@@ -1,0 +1,10 @@
+{
+  "name": "getoptsfpdemo",
+  "version": "1.0.0",
+  "bin": {
+    "getoptsfpdemo": "real-cli.js"
+  },
+  "dependencies": {
+    "commander": "^11.0.0"
+  }
+}

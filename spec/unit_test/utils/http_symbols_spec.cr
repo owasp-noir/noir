@@ -55,4 +55,20 @@ describe "http_symbols test" do
     requestable_http_methods("ANY").should eq(WILDCARD_HTTP_METHODS)
     requestable_http_methods("SEARCH").should eq([] of String)
   end
+
+  it "sends an explicitly declared QUERY endpoint as-is" do
+    requestable_http_methods("QUERY").should eq(["QUERY"])
+  end
+
+  it "does not fan wildcard routes out to QUERY" do
+    # The ANY-expansion decision: QUERY appears only where a route
+    # declares it explicitly, never via ANY/ALL/* expansion.
+    WILDCARD_HTTP_METHODS.should_not contain("QUERY")
+    expand_synthetic_http_methods("ANY").should_not contain("QUERY")
+  end
+
+  it "recognizes QUERY as a method token for probe filters" do
+    endpoint_method_token?("QUERY").should be_true
+    endpoint_method_token?("query").should be_true
+  end
 end

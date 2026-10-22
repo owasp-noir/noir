@@ -76,9 +76,12 @@ expected_endpoints = [
     Param.new("provider", "", "path"),
   ]),
   Endpoint.new("/api/status-check", "GET"),
+  # `#[Route('')]` under a class prefix
+  Endpoint.new("/tasks", "GET"),
+  Endpoint.new("/tasks", "POST"),
 ]
 
 FunctionalTester.new("fixtures/php/symfony/", {
   :techs     => 2,  # Detection still sees php_symfony and php_pure
-  :endpoints => 25, # Analysis suppresses redundant php_pure file endpoints
+  :endpoints => 27, # Analysis suppresses redundant php_pure file endpoints
 }, expected_endpoints).perform_tests

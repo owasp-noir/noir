@@ -15,14 +15,25 @@ expected_endpoints = [
   end,
 ]
 
-FunctionalTester.new("fixtures/kotlin/spring_interface/", {
+tester = FunctionalTester.new("fixtures/kotlin/spring_interface/", {
   :techs     => 1,
   :endpoints => expected_endpoints.size,
 }, expected_endpoints, {
   "include_callee" => YAML::Any.new(true),
-}).perform_tests
+})
+tester.perform_tests
 
-describe "--ai-context on Kotlin Spring interface controller fixtures" do
+describe "Kotlin Spring interface-declared routes", tags: "functional" do
+  it "names the override, not the interface function" do
+    show = tester.endpoints.find! { |ep| ep.method == "GET" && ep.url == "/api/users/{id}" }
+    handler = show.handler.should_not be_nil
+    handler.name.should eq("UserController.show")
+    handler.path.to_s.should end_with("UserController.kt")
+    handler.line.should eq(9)
+  end
+end
+
+describe "--ai-context on Kotlin Spring interface controller fixtures", tags: "functional" do
   before_each do
     CodeLocator.instance.clear_all
   end

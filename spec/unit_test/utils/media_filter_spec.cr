@@ -1,10 +1,16 @@
 require "../../spec_helper"
 require "../../../src/utils/media_filter"
 
-# NOTE: Predicate methods renamed:
-#   is_media_file?   -> media_file?
-#   is_file_too_large? -> file_too_large?
-# Tests updated accordingly.
+# A file that reports `size` bytes without writing them: `truncate` leaves a
+# hole, so the size gate can be exercised at 10MB+ without a 10MB write per
+# example. The bytes it reads back are NUL, which is why the callers below
+# pass `sniff_binary: false` — the same way the detector walk calls
+# `skip_check`.
+private def sparse_file(extension : String, size : Int64) : String
+  path = File.tempname("noir_size_budget", extension)
+  File.open(path, "w", &.truncate(size))
+  path
+end
 
 describe MediaFilter do
   describe ".media_file?" do
@@ -59,82 +65,24 @@ describe MediaFilter do
     end
   end
 
-  describe ".file_too_large?" do
-    it "should return false for non-existent files" do
-      MediaFilter.file_too_large?("non_existent_file.txt").should be_false
-    end
-
-    it "should check file size against default limit" do
-      # Create a temporary small file
-      temp_file = "/tmp/small_test_file.txt"
-      File.write(temp_file, "small content")
-
-      MediaFilter.file_too_large?(temp_file).should be_false
-
-      File.delete(temp_file) if File.exists?(temp_file)
-    end
-
-    it "should check file size against custom limit" do
-      # Create a temporary file
-      temp_file = "/tmp/custom_test_file.txt"
-      File.write(temp_file, "test content")
-
-      # Should be under 1KB limit
-      MediaFilter.file_too_large?(temp_file, 1024).should be_false
-
-      # Should be over 5 byte limit
-      MediaFilter.file_too_large?(temp_file, 5).should be_true
-
-      File.delete(temp_file) if File.exists?(temp_file)
-    end
-  end
-
-  describe ".should_skip_file?" do
-    it "should skip media files regardless of size" do
-      MediaFilter.should_skip_file?("test.jpg").should be_true
-      MediaFilter.should_skip_file?("test.mp4").should be_true
-      MediaFilter.should_skip_file?("test.mp3").should be_true
-    end
-
-    it "should not skip source code files by extension" do
-      MediaFilter.should_skip_file?("test.cr").should be_false
-      MediaFilter.should_skip_file?("test.js").should be_false
-      MediaFilter.should_skip_file?("test.py").should be_false
-    end
-
-    it "should handle combination of extension and size checks" do
-      # Create a temporary source file that's large
-      temp_file = "/tmp/large_source_file.cr"
-      File.write(temp_file, "# " + "x" * 1000) # Make it large enough
-
-      # Should skip due to size even though it's a source file
-      MediaFilter.should_skip_file?(temp_file, 500).should be_true
-
-      # Should not skip with larger size limit
-      MediaFilter.should_skip_file?(temp_file, 2000).should be_false
-
-      File.delete(temp_file) if File.exists?(temp_file)
-    end
-  end
-
-  describe ".skip_reason" do
+  describe ".skip_check" do
     it "should return nil for files that shouldn't be skipped" do
-      MediaFilter.skip_reason("test.cr").should be_nil
-      MediaFilter.skip_reason("test.js").should be_nil
+      MediaFilter.skip_check("test.cr").should be_nil
+      MediaFilter.skip_check("test.js").should be_nil
     end
 
     it "should return media file reason" do
-      reason = MediaFilter.skip_reason("test.jpg")
+      reason = MediaFilter.skip_check("test.jpg")
       reason.should_not be_nil
       reason.as(String).should contain("media file")
       reason.as(String).should contain(".jpg")
     end
 
     it "should return file size reason for large files" do
-      temp_file = "/tmp/size_test_file.txt"
+      temp_file = File.tempname("noir_media_size", ".txt")
       File.write(temp_file, "x" * 100)
 
-      reason = MediaFilter.skip_reason(temp_file, 50)
+      reason = MediaFilter.skip_check(temp_file, 50)
       reason.should_not be_nil
       reason.as(String).should contain("file too large")
 
@@ -144,7 +92,7 @@ describe MediaFilter do
 
   describe ".binary_content_signature?" do
     it "returns false for plain text content" do
-      temp = "/tmp/noir-binsig-text-#{Random.rand(1_000_000)}.py"
+      temp = "#{Dir.tempdir}/noir-binsig-text-#{Random.rand(1_000_000)}.py"
       File.write(temp, "def hello():\n    return 'hi'\n")
       begin
         MediaFilter.binary_content_signature?(temp).should be_false
@@ -154,7 +102,7 @@ describe MediaFilter do
     end
 
     it "returns true for content containing NUL bytes" do
-      temp = "/tmp/noir-binsig-bin-#{Random.rand(1_000_000)}.py"
+      temp = "#{Dir.tempdir}/noir-binsig-bin-#{Random.rand(1_000_000)}.py"
       # `dd` style random bytes — virtually certain to contain a NUL
       # in 1KB. Use a deterministic NUL-bearing payload so the test
       # isn't probabilistic.
@@ -167,7 +115,7 @@ describe MediaFilter do
     end
 
     it "returns false for empty files (nothing to sample)" do
-      temp = "/tmp/noir-binsig-empty-#{Random.rand(1_000_000)}.py"
+      temp = "#{Dir.tempdir}/noir-binsig-empty-#{Random.rand(1_000_000)}.py"
       File.write(temp, "")
       begin
         MediaFilter.binary_content_signature?(temp).should be_false
@@ -189,7 +137,7 @@ describe MediaFilter do
       # with `ArgumentError: UTF-8 error: code points greater than
       # 0x10ffff are not defined`. The binary-sniff in skip_check
       # catches it before any analyzer regex runs.
-      temp = "/tmp/noir-skip-binary-#{Random.rand(1_000_000)}.py"
+      temp = "#{Dir.tempdir}/noir-skip-binary-#{Random.rand(1_000_000)}.py"
       File.write(temp, "import os\x00\x01\x02unparseable")
       begin
         reason = MediaFilter.skip_check(temp)
@@ -201,12 +149,92 @@ describe MediaFilter do
     end
 
     it "does not skip ordinary text source files" do
-      temp = "/tmp/noir-skip-text-#{Random.rand(1_000_000)}.py"
+      temp = "#{Dir.tempdir}/noir-skip-text-#{Random.rand(1_000_000)}.py"
       File.write(temp, "from flask import Flask\napp = Flask(__name__)\n")
       begin
         MediaFilter.skip_check(temp).should be_nil
       ensure
         File.delete(temp) if File.exists?(temp)
+      end
+    end
+  end
+
+  describe ".spec_document?" do
+    it "recognizes specification and structured document extensions" do
+      MediaFilter.spec_document?("openapi.json").should be_true
+      MediaFilter.spec_document?("swagger.YAML").should be_true # Case insensitive
+      MediaFilter.spec_document?("service.wsdl").should be_true
+      MediaFilter.spec_document?("burp-export.xml").should be_true
+      MediaFilter.spec_document?("schema.graphql").should be_true
+    end
+
+    it "does not treat source code or media as a specification document" do
+      MediaFilter.spec_document?("bundle.js").should be_false
+      MediaFilter.spec_document?("views.py").should be_false
+      MediaFilter.spec_document?("logo.png").should be_false
+    end
+  end
+
+  describe "specification document budget" do
+    it "reads a specification document past the media cap" do
+      # The NetBox case: a 12MB generated `openapi.json` describing 308
+      # paths was dropped by a filter meant to keep image files out of the scan.
+      path = sparse_file(".json", MediaFilter::MAX_FILE_SIZE.to_i64 + 1)
+      begin
+        MediaFilter.skip_check(path, sniff_binary: false).should be_nil
+      ensure
+        File.delete(path) if File.exists?(path)
+      end
+    end
+
+    it "still applies the media cap to source files of the same size" do
+      path = sparse_file(".py", MediaFilter::MAX_FILE_SIZE.to_i64 + 1)
+      begin
+        reason = MediaFilter.skip_check(path, sniff_binary: false)
+        reason.should_not be_nil
+        reason.as(String).should contain("file too large")
+      ensure
+        File.delete(path) if File.exists?(path)
+      end
+    end
+
+    it "reports the budget that was actually applied" do
+      path = sparse_file(".json", MediaFilter::MAX_SPEC_FILE_SIZE.to_i64 + 1)
+      begin
+        reason = MediaFilter.skip_check(path, sniff_binary: false)
+        reason.should_not be_nil
+        expected_mb = (MediaFilter::MAX_SPEC_FILE_SIZE / (1024.0 * 1024.0)).round(2)
+        reason.as(String).should contain("file too large")
+        reason.as(String).should contain("> #{expected_mb}MB")
+      ensure
+        File.delete(path) if File.exists?(path)
+      end
+    end
+  end
+
+  describe ".env_size" do
+    it "returns the default when the variable is unset" do
+      ENV.delete("NOIR_SPEC_ENV_SIZE_TEST")
+      MediaFilter.env_size("NOIR_SPEC_ENV_SIZE_TEST", 1234).should eq(1234)
+    end
+
+    it "parses the same value syntax as NOIR_MAX_FILE_SIZE" do
+      ENV["NOIR_SPEC_ENV_SIZE_TEST"] = "16MB"
+      begin
+        MediaFilter.env_size("NOIR_SPEC_ENV_SIZE_TEST", 1234).should eq(16 * 1024 * 1024)
+      ensure
+        ENV.delete("NOIR_SPEC_ENV_SIZE_TEST")
+      end
+    end
+
+    it "falls back to the default on unparsable or non-positive values" do
+      ["not-a-size", "0", "-5"].each do |value|
+        ENV["NOIR_SPEC_ENV_SIZE_TEST"] = value
+        begin
+          MediaFilter.env_size("NOIR_SPEC_ENV_SIZE_TEST", 1234).should eq(1234)
+        ensure
+          ENV.delete("NOIR_SPEC_ENV_SIZE_TEST")
+        end
       end
     end
   end

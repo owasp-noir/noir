@@ -1,0 +1,3 @@
+service BaseService {
+  string ping()
+}

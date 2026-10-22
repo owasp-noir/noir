@@ -79,7 +79,7 @@ module Noir::PythonCalleeExtractor
     when "identifier"
       "#{Noir::TreeSitter.node_text(object, source)}.#{attr_name}"
     when "attribute"
-      inner = build_attribute_text(object, source)
+      inner = Noir::TreeSitter.descend { build_attribute_text(object, source) } || ""
       inner.empty? ? "" : "#{inner}.#{attr_name}"
     else
       # object is a call / subscript / literal — drop to avoid noise.

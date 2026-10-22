@@ -9,6 +9,9 @@ module Noir
     getter method : String
     property path : String
     getter raw_path : String
+    # CHAR index of the route's receiver token — or, for a link of a
+    # `route('/x').get(...).post(...)` chain, of that link's own verb, so
+    # each verb reports its own line and handler.
     getter start_pos : Int32
     getter params : Array(Param)
 
@@ -32,9 +35,17 @@ module Noir
     @current_route_paths : Array(String)? = nil # For multi-prefix support in route chains
     @current_route_start_idx : Int32? = nil
     @current_route_raw_path : String? = nil
-    @current_route_start_pos : Int32? = nil
     @router_prefixes : Hash(String, Array(String)) = Hash(String, Array(String)).new { |h, k| h[k] = [] of String }
     @named_route_receivers = Set(String).new
+    # Receivers this file explicitly builds a router from (`x =
+    # express.Router()`, `x = new Router()`, `x = express()`), as opposed
+    # to the ones inferred from a verb call — every `request.get(...)`
+    # would otherwise vouch for itself as a router.
+    @explicit_router_vars = Set(String).new
+    # child => parents of this file's `parent.use('/p', child)` mounts, kept
+    # after `parse_routes` so a caller can walk a sub-router up to the
+    # router the file exports.
+    @router_parents = {} of String => Array(String)
     @supports_named_routes : Bool = false
 
     private struct PathEntry
@@ -47,7 +58,7 @@ module Noir
 
     private def http_method_name?(value : String) : Bool
       case value.downcase
-      when "get", "post", "put", "delete", "options", "head", "patch", "del", "all"
+      when "get", "post", "put", "delete", "options", "head", "patch", "del", "all", "query"
         true
       else
         false
@@ -58,12 +69,42 @@ module Noir
       token.type == :http_method || (token.type == :keyword && token.value == "delete")
     end
 
-    def initialize(source : String)
+    # A route verb: an HTTP method, or Restify's `opts` (OPTIONS) called on
+    # a server or router in a Restify file — `opts` is far too common a name
+    # to read as one anywhere else.
+    private def route_verb?(token : JSToken, receiver : String) : Bool
+      http_method?(token) ||
+        (@framework == :restify && token.value == "opts" && routing_receiver?(receiver))
+    end
+
+    # `this_receiver_ok` is false for a file with no server-framework import:
+    # there a bare `this.post('/x', data)` is the outbound call of an API
+    # client class (`class ProjectService extends APIService`), not a route,
+    # unless it passes an inline function or a method reference
+    # (`this_handler_arg?`: Unleash's controllers `this.get('/', this.getTags)`
+    # import only a local base class).
+    def initialize(source : String, @this_receiver_ok : Bool = true)
       lexer = JSLexer.new(source)
       @tokens = lexer.tokenize
       @supports_named_routes = source.includes?("koa-router") || source.includes?("@koa/router")
       # Extract constants from the source
       extract_constants
+    end
+
+    # The router nearest to `router` (itself first, then the routers it is
+    # mounted on, breadth-first) for which the block holds. Only meaningful
+    # after `parse_routes`.
+    def nearest_ancestor(router : String, &) : String?
+      seen = Set{router}
+      queue = [router]
+      until queue.empty?
+        name = queue.shift
+        return name if yield name
+        @router_parents[name]?.try do |parents|
+          parents.each { |parent| queue << parent if seen.add?(parent) }
+        end
+      end
+      nil
     end
 
     def detect_framework : Symbol
@@ -92,7 +133,10 @@ module Noir
       @framework = detect_framework
 
       # Add a maximum iteration count to prevent infinite loops
-      max_iterations = 10000
+      # Every iteration advances at least one token, so this is only a
+      # safety net. A fixed 10000 silently dropped the second-pass routes
+      # (Restify `{ path }` specs) of any file past ~10k tokens.
+      max_iterations = @tokens.size + 10_000
       iterations = 0
 
       # Track router mount paths: router_variable_name => array of prefix_paths (supports multi-mount)
@@ -104,6 +148,7 @@ module Noir
       # 1. Variables assigned from express.Router()
       # 2. Variables that have route methods called on them (.get, .post, etc.)
       @named_route_receivers.clear
+      @explicit_router_vars.clear
       identify_router_variables(router_variables)
       identify_named_route_receivers(router_variables)
       scan_router_constructor_prefixes(router_prefixes, router_variables)
@@ -165,13 +210,18 @@ module Noir
         idx += 1
       end
 
-      # Resolve full paths for nested routers by walking up the parent chain
+      # Resolve full paths for nested routers by walking up the parent chain.
+      # Resolve against a snapshot of the declared (own) prefixes: writing
+      # each result back into the table being walked made a grandchild
+      # re-apply an already-resolved parent's prefixes (`/a/a/b/c`).
+      declared_prefixes = router_prefixes.transform_values(&.dup)
+      resolved = {} of String => Array(String)
       router_prefixes.keys.each do |router_name|
-        resolved_prefixes = resolve_full_prefixes(router_name, router_prefixes, router_parents)
-        router_prefixes[router_name] = resolved_prefixes
+        router_prefixes[router_name] = resolve_full_prefixes(router_name, declared_prefixes, router_parents, resolved, Set(String).new)[0]
       end
 
       @router_prefixes = router_prefixes
+      @router_parents = router_parents
 
       # First, run a fast token scan to quickly capture common patterns
       routes.concat(fast_scan_routes(router_prefixes))
@@ -212,7 +262,9 @@ module Noir
       # identifiers like "Object" (leaked via `resolve_dynamic_path` from
       # `Promise.all(Object.values(...).map(...))`) get rewritten to
       # "/Object" and sneak past `valid_route_path?`'s "/" check.
-      routes.select! { |r| valid_route_path?(r.path) }
+      # An empty literal path survives only where `route_path_entries_from_args`
+      # accepted it for a routing receiver (it is the mount point itself).
+      routes.select! { |r| valid_route_path?(r.path) || r.raw_path.empty? }
 
       # Strip Express param regex constraints (`:id(\d+)`, `:pk(${UUID_REGEX})`)
       # down to the bare param, then ensure a leading slash. The constraint
@@ -232,7 +284,10 @@ module Noir
               !stripped.includes?("{#{p.name}}")
           end
         end
-        route_item.path = "/#{route_item.path}" unless route_item.path.starts_with?("/")
+        # An empty path (`router.get('', …)`) stays empty so a mount or
+        # `prefix` resolves it to the prefix itself (`/items`, not
+        # `/items/`); `JSRouteExtractor` roots it to `/` when unprefixed.
+        route_item.path = "/#{route_item.path}" unless route_item.path.empty? || route_item.path.starts_with?("/")
       end
 
       # Dedupe by method + path
@@ -248,48 +303,73 @@ module Noir
       unique
     end
 
-    private def apply_prefix(route : JSRoutePattern, prefix : String)
-      return if prefix.empty?
+    # Ceiling on the full prefixes one router resolves to. A diamond lattice
+    # of parallel mounts doubles the distinct paths per level; a shared
+    # router mounted under many paths stays well below it.
+    MAX_MOUNT_PREFIXES = 1024
 
-      if !route.path.starts_with?("/")
-        route.path = "#{prefix}/#{route.path}"
-      else
-        route.path = "#{prefix}#{route.path}"
-      end
-    end
+    # Ceiling on resolver calls per file. Results cut short by a cycle are
+    # not memoized, so a densely cyclic mount graph could otherwise enumerate
+    # every path; past this budget they are memoized anyway.
+    MAX_PREFIX_RESOLUTIONS = 100_000
+
+    getter? mount_prefixes_capped : Bool = false
+    @prefix_resolutions = 0
 
     # Resolve full prefix for a router by walking up all parent chains
-    # Supports multiple parents (router mounted under different parent routers)
-    private def resolve_full_prefixes(router : String, router_prefixes : Hash(String, Array(String)), router_parents : Hash(String, Array(String)), visited : Set(String) = Set(String).new) : Array(String)
-      prefixes = router_prefixes[router]?.try(&.dup) || [] of String
-      return prefixes if prefixes.empty?
-      return prefixes if visited.includes?(router) # Prevent infinite loops
+    # Supports multiple parents (router mounted under different parent routers).
+    # Memoized per router in `resolved` — re-walking every parent chain for
+    # every router enumerated each path of a diamond lattice again and again.
+    # Returns the prefixes and whether a cycle cut the walk short: such a
+    # result is only right for the current path, so it is not memoized (a
+    # mid-cycle `p` resolved as `/q` alone lost `/root/q/pp` for good).
+    private def resolve_full_prefixes(router : String, router_prefixes : Hash(String, Array(String)),
+                                      router_parents : Hash(String, Array(String)),
+                                      resolved : Hash(String, Array(String)), on_path : Set(String)) : Tuple(Array(String), Bool)
+      if memo = resolved[router]?
+        return {memo, false}
+      end
+      prefixes = router_prefixes[router]? || [] of String
+      return {prefixes, false} if prefixes.empty?
 
-      visited.add(router)
-      parents = router_parents[router]? || [] of String
-      return prefixes if parents.empty?
+      @prefix_resolutions += 1
+      on_path.add(router)
+      # A parent already on this chain is a self-mount or a cycle; walking
+      # it again joined the cycle's prefixes onto themselves (`/v1/v1`).
+      all_parents = router_parents[router]? || [] of String
+      parents = all_parents.reject { |parent| on_path.includes?(parent) }
+      cut = parents.size < all_parents.size
 
       # Combine with all parent chains
       result = [] of String
+      seen = Set(String).new
       parents.each do |parent|
-        # Recursively resolve parent's full prefixes
-        parent_full_prefixes = resolve_full_prefixes(parent, router_prefixes, router_parents, visited.dup)
-
-        if parent_full_prefixes.empty?
-          # No parent prefix, just use our prefixes
-          result.concat(prefixes)
-        else
-          # Cartesian product: combine each parent prefix with each of our prefixes
-          parent_full_prefixes.each do |parent_prefix|
-            prefixes.each do |prefix|
-              combined = URLPath.join(parent_prefix, prefix)
-              result << combined unless result.includes?(combined)
+        parent_full_prefixes, parent_cut = resolve_full_prefixes(parent, router_prefixes, router_parents, resolved, on_path)
+        cut ||= parent_cut
+        # No parent prefix: our own prefixes stand alone.
+        parent_full_prefixes = [""] if parent_full_prefixes.empty?
+        # Cartesian product: combine each parent prefix with each of our prefixes
+        parent_full_prefixes.each do |parent_prefix|
+          prefixes.each do |prefix|
+            combined = parent_prefix.empty? ? prefix : URLPath.join(parent_prefix, prefix)
+            next unless seen.add?(combined)
+            if result.size >= MAX_MOUNT_PREFIXES
+              @mount_prefixes_capped = true
+              break
             end
+            result << combined
           end
         end
       end
+      on_path.delete(router)
 
-      result.empty? ? prefixes : result
+      result = prefixes.dup if result.empty?
+      if cut && @prefix_resolutions >= MAX_PREFIX_RESOLUTIONS
+        @mount_prefixes_capped = true
+        cut = false
+      end
+      resolved[router] = result unless cut
+      {result, cut}
     end
 
     # Koa/@koa-router commonly attaches route prefixes in the constructor:
@@ -477,8 +557,13 @@ module Noir
       paths
     end
 
-    private def route_path_entries_from_args(first_arg_idx : Int32, allow_named_route : Bool = false) : Array(PathEntry)
-      paths = path_entries_from_token(first_arg_idx).select { |path| valid_route_path?(path.path) }
+    private def route_path_entries_from_args(first_arg_idx : Int32, allow_named_route : Bool = false,
+                                             receiver : String? = nil) : Array(PathEntry)
+      # `router.get('', …)` routes the mount point itself (Express, Koa,
+      # Fastify, Hono), but `cache.get('', cb)` / `client.post('', body)`
+      # are not routes, so the empty path is kept only on a routing receiver.
+      empty_ok = receiver ? routing_receiver?(receiver) : false
+      paths = path_entries_from_token(first_arg_idx).select { |path| valid_route_path?(path.path) || (empty_ok && path.path.empty?) }
       return paths unless paths.empty? && allow_named_route
 
       # Koa/@koa-router supports named routes:
@@ -490,6 +575,232 @@ module Noir
       end
 
       [] of PathEntry
+    end
+
+    # True when the verb call whose `(` sits at `lparen_idx` carries an
+    # argument that could be a request handler.
+    #
+    # Every JS HTTP framework this parser covers registers a route as
+    # `verb(path, ...middleware, handler)` and the handler is mandatory —
+    # Express, Koa, Fastify, Restify, Hono and Oak all ignore (or reject) a
+    # verb call that passes nothing but a path. HTTP *client* calls have the
+    # opposite shape: the URL is the whole call, optionally followed by a
+    # plain options bag. That difference is the only structural thing
+    # separating the two in a file the extractor cannot type-check:
+    #
+    #   request.get(`${nconf.get('url')}/api/config`)        // client call
+    #   request.del(`${nconf.get('url')}/api/x`, { jar })    // client call
+    #   container.get('./index')                             // webpack MF
+    #   app.get('view engine')                               // Express getter
+    #
+    #   app.get(`${relativePath}/ping`, pingController.ping) // route
+    #   fastify.get('/x', { schema }, async (rq, rp) => {})  // route
+    #   fastify.get('/x', { schema, handler })               // route
+    #
+    # Both NodeBB shapes above live in the same repository — `app.use(
+    # `${nconf.get('relative_path')}/debug`, router)` is a real mount while
+    # `request.get(`${nconf.get('url')}/api/...`)` is a test client call — so
+    # neither the receiver name nor the leading `${...}` placeholder can tell
+    # them apart. The handler argument can.
+    #
+    # Bias is toward keeping routes: anything that is not a bare literal or a
+    # handler-less object literal counts as a handler, and an argument list
+    # this walk cannot finish (unbalanced tokens) is accepted.
+    private def route_handler_arg?(lparen_idx : Int32) : Bool
+      return true unless lparen_idx < @tokens.size && @tokens[lparen_idx].type == :lparen
+
+      idx = lparen_idx + 1
+      depth = 0
+      arg_index = 0
+      arg_start = idx
+
+      while idx < @tokens.size
+        case @tokens[idx].type
+        when :lparen, :lbracket, :lbrace
+          depth += 1
+        when :rbracket, :rbrace
+          return true if depth == 0 # unbalanced — do not drop the route
+          depth -= 1
+        when :rparen
+          if depth == 0
+            return arg_index > 0 && handler_shaped_arg?(arg_start, idx)
+          end
+          depth -= 1
+        when :comma
+          if depth == 0
+            return true if arg_index > 0 && handler_shaped_arg?(arg_start, idx)
+            arg_index += 1
+            arg_start = idx + 1
+            # A non-literal, non-object argument is handler-shaped on its
+            # first token alone, so answer here instead of walking its body:
+            # an arrow-function handler is routinely hundreds of tokens.
+            if arg_start < @tokens.size
+              case @tokens[arg_start].type
+              when :lbrace, :string, :template_literal, :number, :regex, :literal, :rparen
+                # Needs the full-argument check below.
+              else
+                return true
+              end
+            end
+          end
+        else
+          # Not a delimiter.
+        end
+        idx += 1
+      end
+
+      true
+    end
+
+    # Token index of the start of every top-level argument after the first of
+    # the call whose `(` sits at `lparen_idx`.
+    private def trailing_arg_starts(lparen_idx : Int32) : Array(Int32)
+      starts = [] of Int32
+      depth = 0
+      idx = lparen_idx + 1
+      while idx < @tokens.size
+        case @tokens[idx].type
+        when :lparen, :lbracket, :lbrace
+          depth += 1
+        when :rparen, :rbracket, :rbrace
+          break if depth == 0
+          depth -= 1
+        when :comma
+          starts << idx + 1 if depth == 0
+        else
+          # Not a delimiter.
+        end
+        idx += 1
+      end
+      starts
+    end
+
+    # The first parameter's name when an inline function starts at `idx`
+    # (`(req, res) => …`, `async req => …`, `function (req) {…}`); "" when it
+    # has none or destructures it; nil when no inline function starts there.
+    private def inline_function_first_param(idx : Int32) : String?
+      token = @tokens[idx]? || return
+      if token.type == :keyword && token.value == "async"
+        idx += 1
+        token = @tokens[idx]? || return
+      end
+      if token.type == :identifier && @tokens[idx + 1]?.try(&.type) == :assign && @tokens[idx + 2]?.try(&.value) == ">"
+        return token.value
+      end
+      if token.type == :keyword && token.value == "function"
+        idx += 1
+        idx += 1 if @tokens[idx]?.try(&.type) == :identifier
+        token = @tokens[idx]? || return
+      end
+      return unless token.type == :lparen
+      param = @tokens[idx + 1]?
+      param && param.type == :identifier ? param.value : ""
+    end
+
+    # Index just past the `name` / `a.b.c` / `this.a` chain starting at `idx`,
+    # or `idx` itself when no identifier starts there.
+    private def member_chain_end(idx : Int32) : Int32
+      token = @tokens[idx]? || return idx
+      return idx unless token.type == :identifier || token.value == "this"
+      idx += 1
+      while @tokens[idx]?.try(&.type) == :dot && @tokens[idx + 1]?.try { |t| t.type == :identifier || t.type == :keyword }
+        idx += 2
+      end
+      idx
+    end
+
+    private def arg_end?(idx : Int32) : Bool
+      type = @tokens[idx]?.try(&.type)
+      type == :comma || type == :rparen
+    end
+
+    # Tokens right before a receiver that put the call's value to use:
+    # `return this.get(…)`, `const r = await http.post(…)`, `a || this.get(…)`.
+    # A route registration is a bare statement; a client call is consumed.
+    VALUE_CONTEXT_TOKENS = Set{"return", "await", "yield", "=", ">", "(", ",", ":", "?", "[", "&", "|", "!"}
+
+    private def value_context?(idx : Int32) : Bool
+      prev = idx >= 0 ? @tokens[idx]? : nil
+      !prev.nil? && prev.type != :string && VALUE_CONTEXT_TOKENS.includes?(prev.value)
+    end
+
+    # A `this.<verb>(path, …)` call in a file with no server import is a route
+    # only when it is a statement that hands over a handler: an inline
+    # function or a method reference, `this.get('/', this.getTags)`.
+    # `return this.post('/orders', body)`, `this.post('/files', file, {
+    # onProgress })` and `return this.get('/x', this.defaults)` are the
+    # outbound calls of an API client class. `this_idx` is the receiver.
+    private def this_handler_arg?(this_idx : Int32, lparen_idx : Int32) : Bool
+      trailing_arg_starts(lparen_idx).any? do |idx|
+        next true if inline_function_first_param(idx)
+        chain_end = member_chain_end(idx)
+        @tokens[idx]?.try(&.value) == "this" && chain_end > idx + 1 && arg_end?(chain_end) && !value_context?(this_idx - 1)
+      end
+    end
+
+    # First parameter names of a request handler: `(req, res)`, `(request,
+    # reply)`, `(ctx)`, `(c)`. A client callback names its first parameter
+    # after the response or the error: `(res)`, `(err, res)`, `(data, jwr)`.
+    REQUEST_PARAM_RE = /\A_?(?:req|request|ctx|context|c)\z/
+
+    # Whether the call on receiver `recv_idx` (its `(` at `lparen_idx`) is a
+    # route registration, for the receivers that are an HTTP client in some
+    # files and an app parameter in others (`http.get('/ping', handler)`).
+    # A bare statement on a plain variable (not `this.http.post(…)`, Angular's
+    # injected client; not `await http.get(…)`) with a rooted literal path (a
+    # k6/Node client call takes an absolute URL or a `${base}` template) that
+    # hands over a handler: an inline function with a request-like first
+    # parameter, or a bare reference as the LAST argument
+    # (`socket.post('/x', payload, (res) => …)` ends in a callback, so its
+    # `payload` is not one).
+    private def request_handler_call?(recv_idx : Int32, lparen_idx : Int32) : Bool
+      return false if recv_idx > 0 && (@tokens[recv_idx - 1].type == :dot || value_context?(recv_idx - 1))
+      first = @tokens[lparen_idx + 1]?
+      return false if first.nil? || first.type != :string || !first.value.starts_with?('/') || first.value.starts_with?("//")
+      trailing_arg_starts(lparen_idx).any? do |idx|
+        if param = inline_function_first_param(idx)
+          param.matches?(REQUEST_PARAM_RE)
+        else
+          chain_end = member_chain_end(idx)
+          chain_end > idx && @tokens[chain_end]?.try(&.type) == :rparen
+        end
+      end
+    end
+
+    # Classify one argument (tokens `start_idx...end_idx`) as handler-shaped.
+    private def handler_shaped_arg?(start_idx : Int32, end_idx : Int32) : Bool
+      return false if start_idx >= end_idx || start_idx >= @tokens.size
+
+      case @tokens[start_idx].type
+      when :string, :template_literal, :number, :regex, :literal
+        # A bare literal is a route name (Koa's `router.get("users.show",
+        # "/users/:id", handler)`) or a client payload — never a handler.
+        # The Koa shape still registers because the handler is a later
+        # argument and every argument after the path is inspected.
+        false
+      when :lbrace
+        # Options object. Fastify's shorthand lets the handler live inside
+        # it (`fastify.get('/x', { schema, handler })`); a plain options bag
+        # (`request.del(url, { jar })`) registers nothing.
+        object_declares_handler?(start_idx, end_idx)
+      else
+        true
+      end
+    end
+
+    # True when the object literal spanning `start_idx...end_idx` names a
+    # handler property (Fastify/Restify route-options shorthand).
+    private def object_declares_handler?(start_idx : Int32, end_idx : Int32) : Bool
+      idx = start_idx
+      while idx < end_idx && idx < @tokens.size
+        token = @tokens[idx]
+        if token.type == :identifier &&
+           (token.value == "handler" || token.value == "wsHandler" || token.value == "onRequest")
+          return true
+        end
+        idx += 1
+      end
+      false
     end
 
     private def next_top_level_arg_index(start_idx : Int32) : Int32?
@@ -523,10 +834,85 @@ module Noir
       nil
     end
 
+    private def skip_matching_paren(lparen_idx : Int32) : Int32?
+      return unless lparen_idx < @tokens.size && @tokens[lparen_idx].type == :lparen
+      idx = lparen_idx + 1
+      paren_depth = 1
+      bracket_depth = 0
+      brace_depth = 0
+
+      while idx < @tokens.size && paren_depth > 0
+        token = @tokens[idx]
+        case token.type
+        when :lparen
+          paren_depth += 1
+        when :rparen
+          paren_depth -= 1
+          return idx if paren_depth == 0
+        when :lbracket
+          bracket_depth += 1
+        when :rbracket
+          bracket_depth -= 1 if bracket_depth > 0
+        when :lbrace
+          brace_depth += 1
+        when :rbrace
+          brace_depth -= 1 if brace_depth > 0
+        end
+        idx += 1
+      end
+      nil
+    end
+
     # Pre-scan tokens to identify router variables
     # Routers are identified by:
     # 1. Assignment from express.Router(): const router = express.Router()
     # 2. Having route methods called on them: router.get(...)
+    # Receivers that are HTTP *clients*, never routers. `request.get(url,
+    # opts)` in a test file has the same token shape as `router.get(path,
+    # handler)` — an identifier, a verb, a path-ish first argument and a
+    # second argument — so `route_handler_arg?` cannot separate them and
+    # deliberately errs toward keeping the route. The receiver name can:
+    # none of these is ever assigned an Express/Koa/Fastify router, and
+    # NodeBB's `test/*.js` alone turns 385 such calls into routes that do
+    # not exist. Keep the list to library names that would be perverse to
+    # use for a router — a receiver named `api` or `client` may well be
+    # one (mastodon's streaming server routes on `api`), so neither is
+    # listed. `$`/`jQuery`/`$http`/`AJAX` are browser clients, `http`/`https`
+    # the Node modules (`http.get(url, cb)`, k6's `http.post(url, data)`),
+    # `socket` sails.io's, and `httpClient`/`axiosInstance`/`axiosClient`
+    # the injected clients of generated SDKs (`this.httpClient.post(...)`).
+    HTTP_CLIENT_RECEIVERS = Set{
+      "request", "axios", "superagent", "supertest", "got",
+      "needle", "unirest", "ky", "phin", "chai",
+      "$", "jQuery", "$http", "AJAX", "ajax", "http", "https", "socket",
+      "httpClient", "axiosInstance", "axiosClient",
+    }
+
+    # `http`, `https` and `socket` are also ordinary parameter names for an
+    # app (`module.exports = function registerRoutes(http) { http.get('/ping',
+    # handler) }`), so for them the call shape decides (`request_handler_call?`).
+    CONTEXTUAL_CLIENT_RECEIVERS = Set{"http", "https", "socket"}
+
+    # A receiver is a client only when the file never builds a router
+    # from that name, so a project that genuinely names its router
+    # `request` keeps its routes. `recv_idx` is the receiver token and
+    # `lparen_idx` the call's `(`.
+    private def http_client_receiver?(router_var : String, recv_idx : Int32, lparen_idx : Int32) : Bool
+      return false if !HTTP_CLIENT_RECEIVERS.includes?(router_var) || @explicit_router_vars.includes?(router_var)
+      !(CONTEXTUAL_CLIENT_RECEIVERS.includes?(router_var) && request_handler_call?(recv_idx, lparen_idx))
+    end
+
+    APP_FACTORIES = Set{"express", "fastify", "Fastify", "Koa", "Hono", "Application", "Router", "Elysia"}
+
+    # Receivers conventionally holding an app or router.
+    ROUTING_RECEIVER_NAME = /\A(?:app|router|server|fastify|instance)\z|(?:Router|router|App|Server)\z/
+
+    # A receiver known to be an app or router: built from a framework
+    # factory in this file, or conventionally named like one.
+    private def routing_receiver?(name : String) : Bool
+      @explicit_router_vars.includes?(name) || name.matches?(ROUTING_RECEIVER_NAME)
+    end
+
     private def identify_router_variables(router_variables : Set(String))
       idx = 0
       while idx < @tokens.size - 4
@@ -538,6 +924,43 @@ module Noir
            idx + 3 < @tokens.size && @tokens[idx + 3].type == :dot &&
            idx + 4 < @tokens.size && @tokens[idx + 4].value == "Router"
           router_variables.add(@tokens[idx].value)
+          @explicit_router_vars.add(@tokens[idx].value)
+        end
+
+        # identifier = [new] express() / fastify() / Koa / Hono / Router /
+        # restify.createServer(): an app or router built in this file.
+        if @tokens[idx].type == :identifier && @tokens[idx + 1].type == :assign
+          factory_idx = idx + 2
+          factory_idx += 1 if @tokens[factory_idx].value == "new"
+          factory = @tokens[factory_idx]?
+          if factory && (APP_FACTORIES.includes?(factory.value) ||
+             (factory.value == "restify" && @tokens[factory_idx + 2]?.try(&.value) == "createServer"))
+            @explicit_router_vars.add(@tokens[idx].value)
+          end
+        end
+
+        # x.register([async] function [name](instance, …) / [async] (instance, …) =>
+        # / [async] instance =>: the inline Fastify plugin's instance.
+        if @tokens[idx].type == :dot && @tokens[idx + 1].value == "register" && @tokens[idx + 2].type == :lparen
+          param_idx = idx + 3
+          inline_fn = false
+          if @tokens[param_idx]?.try(&.value) == "async"
+            param_idx += 1
+            inline_fn = true
+          end
+          if @tokens[param_idx]?.try(&.value) == "function"
+            param_idx += 1
+            param_idx += 1 if @tokens[param_idx]?.try(&.type) == :identifier
+            inline_fn = true
+          end
+          if @tokens[param_idx]?.try(&.type) == :lparen
+            param_idx += 1
+            inline_fn = true
+          end
+          # A bare `register(plugin, …)` names a function, not an instance.
+          if inline_fn && (param = @tokens[param_idx]?) && param.type == :identifier
+            @explicit_router_vars.add(param.value)
+          end
         end
 
         # Pattern 2: identifier.get/post/put/delete/patch/all/head/options(
@@ -575,6 +998,7 @@ module Noir
              (@tokens[scan_idx].value == "Router" || @tokens[scan_idx].value.ends_with?("Router"))
             @named_route_receivers.add(receiver)
             router_variables.add(receiver)
+            @explicit_router_vars.add(receiver)
           end
         end
 
@@ -617,11 +1041,6 @@ module Noir
 
       # Fallback: last identifier (original Express convention)
       candidates.last
-    end
-
-    private def current_token
-      return JSToken.new(:eof, "", @position) if at_end?
-      @tokens[@position]
     end
 
     private def advance
@@ -682,11 +1101,15 @@ module Noir
         # Pattern 1: identifier . http_method ( 'path' | `tpl` | identifier/concat )
         if @tokens[idx].type == :identifier &&
            @tokens[idx + 1].type == :dot &&
-           http_method?(@tokens[idx + 2]) &&
+           route_verb?(@tokens[idx + 2], @tokens[idx].value) &&
            @tokens[idx + 3].type == :lparen
+          if !route_handler_arg?(idx + 3) || http_client_receiver?(@tokens[idx].value, idx, idx + 3)
+            idx += 1
+            next
+          end
           router_var = @tokens[idx].value
           method = @tokens[idx + 2].value
-          paths = route_path_entries_from_args(idx + 4, allow_named_route: named_route_receiver?(router_var))
+          paths = route_path_entries_from_args(idx + 4, allow_named_route: named_route_receiver?(router_var), receiver: router_var)
 
           # Create one route for each path with prefix
           start_pos = @tokens[idx].position
@@ -705,9 +1128,13 @@ module Noir
            http_method_name?(@tokens[idx + 2].value) &&
            @tokens[idx + 3].type == :rbracket &&
            @tokens[idx + 4].type == :lparen
+          if !route_handler_arg?(idx + 4) || http_client_receiver?(@tokens[idx].value, idx, idx + 4)
+            idx += 1
+            next
+          end
           router_var = @tokens[idx].value
           method = @tokens[idx + 2].value
-          paths = route_path_entries_from_args(idx + 5, allow_named_route: named_route_receiver?(router_var))
+          paths = route_path_entries_from_args(idx + 5, allow_named_route: named_route_receiver?(router_var), receiver: router_var)
 
           start_pos = @tokens[idx].position
           each_prefixed_path(paths, router_var, router_prefixes) do |path_entry, prefixed_path|
@@ -740,26 +1167,37 @@ module Noir
           # resolve path at idx+4
           paths = [] of PathEntry
           if idx + 4 < limit
-            paths = route_path_entries_from_args(idx + 4)
+            paths = route_path_entries_from_args(idx + 4, receiver: router_var)
           end
 
-          start_pos = @tokens[idx].position
-          each_prefixed_path(paths, router_var, router_prefixes) do |path_entry, prefixed_path|
-            # Scan ahead for chained HTTP method calls (bounded to avoid O(n^2))
-            j = idx + 5
-            steps = 0
-            max_steps = 1000
-            while j < limit - 1 && steps < max_steps
-              if @tokens[j].type == :dot && http_method?(@tokens[j + 1])
-                results << create_route_with_params(@tokens[j + 1].value, prefixed_path, path_entry.path, start_pos, path_entry.is_regex?)
-                j += 2
-                steps += 2
-                next
-              elsif @tokens[j].type == :semicolon
-                break
+          route_rparen = skip_matching_paren(idx + 3)
+          if route_rparen
+            each_prefixed_path(paths, router_var, router_prefixes) do |path_entry, prefixed_path|
+              # Walk the chained calls that follow `route(...)`. A member-call
+              # chain is contiguous: the only thing that may follow the
+              # closing paren and still belong to this statement is the '.'
+              # of the next call. Stopping at anything else — rather than
+              # only at a semicolon — is what makes this correct in
+              # semicolon-free (ASI) style, where the previous scan ran on
+              # into the next statement and hung its verbs on this path.
+              # Still bounded so a pathological chain can't go quadratic.
+              j = route_rparen + 1
+              steps = 0
+              max_steps = 1000
+              while j + 2 < limit && steps < max_steps
+                break unless @tokens[j].type == :dot && @tokens[j + 2].type == :lparen &&
+                             (@tokens[j + 1].type == :identifier || http_method?(@tokens[j + 1]))
+                method_rparen = skip_matching_paren(j + 2)
+                break unless method_rparen
+                # Non-verb links (`.all(...)`-style middleware) keep the
+                # chain alive without emitting a route.
+                # Each link is located at its own verb (see start_pos).
+                if http_method?(@tokens[j + 1])
+                  results << create_route_with_params(@tokens[j + 1].value, prefixed_path, path_entry.path, @tokens[j + 1].position, path_entry.is_regex?)
+                end
+                j = method_rparen + 1
+                steps += 1
               end
-              j += 1
-              steps += 1
             end
           end
 
@@ -771,26 +1209,6 @@ module Noir
       end
 
       results
-    end
-
-    private def extract_path_string(start_token_idx = @position) : String?
-      # Look for a string token that might represent a route path
-      idx = start_token_idx
-
-      # Find the first string after a dot and HTTP method
-      while idx < @tokens.size
-        if idx > 1 &&
-           @tokens[idx - 2].type == :dot &&
-           http_method?(@tokens[idx - 1]) &&
-           @tokens[idx].type == :lparen &&
-           idx + 1 < @tokens.size &&
-           @tokens[idx + 1].type == :string
-          return @tokens[idx + 1].value
-        end
-        idx += 1
-      end
-
-      nil
     end
 
     private def parse_express_route : Array(JSRoutePattern)
@@ -811,9 +1229,10 @@ module Noir
         path_idx = idx + 3
         if path_idx < @tokens.size &&
            @tokens[path_idx].type == :lparen &&
-           path_idx + 1 < @tokens.size
+           path_idx + 1 < @tokens.size &&
+           route_handler_arg?(path_idx)
           router_var = @tokens[idx].value
-          path_entries = route_path_entries_from_args(path_idx + 1, allow_named_route: named_route_receiver?(router_var))
+          path_entries = route_path_entries_from_args(path_idx + 1, allow_named_route: named_route_receiver?(router_var), receiver: router_var)
           @position = path_idx + 2 unless path_entries.empty?
 
           path_entries.each do |path_entry|
@@ -885,29 +1304,33 @@ module Noir
       nil
     end
 
+    # Top-level keys of an HTTP *client* options bag. A Restify route spec
+    # keeps arbitrary keys (`authAction`, `validation`, `swagger`, ...) on
+    # `req.route.spec`, so only these disqualify one.
+    HTTP_CLIENT_OPTION_KEYS = Set{"host", "hostname", "port", "protocol", "agent", "socketPath", "headers"}
+
     private def parse_restify_route : JSRoutePattern?
       # Similar to Express but handle restify specific patterns like .del()
       # Only check at current position
       idx = @position
 
-      # Look for server.METHOD patterns
+      # Look for <receiver>.METHOD patterns. Any receiver — a Restify server
+      # is as often `srv` or a function parameter as `server` — gated, like
+      # fast_scan, on a handler argument and on not being an HTTP client.
       if idx < @tokens.size - 2 &&
-         (@tokens[idx].value == "server" ||
-         @tokens[idx].value == "router" ||
-         @tokens[idx].value.ends_with?("Router")) &&
+         @tokens[idx].type == :identifier &&
+         !http_client_receiver?(@tokens[idx].value, idx, idx + 3) &&
          idx + 2 < @tokens.size &&
          @tokens[idx + 1].type == :dot &&
-         http_method?(@tokens[idx + 2])
-        method = @tokens[idx + 2].value
-        # Handle restify's 'del' method which means DELETE
-        method = "DELETE" if method.downcase == "del"
-        method = method.upcase
+         route_verb?(@tokens[idx + 2], @tokens[idx].value)
+        method = normalize_verb(@tokens[idx + 2].value)
 
         # Look for the path string in parentheses
         path_idx = idx + 3
         if path_idx < @tokens.size &&
            @tokens[path_idx].type == :lparen &&
-           path_idx + 1 < @tokens.size
+           path_idx + 1 < @tokens.size &&
+           route_handler_arg?(path_idx)
           path = nil
           # Handle both string and object pattern { path: '/route' }
           if @tokens[path_idx + 1].type == :string
@@ -916,20 +1339,35 @@ module Noir
           elsif @tokens[path_idx + 1].type == :lbrace
             # Look for the path property in the object. Restify accepts
             # both `{ path: '/x' }` and `{ url: '/x', name: '...' }` —
-            # treat `url` as an alias for `path`.
-            obj_idx = path_idx + 1
-            while obj_idx < @tokens.size && @tokens[obj_idx].type != :rbrace
-              if (@tokens[obj_idx].value == "path" || @tokens[obj_idx].value == "url") &&
-                 obj_idx + 1 < @tokens.size &&
-                 @tokens[obj_idx + 1].type == :colon &&
-                 obj_idx + 2 < @tokens.size &&
-                 @tokens[obj_idx + 2].type == :string
-                path = @tokens[obj_idx + 2].value
-                @position = obj_idx + 3
-                break
+            # treat `url` as an alias for `path`. A route spec is only read
+            # off a server or router (`store.get({ path }, cb)` and
+            # `http.get({ socketPath, path }, cb)` have the same shape), and
+            # not when a top-level key marks a client options bag. Keys of
+            # nested objects (`validation: { … }`) are not the spec's own.
+            obj_idx = path_idx + 2
+            depth = 0
+            spec = routing_receiver?(@tokens[idx].value)
+            while spec && obj_idx + 2 < @tokens.size
+              case @tokens[obj_idx].type
+              when :lbrace, :lbracket, :lparen
+                depth += 1
+              when :rbrace, :rbracket, :rparen
+                break if depth == 0
+                depth -= 1
+              else
+                if depth == 0 && @tokens[obj_idx + 1].type == :colon &&
+                   (@tokens[obj_idx - 1].type == :lbrace || @tokens[obj_idx - 1].type == :comma)
+                  key = @tokens[obj_idx].value
+                  spec = false if HTTP_CLIENT_OPTION_KEYS.includes?(key)
+                  if path.nil? && (key == "path" || key == "url") && @tokens[obj_idx + 2].type == :string
+                    path = @tokens[obj_idx + 2].value
+                    @position = obj_idx + 3
+                  end
+                end
               end
               obj_idx += 1
             end
+            path = nil unless spec
           end
 
           # If we found a path, create a route object
@@ -964,9 +1402,12 @@ module Noir
         path_idx = idx + 2
         if path_idx < @tokens.size &&
            @tokens[path_idx].type == :lparen &&
-           path_idx + 1 < @tokens.size
+           path_idx + 1 < @tokens.size &&
+           route_handler_arg?(path_idx)
           router_var = @tokens[idx - 1].type == :identifier ? @tokens[idx - 1].value : ""
-          path_entries = route_path_entries_from_args(path_idx + 1, allow_named_route: named_route_receiver?(router_var))
+          return results if http_client_receiver?(router_var, idx - 1, path_idx)
+          return results if !@this_receiver_ok && @tokens[idx - 1].value == "this" && !this_handler_arg?(idx - 1, path_idx)
+          path_entries = route_path_entries_from_args(path_idx + 1, allow_named_route: named_route_receiver?(router_var), receiver: router_var)
           @position = path_idx + 2 unless path_entries.empty?
 
           path_entries.each do |path_entry|
@@ -1025,36 +1466,44 @@ module Noir
           method_idx += 1
         end
 
-        # Now look for the next chained method
-        while method_idx < @tokens.size - 1
-          if @tokens[method_idx].type == :dot &&
-             method_idx + 1 < @tokens.size &&
-             http_method?(@tokens[method_idx + 1])
-            method = @tokens[method_idx + 1].value.upcase
+        # Now look for the next chained method. `method_idx` sits on the
+        # token right after the previous call's closing paren, and a
+        # member-call chain is contiguous — only a '.' can follow and still
+        # belong to this statement. Scanning past anything else (the old
+        # loop only stopped at a semicolon) attributed the verbs of the
+        # following statements to this path whenever the file was written
+        # in semicolon-free style.
+        while method_idx < @tokens.size - 2
+          break unless @tokens[method_idx].type == :dot &&
+                       @tokens[method_idx + 2].type == :lparen &&
+                       (@tokens[method_idx + 1].type == :identifier || http_method?(@tokens[method_idx + 1]))
 
-            # Create routes for all prefixed paths
-            paths = @current_route_paths || [@current_route_path.as(String)]
-            raw_path = @current_route_raw_path || paths.first
-            start_pos = @current_route_start_pos || @tokens[@current_route_start_idx.as(Int32)].position
-
-            paths.each do |path|
-              route = JSRoutePattern.new(method, path, raw_path, start_pos)
-              extract_path_params(path).each do |param|
-                route.push_param(param)
-              end
-              results << route
-            end
-
-            @position = method_idx + 2 # Move past the dot and method name
-            # Don't reset yet - there might be more methods chained
-            return results
-          elsif @tokens[method_idx].type == :semicolon ||
-                (@tokens[method_idx].value == "route" && method_idx > @position + 5)
-            # End of chain
-            break
+          unless http_method?(@tokens[method_idx + 1])
+            # A non-verb link (middleware, `.all(...)`-style helpers) keeps
+            # the chain alive without producing a route.
+            link_rparen = skip_matching_paren(method_idx + 2)
+            break unless link_rparen
+            method_idx = link_rparen + 1
+            next
           end
 
-          method_idx += 1
+          method = @tokens[method_idx + 1].value.upcase
+
+          # Create routes for all prefixed paths
+          paths = @current_route_paths || [@current_route_path.as(String)]
+          raw_path = @current_route_raw_path || paths.first
+
+          paths.each do |path|
+            route = JSRoutePattern.new(method, path, raw_path, @tokens[method_idx + 1].position)
+            extract_path_params(path).each do |param|
+              route.push_param(param)
+            end
+            results << route
+          end
+
+          @position = method_idx + 2 # Move past the dot and method name
+          # Don't reset yet - there might be more methods chained
+          return results
         end
 
         # No more methods found in chain, reset
@@ -1062,7 +1511,6 @@ module Noir
         @current_route_paths = nil
         @current_route_start_idx = nil
         @current_route_raw_path = nil
-        @current_route_start_pos = nil
       end
 
       # Look for a new route() declaration - only at the current position
@@ -1088,7 +1536,6 @@ module Noir
         base_path = @tokens[idx + 4].value
         router_var = @tokens[idx].value
         raw_path = base_path
-        start_pos = @tokens[idx].position
 
         # Get all prefixes for multi-mount support
         prefixes_to_apply = if @router_prefixes.has_key?(router_var)
@@ -1099,102 +1546,44 @@ module Noir
 
         paths = prefixes_to_apply.map { |prefix| prefix.empty? ? base_path : URLPath.join(prefix, base_path) }
 
-        # Look for method chaining after .route('/path')
+        # Look for method chaining after .route('/path'). Same contiguity
+        # rule as the continuation scan above: only a '.' may follow the
+        # closing paren, otherwise the statement is over.
         method_idx = idx + 6 # Skip past string and closing paren
-        while method_idx < @tokens.size - 1
-          if @tokens[method_idx].type == :dot &&
-             method_idx + 1 < @tokens.size &&
-             http_method?(@tokens[method_idx + 1])
-            method = @tokens[method_idx + 1].value.upcase
+        while method_idx < @tokens.size - 2
+          break unless @tokens[method_idx].type == :dot &&
+                       @tokens[method_idx + 2].type == :lparen &&
+                       (@tokens[method_idx + 1].type == :identifier || http_method?(@tokens[method_idx + 1]))
 
-            # Create routes for all prefixed paths
-            paths.each do |path|
-              route = JSRoutePattern.new(method, path, raw_path, start_pos)
-              extract_path_params(path).each do |param|
-                route.push_param(param)
-              end
-              results << route
-            end
-
-            # Set up for chain continuation (store all paths)
-            @current_route_path = paths.first
-            @current_route_paths = paths
-            @current_route_start_idx = idx
-            @current_route_raw_path = raw_path
-            @current_route_start_pos = start_pos
-            @position = method_idx + 2 # Move past dot and method
-            return results
-          elsif @tokens[method_idx].type == :semicolon
-            # End of statement without finding a method
-            break
+          unless http_method?(@tokens[method_idx + 1])
+            link_rparen = skip_matching_paren(method_idx + 2)
+            break unless link_rparen
+            method_idx = link_rparen + 1
+            next
           end
-          method_idx += 1
+
+          method = @tokens[method_idx + 1].value.upcase
+
+          # Create routes for all prefixed paths
+          paths.each do |path|
+            route = JSRoutePattern.new(method, path, raw_path, @tokens[method_idx + 1].position)
+            extract_path_params(path).each do |param|
+              route.push_param(param)
+            end
+            results << route
+          end
+
+          # Set up for chain continuation (store all paths)
+          @current_route_path = paths.first
+          @current_route_paths = paths
+          @current_route_start_idx = idx
+          @current_route_raw_path = raw_path
+          @position = method_idx + 2 # Move past dot and method
+          return results
         end
       end
 
       results
-    end
-
-    private def parse_fastify_register_route : JSRoutePattern?
-      # Parse fastify.register(routes, { prefix: '/api/v1' }) patterns
-      # Only check at the current position to avoid skipping other routes
-      idx = @position
-
-      if idx < @tokens.size - 3 &&
-         (@tokens[idx].value == "fastify" || @tokens[idx].value == "app" || @tokens[idx].value == "server") &&
-         idx + 2 < @tokens.size &&
-         @tokens[idx + 1].type == :dot &&
-         @tokens[idx + 2].value == "register" &&
-         idx + 3 < @tokens.size &&
-         @tokens[idx + 3].type == :lparen
-        # Skip to the options object
-        options_idx = idx + 4
-        prefix = ""
-
-        # Look for { prefix: '/path' } pattern
-        while options_idx < @tokens.size && @tokens[options_idx].type != :rbrace
-          if @tokens[options_idx].value == "prefix" &&
-             options_idx + 1 < @tokens.size &&
-             @tokens[options_idx + 1].type == :colon &&
-             options_idx + 2 < @tokens.size &&
-             @tokens[options_idx + 2].type == :string
-            prefix = @tokens[options_idx + 2].value
-            break
-          end
-          options_idx += 1
-        end
-
-        unless prefix.empty?
-          # Look ahead for potential routes within the registered module
-          ahead_idx = options_idx + 3 # Skip past the closing brace
-          while ahead_idx < @tokens.size - 3
-            if ahead_idx + 2 < @tokens.size &&
-               @tokens[ahead_idx + 1].type == :dot &&
-               http_method?(@tokens[ahead_idx + 2]) &&
-               ahead_idx + 3 < @tokens.size &&
-               @tokens[ahead_idx + 3].type == :lparen &&
-               ahead_idx + 4 < @tokens.size &&
-               @tokens[ahead_idx + 4].type == :string
-              method = @tokens[ahead_idx + 2].value.upcase
-              path = @tokens[ahead_idx + 4].value
-              start_pos = @tokens[ahead_idx].position
-
-              # Create route with the prefix
-              raw_path = path
-              route = JSRoutePattern.new(method, "#{prefix}#{path}", raw_path, start_pos)
-              extract_path_params(path).each do |param|
-                route.push_param(param)
-              end
-
-              @position = ahead_idx + 5
-              return route
-            end
-            ahead_idx += 1
-          end
-        end
-      end
-
-      nil
     end
 
     private def parse_restify_apply_routes : JSRoutePattern?
@@ -1245,7 +1634,10 @@ module Noir
               route.push_param(param)
             end
 
-            @position = back_idx + 3
+            # Resume past this `applyRoutes(` call. Jumping back to the route
+            # walked forward onto the same call again, looping until the
+            # iteration budget ran out and dropping every route after it.
+            @position = idx + 4
             return route
           end
           back_idx -= 1
@@ -1352,10 +1744,17 @@ module Noir
     end
 
     # Creates a route pattern and adds path params unless it's a regex path.
+    # Restify's `del` and `opts` aliases to their HTTP methods.
+    private def normalize_verb(method : String) : String
+      case m = method.upcase
+      when "DEL"  then "DELETE"
+      when "OPTS" then "OPTIONS"
+      else             m
+      end
+    end
+
     private def create_route_with_params(method : String, path : String, raw_path : String, start_pos : Int32, is_regex : Bool) : JSRoutePattern
-      m = method.upcase
-      m = "DELETE" if m.downcase == "del"
-      route = JSRoutePattern.new(m, path, raw_path, start_pos)
+      route = JSRoutePattern.new(normalize_verb(method), path, raw_path, start_pos)
       unless is_regex
         extract_path_params(path).each { |p| route.push_param(p) }
       end
@@ -1368,6 +1767,13 @@ module Noir
       return false if path.empty?
       return false if path.includes?("://")
       return false if path.each_char.any?(&.whitespace?)
+      # Relative module specifiers. An HTTP route path is always rooted;
+      # `./x` / `../x` is a filesystem-or-bundler path, and the shape reaches
+      # this parser through calls that merely look like a verb-DSL — webpack
+      # Module Federation's `container.get('./index')` (Superset's
+      # `ExtensionsLoader.ts`) is the canonical case. `/.well-known/...` is
+      # unaffected: it starts at the root.
+      return false if path.starts_with?("./") || path.starts_with?("../")
       # Filter bare identifiers that leak in via `resolve_dynamic_path`
       # when an unresolved variable name is used as a `.get`/`.all`
       # argument — e.g. `Promise.all(Object.values(...).map(...))` would

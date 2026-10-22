@@ -10,7 +10,6 @@ private def with_isolated_cache_dir(&)
   ENV["NOIR_HOME"] = tmp
   ENV.delete("NOIR_CACHE_DISABLE")
   begin
-    LLM::Cache.enable
     yield tmp
   ensure
     if prev_home
@@ -36,8 +35,7 @@ describe LLM::Cache do
       format = "json"
       payload = "some payload"
 
-      # "openai|gpt-4o|ANALYZE|json|some payload"
-      expected_hash = "236649cef258475a5d82d8519748c36ab49bf5bdf619c9f7b2e117a575fe08ac"
+      expected_hash = "9f25643e830f486dfd1a45505e737b6e505d494f68a755c022c5d7c653598b25"
 
       key = LLM::Cache.key(provider, model, kind, format, payload)
       key.should eq(expected_hash)
@@ -47,6 +45,27 @@ describe LLM::Cache do
       k1 = LLM::Cache.key("p1", "m1", "k1", "f1", "payload")
       k2 = LLM::Cache.key("p1", "m1", "k1", "f1", "payload2")
       k1.should_not eq(k2)
+    end
+
+    it "changes with the sampling temperature and seed" do
+      base = LLM::Cache.key("p", "m", "k", "json", "payload")
+      begin
+        LLM::Sampling.temperature = 0.0
+        tempered = LLM::Cache.key("p", "m", "k", "json", "payload")
+        LLM::Sampling.seed = 7_i64
+        seeded = LLM::Cache.key("p", "m", "k", "json", "payload")
+        [base, tempered, seeded].uniq.size.should eq(3)
+      ensure
+        LLM::Sampling.temperature = nil
+        LLM::Sampling.seed = nil
+      end
+    end
+
+    it "distinguishes field boundaries when values contain the delimiter" do
+      first = LLM::Cache.key("p", "m", "k", "json|schema", "payload")
+      second = LLM::Cache.key("p", "m", "k", "json", "schema|payload")
+
+      first.should_not eq(second)
     end
   end
 
@@ -138,6 +157,65 @@ describe LLM::Cache do
         LLM::Cache.store("k", "v").should be_true
         leftovers = Dir.children(cache_dir).select(&.includes?(".tmp-"))
         leftovers.should be_empty
+      end
+    end
+  end
+
+  # A crash between `File.write` and `File.rename` strands a temp file.
+  # It doesn't end in `.json`, so it used to be invisible to every bulk
+  # operation: `clear` couldn't delete it and `stats` didn't count its
+  # bytes, leaving unreclaimable files in the cache directory.
+  describe "stranded temp files" do
+    it "recognizes the name shape `store` actually writes" do
+      LLM::Cache.tmp_entry?("abc#{LLM::Cache::CACHE_FILE_SUFFIX}#{LLM::Cache::CACHE_TMP_MARKER}123-dead").should be_true
+      LLM::Cache.tmp_entry?("abc.json").should be_false
+      LLM::Cache.tmp_entry?("user-dropped.txt").should be_false
+    end
+
+    it "counts them in stats apart from usable entries" do
+      with_isolated_cache_dir do |home|
+        cache_dir = File.join(home, "cache", "ai")
+        LLM::Cache.store("live", "12345").should be_true
+        File.write(File.join(cache_dir, "orphan.json.tmp-99999-deadbeef"), "x" * 100)
+
+        stats = LLM::Cache.stats
+        stats.entries.should eq(1)
+        stats.orphans.should eq(1)
+        stats.orphan_bytes.should eq(100)
+      end
+    end
+
+    it "is reclaimed by clear without inflating the entry count" do
+      with_isolated_cache_dir do |home|
+        cache_dir = File.join(home, "cache", "ai")
+        LLM::Cache.store("live", "v").should be_true
+        File.write(File.join(cache_dir, "orphan.json.tmp-99999-deadbeef"), "x")
+
+        outcome = LLM::Cache.clear
+        outcome.deleted.should eq(1)
+        outcome.orphans.should eq(1)
+        outcome.failed.should eq(0)
+        Dir.children(cache_dir).should be_empty
+      end
+    end
+
+    it "is purged on age like any other entry" do
+      with_isolated_cache_dir do |home|
+        cache_dir = File.join(home, "cache", "ai")
+        stale = File.join(cache_dir, "orphan.json.tmp-99999-deadbeef")
+        FileUtils.mkdir_p(cache_dir)
+        File.write(stale, "x")
+        File.touch(stale, Time.utc - 10.days)
+        # An in-flight temp write from a concurrent process is seconds old,
+        # so the age predicate must leave it alone.
+        fresh = File.join(cache_dir, "inflight.json.tmp-88888-cafebabe")
+        File.write(fresh, "y")
+
+        outcome = LLM::Cache.purge_older_than(7)
+        outcome.deleted.should eq(0)
+        outcome.orphans.should eq(1)
+        File.exists?(stale).should be_false
+        File.exists?(fresh).should be_true
       end
     end
   end

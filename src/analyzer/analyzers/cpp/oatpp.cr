@@ -1,5 +1,7 @@
 require "../../../models/analyzer"
 require "../../../miniparsers/cpp_callee_extractor"
+require "../../engines/c_engine"
+require "../../../utils/top_level_split"
 
 module Analyzer::Cpp
   # oat++ (oatpp) — routes are declared inside an `ApiController` subclass with
@@ -14,6 +16,8 @@ module Analyzer::Cpp
   # inside the generated coroutine class, so only the path placeholders are
   # mined from those.
   class Oatpp < Analyzer
+    analyzer_for "cpp_oatpp"
+
     CPP_EXTENSIONS = [".cpp", ".cc", ".cxx", ".h", ".hpp", ".hxx"]
 
     HTTP_VERBS = Set{"GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"}
@@ -22,16 +26,22 @@ module Analyzer::Cpp
     ENDPOINT_ASYNC_REGEX = /\bENDPOINT_ASYNC\s*\(/
     PATH_PARAM_REGEX     = /\{([^{}\/]+)\}/
 
+    # Precompiled unions for analyze_file's two per-file evidence gates, so
+    # each costs a single PCRE2 match instead of up to two naive substring
+    # scans.
+    LIBRARY_EVIDENCE_RE = Regex.union("oatpp", "ApiController")
+    MACRO_EVIDENCE_RE   = Regex.union("ENDPOINT(", "ENDPOINT_ASYNC(")
+
     def analyze
-      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
+      include_callee = callees_needed?
 
       begin
         locator = CodeLocator.instance
         files = CPP_EXTENSIONS.flat_map { |ext| locator.files_by_extension(ext) }
 
         parallel_analyze(files) do |path|
-          next if File.directory?(path)
           next unless File.exists?(path)
+          next if CEngine.test_path?(base_relative_path(path))
           analyze_file(path, include_callee)
         end
       rescue e
@@ -43,8 +53,8 @@ module Analyzer::Cpp
 
     private def analyze_file(path : String, include_callee : Bool)
       source = read_file_content(path)
-      return unless source.includes?("oatpp") || source.includes?("ApiController")
-      return unless source.includes?("ENDPOINT(") || source.includes?("ENDPOINT_ASYNC(")
+      return unless source.matches?(LIBRARY_EVIDENCE_RE)
+      return unless source.matches?(MACRO_EVIDENCE_RE)
 
       source = Noir::CppCalleeExtractor.strip_comments(source)
 
@@ -163,54 +173,14 @@ module Analyzer::Cpp
 
     private def push_unique(endpoint : Endpoint, param : Param)
       return if param.name.empty?
-      return if endpoint.params.any? { |p| p.name == param.name && p.param_type == param.param_type }
       endpoint.push_param(param)
     end
 
+    # Delegates to the shared splitter; `Rules::CPP` reproduces this file's
+    # previous hand-rolled loop exactly (double quotes only, backslash escapes
+    # inside quotes, per-kind clamped depth, trailing empty dropped).
     private def split_top_level_args(raw : String) : Array(String)
-      args = [] of String
-      current = String::Builder.new
-      paren = 0
-      brace = 0
-      bracket = 0
-      in_string = false
-      escaped = false
-
-      raw.each_char do |char|
-        if in_string
-          current << char
-          if escaped
-            escaped = false
-          elsif char == '\\'
-            escaped = true
-          elsif char == '"'
-            in_string = false
-          end
-          next
-        end
-
-        case char
-        when '"' then in_string = true
-        when '(' then paren += 1
-        when ')' then paren -= 1 if paren > 0
-        when '{' then brace += 1
-        when '}' then brace -= 1 if brace > 0
-        when '[' then bracket += 1
-        when ']' then bracket -= 1 if bracket > 0
-        when ','
-          if paren == 0 && brace == 0 && bracket == 0
-            args << current.to_s.strip
-            current = String::Builder.new
-            next
-          end
-        end
-
-        current << char
-      end
-
-      tail = current.to_s.strip
-      args << tail unless tail.empty?
-      args
+      Noir::TopLevelSplit.split(raw, ',', Noir::TopLevelSplit::Rules::CPP)
     end
   end
 end

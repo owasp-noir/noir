@@ -72,7 +72,7 @@ describe Noir::JSLexer do
     end
 
     it "tokenizes HTTP methods" do
-      lexer = Noir::JSLexer.new("GET POST PUT DELETE OPTIONS HEAD PATCH")
+      lexer = Noir::JSLexer.new("GET POST PUT DELETE OPTIONS HEAD PATCH QUERY")
       tokens = lexer.tokenize
       tokens.each do |token|
         token.type.should eq(:http_method)
@@ -150,6 +150,100 @@ describe Noir::JSLexer do
         tokens = lexer.tokenize
         tokens.map(&.type).should eq(expected_types)
       end
+    end
+
+    it "identifies regex after operators the shared scanner accepts" do
+      # The lexer used to accept only `( [ { , : ; =` plus a keyword list,
+      # so `!`, the `>` of `=>`, `&&` and `||` all lexed the following `/`
+      # as division.
+      cases = {
+        "=> /abc/"    => [:assign, :unknown, :regex],
+        "! /abc/"     => [:unknown, :regex],
+        "&& /abc/"    => [:unknown, :unknown, :regex],
+        "|| /abc/"    => [:unknown, :unknown, :regex],
+        "? /abc/"     => [:unknown, :regex],
+        "return /a/g" => [:keyword, :regex],
+      }
+
+      cases.each do |code, expected_types|
+        lexer = Noir::JSLexer.new(code)
+        lexer.tokenize.map(&.type).should eq(expected_types)
+      end
+    end
+
+    it "keeps a quote-carrying regex out of the string state" do
+      # `(s) => /["']/.test(s)` — the unpaired quote inside the regex used
+      # to open a string token that ran to end of file, so every route
+      # below it disappeared.
+      code = <<-JS
+        const hasQuote = (s) => /["']/.test(s);
+        app.get('/users', h);
+        JS
+
+      tokens = Noir::JSLexer.new(code).tokenize
+      regex = tokens.find { |t| t.type == :regex }.should_not be_nil
+      # Regex value is the pattern, then \x00, then the flags.
+      regex.value.should eq("[\"']\x00")
+
+      # The route after it still lexes as its own statement.
+      tokens.select { |t| t.type == :string }.map(&.value).should eq(["/users"])
+    end
+
+    it "still treats a division that follows a value as an operator" do
+      {
+        "(a + b) / 2" => :rparen,
+        "arr[0] / 2"  => :rbracket,
+        "'a' / 2"     => :string,
+        "x.y / 2"     => :identifier,
+      }.each do |code, before_slash|
+        tokens = Noir::JSLexer.new(code).tokenize
+        slash_idx = tokens.index { |t| t.type == :operator && t.value == "/" }
+        slash_idx = slash_idx.should_not be_nil
+        tokens[slash_idx - 1].type.should eq(before_slash)
+      end
+    end
+
+    it "keeps a template nested in a substitution as one token" do
+      tokens = Noir::JSLexer.new("x(`a${b.map(i => `<li>${i}</li>`)}c`, 'z')").tokenize
+      tokens.map(&.type).should eq([:identifier, :lparen, :template_literal, :comma, :string, :rparen])
+      tokens[2].value.should eq("a${b.map(i => `<li>${i}</li>`)}c")
+    end
+
+    it "keeps a regex with a quote inside a substitution in the template token" do
+      tokens = Noir::JSLexer.new("x(`a${ s.replace(/'/g, '') }b`, 'z')").tokenize
+      tokens.map(&.type).should eq([:identifier, :lparen, :template_literal, :comma, :string, :rparen])
+    end
+
+    it "stays linear when regex scans keep failing on one long line" do
+      src = "var q=" + "a=/[x" * 200_000 + "\n'z'"
+      tokens = [] of Noir::JSToken
+      elapsed = Time.measure { tokens = Noir::JSLexer.new(src).tokenize }
+      elapsed.should be < 2.seconds
+      tokens.last.value.should eq("z")
+    end
+
+    it "lexes '/' after a postfix `++` or a JSX `<` as division" do
+      ["i++ / 2; 'z'", "<div>{n}</div>; 'z'"].each do |code|
+        tokens = Noir::JSLexer.new(code).tokenize
+        tokens.none? { |t| t.type == :regex }.should be_true
+        tokens.last.type.should eq(:string)
+        tokens.last.value.should eq("z")
+      end
+    end
+
+    it "lexes a JSX apostrophe as prose and ends a stray string at the newline" do
+      tokens = Noir::JSLexer.new("<p>We don't</p>\n'z'").tokenize
+      tokens.last.type.should eq(:string)
+      tokens.last.value.should eq("z")
+      tokens = Noir::JSLexer.new("<p>'quoted</p>\n'z'").tokenize
+      tokens.last.value.should eq("z")
+      Noir::JSLexer.new("return'x'").tokenize.last.type.should eq(:string)
+    end
+
+    it "does not skip a JSX-text URL as a line comment" do
+      tokens = Noir::JSLexer.new("(<p>See https://a.dev</p>)").tokenize
+      tokens.last.type.should eq(:rparen)
+      Noir::JSLexer.new("x // https://a.dev )").tokenize.map(&.type).should eq([:identifier])
     end
   end
 end

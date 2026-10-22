@@ -4,6 +4,8 @@ require "../../engines/python_engine"
 
 module Analyzer::Python
   class Robyn < PythonEngine
+    analyzer_for "python_robyn"
+
     # Reference: https://robyn.tech/documentation
     #
     # Robyn is a Rust-backed Python web framework whose route registration
@@ -34,7 +36,7 @@ module Analyzer::Python
     @json_var_regex_cache = Hash(::String, Tuple(Regex, Regex)).new
 
     def analyze
-      python_files = get_files_by_extension(".py")
+      python_files = python_source_files
       base_paths.each do |current_base_path|
         router_prefixes = Hash(::String, ::String).new
         # `app` is the canonical Robyn instance name — accept it implicitly
@@ -43,52 +45,52 @@ module Analyzer::Python
         router_prefixes["app"] = ""
         python_files.each do |path|
           next unless path_under_root?(path, current_base_path)
-          next if path.includes?("/site-packages/")
-          next if python_test_path?(path)
 
-          File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
-            file_content = file.gets_to_end
-            next unless file_content.includes?("robyn")
-            lines = file_content.lines
+          # Prefer the detector-cached content over a fresh disk read;
+          # falls back to File.read (same encoding: utf-8, invalid: :skip)
+          # when the file wasn't cached.
+          file_content = read_file_content(path)
+          next unless file_content.includes?("robyn")
+          lines = file_content.lines
 
-            # Capture `name = Robyn(__file__)` and `name = SubRouter(__file__, "/prefix")`
-            # so prefix composition can resolve via include_router below.
-            collect_router_assignments(lines, router_prefixes)
+          # Capture `name = Robyn(__file__)` and `name = SubRouter(__file__, "/prefix")`
+          # so prefix composition can resolve via include_router below.
+          collect_router_assignments(lines, router_prefixes)
 
-            # `app.include_router(sub_router)` — propagate the SubRouter's
-            # prefix without rewriting the original entry; the SubRouter
-            # already owns its prefix.
-            scan_include_routers(lines, router_prefixes)
+          # `app.include_router(sub_router)` — propagate the SubRouter's
+          # prefix without rewriting the original entry; the SubRouter
+          # already owns its prefix.
+          scan_include_routers(lines, router_prefixes)
 
-            # Decorator-driven routes via tree-sitter (handles multi-line
-            # decorator headers cleanly).
-            Noir::TreeSitterPythonRouteExtractor.extract_decorations(file_content, nil, WEBSOCKET_ATTRIBUTES).each do |deco|
-              next unless router_prefixes.has_key?(deco.router_name)
-              attr = deco.attribute_name.downcase
-              next unless attr.in?(HTTP_METHOD_DECORATORS) || attr == "websocket"
+          # Decorator-driven routes via tree-sitter (handles multi-line
+          # decorator headers cleanly).
+          Noir::TreeSitterPythonRouteExtractor.extract_decorations(file_content, nil, WEBSOCKET_ATTRIBUTES).each do |deco|
+            next unless router_prefixes.has_key?(deco.router_name)
+            attr = deco.attribute_name.downcase
+            next unless attr.in?(HTTP_METHOD_DECORATORS) || attr == "websocket"
 
-              http_method = attr == "websocket" ? "GET" : attr.upcase
-              prefix = router_prefixes[deco.router_name]
-              route_path = normalize_path(deco.path)
-              full_path = join_prefix(prefix, route_path)
+            http_method = attr == "websocket" ? "GET" : attr.upcase
+            prefix = router_prefixes[deco.router_name]
+            route_path = normalize_path(deco.path)
+            full_path = join_prefix(prefix, route_path)
 
-              params = [] of Param
-              # `:name` and `{name}` segments are path params.
-              full_path.scan(/\{([A-Za-z_][A-Za-z0-9_]*)\}/) do |m|
-                params << Param.new(m[1], "", "path")
-              end
-
-              def_index = deco.def_line >= 0 ? deco.def_line : Noir::PythonRouteExtractor.find_def_line(lines, deco.decorator_line)
-              if def_index >= 0 && def_index < lines.size
-                handler_body = extract_function_body(lines, def_index)
-                extract_body_params(handler_body).each { |p| params << p }
-              end
-
-              details = Details.new(PathInfo.new(path, deco.decorator_line + 1))
-              endpoint = Endpoint.new(full_path, http_method, params, details)
-              endpoint.protocol = "ws" if attr == "websocket"
-              result << endpoint
+            params = [] of Param
+            # `:name` and `{name}` segments are path params.
+            full_path.scan(/\{([A-Za-z_][A-Za-z0-9_]*)\}/) do |m|
+              params << Param.new(m[1], "", "path")
             end
+
+            def_index = deco.def_line >= 0 ? deco.def_line : Noir::PythonRouteExtractor.find_def_line(lines, deco.decorator_line)
+            if def_index >= 0 && def_index < lines.size
+              handler_body = extract_function_body(lines, def_index)
+              extract_body_params(handler_body).each { |p| params << p }
+            end
+
+            details = Details.new(PathInfo.new(path, deco.decorator_line + 1))
+            endpoint = Endpoint.new(full_path, http_method, params, details)
+            endpoint.protocol = "ws" if attr == "websocket"
+            endpoint.handler = handler_at(lines, def_index, path) if def_index >= 0
+            result << endpoint
           end
         end
       end
@@ -198,30 +200,6 @@ module Analyzer::Python
       end
     end
 
-    # Walk forward from `def_index` collecting lines at strictly greater
-    # indentation than the def line — that's the function body.
-    private def extract_function_body(lines : Array(::String), def_index : Int32) : ::String
-      return "" if def_index >= lines.size
-      def_line = lines[def_index]
-      base_indent = def_line.size - def_line.lstrip.size
-
-      body = [] of ::String
-      i = def_index + 1
-      while i < lines.size
-        line = lines[i]
-        if line.strip.empty?
-          body << line
-          i += 1
-          next
-        end
-        current_indent = line.size - line.lstrip.size
-        break if current_indent <= base_indent
-        body << line
-        i += 1
-      end
-      body.join("\n")
-    end
-
     # Memoized per JSON-variable name (`data`, `body`, ...): the patterns
     # interpolate a discovered name so they can't be class constants, but
     # handler bodies reuse the same few names across a whole project.
@@ -243,10 +221,7 @@ module Analyzer::Python
 
       record = ->(name : ::String, type : ::String) do
         key = "#{type}:#{name}"
-        unless seen.includes?(key)
-          params << Param.new(name, "", type)
-          seen << key
-        end
+        params << Param.new(name, "", type) if seen.add?(key)
       end
 
       # `data = request.json()` — collect the variable name, then look up

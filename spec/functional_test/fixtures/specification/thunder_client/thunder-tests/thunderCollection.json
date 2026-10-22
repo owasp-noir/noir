@@ -1,0 +1,10 @@
+[
+  {
+    "_id": "c0l-0001",
+    "colName": "Users",
+    "created": "2024-01-01T00:00:00.000Z",
+    "sortNum": 10000,
+    "folders": [],
+    "settings": {"options": {"baseUrl": "https://api.example.com"}}
+  }
+]

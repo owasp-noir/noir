@@ -1,0 +1,9 @@
+{
+  "name": "expo-api-app",
+  "main": "expo-router/entry",
+  "dependencies": {
+    "expo": "~52.0.0",
+    "expo-router": "~4.0.0",
+    "react-native": "0.76.0"
+  }
+}

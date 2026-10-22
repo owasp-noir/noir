@@ -1,26 +1,18 @@
-require "../../../models/analyzer"
+require "../../engines/specification_engine"
 
 module Analyzer::Specification
-  class ApacheHttpd < Analyzer
+  class ApacheHttpd < SpecificationEngine
+    analyzer_for "apache_httpd"
+
     METHOD_ANY = "ANY"
 
     REDIRECT_STATUSES = Set{"permanent", "temp", "temporary", "seeother", "gone"}
     STATIC_EXTENSIONS = Set{".css", ".js", ".gz", ".br", ".ico", ".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".woff", ".woff2", ".ttf", ".eot", ".map"}
 
     def analyze
-      spec_files = CodeLocator.instance.all("apache-httpd-spec")
-      return @result unless spec_files.is_a?(Array(String))
-
-      spec_files.each do |path|
-        next unless File.exists?(path)
-
+      each_spec_file(Noir::LocatorKeys::APACHE_HTTPD_SPEC) do |path|
         content = read_file_content(path)
-        begin
-          process_content(content, path)
-        rescue e
-          @logger.debug "Exception processing #{path}"
-          @logger.debug_sub e
-        end
+        process_content(content, path)
       end
 
       @result
@@ -289,10 +281,15 @@ module Analyzer::Specification
     private def emit_endpoint(path : String, path_type : String, hosts : Array(String), origin : String, source_path : String, line : Int32, target : String? = nil)
       return if path.empty?
 
+      # `*Match` directives and `RewriteRule` take regexes.
+      pattern = path_type.ends_with?("regex") || path_type == "rewrite-source"
+      regex = pattern && Noir::URLPath.regex_route?(path)
+      path = Noir::URLPath.strip_regex_anchors(path) if pattern
       detail = Details.new(PathInfo.new(source_path, line))
       hosts = [""] if hosts.empty?
       hosts.each do |host|
         endpoint = Endpoint.new(path, METHOD_ANY, detail)
+        endpoint.kind = "regex" if regex
         endpoint.add_tag(Tag.new("apache-path-type", path_type, "apache_httpd_analyzer"))
         endpoint.add_tag(Tag.new("apache-host", host, "apache_httpd_analyzer")) unless host.empty?
         endpoint.add_tag(Tag.new("apache-source", origin, "apache_httpd_analyzer"))

@@ -1,6 +1,7 @@
 require "../../../models/framework_tagger"
 require "../../../models/endpoint"
 
+@[Noir::TaggerFor(key: "js_misc_auth", name: "JS Misc Auth Tagger", desc: "Identifies Fastify/Koa/Restify authentication patterns", order: 160)]
 class JsMiscAuthTagger < FrameworkTagger
   MAX_ROUTE_SCOPE_LINES = 12
 
@@ -42,28 +43,14 @@ class JsMiscAuthTagger < FrameworkTagger
     {/\bauthMiddleware\b/, "authMiddleware"},
   ]
 
-  def initialize(options : Hash(String, YAML::Any))
-    super
-    @name = "js_misc_auth"
-  end
-
   def self.target_techs : Array(String)
     ["js_fastify", "js_koa", "js_restify", "js_nuxtjs"]
   end
 
-  def perform(endpoints : Array(Endpoint)) : Array(Endpoint)
-    endpoints.each do |endpoint|
-      check_endpoint(endpoint)
-    end
-    endpoints
-  end
-
   private def check_endpoint(endpoint : Endpoint)
     endpoint.details.code_paths.each do |path_info|
-      content = read_file(path_info.path)
-      next if content.nil?
-
-      lines = content.split("\n")
+      lines = read_file_lines(path_info.path)
+      next if lines.nil?
       line_num = path_info.line
       next if line_num.nil?
       line_idx = line_num - 1

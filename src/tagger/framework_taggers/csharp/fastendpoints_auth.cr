@@ -1,6 +1,7 @@
 require "../../../models/framework_tagger"
 require "../../../models/endpoint"
 
+@[Noir::TaggerFor(key: "fastendpoints_auth", name: "FastEndpoints Auth Tagger", desc: "Identifies FastEndpoints authentication patterns (Roles, Permissions, Policies)", order: 180)]
 class FastEndpointsAuthTagger < FrameworkTagger
   ALLOW_ANONYMOUS_PATTERN = /\bAllowAnonymous\s*\(/
   ROLES_PATTERN           = /\bRoles\s*\(/
@@ -9,20 +10,8 @@ class FastEndpointsAuthTagger < FrameworkTagger
   POLICY_PATTERN          = /\bPolicy\s*\(/
   CLAIMS_PATTERN          = /\bClaims\s*\(/
 
-  def initialize(options : Hash(String, YAML::Any))
-    super
-    @name = "fastendpoints_auth"
-  end
-
   def self.target_techs : Array(String)
     ["cs_fastendpoints"]
-  end
-
-  def perform(endpoints : Array(Endpoint)) : Array(Endpoint)
-    endpoints.each do |endpoint|
-      check_endpoint(endpoint)
-    end
-    endpoints
   end
 
   private def check_endpoint(endpoint : Endpoint)
@@ -37,11 +26,11 @@ class FastEndpointsAuthTagger < FrameworkTagger
         return
       end
 
-      description = describe_guard(configure_block)
-      if description
-        endpoint.add_tag(Tag.new("auth", "Protected by FastEndpoints #{description}", "fastendpoints_auth"))
-        return
-      end
+      # FastEndpoints endpoints are secure by default: without
+      # `AllowAnonymous()` they require an authenticated user.
+      description = describe_guard(configure_block) || "default authorization (no AllowAnonymous)"
+      endpoint.add_tag(Tag.new("auth", "Protected by FastEndpoints #{description}", "fastendpoints_auth"))
+      return
     end
   end
 

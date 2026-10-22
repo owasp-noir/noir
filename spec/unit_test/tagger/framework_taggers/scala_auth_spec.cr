@@ -3,7 +3,7 @@ require "../../../spec_helper"
 require "../../../../src/tagger/tagger"
 
 describe "ScalaAuthTagger" do
-  fixture_base = "#{__DIR__}/../../../functional_test/fixtures/scala/akka_auth"
+  fixture_base = File.expand_path("../../../functional_test/fixtures/scala/akka_auth", __DIR__)
   routes_path = "#{fixture_base}/Routes.scala"
   health_path = "#{fixture_base}/HealthRoutes.scala"
 
@@ -18,7 +18,7 @@ describe "ScalaAuthTagger" do
     locator = CodeLocator.instance
     Dir.glob("#{fixture_base}/**/*").each do |file|
       next if File.directory?(file)
-      locator.push("file_map", file)
+      locator.register_path(file)
     end
 
     # Routes.scala line 10: get { complete("Secure content") }
@@ -42,7 +42,7 @@ describe "ScalaAuthTagger" do
     locator = CodeLocator.instance
     Dir.glob("#{fixture_base}/**/*").each do |file|
       next if File.directory?(file)
-      locator.push("file_map", file)
+      locator.register_path(file)
     end
 
     # Routes.scala line 21: get { complete("OAuth resource") }
@@ -65,7 +65,7 @@ describe "ScalaAuthTagger" do
     locator = CodeLocator.instance
     Dir.glob("#{fixture_base}/**/*").each do |file|
       next if File.directory?(file)
-      locator.push("file_map", file)
+      locator.register_path(file)
     end
 
     # Routes.scala line 32: get { complete("Admin settings") }
@@ -88,7 +88,7 @@ describe "ScalaAuthTagger" do
     locator = CodeLocator.instance
     Dir.glob("#{fixture_base}/**/*").each do |file|
       next if File.directory?(file)
-      locator.push("file_map", file)
+      locator.register_path(file)
     end
 
     # HealthRoutes.scala line 11: get { complete("ok") }
@@ -100,6 +100,45 @@ describe "ScalaAuthTagger" do
     tagger.perform([endpoint])
 
     endpoint.tags.empty?.should be_true
+  end
+
+  it "does not take a sibling object's balanced authorize block as enclosing" do
+    noir_options = create_test_options
+    noir_options["base"] = YAML::Any.new(fixture_base)
+
+    # Routes.scala line 43 sits in HealthRoutes, right after AdminRoutes'
+    # `authorize(hasAdminRole) { … }` closes.
+    details = Details.new(PathInfo.new(routes_path, 43))
+    details.technology = "scala_akka"
+    endpoint = Endpoint.new("/public/health", "GET", [] of Param, details)
+
+    ScalaAuthTagger.new(noir_options).perform([endpoint])
+
+    endpoint.tags.empty?.should be_true
+  end
+
+  it "reads a directive that opens on the line closing a sibling route" do
+    tmpdir = File.tempname("akka_tilde")
+    Dir.mkdir_p(tmpdir)
+    file = File.join(tmpdir, "Routes.scala")
+    File.write(file, [
+      "val route =",
+      "  path(\"a\") { get { complete(\"a\") } } ~ authenticateBasic(\"realm\", auth) { user =>",
+      "    path(\"b\") {",
+      "      get {",
+      "        complete(\"b\")",
+      "      }",
+      "    }",
+      "  }",
+    ].join("\n"))
+
+    details = Details.new(PathInfo.new(file, 4))
+    details.technology = "scala_akka"
+    endpoint = Endpoint.new("/b", "GET", [] of Param, details)
+    ScalaAuthTagger.new(create_test_options).perform([endpoint])
+
+    endpoint.tags.map(&.description).should eq(["Protected by Akka HTTP authenticateBasic"])
+    FileUtils.rm_rf(tmpdir)
   end
 
   it "handles empty code_paths gracefully" do
@@ -141,6 +180,39 @@ describe "ScalaAuthTagger" do
     endpoint.tags[0].description.should contain("Silhouette")
 
     FileUtils.rm_rf(tmpdir)
+  end
+
+  it "bounds a Scalatra route's check to its own block" do
+    noir_options = create_test_options
+    tmpdir = File.tempname("scalatra_block")
+    Dir.mkdir_p(tmpdir)
+    servlet = File.join(tmpdir, "MyServlet.scala")
+    File.write(servlet, [
+      "class MyServlet extends ScalatraServlet with AuthenticationSupport {", # 1
+      "  get(\"/\") {",                                                       # 2
+      "    \"hello\"",                                                        # 3
+      "  }",                                                                  # 4
+      "  get(\"/me\") {",                                                     # 5
+      "    if (!isAuthenticated) halt(401)",                                  # 6
+      "    \"me\"",                                                           # 7
+      "  }",                                                                  # 8
+      "  get(\"/about\") {",                                                  # 9
+      "    \"about\"",                                                        # 10
+      "  }",                                                                  # 11
+      "}",                                                                    # 12
+    ].join("\n"))
+    noir_options["base"] = YAML::Any.new(tmpdir)
+
+    endpoints = {2 => "/", 5 => "/me", 9 => "/about"}.map do |line, url|
+      details = Details.new(PathInfo.new(servlet, line))
+      details.technology = "scala_scalatra"
+      Endpoint.new(url, "GET", [] of Param, details)
+    end
+    ScalaAuthTagger.new(noir_options).perform(endpoints)
+    FileUtils.rm_rf(tmpdir)
+
+    endpoints.map(&.tags.size).should eq([0, 1, 0])
+    endpoints[1].tags[0].description.should contain("isAuthenticated")
   end
 
   it "returns correct target_techs" do

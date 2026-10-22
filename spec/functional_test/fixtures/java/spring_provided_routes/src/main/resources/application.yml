@@ -1,0 +1,16 @@
+spring:
+  web:
+    resources:
+      static-locations:
+        - classpath:/static/
+        - classpath:/pub/
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,env
+springdoc:
+  api-docs:
+    path: /internal/openapi
+  swagger-ui:
+    path: /docs-ui.html

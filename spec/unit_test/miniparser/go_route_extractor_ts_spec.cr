@@ -15,6 +15,7 @@ describe Noir::TreeSitterGoRouteExtractor do
     # and the `authorized := r.Group("/")` + path-without-slash case.
     triples.should eq([
       {"DELETE", "/mixed-delete"},
+      {"GET", "/"},
       {"GET", "/admin"},
       {"GET", "/group/users"},
       {"GET", "/group/v1/migration"},
@@ -274,6 +275,76 @@ describe Noir::TreeSitterGoRouteExtractor do
     routes.map { |r| {r.verb, r.path} }.should eq([{"GET", "/api/v1/users"}])
   end
 
+  it "does not re-stack self-reassigned groups onto the file's own seeded prefix" do
+    source = <<-GO
+      package main
+
+      func main() {
+          app := fiber.New()
+          var r fiber.Router = app
+          r = r.Group("/a")
+          r = r.Group("/b")
+          r.Get("/x", handler)
+      }
+      GO
+
+    # The engine seeds each file with the package map, which already holds
+    # this file's own result for `r`.
+    seed = Noir::TreeSitterGoRouteExtractor.extract_groups(source)
+    seed["r"].should eq("/a/b")
+    Noir::TreeSitterGoRouteExtractor.extract_groups(source, seed)["r"].should eq("/a/b")
+    routes = Noir::TreeSitterGoRouteExtractor.extract_routes(source, seed)
+    routes.map { |r| {r.verb, r.path} }.should eq([{"GET", "/a/b/x"}])
+  end
+
+  it "scopes a package-level func literal's params as locals, not its var block" do
+    closure = <<-GO
+      package main
+
+      var setup = func(g *gin.RouterGroup) {
+          g = g.Group("/v1")
+          g.GET("/x", h)
+      }
+      GO
+    Noir::TreeSitterGoRouteExtractor.extract_routes(closure, {"g" => "/api"})
+      .map { |r| {r.verb, r.path} }.should eq([{"GET", "/v1/x"}])
+
+    block = <<-GO
+      package main
+
+      var (
+          g     *gin.RouterGroup
+          setup = func() {
+              g = g.Group("/v1")
+              g.GET("/x", h)
+          }
+      )
+      GO
+    Noir::TreeSitterGoRouteExtractor.extract_routes(block, {"g" => "/api"})
+      .map { |r| {r.verb, r.path} }.should eq([{"GET", "/api/v1/x"}])
+  end
+
+  it "stacks a package-level self-regroup onto the sibling file's binding" do
+    source = <<-GO
+      package main
+
+      func setup() {
+          r = r.Group("/v1")
+          r.Get("/x", handler)
+      }
+
+      // A same-named param in another function doesn't make `r` local.
+      func handler(w http.ResponseWriter, r *http.Request) {}
+      GO
+
+    # Not exported (it would feed back as this file's own seed) ...
+    Noir::TreeSitterGoRouteExtractor.extract_groups(source).has_key?("r").should be_false
+    Noir::TreeSitterGoRouteExtractor.extract_engine_names_and_groups(source)[1].has_key?("r").should be_false
+    # ... but the sibling's `r = app.Group("/api")` seed is kept.
+    routes = Noir::TreeSitterGoRouteExtractor.extract_routes(source, {"r" => "/api"})
+    routes.map { |r| {r.verb, r.path} }.should eq([{"GET", "/api/v1/x"}])
+  end
+
   it "does not loop on reassigned string identifiers" do
     source = <<-GO
       package main
@@ -351,6 +422,40 @@ describe Noir::TreeSitterGoRouteExtractor do
       {"GET", "/builder", [] of String},
       {"GET", "/filtered", ["type", "page"]},
     ])
+  end
+
+  it "keeps the gorilla mux subrouter prefix through matcher and setter calls" do
+    source = <<-GO
+      package main
+      func main() {
+          r := mux.NewRouter()
+          api := r.PathPrefix("/api").Subrouter().StrictSlash(true)
+          api.HandleFunc("/a", h).Methods("GET")
+          d := r.PathPrefix("/d").Methods("GET").Subrouter()
+          d.HandleFunc("/e", h).Methods("GET")
+          hp := r.Host("x.test").PathPrefix("/h").Subrouter()
+          hp.HandleFunc("/f", h).Methods("GET")
+          m := api.Methods("POST").Subrouter()
+          m.HandleFunc("/g", h).Methods("POST")
+          root := mux.NewRouter().PathPrefix("/root").Subrouter()
+          root.HandleFunc("/i", h).Methods("GET")
+          helper := newRouter().PathPrefix("/helper").Subrouter()
+          helper.HandleFunc("/j", h).Methods("GET")
+          nr := api.NewRoute().PathPrefix("/nr").Subrouter()
+          nr.HandleFunc("/k", h).Methods("GET")
+      }
+      GO
+
+    routes = Noir::TreeSitterGoRouteExtractor.extract_routes(source, group_method: "Subrouter", handlefunc_methods: true)
+    routes.map { |r| {r.verb, r.path} }.sort!.should eq([
+      {"GET", "/api/a"},
+      {"GET", "/d/e"},
+      {"GET", "/api/nr/k"},
+      {"GET", "/h/f"},
+      {"GET", "/helper/j"},
+      {"GET", "/root/i"},
+      {"POST", "/api/g"},
+    ].sort)
   end
 
   it "preserves wildcard methods for unconstrained gorilla mux routes" do
@@ -591,6 +696,51 @@ describe Noir::TreeSitterGoRouteExtractor do
     ].sort)
   end
 
+  it "extracts Echo QUERY routes, Add, and Match slice method routes" do
+    source = <<-GO
+      package main
+      func main() {
+          e := echo.New()
+          e.QUERY("/search", handler)
+          g := e.Group("/api")
+          g.QUERY("/find", handler)
+          e.Add("QUERY", "/add-query", handler)
+          e.Match([]string{"GET", "QUERY"}, "/multi", handler)
+          g.Match([]string{http.MethodGet, "QUERY"}, "/group-multi", handler)
+      }
+      GO
+
+    routes = Noir::TreeSitterGoRouteExtractor.extract_routes(
+      source,
+      handle_method: "Add",
+      handle_many_methods: ["Match"]
+    )
+    routes.map { |r| {r.verb, r.path} }.sort!.should eq([
+      {"GET", "/api/group-multi"},
+      {"GET", "/multi"},
+      {"QUERY", "/add-query"},
+      {"QUERY", "/api/find"},
+      {"QUERY", "/api/group-multi"},
+      {"QUERY", "/multi"},
+      {"QUERY", "/search"},
+    ].sort)
+  end
+
+  it "does not treat SQL-client Query calls as routes" do
+    source = <<-GO
+      package main
+      func main() {
+          e := echo.New()
+          e.QUERY("/search", handler)
+          session.Query("SELECT * FROM users WHERE id = ?", id)
+          q.Query("UPDATE users SET name = ? WHERE id = ?", name, id)
+      }
+      GO
+
+    routes = Noir::TreeSitterGoRouteExtractor.extract_routes(source)
+    routes.map { |r| {r.verb, r.path} }.should eq([{"QUERY", "/search"}])
+  end
+
   it "does not treat zap.Any logging field constructors as routes" do
     source = <<-GO
       package main
@@ -625,6 +775,25 @@ describe Noir::TreeSitterGoRouteExtractor do
       {"ANY", "/metrics"},
       {"GET", "/api/health"},
     ].sort)
+  end
+
+  it "decodes chi Method(...) and http.MethodX constants as the verb" do
+    source = <<-GO
+      package main
+      func main() {
+          r := chi.NewRouter()
+          r.Method("PATCH", "/meth", http.HandlerFunc(h))
+          r.Method(http.MethodPut, "/put", http.HandlerFunc(h))
+          r.MethodFunc(http.MethodDelete, "/mf", h)
+      }
+      GO
+
+    routes = Noir::TreeSitterGoRouteExtractor.extract_chi_routes(source)
+    routes.map { |r| {r.verb, r.path} }.sort!.should eq([
+      {"DELETE", "/mf"},
+      {"PATCH", "/meth"},
+      {"PUT", "/put"},
+    ])
   end
 
   it "does not read stdlib net/http Handle/HandleFunc as chi routes" do
@@ -689,7 +858,7 @@ describe Noir::TreeSitterGoRouteExtractor do
     builders["addUserRoutes"].param.should eq("rg")
 
     calls = Noir::TreeSitterGoRouteExtractor.collect_router_builder_callsites(source, builders.keys.to_set)
-    calls.sort.should eq([{"addPingRoutes", "v1"}, {"addPingRoutes", "v2"}, {"addUserRoutes", "v1"}])
+    calls.sort.should eq([{"addPingRoutes", "v1", ""}, {"addPingRoutes", "v2", ""}, {"addUserRoutes", "v1", ""}])
 
     routes = Noir::TreeSitterGoRouteExtractor.extract_routes_from_function(source, "addUserRoutes", {"rg" => "/v1"})
     routes.map { |r| {r.verb, r.path} }.should eq([{"GET", "/v1/users/"}])
@@ -711,7 +880,19 @@ describe Noir::TreeSitterGoRouteExtractor do
 
     builders = Noir::TreeSitterGoRouteExtractor.collect_router_group_builders(source)
     calls = Noir::TreeSitterGoRouteExtractor.collect_router_builder_callsites(source, builders.keys.to_set)
-    calls.should eq([{"addUserRoutes", "/v1"}])
+    calls.should eq([{"addUserRoutes", "/v1", ""}])
+  end
+
+  it "composes an inline sub-group call-site with its receiver's prefix" do
+    source = <<-GO
+      package main
+      func main() {
+          routes.AddPosts(api.Group("/posts"))
+      }
+      GO
+
+    calls = Noir::TreeSitterGoRouteExtractor.collect_router_builder_callsites(source, Set{"AddPosts"}, {"api" => "/api/v1"})
+    calls.should eq([{"AddPosts", "/api/v1/posts", "routes"}])
   end
 
   it "composes path-scoped Group closures that reuse the outer router (gitea web wrapper)" do
@@ -850,6 +1031,25 @@ describe Noir::TreeSitterGoRouteExtractor do
     ].sort)
   end
 
+  it "keeps the path of Go 1.22 ServeMux host patterns" do
+    source = <<-GO
+      package main
+      import "net/http"
+      func main() {
+          m := http.NewServeMux()
+          m.HandleFunc("api.example.com/v1/status", status)
+          m.HandleFunc("DELETE api.example.com:8443/v1/items/{id}", deleteItem)
+          m.HandleFunc("not a host/x", nope)
+      }
+      GO
+
+    routes = Noir::TreeSitterGoRouteExtractor.extract_net_http_routes(source)
+    routes.map { |r| {r.verb, r.path} }.sort!.should eq([
+      {"ANY", "/v1/status"},
+      {"DELETE", "/v1/items/{id}"},
+    ].sort)
+  end
+
   it "normalizes Go 1.22 ServeMux end-of-path wildcard patterns" do
     source = <<-GO
       package main
@@ -959,5 +1159,156 @@ describe Noir::TreeSitterGoRouteExtractor do
 
     routes = Noir::TreeSitterGoRouteExtractor.extract_net_http_routes(source)
     routes.map { |r| {r.verb, r.path} }.should eq([{"ANY", "/handle"}])
+  end
+
+  it "supports Go 1.22+ QUERY method-in-pattern registrations" do
+    source = <<-GO
+      package main
+      import "net/http"
+      func main() {
+          mux := http.NewServeMux()
+          mux.HandleFunc("QUERY /search", searchHandler)
+          mux.Handle("QUERY /advanced-search", advancedHandler)
+      }
+      GO
+
+    routes = Noir::TreeSitterGoRouteExtractor.extract_net_http_routes(source)
+    routes.map { |r| {r.verb, r.path} }.sort!.should eq([
+      {"QUERY", "/advanced-search"},
+      {"QUERY", "/search"},
+    ].sort)
+  end
+
+  it "detects HTTP QUERY and other methods from r.Method equality comparisons in handler bodies" do
+    source = <<-GO
+      package main
+      import "net/http"
+      func main() {
+          http.HandleFunc("/query-if", func(w http.ResponseWriter, r *http.Request) {
+              if r.Method == "QUERY" {
+                  w.Write([]byte("query response"))
+              }
+          })
+          http.HandleFunc("/query-const", func(w http.ResponseWriter, r *http.Request) {
+              if r.Method == http.MethodQuery {
+                  w.Write([]byte("const query"))
+              }
+          })
+      }
+      GO
+
+    routes = Noir::TreeSitterGoRouteExtractor.extract_net_http_routes(source)
+    routes.map { |r| {r.verb, r.path} }.sort!.should eq([
+      {"QUERY", "/query-const"},
+      {"QUERY", "/query-if"},
+    ].sort)
+  end
+
+  it "detects HTTP QUERY and other methods from switch r.Method statements" do
+    source = <<-GO
+      package main
+      import "net/http"
+      func main() {
+          http.HandleFunc("/multi", func(w http.ResponseWriter, r *http.Request) {
+              switch r.Method {
+              case "GET":
+                  w.Write([]byte("get"))
+              case "QUERY":
+                  w.Write([]byte("query"))
+              case http.MethodPost:
+                  w.Write([]byte("post"))
+              }
+          })
+      }
+      GO
+
+    routes = Noir::TreeSitterGoRouteExtractor.extract_net_http_routes(source)
+    routes.map { |r| {r.verb, r.path} }.sort!.should eq([
+      {"GET", "/multi"},
+      {"POST", "/multi"},
+      {"QUERY", "/multi"},
+    ].sort)
+  end
+
+  it "resolves named functions and methods with r.Method checks" do
+    source = <<-GO
+      package main
+      import "net/http"
+
+      func handleSearch(w http.ResponseWriter, r *http.Request) {
+          if r.Method == "QUERY" {
+              w.Write([]byte("query"))
+          }
+      }
+
+      type Server struct{}
+      func (s *Server) handleItems(w http.ResponseWriter, r *http.Request) {
+          switch r.Method {
+          case http.MethodQuery:
+              w.Write([]byte("query"))
+          }
+      }
+
+      func main() {
+          s := &Server{}
+          http.HandleFunc("/search", handleSearch)
+          http.HandleFunc("/items", s.handleItems)
+      }
+      GO
+
+    routes = Noir::TreeSitterGoRouteExtractor.extract_net_http_routes(source)
+    routes.map { |r| {r.verb, r.path} }.sort!.should eq([
+      {"QUERY", "/items"},
+      {"QUERY", "/search"},
+    ].sort)
+  end
+
+  it "keeps ANY fan-out when a handler only checks OPTIONS (CORS preflight)" do
+    source = <<-GO
+      package main
+
+      import "net/http"
+
+      func main() {
+          mux := http.NewServeMux()
+          mux.HandleFunc("/cors", func(w http.ResponseWriter, r *http.Request) {
+              if r.Method == http.MethodOptions {
+                  w.WriteHeader(http.StatusNoContent)
+                  return
+              }
+              w.Write([]byte("ok"))
+          })
+      }
+      GO
+
+    routes = Noir::TreeSitterGoRouteExtractor.extract_net_http_routes(source)
+    routes.map { |r| {r.verb, r.path} }.should eq([{"ANY", "/cors"}])
+  end
+
+  it "extracts Fiber-style Query routes and Add forms (RFC 10008)" do
+    source = <<-GO
+      package main
+      import (
+          fiber "github.com/gofiber/fiber/v2"
+      )
+      func main() {
+          app := fiber.New()
+          app.Query("/search", searchHandler)
+
+          api := app.Group("/api")
+          api.Query("/items", itemsHandler)
+
+          app.Add(fiber.MethodQuery, "/add-const", constHandler)
+          app.Add("QUERY", "/add-string", stringHandler)
+      }
+      GO
+
+    routes = Noir::TreeSitterGoRouteExtractor.extract_routes(source, handle_method: "Add")
+    routes.map { |r| {r.verb, r.path} }.should eq([
+      {"QUERY", "/search"},
+      {"QUERY", "/api/items"},
+      {"QUERY", "/add-const"},
+      {"QUERY", "/add-string"},
+    ])
   end
 end

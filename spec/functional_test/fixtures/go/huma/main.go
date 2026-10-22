@@ -96,7 +96,7 @@ func registerRoutes(api huma.API) {
 
 	// Huma v2 typed convenience helpers — the path is the SECOND
 	// argument (the first is the API), the verb is the method name.
-	huma.Get(api, "/health", func(ctx context.Context, input *HealthInput) (*HealthOutput, error) {
+	huma.Get(api, /* liveness */ "/health", func(ctx context.Context, input *HealthInput) (*HealthOutput, error) {
 		return &HealthOutput{}, nil
 	})
 

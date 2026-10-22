@@ -1,4 +1,4 @@
-require "../../../models/analyzer"
+require "../../engines/specification_engine"
 
 module Analyzer::Specification
   # AsyncAPI 2.x / 3.x analyzer.
@@ -15,37 +15,21 @@ module Analyzer::Specification
   #
   # The first server's `protocol` (kafka, mqtt, ws, amqp, nats, http, …)
   # is surfaced on the endpoint so DAST consumers can route accordingly.
-  class AsyncApi < Analyzer
+  class AsyncApi < SpecificationEngine
+    analyzer_for "asyncapi"
+
     # Operation keys on `channels` entries (2.x).
     OPERATIONS_2X = {"publish", "subscribe"}
 
     def analyze
-      locator = CodeLocator.instance
-      jsons = locator.all("asyncapi-json")
-      yamls = locator.all("asyncapi-yaml")
-
-      if jsons.is_a?(Array(String))
-        jsons.each do |path|
-          next unless File.exists?(path)
-          details = Details.new(PathInfo.new(path))
-          content = File.read(path, encoding: "utf-8", invalid: :skip)
-          process_json(JSON.parse(content), details, path)
-        rescue e
-          @logger.debug "Exception parsing AsyncAPI #{path}"
-          @logger.debug_sub e
-        end
+      each_spec_file_with_details(Noir::LocatorKeys::ASYNCAPI_JSON) do |path, details|
+        content = read_file_content(path)
+        process_json(parse_json_lenient(content), details, path)
       end
 
-      if yamls.is_a?(Array(String))
-        yamls.each do |path|
-          next unless File.exists?(path)
-          details = Details.new(PathInfo.new(path))
-          content = File.read(path, encoding: "utf-8", invalid: :skip)
-          process_yaml(YAML.parse(content), details, path)
-        rescue e
-          @logger.debug "Exception parsing AsyncAPI #{path}"
-          @logger.debug_sub e
-        end
+      each_spec_file_with_details(Noir::LocatorKeys::ASYNCAPI_YAML) do |path, details|
+        content = read_file_content(path)
+        process_yaml(YAML.parse(content), details, path)
       end
 
       @result
@@ -149,7 +133,11 @@ module Analyzer::Specification
           return
         end
       end
-      if msg.as_h? && (payload = msg["payload"]?)
+      # AsyncAPI 2.x lets one operation carry several messages:
+      # `message: {oneOf: [...]}`.
+      if one_of = msg.as_h?.try(&.["oneOf"]?).try(&.as_a?)
+        one_of.each { |m| collect_message_payload_json(root, m, params, seen) }
+      elsif msg.as_h? && (payload = msg["payload"]?)
         collect_schema_props_json(root, payload, "json", params)
       end
     end
@@ -169,25 +157,13 @@ module Analyzer::Specification
 
       if props = schema["properties"]?.try(&.as_h?)
         props.each do |name, _|
-          params << Param.new(name.to_s, "", param_type)
+          add_param(params, name.to_s, param_type)
         end
       end
 
       if all_of = schema["allOf"]?.try(&.as_a?)
         all_of.each { |s| collect_schema_props_json(root, s, param_type, params, seen) }
       end
-    end
-
-    private def resolve_ref_json(root : JSON::Any, ref : String) : JSON::Any?
-      return unless ref.starts_with?("#/")
-      node = root
-      ref[2..].split('/').each do |segment|
-        decoded = segment.gsub("~1", "/").gsub("~0", "~")
-        return unless hash = node.as_h?
-        return unless next_node = hash[decoded]?
-        node = next_node
-      end
-      node
     end
 
     # --- YAML path ------------------------------------------------------
@@ -304,7 +280,11 @@ module Analyzer::Specification
           return
         end
       end
-      if msg.as_h? && (payload_node = msg[YAML::Any.new("payload")]?)
+      # AsyncAPI 2.x lets one operation carry several messages:
+      # `message: {oneOf: [...]}`.
+      if one_of = msg.as_h?.try(&.[YAML::Any.new("oneOf")]?).try(&.as_a?)
+        one_of.each { |m| collect_message_payload_yaml(root, m, params, seen) }
+      elsif msg.as_h? && (payload_node = msg[YAML::Any.new("payload")]?)
         collect_schema_props_yaml(root, payload_node, "json", params)
       end
     end
@@ -327,7 +307,7 @@ module Analyzer::Specification
       if props_node = schema[YAML::Any.new("properties")]?
         if props = props_node.as_h?
           props.each do |name, _|
-            params << Param.new(name.to_s, "", param_type)
+            add_param(params, name.to_s, param_type)
           end
         end
       end
@@ -337,18 +317,6 @@ module Analyzer::Specification
           all_of.each { |s| collect_schema_props_yaml(root, s, param_type, params, seen) }
         end
       end
-    end
-
-    private def resolve_ref_yaml(root : YAML::Any, ref : String) : YAML::Any?
-      return unless ref.starts_with?("#/")
-      node = root
-      ref[2..].split('/').each do |segment|
-        decoded = segment.gsub("~1", "/").gsub("~0", "~")
-        return unless hash = node.as_h?
-        return unless next_node = hash[YAML::Any.new(decoded)]?
-        node = next_node
-      end
-      node
     end
 
     # --- shared ---------------------------------------------------------

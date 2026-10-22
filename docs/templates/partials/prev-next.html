@@ -1,0 +1,22 @@
+{# Custom front matter must be flat scalars: hwaro's TOML reader does not
+   surface inline-table sub-keys, so `prev_page = { path = "..." }` silently
+   yields nothing. Use prev_page_path / prev_page_label instead.
+   The stored paths are language-neutral; lang_prefix puts them under /ko. #}
+{% if page.extra is defined %}
+{% if page.extra.prev_page_path is defined or page.extra.next_page_path is defined %}
+<nav class="prev-next" aria-label="{{ "ui.page_nav_aria" | t }}">
+  {% if page.extra.prev_page_path is defined %}
+  <a class="prevnext-prev" href="{{ base_url }}{{ lang_prefix }}{{ page.extra.prev_page_path }}">
+    <span class="prevnext-dir">{{ "ui.previous" | t }}</span>
+    {{ page.extra.prev_page_label | e }}
+  </a>
+  {% endif %}
+  {% if page.extra.next_page_path is defined %}
+  <a class="prevnext-next" href="{{ base_url }}{{ lang_prefix }}{{ page.extra.next_page_path }}">
+    <span class="prevnext-dir">{{ "ui.next" | t }}</span>
+    {{ page.extra.next_page_label | e }}
+  </a>
+  {% endif %}
+</nav>
+{% endif %}
+{% endif %}

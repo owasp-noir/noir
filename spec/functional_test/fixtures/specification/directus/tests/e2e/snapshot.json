@@ -1,0 +1,39 @@
+{
+  "version": 1,
+  "directus": "10.13.0",
+  "vendor": "postgres",
+  "collections": [
+    {
+      "collection": "test_articles_1234",
+      "meta": {
+        "collection": "test_articles_1234",
+        "singleton": false,
+        "hidden": false
+      },
+      "schema": {
+        "name": "test_articles_1234"
+      }
+    }
+  ],
+  "fields": [
+    {
+      "collection": "test_articles_1234",
+      "field": "id",
+      "type": "integer",
+      "meta": {
+        "readonly": true
+      },
+      "schema": {
+        "has_auto_increment": true
+      }
+    },
+    {
+      "collection": "test_articles_1234",
+      "field": "title",
+      "type": "string",
+      "meta": {
+        "readonly": false
+      }
+    }
+  ]
+}

@@ -1,0 +1,10 @@
+<div class="search-overlay" id="searchOverlay" role="dialog" aria-modal="true" aria-label="{{ "ui.search_aria" | t }}" hidden>
+  <div class="search-modal">
+    <div class="search-input-wrap">
+      <svg class="ic" aria-hidden="true"><use href="#i-search"/></svg>
+      <input type="search" id="searchInput" aria-label="{{ "ui.search_aria" | t }}" placeholder="{{ "ui.search_placeholder" | t }}" autocomplete="off" spellcheck="false">
+      <kbd id="searchClose" role="button" tabindex="0">Esc</kbd>
+    </div>
+    <div class="search-results" id="searchResults" role="listbox" aria-label="{{ "ui.search" | t }}"></div>
+  </div>
+</div>

@@ -22,7 +22,7 @@ public class SearchRequest
     [FromQuery]
     public int Page { get; set; }
 
-    [FromHeader("X-Trace-Id")]
+    [FromHeader("X-Trace-Id")] // correlation id
     public string? TraceId { get; set; }
 }
 

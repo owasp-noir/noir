@@ -1,0 +1,10 @@
+openapi: 3.0.0
+info:
+  title: /cfg-pets
+  version: 1.0.0
+paths:
+  /cfg-pets:
+    get:
+      responses:
+        '200':
+          description: ok

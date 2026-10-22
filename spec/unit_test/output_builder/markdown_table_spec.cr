@@ -76,12 +76,124 @@ describe "OutputBuilderMarkdownTable" do
     lines = output.split("\n")
 
     # Verify content is escaped
-    # Line 2: | GET\|POST /test\|url | http\|https | `param\|name (query\|type)`  |
-    expected_line_1 = "| GET\\|POST /test\\|url | http\\|https | `param\\|name (query\\|type)`  |"
+    # Line 2: | `GET\|POST /test\|url` | http\|https | `param\|name (query\|type)`  |
+    expected_line_1 = "| `GET\\|POST /test\\|url` | http\\|https | `param\\|name (query\\|type)`  |"
     lines[2].should eq(expected_line_1)
 
-    # Line 3: | GET\\POST /&lt;script&gt;alert(1)&lt;/script&gt; | http | `&lt;i&gt;html&lt;/i&gt; (query)`  |
-    expected_line_2 = "| GET\\\\POST /&lt;script&gt;alert(1)&lt;/script&gt; | http | `&lt;i&gt;html&lt;/i&gt; (query)`  |"
+    # Line 3: endpoint and param are both code spans, which keep literal HTML/backslashes
+    expected_line_2 = "| `GET\\POST /<script>alert(1)</script>` | http | `<i>html</i> (query)`  |"
     lines[3].should eq(expected_line_2)
+  end
+
+  it "preserves literal <, >, and \\ inside code spans while escaping pipes" do
+    options = {
+      "debug"   => YAML::Any.new(false),
+      "verbose" => YAML::Any.new(false),
+      "color"   => YAML::Any.new(false),
+      "nolog"   => YAML::Any.new(false),
+      "output"  => YAML::Any.new(""),
+    }
+    builder = OutputBuilderMarkdownTable.new(options)
+    builder.io = IO::Memory.new
+
+    endpoint = Endpoint.new("/api/test", "GET")
+    endpoint.push_param(Param.new("c<ook>ie", "val", "cookie"))
+    endpoint.push_param(Param.new("path\\to", "val", "path"))
+    endpoint.push_param(Param.new("foo|bar", "val", "query"))
+
+    builder.print([endpoint])
+    cell = builder.io.to_s.split("\n")[2]
+
+    cell.should contain("`c<ook>ie (cookie)`")
+    cell.should contain("`path\\to (path)`")
+    cell.should contain("`foo\\|bar (query)`")
+  end
+
+  it "keeps the code span intact when a param name contains a backtick" do
+    options = {
+      "debug"   => YAML::Any.new(false),
+      "verbose" => YAML::Any.new(false),
+      "color"   => YAML::Any.new(false),
+      "nolog"   => YAML::Any.new(false),
+      "output"  => YAML::Any.new(""),
+    }
+    builder = OutputBuilderMarkdownTable.new(options)
+    builder.io = IO::Memory.new
+
+    # A single backtick closed the span early and the remainder of the row ran
+    # on as loose text.
+    endpoint = Endpoint.new("/search", "POST")
+    endpoint.push_param(Param.new("md`tick", "v", "query"))
+    # Two adjacent backticks need a three-backtick fence.
+    endpoint.push_param(Param.new("run``two", "v", "query"))
+    # Leading/trailing backticks need the space pad CommonMark strips.
+    endpoint.push_param(Param.new("`edge", "v", "query"))
+
+    builder.print([endpoint])
+    cell = builder.io.to_s.split("\n")[2]
+
+    cell.should contain("``md`tick (query)``")
+    cell.should contain("```run``two (query)```")
+    cell.should contain("`` `edge (query) ``")
+  end
+
+  it "fences an endpoint containing a backtick so its code span stays intact" do
+    options = {
+      "debug"   => YAML::Any.new(false),
+      "verbose" => YAML::Any.new(false),
+      "color"   => YAML::Any.new(false),
+      "nolog"   => YAML::Any.new(false),
+      "output"  => YAML::Any.new(""),
+    }
+    builder = OutputBuilderMarkdownTable.new(options)
+    builder.io = IO::Memory.new
+
+    builder.print([Endpoint.new("/a`b`c", "GET")])
+    cell = builder.io.to_s.split("\n")[2]
+
+    cell.should eq("| ``GET /a`b`c`` | http | - |")
+  end
+
+  it "keeps link, image and emphasis syntax in a route inert" do
+    options = {
+      "debug"   => YAML::Any.new(false),
+      "verbose" => YAML::Any.new(false),
+      "color"   => YAML::Any.new(false),
+      "nolog"   => YAML::Any.new(false),
+      "output"  => YAML::Any.new(""),
+    }
+    builder = OutputBuilderMarkdownTable.new(options)
+    builder.io = IO::Memory.new
+
+    # Rendered in a PR comment these were a live link, an embedded image and
+    # bold/italic/strikethrough text.
+    builder.print([
+      Endpoint.new("/a/[Approve](https://evil.example/login)", "GET"),
+      Endpoint.new("/b/![x](https://evil.example/p.png)", "GET"),
+      Endpoint.new("/c/*bold*_it_~~s~~", "GET"),
+    ])
+    lines = builder.io.to_s.split("\n")
+
+    lines[2].should eq("| `GET /a/[Approve](https://evil.example/login)` | http | - |")
+    lines[3].should eq("| `GET /b/![x](https://evil.example/p.png)` | http | - |")
+    lines[4].should eq("| `GET /c/*bold*_it_~~s~~` | http | - |")
+  end
+
+  it "renders a placeholder for an endpoint with no params" do
+    options = {
+      "debug"   => YAML::Any.new(false),
+      "verbose" => YAML::Any.new(false),
+      "color"   => YAML::Any.new(false),
+      "nolog"   => YAML::Any.new(false),
+      "output"  => YAML::Any.new(""),
+    }
+    builder = OutputBuilderMarkdownTable.new(options)
+    builder.io = IO::Memory.new
+
+    # The `-` placeholder sat behind a `params.nil?` check that could never be
+    # true, so this rendered as an empty cell.
+    builder.print([Endpoint.new("/no-params", "GET")])
+
+    builder.io.to_s.split("\n")[2].should eq("| `GET /no-params` | http | - |")
   end
 end

@@ -29,6 +29,8 @@ module Analyzer::Dart
   # method. `Method.ws` is a WebSocket upgrade (surfaced as `GET`). Path
   # captures use the Express-style `:id` syntax → `{id}`.
   class GetServer < Analyzer
+    analyzer_for "dart_get_server"
+
     METHOD_MAP = {
       "get"     => "GET",
       "post"    => "POST",
@@ -39,8 +41,6 @@ module Analyzer::Dart
       "head"    => "HEAD",
     }
 
-    ALL_VERBS = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]
-
     alias RawPage = NamedTuple(
       name_arg: String,
       method_arg: String?,
@@ -49,15 +49,17 @@ module Analyzer::Dart
       line: Int32)
 
     def analyze
-      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
+      include_callee = callees_needed?
       const_map = {} of String => String
       raw_pages = [] of RawPage
-      mutex = Mutex.new
 
       begin
         files = get_files_by_extension(".dart")
 
-        parallel_analyze(files) do |path|
+        # Merged in file order, not worker-completion order: a constant two
+        # files define keeps the later file's value (see
+        # `Analyzer#ordered_scan_files`).
+        per_file = ordered_parallel_analyze(files) do |path|
           next unless path.ends_with?(".dart")
           next if Helper.test_path?(path, base_paths)
 
@@ -68,15 +70,15 @@ module Analyzer::Dart
             next
           end
 
-          cleaned = Helper.strip_comments(content)
+          cleaned = Noir::CComments.strip(content)
           local_consts = collect_constants(cleaned)
           local_pages = collect_pages(cleaned, content, path)
           next if local_consts.empty? && local_pages.empty?
-
-          mutex.synchronize do
-            local_consts.each { |k, v| const_map[k] = v }
-            raw_pages.concat(local_pages)
-          end
+          {local_consts, local_pages}
+        end
+        per_file.each do |local_consts, local_pages|
+          local_consts.each { |k, v| const_map[k] = v }
+          raw_pages.concat(local_pages)
         end
       rescue e
         logger.debug e
@@ -146,18 +148,19 @@ module Analyzer::Dart
 
     private def collect_pages(cleaned : String, content : String, path : String) : Array(RawPage)
       pages = [] of RawPage
+      lines = Helper::LineIndex.new(content)
       cleaned.scan(GET_PAGE_REGEX) do |m|
         match_begin = m.begin(0)
         open_paren = m.end(0).try &.- 1
         next unless match_begin && open_paren
-        close_paren = find_matching_paren(cleaned, open_paren)
+        close_paren = Helper.find_matching_paren(cleaned, open_paren)
         next unless close_paren
 
         args = named_args(cleaned[(open_paren + 1)...close_paren])
         name_arg = args["name"]?
         next unless name_arg
 
-        line = line_for_offset(content, match_begin)
+        line = lines.line_for(match_begin)
         pages << {
           name_arg:   name_arg,
           method_arg: args["method"]?,
@@ -184,7 +187,7 @@ module Analyzer::Dart
 
         verbs.each do |verb|
           next unless seen.add?({verb, url, page[:file]})
-          result << build_endpoint(url, verb, page[:file], page[:line], callees)
+          result << Helper.build_endpoint(url, verb, page[:file], page[:line], callees)
         end
       end
 
@@ -207,18 +210,18 @@ module Analyzer::Dart
     end
 
     private def resolve_verbs(method_arg : String?) : Array(String)
-      return ALL_VERBS unless method_arg
+      return ANY_ROUTE_HTTP_METHODS unless method_arg
       m = method_arg.match(/Method\s*\.\s*([a-zA-Z]+)/)
-      return ALL_VERBS unless m
+      return ANY_ROUTE_HTTP_METHODS unless m
       verb = m[1].downcase
       case verb
       when "dynamic"
-        ALL_VERBS
+        ANY_ROUTE_HTTP_METHODS
       when "ws"
         ["GET"] # WebSocket upgrade handshake is a GET.
       else
         mapped = METHOD_MAP[verb]?
-        mapped ? [mapped] : ALL_VERBS
+        mapped ? [mapped] : ANY_ROUTE_HTTP_METHODS
       end
     end
 
@@ -234,26 +237,12 @@ module Analyzer::Dart
       base.gsub(/:([A-Za-z_]\w*)/) { "{#{$~[1]}}" }
     end
 
-    private def build_endpoint(url : String,
-                               verb : String,
-                               path : String,
-                               line : Int32,
-                               callees : Array(Noir::DartCalleeExtractor::Entry)) : Endpoint
-      endpoint = Endpoint.new(url, verb)
-      endpoint.details = Details.new(PathInfo.new(path, line))
-      url.scan(/\{(\w+)\}/) do |match|
-        endpoint.push_param(Param.new(match[1], "", "path"))
-      end
-      Noir::DartCalleeExtractor.attach_to(endpoint, callees)
-      endpoint
-    end
-
     # ---------- source-string utilities ----------
 
     # Split a call's argument list into a `name: value` map at top level.
     private def named_args(text : String) : Hash(String, String)
       result = {} of String => String
-      split_top_level_args(text).each do |raw|
+      Helper.split_top_level_args(text).each do |raw|
         arg = raw.strip
         next if arg.empty?
         colon = top_level_colon(arg)
@@ -268,14 +257,18 @@ module Analyzer::Dart
     # Index of the first `:` outside any bracket/paren/string — the
     # separator of a named argument.
     private def top_level_colon(text : String) : Int32?
+      # `String#[]` re-walks from byte 0 on every call once the source
+      # contains any multi-byte char, turning this scan O(n^2); index a
+      # materialized Array(Char) instead (O(1) per access).
+      chars = text.chars
       depth = 0
       i = 0
       in_string = false
       string_quote = '\0'
-      while i < text.size
-        c = text[i]
+      while i < chars.size
+        c = chars[i]
         if in_string
-          if c == '\\' && i + 1 < text.size
+          if c == '\\' && i + 1 < chars.size
             i += 2
             next
           end
@@ -299,111 +292,6 @@ module Analyzer::Dart
         i += 1
       end
       nil
-    end
-
-    private def find_matching_paren(text : String, open_idx : Int32) : Int32?
-      depth = 0
-      i = open_idx
-      in_string = false
-      string_quote = '\0'
-
-      while i < text.size
-        c = text[i]
-        if in_string
-          if c == '\\' && i + 1 < text.size
-            i += 2
-            next
-          end
-          in_string = false if c == string_quote
-          i += 1
-          next
-        end
-
-        case c
-        when '"', '\''
-          in_string = true
-          string_quote = c
-        when '('
-          depth += 1
-        when ')'
-          depth -= 1
-          return i if depth == 0
-        else
-          # ignore
-        end
-        i += 1
-      end
-
-      nil
-    end
-
-    private def split_top_level_args(text : String) : Array(String)
-      result = [] of String
-      depth_paren = 0
-      depth_brace = 0
-      depth_bracket = 0
-      depth_angle = 0
-      start = 0
-      i = 0
-      in_string = false
-      string_quote = '\0'
-
-      while i < text.size
-        c = text[i]
-        if in_string
-          if c == '\\' && i + 1 < text.size
-            i += 2
-            next
-          end
-          in_string = false if c == string_quote
-          i += 1
-          next
-        end
-
-        case c
-        when '"', '\''
-          in_string = true
-          string_quote = c
-        when '('
-          depth_paren += 1
-        when ')'
-          depth_paren -= 1 if depth_paren > 0
-        when '{'
-          depth_brace += 1
-        when '}'
-          depth_brace -= 1 if depth_brace > 0
-        when '['
-          depth_bracket += 1
-        when ']'
-          depth_bracket -= 1 if depth_bracket > 0
-        when '<'
-          depth_angle += 1
-        when '>'
-          depth_angle -= 1 if depth_angle > 0
-        when ','
-          if depth_paren == 0 && depth_brace == 0 && depth_bracket == 0 && depth_angle == 0
-            result << text[start...i]
-            start = i + 1
-          end
-        else
-          # ignore
-        end
-        i += 1
-      end
-      result << text[start..] if start <= text.size
-      result
-    end
-
-    private def line_for_offset(content : String, offset : Int32) : Int32
-      return 1 if offset <= 0
-      limit = offset > content.size ? content.size : offset
-      count = 1
-      i = 0
-      while i < limit
-        count += 1 if content[i] == '\n'
-        i += 1
-      end
-      count
     end
   end
 end

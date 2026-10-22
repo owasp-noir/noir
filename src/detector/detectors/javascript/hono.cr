@@ -2,6 +2,8 @@ require "../../../models/detector"
 
 module Detector::Javascript
   class Hono < Detector
+    detector_for "js_hono", extensions: %w[.js .mjs .cjs .jsx .ts .mts .cts .tsx], basenames: %w[package.json]
+
     # Single precompiled alternation — one PCRE2 scan instead of three.
     SIGNAL = Regex.union(
       /require\(['"]hono['"]\)/,
@@ -10,16 +12,9 @@ module Detector::Javascript
     )
 
     def detect(filename : String, file_contents : String) : Bool
-      [".js", ".mjs", ".ts", ".jsx", ".tsx", ".cjs"].any? { |ext| filename.ends_with?(ext) } &&
-        file_contents.matches?(SIGNAL)
-    end
-
-    def applicable?(filename : String) : Bool
-      filename.ends_with?(".js") || filename.ends_with?(".mjs") || filename.ends_with?(".cjs") || filename.ends_with?(".jsx") || filename.ends_with?(".ts") || filename.ends_with?(".tsx") || File.basename(filename) == "package.json"
-    end
-
-    def set_name
-      @name = "js_hono"
+      [".js", ".mjs", ".ts", ".mts", ".cts", ".jsx", ".tsx", ".cjs"].any? { |ext| filename.ends_with?(ext) } &&
+        (file_contents.includes?("hono") || file_contents.includes?("Hono")) &&
+        content_matches?(file_contents, SIGNAL)
     end
   end
 end

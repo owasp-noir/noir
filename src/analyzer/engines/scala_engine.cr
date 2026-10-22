@@ -2,34 +2,30 @@ require "../../models/analyzer"
 require "../../miniparsers/scala_callee_extractor"
 require "../../minilexers/scala_lexer"
 
+require "./file_scan_engine"
+
 module Analyzer::Scala
-  abstract class ScalaEngine < Analyzer
-    def analyze
-      parallel_file_scan do |path|
-        result.concat(analyze_file(path))
-      end
-      result
+  abstract class ScalaEngine < FileScanEngine
+    # `.scala` sources from the extension index, minus sbt test source sets
+    # (Specs/Suites build throwaway route tables nothing serves). Subclasses
+    # that need a custom scan shape can override `analyze` and call this
+    # helper directly. Paths are detector-registered regular files — no
+    # per-path `File.exists?` / `File.directory?`.
+    protected def scan_target_files : Array(String)
+      get_files_by_extension(".scala").reject { |path| sbt_test_path?(path) }
     end
 
-    abstract def analyze_file(path : String) : Array(Endpoint)
+    # One precompiled `Regex.union` scan (PCRE2 JIT) replaces two separate
+    # `String#includes?` scans of the same path -- Crystal's `includes?` is
+    # not Boyer-Moore accelerated, so a single regex pass is cheaper than
+    # two. Equivalent to the OR-of-substrings it replaces (union escapes
+    # each literal).
+    SBT_TEST_PATH_RE = Regex.union("/src/test/", "/src/sbt-test/")
 
-    # `.scala` extension filter baked in. Subclasses that need a custom
-    # scan shape can override `analyze` and call this helper directly.
-    protected def parallel_file_scan(&block : String -> Nil) : Nil
-      begin
-        parallel_analyze(all_files) do |path|
-          next if File.directory?(path)
-          next unless File.exists?(path) && File.extname(path) == ".scala"
-
-          begin
-            block.call(path)
-          rescue e
-            logger.debug "Error analyzing #{path}: #{e}"
-          end
-        end
-      rescue e
-        logger.debug e
-      end
+    # Scan-base-relative, never absolute: a `src/test/` directory ABOVE
+    # the scan base is not this project's test tree.
+    protected def sbt_test_path?(path : String) : Bool
+      base_relative_path(path).matches?(SBT_TEST_PATH_RE)
     end
 
     protected def attach_scala_callees(endpoint : Endpoint, callees : Array(Noir::ScalaCalleeExtractor::Entry))
@@ -50,15 +46,6 @@ module Analyzer::Scala
       return unless opening_brace
 
       extract_scala_brace_block_with_end_at(lines, start_index, opening_brace)
-    end
-
-    protected def extract_scala_brace_block_at(lines : Array(String),
-                                               start_index : Int32,
-                                               opening_brace : Int32) : Tuple(String, Int32)?
-      block = extract_scala_brace_block_with_end_at(lines, start_index, opening_brace)
-      return unless block
-
-      {block[0], block[1]}
     end
 
     protected def extract_scala_brace_block_with_end_at(lines : Array(String),
@@ -93,15 +80,19 @@ module Analyzer::Scala
       Noir::ScalaLexer.new(content).code_lines
     end
 
-    protected def scala_structural_lines(content : String) : Array(String)
-      Noir::ScalaLexer.new(content).masked_lines
-    end
-
     # One lexer per file when an analyzer needs BOTH the code and structural
     # views (take `.code_lines` and `.masked_lines` from it) so the file is
     # lexed once rather than twice.
     protected def scala_lexer(content : String) : Noir::ScalaLexer
       Noir::ScalaLexer.new(content)
+    end
+
+    # The source with comments, triple-quote bodies and char literals blanked
+    # and `"…"` strings kept (the lexer's code view), as one string with every
+    # line in place. Read handler bodies from this, not the raw text, so a
+    # comment inside `parameter(/* x */ "q")` cannot hide the literal.
+    protected def scala_code_text(lexer : Noir::ScalaLexer) : String
+      lexer.code.join
     end
 
     private def scala_structural_opening_brace(line : String) : Int32?

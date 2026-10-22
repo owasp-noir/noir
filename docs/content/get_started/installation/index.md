@@ -1,6 +1,6 @@
 +++
 title = "Install Noir"
-description = "Install OWASP Noir via Homebrew, Snapcraft, Docker, Nix, AUR, .deb, .rpm, .apk, binary download, or from source."
+description = "Install OWASP Noir via Homebrew, Snapcraft, Docker, Nix, AUR, .deb, .rpm, .apk, binary download (Linux, macOS, Windows), or from source."
 weight = 2
 sort_by = "weight"
 prev_page_path = "/get_started/overview/"
@@ -14,7 +14,7 @@ next_page_label = "Your First Scan"
 Noir is a single binary with no runtime dependencies. Homebrew is the quickest way for most users, but pick whatever fits your system.
 {% end %}
 
-Every method below installs the same `noir` binary, so you only need one. They're ordered roughly easiest-first — find the row that matches your platform and package manager, and skip the rest.
+Every method below installs the same `noir` binary, so pick the one that fits your platform and skip the rest. They're ordered roughly easiest-first.
 
 ## Homebrew (macOS and Linux)
 
@@ -33,7 +33,7 @@ brew upgrade noir
 ```
 
 {% alert_info() %}
-Shell completions for Zsh, Bash, and Fish are automatically installed.
+Homebrew also installs shell completions for Zsh, Bash, and Fish.
 {% end %}
 
 ## Snapcraft (Linux)
@@ -65,10 +65,10 @@ docker pull ghcr.io/owasp-noir/noir:latest
 Scan the current directory:
 
 ```bash
-docker run --rm -v $(pwd):/tmp ghcr.io/owasp-noir/noir:latest -b /tmp
+docker run --rm -v $(pwd):/tmp ghcr.io/owasp-noir/noir:latest noir scan /tmp
 ```
 
-Image tags follow the OCI/Docker convention without the `v` prefix, e.g. `:0.30.0`, `:0.30`, and `:latest`. (Versions up to v0.29.1 used the `:vX.Y.Z` form; update any pinned references.) All available tags are on the [GitHub Packages page](https://github.com/owasp-noir/noir/pkgs/container/noir).
+Release images are tagged without the `v` prefix: `:1.4.0`, `:1.4`, `:1`, and `:latest`. The `:main` tag tracks the main branch. Versions up to v0.29.1 used the `:vX.Y.Z` form, so update any pinned references. All tags are on the [GitHub Packages page](https://github.com/owasp-noir/noir/pkgs/container/noir).
 
 ## Nix
 
@@ -83,11 +83,11 @@ nix profile add github:owasp-noir/noir
 To update:
 
 ```bash
-nix profile upgrade github:owasp-noir/noir
+nix profile upgrade noir
 ```
 
 {% alert_info() %}
-**Tip:** In Docker or restricted environments, you may need to enable experimental features. Use the command below.
+In Docker or other restricted environments, you may need to enable experimental features first:
 {% end %}
 
 ```bash
@@ -102,19 +102,19 @@ nix run github:owasp-noir/noir -- -h
 
 ## Direct Binary Download
 
-No package manager? Grab a prebuilt binary from [GitHub Releases](https://github.com/owasp-noir/noir/releases/latest). Linux and macOS builds are provided.
+No package manager? Grab a prebuilt binary from [GitHub Releases](https://github.com/owasp-noir/noir/releases/latest). Builds exist for Linux and macOS; Windows (x86_64) builds start with the first release after v1.4.0.
 
 To install or update:
 
-1. Download the binary for your platform (e.g., `noir-v1.1.0-linux-x86_64` on Linux, or `noir-v1.1.0-osx-arm64.tar.gz` on macOS).
-2. **Linux** — make it executable and move it into your `PATH`:
+1. Download the binary for your platform (e.g., `noir-v1.4.0-linux-x86_64` on Linux, `noir-v1.4.0-osx-arm64.tar.gz` on macOS, or `noir-vX.Y.Z-windows-x86_64.exe` on Windows).
+2. **Linux**: make it executable and move it into your `PATH`:
 
     ```bash
     chmod +x noir-v*-linux-*
     sudo mv noir-v*-linux-* /usr/local/bin/noir
     ```
 
-3. **macOS** — extract the tarball and keep the bundled `lib/` directory next to the binary:
+3. **macOS**: extract the tarball and keep the bundled `lib/` directory next to the binary:
 
     ```bash
     # system-wide install
@@ -127,7 +127,18 @@ To install or update:
 
     The macOS archive ships OpenSSL libraries in `lib/`; do not move only the `noir` binary without them.
 
-4. Verify:
+4. **Windows**: the `.exe` is self-contained. Rename it to `noir.exe` and put it in a folder on your `PATH`. In PowerShell, for a per-user install:
+
+    ```powershell
+    $dir = "$env:LOCALAPPDATA\noir"
+    New-Item -ItemType Directory -Force $dir | Out-Null
+    Move-Item -Force .\noir-v*-windows-x86_64.exe "$dir\noir.exe"
+    [Environment]::SetEnvironmentVariable("Path", [Environment]::GetEnvironmentVariable("Path", "User") + ";$dir", "User")
+    ```
+
+    Open a new terminal so the updated `PATH` takes effect. To update later, run the `Move-Item` line again with the new download (`-Force` replaces the old `noir.exe`).
+
+5. Verify:
 
     ```bash
     noir --version
@@ -135,7 +146,7 @@ To install or update:
 
 ## Debian Package (.deb)
 
-Debian/Ubuntu users can use the `.deb` package from [GitHub Releases](https://github.com/owasp-noir/noir/releases/latest). It integrates with `dpkg`/`apt` like any other system package. Both `amd64` and `arm64` are provided.
+Debian/Ubuntu users can use the `.deb` package from [GitHub Releases](https://github.com/owasp-noir/noir/releases/latest). It integrates with `dpkg`/`apt` like any other system package. Both `amd64` and `arm64` are provided; the commands below use `amd64`, so swap in `arm64` on ARM machines.
 
 To install or update:
 
@@ -176,7 +187,7 @@ yay -S noir
 
 ## RPM Package (.rpm)
 
-Fedora, RHEL, CentOS, openSUSE, and other RPM-based distros can use the `.rpm` package from [GitHub Releases](https://github.com/owasp-noir/noir/releases/latest). Both `x86_64` and `aarch64` are provided.
+Fedora, RHEL, CentOS, openSUSE, and other RPM-based distros can use the `.rpm` package from [GitHub Releases](https://github.com/owasp-noir/noir/releases/latest). Both `x86_64` and `aarch64` are provided; the commands below use `x86_64`, so swap in `aarch64` on ARM machines.
 
 To install:
 
@@ -222,7 +233,7 @@ To update:
 
 ## Alpine Package (.apk)
 
-Alpine Linux users can use the `.apk` package from [GitHub Releases](https://github.com/owasp-noir/noir/releases/latest). Both `x86_64` and `aarch64` are provided.
+Alpine Linux users can use the `.apk` package from [GitHub Releases](https://github.com/owasp-noir/noir/releases/latest). Both `x86_64` and `aarch64` are provided; the commands below use `x86_64`, so swap in `aarch64` on ARM machines.
 
 To install or update:
 
@@ -250,8 +261,12 @@ To install or update:
 For custom builds or contributing back to the project.
 
 {% alert_warning() %}
-Requires [Crystal](https://crystal-lang.org/install/) programming language installed.
+Building from source requires the Crystal programming language.
 {% end %}
+
+Install Crystal from [crystal-lang.org](https://crystal-lang.org/install/) first.
+
+**Windows:** the build compiles the bundled Tree-sitter grammars with a small shell script. So besides [Crystal for Windows](https://crystal-lang.org/install/on_windows/), you also need [Git for Windows](https://gitforwindows.org/) (for `sh`) and `clang` (the "C++ Clang tools for Windows" component of Visual Studio Build Tools, or [LLVM](https://releases.llvm.org/)). Run the steps below from Git Bash. The binary is written to `bin\noir.exe`.
 
 To install:
 

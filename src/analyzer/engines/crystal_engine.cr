@@ -1,46 +1,86 @@
 require "../../models/analyzer"
+require "../../models/skipped_files"
+require "./file_scan_engine"
 require "../../miniparsers/crystal_callee_extractor"
+require "../../utils/call_fold"
 
 module Analyzer::Crystal
-  abstract class CrystalEngine < Analyzer
-    def analyze
-      parallel_file_scan do |path|
-        result.concat(analyze_file(path))
-      end
-      result
+  abstract class CrystalEngine < FileScanEngine
+    # The shard that identifies this analyzer's framework. An analyzer that
+    # declares one is only shown files inside a project whose `shard.yml`
+    # depends on it. Without that, every Crystal analyzer sees every `.cr`
+    # file in the scan — and `get "/path"` is the same line in Kemal, Grip
+    # and Amber, so in a repo holding two of them each read the other's
+    # routes. Default is empty, meaning no gate.
+    protected def shard_dependencies : Array(String)
+      [] of String
     end
 
-    abstract def analyze_file(path : String) : Array(Endpoint)
+    # Directories holding a `shard.yml` that depends on one of
+    # `shard_dependencies`. Empty when the analyzer declares none, and also
+    # empty when the scan has no matching manifest at all — in which case
+    # `path_under_shard_roots?` waves everything through, so a source tree
+    # checked out without its manifest keeps working exactly as before.
+    private def shard_roots : Array(String)
+      @shard_roots ||= compute_shard_roots
+    end
 
-    # `.cr` extension filter plus `lib/` exclusion baked in (shards puts
-    # dependencies under `lib/` and we don't want to analyze them).
-    # Subclasses that need a custom scan shape can override `analyze`
-    # (e.g. Amber/Kemal run a public-dir post-pass after the file walk).
-    protected def parallel_file_scan(&block : String -> Nil) : Nil
-      begin
-        parallel_analyze(all_files) do |path|
-          next if File.directory?(path)
-          next unless File.exists?(path) && File.extname(path) == ".cr"
-          next if crystal_dependency_path?(path)
-          # Crystal's standard test directory is `spec/`, and test
-          # files always end in `_spec.cr`. Crystal framework repos
-          # (lucky, marten, amber, kemal) park hundreds of route
-          # declarations there to exercise the framework. Production
-          # code never adopts either convention. The `spec/` dir
-          # is checked relative to the project root so nested
-          # fixtures under noir's own `spec/functional_test/...`
-          # tree don't accidentally trip the filter.
-          next if crystal_spec_path?(path)
+    @shard_roots : Array(String)?
 
-          begin
-            block.call(path)
-          rescue e
-            logger.debug "Error analyzing #{path}: #{e}"
-          end
+    private def compute_shard_roots : Array(String)
+      dependencies = shard_dependencies
+      return [] of String if dependencies.empty?
+
+      patterns = dependencies.map { |name| shard_dependency_re(name) }
+      roots = [] of String
+      all_files.each do |file|
+        next unless File.basename(file) == "shard.yml"
+        begin
+          content = read_file_content(file)
+        rescue
+          next
         end
-      rescue e
-        logger.debug e
+        next unless patterns.any? { |pattern| content.matches?(pattern) }
+        root = Noir::PathScope.normalize_root(File.dirname(file))
+        roots << root unless roots.includes?(root)
       end
+      roots
+    end
+
+    # A shard entry is a two-space-indented mapping key under `dependencies:`
+    # / `development_dependencies:`. Anchoring on the key keeps `kemal` from
+    # matching a `kemal_json_serializer` line, and keeps the shard's own
+    # `name: kemal` out of it.
+    private def shard_dependency_re(name : String) : Regex
+      Regex.new("^\\s{2}#{Regex.escape(name)}\\s*:\\s*$", Regex::Options::MULTILINE)
+    end
+
+    private def path_under_shard_roots?(path : String, roots : Array(String)) : Bool
+      return true if roots.empty?
+
+      expanded = Noir::PathScope.expand(path)
+      roots.any? { |root| Noir::PathScope.under_normalized_root?(expanded, root) }
+    end
+
+    # `.cr` sources from the extension index; `lib/` exclusion (shards
+    # puts dependencies there) and the spec filter live in
+    # `scan_accepts?`.
+    protected def scan_target_files : Array(String)
+      get_files_by_extension(".cr")
+    end
+
+    protected def scan_accepts?(path : String) : Bool
+      return false if crystal_dependency_path?(path)
+      return false unless path_under_shard_roots?(path, shard_roots)
+      # Crystal's standard test directory is `spec/`, and test
+      # files always end in `_spec.cr`. Crystal framework repos
+      # (lucky, marten, amber, kemal) park hundreds of route
+      # declarations there to exercise the framework. Production
+      # code never adopts either convention. The `spec/` dir
+      # is checked relative to the project root so nested
+      # fixtures under noir's own `spec/functional_test/...`
+      # tree don't accidentally trip the filter.
+      !crystal_spec_path?(path)
     end
 
     # `*_spec.cr` is Crystal's official spec filename — unambiguous
@@ -50,14 +90,14 @@ module Analyzer::Crystal
     # the framework apps themselves live under a `spec/` ancestor.
     private def crystal_spec_path?(path : String) : Bool
       return true if File.basename(path).ends_with?("_spec.cr")
-      expanded_path = File.expand_path(path)
+      expanded_path = Noir::PathScope.expand(path)
 
       base_paths.any? do |root|
         next false unless path_under_root?(expanded_path, root)
 
-        expanded_root = File.expand_path(root)
-        expanded_root = expanded_root.rstrip('/') unless expanded_root == File::SEPARATOR
-        relative = expanded_path[expanded_root.size..]?.try(&.lchop(File::SEPARATOR)) || ""
+        expanded_root = Noir::PathScope.expand(root)
+        expanded_root = expanded_root.rstrip('/') unless expanded_root == "/"
+        relative = expanded_path[expanded_root.size..]?.try(&.lchop('/')) || ""
         relative.starts_with?("spec/")
       end
     end
@@ -67,8 +107,13 @@ module Analyzer::Crystal
     # application directories like `library/`, `glib/`, or a project
     # literally named `amber-library` aren't silently dropped (that bug
     # made a real Amber app surface 0 routes — only public files).
+    #
+    # Scan-base-relative, never absolute: `lib` is common enough as a
+    # directory name that matching the absolute path let an ancestor of
+    # the checkout (`/usr/lib/...`, `~/lib/work/...`) suppress every
+    # source file in the project.
     protected def crystal_dependency_path?(path : String) : Bool
-      path.includes?("/lib/") || path.starts_with?("lib/")
+      base_relative_path(path).includes?("/lib/")
     end
 
     # Crystal `"…"` strings interpolate `#{expr}`. The Kemal/Lucky/
@@ -79,8 +124,21 @@ module Analyzer::Crystal
     # parameter extractor picks it up and the URL template reads
     # cleanly. Mirrors the Python f-string, Ruby `#{}`, and PHP
     # `$var` fixes earlier this pass.
+    #
+    # Most route literals have no interpolation; skip the PCRE2
+    # gsub when the `#\{` marker is absent.
+    INTERPOLATION_RE = /\#\{([^}]+)\}/
+
     protected def normalize_crystal_interpolation(path : String) : String
-      path.gsub(/\#\{([^}]+)\}/) { |_| "{#{$~[1].strip}}" }
+      return path unless path.includes?("\#{")
+      path.gsub(INTERPOLATION_RE) { |_| "{#{$~[1].strip}}" }
+    end
+
+    # Comment-cut `lines` for the per-line param scan, with an accessor read
+    # wrapped over lines (`env.params.query[` / `"q"` / `]`) folded onto its
+    # first line (see `Noir::CallFold`). Same size as `lines`.
+    protected def crystal_param_lines(lines : Array(String)) : Array(String)
+      Noir::CallFold.fold(lines) { |line| Noir::CrystalCalleeExtractor.strip_comment(line) }
     end
 
     # A genuine Kemal/Lucky/Amber route path always begins with `/`
@@ -155,20 +213,64 @@ module Analyzer::Crystal
       rest.empty? || !(rest[0].alphanumeric? || rest[0] == '_')
     end
 
-    protected def each_public_file(&block : String -> Nil) : Nil
+    # Every file under a `public/` directory, plus each extra `{base, folder}`
+    # static directory, served as a GET endpoint. Bases in `disabled_bases`
+    # (static serving switched off) contribute nothing.
+    protected def collect_public_dir_endpoints(public_folders : Array(Tuple(String, String)) = [] of Tuple(String, String),
+                                               disabled_bases : Set(String) = Set(String).new)
+      # Process public folder files
       base_paths.each do |base|
+        next if disabled_bases.includes?(base)
         get_public_files(base).each do |file|
-          block.call(file)
+          # Extract the path after "/public/" regardless of depth
+          # Scan-base-relative, never absolute: the leftmost `/public/`
+          # wins, so a `public/` directory above the scan base put the
+          # whole intervening path into the served URL.
+          if base_relative_path(file) =~ /\/public\/(.*)/
+            relative_path = $1
+            @result << Endpoint.new("/#{relative_path}", "GET")
+          end
         end
       end
-    end
 
-    protected def each_public_dir_file(folder : String, &block : String -> Nil) : Nil
-      base_paths.each do |base|
+      # Process other public folders
+      public_folders.each do |base, folder|
+        next if disabled_bases.includes?(base)
+
+        # `folder` is fixed for this outer iteration, but the interpolated
+        # regex below used to be rebuilt (a full PCRE2 JIT compile) on every
+        # file the folder contains. Precompute it once per folder instead of
+        # once per file, and escape the discovered name since it comes from
+        # arbitrary source text and may contain regex metacharacters.
+        nested_folder = folder.includes?("/")
+        folder_path = nested_folder ? (folder.ends_with?("/") ? folder : "#{folder}/") : ""
+        folder_re = if nested_folder
+                      /\/#{Regex.escape(folder.split("/").last)}\/(.*)/
+                    else
+                      /\/#{Regex.escape(folder)}\/(.*)/
+                    end
+
         get_public_dir_files(base, folder).each do |file|
-          block.call(file)
+          # Extract relative path from the custom folder
+          if nested_folder
+            # For absolute paths or paths with directories
+            if file.starts_with?(folder_path)
+              relative_path = file.sub(folder_path, "")
+              @result << Endpoint.new("/#{relative_path}", "GET")
+            elsif file =~ folder_re
+              # Try to find the folder component in the path
+              relative_path = $1
+              @result << Endpoint.new("/#{relative_path}", "GET")
+            end
+          elsif file =~ folder_re
+            # For simple folder names (no slashes)
+            relative_path = $1
+            @result << Endpoint.new("/#{relative_path}", "GET")
+          end
         end
       end
+    rescue e
+      logger.debug e
     end
 
     protected def attach_crystal_callees(endpoint : Endpoint, callees : Array(Noir::CrystalCalleeExtractor::Entry))
@@ -189,13 +291,23 @@ module Analyzer::Crystal
     protected def build_crystal_action_index(paths : Array(String)) : ActionIndex
       index = ActionIndex.new
       paths.each do |path|
-        next if File.directory?(path)
-        next unless File.exists?(path) && File.extname(path) == ".cr"
+        # Callers may pass a broader list (historically `all_files`); keep
+        # the cheap extension gate so non-Crystal paths never hit the
+        # lexer. Prefer `get_files_by_extension(".cr")` at the call site.
+        next unless path.ends_with?(".cr")
         next if crystal_dependency_path?(path)
         begin
-          collect_actions_into(index, File.read_lines(path), path)
+          # Cache-first: detector already warmed CodeLocator for most
+          # .cr files. `read_file_content` prefers the cache and falls
+          # back to File.read(utf-8, invalid: :skip); String#lines
+          # chomps by default, matching File.read_lines for valid UTF-8.
+          collect_actions_into(index, read_file_content(path).lines, path)
         rescue e
           logger.debug "crystal action index #{path}: #{e}"
+          # A file missing from the action index costs the callees of every
+          # route that dispatches into it, which is coverage lost as surely
+          # as a route missed outright.
+          Noir::SkippedFiles.record(tech, path, e.message.presence || e.class.name)
         end
       end
       index
@@ -224,6 +336,14 @@ module Analyzer::Crystal
     # module, dropping every method defined after them. Indentation is the
     # one signal those constructs can't corrupt: a namespace stays open
     # until a line dedents to or past the column where it was declared.
+    #
+    # Precompiled: this loop runs once per line of every .cr file when
+    # building the cross-file action index (`--include-callee` /
+    # `--ai-context`). The shapes never change, so hoist the two PCRE2
+    # patterns to class constants.
+    NAMESPACE_DECL_RE = /^(?:abstract\s+)?(?:module|class|struct)\s+([A-Z]\w*(?:::[A-Z]\w*)*)/
+    DEF_DECL_RE       = /^(?:(?:private|protected)\s+)?def\s+(?:self\.)?([A-Za-z_]\w*[!?=]?)/
+
     protected def collect_actions_into(index : ActionIndex, lines : Array(String), path : String) : Nil
       base_path = configured_base_for(path)
       namespace_stack = [] of NamedTuple(name: String, indent: Int32)
@@ -240,12 +360,18 @@ module Analyzer::Crystal
           namespace_stack.pop
         end
 
-        if ns = content.match(/^(?:abstract\s+)?(?:module|class|struct)\s+([A-Z]\w*(?:::[A-Z]\w*)*)/)
+        # Cheap keyword gates before PCRE2: most body lines are neither
+        # namespace decls nor method defs.
+        if (content.starts_with?("module") || content.starts_with?("class") ||
+           content.starts_with?("struct") || content.starts_with?("abstract")) &&
+           (ns = content.match(NAMESPACE_DECL_RE))
           namespace_stack << {name: ns[1], indent: indent}
           next
         end
 
-        if def_match = content.match(/^(?:(?:private|protected)\s+)?def\s+(?:self\.)?([A-Za-z_]\w*[!?=]?)/)
+        if (content.starts_with?("def") || content.starts_with?("private") ||
+           content.starts_with?("protected")) &&
+           (def_match = content.match(DEF_DECL_RE))
           next if namespace_stack.empty?
           if method_body = extract_crystal_def_block(lines, i)
             body, body_start_line = method_body
@@ -338,15 +464,76 @@ module Analyzer::Crystal
       {body_lines.join("\n"), body_start_line}
     end
 
+    # Precompiled block-structure probes used by extract_crystal_do_block /
+    # extract_crystal_def_block on every body line. Constant shapes — load
+    # once, match many times. Cheap `includes?` gates reject the common
+    # non-structural body lines before any PCRE2 scan.
+    DO_WORD_RE      = /\bdo\b/
+    END_WORD_RE     = /\bend\b/
+    STRUCT_OPEN_RE  = /(?:^|=[^=>])\s*(?:if|unless|case|begin|while|until|for|class|module|def|macro)\b/
+    CLOSES_BLOCK_RE = /^end\b/
+
     protected def crystal_do_block_open_delta(line : String) : Int32
       return 0 if line.empty?
-      return 1 if line.match(/\bdo\b/) && !line.match(/\bend\b/)
-      return 1 if line.match(/(?:^|=[^=>])\s*(if|unless|case|begin|while|until|for|class|module|def|macro)\b/) && !line.match(/\bend\b/)
+
+      has_end = line.includes?("end")
+      if line.includes?("do") && line.matches?(DO_WORD_RE) && !(has_end && line.matches?(END_WORD_RE))
+        return 1
+      end
+
+      # Structural keyword open — only scan when a candidate keyword is present.
+      if (line.includes?("if") || line.includes?("unless") || line.includes?("case") ||
+         line.includes?("begin") || line.includes?("while") || line.includes?("until") ||
+         line.includes?("for") || line.includes?("class") || line.includes?("module") ||
+         line.includes?("def") || line.includes?("macro")) &&
+         line.matches?(STRUCT_OPEN_RE) &&
+         !(has_end && line.matches?(END_WORD_RE))
+        return 1
+      end
+
       0
     end
 
     private def crystal_closes_block?(line : String) : Bool
-      !!line.match(/^end\b/)
+      line.starts_with?("end") && line.matches?(CLOSES_BLOCK_RE)
+    end
+
+    # Group 1 = verb (or `ws`), group 2 = path. `ws` is folded in so a
+    # single scan covers WebSocket routes too; the caller maps `ws` →
+    # GET + protocol=ws.
+    SIMPLE_ROUTE_RE = /(?:^|[^.\w])(get|post|put|delete|patch|head|options|ws)\s*(?:\(\s*)?['"](.+?)['"]/
+
+    # Match the first `verb "/path"` / `verb("/path")` on a comment-stripped
+    # line. Quote gate skips the PCRE2 scan on lines with no string
+    # literal. Returns an empty endpoint when nothing matches.
+    protected def match_crystal_simple_route(content : String,
+                                             *,
+                                             include_ws : Bool = true,
+                                             extra : Array(Tuple(String, Regex)) = [] of Tuple(String, Regex)) : Endpoint
+      return Endpoint.new("", "") unless content.includes?('"') || content.includes?("'")
+
+      if match = content.match(SIMPLE_ROUTE_RE)
+        verb = match[1]
+        path = normalize_crystal_interpolation(match[2])
+        if verb == "ws"
+          if include_ws
+            endpoint = Endpoint.new(path, "GET")
+            endpoint.protocol = "ws"
+            return endpoint
+          end
+        else
+          return Endpoint.new(path, verb.upcase)
+        end
+      end
+
+      extra.each do |method, pattern|
+        next unless content.includes?(method.downcase)
+        if match = content.match(pattern)
+          return Endpoint.new(normalize_crystal_interpolation(match[1]), method)
+        end
+      end
+
+      Endpoint.new("", "")
     end
   end
 end

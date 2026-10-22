@@ -1,0 +1,274 @@
+require "../../engines/specification_engine"
+require "../../../utils/http_symbols"
+require "uri"
+
+module Analyzer::Specification
+  # Parses `.http` / `.rest` request files — the format shared by the VS Code
+  # REST Client extension and the JetBrains HTTP Client.
+  #
+  # Requests are separated by `###`; the text after `###` is a name/comment.
+  # A request is `METHOD url [HTTP/version]` (the method is optional and
+  # defaults to `GET`), followed by header lines, a blank line, and an
+  # optional body. `{{var}}` placeholders resolve from in-file `@name = value`
+  # definitions; anything left unresolved in the path is treated as a path
+  # parameter (`:var`) rather than literal text. JetBrains response-handler
+  # blocks (`> {% ... %}` / `> script.js`) are skipped.
+  class HttpFile < SpecificationEngine
+    analyzer_for "http_file"
+
+    HTTP_METHODS = ALLOWED_HTTP_METHODS
+
+    LOOPBACK_HOSTS = Set{"localhost", "0.0.0.0", "[::1]", "host.docker.internal"}
+
+    # A `{{ var }}` placeholder.
+
+    def analyze
+      each_spec_file(Noir::LocatorKeys::HTTP_FILE) do |http_file|
+        content = read_file_content(http_file)
+        process_file(content, http_file)
+      end
+
+      @result
+    end
+
+    # A single `###`-delimited request within a file, kept with the 1-based
+    # line number of its first line for endpoint source locations.
+    private record Block, lines : Array(String), start_line : Int32
+
+    private def process_file(content : String, source_path : String)
+      env = collect_variables(content)
+      split_blocks(content).each do |block|
+        process_block(block, env, source_path)
+      rescue e
+        @logger.debug "Exception processing .http request block"
+        @logger.debug_sub e
+      end
+    end
+
+    # File-scoped `@name = value` variable definitions. Collected in a single
+    # pre-pass so a request can reference a variable defined anywhere in the
+    # file. Only lines whose stripped form starts with `@` are considered, so
+    # JSON/form body lines can't be mistaken for definitions.
+    private def collect_variables(content : String) : Hash(String, String)
+      env = {} of String => String
+      content.each_line do |line|
+        stripped = line.strip
+        next unless stripped.starts_with?('@')
+        if m = stripped.match(/^@([A-Za-z0-9_\-]+)\s*=\s*(.*)$/)
+          env[m[1]] = m[2].strip
+        end
+      end
+      env
+    end
+
+    private def split_blocks(content : String) : Array(Block)
+      blocks = [] of Block
+      current = [] of String
+      start_line = 1
+      line_no = 0
+
+      content.each_line do |line|
+        line_no += 1
+        # A line beginning with `###` separates requests; the trailing text is
+        # a comment/name and must not leak into the endpoint.
+        if line.lstrip.starts_with?("###")
+          blocks << Block.new(current, start_line) unless current.empty?
+          current = [] of String
+          start_line = line_no + 1
+          next
+        end
+        current << line
+      end
+      blocks << Block.new(current, start_line) unless current.empty?
+      blocks
+    end
+
+    private def process_block(block : Block, env : Hash(String, String), source_path : String)
+      lines = block.lines
+      idx = 0
+      size = lines.size
+
+      # Skip leading comments, blank lines and `@var` definitions.
+      while idx < size
+        stripped = lines[idx].strip
+        if stripped.empty? || comment?(stripped) || stripped.starts_with?('@')
+          idx += 1
+        else
+          break
+        end
+      end
+      return if idx >= size
+
+      request_line_offset = idx
+      method, url_raw = parse_request_line(lines[idx].strip, env)
+      return if method.nil? || url_raw.nil?
+      idx += 1
+
+      # REST Client / JetBrains split a long query over indented lines that
+      # start with `?` or `&`; they belong to the URL, not the headers.
+      while idx < size && lines[idx].starts_with?(/[ \t]/) && lines[idx].lstrip.starts_with?(/[?&]/)
+        url_raw += resolve_vars(lines[idx].strip, env)
+        idx += 1
+      end
+
+      params = [] of Param
+
+      # Headers run until the first blank line.
+      while idx < size
+        line = lines[idx]
+        stripped = line.strip
+        idx += 1
+        break if stripped.empty?
+        next if comment?(stripped)
+        if sep = stripped.index(':')
+          name = stripped[0...sep].strip
+          next if name.empty?
+          next if skipped_request_header?(name)
+          # Names only: these are scratch files, and their `Authorization` /
+          # `Cookie` values are often a developer's live credentials.
+          add_param(params, name, "", "header")
+        end
+      end
+
+      # Everything after the blank line is the body, up to a response-handler
+      # line (`>`), which must not be treated as body content.
+      body_lines = [] of String
+      while idx < size
+        stripped = lines[idx].strip
+        break if stripped.starts_with?('>')
+        body_lines << lines[idx]
+        idx += 1
+      end
+      extract_body_params(body_lines.join('\n'), env).each { |p| params << p }
+
+      url_path = template_url_path(url_raw, MUSTACHE_VAR)
+      return if url_path.empty?
+      if origin = external_origin(lines[request_line_offset])
+        url_path = origin + url_path
+      end
+
+      request_query_pairs(url_raw).each do |query_name, query_value|
+        add_param(params, query_name, query_value, "query")
+      end
+
+      request_path_vars(url_path).each do |path_name|
+        add_param(params, path_name, "", "path")
+      end
+
+      details = Details.new(PathInfo.new(source_path, block.start_line + request_line_offset))
+      @result << Endpoint.new(url_path, method, params, details)
+    end
+
+    # `scheme://host` of a request line that names another host literally
+    # (`GET https://idp.example.test/...`): a call to a third-party API, not a
+    # route of the scanned app, so it keeps its host. A `{{host}}` variable
+    # or a loopback host is the app under development.
+    private def external_origin(line : String) : String?
+      return unless m = line.match(/(?:\A|[ \t])(https?):\/\/(?:[^\/?#\s@]*@)?([^\/?#\s]+)/i)
+      authority = m[2]
+      return if authority.includes?("{{")
+      host = authority.sub(/:\d*\z/, "").downcase
+      return if LOOPBACK_HOSTS.includes?(host) || host.ends_with?(".localhost") || host.starts_with?("127.")
+      # Userinfo is dropped: it is a credential, not part of the route.
+      "#{m[1].downcase}://#{authority}"
+    end
+
+    private def comment?(stripped : String) : Bool
+      stripped.starts_with?('#') || stripped.starts_with?("//")
+    end
+
+    # Returns `{method, resolved_url}` for a request line, or `{nil, nil}` when
+    # the line is not a request. The line is `METHOD url [HTTP/version]`; the
+    # method is optional (defaults to GET) but a method-less line must still
+    # look like a URL/path so header-shaped lines aren't misread as requests.
+    private def parse_request_line(line : String, env : Hash(String, String)) : Tuple(String?, String?)
+      parts = line.split(/[ \t]+/)
+      return {nil, nil} if parts.empty?
+
+      first = parts[0].upcase
+      if HTTP_METHODS.includes?(first)
+        # `QUERY` must be spelled uppercase to count as a request verb.
+        # Prose idiomatically follows "Query" with a URL-ish token ("Query
+        # /users for the list."), so the case-lenient reading that is safe
+        # for the classic verbs fabricates endpoints from documentation for
+        # this one. The detector's REQUEST_LINE applies the same rule.
+        return {nil, nil} if first == "QUERY" && parts[0] != "QUERY"
+        return {nil, nil} if parts.size < 2
+        target = parts[1]
+        # An explicit method is not enough — the target must be URL-ish, so a
+        # prose line like "Get started with the API" isn't read as a request.
+        return {nil, nil} unless target_like?(target)
+        {first, resolve_vars(target, env)}
+      else
+        target = parts[0]
+        return {nil, nil} unless looks_like_target?(target)
+        {"GET", resolve_vars(target, env)}
+      end
+    end
+
+    # A request target always carries a URL-ish char (`.` `/` `:` `{`);
+    # prose words never do.
+    private def target_like?(value : String) : Bool
+      value.matches?(/[.\/:{]/)
+    end
+
+    private def looks_like_target?(value : String) : Bool
+      value.matches?(/^https?:\/\//i) || value.starts_with?('/') || value.starts_with?("{{")
+    end
+
+    private def extract_body_params(body : String, env : Hash(String, String)) : Array(Param)
+      params = [] of Param
+      stripped = body.strip
+      return params if stripped.empty?
+
+      # `multipart/form-data`: one field per part header.
+      stripped.scan(/^Content-Disposition:\s*form-data;[^\n]*?\bname="([^"]+)"/im) do |m|
+        add_param(params, m[1], "", "form")
+      end
+      return params unless params.empty?
+
+      # Prefer a JSON object body (an unquoted `{{x}}` value is tolerated);
+      # fall back to `application/x-www-form-urlencoded`.
+      json_body_pairs(stripped, MUSTACHE_VAR).each { |k, v| add_param(params, k, v, "json") }
+      return params unless params.empty?
+
+      if stripped.includes?('=') && !stripped.includes?('{')
+        stripped.split('&').each do |pair|
+          next if pair.empty?
+          idx = pair.index('=')
+          next if idx.nil?
+          name = pair[0...idx].strip
+          value = pair[(idx + 1)..].strip
+          add_param(params, name, resolve_vars(value, env), "form")
+        end
+      end
+
+      params
+    end
+
+    # ------ shared helpers (mirrors the Insomnia analyzer) ------
+
+    # Substitutes `{{ var }}` / `{{var}}` tokens using the collected
+    # variables. Unknown tokens are left as-is so the URL parser can turn
+    # them into path parameters.
+    private def resolve_vars(input : String, env : Hash(String, String)) : String
+      return input if input.empty? || env.empty? || !input.includes?("{{")
+      resolved = input
+      3.times do
+        previous = resolved
+        resolved = resolved.gsub(MUSTACHE_VAR) do |match|
+          env.fetch($1, match)
+        end
+        break if resolved == previous
+      end
+      resolved
+    end
+
+    private def add_param(params : Array(Param), name : String, value : String, param_type : String)
+      normalized = name.strip
+      return if normalized.empty?
+      return if params.any? { |p| p.name == normalized && p.param_type == param_type }
+      params << Param.new(normalized, value, param_type)
+    end
+  end
+end

@@ -26,9 +26,22 @@ module Analyzer::Rust
   # AST walk. We recover them by re-parsing each router-bearing macro
   # body as an expression fragment and mapping line numbers back.
   class Salvo < RustEngine
-    HTTP_VERBS = Set{"get", "post", "put", "delete", "patch", "head", "options"}
+    analyzer_for "rust_salvo"
+
+    # Only files inside a crate that depends on `salvo`. See
+    # `RustEngine#crate_dependencies` — without this every Rust analyzer
+    # sees every `.rs` file in the scan.
+    protected def crate_dependencies : Array(String)
+      ["salvo"]
+    end
+
     alias ScopedNameKey = Tuple(String, String)
     alias PrefixEdge = Tuple(ScopedNameKey, String)
+
+    # Precompiled union for build_fn_external_prefixes' per-file evidence
+    # gate, so it costs a single PCRE2 match instead of two naive substring
+    # scans.
+    FN_EDGE_EVIDENCE_RE = Regex.union(".push(", ".unshift(")
 
     # Cross-function router composition. Salvo apps build their tree with
     # builder fns mounted via `.push(build_system_route())`, where
@@ -70,10 +83,9 @@ module Analyzer::Rust
     private def build_global_handler_info : Hash(ScopedNameKey, HandlerInfo)
       info = {} of ScopedNameKey => HandlerInfo
       all_files.each do |fpath|
-        next if File.directory?(fpath)
         next unless File.exists?(fpath) && File.extname(fpath) == ".rs"
-        next if RustEngine.test_path?(fpath)
-        base = configured_base_for(fpath)
+        next if RustEngine.test_path?(base_relative_path(fpath))
+        base = crate_scope_for(fpath)
         src = read_file_content(fpath)
         next unless src.includes?("#[handler]")
         begin
@@ -104,7 +116,7 @@ module Analyzer::Rust
     def analyze_file(path : String) : Array(Endpoint)
       endpoints = [] of Endpoint
       source = read_file_content(path)
-      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
+      include_callee = callees_needed?
       # `crates/core/src/routing.rs`-style `#[cfg(test)] mod tests
       # { Router::with_path(...).get(...) }` blocks would otherwise
       # leak into the endpoint set. See `RustEngine.collect_cfg_test_regions`
@@ -182,7 +194,7 @@ module Analyzer::Rust
         next unless chain
         route_path, method, handler_name = chain
 
-        row = Noir::TreeSitter.node_start_row(node) + 1 + row_offset
+        row = call_line(node) + row_offset
 
         # If this route sits inside a builder fn mounted cross-file via
         # `.push(builder())`, prepend the fn's external mount prefix(es).
@@ -200,7 +212,7 @@ module Analyzer::Rust
             if handler_function = function_index[leaf]?
               extract_function_params(handler_function, original_source, endpoint)
               attach_handler_callees(handler_function, original_source, path, endpoint) if include_callee
-            elsif info = @global_handler_info.try(&.[{configured_base_for(path), leaf}]?)
+            elsif info = @global_handler_info.try(&.[{crate_scope_for(path), leaf}]?)
               # The handler lives in another file (`routes/x.rs` references a
               # `#[handler]` in `handler/x.rs`). Its params + callees were
               # precomputed in the cross-file index.
@@ -233,7 +245,7 @@ module Analyzer::Rust
       verb = Noir::TreeSitter.node_text(verb_field, source).downcase
       return unless HTTP_VERBS.includes?(verb)
 
-      route_path = find_chain_path(fn_node, source, router_prefixes, configured_base_for(file_path))
+      route_path = find_chain_path(fn_node, source, router_prefixes, crate_scope_for(file_path))
       return unless route_path
 
       handler_name = first_handler_argument(call, source)
@@ -251,7 +263,7 @@ module Analyzer::Rust
                                       file_path : String) : Hash(Int32, String)
       map = {} of Int32 => String
       visited = Set(Int32).new
-      base = configured_base_for(file_path)
+      base = crate_scope_for(file_path)
       walk(chain_root) do |node|
         next unless Noir::TreeSitter.node_type(node) == "call_expression"
         next if visited.includes?(node_byte(node))
@@ -304,7 +316,7 @@ module Analyzer::Rust
             own_seg = chain_path_arg(Noir::TreeSitter.field(cursor, "arguments"), source, base)
           elsif name == "push" || name == "unshift"
             if pargs = Noir::TreeSitter.field(cursor, "arguments")
-              Noir::TreeSitter.each_named_child(pargs) do |arg|
+              Noir::TreeSitter.each_named_arg(pargs) do |arg|
                 push_args << arg if Noir::TreeSitter.node_type(arg) == "call_expression"
               end
             end
@@ -457,30 +469,35 @@ module Analyzer::Rust
     # the placeholder early.
     private def canonicalize_salvo_path(route : String) : String
       return route unless route.includes?('{')
+      # Array(Char) indexing/slicing is O(1)/O(k); String#[](Int)/#[](Range)
+      # walk the UTF-8 buffer from the start on every call for any route
+      # containing a multi-byte char, which would otherwise turn this scan
+      # into O(n^2).
+      chars = route.chars
       String.build do |io|
         i = 0
-        while i < route.size
-          if route[i] == '{'
+        while i < chars.size
+          if chars[i] == '{'
             depth = 1
             j = i + 1
-            while j < route.size && depth > 0
-              depth += 1 if route[j] == '{'
-              depth -= 1 if route[j] == '}'
+            while j < chars.size && depth > 0
+              depth += 1 if chars[j] == '{'
+              depth -= 1 if chars[j] == '}'
               j += 1
             end
             if depth > 0
               # Unbalanced '{' (no matching '}'): emit the rest verbatim rather
               # than dropping the final char / producing an empty `{}`.
-              io << route[i..]
+              chars[i..].each { |c| io << c }
               break
             end
-            inner = route[(i + 1)...(j - 1)]
+            inner = chars[(i + 1)...(j - 1)].join
             stars = inner.starts_with?("**") ? "**" : inner.starts_with?("*") ? "*" : ""
             name = inner.lstrip('*').split(/[:|]/, 2).first
             io << "{#{stars}#{name}}"
             i = j
           else
-            io << route[i]
+            io << chars[i]
             i += 1
           end
         end
@@ -520,8 +537,13 @@ module Analyzer::Rust
           # Strip a turbofish so `req.header::<&str>("x")` /
           # `req.parse_json::<T>()` match like their bare forms.
           base = fn_text.gsub(/::<[^>]*>/, "")
-          if (base == "req.query" || base.ends_with?(".parse_queries")) && !endpoint.params.any? { |p| p.name == "query" && p.param_type == "query" }
-            endpoint.push_param(Param.new("query", "", "query"))
+          # `req.query::<T>("page")` / `req.form::<T>("name")` read one named
+          # field; `req.parse_queries::<T>()` binds a whole struct.
+          if base == "req.query" || base.ends_with?(".parse_queries") || base == "req.form"
+            type = base == "req.form" ? "form" : "query"
+            name = base.ends_with?(".parse_queries") ? nil : first_string_literal_text(Noir::TreeSitter.field(node, "arguments"), source)
+            name ||= type
+            endpoint.push_param(Param.new(name, "", type)) unless endpoint.params.any? { |p| p.name == name && p.param_type == type }
           end
           # Salvo's request-side body extractors: `req.parse_json::<T>()` /
           # `req.extract::<T>()` (JSON) and `req.parse_form::<T>()` (form).
@@ -545,29 +567,13 @@ module Analyzer::Rust
       end
     end
 
-    private def attach_handler_callees(function : LibTreeSitter::TSNode,
-                                       source : String,
-                                       path : String,
-                                       endpoint : Endpoint)
-      body = Noir::TreeSitter.field(function, "body")
-      return unless body
-      entries = Noir::RustCalleeExtractorTS.callees_in_body(body, source, path)
-      attach_rust_callees(endpoint, entries)
-    end
-
-    private def call_function_text(call : LibTreeSitter::TSNode, source : String) : String?
-      fn_node = Noir::TreeSitter.field(call, "function")
-      return unless fn_node
-      Noir::TreeSitter.node_text(fn_node, source)
-    end
-
     # First identifier / scoped-path argument of a call, used as the
     # handler name. `get(create_user)` → `create_user`,
     # `get(html::pages::login)` → `html::pages::login`.
     private def first_handler_argument(call : LibTreeSitter::TSNode, source : String) : String?
       args = Noir::TreeSitter.field(call, "arguments")
       return unless args
-      Noir::TreeSitter.each_named_child(args) do |child|
+      Noir::TreeSitter.each_named_arg(args) do |child|
         case Noir::TreeSitter.node_type(child)
         when "identifier", "scoped_identifier"
           return Noir::TreeSitter.node_text(child, source)
@@ -601,34 +607,7 @@ module Analyzer::Rust
       fragments
     end
 
-    private def build_function_index(root : LibTreeSitter::TSNode, source : String) : Hash(String, LibTreeSitter::TSNode)
-      index = {} of String => LibTreeSitter::TSNode
-      walk(root) do |node|
-        next unless Noir::TreeSitter.node_type(node) == "function_item"
-        name_node = Noir::TreeSitter.field(node, "name")
-        next unless name_node
-        name = Noir::TreeSitter.node_text(name_node, source)
-        index[name] = node unless index.has_key?(name)
-      end
-      index
-    end
-
     # ── cross-fn external prefix resolution ───────────────────────────
-
-    # Byte range + name of every fn, for mapping a route node back to the
-    # builder fn that encloses it.
-    private def build_fn_ranges(root : LibTreeSitter::TSNode, source : String) : Array(Tuple(Int32, Int32, String))
-      ranges = [] of Tuple(Int32, Int32, String)
-      walk(root) do |n|
-        next unless Noir::TreeSitter.node_type(n) == "function_item"
-        name_node = Noir::TreeSitter.field(n, "name")
-        next unless name_node
-        s = LibTreeSitter.ts_node_start_byte(n).to_i
-        e = LibTreeSitter.ts_node_end_byte(n).to_i
-        ranges << {s, e, Noir::TreeSitter.node_text(name_node, source)}
-      end
-      ranges
-    end
 
     # External mount prefix(es) of the innermost builder fn enclosing `node`,
     # or nil when the enclosing fn is a root-level assembly (no prefix).
@@ -644,7 +623,7 @@ module Analyzer::Rust
         best = r if best.nil? || (r[1] - r[0]) < (best[1] - best[0])
       end
       return unless chosen = best
-      prefixes = ext[{configured_base_for(file_path), chosen[2]}]?
+      prefixes = ext[{crate_scope_for(file_path), chosen[2]}]?
       return unless prefixes
       cleaned = prefixes.reject(&.empty?)
       cleaned.empty? ? nil : cleaned
@@ -658,12 +637,11 @@ module Analyzer::Rust
       edges = Hash(ScopedNameKey, Array(PrefixEdge)).new
       pushed = Set(ScopedNameKey).new
       all_files.each do |fpath|
-        next if File.directory?(fpath)
         next unless File.exists?(fpath) && File.extname(fpath) == ".rs"
-        next if RustEngine.test_path?(fpath)
-        base = configured_base_for(fpath)
+        next if RustEngine.test_path?(base_relative_path(fpath))
+        base = crate_scope_for(fpath)
         src = read_file_content(fpath)
-        next unless src.includes?(".push(") || src.includes?(".unshift(")
+        next unless src.matches?(FN_EDGE_EVIDENCE_RE)
         begin
           test_regions = RustEngine.collect_cfg_test_regions(src)
           Noir::TreeSitter.parse_rust(src) do |root|
@@ -725,7 +703,7 @@ module Analyzer::Rust
             own_seg = chain_path_arg(Noir::TreeSitter.field(cursor, "arguments"), source, fn_key[0])
           elsif name == "push" || name == "unshift"
             if pargs = Noir::TreeSitter.field(cursor, "arguments")
-              Noir::TreeSitter.each_named_child(pargs) do |arg|
+              Noir::TreeSitter.each_named_arg(pargs) do |arg|
                 push_args << arg if Noir::TreeSitter.node_type(arg) == "call_expression"
               end
             end
@@ -799,33 +777,6 @@ module Analyzer::Rust
       final
     end
 
-    private def each_routing_pair(node : LibTreeSitter::TSNode, &block : LibTreeSitter::TSNode, LibTreeSitter::TSNode ->)
-      named = [] of LibTreeSitter::TSNode
-      Noir::TreeSitter.each_named_child(node) { |c| named << c }
-      named.each_with_index do |child, idx|
-        if Noir::TreeSitter.node_type(child) == "attribute_item"
-          pair_function = find_paired_function(named, idx + 1)
-          block.call(child, pair_function) if pair_function
-        end
-        each_routing_pair(child, &block)
-      end
-    end
-
-    private def find_paired_function(named : Array(LibTreeSitter::TSNode), start : Int32) : LibTreeSitter::TSNode?
-      (start...named.size).each do |i|
-        next_node = named[i]
-        case Noir::TreeSitter.node_type(next_node)
-        when "function_item"
-          return next_node
-        when "attribute_item", "line_comment", "block_comment"
-          next
-        else
-          return
-        end
-      end
-      nil
-    end
-
     # Collect `const NAME: &str = "..."` / `static NAME: &str = "..."` string
     # constants across the project (regex over source; these are simple
     # top-level declarations). Used to resolve concatenated path prefixes.
@@ -833,10 +784,9 @@ module Analyzer::Rust
       consts = {} of ScopedNameKey => String
       pattern = /(?:const|static)\s+([A-Z_][A-Z0-9_]*)\s*:\s*&(?:'static\s+)?str\s*=\s*"([^"]*)"/
       all_files.each do |fpath|
-        next if File.directory?(fpath)
         next unless File.exists?(fpath) && File.extname(fpath) == ".rs"
-        next if RustEngine.test_path?(fpath)
-        base = configured_base_for(fpath)
+        next if RustEngine.test_path?(base_relative_path(fpath))
+        base = crate_scope_for(fpath)
         src = read_file_content(fpath)
         next unless src.includes?(": &") && src.includes?("str")
         src.scan(pattern) do |m|
@@ -854,7 +804,7 @@ module Analyzer::Rust
     private def chain_path_arg(args : LibTreeSitter::TSNode?, source : String, base : String) : String?
       return unless args
       first = nil.as(LibTreeSitter::TSNode?)
-      Noir::TreeSitter.each_named_child(args) { |c| first ||= c }
+      Noir::TreeSitter.each_named_arg(args) { |c| first ||= c }
       (first ? eval_str_expr(first, source, base) : nil) || first_string_literal_text(args, source)
     end
 
@@ -879,43 +829,6 @@ module Analyzer::Rust
         @str_consts.try { |consts| consts[{base, Noir::TreeSitter.node_text(node, source)}]? }
       when "scoped_identifier"
         @str_consts.try { |consts| consts[{base, Noir::TreeSitter.node_text(node, source).split("::").last}]? }
-      end
-    end
-
-    private def first_string_literal_text(node : LibTreeSitter::TSNode?, source : String) : String?
-      return unless node
-      result : String? = nil
-      walk(node) do |child|
-        next if result
-        case Noir::TreeSitter.node_type(child)
-        when "string_literal", "raw_string_literal"
-          # Salvo regex-constrained params live in raw strings:
-          # `Router::with_path(r"delete/{id|[0-9a-fA-F]{8}}")`. Those are
-          # `raw_string_literal` nodes, not `string_literal`.
-          result = string_content(child, source)
-        end
-      end
-      result
-    end
-
-    private def string_content(string_literal : LibTreeSitter::TSNode, source : String) : String?
-      Noir::TreeSitter.each_named_child(string_literal) do |grand|
-        return Noir::TreeSitter.node_text(grand, source) if Noir::TreeSitter.node_type(grand) == "string_content"
-      end
-      nil
-    end
-
-    private def find_named_child(node : LibTreeSitter::TSNode, type : String) : LibTreeSitter::TSNode?
-      Noir::TreeSitter.each_named_child(node) do |child|
-        return child if Noir::TreeSitter.node_type(child) == type
-      end
-      nil
-    end
-
-    private def walk(node : LibTreeSitter::TSNode, &block : LibTreeSitter::TSNode ->)
-      block.call(node)
-      Noir::TreeSitter.each_named_child(node) do |child|
-        walk(child, &block)
       end
     end
   end

@@ -6,8 +6,8 @@ private def analyze_cdk(content : String, ext = ".ts")
   path = File.tempname("cdk", ext)
   File.write(path, content)
   locator = CodeLocator.instance
-  locator.clear "aws-cdk-spec"
-  locator.push "aws-cdk-spec", path
+  locator.clear Noir::LocatorKeys::AWS_CDK_SPEC
+  locator.push Noir::LocatorKeys::AWS_CDK_SPEC, path
 
   options = create_test_options
   analyzer = Analyzer::Specification::AwsCdk.new options

@@ -1,0 +1,3 @@
+# Above the document root: it keeps outsiders out of the repo, but
+# says nothing about what `public/` serves.
+Deny from all

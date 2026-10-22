@@ -1,0 +1,18 @@
+PetById:
+  parameters:
+    - $ref: '../openapi.yaml#/components/parameters/PetId'
+  get:
+    operationId: showPet
+    responses:
+      '200':
+        description: OK
+  delete:
+    operationId: deletePet
+    parameters:
+      - name: X-Reason
+        in: header
+        schema:
+          type: string
+    responses:
+      '204':
+        description: No Content

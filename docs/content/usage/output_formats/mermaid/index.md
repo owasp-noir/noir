@@ -6,7 +6,7 @@ sort_by = "weight"
 
 +++
 
-Visualize API endpoints as a [Mermaid mindmap](https://mermaid-js.github.io/mermaid/#/mindmap) to get a bird's-eye view of your API structure.
+Draw the discovered endpoints as a [Mermaid mindmap](https://mermaid.js.org/syntax/mindmap.html) to see the shape of the API at a glance.
 
 ## Usage
 
@@ -16,7 +16,7 @@ noir scan . -f mermaid
 
 ## Example Output
 
-The mindmap is a tree: the root node represents the API, branches are URL path segments, and leaves show HTTP methods with their parameters (grouped by type: `body`, `headers`, `cookies`).
+The mindmap is a tree: the root node is the API, branches are URL path segments, and each HTTP method hangs off the path it serves. Parameters under a method are grouped by where they travel in the request: `headers`, `cookies`, `query`, `body` (JSON and form fields), and `path`. Path parameters also surface as `param_*` branches (so `/users/{user_id}` becomes a `param_user_id` segment), and WebSocket routes are tagged `websocket`. Names are made safe for Mermaid: characters other than letters, digits and `_` become `_`, and a name that starts with a digit gets a `path_` prefix (`x-api-key` → `x_api_key`, `/1.html` → `path_1_html`).
 
 <details>
     <summary>Mermaid Output</summary>
@@ -25,186 +25,70 @@ The mindmap is a tree: the root node represents the API, branches are URL path s
 mindmap
   root((API))
     GET
-    about
+    account
       GET
-      GET
-      POST
-        body
-          data
-          id
-    gems
-      GET
-    gems_json
-      GET
+        headers
+          authorization
         cookies
-          cookie
-        body
-          query
-          sort
-      POST
-        cookies
-          cookie
-        body
-          query
-          sort
-    gems_yml
+          session
+    search
       GET
-        cookies
-          cookie
-        body
-          query
-          sort
-      PUT
-        cookies
-          cookie
-        body
-          query
-          sort
-    path_111
-      PUT
-    pets
-      GET
-        cookies
-          cookie
-        body
-          query
-          sort
-      POST
-        body
-          name
-      param_petId
-        GET
-          body
-            petId
-        PUT
-          body
-            breed
-            name
-            petId
-    shards
-      GET
+        query
+          page
+          q
     users
       POST
         body
           email
           name
-      param_userId
+      param_user_id
         GET
-          headers
-            Authorization
-          body
-            userId
-    v1
-      pets
-        GET
-        POST
-        param_petId
-          GET
-            body
-              petId
-          PUT
-            body
-              petId
-    zz
-      GET
-      DELETE
+          query
+            verbose
+          path
+            user_id
+        DELETE
+          path
+            user_id
+    ws
+      feed
+        GET websocket
 ```
 
 </details>
 
-Paste the raw output into the [Mermaid live editor](https://mermaid.live/) to render it interactively, or embed it directly in Markdown files (GitHub, GitLab, and Notion all render Mermaid natively).
+Paste the output into the [Mermaid live editor](https://mermaid.live/) to render it, or put it in a Markdown file (GitHub, GitLab, and Notion render Mermaid blocks).
 
 {% mermaid() %}
 mindmap
   root((API))
     GET
-    about
+    account
       GET
-      GET
-      POST
-        body
-          data
-          id
-    gems
-      GET
-    gems_json
-      GET
+        headers
+          authorization
         cookies
-          cookie
-        body
-          query
-          sort
-      POST
-        cookies
-          cookie
-        body
-          query
-          sort
-    gems_yml
+          session
+    search
       GET
-        cookies
-          cookie
-        body
-          query
-          sort
-      PUT
-        cookies
-          cookie
-        body
-          query
-          sort
-    path_111
-      PUT
-    pets
-      GET
-        cookies
-          cookie
-        body
-          query
-          sort
-      POST
-        body
-          name
-      param_petId
-        GET
-          body
-            petId
-        PUT
-          body
-            breed
-            name
-            petId
-    shards
-      GET
+        query
+          page
+          q
     users
       POST
         body
           email
           name
-      param_userId
+      param_user_id
         GET
-          headers
-            Authorization
-          body
-            userId
-    v1
-      pets
-        GET
-        POST
-        param_petId
-          GET
-            body
-              petId
-          PUT
-            body
-              petId
-    zz
-      GET
-      DELETE
+          query
+            verbose
+          path
+            user_id
+        DELETE
+          path
+            user_id
+    ws
+      feed
+        GET websocket
 {% end %}
-
-## Tips
-
-- The root node is always labeled `API`.
-- HTTP methods, endpoint paths, and parameters are all represented in the mindmap.
-- For large APIs, collapse or expand branches in Mermaid-compatible viewers.

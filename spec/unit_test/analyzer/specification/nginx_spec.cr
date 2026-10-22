@@ -6,8 +6,8 @@ private def analyze_nginx(content : String)
   path = File.tempname("nginx", ".conf")
   File.write(path, content)
   locator = CodeLocator.instance
-  locator.clear "nginx-spec"
-  locator.push "nginx-spec", path
+  locator.clear Noir::LocatorKeys::NGINX_SPEC
+  locator.push Noir::LocatorKeys::NGINX_SPEC, path
 
   options = create_test_options
   analyzer = Analyzer::Specification::Nginx.new options
@@ -36,13 +36,32 @@ describe "Nginx Analyzer" do
 
     pairs = endpoints.map { |e| {e.url, tag_descriptions(e, "nginx-path-type").first} }.sort!
     pairs.should eq([
+      {"/admin/.*", "regex"},
       {"/healthz", "exact"},
       {"/static/", "prefix-stop"},
       {"/v1/users", "prefix"},
-      {"^/admin/.*", "regex"},
     ])
     endpoints.each(&.method.should(eq("ANY")))
     endpoints.each(&.protocol.should(eq("https")))
+  end
+
+  it "marks a regex location as kind regex only while it still reads as a pattern" do
+    endpoints = analyze_nginx <<-CONF
+      server {
+          listen 80;
+          location ~ ^/(fonts|assets)/.*\\.(eot|ttf)$ { expires 1y; }
+          location ~ ^/api/v1/users$                 { proxy_pass http://api; }
+          location ~ \\.php$                          { fastcgi_pass php; }
+          location /plain/                           { proxy_pass http://app; }
+      }
+      CONF
+
+    endpoints.map { |e| {e.url, e.kind} }.sort!.should eq([
+      {".php", "regex"},
+      {"/(fonts|assets)/.*.(eot|ttf)", "regex"},
+      {"/api/v1/users", ""},
+      {"/plain/", ""},
+    ])
   end
 
   it "emits method-specific endpoints from if (\\$request_method) blocks" do
@@ -74,7 +93,7 @@ describe "Nginx Analyzer" do
       }
       CONF
 
-    endpoints.map(&.url).should eq(["(?:#.*#|\\.(?:bak|conf|log)|~)$"])
+    endpoints.map(&.url).should eq(["(?:#.*#|.(?:bak|conf|log)|~)"])
   end
 
   it "skips internal named and templated locations" do
@@ -107,6 +126,118 @@ describe "Nginx Analyzer" do
     pairs.should eq([
       {"/bar", "b.example.com"},
       {"/foo", "a.example.com"},
+    ])
+  end
+
+  # The method endpoint was emitted with no modifier, so a regex location's
+  # anchors survived on it (`^/v1$` next to `/v1`) and it was tagged prefix.
+  it "gives a method block its regex location's path and path-type" do
+    endpoints = analyze_nginx <<-CONF
+      server {
+          location ~ ^/v1/items$ {
+              if ($request_method = PUT) { return 405; }
+          }
+      }
+      CONF
+
+    endpoints.map { |e| {e.url, e.method, tag_descriptions(e, "nginx-path-type").first} }.sort!.should eq([
+      {"/v1/items", "ANY", "regex"},
+      {"/v1/items", "PUT", "regex"},
+    ])
+  end
+
+  # The regex's `{1,2}` was counted as structure, so its `}` popped the
+  # location before its `{` on the next line was ever read.
+  it "keeps a regex location whose block opens on the next line" do
+    endpoints = analyze_nginx <<-'CONF'
+      server {
+          location ~ ^/v\d{1,2}/u$
+          {
+              if ($request_method = POST) { return 200; }
+          }
+          location /after { }
+      }
+      CONF
+
+    endpoints.map { |e| {e.url, e.method} }.sort!.should eq([
+      {"/after", "ANY"},
+      {"/v\\d{1,2}/u", "ANY"},
+      {"/v\\d{1,2}/u", "POST"},
+    ])
+  end
+
+  # Each `}` of a one-line block or of an unpushed `@named` location used to
+  # pop a frame it never pushed, closing /admin and then the server early.
+  it "keeps frames balanced across one-line blocks and named locations" do
+    endpoints = analyze_nginx <<-'CONF'
+      server {
+          listen 443 ssl;
+          server_name a.example.com;
+          location /admin {
+              if ($bad_ua) { return 403; }
+              return 200 '{"ok":true}';
+              if ($request_method = POST) {
+                  return 405;
+              }
+          }
+          location @fallback {
+              proxy_pass http://fallback;
+          }
+          location ~ ^/v\d{1,2}/items$ {
+              deny all;
+          }
+          location /api
+          {
+              proxy_pass http://api;
+          }
+      }
+      CONF
+
+    endpoints.map { |e| {e.url, e.method} }.sort!.should eq([
+      {"/admin", "ANY"},
+      {"/admin", "POST"},
+      {"/api", "ANY"},
+      {"/v\\d{1,2}/items", "ANY"},
+    ])
+    endpoints.each do |endpoint|
+      endpoint.protocol.should eq("https")
+      tag_descriptions(endpoint, "nginx-host").should eq(["a.example.com"])
+    end
+  end
+
+  it "strips surrounding quotes from regex and prefix locations" do
+    endpoints = analyze_nginx <<-CONF
+      server {
+          listen 80;
+          location ~ "^/v[0-9]{1,2}/.+\\.json$" { proxy_pass http://api; }
+          location ~ '^/v[0-9]{1,2}/items$'     { proxy_pass http://items; }
+          location ~ "^/api/v1/users$"          { proxy_pass http://users; }
+          location "/quoted/prefix"             { proxy_pass http://prefix; }
+          location = '/quoted/exact'            { return 200 "ok"; }
+      }
+      CONF
+
+    endpoints.map { |e| {e.url, e.kind, tag_descriptions(e, "nginx-path-type").first} }.sort!.should eq([
+      {"/api/v1/users", "", "regex"},
+      {"/quoted/exact", "", "exact"},
+      {"/quoted/prefix", "", "prefix"},
+      {"/v[0-9]{1,2}/.+.json", "regex", "regex"},
+      {"/v[0-9]{1,2}/items", "regex", "regex"},
+    ])
+  end
+
+  it "preserves unquoted path with method block inside quoted regex location" do
+    endpoints = analyze_nginx <<-CONF
+      server {
+          location ~ "^/v[0-9]{1,2}/.+\\.json$" {
+              if ($request_method = POST) { return 200; }
+          }
+      }
+      CONF
+
+    endpoints.map { |e| {e.url, e.method, e.kind} }.sort!.should eq([
+      {"/v[0-9]{1,2}/.+.json", "ANY", "regex"},
+      {"/v[0-9]{1,2}/.+.json", "POST", "regex"},
     ])
   end
 end

@@ -1,6 +1,7 @@
 require "../../../models/framework_tagger"
 require "../../../models/endpoint"
 
+@[Noir::TaggerFor(key: "spring_auth", name: "Spring Auth Tagger", desc: "Identifies Spring Security patterns (annotations, security config)", order: 20)]
 class SpringAuthTagger < FrameworkTagger
   ANNOTATION_PATTERNS = [
     /\@PreAuthorize\s*\(/,
@@ -8,11 +9,20 @@ class SpringAuthTagger < FrameworkTagger
     /\@RolesAllowed\s*\(/,
   ]
 
+  # The same authorization annotations, as the bare names they are matched by
+  # when they decorate the controller *class* instead of a single handler.
+  CLASS_ANNOTATION_NAMES = ["@PreAuthorize", "@Secured", "@RolesAllowed"]
+
   # Patterns for security config URL rules. `access { ... }` is a
   # protected rule too; `permitAll()` is intentionally tracked so a
   # more-specific public matcher can suppress a broader protected one.
-  MATCHERS_RULE    = /\.(antMatchers|requestMatchers|mvcMatchers)\s*\(([^)]+)\)\s*\.\s*(permitAll|authenticated|hasRole|hasAnyRole|hasAuthority|hasAnyAuthority|access)\s*(?:\(|\{)/
-  ANY_REQUEST_AUTH = /\.anyRequest\s*\(\)\s*\.\s*(authenticated|hasRole|hasAnyRole|hasAuthority|hasAnyAuthority|access)\s*(?:\(|\{)/
+  MATCHERS_RULE    = /\.(antMatchers|requestMatchers|mvcMatchers)\s*\(([^)]+)\)\s*\.\s*(permitAll|authenticated|fullyAuthenticated|hasRole|hasAnyRole|hasAuthority|hasAnyAuthority|access)\s*(?:\(|\{)/
+  ANY_REQUEST_AUTH = /\.anyRequest\s*\(\)\s*\.\s*(authenticated|fullyAuthenticated|hasRole|hasAnyRole|hasAuthority|hasAnyAuthority|access)\s*(?:\(|\{)/
+
+  # The Kotlin DSL Spring Security documents for Kotlin apps:
+  # `authorizeHttpRequests { authorize("/public/**", permitAll);
+  # authorize(anyRequest, authenticated) }`.
+  KOTLIN_AUTHORIZE_RULE = /\bauthorize\s*\(\s*(?:HttpMethod\.(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\s*,\s*)?(?:"([^"]+)"|(anyRequest))\s*,\s*(permitAll|authenticated|fullyAuthenticated|hasRole|hasAnyRole|hasAuthority|hasAnyAuthority|access)\b/
 
   # A chain is "scoped" only when restricted by a singular `securityMatcher(` /
   # `antMatcher(` call. The plural `antMatchers(...)` / `requestMatchers(...)`
@@ -21,9 +31,10 @@ class SpringAuthTagger < FrameworkTagger
   # drops its `anyRequest()` fallback. The `\s*\(` boundary rejects the plural.
   SCOPE_MATCHER_CALL = /\b(?:securityMatcher|antMatcher)\s*\(/
 
+  KOTLIN_FUN_DECLARATION = /(?:^|\s)fun\s/
+
   def initialize(options : Hash(String, YAML::Any))
     super
-    @name = "spring_auth"
     @security_rules = [] of NamedTuple(pattern: String, method: String?, description: String, protected_rule: Bool)
   end
 
@@ -34,13 +45,7 @@ class SpringAuthTagger < FrameworkTagger
   def perform(endpoints : Array(Endpoint)) : Array(Endpoint)
     # Phase 1: Pre-scan security config files
     pre_scan_security_configs
-
-    # Phase 2 & 3: Check each endpoint
-    endpoints.each do |endpoint|
-      check_endpoint(endpoint)
-    end
-
-    endpoints
+    super
   end
 
   private def pre_scan_security_configs
@@ -70,8 +75,11 @@ class SpringAuthTagger < FrameworkTagger
     lines = block.split("\n")
     unscoped_chain = !block.matches?(SCOPE_MATCHER_CALL)
 
+    # A lambda DSL often chains every rule on one line
+    # (`auth.requestMatchers("/p/**").permitAll().anyRequest().authenticated()`),
+    # so read every rule on the line, not just the first.
     lines.each do |line|
-      if match = line.match(MATCHERS_RULE)
+      line.scan(MATCHERS_RULE) do |match|
         matcher_method = request_matcher_method(match[2])
         auth_type = match[3]
         protected_rule = auth_type != "permitAll"
@@ -84,7 +92,18 @@ class SpringAuthTagger < FrameworkTagger
             end
           @security_rules << {pattern: url_pattern, method: matcher_method, description: description, protected_rule: protected_rule}
         end
-      elsif unscoped_chain && (match = line.match(ANY_REQUEST_AUTH))
+      end
+      line.scan(KOTLIN_AUTHORIZE_RULE) do |match|
+        auth_type = match[4]
+        protected_rule = auth_type != "permitAll"
+        if url_pattern = match[2]?
+          verb = protected_rule ? "Protected by Spring Security #{auth_type}" : "Public by Spring Security permitAll"
+          @security_rules << {pattern: url_pattern, method: match[1]?, description: "#{verb} via authorize(\"#{url_pattern}\")", protected_rule: protected_rule}
+        elsif unscoped_chain && protected_rule
+          @security_rules << {pattern: "/**", method: nil, description: "Protected by Spring Security #{auth_type} via authorize(anyRequest)", protected_rule: true}
+        end
+      end
+      if unscoped_chain && (match = line.match(ANY_REQUEST_AUTH))
         auth_type = match[1]
         @security_rules << {
           pattern:        "/**",
@@ -162,12 +181,20 @@ class SpringAuthTagger < FrameworkTagger
     value.starts_with?("/") ? value : "/#{value}"
   end
 
-  private def ant_pattern_regex(pattern : String) : Regex
-    escaped = Regex.escape(pattern)
-      .gsub("\\*\\*", ".*")
-      .gsub("\\*", "[^/]*")
+  # Every endpoint is matched against every recorded security rule, so this is
+  # called O(endpoints x rules) times over a small set of distinct patterns.
+  # Memoize (as `spring_security` already does) so the same PCRE2 pattern isn't
+  # recompiled thousands of times.
+  @ant_pattern_regexes = Hash(String, Regex).new
 
-    /^#{escaped}\/?$/
+  private def ant_pattern_regex(pattern : String) : Regex
+    @ant_pattern_regexes[pattern] ||= begin
+      escaped = Regex.escape(pattern)
+        .gsub("\\*\\*", ".*")
+        .gsub("\\*", "[^/]*")
+
+      /^#{escaped}\/?$/
+    end
   end
 
   private def pattern_specificity(pattern : String) : Int32
@@ -184,7 +211,7 @@ class SpringAuthTagger < FrameworkTagger
 
     # Walk backwards from endpoint line to find annotations
     # `line` is 1-indexed (from PathInfo), array is 0-indexed
-    lines = ctx.full_content.split("\n")
+    lines = ctx.lines
     endpoint_idx = line - 1
 
     idx = [endpoint_idx - 1, lines.size - 1].min
@@ -198,6 +225,9 @@ class SpringAuthTagger < FrameworkTagger
       break if current_line.starts_with?("public ") || current_line.starts_with?("private ") || current_line.starts_with?("protected ")
       break if current_line.starts_with?("class ") || current_line.starts_with?("}")
       break if current_line.ends_with?("}")
+      # The previous handler's declaration: a Kotlin `fun admin() = "admin"`
+      # or a bodiless interface method `String admin();`.
+      break if current_line.ends_with?(";") || current_line.matches?(KOTLIN_FUN_DECLARATION)
 
       ANNOTATION_PATTERNS.each do |pattern|
         if current_line.matches?(pattern)
@@ -207,6 +237,26 @@ class SpringAuthTagger < FrameworkTagger
       end
 
       idx -= 1
+    end
+
+    annotation_lines_below(lines, endpoint_idx, "@").each do |below|
+      ANNOTATION_PATTERNS.each do |pattern|
+        if below.matches?(pattern)
+          annotation_name = below.split("(").first.strip
+          return "Protected by Spring #{annotation_name}"
+        end
+      end
+    end
+
+    # A controller-level `@PreAuthorize`/`@Secured`/`@RolesAllowed` applies to
+    # every handler the class declares. The walk above cannot reach it — it
+    # stops at the `public`/`class` boundary by design, so a handler under an
+    # `@PreAuthorize("hasRole('ADMIN')")` controller was reported as
+    # unauthenticated. Check the class declaration separately.
+    CLASS_ANNOTATION_NAMES.each do |annotation_name|
+      if class_line = class_level_annotation(ctx.path, lines, annotation_name)
+        return "Protected by Spring #{class_line.split("(").first.strip} on the controller class"
+      end
     end
 
     nil

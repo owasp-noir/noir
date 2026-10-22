@@ -2,12 +2,9 @@ require "../../engines/php_engine"
 
 module Analyzer::Php
   class Hyperf < PhpEngine
-    private struct ClassRoutePrefix
-      getter path, body_start, body_end
+    analyzer_for "php_hyperf"
 
-      def initialize(@path : String, @body_start : Int32, @body_end : Int32)
-      end
-    end
+    private record ClassRoutePrefix, path : String, body_start : Int32, body_end : Int32
 
     HTTP_MAPPING_ATTRIBUTES = {
       "GetMapping"     => "GET",
@@ -22,12 +19,11 @@ module Analyzer::Php
     def analyze_file(path : String) : Array(Endpoint)
       endpoints = [] of Endpoint
       return endpoints unless path.ends_with?(".php")
-      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
+      include_callee = callees_needed?
 
-      File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
-        content = file.gets_to_end
-        next unless hyperf_relevant?(content)
-
+      content = read_file_content(path)
+      if hyperf_relevant?(content)
+        content = php_code(content)
         endpoints.concat(analyze_annotation_routes(content, path, include_callee))
         endpoints.concat(analyze_procedural_routes(content, "", path, include_callee))
       end
@@ -39,8 +35,11 @@ module Analyzer::Php
     # aren't part of a Hyperf project. Project-wide scans still feed unrelated
     # PHP through this analyzer.
     private def hyperf_relevant?(content : String) : Bool
+      # `content.includes?("Hyperf\\HttpServer")` used to be ORed in here
+      # too, but any string containing that substring necessarily contains
+      # "Hyperf\\" — the check was dead weight, always scanning the whole
+      # buffer a second time for a condition the first check already covers.
       content.includes?("Hyperf\\") ||
-        content.includes?("Hyperf\\HttpServer") ||
         !!content.match(/\bRouter::(?:get|post|put|patch|delete|options|head|addRoute|addGroup)\s*\(/i) ||
         !!content.match(/#\[\s*(?:AutoController|Controller|Get|Post|Put|Patch|Delete|Options|Head|RequestMapping)/)
     end
@@ -336,14 +335,6 @@ module Analyzer::Php
 
     # --- Callees + method body param extraction -------------------------------
 
-    private def attach_method_callees(endpoint : Endpoint, method_body : Tuple(String, Int32)?, path : String)
-      return unless method_body
-
-      body, start_line = method_body
-      callees = Noir::PhpCalleeExtractor.callees_for_body(body, path, start_line)
-      attach_php_callees(endpoint, callees)
-    end
-
     private def extract_method_params(method_body : String) : Array(Param)
       params = [] of Param
       seen = Set(String).new
@@ -370,19 +361,6 @@ module Analyzer::Php
       end
 
       params
-    end
-
-    private def dedup_params(params : Array(Param)) : Array(Param)
-      seen = Set(String).new
-      params.select do |param|
-        key = "#{param.param_type}\0#{param.name}"
-        if seen.includes?(key)
-          false
-        else
-          seen.add(key)
-          true
-        end
-      end
     end
   end
 end

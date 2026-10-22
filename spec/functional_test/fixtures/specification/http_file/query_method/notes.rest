@@ -1,0 +1,3 @@
+Query /users for the list of accounts.
+Query api.example.com/v1/search when you need full-text results.
+Query https://api.example.com/search to list products.

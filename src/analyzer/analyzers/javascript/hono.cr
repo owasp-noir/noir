@@ -1,116 +1,146 @@
 require "../../engines/javascript_engine"
 require "../../../miniparsers/js_callee_extractor"
 require "../../../miniparsers/js_route_extractor"
+require "../../../utils/top_level_split"
 require "./express/router_mount_scanner"
 
 module Analyzer::Javascript
   class Hono < JavascriptEngine
-    ON_ROUTE_CALL_HINTS   = [".on(", ".on ("]
+    analyzer_for "js_hono"
+
     ON_ROUTE_CALL_PATTERN = /\.(?:\s|\n|\r)*on(?:\s|\n|\r)*\(/
 
     def analyze
-      result = [] of Endpoint
-      static_dirs = [] of Hash(String, String)
-
       scan_for_router_mounts
+      # HonoX mounts a route module's `new Hono()` app at the module's file
+      # path (js_honox); read here, its routes would lose that prefix.
+      honox = js_package_owners(["\"honox\""])
 
-      parallel_file_scan do |path|
-        begin
-          content = read_file_content(path)
-          include_callee = callees_needed?
-          callees_by_route = include_callee ? Noir::JSCalleeExtractor.callees_for_routes(content, path) : {} of String => Array(Noir::JSCalleeExtractor::Entry)
-          parser_endpoints = Noir::JSRouteExtractor.extract_routes(path, content, @is_debug,
-            include_callees: include_callee, route_callees: callees_by_route)
-          parser_endpoints.each do |endpoint|
-            extract_path_params(endpoint)
-            result << endpoint
-          end
-
-          # Extract app.on() patterns not handled by JSRouteExtractor.
-          # The primary extractor already gates on `test_stub_only?` and
-          # minified bundles; this auxiliary pass has its own regex
-          # walk, so it has to repeat the same gates — without the stub
-          # gate, `app.on('GET', '/x10', ...)` from hono's own
-          # `*.test.ts` suites slips through, and without the minified
-          # gate a multi-MB bundle pays the full scan (issue #1903).
-          if on_route_candidate?(content) &&
-             !Noir::JSRouteExtractor.test_stub_only?(path, content) &&
-             !Noir::JSRouteExtractor.minified_content?(content)
-            extract_on_routes(path, content, result, callees_by_route, include_callee)
-          end
-
-          collect_static_paths(path, content, static_dirs, :hono)
-        rescue e
-          logger.debug "Parser failed for #{path}: #{e.message}, falling back to regex"
-          analyze_with_regex(path, result)
+      # Per-file results merged below in input order, not appended to a
+      # shared array from the workers: worker completion order varies run
+      # to run (see `Analyzer#ordered_scan_files`), and the static-dir
+      # merge is first-wins.
+      per_file = ordered_scan_files(get_files_by_extensions(DEFAULT_EXTENSIONS)) do |path|
+        next if base_relative_path(path).includes?("/app/routes/") && owned_by_js_package?(path, honox)
+        result = [] of Endpoint
+        static_dirs = [] of Hash(String, String)
+        # Blanked once here: the `app.on()` pass and `line_to_params` read
+        # the text with their own regexes. Lines and columns are kept.
+        content = Noir::JSRouteExtractor.strip_js_comments(read_file_content(path))
+        next if Noir::JSRouteExtractor.other_shared_extractor_framework?(content, :hono)
+        include_callee = callees_needed?
+        callees_by_route = include_callee ? Noir::JSCalleeExtractor.callees_for_routes(content, path) : {} of String => Array(Noir::JSCalleeExtractor::Entry)
+        parser_endpoints = Noir::JSRouteExtractor.extract_routes(path, content, @is_debug,
+          include_callees: include_callee, route_callees: callees_by_route)
+        # "METHOD url" this file already emitted, for the app.on() pass's
+        # de-duplication (a Set: scanning the whole result per route was
+        # quadratic).
+        recorded = Set(String).new
+        parser_endpoints.each do |endpoint|
+          extract_path_params(endpoint)
+          result << endpoint
+          recorded << "#{endpoint.method} #{endpoint.url}"
         end
+
+        # Extract app.on() patterns not handled by JSRouteExtractor.
+        # The primary extractor already gates on `test_stub_only?` and
+        # minified bundles; this auxiliary pass has its own regex
+        # walk, so it has to repeat the same gates — without the stub
+        # gate, `app.on('GET', '/x10', ...)` from hono's own
+        # `*.test.ts` suites slips through, and without the minified
+        # gate a multi-MB bundle pays the full scan (issue #1903).
+        if on_route_candidate?(content) &&
+           !Noir::JSRouteExtractor.test_stub_only?(path, content) &&
+           !Noir::JSRouteExtractor.minified_content?(content)
+          extract_on_routes(path, content, result, recorded, callees_by_route, include_callee)
+        end
+
+        collect_static_paths(path, content, static_dirs, :hono)
+        {result, static_dirs}
+      rescue e
+        logger.debug "Parser failed for #{path}: #{e.message}, falling back to regex"
+        partial = result || [] of Endpoint
+        analyze_with_regex(path, partial)
+        {partial, static_dirs || [] of Hash(String, String)}
       end
 
-      process_static_dirs(static_dirs, result)
+      result = per_file.flat_map(&.[0])
+      static_dirs = per_file.flat_map(&.[1]).uniq! { |dir| {dir["static_path"], dir["file_path"]} }
+
+      process_js_static_dirs(static_dirs, result)
 
       result
     end
 
-    private def process_static_dirs(static_dirs : Array(Hash(String, String)), result : Array(Endpoint))
-      process_js_static_dirs(static_dirs, result)
+    private def on_route_candidate?(content : String) : Bool
+      # `ON_ROUTE_CALL_PATTERN` already matches both ".on(" and ".on ("
+      # (its `(?:\s|\n|\r)*` groups allow zero-or-more whitespace around
+      # "on"), so the two former String#includes? checks ahead of it were
+      # a strictly redundant pre-filter — and per this project's own
+      # benchmarking, Crystal's naive includes? scan is slower than a
+      # PCRE2-JIT matches? call, so the "pre-gate" was a pure regression.
+      content.matches?(ON_ROUTE_CALL_PATTERN)
     end
 
-    private def on_route_candidate?(content : String) : Bool
-      ON_ROUTE_CALL_HINTS.any? { |hint| content.includes?(hint) } ||
-        content.matches?(ON_ROUTE_CALL_PATTERN)
-    end
+    # `<receiver>.on('GET', '/path', …)` (method in group 2) or
+    # `.on(['GET', 'POST'], '/path', …)` (group 3); the path is group 4. Any
+    # receiver (`books`, `api`, …) with a `/` or `*` path — an event name is
+    # neither — except the usual event-emitter names, whose `.on('get',
+    # '/room/1', cb)` has the same shape.
+    ON_ROUTE_RE            = /(?<![\w$])([A-Za-z_$][\w$]*)\s*\.\s*on\s*\(\s*(?:['"](\w+)['"]|\[([^\]\n]+)\])\s*,\s*['"]([\/*][^'"\n]*)['"]/
+    EVENT_EMITTER_RECEIVER = /\A(?:ee|io|ws|process|events?|\w*(?:[Ee]mitter|[Ss]ocket|[Ss]tream))\z/
 
     private def extract_on_routes(path : String,
                                   content : String,
                                   result : Array(Endpoint),
+                                  recorded : Set(String),
                                   callees_by_route : Hash(String, Array(Noir::JSCalleeExtractor::Entry)),
                                   include_callee : Bool)
-      http_methods = %w[get post put delete patch options head]
-      lines = content.lines
-      line_offset = 0
-      lines.each_with_index do |line, index|
+      bytes = content.to_slice
+      # Matches arrive in order, so the line is counted incrementally from
+      # the match's own byte offset. Summing `line.bytesize + 1` over
+      # `content.lines` (terminators stripped) drifted one byte per CRLF
+      # line and mixed bytes with the char offsets callees are found by.
+      line_byte = 0
+      index = 0
+      content.scan(ON_ROUTE_RE) do |match|
         methods = [] of String
-        url = ""
-        call_start = nil.as(Int32?)
-
-        # app.on('GET', '/path', ...) - single method string
-        if match = line.match(/\b(?:app|router|hono)\s*\.\s*on\s*\(\s*['"](\w+)['"]\s*,\s*['"]([^'"]+)['"]/)
-          method = match[1].downcase
-          if http_methods.includes?(method)
-            methods << method
-            url = match[2]
-            call_start = line_offset + (match.begin(0) || 0)
-          end
-          # app.on(['GET', 'POST'], '/path', ...) - array of methods
-        elsif match = line.match(/\b(?:app|router|hono)\s*\.\s*on\s*\(\s*\[([^\]]+)\]\s*,\s*['"]([^'"]+)['"]/)
-          methods_str = match[1]
-          url = match[2]
-          call_start = line_offset + (match.begin(0) || 0)
-          methods_str.scan(/['"](\w+)['"]/) do |m|
+        next if match[1].matches?(EVENT_EMITTER_RECEIVER)
+        if single = match[2]?
+          method = single.downcase
+          methods << method if HTTP_METHODS.includes?(method)
+        elsif list = match[3]?
+          list.scan(/['"](\w+)['"]/) do |m|
             method = m[1].downcase
-            methods << method if http_methods.includes?(method) && !methods.includes?(method)
+            methods << method if HTTP_METHODS.includes?(method) && !methods.includes?(method)
           end
         end
+        url = match[4]
+        next if methods.empty? || url.empty?
 
-        if methods.empty? || url.empty?
-          line_offset += line.bytesize + 1
-          next
-        end
+        match_byte = match.byte_begin(0)
+        index += bytes[line_byte, match_byte - line_byte].count('\n'.ord.to_u8)
+        line_byte = match_byte
 
-        # Pre-extract handler-body params once so each method-variant
-        # endpoint gets the same params without re-walking lines.
+        # Handler params, read once for every method variant from the
+        # call's own arguments. Walking the following lines up to a `})`
+        # line skipped a one-line handler and read the next route's instead.
         body_params = [] of Param
-        ((index + 1)...lines.size).each do |i|
-          handler_line = lines[i]
-          break if handler_line =~ /^\s*\}\s*\)\s*$/
-          line_to_params(handler_line).each do |param|
-            body_params << param
+        direct_callees = [] of Noir::JSCalleeExtractor::Entry
+        if (open = content.byte_index('(', match_byte)) &&
+           (close = Noir::JSLiteralScanner.find_matching_paren_at_byte(content, open))
+          args_src = content.byte_slice(open + 1, close - open - 1)
+          args_src.each_line do |handler_line|
+            body_params.concat(line_to_params(handler_line))
+          end
+          if include_callee
+            args_line = index + 1 + bytes[match_byte, open - match_byte].count('\n'.ord.to_u8)
+            direct_callees = on_route_callees(args_src, path, args_line)
           end
         end
-        direct_callees = include_callee && call_start ? on_route_callees(content, path, call_start) : [] of Noir::JSCalleeExtractor::Entry
 
         methods.each do |http_method|
-          next if result.any? { |e| e.url == url && e.method == http_method.upcase }
+          next unless recorded.add?("#{http_method.upcase} #{url}")
 
           endpoint = Endpoint.new(url, http_method.upcase)
           details = Details.new(PathInfo.new(path, index + 1))
@@ -123,120 +153,22 @@ module Analyzer::Javascript
 
           result << endpoint
         end
-        line_offset += line.bytesize + 1
       end
     end
 
-    private def on_route_callees(content : String, path : String, call_start : Int32) : Array(Noir::JSCalleeExtractor::Entry)
-      paren_open = content.index("(", call_start)
-      return [] of Noir::JSCalleeExtractor::Entry unless paren_open
-
-      paren_close = Noir::JSRouteExtractor.find_matching_paren(content, paren_open)
-      return [] of Noir::JSCalleeExtractor::Entry unless paren_close
-
-      args = split_top_level_args(content, paren_open + 1, paren_close)
+    # Callees of an `on()` handler (the call's third argument), read from the
+    # call's own argument text so the cost stays local to the call — the
+    # file-wide char-offset walk was quadratic in the route count. Lines are
+    # shifted from the slice back to the file; `args_line` is the line the
+    # arguments start on.
+    private def on_route_callees(args_src : String, path : String, args_line : Int32) : Array(Noir::JSCalleeExtractor::Entry)
+      args = split_top_level_args(args_src, 0, args_src.size)
       return [] of Noir::JSCalleeExtractor::Entry if args.size < 3
 
       handler_source, handler_start = args[2]
-      handler_callees(handler_source, handler_start, content, path)
-    end
-
-    private def handler_callees(handler_source : String, handler_start : Int32, content : String, path : String) : Array(Noir::JSCalleeExtractor::Entry)
-      if arrow_idx = handler_source.index("=>")
-        body_start = skip_whitespace(content, handler_start + arrow_idx + 2)
-        return [] of Noir::JSCalleeExtractor::Entry if body_start >= content.size
-
-        if content[body_start]? == '{'
-          return block_handler_callees(content, path, body_start)
-        end
-
-        body = content[body_start...(handler_start + handler_source.size)].strip
-        return [] of Noir::JSCalleeExtractor::Entry if body.empty?
-
-        return Noir::JSCalleeExtractor.callees_for_function_body(body, path, line_for_pos(content, body_start), language: javascript_source_language(path))
+      handler_callees(handler_source, handler_start, args_src, path).map do |name, file, line|
+        {name, file, line + args_line - 1}
       end
-
-      function_idx = handler_source.index(/\bfunction\b/)
-      return [] of Noir::JSCalleeExtractor::Entry unless function_idx
-
-      open_brace = content.index("{", handler_start + function_idx)
-      return [] of Noir::JSCalleeExtractor::Entry unless open_brace
-
-      block_handler_callees(content, path, open_brace)
-    end
-
-    private def block_handler_callees(content : String, path : String, open_brace : Int32) : Array(Noir::JSCalleeExtractor::Entry)
-      close_brace = Noir::JSRouteExtractor.find_matching_brace(content, open_brace)
-      return [] of Noir::JSCalleeExtractor::Entry unless close_brace
-
-      body = content[(open_brace + 1)...close_brace]
-      Noir::JSCalleeExtractor.callees_for_function_body(body, path, line_for_pos(content, open_brace), language: javascript_source_language(path))
-    end
-
-    private def split_top_level_args(content : String, start_pos : Int32, end_pos : Int32) : Array(Tuple(String, Int32))
-      args = [] of Tuple(String, Int32)
-      arg_start = start_pos
-      depth = 0
-      quote : Char? = nil
-      escaped = false
-      i = start_pos
-
-      while i < end_pos
-        char = content[i]
-
-        if quote
-          if escaped
-            escaped = false
-          elsif char == '\\'
-            escaped = true
-          elsif char == quote
-            quote = nil
-          end
-          i += 1
-          next
-        end
-
-        case char
-        when '\'', '"', '`'
-          quote = char
-        when '(', '[', '{'
-          depth += 1
-        when ')', ']', '}'
-          depth -= 1 if depth > 0
-        when ','
-          if depth == 0
-            args << normalized_arg(content, arg_start, i)
-            arg_start = i + 1
-          end
-        end
-
-        i += 1
-      end
-
-      args << normalized_arg(content, arg_start, end_pos)
-      args
-    end
-
-    private def normalized_arg(content : String, start_pos : Int32, end_pos : Int32) : Tuple(String, Int32)
-      start_idx = skip_whitespace(content, start_pos)
-      stop_idx = end_pos
-      while stop_idx > start_idx && content[stop_idx - 1].whitespace?
-        stop_idx -= 1
-      end
-
-      {content[start_idx...stop_idx], start_idx}
-    end
-
-    private def skip_whitespace(content : String, pos : Int32) : Int32
-      i = pos
-      while i < content.size && content[i].whitespace?
-        i += 1
-      end
-      i
-    end
-
-    private def line_for_pos(content : String, pos : Int32) : Int32
-      content[0...pos].count('\n') + 1
     end
 
     private def analyze_with_regex(path : String, result : Array(Endpoint))
@@ -265,7 +197,7 @@ module Analyzer::Javascript
         endpoint.url.scan(/:(\w+)/) do |m|
           if m.size > 0
             param = Param.new(m[1], "", "path")
-            endpoint.push_param(param) if !endpoint.params.any? { |p| p.name == m[1] && p.param_type == "path" }
+            endpoint.push_param(param)
           end
         end
       end
@@ -310,7 +242,7 @@ module Analyzer::Javascript
       [] of Param
     end
 
-    HTTP_METHODS = %w[get post put delete patch options head]
+    HTTP_METHODS = %w[get post put delete patch options head query]
     # Compiled once — an interpolated regex literal would otherwise be
     # rebuilt (full PCRE2 compile) for every method on every line.
     ROUTE_CALL_RES = HTTP_METHODS.map { |m| {m, /\b(?:app|router|hono)\s*\.\s*#{m}\s*\(\s*['"]([^'"]+)['"]/} }.to_h
@@ -328,7 +260,7 @@ module Analyzer::Javascript
       # app.all('/path', ...) - registers for all HTTP methods
       if line =~ /\b(?:app|router|hono)\s*\.\s*all\s*\(\s*['"]([^'"]+)['"]/
         path = $1
-        return http_methods.map { |m| Endpoint.new(path, m.upcase) }
+        return %w[get post put delete patch options head].map { |m| Endpoint.new(path, m.upcase) }
       end
 
       # app.on('GET', '/path', ...) - single method string
@@ -358,7 +290,7 @@ module Analyzer::Javascript
     end
 
     private def scan_for_router_mounts
-      scanner = RouterMountScanner.new(all_files, @base_paths, base_path, logger)
+      scanner = RouterMountScanner.new(all_files, @base_paths, base_path, logger, :hono)
       scanner.scan
     end
   end

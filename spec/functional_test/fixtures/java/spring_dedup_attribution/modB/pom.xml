@@ -1,0 +1,1 @@
+<project><modelVersion>4.0.0</modelVersion><groupId>com.example</groupId><artifactId>modB</artifactId><version>1.0</version><dependencies><dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-web</artifactId></dependency></dependencies></project>

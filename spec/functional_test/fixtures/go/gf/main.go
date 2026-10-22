@@ -48,6 +48,12 @@ func main() {
 		v1.PUT("/update", func(r *ghttp.Request) {
 		    r.Response.Write("update")
 		})
+
+		// Catch-all method registration (RouterGroup.ALL). Must surface
+		// as an endpoint — gf.cr folds the verb to GET.
+		group.ALL("/health", func(r *ghttp.Request) {
+			r.Response.Write("ok")
+		})
 	})
 
 	// Mixed case methods test

@@ -1,3 +1,4 @@
+require "../utils/url_path"
 require "../ext/tree_sitter/tree_sitter"
 require "../models/endpoint"
 require "./js_callee_extractor"
@@ -68,6 +69,12 @@ module Noir
     GROUP_METHODS       = Set{"group"}
     TRANSPARENT_METHODS = Set{"guard", "use"}
 
+    # Route and group paths are written as either a quoted string or a
+    # backtick template literal — tree-sitter-javascript emits
+    # `template_string` for the latter, and every path gate below accepts
+    # both. `decode_string` has always known how to unwrap them; only the
+    # call-site gates rejected backticks.
+
     struct Route
       getter verb : String
       getter path : String
@@ -94,11 +101,16 @@ module Noir
 
     # ---- traversal --------------------------------------------------
 
-    private def walk(node : LibTreeSitter::TSNode, source : String, prefix : String, routes : Array(Route), depth : Int32, include_callees : Bool)
+    # `chained` is set while descending a chain's own links, so the chain
+    # head's `new Elysia({ prefix })` is read once, at the outermost call.
+    private def walk(node : LibTreeSitter::TSNode, source : String, prefix : String, routes : Array(Route), depth : Int32, include_callees : Bool, chained : Bool = false)
       return if depth > Noir::TreeSitter::MAX_AST_DEPTH
 
       if Noir::TreeSitter.node_type(node) == "call_expression"
         method = chain_method_name(node, source)
+        if !chained && route_chain_method?(method) && (ctor_prefix = constructor_prefix(node, source))
+          prefix = Noir::URLPath.join_trimmed(prefix, ctor_prefix)
+        end
         case
         when HTTP_VERB_METHODS.has_key?(method)
           emit_route(node, source, HTTP_VERB_METHODS[method], prefix, routes, include_callees)
@@ -119,8 +131,13 @@ module Noir
         end
       end
 
+      # An unrecognised link (`.onError(...)`) keeps the chain going through
+      # its receiver, so the links below it don't re-apply the head's prefix;
+      # its arguments start fresh.
+      link = chained && {"call_expression", "member_expression"}.includes?(Noir::TreeSitter.node_type(node))
       Noir::TreeSitter.each_named_child(node) do |child|
-        walk(child, source, prefix, routes, depth + 1, include_callees)
+        walk(child, source, prefix, routes, depth + 1, include_callees, chained: link)
+        link = false
       end
     end
 
@@ -129,7 +146,7 @@ module Noir
     # shape matches; an empty string otherwise (e.g., `new Foo()`,
     # `Foo()` — bare identifier callees).
     private def chain_method_name(call : LibTreeSitter::TSNode, source : String) : String
-      callee = first_named_child(call)
+      callee = Noir::TreeSitter.first_named_child(call)
       return "" unless callee
       return "" unless Noir::TreeSitter.node_type(callee) == "member_expression"
       Noir::TreeSitter.each_named_child(callee) do |child|
@@ -142,12 +159,42 @@ module Noir
     # — `a.get(...).post(...)` outer has the inner `a.get(...)` as
     # the member_expression's first child.
     private def walk_chain_predecessor(call : LibTreeSitter::TSNode, source : String, prefix : String, routes : Array(Route), depth : Int32, include_callees : Bool)
-      callee = first_named_child(call)
+      callee = Noir::TreeSitter.first_named_child(call)
       return unless callee
       return unless Noir::TreeSitter.node_type(callee) == "member_expression"
-      inner = first_named_child(callee)
+      inner = Noir::TreeSitter.first_named_child(callee)
       return unless inner
-      walk(inner, source, prefix, routes, depth + 1, include_callees) if Noir::TreeSitter.node_type(inner) == "call_expression"
+      walk(inner, source, prefix, routes, depth + 1, include_callees, chained: true) if Noir::TreeSitter.node_type(inner) == "call_expression"
+    end
+
+    private def route_chain_method?(method : String) : Bool
+      HTTP_VERB_METHODS.has_key?(method) || method == "all" ||
+        GROUP_METHODS.includes?(method) || TRANSPARENT_METHODS.includes?(method)
+    end
+
+    # The `prefix` option of the `new Elysia({ prefix: '/v1' })` a chain
+    # starts from. Iterative, and run once per chain, so long chains stay
+    # linear.
+    private def constructor_prefix(call : LibTreeSitter::TSNode, source : String) : String?
+      node = call
+      while Noir::TreeSitter.node_type(node) == "call_expression"
+        callee = Noir::TreeSitter.first_named_child(node)
+        return unless callee && Noir::TreeSitter.node_type(callee) == "member_expression"
+        node = Noir::TreeSitter.first_named_child(callee) || return
+      end
+      return unless Noir::TreeSitter.node_type(node) == "new_expression"
+      ctor = Noir::TreeSitter.field(node, "constructor")
+      return unless ctor && Noir::TreeSitter.node_text(ctor, source) == "Elysia"
+      options = Noir::TreeSitter.field(node, "arguments").try { |args| Noir::TreeSitter.first_named_arg(args) }
+      return unless options && Noir::TreeSitter.node_type(options) == "object"
+      Noir::TreeSitter.each_named_child(options) do |pair|
+        next unless Noir::TreeSitter.node_type(pair) == "pair"
+        key = Noir::TreeSitter.field(pair, "key")
+        value = Noir::TreeSitter.field(pair, "value")
+        next unless key && value && decode_string(key, source) == "prefix"
+        return decode_string(value, source) if {"string", "template_string"}.includes?(Noir::TreeSitter.node_type(value))
+      end
+      nil
     end
 
     private def handle_group(call : LibTreeSitter::TSNode, source : String, prefix : String, routes : Array(Route), depth : Int32, include_callees : Bool)
@@ -158,7 +205,7 @@ module Noir
       group_body : LibTreeSitter::TSNode? = nil
       Noir::TreeSitter.each_named_child(args) do |arg|
         case Noir::TreeSitter.node_type(arg)
-        when "string"
+        when "string", "template_string"
           group_path ||= decode_string(arg, source)
         when "arrow_function"
           group_body ||= arrow_body(arg)
@@ -166,7 +213,7 @@ module Noir
       end
       return unless group_path && group_body
 
-      new_prefix = join_paths(prefix, group_path)
+      new_prefix = Noir::URLPath.join_trimmed(prefix, group_path)
       walk(group_body, source, new_prefix, routes, depth + 1, include_callees)
     end
 
@@ -174,9 +221,15 @@ module Noir
       args = arguments_node(call)
       return unless args
       Noir::TreeSitter.each_named_child(args) do |arg|
-        next unless Noir::TreeSitter.node_type(arg) == "arrow_function"
-        if body = arrow_body(arg)
-          walk(body, source, prefix, routes, depth + 1, include_callees)
+        case Noir::TreeSitter.node_type(arg)
+        when "arrow_function"
+          if body = arrow_body(arg)
+            walk(body, source, prefix, routes, depth + 1, include_callees)
+          end
+        when "call_expression"
+          # `.use(new Elysia({ prefix: '/admin' }).get(...))` — an inline
+          # plugin instance, whose own chain carries its prefix.
+          walk(arg, source, prefix, routes, depth + 1, include_callees)
         end
       end
     end
@@ -189,7 +242,7 @@ module Noir
       handler : LibTreeSitter::TSNode? = nil
       Noir::TreeSitter.each_named_child(args) do |arg|
         case Noir::TreeSitter.node_type(arg)
-        when "string"
+        when "string", "template_string"
           path ||= decode_string(arg, source)
         when "arrow_function"
           handler ||= arg
@@ -197,8 +250,8 @@ module Noir
       end
       return unless path
 
-      full_path = join_paths(prefix, path)
-      line = Noir::TreeSitter.node_start_row(call)
+      full_path = Noir::URLPath.join_trimmed(prefix, path)
+      line = Noir::TreeSitter.call_name_row(call)
 
       query_params = [] of String
       header_params = [] of String
@@ -296,7 +349,7 @@ module Noir
           block.call(:body, "")
         end
       when "subscript_expression"
-        target = first_named_child(node)
+        target = Noir::TreeSitter.first_named_child(node)
         if target
           base = navigation_chain(target, source)
           idx = base.index { |seg| seg == "query" || seg == "headers" || seg == "cookie" }
@@ -364,12 +417,6 @@ module Noir
       nil
     end
 
-    private def first_named_child(node : LibTreeSitter::TSNode) : LibTreeSitter::TSNode?
-      count = LibTreeSitter.ts_node_named_child_count(node)
-      return if count == 0
-      LibTreeSitter.ts_node_named_child(node, 0_u32)
-    end
-
     private def arguments_node(call : LibTreeSitter::TSNode) : LibTreeSitter::TSNode?
       Noir::TreeSitter.each_named_child(call) do |child|
         return child if Noir::TreeSitter.node_type(child) == "arguments"
@@ -396,8 +443,17 @@ module Noir
     private def decode_string(node : LibTreeSitter::TSNode, source : String) : String
       buf = String.build do |io|
         Noir::TreeSitter.each_named_child(node) do |child|
-          if Noir::TreeSitter.node_type(child) == "string_fragment"
+          case Noir::TreeSitter.node_type(child)
+          when "string_fragment"
             io << Noir::TreeSitter.node_text(child, source)
+          when "escape_sequence"
+            io << Noir::TreeSitter.unescape(Noir::TreeSitter.node_text(child, source))
+          when "template_substitution"
+            # `` `/users/${id}` `` — keep the hole as a `{id}` placeholder
+            # rather than dropping it, which would collapse the path to
+            # `/users/`. Same convention as the Python f-string and Kotlin
+            # template decoders.
+            io << Noir::TreeSitter.node_text(child, source).lchop('$')
           end
         end
       end
@@ -408,12 +464,6 @@ module Noir
       else
         raw
       end
-    end
-
-    private def join_paths(prefix : String, suffix : String) : String
-      return suffix if prefix.empty?
-      return prefix.rstrip('/') if suffix.empty?
-      "#{prefix.rstrip('/')}/#{suffix.lstrip('/')}"
     end
   end
 end

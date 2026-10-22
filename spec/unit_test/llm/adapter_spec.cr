@@ -29,10 +29,6 @@ describe LLM::Adapter do
     it "reports no native tool calling by default" do
       RecordingAdapter.new.supports_native_tool_calling?.should be_false
     end
-
-    it "reports no server-side context by default" do
-      RecordingAdapter.new.supports_context?.should be_false
-    end
   end
 
   describe "default close" do
@@ -54,7 +50,7 @@ describe LLM::Adapter do
   describe "default request_with_context" do
     it "skips the system slot when system is nil" do
       adapter = RecordingAdapter.new
-      adapter.request_with_context(nil, "u", "json", "ck").should eq("OK")
+      adapter.request_with_context(nil, "u", "json").should eq("OK")
       payload = adapter.calls.first[:payload]
       payload.should_not contain("\"role\":\"system\"")
       payload.should contain("\"role\":\"user\"")
@@ -112,39 +108,94 @@ describe LLM::OllamaAdapter do
       sys.should be_nil
     end
 
-    it "drops messages with roles other than system / user" do
+    it "keeps assistant turns in conversation order and drops other roles" do
+      # The agent loop records each action as an assistant turn; without
+      # it the model never sees what it already asked for.
       sys, usr = LLM::OllamaAdapter.flatten_messages([
         {"role" => "system", "content" => "S"},
-        {"role" => "assistant", "content" => "A"},
-        {"role" => "user", "content" => "U"},
+        {"role" => "user", "content" => "U1"},
+        {"role" => "assistant", "content" => %({"action":"list_directory"})},
         {"role" => "tool", "content" => "T"},
+        {"role" => "user", "content" => "Tool result (list_directory): a.js"},
       ])
       sys.should eq("S")
-      usr.should eq("U")
+      usr.should eq(%(U1\n\nASSISTANT:\n{"action":"list_directory"}\n\nTool result (list_directory): a.js))
     end
   end
 end
 
 describe LLM::AdapterFactory do
   describe ".for" do
-    it "returns an ACPAdapter for acp:* providers" do
+    it "returns an ACPClient for acp:* providers" do
       adapter = LLM::AdapterFactory.for("acp:codex", "")
-      adapter.should be_a(LLM::ACPAdapter)
+      adapter.should be_a(LLM::ACPClient)
     end
 
-    it "returns an OllamaAdapter when the provider mentions ollama" do
+    it "returns an OllamaAdapter for the ollama alias" do
       adapter = LLM::AdapterFactory.for("ollama", "llama3")
       adapter.should be_a(LLM::OllamaAdapter)
     end
 
-    it "returns an OllamaAdapter for an ollama:// URL form" do
-      adapter = LLM::AdapterFactory.for("http://example.com/ollama", "llama3")
+    it "returns an OllamaAdapter for a URL whose host is an ollama server" do
+      adapter = LLM::AdapterFactory.for("http://ollama.internal:11434", "llama3")
       adapter.should be_a(LLM::OllamaAdapter)
+    end
+
+    it "does not route an OpenAI-compatible gateway to Ollama because of its path" do
+      # The path belongs to whoever runs the gateway. Matching "ollama"
+      # anywhere in the provider string handed this URL Ollama's native API
+      # and its body shape, and posted them to
+      # `http://127.0.0.1:18085/ollama/v1/api/generate`; the 404 came back
+      # as an empty AI result rather than an error.
+      adapter = LLM::AdapterFactory.for("http://127.0.0.1:18085/ollama/v1", "gpt-4o")
+      adapter.should be_a(LLM::GeneralAdapter)
     end
 
     it "returns a GeneralAdapter for any non-ACP / non-ollama provider" do
       adapter = LLM::AdapterFactory.for("openai", "gpt-4o", "sk-fake")
       adapter.should be_a(LLM::GeneralAdapter)
+    end
+  end
+
+  describe ".ollama_native?" do
+    it "matches the exact alias" do
+      LLM::AdapterFactory.ollama_native?("ollama").should be_true
+      LLM::AdapterFactory.ollama_native?("  OLLAMA ").should be_true
+    end
+
+    it "matches on the host, not on the path" do
+      LLM::AdapterFactory.ollama_native?("http://ollama:11434").should be_true
+      LLM::AdapterFactory.ollama_native?("http://my-ollama.lan:11434").should be_true
+      LLM::AdapterFactory.ollama_native?("http://127.0.0.1:18085/ollama/v1").should be_false
+      LLM::AdapterFactory.ollama_native?("https://gateway.example/proxy/ollama").should be_false
+    end
+
+    it "leaves an explicit OpenAI-compatible path on an ollama host alone" do
+      LLM::AdapterFactory.ollama_native?("http://ollama:11434/v1/chat/completions").should be_false
+    end
+
+    it "does not treat a non-ollama provider as native" do
+      LLM::AdapterFactory.ollama_native?("openai").should be_false
+      LLM::AdapterFactory.ollama_native?("http://localhost:11434").should be_false
+      LLM::AdapterFactory.ollama_native?("not a url at all").should be_false
+    end
+  end
+
+  describe ".ollama_base_url" do
+    it "defaults the bare alias to the local server" do
+      LLM::AdapterFactory.ollama_base_url("ollama").should eq("http://localhost:11434")
+    end
+
+    it "drops the OpenAI-compatible /v1 mount the CLI help advertises" do
+      # `LLM::Ollama` appends `/api/generate`, so keeping `/v1` produced
+      # `http://ollama:11434/v1/api/generate` — a 404 on every request.
+      LLM::AdapterFactory.ollama_base_url("http://ollama:11434/v1").should eq("http://ollama:11434")
+      LLM::AdapterFactory.ollama_base_url("http://ollama:11434/v1/").should eq("http://ollama:11434")
+    end
+
+    it "keeps a plain server URL as-is" do
+      LLM::AdapterFactory.ollama_base_url("http://ollama:11434").should eq("http://ollama:11434")
+      LLM::AdapterFactory.ollama_base_url("http://ollama:11434/").should eq("http://ollama:11434")
     end
   end
 
@@ -159,8 +210,8 @@ describe LLM::AdapterFactory do
     end
 
     it "follows the default allowlist when no allowlist is supplied" do
-      # Default allowlist is whatever NativeToolCalling.default_allowlist
-      # produces — just sanity-check it consistently agrees with the
+      # Default allowlist is whatever NativeToolCalling::DEFAULT_ALLOWLIST
+      # holds — just sanity-check it consistently agrees with the
       # normalize path on a known provider.
       default_decision = LLM::AdapterFactory.native_tool_calling_enabled_for_provider?("openai")
       normalized_decision = LLM::NativeToolCalling.normalize_allowlist(nil).includes?(
@@ -177,15 +228,6 @@ describe LLM::GeneralAdapter do
       client = LLM::General.new("https://example.test", "gpt-4o", "sk-fake")
       LLM::GeneralAdapter.new(client, native_tool_calling_enabled: true).supports_native_tool_calling?.should be_true
       LLM::GeneralAdapter.new(client, native_tool_calling_enabled: false).supports_native_tool_calling?.should be_false
-    end
-  end
-end
-
-describe LLM::OllamaAdapter do
-  describe "#supports_context?" do
-    it "reports true (Ollama exposes KV context reuse)" do
-      client = LLM::Ollama.new("http://localhost:11434", "llama3")
-      LLM::OllamaAdapter.new(client).supports_context?.should be_true
     end
   end
 end

@@ -33,7 +33,7 @@ jobs:
 ~~~
 
 - `base_path`: Directory to analyze (`-b/--base-path`)
-- `endpoints`: JSON output for post-processing
+- `endpoints`: The JSON result, for later steps to process
 
 ## Inputs
 
@@ -47,9 +47,9 @@ jobs:
 | `exclude_techs` | Technologies to exclude (`--exclude-techs`) | No | `` |
 | `passive_scan` | Enable passive security scan (`-P/--passive-scan`) | No | `false` |
 | `passive_scan_severity` | Minimum severity for passive scan (`critical`, `high`, `medium`, `low`) | No | `high` |
-| `use_all_taggers` | Enable all taggers for comprehensive analysis (`-T/--use-all-taggers`) | No | `false` |
+| `use_all_taggers` | Enable all taggers (`-T/--use-all-taggers`) | No | `false` |
 | `use_taggers` | Enable specific taggers (`--use-taggers`) | No | `` |
-| `include_path` | Include source file paths in results (`--include-path`) | No | `false` |
+| `include_path` | Add source file paths to `plain` output; JSON always has them (`--include-path`) | No | `false` |
 | `verbose` | Verbose output (`--verbose`) | No | `false` |
 | `debug` | Debug output (`-d/--debug`) | No | `false` |
 | `concurrency` | Concurrency level (`--concurrency`) | No | `` |
@@ -64,18 +64,22 @@ jobs:
 | `export_es` | Index endpoints in Elasticsearch or OpenSearch (`--export-es`) | No | `` |
 | `export_webhook` | POST endpoint catalog as JSON to a webhook URL (`--export-webhook`) | No | `` |
 | `diff_path` | Old code version path for diff analysis (`--diff-path`) | No | `` |
+| `diff_ref` | Git revision to diff the checkout against, e.g. the pull request base; fetched if the checkout lacks it (`--diff-ref`) | No | `` |
+| `fail_on` | Fail the step (exit code `3`) when the diff has any of `added`, `removed`, `changed`, `auth-removed` (`--fail-on`) | No | `` |
 | `no_log` | Hide execution logs and show only results (`--no-log`) | No | `true` |
 
 **Notes:**
-- Pass boolean options as strings (`'true'`/`'false'`)
-- `output_file` writes to file and provides outputs
+- Pass boolean options as strings (`'true'`/`'false'`).
+- `output_file` is relative to the workspace. Set it when a later step needs the report file. The step outputs are filled either way.
+- `status_codes`, `exclude_codes`, `probe` and `probe_via` need `url`. Without it the scan stops with an error.
+- With `jsonl`, the outputs below fold the lines into the same single document `json` produces.
 
 ## Outputs
 
 | Name | Description |
 |---|---|
-| `endpoints` | JSON‑formatted endpoint analysis |
-| `passive_results` | JSON‑formatted passive scan findings (present when `passive_scan` is enabled) |
+| `endpoints` | The full Noir result document (`{"endpoints":[...],"passive_results":[...],"errors":[...]}`) when `format` is `json` or `jsonl`. Empty for other formats |
+| `passive_results` | A JSON array of passive-scan findings when `format` is `json` or `jsonl`. `[]` when passive scan is off, found nothing, or the format is anything else |
 
 Consuming outputs:
 
@@ -92,7 +96,7 @@ Consuming outputs:
 ### Advanced Scan
 
 ~~~yaml
-name: Comprehensive Security Analysis
+name: Noir Passive Scan
 on: [push, pull_request]
 
 jobs:
@@ -110,16 +114,15 @@ jobs:
           passive_scan: 'true'
           passive_scan_severity: 'medium'
           use_all_taggers: 'true'
-          include_path: 'true'
           verbose: 'true'
           output_file: 'noir-results.json'
 
       - name: Process Results
         run: |
-          echo "🔍 Endpoints discovered:"
+          echo "Endpoints discovered:"
           echo '${{ steps.noir.outputs.endpoints }}' | jq '.endpoints | length'
 
-          echo "🚨 Security issues found:"
+          echo "Passive scan findings:"
           echo '${{ steps.noir.outputs.passive_results }}' | jq '. | length'
 
       - name: Save detailed results
@@ -150,8 +153,43 @@ jobs:
         with:
           base_path: '${{ matrix.service }}'
           format: 'json'
-          include_path: 'true'
 ~~~
+
+### Attack Surface Review on Pull Requests
+
+Diff the pull request against its base branch, post the result as a comment, and fail the check when a route loses its authentication:
+
+~~~yaml
+name: Attack Surface Review
+on: pull_request
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  noir-diff:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Diff the attack surface
+        uses: owasp-noir/noir@main
+        with:
+          base_path: '.'
+          diff_ref: ${{ github.event.pull_request.base.sha }}
+          format: 'markdown-table'
+          output_file: 'noir-diff.md'
+          fail_on: 'auth-removed'
+
+      - name: Comment on the pull request
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh pr comment "${{ github.event.pull_request.number }}" --body-file noir-diff.md
+~~~
+
+`actions/checkout` fetches a single commit by default. If `diff_ref` isn't in the checkout, the action fetches that revision before scanning. The step fails with exit code `3` when the diff matches `fail_on`, and the report file is still written, so the comment step above runs with `if: always()`. For inline annotations instead of a comment, use `format: 'sarif'` and upload the file with `github/codeql-action/upload-sarif`.
 
 ### Framework-Specific Scans
 
@@ -182,10 +220,13 @@ jobs:
 
 ### Status Code Configuration
 
+Status codes come from live requests, so `url` must point at a running instance of the app:
+
 ~~~yaml
 - uses: owasp-noir/noir@main
   with:
     base_path: '.'
+    url: 'http://localhost:3000'
     status_codes: 'true'       # include HTTP status codes
     exclude_codes: '404,429'   # suppress noisy codes
 ~~~
@@ -202,34 +243,31 @@ jobs:
 
 ## Best Practices
 
-1. Enable passive scanning (`passive_scan: 'true'`) to surface security smells early.
-2. Tune noise with `passive_scan_severity` and `exclude_codes`.
-3. Include paths (`include_path: 'true'`) to speed up triage and code navigation.
-4. Pin frameworks with `techs` when auto‑detection isn’t enough; use `exclude_techs` to avoid irrelevant analyzers.
-5. Persist results with `actions/upload-artifact`
+1. Turn on passive scanning (`passive_scan: 'true'`) to catch security issues early.
+2. Cut noise with `passive_scan_severity` and `exclude_codes`.
+3. JSON output already records each endpoint's source file. For `plain` output, set `include_path: 'true'`.
+4. Add frameworks with `techs` when auto-detection misses them. Use `exclude_techs` to drop analyzers you don't need.
+5. Keep results with `actions/upload-artifact`.
 
 ## Troubleshooting
 
 **No endpoints found:**
-- Verify `base_path` points to source directory
-- Check repository contains supported frameworks
-- Specify `techs` explicitly
+- Check that `base_path` points to the source directory
+- Check that the repository uses a supported framework
+- Set `techs` explicitly
 
 **Output too large or slow:**
-- Use `format: 'jsonl'` for streaming
+- Write `format: 'jsonl'` to `output_file` (one endpoint per line)
 - Narrow `base_path` or use `techs`/`exclude_techs`
 
 **Hard to diagnose:**
-- Enable `debug: 'true'` and `verbose: 'true'`
-- Use `include_path: 'true'` for traceability
+- Set `debug: 'true'` or `verbose: 'true'` together with `no_log: 'false'`. `no_log` defaults to `true` and hides the logs
 
 **HTTP status noise:**
 - Disable with `status_codes: 'false'` or use `exclude_codes`
 
-
-
 ## Implementation Notes
 
-- Runs in Docker container for consistency
-- Inputs map directly to CLI flags
+- The action runs the `ghcr.io/owasp-noir/noir` Docker image. The image tag follows the ref you pin: `@v1.4.0` uses `1.4.0`, `@main` uses `main`, and a commit SHA uses `latest`. If the tag can't be pulled (for example, a branch with no published image), the action falls back to `latest` with a warning.
+- Each input maps to one CLI flag.
 - See supported technologies: `noir list techs`

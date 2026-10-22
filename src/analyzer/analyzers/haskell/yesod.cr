@@ -4,6 +4,8 @@ require "set"
 
 module Analyzer::Haskell
   class Yesod < Analyzer
+    analyzer_for "haskell_yesod"
+
     HTTP_METHODS = %w[GET POST PUT DELETE PATCH OPTIONS HEAD]
     alias HandlerBody = Noir::HaskellCalleeExtractor::FunctionBody
     # A handler name can occur in more than one file; keep all bodies and only
@@ -14,17 +16,19 @@ module Analyzer::Haskell
 
     def analyze
       processed_route_files = Set(String).new
-      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
+      include_callee = callees_needed?
       handler_bodies = include_callee ? build_handler_bodies : HandlerBodies.new
 
       all_files.each do |path|
-        next if File.directory?(path)
-
         if route_file?(path)
-          expanded_path = File.expand_path(path)
+          # The expanded path canonicalizes the dedup key only. Reporting it
+          # as well recorded an absolute machine path in `code_paths`, while
+          # the walker's own spelling (relative, when the scan base is) is
+          # what every other analyzer records.
+          expanded_path = Noir::PathScope.expand(path)
           next if processed_route_files.includes?(expanded_path)
 
-          process_route_content(expanded_path, read_file_content(path), include_callee, handler_bodies)
+          process_route_content(path, read_file_content(path), include_callee, handler_bodies)
           processed_route_files << expanded_path
           next
         end
@@ -33,7 +37,7 @@ module Analyzer::Haskell
 
         content = read_file_content(path)
         extract_inline_route_blocks(content).each do |block|
-          process_route_content(path, block, include_callee, handler_bodies)
+          process_route_content(path, block[:text], include_callee, handler_bodies, block[:line_offset])
         end
 
         extract_external_route_paths(content).each do |relative_path|
@@ -42,7 +46,9 @@ module Analyzer::Haskell
           next if File.directory?(referenced_path)
           next if processed_route_files.includes?(referenced_path)
 
-          process_route_content(referenced_path, read_file_content(referenced_path), include_callee, handler_bodies)
+          # Resolved against the referencing file's directory, so report it
+          # the way the walker saw it rather than as an absolute path.
+          process_route_content(walked_path(referenced_path), read_file_content(referenced_path), include_callee, handler_bodies)
           processed_route_files << referenced_path
         end
       end
@@ -64,7 +70,6 @@ module Analyzer::Haskell
       handlers = HandlerBodies.new
 
       all_files.each do |path|
-        next if File.directory?(path)
         next unless haskell_source?(path)
 
         Noir::HaskellCalleeExtractor.function_bodies(read_file_content(path), path).each do |body|
@@ -80,12 +85,23 @@ module Analyzer::Haskell
       {base_path, name}
     end
 
-    private def extract_inline_route_blocks(content : String) : Array(String)
-      blocks = [] of String
+    # The quasi-quoted route table plus the count of lines that precede it in
+    # the file. The block is processed as a standalone document, so its own
+    # line numbering starts at 1 — without the offset every route declared in
+    # an inline `[parseRoutes| ... |]` was reported at its position *within
+    # the quote*, which for the usual `Foundation.hs` layout pointed at the
+    # module header instead of the route.
+    private alias InlineRouteBlock = NamedTuple(text: String, line_offset: Int32)
+
+    private def extract_inline_route_blocks(content : String) : Array(InlineRouteBlock)
+      blocks = [] of InlineRouteBlock
 
       content.scan(/\[(?:parseRoutes|parseRoutesNoCheck)\|([\s\S]*?)\|\]/) do |match|
         next if match.size < 2
-        blocks << match[1]
+        body_start = match.begin(1) || 0
+        # `line_number_for_index` walks the byte buffer; `content[0...i]` would
+        # copy the whole prefix per block.
+        blocks << {text: match[1], line_offset: line_number_for_index(content, body_start) - 1}
       end
 
       blocks
@@ -105,7 +121,8 @@ module Analyzer::Haskell
     private def process_route_content(source_path : String,
                                       content : String,
                                       include_callee : Bool,
-                                      handler_bodies : HandlerBodies)
+                                      handler_bodies : HandlerBodies,
+                                      line_offset : Int32 = 0)
       scope_stack = [{indent: -1, raw_segments: [] of String}]
 
       logical_route_lines(content).each do |entry|
@@ -135,7 +152,7 @@ module Analyzer::Haskell
         methodless_route = methodless_route?(tokens)
 
         url, params = build_url_and_params(scope_stack.last[:raw_segments] + raw_segments)
-        details = Details.new(PathInfo.new(source_path, entry[:line]))
+        details = Details.new(PathInfo.new(source_path, entry[:line] + line_offset))
 
         methods.each do |method|
           endpoint_params = params.map { |param| Param.new(param.name, param.value, param.param_type) }

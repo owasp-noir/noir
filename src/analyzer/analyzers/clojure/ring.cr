@@ -1,13 +1,15 @@
 require "../../../models/analyzer"
 require "../../../utils/utils"
+require "../../../miniparsers/clojure_scanner"
 
 module Analyzer::Clojure
   # Generic Ring handler analyzer — extracts endpoints from Clojure code that
   # dispatches directly on `(:uri request)` / `(:request-method request)` via
   # `case`, `condp`, or `cond`, without going through Compojure's routing macros.
   class Ring < Analyzer
-    CLOJURE_EXTENSIONS = {".clj", ".cljc", ".cljs"}
-    METHOD_KEYWORDS    = {
+    analyzer_for "clojure_ring"
+
+    METHOD_KEYWORDS = {
       "get"     => "GET",
       "post"    => "POST",
       "put"     => "PUT",
@@ -18,9 +20,17 @@ module Analyzer::Clojure
       "any"     => "ANY",
     }
 
+    # Whole-file detection gates, evaluated once per candidate file.
+    # `String#matches?` (PCRE2 JIT) replaces the naive `String#includes?`
+    # char scans with a single pass; `Regex.union` auto-escapes each literal,
+    # so each is provably equivalent to the OR-of-substrings it replaces.
+    RING_EXCLUDE_RE = Regex.union("compojure.core", "defroutes")
+    RING_SIGNAL_RE  = Regex.union(":request-method", ":uri")
+
     def analyze
       all_files.each do |path|
-        next unless clojure_file?(path)
+        next unless Noir::ClojureScanner.clojure_file?(path)
+        next if Noir::ClojureScanner.test_path?(base_relative_path(path))
 
         content = read_file_content(path)
         next unless ring_source?(content)
@@ -34,16 +44,11 @@ module Analyzer::Clojure
       @result
     end
 
-    private def clojure_file?(path : String) : Bool
-      CLOJURE_EXTENSIONS.any? { |ext| path.ends_with?(ext) }
-    end
-
     private def ring_source?(content : String) : Bool
       # Compojure files are handled by the Compojure analyzer; skipping them
       # avoids double extraction when both analyzers run on the same project.
-      return false if content.includes?("compojure.core")
-      return false if content.includes?("defroutes")
-      content.includes?(":request-method") || content.includes?(":uri")
+      return false if content.matches?(RING_EXCLUDE_RE)
+      content.matches?(RING_SIGNAL_RE)
     end
 
     # `case`/`condp` clauses use literal vector keys like `[:get "/users"]`.
@@ -52,7 +57,7 @@ module Analyzer::Clojure
         method = METHOD_KEYWORDS[match[1].downcase]
         route = decode_string(match[2])
         next unless route.starts_with?('/')
-        # byte offset (line_number_for uses byte_slice; begin(0) is a char index)
+        # byte offset (Noir::ClojureScanner.line_number_for uses byte_slice; begin(0) is a char index)
         offset = match.byte_begin(0)
         emit_endpoint(content, path, offset, method, route, seen)
       end
@@ -68,19 +73,23 @@ module Analyzer::Clojure
       while i < end_index
         case source.byte_at(i).unsafe_chr
         when ';'
-          i = skip_comment(source, i, end_index)
+          i = Noir::ClojureScanner.skip_comment(source, i, end_index)
         when '"'
-          i = skip_string(source, i, end_index) + 1
+          i = Noir::ClojureScanner.skip_string(source, i, end_index) + 1
+        when '#'
+          i = Noir::ClojureScanner.skip_hash(source, i, end_index)
         when '('
-          form_end = find_matching_delimiter(source, i, '(', ')', end_index)
+          form_end = Noir::ClojureScanner.find_matching_delimiter(source, i, '(', ')', end_index)
           break if form_end <= i
 
-          symbol_start = skip_ws_and_comments(source, i + 1, form_end)
-          symbol, after_symbol = read_symbol(source, symbol_start, form_end)
+          symbol_start = Noir::ClojureScanner.skip_ws_and_comments(source, i + 1, form_end, commas: false)
+          symbol, after_symbol = Noir::ClojureScanner.read_symbol(source, symbol_start, form_end, commas: false)
 
-          base = base_symbol(symbol)
+          base = Noir::ClojureScanner.base_symbol(symbol)
 
           case base
+          when "comment"
+            walk_forms(source, after_symbol, form_end, path, seen, and_method) unless Noir::ClojureScanner.comment_form?(symbol)
           when "and"
             inner_method = scan_method_in(source, after_symbol, form_end)
             walk_forms(source, after_symbol, form_end, path, seen, inner_method)
@@ -114,7 +123,7 @@ module Analyzer::Clojure
     # `("/a" "/b")` for fall-through — becomes a GET endpoint.
     private def extract_uri_case_dispatch(source : String, base : String, start : Int32, limit : Int32,
                                           path : String, seen : Set(String))
-      i = skip_ws_and_comments(source, start, limit)
+      i = Noir::ClojureScanner.skip_ws_and_comments(source, start, limit, commas: false)
 
       if base == "condp"
         pred, after_pred = read_form_token(source, i, limit)
@@ -133,7 +142,7 @@ module Analyzer::Clojure
     # so a handler that happens to return a `/`-string is never a route.
     private def emit_string_clause_keys(source : String, start : Int32, limit : Int32,
                                         path : String, seen : Set(String))
-      i = skip_ws_and_comments(source, start, limit)
+      i = Noir::ClojureScanner.skip_ws_and_comments(source, start, limit, commas: false)
       is_key = true
       while i < limit
         token, after = read_form_token(source, i, limit)
@@ -141,11 +150,11 @@ module Analyzer::Clojure
 
         if is_key
           if token.starts_with?('"')
-            route = decode_literal(token)
+            route = Noir::ClojureScanner.decode_string_literal(token)
             emit_endpoint(source, path, i, "GET", route, seen) if route.starts_with?('/')
           elsif token.starts_with?('(')
             # Fall-through list of keys: `("/a" "/b")` — each string is a route.
-            emit_list_string_keys(source, i + 1, find_matching_delimiter(source, i, '(', ')', limit), path, seen)
+            emit_list_string_keys(source, i + 1, Noir::ClojureScanner.find_matching_delimiter(source, i, '(', ')', limit), path, seen)
           end
         end
 
@@ -155,12 +164,12 @@ module Analyzer::Clojure
     end
 
     private def emit_list_string_keys(source : String, start : Int32, limit : Int32, path : String, seen : Set(String))
-      i = skip_ws_and_comments(source, start, limit)
+      i = Noir::ClojureScanner.skip_ws_and_comments(source, start, limit, commas: false)
       while i < limit
         token, after = read_form_token(source, i, limit)
         break if token.empty?
         if token.starts_with?('"')
-          route = decode_literal(token)
+          route = Noir::ClojureScanner.decode_string_literal(token)
           emit_endpoint(source, path, i, "GET", route, seen) if route.starts_with?('/')
         end
         i = after
@@ -175,9 +184,9 @@ module Analyzer::Clojure
 
       first, second = tokens
       if first.starts_with?('"') && uri_accessor?(second)
-        decode_literal(first)
+        Noir::ClojureScanner.decode_string_literal(first)
       elsif uri_accessor?(first) && second.starts_with?('"')
-        decode_literal(second)
+        Noir::ClojureScanner.decode_string_literal(second)
       end
     end
 
@@ -186,20 +195,20 @@ module Analyzer::Clojure
     # method. Only direct children of the `and` are inspected so nested
     # forms don't poison the lookup.
     private def scan_method_in(source : String, start_index : Int32, end_index : Int32) : String?
-      i = skip_ws_and_comments(source, start_index, end_index)
+      i = Noir::ClojureScanner.skip_ws_and_comments(source, start_index, end_index, commas: false)
       while i < end_index
         case source.byte_at(i).unsafe_chr
         when ';'
-          i = skip_comment(source, i, end_index)
+          i = Noir::ClojureScanner.skip_comment(source, i, end_index)
         when '"'
-          i = skip_string(source, i, end_index) + 1
+          i = Noir::ClojureScanner.skip_string(source, i, end_index) + 1
         when '('
-          form_end = find_matching_delimiter(source, i, '(', ')', end_index)
+          form_end = Noir::ClojureScanner.find_matching_delimiter(source, i, '(', ')', end_index)
           break if form_end <= i
 
-          sym_start = skip_ws_and_comments(source, i + 1, form_end)
-          symbol, after_symbol = read_symbol(source, sym_start, form_end)
-          if base_symbol(symbol) == "="
+          sym_start = Noir::ClojureScanner.skip_ws_and_comments(source, i + 1, form_end, commas: false)
+          symbol, after_symbol = Noir::ClojureScanner.read_symbol(source, sym_start, form_end, commas: false)
+          if Noir::ClojureScanner.base_symbol(symbol) == "="
             if method = method_equality(source, after_symbol, form_end)
               return method
             end
@@ -209,7 +218,7 @@ module Analyzer::Clojure
         else
           i += 1
         end
-        i = skip_ws_and_comments(source, i, end_index)
+        i = Noir::ClojureScanner.skip_ws_and_comments(source, i, end_index, commas: false)
       end
       nil
     end
@@ -252,49 +261,43 @@ module Analyzer::Clojure
     # or a bare symbol/keyword. Returns the raw substring plus the index
     # immediately after it (whitespace skipped).
     private def read_form_token(source : String, start_index : Int32, end_index : Int32) : Tuple(String, Int32)
-      i = skip_ws_and_comments(source, start_index, end_index)
+      i = Noir::ClojureScanner.skip_ws_and_comments(source, start_index, end_index, commas: false)
       return {"", i} if i >= end_index
 
       char = source.byte_at(i).unsafe_chr
       case char
       when '('
-        form_end = find_matching_delimiter(source, i, '(', ')', end_index)
+        form_end = Noir::ClojureScanner.find_matching_delimiter(source, i, '(', ')', end_index)
         if form_end > i
           token = source.byte_slice(i, form_end - i + 1)
-          {token, skip_ws_and_comments(source, form_end + 1, end_index)}
+          {token, Noir::ClojureScanner.skip_ws_and_comments(source, form_end + 1, end_index, commas: false)}
         else
           {"", i}
         end
       when '['
-        form_end = find_matching_delimiter(source, i, '[', ']', end_index)
+        form_end = Noir::ClojureScanner.find_matching_delimiter(source, i, '[', ']', end_index)
         if form_end > i
           token = source.byte_slice(i, form_end - i + 1)
-          {token, skip_ws_and_comments(source, form_end + 1, end_index)}
+          {token, Noir::ClojureScanner.skip_ws_and_comments(source, form_end + 1, end_index, commas: false)}
         else
           {"", i}
         end
       when '{'
-        form_end = find_matching_delimiter(source, i, '{', '}', end_index)
+        form_end = Noir::ClojureScanner.find_matching_delimiter(source, i, '{', '}', end_index)
         if form_end > i
           token = source.byte_slice(i, form_end - i + 1)
-          {token, skip_ws_and_comments(source, form_end + 1, end_index)}
+          {token, Noir::ClojureScanner.skip_ws_and_comments(source, form_end + 1, end_index, commas: false)}
         else
           {"", i}
         end
       when '"'
-        str_end = skip_string(source, i, end_index)
+        str_end = Noir::ClojureScanner.skip_string(source, i, end_index)
         token = source.byte_slice(i, str_end - i + 1)
-        {token, skip_ws_and_comments(source, str_end + 1, end_index)}
+        {token, Noir::ClojureScanner.skip_ws_and_comments(source, str_end + 1, end_index, commas: false)}
       else
-        sym, after = read_symbol(source, i, end_index)
-        {sym, skip_ws_and_comments(source, after, end_index)}
+        sym, after = Noir::ClojureScanner.read_symbol(source, i, end_index, commas: false)
+        {sym, Noir::ClojureScanner.skip_ws_and_comments(source, after, end_index, commas: false)}
       end
-    end
-
-    private def decode_literal(raw : String) : String
-      return raw unless raw.starts_with?('"') && raw.ends_with?('"') && raw.size >= 2
-      inner = raw[1...raw.size - 1]
-      inner.gsub(/\\(.)/, "\\1")
     end
 
     private def decode_string(raw : String) : String
@@ -307,110 +310,14 @@ module Analyzer::Clojure
       return if seen.includes?(key)
       seen << key
 
-      line = line_number_for(content, offset)
+      line = Noir::ClojureScanner.line_number_for(content, offset)
       endpoint = Endpoint.new(route, method, Details.new(PathInfo.new(path, line)))
 
-      extract_path_param_names(route).each do |name|
+      Noir::ClojureScanner.extract_path_param_names(route).each do |name|
         endpoint.push_param(Param.new(name, "", "path"))
       end
 
       @result << endpoint
-    end
-
-    private def extract_path_param_names(route : String) : Array(String)
-      names = [] of String
-      route.scan(/:([A-Za-z_][\w\-]*)/) do |match|
-        names << match[1]
-      end
-      names
-    end
-
-    private def base_symbol(symbol : String) : String
-      parts = symbol.split('/')
-      parts.last? || symbol
-    end
-
-    private def read_symbol(source : String, index : Int32, limit : Int32) : Tuple(String, Int32)
-      i = index
-      while i < limit
-        char = source.byte_at(i).unsafe_chr
-        break if whitespace?(char) || {'(', ')', '[', ']', '{', '}', '"', ';'}.includes?(char)
-        i += 1
-      end
-      {source.byte_slice(index, i - index), i}
-    end
-
-    private def skip_ws_and_comments(source : String, index : Int32, limit : Int32) : Int32
-      i = index
-      while i < limit
-        char = source.byte_at(i).unsafe_chr
-        if whitespace?(char)
-          i += 1
-        elsif char == ';'
-          i = skip_comment(source, i, limit)
-        else
-          break
-        end
-      end
-      i
-    end
-
-    private def skip_comment(source : String, index : Int32, limit : Int32) : Int32
-      i = index
-      while i < limit && source.byte_at(i).unsafe_chr != '\n'
-        i += 1
-      end
-      i
-    end
-
-    private def skip_string(source : String, index : Int32, limit : Int32) : Int32
-      i = index + 1
-      escaping = false
-
-      while i < limit
-        char = source.byte_at(i).unsafe_chr
-        if escaping
-          escaping = false
-        elsif char == '\\'
-          escaping = true
-        elsif char == '"'
-          return i
-        end
-        i += 1
-      end
-
-      limit - 1
-    end
-
-    private def find_matching_delimiter(source : String, index : Int32, open_char : Char, close_char : Char, limit : Int32) : Int32
-      depth = 0
-      i = index
-
-      while i < limit
-        char = source.byte_at(i).unsafe_chr
-        case char
-        when ';'
-          i = skip_comment(source, i, limit)
-        when '"'
-          i = skip_string(source, i, limit)
-        when open_char
-          depth += 1
-        when close_char
-          depth -= 1
-          return i if depth == 0
-        end
-        i += 1
-      end
-
-      index
-    end
-
-    private def line_number_for(source : String, index : Int32) : Int32
-      source.byte_slice(0, index).count('\n') + 1
-    end
-
-    private def whitespace?(char : Char) : Bool
-      char.whitespace?
     end
   end
 end

@@ -1,7 +1,10 @@
 require "../../engines/python_engine"
+require "../../../utils/top_level_split"
 
 module Analyzer::Python
   class Starlette < PythonEngine
+    analyzer_for "python_starlette"
+
     # Route('/path', handler, methods=[...]) — captures path, and the tail
     # after the path literal so we can inspect methods= and the handler
     # reference. The tail stops at the closing paren on the same line to
@@ -10,8 +13,19 @@ module Analyzer::Python
     ROUTE_REGEX = /\b(WebSocketRoute|Route)\s*\(\s*[rf]?['"]([^'"]*)['"]([^)]*)/
     # Mount('/prefix', routes=[...]) — only the prefix literal is needed;
     # the routes list is scanned via the ongoing line loop while the mount
-    # is on the paren stack.
-    MOUNT_REGEX = /Mount\s*\(\s*[rf]?['"]([^'"]*)['"]/
+    # is on the paren stack. A Mount whose second argument is an app —
+    # `app=sub`, a positional `sub` (both wired through MOUNT_APP_RE) or a
+    # positional call such as `StaticFiles(...)` — holds no routes of its
+    # own, so it must not prefix routes that merely share its line
+    # (`routes=[Route("/h", h), Mount("/v2", app=sub)]`).
+    MOUNT_REGEX = /Mount\s*\(\s*[rf]?['"]([^'"]*)['"](?!\s*,\s*(?:app\s*=|[A-Za-z_][\w.]*\s*[,)(]))/
+    # `Mount('/p', app=sub)` or `Mount('/p', sub)`: the prefix and the
+    # mounted app's name. A call (`app=StaticFiles(...)`) or a keyword in
+    # the second slot (`routes=[...]`) is not an app name.
+    MOUNT_APP_RE = /Mount\s*\(\s*[rf]?['"]([^'"]*)['"](?:[^)]*\bapp\s*=\s*|\s*,\s*)([a-zA-Z_][a-zA-Z0-9_]*)\b(?!\s*[(.=])/m
+    # `X = Starlette(` / `X = Router(` whose `routes=[...]` list is inline.
+    INLINE_APP_RE        = /^\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*(?:Starlette|Router)\s*\(/
+    INLINE_ROUTES_SUFFIX = ".routes"
     # Path param in a route pattern: {name} or {name:type}. Starlette uses
     # the :type suffix as a converter hint (int, str, float, uuid, path);
     # it is stripped before the param is exposed as a path param.
@@ -39,7 +53,6 @@ module Analyzer::Python
     @await_body_regex_cache = Hash(::String, AwaitBodyRegexes).new
     @attr_regex_cache = Hash(Tuple(::String, ::String), Tuple(Regex, Regex)).new
     @body_var_regex_cache = Hash(::String, Tuple(Regex, Regex)).new
-    @keyword_expr_regex_cache = Hash(::String, Regex).new
 
     private def await_body_regexes(request_name : ::String) : AwaitBodyRegexes
       @await_body_regex_cache[request_name] ||= begin
@@ -54,18 +67,11 @@ module Analyzer::Python
     end
 
     def analyze
-      python_files = get_files_by_extension(".py")
-      base_paths.each do |current_base_path|
-        python_files.each do |path|
-          next unless path_under_root?(path, current_base_path)
-          next if path.includes?("/site-packages/")
-          next if python_test_path?(path)
+      parallel_python_sources do |path, current_base_path|
+        source = read_file_content(path)
+        next unless source.includes?("starlette")
 
-          source = read_file_content(path)
-          next unless source.includes?("starlette")
-
-          analyze_file(path, source, current_base_path)
-        end
+        analyze_file(path, source, current_base_path)
       end
 
       Fiber.yield
@@ -82,8 +88,9 @@ module Analyzer::Python
       class_handler_cache = {} of ::String => Hash(::String, Tuple(Array(Param), Array(Callee)))
       websocket_class_handler_cache = {} of ::String => Tuple(Array(Param), Array(Callee))
       app_prefixes = build_app_prefixes(lines)
-      mounted_route_list_prefixes = build_mounted_route_list_prefixes(lines, app_prefixes)
-      mounted_route_list_ranges = build_mounted_route_list_ranges(lines, mounted_route_list_prefixes)
+      inline_route_lists = build_inline_route_list_ranges(lines)
+      mounted_route_list_prefixes = build_mounted_route_list_prefixes(lines, app_prefixes, inline_route_lists)
+      mounted_route_list_ranges = build_mounted_route_list_ranges(lines, mounted_route_list_prefixes, inline_route_lists)
       # Stack of active Mount prefixes. Each entry stores the paren depth
       # at which the Mount was opened; when the running depth drops below
       # that value the mount has closed and its prefix must be popped.
@@ -114,7 +121,7 @@ module Analyzer::Python
             receiver = normalize_receiver(programmatic_match[1])
             websocket_route = !(programmatic_match[2]?).to_s.empty?
             args = split_python_arguments(programmatic_match[3])
-            route_path = extract_python_keyword_string(args, "path") || args[0]?.try { |arg| extract_python_string(arg) }
+            route_path = extract_python_keyword_string(args, "path") || args[0]?.try { |arg| Helper.extract_python_string(arg) }
             next unless route_path
 
             handler_expr = extract_python_keyword_expression(args, "endpoint") || args[1]?.try(&.strip)
@@ -335,7 +342,7 @@ module Analyzer::Python
     private def parse_staticfiles_mount_path(line : ::String) : ::String?
       return unless line.includes?("Mount") && line.includes?("StaticFiles")
 
-      if match = line.match(/Mount\s*\(\s*[rf]?['"]([^'"]*)['"]/m)
+      if match = line.match(/Mount\s*\(\s*[rf]?['"]([^'"]*)['"][^)]*?\bStaticFiles\b/m)
         return match[1]
       end
 
@@ -350,12 +357,14 @@ module Analyzer::Python
     end
 
     private def build_mounted_route_list_prefixes(lines : Array(::String),
-                                                  app_prefixes : Hash(::String, Array(::String))) : Hash(::String, Array(::String))
+                                                  app_prefixes : Hash(::String, Array(::String)),
+                                                  inline_route_lists : Hash(::String, Tuple(Int32, Int32))) : Hash(::String, Array(::String))
       prefixes = Hash(::String, Array(::String)).new do |hash, key|
         hash[key] = [] of ::String
       end
       app_route_lists = build_app_route_lists(lines)
-      route_list_ranges = build_route_list_ranges(lines)
+      inline_route_lists.each_key { |list| app_route_lists[list.rchop(INLINE_ROUTES_SUFFIX)] << list }
+      route_list_ranges = build_route_list_ranges(lines).merge(inline_route_lists)
       mount_edges = [] of Tuple(::String?, ::String, ::String)
 
       app_route_lists.each do |app_name, route_lists|
@@ -368,7 +377,7 @@ module Analyzer::Python
       end
 
       lines.each_with_index do |line, line_index|
-        next unless line.includes?("Mount") && (line.includes?("routes") || line.includes?("app"))
+        next unless line.includes?("Mount")
 
         effective_line = if line.includes?("Mount") && python_paren_delta(line) > 0
                            join_until_python_call_closes(lines, line_index, line)
@@ -382,7 +391,7 @@ module Analyzer::Python
           mount_edges << {parent_route_list, match[2], match[1]}
         end
 
-        effective_line.scan(/Mount\s*\(\s*[rf]?['"]([^'"]*)['"][^)]*\bapp\s*=\s*([a-zA-Z_][a-zA-Z0-9_]*)/m) do |match|
+        effective_line.scan(MOUNT_APP_RE) do |match|
           next if match.size < 3
           mount_prefix = match[1]
           app_name = match[2]
@@ -395,29 +404,19 @@ module Analyzer::Python
         end
       end
 
+      nested_edges = [] of Tuple(::String, ::String, ::String)
       mount_edges.each do |parent_route_list, route_list, mount_prefix|
-        next if parent_route_list
-        add_route_list_prefix(prefixes, route_list, mount_prefix)
-      end
-
-      changed = true
-      while changed
-        changed = false
-        mount_edges.each do |parent_route_list, route_list, mount_prefix|
-          next unless parent_route_list
-
-          parent_prefixes = prefixes[parent_route_list]?
-          next unless parent_prefixes
-
-          parent_prefixes.each do |parent_prefix|
-            composed_prefix = normalize_route_prefix(parent_prefix, mount_prefix)
-            next if prefixes[route_list].includes?(composed_prefix)
-
-            prefixes[route_list] << composed_prefix
-            changed = true
-          end
+        if parent_route_list
+          nested_edges << {parent_route_list, mount_prefix, route_list}
+        else
+          add_route_list_prefix(prefixes, route_list, mount_prefix)
         end
       end
+
+      # A list mounted into itself (`routes = [Mount('/v1', routes=routes)]`
+      # rebinding the name) or an `a -> b -> a` cycle is walked once, not
+      # composed forever.
+      propagate_mount_prefixes(prefixes, nested_edges) { |parent_prefix, mount_prefix| normalize_route_prefix(parent_prefix, mount_prefix) }
 
       prefixes
     end
@@ -453,7 +452,7 @@ module Analyzer::Python
         bracket_depth = 0
         index = line_index
         while index < lines.size
-          bracket_depth += lines[index].count('[') - lines[index].count(']')
+          bracket_depth += python_bracket_delta(strip_python_comment(lines[index]))
           end_line = index
           break if bracket_depth <= 0
           index += 1
@@ -476,7 +475,7 @@ module Analyzer::Python
           prefixes[app_match[1]] << "" unless prefixes[app_match[1]].includes?("")
         end
 
-        next unless line.includes?("Mount") && line.includes?("app")
+        next unless line.includes?("Mount")
 
         effective_line = if line.includes?("Mount") && python_paren_delta(line) > 0
                            join_until_python_call_closes(lines, line_index, line)
@@ -484,7 +483,7 @@ module Analyzer::Python
                            line
                          end
 
-        effective_line.scan(/Mount\s*\(\s*[rf]?['"]([^'"]*)['"][^)]*\bapp\s*=\s*([a-zA-Z_][a-zA-Z0-9_]*)/m) do |match|
+        effective_line.scan(MOUNT_APP_RE) do |match|
           next if match.size < 3
           mount_prefix = match[1]
           app_name = match[2]
@@ -529,8 +528,37 @@ module Analyzer::Python
       app_route_lists
     end
 
+    # `X = Starlette(routes=[...])` / `X = Router(routes=[...])`: the inline
+    # list gets the synthetic name `X.routes` (never a Python identifier,
+    # so it cannot collide with a named list) and the constructor call's
+    # line span, so `Mount('/v2', app=X)` prefixes it like a named list.
+    private def build_inline_route_list_ranges(lines : Array(::String)) : Hash(::String, Tuple(Int32, Int32))
+      ranges = Hash(::String, Tuple(Int32, Int32)).new
+
+      lines.each_with_index do |line, line_index|
+        next unless line.includes?("Starlette") || line.includes?("Router")
+        next unless app_match = line.match(INLINE_APP_RE)
+
+        end_line = line_index
+        depth = python_paren_delta(line)
+        # The next `X = Starlette(` statement ends an unclosed call, so a
+        # run of them is walked once rather than each to the end of file.
+        while depth > 0 && end_line + 1 < lines.size && !lines[end_line + 1].matches?(INLINE_APP_RE)
+          end_line += 1
+          depth += python_paren_delta(lines[end_line])
+        end
+        call = end_line == line_index ? line : lines[line_index..end_line].join(' ')
+        next unless call.matches?(/\broutes\s*=\s*\[/)
+
+        ranges["#{app_match[1]}#{INLINE_ROUTES_SUFFIX}"] = {line_index, end_line}
+      end
+
+      ranges
+    end
+
     private def build_mounted_route_list_ranges(lines : Array(::String),
-                                                mounted_route_list_prefixes : Hash(::String, Array(::String))) : Array(Tuple(Int32, Int32, Array(::String)))
+                                                mounted_route_list_prefixes : Hash(::String, Array(::String)),
+                                                inline_route_lists : Hash(::String, Tuple(Int32, Int32))) : Array(Tuple(Int32, Int32, Array(::String)))
       ranges = [] of Tuple(Int32, Int32, Array(::String))
       return ranges if mounted_route_list_prefixes.empty?
 
@@ -546,13 +574,19 @@ module Analyzer::Python
         bracket_depth = 0
         index = line_index
         while index < lines.size
-          bracket_depth += lines[index].count('[') - lines[index].count(']')
+          bracket_depth += python_bracket_delta(strip_python_comment(lines[index]))
           end_line = index
           break if bracket_depth <= 0
           index += 1
         end
 
         ranges << {line_index, end_line, prefixes}
+      end
+
+      inline_route_lists.each do |route_list_name, range|
+        if prefixes = mounted_route_list_prefixes[route_list_name]?
+          ranges << {range[0], range[1], prefixes}
+        end
       end
 
       ranges
@@ -607,100 +641,11 @@ module Analyzer::Python
       methods.uniq
     end
 
-    # Memoized per keyword — the keyword set is tiny (`path`, `endpoint`,
-    # `methods`) but this runs per argument of every programmatic route.
-    private def keyword_expression_regex(keyword : ::String) : Regex
-      @keyword_expr_regex_cache[keyword] ||= /^\s*#{Regex.escape(keyword)}\s*=\s*(.+)$/m
-    end
-
-    private def extract_python_keyword_expression(args : Array(::String), keyword : ::String) : ::String?
-      keyword_re = keyword_expression_regex(keyword)
-      args.each do |arg|
-        keyword_match = arg.match(keyword_re)
-        return keyword_match[1].strip if keyword_match
-      end
-
-      nil
-    end
-
-    private def extract_python_keyword_string(args : Array(::String), keyword : ::String) : ::String?
-      if expression = extract_python_keyword_expression(args, keyword)
-        return extract_python_string(expression)
-      end
-
-      nil
-    end
-
-    private def extract_python_string(expression : ::String) : ::String?
-      string_match = expression.strip.match(/^[rf]?['"]([^'"]*)['"]/)
-      string_match ? string_match[1] : nil
-    end
-
     private def clean_reference(expression : ::String) : ::String
       reference = expression.strip
       reference = reference.split("#", 2)[0].strip
       reference = reference.split(",", 2)[0].strip
       reference.matches?(/^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*$/) ? reference : ""
-    end
-
-    private def split_python_arguments(args : ::String) : Array(::String)
-      parts = [] of ::String
-      current = String::Builder.new
-      paren_depth = 0
-      bracket_depth = 0
-      brace_depth = 0
-      in_quote : Char? = nil
-      escaped = false
-
-      args.each_char do |ch|
-        if in_quote
-          current << ch
-          if escaped
-            escaped = false
-          elsif ch == '\\'
-            escaped = true
-          elsif ch == in_quote
-            in_quote = nil
-          end
-          next
-        end
-
-        case ch
-        when '\'', '"'
-          in_quote = ch
-          current << ch
-        when '('
-          paren_depth += 1
-          current << ch
-        when ')'
-          paren_depth -= 1 if paren_depth > 0
-          current << ch
-        when '['
-          bracket_depth += 1
-          current << ch
-        when ']'
-          bracket_depth -= 1 if bracket_depth > 0
-          current << ch
-        when '{'
-          brace_depth += 1
-          current << ch
-        when '}'
-          brace_depth -= 1 if brace_depth > 0
-          current << ch
-        when ','
-          if paren_depth == 0 && bracket_depth == 0 && brace_depth == 0
-            parts << current.to_s
-            current = String::Builder.new
-          else
-            current << ch
-          end
-        else
-          current << ch
-        end
-      end
-
-      parts << current.to_s
-      parts
     end
 
     private def normalize_receiver(receiver : ::String) : ::String
@@ -762,7 +707,7 @@ module Analyzer::Python
             codeblock = parse_code_block(lines[i..])
             if codeblock
               params = [] of Param
-              codeblock.split("\n").each do |cl|
+              fold_python_continuations(codeblock.split("\n")).each do |cl|
                 if request_name && request_body_res
                   collect_request_attr_params(cl, request_name, "path_params", "path", params)
                   collect_request_attr_params(cl, request_name, "query_params", "query", params)
@@ -879,7 +824,7 @@ module Analyzer::Python
       end
 
       request_body_res = await_body_regexes(request_name)
-      codeblock.split("\n").each do |cl|
+      fold_python_continuations(codeblock.split("\n")).each do |cl|
         collect_websocket_params(cl, request_name, params)
 
         if cl.matches?(request_body_res.json_await)
@@ -937,7 +882,7 @@ module Analyzer::Python
     end
 
     private def collect_websocket_params(source : ::String, request_name : ::String, params : Array(Param))
-      source.each_line do |line|
+      fold_python_continuations(source.lines).each do |line|
         collect_request_attr_params(line, request_name, "path_params", "path", params)
         collect_request_attr_params(line, request_name, "query_params", "query", params)
         collect_request_attr_params(line, request_name, "headers", "header", params)
@@ -948,8 +893,11 @@ module Analyzer::Python
     private def request_attr_regexes(request_name : ::String, attr : ::String) : Tuple(Regex, Regex)
       @attr_regex_cache[{request_name, attr}] ||= begin
         rp = Regex.escape(request_name)
+        # `.get(` and `.getlist(`: Starlette's QueryParams / Headers are
+        # multidicts exposing `getlist("key")` for repeated keys, reading
+        # the same first-arg key as `get`.
         {/#{rp}\.#{attr}\[\s*[rf]?['"]([^'"]+)['"]\s*\]/,
-         /#{rp}\.#{attr}\.get\(\s*[rf]?['"]([^'"]+)['"]/}
+         /#{rp}\.#{attr}\.get(?:list)?\(\s*[rf]?['"]([^'"]+)['"]/}
       end
     end
 

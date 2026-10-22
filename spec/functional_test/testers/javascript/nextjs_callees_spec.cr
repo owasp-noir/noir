@@ -75,7 +75,7 @@ FunctionalTester.new("fixtures/javascript/nextjs_callees/", {
   "include_callee" => YAML::Any.new(true),
 }).perform_tests
 
-describe "Next.js callee source attribution" do
+describe "Next.js callee source attribution", tags: "functional" do
   it "uses aliased route handlers and server-action export lines" do
     options = ConfigInitializer.new.default_options
     options["base"] = YAML::Any.new([YAML::Any.new("./spec/functional_test/fixtures/javascript/nextjs_callees/")])

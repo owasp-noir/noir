@@ -1,46 +1,28 @@
 require "../../../models/detector"
 require "../../../utils/yaml"
+require "../../../utils/json"
 require "../../../models/code_locator"
 
 module Detector::Specification
   class ServerlessFramework < Detector
-    CONFIG_FILES = {"serverless.yml", "serverless.yaml", "serverless.json"}
+    # Registers each Serverless Framework config path in `CodeLocator`.
+    detector_for "serverless_framework", idempotent: false,
+      basenames: %w[serverless.yml serverless.yaml serverless.json]
 
     def detect(filename : String, file_contents : String) : Bool
       return false unless applicable?(filename)
 
       base = File.basename(filename)
       if base.ends_with?(".json")
-        return false unless valid_json?(file_contents)
-        begin
-          return false unless serverless_doc?(JSON.parse(file_contents))
-        rescue
-          return false
-        end
+        return false unless data = json_any?(file_contents)
+        return false unless serverless_doc?(data)
       else
-        return false unless valid_yaml?(file_contents)
-        begin
-          return false unless serverless_doc?(YAML.parse(file_contents))
-        rescue
-          return false
-        end
+        return false unless data = yaml_any?(file_contents)
+        return false unless serverless_doc?(data)
       end
 
-      CodeLocator.instance.push("serverless-framework-spec", filename)
+      CodeLocator.instance.push(Noir::LocatorKeys::SERVERLESS_FRAMEWORK_SPEC, filename)
       true
-    end
-
-    def applicable?(filename : String) : Bool
-      CONFIG_FILES.includes?(File.basename(filename))
-    end
-
-    def set_name
-      @name = "serverless_framework"
-    end
-
-    # Registers each Serverless Framework config path in `CodeLocator`.
-    def idempotent? : Bool
-      false
     end
 
     private def serverless_doc?(data : JSON::Any) : Bool

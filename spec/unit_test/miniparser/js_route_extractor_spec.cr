@@ -5,6 +5,34 @@ require "../../../src/models/endpoint"
 require "../../../src/miniparsers/js_route_extractor"
 
 describe Noir::JSRouteExtractor do
+  describe "propagate_mount_prefixes" do
+    it "expands a self-mount and an a -> b -> a cycle at most once" do
+      edges = [
+        {"root", "/r", "a"},
+        {"a", "/x", "b"}, {"a", "/z", "b"}, {"b", "/y", "a"},
+        {"s", "/v1", "s"},
+      ]
+      prefixes = {"root" => [""], "s" => [""]}
+      Noir::JSRouteExtractor.propagate_mount_prefixes(edges, prefixes)
+      prefixes["a"].should eq(["/r"])
+      prefixes["b"].should eq(["/r/x", "/r/z"])
+      prefixes["s"].should eq([""])
+    end
+
+    it "keeps a shared router's fan-in across many mounts" do
+      edges = (1..80).map { |n| {"root", "/m#{n}", "shared"} }
+      prefixes = {"root" => [""]}
+      Noir::JSRouteExtractor.propagate_mount_prefixes(edges, prefixes).should be_false
+      prefixes["shared"].size.should eq(80)
+    end
+
+    it "starts an unprefixed parent from the fallback without recording it" do
+      prefixes = {} of String => Array(String)
+      Noir::JSRouteExtractor.propagate_mount_prefixes([{"p", "/c", "c"}], prefixes, ["/f"])
+      prefixes.should eq({"c" => ["/f/c"]})
+    end
+  end
+
   describe "normalize_http_method" do
     it "normalizes DEL to DELETE" do
       Noir::JSRouteExtractor.normalize_http_method("DEL").should eq("DELETE")
@@ -18,6 +46,7 @@ describe Noir::JSRouteExtractor do
       Noir::JSRouteExtractor.normalize_http_method("DELETE").should eq("DELETE")
       Noir::JSRouteExtractor.normalize_http_method("PATCH").should eq("PATCH")
       Noir::JSRouteExtractor.normalize_http_method("HEAD").should eq("HEAD")
+      Noir::JSRouteExtractor.normalize_http_method("QUERY").should eq("QUERY")
     end
 
     it "uppercases methods" do
@@ -285,6 +314,48 @@ describe Noir::JSRouteExtractor do
       Noir::JSRouteExtractor.minified_content?(content).should be_false
     end
 
+    it "does NOT classify a SMALL route file that carries one fat literal" do
+      # The regime the average check used to get wrong: with only a handful
+      # of lines, one 20 KB inline literal drags the whole-file average over
+      # the threshold and every route in the module was dropped. Averaging
+      # the remaining code lines instead keeps it at ~40 bytes.
+      fat = "const LOGO = 'data:image/png;base64," + ("iVBORw0KGg" * 2000) + "';"
+      routes = Array.new(10) { |i| "app.get('/r#{i}', (req, res) => res.send('#{i}'));" }
+      content = (["const express = require('express');", "const app = express();", fat] + routes).join("\n")
+      # Guard the premise: this is exactly a file the whole-file average
+      # would have called a bundle.
+      (content.bytesize // content.lines.size).should be >= Noir::JSRouteExtractor::MINIFIED_AVG_LINE_THRESHOLD
+      Noir::JSRouteExtractor.minified_content?(content).should be_false
+    end
+
+    it "does NOT classify a three-line module built around a fat literal" do
+      fat = "const KEY = '" + ("k" * 20000) + "';"
+      content = "#{fat}\napp.get('/a', h);\napp.post('/b', h);\n"
+      Noir::JSRouteExtractor.minified_content?(content).should be_false
+    end
+
+    it "is true for a bundle wrapped in a banner and a sourcemap trailer" do
+      # The canonical `*.min.js`: one enormous line between a `/*! … */`
+      # license banner and a `//# sourceMappingURL=` trailer. Neither
+      # decoration is source, so setting the fat line aside must still
+      # leave nothing to average — the file is a bundle.
+      content = "/*! lib v1.2.3 | (c) Example | example.com/license */\n" +
+                "!function(e){var app=e();" + ("var _0x=function(a,b){return a+b};" * 300) + "}(window);\n" +
+                "//# sourceMappingURL=lib.min.js.map\n"
+      Noir::JSRouteExtractor.minified_content?(content).should be_true
+    end
+
+    it "is true for a bundle behind a multi-line license header" do
+      header = Array.new(20) { |i| " * line #{i} of a preserved @license block" }.join("\n")
+      content = "/*\n#{header}\n */\n" + ("a" * 60000) + "\n"
+      Noir::JSRouteExtractor.minified_content?(content).should be_true
+    end
+
+    it "is true for a single enormous line terminated by a newline" do
+      # A trailing newline must not leave an empty line to average over.
+      Noir::JSRouteExtractor.minified_content?(("a" * 6000) + "\n").should be_true
+    end
+
     it "pins the default 5000-byte line boundary" do
       Noir::JSRouteExtractor.minified_content?("a" * 4999).should be_false
       Noir::JSRouteExtractor.minified_content?("a" * 5000).should be_true
@@ -345,6 +416,26 @@ describe Noir::JSRouteExtractor do
         file.delete
       end
     end
+
+    it "extracts HTTP QUERY routes in express source" do
+      content = <<-JS
+        const express = require("express");
+        const app = express();
+        const router = express.Router();
+        app.query("/search", (req, res) => res.json([]));
+        router.query("/items", (req, res) => res.json([]));
+        app.route("/filter").query((req, res) => res.json([]));
+        JS
+      file = File.tempfile("app", ".js", &.print(content))
+      begin
+        routes = Noir::JSRouteExtractor.extract_routes(file.path, content)
+        routes.any? { |r| r.url == "/search" && r.method == "QUERY" }.should be_true
+        routes.any? { |r| r.url == "/items" && r.method == "QUERY" }.should be_true
+        routes.any? { |r| r.url == "/filter" && r.method == "QUERY" }.should be_true
+      ensure
+        file.delete
+      end
+    end
   end
 
   describe "test_stub_only?" do
@@ -375,6 +466,24 @@ describe Noir::JSRouteExtractor do
         "/app/dist/server-bundle.js",
         content
       ).should be_false
+    end
+
+    it "skips files importing fetch-mock without an HTTP server lib" do
+      # `fetchMock.get(pattern, response)` is the same shape as a route
+      # registration, so Superset's client test setup reported its glob
+      # patterns as Express routes: `GET /glob:*api/v1/security/csrf_token/*`.
+      content = <<-JS
+        import fetchMock from 'fetch-mock';
+        import { SupersetClient } from '@superset-ui/core';
+
+        export default function setupClientForTest() {
+          fetchMock.get('glob:*api/v1/security/csrf_token/*', { result: '1234' });
+        }
+        JS
+      Noir::JSRouteExtractor.test_stub_only?(
+        "/app/packages/core/test/query/api/setupClientForTest.ts",
+        content
+      ).should be_true
     end
 
     it "skips strict-filename test markers unconditionally" do
@@ -411,6 +520,30 @@ describe Noir::JSRouteExtractor do
         app.get("/api/users", (req, res) => res.json([]));
         JS
       Noir::JSRouteExtractor.test_stub_only?("/app/src/server.js", content).should be_false
+    end
+
+    # `-test.`/`-spec.` are ordinary words in router names: an A/B-test
+    # router or an API-spec router importing express is production code.
+    it "keeps hyphen-named production routers that import an HTTP server" do
+      content = <<-JS
+        const express = require('express');
+        const router = express.Router();
+        router.post('/assign', (req, res) => res.json({}));
+        module.exports = router;
+        JS
+      Noir::JSRouteExtractor.test_stub_only?("/app/routes/ab-test.js", content).should be_false
+      Noir::JSRouteExtractor.test_stub_only?("/app/routes/api-spec.js", content).should be_false
+    end
+
+    it "still skips hyphen-named test suites that import express" do
+      content = <<-JS
+        const express = require('express');
+        const request = require('supertest');
+        describe('users', () => {
+          it('lists', () => request(app).get('/users').expect(200));
+        });
+        JS
+      Noir::JSRouteExtractor.test_stub_only?("/app/test/users-test.js", content).should be_true
     end
 
     it "skips Jest-style test files by name" do
@@ -712,6 +845,335 @@ describe Noir::JSRouteExtractor do
         "/repo/src/server.ts",
         content
       ).should be_false
+    end
+  end
+
+  describe "strip_js_comments" do
+    it "keeps blanking comments after a regex literal containing a quote" do
+      # `str.replace(/'/g, "&#39;")` used to leave the scanner inside a
+      # string for the rest of the file, so the commented-out decorator
+      # below survived and was reported as a live endpoint.
+      content = <<-TS
+        escape(str: string) { return str.replace(/'/g, "&#39;"); }
+
+        // @Get('legacy-removed')
+        @Post('create')
+        TS
+
+      stripped = Noir::JSRouteExtractor.strip_js_comments(content)
+      stripped.should_not contain("legacy-removed")
+      stripped.should contain("@Post('create')")
+    end
+
+    it "does not open a comment from a '/*' inside a string" do
+      # Mirror image of the case above: with the state inverted, the `/*`
+      # in a plain string literal started a block comment that blanked
+      # every route below it.
+      content = <<-TS
+        escape(str) { return str.replace(/'/g, '&#39;'); }
+        const blockOpen = '/*';
+        @Get('list')
+        @Post('create')
+        TS
+
+      stripped = Noir::JSRouteExtractor.strip_js_comments(content)
+      stripped.should contain("@Get('list')")
+      stripped.should contain("@Post('create')")
+    end
+
+    it "keeps a '//' inside a regex character class out of comment state" do
+      content = "const sep = /[//]/; app.get('/kept', h);"
+
+      stripped = Noir::JSRouteExtractor.strip_js_comments(content)
+      stripped.should contain("app.get('/kept', h);")
+    end
+
+    it "preserves length and newline positions" do
+      content = <<-JS
+        const re = /a'b/;
+        // gone
+        app.get('/x', h);
+        JS
+
+      stripped = Noir::JSRouteExtractor.strip_js_comments(content)
+      stripped.size.should eq(content.size)
+      stripped.count('\n').should eq(content.count('\n'))
+    end
+
+    it "resyncs at end of line when a '/' is misjudged as a regex" do
+      # `</p>` looks like a regex opening after '<'. Bounding the state to
+      # one line keeps that misjudgement from eating the rest of the file.
+      content = <<-JSX
+        const el = <p>a</p>;
+        // gone
+        app.get('/x', h);
+        JSX
+
+      stripped = Noir::JSRouteExtractor.strip_js_comments(content)
+      stripped.should contain("app.get('/x', h);")
+      stripped.should_not contain("gone")
+    end
+
+    it "does not open a string at an apostrophe in JSX text" do
+      content = <<-JSX
+        const el = <p>We don't track you</p>;
+        // gone
+        app.get('/x', h);
+        JSX
+
+      stripped = Noir::JSRouteExtractor.strip_js_comments(content)
+      stripped.should contain("app.get('/x', h);")
+      stripped.should_not contain("gone")
+    end
+
+    it "keeps an http(s) URL in JSX text and still blanks real comments" do
+      content = "const el = <p>Docs at https://hono.dev</p>; // gone\napp.get('/x', h);"
+
+      stripped = Noir::JSRouteExtractor.strip_js_comments(content)
+      stripped.should contain("https://hono.dev</p>;")
+      stripped.should_not contain("gone")
+    end
+
+    it "ends a stray string at the newline" do
+      content = "const el = <p>'quoted</p>;\n// gone\napp.get('/x', h);"
+
+      stripped = Noir::JSRouteExtractor.strip_js_comments(content)
+      stripped.should_not contain("gone")
+    end
+  end
+  describe "line_for_char_pos" do
+    it "resolves a char index on non-ASCII content" do
+      # `to_slice` is byte-indexed; feeding it a char index straight from
+      # the lexer under-counted newlines once the file held any multi-byte
+      # character, so routes reported a line from earlier in the file.
+      content = "// 주석 — 설명\nconst a = 1;\napp.get('/x', h);\n"
+      pos = content.index("app").should_not be_nil
+
+      Noir::JSRouteExtractor.line_for_char_pos(content, pos).should eq(3)
+      Noir::JSRouteExtractor.line_for_char_pos(content, 0).should eq(1)
+    end
+
+    it "resolves a char index on ASCII content" do
+      content = "a\nb\nc"
+      Noir::JSRouteExtractor.line_for_char_pos(content, 4).should eq(3)
+    end
+
+    it "reports the right route line below a non-ASCII literal" do
+      content = <<-JS
+        const express = require('express');
+        const app = express();
+
+        const 메시지 = '안녕하세요 여러분 반갑습니다 오늘도 좋은 하루 되세요';
+
+        app.get('/users', (req, res) => res.json({ m: 메시지 }));
+
+        app.listen(3000);
+
+        app.post('/items', (req, res) => res.json({}));
+        JS
+
+      file = File.tempfile("noir_js_route", ".js")
+      begin
+        File.write(file.path, content)
+        endpoints = Noir::JSRouteExtractor.extract_routes(file.path, content)
+        lines = endpoints.to_h { |e| {"#{e.method} #{e.url}", e.details.code_paths.first.line} }
+        lines["GET /users"].should eq(6)
+        lines["POST /items"].should eq(10)
+      ensure
+        file.delete
+      end
+    end
+  end
+
+  describe "routes after JSX text with an apostrophe" do
+    it "keeps every route and handler param below it" do
+      content = <<-JS
+        app.get('/about', (c) => {
+          const name = c.req.query('name')
+          return c.html(<p>We don't track you, {name}</p>)
+        })
+
+        app.post('/submit', async (c) => {
+          const token = c.req.header('X-Token')
+          return c.text('ok')
+        })
+        JS
+      file = File.tempfile("noir_js_jsx", ".tsx")
+      begin
+        File.write(file.path, content)
+        endpoints = Noir::JSRouteExtractor.extract_routes(file.path, content)
+        endpoints.map { |e| {e.method, e.url, e.params.map(&.name)} }.uniq!.should eq([
+          {"GET", "/about", ["name"]},
+          {"POST", "/submit", ["X-Token"]},
+        ])
+      ensure
+        file.delete
+      end
+    end
+  end
+
+  describe "handler params" do
+    it "reads each chained route() verb's own handler and line" do
+      filler = "x" * 300
+      content = <<-JS
+        app.route('/products')
+          .get(function (req, res) {
+            const category = req.query.category;
+            res.json({ category, pad: '#{filler}' });
+          })
+          .post(function (req, res) {
+            const title = req.body.title;
+            const auth = req.headers['authorization'];
+            res.json({ title, auth });
+          });
+        JS
+      file = File.tempfile("noir_js_chain", ".js")
+      begin
+        File.write(file.path, content)
+        endpoints = Noir::JSRouteExtractor.extract_routes(file.path, content)
+        get = endpoints.find! { |e| e.method == "GET" }
+        post = endpoints.find! { |e| e.method == "POST" }
+        get.details.code_paths.first.line.should eq(2)
+        get.params.map(&.name).should eq(["category"])
+        post.details.code_paths.first.line.should eq(6)
+        post.params.map { |p| {p.name, p.param_type} }.should eq([{"title", "json"}, {"authorization", "header"}])
+      ensure
+        file.delete
+      end
+    end
+
+    it "reads expression-bodied arrow handlers without taking a nested arrow" do
+      content = <<-JS
+        app.get('/concise', (req, res) => res.json({ q: req.query.q }));
+        app.get('/nested', (req, res) => res.json(req.query.ids.map((id) => id + req.query.sep)));
+        app.get('/mw', (req, res, next) => next(), (req, res) => res.send(req.body.name));
+        JS
+      file = File.tempfile("noir_js_concise", ".js")
+      begin
+        File.write(file.path, content)
+        params = Noir::JSRouteExtractor.extract_routes(file.path, content).to_h do |e|
+          {e.url, e.params.map(&.name)}
+        end
+        params["/concise"].should eq(["q"])
+        params["/nested"].should eq(["ids", "sep"])
+        params["/mw"].should eq(["name"])
+      ensure
+        file.delete
+      end
+    end
+
+    it "extracts destructured request parameters from signature" do
+      content = <<-JS
+        app.post('/sig-nested', ({ body: { title, count } }, res) => res.json({ title, count }));
+        app.get('/sig-alias', ({ query, headers }, res) => res.send(query.keyword + headers.authorization));
+        app.get('/sig-path/:fileId', ({ params }, res) => res.send(params.fileId));
+        app.get('/sig-cookies', ({ cookies: { token } }, res) => res.send(token));
+        JS
+      file = File.tempfile("noir_js_sig_destruct", ".js")
+      begin
+        File.write(file.path, content)
+        routes = Noir::JSRouteExtractor.extract_routes(file.path, content)
+        by_url = routes.to_h { |e| {e.url, e.params.map { |p| {p.name, p.param_type} }} }
+
+        by_url["/sig-nested"].should eq([{"title", "json"}, {"count", "json"}])
+        by_url["/sig-alias"].should eq([{"keyword", "query"}, {"authorization", "header"}])
+        by_url["/sig-path/:fileId"].should eq([{"fileId", "path"}])
+        by_url["/sig-cookies"].should eq([{"token", "cookie"}])
+      ensure
+        file.delete
+      end
+    end
+
+    it "extracts destructured variable declarations and optional chaining" do
+      content = <<-JS
+        app.post('/destruct-vars', (req, res) => {
+          const { id } = req.params;
+          const { auth } = req.headers;
+          const { token } = req.cookies;
+          const message = req.body?.messages;
+          const field = req.query?.fields;
+          res.json({ id, auth, token, message, field });
+        });
+        JS
+      file = File.tempfile("noir_js_opt_chain", ".js")
+      begin
+        File.write(file.path, content)
+        route = Noir::JSRouteExtractor.extract_routes(file.path, content).first
+        route.params.map { |p| {p.name, p.param_type} }.should eq([
+          {"messages", "json"},
+          {"fields", "query"},
+          {"auth", "header"},
+          {"token", "cookie"},
+          {"id", "path"},
+        ])
+      ensure
+        file.delete
+      end
+    end
+  end
+
+  describe "guard definitions and inline closures" do
+    it "marks expressjwt concise arrow as guard and empties callees" do
+      source = <<-JS
+        export const denyAll = () => expressJwt({ secret: '' + Math.random() } as any);
+        export const isAuthorized = () => expressJwt({ secret: 'sec' });
+        JS
+      file = File.tempfile("noir_guard_defs", ".js")
+      begin
+        File.write(file.path, source)
+        deny_handler = Handler.new("denyAll", file.path, 1)
+        deny_facts = Noir::JSRouteExtractor.handler_definition_facts(deny_handler, true).should_not be_nil
+        deny_facts.guard.should be_true
+        deny_facts.callees.should be_empty
+
+        auth_handler = Handler.new("isAuthorized", file.path, 2)
+        auth_facts = Noir::JSRouteExtractor.handler_definition_facts(auth_handler, true).should_not be_nil
+        auth_facts.guard.should be_true
+        auth_facts.callees.should be_empty
+      ensure
+        file.delete
+      end
+    end
+
+    it "reads inline closure facts for mounts" do
+      serving = "(req, res) => res.status(200).send('OK')"
+      facts = Noir::JSRouteExtractor.inline_closure_facts(serving, "/fake/path.js", 1, true).should_not be_nil
+      facts.responds.should be_true
+
+      mw = "(req, res, next) => next()"
+      mw_facts = Noir::JSRouteExtractor.inline_closure_facts(mw, "/fake/path.js", 1, true).should_not be_nil
+      mw_facts.responds.should be_false
+
+      err = "(err, req, res, next) => res.status(500).send(err)"
+      err_facts = Noir::JSRouteExtractor.inline_closure_facts(err, "/fake/path.js", 1, true)
+      err_facts.should be_nil
+    end
+  end
+
+  describe "large files" do
+    # Every route used to index the file by CHAR offset (`content[i, n]`,
+    # `index(str, offset)`, `.chars` per brace match), which walks from byte 0
+    # on non-ASCII content and from 0 for `index(String, offset)` even on
+    # ASCII: 2000 routes plus one 'é' took ~13s in a release build.
+    it "stays linear with a non-ASCII char and keeps params and lines" do
+      n = 4000
+      content = String.build do |io|
+        io << "// café\nconst app = express();\n"
+        n.times { |i| io << "app.get('/r#{i}', (req, res) => { const v = req.query.q#{i}; res.send('é' + v); });\n" }
+      end
+      file = File.tempfile("noir_js_large", ".js")
+      begin
+        File.write(file.path, content)
+        endpoints = [] of Endpoint
+        elapsed = Time.measure { endpoints = Noir::JSRouteExtractor.extract_routes(file.path, content) }
+        elapsed.should be < 3.seconds
+        endpoints.size.should eq(n)
+        last = endpoints.find! { |e| e.url == "/r#{n - 1}" }
+        last.details.code_paths.first.line.should eq(n + 2)
+        last.params.map(&.name).should eq(["q#{n - 1}"])
+      ensure
+        file.delete
+      end
     end
   end
 end

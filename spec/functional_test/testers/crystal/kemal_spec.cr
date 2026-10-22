@@ -4,6 +4,13 @@ expected_endpoints = [
   Endpoint.new("/", "GET", [Param.new("x-api-key", "", "header")]),
   Endpoint.new("/paren", "GET", [Param.new("kind", "", "query")]),
   Endpoint.new("/socket", "GET"),
+  # HTTP QUERY (RFC 10008, kemalcr/kemal#769) block form. `before_query` /
+  # `after_query` filters below (same base path) must NOT appear as
+  # endpoints — mirrors how `before_get`/`after_get` are already excluded.
+  Endpoint.new("/search", "QUERY", [
+    Param.new("q", "", "json"),
+    Param.new("mode", "", "query"),
+  ]),
   Endpoint.new("/query", "POST", [
     Param.new("query", "", "form"),
     Param.new("my_auth", "", "cookie"),

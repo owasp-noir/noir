@@ -6,10 +6,12 @@ require "../../func_spec.cr"
 expected_endpoints = [
   Endpoint.new("/books/add", "POST", [
     Param.new("body", "Book", "json"),
-    Param.new("X-Auth-Token", "String", "header"),
+    # Tapir declares the input's Scala type; a type is not a value, so
+    # only a `body` param records one (its DTO name).
+    Param.new("X-Auth-Token", "", "header"),
   ]),
   Endpoint.new("/books/list/all", "GET", [
-    Param.new("limit", "Option[Int]", "query"),
+    Param.new("limit", "", "query"),
   ]),
   Endpoint.new("/user/register", "POST", [Param.new("body", "Register_IN", "json")]),
   Endpoint.new("/user", "GET"),

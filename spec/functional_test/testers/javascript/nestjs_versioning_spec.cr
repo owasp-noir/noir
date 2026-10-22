@@ -13,6 +13,16 @@ expected_endpoints = [
   ]),
   Endpoint.new("/health", "GET"),
   Endpoint.new("/v2/dogs/override", "GET"),
+  # Compact one-line members keep their own `@Version` only.
+  Endpoint.new("/v2/items/a", "GET"),
+  Endpoint.new("/items/b", "GET", [
+    Param.new("q", "", "query"),
+  ]),
+  Endpoint.new("/items/c", "GET"),
+  Endpoint.new("/v4/items/d", "GET"),
+  # Route decorators stacked on one member share its decorator block.
+  Endpoint.new("/items/e", "GET"),
+  Endpoint.new("/items/f", "GET"),
 ]
 
 FunctionalTester.new("fixtures/javascript/nestjs_versioning/", {

@@ -9,13 +9,12 @@ require "../../func_spec.cr"
 #   - GET /profile  — second named handler in handlers.go to confirm
 #                     per-handler scoping.
 #
-# Echo's existing file-local param extraction (FormValue/QueryParam/
-# Header.Get) does not follow into sibling files, so the form param
-# for POST /users isn't surfaced — params and callees stay orthogonal.
+# The sibling handler's `c.FormValue("name")` reaches POST /users through
+# the cross-file named-handler lookup.
 helpers_path = "./spec/functional_test/fixtures/go/echo_callees/helpers.go"
 
 expected_endpoints = [
-  Endpoint.new("/users", "POST").tap do |ep|
+  Endpoint.new("/users", "POST", [Param.new("name", "", "form")]).tap do |ep|
     ep.push_callee(Callee.new("c.FormValue", line: 8))
     ep.push_callee(Callee.new("saveUser", helpers_path, 3))
     ep.push_callee(Callee.new("auditLog", helpers_path, 7))

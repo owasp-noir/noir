@@ -6,6 +6,7 @@ require "../../models/endpoint"
 # targets for data exposure, broken object-level authorization, and
 # sensitive-data logging — knowing *which* routes touch PII lets a
 # reviewer (or an AI consumer) prioritize accordingly.
+@[Noir::TaggerFor(key: "pii", name: "PII Tagger", desc: "Identifies endpoints handling personally identifiable information", order: 100)]
 class PiiTagger < Tagger
   # Unambiguous, high-signal identifiers. A single one is enough to flag
   # the endpoint because these names rarely appear outside a PII context.
@@ -50,29 +51,22 @@ class PiiTagger < Tagger
     "marital_status",
   }
 
-  def initialize(options : Hash(String, YAML::Any))
-    super
-    @name = "pii"
-  end
+  private def check_endpoint(endpoint : Endpoint)
+    param_names = endpoint.params.map { |param| normalize_param_name(param.name) }.to_set
 
-  def perform(endpoints : Array(Endpoint))
-    endpoints.each do |endpoint|
-      param_names = endpoint.params.map { |param| normalize_param_name(param.name) }.to_set
+    has_strong = !(STRONG_NAMES & param_names).empty? ||
+                 param_names.any? { |name| name.split('_').any? { |token| STRONG_TOKENS.includes?(token) } }
+    medium_hits = (MEDIUM_NAMES & param_names).size
 
-      has_strong = !(STRONG_NAMES & param_names).empty? ||
-                   param_names.any? { |name| name.split('_').any? { |token| STRONG_TOKENS.includes?(token) } }
-      medium_hits = (MEDIUM_NAMES & param_names).size
+    check = has_strong || medium_hits >= 2
 
-      check = has_strong || medium_hits >= 2
-
-      if check
-        tag = Tag.new(
-          "pii",
-          "Endpoint handles personally identifiable information (PII) or sensitive personal data; review for data exposure, broken object-level authorization, and sensitive-data logging.",
-          "PII"
-        )
-        endpoint.add_tag(tag)
-      end
+    if check
+      tag = Tag.new(
+        "pii",
+        "Endpoint handles personally identifiable information (PII) or sensitive personal data; review for data exposure, broken object-level authorization, and sensitive-data logging.",
+        "PII"
+      )
+      endpoint.add_tag(tag)
     end
   end
 

@@ -1,0 +1,10 @@
+{
+  "name": "cladfpdemo",
+  "version": "1.0.0",
+  "bin": {
+    "cladfpdemo": "cli.js"
+  },
+  "dependencies": {
+    "command-line-args": "^5.2.1"
+  }
+}

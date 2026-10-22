@@ -61,6 +61,41 @@ describe "Detect JS Next.js" do
     instance.detect("project/app/api/products/[id]/route.ts", "export async function GET() {}").should be_true
   end
 
+  it "app_route_with_next_types_only" do
+    # No verb export in this file (the handlers are re-exported elsewhere),
+    # but it speaks to the Next.js request/response types.
+    instance.detect("project/app/api/products/route.ts", %(import { NextResponse } from "next/server")).should be_true
+  end
+
+  it "app_route_destructured_handler_export" do
+    instance.detect("project/app/api/workflows/route.ts", "export const { POST } = serve(async () => {});").should be_true
+  end
+
+  it "app_route_without_next_signal" do
+    # `route.ts` under an `app/` directory, but nothing in the file says
+    # Next.js — no verb export and no `Next*` type. The App Router branch
+    # used to accept this on the path alone.
+    instance.detect("project/src/app/admin/route.ts", "export const route = { path: \"/admin\" };").should be_false
+  end
+
+  # `app` is an ordinary directory name — the project's own documented
+  # Docker command mounts the repo at `-w /app` — so the App Router branch
+  # has to match the scan-base-relative path, not the raw one.
+  it "scopes the app router directory to the scan base" do
+    locator = CodeLocator.instance
+    previous_bases = locator.scan_base_paths
+
+    begin
+      locator.scan_base_paths = ["/srv/myproj"]
+      instance.detect("/srv/myproj/app/api/products/route.ts", "export async function GET() {}").should be_true
+
+      locator.scan_base_paths = ["/app/myproj"]
+      instance.detect("/app/myproj/server/route.ts", "export async function GET() {}").should be_false
+    ensure
+      locator.scan_base_paths = previous_bases
+    end
+  end
+
   it "import_from_next" do
     instance.detect("index.ts", "import Link from 'next/link'").should be_true
   end

@@ -16,8 +16,9 @@ expected_endpoints = [
   Endpoint.new("/articles", "POST"),
   Endpoint.new("/articles/:id", "GET", [Param.new("id", "", "path")]),
   Endpoint.new("/articles/:id", "PUT", [Param.new("id", "", "path")]),
+  Endpoint.new("/articles/:id", "PATCH", [Param.new("id", "", "path")]),
   Endpoint.new("/articles/:id", "DELETE", [Param.new("id", "", "path")]),
-  # `.only(['index', 'show'])` — restricts to two of the five.
+  # `.only(['index', 'show'])` — restricts to two of the actions.
   Endpoint.new("/tags", "GET"),
   Endpoint.new("/tags/:id", "GET", [Param.new("id", "", "path")]),
   # `Route.any(...)` fans out to GET / POST / PUT / DELETE / PATCH.

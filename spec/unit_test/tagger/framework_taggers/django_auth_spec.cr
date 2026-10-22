@@ -1,8 +1,9 @@
+require "file_utils"
 require "../../../spec_helper"
 require "../../../../src/tagger/tagger"
 
 describe "DjangoAuthTagger" do
-  fixture_base = "#{__DIR__}/../../../functional_test/fixtures/python/django_auth"
+  fixture_base = File.expand_path("../../../functional_test/fixtures/python/django_auth", __DIR__)
   views_path = "#{fixture_base}/blog/views.py"
 
   # views.py line reference:
@@ -108,5 +109,180 @@ describe "DjangoAuthTagger" do
     tagger.perform([endpoint])
 
     endpoint.tags.empty?.should be_true
+  end
+
+  it "applies LoginRequiredMiddleware and DRF defaults, honouring opt-outs" do
+    CodeLocator.instance.clear_all
+    tmpdir = File.tempname("django_global_auth")
+    Dir.mkdir_p(tmpdir)
+    settings = File.join(tmpdir, "settings.py")
+    views = File.join(tmpdir, "views.py")
+    File.write(settings, <<-PY)
+      MIDDLEWARE = [
+          "django.contrib.auth.middleware.AuthenticationMiddleware",
+          "django.contrib.auth.middleware.LoginRequiredMiddleware",
+      ]
+      REST_FRAMEWORK = {
+          "DEFAULT_PERMISSION_CLASSES": [
+              "rest_framework.permissions.IsAuthenticated",
+          ],
+      }
+      PY
+    File.write(views, <<-PY)
+      def dashboard(request):
+          pass
+
+      @login_not_required
+      def about(request):
+          pass
+
+      class SignInView(LoginView):
+          pass
+
+      @api_view(["GET"])
+      @permission_classes([AllowAny])
+      def ping(request):
+          pass
+
+      class ItemViewSet(viewsets.ModelViewSet):
+          queryset = None
+
+      class NoteViewSet(viewsets.ModelViewSet):
+          permission_classes = [IsAuthenticatedOrReadOnly]
+      PY
+    CodeLocator.instance.register_path(settings)
+    CodeLocator.instance.register_path(views)
+
+    begin
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(tmpdir)
+      at = ->(method : String, line : Int32) { Endpoint.new("/#{line}", method, [] of Param, Details.new(PathInfo.new(views, line))) }
+      dashboard = at.call("GET", 1)
+      about = at.call("GET", 5)
+      sign_in = at.call("GET", 8)
+      ping = at.call("GET", 13)
+      items = at.call("GET", 16)
+      notes_read = at.call("GET", 19)
+      notes_write = at.call("POST", 19)
+
+      DjangoAuthTagger.new(noir_options).perform([dashboard, about, sign_in, ping, items, notes_read, notes_write])
+
+      dashboard.tags.map(&.description).should eq(["Protected by Django LoginRequiredMiddleware"])
+      about.tags.should be_empty
+      sign_in.tags.should be_empty
+      ping.tags.should be_empty
+      items.tags.map(&.description).should eq(["Protected by DRF DEFAULT_PERMISSION_CLASSES"])
+      notes_read.tags.should be_empty
+      notes_write.tags.map(&.description).should eq(["Protected by DRF permission_classes"])
+    ensure
+      FileUtils.rm_rf(tmpdir)
+      CodeLocator.instance.clear_all
+    end
+  end
+
+  it "reads project-wide defaults only from live MIDDLEWARE / settings, not tests or mentions" do
+    CodeLocator.instance.clear_all
+    tmpdir = File.tempname("django_settings_scope")
+    files = {
+      "proj/settings/base.py" => <<-PY,
+        MIDDLEWARE = ["django.contrib.auth.middleware.AuthenticationMiddleware"]
+        REST_FRAMEWORK = {"DEFAULT_PERMISSION_CLASSES": ["rest_framework.permissions.IsAuthenticated"]}
+        PY
+      "proj/settings/dev.py" => <<-PY,
+        REST_FRAMEWORK = {"DEFAULT_PERMISSION_CLASSES": ["rest_framework.permissions.AllowAny"]}
+        PY
+      "tests/settings.py" => <<-PY,
+        MIDDLEWARE = ["django.contrib.auth.middleware.LoginRequiredMiddleware"]
+        REST_FRAMEWORK = {"DEFAULT_PERMISSION_CLASSES": ["rest_framework.permissions.IsAuthenticated"]}
+        PY
+      "proj/checks.py" => <<-PY,
+        HINT = "add django.contrib.auth.middleware.LoginRequiredMiddleware to MIDDLEWARE"
+        PY
+      "proj/views.py" => <<-PY,
+        def dashboard(request):
+            pass
+
+        class ItemViewSet(viewsets.ModelViewSet):
+            queryset = None
+        PY
+    }
+    files.each do |rel, body|
+      path = File.join(tmpdir, rel)
+      Dir.mkdir_p(File.dirname(path))
+      File.write(path, body)
+      CodeLocator.instance.register_path(path)
+    end
+
+    begin
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(tmpdir)
+      views = File.join(tmpdir, "proj/views.py")
+      dashboard = Endpoint.new("/dashboard", "GET", [] of Param, Details.new(PathInfo.new(views, 1)))
+      items = Endpoint.new("/items", "GET", [] of Param, Details.new(PathInfo.new(views, 4)))
+
+      DjangoAuthTagger.new(noir_options).perform([dashboard, items])
+
+      dashboard.tags.should be_empty
+      items.tags.should be_empty
+    ensure
+      FileUtils.rm_rf(tmpdir)
+      CodeLocator.instance.clear_all
+    end
+  end
+
+  it "reads @method_decorator(login_required) and wrapped class headers" do
+    CodeLocator.instance.clear_all
+    tmpdir = File.tempname("django_method_decorator")
+    Dir.mkdir_p(tmpdir)
+    views = File.join(tmpdir, "views.py")
+    File.write(views, <<-PY)
+      @method_decorator(login_required, name="dispatch")
+      class DashboardView(View):
+          def get(self, request):
+              return HttpResponse("dash")
+
+
+      class ProfileView(View):
+          @method_decorator(login_required)
+          def get(self, request):
+              return HttpResponse("p")
+
+
+      class WrappedView(
+          LoginRequiredMixin,
+          View,
+      ):
+          def get(self, request):
+              return HttpResponse("w")
+
+
+      @method_decorator(login_required, name="post")
+      class FormView(View):
+          def get(self, request):
+              return HttpResponse("f")
+
+
+      class OpenView(View):
+          def get(self, request):
+              return HttpResponse("o")
+      PY
+
+    begin
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(tmpdir)
+      dash, profile, wrapped, form, open = [3, 9, 17, 23, 28].map do |line|
+        Endpoint.new("/#{line}", "GET", [] of Param, Details.new(PathInfo.new(views, line)))
+      end
+
+      DjangoAuthTagger.new(noir_options).perform([dash, profile, wrapped, form, open])
+
+      dash.tags.map(&.description).should eq(["Protected by Django login_required decorator"])
+      profile.tags.map(&.description).should eq(["Protected by Django login_required decorator"])
+      wrapped.tags.map(&.description).should eq(["Protected by Django LoginRequiredMixin"])
+      form.tags.should be_empty
+      open.tags.should be_empty
+    ensure
+      FileUtils.rm_rf(tmpdir)
+    end
   end
 end

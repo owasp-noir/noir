@@ -1,26 +1,17 @@
-require "../../../models/analyzer"
+require "../../engines/specification_engine"
 
 module Analyzer::Specification
-  class Vercel < Analyzer
+  class Vercel < SpecificationEngine
+    analyzer_for "vercel"
+
     ROUTING_GROUP_KEYS = {"beforeFiles", "afterFiles", "fallback"}
     PATTERN_CHARS      = {'*', '^', '$', '(', ')', '[', ']', '{', '}', '|', '+', '?', '\\'}
     METHOD_ANY         = "ANY"
 
     def analyze
-      locator = CodeLocator.instance
-      config_files = locator.all("vercel-spec")
-      return @result unless config_files.is_a?(Array(String))
-
-      config_files.each do |path|
-        next unless File.exists?(path)
-        details = Details.new(PathInfo.new(path))
-        content = File.read(path, encoding: "utf-8", invalid: :skip)
-        begin
-          process_config(JSON.parse(content), details)
-        rescue e
-          @logger.debug "Exception processing #{path}"
-          @logger.debug_sub e
-        end
+      each_spec_file_with_details(Noir::LocatorKeys::VERCEL_SPEC) do |path, details|
+        content = read_file_content(path)
+        process_config(parse_json_lenient(content), details)
       end
 
       @result
@@ -38,7 +29,11 @@ module Analyzer::Specification
         source = entry[source_key]?.try(&.as_s?)
         next if source.nil? || source.empty?
 
-        endpoint = Endpoint.new(source, METHOD_ANY, details)
+        # `src` is a PCRE regex, and `source` patterns are written with the
+        # same anchors in practice.
+        endpoint = Endpoint.new(Noir::URLPath.strip_regex_anchors(source), METHOD_ANY, details)
+        # Only `src` is a regex; `source` is path-to-regexp (`:slug*`).
+        endpoint.kind = "regex" if source_key == "src" && Noir::URLPath.regex_route?(source)
         endpoint.add_tag(Tag.new("vercel-rule", rule_kind, "vercel_analyzer"))
         endpoint.add_tag(Tag.new("pattern", "vercel_source_matcher", "vercel_analyzer")) if pattern_source?(source)
 

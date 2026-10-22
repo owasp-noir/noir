@@ -1,6 +1,6 @@
 require "../../func_spec.cr"
 
-describe "--ai-context on Mux fixtures" do
+describe "--ai-context on Mux fixtures", tags: "functional" do
   fixture_path = "fixtures/go/mux/"
 
   before_each do

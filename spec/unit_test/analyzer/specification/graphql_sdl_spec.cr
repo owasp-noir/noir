@@ -6,14 +6,14 @@ private def analyze_sdl(content : String, path : String? = nil)
   sdl_path = path || File.tempname("noir_graphql_sdl_", ".graphql")
   File.write(sdl_path, content)
   locator = CodeLocator.instance
-  locator.clear "graphql-sdl"
-  locator.push "graphql-sdl", sdl_path
+  locator.clear Noir::LocatorKeys::GRAPHQL_SDL
+  locator.push Noir::LocatorKeys::GRAPHQL_SDL, sdl_path
 
   options = create_test_options
   analyzer = Analyzer::Specification::GraphqlSdl.new options
   analyzer.analyze
 ensure
-  CodeLocator.instance.clear "graphql-sdl"
+  CodeLocator.instance.clear Noir::LocatorKeys::GRAPHQL_SDL
   File.delete(sdl_path) if sdl_path && File.exists?(sdl_path)
 end
 
@@ -142,6 +142,35 @@ describe "GraphQL SDL Analyzer" do
 
     with_args = endpoints.find!(&.url.ends_with?("withDeprecatedArg"))
     with_args.params.reject(&.name.starts_with?("graphql_")).map(&.name).should eq ["oldArg", "newArg"]
+  end
+
+  it "keeps every argument and field when the optional commas are left out" do
+    # Regression: after each argument/field the cursor skipped to the next
+    # depth-0 `,` (args) or `,`/newline (fields), so a newline-separated
+    # argument list kept only its first argument and fields sharing a line
+    # were dropped.
+    endpoints = analyze_sdl <<-SDL
+      type Query {
+        search(
+          term: String!
+          limit: Int = 10
+          offset: Int @deprecated(reason: "x")
+        ): [String]
+        inline(a: Int b: Int c: [Int] = [1, 2]): Int
+      }
+      type Mutation { createUser(name: String): ID deleteUser(id: ID!): Boolean }
+      SDL
+
+    endpoints.map(&.url).should eq [
+      "/graphql#Query.search",
+      "/graphql#Query.inline",
+      "/graphql#Mutation.createUser",
+      "/graphql#Mutation.deleteUser",
+    ]
+    args = ->(suffix : String) { endpoints.find!(&.url.ends_with?(suffix)).params.reject(&.name.starts_with?("graphql_")).map(&.name) }
+    args.call("search").should eq ["term", "limit", "offset"]
+    args.call("inline").should eq ["a", "b", "c"]
+    args.call("deleteUser").should eq ["id"]
   end
 
   it "preserves trailing non-null marker on list types" do

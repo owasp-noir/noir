@@ -1,0 +1,659 @@
+require "../../spec_helper"
+require "file_utils"
+require "json"
+require "http/server"
+require "../../../src/cli/catalog"
+
+# End-to-end specs for the CLI front door, driven through the *built
+# binary*.
+#
+# Everything else in this directory tests a pure parser helper, and
+# `spec/functional_test`'s `FunctionalTester` drives `detect`/`analyze`
+# directly without ever going through the CLI — which is exactly the gap
+# the router/subcommand bugs fixed here lived in. Argv handling, exit
+# codes, and the stdout/stderr split can only be pinned by running the
+# real program, so these examples assert all three separately.
+private REPO_ROOT = File.expand_path(File.join(__DIR__, "..", "..", ".."))
+private BINARY    = File.join(REPO_ROOT, "bin", {% if flag?(:windows) %} "noir.exe" {% else %} "noir" {% end %})
+private FIXTURE   = File.join(REPO_ROOT, "spec", "functional_test", "fixtures", "ruby", "sinatra")
+# A second, deliberately different codebase, so `--diff-path` has something
+# to report as added/removed rather than an empty diff.
+private DIFF_FIXTURE = File.join(REPO_ROOT, "spec", "functional_test", "fixtures", "ruby", "rails")
+
+private record CliRun, stdout : String, stderr : String, exit_code : Int32
+
+# A HAR whose `startedDateTime` and cookie `expires` are not ISO-8601.
+# Browsers and capture proxies do emit such files, and the `har` shard reports
+# each one through Crystal's *global* `Log` — whose default backend writes to
+# STDOUT. So `noir scan ./captures -f json` printed a WARN line *and a full
+# Crystal backtrace* ahead of the JSON document, and `| jq .` died with
+# `Invalid numeric literal at line 1, column 14`.
+#
+# Neither the warning nor the shard is Noir's to change, which is the point:
+# the fix is the process-entry redirect in `Router.dispatch`
+# (`Noir::CLI.route_library_logs_to_stderr!`), so third-party logging cannot
+# reach the report stream no matter who does it. Driven through the built
+# binary because that redirect is a real-stream property — the spec runner's
+# own `Log` is set to `:none`, so nothing in-process can observe it.
+private BAD_TIMESTAMP_HAR = <<-HAR
+  {
+    "log": {
+      "version": "1.2",
+      "creator": { "name": "spec", "version": "1" },
+      "entries": [
+        {
+          "startedDateTime": "not-a-timestamp",
+          "request": {
+            "bodySize": 0, "method": "GET",
+            "url": "https://www.example.com/api/users",
+            "httpVersion": "HTTP/1.1",
+            "headers": [{ "name": "Host", "value": "www.example.com" }],
+            "cookies": [{ "name": "sid", "value": "abc",
+                          "expires": "Wed, 21 Oct 2015 07:28:00 GMT" }],
+            "queryString": [{ "name": "page", "value": "1" }],
+            "headersSize": -1
+          },
+          "response": {
+            "status": 200, "statusText": "OK", "httpVersion": "HTTP/1.1",
+            "headers": [], "cookies": [],
+            "content": { "size": 0, "mimeType": "application/json" },
+            "redirectURL": "", "headersSize": -1, "bodySize": 0
+          },
+          "cache": {}, "timings": { "send": 0, "wait": 0, "receive": 0 },
+          "time": 0
+        }
+      ]
+    }
+  }
+  HAR
+
+private def run_noir(args : Array(String), env : Hash(String, String)? = nil) : CliRun
+  stdout = IO::Memory.new
+  stderr = IO::Memory.new
+  status = Process.run(BINARY, args: args, env: env, output: stdout, error: stderr)
+  CliRun.new(stdout: stdout.to_s, stderr: stderr.to_s, exit_code: status.exit_code)
+end
+
+# `bin/noir` is produced by a separate CI job from the one that runs the
+# specs, so it is routinely absent here — and a stale binary would fail
+# these examples for a reason that has nothing to do with the code under
+# test. Both cases skip instead; `shards build` makes them run.
+private def binary_ready? : Bool
+  return false unless File.exists?(BINARY)
+  built_at = File.info(BINARY).modification_time
+  Dir.glob(File.join(REPO_ROOT, "src", "**", "*.cr")).none? do |source|
+    File.info(source).modification_time > built_at
+  end
+end
+
+describe "noir CLI surface (built binary)" do
+  unless binary_ready?
+    pending "needs an up-to-date bin/noir — run `shards build` to exercise these"
+    next
+  end
+
+  describe "terminal-flag rewriting" do
+    it "leaves a subcommand's own -v alone" do
+      # `noir rules update -v` used to print the version and exit 0 —
+      # `-v` was rewritten to the `version` subcommand before the router
+      # ever saw the verb, so the rules were never updated while the
+      # documented `noir rules update && noir scan . -P` precondition
+      # reported success. `rules path` is the network-free stand-in for
+      # the same argv shape.
+      result = run_noir(["rules", "path", "-v"])
+      result.stdout.should contain("passive_rules")
+      result.stdout.strip.should_not match(/\A\d+\.\d+\.\d+\z/)
+      result.exit_code.should eq(0)
+    end
+
+    it "still routes the v0 (verb-less) global flags to `version`" do
+      %w[-v -V --version].each do |flag|
+        result = run_noir([flag])
+        result.stdout.strip.should match(/\A\d+\.\d+\.\d+/)
+        result.stderr.should be_empty
+        result.exit_code.should eq(0)
+      end
+    end
+
+    it "keeps `noir version -v` working" do
+      result = run_noir(["version", "-v"])
+      result.stdout.strip.should match(/\A\d+\.\d+\.\d+/)
+      result.exit_code.should eq(0)
+    end
+
+    it "keeps the v0 terminal flags working after other v0 flags" do
+      result = run_noir(["-b", FIXTURE, "--build-info"])
+      result.stdout.should contain("Crystal:")
+      result.exit_code.should eq(0)
+    end
+  end
+
+  describe "noir help <command>" do
+    it "routes every catalog command to a help page" do
+      Noir::CLI::Catalog::NAMES.each do |name|
+        result = run_noir(["help", name])
+        result.stdout.should_not be_empty
+        result.exit_code.should eq(0)
+      end
+    end
+
+    it "dies on an unknown command" do
+      result = run_noir(["help", "bogus"])
+      result.stderr.should contain("Unknown command: bogus")
+      result.exit_code.should eq(1)
+    end
+  end
+
+  describe "global flags before the verb" do
+    # `noir help` documents `--no-color` / `--no-spinner` as working on
+    # "every command's output", but the router only ever tested `argv[0]`
+    # for a verb — so a global flag typed first pushed the whole invocation
+    # down the v0 bare-flag path and every one of these died with
+    # `Base path does not exist: <verb>`.
+    it "dispatches a verb that follows a leading global flag" do
+      result = run_noir(["--no-color", "version"])
+      result.stdout.strip.should match(/\A\d+\.\d+\.\d+/)
+      result.exit_code.should eq(0)
+    end
+
+    it "accepts several leading global flags at once" do
+      result = run_noir(["--no-color", "--no-spinner", "list", "formats"])
+      result.stdout.should contain("json")
+      result.exit_code.should eq(0)
+    end
+
+    it "still reaches scan, with the flag applied" do
+      result = run_noir(["--no-color", "scan", FIXTURE, "-f", "json", "--no-log"])
+      result.exit_code.should eq(0)
+      result.stdout.should_not contain("\e[")
+      JSON.parse(result.stdout)["endpoints"].as_a.empty?.should be_false
+    end
+
+    it "shows the top-level overview for `--no-color -h`, not scan's flag dump" do
+      result = run_noir(["--no-color", "-h"])
+      result.stdout.should contain("COMMANDS:")
+      result.stdout.should_not contain("--passive-scan-severity")
+      result.exit_code.should eq(0)
+    end
+
+    it "does not let the v0 rewrite hijack a subcommand's own -v" do
+      # Same exposure as `noir rules path -v` above, reached through the
+      # leading-global-flag path: `subcommand_invocation?` looked at
+      # `argv[0]`, saw `--no-color`, and let `-v => version` win.
+      result = run_noir(["--no-color", "rules", "path", "-v"])
+      result.stdout.should contain("passive_rules")
+      result.stdout.strip.should_not match(/\A\d+\.\d+\.\d+\z/)
+      result.exit_code.should eq(0)
+    end
+
+    it "keeps a globals-only argv on the v0 scan path" do
+      result = run_noir(["--no-color"])
+      result.stderr.should contain("No path to scan was given")
+      result.exit_code.should eq(1)
+    end
+  end
+
+  describe "config" do
+    it "rejects --config-file with no value instead of using the default file" do
+      result = run_noir(["config", "path", "--config-file"])
+      result.stdout.should be_empty
+      result.stderr.should contain("--config-file requires an argument.")
+      result.exit_code.should eq(1)
+    end
+
+    it "expands a leading ~ in --config-file" do
+      result = run_noir(["config", "path", "--config-file=~/noir-spec-nope.yaml"])
+      result.stdout.strip.should eq(File.join(Path.home.to_s, "noir-spec-nope.yaml"))
+      result.exit_code.should eq(0)
+    end
+
+    it "rejects a surplus positional instead of running a different action" do
+      result = run_noir(["config", "path", "init"])
+      result.stdout.should be_empty
+      result.stderr.should contain("Unexpected argument: init")
+      result.exit_code.should eq(1)
+    end
+
+    it "rejects an unknown flag" do
+      result = run_noir(["config", "show", "--bogus-flag"])
+      result.stdout.should be_empty
+      result.stderr.should contain("Unknown option: --bogus-flag")
+      result.exit_code.should eq(1)
+    end
+
+    it "names the missing terminal first when not on a TTY, whatever the editor" do
+      home = File.join(Dir.tempdir, "noir-cfg-editor-#{Random.new.hex(4)}")
+      Dir.mkdir_p(home)
+      begin
+        ["/no/such/ed", %(vi ")].each do |editor|
+          result = run_noir(["config", "edit"], env: {"NOIR_HOME" => home, "VISUAL" => editor})
+          result.stderr.should contain("needs an interactive terminal")
+          result.exit_code.should eq(1)
+        end
+      ensure
+        FileUtils.rm_rf(home)
+      end
+    end
+
+    it "shows a config file holding invalid UTF-8 instead of crashing" do
+      home = File.join(Dir.tempdir, "noir-cfg-utf8-#{Random.new.hex(4)}")
+      Dir.mkdir_p(home)
+      File.write(File.join(home, "config.yaml"), Bytes[0x62, 0x3a, 0x20, 0xff, 0xfe, 0x0a])
+      begin
+        result = run_noir(["config", "show"], env: {"NOIR_HOME" => home})
+        result.stderr.should_not contain("Unhandled exception")
+        result.stdout.should start_with("b: ")
+        result.exit_code.should eq(0)
+      ensure
+        FileUtils.rm_rf(home)
+      end
+    end
+
+    it "rejects a directory at the default config path for show and init" do
+      home = File.join(Dir.tempdir, "noir-cfg-dir-#{Random.new.hex(4)}")
+      Dir.mkdir_p(File.join(home, "config.yaml"))
+      begin
+        %w[show init].each do |action|
+          result = run_noir(["config", action], env: {"NOIR_HOME" => home})
+          result.stdout.should be_empty
+          result.stderr.should_not contain("Unhandled exception")
+          result.stderr.should contain("is a directory, not a file")
+          result.exit_code.should eq(1)
+        end
+      ensure
+        FileUtils.rm_rf(home)
+      end
+    end
+
+    {% unless flag?(:windows) %}
+      it "reports an unreadable config file instead of crashing" do
+        home = File.join(Dir.tempdir, "noir-cfg-unreadable-#{Random.new.hex(4)}")
+        path = File.join(home, "config.yaml")
+        Dir.mkdir_p(home)
+        File.write(path, "base: .\n")
+        File.chmod(path, 0o000)
+        begin
+          # root reads through mode 000; nothing to assert there.
+          next if File::Info.readable?(path)
+          result = run_noir(["config", "show"], env: {"NOIR_HOME" => home})
+          result.stderr.should_not contain("Unhandled exception")
+          result.stderr.should contain("Cannot read config file")
+          result.exit_code.should eq(1)
+        ensure
+          File.chmod(path, 0o600)
+          FileUtils.rm_rf(home)
+        end
+      end
+    {% end %}
+  end
+
+  describe "completion" do
+    it "rejects a second shell instead of emitting only the first" do
+      result = run_noir(["completion", "zsh", "bash"])
+      result.stdout.should be_empty
+      result.stderr.should contain("Unexpected argument: bash")
+      result.exit_code.should eq(1)
+    end
+
+    it "still emits a single requested script on stdout" do
+      result = run_noir(["completion", "zsh"])
+      result.stdout.should contain("#compdef noir")
+      result.stderr.should be_empty
+      result.exit_code.should eq(0)
+    end
+  end
+
+  describe "scan" do
+    # Windows hands argv over as UTF-16, so invalid bytes arrive as U+FFFD
+    # and a non-UTF-8 argument can't reach noir there.
+    {% unless flag?(:win32) %}
+      it "rejects a non-UTF-8 argument instead of crashing in a regex" do
+        bad = String.new(Bytes[0xff, 0xfe])
+        [["--pvalue", bad], ["-u", "http://#{bad}"]].each do |flag|
+          result = run_noir(["scan", FIXTURE, "-f", "json", "--no-log"] + flag)
+          result.stdout.should be_empty
+          result.stderr.should_not contain("Unhandled exception")
+          result.stderr.should contain("not valid UTF-8")
+          result.exit_code.should eq(1)
+        end
+      end
+    {% end %}
+
+    it "rejects a -u/--url with no host" do
+      result = run_noir(["scan", FIXTURE, "-u", "http://", "-f", "json", "--no-log"])
+      result.stdout.should be_empty
+      result.stderr.should contain("has no host")
+      result.exit_code.should eq(1)
+    end
+
+    it "rejects a -u/--url whose authority holds whitespace" do
+      result = run_noir(["scan", FIXTURE, "-u", "not a url", "-f", "json", "--no-log"])
+      result.stdout.should be_empty
+      result.stderr.should contain("whitespace or control characters")
+      result.exit_code.should eq(1)
+    end
+
+    it "rejects an --exclude-path glob that would silently match nothing" do
+      # `z[b` and `a[b` are the same malformation. The validator used to
+      # probe them with `File.match?(pattern, "noir")`, and Crystal's
+      # matcher stops at the first literal that does not match its subject:
+      # `a[b` reached the unterminated `[` and raised, `z[b` did not and
+      # sailed through to exclude nothing at all. Which one a user got
+      # depended on the first character of their pattern.
+      {"*.{rb", "{", "", "  ", "a[b", "z[b", "[", "src/[a-z"}.each do |pattern|
+        result = run_noir(["scan", FIXTURE, "--exclude-path", pattern, "-f", "json", "--no-log"])
+        result.stdout.should be_empty
+        result.stderr.should contain("--exclude-path")
+        result.exit_code.should eq(1)
+      end
+    end
+
+    # A brace group with a comma in it (`*.{rb,py}`) is not expressible
+    # here — the flag splits its value on `,` before a pattern is parsed —
+    # so the single-branch form is what these assert.
+    it "still accepts the character classes and brace groups that are valid" do
+      {"[]]", "[^a-z]*.rb", "src/[a-z]*.go", "*.{rb}", "**/vendor/**"}.each do |pattern|
+        result = run_noir(["scan", FIXTURE, "--exclude-path", pattern, "-f", "json", "--no-log"])
+        result.stderr.should_not contain("invalid glob pattern")
+        result.exit_code.should eq(0)
+      end
+    end
+
+    # A tech flag given nothing is stored as `""` — indistinguishable, in
+    # the options hash, from the flag never being typed. `--only-techs ""`
+    # therefore asked to restrict the scan and silently widened it back to
+    # every technology, which is what a CI job passing `--only-techs
+    # "$TECHS"` gets when `$TECHS` is unset. `--only-techs ,` went the other
+    # way: no detector ran, zero endpoints, exit 0, no word about why.
+    it "rejects a tech flag that names no technology" do
+      {
+        {"--only-techs", ""}, {"--only-techs", "  "}, {"--only-techs", ","},
+        {"--exclude-techs", ""}, {"--exclude-techs", ",,"},
+        {"-t", ""}, {"--techs", " "},
+      }.each do |(flag, value)|
+        result = run_noir(["scan", FIXTURE, flag, value, "-f", "json", "--no-log"])
+        result.stdout.should be_empty
+        result.stderr.should contain(flag == "-t" ? "--techs" : flag)
+        result.exit_code.should eq(1)
+      end
+
+      result = run_noir(["scan", FIXTURE, "--only-techs=", "-f", "json", "--no-log"])
+      result.stdout.should be_empty
+      result.stderr.should contain("--only-techs")
+      result.exit_code.should eq(1)
+    end
+
+    it "still fails a CLI-typed --status-codes without a URL" do
+      result = run_noir(["scan", FIXTURE, "--status-codes", "-f", "json", "--no-log"])
+      result.stdout.should be_empty
+      result.stderr.should contain("--status-codes needs a target URL")
+      result.exit_code.should eq(1)
+    end
+
+    it "warns and carries on when the URL-dependent value came from a config file" do
+      # `status_codes:` is a documented config key, so enforcing the URL
+      # dependency after the merge made a plain `noir scan ./app` die,
+      # blaming a flag the user never typed.
+      config = File.tempfile("noir-cli-spec", ".yaml") do |file|
+        file.puts "status_codes: true"
+      end
+
+      begin
+        result = run_noir(["scan", FIXTURE, "--config-file", config.path, "-f", "json", "--no-log"])
+        result.stderr.should contain("config key `status_codes`")
+        result.exit_code.should eq(0)
+        # The warning belongs on stderr — stdout must stay byte-parseable.
+        JSON.parse(result.stdout)["endpoints"].as_a.empty?.should be_false
+      ensure
+        config.delete
+      end
+    end
+
+    it "treats everything after `--` as a path, flag-shaped or not" do
+      # Crystal's OptionParser drops the `--` and leaves the tail in place,
+      # which erased the boundary: the positional loop skipped every
+      # leftover starting with `-`, so a flag typed after `--` vanished and
+      # its value was promoted to a base path.
+      result = run_noir(["scan", "--", FIXTURE, "-f", "json"])
+      result.stdout.should be_empty
+      result.stderr.should contain("Base path does not exist: -f")
+      result.exit_code.should eq(1)
+    end
+
+    it "scans a directory whose name starts with a dash when given after `--`" do
+      dir = File.join(Dir.tempdir, "-noir-dash-#{Random.rand(100_000)}")
+      Dir.mkdir_p(dir)
+      begin
+        result = run_noir(["scan", "-f", "json", "--no-log", "--", dir])
+        result.exit_code.should eq(0)
+        JSON.parse(result.stdout)["endpoints"].as_a.empty?.should be_true
+      ensure
+        Dir.delete(dir) if Dir.exists?(dir)
+      end
+    end
+
+    it "names an empty base path instead of reporting a blank one as missing" do
+      result = run_noir(["scan", ""])
+      result.stderr.should contain("Base path is empty")
+      result.exit_code.should eq(1)
+    end
+
+    it "reports a --config-file that is a directory instead of crashing" do
+      # `File.exists?` is true for a directory and the `File.read` that
+      # followed it sat outside ConfigInitializer's YAML rescue, so this
+      # printed a raw Crystal backtrace before CliValidation's one-liner.
+      result = run_noir(["scan", FIXTURE, "--config-file", Dir.tempdir, "-f", "json", "--no-log"])
+      result.stdout.should be_empty
+      result.stderr.should_not contain("Unhandled exception")
+      result.stderr.should contain("--config-file is not a file")
+      result.exit_code.should eq(1)
+    end
+
+    it "leaves a well-formed scan untouched" do
+      result = run_noir(["scan", FIXTURE, "-u", "http://localhost:3000", "-f", "json", "--no-log"])
+      result.stderr.should be_empty
+      result.exit_code.should eq(0)
+      urls = JSON.parse(result.stdout)["endpoints"].as_a.map(&.["url"].as_s)
+      urls.empty?.should be_false
+      urls.all?(&.starts_with?("http://localhost:3000/")).should be_true
+    end
+
+    it "strips a -u/--url suffix from the earlier of `?` and `#`" do
+      # A `||` short-circuit skipped the `#` lookup whenever a `?` was
+      # present, so `/#frag?x=1` was cut at the `?` and kept `#frag`.
+      {"http://localhost:3000/#frag?x=1", "http://localhost:3000/?x=1#frag"}.each do |url|
+        result = run_noir(["scan", FIXTURE, "-u", url, "-f", "json", "--no-log"])
+        result.exit_code.should eq(0)
+        urls = JSON.parse(result.stdout)["endpoints"].as_a.map(&.["url"].as_s)
+        urls.empty?.should be_false
+        urls.none?(&.includes?("#")).should be_true
+        urls.all?(&.starts_with?("http://localhost:3000/")).should be_true
+      end
+    end
+  end
+
+  describe "stdout purity" do
+    it "keeps a third-party warning out of the report stream" do
+      dir = File.join(Dir.tempdir, "noir-stdout-purity-#{Random.rand(100_000)}")
+      Dir.mkdir_p(dir)
+      begin
+        File.write(File.join(dir, "capture.har"), BAD_TIMESTAMP_HAR)
+        result = run_noir(["scan", dir, "-f", "json", "--no-log"])
+
+        result.exit_code.should eq(0)
+        # The whole point: stdout parses, and it is the report.
+        JSON.parse(result.stdout)["endpoints"].as_a
+          .map(&.["url"].as_s)
+          .should contain("https://www.example.com/api/users")
+        # ...and the diagnostic is not lost, it moved to the other stream.
+        result.stderr.should contain("Unable to parse timestamp")
+      ensure
+        FileUtils.rm_rf(dir)
+      end
+    end
+  end
+
+  describe "diff mode with a format it cannot render" do
+    # Diff mode only implements plain/json/yaml/toml. Any other `-f` falls
+    # back to the decorated text diff, and the notice saying so used to go
+    # through the progress logger — which `--no-log` silences wholesale.
+    # That is exactly backwards: `--no-log -f sarif -o report.sarif` in CI
+    # is the run that most needs to hear it, and it was the one run that
+    # could not. The warning now takes the same always-visible STDERR path
+    # as the other "your flag was ignored" notices.
+    it "warns on stderr even under --no-log" do
+      result = run_noir(["scan", FIXTURE, "--diff-path", DIFF_FIXTURE,
+                         "--no-color", "--no-log", "-f", "oas3"])
+      result.stderr.should contain("diff mode does not support -f oas3")
+      result.stdout.should_not contain("\"openapi\"")
+    end
+
+    it "stays quiet for a format diff mode does implement" do
+      result = run_noir(["scan", FIXTURE, "--diff-path", DIFF_FIXTURE,
+                         "--no-color", "--no-log", "-f", "json"])
+      result.stderr.should_not contain("does not support")
+      JSON.parse(result.stdout)["added"].as_a.should_not be_nil
+    end
+  end
+
+  describe "diff mode against a git revision" do
+    # `--diff-ref` checks REF out into a scratch directory and scans it as the
+    # old side. The route is added in the second commit, so diffing the
+    # working tree against HEAD~1 names it as added and nothing else.
+    it "reports what changed since REF and cleans up its checkout" do
+      repo = File.tempname("noir-diff-ref-spec-")
+      git = ->(args : Array(String)) do
+        Process.run("git", args: ["-C", repo, "-c", "user.email=spec@noir", "-c", "user.name=spec",
+                                  "-c", "commit.gpgsign=false"] + args).success?.should be_true
+      end
+      begin
+        Dir.mkdir(repo)
+        FileUtils.cp_r(FIXTURE, File.join(repo, "app"))
+        git.call(["init", "-q"])
+        git.call(["add", "-A"])
+        git.call(["commit", "-q", "-m", "base"])
+        routes = File.join(repo, "app", "app.rb")
+        File.write(routes, File.read(routes) + "\npost '/diff-ref-added' do\nend\n")
+        git.call(["commit", "-q", "-am", "add route"])
+
+        # A private TMPDIR, so "nothing left behind" is not a count over a
+        # directory other runs (and other specs) write to as well.
+        tmp = File.join(repo, ".tmp")
+        Dir.mkdir(tmp)
+        result = run_noir(["scan", File.join(repo, "app"), "--diff-ref", "HEAD~1",
+                           "--no-color", "--no-log", "-f", "json"], env: {"TMPDIR" => tmp})
+        result.exit_code.should eq(0)
+        diff = JSON.parse(result.stdout)
+        diff["added"].as_a.map(&.["url"].as_s).should eq(["/diff-ref-added"])
+        diff["removed"].as_a.should be_empty
+        Dir.children(tmp).should be_empty
+      ensure
+        FileUtils.rm_rf(repo)
+      end
+    end
+
+    it "exits 3 and says why when --fail-on matches" do
+      result = run_noir(["scan", FIXTURE, "--diff-path", DIFF_FIXTURE,
+                         "--fail-on", "added", "--no-color", "--no-log", "-f", "json"])
+      result.exit_code.should eq(3)
+      result.stderr.should contain("--fail-on matched:")
+      # The report is written before the gate fires.
+      JSON.parse(result.stdout)["added"].as_a.should_not be_empty
+    end
+
+    it "exits 0 when --fail-on names only categories the diff does not have" do
+      result = run_noir(["scan", FIXTURE, "--diff-path", FIXTURE,
+                         "--fail-on", "added,removed", "--no-color", "--no-log", "-f", "json"])
+      result.exit_code.should eq(0)
+      result.stderr.should_not contain("--fail-on matched")
+    end
+
+    it "refuses --fail-on without a diff" do
+      result = run_noir(["scan", FIXTURE, "--fail-on", "added", "--no-color", "--no-log"])
+      result.exit_code.should eq(1)
+      result.stderr.should contain("--fail-on needs a diff")
+    end
+
+    it "still diffs when the change removed every route" do
+      # Nothing left on the new side means no framework to detect, and the
+      # no-technologies path used to exit before the diff ran: the removed
+      # routes went unreported and `--fail-on removed` passed.
+      empty = File.tempname("noir-diff-empty-")
+      Dir.mkdir(empty)
+      begin
+        result = run_noir(["scan", empty, "--diff-path", FIXTURE, "--fail-on", "removed",
+                           "--no-color", "--no-log", "-f", "json"])
+        result.exit_code.should eq(3)
+        JSON.parse(result.stdout)["removed"].as_a.should_not be_empty
+      ensure
+        FileUtils.rm_rf(empty)
+      end
+    end
+
+    # The old side is detection-only. Its endpoints were status-probed too,
+    # and every removed route answers 404 on the live target, so
+    # `--exclude-codes 404` hid the whole removed list.
+    it "does not status-probe or --exclude-codes the old side" do
+      server = HTTP::Server.new(&.response.status_code=(404))
+      address = server.bind_tcp("127.0.0.1", 0)
+      spawn { server.listen }
+      Fiber.yield
+      begin
+        result = run_noir(["scan", FIXTURE, "--diff-path", DIFF_FIXTURE, "--exclude-codes", "404",
+                           "-u", "http://127.0.0.1:#{address.port}", "--no-color", "--no-log", "-f", "json"])
+        JSON.parse(result.stdout)["removed"].as_a.should_not be_empty
+      ensure
+        server.close
+      end
+    end
+
+    # The new side still drops 404s; a route present on both sides that
+    # 404s live was then reported as removed although the code keeps it.
+    it "does not report a route still in the code as removed when it is excluded by status" do
+      server = HTTP::Server.new(&.response.status_code=(404))
+      address = server.bind_tcp("127.0.0.1", 0)
+      spawn { server.listen }
+      Fiber.yield
+      begin
+        result = run_noir(["scan", FIXTURE, "--diff-path", FIXTURE, "--exclude-codes", "404",
+                           "-u", "http://127.0.0.1:#{address.port}", "--no-color", "--no-log", "-f", "json"])
+        JSON.parse(result.stdout)["removed"].as_a.should be_empty
+      ensure
+        server.close
+      end
+    end
+
+    it "refuses --diff-ref together with --diff-path" do
+      result = run_noir(["scan", FIXTURE, "--diff-ref", "HEAD", "--diff-path", DIFF_FIXTURE,
+                         "--no-color", "--no-log"])
+      result.exit_code.should eq(1)
+      result.stderr.should contain("pass one")
+    end
+  end
+
+  describe "broken pipe" do
+    # `noir list techs` writes far more than a pipe buffer holds, so a
+    # reader that stops early (`| head`) closes the pipe mid-write. Scan's
+    # own stdout writes have been guarded for a while, but the thin
+    # subcommands write straight to STDOUT — this painted a full Crystal
+    # backtrace over the terminal and exited non-zero.
+    it "exits quietly when the reader closes the pipe" do
+      log = File.tempname("noir-epipe-", ".log")
+      begin
+        # The brace group sends both noir's stderr and its exit status to
+        # `log`, because `$?` after a pipeline in `sh` belongs to `head`.
+        # `sh` by name, not `/bin/sh`: on Windows that path is drive-rooted
+        # and missing, while Git for Windows puts `sh` on PATH.
+        Process.run("sh", args: [
+          "-c", "{ \"$0\" list techs; echo \"rc=$?\" >&2; } 2>\"$1\" | head -1 >/dev/null",
+          BINARY, log,
+        ])
+        captured = File.read(log)
+        captured.should_not contain("Unhandled exception")
+        captured.should contain("rc=0")
+      ensure
+        File.delete?(log)
+      end
+    end
+  end
+end

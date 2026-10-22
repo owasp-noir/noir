@@ -64,7 +64,7 @@ tester = FunctionalTester.new("fixtures/groovy/grails_callees/", {
 })
 tester.perform_tests
 
-it "reports exact Grails callees for allowedMethods fan-out" do
+it "reports exact Grails callees for allowedMethods fan-out", tags: "functional" do
   endpoint = tester.app.endpoints.find { |found| found.url == "/book/update" && found.method == "PUT" }
   endpoint.should_not be_nil
   endpoint.try do |actual|
@@ -72,7 +72,7 @@ it "reports exact Grails callees for allowedMethods fan-out" do
   end
 end
 
-it "handles Groovy literals and safe navigation in Grails action bodies" do
+it "handles Groovy literals and safe navigation in Grails action bodies", tags: "functional" do
   endpoint = tester.app.endpoints.find { |found| found.url == "/book/show" && found.method == "GET" }
   endpoint.should_not be_nil
   endpoint.try do |actual|
@@ -80,7 +80,7 @@ it "handles Groovy literals and safe navigation in Grails action bodies" do
   end
 end
 
-it "does not attach callees to scaffold-generated Grails actions" do
+it "does not attach callees to scaffold-generated Grails actions", tags: "functional" do
   endpoint = tester.app.endpoints.find { |found| found.url == "/product/save" && found.method == "POST" }
   endpoint.should_not be_nil
   endpoint.try do |actual|
@@ -88,7 +88,7 @@ it "does not attach callees to scaffold-generated Grails actions" do
   end
 end
 
-it "populates Grails callee source paths" do
+it "populates Grails callee source paths", tags: "functional" do
   endpoint = tester.app.endpoints.find { |found| found.url == "/book/index" && found.method == "GET" }
   endpoint.should_not be_nil
   endpoint.try do |actual|

@@ -3,7 +3,7 @@ require "../../../spec_helper"
 require "../../../../src/tagger/tagger"
 
 describe "CrystalAuthTagger" do
-  fixture_base = "#{__DIR__}/../../../functional_test/fixtures/crystal/kemal_auth"
+  fixture_base = File.expand_path("../../../functional_test/fixtures/crystal/kemal_auth", __DIR__)
   app_path = "#{fixture_base}/app.cr"
 
   # app.cr line reference:
@@ -24,7 +24,7 @@ describe "CrystalAuthTagger" do
     locator = CodeLocator.instance
     Dir.glob("#{fixture_base}/**/*").each do |file|
       next if File.directory?(file)
-      locator.push("file_map", file)
+      locator.register_path(file)
     end
 
     details = Details.new(PathInfo.new(app_path, 4))
@@ -46,7 +46,7 @@ describe "CrystalAuthTagger" do
     locator = CodeLocator.instance
     Dir.glob("#{fixture_base}/**/*").each do |file|
       next if File.directory?(file)
-      locator.push("file_map", file)
+      locator.register_path(file)
     end
 
     details = Details.new(PathInfo.new(app_path, 10))
@@ -68,7 +68,7 @@ describe "CrystalAuthTagger" do
     locator = CodeLocator.instance
     Dir.glob("#{fixture_base}/**/*").each do |file|
       next if File.directory?(file)
-      locator.push("file_map", file)
+      locator.register_path(file)
     end
 
     details = Details.new(PathInfo.new(app_path, 18))
@@ -115,6 +115,87 @@ describe "CrystalAuthTagger" do
     endpoint.tags.empty?.should be_true
 
     FileUtils.rm_rf(tmpdir)
+  end
+
+  it "keeps a Kemal session check to the route that makes it" do
+    tmpdir = File.tempname("kemal_session_scope")
+    Dir.mkdir_p(tmpdir)
+    file = File.join(tmpdir, "app.cr")
+    File.write(file, <<-'CR')
+      require "kemal"
+
+      get "/dashboard" do |env|
+        user = env.session.string("user_id")
+        "Hi #{user}"
+      end
+
+      get "/" do
+        "home"
+      end
+
+      get "/about" do
+        "about"
+      end
+      CR
+
+    noir_options = create_test_options
+    noir_options["base"] = YAML::Any.new(tmpdir)
+    at = ->(url : String, line : Int32) do
+      details = Details.new(PathInfo.new(file, line))
+      details.technology = "crystal_kemal"
+      Endpoint.new(url, "GET", [] of Param, details)
+    end
+    dashboard = at.call("/dashboard", 3)
+    root = at.call("/", 8)
+    about = at.call("/about", 12)
+
+    CrystalAuthTagger.new(noir_options).perform([dashboard, root, about])
+    dashboard.tags.map(&.description).should eq(["Protected by Kemal session user check"])
+    root.tags.should be_empty
+    about.tags.should be_empty
+  ensure
+    FileUtils.rm_rf(tmpdir) if tmpdir
+  end
+
+  it "treats Lucky include Auth::AllowGuests as public, not protected" do
+    tmpdir = File.tempname("lucky_allow_guests")
+    Dir.mkdir_p(tmpdir)
+    guest = File.join(tmpdir, "index.cr")
+    member = File.join(tmpdir, "show.cr")
+    File.write(guest, <<-CR)
+      class Home::Index < BrowserAction
+        include Auth::AllowGuests
+
+        get "/" do
+          html Lucky::WelcomePage
+        end
+      end
+      CR
+    File.write(member, <<-CR)
+      class Me::Show < BrowserAction
+        include Auth::RequireSignIn
+
+        get "/me" do
+          html ShowPage
+        end
+      end
+      CR
+
+    noir_options = create_test_options
+    noir_options["base"] = YAML::Any.new(tmpdir)
+    at = ->(url : String, file : String) do
+      details = Details.new(PathInfo.new(file, 4))
+      details.technology = "crystal_lucky"
+      Endpoint.new(url, "GET", [] of Param, details)
+    end
+    home = at.call("/", guest)
+    me = at.call("/me", member)
+
+    CrystalAuthTagger.new(noir_options).perform([home, me])
+    home.tags.should be_empty
+    me.tags.map(&.description).should eq(["Protected by Lucky Auth::RequireSignIn"])
+  ensure
+    FileUtils.rm_rf(tmpdir) if tmpdir
   end
 
   it "returns correct target_techs" do

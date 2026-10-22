@@ -9,8 +9,12 @@ module Analyzer::Java
   # The shared lambda-DSL extractor handles all of that; this
   # analyzer just supplies the Spark method-name set.
   class Spark < Analyzer
+    analyzer_for "java_spark"
+
     JAVA_EXTENSION = "java"
-    SPARK_MARKERS  = ["spark.Spark", "import static spark.", "import spark."]
+    # `spark.Spark` must not be the tail of a longer package such as
+    # `org.apache.spark.SparkConf` (Apache Spark, the data engine).
+    SPARK_MARKERS = /(?<![\w.])spark\.Spark\b|import static spark\.|import spark\./
 
     # Spark's request helpers. `body()` returns the raw body string
     # (no type info) — emit a generic body param. `queryParams`
@@ -31,7 +35,7 @@ module Analyzer::Java
       },
       nest_methods: Set{"path"},
       transparent_methods: Set{"before", "after", "afterAfter"},
-      query_methods: Set{"queryParams", "queryParamOrDefault", "queryParamsValues"},
+      query_methods: Set{"queryParams", "queryParamOrDefault", "queryParamsValues", "queryMap"},
       header_methods: Set{"headers"},
       cookie_methods: Set{"cookie"},
       body_methods: Set{"body", "bodyAsBytes"},
@@ -44,15 +48,15 @@ module Analyzer::Java
     )
 
     def analyze
-      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
+      include_callee = callees_needed?
       file_list = all_files()
       file_list.each do |path|
-        next if JavaEngine.test_path?(path)
-        next unless File.exists?(path)
         next unless path.ends_with?(".#{JAVA_EXTENSION}")
+        next if JavaEngine.test_path?(base_relative_path(path))
+        next unless File.exists?(path)
 
         content = read_file_content(path)
-        next unless SPARK_MARKERS.any? { |m| content.includes?(m) }
+        next unless content.matches?(SPARK_MARKERS)
 
         Noir::TreeSitterJvmLambdaDslExtractor.extract_routes(content, CONFIG, include_callees: include_callee).each do |route|
           @result << build_endpoint(route, path)
@@ -109,7 +113,7 @@ module Analyzer::Java
         offset = marker + method_name.size
         next unless static_file_call_name?(content, marker, method_name)
 
-        endpoints << {"/**", content[0...marker].count('\n') + 1}
+        endpoints << {"/**", line_number_for_index(content, marker)}
       end
     end
 

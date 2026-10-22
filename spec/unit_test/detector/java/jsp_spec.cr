@@ -101,6 +101,16 @@ describe "Detect Java JSP" do
     instance.detect("WEB-INF/web.xml", content).should be_false
   end
 
+  it "strips every comment, including a commented-out <jsp-file> between live ones" do
+    content = "<!-- a --><servlet><!-- <jsp-file>/x.jsp</jsp-file> --></servlet><!-- b -->"
+    instance.detect("WEB-INF/web.xml", content).should be_false
+    instance.detect("WEB-INF/web.xml", "<!-- a --><jsp-file>/x.jsp</jsp-file><!-- b -->").should be_true
+  end
+
+  it "treats an unterminated comment as running to the end of the file" do
+    instance.detect("WEB-INF/web.xml", "<servlet><!-- <jsp-file>/x.jsp</jsp-file>").should be_false
+  end
+
   it "does not detect non-JSP files" do
     instance.detect("index.html", "<html></html>").should be_false
     instance.detect("app.js", "console.log('hello')").should be_false

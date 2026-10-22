@@ -1,0 +1,75 @@
+[
+  {
+    "v": 8,
+    "name": "Shop",
+    "auth": {"authType": "bearer", "authActive": true, "token": "<<token>>"},
+    "headers": [{"key": "X-Tenant", "value": "acme", "active": true}],
+    "requests": [],
+    "folders": [
+      {
+        "v": 8,
+        "name": "Orders",
+        "auth": {"authType": "inherit", "authActive": true},
+        "headers": [],
+        "requests": [
+          {
+            "v": "11",
+            "name": "Get order",
+            "method": "GET",
+            "endpoint": "<<shopUrl>>/orders/<<orderId>>",
+            "params": [
+              {"key": "expand", "value": "items", "active": true},
+              {"key": "debug", "value": "1", "active": false}
+            ],
+            "headers": [{"key": "Content-Type", "value": "application/json", "active": true}],
+            "auth": {"authType": "inherit", "authActive": true},
+            "body": {"contentType": null, "body": null}
+          },
+          {
+            "v": "11",
+            "name": "Search orders",
+            "method": "POST",
+            "endpoint": "<<shopUrl>>/orders/search",
+            "params": [],
+            "headers": [],
+            "auth": {"authType": "api-key", "authActive": true, "key": "X-Api-Key", "value": "<<apiKey>>", "addTo": "HEADERS"},
+            "body": {"contentType": "application/x-www-form-urlencoded", "body": "status: open\n#limit: 10\nsort: date"}
+          }
+        ],
+        "folders": [
+          {
+            "name": "Public",
+            "headers": [{"key": "X-Tenant", "value": "public", "active": true}],
+            "requests": [
+              {
+                "v": "11",
+                "method": "GET",
+                "endpoint": "<<shopUrl>>/catalog",
+                "params": [],
+                "headers": [],
+                "auth": {"authType": "bearer", "authActive": false, "token": ""},
+                "body": {"contentType": null, "body": null}
+              }
+            ],
+            "folders": []
+          },
+          {
+            "name": "Uploads",
+            "requests": [
+              {
+                "v": "11",
+                "method": "PUT",
+                "endpoint": "<<shopUrl>>/orders/receipt",
+                "params": [],
+                "headers": [],
+                "auth": {"authType": "none", "authActive": true},
+                "body": {"contentType": "multipart/form-data", "body": [{"key": "file", "value": "", "active": true, "isFile": true}]}
+              }
+            ],
+            "folders": []
+          }
+        ]
+      }
+    ]
+  }
+]

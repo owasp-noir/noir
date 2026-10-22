@@ -9,7 +9,7 @@ import (
 func main() {
 	r := gin.Default()
 	r.GET("/ping", func(c *gin.Context) {
-		_ = c.DefaultQuery("name", "Guest")
+		_ = c.DefaultQuery(/* display name */ "name", "Guest")
 		_ = c.Query("age")
 
 		c.JSON(http.StatusOK, gin.H{
@@ -65,13 +65,24 @@ func main() {
 	})
 	
 	// Multi-line route definition
-	r.GET(
+	r.GET( // path on the next line
 		"/multiline",
 		func(c *gin.Context) {
 			_ = c.Query("ml_param")
 			c.JSON(http.StatusOK, "multiline")
 		},
 	)
+
+	// Root route registered directly on the engine with an empty path.
+	// Regression guard: base_prefix=="" and raw_path=="" must resolve to
+	// "/" instead of vanishing entirely.
+	r.GET("", func(c *gin.Context) {
+		c.JSON(http.StatusOK, "root")
+	})
+
+	// Single-file static registration — must emit the URL prefix as a
+	// GET endpoint (not via directory globbing).
+	r.StaticFile("/favicon.ico", "./favicon.ico")
 
 	r.Static("/public", "public")
 	r.Run() // listen and serve on 0.0.0.0:8080 (for windows "localhost:8080")

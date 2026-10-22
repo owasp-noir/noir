@@ -6,6 +6,10 @@ sort_by = "weight"
 
 +++
 
+{% mascot(mood="dev") %}
+A rule is one YAML file: an id, some info, and the patterns to match. Drop it in the rules directory and the next -P scan picks it up.
+{% end %}
+
 ```yaml
 id: rule-id
 info:
@@ -13,19 +17,19 @@ info:
   author:
     - "List of authors"
     - "Another author"
-  severity: "The severity level of the rule (e.g., critical, high, medium, low)"
+  severity: "The severity level of the rule (one of: critical, high, medium, low)"
   description: "A brief description of the rule"
   reference:
     - "URLs or references related to the rule"
 
 matchers-condition: "The condition to apply between matchers (and/or)"
 matchers:
-  - type: "The type of matcher (e.g., word, regex)"
+  - type: "The type of matcher (one of: word, regex)"
     patterns:
       - "Patterns to match"
     condition: "The condition to apply within the matcher (and/or)"
 
-  - type: "The type of matcher (e.g., word, regex)"
+  - type: "The type of matcher (one of: word, regex)"
     patterns:
       - "Patterns to match"
       - "Another pattern"
@@ -69,4 +73,17 @@ techs:
   - '*'
 ```
 
-![](./passive_private_key.png)
+<img src="./passive_private_key.png" alt="Passive scan results reporting a critical PRIVATE_KEY finding, quoting the BEGIN PRIVATE KEY line and the file it sits on." width="787" height="286" loading="lazy" decoding="async">
+
+## Notes on rule fields
+
+* Required: `id`, `info.name`, `info.severity`, and at least one matcher with a `type` and `patterns`. `matchers-condition` and each matcher's `condition` default to `or`. `author`, `description`, `reference`, `category` and `techs` are optional.
+* `severity` and `matchers[].type` are closed sets. A rule using any other value is invalid and is skipped with a `Skipped invalid passive rule` message, rather than partially applied. `category` is free-form.
+* Findings below the minimum severity are filtered out of the report, and the default minimum is `high`. A `severity: medium` or `severity: low` rule produces nothing until you lower the threshold with `--passive-scan-severity`.
+* `techs` is result metadata copied onto each finding. It does not gate which files a rule runs against: every loaded rule is evaluated against every scanned file.
+* Matchers are evaluated **line by line**: a finding is a single line, and every matcher (and every pattern inside it) has to be satisfied by that one line. A `regex` pattern written to span several lines (`-----BEGIN PRIVATE KEY-----[\s\S]*?-----END PRIVATE KEY-----`, for example) therefore never produces a finding on its own; pair it with a `word` matcher on the opening marker.
+* `id` must be unique across the whole rule set. A second rule reusing an id is skipped with a `Skipped duplicate passive rule id` message, because the id is what the JSON output and the SARIF `ruleId` identify a finding by.
+* A rule file may hold several `---` separated YAML documents; every document is loaded as its own rule.
+* A rule that can never fire because a `regex` pattern does not compile is rejected like any other invalid rule instead of being counted as loaded. That is the case when every matcher fails under `matchers-condition: or`, or any matcher fails under `and`. If only some matchers fail under `or`, the rule still loads and Noir prints a warning naming the broken pattern.
+* `category: secret` turns on a false-positive filter. A `secret` finding is dropped when the line only reads the value at runtime (`process.env`, `os.getenv`, `ENV[...]`, a CI `${{ secrets.X }}` expression), holds a placeholder, or just names the variable without assigning it a literal. A line where a `regex` matcher of the rule matches is always kept.
+* Every entry of `patterns` must be non-empty. An empty pattern (an explicit `''`, or a `- ` list item with nothing after it, which YAML reads as null) matches every line of every scanned file. A rule carrying one is rejected so it can't flood the report.

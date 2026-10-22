@@ -1,0 +1,63 @@
+---
+name: Windows
+# Native Windows build + spec run (#2828). Its own workflow rather than a
+# ci.yml job because it also runs on stacked PRs, whose base is not main.
+on:
+  # No `branches:` filter: Windows work lands as stacked PRs whose base is
+  # another PR's branch, not main.
+  pull_request:
+    paths:
+      - .github/workflows/windows.yml
+      - shard.yml
+      - shard.lock
+      - src/**
+      - spec/**
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/windows.yml
+      - shard.yml
+      - shard.lock
+      - src/**
+      - spec/**
+  workflow_dispatch:
+
+concurrency:
+  group: windows-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+      - uses: crystal-lang/install-crystal@v1
+        with:
+          crystal: 1.22.0
+      - name: Install shards
+        run: shards install
+      - name: Build
+        # --static, as release-binaries.yml builds the shipped .exe, so a
+        # static-CRT link failure shows up here rather than at release time.
+        run: shards build --verbose --static
+      - name: Smoke test
+        # A scan that finds nothing still exits 0, so assert on the count.
+        run: |
+          count=$(./bin/noir.exe -b spec/functional_test/fixtures/crystal/kemal -f json 2>/dev/null | jq '.endpoints | length')
+          echo "endpoints: $count"
+          test "$count" -gt 0
+      - name: Build spec suite
+        # Every spec file's top-level code lands in one unoptimized
+        # `__crystal_main`, and on win64 each by-value struct (Endpoint is
+        # ~200 bytes) gets its own stack slot there; the frame passed the 8 MB
+        # default reserve (0xC00000FD before the first spec). Link flags come
+        # after Crystal's own /STACK, so this one wins.
+        run: crystal build spec/suite.cr -o bin/noir_spec.exe --link-flags=/STACK:0x2000000
+      - name: Run specs
+        run: ./bin/noir_spec.exe

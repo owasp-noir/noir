@@ -3,35 +3,34 @@ require "../../../models/code_locator"
 
 module Detector::Specification
   class Nginx < Detector
+    # Registers each Nginx config path in `CodeLocator`.
+    #
     # `.conf` is by far the most common extension for Nginx fragments;
     # `.tmpl`/`.template` files are common in docker-gen and deployment
     # repositories that render Nginx configs from templates.
-    EXTENSIONS  = {".conf", ".tmpl", ".template"}
+    detector_for "nginx", idempotent: false, extensions: %w[.conf .tmpl .template]
+
     LOCATION_RE = /^\s*location\s+(?:(?:=|~\*|~|\^~)\s+)?\S+/
+    # Whole-content necessary-condition guard for `nginx_shape?`: a line can
+    # only match LOCATION_RE if "location" appears in the raw content — or
+    # if a template action is spliced out of the middle of the word
+    # (`loc{{x}}ation`), which the `\{\{` disjunct keeps on the slow path.
+    # Comment stripping only truncates lines, so it can never assemble the
+    # keyword. Skips the per-line walk for the vast majority of `.conf` /
+    # `.tmpl` files that carry no location block.
+    SHAPE_GUARD = /location|\{\{/
 
     def detect(filename : String, file_contents : String) : Bool
       return false unless applicable?(filename)
       return false unless nginx_shape?(file_contents)
 
-      CodeLocator.instance.push("nginx-spec", filename)
+      CodeLocator.instance.push(Noir::LocatorKeys::NGINX_SPEC, filename)
       true
     end
 
-    def applicable?(filename : String) : Bool
-      return true if File.basename(filename) == "nginx.conf"
-      EXTENSIONS.any? { |ext| filename.ends_with?(ext) }
-    end
-
-    def set_name
-      @name = "nginx"
-    end
-
-    # Registers each Nginx config path in `CodeLocator`.
-    def idempotent? : Bool
-      false
-    end
-
     private def nginx_shape?(content : String) : Bool
+      return false unless content_matches?(content, SHAPE_GUARD)
+
       # Include fragments often contain only `location` blocks, so scan
       # executable directives instead of requiring a top-level server/http block.
       content.each_line do |raw|

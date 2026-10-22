@@ -2,6 +2,8 @@ require "../../engines/scala_engine"
 
 module Analyzer::Scala
   class Scalatra < ScalaEngine
+    analyzer_for "scala_scalatra"
+
     HTTP_METHODS = %w[get post put delete patch head options]
 
     # Crystal recompiles an interpolated regex literal on every evaluation
@@ -11,22 +13,29 @@ module Analyzer::Scala
       {method, /(?<![.\w])#{method}\s*\(\s*"([^"]+)"/}
     end
 
+    # One precompiled `Regex.union` scan replaces the three `includes?`
+    # calls gating the `class`/`object`/`trait` declaration scan in
+    # `single_mount_prefix` (Crystal's `includes?` is not Boyer-Moore
+    # accelerated).
+    CLASS_OBJECT_TRAIT_RE = Regex.union("class", "object", "trait")
+
     # Servlet/filter class name -> mount prefix, harvested from
     # `context.mount(new XController, "/prefix")` in ScalatraBootstrap.
     @mount_prefixes = {} of String => String
 
     def analyze
       @mount_prefixes = build_mount_prefixes
-      parallel_file_scan do |path|
-        result.concat(analyze_file(path))
+      ordered_file_scan { |path| analyze_file(path) }.each do |file_endpoints|
+        result.concat(file_endpoints)
       end
       result
     end
 
     def analyze_file(path : String) : Array(Endpoint)
-      return [] of Endpoint if scalatra_test_path?(path)
-      content = File.read(path)
-      extract_routes_from_content(path, content, any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?))
+      content = read_file_content(path)
+      # Finatra controllers share the `get("/x") { ... }` DSL; scala_finatra owns them.
+      return [] of Endpoint if content.includes?("com.twitter.finatra.http")
+      extract_routes_from_content(path, content, callees_needed?)
     end
 
     # Scalatra (like a servlet container) mounts each servlet/filter at a base
@@ -35,11 +44,10 @@ module Analyzer::Scala
     private def build_mount_prefixes : Hash(String, String)
       map = {} of String => String
       all_files.each do |path|
-        next if File.directory?(path)
         next unless File.exists?(path) && File.extname(path) == ".scala"
-        next if scalatra_test_path?(path)
+        next if sbt_test_path?(path)
         begin
-          content = File.read(path)
+          content = read_file_content(path)
         rescue
           next
         end
@@ -60,15 +68,12 @@ module Analyzer::Scala
       prefix.rstrip("/*")
     end
 
-    private def scalatra_test_path?(path : String) : Bool
-      path.includes?("/src/test/") || path.includes?("/src/sbt-test/")
-    end
-
     # Extract routes from Scalatra DSL
     private def extract_routes_from_content(path : String, content : String, include_callee : Bool) : Array(Endpoint)
       endpoints = [] of Endpoint
-      lines = content.split('\n')
-      code_lines = scala_code_lines(content)
+      lexer = scala_lexer(content)
+      lines = scala_code_text(lexer).split('\n')
+      code_lines = lexer.code_lines
       mount_prefix = single_mount_prefix(code_lines)
 
       lines.each_with_index do |_line, index|
@@ -138,9 +143,7 @@ module Analyzer::Scala
         # Check if this is already a path parameter
         is_path_param = endpoint.params.any? { |p| p.name == param_name && p.param_type == "path" }
         unless is_path_param
-          unless endpoint.params.any? { |p| p.name == param_name && p.param_type == "query" }
-            endpoint.push_param(Param.new(param_name, "", "query"))
-          end
+          endpoint.push_param(Param.new(param_name, "", "query"))
         end
       end
 
@@ -150,9 +153,7 @@ module Analyzer::Scala
         param_name = match[1]
         # Skip "splat" as it's a path parameter
         next if param_name == "splat"
-        unless endpoint.params.any? { |p| p.name == param_name && p.param_type == "query" }
-          endpoint.push_param(Param.new(param_name, "", "query"))
-        end
+        endpoint.push_param(Param.new(param_name, "", "query"))
       end
 
       # Extract request body: parsedBody.extract[User]
@@ -168,17 +169,13 @@ module Analyzer::Scala
       # Extract headers: request.getHeader("Authorization")
       block.scan(/request\.getHeader\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |match|
         param_name = match[1]
-        unless endpoint.params.any? { |p| p.name == param_name && p.param_type == "header" }
-          endpoint.push_param(Param.new(param_name, "", "header"))
-        end
+        endpoint.push_param(Param.new(param_name, "", "header"))
       end
 
       # Extract cookies: cookies.get("session")
       block.scan(/cookies\.get\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |match|
         param_name = match[1]
-        unless endpoint.params.any? { |p| p.name == param_name && p.param_type == "cookie" }
-          endpoint.push_param(Param.new(param_name, "", "cookie"))
-        end
+        endpoint.push_param(Param.new(param_name, "", "cookie"))
       end
     end
 
@@ -191,7 +188,7 @@ module Analyzer::Scala
 
       prefixes = Set(String).new
       code_lines.each do |line|
-        next unless line.includes?("class") || line.includes?("object") || line.includes?("trait")
+        next unless line.matches?(CLASS_OBJECT_TRAIT_RE)
         line.scan(/(?<![.\w])(?:class|object|trait)\s+(\w+)/) do |m|
           if pfx = @mount_prefixes[m[1]]?
             prefixes << pfx

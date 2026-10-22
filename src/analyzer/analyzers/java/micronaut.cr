@@ -1,11 +1,16 @@
 require "../../../models/analyzer"
 require "../../engines/java_engine"
 require "../../../miniparsers/micronaut_extractor_ts"
+require "../../../miniparsers/kotlin_route_extractor_ts"
 require "yaml"
+require "../../../utils/url_path"
 
 module Analyzer::Java
   class Micronaut < Analyzer
-    JAVA_EXTENSION    = "java"
+    analyzer_for "java_micronaut"
+
+    include JavaEngine
+
     MICRONAUT_MARKERS = ["io.micronaut", "micronaut.io"]
     alias PackageScopeKey = Tuple(String, String)
 
@@ -50,8 +55,9 @@ module Analyzer::Java
     end
 
     def analyze
-      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
+      include_callee = callees_needed?
       dto_builder = Noir::TreeSitterJavaDtoIndex.new
+      kotlin_dto_builder = Noir::TreeSitterKotlinDtoIndex.new
 
       file_list = all_files()
       path_configs = path_configs_for(file_list)
@@ -59,47 +65,45 @@ module Analyzer::Java
 
       path_configs.each do |_project_root, config|
         config.static_resource_mappings.each do |mapping|
-          @result << Endpoint.new(join_paths(config.context_path, mapping), "GET")
+          @result << Endpoint.new(Noir::URLPath.join_trimmed(config.context_path, mapping), "GET")
         end
       end
 
       file_list.each do |path|
-        next if JavaEngine.test_path?(path)
+        next unless jvm_source?(path)
+        next if JavaEngine.test_path?(base_relative_path(path))
         next unless File.exists?(path)
-        next unless path.ends_with?(".#{JAVA_EXTENSION}")
 
         content = read_file_content(path)
         next unless MICRONAUT_MARKERS.any? { |marker| content.includes?(marker) }
+
+        base_path = (path_configs[JavaEngine.project_root_for(path, configured_base_for(path))]? || MicronautPathConfig.new).context_path
+        if path.ends_with?(".kt")
+          analyze_kotlin_file(path, content, kotlin_dto_builder, base_path, include_callee)
+          next
+        end
 
         package_name = Noir::TreeSitterJavaParameterExtractor.extract_package_name(content)
         next if package_name.empty?
 
         dto_index = dto_builder.build_for(path, content)
         imports = java_imports(content)
-        base_path = (path_configs[project_root_for(path)]? || MicronautPathConfig.new).context_path
 
-        Noir::TreeSitterMicronautExtractor.extract_routes(content, dto_index, include_callees: include_callee).each do |route|
-          line = route.line + 1
-          details = Details.new(PathInfo.new(path, line))
-          endpoint = Endpoint.new(join_paths(base_path, route.path), route.verb, route.params, details)
-          endpoint.protocol = route.protocol
-          route.callees.each do |(name, callee_line)|
-            endpoint.push_callee(Callee.new(name, path: path, line: callee_line))
-          end
-          @result << endpoint
+        project_constants = java_project_constants(path)
+        Noir::TreeSitterMicronautExtractor.extract_routes(content, dto_index, include_callees: include_callee, project_constants: project_constants).each do |route|
+          @result << jvm_route_endpoint(route, Noir::URLPath.join_trimmed(base_path, route.path), path)
         end
 
-        Noir::TreeSitterMicronautExtractor.extract_controller_interface_implementations(content).each do |implementation|
+        Noir::TreeSitterMicronautExtractor.extract_controller_interface_implementations(content, project_constants).each do |implementation|
           implementation.interface_names.each do |interface_name|
             visible_interface_routes(interface_route_index, path, package_name, imports, interface_name).each do |entry|
               entry_route = entry.route
               implementation.paths.each do |implementation_path|
-                inherited_path = join_paths(implementation_path, entry_route.path)
-                details = Details.new(PathInfo.new(entry.path, entry_route.line + 1))
-                endpoint = Endpoint.new(join_paths(base_path, inherited_path), entry_route.verb, entry_route.params, details)
-                endpoint.protocol = entry_route.protocol
-                entry_route.callees.each do |name, callee_line|
-                  endpoint.push_callee(Callee.new(name, path: entry.path, line: callee_line))
+                inherited_path = Noir::URLPath.join_trimmed(implementation_path, entry_route.path)
+                endpoint = jvm_route_endpoint(entry_route, Noir::URLPath.join_trimmed(base_path, inherited_path), entry.path)
+                # The body lives on the `@Override`, not the interface method.
+                endpoint.handler = implementation.method_rows[entry_route.method_name]?.try do |row|
+                  Handler.new("#{implementation.class_name}.#{entry_route.method_name}", path, row + 1)
                 end
                 @result << endpoint
               end
@@ -112,15 +116,28 @@ module Analyzer::Java
       @result
     end
 
+    private def analyze_kotlin_file(path : String,
+                                    content : String,
+                                    dto_builder : Noir::TreeSitterKotlinDtoIndex,
+                                    base_path : String,
+                                    include_callee : Bool)
+      Noir::TreeSitter.parse_kotlin(content) do |root|
+        dto_index = dto_builder.build_for_with_root(path, content, root)
+        Noir::TreeSitterKotlinRouteExtractor.extract_micronaut_routes_from(root, content, dto_index, include_callees: include_callee).each do |route|
+          @result << jvm_route_endpoint(route, Noir::URLPath.join_trimmed(base_path, route.path), path)
+        end
+      end
+    end
+
     private def collect_interface_route_index(file_list : Array(String),
                                               dto_builder : Noir::TreeSitterJavaDtoIndex,
                                               include_callee : Bool) : MicronautInterfaceRouteIndex
       index = MicronautInterfaceRouteIndex.new
 
       file_list.each do |path|
-        next if JavaEngine.test_path?(path)
+        next unless path.ends_with?(".java")
+        next if JavaEngine.test_path?(base_relative_path(path))
         next unless File.exists?(path)
-        next unless path.ends_with?(".#{JAVA_EXTENSION}")
 
         content = read_file_content(path)
         next unless MICRONAUT_MARKERS.any? { |marker| content.includes?(marker) }
@@ -129,9 +146,9 @@ module Analyzer::Java
         next if package_name.empty?
 
         dto_index = dto_builder.build_for(path, content)
-        Noir::TreeSitterMicronautExtractor.extract_interface_routes(content, dto_index, include_callees: include_callee).each do |interface_name, routes|
+        Noir::TreeSitterMicronautExtractor.extract_interface_routes(content, dto_index, include_callees: include_callee, project_constants: java_project_constants(path)).each do |interface_name, routes|
           routes.each do |route|
-            index.add(project_root_for(path), package_name, interface_name, MicronautInterfaceRouteEntry.new(route, path, content, package_name))
+            index.add(JavaEngine.project_root_for(path, configured_base_for(path)), package_name, interface_name, MicronautInterfaceRouteEntry.new(route, path, content, package_name))
           end
         end
       end
@@ -146,7 +163,7 @@ module Analyzer::Java
                                          interface_name : String) : Array(MicronautInterfaceRouteEntry)
       routes = [] of MicronautInterfaceRouteEntry
       seen = Set(String).new
-      project_root = project_root_for(path)
+      project_root = JavaEngine.project_root_for(path, configured_base_for(path))
 
       add_interface_routes(routes, seen, index.by_package[{project_root, package_name}]?.try(&.[interface_name]?))
 
@@ -159,20 +176,6 @@ module Analyzer::Java
       end
 
       routes
-    end
-
-    private def add_interface_routes(target : Array(MicronautInterfaceRouteEntry),
-                                     seen : Set(String),
-                                     routes : Array(MicronautInterfaceRouteEntry)?)
-      return unless routes
-
-      routes.each do |entry|
-        route = entry.route
-        key = "#{entry.path}:#{route.class_name}:#{route.method_name}:#{route.verb}:#{route.path}"
-        next if seen.includes?(key)
-        seen << key
-        target << entry
-      end
     end
 
     private def java_imports(content : String) : Array(String)
@@ -188,10 +191,10 @@ module Analyzer::Java
       project_roots = Set(String).new
 
       file_list.each do |path|
-        next if JavaEngine.test_path?(path)
+        next unless jvm_source?(path)
+        next if JavaEngine.test_path?(base_relative_path(path))
         next unless File.exists?(path)
-        next unless path.ends_with?(".#{JAVA_EXTENSION}")
-        project_roots << project_root_for(path)
+        project_roots << JavaEngine.project_root_for(path, configured_base_for(path))
       end
 
       project_roots.each do |root|
@@ -220,31 +223,8 @@ module Analyzer::Java
       )
     end
 
-    private def resource_dirs_for(project_root : String) : Array(String)
-      [
-        File.join(project_root, "src/main/resources"),
-        File.join(project_root, "resources"),
-        project_root,
-      ].uniq
-    end
-
-    private def read_properties(path : String) : Hash(String, String)
-      values = Hash(String, String).new
-      File.each_line(path) do |line|
-        stripped = line.strip
-        next if stripped.empty? || stripped.starts_with?("#") || stripped.starts_with?("!")
-
-        if separator = stripped.index(/[=:]/)
-          key = stripped[...separator].strip
-          value = stripped[(separator + 1)..].strip
-          values[key] = value unless key.empty?
-        end
-      end
-      values
-    end
-
     private def merge_yaml_path_config(values : Hash(String, String), path : String)
-      flatten_yaml_values(values, YAML.parse(File.read(path)))
+      flatten_yaml_values(values, YAML.parse(read_file_content(path)))
     rescue
       nil
     end
@@ -287,29 +267,6 @@ module Analyzer::Java
       return "" if normalized.empty?
 
       normalized.starts_with?("/") ? normalized : "/#{normalized}"
-    end
-
-    private def project_root_for(path : String) : String
-      marker = "/src/main/java/"
-      if index = path.index(marker)
-        path[...index]
-      else
-        File.dirname(path)
-      end
-    end
-
-    private def normalize_optional_path(path : String?) : String
-      return "" unless path
-
-      trimmed = path.strip
-      return "" if trimmed.empty? || trimmed == "/"
-      trimmed.starts_with?("/") ? trimmed : "/#{trimmed}"
-    end
-
-    private def join_paths(prefix : String, suffix : String) : String
-      return suffix if prefix.empty?
-      return prefix.rstrip('/') if suffix.empty?
-      "#{prefix.rstrip('/')}/#{suffix.lstrip('/')}"
     end
   end
 end

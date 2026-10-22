@@ -1,8 +1,9 @@
+require "file_utils"
 require "../../../spec_helper"
 require "../../../../src/tagger/tagger"
 
 describe "FastEndpointsAuthTagger" do
-  fixture_base = "#{__DIR__}/../../../functional_test/fixtures/csharp/fastendpoints"
+  fixture_base = File.expand_path("../../../functional_test/fixtures/csharp/fastendpoints", __DIR__)
   create_user_path = "#{fixture_base}/Endpoints/CreateUserEndpoint.cs"
   ping_path = "#{fixture_base}/Endpoints/PingEndpoint.cs"
 
@@ -35,5 +36,30 @@ describe "FastEndpointsAuthTagger" do
     tagger.perform([endpoint])
 
     endpoint.tags.empty?.should be_true
+  end
+
+  it "tags an endpoint without AllowAnonymous as secure by default" do
+    noir_options = create_test_options
+    tmpdir = File.tempname("fastendpoints_default")
+    Dir.mkdir_p(tmpdir)
+    file = File.join(tmpdir, "MyEndpoint.cs")
+    File.write(file, [
+      "public class MyEndpoint : EndpointWithoutRequest",
+      "{",
+      "    public override void Configure()",
+      "    {",
+      "        Get(\"/api/user/profile\");",
+      "    }",
+      "}",
+    ].join("\n"))
+    noir_options["base"] = YAML::Any.new(tmpdir)
+
+    details = Details.new(PathInfo.new(file, 5))
+    details.technology = "cs_fastendpoints"
+    endpoint = Endpoint.new("/api/user/profile", "GET", [] of Param, details)
+    FastEndpointsAuthTagger.new(noir_options).perform([endpoint])
+    FileUtils.rm_rf(tmpdir)
+
+    endpoint.tags.map(&.description).should eq(["Protected by FastEndpoints default authorization (no AllowAnonymous)"])
   end
 end

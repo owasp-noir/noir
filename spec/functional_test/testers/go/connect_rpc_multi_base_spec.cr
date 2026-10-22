@@ -22,7 +22,7 @@ tester = FunctionalTester.new("fixtures/go/connect_rpc_multi_base/", {
 })
 tester.perform_tests
 
-it "keeps Connect RPC service mounts inside each base path" do
+it "keeps Connect RPC service mounts inside each base path", tags: "functional" do
   service_a = tester.app.endpoints.find! { |endpoint| endpoint.url == "/servicea.v1.UserService/Get" }
   service_b = tester.app.endpoints.find! { |endpoint| endpoint.url == "/serviceb.v1.UserService/Get" }
 

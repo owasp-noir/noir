@@ -1,24 +1,15 @@
-require "../../../models/analyzer"
+require "../../engines/specification_engine"
 
 module Analyzer::Specification
-  class IstioVirtualservice < Analyzer
+  class IstioVirtualservice < SpecificationEngine
+    analyzer_for "istio_virtualservice"
+
     METHOD_ANY = "ANY"
 
     def analyze
-      spec_files = CodeLocator.instance.all("istio-virtualservice-spec")
-      return @result unless spec_files.is_a?(Array(String))
-
-      spec_files.each do |path|
-        next unless File.exists?(path)
-
-        details = Details.new(PathInfo.new(path))
+      each_spec_file_with_details(Noir::LocatorKeys::ISTIO_VIRTUALSERVICE_SPEC) do |path, details|
         content = read_file_content(path)
-        begin
-          YAML.parse_all(content).each { |doc| process_doc(doc, details) }
-        rescue e
-          @logger.debug "Exception processing #{path}"
-          @logger.debug_sub e
-        end
+        parse_all_yaml_template(content).each { |doc| process_doc(doc, details) }
       end
 
       @result
@@ -37,23 +28,10 @@ module Analyzer::Specification
       spec = root[YAML::Any.new("spec")]?.try(&.as_h?)
       return unless spec
 
-      hosts = collect_string_array(spec[YAML::Any.new("hosts")]?)
+      hosts = string_list(spec[YAML::Any.new("hosts")]?)
 
       http_rules = spec[YAML::Any.new("http")]?.try(&.as_a?) || [] of YAML::Any
       http_rules.each { |rule| process_http_rule(rule, hosts, details) }
-    end
-
-    private def collect_string_array(node : YAML::Any?) : Array(String)
-      result = [] of String
-      return result if node.nil?
-      arr = node.as_a?
-      return result unless arr
-      arr.each do |entry|
-        if str = entry.as_s?
-          result << str unless str.empty?
-        end
-      end
-      result
     end
 
     private def process_http_rule(rule : YAML::Any, hosts : Array(String), details : Details)
@@ -113,9 +91,12 @@ module Analyzer::Specification
     end
 
     private def emit_endpoint(path : String, method : String, path_type : String, hosts : Array(String), origin : String, details : Details)
+      regex = path_type == "regex" && origin == "match" && Noir::URLPath.regex_route?(path)
+      path = Noir::URLPath.strip_regex_anchors(path) if path_type == "regex"
       hosts = [""] if hosts.empty?
       hosts.each do |host|
         endpoint = Endpoint.new(path, method, details)
+        endpoint.kind = "regex" if regex
         endpoint.add_tag(Tag.new("virtualservice-path-type", path_type, "istio_virtualservice_analyzer"))
         endpoint.add_tag(Tag.new("virtualservice-host", host, "istio_virtualservice_analyzer")) unless host.empty?
         endpoint.add_tag(Tag.new("virtualservice-source", origin, "istio_virtualservice_analyzer"))

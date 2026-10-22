@@ -4,7 +4,9 @@ from typing import FrozenSet, Optional,Union
 from fastapi_utils.cbv import cbv
 from typing_extensions import Annotated
 from fastapi.responses import JSONResponse
+from fastapi.security import OAuth2PasswordRequestForm
 from fastapi import FastAPI, Path, Query, status, Body, Header, Cookie, Depends, Security, Request, Response, APIRouter, WebSocket
+from pydantic import BaseModel, Field
 
 api : APIRouter = APIRouter()
 tenant_api = APIRouter(prefix="/tenants/{tenant_id}")
@@ -39,6 +41,29 @@ async def hidden_header(
     return {"hidden_header": hidden_header}
 
 
+# The name a client sends is not always the Python identifier: `alias=`
+# overrides it outright, and `Header` maps `_` to `-` unless it is told
+# `convert_underscores=False`.
+@api.get("/wire_names")
+async def wire_names(
+    x_token: Optional[str] = Header(default=None),
+    renamed: Optional[str] = Header(default=None, alias="X-Custom-Auth"),
+    keep_underscores: Optional[str] = Header(default=None, convert_underscores=False),
+    q_name: Optional[str] = Query(default=None, alias="q-name"),
+    sess_id: Optional[str] = Cookie(default=None, alias="sess-id"),
+):
+    return {}
+
+
+@api.get("/wire_names/annotated")
+async def wire_names_annotated(
+    x_api_key: Annotated[Optional[str], Header()] = None,
+    tok: Annotated[Optional[str], Header(alias="X-Tok")] = None,
+    q_x: Annotated[Optional[str], Query(alias="q-x")] = None,
+):
+    return {}
+
+
 @api.get("/cookie_examples/")
 def cookie_examples(
     data: Union[str, None] = Cookie(
@@ -58,10 +83,35 @@ def cookie_examples(
 ):
     return data
 
+# A Pydantic model describes the body, and `Field(alias=...)` /
+# `validation_alias=...` rename the key the client has to send. `note`
+# guards the other direction: a default that merely contains the text
+# `alias=` is not a rename.
+class AliasedPayload(BaseModel):
+    user_name: str = Field(..., alias="userName")
+    v2_name: str = Field(..., validation_alias="v2Name")
+    age: int
+    note: str = "plain"
+
+
+@api.post("/aliased_body")
+async def aliased_body(payload: AliasedPayload):
+    return payload
+
+
 @api.post("/dummypath")
 async def get_body(request: Request):
     jj = request.json()
     return await jj["dummy"]
+
+
+@api.get("/raw_request")
+async def raw_request(request: Request):
+    q = request.query_params.get("q")
+    page = request.query_params["page"]
+    token = request.headers.get("x-token")
+    session = request.cookies.get("session")
+    return {"q": q, "page": page, "token": token, "session": session}
 
 @api.get(BASE_ROUTE + "/concat")
 def constant_concat_route():
@@ -163,3 +213,40 @@ api.add_api_websocket_route(
     "/ws/registered/{channel}",
     endpoint=registered_websocket_handler,
 )
+
+
+class OrderBase(BaseModel):
+    """Shared order fields.
+
+    note: prose in a docstring, not a field
+    """
+    # the customer placing the order
+    customer_id: int
+    label: str = Field(..., description="Display name: shown in the UI")
+
+
+class OrderCreate(OrderBase):
+    model_config = {"extra": "forbid"}
+    quantity: int = 1  # how many
+
+
+@api.post("/orders")
+async def create_order(order: OrderCreate):
+    return order
+
+
+@api.patch("/orders/{order_id}")
+async def patch_order(order_id: int, order: Optional[OrderBase] = None):
+    return order
+
+
+@api.put("/orders/{order_id}")
+async def put_order(order_id: int, order: Annotated[OrderCreate, Body()]):
+    return order
+
+
+@api.post("/login/access-token")
+def login_access_token(
+    form_data: Annotated[OAuth2PasswordRequestForm, Depends()]
+):
+    return {"user": form_data.username}

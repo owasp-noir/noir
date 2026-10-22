@@ -1,15 +1,6 @@
 require "../../spec_helper"
 require "../../../src/utils/*"
 
-describe "remove_start_slash" do
-  it "with slash" do
-    remove_start_slash("/abcd/1234").should eq("abcd/1234")
-  end
-  it "without slash" do
-    remove_start_slash("abcd/1234").should eq("abcd/1234")
-  end
-end
-
 describe "get_relative_path" do
   it "start with ./" do
     get_relative_path("./abcd", "1.cr").should eq("1.cr")
@@ -85,24 +76,6 @@ describe "any_to_bool" do
   end
 end
 
-describe "valid_json?" do
-  it "valid json" do
-    valid_json?("{\"test\":\"test\"}").should be_true
-  end
-  it "invalid json" do
-    valid_json?("{\"test\":\"test\"").should be_false
-  end
-end
-
-describe "valid_yaml?" do
-  it "valid yaml" do
-    valid_yaml?("test: test").should be_true
-  end
-  it "invalid yaml" do
-    valid_yaml?(":").should be_false
-  end
-end
-
 describe "escape_glob_path" do
   it "no special chars" do
     escape_glob_path("/tmp/test-noir/app").should eq("/tmp/test-noir/app")
@@ -122,31 +95,5 @@ describe "escape_glob_path" do
 
   it "mixed specials" do
     escape_glob_path("/x/{a}[b]*?\\c").should eq("/x/\\{a\\}\\[b\\]\\*\\?\\\\c")
-  end
-end
-
-describe "join_path" do
-  it "joins two segments" do
-    join_path("/api", "users").should eq("/api/users")
-  end
-
-  it "collapses a double slash at the boundary" do
-    join_path("/api", "/users").should eq("/api/users")
-  end
-
-  it "strips trailing slashes from segments" do
-    join_path("api/", "/v1/").should eq("/api/v1")
-  end
-
-  it "skips empty segments" do
-    join_path("", "users").should eq("/users")
-  end
-
-  it "joins three segments (variadic)" do
-    join_path("a", "b", "c").should eq("/a/b/c")
-  end
-
-  it "always prepends a leading slash" do
-    join_path("noslash").should eq("/noslash")
   end
 end

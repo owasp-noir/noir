@@ -2,29 +2,86 @@ require "../../../models/analyzer"
 require "../../../miniparsers/java_route_extractor_ts"
 require "../../../miniparsers/java_parameter_extractor_ts"
 require "../../../miniparsers/java_callee_extractor"
+require "../../../utils/spring_property_path"
 require "../../engines/java_engine"
+require "../../../utils/path_scope"
+require "../../../utils/url_path"
+require "../../../utils/top_level_split"
 require "yaml"
 
 module Analyzer::Java
   class Spring < Analyzer
+    analyzer_for "java_spring"
+
+    include JavaEngine
+
     REGEX_ROUTER_CODE_BLOCK = /route\(\)?.*?\);/m
     REGEX_ROUTE_CALL        = /((?:andRoute|route)\s*\(|\.)\s*(?:RequestPredicates\.)?(GET|POST|DELETE|PUT|PATCH|HEAD|OPTIONS)\s*\(/
+
+    SPRING_WEB_BIND_PACKAGE      = "org.springframework.web.bind.annotation."
+    FEIGN_CLIENT_PACKAGE         = "org.springframework.cloud.openfeign.FeignClient"
+    SPRING_HTTP_EXCHANGE_PACKAGE = "org.springframework.web.service.annotation."
+
+    # Every `content.includes?(...)` below used to be its own Rabin-Karp
+    # pass over the whole file. This analyzer asks ~30 such questions per
+    # `.java` file across three walks, and on a monorepo the overwhelming
+    # majority of files answer "no" to all of them. One precompiled
+    # `Regex.union` (PCRE2 JIT, via `content_matches?`) is the same
+    # predicate in a single pass — see the note on `Analyzer#content_matches?`.
+    WEBSOCKET_BINDING_RE = Regex.union(
+      "org.springframework.web.socket.config.annotation",
+      "WebSocketMessageBrokerConfigurer",
+      "@EnableWebSocketMessageBroker",
+    )
+    MESSAGE_MAPPING_BINDING_RE = Regex.union(
+      "org.springframework.messaging.handler.annotation",
+      "@MessageMapping",
+      "@SubscribeMapping",
+    )
+    RESOURCE_HANDLER_BINDING_RE = Regex.union("ResourceHandlerRegistry", "addResourceHandler")
+
+    # The OR of every marker the annotation branch keys off. A file that
+    # misses this cannot set any of the individual flags, so the per-flag
+    # scans only run for the handful of files that get past it.
+    ANY_BINDING_RE = Regex.union(
+      SPRING_WEB_BIND_PACKAGE,
+      FEIGN_CLIENT_PACKAGE, "@FeignClient",
+      SPRING_HTTP_EXCHANGE_PACKAGE,
+      "@HttpExchange", "@GetExchange", "@PostExchange",
+      "@PutExchange", "@PatchExchange", "@DeleteExchange",
+      "RouteLocatorBuilder", "PredicateSpec", "org.springframework.cloud.gateway",
+      "org.springframework.web.socket.config.annotation",
+      "WebSocketMessageBrokerConfigurer", "@EnableWebSocketMessageBroker",
+      "org.springframework.messaging.handler.annotation",
+      "@MessageMapping", "@SubscribeMapping",
+      "ResourceHandlerRegistry", "addResourceHandler",
+    )
+
+    # `build_spring_indexes` gate: neither index can want a file that
+    # mentions neither marker.
+    STOMP_PREFIX_RE           = Regex.union("setApplicationDestinationPrefixes")
+    SPRING_WEB_BIND_RE        = Regex.union(SPRING_WEB_BIND_PACKAGE)
+    META_ANNOTATION_RE        = Regex.union("@interface")
+    SPRING_INDEX_PRESCREEN_RE = Regex.union("setApplicationDestinationPrefixes", SPRING_WEB_BIND_PACKAGE)
+    INJECTED_META_RE          = Regex.union(Noir::TreeSitterJavaParameterExtractor::INJECTED_PARAM_ANNOTATIONS.map { |name| "@#{name}" })
+    # `implements Formatter<PetType>` / `Converter<String, PetType>`: the target type.
+    CONVERTER_TARGET_RE = /\b(?:Formatter|Converter)\s*<\s*(?:[\w.]+\s*,\s*)?(?:[\w]+\.)*(\w+)\s*>/
+    # `dataBinder.setDisallowedFields("id", "*.id")` in an `@InitBinder`.
+    DISALLOWED_FIELDS_RE = /\bsetDisallowedFields\s*\(([^)]*)\)/
+
+    # `collect_interface_route_index` gates.
+    INTERFACE_OR_ABSTRACT_RE  = Regex.union("interface", "abstract")
+    INTERFACE_ROUTE_MARKER_RE = Regex.union(
+      SPRING_WEB_BIND_PACKAGE,
+      SPRING_HTTP_EXCHANGE_PACKAGE,
+      "@HttpExchange", "@GetExchange", "@PostExchange",
+      "@PutExchange", "@PatchExchange", "@DeleteExchange",
+      "@RequestMapping", "@GetMapping", "@PostMapping",
+    )
 
     alias SpringRouteMapping = Noir::TreeSitterJavaRouteExtractor::ClassMapping
     alias SpringRoute = Noir::TreeSitterJavaRouteExtractor::Route
     alias PackageScopeKey = Tuple(String, String)
-
-    private struct SpringPathConfig
-      getter servlet_context_path : String
-      getter webflux_base_path : String
-
-      def initialize(@servlet_context_path = "", @webflux_base_path = "")
-      end
-
-      def web_base_path : String
-        @webflux_base_path.empty? ? @servlet_context_path : @webflux_base_path
-      end
-    end
 
     private struct SpringMetaAnnotationIndex
       getter by_package : Hash(PackageScopeKey, Hash(String, SpringRouteMapping))
@@ -78,353 +135,425 @@ module Analyzer::Java
     end
 
     def analyze
-      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
-      webflux_base_path_map = Hash(String, String).new
+      include_callee = callees_needed?
       dto_builder = Noir::TreeSitterJavaDtoIndex.new
 
-      file_list = all_files()
-      path_configs = path_configs_for(file_list)
-      stomp_prefixes = stomp_application_prefixes_for(file_list)
-      meta_annotation_index = collect_meta_annotation_index(file_list)
-      interface_route_index = collect_interface_route_index(file_list, meta_annotation_index)
-      file_list.each do |path|
-        # Extract the Webflux base path from 'application.yml' /
-        # 'application.properties' so route paths inherit it.
-        if File.directory?(path)
-          if path.ends_with?("/src")
-            application_yml_path = File.join(path, "main/resources/application.yml")
-            if File.exists?(application_yml_path)
-              begin
-                config = YAML.parse(File.read(application_yml_path))
-                spring = config["spring"]
-                webflux = spring["webflux"]
-                webflux_base_path = webflux["base-path"]
+      # `.java` from the extension index, tests dropped once. Previous
+      # shape walked the whole monorepo `file_map` four times (path
+      # configs, STOMP prefixes, meta annotations, interface routes)
+      # before the main route pass — each pass re-reading and often
+      # re-parsing the same files. Indexes are now built in at most two
+      # content walks over the Java source set only; webflux /
+      # servlet context paths come from `path_config_for` (application.yml
+      # / .properties under each project root).
+      java_files = get_files_by_extension(".java").reject { |path| JavaEngine.test_path?(base_relative_path(path)) }
+      path_configs, spring_property_maps, stomp_prefixes, meta_annotation_index, interface_route_index, injected_annotation_index, converted_type_index, advice_disallowed_index =
+        build_spring_indexes(java_files)
 
-                if webflux_base_path
-                  webflux_base_path_map[path] = webflux_base_path.as_s
+      java_files.each do |path|
+        project_root = project_root_for(path)
+        path_config = path_configs[project_root]? || SpringPathConfig.new
+        spring_properties = spring_property_maps[project_root]? || {} of String => String
+        stomp_application_prefixes = stomp_prefixes[project_root]? || [""]
+        configured_base_path = path_config.web_base_path
+        injected_annotations = injected_annotation_index[project_root]?
+        converted_types = converted_type_index[project_root]?
+        content = read_file_content(path)
+        # ponytail: file-scoped, ignores `@InitBinder("name")` targets and advice selectors.
+        disallowed_fields = disallowed_binder_fields(content) + (advice_disallowed_index[project_root]? || [] of String)
+        @result.concat(spring_security_endpoints(path, configured_base_path))
+
+        # Only files that mention Spring MVC / Feign bindings carry
+        # annotation-based routes. Reactive `router().route()` files
+        # land in the `else` branch below. `ANY_BINDING_RE` is the OR of
+        # every marker the branch below keys off, so one pass decides
+        # whether the per-flag scans are worth running at all.
+        if content_matches?(content, ANY_BINDING_RE)
+          has_websocket_bindings = content_matches?(content, WEBSOCKET_BINDING_RE)
+          has_message_mapping_bindings = content_matches?(content, MESSAGE_MAPPING_BINDING_RE)
+          has_resource_handler_bindings = content_matches?(content, RESOURCE_HANDLER_BINDING_RE)
+
+          # Single tree-sitter parse for the whole file — every
+          # extraction below pulls from the same root so a
+          # controller with N routes pays for 1 parse instead of
+          # the previous 4 + 2N. The DTO index, FeignClient
+          # detection, route discovery, consumes lookup, and
+          # parameter walks all consume `root`.
+          Noir::TreeSitter.parse_java(content) do |root|
+            # Skip files without a package declaration — legacy filter
+            # that avoids scanning test stubs / throwaway snippets.
+            package_name = Noir::TreeSitterJavaParameterExtractor.extract_package_name_from(root, content)
+            next if package_name.empty?
+
+            dto_index = dto_builder.build_for_with_root(path, content, root)
+            feign_clients = Noir::TreeSitterJavaParameterExtractor.extract_feign_client_classes_from(root, content)
+            http_exchange_clients = Noir::TreeSitterJavaParameterExtractor.extract_http_exchange_client_classes_from(root, content)
+            visible_meta_mappings = visible_meta_annotation_mappings(path, content, package_name, meta_annotation_index)
+            imports = java_imports(content)
+
+            # The file's String-constant table is identical for every
+            # route in the file, so build it once here and thread it into
+            # the per-route parameter walks (and the WebSocket branches
+            # below) instead of rebuilding it — a full recursive tree walk
+            # — on every emitted route.
+            file_constants = Noir::TreeSitterJavaRouteExtractor.extract_string_constants_from(root, content, java_project_constants(path))
+
+            # Callee lookups share the file's method and declaration
+            # indexes across every route, built on the first route that
+            # needs them.
+            file_callees = Noir::JavaCalleeExtractor::FileCallees.new(root, content, path)
+            # Same for the handler-method lookups below (built on the first route).
+            param_index = nil.as(Noir::TreeSitterJavaParameterExtractor::FileIndex?)
+            model_attribute_methods = nil.as(Hash(String, Array(Tuple(String, Array(String))))?)
+
+            Noir::TreeSitterJavaRouteExtractor.extract_routes_from(root, content, visible_meta_mappings, file_constants).each do |route|
+              is_feign_client = feign_clients.includes?(route.class_name)
+              is_http_exchange_client = http_exchange_clients.includes?(route.class_name)
+              is_internal_client = is_feign_client || is_http_exchange_client
+
+              param_index ||= Noir::TreeSitterJavaParameterExtractor.build_file_index(root, content)
+              parameter_format = Noir::TreeSitterJavaParameterExtractor.extract_consumes_from(
+                root, content, route.class_name, route.method_name, param_index
+              )
+              # The POST form-binding default is applied per-parameter in
+              # the extractor so an explicit `@RequestBody` resolves to
+              # "json" rather than inheriting "form".
+
+              parameters = Noir::TreeSitterJavaParameterExtractor.extract_method_parameters_from(
+                root, content, route.class_name, route.method_name, route.verb, parameter_format, dto_index, route.line,
+                constants: file_constants, index: param_index, injected_annotations: injected_annotations,
+                converted_types: converted_types, disallowed_fields: disallowed_fields
+              )
+              merge_route_condition_params(parameters, route.params)
+
+              base_path = is_internal_client ? "" : configured_base_path
+
+              line = route.line + 1
+              details = Details.new(PathInfo.new(path, line))
+
+              endpoint = Endpoint.new(
+                resolve_endpoint_path(Noir::URLPath.join_rooted(base_path, route.path), spring_properties),
+                route.verb, parameters, details, is_internal_client
+              )
+              endpoint.route_conditions = route.params
+              endpoint.handler = jvm_route_handler(route, path)
+
+              # 1-hop callees out of the handler method body. Cross-file
+              # definition resolution is intentionally out of scope —
+              # `Callee#path` points at the call site, matching every
+              # other analyzer's first-cut honest scope.
+              if include_callee && !(route.class_name.empty? || route.method_name.empty?)
+                file_callees.callees_in_method(route.class_name, route.method_name, route.line).each do |entry|
+                  name, callee_path, callee_line = entry
+                  endpoint.push_callee(Callee.new(name, path: callee_path, line: callee_line))
                 end
-              rescue
-                # Handle parsing errors if necessary
-              end
-            end
-
-            application_properties_path = File.join(path, "main/resources/application.properties")
-            if File.exists?(application_properties_path)
-              begin
-                properties = File.read(application_properties_path)
-                base_path = properties.match(/spring\.webflux\.base-path\s*=\s*(.*)/)
-                if base_path
-                  webflux_base_path = base_path[1]
-                  webflux_base_path_map[path] = webflux_base_path if webflux_base_path
-                end
-              rescue
-                # Handle parsing errors if necessary
-              end
-            end
-          end
-        elsif File.exists?(path) && path.ends_with?(".java")
-          # Skip Maven/Gradle test sources via the shared
-          # `JavaEngine.test_path?` helper; see the helper doc for
-          # the rationale (`src/test/`, `src/it/` are unambiguous
-          # JVM build-tool conventions).
-          next if JavaEngine.test_path?(path)
-          webflux_base_path = find_base_path(path, webflux_base_path_map)
-          project_root = project_root_for(path)
-          path_config = path_configs[project_root]? || SpringPathConfig.new
-          stomp_application_prefixes = stomp_prefixes[project_root]? || [""]
-          configured_base_path = path_config.web_base_path
-          configured_base_path = webflux_base_path if configured_base_path.empty?
-          content = read_file_content(path)
-
-          # Only files that mention Spring MVC / Feign bindings carry
-          # annotation-based routes. Reactive `router().route()` files
-          # land in the `else` branch below.
-          spring_web_bind_package = "org.springframework.web.bind.annotation."
-          feign_client_package = "org.springframework.cloud.openfeign.FeignClient"
-          http_exchange_package = "org.springframework.web.service.annotation."
-          has_spring_bindings = content.includes?(spring_web_bind_package)
-          has_feign_bindings = content.includes?(feign_client_package) || content.includes?("@FeignClient")
-          has_http_exchange_bindings = http_exchange_bindings?(content, http_exchange_package)
-          has_gateway_bindings = content.includes?("RouteLocatorBuilder") ||
-                                 content.includes?("PredicateSpec") ||
-                                 content.includes?("org.springframework.cloud.gateway")
-          has_websocket_bindings = content.includes?("org.springframework.web.socket.config.annotation") ||
-                                   content.includes?("WebSocketMessageBrokerConfigurer") ||
-                                   content.includes?("@EnableWebSocketMessageBroker")
-          has_message_mapping_bindings = content.includes?("org.springframework.messaging.handler.annotation") ||
-                                         content.includes?("@MessageMapping") ||
-                                         content.includes?("@SubscribeMapping")
-          has_resource_handler_bindings = content.includes?("ResourceHandlerRegistry") ||
-                                          content.includes?("addResourceHandler")
-
-          if has_spring_bindings || has_feign_bindings || has_http_exchange_bindings || has_gateway_bindings ||
-             has_websocket_bindings || has_message_mapping_bindings || has_resource_handler_bindings
-            # Single tree-sitter parse for the whole file — every
-            # extraction below pulls from the same root so a
-            # controller with N routes pays for 1 parse instead of
-            # the previous 4 + 2N. The DTO index, FeignClient
-            # detection, route discovery, consumes lookup, and
-            # parameter walks all consume `root`.
-            Noir::TreeSitter.parse_java(content) do |root|
-              # Skip files without a package declaration — legacy filter
-              # that avoids scanning test stubs / throwaway snippets.
-              package_name = Noir::TreeSitterJavaParameterExtractor.extract_package_name_from(root, content)
-              next if package_name.empty?
-
-              dto_index = dto_builder.build_for_with_root(path, content, root)
-              feign_clients = Noir::TreeSitterJavaParameterExtractor.extract_feign_client_classes_from(root, content)
-              http_exchange_clients = Noir::TreeSitterJavaParameterExtractor.extract_http_exchange_client_classes_from(root, content)
-              visible_meta_mappings = visible_meta_annotation_mappings(path, content, package_name, meta_annotation_index)
-              imports = java_imports(content)
-
-              Noir::TreeSitterJavaRouteExtractor.extract_routes_from(root, content, visible_meta_mappings).each do |route|
-                is_feign_client = feign_clients.includes?(route.class_name)
-                is_http_exchange_client = http_exchange_clients.includes?(route.class_name)
-                is_internal_client = is_feign_client || is_http_exchange_client
-
-                parameter_format = Noir::TreeSitterJavaParameterExtractor.extract_consumes_from(
-                  root, content, route.class_name, route.method_name
-                )
-                # The POST form-binding default is applied per-parameter in
-                # the extractor so an explicit `@RequestBody` resolves to
-                # "json" rather than inheriting "form".
-
-                parameters = Noir::TreeSitterJavaParameterExtractor.extract_method_parameters_from(
-                  root, content, route.class_name, route.method_name, route.verb, parameter_format, dto_index, route.line
-                )
-                merge_route_condition_params(parameters, route.params)
-
-                # Drop the trailing `/` on webflux_base_path when the
-                # route path already starts with one, so the join
-                # doesn't produce `//`.
-                base_path = is_internal_client ? "" : configured_base_path
-                if base_path.ends_with?("/") && route.path.starts_with?("/")
-                  base_path = base_path[..-2]
-                end
-
-                line = route.line + 1
-                details = Details.new(PathInfo.new(path, line))
-
-                endpoint = Endpoint.new(
-                  join_paths(base_path, route.path), route.verb, parameters, details, is_internal_client
-                )
-
-                # 1-hop callees out of the handler method body. Cross-file
-                # definition resolution is intentionally out of scope —
-                # `Callee#path` points at the call site, matching every
-                # other analyzer's first-cut honest scope.
-                if include_callee && !(route.class_name.empty? || route.method_name.empty?)
-                  Noir::JavaCalleeExtractor.callees_in_method(
-                    root, content, path, route.class_name, route.method_name, route.line
-                  ).each do |entry|
+                # `@ModelAttribute` methods run before every handler of
+                # their controller, so their callees (the `findById` that
+                # loads the owner a handler then edits) belong to every
+                # route of the class.
+                model_attribute_methods ||= model_attribute_methods_by_class(root, content)
+                model_attribute_methods[route.class_name]?.try &.each do |(method_name, path_variables)|
+                  # A `@PathVariable` the route does not carry binds null
+                  # (or fails), so the supplier's lookup does not run there:
+                  # spring-petclinic's `findOwner` returns `new Owner()` on
+                  # `/owners/new` and calls `findById` only under `{ownerId}`.
+                  next unless path_variables.all? { |var| endpoint.url.includes?("{#{var}}") || endpoint.url.includes?("{#{var}:") }
+                  file_callees.callees_in_method(route.class_name, method_name).each do |entry|
                     name, callee_path, callee_line = entry
                     endpoint.push_callee(Callee.new(name, path: callee_path, line: callee_line))
                   end
                 end
+              end
 
+              @result << endpoint
+            end
+
+            Noir::TreeSitterJavaRouteExtractor.extract_controller_interface_implementations_from(root, content, visible_meta_mappings, file_constants).each do |implementation|
+              implementation.interface_names.each do |interface_name|
+                next if implementation.paths.empty?
+                # Concrete @Override that re-declares its own mapping
+                # annotation shadows the interface's method-level
+                # mapping (Spring closest-annotation-wins). The direct
+                # scan already emitted that route — skip the duplicate.
+                entries = visible_interface_routes(interface_route_index, path, package_name, imports, interface_name).reject do |entry|
+                  implementation.annotated_method_names.includes?(entry.route.method_name)
+                end
+                entry_params = interface_route_params(entries, dto_builder, injected_annotations, converted_types)
+                entries.each_with_index do |entry, entry_index|
+                  entry_route = entry.route
+                  implementation.paths.each do |implementation_path|
+                    inherited_path = Noir::URLPath.join_rooted(implementation_path, entry_route.path)
+                    parameters = entry_params[entry_index].dup
+                    merge_route_condition_params(parameters, implementation.params + entry_route.params)
+
+                    details = Details.new(PathInfo.new(entry.path, entry_route.line + 1))
+                    endpoint = Endpoint.new(
+                      resolve_endpoint_path(Noir::URLPath.join_rooted(configured_base_path, inherited_path), spring_properties),
+                      entry_route.verb, parameters, details
+                    )
+                    endpoint.route_conditions = implementation.params + entry_route.params
+                    # The body lives on the `@Override`, not the interface method;
+                    # no override in this class, no handler.
+                    param_index ||= Noir::TreeSitterJavaParameterExtractor.build_file_index(root, content)
+                    if (impl_method = param_index.methods["#{implementation.class_name}##{entry_route.method_name}"]?.try(&.first?)) &&
+                       (impl_row = Noir::TreeSitter.name_row(impl_method))
+                      endpoint.handler = Handler.new("#{implementation.class_name}.#{entry_route.method_name}", path, impl_row + 1)
+                    end
+
+                    # The route is declared on the interface (springdoc /
+                    # OpenAPI `*Api` contracts), but the behaviour — and
+                    # thus the callees worth surfacing for ai-context —
+                    # lives in the `@Override` method on the concrete
+                    # controller currently being walked. Pull 1-hop
+                    # callees from that implementing body rather than the
+                    # empty interface method.
+                    if include_callee && !(implementation.class_name.empty? || entry_route.method_name.empty?)
+                      file_callees.callees_in_method(implementation.class_name, entry_route.method_name).each do |callee_entry|
+                        name, callee_path, callee_line = callee_entry
+                        endpoint.push_callee(Callee.new(name, path: callee_path, line: callee_line))
+                      end
+                    end
+
+                    @result << endpoint
+                  end
+                end
+              end
+            end
+
+            if has_websocket_bindings
+              constants = file_constants
+              collect_stomp_endpoints(content, constants).each do |entry|
+                endpoint_path, line = entry
+                endpoint = Endpoint.new(
+                  resolve_endpoint_path(Noir::URLPath.join_rooted(configured_base_path, endpoint_path), spring_properties),
+                  "GET", Details.new(PathInfo.new(path, line))
+                )
+                endpoint.protocol = "ws"
                 @result << endpoint
               end
-
-              Noir::TreeSitterJavaRouteExtractor.extract_controller_interface_implementations_from(root, content, visible_meta_mappings).each do |implementation|
-                implementation.interface_names.each do |interface_name|
-                  visible_interface_routes(interface_route_index, path, package_name, imports, interface_name).each do |entry|
-                    entry_route = entry.route
-                    implementation.paths.each do |implementation_path|
-                      inherited_path = join_paths(implementation_path, entry_route.path)
-                      parameter_format = nil
-                      parameters = [] of Param
-
-                      Noir::TreeSitter.parse_java(entry.source) do |interface_root|
-                        interface_dto_index = dto_builder.build_for_with_root(entry.path, entry.source, interface_root)
-                        parameter_format = Noir::TreeSitterJavaParameterExtractor.extract_consumes_from(
-                          interface_root, entry.source, entry_route.class_name, entry_route.method_name
-                        )
-                        # POST form-binding default applied per-parameter in
-                        # the extractor (keeps `@RequestBody` as "json").
-
-                        parameters = Noir::TreeSitterJavaParameterExtractor.extract_method_parameters_from(
-                          interface_root, entry.source, entry_route.class_name, entry_route.method_name,
-                          entry_route.verb, parameter_format, interface_dto_index, entry_route.line
-                        )
-                        merge_route_condition_params(parameters, implementation.params + entry_route.params)
-                      end
-
-                      details = Details.new(PathInfo.new(entry.path, entry_route.line + 1))
-                      endpoint = Endpoint.new(
-                        join_paths(configured_base_path, inherited_path), entry_route.verb, parameters, details
-                      )
-
-                      # The route is declared on the interface (springdoc /
-                      # OpenAPI `*Api` contracts), but the behaviour — and
-                      # thus the callees worth surfacing for ai-context —
-                      # lives in the `@Override` method on the concrete
-                      # controller currently being walked. Pull 1-hop
-                      # callees from that implementing body rather than the
-                      # empty interface method.
-                      if include_callee && !(implementation.class_name.empty? || entry_route.method_name.empty?)
-                        Noir::JavaCalleeExtractor.callees_in_method(
-                          root, content, path, implementation.class_name, entry_route.method_name
-                        ).each do |callee_entry|
-                          name, callee_path, callee_line = callee_entry
-                          endpoint.push_callee(Callee.new(name, path: callee_path, line: callee_line))
-                        end
-                      end
-
-                      @result << endpoint
-                    end
-                  end
-                end
-              end
-
-              if has_websocket_bindings
-                constants = Noir::TreeSitterJavaRouteExtractor.extract_string_constants_from(root, content)
-                collect_stomp_endpoints(content, constants).each do |entry|
-                  endpoint_path, line = entry
-                  endpoint = Endpoint.new(join_paths(configured_base_path, endpoint_path), "GET", Details.new(PathInfo.new(path, line)))
-                  endpoint.protocol = "ws"
-                  @result << endpoint
-                end
-              end
-
-              if has_message_mapping_bindings
-                constants = Noir::TreeSitterJavaRouteExtractor.extract_string_constants_from(root, content)
-                collect_message_mapping_endpoints(root, content, constants, stomp_application_prefixes).each do |entry|
-                  verb, destination, line = entry
-                  endpoint = Endpoint.new(destination, verb, Details.new(PathInfo.new(path, line)))
-                  endpoint.protocol = "ws"
-                  @result << endpoint
-                end
-              end
-
-              if has_resource_handler_bindings
-                constants = Noir::TreeSitterJavaRouteExtractor.extract_string_constants_from(root, content)
-                collect_resource_handler_endpoints(content, constants).each do |entry|
-                  endpoint_path, line = entry
-                  @result << Endpoint.new(join_paths(configured_base_path, endpoint_path), "GET", Details.new(PathInfo.new(path, line)))
-                end
-              end
             end
-          else
-            # Reactive routes declared via `router().route(...).andRoute(...)`
-            # — regex-scoped because the builder-pattern shape isn't
-            # worth a dedicated tree-sitter walk yet.
-            route_blocks = [] of Tuple(Array(Tuple(Int32, String, String, String)), Array(Tuple(Int32, Int32, String)))
-            reactive_callees = {} of String => Array(Callee)
 
-            # Single tree-sitter parse for the whole reactive file: the
-            # constant table and the `this::handler` callee resolution both
-            # read from this one `root`, so the file isn't parsed twice
-            # when callees are requested (and constants are resolved once,
-            # not once-per-block).
-            Noir::TreeSitter.parse_java(content) do |root|
-              constants = Noir::TreeSitterJavaRouteExtractor.extract_string_constants_from(root, content)
-              content.scan(REGEX_ROUTER_CODE_BLOCK) do |route_code|
-                method_code = route_code[0]
-                # Pick up `nest(RequestPredicates.path("/prefix"), ...)`
-                # / `nest(path("/prefix"), ...)` byte ranges so verb
-                # calls inside the nested lambda get the prefix added.
-                # Servlet-fn and WebFlux both use this idiom heavily;
-                # without prefix awareness routes like
-                # `route().nest(path("/product"), builder ->
-                # builder.GET("/name/{name}", ...))` surfaced as
-                # `GET /name/{name}` instead of `GET /product/name/{name}`.
-                route_blocks << {collect_router_route_calls(method_code, constants), collect_nest_prefixes(method_code, constants)}
-              end
-
-              # Resolve same-file `this::handler` method bodies to 1-hop
-              # callees so reactive endpoints carry handler context too.
-              if include_callee
-                wanted = Set(String).new
-                route_blocks.each { |calls, _| calls.each { |call| wanted << call[3] unless call[3].empty? } }
-                reactive_callees = build_reactive_method_callees(root, content, path, wanted)
+            if has_message_mapping_bindings
+              constants = file_constants
+              collect_message_mapping_endpoints(root, content, constants, stomp_application_prefixes).each do |entry|
+                verb, destination, line = entry
+                endpoint = Endpoint.new(
+                  resolve_endpoint_path(destination, spring_properties),
+                  verb, Details.new(PathInfo.new(path, line))
+                )
+                endpoint.protocol = "ws"
+                @result << endpoint
               end
             end
 
-            route_blocks.each do |calls, nest_prefixes|
-              calls.each do |call|
-                pos, method, endpoint, handler_ref = call
-                nest_prefix = ""
-                nest_prefixes.each do |start_b, end_b, prefix|
-                  if pos >= start_b && pos < end_b
-                    nest_prefix = join_paths(nest_prefix, prefix)
-                  end
-                end
-                composed = nest_prefix.empty? ? endpoint : join_paths(nest_prefix, endpoint)
-                details = Details.new(PathInfo.new(path))
-                reactive_endpoint = Endpoint.new(join_paths(configured_base_path, composed), method, details)
-
-                if include_callee && !handler_ref.empty?
-                  if handler_callees = reactive_callees[handler_ref]?
-                    handler_callees.each { |callee| reactive_endpoint.push_callee(callee) }
-                  end
-                end
-
-                @result << reactive_endpoint
+            if has_resource_handler_bindings
+              constants = file_constants
+              collect_resource_handler_endpoints(content, constants).each do |entry|
+                endpoint_path, line = entry
+                @result << Endpoint.new(
+                  resolve_endpoint_path(Noir::URLPath.join_rooted(configured_base_path, endpoint_path), spring_properties),
+                  "GET", Details.new(PathInfo.new(path, line))
+                )
               end
             end
           end
+        else
+          # Reactive routes declared via `router().route(...).andRoute(...)`
+          # — regex-scoped because the builder-pattern shape isn't
+          # worth a dedicated tree-sitter walk yet.
+          # {verb calls, nest prefixes, offset of the block in `content`}.
+          # The first two hold positions relative to the block, so the block's
+          # own offset is what turns a call position into a file line.
+          route_blocks = [] of Tuple(Array(Tuple(Int32, String, String, String, Int32)), Array(Tuple(Int32, Int32, String)), Int32)
+          reactive_callees = {} of String => Array(Callee)
+          # The block and verb-call scans are regexes: on the raw source a
+          # commented-out `.andRoute(GET(...))` was a route. Offsets and
+          # line numbers are kept.
+          content = JavaEngine.strip_comments(content)
+
+          # Single tree-sitter parse for the whole reactive file: the
+          # constant table and the `this::handler` callee resolution both
+          # read from this one `root`, so the file isn't parsed twice
+          # when callees are requested (and constants are resolved once,
+          # not once-per-block).
+          Noir::TreeSitter.parse_java(content) do |root|
+            # Every non-annotation `.java` file lands here; only router
+            # files are worth seeding (a copy of) the project table into.
+            project_constants = content_matches?(content, REGEX_ROUTER_CODE_BLOCK) ? java_project_constants(path) : nil
+            constants = Noir::TreeSitterJavaRouteExtractor.extract_string_constants_from(root, content, project_constants)
+            content.scan(REGEX_ROUTER_CODE_BLOCK) do |route_code|
+              method_code = route_code[0]
+              # Pick up `nest(RequestPredicates.path("/prefix"), ...)`
+              # / `nest(path("/prefix"), ...)` byte ranges so verb
+              # calls inside the nested lambda get the prefix added.
+              # Servlet-fn and WebFlux both use this idiom heavily;
+              # without prefix awareness routes like
+              # `route().nest(path("/product"), builder ->
+              # builder.GET("/name/{name}", ...))` surfaced as
+              # `GET /name/{name}` instead of `GET /product/name/{name}`.
+              route_blocks << {collect_router_route_calls(method_code, constants),
+                               collect_nest_prefixes(method_code, constants),
+                               route_code.begin(0) || 0}
+            end
+
+            # Resolve same-file `this::handler` method bodies to 1-hop
+            # callees so reactive endpoints carry handler context too.
+            if include_callee
+              wanted = Set(String).new
+              route_blocks.each { |calls, _, _| calls.each { |call| wanted << call[3] unless call[3].empty? } }
+              reactive_callees = build_reactive_method_callees(root, content, path, wanted)
+            end
+          end
+
+          route_blocks.each do |calls, nest_prefixes, block_offset|
+            calls.each do |call|
+              pos, method, endpoint, handler_ref, verb_pos = call
+              nest_prefix = ""
+              nest_prefixes.each do |start_b, end_b, prefix|
+                if pos >= start_b && pos < end_b
+                  nest_prefix = Noir::URLPath.join_rooted(nest_prefix, prefix)
+                end
+              end
+              composed = nest_prefix.empty? ? endpoint : Noir::URLPath.join_rooted(nest_prefix, endpoint)
+              details = Details.new(PathInfo.new(path, line_number_for_index(content, block_offset + verb_pos)))
+              reactive_endpoint = Endpoint.new(
+                resolve_endpoint_path(Noir::URLPath.join_rooted(configured_base_path, composed), spring_properties),
+                method, details
+              )
+
+              if include_callee && !handler_ref.empty?
+                if handler_callees = reactive_callees[handler_ref]?
+                  handler_callees.each { |callee| reactive_endpoint.push_callee(callee) }
+                end
+              end
+
+              @result << reactive_endpoint
+            end
+          end
         end
+      end
+
+      path_configs.each do |root, config|
+        @result.concat(spring_provided_endpoints(root, spring_property_maps[root], config.web_base_path))
       end
       Fiber.yield
 
       @result
     end
 
-    private def collect_meta_annotation_index(file_list : Array(String)) : SpringMetaAnnotationIndex
-      index = SpringMetaAnnotationIndex.new
-      spring_web_bind_package = "org.springframework.web.bind.annotation."
+    # Build path configs, STOMP destination prefixes, meta-annotation index,
+    # and interface-route index for the pre-filtered `.java` source set.
+    #
+    # Path roots + STOMP + meta annotations share one content walk and at
+    # most one tree-sitter parse per file (previously three independent
+    # passes). Interface routes need a complete meta index, so they run as
+    # a second pass over the same cached content.
+    private def build_spring_indexes(java_files : Array(String)) : Tuple(
+      Hash(String, SpringPathConfig),
+      Hash(String, Hash(String, String)),
+      Hash(String, Array(String)),
+      SpringMetaAnnotationIndex,
+      SpringInterfaceRouteIndex,
+      Hash(String, Set(String)),
+      Hash(String, Set(String)),
+      Hash(String, Array(String)),
+    )
+      path_configs = Hash(String, SpringPathConfig).new
+      spring_property_maps = Hash(String, Hash(String, String)).new
+      stomp_prefixes = Hash(String, Array(String)).new
+      meta_index = SpringMetaAnnotationIndex.new
+      # Per project root: `@interface` names meta-annotated with an injected
+      # argument annotation (`@CurrentMember` carrying `@AuthenticationPrincipal`).
+      # ponytail: keyed by simple name project-wide, not by import visibility.
+      injected_annotations = Hash(String, Set(String)).new
+      # Per project root: types a registered `Formatter`/`Converter` builds
+      # from one request value, so a nested field of that type stays scalar.
+      converted_types = Hash(String, Set(String)).new
+      # Per project root: fields a `@ControllerAdvice` `@InitBinder` disallows for every controller.
+      advice_disallowed = Hash(String, Array(String)).new
+      project_roots = Set(String).new
 
-      file_list.each do |path|
-        next unless File.exists?(path) && path.ends_with?(".java")
-        next if JavaEngine.test_path?(path)
+      java_files.each do |path|
+        project_root = project_root_for(path)
+        project_roots << project_root
 
         content = read_file_content(path)
-        next unless content.includes?(spring_web_bind_package)
-        # Composed (meta) mapping annotations are declared as Java
-        # annotation types (`@interface`). A file without one cannot
-        # contribute to this index, so skip the tree-sitter parse for
-        # the (overwhelming) majority of regular controller classes.
-        next unless content.includes?("@interface")
+        if content.includes?("implements")
+          content.scan(CONVERTER_TARGET_RE) { |match| (converted_types[project_root] ||= Set(String).new) << match[1] }
+        end
+        if content.includes?("ControllerAdvice")
+          fields = disallowed_binder_fields(content)
+          (advice_disallowed[project_root] ||= [] of String).concat(fields) unless fields.empty?
+        end
+        # One union pass rejects the files that can feed neither index
+        # before the two individual scans run.
+        needs_injected = content_matches?(content, META_ANNOTATION_RE) && content_matches?(content, INJECTED_META_RE)
+        next unless needs_injected || content_matches?(content, SPRING_INDEX_PRESCREEN_RE)
+        needs_stomp = content_matches?(content, STOMP_PREFIX_RE)
+        needs_meta = content_matches?(content, SPRING_WEB_BIND_RE) && content_matches?(content, META_ANNOTATION_RE)
+        next unless needs_stomp || needs_meta || needs_injected
 
         Noir::TreeSitter.parse_java(content) do |root|
-          package_name = Noir::TreeSitterJavaParameterExtractor.extract_package_name_from(root, content)
-          constants = Noir::TreeSitterJavaRouteExtractor.extract_string_constants_from(root, content)
-          Noir::TreeSitterJavaRouteExtractor.extract_meta_mappings_from(root, content, constants).each do |name, mapping|
-            index.add(project_root_for(path), package_name, name, mapping)
+          constants = Noir::TreeSitterJavaRouteExtractor.extract_string_constants_from(root, content, java_project_constants(path))
+
+          if needs_stomp
+            collected = collect_stomp_application_prefixes(content, constants)
+            unless collected.empty?
+              stomp_prefixes[project_root] ||= [] of String
+              stomp_prefixes[project_root].concat(collected)
+              stomp_prefixes[project_root] = stomp_prefixes[project_root].uniq
+            end
+          end
+
+          if needs_meta
+            package_name = Noir::TreeSitterJavaParameterExtractor.extract_package_name_from(root, content)
+            Noir::TreeSitterJavaRouteExtractor.extract_meta_mappings_from(root, content, constants).each do |name, mapping|
+              meta_index.add(project_root, package_name, name, mapping)
+            end
+          end
+
+          if needs_injected
+            names = Noir::TreeSitterJavaParameterExtractor.extract_injected_annotation_types_from(root, content)
+            (injected_annotations[project_root] ||= Set(String).new).concat(names) unless names.empty?
           end
         end
       end
 
-      index
+      project_roots.each do |root|
+        values = spring_config_values_for(root)
+        spring_property_maps[root] = values
+        path_configs[root] = SpringPathConfig.new(
+          normalize_optional_path(values["server.servlet.context-path"]?),
+          normalize_optional_path(values["spring.webflux.base-path"]?)
+        )
+      end
+
+      interface_index = collect_interface_route_index(java_files, meta_index)
+      {path_configs, spring_property_maps, stomp_prefixes, meta_index, interface_index, injected_annotations, converted_types, advice_disallowed}
     end
 
-    private def collect_interface_route_index(file_list : Array(String),
+    private def collect_interface_route_index(java_files : Array(String),
                                               meta_annotation_index : SpringMetaAnnotationIndex) : SpringInterfaceRouteIndex
       index = SpringInterfaceRouteIndex.new
-      spring_web_bind_package = "org.springframework.web.bind.annotation."
-      http_exchange_package = "org.springframework.web.service.annotation."
 
-      file_list.each do |path|
-        next unless File.exists?(path) && path.ends_with?(".java")
-        next if JavaEngine.test_path?(path)
-
+      # `java_files` is already extension-filtered and test-path-free.
+      java_files.each do |path|
         content = read_file_content(path)
         # Inheritable routes come from Java interfaces (Feign, Spring HTTP
         # Interface, OpenAPI-style `*Api`) and from `abstract` base
         # classes that concrete controllers extend. Files with neither
         # keyword — the bulk of controller classes — can't contribute, so
         # skip the parse before the annotation gate below.
-        next unless content.includes?("interface") || content.includes?("abstract")
-        next unless content.includes?(spring_web_bind_package) || http_exchange_bindings?(content, http_exchange_package) ||
-                    content.includes?("@RequestMapping") ||
-                    content.includes?("@GetMapping") || content.includes?("@PostMapping")
+        next unless content_matches?(content, INTERFACE_OR_ABSTRACT_RE)
+        next unless content_matches?(content, INTERFACE_ROUTE_MARKER_RE)
 
         Noir::TreeSitter.parse_java(content) do |root|
           package_name = Noir::TreeSitterJavaParameterExtractor.extract_package_name_from(root, content)
           next if package_name.empty?
 
           visible_meta_mappings = visible_meta_annotation_mappings(path, content, package_name, meta_annotation_index)
-          Noir::TreeSitterJavaRouteExtractor.extract_interface_routes_from(root, content, visible_meta_mappings).each do |interface_name, routes|
+          constants = Noir::TreeSitterJavaRouteExtractor.extract_string_constants_from(root, content, java_project_constants(path))
+          Noir::TreeSitterJavaRouteExtractor.extract_interface_routes_from(root, content, visible_meta_mappings, constants).each do |interface_name, routes|
             routes.each do |route|
               index.add(project_root_for(path), package_name, interface_name, SpringInterfaceRouteEntry.new(route, path, content, package_name))
             end
@@ -433,16 +562,6 @@ module Analyzer::Java
       end
 
       index
-    end
-
-    private def http_exchange_bindings?(content : String, package_name : String) : Bool
-      content.includes?(package_name) ||
-        content.includes?("@HttpExchange") ||
-        content.includes?("@GetExchange") ||
-        content.includes?("@PostExchange") ||
-        content.includes?("@PutExchange") ||
-        content.includes?("@PatchExchange") ||
-        content.includes?("@DeleteExchange")
     end
 
     private def visible_meta_annotation_mappings(path : String,
@@ -486,18 +605,40 @@ module Analyzer::Java
       routes
     end
 
-    private def add_interface_routes(target : Array(SpringInterfaceRouteEntry),
-                                     seen : Set(String),
-                                     routes : Array(SpringInterfaceRouteEntry)?)
-      return unless routes
+    # Handler parameters of each inherited interface route, aligned with
+    # `entries`. Each interface file is parsed (and DTO/method-indexed)
+    # once, not once per route: a 500-method `*Api` interface used to be
+    # re-parsed 500 times.
+    private def interface_route_params(entries : Array(SpringInterfaceRouteEntry),
+                                       dto_builder : Noir::TreeSitterJavaDtoIndex,
+                                       injected_annotations : Set(String)?,
+                                       converted_types : Set(String)?) : Array(Array(Param))
+      result = Array(Array(Param)).new(entries.size) { [] of Param }
+      indexes_by_path = Hash(String, Array(Int32)).new { |hash, key| hash[key] = [] of Int32 }
+      entries.each_with_index { |entry, i| indexes_by_path[entry.path] << i }
 
-      routes.each do |entry|
-        route = entry.route
-        key = "#{entry.path}:#{route.class_name}:#{route.method_name}:#{route.verb}:#{route.path}"
-        next if seen.includes?(key)
-        seen << key
-        target << entry
+      indexes_by_path.each do |entry_path, indexes|
+        source = entries[indexes.first].source
+        Noir::TreeSitter.parse_java(source) do |interface_root|
+          dto_index = dto_builder.build_for_with_root(entry_path, source, interface_root)
+          param_index = Noir::TreeSitterJavaParameterExtractor.build_file_index(interface_root, source)
+          constants = Noir::TreeSitterJavaRouteExtractor.extract_string_constants_from(interface_root, source)
+          indexes.each do |i|
+            route = entries[i].route
+            # POST form-binding default applied per-parameter in the
+            # extractor (keeps `@RequestBody` as "json").
+            parameter_format = Noir::TreeSitterJavaParameterExtractor.extract_consumes_from(
+              interface_root, source, route.class_name, route.method_name, param_index
+            )
+            result[i] = Noir::TreeSitterJavaParameterExtractor.extract_method_parameters_from(
+              interface_root, source, route.class_name, route.method_name,
+              route.verb, parameter_format, dto_index, route.line, constants: constants, index: param_index,
+              injected_annotations: injected_annotations, converted_types: converted_types
+            )
+          end
+        end
       end
+      result
     end
 
     private def merge_route_condition_params(parameters : Array(Param), condition_params : Array(Param))
@@ -539,7 +680,7 @@ module Analyzer::Java
         next unless close_idx
 
         args = content[(open_idx + 1)...close_idx]
-        line = content[0...marker].count('\n') + 1
+        line = line_number_for_index(content, marker)
         top_level_arguments(args).each do |arg|
           if endpoint_path = resolve_router_path(arg, constants)
             endpoints << {endpoint_path, line}
@@ -565,15 +706,30 @@ module Analyzer::Java
         next unless close_idx
 
         args = content[(open_idx + 1)...close_idx]
-        line = content[0...marker].count('\n') + 1
+        line = line_number_for_index(content, marker)
         top_level_arguments(args).each do |arg|
-          if endpoint_path = resolve_router_path(arg, constants)
-            endpoints << {endpoint_path, line}
-          end
+          resource_handler_patterns(arg, content, constants).each { |pattern| endpoints << {pattern, line} }
         end
       end
 
       endpoints.uniq
+    end
+
+    # `addResourceHandler(String...)` arguments: a path, a `new String[]{...}`
+    # / `{...}` array, or a `String[]` constant declared in this file.
+    #
+    # ponytail: array constants from other classes are not resolved.
+    private def resource_handler_patterns(arg : String, content : String, constants : Hash(String, String)) : Array(String)
+      if path = resolve_router_path(arg, constants)
+        return [path]
+      end
+      elements = arg.match(/\{(.*)\}\s*\z/m).try(&.[1])
+      if elements.nil? && arg.matches?(/\A[\w.]+\z/)
+        name = Regex.escape(arg.split('.').last)
+        elements = content.match(/\bString\s*\[\s*\]\s+#{name}\s*=\s*(?:new\s+String\s*\[\s*\]\s*)?\{([^}]*)\}/).try(&.[1])
+      end
+      return [] of String unless elements
+      top_level_arguments(elements).compact_map { |element| resolve_router_path(element, constants) }
     end
 
     private def collect_message_mapping_endpoints(root : LibTreeSitter::TSNode,
@@ -600,7 +756,7 @@ module Analyzer::Java
         prefixes = [] of String
         outer_prefixes.each do |outer_prefix|
           class_paths.each do |class_path|
-            prefixes << join_paths(outer_prefix, class_path)
+            prefixes << Noir::URLPath.join_rooted(outer_prefix, class_path)
           end
         end
 
@@ -642,7 +798,7 @@ module Analyzer::Java
         application_prefixes.each do |application_prefix|
           class_prefixes.each do |class_prefix|
             paths.each do |path|
-              endpoints << {verb, join_paths(application_prefix, join_paths(class_prefix, path)), line + 1}
+              endpoints << {verb, Noir::URLPath.join_rooted(application_prefix, Noir::URLPath.join_rooted(class_prefix, path)), line + 1}
             end
           end
         end
@@ -673,6 +829,50 @@ module Analyzer::Java
         after_idx += 1
       end
       after_idx < code.size && code[after_idx] == '('
+    end
+
+    private def disallowed_binder_fields(content : String) : Array(String)
+      fields = [] of String
+      return fields unless content.includes?("setDisallowedFields")
+      content.scan(DISALLOWED_FIELDS_RE) do |call|
+        call[1].scan(/"([^"]*)"/) { |literal| fields << literal[1] }
+      end
+      fields
+    end
+
+    # The method-level `@ModelAttribute` methods of every class in the
+    # file, each with the `@PathVariable` names it binds: Spring runs them
+    # before each handler of that class.
+    private def model_attribute_methods_by_class(root : LibTreeSitter::TSNode,
+                                                 content : String) : Hash(String, Array(Tuple(String, Array(String))))
+      by_class = Hash(String, Array(Tuple(String, Array(String)))).new
+      Noir::JavaCalleeExtractor.build_method_index(root, content).each do |(class_name, method_name), nodes|
+        next unless node = nodes.find { |candidate| java_annotated?(candidate, content, "ModelAttribute") }
+        (by_class[class_name] ||= [] of Tuple(String, Array(String))) << {method_name, java_path_variables(node, content)}
+      end
+      by_class
+    end
+
+    # `@PathVariable("id")` / `@PathVariable(name = "id")` name the
+    # variable; a bare `@PathVariable Long id` binds the parameter name.
+    private def java_path_variables(method : LibTreeSitter::TSNode, content : String) : Array(String)
+      variables = [] of String
+      return variables unless params = Noir::TreeSitter.field(method, "parameters")
+      Noir::TreeSitter.each_named_child(params) do |param|
+        each_java_annotation(param, content) do |name, args, _|
+          next unless name == "PathVariable"
+          explicit = args.try { |node| Noir::TreeSitter.node_text(node, content).match(/\A\(\s*(?:(?:name|value)\s*=\s*)?"([^"]+)"/).try(&.[1]) }
+          if variable = explicit || Noir::TreeSitter.field(param, "name").try { |node| Noir::TreeSitter.node_text(node, content) }
+            variables << variable
+          end
+        end
+      end
+      variables
+    end
+
+    private def java_annotated?(decl : LibTreeSitter::TSNode, content : String, wanted : String) : Bool
+      each_java_annotation(decl, content) { |name, _, _| return true if name == wanted }
+      false
     end
 
     private def each_java_annotation(decl : LibTreeSitter::TSNode,
@@ -788,8 +988,8 @@ module Analyzer::Java
     # whose match position falls inside `[start, end)` should have
     # `prefix` prepended.
     private def collect_router_route_calls(code : String,
-                                           constants : Hash(String, String)) : Array(Tuple(Int32, String, String, String))
-      calls = [] of Tuple(Int32, String, String, String)
+                                           constants : Hash(String, String)) : Array(Tuple(Int32, String, String, String, Int32))
+      calls = [] of Tuple(Int32, String, String, String, Int32)
 
       code.scan(REGEX_ROUTE_CALL) do |match|
         open_idx = (match.end || 0) - 1
@@ -799,7 +999,11 @@ module Analyzer::Java
 
         args = code[(open_idx + 1)...close_idx]
         arg_list = top_level_arguments(args)
-        path = resolve_router_path(arg_list.first? || "", constants)
+        first_arg = arg_list.first? || ""
+        # Builder `.GET(h::list)` / `.POST(req -> …)` has no pattern of its
+        # own: it matches the enclosing `path(...)` / `nest(...)` prefix.
+        path_less = first_arg.includes?("::") || first_arg.includes?("->")
+        path = path_less ? "" : resolve_router_path(first_arg, constants)
         next unless path
 
         # The handler is the second argument of `.GET("/x", this::handle)`
@@ -808,8 +1012,13 @@ module Analyzer::Java
         # 1-hop callees out of that handler body (WebFlux/servlet-fn
         # RouterFunction handlers carry the real behaviour worth surfacing
         # for ai-context).
-        handler_ref = arg_list.size >= 2 ? handler_method_reference(arg_list[1]) : ""
-        calls << {match.begin || 0, match[2], path.gsub(/\n/, ""), handler_ref}
+        handler_arg = path_less ? first_arg : arg_list[1]?
+        handler_ref = handler_arg ? handler_method_reference(handler_arg) : ""
+        # Two positions: the match start decides which `nest(...)` range the
+        # call sits in, while the verb is where the route itself is written —
+        # `.route(\n  GET("/hello")` declares the route on the `GET` line, not
+        # on the `route(` line that opens the statement.
+        calls << {match.begin || 0, match[2], path.gsub(/\n/, ""), handler_ref, match.begin(2) || match.begin || 0}
       end
 
       calls
@@ -873,19 +1082,22 @@ module Analyzer::Java
                                       constants : Hash(String, String)) : Array(Tuple(Int32, Int32, String))
       regions = [] of Tuple(Int32, Int32, String)
 
-      offset = 0
-      while nest_marker = code.index("nest", offset)
-        offset = nest_marker + 4
-        next unless nest_call_name?(code, nest_marker)
-
-        open_idx = code.index('(', nest_marker)
-        next unless open_idx
+      # `nest(path("/p"), …)` / `.andNest(path("/p"), …)` carry the prefix
+      # in a predicate; the builder's `.path("/p", b -> …)` carries it as a
+      # plain first argument.
+      code.scan(NEST_CALL_RE) do |match|
+        open_idx = (match.end || 0) - 1
         close_idx = find_matching_paren(code, open_idx)
         next unless close_idx
 
         args = code[(open_idx + 1)...close_idx]
         predicate = first_argument(args)
-        next unless prefix = path_predicate_prefix(predicate, constants)
+        prefix = if match[1]?
+                   path_predicate_prefix(predicate, constants)
+                 elsif args.includes?("->")
+                   resolve_router_path(predicate, constants)
+                 end
+        next unless prefix
 
         regions << {open_idx, close_idx, prefix}
       end
@@ -893,16 +1105,7 @@ module Analyzer::Java
       regions
     end
 
-    private def nest_call_name?(code : String, nest_marker : Int32) : Bool
-      before = nest_marker.zero? ? '\0' : code[nest_marker - 1]
-      return false if before.ascii_alphanumeric? || before == '_'
-
-      after_idx = nest_marker + 4
-      while after_idx < code.size && code[after_idx].ascii_whitespace?
-        after_idx += 1
-      end
-      after_idx < code.size && code[after_idx] == '('
-    end
+    NEST_CALL_RE = /(?<![\w$])(?:(nest|andNest)|(?<=\.)path)\s*\(/
 
     private def first_argument(args : String) : String
       depth = 0
@@ -937,6 +1140,7 @@ module Analyzer::Java
     end
 
     private def top_level_arguments(args : String) : Array(String)
+      args = JavaEngine.strip_comments(args)
       values = [] of String
       start = 0
       depth = 0
@@ -1045,42 +1249,25 @@ module Analyzer::Java
       nil
     end
 
+    # `Rules::JAVA` minus the single-quote quote style, and dropping EVERY
+    # empty part rather than only a trailing one — the old body ended in
+    # `.map(&.strip).reject(&.empty?)`, so `"a" + + "b"` yielded two terms, not
+    # three. Both matter to the caller, which concatenates the terms it gets
+    # back into a route path. File-local because spring is the only splitter
+    # with this combination.
+    SPLIT_CONCAT_RULES = Noir::TopLevelSplit::Rules.new(
+      nest: Noir::TopLevelSplit::Nest::Paren | Noir::TopLevelSplit::Nest::Bracket |
+            Noir::TopLevelSplit::Nest::Brace,
+      quotes: "\"",
+      escape: Noir::TopLevelSplit::Escape::InQuotes,
+      strip: true,
+      empties: Noir::TopLevelSplit::Empties::DropAll,
+      per_kind: false,
+      clamp: true,
+    )
+
     private def split_top_level_concat(expression : String) : Array(String)
-      parts = [] of String
-      start = 0
-      depth = 0
-      in_string = false
-      escape = false
-
-      expression.each_char_with_index do |char, index|
-        if in_string
-          if escape
-            escape = false
-          elsif char == '\\'
-            escape = true
-          elsif char == '"'
-            in_string = false
-          end
-          next
-        end
-
-        case char
-        when '"'
-          in_string = true
-        when '(', '[', '{'
-          depth += 1
-        when ')', ']', '}'
-          depth -= 1 if depth > 0
-        when '+'
-          if depth.zero?
-            parts << expression[start...index]
-            start = index + 1
-          end
-        end
-      end
-
-      parts << expression[start..]
-      parts.map(&.strip).reject(&.empty?)
+      Noir::TopLevelSplit.split(expression, '+', SPLIT_CONCAT_RULES)
     end
 
     private def strip_wrapping_parentheses(expression : String) : String
@@ -1107,8 +1294,7 @@ module Analyzer::Java
       depth = 1
       in_string = false
       escape = false
-      code.each_char_with_index do |c, i|
-        next if i <= open_idx
+      JavaEngine.each_char_after(code, open_idx) do |c, i|
         if in_string
           if escape
             escape = false
@@ -1127,48 +1313,6 @@ module Analyzer::Java
         return i if depth.zero?
       end
       nil
-    end
-
-    private def path_configs_for(file_list : Array(String)) : Hash(String, SpringPathConfig)
-      configs = Hash(String, SpringPathConfig).new
-      project_roots = Set(String).new
-
-      file_list.each do |path|
-        next if JavaEngine.test_path?(path)
-        next unless File.exists?(path)
-        next unless path.ends_with?(".java")
-        project_roots << project_root_for(path)
-      end
-
-      project_roots.each do |root|
-        configs[root] = path_config_for(root)
-      end
-
-      configs
-    end
-
-    private def stomp_application_prefixes_for(file_list : Array(String)) : Hash(String, Array(String))
-      prefixes = Hash(String, Array(String)).new
-
-      file_list.each do |path|
-        next if JavaEngine.test_path?(path)
-        next unless File.exists?(path)
-        next unless path.ends_with?(".java")
-
-        content = read_file_content(path)
-        next unless content.includes?("setApplicationDestinationPrefixes")
-
-        constants = Noir::TreeSitterJavaRouteExtractor.extract_string_constants(content)
-        collected = collect_stomp_application_prefixes(content, constants)
-        next if collected.empty?
-
-        root = project_root_for(path)
-        prefixes[root] ||= [] of String
-        prefixes[root].concat(collected)
-        prefixes[root] = prefixes[root].uniq
-      end
-
-      prefixes
     end
 
     private def collect_stomp_application_prefixes(content : String,
@@ -1203,92 +1347,15 @@ module Analyzer::Java
     end
 
     private def path_config_for(project_root : String) : SpringPathConfig
-      values = Hash(String, String).new
-
-      resource_dirs_for(project_root).each do |dir|
-        properties_path = File.join(dir, "application.properties")
-        values.merge!(read_properties(properties_path)) if File.exists?(properties_path)
-
-        yml_path = File.join(dir, "application.yml")
-        yaml_path = File.join(dir, "application.yaml")
-        merge_yaml_path_config(values, yml_path) if File.exists?(yml_path)
-        merge_yaml_path_config(values, yaml_path) if File.exists?(yaml_path)
-      end
-
+      values = spring_config_values_for(project_root)
       SpringPathConfig.new(
         normalize_optional_path(values["server.servlet.context-path"]?),
         normalize_optional_path(values["spring.webflux.base-path"]?)
       )
     end
 
-    private def resource_dirs_for(project_root : String) : Array(String)
-      [
-        File.join(project_root, "src/main/resources"),
-        File.join(project_root, "resources"),
-        project_root,
-      ].uniq
-    end
-
-    private def read_properties(path : String) : Hash(String, String)
-      values = Hash(String, String).new
-      File.each_line(path) do |line|
-        stripped = line.strip
-        next if stripped.empty? || stripped.starts_with?("#") || stripped.starts_with?("!")
-
-        if separator = stripped.index(/[=:]/)
-          key = stripped[...separator].strip
-          value = stripped[(separator + 1)..].strip
-          values[key] = value unless key.empty?
-        end
-      end
-      values
-    end
-
-    private def merge_yaml_path_config(values : Hash(String, String), path : String)
-      if value = yaml_string_value(path, "server", "servlet", "context-path")
-        values["server.servlet.context-path"] = value
-      end
-      if value = yaml_string_value(path, "spring", "webflux", "base-path")
-        values["spring.webflux.base-path"] = value
-      end
-    end
-
-    private def yaml_string_value(path : String, *keys : String) : String?
-      value = YAML.parse(File.read(path))
-      keys.each do |key|
-        value = value[key]
-      end
-      value.as_s?
-    rescue
-      nil
-    end
-
-    private def project_root_for(path : String) : String
-      ["/src/main/java/", "/src/"].each do |marker|
-        if index = path.index(marker)
-          return path[...index]
-        end
-      end
-
-      configured_base_for(path)
-    end
-
-    private def normalize_optional_path(path : String?) : String
-      return "" unless path
-
-      trimmed = path.strip
-      return "" if trimmed.empty? || trimmed == "/"
-      trimmed.starts_with?("/") ? trimmed : "/#{trimmed}"
-    end
-
-    def find_base_path(current_path : String, base_paths : Hash(String, String))
-      base_paths.keys.sort_by!(&.size).reverse!.each do |path|
-        if current_path.starts_with?(path)
-          return base_paths[path]
-        end
-      end
-
-      ""
+    private def resolve_endpoint_path(path : String, properties : Hash(String, String)) : String
+      SpringPropertyPath.resolve(path, properties)
     end
   end
 end

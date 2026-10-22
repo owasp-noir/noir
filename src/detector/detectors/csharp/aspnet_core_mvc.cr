@@ -2,10 +2,14 @@ require "../../../models/detector"
 
 module Detector::CSharp
   class AspNetCoreMvc < Detector
+    detector_for "cs_aspnet_core_mvc",
+      extensions: %w[.cs .csproj .vbproj .sln .config]
+
     def detect(filename : String, file_contents : String) : Bool
-      is_csproj = filename.ends_with?(".csproj")
-      is_program_file = filename.ends_with?("Program.cs") || filename.ends_with?("Startup.cs")
-      is_controller = filename.ends_with?(".cs") && filename.includes?("Controller")
+      name = Noir::FileExtension.fold(filename) # `Program.CS`
+      is_csproj = name.ends_with?(".csproj")
+      is_program_file = name.ends_with?("Program.cs") || name.ends_with?("Startup.cs")
+      is_controller = name.ends_with?(".cs") && name.includes?("Controller")
 
       uses_aspnetcore = file_contents.includes?("AspNetCore.Mvc") || # also matches "Microsoft.AspNetCore.Mvc"
                         file_contents.includes?("Microsoft.AspNetCore.App")
@@ -18,34 +22,16 @@ module Detector::CSharp
                       file_contents.includes?("MapDefaultControllerRoute") ||
                       file_contents.includes?("MapControllers")
 
-      detected = false
-      locator = CodeLocator.instance
-
-      if is_csproj && (uses_aspnetcore || uses_web_sdk)
-        detected = true
-      elsif is_program_file && (uses_aspnetcore || has_mvc_setup)
-        detected = true
-        locator.push("cs-aspnet-core-mvc-entrypoints", filename)
-      elsif is_controller && uses_aspnetcore
-        detected = true
-      end
-
-      detected
-    end
-
-    def applicable?(filename : String) : Bool
-      filename.ends_with?(".cs") || filename.ends_with?(".csproj") || filename.ends_with?(".vbproj") || filename.ends_with?(".sln") || filename.ends_with?(".config")
-    end
-
-    def set_name
-      @name = "cs_aspnet_core_mvc"
-    end
-
-    # Side effect: registers `Program.cs` / similar paths in
-    # `CodeLocator` for the analyzer. Must keep running after first
-    # match.
-    def idempotent? : Bool
-      false
+      # A pure predicate. It used to push `Program.cs` paths into
+      # `CodeLocator` under `cs-aspnet-core-mvc-entrypoints`, which nothing
+      # in the tree ever read — the analyzer resolves its entry points
+      # through `get_files_by_extension` instead. That write was the only
+      # reason this detector declared `idempotent: false`, so the flag goes
+      # with it and the detect pass can stop calling this detector once the
+      # tech is known.
+      (is_csproj && (uses_aspnetcore || uses_web_sdk)) ||
+        (is_program_file && (uses_aspnetcore || has_mvc_setup)) ||
+        (is_controller && uses_aspnetcore)
     end
   end
 end

@@ -26,6 +26,17 @@ search = Endpoint.new("/search", "GET", [
   Param.new("X-Tenant", "", "header"),
 ])
 
+search_inline = Endpoint.new("/search-inline", "GET", [
+  Param.new("Term", "", "query"),
+  Param.new("Page", "", "query"),
+  Param.new("X-Tenant", "", "header"),
+])
+
+upload = Endpoint.new("/upload", "POST", [
+  Param.new("file", "", "form"),
+  Param.new("title", "", "form"),
+])
+
 inventory = Endpoint.new("/inventory", "GET")
 inventory.push_callee(Callee.new("repository.All"))
 
@@ -40,6 +51,8 @@ expected_endpoints = [
   get_product,
   create_product,
   search,
+  search_inline,
+  upload,
   inventory,
   create_order,
 ]
@@ -53,7 +66,7 @@ tester = FunctionalTester.new("fixtures/csharp/aspnet_core_minimal_api_methodgro
 
 tester.perform_tests
 
-describe "ASP.NET Core Minimal API method-group analyzer edge cases" do
+describe "ASP.NET Core Minimal API method-group analyzer edge cases", tags: "functional" do
   it "drops DI services injected into a lambda handler" do
     inv = tester.app.endpoints.find { |e| e.url == "/inventory" && e.method == "GET" }
     inv.should_not be_nil
@@ -64,6 +77,18 @@ describe "ASP.NET Core Minimal API method-group analyzer edge cases" do
     s = tester.app.endpoints.find { |e| e.url == "/search" && e.method == "GET" }
     s.should_not be_nil
     s.as(Endpoint).params.any? { |p| p.name.downcase == "repository" }.should be_false
+  end
+
+  it "expands [AsParameters] on an inline lambda instead of reporting the bundle" do
+    s = tester.app.endpoints.find { |e| e.url == "/search-inline" && e.method == "GET" }
+    s.should_not be_nil
+    s.as(Endpoint).params.any? { |p| p.name == "query" || p.name.downcase == "repository" }.should be_false
+  end
+
+  it "does not report an uploaded file as a JSON body" do
+    u = tester.app.endpoints.find { |e| e.url == "/upload" && e.method == "POST" }
+    u.should_not be_nil
+    u.as(Endpoint).params.any? { |p| p.name == "file" && p.param_type == "json" }.should be_false
   end
 
   it "does not record binding attributes or route metadata as callees" do

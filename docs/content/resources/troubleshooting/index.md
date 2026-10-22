@@ -6,45 +6,58 @@ sort_by = "weight"
 
 +++
 
+{% mascot(mood="anger") %}
+Something on fire? Start with the symptom below that matches. Most of these have a one-flag fix.
+{% end %}
+
 ## No Endpoints Found
 
 **Symptom:** Noir runs but reports 0 endpoints.
 
 - Check that you are pointing to the correct directory: `noir scan ./your-app`
 - Verify that your framework is supported: `noir list techs`
-- Try scanning with `--verbose` to see which technologies were detected
+- Check the detection step in the log. It lists each detected technology; if it says `No technologies detected`, name the framework yourself with `-t`: `noir scan . -t rails`
 - If your framework is not supported, use [AI-Powered Analysis](@/get_started/ai_power/index.md) to detect endpoints
 
 ## Scan Takes Too Long
 
 **Symptom:** Noir takes a long time on large codebases.
 
-- Use `--techs` to limit scanning to specific frameworks: `noir scan . --techs rails`
-- Use `--exclude-techs` to skip known irrelevant frameworks
-- AI-powered analysis caches responses; subsequent runs on the same codebase will be faster
+- Use `--only-techs` to run just those detectors and skip the rest: `noir scan . --only-techs rails`
+  (`--techs` is different: it adds techs to the analyzer set without narrowing detection)
+- Use `--exclude-techs` to skip the analyzers of detected frameworks you don't need (the log marks them `(skip)`)
+- Use `--exclude-path` to skip vendored or generated trees: `--exclude-path "vendor/*,**/node_modules/**"`
+- AI responses are cached, so repeat runs on the same code are faster
 
 ## AI Provider Connection Errors
 
 **Symptom:** Errors when using `--ai-provider`.
 
-- Verify your API key is correct: `--ai-key <KEY>` or set `NOIR_AI_KEY` environment variable
-- For local providers (Ollama, vLLM, LM Studio), ensure the server is running
+- Check the API key you passed in `NOIR_AI_KEY`, `--ai-key-file`, or `--ai-key`
+- For local providers (Ollama, vLLM, LM Studio), check that the server is running
 - Check the provider's default host in the [AI Providers](@/usage/ai_providers/_index.md) table
 - For custom endpoints, use the full URL: `--ai-provider=http://your-server:port`
-- Enable debug logs with `NOIR_ACP_RAW_LOG=1` for ACP providers
+- For ACP providers, set `NOIR_ACP_RAW_LOG=1` to see the agent's raw logs
+
+**Symptom:** The AI analysis stalls, or gives up while the model is still working.
+
+- Requests fail after `NOIR_AI_CONNECT_TIMEOUT` (default 10s) if the host is unreachable, and after `NOIR_AI_TIMEOUT` (default 300s) if the provider accepts the request but never answers
+- Raise `NOIR_AI_TIMEOUT` when a slow local model legitimately needs longer to generate; lower `--ai-max-token` to send smaller bundles instead
+- Rate limits (HTTP 429) and transient gateway errors (502, 503, ...) are retried with backoff, up to three attempts in total. If warnings persist, reduce `--concurrency` or cap the run with `--ai-max-requests`
+- If a proxy or gateway drops connections that sit idle while the model generates, add `--ai-stream` (OpenAI-compatible providers)
 
 ## Docker Permission Issues
 
 **Symptom:** Permission denied errors when running via Docker.
 
-- Ensure your directory is mounted correctly: `docker run --rm -v $(pwd):/tmp ghcr.io/owasp-noir/noir:latest scan /tmp`
+- Check that your directory is mounted correctly: `docker run --rm -v $(pwd):/tmp ghcr.io/owasp-noir/noir:latest noir scan /tmp`
 - On SELinux systems, add `:z` to the volume mount: `-v $(pwd):/tmp:z`
 
 ## Shell Completion Not Working
 
 **Symptom:** Tab completion doesn't work after installation.
 
-- If installed via Homebrew, completions are installed automatically
+- If you installed with Homebrew (`brew install noir` or the `owasp-noir/noir` tap), completions are set up automatically for bash, zsh and fish. Open a new shell
 - For manual setup, see [Shell Completions](@/usage/configurations/shell-completion/index.md)
 - After setting up, restart your shell or run `source ~/.zshrc` (or equivalent)
 

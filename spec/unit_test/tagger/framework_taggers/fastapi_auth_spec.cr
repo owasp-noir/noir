@@ -1,8 +1,9 @@
+require "file_utils"
 require "../../../spec_helper"
 require "../../../../src/tagger/tagger"
 
 describe "FastAPIAuthTagger" do
-  fixture_base = "#{__DIR__}/../../../functional_test/fixtures/python/fastapi_auth"
+  fixture_base = File.expand_path("../../../functional_test/fixtures/python/fastapi_auth", __DIR__)
   main_path = "#{fixture_base}/main.py"
 
   # main.py line reference:
@@ -60,5 +61,205 @@ describe "FastAPIAuthTagger" do
     tagger.perform([endpoint])
 
     endpoint.tags.empty?.should be_true
+  end
+
+  # 48: @app.delete("/users/{user_id}", dependencies=[Depends(get_current_active_superuser)])
+  # 53: @app.put("/items/{item_id}")   body: owner_id != current_user.id -> 403
+  # 61: @app.patch("/notes/{note_id}") Depends(get_current_user) only
+  it "tags authorization from a role-checking dependency or the handler's own 403" do
+    noir_options = create_test_options
+    noir_options["base"] = YAML::Any.new(fixture_base)
+    at = ->(line : Int32, method : String) { Endpoint.new("/#{line}", method, [] of Param, Details.new(PathInfo.new(main_path, line))) }
+    superuser, ownership, plain = at.call(48, "DELETE"), at.call(53, "PUT"), at.call(61, "PATCH")
+
+    # The dependency index is built from the files the detector registered.
+    CodeLocator.instance.clear_all
+    CodeLocator.instance.register_path(main_path)
+    begin
+      FastAPIAuthTagger.new(noir_options).perform([superuser, ownership, plain])
+    ensure
+      CodeLocator.instance.clear_all
+    end
+
+    superuser.tags.map { |t| {t.name, t.description} }.should eq([
+      {"auth", "Protected by FastAPI Depends(get_current_active_superuser)"},
+      {"authz", "Protected by FastAPI Depends(get_current_active_superuser)"},
+    ])
+    ownership.tags.map { |t| {t.name, t.description} }.should eq([
+      {"auth", "Protected by FastAPI Depends(get_current_user)"},
+      {"authz", "Protected by FastAPI handler ownership/role check"},
+    ])
+    plain.tags.map(&.name).should eq(["auth"])
+  end
+
+  # app/accounts.py imports `load_account` from loose_deps (checks nothing)
+  # and strict_deps (checks `is_admin`), which both define that name.
+  #  9: @router.get("/")                Depends(load_account)
+  # 14: @router.delete("/{account_id}") Depends(strict_deps.load_account)
+  it "judges a dependency by the module the route imports it from" do
+    noir_options = create_test_options
+    noir_options["base"] = YAML::Any.new(fixture_base)
+    accounts = "#{fixture_base}/app/accounts.py"
+    loose = Endpoint.new("/accounts/", "GET", [] of Param, Details.new(PathInfo.new(accounts, 9)))
+    strict = Endpoint.new("/accounts/{account_id}", "DELETE", [] of Param, Details.new(PathInfo.new(accounts, 14)))
+
+    CodeLocator.instance.clear_all
+    Dir.glob("#{fixture_base}/**/*.py").each { |path| CodeLocator.instance.register_path(path) }
+    begin
+      FastAPIAuthTagger.new(noir_options).perform([loose, strict])
+    ensure
+      CodeLocator.instance.clear_all
+    end
+
+    loose.tags.should be_empty
+    strict.tags.map { |t| {t.name, t.description} }.should eq([
+      {"authz", "Protected by FastAPI Depends(strict_deps.load_account)"},
+    ])
+  end
+
+  it "reads Annotated auth aliases, wrapped signatures and router dependencies" do
+    CodeLocator.instance.clear_all
+    tmpdir = File.tempname("fastapi_aliases")
+    Dir.mkdir_p(tmpdir)
+    deps = File.join(tmpdir, "deps.py")
+    users = File.join(tmpdir, "users.py")
+    admin = File.join(tmpdir, "admin.py")
+    File.write(deps, <<-PY)
+      SessionDep = Annotated[Session, Depends(get_db)]
+      CurrentUser = Annotated[User, Depends(get_current_user)]
+      PY
+    File.write(users, <<-PY)
+      router = APIRouter(prefix="/users")
+
+      @router.get(
+          "/",
+          dependencies=[Depends(get_current_active_superuser)],
+      )
+      def read_users(session: SessionDep):
+          return []
+
+      @router.patch("/me/password")
+      def update_password_me(
+          *, session: SessionDep, body: dict, current_user: CurrentUser
+      ):
+          return None
+
+      @router.post("/signup")
+      def register_user(session: SessionDep, email: str):
+          return None
+      PY
+    File.write(admin, <<-PY)
+      router = APIRouter(
+          prefix="/admin",
+          dependencies=[Depends(get_current_active_superuser)],
+      )
+
+      @router.get("/metrics")
+      def metrics():
+          return {}
+      PY
+    [deps, users, admin].each { |path| CodeLocator.instance.register_path(path) }
+
+    begin
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(tmpdir)
+      at = ->(path : String, line : Int32) { Endpoint.new("/#{line}", "GET", [] of Param, Details.new(PathInfo.new(path, line))) }
+      read_users = at.call(users, 3)
+      password = at.call(users, 10)
+      signup = at.call(users, 16)
+      metrics = at.call(admin, 6)
+
+      FastAPIAuthTagger.new(noir_options).perform([read_users, password, signup, metrics])
+
+      read_users.tags.map(&.description).should eq(["Protected by FastAPI Depends(get_current_active_superuser)"])
+      password.tags.map(&.description).should eq(["Protected by FastAPI Depends(get_current_user) (CurrentUser)"])
+      signup.tags.should be_empty
+      metrics.tags.map(&.description).should eq(["Protected by FastAPI Depends(get_current_active_superuser)"])
+    ensure
+      FileUtils.rm_rf(tmpdir)
+      CodeLocator.instance.clear_all
+    end
+  end
+
+  it "needs the auth word as a whole name component, not a substring" do
+    tmpdir = File.tempname("fastapi_callable_words")
+    Dir.mkdir_p(tmpdir)
+    main = File.join(tmpdir, "main.py")
+    File.write(main, <<-PY)
+      @app.get("/a")
+      def a(author=Depends(get_author_by_id)):
+          pass
+      @app.get("/b")
+      def b(n=Depends(get_token_count)):
+          pass
+      @app.get("/c")
+      def c(repo=Depends(get_roles_repo)):
+          pass
+      @app.get("/d")
+      def d(svc=Depends(permission_service)):
+          pass
+      @app.get("/e")
+      def e(svc=Depends(author_service)):
+          pass
+      @app.get("/f")
+      def f(key=Security(verify_api_key)):
+          pass
+      @app.get("/g")
+      def g(tok=Depends(reusable_oauth2)):
+          pass
+      @app.get("/h")
+      def h(u=Depends(deps.get_current_active_superuser)):
+          pass
+      @app.get("/i")
+      def i(p=Depends(check_permissions)):
+          pass
+      @app.get("/j")
+      def j(u=Depends(require_authenticated_user)):
+          pass
+      PY
+
+    begin
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(tmpdir)
+      endpoints = (0...10).map { |i| Endpoint.new("/#{i}", "GET", [] of Param, Details.new(PathInfo.new(main, i * 3 + 1))) }
+
+      FastAPIAuthTagger.new(noir_options).perform(endpoints)
+
+      endpoints.map(&.tags.empty?).should eq([true, true, true, true, true, false, false, false, false, false])
+    ensure
+      FileUtils.rm_rf(tmpdir)
+    end
+  end
+
+  it "ends a handler's signature at a trailing comment or a one-line def" do
+    tmpdir = File.tempname("fastapi_header_end")
+    Dir.mkdir_p(tmpdir)
+    main = File.join(tmpdir, "main.py")
+    File.write(main, <<-PY)
+      @app.get("/public")
+      async def public_items():  # no auth needed (yet)
+          return {"items": []}
+
+      @app.get("/ping")
+      def ping(): return "pong"
+
+      @app.get("/me")
+      async def me(user: User = Depends(get_current_user)):
+          return user
+      PY
+
+    begin
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(tmpdir)
+      public_items, ping, me = [1, 5, 8].map { |line| Endpoint.new("/#{line}", "GET", [] of Param, Details.new(PathInfo.new(main, line))) }
+
+      FastAPIAuthTagger.new(noir_options).perform([public_items, ping, me])
+
+      public_items.tags.should be_empty
+      ping.tags.should be_empty
+      me.tags.map(&.description).should eq(["Protected by FastAPI Depends(get_current_user)"])
+    ensure
+      FileUtils.rm_rf(tmpdir)
+    end
   end
 end

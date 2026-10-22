@@ -1,34 +1,24 @@
 +++
-title = "GitHub Marketplace 모델과 함께 Noir 사용하기"
-description = "GitHub Marketplace의 AI 모델을 Noir와 함께 사용하는 방법입니다."
+title = "GitHub Models 제공업체(종료)"
+description = "GitHub Models는 2026년 7월 30일 종료되었습니다. 마이그레이션 안내와 현재 사용할 수 있는 Noir AI 제공업체를 확인하세요."
 weight = 6
 sort_by = "weight"
 
 +++
 
-[GitHub Marketplace](https://github.com/marketplace/models)의 AI 모델을 Noir와 함께 사용할 수 있습니다.
+GitHub는 2026년 7월 30일 [GitHub Models](https://docs.github.com/en/github-models)를 종료했습니다. 모델 카탈로그, 추론 API, 플레이그라운드, BYOK 기능을 더 이상 사용할 수 없습니다.
 
-## 설정
+이 페이지는 기존 Noir 설정을 옮기는 분을 위해 남겨 둔 마이그레이션 안내입니다. 새 스캔에는 `github` 제공업체를 사용하지 마세요.
 
-1.  **Personal Access Token 생성**: [GitHub 문서](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens)에 따라 PAT를 생성하세요. AI 모델 접근 권한이 필요합니다.
-2.  **모델 선택**: [GitHub Marketplace](https://github.com/marketplace/models)에서 모델을 선택하세요.
+## 지원되는 제공업체 선택
 
-## 사용 방법
+다음 지원 제공업체 중 하나를 사용하세요.
 
-**GitHub API 사용**:
+*   [Azure AI](../azure/): Microsoft Foundry 리소스에 연결합니다.
+*   [OpenAI](../openai/): OpenAI API로 OpenAI 모델을 사용합니다.
+*   [OpenRouter](../openrouter/): 하나의 API로 여러 모델에 접근합니다.
+*   [ACP 에이전트](../acp/): Codex, Gemini, Claude 또는 다른 ACP 호환 에이전트에 연결합니다.
 
-```bash
-noir scan ./spec/functional_test/fixtures/hahwul \
-     --ai-provider=github \
-     --ai-model=gpt-5.5 \
-     --ai-key=github_pat_...
-```
-
-**Azure Inference API 사용** (Azure를 통해 제공되는 모델):
-
-```bash
-noir scan ./spec/functional_test/fixtures/hahwul \
-     --ai-provider=azure \
-     --ai-model=gpt-5.5 \
-     --ai-key=github_pat_...
-```
+{% alert_warning() %}
+Noir는 기존 설정이 그대로 읽히도록 github 제공업체를 남겨 두었을 뿐입니다. 그 뒤의 서비스는 이미 종료되었습니다.
+{% end %}

@@ -30,9 +30,14 @@ expected_endpoints = [
   Endpoint.new("/v2/status", "GET"),
   # Symbol verb path (`get :ping`) is a literal segment, not a `{ping}` param.
   Endpoint.new("/v2/status/ping", "GET"),
+  Endpoint.new("/v2/dollar$", "POST"),
+  Endpoint.new("/v2/users.json", "GET"),
+  Endpoint.new("/v2/~me", "GET"),
+  Endpoint.new("/v2/@me", "GET"),
+  Endpoint.new("/v2/a+b", "GET"),
 ]
 
 FunctionalTester.new("fixtures/ruby/grape/", {
   :techs     => 1,
-  :endpoints => 13,
+  :endpoints => 18,
 }, expected_endpoints).perform_tests

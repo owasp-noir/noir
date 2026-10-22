@@ -2,6 +2,10 @@ require "../../../models/detector"
 
 module Detector::Javascript
   class Nitro < Detector
+    detector_for "js_nitro",
+      extensions: %w[.js .mjs .cjs .jsx .ts .tsx],
+      basenames: %w[package.json]
+
     # Single precompiled alternation — one PCRE2 scan instead of three.
     SIGNAL = Regex.union(
       /require\(['"]nitropack['"]\)/,
@@ -17,19 +21,12 @@ module Detector::Javascript
 
       # Check for Nitro imports and patterns in JS/TS files
       if (filename.ends_with?(".js") || filename.ends_with?(".mjs") || filename.ends_with?(".ts") || filename.ends_with?(".cjs")) &&
-         file_contents.matches?(SIGNAL)
+         (file_contents.includes?("nitropack") || file_contents.includes?("defineNitroConfig")) &&
+         content_matches?(file_contents, SIGNAL)
         return true
       end
 
       false
-    end
-
-    def applicable?(filename : String) : Bool
-      filename.ends_with?(".js") || filename.ends_with?(".mjs") || filename.ends_with?(".cjs") || filename.ends_with?(".jsx") || filename.ends_with?(".ts") || filename.ends_with?(".tsx") || File.basename(filename) == "package.json"
-    end
-
-    def set_name
-      @name = "js_nitro"
     end
   end
 end

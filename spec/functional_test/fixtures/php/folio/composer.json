@@ -1,0 +1,8 @@
+{
+    "name": "laravel/laravel",
+    "require": {
+        "php": "^8.2",
+        "laravel/framework": "^11.0",
+        "laravel/folio": "^1.1"
+    }
+}

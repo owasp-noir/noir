@@ -71,4 +71,81 @@ describe "Detect Ruby Rails" do
   it "gemfile/does not match jquery-rails" do
     instance.detect("Gemfile", "gem 'jquery-rails'\ngem 'sinatra'").should be_false
   end
+
+  # The dependency declaration is the better marker, but it is only there when
+  # the scan reaches the manifest. A `config/` directory, an engine whose
+  # gemspec does not name the framework, or one service of a monorepo scanned
+  # app-by-app all detect as nothing without these — and then the analyzer
+  # never runs and every route the app declares is lost.
+  it "routes/modern draw block" do
+    contents = <<-RUBY
+      Rails.application.routes.draw do
+        get '/api/posts', to: 'posts#index'
+        resources :comments, only: [:index, :show]
+      end
+      RUBY
+    instance.detect("config/routes.rb", contents).should be_true
+  end
+
+  it "routes/pre-3.0 draw block" do
+    contents = <<-RUBY
+      Blog::Application.routes.draw do
+        root to: 'posts#index'
+      end
+      RUBY
+    instance.detect("config/routes.rb", contents).should be_true
+  end
+
+  it "config.ru/run Rails.application" do
+    contents = <<-RUBY
+      require_relative "config/environment"
+      run Rails.application
+      Rails.application.load_server
+      RUBY
+    instance.detect("config.ru", contents).should be_true
+  end
+
+  it "application.rb/Rails::Application subclass" do
+    contents = <<-RUBY
+      require_relative "boot"
+      require "rails/all"
+
+      module Blog
+        class Application < Rails::Application
+          config.load_defaults 8.0
+        end
+      end
+      RUBY
+    instance.detect("config/application.rb", contents).should be_true
+  end
+
+  it "ruby/an ordinary file is not a marker" do
+    contents = <<-RUBY
+      class PostsController < ApplicationController
+        def index
+          @posts = Post.all
+        end
+      end
+      RUBY
+    instance.detect("app/controllers/posts_controller.rb", contents).should be_false
+  end
+
+  it "ruby/another framework's routing block is not Rails" do
+    contents = <<-RUBY
+      Hanami.application.routes do
+        get "/posts", to: "posts.index"
+      end
+      RUBY
+    instance.detect("config/routes.rb", contents).should be_false
+  end
+
+  it "ruby/prose mentioning rails is not a marker" do
+    contents = <<-RUBY
+      # This gem works with Rails, Sinatra and Hanami applications.
+      # See the rails/all guide for details.
+      module Thing
+      end
+      RUBY
+    instance.detect("lib/thing.rb", contents).should be_false
+  end
 end

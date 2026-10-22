@@ -80,4 +80,34 @@ describe "OutputBuilderToml" do
     output.should contain("file_path = \"test.cr\"")
     output.should contain("line_number = 10")
   end
+
+  # TOML basic strings admit no raw control character. Only `\b \t \n \f \r`
+  # have a short form; everything else in U+0000-U+001F, plus U+007F, needs
+  # `\uXXXX`. The escaper covered exactly those five, so one ANSI escape in a
+  # route literal — or a control byte in a filename, which reaches the
+  # document through `code_paths` — emitted a document no TOML parser will
+  # read.
+  it "escapes control characters so the document stays parseable" do
+    options = {
+      "debug"   => YAML::Any.new(false),
+      "verbose" => YAML::Any.new(false),
+      "color"   => YAML::Any.new(false),
+      "nolog"   => YAML::Any.new(false),
+      "output"  => YAML::Any.new(""),
+    }
+    builder = OutputBuilderToml.new(options)
+    builder.io = IO::Memory.new
+
+    endpoint = Endpoint.new("/ctrl\u0001\u0002\e[31m", "GET",
+      Details.new(PathInfo.new("src/we\u007Fird.py", 3)))
+    endpoint.push_param(Param.new("na\u0001me", "va\u001Flue", "query"))
+
+    builder.print([endpoint])
+    output = builder.io.to_s
+
+    output.should_not match(/[\x00-\x08\x0B\x0E-\x1F\x7F]/)
+    output.should contain(%(url = "/ctrl\\u0001\\u0002\\u001B[31m"))
+    output.should contain(%("na\\u0001me"))
+    output.should contain(%(path = "src/we\\u007Fird.py"))
+  end
 end

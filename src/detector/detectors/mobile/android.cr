@@ -3,26 +3,16 @@ require "../../../models/code_locator"
 
 module Detector::Mobile
   class Android < Detector
+    # Registers AndroidManifest.xml paths in `CodeLocator`.
+    detector_for "android", basenames: %w[AndroidManifest.xml], idempotent: false
+
     def detect(filename : String, file_contents : String) : Bool
       if File.basename(filename) == "AndroidManifest.xml" && file_contents.includes?("<manifest")
         locator = CodeLocator.instance
-        locator.push("android-manifest", filename)
+        locator.push(Noir::LocatorKeys::ANDROID_MANIFEST, filename)
         return true
       end
 
-      false
-    end
-
-    def applicable?(filename : String) : Bool
-      File.basename(filename) == "AndroidManifest.xml"
-    end
-
-    def set_name
-      @name = "android"
-    end
-
-    # Registers AndroidManifest.xml paths in `CodeLocator`.
-    def idempotent? : Bool
       false
     end
   end

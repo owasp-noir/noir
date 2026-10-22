@@ -2,29 +2,83 @@ require "../../engines/php_engine"
 
 module Analyzer::Php
   class Slim < PhpEngine
+    analyzer_for "php_slim"
+
+    # ASCII byte values scanned by `find_matching_close_brace` below. Both
+    # are < 0x80, so they can never collide with a UTF-8 multi-byte
+    # continuation/lead byte (>= 0x80) — same invariant
+    # `PhpEngine#find_matching_php_close_brace` relies on.
+    private BYTE_LBRACE    = '{'.ord.to_u8
+    private BYTE_RBRACE    = '}'.ord.to_u8
+    private BYTE_DQUOTE    = '"'.ord.to_u8
+    private BYTE_SQUOTE    = '\''.ord.to_u8
+    private BYTE_BACKSLASH = '\\'.ord.to_u8
+
+    # `RouteCollectorProxy::any` maps exactly these verbs.
+    ANY_VERBS = %w[GET POST PUT PATCH DELETE OPTIONS]
+
     def analyze_file(path : String) : Array(Endpoint)
       endpoints = [] of Endpoint
       return endpoints unless path.ends_with?(".php")
-      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
+      include_callee = callees_needed?
 
-      File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
-        content = file.gets_to_end
-        next unless slim_relevant?(content)
-        endpoints = analyze_routes_content(content, "", path, include_callee)
+      content = read_file_content(path)
+      if slim_relevant?(content)
+        endpoints = analyze_routes_content(php_code(content), "", path, include_callee)
       end
 
       endpoints
     end
 
+    # Precompiled once at load: these four markers used to be four separate
+    # `String#includes?` scans of the whole file ORed together. Crystal's
+    # `String#includes?` is measurably slower than a single precompiled
+    # `Regex#matches?` call, and this runs on every .php file fed into the
+    # analyzer during a project-wide scan.
+    RELEVANCE_MARKER_RE = /Slim\\|SlimFramework|AppFactory|RouteCollectorProxy/
+
     # Cheap pre-filter: avoid heavy regex work on files that clearly aren't
     # Slim. Any file that reaches this analyzer via detection is usually in
     # a Slim project, but project-wide scans still feed unrelated PHP here.
+    # Route-collector handles that belong to a different PHP framework by
+    # convention: `$routes` is CodeIgniter 4 and CakePHP, `$builder` is
+    # CakePHP's `RouteBuilder`, `$router` is Lumen. Slim's own docs and
+    # skeleton use `$app` and `$group` throughout.
+    #
+    # This only gates the marker-less fallback below. Every PHP analyzer is fed
+    # every `.php` file in the scan, so in a repo holding more than one PHP
+    # framework that fallback read `$routes->get('users/(:num)', …)` out of
+    # CodeIgniter's `app/Config/Routes.php` and `$builder->get('/status', …)`
+    # out of CakePHP's `config/routes.php`, and emitted both as Slim routes. A
+    # genuine Slim file naming `Slim\` keeps working regardless of what it
+    # calls its variables.
+    FOREIGN_ROUTE_COLLECTORS = Set{"routes", "router", "route", "builder"}
+
+    VERB_CALL_RECEIVER_RE = /\$(\w+)->(?:get|post|put|patch|delete|options|head|any|map|group)\s*\(/i
+
+    # Mezzio registers its programmatic routes on `$app->get('/x', Handler::class)`
+    # — the same expression Slim uses — so Slim read Mezzio's route table as
+    # its own. `Mezzio\` is the one unambiguous marker: a Mezzio application
+    # names it, and Slim never does.
+    #
+    # `Laminas\` deliberately isn't on this list. Slim apps pull in
+    # `Laminas\Diactoros` for PSR-7 all the time, so excluding on it would
+    # drop their routes.
+    MEZZIO_MARKER_RE = /Mezzio\\/
+
     private def slim_relevant?(content : String) : Bool
-      content.includes?("Slim\\") ||
-        content.includes?("SlimFramework") ||
-        content.includes?("AppFactory") ||
-        content.includes?("RouteCollectorProxy") ||
-        !!content.match(/\$\w+->(?:get|post|put|patch|delete|options|head|map|group)\s*\(/i)
+      return false if content.matches?(MEZZIO_MARKER_RE) && !content.matches?(RELEVANCE_MARKER_RE)
+      return true if content.matches?(RELEVANCE_MARKER_RE)
+      # Verb/map/group registrations are always `$var->method(`. Skip the
+      # heavier verb regex when no `->` call shape is present.
+      return false unless content.includes?("->")
+      # Relevant as soon as one registration is made on a handle that isn't
+      # another framework's — a file where every one of them is foreign is
+      # that framework's route file, not a marker-less Slim one.
+      content.scan(VERB_CALL_RECEIVER_RE) do |match|
+        return true unless FOREIGN_ROUTE_COLLECTORS.includes?(match[1].downcase)
+      end
+      false
     end
 
     private def analyze_routes_content(content : String,
@@ -33,7 +87,6 @@ module Analyzer::Php
                                        include_callee : Bool,
                                        base_line : Int32 = 1) : Array(Endpoint)
       endpoints = [] of Endpoint
-      details = Details.new(PathInfo.new(file_path))
 
       working_content = content
 
@@ -60,41 +113,51 @@ module Analyzer::Php
       #    a route at the outer level.
       # Keep the path literal on a single line (no quotes, no newlines) so an
       # unrelated `$obj->get('key')` can't pull in following code as a route.
-      verb_regex = /(\$\w+)->(get|post|put|patch|delete|options|head)\s*\(\s*['"]([^'"\r\n]+)['"]\s*,/i
+      # The path may be empty: `$group->get('', …)` routes the group prefix
+      # itself (slim-skeleton's `/users`).
+      #
+      # The pattern must also be empty, start with `/`, be an optional
+      # segment `[…]` or start with an interpolated prefix followed by a `/`
+      # (`"{$apiPrefix}/users"`, `"$base/login"`): Slim joins it onto the
+      # group prefix as a string and FastRoute only sees URIs that start with
+      # `/`. Without that, a config getter (`$conf->get('general.timezone',
+      # 'UTC')`), an HTTP client or a collection `put("$key", …)` reads as a
+      # route.
+      verb_regex = /(\$\w+)->(get|post|put|patch|delete|options|head|any)\s*\(\s*['"]((?:(?:[\/\[]|(?:\{\$\w+\}|\$\w+)\/)[^'"\r\n]*)?)['"]\s*,/i
+      offsets = Noir::CharOffsets.new(working_content)
       pos = 0
-      while m = working_content.match(verb_regex, pos)
-        match_text = m[0]
-        match_start = working_content.index(match_text, pos)
-        break unless match_start
-        after_args = match_start + match_text.size
+      while m = offsets.match(verb_regex, pos)
+        after_args = offsets.end(m)
+        details = Details.new(PathInfo.new(file_path, base_line + offsets.line(offsets.begin(m)) - 1))
 
-        method = m[2].upcase
+        verb = m[2].upcase
+        methods = verb == "ANY" ? ANY_VERBS : [verb]
         route_path = m[3]
         full_path = build_full_path(prefix, route_path)
 
-        handler_body, next_pos, body_start_line = extract_handler_body_with_end(working_content, after_args, base_line)
+        handler_body, next_pos, body_start_line = extract_handler_body_with_end(offsets, after_args, base_line)
         params = extract_brace_path_params(full_path)
         params.concat(extract_handler_params(handler_body)) if handler_body
         params = dedup_params(params)
 
-        endpoint = Endpoint.new(full_path, method, params, details.dup)
-        attach_handler_callees(endpoint, handler_body, file_path, body_start_line) if include_callee
-        endpoints << endpoint
+        methods.each do |method|
+          endpoint = Endpoint.new(full_path, method, params, details.dup)
+          attach_handler_callees(endpoint, handler_body, file_path, body_start_line) if include_callee
+          endpoints << endpoint
+        end
         pos = next_pos
       end
 
       # 3. Multi-method map routes: $app->map(["GET","POST"], "/path", handler)
-      map_regex = /(\$\w+)->map\s*\(\s*\[([^\]]+)\]\s*,\s*['"]([^'"\r\n]+)['"]\s*,/i
+      map_regex = /(\$\w+)->map\s*\(\s*\[([^\]]+)\]\s*,\s*['"]((?:(?:[\/\[]|(?:\{\$\w+\}|\$\w+)\/)[^'"\r\n]*)?)['"]\s*,/i
       pos = 0
-      while m = working_content.match(map_regex, pos)
-        match_text = m[0]
-        match_start = working_content.index(match_text, pos)
-        break unless match_start
-        after_args = match_start + match_text.size
+      while m = offsets.match(map_regex, pos)
+        after_args = offsets.end(m)
+        details = Details.new(PathInfo.new(file_path, base_line + offsets.line(offsets.begin(m)) - 1))
 
         methods = m[2].scan(/['"]([^'"]+)['"]/).map(&.[1].upcase)
 
-        handler_body, next_pos, body_start_line = extract_handler_body_with_end(working_content, after_args, base_line)
+        handler_body, next_pos, body_start_line = extract_handler_body_with_end(offsets, after_args, base_line)
         pos = next_pos
 
         next if methods.empty?
@@ -123,23 +186,10 @@ module Analyzer::Php
       attach_php_callees(endpoint, callees)
     end
 
-    private def dedup_params(params : Array(Param)) : Array(Param)
-      seen = Set(String).new
-      params.select do |param|
-        key = "#{param.param_type}\0#{param.name}"
-        if seen.includes?(key)
-          false
-        else
-          seen.add(key)
-          true
-        end
-      end
-    end
-
     # Locate the first `$var->group("/prefix", function(...) { ... })` call
     # in the given content and return its span + extracted prefix.
     private def find_group_call(content : String) : Tuple(Int32, Int32, Int32, Int32, String)?
-      regex = /(\$\w+)->group\s*\(\s*['"]([^'"]+)['"]\s*,\s*(?:static\s+)?function\s*\([^)]*\)\s*(?:use\s*\([^)]*\)\s*)?(?::\s*[^{=]+)?\{/i
+      regex = /(\$\w+)->group\s*\(\s*['"]([^'"]*)['"]\s*,\s*(?:static\s+)?function\s*\([^)]*\)\s*(?:use\s*\([^)]*\)\s*)?(?::\s*[^{=]+)?\{/i
       m = content.match(regex)
       return unless m
 
@@ -148,8 +198,9 @@ module Analyzer::Php
       return unless match_start
 
       brace_pos = match_start + match_text.size - 1
-      body_end = find_matching_close_brace(content, brace_pos)
-      return unless body_end
+      close_byte = find_matching_close_brace(content, content.char_index_to_byte_index(brace_pos) || content.bytesize)
+      return unless close_byte
+      body_end = content.byte_index_to_char_index(close_byte) || content.size
 
       # Consume the closing `)` (and optional `;`) that terminates the group call.
       close_end = body_end + 1
@@ -171,56 +222,62 @@ module Analyzer::Php
     # text (or nil when the handler is a string/callable or brace matching
     # fails) together with the position after the handler so the caller can
     # resume scanning past it.
-    private def extract_handler_body_with_end(content : String, pos : Int32, base_line : Int32) : Tuple(String?, Int32, Int32?)
-      return {nil, pos, nil} unless pos < content.size
+    private def extract_handler_body_with_end(offsets : Noir::CharOffsets, pos : Int32, base_line : Int32) : Tuple(String?, Int32, Int32?)
+      size = offsets.content.size
+      return {nil, pos, nil} unless pos < size
 
       scan_pos = pos
-      while scan_pos < content.size && content[scan_pos].ascii_whitespace?
+      while offsets.ascii_whitespace?(scan_pos)
         scan_pos += 1
       end
-      return {nil, pos, nil} unless scan_pos < content.size
+      return {nil, pos, nil} unless scan_pos < size
 
-      closure_regex = /\A(?:static\s+)?function\s*\([^)]*\)\s*(?:use\s*\([^)]*\)\s*)?(?::\s*[^{=]+)?\{/i
-      m = content[scan_pos..].match(closure_regex)
+      m = offsets.match(INLINE_CLOSURE_HEAD_RE, scan_pos)
       return {nil, pos, nil} unless m
 
-      brace_pos = scan_pos + m[0].size - 1
-      body_end = find_matching_close_brace(content, brace_pos)
-      return {nil, pos, nil} unless body_end
+      close_byte = find_matching_close_brace(offsets.content, m.byte_end(0) - 1)
+      return {nil, pos, nil} unless close_byte
 
-      body_start_line = base_line + newline_count_before(content, brace_pos)
-      {content[(brace_pos + 1)...body_end], body_end + 1, body_start_line}
+      brace_pos = offsets.end(m) - 1
+      body_end = offsets.char(close_byte)
+      body_start_line = base_line + offsets.line(brace_pos) - 1
+      {offsets.slice(brace_pos + 1, body_end), body_end + 1, body_start_line}
     end
 
-    private def newline_count_before(content : String, pos : Int32) : Int32
-      return 0 if pos <= 0
-
-      content[0...pos].count('\n')
-    end
-
-    private def find_matching_close_brace(content : String, open_pos : Int32) : Int32?
-      return unless open_pos < content.size && content[open_pos] == '{'
+    # Byte-level scan for O(1) positional access instead of the previous
+    # `String#[](Int)` per-character loop, which is O(n) on any string
+    # containing a multi-byte UTF-8 character and turned a single call into
+    # O(n^2) — see `PhpEngine#find_matching_php_close_brace` for the same
+    # fix applied to the shared brace matcher. `find_group_call` and
+    # `extract_handler_body_with_end` both call this over the full
+    # remainder of the file, so this is the hot path for any Slim routes
+    # file with non-ASCII content (e.g. CJK comments/strings). Takes and
+    # returns BYTE offsets.
+    private def find_matching_close_brace(content : String, start : Int32) : Int32?
+      bytes = content.to_slice
+      return unless start < bytes.size && bytes[start] == BYTE_LBRACE
 
       depth = 0
       in_string = false
-      quote_char = '\0'
-      pos = open_pos
-      while pos < content.size
-        char = content[pos]
+      quote_byte = 0_u8
+      pos = start
+      size = bytes.size
+      while pos < size
+        byte = bytes[pos]
         if !in_string
-          case char
-          when '{'
+          case byte
+          when BYTE_LBRACE
             depth += 1
-          when '}'
+          when BYTE_RBRACE
             depth -= 1
             return pos if depth == 0
-          when '"', '\''
+          when BYTE_DQUOTE, BYTE_SQUOTE
             in_string = true
-            quote_char = char
+            quote_byte = byte
           end
-        elsif char == '\\'
+        elsif byte == BYTE_BACKSLASH
           pos += 1
-        elsif char == quote_char
+        elsif byte == quote_byte
           in_string = false
         end
         pos += 1

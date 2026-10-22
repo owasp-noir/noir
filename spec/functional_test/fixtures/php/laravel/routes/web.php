@@ -37,6 +37,10 @@ Route::resource('photos', ProductController::class)
 Route::apiResource('admin/widgets', ProductController::class)
     ->except(['destroy'])
     ->parameters(['widgets' => 'widget']);
+// Shallow nesting: member routes drop the parent segment.
+Route::apiResource('posts.notes', ProductController::class)
+    ->shallow()
+    ->only(['index', 'show']);
 
 Route::group(['prefix' => 'admin'], function () {
     Route::get('/settings', function () {
@@ -45,10 +49,32 @@ Route::group(['prefix' => 'admin'], function () {
     Route::post('/settings', function () {
         return redirect('/admin/settings');
     });
+    Route::query('/logs', function () {
+        return response()->json(['logs' => []]);
+    });
 });
 
-Route::match(['get', 'post'], '/contact', function () {
+Route::match(['get', 'post'], '/contact', function (Request $request) {
+    $topic = $request->input('topic');
     return view('contact');
+});
+
+Route::match(['get', 'query'], '/filter', function () {
+    return view('contact');
+});
+
+Route::query('/search', [ProductController::class, 'index']);
+
+Route::addRoute('QUERY', '/advanced-search', function () {
+    return response()->json(['status' => 'ok']);
+});
+
+Route::query('/search-chained', function () {
+    return response()->json(['status' => 'ok']);
+})->middleware('auth');
+
+Route::middleware('auth')->query('/secure-search', function () {
+    return response()->json(['status' => 'ok']);
 });
 
 Route::any('/webhook', function () {
@@ -60,6 +86,9 @@ Route::middleware('auth:sanctum')->get('/me', [UserController::class, 'me']);
 Route::middleware(['auth'])->prefix('api/v1')->group(function () {
     Route::get('/profile', [UserController::class, 'profile']);
     Route::post('/profile', [UserController::class, 'updateProfile']);
+    Route::query('/query-items', function () {
+        return response()->json(['items' => []]);
+    });
     Route::apiResource('tokens', ProductController::class);
 
     Route::prefix('reports')->group(function () {

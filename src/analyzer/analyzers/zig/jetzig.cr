@@ -20,6 +20,8 @@ module Analyzer::Zig
   # handler, so its 1-hop calls are surfaced as callees and `params.get("…")`
   # reads become query parameters.
   class Jetzig < Analyzer
+    analyzer_for "zig_jetzig"
+
     VIEWS_MARKER = "app#{File::SEPARATOR}views#{File::SEPARATOR}"
 
     # action => {http method, url suffix, has resource id}
@@ -34,7 +36,11 @@ module Analyzer::Zig
       "delete" => {"DELETE", "/:id", true},
     }
 
-    ACTION_FN_RE = /(?:^|[^A-Za-z0-9_.])pub\s+fn\s+(index|get|new|edit|post|put|patch|delete)\s*\(/
+    # Zero-width lookbehind rather than `(?:^|[^A-Za-z0-9_.])`: the consuming
+    # form made `match.begin(0)` the previous line's newline for every action
+    # written at the start of a line, so each route was reported one line above
+    # its `pub fn`. A lookbehind is the same predicate with the offset intact.
+    ACTION_FN_RE = /(?<![A-Za-z0-9_.])pub\s+fn\s+(index|get|new|edit|post|put|patch|delete)\s*\(/
     PARAM_GET_RE = /\b(?:params|query)\s*\.\s*get\s*\(\s*"([^"]+)"/
 
     # Explicit custom route registered in the app's startup hook, e.g.
@@ -48,7 +54,7 @@ module Analyzer::Zig
 
       all_files.each do |path|
         next unless path.ends_with?(".zig")
-        next if Noir::ZigCalleeExtractor.vendored_framework_path?(path)
+        next if Noir::ZigCalleeExtractor.vendored_framework_path?(base_relative_path(path))
 
         content = read_file_content(path)
 
@@ -75,10 +81,11 @@ module Analyzer::Zig
       resource = resource_for(path)
       return if resource.nil?
 
-      stripped = Noir::ZigCalleeExtractor.strip_non_code(content)
+      prepared = Noir::ZigCalleeExtractor.prepare(content)
+      stripped = prepared[:non_code]
       # Strings preserved — `params.get("foo")` reads need the literal name.
-      comment_stripped = Noir::ZigCalleeExtractor.strip_comments(content)
-      table = Noir::ZigCalleeExtractor.function_table(content, path)
+      comment_stripped = prepared[:comments]
+      table = Noir::ZigCalleeExtractor.function_table_from(prepared[:non_code_chars], path)
       by_name = {} of String => Noir::ZigCalleeExtractor::FunctionInfo
       table.each { |info| by_name[info[:name]] ||= info }
 
@@ -89,7 +96,7 @@ module Analyzer::Zig
         method, suffix, has_id = spec
 
         url = build_url(resource, suffix)
-        line = Noir::ZigCalleeExtractor.line_at(stripped.chars, match.begin(0) || 0)
+        line = Noir::ZigCalleeExtractor.line_at(stripped, match.begin(0) || 0)
         details = Details.new(PathInfo.new(path, line))
 
         params = [] of Param
@@ -127,11 +134,11 @@ module Analyzer::Zig
         import_rel = m[3]
         action = m[4]
 
-        line = Noir::ZigCalleeExtractor.line_at(text.chars, m.begin(0) || 0)
+        line = Noir::ZigCalleeExtractor.line_at(text, m.begin(0) || 0)
         endpoint = Endpoint.new(url, method, path_params(url), Details.new(PathInfo.new(path, line)))
 
         if include_callee
-          view_path = File.expand_path(File.join(dir, import_rel))
+          view_path = Noir::PathScope.expand(File.join(dir, import_rel))
           action_callees(view_path, action).tap do |callees|
             Noir::ZigCalleeExtractor.attach_to(endpoint, callees) unless callees.empty?
           end
@@ -154,11 +161,7 @@ module Analyzer::Zig
     end
 
     private def path_params(url : String) : Array(Param)
-      params = [] of Param
-      url.scan(/:([A-Za-z_]\w*)/) do |m|
-        params << Param.new(m[1], "", "path")
-      end
-      params
+      url.scan(/:([A-Za-z_]\w*)/).map { |m| Param.new(m[1], "", "path") }
     end
 
     # Resource path = the view file path below `app/views/`, extension

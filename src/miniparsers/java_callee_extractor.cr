@@ -43,27 +43,54 @@ module Noir::JavaCalleeExtractor
                         file_path : String,
                         class_name : String,
                         method_name : String,
-                        target_line : Int32? = nil) : Array(Tuple(String, String, Int32))
+                        target_line : Int32? = nil,
+                        decl_index : Hash(String, Int32?)? = nil,
+                        method_index : MethodIndex? = nil) : Array(Tuple(String, String, Int32))
     sink = [] of Tuple(String, String, Int32)
     return sink if class_name.empty? || method_name.empty?
 
-    method_node = find_method(root, source, class_name, method_name, target_line)
+    method_node = find_method(method_index || build_method_index(root, source, class_name), class_name, method_name, target_line)
     return sink unless method_node
     body = Noir::TreeSitter.field(method_node, "body")
     return sink unless body
 
-    decl_index = build_method_decl_index(root, source)
+    # The method-declaration index is file-scoped; callers that resolve
+    # callees for many routes in one file (spring.cr) build it once and
+    # pass it in. The nil default recomputes it, preserving every other
+    # call site.
+    resolved_decl_index = decl_index || build_method_decl_index(root, source)
 
-    walk(body) do |n|
+    Noir::TreeSitter.walk(body) do |n|
       node_type = Noir::TreeSitter.node_type(n)
       next unless node_type == "method_invocation" || node_type == "method_reference"
       name = callee_text(n, source)
       next if name.empty?
       row = Noir::TreeSitter.node_start_row(n)
-      resolved_line = resolve_same_file_line(n, source, decl_index)
+      resolved_line = resolve_same_file_line(n, source, resolved_decl_index)
       sink << {name, file_path, resolved_line || (row + 1)}
     end
     sink
+  end
+
+  # `callees_in_method` for many handlers of one parsed file. Each call
+  # without `decl_index:` / `method_index:` walks the whole tree twice to
+  # build them, so a class with N actions resolved one by one cost O(N²)
+  # (Struts2, 4000 `@Action` methods: 36s under `--ai-context`). This
+  # builds both on first use and reuses them. Only valid while the tree
+  # `root` belongs to is alive — inside the `parse_java` block.
+  class FileCallees
+    @decl_index : Hash(String, Int32?)?
+    @method_index : MethodIndex?
+
+    def initialize(@root : LibTreeSitter::TSNode, @source : String, @file_path : String)
+    end
+
+    def callees_in_method(class_name : String, method_name : String, target_line : Int32? = nil) : Array(Tuple(String, String, Int32))
+      decl_index = @decl_index ||= JavaCalleeExtractor.build_method_decl_index(@root, @source)
+      method_index = @method_index ||= JavaCalleeExtractor.build_method_index(@root, @source)
+      JavaCalleeExtractor.callees_in_method(@root, @source, @file_path, class_name, method_name, target_line,
+        decl_index: decl_index, method_index: method_index)
+    end
   end
 
   # Lambda/handler entry point used by DSL analyzers (Javalin, Spark,
@@ -86,7 +113,7 @@ module Noir::JavaCalleeExtractor
                       source : String,
                       file_path : String) : Array(Tuple(String, String, Int32))
     sink = [] of Tuple(String, String, Int32)
-    walk(body) do |n|
+    Noir::TreeSitter.walk(body) do |n|
       node_type = Noir::TreeSitter.node_type(n)
       next unless node_type == "method_invocation" || node_type == "method_reference"
       name = callee_text(n, source)
@@ -153,11 +180,38 @@ module Noir::JavaCalleeExtractor
       object = Noir::TreeSitter.field(node, "object")
       field = Noir::TreeSitter.field(node, "field")
       return "" unless object && field
-      inner = receiver_text(object, source)
+      inner = Noir::TreeSitter.descend { receiver_text(object, source) } || ""
       inner.empty? ? "" : "#{inner}.#{Noir::TreeSitter.node_text(field, source)}"
     else
       ""
     end
+  end
+
+  # Every `method_declaration` directly in a class or interface body, by
+  # `{class name, method name}`, in tree order. Spring resolves callees for
+  # every route of a file against one root, and walking the whole tree per
+  # route made a controller with N handlers cost O(N²) — build it once and
+  # pass it as `method_index:`, like `decl_index:`. `only_class` indexes
+  # just that class, for a caller resolving a single method.
+  alias MethodIndex = Hash(Tuple(String, String), Array(LibTreeSitter::TSNode))
+
+  def build_method_index(root : LibTreeSitter::TSNode, source : String, only_class : String? = nil) : MethodIndex
+    index = MethodIndex.new
+    walk_class_decls(root) do |decl|
+      name_node = Noir::TreeSitter.field(decl, "name")
+      next unless name_node
+      class_name = Noir::TreeSitter.node_text(name_node, source)
+      next if only_class && class_name != only_class
+      body = Noir::TreeSitter.field(decl, "body")
+      next unless body
+      Noir::TreeSitter.each_named_child(body) do |member|
+        next unless Noir::TreeSitter.node_type(member) == "method_declaration"
+        mn = Noir::TreeSitter.field(member, "name")
+        next unless mn
+        (index[{class_name, Noir::TreeSitter.node_text(mn, source)}] ||= [] of LibTreeSitter::TSNode) << member
+      end
+    end
+    index
   end
 
   # `target_line` (0-based row of the route's mapping annotation, when
@@ -165,35 +219,19 @@ module Noir::JavaCalleeExtractor
   # inside the correct overload's node span, so the method whose
   # `[start_row, end_row]` range contains that line wins. Falls back to
   # the first same-named method otherwise, matching prior behaviour.
-  private def find_method(root : LibTreeSitter::TSNode,
-                          source : String,
+  private def find_method(index : MethodIndex,
                           class_name : String,
                           method_name : String,
                           target_line : Int32? = nil) : LibTreeSitter::TSNode?
-    first : LibTreeSitter::TSNode? = nil
-    matched : LibTreeSitter::TSNode? = nil
-    walk_class_decls(root) do |decl|
-      next if matched
-      name_node = Noir::TreeSitter.field(decl, "name")
-      next unless name_node
-      next unless Noir::TreeSitter.node_text(name_node, source) == class_name
-      body = Noir::TreeSitter.field(decl, "body")
-      next unless body
-      Noir::TreeSitter.each_named_child(body) do |member|
-        next if matched
-        next unless Noir::TreeSitter.node_type(member) == "method_declaration"
-        mn = Noir::TreeSitter.field(member, "name")
-        next unless mn
-        next unless Noir::TreeSitter.node_text(mn, source) == method_name
-        first ||= member
-        if line = target_line
-          start_row = Noir::TreeSitter.node_start_row(member)
-          end_row = Noir::TreeSitter.node_end_row(member)
-          matched = member if line >= start_row && line <= end_row
-        end
+    candidates = index[{class_name, method_name}]?
+    return unless candidates
+    if line = target_line
+      matched = candidates.find do |member|
+        line >= Noir::TreeSitter.node_start_row(member) && line <= Noir::TreeSitter.node_end_row(member)
       end
+      return matched if matched
     end
-    matched || first
+    candidates.first
   end
 
   private def walk_class_decls(node : LibTreeSitter::TSNode, &block : LibTreeSitter::TSNode ->)
@@ -204,23 +242,16 @@ module Noir::JavaCalleeExtractor
     end
   end
 
-  private def walk(node : LibTreeSitter::TSNode, &block : LibTreeSitter::TSNode ->)
-    block.call(node)
-    Noir::TreeSitter.each_named_child(node) do |child|
-      walk(child, &block)
-    end
-  end
-
   # Build a same-file method-name -> start row map. `nil` value marks
   # an ambiguous name (multiple `method_declaration`s share it), so the
   # caller knows to keep the call site location instead of guessing
   # which overload to point at. Conservative by design — overloads,
   # qualified non-`this` calls, and missing declarations all stay at
   # call site.
-  private def build_method_decl_index(root : LibTreeSitter::TSNode,
-                                      source : String) : Hash(String, Int32?)
+  def build_method_decl_index(root : LibTreeSitter::TSNode,
+                              source : String) : Hash(String, Int32?)
     index = {} of String => Int32?
-    walk(root) do |n|
+    Noir::TreeSitter.walk(root) do |n|
       next unless Noir::TreeSitter.node_type(n) == "method_declaration"
       name_node = Noir::TreeSitter.field(n, "name")
       next unless name_node

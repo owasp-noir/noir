@@ -21,5 +21,12 @@ src/ext/tree_sitter/**/*.o
 # Ignore for Hwaro
 /docs/public/
 
-# Nix
-# /flake.lock
+# Byte-cache from the docs CLI-screenshot renderer
+__pycache__/
+
+# Nix build result symlinks
+/result
+/result-*
+
+# Scratch output of scripts/ (agent_bench clones, benchmark fixtures)
+/tmp/

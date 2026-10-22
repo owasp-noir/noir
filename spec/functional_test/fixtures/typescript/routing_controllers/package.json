@@ -1,0 +1,8 @@
+{
+  "name": "routing-controllers-fixture",
+  "dependencies": {
+    "express": "^4.21.0",
+    "reflect-metadata": "^0.2.2",
+    "routing-controllers": "^0.10.4"
+  }
+}

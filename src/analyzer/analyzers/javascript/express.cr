@@ -2,11 +2,15 @@ require "../../engines/javascript_engine"
 require "../../../miniparsers/js_route_extractor"
 require "../../../utils/url_path"
 require "../../../utils/js_literal_scanner"
+require "../../../utils/top_level_split"
 require "./express_constants"
 require "./express/router_mount_scanner"
+require "./express/route_helper_scanner"
 
 module Analyzer::Javascript
   class Express < JavascriptEngine
+    analyzer_for "js_express"
+
     include ExpressConstants
 
     # Constants for method chaining detection
@@ -21,50 +25,75 @@ module Analyzer::Javascript
       # Phase 1: Pre-scan to build router mount map
       scan_for_router_mounts
 
+      # Phase 1b: index the project-local helpers that forward their
+      # arguments to `router[verb](path, …)`. Must follow the mount scan:
+      # the routes it recovers are prefixed from the same locator table.
+      helper_scanner = scan_for_route_helpers
+
       parallel_file_scan do |path|
-        begin
-          content = read_file_content(path)
-          parser_endpoints = Noir::JSRouteExtractor.extract_routes(path, content, @is_debug,
-            include_callees: include_callee)
-          parser_endpoints.each do |endpoint|
-            # Use the line number already set by the extractor; fall back to path-only if missing
-            if endpoint.details.code_paths.empty?
-              endpoint.details = Details.new(PathInfo.new(path))
-            end
-
-            # Parse path parameters from the URL path itself
-            if endpoint.url.includes?(":")
-              endpoint.url.scan(/:(\w+)/) do |m|
-                if m.size > 0
-                  param = Param.new(m[1], "", "path")
-                  endpoint.push_param(param) if !endpoint.params.any? { |p| p.name == m[1] && p.param_type == "path" }
-                end
-              end
-            end
-
-            result << endpoint
+        content = read_file_content(path)
+        next if Noir::JSRouteExtractor.other_shared_extractor_framework?(content, :express)
+        parser_endpoints = Noir::JSRouteExtractor.extract_routes(path, content, @is_debug,
+          include_callees: include_callee)
+        # A forwarding helper's own body carries the *shape* of a route,
+        # not a route: `router.get(`/api${name}`, …)` inside
+        # `setupPageRoute` is a rewrite of the caller's path, and the
+        # generic parser turns it into a phantom `/api{name}` endpoint.
+        # The real registrations come from the call sites below.
+        helper_forward_lines = helper_scanner.forward_lines(path)
+        parser_endpoints.each do |endpoint|
+          unless helper_forward_lines.empty?
+            first_line = endpoint.details.code_paths.first?.try(&.line)
+            next if first_line && helper_forward_lines.includes?(first_line)
           end
 
-          collect_express_static_paths(path, content, static_dirs)
+          # Use the line number already set by the extractor; fall back to path-only if missing
+          if endpoint.details.code_paths.empty?
+            endpoint.details = Details.new(PathInfo.new(path))
+          end
 
-          # Parse Server style `this.route('METHOD', '/path', ...)`
-          # declarations. The framework's PromiseRouter base class
-          # exposes a `route(method, path, ...handlers)` shape that
-          # the standard verb-DSL extractor doesn't recognise.
-          # parse-community/parse-server alone parks ~51 routes in
-          # `src/Routers/*.js` (AudiencesRouter, GlobalConfigRouter,
-          # UsersRouter, ...) via this pattern.
-          extract_parse_server_routes(path, content, result, include_callee)
-        rescue e
-          logger.debug "Parser failed for #{path}: #{e.message}, falling back to regex"
+          # Parse path parameters from the URL path itself
+          if endpoint.url.includes?(":")
+            endpoint.url.scan(/:(\w+)/) do |m|
+              param = Param.new(m[1], "", "path")
+              endpoint.push_param(param)
+            end
+          end
 
-          # Fallback to the original regex-based approach if parser fails
-          analyze_with_regex(path, result, static_dirs)
+          result << endpoint
         end
+
+        collect_express_static_paths(path, content, static_dirs)
+
+        # Parse Server style `this.route('METHOD', '/path', ...)`
+        # declarations. The framework's PromiseRouter base class
+        # exposes a `route(method, path, ...handlers)` shape that
+        # the standard verb-DSL extractor doesn't recognise.
+        # parse-community/parse-server alone parks ~51 routes in
+        # `src/Routers/*.js` (AudiencesRouter, GlobalConfigRouter,
+        # UsersRouter, ...) via this pattern.
+        extract_parse_server_routes(path, content, result, include_callee)
+
+        # Routes registered by calling a forwarding helper
+        # (`setupApiRoute(router, 'get', '/:cid', …)`).
+        extract_route_helper_calls(helper_scanner, path, content, result, include_callee)
+
+        # `app.use('/ftp/:file', servePublicFiles())`: a path-mounted
+        # handler that answers the request is a route for every method.
+        extract_use_handler_routes(path, content, result, include_callee)
+
+        # `finale.resource({ endpoints: [...] })`: CRUD routes the library
+        # registers on `app` itself.
+        extract_finale_resource_routes(path, content, result)
+      rescue e
+        logger.debug "Parser failed for #{path}: #{e.message}, falling back to regex"
+
+        # Fallback to the original regex-based approach if parser fails
+        analyze_with_regex(path, result, static_dirs)
       end
 
       # Process static directories to create endpoints for static files
-      process_static_dirs(static_dirs, result)
+      process_js_static_dirs(static_dirs, result)
 
       result
     end
@@ -86,6 +115,9 @@ module Analyzer::Javascript
       # regex across a multi-MB minified single line that merely packs a
       # `this.route(` substring from library code.
       return if Noir::JSRouteExtractor.minified_content?(content)
+      # `this.route(/* x */ 'GET', …)` and a commented-out call: blanked in
+      # place, so offsets and lines stay put.
+      content = Noir::JSRouteExtractor.strip_js_comments(content)
       pattern = /(^|[^.\w])this\.route\(\s*['"]([A-Z]+)['"]\s*,\s*['"]([^'"]+)['"]/m
       seen = Set(Tuple(String, String)).new
       content.scan(pattern) do |m|
@@ -94,16 +126,14 @@ module Analyzer::Javascript
         next unless ["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"].includes?(method)
         url = m[3]
         key = {method, url}
-        next if seen.includes?(key)
-        seen << key
+        next unless seen.add?(key)
 
         match_start = m.begin(0) || m.begin || 0
         call_start = content.index("this.route", match_start) || match_start
-        line = content[0...call_start].count('\n') + 1
+        line = line_number_for_index(content, call_start)
         details = Details.new(PathInfo.new(path, line))
         endpoint = Endpoint.new(url, method, details)
         url.scan(/:(\w+)/) do |pm|
-          next unless pm.size > 0
           endpoint.push_param(Param.new(pm[1], "", "path"))
         end
         attach_js_callees(endpoint, parse_server_route_callees(content, path, call_start)) if include_callee
@@ -128,122 +158,137 @@ module Analyzer::Javascript
       callees
     end
 
-    private def handler_callees(handler_source : String, handler_start : Int32, content : String, path : String) : Array(Noir::JSCalleeExtractor::Entry)
-      if arrow_idx = handler_source.index("=>")
-        body_start = skip_whitespace(content, handler_start + arrow_idx + 2)
-        return [] of Noir::JSCalleeExtractor::Entry if body_start >= content.size
+    USE_PATH_RE = /\b[A-Za-z_$][\w$]*\.use\s*\(\s*['"]([^'"]+)['"]\s*,/
 
-        if content[body_start]? == '{'
-          return block_handler_callees(content, path, body_start)
-        end
+    # Deliberate exception to "no name lists": package-provided serving
+    # factories (`swaggerUi.serve`, `express.static`, `serveIndex`, …) have no
+    # definition in the scan to read, and register a `GET` route at the mount
+    # path (or `GET` + `POST` for GraphQL / Apollo middleware) rather than all
+    # seven methods.
+    PACKAGE_SERVING_GET_RE =
+      /\A(?:express\s*\.\s*static|serveStatic|serveIndex)\s*\(|\AswaggerUi\s*\.\s*(?:serve\b|setup\s*\()/
+    PACKAGE_SERVING_GRAPHQL_RE =
+      /\A(?:graphqlHTTP|createHandler|(?:[A-Za-z_$][\w$]*\s*\.\s*)?expressMiddleware)\s*\(/
 
-        body = content[body_start...(handler_start + handler_source.size)].strip
-        return [] of Noir::JSCalleeExtractor::Entry if body.empty?
+    # A mount whose last argument resolves to a definition that sends the
+    # response and never calls bare `next()` is a handler (juice-shop's
+    # `serveKeyFiles()`); so is an inline closure (`(req, res) => { res.send(…) }`)
+    # that obeys the same rule. One that calls `next()` is middleware (a guard,
+    # a decoder) and stays a mount; a Router mount is already a prefix. Package
+    # serving factories above have no definition in the scan and register their
+    # known serving verbs (`GET`, or `GET` + `POST` for GraphQL) at the mount path.
+    private def extract_use_handler_routes(path : String, content : String, result : Array(Endpoint), include_callee : Bool)
+      return unless content.includes?(".use")
+      return if Noir::JSRouteExtractor.minified_content?(content)
+      content = Noir::JSRouteExtractor.strip_js_comments(content)
+      prefixes = CodeLocator.instance.all(ExpressConstants.file_key(Noir::PathScope.expand(path)))
+      prefixes = [""] if prefixes.empty?
 
-        return Noir::JSCalleeExtractor.callees_for_function_body(body, path, line_for_pos(content, body_start), language: javascript_source_language(path))
-      end
+      content.scan(USE_PATH_RE) do |m|
+        call_start = m.begin(0)
+        paren_open = content.index('(', call_start) || next
+        paren_close = Noir::JSRouteExtractor.find_matching_paren(content, paren_open) || next
+        args = split_top_level_args(content, paren_open + 1, paren_close)
+        next if args.size < 2
 
-      function_idx = handler_source.index(/\bfunction\b/)
-      return [] of Noir::JSCalleeExtractor::Entry unless function_idx
+        line = line_number_for_index(content, call_start)
+        # `/ftp(?!/quarantine)/:file`: a lookaround only constrains the
+        # segment, so `trace "GET /ftp/x"` should land on `/ftp/:file`.
+        mount_path = m[1].gsub(/\(\?[!=<][^)]*\)/, "")
 
-      open_brace = content.index("{", handler_start + function_idx)
-      return [] of Noir::JSCalleeExtractor::Entry unless open_brace
-
-      block_handler_callees(content, path, open_brace)
-    end
-
-    private def block_handler_callees(content : String, path : String, open_brace : Int32) : Array(Noir::JSCalleeExtractor::Entry)
-      close_brace = Noir::JSRouteExtractor.find_matching_brace(content, open_brace)
-      return [] of Noir::JSCalleeExtractor::Entry unless close_brace
-
-      body = content[(open_brace + 1)...close_brace]
-      Noir::JSCalleeExtractor.callees_for_function_body(body, path, line_for_pos(content, open_brace), language: javascript_source_language(path))
-    end
-
-    private def split_top_level_args(content : String, start_pos : Int32, end_pos : Int32) : Array(Tuple(String, Int32))
-      args = [] of Tuple(String, Int32)
-      arg_start = start_pos
-      depth = 0
-      quote : Char? = nil
-      escaped = false
-      i = start_pos
-
-      while i < end_pos
-        char = content[i]
-
-        if quote
-          if escaped
-            escaped = false
-          elsif char == '\\'
-            escaped = true
-          elsif char == quote
-            quote = nil
+        if methods = package_serving_methods(args[1..])
+          prefixes.each do |prefix|
+            url = prefix.empty? ? mount_path : Noir::URLPath.join(prefix, mount_path)
+            methods.each do |method|
+              next if route_recorded_for_file?(result, path, url, method)
+              endpoint = Endpoint.new(url, method, Details.new(PathInfo.new(path, line)))
+              url.scan(/:(\w+)/) { |pm| endpoint.push_param(Param.new(pm[1], "", "path")) }
+              result << endpoint
+            end
           end
-          i += 1
           next
         end
 
-        case char
-        when '\'', '"', '`'
-          quote = char
-        when '(', '[', '{'
-          depth += 1
-        when ')', ']', '}'
-          depth -= 1 if depth > 0
-        when ','
-          if depth == 0
-            args << normalized_arg(content, arg_start, i)
-            arg_start = i + 1
+        last_source, last_start = args.last
+        handler = nil.as(Handler?)
+        facts = if resolved = Noir::JSHandlerResolver.resolve(last_source, content, path)
+                  handler = resolved
+                  Noir::JSRouteExtractor.handler_definition_facts(resolved, include_callee)
+                else
+                  Noir::JSRouteExtractor.inline_closure_facts(last_source, path, line_number_for_index(content, last_start), include_callee)
+                end
+        next unless facts && facts.responds
+        chain_callees = Noir::JSRouteExtractor.chain_step_callees(args[1...-1].map(&.[0]), content, path) if include_callee
+
+        prefixes.each do |prefix|
+          url = prefix.empty? ? mount_path : Noir::URLPath.join(prefix, mount_path)
+          FILE_ROUTE_METHODS.each do |method|
+            endpoint = Endpoint.new(url, method, Details.new(PathInfo.new(path, line)))
+            url.scan(/:(\w+)/) { |pm| endpoint.push_param(Param.new(pm[1], "", "path")) }
+            Noir::JSRouteExtractor.apply_handler_facts(endpoint, facts)
+            Noir::JSRouteExtractor.push_callees(endpoint, chain_callees)
+            endpoint.handler = handler
+            result << endpoint
           end
         end
-
-        i += 1
       end
-
-      args << normalized_arg(content, arg_start, end_pos)
-      args
+    rescue e
+      # Auxiliary pass: its failure must not send the file to the regex
+      # fallback on top of the routes the parser already emitted.
+      logger.debug "Express use-handler pass failed for #{path}: #{e.message}"
     end
 
-    private def normalized_arg(content : String, start_pos : Int32, end_pos : Int32) : Tuple(String, Int32)
-      start_idx = skip_whitespace(content, start_pos)
-      stop_idx = end_pos
-      while stop_idx > start_idx && content[stop_idx - 1].whitespace?
-        stop_idx -= 1
+    # Rows share (method, url) with any guard-only registration of the same
+    # route (`app.put('/api/Hints/:id', security.denyAll())`); the optimizer
+    # merges them, so the guard stays attached. No handler: the controller
+    # is library code.
+    private def extract_finale_resource_routes(path : String, content : String, result : Array(Endpoint))
+      return unless content.includes?(".resource")
+      content = Noir::JSRouteExtractor.strip_js_comments(content)
+      Noir::JSRouteExtractor.finale_resource_routes(content).each do |method, url, call_start|
+        endpoint = Endpoint.new(url, method, Details.new(PathInfo.new(path, line_number_for_index(content, call_start))))
+        url.scan(/:(\w+)/) { |pm| endpoint.push_param(Param.new(pm[1], "", "path")) }
+        result << endpoint
       end
-
-      {content[start_idx...stop_idx], start_idx}
+    rescue e
+      logger.debug "Express finale pass failed for #{path}: #{e.message}"
     end
 
-    private def skip_whitespace(content : String, pos : Int32) : Int32
-      i = pos
-      while i < content.size && content[i].whitespace?
-        i += 1
+    private def package_serving_methods(handler_args : Array(Tuple(String, Int32))) : Array(String)?
+      handler_args.each do |arg_source, _|
+        stripped = arg_source.strip
+        return ["GET", "POST"] if stripped.matches?(PACKAGE_SERVING_GRAPHQL_RE)
+        return ["GET"] if stripped.matches?(PACKAGE_SERVING_GET_RE)
       end
-      i
-    end
-
-    private def line_for_pos(content : String, pos : Int32) : Int32
-      content[0...pos].count('\n') + 1
-    end
-
-    # Process static directories and add endpoints for each file
-    private def process_static_dirs(static_dirs : Array(Hash(String, String)), result : Array(Endpoint))
-      process_js_static_dirs(static_dirs, result)
+      nil
     end
 
     private def analyze_with_regex(path : String, result : Array(Endpoint), static_dirs : Array(Hash(String, String)) = [] of Hash(String, String))
       # Original regex-based analysis as a fallback
       file_content = read_file_content(path)
+      # Every pass below reasons about one file, and `scan_for_nested_router_endpoints`
+      # *edits* what earlier passes emitted: it replaces the un-prefixed route
+      # with the router-mounted one. Handed the scan-wide array that edit
+      # reaches across files — the lookup matches on url and method alone, so
+      # the endpoint it replaces is just as likely to belong to another
+      # Express app under the same scan base, and it disappears from the
+      # report along with its params and its `code_path`. Twelve one-file apps
+      # each declaring `app.post('/users')` plus twelve declaring it behind
+      # `router.use('/api', usersRouter)` came out with ten of the twelve
+      # plain apps erased. Collect into a per-file array so a fix-up can only
+      # touch this file's own endpoints, and hand the whole batch to `result`
+      # at the end; duplicates across files are the optimizer's job to merge.
+      file_endpoints = [] of Endpoint
       last_endpoint = Endpoint.new("", "")
       current_router_base = ""
       router_detected = false
       nested_routers = {} of String => String
 
       # First, handle the specific v1Router pattern directly
-      handle_v1_router_pattern(file_content, result, path)
+      handle_v1_router_pattern(file_content, file_endpoints, path)
 
       # Handle app.route('/path').method1().method2() patterns
-      handle_app_route_chaining(file_content, result, path)
+      handle_app_route_chaining(file_content, file_endpoints, path)
 
       collect_express_static_paths(path, file_content, static_dirs)
 
@@ -279,7 +324,7 @@ module Analyzer::Javascript
       current_router = ""
       lines.each_with_index do |line, index|
         # Detect current router - support case variations of HTTP methods
-        if line =~ /(\w+)\.(get|Get|GET|post|Post|POST|put|Put|PUT|delete|Delete|DELETE|Del|patch|Patch|PATCH|options|Options|OPTIONS|head|Head|HEAD|all|All|ALL)/
+        if line =~ /(\w+)\.(get|Get|GET|post|Post|POST|put|Put|PUT|delete|Delete|DELETE|Del|patch|Patch|PATCH|options|Options|OPTIONS|head|Head|HEAD|all|All|ALL|query|Query|QUERY)/
           current_router = $1
         end
 
@@ -317,7 +362,7 @@ module Analyzer::Javascript
 
               details = Details.new(PathInfo.new(path, index + 1))
               expanded_endpoint.details = details
-              result << expanded_endpoint
+              file_endpoints << expanded_endpoint
             end
           else
             # Apply nested router prefix if applicable
@@ -333,7 +378,7 @@ module Analyzer::Javascript
 
             details = Details.new(PathInfo.new(path, index + 1))
             endpoint.details = details
-            result << endpoint
+            file_endpoints << endpoint
             last_endpoint = endpoint
           end
         end
@@ -348,7 +393,9 @@ module Analyzer::Javascript
       end
 
       # After processing all lines, look for any nested router patterns we might have missed
-      scan_for_nested_router_endpoints(file_content, result, path)
+      scan_for_nested_router_endpoints(file_content, file_endpoints, path)
+
+      result.concat(file_endpoints)
     end
 
     # Enhanced method to detect nested router patterns that might be missed in the regular line-by-line analysis
@@ -363,7 +410,7 @@ module Analyzer::Javascript
           prefix = m[2]
 
           # Now find all endpoints defined on this router
-          http_methods = %w[get post put delete patch options head all]
+          http_methods = %w[get post put delete patch options head all query]
 
           http_methods.each do |http_method|
             endpoint_pattern = cached_regex("express:nested_router:#{router_var}:#{http_method}") do
@@ -399,12 +446,10 @@ module Analyzer::Javascript
 
                 # Body parameters from destructuring
                 handler_body.scan(/\{\s*([^}]+)\s*\}\s*=\s*req\.body/) do |bm|
-                  if bm.size > 0
-                    param_list = bm[1].split(",").map(&.strip)
-                    param_list.each do |body_param|
-                      clean_param = body_param.split("=").first.strip.split(":").first.strip
-                      endpoint.push_param(Param.new(clean_param, "", "json")) unless clean_param.empty?
-                    end
+                  param_list = bm[1].split(",").map(&.strip)
+                  param_list.each do |body_param|
+                    clean_param = body_param.split("=").first.strip.split(":").first.strip
+                    endpoint.push_param(Param.new(clean_param, "", "json")) unless clean_param.empty?
                   end
                 end
 
@@ -446,10 +491,8 @@ module Analyzer::Javascript
 
       # Find router declarations with more patterns to detect express Router
       content.scan(/(?:const|let|var)\s+(\w+)\s*=\s*(?:express\.Router\(\)|Router\(\)|[a-zA-Z0-9_]+\.Router\(\))/) do |m|
-        if m.size > 0
-          router_name = m[1]
-          router_declarations[router_name] = true
-        end
+        router_name = m[1]
+        router_declarations[router_name] = true
       end
 
       # Find router.use statements with a path prefix - expanded pattern to catch more formats
@@ -495,7 +538,7 @@ module Analyzer::Javascript
         next if router_prefix.empty?
 
         # Look for route handlers on this router
-        http_methods = %w[get post put delete patch options head all]
+        http_methods = %w[get post put delete patch options head all query]
 
         http_methods.each do |method|
           # Enhanced pattern to catch more route handler formats
@@ -504,35 +547,31 @@ module Analyzer::Javascript
           end
 
           content.scan(pattern) do |m|
-            if m.size > 0
-              route_path = m[1]
-              method_upper = method.upcase
+            route_path = m[1]
+            method_upper = method.upcase
 
-              # Combine the prefix with the path
-              full_path = Noir::URLPath.join(router_prefix, route_path)
+            # Combine the prefix with the path
+            full_path = Noir::URLPath.join(router_prefix, route_path)
 
-              # Create endpoint and add to results
-              endpoint = Endpoint.new(full_path, method_upper)
-              details = Details.new(PathInfo.new(path, 1)) # Line number is approximate
-              endpoint.details = details
+            # Create endpoint and add to results
+            endpoint = Endpoint.new(full_path, method_upper)
+            details = Details.new(PathInfo.new(path, 1)) # Line number is approximate
+            endpoint.details = details
 
-              # Extract path parameters
-              if full_path.includes?(":")
-                full_path.scan(/:(\w+)/) do |param_m|
-                  if param_m.size > 0
-                    param = Param.new(param_m[1], "", "path")
-                    endpoint.push_param(param)
-                  end
-                end
+            # Extract path parameters
+            if full_path.includes?(":")
+              full_path.scan(/:(\w+)/) do |param_m|
+                param = Param.new(param_m[1], "", "path")
+                endpoint.push_param(param)
               end
+            end
 
-              # Extract params from handler body
-              extract_handler_params_from_content(content, router_prefix_router_name, method, route_path, endpoint)
+            # Extract params from handler body
+            extract_handler_params_from_content(content, router_prefix_router_name, method, route_path, endpoint)
 
-              # Add endpoint to results if it's not already there with same method and path
-              unless result.any? { |e| e.url == full_path && e.method == method_upper }
-                result << endpoint
-              end
+            # Add endpoint to results if it's not already there with same method and path
+            unless route_recorded_for_file?(result, path, full_path, method_upper)
+              result << endpoint
             end
           end
         end
@@ -541,7 +580,7 @@ module Analyzer::Javascript
 
     # Special method to process versioned routers like v1Router
     private def process_versioned_router(content : String, result : Array(Endpoint), path : String, router_name : String, prefix : String)
-      http_methods = %w[get post put delete patch options head all]
+      http_methods = %w[get post put delete patch options head all query]
 
       http_methods.each do |method|
         pattern = cached_regex("express:versioned_router:#{router_name}:#{method}") do
@@ -565,59 +604,47 @@ module Analyzer::Javascript
             # Extract path parameters
             if full_path.includes?(":")
               full_path.scan(/:(\w+)/) do |param_m|
-                if param_m.size > 0
-                  param = Param.new(param_m[1], "", "path")
-                  endpoint.push_param(param)
-                end
+                param = Param.new(param_m[1], "", "path")
+                endpoint.push_param(param)
               end
             end
 
             # Extract parameters from handler body
             # Query parameters
             handler_body.scan(/req\.query\.(\w+)|req\.query\[['"](\w+)['"]\]|format\s*=\s*req\.query\.(\w+)/) do |p_m|
-              if p_m.size > 0
-                param_name = p_m[1] || p_m[2] || p_m[3] || ""
-                endpoint.push_param(Param.new(param_name, "", "query")) unless param_name.empty?
-              end
+              param_name = p_m[1] || p_m[2] || p_m[3] || ""
+              endpoint.push_param(Param.new(param_name, "", "query")) unless param_name.empty?
             end
 
             # Header parameters
             handler_body.scan(/req\.headers(?:\[['"]([^'"]+)['"]\]|\.(\w+))|req\.header\s*\(\s*['"]([^'"]+)['"]\)|(\w+)\s*=\s*req\.header\s*\(['"]([^'"]+)['"]\)/) do |p_m|
-              if p_m.size > 0
-                param_name = p_m[1] || p_m[2] || p_m[3] || p_m[5] || ""
-                endpoint.push_param(Param.new(param_name, "", "header")) unless param_name.empty?
-              end
+              param_name = p_m[1] || p_m[2] || p_m[3] || p_m[5] || ""
+              endpoint.push_param(Param.new(param_name, "", "header")) unless param_name.empty?
             end
 
             # Body parameters
             handler_body.scan(/req\.body\.(\w+)|req\.body\[['"](\w+)['"]\]/) do |p_m|
-              if p_m.size > 0
-                param_name = p_m[1] || p_m[2] || ""
-                endpoint.push_param(Param.new(param_name, "", "json")) unless param_name.empty?
-              end
+              param_name = p_m[1] || p_m[2] || ""
+              endpoint.push_param(Param.new(param_name, "", "json")) unless param_name.empty?
             end
 
             # Body parameters from destructuring
             handler_body.scan(/(?:const|let|var)?\s*\{\s*([^}]+)\s*\}\s*=\s*req\.body/) do |p_m|
-              if p_m.size > 0
-                param_list = p_m[1].split(",").map(&.strip)
-                param_list.each do |param_var|
-                  clean_param = param_var.split("=").first.strip.split(":").first.strip
-                  endpoint.push_param(Param.new(clean_param, "", "json")) unless clean_param.empty?
-                end
+              param_list = p_m[1].split(",").map(&.strip)
+              param_list.each do |param_var|
+                clean_param = param_var.split("=").first.strip.split(":").first.strip
+                endpoint.push_param(Param.new(clean_param, "", "json")) unless clean_param.empty?
               end
             end
 
             # Cookie parameters
             handler_body.scan(/req\.cookies\.(\w+)|req\.cookies\[['"](\w+)['"]\]|(\w+)\s*=\s*req\.cookies\.(\w+)/) do |p_m|
-              if p_m.size > 0
-                param_name = p_m[1] || p_m[2] || p_m[4] || ""
-                endpoint.push_param(Param.new(param_name, "", "cookie")) unless param_name.empty?
-              end
+              param_name = p_m[1] || p_m[2] || p_m[4] || ""
+              endpoint.push_param(Param.new(param_name, "", "cookie")) unless param_name.empty?
             end
 
             # Add endpoint to results if it's not already there with same method and path
-            unless result.any? { |e| e.url == full_path && e.method == method_upper }
+            unless route_recorded_for_file?(result, path, full_path, method_upper)
               result << endpoint
             end
           end
@@ -649,80 +676,56 @@ module Analyzer::Javascript
 
       # Extract query parameters
       handler_body.scan(/req\.query\.(\w+)|req\.query\[['"](\w+)['"]\]/) do |m|
-        if m.size > 0
-          param_name = m[1] || m[2] || ""
-          endpoint.push_param(Param.new(param_name, "", "query")) unless param_name.empty?
-        end
+        param_name = m[1] || m[2] || ""
+        endpoint.push_param(Param.new(param_name, "", "query")) unless param_name.empty?
       end
 
       # Extract query parameters from destructuring
       handler_body.scan(/(?:const|let|var)?\s*\{\s*([^}]+)\s*\}\s*=\s*req\.query/) do |m|
-        if m.size > 0
-          param_list = m[1].split(",").map(&.strip)
-          param_list.each do |param_var|
-            clean_param = param_var.split("=").first.strip.split(":").first.strip
-            endpoint.push_param(Param.new(clean_param, "", "query")) unless clean_param.empty?
-          end
+        param_list = m[1].split(",").map(&.strip)
+        param_list.each do |param_var|
+          clean_param = param_var.split("=").first.strip.split(":").first.strip
+          endpoint.push_param(Param.new(clean_param, "", "query")) unless clean_param.empty?
         end
       end
 
       # Extract body parameters
       handler_body.scan(/req\.body\.(\w+)|req\.body\[['"](\w+)['"]\]/) do |m|
-        if m.size > 0
-          param_name = m[1] || m[2] || ""
-          endpoint.push_param(Param.new(param_name, "", "json")) unless param_name.empty?
-        end
+        param_name = m[1] || m[2] || ""
+        endpoint.push_param(Param.new(param_name, "", "json")) unless param_name.empty?
       end
 
       # Extract body parameters from destructuring
       handler_body.scan(/(?:const|let|var)?\s*\{\s*([^}]+)\s*\}\s*=\s*req\.body/) do |m|
-        if m.size > 0
-          param_list = m[1].split(",").map(&.strip)
-          param_list.each do |param_var|
-            clean_param = param_var.split("=").first.strip.split(":").first.strip
-            endpoint.push_param(Param.new(clean_param, "", "json")) unless clean_param.empty?
-          end
+        param_list = m[1].split(",").map(&.strip)
+        param_list.each do |param_var|
+          clean_param = param_var.split("=").first.strip.split(":").first.strip
+          endpoint.push_param(Param.new(clean_param, "", "json")) unless clean_param.empty?
         end
       end
 
       # Extract header parameters - improved pattern
       handler_body.scan(/req\.headers(?:\[['"]([^'"]+)['"]\]|\.(\w+))/) do |m|
-        if m.size > 0
-          param_name = m[1] || m[2] || ""
-          endpoint.push_param(Param.new(param_name, "", "header")) unless param_name.empty?
-        end
+        param_name = m[1] || m[2] || ""
+        endpoint.push_param(Param.new(param_name, "", "header")) unless param_name.empty?
       end
 
       # Handle req.header pattern
       handler_body.scan(/req\.header\s*\(\s*['"]([^'"]+)['"]/) do |m|
-        if m.size > 0
-          endpoint.push_param(Param.new(m[1], "", "header"))
-        end
+        endpoint.push_param(Param.new(m[1], "", "header"))
       end
 
       # Extract cookie parameters
       handler_body.scan(/req\.cookies\.(\w+)|req\.cookies\[['"](\w+)['"]\]/) do |m|
-        if m.size > 0
-          param_name = m[1] || m[2] || ""
-          endpoint.push_param(Param.new(param_name, "", "cookie")) unless param_name.empty?
-        end
+        param_name = m[1] || m[2] || ""
+        endpoint.push_param(Param.new(param_name, "", "cookie")) unless param_name.empty?
       end
 
       # Extract path parameters
       handler_body.scan(/req\.params\.(\w+)|req\.params\[['"](\w+)['"]\]/) do |m|
-        if m.size > 0
-          param_name = m[1] || m[2] || ""
-          if !endpoint.params.any? { |p| p.name == param_name && p.param_type == "path" }
-            endpoint.push_param(Param.new(param_name, "", "path")) unless param_name.empty?
-          end
-        end
+        param_name = m[1] || m[2] || ""
+        endpoint.push_param(Param.new(param_name, "", "path")) unless param_name.empty?
       end
-    end
-
-    def extract_path_from_route_handler(line : String) : String
-      # More robust path extraction handling different quote styles
-      match = line.match(/\(\s*['"]([^'"]+)['"]/)
-      match ? match[1] : ""
     end
 
     def line_to_param(line : String) : Param
@@ -780,11 +783,11 @@ module Analyzer::Javascript
     def line_to_endpoint(line : String, router_detected : Bool = false) : Endpoint
       # Match both app.method and router.method patterns
       # Support case variations and catch v1Router, apiRouter, and any *Router patterns
-      combined_pattern = /\b(?:app|router|route|r|Router|v\d+Router|apiRouter|[\w]+Router)\s*\.\s*(?:get|Get|GET|post|Post|POST|put|Put|PUT|delete|Delete|DELETE|del|Del|DEL|patch|Patch|PATCH|options|Options|OPTIONS|head|Head|HEAD|all|All|ALL)\s*\(\s*['"]([^'"]+)['"]/
+      combined_pattern = /\b(?:app|router|route|r|Router|v\d+Router|apiRouter|[\w]+Router)\s*\.\s*(?:get|Get|GET|post|Post|POST|put|Put|PUT|delete|Delete|DELETE|del|Del|DEL|patch|Patch|PATCH|options|Options|OPTIONS|head|Head|HEAD|all|All|ALL|query|Query|QUERY)\s*\(\s*['"]([^'"]+)['"]/
 
       if line =~ combined_pattern
         # Extract the actual method used
-        method_match = line.match(/\.(get|Get|GET|post|Post|POST|put|Put|PUT|delete|Delete|DELETE|del|Del|DEL|patch|Patch|PATCH|options|Options|OPTIONS|head|Head|HEAD|all|All|ALL)\s*\(/)
+        method_match = line.match(/\.(get|Get|GET|post|Post|POST|put|Put|PUT|delete|Delete|DELETE|del|Del|DEL|patch|Patch|PATCH|options|Options|OPTIONS|head|Head|HEAD|all|All|ALL|query|Query|QUERY)\s*\(/)
         if method_match
           actual_method = method_match[1].downcase
           actual_method = "delete" if actual_method == "del"
@@ -794,9 +797,9 @@ module Analyzer::Javascript
       end
 
       # Also try simple pattern match (without router name constraint)
-      simple_pattern = /\.\s*(?:get|Get|GET|post|Post|POST|put|Put|PUT|delete|Delete|DELETE|del|Del|DEL|patch|Patch|PATCH|options|Options|OPTIONS|head|Head|HEAD|all|All|ALL)\s*\(\s*['"]([^'"]+)['"]/
+      simple_pattern = /\.\s*(?:get|Get|GET|post|Post|POST|put|Put|PUT|delete|Delete|DELETE|del|Del|DEL|patch|Patch|PATCH|options|Options|OPTIONS|head|Head|HEAD|all|All|ALL|query|Query|QUERY)\s*\(\s*['"]([^'"]+)['"]/
       if line =~ simple_pattern
-        method_match = line.match(/\.(get|Get|GET|post|Post|POST|put|Put|PUT|delete|Delete|DELETE|del|Del|DEL|patch|Patch|PATCH|options|Options|OPTIONS|head|Head|HEAD|all|All|ALL)\s*\(/)
+        method_match = line.match(/\.(get|Get|GET|post|Post|POST|put|Put|PUT|delete|Delete|DELETE|del|Del|DEL|patch|Patch|PATCH|options|Options|OPTIONS|head|Head|HEAD|all|All|ALL|query|Query|QUERY)\s*\(/)
         if method_match
           actual_method = method_match[1].downcase
           actual_method = "delete" if actual_method == "del"
@@ -806,7 +809,7 @@ module Analyzer::Javascript
       end
 
       # Handle route method with method as a parameter - case variations
-      if line =~ /\b(?:app|router|route|r|Router|v\d+Router|apiRouter|[\w]+Router)\s*\.\s*route\s*\(\s*['"]([^'"]+)['"].*?\.(get|Get|GET|post|Post|POST|put|Put|PUT|delete|Delete|DELETE|Del|patch|Patch|PATCH|options|Options|OPTIONS|head|Head|HEAD|all|All|ALL)\s*\(/
+      if line =~ /\b(?:app|router|route|r|Router|v\d+Router|apiRouter|[\w]+Router)\s*\.\s*route\s*\(\s*['"]([^'"]+)['"].*?\.(get|Get|GET|post|Post|POST|put|Put|PUT|delete|Delete|DELETE|Del|patch|Patch|PATCH|options|Options|OPTIONS|head|Head|HEAD|all|All|ALL|query|Query|QUERY)\s*\(/
         path = $1
         method = $2.downcase
         # Handle special case for Del -> delete
@@ -822,10 +825,10 @@ module Analyzer::Javascript
       # Try to extract method from current line and path from next line
 
       # Check if current line has the method call (case variations)
-      if line =~ /\b(?:app|router|route|r|Router|v\d+Router|apiRouter|[\w]+Router)\s*\.\s*(?:get|Get|GET|post|Post|POST|put|Put|PUT|delete|Delete|DELETE|del|Del|DEL|patch|Patch|PATCH|options|Options|OPTIONS|head|Head|HEAD|all|All|ALL)\s*\(/ ||
-         line =~ /\.\s*(?:get|Get|GET|post|Post|POST|put|Put|PUT|delete|Delete|DELETE|del|Del|DEL|patch|Patch|PATCH|options|Options|OPTIONS|head|Head|HEAD|all|All|ALL)\s*\(/
+      if line =~ /\b(?:app|router|route|r|Router|v\d+Router|apiRouter|[\w]+Router)\s*\.\s*(?:get|Get|GET|post|Post|POST|put|Put|PUT|delete|Delete|DELETE|del|Del|DEL|patch|Patch|PATCH|options|Options|OPTIONS|head|Head|HEAD|all|All|ALL|query|Query|QUERY)\s*\(/ ||
+         line =~ /\.\s*(?:get|Get|GET|post|Post|POST|put|Put|PUT|delete|Delete|DELETE|del|Del|DEL|patch|Patch|PATCH|options|Options|OPTIONS|head|Head|HEAD|all|All|ALL|query|Query|QUERY)\s*\(/
         # Extract the actual method used
-        method_match = line.match(/\.(get|Get|GET|post|Post|POST|put|Put|PUT|delete|Delete|DELETE|del|Del|DEL|patch|Patch|PATCH|options|Options|OPTIONS|head|Head|HEAD|all|All|ALL)\s*\(/)
+        method_match = line.match(/\.(get|Get|GET|post|Post|POST|put|Put|PUT|delete|Delete|DELETE|del|Del|DEL|patch|Patch|PATCH|options|Options|OPTIONS|head|Head|HEAD|all|All|ALL|query|Query|QUERY)\s*\(/)
         if method_match
           actual_method = method_match[1].downcase
           actual_method = "delete" if actual_method == "del"
@@ -842,6 +845,11 @@ module Analyzer::Javascript
     end
 
     # Direct handler for the v1Router pattern in the test fixture
+    # Emits the two routes of the `vNRouter` fixture shape under their mount
+    # prefix. Runs first, on a `result` that is this file's own (empty) batch,
+    # so there is nothing here to de-duplicate against: the line loop below
+    # resolves the same routes through `nested_routers` and the optimizer
+    # merges whatever it emits with these.
     private def handle_v1_router_pattern(content : String, result : Array(Endpoint), path : String)
       # Look for the exact pattern used in the test fixture
       v1_pattern = /const\s+(v\d+Router)\s*=\s*express\.Router\(\);\s*router\.use\s*\(\s*['"]([^'"]+)['"]\s*,\s*\1\);/m
@@ -857,9 +865,6 @@ module Analyzer::Javascript
 
           # Add the status endpoint with correct prefix
           if content.match(status_route)
-            # Remove any existing /status endpoint
-            result.reject! { |e| e.url == "/status" && e.method == "GET" }
-
             # Create a new endpoint with the correct prefix
             endpoint = Endpoint.new("#{prefix}/status", "GET")
             details = Details.new(PathInfo.new(path, 1))
@@ -874,9 +879,6 @@ module Analyzer::Javascript
 
           # Add the settings endpoint with correct prefix
           if content.match(settings_route)
-            # Remove any existing /settings endpoint
-            result.reject! { |e| e.url == "/settings" && e.method == "PUT" }
-
             # Create a new endpoint with the correct prefix
             endpoint = Endpoint.new("#{prefix}/settings", "PUT")
             details = Details.new(PathInfo.new(path, 1))
@@ -917,7 +919,7 @@ module Analyzer::Javascript
         scan_pos = search_start
         loop do
           # Look for .method( pattern
-          method_match = content.match(/\.\s*(get|post|put|delete|patch|head|options)\s*\(/, scan_pos)
+          method_match = content.match(/\.\s*(get|post|put|delete|patch|head|options|query)\s*\(/, scan_pos)
           break unless method_match
           pos = method_match.begin(0)
           break unless pos
@@ -987,20 +989,59 @@ module Analyzer::Javascript
       collect_static_paths(path, content, static_dirs, :express)
     end
 
+    # Precompiled once — a single PCRE2-JIT scan replaces six naive
+    # String#includes? substring scans over the whole file content.
+    # Regex.union auto-escapes each literal, so this is provably
+    # equivalent to the OR-of-includes? it replaces.
+    EXPRESS_SOURCE_RE = Regex.union(
+      "require('express')", "require(\"express\")",
+      "from 'express'", "from \"express\"",
+      "express()", "express.Router("
+    )
+
     private def express_source?(content : String) : Bool
-      content.includes?("require('express')") ||
-        content.includes?("require(\"express\")") ||
-        content.includes?("from 'express'") ||
-        content.includes?("from \"express\"") ||
-        content.includes?("express()") ||
-        content.includes?("express.Router(")
+      content.matches?(EXPRESS_SOURCE_RE)
     end
 
     # Scan for router mount patterns and store them in CodeLocator
     # This enables cross-file router prefix tracking
     private def scan_for_router_mounts
-      scanner = RouterMountScanner.new(all_files, @base_paths, base_path, logger)
+      scanner = RouterMountScanner.new(all_files, @base_paths, base_path, logger, :express)
       scanner.scan
+    end
+
+    private def scan_for_route_helpers : RouteHelperScanner
+      scanner = RouteHelperScanner.new(all_files, @base_paths, base_path, logger)
+      scanner.index
+      scanner
+    end
+
+    # Emit one endpoint per route recovered from a forwarding-helper call.
+    private def extract_route_helper_calls(scanner : RouteHelperScanner, path : String, content : String,
+                                           result : Array(Endpoint), include_callee : Bool)
+      return unless scanner.any_helpers?
+
+      scanner.routes_for(path, content).each do |route|
+        details = Details.new(PathInfo.new(path, route.line))
+        endpoint = Endpoint.new(route.url, route.method, details)
+        route.url.scan(/:(\w+)/) do |pm|
+          endpoint.push_param(Param.new(pm[1], "", "path"))
+        end
+        attach_js_callees(endpoint, helper_call_callees(route, content, path)) if include_callee
+        result << endpoint
+      end
+    end
+
+    # Handlers passed to a helper sit after the path argument. Reuse the
+    # same inline-handler walk the Parse Server pass uses.
+    private def helper_call_callees(route : RouteHelperScanner::HelperRoute, content : String,
+                                    path : String) : Array(Noir::JSCalleeExtractor::Entry)
+      callees = [] of Noir::JSCalleeExtractor::Entry
+      route.args.each_with_index do |entry, idx|
+        next unless idx > route.path_arg
+        callees.concat(handler_callees(entry[0], entry[1], content, path))
+      end
+      callees
     end
   end
 end

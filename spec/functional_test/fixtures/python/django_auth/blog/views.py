@@ -31,3 +31,11 @@ class PostAPIView(APIView):
 
     def get(self, request):
         return Response({"posts": []})
+
+
+def draft_list(request):
+    return HttpResponse("Drafts")
+
+
+def export_page(request):
+    return HttpResponse("Export")

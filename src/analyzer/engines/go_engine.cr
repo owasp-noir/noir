@@ -1,9 +1,13 @@
 require "../../models/analyzer"
 require "../../miniparsers/go_callee_extractor"
 require "../../miniparsers/go_route_extractor_ts"
+require "../../miniparsers/go_named_handler"
+require "../../miniparsers/go_request_param_extractor"
+require "../../utils/worker_threads"
+require "../../utils/c_comments"
 
 module Analyzer::Go
-  class GoEngine < Analyzer
+  abstract class GoEngine < Analyzer
     # `*_test.go` is Go's hard-wired build-tag for test-only source.
     # `go build` excludes these files entirely; only `go test` pulls
     # them in. Real route handlers never live there, but framework
@@ -17,10 +21,39 @@ module Analyzer::Go
     # `_testdata/`) is excluded by `go build`/`go list` outright.
     # `kataras/iris` alone parks 392 phantom endpoints under
     # `_examples/...`; they're documented apps, not production
-    # routes the framework ships.
-    def self.go_test_file?(path : String) : Bool
-      return true if path.ends_with?("_test.go")
-      path.split("/").any?(&.starts_with?("_"))
+    # routes the framework ships. `go help packages` ignores a
+    # directory named `testdata` the same way: swaggo/swag parks
+    # 196 parser-input endpoints under `testdata/...`.
+    #
+    # Takes the scan-base-relative path (`Analyzer#base_relative_path`),
+    # never the absolute one. Go's toolchain rule is relative to the
+    # module, so on an absolute path a single `_`-prefixed directory
+    # anywhere above the scan base — `~/_work/repo` on a self-hosted CI
+    # runner — excluded every `.go` file in the project.
+    #
+    # `relative_path` from `base_relative_path` is `/`-rooted, so `"/_"`
+    # is exactly "a path segment starts with `_`" without the per-call
+    # `split` allocation. The leading-`_` and `testdata/` checks cover a
+    # caller that passes an unrooted relative path.
+    def self.go_test_file?(relative_path : String) : Bool
+      return true if relative_path.ends_with?("_test.go")
+      return true if relative_path.starts_with?("testdata/") || relative_path.includes?("/testdata/")
+      relative_path.starts_with?('_') || relative_path.includes?("/_")
+    end
+
+    # Blanks out `//` line comments and `/* */` block comments, replacing
+    # them with spaces so every real line number stays put for PathInfo
+    # reporting. Without this a commented-out call reads as a live one —
+    # a `// serveCmd.Flags().StringVar(&tok, "secret-token", ...)` note
+    # registered a flag that the binary does not accept.
+    #
+    # All three Go string forms are tracked so a `//` or `/*` inside a
+    # literal is never read as a comment opener: interpreted strings
+    # (`"..."`, backslash escapes), rune literals (`'.'`), and raw
+    # strings (`` `...` ``) — the last take no escapes and may span
+    # newlines, hence `raw_quotes`.
+    def self.strip_comments(text : String) : String
+      Noir::CComments.strip(text, raw_quotes: "`", leak_unterminated_tail: true)
     end
 
     # --- Tree-sitter group/route pre-pass --------------------------------
@@ -47,14 +80,13 @@ module Analyzer::Go
     # repos (e.g. an example monorepo where most dirs use other routers).
     # `file_contents` is still populated for every file so the per-file
     # route pass and callee pre-pass keep their read cache.
-    def collect_package_groups_ts(group_method : String = "Group", import_marker : String? = nil) : Tuple(Hash(String, Hash(String, String)), Hash(String, String))
+    def collect_package_groups_ts(group_method : String = "Group", import_marker : (String | Array(String))? = nil) : Tuple(Hash(String, Hash(String, String)), Hash(String, String))
       package_groups = Hash(String, Hash(String, String)).new
       files_by_dir = Hash(String, Array(String)).new
       file_contents = Hash(String, String).new
 
       get_files_by_extension(".go").each do |path|
-        next if File.directory?(path)
-        next if GoEngine.go_test_file?(path)
+        next if GoEngine.go_test_file?(base_relative_path(path))
         dir = File.dirname(path)
         files_by_dir[dir] ||= [] of String
         files_by_dir[dir] << path
@@ -62,20 +94,43 @@ module Analyzer::Go
 
       files_by_dir.each do |_dir, paths|
         paths.each do |path|
-          begin
-            file_contents[path] = read_file_content(path)
-          rescue File::NotFoundError
-            # skip
-          end
+          file_contents[path] = read_file_content(path)
+        rescue IO::Error
+          # skip
         end
       end
 
+      relevant_by_dir = Hash(String, Array(String)).new
       files_by_dir.each do |dir, paths|
-        relevant = if import_marker
-                     paths.select { |p| (c = file_contents[p]?) && c.includes?(import_marker) }
-                   else
-                     paths
-                   end
+        relevant_by_dir[dir] = if import_marker
+                                 markers = import_markers(import_marker)
+                                 paths.select do |p|
+                                   (c = file_contents[p]?) && markers.any? { |marker| c.includes?(marker) }
+                                 end
+                               else
+                                 paths
+                               end
+      end
+
+      # Every relevant file's own-file parse, done up front on the worker
+      # threads: it is a pure function of the source, and it is the bulk of
+      # this pre-pass. The package logic below consumes the results in the
+      # same order it always did; a file whose parse came back nil (it
+      # raised on the pool) is parsed again inline, where it behaves as
+      # before.
+      parse_paths = relevant_by_dir.values.flatten.select { |p| file_contents.has_key?(p) }
+      parsed = Noir::WorkerThreads.map(parse_paths) do |p|
+        Noir::TreeSitterGoRouteExtractor.extract_engine_names_and_groups(file_contents[p], group_method)
+      end
+      engine_names_and_groups = Hash(String, Tuple(Set(String), Hash(String, String))).new
+      parse_paths.each_with_index do |p, i|
+        if result = parsed[i]
+          engine_names_and_groups[p] = result
+        end
+      end
+
+      files_by_dir.each do |dir, _paths|
+        relevant = relevant_by_dir[dir]
         next if relevant.empty?
 
         # Detect group-variable names that resolve to DIFFERENT prefixes
@@ -105,7 +160,8 @@ module Analyzer::Go
         relevant.each do |path|
           content = file_contents[path]?
           next if content.nil?
-          names, own = Noir::TreeSitterGoRouteExtractor.extract_engine_names_and_groups(content, group_method)
+          names, own = engine_names_and_groups[path]? ||
+                       Noir::TreeSitterGoRouteExtractor.extract_engine_names_and_groups(content, group_method)
           names.each { |n| ambiguous << n }
           own_groups_by_file[path] = own
           own.each do |k, v|
@@ -156,7 +212,195 @@ module Analyzer::Go
       package_groups[dir]? || Hash(String, String).new
     end
 
-    GO_HTTP_ROUTE_CALL_RE = /\.(?:GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS|Get|Post|Put|Delete|Patch|Head|Options|ANY|Any|All)\s*\(/
+    # Router-builder helpers (`func addUserRoutes(rg *gin.RouterGroup)`)
+    # receive their group as an argument, so the prefix lives at the call
+    # site (`addUserRoutes(router.Group("/v1"))`) and has to be grafted onto
+    # the helper's routes. `builder_type` is the group parameter type as
+    # written (`*gin.RouterGroup`, `*echo.Group`, `*route.RouterGroup`); its
+    # text gates the per-file parse and its last segment is the type name.
+    #
+    # Builds `{dir => {builder_fn => set(prefixes)}}` by (1) collecting
+    # every helper across the directory's files and (2) resolving each call
+    # site `F(arg)` to the prefix `arg` denotes via the caller's directory
+    # group map. A call from another package (`routes.F(api)`) counts when
+    # the caller imports the helper's package. A helper called with several
+    # groups accumulates each prefix; one with any unresolved call site (the
+    # root router, a computed value) is left out so the whole-file pass
+    # keeps its routes.
+    def resolve_router_builder_prefixes(file_contents : Hash(String, String),
+                                        package_groups : Hash(String, Hash(String, String)),
+                                        builder_type : String) : Hash(String, Hash(String, Set(String)))
+      type_name = builder_type.split('.').last
+      result = Hash(String, Hash(String, Set(String))).new
+      files_by_dir = Hash(String, Array(String)).new
+      file_contents.each_key { |p| (files_by_dir[File.dirname(p)] ||= [] of String) << p }
+
+      builders_by_dir = Hash(String, Set(String)).new
+      files_by_dir.each do |dir, paths|
+        builders = Set(String).new
+        paths.each do |p|
+          content = file_contents[p]?
+          next unless content && content.includes?(builder_type)
+          Noir::TreeSitterGoRouteExtractor.collect_router_group_builders(content, type_name).each_key { |fn| builders << fn }
+        end
+        builders_by_dir[dir] = builders unless builders.empty?
+      end
+      return result if builders_by_dir.empty?
+
+      # Import path of each builder package, for cross-package call sites.
+      builder_imports = Hash(String, String).new
+      modules = collect_go_modules
+      builders_by_dir.each_key do |dir|
+        if import_path = import_path_for_dir(dir, modules)
+          builder_imports[import_path] = dir
+        end
+      end
+
+      prefixes_by_dir = Hash(String, Hash(String, Set(String))).new
+      unresolved_by_dir = Hash(String, Set(String)).new
+      files_by_dir.each do |dir, paths|
+        group_map = package_groups[dir]? || Hash(String, String).new
+        paths.each do |p|
+          content = file_contents[p]?
+          next unless content
+          names = builders_by_dir[dir]?.try(&.dup) || Set(String).new
+          # Quoted, so `"app/routes"` is not matched by `"app/routes/admin"`.
+          imported = builder_imports.select { |import_path, _| content.includes?(%("#{import_path}")) }
+          imported.each_value { |d| names.concat(builders_by_dir[d]) }
+          next if names.empty?
+          aliases = nil
+          Noir::TreeSitterGoRouteExtractor.collect_router_builder_callsites(content, names, group_map).each do |fn, arg, qualifier|
+            target = if qualifier.empty?
+                       dir if builders_by_dir[dir]?.try(&.includes?(fn))
+                     elsif !imported.empty?
+                       aliases ||= Noir::GoCalleeExtractor.extract_import_aliases(content)
+                       d = aliases[qualifier]?.try { |import_path| imported[import_path]? }
+                       d if d && builders_by_dir[d].includes?(fn)
+                     end
+            next unless target
+            prefix = group_map[arg]?
+            prefix = arg if prefix.nil? && arg.starts_with?("/")
+            if prefix
+              ((prefixes_by_dir[target] ||= Hash(String, Set(String)).new)[fn] ||= Set(String).new) << prefix
+            else
+              (unresolved_by_dir[target] ||= Set(String).new) << fn
+            end
+          end
+        end
+      end
+
+      prefixes_by_dir.each do |dir, prefixes|
+        unresolved = unresolved_by_dir[dir]?
+        prefixes.reject! { |fn, _| unresolved.includes?(fn) } if unresolved
+        result[dir] = prefixes unless prefixes.empty?
+      end
+      result
+    end
+
+    # The router-builder helpers defined in `content` to expand, with their
+    # resolved call-site prefixes. A helper whose group parameter name is
+    # already a package-level group (both named `v1`) is resolved by the
+    # whole-file pass and is left alone.
+    def router_builder_expansions(content : String,
+                                  builder_type : String,
+                                  dir_prefixes : Hash(String, Set(String))?,
+                                  cross_file_groups : Hash(String, String)) : Array(Tuple(String, Noir::TreeSitterGoRouteExtractor::RouterBuilder, Set(String)))
+      expansions = [] of Tuple(String, Noir::TreeSitterGoRouteExtractor::RouterBuilder, Set(String))
+      return expansions unless dir_prefixes && content.includes?(builder_type)
+      Noir::TreeSitterGoRouteExtractor.collect_router_group_builders(content, builder_type.split('.').last).each do |fn, rb|
+        pset = dir_prefixes[fn]?
+        next if pset.nil? || pset.empty?
+        next if cross_file_groups.has_key?(rb.param)
+        expansions << {fn, rb, pset}
+      end
+      expansions
+    end
+
+    # Emits every `expansions` helper's routes once per call-site prefix
+    # (with the route's callees), then yields each `(line, endpoint)` pair
+    # of the helper body so the caller applies its framework's param
+    # patterns. The caller skips the helper bodies in its own line loop.
+    # Endpoints go to `into` (default: `result`).
+    def expand_router_builders(content : String,
+                               lines : Array(String),
+                               path : String,
+                               expansions : Array(Tuple(String, Noir::TreeSitterGoRouteExtractor::RouterBuilder, Set(String))),
+                               callees_by_route : Hash(Int32, Array(Tuple(String, String, Int32))),
+                               named : Noir::GoNamedHandler,
+                               handle_method : String? = nil,
+                               into emitted_to : Array(Endpoint) = result,
+                               & : String, Endpoint ->)
+      expansions.each do |fn, rb, pset|
+        emitted = [] of Endpoint
+        pset.each do |prefix|
+          Noir::TreeSitterGoRouteExtractor.extract_routes_from_function(
+            content, fn, {rb.param => prefix}, handle_method: handle_method
+          ).each do |route|
+            details = Details.new(PathInfo.new(path, route.line + 1))
+            Noir::TreeSitterGoRouteExtractor.fan_out_verbs(route.verb).each do |verb|
+              ep = Endpoint.new(route.path, verb, details)
+              callees_by_route[route.line]?.try &.each do |name, callee_path, callee_line|
+                ep.push_callee(Callee.new(name, path: callee_path, line: callee_line))
+              end
+              emitted_to << ep
+              named.bind(route, ep)
+              emitted << ep
+            end
+          end
+        end
+        each_router_builder_line(lines, emitted, rb) do |line, eps|
+          eps.each { |ep| yield line, ep }
+        end
+      end
+    end
+
+    # Yields each line of a router-builder body that belongs to one of the
+    # expanded `emitted` endpoints (the registration line and its inline
+    # closure) with the endpoints registered there.
+    private def each_router_builder_line(lines : Array(String),
+                                         emitted : Array(Endpoint),
+                                         builder : Noir::TreeSitterGoRouteExtractor::RouterBuilder,
+                                         & : String, Array(Endpoint) ->)
+      eps_by_line = Hash(Int32, Array(Endpoint)).new { |h, k| h[k] = [] of Endpoint }
+      emitted.each do |ep|
+        ep.details.code_paths.each do |cp|
+          if ln = cp.line
+            eps_by_line[ln.to_i - 1] << ep
+          end
+        end
+      end
+      return if eps_by_line.empty?
+      currents = [] of Endpoint
+      in_inline = false
+      brace_count = 0
+      (builder.start_row..[builder.end_row, lines.size - 1].min).each do |i|
+        line = lines[i]?
+        next unless line
+        apply_now = false
+        if eps = eps_by_line[i]?
+          currents = eps
+          apply_now = true
+          if line.includes?("func(")
+            in_inline = true
+            brace_count = line.count("{") - line.count("}")
+            if brace_count <= 0
+              in_inline = false
+              brace_count = 0
+            end
+          end
+        elsif in_inline
+          brace_count += line.count("{") - line.count("}")
+          if brace_count <= 0
+            in_inline = false
+            brace_count = 0
+          end
+          apply_now = true
+        end
+        yield line, currents if !currents.empty? && apply_now
+      end
+    end
+
+    GO_HTTP_ROUTE_CALL_RE = /\.(?:GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS|QUERY|Get|Post|Put|Delete|Patch|Head|Options|Query|ANY|Any|All)\s*\(/
 
     # Crystal recompiles an interpolated regex literal on every evaluation
     # (a full PCRE2 JIT compile); the per-framework extra route methods are
@@ -164,13 +408,33 @@ module Analyzer::Go
     # instead of rebuilding them for every candidate file.
     @extra_method_regexes = Hash(String, Regex).new
 
+    # One compiled matcher per framework import marker set. Each analyzer
+    # passes a single `IMPORT_MARKER` constant, so the cardinality here is
+    # one entry; the Hash just keeps the memo honest if that changes.
+    @import_marker_regexes = Hash(String, Regex).new
+
+    # An analyzer may name more than one import path when a framework is
+    # shipped under several of them — a maintained hard fork exposing the
+    # same routing API, for instance. Callers keep passing a plain String.
+    private def import_markers(import_marker : String | Array(String)) : Array(String)
+      import_marker.is_a?(String) ? [import_marker] : import_marker
+    end
+
+    # Called once per candidate file, so the single-marker case reuses the
+    # constant itself as the memo key rather than allocating a joined one.
+    private def import_marker_regex(import_marker : String | Array(String)) : Regex
+      key = import_marker.is_a?(String) ? import_marker : import_marker.join('\n')
+      @import_marker_regexes[key] ||= Regex.union(import_markers(import_marker))
+    end
+
     # Per-package directories that import a target framework. Some real
     # projects hide the concrete framework type behind a local interface, so
     # the file that calls `router.GET(...)` may not import Gin/Echo itself.
-    def framework_package_dirs(file_contents : Hash(String, String), import_marker : String) : Set(String)
+    def framework_package_dirs(file_contents : Hash(String, String), import_marker : String | Array(String)) : Set(String)
       dirs = Set(String).new
+      marker = import_marker_regex(import_marker)
       file_contents.each do |path, content|
-        dirs << File.dirname(path) if content.includes?(import_marker)
+        dirs << File.dirname(path) if content_matches?(content, marker)
       end
       dirs
     end
@@ -178,21 +442,69 @@ module Analyzer::Go
     # Cheap gate before the tree-sitter route pass. Handler-only files often
     # import Gin/Echo for `*gin.Context` / `echo.Context`, but they cannot emit
     # endpoints unless they contain a route/static registration call.
-    def go_route_source_candidate?(content : String, extra_methods : Array(String)) : Bool
-      return true if content.matches?(GO_HTTP_ROUTE_CALL_RE)
+    #
+    # `verb_calls: false` drops the shared `.GET(` / `.Get(` gate for a
+    # framework that registers no routes through verb-named methods
+    # (gorilla/mux: `Router.Get(name)` *looks up* a named route). In a
+    # package that imports the framework, `.Get(` / `.Put(` on caches,
+    # maps and clients otherwise sends nearly every file to the parser.
+    def go_route_source_candidate?(content : String, extra_methods : Array(String), verb_calls : Bool = true) : Bool
+      return true if verb_calls && content_matches?(content, GO_HTTP_ROUTE_CALL_RE)
       extra_methods.any? do |method|
         method_regex = @extra_method_regexes[method] ||= /\.#{Regex.escape(method)}\s*\(/
-        content.matches?(method_regex)
+        content_matches?(content, method_regex)
       end
+    end
+
+    # Runs `extract` for every file the route pass will parse — the same
+    # test-file and `framework_route_source_candidate?` gates, evaluated here
+    # on the analyzer's own fiber — on `Noir::WorkerThreads`, and returns
+    # the results by path.
+    #
+    # `extract` must be pure: tree-sitter extraction over the file's source
+    # and read-only tables built before this call. The route pass then
+    # takes each file's result from here instead of parsing it itself, and
+    # parses inline for any file missing (a gate it evaluates differently,
+    # or an extraction that raised on the pool) — so what the pass emits,
+    # and in what order, is unchanged.
+    def prefetch_route_sources(file_contents : Hash(String, String),
+                               framework_dirs : Set(String),
+                               import_marker : String | Array(String),
+                               extra_methods : Array(String),
+                               verb_calls : Bool = true,
+                               &extract : String, String -> T) : Hash(String, T) forall T
+      candidates = get_files_by_extension(".go").select do |path|
+        next false if GoEngine.go_test_file?(base_relative_path(path))
+        content = file_contents[path]?
+        next false if content.nil?
+        framework_route_source_candidate?(content, File.dirname(path), framework_dirs, import_marker, extra_methods, verb_calls)
+      end
+      prefetch_sources(candidates, file_contents, &extract)
+    end
+
+    # `extract` for each of `paths` (all keys of `file_contents`) on
+    # `Noir::WorkerThreads`, by path; a path whose extraction raised is
+    # left out, so the caller computes it inline as before.
+    def prefetch_sources(paths : Array(String), file_contents : Hash(String, String),
+                         &extract : String, String -> T) : Hash(String, T) forall T
+      results = Noir::WorkerThreads.map(paths) { |path| extract.call(path, file_contents[path]) }
+      prefetched = Hash(String, T).new
+      paths.each_with_index do |path, index|
+        if result = results[index]
+          prefetched[path] = result
+        end
+      end
+      prefetched
     end
 
     def framework_route_source_candidate?(content : String,
                                           dir : String,
                                           framework_dirs : Set(String),
-                                          import_marker : String,
-                                          extra_methods : Array(String)) : Bool
-      return false unless content.includes?(import_marker) || framework_dirs.includes?(dir)
-      go_route_source_candidate?(content, extra_methods)
+                                          import_marker : String | Array(String),
+                                          extra_methods : Array(String),
+                                          verb_calls : Bool = true) : Bool
+      return false unless content_matches?(content, import_marker_regex(import_marker)) || framework_dirs.includes?(dir)
+      go_route_source_candidate?(content, extra_methods, verb_calls)
     end
 
     # --- Cross-file function body pre-pass --------------------------------
@@ -268,6 +580,40 @@ module Analyzer::Go
       package_function_bodies[dir]? || Hash(String, Noir::GoCalleeExtractor::FunctionBody).new
     end
 
+    def ts_function_bodies_for_directory(package_bodies : Noir::GoCalleeExtractor::LazyPackageBodies, dir : String) : Hash(String, Noir::GoCalleeExtractor::FunctionBody)
+      package_bodies.functions_for(dir)
+    end
+
+    # Per-directory function and method tables, built for a directory only
+    # when an analyzer looks it up. Holds exactly what
+    # `collect_package_function_bodies` / `collect_package_controller_method_bodies`
+    # would store for that directory, and is empty unless callees are
+    # requested — see `Noir::GoCalleeExtractor::LazyPackageBodies`. Use it
+    # wherever the tables are only read through the `ts_*_for_directory`
+    # lookups; the import-path indexes iterate every directory and still
+    # need the eager maps.
+    def lazy_package_bodies(file_contents : Hash(String, String)) : Noir::GoCalleeExtractor::LazyPackageBodies
+      Noir::GoCalleeExtractor.lazy_package_bodies_if(callees_needed?, file_contents)
+    end
+
+    # Lookup scope for `Noir::GoNamedHandler`: a named handler declared in
+    # another file of the route's package, or in a scanned package it
+    # imports (`handlers.List`). Not gated on callees: the handler body is
+    # where the route's request params are read. Packages are parsed only
+    # when a route names a handler outside its own file.
+    def named_handler_scope(file_contents : Hash(String, String)) : Noir::GoNamedHandler::Scope
+      import_dirs = Hash(String, String).new
+      modules = collect_go_modules
+      unless modules.empty?
+        file_contents.each_key.map { |path| File.dirname(path) }.to_set.each do |dir|
+          if import_path = import_path_for_dir(dir, modules)
+            import_dirs[import_path] ||= dir
+          end
+        end
+      end
+      Noir::GoNamedHandler.scope(file_contents, import_dirs)
+    end
+
     # --- Beego controller-method pre-pass --------------------------------
     #
     # Builds a per-directory `{controller_type => [http_verb_methods]}` map
@@ -278,13 +624,18 @@ module Analyzer::Go
     # still found.
     def collect_package_controller_methods(file_contents : Hash(String, String)) : Hash(String, Hash(String, Array(String)))
       result = Hash(String, Hash(String, Array(String))).new
+      # Cheap gate: a file with controller methods must contain a method
+      # receiver. gofmt always writes those as `func (recv Type) Name(`,
+      # so files without `func (` can't define controller methods and
+      # are skipped before paying for a tree-sitter parse. The parses run
+      # on the worker threads; the merge below stays in file order.
+      receivers = file_contents.keys.select { |path| file_contents[path].includes?("func (") }
+      parsed = prefetch_sources(receivers, file_contents) do |_path, content|
+        Noir::TreeSitterGoRouteExtractor.extract_controller_methods(content)
+      end
       file_contents.each do |path, content|
-        # Cheap gate: a file with controller methods must contain a method
-        # receiver. gofmt always writes those as `func (recv Type) Name(`,
-        # so files without `func (` can't define controller methods and
-        # are skipped before paying for a tree-sitter parse.
         next unless content.includes?("func (")
-        methods = Noir::TreeSitterGoRouteExtractor.extract_controller_methods(content)
+        methods = parsed[path]? || Noir::TreeSitterGoRouteExtractor.extract_controller_methods(content)
         next if methods.empty?
         dir = File.dirname(path)
         dir_map = (result[dir] ||= Hash(String, Array(String)).new)
@@ -328,6 +679,10 @@ module Analyzer::Go
       package_controller_method_bodies[dir]? || Hash(String, Array(Noir::GoCalleeExtractor::FunctionBody)).new
     end
 
+    def ts_controller_method_bodies_for_directory(package_bodies : Noir::GoCalleeExtractor::LazyPackageBodies, dir : String) : Hash(String, Array(Noir::GoCalleeExtractor::FunctionBody))
+      package_bodies.methods_for(dir)
+    end
+
     # Read every `.go` file once into a `{path => source}` hash. Used by
     # analyzers (Goyave) that don't otherwise call
     # `collect_package_groups_ts` but still need the file_contents hash
@@ -335,11 +690,10 @@ module Analyzer::Go
     def read_package_file_contents : Hash(String, String)
       file_contents = Hash(String, String).new
       get_files_by_extension(".go").each do |path|
-        next if File.directory?(path)
-        next if GoEngine.go_test_file?(path)
+        next if GoEngine.go_test_file?(base_relative_path(path))
         begin
           file_contents[path] = read_file_content(path)
-        rescue File::NotFoundError
+        rescue IO::Error
           # skip
         end
       end
@@ -349,7 +703,7 @@ module Analyzer::Go
     # --- Adapter helpers (shared across Go framework adapters) ----------
 
     def add_param_to_endpoint(param : Param, endpoint : Endpoint)
-      if param.name.size > 0 && !endpoint.method.empty? && !endpoint.url.empty?
+      if !param.name.empty? && !endpoint.method.empty? && !endpoint.url.empty?
         # Don't re-add an identical (name, type) param. go-zero's
         # handler-body getters (`httpx.ParseForm`, repeated across several
         # handlers in a single-file app) would otherwise stack four
@@ -357,12 +711,6 @@ module Analyzer::Go
         # adapter's line-loop from emitting duplicates.
         return if endpoint.params.any? { |p| p.name == param.name && p.param_type == param.param_type }
         endpoint.params << param
-      end
-    end
-
-    def add_static_path_if_valid(static_path : Hash(String, String), public_dirs : Array(Hash(String, String)))
-      if static_path["static_path"].size > 0 && static_path["file_path"].size > 0
-        public_dirs << static_path
       end
     end
 
@@ -374,73 +722,72 @@ module Analyzer::Go
       }
     end
 
-    def resolve_public_dirs_with_glob(public_dirs : Array(Hash(String, String)))
-      public_dirs.each do |p_dir|
-        next if p_dir["file_path"].size == 0
-        full_path = resolve_public_dir_path(p_dir)
-
-        next unless File.directory?(full_path)
-        Dir.glob("#{escape_glob_path(full_path)}/**/*") do |path|
-          next if File.directory?(path)
-          if File.exists?(path)
-            static_url = p_dir["static_path"]
-            if static_url.ends_with?("/")
-              static_url = static_url[0..-2]
-            end
-
-            details = Details.new(PathInfo.new(path))
-            result << Endpoint.new("#{static_url}#{path.gsub(full_path, "")}", "GET", details)
-          end
-        end
-      end
-    end
-
+    # A static mount's endpoint set is every file under its directory,
+    # images, fonts and SVGs included. Those come from the walk's media list
+    # (`CodeLocator#media_files`; the media filter keeps them out of the index);
+    # everything else from the index. Both are bounded by the scan base and
+    # skip the subtrees and `--exclude-path` entries the walk prunes. A
+    # single-file target (`e.File("/robots.txt", "static/robots.txt")`) is
+    # matched as is.
     def resolve_public_dirs(public_dirs : Array(Hash(String, String)))
+      media_files = CodeLocator.instance.media_files
       public_dirs.each do |p_dir|
         full_path = resolve_public_dir_path(p_dir)
-
-        get_files_by_prefix(full_path).each do |path|
-          # Ensure strict prefix match (directory boundary or exact match)
-          # get_files_by_prefix matches any file starting with prefix, so "public" matches "public2"
-          # We prevent this by ensuring the next character is a separator or it's an exact match
-          next unless path == full_path || path.starts_with?(full_path.ends_with?("/") ? full_path : "#{full_path}/")
-
-          if File.exists?(path)
-            if p_dir["static_path"].ends_with?("/")
-              p_dir["static_path"] = p_dir["static_path"][0..-2]
-            end
-
-            details = Details.new(PathInfo.new(path))
-            result << Endpoint.new("#{p_dir["static_path"]}#{path.gsub(full_path, "")}", "GET", details)
-          end
+        dir_prefix = full_path.ends_with?("/") ? full_path : "#{full_path}/"
+        static_url = p_dir["static_path"].chomp('/')
+        get_files_by_prefix(full_path).concat(media_files).each do |path|
+          # `get_files_by_prefix` matches any file starting with the prefix
+          # ("public" matches "public2"), so require a directory boundary.
+          next unless path == full_path || path.starts_with?(dir_prefix)
+          result << Endpoint.new("#{static_url}#{path.lchop(full_path)}", "GET", Details.new(PathInfo.new(path)))
         end
       end
     end
 
+    # `File.exists?` alongside `Dir.exists?`, in both branches: the same
+    # `public_dirs` list carries single-file static routes
+    # (Echo's `e.File("/robots.txt", "static/robots.txt")`) as well as
+    # directories. Testing only for a directory made the source-relative
+    # branch miss every single-file route, which then fell back to
+    # `base_path + file_path` — a path that only exists when the scan base
+    # happens to be the Go project root. Scanning the same project from one
+    # directory up silently lost the route.
+    #
+    # `Path.posix`, not `Path[]`: a native Windows `Path` re-joins with `\`,
+    # and the result is matched against `/`-separated walk paths below.
     private def resolve_public_dir_path(p_dir : Hash(String, String)) : String
       file_path = p_dir["file_path"]
-      return Path[file_path].normalize.to_s if file_path.starts_with?("/") && Dir.exists?(file_path)
+      return Path.posix(file_path).normalize.to_s if file_path.starts_with?("/") && static_target_exists?(file_path)
 
       normalized_file_path = file_path.lstrip("/")
       root = base_path
       if source_path = p_dir["source_path"]?
         source_dir = File.dirname(source_path)
-        source_relative = Path[(source_dir + "/" + normalized_file_path).gsub_repeatedly("//", "/")].normalize.to_s
-        if Dir.exists?(source_relative)
+        source_relative = Path.posix((source_dir + "/" + normalized_file_path).squeeze('/')).normalize.to_s
+        if static_target_exists?(source_relative)
           return preserve_relative_prefix(source_relative, source_path)
         end
 
         root = base_path_for_path(source_path)
       end
 
-      raw_full_path = (root + "/" + normalized_file_path).gsub_repeatedly("//", "/")
-      normalized_full_path = Path[raw_full_path].normalize.to_s
+      raw_full_path = (root + "/" + normalized_file_path).squeeze('/')
+      normalized_full_path = Path.posix(raw_full_path).normalize.to_s
 
       if root.starts_with?("./") && !normalized_full_path.starts_with?("./") && !normalized_full_path.starts_with?("/")
         "./#{normalized_full_path}"
       else
         normalized_full_path
       end
+    end
+
+    # A static route's target on disk, which may be either a directory
+    # (`e.Static`) or a single file (`e.File`). Spelled with both checks
+    # rather than the equivalent bare `File.exists?` so the file half is
+    # not mistaken for a leftover: `Dir.exists?` alone is what dropped
+    # single-file routes.
+    private def static_target_exists?(path : String) : Bool
+      Dir.exists?(path) || File.exists?(path)
     end
 
     private def preserve_relative_prefix(path : String, reference : String) : String
@@ -457,20 +804,26 @@ module Analyzer::Go
 
     private def collect_go_modules : Array(Tuple(String, String))
       modules = [] of Tuple(String, String)
-      all_files.each do |path|
-        next unless File.basename(path) == "go.mod"
-        next if File.directory?(path)
-        next if path.split("/").includes?("vendor")
+      # Basename index instead of a full `file_map` walk: this runs once
+      # per Go analyzer, and on a monorepo the `.go` module files are a
+      # handful of entries out of tens of thousands. No `File.directory?`
+      # either — the detector only registers regular files.
+      get_files_by_basename("go.mod").each do |path|
+        # Scan-base-relative: a `vendor` directory *above* the base is
+        # not this project's vendor tree, and matching it dropped the
+        # module map (and with it 13 of the fixture tree's 276
+        # endpoints) for any checkout that lived under one.
+        next if base_relative_path(path).includes?("/vendor/")
 
         begin
           content = read_file_content(path)
-        rescue File::NotFoundError
+        rescue IO::Error
           next
         end
 
         match = content.match(/^\s*module\s+(\S+)/m)
         next unless match
-        modules << {match[1], File.expand_path(File.dirname(path))}
+        modules << {match[1], Noir::PathScope.expand(File.dirname(path))}
       end
 
       modules.sort_by! { |(_module_path, dir)| -dir.size }
@@ -478,7 +831,7 @@ module Analyzer::Go
     end
 
     private def import_path_for_dir(dir : String, modules : Array(Tuple(String, String))) : String?
-      expanded_dir = File.expand_path(dir)
+      expanded_dir = Noir::PathScope.expand(dir)
       modules.each do |module_path, module_dir|
         next unless expanded_dir == module_dir || expanded_dir.starts_with?("#{module_dir}/")
 

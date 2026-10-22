@@ -11,6 +11,12 @@ android {
             deepLinkScheme: "myapp",
             deepLinkHost  : "links.example.com"
         ]
+
+        // Groovy property-assignment form on the placeholder map. Termux
+        // declares its whole package name this way, and it resolves exactly
+        // like a map-literal entry.
+        manifestPlaceholders.propScheme = "propapp"
+        manifestPlaceholders.propHost = "prop.example.com"
     }
 
     buildTypes {

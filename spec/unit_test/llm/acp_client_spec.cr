@@ -13,28 +13,55 @@ describe LLM::ACPClient do
   end
 
   describe ".resolve_command" do
+    # On Windows the npm shims run through `cmd.exe` (see `npm_shim`).
+    shim = ->(command : String, args : Array(String)) do
+      {% if flag?(:windows) %}
+        {"cmd.exe", ["/d", "/c", command] + args}
+      {% else %}
+        {command, args}
+      {% end %}
+    end
+
     it "maps codex to npx codex acp adapter" do
-      command, args = LLM::ACPClient.resolve_command("acp:codex")
-      command.should eq("npx")
-      args.should eq(["@zed-industries/codex-acp"])
+      LLM::ACPClient.resolve_command("acp:codex").should eq(shim.call("npx", ["@zed-industries/codex-acp"]))
     end
 
     it "maps gemini to experimental acp mode" do
-      command, args = LLM::ACPClient.resolve_command("acp:gemini")
-      command.should eq("gemini")
-      args.should eq(["--experimental-acp"])
+      LLM::ACPClient.resolve_command("acp:gemini").should eq(shim.call("gemini", ["--experimental-acp"]))
     end
 
     it "maps claude to npx claude agent acp adapter" do
-      command, args = LLM::ACPClient.resolve_command("acp:claude")
-      command.should eq("npx")
-      args.should eq(["@zed-industries/claude-agent-acp"])
+      LLM::ACPClient.resolve_command("acp:claude").should eq(shim.call("npx", ["@zed-industries/claude-agent-acp"]))
     end
 
     it "maps claude-code alias to npx claude agent acp adapter" do
-      command, args = LLM::ACPClient.resolve_command("acp:claude-code")
-      command.should eq("npx")
-      args.should eq(["@zed-industries/claude-agent-acp"])
+      LLM::ACPClient.resolve_command("acp:claude-code").should eq(shim.call("npx", ["@zed-industries/claude-agent-acp"]))
+    end
+
+    {% if flag?(:windows) %}
+      it "can actually launch an npm .cmd shim through cmd.exe" do
+        found = Process.run("cmd.exe", ["/d", "/c", "where", "npx"]).success?
+        pending! "npx is not installed" unless found
+        Process.run("cmd.exe", ["/d", "/c", "npx", "--version"]).success?.should be_true
+      end
+    {% end %}
+
+    it "refuses an arbitrary command target (no code execution)" do
+      ENV.delete("NOIR_ACP_ALLOW_CUSTOM_COMMAND")
+      expect_raises(LLM::ACPClient::UnsupportedACPTargetError, /Unsupported ACP provider target/) do
+        LLM::ACPClient.resolve_command("acp:rm -rf /")
+      end
+    end
+
+    it "allows a custom command only with the explicit opt-in" do
+      ENV["NOIR_ACP_ALLOW_CUSTOM_COMMAND"] = "1"
+      begin
+        command, args = LLM::ACPClient.resolve_command("acp:my-agent --flag")
+        command.should eq("my-agent")
+        args.should eq(["--flag"])
+      ensure
+        ENV.delete("NOIR_ACP_ALLOW_CUSTOM_COMMAND")
+      end
     end
   end
 
@@ -47,12 +74,185 @@ describe LLM::ACPClient do
       LLM::ACPClient.default_model("acp:codex", "custom-model").should eq("custom-model")
     end
   end
+
+  # The agent asks before running a tool — a shell command, a file write. The
+  # prompt driving it is source code from the tree being scanned, so a blanket
+  # "yes" turns a scan of an untrusted repo into local code execution.
+  describe "#answer_permission_request" do
+    permission_request = JSON.parse(<<-JSON)
+      {
+        "sessionId": "s1",
+        "toolCall": {"toolCallId": "t1", "title": "Run shell command", "kind": "execute"},
+        "options": [
+          {"optionId": "proceed_once", "name": "Yes", "kind": "allow_once"},
+          {"optionId": "proceed_always", "name": "Yes, always", "kind": "allow_always"},
+          {"optionId": "cancel", "name": "No", "kind": "reject_once"}
+        ]
+      }
+      JSON
+
+    it "rejects a tool permission request by default" do
+      ENV.delete("NOIR_ACP_ALLOW_TOOL_PERMISSIONS")
+      client = LLM::ACPClient.new("acp:gemini", "gemini")
+      outcome = client.answer_permission_request(permission_request)["outcome"]
+      outcome["outcome"].should eq("selected")
+      outcome["optionId"].should eq("cancel")
+    end
+
+    it "allows only with the explicit opt-in, using an id the agent offered" do
+      ENV["NOIR_ACP_ALLOW_TOOL_PERMISSIONS"] = "1"
+      begin
+        client = LLM::ACPClient.new("acp:gemini", "gemini")
+        outcome = client.answer_permission_request(permission_request)["outcome"]
+        outcome["outcome"].should eq("selected")
+        # Not the hardcoded "allow-once" the old code invented — option ids
+        # are agent-defined, and only `kind` is standardised.
+        outcome["optionId"].should eq("proceed_once")
+      ensure
+        ENV.delete("NOIR_ACP_ALLOW_TOOL_PERMISSIONS")
+      end
+    end
+
+    it "cancels when the agent offers no way to decline" do
+      ENV.delete("NOIR_ACP_ALLOW_TOOL_PERMISSIONS")
+      allow_only = JSON.parse(<<-JSON)
+        {
+          "sessionId": "s1",
+          "toolCall": {"toolCallId": "t1", "title": "Write file", "kind": "edit"},
+          "options": [{"optionId": "yes", "name": "Yes", "kind": "allow_once"}]
+        }
+        JSON
+
+      client = LLM::ACPClient.new("acp:gemini", "gemini")
+      outcome = client.answer_permission_request(allow_only)["outcome"]
+      outcome["outcome"].should eq("cancelled")
+      outcome["optionId"]?.should be_nil
+    end
+  end
+
+  describe "#report_request_failure" do
+    it "names the exception instead of swallowing it" do
+      # A dead agent, a session that never spawned and a genuinely empty
+      # answer all reach the caller as "". Without this report they are
+      # indistinguishable, and the analyzer reads all three as "this code
+      # defines no endpoints".
+      events = [] of String
+      sink = ->(msg : String) { events << msg; nil }
+      client = LLM::ACPClient.new("acp:gemini", "gemini", sink)
+
+      client.report_request_failure(IO::Error.new("Connection lost"))
+
+      events.size.should eq(1)
+      events[0].should contain("request failed")
+      events[0].should contain("IO::Error")
+      events[0].should contain("Connection lost")
+    end
+
+    it "is reached when the agent binary dies immediately" do
+      # `false` exits before it can speak the protocol, standing in for a
+      # crashed or missing agent. `request` still has to return "" — the
+      # caller has no other contract — but it must not do so silently.
+      ENV["NOIR_ACP_ALLOW_CUSTOM_COMMAND"] = "1"
+      begin
+        events = [] of String
+        sink = ->(msg : String) { events << msg; nil }
+        client = LLM::ACPClient.new("acp:false", "acp", sink)
+
+        client.request("find endpoints").should eq("")
+        events.any?(&.includes?("request failed")).should be_true
+      ensure
+        ENV.delete("NOIR_ACP_ALLOW_CUSTOM_COMMAND")
+      end
+    end
+  end
+end
+
+describe LLM::ACPClient do
+  describe "timeouts" do
+    it "follows NOIR_AI_TIMEOUT for prompts and NOIR_AI_CONNECT_TIMEOUT for other requests" do
+      ENV["NOIR_AI_TIMEOUT"] = "42"
+      ENV["NOIR_AI_CONNECT_TIMEOUT"] = "7"
+      begin
+        LLM::ACPClient.prompt_timeout.should eq(42.seconds)
+        LLM::ACPClient.request_timeout.should eq(7.seconds)
+      ensure
+        ENV.delete("NOIR_AI_TIMEOUT")
+        ENV.delete("NOIR_AI_CONNECT_TIMEOUT")
+      end
+    end
+
+    it "gives initialize room for a first-run npx download by default" do
+      ENV.delete("NOIR_AI_CONNECT_TIMEOUT")
+      (LLM::ACPClient.request_timeout > 30.seconds).should be_true
+    end
+  end
+
+  describe "#report_stop_reason" do
+    it "stays quiet on end_turn and reports anything else" do
+      events = [] of String
+      sink = ->(msg : String) { events << msg; nil }
+      client = LLM::ACPClient.new("acp:gemini", "gemini", sink)
+
+      client.report_stop_reason("end_turn")
+      events.should be_empty
+
+      client.report_stop_reason("refusal")
+      events.should eq(["ACP: turn stopped with refusal"])
+    end
+  end
+
+  describe "#request" do
+    # A minimal ACP agent: answers each prompt with the id of the session it
+    # was sent on, and ends every turn with `refusal`.
+    fake_agent = <<-'SH'
+      n=0
+      while IFS= read -r line; do
+        id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9]*\).*/\1/p')
+        case "$line" in
+          *'"initialize"'*)
+            printf '{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":1,"agentCapabilities":{}}}\n' "$id" ;;
+          *'"session/new"'*)
+            n=$((n+1))
+            printf '{"jsonrpc":"2.0","id":%s,"result":{"sessionId":"s%s"}}\n' "$id" "$n" ;;
+          *'"session/prompt"'*)
+            printf '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"s%s","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"s%s"}}}}\n' "$n" "$n"
+            printf '{"jsonrpc":"2.0","id":%s,"result":{"stopReason":"refusal"}}\n' "$id" ;;
+        esac
+      done
+      SH
+
+    it "opens a fresh session per request, restarts the agent past the cap and reports a non-end_turn stop" do
+      {% if flag?(:windows) %}
+        pending! "fake agent is a POSIX shell script"
+      {% end %}
+      script = File.tempname("fake_acp_agent", ".sh")
+      File.write(script, fake_agent)
+      ENV["NOIR_ACP_ALLOW_CUSTOM_COMMAND"] = "1"
+      events = [] of String
+      sink = ->(msg : String) { events << msg; nil }
+      client = LLM::ACPClient.new("acp:sh #{script}", "acp", sink)
+      begin
+        client.request("bundle one", "").should eq("s1")
+        client.request("bundle two", "").should eq("s2")
+        events.count(&.includes?("turn stopped with refusal")).should eq(2)
+
+        max = LLM::ACPClient::MAX_SESSIONS_PER_AGENT
+        (3..max).each { |i| client.request("bundle", "").should eq("s#{i}") }
+        # Past the cap the agent is restarted, so its session ids start over.
+        client.request("bundle", "").should eq("s1")
+      ensure
+        client.close
+        ENV.delete("NOIR_ACP_ALLOW_CUSTOM_COMMAND")
+        File.delete?(script)
+      end
+    end
+  end
 end
 
 describe LLM::AdapterFactory do
   it "returns ACP adapter for acp providers" do
     adapter = LLM::AdapterFactory.for("acp:codex", "", nil)
-    adapter.should be_a(LLM::ACPAdapter)
+    adapter.should be_a(LLM::ACPClient)
     adapter.close
   end
 

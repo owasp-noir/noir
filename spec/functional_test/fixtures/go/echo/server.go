@@ -14,7 +14,7 @@ func main() {
 	})
 	e.GET("/pet", func(c echo.Context) error {
 		_ = c.QueryParam("query")
-		_ = c.Request().Header.Get("X-API-Key")
+		_ = c.Request().Header.Get(/* api key */ "X-API-Key")
 		return c.String(http.StatusOK, "Hello, Pet!")
 	})
 	e.POST("/pet", func(c echo.Context) error {
@@ -67,6 +67,34 @@ func main() {
 			return c.String(http.StatusOK, "multiline")
 		},
 	)
+
+	// Single-file static registration (must be recognized as a public entry)
+	e.File("/robots.txt", "static/robots.txt")
+
+	// HTTP QUERY routes (e.QUERY, group.QUERY, e.Add, e.Match, group.Match)
+	e.QUERY("/search-query", func(c echo.Context) error {
+		_ = c.QueryParam("filter")
+		var req map[string]interface{}
+		_ = c.Bind(&req)
+		return c.String(http.StatusOK, "search query")
+	})
+
+	mygroup.QUERY("/query-admin", func(c echo.Context) error {
+		return c.String(http.StatusOK, "admin query")
+	})
+
+	e.Add("QUERY", "/add-query", func(c echo.Context) error {
+		return c.String(http.StatusOK, "add query")
+	})
+
+	e.Match([]string{"GET", "QUERY"}, "/match-query", func(c echo.Context) error {
+		_ = c.QueryParam("q")
+		return c.String(http.StatusOK, "match query")
+	})
+
+	mygroup.Match([]string{"GET", "QUERY"}, "/match-admin", func(c echo.Context) error {
+		return c.String(http.StatusOK, "match admin")
+	})
 
 	e.Logger.Fatal(e.Start(":1323"))
 }

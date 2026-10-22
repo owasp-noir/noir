@@ -12,6 +12,11 @@ expected_endpoints = [
   Endpoint.new("/users/:id", "DELETE"),
   Endpoint.new("/articles/:articleID", "PATCH"),
   Endpoint.new("/status", "GET"),
+  # Chained `.grouped(...)` and verbs called on a group expression.
+  Endpoint.new("/api/v3/items", "GET"),
+  Endpoint.new("/secure/vault", "GET"),
+  Endpoint.new("/inline/direct", "GET"),
+  Endpoint.new("/a/b/c", "POST"),
   # RoutesBuilder extension: bare `grouped(...)` + `self.<verb>` (AdminRoutes).
   Endpoint.new("/admin/dashboard", "GET"),
   Endpoint.new("/purge", "POST"),

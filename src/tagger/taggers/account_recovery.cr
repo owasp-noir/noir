@@ -7,6 +7,7 @@ require "../../models/endpoint"
 # takeover surface: review for reset-token leakage, host-header
 # injection in reset links, account enumeration, missing rate limiting,
 # and weak step-up verification.
+@[Noir::TaggerFor(key: "account_recovery", name: "Account Recovery Tagger", desc: "Identifies credential-management and account-recovery endpoints (password reset/change, MFA/OTP, verification)", order: 170)]
 class AccountRecoveryTagger < Tagger
   # Path segments that on their own mark a credential/recovery action.
   # `password`/`mfa`/`otp`/`forgot` are not benign as a standalone path
@@ -49,35 +50,28 @@ class AccountRecoveryTagger < Tagger
     "account", "recover", "recovery",
   }
 
-  def initialize(options : Hash(String, YAML::Any))
-    super
-    @name = "account_recovery"
-  end
+  private def check_endpoint(endpoint : Endpoint)
+    param_names = endpoint.params.map { |param| normalize_param_name(param.name) }.to_set
+    url_segments = url_parts(endpoint.url)
 
-  def perform(endpoints : Array(Endpoint))
-    endpoints.each do |endpoint|
-      param_names = endpoint.params.map { |param| normalize_param_name(param.name) }.to_set
-      url_segments = url_parts(endpoint.url)
+    has_strong = !(STRONG_PARAM_NAMES & param_names).empty? ||
+                 url_segments.any? { |part| STRONG_PATH_PARTS.includes?(part) } ||
+                 mfa_squished_segment?(endpoint.url)
 
-      has_strong = !(STRONG_PARAM_NAMES & param_names).empty? ||
-                   url_segments.any? { |part| STRONG_PATH_PARTS.includes?(part) } ||
-                   mfa_squished_segment?(endpoint.url)
+    weak_tokens = Set(String).new
+    url_segments.each do |part|
+      weak_tokens << part if WEAK_PATH_PARTS.includes?(part)
+    end
 
-      weak_tokens = Set(String).new
-      url_segments.each do |part|
-        weak_tokens << part if WEAK_PATH_PARTS.includes?(part)
-      end
+    check = has_strong || weak_tokens.size >= 2
 
-      check = has_strong || weak_tokens.size >= 2
-
-      if check
-        tag = Tag.new(
-          "account_recovery",
-          "Credential-management or account-recovery endpoint (password reset/change, email change, MFA/OTP, verification); classic account-takeover surface — review for reset-token leakage, host-header injection in reset links, account enumeration, and missing rate limiting.",
-          "AccountRecovery"
-        )
-        endpoint.add_tag(tag)
-      end
+    if check
+      tag = Tag.new(
+        "account_recovery",
+        "Credential-management or account-recovery endpoint (password reset/change, email change, MFA/OTP, verification); classic account-takeover surface — review for reset-token leakage, host-header injection in reset links, account enumeration, and missing rate limiting.",
+        "AccountRecovery"
+      )
+      endpoint.add_tag(tag)
     end
   end
 

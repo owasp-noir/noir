@@ -1,11 +1,21 @@
 require "../../../models/analyzer"
 require "../../../miniparsers/go_callee_extractor"
 require "../../../miniparsers/go_route_extractor_ts"
+require "../../../miniparsers/go_named_handler"
 require "../../engines/go_engine"
 
 module Analyzer::Go
   class Fasthttp < Analyzer
+    analyzer_for "go_fasthttp"
+
     IMPORT_MARKER = "github.com/valyala/fasthttp"
+
+    # One precompiled matcher instead of a `String#includes?` scan per
+    # `.go` file: `includes?` runs Rabin-Karp over the whole buffer and
+    # the marker is absent in the overwhelming majority of files in a
+    # polyglot repo, so every one of them pays the full scan. See
+    # `Analyzer#content_matches?`.
+    IMPORT_MARKER_RE = Regex.union(IMPORT_MARKER)
 
     def analyze
       # Source Analysis
@@ -20,26 +30,27 @@ module Analyzer::Go
         # twins on `GoCalleeExtractor`.
         file_contents = Hash(String, String).new
         go_files.each do |fp|
-          next if File.directory?(fp)
-          next if GoEngine.go_test_file?(fp)
+          next if GoEngine.go_test_file?(base_relative_path(fp))
           begin
             file_contents[fp] = read_file_content(fp)
-          rescue File::NotFoundError
+          rescue IO::Error
             # skip
           end
         end
-        package_function_bodies = Noir::GoCalleeExtractor.package_function_bodies_if(callees_needed?, file_contents)
+        package_function_bodies = Noir::GoCalleeExtractor.lazy_package_bodies_if(callees_needed?, file_contents)
         # Resolve method-value handlers (`h.Index`) to their bodies too,
         # so callees aren't empty when handlers hang off a struct.
-        package_method_bodies = Noir::GoCalleeExtractor.package_method_bodies_if(callees_needed?, file_contents)
+        package_method_bodies = Noir::GoCalleeExtractor.lazy_package_bodies_if(callees_needed?, file_contents)
+
+        named_scope = Noir::GoNamedHandler.scope(file_contents)
 
         base_paths.each do |current_base_path|
           go_files.each do |path|
             next unless path_under_root?(path, current_base_path)
-            next if GoEngine.go_test_file?(path)
+            next if GoEngine.go_test_file?(base_relative_path(path))
             if File.exists?(path)
               content = read_file_content(path)
-              next unless content.includes?(IMPORT_MARKER)
+              next unless content_matches?(content, IMPORT_MARKER_RE)
               last_endpoint = Endpoint.new("", "")
 
               # Tree-sitter pre-pass: fasthttp has no groups, so we just
@@ -63,8 +74,11 @@ module Analyzer::Go
               external_fns = Noir::GoCalleeExtractor.function_bodies_for_directory(package_function_bodies, File.dirname(path))
               external_methods = Noir::GoCalleeExtractor.method_bodies_for_directory(package_method_bodies, File.dirname(path))
               callees_by_route = Noir::GoCalleeExtractor.callees_for_routes_if(callees_needed?, content, path, route_rows, external_fns, external_methods)
+              named = Noir::GoNamedHandler.new(content, path, ts_routes, named_scope)
 
-              content.each_line.with_index do |line, index|
+              GoEngine.strip_comments(content).each_line.with_index do |line, index|
+                next if named.claim?(index, line)
+
                 details = Details.new(PathInfo.new(path, index + 1))
 
                 if ts_hits = routes_by_line[index]?
@@ -78,21 +92,18 @@ module Analyzer::Go
                           endpoint.push_callee(Callee.new(name, path: callee_path, line: callee_line))
                         end
                       end
+                      endpoint.handler = named.handler_for(route)
                       result << endpoint
+                      named.bind(route, endpoint)
                       last_endpoint = endpoint
                     end
                   end
                 end
 
-                params = analyze_param_line(line)
-                params.each do |param|
-                  if param.name.size > 0 && !last_endpoint.method.empty?
-                    unless last_endpoint.params.any? { |p| p.name == param.name && p.param_type == param.param_type }
-                      last_endpoint.params << param
-                    end
-                  end
-                end
+                add_fasthttp_params(line, last_endpoint)
               end
+
+              named.each_attribution { |line, ep| add_fasthttp_params(line, ep) }
             end
           end
         end
@@ -115,41 +126,30 @@ module Analyzer::Go
       path.gsub(/\{([a-zA-Z0-9_]+)\??(?::[^{}]+)?\}/) { "{#{$1}}" }
     end
 
-    private def analyze_route_line(line : String, details : Details) : Endpoint
-      # Pattern 1: Direct handler registration with router
-      # router.GET("/path", handler) or router.POST("/path", handler)
-      # Route path must start with "/" to be a valid HTTP endpoint
-      if match = line.match(/(?:router|r|app|server)\.(?:GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)\s*\(\s*"(\/[^"]*)"\s*,/)
-        path = match[1]
-        method = extract_method_from_router_call(line)
-        return Endpoint.new(path, method, details)
-      end
-
-      # Pattern 2: fasthttprouter patterns
-      # router.GET("/path", handler)
-      # Route path must start with "/" to be a valid HTTP endpoint
-      if match = line.match(/\.(?:GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)\s*\(\s*"(\/[^"]*)"\s*,/)
-        path = match[1]
-        method = extract_method_from_router_call(line)
-        return Endpoint.new(path, method, details)
-      end
-
-      # Pattern 3: Direct fasthttp.ListenAndServe with switch statements for routes
-      # This would require more complex analysis, for now we focus on router patterns
-
-      Endpoint.new("", "")
-    end
-
-    private def extract_method_from_router_call(line : String) : String
-      if match = line.match(/\.(?:GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)/)
-        match[0].gsub(".", "").upcase
-      else
-        ""
+    private def add_fasthttp_params(line : String, endpoint : Endpoint)
+      return if endpoint.method.empty?
+      analyze_param_line(line).each do |param|
+        next if param.name.empty?
+        unless endpoint.params.any? { |p| p.name == param.name && p.param_type == param.param_type }
+          endpoint.params << param
+        end
       end
     end
+
+    # Cheap pre-filter for `analyze_param_line`, called on EVERY line of
+    # every fasthttp file (not just route lines). Union of every literal
+    # substring any of the six scans below requires to possibly match —
+    # a single precompiled `Regex.union` (PCRE2 JIT) pass replaces six
+    # unconditional `String#scan` regex attempts on lines that can't
+    # possibly contain a param accessor.
+    PARAM_LINE_SIGNAL_RE = Regex.union(
+      "QueryArgs", "PostArgs", "Request.Header", "FormValue", "UserValue",
+      "PostBody", ".Request.Body(",
+    )
 
     private def analyze_param_line(line : String) : Array(Param)
       params = [] of Param
+      return params unless line.matches?(PARAM_LINE_SIGNAL_RE)
 
       # QueryArgs().Peek("param") or QueryArgs().Get("param")
       line.scan(/(?:QueryArgs|PostArgs)\(\)\.(?:Peek|PeekMulti|Get|GetAll)\s*\(\s*"([^"]+)"\s*\)/) do |match|

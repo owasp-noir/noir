@@ -4,8 +4,8 @@ require "../../../../src/analyzer/analyzers/specification/apisix"
 
 private def analyze_apisix(yaml_content : String? = nil, json_content : String? = nil) : Array(Endpoint)
   locator = CodeLocator.instance
-  locator.clear "apisix-yaml"
-  locator.clear "apisix-json"
+  locator.clear Noir::LocatorKeys::APISIX_YAML
+  locator.clear Noir::LocatorKeys::APISIX_JSON
 
   yaml_path = nil
   json_path = nil
@@ -13,13 +13,13 @@ private def analyze_apisix(yaml_content : String? = nil, json_content : String? 
   if yaml_content
     yaml_path = File.tempname("apisix", ".yaml")
     File.write(yaml_path, yaml_content)
-    locator.push "apisix-yaml", yaml_path
+    locator.push Noir::LocatorKeys::APISIX_YAML, yaml_path
   end
 
   if json_content
     json_path = File.tempname("apisix", ".json")
     File.write(json_path, json_content)
-    locator.push "apisix-json", json_path
+    locator.push Noir::LocatorKeys::APISIX_JSON, json_path
   end
 
   analyzer = Analyzer::Specification::Apisix.new(create_test_options)
@@ -51,7 +51,7 @@ describe "Apisix Analyzer" do
     ])
   end
 
-  it "captures all hosts from hosts[] and host as Host header params" do
+  it "emits one Host param and keeps the alternates as a tag" do
     yaml = <<-YAML
       routes:
         - uri: /internal
@@ -68,13 +68,18 @@ describe "Apisix Analyzer" do
     endpoints = analyze_apisix(yaml_content: yaml)
     internal = endpoints.find { |ep| ep.url == "/internal" && ep.method == "DELETE" }
     raise "expected /internal DELETE endpoint" unless internal
-    internal_hosts = internal.params.select { |p| p.name == "Host" && p.param_type == "header" }.map(&.value).sort!
-    internal_hosts.should eq(["api.example.com", "internal.example.com"])
+    # One Host param — a request carries exactly one Host header, and two of
+    # them rendered as `curl -H 'Host: a' -H 'Host: b'`.
+    internal_hosts = internal.params.select { |p| p.name == "Host" && p.param_type == "header" }.map(&.value)
+    internal_hosts.should eq(["api.example.com"])
+    # The alternate host is still surface, so it survives as a tag.
+    internal.tags.map { |t| {t.name, t.description} }.should eq([{"apisix-host", "internal.example.com"}])
 
     admin = endpoints.find { |ep| ep.url == "/admin" && ep.method == "GET" }
     raise "expected /admin GET endpoint" unless admin
     admin_hosts = admin.params.select { |p| p.name == "Host" && p.param_type == "header" }.map(&.value)
     admin_hosts.should eq(["admin.example.com"])
+    admin.tags.should be_empty
   end
 
   it "handles APISIX JSON route documents" do

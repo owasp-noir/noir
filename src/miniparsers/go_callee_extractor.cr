@@ -1,4 +1,5 @@
 require "../ext/tree_sitter/tree_sitter"
+require "./extraction_result_cache"
 
 # Tree-sitter-backed Go 1-hop callee extractor. Parallels
 # `Noir::PythonCalleeExtractor` but works at the AST level — Go can't
@@ -59,86 +60,187 @@ module Noir::GoCalleeExtractor
     "bool", "error",
   }
 
-  # Walk every cached `.go` source in `file_contents` and collect
-  # top-level `function_declaration` nodes into a per-directory map
-  # so cross-file identifier-handler resolution is O(1) at lookup
-  # time. Keyed by directory because Go's name resolution is scoped
-  # to a single package (== single directory). Module-level twin of
-  # `GoEngine#collect_package_function_bodies` for analyzers (Chi)
-  # that don't inherit from `GoEngine`.
-  def package_function_bodies(file_contents : Hash(String, String)) : Hash(String, Hash(String, FunctionBody))
-    bodies = Hash(String, Hash(String, FunctionBody)).new
-    file_contents.each do |path, content|
-      dir = File.dirname(path)
-      fns = collect_function_bodies(content, path)
-      next if fns.empty?
-      bodies[dir] ||= Hash(String, FunctionBody).new
-      fns.each { |name, fb| bodies[dir][name] ||= fb }
-    end
-    bodies
-  end
+  # Per-directory function/method tables, built for a directory only when
+  # someone asks for it.
+  #
+  # The eager builders (`GoEngine#collect_package_*`) parse every
+  # `.go` file of the scan, but most callers only ever look up the
+  # directories that hold a route file — Go's name resolution is scoped to
+  # one package, so nothing else is consulted. On minio that was a parse of
+  # every file in the repo to answer lookups for a handful of router
+  # packages.
+  #
+  # A directory's table is exactly what the eager builder would have stored
+  # for it: the same files, in the same order (grouped from `file_contents`
+  # insertion order), behind the same per-file substring gate, merged the
+  # same way (`||=` for functions, `concat` for methods). A directory with
+  # nothing in it yields an empty table, as the `*_for_directory` lookups
+  # already did. `only_dirs`, when given, keeps a builder's own restriction
+  # to a directory set: any other directory answers empty without parsing.
+  #
+  # Use it only where the tables are looked up per directory. Callers that
+  # iterate every directory (the import-path indexes) still need the eager
+  # form.
+  class LazyPackageBodies
+    @files_by_dir = Hash(String, Array(Tuple(String, String))).new
+    @functions = Hash(String, Hash(String, FunctionBody)).new
+    @methods = Hash(String, Hash(String, Array(FunctionBody))).new
+    @mutex = Mutex.new
 
-  # Like `package_function_bodies`, but returns an empty map immediately
-  # when `enabled` is false. Module-level twin of the
-  # `GoEngine#collect_package_function_bodies` gate for analyzers that
-  # don't inherit from `GoEngine`.
-  def package_function_bodies_if(enabled : Bool, file_contents : Hash(String, String)) : Hash(String, Hash(String, FunctionBody))
-    return Hash(String, Hash(String, FunctionBody)).new unless enabled
-    package_function_bodies(file_contents)
-  end
-
-  # Returns the cross-file function-body map for the given directory,
-  # or an empty map. Mirrors `GoEngine#ts_function_bodies_for_directory`.
-  def function_bodies_for_directory(package_bodies : Hash(String, Hash(String, FunctionBody)), dir : String) : Hash(String, FunctionBody)
-    package_bodies[dir]? || Hash(String, FunctionBody).new
-  end
-
-  # Per-directory `{method_name => [FunctionBody, ...]}` map so a
-  # method-value handler (`as.Campaigns`, `ctrl.Index`) can be resolved
-  # to its method body for callee extraction. Module-level twin of
-  # `GoEngine#collect_package_controller_method_bodies` for analyzers
-  # (Chi) that don't inherit from `GoEngine`. Returns an empty map
-  # immediately when `enabled` is false so default scans pay nothing.
-  def package_method_bodies_if(enabled : Bool, file_contents : Hash(String, String)) : Hash(String, Hash(String, Array(FunctionBody)))
-    bodies = Hash(String, Hash(String, Array(FunctionBody))).new
-    return bodies unless enabled
-    file_contents.each do |path, content|
-      next unless content.includes?("func (")
-      methods = collect_method_bodies(content, path)
-      next if methods.empty?
-      dir = File.dirname(path)
-      dir_map = (bodies[dir] ||= Hash(String, Array(FunctionBody)).new)
-      methods.each do |name, list|
-        (dir_map[name] ||= [] of FunctionBody).concat(list)
+    def initialize(file_contents : Hash(String, String),
+                   @function_gate : String? = nil,
+                   @method_gate : String? = "func (",
+                   @only_dirs : Set(String)? = nil)
+      file_contents.each do |path, content|
+        (@files_by_dir[File.dirname(path)] ||= [] of Tuple(String, String)) << {path, content}
       end
     end
-    bodies
+
+    # An instance with no files: every lookup is empty. What callers get
+    # when the tables are not needed at all.
+    def self.empty : LazyPackageBodies
+      new(Hash(String, String).new)
+    end
+
+    def functions_for(dir : String) : Hash(String, FunctionBody)
+      @mutex.synchronize do
+        @functions[dir] ||= begin
+          table = Hash(String, FunctionBody).new
+          each_file_in(dir, @function_gate) do |path, content|
+            GoCalleeExtractor.collect_function_bodies(content, path).each { |name, fb| table[name] ||= fb }
+          end
+          table
+        end
+      end
+    end
+
+    def methods_for(dir : String) : Hash(String, Array(FunctionBody))
+      @mutex.synchronize do
+        @methods[dir] ||= begin
+          table = Hash(String, Array(FunctionBody)).new
+          each_file_in(dir, @method_gate) do |path, content|
+            GoCalleeExtractor.collect_method_bodies(content, path).each do |name, list|
+              (table[name] ||= [] of FunctionBody).concat(list)
+            end
+          end
+          table
+        end
+      end
+    end
+
+    private def each_file_in(dir : String, gate : String?, &)
+      if only = @only_dirs
+        return unless only.includes?(dir)
+      end
+      @files_by_dir[dir]?.try &.each do |path, content|
+        next if gate && !content.includes?(gate)
+        yield path, content
+      end
+    end
   end
 
-  # Returns the per-directory method-body map, or an empty map.
-  def method_bodies_for_directory(package_method_bodies : Hash(String, Hash(String, Array(FunctionBody))), dir : String) : Hash(String, Array(FunctionBody))
-    package_method_bodies[dir]? || Hash(String, Array(FunctionBody)).new
+  def function_bodies_for_directory(package_bodies : LazyPackageBodies, dir : String) : Hash(String, FunctionBody)
+    package_bodies.functions_for(dir)
+  end
+
+  # Per-directory tables for callers that only look them up per directory
+  # (see `LazyPackageBodies`): no gate for functions, `func (` for methods.
+  def lazy_package_bodies_if(enabled : Bool, file_contents : Hash(String, String)) : LazyPackageBodies
+    return LazyPackageBodies.empty unless enabled
+    LazyPackageBodies.new(file_contents, function_gate: nil, method_gate: "func (")
+  end
+
+  def method_bodies_for_directory(package_method_bodies : LazyPackageBodies, dir : String) : Hash(String, Array(FunctionBody))
+    package_method_bodies.methods_for(dir)
+  end
+
+  # Process-wide memo for the two top-level-declaration tables.
+  #
+  # A Go scan asks for these tables from several directions: the callee
+  # pass (`GoEngine#collect_package_*`), the request-param pass
+  # (`GoRequestParamExtractor#lazy_package_bodies_for_dirs`), and once per Go
+  # framework analyzer that survived detection — each over the same
+  # `CodeLocator` content. Measured on a gitea checkout: 1734 Go parses
+  # for 680 distinct sources, 2.55 parses per file, some files 8 times.
+  #
+  # Both tables come out of one `each_named_child` walk, so a miss on
+  # either fills both (via `store_capped`, which `fetch` cannot do
+  # without parsing twice). Keys include `file_path` because it is baked
+  # into every `FunctionBody`, so two identical files at different paths
+  # must not share an entry.
+  @@function_bodies_memo = Hash(UInt64, Hash(String, FunctionBody)).new
+  @@method_bodies_memo = Hash(UInt64, Hash(String, Array(FunctionBody))).new
+  @@bodies_memo_mutex = Mutex.new
+
+  Noir::ExtractionResultCache.register_clearer do
+    @@bodies_memo_mutex.synchronize do
+      @@function_bodies_memo.clear
+      @@method_bodies_memo.clear
+    end
   end
 
   # Returns top-level function declarations in `source`, keyed by name.
   # `file_path` is recorded on each `FunctionBody` so callees emitted by
   # later re-parsing can report a useful path.
+  #
+  # Callers treat the result as read-only (they copy entries into their
+  # own per-directory maps), which is what lets it be shared.
   def collect_function_bodies(source : String, file_path : String) : Hash(String, FunctionBody)
-    bodies = Hash(String, FunctionBody).new
+    collect_top_level_bodies(source, file_path)[0]
+  end
+
+  # Collects top-level `method_declaration` bodies keyed by method name.
+  # The value is a list because a name can be defined on several receiver
+  # types in one package; callers that need an unambiguous resolution
+  # should require `size == 1`. Used to attach callees to controller-style
+  # routes whose handler is referenced by method name only.
+  def collect_method_bodies(source : String, file_path : String) : Hash(String, Array(FunctionBody))
+    collect_top_level_bodies(source, file_path)[1]
+  end
+
+  # One parse, both tables, memoized.
+  private def collect_top_level_bodies(source : String,
+                                       file_path : String) : Tuple(Hash(String, FunctionBody), Hash(String, Array(FunctionBody)))
+    fn_key = Noir::ExtractionResultCache.key(source, "go_fn_bodies", file_path)
+    method_key = Noir::ExtractionResultCache.key(source, "go_method_bodies", file_path)
+
+    @@bodies_memo_mutex.synchronize do
+      cached_fns = @@function_bodies_memo[fn_key]?
+      cached_methods = @@method_bodies_memo[method_key]?
+      return {cached_fns, cached_methods} if cached_fns && cached_methods
+    end
+
+    functions = Hash(String, FunctionBody).new
+    methods = Hash(String, Array(FunctionBody)).new
+
     Noir::TreeSitter.parse_go(source) do |root|
       Noir::TreeSitter.each_named_child(root) do |child|
-        next unless Noir::TreeSitter.node_type(child) == "function_declaration"
+        node_type = Noir::TreeSitter.node_type(child)
+        next unless node_type == "function_declaration" || node_type == "method_declaration"
         name_node = Noir::TreeSitter.field(child, "name")
         next unless name_node
         name = Noir::TreeSitter.node_text(name_node, source)
-        bodies[name] ||= FunctionBody.new(
+        body = FunctionBody.new(
           Noir::TreeSitter.node_text(child, source),
           file_path,
           Noir::TreeSitter.node_start_row(child),
         )
+        if node_type == "function_declaration"
+          functions[name] ||= body
+        else
+          (methods[name] ||= [] of FunctionBody) << body
+        end
       end
     end
-    bodies
+
+    @@bodies_memo_mutex.synchronize do
+      functions = Noir::ExtractionResultCache.store_capped(
+        @@function_bodies_memo, fn_key, functions)
+      methods = Noir::ExtractionResultCache.store_capped(
+        @@method_bodies_memo, method_key, methods)
+    end
+
+    {functions, methods}
   end
 
   # Like `callees_for_routes`, but returns an empty map immediately when
@@ -185,7 +287,7 @@ module Noir::GoCalleeExtractor
         local_functions[Noir::TreeSitter.node_text(name_node, source)] = child
       end
 
-      walk(root) do |node|
+      Noir::TreeSitter.walk(root) do |node|
         next unless Noir::TreeSitter.node_type(node) == "call_expression"
         row = Noir::TreeSitter.node_start_row(node)
         next unless route_rows.includes?(row)
@@ -608,7 +710,7 @@ module Noir::GoCalleeExtractor
     return vars if import_aliases.empty?
 
     Noir::TreeSitter.parse_go(source) do |root|
-      walk(root) do |node|
+      Noir::TreeSitter.walk(root) do |node|
         next unless imported_receiver_assignment_node?(node)
 
         left = Noir::TreeSitter.field(node, "left")
@@ -670,10 +772,13 @@ module Noir::GoCalleeExtractor
     import_aliases[Noir::TreeSitter.node_text(operand, source)]?
   end
 
-  private def extract_import_aliases(source : String) : Hash(String, String)
+  # `{alias => import path}` for every import in `source`. Public so the
+  # chi analyzer can turn `apiv1.Routes()` in a `.Mount(...)` call into
+  # the package directory that declares `Routes`.
+  def extract_import_aliases(source : String) : Hash(String, String)
     aliases = Hash(String, String).new
     Noir::TreeSitter.parse_go(source) do |root|
-      walk(root) do |node|
+      Noir::TreeSitter.walk(root) do |node|
         next unless Noir::TreeSitter.node_type(node) == "import_spec"
 
         alias_name : String? = nil
@@ -723,7 +828,7 @@ module Noir::GoCalleeExtractor
                                  sink : Array(Tuple(String, String, Int32)),
                                  line_offset : Int32,
                                  external_functions : Hash(String, FunctionBody))
-    walk(body_node) do |n|
+    Noir::TreeSitter.walk(body_node) do |n|
       next unless Noir::TreeSitter.node_type(n) == "call_expression"
       func = Noir::TreeSitter.field(n, "function")
       next unless func
@@ -776,29 +881,6 @@ module Noir::GoCalleeExtractor
     calls_in_external(fn, external_functions)
   end
 
-  # Collects top-level `method_declaration` bodies keyed by method name.
-  # The value is a list because a name can be defined on several receiver
-  # types in one package; callers that need an unambiguous resolution
-  # should require `size == 1`. Used to attach callees to controller-style
-  # routes whose handler is referenced by method name only.
-  def collect_method_bodies(source : String, file_path : String) : Hash(String, Array(FunctionBody))
-    bodies = Hash(String, Array(FunctionBody)).new
-    Noir::TreeSitter.parse_go(source) do |root|
-      Noir::TreeSitter.each_named_child(root) do |child|
-        next unless Noir::TreeSitter.node_type(child) == "method_declaration"
-        name_node = Noir::TreeSitter.field(child, "name")
-        next unless name_node
-        name = Noir::TreeSitter.node_text(name_node, source)
-        (bodies[name] ||= [] of FunctionBody) << FunctionBody.new(
-          Noir::TreeSitter.node_text(child, source),
-          file_path,
-          Noir::TreeSitter.node_start_row(child),
-        )
-      end
-    end
-    bodies
-  end
-
   # Render a callee's textual name. Identifiers come back verbatim;
   # `selector_expression` chains rebuild into dotted names, but only
   # when every link is an identifier — chains rooted on another call
@@ -816,7 +898,7 @@ module Noir::GoCalleeExtractor
       when "identifier"
         "#{Noir::TreeSitter.node_text(operand, source)}.#{Noir::TreeSitter.node_text(field, source)}"
       when "selector_expression"
-        inner = callee_text(operand, source)
+        inner = Noir::TreeSitter.descend { callee_text(operand, source) } || ""
         inner.empty? ? "" : "#{inner}.#{Noir::TreeSitter.node_text(field, source)}"
       else
         # operand is a call/index/literal — chained on a result, skip.
@@ -824,13 +906,6 @@ module Noir::GoCalleeExtractor
       end
     else
       ""
-    end
-  end
-
-  private def walk(node : LibTreeSitter::TSNode, &block : LibTreeSitter::TSNode ->)
-    block.call(node)
-    Noir::TreeSitter.each_named_child(node) do |child|
-      walk(child, &block)
     end
   end
 end

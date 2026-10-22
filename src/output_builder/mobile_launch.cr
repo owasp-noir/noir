@@ -1,4 +1,5 @@
 require "../models/endpoint"
+require "../utils/control_chars"
 
 # Helpers shared by the mobile launch-command builders (adb, simctl). A mobile
 # entry point's launcher depends on the platform that declared it: Android
@@ -18,9 +19,11 @@ module MobileLaunch
     return true if tech == "ios"
     return false unless tech == "well_known_applinks"
 
-    # Apple App Site Association entry unless an Android Digital Asset Links
-    # file backs it.
-    endpoint.details.code_paths.none? { |pi| File.basename(pi.path) == "assetlinks.json" }
+    # Classify as iOS only on an affirmative Apple apple-app-site-association
+    # backing file. The old `none? { assetlinks.json }` was vacuously true for
+    # an empty code_paths list (which optimization can produce), so an Android
+    # App-Links association with no code_paths leaked into the iOS simctl list.
+    endpoint.details.code_paths.any? { |pi| File.basename(pi.path) == "apple-app-site-association" }
   end
 
   # App Links / Universal Links from `.well-known` files are bare path
@@ -32,8 +35,29 @@ module MobileLaunch
     !url.starts_with?("/")
   end
 
+  # Control characters become `\xNN` text (`ControlChars`) so a manifest
+  # carrying `\e]8;;…` cannot drive the terminal the command is printed to.
+  # Lossy: control chars become literal `\xNN` text in the command, not the
+  # original bytes (no ANSI-C `$'…'` quoting).
   def shell_quote(str : String) : String
-    "'#{str.gsub("'", "'\\''")}'"
+    "'#{ControlChars.escape(str).gsub("'", "'\\''")}'"
+  end
+
+  # Characters the on-device shell would interpret (word-splitting, control
+  # operators, globs, expansions). `&` is the important one: an OAuth-style
+  # deep link `myapp://cb?code=x&state=y` otherwise backgrounds at `&`.
+  DEVICE_SHELL_METACHARS = /[\s&;|<>()$`"'\\*?\[\]{}#!~]/
+
+  # `adb shell ARGS...` runs ARGS through a SECOND shell on the device: the
+  # host shell strips one quote layer, leaving raw metacharacters exposed to
+  # the device shell. When a value carries such a character, quote twice so
+  # both shells strip a layer and the device receives the literal value.
+  # Metachar-free values (the common case) keep a single clean quote layer.
+  def device_shell_quote(str : String) : String
+    # Escaped first: the `\` that escaping adds is itself a device metachar.
+    str = ControlChars.escape(str)
+    return shell_quote(str) unless str.empty? || str.matches?(DEVICE_SHELL_METACHARS)
+    shell_quote(shell_quote(str))
   end
 
   def plural(count : Int32) : String

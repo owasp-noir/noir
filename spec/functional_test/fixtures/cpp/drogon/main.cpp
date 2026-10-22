@@ -21,6 +21,15 @@ int main() {
         },
         {Get});
 
+    // No method list: Drogon accepts GET. Must not borrow /submit's {Post}.
+    app().registerHandler(
+        "/no-methods",
+        [](const HttpRequestPtr &req,
+           std::function<void(const HttpResponsePtr &)> &&callback) {
+            auto dflt = req->getParameter("dflt");
+            callback(HttpResponse::newHttpResponse());
+        });
+
     app().registerHandler(
         "/submit",
         [](const HttpRequestPtr &req,
@@ -30,6 +39,9 @@ int main() {
             callback(resp);
         },
         {Post});
+
+    // Named handler, no method list: must not borrow the next lambda.
+    app().registerHandler("/named-default", &namedSearchHandler);
 
     app().registerHandler(
         "/items/{id:int}",
@@ -44,6 +56,10 @@ int main() {
         {Get, Delete});
 
     app().registerHandler("/named", &namedSearchHandler, {Get});
+
+    // Filters before the verb, and a typed constraint list.
+    app().registerHandler("/filtered", &namedSearchHandler, {"LoginFilter", Delete});
+    app().registerHandler("/typed", &namedSearchHandler, std::vector<internal::HttpConstraint>{Patch});
 
     app().run();
     return 0;

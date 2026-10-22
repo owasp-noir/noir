@@ -31,7 +31,7 @@ private def load_fixture(base : String) : Hash(String, YAML::Any)
   locator = CodeLocator.instance
   Dir.glob("#{base}/**/*").each do |file|
     next if File.directory?(file)
-    locator.push("file_map", file)
+    locator.register_path(file)
   end
   options
 end
@@ -47,7 +47,7 @@ private def build_endpoint(path : String, line : Int32, url : String, method : S
 end
 
 describe "RustSecurityTagger" do
-  fixtures = "#{__DIR__}/../../../functional_test/fixtures/rust/rust_security"
+  fixtures = File.expand_path("../../../functional_test/fixtures/rust/rust_security", __DIR__)
 
   describe "target techs" do
     it "covers the major Rust web frameworks" do

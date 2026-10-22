@@ -7,6 +7,8 @@ module Detector::Javascript
   # runtimes. The `createYoga` factory is the universal entry point, so
   # a literal-name match also covers wrapper helpers that re-export it.
   class GraphqlYoga < Detector
+    detector_for "js_graphql_yoga", extensions: %w[.js .mjs .cjs .jsx .ts .mts .cts .tsx]
+
     SIGNALS = [
       /from\s+['"]graphql-yoga(?:\/[^'"]*)?['"]/,
       /require\(['"]graphql-yoga(?:\/[^'"]*)?['"]\)/,
@@ -21,17 +23,11 @@ module Detector::Javascript
 
     def detect(filename : String, file_contents : String) : Bool
       return false unless applicable?(filename)
-      file_contents.matches?(SIGNAL)
-    end
-
-    def applicable?(filename : String) : Bool
-      filename.ends_with?(".js") || filename.ends_with?(".mjs") ||
-        filename.ends_with?(".cjs") || filename.ends_with?(".jsx") ||
-        filename.ends_with?(".ts") || filename.ends_with?(".tsx")
-    end
-
-    def set_name
-      @name = "js_graphql_yoga"
+      # Necessary condition for every marker below, which all spell `yoga` or
+      # `Yoga` literally; a memchr scan is far cheaper than the alternation
+      # regex.
+      return false unless file_contents.includes?("yoga") || file_contents.includes?("Yoga")
+      content_matches?(file_contents, SIGNAL)
     end
   end
 end

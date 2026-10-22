@@ -1,9 +1,16 @@
 require "../../../models/analyzer"
+require "../../engines/java_engine"
 require "../../../miniparsers/java_callee_extractor"
 require "../../../miniparsers/java_route_extractor_ts"
+require "../../../utils/url_path"
+require "../../engines/play_route_support"
 
 module Analyzer::Java
   class Play < Analyzer
+    analyzer_for "java_play"
+
+    include PlayRouteSupport
+
     # Stores parsed controller methods with their parameters
     alias ControllerMethod = NamedTuple(headers: Array(String), cookies: Array(String), body_type: String?, callees: Array(Callee))
     alias ScopedKey = Tuple(String, String)
@@ -30,7 +37,10 @@ module Analyzer::Java
         # resources/`. Both `/src/test/` (Maven/Gradle convention) and
         # `/src/sbt-test/` (sbt-plugin's per-fixture test trees) are
         # unambiguous — production code never adopts either.
-        next if path.includes?("/src/test/") || path.includes?("/src/sbt-test/")
+        # Scan-base-relative, never absolute: a `src/test/` directory
+        # ABOVE the scan base is not this project's test tree.
+        relative = base_relative_path(path)
+        next if relative.includes?("/src/test/") || relative.includes?("/src/sbt-test/")
 
         if path.ends_with?("routes") || path.ends_with?("routes.conf") || path.includes?("/conf/routes")
           routes_files << path
@@ -72,10 +82,12 @@ module Analyzer::Java
     # Parse Java controller files to extract header, cookie, and body parameters
     private def parse_controller_files(java_files : Array(String)) : Hash(ScopedKey, ControllerMethod)
       controller_methods = Hash(ScopedKey, ControllerMethod).new
-      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
+      include_callee = callees_needed?
 
       java_files.each do |path|
-        content = read_file_content(path)
+        # The handler bodies are read with regexes; blank comments so
+        # `request.header(/* x */ "X-H")` still matches. Lines are kept.
+        content = JavaEngine.strip_comments(read_file_content(path))
         base_path = configured_base_for(path)
 
         # Extract package name
@@ -201,9 +213,9 @@ module Analyzer::Java
       params = [] of String
       method_pattern = case kind
                        when :header
-                         "(?:header|getHeaders\\(\\)\\s*\\.\\s*get)"
+                         "(?:header|getHeader|(?:headers|getHeaders)\\(\\)\\s*\\.\\s*get)"
                        when :cookie
-                         "(?:cookie|cookies\\(\\)\\s*\\.\\s*get)"
+                         "(?:cookie|getCookie|cookies\\(\\)\\s*\\.\\s*get)"
                        else
                          return params
                        end
@@ -276,24 +288,6 @@ module Analyzer::Java
       index
     end
 
-    private def collect_included_routes(routes_files : Array(String), routes_by_key : Hash(ScopedKey, String)) : Set(String)
-      included = Set(String).new
-
-      routes_files.each do |path|
-        read_file_content(path).each_line do |line|
-          stripped = line.strip
-          next if stripped.empty? || stripped.starts_with?("#")
-          next unless include_match = stripped.match(/^->\s+[^\s]+\s+(.+)$/)
-
-          if included_path = resolve_included_routes_file(include_match[1], routes_by_key, path)
-            included << included_path
-          end
-        end
-      end
-
-      included
-    end
-
     private def resolve_included_routes_file(target : String, routes_by_key : Hash(ScopedKey, String), including_path : String) : String?
       key = target.split(/\s|\(/).first.strip
       key = key.lchop("@")
@@ -336,7 +330,7 @@ module Analyzer::Java
           include_prefix = include_match[1]
           include_target = include_match[2]
           if included_path = resolve_included_routes_file(include_target, routes_by_key, path)
-            process_routes_file(included_path, controller_methods, routes_by_key, join_paths(prefix, include_prefix), seen)
+            process_routes_file(included_path, controller_methods, routes_by_key, Noir::URLPath.join_trimmed(prefix, include_prefix), seen)
           end
           next
         end
@@ -345,7 +339,7 @@ module Analyzer::Java
         # Example: GET /users/:id controllers.Users.show(id: Long)
         if route_match = stripped_line.match(/^(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)\s+([^\s]+)\s+(.+)/)
           method = route_match[1]
-          route_path = join_paths(prefix, route_match[2])
+          route_path = Noir::URLPath.join_trimmed(prefix, route_match[2])
           action = route_match[3]
 
           endpoint = create_endpoint(route_path, method, path, index + 1)
@@ -364,180 +358,6 @@ module Analyzer::Java
       end
 
       seen.delete(path)
-    end
-
-    private def join_paths(prefix : String, suffix : String) : String
-      return suffix if prefix.empty?
-      return prefix.rstrip('/') if suffix.empty?
-      "#{prefix.rstrip('/')}/#{suffix.lstrip('/')}"
-    end
-
-    # Extract path parameters from route pattern
-    private def extract_path_params(endpoint : Endpoint, route_path : String)
-      # Match :param style parameters
-      route_path.scan(/:(\w+)/) do |match|
-        param_name = match[1]
-        endpoint.push_param(Param.new(param_name, "", "path"))
-      end
-
-      # Match $param<regex> style parameters
-      route_path.scan(/\$(\w+)<[^>]+>/) do |match|
-        param_name = match[1]
-        unless endpoint.params.any? { |p| p.name == param_name && p.param_type == "path" }
-          endpoint.push_param(Param.new(param_name, "", "path"))
-        end
-      end
-
-      # Match *param wildcard style parameters
-      route_path.scan(/\*(\w+)/) do |match|
-        param_name = match[1]
-        unless endpoint.params.any? { |p| p.name == param_name && p.param_type == "path" }
-          endpoint.push_param(Param.new(param_name, "", "path"))
-        end
-      end
-    end
-
-    # Extract query parameters from action signature
-    # Example: controllers.Users.show(id: Long, name: String)
-    private def extract_params_from_action(endpoint : Endpoint, action : String)
-      # Extract parameters from action signature
-      if params_match = action.match(/\((.*)\)/)
-        params_str = params_match[1]
-
-        split_route_action_params(params_str).each do |param_def|
-          param_def = param_def.strip
-          next if param_def.empty?
-
-          if route_param = route_action_param(param_def)
-            param_name, param_type, default_value = route_param
-            next if request_route_param_type?(param_type)
-            next if endpoint.params.any? { |p| p.name == param_name && p.param_type == "path" }
-            next if endpoint.params.any? { |p| p.name == param_name }
-
-            endpoint.push_param(Param.new(param_name, default_value, "query"))
-          end
-        end
-      end
-    end
-
-    private def split_route_action_params(params_str : String) : Array(String)
-      params = [] of String
-      start = 0
-      depth = 0
-      in_string = false
-      quote = '\0'
-      escape = false
-
-      params_str.each_char_with_index do |char, index|
-        if in_string
-          if escape
-            escape = false
-          elsif char == '\\'
-            escape = true
-          elsif char == quote
-            in_string = false
-          end
-          next
-        end
-
-        case char
-        when '"', '\''
-          in_string = true
-          quote = char
-        when '(', '[', '{'
-          depth += 1
-        when ')', ']', '}'
-          depth -= 1 if depth > 0
-        when ','
-          next unless depth == 0
-
-          params << params_str[start...index].strip
-          start = index + 1
-        end
-      end
-
-      tail = params_str[start..]?.to_s.strip
-      params << tail unless tail.empty?
-      params
-    end
-
-    private def route_action_param(param_def : String) : Tuple(String, String?, String)?
-      optional_default_index = top_level_operator_index(param_def, "?=")
-      fixed_value_index = top_level_operator_index(param_def, "=")
-      return if fixed_value_index && optional_default_index.nil?
-
-      declaration_end = optional_default_index || param_def.size
-      declaration = param_def[0...declaration_end].strip
-      return if declaration.empty?
-
-      default_value = ""
-      if optional_default_index
-        raw_default = param_def[(optional_default_index + 2)..].strip
-        default_value = normalize_route_default_value(raw_default)
-      end
-
-      if colon = declaration.index(':')
-        name = declaration[0...colon].strip
-        type_name = declaration[(colon + 1)..].strip
-        return if name.empty?
-        return {name, type_name.empty? ? nil : type_name, default_value}
-      end
-
-      name = declaration.strip
-      return unless name.match(/\A[A-Za-z_][A-Za-z0-9_]*\z/)
-      {name, nil, default_value}
-    end
-
-    private def top_level_operator_index(text : String, operator : String) : Int32?
-      depth = 0
-      in_string = false
-      quote = '\0'
-      escape = false
-      i = 0
-
-      while i <= text.size - operator.size
-        char = text[i]
-
-        if in_string
-          if escape
-            escape = false
-          elsif char == '\\'
-            escape = true
-          elsif char == quote
-            in_string = false
-          end
-          i += 1
-          next
-        end
-
-        case char
-        when '"', '\''
-          in_string = true
-          quote = char
-        when '(', '[', '{'
-          depth += 1
-        when ')', ']', '}'
-          depth -= 1 if depth > 0
-        else
-          # `i` is a CHAR index; char-slice (byte_slice would treat i as a byte
-          # offset and desync the match when a multi-byte char precedes it).
-          return i if depth == 0 && text[i, operator.size] == operator
-        end
-        i += 1
-      end
-
-      nil
-    end
-
-    private def normalize_route_default_value(raw_default : String) : String
-      value = raw_default.strip
-      return "" if value.empty?
-
-      if value.size >= 2 && ((value.starts_with?('"') && value.ends_with?('"')) || (value.starts_with?("'") && value.ends_with?("'")))
-        return value[1..-2]
-      end
-
-      value
     end
 
     private def request_route_param_type?(param_type : String?) : Bool
@@ -560,16 +380,12 @@ module Analyzer::Java
       if method_info = controller_methods[{configured_base_for(routes_path), method_name}]?
         # Add header parameters
         method_info[:headers].each do |header|
-          unless endpoint.params.any? { |p| p.name == header && p.param_type == "header" }
-            endpoint.push_param(Param.new(header, "", "header"))
-          end
+          endpoint.push_param(Param.new(header, "", "header"))
         end
 
         # Add cookie parameters
         method_info[:cookies].each do |cookie|
-          unless endpoint.params.any? { |p| p.name == cookie && p.param_type == "cookie" }
-            endpoint.push_param(Param.new(cookie, "", "cookie"))
-          end
+          endpoint.push_param(Param.new(cookie, "", "cookie"))
         end
 
         # Add body parameter if body type detected
@@ -583,14 +399,6 @@ module Analyzer::Java
           endpoint.push_callee(callee)
         end
       end
-    end
-
-    # Create an endpoint with the given path and method
-    private def create_endpoint(path : String, method : String, source : String, line_number : Int32)
-      details = Details.new(PathInfo.new(source, line_number))
-      params = [] of Param
-
-      Endpoint.new(path, method, params, details)
     end
   end
 end

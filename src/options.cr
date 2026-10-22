@@ -1,10 +1,17 @@
+require "./ai_context/features.cr"
+require "./cli/common.cr"
 require "./completions.cr"
+require "./output_builder/formats.cr"
+require "./utils/path_scope.cr"
 require "./config_initializer.cr"
 require "./banner.cr"
 require "yaml"
 
-private def append_to_yaml_array(hash : Hash(String, YAML::Any), key : String, value : String)
+# `reset_seen` works as in `append_to_csv_option`: the first CLI occurrence
+# replaces a config-file list instead of appending to it.
+private def append_to_yaml_array(hash : Hash(String, YAML::Any), key : String, value : String, reset_seen : Set(String)? = nil)
   arr = (hash[key]? || YAML::Any.new([] of YAML::Any)).as_a.dup
+  arr.clear if reset_seen && reset_seen.add?(key)
   arr << YAML::Any.new(value)
   hash[key] = YAML::Any.new(arr)
 end
@@ -14,8 +21,15 @@ end
 # When `reset_if` equals the current value — e.g. an untouched default list —
 # the accumulation starts fresh so the first user value replaces the default
 # rather than appending to it.
-private def append_to_csv_option(hash : Hash(String, YAML::Any), key : String, value : String, reset_if : String? = nil)
+private def append_to_csv_option(hash : Hash(String, YAML::Any), key : String, value : String, reset_if : String? = nil, reset_seen : Set(String)? = nil)
   existing = (hash[key]? || YAML::Any.new("")).to_s
+  if reset_seen && !reset_seen.includes?(key)
+    # First CLI occurrence of this flag replaces any config-file value
+    # outright (CLI wins over config, not "config,cli"); later occurrences on
+    # the same command line then accumulate.
+    existing = ""
+    reset_seen << key
+  end
   existing = "" if reset_if && existing == reset_if
   combined = existing.empty? ? value : "#{existing},#{value}"
   hash[key] = YAML::Any.new(combined)
@@ -47,6 +61,28 @@ private def scan_config_file_override(args : Array(String)) : String?
   found
 end
 
+# POSIX end-of-options marker. Removes the first `--` and everything after
+# it from `args`, returning the tail — the tokens the user declared to be
+# positionals no matter what they look like.
+#
+# Crystal's OptionParser handles `--` by dropping the marker and leaving the
+# tail in place, which erases the boundary: scan's positional loop then skips
+# every leftover starting with `-`, so `noir scan -- -old-api` silently
+# scanned nothing ("No path to scan was given") and `noir scan -- ./app -f
+# json` reported "Base path does not exist: json" — the `-f` had been thrown
+# away and its value promoted to a path. Splitting the tail off before any
+# parsing keeps the marker's meaning: a directory whose name starts with `-`
+# has a way in, and a flag typed after `--` is reported as the path it now is
+# instead of vanishing.
+private def split_end_of_options!(args : Array(String)) : Array(String)
+  index = args.index("--")
+  return [] of String if index.nil?
+
+  tail = args[(index + 1)..]
+  args.delete_at(index, args.size - index)
+  tail
+end
+
 # Validate a CLI flag value that needs to be a positive (>=1)
 # integer. `String#to_i` raises ArgumentError on non-numeric input
 # and silently produces 0 for "" — both surface as Crystal stack
@@ -55,10 +91,23 @@ end
 private def positive_int_or_die!(flag : String, raw : String) : Int32
   value = raw.to_i?
   if value.nil? || value < 1
-    STDERR.puts "ERROR: Invalid #{flag} '#{raw}'. Must be a positive integer.".colorize(:yellow)
+    STDERR.puts "ERROR: Invalid #{flag} '#{raw}'. Must be a positive integer.".colorize(:red)
     exit(1)
   end
   value
+end
+
+# `--ai-key-file`: the key without its trailing newline, or a clear error.
+private def read_key_file_or_die!(path : String) : String
+  # PowerShell's `Set-Content -Encoding UTF8` writes a BOM, which `strip`
+  # keeps and the provider rejects.
+  key = Noir::TextFile.strip_utf8_bom(File.read(Path[path].expand(home: true))).strip
+  raise "'#{path}' is empty" if key.empty?
+  raise "'#{path}' must hold only the key" if key.each_char.any?(&.whitespace?)
+  key
+rescue e
+  STDERR.puts "ERROR: --ai-key-file: #{e.message}".colorize(:red)
+  exit(1)
 end
 
 private def process_override_flag(
@@ -70,120 +119,18 @@ private def process_override_flag(
     noir_options[option_key] = YAML::Any.new(args[i + 1])
     i + 2
   else
-    STDERR.puts "ERROR: #{flag} requires an argument.".colorize(:yellow)
+    STDERR.puts "ERROR: #{flag} requires an argument.".colorize(:red)
     exit(1)
   end
 end
 
-def extract_hidden_prompt_flags(noir_options : Hash(String, YAML::Any)) : Array(String)
-  args = ARGV.dup
-  filtered = [] of String
-  i = 0
-  override_flags = {
-    "--override-analyze-prompt"        => "override_analyze_prompt",
-    "--override-llm-optimize-prompt"   => "override_llm_optimize_prompt",
-    "--override-bundle-analyze-prompt" => "override_bundle_analyze_prompt",
-    "--override-filter-prompt"         => "override_filter_prompt",
-  }
-
-  while i < args.size
-    arg = args[i]
-    if override_flags.has_key?(arg)
-      i = process_override_flag(arg, override_flags[arg], noir_options, args, i)
-    else
-      filtered << arg
-      i += 1
-    end
-  end
-  filtered = normalize_ai_context_flag(filtered)
-  filtered = extract_legacy_aliases(filtered, noir_options)
-  filtered
-end
-
-# Silently translate v0 flag spellings to their v1 storage. Keeping the
-# work here (instead of `parser.on "--include-path"`) means the legacy
-# names no longer clutter `noir scan -h`, while every v0 script keeps
-# working untouched in v1.x.
-LEGACY_PVALUE_TARGETS = {
-  "--set-pvalue"        => "set_pvalue",
-  "--set-pvalue-header" => "set_pvalue_header",
-  "--set-pvalue-cookie" => "set_pvalue_cookie",
-  "--set-pvalue-query"  => "set_pvalue_query",
-  "--set-pvalue-form"   => "set_pvalue_form",
-  "--set-pvalue-json"   => "set_pvalue_json",
-  "--set-pvalue-path"   => "set_pvalue_path",
-}
-
-LEGACY_INCLUDE_TARGETS = {
-  "--include-path"   => "include_path",
-  "--include-techs"  => "include_techs",
-  "--include-callee" => "include_callee",
-}
-
-def extract_legacy_aliases(args : Array(String), noir_options : Hash(String, YAML::Any)) : Array(String)
-  result = [] of String
-  i = 0
-  while i < args.size
-    arg = args[i]
-    if key = LEGACY_INCLUDE_TARGETS[arg]?
-      noir_options[key] = YAML::Any.new(true)
-      i += 1
-    elsif pvalue_key = LEGACY_PVALUE_TARGETS[arg]?
-      if i + 1 >= args.size
-        STDERR.puts "ERROR: #{arg} requires an argument.".colorize(:yellow)
-        exit(1)
-      end
-      append_to_yaml_array(noir_options, pvalue_key, args[i + 1])
-      i += 2
-    else
-      result << arg
-      i += 1
-    end
-  end
-  result
-end
-
-# `--ai-context` accepts an optional comma-separated feature list. Crystal's
-# OptionParser cannot express "optional positional value", so we rewrite
-# the few well-defined ambiguous forms upfront:
-#
-#   --ai-context                 → --ai-context=         (bare, all features)
-#   --ai-context=guards,sinks    → unchanged             (explicit value)
-#   --ai-context guards,sinks    → --ai-context=guards,sinks (heuristic)
-#   --ai-context ./app           → --ai-context=         (next token is a path)
-#
-# The heuristic for "is the next token a feature list?" is intentionally
-# tight: lowercase comma-separated words drawn from a fixed vocabulary.
-# This keeps `noir scan --ai-context ./app` working as a positional path.
-AI_CONTEXT_FEATURES = ["guards", "sinks", "validators", "signals", "callee", "all"]
-
-def normalize_ai_context_flag(args : Array(String)) : Array(String)
-  result = [] of String
-  i = 0
-  while i < args.size
-    arg = args[i]
-    if arg == "--ai-context"
-      if i + 1 < args.size && ai_context_feature_list?(args[i + 1])
-        result << "--ai-context=#{args[i + 1]}"
-        i += 2
-      else
-        result << "--ai-context="
-        i += 1
-      end
-    else
-      result << arg
-      i += 1
-    end
-  end
-  result
-end
-
 private def ai_context_feature_list?(token : String) : Bool
   return false if token.starts_with?("-")
-  return false unless token.matches?(/\A[a-z,]+\z/)
+  return false unless token.matches?(/\A[a-z,]+\z/i)
   tokens = token.split(',').reject(&.empty?)
   return false if tokens.empty?
-  tokens.all? { |t| AI_CONTEXT_FEATURES.includes?(t) }
+  return true if tokens.size > 1
+  NoirAIContext::ACCEPTED_FEATURES.includes?(tokens.first.downcase)
 end
 
 private def base_help : String
@@ -202,7 +149,7 @@ private def base_help : String
         noir scan ./myapp -P
 
       #{"AI integration".colorize(:yellow)}
-        $ noir scan . --ai-provider openai --ai-model gpt-5.5 --ai-key YOUR_API_KEY
+        $ NOIR_AI_KEY=YOUR_API_KEY noir scan . --ai-provider openai --ai-model gpt-5.5
         $ noir scan . --ai-provider acp:codex
         $ noir scan . --ai-provider acp:claude
 
@@ -212,7 +159,245 @@ private def base_help : String
     HELP
 end
 
+# CLI option parsing: the legacy-alias rewrites, the `--set-pvalue` /
+# `--include` / `--ai-context` target tables, and the helpers that apply
+# them to the options hash.
+#
+# These were eight top-level `def`s and five SCREAMING constants leaking
+# into every compilation unit — `INCLUDE_TARGETS` among them, under a
+# name generic enough to collide. `run_options_parser` stays
+# top-level: it is the CLI's entry point, same as `detect_techs` and
+# `analysis_endpoints` on the scan side.
+module Noir::OptionsParsing
+  extend self
+
+  def extract_hidden_prompt_flags(noir_options : Hash(String, YAML::Any), reset_seen : Set(String)? = nil) : Array(String)
+    args = ARGV.dup
+    filtered = [] of String
+    i = 0
+    override_flags = {
+      "--override-analyze-prompt"        => "override_analyze_prompt",
+      "--override-llm-optimize-prompt"   => "override_llm_optimize_prompt",
+      "--override-bundle-analyze-prompt" => "override_bundle_analyze_prompt",
+      "--override-filter-prompt"         => "override_filter_prompt",
+    }
+
+    while i < args.size
+      arg = args[i]
+      if override_flags.has_key?(arg)
+        i = process_override_flag(arg, override_flags[arg], noir_options, args, i)
+      else
+        filtered << arg
+        i += 1
+      end
+    end
+    filtered = normalize_ai_context_flag(filtered)
+    filtered = extract_legacy_aliases(filtered, noir_options, reset_seen)
+    filtered
+  end
+
+  # Silently translate v0 flag spellings to their v1 storage. Keeping the
+  # work here (instead of `parser.on "--include-path"`) means the legacy
+  # names no longer clutter `noir scan -h`, while every v0 script keeps
+  # working untouched in v1.x.
+  LEGACY_PVALUE_TARGETS = {
+    "--set-pvalue"        => "set_pvalue",
+    "--set-pvalue-header" => "set_pvalue_header",
+    "--set-pvalue-cookie" => "set_pvalue_cookie",
+    "--set-pvalue-query"  => "set_pvalue_query",
+    "--set-pvalue-form"   => "set_pvalue_form",
+    "--set-pvalue-json"   => "set_pvalue_json",
+    "--set-pvalue-path"   => "set_pvalue_path",
+  }
+
+  LEGACY_INCLUDE_TARGETS = {
+    "--include-path"   => "include_path",
+    "--include-techs"  => "include_techs",
+    "--include-callee" => "include_callee",
+  }
+
+  def extract_legacy_aliases(args : Array(String), noir_options : Hash(String, YAML::Any), reset_seen : Set(String)? = nil) : Array(String)
+    result = [] of String
+    i = 0
+    while i < args.size
+      arg = args[i]
+      if key = LEGACY_INCLUDE_TARGETS[arg]?
+        noir_options[key] = YAML::Any.new(true)
+        i += 1
+      elsif pvalue_key = LEGACY_PVALUE_TARGETS[arg]?
+        if i + 1 >= args.size
+          STDERR.puts "ERROR: #{arg} requires an argument.".colorize(:red)
+          exit(1)
+        end
+        append_to_yaml_array(noir_options, pvalue_key, args[i + 1], reset_seen)
+        i += 2
+      elsif (eq_idx = arg.index('=')) && (eq_pvalue_key = LEGACY_PVALUE_TARGETS[arg[0...eq_idx]]?)
+        # `--set-pvalue=VALUE`. In v0 these were real `parser.on
+        # "--set-pvalue VALUE"` entries, so Crystal's OptionParser accepted
+        # both spellings; this hand-rolled extractor only matched the bare
+        # token, and the `=` form fell through to `invalid_option` and hard
+        # failed. `Noir::CLI::Legacy.translate_flag_aliases` handles `=` for
+        # the probe aliases, so the two legacy layers also disagreed.
+        # Split on the *first* `=` only, so `--set-pvalue=key=val` keeps
+        # "key=val" as the value.
+        append_to_yaml_array(noir_options, eq_pvalue_key, arg[(eq_idx + 1)..], reset_seen)
+        i += 1
+      else
+        result << arg
+        i += 1
+      end
+    end
+    result
+  end
+
+  # `--ai-context` accepts an optional comma-separated feature list. Crystal's
+  # OptionParser cannot express "optional positional value", so we rewrite
+  # the few well-defined ambiguous forms upfront:
+  #
+  #   --ai-context                 → --ai-context=         (bare, all features)
+  #   --ai-context=guards,sinks    → unchanged             (explicit value)
+  #   --ai-context guards,sinks    → --ai-context=guards,sinks (heuristic)
+  #   --ai-context ./app           → --ai-context=         (next token is a path)
+  #
+  # The heuristic for "is the next token a feature list?": lowercase words
+  # joined by commas, where either (a) there's more than one comma-separated
+  # word, or (b) the single word is in `NoirAIContext::ACCEPTED_FEATURES`.
+  # A real filesystem path essentially never contains a literal comma, so
+  # any multi-word comma list — typo'd feature names included — is routed
+  # to `--ai-context=...` and left for the vocabulary check in
+  # `apply_ai_context` to reject with a precise "unknown feature" error,
+  # rather than silently falling through to "Base path does not exist:
+  # <the typo>". A single bare word still has to match a known feature
+  # exactly, since that shape is genuinely ambiguous with a real one-word
+  # directory name (`noir scan --ai-context myapp` must keep scanning `myapp`).
+  # Both this and the flag's own validator used to spell the vocabulary out
+  # by hand, and both omitted `sources`.
+
+  def normalize_ai_context_flag(args : Array(String)) : Array(String)
+    result = [] of String
+    i = 0
+    while i < args.size
+      arg = args[i]
+      if arg == "--ai-context"
+        if i + 1 < args.size && ai_context_feature_list?(args[i + 1])
+          # Greedily absorb space-separated continuations of a comma list:
+          # `--ai-context guards, sinks` shell-splits into "guards," + "sinks",
+          # and without this the trailing "sinks" was mistaken for a positional
+          # scan path ("Base path does not exist: sinks").
+          features = [args[i + 1]]
+          j = i + 2
+          while features.last.ends_with?(",") && j < args.size && ai_context_feature_list?(args[j])
+            features << args[j]
+            j += 1
+          end
+          result << "--ai-context=#{features.join.rstrip(",")}"
+          i = j
+        else
+          result << "--ai-context="
+          i += 1
+        end
+      else
+        result << arg
+        i += 1
+      end
+    end
+    result
+  end
+
+  # Split `TYPE=VAL` (or bare `VAL` → all-types) and route it into the
+  # right slot in noir_options. `--pvalue` may be repeated to set multiple
+  # values across different types.
+  PVALUE_TYPE_KEYS = {
+    "any"    => "set_pvalue",
+    "all"    => "set_pvalue",
+    "header" => "set_pvalue_header",
+    "cookie" => "set_pvalue_cookie",
+    "query"  => "set_pvalue_query",
+    "form"   => "set_pvalue_form",
+    "json"   => "set_pvalue_json",
+    "path"   => "set_pvalue_path",
+  }
+
+  def handle_pvalue(noir_options : Hash(String, YAML::Any), spec : String, reset_seen : Set(String)? = nil)
+    type, value = if idx = spec.index('=')
+                    {spec[0...idx], spec[(idx + 1)..]}
+                  else
+                    # `--pvalue query` (no '=') sets the literal value "query"
+                    # for all types. Since `query` is itself a type name, this
+                    # is almost always a forgotten '=' (meant `query=<value>`).
+                    # Warn but honor the literal so scripted usage still works.
+                    if PVALUE_TYPE_KEYS.has_key?(spec)
+                      STDERR.puts "WARNING: --pvalue #{spec.inspect} has no '=', so #{spec.inspect} is used as a literal value for all param types. Did you mean --pvalue #{spec}=<value>?".colorize(:yellow)
+                    end
+                    {"any", spec}
+                  end
+
+    key = PVALUE_TYPE_KEYS[type]?
+    if key.nil?
+      STDERR.puts "ERROR: --pvalue: unknown type '#{type}'. Valid: #{PVALUE_TYPE_KEYS.keys.join(", ")}.".colorize(:red)
+      exit(1)
+    end
+
+    append_to_yaml_array(noir_options, key, value, reset_seen)
+  end
+
+  INCLUDE_TARGETS = {
+    "path"   => "include_path",
+    "techs"  => "include_techs",
+    "callee" => "include_callee",
+  }
+
+  def apply_include_list(noir_options : Hash(String, YAML::Any), spec : String)
+    spec.split(',').reject(&.empty?).each do |raw|
+      target = raw.strip.downcase
+      key = INCLUDE_TARGETS[target]?
+      if key.nil?
+        STDERR.puts "ERROR: --include: unknown target '#{raw.strip}'. Valid: #{INCLUDE_TARGETS.keys.join(", ")}.".colorize(:red)
+        exit(1)
+      end
+      noir_options[key] = YAML::Any.new(true)
+    end
+  end
+
+  # `--ai-context[=LIST]` always enables AI context output. An empty LIST
+  # means "every category"; a non-empty LIST narrows the output to the
+  # named categories.
+  def apply_ai_context(noir_options : Hash(String, YAML::Any), spec : String)
+    noir_options["ai_context"] = YAML::Any.new(true)
+    validate_ai_context_features(spec, "--ai-context")
+
+    list = spec.split(',').map(&.strip.downcase).reject(&.empty?)
+    # An empty list, or one naming `all`, means every bucket. Write that out
+    # as the empty value instead of returning early: the config file is read
+    # before OptionParser runs, so an early return left a config-file
+    # `ai_context_features: "guards"` in place and `--ai-context=all` (and the
+    # bare flag) — the two spellings that mean "everything" — were the only
+    # ones that could not override it.
+    list.clear if list.includes?(NoirAIContext::FEATURE_ALL)
+
+    noir_options["ai_context_features"] = YAML::Any.new(list.join(","))
+  end
+
+  # Rejects AI-context bucket names outside the accepted vocabulary. `origin`
+  # names the source in the error so a config-file typo doesn't read as a
+  # command-line one.
+  def validate_ai_context_features(spec : String, origin : String)
+    unknown = NoirAIContext.unknown_features(spec)
+    return if unknown.empty?
+
+    # Echo the user's original spelling (not the lowercased form) so a typo
+    # like `Sinkz` reads as it was written.
+    STDERR.puts "ERROR: #{origin}: unknown feature '#{unknown.first}'. Valid: #{NoirAIContext::ACCEPTED_FEATURES.join(", ")}.".colorize(:red)
+    exit(1)
+  end
+end
+
 def run_options_parser
+  # Split off a POSIX `--` tail before anything reads ARGV: those tokens are
+  # positionals by the user's explicit declaration, so neither the
+  # `--config-file` pre-scan nor the flag rewrites below may interpret them.
+  end_of_options = split_end_of_options!(ARGV)
+
   # Resolve `--config-file PATH` (if present in ARGV) before
   # ConfigInitializer reads the file, so the user-supplied path
   # becomes the source ConfigInitializer parses. Defaults < file <
@@ -223,7 +408,11 @@ def run_options_parser
   noir_options = config_init.read_config
   noir_options["config_file"] = YAML::Any.new(override_config_path) if override_config_path
 
-  extracted_args = extract_hidden_prompt_flags(noir_options)
+  # Tracks CSV and array flags whose first CLI occurrence must override (not
+  # append to) a config-file value. See append_to_csv_option.
+  csv_reset_seen = Set(String).new
+
+  extracted_args = Noir::OptionsParsing.extract_hidden_prompt_flags(noir_options, csv_reset_seen)
 
   OptionParser.parse(extracted_args) do |parser|
     parser.banner = base_help
@@ -232,38 +421,20 @@ def run_options_parser
 
     parser.separator " BASE:".colorize(:blue)
     parser.on "-b PATH", "--base-path PATH", "Add a base path to scan (positional paths work too; repeatable)" do |v|
-      append_to_yaml_array(noir_options, "base", v)
+      # Normalize once, here: the base string is echoed verbatim into every
+      # reported `code_path`, so `-b rem2`, `-b rem2///` and `-b ./rem2`
+      # otherwise describe the same tree with three different report bodies.
+      append_to_yaml_array(noir_options, "base", Noir::PathScope.normalize_base(v), csv_reset_seen)
     end
     parser.on "-u URL", "--url http://...", "Prepend this base URL to every discovered path; required for --status-codes, --probe, and --probe-via" do |v|
       noir_options["url"] = YAML::Any.new(v)
     end
 
     parser.separator "\n OUTPUT:".colorize(:blue)
-    parser.on "-f FMT", "--format json", <<-DESC do |v|
-      Output format:
-        plain                Plain text (default)
-        yaml                 YAML
-        json                 JSON
-        jsonl                JSON Lines
-        toml                 TOML
-        markdown-table       Markdown table
-        sarif                SARIF format
-        html                 HTML report
-        curl                 cURL commands
-        httpie               HTTPie commands
-        powershell           PowerShell Invoke-WebRequest commands
-        adb                  ADB commands for Android entry points
-        simctl               simctl commands for iOS entry points
-        oas2                 OpenAPI 2.0 (Swagger)
-        oas3                 OpenAPI 3.0
-        postman              Postman collection
-        only-url             Only endpoint URLs
-        only-param           Only parameters
-        only-header          Only headers
-        only-cookie          Only cookies
-        only-tag             Only tags
-        mermaid              Mermaid diagram
-      DESC
+    # The per-format lines come from the annotated builder classes
+    # (`Noir::OutputFormats`), so a new format shows up in `-h` without this
+    # list having to be updated alongside the builder.
+    parser.on "-f FMT", "--format json", "Output format:\n#{Noir::OutputFormats.help_text}" do |v|
       noir_options["format"] = YAML::Any.new(v)
     end
     parser.on "-o PATH", "--output out.txt", "Write result to file" do |v|
@@ -271,7 +442,7 @@ def run_options_parser
     end
 
     parser.on "--pvalue TYPE=VAL", "Set parameter value (TYPE: any|header|cookie|query|form|json|path; repeatable)" do |v|
-      handle_pvalue(noir_options, v)
+      Noir::OptionsParsing.handle_pvalue(noir_options, v, csv_reset_seen)
     end
 
     parser.on "--status-codes", "Display HTTP status codes" do
@@ -281,27 +452,35 @@ def run_options_parser
       # Accumulate same as --exclude-path / --use-taggers / -t etc.
       # so users can repeat the flag (`--exclude-codes 404
       # --exclude-codes 500`) without losing the first value.
-      append_to_csv_option(noir_options, "exclude_codes", v)
+      # `reset_seen` scopes that accumulation to this command line: the
+      # first occurrence replaces a config-file value outright.
+      append_to_csv_option(noir_options, "exclude_codes", v, reset_seen: csv_reset_seen)
     end
     parser.on "--exclude-path PATTERN", "Exclude files by glob (e.g. *.test.js,*_test.go; repeatable)" do |v|
       # Storage is a comma-separated string (the detector splits on
       # `,` per-file). Pre-fix, the second `--exclude-path` clobbered
       # the first via plain `=`. Concatenate instead so users can
       # repeat the flag OR pack patterns into one comma list — both
-      # shapes accumulate to the same final list.
-      append_to_csv_option(noir_options, "exclude_path", v)
+      # shapes accumulate to the same final list. `reset_seen` keeps
+      # that accumulation inside the command line: a config-file
+      # `exclude_path` is replaced, not extended.
+      append_to_csv_option(noir_options, "exclude_path", v, reset_seen: csv_reset_seen)
     end
     parser.on "--include LIST", "Enrich plain output (comma-separated: path,techs,callee)" do |v|
-      apply_include_list(noir_options, v)
+      Noir::OptionsParsing.apply_include_list(noir_options, v)
     end
+    # Category names come from the one vocabulary so the help can no longer
+    # drift from what the validator accepts. It had: it omitted `sources`
+    # and spelled `callee` as "callees", neither of which is a name you can
+    # actually pass.
     parser.on "--ai-context [LIST]", <<-DESC do |v|
       Include aggregated AI review context. With no argument, emits every
-      category (guards, callees, sinks, validators, signals). Pass a
+      category (#{NoirAIContext::FEATURES.join(", ")}). Pass a
       comma-separated subset to narrow the output:
         --ai-context guards,sinks
         --ai-context=callee
       DESC
-      apply_ai_context(noir_options, v)
+      Noir::OptionsParsing.apply_ai_context(noir_options, v)
     end
     parser.on "--no-color", "Disable color output" do
       noir_options["color"] = YAML::Any.new(false)
@@ -312,20 +491,23 @@ def run_options_parser
     parser.on "--no-log", "Show only results" do
       noir_options["nolog"] = YAML::Any.new(true)
     end
+    parser.on "--strict", "Exit with code 2 if any analyzer failed or skipped a file" do
+      noir_options["strict"] = YAML::Any.new(true)
+    end
 
     parser.separator "\n PASSIVE SCAN:".colorize(:blue)
     parser.on "-P", "--passive-scan", "Enable passive security scan" do
       noir_options["passive_scan"] = YAML::Any.new(true)
     end
     parser.on "--passive-scan-path PATH", "Use a custom passive-rule directory (replaces the bundled rules; repeatable)" do |v|
-      append_to_yaml_array(noir_options, "passive_scan_path", v)
+      append_to_yaml_array(noir_options, "passive_scan_path", v, csv_reset_seen)
     end
     parser.on "--passive-scan-severity LVL", "Min severity (critical|high|medium|low, default: high)" do |v|
       lvl = v.downcase
       if lvl.in?(%w[critical high medium low])
         noir_options["passive_scan_severity"] = YAML::Any.new(lvl)
       else
-        STDERR.puts "ERROR: Invalid severity '#{v}'. Valid: critical, high, medium, low".colorize(:yellow)
+        STDERR.puts "ERROR: Invalid severity '#{v}'. Valid: critical, high, medium, low".colorize(:red)
         exit(1)
       end
     end
@@ -346,8 +528,10 @@ def run_options_parser
       # (`NoirTaggers.run_tagger`) gets the union, not just the last
       # `--use-taggers` value. Pre-fix `--use-taggers hunt
       # --use-taggers cors` silently dropped `hunt` because the
-      # second assignment overwrote the first.
-      append_to_csv_option(noir_options, "use_taggers", v)
+      # second assignment overwrote the first. `reset_seen` keeps the
+      # union scoped to the command line, so a config-file
+      # `use_taggers` is replaced rather than added to.
+      append_to_csv_option(noir_options, "use_taggers", v, reset_seen: csv_reset_seen)
     end
 
     # PROBE — fire HTTP requests against the endpoints noir just
@@ -368,10 +552,13 @@ def run_options_parser
       append_to_yaml_array(noir_options, "probe_header", v)
     end
     parser.on "--probe-match VAL", "Only probe endpoints matching pattern (repeatable)" do |v|
-      append_to_yaml_array(noir_options, "probe_match", v)
+      append_to_yaml_array(noir_options, "probe_match", v, csv_reset_seen)
     end
     parser.on "--probe-skip VAL", "Skip endpoints matching pattern (repeatable)" do |v|
-      append_to_yaml_array(noir_options, "probe_skip", v)
+      append_to_yaml_array(noir_options, "probe_skip", v, csv_reset_seen)
+    end
+    parser.on "--tls-skip-verify", "Skip TLS cert verification for probe/export/webhook (insecure; for self-signed hosts)" do
+      noir_options["tls_skip_verify"] = YAML::Any.new(true)
     end
 
     # EXPORT — ship the endpoint catalog to an external data store.
@@ -402,7 +589,9 @@ def run_options_parser
         github     → https://models.github.ai/inference
         azure      → https://models.inference.ai.azure.com
         openrouter → https://openrouter.ai/api/v1
-        ollama     → http://localhost:11434/v1
+        anthropic  → https://api.anthropic.com/v1 (native Messages API)
+        gemini     → https://generativelanguage.googleapis.com/v1beta/openai
+        ollama     → http://localhost:11434 (native /api/generate)
         lmstudio   → http://localhost:1234/v1
         vllm       → http://localhost:8000/v1
         acp:codex  → npx @zed-industries/codex-acp
@@ -417,35 +606,70 @@ def run_options_parser
     parser.on "--ai-model NAME", "Model name (optional for acp:* providers)" do |v|
       noir_options["ai_model"] = YAML::Any.new(v)
     end
-    parser.on "--ai-key KEY", "API key (or set NOIR_AI_KEY env)" do |v|
+    parser.on "--ai-key KEY", "API key (prefer NOIR_AI_KEY or --ai-key-file: argv is visible in the process list)" do |v|
       noir_options["ai_key"] = YAML::Any.new(v)
+    end
+    parser.on "--ai-key-file PATH", "Read the API key from a file" do |v|
+      noir_options["ai_key"] = YAML::Any.new(read_key_file_or_die!(v))
+    end
+    parser.on "--ai-temperature N", "Sampling temperature for every AI request, 0-2 (default: 0.3, agent steps 0)" do |v|
+      noir_options["ai_temperature"] = YAML::Any.new(v)
+    end
+    parser.on "--ai-seed N", "Sampling seed, sent where the provider supports one" do |v|
+      noir_options["ai_seed"] = YAML::Any.new(v)
     end
     parser.on "--ai-agent", "Enable agentic AI workflow (iterative tool-calling loop)" do
       noir_options["ai_agent"] = YAML::Any.new(true)
+    end
+    parser.on "--ai-dry-run", "List the files, request count and token estimate the AI analyzer would send, and send nothing" do
+      noir_options["ai_dry_run"] = YAML::Any.new(true)
+    end
+    parser.on "--ai-include-sensitive", "Also send credentials files (.env, *.pem, id_rsa, ...) to the AI provider" do
+      noir_options["ai_include_sensitive"] = YAML::Any.new(true)
     end
     parser.on "--ai-agent-max-steps N", "Max steps for AI agent loop (default: 20)" do |v|
       validated = positive_int_or_die!("--ai-agent-max-steps", v)
       noir_options["ai_agent_max_steps"] = YAML::Any.new(validated)
     end
+    parser.on "--ai-no-optimize", "Skip the LLM rewrite pass over AI-found endpoints" do
+      noir_options["ai_no_optimize"] = YAML::Any.new(true)
+    end
     parser.on "--ai-native-tools-allowlist LIST", "Provider allowlist for native tool-calling (comma-separated; repeatable; default: #{LLM::NativeToolCalling.default_allowlist_csv})" do |v|
       # Accumulate so users can layer providers across multiple
       # `--ai-native-tools-allowlist` invocations the same way they
-      # do for `--use-taggers`, `--exclude-techs`, etc. The default
-      # is the global CSV — once any user value arrives, replace
-      # the default before extending. Without this guard, the user's
-      # first `--ai-native-tools-allowlist openai` would land
-      # appended onto the default list ("openai,anthropic,gemini,…
-      # ,openai") instead of replacing it.
-      append_to_csv_option(noir_options, "ai_native_tools_allowlist", v, reset_if: LLM::NativeToolCalling.default_allowlist_csv)
+      # do for `--use-taggers`, `--exclude-techs`, etc. The first
+      # occurrence replaces the default CSV (`reset_seen`) instead of
+      # appending onto it.
+      append_to_csv_option(noir_options, "ai_native_tools_allowlist", v, reset_if: LLM::NativeToolCalling.default_allowlist_csv, reset_seen: csv_reset_seen)
+    end
+    parser.on "--ai-scope SCOPE", "Files sent to the AI analyzer (all|unmatched, default: all)" do |v|
+      unless v.in?(%w[all unmatched])
+        STDERR.puts "ERROR: Invalid --ai-scope '#{v}'. Valid: all, unmatched".colorize(:red)
+        exit(1)
+      end
+      noir_options["ai_scope"] = YAML::Any.new(v)
     end
     parser.on "--ai-max-token N", "Max tokens per request" do |v|
       validated = positive_int_or_die!("--ai-max-token", v)
       noir_options["ai_max_token"] = YAML::Any.new(validated)
     end
+    parser.on "--ai-stream", "Stream endpoint-extraction replies (OpenAI-compatible providers), so idle-timeout proxies keep the connection" do
+      noir_options["ai_stream"] = YAML::Any.new(true)
+    end
+    parser.on "--ai-max-requests N", "Max AI HTTP requests per run, retries included (default: unlimited)" do |v|
+      validated = positive_int_or_die!("--ai-max-requests", v)
+      noir_options["ai_max_requests"] = YAML::Any.new(validated)
+    end
 
     parser.separator "\n DIFF:".colorize(:blue)
     parser.on "--diff-path PATH", "Old code version for diff" do |v|
       noir_options["diff"] = YAML::Any.new(v)
+    end
+    parser.on "--diff-ref REF", "Git revision to diff against (e.g. main, HEAD~1)" do |v|
+      noir_options["diff_ref"] = YAML::Any.new(v)
+    end
+    parser.on "--fail-on LIST", "Exit 3 when the diff has: added, removed, changed, auth-removed (comma-separated; repeatable)" do |v|
+      append_to_csv_option(noir_options, "fail_on", v, reset_seen: csv_reset_seen)
     end
 
     # Three flags act at different stages of the tech pipeline:
@@ -470,14 +694,20 @@ def run_options_parser
     # masked only when auto-detection happened to re-surface the
     # dropped tech. `--only-techs` and `--exclude-techs` had the
     # same shape.
+    #
+    # All three pass `reset_seen` so accumulation stops at the config
+    # file: the first CLI occurrence replaces whatever the file set.
+    # `--only-techs` is where that mattered most — appending *widened*
+    # the restriction the flag exists to impose, and left no way to
+    # override a config-file `only_techs` from the command line at all.
     parser.on "-t LIST", "--techs rails,php", "Add these techs to the analyzer set (in addition to auto-detected ones; repeatable)" do |v|
-      append_to_csv_option(noir_options, "techs", v)
+      append_to_csv_option(noir_options, "techs", v, reset_seen: csv_reset_seen)
     end
     parser.on "--only-techs LIST", "Restrict auto-detection to these tech detectors (repeatable)" do |v|
-      append_to_csv_option(noir_options, "only_techs", v)
+      append_to_csv_option(noir_options, "only_techs", v, reset_seen: csv_reset_seen)
     end
     parser.on "--exclude-techs LIST", "Drop these techs from the final result after detection (repeatable)" do |v|
-      append_to_csv_option(noir_options, "exclude_techs", v)
+      append_to_csv_option(noir_options, "exclude_techs", v, reset_seen: csv_reset_seen)
     end
 
     parser.separator "\n CONFIG:".colorize(:blue)
@@ -487,7 +717,7 @@ def run_options_parser
     parser.on "--concurrency N", "Concurrency level" do |v|
       value = v.to_i?
       if value.nil? || value < 1
-        STDERR.puts "ERROR: Invalid concurrency '#{v}'. Concurrency must be an integer greater than or equal to 1.".colorize(:yellow)
+        STDERR.puts "ERROR: Invalid concurrency '#{v}'. Concurrency must be an integer greater than or equal to 1.".colorize(:red)
         exit(1)
       end
 
@@ -519,19 +749,19 @@ def run_options_parser
     parser.invalid_option do |flag|
       case flag
       when "--ollama", "--ollama-model"
-        STDERR.puts "ERROR: #{flag} was removed in v1.0.".colorize(:yellow)
+        STDERR.puts "ERROR: #{flag} was removed in v1.0.".colorize(:red)
         STDERR.puts "       Use --ai-provider ollama [--ai-model NAME] instead."
         STDERR.puts "       Example: noir scan ./app --ai-provider ollama --ai-model llama3"
         exit(1)
       else
-        STDERR.puts "ERROR: #{flag} is not a valid option.".colorize(:yellow)
+        STDERR.puts "ERROR: #{flag} is not a valid option.".colorize(:red)
         STDERR.puts parser
         exit(1)
       end
     end
 
     parser.missing_option do |flag|
-      STDERR.puts "ERROR: #{flag} requires an argument.".colorize(:yellow)
+      STDERR.puts "ERROR: #{flag} requires an argument.".colorize(:red)
       exit(1)
     end
   end
@@ -539,83 +769,35 @@ def run_options_parser
   # Anything left in `extracted_args` after OptionParser ran is a
   # positional argument. In v1 scan, those are treated as additional
   # base paths so `noir scan ./a ./b` mirrors `-b ./a -b ./b`.
-  extracted_args.each do |positional|
-    next if positional.starts_with?("-")
-    append_to_yaml_array(noir_options, "base", positional)
+  #
+  # Everything after `--` joins them verbatim — no `starts_with?("-")` skip,
+  # because that is exactly what the marker exists to switch off.
+  (extracted_args.reject(&.starts_with?("-")) + end_of_options).each do |positional|
+    append_to_yaml_array(noir_options, "base", Noir::PathScope.normalize_base(positional), csv_reset_seen)
   end
+
+  # Validate the *effective* feature list, not just the one `--ai-context`
+  # supplied. `ai_context_features` is also a config-file key, and that path
+  # never reached the flag's validator: an unknown bucket name there matched
+  # nothing in `parse_feature_set`, so every bucket was filtered out and the
+  # run emitted `ai_context: null` for every endpoint with no diagnostic.
+  # A CLI flag has already normalized its own value by this point, so this
+  # only ever fires on a config-file value that survived unchanged.
+  Noir::OptionsParsing.validate_ai_context_features(
+    noir_options["ai_context_features"]?.try(&.to_s) || "",
+    "config ai_context_features"
+  )
+
+  # `NO_COLOR` has to land in `options["color"]`, not just in
+  # `Colorize.enabled`. The router already sets `Colorize.enabled = false`
+  # for it, but every colored string noir emits goes through
+  # `.colorize(...).toggle(@is_color)`, and `Colorize::Object#toggle`
+  # *overwrites* the global flag the object captured at construction. So
+  # `NO_COLOR=1 noir scan ./app` kept printing escape codes while
+  # `--no-color` worked, contradicting `noir help` ("NO_COLOR env also
+  # works"). Applied after the parser so it outranks a config file, and
+  # last so an explicit `--no-color` can only agree with it.
+  noir_options["color"] = YAML::Any.new(false) if Noir::CLI.no_color_env?
 
   noir_options
-end
-
-# Split `TYPE=VAL` (or bare `VAL` → all-types) and route it into the
-# right slot in noir_options. `--pvalue` may be repeated to set multiple
-# values across different types.
-PVALUE_TYPE_KEYS = {
-  "any"    => "set_pvalue",
-  "all"    => "set_pvalue",
-  "header" => "set_pvalue_header",
-  "cookie" => "set_pvalue_cookie",
-  "query"  => "set_pvalue_query",
-  "form"   => "set_pvalue_form",
-  "json"   => "set_pvalue_json",
-  "path"   => "set_pvalue_path",
-}
-
-def handle_pvalue(noir_options : Hash(String, YAML::Any), spec : String)
-  type, value = if idx = spec.index('=')
-                  {spec[0...idx], spec[(idx + 1)..]}
-                else
-                  {"any", spec}
-                end
-
-  key = PVALUE_TYPE_KEYS[type]?
-  if key.nil?
-    STDERR.puts "ERROR: --pvalue: unknown type '#{type}'. Valid: #{PVALUE_TYPE_KEYS.keys.join(", ")}.".colorize(:yellow)
-    exit(1)
-  end
-
-  append_to_yaml_array(noir_options, key, value)
-end
-
-INCLUDE_TARGETS = {
-  "path"   => "include_path",
-  "techs"  => "include_techs",
-  "callee" => "include_callee",
-}
-
-def apply_include_list(noir_options : Hash(String, YAML::Any), spec : String)
-  spec.split(',').reject(&.empty?).each do |raw|
-    target = raw.strip.downcase
-    key = INCLUDE_TARGETS[target]?
-    if key.nil?
-      STDERR.puts "ERROR: --include: unknown target '#{raw.strip}'. Valid: #{INCLUDE_TARGETS.keys.join(", ")}.".colorize(:yellow)
-      exit(1)
-    end
-    noir_options[key] = YAML::Any.new(true)
-  end
-end
-
-# `--ai-context[=LIST]` always enables AI context output. An empty LIST
-# means "every category"; a non-empty LIST narrows the output to the
-# named categories.
-AI_CONTEXT_VALID_FEATURES = {"guards", "sinks", "validators", "signals", "callee", "all"}
-
-def apply_ai_context(noir_options : Hash(String, YAML::Any), spec : String)
-  noir_options["ai_context"] = YAML::Any.new(true)
-
-  raw_list = spec.split(',').map(&.strip).reject(&.empty?)
-  list = raw_list.map(&.downcase)
-  return if list.empty? || list.includes?("all")
-
-  list.each_with_index do |feature, idx|
-    unless AI_CONTEXT_VALID_FEATURES.includes?(feature)
-      # Echo the user's original spelling (not the lowercased form)
-      # in the error so a typo like `Sinkz` reads as the user wrote
-      # it.
-      STDERR.puts "ERROR: --ai-context: unknown feature '#{raw_list[idx]}'. Valid: #{(AI_CONTEXT_VALID_FEATURES.to_a - ["all"]).join(", ")}.".colorize(:yellow)
-      exit(1)
-    end
-  end
-
-  noir_options["ai_context_features"] = YAML::Any.new(list.join(","))
 end

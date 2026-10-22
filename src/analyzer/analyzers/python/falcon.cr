@@ -1,7 +1,10 @@
 require "../../engines/python_engine"
+require "../../../utils/top_level_split"
 
 module Analyzer::Python
   class Falcon < PythonEngine
+    analyzer_for "python_falcon"
+
     # Reference: https://falcon.readthedocs.io/en/stable/user/tutorial.html
     #
     # Falcon is a class-based REST framework. Routes are registered with
@@ -27,20 +30,12 @@ module Analyzer::Python
       "on_options" => "OPTIONS",
     }
 
-    @keyword_regex_cache = Hash(::String, Regex).new
     @media_var_regex_cache = Hash(::String, Tuple(Regex, Regex)).new
 
     def analyze
-      python_files = get_files_by_extension(".py")
-      base_paths.each do |current_base_path|
-        python_files.each do |path|
-          next unless path_under_root?(path, current_base_path)
-          next if path.includes?("/site-packages/")
-          next if python_test_path?(path)
-          @logger.debug "Analyzing #{path}"
-
-          analyze_file(path, current_base_path)
-        end
+      parallel_python_sources do |path, current_base_path|
+        @logger.debug "Analyzing #{path}"
+        analyze_file(path, current_base_path)
       end
 
       result
@@ -292,77 +287,16 @@ module Analyzer::Python
       return unless call_match
 
       args = split_python_arguments(call_match[1])
-      extract_keyword_string(args, "prefix") || args[0]?.try { |arg| extract_python_string(arg) }
+      extract_python_keyword_string(args, "prefix") || args[0]?.try { |arg| Helper.extract_python_string(arg) }
     end
 
+    # Delegates to the shared splitter. `Rules::SHARED_DEPTH_RAW`, not
+    # `Rules::PYTHON`: this loop counted `(`, `[` and `{` on ONE depth
+    # counter, which is observable on the unbalanced fragments the route
+    # regexes actually hand it — `"[a)b, c"` splits here, but would not
+    # under per-kind counters.
     private def split_python_arguments(args : ::String) : Array(::String)
-      parts = [] of ::String
-      current = String::Builder.new
-      depth = 0
-      in_quote : Char? = nil
-      escaped = false
-
-      args.each_char do |ch|
-        if in_quote
-          current << ch
-          if escaped
-            escaped = false
-          elsif ch == '\\'
-            escaped = true
-          elsif ch == in_quote
-            in_quote = nil
-          end
-          next
-        end
-
-        case ch
-        when '\'', '"'
-          in_quote = ch
-          current << ch
-        when '(', '[', '{'
-          depth += 1
-          current << ch
-        when ')', ']', '}'
-          depth -= 1 if depth > 0
-          current << ch
-        when ','
-          if depth == 0
-            parts << current.to_s
-            current = String::Builder.new
-          else
-            current << ch
-          end
-        else
-          current << ch
-        end
-      end
-
-      parts << current.to_s
-      parts
-    end
-
-    # Memoized per keyword — the keyword set is tiny (`prefix`) but this
-    # runs per argument of every static-route declaration (an interpolated
-    # regex literal recompiles PCRE2 on every evaluation).
-    private def keyword_string_regex(keyword : ::String) : Regex
-      @keyword_regex_cache[keyword] ||= /^\s*#{Regex.escape(keyword)}\s*=\s*(.+)$/m
-    end
-
-    private def extract_keyword_string(args : Array(::String), keyword : ::String) : ::String?
-      keyword_re = keyword_string_regex(keyword)
-      args.each do |arg|
-        keyword_match = arg.match(keyword_re)
-        next unless keyword_match
-
-        return extract_python_string(keyword_match[1])
-      end
-
-      nil
-    end
-
-    private def extract_python_string(expression : ::String) : ::String?
-      string_match = expression.strip.match(/^[rf]?['"]([^'"]*)['"]/)
-      string_match ? string_match[1] : nil
+      Noir::TopLevelSplit.split(args, ',', Noir::TopLevelSplit::Rules::SHARED_DEPTH_RAW)
     end
 
     private def static_route_path(route_path : ::String) : ::String
@@ -403,10 +337,7 @@ module Analyzer::Python
 
       record = ->(name : ::String, type : ::String) do
         key = "#{type}:#{name}"
-        unless seen.includes?(key)
-          params << Param.new(name, "", type)
-          seen << key
-        end
+        params << Param.new(name, "", type) if seen.add?(key)
       end
 
       body_lines.each do |line|

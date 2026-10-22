@@ -54,7 +54,7 @@ FunctionalTester.new("fixtures/javascript/remix_callees/", {
   "include_callee" => YAML::Any.new(true),
 }).perform_tests
 
-describe "Remix callee source attribution" do
+describe "Remix callee source attribution", tags: "functional" do
   before_each do
     CodeLocator.instance.clear_all
   end

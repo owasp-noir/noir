@@ -16,12 +16,19 @@ module Analyzer::Rust
   # pieces locally and we don't need to thread state through the
   # chain.
   class Gotham < RustEngine
-    HTTP_VERBS = Set{"get", "post", "put", "delete", "patch", "head", "options"}
+    analyzer_for "rust_gotham"
+
+    # Only files inside a crate that depends on `gotham`. See
+    # `RustEngine#crate_dependencies` — without this every Rust analyzer
+    # sees every `.rs` file in the scan.
+    protected def crate_dependencies : Array(String)
+      ["gotham"]
+    end
 
     def analyze_file(path : String) : Array(Endpoint)
       endpoints = [] of Endpoint
       source = read_file_content(path)
-      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
+      include_callee = callees_needed?
 
       # Gotham's framework repo parks route registrations inside
       # `#[cfg(test)] mod tests { ... build_router(|route| { route.get(...) }) }`
@@ -55,7 +62,7 @@ module Analyzer::Rust
       if Noir::TreeSitter.node_type(node) == "call_expression" && !RustEngine.inside_test_region?(node, test_regions)
         if scope = decode_scope(node, source)
           seg, block = scope
-          walk_with_prefix(block, source, join_paths(prefix, seg), path, function_index, include_callee, endpoints, test_regions)
+          walk_with_prefix(block, source, absolute_scope_join(prefix, seg), path, function_index, include_callee, endpoints, test_regions)
           return
         end
         if block = decode_pipeline_closure(node, source)
@@ -64,13 +71,13 @@ module Analyzer::Rust
         end
         if assoc = decode_associate(node, source)
           assoc_path, closure_body = assoc
-          process_associate(closure_body, source, join_paths(prefix, assoc_path), path, function_index, include_callee, endpoints)
+          process_associate(closure_body, source, absolute_scope_join(prefix, assoc_path), path, function_index, include_callee, endpoints)
           # fall through to the generic child walk so any nested
           # scope/route inside the closure is still visited.
         end
         if route = decode_to_call(node, source)
           route_path, methods, handler_name = route
-          full_path = join_paths(prefix, route_path)
+          full_path = absolute_scope_join(prefix, route_path)
 
           methods.each do |method|
             details = Details.new(PathInfo.new(path, Noir::TreeSitter.node_start_row(node) + 1))
@@ -125,7 +132,7 @@ module Analyzer::Rust
 
     # Body block of the first closure argument in an `arguments` node.
     private def closure_body(args : LibTreeSitter::TSNode) : LibTreeSitter::TSNode?
-      Noir::TreeSitter.each_named_child(args) do |arg|
+      Noir::TreeSitter.each_named_arg(args) do |arg|
         next unless Noir::TreeSitter.node_type(arg) == "closure_expression"
         body = Noir::TreeSitter.field(arg, "body")
         return body if body && Noir::TreeSitter.node_type(body) == "block"
@@ -136,7 +143,7 @@ module Analyzer::Rust
       nil
     end
 
-    private def join_paths(prefix : String, route_path : String) : String
+    private def absolute_scope_join(prefix : String, route_path : String) : String
       return ensure_leading_slash(route_path) if prefix.empty?
       combined = "/#{prefix.strip('/')}/#{route_path.lstrip('/')}".rstrip('/')
       combined.empty? ? "/" : combined
@@ -228,7 +235,7 @@ module Analyzer::Rust
         args = Noir::TreeSitter.field(call, "arguments")
         return unless args
         named = [] of LibTreeSitter::TSNode
-        Noir::TreeSitter.each_named_child(args) { |c| named << c }
+        Noir::TreeSitter.each_named_arg(args) { |c| named << c }
         return if named.size < 2
         methods = parse_method_vec(named[0], source)
         return if methods.empty?
@@ -363,26 +370,10 @@ module Analyzer::Rust
       end
     end
 
-    private def attach_handler_callees(function : LibTreeSitter::TSNode,
-                                       source : String,
-                                       path : String,
-                                       endpoint : Endpoint)
-      body = Noir::TreeSitter.field(function, "body")
-      return unless body
-      entries = Noir::RustCalleeExtractorTS.callees_in_body(body, source, path)
-      attach_rust_callees(endpoint, entries)
-    end
-
-    private def call_function_text(call : LibTreeSitter::TSNode, source : String) : String?
-      fn_node = Noir::TreeSitter.field(call, "function")
-      return unless fn_node
-      Noir::TreeSitter.node_text(fn_node, source)
-    end
-
     private def first_identifier_argument(call : LibTreeSitter::TSNode, source : String) : String?
       args = Noir::TreeSitter.field(call, "arguments")
       return unless args
-      Noir::TreeSitter.each_named_child(args) do |child|
+      Noir::TreeSitter.each_named_arg(args) do |child|
         case Noir::TreeSitter.node_type(child)
         when "identifier"
           return Noir::TreeSitter.node_text(child, source)
@@ -391,42 +382,6 @@ module Analyzer::Rust
         end
       end
       nil
-    end
-
-    private def build_function_index(root : LibTreeSitter::TSNode, source : String) : Hash(String, LibTreeSitter::TSNode)
-      index = {} of String => LibTreeSitter::TSNode
-      walk(root) do |node|
-        next unless Noir::TreeSitter.node_type(node) == "function_item"
-        name_node = Noir::TreeSitter.field(node, "name")
-        next unless name_node
-        name = Noir::TreeSitter.node_text(name_node, source)
-        index[name] = node unless index.has_key?(name)
-      end
-      index
-    end
-
-    private def first_string_literal_text(node : LibTreeSitter::TSNode?, source : String) : String?
-      return unless node
-      result : String? = nil
-      walk(node) do |child|
-        next if result
-        if Noir::TreeSitter.node_type(child) == "string_literal"
-          Noir::TreeSitter.each_named_child(child) do |grand|
-            if Noir::TreeSitter.node_type(grand) == "string_content"
-              result = Noir::TreeSitter.node_text(grand, source)
-              break
-            end
-          end
-        end
-      end
-      result
-    end
-
-    private def walk(node : LibTreeSitter::TSNode, &block : LibTreeSitter::TSNode ->)
-      block.call(node)
-      Noir::TreeSitter.each_named_child(node) do |child|
-        walk(child, &block)
-      end
     end
   end
 end

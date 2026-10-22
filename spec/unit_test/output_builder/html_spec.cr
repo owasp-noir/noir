@@ -201,6 +201,7 @@ describe "OutputBuilderHtml" do
       Endpoint.new("/test", "PUT"),
       Endpoint.new("/test", "PATCH"),
       Endpoint.new("/test", "DELETE"),
+      Endpoint.new("/test", "QUERY"),
       Endpoint.new("/test", "OPTIONS"),
     ]
 
@@ -213,7 +214,27 @@ describe "OutputBuilderHtml" do
     output.should contain("method-put")
     output.should contain("method-patch")
     output.should contain("method-delete")
+    output.should contain("method-query")
     output.should contain("method-default")
+  end
+
+  it "assigns a dedicated chip class to QUERY endpoints" do
+    options = {
+      "debug"   => YAML::Any.new(false),
+      "verbose" => YAML::Any.new(false),
+      "color"   => YAML::Any.new(false),
+      "nolog"   => YAML::Any.new(false),
+      "output"  => YAML::Any.new(""),
+    }
+    builder = OutputBuilderHtml.new(options)
+    builder.io = IO::Memory.new
+
+    builder.print([Endpoint.new("/test", "QUERY")])
+    output = builder.io.to_s
+
+    output.should contain("method-query")
+    output.should_not contain("class=\"method-badge method-default\"")
+    output.should contain("chip-query")
   end
 
   it "handles all parameter types" do
@@ -491,5 +512,399 @@ describe "OutputBuilderHtml" do
     output.should contain("data-severity=\"medium\"")
     output.should contain("data-filter-severity=\"high\"")
     output.should contain("data-filter-severity=\"medium\"")
+  end
+
+  it "renders the card/table view toggle with persistence hooks" do
+    options = {
+      "debug"   => YAML::Any.new(false),
+      "verbose" => YAML::Any.new(false),
+      "color"   => YAML::Any.new(false),
+      "nolog"   => YAML::Any.new(false),
+      "output"  => YAML::Any.new(""),
+    }
+    builder = OutputBuilderHtml.new(options)
+    builder.io = IO::Memory.new
+
+    builder.print([Endpoint.new("/test", "GET")])
+    output = builder.io.to_s
+
+    output.should contain("data-action=\"set-view\"")
+    output.should contain("data-view-mode=\"cards\"")
+    output.should contain("data-view-mode=\"table\"")
+    output.should contain("table-head")
+    output.should contain("noir-view")
+  end
+
+  it "renders copy buttons with a precomputed curl command" do
+    options = {
+      "debug"   => YAML::Any.new(false),
+      "verbose" => YAML::Any.new(false),
+      "color"   => YAML::Any.new(false),
+      "nolog"   => YAML::Any.new(false),
+      "output"  => YAML::Any.new(""),
+    }
+    builder = OutputBuilderHtml.new(options)
+    builder.io = IO::Memory.new
+
+    endpoint = Endpoint.new("/api/users", "POST")
+    endpoint.push_param(Param.new("username", "test", "json"))
+
+    builder.print([endpoint])
+    output = builder.io.to_s
+
+    output.should contain("data-action=\"copy-url\"")
+    output.should contain("data-action=\"copy-curl\"")
+    output.should contain("data-url=\"/api/users\"")
+    output.should contain("curl -i -g -X &#39;POST&#39; &#39;/api/users&#39;")
+    output.should contain("Content-Type: application/json")
+  end
+
+  it "keeps multipart text fields out of curl's file syntax in copy-as-curl" do
+    options = {
+      "debug"   => YAML::Any.new(false),
+      "verbose" => YAML::Any.new(false),
+      "color"   => YAML::Any.new(false),
+      "nolog"   => YAML::Any.new(false),
+      "output"  => YAML::Any.new(""),
+    }
+    builder = OutputBuilderHtml.new(options)
+    builder.io = IO::Memory.new
+
+    endpoint = Endpoint.new("/upload.php", "POST")
+    endpoint.push_param(Param.new("name", "@/etc/passwd", "form"))
+    endpoint.push_param(Param.new("avatar", "", "file"))
+
+    builder.print([endpoint])
+    output = builder.io.to_s
+
+    output.should contain("--form-string &#39;name=@/etc/passwd&#39;")
+    output.should contain("-F &#39;avatar=@avatar&#39;")
+    output.should_not contain("-F &#39;name=")
+  end
+
+  it "expands synthetic ANY methods inside the curl attribute" do
+    options = {
+      "debug"   => YAML::Any.new(false),
+      "verbose" => YAML::Any.new(false),
+      "color"   => YAML::Any.new(false),
+      "nolog"   => YAML::Any.new(false),
+      "output"  => YAML::Any.new(""),
+    }
+    builder = OutputBuilderHtml.new(options)
+    builder.io = IO::Memory.new
+
+    builder.print([Endpoint.new("/wildcard", "ANY")])
+    output = builder.io.to_s
+
+    output.should contain("curl -i -g -X &#39;GET&#39; &#39;/wildcard&#39;")
+    output.should contain("curl -i -g -X &#39;DELETE&#39; &#39;/wildcard&#39;")
+    output.should_not contain("curl -i -g -X &#39;ANY&#39;")
+  end
+
+  it "omits copy-as-curl for non-HTTP endpoints" do
+    options = {
+      "debug"   => YAML::Any.new(false),
+      "verbose" => YAML::Any.new(false),
+      "color"   => YAML::Any.new(false),
+      "nolog"   => YAML::Any.new(false),
+      "output"  => YAML::Any.new(""),
+    }
+    builder = OutputBuilderHtml.new(options)
+    builder.io = IO::Memory.new
+
+    endpoint = Endpoint.new("myapp://profile", "GET")
+    endpoint.protocol = "mobile-scheme"
+
+    builder.print([endpoint])
+    output = builder.io.to_s
+
+    # The copy-curl selector always appears in the shared script, so assert
+    # on markup-only forms: the button title and the data attribute.
+    output.should contain("title=\"Copy URL\"")
+    output.should_not contain("title=\"Copy as curl\"")
+    output.should_not contain("data-curl=")
+  end
+
+  it "groups endpoints by first path segment with counts" do
+    options = {
+      "debug"   => YAML::Any.new(false),
+      "verbose" => YAML::Any.new(false),
+      "color"   => YAML::Any.new(false),
+      "nolog"   => YAML::Any.new(false),
+      "output"  => YAML::Any.new(""),
+    }
+    builder = OutputBuilderHtml.new(options)
+    builder.io = IO::Memory.new
+
+    builder.print([
+      Endpoint.new("/users/1", "GET"),
+      Endpoint.new("/users/2", "POST"),
+      Endpoint.new("/admin", "GET"),
+    ])
+    output = builder.io.to_s
+
+    output.should contain("data-group-key=\"/users\"")
+    output.should contain("data-group-key=\"/admin\"")
+    output.should contain("class=\"group-header\"")
+    output.should contain("data-group-count")
+    output.should contain("data-action=\"toggle-group-collapse\"")
+    output.should contain("class=\"chip group-toggle\"")
+    output.should contain("noir-group")
+  end
+
+  it "skips grouping when all endpoints share one group" do
+    options = {
+      "debug"   => YAML::Any.new(false),
+      "verbose" => YAML::Any.new(false),
+      "color"   => YAML::Any.new(false),
+      "nolog"   => YAML::Any.new(false),
+      "output"  => YAML::Any.new(""),
+    }
+    builder = OutputBuilderHtml.new(options)
+    builder.io = IO::Memory.new
+
+    builder.print([Endpoint.new("/users/a", "GET"), Endpoint.new("/users/b", "POST")])
+    output = builder.io.to_s
+
+    # CSS/JS always reference group selectors; assert on markup-only forms.
+    output.should_not contain("class=\"group-header\"")
+    output.should_not contain("class=\"chip group-toggle\"")
+  end
+
+  it "skips grouping when every endpoint is its own group" do
+    options = {
+      "debug"   => YAML::Any.new(false),
+      "verbose" => YAML::Any.new(false),
+      "color"   => YAML::Any.new(false),
+      "nolog"   => YAML::Any.new(false),
+      "output"  => YAML::Any.new(""),
+    }
+    builder = OutputBuilderHtml.new(options)
+    builder.io = IO::Memory.new
+
+    builder.print([
+      Endpoint.new("/a", "GET"),
+      Endpoint.new("/b", "GET"),
+      Endpoint.new("/c", "GET"),
+    ])
+    output = builder.io.to_s
+
+    output.should_not contain("class=\"group-header\"")
+    output.should_not contain("class=\"chip group-toggle\"")
+  end
+
+  it "groups absolute URLs by authority and first path segment" do
+    options = {
+      "debug"   => YAML::Any.new(false),
+      "verbose" => YAML::Any.new(false),
+      "color"   => YAML::Any.new(false),
+      "nolog"   => YAML::Any.new(false),
+      "output"  => YAML::Any.new(""),
+    }
+    builder = OutputBuilderHtml.new(options)
+    builder.io = IO::Memory.new
+
+    builder.print([
+      Endpoint.new("https://api.example.com/v1/users", "GET"),
+      Endpoint.new("https://api.example.com/v1/orders", "GET"),
+      Endpoint.new("/local/x", "GET"),
+    ])
+    output = builder.io.to_s
+
+    output.should contain("data-group-key=\"https://api.example.com/v1\"")
+    output.should contain("data-group-key=\"/local\"")
+  end
+
+  it "renders semantic method and severity styles" do
+    options = {
+      "debug"   => YAML::Any.new(false),
+      "verbose" => YAML::Any.new(false),
+      "color"   => YAML::Any.new(false),
+      "nolog"   => YAML::Any.new(false),
+      "output"  => YAML::Any.new(""),
+    }
+    builder = OutputBuilderHtml.new(options)
+    builder.io = IO::Memory.new
+
+    high = YAML.parse <<-YAML
+      id: high-rule
+      info:
+        name: "High Rule"
+        author: ["a"]
+        severity: "high"
+        description: "d"
+        reference: ["https://example.com"]
+      matchers-condition: "or"
+      matchers:
+        - type: "regex"
+          patterns: ["x"]
+          condition: "or"
+      category: "secret"
+      techs: ["*"]
+      YAML
+    info = YAML.parse <<-YAML
+      id: info-rule
+      info:
+        name: "Info Rule"
+        author: ["a"]
+        severity: "info"
+        description: "d"
+        reference: ["https://example.com"]
+      matchers-condition: "or"
+      matchers:
+        - type: "regex"
+          patterns: ["x"]
+          condition: "or"
+      category: "misconfig"
+      techs: ["*"]
+      YAML
+
+    results = [
+      PassiveScanResult.new(PassiveScan.new(high), "a.cr", 1, "x"),
+      PassiveScanResult.new(PassiveScan.new(info), "b.cr", 2, "y"),
+    ]
+
+    builder.print([Endpoint.new("/test", "GET")], results)
+    output = builder.io.to_s
+
+    output.should contain("--m-get")
+    output.should contain("--m-delete")
+    output.should contain("--sev-medium")
+    output.should contain("severity-high")
+    output.should contain("severity-info")
+  end
+
+  # Only the *failure* path of the custom-template feature was covered (an
+  # unreadable template falling back to the built-in report). A bare `rescue`
+  # in `apply_template` swallows every exception, so a regression in the
+  # substitution itself would have silently degraded to the default report with
+  # nothing to notice it — the documented `report-template.html` feature had no
+  # test that it works at all.
+  it "substitutes every placeholder in a custom report template" do
+    options = {
+      "debug"   => YAML::Any.new(false),
+      "verbose" => YAML::Any.new(false),
+      "color"   => YAML::Any.new(false),
+      "nolog"   => YAML::Any.new(false),
+      "output"  => YAML::Any.new(""),
+    }
+    builder = OutputBuilderHtml.new(options)
+    builder.io = IO::Memory.new
+
+    temp_dir = File.join(Dir.tempdir, "noir_tpl_#{Process.pid}_#{Time.utc.to_unix_ms}")
+    Dir.mkdir_p(temp_dir)
+    ENV["NOIR_HOME"] = temp_dir
+
+    begin
+      File.write(File.join(temp_dir, "report-template.html"), <<-TPL)
+        <!DOCTYPE html><html><head><%= noir_head %></head><body>
+        MARK-HEADER<%= noir_header %>
+        MARK-SUMMARY<%= noir_summary %>
+        MARK-ENDPOINTS<%= noir_endpoints %>
+        MARK-PASSIVE<%= noir_passive_scans %>
+        MARK-FOOTER<%= noir_footer %>
+        <%= noir_scripts %></body></html>
+        TPL
+
+      endpoint = Endpoint.new("/api/users", "GET")
+      endpoint.push_param(Param.new("page", "1", "query"))
+      scan_yaml = YAML.parse <<-YAML
+        id: tpl-rule
+        info:
+          name: "Test finding"
+          author: ["a"]
+          severity: "high"
+          description: "A finding rendered through the custom template"
+          reference: ["https://example.com"]
+        matchers-condition: "or"
+        matchers:
+          - type: "regex"
+            patterns: ["x"]
+            condition: "or"
+        category: "secret"
+        techs: ["*"]
+        YAML
+      finding = PassiveScanResult.new(PassiveScan.new(scan_yaml), "app/config.rb", 4, "SECRET=abc")
+
+      builder.print([endpoint], [finding])
+      output = builder.io.to_s
+
+      # The template's own markup survives — this is the custom layout, not the
+      # built-in one silently substituted for it.
+      output.should contain("MARK-HEADER")
+      output.should contain("MARK-SUMMARY")
+      output.should contain("MARK-ENDPOINTS")
+      output.should contain("MARK-PASSIVE")
+      output.should contain("MARK-FOOTER")
+
+      # Every placeholder is consumed; a leftover tag would ship to the browser.
+      output.should_not match(/<%=\s*noir_\w+\s*%>/)
+
+      # And each section actually rendered its content.
+      output.should contain("data-endpoint")
+      output.should contain("/api/users")
+      output.should contain("page")
+      output.should contain("Test finding")
+      output.should contain("noir-theme")
+    ensure
+      FileUtils.rm_rf(temp_dir)
+      ENV.delete("NOIR_HOME")
+    end
+  end
+
+  it "renders probed status code badges when status_codes flag is enabled" do
+    options = {
+      "debug"         => YAML::Any.new(false),
+      "verbose"       => YAML::Any.new(false),
+      "color"         => YAML::Any.new(false),
+      "nolog"         => YAML::Any.new(false),
+      "output"        => YAML::Any.new(""),
+      "status_codes"  => YAML::Any.new(true),
+      "exclude_codes" => YAML::Any.new(""),
+    }
+    builder = OutputBuilderHtml.new(options)
+    builder.io = IO::Memory.new
+
+    ep_200 = Endpoint.new("/ok", "GET")
+    ep_200.details.status_code = 200
+
+    ep_404 = Endpoint.new("/missing", "GET")
+    ep_404.details.status_code = 404
+
+    ep_500 = Endpoint.new("/crash", "POST")
+    ep_500.details.status_code = 500
+
+    ep_err = Endpoint.new("/down", "GET")
+    # nil status_code represents probe error
+
+    builder.print([ep_200, ep_404, ep_500, ep_err])
+    output = builder.io.to_s
+
+    output.should contain("<span class=\"status-badge status-2xx\">200</span>")
+    output.should contain("<span class=\"status-badge status-4xx\">404</span>")
+    output.should contain("<span class=\"status-badge status-5xx\">500</span>")
+    output.should contain("<span class=\"status-badge status-error\">error</span>")
+  end
+
+  it "does not render status code badges when status probing is disabled" do
+    options = {
+      "debug"         => YAML::Any.new(false),
+      "verbose"       => YAML::Any.new(false),
+      "color"         => YAML::Any.new(false),
+      "nolog"         => YAML::Any.new(false),
+      "output"        => YAML::Any.new(""),
+      "status_codes"  => YAML::Any.new(false),
+      "exclude_codes" => YAML::Any.new(""),
+    }
+    builder = OutputBuilderHtml.new(options)
+    builder.io = IO::Memory.new
+
+    endpoint = Endpoint.new("/test", "GET")
+    endpoint.details.status_code = 200
+
+    builder.print([endpoint])
+    output = builder.io.to_s
+
+    output.should_not contain("<span class=\"status-badge")
   end
 end

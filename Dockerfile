@@ -1,5 +1,5 @@
 ##= BUILDER =##
-FROM crystallang/crystal:1.20.2-alpine AS builder
+FROM crystallang/crystal:1.22.0-alpine AS builder
 WORKDIR /noir
 COPY . .
 
@@ -11,7 +11,7 @@ RUN apk add --no-cache yaml-dev zstd-dev git && \
 # Snapshot the passive-rules repo so the runner stage can ship them
 # pre-baked at `/opt/noir/passive_rules`. `--depth=1` keeps the
 # tarball-sized clone tiny, then we drop `.git` so the runtime image
-# doesn't carry repo metadata it can't use (no git binary downstream).
+# doesn't carry repo metadata it has no use for.
 RUN git clone --depth=1 https://github.com/owasp-noir/noir-passive-rules.git /noir-passive-rules && \
     rm -rf /noir-passive-rules/.git
 
@@ -20,7 +20,7 @@ FROM debian:13-slim
 
 # Standard OCI labels
 LABEL org.opencontainers.image.title="OWASP Noir"
-LABEL org.opencontainers.image.version="1.1.0"
+LABEL org.opencontainers.image.version="1.4.0"
 LABEL org.opencontainers.image.description="Hunt every Endpoint in your code, expose Shadow APIs, map the Attack Surface."
 LABEL org.opencontainers.image.authors="Noir Team (@hahwul, @ksg97031)"
 LABEL org.opencontainers.image.source=https://github.com/owasp-noir/noir
@@ -40,8 +40,10 @@ LABEL "com.github.actions.color"="purple"
 #     `endpoints` / `passive_results` action outputs.
 #   * ca-certificates — needed when noir or downstream tooling needs to
 #     hit HTTPS endpoints from inside the container.
+#   * git — `--diff-ref` checks the compared revision out of the mounted
+#     repository with git plumbing.
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends jq ca-certificates && \
+    apt-get install -y --no-install-recommends jq ca-certificates git && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /noir/bin/noir /usr/local/bin/noir

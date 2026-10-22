@@ -1,0 +1,13 @@
+{
+  "name": "react-router-flat-app",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@react-router/node": "^7.9.0",
+    "react-router": "^7.9.0"
+  },
+  "devDependencies": {
+    "@react-router/dev": "^7.9.0",
+    "@react-router/fs-routes": "^7.9.0"
+  }
+}

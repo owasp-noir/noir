@@ -1,0 +1,8 @@
+{
+  "name": "acme/my-test-plugin",
+  "description": "A fixture WordPress plugin for noir functional tests.",
+  "type": "wordpress-plugin",
+  "require": {
+    "php": ">=7.4"
+  }
+}

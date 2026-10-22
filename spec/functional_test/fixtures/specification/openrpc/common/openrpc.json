@@ -1,0 +1,79 @@
+{
+  "openrpc": "1.2.6",
+  "info": {
+    "title": "Example Node RPC",
+    "version": "1.0.0"
+  },
+  "servers": [
+    {
+      "name": "default",
+      "url": "/rpc"
+    }
+  ],
+  "methods": [
+    {
+      "name": "eth_getBalance",
+      "summary": "Returns the balance of an account",
+      "paramStructure": "by-position",
+      "params": [
+        {
+          "name": "address",
+          "required": true,
+          "schema": { "type": "string" }
+        },
+        {
+          "$ref": "#/components/contentDescriptors/BlockNumber"
+        }
+      ],
+      "result": {
+        "name": "Balance",
+        "schema": { "$ref": "#/components/schemas/Quantity" }
+      }
+    },
+    {
+      "name": "eth_blockNumber",
+      "summary": "Returns the number of the most recent block",
+      "params": [],
+      "result": {
+        "name": "BlockNumber",
+        "schema": { "$ref": "#/components/schemas/Quantity" }
+      }
+    },
+    {
+      "name": "session_login",
+      "summary": "Authenticates an operator session",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "username",
+          "required": true,
+          "schema": { "type": "string" }
+        },
+        {
+          "name": "password",
+          "required": true,
+          "schema": { "type": "string" }
+        }
+      ],
+      "result": {
+        "name": "SessionToken",
+        "schema": { "type": "string" }
+      }
+    }
+  ],
+  "components": {
+    "contentDescriptors": {
+      "BlockNumber": {
+        "name": "blockNumber",
+        "required": false,
+        "schema": { "$ref": "#/components/schemas/Quantity" }
+      }
+    },
+    "schemas": {
+      "Quantity": {
+        "type": "string",
+        "pattern": "^0x[0-9a-f]+$"
+      }
+    }
+  }
+}

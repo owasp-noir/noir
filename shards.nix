@@ -6,8 +6,8 @@
   };
   "ameba" = {
     url = "https://github.com/crystal-ameba/ameba.git";
-    rev = "9f217cd4cb673145be81135b763da3b79de083a4";
-    sha256 = "12asj3r4b9v338vdhfhhasghxx803hnlfdq4vagxldc9vygnkxmg";
+    rev = "v1.7.0";
+    sha256 = "0blfyizcajyrgbfxhiwnvf1xmz3wfx6kpf9jf8x7daxihany4r9z";
   };
   "crest" = {
     url = "https://github.com/mamantoha/crest.git";

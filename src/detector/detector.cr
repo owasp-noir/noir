@@ -4,16 +4,14 @@ require "../models/passive_scan"
 require "../techs/techs.cr" # Added to define NoirTechs
 require "../passive_scan/detect.cr"
 require "wait_group"
+require "../utils/exclude_path"
 require "../utils/media_filter"
+require "../utils/text_file"
+require "../utils/read_pool"
+require "../utils/dir_listing"
 require "yaml"
-
-macro define_detectors(detectors)
-  {% for detector, index in detectors %}
-    instance = Detector::{{ detector }}.new(options)
-    instance.set_name
-    detector_list << instance
-  {% end %}
-end
+require "../models/locator_keys"
+require "../models/skipped_files"
 
 # Reference-typed atomic Boolean. Wrapping `Atomic(Int8)` in a
 # class keeps the underlying byte addressable through an Array
@@ -32,356 +30,441 @@ class AtomicFlag
   end
 end
 
-DETECTOR_IGNORED_DIR_NAMES = Set{
-  # Source control / IDE / agent state
-  ".git", ".idea", ".vscode", ".claude",
-  # Language-specific dependency / build caches
-  "node_modules", "vendor", "__pycache__", ".venv", "venv",
-  ".pytest_cache", ".tox", ".gradle", ".bundle", ".dart_tool",
-  ".cargo", ".terraform",
-  # Zig build outputs / fetched-dependency cache. Vendored deps under
-  # `.zig-cache` carry their own `@import("httpz")` etc. and would
-  # otherwise make every Zig project look like it uses every framework.
-  ".zig-cache", "zig-cache", ".zig-out", "zig-out",
-  # Common build / dist / cache outputs
-  "dist", "build", "target", "out", "tmp", ".cache",
-  ".next", ".nuxt", ".svelte-kit", ".turbo", ".parcel-cache",
-  ".serverless", ".expo",
-  # Test coverage / reports
-  "coverage", ".coverage",
-  # iOS / macOS noise
-  "Pods", "__MACOSX",
-}
+# Detection-pass internals: the ignore lists, the Android source-set
+# resolver, and the `applicable?` memo that keeps the per-file walk off the
+# O(detectors) path.
+#
+# These were seven top-level `def`s and seven SCREAMING constants, each
+# hand-prefixed `detector_` / `DETECTOR_` — a namespace spelled out by
+# convention because there was no module to put them in. `ANDROID_SOURCE_SUBDIRS`
+# and `ANDROID_EMBEDDED_SERVER_MARKER` did not even get the prefix, and were
+# sitting in the global namespace under names generic enough to collide.
+#
+# The two phase entry points (`build_detector_list`, `detect_techs`) stay
+# top-level: they are the detection pass's public surface, called from
+# `NoirRunner` and the specs.
+module Noir::Detection
+  extend self
 
-DETECTOR_IGNORED_DIR_SUFFIXES = Set{
-  # Xcode asset catalogs. They contain images plus many Contents.json
-  # metadata files; none are source/spec files for route detection, and
-  # large iOS apps can carry hundreds of them.
-  ".xcassets",
-}
+  IGNORED_DIR_NAMES = Set{
+    # Source control / IDE / agent state
+    ".git", ".idea", ".vscode", ".claude",
+    # Language-specific dependency / build caches
+    "node_modules", "__pycache__", ".venv", "venv",
+    ".pytest_cache", ".tox", ".gradle", ".bundle", ".dart_tool",
+    ".cargo", ".terraform",
+    # Yarn Berry: the committed yarn binary (`releases/yarn-4.x.cjs`, a
+    # 3 MB bundle whose embedded libraries read as Feathers/Express
+    # routes), plus `cache/`, `unplugged/` and `sdks/`.
+    ".yarn",
+    # Zig build outputs / fetched-dependency cache. Vendored deps under
+    # `.zig-cache` carry their own `@import("httpz")` etc. and would
+    # otherwise make every Zig project look like it uses every framework.
+    ".zig-cache", "zig-cache", ".zig-out", "zig-out",
+    # Common build / dist / cache outputs
+    ".cache",
+    ".next", ".nuxt", ".svelte-kit", ".turbo", ".parcel-cache",
+    ".serverless", ".expo",
+    # Deploy-tool staging copies of the app plus its installed
+    # dependencies (`sam build`, `cdk synth`, `vercel build`, Netlify,
+    # Nitro/Nuxt `.output`, `wrangler dev`). Scanning them reports every
+    # route twice and every bundled library's routes once.
+    ".aws-sam", "cdk.out", ".vercel", ".netlify", ".output", ".wrangler",
+    # Test coverage / reports
+    ".coverage",
+    # iOS / macOS noise
+    "Pods", "__MACOSX",
+  }
 
-ANDROID_SOURCE_SUBDIRS = Set{
-  "aidl",
-  "assets",
-  "cpp",
-  "java",
-  "jni",
-  "kotlin",
-  "res",
-}
+  # Names that are build output or a dependency cache only when they sit
+  # next to the project manifest that produces them (`vendor/` beside
+  # `composer.json` / `go.mod` / `Gemfile`, `target/` beside `pom.xml`,
+  # `build/` beside `build.gradle`). Anywhere else they are ordinary
+  # source directories — an Express `routes/vendor/` module or a Java
+  # `com.acme.build` package — and pruning them by bare name dropped
+  # their endpoints with `"errors": []`.
+  MANIFEST_SCOPED_DIR_NAMES = Set{"vendor", "dist", "build", "target", "out", "tmp", "coverage"}
 
-MOBILE_DETECTOR_NAMES = Set{
-  "android",
-  "ios",
-  "well_known_applinks",
-}
+  # Mix fetches every dependency's source into `deps/` and compiles into
+  # `_build/`. Scanning them reports Plug/Phoenix's own docs and generator
+  # templates as routes, and their `defmacro get`/`scope` shadow the app's
+  # router calls. Only next to `mix.exs`: elsewhere `deps/` is an ordinary
+  # directory name.
+  MIX_SCOPED_DIR_NAMES = MANIFEST_SCOPED_DIR_NAMES + Set{"deps", "_build"}
 
-# Strong server-routing constructs. A `.kt` / `.java` file that sits
-# inside an Android app's source set is normally scoped to mobile
-# detectors only (an incidental `import ...SpringApplication` must not
-# flag the project as a server). But an Android app can legitimately
-# *embed* an on-device HTTP server — e.g. plain-app runs a local Ktor
-# web server whose routes live under `app/src/main/java/...`. When a
-# file carries one of these markers it is a real server, so the
-# Ktor / http4k / Spring detectors are allowed to run on it. Kept as a
-# single precompiled constant — recompiling it per file would recreate
-# the PCRE2 program on every read.
-ANDROID_EMBEDDED_SERVER_MARKER = /io\.ktor\.server\.|embeddedServer|\brouting\s*\{|\bfun\s+Route\.|org\.http4k\.routing|@RestController|@RequestMapping|@(?:Get|Post|Put|Delete|Patch)Mapping|\bRouterFunction\b/
+  # The build-output subset, also pruned next to a `src/` directory or a
+  # `tsconfig.json`: a Gradle subproject configured from the root
+  # `subprojects {}` block has no build file of its own, and a TypeScript
+  # package's manifest often sits one level above its stale `dist/`.
+  BUILD_OUTPUT_DIR_NAMES = Set{"dist", "build", "target", "out"}
+  NO_DIR_NAMES           = Set(String).new
 
-def detector_android_source_prefixes_for_manifest(manifest_path : String) : Array(String)
-  prefixes = [] of String
-  manifest_dir = File.dirname(manifest_path)
-  manifest_dir_parts = manifest_dir.split(File::SEPARATOR)
-  src_index = manifest_dir_parts.rindex("src")
+  BUILD_MANIFESTS = Set{
+    "package.json", "composer.json", "go.mod", "Gemfile", "pom.xml",
+    "build.gradle", "build.gradle.kts", "settings.gradle", "settings.gradle.kts",
+    "build.sbt", "build.xml", "Cargo.toml", "shard.yml", "mix.exs", "pubspec.yaml",
+    "Package.swift", "setup.py", "setup.cfg", "pyproject.toml", "requirements.txt",
+    "Pipfile", "deno.json", "deno.jsonc", "build.zig", "CMakeLists.txt",
+    "meson.build", "Makefile", "project.clj", "deps.edn", "stack.yaml",
+    "rebar.config", "gleam.toml", "cpanfile", "Makefile.PL", "dune-project",
+  }
 
-  source_set_root = if src_index && src_index == manifest_dir_parts.size - 2
-                      manifest_dir
-                    end
+  # Vendored-library directories (Google/Chromium and CMake convention): a
+  # bundled Duktape debugger UI under `third_party/` reads as the project's own
+  # Express routes. Only the underscore/digit-prefixed spellings: `third-party/`
+  # and `thirdparty` name first-party integration code and URL segments.
+  #
+  # The name alone is not evidence: a Flask `app/third_party/routes.py`, a
+  # Next.js `pages/api/third_party/callback.ts` or an Express
+  # `routes/third_party/webhooks.js` serves real routes. They are pruned only
+  # when the nearest manifest at or above their parent says the tree is native
+  # source (`native_source_root?`).
+  VENDORED_DIR_NAMES = Set{"third_party", "3rdparty"}
 
-  if source_set_root
-    ANDROID_SOURCE_SUBDIRS.each do |subdir|
-      prefixes << File.join(source_set_root, subdir) + File::SEPARATOR
+  # Build files that make a tree C/C++-style source with vendored libraries,
+  # and weaker hints (submodules, Chromium's DEPS) that only count when no
+  # language manifest sits beside them.
+  NATIVE_BUILD_MANIFESTS = Set{
+    "CMakeLists.txt", "meson.build", "BUILD.bazel", "WORKSPACE", "WORKSPACE.bazel",
+    "MODULE.bazel", "BUILD.gn", "configure.ac", "SConstruct",
+  }
+  VENDORING_HINTS = Set{".gitmodules", "DEPS"}
+
+  # Language-app manifests: `BUILD_MANIFESTS` less the build files that are
+  # just as common beside C/C++ trees (a bare `Makefile` says nothing).
+  APP_MANIFESTS = BUILD_MANIFESTS - Set{"CMakeLists.txt", "meson.build", "Makefile"}
+
+  IGNORED_DIR_SUFFIXES = Set{
+    # Xcode asset catalogs. They contain images plus many Contents.json
+    # metadata files; none are source/spec files for route detection, and
+    # large iOS apps can carry hundreds of them.
+    ".xcassets",
+  }
+
+  ANDROID_SOURCE_SUBDIRS = Set{
+    "aidl",
+    "assets",
+    "cpp",
+    "java",
+    "jni",
+    "kotlin",
+    "res",
+  }
+
+  MOBILE_DETECTOR_NAMES = Set{
+    "android",
+    "ios",
+    "well_known_applinks",
+  }
+
+  # Strong server-routing constructs. A `.kt` / `.java` file that sits
+  # inside an Android app's source set is normally scoped to mobile
+  # detectors only (an incidental `import ...SpringApplication` must not
+  # flag the project as a server). But an Android app can legitimately
+  # *embed* an on-device HTTP server — e.g. plain-app runs a local Ktor
+  # web server whose routes live under `app/src/main/java/...`. When a
+  # file carries one of these markers it is a real server, so the
+  # Ktor / http4k / Spring detectors are allowed to run on it. Kept as a
+  # single precompiled constant — recompiling it per file would recreate
+  # the PCRE2 program on every read.
+  ANDROID_EMBEDDED_SERVER_MARKER = /io\.ktor\.server\.|embeddedServer|\brouting\s*\{|\bfun\s+Route\.|org\.http4k\.routing|@RestController|@RequestMapping|@(?:Get|Post|Put|Delete|Patch)Mapping|\bRouterFunction\b/
+
+  def android_source_prefixes_for_manifest(manifest_path : String) : Array(String)
+    prefixes = [] of String
+    manifest_dir = File.dirname(manifest_path)
+    manifest_dir_parts = manifest_dir.split(File::SEPARATOR)
+    src_index = manifest_dir_parts.rindex("src")
+
+    source_set_root = if src_index && src_index == manifest_dir_parts.size - 2
+                        manifest_dir
+                      end
+
+    if source_set_root
+      ANDROID_SOURCE_SUBDIRS.each do |subdir|
+        prefixes << File.join(source_set_root, subdir) + File::SEPARATOR
+      end
+    else
+      ANDROID_SOURCE_SUBDIRS.each do |subdir|
+        prefixes << File.join(manifest_dir, subdir) + File::SEPARATOR
+        prefixes << File.join(manifest_dir, "src", subdir) + File::SEPARATOR
+        prefixes << File.join(manifest_dir, "src", "main", subdir) + File::SEPARATOR
+      end
     end
-  else
-    ANDROID_SOURCE_SUBDIRS.each do |subdir|
-      prefixes << File.join(manifest_dir, subdir) + File::SEPARATOR
-      prefixes << File.join(manifest_dir, "src", subdir) + File::SEPARATOR
-      prefixes << File.join(manifest_dir, "src", "main", subdir) + File::SEPARATOR
+
+    prefixes
+  end
+
+  def add_android_source_prefixes_from_dir(dir : String, prefixes : Array(String))
+    manifest_path = File.join(dir, "AndroidManifest.xml")
+    begin
+      # `File.file?` raises (not false) on EACCES, and `File.exists?` is true
+      # for a directory named AndroidManifest.xml, whose read raises EISDIR.
+      return unless File.file?(manifest_path)
+      content = Noir::TextFile.read(manifest_path)
+      return unless content.includes?("<manifest")
+    rescue IO::Error
+      return
+    end
+
+    android_source_prefixes_for_manifest(manifest_path).each do |prefix|
+      prefixes << prefix unless prefixes.includes?(prefix)
     end
   end
 
-  prefixes
-end
-
-def detector_add_android_source_prefixes_from_dir(dir : String, prefixes : Array(String))
-  manifest_path = File.join(dir, "AndroidManifest.xml")
-  return unless File.exists?(manifest_path)
-
-  begin
-    content = File.read(manifest_path, encoding: "utf-8", invalid: :skip)
-    return unless content.includes?("<manifest")
-  rescue File::NotFoundError | File::AccessDeniedError
-    return
+  def android_source_file?(path : String, prefixes : Array(String)) : Bool
+    prefixes.any? { |prefix| path.starts_with?(prefix) }
   end
 
-  detector_android_source_prefixes_for_manifest(manifest_path).each do |prefix|
-    prefixes << prefix unless prefixes.includes?(prefix)
+  def mobile_detector?(name : String) : Bool
+    MOBILE_DETECTOR_NAMES.includes?(name)
   end
+
+  # Whether a directory entry names a subtree the walk prunes on purpose
+  # (dependency cache, build output next to its manifest, Crystal's `lib/`
+  # next to a `shard.yml`).
+  #
+  # Extracted from the directory branch of the walk so the symlink branch can
+  # ask the same question: a symlink is not a directory to `File.info?` with
+  # `follow_symlinks: false`, so a `node_modules` or `.venv` symlink lands
+  # there instead — and reporting *that* as lost coverage would fire on
+  # every pnpm workspace, which is the opposite of the point.
+  #
+  # `scoped_names` is what `scoped_dir_names` returned for the parent;
+  # `native_root` is what `native_source_root?` returned for it.
+  def ignored_dir_entry?(entry : String, full_path : String, dir_has_shard : Bool, scoped_names : Set(String), native_root : Bool) : Bool
+    return true if IGNORED_DIR_NAMES.includes?(entry)
+    return true if native_root && VENDORED_DIR_NAMES.includes?(entry)
+    return true if IGNORED_DIR_SUFFIXES.any? { |suffix| entry.ends_with?(suffix) }
+    return true if scoped_names.includes?(entry)
+    return true if entry == "vendor" && dependency_vendor_dir?(full_path)
+    entry == "lib" && dir_has_shard
+  end
+
+  # Which `MANIFEST_SCOPED_DIR_NAMES` a directory's listing licenses the
+  # walk to prune among its children.
+  def scoped_dir_names(entries : Array(Noir::DirListing::Entry)) : Set(String)
+    source_root = false
+    manifest = false
+    entries.each do |listed|
+      return MIX_SCOPED_DIR_NAMES if listed.name == "mix.exs"
+      manifest ||= BUILD_MANIFESTS.includes?(listed.name)
+      source_root ||= listed.name == "tsconfig.json" || (listed.name == "src" && !!listed.info.try(&.directory?))
+    end
+    return MANIFEST_SCOPED_DIR_NAMES if manifest
+    source_root ? BUILD_OUTPUT_DIR_NAMES : NO_DIR_NAMES
+  end
+
+  # Whether `third_party/` and `3rdparty/` children of a directory are vendored
+  # libraries: its listing names a native build file (true), a language
+  # manifest with no native build file beside it (false), or `inherited` (the
+  # nearest ancestor's answer) when it names neither. `.gitmodules` / `DEPS`
+  # count as native only without a language manifest, so a first-party app
+  # that merely uses submodules keeps its `third_party/` routes.
+  def native_source_root?(entries : Array(Noir::DirListing::Entry), inherited : Bool) : Bool
+    hint = app = false
+    entries.each do |listed|
+      name = listed.name
+      return true if NATIVE_BUILD_MANIFESTS.includes?(name)
+      hint ||= VENDORING_HINTS.includes?(name)
+      app ||= APP_MANIFESTS.includes?(name)
+    end
+    return false if app
+    hint || inherited
+  end
+
+  # True when the symlink at `path` resolves inside one of the scan bases
+  # (`real_bases` are realpaths), so the walk covers its target anyway.
+  # A dangling link, or one that leaves every base, is lost coverage — and
+  # so is one into a directory the walk may prune (`vendor/`, `deps/`,
+  # `node_modules/`): over-reporting a link there beats hiding a lost tree.
+  def symlink_target_scanned?(path : String, real_bases : Array(String)) : Bool
+    target = File.realpath(path)
+    real_bases.any? do |base|
+      next false unless Noir::PathScope.under_normalized_root?(target, base)
+      target[base.size..].split('/').none? { |part| IGNORED_DIR_NAMES.includes?(part) || MIX_SCOPED_DIR_NAMES.includes?(part) || VENDORED_DIR_NAMES.includes?(part) }
+    end
+  rescue File::Error
+    false
+  end
+
+  # A Composer or `go mod vendor` tree, recognised by its own contents
+  # wherever it sits (a nested app whose `composer.json` lives elsewhere).
+  def dependency_vendor_dir?(path : String) : Bool
+    File.exists?(File.join(path, "autoload.php")) ||
+      File.exists?(File.join(path, "composer")) ||
+      File.exists?(File.join(path, "modules.txt"))
+  end
+
+  # Filenames that detectors match by exact basename (often with path
+  # constraints like "must sit at the project root"). These must not share
+  # an extension-only cache bucket — e.g. `vercel.json` is not "any .json".
+  SPECIAL_BASENAMES = Set{
+    "package.json", "tsconfig.json", "composer.json", "composer.lock",
+    "vercel.json", "now.json", "netlify.toml", "wrangler.toml",
+    "Gemfile", "Gemfile.lock", "Package.swift", "Cargo.toml", "go.mod",
+    "mix.exs", "pubspec.yaml", "pubspec.lock", "shard.yml", "shard.lock",
+    "build.sbt", "pom.xml", "AndroidManifest.xml", "config.toml",
+    "rebar.config", "erlang.mk", "project.clj", "deps.edn", "stack.yaml",
+    "package.yaml", "gleam.toml", "manifest.toml", "paket.dependencies",
+    "Caddyfile", "Dockerfile", "Makefile", "Rakefile", "serverless.yml",
+    "serverless.yaml", "app.yaml", "openapi.yaml", "openapi.json",
+    "swagger.json", "swagger.yaml",
+  }
+
+  # Paths that embed directory segments real detectors gate on
+  # (`/grails-app/`, `/migrations/`, `/server/api/`, …). Used only to
+  # classify path-sensitive detectors — not as production file samples.
+  PATH_SEGMENT_PROBES = [
+    # Extension-free path under grails-app: only matches via the directory
+    # gate (a bare `Foo.groovy` basename is true for other reasons).
+    "proj/grails-app/conf/application",
+    "proj/supabase/migrations/001.sql",
+    "proj/migrations/001.sql",
+    "proj/supabase/config.toml",
+    "proj/server/api/hello.js",
+    "proj/server/routes/hello.js",
+    "proj/pages/api/hello.js",
+    "proj/app/api/hello/route.ts",
+    "proj/routes/+server.ts",
+    "proj/routes/index.dart",
+    "proj/directus/snapshots/snap.json",
+    "proj/wp-content/plugins/x.php",
+    "proj/metadata/databases/tables.yaml",
+    "proj/Magento/module.xml",
+  ]
+
+  # Whether `applicable?` depends on more than the basename (root
+  # placement, directory segments, multi-hop path layout). Those
+  # detectors must always see the real path in the hot loop.
+  def path_sensitive?(detector : Detector) : Bool
+    # Explicit declaration wins. The probe sweep below is a safety net,
+    # not the contract: it is fail-open by construction, so a detector
+    # whose directory gate happens to agree with its basename gate on
+    # every probe would otherwise be memoized as basename-only and lose
+    # the path check entirely.
+    return true if detector.path_sensitive?
+
+    sample_suffixes = [
+      ".java", ".js", ".ts", ".tsx", ".rb", ".py", ".go", ".json", ".yml",
+      ".yaml", ".xml", ".cs", ".kt", ".php", ".cr", ".rs", ".ex", ".swift",
+      ".scala", ".dart", ".groovy", ".pl", ".clj", ".hs", ".lua", ".sql",
+      ".toml", ".bru", ".http", ".sbt", ".gradle", ".aspx", ".fs",
+    ]
+    # Bare names: catch "must sit at project root" checks (Vercel,
+    # Package.swift, …) where `name` is true but `a/b/c/name` is false.
+    basenames = SPECIAL_BASENAMES.to_a + sample_suffixes.map { |ext| "file#{ext}" }
+    basenames.any? do |name|
+      detector.applicable?("a/b/c/#{name}") != detector.applicable?(name)
+    end || PATH_SEGMENT_PROBES.any? do |probe|
+      # Directory-segment gates: same basename, different path → different
+      # answer (Supabase `/migrations/`, Grails `/grails-app/`, …).
+      detector.applicable?(probe) != detector.applicable?(File.basename(probe))
+    end
+  end
+
+  # Build a lookup that turns a path into the list of detector indices
+  # whose `applicable?` returns true — without re-walking every detector
+  # on every file. Most detectors only inspect extension / basename, so
+  # their answers are memoized by basename. Detectors that look at path
+  # segments or root placement are classified as path-sensitive and
+  # always evaluated against the real path.
+  def build_applicable_lookup(detectors : Array(Detector)) : Proc(String, Array(Int32))
+    path_sensitive = [] of Int32
+    detectors.each_with_index do |detector, idx|
+      path_sensitive << idx if path_sensitive?(detector)
+    end
+
+    path_sensitive_set = Set(Int32).new(path_sensitive)
+    # Key by basename, not bare extension: many detectors gate on
+    # basename substrings (`*deploy*.yml`, `*sites*.yaml`) or exact
+    # names (`package.json`). An extension-only key would probe
+    # `file.yml` and drop every basename-qualified match.
+    cache = {} of String => Array(Int32)
+
+    ->(path : String) do
+      base = File.basename(path)
+
+      cached = cache[base]?
+      unless cached
+        idxs = [] of Int32
+        detectors.each_with_index do |detector, idx|
+          next if path_sensitive_set.includes?(idx)
+          idxs << idx if detector.applicable?(base)
+        end
+        cache[base] = idxs
+        cached = idxs
+      end
+
+      # Always dup: callers `reject!` android-scope / JSON-spec candidates
+      # in place and must not corrupt the memoized array.
+      result = cached.dup
+      path_sensitive.each do |idx|
+        result << idx if detectors[idx].applicable?(path)
+      end
+      result
+    end
+  end
+
+  # The complete detector registry.
+  #
+  # Derived from the classes themselves rather than a hand-maintained list.
+  # Every detector under the `Detector::` namespace is registered by existing;
+  # there is no second place to add it to and therefore no way to write a
+  # detector that silently never runs. That was a real failure mode — it is
+  # how `zap_sites_tree` ended up detectable but unnameable (see
+  # `spec/unit_test/techs/registry_integrity_spec.cr`, which still checks the
+  # remaining hand-maintained lists it cannot yet be derived from).
+  #
+  # The `Detector::` filter is the production contract. `crystal spec`
+  # compiles the suite into one binary, so `all_subclasses` also sees the
+  # throwaway subclasses `spec/unit_test/detector/detector_for_spec.cr`
+  # defines to exercise the base class; those must never join a real scan.
+  #
+  # Sorted by class name so the order is a property of the source, not of
+  # whatever sequence `require "./detectors/**"` happened to produce. Order is
+  # not load-bearing — `techs` is accumulated concurrently across worker
+  # fibers and the optimizer sorts endpoints before output — but a stable
+  # order keeps debug logs and `detector_list` indices comparable between
+  # runs.
+
+  # One file the detect walk kept, on its way from the walker to the
+  # sequencer (see `detect_techs`). `reply` is nil for a file whose content
+  # nothing will inspect: it is registered by path only, never read.
+  record PendingFile,
+    path : String,
+    detector_indices : Array(Int32),
+    android_source_file : Bool,
+    reply : Channel(Noir::ReadPool::Outcome)?
+
+  # How far the walker may run ahead of the sequencer. Every pending file
+  # past the head holds its content in memory until the sequencer reaches
+  # it, and the content cache keeps most of them anyway.
+  READ_WINDOW = 64
 end
 
-def detector_android_source_file?(path : String, prefixes : Array(String)) : Bool
-  prefixes.any? { |prefix| path.starts_with?(prefix) }
-end
+def build_detector_list(options : Hash(String, YAML::Any)) : Array(Detector)
+  detector_list = [] of Detector
 
-def detector_mobile_detector?(name : String) : Bool
-  MOBILE_DETECTOR_NAMES.includes?(name)
+  {% for detector in Detector.all_subclasses.select { |sub| !sub.abstract? && sub.name.starts_with?("Detector::") }.sort_by(&.name) %}
+    detector_list << {{ detector }}.new(options)
+  {% end %}
+
+  detector_list
 end
 
 def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), passive_scans : Array(PassiveScan), logger : NoirLogger)
   techs = [] of String
   passive_result = [] of PassiveScanResult
-  detector_list = [] of Detector
+  detector_list = build_detector_list(options)
   mutex = Mutex.new
 
-  # Define detectors
-  define_detectors([
-    Cpp::Drogon,
-    Cpp::Cli,
-    Cpp::Crow,
-    Cpp::Httplib,
-    Cpp::Oatpp,
-    Clojure::Cli,
-    Clojure::Compojure,
-    Clojure::Pedestal,
-    Clojure::Reitit,
-    Clojure::Ring,
-    CSharp::Cli,
-    CSharp::AspNetMvc,
-    CSharp::AspNetCoreMvc,
-    CSharp::AspNetCoreMinimalApi,
-    CSharp::Carter,
-    CSharp::FastEndpoints,
-    CSharp::HttpListener,
-    Crystal::Cli,
-    Crystal::Amber,
-    Crystal::Grip,
-    Crystal::Kemal,
-    Crystal::Lucky,
-    Crystal::Marten,
-    Crystal::Http,
-    Dart::Cli,
-    Dart::Alfred,
-    Dart::Angel3,
-    Dart::GetServer,
-    Dart::DartFrog,
-    Dart::Http,
-    Dart::Serverpod,
-    Dart::Shelf,
-    Elixir::Cli,
-    Elixir::Bandit,
-    Elixir::Phoenix,
-    Elixir::Plug,
-    Fsharp::Giraffe,
-    Perl::Cli,
-    Perl::Catalyst,
-    Perl::Dancer2,
-    Perl::Mojolicious,
-    Go::Beego,
-    Go::Cli,
-    Go::Echo,
-    Go::Fasthttp,
-    Go::Fiber,
-    Go::Gin,
-    Go::Hertz,
-    Go::Iris,
-    Go::GoRestful,
-    Go::Chi,
-    Go::GoZero,
-    Go::Goyave,
-    Go::Gf,
-    Go::Http,
-    Go::Httprouter,
-    Go::Huma,
-    Go::Mux,
-    Go::Pocketbase,
-    Go::ConnectRpc,
-    Groovy::Cli,
-    Groovy::Grails,
-    Haskell::Cli,
-    Haskell::Scotty,
-    Haskell::Servant,
-    Haskell::Yesod,
-    Specification::AsyncApi,
-    Specification::Envoy,
-    Specification::Grpc,
-    Specification::Har,
-    Java::Cli,
-    Java::Armeria,
-    Java::Dropwizard,
-    Java::HttpServer,
-    Java::Javalin,
-    Java::JaxRs,
-    Java::Jsp,
-    Java::Micronaut,
-    Java::Quarkus,
-    Java::Spark,
-    Java::Spring,
-    Java::Struts2,
-    Lua::Cli,
-    Lua::Lapis,
-    Lua::Lor,
-    Mobile::Android,
-    Mobile::Ios,
-    Mobile::WellKnown,
-    Java::Vertx,
-    Java::Wicket,
-    Javascript::Adonisjs,
-    Javascript::Cli,
-    Javascript::Apollo,
-    Javascript::Astro,
-    Javascript::Elysia,
-    Javascript::Express,
-    Javascript::Fastify,
-    Javascript::Fresh,
-    Javascript::GraphqlYoga,
-    Javascript::Hapi,
-    Javascript::Hono,
-    Javascript::Http,
-    Javascript::Koa,
-    Javascript::Nestjs,
-    Javascript::Nextjs,
-    Javascript::Nitro,
-    Javascript::Nuxtjs,
-    Javascript::Remix,
-    Javascript::Restify,
-    Javascript::Sveltekit,
-    Kotlin::Cli,
-    Kotlin::Http4k,
-    Kotlin::Spring,
-    Kotlin::Ktor,
-    Specification::Bruno,
-    Specification::Burp,
-    Specification::Caddy,
-    Specification::Caido,
-    Specification::GraphqlSdl,
-    Specification::ApacheHttpd,
-    Specification::Apisix,
-    Specification::AwsCdk,
-    Specification::AwsCloudformation,
-    Specification::AzureFunctions,
-    Specification::CloudflareWrangler,
-    Specification::K8sGatewayApi,
-    Specification::K8sIngress,
-    Specification::Kong,
-    Specification::Oas2,
-    Specification::Oas3,
-    Specification::Insomnia,
-    Specification::IstioVirtualservice,
-    Specification::Kamal,
-    Specification::Mitmproxy,
-    Specification::Netlify,
-    Specification::Nginx,
-    Specification::OData,
-    Specification::Postman,
-    Specification::RAML,
-    Specification::ServerlessFramework,
-    Specification::Smithy,
-    Specification::Traefik,
-    Specification::TypeSpec,
-    Specification::Vercel,
-    Specification::WSDL,
-    Specification::ZapSitesTree,
-    Php::Php,
-    Php::Cli,
-    Php::CakePHP,
-    Php::CodeIgniter,
-    Php::Hyperf,
-    Php::Laminas,
-    Php::Laravel,
-    Php::Lumen,
-    Php::Mautic,
-    Php::Slim,
-    Php::Symfony,
-    Php::ThinkPHP,
-    Php::Yii,
-    Python::Aiohttp,
-    Python::Cli,
-    Python::Django,
-    Python::FastAPI,
-    Python::Bottle,
-    Python::Falcon,
-    Python::Flask,
-    Python::Litestar,
-    Python::Pyramid,
-    Python::Quart,
-    Python::Robyn,
-    Python::Sanic,
-    Python::Starlette,
-    Python::Tornado,
-    Python::HttpServer,
-    Ruby::Cli,
-    Ruby::Grape,
-    Ruby::Hanami,
-    Ruby::Rails,
-    Ruby::Roda,
-    Ruby::Sinatra,
-    Ruby::Webrick,
-    Rust::Cli,
-    Rust::Axum,
-    Rust::Rocket,
-    Rust::ActixWeb,
-    Rust::Loco,
-    Rust::Rwf,
-    Rust::Tide,
-    Rust::Warp,
-    Rust::Gotham,
-    Rust::Salvo,
-    Rust::Poem,
-    Scala::Cli,
-    Scala::Akka,
-    Scala::Scalatra,
-    Scala::Play,
-    Scala::Http4s,
-    Scala::ZioHttp,
-    Scala::Tapir,
-    Java::Play,
-    Swift::Cli,
-    Swift::Vapor,
-    Swift::Kitura,
-    Swift::Hummingbird,
-    Typescript::Nestjs,
-    Typescript::TanstackRouter,
-    Typescript::TRPC,
-    Zig::Cli,
-    Zig::Jetzig,
-    Zig::Zap,
-    Zig::Http,
-    Zig::Httpz,
-    Zig::Tokamak,
-  ])
-
-  # Handle --only-techs: filter detector_list to only specified techs
-  only_techs_value = options["only_techs"]?.to_s
-  if only_techs_value.size > 0
-    only_techs_list = only_techs_value.split(",").map do |tech|
-      NoirTechs.similar_to_tech(tech.strip)
-    end.reject(&.empty?)
-
-    if only_techs_list.empty?
-      logger.error "No valid technologies specified in --only-techs. No detectors will be run."
-      detector_list.clear
-    else
-      logger.info "Filtering detectors to: #{only_techs_list.join(", ")}"
-      detector_list.select! do |detector|
-        only_techs_list.includes?(detector.name)
-      end
-      logger.debug "Using #{detector_list.size} detector(s)"
-    end
-  end
-
   # Handle -t/--techs: add techs directly (without detection validation)
-  if options["techs"].to_s.size > 0
-    techs_tmp = options["techs"].to_s.split(",")
+  if !options["techs"].to_s.empty?
+    # Stripped, like `--only-techs` and like the CLI validator: without it
+    # `-t "js_express, python_flask"` resolved `" python_flask"` against the
+    # alias table, found nothing, and added only the first tech — while the
+    # count printed here still claimed two.
+    techs_tmp = options["techs"].to_s.split(",").map(&.strip).reject(&.empty?)
     logger.success "Setting #{techs_tmp.size} techs from command line."
     techs_tmp.each do |tech|
       similar_tech = NoirTechs.similar_to_tech(tech)
@@ -391,6 +474,25 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
         logger.success "Added #{tech} to techs."
         techs << similar_tech
       end
+    end
+  end
+
+  # Handle --only-techs: filter detector_list to only specified techs.
+  # A `-t` tech keeps its detector too: spec detectors register the spec
+  # files their analyzer reads, so dropping one empties that analyzer.
+  only_techs_value = options["only_techs"]?.to_s
+  if !only_techs_value.empty?
+    only_techs_list = NoirTechs.resolve_tech_list(only_techs_value)
+
+    if only_techs_list.empty?
+      logger.error "No valid technologies specified in --only-techs. No detectors will be run."
+      detector_list.clear
+    else
+      logger.info "Filtering detectors to: #{only_techs_list.join(", ")}"
+      detector_list.select! do |detector|
+        only_techs_list.includes?(detector.name) || techs.includes?(detector.name)
+      end
+      logger.debug "Using #{detector_list.size} detector(s)"
     end
   end
 
@@ -412,217 +514,457 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
     "insomnia",
     "oas2",
     "oas3",
+    "openrpc",
     "postman",
   }
-  generic_json_spec_marker = /"(?:openapi|swagger|asyncapi|_postman_id|__export_format|_type|routes|uri|uris|upstream_id|plugins|log|entries|host|method|path|raw|is_tls|port|apps|http|virtual_hosts|domains|AWSTemplateFormatVersion)"|schema\.(?:getpostman|postman)\.com|AWS::Serverless-2016-10-31/
+  generic_json_spec_marker = /"(?:openapi|swagger|asyncapi|openrpc|_postman_id|__export_format|_type|routes|uri|uris|upstream_id|plugins|log|entries|host|method|path|raw|is_tls|port|apps|http|virtual_hosts|domains|AWSTemplateFormatVersion)"|schema\.(?:getpostman|postman)\.com|AWS::Serverless-2016-10-31/
 
   channel = Channel(Tuple(String, String, Array(Int32))).new(Analyzer::DEFAULT_CONTENT_CHANNEL_CAPACITY)
   locator = CodeLocator.instance
   wg = WaitGroup.new
 
-  # Clear detector-populated locator keys before starting. These arrays
-  # are side effects of idempotent? == false mobile/spec detectors, so
-  # they should represent the current detection run only.
-  locator.clear("file_map")
-  locator.clear("android-manifest")
-  locator.clear("android-assetlinks")
-  locator.clear("ios-info-plist")
-  locator.clear("ios-entitlements")
-  locator.clear("ios-aasa")
+  # Detector-written keys accumulate as side effects of `idempotent? == false`
+  # detectors, so they must represent the current run only. This used to name
+  # six keys by hand and miss the other 58 — every specification key survived
+  # into the next scan in the same process.
+  Noir::LocatorKeys.reset(Noir::LocatorKey::Lifecycle::DetectScoped)
 
-  android_source_scope_active = detector_list.any? { |detector| detector_mobile_detector?(detector.name) }
+  # Same lifecycle, for the coverage gaps this walk (and the delivery pass
+  # that follows it) records. A scan of a new codebase begins here, so the
+  # previous one's unreadable files must not be reported against it.
+  Noir::SkippedFiles.clear(Noir::SkippedFiles::Phase::Scan)
+
+  android_source_scope_active = detector_list.any? { |detector| Noir::Detection.mobile_detector?(detector.name) }
   android_source_prefixes = [] of String
+  # Built once before the reader starts. Replaces the per-file
+  # O(detectors) `applicable?` walk with an extension/basename memo
+  # plus a short path-sensitive tail (see Noir::Detection.build_applicable_lookup).
+  applicable_lookup = Noir::Detection.build_applicable_lookup(detector_list)
+
+  # A malformed `--exclude-path` glob makes `File.match?` raise
+  # `File::BadPatternError`. In practice that means an unterminated `[`
+  # character class: the pattern list is comma-separated (so a `{a,b}`
+  # brace group can never arrive intact) and backslashes are folded to
+  # `/` above, which rules out the escape-related raises.
+  #
+  # The raise fires inside the reader fiber below, mid-walk, and only
+  # once traversal actually reaches the malformed part — so `[bad`
+  # raises on the first file while `src/[bad` survives until the walk
+  # descends into `src/`. Left unhandled the fiber died silently: the
+  # walk stopped wherever it was, every remaining file went unscanned,
+  # and noir reported "No technologies detected" with exit 0 — an empty
+  # or partial scan indistinguishable from a genuinely empty codebase.
+  # Capture it here and fail loudly after the WaitGroup instead.
+  exclude_pattern_error : String? = nil
 
   # Thread for reading files and sending their contents to the channel
   wg.add(1)
   spawn do
-    begin
-      skipped_files = 0
-      skipped_content_reads = 0
-      total_files = 0
-      skipped_ignored_dirs = 0
+    skipped_files = 0
+    # Media files the filter keeps out of `file_map`; a static-mount
+    # analyzer still serves them (see `CodeLocator#media_files`).
+    media_files = [] of String
+    skipped_content_reads = 0
+    total_files = 0
+    skipped_ignored_dirs = 0
+    unreadable_files = 0
+    # Directories `Dir.each_child` refused to list, and entries that are
+    # neither a directory nor a regular file (symlinks, FIFOs, sockets,
+    # devices). Both used to leave no trace at any verbosity.
+    unlistable_dirs = 0
+    skipped_entries = 0
+    # Entries `Dir.each_child` named but `File.info?` would not stat.
+    unstattable_entries = 0
 
-      # User-supplied --exclude-path patterns (comma-separated globs).
-      # Patterns containing "/" are matched against the relative path;
-      # patterns without "/" are matched against the basename.
-      # Partition once up front so the per-file loop only walks the two
-      # already-classified lists — no substring check per file.
-      exclude_path_raw = options["exclude_path"]?.to_s
-        .split(",").map(&.strip).reject(&.empty?)
-      path_patterns, basename_patterns = exclude_path_raw.partition(&.includes?('/'))
-      exclude_path_active = !exclude_path_raw.empty?
-      skipped_exclude_path = 0
+    # User-supplied --exclude-path patterns (comma-separated globs),
+    # compiled once. `Noir::ExcludePath` owns what a pattern means; the
+    # analyzers that walk the filesystem themselves apply the same type
+    # through `Analyzer#excluded_path?`, so the two cannot drift into
+    # disagreeing about the option.
+    exclude_path = Noir::ExcludePath.new(options["exclude_path"]?.to_s)
+    skipped_exclude_path = 0
 
-      base_paths.each do |base_path|
-        # Pre-compute base path prefix for fast relative path calculation
-        base_prefix = base_path.ends_with?("/") ? base_path : base_path + "/"
+    # Reads run on `Noir::ReadPool`'s threads; everything done with a file
+    # once it is read happens on the sequencer fiber below, one file at a
+    # time and in walk order. The walk used to read each file inline, on
+    # the thread detection runs on, so every open/read/close stalled the
+    # scan. Keeping the post-read work in walk order is what keeps the
+    # result identical: `register_path` / `register_file` build the file
+    # list analyzers iterate, and some analyzers accumulate first-wins
+    # state across files in that order.
+    read_pool = Noir::ReadPool.new(passive_rules: active_passive_scans)
+    dir_pool = Noir::DirListing::Pool.new
+    # Counted by the sequencer, folded into `skipped_files` once it is done.
+    binary_files = 0
+    pending = Channel(Noir::Detection::PendingFile).new(Noir::Detection::READ_WINDOW)
+    sequencer = WaitGroup.new(1)
 
-        # Iterative DFS. Avoids `Dir.glob("**/**")`, which enumerates every
-        # file under ignored subtrees before any filter runs; on a Node
-        # monorepo with a 100k-entry node_modules this was the dominant
-        # cost of the detect phase.
-        stack = [base_path]
-        until stack.empty?
-          dir = stack.pop
-          # Crystal's vendor convention is `lib/` next to `shard.yml`
-          # (same shape as Node's node_modules / Ruby's vendor/bundle).
-          # The directory name `lib` is too generic to put in the global
-          # ignored set — Rails / Python / many other ecosystems use it
-          # for source. Resolve the ambiguity contextually: skip `lib/`
-          # only when a sibling `shard.yml` is present.
-          dir_has_shard = File.exists?(File.join(dir, "shard.yml"))
-          if android_source_scope_active
-            detector_add_android_source_prefixes_from_dir(dir, android_source_prefixes)
+    spawn(name: "detect-sequencer") do
+      while item = pending.receive?
+        full_path = item.path
+        candidate_detector_indices = item.detector_indices
+        # The walker reads a file with no applicable detector only for the
+        # passive scan; without `-P` it is never read at all.
+        read_for_detection = !candidate_detector_indices.empty? || item.android_source_file
+
+        reply = item.reply
+        if reply.nil?
+          # Keep the path visible to analyzers without paying to
+          # read/cache content that neither detection nor passive
+          # scan will inspect. Analyzer reads still fall back to
+          # a disk read when a file was not cached here.
+          locator.register_path(full_path)
+          next
+        end
+
+        # Per-file read isolation.
+        #
+        # This read used to sit bare inside `Dir.each_child`, and the
+        # nearest rescue is the *directory*-level one below. So one
+        # unreadable file aborted the whole directory listing and every
+        # remaining sibling went unregistered — no detection, no
+        # analysis, no message, exit 0. Measured on a flat 501-file Gin
+        # project: `chmod 000` on a single `.go` file took the scan from
+        # 501 endpoints to 277. Files deleted mid-walk take the same
+        # path (`File::NotFoundError`), which a live repo hits without
+        # anyone doing anything unusual.
+        #
+        # A file we cannot read must cost only itself. That now holds for
+        # any error the read raises, not only `IO::Error`: an exception
+        # escaping here would end the sequencer, and with it the walk.
+        outcome = reply.receive
+        if error = outcome.error
+          logger.debug "Skipping #{full_path}: #{error.message}"
+          unreadable_files += 1
+          Noir::SkippedFiles.record(Noir::SkippedFiles::DETECT_SCOPE, full_path,
+            error.message.presence || error.class.name, phase: Noir::SkippedFiles::Phase::Scan)
+          next
+        end
+        content = outcome.content
+        next if content.nil?
+
+        if outcome.binary
+          binary_reason = "binary content (file is text-extension but bytes look binary)"
+          logger.debug "Skipping #{full_path}: #{binary_reason}"
+          binary_files += 1
+          Noir::SkippedFiles.record(Noir::SkippedFiles::DETECT_SCOPE, full_path, binary_reason,
+            phase: Noir::SkippedFiles::Phase::Scan)
+          next
+        end
+
+        # Passive findings were computed on the read thread; record them in
+        # walk order, logging each matched rule once per file as the rules
+        # themselves used to.
+        unless outcome.passive_results.empty?
+          outcome.passive_results.uniq(&.id).each do |result|
+            logger.sub "├── Passive rule matched: #{result.info.name}"
           end
-          begin
-            Dir.each_child(dir) do |entry|
-              full_path = File.join(dir, entry)
-              info = File.info?(full_path, follow_symlinks: false)
-              next if info.nil?
+          passive_result.concat(outcome.passive_results)
+        end
 
-              if info.directory?
-                # Subtree prune happens here. Entry name (not full path)
-                # so the base-as-node_modules case from #912 is safe.
-                if DETECTOR_IGNORED_DIR_NAMES.includes?(entry) || DETECTOR_IGNORED_DIR_SUFFIXES.any? { |suffix| entry.ends_with?(suffix) }
-                  skipped_ignored_dirs += 1
-                  next
-                end
-                if entry == "lib" && dir_has_shard
-                  skipped_ignored_dirs += 1
-                  next
-                end
-                stack << full_path
-                next
-              end
-
-              # `info` was obtained with follow_symlinks: false, so symlinks
-              # land here as type=symlink and `info.file?` is false — they
-              # are skipped entirely. This is a minor behavior change from
-              # the previous `Dir.glob` implementation, which would have
-              # yielded symlinked regular files for scanning. Skipping them
-              # trades coverage of unusual monorepo layouts for a simpler
-              # cycle guard; revisit if a real project needs the old
-              # behavior. Non-regular files (FIFOs, sockets, devices) are
-              # also dropped here — previously they would reach `File.read`
-              # and either hang or error out.
-              next unless info.file?
-
-              total_files += 1
-
-              if exclude_path_active
-                if basename_patterns.any? { |pat| File.match?(pat, entry) }
-                  skipped_exclude_path += 1
-                  next
-                end
-                if !path_patterns.empty?
-                  rel_path = full_path.starts_with?(base_prefix) ? full_path[base_prefix.size..] : full_path
-                  if path_patterns.any? { |pat| File.match?(pat, rel_path) }
-                    skipped_exclude_path += 1
-                    next
-                  end
-                end
-              end
-
-              if skip_reason = MediaFilter.skip_check(full_path, info: info, sniff_binary: false)
-                logger.debug "Skipping #{full_path}: #{skip_reason}"
-                skipped_files += 1
-                next
-              end
-
-              candidate_detector_indices = [] of Int32
-              detector_list.each_with_index do |detector, idx|
-                candidate_detector_indices << idx if detector.applicable?(full_path)
-              end
-
-              # An Android source-set file is normally narrowed to the
-              # mobile detectors only (see ANDROID_EMBEDDED_SERVER_MARKER /
-              # the Android-source scope spec). The exception — a genuine
-              # embedded on-device server — can only be told apart from an
-              # incidental framework import by reading the file, so defer
-              # the narrowing until after the content read below.
-              android_source_file = detector_android_source_file?(full_path, android_source_prefixes)
-              if android_source_file && candidate_detector_indices.all? { |idx| detector_mobile_detector?(detector_list[idx].name) }
-                # No server detector is even applicable here, so the
-                # marker check cannot change the outcome — keep the
-                # content-free fast path.
-                android_source_file = false
-              end
-
-              if candidate_detector_indices.empty? && active_passive_scans.empty? && !android_source_file
-                # Keep the path visible to analyzers without paying to
-                # read/cache content that neither detection nor passive
-                # scan will inspect. Analyzer reads still fall back to
-                # File.read when a file was not cached here.
-                locator.push("file_map", full_path)
-                skipped_content_reads += 1
-                next
-              end
-
-              content = File.read(full_path, encoding: "utf-8", invalid: :skip)
-              if content.to_slice.includes?(0_u8)
-                logger.debug "Skipping #{full_path}: binary content (file is text-extension but bytes look binary)"
-                skipped_files += 1
-                next
-              end
-
-              # Apply the Android-source narrowing now that content is
-              # available: drop the server-framework detectors unless the
-              # file carries a real server-routing construct (an embedded
-              # on-device server).
-              if android_source_file && !content.matches?(ANDROID_EMBEDDED_SERVER_MARKER)
-                candidate_detector_indices.reject! do |idx|
-                  !detector_mobile_detector?(detector_list[idx].name)
-                end
-                if candidate_detector_indices.empty? && active_passive_scans.empty?
-                  # Nothing left to detect and no passive scan to run.
-                  # register_file already records the path in file_map and
-                  # caches the (already-read) content for the analyzers.
-                  locator.register_file(full_path, content)
-                  next
-                end
-              end
-
-              if full_path.ends_with?(".json") && !content.matches?(generic_json_spec_marker)
-                candidate_detector_indices = candidate_detector_indices.reject do |idx|
-                  generic_json_spec_detector_names.includes?(detector_list[idx].name)
-                end
-              end
-
-              channel.send({full_path, content, candidate_detector_indices})
-              # Register the path in file_map and (budget permitting)
-              # cache the content so analyzers can skip the re-read.
-              locator.register_file(full_path, content)
-            end
-          rescue File::NotFoundError | File::AccessDeniedError
-            # Directory vanished or we can't read it — treat the subtree
-            # as empty and move on.
+        # Apply the Android-source narrowing now that content is
+        # available: drop the server-framework detectors unless the
+        # file carries a real server-routing construct (an embedded
+        # on-device server).
+        if item.android_source_file && !content.matches?(Noir::Detection::ANDROID_EMBEDDED_SERVER_MARKER)
+          candidate_detector_indices.reject! do |idx|
+            !Noir::Detection.mobile_detector?(detector_list[idx].name)
+          end
+          if candidate_detector_indices.empty? && active_passive_scans.empty?
+            # Nothing left to detect and no passive scan to run.
+            # register_file already records the path in file_map and
+            # caches the (already-read) content for the analyzers.
+            locator.register_file(full_path, content)
+            next
           end
         end
-      end
 
-      if skipped_files > 0
-        logger.info "Skipped #{skipped_files} media/large files out of #{total_files} total files"
-      end
-      if skipped_ignored_dirs > 0
-        logger.debug "Pruned #{skipped_ignored_dirs} ignored directory tree(s)"
-      end
-      if skipped_exclude_path > 0
-        logger.info "Skipped #{skipped_exclude_path} files matching --exclude-path patterns"
-      end
-      if skipped_content_reads > 0
-        logger.debug "Avoided content reads for #{skipped_content_reads} file(s) with no applicable detectors"
-      end
+        if full_path.ends_with?(".json") && !content.matches?(generic_json_spec_marker)
+          candidate_detector_indices = candidate_detector_indices.reject do |idx|
+            generic_json_spec_detector_names.includes?(detector_list[idx].name)
+          end
+        end
 
-      stats = locator.content_cache_stats
-      if stats[:budget] > 0
-        cached_mb = (stats[:bytes] / (1024.0 * 1024.0)).round(1)
-        budget_mb = (stats[:budget] / (1024.0 * 1024.0)).round(1)
-        logger.debug "Content cache: #{stats[:files]} files / #{cached_mb} MB (budget #{budget_mb} MB, #{stats[:skipped]} skipped)"
+        channel.send({full_path, content, candidate_detector_indices})
+        # Register the path in file_map and (budget permitting) cache the
+        # content so analyzers can skip the re-read — but only for a file
+        # detection asked for. A file read just for the passive scan stays
+        # uncached, as it is without `-P`: caching every text file of the
+        # tree filled the content budget with files nothing reads again
+        # (gitlab: ~430MB peak without `-P`, ~800MB with it) and crowded
+        # out the files analyzers do re-read.
+        if read_for_detection
+          locator.register_file(full_path, content)
+        else
+          locator.register_path(full_path)
+        end
       end
     ensure
-      channel.close
-      wg.done
+      # A sequencer that died must not leave the walker blocked on a full
+      # `pending`: closing it makes the walker's next send raise instead.
+      pending.close
+      sequencer.done
     end
+
+    # Drain in order: the sequencer finishes every file already walked (the
+    # pool is still reading them), and only then is the pool shut down.
+    # Idempotent, so the `ensure` below can repeat it when the walk raises —
+    # neither fiber may be left waiting on the other.
+    drain_reads = -> do
+      pending.close
+      sequencer.wait
+      read_pool.close
+      dir_pool.close
+    end
+
+    # Overlapping scan bases can reach the same source file more than once.
+    # Check `--exclude-path` per base first, then process each accepted path
+    # once so passive findings and the analyzer file registry stay unique.
+    seen_file_paths = Set(String).new
+    real_bases = base_paths.map { |base| File.realpath(base) rescue Noir::PathScope.normalize_root(base) }
+
+    base_paths.each do |base_path|
+      # Pre-compute base path prefix for fast relative path calculation
+      base_prefix = base_path.ends_with?("/") ? base_path : base_path + "/"
+
+      # Iterative DFS. Avoids `Dir.glob("**/**")`, which enumerates every
+      # file under ignored subtrees before any filter runs; on a Node
+      # monorepo with a 100k-entry node_modules this was the dominant
+      # cost of the detect phase.
+      #
+      # Each directory is listed (entries, their `lstat`, the `shard.yml`
+      # check) on `Noir::DirListing::Pool` from the moment it is pushed, and
+      # consumed here when it is popped; see `Noir::DirListing`.
+      stack = [{base_path, false}]
+      pending_listings = {base_path => dir_pool.submit(base_path)}
+      until stack.empty?
+        dir, inherited_native_root = stack.pop
+        listing = pending_listings.delete(dir).try(&.receive) || Noir::DirListing.list(dir)
+        if (listing_error = listing.error) && !listing_error.is_a?(File::Error)
+          raise listing_error
+        end
+        # Crystal's vendor convention is `lib/` next to `shard.yml`
+        # (same shape as Node's node_modules / Ruby's vendor/bundle).
+        # The directory name `lib` is too generic to put in the global
+        # ignored set — Rails / Python / many other ecosystems use it
+        # for source. Resolve the ambiguity contextually: skip `lib/`
+        # only when a sibling `shard.yml` is present.
+        dir_has_shard = listing.has_shard
+        scoped_names = Noir::Detection.scoped_dir_names(listing.entries)
+        native_root = Noir::Detection.native_source_root?(listing.entries, inherited_native_root)
+        if android_source_scope_active
+          Noir::Detection.add_android_source_prefixes_from_dir(dir, android_source_prefixes)
+        end
+        begin
+          listing.entries.each do |listed|
+            entry = listed.name
+            full_path = File.join(dir, entry)
+            info = listed.info
+            if info.nil?
+              # `File.info?` turns every `stat(2)` failure into `nil`, and
+              # the walk used to `next` on it without a word. The entry is
+              # not imaginary — `Dir.each_child` just handed it over — so
+              # this is a directory or file the scan drops, and when it is a
+              # directory it takes the entire subtree with it.
+              #
+              # The reachable case is a path longer than `PATH_MAX`: a deep
+              # generated tree crosses 1024 bytes around 80 levels down on
+              # macOS, and from there every entry stats `ENAMETOOLONG`. A
+              # 1000-level fixture reported zero endpoints, `"errors": []`
+              # and exit 0 under `--strict` — the same output as a clean
+              # scan of an empty directory. Re-stat once (only on this
+              # path, which is off the hot loop) to name the real errno.
+              reason = listed.stat_error || "stat returned no information"
+              unstattable_entries += 1
+              logger.debug "Skipping #{full_path}: #{reason}"
+              Noir::SkippedFiles.record(Noir::SkippedFiles::DETECT_SCOPE, full_path, reason,
+                noun: "unreadable entry", phase: Noir::SkippedFiles::Phase::Scan)
+              next
+            end
+
+            if info.directory?
+              # Subtree prune happens here. Entry name (not full path)
+              # so the base-as-node_modules case from #912 is safe.
+              if Noir::Detection.ignored_dir_entry?(entry, full_path, dir_has_shard, scoped_names, native_root)
+                skipped_ignored_dirs += 1
+                next
+              end
+              stack << {full_path, native_root}
+              pending_listings[full_path] = dir_pool.submit(full_path)
+              next
+            end
+
+            # `info` was obtained with follow_symlinks: false, so symlinks
+            # land here as type=symlink and `info.file?` is false — they
+            # are skipped entirely. This is a minor behavior change from
+            # the previous `Dir.glob` implementation, which would have
+            # yielded symlinked regular files for scanning. Skipping them
+            # trades coverage of unusual monorepo layouts for a simpler
+            # cycle guard; revisit if a real project needs the old
+            # behavior. Non-regular files (FIFOs, sockets, devices) are
+            # also dropped here — previously they would reach `File.read`
+            # and either hang or error out.
+            #
+            # Skipping is deliberate; being *silent* about it was not. A
+            # monorepo that symlinks `packages/api -> ../shared` (pnpm
+            # workspaces, Bazel's `bazel-*` links) reported zero endpoints
+            # for that tree and looked exactly like a clean scan. Entries
+            # the walk prunes on purpose, and media files it would have
+            # filtered a step later anyway, are not coverage the user lost;
+            # nor is a link whose target the walk reaches on its own
+            # (`CLAUDE.md -> AGENTS.md`).
+            unless info.file?
+              unless Noir::Detection.ignored_dir_entry?(entry, full_path, dir_has_shard, scoped_names, native_root) || MediaFilter.media_file?(full_path) ||
+                     (info.type.symlink? && Noir::Detection.symlink_target_scanned?(full_path, real_bases))
+                skipped_entries += 1
+                reason = info.type.symlink? ? "symbolic link (not followed)" : "not a regular file (#{info.type})"
+                logger.debug "Skipping #{full_path}: #{reason}"
+                Noir::SkippedFiles.record(Noir::SkippedFiles::DETECT_SCOPE, full_path, reason,
+                  noun: "entry", phase: Noir::SkippedFiles::Phase::Scan)
+              end
+              next
+            end
+
+            total_files += 1
+
+            if exclude_path.active?
+              rel_path = full_path.starts_with?(base_prefix) ? full_path[base_prefix.size..] : full_path
+              if exclude_path.excluded?(rel_path)
+                skipped_exclude_path += 1
+                next
+              end
+            end
+
+            next if base_paths.size > 1 && !seen_file_paths.add?(Noir::PathScope.expand(full_path))
+
+            if skip_reason = MediaFilter.skip_check(full_path, info: info, sniff_binary: false)
+              logger.debug "Skipping #{full_path}: #{skip_reason}"
+              skipped_files += 1
+              # A media extension is the filter doing its job — a `.png`
+              # was never going to yield an endpoint, so reporting it
+              # would make every scan of a repo with images "degraded".
+              # An oversize file is different: it is a source file the
+              # scan chose not to read, and one 12 MB Flask module is the
+              # difference between two routes and one.
+              if MediaFilter.media_file?(full_path)
+                media_files << full_path
+              else
+                Noir::SkippedFiles.record(Noir::SkippedFiles::DETECT_SCOPE, full_path, skip_reason,
+                  phase: Noir::SkippedFiles::Phase::Scan)
+              end
+              next
+            end
+
+            candidate_detector_indices = applicable_lookup.call(full_path)
+
+            # An Android source-set file is normally narrowed to the
+            # mobile detectors only (see Noir::Detection::ANDROID_EMBEDDED_SERVER_MARKER /
+            # the Android-source scope spec). The exception — a genuine
+            # embedded on-device server — can only be told apart from an
+            # incidental framework import by reading the file, so defer
+            # the narrowing until after the content read below.
+            android_source_file = Noir::Detection.android_source_file?(full_path, android_source_prefixes)
+            if android_source_file && candidate_detector_indices.all? { |idx| Noir::Detection.mobile_detector?(detector_list[idx].name) }
+              # No server detector is even applicable here, so the
+              # marker check cannot change the outcome — keep the
+              # content-free fast path.
+              android_source_file = false
+            end
+
+            if candidate_detector_indices.empty? && active_passive_scans.empty? && !android_source_file
+              pending.send(Noir::Detection::PendingFile.new(full_path, candidate_detector_indices, false, nil))
+              skipped_content_reads += 1
+              next
+            end
+
+            reply = read_pool.submit(full_path)
+            pending.send(Noir::Detection::PendingFile.new(full_path, candidate_detector_indices, android_source_file, reply))
+          end
+          # A listing that failed part-way: the entries it did yield were
+          # handled above, and the failure lands in the rescue below, as it
+          # did when `Dir.each_child` raised here directly.
+          if listing_error
+            raise listing_error
+          end
+        rescue e : File::Error
+          # `Dir.each_child` itself failed: the directory vanished between
+          # being pushed on the stack and being popped, or it is not
+          # listable. Treat the subtree as empty and move on.
+          #
+          # `File::Error`, not the `NotFoundError | AccessDeniedError` pair
+          # this used to name: those two cover ENOENT and EACCES, and every
+          # other errno `opendir(3)` can return — ENAMETOOLONG, ENOTDIR,
+          # EMFILE once a big scan runs out of descriptors — escaped as a
+          # bare `File::Error`, killed the reader fiber mid-walk and left
+          # every remaining base path unscanned. `File::BadPatternError` is
+          # not a `File::Error` (it descends straight from `Exception`), so
+          # the `--exclude-path` handler below still sees its own raise.
+          #
+          # Scope note: this is the *directory* handler. Per-file failures
+          # are caught at the read above, so they no longer land here and
+          # take the rest of the listing with them.
+          #
+          # "Move on" used to mean an empty rescue body: no counter, no log
+          # line at any verbosity, no entry in `errors`. One `chmod 000`
+          # directory therefore deleted its entire subtree from the scan
+          # and the run still reported `"errors": []` and exit 0 — the
+          # single largest silent-loss path in the walk, because it costs
+          # a whole tree rather than one file.
+          unlistable_dirs += 1
+          Noir::SkippedFiles.record(Noir::SkippedFiles::DETECT_SCOPE, dir,
+            e.message.presence || e.class.name,
+            noun: "directory", phase: Noir::SkippedFiles::Phase::Scan)
+        end
+      end
+    end
+
+    # The counters below are final only once the sequencer has caught up.
+    drain_reads.call
+    skipped_files += binary_files
+    media_files.each { |path| locator.register_media_path(path) }
+
+    if skipped_files > 0
+      logger.info "Skipped #{skipped_files} media/large files out of #{total_files} total files"
+    end
+    # Warning, not info: a media/large skip is the filter working as
+    # intended, but an unreadable file is a hole in the scan the user did
+    # not ask for. It was previously invisible at every verbosity.
+    if unreadable_files > 0
+      logger.warning "Skipped #{unreadable_files} unreadable file#{"s" if unreadable_files != 1} (permissions, or removed during the scan)"
+    end
+    # Same reasoning again, and louder: an unlistable directory costs every
+    # file beneath it, not one file.
+    if unlistable_dirs > 0
+      logger.warning "Skipped #{unlistable_dirs} unlistable director#{unlistable_dirs == 1 ? "y" : "ies"} and everything beneath (permissions, or removed during the scan)"
+    end
+    if skipped_entries > 0
+      logger.warning "Skipped #{skipped_entries} symlinked or non-regular path#{"s" if skipped_entries != 1} (symlinks are not followed)"
+    end
+    if unstattable_entries > 0
+      logger.warning "Skipped #{unstattable_entries} entr#{unstattable_entries == 1 ? "y" : "ies"} that could not be stat'd (path too long, or removed during the scan)"
+    end
+    if skipped_ignored_dirs > 0
+      logger.debug "Pruned #{skipped_ignored_dirs} ignored directory tree(s)"
+    end
+    if skipped_exclude_path > 0
+      logger.info "Skipped #{skipped_exclude_path} files matching --exclude-path patterns"
+    end
+    if skipped_content_reads > 0
+      logger.debug "Avoided content reads for #{skipped_content_reads} file(s) with no applicable detectors"
+    end
+
+    stats = locator.content_cache_stats
+    if stats[:budget] > 0
+      cached_mb = (stats[:bytes] / (1024.0 * 1024.0)).round(1)
+      budget_mb = (stats[:budget] / (1024.0 * 1024.0)).round(1)
+      logger.debug "Content cache: #{stats[:files]} files / #{cached_mb} MB (budget #{budget_mb} MB, #{stats[:skipped]} skipped)"
+    end
+  rescue e : File::BadPatternError
+    exclude_pattern_error = e.message || "invalid pattern"
+  ensure
+    drain_reads.try &.call
+    channel.close
+    wg.done
   end
 
   # Threads for receiving and processing the contents from the channel
@@ -641,59 +983,73 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
   concurrency.times do
     wg.add(1)
     spawn do
-      begin
-        loop do
-          begin
-            file_content = channel.receive?
-            break if file_content.nil?
-            file, content, candidate_detector_indices = file_content
-            logger.debug "Detecting: #{file}"
+      loop do
+        file_content = channel.receive?
+        break if file_content.nil?
+        file, content, candidate_detector_indices = file_content
+        logger.debug "Detecting: #{file}"
 
-            candidate_detector_indices.each do |idx|
-              detector = detector_list[idx]
-              # Skip detectors that have already matched, unless
-              # the detector signals it has side effects in
-              # `detect` (`idempotent? == false`) — see
-              # `Detector#idempotent?` for the contract.
-              next if detector.idempotent? && detected_flags[idx].get
-              if detector.detect(file, content)
-                detected_flags[idx].set
-                newly_added = false
-                mutex.synchronize do
-                  unless techs.includes?(detector.name)
-                    techs << detector.name
-                    newly_added = true
-                  end
-                end
-                if newly_added
-                  logger.debug_sub "└── Detected: #{detector.name}"
-                  logger.verbose_sub "└── Detected: #{detector.name} in #{file}"
-                end
+        candidate_detector_indices.each do |idx|
+          detector = detector_list[idx]
+          # Skip detectors that have already matched, unless
+          # the detector signals it has side effects in
+          # `detect` (`idempotent? == false`) — see
+          # `Detector#idempotent?` for the contract.
+          next if detector.idempotent? && detected_flags[idx].get
+          if detector.detect(file, content)
+            detected_flags[idx].set
+            newly_added = false
+            mutex.synchronize do
+              unless techs.includes?(detector.name)
+                techs << detector.name
+                newly_added = true
               end
             end
-
-            # Severity is already filtered above; pass the pre-pruned
-            # rule list through and let `detect` short-circuit when
-            # it's empty (passive scan disabled or every rule pruned).
-            if !active_passive_scans.empty?
-              results = NoirPassiveScan.detect(file, content, active_passive_scans, logger)
-              if results.size > 0
-                mutex.synchronize do
-                  passive_result.concat(results)
-                end
-              end
+            if newly_added
+              logger.debug_sub "└── Detected: #{detector.name}"
+              logger.verbose_sub "└── Detected: #{detector.name} in #{file}"
             end
-          rescue File::NotFoundError
-            logger.debug "File not found: #{file}"
           end
         end
-      ensure
-        wg.done
+
+        # Passive rules no longer run here: `Noir::ReadPool` runs them on
+        # its threads and the sequencer records the findings.
+
+
+      rescue File::NotFoundError
+        logger.debug "File not found: #{file}"
+      rescue e : Exception
+        # Mirror `parallel_analyze`'s worker rescue. Without this a
+        # single detector/passive-rule exception unwinds the whole
+        # worker loop; once every worker has died the reader fiber
+        # blocks forever on `channel.send` and the scan hangs with
+        # no output instead of skipping one bad file.
+        logger.debug "Error detecting #{file}: #{e.message}"
       end
+    ensure
+      wg.done
     end
   end
 
   wg.wait
-  logger.debug "Added #{locator.all("file_map").size} files to file_map"
+
+  # The file walk aborted on a bad glob, so `techs` reflects only the
+  # files read before the raise. Reporting that as a result would be a
+  # silent lie; surface the pattern error and stop.
+  if pattern_error = exclude_pattern_error
+    raise Noir::InvalidExcludePathError.new(
+      "--exclude-path contains an invalid glob pattern (#{pattern_error}): #{options["exclude_path"]?.to_s.inspect}. " \
+      "Check the `[` character classes — each one must be closed with a `]`."
+    )
+  end
+
+  logger.debug "Added #{locator.all_files.size} files to file_map"
+
+  # Findings arrive in whatever order the detect workers finish, which is
+  # not the same from one run to the next: the same scan of discourse gave
+  # three different `passive_results` orders in three runs. They are part of
+  # the `-f json` / `-f sarif` document, so order them by location — one
+  # rule reports at most one finding per line, so the key is unique.
+  passive_result.sort_by! { |result| {result.file_path, result.line_number, result.id} }
   {techs.uniq, passive_result}
 end

@@ -1,4 +1,5 @@
 require "../../../models/analyzer"
+require "../../engines/cli_endpoint_support"
 
 module Analyzer::Crystal
   # Surfaces the command-line attack surface of Crystal programs as `cli://`
@@ -6,6 +7,10 @@ module Analyzer::Crystal
   # commander shards. One endpoint per (sub)command, params flag/argument/env,
   # merged by URL. Line-scan; subclasses Analyzer directly.
   class Cli < Analyzer
+    analyzer_for "crystal_cli"
+
+    include CliEndpointSupport
+
     OPTION_PARSER = /\bOptionParser\.(?:parse|new)\b/
     OPT_LONG      = /\.on\s*\(?[^)]*?["'](-{2}[A-Za-z0-9][\w-]*)/
     OPT_SHORT     = /\.on\s*\(\s*["'](-[A-Za-z0-9])(?:["' =]|\))/
@@ -26,7 +31,6 @@ module Analyzer::Crystal
     def analyze
       endpoints = {} of String => Endpoint
       get_files_by_extension(".cr").each do |path|
-        next if File.directory?(path)
         next if cli_test_path?(path)
         next unless File.exists?(path)
         begin
@@ -40,7 +44,7 @@ module Analyzer::Crystal
           next
         end
       end
-      endpoints.each_value { |ep| @result << ep }
+      @result.concat(cli_endpoints(endpoints))
       @result
     end
 
@@ -89,24 +93,18 @@ module Analyzer::Crystal
     private def cli_binary_name(path : String) : String
       stem = File.basename(path, ".cr")
       if stem == "main" || stem == "cli" || stem == "app"
-        parent = File.basename(File.dirname(path))
-        return parent unless parent.empty?
+        if name = cli_directory_binary_name(path)
+          return name
+        end
       end
       stem
     end
 
     private def cli_test_path?(path : String) : Bool
-      lower = path.downcase
+      # Scan-base-relative, never absolute: a `test/` directory ABOVE the
+      # scan base is not this project's test tree.
+      lower = base_relative_path(path).downcase
       lower.includes?("_spec.") || lower.includes?("/test/")
-    end
-
-    private def fetch_endpoint(endpoints : Hash(String, Endpoint), url : String,
-                               path : String, line_no : Int32) : Endpoint
-      endpoints[url] ||= begin
-        ep = Endpoint.new(url, "CLI", Details.new(PathInfo.new(path, line_no)))
-        ep.protocol = "cli"
-        ep
-      end
     end
   end
 end

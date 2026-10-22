@@ -4,12 +4,24 @@ require "../../../models/code_locator"
 
 module Detector::Specification
   class Caido < Detector
+    # Registers Caido export paths in `CodeLocator`.
+    detector_for "caido", extensions: %w[.json], idempotent: false
+
+    # Every `.json` in the tree reaches these guards. The first four must
+    # all match, so they stay separate probes; only the last pair is an
+    # alternation.
+    HOST_MARKER        = /"host"/
+    METHOD_MARKER      = /"method"/
+    PATH_MARKER        = /"path"/
+    RAW_MARKER         = /"raw"/
+    TLS_OR_PORT_MARKER = Regex.union("\"is_tls\"", "\"port\"")
+
     def detect(filename : String, file_contents : String) : Bool
       return false unless filename.ends_with?(".json")
       return false unless caido_json_candidate?(file_contents)
 
       begin
-        data = JSON.parse(file_contents)
+        data = parse_json_lenient(file_contents)
         array = data.as_a?
         return false unless array
         return false if array.empty?
@@ -30,32 +42,19 @@ module Detector::Specification
                             (first.has_key?("is_tls") || first.has_key?("port"))
 
         locator = CodeLocator.instance
-        locator.push("caido-json", filename)
+        locator.push(Noir::LocatorKeys::CAIDO_JSON, filename)
         true
       rescue
         false
       end
     end
 
-    def applicable?(filename : String) : Bool
-      filename.ends_with?(".json")
-    end
-
-    def set_name
-      @name = "caido"
-    end
-
-    # Registers Caido export paths in `CodeLocator`.
-    def idempotent? : Bool
-      false
-    end
-
     private def caido_json_candidate?(content : String) : Bool
-      content.includes?("\"host\"") &&
-        content.includes?("\"method\"") &&
-        content.includes?("\"path\"") &&
-        content.includes?("\"raw\"") &&
-        (content.includes?("\"is_tls\"") || content.includes?("\"port\""))
+      content_matches?(content, HOST_MARKER) &&
+        content_matches?(content, METHOD_MARKER) &&
+        content_matches?(content, PATH_MARKER) &&
+        content_matches?(content, RAW_MARKER) &&
+        content_matches?(content, TLS_OR_PORT_MARKER)
     end
   end
 end

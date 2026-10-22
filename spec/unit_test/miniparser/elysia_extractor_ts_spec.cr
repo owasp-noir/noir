@@ -111,4 +111,70 @@ describe Noir::TreeSitterElysiaExtractor do
     routes = Noir::TreeSitterElysiaExtractor.extract_routes(source)
     routes.first.query_params.should eq(["filter"])
   end
+
+  # Regression: the route/group path gates matched node type "string" only,
+  # so every backtick path was invisible and the route was dropped.
+  it "accepts backtick template-literal route and group paths" do
+    source = <<-TS
+      const app = new Elysia()
+          .group(`/api/v1`, (app) =>
+              app
+                  .get(`/health`, () => 'ok')
+                  .post(`/users/${id}`, ({ body }) => body)
+          )
+          .listen(3000)
+      TS
+
+    routes = Noir::TreeSitterElysiaExtractor.extract_routes(source)
+    routes.map { |r| {r.verb, r.path} }.sort!.should eq([
+      {"GET", "/api/v1/health"},
+      {"POST", "/api/v1/users/{id}"},
+    ].sort)
+  end
+
+  it "puts each chained route on its own verb's line" do
+    source = <<-TS
+      new Elysia()
+        .get('/a', () => 'a')
+        .get('/b', () => 'b')
+        .post('/c', () => 'c')
+      TS
+
+    routes = Noir::TreeSitterElysiaExtractor.extract_routes(source)
+    routes.map { |r| {r.path, r.line} }.sort!.should eq([{"/a", 1}, {"/b", 2}, {"/c", 3}])
+  end
+
+  it "applies the constructor prefix once across the whole chain" do
+    source = <<-TS
+      new Elysia({ prefix: '/v1' })
+        .get('/a', () => 'a')
+        .onError(() => 'err')
+        .group('/g', (app) => app.get('/x', () => 'x'))
+        .use(new Elysia({ prefix: `/admin` }).get('/stats', () => 's'))
+        .post('/c', () => 'c')
+        .listen(3000)
+      const plain = new Elysia({ name: 'svc' }).get('/plain', () => 'p')
+      const other = new Router({ prefix: '/no' }).get('/router', () => 'r')
+      TS
+
+    routes = Noir::TreeSitterElysiaExtractor.extract_routes(source)
+    routes.map { |r| {r.verb, r.path} }.sort!.should eq([
+      {"GET", "/plain"},
+      {"GET", "/router"},
+      {"GET", "/v1/a"},
+      {"GET", "/v1/admin/stats"},
+      {"GET", "/v1/g/x"},
+      {"POST", "/v1/c"},
+    ])
+  end
+
+  it "decodes escape sequences in string literals" do
+    source = <<-'TS'
+      new Elysia()
+          .get('/say/\'hi\'', () => 'x')
+          .get("/a\\b", () => 'y')
+      TS
+
+    Noir::TreeSitterElysiaExtractor.extract_routes(source).map(&.path).sort!.should eq([%(/a\\b), %(/say/'hi')])
+  end
 end

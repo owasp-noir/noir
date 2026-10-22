@@ -193,6 +193,38 @@
             </intent-filter>
         </activity>
 
+        <!-- Deep link on a NOT-exported activity: the filter can only be
+             matched by an intent from inside the app, so the URI is not an
+             external entry point and must NOT be reported. -->
+        <activity android:name=".InternalDeepLinkActivity" android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="myapp" android:host="internal-only" />
+            </intent-filter>
+        </activity>
+
+        <!-- Protected system broadcast receiver: `<data android:scheme="package"/>`
+             only qualifies which package the PACKAGE_* broadcast is about. It
+             is opaque and system-only, so no `package://` endpoint. -->
+        <receiver android:name=".PackageWatcherReceiver" android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.PACKAGE_FULLY_REMOVED" />
+                <data android:scheme="package" />
+            </intent-filter>
+        </receiver>
+
+        <!-- Placeholder declared with the groovy property-assignment form
+             (`manifestPlaceholders.propScheme = "..."`) rather than a map
+             literal. -->
+        <activity android:name=".PropertyPlaceholderActivity" android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="${propScheme}" android:host="${propHost}" />
+            </intent-filter>
+        </activity>
+
         <!-- Exported component with NO intent-filter: cannot be matched by an
              implicit intent, but an explicit intent naming the component still
              reaches it, so it is an IPC surface (android-intent, explicit). The

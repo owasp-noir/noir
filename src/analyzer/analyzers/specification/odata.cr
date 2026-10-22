@@ -1,5 +1,6 @@
 require "xml"
-require "../../../models/analyzer"
+require "../../engines/specification_engine"
+require "../../../utils/xml_comments"
 
 module Analyzer::Specification
   # OData CSDL (`$metadata`) describes a service's entity sets,
@@ -8,7 +9,9 @@ module Analyzer::Specification
   # base path is left implicit (`/`) because CSDL doesn't carry the
   # service root — downstream consumers prefix it from their own
   # context.
-  class OData < Analyzer
+  class OData < SpecificationEngine
+    analyzer_for "odata"
+
     EDM_PRIMITIVE_BODY_TYPES = {
       "Edm.String"         => "string",
       "Edm.Boolean"        => "boolean",
@@ -33,19 +36,9 @@ module Analyzer::Specification
     alias Operation = NamedTuple(parameters: Array(NamedTuple(name: String, type: String)), kind: String)
 
     def analyze
-      locator = CodeLocator.instance
-      odata_specs = locator.all("odata-spec")
-      return @result unless odata_specs.is_a?(Array(String))
-
-      odata_specs.each do |path|
-        next unless File.exists?(path)
-        begin
-          content = read_file_content(path)
-          parse_metadata(content, path)
-        rescue e
-          @logger.debug "Failed to parse OData metadata #{path}: #{e.message}"
-          @logger.debug_sub e
-        end
+      each_spec_file(Noir::LocatorKeys::ODATA_SPEC) do |path|
+        content = read_file_content(path)
+        parse_metadata(content, path)
       end
 
       @result
@@ -56,7 +49,7 @@ module Analyzer::Specification
     # them by qualified name) and then walk every EntityContainer
     # to emit endpoints.
     private def parse_metadata(content : String, source : String)
-      doc = XML.parse(content)
+      doc = Noir::XmlComments.parse(content)
       edmx = find_child(doc, "Edmx")
       return unless edmx
 
@@ -277,19 +270,6 @@ module Analyzer::Specification
       endpoint = Endpoint.new(url, method, params, details)
       endpoint.add_tag(Tag.new("odata", "#{op_kind}:#{op_name}", "odata_analyzer"))
       @result << endpoint
-    end
-
-    private def find_child(node : XML::Node, local_name : String) : XML::Node?
-      node.children.each do |c|
-        return c if c.element? && c.name == local_name
-      end
-      nil
-    end
-
-    private def each_child(node : XML::Node, local_name : String, &)
-      node.children.each do |c|
-        yield c if c.element? && c.name == local_name
-      end
     end
   end
 end

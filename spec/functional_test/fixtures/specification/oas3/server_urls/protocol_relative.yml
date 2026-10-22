@@ -1,0 +1,13 @@
+openapi: 3.0.0
+info:
+  title: Protocol Relative Server
+  version: 1.0.0
+servers:
+  - url: //api.example.com/edge
+paths:
+  /banners:
+    get:
+      summary: List banners
+      responses:
+        '200':
+          description: OK

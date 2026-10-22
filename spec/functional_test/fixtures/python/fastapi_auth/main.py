@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Depends, Security
+from fastapi import FastAPI, Depends, HTTPException, Security
 from fastapi.security import OAuth2PasswordBearer
 from pydantic import BaseModel
 
@@ -33,3 +33,31 @@ async def admin(token: str = Security(oauth2_scheme)):
 @app.get("/open")
 async def open_page():
     return {"message": "open"}
+
+
+class Item(BaseModel):
+    owner_id: int
+
+
+async def get_current_active_superuser(current_user: User = Depends(get_current_user)) -> User:
+    if not current_user.is_superuser:
+        raise HTTPException(status_code=403, detail="Not enough privileges")
+    return current_user
+
+
+@app.delete("/users/{user_id}", dependencies=[Depends(get_current_active_superuser)])
+async def delete_user(user_id: int):
+    return {"deleted": user_id}
+
+
+@app.put("/items/{item_id}")
+async def update_item(item_id: int, current_user: User = Depends(get_current_user)):
+    item = Item(owner_id=1)
+    if item.owner_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Not enough permissions")
+    return {"item": item_id}
+
+
+@app.patch("/notes/{note_id}")
+async def update_note(note_id: int, current_user: User = Depends(get_current_user)):
+    return {"note": note_id}

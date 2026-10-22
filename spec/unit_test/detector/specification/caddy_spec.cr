@@ -16,10 +16,10 @@ describe "Detect Caddy config" do
 
   it "detects Caddyfile by name" do
     locator = CodeLocator.instance
-    locator.clear "caddy-spec"
+    locator.clear Noir::LocatorKeys::CADDY_SPEC
 
     instance.detect("Caddyfile", caddyfile).should be_true
-    locator.all("caddy-spec").should eq ["Caddyfile"]
+    locator.all(Noir::LocatorKeys::CADDY_SPEC).should eq ["Caddyfile"]
   end
 
   it "detects caddy.json with apps.http shape" do
@@ -28,6 +28,13 @@ describe "Detect Caddy config" do
 
   it "rejects unrelated JSON" do
     instance.detect("config.json", %({"foo":"bar"})).should be_false
+  end
+
+  # Both words appear, but not as `apps.http`; claiming it made the analyzer
+  # raise and `--strict` fail on an icon list.
+  it "rejects JSON that only mentions apps and http" do
+    instance.detect("icons.json", %([{"name":"apps","kind":"http"}])).should be_false
+    instance.detect("meta.json", %({"apps":["http"]})).should be_false
   end
 
   it "rejects arbitrary filename" do

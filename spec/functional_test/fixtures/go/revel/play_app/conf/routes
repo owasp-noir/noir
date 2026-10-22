@@ -1,0 +1,2 @@
+# A Play app sharing the repository: no Revel code beside it.
+GET     /play                   controllers.HomeController.index

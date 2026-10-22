@@ -28,7 +28,7 @@ expected_endpoints << Endpoint.new("/users", "POST").tap do |ep|
 end
 
 FunctionalTester.new("fixtures/javascript/nitro_callees/", {
-  :techs     => 2,
+  :techs     => 1,
   :endpoints => expected_endpoints.size,
 }, expected_endpoints, {
   "include_callee" => YAML::Any.new(true),

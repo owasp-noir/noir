@@ -1,17 +1,23 @@
 require "../../../models/framework_tagger"
 require "../../../models/endpoint"
 
+@[Noir::TaggerFor(key: "swift_auth", name: "Swift Auth Tagger", desc: "Identifies Vapor/Kitura/Hummingbird authentication patterns", order: 220)]
 class SwiftAuthTagger < FrameworkTagger
+  # `.grouped(` followed by any earlier arguments, so a pattern after it
+  # matches at the start of ANY argument: `app.grouped(UserToken.authenticator(),
+  # User.guardMiddleware())` is guarded by its second one.
+  GROUPED_ARG = /\.grouped\s*\((?:[^(),]*(?:\([^()]*\)[^(),]*)?,\s*)*\s*/.source
+
   # Vapor middleware patterns
   VAPOR_MIDDLEWARE_PATTERNS = [
-    {/\.grouped\s*\(\s*\w*[Aa]uth\w*/, "Vapor auth middleware group"},
-    {/\.grouped\s*\(\s*User\.authenticator\(\)/, "Vapor User.authenticator()"},
-    {/\.grouped\s*\(\s*Token\.authenticator\(\)/, "Vapor Token.authenticator()"},
-    {/\.grouped\s*\(\s*User\.guardMiddleware\(\)/, "Vapor User.guardMiddleware()"},
-    {/\.grouped\s*\(\s*\w+\.guardMiddleware\(\)/, "Vapor guardMiddleware"},
-    {/\.grouped\s*\(\s*BearerAuthenticator/, "Vapor BearerAuthenticator"},
-    {/\.grouped\s*\(\s*BasicAuthenticator/, "Vapor BasicAuthenticator"},
-    {/\.grouped\s*\(\s*SessionAuthenticator/, "Vapor SessionAuthenticator"},
+    {/#{GROUPED_ARG}\w*[Aa]uth\w*/, "Vapor auth middleware group"},
+    {/#{GROUPED_ARG}User\.authenticator\(\)/, "Vapor User.authenticator()"},
+    {/#{GROUPED_ARG}Token\.authenticator\(\)/, "Vapor Token.authenticator()"},
+    {/#{GROUPED_ARG}User\.guardMiddleware\(\)/, "Vapor User.guardMiddleware()"},
+    {/#{GROUPED_ARG}\w+\.guardMiddleware\(\)/, "Vapor guardMiddleware"},
+    {/#{GROUPED_ARG}BearerAuthenticator/, "Vapor BearerAuthenticator"},
+    {/#{GROUPED_ARG}BasicAuthenticator/, "Vapor BasicAuthenticator"},
+    {/#{GROUPED_ARG}SessionAuthenticator/, "Vapor SessionAuthenticator"},
   ]
 
   # Auth requirement in route handler
@@ -34,28 +40,14 @@ class SwiftAuthTagger < FrameworkTagger
     {/HBAuthenticator/, "Hummingbird HBAuthenticator"},
   ]
 
-  def initialize(options : Hash(String, YAML::Any))
-    super
-    @name = "swift_auth"
-  end
-
   def self.target_techs : Array(String)
     ["swift_vapor", "swift_kitura", "swift_hummingbird"]
   end
 
-  def perform(endpoints : Array(Endpoint)) : Array(Endpoint)
-    endpoints.each do |endpoint|
-      check_endpoint(endpoint)
-    end
-    endpoints
-  end
-
   private def check_endpoint(endpoint : Endpoint)
     endpoint.details.code_paths.each do |path_info|
-      content = read_file(path_info.path)
-      next if content.nil?
-
-      lines = content.split("\n")
+      lines = read_file_lines(path_info.path)
+      next if lines.nil?
       line_num = path_info.line
       next if line_num.nil?
       # Skip stale/out-of-range line refs: a line beyond the content we
@@ -116,23 +108,21 @@ class SwiftAuthTagger < FrameworkTagger
   end
 
   private def check_handler_auth(lines : Array(String), route_line : Int32) : String?
-    idx = route_line + 1
     end_idx = [route_line + 15, lines.size - 1].min
-    brace_depth = 1 # We start inside the route closure's opening {
+    brace_depth = 0
 
-    while idx <= end_idx
+    (route_line..end_idx).each do |idx|
       current = lines[idx]
-      stripped = current.strip
 
       HANDLER_AUTH_PATTERNS.each do |pattern, desc|
-        return desc if stripped.matches?(pattern)
+        return desc if current.matches?(pattern)
       end
 
-      # Track braces to stop at end of this route's closure
+      # Track braces from the route line itself, so a closure that opens and
+      # closes there (`app.get("hello") { req in "Hello" }`) ends the walk
+      # instead of reading the next route's body as this one's.
       brace_depth += current.count('{') - current.count('}')
       break if brace_depth <= 0
-
-      idx += 1
     end
 
     nil

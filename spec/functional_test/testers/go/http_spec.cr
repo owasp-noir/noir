@@ -14,6 +14,14 @@ expected_endpoints = [
   Endpoint.new("/items", "POST", [
     Param.new("title", "", "form"),
   ]),
+  Endpoint.new("/search", "QUERY", [
+    Param.new("q", "", "query"),
+  ]),
+  Endpoint.new("/query-manual", "QUERY", [
+    Param.new("filter", "", "query"),
+  ]),
+  # server.go: a sub-mux route; `http.Handle("/v2/", api)` is its mount, not a route
+  Endpoint.new("/v2/ping", "GET"),
 ]
 
 FunctionalTester.new("fixtures/go/http/", {

@@ -57,7 +57,7 @@ describe "OutputBuilderPowershell" do
     put_line = lines[2]
     put_line.should start_with("Invoke-WebRequest -Method \"PUT\"")
     put_line.should contain("/api/products")
-    put_line.should contain("name=Updated Product")
+    put_line.should contain("name=Updated+Product")
     put_line.should contain("application/x-www-form-urlencoded")
   end
 
@@ -78,5 +78,119 @@ describe "OutputBuilderPowershell" do
     lines.size.should eq(WILDCARD_HTTP_METHODS.size)
     lines.map { |line| line.split("\"")[1] }.should eq(WILDCARD_HTTP_METHODS)
     lines.any?(&.includes?("\"ANY\"")).should be_false
+  end
+
+  it "routes verbs outside the -Method enum through -CustomMethod" do
+    options = {
+      "debug"   => YAML::Any.new(false),
+      "verbose" => YAML::Any.new(false),
+      "color"   => YAML::Any.new(false),
+      "nolog"   => YAML::Any.new(false),
+      "output"  => YAML::Any.new(""),
+    }
+    builder = OutputBuilderPowershell.new(options)
+    builder.io = IO::Memory.new
+
+    endpoint = Endpoint.new("/products/search", "QUERY")
+    endpoint.push_param(Param.new("q", "widget", "form"))
+
+    builder.print([endpoint])
+    line = builder.io.to_s.split("\n").reject(&.empty?)[0]
+
+    # Invoke-WebRequest validates -Method against its enum, which has no
+    # QUERY — the emitted command must use -CustomMethod to be runnable.
+    line.should start_with("Invoke-WebRequest -CustomMethod \"QUERY\" -Uri \"/products/search\"")
+    line.should contain("-Body \"q=widget\"")
+    line.should contain("application/x-www-form-urlencoded")
+
+    # CONNECT is outside the enum too; pin it so a future "add CONNECT to
+    # ENUM_METHODS" edit (it looks plausibly missing next to TRACE) fails
+    # here instead of regressing every CONNECT endpoint to -Method.
+    builder.io = IO::Memory.new
+    builder.print([Endpoint.new("/tunnel", "CONNECT")])
+    connect_line = builder.io.to_s.split("\n").reject(&.empty?)[0]
+    connect_line.should start_with("Invoke-WebRequest -CustomMethod \"CONNECT\"")
+  end
+
+  it "emits -Form with Get-Item for file upload params" do
+    options = {
+      "debug"   => YAML::Any.new(false),
+      "verbose" => YAML::Any.new(false),
+      "color"   => YAML::Any.new(false),
+      "nolog"   => YAML::Any.new(false),
+      "output"  => YAML::Any.new(""),
+    }
+    builder = OutputBuilderPowershell.new(options)
+    builder.io = IO::Memory.new
+
+    # PHP `$_FILES["avatar"]` arrives as param_type `file`. bake_endpoint
+    # never puts file fields into `-Body`, so the previous builder dropped
+    # them while curl/httpie already emitted multipart — same class of gap
+    # those formats just fixed.
+    upload = Endpoint.new("/modern.php", "POST")
+    upload.push_param(Param.new("name", "", "form"))
+    upload.push_param(Param.new("avatar", "", "file"))
+    upload.push_param(Param.new("AUTHORIZATION", "", "header"))
+
+    builder.print([upload])
+    line = builder.io.to_s.split("\n").reject(&.empty?).first
+
+    line.should contain("-Form @{\"name\"=\"\"; \"avatar\"=Get-Item -Path \"avatar\"}")
+    line.should contain("AUTHORIZATION")
+    line.should_not contain("-Body ")
+    line.should_not contain("application/x-www-form-urlencoded")
+  end
+
+  it "emits each hash-literal key once, case-insensitively" do
+    options = {
+      "debug"   => YAML::Any.new(false),
+      "verbose" => YAML::Any.new(false),
+      "color"   => YAML::Any.new(false),
+      "nolog"   => YAML::Any.new(false),
+      "output"  => YAML::Any.new(""),
+    }
+    builder = OutputBuilderPowershell.new(options)
+    builder.io = IO::Memory.new
+
+    # PowerShell rejects `@{"Cookie"=...; "Cookie"=...}` and `@{"X-A"=...;
+    # "x-a"=...}` outright: "Duplicate keys ... are not allowed in hash
+    # literals".
+    endpoint = Endpoint.new("/c", "GET")
+    endpoint.push_param(Param.new("cookie", "theme=dark", "header"))
+    endpoint.push_param(Param.new("sid", "1", "cookie"))
+    endpoint.push_param(Param.new("X-A", "1", "header"))
+    endpoint.push_param(Param.new("x-a", "2", "header"))
+
+    upload = Endpoint.new("/up", "POST")
+    upload.push_param(Param.new("doc", "", "form"))
+    upload.push_param(Param.new("Doc", "", "file"))
+
+    builder.print([endpoint, upload])
+    lines = builder.io.to_s.split("\n").reject(&.empty?)
+
+    lines[0].should eq(%(Invoke-WebRequest -Method "GET" -Uri "/c" -Headers @{"Cookie"="theme=dark; sid=1"; "X-A"="1"}))
+    lines[1].should eq(%(Invoke-WebRequest -Method "POST" -Uri "/up" -Form @{"doc"=""}))
+  end
+
+  it "backticks typographic double quotes so a route cannot close the string" do
+    options = {
+      "debug"   => YAML::Any.new(false),
+      "verbose" => YAML::Any.new(false),
+      "color"   => YAML::Any.new(false),
+      "nolog"   => YAML::Any.new(false),
+      "output"  => YAML::Any.new(""),
+    }
+    builder = OutputBuilderPowershell.new(options)
+    builder.io = IO::Memory.new
+
+    # PowerShell ends a "..." string on U+201C/U+201D/U+201E as well as on
+    # `"`, so this route used to run `Start-Process calc`.
+    endpoint = Endpoint.new("/a\u201C;Start-Process calc;\u201D\u201E", "GET")
+    endpoint.push_param(Param.new("h\u201C", "v\u201E", "header"))
+
+    builder.print([endpoint])
+    line = builder.io.to_s.strip
+
+    line.should eq(%(Invoke-WebRequest -Method "GET" -Uri "/a`\u201C;Start-Process calc;`\u201D`\u201E" -Headers @{"h`\u201C"="v`\u201E"}))
   end
 end

@@ -6,15 +6,15 @@ private def analyze_postman(content : String)
   path = File.tempname("postman", ".json")
   File.write(path, content)
   locator = CodeLocator.instance
-  locator.clear "postman-json"
-  locator.push "postman-json", path
+  locator.clear Noir::LocatorKeys::POSTMAN_JSON
+  locator.push Noir::LocatorKeys::POSTMAN_JSON, path
 
   options = create_test_options
   analyzer = Analyzer::Specification::Postman.new options
   analyzer.analyze
 ensure
   locator = CodeLocator.instance
-  locator.clear "postman-json"
+  locator.clear Noir::LocatorKeys::POSTMAN_JSON
   File.delete(path) if path && File.exists?(path)
 end
 
@@ -314,5 +314,53 @@ describe "Postman Analyzer" do
 
     users.details.code_paths.map(&.path).should contain("UsersController.kt")
     graphql.details.code_paths.map(&.path).should_not contain("UsersController.kt")
+  end
+
+  it "skips absolute request URLs with an empty host" do
+    endpoints = analyze_postman <<-JSON
+      {
+        "info": { "name": "Empty Host Collection" },
+        "item": [
+          { "name": "Empty host", "request": "https:///users" },
+          { "name": "Empty host with a port", "request": "https://:443/orders" },
+          { "name": "Empty host with a query", "request": "https://?next=/query" },
+          {
+            "name": "Raw empty host",
+            "request": { "method": "GET", "url": { "raw": "https:///raw" } }
+          },
+          { "name": "Relative request", "request": "/health" }
+        ]
+      }
+      JSON
+
+    endpoints.map(&.url).should eq ["/health"]
+  end
+
+  it "keeps raw JSON body params next to unquoted {{var}} values" do
+    endpoints = analyze_postman <<-JSON
+      {
+        "info": {"name": "x", "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"},
+        "item": [{"name": "u", "request": {"method": "PUT", "url": "https://api.example.com/pets",
+          "body": {"mode": "raw", "raw": "{\\"name\\": \\"{{n}}\\", \\"age\\": {{age}}, \\"id\\": {{$randomInt}}}"}}}]
+      }
+      JSON
+
+    endpoints[0].params.select(&.param_type.==("json")).map { |p| {p.name, p.value} }.should eq([{"name", "{{n}}"}, {"age", ""}, {"id", ""}])
+  end
+
+  it "keeps the base path a host variable carries in a URL object" do
+    endpoints = analyze_postman <<-JSON
+      {
+        "info": {"name": "x", "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"},
+        "item": [
+          {"name": "a", "request": {"method": "GET", "url": "{{baseUrl}}/pets"}},
+          {"name": "b", "request": {"method": "DELETE", "url": {"raw": "{{baseUrl}}/pets/:id", "host": ["{{baseUrl}}"], "path": ["pets", ":id"]}}},
+          {"name": "c", "request": {"method": "GET", "url": {"host": ["api", "example", "com"], "path": ["users"]}}}
+        ],
+        "variable": [{"key": "baseUrl", "value": "https://petstore.example.com/v1"}]
+      }
+      JSON
+
+    endpoints.map(&.url).should eq(["/v1/pets", "/v1/pets/:id", "/users"])
   end
 end

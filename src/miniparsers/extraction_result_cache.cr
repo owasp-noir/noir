@@ -1,0 +1,98 @@
+# Process-wide memo helpers for pure tree-sitter / lexer extractors.
+#
+# Large monorepo scans re-enter the same extractors many times on the
+# same source string:
+#   * one analyzer calls decorations + blueprints (two full parses)
+#   * concurrent tech analyzers re-parse the same CodeLocator-cached
+#     content for sibling frameworks that both survived detection
+#
+# Trees themselves cannot be cached (lifetime is tied to the parse
+# block), but the *derived* route/decoration/constant tables can. Keys
+# combine a content fingerprint so GC reuse of `object_id` cannot
+# return a stale hit.
+module Noir::ExtractionResultCache
+  extend self
+
+  # Soft cap per typed store. Beyond this, the oldest half of entries
+  # is dropped (FIFO on insertion order). Extraction results are small
+  # relative to source text; the cap mainly bounds pathological cases.
+  DEFAULT_MAX_ENTRIES = 4096
+
+  # Content fingerprint for a source buffer. Deliberately *not* keyed on
+  # `object_id`: a short-lived string can be freed and its id recycled by
+  # a later buffer, which would serve another file's extraction table.
+  # Content-only means two distinct String instances holding identical
+  # source correctly share one entry, which is also the common case (the
+  # CodeLocator content cache hands the same text to sibling analyzers).
+  def source_fingerprint(source : String) : UInt64
+    # Crystal's String#hash is content-based; bytesize is mixed in so
+    # collisions need matching length as well as matching hash.
+    h = source.hash.to_u64!
+    h &+= source.bytesize.to_u64! &* 0x9e3779b97f4a7c15_u64
+    h
+  end
+
+  # Combine source fingerprint with a cheap options tag (e.g. joined
+  # router names). Callers should keep the tag deterministic.
+  def key(source : String, *options : String) : UInt64
+    h = source_fingerprint(source)
+    options.each do |opt|
+      h &+= opt.hash.to_u64! &* 0xbf58476d1ce4e5b9_u64
+    end
+    h
+  end
+
+  # Insert-or-fetch with a typed Hash store owned by the caller, so each
+  # extractor keeps its own type-safe map.
+  def fetch(store : Hash(UInt64, T), key : UInt64, mutex : Mutex, & : -> T) : T forall T
+    mutex.synchronize do
+      if hit = store[key]?
+        return hit
+      end
+    end
+
+    value = yield
+
+    mutex.synchronize do
+      store_capped(store, key, value)
+    end
+  end
+
+  # Capped insert-or-keep. The caller must already hold the store's
+  # mutex. Extractors that fill two stores from a single parse cannot go
+  # through `fetch` (that would parse twice), so they call this directly
+  # instead of writing to the Hash — writing raw skips eviction and lets
+  # the store grow one entry per file for the whole scan.
+  #
+  # Eviction drops the oldest half of the entries, oldest first: `Hash`
+  # iterates in insertion order, so `shift` removes the oldest key.
+  def store_capped(store : Hash(K, V), key : K, value : V,
+                   max_entries : Int32 = DEFAULT_MAX_ENTRIES) : V forall K, V
+    unless store.has_key?(key)
+      if store.size >= max_entries
+        drop = store.size // 2
+        drop = 1 if drop < 1
+        drop.times { store.shift }
+      end
+      store[key] = value
+    end
+    # Another fiber may have filled the same key first; prefer the
+    # stored entry so all callers share one array.
+    store[key]
+  end
+
+  # Registered clear callbacks for typed extractor stores. Invoked at
+  # the start of each scan so a long-lived process (diff mode, repeated
+  # library use) cannot serve memo entries from a previous codebase.
+  @@clearers = [] of -> Nil
+  @@clearers_mutex = Mutex.new
+
+  def register_clearer(&block : -> Nil) : Nil
+    @@clearers_mutex.synchronize { @@clearers << block }
+  end
+
+  def clear_all : Nil
+    clearers = @@clearers_mutex.synchronize { @@clearers.dup }
+    clearers.each(&.call)
+  end
+end

@@ -1,14 +1,25 @@
 require "../../spec_helper"
 require "../../../src/ai_context/augmentor"
+require "../../../src/output_builder/common"
 
-def with_temp_ai_context_source(content : String, & : String ->)
-  path = "/tmp/noir-ai-context-#{Random.rand(1_000_000)}.txt"
+def with_temp_ai_context_source(content : String, ext : String = ".txt", & : String ->)
+  path = "#{Dir.tempdir}/noir-ai-context-#{Random.rand(1_000_000)}#{ext}"
   File.write(path, content)
   begin
     yield path
   ensure
     File.delete(path) if File.exists?(path)
   end
+end
+
+private def render_ai_context_with_features(endpoint : Endpoint, features : String) : String
+  options = create_test_options
+  options["ai_context"] = YAML::Any.new(true)
+  options["ai_context_features"] = YAML::Any.new(features)
+  builder = OutputBuilderCommon.new(options)
+  builder.io = IO::Memory.new
+  builder.print([endpoint])
+  builder.io.to_s
 end
 
 describe "NoirAIContext" do
@@ -18,6 +29,42 @@ describe "NoirAIContext" do
 
       reader.snippet_for(path, 0, 2).should be_nil
       reader.route_scope_snippet_for(path, 0).should be_nil
+    end
+  end
+
+  # Blank lines used to be emitted as bare `N: ` entries. Handlers are
+  # almost always preceded by a blank line or two, so nearly every
+  # snippet opened with a run of placeholders that carried no evidence
+  # and spent part of the 240-char budget the surrounding code needs.
+  it "omits blank lines instead of emitting bare line-number placeholders" do
+    source = "import os\n\n\n\n@app.route('/run')\ndef run():\n    os.system(q)"
+
+    with_temp_ai_context_source(source) do |path|
+      reader = NoirAIContext::SourceReader.new
+
+      # The radius is unchanged — blank lines are dropped from the
+      # window, not backfilled with lines from outside it.
+      window = reader.snippet_for(path, 5, 2).should_not be_nil
+      window.should_not match(/(?:^|\| )\d+: (?=\||\z)/)
+      window.should start_with("5: @app.route('/run')")
+      window.should contain("7: os.system(q)")
+
+      scope = reader.route_scope_snippet_for(path, 5).should_not be_nil
+      scope.should_not match(/(?:^|\| )\d+: (?=\||\z)/)
+      scope.should start_with("5: @app.route('/run')")
+    end
+  end
+
+  it "still captures decorators separated from the handler by a blank line" do
+    source = "@login_required\n\n@app.route('/admin')\ndef admin():\n    pass"
+
+    with_temp_ai_context_source(source) do |path|
+      reader = NoirAIContext::SourceReader.new
+
+      scope = reader.route_scope_snippet_for(path, 3).should_not be_nil
+      scope.should contain("1: @login_required")
+      scope.should contain("3: @app.route('/admin')")
+      scope.should_not match(/(?:^|\| )\d+: (?=\||\z)/)
     end
   end
 
@@ -72,6 +119,99 @@ describe "NoirAIContext" do
       context.signals.map(&.kind).should contain("file_input")
       context.signals.map(&.kind).should contain("idor")
       context.signals.map(&.name).should contain("jwt")
+    end
+  end
+
+  it "ignores specification code paths when an implementation path is available" do
+    spec = <<-YAML
+      x-java: Runtime.getRuntime().exec("whoami")
+      x-sql: Statement.executeQuery("SELECT 1 FROM users")
+      YAML
+    handler = <<-JAVA
+      class Handler {
+        String get() {
+          statement.executeQuery("SELECT id FROM users");
+        }
+      }
+      JAVA
+
+    with_temp_ai_context_source(spec, ".yaml") do |spec_path|
+      with_temp_ai_context_source(handler, ".java") do |handler_path|
+        details = Details.new(PathInfo.new(spec_path, 1))
+        details.add_path(PathInfo.new(handler_path, 2))
+        details.technology = "java_spring"
+        endpoint = Endpoint.new("/users", "GET", details)
+
+        context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+
+        context.sinks.map(&.kind).should eq(["sql"])
+        context.sinks[0].path.should eq(handler_path)
+        context.sinks[0].name.should contain("SELECT id FROM")
+        route = context.signals.find! { |signal| signal.kind == "route_definition" }
+        route.path.should eq(handler_path)
+      end
+    end
+  end
+
+  it "does not source-scan OpenAPI JSON for handler sinks or guards" do
+    spec = %({"paths":{"/run":{"post":{"summary":"@PreAuthorize('hasRole(ADMIN)') Statement.executeQuery('SELECT 1 FROM users'); Runtime.getRuntime().exec('id'); eval(req.body.code)"}}}})
+    handler = <<-JS
+      app.post("/run", (req, res) => {
+        res.json({ ok: true })
+      })
+      JS
+
+    with_temp_ai_context_source(spec, ".json") do |spec_path|
+      spec_only = Endpoint.new("/run", "POST")
+      spec_details = spec_only.details
+      spec_details.add_path(PathInfo.new(spec_path, 1))
+      spec_only.details = spec_details
+
+      spec_context = NoirAIContext.apply([spec_only])[0].ai_context.should_not be_nil
+      # Spec docs still anchor route metadata when no implementation exists.
+      route = spec_context.signals.find! { |signal| signal.kind == "route_definition" }
+      route.path.should eq(spec_path)
+      spec_context.guards.should be_empty
+      spec_context.sinks.should be_empty
+      # Decoy summary must not leak into any evidence bucket that LLMs treat as handler proof.
+      spec_context.signals.map(&.kind).should_not contain("csrf_exempt")
+      spec_context.signals.map(&.kind).should_not contain("jwt_unsafe")
+      spec_context.signals.map(&.kind).should_not contain("cors_open")
+
+      with_temp_ai_context_source(handler, ".js") do |handler_path|
+        implementation_first = Endpoint.new("/run", "POST")
+        details = implementation_first.details
+        details.add_path(PathInfo.new(handler_path, 1))
+        details.add_path(PathInfo.new(spec_path, 1))
+        implementation_first.details = details
+
+        context = NoirAIContext.apply([implementation_first])[0].ai_context.should_not be_nil
+        route = context.signals.find! { |signal| signal.kind == "route_definition" }
+        route.path.should eq(handler_path)
+        context.guards.should be_empty
+        context.sinks.should be_empty
+      end
+    end
+  end
+
+  it "lets a framework's anonymous verdict overrule a guard name match in the route source" do
+    source = <<-RUBY
+      def show
+        authorize @collection, :show?
+      end
+      RUBY
+
+    with_temp_ai_context_source(source, ".rb") do |path|
+      build = ->(tags : Array(Tag)) do
+        endpoint = Endpoint.new("/collections/1", "GET", [] of Param, Details.new(PathInfo.new(path, 1)))
+        tags.each { |tag| endpoint.add_tag(tag) }
+        NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+      end
+
+      build.call([] of Tag).guards.map(&.kind).should eq(["authz_guard"])
+      public_context = build.call([Tag.new("anonymous", "Pundit CollectionPolicy#show? admits anonymous callers", "ruby_auth")])
+      public_context.guards.should be_empty
+      public_context.signals.map(&.kind).should contain("anonymous")
     end
   end
 
@@ -609,8 +749,8 @@ describe "NoirAIContext" do
   end
 
   it "adds GraphQL resolver evidence when an SDL operation is merged with Kotlin resolver code" do
-    schema_path = "/tmp/noir-ai-context-schema-#{Random.rand(1_000_000)}.graphqls"
-    resolver_path = "/tmp/noir-ai-context-resolver-#{Random.rand(1_000_000)}.kt"
+    schema_path = "#{Dir.tempdir}/noir-ai-context-schema-#{Random.rand(1_000_000)}.graphqls"
+    resolver_path = "#{Dir.tempdir}/noir-ai-context-resolver-#{Random.rand(1_000_000)}.kt"
     File.write(schema_path, "type Mutation {\n  deleteBook(id: ID!): Boolean\n}\n")
     File.write(resolver_path, <<-CODE)
       @Controller
@@ -1064,6 +1204,26 @@ describe "NoirAIContext" do
     context.signals.map(&.kind).should_not contain("guard_absence")
   end
 
+  it "treats privileged WebSocket SEND endpoints as state-changing" do
+    privileged = Endpoint.new("ws://admin/ban user", "SEND")
+    privileged.protocol = "ws"
+    privileged.add_tag(Tag.new("websocket", "WebSocket endpoint", "websocket"))
+    privileged.add_tag(Tag.new("admin", "Administrative endpoint", "admin"))
+
+    ordinary = Endpoint.new("ws://chat message", "SEND")
+    ordinary.protocol = "ws"
+    ordinary.add_tag(Tag.new("websocket", "WebSocket endpoint", "websocket"))
+
+    endpoints = NoirAIContext.apply([privileged, ordinary])
+    privileged_context = endpoints[0].ai_context.should_not be_nil
+    ordinary_context = endpoints[1].ai_context.should_not be_nil
+
+    privileged_context.signals.map(&.kind).should contain("state_change")
+    privileged_context.signals.map(&.kind).should contain("guard_absence")
+    ordinary_context.signals.map(&.kind).should_not contain("state_change")
+    ordinary_context.signals.map(&.kind).should_not contain("guard_absence")
+  end
+
   it "keeps state-changing review signals for GraphQL mutations" do
     endpoint = Endpoint.new("/graphql#Mutation.createBook", "POST")
     endpoint.add_tag(Tag.new("graphql", "Mutation.createBook", "graphql_sdl_analyzer"))
@@ -1224,6 +1384,32 @@ describe "NoirAIContext" do
     end
   end
 
+  it "keeps a receiver-qualified query call a sql sink when the request query is read beside it" do
+    # juice-shop `routes/search.ts`: the SQL is built from `req.query.q`
+    # two lines above `sequelize.query(...)`. The request-accessor gate is
+    # for a bare `query(`, not for a call on a database receiver.
+    source = <<-CODE
+      function searchProducts() {
+        return (req, res, next) => {
+          const criteria = req.query.q || ''
+          models.sequelize.query("SELECT * FROM Products WHERE name LIKE '%" + criteria + "%'")
+        }
+      }
+      CODE
+
+    with_temp_ai_context_source(source) do |path|
+      endpoint = Endpoint.new("/rest/products/search", "GET")
+      details = endpoint.details
+      details.add_path(PathInfo.new(path, 1))
+      endpoint.details = details
+      endpoint.push_callee(Callee.new("models.sequelize.query", path, 4))
+      endpoint.push_param(Param.new("q", "", "query"))
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+      context.sinks.map(&.kind).should contain("sql")
+    end
+  end
+
   it "classifies Kotlin Spring document-store query callees separately from sql sinks" do
     source = <<-CODE
       suspend fun findOne(id: String): Post? =
@@ -1254,6 +1440,60 @@ describe "NoirAIContext" do
 
     context.sinks.map(&.kind).should contain("sql")
     context.sinks.map(&.kind).should_not contain("data_store_query")
+  end
+
+  it "requires a DB-ish receiver before a query/execute callee counts as a sql sink" do
+    {
+      "cache.query"         => false,
+      "c.Query"             => false,
+      "Query"               => false,
+      "useCase.execute"     => false,
+      "pool.query"          => true,
+      "this.db.query"       => true,
+      "cursor.execute"      => true,
+      "db.session.execute"  => true,
+      "$pdo->query"         => true,
+      "self.env.cr.execute" => true,
+      "pgClient.query"      => true,
+      "queryRunner.query"   => true,
+    }.each do |name, sql|
+      endpoint = Endpoint.new("/items", "GET")
+      endpoint.push_callee(Callee.new(name, "app.js", 3))
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+
+      context.sinks.map(&.kind).includes?("sql").should eq(sql), name
+    end
+  end
+
+  it "does not source-scan a command-object execute as a sql sink" do
+    source = <<-JS
+      app.post('/orders', (req, res) => {
+        return this.createOrderUseCase.execute(req.body)
+      })
+      JS
+
+    with_temp_ai_context_source(source) do |path|
+      endpoint = Endpoint.new("/orders", "POST")
+      details = endpoint.details
+      details.add_path(PathInfo.new(path, 1))
+      endpoint.details = details
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+
+      context.sinks.map(&.kind).should_not contain("sql")
+    end
+  end
+
+  it "does not treat a bare session cookie as credential input" do
+    endpoint = Endpoint.new("/cart", "POST")
+    endpoint.push_param(Param.new("session", "abc", "cookie"))
+    endpoint.push_param(Param.new("cookie", "abc", "header"))
+
+    context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+
+    context.signals.map(&.kind).should_not contain("credential_input")
+    context.signals.map(&.kind).should_not contain("rate_limit_absence")
   end
 
   it "scopes the mobile webview_load sink to mobile endpoints" do
@@ -1301,7 +1541,7 @@ describe "NoirAIContext" do
       }
       CODE
 
-    path = "/tmp/noir-ai-context-mobile-#{Random.rand(1_000_000)}.swift"
+    path = "#{Dir.tempdir}/noir-ai-context-mobile-#{Random.rand(1_000_000)}.swift"
     File.write(path, source)
     begin
       endpoint = Endpoint.new("myapp://open", "GET", Details.new(PathInfo.new("Info.plist")))
@@ -1341,6 +1581,57 @@ describe "NoirAIContext" do
 
       context.sinks.map(&.kind).should contain("outbound_http")
       context.sinks.map(&.kind).should_not contain("file_io")
+    end
+  end
+
+  it "does not read a handler named authenticatedUsers as an authentication guard" do
+    source = <<-CODE
+      app.get('/rest/user/authentication-details', authenticatedUsers())
+      app.get('/rest/admin', authenticateUser(), listAdmins())
+      CODE
+
+    with_temp_ai_context_source(source) do |path|
+      named = Endpoint.new("/rest/user/authentication-details", "GET")
+      named.details = Details.new(PathInfo.new(path, 1))
+      guarded = Endpoint.new("/rest/admin", "GET")
+      guarded.details = Details.new(PathInfo.new(path, 2))
+
+      contexts = NoirAIContext.apply([named, guarded]).map(&.ai_context.should_not(be_nil))
+      contexts[0].guards.map(&.kind).should_not contain("auth_guard")
+      contexts[1].guards.map(&.kind).should contain("auth_guard")
+    end
+  end
+
+  it "classifies callees by what they do, not by a word in their name (#3139)" do
+    source = <<-CODE
+      count = session.exec(count_statement).one()
+      r.Body = http.MaxBytesReader(w, r.Body, 8<<20)
+      safe := html.EscapeString(message)
+      item = session.get(Item, id)
+      CODE
+
+    with_temp_ai_context_source(source) do |path|
+      endpoint = Endpoint.new("/items/{id}", "PUT")
+      endpoint.push_param(Param.new("id", "", "path"))
+      details = endpoint.details
+      details.add_path(PathInfo.new(path, 1))
+      endpoint.details = details
+      endpoint.push_callee(Callee.new("session.exec", path, 1))
+      endpoint.push_callee(Callee.new("http.MaxBytesReader", path, 2))
+      endpoint.push_callee(Callee.new("html.EscapeString", path, 3))
+      endpoint.push_callee(Callee.new("session.get", path, 4))
+      endpoint.push_callee(Callee.new("session.commit", path, 4))
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+
+      kinds = context.sinks.map(&.kind)
+      kinds.should contain("sql") # SQLModel's session.exec is a query
+      kinds.should_not contain("command_exec")
+      kinds.should_not contain("outbound_http")   # a body limiter makes no request
+      kinds.should_not contain("template_render") # escaping is not rendering
+      # `session.get(Item, id)` is the object lookup the write is scoped by.
+      context.signals.map(&.kind).should contain("object_lookup")
+      context.signals.map(&.kind).should_not contain("object_write")
     end
   end
 
@@ -1702,6 +1993,143 @@ describe "NoirAIContext" do
     end
   end
 
+  it "does NOT treat FastAPI Security dependencies as authorization guards" do
+    source = <<-PYTHON
+      @app.get("/admin")
+      async def admin(token: str = Security(oauth2_scheme)):
+          return {"admin": True}
+      PYTHON
+
+    with_temp_ai_context_source(source, ".py") do |path|
+      endpoint = Endpoint.new("/admin", "GET")
+      details = endpoint.details
+      details.add_path(PathInfo.new(path, 2))
+      endpoint.details = details
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+      context.guards.map(&.kind).should_not contain("authz_guard")
+    end
+  end
+
+  it "does NOT emit sensitive_response for a credential parameter type annotation" do
+    source = <<-PYTHON
+      @app.get("/admin")
+      async def admin(token: str = Security(oauth2_scheme)):
+          return {"admin": True}
+      PYTHON
+
+    with_temp_ai_context_source(source, ".py") do |path|
+      endpoint = Endpoint.new("/admin", "GET")
+      details = endpoint.details
+      details.add_path(PathInfo.new(path, 2))
+      endpoint.details = details
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+      context.signals.map(&.kind).should_not contain("sensitive_response")
+    end
+  end
+
+  it "keeps inline Python response fields after filtering a typed parameter" do
+    source = <<-PYTHON
+      @app.get("/tokens")
+      def issue_token(token: str): return {"secret": server_secret}
+      PYTHON
+
+    with_temp_ai_context_source(source, ".py") do |path|
+      endpoint = Endpoint.new("/tokens", "GET")
+      details = endpoint.details
+      details.add_path(PathInfo.new(path, 2))
+      endpoint.details = details
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+      signal = context.signals.find { |entry| entry.kind == "sensitive_response" }
+      signal = signal.should_not be_nil
+      signal.name.should eq("secret")
+    end
+  end
+
+  it "keeps class-level Spring authorization from becoming authz_absence" do
+    source = <<-JAVA
+      @RestController
+      @PreAuthorize("hasRole('ADMIN')")
+      public class AdminController {
+        @DeleteMapping("/users/{id}")
+        public void deleteUser(Long id) {
+          service.delete(id);
+        }
+      }
+      JAVA
+
+    with_temp_ai_context_source(source) do |path|
+      endpoint = Endpoint.new("/users/{id}", "DELETE")
+      details = endpoint.details
+      details.add_path(PathInfo.new(path, 5))
+      endpoint.details = details
+      endpoint.push_param(Param.new("id", "1", "path"))
+      endpoint.add_tag(Tag.new("auth", "Protected by Spring @PreAuthorize on the controller class", "spring_auth"))
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+      context.guards.map(&.kind).should contain("auth_guard")
+      context.guards.map(&.kind).should contain("authz_guard")
+      context.signals.map(&.kind).should_not contain("authz_absence")
+    end
+  end
+
+  it "stacks NestJS class JwtAuthGuard with method @Roles without authz_absence" do
+    source = <<-TS
+      @Controller('posts')
+      @UseGuards(JwtAuthGuard)
+      export class PostsController {
+        @Roles('admin')
+        @Delete(':id')
+        remove() {
+          return {};
+        }
+      }
+      TS
+
+    with_temp_ai_context_source(source, ".ts") do |path|
+      endpoint = Endpoint.new("/posts/:id", "DELETE")
+      details = endpoint.details
+      details.add_path(PathInfo.new(path, 6))
+      endpoint.details = details
+      endpoint.push_param(Param.new("id", "1", "path"))
+      endpoint.add_tag(Tag.new("auth", "Protected by NestJS @UseGuards(JwtAuthGuard) (class-level)", "nestjs_auth"))
+      endpoint.add_tag(Tag.new("authz", "Protected by NestJS @Roles decorator", "nestjs_auth"))
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+      context.guards.map(&.kind).sort!.should eq(["auth_guard", "authz_guard"])
+      context.signals.map(&.kind).should_not contain("authz_absence")
+    end
+  end
+
+  it "stacks Rails Devise authenticate with Pundit authorize without authz_absence" do
+    source = <<-RUBY
+      class PostsController < ApplicationController
+        before_action :authenticate_user!
+        def destroy
+          post = Post.find(params[:id])
+          authorize post
+          post.destroy
+        end
+      end
+      RUBY
+
+    with_temp_ai_context_source(source, ".rb") do |path|
+      endpoint = Endpoint.new("/posts/:id", "DELETE")
+      details = endpoint.details
+      details.add_path(PathInfo.new(path, 3))
+      endpoint.details = details
+      endpoint.push_param(Param.new("id", "1", "path"))
+      endpoint.add_tag(Tag.new("auth", "Protected by Devise authenticate_user!", "ruby_auth"))
+      endpoint.add_tag(Tag.new("authz", "Protected by Pundit authorize", "ruby_auth"))
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+      context.guards.map(&.kind).sort!.should eq(["auth_guard", "authz_guard"])
+      context.signals.map(&.kind).should_not contain("authz_absence")
+    end
+  end
+
   it "detects csrf_guard via protect_from_forgery" do
     source = <<-CODE
       class UsersController < ApplicationController
@@ -1758,6 +2186,30 @@ describe "NoirAIContext" do
 
       context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
       context.signals.map(&.kind).should contain("csrf_exempt")
+    end
+  end
+
+  it "detects csrf_exempt on a Django method_decorator applied to a class" do
+    source = <<-CODE
+      from django.utils.decorators import method_decorator
+      from django.views.decorators.csrf import csrf_exempt
+      from django.views import View
+
+      @method_decorator(csrf_exempt, name="dispatch")
+      class WebhookView(View):
+          def post(self, request):
+              return process(request.body)
+      CODE
+
+    with_temp_ai_context_source(source) do |path|
+      endpoint = Endpoint.new("/webhook", "POST")
+      details = endpoint.details
+      details.add_path(PathInfo.new(path, 7))
+      endpoint.details = details
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+      context.signals.map(&.kind).should contain("csrf_exempt")
+      context.signals.map(&.kind).should contain("priority_review")
     end
   end
 
@@ -1910,6 +2362,22 @@ describe "NoirAIContext" do
     context.signals.map(&.kind).should_not contain("html_content_input")
   end
 
+  it "does not tag generic body params as html_content_input" do
+    endpoint = Endpoint.new("/posts", "POST")
+    endpoint.push_param(Param.new("body", "", "json"))
+
+    context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+    context.signals.map(&.kind).should_not contain("html_content_input")
+  end
+
+  it "tags explicitly rich body params as html_content_input" do
+    endpoint = Endpoint.new("/posts", "POST")
+    endpoint.push_param(Param.new("body_html", "<p>hello</p>", "json"))
+
+    context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+    context.signals.map(&.kind).should contain("html_content_input")
+  end
+
   it "tags explicit HTML content params as html_content_input" do
     endpoint = Endpoint.new("/posts", "POST")
     endpoint.push_param(Param.new("htmlContent", "hello <b>world</b>", "json"))
@@ -1960,6 +2428,35 @@ describe "NoirAIContext" do
 
   # ===== Phase 5: New heuristic signals =====
 
+  it "reads an inline owner comparison against the current user as authorization" do
+    source = <<-RUBY
+      class CommentsController < ApplicationController
+        before_action :authenticate_user!
+        def destroy
+          @comment = @article.comments.find(params[:id])
+          if @comment.user_id == @current_user_id
+            @comment.destroy
+          else
+            render json: {}, status: :forbidden
+          end
+        end
+      end
+      RUBY
+
+    with_temp_ai_context_source(source, ".rb") do |path|
+      endpoint = Endpoint.new("/comments/:id", "DELETE")
+      details = endpoint.details
+      details.add_path(PathInfo.new(path, 3))
+      endpoint.details = details
+      endpoint.push_param(Param.new("id", "1", "path"))
+      endpoint.add_tag(Tag.new("auth", "Protected by Devise authenticate_user!", "ruby_auth"))
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+      context.guards.map(&.kind).should contain("authz_guard")
+      context.signals.map(&.kind).should_not contain("authz_absence")
+    end
+  end
+
   it "emits authz_absence when authn is present but no authz and the route has a path id" do
     source = <<-CODE
       class UsersController < ApplicationController
@@ -1978,10 +2475,17 @@ describe "NoirAIContext" do
       endpoint.details = details
       endpoint.push_param(Param.new("id", "1", "path"))
 
-      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+      endpoints = NoirAIContext.apply([endpoint])
+      context = endpoints[0].ai_context.should_not be_nil
       context.guards.map(&.kind).should contain("auth_guard")
       context.guards.map(&.kind).should_not contain("authz_guard")
       context.signals.map(&.kind).should contain("authz_absence")
+
+      NoirAIContext.apply_feature_filter(endpoints, Set{"guards", "sinks"})
+      filtered_context = endpoints[0].ai_context.should_not be_nil
+      filtered_context.guards.map(&.kind).should contain("auth_guard")
+      filtered_context.sources.map(&.kind).should contain("request_input")
+      filtered_context.signals.map(&.kind).should contain("authz_absence")
     end
   end
 
@@ -2041,6 +2545,19 @@ describe "NoirAIContext" do
 
     context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
     context.signals.map(&.kind).should contain("guard_absence")
+  end
+
+  it "does not treat pure gRPC POST endpoints as mutating HTTP" do
+    endpoint = Endpoint.new("/HealthService/Check", "POST")
+    endpoint.protocol = "grpc"
+    details = endpoint.details
+    details.technology = "grpc"
+    endpoint.details = details
+
+    context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+    signal_kinds = context.signals.map(&.kind)
+    signal_kinds.should_not contain("state_change")
+    signal_kinds.should_not contain("guard_absence")
   end
 
   it "does not bleed Python route scope into the next decorator (regression)" do
@@ -2256,6 +2773,85 @@ describe "NoirAIContext" do
     end
   end
 
+  # The guard that keeps the check off prose inside a string value —
+  # "the noun must not be preceded by a quote" — also excluded every
+  # *quoted key*, which is how JSON, Python dicts, Go maps and PHP
+  # arrays spell a response field. The check silently stopped firing on
+  # the dominant shape; only JS/Ruby-style bare keys reached it.
+  {
+    {"js", %({ name: u.name, "token": u.access_token })},
+    {"python", %({"user": name, "access_token": tok})},
+    {"single-quoted", %({'refresh_token': tok})},
+  }.each do |(label, payload)|
+    it "emits sensitive_response for a #{label} quoted credential key" do
+      source = <<-CODE
+        app.get('/me', (req, res) => {
+          res.json(#{payload})
+        })
+        CODE
+
+      with_temp_ai_context_source(source) do |path|
+        endpoint = Endpoint.new("/me", "GET")
+        details = endpoint.details
+        details.add_path(PathInfo.new(path, 1))
+        endpoint.details = details
+
+        context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+        context.signals.map(&.kind).should contain("sensitive_response")
+      end
+    end
+  end
+
+  # A real handler assembles the payload first and serializes it at the
+  # end, so the emitter and the credential key sit further apart than the
+  # default 12-line / 240-char route scope. Under that window the two
+  # could never co-occur and the check could not fire on the shape it
+  # exists to catch.
+  it "emits sensitive_response when the emitter is far below the credential key" do
+    filler = (1..18).map { |i| "  const step#{i} = compute(#{i})" }.join("\n")
+    source = <<-CODE
+      app.get('/session', (req, res) => {
+        const user = { id: u.id, "apiKey": u.api_key }
+      #{filler}
+        res.json({ user: user })
+      })
+      CODE
+
+    with_temp_ai_context_source(source) do |path|
+      endpoint = Endpoint.new("/session", "GET")
+      details = endpoint.details
+      details.add_path(PathInfo.new(path, 1))
+      endpoint.details = details
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+      context.signals.map(&.kind).should contain("sensitive_response")
+    end
+  end
+
+  # FastAPI and modern Flask handlers serialize a returned literal with
+  # no helper call at all, so an emitter list built purely from helper
+  # names (`jsonify`, `res.json`, …) skipped them entirely.
+  it "emits sensitive_response for a handler that returns a bare dict literal" do
+    source = <<-CODE
+      @bp.route('/tokens', methods=['POST'])
+      def get_token():
+          token = basic_auth.current_user().get_token()
+          return {'token': token}
+      CODE
+
+    with_temp_ai_context_source(source, ".py") do |path|
+      endpoint = Endpoint.new("/tokens", "POST")
+      details = endpoint.details
+      details.add_path(PathInfo.new(path, 1))
+      endpoint.details = details
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+      signal = context.signals.find { |entry| entry.kind == "sensitive_response" }
+      signal = signal.should_not be_nil
+      signal.name.should eq("token")
+    end
+  end
+
   it "emits sensitive_response when a Kotlin handler directly returns a credential value" do
     source = <<-CODE
       @GetMapping
@@ -2325,6 +2921,28 @@ describe "NoirAIContext" do
     end
   end
 
+  # Admitting quoted keys must not admit a credential noun that merely
+  # *opens* a string value. The quoted branch only matches when the
+  # string closes right after the noun, so `"password: required"` — the
+  # case the original quote guard was written for — still stays quiet.
+  it "does NOT emit sensitive_response when a credential noun opens a string value" do
+    source = <<-CODE
+      app.get('/help', (req, res) => {
+        res.json({ hint: "password: required", detail: "token: see docs above" })
+      })
+      CODE
+
+    with_temp_ai_context_source(source) do |path|
+      endpoint = Endpoint.new("/help", "GET")
+      details = endpoint.details
+      details.add_path(PathInfo.new(path, 1))
+      endpoint.details = details
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+      context.signals.any? { |s| s.kind == "sensitive_response" }.should be_false
+    end
+  end
+
   it "emits unsafe_method when a GET handler invokes a mutating callee" do
     endpoint = Endpoint.new("/users/:id", "GET")
     endpoint.push_callee(Callee.new("User.destroy", "controller.rb", 5))
@@ -2333,6 +2951,17 @@ describe "NoirAIContext" do
     context.signals.map(&.kind).should contain("unsafe_method")
     context.signals.find!(&.kind.== "unsafe_method").name.should contain("GET")
     context.signals.find!(&.kind.== "unsafe_method").name.should contain("User.destroy")
+  end
+
+  it "emits unsafe_method when a QUERY handler invokes a mutating callee" do
+    # RFC 10008 defines QUERY as safe + idempotent, so a mutation behind it
+    # is the same verb-vs-implementation mismatch as a mutating GET.
+    endpoint = Endpoint.new("/products/search", "QUERY")
+    endpoint.push_callee(Callee.new("Cart.update", "controller.rb", 9))
+
+    context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+    context.signals.map(&.kind).should contain("unsafe_method")
+    context.signals.find!(&.kind.== "unsafe_method").name.should contain("QUERY")
   end
 
   it "does NOT emit unsafe_method for mobile deep-link endpoints" do
@@ -2452,7 +3081,7 @@ describe "NoirAIContext" do
       def sign_up():
           username = request.form['username']
           password = request.form['password']
-          User.query.filter(User.name == username).first()
+          db.execute("SELECT 1 FROM users WHERE name = '%s'" % username)
           db.session.add(User(username, password))
       CODE
 
@@ -2462,7 +3091,7 @@ describe "NoirAIContext" do
       details.add_path(PathInfo.new(path, 1))
       endpoint.details = details
       endpoint.push_param(Param.new("password", "x", "form"))
-      endpoint.push_callee(Callee.new("User.query.filter", path, 5))
+      endpoint.push_callee(Callee.new("db.execute", path, 5))
       endpoint.push_callee(Callee.new("db.session.add", path, 6))
 
       context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
@@ -2478,7 +3107,7 @@ describe "NoirAIContext" do
     # No guard, no rate-limit param, but state-change exists. Then
     # the create callee is a name-matched sql sink ("execute") —
     # let's instead use a clearer sink.
-    endpoint.push_callee(Callee.new("User.query", "controller.rb", 6))
+    endpoint.push_callee(Callee.new("db.execute", "controller.rb", 6))
 
     context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
     priority = context.signals.find(&.kind.== "priority_review")
@@ -2495,6 +3124,48 @@ describe "NoirAIContext" do
     # GET with no callees, no params, no guards needed.
     context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
     context.signals.map(&.kind).should_not contain("priority_review")
+  end
+
+  it "does not score an XSS sink when sanitization is present" do
+    source = <<-CODE
+      app.post('/render', (req, res) => {
+        const clean = sanitize_html(req.body.html)
+        element.innerHTML = clean
+      })
+      CODE
+
+    with_temp_ai_context_source(source) do |path|
+      endpoint = Endpoint.new("/render", "POST")
+      details = endpoint.details
+      details.add_path(PathInfo.new(path, 1))
+      endpoint.details = details
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+      context.sinks.map(&.kind).should contain("xss")
+      context.validators.map(&.kind).should contain("sanitization")
+      context.signals.map(&.kind).should_not contain("priority_review")
+    end
+  end
+
+  it "does not score an XSS sink when schema validation is present" do
+    source = <<-CODE
+      app.post('/render', (req, res) => {
+        const payload = UserInput.model_validate(req.body)
+        element.innerHTML = payload.name
+      })
+      CODE
+
+    with_temp_ai_context_source(source) do |path|
+      endpoint = Endpoint.new("/render", "POST")
+      details = endpoint.details
+      details.add_path(PathInfo.new(path, 1))
+      endpoint.details = details
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+      context.sinks.map(&.kind).should contain("xss")
+      context.validators.map(&.kind).should contain("schema_validation")
+      context.signals.map(&.kind).should_not contain("priority_review")
+    end
   end
 
   it "does not inflate priority from duplicate sinks of the same kind" do
@@ -2548,9 +3219,77 @@ describe "NoirAIContext" do
       endpoint.push_param(Param.new("url", "https://example.com", "query"))
       endpoint.push_callee(Callee.new("fetch", path, 2))
 
-      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+      endpoints = NoirAIContext.apply([endpoint])
+      context = endpoints[0].ai_context.should_not be_nil
+      context.sinks.map(&.kind).should contain("outbound_http")
       context.signals.map(&.kind).should contain("ssrf")
+      ssrf = context.signals.find!(&.kind.== "ssrf")
+      ssrf.source.should eq("heuristic")
+      ssrf.confidence.should eq(72)
+
+      NoirAIContext.apply_feature_filter(endpoints, Set{"signals"})
+      filtered_context = endpoints[0].ai_context.should_not be_nil
+      filtered_context.signals.map(&.kind).should contain("ssrf")
+      filtered_context.sources.map(&.kind).should contain("request_input")
+      filtered_context.sinks.map(&.kind).should contain("outbound_http")
     end
+  end
+
+  it "upgrades Hunt param-tag ssrf to combination heuristic when outbound_http exists" do
+    # Regression for #2788: Hunt tags URL-like params as `ssrf` (conf ~58).
+    # That weak tag used to satisfy add_ssrf_signal's kind-collision guard
+    # and suppress the stronger outbound_http + redirect_input roll-up.
+    source = <<-CODE
+      app.get('/fetch', (req, res) => {
+        const data = await fetch(req.query.url)
+        res.send(data)
+      })
+      CODE
+
+    with_temp_ai_context_source(source) do |path|
+      endpoint = Endpoint.new("/fetch", "GET")
+      details = endpoint.details
+      details.add_path(PathInfo.new(path, 1))
+      endpoint.details = details
+
+      url_param = Param.new("url", "https://example.com", "query")
+      url_param.add_tag(Tag.new("ssrf", "This parameter may be vulnerable to Server Side Request Forgery (SSRF) attacks.", "Hunt"))
+      endpoint.push_param(url_param)
+      endpoint.push_callee(Callee.new("fetch", path, 2))
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+
+      ssrf_signals = context.signals.select { |s| s.kind == "ssrf" }
+      ssrf_signals.size.should eq(1)
+      ssrf = ssrf_signals[0]
+      ssrf.source.should eq("heuristic")
+      ssrf.confidence.should eq(72)
+      ssrf.description.should_not be_nil
+      ssrf.description.not_nil!.should contain("outbound HTTP")
+    end
+  end
+
+  it "retains derived risk signals and credential sources when params flood the context" do
+    # Param-derived entries are intentionally first here: before the cap
+    # became priority-aware, these entries filled both buckets and silently
+    # dropped the late SSRF / absence roll-ups and credential-bearing input.
+    names = %w[
+      url uri redirect return next continue dest callback
+      id user account order profile document project user_id
+      password token secret api_key file filename path search
+    ]
+    endpoint = Endpoint.new("/fetch", "POST", names.map { |name| Param.new(name, "", "json") })
+    endpoint.push_callee(Callee.new("fetch"))
+
+    context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+
+    context.signals.map(&.kind).should contain("ssrf")
+    context.signals.map(&.kind).should contain("guard_absence")
+    context.signals.map(&.kind).should contain("priority_review")
+    context.signals.map(&.kind).should contain("credential_input")
+    context.sources.map(&.name).should contain("json.password")
+    context.signals.size.should eq(AIContext::MAX_PER_SECTION)
+    context.sources.size.should eq(AIContext::MAX_PER_SECTION)
   end
 
   it "emits ssrf for Rust reqwest direct HTTP callees with URL-like input" do
@@ -2871,25 +3610,76 @@ describe "NoirAIContext" do
     end
   end
 
-  it "does NOT emit path_traversal when file_io is tagger-derived (file upload, not path operation)" do
-    # FP sweep #1 regression: the FileUpload tagger pushes a `file_io`
-    # sink to mark the endpoint as a file-handling route, but
-    # receiving a multipart upload doesn't itself mean the file's
-    # PATH is attacker-controlled. path_traversal requires a
-    # code-derived file_io (File.read/write/send_file in source),
-    # not the tagger-derived "this is an upload endpoint" marker.
+  it "does NOT promote FileUpload alone to file_io or path_traversal" do
+    # Packaging regression (#2787): FileUpload is a surface heuristic.
+    # Promoting it to a file_io sink @80 made upload routes look like
+    # confirmed path I/O and previously needed a special-case filter
+    # to keep path_traversal quiet. Keep the file_upload signal; do
+    # not invent a file_io sink from the tag alone.
     endpoint = Endpoint.new("/upload", "POST")
     endpoint.push_param(Param.new("file", "blob", "form"))
-    endpoint.add_tag(Tag.new("file_upload", "Endpoint characteristics suggest file upload or file handling behavior", "FileUpload"))
+    endpoint.add_tag(Tag.new("file_upload", "File upload endpoint potentially vulnerable to unrestricted file upload, path traversal, or malicious file execution.", "FileUpload"))
 
     context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
-    # The sink should still be present (it's a useful hint that this
-    # is an upload route).
-    context.sinks.map(&.kind).should contain("file_io")
-    # But the path_traversal combination signal should NOT fire,
-    # because the file_io came from the upload tagger, not from a
-    # path-operation source pattern.
+    context.signals.map(&.kind).should contain("file_upload")
+    file_upload = context.signals.find!(&.kind.==("file_upload"))
+    desc = file_upload.description.should_not be_nil
+    desc.should contain("tagger heuristic")
+    desc.should_not contain("potentially vulnerable")
+    context.sinks.map(&.kind).should_not contain("file_io")
     context.signals.map(&.kind).should_not contain("path_traversal")
+  end
+
+  it "does not read an uploaded file handle or the route literal as file_io" do
+    # gin upload-file/limit-bytes: reads the multipart file and never saves
+    # it. `file.Close` is a handle on the upload and `/upload` is the route's
+    # own path literal; neither is file-system access.
+    source = <<-GO
+      func uploadHandler(c *gin.Context) {
+        file, _, err := c.Request.FormFile("file")
+        defer func() { _ = file.Close() }()
+        c.JSON(http.StatusOK, gin.H{"message": "upload successful"})
+      }
+      r.POST("/upload", uploadHandler)
+      GO
+
+    with_temp_ai_context_source(source, ".go") do |path|
+      endpoint = Endpoint.new("/upload", "POST")
+      details = endpoint.details
+      details.add_path(PathInfo.new(path, 6))
+      endpoint.details = details
+      endpoint.push_callee(Callee.new("c.Request.FormFile", path, 2))
+      endpoint.push_callee(Callee.new("file.Close", path, 3))
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+      context.sinks.map(&.kind).should_not contain("file_io")
+    end
+
+    saving = Endpoint.new("/upload", "POST")
+    saving.push_callee(Callee.new("c.FormFile", "main.go", 2))
+    saving.push_callee(Callee.new("c.SaveUploadedFile", "main.go", 3))
+    context = NoirAIContext.apply([saving])[0].ai_context.should_not be_nil
+    context.sinks.map(&.kind).should contain("file_io")
+  end
+
+  it "does not read a download route literal in a URLconf as file_io" do
+    source = <<-PY
+      path(
+          "sets/download/<int:pk>/",
+          self.set_download_view.as_view(),
+          name="voucher-set-download",
+      ),
+      PY
+
+    with_temp_ai_context_source(source, ".py") do |path|
+      endpoint = Endpoint.new("/sets/download/<int:pk>/", "GET")
+      details = endpoint.details
+      details.add_path(PathInfo.new(path, 1))
+      endpoint.details = details
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+      context.sinks.map(&.kind).should_not contain("file_io")
+    end
   end
 
   it "still emits path_traversal for actual file-path I/O with a file-named input" do
@@ -2903,6 +3693,127 @@ describe "NoirAIContext" do
 
     context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
     context.signals.map(&.kind).should contain("path_traversal")
+  end
+
+  # Callee sinks need a name match, and `\bread\b` / `\bfile\b` match none
+  # of the camelCase fs calls, so a handler whose only file access was
+  # `readdir` or `res.sendFile` had no file_io sink.
+  it "emits file_io for camelCase file-system callees" do
+    ["readFile", "readdir", "fs.readFileSync", "fs.createReadStream", "res.sendFile", "fs.existsSync", "os.ReadFile", "send_from_directory"].each do |name|
+      endpoint = Endpoint.new("/x", "GET")
+      endpoint.push_callee(Callee.new(name, "handler.ts", 3))
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+      context.sinks.map(&.kind).should contain("file_io")
+    end
+  end
+
+  it "reads read/write as file_io only on a handle opened from the file system" do
+    sink_kinds = ->(source : String, ext : String, callee : String, line : Int32) do
+      with_temp_ai_context_source(source, ext) do |path|
+        endpoint = Endpoint.new("/x", "POST")
+        endpoint.push_callee(Callee.new(callee, path, line))
+        NoirAIContext.apply([endpoint])[0].ai_context.should_not(be_nil).sinks.map(&.kind)
+      end
+    end
+
+    python = <<-PY
+      def export(request):
+          with open(request.args["name"]) as f:
+              data = f.read()
+          upload = request.files.get("file")
+          content = upload.read()
+          raw = request.files["file"].stream.read()
+          out = io.open(path, "w")
+          out.write(data)
+      PY
+    sink_kinds.call(python, ".py", "f.read", 3).should contain("file_io")
+    sink_kinds.call(python, ".py", "out.write", 8).should contain("file_io")
+    sink_kinds.call(python, ".py", "upload.read", 5).should_not contain("file_io")
+    sink_kinds.call(python, ".py", "file.stream.read", 6).should_not contain("file_io")
+
+    go = <<-GO
+      func handler(w http.ResponseWriter, r *http.Request) {
+        f, err := os.Open(r.URL.Query().Get("name"))
+        n, _ := f.Read(buf)
+        token := make([]byte, 32)
+        rand.Read(token)
+        body := resp.Body
+        body.Read(buf)
+      }
+      GO
+    sink_kinds.call(go, ".go", "f.Read", 3).should contain("file_io")
+    sink_kinds.call(go, ".go", "rand.Read", 5).should_not contain("file_io")
+    sink_kinds.call(go, ".go", "body.Read", 7).should_not contain("file_io")
+    sink_kinds.call(go, ".go", "resp.Body.Read", 7).should_not contain("file_io")
+
+    ruby = <<-RB
+      def update
+        File.open(params[:path], "w") do |f|
+          f.write(params[:body])
+        end
+      end
+      RB
+    sink_kinds.call(ruby, ".rb", "f.write", 3).should contain("file_io")
+
+    # A FastAPI `File()` form-field marker and a service helper named
+    # `download` / `upload` are not file-system calls.
+    ["File", "this.service.download", "upload"].each do |name|
+      sink_kinds.call("x\n", ".py", name, 1).should_not contain("file_io")
+    end
+    ["File.read", "c.File", "res.download"].each do |name|
+      sink_kinds.call("x\n", ".rb", name, 1).should contain("file_io")
+    end
+  end
+
+  it "does not read send_file of an in-memory buffer as file_io" do
+    source = <<-PY
+      def icon():
+          return send_file(io.BytesIO(icon_bytes), mimetype=mimetype)
+      def export():
+          return send_file(
+              io.BytesIO(result.payload),
+              as_attachment=True,
+          )
+      def archive():
+          buf = io.BytesIO()
+          return send_file(buf, mimetype="application/zip")
+      def report():
+          return send_file(report_path, as_attachment=True)
+      PY
+
+    with_temp_ai_context_source(source, ".py") do |path|
+      kinds = [2, 4, 10, 12].map do |line|
+        endpoint = Endpoint.new("/x", "GET")
+        endpoint.push_callee(Callee.new("send_file", path, line))
+        NoirAIContext.apply([endpoint])[0].ai_context.should_not(be_nil).sinks.map(&.kind)
+      end
+      kinds[0].should_not contain("file_io")
+      kinds[1].should_not contain("file_io")
+      kinds[2].should_not contain("file_io")
+      kinds[3].should contain("file_io")
+    end
+  end
+
+  it "emits file_io for a directory-listing mount but not for a plain static mount" do
+    source = <<-CODE
+      app.use('/ftp', serveIndexMiddleware, serveIndex('ftp', { icons: true }))
+      app.use('/vendor/lib', express.static(path.resolve('node_modules/lib')))
+      CODE
+
+    with_temp_ai_context_source(source, ".ts") do |path|
+      endpoints = [{"/ftp", 1}, {"/vendor/lib", 2}].map do |url, line|
+        endpoint = Endpoint.new(url, "GET")
+        details = endpoint.details
+        details.add_path(PathInfo.new(path, line))
+        endpoint.details = details
+        endpoint
+      end
+
+      contexts = NoirAIContext.apply(endpoints).map(&.ai_context.should_not(be_nil))
+      contexts[0].sinks.map(&.kind).should contain("file_io")
+      contexts[1].sinks.map(&.kind).should_not contain("file_io")
+    end
   end
 
   it "suppresses unsafe_method when the handler dispatches on request.method" do
@@ -3075,6 +3986,24 @@ describe "NoirAIContext" do
       context.signals.map(&.kind).should_not contain("rate_limit_absence")
     end
   end
+
+  it "does NOT emit rate_limit_absence when the only credential is a presented bearer header or session cookie" do
+    endpoint = Endpoint.new("/api/articles", "POST")
+    endpoint.push_param(Param.new("title", "x", "json"))
+    endpoint.push_param(Param.new("Authorization", "Token x", "header"))
+    endpoint.push_param(Param.new("token", "x", "cookie"))
+
+    context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+    context.signals.map(&.kind).should contain("credential_input")
+    context.signals.map(&.kind).should_not contain("rate_limit_absence")
+
+    login = Endpoint.new("/api/users/login", "POST")
+    login.push_param(Param.new("password", "x", "json"))
+    login.push_param(Param.new("Authorization", "Token x", "header"))
+
+    login_context = NoirAIContext.apply([login])[0].ai_context.should_not be_nil
+    login_context.signals.map(&.kind).should contain("rate_limit_absence")
+  end
 end
 
 # `--ai-context=…` used to filter the plain-text renderer only,
@@ -3101,6 +4030,37 @@ describe "NoirAIContext.parse_feature_set" do
   it "trims whitespace and drops empty entries" do
     set = NoirAIContext.parse_feature_set("  guards , , sinks  ")
     set.should eq(Set{"guards", "sinks"})
+  end
+end
+
+describe "NoirAIContext packaging honesty (#2787)" do
+  it "special-cases cookie/file/xml request_input descriptions" do
+    endpoint = Endpoint.new("/x", "POST")
+    endpoint.push_param(Param.new("sid", "abc", "cookie"))
+    endpoint.push_param(Param.new("resume", "cv.pdf", "file"))
+    endpoint.push_param(Param.new("payload", "<a/>", "xml"))
+
+    context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+    by_name = {} of String => AIContextEntry
+    context.sources.each { |s| by_name[s.name] = s if s.kind == "request_input" }
+
+    by_name["cookie.sid"].description.should eq("HTTP cookie supplied by the caller.")
+    by_name["file.resume"].description.should eq("Uploaded file parameter supplied by the caller.")
+    by_name["xml.payload"].description.should eq("XML body/field supplied by the caller.")
+  end
+
+  it "softens Hunt param-tag signal copy and keeps confidence below strong heuristics" do
+    endpoint = Endpoint.new("/fetch", "GET")
+    param = Param.new("url", "https://example.com", "query")
+    param.add_tag(Tag.new("ssrf", "This parameter may be vulnerable to Server Side Request Forgery (SSRF) attacks.", "Hunt"))
+    endpoint.push_param(param)
+
+    context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+    hunt = context.signals.find { |s| s.kind == "ssrf" && s.source.try(&.starts_with?("param_tagger:Hunt")) }
+    hunt = hunt.should_not be_nil
+    hunt_desc = hunt.description.should_not be_nil
+    hunt_desc.should contain("Name-heuristic only")
+    hunt.confidence.should eq(58)
   end
 end
 
@@ -3146,6 +4106,19 @@ describe "NoirAIContext.apply_feature_filter" do
     context.signals.empty?.should be_true
   end
 
+  it "omits empty buckets from JSON so filtered categories do not look confirmed-none" do
+    arr = [private_endpoint.call({"guards" => 1, "callee" => 1, "sinks" => 1})]
+    NoirAIContext.apply_feature_filter(arr, Set{"guards", "sinks"})
+    context = arr[0].ai_context.should_not be_nil
+    json = JSON.parse(context.to_json)
+    json.as_h.has_key?("guards").should be_true
+    json.as_h.has_key?("sinks").should be_true
+    json.as_h.has_key?("callees").should be_false
+    json.as_h.has_key?("sources").should be_false
+    json.as_h.has_key?("validators").should be_false
+    json.as_h.has_key?("signals").should be_false
+  end
+
   it "nils the ai_context entirely when the filter empties every bucket" do
     # If the user asks for `--ai-context=guards` and the endpoint
     # has none, the struct ends up entirely empty — return it to
@@ -3161,5 +4134,109 @@ describe "NoirAIContext.apply_feature_filter" do
     arr[0].ai_context.should be_nil
     NoirAIContext.apply_feature_filter(arr, Set{"guards"})
     arr[0].ai_context.should be_nil
+  end
+end
+
+describe "AI context feature dependencies in plain output" do
+  it "renders linked signals and evidence buckets together" do
+    endpoint = Endpoint.new("/fetch/:id", "PUT")
+    context = AIContext.new
+    context.push_guard(AIContextEntry.new("auth_guard", "authenticate_user!", source: "route_source"))
+    context.push_source(AIContextEntry.new("request_input", "path.id", source: "param"))
+    context.push_sink(AIContextEntry.new("outbound_http", "fetch", source: "route_source"))
+    context.push_signal(AIContextEntry.new("authz_absence", endpoint.url, source: "heuristic"))
+    context.push_signal(AIContextEntry.new("ssrf", "fetch", source: "heuristic"))
+    context.push_signal(AIContextEntry.new("log_injection", "log+input", source: "route_source"))
+    endpoint.ai_context = context
+
+    signals_only = render_ai_context_with_features(endpoint, "signals")
+    signals_only.should contain("guards:")
+    signals_only.should contain("sinks:")
+    signals_only.should contain("signals:")
+
+    evidence_only = render_ai_context_with_features(endpoint, "guards,sinks")
+    evidence_only.should contain("guards:")
+    evidence_only.should contain("sinks:")
+    evidence_only.should contain("signals:")
+  end
+
+  it "keeps unrelated signals out of narrow feature selections" do
+    endpoint = Endpoint.new("/fetch/:id", "PUT")
+    context = AIContext.new
+    context.push_guard(AIContextEntry.new("auth_guard", "authenticate_user!", source: "route_source"))
+    context.push_source(AIContextEntry.new("request_input", "path.id", source: "param"))
+    context.push_sink(AIContextEntry.new("outbound_http", "fetch", source: "route_source"))
+    context.push_signal(AIContextEntry.new("authz_absence", endpoint.url, source: "heuristic"))
+    context.push_signal(AIContextEntry.new("ssrf", "fetch", source: "heuristic"))
+    context.push_signal(AIContextEntry.new("log_injection", "log+input", source: "route_source"))
+    endpoint.ai_context = context
+
+    guards_only = render_ai_context_with_features(endpoint, "guards")
+    guards_only.should contain("authz_absence")
+    guards_only.should contain("sources:")
+    guards_only.should_not contain("ssrf")
+    guards_only.should_not contain("log_injection")
+    guards_only.should_not contain("outbound_http")
+
+    sources_only = render_ai_context_with_features(endpoint, "sources")
+    sources_only.should contain("log_injection")
+
+    endpoints = [endpoint]
+    NoirAIContext.apply_feature_filter(endpoints, Set{"guards"})
+    filtered_context = endpoints[0].ai_context.should_not be_nil
+    filtered_context.signals.map(&.kind).should eq(["authz_absence"])
+    filtered_context.sources.map(&.kind).should eq(["request_input"])
+  end
+
+  it "keeps csrf_exempt with guards the same way as guard_absence" do
+    endpoint = Endpoint.new("/login", "POST")
+    context = AIContext.new
+    context.push_guard(AIContextEntry.new("auth_guard", "login_required", source: "route_source"))
+    context.push_signal(AIContextEntry.new("csrf_exempt", "csrf_exempt", source: "route_source"))
+    context.push_signal(AIContextEntry.new("ssrf", "fetch", source: "heuristic"))
+    endpoint.ai_context = context
+
+    endpoints = [endpoint]
+    NoirAIContext.apply_feature_filter(endpoints, Set{"guards"})
+    filtered = endpoints[0].ai_context.should_not be_nil
+    filtered.guards.map(&.kind).should contain("auth_guard")
+    filtered.signals.map(&.kind).should eq(["csrf_exempt"])
+    filtered.sinks.should be_empty
+  end
+
+  it "does not attach aggregate priority signals to one possible contributor bucket" do
+    endpoint = Endpoint.new("/write/:id", "PUT")
+    context = AIContext.new
+    context.push_guard(AIContextEntry.new("auth_guard", "authenticate_user!", source: "route_source"))
+    context.push_sink(AIContextEntry.new("sql", "query", source: "route_source"))
+    context.push_validator(AIContextEntry.new("schema_validation", "RequestSchema", source: "route_source"))
+    context.push_signal(AIContextEntry.new("priority_review", "high", source: "heuristic"))
+    context.push_signal(AIContextEntry.new("cors_open", "wildcard+credentials", source: "route_source"))
+    context.push_signal(AIContextEntry.new("jwt_unsafe", "verify disabled", source: "route_source"))
+    endpoint.ai_context = context
+
+    guard_selection = [endpoint]
+    NoirAIContext.apply_feature_filter(guard_selection, Set{"guards"})
+    guard_context = guard_selection[0].ai_context.should_not be_nil
+    guard_context.guards.map(&.kind).should contain("auth_guard")
+    guard_context.signals.map(&.kind).should be_empty
+
+    signal_endpoint = Endpoint.new("/write/:id", "PUT")
+    signal_context = AIContext.new
+    signal_context.push_guard(AIContextEntry.new("auth_guard", "authenticate_user!", source: "route_source"))
+    signal_context.push_sink(AIContextEntry.new("sql", "query", source: "route_source"))
+    signal_context.push_validator(AIContextEntry.new("schema_validation", "RequestSchema", source: "route_source"))
+    signal_context.push_signal(AIContextEntry.new("priority_review", "high", source: "heuristic"))
+    signal_context.push_signal(AIContextEntry.new("cors_open", "wildcard+credentials", source: "route_source"))
+    signal_context.push_signal(AIContextEntry.new("jwt_unsafe", "verify disabled", source: "route_source"))
+    signal_endpoint.ai_context = signal_context
+
+    signal_selection = [signal_endpoint]
+    NoirAIContext.apply_feature_filter(signal_selection, Set{"signals"})
+    signal_context = signal_selection[0].ai_context.should_not be_nil
+    signal_context.signals.map(&.kind).should contain("priority_review")
+    signal_context.guards.map(&.kind).should contain("auth_guard")
+    signal_context.sinks.map(&.kind).should contain("sql")
+    signal_context.validators.map(&.kind).should contain("schema_validation")
   end
 end

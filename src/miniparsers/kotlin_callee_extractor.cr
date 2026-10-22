@@ -29,6 +29,26 @@ require "../ext/tree_sitter/tree_sitter"
 module Noir::KotlinCalleeExtractor
   extend self
 
+  alias FunctionIndex = Hash(Tuple(String, String), Array(LibTreeSitter::TSNode))
+
+  # One parsed file's callee lookups. The function index is built on
+  # the first lookup and shared by every later one, so resolving N
+  # handlers in one file costs one tree walk instead of N.
+  class FileCallees
+    getter root : LibTreeSitter::TSNode
+    getter source : String
+    getter file_path : String
+    @function_index : FunctionIndex?
+
+    def initialize(@root : LibTreeSitter::TSNode, @source : String, @file_path : String)
+    end
+
+    def callees_in_method(class_name : String, method_name : String, route_line : Int32? = nil) : Array(Tuple(String, String, Int32))
+      function_index = @function_index ||= KotlinCalleeExtractor.build_function_index(@root, @source)
+      KotlinCalleeExtractor.callees_in_method(@root, @source, @file_path, class_name, method_name, route_line, function_index: function_index)
+    end
+  end
+
   # Routing DSL verbs + scoping helpers. When `skip_routing` is on
   # (Ktor handler body), a `call_expression` whose root name is in
   # this set is treated as a NESTED ROUTE — we skip both emitting it
@@ -46,16 +66,21 @@ module Noir::KotlinCalleeExtractor
   # `call_expression` callee inside its body as
   # `{name, file_path, file_line_1_based}`. Empty array when the
   # function can't be located or its body is missing.
+  #
+  # Without `function_index:` this walks the whole tree to find the
+  # function; callers resolving many handlers in one file should go
+  # through `FileCallees`, which builds the index once.
   def callees_in_method(root : LibTreeSitter::TSNode,
                         source : String,
                         file_path : String,
                         class_name : String,
                         method_name : String,
-                        route_line : Int32? = nil) : Array(Tuple(String, String, Int32))
+                        route_line : Int32? = nil,
+                        function_index : FunctionIndex? = nil) : Array(Tuple(String, String, Int32))
     sink = [] of Tuple(String, String, Int32)
     return sink if class_name.empty? || method_name.empty?
 
-    fn = find_function(root, source, class_name, method_name, route_line)
+    fn = find_function(function_index || build_function_index(root, source), class_name, method_name, route_line)
     return sink unless fn
     body = function_body_node(fn)
     return sink unless body
@@ -118,7 +143,7 @@ module Noir::KotlinCalleeExtractor
   # non-identifier shape (mirrors the Python/Go/Java chained-call
   # noise filter).
   private def callee_text(call : LibTreeSitter::TSNode, source : String) : String
-    callable = first_named_child(call)
+    callable = Noir::TreeSitter.first_named_child(call)
     return "" unless callable
 
     case Noir::TreeSitter.node_type(callable)
@@ -192,7 +217,7 @@ module Noir::KotlinCalleeExtractor
   # calls qualify — `obj.get("x")` returns "" so a method named
   # `get` on a real object isn't misclassified as nested routing.
   private def call_root_name(call : LibTreeSitter::TSNode, source : String) : String
-    callable = first_named_child(call)
+    callable = Noir::TreeSitter.first_named_child(call)
     return "" unless callable
     case Noir::TreeSitter.node_type(callable)
     when "simple_identifier"
@@ -205,38 +230,34 @@ module Noir::KotlinCalleeExtractor
     end
   end
 
-  private def first_named_child(node : LibTreeSitter::TSNode) : LibTreeSitter::TSNode?
-    count = LibTreeSitter.ts_node_named_child_count(node)
-    return if count == 0
-    LibTreeSitter.ts_node_named_child(node, 0_u32)
+  # Every class member `function_declaration`, keyed by
+  # (class name, function name) in tree order.
+  def build_function_index(root : LibTreeSitter::TSNode, source : String) : FunctionIndex
+    index = FunctionIndex.new
+    walk_class_containers(root) do |decl|
+      body = class_body_of(decl)
+      next unless body
+      class_name = type_identifier_text(decl, source)
+      Noir::TreeSitter.each_named_child(body) do |member|
+        next unless Noir::TreeSitter.node_type(member) == "function_declaration"
+        (index[{class_name, function_name(member, source)}] ||= [] of LibTreeSitter::TSNode) << member
+      end
+    end
+    index
   end
 
-  # Find the (class_name, method_name) `function_declaration` node.
-  # Mirrors the Java extractor's `find_method` shape; Kotlin uses
-  # `class_declaration` / `object_declaration` / `interface_declaration`
-  # as the class container.
-  private def find_function(root : LibTreeSitter::TSNode,
-                            source : String,
+  # The first (class_name, method_name) function at or after
+  # `route_line`. Kotlin uses `class_declaration` /
+  # `object_declaration` / `interface_declaration` as the class
+  # container.
+  private def find_function(index : FunctionIndex,
                             class_name : String,
                             method_name : String,
                             route_line : Int32? = nil) : LibTreeSitter::TSNode?
-    result : LibTreeSitter::TSNode? = nil
-    walk_class_containers(root) do |decl|
-      next if result
-      next unless type_identifier_text(decl, source) == class_name
-      body = class_body_of(decl)
-      next unless body
-      Noir::TreeSitter.each_named_child(body) do |member|
-        next if result
-        next unless Noir::TreeSitter.node_type(member) == "function_declaration"
-        next unless function_name(member, source) == method_name
-        if route_line
-          next if Noir::TreeSitter.node_start_row(member) + 1 < route_line
-        end
-        result = member
-      end
-    end
-    result
+    candidates = index[{class_name, method_name}]?
+    return unless candidates
+    return candidates.first unless route_line
+    candidates.find { |member| Noir::TreeSitter.node_start_row(member) + 1 >= route_line }
   end
 
   private def walk_class_containers(node : LibTreeSitter::TSNode, &block : LibTreeSitter::TSNode ->)

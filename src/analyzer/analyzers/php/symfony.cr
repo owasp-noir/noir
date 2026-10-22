@@ -1,17 +1,35 @@
 require "../../engines/php_engine"
+require "../../../utils/spec_line_index"
 
 module Analyzer::Php
   class Symfony < PhpEngine
-    private struct ClassRoutePrefix
-      getter path, body_start, body_end
+    analyzer_for "php_symfony"
 
-      def initialize(@path : String, @body_start : Int32, @body_end : Int32)
-      end
+    private record ClassRoutePrefix, path : String, body_start : Int32, body_end : Int32
+
+    # Symfony route configs also live in YAML under config/routes*.
+    # Extend the engine's default `.php`-only source set.
+    protected def php_source_files : Array(String)
+      get_files_by_extension(".php") +
+        get_files_by_extension(".yaml") +
+        get_files_by_extension(".yml")
+    end
+
+    # A YAML route import (`resource: ../src/Controller/Api/`, `type:
+    # attribute`, `prefix: /api/v1`): attribute routes in files under `path`
+    # are mounted under each of `prefixes`.
+    private record RouteImport, path : String, prefixes : Array(String)
+
+    @route_imports = [] of RouteImport
+
+    def analyze
+      @route_imports = collect_route_imports
+      super
     end
 
     def analyze_file(path : String) : Array(Endpoint)
       endpoints = [] of Endpoint
-      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
+      include_callee = callees_needed?
 
       # Analyze PHP controller files
       if path.ends_with?(".php")
@@ -19,26 +37,77 @@ module Analyzer::Php
       end
 
       # Analyze YAML route files
-      if path.ends_with?(".yaml") || path.ends_with?(".yml")
-        if path.includes?("config") && (path.includes?("routes") || path.includes?("routing"))
-          endpoints.concat(analyze_yaml_routes(path))
-        end
-      end
+      endpoints.concat(analyze_yaml_routes(path)) if yaml_route_file?(path)
 
       endpoints
+    end
+
+    private def yaml_route_file?(path : String) : Bool
+      (path.ends_with?(".yaml") || path.ends_with?(".yml")) &&
+        path.includes?("config") && (path.includes?("routes") || path.includes?("routing"))
+    end
+
+    # Every directory/file import declared in the YAML route configs.
+    # Imports of other route files (`.yaml`/`.xml`) and bundle paths
+    # (`@AcmeBundle/...`) are not followed.
+    private def collect_route_imports : Array(RouteImport)
+      imports = [] of RouteImport
+      php_source_files.each do |path|
+        next unless yaml_route_file?(path)
+        # A file that fails to parse is reported by `analyze_yaml_routes`.
+        routes = begin
+          YAML.parse(read_file_content(path)).as_h?
+        rescue
+          nil
+        end
+        next unless routes
+
+        routes.each_value do |route|
+          route_h = route.as_h?
+          next unless route_h
+          resource_node = route_h[YAML::Any.new("resource")]?
+          resource = resource_node.try { |node| node.as_s? || node.as_h?.try(&.[YAML::Any.new("path")]?.try(&.as_s?)) }
+          next if resource.nil? || resource.starts_with?('@') || resource.matches?(/\.(?:ya?ml|xml)\z/i)
+
+          # `prefix` is one path, or a locale => path map.
+          prefix_node = route_h[YAML::Any.new("prefix")]?
+          prefixes = prefix_node.try { |node| node.as_s?.try { |prefix| [prefix] } || node.as_h?.try(&.values.compact_map(&.as_s?)) }
+          prefixes = [""] if prefixes.nil? || prefixes.empty?
+          imports << RouteImport.new(File.expand_path(resource, File.dirname(path)).rstrip('/'), prefixes)
+        end
+      end
+      imports
+    end
+
+    # URL prefixes for a controller file: those of every import covering it,
+    # or just "" when no import does.
+    private def import_prefixes_for(path : String) : Array(String)
+      file = File.expand_path(path)
+      prefixes = @route_imports.select { |import| file == import.path || file.starts_with?("#{import.path}/") }
+        .flat_map(&.prefixes).uniq!
+      prefixes.empty? ? [""] : prefixes
     end
 
     private def analyze_php_routes(path : String, include_callee : Bool) : Array(Endpoint)
       endpoints = [] of Endpoint
 
-      File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
-        content = file.gets_to_end
-        class_prefixes = extract_class_route_prefixes(content)
+      content = read_file_content(path)
+      # Controllers/services without route attributes dominate a Symfony
+      # tree. Skip the annotation/attribute scans when neither form is
+      # present (`@Route` or `#[Route`).
+      return endpoints unless content.includes?("Route")
+      return endpoints unless content.includes?("@Route") || content.includes?("#[Route")
+      lexer = Noir::PhpLexer.new(content)
+      content = lexer.without_comments
 
-        # Look for route annotations (@Route) - more flexible pattern
-        # Track offset to find each match correctly
+      class_prefixes = extract_class_route_prefixes(content)
+      import_prefixes = import_prefixes_for(path)
+
+      # Route annotations (@Route) first, then PHP 8 attributes (#[Route]).
+      # Track offset to find each match correctly.
+      {/@Route\s*\((.*?)\)/m, /#\[Route\s*\((.*?)\)\]/m}.each do |route_regex|
         offset = 0
-        content.scan(/@Route\s*\((.*?)\)/m) do |match|
+        content.scan(route_regex) do |match|
           route_path = extract_symfony_route_path(match[1])
           next unless route_path
 
@@ -46,60 +115,30 @@ module Analyzer::Php
 
           # Find this specific match starting from current offset
           route_start = content.index(full_match, offset)
-          if route_start
-            offset = route_start + full_match.size
-            next if route_applies_to_class?(content, offset)
+          next unless route_start
+          offset = route_start + full_match.size
+          next if route_applies_to_class?(content, offset)
+          # An attribute is code; `#[Route(...)]` written inside a string
+          # literal is text. (`@Route` lives in a docblock, so it can't be
+          # checked this way.)
+          next if full_match.starts_with?('#') && !lexer.in_code?(route_start)
 
-            # Extract methods from the annotation itself
-            methods = extract_methods_from_symfony_context(full_match)
-            methods = ["GET"] if methods.empty?
+          # Extract methods from the annotation/attribute itself
+          methods = extract_methods_from_symfony_context(full_match)
+          methods = ["GET"] if methods.empty?
 
-            method_body = extract_php_method_body_after(content, route_start)
+          method_body = extract_php_method_body_after(content, route_start)
+          # Extract additional parameters from method body
+          body_params = method_body ? extract_method_params(method_body[0]) : [] of Param
+          route_line = line_number_for_index(content, route_start)
+          class_path = build_full_path(class_prefix_for_position(class_prefixes, route_start), route_path)
 
-            full_path = build_full_path(class_prefix_for_position(class_prefixes, route_start), route_path)
-            params = extract_brace_path_params(full_path)
-            # Extract additional parameters from method body
-            params.concat(extract_method_params(method_body[0])) if method_body
-
-            details = Details.new(PathInfo.new(path))
-
-            methods.each do |method|
-              endpoint = Endpoint.new(full_path, method.upcase, params, details)
-              attach_method_callees(endpoint, method_body, path) if include_callee
-              endpoints << endpoint
-            end
-          end
-        end
-
-        # Look for route attributes (#[Route]) - PHP 8 style
-        # Track offset to find each match correctly
-        offset = 0
-        content.scan(/#\[Route\s*\((.*?)\)\]/m) do |match|
-          route_path = extract_symfony_route_path(match[1])
-          next unless route_path
-
-          full_match = match[0]
-
-          # Find this specific match starting from current offset
-          route_start = content.index(full_match, offset)
-          if route_start
-            offset = route_start + full_match.size
-            next if route_applies_to_class?(content, offset)
-
-            # Extract methods from the attribute itself
-            methods = extract_methods_from_symfony_context(full_match)
-            methods = ["GET"] if methods.empty?
-
-            method_body = extract_php_method_body_after(content, route_start)
-
-            full_path = build_full_path(class_prefix_for_position(class_prefixes, route_start), route_path)
-            params = extract_brace_path_params(full_path)
-            # Extract additional parameters from method body
-            params.concat(extract_method_params(method_body[0])) if method_body
-
-            details = Details.new(PathInfo.new(path))
+          import_prefixes.each do |import_prefix|
+            full_path = build_full_path(import_prefix, class_path).presence || "/"
+            params = extract_brace_path_params(full_path) + body_params
 
             methods.each do |method|
+              details = Details.new(PathInfo.new(path, route_line))
               endpoint = Endpoint.new(full_path, method.upcase, params, details)
               attach_method_callees(endpoint, method_body, path) if include_callee
               endpoints << endpoint
@@ -166,11 +205,11 @@ module Analyzer::Php
       # (Shopware's whole storefront) was dropped. A negative-lookbehind on a
       # word char accepts any non-word boundary (start, comma, paren, newline,
       # space) while still rejecting `subpath:` / `routePath:`.
-      if path_match = context.match(/(?<!\w)path\s*[:=]\s*['"]([^'"]+)['"]/i)
+      if path_match = context.match(/(?<!\w)path\s*[:=]\s*['"]([^'"]*)['"]/i)
         return path_match[1]
       end
 
-      if path_match = context.match(/^\s*['"]([^'"]+)['"]/)
+      if path_match = context.match(/^\s*['"]([^'"]*)['"]/)
         return path_match[1]
       end
 
@@ -204,50 +243,45 @@ module Analyzer::Php
       tokens
     end
 
-    private def extract_methods_from_annotation_context(context : String) : Array(String)
-      extract_methods_from_symfony_context(context)
-    end
-
-    private def extract_methods_from_attribute_context(context : String) : Array(String)
-      extract_methods_from_symfony_context(context)
-    end
-
     private def analyze_yaml_routes(path : String) : Array(Endpoint)
       endpoints = [] of Endpoint
 
       begin
-        File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
-          content = file.gets_to_end
+        content = read_file_content(path)
 
-          # Simple YAML route parsing for Symfony
-          # Look for patterns like:
-          # route_name:
-          #   path: /api/users/{id}
-          #   methods: [GET, POST]
+        # Simple YAML route parsing for Symfony
+        # Look for patterns like:
+        # route_name:
+        #   path: /api/users/{id}
+        #   methods: [GET, POST]
 
-          yaml = YAML.parse(content)
-          if routes = yaml.as_h?
-            routes.each_value do |route|
-              route_h = route.as_h?
-              next unless route_h
+        yaml = YAML.parse(content)
+        # A route in a Symfony YAML routing file is declared by its name key,
+        # so that key's line is where a reviewer has to look.
+        line_index = Noir::SpecLineIndex.yaml(content, max_depth: 1)
+        if routes = yaml.as_h?
+          routes.each do |route_name, route|
+            route_h = route.as_h?
+            next unless route_h
 
-              route_path = route_h[YAML::Any.new("path")]?.try(&.as_s?)
-              next unless route_path
+            route_path = route_h[YAML::Any.new("path")]?.try(&.as_s?)
+            next unless route_path
 
-              methods = extract_yaml_methods(route_h[YAML::Any.new("methods")]?)
-              methods = ["GET"] if methods.empty?
+            methods = extract_yaml_methods(route_h[YAML::Any.new("methods")]?)
+            methods = ["GET"] if methods.empty?
 
-              params = extract_brace_path_params(route_path)
-              details = Details.new(PathInfo.new(path))
+            params = extract_brace_path_params(route_path)
+            route_line = route_name.as_s?.try { |name| line_index.line(name) }
 
-              methods.each do |method|
-                endpoints << Endpoint.new(route_path, method.upcase, params, details)
-              end
+            methods.each do |method|
+              details = Details.new(PathInfo.new(path, route_line))
+              endpoints << Endpoint.new(route_path, method.upcase, params, details)
             end
           end
         end
       rescue e
         logger.debug "Error parsing YAML routes in #{path}: #{e}"
+        Noir::SkippedFiles.record(tech, path, e.message.presence || e.class.name)
       end
 
       endpoints
@@ -265,76 +299,78 @@ module Analyzer::Php
       end
     end
 
-    private def attach_method_callees(endpoint : Endpoint, method_body : Tuple(String, Int32)?, path : String)
-      return unless method_body
-
-      body, start_line = method_body
-      callees = Noir::PhpCalleeExtractor.callees_for_body(body, path, start_line)
-      attach_php_callees(endpoint, callees)
-    end
-
     private def extract_method_params(method_body : String) : Array(Param)
       params = [] of Param
       seen_params = Set(String).new
 
+      # Every accessor below is `$request->…`. Bodies that never touch
+      # the request object cannot contribute params.
+      return params unless method_body.includes?("$request")
+
       # Extract query parameters: $request->query->get('param')
-      query_matches = method_body.scan(/\$request->query->get\s*\(\s*['"]([^'"]+)['"]\s*(?:,\s*[^)]+)?\)/)
-      query_matches.each do |match|
-        param_name = match[1]
-        unless seen_params.includes?(param_name)
-          params << Param.new(param_name, "", "query")
-          seen_params.add(param_name)
+      if method_body.includes?("query->get")
+        method_body.scan(/\$request->query->get\s*\(\s*['"]([^'"]+)['"]\s*(?:,\s*[^)]+)?\)/) do |match|
+          param_name = match[1]
+          unless seen_params.includes?(param_name)
+            params << Param.new(param_name, "", "query")
+            seen_params.add(param_name)
+          end
         end
       end
 
       # Extract request body/form parameters: $request->request->get('param')
-      request_matches = method_body.scan(/\$request->request->get\s*\(\s*['"]([^'"]+)['"]\s*(?:,\s*[^)]+)?\)/)
-      request_matches.each do |match|
-        param_name = match[1]
-        unless seen_params.includes?(param_name)
-          params << Param.new(param_name, "", "form")
-          seen_params.add(param_name)
+      if method_body.includes?("request->get")
+        method_body.scan(/\$request->request->get\s*\(\s*['"]([^'"]+)['"]\s*(?:,\s*[^)]+)?\)/) do |match|
+          param_name = match[1]
+          unless seen_params.includes?(param_name)
+            params << Param.new(param_name, "", "form")
+            seen_params.add(param_name)
+          end
         end
       end
 
       # Extract header parameters: $request->headers->get('param')
-      header_matches = method_body.scan(/\$request->headers->get\s*\(\s*['"]([^'"]+)['"]\s*(?:,\s*[^)]+)?\)/)
-      header_matches.each do |match|
-        param_name = match[1]
-        unless seen_params.includes?(param_name)
-          params << Param.new(param_name, "", "header")
-          seen_params.add(param_name)
+      if method_body.includes?("headers->get")
+        method_body.scan(/\$request->headers->get\s*\(\s*['"]([^'"]+)['"]\s*(?:,\s*[^)]+)?\)/) do |match|
+          param_name = match[1]
+          unless seen_params.includes?(param_name)
+            params << Param.new(param_name, "", "header")
+            seen_params.add(param_name)
+          end
         end
       end
 
       # Extract cookie parameters: $request->cookies->get('param')
-      cookie_matches = method_body.scan(/\$request->cookies->get\s*\(\s*['"]([^'"]+)['"]\s*(?:,\s*[^)]+)?\)/)
-      cookie_matches.each do |match|
-        param_name = match[1]
-        unless seen_params.includes?(param_name)
-          params << Param.new(param_name, "", "cookie")
-          seen_params.add(param_name)
+      if method_body.includes?("cookies->get")
+        method_body.scan(/\$request->cookies->get\s*\(\s*['"]([^'"]+)['"]\s*(?:,\s*[^)]+)?\)/) do |match|
+          param_name = match[1]
+          unless seen_params.includes?(param_name)
+            params << Param.new(param_name, "", "cookie")
+            seen_params.add(param_name)
+          end
         end
       end
 
       # Extract file parameters: $request->files->get('param')
-      file_matches = method_body.scan(/\$request->files->get\s*\(\s*['"]([^'"]+)['"]\s*(?:,\s*[^)]+)?\)/)
-      file_matches.each do |match|
-        param_name = match[1]
-        unless seen_params.includes?(param_name)
-          params << Param.new(param_name, "", "file")
-          seen_params.add(param_name)
+      if method_body.includes?("files->get")
+        method_body.scan(/\$request->files->get\s*\(\s*['"]([^'"]+)['"]\s*(?:,\s*[^)]+)?\)/) do |match|
+          param_name = match[1]
+          unless seen_params.includes?(param_name)
+            params << Param.new(param_name, "", "file")
+            seen_params.add(param_name)
+          end
         end
       end
 
       # Extract generic request parameters: $request->get('param')
       # This is ambiguous (could be query or body), so we mark it as query by default
-      generic_matches = method_body.scan(/\$request->get\s*\(\s*['"]([^'"]+)['"]\s*(?:,\s*[^)]+)?\)/)
-      generic_matches.each do |match|
-        param_name = match[1]
-        unless seen_params.includes?(param_name)
-          params << Param.new(param_name, "", "query")
-          seen_params.add(param_name)
+      if method_body.includes?("->get")
+        method_body.scan(/\$request->get\s*\(\s*['"]([^'"]+)['"]\s*(?:,\s*[^)]+)?\)/) do |match|
+          param_name = match[1]
+          unless seen_params.includes?(param_name)
+            params << Param.new(param_name, "", "query")
+            seen_params.add(param_name)
+          end
         end
       end
 

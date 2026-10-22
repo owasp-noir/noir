@@ -3,8 +3,7 @@ require "../../../miniparsers/swift_callee_extractor"
 
 module Analyzer::Swift
   class Hummingbird < SwiftEngine
-    # Maximum number of lines to look ahead for function parameters
-    LOOKAHEAD_LIMIT = 20
+    analyzer_for "swift_hummingbird"
 
     # Route-registration methods exposed by Hummingbird's `RouterMethods`
     # protocol. They all return `Self`, which is what makes the fluent
@@ -12,7 +11,6 @@ module Analyzer::Swift
     HTTP_METHODS = %w[get post put patch delete head]
 
     ROUTE_BODY_LOOKAHEAD_LIMIT = 5
-    FUNCTION_SIGNATURE_PATTERN = /\bfunc\s+([A-Za-z_]\w*)\s*\(/
 
     # `let group = router.group("path")` / `var api = router.group("v1")`
     GROUP_ASSIGN_PATTERN = /\b(?:let|var)\s+([A-Za-z_]\w*)\s*=\s*([A-Za-z_]\w*)\.group\s*\(/
@@ -27,6 +25,13 @@ module Analyzer::Swift
     # Type declarations whose body can host a RouteCollection handler.
     TYPE_DECL_PATTERN = /\b(?:struct|class|extension|actor|enum)\s+([A-Za-z_]\w*)/
     alias ScopedPrefixKey = Tuple(String, String)
+
+    # `route_definition?` runs on every scanned line (route detection, param
+    # lookahead, body-boundary checks). One precompiled `Regex.union` scan
+    # (PCRE2 JIT) replaces seven naive `String#includes?` char scans; union
+    # auto-escapes each literal so it is provably equivalent to the
+    # OR-of-substrings it replaces.
+    ROUTE_CALL_RE = Regex.union(".get(", ".post(", ".put(", ".delete(", ".patch(", ".head(", ".on(")
 
     # A route hit discovered by the chain scanner.
     record RouteHit,
@@ -51,7 +56,7 @@ module Analyzer::Swift
 
     def analyze_file(path : String) : Array(Endpoint)
       endpoints = [] of Endpoint
-      lines = File.read_lines(path, encoding: "utf-8", invalid: :skip)
+      lines = swift_code_lines(read_file_content(path))
       stripped_lines = strip_code_lines(lines)
       include_callee = callees_needed?
       handler_bodies = named_handler_bodies(lines)
@@ -62,25 +67,27 @@ module Analyzer::Swift
       # `RouteGroup`, capitalized `Get`/`Post`/... primitives) is invisible to
       # the receiver-based chain scanner, so discover it in a second pass.
       hits.concat(collect_dsl_route_hits(stripped_lines, lines))
+      hits_per_line = hits.tally_by(&.line_index)
 
       hits.each do |hit|
-        begin
-          details = Details.new(PathInfo.new(path, hit.line_index + 1))
-          endpoint = Endpoint.new(hit.path, hit.method, details)
-          extract_path_params(hit.path, endpoint)
+        details = Details.new(PathInfo.new(path, hit.line_index + 1))
+        endpoint = Endpoint.new(hit.path, hit.method, details)
+        extract_path_params(hit.path, endpoint)
 
-          if handler = hit.handler
-            extract_named_handler_params(handler, handler_bodies, endpoint)
-            attach_named_handler_callees(handler, handler_bodies, path, endpoint) if include_callee
-          else
-            extract_function_params(lines, hit.line_index + 1, endpoint)
-            attach_route_callees(lines, hit.line_index, path, endpoint, handler_bodies) if include_callee
-          end
-
-          endpoints << endpoint
-        rescue e
-          logger.debug "Error processing endpoint: #{e.message}"
+        if handler = hit.handler
+          extract_named_handler_params(handler, handler_bodies, endpoint)
+          attach_named_handler_callees(handler, handler_bodies, path, endpoint) if include_callee
+        else
+          # Routes sharing a line can't be told apart line-wise (and re-reading
+          # a long shared line per route is quadratic): start below it.
+          start = hits_per_line[hit.line_index] > 1 ? hit.line_index + 1 : hit.line_index
+          extract_function_params(lines, stripped_lines, start, endpoint)
+          attach_route_callees(lines, hit.line_index, path, endpoint, handler_bodies) if include_callee
         end
+
+        endpoints << endpoint
+      rescue e
+        logger.debug "Error processing endpoint: #{e.message}"
       end
 
       endpoints
@@ -283,12 +290,20 @@ module Analyzer::Swift
                                    paren_depth : Int32,
                                    start_col : Int32,
                                    hits : Array(RouteHit))
+      # `chars` avoids per-index `String#[]`: on non-ASCII lines each direct
+      # `line[i]` re-walks from byte 0 to locate the char offset, making this
+      # scan O(n^2). Materializing the char array once keeps the dominant
+      # per-character walk O(1)-indexed. The `.` branch below still slices
+      # `line[i..]` for its lookahead match — left as-is, since that regex is
+      # `^`-anchored to "start of the remaining text" and only fires at `.`
+      # positions (bounded by dot count on the line, not every character).
+      chars = line.chars
       i = start_col
       closed = false
       stop = line.size
 
-      while i < line.size
-        char = line[i]
+      while i < chars.size
+        char = chars[i]
 
         if paren_depth > 0
           case char
@@ -327,7 +342,7 @@ module Analyzer::Swift
           # closure and no path argument registers a root-relative route.
           if method_match[2] == "{"
             if verb = route_verb(method)
-              hits << RouteHit.new(verb, join_paths(prefix, "/"), index, nil)
+              hits << RouteHit.new(verb, normalized_route_join(prefix, "/"), index, nil)
             end
             i += (method_match.end(0) || 1) - 1
             next
@@ -366,9 +381,9 @@ module Analyzer::Swift
                                     hits : Array(RouteHit)) : String
       case method
       when "group"
-        join_paths(prefix, parse_route_path(args_str))
+        normalized_route_join(prefix, parse_route_path(args_str))
       when "on"
-        path = join_paths(prefix, parse_route_path(args_str))
+        path = normalized_route_join(prefix, parse_route_path(args_str))
         handler = handler_from_args(args_str)
         on_methods(args_str).each do |http_method|
           hits << RouteHit.new(http_method, path, index, handler)
@@ -376,7 +391,7 @@ module Analyzer::Swift
         prefix
       else
         if verb = route_verb(method)
-          path = join_paths(prefix, parse_route_path(args_str))
+          path = normalized_route_join(prefix, parse_route_path(args_str))
           hits << RouteHit.new(verb, path, index, handler_from_args(args_str))
         end
         prefix
@@ -458,6 +473,12 @@ module Analyzer::Swift
     # `var body: some RouterMiddleware<Context>` / `func routes() -> some
     # RouterMiddleware<Context>` — the controller body that hosts the DSL.
     DSL_BODY_RE = /\bsome\s+RouterMiddleware\b/
+    # Whole-file DSL-presence gate, evaluated once per line to decide whether
+    # the (expensive) DSL scan runs at all. One precompiled `Regex.union`
+    # scan (PCRE2 JIT) replaces three naive `String#includes?` char scans per
+    # line; union auto-escapes each literal so it is provably equivalent to
+    # the OR-of-substrings it replaces.
+    DSL_PRESENCE_RE = Regex.union("RouterBuilder", "RouterMiddleware", "RouteGroup")
 
     # One nesting level of the DSL. `:builder`/`:group` scopes emit routes;
     # `:handler` (a route's trailing closure) and `:other` (struct/func/etc.
@@ -473,9 +494,7 @@ module Analyzer::Swift
 
     private def collect_dsl_route_hits(stripped_lines : Array(String), original_lines : Array(String)) : Array(RouteHit)
       hits = [] of RouteHit
-      return hits unless stripped_lines.any? do |l|
-                           l.includes?("RouterBuilder") || l.includes?("RouterMiddleware") || l.includes?("RouteGroup")
-                         end
+      return hits unless stripped_lines.any?(&.matches?(DSL_PRESENCE_RE))
 
       stack = [] of DslScope
       pending : DslScope? = nil
@@ -532,7 +551,7 @@ module Analyzer::Swift
         args = call_arguments(original, m.paren_col + 1)
         args_str = args ? args[0] : ""
         if dsl_emitting?(stack)
-          path = join_paths(current_dsl_prefix(stack), parse_route_path(args_str))
+          path = normalized_route_join(current_dsl_prefix(stack), parse_route_path(args_str))
           hits << RouteHit.new(m.verb.upcase, path, index, handler_from_args(args_str))
         end
         # A trailing closure on this verb is its handler body, not a group.
@@ -540,7 +559,7 @@ module Analyzer::Swift
       when :group
         args = call_arguments(original, m.paren_col + 1)
         args_str = args ? args[0] : ""
-        prefix = join_paths(current_dsl_prefix(stack), parse_route_path(args_str))
+        prefix = normalized_route_join(current_dsl_prefix(stack), parse_route_path(args_str))
         {DslScope.new(:group, prefix), args ? args[1] + 1 : m.end_col}
       else
         # :builder / :body — a route-emitting root rooted at "".
@@ -632,7 +651,7 @@ module Analyzer::Swift
       args = call_arguments(original, match.end(0) || 0)
       return unless args
 
-      prefix_by_receiver[variable] = join_paths(prefix_for_receiver(base, prefix_by_receiver), parse_route_path(args[0]))
+      prefix_by_receiver[variable] = normalized_route_join(prefix_for_receiver(base, prefix_by_receiver), parse_route_path(args[0]))
     end
 
     private def register_group_closure(line : String,
@@ -654,7 +673,7 @@ module Analyzer::Swift
       return unless closure_match
 
       variable = closure_match[1]
-      prefix_by_receiver[variable] = join_paths(prefix_for_receiver(base, prefix_by_receiver), parse_route_path(args[0]))
+      prefix_by_receiver[variable] = normalized_route_join(prefix_for_receiver(base, prefix_by_receiver), parse_route_path(args[0]))
       group_prefix_stack << {variable, brace_depth + 1}
     end
 
@@ -729,7 +748,7 @@ module Analyzer::Swift
     # ------------------------------------------------------------------
 
     private def build_controller_prefixes
-      files = swift_source_files
+      files = scan_target_files.select { |path| scan_accepts?(path) }
       return if files.empty?
 
       route_methods_by_base = Hash(String, Set(String)).new do |hash, key|
@@ -739,7 +758,7 @@ module Analyzer::Swift
 
       files.each do |path|
         base = configured_base_for(path)
-        lines = strip_code_lines(File.read_lines(path, encoding: "utf-8", invalid: :skip))
+        lines = strip_code_lines(read_file_content(path).lines)
         lines.each do |line|
           if (func = line.match(FUNCTION_SIGNATURE_PATTERN)) && line.match(ROUTER_PARAM_PATTERN)
             route_methods_by_base[base] << func[1]
@@ -760,7 +779,7 @@ module Analyzer::Swift
                                                method_set : Set(String),
                                                assignments : Hash(ScopedPrefixKey, String),
                                                base : String)
-      original_lines = File.read_lines(path, encoding: "utf-8", invalid: :skip)
+      original_lines = swift_code_lines(read_file_content(path))
       stripped_lines = strip_code_lines(original_lines)
 
       merge_logical_lines(stripped_lines, original_lines) do |stripped, original|
@@ -839,7 +858,7 @@ module Analyzer::Swift
     private def chain_group_prefix(expr : String) : String
       prefix = ""
       expr.scan(/\bgroup\s*\(\s*["']([^"']*)["']/) do |m|
-        prefix = join_paths(prefix, parse_route_path("\"#{m[1]}\""))
+        prefix = normalized_route_join(prefix, parse_route_path("\"#{m[1]}\""))
       end
       prefix
     end
@@ -865,15 +884,16 @@ module Analyzer::Swift
     # is labeled, e.g. `to:`/`atPath:`).
     private def first_positional_arg(args : String) : String?
       depth = 0
-      slice = ""
-      args.each_char do |char|
-        case char
-        when '(', '[', '<' then depth += 1
-        when ')', ']', '>' then depth -= 1
-        when ','
-          break if depth == 0
+      slice = String.build do |io|
+        args.each_char do |char|
+          case char
+          when '(', '[', '<' then depth += 1
+          when ')', ']', '>' then depth -= 1
+          when ','
+            break if depth == 0
+          end
+          io << char
         end
-        slice += char
       end
       slice = slice.strip
       return if slice.empty?
@@ -901,16 +921,6 @@ module Analyzer::Swift
       end
     end
 
-    private def swift_source_files : Array(String)
-      all_files.select do |path|
-        File.exists?(path) && !File.directory?(path) &&
-          File.extname(path) == ".swift" &&
-          !swift_test_path?(path) && !swift_vendor_path?(path)
-      end
-    rescue
-      [] of String
-    end
-
     # ------------------------------------------------------------------
     # Path / parameter helpers
     # ------------------------------------------------------------------
@@ -928,56 +938,9 @@ module Analyzer::Swift
       "/"
     end
 
-    # Extract path parameters from the route pattern (e.g., :id, :userID)
-    def extract_path_params(route : String, endpoint : Endpoint)
-      route.scan(/:(\w+)/) do |match|
-        param_name = match[1]
-        endpoint.push_param(Param.new(param_name, "", "path"))
-      end
-    end
-
-    # Extract parameters from an inline closure body.
-    def extract_function_params(lines : Array(String), start_index : Int32, endpoint : Endpoint)
-      in_function = false
-      brace_count = 0
-      seen_opening_brace = false
-
-      existing_path_params = Set(String).new
-      endpoint.params.each do |p|
-        existing_path_params.add(p.name) if p.param_type == "path"
-      end
-
-      (start_index...[start_index + LOOKAHEAD_LIMIT, lines.size].min).each do |i|
-        line = lines[i]
-
-        if line.includes?(" in ")
-          in_function = true
-        end
-
-        brace_count += line.count('{')
-        if brace_count > 0
-          seen_opening_brace = true
-        end
-        brace_count -= line.count('}')
-
-        extract_params_from_line(line, endpoint, existing_path_params)
-
-        if in_function && seen_opening_brace && brace_count == 0 && i > start_index
-          break
-        end
-
-        if i > start_index && route_definition?(line)
-          break
-        end
-      end
-    end
-
     # Check if a line contains a route definition
     private def route_definition?(line : String) : Bool
-      (line.includes?(".get(") || line.includes?(".post(") ||
-        line.includes?(".put(") || line.includes?(".delete(") ||
-        line.includes?(".patch(") || line.includes?(".head(") ||
-        line.includes?(".on("))
+      line.matches?(ROUTE_CALL_RE)
     end
 
     private def attach_route_callees(lines : Array(String),
@@ -1022,70 +985,6 @@ module Analyzer::Swift
       body_after_opening_brace(lines, opening_index, opening_brace)
     end
 
-    private def structural_opening_brace(line : String) : Int32?
-      stripped, _, _ = Noir::SwiftCalleeExtractor.strip_non_code_with_state(line, 0, false)
-      stripped.index('{')
-    end
-
-    private def call_arguments(line : String, args_start : Int32) : Tuple(String, Int32)?
-      depth = 1
-      in_string = false
-      escaped = false
-      quote = '"'
-      index = args_start
-
-      while index < line.size
-        char = line[index]
-
-        if in_string
-          if escaped
-            escaped = false
-          elsif char == '\\'
-            escaped = true
-          elsif char == quote
-            in_string = false
-          end
-        elsif char == '"' || char == '\''
-          in_string = true
-          quote = char
-        elsif char == '('
-          depth += 1
-        elsif char == ')'
-          depth -= 1
-          if depth == 0
-            return {line[args_start...index], index}
-          end
-        end
-
-        index += 1
-      end
-
-      nil
-    end
-
-    private def prefix_for_receiver(receiver : String, prefix_by_receiver : Hash(String, String)) : String
-      receiver.split('.').reverse_each do |part|
-        if prefix = prefix_by_receiver[part]?
-          return prefix
-        end
-      end
-
-      ""
-    end
-
-    private def join_paths(prefix : String, path : String) : String
-      return normalize_path(path) if prefix.empty? || prefix == "/"
-      return normalize_path(prefix) if path.empty? || path == "/"
-
-      "#{normalize_path(prefix).rstrip("/")}/#{path.lstrip("/")}"
-    end
-
-    private def normalize_path(path : String) : String
-      normalized = path.empty? ? "/" : path
-      normalized = "/#{normalized}" unless normalized.starts_with?("/")
-      normalized.gsub(%r{/+}, "/")
-    end
-
     private def strip_code_line(line : String) : String
       stripped, _, _ = Noir::SwiftCalleeExtractor.strip_non_code_with_state(line, 0, false)
       stripped
@@ -1094,19 +993,6 @@ module Analyzer::Swift
     # Strip comments and string contents across the whole file so brace,
     # paren and method scanning never trips over `}` inside a string or a
     # multi-line comment.
-    private def strip_code_lines(lines : Array(String)) : Array(String)
-      block_comment_depth = 0
-      in_multiline_string = false
-      lines.map do |line|
-        stripped, block_comment_depth, in_multiline_string = Noir::SwiftCalleeExtractor.strip_non_code_with_state(
-          line,
-          block_comment_depth,
-          in_multiline_string
-        )
-        stripped
-      end
-    end
-
     private def extract_named_handler_params(handler_name : String,
                                              handler_bodies : Hash(String, Tuple(String, Int32)),
                                              endpoint : Endpoint)
@@ -1127,8 +1013,8 @@ module Analyzer::Swift
       # Extract query parameters from request.uri.queryParameters
       if line.includes?("request.uri.queryParameters.get(") ||
          line.includes?("request.uri.queryParameters[")
-        match = line.match(/request\.uri\.queryParameters\.get\(["']([^"']+)["']\)/) ||
-                line.match(/request\.uri\.queryParameters\[["']([^"']+)["']\]/)
+        match = line.match(/request\.uri\.queryParameters\.get\(\s*["']([^"']+)["']\s*\)/) ||
+                line.match(/request\.uri\.queryParameters\[\s*["']([^"']+)["']\s*\]/)
         if match
           query_name = match[1]
           endpoint.push_param(Param.new(query_name, "", "query"))
@@ -1142,7 +1028,7 @@ module Analyzer::Swift
 
       # Extract headers from request.headers
       if line.includes?("request.headers[")
-        match = line.match(/request\.headers\[["']([^"']+)["']\]/)
+        match = line.match(/request\.headers\[\s*["']([^"']+)["']\s*\]/)
         if match
           header_name = match[1]
           endpoint.push_param(Param.new(header_name, "", "header"))
@@ -1151,7 +1037,7 @@ module Analyzer::Swift
 
       # Extract cookies from request.cookies
       if line.includes?("request.cookies[")
-        match = line.match(/request\.cookies\[["']([^"']+)["']\]/)
+        match = line.match(/request\.cookies\[\s*["']([^"']+)["']\s*\]/)
         if match
           cookie_name = match[1]
           endpoint.push_param(Param.new(cookie_name, "", "cookie"))
@@ -1161,7 +1047,7 @@ module Analyzer::Swift
       # Extract path parameters from context.parameters.require / .get
       if line.includes?("context.parameters.require(") ||
          line.includes?("context.parameters.get(")
-        match = line.match(/context\.parameters\.(require|get)\(["']([^"']+)["']\)/)
+        match = line.match(/context\.parameters\.(require|get)\(\s*["']([^"']+)["']\s*\)/)
         if match
           param_name = match[2]
           if !existing_path_params.includes?(param_name)
@@ -1170,99 +1056,6 @@ module Analyzer::Swift
           end
         end
       end
-    end
-
-    private def named_handler_bodies(lines : Array(String)) : Hash(String, Tuple(String, Int32))
-      bodies = {} of String => Tuple(String, Int32)
-      block_comment_depth = 0
-      in_multiline_string = false
-
-      lines.each_with_index do |line, index|
-        stripped, block_comment_depth, in_multiline_string = Noir::SwiftCalleeExtractor.strip_non_code_with_state(
-          line,
-          block_comment_depth,
-          in_multiline_string
-        )
-        match = stripped.match(FUNCTION_SIGNATURE_PATTERN)
-        next unless match
-
-        handler_name = match[1]
-        next if bodies.has_key?(handler_name)
-
-        opening = stripped.index('{')
-        if opening
-          bodies[handler_name] = body_after_opening_brace(lines, index, opening)
-          next
-        end
-
-        if location = next_opening_brace(lines, index + 1, block_comment_depth, in_multiline_string)
-          opening_index, opening_brace = location
-          bodies[handler_name] = body_after_opening_brace(lines, opening_index, opening_brace)
-        end
-      end
-
-      bodies
-    end
-
-    private def next_opening_brace(lines : Array(String),
-                                   start_index : Int32,
-                                   block_comment_depth : Int32,
-                                   in_multiline_string : Bool) : Tuple(Int32, Int32)?
-      (start_index...[start_index + LOOKAHEAD_LIMIT, lines.size].min).each do |index|
-        stripped, block_comment_depth, in_multiline_string = Noir::SwiftCalleeExtractor.strip_non_code_with_state(
-          lines[index],
-          block_comment_depth,
-          in_multiline_string
-        )
-        if opening = stripped.index('{')
-          return {index, opening}
-        end
-
-        break if stripped.match(FUNCTION_SIGNATURE_PATTERN)
-      end
-
-      nil
-    end
-
-    private def body_after_opening_brace(lines : Array(String), opening_index : Int32, opening_brace : Int32) : Tuple(String, Int32)
-      route_line = lines[opening_index]
-      first_fragment = route_line[(opening_brace + 1)..]? || ""
-      clean_fragment, block_comment_depth, in_multiline_string = Noir::SwiftCalleeExtractor.strip_non_code_with_state(first_fragment, 0, false)
-      body_lines = [] of String
-      brace_count = 1 + clean_fragment.count('{') - clean_fragment.count('}')
-
-      if brace_count <= 0
-        closing_brace = clean_fragment.rindex('}')
-        first_fragment = first_fragment[0...closing_brace] if closing_brace
-        return {first_fragment, opening_index + 1}
-      end
-
-      body_lines << first_fragment
-      index = opening_index + 1
-
-      while index < lines.size && brace_count > 0
-        line = lines[index]
-        stripped, block_comment_depth, in_multiline_string = Noir::SwiftCalleeExtractor.strip_non_code_with_state(
-          line,
-          block_comment_depth,
-          in_multiline_string
-        )
-        next_brace_count = brace_count + stripped.count('{') - stripped.count('}')
-
-        if next_brace_count <= 0
-          if line.strip != "}"
-            closing_brace = stripped.rindex('}')
-            body_lines << (closing_brace ? line[0...closing_brace] : line)
-          end
-          break
-        end
-
-        body_lines << line
-        brace_count = next_brace_count
-        index += 1
-      end
-
-      {body_lines.join("\n"), opening_index + 1}
     end
   end
 end

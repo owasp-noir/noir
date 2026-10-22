@@ -60,9 +60,11 @@ expected_endpoints = [
     ep.push_callee(Callee.new("AuditLog.write", line: 22))
   end,
 
+  # `@ModelAttribute findOrder` runs before every handler of OrderController.
   Endpoint.new("/api/orders/legacy", "GET").tap do |ep|
-    ep.push_callee(Callee.new("AuditLog.write", line: 13))
-    ep.push_callee(Callee.new("getLegacy", line: 14))
+    ep.push_callee(Callee.new("AuditLog.write", line: 14))
+    ep.push_callee(Callee.new("getLegacy", line: 15))
+    ep.push_callee(Callee.new("OrderStore.load", line: 25))
   end,
 
   Endpoint.new("/api/teams/{nation}", "GET").tap do |ep|
@@ -112,14 +114,28 @@ expected_endpoints = [
   end,
 ]
 
-FunctionalTester.new("fixtures/kotlin/spring_callees/", {
+tester = FunctionalTester.new("fixtures/kotlin/spring_callees/", {
   :techs     => 1,
   :endpoints => expected_endpoints.size,
 }, expected_endpoints, {
   "include_callee" => YAML::Any.new(true),
-}).perform_tests
+})
+tester.perform_tests
 
-describe "--ai-context on Kotlin Spring constructor-injected callee expansion" do
+describe "Kotlin Spring annotation handlers", tags: "functional" do
+  it "names the decorated function at its signature line" do
+    types = tester.endpoints.find! { |ep| ep.method == "GET" && ep.url == "/api/roles/types" }
+    types.details.code_paths.first.line.should eq(15)
+    types.handler.should eq(Handler.new("RoleTypesController.types", types.details.code_paths.first.path, 16))
+  end
+
+  it "keeps @ModelAttribute callees inside their own controller" do
+    create = tester.endpoints.find! { |ep| ep.method == "POST" && ep.url == "/api/users/" }
+    create.callees.map(&.name).should_not contain("OrderStore.load")
+  end
+end
+
+describe "--ai-context on Kotlin Spring constructor-injected callee expansion", tags: "functional" do
   before_each do
     CodeLocator.instance.clear_all
   end
@@ -236,6 +252,7 @@ describe "--ai-context on Kotlin Spring constructor-injected callee expansion" d
     endpoint.callees.size.should eq(Callee::MAX_PER_ENDPOINT)
     names.should contain("budgetRepository.save")
     names.should contain("budgetRepository.deleteById")
-    names.count(&.starts_with?("budgetRepository.findAll")).should be < 9
+    # 19 reads and 2 writes compete for 20 slots; a read loses, never a write.
+    names.count(&.starts_with?("budgetRepository.findAll")).should be < 19
   end
 end

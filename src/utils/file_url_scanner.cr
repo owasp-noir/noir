@@ -1,0 +1,185 @@
+require "uri"
+require "./text_file"
+require "./url_origin"
+require "../models/code_locator"
+
+module Noir
+  # Shared line/URL extraction for the `FileAnalyzer` hooks
+  # (`file_analyzers/string.cr`, `file_analyzers/base64.cr`).
+  #
+  # Those hooks are the only analyzers that run against *every* file in the
+  # project regardless of detected technology, so both what they accept and
+  # what they cost apply to every scan that passes `-u/--url`. Three things
+  # are centralised here:
+  #
+  #   * reading through the detector's content cache instead of re-opening
+  #     the file per hook,
+  #   * rejecting lines that are binary payload rather than text,
+  #   * turning a raw `https?://…` run into a URL, or rejecting it.
+  module FileUrlScanner
+    # Control characters that never appear in a text line. `\t` (0x09) is
+    # legitimate indentation; `\n` / `\r` are consumed by `each_line`. A line
+    # carrying any of the rest is binary payload that happens to sit in a
+    # file with a text-ish extension — the detector's binary sniff only reads
+    # the first 512 bytes, so protobuf/asset blobs with a clean header still
+    # reach the analyzers. URL-shaped byte runs inside them are noise.
+    BINARY_LINE_RE = /[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/
+
+    # A URL literal, terminated by any character that cannot appear in one.
+    # Besides whitespace this stops at the quoting/markup characters that
+    # actually wrap URLs in the wild — `"` and `'` (string literals), `<` and
+    # `>` (XML/HTML markup and RFC 3986 angle-bracket delimiters), and the
+    # RFC 3986 "unwise" set (`\` `^` `` ` `` `|`). Without the markup stop,
+    # `<string>https://x/install</string>` yielded the endpoint
+    # `https://x/install</string>`.
+    #
+    # `{` / `}` are deliberately kept: a templated `https://api/x/{id}` is a
+    # real endpoint declaration, not markup.
+    URL_RE = /https?:\/\/[^\s"'<>\\^`|\x00-\x1F\x7F]+/
+
+    # Request files are parsed properly (method, headers, body, `{{vars}}`)
+    # by the `http_file` / `hurl` specification analyzers, so scraping their
+    # bare URLs here would only add a duplicate `GET` for every non-GET request.
+    REQUEST_FILE_EXTENSIONS = {".http", ".rest", ".hurl"}
+
+    # A run of base64 alphabet characters long enough to hold a URL. The
+    # surrounding text can make any substring look like one, so decoding is
+    # attempted per token and failures are ignored rather than propagated.
+    BASE64_TOKEN_RE = /[A-Za-z0-9+\/]{20,}={0,2}/
+
+    # Trailing sentence/prose punctuation. A URL at the end of a Markdown
+    # link, a comment or a sentence carries the delimiter with it
+    # (`see https://x/donate/).`), and that delimiter is not part of the URL.
+    TRAILING_PUNCTUATION = ".,;:!?"
+
+    # Bracket pairs that may legitimately appear *inside* a URL
+    # (`…/wiki/Foo_(bar)`), so only an unbalanced closer is trimmed.
+    BRACKET_PAIRS = { {'(', ')'}, {'[', ']'}, {'{', '}'} }
+
+    # The `-u/--url` base a URL literal is matched against: its origin and
+    # its path without a trailing slash (`""` for a root base).
+    record BaseUrl, origin : String?, path : String do
+      def self.parse(url : String) : BaseUrl
+        raw = url.includes?("://") ? url : "http://#{url}"
+        path = begin
+          URI.parse(raw).path
+        rescue URI::Error
+          ""
+        end
+        new(UrlOrigin.of(url), path.rstrip('/'))
+      end
+    end
+
+    # The path of `candidate` relative to `base`, or nil when the literal
+    # does not address a URL under it.
+    #
+    # The hooks used to keep any literal whose text merely *contained* the
+    # `-u` value, and report its full path. That matched other hosts
+    # (`http://example.com.attacker.net/x`, `http://example.community/x`)
+    # and sibling paths (`http://h/apiv2/x` under `http://h/api`), and the
+    # full path then had the optimizer prefix `-u` a second time
+    # (`http://h/api/api/users`). Now the origins must be equal, the path
+    # must be the base path or sit below it on a segment boundary, and the
+    # result is relative to the base so the optimizer's prefixing lands on
+    # the literal's own URL. The base itself yields `""`, which the
+    # optimizer drops just as it drops a bare root-base literal.
+    def self.path_under_base(candidate : URI, base : BaseUrl) : String?
+      origin = base.origin
+      return if origin.nil? || UrlOrigin.of(candidate) != origin
+
+      path = candidate.path
+      return path if base.path.empty?
+      return unless path.starts_with?(base.path)
+      rest = path[base.path.size..]
+      return unless rest.empty? || rest.starts_with?('/')
+      rest
+    end
+
+    # Yields each line of `path` with its 0-based index, reading through the
+    # detector's content cache when the file is there. The hooks used to
+    # `File.open` the same file once each, so a cached file was read from
+    # disk twice per scan on top of the detector's own read.
+    def self.each_line(path : String, &)
+      if cached = CodeLocator.instance.content_for(path)
+        cached.each_line.with_index { |line, index| yield line, index }
+      else
+        Noir::TextFile.read(path).each_line.with_index { |line, index| yield line, index }
+      end
+    end
+
+    # True when `line` is binary payload rather than source/prose text.
+    def self.binary_line?(line : String) : Bool
+      line.matches?(BINARY_LINE_RE)
+    end
+
+    # Yields every URL found in `text`, already trimmed of prose punctuation.
+    # Candidates that trim away to nothing are skipped. Unlike the previous
+    # single `String#match`, every URL on a line is reported — a line
+    # declaring two endpoints used to contribute only its first.
+    def self.each_url(text : String, &)
+      text.scan(URL_RE) do |match|
+        url = trim(match[0])
+        yield url unless url.nil?
+      end
+    end
+
+    # Strips trailing punctuation and unbalanced brackets from a raw
+    # candidate. Returns nil when no host is addressable after the `://`.
+    def self.trim(raw : String) : String?
+      stop = trimmed_bytesize(raw.to_slice)
+      url = stop == raw.bytesize ? raw : raw.byte_slice(0, stop)
+
+      scheme_end = url.index("://")
+      return if scheme_end.nil?
+
+      authority_start = scheme_end + 3
+      return if url.size <= authority_start
+      # URI.parse accepts an empty HTTP(S) host (`https:///path` or
+      # `https://:443/path`). Those candidates can then become endpoints
+      # when a query happens to contain the requested URL.
+      authority_first = url[authority_start]
+      return if authority_first == '/' || authority_first == '?' || authority_first == '#'
+
+      host = begin
+        URI.parse(url).host
+      rescue
+        nil
+      end
+      return if host.nil? || host.empty?
+
+      url
+    end
+
+    # Byte length of `bytes` once trailing punctuation and unbalanced
+    # brackets are dropped, one at a time from the end. Bracket counts are
+    # taken once and decremented as bytes go, rather than recounted over the
+    # whole URL per dropped byte — a URL followed by 60000 `)` took minutes.
+    # Every character trimmed is ASCII, and an ASCII byte never occurs
+    # inside a multibyte sequence, so working on bytes is exact.
+    private def self.trimmed_bytesize(bytes : Bytes) : Int32
+      counts = Slice(Int32).new(128, 0)
+      bytes.each { |byte| counts[byte] += 1 if byte < 128 }
+
+      stop = bytes.size
+      while stop > 0
+        last = bytes[stop - 1]
+        break unless last < 128 && trailing_noise?(last.unsafe_chr, counts)
+        counts[last] -= 1
+        stop -= 1
+      end
+      stop
+    end
+
+    private def self.trailing_noise?(last : Char, counts : Slice(Int32)) : Bool
+      return true if TRAILING_PUNCTUATION.includes?(last)
+
+      # An unbalanced bracket at the end belongs to the surrounding text,
+      # not the URL: a closer with no opener came from `](url)` markup, an
+      # opener with no closer from a byte run that merely ends in one.
+      BRACKET_PAIRS.any? do |opener, closer|
+        (last == closer && counts[closer.ord] > counts[opener.ord]) ||
+          (last == opener && counts[opener.ord] > counts[closer.ord])
+      end
+    end
+  end
+end

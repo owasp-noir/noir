@@ -1,0 +1,8 @@
+{
+    "name": "acme/yii-modules-sample",
+    "type": "project",
+    "require": {
+        "php": ">=7.4",
+        "yiisoft/yii2": "~2.0.45"
+    }
+}

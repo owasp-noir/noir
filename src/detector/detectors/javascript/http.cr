@@ -2,6 +2,8 @@ require "../../../models/detector"
 
 module Detector::Javascript
   class Http < Detector
+    detector_for "js_http", extensions: %w[.js .mjs .cjs .jsx .ts .mts .tsx], basenames: %w[package.json]
+
     CORE_HTTP_IMPORT = Regex.union(
       /require\s*\(\s*['"](?:node:)?https?['"]\s*\)/,
       /from\s+['"](?:node:)?https?['"]/,
@@ -15,23 +17,19 @@ module Detector::Javascript
 
     def detect(filename : String, file_contents : String) : Bool
       return false unless source_file?(filename)
-      return false unless file_contents.matches?(CORE_HTTP_IMPORT)
-      return false unless file_contents.matches?(CREATE_SERVER_SIGNAL)
+      # `createServer` is the one literal every accepting path needs
+      # (CREATE_SERVER_SIGNAL), and it is far rarer than the `http` the import
+      # regex would scan for.
+      return false unless file_contents.includes?("createServer")
+      return false unless content_matches?(file_contents, CORE_HTTP_IMPORT)
+      return false unless content_matches?(file_contents, CREATE_SERVER_SIGNAL)
 
       # Adapter use such as `createServer(yoga)` imports node:http but has no
       # direct request branching. Keep js_http scoped to the bare stdlib router
       # shape requested in #2144.
-      file_contents.matches?(METHOD_REF) &&
-        file_contents.matches?(URL_REF) &&
-        file_contents.matches?(PATH_LITERAL)
-    end
-
-    def applicable?(filename : String) : Bool
-      source_file?(filename) || File.basename(filename) == "package.json"
-    end
-
-    def set_name
-      @name = "js_http"
+      content_matches?(file_contents, METHOD_REF) &&
+        content_matches?(file_contents, URL_REF) &&
+        content_matches?(file_contents, PATH_LITERAL)
     end
 
     private def source_file?(filename : String) : Bool

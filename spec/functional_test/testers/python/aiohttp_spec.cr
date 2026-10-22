@@ -64,6 +64,9 @@ expected_endpoints = [
     Param.new("category", "", "path"),
     Param.new("q", "", "query"),
   ]),
+  Endpoint.new("/search/advanced", "QUERY", [
+    Param.new("filters", "", "json"),
+  ]),
   Endpoint.new("/admin/stats", "GET", [
     Param.new("section", "", "query"),
   ]),
@@ -91,6 +94,12 @@ expected_endpoints = [
     Param.new("mode", "", "query"),
     Param.new("title", "", "json"),
   ]),
+  Endpoint.new("/tenant-api/tenants/query", "QUERY", [
+    Param.new("term", "", "json"),
+  ]),
+  Endpoint.new("/lookup", "QUERY", [
+    Param.new("ids", "", "json"),
+  ]),
 ]
 
 tester = FunctionalTester.new("fixtures/python/aiohttp/", {
@@ -99,7 +108,7 @@ tester = FunctionalTester.new("fixtures/python/aiohttp/", {
 }, expected_endpoints)
 tester.perform_tests
 
-it "marks aiohttp WebSocketResponse handlers with ws protocol" do
+it "marks aiohttp WebSocketResponse handlers with ws protocol", tags: "functional" do
   feed = tester.app.endpoints.find { |endpoint| endpoint.url == "/feed/{channel}" }
   feed.should_not be_nil
   feed.try(&.protocol).should eq("ws")

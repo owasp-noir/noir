@@ -10,6 +10,7 @@ func main() {
 	web.Run()
 
 	web.Get("/", func(ctx *context.Context) {
+		ctx.GetString("lang", "en")
 		ctx.Output.Body([]byte("hello world"))
 	})
 

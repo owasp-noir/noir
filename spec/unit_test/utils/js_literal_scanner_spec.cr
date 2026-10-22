@@ -49,102 +49,14 @@ describe Noir::JSLiteralScanner do
     end
   end
 
-  describe "try_skip_literal" do
-    it "skips single-line comments" do
-      content = "// comment\nnext"
-      res = Noir::JSLiteralScanner.try_skip_literal(content, 0, "")
-      res = res.should_not be_nil
-      res[:content].should eq("")
-      res[:pos].should eq(10) # Position of newline
-      content[res[:pos]..].should start_with("\nnext")
-    end
-
-    it "skips multi-line comments" do
-      content = "/* comment */next"
-      res = Noir::JSLiteralScanner.try_skip_literal(content, 0, "")
-      res = res.should_not be_nil
-      res[:content].should eq("")
-      res[:pos].should eq(13)
-      content[res[:pos]..].should eq("next")
-    end
-
-    it "skips double-quoted strings" do
-      content = "\"string\"next"
-      res = Noir::JSLiteralScanner.try_skip_literal(content, 0, "")
-      res = res.should_not be_nil
-      res[:content].should eq("\"string\"")
-      res[:pos].should eq(8)
-      content[res[:pos]..].should eq("next")
-    end
-
-    it "skips single-quoted strings" do
-      content = "'string'next"
-      res = Noir::JSLiteralScanner.try_skip_literal(content, 0, "")
-      res = res.should_not be_nil
-      res[:content].should eq("'string'")
-      res[:pos].should eq(8)
-      content[res[:pos]..].should eq("next")
-    end
-
-    it "skips escaped quotes in strings" do
-      content = "\"str\\\"ing\"next"
-      res = Noir::JSLiteralScanner.try_skip_literal(content, 0, "")
-      res = res.should_not be_nil
-      res[:content].should eq("\"str\\\"ing\"")
-      res[:pos].should eq(10)
-      content[res[:pos]..].should eq("next")
-    end
-
-    it "skips template literals" do
-      content = "`template`next"
-      res = Noir::JSLiteralScanner.try_skip_literal(content, 0, "")
-      res = res.should_not be_nil
-      res[:content].should eq("`template`")
-      res[:pos].should eq(10)
-      content[res[:pos]..].should eq("next")
-    end
-
-    it "skips regex literals" do
-      # Context matters for regex vs division
-      content = "return /regex/;"
-      # "return " is 7 chars. '/' is at 7.
-      res = Noir::JSLiteralScanner.try_skip_literal(content, 7, "return ")
-      res = res.should_not be_nil
-      res[:content].should eq("return /regex/")
-      res[:pos].should eq(14)
-      content[res[:pos]..].should eq(";")
-    end
-
-    it "skips regex literals with flags" do
-      content = "return /regex/gi;"
-      res = Noir::JSLiteralScanner.try_skip_literal(content, 7, "return ")
-      res = res.should_not be_nil
-      res[:content].should eq("return /regex/gi")
-      res[:pos].should eq(16)
-      content[res[:pos]..].should eq(";")
-    end
-
-    it "identifies division operator (not regex)" do
-      content = "var a = 10 / 2;"
-      # "var a = 10 " ends with a number, so / should be division
-      res = Noir::JSLiteralScanner.try_skip_literal(content, 11, "var a = 10 ")
-      res.should be_nil
-    end
-
-    it "handles regex with character classes" do
-      content = "return /[a-z]/;"
-      res = Noir::JSLiteralScanner.try_skip_literal(content, 7, "return ")
-      res = res.should_not be_nil
-      res[:content].should eq("return /[a-z]/")
-      res[:pos].should eq(14)
-    end
-
-    it "handles regex with escaped slashes" do
-      content = "return /\\//;"
-      res = Noir::JSLiteralScanner.try_skip_literal(content, 7, "return ")
-      res = res.should_not be_nil
-      res[:content].should eq("return /\\//")
-      res[:pos].should eq(11)
+  describe "extract_paren_content_at_byte" do
+    it "takes and returns byte offsets and keeps multi-byte text intact" do
+      content = "// 한글\napp.use('/경로', /* 주석 */ router)"
+      start = content.byte_index("(").not_nil! + 1
+      result = Noir::JSLiteralScanner.extract_paren_content_at_byte(content, start)
+      result = result.should_not be_nil
+      result.content.should eq("'/경로',  router")
+      result.end_pos.should eq(content.bytesize - 1)
     end
   end
 
@@ -197,6 +109,206 @@ describe Noir::JSLiteralScanner do
       content = "( code"
       idx = Noir::JSLiteralScanner.find_matching_paren(content, 0)
       idx.should be_nil
+    end
+  end
+
+  describe "edge cases pinned across the linear-scan rewrite" do
+    it "treats slash after identifier as division inside paren content" do
+      result = Noir::JSLiteralScanner.extract_paren_content("(a / b / c)", 1)
+      result = result.should_not be_nil
+      result.content.should eq("a / b / c")
+      result.end_pos.should eq(10)
+    end
+
+    it "skips regex with escaped slash and flags after an operator" do
+      result = Noir::JSLiteralScanner.extract_paren_content("(x = /a\\/b/gi)", 1)
+      result = result.should_not be_nil
+      result.content.should eq("x = /a\\/b/gi")
+      result.end_pos.should eq(13)
+    end
+
+    it "stops at the end of the input for unterminated strings" do
+      result = Noir::JSLiteralScanner.extract_paren_content("('ab", 1)
+      result = result.should_not be_nil
+      result.content.should eq("'ab")
+      result.end_pos.should eq(4)
+    end
+
+    it "matches braces across a keyword-context regex containing a brace" do
+      idx = Noir::JSLiteralScanner.find_matching_brace("{ return /}/ }", 0)
+      idx.should eq(13)
+    end
+
+    it "returns nil for a brace opened before an unterminated string" do
+      idx = Noir::JSLiteralScanner.find_matching_brace("{ \"ab", 0)
+      idx.should be_nil
+    end
+  end
+
+  describe "non-ASCII content (char-index API)" do
+    it "extracts paren content containing multi-byte chars" do
+      result = Noir::JSLiteralScanner.extract_paren_content("(한글 'x(y)' z)", 1)
+      result = result.should_not be_nil
+      result.content.should eq("한글 'x(y)' z")
+      result.end_pos.should eq(12)
+    end
+
+    it "finds matching brace past a multi-byte comment" do
+      idx = Noir::JSLiteralScanner.find_matching_brace("{ // 주석 }\n}", 0)
+      idx.should eq(10)
+    end
+
+    it "ignores parens inside strings holding emoji" do
+      idx = Noir::JSLiteralScanner.find_matching_paren("(f(\"🎉)\") )", 0)
+      idx.should eq(9)
+    end
+  end
+
+  describe "regex_context?" do
+    it "accepts operators that expect an expression" do
+      ['(', '[', '{', ',', ':', ';', '=', '!', '&', '|', '?', '>'].each do |ch|
+        Noir::JSLiteralScanner.regex_context?(ch, "").should be_true
+      end
+    end
+
+    it "accepts keywords that expect an expression" do
+      Noir::JSLiteralScanner.regex_context?('n', "return").should be_true
+      Noir::JSLiteralScanner.regex_context?('f', "typeof").should be_true
+    end
+
+    it "rejects a value-producing tail" do
+      Noir::JSLiteralScanner.regex_context?(')', "").should be_false
+      Noir::JSLiteralScanner.regex_context?(']', "").should be_false
+      Noir::JSLiteralScanner.regex_context?('x', "x").should be_false
+      Noir::JSLiteralScanner.regex_context?('n', "login").should be_false
+      Noir::JSLiteralScanner.regex_context?(nil, "").should be_false
+    end
+
+    it "matches whole words, not keyword suffixes" do
+      # "login" ends with "in" — a suffix match would call `login / 2`
+      # a regex and swallow the rest of the expression.
+      Noir::JSLiteralScanner.regex_context?('n', "in").should be_true
+      Noir::JSLiteralScanner.regex_context?('n', "login").should be_false
+    end
+
+    it "treats '/' after a JSX `<` or a postfix `++` / `--` as division" do
+      Noir::JSLiteralScanner.regex_context?('<', "").should be_false
+      Noir::JSLiteralScanner.regex_context?('+', "", '+').should be_false
+      Noir::JSLiteralScanner.regex_context?('-', "", '-').should be_false
+      Noir::JSLiteralScanner.regex_context?('+', "", ' ').should be_true
+    end
+  end
+
+  describe "template_literal_end" do
+    it "skips a template nested inside a substitution" do
+      src = "`<ul>${items.map(i => `<li>${i}</li>`)}</ul>`;x"
+      Noir::JSLiteralScanner.template_literal_end(src.chars, src.size, 0).should eq(src.index!(';'))
+    end
+
+    it "keeps an apostrophe or a `}` inside a nested template inert" do
+      ["`${a.map(n => `it's ${n}`)}`;", "`${rows.map(r => `}`)}`;", "`${rows.map(r => `{${r.a}}`)}`;"].each do |src|
+        Noir::JSLiteralScanner.template_literal_end(src.chars, src.size, 0).should eq(src.size - 1)
+      end
+    end
+  end
+
+  describe "template_literal_end with a regex in a substitution" do
+    it "keeps a quote or brace inside the regex out of the substitution state" do
+      ["/'/g, ''", %(/"/g, ""), "/{/g, ''", %(/\\${/, "")].each do |re|
+        src = "`a${ x.replace(#{re}) }b`;x"
+        Noir::JSLiteralScanner.template_literal_end(src.chars, src.size, 0).should eq(src.index!(";"))
+      end
+    end
+  end
+
+  describe "failed regex scans" do
+    it "stay linear on one long line of '/' that never closes" do
+      src = "{ var q=" + "a=/[x" * 200_000 + "\n}"
+      elapsed = Time.measure do
+        Noir::JSLiteralScanner.find_matching_brace(src, 0).should eq(src.size - 1)
+        Noir::JSLiteralScanner.extract_paren_content("(" + src + ")", 1).should_not be_nil
+      end
+      elapsed.should be < 2.seconds
+    end
+  end
+
+  describe "find_matching_brace" do
+    it "is not desynced by nested templates, JSX closing tags or postfix division" do
+      [
+        "{ res.send(`${items.map(i => `<li>${i}</li>`)}`); }",
+        "{ const el = <div>{name}</div>;\n }",
+        "{ const half = i++ / 2;\n const s = 'x'; }",
+      ].each do |src|
+        Noir::JSLiteralScanner.find_matching_brace(src, 0).should eq(src.size - 1)
+      end
+    end
+  end
+
+  describe "quotes in JSX text" do
+    jsx = <<-JSX
+      app.get('/about', (c) => {
+        return c.html(<p>We don't track you, {name}</p>)
+      })
+      app.post('/submit', h)
+      JSX
+
+    it "does not open a string at an apostrophe glued to a word" do
+      open = jsx.index!("(")
+      close = jsx.index!("})") + 1
+      Noir::JSLiteralScanner.find_matching_paren(jsx, open).should eq(close)
+      Noir::JSLiteralScanner.find_matching_paren_at_byte(jsx, open).should eq(close)
+      brace = jsx.index!("{")
+      Noir::JSLiteralScanner.find_matching_brace(jsx, brace).should eq(close - 1)
+      result = Noir::JSLiteralScanner.extract_paren_content(jsx, open + 1).should_not be_nil
+      result.end_pos.should eq(close)
+    end
+
+    it "agrees between the char and byte walks after a non-ASCII letter" do
+      src = "(<p>Café's menu</p>)"
+      Noir::JSLiteralScanner.find_matching_paren(src, 0).should eq(src.size - 1)
+      Noir::JSLiteralScanner.find_matching_paren_at_byte(src, 0).should eq(src.bytesize - 1)
+    end
+
+    it "ends a stray string at the newline instead of running to EOF" do
+      src = "{\n  <p>'quoted</p>\n}"
+      Noir::JSLiteralScanner.find_matching_brace(src, 0).should eq(src.size - 1)
+    end
+
+    it "still reads strings after operators, punctuation and operand keywords" do
+      ["{ return'}' }", "{ x = typeof\"}\" }", "{ case'}': y }", "{ f(a,'}') }", "{ s = 'a\\\n}' }"].each do |src|
+        Noir::JSLiteralScanner.find_matching_brace(src, 0).should eq(src.size - 1)
+      end
+    end
+  end
+
+  describe "URLs in JSX text" do
+    it "does not open a comment at the slashes of an http(s) URL" do
+      src = "(<p>Docs at https://hono.dev for {name}</p>)"
+      Noir::JSLiteralScanner.find_matching_paren(src, 0).should eq(src.size - 1)
+      Noir::JSLiteralScanner.find_matching_paren_at_byte(src, 0).should eq(src.size - 1)
+      result = Noir::JSLiteralScanner.extract_paren_content(src, 1).should_not be_nil
+      result.end_pos.should eq(src.size - 1)
+    end
+
+    it "still reads comments that only look URL-like" do
+      ["{ a:// }\n}", "{ xhttp://a }\n}", "{ http:// }\n}", "{ ftp://a }\n}"].each do |src|
+        Noir::JSLiteralScanner.find_matching_brace(src, 0).should eq(src.size - 1)
+      end
+    end
+  end
+
+  describe "minified string operands and CRLF continuations" do
+    it "opens a string glued to from/import/export/await" do
+      src = %q(import{a}from"./routes//v1";export*from"./x")
+      Noir::JSLiteralScanner.quote_opens_string?(src.chars, src.index!('"')).should be_true
+      Noir::JSLiteralScanner.quote_opens_string?(src.chars, src.rindex!("\"./x")).should be_true
+      Noir::JSLiteralScanner.quote_opens_string?("someone else's".chars, 12).should be_false
+    end
+
+    it "keeps a backslash-CRLF continuation inside the string" do
+      src = "f('abc\\\r\ndef)', 1)"
+      Noir::JSLiteralScanner.find_matching_paren(src, 1).should eq(src.size - 1)
+      Noir::JSLiteralScanner.find_matching_paren_at_byte(src, 1).should eq(src.size - 1)
     end
   end
 end

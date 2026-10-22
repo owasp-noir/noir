@@ -6,6 +6,7 @@ expected_endpoints = [
   Endpoint.new("/healthz", "ANY"),
   Endpoint.new("/api/", "ANY"),
   Endpoint.new("/api/", "POST"),
+  Endpoint.new("/v[0-9]{1,2}/.+.json", "ANY"),
 ]
 
 FunctionalTester.new("fixtures/specification/nginx/", {

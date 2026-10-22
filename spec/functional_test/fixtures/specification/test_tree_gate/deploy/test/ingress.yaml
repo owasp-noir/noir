@@ -1,0 +1,10 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: test-env-ingress
+spec:
+  rules:
+    - http:
+        paths:
+          - path: /test-env
+            pathType: Prefix

@@ -7,6 +7,20 @@ class AnalyzerBasePathHarness < Analyzer
   end
 end
 
+# Names itself the way a real analyzer does, so a skipped file can be
+# attributed to a tech.
+class AnalyzerSkipHarness < Analyzer
+  analyzer_for "spec_skip_harness"
+
+  def scan(files : Array(String), &block : String -> Nil)
+    scan_files(files, &block)
+  end
+
+  def scan_via_workers(files : Array(String), &block : String -> Nil)
+    parallel_analyze(files, &block)
+  end
+end
+
 describe "Initialize Analyzer" do
   options = create_test_options
   options["base"] = YAML::Any.new([YAML::Any.new("noir")])
@@ -45,6 +59,13 @@ describe "Initialize Analyzer" do
   end
 end
 
+private def with_url_options : Hash(String, YAML::Any)
+  options = create_test_options
+  options["base"] = YAML::Any.new([YAML::Any.new("noir")])
+  options["url"] = YAML::Any.new("https://ex.com")
+  options
+end
+
 describe "Initialize FileAnalyzer" do
   options = create_test_options
   options["base"] = YAML::Any.new([YAML::Any.new("noir")])
@@ -63,7 +84,84 @@ describe "Initialize FileAnalyzer" do
     object.base_path.should eq("noir")
   end
 
-  it "getter - hooks_count" do
-    object.hooks_count.should_not eq(0)
+  # Every hook recognises an endpoint by matching a URL it found against
+  # `-u/--url`, so with no url none of them can do anything but match
+  # everything.
+  it "activates no hook when no url is set" do
+    object.url.should eq("")
+    object.active_hooks.should be_empty
+    object.hooks_count.should eq(0)
+  end
+
+  it "activates every hook once a url is set" do
+    analyzer = FileAnalyzer.new(with_url_options)
+    analyzer.active_hooks.should_not be_empty
+    analyzer.hooks_count.should eq(analyzer.active_hooks.size)
+  end
+
+  # Every endpoint that leaves the analysis phase carries the technology it
+  # came from; these hooks run outside `analysis_endpoints`' per-tech loop,
+  # so they have to stamp their own. An unset one is what put `POST /graphql`
+  # into a report as `"technology": null`.
+  it "gives every hook a technology to attribute its endpoints to" do
+    analyzer = FileAnalyzer.new(with_url_options)
+    analyzer.active_hooks.each(&.tech.should_not(be_empty))
+  end
+
+  # `--only-techs` restricts the scan to the technologies it names. These
+  # hooks are not among them (they have no catalog entry, so the flag cannot
+  # resolve one), so a restriction switches them off instead of leaving them
+  # running underneath it and adding endpoints the named analyzer never
+  # produced.
+  it "runs no hook when --only-techs restricts the scan" do
+    restricted = with_url_options
+    restricted["only_techs"] = YAML::Any.new("rust_axum")
+
+    FileAnalyzer.new(restricted).active_hooks.should be_empty
+  end
+end
+
+# One unreadable or unparsable file costs only itself — that is what the
+# per-file rescues are for. But until they tallied it, the result of a scan
+# that dropped a file was byte-identical to one that read everything, so the
+# skip has to reach `Noir::SkippedFiles` and from there the `errors` array.
+describe "Analyzer per-file skips" do
+  before_each { Noir::SkippedFiles.clear }
+  after_each { Noir::SkippedFiles.clear }
+
+  options = create_test_options
+  options["base"] = YAML::Any.new([YAML::Any.new("noir")])
+
+  it "records a file whose analysis raised, and attributes it to the tech" do
+    harness = AnalyzerSkipHarness.new(options)
+
+    harness.scan(["a.cr", "b.cr"]) do |path|
+      raise "boom on #{path}" if path == "a.cr"
+    end
+
+    Noir::SkippedFiles.count.should eq(1)
+    failure = Noir::SkippedFiles.failures.first
+    failure.tech.should eq("spec_skip_harness")
+    failure.message.should contain("a.cr")
+    failure.message.should contain("boom on a.cr")
+  end
+
+  it "records a skip from the bare worker loop too" do
+    harness = AnalyzerSkipHarness.new(options)
+
+    harness.scan_via_workers(["c.cr"]) { raise "worker boom" }
+
+    Noir::SkippedFiles.count.should eq(1)
+    Noir::SkippedFiles.failures.first.message.should contain("worker boom")
+  end
+
+  it "records nothing when every file is analyzed" do
+    harness = AnalyzerSkipHarness.new(options)
+
+    seen = [] of String
+    harness.scan(["a.cr", "b.cr"]) { |path| seen << path }
+
+    seen.sort.should eq(["a.cr", "b.cr"])
+    Noir::SkippedFiles.count.should eq(0)
   end
 end

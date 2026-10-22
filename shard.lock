@@ -6,7 +6,7 @@ shards:
 
   ameba:
     git: https://github.com/crystal-ameba/ameba.git
-    version: 1.7.0-dev+git.commit.9f217cd4cb673145be81135b763da3b79de083a4
+    version: 1.7.0
 
   crest:
     git: https://github.com/mamantoha/crest.git

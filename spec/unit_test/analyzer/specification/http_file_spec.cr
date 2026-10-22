@@ -1,0 +1,221 @@
+require "../../../spec_helper"
+require "../../../../src/models/code_locator"
+require "../../../../src/analyzer/analyzers/specification/http_file"
+
+private def analyze_http_file(content : String, ext = ".http")
+  path = File.tempname("http_file", ext)
+  File.write(path, content)
+  locator = CodeLocator.instance
+  locator.clear Noir::LocatorKeys::HTTP_FILE
+  locator.push Noir::LocatorKeys::HTTP_FILE, path
+
+  options = create_test_options
+  analyzer = Analyzer::Specification::HttpFile.new options
+  analyzer.analyze
+ensure
+  locator = CodeLocator.instance
+  locator.clear Noir::LocatorKeys::HTTP_FILE
+  File.delete(path) if path && File.exists?(path)
+end
+
+describe "HTTP/REST File Analyzer" do
+  it "extracts method, path, query, path var and header" do
+    endpoints = analyze_http_file <<-HTTP
+      ### Get a user
+      GET http://localhost:8080/users/{{userId}}?verbose=true
+      Authorization: Bearer secret
+      HTTP
+
+    endpoint = endpoints.find! { |e| e.method == "GET" }
+    endpoint.url.should eq("/users/:userId")
+    params = endpoint.params
+    params.any? { |p| p.name == "verbose" && p.param_type == "query" }.should be_true
+    params.any? { |p| p.name == "userId" && p.param_type == "path" }.should be_true
+    params.any? { |p| p.name == "Authorization" && p.param_type == "header" }.should be_true
+    # Content-Type-style headers are not surfaced; none present here anyway.
+    params.any? { |p| p.param_type == "header" && p.name.downcase == "content-type" }.should be_false
+  end
+
+  it "extracts JSON body params and drops a trailing HTTP version" do
+    endpoints = analyze_http_file <<-HTTP
+      POST http://localhost:8080/users HTTP/1.1
+      Content-Type: application/json
+
+      {
+        "name": "noir",
+        "email": "noir@example.com"
+      }
+      HTTP
+
+    endpoint = endpoints.find! { |e| e.method == "POST" }
+    endpoint.url.should eq("/users")
+    endpoint.params.any? { |p| p.name == "name" && p.param_type == "json" }.should be_true
+    endpoint.params.any? { |p| p.name == "email" && p.param_type == "json" }.should be_true
+  end
+
+  it "does not leak response-handler scripts into endpoints" do
+    endpoints = analyze_http_file <<-HTTP
+      ### Create order
+      POST http://localhost:8080/orders
+      Content-Type: application/json
+
+      { "item": "widget" }
+
+      > {%
+          client.test("ok", function() {
+              client.assert(response.status === 200);
+          });
+      %}
+
+      ### List orders
+      GET http://localhost:8080/orders
+      HTTP
+
+    endpoints.size.should eq(2)
+    urls = endpoints.map(&.url)
+    urls.should contain("/orders")
+    # The `client`, `response` and `assert` tokens must not become endpoints.
+    endpoints.none? { |e| e.url.includes?("client") || e.url.includes?("assert") }.should be_true
+  end
+
+  it "resolves in-file @variables in the request URL" do
+    endpoints = analyze_http_file <<-HTTP
+      @baseUrl = https://api.example.com
+
+      GET {{baseUrl}}/health
+      HTTP
+
+    endpoints.size.should eq(1)
+    endpoints.first.url.should eq("/health")
+  end
+
+  it "does not treat verb-initial prose as a request" do
+    endpoints = analyze_http_file <<-HTTP
+      Get started with the API.
+      Delete the old files first.
+      HTTP
+
+    endpoints.size.should eq(0)
+  end
+
+  it "parses .rest files the same as .http" do
+    endpoints = analyze_http_file("GET http://localhost:8080/ping\n", ".rest")
+    endpoints.size.should eq(1)
+    endpoints.first.url.should eq("/ping")
+    endpoints.first.method.should eq("GET")
+  end
+
+  it "skips absolute request URLs with an empty host" do
+    endpoints = analyze_http_file <<-HTTP
+      ### Empty host
+      GET https:///users
+
+      ### Empty host with a port
+      GET https://:443/orders
+
+      ### Empty host with a query
+      GET https://?next=/query
+
+      ### Relative request target
+      GET /health
+      HTTP
+
+    endpoints.map(&.url).should eq ["/health"]
+  end
+
+  it "keeps absolute request URLs whose authority is templated" do
+    endpoints = analyze_http_file <<-HTTP
+      GET http://localhost:{{port}}/api/local
+
+      ###
+      GET https://{{host}}:{{port}}/api/users/{{id}}?x=1
+      HTTP
+
+    endpoints.map(&.url).should eq ["/api/local", "/api/users/:id"]
+  end
+
+  it "keeps JSON body params next to an unquoted {{var}} value" do
+    endpoints = analyze_http_file <<-HTTP
+      POST https://api.example.com/orders
+      Content-Type: application/json
+
+      {
+        "productId": {{productId}},
+        "quantity": 1
+      }
+      HTTP
+
+    endpoints[0].params.select(&.param_type.==("json")).map(&.name).should eq(["productId", "quantity"])
+  end
+
+  it "reads indented ?/& continuation lines as query params, not headers" do
+    endpoints = analyze_http_file <<-HTTP
+      GET http://localhost:8080/comments
+          ?page=2
+          &pageSize=10
+      Accept: application/json
+      HTTP
+
+    endpoints[0].url.should eq("/comments")
+    endpoints[0].params.map { |p| {p.name, p.value, p.param_type} }.should eq([
+      {"Accept", "", "header"},
+      {"page", "2", "query"},
+      {"pageSize", "10", "query"},
+    ])
+  end
+
+  it "keeps the host of a request to another host, minus its userinfo" do
+    endpoints = analyze_http_file <<-HTTP
+      GET https://idp.example.test/oauth/authorize?client_id=abc
+
+      ###
+      GET https://user:pw@idp.example.test:8443/v1/profile
+
+      ###
+      GET http://127.0.0.1:8080/local
+
+      ###
+      @host = https://api.example.com
+      GET {{host}}/via-variable
+      HTTP
+
+    endpoints.map(&.url).should eq([
+      "https://idp.example.test/oauth/authorize",
+      "https://idp.example.test:8443/v1/profile",
+      "/local",
+      "/via-variable",
+    ])
+  end
+
+  it "emits header names without their values" do
+    endpoints = analyze_http_file <<-HTTP
+      GET http://localhost:8080/me
+      Authorization: Bearer dummy-not-a-secret
+      Cookie: JSESSIONID=FAKE
+      HTTP
+
+    endpoints[0].params.map { |p| {p.name, p.value, p.param_type} }.should eq([
+      {"Authorization", "", "header"},
+      {"Cookie", "", "header"},
+    ])
+  end
+
+  it "extracts multipart form field names" do
+    endpoints = analyze_http_file <<-HTTP
+      POST http://localhost:8080/upload
+      Content-Type: multipart/form-data; boundary=B
+
+      --B
+      Content-Disposition: form-data; name="title"
+
+      hello
+      --B
+      Content-Disposition: form-data; name="file"; filename="a.txt"
+
+      < ./a.txt
+      --B--
+      HTTP
+
+    endpoints[0].params.map { |p| {p.name, p.param_type} }.should eq([{"title", "form"}, {"file", "form"}])
+  end
+end

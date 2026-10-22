@@ -40,7 +40,7 @@ private def seed_file_map(fixture_base : String)
   locator.clear_all
   Dir.glob("#{fixture_base}/**/*").each do |file|
     next if File.directory?(file)
-    locator.push("file_map", file)
+    locator.register_path(file)
   end
 end
 
@@ -51,9 +51,9 @@ private def go_endpoint(path : String, line : Int32, url : String, method : Stri
 end
 
 describe "GoSecurityTagger" do
-  echo_base = "#{__DIR__}/../../../functional_test/fixtures/go/echo_security"
+  echo_base = File.expand_path("../../../functional_test/fixtures/go/echo_security", __DIR__)
   echo_main = "#{echo_base}/main.go"
-  fiber_base = "#{__DIR__}/../../../functional_test/fixtures/go/fiber_security"
+  fiber_base = File.expand_path("../../../functional_test/fixtures/go/fiber_security", __DIR__)
   fiber_main = "#{fiber_base}/main.go"
 
   echo_opts = create_test_options
@@ -173,6 +173,30 @@ describe "GoSecurityTagger" do
 
       tag_named(endpoint, "cors").should_not be_nil
       tag_named(endpoint, "csrf-protection").should be_nil
+    end
+
+    it "excludes Query route definition lines from global-wrapper false matching" do
+      tmpdir = File.tempname("go_sec_query")
+      Dir.mkdir_p(tmpdir)
+      file = File.join(tmpdir, "main.go")
+      File.write(file, [
+        "package main",
+        "func main() {",
+        "    app := fiber.New()",
+        "    app.Query(\"/search\", searchHandler)",
+        "}",
+      ].join("\n"))
+
+      opts = create_test_options
+      opts["base"] = YAML::Any.new(tmpdir)
+      seed_file_map(tmpdir)
+
+      query_ep = go_endpoint(file, 4, "/search", "QUERY", "go_fiber")
+      GoSecurityTagger.new(opts).perform([query_ep])
+
+      tag_named(query_ep, "csrf-protection").should be_nil
+
+      FileUtils.rm_rf(tmpdir)
     end
   end
 

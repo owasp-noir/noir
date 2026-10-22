@@ -1,24 +1,24 @@
 +++
-title = "--ai-context와 --include-callee — AI 코드 리뷰의 hint이자 sink"
-description = "AI 기반 소스 코드 분석에서 구조화된 보안 context를 흘려보내는 Noir의 두 플래그 이야기."
+title = "--ai-context와 --include-callee: AI 코드 리뷰의 hint이자 sink"
+description = "raw 코드 대신 구조화된 보안 컨텍스트를 AI 소스코드 분석에 넘겨주는 v1의 두 플래그."
 date = "2026-05-24"
 tags = ["v1", "ai-context", "callee", "design"]
 authors = ["hahwul"]
 template = "blog_post"
 +++
 
-AI의 발전으로 2025년 11월쯤 이후 개발에서 큰 변화가 생겼듯 소스코드 취약점 분석 영역도 해당 시점을 기준으로 빠르게 AI화되고 있습니다.
+2025년 11월쯤부터 AI가 개발 방식을 크게 바꿔놓았듯, 소스코드 취약점 분석도 같은 시점부터 빠르게 AI 중심으로 옮겨가고 있습니다.
 
-많은 AI 기반 소스코드 분석 도구나 방법들은 코드를 입력으로 받아서 LLM에 던지고 결과를 받는 패턴을 가지고 있습니다. 그런데 실제로 잘 동작하려면 LLM이 "무엇을 봐야 하는지"를 알려주는 게 중요합니다. 그냥 codebase를 통째로 던지면 token만 태우고, 정작 봐야 할 지점은 놓치는 경우가 많습니다.
+많은 AI 기반 소스코드 분석 도구들이 코드를 LLM에 던지고 결과를 받는 패턴을 따릅니다. 그런데 이게 실제로 잘 동작하려면 LLM에게 "무엇을 봐야 하는지"를 알려주는 게 중요합니다. 그냥 코드베이스를 통째로 던지면 토큰만 태우고, 정작 봐야 할 지점은 놓치는 경우가 많거든요.
 
-Noir v1에는 그 hint를 미리 추출해서 출력에 실어주는 두 플래그가 있습니다.
+Noir v1에는 그 "무엇을 봐야 하는지"를 미리 추출해서 출력에 실어주는 두 플래그가 있습니다.
 
-- `--include-callee`: 각 endpoint 핸들러의 1-hop 호출 그래프를 `callees` 배열로 추가
-- `--ai-context`: 같은 callee 정보를 포함해서 **5개 보안 카테고리**로 분류된 `ai_context` 구조로 추가
+- `--include-callee`: 각 엔드포인트 핸들러의 1-hop 호출 그래프를 `callees` 배열로 추가
+- `--ai-context`: 같은 callee 정보를 포함해서 5개 보안 카테고리로 분류된 `ai_context` 구조로 추가
 
-## --include-callee — who calls whom
+## --include-callee: 누가 누구를 호출하나
 
-가장 단순한 형태입니다. Endpoint 본문을 tree-sitter로 파싱해서 1-hop callee의 `{name, path, line}`을 뽑습니다.
+둘 중 더 단순한 쪽입니다. 엔드포인트 핸들러 본문을 tree-sitter로 파싱해서 1-hop callee의 `{name, path, line}`을 뽑습니다.
 
 ```bash
 $ noir -b ./flask_app --include callee -f json
@@ -38,9 +38,9 @@ $ noir -b ./flask_app --include callee -f json
 }
 ```
 
-LLM 입장에서는 "이 endpoint를 보려면 `utils.py:3`과 `app.py:21,24,25,26`을 같이 봐야 한다"는 hint가 됩니다. token 효율도 좋습니다. codebase 전체를 던질 게 아니라 **이 다섯 줄과 그 주변**만 추가로 띄우면 되니까요.
+LLM 입장에서는 "이 엔드포인트를 보려면 `utils.py:3`과 `app.py:21,24,25,26`을 같이 봐야 한다"는 hint가 됩니다. 토큰 효율도 좋습니다. 코드베이스 전체를 던질 필요 없이 핸들러와 참조된 몇 줄만 있으면 되니까요.
 
-## --ai-context — same data, sorted into security categories
+## --ai-context: 같은 데이터를 보안 카테고리로 분류
 
 `--ai-context`는 같은 callee 정보를 가져다가 추가 분석을 거쳐 5가지 카테고리로 분류합니다.
 
@@ -50,7 +50,7 @@ LLM 입장에서는 "이 endpoint를 보려면 `utils.py:3`과 `app.py:21,24,25,
 - **validators**: 입력 검증 호출
 - **signals**: `state_change`, `credential_input`, `guard_absence` 같은 휴리스틱 신호
 
-같은 Flask `/sign` POST endpoint를 `--ai-context`로 돌리면
+같은 Flask `/sign` POST 엔드포인트를 `--ai-context`로 돌리면
 
 ```bash
 $ noir -b ./flask_app --ai-context -f json
@@ -80,14 +80,14 @@ $ noir -b ./flask_app --ai-context -f json
 }
 ```
 
-이 endpoint 하나로 LLM이 받는 정보를 정리하면
+이 엔드포인트 하나로 LLM이 받는 정보를 정리하면
 
 1. `credential_input`이 있다 (password를 form으로 받음)
 2. `state_change`다 (POST)
 3. `guard_absence`다 (auth 데코레이터 안 보임)
 4. `sql` sink가 있다 (`User.query.filter`)
 
-사람 리뷰어든 LLM이든 이 네 신호가 한 곳에 모여 있다면 자연스럽게 **"이 핸들러 먼저 보세요"**라는 결론이 나옵니다. 회원가입 같은 credential-handling 경로에 auth 부재 = 명백한 priority 1.
+사람 리뷰어든 LLM이든 이 네 신호가 한곳에 모여 있다면 자연스럽게 "이 핸들러 먼저 보세요"라는 결론이 나옵니다. credential을 다루는 엔드포인트에 auth까지 없다면 더 따질 것도 없이 1순위죠.
 
 반대로 auth가 잡힌 케이스도 봅니다 (flask_auth fixture 출력)
 
@@ -107,14 +107,14 @@ $ noir -b ./flask_app --ai-context -f json
 }
 ```
 
-`@login_required` 데코레이터가 잡혀서 `guards`에 채워졌습니다. 이건 LLM에게 "이 endpoint는 auth가 걸려있으니 다른 류의 취약점에 집중하라"는 **negative signal**로도 쓰입니다.
+`@login_required` 데코레이터가 잡혀서 `guards`에 채워졌습니다. 이건 LLM에게 "이 엔드포인트는 auth가 걸려 있으니 다른 류의 취약점에 집중하라"는 negative signal로도 쓰입니다.
 
-## Hint and sink at the same time
+## 동시에 hint이자 sink
 
-이 두 플래그가 동시에 hint이자 sink로 쓸 수 있다는 게 핵심입니다.
+이 두 플래그를 동시에 hint이자 sink로 쓸 수 있다는 게 핵심입니다.
 
-- **Hint**으로: endpoint 단위로 1-hop context를 미리 추려 LLM의 attention을 좁혀줍니다. "전체 코드베이스" 대신 "이 핸들러 + 이 파일들"만 보면 됩니다.
-- **Sink**으로: `sinks` 카테고리는 데이터 흐름의 종착점 후보를 framework-aware하게 알려줍니다. 일반 LLM은 "`User.query.filter`는 SQL이다"를 추론은 가능하지만 매번 token을 태워야 합니다. Noir가 미리 라벨링해주면 그 추론 단계를 건너뛸 수 있습니다.
+- **Hint**로: 엔드포인트 단위로 컨텍스트를 미리 추려 LLM의 attention을 좁혀줍니다. "전체 코드베이스" 대신 "이 핸들러 + 이 파일들"만 보면 됩니다.
+- **Sink**로(source-to-sink의 그 sink): `sinks` 카테고리는 데이터 흐름의 종착점 후보를 framework-aware하게 알려줍니다. 일반 LLM도 `User.query.filter`가 SQL이라는 것 정도는 추론할 수 있지만, 매번 토큰을 태워야 합니다. Noir가 미리 라벨링해주면 그 추론 단계를 건너뛸 수 있습니다.
 
 특히 framework-aware라는 점이 큽니다. 같은 `query`라는 callee 이름이라도 컨텍스트에 따라 의미가 다릅니다.
 
@@ -122,9 +122,9 @@ $ noir -b ./flask_app --ai-context -f json
 - Express + MongoDB: `User.find` → NoSQL sink
 - 그냥 generic LLM은 이 차이를 모르거나 매번 reasoning을 다시 합니다
 
-Noir는 detector 단계에서 framework를 식별하고, augmentor가 그 framework의 idiom에 맞춰 sink / guard 패턴을 적용합니다. LLM이 받는 건 raw 코드가 아니라 **이미 framework-aware하게 정리된 context**입니다.
+Noir는 detector 단계에서 framework를 식별하고, augmentor가 그 framework의 idiom에 맞춰 sink / guard 패턴을 적용합니다. LLM이 받는 건 raw 코드가 아니라 이미 framework-aware하게 정리된 context입니다.
 
-## Recommended use
+## 권장 사용법
 
 AI 기반 코드 리뷰 파이프라인을 짠다면
 
@@ -141,8 +141,8 @@ noir -b ./app --include callee -f json
 
 전체 카테고리는 첫 audit 때 한 번 돌리는 정도가 적당합니다. 이후 incremental review나 PR 단위에서는 `guards,sinks,signals`만 띄워도 충분한 경우가 많습니다.
 
-## What's next
+## 다음 계획
 
-`--ai-context`의 sink / guard 패턴은 현재 정규식 기반 휴리스틱입니다. 데이터 흐름 자체를 따라가지는 않고, callee 이름과 코드 패턴으로 "여기 sink 같은데" 정도까지만 표시합니다. 이건 의도된 trade-off예요. 정확한 taint analysis는 분리된 도구가 더 잘하고, Noir는 그 도구나 LLM에게 **focus point**를 빠르게 던지는 역할에 충실하려고 합니다.
+`--ai-context`의 sink / guard 패턴은 현재 정규식 기반 휴리스틱입니다. 데이터 흐름 자체를 따라가지는 않고, callee 이름과 코드 패턴으로 "여기 sink 같은데" 정도까지만 표시합니다. 이건 의도된 trade-off예요. 정확한 taint analysis는 전용 도구가 더 잘하고, Noir는 그 도구나 LLM에게 focus point를 빠르게 던지는 역할에 충실하려고 합니다.
 
 앞으로는 패턴 카탈로그를 더 framework-aware하게 확장하고, signal 종류를 추가하는 방향으로 진행할 예정입니다. 피드백이나 새 패턴 제안은 언제나 환영합니다.

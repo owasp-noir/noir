@@ -6,7 +6,10 @@ expected_endpoints = [
   Endpoint.new("/about/", "GET"),
   Endpoint.new("/zz", "GET"),
   Endpoint.new("/zz/", "DELETE"),
-  Endpoint.new("/111", "PUT"),
+  # ZAP records the URL a node was reached with, query string included. Only
+  # the path used to be kept, so every query parameter ZAP had already
+  # discovered was thrown away.
+  Endpoint.new("/111", "PUT", [Param.new("q", "", "query")]),
   Endpoint.new("/about/", "POST", [Param.new("data", "", "form"), Param.new("id", "", "form")]),
 ]
 

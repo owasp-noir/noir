@@ -3,12 +3,21 @@ require "../../engines/java_engine"
 require "../../../miniparsers/java_callee_extractor"
 require "../../../miniparsers/java_parameter_extractor_ts"
 require "xml"
+require "../../../utils/xml_comments"
+require "../../../utils/char_offsets"
 
 module Analyzer::Java
   class Struts2 < Analyzer
+    analyzer_for "java_struts2"
+
     STRUTS_CONFIG_BASENAMES = Set{"struts.xml", "struts-plugin.xml", "struts-deferred.xml"}
     DEFAULT_LOCATORS        = ["action", "actions", "struts", "struts2"]
-    REST_METHODS            = {
+
+    # `struts_java_source?` gates the per-file convention-action scan; one
+    # precompiled `Regex.union` scan (PCRE2 JIT, auto-escapes each literal)
+    # replaces 4 separate `String#includes?` passes over the same buffer.
+    STRUTS_JAVA_SOURCE_RE = Regex.union("org.apache.struts2", "com.opensymphony.xwork2", "@Action", "@Namespace")
+    REST_METHODS          = {
       "index"         => {"GET", ""},
       "show"          => {"GET", "/:id"},
       "edit"          => {"GET", "/:id/edit"},
@@ -89,7 +98,7 @@ module Analyzer::Java
       seen = Set(String).new
 
       java_files = file_list.select do |path|
-        File.exists?(path) && path.ends_with?(".java") && !JavaEngine.test_path?(path)
+        path.ends_with?(".java") && File.exists?(path) && !JavaEngine.test_path?(base_relative_path(path))
       end
 
       # Build a FQCN → source-path index up front so XML `<action
@@ -129,43 +138,52 @@ module Analyzer::Java
       end
     end
 
-    # 1-hop callees for an XML-configured action by resolving its
-    # `class`/`method` (default `execute`) to the handler source. Returns
-    # empty unless enrichment is on and the handler file is indexed.
-    private def xml_action_callees(action : XmlAction, config_path : String) : Array(Callee)
-      callees = [] of Callee
-      return callees unless @include_callee
-      return callees if action.class_name.empty?
+    # 1-hop callees for XML-configured actions, resolving each action's
+    # `class`/`method` (default `execute`) to the handler source. Each
+    # handler file is parsed once for all of its actions. Empty unless
+    # enrichment is on and the handler file is indexed.
+    private def xml_action_callees(actions : Array(XmlAction), config_path : String) : Hash(XmlAction, Array(Callee))
+      result = Hash(XmlAction, Array(Callee)).new
+      return result unless @include_callee
 
-      handler_path = @handler_index[{configured_base_for(config_path), action.class_name}]?
-      return callees unless handler_path && File.exists?(handler_path)
-
-      simple_name = action.class_name.split('.').last
-      method_name = action.method_name.empty? ? "execute" : action.method_name
-      handler_content = read_file_content(handler_path)
-
-      Noir::TreeSitter.parse_java(handler_content) do |root|
-        Noir::JavaCalleeExtractor.callees_in_method(root, handler_content, handler_path, simple_name, method_name).each do |entry|
-          name, callee_path, callee_line = entry
-          callees << Callee.new(name, path: callee_path, line: callee_line)
-        end
+      by_handler = Hash(String, Array(XmlAction)).new
+      actions.each do |action|
+        next if action.class_name.empty?
+        handler_path = @handler_index[{configured_base_for(config_path), action.class_name}]?
+        next unless handler_path && File.exists?(handler_path)
+        (by_handler[handler_path] ||= [] of XmlAction) << action
       end
-      callees
-    rescue e : Exception
-      @logger.debug "Failed to extract Struts XML callees for #{action.class_name}: #{e.message}"
-      [] of Callee
+
+      by_handler.each do |handler_path, handler_actions|
+        handler_content = read_file_content(handler_path)
+        Noir::TreeSitter.parse_java(handler_content) do |root|
+          file_callees = Noir::JavaCalleeExtractor::FileCallees.new(root, handler_content, handler_path)
+          handler_actions.each do |action|
+            simple_name = action.class_name.split('.').last
+            method_name = action.method_name.empty? ? "execute" : action.method_name
+            result[action] = file_callees.callees_in_method(simple_name, method_name).map do |(name, callee_path, callee_line)|
+              Callee.new(name, path: callee_path, line: callee_line)
+            end
+          rescue e : Exception
+            @logger.debug "Failed to extract Struts XML callees for #{action.class_name}: #{e.message}"
+          end
+        end
+      rescue e : Exception
+        @logger.debug "Failed to extract Struts XML callees from #{handler_path}: #{e.message}"
+      end
+      result
     end
 
     private def struts_config_files(file_list : Array(String)) : Array(String)
       file_list.select do |path|
-        next false unless File.exists?(path)
         next false unless path.ends_with?(".xml")
+        next false unless File.exists?(path)
         # Test-source Struts config (`src/test/resources/struts.xml`,
         # `src/it/...`) exercises the framework itself and never backs a
         # deployed action — gate it the same way the `.java` selection at
         # the top of `analyze` does via the shared `JavaEngine.test_path?`
         # convention.
-        next false if JavaEngine.test_path?(path)
+        next false if JavaEngine.test_path?(base_relative_path(path))
         basename = File.basename(path)
         STRUTS_CONFIG_BASENAMES.includes?(basename) || basename.ends_with?("-struts.xml")
       end
@@ -175,12 +193,12 @@ module Analyzer::Java
                                     file_list : Array(String),
                                     convention_config : ConventionConfig,
                                     seen : Set(String))
-      expanded = File.expand_path(path)
+      expanded = Noir::PathScope.expand(path)
       return if seen.includes?(expanded)
       seen << expanded
 
       content = read_file_content(path)
-      doc = XML.parse(content)
+      doc = Noir::XmlComments.parse(content)
       root = find_xml_child(doc, "struts") || doc.first_element_child
       return unless root && root.name == "struts"
 
@@ -190,11 +208,12 @@ module Analyzer::Java
       end
 
       packages = collect_packages(root, content)
+      action_callees = xml_action_callees(packages.values.flat_map(&.actions), path)
       packages.each_value do |package_config|
         namespace = package_namespace(package_config, packages, Set(String).new)
         package_config.actions.each do |action|
-          add_route(join_paths(namespace, normalize_action_pattern(action.name)), "ANY", path, action.line,
-            callees: xml_action_callees(action, path))
+          add_route(namespace_join(namespace, normalize_action_pattern(action.name)), "ANY", path, action.line,
+            callees: action_callees[action]? || [] of Callee)
         end
       end
     rescue e : Exception
@@ -239,8 +258,13 @@ module Analyzer::Java
       candidates << File.expand_path(include_name, File.dirname(current_path))
       candidates << File.join(configured_base_for(current_path), include_name.lstrip('/'))
 
+      # `walked_path` maps the resolved candidate back to the walker's own
+      # spelling. Without it an `<include>` target resolved against the
+      # including file's directory was recorded — and reported — as an
+      # absolute machine path, while the top-level `struts.xml` next to it
+      # stayed relative.
       if found = candidates.find { |candidate| File.exists?(candidate) }
-        return found
+        return walked_path(found)
       end
 
       normalized = include_name.lstrip('/')
@@ -299,12 +323,12 @@ module Analyzer::Java
       java_files.each do |path|
         next unless File.basename(path) == "package-info.java"
 
-        content = read_file_content(path)
+        content = JavaEngine.strip_comments(read_file_content(path))
         package_name = Noir::TreeSitterJavaParameterExtractor.extract_package_name(content)
         next if package_name.empty?
 
         if package_index = content.index(/\bpackage\s+#{Regex.escape(package_name)}\s*;/)
-          annotations = annotations_before(content, package_index)
+          annotations = annotations_before(Noir::CharOffsets.new(content), package_index)
           package_annotations[{configured_base_for(path), package_name}] = annotations unless annotations.empty?
         end
       rescue e : Exception
@@ -324,7 +348,7 @@ module Analyzer::Java
       # in the file. On a default scan we skip the parse entirely.
       if @include_callee
         Noir::TreeSitter.parse_java(content) do |root|
-          analyze_java_classes(path, config, package_annotations, content, root)
+          analyze_java_classes(path, config, package_annotations, content, Noir::JavaCalleeExtractor::FileCallees.new(root, content, path))
         end
       else
         analyze_java_classes(path, config, package_annotations, content, nil)
@@ -337,9 +361,15 @@ module Analyzer::Java
                                      config : ConventionConfig,
                                      package_annotations : Hash(ScopedNameKey, String),
                                      content : String,
-                                     root : LibTreeSitter::TSNode?)
+                                     file_callees : Noir::JavaCalleeExtractor::FileCallees?)
       package_name = Noir::TreeSitterJavaParameterExtractor.extract_package_name(content)
-      classes_in(content, package_name).each do |klass|
+      # Scan a comment-blanked copy (same offsets and lines) so a comment
+      # after or between annotations (`@Action("x") // note`) does not end
+      # the annotation walk; callees keep the raw text `root` came from.
+      # One offset index per file: every per-class/per-method lookup below is
+      # O(log n) instead of rescanning the file from the start (#3042).
+      visible = Noir::CharOffsets.new(JavaEngine.strip_comments(content))
+      classes_in(visible, package_name).each do |klass|
         next if klass.abstract?
 
         package_annotations_for_class = package_annotations[{configured_base_for(path), klass.package_name}]? || ""
@@ -350,13 +380,13 @@ module Analyzer::Java
         class_actions = action_paths_from_annotations(klass.annotations)
         class_action_base = convention_action_name(klass.name, config)
         class_has_action_annotation = !class_actions.empty?
-        methods = methods_in(klass.body, klass.body_offset, content)
+        methods = methods_in(klass.body, klass.body_offset, visible)
 
         namespaces.each do |class_namespace|
           class_actions.each do |action_path|
-            resolved = action_path.empty? ? join_paths(class_namespace, class_action_base) : resolve_action_path(action_path, class_namespace)
+            resolved = action_path.empty? ? namespace_join(class_namespace, class_action_base) : resolve_action_path(action_path, class_namespace)
             # A class-level @Action defaults to the `execute` handler.
-            add_route(resolved, "ANY", path, klass.line, callees: callees_for(root, content, path, klass.name, "execute"))
+            add_route(resolved, "ANY", path, klass.line, callees: callees_for(file_callees, klass.name, "execute"))
           end
 
           methods.each do |method|
@@ -364,20 +394,20 @@ module Analyzer::Java
             next if action_paths.empty?
 
             action_paths.each do |action_path|
-              resolved = action_path.empty? ? join_paths(class_namespace, class_action_base) : resolve_action_path(action_path, class_namespace)
-              add_route(resolved, "ANY", path, method.line, callees: callees_for(root, content, path, klass.name, method.name))
+              resolved = action_path.empty? ? namespace_join(class_namespace, class_action_base) : resolve_action_path(action_path, class_namespace)
+              add_route(resolved, "ANY", path, method.line, callees: callees_for(file_callees, klass.name, method.name))
             end
           end
 
           next if class_has_action_annotation || methods.any? { |method| !action_paths_from_annotations(method.annotations).empty? }
           next unless convention_action_class?(klass, config, package_annotations_for_class)
 
-          base_path = join_paths(class_namespace, class_action_base)
+          base_path = namespace_join(class_namespace, class_action_base)
           if rest_controller?(klass, config)
-            add_rest_routes(path, base_path, methods, root, content, klass.name)
+            add_rest_routes(path, base_path, methods, file_callees, klass.name)
           else
             # A convention action without an explicit method defaults to `execute`.
-            add_route(base_path, "ANY", path, klass.line, callees: callees_for(root, content, path, klass.name, "execute"))
+            add_route(base_path, "ANY", path, klass.line, callees: callees_for(file_callees, klass.name, "execute"))
           end
         end
       end
@@ -385,17 +415,15 @@ module Analyzer::Java
 
     # 1-hop callees out of the action handler method body, mirroring the
     # Spring analyzer. Returns an empty list unless callee/ai-context
-    # enrichment was requested (`root` is nil on a default scan). The
-    # tree-sitter root is shared across every route in the file.
-    private def callees_for(root : LibTreeSitter::TSNode?,
-                            content : String,
-                            path : String,
+    # enrichment was requested (`file_callees` is nil on a default scan).
+    # One parse and its indexes are shared across every route in the file.
+    private def callees_for(file_callees : Noir::JavaCalleeExtractor::FileCallees?,
                             class_name : String,
                             method_name : String) : Array(Callee)
       callees = [] of Callee
-      return callees if root.nil? || class_name.empty? || method_name.empty?
+      return callees if file_callees.nil? || class_name.empty? || method_name.empty?
 
-      Noir::JavaCalleeExtractor.callees_in_method(root, content, path, class_name, method_name).each do |entry|
+      file_callees.callees_in_method(class_name, method_name).each do |entry|
         name, callee_path, callee_line = entry
         callees << Callee.new(name, path: callee_path, line: callee_line)
       end
@@ -406,27 +434,23 @@ module Analyzer::Java
     end
 
     private def struts_java_source?(content : String, config : ConventionConfig) : Bool
-      content.includes?("org.apache.struts2") ||
-        content.includes?("com.opensymphony.xwork2") ||
-        content.includes?("@Action") ||
-        content.includes?("@Namespace") ||
-        config.rest_enabled?
+      content.matches?(STRUTS_JAVA_SOURCE_RE) || config.rest_enabled?
     end
 
-    private def classes_in(content : String, package_name : String) : Array(JavaClass)
+    private def classes_in(src : Noir::CharOffsets, package_name : String) : Array(JavaClass)
       classes = [] of JavaClass
       scanner = /(?:^|\n)\s*((?:public\s+|protected\s+|private\s+|abstract\s+|final\s+|static\s+)*)class\s+([A-Za-z_][A-Za-z0-9_]*)([^{]*)\{/m
-      content.scan(scanner) do |match|
+      src.content.scan(scanner) do |match|
         modifiers = match[1]
         class_name = match[2]
-        start_offset = match.begin(0)
-        open_brace = match.end(0) - 1
-        close_brace = matching_brace(content, open_brace)
+        start_offset = src.begin(match)
+        open_brace = src.end(match) - 1
+        close_brace = matching_brace(src.chars, open_brace)
         next unless close_brace
 
-        annotations = annotations_before(content, start_offset)
+        annotations = annotations_before(src, start_offset)
         header = match[3]
-        body = content[(open_brace + 1)...close_brace]
+        body = src.slice(open_brace + 1, close_brace)
         classes << JavaClass.new(
           class_name,
           package_name,
@@ -434,47 +458,52 @@ module Analyzer::Java
           header,
           body,
           open_brace + 1,
-          line_number_for(content, start_offset),
+          src.line(start_offset),
           modifiers.includes?("abstract")
         )
       end
       classes
     end
 
-    private def methods_in(body : String, body_offset : Int32, full_content : String) : Array(JavaMethod)
+    private def methods_in(body : String, body_offset : Int32, src : Noir::CharOffsets) : Array(JavaMethod)
       methods = [] of JavaMethod
+      body_byte = src.byte(body_offset)
       scanner = /(?:^|\n)\s*(?:public|protected|private)?\s*(?:static\s+)?(?:final\s+)?[\w<>\[\].?,\s]+\s+([A-Za-z_][A-Za-z0-9_]*)\s*\([^;{}]*\)\s*(?:throws\s+[^{]+)?\{/m
       body.scan(scanner) do |match|
         method_name = match[1]
-        start_offset = body_offset + match.begin(0)
-        annotations = annotations_before(full_content, start_offset)
-        methods << JavaMethod.new(method_name, annotations, line_number_for(full_content, start_offset))
+        start_offset = src.char(body_byte + match.byte_begin(0))
+        annotations = annotations_before(src, start_offset)
+        methods << JavaMethod.new(method_name, annotations, src.line(start_offset))
       end
       methods
     end
 
-    private def annotations_before(content : String, offset : Int32) : String
+    private def annotations_before(src : Noir::CharOffsets, offset : Int32) : String
+      chars = src.chars
       cursor = offset - 1
-      while cursor >= 0 && content[cursor].ascii_whitespace?
+      while cursor >= 0 && chars[cursor].ascii_whitespace?
         cursor -= 1
       end
       end_pos = cursor + 1
 
       loop do
-        while cursor >= 0 && content[cursor].ascii_whitespace?
+        while cursor >= 0 && chars[cursor].ascii_whitespace?
           cursor -= 1
         end
         break if cursor < 0
 
-        if content[cursor] == ')'
-          open_paren = matching_open_paren(content, cursor)
+        if chars[cursor] == ')'
+          open_paren = matching_open_paren(chars, cursor)
           break unless open_paren
-          at_pos = annotation_start_before(content, open_paren)
+          at_pos = annotation_start_before(chars, open_paren)
           break unless at_pos
           cursor = at_pos - 1
         else
-          line_start = content.rindex('\n', cursor) || -1
-          line = content[(line_start + 1)..cursor].strip
+          line_start = cursor
+          while line_start >= 0 && chars[line_start] != '\n'
+            line_start -= 1
+          end
+          line = src.slice(line_start + 1, cursor + 1).strip
           break unless line.matches?(/^@[A-Za-z_][A-Za-z0-9_.]*$/)
           cursor = line_start
         end
@@ -482,7 +511,7 @@ module Analyzer::Java
 
       start_pos = cursor + 1
       return "" if start_pos >= end_pos
-      content[start_pos...end_pos]
+      src.slice(start_pos, end_pos)
     end
 
     private def action_paths_from_annotations(annotations : String) : Array(String)
@@ -583,8 +612,7 @@ module Analyzer::Java
     private def add_rest_routes(path : String,
                                 base_path : String,
                                 methods : Array(JavaMethod),
-                                root : LibTreeSitter::TSNode?,
-                                content : String,
+                                file_callees : Noir::JavaCalleeExtractor::FileCallees?,
                                 class_name : String)
       methods.each do |method|
         route = REST_METHODS[method.name]?
@@ -592,8 +620,8 @@ module Analyzer::Java
 
         verb, suffix = route
         params = suffix.includes?(":id") ? [Param.new("id", "", "path")] : [] of Param
-        add_route(join_paths(base_path, suffix), verb, path, method.line, params,
-          callees: callees_for(root, content, path, class_name, method.name))
+        add_route(namespace_join(base_path, suffix), verb, path, method.line, params,
+          callees: callees_for(file_callees, class_name, method.name))
       end
     end
 
@@ -633,7 +661,7 @@ module Analyzer::Java
     end
 
     private def resolve_action_path(action_path : String, namespace : String) : String
-      return join_paths(namespace, action_path) unless action_path.starts_with?("/")
+      return namespace_join(namespace, action_path) unless action_path.starts_with?("/")
       normalize_path(action_path)
     end
 
@@ -660,7 +688,12 @@ module Analyzer::Java
       end
 
       key = "#{method} #{normalized}"
-      return if @result.any? { |endpoint| "#{endpoint.method} #{endpoint.url}" == key }
+      # Dedup by "METHOD url" against an O(1) key set rather than a linear
+      # scan of the whole accumulated result — add_route is the only writer
+      # to @result, so the set mirrors it exactly. Keeps route registration
+      # O(n) instead of O(n^2) in the total struts2 endpoint count.
+      seen_keys = (@seen_route_keys ||= Set(String).new)
+      return unless seen_keys.add?(key)
 
       endpoint = Endpoint.new(normalized, method, route_params, Details.new(PathInfo.new(file_path, line)))
       callees.each { |callee| endpoint.push_callee(callee) }
@@ -680,7 +713,7 @@ module Analyzer::Java
       cleaned.gsub(%r{/+}, "/").rstrip('/')
     end
 
-    private def join_paths(prefix : String, suffix : String) : String
+    private def namespace_join(prefix : String, suffix : String) : String
       return normalize_path(prefix) if suffix.empty? || suffix == "/"
       return normalize_path(suffix) if prefix.empty? || prefix == "/"
       normalize_path("#{prefix.rstrip('/')}/#{suffix.lstrip('/')}")
@@ -713,19 +746,26 @@ module Analyzer::Java
     end
 
     private def line_number_for(content : String, offset : Int32) : Int32
-      # Callers pass CHAR offsets (match.begin / String#index); char-slice so
-      # multi-byte chars before `offset` don't under-count newlines.
-      content[0, offset].count('\n') + 1
+      # Callers pass CHAR offsets (match.begin / String#index); convert to a
+      # byte offset so multi-byte chars before `offset` don't under-count
+      # newlines, without the prefix-substring allocation of a char-slice.
+      byte_offset = if content.bytesize == content.size
+                      offset
+                    else
+                      content.char_index_to_byte_index(offset) || content.bytesize
+                    end
+      content.to_slice[0, byte_offset].count('\n'.ord.to_u8) + 1
     end
 
-    private def matching_brace(content : String, open_index : Int32) : Int32?
+    # `chars` is the file's shared `CharOffsets#chars`, so the walk starts at
+    # `open_index` instead of re-reading the file prefix for every class.
+    private def matching_brace(chars : Array(Char), open_index : Int32) : Int32?
       depth = 0
       in_string : Char? = nil
       escaped = false
 
-      index = open_index
-      while index < content.size
-        char = content[index]
+      (open_index...chars.size).each do |index|
+        char = chars[index]
         if in_string
           if escaped
             escaped = false
@@ -742,16 +782,15 @@ module Analyzer::Java
           depth -= 1
           return index if depth == 0
         end
-        index += 1
       end
       nil
     end
 
-    private def matching_open_paren(content : String, close_index : Int32) : Int32?
+    private def matching_open_paren(chars : Array(Char), close_index : Int32) : Int32?
       depth = 0
       index = close_index
       while index >= 0
-        case content[index]
+        case chars[index]
         when ')'
           depth += 1
         when '('
@@ -764,13 +803,16 @@ module Analyzer::Java
     end
 
     private def matching_close_paren(content : String, open_index : Int32) : Int32?
+      # Materialize once and index the array: `String#[]` is O(n) per access
+      # on non-ASCII content. Returned index stays a CHAR index.
+      chars = content.chars
       depth = 0
       in_string : Char? = nil
       escaped = false
 
       index = open_index
-      while index < content.size
-        char = content[index]
+      while index < chars.size
+        char = chars[index]
         if in_string
           if escaped
             escaped = false
@@ -792,15 +834,15 @@ module Analyzer::Java
       nil
     end
 
-    private def annotation_start_before(content : String, open_paren : Int32) : Int32?
+    private def annotation_start_before(chars : Array(Char), open_paren : Int32) : Int32?
       index = open_paren - 1
-      while index >= 0 && content[index].ascii_whitespace?
+      while index >= 0 && chars[index].ascii_whitespace?
         index -= 1
       end
-      while index >= 0 && (identifier_char?(content[index]) || content[index] == '.')
+      while index >= 0 && (identifier_char?(chars[index]) || chars[index] == '.')
         index -= 1
       end
-      return unless index >= 0 && content[index] == '@'
+      return unless index >= 0 && chars[index] == '@'
       index
     end
 

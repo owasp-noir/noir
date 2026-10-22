@@ -22,6 +22,7 @@ require "../../../models/endpoint"
 # controller the action lives in. Cross-file concerns (a `null_session`
 # base controller inherited by children, a Rack::Attack initializer) are
 # out of scope by design — those live outside the action's own file.
+@[Noir::TaggerFor(key: "rails_security", name: "Rails Security Tagger", desc: "Identifies Rails controller security signals (CSRF protection, mass assignment, rate limiting)", order: 130)]
 class RailsSecurityTagger < FrameworkTagger
   # Class-level macros that turn CSRF verification OFF for (some) actions.
   CSRF_DISABLE_PATTERNS = [
@@ -51,28 +52,50 @@ class RailsSecurityTagger < FrameworkTagger
   MASS_ASSIGN_WRITER_PATTERN =
     /\.(?:new|create|create!|update|update!|update_attributes|update_attributes!|assign_attributes)\s*\(\s*params\[/
 
-  def initialize(options : Hash(String, YAML::Any))
-    super
-    @name = "rails_security"
-  end
-
   def self.target_techs : Array(String)
     ["ruby_rails"]
   end
 
-  def perform(endpoints : Array(Endpoint)) : Array(Endpoint)
-    endpoints.each do |endpoint|
-      check_endpoint(endpoint)
+  def initialize(options : Hash(String, YAML::Any))
+    super
+    @class_macro_flags = Hash(String, Array(UInt8)).new
+  end
+
+  # Every pattern `check_csrf` tests a line against.
+  CSRF_ANY = begin
+    sources = [] of Regex | String
+    CSRF_DISABLE_PATTERNS.each { |pattern, _| sources << pattern }
+    sources << CSRF_NULL_SESSION_PATTERN
+    Regex.union(sources)
+  end
+
+  # Per-line flags for the two class-macro walks, computed once per file.
+  #
+  # `check_csrf` and `check_rate_limit` each walk from an action back to its
+  # enclosing `class`, so a controller with N actions had every line above
+  # them stripped and regex-tested 2N times. None of that depends on the
+  # action — only `macro_applies?` does, and it only runs on a line whose
+  # pattern already matched — so classify each line once and let the walks
+  # skip the lines no pattern can match.
+  CSRF_LINE       = 1_u8
+  RATE_LIMIT_LINE = 2_u8
+  CLASS_LINE      = 4_u8
+
+  private def class_macro_flags(path : String, lines : Array(String)) : Array(UInt8)
+    @class_macro_flags[path] ||= lines.map do |line|
+      current = line.strip
+      flags = 0_u8
+      flags |= CSRF_LINE if current.matches?(CSRF_ANY)
+      flags |= RATE_LIMIT_LINE if current.matches?(RATE_LIMIT_PATTERN)
+      flags |= CLASS_LINE if current.starts_with?("class ")
+      flags
     end
-    endpoints
   end
 
   private def check_endpoint(endpoint : Endpoint)
     endpoint.details.code_paths.each do |path_info|
-      content = read_file(path_info.path)
-      next if content.nil?
-
-      lines = content.split("\n")
+      lines = read_file_lines(path_info.path)
+      next if lines.nil?
       line_num = path_info.line
       next if line_num.nil?
       # Skip stale/out-of-range line refs: a line beyond the content we read
@@ -81,15 +104,16 @@ class RailsSecurityTagger < FrameworkTagger
       line_idx = line_num - 1
 
       action_name = extract_action_name(lines, line_idx)
+      flags = class_macro_flags(path_info.path, lines)
 
       # Each concern is independent — an action can be CSRF-disabled AND
       # rate-limited AND mass-assigning — so collect all that apply rather
       # than returning on the first hit.
-      if desc = check_csrf(lines, line_idx, action_name)
+      if desc = check_csrf(lines, line_idx, action_name, flags)
         endpoint.add_tag(Tag.new("csrf-protection", desc, "rails_security"))
       end
 
-      if desc = check_rate_limit(lines, line_idx, action_name)
+      if desc = check_rate_limit(lines, line_idx, action_name, flags)
         endpoint.add_tag(Tag.new("rate-limit", desc, "rails_security"))
       end
 
@@ -101,22 +125,24 @@ class RailsSecurityTagger < FrameworkTagger
 
   # Walk backwards from the action to its enclosing class, looking for a
   # CSRF disable/downgrade macro. The nearest matching macro wins.
-  private def check_csrf(lines : Array(String), action_line : Int32, action_name : String?) : String?
+  private def check_csrf(lines : Array(String), action_line : Int32, action_name : String?, flags : Array(UInt8)) : String?
     idx = action_line
     while idx >= 0
-      current = lines[idx].strip
+      if flags[idx] & CSRF_LINE != 0
+        current = lines[idx].strip
 
-      CSRF_DISABLE_PATTERNS.each do |pattern, label|
-        if current.matches?(pattern) && macro_applies?(current, action_name)
-          return "CSRF protection disabled (#{label}) — state-changing requests to this action are not CSRF-validated."
+        CSRF_DISABLE_PATTERNS.each do |pattern, label|
+          if current.matches?(pattern) && macro_applies?(current, action_name)
+            return "CSRF protection disabled (#{label}) — state-changing requests to this action are not CSRF-validated."
+          end
+        end
+
+        if current.matches?(CSRF_NULL_SESSION_PATTERN) && macro_applies?(current, action_name)
+          return "CSRF protection downgraded to null_session — forged requests proceed with an empty session instead of being rejected (typical for token/API controllers)."
         end
       end
 
-      if current.matches?(CSRF_NULL_SESSION_PATTERN) && macro_applies?(current, action_name)
-        return "CSRF protection downgraded to null_session — forged requests proceed with an empty session instead of being rejected (typical for token/API controllers)."
-      end
-
-      break if current.starts_with?("class ")
+      break if flags[idx] & CLASS_LINE != 0
       idx -= 1
     end
 
@@ -125,16 +151,17 @@ class RailsSecurityTagger < FrameworkTagger
 
   # Rails 8 `rate_limit` is a class-level macro like before_action; walk
   # back to the class and honour only:/except:.
-  private def check_rate_limit(lines : Array(String), action_line : Int32, action_name : String?) : String?
+  private def check_rate_limit(lines : Array(String), action_line : Int32, action_name : String?, flags : Array(UInt8)) : String?
     idx = action_line
     while idx >= 0
-      current = lines[idx].strip
-
-      if current.matches?(RATE_LIMIT_PATTERN) && macro_applies?(current, action_name)
-        return "Rate limited by Rails rate_limit — request volume to this action is throttled per client."
+      if flags[idx] & RATE_LIMIT_LINE != 0
+        current = lines[idx].strip
+        if macro_applies?(current, action_name)
+          return "Rate limited by Rails rate_limit — request volume to this action is throttled per client."
+        end
       end
 
-      break if current.starts_with?("class ")
+      break if flags[idx] & CLASS_LINE != 0
       idx -= 1
     end
 

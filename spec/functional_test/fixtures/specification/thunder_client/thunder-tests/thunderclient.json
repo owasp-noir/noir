@@ -1,0 +1,38 @@
+[
+  {
+    "_id": "9f1c2a40-0001",
+    "colId": "c0l-0001",
+    "containerId": "",
+    "name": "List users",
+    "url": "{{baseUrl}}/users?page=1",
+    "method": "GET",
+    "sortNum": 10000,
+    "created": "2024-01-01T00:00:00.000Z",
+    "modified": "2024-01-01T00:00:00.000Z",
+    "headers": [
+      {"name": "Accept", "value": "application/json"},
+      {"name": "X-Debug", "value": "1", "isDisabled": true}
+    ],
+    "params": [
+      {"name": "page", "value": "1", "isPath": false},
+      {"name": "limit", "value": "20", "isPath": false}
+    ],
+    "tests": []
+  },
+  {
+    "_id": "9f1c2a40-0002",
+    "colId": "c0l-0001",
+    "containerId": "",
+    "name": "Create user",
+    "url": "https://api.example.com/users",
+    "method": "POST",
+    "sortNum": 20000,
+    "created": "2024-01-01T00:00:00.000Z",
+    "modified": "2024-01-01T00:00:00.000Z",
+    "headers": [{"name": "Content-Type", "value": "application/json"}],
+    "params": [],
+    "body": {"type": "json", "raw": "{\n  \"name\": \"bob\",\n  \"age\": {{age}}\n}", "form": []},
+    "auth": {"type": "bearer", "bearer": "{{token}}"},
+    "tests": []
+  }
+]

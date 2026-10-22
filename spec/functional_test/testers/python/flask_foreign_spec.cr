@@ -16,7 +16,7 @@ tester = FunctionalTester.new("fixtures/python/flask_foreign/", {
 }, expected_endpoints)
 tester.perform_tests
 
-it "tags FastAPI handler-file routes python_fastapi, not python_flask" do
+it "tags FastAPI handler-file routes python_fastapi, not python_flask", tags: "functional" do
   fastapi_route = tester.app.endpoints.find { |endpoint| endpoint.url == "/fastapi-items" && endpoint.method == "POST" }
   fastapi_route.should_not be_nil
   fastapi_route.try(&.details.technology).should eq("python_fastapi")

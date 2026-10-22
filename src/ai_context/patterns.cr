@@ -8,6 +8,48 @@ module NoirAIContext
   # lexical constant lookup, while keeping the catalog separate from
   # the orchestration logic.
 
+  # Bare `query` / `execute` are mostly request-input accessors
+  # (`c.Query`, FastAPI `Query()`, `params.query`) or command objects
+  # (`useCase.execute`), so they count as SQL only on a DB-ish
+  # receiver. Raw SQL on any other receiver still surfaces through the
+  # `select ... from` source pattern.
+  SQL_RECEIVER_CALL = /\b(?:\w*db|db\w*|database|\w*conn(?:ection)?|con|cursor|cur|_?cr|pool|session|tx|transaction|stmt|statement|knex|sequelize|pg\w*|mysqli?|sqlite3?|pdo|sqlx?|repo|queryRunner|manager|jdbcTemplate|entityManager|dataSource)(?:\.|->|::)(?:query|execute|exec)\b/i
+
+  # The JVM receiver names no rule above can see (`this.owners.save`),
+  # read off the declaration instead: a type named `*Repository` / `*Dao`,
+  # or one extending such a type (every Spring Data base interface is a
+  # `*Repository`). Only its data-access methods count, so `getClass` /
+  # `toString` on a repository field stay out; a method without such a
+  # name counts when it carries `@Query`.
+  DATA_REPOSITORY_TYPE = /(?:Repository|Dao|DAO)\z/
+  DATA_ACCESS_METHOD   = /\A(?:(?:save|find|delete|exists|count|query)\w*|get\w*By\w*)\z/
+
+  # File-system calls as handler bodies spell them: Node's `fs` module and
+  # its camelCase API (`readFileSync`, `createReadStream`, `readdir`),
+  # `os.ReadFile` / `os.Open`, PHP `readfile` / `scandir`, `res.sendFile` /
+  # `send_file` / `send_from_directory`, Express `res.download`,
+  # `http.ServeFile`, gin's `c.SaveUploadedFile`.
+  FILE_IO_CALL = /\b(?:fs\.\w+|os\.(?:open|openfile|create|stat|lstat|remove|removeall)\b|(?:read|write|append)_?file(?:_?sync)?|(?:read|open|scan|list)_?dir(?:_?sync)?|create(?:read|write)stream|send_?file|send_from_directory|(?:res|response|reply)\.download|serve_?file|saveuploadedfile)\b/i
+
+  # What `f` in `f.read()` / `f.Write(b)` must be bound to for the call to
+  # be file I/O: a call that opens a file (`open(p)`, `io.open`,
+  # `Path(p).open()`, `File.open`, `os.Open` / `OpenFile` / `Create`,
+  # `fs.createReadStream`, `new FileInputStream`) or Go's `*os.File` type.
+  # See `Builder#file_handle_sink`.
+  FILE_HANDLE_OPEN = /(?<![\w.])(?:io\.|codecs\.|aiofiles\.)?open\s*\(|\b(?:File|Tempfile)\.(?:open|new)\b|\bos\.(?:Open|OpenFile|Create|CreateTemp)\s*\(|\bfs\.(?:promises\.)?(?:open|createReadStream|createWriteStream)\s*\(|\bPath\s*\([^)]*\)\s*\.open\s*\(|\bnew\s+(?:File(?:Input|Output)Stream|FileReader|FileWriter|RandomAccessFile)\b|\b(?:Named)?TemporaryFile\s*\(|\*os\.File\b/
+
+  # An in-memory buffer: `send_file(io.BytesIO(data))` streams bytes the
+  # handler already holds, so no path reaches the file system.
+  IN_MEMORY_BUFFER = /(?:\bio\.)?\b(?:BytesIO|StringIO)\s*\(/
+
+  # Middleware that lists a directory to the client (Express `serveIndex`,
+  # Go `http.FileServer`, which lists by default). A plain static mount
+  # (`express.static`) is deliberately left out: it serves the same fixed
+  # files a static dir expands into, and those asset rows carry no sink.
+  # Matched only on the route's own statement, so the asset rows, anchored
+  # at the asset file with no line, never reach it.
+  DIRECTORY_LISTING_CALL = /\b(?:serveIndex|http\.FileServer)\s*\(/
+
   SINK_PATTERNS = [
     PatternDefinition.new(
       "data_store_query",
@@ -20,23 +62,35 @@ module NoirAIContext
       "sql",
       "Potential SQL/data-store sink inferred from code or callee name",
       78,
-      name_patterns: [/raw_?sql/i, /find_?by_?sql/i, /\bquery\b/i, /\bexecute\b/i, /\bselect\b/i],
-      source_patterns: [/find_by_sql/i, /\braw(sql|_sql)\b/i, /\bselect\b.+\bfrom\b/i, /\bexecute(Query|Sql)?\b/i]
+      name_patterns: [/raw_?sql/i, /find_?by_?sql/i, SQL_RECEIVER_CALL, /\bselect\b/i],
+      source_patterns: [/find_by_sql/i, /\braw(sql|_sql)\b/i, /\bselect\b.+\bfrom\b/i, /\bexecute(?:Query|Sql)\b/i, SQL_RECEIVER_CALL]
     ),
     PatternDefinition.new(
       "command_exec",
       "Potential command execution sink inferred from code or callee name",
       82,
       name_patterns: [/\bexec\b/i, /\bsystem\b/i, /\bspawn\b/i, /\bpopen\b/i, /\bshell\b/i],
-      source_patterns: [/\bexec\s*\(/i, /\bsystem\s*\(/i, /\bspawn\s*\(/i, /\bpopen\s*\(/i, /ProcessBuilder/i, /Runtime\.getRuntime/i, /subprocess\./i]
+      # `session.exec(` / `cursor.exec(` are queries, see SQL_RECEIVER_CALL.
+      source_patterns: [/(?<!session\.|cursor\.|conn\.|pool\.|stmt\.|db\.|tx\.|sql\.)\bexec\s*\(/i, /\bsystem\s*\(/i, /\bspawn\s*\(/i, /\bpopen\s*\(/i, /ProcessBuilder/i, /Runtime\.getRuntime/i, /subprocess\./i]
     ),
     PatternDefinition.new(
       "file_io",
       "Potential file I/O sink inferred from code or callee name",
       68,
-      name_patterns: [/\bfile\b/i, /\bread\b/i, /\bupload\b/i, /\bdownload\b/i],
-      source_patterns: [/\bFile\.(open|read|write)/, /\bread(File|_text)\b/i, /\bwrite(File|_text)\b/i, /\bsend_file\b/i, /\bsendFile\b/i, /\bdownload\b/i, /\bupload\b/i]
+      # Callee names count only for a file-system API: a `File` / `IO`
+      # class method, a method named `File` (gin's `c.File`), an upload's
+      # save/write, or FILE_IO_CALL. A bare `File(...)` constructs a path
+      # or declares a FastAPI form field and reads nothing; a lowercase
+      # `file` / `read` / `upload` / `download` names a variable or a helper
+      # (`file.stream.read`, `rand.Read`, `this.service.download`). A
+      # `read` / `write` on a real file handle is `Builder#file_handle_sink`.
+      # The source scan needs a file-system call: a bare `upload` /
+      # `download` word in the scan window is usually the route's own path
+      # literal or name (`"/upload"`), see MOBILE_DOWNLOAD_SINK.
+      name_patterns: [/\b(?:File|IO)\.\w|\.File\b/, /\bfile\.(?:save|write)/i, FILE_IO_CALL],
+      source_patterns: [/\bFile\.(open|read|write)/, /\bread_text\b/i, /\bwrite_text\b/i, FILE_IO_CALL, DIRECTORY_LISTING_CALL]
     ),
+    MOBILE_DOWNLOAD_SINK,
     PatternDefinition.new(
       "redirect",
       "Potential redirect sink inferred from code or callee name",
@@ -48,7 +102,8 @@ module NoirAIContext
       "template_render",
       "Potential template/render sink inferred from code or callee name",
       62,
-      name_patterns: [/\brender\b/i, /\btemplate\b/i, /\bhtml\b/i, /\brespond\b/i],
+      # `html.EscapeString` / `html.escape` sanitize; they are not a render.
+      name_patterns: [/\brender\b/i, /\btemplate\b/i, /\bhtml\b(?!\.(?:un)?escape)/i, /\brespond\b/i],
       source_patterns: [/\brender(_template)?\s*\(/i, /\breturn\s+render\b/i, /\brespond_to\b/i]
     ),
     PatternDefinition.new(
@@ -57,7 +112,9 @@ module NoirAIContext
       64,
       name_patterns: [
         /\b(?:reqwest|hyper|hyper_util|ureq|surf|isahc|attohttpc|awc)::[A-Za-z_][A-Za-z0-9_:!]*/i,
-        /\bhttp\b/i,
+        # Go's net/http is also the server package: a body limiter, an
+        # error writer or a status constant makes no outbound request.
+        /\bhttp\b(?!\.(?:MaxBytesReader|Error|NotFound|SetCookie|Handle|HandleFunc|FileServer|StripPrefix|ListenAndServe|Status[A-Z]|Method[A-Z]|TimeoutHandler|DetectContentType|Cookie\b|Header\b|Request\b|ResponseWriter|Server\b|NewServeMux|ServeFile|ServeContent))/i,
         /\bfetch\b/i,
         /\bclient\b/i,
         /\baxios\b/i,
@@ -154,7 +211,7 @@ module NoirAIContext
       name_patterns: [/\binstance_eval\b/, /\bclass_eval\b/, /\bcreate_function\b/],
       source_patterns: [
         /\beval\s*\(/,
-        /\bexec\s*\(/, # Python's exec (overlaps with shell exec but resolved by context)
+        /(?<![\w.])exec\s*\(/, # Python's builtin exec; a method named exec is a query or a shell
         /\bcompile\s*\([^)]*,\s*['"]exec['"]/,
         /\bnew\s+Function\s*\(/,
         /\bFunction\s*\([^)]*\)\s*\(/,
@@ -174,7 +231,7 @@ module NoirAIContext
     # surface this shape and aren't necessarily vulnerable.
     PatternDefinition.new(
       "mass_assignment",
-      "Potential mass-assignment — request params written into a model without an explicit field allowlist",
+      "Request params written into a model (mass assignment); check that the field allowlist, if any, covers only the fields this route may set",
       60,
       name_patterns: [/\bupdate_attributes\b/, /\bassign_attributes\b/],
       source_patterns: [
@@ -233,10 +290,24 @@ module NoirAIContext
   # (and a latent FP source as the name/source patterns broaden).
   MOBILE_SINK_KINDS = Set{"webview_load", "intent_redirect"}
 
+  # Mobile code names its URL fetch flows `download…`; the bare word is
+  # what `Builder#normalize_mobile_sink` turns into outbound_http. Kept
+  # mobile-only like the kinds above: on an HTTP route it is the route
+  # literal or a helper's name, not file I/O.
+  MOBILE_DOWNLOAD_SINK = PatternDefinition.new(
+    "file_io",
+    "Potential file I/O sink inferred from code or callee name",
+    68,
+    name_patterns: [/\bupload\b/i, /\bdownload\b/i],
+    source_patterns: [/\bdownload\b/i, /\bupload\b/i]
+  )
+
   # The non-mobile view of the sink catalog, computed once. Used for
   # HTTP endpoints so the two mobile-only sinks above are never matched
   # against server-side route/callee snippets.
-  NON_MOBILE_SINK_PATTERNS = SINK_PATTERNS.reject { |pattern| MOBILE_SINK_KINDS.includes?(pattern.kind) }
+  NON_MOBILE_SINK_PATTERNS = SINK_PATTERNS.reject do |pattern|
+    MOBILE_SINK_KINDS.includes?(pattern.kind) || pattern.same?(MOBILE_DOWNLOAD_SINK)
+  end
 
   VALIDATOR_PATTERNS = [
     PatternDefinition.new(
@@ -417,7 +488,9 @@ module NoirAIContext
       source_patterns: [
         /passport\.authenticate/i,
         /expressjwt/i,
-        /\bauthenticate\w*\b/i,
+        # `authenticate(`, `authenticate_user!`, `authenticateUser`; not a
+        # handler *named* `authenticatedUsers`.
+        /\bauthenticate(?:_\w+|[A-Z]\w*)?!?\b/,
         /\bverifyToken\b/i,
         /\brequireAuth\b/i,
         /\blogin_required\b/i,
@@ -454,11 +527,18 @@ module NoirAIContext
         /@PreAuthorize\b/,
         /@RolesAllowed\b/,
         /@Secured\b/,
-        /Security\s*\(/,
+        /@Roles\b/,
+        /@Permissions\b/,
+        /@RequirePermissions\b/,
+        /@Security\s*\(/,
         /\bPundit\b.*\bauthorize\b/i,
         /\bcan\?\s*\(/,
         /\b(can|cannot)\s+:[\w_!?]+/,
         /\bability\.\w+/i,
+        # Inline ownership check: the loaded record's owner compared with
+        # the current user (`@comment.user_id == @current_user_id`,
+        # `current_user.id != post.author_id`), either operand order.
+        /\.(?:user|author|owner)(?:_id)?\s*[!=]==?\s*@?current_user(?:_id)?\b|\bcurrent_user(?:_id|\.id)?\s*[!=]==?\s*@?\w+\.(?:user|author|owner)(?:_id)?\b/,
       ]
     ),
   ] of PatternDefinition
@@ -526,6 +606,9 @@ module NoirAIContext
       source_patterns: [
         /@csrf_exempt\b/,
         /\bcsrf_exempt\s*\(/,
+        # Django class-based views commonly apply the exemption to
+        # `dispatch` through `@method_decorator(csrf_exempt, ...)`.
+        /\bmethod_decorator\s*\([^)]*\bcsrf_exempt\b/i,
         /protect_from_forgery\s+with:\s*:null_session/,
         /\.disable\s*\(\s*\.?csrf/i,
         /csrfProtection:\s*false/i,
@@ -585,7 +668,10 @@ module NoirAIContext
       "credential_input",
       "Credential-bearing input; review secret handling, logging, and auth bypass paths",
       86,
-      name_patterns: [/\b(pass(word)?|token|secret|api[_-]?key|authorization|session|cookie|jwt|bearer)\b/i]
+      # Bare `session` / `cookie` name a transport slot, not a secret
+      # the caller types in; they made every cookie-bearing POST look
+      # like a login form (rate_limit_absence / priority_review noise).
+      name_patterns: [/\b(pass(word)?|token|secret|api[_-]?key|authorization|jwt|bearer)\b/i]
     ),
     PatternDefinition.new(
       "identifier_input",
@@ -621,15 +707,19 @@ module NoirAIContext
       78,
       name_patterns: [/\b(email|e[-_]?mail|phone|mobile|ssn|tax[_-]?id|dob|date[_-]?of[_-]?birth|birthdate|nin|national[_-]?id|passport|driver[_-]?license)\b/i]
     ),
-    # Rich content fields. Common XSS source — body / description /
-    # comment / markdown almost always flow into a render path and
-    # need either escaping or a strict schema.
+    # Rich content fields. Common XSS source — description / comment /
+    # markdown almost always flow into a render path and need either
+    # escaping or a strict schema. A bare `body` is deliberately excluded:
+    # it is commonly the transport field in gRPC/protobuf and other request
+    # contracts, not evidence that the value is rendered as HTML. Keep body
+    # only when it is explicitly paired with a rich-content qualifier.
     PatternDefinition.new(
       "html_content_input",
       "Rich-content input may flow into HTML output; review escaping or schema validation",
       72,
       name_patterns: [
-        /\b(body|description|html|message|comment|note|memo|markdown|rich[_-]?text)\b/i,
+        /\b(description|html|message|comment|note|memo|markdown|rich[_-]?text)\b/i,
+        /\b(?:body[_-]?(?:html|markdown|rich[_-]?text|content)|(?:html|markdown|rich[_-]?text|content)[_-]?body)\b/i,
         /\b(html[_-]?content|content[_-]?html|markdown[_-]?content|content[_-]?markdown|rich[_-]?content|content[_-]?rich)\b/i,
       ]
     ),

@@ -9,9 +9,15 @@ expected_endpoints = [
   # Multi-line route definitions (WORKING)
   Endpoint.new("/multiline-simple", "GET"),
 
-  # Method chaining on routes (WORKING - first method only)
+  # Method chaining on routes: each link reads its own handler
   Endpoint.new("/chained", "GET", [
     Param.new("getParam", "", "query"),
+  ]),
+  Endpoint.new("/chained", "POST", [
+    Param.new("postData", "", "json"),
+  ]),
+  Endpoint.new("/chained", "PUT", [
+    Param.new("putData", "", "json"),
   ]),
 
   # Nested path parameters (WORKING)

@@ -17,36 +17,39 @@ module Analyzer::Javascript
   # (`import typeDefs from './schema.graphql'`) are handled by the
   # `graphql_sdl` analyzer, so no work is duplicated here.
   class Apollo < JavascriptEngine
+    analyzer_for "js_apollo"
+
     DEFAULT_GRAPHQL_PATH = "/graphql"
 
     # File-level signals that mark a JS/TS file as Apollo-relevant. The
     # parallel_file_scan walks every JS/TS source, so we gate with a cheap
-    # substring check before doing the heavier SDL extraction.
-    APOLLO_HINTS = ["@apollo/server", "apollo-server", "ApolloServer"]
+    # substring check before doing the heavier SDL extraction. Precompiled
+    # once — a single PCRE2-JIT scan replaces three naive String#includes?
+    # substring scans. Regex.union auto-escapes each literal, so it is
+    # provably equivalent to the OR-of-includes? it replaces.
+    APOLLO_HINTS_RE = Regex.union("@apollo/server", "apollo-server", "ApolloServer")
 
     def analyze
       parallel_file_scan do |path|
-        begin
-          content = read_file_content(path)
-          next unless apollo_in_file?(content)
-          # A `gql\`type Query { ... }\`` schema inside a *.test/*.spec file
-          # (or a mock/e2e tree) is a test fixture, not a deployed GraphQL
-          # endpoint — skip it the same way the verb-DSL analyzers do.
-          next if Noir::JSRouteExtractor.test_stub_only?(path, content)
-          process_file(path, content)
-        rescue e
-          @logger.debug "Apollo analyzer: failed to process #{path}: #{e.message}"
-        end
+        content = read_file_content(path)
+        next unless apollo_in_file?(content)
+        # A `gql\`type Query { ... }\`` schema inside a *.test/*.spec file
+        # (or a mock/e2e tree) is a test fixture, not a deployed GraphQL
+        # endpoint — skip it the same way the verb-DSL analyzers do.
+        next if Noir::JSRouteExtractor.test_stub_only?(path, content)
+        process_file(path, content)
+      rescue e
+        @logger.debug "Apollo analyzer: failed to process #{path}: #{e.message}"
       end
       @result
     end
 
     private def apollo_in_file?(content : String) : Bool
-      APOLLO_HINTS.any? { |hint| content.includes?(hint) }
+      content.matches?(APOLLO_HINTS_RE)
     end
 
     private def process_file(path : String, content : String)
-      mount_path = detect_mount_path(content)
+      mount_path = detect_mount_path(Noir::JSRouteExtractor.strip_js_comments(content))
       Analyzer::Specification::GraphqlTypedefs.extract(content).each do |sdl, line_offset|
         endpoints = Analyzer::Specification::GraphqlSdlParser.parse(
           sdl, path,

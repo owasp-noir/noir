@@ -1,0 +1,5 @@
+# Netlify redirect rules. The first field is the source.
+/home                          /                              301
+/blog/*                        /posts/:splat                  301
+https://old.example.com/legacy https://new.example.com/legacy 301!
+/api/*                         /.netlify/functions/:splat     200

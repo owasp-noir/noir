@@ -2,6 +2,13 @@
 # Bundle Homebrew-linked dylibs next to a Crystal macOS binary so the
 # release tarball runs without a local OpenSSL (or other brew) install.
 #
+# Rewriting load commands with install_name_tool invalidates a Mach-O code
+# signature. The linker-signed main binary gets re-signed automatically, but
+# Homebrew's plainly ad-hoc-signed dylibs do not: they are left with a stale
+# signature, and arm64 SIGKILLs any process that maps one. So everything is
+# re-signed ad hoc after the last install_name_tool call, and the packaged
+# tarball is smoke-tested before the script reports success.
+#
 # Usage: scripts/package-macos.sh <binary-path> <output-tarball>
 #
 # Archive layout:
@@ -17,13 +24,16 @@ if [[ ! -f "$BINARY" ]]; then
   exit 1
 fi
 
-if ! command -v otool >/dev/null 2>&1 || ! command -v install_name_tool >/dev/null 2>&1; then
-  echo "error: otool and install_name_tool are required (macOS only)" >&2
-  exit 1
-fi
+for tool in otool install_name_tool codesign; do
+  if ! command -v "$tool" >/dev/null 2>&1; then
+    echo "error: $tool is required (macOS only)" >&2
+    exit 1
+  fi
+done
 
 STAGING="$(mktemp -d)"
-trap 'rm -rf "$STAGING"' EXIT
+VERIFY_DIR="$(mktemp -d)"
+trap 'rm -rf "$STAGING" "$VERIFY_DIR"' EXIT
 
 mkdir -p "$STAGING/lib"
 cp "$BINARY" "$STAGING/noir"
@@ -88,10 +98,52 @@ for candidate in "$STAGING/noir" "$STAGING"/lib/*.dylib; do
   fi
 done
 
+# Re-sign ad hoc. This must come after every install_name_tool call above,
+# and dylibs must be signed before the binary that loads them.
+for lib in "$STAGING"/lib/*.dylib; do
+  [[ -e "$lib" ]] || continue
+  codesign --force --sign - "$lib"
+done
+codesign --force --sign - "$STAGING/noir"
+
+for target in "$STAGING/noir" "$STAGING"/lib/*.dylib; do
+  [[ -e "$target" ]] || continue
+  if ! codesign --verify --strict "$target"; then
+    echo "error: invalid code signature after packaging: $target" >&2
+    exit 1
+  fi
+done
+
 mkdir -p "$(dirname "$OUTPUT")"
-tar -czf "$OUTPUT" -C "$STAGING" noir lib
+
+# Archive to a scratch path first. A tarball only becomes $OUTPUT once it has
+# proven it runs, so a failed smoke test cannot leave a finished-looking but
+# unrunnable artifact for a later step to upload.
+STAGED_OUTPUT="$VERIFY_DIR/$(basename "$OUTPUT")"
+tar -czf "$STAGED_OUTPUT" -C "$STAGING" noir lib
+
+# Smoke-test the packaged artifact rather than the staged tree: this is the
+# exact layout a user unpacks, and a stale signature is fatal only at exec
+# time. Guarding this behind `if` hid exactly the breakage it existed to catch.
+EXTRACT_DIR="$VERIFY_DIR/extracted"
+mkdir -p "$EXTRACT_DIR"
+tar -xzf "$STAGED_OUTPUT" -C "$EXTRACT_DIR"
+smoke_status=0
+VERSION_OUTPUT="$("$EXTRACT_DIR/noir" --version)" || smoke_status=$?
+if [[ "$smoke_status" -ne 0 ]]; then
+  echo "error: packaged binary failed to run (exit $smoke_status)" >&2
+  echo "       arm64 SIGKILLs binaries and dylibs with an invalid signature;" >&2
+  echo "       check the codesign step above." >&2
+  exit 1
+fi
+# Exit 0 alone is not evidence: a binary that prints nothing has not
+# demonstrated it loaded its dylibs and reached its own CLI.
+if [[ -z "${VERSION_OUTPUT//[[:space:]]/}" ]]; then
+  echo "error: packaged binary ran but printed no version" >&2
+  exit 1
+fi
+
+mv "$STAGED_OUTPUT" "$OUTPUT"
 
 echo "Created $OUTPUT"
-if "$STAGING/noir" --version >/dev/null 2>&1; then
-  "$STAGING/noir" --version
-fi
+echo "$VERSION_OUTPUT"

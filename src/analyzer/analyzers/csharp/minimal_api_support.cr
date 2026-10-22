@@ -12,21 +12,123 @@ module Analyzer::CSharp::MinimalApiSupport
     "IServiceProvider", "ILogger", "ILoggerFactory", "LinkGenerator",
   }
 
+  # `Map<Verb>` may carry an explicit generic argument — Carter's
+  # `app.MapPut<Person>("/", …)` and the typed `MapGet<T>` helpers some
+  # libraries ship. Without the optional `<…>` the route literal was never
+  # reached and the registration produced no endpoint at all.
+  MAP_VERB_ROUTE_RE = /(?:\b([A-Za-z_][A-Za-z0-9_]*)\s*\.\s*)?Map(Get|Post|Put|Delete|Patch|Head|Options)\s*(?:<[^<>()]*>\s*)?\(\s*(?:[A-Za-z_][A-Za-z0-9_]*\s*:\s*)?@?"([^"]+)"/m
+  MAP_METHODS_RE    = /(?:\b([A-Za-z_][A-Za-z0-9_]*)\s*\.\s*)?MapMethods\s*(?:<[^<>()]*>\s*)?\(\s*(?:[A-Za-z_][A-Za-z0-9_]*\s*:\s*)?@?"([^"]+)"\s*,\s*([\s\S]+?)(?:=>|\);)/m
+  MAP_CALL_RE       = /\bMap(?:Get|Post|Put|Delete|Patch|Head|Options|Methods)?\s*(?:<[^<>()]*>\s*)?\(/
+  MAP_ANY_PREFIX_RE = /\.?\s*Map(?:Get|Post|Put|Delete|Patch|Head|Options|Methods)?\s*(?:<[^<>()]*>\s*)?\(/
+
   private def analyze_minimal_api_files(include_callee : Bool)
+    sources = [] of Tuple(String, String)
     get_files_by_extension(".cs").each do |file|
       next unless File.exists?(file)
-      next if Common.csharp_test_path?(file)
+      next if Common.csharp_test_path?(base_relative_path(file))
 
       content = read_file_content(file)
-      next if content.includes?("ICarterModule")
-      next unless minimal_api_source?(content)
+      # Carter modules register minimal-API routes too, but under a module
+      # base path this analyzer can't see — `cs_carter` owns them.
+      next if Common.carter_module_source?(content)
+      sources << {file, content}
+    end
 
-      analyze_minimal_api_content(file, content, include_callee)
+    extension_scopes = route_group_extension_scopes(sources)
+    sources.each do |file, content|
+      next unless minimal_api_source?(content)
+      analyze_minimal_api_content(file, content, include_callee, extension_scopes[file]? || [] of ExtensionScope)
     end
   end
 
+  # A `static … MapTodosApi(this RouteGroupBuilder group)` extension method:
+  # the routes it registers on `group` take the prefix of whichever
+  # `MapGroup(...)` it is called on, possibly from another file —
+  #
+  #   app.MapGroup("/public/todos").MapTodosApi();
+  #   app.MapGroup("/private/todos").MapTodosApi();
+  ROUTE_BUILDER_EXTENSION_RE = /\bstatic\s[^;{}()=]*?\b([A-Za-z_][A-Za-z0-9_]*)\s*(?:<[^<>()]*>\s*)?\(\s*this\s+(?:RouteGroupBuilder|IEndpointRouteBuilder|WebApplication)\b/
+
+  # `{body_line_range, caller_prefixes}` of one extension method in a file.
+  alias ExtensionScope = Tuple(Range(Int32, Int32), Array(String))
+
+  # Maps each file to its route-builder extension method bodies and the group
+  # prefix of every call site of each, so a route inside one is emitted once
+  # per caller prefix. Call sites inside another such extension compose with
+  # that extension's own caller prefixes.
+  private def route_group_extension_scopes(sources : Array(Tuple(String, String))) : Hash(String, Array(ExtensionScope))
+    decls = [] of Tuple(String, String, Range(Int32, Int32))
+    sources.each do |file, content|
+      next unless content.matches?(ROUTE_BUILDER_EXTENSION_RE)
+      lexer = Noir::CSharpLexer.new(content)
+      code = lexer.code_source
+      lines = lexer.code_lines
+      masked_lines = lexer.masked_lines
+      code.scan(ROUTE_BUILDER_EXTENSION_RE) do |m|
+        decl_index = code[0...m.begin].count('\n')
+        _, sig_end = build_signature(lines, masked_lines, decl_index)
+        body, body_index, _ = extract_callable_body(lines, masked_lines, sig_end)
+        next if body.empty?
+        decls << {m[1], file, decl_index..(body_index + Math.max(body.count('\n') - 1, 0))}
+      end
+    end
+    scopes = Hash(String, Array(ExtensionScope)).new
+    return scopes if decls.empty?
+
+    names = decls.map(&.[0]).uniq!
+    call_re = /\.\s*(#{names.map { |n| Regex.escape(n) }.join('|')})\s*(?:<[^<>()]*>\s*)?\(/
+    calls = [] of Tuple(String, String, Int32, String)
+    sources.each do |file, content|
+      next unless content.matches?(call_re)
+      lexer = Noir::CSharpLexer.new(content)
+      masked = lexer.masked_source
+      code = lexer.code_source
+      group_prefixes = extract_map_group_prefixes(code)
+      masked.scan(call_re) do |m|
+        stmt_start = (masked.rindex(/[;{}]/, m.begin) || -1) + 1
+        head = code[stmt_start...m.begin]
+        local = group_chain_prefix(head, group_prefixes)
+        if local.empty? && (receiver = head.match(/([A-Za-z_][A-Za-z0-9_]*)\s*\z/))
+          local = group_prefixes[receiver[1]]? || ""
+        end
+        calls << {m[1], file, masked[0...m.begin].count('\n'), local}
+      end
+    end
+
+    memo = Hash(String, Array(String)).new
+    decls.each do |name, file, range|
+      prefixes = extension_caller_prefixes(name, decls, calls, memo, Set(String).new)
+      (scopes[file] ||= [] of ExtensionScope) << {range, prefixes}
+    end
+    scopes
+  end
+
+  # ponytail: extensions are keyed by method name, so two same-named
+  # extensions share their callers' prefixes; key by declaring type if that
+  # ever surfaces.
+  private def extension_caller_prefixes(name : String, decls : Array(Tuple(String, String, Range(Int32, Int32))),
+                                        calls : Array(Tuple(String, String, Int32, String)),
+                                        memo : Hash(String, Array(String)), seen : Set(String)) : Array(String)
+    if cached = memo[name]?
+      return cached
+    end
+    return [""] unless seen.add?(name)
+
+    sites = calls.select { |call| call[0] == name }
+    return memo[name] = [""] if sites.empty?
+
+    prefixes = sites.flat_map do |_, file, line, local|
+      outer = decls.find { |decl| decl[1] == file && decl[2].includes?(line) }
+      outer_prefixes = outer ? extension_caller_prefixes(outer[0], decls, calls, memo, seen) : [""]
+      outer_prefixes.map { |outer_prefix| join_route_parts(outer_prefix, local) }
+    end
+    memo[name] = prefixes.uniq.map { |prefix| prefix == "/" ? "" : prefix }
+  end
+
+  MINIMAL_API_MARKER_RE = /\.\s*Map(?:Get|Post|Put|Delete|Patch|Head|Options|Methods)\s*(?:<[^<>()]*>\s*)?\(/
+
   private def minimal_api_source?(content : String) : Bool
-    content.matches?(/\.\s*Map(?:Get|Post|Put|Delete|Patch|Head|Options|Methods)\s*\(/) ||
+    content_matches?(content, MINIMAL_API_MARKER_RE) ||
       (content.matches?(/\.\s*Map\s*\(/) && minimal_api_context?(content))
   end
 
@@ -36,18 +138,84 @@ module Analyzer::CSharp::MinimalApiSupport
       content.includes?("RouteGroupBuilder")
   end
 
-  private def analyze_minimal_api_content(file : String, content : String, include_callee : Bool)
-    group_prefixes = extract_map_group_prefixes(content)
-    lines = content.lines
+  private def analyze_minimal_api_content(file : String, content : String, include_callee : Bool,
+                                          extension_scopes : Array(ExtensionScope) = [] of ExtensionScope)
+    lexer = Noir::CSharpLexer.new(content)
+    # Scan comment-blanked source: ASP.NET Core's own libraries carry
+    # `/// app.MapGet("/from-route/{id}", …)` inside `<example>` XML docs and
+    # `// app.MapGet("/form-todo", …)` in explanatory comments, each of which
+    # the raw scan emitted as a real endpoint. Line numbers and column offsets
+    # are preserved, so reported locations are unchanged.
+    lines = lexer.code_lines
+    masked_lines = lexer.masked_lines
+    group_prefixes = extract_map_group_prefixes(lexer.code_source)
 
-    lines.each_with_index do |line, index|
-      next unless route_builder_line?(line)
-
-      block = extract_map_block(lines, index)
-      extract_endpoints_from_map_block(block, group_prefixes, file, index + 1, lines, include_callee).each do |endpoint|
-        @result << endpoint
+    each_map_block(lines, masked_lines, 0...lines.size, group_prefixes) do |block, index, chain_prefix|
+      caller_prefixes = extension_scopes.find(&.[0].includes?(index)).try(&.[1]) || [""]
+      caller_prefixes.each do |route_prefix|
+        extract_endpoints_from_map_block(block, group_prefixes, file, index + 1, lines, masked_lines,
+          include_callee, route_prefix: route_prefix, chain_prefix: chain_prefix).each do |endpoint|
+          @result << endpoint
+        end
       end
     end
+  end
+
+  # Yields `{block, line_index, chain_prefix}` for every `Map*` registration
+  # on the lines in `range`, one per statement, so two registrations on one
+  # line are both seen. `chain_prefix` carries the `MapGroup` prefix of a
+  # chain whose `.Map*` call continues on a leading-dot line:
+  #
+  #   app.MapGroup("/api")
+  #      .MapGet("/items", ...);
+  private def each_map_block(lines : Array(String), masked_lines : Array(String), range : Range(Int32, Int32),
+                             group_prefixes : Hash(String, String), &)
+    chain_prefix = ""
+    range.each do |index|
+      line = lines[index]
+      masked = masked_lines[index]? || line
+      # A comment or blank line inside a chain does not end it.
+      next if masked.blank?
+      continuation = masked.lstrip.starts_with?('.')
+      chain_prefix = "" unless continuation
+      if route_builder_line?(line)
+        starts = map_statement_starts(masked)
+        start_chars = {line.chars, masked.chars} if starts.size > 1
+        starts.each do |column|
+          prefix = column == 0 && continuation ? chain_prefix : ""
+          yield extract_map_block(lines, masked_lines, index, column, start_chars), index, prefix
+        end
+      end
+      next unless line.includes?("MapGroup")
+      # Both sides are already normalized (`/a`, `/a/b`), so a plain append
+      # joins them without re-normalizing the whole chain on every line.
+      line_prefix = group_chain_prefix(line, group_prefixes).rchop("/")
+      chain_prefix = continuation ? chain_prefix + line_prefix : line_prefix
+    end
+  end
+
+  # Start column of each statement on `masked` that holds a `Map*` call. A
+  # statement ends at a `;` outside the line's parens and braces.
+  private def map_statement_starts(masked : String) : Array(Int32)
+    starts = [] of Int32
+    start = 0
+    depth = 0
+    segment = String::Builder.new
+    masked.each_char_with_index do |char, column|
+      segment << char
+      case char
+      when '(', '{' then depth += 1
+      when ')', '}' then depth -= 1
+      when ';'
+        next if depth > 0
+        starts << start if route_builder_line?(segment.to_s)
+        segment = String::Builder.new
+        start = column + 1
+        depth = 0
+      end
+    end
+    starts << start if start < masked.size && route_builder_line?(segment.to_s)
+    starts
   end
 
   private def route_builder_line?(line : String) : Bool
@@ -61,13 +229,18 @@ module Analyzer::CSharp::MinimalApiSupport
                                                file : String,
                                                line : Int32,
                                                file_lines : Array(String),
-                                               include_callee : Bool) : Array(Endpoint)
-    route, methods = extract_route_and_methods(block, group_prefixes)
+                                               masked_lines : Array(String),
+                                               include_callee : Bool,
+                                               route_prefix : String = "",
+                                               chain_prefix : String = "") : Array(Endpoint)
+    route, methods = extract_route_and_methods(block, group_prefixes, chain_prefix)
     return [] of Endpoint unless route && methods.size > 0
 
+    route = join_route_parts(route_prefix, route) unless route_prefix.empty?
+
     extra_params = extract_params_from_block(block)
-    extra_params.concat(extract_bind_params_from_file(block, file_lines))
-    extra_params.concat(extract_delegate_params(block, route, methods.first))
+    extra_params.concat(extract_bind_params_from_file(block, file_lines, masked_lines))
+    extra_params.concat(extract_delegate_params(block, route, methods.first, file_lines, masked_lines))
 
     # Method-group handlers — `MapGet("/items", GetItems)` — carry the route
     # on the `Map` line but keep their parameters and body in the referenced
@@ -76,9 +249,9 @@ module Analyzer::CSharp::MinimalApiSupport
     callee_block = block
     callee_line = line
     callee_skip_first = false
-    if handler = resolve_handler_method(block, file_lines)
+    if handler = resolve_handler_method(block, file_lines, masked_lines)
       sig, handler_block, handler_line, skip_first = handler
-      extra_params.concat(handler_signature_params(sig, route, methods.first, file_lines))
+      extra_params.concat(handler_signature_params(sig, route, methods.first, file_lines, masked_lines))
       callee_block = handler_block
       callee_line = handler_line
       callee_skip_first = skip_first
@@ -95,14 +268,14 @@ module Analyzer::CSharp::MinimalApiSupport
     endpoints
   end
 
-  private def extract_route_and_methods(block : String, group_prefixes : Hash(String, String)) : Tuple(String?, Array(String))
+  private def extract_route_and_methods(block : String, group_prefixes : Hash(String, String), chain_prefix : String = "") : Tuple(String?, Array(String))
     if block.includes?("MapMethods")
-      route, methods = extract_map_methods_route(block, group_prefixes)
+      route, methods = extract_map_methods_route(block, group_prefixes, chain_prefix)
       return {route, methods}
     end
 
-    inline_prefix = extract_inline_group_prefix(block, group_prefixes)
-    if match = block.match(/(?:\b([A-Za-z_][A-Za-z0-9_]*)\s*\.\s*)?Map(Get|Post|Put|Delete|Patch|Head|Options)\s*\(\s*(?:[A-Za-z_][A-Za-z0-9_]*\s*:\s*)?@?"([^"]+)"/m)
+    inline_prefix = extract_inline_group_prefix(block, group_prefixes, chain_prefix)
+    if match = block.match(MAP_VERB_ROUTE_RE)
       receiver = match[1]?
       route = apply_group_prefix(match[3], receiver, group_prefixes)
       route = join_route_parts(inline_prefix, route) unless inline_prefix.empty?
@@ -119,10 +292,10 @@ module Analyzer::CSharp::MinimalApiSupport
     {nil, [] of String}
   end
 
-  private def extract_map_methods_route(block : String, group_prefixes : Hash(String, String)) : Tuple(String?, Array(String))
-    inline_prefix = extract_inline_group_prefix(block, group_prefixes)
+  private def extract_map_methods_route(block : String, group_prefixes : Hash(String, String), chain_prefix : String) : Tuple(String?, Array(String))
+    inline_prefix = extract_inline_group_prefix(block, group_prefixes, chain_prefix)
 
-    if match = block.match(/(?:\b([A-Za-z_][A-Za-z0-9_]*)\s*\.\s*)?MapMethods\s*\(\s*(?:[A-Za-z_][A-Za-z0-9_]*\s*:\s*)?@?"([^"]+)"\s*,\s*([\s\S]+?)(?:=>|\);)/m)
+    if match = block.match(MAP_METHODS_RE)
       receiver = match[1]?
       route = apply_group_prefix(match[2], receiver, group_prefixes)
       route = join_route_parts(inline_prefix, route) unless inline_prefix.empty?
@@ -144,11 +317,19 @@ module Analyzer::CSharp::MinimalApiSupport
     methods.uniq
   end
 
-  private def extract_inline_group_prefix(block : String, group_prefixes : Hash(String, String)) : String
-    map_index = block.index(/\.?\s*Map(?:Get|Post|Put|Delete|Patch|Head|Options|Methods)?\s*\(/)
+  private def extract_inline_group_prefix(block : String, group_prefixes : Hash(String, String), chain_prefix : String = "") : String
+    map_index = block.index(MAP_ANY_PREFIX_RE)
     return "" unless map_index
 
-    prefix_source = block[0...map_index]
+    own_prefix = group_chain_prefix(block[0...map_index], group_prefixes)
+    return own_prefix if chain_prefix.empty?
+    return chain_prefix if own_prefix.empty?
+    join_route_parts(chain_prefix, own_prefix)
+  end
+
+  # The joined `MapGroup("...")` prefixes in `prefix_source`, led by the
+  # prefix of the receiver variable the chain starts from; "" when none.
+  private def group_chain_prefix(prefix_source : String, group_prefixes : Hash(String, String)) : String
     parts = prefix_source.scan(/MapGroup\s*\(\s*@?"([^"]+)"/).map(&.[1]?.to_s)
     return "" if parts.empty?
 
@@ -208,7 +389,16 @@ module Analyzer::CSharp::MinimalApiSupport
     "/" + clean_parts.join("/")
   end
 
-  private def extract_map_block(lines : Array(String), start_index : Int32) : String
+  # The registration statement starting at `start_column` of
+  # `lines[start_index]`, up to the `;` that ends it. Depth is counted over
+  # `masked_lines` so a `(` inside a route string (`"/smile-("`) can't hold
+  # the statement open and swallow the registrations after it.
+  #
+  # `start_chars` is `{line.chars, masked.chars}` of the start line, built once
+  # by a caller that extracts several statements from it.
+  private def extract_map_block(lines : Array(String), masked_lines : Array(String), start_index : Int32,
+                                start_column : Int32 = 0,
+                                start_chars : Tuple(Array(Char), Array(Char))? = nil) : String
     io = String::Builder.new
     paren_depth = 0
     brace_depth = 0
@@ -216,15 +406,29 @@ module Analyzer::CSharp::MinimalApiSupport
 
     while i < lines.size
       line = lines[i]
-      paren_depth += line.count('(') - line.count(')')
-      brace_depth += line.count('{') - line.count('}')
-      io << line
-      io << '\n'
-
-      if paren_depth <= 0 && brace_depth <= 0 && line.includes?(";")
-        break
+      masked = masked_lines[i]? || line
+      from = i == start_index ? start_column : 0
+      if from == 0 && !masked.includes?(';')
+        paren_depth += masked.count('(') - masked.count(')')
+        brace_depth += masked.count('{') - masked.count('}')
+        io << line
+      else
+        # Char arrays index in O(1); `String#[]` is O(n) on multi-byte text.
+        line_chars, masked_chars = (start_chars if i == start_index) || {line.chars, masked.chars}
+        (from...masked_chars.size).each do |column|
+          char = masked_chars[column]
+          io << (line_chars[column]? || ' ')
+          case char
+          when '(' then paren_depth += 1
+          when ')' then paren_depth -= 1
+          when '{' then brace_depth += 1
+          when '}' then brace_depth -= 1
+          when ';'
+            return io.to_s if paren_depth <= 0 && brace_depth <= 0
+          end
+        end
       end
-
+      io << '\n'
       i += 1
     end
 
@@ -249,11 +453,10 @@ module Analyzer::CSharp::MinimalApiSupport
     params.uniq(&.name)
   end
 
-  private def extract_bind_params_from_file(block : String, lines : Array(String)) : Array(Param)
+  private def extract_bind_params_from_file(block : String, lines : Array(String), masked_lines : Array(String)) : Array(Param)
     return [] of Param unless block.includes?("Bind(") || block.includes?("BindAsync(")
 
     params = [] of Param
-    masked_lines = Noir::CSharpLexer.new(lines.join('\n')).masked_lines
     lines.each_with_index do |line, index|
       next unless line.includes?("Bind(") || line.includes?("BindAsync(")
       next unless line.includes?("public") || line.includes?("private") || line.includes?("protected") || line.includes?("internal") || line.includes?("static")
@@ -266,31 +469,34 @@ module Analyzer::CSharp::MinimalApiSupport
     params.uniq(&.name)
   end
 
-  private def extract_delegate_params(block : String, route : String, http_method : String) : Array(Param)
+  private def extract_delegate_params(block : String, route : String, http_method : String,
+                                      lines : Array(String), masked_lines : Array(String)) : Array(Param)
     lambda_params = extract_lambda_param_list(block)
     return [] of Param if lambda_params.empty?
 
-    route_params = extract_route_placeholders(route)
-    split_csharp_parameters(lambda_params).compact_map do |param_def|
-      delegate_param_to_noir_param(param_def, route_params, http_method)
-    end.uniq!(&.name)
+    bound_handler_params(lambda_params, route, http_method, lines, masked_lines)
   end
 
   private def extract_lambda_param_list(block : String) : String
     arrow_index = block.index("=>")
     return "" unless arrow_index
 
+    # Index over `Array(Char)` (O(1)) rather than `String#[](Int)`, which is
+    # O(n) per access on multi-byte source and turns these backward scans
+    # O(n^2) on a non-ASCII (CJK comment/string) inline lambda handler.
+    chars = block.chars
+
     end_index = arrow_index - 1
-    while end_index >= 0 && block[end_index].ascii_whitespace?
+    while end_index >= 0 && chars[end_index].ascii_whitespace?
       end_index -= 1
     end
     return "" if end_index < 0
 
-    if block[end_index] == ')'
+    if chars[end_index] == ')'
       depth = 0
       index = end_index
       while index >= 0
-        case block[index]
+        case chars[index]
         when ')'
           depth += 1
         when '('
@@ -304,7 +510,7 @@ module Analyzer::CSharp::MinimalApiSupport
     end
 
     start_index = end_index
-    while start_index >= 0 && (block[start_index].ascii_alphanumeric? || block[start_index] == '_')
+    while start_index >= 0 && (chars[start_index].ascii_alphanumeric? || chars[start_index] == '_')
       start_index -= 1
     end
     block[(start_index + 1)..end_index]
@@ -314,8 +520,8 @@ module Analyzer::CSharp::MinimalApiSupport
     cleaned = param_def.strip
     return if cleaned.empty?
 
-    explicit_name = extract_explicit_binding_name(cleaned)
-    param_type = binding_attribute_type(cleaned)
+    explicit_name = Common.explicit_binding_name(cleaned)
+    param_type = Common.binding_attribute_type(cleaned)
     cleaned = cleaned.gsub(/\[[^\]]+\]\s*/, "").strip
     cleaned = cleaned.sub(/=.*/, "").strip
     cleaned = cleaned.gsub(/\b(ref|out|in|params)\b/, "").strip
@@ -330,6 +536,12 @@ module Analyzer::CSharp::MinimalApiSupport
       .split(/\s+/).last? || ""
     type_name = type_name.split(".").last
 
+    # A lambda parameter with no type annotation only compiles against the
+    # `RequestDelegate` overload — `endpoints.MapGet("/headers", async context
+    # => …)` — so the name is the HttpContext, never a bound request value.
+    # Every such registration used to contribute a phantom `query` param.
+    return if type_name.empty? && param_type.nil?
+
     return if service_binding?(type_name, cleaned, param_type)
 
     if route_params.includes?(name)
@@ -340,30 +552,6 @@ module Analyzer::CSharp::MinimalApiSupport
 
     return if param_type == "service"
     Param.new(name, "", param_type || "query")
-  end
-
-  private def extract_explicit_binding_name(param_def : String) : String?
-    if match = param_def.match(/\[From(?:Query|Route|Body|Header|Form)\s*\([^\]]*(?:Name\s*=\s*)?"([^"]+)"/)
-      return match[1]
-    end
-
-    nil
-  end
-
-  private def binding_attribute_type(param_def : String) : String?
-    {
-      "FromQuery"         => "query",
-      "FromRoute"         => "path",
-      "FromBody"          => "json",
-      "FromHeader"        => "header",
-      "FromForm"          => "form",
-      "FromServices"      => "service",
-      "FromKeyedServices" => "service",
-    }.each do |attr, param_type|
-      return param_type if param_def.includes?("[#{attr}")
-    end
-
-    nil
   end
 
   private def service_binding?(type_name : String, full_definition : String, param_type : String?) : Bool
@@ -379,6 +567,9 @@ module Analyzer::CSharp::MinimalApiSupport
 
   private def default_delegate_param_type(type_name : String, http_method : String) : String
     return "query" if SIMPLE_BINDING_TYPES.includes?(type_name)
+    # `IFormFile` / `IFormFileCollection` / `IFormCollection` bind from the
+    # multipart form, never the JSON body.
+    return "form" if Common::SERVICE_FORM_INPUT_TYPES.includes?(type_name)
 
     case http_method
     when "POST", "PUT", "PATCH"
@@ -427,14 +618,16 @@ module Analyzer::CSharp::MinimalApiSupport
       next unless raw
 
       optional = raw.ends_with?("?")
-      name = raw.split(":").first.gsub(/\?$/, "")
+      name = Common.route_placeholder_name(raw)
 
       if optional && !param_names.includes?(name)
         result = result.gsub("/{#{raw}}", "")
         result = result.gsub("{#{raw}}/", "")
         result = result.gsub("{#{raw}}", "")
-      elsif optional
-        result = result.gsub("{#{raw}}", "{#{raw.gsub("?", "")}}")
+      elsif optional || raw.includes?('=')
+        # `{id?}` -> `{id}` and `{id=5}` -> `{id}`: a default value is part of
+        # the route *template*, never of the URL a client sends.
+        result = result.gsub("{#{raw}}", "{#{raw.split('=').first.rstrip('?')}}")
       end
     end
 
@@ -447,8 +640,7 @@ module Analyzer::CSharp::MinimalApiSupport
       raw = match[1]? || match[0]
       next unless raw
 
-      cleaned = raw.split(":").first.gsub(/\?$/, "").lstrip("*")
-      keys << cleaned
+      keys << Common.route_placeholder_name(raw)
     end
 
     keys.uniq
@@ -460,10 +652,10 @@ module Analyzer::CSharp::MinimalApiSupport
   # referenced method's signature + body. Returns
   # `{signature, body, body_start_line, skip_first_line}` or nil when the
   # handler is a lambda (already handled) or can't be found in this file.
-  private def resolve_handler_method(block : String, lines : Array(String)) : Tuple(String, String, Int32, Bool)?
+  private def resolve_handler_method(block : String, lines : Array(String), masked_lines : Array(String)) : Tuple(String, String, Int32, Bool)?
     name = handler_method_name(block)
     return unless name
-    locate_method_definition(name, lines)
+    locate_method_definition(name, lines, masked_lines)
   end
 
   # Pulls the handler argument out of the `Map*(...)` call and returns its
@@ -487,17 +679,24 @@ module Analyzer::CSharp::MinimalApiSupport
   # split on commas while respecting nested parens/brackets/braces/generics
   # and string literals.
   private def map_call_arguments(block : String) : Array(String)
-    m = block.match(/\bMap(?:Get|Post|Put|Delete|Patch|Head|Options|Methods)?\s*\(/)
+    # Find the call and its parens on the masked block so a `(` or `)`
+    # inside a string argument can't unbalance them.
+    masked = Noir::CSharpLexer.new(block).masked_source
+    m = masked.match(MAP_CALL_RE)
     return [] of String unless m
 
-    open = block.index('(', m.begin)
+    open = masked.index('(', m.begin)
     return [] of String unless open
 
+    # Index over `Array(Char)` (O(1)) rather than `String#[](Int)`, which is
+    # O(n) per access on multi-byte source and turns this paren-depth walk
+    # O(n^2) across a large inline lambda handler with non-ASCII content.
+    chars = masked.chars
     depth = 0
     i = open
     close = -1
-    while i < block.size
-      case block[i]
+    while i < chars.size
+      case chars[i]
       when '('
         depth += 1
       when ')'
@@ -518,15 +717,14 @@ module Analyzer::CSharp::MinimalApiSupport
   # signature, body block, body start line (1-based) and whether the
   # callee scanner should skip the first body line. Skips the
   # registration call itself and assignment/call sites.
-  private def locate_method_definition(name : String, lines : Array(String)) : Tuple(String, String, Int32, Bool)?
+  private def locate_method_definition(name : String, lines : Array(String), masked_lines : Array(String)) : Tuple(String, String, Int32, Bool)?
     decl = /(?:public|private|internal|protected|static|async)\b[^;={(]*\b#{Regex.escape(name)}\s*\(/
-    masked_lines = Noir::CSharpLexer.new(lines.join('\n')).masked_lines
 
     lines.each_with_index do |line, idx|
       next unless line.includes?(name)
       next unless line.matches?(decl)
       # The `Map*("/x", Name)` line also references the handler — skip it.
-      next if line.matches?(/\bMap(?:Get|Post|Put|Delete|Patch|Head|Options|Methods)?\s*\(/)
+      next if line.matches?(MAP_CALL_RE)
 
       sig, end_idx = build_signature(lines, masked_lines, idx)
       block, body_idx, skip_first = extract_callable_body(lines, masked_lines, end_idx)
@@ -539,18 +737,24 @@ module Analyzer::CSharp::MinimalApiSupport
 
   # Builds params from a resolved handler's signature, reusing the delegate
   # binding rules and expanding `[AsParameters]` bundle types.
-  private def handler_signature_params(signature : String, route : String, http_method : String, lines : Array(String)) : Array(Param)
+  private def handler_signature_params(signature : String, route : String, http_method : String, lines : Array(String), masked_lines : Array(String)) : Array(Param)
     list = extract_balanced_param_list(signature)
     return [] of Param unless list
 
     list = list.strip
     return [] of Param if list.empty?
 
+    bound_handler_params(list, route, http_method, lines, masked_lines)
+  end
+
+  # Params bound from a handler's parameter list — an inline lambda's or a
+  # method group's — expanding `[AsParameters]` bundle types.
+  private def bound_handler_params(list : String, route : String, http_method : String, lines : Array(String), masked_lines : Array(String)) : Array(Param)
     route_params = extract_route_placeholders(route)
     params = [] of Param
     split_csharp_parameters(list).each do |pdef|
       if pdef.includes?("[AsParameters]") || pdef.includes?("[AsParameters ")
-        params.concat(expand_as_parameters(pdef, lines, route_params, http_method))
+        params.concat(expand_as_parameters(pdef, lines, masked_lines, route_params, http_method))
       elsif param = delegate_param_to_noir_param(pdef, route_params, http_method)
         params << param
       end
@@ -562,7 +766,7 @@ module Analyzer::CSharp::MinimalApiSupport
   # from the query/route/header — never the body. Expand to those members,
   # dropping the DI-service members (a bundle like `CatalogServices` yields
   # nothing, which is exactly right).
-  private def expand_as_parameters(param_def : String, lines : Array(String), route_params : Array(String), http_method : String) : Array(Param)
+  private def expand_as_parameters(param_def : String, lines : Array(String), masked_lines : Array(String), route_params : Array(String), http_method : String) : Array(Param)
     cleaned = param_def.gsub(/\[[^\]]*\]\s*/, "").strip
     type_token = cleaned.split(/\s+/).first?
     return [] of Param unless type_token
@@ -572,7 +776,7 @@ module Analyzer::CSharp::MinimalApiSupport
     return [] of Param if Common.csharp_service_type?(base)
 
     params = [] of Param
-    as_parameters_member_defs(base, lines).each do |member|
+    as_parameters_member_defs(base, lines, masked_lines).each do |member|
       param = as_parameters_member_to_param(member, route_params, http_method)
       params << param if param
     end
@@ -581,7 +785,7 @@ module Analyzer::CSharp::MinimalApiSupport
 
   # Returns the member definitions (primary-constructor params or public
   # auto-properties) of a record/class/struct used with `[AsParameters]`.
-  private def as_parameters_member_defs(type_name : String, lines : Array(String)) : Array(String)
+  private def as_parameters_member_defs(type_name : String, lines : Array(String), masked_lines : Array(String)) : Array(String)
     # Hoisted out of the loop: an interpolated regex literal recompiles
     # (PCRE2 JIT) on every evaluation, i.e. once per line.
     type_decl_regex = /\b(?:record|class|struct)\s+#{Regex.escape(type_name)}\b/
@@ -589,8 +793,6 @@ module Analyzer::CSharp::MinimalApiSupport
       l.includes?(type_name) && l.matches?(type_decl_regex)
     end
     return [] of String unless def_idx
-
-    masked_lines = Noir::CSharpLexer.new(lines.join('\n')).masked_lines
     defline = lines[def_idx]
     name_pos = defline.index(/\b#{Regex.escape(type_name)}\b/)
     paren = defline.index('(', name_pos || 0)
@@ -649,8 +851,8 @@ module Analyzer::CSharp::MinimalApiSupport
   # (members bind from query/route/header, never the body) and honours an
   # explicit `[FromHeader]`/`[FromQuery]`/`[FromRoute]` on the member.
   private def as_parameters_member_to_param(member_def : String, route_params : Array(String), http_method : String) : Param?
-    explicit_name = extract_explicit_binding_name(member_def)
-    param_type = binding_attribute_type(member_def)
+    explicit_name = Common.explicit_binding_name(member_def)
+    param_type = Common.binding_attribute_type(member_def)
     cleaned = member_def.gsub(/\[[^\]]*\]\s*/, "").strip
     cleaned = cleaned.sub(/=.*/, "").strip
     cleaned = cleaned.gsub(/\b(ref|out|in|params)\b/, "").strip
@@ -668,7 +870,13 @@ module Analyzer::CSharp::MinimalApiSupport
     return if service_binding?(type_name, cleaned, param_type)
     return if param_type == "service"
 
-    param_type ||= route_params.includes?(name) ? "path" : "query"
+    param_type ||= if route_params.includes?(name)
+                     "path"
+                   elsif Common::SERVICE_FORM_INPUT_TYPES.includes?(type_name)
+                     "form"
+                   else
+                     "query"
+                   end
     Param.new(name, "", param_type)
   end
 end

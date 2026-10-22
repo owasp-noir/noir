@@ -1,32 +1,141 @@
 require "../../engines/elixir_engine"
+require "../../../utils/call_fold"
 
 module Analyzer::Elixir
   class Plug < ElixirEngine
+    analyzer_for "elixir_plug"
+
+    # A `forward "/p", to: Mod` (Plug.Router) or `forward "/p", Mod`
+    # (Phoenix router). `path`/`line` locate the statement.
+    record Forward, path : String, line : Int32, prefix : String, target : String
+
+    FORWARD_RE      = /(?:^|[^.\w])forward\s*\(?\s*["']([^"']+)["']\s*,\s*(?:to:\s*)?([A-Z]\w*(?:\.[A-Z]\w*)*)/
+    SCOPE_OPENER_RE = /^\s*scope\s*\(?\s*(?:["']([^"']*)["'])?\s*,?\s*([A-Z]\w*(?:\.[A-Z]\w*)*)?/
+
+    # A child router reached through `forward` serves its routes under the
+    # forward path only, and the forward itself is not a route. Collect the
+    # forwards of every scanned router (Plug or Phoenix), then re-root the
+    # child's routes and drop the forward endpoint.
+    def analyze
+      super
+      routers = plug_router_modules
+      return @result if routers.empty?
+
+      forwards = collect_forwards(routers)
+      return @result if forwards.empty?
+
+      module_by_path = routers.invert
+      forwarded_at = forwards.map { |fwd| {fwd.path, fwd.line} }.to_set
+      prefix_cache = {} of String => Array(String)
+
+      rerooted = [] of Endpoint
+      @result.each do |endpoint|
+        location = endpoint.details.code_paths.first?
+        next if endpoint.method == "FORWARD" && location && forwarded_at.includes?({location.path, location.line || 0})
+
+        mod = location.try { |loc| module_by_path[loc.path]? }
+        prefixes = mod ? forward_prefixes(mod, forwards, module_by_path, prefix_cache, Set(String).new) : [] of String
+        if prefixes.empty?
+          rerooted << endpoint
+          next
+        end
+
+        prefixes.each do |prefix|
+          copy = Endpoint.new(Noir::URLPath.join_absorbing(prefix, endpoint.url), endpoint.method, endpoint.params, endpoint.details)
+          endpoint.callees.each { |callee| copy.push_callee(callee) }
+          rerooted << copy
+        end
+      end
+      @result = rerooted
+    end
+
+    # Full mount paths of `mod`: each forward to it, under the mount paths
+    # of the router that forward sits in (when that router is itself
+    # forwarded to).
+    private def forward_prefixes(mod : String,
+                                 forwards : Array(Forward),
+                                 module_by_path : Hash(String, String),
+                                 cache : Hash(String, Array(String)),
+                                 visiting : Set(String)) : Array(String)
+      if cached = cache[mod]?
+        return cached
+      end
+      return [] of String if visiting.includes?(mod)
+      visiting << mod
+
+      prefixes = [] of String
+      forwards.each do |fwd|
+        next unless fwd.target == mod
+        parent = module_by_path[fwd.path]?
+        parent_prefixes = parent ? forward_prefixes(parent, forwards, module_by_path, cache, visiting) : [] of String
+        if parent_prefixes.empty?
+          prefixes << fwd.prefix
+        else
+          parent_prefixes.each { |pp| prefixes << Noir::URLPath.join_absorbing(pp, fwd.prefix) }
+        end
+      end
+      visiting.delete(mod)
+      cache[mod] = prefixes.uniq
+    end
+
+    # Forwards to a scanned Plug.Router in any Elixir file. Phoenix `scope`
+    # blocks contribute their path and module alias; the walk counts
+    # `do`/`end` depth, so a scope opener must end its line with `do`.
+    private def collect_forwards(routers : Hash(String, String)) : Array(Forward)
+      forwards = [] of Forward
+      scan_target_files.each do |path|
+        next unless scan_accepts?(path)
+        content = read_file_content(path)
+        next unless content.includes?("forward")
+
+        scopes = [] of Tuple(String, String, Int32) # prefix, module, depth inside
+        depth = 0
+        own_module = routers.key_for?(path)
+        content.each_line.with_index do |line, index|
+          code = strip_trailing_comment(line)
+          if code.includes?("forward") && (match = code.match(FORWARD_RE))
+            scope_module = scopes.map(&.[1]).reject(&.empty?).join('.')
+            target = resolve_plug_router(match[2], scope_module, routers)
+            if target && target != own_module
+              prefix = scopes.reduce("") { |acc, scope| Noir::URLPath.join_absorbing(acc, scope[0]) }
+              forwards << Forward.new(path, index + 1, Noir::URLPath.join_absorbing(prefix, match[1]), target)
+            end
+          end
+
+          depth += elixir_block_depth_delta(code.strip)
+          if code.includes?("scope") && code.rstrip.ends_with?("do") && (opener = code.match(SCOPE_OPENER_RE))
+            scopes << {opener[1]? || "", opener[2]? || "", depth}
+          end
+          while (last = scopes.last?) && depth < last[2]
+            scopes.pop
+          end
+        end
+      end
+      forwards
+    end
+
     def analyze_file(path : String) : Array(Endpoint)
+      # Extension and `*_test.exs` filtering live in ElixirEngine's
+      # `parallel_file_scan`; Plug only needs the remaining .ex/.exs
+      # split (.exs scripts still carry Plug.Router modules).
       ext = File.extname(path)
       return [] of Endpoint unless ext == ".ex" || ext == ".exs"
-      # Elixir convention: `*_test.exs` files are ExUnit test
-      # modules. They register routes (often via inline
-      # `Plug.Router`-using modules or `defmodule TestRouter do ... use
-      # Phoenix.Router`) purely to exercise the framework; the routes
-      # never serve real traffic. Phoenix's own repo and any
-      # `phx.gen.auth` scaffold's tests trip this hard.
-      return [] of Endpoint if test_only_path?(path)
 
       endpoints = [] of Endpoint
-      File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
-        content = file.gets_to_end
-        # A Phoenix router is owned by the Phoenix analyzer, which
-        # understands `scope` prefixes, the `resources` macro, and the
-        # controller/action mapping. The bare `get "/path"` regex here
-        # would re-extract those same lines stripped of their scope
-        # prefix and minus every `resources`-generated route — degraded
-        # duplicates that pollute the result. Skip the file and let the
-        # Phoenix analyzer handle it.
-        next endpoints if phoenix_router?(content)
-        analyze_content(content, path).each do |endpoint|
-          endpoints << endpoint unless endpoint.method.empty?
-        end
+      # `read_file_content` reuses the detector's already-cached bytes
+      # (same "utf-8"/`invalid: :skip` decoding as the `File.open` this
+      # replaced) instead of re-reading the file from disk here.
+      content = read_file_content(path)
+      # A Phoenix router is owned by the Phoenix analyzer, which
+      # understands `scope` prefixes, the `resources` macro, and the
+      # controller/action mapping. The bare `get "/path"` regex here
+      # would re-extract those same lines stripped of their scope
+      # prefix and minus every `resources`-generated route — degraded
+      # duplicates that pollute the result. Skip the file and let the
+      # Phoenix analyzer handle it.
+      return endpoints if phoenix_router?(content)
+      analyze_content(content, path).each do |endpoint|
+        endpoints << endpoint unless endpoint.method.empty?
       end
       endpoints
     end
@@ -36,13 +145,26 @@ module Analyzer::Elixir
     # this distinguishes the two even though both share `get`/`post`
     # route macros.
     private def phoenix_router?(content : String) : Bool
-      content.includes?("Phoenix.Router") ||
-        content.matches?(/\buse\s+[A-Z]\w*(?:\.[A-Z]\w*)*\s*,\s*:router\b/)
+      return true if content.includes?("Phoenix.Router")
+      # Cheap reject before the `:router` atom regex — most Plug modules
+      # never mention `use ` with a router tag.
+      return false unless content.includes?(":router")
+      content.matches?(/\buse\s+[A-Z]\w*(?:\.[A-Z]\w*)*\s*,\s*:router\b/)
     end
+
+    # File-level gate: Plug.Router only registers absolute paths via the
+    # verb/`match`/`forward` macros. Files with none of those tokens
+    # cannot contribute endpoints (models, views, plain modules).
+    PLUG_ROUTE_EVIDENCE_RE = /
+      \b(?:get|post|put|patch|delete|head|options|query|forward|match)
+      \s*(?:\(\s*)?["']
+    /x
 
     def analyze_content(content : String, file_path : String) : Array(Endpoint)
       endpoints = Array(Endpoint).new
-      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
+      return endpoints unless content.matches?(PLUG_ROUTE_EVIDENCE_RE)
+
+      include_callee = callees_needed?
 
       # Find all route blocks and extract params
       lines = content.lines
@@ -57,16 +179,20 @@ module Analyzer::Elixir
       in_triple_single = false
       lines.each_with_index do |line, index|
         if line.includes?("\"\"\"")
-          line.scan(/"""/).size.times { in_triple_double = !in_triple_double }
+          line.scan("\"\"\"") { in_triple_double = !in_triple_double }
           next
         end
         if line.includes?("'''")
-          line.scan(/'''/).size.times { in_triple_single = !in_triple_single }
+          line.scan("'''") { in_triple_single = !in_triple_single }
           next
         end
         next if in_triple_double || in_triple_single
 
-        line_endpoints = line_to_endpoint(line.strip)
+        # A commented-out route (`# get "/old", do: ...`) is not a route.
+        code = strip_trailing_comment(line).strip
+        next if code.empty?
+
+        line_endpoints = line_to_endpoint(code)
         line_endpoints.each do |endpoint|
           unless endpoint.method.empty?
             details = Details.new(PathInfo.new(file_path, index + 1))
@@ -87,14 +213,6 @@ module Analyzer::Elixir
       endpoints
     end
 
-    # ExUnit's filename convention is rigid: every test module sits in
-    # a file named `*_test.exs`, and `mix test` ignores anything else.
-    # Skipping by suffix is safe because production code never adopts
-    # that name.
-    private def test_only_path?(path : String) : Bool
-      File.basename(path).ends_with?("_test.exs")
-    end
-
     def extract_params_from_block(lines : Array(String), start_index : Int32, method : String, block_end : Int32? = nil) : Array(Param)
       params = Array(Param).new
       seen_params = Set(String).new # Track seen params for O(1) lookup
@@ -103,58 +221,73 @@ module Analyzer::Elixir
       end_index = block_end || find_block_end(lines, start_index)
       return params if end_index == -1
 
-      # Extract parameters from the block content
-      (start_index..end_index).each do |i|
-        line = lines[i]
+      # Extract parameters from the block content, with a wrapped read
+      # (`get_req_header(` / `conn,` / `"x-key"` / `)`) folded.
+      Noir::CallFold.fold(lines[start_index..end_index]) { |l| strip_trailing_comment(l) }.each do |line|
+        has_conn = line.includes?("conn.")
+        has_header = line.includes?("get_req_header")
+        next unless has_conn || has_header
 
-        # Extract query parameters (conn.query_params["param"] or conn.params["param"] for GET)
-        line.scan(/conn\.query_params\[["']([^"']+)["']\]/) do |match|
-          param_name = match[1]
-          param_key = "query:#{param_name}"
-          unless seen_params.includes?(param_key)
-            params << Param.new(param_name, "", "query")
-            seen_params << param_key
+        if has_conn
+          # Extract query parameters (conn.query_params["param"] or conn.params["param"] for GET)
+          if line.includes?("query_params")
+            line.scan(/conn\.query_params\[["']([^"']+)["']\]/) do |match|
+              param_name = match[1]
+              param_key = "query:#{param_name}"
+              unless seen_params.includes?(param_key)
+                params << Param.new(param_name, "", "query")
+                seen_params << param_key
+              end
+            end
           end
-        end
 
-        # Extract params (could be query for GET or form for POST/PUT/PATCH)
-        line.scan(/conn\.params\[["']([^"']+)["']\]/) do |match|
-          param_name = match[1]
-          param_type = (method == "GET") ? "query" : "form"
-          param_key = "#{param_type}:#{param_name}"
-          unless seen_params.includes?(param_key)
-            params << Param.new(param_name, "", param_type)
-            seen_params << param_key
+          # Extract params (could be query for GET or form for POST/PUT/PATCH)
+          if line.includes?("params[")
+            line.scan(/conn\.params\[["']([^"']+)["']\]/) do |match|
+              param_name = match[1]
+              param_type = (method == "GET") ? "query" : "form"
+              param_key = "#{param_type}:#{param_name}"
+              unless seen_params.includes?(param_key)
+                params << Param.new(param_name, "", param_type)
+                seen_params << param_key
+              end
+            end
           end
-        end
 
-        # Extract body parameters (conn.body_params["param"] for POST/PUT/PATCH)
-        line.scan(/conn\.body_params\[["']([^"']+)["']\]/) do |match|
-          param_name = match[1]
-          param_key = "form:#{param_name}"
-          unless seen_params.includes?(param_key)
-            params << Param.new(param_name, "", "form")
-            seen_params << param_key
+          # Extract body parameters (conn.body_params["param"] for POST/PUT/PATCH)
+          if line.includes?("body_params")
+            line.scan(/conn\.body_params\[["']([^"']+)["']\]/) do |match|
+              param_name = match[1]
+              param_key = "form:#{param_name}"
+              unless seen_params.includes?(param_key)
+                params << Param.new(param_name, "", "form")
+                seen_params << param_key
+              end
+            end
+          end
+
+          # Extract cookie parameters (conn.cookies["cookie_name"])
+          if line.includes?("cookies")
+            line.scan(/conn\.cookies\[["']([^"']+)["']\]/) do |match|
+              param_name = match[1]
+              param_key = "cookie:#{param_name}"
+              unless seen_params.includes?(param_key)
+                params << Param.new(param_name, "", "cookie")
+                seen_params << param_key
+              end
+            end
           end
         end
 
         # Extract header parameters (get_req_header(conn, "header-name"))
-        line.scan(/get_req_header\(conn,\s*["']([^"']+)["']\)/) do |match|
-          param_name = match[1]
-          param_key = "header:#{param_name}"
-          unless seen_params.includes?(param_key)
-            params << Param.new(param_name, "", "header")
-            seen_params << param_key
-          end
-        end
-
-        # Extract cookie parameters (conn.cookies["cookie_name"])
-        line.scan(/conn\.cookies\[["']([^"']+)["']\]/) do |match|
-          param_name = match[1]
-          param_key = "cookie:#{param_name}"
-          unless seen_params.includes?(param_key)
-            params << Param.new(param_name, "", "cookie")
-            seen_params << param_key
+        if has_header
+          line.scan(/get_req_header\(conn,\s*["']([^"']+)["']\)/) do |match|
+            param_name = match[1]
+            param_key = "header:#{param_name}"
+            unless seen_params.includes?(param_key)
+              params << Param.new(param_name, "", "header")
+              seen_params << param_key
+            end
           end
         end
       end
@@ -181,10 +314,16 @@ module Analyzer::Elixir
       # Find the matching "end" for the route block starting with "do"
       return -1 if start_index >= lines.size
 
-      # Check if the line has "do" keyword
-      return -1 unless lines[start_index].includes?("do")
+      # Only a real `do` opener starts a block. The inline `do:` keyword
+      # form (`get "/x", do: send_resp(...)`) is its own one-line body —
+      # walking on from it used to run to the next route's `end` and
+      # hand that route's params to this one. So did a bare "do"
+      # substring in a path (`"/download"`) or a comment.
+      depth = elixir_block_depth_delta(lines[start_index].strip)
+      if depth <= 0
+        return lines[start_index].matches?(/\bdo:/) ? start_index : -1
+      end
 
-      depth = 1
       (start_index + 1...lines.size).each do |i|
         depth += elixir_block_depth_delta(lines[i].strip)
         return i if depth == 0
@@ -210,6 +349,8 @@ module Analyzer::Elixir
       "head"    => "HEAD",
       "options" => "OPTIONS",
       "forward" => "FORWARD",
+      # RFC 10008, shipped in elixir-plug/plug#1319 (merged 2026-06-25).
+      "query" => "QUERY",
     }
 
     # Precompiled per-verb route regexes. `line_to_endpoint` runs once per
@@ -232,22 +373,29 @@ module Analyzer::Elixir
         end
       end
 
-      # Match match statements with method patterns
-      # match "/path", via: [:get, :post]
-      if via_match = line.match(/(?:^|[^.\w])match\s+["\']([^"\']+)["\'][^:]*via:\s*\[([^\]]+)\]/)
-        path = via_match[1]
-        if plug_route_path?(path)
-          via_match[2].scan(/:(\w+)/) do |method_match|
-            endpoints << Endpoint.new(path, method_match[1].upcase)
+      # Match match statements only when the token is present.
+      if line.includes?("match")
+        # match "/path", via: [:get, :post]
+        if via_match = line.match(/(?:^|[^.\w])match\s+["\']([^"\']+)["\'][^:]*via:\s*\[([^\]]+)\]/)
+          path = via_match[1]
+          if plug_route_path?(path)
+            via_match[2].scan(/:(\w+)/) do |method_match|
+              endpoints << Endpoint.new(path, method_match[1].upcase)
+            end
           end
+        elsif via_match = line.match(/(?:^|[^.\w])match\s+["\']([^"\']+)["\'][^:]*via:\s*:(\w+)/)
+          # match "/path", via: :query — Plug.Router's `via:` also accepts
+          # a single atom, not just a list.
+          path = via_match[1]
+          endpoints << Endpoint.new(path, via_match[2].upcase) if plug_route_path?(path)
         end
-      end
 
-      # Match simple match statements (defaults to GET)
-      unless line.includes?("via:")
-        line.scan(/(?:^|[^.\w])match\s+["\']([^"\']+)["\']/) do |match|
-          path = match[1]
-          endpoints << Endpoint.new(path, "GET") if plug_route_path?(path)
+        # Match simple match statements (defaults to GET)
+        unless line.includes?("via:")
+          line.scan(/(?:^|[^.\w])match\s+["\']([^"\']+)["\']/) do |match|
+            path = match[1]
+            endpoints << Endpoint.new(path, "GET") if plug_route_path?(path)
+          end
         end
       end
 

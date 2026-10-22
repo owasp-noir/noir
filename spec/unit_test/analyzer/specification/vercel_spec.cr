@@ -6,8 +6,8 @@ private def analyze_vercel_config(content : String)
   path = File.tempname("vercel", ".json")
   File.write(path, content)
   locator = CodeLocator.instance
-  locator.clear "vercel-spec"
-  locator.push "vercel-spec", path
+  locator.clear Noir::LocatorKeys::VERCEL_SPEC
+  locator.push Noir::LocatorKeys::VERCEL_SPEC, path
 
   options = create_test_options
   analyzer = Analyzer::Specification::Vercel.new options
@@ -31,7 +31,7 @@ describe "Vercel Analyzer" do
       }
       JSON
 
-    endpoints.map(&.url).sort!.should eq ["/(.*)", "/api/v1/(.*)", "/old", "^/legacy/(.*)"]
+    endpoints.map(&.url).sort!.should eq ["/(.*)", "/api/v1/(.*)", "/legacy/(.*)", "/old"]
     endpoints.all? { |e| e.method == "ANY" }.should be_true
   end
 
@@ -62,7 +62,7 @@ describe "Vercel Analyzer" do
       }
       JSON
 
-    endpoints.map(&.url).sort!.should eq ["/blog/*", "^/api/(.*)"]
+    endpoints.map(&.url).sort!.should eq ["/api/(.*)", "/blog/*"]
     endpoints.each do |endpoint|
       tag_descriptions(endpoint, "pattern").should eq ["vercel_source_matcher"]
     end

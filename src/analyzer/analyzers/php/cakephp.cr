@@ -2,6 +2,8 @@ require "../../engines/php_engine"
 
 module Analyzer::Php
   class CakePHP < PhpEngine
+    analyzer_for "php_cakephp"
+
     @method_def_regexes = Hash(String, Regex).new
 
     def analyze_file(path : String) : Array(Endpoint)
@@ -18,16 +20,23 @@ module Analyzer::Php
       endpoints
     end
 
+    # Hyperf keeps its route table at `config/routes.php` too, and writes it
+    # as `Router::get('/items/{itemId}', …)` — a call shape CakePHP 3 also
+    # used, so the verb matchers below hit it. In a repo holding both, CakePHP
+    # reported Hyperf's routes as its own. `Hyperf\` is unambiguous: the file
+    # imports `Hyperf\HttpServer\Router\Router`, and CakePHP never names it.
+    HYPERF_MARKER_RE = /Hyperf\\/
+
     private def analyze_routes_file(path : String) : Array(Endpoint)
       endpoints = [] of Endpoint
-      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
+      include_callee = callees_needed?
       begin
-        File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
-          content = file.gets_to_end
-          endpoints = analyze_routes_content(content, "", path, include_callee)
-        end
+        content = php_code(read_file_content(path))
+        return endpoints if content.matches?(HYPERF_MARKER_RE)
+        endpoints = analyze_routes_content(content, "", path, include_callee)
       rescue e
         logger.debug "Error analyzing routes file #{path}: #{e}"
+        Noir::SkippedFiles.record(tech, path, e.message.presence || e.class.name)
       end
       endpoints
     end
@@ -35,9 +44,12 @@ module Analyzer::Php
     private def analyze_routes_content(content : String,
                                        prefix : String,
                                        file_path : String,
-                                       include_callee : Bool) : Array(Endpoint)
+                                       include_callee : Bool,
+                                       base_line : Int32 = 1) : Array(Endpoint)
       endpoints = [] of Endpoint
-      details = Details.new(PathInfo.new(file_path))
+      offsets = Noir::CharOffsets.new(content)
+      # Line of a route matched at byte offset `byte`.
+      line_at = ->(byte : Int32) { base_line + offsets.line(offsets.char(byte)) - 1 }
 
       # `scope()`/`prefix()`/`plugin()` each open a nested RouteBuilder whose
       # routes inherit a URL prefix. Extract their bodies first so the verb
@@ -52,9 +64,9 @@ module Analyzer::Php
       # endpoints into GET false positives (and dropping the verbs they
       # actually answer).
       pos = 0
-      while route_match = content.match(CONNECT_REGEX, pos)
-        if inside_scope_body?(route_match.begin(0), scopes)
-          pos = route_match.end(0)
+      while route_match = CONNECT_REGEX.match_at_byte_index(content, pos)
+        if inside_scope_body?(route_match.byte_begin(0), scopes)
+          pos = route_match.byte_end(0)
           next
         end
 
@@ -64,7 +76,8 @@ module Analyzer::Php
 
         full_path = build_full_path(prefix, route_path)
         target = extract_controller_action_target(options_str)
-        methods = extract_connect_methods(statement, options_str)
+        methods = extract_connect_methods(statement)
+        details = Details.new(PathInfo.new(file_path, line_at.call(route_match.byte_begin(0))))
 
         methods.each do |method|
           params = extract_route_params(full_path)
@@ -72,15 +85,15 @@ module Analyzer::Php
           attach_route_target_callees(endpoint, target, file_path) if include_callee
           endpoints << endpoint
         end
-        pos = route_match.end(0)
+        pos = route_match.byte_end(0)
       end
 
       # 2. HTTP verb shortcuts: $routes->get/post/..., Router::get/...
       VERB_REGEXES.each do |method, pattern|
         pos = 0
-        while route_match = content.match(pattern, pos)
-          if inside_scope_body?(route_match.begin(0), scopes)
-            pos = route_match.end(0)
+        while route_match = pattern.match_at_byte_index(content, pos)
+          if inside_scope_body?(route_match.byte_begin(0), scopes)
+            pos = route_match.byte_end(0)
             next
           end
 
@@ -88,49 +101,47 @@ module Analyzer::Php
           full_path = build_full_path(prefix, route_path)
           params = extract_route_params(full_path)
           target = extract_controller_action_target(route_match[3]?)
-          endpoint = Endpoint.new(full_path, method, params, details.dup)
+          details = Details.new(PathInfo.new(file_path, line_at.call(route_match.byte_begin(0))))
+          endpoint = Endpoint.new(full_path, method, params, details)
           attach_route_target_callees(endpoint, target, file_path) if include_callee
           endpoints << endpoint
-          pos = route_match.end(0)
+          pos = route_match.byte_end(0)
         end
       end
 
       # 3. Resource routes
       pos = 0
-      while route_match = content.match(RESOURCE_REGEX, pos)
-        if inside_scope_body?(route_match.begin(0), scopes)
-          pos = route_match.end(0)
+      while route_match = RESOURCE_REGEX.match_at_byte_index(content, pos)
+        if inside_scope_body?(route_match.byte_begin(0), scopes)
+          pos = route_match.byte_end(0)
           next
         end
 
         resource_name = route_match[2]
-        full_resource_path = build_full_path(prefix, resource_name)
-        endpoints.concat(create_resource_endpoints(full_resource_path, file_path, include_callee, resource_name))
-        pos = route_match.end(0)
+        args = route_match[3]
+        full_resource_path = build_full_path(prefix, resource_url_name(resource_name, args))
+        details = Details.new(PathInfo.new(file_path, line_at.call(route_match.byte_begin(0))))
+        endpoints.concat(create_resource_endpoints(full_resource_path, file_path, details, include_callee, resource_name, args))
+        pos = route_match.byte_end(0)
       end
 
       # 4. Recurse into each scope/prefix/plugin body with its prefix applied.
       scopes.each do |scope|
         new_prefix = build_full_path(prefix, scope.prefix)
-        endpoints.concat(analyze_routes_content(scope.body, new_prefix, file_path, include_callee))
+        endpoints.concat(analyze_routes_content(scope.body, new_prefix, file_path, include_callee, line_at.call(scope.body_start)))
       end
 
       endpoints
     end
 
-    private struct Scope
-      getter prefix, body, body_start, body_end
-
-      def initialize(@prefix : String, @body : String, @body_start : Int32, @body_end : Int32)
-      end
-    end
+    private record Scope, prefix : String, body : String, body_start : Int32, body_end : Int32
 
     # Route receivers in a CakePHP routes file: the injected builder under any
     # variable name (`$routes`, `$builder`, `$routeBuilder`, ...) or the static
     # `Router` facade used by older apps and plugin route files (croogo).
     CONNECT_REGEX    = /(\$\w+|Router)(?:->|::)connect\s*\(\s*['"]([^'"]+)['"](.*?);/mi
-    RESOURCE_REGEX   = /(\$\w+|Router)(?:->|::)resources\s*\(\s*['"]([^'"]+)['"]/mi
-    SCOPE_OPEN_REGEX = /(?:\$\w+|Router)(?:->|::)(scope|prefix|plugin)\s*\(/mi
+    RESOURCE_REGEX   = /(\$\w+|Router)(?:->|::)resources\s*\(\s*['"]([^'"]+)['"](#{CALL_ARGS_TAIL})/mi
+    SCOPE_OPEN_REGEX = /(?:\$\w+|Router)(?:->|::)(scope|prefix|plugin|resources)\s*\(/mi
     VERB_REGEXES     = {
       "GET"     => /(\$\w+|Router)(?:->|::)get\s*\(\s*['"]([^'"]+)['"](?:\s*,\s*\[(.*?)\])?/mi,
       "POST"    => /(\$\w+|Router)(?:->|::)post\s*\(\s*['"]([^'"]+)['"](?:\s*,\s*\[(.*?)\])?/mi,
@@ -154,7 +165,10 @@ module Analyzer::Php
         info = parse_scope_call(content, open_match.end(0), method)
         if info
           prefix, body, body_start, body_end = info
-          scopes << Scope.new(prefix, body, body_start, body_end)
+          # Stored as BYTE offsets: the per-route scans compare them with
+          # `byte_begin`, which (unlike `begin`) is O(1) on non-ASCII files.
+          scopes << Scope.new(prefix, body, content.char_index_to_byte_index(body_start) || content.bytesize,
+            content.char_index_to_byte_index(body_end) || content.bytesize)
           pos = body_end + 1
         else
           pos = open_match.end(0)
@@ -168,10 +182,13 @@ module Analyzer::Php
       return unless pos < content.size
 
       context = content[pos..]
-      closure = context.match(/(?:static\s+)?function\s*\([^)]*\)\s*(?:use\s*\([^)]*\)\s*)?\{/mi)
+      closure = context.match(/(?:static\s+)?function\s*\([^)]*\)\s*(?:use\s*\([^)]*\)\s*)?(?::\s*[^{=]+)?\{/mi)
       return unless closure
 
       prelude = context[0...closure.begin(0)]
+      # Only `resources()` may omit the closure; a `;` before it means the
+      # closure found belongs to a later statement.
+      return if method == "resources" && prelude.includes?(';')
       brace_pos = pos + closure.end(0) - 1
       body_end = find_matching_php_close_brace(content, brace_pos)
       return unless body_end
@@ -179,31 +196,48 @@ module Analyzer::Php
       {scope_prefix_from_prelude(prelude, method), content[(brace_pos + 1)...body_end], brace_pos + 1, body_end}
     end
 
-    # Resolve the URL prefix a scope/prefix/plugin contributes. `scope`/`prefix`
-    # take the path as their first string argument; `plugin` takes the plugin
-    # name, with the mounted path supplied separately as a `'path' => '/x'`
-    # option (falling back to the dasherized plugin name).
+    PATH_OPTION_RE = /['"]path['"]\s*=>\s*['"]([^'"]*)['"]/i
+
+    # Resolve the URL prefix a scope/prefix/plugin/resources contributes.
+    # `scope` takes the path itself as its first string argument. `prefix` and
+    # `plugin` take a name, mounted at an explicit `'path' => '/x'` option or
+    # else at the dasherized name (`Admin` -> `/admin`). A `resources()`
+    # callback nests under the member path, `/recipes/{recipe_id}`
+    # (`RouteBuilder::resources`).
     private def scope_prefix_from_prelude(prelude : String, method : String) : String
-      if method == "plugin"
-        if path = prelude.match(/['"]path['"]\s*=>\s*['"]([^'"]*)['"]/i)
-          return path[1]
-        end
-        name = prelude.match(/['"]([^'"]+)['"]/)
-        return name ? "/#{name[1].downcase}" : ""
-      end
-
-      # `prefix('v10', ['path' => '/v1.0'], ...)` mounts under the explicit
-      # `path` option, NOT the dasherized prefix name — honour it like `plugin`
-      # does (`scope('/api', ...)` has no such option, so it falls through to
-      # its first string arg, the path itself).
-      if method == "prefix"
-        if path = prelude.match(/['"]path['"]\s*=>\s*['"]([^'"]*)['"]/i)
-          return path[1]
-        end
-      end
-
       first = prelude.match(/['"]([^'"]*)['"]/)
-      first ? first[1] : ""
+      name = first ? first[1] : ""
+      case method
+      when "scope"
+        name
+      when "resources"
+        id = singularize_resource_segment(cake_delimit(name, '_'))
+        "/#{resource_url_name(name, prelude)}/{#{id}_id}"
+      else
+        if path = prelude.match(PATH_OPTION_RE)
+          path[1]
+        else
+          name.empty? ? "" : "/#{cake_delimit(name, '-')}"
+        end
+      end
+    end
+
+    # URL segment of `resources('BlogPosts')`: the `'path'` option, else the
+    # dasherized name (`blog-posts`, the default `'inflect' => 'dasherize'`).
+    private def resource_url_name(name : String, args : String) : String
+      if path = args.match(PATH_OPTION_RE)
+        path[1]
+      else
+        cake_delimit(name, '-')
+      end
+    end
+
+    # CakePHP `Inflector::dasherize` (delimiter '-') / `underscore` ('_'):
+    # `BlogPosts` -> `blog-posts` / `blog_posts`.
+    private def cake_delimit(name : String, delimiter : Char) : String
+      name.tr(delimiter == '-' ? "_" : "-", delimiter.to_s)
+        .gsub(/(?<=\w)([A-Z])/) { |upper| "#{delimiter}#{upper}" }
+        .downcase
     end
 
     private def inside_scope_body?(pos : Int32, scopes : Array(Scope)) : Bool
@@ -215,14 +249,17 @@ module Analyzer::Php
     # legacy `'_method' => '...'` option, and default to GET when neither
     # is present (an unrestricted `connect()` is most commonly reached via
     # GET in these apps).
-    private def extract_connect_methods(statement : String, options_str : String?) : Array(String)
+    private def extract_connect_methods(statement : String) : Array(String)
       if set_methods = statement.match(/->\s*setMethods\s*\(\s*\[([^\]]*)\]/i)
         methods = extract_methods_from_array(set_methods[1])
         return methods unless methods.empty?
       end
 
-      if options_str && (legacy = options_str.match(/['"]_method['"]\s*=>\s*['"]([^'"]+)['"]/i))
-        return [legacy[1].upcase]
+      # `_method` sits in the defaults (2nd argument) or the options (3rd),
+      # as one verb or a list.
+      if legacy = statement.match(/['"]_method['"]\s*=>\s*(?:['"]([^'"]+)['"]|(?:\[|array\s*\()([^\])]*))/i)
+        methods = legacy[1]? ? [legacy[1].upcase] : extract_methods_from_array(legacy[2])
+        return methods unless methods.empty?
       end
 
       ["GET"]
@@ -255,23 +292,26 @@ module Analyzer::Php
 
     private def create_resource_endpoints(resource_path : String,
                                           file_path : String,
+                                          details : Details,
                                           include_callee : Bool,
-                                          controller_name : String) : Array(Endpoint)
+                                          controller_name : String,
+                                          args : String) : Array(Endpoint)
       endpoints = [] of Endpoint
-      details = Details.new(PathInfo.new(file_path))
 
-      # Standard REST resource routes
+      # RouteBuilder's resource map: {path, verb, controller action, map key}.
+      # `only` names the map keys (`create`/`update`), not the actions.
       resource_routes = [
-        {resource_path, "GET", "index"},
-        {resource_path, "POST", "add"},
-        {"#{resource_path}/{id}", "GET", "view"},
-        {"#{resource_path}/{id}", "PUT", "edit"},
-        {"#{resource_path}/{id}", "PATCH", "edit"},
-        {"#{resource_path}/{id}", "DELETE", "delete"},
+        {resource_path, "GET", "index", "index"},
+        {resource_path, "POST", "add", "create"},
+        {"#{resource_path}/{id}", "GET", "view", "view"},
+        {"#{resource_path}/{id}", "PUT", "edit", "update"},
+        {"#{resource_path}/{id}", "PATCH", "edit", "update"},
+        {"#{resource_path}/{id}", "DELETE", "delete", "delete"},
       ]
 
       resource_routes.each do |route_info|
-        path, method, action = route_info
+        path, method, action, key = route_info
+        next unless resource_action_allowed?(args, key)
         params = extract_route_params(path)
         endpoint = Endpoint.new(path, method, params, details.dup)
         attach_route_target_callees(endpoint, {controller_name, action}, file_path) if include_callee

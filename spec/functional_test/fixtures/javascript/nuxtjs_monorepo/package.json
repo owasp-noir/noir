@@ -1,0 +1,8 @@
+{
+  "name": "nuxt-monorepo",
+  "private": true,
+  "workspaces": ["apps/*"],
+  "devDependencies": {
+    "nuxt": "^3.11.0"
+  }
+}

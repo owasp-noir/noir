@@ -1,18 +1,48 @@
 require "../../models/analyzer"
 require "../../miniparsers/import_graph"
 require "../../miniparsers/python_callee_extractor"
+require "../../utils/top_level_split"
+require "../../utils/call_fold"
+require "../analyzers/python/python_helper"
 require "json"
 
 module Analyzer::Python
-  class PythonEngine < Analyzer
-    # HTTP method names commonly used in REST APIs
-    HTTP_METHODS = ["get", "post", "put", "patch", "delete", "head", "options", "trace"]
+  abstract class PythonEngine < Analyzer
+    # HTTP method names commonly used in REST APIs. `query` (RFC 10008) is
+    # included for frameworks whose class-based-view dispatch is duck-typed
+    # (Flask/Quart/Sanic call `getattr(self, request.method.lower())`, so a
+    # `def query(self):` method genuinely serves QUERY requests).
+    HTTP_METHODS = ["get", "post", "put", "patch", "delete", "head", "options", "trace", "query"]
+
+    # `HTTP_METHODS` minus `query`. Analyzers pattern-match a bare method
+    # name against source text in more than one shape — a `def <verb>(...)`
+    # head inside a confirmed handler class, or a verb token appearing
+    # anywhere in a decorator's raw text — and for two reasons a match on
+    # `query` there is not reliable evidence of QUERY support:
+    #
+    #   * The framework dispatches via an explicit method allowlist rather
+    #     than duck-typing (Django's `http_method_names`, Tornado's
+    #     `SUPPORTED_METHODS`), so a same-named helper method — a common
+    #     name for search/filter logic — is genuinely inert, not a route.
+    #   * The match is a bare-word scan of arbitrary decorator text, where
+    #     `query` routinely appears as an unrelated parameter name (e.g.
+    #     DRF-spectacular's `OpenApiParameter("query", ...)`).
+    #
+    # Shared here so each consuming analyzer doesn't redefine the same
+    # subtraction with its own copy of the justification.
+    HTTP_METHODS_EXCLUDING_QUERY = HTTP_METHODS - ["query"]
     # Indentation size in spaces; different sizes can cause analysis issues
     INDENTATION_SIZE = 4
     # Regex for valid Python variable names
     PYTHON_VAR_NAME_REGEX = /[a-zA-Z_][a-zA-Z0-9_]*/
     # Regex for valid Python module names
     DOT_NATION = /[a-zA-Z_][a-zA-Z0-9_.]*/
+    # A call's argument text up to (not including) its closing `)`: quoted
+    # strings are skipped whole and one level of nested parentheses is
+    # allowed, so `http_method=("GET", "POST")` or `title="x (y)"` does not
+    # end it early. Possessive, so an unclosed call fails fast instead of
+    # backtracking.
+    PYTHON_CALL_ARGS = /(?:[^()'"]++|'[^']*+'|"[^"]*+"|\((?:[^()'"]++|'[^']*+'|"[^"]*+")*+\))*+/
 
     # Standard Python/pytest/unittest test-file conventions. A file
     # under any of these patterns ships with `python -m pytest` or
@@ -49,8 +79,126 @@ module Analyzer::Python
       PythonEngine.python_test_path?(path, python_base_path_for(path))
     end
 
+    PROJECT_MARKERS = %w[pyproject.toml setup.py setup.cfg manage.py requirements.txt Pipfile]
+    @python_project_dirs : Array(String)?
+
+    # Deepest directory above `path` holding a Python project marker, else its scan base
+    # — the app a file belongs to in a monorepo.
+    protected def python_project_root(path : String) : String
+      dirs = @python_project_dirs ||= PROJECT_MARKERS.flat_map { |m| get_files_by_basename(m) }
+        .map { |f| Noir::PathScope.normalize_root(File.dirname(f)) }.uniq!
+      expanded = Noir::PathScope.expand(path)
+      dirs.select { |dir| Noir::PathScope.under_normalized_root?(expanded, dir) }.max_by?(&.size) || configured_base_for(path)
+    end
+
     private def self.path_for_test_convention_match(path : String, base_path : String?) : String
       Noir::PathScope.relative_under(path, base_path)
+    end
+
+    # Production `.py` sources from the extension index: drops
+    # site-packages and standard test paths once so adapters don't
+    # re-walk monorepo noise. Prefer this (or the helpers below) over
+    # `get_files_by_extension(".py")` + nested `base_paths.each`.
+    protected def python_source_files : Array(String)
+      get_files_by_extension(".py").reject do |path|
+        base_relative_path(path).includes?("/site-packages/") || python_test_path?(path)
+      end
+    end
+
+    # Yield each production `.py` path with its owning configured base.
+    # Single-base scans skip multi-base resolution; multi-base uses the
+    # longest-match cache in `configured_base_for` instead of O(bases)
+    # `path_under_root?` checks per file.
+    protected def each_python_source(&block : String, String -> Nil) : Nil
+      files = python_source_files
+      if base_paths.size <= 1
+        base = base_paths.first? || ""
+        files.each { |path| block.call(path, base) }
+      else
+        files.each { |path| block.call(path, python_base_path_for(path)) }
+      end
+    end
+
+    # Parallel walk of production Python sources. Same fiber model as
+    # the other engines' `parallel_file_scan`. Use only when per-file
+    # work is independent (no shared cross-file maps mutated without
+    # synchronization). Analyzers that accumulate blueprint/app state
+    # across files should use `each_python_source` instead.
+    #
+    # Deliberately no `begin/rescue` around `block.call`. There was one, and
+    # because it sat *inside* the `parallel_analyze` block it caught the
+    # exception before `parallel_analyze`'s own rescue could tally it — so a
+    # file every Python analyzer failed on was a `--debug` line and nothing
+    # else, while the identical failure under `scan_files` produced an
+    # `errors` entry and `--strict` exit 2. `parallel_analyze` already
+    # isolates the failure to the one file; this is where it gets recorded.
+    protected def parallel_python_sources(&block : String, String -> Nil) : Nil
+      files = python_source_files
+      if base_paths.size <= 1
+        base = base_paths.first? || ""
+        parallel_analyze(files) { |path| block.call(path, base) }
+      else
+        parallel_analyze(files) { |path| block.call(path, python_base_path_for(path)) }
+      end
+    end
+
+    # Splits call arguments on top-level commas, keeping every empty part so
+    # positional indexing of the result stays valid.
+    protected def split_python_arguments(args : ::String) : Array(::String)
+      Noir::TopLevelSplit.split(args, ',', Noir::TopLevelSplit::Rules::PYTHON)
+    end
+
+    # Walk forward from `def_index` collecting lines at strictly greater
+    # indentation than the def line — that's the function body. The def
+    # line itself is not included.
+    protected def extract_function_body(lines : Array(::String), def_index : Int32) : ::String
+      return "" if def_index >= lines.size
+      def_line = lines[def_index]
+      base_indent = def_line.size - def_line.lstrip.size
+
+      body = [] of ::String
+      i = def_index + 1
+      while i < lines.size
+        line = lines[i]
+        if line.strip.empty?
+          body << line
+          i += 1
+          next
+        end
+        current_indent = line.size - line.lstrip.size
+        break if current_indent <= base_indent
+        body << line
+        i += 1
+      end
+      body.join("\n")
+    end
+
+    # `<receiver>.get("x")` / `.pop("x")` / `["x"]`, capturing the whole
+    # dotted receiver (the lookbehind keeps a long chain linear).
+    DICT_READ_RE = /(?<![\w.])((?:\w+\.)*\w+)(?:\.(?:get|pop)\(\s*['"]([^'"]+)['"]|\[\s*['"]([^'"]+)['"]\s*\])/
+
+    # Request parameters of a handler whose keyword arguments are the
+    # request's: its named arguments plus the keys read off its `**kwargs`
+    # dict or one of `request_dicts` (Odoo `request.params`, Frappe
+    # `frappe.form_dict`), also when qualified (`http.request.params`).
+    protected def handler_kwarg_names(lines : Array(::String), def_line : Int32, body : ::String,
+                                      request_dicts : Array(::String)) : Array(::String)
+      names = [] of ::String
+      kwargs = nil
+      parse_function_def(lines, def_line).try &.params.each do |param|
+        name = param.name
+        if name.starts_with?("**")
+          kwargs = name[2..]
+        elsif !name.starts_with?("*") && name != "self" && !name.empty?
+          names << name
+        end
+      end
+
+      body.scan(DICT_READ_RE) do |m|
+        receiver = m[1]
+        names << (m[2]? || m[3]) if receiver == kwargs || request_dicts.any? { |d| receiver == d || receiver.ends_with?(".#{d}") }
+      end
+      names.uniq
     end
 
     # Parses the definition of a function from the source lines starting at a given index
@@ -64,7 +212,9 @@ module Analyzer::Python
 
       # Extract the function name and parameter line
       name = def_line.split("def ", 2)[1].split("(", 2)[0].strip
-      param_line = def_line.split("(", 2)[1]
+      # Indexed as a Char array: `String#[]` is O(index) on non-ASCII text,
+      # which made a long non-ASCII default quadratic.
+      param_line = def_line.split("(", 2)[1].chars
 
       index = 0
       # Accumulate field text in builders rather than `String += Char`: a single
@@ -77,18 +227,61 @@ module Analyzer::Python
       is_option = false
       is_default = false
       bracket_count = 0
+      # `{` / `}` needs the same depth tracking `[` / `]` gets. Without it a
+      # dict or set default leaks its separators into the parameter loop:
+      # `def f(tags: set = {"x", "y"}, after: str = "t")` split on the comma
+      # inside the braces and produced a parameter literally named `"y"}`.
+      brace_count = 0
       parentheses_count = 1
+
+      # Quoted runs, tracked exactly as `python_delimiter_delta` does it (same
+      # escape rule, same "only same-line quoting is modelled" limit — the
+      # reset below restores it per line).
+      #
+      # Nothing here was quote-aware before, so every delimiter inside a
+      # string default was counted as structure: `def f(a: str = "(", b: int
+      # = 1)` lost both parameters because the `(` was never closed, and
+      # `def f(a: str = "x,y", b: str = "t")` split mid-literal into a
+      # parameter named `y"`. The depth counters also ran negative on a
+      # stray closer, and since the split guard demands EXACTLY zero, one
+      # unbalanced character disabled every remaining split in the header —
+      # so both counters are clamped at zero, the same rule
+      # `Noir::TopLevelSplit::Rules::PYTHON` already applies.
+      in_quote : Char? = nil
+      escaped = false
 
       line_index = start_index
       # Iterate over the parameter line to parse each parameter
       while parentheses_count != 0
         while index < param_line.size
           char = param_line[index]
-          if char == '['
+          if in_quote
+            # Inside a quoted run every delimiter is literal text. This must
+            # not skip the append below — the characters are still part of
+            # the name/type/default being built.
+            if escaped
+              escaped = false
+            elsif char == '\\'
+              escaped = true
+            elsif char == in_quote
+              in_quote = nil
+            end
+          elsif char == '\'' || char == '"'
+            in_quote = char
+          elsif char == '#'
+            # A comment runs to the end of the line. Read as text it glued
+            # onto the next parameter's name (`q: str = None,  # search`
+            # lost the parameter on the following line).
+            break
+          elsif char == '['
             bracket_count += 1
           elsif char == ']'
-            bracket_count -= 1
-          elsif bracket_count == 0
+            bracket_count -= 1 if bracket_count > 0
+          elsif char == '{'
+            brace_count += 1
+          elsif char == '}'
+            brace_count -= 1 if brace_count > 0
+          elsif bracket_count == 0 && brace_count == 0
             if char == '('
               parentheses_count += 1
             elsif parentheses_count == 1 && char == '='
@@ -114,7 +307,13 @@ module Analyzer::Python
                 end
                 break
               end
-            elsif char == ':'
+            elsif parentheses_count == 1 && !is_default && char == ':'
+              # Only the annotation colon separates name from type, and it is
+              # always at depth 1 before any `=`. A `:` seen anywhere else
+              # belongs to the text it sits in — `Query(description="a: b")`,
+              # a nested dict, a lambda — and used to be dropped on the floor,
+              # which is what mangled a multi-line `Cookie(openapi_examples=
+              # {"Cookie One": {...}})` default into `"Cookie One" {...}`.
               is_option = true
               index += 1
               next
@@ -134,8 +333,13 @@ module Analyzer::Python
 
         line_index += 1
         if line_index < source_lines.size
-          param_line = source_lines[line_index]
+          param_line = source_lines[line_index].chars
           index = 0
+          # An unterminated quote is a same-line artefact (a `#` comment, a
+          # triple-quoted opener), not a run that should swallow the rest of
+          # the header — reset with the line, as `python_delimiter_delta` does.
+          in_quote = nil
+          escaped = false
           next
         end
 
@@ -154,9 +358,96 @@ module Analyzer::Python
       Noir::ImportGraph::Python.find_imported_modules(app_base_path, file_path, content)
     end
 
-    # See `find_imported_modules` — same delegator.
-    def find_imported_package(package_path : ::String, dotted_as_names : ::String) : Array(Tuple(::String, ::String, Int32))
-      Noir::ImportGraph::Python.find_imported_package(package_path, dotted_as_names)
+    # Resolve a handler reference that is not defined in `current_path`
+    # to `{file, function_name}`: `module.func` through an import or a
+    # sibling `module.py`, a bare `func` through a `from … import func`.
+    protected def resolve_external_handler(handler_name : ::String,
+                                           current_path : ::String,
+                                           import_modules : Hash(::String, Tuple(::String, Int32))) : Tuple(::String, ::String)?
+      reference = handler_name.strip
+      return if reference.empty?
+
+      if reference.includes?(".")
+        receiver, function_name = reference.split(".", 2)
+        if import_info = import_modules[receiver]?
+          import_path = import_info.first
+          return {import_path, function_name} unless import_path.empty?
+        end
+
+        sibling_module_path = File.join(File.dirname(current_path), "#{receiver}.py")
+        return {sibling_module_path, function_name} if File.exists?(sibling_module_path)
+
+        return
+      end
+
+      if import_info = import_modules[reference]?
+        import_path = import_info.first
+        return {import_path, reference} unless import_path.empty?
+      end
+
+      nil
+    end
+
+    # Methods a request-param type can arrive on (`nil` = any) for the
+    # Flask-style analyzers (Flask, Quart, Sanic). `QUERY` (RFC 10008) is
+    # safe/idempotent like GET but, per the method's whole purpose, carries
+    # its filter criteria in a request body like POST — so it joins the
+    # body-bearing methods for "form"/"json", not the read-only "query"
+    # (query-string) type.
+    REQUEST_PARAM_TYPES = {
+      "query"  => nil,
+      "form"   => ["POST", "PUT", "PATCH", "DELETE", "QUERY"],
+      "json"   => ["POST", "PUT", "PATCH", "DELETE", "QUERY"],
+      "cookie" => nil,
+      "header" => nil,
+    }
+
+    # Keep the params `method` can carry per `REQUEST_PARAM_TYPES`,
+    # deduplicated by (name, param_type).
+    protected def get_filtered_params(method : ::String, params : Array(Param)) : Array(Param)
+      filtered_params = Array(Param).new
+      upper_method = method.upcase
+
+      params.each do |param|
+        support_methods = REQUEST_PARAM_TYPES.fetch(param.param_type, nil)
+        next unless support_methods.nil? || support_methods.any? { |support_method| upper_method == support_method.upcase }
+        next if filtered_params.any? { |filtered| filtered.name == param.name && filtered.param_type == param.param_type }
+
+        filtered_params << param
+      end
+
+      filtered_params
+    end
+
+    # Memoized per keyword — the keyword set is tiny (`path`, `prefix`,
+    # `handler`, ...) but these run per argument of every programmatic
+    # route, and an interpolated regex literal recompiles on every call.
+    @keyword_regex_cache = Hash(::String, Regex).new
+
+    private def keyword_argument_regex(keyword : ::String) : Regex
+      @keyword_regex_cache[keyword] ||= /^\s*#{Regex.escape(keyword)}\s*=\s*(.+)$/m
+    end
+
+    # The stripped value of the first `keyword=<value>` among split call
+    # arguments, or nil when none names `keyword`.
+    protected def extract_python_keyword_expression(args : Array(::String), keyword : ::String) : ::String?
+      keyword_re = keyword_argument_regex(keyword)
+      args.each do |arg|
+        keyword_match = arg.match(keyword_re)
+        return keyword_match[1].strip if keyword_match
+      end
+
+      nil
+    end
+
+    # Like `extract_python_keyword_expression`, but only when the value is a
+    # string literal (returned unquoted).
+    protected def extract_python_keyword_string(args : Array(::String), keyword : ::String) : ::String?
+      if expression = extract_python_keyword_expression(args, keyword)
+        return Helper.extract_python_string(expression)
+      end
+
+      nil
     end
 
     # Finds all parameters in JSON objects within a given code block
@@ -176,16 +467,12 @@ module Analyzer::Python
         var_patterns.each do |json_var_name, subscript_regex, get_regex|
           next unless codeblock_line.includes?(json_var_name)
           matches = codeblock_line.scan(subscript_regex)
-          if matches.size == 0
+          if matches.empty?
             matches = codeblock_line.scan(get_regex)
           end
 
-          unless matches.nil?
-            matches.each do |match|
-              if match.size > 0
-                params << Param.new(match[1], "", "json")
-              end
-            end
+          matches.each do |match|
+            params << Param.new(match[1], "", "json")
           end
         end
       end
@@ -195,15 +482,11 @@ module Analyzer::Python
 
     # Parses a function or class definition from a string or an array of strings
     def parse_code_block(data : ::String | Array(::String), after : Regex? = nil) : ::String?
-      content = ""
-      lines = [] of ::String
-      if data.is_a?(::String)
-        lines = data.split("\n")
-        content = data
-      else
-        lines = data
-        content = data.join("\n")
-      end
+      # The block is returned as its own lines re-joined, never as a slice
+      # of `data` joined whole: callers pass the rest of the file, and
+      # joining all of it once per handler made a file with many routes
+      # quadratic.
+      lines = data.is_a?(::String) ? data.split("\n") : data
 
       # Remove lines before the "after" line if provided
       unless after.nil?
@@ -211,7 +494,6 @@ module Analyzer::Python
         lines.each_with_index do |line, index|
           if line.starts_with?(after)
             lines = lines[index..]
-            content = lines.join("\n")
             break
           end
         end
@@ -235,7 +517,7 @@ module Analyzer::Python
       if indent_size > 0
         double_quote_open, single_quote_open = [false, false]
         double_comment_open, single_comment_open = [false, false]
-        end_index = lines[0].size + 1
+        kept = 1
         # A `def`/`class` signature frequently wraps across lines, with
         # the closing `)` and a `-> T:` return annotation sitting at
         # column 0 — at or below the body's indent. Those header lines
@@ -244,17 +526,51 @@ module Analyzer::Python
         # handlers (`def read_items(\n  session: Dep,\n) -> Any:`) hit
         # this on nearly every endpoint.
         header_span = python_signature_line_span(lines)
-        lines[1..].each_with_index do |line, body_idx|
+        (1...lines.size).each do |line_number|
+          line = lines[line_number]
+          body_idx = line_number - 1
           line_index = 0
           clear_line = line
-          while line_index < line.size
-            if line_index < line.size - 2
+          # `String#[](Int)` walks from the start of the string on every call
+          # once the content is not single-byte, so indexing `line` inside this
+          # loop was O(n^2) per line on any file with a non-ASCII comment or
+          # string literal — and `line[i..i + 2]` allocated a three-character
+          # String for every character besides. `join_multiline_call` in
+          # `python/tornado.cr` already carried the same `chars` fix with the
+          # same reasoning.
+          chars = line.chars
+          size = chars.size
+          # A backslash inside a quoted run consumes the next character,
+          # whatever it is. This used to be a one-character lookback
+          # (`line[line_index - 1] != '\\'`), which cannot tell an escaped
+          # quote from an escaped BACKSLASH followed by a quote: `"C:\\"` read
+          # as unterminated, so the run stayed open and the rest of the line —
+          # `#` comments included — was swallowed. Same defect as #2625 fixed
+          # in the Express router-mount scanner. The lookback also indexed
+          # `line[-1]` at column 0, and a negative index counts from the END of
+          # the string in Crystal, so a quote in column 0 was read as escaped
+          # whenever the line happened to end in a backslash.
+          #
+          # Reset per line, like the quote flags are not: a backslash at
+          # end-of-line continues a string, but the continuation is a fresh
+          # line and the first character of it is not escaped.
+          escaped = false
+          while line_index < size
+            ch = chars[line_index]
+
+            if escaped
+              escaped = false
+              line_index += 1
+              next
+            end
+
+            if line_index < size - 2
               if !single_quote_open && !double_quote_open
-                if !double_comment_open && line[line_index..line_index + 2] == "'''"
+                if !double_comment_open && ch == '\'' && chars[line_index + 1] == '\'' && chars[line_index + 2] == '\''
                   single_comment_open = !single_comment_open
                   line_index += 3
                   next
-                elsif !single_comment_open && line[line_index..line_index + 2] == "\"\"\""
+                elsif !single_comment_open && ch == '"' && chars[line_index + 1] == '"' && chars[line_index + 2] == '"'
                   double_comment_open = !double_comment_open
                   line_index += 3
                   next
@@ -263,12 +579,22 @@ module Analyzer::Python
             end
 
             if !single_comment_open && !double_comment_open
-              if !single_quote_open && line[line_index] == '"' && line[line_index - 1] != '\\'
+              if ch == '\\' && (single_quote_open || double_quote_open)
+                escaped = true
+              elsif !single_quote_open && ch == '"'
                 double_quote_open = !double_quote_open
-              elsif !double_quote_open && line[line_index] == '\'' && line[line_index - 1] != '\\'
+              elsif !double_quote_open && ch == '\''
                 single_quote_open = !single_quote_open
-              elsif !single_quote_open && !double_quote_open && line[line_index] == '#' && line[line_index - 1] != '\\'
-                clear_line = line[..(line_index - 1)]
+              elsif !single_quote_open && !double_quote_open && ch == '#'
+                # Exclusive range, NOT `line[..(line_index - 1)]`: at
+                # `line_index == 0` that is `line[..-1]`, and a negative range
+                # end counts from the end of the string in Crystal, so a
+                # comment starting at column 0 kept the WHOLE line as its
+                # comment-stripped form. The indent test below then read `#`
+                # as code at column 0 and ended the block, truncating the rest
+                # of the function body — every param and callee after a
+                # column-0 comment was lost.
+                clear_line = line[...line_index]
                 break
               end
             end
@@ -280,17 +606,14 @@ module Analyzer::Python
           # `body_idx` is 0-based within `lines[1..]`, so absolute line
           # `body_idx + 1`. While that is still inside the multi-line
           # signature, keep the line unconditionally.
-          if body_idx + 1 < header_span
-            end_index += line.size + 1
-          elsif clear_line[0..(indent_size - 1)].strip.empty? || open_status
-            end_index += line.size + 1
+          if body_idx + 1 < header_span || clear_line[0..(indent_size - 1)].strip.empty? || open_status
+            kept += 1
           else
             break
           end
         end
 
-        end_index -= 1
-        return content[..end_index].strip
+        return lines[0, kept].join("\n").strip
       end
 
       nil
@@ -333,20 +656,102 @@ module Analyzer::Python
       1
     end
 
-    # Returns the literal value from a string if it represents a number or a quoted string
-    def return_literal_value(data : ::String) : ::String
-      # Check if the data is numeric
-      return data if data.numeric?
+    # FastAPI / django-ninja parameter markers. `q: str = Query("abc")` does
+    # not default `q` to the *object* `Query("abc")` — the marker is a
+    # declaration, and the default it carries is its first positional
+    # argument or its `default=` keyword.
+    PARAM_MARKER_CALLS = %w[Query Header Cookie Path Body Form File]
 
-      # Check if the data is a string
-      if data.size != 0
-        if data[0] == data[-1] && data[0].in?('"', '\'')
-          return data[1..-2]
+    # Python spellings for "there is no value here". `...` (Ellipsis) is how
+    # FastAPI marks a *required* parameter, so it is an absence too.
+    PYTHON_EMPTY_LITERALS = %w[None ... Ellipsis]
+
+    # Python's two triple-quote fences, spelled as an explicit array because
+    # `%w[""" ''']` reads as a `%w` element containing quote characters.
+    TRIPLE_QUOTE_FENCES = ["\"\"\"", "'''"]
+
+    # The request-ready value a Python parameter default evaluates to.
+    #
+    # Anything that is not a literal has no value, and returning the source
+    # text instead is worse than returning nothing: `value` is what the
+    # curl / httpie / PowerShell / Postman / OpenAPI builders put on the
+    # wire, so a leaked expression became `-H 'x_token: Header(None)'` and
+    # `?q=Query()`. Callers only ever ask this to turn a default into a
+    # value, so a non-literal answers with the empty string — the same thing
+    # a parameter with no default at all produces.
+    def return_literal_value(data : ::String) : ::String
+      python_literal_value(data) || ""
+    end
+
+    # The literal `expr` evaluates to, or nil when it is not a literal.
+    #
+    # Separate from `return_literal_value` because "not a literal" and "the
+    # empty string" are different answers here: `Query()` is not a literal
+    # (recurse no further), while `Query(None)` unwraps to one that happens
+    # to be empty.
+    private def python_literal_value(expr : ::String, depth : Int32 = 0) : ::String?
+      value = expr.strip
+      return if value.empty?
+      # Guards a pathological `Query(Query(Query(...)))`; real markers nest
+      # one deep at most.
+      return if depth > 4
+
+      return value if value.to_f?
+
+      TRIPLE_QUOTE_FENCES.each do |fence|
+        if value.size >= fence.size * 2 && value.starts_with?(fence) && value.ends_with?(fence)
+          return value[fence.size..-(fence.size + 1)]
         end
       end
 
-      data
+      if value.size >= 2 && value[0] == value[-1] && value[0].in?('"', '\'')
+        return value[1..-2]
+      end
+
+      # Python's booleans are `True`/`False`; the wire wants `true`/`false`.
+      return "true" if value == "True"
+      return "false" if value == "False"
+      return "" if PYTHON_EMPTY_LITERALS.includes?(value)
+
+      if inner = param_marker_default(value)
+        return python_literal_value(inner, depth + 1)
+      end
+
+      nil
     end
+
+    # The default expression carried by a `Query(...)` / `Header(...)` style
+    # marker call, or nil when `expr` is not one of those calls (or carries
+    # no default). `fastapi.Query(...)` and `params.Query(...)` count too.
+    private def param_marker_default(expr : ::String) : ::String?
+      return unless expr.ends_with?(')')
+      open = expr.index('(')
+      return unless open && open > 0
+
+      callee = expr[0, open].strip.split('.').last
+      return unless PARAM_MARKER_CALLS.includes?(callee)
+
+      args = expr[(open + 1)..-2]
+      return if args.blank?
+
+      positional = nil
+      Noir::TopLevelSplit.split(args, ',', Noir::TopLevelSplit::Rules::PYTHON).each do |raw|
+        arg = raw.strip
+        next if arg.empty?
+        # Matched rather than `includes?('=')` so `Query("a=b")` still reads
+        # as positional and `Query(default = 3)` still reads as a keyword.
+        if kwarg = KEYWORD_ARGUMENT_RE.match(arg)
+          return arg[kwarg[0].size..].strip if kwarg[1] == "default"
+          next
+        end
+        positional ||= arg
+      end
+
+      positional
+    end
+
+    # `name =` at the head of a call argument, excluding `==`/`>=`/`<=`/`!=`.
+    KEYWORD_ARGUMENT_RE = /\A([A-Za-z_]\w*)\s*=(?!=)/
 
     # `PackageType::FILE` / `PackageType::CODE` constants are now
     # canonical at `Noir::ImportGraph::Python::PackageType`. Aliasing
@@ -375,10 +780,11 @@ module Analyzer::Python
         end
 
         if stripped.starts_with?('@')
-          paren_delta = python_paren_delta(lines[i])
+          paren_delta, triple = python_call_line_delta(lines[i], nil)
           i += 1
           while i < lines.size && paren_delta > 0
-            paren_delta += python_paren_delta(lines[i])
+            line_delta, triple = python_call_line_delta(lines[i], triple)
+            paren_delta += line_delta
             i += 1
           end
           next
@@ -396,6 +802,26 @@ module Analyzer::Python
         return
       end
       nil
+    end
+
+    # The handler whose `def` sits at 0-based `def_index`: its name, the
+    # file and the 1-based def line. A method is reported as
+    # `Class.method` (Flask `MethodView`, aiohttp `View`), found by walking
+    # up to the first less-indented statement.
+    # ponytail: a def nested inside a function reports its bare name.
+    def handler_at(lines : Array(::String), def_index : Int32, path : ::String) : Handler?
+      def_match = lines[def_index]?.try(&.match(/\A(\s*)(?:async\s+)?def\s+([A-Za-z_]\w*)/)) || return
+      indent, name = def_match[1].size, def_match[2]
+      i = def_index - 1
+      while indent > 0 && i >= 0
+        line = lines[i]
+        i -= 1
+        stripped = line.lstrip
+        next if stripped.empty? || stripped.starts_with?('#') || stripped.starts_with?('@') || line.size - stripped.size >= indent
+        name = "#{$1}.#{name}" if stripped =~ /\Aclass\s+([A-Za-z_]\w*)/
+        break
+      end
+      Handler.new(name, path, def_index + 1)
     end
 
     # Build 1-hop callees observed in `body` (a handler's Python
@@ -432,14 +858,6 @@ module Analyzer::Python
       resolve_python_callee_definitions(callees, base_path, path, source)
     end
 
-    # Callees feed both `--include-callee` (direct output) and `--ai-context`
-    # (aggregated review context). Skip the tree-sitter walk and import-graph
-    # resolution when neither flag is set so default Python scans avoid the
-    # per-handler callee build.
-    private def callees_needed? : Bool
-      any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
-    end
-
     # Convenience wrapper around `build_callees_from`: parse + push in
     # one call when one body maps to exactly one endpoint.
     # `Endpoint#push_callee` enforces dedup and the per-endpoint cap.
@@ -464,8 +882,8 @@ module Analyzer::Python
                                                   caller_path : ::String,
                                                   caller_source : ::String?) : Array(Callee)
       source_cache = Hash(::String, ::String).new
-      source_cache[caller_path] = caller_source || read_file_content(caller_path)
-      import_map = find_imported_modules(app_base_path, caller_path, source_cache[caller_path])
+      source = source_cache[caller_path] = caller_source || read_file_content(caller_path)
+      import_map = callee_import_map(app_base_path, caller_path, source)
 
       callees.map do |callee|
         if definition = resolve_python_callee_definition(callee.name, caller_path, source_cache, import_map)
@@ -507,57 +925,92 @@ module Analyzer::Python
       return if parts.empty?
 
       if parts.size == 1
-        line = find_python_function_or_class_line(source, parts[0])
+        line = find_python_function_or_class_line(path, source, parts[0])
         return {path, line} if line
         return
       end
 
-      if line = find_python_class_method_line(source, parts[0], parts[1])
+      if line = find_python_class_method_line(path, source, parts[0], parts[1])
         return {path, line}
       end
     end
 
-    private def find_python_function_or_class_line(source : ::String, name : ::String) : Int32?
+    # Callee resolution runs once per endpoint, and each lookup used to
+    # re-split the file and scan it from the top — once per callee, even for
+    # a dotted `request.args.get` that names no class in it — so a module
+    # with N handlers cost O(N²). Each file's definitions are indexed once,
+    # keyed by path; `source` is kept to tell a different text for the same
+    # path apart (compared by content, so a re-read file still hits).
+    private record DefinitionIndex,
+      source : ::String,
+      # First line (0-based) that defines the name as a function or class.
+      first_def_or_class : Hash(::String, Int32),
+      # For the first class of each name, the first line in its body that
+      # defines each function name (nested ones included).
+      class_methods : Hash(::String, Hash(::String, Int32))
+
+    @definition_indexes = Hash(::String, DefinitionIndex).new
+    @callee_import_maps = Hash(Tuple(::String, ::String), Tuple(::String, Hash(::String, Tuple(::String, Int32)))).new
+
+    private def callee_import_map(app_base_path : ::String, caller_path : ::String, source : ::String) : Hash(::String, Tuple(::String, Int32))
+      key = {app_base_path, caller_path}
+      if (cached = @callee_import_maps[key]?) && cached[0] == source
+        return cached[1]
+      end
+      import_map = find_imported_modules(app_base_path, caller_path, source)
+      @callee_import_maps[key] = {source, import_map}
+      import_map
+    end
+
+    private def definition_index(path : ::String, source : ::String) : DefinitionIndex
+      if (cached = @definition_indexes[path]?) && cached.source == source
+        return cached
+      end
+
+      first_def_or_class = Hash(::String, Int32).new
+      class_methods = Hash(::String, Hash(::String, Int32)).new
+      # Bodies of the first class of each name still open at this line,
+      # as {class indent, methods}; indents strictly increase. A body ends
+      # at the first line indented no deeper than its class, not counting
+      # blank, comment or decorator lines.
+      open = [] of Tuple(Int32, Hash(::String, Int32))
       source.lines.each_with_index do |line, index|
         stripped = line.lstrip
-        next if stripped.starts_with?("#")
-        if python_def_matches?(stripped, name) || python_class_matches?(stripped, name)
-          return index + 1
-        end
-      end
-    end
-
-    private def find_python_class_method_line(source : ::String, class_name : ::String, method_name : ::String) : Int32?
-      lines = source.lines
-      class_indent : Int32? = nil
-
-      lines.each_with_index do |line, index|
-        stripped = line.lstrip
-        next if stripped.starts_with?("#")
-
-        if class_indent.nil?
-          next unless python_class_matches?(stripped, class_name)
-
-          class_indent = line.size - stripped.size
-          next
-        end
-
+        next if stripped.empty? || stripped.starts_with?('@') || stripped.starts_with?('#')
         indent = line.size - stripped.size
-        next if stripped.empty? || stripped.starts_with?("@") || stripped.starts_with?("#")
-        if current_class_indent = class_indent
-          return if indent <= current_class_indent
+        while (last = open.last?) && last[0] >= indent
+          open.pop
         end
 
-        return index + 1 if python_def_matches?(stripped, method_name)
+        if name = definition_name(stripped, "def ", '(') || definition_name(stripped, "async def ", '(')
+          first_def_or_class[name] ||= index
+          open.each { |entry| entry[1][name] ||= index }
+        elsif name = definition_name(stripped, "class ", ':', '(')
+          first_def_or_class[name] ||= index
+          unless class_methods.has_key?(name)
+            methods = class_methods[name] = Hash(::String, Int32).new
+            open << {indent, methods}
+          end
+        end
       end
+      @definition_indexes[path] = DefinitionIndex.new(source, first_def_or_class, class_methods)
     end
 
-    private def python_def_matches?(stripped : ::String, name : ::String) : Bool
-      stripped.starts_with?("def #{name}(") || stripped.starts_with?("async def #{name}(")
+    # The name a `def NAME(` / `async def NAME(` / `class NAME:` /
+    # `class NAME(` line declares: the text between `keyword` and the first
+    # terminator.
+    private def definition_name(stripped : ::String, keyword : ::String, *terminators : Char) : ::String?
+      return unless stripped.starts_with?(keyword)
+      stop = terminators.compact_map { |char| stripped.index(char, keyword.size) }.min?
+      stripped[keyword.size...stop] if stop
     end
 
-    private def python_class_matches?(stripped : ::String, name : ::String) : Bool
-      stripped.starts_with?("class #{name}:") || stripped.starts_with?("class #{name}(")
+    private def find_python_function_or_class_line(path : ::String, source : ::String, name : ::String) : Int32?
+      definition_index(path, source).first_def_or_class[name]?.try(&.+(1))
+    end
+
+    private def find_python_class_method_line(path : ::String, source : ::String, class_name : ::String, method_name : ::String) : Int32?
+      definition_index(path, source).class_methods[class_name]?.try(&.[method_name]?).try(&.+(1))
     end
 
     class FunctionParameter
@@ -584,14 +1037,12 @@ module Analyzer::Python
       end
 
       def to_s : ::String
-        if @type.size != 0
-          if @default.size != 0
-            "Name(#{@name}): Type(#{@type}) = Default(#{@default})"
-          else
-            "Name(#{@name}): Type(#{@type})"
-          end
-        else
+        if @type.empty?
           "Name(#{@name})"
+        elsif @default.empty?
+          "Name(#{@name}): Type(#{@type})"
+        else
+          "Name(#{@name}): Type(#{@type}) = Default(#{@default})"
         end
       end
 
@@ -620,25 +1071,30 @@ module Analyzer::Python
       def params : Array(FunctionParameter)
         @params
       end
-
-      def add_parameter(param : FunctionParameter)
-        @params << param
-      end
     end
 
-    # Net `(` − `)` count on a single Python source line, ignoring
-    # parens that fall inside single- or double-quoted strings on the
-    # same line. Sufficient for decorator / function-call headers,
-    # which never carry triple-quoted strings on the call line.
+    # Net `open_char` − `close_char` count on a single Python source
+    # line, ignoring delimiters that fall inside single- or
+    # double-quoted strings on the same line — a `"("` inside a route
+    # pattern or a `"["` inside a regex must not move the depth.
+    # Backslash escapes are tracked inside a quoted run so that `\'`
+    # / `\"` do not close it early.
     #
-    # Used by analyzers that walk source line-by-line and need to
-    # join continuation lines into one logical call (e.g. multi-line
-    # decorators in FastAPI / Litestar / Sanic / Bottle, multi-line
-    # `Route(...)` entries in Starlette).
-    def python_paren_delta(line : ::String) : Int32
+    # Only same-line quoting is modelled: `in_quote` resets on every
+    # call, so a triple-quoted string spanning lines is not tracked.
+    # That is sufficient for the shapes the callers care about —
+    # decorator / call headers and collection literals never open a
+    # triple-quoted string on the line being counted.
+    #
+    # Unbalanced input is reported as-is (negative when the line
+    # closes more than it opens); callers decide what to do with it.
+    private def python_delimiter_delta(line : ::String,
+                                       open_char : Char,
+                                       close_char : Char) : Int32
       depth = 0
-      in_quote = nil
+      in_quote : Char? = nil
       escaped = false
+
       line.each_char do |ch|
         if in_quote
           if escaped
@@ -650,16 +1106,39 @@ module Analyzer::Python
           end
           next
         end
+
         case ch
         when '\'', '"'
           in_quote = ch
-        when '('
+        when open_char
           depth += 1
-        when ')'
+        when close_char
           depth -= 1
         end
       end
+
       depth
+    end
+
+    # Net `(` − `)` count on a single Python source line.
+    #
+    # Used by analyzers that walk source line-by-line and need to
+    # join continuation lines into one logical call (e.g. multi-line
+    # decorators in FastAPI / Litestar / Sanic / Bottle, multi-line
+    # `Route(...)` entries in Starlette).
+    def python_paren_delta(line : ::String) : Int32
+      python_delimiter_delta(line, '(', ')')
+    end
+
+    # Net `[` − `]` count on a single Python source line.
+    #
+    # Used where the construct being followed is a collection literal
+    # rather than a call: Django's `urlpatterns = [...]` / inline
+    # `include([...])`, aiohttp's route-table lists, and the
+    # Flask / Quart collection assignments that add both deltas
+    # together to follow a mixed `[... (...) ...]` continuation.
+    def python_bracket_delta(line : ::String) : Int32
+      python_delimiter_delta(line, '[', ']')
     end
 
     # Given a 0-based `index` into `lines` whose content `line` is
@@ -673,17 +1152,173 @@ module Analyzer::Python
     def join_until_python_call_closes(lines : Array(::String),
                                       index : Int32,
                                       line : ::String) : ::String
-      pieces = [line]
-      delta = python_paren_delta(line)
+      # Each piece is cut at its `#` comment: joined onto one line, the
+      # comment text glued onto the next argument (`add_api_route(  # v2`
+      # made the path argument `# v2 "/x"`).
+      delta, triple, comment = python_call_line_scan(line, nil)
+      return line unless delta > 0
+      pieces = [line.byte_slice(0, comment)]
       i = index + 1
       while i < lines.size && delta > 0
         nxt = lines[i]
-        pieces << nxt
-        delta += python_paren_delta(nxt)
-        break if delta <= 0
+        line_delta, triple, comment = python_call_line_scan(nxt, triple)
+        pieces << nxt.byte_slice(0, comment)
+        delta += line_delta
         i += 1
       end
       pieces.join(' ')
+    end
+
+    # `(` − `)` on one physical line of a call that may span lines, plus
+    # the triple-quote delimiter (`"` / `'`) still open at its end. Unlike
+    # `python_paren_delta` this carries a `"""` / `'''` run across lines,
+    # so it can tell a `#` comment (`@get("/a")  # old (remove`, which must
+    # not keep the call open) from a `#` inside a multi-line string
+    # (`Returns things (see issue #12)`, which is text).
+    private def python_call_line_delta(line : ::String, triple : Char?) : Tuple(Int32, Char?)
+      depth, triple, _ = python_call_line_scan(line, triple)
+      {depth, triple}
+    end
+
+    # `lines` with each call or subscript left open at a line end folded
+    # onto the line that opens it, so a per-line accessor regex sees
+    # black's wrap of a long call (`request.args.get(` / `"q"` / `)`) as
+    # `request.args.get("q")`. The result has the same size as `lines`: a
+    # folded line's continuations become `""`, so indexes (and the line
+    # numbers derived from them) still line up. Folded pieces are cut at
+    # their `#` comment and stripped; a line that closes on its own comes
+    # back cut at its comment only, and so does one still open after
+    # `Noir::CallFold::MAX_CONTINUATION_LINES` (a long call, not a wrapped
+    # read). Triple-quoted strings are tracked across the block, so a `(`
+    # in a docstring opens nothing.
+    def fold_python_continuations(lines : Array(::String)) : Array(::String)
+      folded = lines.dup
+      triple : Char? = nil
+      i = 0
+      while i < lines.size
+        delta, triple, comment = python_call_line_scan(lines[i], triple, brackets: true)
+        folded[i] = lines[i].byte_slice(0, comment) if comment < lines[i].bytesize
+        start = i
+        i += 1
+        next unless delta > 0
+
+        head = lines[start].byte_slice(0, comment).rstrip
+        inner_triple = triple
+        j = i
+        joined = String.build do |io|
+          io << head
+          last = head[-1]? || ' '
+          while j < lines.size && delta > 0 && j - start <= Noir::CallFold::MAX_CONTINUATION_LINES
+            line_delta, inner_triple, comment = python_call_line_scan(lines[j], inner_triple, brackets: true)
+            piece = lines[j].byte_slice(0, comment).strip
+            unless piece.empty?
+              # Glue the tokens back together, but keep `a` / `and b` two words.
+              io << ' ' if python_word_char?(last) && python_word_char?(piece[0])
+              io << piece
+              last = piece[-1]
+            end
+            delta += line_delta
+            j += 1
+          end
+        end
+        next if delta > 0 # unclosed: resume at the next line, which may open its own read
+
+        folded[start] = Noir::CallFold.drop_trailing_commas(joined)
+        (i...j).each { |k| folded[k] = "" }
+        i = j
+        triple = inner_triple
+      end
+      folded
+    end
+
+    private def python_word_char?(ch : Char) : Bool
+      ch.alphanumeric? || ch == '_'
+    end
+
+    # `python_call_line_delta` plus the byte offset where the line's `#`
+    # comment starts (`line.bytesize` when it has none). `brackets` also
+    # counts `[` / `]`, for a subscript wrapped like a call.
+    private def python_call_line_scan(line : ::String, triple : Char?, brackets : Bool = false) : Tuple(Int32, Char?, Int32)
+      depth = 0
+      in_quote : Char? = nil
+      escaped = false
+      # Bytes, not chars: every delimiter here is ASCII and a UTF-8
+      # continuation byte never equals one, so this needs no allocation
+      # and keeps O(1) lookahead.
+      bytes = line.to_slice
+      i = 0
+      while i < bytes.size
+        ch = bytes[i].unsafe_chr
+        if escaped
+          escaped = false
+        elsif (triple || in_quote) && ch == '\\'
+          escaped = true
+        elsif triple
+          if ch == triple && bytes[i + 1]? == bytes[i] && bytes[i + 2]? == bytes[i]
+            triple = nil
+            i += 2
+          end
+        elsif in_quote
+          in_quote = nil if ch == in_quote
+        elsif ch == '"' || ch == '\''
+          if bytes[i + 1]? == bytes[i] && bytes[i + 2]? == bytes[i]
+            triple = ch
+            i += 2
+          else
+            in_quote = ch
+          end
+        elsif ch == '#'
+          return {depth, triple, i}
+        elsif ch == '(' || (brackets && ch == '[')
+          depth += 1
+        elsif ch == ')' || (brackets && ch == ']')
+          depth -= 1
+        end
+        i += 1
+      end
+      {depth, triple, bytes.size}
+    end
+
+    def strip_python_comment(line : ::String) : ::String
+      Helper.strip_python_comment(line)
+    end
+
+    # Push mount prefixes from every node that already has some along the
+    # `{parent, mount_prefix, child}` edges, one prefix per simple path: a
+    # cycle is entered at most once instead of growing a prefix every lap.
+    # Memoised on (node, prefix), so a diamond-shaped graph stays linear in
+    # the number of distinct prefixes.
+    def propagate_mount_prefixes(prefixes : Hash(::String, Array(::String)),
+                                 edges : Array(Tuple(::String, ::String, ::String)),
+                                 &join : ::String, ::String -> ::String) : Nil
+      children = Hash(::String, Array(Tuple(::String, ::String))).new
+      edges.each do |parent, mount_prefix, child|
+        (children[parent] ||= [] of Tuple(::String, ::String)) << {mount_prefix, child}
+      end
+      seen = Set(Tuple(::String, ::String)).new
+      on_path = Set(::String).new
+      seeds = [] of Tuple(::String, ::String)
+      prefixes.each { |node, list| list.each { |prefix| seeds << {node, prefix} } }
+      seeds.each do |node, prefix|
+        visit_mount_prefix(node, prefix, children, prefixes, seen, on_path, join)
+      end
+    end
+
+    private def visit_mount_prefix(node : ::String, prefix : ::String,
+                                   children : Hash(::String, Array(Tuple(::String, ::String))),
+                                   prefixes : Hash(::String, Array(::String)),
+                                   seen : Set(Tuple(::String, ::String)),
+                                   on_path : Set(::String),
+                                   join : ::String, ::String -> ::String) : Nil
+      return unless seen.add?({node, prefix})
+      list = prefixes[node]? || (prefixes[node] = [] of ::String)
+      list << prefix unless list.includes?(prefix)
+      on_path << node
+      children[node]?.try &.each do |mount_prefix, child|
+        next if on_path.includes?(child)
+        visit_mount_prefix(child, join.call(prefix, mount_prefix), children, prefixes, seen, on_path, join)
+      end
+      on_path.delete(node)
     end
   end
 end

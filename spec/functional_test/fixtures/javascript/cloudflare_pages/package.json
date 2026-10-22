@@ -1,0 +1,11 @@
+{
+  "name": "pages-functions-app",
+  "private": true,
+  "scripts": {
+    "dev": "wrangler pages dev ./public"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20240909.0",
+    "wrangler": "^3.78.0"
+  }
+}

@@ -4,6 +4,7 @@ require "../../models/endpoint"
 # Flags WebSocket endpoints — long-lived, bidirectional channels whose
 # threat model (origin checks on the handshake, per-message authz, no
 # CSRF token on the upgrade) differs from a request/response route.
+@[Noir::TaggerFor(key: "websocket", name: "Websocket Tagger", desc: "Identifies Websocket endpoints", order: 50)]
 class WebsocketTagger < Tagger
   # AsyncAPI specs carry the raw server protocol (`ws`, `wss`,
   # `websocket`); HTTP analyzers set `ws`. Accept every spelling so
@@ -28,17 +29,10 @@ class WebsocketTagger < Tagger
   # ordinary HTTP endpoints.
   URL_MARKERS = ["socket.io", "sockjs"]
 
-  def initialize(options : Hash(String, YAML::Any))
-    super
-    @name = "websocket"
-  end
-
-  def perform(endpoints : Array(Endpoint))
-    endpoints.each do |endpoint|
-      if websocket?(endpoint)
-        tag = Tag.new("websocket", "WebSocket endpoint for real-time, bidirectional communication between clients and servers, enabling efficient data exchanges.", "WebSocket")
-        endpoint.add_tag(tag)
-      end
+  private def check_endpoint(endpoint : Endpoint)
+    if websocket?(endpoint)
+      tag = Tag.new("websocket", "WebSocket endpoint for real-time, bidirectional communication between clients and servers, enabling efficient data exchanges.", "WebSocket")
+      endpoint.add_tag(tag)
     end
   end
 

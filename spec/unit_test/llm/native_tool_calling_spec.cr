@@ -2,27 +2,17 @@ require "spec"
 require "../../../src/llm/native_tool_calling"
 
 describe LLM::NativeToolCalling do
-  describe ".default_allowlist" do
-    it "returns the default providers" do
-      LLM::NativeToolCalling.default_allowlist.should eq(["openai", "xai", "github"])
-    end
-
-    it "returns a cloned list" do
-      list = LLM::NativeToolCalling.default_allowlist
-      list << "custom"
-      LLM::NativeToolCalling.default_allowlist.should eq(["openai", "xai", "github"])
-    end
-  end
-
   describe ".default_allowlist_csv" do
     it "returns comma-separated default values" do
-      LLM::NativeToolCalling.default_allowlist_csv.should eq("openai,xai,github")
+      LLM::NativeToolCalling.default_allowlist_csv.should eq("openai,xai,github,anthropic")
     end
   end
 
   describe ".canonical_provider" do
     it "canonicalizes known providers from urls and aliases" do
       LLM::NativeToolCalling.canonical_provider("openai").should eq("openai")
+      LLM::NativeToolCalling.canonical_provider("gemini").should eq("google")
+      LLM::NativeToolCalling.canonical_provider("anthropic").should eq("anthropic")
       LLM::NativeToolCalling.canonical_provider("https://api.openai.com/v1/chat/completions").should eq("openai")
       LLM::NativeToolCalling.canonical_provider("https://api.x.ai/v1/chat/completions").should eq("xai")
       LLM::NativeToolCalling.canonical_provider("https://models.github.ai/inference/chat/completions").should eq("github")
@@ -33,11 +23,26 @@ describe LLM::NativeToolCalling do
     it "keeps unknown providers as normalized lowercase strings" do
       LLM::NativeToolCalling.canonical_provider(" CustomProvider ").should eq("customprovider")
     end
+
+    it "matches on the host rather than anywhere in the URL" do
+      # The path is chosen by whoever runs the gateway, so a substring test
+      # over the whole URL canonicalized these to a provider the operator
+      # never named — and, in `AdapterFactory`, picked the wrong API for it.
+      LLM::NativeToolCalling.canonical_provider("http://127.0.0.1:18085/ollama/v1")
+        .should eq("http://127.0.0.1:18085/ollama/v1")
+      LLM::NativeToolCalling.canonical_provider("https://gw.internal/openai/v1/chat/completions")
+        .should eq("https://gw.internal/openai/v1/chat/completions")
+    end
+
+    it "still matches a host-only form that carries no scheme" do
+      LLM::NativeToolCalling.canonical_provider("api.openai.com").should eq("openai")
+      LLM::NativeToolCalling.canonical_provider("api.x.ai").should eq("xai")
+    end
   end
 
   describe ".normalize_allowlist" do
     it "uses default allowlist when input is nil" do
-      LLM::NativeToolCalling.normalize_allowlist(nil).should eq(["openai", "xai", "github"])
+      LLM::NativeToolCalling.normalize_allowlist(nil).should eq(["openai", "xai", "github", "anthropic"])
     end
 
     it "canonicalizes, de-duplicates, and trims custom input" do

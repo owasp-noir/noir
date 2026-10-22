@@ -1,0 +1,3 @@
+<Files *.php>
+    Require all denied
+</Files>

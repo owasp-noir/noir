@@ -1,12 +1,12 @@
 +++
 title = "출력 형식"
-description = "Noir는 스캔 결과를 최대한 활용할 수 있도록 광범위한 출력 형식을 지원합니다. 이 섹션은 JSON, YAML, TOML, OpenAPI 명세(OAS) 등을 포함한 사용 가능한 형식에 대한 개요를 제공합니다."
+description = "Noir가 내보낼 수 있는 출력 형식: JSON, YAML, TOML, OpenAPI(OAS), SARIF, HTML 등."
 weight = 2
 sort_by = "weight"
 
 +++
 
-Noir는 모든 워크플로에 적합한 다재다능한 도구로 구축되었습니다. 이러한 유연성의 핵심 부분은 스캔 결과를 다양한 형식으로 출력할 수 있는 능력입니다. 자동화를 위한 기계 판독 가능한 형식이 필요하든 수동 검토를 위한 사람이 읽기 쉬운 형식이 필요하든, Noir가 모든 것을 제공합니다.
+`-f`로 출력 형식을 고릅니다. 스크립트나 다른 도구가 읽는 형식도 있고, 사람이 읽는 형식도 있습니다.
 
 ## 형식 선택 가이드
 
@@ -17,22 +17,42 @@ Noir는 모든 워크플로에 적합한 다재다능한 도구로 구축되었�
 | API 문서 생성 | [OpenAPI](openapi/) | `-f oas3` |
 | 빠른 엔드포인트 테스트 | [cURL](curl/) / HTTPie / PowerShell | `-f curl` |
 | 모바일 진입점 실행 | [ADB](curl/#adb-android) (Android) / [simctl](curl/#simctl-ios) (iOS) | `-f adb` / `-f simctl` |
-| 사람이 읽기 쉬운 검토 | [YAML](yaml/) | `-f yaml` |
-| 설정 스타일 출력 | [기타](more/) (TOML) | `-f toml` |
+| 사람이 직접 검토 | [YAML](yaml/) | `-f yaml` |
+| 설정 파일 형태 출력 | [기타](more/) (TOML) | `-f toml` |
 | Postman으로 가져오기 | [기타](more/) (Postman Collection) | `-f postman` |
-| 시각적 보고서 공유 | [HTML](html/) | `-f html` |
+| 시각적 리포트 공유 | [HTML](html/) | `-f html` |
 | API 구조 시각화 | [Mermaid](mermaid/) | `-f mermaid` |
 | URL이나 파라미터만 추출 | [기타](more/) (필터) | `-f only-url` |
 
+## 형식별 요청 본문 지원
+
+모든 형식이 모든 `param_type`을 실제 요청 본문으로 만들지는 않습니다. 아래 표로 빠르게 확인하세요(✅ = 요청 본문/multipart 파트로 출력, ➖ = 엔드포인트 기록에만 남거나 해당 없음).
+
+| `param_type` | `json` / `yaml` / plain | `oas2` / `oas3` | `postman` | `curl` / `httpie` / `powershell` / HTML copy-as-curl |
+|---|---|---|---|---|
+| `json` | ✅ (타입 필드) | ✅ `application/json` | ✅ raw JSON | ✅ JSON 본문 |
+| `form` | ✅ (타입 필드) | ✅ urlencoded 또는 multipart | ✅ `urlencoded` | ✅ urlencoded 본문 |
+| `file` | ✅ (타입 필드) | ✅ multipart `format: binary` | ✅ `formdata` file | ✅ multipart 업로드 |
+| `xml` | ✅ (타입 필드) | ✅ `application/xml` | ✅ raw XML (비어 있으면 `<name/>`) | ➖ 명령에 본문으로 넣지 않음. OAS / Postman / JSON 사용 |
+
+자세한 내용: [cURL](curl/#xml-요청-본문), [OpenAPI](openapi/), [Postman](more/#postman-컬렉션).
+
 ## 사용 가능한 형식
 
-*   **[HTTP 클라이언트 명령](curl/)**: 엔드포인트 테스트를 위한 실행 가능한 cURL, HTTPie, PowerShell 명령을 생성하며, 모바일 딥링크·인텐트·콘텐츠 프로바이더를 실행하는 [ADB](curl/#adb-android)(Android)·[simctl](curl/#simctl-ios)(iOS) 명령도 만들어 줍니다.
-*   **[JSON 및 JSONL](json/)**: 다른 도구 및 스크립트와 통합하기에 완벽한 널리 사용되는 형식입니다.
-*   **[YAML](yaml/)**: 구성 파일 및 수동 검사에 적합한 사람이 읽기 쉬운 형식입니다.
-*   **[OpenAPI 명세(OAS)](openapi/)**: 코드에서 OpenAPI 문서를 생성하여 API 문서를 쉽게 만들거나 보안 테스트를 설정합니다.
-*   **[SARIF](sarif/)**: CI/CD 플랫폼과 네이티브 통합이 가능한 보안 도구 출력용 업계 표준 형식입니다.
-*   **[HTML 보고서](html/)**: 스캔 결과의 포괄적인 시각적 HTML 보고서를 생성합니다.
-*   **[Mermaid 차트](mermaid/)**: API 구조를 시각화하기 위한 다이어그램을 생성합니다.
-*   **[추가 형식](more/)**: TOML, JSONL, Postman 컬렉션, 마크다운 테이블 및 특수 필터를 포함한 추가 형식을 살펴보세요.
+`-f`에 쓸 수 있는 모든 값입니다(`noir list formats`도 같은 목록을 보여줍니다).
 
-올바른 출력 형식을 선택하면 개발 프로세스를 간소화하고 Noir가 제공하는 인사이트에 더 쉽게 조치를 취할 수 있습니다.
+| 형식 | 출력 | 페이지 |
+|---|---|---|
+| `plain` | 일반 텍스트(기본값) | [기타](more/) |
+| `json`, `jsonl` | JSON, JSON Lines | [JSON 및 JSONL](json/) |
+| `yaml` | YAML | [YAML](yaml/) |
+| `toml` | TOML | [기타](more/) |
+| `markdown-table` | 마크다운 테이블 | [기타](more/) |
+| `sarif` | SARIF v2.1.0 | [SARIF](sarif/) |
+| `html` | 단일 파일 HTML 리포트 | [HTML](html/) |
+| `curl`, `httpie`, `powershell` | HTTP 클라이언트 명령 | [HTTP 클라이언트 명령](curl/) |
+| `adb`, `simctl` | 모바일 진입점용 Android / iOS 실행 명령 | [HTTP 클라이언트 명령](curl/#adb-android) |
+| `oas2`, `oas3` | OpenAPI 2.0(Swagger) / 3.x | [OpenAPI](openapi/) |
+| `postman` | Postman 컬렉션 | [기타](more/) |
+| `only-url`, `only-param`, `only-header`, `only-cookie`, `only-tag` | 한 줄에 값 하나 | [기타](more/) |
+| `mermaid` | Mermaid 마인드맵 | [Mermaid](mermaid/) |

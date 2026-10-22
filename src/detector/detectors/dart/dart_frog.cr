@@ -2,6 +2,8 @@ require "../../../models/detector"
 
 module Detector::Dart
   class DartFrog < Detector
+    detector_for "dart_frog", extensions: %w[.dart], basenames: %w[pubspec.yaml pubspec.lock]
+
     def detect(filename : String, file_contents : String) : Bool
       base = File.basename(filename)
 
@@ -20,20 +22,14 @@ module Detector::Dart
         return true
       end
 
-      if filename.includes?("/routes/") &&
+      # Scan-base-relative: `routes/` is Dart Frog's project-root
+      # convention, not a directory the checkout happens to sit under.
+      if base_relative_path(filename).includes?("/routes/") &&
          file_contents.match(/\b(?:Response|Future<Response>)\s+onRequest\s*\(/)
         return true
       end
 
       false
-    end
-
-    def applicable?(filename : String) : Bool
-      filename.ends_with?(".dart") || File.basename(filename) == "pubspec.yaml" || File.basename(filename) == "pubspec.lock"
-    end
-
-    def set_name
-      @name = "dart_frog"
     end
   end
 end

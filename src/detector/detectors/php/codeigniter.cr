@@ -2,6 +2,10 @@ require "../../../models/detector"
 
 module Detector::Php
   class CodeIgniter < Detector
+    detector_for "php_codeigniter",
+      extensions: %w[.php .phtml],
+      basenames: %w[composer.json composer.lock spark]
+
     def detect(filename : String, file_contents : String) : Bool
       # composer.json with CodeIgniter dependency
       if filename.ends_with?("composer.json") &&
@@ -12,7 +16,7 @@ module Detector::Php
       end
 
       # CodeIgniter 4 CLI script
-      if filename.ends_with?("/spark") || filename == "spark"
+      if File.basename(filename) == "spark"
         if file_contents.includes?("CodeIgniter") || file_contents.includes?("Config\\Paths")
           return true
         end
@@ -35,7 +39,7 @@ module Detector::Php
       end
 
       # PHP files with CodeIgniter namespaces
-      if filename.ends_with?(".php") &&
+      if Noir::FileExtension.fold(filename).ends_with?(".php") &&
          (file_contents.includes?("use CodeIgniter\\") ||
          file_contents.includes?("namespace CodeIgniter\\") ||
          file_contents.includes?("extends \\CodeIgniter\\Controller") ||
@@ -46,14 +50,6 @@ module Detector::Php
       end
 
       false
-    end
-
-    def applicable?(filename : String) : Bool
-      filename.ends_with?(".php") || filename.ends_with?(".phtml") || File.basename(filename) == "composer.json" || File.basename(filename) == "composer.lock"
-    end
-
-    def set_name
-      @name = "php_codeigniter"
     end
   end
 end

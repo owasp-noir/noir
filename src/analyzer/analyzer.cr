@@ -1,236 +1,40 @@
 require "./analyzers/**"
 require "./analyzers/file_analyzers/*"
-
-macro define_analyzers(analyzers)
-  {% for analyzer in analyzers %}
-    analyzers[{{ analyzer[0].id.stringify }}] = ->(options : Hash(String, YAML::Any)) do
-      instance = Analyzer::{{ analyzer[1].id }}.new(options)
-      instance.analyze
-    end
-  {% end %}
-end
+require "../miniparsers/extraction_result_cache"
+require "../models/analyzer_failure"
+require "../models/locator_keys"
+require "../models/skipped_files"
+require "../techs/techs"
+require "../utils/redact"
 
 def initialize_analyzers(logger : NoirLogger)
   # Initializing analyzers
   analyzers = {} of String => Proc(Hash(String, YAML::Any), Array(Endpoint))
 
-  # Mapping analyzers to their respective functions
-  define_analyzers([
-    {"cpp_drogon", Cpp::Drogon},
-    {"cpp_cli", Cpp::Cli},
-    {"cpp_crow", Cpp::Crow},
-    {"cpp_httplib", Cpp::Httplib},
-    {"cpp_oatpp", Cpp::Oatpp},
-    {"clojure_cli", Clojure::Cli},
-    {"clojure_compojure", Clojure::Compojure},
-    {"clojure_pedestal", Clojure::Pedestal},
-    {"clojure_reitit", Clojure::Reitit},
-    {"clojure_ring", Clojure::Ring},
-    {"cs_cli", CSharp::Cli},
-    {"cs_aspnet_mvc", CSharp::AspNetMvc},
-    {"cs_aspnet_core_mvc", CSharp::AspNetCoreMvc},
-    {"cs_aspnet_core_minimal_api", CSharp::MinimalApis},
-    {"cs_carter", CSharp::Carter},
-    {"cs_fastendpoints", CSharp::FastEndpoints},
-    {"cs_httplistener", CSharp::HttpListener},
-    {"crystal_cli", Crystal::Cli},
-    {"crystal_amber", Crystal::Amber},
-    {"crystal_grip", Crystal::Grip},
-    {"crystal_kemal", Crystal::Kemal},
-    {"crystal_lucky", Crystal::Lucky},
-    {"crystal_marten", Crystal::Marten},
-    {"crystal_http", Crystal::Http},
-    {"dart_cli", Dart::Cli},
-    {"dart_alfred", Dart::Alfred},
-    {"dart_angel3", Dart::Angel3},
-    {"dart_get_server", Dart::GetServer},
-    {"dart_frog", Dart::DartFrog},
-    {"dart_http", Dart::Http},
-    {"dart_serverpod", Dart::Serverpod},
-    {"dart_shelf", Dart::Shelf},
-    {"elixir_cli", Elixir::Cli},
-    {"elixir_bandit", Elixir::Bandit},
-    {"elixir_phoenix", Elixir::Phoenix},
-    {"elixir_plug", Elixir::Plug},
-    {"fs_giraffe", Fsharp::Giraffe},
-    {"perl_cli", Perl::Cli},
-    {"perl_catalyst", Perl::Catalyst},
-    {"perl_dancer2", Perl::Dancer2},
-    {"perl_mojolicious", Perl::Mojolicious},
-    {"go_beego", Go::Beego},
-    {"go_cli", Go::Cli},
-    {"go_echo", Go::Echo},
-    {"go_fasthttp", Go::Fasthttp},
-    {"go_fiber", Go::Fiber},
-    {"go_gin", Go::Gin},
-    {"go_hertz", Go::Hertz},
-    {"go_iris", Go::Iris},
-    {"go_restful", Go::GoRestful},
-    {"go_chi", Go::Chi},
-    {"go_gozero", Go::GoZero},
-    {"go_goyave", Go::Goyave},
-    {"go_gf", Go::Gf},
-    {"go_http", Go::Http},
-    {"go_httprouter", Go::Httprouter},
-    {"go_huma", Go::Huma},
-    {"go_mux", Go::Mux},
-    {"go_pocketbase", Go::Pocketbase},
-    {"go_connect_rpc", Go::ConnectRpc},
-    {"groovy_cli", Groovy::Cli},
-    {"groovy_grails", Groovy::Grails},
-    {"haskell_cli", Haskell::Cli},
-    {"haskell_scotty", Haskell::Scotty},
-    {"haskell_servant", Haskell::Servant},
-    {"haskell_yesod", Haskell::Yesod},
-    {"asyncapi", Specification::AsyncApi},
-    {"envoy", Specification::Envoy},
-    {"bruno", Specification::Bruno},
-    {"burp", Specification::Burp},
-    {"caddy", Specification::Caddy},
-    {"caido", Specification::Caido},
-    {"grpc", Specification::Grpc},
-    {"har", Specification::Har},
-    {"java_cli", Java::Cli},
-    {"java_armeria", Java::Armeria},
-    {"java_dropwizard", Java::Dropwizard},
-    {"java_httpserver", Java::HttpServer},
-    {"java_javalin", Java::Javalin},
-    {"java_jaxrs", Java::JaxRs},
-    {"java_jsp", Java::Jsp},
-    {"java_micronaut", Java::Micronaut},
-    {"java_quarkus", Java::Quarkus},
-    {"java_spark", Java::Spark},
-    {"java_spring", Java::Spring},
-    {"java_struts2", Java::Struts2},
-    {"lua_cli", Lua::Cli},
-    {"lua_lapis", Lua::Lapis},
-    {"lua_lor", Lua::Lor},
-    {"android", Mobile::Android},
-    {"ios", Mobile::Ios},
-    {"well_known_applinks", Mobile::WellKnown},
-    {"java_vertx", Java::Vertx},
-    {"java_wicket", Java::Wicket},
-    {"js_adonisjs", Javascript::Adonisjs},
-    {"js_cli", Javascript::Cli},
-    {"js_apollo", Javascript::Apollo},
-    {"js_astro", Javascript::Astro},
-    {"js_elysia", Javascript::Elysia},
-    {"js_express", Javascript::Express},
-    {"js_fastify", Javascript::Fastify},
-    {"js_fresh", Javascript::Fresh},
-    {"js_graphql_yoga", Javascript::GraphqlYoga},
-    {"js_hapi", Javascript::Hapi},
-    {"js_hono", Javascript::Hono},
-    {"js_http", Javascript::Http},
-    {"js_koa", Javascript::Koa},
-    {"js_nestjs", Javascript::Nestjs},
-    {"js_nextjs", Javascript::Nextjs},
-    {"js_nitro", Javascript::Nitro},
-    {"js_nuxtjs", Javascript::Nuxtjs},
-    {"js_remix", Javascript::Remix},
-    {"js_restify", Javascript::Restify},
-    {"js_sveltekit", Javascript::Sveltekit},
-    {"kotlin_cli", Kotlin::Cli},
-    {"kotlin_http4k", Kotlin::Http4k},
-    {"kotlin_spring", Kotlin::Spring},
-    {"kotlin_ktor", Kotlin::Ktor},
-    {"graphql_sdl", Specification::GraphqlSdl},
-    {"apache_httpd", Specification::ApacheHttpd},
-    {"apisix", Specification::Apisix},
-    {"aws_cdk", Specification::AwsCdk},
-    {"aws_cloudformation", Specification::AwsCloudformation},
-    {"azure_functions", Specification::AzureFunctions},
-    {"cloudflare_wrangler", Specification::CloudflareWrangler},
-    {"k8s_gateway_api", Specification::K8sGatewayApi},
-    {"k8s_ingress", Specification::K8sIngress},
-    {"kong", Specification::Kong},
-    {"oas2", Specification::Oas2},
-    {"oas3", Specification::Oas3},
-    {"insomnia", Specification::Insomnia},
-    {"istio_virtualservice", Specification::IstioVirtualservice},
-    {"kamal", Specification::Kamal},
-    {"mitmproxy", Specification::Mitmproxy},
-    {"netlify", Specification::Netlify},
-    {"nginx", Specification::Nginx},
-    {"odata", Specification::OData},
-    {"postman", Specification::Postman},
-    {"raml", Specification::RAML},
-    {"serverless_framework", Specification::ServerlessFramework},
-    {"smithy", Specification::Smithy},
-    {"traefik", Specification::Traefik},
-    {"typespec", Specification::TypeSpec},
-    {"vercel", Specification::Vercel},
-    {"wsdl", Specification::WSDL},
-    {"zap_sites_tree", Specification::ZapSitesTree},
-    {"php_cli", Php::Cli},
-    {"php_pure", Php::Php},
-    {"php_cakephp", Php::CakePHP},
-    {"php_codeigniter", Php::CodeIgniter},
-    {"php_hyperf", Php::Hyperf},
-    {"php_laminas", Php::Laminas},
-    {"php_laravel", Php::Laravel},
-    {"php_lumen", Php::Lumen},
-    {"php_mautic", Php::Mautic},
-    {"php_slim", Php::Slim},
-    {"php_symfony", Php::Symfony},
-    {"php_thinkphp", Php::ThinkPHP},
-    {"php_yii", Php::Yii},
-    {"python_aiohttp", Python::Aiohttp},
-    {"python_cli", Python::Cli},
-    {"python_django", Python::Django},
-    {"python_fastapi", Python::FastAPI},
-    {"python_bottle", Python::Bottle},
-    {"python_falcon", Python::Falcon},
-    {"python_flask", Python::Flask},
-    {"python_litestar", Python::Litestar},
-    {"python_pyramid", Python::Pyramid},
-    {"python_quart", Python::Quart},
-    {"python_robyn", Python::Robyn},
-    {"python_sanic", Python::Sanic},
-    {"python_starlette", Python::Starlette},
-    {"python_tornado", Python::Tornado},
-    {"python_http_server", Python::HttpServer},
-    {"ruby_cli", Ruby::Cli},
-    {"ruby_grape", Ruby::Grape},
-    {"ruby_hanami", Ruby::Hanami},
-    {"ruby_rails", Ruby::Rails},
-    {"ruby_roda", Ruby::Roda},
-    {"ruby_sinatra", Ruby::Sinatra},
-    {"ruby_webrick", Ruby::Webrick},
-    {"rust_cli", Rust::Cli},
-    {"rust_axum", Rust::Axum},
-    {"rust_rocket", Rust::Rocket},
-    {"rust_actix_web", Rust::ActixWeb},
-    {"rust_loco", Rust::Loco},
-    {"rust_rwf", Rust::Rwf},
-    {"rust_tide", Rust::Tide},
-    {"rust_warp", Rust::Warp},
-    {"rust_gotham", Rust::Gotham},
-    {"rust_salvo", Rust::Salvo},
-    {"rust_poem", Rust::Poem},
-    {"scala_cli", Scala::Cli},
-    {"scala_akka", Scala::Akka},
-    {"scala_scalatra", Scala::Scalatra},
-    {"scala_play", Scala::Play},
-    {"scala_http4s", Scala::Http4s},
-    {"scala_zio_http", Scala::ZioHttp},
-    {"scala_tapir", Scala::Tapir},
-    {"java_play", Java::Play},
-    {"swift_cli", Swift::Cli},
-    {"swift_vapor", Swift::Vapor},
-    {"swift_kitura", Swift::Kitura},
-    {"swift_hummingbird", Swift::Hummingbird},
-    {"ts_nestjs", Typescript::Nestjs},
-    {"ts_tanstack_router", Typescript::TanstackRouter},
-    {"ts_trpc", Typescript::TRPC},
-    {"zig_cli", Zig::Cli},
-    {"zig_jetzig", Zig::Jetzig},
-    {"zig_zap", Zig::Zap},
-    {"zig_http", Zig::Http},
-    {"zig_httpz", Zig::Httpz},
-    {"zig_tokamak", Zig::Tokamak},
-    {"ai", AI::Unified},
-  ])
+  # The registry is read off the analyzer classes themselves — each one
+  # names its tech with `analyzer_for` — rather than from a hand-maintained
+  # list. That list was a second place every new analyzer had to be added,
+  # and forgetting it produced no error and no failing spec: the integrity
+  # spec compares *registered* analyzers against the catalog, so a class that
+  # was never registered was invisible to it. An analyzer now joins the
+  # registry by existing.
+  #
+  # The `Analyzer::` filter is the production contract; `FileAnalyzer` (run
+  # separately, via its own hooks) and the `AnalyzerExample` template sit
+  # outside the namespace. Shared base classes are `abstract`, so they are
+  # excluded — and any concrete class under `Analyzer::` that forgets
+  # `analyzer_for` is a compile error here rather than a silent no-op.
+  #
+  # Sorted by class name so the order is a property of the source rather
+  # than of `require "./analyzers/**"`. Order is not load-bearing: the techs
+  # actually run are chosen by detection, each analyzer is spawned
+  # concurrently, and the optimizer sorts endpoints before output.
+  {% for klass in Analyzer.all_subclasses.select { |sub| !sub.abstract? && sub.name.starts_with?("Analyzer::") }.sort_by(&.name) %}
+    analyzers[{{ klass }}.tech_name] = ->(options : Hash(String, YAML::Any)) do
+      instance = {{ klass }}.new(options)
+      instance.analyze
+    end
+  {% end %}
 
   logger.debug "#{analyzers.size} Analyzers initialized"
   analyzers.each do |key, _|
@@ -239,62 +43,98 @@ def initialize_analyzers(logger : NoirLogger)
   analyzers
 end
 
-def filter_redundant_generic_techs(techs : Array(String)) : Array(String)
-  filtered = techs.dup
+# CFML frameworks that own their application's route table.
+CFML_FRAMEWORK_TECHS = Set{
+  "cfml_taffy",
+  "cfml_coldbox",
+  "cfml_wheels",
+  "cfml_fw1",
+}
 
-  php_frameworks = Set{
-    "php_laravel",
-    "php_lumen",
-    "php_symfony",
-    "php_cakephp",
-    "php_codeigniter",
-    "php_hyperf",
-    "php_laminas",
-    "php_mautic",
-    "php_slim",
-    "php_thinkphp",
-    "php_yii",
-  }
-
-  if filtered.includes?("php_pure") && filtered.any? { |tech| php_frameworks.includes?(tech) }
-    filtered.reject!("php_pure")
-  end
-
-  # Lumen and Laravel share enough surface (Illuminate namespaces, the `routes/`
-  # convention) that the Laravel detector also fires on Lumen projects. When
-  # Lumen is the actual framework, the Laravel signal is just noise.
-  if filtered.includes?("php_lumen") && filtered.includes?("php_laravel")
-    filtered.reject!("php_laravel")
-  end
-
-  # Bandit hosts the same `Plug.Router` modules the Plug analyzer
-  # already understands, so both detectors fire on a Bandit project.
-  # When both are present, the Bandit signal is the more specific one
-  # (it tells you which HTTP server is actually serving the routes);
-  # keep it and drop the redundant Plug entry so endpoints aren't
-  # extracted twice with two different technology tags. The Phoenix
-  # analyzer is unaffected — it owns the Phoenix.Router DSL.
-  if filtered.includes?("elixir_bandit") && filtered.includes?("elixir_plug")
-    filtered.reject!("elixir_plug")
-  end
-
-  # Jetzig and Tokamak are both built on top of http.zig (httpz), so a
-  # project that vendors either framework's source also carries the
-  # `@import("httpz")` / `.httpz` dependency markers the httpz detector
-  # keys on. When the more specific framework is present it owns the
-  # routing DSL; keep it and drop the redundant httpz entry so the httpz
-  # analyzer doesn't also scan the framework's internals.
-  if filtered.includes?("zig_httpz") && (filtered.includes?("zig_jetzig") || filtered.includes?("zig_tokamak"))
-    filtered.reject!("zig_httpz")
-  end
-
-  filtered
+# Whether the generic CFML analyzer should narrow to components-only mode.
+#
+# This is a *narrowing*, not a supersede, which is why it stays here rather
+# than moving to the catalog's `:supersedes` alongside the four
+# framework-shadows-framework rules. A CFML framework owns the `.cfm` page
+# surface, so dropping `cfml_pure` outright would lose the half no framework
+# analyzer covers — the `access="remote"` methods on a ColdBox app's proxy
+# components, which are HTTP-callable whatever framework fronts them.
+# Narrowing keeps those and still leaves the page surface to its owner.
+#
+# Extracted from `analysis_endpoints` so it can be tested at all: in place
+# it sat inside the function that runs every analyzer.
+def cfml_components_only?(selected_techs : Array(String)) : Bool
+  selected_techs.includes?("cfml_pure") &&
+    selected_techs.any? { |tech| CFML_FRAMEWORK_TECHS.includes?(tech) }
 end
 
-def analysis_endpoints(options : Hash(String, YAML::Any), techs, logger : NoirLogger)
+# Publishes the narrowing decision into the options hash, which is how
+# `Analyzer::Cfml::Pure` receives it.
+#
+# **Assigns on every pass, never only when true.** The key is written into the
+# *caller's* options hash and nothing clears it — `CodeLocator`'s lifecycle
+# resets cannot reach it, because it is not a locator key. Written
+# conditionally (the previous `if cfml_components_only? ... = true` shape), a
+# `true` from one scan survived into the next `analysis_endpoints` call on the
+# same hash: a library embedder that scanned a ColdBox app and then a
+# plain-CFML app got the second scan silently narrowed to components-only and
+# lost its entire `.cfm` page surface. Same shape as the scan-lifecycle leak
+# #2503 fixed, in the one remaining channel that carries state between passes.
+#
+# The CLI never hit it — `cli/commands/scan.cr` dups the hash before the diff
+# scan — so only embedders reusing one hash were affected.
+#
+# Extracted from `analysis_endpoints` for the same reason
+# `cfml_components_only?` was: in place, the only way to exercise it was to
+# run every analyzer.
+def apply_cfml_components_only!(options : Hash(String, YAML::Any), selected_techs : Array(String)) : Nil
+  options[Analyzer::Cfml::Pure::COMPONENTS_ONLY_OPTION] =
+    YAML::Any.new(cfml_components_only?(selected_techs))
+end
+
+# Drops techs that another detected tech supersedes. The rules live on the
+# superseding tech's catalog entry as `:supersedes`; see the doc on
+# `NoirTechs::SUPERSEDES` for what belongs there and — more importantly —
+# what must never be added.
+#
+# Presence is evaluated against the *input* list rather than the array being
+# filtered, so the result no longer depends on the order the rules happen to
+# be written in. `SUPERSEDES` chains are rejected by the tech-registry
+# integrity spec, which keeps that equivalence true.
+def filter_redundant_generic_techs(techs : Array(String)) : Array(String)
+  drop = Set(String).new
+  techs.each { |tech| NoirTechs.supersedes(tech).each { |target| drop << target } }
+  techs.reject { |tech| drop.includes?(tech) }
+end
+
+# `failures` is an out-parameter rather than a second return value so the
+# existing signature keeps working: library embedders and specs call this
+# positionally and have no interest in the failure list. Callers that do care
+# (the CLI, via `NoirRunner`) pass an array and get every tech that raised.
+def analysis_endpoints(options : Hash(String, YAML::Any), techs, logger : NoirLogger,
+                       failures : Array(AnalyzerFailure)? = nil)
   result = [] of Endpoint
   file_analyzer = FileAnalyzer.new options
   logger.info "Initializing analyzers"
+
+  # Drop process-wide extraction memos from any previous scan (diff mode
+  # / repeated library use) so fingerprints cannot serve stale tables.
+  Noir::ExtractionResultCache.clear_all
+
+  # Same reasoning: a per-file skip tallied by the previous pass would be
+  # reported against this one, and under `--strict` would fail every
+  # subsequent build.
+  #
+  # Only the analysis phase. The detection walk's gaps belong to the scan
+  # that produced `techs`, are reported in the same `errors` array, and are
+  # cleared by the next `detect_techs` — clearing them here would erase the
+  # walk's findings before anything got to read them.
+  Noir::SkippedFiles.clear(Noir::SkippedFiles::Phase::Analysis)
+
+  # Same reasoning, for the locator slots written and read inside one
+  # analysis pass (the Express router prefixes). Detector-written keys are
+  # deliberately NOT cleared here — this pass is what drains them.
+  Noir::LocatorKeys.reset(Noir::LocatorKey::Lifecycle::AnalyzeScoped)
 
   analyzer = initialize_analyzers logger
 
@@ -311,23 +151,36 @@ def analysis_endpoints(options : Hash(String, YAML::Any), techs, logger : NoirLo
             else
               raw_model
             end
-    logger.sub "➔ AI Analyzer: Server=#{provider}, Model=#{model}"
+    logger.sub "➔ AI Analyzer: Server=#{Noir::Redact.url(provider)}, Model=#{model}"
     techs << "ai"
   end
 
   # Run tech analyzers concurrently to avoid long stalls from a single analyzer
   selected_techs = filter_redundant_generic_techs(techs).select { |t| analyzer.has_key?(t) }
+
+  apply_cfml_components_only!(options, selected_techs)
+
   mutex = Mutex.new
 
   # Pre-build extension index synchronously to avoid concurrent mutation in multiple threads/fibers
   CodeLocator.instance.build_extension_index
 
-  WaitGroup.wait do |wg|
-    selected_techs.each do |tech|
-      wg.spawn do
-        begin
+  # `--ai-scope unmatched` skips files a static analyzer already covered,
+  # so the AI analyzer waits for the others; by default it runs with them.
+  ai_last = options["ai_scope"]?.to_s == "unmatched" && selected_techs.includes?("ai")
+  phases = ai_last ? [selected_techs - ["ai"], ["ai"]] : [selected_techs]
+  phases.each_with_index do |phase, phase_index|
+    phase_options = options
+    if phase_index == 1
+      covered = result.flat_map(&.details.code_paths.map { |path_info| Noir::PathScope.expand(path_info.path) }).uniq!
+      phase_options = options.merge({Analyzer::AI::Unified::COVERED_FILES_OPTION => YAML::Any.new(covered.map { |path| YAML::Any.new(path) })})
+    end
+
+    WaitGroup.wait do |wg|
+      phase.each do |tech|
+        wg.spawn do
           logger.debug "Analyzer[#{tech}] start"
-          endpoints = analyzer[tech].call(options)
+          endpoints = analyzer[tech].call(phase_options)
           # Set technology on each endpoint using map to handle struct copy
           endpoints_with_tech = endpoints.map do |ep|
             details = ep.details
@@ -339,20 +192,43 @@ def analysis_endpoints(options : Hash(String, YAML::Any), techs, logger : NoirLo
           logger.debug "Analyzer[#{tech}] done (#{endpoints.size})"
         rescue e
           logger.warning "Analyzer[#{tech}] failed: #{e.message}"
+          if collected = failures
+            # `e.message` is nilable and can be empty (`IndexError.new`,
+            # `raise ""`), and a report that reads `go_gin: ` names no cause
+            # at all — the class name is at least something to search for.
+            reason = e.message.presence || e.class.name
+            # Same mutex as the result concat above, not a second one: this
+            # runs on a spawned fiber and `collected` is shared by all of them.
+            mutex.synchronize { collected << AnalyzerFailure.new(tech, reason) }
+          end
         end
       end
     end
   end
 
-  unless options["url"].to_s.empty?
-    logger.sub "➔ File-based Analyzer: #{file_analyzer.hooks_count} hook#{'s' unless file_analyzer.hooks_count == 1} in use"
+  # A file an analyzer opened and could not finish is coverage lost just as
+  # surely as an analyzer that never ran, so it joins the same list. Added
+  # after the tech-level failures so a dead analyzer still reads first.
+  #
+  # Analysis-phase gaps only: the detection and delivery ones are collected
+  # by `NoirRunner`, which is the layer that knows when those phases are
+  # over. A library caller driving this function directly reads them off
+  # `Noir::SkippedFiles.failures` itself.
+  if collected = failures
+    Noir::SkippedFiles.failures(Noir::SkippedFiles::Phase::Analysis).each { |failure| collected << failure }
+  end
+
+  # `hooks_count` reports only the hooks that can produce something for
+  # this scan: without `-u/--url` the url-matching hooks sit out and the
+  # url-independent ones (graphql operation documents) still run. This used
+  # to be `unless options["url"].empty?`, which skipped the whole
+  # FileAnalyzer — and with it GraphQL operations — on every default scan.
+  file_analyzer_hooks = file_analyzer.hooks_count
+  if file_analyzer_hooks > 0
+    logger.sub "➔ File-based Analyzer: #{file_analyzer_hooks} hook#{'s' unless file_analyzer_hooks == 1} in use"
     result = result + file_analyzer.analyze
   end
 
   logger.info "Found #{result.size} endpoints"
   result
-end
-
-def join_paths(*paths : String) : String
-  File.join(paths)
 end

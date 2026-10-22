@@ -1,19 +1,31 @@
 require "../../../models/analyzer"
 require "../../../miniparsers/elysia_extractor_ts"
+require "../../../miniparsers/js_route_extractor"
 
 module Analyzer::Javascript
   class Elysia < Analyzer
-    JS_EXTENSIONS  = [".js", ".mjs", ".cjs", ".ts"]
-    ELYSIA_MARKERS = ["from 'elysia'", "from \"elysia\"", "require('elysia')", "require(\"elysia\")"]
+    analyzer_for "js_elysia"
+
+    JS_EXTENSIONS = [".js", ".mjs", ".cjs", ".ts"]
+    # Precompiled once — a single PCRE2-JIT scan replaces four naive
+    # String#includes? substring scans over the whole file content.
+    # Regex.union auto-escapes each literal (including the parens in
+    # "require('elysia')"), so it is provably equivalent to the
+    # OR-of-includes? it replaces.
+    ELYSIA_MARKERS_RE = Regex.union("from 'elysia'", "from \"elysia\"", "require('elysia')", "require(\"elysia\")")
 
     def analyze
       file_list = all_files()
       file_list.each do |path|
-        next unless File.exists?(path)
         next unless JS_EXTENSIONS.any? { |ext| path.ends_with?(ext) }
+        next unless File.exists?(path)
 
         content = read_file_content(path)
-        next unless ELYSIA_MARKERS.any? { |m| content.includes?(m) }
+        next unless content.matches?(ELYSIA_MARKERS_RE)
+        # `new Elysia().get(...).handle(new Request(...))` in a test is
+        # never served. Import-blind: `test_stub_only?` would drop an Elysia
+        # server that also imports react or axios.
+        next if Noir::JSRouteExtractor.test_file?(path, content)
 
         include_callee = callees_needed?
         Noir::TreeSitterElysiaExtractor.extract_routes(content, include_callee).each do |route|

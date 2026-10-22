@@ -1,14 +1,5 @@
-<div class="mermaid-container">
+{# Diagram source only. js/mermaid.js loads the renderer lazily, and only on
+   pages that actually contain one of these. #}
+<div class="mermaid-figure">
   <pre class="mermaid">{{ body }}</pre>
 </div>
-<script>
-if (!window._mermaidLoaded) {
-  window._mermaidLoaded = true;
-  var s = document.createElement('script');
-  s.src = 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js';
-  s.onload = function() {
-    mermaid.initialize({ theme: 'dark', startOnLoad: true });
-  };
-  document.head.appendChild(s);
-}
-</script>

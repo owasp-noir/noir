@@ -16,38 +16,49 @@ noir scan . -f yaml --no-log
 
 ## 출력 예제
 
-구조는 JSON과 동일합니다. `endpoints` 목록 아래에 URL, HTTP 메서드, 파라미터, 소스 경로, 태그 정보가 들어갑니다.
+구조는 JSON과 같습니다. `endpoints` 목록 아래에 URL, HTTP 메서드, 파라미터, 소스 경로, 태그 정보가 들어갑니다. `param_type` 값은 [JSON](@/usage/output_formats/json/index.ko.md)과 같습니다(`query`, `path`, `header`, `cookie`, `form`, `json`, `file`, `xml` 등).
 
 ```yaml
+---
 endpoints:
-  - url: /
-    method: GET
-    params:
-      - name: x-api-key
-        value: ""
-        param_type: header
-        tags: []
-    details:
-      code_paths:
-        - path: ./spec/functional_test/fixtures/crystal_kemal/src/testapp.cr
-          line: 3
-    protocol: http
+- callees: []
+  url: /
+  method: GET
+  internal: false
+  details:
+    code_paths:
+    - path: spec/functional_test/fixtures/crystal/kemal/src/testapp.cr
+      line: 3
+    technology: crystal_kemal
+  protocol: http
+  kind: ""
+  tags: []
+  params:
+  - name: x-api-key
+    value: ""
+    param_type: header
     tags: []
-  - url: /query
-    method: POST
-    params:
-      - name: my_auth
-        value: ""
-        param_type: cookie
-        tags: []
-      - name: query
-        value: ""
-        param_type: form
-        tags: []
-    details:
-      code_paths:
-        - path: ./spec/functional_test/fixtures/crystal_kemal/src/testapp.cr
-          line: 8
-    protocol: http
+- callees: []
+  url: /query
+  method: POST
+  internal: false
+  details:
+    code_paths:
+    - path: spec/functional_test/fixtures/crystal/kemal/src/testapp.cr
+      line: 17
+    technology: crystal_kemal
+  protocol: http
+  kind: ""
+  tags: []
+  params:
+  - name: my_auth
+    value: ""
+    param_type: cookie
     tags: []
+  - name: query
+    value: ""
+    param_type: form
+    tags: []
+passive_results: []
+errors: []
 ```

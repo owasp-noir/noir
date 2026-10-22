@@ -1,0 +1,8 @@
+web:
+    resource: ../src/Controller/Web/
+    type: attribute
+    prefix: /{_locale}
+
+health:
+    path: /health
+    methods: [GET]

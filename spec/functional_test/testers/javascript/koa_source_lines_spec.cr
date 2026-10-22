@@ -1,6 +1,6 @@
 require "../../func_spec.cr"
 
-describe "Koa route source attribution" do
+describe "Koa route source attribution", tags: "functional" do
   before_each do
     CodeLocator.instance.clear_all
   end

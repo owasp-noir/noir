@@ -1,23 +1,16 @@
-require "../../../models/analyzer"
+require "../../engines/specification_engine"
 
 module Analyzer::Specification
-  class Bruno < Analyzer
+  class Bruno < SpecificationEngine
+    analyzer_for "bruno"
+
     HTTP_METHODS = {"get", "post", "put", "patch", "delete", "head", "options"}
 
     def analyze
-      locator = CodeLocator.instance
-      bruno_files = locator.all("bruno-bru")
-
-      bruno_files.each do |bruno_file|
-        next unless File.exists?(bruno_file)
-        begin
-          content = read_file_content(bruno_file)
-          details = Details.new(PathInfo.new(bruno_file))
-          process_bru(content, details)
-        rescue e
-          @logger.debug "Exception processing #{bruno_file}"
-          @logger.debug_sub e
-        end
+      each_spec_file(Noir::LocatorKeys::BRUNO_BRU) do |bruno_file|
+        content = read_file_content(bruno_file)
+        details = Details.new(PathInfo.new(bruno_file))
+        process_bru(content, details)
       end
 
       @result
@@ -121,7 +114,7 @@ module Analyzer::Specification
             params << Param.new(k, v, "header")
           end
         when "body:json"
-          extract_json_body(block.body).each { |p| params << p }
+          json_body_pairs(block.body, MUSTACHE_VAR).each { |k, v| params << Param.new(k, v, "json") }
         when "body:form-urlencoded"
           parse_kv_lines(block.body).each do |k, v|
             params << Param.new(k, v, "form")
@@ -137,51 +130,13 @@ module Analyzer::Specification
       resolved_url = url
       return if resolved_method.nil? || resolved_url.nil?
 
-      url_path = extract_path_from_url(resolved_url)
+      url_path = template_url_path(resolved_url, MUSTACHE_VAR)
       return if url_path.empty?
 
       @result << Endpoint.new(url_path, resolved_method, params, details)
     rescue e
       @logger.debug "Exception processing .bru block"
       @logger.debug_sub e
-    end
-
-    private def extract_json_body(raw : String) : Array(Param)
-      params = [] of Param
-      stripped = raw.strip
-      return params if stripped.empty?
-      begin
-        parsed = JSON.parse(stripped)
-        if hash = parsed.as_h?
-          hash.each do |k, v|
-            params << Param.new(k, v.to_s, "json")
-          end
-        end
-      rescue
-        # Non-JSON or templated body (e.g. {{var}}) — skip silently.
-      end
-      params
-    end
-
-    private def extract_path_from_url(url_string : String) : String
-      stripped = url_string.strip
-      return "" if stripped.empty?
-
-      # Drop query string; structured params live in the `query` block.
-      q_idx = stripped.index('?')
-      stripped = stripped[0...q_idx] if q_idx
-
-      if stripped =~ /^https?:\/\//i
-        rest = stripped.sub(/^https?:\/\//i, "")
-        slash_idx = rest.index('/')
-        if slash_idx
-          path = rest[slash_idx..]
-          return path.empty? ? "/" : path
-        end
-        return "/"
-      end
-
-      stripped.starts_with?('/') ? stripped : "/#{stripped}"
     end
   end
 end

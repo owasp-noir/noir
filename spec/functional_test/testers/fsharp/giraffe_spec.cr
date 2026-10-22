@@ -62,6 +62,16 @@ expected_endpoints << Endpoint.new("/admin/sessions/:int", "DELETE", [
   Param.new("int", "int", "path"),
 ])
 
+# `GET_HEAD [...]` is Giraffe's own combinator for `[ GET; HEAD ]`. Without
+# it the wrapped routes fell through to the five fallback verbs.
+expected_endpoints << Endpoint.new("/healthz", "GET")
+expected_endpoints << Endpoint.new("/healthz", "HEAD")
+# Endpoint Routing's named format specifier `%<type>:<name>`: the name comes
+# from the pattern, and the `:petId` suffix must not survive in the URL
+# (it used to produce `/pet/:int:petId`).
+expected_endpoints << Endpoint.new("/pet/:petId", "GET", [Param.new("petId", "int", "path")])
+expected_endpoints << Endpoint.new("/pet/:petId", "HEAD", [Param.new("petId", "int", "path")])
+
 # --- Api.fs ---------------------------------------------------------------
 # `VERB >=> choose [...]` — verb scopes the whole block, so each nested
 # route reports only that method (no fallback-method explosion).

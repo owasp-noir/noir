@@ -1,49 +1,64 @@
 require "../../models/analyzer"
+require "../../utils/char_offsets"
 require "../../miniparsers/php_callee_extractor"
+require "../../minilexers/php_lexer"
 require "../../utils/utils.cr"
 
+require "./file_scan_engine"
+
 module Analyzer::Php
-  abstract class PhpEngine < Analyzer
+  abstract class PhpEngine < FileScanEngine
     # See AGENTS.md §"Two engine shapes" (and
     # docs/content/development/analyzer_architecture/) for when to override
     # `analyze_file` vs. `analyze` + `parallel_file_scan`.
 
-    def analyze
-      parallel_file_scan do |path|
-        result.concat(analyze_file(path))
-      end
-      result
+    # Default source set for PHP framework adapters: every registered
+    # `.php` file. Symfony overrides this to also include YAML route
+    # configs (`.yaml` / `.yml`). Prefer the extension index over
+    # walking the whole monorepo `file_map`.
+    protected def php_source_files : Array(String)
+      get_files_by_extension(".php")
     end
 
-    abstract def analyze_file(path : String) : Array(Endpoint)
-
-    # Walk the project tree concurrently and invoke the block for each
-    # readable, non-directory file. PHP analyzers apply their own
-    # extension/pathname filters inside the block because Symfony matches
-    # `.php` *and* YAML route files, Laravel checks `routes/*.php`, etc.
-    protected def parallel_file_scan(&block : String -> Nil) : Nil
-      begin
-        parallel_analyze(all_files) do |path|
-          next if File.directory?(path)
-          next unless File.exists?(path)
-          next if PhpEngine.test_path?(path)
-
-          begin
-            block.call(path)
-          rescue e
-            logger.debug "Error analyzing #{path}: #{e}"
-          end
-        end
-      rescue e
-        logger.debug e
-      end
+    # Extension + test-path filtering lives here so adapters don't
+    # re-check every monorepo path. Paths come from CodeLocator (regular
+    # files only); missing files error on read and are logged.
+    protected def scan_target_files : Array(String)
+      php_source_files
     end
+
+    protected def scan_accepts?(path : String) : Bool
+      !PhpEngine.test_path?(base_relative_path(path), root_docs: root_docs_skipped?)
+    end
+
+    # Whether a `docs/` tree at the scan base is skipped as runnable doc
+    # snippets. True for framework adapters, where nothing under `docs/` is a
+    # route; the plain PHP analyzer turns it off, because there a `docs/`
+    # section is served like any other directory (`docs/index.php?page=…`).
+    protected def root_docs_skipped? : Bool
+      true
+    end
+
+    TEST_DIR_RE = %r{/(?:Tests|tests|Fixtures|workbench|legacy_tests)/|/Test/(?:Unit|Integration|Mftf|Integrity|Legacy|Fixture|_files)/|/test/phpunit/|/config/routes/test/}
 
     # Standard PHP test-source conventions:
     #
     #   * `/Tests/`               — PSR-4 / Symfony convention
     #     (`src/Symfony/Bundle/FrameworkBundle/Tests/...`)
     #   * `/tests/`               — Laravel / CakePHP / PHPUnit default
+    #   * `/Test/Unit/`, `/Test/Mftf/`, … — Magento's per-module test trees
+    #     (`Test/Unit/_files/webapi.xml`), `/test/phpunit/` — Dolibarr, and
+    #     `/config/routes/test/` — Symfony's test-env routes. A bare
+    #     `Test/` or `test/` is *not* a test dir: it is the `Test` namespace
+    #     of `app/Http/Controllers/Test/` (Laravel), `src/Controller/Test/`
+    #     (Symfony), a ThinkPHP `application/test/` or Yii `modules/test/`
+    #     module, all real routes.
+    #   * `/Fixtures/`, `/legacy_tests/` — test data and Dusk suites
+    #   * `/workbench/`           — Orchestra Testbench skeleton app
+    #   * `/docs/` at the scan base — runnable doc snippets
+    #     (API Platform `docs/guides`); anchored, because Folio mounts
+    #     `resources/views/docs` as a real route. `root_docs: false` drops
+    #     it for the plain PHP analyzer, which serves a `docs/` section.
     #   * `*Test.php` filename    — PHPUnit suffix convention
     #   * `*Tests.php` filename   — pluralized variant (rare)
     #
@@ -51,16 +66,83 @@ module Analyzer::Php
     # under `src/Symfony/Bundle/FrameworkBundle/Tests/...`. The
     # conventions are unambiguous — production routing never adopts
     # any of them.
-    def self.test_path?(path : String) : Bool
-      return true if path.includes?("/Tests/")
-      return true if path.includes?("/tests/")
-      base = File.basename(path)
+    #
+    # Takes the scan-base-relative path (`Analyzer#base_relative_path`),
+    # never the absolute one. The conventions describe a location inside
+    # the project, so matching the absolute path handed the decision to
+    # whatever directory the checkout happened to live in: the same tree
+    # scanned from `~/work/tests/myapp` reported 0 endpoints instead of
+    # 235.
+    def self.test_path?(relative_path : String, root_docs : Bool = true) : Bool
+      return true if relative_path.matches?(TEST_DIR_RE)
+      return true if root_docs && relative_path.starts_with?("/docs/")
+      base = File.basename(relative_path)
       return true if base.ends_with?("Test.php")
       base.ends_with?("Tests.php")
     end
 
+    # `content` with comments blanked (docblocks kept), offsets and lines
+    # intact — see `Noir::PhpLexer#without_comments`. Adapters that pull
+    # routes out with regexes run them on this so commented-out routes stay
+    # dead. Call it after the adapter's relevance gate: it lexes the file.
+    protected def php_code(content : String) : String
+      Noir::PhpLexer.new(content).without_comments
+    end
+
+    # Regex fragment for the rest of a call's argument list, up to the `)`
+    # that closes it. Quoted strings are skipped whole so a `)` in one
+    # (`'placeholder' => '(:num)'`) does not end the list; nested calls are
+    # not balanced, so the text stops at their first bare `)`. Possessive
+    # throughout, so it never backtracks.
+    CALL_ARGS_TAIL = /(?:[^)'"]++|'(?:[^'\\]|\\.)*+'|"(?:[^"\\]|\\.)*+")*+/.source
+
+    RESOURCE_FILTER_RE = /['"](only|except)['"]\s*=>\s*(?:['"]([^'"]*)['"]|(?:\[|array\s*\()([^\])]*))/i
+
+    # Whether a resource action survives the call's `only`/`except` options,
+    # given as `['index', 'show']`, `'index,show'` or `array('new')`.
+    protected def resource_action_allowed?(args : String, action : String) : Bool
+      args.scan(RESOURCE_FILTER_RE) do |m|
+        names = if single = m[2]?
+                  single.split(',').map(&.strip)
+                else
+                  m[3].scan(/['"]([^'"]+)['"]/).map(&.[1])
+                end
+        return false if names.includes?(action) == (m[1].downcase == "except")
+      end
+      true
+    end
+
+    # Find `'<key>' => [` within `[from, to)` and return the index of the `[`,
+    # verified to be real code (not a comment / heredoc). Mautic's
+    # `Config/config.php` and Nextcloud's `appinfo/routes.php` both declare
+    # routes as keyed array literals.
+    protected def find_key_array_open(content : String, lexer : Noir::PhpLexer, key : String, from : Int32, to : Int32) : Int32?
+      regex = Regex.new("['\"]#{Regex.escape(key)}['\"]\\s*=>\\s*\\[")
+      pos = from
+      while match = content.match(regex, pos)
+        match_text = match[0]
+        start = content.index(match_text, pos)
+        break unless start && start < to
+        bracket_pos = start + match_text.size - 1
+        # Validate the `[` (a code char) rather than the key's opening quote,
+        # which the lexer masks as string content — so a real `'routes' => [`
+        # passes while one buried in a heredoc/comment (masked `[`) is rejected.
+        return bracket_pos if lexer.in_code?(bracket_pos)
+        pos = start + match_text.size
+      end
+      nil
+    end
+
     protected def php_base_path_for(path : String) : String
       configured_base_for(path)
+    end
+
+    # Directory (normalized) of the nearest `composer.json` above `path`, or
+    # "" — the app a file belongs to in a monorepo.
+    protected def composer_project_root(path : String) : String
+      expanded = Noir::PathScope.expand(path)
+      get_files_by_basename("composer.json").map { |f| Noir::PathScope.normalize_root(File.dirname(f)) }
+        .select { |dir| Noir::PathScope.under_normalized_root?(expanded, dir) }.max_by?(&.size) || ""
     end
 
     # Route composition helper. Will migrate to a PHP route extractor when that
@@ -86,11 +168,28 @@ module Analyzer::Php
     # Rewrite each shape to `{name}` so the path-parameter
     # extractor picks it up and the URL template reads cleanly.
     # Same posture as the Python f-string and Ruby `#{}` fixes.
+    INTERPOLATION_DOLLAR_BRACE_RE = /\$\{([A-Za-z_]\w*)\}/
+    INTERPOLATION_BRACE_DOLLAR_RE = /\{\$([A-Za-z_]\w*)\}/
+    INTERPOLATION_DOLLAR_RE       = /\$([A-Za-z_]\w*)/
+
     protected def normalize_php_interpolation(path : String) : String
-      path = path.gsub(/\$\{([A-Za-z_]\w*)\}/) { |_| "{#{$~[1]}}" }
-      path = path.gsub(/\{\$([A-Za-z_]\w*)\}/) { |_| "{#{$~[1]}}" }
-      path = path.gsub(/\$([A-Za-z_]\w*)/) { |_| "{#{$~[1]}}" }
+      # Most route literals have no interpolation; skip three PCRE
+      # gsub passes when `$` is absent.
+      return path unless path.includes?('$')
+
+      path = path.gsub(INTERPOLATION_DOLLAR_BRACE_RE) { |_| "{#{$~[1]}}" }
+      path = path.gsub(INTERPOLATION_BRACE_DOLLAR_RE) { |_| "{#{$~[1]}}" }
+      path = path.gsub(INTERPOLATION_DOLLAR_RE) { |_| "{#{$~[1]}}" }
       path
+    end
+
+    # Naive English singular of a resource name (`photos` -> `photo`,
+    # `categories` -> `category`), for nested-resource parameter names.
+    protected def singularize_resource_segment(segment : String) : String
+      return segment[0...-3] + "y" if segment.ends_with?("ies") && segment.size > 3
+      return segment[0...-2] if segment.ends_with?("ses") && segment.size > 3
+      return segment[0...-1] if segment.ends_with?("s") && segment.size > 1
+      segment
     end
 
     protected def extract_brace_path_params(route_path : String) : Array(Param)
@@ -103,6 +202,51 @@ module Analyzer::Php
 
     protected def attach_php_callees(endpoint : Endpoint, callees : Array(Noir::PhpCalleeExtractor::Entry))
       Noir::PhpCalleeExtractor.attach_to(endpoint, callees)
+    end
+
+    protected def attach_method_callees(endpoint : Endpoint, method_body : Tuple(String, Int32)?, path : String)
+      return unless method_body
+
+      body, start_line = method_body
+      callees = Noir::PhpCalleeExtractor.callees_for_body(body, path, start_line)
+      attach_php_callees(endpoint, callees)
+    end
+
+    # Body of an inline `function (...) use (...) { ... }` closure handler
+    # starting at `pos`: `{body, position after the closure, body start line}`,
+    # or `{nil, pos, nil}` when no closure starts there.
+    INLINE_CLOSURE_HEAD_RE = /\G(?:static\s+)?function\s*\([^)]*\)\s*(?:use\s*\([^)]*\)\s*)?(?::\s*[^{=]+)?\{/i
+
+    # Char positions in and out, like the rest of the route loops, but every
+    # step goes through `offsets`: this runs once per route, and the plain
+    # `String` forms are O(file) per call on non-ASCII content.
+    protected def extract_inline_closure_body(offsets : Noir::CharOffsets, pos : Int32, base_line : Int32) : Tuple(String?, Int32, Int32?)
+      size = offsets.content.size
+      return {nil, pos, nil} unless pos < size
+
+      scan_pos = pos
+      while offsets.ascii_whitespace?(scan_pos)
+        scan_pos += 1
+      end
+      return {nil, pos, nil} unless scan_pos < size
+
+      match = offsets.match(INLINE_CLOSURE_HEAD_RE, scan_pos)
+      return {nil, pos, nil} unless match
+
+      close_byte = find_matching_php_close_brace_at_byte(offsets.content, match.byte_end(0) - 1)
+      return {nil, pos, nil} unless close_byte
+
+      brace_pos = offsets.end(match) - 1
+      body_end = offsets.char(close_byte)
+      body_start_line = base_line + offsets.line(brace_pos) - 1
+      {offsets.slice(brace_pos + 1, body_end), body_end + 1, body_start_line}
+    end
+
+    private def skip_whitespace(content : String, pos : Int32) : Int32
+      while pos < content.size && content[pos].ascii_whitespace?
+        pos += 1
+      end
+      pos
     end
 
     protected def extract_php_method_body_after(content : String, start_pos : Int32) : Tuple(String, Int32)?
@@ -120,14 +264,86 @@ module Analyzer::Php
       return unless method_end
       return if method_end <= brace_start + 1
 
-      body_start_line = php_line_number_for_index(content, brace_start)
+      body_start_line = line_number_for_index(content, brace_start)
       {content[(brace_start + 1)...method_end], body_start_line}
     end
 
-    protected def php_line_number_for_index(content : String, index : Int32) : Int32
-      return 1 if index <= 0
+    # Newlines strictly before `pos`, a CHAR offset — i.e. the 0-based line
+    # index where `line_number_for_index` gives the 1-based number.
+    #
+    # Four analyzers (laravel, lumen, slim, thinkphp) each carried a
+    # byte-identical `content[0...pos].count('\n')` copy of this. That form
+    # allocates a prefix substring per call; routing through the inherited
+    # helper drops the allocation and keeps one definition of "which line is
+    # this offset on" for the whole engine.
+    protected def newline_count_before(content : String, pos : Int32) : Int32
+      line_number_for_index(content, pos) - 1
+    end
 
-      content[0...index].count('\n') + 1
+    # Drop repeat `(param_type, name)` pairs, keeping the first.
+    #
+    # Was five byte-identical private copies (hyperf, laminas, lumen, slim,
+    # thinkphp). The NUL separator matters: it cannot occur in either field,
+    # so `("query", "a\0b")` and `("query\0a", "b")` cannot collide.
+    protected def dedup_params(params : Array(Param)) : Array(Param)
+      seen = Set(String).new
+      params.select do |param|
+        key = "#{param.param_type}\0#{param.name}"
+        if seen.includes?(key)
+          false
+        else
+          seen.add(key)
+          true
+        end
+      end
+    end
+
+    # `Illuminate\Http\Request` reads (Laravel, Lumen): `$request->input('x')`,
+    # `request()->query('x')`, `$request->header('X-Token')`, ... Capture 1 is
+    # the accessor, capture 2 the input name.
+    ILLUMINATE_REQUEST_READ_RE = /(?:\$request|\brequest\(\s*\))\s*->\s*(input|post|get|query|header|cookie|file|string|integer|boolean|float|date|enum|array)\s*\(\s*['"]([^'"]+)['"]/
+    ILLUMINATE_READ_TYPES      = {"get" => "query", "query" => "query", "header" => "header", "cookie" => "cookie"}
+    # Calls taking a validation rules array: `$request->validate([...])`,
+    # `$this->validate($request, [...])`, `Validator::make($data, [...])`.
+    ILLUMINATE_VALIDATE_RE = /(?:->\s*validate(?:WithBag)?|\bValidator::make)\s*\(/
+    # A rules-array key: `'title' =>`, `'author.name' =>` (input `author`).
+    RULE_KEY_RE = /['"]([\w-]+)(?:\.[^'"]*)?['"]\s*=>/
+
+    # Input an `Illuminate\Http\Request` handler body reads: accessor calls
+    # plus the keys of its validation rules. Body inputs come back as "form".
+    protected def illuminate_request_params(body : String) : Array(Param)
+      params = [] of Param
+      body.scan(ILLUMINATE_REQUEST_READ_RE) do |m|
+        params << Param.new(m[2], "", ILLUMINATE_READ_TYPES[m[1]]? || "form")
+      end
+      if body.matches?(ILLUMINATE_VALIDATE_RE)
+        lexer = Noir::PhpLexer.new(body, php_mode: true)
+        body.scan(ILLUMINATE_VALIDATE_RE) do |m|
+          open = m.end(0) - 1
+          next unless lexer.in_code?(open) && (close = lexer.matching_delimiter(open))
+          # The rules are the first array literal among the call's own
+          # arguments; a later one is custom messages (keyed by rule name).
+          depth = 0
+          (open + 1...close).each do |i|
+            case lexer.masked[i]
+            when '(' then depth += 1
+            when ')' then depth -= 1
+            when '['
+              next unless depth == 0
+              if array_close = lexer.matching_delimiter(i)
+                params.concat(rule_key_params(body[i..array_close]))
+              end
+              break
+            end
+          end
+        end
+      end
+      dedup_params(params)
+    end
+
+    # One "form" param per key of a validation rules array or `rules()` body.
+    protected def rule_key_params(rules : String) : Array(Param)
+      rules.scan(RULE_KEY_RE).map { |m| Param.new(m[1], "", "form") }
     end
 
     # ASCII byte values for the structural delimiters scanned below.
@@ -160,9 +376,17 @@ module Analyzer::Php
     # `matching_delimiter` — constructing a lexer per call re-lexes the whole
     # file and is ~hundreds of times slower on method-heavy controllers.
     protected def find_matching_php_close_brace(content : String, open_pos : Int32) : Int32?
-      bytes = content.to_slice
       start = content.char_index_to_byte_index(open_pos)
-      return unless start && start < bytes.size && bytes[start] == BYTE_OPEN_BRACE
+      return unless start
+      close = find_matching_php_close_brace_at_byte(content, start)
+      content.byte_index_to_char_index(close) if close
+    end
+
+    # BYTE-offset form of `find_matching_php_close_brace`: takes and returns
+    # byte offsets, so a per-route caller pays no O(n) char/byte conversion.
+    protected def find_matching_php_close_brace_at_byte(content : String, start : Int32) : Int32?
+      bytes = content.to_slice
+      return unless start < bytes.size && bytes[start] == BYTE_OPEN_BRACE
 
       depth = 0
       in_string = false
@@ -207,7 +431,7 @@ module Analyzer::Php
           depth += 1
         elsif char == BYTE_CLOSE_BRACE
           depth -= 1
-          return content.byte_index_to_char_index(pos) if depth == 0
+          return pos if depth == 0
         end
 
         pos += 1

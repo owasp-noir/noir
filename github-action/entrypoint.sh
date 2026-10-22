@@ -51,6 +51,8 @@ probe_via="${INPUT_PROBE_VIA:-}"
 export_es="${INPUT_EXPORT_ES:-}"
 export_webhook="${INPUT_EXPORT_WEBHOOK:-}"
 diff_path="${INPUT_DIFF_PATH:-}"
+diff_ref="${INPUT_DIFF_REF:-}"
+fail_on="${INPUT_FAIL_ON:-}"
 no_log="${INPUT_NO_LOG:-true}"
 
 # ==============================================================================
@@ -91,16 +93,49 @@ fi
 [ -n "$export_es" ]              && set -- "$@" --export-es "$export_es"
 [ -n "$export_webhook" ]         && set -- "$@" --export-webhook "$export_webhook"
 [ -n "$diff_path" ]              && set -- "$@" --diff-path "$diff_path"
+[ -n "$diff_ref" ]               && set -- "$@" --diff-ref "$diff_ref"
+[ -n "$fail_on" ]                && set -- "$@" --fail-on "$fail_on"
+
+# The checkout is mounted from the runner and owned by the runner's user,
+# not by the container's root, so git refuses it as "dubious ownership"
+# unless it is marked safe. `*` rather than the workspace path: with
+# `actions/checkout` `path: app` the repository is a subdirectory, and
+# safe.directory matches the repository root exactly. The container is
+# throwaway and only runs noir's read-only git plumbing, and only when
+# `--diff-ref` is about to.
+if [ -n "$diff_ref" ]; then
+    git config --global --add safe.directory '*'
+fi
 
 # ==============================================================================
 # Execute
 # ==============================================================================
 
-echo "Executing command: $*"
+# GitHub masks only `secrets.*` values, so an ai_key from `vars.*` or a
+# literal was printed here. Mask it for GitHub, and redact both secret flags
+# (a webhook URL carries its token in the path) for any other runner.
+[ -n "$ai_key" ] && echo "::add-mask::$ai_key"
+log_cmd=""
+prev=""
+for arg in "$@"; do
+    shown=$arg
+    case $prev in --ai-key|--export-webhook) shown="***" ;; esac
+    log_cmd="${log_cmd:+$log_cmd }$shown"
+    prev=$arg
+done
+echo "Executing command: $log_cmd"
 "$@"
 exit_code=$?
 
-[ $exit_code -ne 0 ] && error_exit "Noir command failed with exit code $exit_code" $exit_code
+# 3 is `--fail-on` matching: the scan worked and the report is complete,
+# so the outputs are still written below and the exit code is passed on at
+# the end. Anything else non-zero is a failed run.
+fail_on_matched=false
+if [ $exit_code -eq 3 ] && [ -n "$fail_on" ]; then
+    fail_on_matched=true
+elif [ $exit_code -ne 0 ]; then
+    error_exit "Noir command failed with exit code $exit_code" $exit_code
+fi
 [ ! -f "$output_file" ] && error_exit "Output file $output_file not found" 1
 
 # ==============================================================================
@@ -116,8 +151,21 @@ if [ "$format" = "json" ] || [ "$format" = "jsonl" ]; then
     if command -v jq >/dev/null 2>&1; then
         jq empty "$output_file" 2>/dev/null || error_exit "Invalid JSON output from Noir" 1
 
-        endpoints_output=$(jq -c . "$output_file")
-        passive_results=$(jq -c '.passive_results // []' "$output_file")
+        if [ "$format" = "jsonl" ]; then
+            # JSONL is one object per line: endpoints (url/method), passive
+            # findings (id/info) and analyzer failures (tech/message). Fold
+            # them back into the single-line document the json format
+            # produces; a multi-line value would corrupt $GITHUB_OUTPUT.
+            endpoints_output=$(jq -cs '{
+                endpoints: map(select(has("url") and has("method"))),
+                passive_results: map(select(has("id") and has("info"))),
+                errors: map(select(has("tech") and has("message")))
+            }' "$output_file")
+            passive_results=$(printf '%s' "$endpoints_output" | jq -c '.passive_results')
+        else
+            endpoints_output=$(jq -c . "$output_file")
+            passive_results=$(jq -c '.passive_results // []' "$output_file")
+        fi
 
         echo "endpoints=$endpoints_output" >> "$github_output"
         echo "passive_results=$passive_results" >> "$github_output"
@@ -139,6 +187,13 @@ fi
 # ==============================================================================
 # Summary
 # ==============================================================================
+
+if [ "$fail_on_matched" = "true" ]; then
+    echo "::error title=OWASP Noir::The diff matched fail_on ($fail_on)"
+    echo "Output format: $format"
+    echo "Output file:   $output_file"
+    exit 3
+fi
 
 echo "Noir analysis completed successfully"
 echo "Output format: $format"

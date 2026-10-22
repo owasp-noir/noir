@@ -78,4 +78,152 @@ describe "OutputBuilderHttpie" do
     lines.map { |line| line.split("'")[1] }.should eq(WILDCARD_HTTP_METHODS)
     lines.any?(&.includes?("'ANY'")).should be_false
   end
+
+  it "keeps a form value containing & in one request item" do
+    options = {
+      "debug"   => YAML::Any.new(false),
+      "verbose" => YAML::Any.new(false),
+      "color"   => YAML::Any.new(false),
+      "nolog"   => YAML::Any.new(false),
+      "output"  => YAML::Any.new(""),
+    }
+    builder = OutputBuilderHttpie.new(options)
+    builder.io = IO::Memory.new
+
+    # Re-splitting the joined `k=v&k=v` body on `&` cannot tell a separator
+    # from a `&` inside a value: this came out as `'note=a' 'b=c'`, truncating
+    # the real value and inventing a `b` field the endpoint never had.
+    endpoint = Endpoint.new("/submit", "POST")
+    endpoint.push_param(Param.new("note", "a&b=c", "form"))
+
+    builder.print([endpoint])
+    line = builder.io.to_s.strip
+
+    line.should eq("http --form 'POST' '/submit' 'note=a&b=c'")
+    line.should_not contain("'b=c'")
+  end
+
+  it "emits form params whose param_type is the body alias" do
+    options = {
+      "debug"   => YAML::Any.new(false),
+      "verbose" => YAML::Any.new(false),
+      "color"   => YAML::Any.new(false),
+      "nolog"   => YAML::Any.new(false),
+      "output"  => YAML::Any.new(""),
+    }
+    builder = OutputBuilderHttpie.new(options)
+    builder.io = IO::Memory.new
+
+    # `body` aliases onto the `json` bucket, so these take the JSON branch —
+    # the form branch must not pick them up and must not lose them either.
+    endpoint = Endpoint.new("/upload", "POST")
+    endpoint.push_param(Param.new("avatar", "", "body"))
+
+    builder.print([endpoint])
+    line = builder.io.to_s.strip
+
+    line.should contain("'avatar='")
+    line.should_not contain("--form")
+  end
+
+  it "prints a QUERY endpoint with its body intact" do
+    options = {
+      "debug"   => YAML::Any.new(false),
+      "verbose" => YAML::Any.new(false),
+      "color"   => YAML::Any.new(false),
+      "nolog"   => YAML::Any.new(false),
+      "output"  => YAML::Any.new(""),
+    }
+    builder = OutputBuilderHttpie.new(options)
+    builder.io = IO::Memory.new
+
+    endpoint = Endpoint.new("/products/search", "QUERY")
+    endpoint.push_param(Param.new("q", "widget", "form"))
+
+    builder.print([endpoint])
+    line = builder.io.to_s.strip
+
+    line.should eq("http --form 'QUERY' '/products/search' 'q=widget'")
+  end
+
+  it "escapes newlines and carriage returns so commands remain on a single line" do
+    options = {
+      "debug"   => YAML::Any.new(false),
+      "verbose" => YAML::Any.new(false),
+      "color"   => YAML::Any.new(false),
+      "nolog"   => YAML::Any.new(false),
+      "output"  => YAML::Any.new(""),
+    }
+    builder = OutputBuilderHttpie.new(options)
+    builder.io = IO::Memory.new
+
+    endpoint = Endpoint.new("/base/quote\"path?q\"uote=", "GET")
+    endpoint.push_param(Param.new("X-New\nLine", "value\r\nwith\nbreaks", "header"))
+
+    builder.print([endpoint])
+    output = builder.io.to_s.strip
+    lines = output.split("\n")
+
+    lines.size.should eq(1)
+    output.should contain("'X-New\\nLine: value\\r\\nwith\\nbreaks'")
+  end
+
+  it "emits field@file items for file uploads" do
+    options = {
+      "debug"   => YAML::Any.new(false),
+      "verbose" => YAML::Any.new(false),
+      "color"   => YAML::Any.new(false),
+      "nolog"   => YAML::Any.new(false),
+      "output"  => YAML::Any.new(""),
+    }
+    builder = OutputBuilderHttpie.new(options)
+    builder.io = IO::Memory.new
+
+    upload = Endpoint.new("/modern.php", "POST")
+    upload.push_param(Param.new("name", "", "form"))
+    upload.push_param(Param.new("avatar", "", "file"))
+
+    builder.print([upload])
+    line = builder.io.to_s.split("\n").reject(&.empty?).first
+
+    line.should contain("--form")
+    line.should contain("'name='")
+    line.should contain("'avatar@avatar'")
+  end
+
+  it "backslash-escapes request-item separators inside field names" do
+    options = {
+      "debug"   => YAML::Any.new(false),
+      "verbose" => YAML::Any.new(false),
+      "color"   => YAML::Any.new(false),
+      "nolog"   => YAML::Any.new(false),
+      "output"  => YAML::Any.new(""),
+    }
+    builder = OutputBuilderHttpie.new(options)
+    builder.io = IO::Memory.new
+
+    # Unescaped, HTTPie read `@type=` as a file upload, `a:b=` as a header
+    # `a: b=` and `c=d=` as field `c` with value `d=`.
+    json = Endpoint.new("/ld", "POST")
+    json.push_param(Param.new("@type", "", "json"))
+    json.push_param(Param.new("a:b", "", "json"))
+    json.push_param(Param.new("c=d", "", "json"))
+    json.push_param(Param.new("e;f", "", "json"))
+    json.push_param(Param.new("x[y]", "", "json"))
+
+    form = Endpoint.new("/ld", "PUT")
+    form.push_param(Param.new("@f", "", "form"))
+    form.push_param(Param.new("g:h[i]", "", "form"))
+
+    upload = Endpoint.new("/up", "POST")
+    upload.push_param(Param.new("a@b", "", "file"))
+
+    builder.print([json, form, upload])
+    lines = builder.io.to_s.split("\n").reject(&.empty?)
+
+    lines[0].should eq("http 'POST' '/ld' '\\@type=' 'a\\:b=' 'c\\=d=' 'e\\;f=' 'x\\[y\\]='")
+    # Under --form HTTPie keeps a backslash before `[`, so brackets stay bare.
+    lines[1].should eq("http --form 'PUT' '/ld' '\\@f=' 'g\\:h[i]='")
+    lines[2].should eq("http --form 'POST' '/up' 'a\\@b@a@b'")
+  end
 end

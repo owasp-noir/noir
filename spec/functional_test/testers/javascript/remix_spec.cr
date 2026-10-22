@@ -21,6 +21,8 @@ expected_endpoints = [
   Endpoint.new("/api/users", "PATCH"),
   Endpoint.new("/api/users", "DELETE"),
   Endpoint.new("/{splat}", "GET", [Param.new("splat", "", "path")]),
+  # Folder route: `settings/route.tsx`; `form.tsx` beside it is not a route.
+  Endpoint.new("/settings", "GET"),
 ]
 
 FunctionalTester.new("fixtures/javascript/remix/", {
@@ -28,7 +30,7 @@ FunctionalTester.new("fixtures/javascript/remix/", {
   :endpoints => expected_endpoints.size,
 }, expected_endpoints).perform_tests
 
-describe "Remix route source attribution" do
+describe "Remix route source attribution", tags: "functional" do
   before_each do
     CodeLocator.instance.clear_all
   end

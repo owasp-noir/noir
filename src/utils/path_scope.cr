@@ -1,3 +1,5 @@
+require "./utils"
+
 module Noir
   # Path-boundary helpers shared by the analyzers and engines. Monorepo
   # scans (multiple `-b` base paths) have to answer two questions
@@ -17,11 +19,143 @@ module Noir
   module PathScope
     extend self
 
+    @@pinned_cwd : String? = nil
+
+    # `File.expand_path(path)`, without the per-call cost of finding the
+    # working directory.
+    #
+    # Crystal's `File.expand_path(path)` evaluates `Dir.current` on every
+    # call — even for an absolute path, which never uses it — and
+    # `Dir.current` stats both `$PWD` and `.` to confirm they agree. The
+    # analyzers expand paths inside per-file loops, so on a large scan
+    # those two syscalls per call were a measurable share of the run.
+    #
+    # An absolute path is expanded against `/` (the base is ignored), and
+    # a relative one against the directory pinned by `with_pinned_cwd`,
+    # falling back to `Dir.current` outside a pinned scope. The result is
+    # identical to `File.expand_path(path)` as long as nothing changes the
+    # working directory inside the pinned scope, which noir never does.
+    #
+    # Always `/`-separated, Windows included (see `ext/windows_paths.cr`).
+    def expand(path : String) : String
+      return path if already_expanded?(path)
+      if Path.new(path).absolute?
+        File.expand_path(path, File::SEPARATOR_STRING)
+      else
+        File.expand_path(path, @@pinned_cwd || Dir.current)
+      end
+    end
+
+    # True when `File.expand_path(path)` would return `path` unchanged: an
+    # absolute POSIX path with no empty, `.` or `..` segment and no trailing
+    # separator. Nearly every path a scan handles is one — the walk builds
+    # them with `File.join` under an expanded base — and `expand` sits in
+    # per-file loops of many analyzers, where rebuilding each one through
+    # `Path#normalize` (a char-by-char copy) was the single largest cost of
+    # a 50k-file scan outside the walk itself.
+    #
+    # The two remaining conditions mirror `normalize` exactly: it stops at a
+    # NUL, and it re-encodes invalid UTF-8 as U+FFFD, so either one means
+    # the result would differ from the input.
+    private def already_expanded?(path : String) : Bool
+      {% if flag?(:unix) %}
+        return false unless path.starts_with?('/')
+        return true if path == "/"
+        return false if path.ends_with?('/') || path.ends_with?("/.") || path.ends_with?("/..")
+        return false if path.includes?("//") || path.includes?("/./") || path.includes?("/../")
+        return false if path.includes?('\0')
+        path.valid_encoding?
+      {% else %}
+        false
+      {% end %}
+    end
+
+    # Resolves the working directory once and reuses it for every `expand`
+    # inside the block. Scoped rather than cached for the process: specs
+    # (and embedders) `Dir.cd` between scans, and a process-wide cache
+    # would resolve their paths against a stale directory. Re-entrant: a
+    # nested call keeps the outer pin.
+    def with_pinned_cwd(&)
+      return yield if @@pinned_cwd
+
+      @@pinned_cwd = Dir.current
+      begin
+        yield
+      ensure
+        @@pinned_cwd = nil
+      end
+    end
+
     # Canonical comparison form of a root: expanded, with any trailing
     # separator stripped (except the filesystem root itself).
     def normalize_root(root : String) : String
-      expanded = File.expand_path(root)
-      expanded == File::SEPARATOR ? expanded : expanded.rstrip('/')
+      expanded = expand(root)
+      expanded == "/" ? expanded : expanded.rstrip('/')
+    end
+
+    # Canonical form of a user-supplied *base* path, preserving whether it
+    # is relative. `-b rem2`, `-b rem2///` and `-b ./rem2` all name the
+    # same tree, but the raw string is echoed straight into every reported
+    # `code_path`, so the same codebase scanned three ways produced three
+    # different reports — which breaks baseline diffing and any SARIF
+    # consumer that keys on the URI.
+    #
+    # Repeated separators collapse, trailing separators are dropped (the
+    # filesystem root itself stays `/`), and `.` segments are resolved
+    # away (`./rem2` -> `rem2`, a bare `.` stays `.`). `..` segments are
+    # left alone: resolving them textually is wrong across symlinks.
+    #
+    # Deliberately NOT `normalize_root`/`File.expand_path` — expanding a
+    # relative base would bake the machine's checkout location into every
+    # reported path, and an absolute `code_path` was itself a bug fixed in
+    # an earlier sweep. A relative base stays relative.
+    # Separators a base path may legitimately use. Windows accepts both
+    # forms; on POSIX a backslash is an ordinary filename character and
+    # must not be treated as a separator. The result is always joined with
+    # `/`: noir handles paths as `/`-separated strings throughout, and
+    # Windows file APIs accept `/` as readily as `\\`.
+    # `File::SEPARATOR` is `'/'` on every platform in Crystal, Windows
+    # included, so the platform has to be read off the target flag.
+    BASE_SEPARATORS = {% if flag?(:windows) %} {'\\', '/'} {% else %} {'/'} {% end %}
+
+    def normalize_base(base : String) : String
+      return base if base.empty?
+      # An extended-length path (`\\?\C:\...`) is passed to Windows
+      # verbatim; rewriting its separators changes what it names.
+      return base if {{ flag?(:windows) }} && base.starts_with?("\\\\?\\")
+
+      separators = BASE_SEPARATORS
+      rooted = separators.includes?(base[0])
+      # A UNC share (`\\server\share`, `//server/share`) keeps both leading
+      # separators; one alone names the root of the current drive.
+      unc = {{ flag?(:windows) }} && base.size > 2 && rooted && separators.includes?(base[1])
+
+      segments = [] of String
+      segment = String::Builder.new
+      base.each_char do |char|
+        if separators.includes?(char)
+          part = segment.to_s
+          segments << part unless part.empty? || part == "."
+          segment = String::Builder.new
+        else
+          segment << char
+        end
+      end
+      last = segment.to_s
+      segments << last unless last.empty? || last == "."
+
+      joined = segments.join('/')
+      return "//#{joined}" if unc && !joined.empty?
+      return joined.empty? ? "/" : "/#{joined}" if rooted
+      return "." if joined.empty?
+      # A Windows drive root ("C:\\") is the one place a trailing separator
+      # carries meaning — without it "C:" names the current directory on
+      # that drive instead.
+      if {{ flag?(:windows) }} && segments.size == 1 && joined.size == 2 &&
+         joined[1] == ':' && base.size > 2
+        return "#{joined}/"
+      end
+      joined
     end
 
     # True when `path` is `root` or sits beneath it on a path boundary.
@@ -29,22 +163,27 @@ module Noir
     # everything (mirrors the historical `starts_with?("")`).
     def under_root?(path : String, root : String) : Bool
       return true if root.empty?
-      under_normalized_root?(File.expand_path(path), normalize_root(root))
+      under_normalized_root?(expand(path), normalize_root(root))
     end
 
     # Boundary check against an already-expanded path and an
     # already-normalized root. Use this in per-file loops where the root is
     # loop-invariant (normalize it once with `normalize_root`).
     def under_normalized_root?(expanded_path : String, normalized_root : String) : Bool
-      return expanded_path.starts_with?(File::SEPARATOR) if normalized_root == File::SEPARATOR
-      expanded_path == normalized_root || expanded_path.starts_with?(normalized_root + File::SEPARATOR)
+      return expanded_path.starts_with?('/') if normalized_root == "/"
+      return false unless expanded_path.starts_with?(normalized_root)
+      # Boundary test on the byte after the root rather than
+      # `starts_with?(normalized_root + "/")`: this runs inside
+      # files x roots loops, and the concatenation allocated a string per call.
+      expanded_path.bytesize == normalized_root.bytesize ||
+        expanded_path.byte_at(normalized_root.bytesize) == '/'.ord
     end
 
     # The most specific (longest normalized) base in `bases` that contains
     # `path`, or nil if none does. Returns the ORIGINAL base string (not its
     # normalized form) so callers can use it as a stable map key.
     def longest_base(path : String, bases : Enumerable(String)) : String?
-      expanded_path = File.expand_path(path)
+      expanded_path = expand(path)
       best_base = nil
       best_size = -1
       bases.each do |base|
@@ -57,16 +196,69 @@ module Noir
       best_base
     end
 
+    # The form every *convention filter* must match on: `path`'s location
+    # relative to the scan base that owns it, `/`-separated and rooted
+    # with a leading `/`.
+    #
+    # "Is this file under `tests/`?", "is this vendored?", "is this build
+    # output?" are all statements about a location inside the project. Ask
+    # them of the absolute path and the answer depends on where the
+    # checkout happens to sit: a clone into `~/work/tests/myapp`, or a CI
+    # job that checks out under a `test/` step directory, matches every
+    # file in the project and silently reports nothing. Rooting the result
+    # means one `includes?("/tests/")` also covers a `tests/` directory at
+    # the top of the project, and keeps every match on a whole path
+    # segment (`/test/` never matches `latest/`).
+    #
+    # A path outside `base_path` keeps its own (absolute) form, exactly as
+    # `get_relative_path` returns it — the filters then behave as they did
+    # before, which is the conservative choice for a file the scan base
+    # does not own.
+    def base_relative(path : String, base_path : String) : String
+      relative = get_relative_path(base_path, path)
+      relative = relative.gsub(File::SEPARATOR, "/") unless File::SEPARATOR == '/'
+      relative.starts_with?("/") ? relative : "/#{relative}"
+    end
+
+    # Multi-base overload: resolves the owning base first. Callers with a
+    # per-path base cache (`Analyzer#configured_base_for`) should use that
+    # and call the single-base form instead.
+    def base_relative(path : String, base_paths : Array(String)) : String
+      base = if base_paths.size <= 1
+               base_paths.first?
+             else
+               longest_base(path, base_paths)
+             end
+      base_relative(path, base || "")
+    end
+
+    # `path` up to the first of `markers` (tried in order) that ends below
+    # `base`, or nil when none does. A marker wholly above the base is the
+    # checkout location (`~/src/<project>`), not the module's own source
+    # root, so it never counts. One that straddles the end of the base
+    # (`-b module/src`) does: below-base matches are tried first, then the
+    # straddling one, per marker.
+    def marker_root(path : String, base : String, markers : Enumerable(String)) : String?
+      prefix = base.rstrip('/')
+      floor = path.starts_with?(prefix) ? prefix.bytesize : 0
+      markers.each do |marker|
+        index = path.byte_index(marker, floor) ||
+                path.byte_index(marker, Math.max(0, floor - marker.bytesize + 1))
+        return path.byte_slice(0, index) if index
+      end
+      nil
+    end
+
     # Remainder of `path` beneath `base_path`, or the bare basename when
     # `path` is outside `base_path` (or no base given). Backs the
     # Python/Dart test-path conventions, which key off the project-relative
     # path so nested fixture trees don't trip the `tests/`/`test/` filters.
     def relative_under(path : String, base_path : String?) : String
       return File.basename(path) if base_path.nil? || base_path.empty?
-      expanded_path = File.expand_path(path)
+      expanded_path = expand(path)
       normalized = normalize_root(base_path)
       return File.basename(path) unless under_normalized_root?(expanded_path, normalized)
-      relative = expanded_path[normalized.size..].lchop(File::SEPARATOR)
+      relative = expanded_path[normalized.size..].lchop('/')
       relative.empty? ? File.basename(path) : relative
     end
   end

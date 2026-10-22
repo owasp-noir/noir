@@ -1,0 +1,5 @@
+{
+  "packageDirectories": [{ "path": "force-app", "default": true }],
+  "name": "noir-apex-fixture",
+  "sourceApiVersion": "60.0"
+}

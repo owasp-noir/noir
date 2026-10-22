@@ -1,0 +1,21 @@
+# JetBrains HTTP Client collection with a variable and a response handler.
+@baseUrl = https://api.example.com
+
+### Create order
+POST {{baseUrl}}/orders
+Content-Type: application/json
+
+{
+  "item": "widget",
+  "qty": 3
+}
+
+> {%
+    client.test("status is 200", function() {
+        client.assert(response.status === 200, "unexpected status");
+    });
+%}
+
+### List orders
+GET {{baseUrl}}/orders?status=open
+Accept: application/json

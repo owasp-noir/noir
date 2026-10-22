@@ -1,9 +1,14 @@
 require "../../engines/perl_engine"
+require "./perl_helper"
+require "../../../miniparsers/perl_callee_extractor"
 
 module Analyzer::Perl
   class Catalyst < PerlEngine
+    analyzer_for "perl_catalyst"
+
     HTTP_VERBS        = %w[get post put delete patch options head]
     BARE_ATTR_VALUE   = "__NOIR_BARE_ATTR__"
+    MAX_ARG_SEGMENTS  = 32
     HTTP_METHOD_ATTRS = {
       "get"     => "GET",
       "post"    => "POST",
@@ -44,17 +49,22 @@ module Analyzer::Perl
     def analyze
       actions = [] of RouteAction
       configs = {} of String => ControllerConfig
-      actions_mutex = Mutex.new
-      parallel_file_scan do |path|
+      # Merged in file order, not worker-completion order: a later file's
+      # config for the same package replaces an earlier one, so the order
+      # decides which wins (see `ordered_file_scan`).
+      per_file = ordered_file_scan do |path|
         next unless catalyst_source_file?(path)
 
         content = read_file_content(path)
-        file_actions = collect_actions(content, path)
-        file_configs = collect_controller_configs(sanitize_perl_lines(content.lines))
-        actions_mutex.synchronize do
-          actions.concat(file_actions)
-          file_configs.each { |pkg, cfg| configs[pkg] = cfg }
-        end
+        # One sanitize + one config collect per file. Previously
+        # `collect_actions` re-sanitized and re-parsed configs for the
+        # action walk, then the outer call did both again for composition.
+        lines = sanitize_perl_lines(content.lines)
+        collect_actions_and_configs(content, lines, path)
+      end
+      per_file.each do |file_actions, file_configs|
+        actions.concat(file_actions)
+        file_configs.each { |pkg, cfg| configs[pkg] = cfg }
       end
 
       @result.concat(analyze_actions(compose_actions(actions, configs)))
@@ -69,8 +79,8 @@ module Analyzer::Perl
     end
 
     def analyze_content(content : String, file_path : String) : Array(Endpoint)
-      actions = collect_actions(content, file_path)
-      configs = collect_controller_configs(sanitize_perl_lines(content.lines))
+      lines = sanitize_perl_lines(content.lines)
+      actions, configs = collect_actions_and_configs(content, lines, file_path)
       analyze_actions(compose_actions(actions, configs))
     end
 
@@ -214,9 +224,12 @@ module Analyzer::Perl
       sources
     end
 
-    private def collect_actions(content : String, file_path : String) : Array(RouteAction)
-      raw_lines = content.lines
-      lines = sanitize_perl_lines(raw_lines)
+    # Single-pass collect of route actions + controller configs from
+    # already-sanitized lines. Callers must not re-run `sanitize_perl_lines`
+    # or `collect_controller_configs` for the same file.
+    private def collect_actions_and_configs(content : String,
+                                            lines : Array(String),
+                                            file_path : String) : Tuple(Array(RouteAction), Hash(String, ControllerConfig))
       # Count braces over a string/comment/regex-stripped (line-aligned) view so
       # an unbalanced brace inside a literal can't truncate/extend a sub body.
       code_lines = code_only_lines(lines)
@@ -228,8 +241,13 @@ module Analyzer::Perl
 
       while index < lines.size
         line = lines[index]
-        if package_match = line.match(/^\s*package\s+([A-Za-z_][A-Za-z0-9_:]*)\s*;/)
+        if line.includes?("package") && (package_match = line.match(/^\s*package\s+([A-Za-z_][A-Za-z0-9_:]*)\s*;/))
           package_name = package_match[1]
+        end
+
+        unless line.includes?("sub")
+          index += 1
+          next
         end
 
         sub_match = line.match(/^\s*sub\s+([A-Za-z_][A-Za-z0-9_]*)\b(.*)$/)
@@ -255,7 +273,7 @@ module Analyzer::Perl
             body_line = lines[body_index]
             body_lines << body_line
             code_line = code_lines[body_index]? || ""
-            brace_depth += brace_delta(code_line)
+            brace_depth += code_line.count('{') - code_line.count('}')
             opened = true if code_line.includes?("{")
             break if opened && brace_depth <= 0
             body_index += 1
@@ -280,7 +298,7 @@ module Analyzer::Perl
         index += 1
       end
 
-      actions
+      {actions, package_configs}
     end
 
     private def collect_controller_configs(lines : Array(String)) : Hash(String, ControllerConfig)
@@ -294,7 +312,7 @@ module Analyzer::Perl
 
       while index < lines.size
         line = lines[index]
-        if package_match = line.match(/^\s*package\s+([A-Za-z_][A-Za-z0-9_:]*)\s*;/)
+        if line.includes?("package") && (package_match = line.match(/^\s*package\s+([A-Za-z_][A-Za-z0-9_:]*)\s*;/))
           package_name = package_match[1]
         end
 
@@ -302,7 +320,7 @@ module Analyzer::Perl
         # `with 'Role'` / `with ('A', 'B')` / multi-line `with\n  'A',\n  'B';`
         # — Moose role application. Roles are composition sources whose
         # chained actions belong to the consuming controller.
-        if stripped.matches?(/^with\b/)
+        if stripped.starts_with?("with") && stripped.matches?(/^with\b/)
           statement, index = accumulate_statement(lines, index)
           (roles[package_name] ||= [] of String).concat(extract_quoted_packages(statement))
           next
@@ -381,8 +399,31 @@ module Analyzer::Perl
       overrides
     end
 
+    # Crystal recompiles an interpolated regex literal on every evaluation (a
+    # full PCRE2 JIT compile). `config_value` is only ever called with key
+    # "namespace" or "path" (see `collect_controller_configs`, which itself
+    # runs once per file from `analyze`/`analyze_content` and again from
+    # `collect_actions`), so precompile both key's pattern sets once at load
+    # time instead of rebuilding+recompiling five regexes per call.
+    CONFIG_VALUE_PATTERNS = {
+      "namespace" => [
+        /namespace\s*=>\s*q\{([^}]*)\}/,
+        /namespace\s*=>\s*q\(([^)]*)\)/,
+        /namespace\s*=>\s*q\/([^\/]*)\//,
+        /namespace\s*=>\s*'([^']*)'/,
+        /namespace\s*=>\s*"([^"]*)"/,
+      ],
+      "path" => [
+        /path\s*=>\s*q\{([^}]*)\}/,
+        /path\s*=>\s*q\(([^)]*)\)/,
+        /path\s*=>\s*q\/([^\/]*)\//,
+        /path\s*=>\s*'([^']*)'/,
+        /path\s*=>\s*"([^"]*)"/,
+      ],
+    }
+
     private def config_value(statement : String, key : String) : String?
-      patterns = [
+      patterns = CONFIG_VALUE_PATTERNS[key]? || [
         /#{key}\s*=>\s*q\{([^}]*)\}/,
         /#{key}\s*=>\s*q\(([^)]*)\)/,
         /#{key}\s*=>\s*q\/([^\/]*)\//,
@@ -547,7 +588,10 @@ module Analyzer::Perl
       return path if values.empty?
 
       count = count_from_arg_spec(values.first)
-      if count.nil?
+      # A hostile `:Args(2000000000)` would otherwise build the path one
+      # segment at a time; past MAX_ARG_SEGMENTS collapse to one wildcard,
+      # the same shape an unbounded `:Args` gets.
+      if count.nil? || count > MAX_ARG_SEGMENTS
         return join_url(path, ":#{name}")
       end
 
@@ -580,30 +624,40 @@ module Analyzer::Perl
 
     private def extract_params_from_body(body : String, method : String) : Array(Param)
       params = [] of Param
+      # Action bodies without request accessors skip six PCRE2 scans.
+      return params unless body.includes?("->") && (body.includes?("req") || body.includes?("request"))
 
-      body.scan(/->\s*(?:req|request)\s*->\s*(?:query_params|query_parameters|parameters)\s*->\s*\{?\s*['"]?([A-Za-z_][A-Za-z0-9_-]*)/) do |match|
-        params << Param.new(match[1], "", "query")
+      if body.includes?("param")
+        body.scan(/->\s*(?:req|request)\s*->\s*(?:query_params|query_parameters|parameters)\s*->\s*\{?\s*['"]?([A-Za-z_][A-Za-z0-9_-]*)/) do |match|
+          params << Param.new(match[1], "", "query")
+        end
+
+        body.scan(/->\s*(?:req|request)\s*->\s*(?:body_params|body_parameters)\s*->\s*\{?\s*['"]?([A-Za-z_][A-Za-z0-9_-]*)/) do |match|
+          params << Param.new(match[1], "", "form")
+        end
+
+        body.scan(/->\s*(?:req|request)\s*->\s*param\s*\(\s*['"]([^'"]+)['"]/) do |match|
+          param_type = (method == "GET" || method == "HEAD" || method == "OPTIONS") ? "query" : "form"
+          params << Param.new(match[1], "", param_type)
+        end
       end
 
-      body.scan(/->\s*(?:req|request)\s*->\s*(?:body_params|body_parameters)\s*->\s*\{?\s*['"]?([A-Za-z_][A-Za-z0-9_-]*)/) do |match|
-        params << Param.new(match[1], "", "form")
+      if body.includes?("body_data") || body.includes?("->data") || body.includes?("-> data")
+        body.scan(/->\s*(?:req|request)\s*->\s*(?:body_data|data)\s*->\s*\{?\s*['"]?([A-Za-z_][A-Za-z0-9_-]*)/) do |match|
+          params << Param.new(match[1], "", "json")
+        end
       end
 
-      body.scan(/->\s*(?:req|request)\s*->\s*(?:body_data|data)\s*->\s*\{?\s*['"]?([A-Za-z_][A-Za-z0-9_-]*)/) do |match|
-        params << Param.new(match[1], "", "json")
+      if body.includes?("header")
+        body.scan(/->\s*(?:req|request)\s*->\s*(?:header|headers\s*->\s*header)\s*\(\s*['"]([^'"]+)['"]/) do |match|
+          params << Param.new(match[1], "", "header")
+        end
       end
 
-      body.scan(/->\s*(?:req|request)\s*->\s*(?:header|headers\s*->\s*header)\s*\(\s*['"]([^'"]+)['"]/) do |match|
-        params << Param.new(match[1], "", "header")
-      end
-
-      body.scan(/->\s*(?:req|request)\s*->\s*cookies?\s*(?:->\s*\{|\(\s*)\s*['"]?([A-Za-z_][A-Za-z0-9_-]*)/) do |match|
-        params << Param.new(match[1], "", "cookie")
-      end
-
-      body.scan(/->\s*(?:req|request)\s*->\s*param\s*\(\s*['"]([^'"]+)['"]/) do |match|
-        param_type = (method == "GET" || method == "HEAD" || method == "OPTIONS") ? "query" : "form"
-        params << Param.new(match[1], "", param_type)
+      if body.includes?("cookie")
+        body.scan(/->\s*(?:req|request)\s*->\s*cookies?\s*(?:->\s*\{|\(\s*)\s*['"]?([A-Za-z_][A-Za-z0-9_-]*)/) do |match|
+          params << Param.new(match[1], "", "cookie")
+        end
       end
 
       params
@@ -697,7 +751,7 @@ module Analyzer::Perl
       namespace = package_name.split(marker, 2)[1]
       return "" if namespace == "Root"
 
-      namespace.split("::").map { |part| underscore(part) }.join("/")
+      namespace.split("::").map { |part| Helper.underscore(part) }.join("/")
     end
 
     private def path_prefix(namespace : String, config : ControllerConfig) : String
@@ -710,10 +764,6 @@ module Analyzer::Perl
 
     private def namespace_path(namespace : String) : String
       namespace.empty? ? "" : "/#{namespace}"
-    end
-
-    private def underscore(name : String) : String
-      name.gsub(/([a-z0-9])([A-Z])/, "\\1_\\2").downcase
     end
 
     private def clean_path_prefix(value : String) : String
@@ -741,15 +791,6 @@ module Analyzer::Perl
                           ext == ".psgi" || ext == ".t"
       return false if perl_test_path?(path, ext)
       true
-    end
-
-    private def brace_delta(line : String) : Int32
-      delta = 0
-      line.each_char do |char|
-        delta += 1 if char == '{'
-        delta -= 1 if char == '}'
-      end
-      delta
     end
 
     # Line-aligned copy with strings/comments/regexes blanked (newlines kept),

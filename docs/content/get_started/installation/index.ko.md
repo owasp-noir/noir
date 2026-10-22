@@ -1,6 +1,6 @@
 +++
 title = "Noir 설치"
-description = "Homebrew, Snapcraft, Docker, Nix, AUR, .deb, .rpm, .apk, 바이너리 다운로드 또는 소스 빌드를 통해 OWASP Noir를 설치합니다."
+description = "Homebrew, Snapcraft, Docker, Nix, AUR, .deb, .rpm, .apk, 바이너리 다운로드(Linux, macOS, Windows), 소스 빌드 중 하나로 OWASP Noir를 설치합니다."
 weight = 2
 sort_by = "weight"
 prev_page_path = "/get_started/overview/"
@@ -11,14 +11,14 @@ next_page_label = "첫 번째 스캔"
 +++
 
 {% mascot(mood="think") %}
-Noir는 런타임 의존성 없이 단일 바이너리로 배포돼. 대부분의 사용자에게 Homebrew가 가장 빠르지만, 시스템에 맞는 걸 선택해.
+Noir는 런타임 의존성 없이 단일 바이너리로 배포돼. 대부분은 Homebrew가 제일 빠르지만, 시스템에 맞는 걸 골라.
 {% end %}
 
-아래 방법들은 모두 동일한 `noir` 바이너리를 설치하므로 하나만 고르면 됩니다. 대체로 간편한 순서로 정리했으니, 사용하는 플랫폼과 패키지 매니저에 맞는 항목을 선택하고 나머지는 건너뛰어도 됩니다.
+아래 방법은 모두 같은 `noir` 바이너리를 설치하므로, 플랫폼에 맞는 하나만 고르고 나머지는 건너뛰세요. 대략 쉬운 순서로 정리했습니다.
 
 ## Homebrew (macOS 및 Linux)
 
-가장 간편한 방법. Noir에는 공식 [Homebrew formula](https://formulae.brew.sh/formula/noir)가 있습니다.
+가장 쉬운 방법입니다. Noir에는 공식 [Homebrew formula](https://formulae.brew.sh/formula/noir)가 있습니다.
 
 설치:
 
@@ -33,7 +33,7 @@ brew upgrade noir
 ```
 
 {% alert_info() %}
-Zsh, Bash, Fish용 셸 자동완성이 함께 설치됩니다.
+Homebrew는 Zsh, Bash, Fish용 셸 자동완성도 함께 설치합니다.
 {% end %}
 
 ## Snapcraft (Linux)
@@ -56,19 +56,19 @@ sudo snap refresh noir
 
 호스트에 직접 설치하고 싶지 않거나, CI/CD 파이프라인에서 쓸 때 유용합니다.
 
-최신 이미지 다운로드/업데이트:
+최신 이미지 받기(업데이트도 같은 명령):
 
 ```bash
 docker pull ghcr.io/owasp-noir/noir:latest
 ```
 
-현재 디렉토리를 스캔하려면 아래와 같이 실행합니다.
+현재 디렉터리를 스캔합니다.
 
 ```bash
-docker run --rm -v $(pwd):/tmp ghcr.io/owasp-noir/noir:latest -b /tmp
+docker run --rm -v $(pwd):/tmp ghcr.io/owasp-noir/noir:latest noir scan /tmp
 ```
 
-이미지 태그는 OCI/Docker 컨벤션을 따라 `v` 프리픽스 없이 발행됩니다. 예: `:0.30.0`, `:0.30`, `:latest`. (v0.29.1까지는 `:vX.Y.Z` 형태를 썼으므로, 핀 박힌 참조가 있다면 업데이트가 필요합니다.) 사용 가능한 태그 목록은 [GitHub Packages 페이지](https://github.com/owasp-noir/noir/pkgs/container/noir)에서 확인할 수 있습니다.
+릴리즈 이미지 태그에는 `v` 접두사가 붙지 않습니다: `:1.4.0`, `:1.4`, `:1`, `:latest`. `:main` 태그는 main 브랜치를 따라갑니다. v0.29.1까지는 `:vX.Y.Z` 형태를 썼으니, 버전을 고정해 둔 참조가 있다면 바꾸세요. 전체 태그 목록은 [GitHub Packages 페이지](https://github.com/owasp-noir/noir/pkgs/container/noir)에 있습니다.
 
 ## Nix
 
@@ -83,11 +83,11 @@ nix profile add github:owasp-noir/noir
 업데이트:
 
 ```bash
-nix profile upgrade github:owasp-noir/noir
+nix profile upgrade noir
 ```
 
 {% alert_info() %}
-**팁:** Docker나 제한된 환경에서는 아래처럼 실험적 기능을 활성화해야 할 수 있습니다.
+Docker나 제한된 환경에서는 먼저 실험적 기능을 켜야 할 수 있습니다.
 {% end %}
 
 ```bash
@@ -100,21 +100,21 @@ nix --extra-experimental-features "nix-command flakes" profile add github:owasp-
 nix run github:owasp-noir/noir -- -h
 ```
 
-## 직접 바이너리 사용
+## 바이너리 직접 다운로드
 
-패키지 매니저가 없다면 [GitHub Releases](https://github.com/owasp-noir/noir/releases/latest)에서 빌드된 바이너리를 받을 수 있습니다. Linux와 macOS용이 제공됩니다.
+패키지 매니저가 없다면 [GitHub Releases](https://github.com/owasp-noir/noir/releases/latest)에서 미리 빌드된 바이너리를 받으세요. Linux와 macOS용이 있고, Windows(x86_64)용은 v1.4.0 다음 릴리즈부터 나옵니다.
 
 설치 및 업데이트:
 
-1. 플랫폼에 맞는 바이너리를 다운로드합니다(예: Linux는 `noir-v1.1.0-linux-x86_64`, macOS는 `noir-v1.1.0-osx-arm64.tar.gz`).
-2. **Linux** — 실행 권한을 부여한 뒤 `PATH`로 옮깁니다.
+1. 플랫폼에 맞는 바이너리를 다운로드합니다(예: Linux는 `noir-v1.4.0-linux-x86_64`, macOS는 `noir-v1.4.0-osx-arm64.tar.gz`, Windows는 `noir-vX.Y.Z-windows-x86_64.exe`).
+2. **Linux**: 실행 권한을 주고 `PATH`로 옮깁니다.
 
     ```bash
     chmod +x noir-v*-linux-*
     sudo mv noir-v*-linux-* /usr/local/bin/noir
     ```
 
-3. **macOS** — tarball을 풀고 `lib/` 디렉터리를 바이너리와 함께 유지합니다.
+3. **macOS**: tarball을 풀고, 함께 들어 있는 `lib/` 디렉터리는 바이너리 옆에 그대로 둡니다.
 
     ```bash
     # 시스템 전역 설치
@@ -123,11 +123,22 @@ nix run github:owasp-noir/noir -- -h
     sudo ln -sf /opt/noir/noir /usr/local/bin/noir
     ```
 
-    `sudo` 없이 설치하려면 `~/.local/noir`에 풀고 `PATH`에 해당 디렉터리를 추가하세요.
+    `sudo` 없이 사용자 단위로 설치하려면 `~/.local/noir`에 풀고 `~/.local/noir`를 `PATH`에 추가하세요.
 
     macOS 아카이브에는 OpenSSL 라이브러리가 `lib/`에 포함되어 있으므로, `noir` 바이너리만 따로 옮기지 마세요.
 
-4. 설치를 확인합니다.
+4. **Windows**: `.exe` 하나로 동작합니다. 이름을 `noir.exe`로 바꾸고 `PATH`에 들어 있는 폴더에 둡니다. 사용자 단위로 설치하려면 PowerShell에서 다음을 실행합니다.
+
+    ```powershell
+    $dir = "$env:LOCALAPPDATA\noir"
+    New-Item -ItemType Directory -Force $dir | Out-Null
+    Move-Item -Force .\noir-v*-windows-x86_64.exe "$dir\noir.exe"
+    [Environment]::SetEnvironmentVariable("Path", [Environment]::GetEnvironmentVariable("Path", "User") + ";$dir", "User")
+    ```
+
+    바뀐 `PATH`가 적용되도록 터미널을 새로 엽니다. 나중에 업데이트할 때는 새로 받은 파일로 `Move-Item` 줄만 다시 실행하면 됩니다(`-Force`가 기존 `noir.exe`를 교체합니다).
+
+5. 설치를 확인합니다.
 
     ```bash
     noir --version
@@ -135,7 +146,7 @@ nix run github:owasp-noir/noir -- -h
 
 ## Debian 패키지 (.deb)
 
-Debian/Ubuntu 계열이라면 [GitHub Releases](https://github.com/owasp-noir/noir/releases/latest)의 `.deb` 패키지를 쓸 수 있습니다. `dpkg`/`apt`로 다른 시스템 패키지처럼 관리됩니다. `amd64`와 `arm64`가 모두 제공됩니다.
+Debian/Ubuntu 계열이라면 [GitHub Releases](https://github.com/owasp-noir/noir/releases/latest)의 `.deb` 패키지를 쓸 수 있습니다. `dpkg`/`apt`로 다른 시스템 패키지처럼 관리됩니다. `amd64`와 `arm64`를 모두 제공합니다. 아래 명령은 `amd64` 기준이니 ARM 머신에서는 `arm64`로 바꾸세요.
 
 설치 및 업데이트:
 
@@ -152,7 +163,7 @@ Debian/Ubuntu 계열이라면 [GitHub Releases](https://github.com/owasp-noir/no
     sudo dpkg -i "noir_${VERSION}_amd64.deb"
     ```
 
-3. 의존성이 누락됐다면 아래 명령으로 해결합니다.
+3. 빠진 의존성이 있으면 채웁니다.
 
     ```bash
     sudo apt-get -f install
@@ -176,7 +187,7 @@ yay -S noir
 
 ## RPM 패키지 (.rpm)
 
-Fedora, RHEL, CentOS, openSUSE 등 RPM 기반 배포판은 [GitHub Releases](https://github.com/owasp-noir/noir/releases/latest)의 `.rpm` 패키지를 사용할 수 있습니다. `x86_64`와 `aarch64`가 모두 제공됩니다.
+Fedora, RHEL, CentOS, openSUSE 등 RPM 기반 배포판은 [GitHub Releases](https://github.com/owasp-noir/noir/releases/latest)의 `.rpm` 패키지를 쓸 수 있습니다. `x86_64`와 `aarch64`를 모두 제공합니다. 아래 명령은 `x86_64` 기준이니 ARM 머신에서는 `aarch64`로 바꾸세요.
 
 설치:
 
@@ -201,7 +212,7 @@ Fedora, RHEL, CentOS, openSUSE 등 RPM 기반 배포판은 [GitHub Releases](htt
 
 업데이트:
 
-1. 설치 단계에 안내된 대로 최신 버전을 다운로드합니다.
+1. 설치 단계와 같은 방법으로 최신 버전을 다운로드합니다.
 2. 업그레이드합니다.
 
     ```bash
@@ -222,7 +233,7 @@ Fedora, RHEL, CentOS, openSUSE 등 RPM 기반 배포판은 [GitHub Releases](htt
 
 ## Alpine 패키지 (.apk)
 
-Alpine Linux 사용자는 [GitHub Releases](https://github.com/owasp-noir/noir/releases/latest)의 `.apk` 패키지를 사용할 수 있습니다. `x86_64`와 `aarch64`가 모두 제공됩니다.
+Alpine Linux 사용자는 [GitHub Releases](https://github.com/owasp-noir/noir/releases/latest)의 `.apk` 패키지를 쓸 수 있습니다. `x86_64`와 `aarch64`를 모두 제공합니다. 아래 명령은 `x86_64` 기준이니 ARM 머신에서는 `aarch64`로 바꾸세요.
 
 설치 및 업데이트:
 
@@ -233,7 +244,7 @@ Alpine Linux 사용자는 [GitHub Releases](https://github.com/owasp-noir/noir/r
     wget "https://github.com/owasp-noir/noir/releases/download/v${VERSION}/noir-${VERSION}-x86_64.apk"
     ```
 
-2. 설치 및 업그레이드합니다.
+2. 설치하거나 업그레이드합니다.
 
     ```bash
     sudo apk add --upgrade --allow-untrusted "noir-${VERSION}-x86_64.apk"
@@ -247,11 +258,15 @@ Alpine Linux 사용자는 [GitHub Releases](https://github.com/owasp-noir/noir/r
 
 ## 소스에서 빌드
 
-직접 빌드하거나, 프로젝트에 기여하고 싶을 때 사용합니다.
+직접 빌드하거나 프로젝트에 기여할 때 씁니다.
 
 {% alert_warning() %}
-[Crystal](https://crystal-lang.org/install/) 프로그래밍 언어가 필요합니다.
+소스에서 빌드하려면 Crystal 프로그래밍 언어가 필요합니다.
 {% end %}
+
+먼저 [crystal-lang.org](https://crystal-lang.org/install/)에서 Crystal을 설치하세요.
+
+**Windows:** 빌드할 때 내장된 Tree-sitter 문법을 작은 셸 스크립트로 컴파일합니다. 그래서 [Crystal for Windows](https://crystal-lang.org/install/on_windows/) 외에 [Git for Windows](https://gitforwindows.org/)(`sh` 제공)와 `clang`(Visual Studio Build Tools의 "C++ Clang tools for Windows" 구성 요소 또는 [LLVM](https://releases.llvm.org/))이 필요합니다. 아래 단계는 Git Bash에서 실행하세요. 바이너리는 `bin\noir.exe`에 생성됩니다.
 
 설치:
 
@@ -262,7 +277,7 @@ Alpine Linux 사용자는 [GitHub Releases](https://github.com/owasp-noir/noir/r
     cd noir
     ```
 
-2.  **종속성 설치:**
+2.  **의존성 설치:**
 
     ```bash
     shards install
@@ -274,11 +289,11 @@ Alpine Linux 사용자는 [GitHub Releases](https://github.com/owasp-noir/noir/r
     shards build --release
     ```
 
-    빌드된 바이너리는 `./bin/noir`에 위치합니다.
+    빌드된 바이너리는 `./bin/noir`에 생깁니다.
 
 업데이트:
 
-1.  **최신 변경사항 가져오기:**
+1.  **최신 변경 사항 가져오기:**
 
     ```bash
     git pull
@@ -303,4 +318,4 @@ noir --version
 
 ---
 
-**다음**: [첫 번째 스캔](@/get_started/running/index.md)
+**다음**: [첫 번째 스캔](@/get_started/running/index.ko.md)

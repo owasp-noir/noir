@@ -1,0 +1,6 @@
+.gitignore
+README.md
+api/openapi.yaml
+api_vendor.go
+client.go
+configuration.go

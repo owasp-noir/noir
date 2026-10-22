@@ -24,7 +24,13 @@ describe "OutputBuilderPostman" do
     endpoint1.push_callee(Callee.new("PetService.find", "app/controllers/pets.cr", 12))
     endpoint1.push_callee(Callee.new("AuditLog.record", line: 13))
     context = AIContext.new
-    context.push_guard(AIContextEntry.new("auth", "auth", source: "express_auth", description: "Protected by auth middleware"))
+    context.push_guard(AIContextEntry.new("auth", "auth", source: "express_auth", description: "Protected by auth middleware", confidence: 86))
+    # Carries a source *and* a location, so the description pins the field
+    # order the plain-text report and Postman now share. With only one of
+    # the two set (as the guard above has) any ordering looks the same.
+    # Confidence is part of that shared format (#2787).
+    context.push_sink(AIContextEntry.new("sql", "run_query", source: "callee",
+      path: "app/controllers/pets.cr", line: 12, confidence: 92))
     endpoint1.ai_context = context
 
     endpoint2 = Endpoint.new("/pets", "POST")
@@ -67,7 +73,10 @@ describe "OutputBuilderPostman" do
     item1["request"]["header"][0]["key"].as_s.should eq("api_key")
     item1["description"].as_s.should contain("Noir AI context:")
     item1["description"].as_s.should contain("guards:")
-    item1["description"].as_s.should contain("auth: auth [express_auth]")
+    item1["description"].as_s.should contain("auth: auth [express_auth] (conf 86)")
+    # `[source]` before the location, matching OutputBuilderCommon's
+    # plain-text ai_context block — the two used to disagree.
+    item1["description"].as_s.should contain("sql: run_query [callee] (app/controllers/pets.cr:12) (conf 92)")
 
     # Check second item (POST with JSON body)
     item2 = items[1]
@@ -155,5 +164,399 @@ describe "OutputBuilderPostman" do
     methods.should eq(WILDCARD_HTTP_METHODS)
     methods.includes?("ANY").should be_false
     items.map(&.["name"].as_s).should eq(WILDCARD_HTTP_METHODS.map { |method| "#{method} /wildcard" })
+  end
+end
+
+describe "OutputBuilderPostman URLs" do
+  options = {
+    "debug"   => YAML::Any.new(false),
+    "verbose" => YAML::Any.new(false),
+    "color"   => YAML::Any.new(false),
+    "nolog"   => YAML::Any.new(false),
+    "output"  => YAML::Any.new(""),
+    "url"     => YAML::Any.new(""),
+  }
+
+  it "keeps the host of an absolute endpoint instead of {{baseUrl}}" do
+    builder = OutputBuilderPostman.new(options)
+    builder.io = IO::Memory.new
+
+    absolute = Endpoint.new("https://demo.example.com.evil/api/users/{id}", "GET")
+    absolute.push_param(Param.new("id", "", "path"))
+
+    builder.print([absolute])
+    url = JSON.parse(builder.io.to_s)["item"][0]["request"]["url"]
+
+    url["raw"].as_s.should eq("https://demo.example.com.evil/api/users/:id")
+    url["host"].as_a.map(&.as_s).should eq(["demo", "example", "com", "evil"])
+    url["protocol"].as_s.should eq("https")
+    # The sidebar shows the name alone, so a host-less name would render this
+    # and `demo.example.com/api/users/{id}` identically.
+    JSON.parse(builder.io.to_s)["item"][0]["name"].as_s
+      .should eq("GET demo.example.com.evil/api/users/{id}")
+  end
+
+  it "keeps hyphens in brace, angle, and bracket path placeholders" do
+    builder = OutputBuilderPostman.new(options)
+    builder.io = IO::Memory.new
+
+    # Compojure / Pedestal kebab-case (`:item-id`) is already Postman-native.
+    # Brace / angle / bracket forms used `\w+`, which stopped at `-` and left
+    # `{item-id}` as a literal segment, so the declared path variable never bound.
+    brace = Endpoint.new("/items/{item-id}", "GET")
+    brace.push_param(Param.new("item-id", "", "path"))
+    constrained = Endpoint.new("/orders/{order-id:uuid}", "GET")
+    constrained.push_param(Param.new("order-id", "", "path"))
+    angle = Endpoint.new("/sku/<int:item-id>", "GET")
+    angle.push_param(Param.new("item-id", "", "path"))
+    bracket = Endpoint.new("/users/[user-id]", "GET")
+    bracket.push_param(Param.new("user-id", "", "path"))
+
+    builder.print([brace, constrained, angle, bracket])
+    items = JSON.parse(builder.io.to_s)["item"].as_a
+
+    items[0]["request"]["url"]["path"].as_a.map(&.as_s).should eq(["items", ":item-id"])
+    items[0]["request"]["url"]["raw"].as_s.should eq("{{baseUrl}}/items/:item-id")
+    items[0]["request"]["url"]["variable"][0]["key"].as_s.should eq("item-id")
+
+    items[1]["request"]["url"]["path"].as_a.map(&.as_s).should eq(["orders", ":order-id"])
+    items[1]["request"]["url"]["raw"].as_s.should eq("{{baseUrl}}/orders/:order-id")
+
+    items[2]["request"]["url"]["path"].as_a.map(&.as_s).should eq(["sku", ":item-id"])
+    items[2]["request"]["url"]["raw"].as_s.should eq("{{baseUrl}}/sku/:item-id")
+
+    items[3]["request"]["url"]["path"].as_a.map(&.as_s).should eq(["users", ":user-id"])
+    items[3]["request"]["url"]["raw"].as_s.should eq("{{baseUrl}}/users/:user-id")
+  end
+
+  it "still routes a relative endpoint through {{baseUrl}}" do
+    builder = OutputBuilderPostman.new(options)
+    builder.io = IO::Memory.new
+
+    builder.print([Endpoint.new("/api/users", "GET")])
+    url = JSON.parse(builder.io.to_s)["item"][0]["request"]["url"]
+
+    url["raw"].as_s.should eq("{{baseUrl}}/api/users")
+    url["host"].as_a.map(&.as_s).should eq(["{{baseUrl}}"])
+    url.as_h.has_key?("protocol").should be_false
+  end
+
+  it "keeps raw in agreement with the structured query list" do
+    builder = OutputBuilderPostman.new(options)
+    builder.io = IO::Memory.new
+
+    endpoint = Endpoint.new("/search", "GET")
+    endpoint.push_param(Param.new("q", "noir", "query"))
+    endpoint.push_param(Param.new("page", "2", "query"))
+
+    builder.print([endpoint])
+    url = JSON.parse(builder.io.to_s)["item"][0]["request"]["url"]
+
+    url["raw"].as_s.should eq("{{baseUrl}}/search?q=noir&page=2")
+    url["query"].as_a.map(&.["key"].as_s).should eq(["q", "page"])
+  end
+
+  it "keeps a query string the route itself carries, with no declared param" do
+    builder = OutputBuilderPostman.new(options)
+    builder.io = IO::Memory.new
+
+    # How WordPress addresses an AJAX handler. This builder rebuilds the URL
+    # from `uri.path`, so the query used to be dropped outright and the
+    # imported request addressed a different handler.
+    builder.print([Endpoint.new("/wp-admin/admin-ajax.php?action=get_user_data", "GET")])
+    item = JSON.parse(builder.io.to_s)["item"][0]
+    url = item["request"]["url"]
+
+    url["raw"].as_s.should eq("{{baseUrl}}/wp-admin/admin-ajax.php?action=get_user_data")
+    url["query"].as_a.map(&.["key"].as_s).should eq(["action"])
+    url["query"].as_a.map(&.["value"].as_s).should eq(["get_user_data"])
+    item["name"].as_s.should eq("GET /wp-admin/admin-ajax.php?action=get_user_data")
+  end
+
+  it "does not repeat a pair the route and a declared param both spell out" do
+    builder = OutputBuilderPostman.new(options)
+    builder.io = IO::Memory.new
+
+    # The WordPress analyzer records `action` as a query param on top of the
+    # URL that already carries it. Emitting both would produce
+    # `?action=get_user_data&action=get_user_data`.
+    endpoint = Endpoint.new("/wp-admin/admin-ajax.php?action=get_user_data", "GET")
+    endpoint.push_param(Param.new("action", "get_user_data", "query"))
+
+    builder.print([endpoint])
+    url = JSON.parse(builder.io.to_s)["item"][0]["request"]["url"]
+
+    url["raw"].as_s.should eq("{{baseUrl}}/wp-admin/admin-ajax.php?action=get_user_data")
+    url["query"].as_a.size.should eq(1)
+  end
+
+  it "appends a declared param that overrides the route's own value" do
+    builder = OutputBuilderPostman.new(options)
+    builder.io = IO::Memory.new
+
+    # `--pvalue query=…` style override: the later pair is the one servers
+    # read, so it survives alongside the route's own.
+    endpoint = Endpoint.new("/search?q=old", "GET")
+    endpoint.push_param(Param.new("q", "new", "query"))
+
+    builder.print([endpoint])
+    url = JSON.parse(builder.io.to_s)["item"][0]["request"]["url"]
+
+    url["raw"].as_s.should eq("{{baseUrl}}/search?q=old&q=new")
+    url["query"].as_a.map(&.["value"].as_s).should eq(["old", "new"])
+  end
+
+  it "gives endpoints that differ only by query string distinct names" do
+    builder = OutputBuilderPostman.new(options)
+    builder.io = IO::Memory.new
+
+    # `action` is the only discriminator for WordPress AJAX, so a path-only
+    # name renders these two identically in the Postman sidebar.
+    builder.print([
+      Endpoint.new("/wp-admin/admin-ajax.php?action=get_user_data", "GET"),
+      Endpoint.new("/wp-admin/admin-ajax.php?action=save_settings", "GET"),
+    ])
+    names = JSON.parse(builder.io.to_s)["item"].as_a.map(&.["name"].as_s)
+
+    names.uniq.size.should eq(2)
+    names.should eq([
+      "GET /wp-admin/admin-ajax.php?action=get_user_data",
+      "GET /wp-admin/admin-ajax.php?action=save_settings",
+    ])
+  end
+
+  it "keeps a QUERY endpoint's verb and body in the collection" do
+    builder = OutputBuilderPostman.new(options)
+    builder.io = IO::Memory.new
+
+    endpoint = Endpoint.new("/products/search", "QUERY")
+    endpoint.push_param(Param.new("q", "widget", "form"))
+
+    builder.print([endpoint])
+    request = JSON.parse(builder.io.to_s)["item"][0]["request"]
+
+    request["method"].as_s.should eq("QUERY")
+    request["body"]["urlencoded"].as_a.map(&.["key"].as_s).should eq(["q"])
+  end
+
+  it "preserves trailing empty segment for trailing-slash routes" do
+    builder = OutputBuilderPostman.new(options)
+    builder.io = IO::Memory.new
+
+    builder.print([
+      Endpoint.new("/api/users/", "GET"),
+      Endpoint.new("/api/users", "POST"),
+    ])
+    items = JSON.parse(builder.io.to_s)["item"].as_a
+
+    items[0]["name"].as_s.should eq("GET /api/users/")
+    items[0]["request"]["url"]["raw"].as_s.should eq("{{baseUrl}}/api/users/")
+    items[0]["request"]["url"]["path"].as_a.map(&.as_s).should eq(["api", "users", ""])
+
+    items[1]["name"].as_s.should eq("POST /api/users")
+    items[1]["request"]["url"]["raw"].as_s.should eq("{{baseUrl}}/api/users")
+    items[1]["request"]["url"]["path"].as_a.map(&.as_s).should eq(["api", "users"])
+  end
+
+  it "preserves trailing empty segment for absolute trailing-slash routes" do
+    builder = OutputBuilderPostman.new(options)
+    builder.io = IO::Memory.new
+
+    builder.print([Endpoint.new("https://example.com/api/users/", "GET")])
+    item = JSON.parse(builder.io.to_s)["item"][0]
+
+    item["request"]["url"]["raw"].as_s.should eq("https://example.com/api/users/")
+    item["request"]["url"]["path"].as_a.map(&.as_s).should eq(["api", "users", ""])
+  end
+end
+
+describe "OutputBuilderPostman Parameters and Bodies" do
+  options = {
+    "debug"   => YAML::Any.new(false),
+    "verbose" => YAML::Any.new(false),
+    "color"   => YAML::Any.new(false),
+    "nolog"   => YAML::Any.new(false),
+    "output"  => YAML::Any.new(""),
+    "url"     => YAML::Any.new(""),
+  }
+
+  it "emits JSON body and retains form fields as urlencoded when both are present" do
+    builder = OutputBuilderPostman.new(options)
+    builder.io = IO::Memory.new
+
+    endpoint = Endpoint.new("/api/items", "POST")
+    endpoint.push_param(Param.new("name", "Fluffy", "json"))
+    endpoint.push_param(Param.new("role", "admin", "form"))
+
+    builder.print([endpoint])
+    item = JSON.parse(builder.io.to_s)["item"][0]
+    body = item["request"]["body"]
+
+    body["mode"].as_s.should eq("raw")
+    JSON.parse(body["raw"].as_s)["name"].as_s.should eq("Fluffy")
+    body["options"]["raw"]["language"].as_s.should eq("json")
+
+    urlencoded = body["urlencoded"].as_a
+    urlencoded.size.should eq(1)
+    urlencoded[0]["key"].as_s.should eq("role")
+    urlencoded[0]["value"].as_s.should eq("admin")
+    urlencoded[0]["type"].as_s.should eq("text")
+
+    headers = item["request"]["header"].as_a
+    headers.any? { |h| h["key"].as_s == "Content-Type" && h["value"].as_s == "application/json" }.should be_true
+  end
+
+  it "emits formdata with type file and src for file params" do
+    builder = OutputBuilderPostman.new(options)
+    builder.io = IO::Memory.new
+
+    endpoint = Endpoint.new("/upload", "POST")
+    endpoint.push_param(Param.new("description", "avatar image", "form"))
+    endpoint.push_param(Param.new("avatar", "profile.png", "file"))
+
+    builder.print([endpoint])
+    item = JSON.parse(builder.io.to_s)["item"][0]
+    body = item["request"]["body"]
+
+    body["mode"].as_s.should eq("formdata")
+    formdata = body["formdata"].as_a
+    formdata.size.should eq(2)
+
+    text_entry = formdata.find { |e| e["key"].as_s == "description" }.should_not be_nil
+    text_entry["type"].as_s.should eq("text")
+    text_entry["value"].as_s.should eq("avatar image")
+
+    file_entry = formdata.find { |e| e["key"].as_s == "avatar" }.should_not be_nil
+    file_entry["type"].as_s.should eq("file")
+    file_entry["src"].as_s.should eq("profile.png")
+  end
+
+  it "emits raw JSON body and retains formdata when json and file params are present" do
+    builder = OutputBuilderPostman.new(options)
+    builder.io = IO::Memory.new
+
+    endpoint = Endpoint.new("/upload-meta", "POST")
+    endpoint.push_param(Param.new("title", "New Upload", "json"))
+    endpoint.push_param(Param.new("attachment", "document.pdf", "file"))
+    endpoint.push_param(Param.new("category", "docs", "form"))
+
+    builder.print([endpoint])
+    item = JSON.parse(builder.io.to_s)["item"][0]
+    body = item["request"]["body"]
+
+    body["mode"].as_s.should eq("raw")
+    JSON.parse(body["raw"].as_s)["title"].as_s.should eq("New Upload")
+
+    formdata = body["formdata"].as_a
+    formdata.size.should eq(2)
+    formdata.any? { |e| e["key"].as_s == "attachment" && e["type"].as_s == "file" && e["src"].as_s == "document.pdf" }.should be_true
+    formdata.any? { |e| e["key"].as_s == "category" && e["type"].as_s == "text" && e["value"].as_s == "docs" }.should be_true
+  end
+
+  it "routes unknown param types to query list" do
+    builder = OutputBuilderPostman.new(options)
+    builder.io = IO::Memory.new
+
+    endpoint = Endpoint.new("/stream", "GET")
+    endpoint.push_param(Param.new("websocket", "true", "websocket"))
+    endpoint.push_param(Param.new("custom_meta", "xyz", "custom_type"))
+
+    builder.print([endpoint])
+    url = JSON.parse(builder.io.to_s)["item"][0]["request"]["url"]
+
+    url["raw"].as_s.should eq("{{baseUrl}}/stream?websocket=true&custom_meta=xyz")
+    query_params = url["query"].as_a
+    query_params.size.should eq(2)
+    query_params[0]["key"].as_s.should eq("websocket")
+    query_params[0]["value"].as_s.should eq("true")
+    query_params[1]["key"].as_s.should eq("custom_meta")
+    query_params[1]["value"].as_s.should eq("xyz")
+  end
+
+  it "handles body-typed param as json body alias" do
+    builder = OutputBuilderPostman.new(options)
+    builder.io = IO::Memory.new
+
+    endpoint = Endpoint.new("/api/submit", "POST")
+    endpoint.push_param(Param.new("payload", "sample_payload", "body"))
+
+    builder.print([endpoint])
+    item = JSON.parse(builder.io.to_s)["item"][0]
+    body = item["request"]["body"]
+
+    body["mode"].as_s.should eq("raw")
+    JSON.parse(body["raw"].as_s)["payload"].as_s.should eq("sample_payload")
+    body["options"]["raw"]["language"].as_s.should eq("json")
+  end
+
+  it "handles body-typed param together with form params" do
+    builder = OutputBuilderPostman.new(options)
+    builder.io = IO::Memory.new
+
+    endpoint = Endpoint.new("/login", "POST")
+    endpoint.push_param(Param.new("LoginForm", "credentials", "body"))
+    endpoint.push_param(Param.new("remember", "1", "form"))
+
+    builder.print([endpoint])
+    item = JSON.parse(builder.io.to_s)["item"][0]
+    body = item["request"]["body"]
+
+    body["mode"].as_s.should eq("raw")
+    JSON.parse(body["raw"].as_s)["LoginForm"].as_s.should eq("credentials")
+    body["urlencoded"].as_a[0]["key"].as_s.should eq("remember")
+    body["urlencoded"].as_a[0]["value"].as_s.should eq("1")
+  end
+
+  it "emits raw application/xml body instead of query for xml params" do
+    builder = OutputBuilderPostman.new(options)
+    builder.io = IO::Memory.new
+
+    # Play `request.body.asXml` / Tapir `xmlBody` arrive as param_type `xml`
+    # with name `body`. merged_query_pairs used to emit `?body=`.
+    xml_ep = Endpoint.new("/xml", "POST")
+    xml_ep.push_param(Param.new("body", "", "xml"))
+
+    builder.print([xml_ep])
+    item = JSON.parse(builder.io.to_s)["item"][0]
+    request = item["request"]
+    body = request["body"]
+
+    body["mode"].as_s.should eq("raw")
+    body["raw"].as_s.should eq("<body/>")
+    body["options"]["raw"]["language"].as_s.should eq("xml")
+
+    headers = request["header"].as_a
+    headers.any? { |h| h["key"].as_s == "Content-Type" && h["value"].as_s == "application/xml" }.should be_true
+
+    url = request["url"]
+    url["raw"].as_s.should eq("{{baseUrl}}/xml")
+    url.as_h.has_key?("query").should be_false
+  end
+
+  it "uses an xml snippet as the raw body when the param already has a value" do
+    builder = OutputBuilderPostman.new(options)
+    builder.io = IO::Memory.new
+
+    xml_ep = Endpoint.new("/payload", "POST")
+    xml_ep.push_param(Param.new("payload", "<root/>", "xml"))
+
+    builder.print([xml_ep])
+    body = JSON.parse(builder.io.to_s)["item"][0]["request"]["body"]
+    body["raw"].as_s.should eq("<root/>")
+    body["options"]["raw"]["language"].as_s.should eq("xml")
+  end
+
+  it "form-encodes query values in url.raw" do
+    builder = OutputBuilderPostman.new(options)
+    builder.io = IO::Memory.new
+
+    search = Endpoint.new("/search", "GET")
+    search.push_param(Param.new("q", "red shoes & socks", "query"))
+    search.push_param(Param.new("sort", "price#asc", "query"))
+
+    builder.print([search])
+    url = JSON.parse(builder.io.to_s)["item"][0]["request"]["url"]
+
+    url["raw"].as_s.should eq("{{baseUrl}}/search?q=red+shoes+%26+socks&sort=price%23asc")
   end
 end

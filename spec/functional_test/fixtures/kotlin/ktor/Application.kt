@@ -43,9 +43,25 @@ fun Application.configureRouting() {
             call.respondText("Deleted user $id")
         }
         
+        query("/search") {
+            val query = call.receive<SearchRequest>()
+            val filter = call.parameters["filter"]
+            call.respondText("Searched: ${query.query}")
+        }
+        
+        route("/items", HttpMethod.Query) {
+            handle {
+                call.respondText("Queried items")
+            }
+        }
+        
         route("/api") {
             get("/status") {
                 call.respondText("API is running")
+            }
+
+            query("/search") {
+                call.respondText("API search")
             }
             
             route("/v1") {
@@ -80,8 +96,24 @@ fun Application.configureRouting() {
         options("/settings") {
             call.respond(HttpStatusCode.OK)
         }
+
+        // The OpenAPI description DSL: `query("chunk_size")` names a query
+        // parameter of this GET route, it does not declare a QUERY route.
+        get("/stream-bytes") {
+            call.respondText("streaming")
+        }.describe {
+            tag("Dynamic data")
+            summary = "Streams n random bytes at a given chunk size"
+            parameters {
+                query("chunk_size") {
+                    description = "in bytes"
+                }
+                query("seed") { }
+            }
+        }
     }
 }
 
 data class User(val name: String, val email: String)
 data class SubmitData(val content: String)
+data class SearchRequest(val query: String)

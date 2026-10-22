@@ -1,0 +1,9 @@
+_format_version: "3.0"
+services:
+  - name: s
+    url: http://x
+    routes:
+      - name: r
+        paths:
+          - "~^/kong/[0-9]+$"
+          - "/kong-literal$"

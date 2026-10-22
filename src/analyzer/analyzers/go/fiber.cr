@@ -2,7 +2,10 @@ require "../../engines/go_engine"
 
 module Analyzer::Go
   class Fiber < GoEngine
+    analyzer_for "go_fiber"
+
     IMPORT_MARKER = "github.com/gofiber/fiber"
+    BUILDER_TYPE  = "fiber.Router"
 
     def analyze
       # Source Analysis
@@ -13,136 +16,96 @@ module Analyzer::Go
       package_method_bodies = collect_package_controller_method_bodies(file_contents)
       import_path_function_bodies = collect_import_path_function_bodies(package_function_bodies)
       import_path_method_bodies = collect_import_path_method_bodies(package_method_bodies)
+      # `RegisterUsers(app.Group("/api"))` + `func RegisterUsers(r fiber.Router)`:
+      # the prefix lives at the call site (see `resolve_router_builder_prefixes`).
+      builder_prefixes_by_dir = resolve_router_builder_prefixes(file_contents, package_groups, BUILDER_TYPE)
       framework_dirs = framework_package_dirs(file_contents, IMPORT_MARKER)
-      channel = Channel(String).new(DEFAULT_CHANNEL_CAPACITY)
+      named_scope = named_handler_scope(file_contents)
+      parallel_analyze(get_files_by_extension(".go")) do |path|
+        next if GoEngine.go_test_file?(base_relative_path(path))
+        next unless File.exists?(path)
+        content = file_contents[path]? || read_file_content(path)
+        dir = File.dirname(path)
+        next unless framework_route_source_candidate?(content, dir, framework_dirs, IMPORT_MARKER, ["Add", "Static"])
+        lines = GoEngine.strip_comments(content).lines
+        last_endpoint = Endpoint.new("", "")
 
-      begin
-        WaitGroup.wait do |wg|
-          # Producer — tracked by the WaitGroup
-          wg.spawn do
-            get_files_by_extension(".go").each { |file| channel.send(file) }
-            channel.close
-          end
+        # Tree-sitter pre-pass for Fiber's verb-method routes.
+        # websocket.New(...) detection stays on the raw line text
+        # because it's a sibling expression, not part of the route
+        # argument list.
+        cross_file_groups = ts_groups_for_directory(package_groups, dir)
+        # `app.Route("/r", func(r fiber.Router){...})` scopes a prefix to
+        # the closure; `app.Mount("/mnt", micro)` prefixes a sub-app.
+        ts_routes = Noir::TreeSitterGoRouteExtractor.extract_routes(
+          content, cross_file_groups, handle_method: "Add",
+          closure_group_methods: ["Route"], mount_methods: ["Mount"])
+        routes_by_line = Hash(Int32, Array(Noir::TreeSitterGoRouteExtractor::Route)).new
+        ts_routes.each do |r|
+          routes_by_line[r.line] ||= [] of Noir::TreeSitterGoRouteExtractor::Route
+          routes_by_line[r.line] << r
+        end
 
-          @options["concurrency"].to_s.to_i.times do
-            wg.spawn do
-              loop do
-                begin
-                  path = channel.receive?
-                  break if path.nil?
-                  next if File.directory?(path)
-                  next if GoEngine.go_test_file?(path)
-                  if File.exists?(path)
-                    content = file_contents[path]? || read_file_content(path)
-                    dir = File.dirname(path)
-                    next unless framework_route_source_candidate?(content, dir, framework_dirs, IMPORT_MARKER, ["Add", "Static"])
-                    lines = content.lines
-                    last_endpoint = Endpoint.new("", "")
+        named = Noir::GoNamedHandler.new(content, path, ts_routes, named_scope)
+        expand_builders = router_builder_expansions(content, BUILDER_TYPE, builder_prefixes_by_dir[dir]?, cross_file_groups)
+        suppress_ranges = expand_builders.map { |_, rb, _| rb.start_row..rb.end_row }
 
-                    # Tree-sitter pre-pass for Fiber's verb-method routes.
-                    # websocket.New(...) detection stays on the raw line text
-                    # because it's a sibling expression, not part of the route
-                    # argument list.
-                    cross_file_groups = ts_groups_for_directory(package_groups, dir)
-                    ts_routes = Noir::TreeSitterGoRouteExtractor.extract_routes(content, cross_file_groups, handle_method: "Add")
-                    routes_by_line = Hash(Int32, Array(Noir::TreeSitterGoRouteExtractor::Route)).new
-                    ts_routes.each do |r|
-                      routes_by_line[r.line] ||= [] of Noir::TreeSitterGoRouteExtractor::Route
-                      routes_by_line[r.line] << r
-                    end
+        # Resolve 1-hop callees for every route (see Gin).
+        route_rows = Set(Int32).new
+        routes_by_line.each_key { |row| route_rows << row }
+        external_fns = ts_function_bodies_for_directory(package_function_bodies, dir)
+        external_methods = ts_controller_method_bodies_for_directory(package_method_bodies, dir)
+        callees_by_route = Noir::GoCalleeExtractor.callees_for_routes_if(
+          callees_needed?,
+          content,
+          path,
+          route_rows,
+          external_fns,
+          external_methods,
+          imported_functions: import_path_function_bodies,
+          imported_methods: import_path_method_bodies
+        )
 
-                    # Resolve 1-hop callees for every route (see Gin).
-                    route_rows = Set(Int32).new
-                    routes_by_line.each_key { |row| route_rows << row }
-                    external_fns = ts_function_bodies_for_directory(package_function_bodies, dir)
-                    external_methods = ts_controller_method_bodies_for_directory(package_method_bodies, dir)
-                    callees_by_route = Noir::GoCalleeExtractor.callees_for_routes_if(
-                      callees_needed?,
-                      content,
-                      path,
-                      route_rows,
-                      external_fns,
-                      external_methods,
-                      imported_functions: import_path_function_bodies,
-                      imported_methods: import_path_method_bodies
-                    )
+        # `app.Static("/url", "./dir")`.
+        Noir::TreeSitterGoRouteExtractor.extract_simple_statics(content).each do |sp|
+          public_dirs << static_dir_entry(path, sp.url_prefix, sp.disk_path)
+        end
 
-                    # `app.Static("/url", "./dir")`.
-                    Noir::TreeSitterGoRouteExtractor.extract_simple_statics(content).each do |sp|
-                      public_dirs << static_dir_entry(path, sp.url_prefix, sp.disk_path)
-                    end
+        lines.each_with_index do |line, index|
+          # Expanded router-builder bodies are emitted below with their
+          # call-site prefix.
+          next if suppress_ranges.any?(&.includes?(index))
+          next if named.claim?(index, line)
 
-                    lines.each_with_index do |line, index|
-                      details = Details.new(PathInfo.new(path, index + 1))
+          details = Details.new(PathInfo.new(path, index + 1))
 
-                      if ts_hits = routes_by_line[index]?
-                        ts_hits.each do |route|
-                          Noir::TreeSitterGoRouteExtractor.fan_out_verbs(route.verb).each do |verb|
-                            new_endpoint = Endpoint.new(route.path, verb, details)
-                            new_endpoint.protocol = "ws" if route.handler.includes?("websocket.New(")
-                            if entries = callees_by_route[route.line]?
-                              entries.each do |entry|
-                                name, callee_path, callee_line = entry
-                                new_endpoint.push_callee(Callee.new(name, path: callee_path, line: callee_line))
-                              end
-                            end
-                            result << new_endpoint
-                            last_endpoint = new_endpoint
-                          end
-                        end
-                      end
-
-                      if line.includes?(".Query(") || line.includes?(".FormValue(") ||
-                         line.includes?(".Params(") || line.includes?(".ParamsInt(")
-                        add_param_to_endpoint(get_param(line), last_endpoint)
-                      end
-
-                      # Fiber's body-binding helpers: `c.BodyParser(&v)`
-                      # for arbitrary content negotiation, plus the
-                      # explicit `c.QueryParser` / `c.ReqHeaderParser`
-                      # /`c.CookieParser` /`c.ParamsParser` variants that
-                      # parse into a struct. `BodyParser` is the one
-                      # that signals a request body is expected; the
-                      # others duplicate accessors we already surface.
-                      if line.includes?(".BodyParser(")
-                        add_param_to_endpoint(Param.new("body", "", "json"), last_endpoint)
-                      end
-
-                      if line.includes?("GetRespHeader(")
-                        match = line.match(/GetRespHeader\(\"(.*)\"\)/)
-                        if match
-                          header_name = match[1]
-                          last_endpoint.params << Param.new(header_name, "", "header")
-                        end
-                      end
-
-                      if line.includes?("Vary(")
-                        match = line.match(/Vary\(\"(.*)\"\)/)
-                        if match
-                          header_value = match[1]
-                          last_endpoint.params << Param.new("Vary", header_value, "header")
-                        end
-                      end
-
-                      if line.includes?("Cookies(") &&
-                         !line.includes?("Header.Get") && !line.includes?("Cookie.Get")
-                        match = line.match(/Cookies\(\"(.*)\"\)/)
-                        if match
-                          cookie_name = match[1]
-                          last_endpoint.params << Param.new(cookie_name, "", "cookie")
-                        end
-                      end
-                    end
+          if ts_hits = routes_by_line[index]?
+            ts_hits.each do |route|
+              Noir::TreeSitterGoRouteExtractor.fan_out_verbs(route.verb).each do |verb|
+                new_endpoint = Endpoint.new(route.path, verb, details)
+                new_endpoint.protocol = "ws" if route.handler.includes?("websocket.New(")
+                if entries = callees_by_route[route.line]?
+                  entries.each do |entry|
+                    name, callee_path, callee_line = entry
+                    new_endpoint.push_callee(Callee.new(name, path: callee_path, line: callee_line))
                   end
-                rescue File::NotFoundError
-                  logger.debug "File not found: #{path}"
                 end
+                new_endpoint.handler = named.handler_for(route)
+                result << new_endpoint
+                named.bind(route, new_endpoint)
+                last_endpoint = new_endpoint
               end
             end
           end
+
+          add_fiber_param_patterns(line, last_endpoint)
         end
-      rescue e
-        logger.debug e
+
+        expand_router_builders(content, lines, path, expand_builders, callees_by_route, named, "Add") do |line, ep|
+          add_fiber_param_patterns(line, ep)
+        end
+
+        named.each_attribution { |line, ep| add_fiber_param_patterns(line, ep) }
       end
 
       resolve_public_dirs(public_dirs)
@@ -150,30 +113,60 @@ module Analyzer::Go
       result
     end
 
+    REQUEST_HEADER_GET_RE = /\b(?:c|ctx)\.Get\(\s*"([^"]+)"/
+
+    private def add_fiber_param_patterns(line : String, ep : Endpoint)
+      if line.includes?(".Query(") || line.includes?(".FormValue(") ||
+         line.includes?(".Params(") || line.includes?(".ParamsInt(")
+        add_param_to_endpoint(get_param(line), ep)
+      end
+
+      # Fiber's body-binding helpers: `c.BodyParser(&v)`
+      # for arbitrary content negotiation, plus the
+      # explicit `c.QueryParser` / `c.ReqHeaderParser`
+      # /`c.CookieParser` /`c.ParamsParser` variants that
+      # parse into a struct. `BodyParser` is the one
+      # that signals a request body is expected; the
+      # others duplicate accessors we already surface.
+      if line.includes?(".BodyParser(")
+        add_param_to_endpoint(Param.new("body", "", "json"), ep)
+      end
+
+      # `c.Get("X-Api-Key")` reads a request header (`GetRespHeader` and
+      # `Vary` act on the response, so they are not request params). The
+      # context receiver is pinned to the conventional names so a cache or
+      # config `Get` is not read as a header; a path literal is a route
+      # registration (`app.Get("/x", h)`).
+      if line.includes?(".Get(") && (match = line.match(REQUEST_HEADER_GET_RE)) && !match[1].starts_with?("/")
+        add_param_to_endpoint(Param.new(match[1], "", "header"), ep)
+      end
+
+      if line.includes?("Cookies(") &&
+         !line.includes?("Header.Get") && !line.includes?("Cookie.Get")
+        match = line.match(/Cookies\(\s*\"(.*)\"\s*\)/)
+        if match
+          ep.params << Param.new(match[1], "", "cookie")
+        end
+      end
+    end
+
     def get_param(line : String) : Param
       param_type = "json"
       if line.includes?("Query")
         param_type = "query"
-      end
-      if line.includes?("FormValue")
+      elsif line.includes?("FormValue")
         param_type = "form"
-      end
-      # `c.Params("id")` — Fiber path-variable accessor (also
-      # `.ParamsInt("id")`). Distinct from `c.Query`/`c.FormValue`;
-      # was previously falling through to the `json` default.
-      if line.includes?(".Params(") || line.includes?(".ParamsInt(")
+      elsif line.includes?(".Params(") || line.includes?(".ParamsInt(")
         param_type = "path"
       end
 
-      first = line.strip.split("(")
-      if first.size > 1
-        second = first[1].split(")")
-        if second.size > 1
-          param_name = second[0].gsub("\"", "")
-          rtn = Param.new(param_name, "", param_type)
+      # Capture the accessor's first string-literal argument.
+      # Skip route registrations like `app.Query("/search", handler)`.
+      if match = line.match(/\.(?:Query|FormValue|Params|ParamsInt)\s*\(\s*"([^"]*)"/)
+        param_name = match[1]
+        return Param.new("", "", "") if param_name.starts_with?("/")
 
-          return rtn
-        end
+        return Param.new(param_name, "", param_type)
       end
 
       Param.new("", "", "")

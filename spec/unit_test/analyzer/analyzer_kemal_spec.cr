@@ -1,4 +1,6 @@
+require "file_utils"
 require "../../spec_helper"
+require "../../../src/models/code_locator"
 require "../../../src/analyzer/analyzers/crystal/kemal.cr"
 
 describe "mapping_to_path" do
@@ -144,6 +146,42 @@ describe "kemal namespace routing" do
     Dir.delete(temp_dir)
   end
 
+  it "parses HTTP QUERY routes and excludes before_query/after_query filters" do
+    temp_dir = File.tempname("kemal_test")
+    Dir.mkdir_p(temp_dir)
+    temp_file = File.join(temp_dir, "test.cr")
+
+    File.write(temp_file, <<-CRYSTAL)
+      query "/search" do |env|
+        env.params.json["q"]?
+        env.params.query["mode"]
+        "search results"
+      end
+
+      before_query "/admin/*" do |env|
+        env.response.status_code = 403
+      end
+
+      after_query "/admin/*" do |env|
+        env.response.headers["x-filtered"] = "true"
+      end
+      CRYSTAL
+
+    endpoints = instance.analyze_file(temp_file)
+    endpoints.size.should eq(1)
+    endpoints[0].url.should eq("/search")
+    endpoints[0].method.should eq("QUERY")
+
+    params = endpoints[0].params
+    params.size.should eq(2)
+    params.find { |p| p.name == "q" }.try(&.param_type).should eq("json")
+    params.find { |p| p.name == "mode" }.try(&.param_type).should eq("query")
+
+    # Cleanup
+    File.delete(temp_file)
+    Dir.delete(temp_dir)
+  end
+
   it "handles routes outside namespace normally" do
     temp_dir = File.tempname("kemal_test")
     Dir.mkdir_p(temp_dir)
@@ -173,5 +211,41 @@ describe "kemal namespace routing" do
     # Cleanup
     File.delete(temp_file)
     Dir.delete(temp_dir)
+  end
+end
+
+describe "kemal cross-file mounts" do
+  it "prefixes a router mounted from another file" do
+    temp_dir = File.tempname("kemal_mount")
+    files = {
+      "src/app.cr" => <<-CRYSTAL,
+        require "kemal"
+        require "./routes/users"
+        mount "/api", USERS_ROUTER
+        Kemal.run
+        CRYSTAL
+      "src/routes/users.cr" => <<-CRYSTAL,
+        USERS_ROUTER = Kemal::Router.new
+        USERS_ROUTER.namespace "/users" do
+          get "/:id" do |env|
+            env.params.url["id"]
+          end
+        end
+        CRYSTAL
+    }
+    CodeLocator.instance.clear_all
+    files.each do |relative, content|
+      path = File.join(temp_dir, relative)
+      Dir.mkdir_p(File.dirname(path))
+      File.write(path, content)
+      CodeLocator.instance.register_file(path, content)
+    end
+    options = create_test_options
+    options["base"] = YAML::Any.new([YAML::Any.new(temp_dir)])
+
+    Analyzer::Crystal::Kemal.new(options).analyze.map(&.url).should eq(["/api/users/:id"])
+  ensure
+    CodeLocator.instance.clear_all
+    FileUtils.rm_rf(temp_dir) if temp_dir
   end
 end

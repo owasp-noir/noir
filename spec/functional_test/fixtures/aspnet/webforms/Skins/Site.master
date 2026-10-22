@@ -1,0 +1,2 @@
+<%@ Master Language="VB" CodeFile="Site.master.vb" Inherits="Skins_Site" %>
+<html><body><form id="frmMain" runat="server"><asp:ContentPlaceHolder runat="server" /></form></body></html>

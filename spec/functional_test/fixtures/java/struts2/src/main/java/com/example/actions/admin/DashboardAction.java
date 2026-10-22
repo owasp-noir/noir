@@ -6,12 +6,19 @@ import com.opensymphony.xwork2.ActionSupport;
 // class="com.example.actions.admin.DashboardAction"/>` in
 // admin-struts.xml. Exercises XML-action callee resolution: the default
 // `execute` method is resolved from the XML `class` attribute and its
-// 1-hop callees attached to the /admin/dashboard endpoint.
+// 1-hop callees attached to the /admin/dashboard endpoint. The
+// `dashboard-refresh` action maps to `refresh` on the same class, so one
+// handler file answers two actions with different callees.
 public class DashboardAction extends ActionSupport {
     private final DashboardService dashboardService = new DashboardService();
 
     public String execute() {
         dashboardService.loadStats();
+        return SUCCESS;
+    }
+
+    public String refresh() {
+        dashboardService.refreshStats();
         return SUCCESS;
     }
 }

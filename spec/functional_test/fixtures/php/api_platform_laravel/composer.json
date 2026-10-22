@@ -1,0 +1,7 @@
+{
+    "require": {
+        "php": "^8.2",
+        "api-platform/laravel": "^4.1",
+        "laravel/framework": "^11.0"
+    }
+}

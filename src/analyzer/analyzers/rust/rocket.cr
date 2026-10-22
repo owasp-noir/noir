@@ -11,11 +11,23 @@ module Analyzer::Rust
   # the `data = "<...>"` form, query / path angle-bracket params, and
   # `CookieJar` / `headers().get(...)` body uses.
   class Rocket < RustEngine
-    HTTP_VERBS = Set{"get", "post", "put", "delete", "patch", "head", "options"}
+    analyzer_for "rust_rocket"
+
+    # Only files inside a crate that depends on `rocket`. See
+    # `RustEngine#crate_dependencies` — without this every Rust analyzer
+    # sees every `.rs` file in the scan.
+    protected def crate_dependencies : Array(String)
+      ["rocket"]
+    end
+
     alias ScopedRouteKey = Tuple(String, String, String)
     alias AliasKey = Tuple(String, String)
     alias RouteLeaf = Tuple(String, String?)
     alias MountEntry = Tuple(String, Symbol, Array(RouteLeaf), String?, String, String)
+
+    # Precompiled union for build_mount_index's per-file evidence gate, so it
+    # costs a single PCRE2 match instead of three naive substring scans.
+    MOUNT_INDEX_EVIDENCE_RE = Regex.union("routes!", ".mount(", "routes as")
 
     # Cross-file `.mount()` prefix composition. A Rocket handler's real URL
     # is its `#[get("/x")]` attribute path prefixed by the base it is mounted
@@ -42,7 +54,7 @@ module Analyzer::Rust
     def analyze_file(path : String) : Array(Endpoint)
       endpoints = [] of Endpoint
       source = read_file_content(path)
-      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
+      include_callee = callees_needed?
 
       Noir::TreeSitter.parse_rust(source) do |root|
         each_routing_pair(root) do |attr, function|
@@ -100,12 +112,11 @@ module Analyzer::Rust
       mounts = [] of MountEntry
 
       all_files.each do |path|
-        next if File.directory?(path)
         next unless File.exists?(path) && File.extname(path) == ".rs"
-        next if RustEngine.test_path?(path)
-        base = configured_base_for(path)
+        next if RustEngine.test_path?(base_relative_path(path))
+        base = crate_scope_for(path)
         src = read_file_content(path)
-        next unless src.includes?("routes!") || src.includes?(".mount(") || src.includes?("routes as")
+        next unless src.matches?(MOUNT_INDEX_EVIDENCE_RE)
         file_mod = primary_module(path)
         begin
           test_regions = RustEngine.collect_cfg_test_regions(src)
@@ -206,7 +217,7 @@ module Analyzer::Rust
         args = Noir::TreeSitter.field(n, "arguments")
         next unless args
         named = [] of LibTreeSitter::TSNode
-        Noir::TreeSitter.each_named_child(args) { |c| named << c }
+        Noir::TreeSitter.each_named_arg(args) { |c| named << c }
         next if named.size < 2
 
         prefix = extract_mount_prefix(named[0], source)
@@ -341,33 +352,13 @@ module Analyzer::Rust
       name ? Noir::TreeSitter.node_text(name, source) : nil
     end
 
-    # Canonical single module a `.rs` file is referred to by. A plain
-    # `foo.rs` is module `foo`; `foo/mod.rs` is module `foo`. A crate root
-    # (`src/main.rs` / `src/lib.rs`) has no module name of its own, so we key
-    # it by the crate directory — this keeps the identically named
-    # `examples/<x>/src/main.rs` roots of a framework example monorepo apart
-    # instead of collapsing them all to a shared `src` pseudo-module.
-    private def primary_module(path : String) : String
-      base = File.basename(path, ".rs")
-      dir = File.dirname(path)
-      case base
-      when "mod"
-        File.basename(dir)
-      when "lib", "main"
-        parent = File.basename(dir)
-        parent == "src" ? File.basename(File.dirname(dir)) : parent
-      else
-        base
-      end
-    end
-
     # Mount prefix(es) for a handler, matched module-aware so a leaf shared
     # across modules only inherits the prefix of the module that registers
     # it. nil when the handler isn't mounted anywhere visible.
     private def lookup_mount_prefixes(leaf : String, file_path : String) : Array(String)?
       index = @mount_index
       return unless index
-      if prefixes = index[{configured_base_for(file_path), primary_module(file_path), leaf}]?
+      if prefixes = index[{crate_scope_for(file_path), primary_module(file_path), leaf}]?
         return prefixes
       end
       nil
@@ -556,82 +547,6 @@ module Analyzer::Rust
             endpoint.push_param(Param.new(name, "", "header"))
           end
         end
-      end
-    end
-
-    private def attach_handler_callees(function : LibTreeSitter::TSNode,
-                                       source : String,
-                                       path : String,
-                                       endpoint : Endpoint)
-      body = Noir::TreeSitter.field(function, "body")
-      return unless body
-      entries = Noir::RustCalleeExtractorTS.callees_in_body(body, source, path)
-      attach_rust_callees(endpoint, entries)
-    end
-
-    private def call_function_text(call : LibTreeSitter::TSNode, source : String) : String?
-      fn_node = Noir::TreeSitter.field(call, "function")
-      return unless fn_node
-      Noir::TreeSitter.node_text(fn_node, source)
-    end
-
-    private def each_routing_pair(node : LibTreeSitter::TSNode, &block : LibTreeSitter::TSNode, LibTreeSitter::TSNode ->)
-      named = [] of LibTreeSitter::TSNode
-      Noir::TreeSitter.each_named_child(node) { |c| named << c }
-      named.each_with_index do |child, idx|
-        if Noir::TreeSitter.node_type(child) == "attribute_item"
-          pair_function = find_paired_function(named, idx + 1)
-          block.call(child, pair_function) if pair_function
-        end
-        each_routing_pair(child, &block)
-      end
-    end
-
-    private def find_paired_function(named : Array(LibTreeSitter::TSNode), start : Int32) : LibTreeSitter::TSNode?
-      (start...named.size).each do |i|
-        next_node = named[i]
-        case Noir::TreeSitter.node_type(next_node)
-        when "function_item"
-          return next_node
-        when "attribute_item", "line_comment", "block_comment"
-          next
-        else
-          return
-        end
-      end
-      nil
-    end
-
-    private def first_string_literal_text(node : LibTreeSitter::TSNode?, source : String) : String?
-      return unless node
-      result : String? = nil
-      walk(node) do |child|
-        next if result
-        if Noir::TreeSitter.node_type(child) == "string_literal"
-          result = string_content(child, source)
-        end
-      end
-      result
-    end
-
-    private def string_content(string_literal : LibTreeSitter::TSNode, source : String) : String?
-      Noir::TreeSitter.each_named_child(string_literal) do |grand|
-        return Noir::TreeSitter.node_text(grand, source) if Noir::TreeSitter.node_type(grand) == "string_content"
-      end
-      nil
-    end
-
-    private def find_named_child(node : LibTreeSitter::TSNode, type : String) : LibTreeSitter::TSNode?
-      Noir::TreeSitter.each_named_child(node) do |child|
-        return child if Noir::TreeSitter.node_type(child) == type
-      end
-      nil
-    end
-
-    private def walk(node : LibTreeSitter::TSNode, &block : LibTreeSitter::TSNode ->)
-      block.call(node)
-      Noir::TreeSitter.each_named_child(node) do |child|
-        walk(child, &block)
       end
     end
   end

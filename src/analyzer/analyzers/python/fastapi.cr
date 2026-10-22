@@ -1,7 +1,11 @@
 require "../../engines/python_engine"
+require "../../../utils/top_level_split"
+require "./python_helper"
 
 module Analyzer::Python
   class FastAPI < PythonEngine
+    analyzer_for "python_fastapi"
+
     PATH_PARAM_REGEX       = /\{(#{PYTHON_VAR_NAME_REGEX})(?::[a-zA-Z_][a-zA-Z0-9_]*)?\}/
     TYPED_PATH_PARAM_REGEX = /\{(#{PYTHON_VAR_NAME_REGEX}):[a-zA-Z_][a-zA-Z0-9_]*\}/
 
@@ -49,6 +53,9 @@ module Analyzer::Python
 
     @fastapi_import_cache = Hash(::String, Hash(::String, Tuple(::String, Int32))).new
 
+    REQUEST_ATTR_TYPES = {"query_params" => "query", "headers" => "header", "cookies" => "cookie"}
+    @request_attr_regex_cache = Hash(::String, Regex).new
+
     def analyze
       include_router_map = Hash(::String, Hash(::String, Router)).new
       fastapi_app_instances = [] of Tuple(::String, ::String)
@@ -57,12 +64,10 @@ module Analyzer::Python
         # Iterate through all Python files in all base paths. Pulls from
         # the detector-built file_map so subtree pruning and
         # --exclude-path apply to this pass too.
-        python_files = get_files_by_extension(".py")
+        python_files = python_source_files
         base_paths.each do |current_base_path|
           python_files.each do |path|
             next unless path_under_root?(path, current_base_path)
-            next if path.includes?("/site-packages/")
-            next if python_test_path?(path)
             source = read_file_content(path)
 
             import_modules = find_fastapi_imported_modules(current_base_path, path, source)
@@ -125,11 +130,29 @@ module Analyzer::Python
       fastapi_base_paths = fastapi_project_roots(fastapi_app_instances)
 
       begin
-        # Seed prefix configuration from every FastAPI app instance,
-        # sharing one `visited` set so a router included by more than
-        # one app is configured exactly once.
+        # Seed prefix configuration from every FastAPI app instance. A
+        # router included more than once (two prefixes, or two parents)
+        # collects one mounted prefix per inclusion path.
         prefix_visited = Set(::String).new
+        # An app another app mounts is served only under the mount path,
+        # so it is reached through that mount instead of seeded as a root —
+        # unless the mount is a route-less wrapper in another file
+        # (`wrapper = FastAPI(); wrapper.mount("/x", app)` in a dev script):
+        # the real app is then likely served on its own too, so keep both.
+        mounted_apps = Set(Tuple(::String, ::String)).new
         fastapi_app_instances.each do |app_file, app_instance|
+          source = read_file_content(app_file)
+          import_modules = find_fastapi_imported_modules(fastapi_base_path_for(app_file, fastapi_base_paths), app_file, source)
+          extract_app_mount_calls(source, app_instance).each do |args|
+            next unless mount = parse_app_mount(args, source, import_modules)
+            target = resolve_router_reference(app_file, source, import_modules, include_router_map, mount[1])
+            next unless target && target != {app_file, app_instance}
+            next if target[0] != app_file && !declares_own_routes?(source, app_instance)
+            mounted_apps << target
+          end
+        end
+        fastapi_app_instances.each do |app_file, app_instance|
+          next if mounted_apps.includes?({app_file, app_instance})
           app_base_path = fastapi_base_path_for(app_file, fastapi_base_paths)
           configure_router_prefix(app_file, include_router_map, app_base_path, "", app_instance, prefix_visited)
         end
@@ -140,7 +163,7 @@ module Analyzer::Python
           definition_base_path = python_base_path_for(path)
           import_modules = find_fastapi_imported_modules(import_base_path, path, source)
           codelines = source.split("\n")
-          router_map.each do |instance_name, router_class|
+          router_map.flat_map { |name, registered| registered.mounts.map { |router| {name, router} } }.each do |instance_name, router_class|
             codelines.each_with_index do |line, index|
               next if line.lstrip.starts_with?("#")
 
@@ -172,12 +195,6 @@ module Analyzer::Python
 
                 http_method_name = http_method_name.upcase
 
-                params = [] of Param
-
-                # Get path params from route path
-                query_params = [] of ::String
-                query_params.concat(fastapi_path_param_names(http_route_path))
-
                 # Resolve the actual `def` line, skipping stacked
                 # decorators / comments / blank lines between the
                 # route decorator and the handler. Both param
@@ -187,74 +204,7 @@ module Analyzer::Python
                 # style stacks.
                 def_line = find_def_line(codelines, index) || (index + 1)
 
-                # Parsing extra params
-                function_definition = parse_function_def(codelines, def_line)
-                unless function_definition.nil?
-                  function_params = function_definition.params
-                  if function_params.size > 0
-                    function_params.each do |param|
-                      # https://fastapi.tiangolo.com/tutorial/path-params-numeric-validations/#order-the-parameters-as-you-need-tricks
-                      next if param.name == "*"
-                      next if param.name.in?(%w[self cls])
-                      next if param.type == "WebSocket"
-                      next if fastapi_dependency_param?(param)
-
-                      unless query_params.includes?(param.name)
-                        # Default value is numeric or string only
-                        default_value = return_literal_value(param.default)
-
-                        # Get param type by default value first
-                        param_type = infer_parameter_type(param.default) unless param.default.empty?
-
-                        # Get param type by type if not found
-                        if param_type.nil? && !param.type.empty?
-                          param_type = param.type
-                          # https://peps.python.org/pep-0593/
-                          param_type = param_type.split("Annotated[", 2)[-1].split(",", 2)[-1] if param_type.includes?("Annotated[")
-
-                          # https://peps.python.org/pep-0484/#union-types
-                          param_type = param_type.split("Union[", 2)[-1] if param_type.includes?("Union[")
-
-                          param_type = infer_parameter_type(param_type, true)
-                          param_type = "query" if param_type.nil? && param.type.empty?
-                        else
-                          param_type = "query" if param_type.nil?
-                        end
-
-                        if param_type.nil?
-                          if VAR_NAME_FULL_RE.match(param.type)
-                            if param.type.in?(%w[Request dict])
-                              function_codeblock = parse_code_block(codelines[def_line..])
-                              next if function_codeblock.nil?
-                              new_params = find_dictionary_params(function_codeblock, param)
-                            elsif import_modules.has_key?(param.type)
-                              # Parse model class from module path
-                              import_module_path = import_modules[param.type].first
-
-                              # Skip if import module path is not identified
-                              next if import_module_path.empty?
-
-                              import_module_source = read_file_content(import_module_path)
-                              new_params = find_base_model_params(import_module_source, param.type, param.name)
-                            else
-                              # Parse model class from current source
-                              new_params = find_base_model_params(source, param.type, param.name)
-                            end
-
-                            next if new_params.nil?
-
-                            new_params.each do |model_param|
-                              params << model_param
-                            end
-                          end
-                        else
-                          # Add endpoint param
-                          params << Param.new(param.name, default_value, param_type)
-                        end
-                      end
-                    end
-                  end
-                end
+                params = extract_fastapi_handler_params(codelines, def_line, http_route_path, source, import_modules)
 
                 # Honor `methods=[...]` on `@router.route(...)` /
                 # `@router.api_route(...)` decorators by emitting
@@ -269,6 +219,7 @@ module Analyzer::Python
                 full_path = normalize_fastapi_path_params(router_class.join(http_route_path))
                 base_endpoint = Endpoint.new(full_path, emit_methods.first, params, details)
                 base_endpoint.protocol = "ws" if websocket_route
+                base_endpoint.handler = handler_at(codelines, def_line, path)
 
                 # `parse_code_block(codelines[def_line..])` keeps the
                 # def line, so body row 0 lives at file line `def_line`.
@@ -290,6 +241,7 @@ module Analyzer::Python
                                     else
                                       Endpoint.new(full_path, method, params, details).tap do |dup_ep|
                                         dup_ep.protocol = "ws" if websocket_route
+                                        dup_ep.handler = base_endpoint.handler
                                         base_endpoint.callees.each { |c| dup_ep.push_callee(c) }
                                       end
                                     end
@@ -316,6 +268,7 @@ module Analyzer::Python
                 prog_details = Details.new(PathInfo.new(path, index + 1))
                 prog_params = [] of Param
                 prog_callees = [] of Callee
+                prog_handler = nil.as(Handler?)
                 if callees_needed?
                   if handler_callee = extract_programmatic_handler_callee(prog_tail)
                     prog_callees << Callee.new(handler_callee, path, index + 1)
@@ -327,6 +280,7 @@ module Analyzer::Python
                   handler_lines = handler_source.split("\n")
                   handler_imports = handler_path == path ? import_modules : find_fastapi_imported_modules(import_base_path, handler_path, handler_source)
                   if handler_def_line = find_function_def_line(handler_lines, handler_name)
+                    prog_handler = handler_at(handler_lines, handler_def_line, handler_path)
                     prog_params = extract_fastapi_handler_params(handler_lines, handler_def_line, prog_full, handler_source, handler_imports)
                     if handler_codeblock = parse_code_block(handler_lines[handler_def_line..])
                       prog_callees.concat(build_callees_from(
@@ -342,6 +296,7 @@ module Analyzer::Python
                 prog_methods.each do |m|
                   endpoint = Endpoint.new(prog_full, m, prog_params, prog_details)
                   endpoint.protocol = "ws" if prog_websocket_route
+                  endpoint.handler = prog_handler
                   prog_callees.each { |c| endpoint.push_callee(c) }
                   result << endpoint
                 end
@@ -417,12 +372,16 @@ module Analyzer::Python
       include_router_map[file].each do |instance_name, router_class|
         next if target_instance_name && instance_name != target_instance_name
 
-        # Each (file, router) is configured at most once. Without this
-        # guard the new local-router recursion below (and any app that
-        # includes the same router from two parents) would re-prepend
-        # the inherited prefix and could recurse forever on a cyclic
-        # include graph.
-        next unless visited.add?("#{file}::#{instance_name}")
+        # `visited` holds two kinds of key. The bare router key marks the
+        # routers on the current include path, so a cyclic include graph
+        # stops instead of recursing forever. The router + inherited
+        # prefix key memoises each configuration, so a router included
+        # under two prefixes is configured once per prefix while a
+        # diamond-shaped include graph is not re-walked once per path.
+        visit_key = "#{file}::#{instance_name}"
+        next if visited.includes?(visit_key)
+        next unless visited.add?("#{visit_key}\0#{router_prefix}")
+        visited.add(visit_key)
 
         # PREPEND the inherited prefix to the router's own. The
         # initial pass captures `APIRouter(prefix="/users")`, so
@@ -434,7 +393,8 @@ module Analyzer::Python
         # `items.router` both declare `prefix=...` at construction
         # time, but their routes were surfacing without the
         # `/users` / `/items` segment.
-        router_class.prefix = combine_router_prefixes(router_prefix, router_class.prefix)
+        mounted = Router.new(combine_router_prefixes(router_prefix, router_class.prefix))
+        router_class.mounted_prefixes << mounted.prefix unless router_class.mounted_prefixes.includes?(mounted.prefix)
 
         # Parse `{app}.include_router(...)` calls. Real FastAPI apps
         # often use keyword form (`router=users.router`) and nested
@@ -466,45 +426,23 @@ module Analyzer::Python
             end
           end
 
-          # Register router's prefix recursively
-          prefix = router_class.join(prefix)
-          if router_instance_name.count(".") == 0
-            if include_router_map[file].has_key?(router_instance_name)
-              # A router included from the SAME file (e.g. dispatch's
-              # `api_router.include_router(authenticated_organization_api_router)`).
-              # Recurse so the included router's OWN `include_router`
-              # calls are processed under the inherited prefix —
-              # previously we only set its prefix and stopped, which
-              # dropped every grand-child route's prefix
-              # (`/{organization}/cases/...` collapsed to `/...`).
-              configure_router_prefix(file, include_router_map, app_base_path, prefix, router_instance_name, visited)
-              next
-            end
-
-            next unless import_modules.has_key?(router_instance_name)
-            import_module_path = import_modules[router_instance_name].first
-
-            next unless include_router_map.has_key?(import_module_path)
-            # The local name is frequently an alias
-            # (`from .api import router as api_router`). The target
-            # file registers the router under its ORIGINAL symbol
-            # (`router`), so translate the alias back before recursing.
-            # Passing the alias straight through made the
-            # `target_instance_name` filter never match, silently
-            # dropping the ENTIRE sub-router prefix tree — the dominant
-            # FastAPI accuracy bug on real apps (fastapi-realworld,
-            # Netflix/dispatch) that lean on `import router as X`.
-            target_name = resolve_original_import_name(source, router_instance_name, include_router_map[import_module_path])
-            configure_router_prefix(import_module_path, include_router_map, app_base_path, prefix, target_name, visited)
-          elsif router_instance_name.count(".") == 1
-            module_name, imported_router_instance_name = router_instance_name.split(".")
-            next unless import_modules.has_key?(module_name)
-            import_module_path = import_modules[module_name].first
-
-            next unless include_router_map.has_key?(import_module_path)
-            configure_router_prefix(import_module_path, include_router_map, app_base_path, prefix, imported_router_instance_name, visited)
+          # Register router's prefix recursively, so the included router's
+          # OWN `include_router` calls are processed under the inherited
+          # prefix too.
+          if target = resolve_router_reference(file, source, import_modules, include_router_map, router_instance_name)
+            configure_router_prefix(target[0], include_router_map, app_base_path, mounted.join(prefix), target[1], visited)
           end
         end
+
+        # `app.mount("/sub", subapi)` serves the sub-application's routes
+        # under the mount path, like an include_router prefix.
+        extract_app_mount_calls(source, instance_name).each do |args|
+          next unless mount = parse_app_mount(args, source, import_modules)
+          if target = resolve_router_reference(file, source, import_modules, include_router_map, mount[1])
+            configure_router_prefix(target[0], include_router_map, app_base_path, mounted.join(mount[0]), target[1], visited)
+          end
+        end
+        visited.delete(visit_key)
       end
     end
 
@@ -532,39 +470,91 @@ module Analyzer::Python
     end
 
     private def extract_include_router_calls(source : ::String, instance_name : ::String) : Array(::String)
-      calls = [] of ::String
       res = instance_regexes(instance_name)
+      extract_instance_calls(source, "include_router", res.include_router_guard, res.include_router_call)
+    end
+
+    # Argument text of every `<instance>.mount(...)` that mounts an app
+    # rather than `StaticFiles` (those are emitted as static routes).
+    private def extract_app_mount_calls(source : ::String, instance_name : ::String) : Array(::String)
+      res = instance_regexes(instance_name)
+      extract_instance_calls(source, ".mount", res.mount_guard, res.static_mount).reject(&.includes?("StaticFiles"))
+    end
+
+    # Whether `instance` serves anything itself: a route decorator, an
+    # `include_router` or an `add_api_route` in `source` (middleware and
+    # event hooks do not count).
+    private def declares_own_routes?(source : ::String, instance_name : ::String) : Bool
+      res = instance_regexes(instance_name)
+      e = Regex.escape(instance_name)
+      source.matches?(/^\s*@\s*#{e}\s*\.\s*(?:get|post|put|patch|delete|head|options|trace|query|api_route|websocket)\s*\(/m) ||
+        source.matches?(res.include_router_guard) || source.matches?(res.programmatic_guard)
+    end
+
+    private def extract_instance_calls(source : ::String, needle : ::String, guard : Regex, call : Regex) : Array(::String)
+      calls = [] of ::String
+      # One scan of the source before splitting it: most instances make
+      # no such call, and this runs once per instance per file.
+      return calls unless source.matches?(guard)
       lines = source.split("\n")
       lines.each_with_index do |line, index|
         stripped = line.lstrip
         next if stripped.starts_with?("#")
-        next unless line.includes?("include_router") && line.matches?(res.include_router_guard)
+        next unless line.includes?(needle) && line.matches?(guard)
 
-        logical_line = coalesce_include_router_call(lines, index, line, instance_name)
-        match = logical_line.match(res.include_router_call)
+        logical_line = join_until_python_call_closes(lines, index, line)
+        match = logical_line.match(call)
         calls << match[1] if match
       end
       calls
     end
 
-    private def coalesce_include_router_call(codelines : Array(::String),
-                                             index : Int32,
-                                             line : ::String,
-                                             instance_name : ::String) : ::String
-      return line unless line.matches?(instance_regexes(instance_name).include_router_guard)
-      return line if python_call_balanced?(line)
+    # `{prefix, target}` of an app mount: `mount("/sub", sub)` or
+    # `mount(path="/sub", app=sub)`.
+    private def parse_app_mount(args : ::String, source : ::String,
+                                import_modules : Hash(::String, Tuple(::String, Int32))) : Tuple(::String, ::String)?
+      positional = split_python_arguments(args).map(&.strip).reject(&.empty?).take_while { |arg| !top_level_keyword_argument?(arg) }
+      target = extract_python_keyword_expression(args, "app").try(&.strip) || positional[1]?
+      path_expr = positional[0]? || extract_python_keyword_expression(args, "path")
+      return unless target && path_expr
+      return unless path = resolve_string_expression(path_expr, source, import_modules)
 
-      pieces = [line]
-      depth = python_paren_delta(line)
-      i = index + 1
-      while i < codelines.size && depth > 0
-        nxt = codelines[i]
-        pieces << nxt
-        depth += python_paren_delta(nxt)
-        break if depth <= 0
-        i += 1
+      {path, target}
+    end
+
+    # `{file, instance}` a router or app reference used in `file` is
+    # registered under: a same-file name, an imported name (aliases
+    # translated back) or `module.attr`. Nil when it names nothing known.
+    private def resolve_router_reference(file : ::String,
+                                         source : ::String,
+                                         import_modules : Hash(::String, Tuple(::String, Int32)),
+                                         include_router_map : Hash(::String, Hash(::String, Router)),
+                                         name : ::String) : Tuple(::String, ::String)?
+      case name.count(".")
+      when 0
+        # A router included from the SAME file (e.g. dispatch's
+        # `api_router.include_router(authenticated_organization_api_router)`).
+        return {file, name} if include_router_map[file].has_key?(name)
+        return unless imported = import_modules[name]?
+        import_module_path = imported.first
+        return unless target_map = include_router_map[import_module_path]?
+        # The local name is frequently an alias
+        # (`from .api import router as api_router`). The target
+        # file registers the router under its ORIGINAL symbol
+        # (`router`), so translate the alias back before recursing.
+        # Passing the alias straight through made the
+        # `target_instance_name` filter never match, silently
+        # dropping the ENTIRE sub-router prefix tree — the dominant
+        # FastAPI accuracy bug on real apps (fastapi-realworld,
+        # Netflix/dispatch) that lean on `import router as X`.
+        {import_module_path, resolve_original_import_name(source, name, target_map)}
+      when 1
+        module_name, attr = name.split(".")
+        return unless imported = import_modules[module_name]?
+        import_module_path = imported.first
+        return unless include_router_map.has_key?(import_module_path)
+        {import_module_path, attr}
       end
-      pieces.join(' ')
     end
 
     # Translate a locally-used router name back to the symbol it is
@@ -818,11 +808,17 @@ module Analyzer::Python
                                  source : ::String,
                                  import_modules : Hash(::String, Tuple(::String, Int32)),
                                  depth : Int32) : ::String?
+      # `String#[]` walks from the start on every call for non-ASCII
+      # content, so indexing `value` directly inside this while loop was
+      # O(n^2); `chars` (Array(Char)) gives O(1) random access instead.
+      # `value.index`/range-slice stay on `value` — they only run once
+      # per `{...}` placeholder found, not once per character.
+      chars = value.chars
       result = String.build do |io|
         index = 0
-        while index < value.size
-          if value[index] == '{'
-            if index + 1 < value.size && value[index + 1] == '{'
+        while index < chars.size
+          if chars[index] == '{'
+            if index + 1 < chars.size && chars[index + 1] == '{'
               io << '{'
               index += 2
               next
@@ -836,11 +832,11 @@ module Analyzer::Python
             return unless resolved
             io << resolved
             index = end_index + 1
-          elsif value[index] == '}' && index + 1 < value.size && value[index + 1] == '}'
+          elsif chars[index] == '}' && index + 1 < chars.size && chars[index + 1] == '}'
             io << '}'
             index += 2
           else
-            io << value[index]
+            io << chars[index]
             index += 1
           end
         end
@@ -869,12 +865,16 @@ module Analyzer::Python
       return unless match
 
       index = match.end
+      # `String#[]` walks from the start on every call for non-ASCII
+      # content, so indexing `call_tail` directly inside this while loop
+      # was O(n^2); `chars` gives O(1) random access instead.
+      chars = call_tail.chars
       expression = String.build do |io|
         depth = 0
         in_quote = nil
         escaped = false
-        while index < call_tail.size
-          ch = call_tail[index]
+        while index < chars.size
+          ch = chars[index]
           if in_quote
             io << ch
             if escaped
@@ -1068,6 +1068,13 @@ module Analyzer::Python
       function_definition.params.each do |param|
         next if param.name == "*" || path_param_names.includes?(param.name)
         next if param.name.in?(%w[self cls])
+        next if param.type == "WebSocket"
+        # `Depends()` on a password-flow form model reads the two
+        # `application/x-www-form-urlencoded` fields the client must send.
+        if param.type.includes?("OAuth2PasswordRequestForm")
+          params << Param.new("username", "", "form") << Param.new("password", "", "form")
+          next
+        end
         next if fastapi_dependency_param?(param)
 
         default_value = return_literal_value(param.default)
@@ -1077,32 +1084,33 @@ module Analyzer::Python
           param_type = param_type.split("Annotated[", 2)[-1].split(",", 2)[-1] if param_type.includes?("Annotated[")
           param_type = param_type.split("Union[", 2)[-1] if param_type.includes?("Union[")
           param_type = infer_parameter_type(param_type, true)
-          param_type = "query" if param_type.nil? && param.type.empty?
         else
           param_type = "query" if param_type.nil?
         end
 
+        model = fastapi_model_name(param.type)
+
+        # A lone `Body()` model is the request body itself; `embed=True`
+        # nests it under the parameter name instead.
+        if param_type == "json" && model && !fastapi_param_declaration(param).matches?(BODY_EMBED_RE)
+          fields = model_params_for(model, param.name, source, import_modules)
+          unless fields.empty?
+            params.concat(fields)
+            next
+          end
+        end
+
         if param_type.nil?
-          if /^#{PYTHON_VAR_NAME_REGEX}$/.match(param.type)
-            if param.type.in?(%w[Request dict])
-              function_codeblock = parse_code_block(codelines[def_line..])
-              next if function_codeblock.nil?
-              new_params = find_dictionary_params(function_codeblock, param)
-            elsif import_modules.has_key?(param.type)
-              import_module_path = import_modules[param.type].first
-              next if import_module_path.empty?
-
-              import_module_source = read_file_content(import_module_path)
-              new_params = find_base_model_params(import_module_source, param.type, param.name)
-            else
-              new_params = find_base_model_params(source, param.type, param.name)
-            end
-
-            next if new_params.nil?
-            new_params.each { |model_param| params << model_param }
+          next unless model
+          if model.in?(%w[Request dict])
+            function_codeblock = parse_code_block(codelines[def_line..])
+            next if function_codeblock.nil?
+            params.concat(find_dictionary_params(function_codeblock, FunctionParameter.new(param.name, model, param.default)))
+          else
+            params.concat(model_params_for(model, param.name, source, import_modules))
           end
         else
-          params << Param.new(param.name, default_value, param_type)
+          params << Param.new(fastapi_wire_name(param, param_type), default_value, param_type)
         end
       end
 
@@ -1112,7 +1120,7 @@ module Analyzer::Python
     private def fastapi_path_param_names(route_path : ::String) : Array(::String)
       names = [] of ::String
       route_path.scan(PATH_PARAM_REGEX) do |match|
-        names << match[1] if match.size > 0 && !names.includes?(match[1])
+        names << match[1] unless names.includes?(match[1])
       end
       names
     end
@@ -1157,42 +1165,14 @@ module Analyzer::Python
       parts
     end
 
+    # Delegates to the shared splitter. `Rules::SHARED_DEPTH_RAW`, not
+    # `Rules::PYTHON`: this loop counted `(`, `[` and `{` on ONE depth
+    # counter, which is observable on the unbalanced fragments the route
+    # regexes actually hand it. The two wrappers above stay local — the
+    # `nil`-on-single-part contract of `split_python_expression` is a FastAPI
+    # call-site convention, not a splitting rule.
     private def split_python_top_level(input : ::String, delimiter : Char) : Array(::String)
-      parts = [] of ::String
-      start = 0
-      depth = 0
-      in_quote = nil
-      escaped = false
-      index = 0
-      while index < input.size
-        ch = input[index]
-        if in_quote
-          if escaped
-            escaped = false
-          elsif ch == '\\'
-            escaped = true
-          elsif ch == in_quote
-            in_quote = nil
-          end
-        else
-          case ch
-          when '\'', '"'
-            in_quote = ch
-          when '(', '[', '{'
-            depth += 1
-          when ')', ']', '}'
-            depth -= 1 if depth > 0
-          else
-            if ch == delimiter && depth == 0
-              parts << input[start...index]
-              start = index + 1
-            end
-          end
-        end
-        index += 1
-      end
-      parts << input[start..]
-      parts
+      Noir::TopLevelSplit.split(input, delimiter, Noir::TopLevelSplit::Rules::SHARED_DEPTH_RAW)
     end
 
     private def static_route_path(path : ::String) : ::String
@@ -1202,14 +1182,73 @@ module Analyzer::Python
       normalized == "/" ? "/*" : "#{normalized}/*"
     end
 
+    # The Python identifier a FastAPI handler declares is not always the name
+    # the client sends. Two rules rewrite it, and Noir honored neither:
+    #
+    #   * `alias=` overrides the name outright, for every parameter class
+    #     (`Header`, `Query`, `Cookie`, `Form`, `File`, `Body`, `Path`).
+    #   * `Header` — and only `Header` — additionally maps `_` to `-`, because
+    #     an HTTP header name can't carry an underscore in most stacks. That
+    #     is `convert_underscores`, and it defaults to **True**; passing
+    #     `convert_underscores=False` is what opts back out.
+    #
+    # Reporting the identifier verbatim is not a cosmetic mismatch: it is the
+    # name Noir hands to the next stage. `-f curl` emitted `-H 'x_token: '`
+    # for `x_token: str = Header(None)`, a header the app reads as nothing,
+    # and a DAST tool importing the OpenAPI doc probed `?q_name=` for a
+    # parameter the app only accepts as `q-name`.
+    FASTAPI_PARAM_CLASS_RE    = /\b(?:Header|Query|Cookie|Path|Body|Form|File)\s*\(/
+    NO_CONVERT_UNDERSCORES_RE = /\bconvert_underscores\s*=\s*False\b/
+
+    # The same rename, one layer down. A request body is described by a
+    # Pydantic model, and `Field(alias=...)` renames the key there too —
+    # with `populate_by_name` off (the default) the alias is the *only* key
+    # the model accepts, so the attribute name is a body field the app
+    # rejects outright.
+    MODEL_FIELD_CALL_RE = /\bField\s*\(/
+
+    # `param_type` is Noir's resolved slot ("header", "query", ...), which is
+    # what decides whether the underscore rule applies; the declaration text
+    # is whichever of the default value or the annotation actually carries the
+    # `Header(...)` / `Query(...)` call, since `Annotated[str, Header()]` puts
+    # it in the annotation and `= Header()` puts it in the default.
+    private def fastapi_wire_name(param : FunctionParameter, param_type : ::String) : ::String
+      declaration = fastapi_param_declaration(param)
+      return param.name if declaration.empty?
+
+      if explicit = Helper.declared_alias(declaration)
+        return explicit
+      end
+
+      return param.name unless param_type == "header"
+      return param.name if declaration.matches?(NO_CONVERT_UNDERSCORES_RE)
+      param.name.tr("_", "-")
+    end
+
+    # Gated on an actual parameter-class call so a plain default that merely
+    # contains the text `alias=` (`mode: str = "alias=1"`) is left alone.
+    private def fastapi_param_declaration(param : FunctionParameter) : ::String
+      return param.default if param.default.matches?(FASTAPI_PARAM_CLASS_RE)
+      return param.type if param.type.matches?(FASTAPI_PARAM_CLASS_RE)
+      ""
+    end
+
+    # Same gate as `fastapi_param_declaration`: only a real `Field(...)`
+    # call renames anything, so `note: str = "alias=x"` keeps its name.
+    private def model_field_wire_name(attribute : ::String, default : ::String) : ::String
+      return attribute unless default.matches?(MODEL_FIELD_CALL_RE)
+      Helper.declared_alias(default) || attribute
+    end
+
     # Infers the type of the parameter based on its default value or type annotation
     def infer_parameter_type(data : ::String, is_param_type = false) : ::String?
       if data.matches?(/Cookie/)
         "cookie"
       elsif data.matches?(/Header/)
         "header"
-      elsif data.matches?(/Body/) || data.matches?(/Form/) ||
-            data.matches?(/File/) || data.matches?(/UploadFile/)
+      elsif data.matches?(/Body/)
+        "json"
+      elsif data.matches?(/Form/) || data.matches?(/File/)
         "form"
       elsif data.matches?(/Query/)
         "query"
@@ -1223,37 +1262,79 @@ module Analyzer::Python
       end
     end
 
-    # Finds the parameters for a base model class
-    def find_base_model_params(source : ::String, class_name : ::String, param_name : ::String) : Array(Param)
+    BODY_EMBED_RE         = /\bembed\s*=\s*True\b/
+    MODEL_TYPE_WRAPPER_RE = /^(?:typing\.)?(Optional|Annotated|Union)\[(.*)\]$/m
+    MODEL_FIELD_LINE_RE   = /^[A-Za-z]\w*\s*:/
+
+    # The class a parameter annotation names once `Optional[...]`,
+    # `Union[X, None]`, `X | None` and `Annotated[X, ...]` are peeled off;
+    # nil when what is left is not a bare identifier.
+    private def fastapi_model_name(type : ::String) : ::String?
+      type = type.strip
+      loop do
+        if match = type.match(MODEL_TYPE_WRAPPER_RE)
+          args = split_python_top_level(match[2], ',').map(&.strip).reject(&.empty?)
+          args = args.first(1) if match[1] == "Annotated"
+          args = args.reject { |arg| arg == "None" }
+          return unless args.size == 1
+          type = args.first
+        elsif type.includes?('|')
+          args = split_python_top_level(type, '|').map(&.strip).reject { |arg| arg == "None" }
+          return unless args.size == 1
+          type = args.first
+        else
+          break
+        end
+      end
+      type if VAR_NAME_FULL_RE.matches?(type)
+    end
+
+    private def model_params_for(model : ::String, param_name : ::String, source : ::String,
+                                 import_modules : Hash(::String, Tuple(::String, Int32))) : Array(Param)
+      if import_modules.has_key?(model)
+        import_module_path = import_modules[model].first
+        return [] of Param if import_module_path.empty?
+        source = read_file_content(import_module_path)
+      end
+      find_base_model_params(source, model, param_name)
+    end
+
+    # Finds the parameters for a base model class, base classes declared in
+    # the same source first (Pydantic orders inherited fields that way).
+    def find_base_model_params(source : ::String, class_name : ::String, param_name : ::String,
+                               visited : Set(::String) = Set(::String).new) : Array(Param)
       params = [] of Param
+      return params unless visited.add?(class_name)
       class_codeblock = parse_code_block(source, /\s*class\s*#{class_name}\s*\(/)
       return params if class_codeblock.nil?
 
-      # Parse the class code block to extract parameters
-      class_codeblock.split("\n").each_with_index do |line, index|
-        if index == 0
-          param_code = line.split("(", 2)[-1].split(")")[0]
-          if param_code.match(/(\b)*str,\s*(enum\.){0,1}Enum(\b)*/)
-            return [Param.new(param_name.strip, "", "query")]
-          end
-          return params unless /^#{PYTHON_VAR_NAME_REGEX}$/.match(param_code)
-        else
-          break unless line.split(":").size == 2
+      lines = class_codeblock.split("\n")
+      bases = lines[0].split("(", 2)[-1].split(")")[0]
+      if bases.match(/(\b)*str,\s*(enum\.){0,1}Enum(\b)*/)
+        return [Param.new(param_name.strip, "", "query")]
+      end
+      split_python_top_level(bases, ',').each do |base|
+        base = base.strip
+        next if base == "BaseModel" || !VAR_NAME_FULL_RE.matches?(base)
+        params.concat(find_base_model_params(source, base, param_name, visited))
+      end
 
-          param_name, extra = line.split(":", 2)
-          param_default = ""
-          param_type_and_default = extra.split("=", 2)
-          if param_type_and_default.size == 2
-            param_type, param_default = param_type_and_default
-          else
-            param_type = param_type_and_default[0]
-          end
+      in_docstring = Helper.docstring_line_flags(lines)
+      folded = fold_python_continuations(lines)
+      body_indent = nil
+      folded.each_with_index do |line, index|
+        next if index == 0 || in_docstring[index]
+        stripped = line.lstrip
+        next if stripped.empty? || stripped.starts_with?('#')
+        body_indent ||= line.size - stripped.size
+        next unless line.size - stripped.size == body_indent && stripped.matches?(MODEL_FIELD_LINE_RE)
 
-          if !param_name.empty? && !param_type.empty?
-            default_value = return_literal_value(param_default.strip)
-            params << Param.new(param_name.strip, default_value, "form")
-          end
-        end
+        field = parse_function_def(["def _(#{strip_python_comment(stripped)}):"], 0).try(&.params.first?)
+        next if field.nil? || field.type.empty? || field.type.starts_with?("ClassVar")
+
+        name = model_field_wire_name(field.name, field.default)
+        params.reject! { |existing| existing.name == name }
+        params << Param.new(name, return_literal_value(field.default), "json")
       end
 
       params
@@ -1263,7 +1344,9 @@ module Analyzer::Python
     def find_dictionary_params(source : ::String, param : FunctionParameter) : Array(Param)
       new_params = [] of Param
       json_variable_names = [] of ::String
-      codelines = source.split("\n")
+      # Comments out: `# request.query_params.get("old")` is not a read.
+      codelines = source.split("\n").map { |line| strip_python_comment(line) }
+      source = codelines.join('\n')
       if param.type == "Request"
         # Parse JSON variable names
         codelines.each do |codeline|
@@ -1273,6 +1356,15 @@ module Analyzer::Python
         end
 
         new_params = find_json_params(codelines, json_variable_names)
+
+        # Starlette `Request` accessors read in the handler body:
+        # `request.query_params.get("q")`, `request.headers["x-token"]`, ...
+        attr_re = @request_attr_regex_cache[param.name] ||=
+          /(?<![\w.])#{Regex.escape(param.name)}\.(query_params|headers|cookies)(?:\[\s*['"]([^'"]+)['"]\s*\]|\.get(?:list)?\(\s*['"]([^'"]+)['"])/
+        source.scan(attr_re) do |m|
+          found = Param.new((m[2]? || m[3]).to_s, "", REQUEST_ATTR_TYPES[m[1]])
+          new_params << found unless new_params.any? { |p| p.name == found.name && p.param_type == found.param_type }
+        end
       elsif param.type == "dict"
         json_variable_names << param.name
         new_params = find_json_params(codelines, json_variable_names)
@@ -1290,19 +1382,7 @@ module Analyzer::Python
                                            line : ::String,
                                            instance_name : ::String) : ::String
       return line unless line.matches?(instance_regexes(instance_name).programmatic_guard)
-      return line if python_call_balanced?(line)
-
-      pieces = [line]
-      depth = python_paren_delta(line)
-      i = index + 1
-      while i < codelines.size && depth > 0
-        nxt = codelines[i]
-        pieces << nxt
-        depth += python_paren_delta(nxt)
-        break if depth <= 0
-        i += 1
-      end
-      pieces.join(' ')
+      join_until_python_call_closes(codelines, index, line)
     end
 
     private def coalesce_mount_call(codelines : Array(::String),
@@ -1310,19 +1390,7 @@ module Analyzer::Python
                                     line : ::String,
                                     instance_name : ::String) : ::String
       return line unless line.matches?(instance_regexes(instance_name).mount_guard)
-      return line if python_call_balanced?(line)
-
-      pieces = [line]
-      depth = python_paren_delta(line)
-      i = index + 1
-      while i < codelines.size && depth > 0
-        nxt = codelines[i]
-        pieces << nxt
-        depth += python_paren_delta(nxt)
-        break if depth <= 0
-        i += 1
-      end
-      pieces.join(' ')
+      join_until_python_call_closes(codelines, index, line)
     end
 
     private def coalesce_constructor_call(codelines : Array(::String),
@@ -1330,19 +1398,7 @@ module Analyzer::Python
                                           line : ::String,
                                           constructor_name : ::String) : ::String
       return line unless line.includes?(constructor_name) && line.matches?(/\b#{Regex.escape(constructor_name)}\s*\(/)
-      return line if python_call_balanced?(line)
-
-      pieces = [line]
-      depth = python_paren_delta(line)
-      i = index + 1
-      while i < codelines.size && depth > 0
-        nxt = codelines[i]
-        pieces << nxt
-        depth += python_paren_delta(nxt)
-        break if depth <= 0
-        i += 1
-      end
-      pieces.join(' ')
+      join_until_python_call_closes(codelines, index, line)
     end
 
     # Extract `methods=[...]` / `methods=("...")` from a FastAPI
@@ -1373,71 +1429,25 @@ module Analyzer::Python
                                         line : ::String,
                                         instance_name : ::String) : ::String
       return line unless line.matches?(instance_regexes(instance_name).decorator_guard)
-      return line if python_call_balanced?(line)
-
-      pieces = [line]
-      depth = python_paren_delta(line)
-      i = index + 1
-      while i < codelines.size && depth > 0
-        nxt = codelines[i]
-        pieces << nxt
-        depth += python_paren_delta(nxt)
-        break if depth <= 0
-        i += 1
-      end
-
-      pieces.join(' ')
-    end
-
-    # Net `(` − `)` paren count for `line`, ignoring parens inside
-    # single- or double-quoted strings. Sufficient for FastAPI
-    # decorator headers, which don't carry triple-quoted strings or
-    # raw f-strings on the call line itself.
-    private def python_paren_delta(line : ::String) : Int32
-      depth = 0
-      in_quote = nil
-      escaped = false
-      line.each_char do |ch|
-        if in_quote
-          if escaped
-            escaped = false
-          elsif ch == '\\'
-            escaped = true
-          elsif ch == in_quote
-            in_quote = nil
-          end
-          next
-        end
-        case ch
-        when '\'', '"'
-          in_quote = ch
-        when '('
-          depth += 1
-        when ')'
-          depth -= 1
-        end
-      end
-      depth
-    end
-
-    # Whether `line`'s paren count is balanced (delta == 0). Used to
-    # short-circuit the multi-line join when the call already closes
-    # on the same line.
-    private def python_call_balanced?(line : ::String) : Bool
-      python_paren_delta(line) == 0
+      join_until_python_call_closes(codelines, index, line)
     end
   end
 
   # Router class for handling URL prefix joining
   class Router
-    @prefix : ::String
+    property prefix : ::String
+    # Effective prefixes this router is served under, one per inclusion
+    # path from an app (`include_router(r, prefix="/v1")` and again under
+    # "/v2" gives two). Empty when no app includes it.
+    getter mounted_prefixes = [] of ::String
 
-    def initialize(prefix : ::String)
-      @prefix = prefix
+    def initialize(@prefix : ::String)
     end
 
-    def prefix
-      @prefix
+    # One router per mounted prefix, or itself when never included.
+    def mounts : Array(Router)
+      return [self] if @mounted_prefixes.empty?
+      @mounted_prefixes.map { |mounted_prefix| Router.new(mounted_prefix) }
     end
 
     def join(url : ::String) : ::String
@@ -1453,17 +1463,6 @@ module Analyzer::Python
       url = "/#{url}" unless prefix.ends_with?("/") || url.starts_with?("/")
 
       @prefix + url
-    end
-
-    def prefix=(new_prefix : ::String)
-      @prefix = new_prefix
-    end
-  end
-
-  # Extend ::String class to check if a string is numeric
-  class ::String
-    def numeric?
-      to_f != nil rescue false
     end
   end
 end

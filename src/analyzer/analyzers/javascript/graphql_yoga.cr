@@ -1,6 +1,7 @@
 require "../../engines/javascript_engine"
 require "../specification/graphql_sdl_parser"
 require "../specification/graphql_typedefs"
+require "../../../miniparsers/js_route_extractor"
 
 module Analyzer::Javascript
   # GraphQL Yoga analyzer.
@@ -17,30 +18,38 @@ module Analyzer::Javascript
   # servers carry typeDefs as a backtick template literal — so the only
   # Yoga-specific work here is reading `graphqlEndpoint` for the mount.
   class GraphqlYoga < JavascriptEngine
+    analyzer_for "js_graphql_yoga"
+
     DEFAULT_GRAPHQL_PATH = "/graphql"
 
     # Cheap content hints used to gate the heavier SDL extraction.
-    YOGA_HINTS = ["graphql-yoga", "createYoga"]
+    # Precompiled once — a single PCRE2-JIT scan replaces two naive
+    # String#includes? substring scans. Regex.union auto-escapes each
+    # literal, so it is provably equivalent to the OR-of-includes? it
+    # replaces.
+    YOGA_HINTS_RE = Regex.union("graphql-yoga", "createYoga")
 
     def analyze
       parallel_file_scan do |path|
-        begin
-          content = read_file_content(path)
-          next unless yoga_in_file?(content)
-          process_file(path, content)
-        rescue e
-          @logger.debug "GraphQL Yoga analyzer: failed to process #{path}: #{e.message}"
-        end
+        content = read_file_content(path)
+        next unless yoga_in_file?(content)
+        # A `typeDefs` schema in a test file is a fixture, not a deployed
+        # endpoint. Import-blind: a BFF that imports node-fetch/axios is not
+        # a test (`test_stub_only?` would skip it as "no server import").
+        next if Noir::JSRouteExtractor.test_file?(path, content)
+        process_file(path, content)
+      rescue e
+        @logger.debug "GraphQL Yoga analyzer: failed to process #{path}: #{e.message}"
       end
       @result
     end
 
     private def yoga_in_file?(content : String) : Bool
-      YOGA_HINTS.any? { |hint| content.includes?(hint) }
+      content.matches?(YOGA_HINTS_RE)
     end
 
     private def process_file(path : String, content : String)
-      mount_path = detect_mount_path(content)
+      mount_path = detect_mount_path(Noir::JSRouteExtractor.strip_js_comments(content))
       Analyzer::Specification::GraphqlTypedefs.extract(content, skip_js_comments: true).each do |sdl, line_offset|
         endpoints = Analyzer::Specification::GraphqlSdlParser.parse(
           sdl, path,

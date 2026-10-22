@@ -1,14 +1,15 @@
 ---
 name: CI
+# Every job below is gated on the `changes` job's path filters rather than on a
+# workflow-level `paths:` list. A workflow-level filter can only answer "run the
+# whole thing or none of it", which was wrong in both directions here: a
+# docs-only push to main still paid for two Docker builds and a 10-minute
+# snapcraft build, while a non-Crystal fixture change (`spec/**` is mostly .py /
+# .java / .ts) or a hand-edit to a generated table in README.md matched nothing
+# and silently ran no CI at all.
 on:
   pull_request:
     branches: [main]
-    paths:
-      - .github/workflows/ci.yml
-      - shard.yml
-      - shard.lock
-      - Dockerfile
-      - "**/*.cr"
   push:
     branches: [main]
   workflow_dispatch:
@@ -17,36 +18,196 @@ on:
         description: manual run
         required: false
         default: ""
+
+# Rapid pushes to a PR branch used to leave every superseded Docker build
+# running to completion. Pushes to main are never cancelled — publish-ghcr and
+# the murals key off them.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+# Nothing here publishes: the images are built with `push: false` and the
+# snapcraft job already asked for this explicitly. Stating it at the workflow
+# level also covers dorny/paths-filter, which reads the pull request's file
+# list through the API.
+permissions:
+  contents: read
+
 jobs:
+  changes:
+    # Per-job path filtering: GitHub has no per-job `paths:`, so resolve the
+    # changed-file buckets once and let every other job gate on the result.
+    # `.github/workflows/ci.yml` is in every bucket on purpose — a change to the
+    # pipeline itself has to re-prove the whole pipeline.
+    name: Detect changed paths
+    runs-on: ubuntu-latest
+    outputs:
+      crystal: ${{ steps.gate.outputs.crystal }}
+      spec: ${{ steps.gate.outputs.spec }}
+      lint: ${{ steps.gate.outputs.lint }}
+      docker: ${{ steps.gate.outputs.docker }}
+      action: ${{ steps.gate.outputs.action }}
+      generated_docs: ${{ steps.gate.outputs.generated_docs }}
+      snap: ${{ steps.gate.outputs.snap }}
+      nix: ${{ steps.gate.outputs.nix }}
+    steps:
+      # `push` events resolve the base from `github.event.before`, which needs
+      # the git history present; `pull_request` events use the API and would not
+      # need this. Checking out unconditionally keeps both paths working.
+      - uses: actions/checkout@v7
+      - uses: dorny/paths-filter@v4
+        id: filter
+        with:
+          filters: |
+            crystal: &crystal
+              - .github/workflows/ci.yml
+              - shard.yml
+              - shard.lock
+              - src/**
+            spec:
+              - *crystal
+              - spec/**
+            lint:
+              - *crystal
+              - .ameba.yml
+            docker: &docker
+              - .github/workflows/ci.yml
+              - Dockerfile
+              - .dockerignore
+              - shard.yml
+              - shard.lock
+              - src/**
+              - github-action/entrypoint.sh
+            action:
+              - *docker
+              - action.yml
+              - github-action/**
+            generated_docs:
+              # Mirrors what scripts/generate_supported_docs.cr writes — see the
+              # TARGETS table and `docs_dir` in that script. Kept slightly wide
+              # (the whole supported/ tree) because the job costs ~20s and a
+              # missed output file would reopen the silent-staleness hole.
+              - .github/workflows/ci.yml
+              - scripts/generate_supported_docs.cr
+              - src/techs/**
+              - README.md
+              - docs/content/_index.md
+              - docs/content/_index.ko.md
+              - docs/content/usage/supported/**
+            snap:
+              - *crystal
+              - snap/**
+            nix:
+              # Deliberately not the whole of `src/**`: the flake pins its
+              # dependency set from shard.lock, so ordinary analyzer changes
+              # cannot break it — only a new dependency (shard.yml/shard.lock)
+              # or a new native link flag (src/ext) can, and both are here.
+              - .github/workflows/ci.yml
+              - flake.nix
+              - flake.lock
+              - shards.nix
+              - shard.yml
+              - shard.lock
+              - scripts/check_shards_nix.cr
+              - src/ext/**
+      - name: Resolve job gates
+        id: gate
+        # A manual run has no "before" commit to diff against, so the filter
+        # step sees an empty change set and would skip every job. Running the
+        # workflow by hand is an explicit request for a full run, so force all
+        # gates open — this is also what makes the `workflow_dispatch` entry
+        # point (and build-snapcraft's dispatch path) still mean something.
+        env:
+          MATCHED: ${{ steps.filter.outputs.changes }}
+          FORCE_ALL: ${{ github.event_name == 'workflow_dispatch' }}
+        run: |
+          for gate in crystal spec lint docker action generated_docs snap nix; do
+            if [ "$FORCE_ALL" = "true" ]; then
+              value=true
+            else
+              value=$(jq -r --arg g "$gate" 'index($g) != null' <<<"$MATCHED")
+            fi
+            echo "$gate=$value" >> "$GITHUB_OUTPUT"
+            echo "$gate=$value"
+          done
+
   build-crystal:
+    needs: changes
+    if: needs.changes.outputs.crystal == 'true'
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        crystal-version: [1.19.0, 1.20.0]
+        crystal-version: [1.21.0, 1.22.0]
     steps:
       - uses: actions/checkout@v7
+      - name: Refresh apt package indexes
+        run: sudo apt-get update
       - uses: crystal-lang/install-crystal@v1
         with:
           crystal: ${{ matrix.crystal-version }}
+      - name: Cache shards
+        uses: actions/cache@v6
+        with:
+          path: |
+            lib
+            .shards.info
+          key: shards-${{ runner.os }}-${{ hashFiles('shard.lock') }}
+      - name: Cache tree-sitter objects
+        id: ts-cache
+        uses: actions/cache@v6
+        with:
+          path: |
+            src/ext/tree_sitter/runtime/lib.o
+            src/ext/tree_sitter/grammars/*/*.o
+          key: treesitter-${{ runner.os }}-${{ hashFiles('src/ext/tree_sitter/build.sh', 'src/ext/tree_sitter/runtime/src/**', 'src/ext/tree_sitter/runtime/include/**', 'src/ext/tree_sitter/grammars/*/*.c', 'src/ext/tree_sitter/grammars/*/tree_sitter/*.h') }}
+      - name: Refresh restored object mtimes
+        if: steps.ts-cache.outputs.cache-hit == 'true'
+        # `build.sh` decides staleness by mtime (`[ "$SRC" -nt "$OBJ" ]`), and
+        # `actions/checkout` stamps every source with the checkout time while
+        # the cache restores objects with their original, older mtime. Without
+        # this the objects always look stale and the cache buys nothing.
+        # Touching them is correct by construction: the cache key hashes every
+        # tree-sitter source plus build.sh, so a hit means the sources are
+        # byte-identical to when these objects were compiled.
+        run: find src/ext/tree_sitter -name '*.o' -exec touch {} +
+      - name: Cache Crystal compiler cache
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/crystal
+          # Crystal fingerprints its own cache entries by content, so a
+          # partially-stale restore is safe — it only ever means some entries
+          # get recompiled. Hence the loose restore-keys ladder.
+          key: crystal-${{ runner.os }}-${{ matrix.crystal-version }}-build-${{ hashFiles('shard.lock', 'src/**/*.cr') }}
+          restore-keys: |
+            crystal-${{ runner.os }}-${{ matrix.crystal-version }}-build-
+            crystal-${{ runner.os }}-${{ matrix.crystal-version }}-
       - name: Install dependencies
         run: shards install
       - name: Build
         run: shards build
   build-docker:
-    runs-on: ubuntu-latest
+    # Pull requests only. A push to main builds and *publishes* the very same
+    # Dockerfile for both architectures in publish-ghcr.yml, so running this
+    # here as well bought nothing but a second full image build.
+    needs: changes
+    if: github.event_name != 'push' && needs.changes.outputs.docker == 'true'
+    # linux/arm64 used to cross-build under QEMU on an x86 runner, which took
+    # 58 minutes on a cold cache and dominated the whole pipeline. Building on
+    # a native arm runner — the arrangement publish-ghcr.yml already uses — is
+    # the same image in a few minutes, so there is no QEMU step any more.
+    runs-on: ${{ matrix.runner }}
     strategy:
       matrix:
-        arch: [linux/amd64, linux/arm64]
+        include:
+          - arch: linux/amd64
+            slug: linux-amd64
+            runner: ubuntu-latest
+          - arch: linux/arm64
+            slug: linux-arm64
+            runner: ubuntu-24.04-arm
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
-      - name: Install cosign
-        if: github.event_name != 'pull_request'
-        uses: sigstore/cosign-installer@v4.1.2
-        with:
-          cosign-release: v2.1.1
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v4
       - name: Setup Docker buildx
         uses: docker/setup-buildx-action@v4
       - name: Extract Docker metadata
@@ -63,17 +224,129 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           platforms: ${{ matrix.arch }}
-          cache-from: type=gha,scope=${{ matrix.arch }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.arch }}
-  lint:
+          # Read publish-ghcr.yml's scope as well as this job's own. GitHub
+          # scopes its Actions cache per ref, so a pull request can only read
+          # entries written on its own branch or on main — and now that this
+          # job no longer runs on pushes to main, its own scope is never
+          # populated there. publish-ghcr.yml builds the identical Dockerfile
+          # on every main push, so its layers are what keep pull requests off
+          # a cold cache.
+          cache-from: |
+            type=gha,scope=ci-${{ matrix.slug }}
+            type=gha,scope=ghcr-${{ matrix.slug }}
+          cache-to: type=gha,mode=max,scope=ci-${{ matrix.slug }}
+  test-action:
+    # End-to-end coverage for the GitHub Action runtime. The composite
+    # action `docker pull`s a pre-built published image and build-docker
+    # above never runs the container, so entrypoint.sh would otherwise ship
+    # untested. Build the image from the current tree and drive the
+    # entrypoint exactly as action.yml does, asserting the output contract.
+    name: GitHub Action entrypoint (e2e)
+    needs: changes
+    if: needs.changes.outputs.action == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+      - name: Unit-test image tag resolver
+        run: bash github-action/test-resolve-image-tag.sh
+      - name: Setup Docker buildx
+        uses: docker/setup-buildx-action@v4
+      - name: Build action image from current tree
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: Dockerfile
+          load: true
+          platforms: linux/amd64
+          tags: noir-action:ci
+          cache-from: |
+            type=gha,scope=action-ci
+            type=gha,scope=ghcr-linux-amd64
+          cache-to: type=gha,mode=max,scope=action-ci
+      - name: Run entrypoint end-to-end
+        run: bash github-action/test-entrypoint.sh noir-action:ci
+  docs-generated:
+    # The supported-technology tables and the headline framework/language
+    # counts are derived from the techs catalog and committed, so they can go
+    # stale the moment a technology is added and nobody runs the generator.
+    # Nothing used to notice.
+    #
+    # Deliberately its own job with no `shards install`: the generator requires
+    # only stdlib and `src/techs/**`, which is exactly why the catalog metadata
+    # is kept independent of the analyzer tree. Keeping this job dependency-free
+    # is what preserves that property — if it ever needs `shards install`,
+    # something has pulled the analyzers into the techs module.
+    name: Generated docs are current
+    needs: changes
+    if: needs.changes.outputs.generated_docs == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+      - name: Refresh apt package indexes
+        run: sudo apt-get update
       - uses: crystal-lang/install-crystal@v1
         with:
-          crystal: 1.20.0
+          crystal: 1.22.0
+      - name: Regenerate supported docs and counts
+        run: crystal run scripts/generate_supported_docs.cr -- -q
+      - name: Fail if the committed output is stale
+        # Scoped to what the generator writes, so an unrelated dirty file
+        # cannot masquerade as stale docs.
+        run: |
+          if ! git diff --quiet -- README.md docs/; then
+            echo "::error::Generated docs are out of date. Run 'just docs-supported' and commit the result."
+            git --no-pager diff --stat -- README.md docs/
+            git --no-pager diff -- README.md docs/
+            exit 1
+          fi
+          echo "Generated docs match the catalog."
+  lint:
+    needs: changes
+    if: needs.changes.outputs.lint == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Refresh apt package indexes
+        run: sudo apt-get update
+      - uses: crystal-lang/install-crystal@v1
+        with:
+          crystal: 1.22.0
+      - name: Cache shards
+        uses: actions/cache@v6
+        with:
+          path: |
+            lib
+            .shards.info
+          key: shards-${{ runner.os }}-${{ hashFiles('shard.lock') }}
+      - name: Cache Crystal compiler cache
+        uses: actions/cache@v6
+        with:
+          # This job compiles Ameba, not noir, so it needs no tree-sitter
+          # objects — and its cache entries are disjoint from the other jobs'.
+          path: ~/.cache/crystal
+          key: crystal-${{ runner.os }}-1.22.0-lint-${{ hashFiles('shard.lock') }}
+          restore-keys: |
+            crystal-${{ runner.os }}-1.22.0-lint-
+      - name: Cache the compiled Ameba binary
+        id: ameba-cache
+        uses: actions/cache@v6
+        with:
+          # 126s of this job's 155s was compiling Ameba, and it recompiled the
+          # same source on every run. The shard ships only
+          # lib/ameba/bin/ameba.cr, no prebuilt binary, so something has to
+          # compile it once. `shard.lock` pins the Ameba version, and the
+          # Crystal version is in the key too, so a hit means the binary was
+          # built from exactly this source by exactly this compiler.
+          path: bin/ameba
+          key: ameba-${{ runner.os }}-1.22.0-${{ hashFiles('shard.lock') }}
       - name: Install dependencies
         run: shards install
+      - name: Build Ameba
+        if: steps.ameba-cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p bin
+          crystal build lib/ameba/bin/ameba.cr -o bin/ameba
       - name: Run Ameba linter
         # Run the Ameba pinned in shard.lock rather than
         # crystal-ameba/github-action@master, whose image tracks an
@@ -81,25 +354,211 @@ jobs:
         # (and tightened Lint/UselessAssign), failing CI on unrelated,
         # already-merged code. shard.lock keeps the rule set stable and
         # reproducible with local `ameba` runs.
-        run: crystal run lib/ameba/bin/ameba.cr
+        run: ./bin/ameba
   tests:
+    needs: changes
+    if: needs.changes.outputs.spec == 'true'
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        crystal-version: [1.19.0, 1.20.0]
+        crystal-version: [1.21.0, 1.22.0]
     steps:
       - uses: actions/checkout@v7
+      - name: Refresh apt package indexes
+        run: sudo apt-get update
       - uses: crystal-lang/install-crystal@v1
         with:
           crystal: ${{ matrix.crystal-version }}
+      - name: Cache shards
+        uses: actions/cache@v6
+        with:
+          path: |
+            lib
+            .shards.info
+          key: shards-${{ runner.os }}-${{ hashFiles('shard.lock') }}
+      - name: Cache tree-sitter objects
+        id: ts-cache
+        uses: actions/cache@v6
+        with:
+          path: |
+            src/ext/tree_sitter/runtime/lib.o
+            src/ext/tree_sitter/grammars/*/*.o
+          key: treesitter-${{ runner.os }}-${{ hashFiles('src/ext/tree_sitter/build.sh', 'src/ext/tree_sitter/runtime/src/**', 'src/ext/tree_sitter/runtime/include/**', 'src/ext/tree_sitter/grammars/*/*.c', 'src/ext/tree_sitter/grammars/*/tree_sitter/*.h') }}
+      - name: Refresh restored object mtimes
+        if: steps.ts-cache.outputs.cache-hit == 'true'
+        # See the identical step in build-crystal for why this is needed and
+        # why it is safe.
+        run: find src/ext/tree_sitter -name '*.o' -exec touch {} +
+      - name: Cache Crystal compiler cache
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/crystal
+          # `spec/**/*.cr` is deliberately not in the key. Nearly every pull
+          # request that reaches this job touches a spec file, so including it
+          # meant the primary key essentially never hit and every run came in
+          # through the restore-keys ladder below. Crystal fingerprints its own
+          # cache entries by content, so restoring an entry set that is partly
+          # stale for the spec half is safe: it only ever means those entries
+          # recompile, which they were going to do anyway. Keying on
+          # `shard.lock` plus `src/**/*.cr` lets a run whose src/ is unchanged
+          # hit the primary key instead. Note that a primary-key hit also means
+          # actions/cache does not re-save, so the entry ages until src/ moves.
+          # Watch the `--stats` lines on the build step for the effect.
+          key: crystal-${{ runner.os }}-${{ matrix.crystal-version }}-spec-${{ hashFiles('shard.lock', 'src/**/*.cr') }}
+          restore-keys: |
+            crystal-${{ runner.os }}-${{ matrix.crystal-version }}-spec-
+            crystal-${{ runner.os }}-${{ matrix.crystal-version }}-
       - name: Install dependencies
         run: shards install
-      - name: Run unit tests
-        run: crystal spec spec/unit_test
-      - name: Run functional tests
-        run: crystal spec spec/functional_test
+      # This job used to run four `crystal spec` steps (unit, functional, and
+      # both again in randomized order) and so compiled the same program four
+      # times: measured at 92s, 87s, 91s and 86s, of which only 17.7s, 21.0s,
+      # 17.8s and 20.4s was actually running examples. Compiling both suites
+      # into one binary costs no more than compiling the unit suite alone, so
+      # build once here and re-run the binary below as many times as the
+      # ordering fences need.
+      #
+      # `--stats` prints the per-phase compile times, which costs nothing and
+      # is what makes a regression in the Crystal cache below visible in the
+      # log rather than only in the job's total.
+      #
+      # `--no-debug` is CI-only. Measured locally on this program: a cold build
+      # goes from 23.2s to 19.9s and 6.84GB to 6.59GB, and a warm one from 10.1s
+      # to 8.4s. It also takes the ~/.cache/crystal payload from 236MB to 195MB,
+      # though only on the runs where the step above re-saves it, which after
+      # the src-only key means the runs that changed src/. What it costs is
+      # file:line in the backtrace when an analyzer raises during a scan, so a
+      # raise here names the exception but not where it came from. Spec assertion failures are unaffected, because
+      # the spec DSL passes its own file and line. Reproduce such a failure with
+      # `just spec-build`, which keeps debug info on purpose.
+      - name: Build the spec binary
+        # `--no-export-dynamic` is load-bearing, not tidiness. Crystal passes
+        # `-rdynamic` so backtraces can symbolize, which exports every Crystal
+        # symbol into `.dynsym`. For this binary that was 133,142 entries in
+        # `.gnu.version` over a 4.9 MB `.dynstr`, and at that size the loader
+        # read an out-of-range version index and dereferenced into `.dynstr`,
+        # which is full of Crystal names:
+        #
+        #   ./bin/noir_spec: symbol lookup error: ./bin/noir_spec:
+        #     undefined symbol: xmlFree, version Hash(K, V)#fetch<String, Nil>:(JSON::Any | Nil)
+        #
+        # A libc/libxml2 symbol carrying a Crystal method signature as its ELF
+        # symbol version is that read, not a corrupt binary. `ld` takes the last
+        # of `--export-dynamic` / `--no-export-dynamic`, so appending it here
+        # cancels the one Crystal adds. Nothing dlopens this binary.
+        run: |
+          mkdir -p bin
+          crystal build spec/suite.cr -o bin/noir_spec --stats --no-debug \
+            --link-flags="-Wl,--no-export-dynamic"
+      # Guards the above: if `.dynsym` grows back, the suite starts failing at
+      # exec with a message that looks like anything but its cause.
+      - name: Check the spec binary's dynamic symbol count
+        run: |
+          count=$(readelf --dyn-syms bin/noir_spec | grep -c '^ *[0-9]*:' || true)
+          echo "dynamic symbols: $count"
+          if [ "$count" -gt 2000 ]; then
+            echo "::error::bin/noir_spec exports $count dynamic symbols; --no-export-dynamic is not taking effect"
+            exit 1
+          fi
+      # The CLI specs (spec/unit_test/cli/binary_surface_spec.cr and the AI
+      # fake-provider spec) run the real `bin/noir` and mark themselves
+      # pending when it is missing, which it always was in this job.
+      # Same `--no-export-dynamic` as the spec binary above, for the same
+      # reason: bin/noir has crossed the `.dynsym` size where the loader
+      # misreads `.gnu.version` and every exec dies with
+      # `undefined symbol: xmlFree, version src/analyzer/analyzer.cr:32`.
+      - name: Build noir for the CLI specs
+        run: shards build --no-debug --link-flags="-Wl,--no-export-dynamic"
+      # Spec files load in directory order, which differs between macOS and
+      # Linux, so an example that depends on state another example left behind
+      # passes locally and fails here, on an unrelated PR. Four such couplings
+      # had accumulated. Randomizing on purpose turns "flaky CI" into a named
+      # failure: the runner prints the seed, and `bin/noir_spec --order <seed>`
+      # reproduces it exactly.
+      #
+      # The randomized run is a real fence rather than a formality now that
+      # `FunctionalTester` scans lazily from inside the first example that
+      # needs it: which example runs first decides which tester pays for the
+      # scan, so ordering is load-bearing and this step is what catches a new
+      # order dependency.
+      #
+      # The randomized run stays over the *whole* suite rather than the tagged
+      # halves below. Before both suites shared a binary they were separate
+      # processes, so a unit example could not possibly depend on state a
+      # functional one left behind; now it can, and this is the only run that
+      # would notice.
+      #
+      # The two tagged halves fence what the tags claim: that each half stands
+      # alone. `just test` runs them as its two parallel processes, so a
+      # cross-half dependency has to fail here rather than only on a
+      # contributor's machine.
+      #
+      # Every run is single-threaded and takes ~0.3GB, so all four go at once
+      # and the full randomized run (~18s) sets the wall time. Each writes to
+      # its own file, replayed in a collapsed group afterwards, because runners
+      # sharing a stdout interleave their progress dots and their failure
+      # reports.
+      - name: Run the suite
+        run: |
+          ./bin/noir_spec > /tmp/spec-default.log 2>&1 & pid_default=$!
+          ./bin/noir_spec --order random > /tmp/spec-random.log 2>&1 & pid_random=$!
+          ./bin/noir_spec --tag functional > /tmp/spec-functional.log 2>&1 & pid_functional=$!
+          ./bin/noir_spec --tag '~functional' > /tmp/spec-unit.log 2>&1 & pid_unit=$!
+          failed=0
+          for name in default random functional unit; do
+            pid_var="pid_$name"
+            wait "${!pid_var}" || failed=1
+          done
+          for name in default random functional unit; do
+            echo "::group::bin/noir_spec ($name)"
+            cat "/tmp/spec-$name.log"
+            echo "::endgroup::"
+          done
+          exit $failed
+  nix:
+    # Nix is one of the documented install paths (`nix profile add
+    # github:owasp-noir/noir`), and nothing in CI ever looked at it — so the
+    # flake was free to drift from the rest of the tree. `shards.nix` is the
+    # sharpest edge: it is generated by crystal2nix and has no other guard, so
+    # a dependency bump that nobody regenerated leaves the Nix build pinned to
+    # the old shard.
+    #
+    # The check-and-evaluate half is cheap enough to run on every pull request.
+    # The release build costs about as much as build-snapcraft below and is
+    # gated the same way.
+    name: Nix flake
+    needs: changes
+    if: needs.changes.outputs.nix == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Refresh apt package indexes
+        run: sudo apt-get update
+      - uses: crystal-lang/install-crystal@v1
+        with:
+          crystal: 1.22.0
+      - name: Check shards.nix against shard.lock
+        run: crystal run scripts/check_shards_nix.cr
+      - uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+      - name: Evaluate flake outputs
+        run: nix flake check --no-build
+      - name: Build the package
+        if: >-
+          github.event_name == 'push' && github.ref == 'refs/heads/main' ||
+          github.event_name == 'workflow_dispatch'
+        run: nix build .#default --print-build-logs
   build-snapcraft:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+    # ~10 minutes, and it only ever proves that snap/snapcraft.yaml still builds
+    # the current source — so it needs neither pull requests nor pushes that
+    # leave both untouched.
+    needs: changes
+    if: >-
+      needs.changes.outputs.snap == 'true' &&
+      (github.event_name == 'push' && github.ref == 'refs/heads/main' ||
+      github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-latest
     permissions:
       contents: read

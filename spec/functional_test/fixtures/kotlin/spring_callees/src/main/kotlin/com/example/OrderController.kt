@@ -1,6 +1,7 @@
 package com.example
 
 import org.springframework.web.bind.annotation.GetMapping
+import org.springframework.web.bind.annotation.ModelAttribute
 import org.springframework.web.bind.annotation.RequestMapping
 import org.springframework.web.bind.annotation.RestController
 
@@ -16,5 +17,11 @@ class OrderController {
 
     private fun getLegacy(): String {
         return "legacy"
+    }
+
+    // Runs before every handler of this controller.
+    @ModelAttribute("order")
+    fun findOrder(): String {
+        return OrderStore.load("legacy")
     }
 }

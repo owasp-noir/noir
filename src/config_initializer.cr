@@ -1,52 +1,30 @@
 require "file"
 require "log"
 require "yaml"
+require "colorize"
+require "levenshtein"
 require "./utils/home.cr"
 require "./llm/native_tool_calling"
 
 class ConfigInitializer
-  # Keys that should be coerced from a legacy "yes" / "no" string into
-  # a real Bool when parsed from config.yaml. Every boolean field in
-  # default_options must be listed here; otherwise direct comparisons
-  # like `options["cache_disable"] == true` in scan.cr would miss a
-  # legacy `cache_disable: yes` entry and silently leave the flag off.
-  BOOLEAN_CONFIG_KEYS = %w[
-    color
-    debug
-    verbose
-    include_path
-    include_techs
-    include_callee
-    ai_context
-    nolog
-    no_spinner
-    probe # legacy `send_req` is migrated to `probe` before this coercion runs
-    all_taggers
-    status_codes
-    passive_scan
-    passive_scan_auto_update
-    passive_scan_no_update_check
-    ai_agent
-    cache_disable
-    cache_clear
-    analyze_feign
-  ]
-
-  # Keys whose value should always end up as an Array(YAML::Any) so
-  # callers can iterate without per-call type checks.
-  ARRAY_CONFIG_KEYS = %w[
-    base
-    probe_header
-    probe_skip
-    probe_match
-    set_pvalue
-    set_pvalue_header
-    set_pvalue_cookie
-    set_pvalue_query
-    set_pvalue_form
-    set_pvalue_json
-    set_pvalue_path
-    passive_scan_path
+  # Keys stored as one comma-separated String, because the CLI flags
+  # that feed them accumulate into that shape. A YAML sequence is the
+  # natural spelling for a list of globs or tech names — and `base:` /
+  # `probe_header:` in the same file *are* sequences — so accept it and
+  # join. Untreated, `exclude_path: ["*.py"]` stringified to Crystal's
+  # array inspect (`["*.py"]`), matched no file and excluded nothing
+  # silently; the tech keys at least failed loudly, but with that same
+  # inspect string quoted back at the user.
+  CSV_CONFIG_KEYS = %w[
+    exclude_path
+    exclude_codes
+    techs
+    only_techs
+    exclude_techs
+    use_taggers
+    fail_on
+    ai_context_features
+    ai_native_tools_allowlist
   ]
 
   # v0 config-key → v1 config-key map. Applied during `read_config`
@@ -76,47 +54,119 @@ class ConfigInitializer
   # post-CLI merge inside NoirRunner that re-overwrote everything
   # the CLI had just set.
   def initialize(override_path : String? = nil)
-    @config_dir = get_home
-
     if override_path && !override_path.empty?
-      @config_file = override_path
+      # Resolve the override *without* touching Noir::Home. `Noir::Home.path`
+      # calls `Noir::CLI.die` when neither NOIR_HOME nor HOME is set, and it
+      # used to run on the first line of this method — so `--config-file
+      # ./f.yaml`, the documented escape hatch for exactly that environment,
+      # died before the override was ever looked at. Distroless images,
+      # `--user`-run containers and hardened CI runners routinely have no
+      # HOME, which left no way to run a scan at all. The default home is
+      # only required when the default config is what we are about to read.
+      @config_file = expand_config_path(override_path)
+      # Only used by `setup`, which no-ops for an override. Kept in sync
+      # with the file so the field never points somewhere unrelated.
+      @config_dir = File.dirname(@config_file)
       @is_override = true
     else
-      @config_file = File.join(@config_dir, "config.yaml")
+      @config_dir = File.expand_path(Noir::Home.path)
+      @config_file = File.expand_path(File.join(@config_dir, "config.yaml"))
       @is_override = false
     end
+  end
 
-    @config_dir = File.expand_path(@config_dir)
-    @config_file = File.expand_path(@config_file)
+  # Expand `~` in a user-supplied `--config-file` path, matching
+  # `Noir::Home.path`'s deliberate `home: true`: a value that arrives from a
+  # Dockerfile `ENV`, a systemd `Environment=` or a .env loader never gets
+  # the shell's tilde expansion, so a literal `~/noir.yaml` would otherwise
+  # resolve to a bogus `./~/noir.yaml` under the cwd. Guarded on the leading
+  # `~` so the HOME-less case — the whole reason this branch skips
+  # Noir::Home — can't be reintroduced through `Path.home`.
+  private def expand_config_path(path : String) : String
+    return File.expand_path(path, home: true) if path.starts_with?('~')
+    File.expand_path(path)
   end
 
   def setup
-    # Create the directory if it doesn't exist
-    Dir.mkdir(@config_dir) unless Dir.exists?(@config_dir)
-    Dir.mkdir("#{@config_dir}/passive_rules") unless Dir.exists?("#{@config_dir}/passive_rules")
-
-    # Create the config file if it doesn't exist — but only when this
-    # is the *default* config path. When the user passed
-    # `--config-file PATH`, a missing file is a user error and is
-    # surfaced by CliValidation later; auto-creating a default
-    # template at the user-supplied path would silently mask the
-    # typo with a generated file.
+    # `--config-file PATH` names a file the user already created, so nothing
+    # under the default home is needed for that run — not the directory
+    # scaffolding below, and not the template write. Bailing out first is
+    # what lets `--config-file` work in an environment with no HOME at all:
+    # `@config_dir` there is just the override's own directory, and creating
+    # it would be a side effect the user never asked for.
+    #
+    # A missing --config-file path is a user error, surfaced by
+    # CliValidation later; auto-creating a default template there would
+    # silently mask the typo with a generated file.
     return if @is_override
-    File.write(@config_file, generate_config_file) unless File.exists?(@config_file)
+
+    # Create the directory if it doesn't exist. 0700, not the default 0755:
+    # everything Noir keeps here is private to the user — the 0600 config
+    # below with its `ai_key`, and the AI response cache, whose entries are
+    # answers about the user's source. A world-readable parent leaks the
+    # cache filenames and contents even though the config file itself is
+    # locked down.
+    Dir.mkdir_p("#{@config_dir}/passive_rules", 0o700)
+
+    # Written 0600: the file carries an `ai_key` field documented as
+    # where real provider API keys go, so it should never be created
+    # world-readable on a shared box (matches ssh/aws-cli/gh).
+    File.write(@config_file, generate_config_file, perm: 0o600) unless File.exists?(@config_file)
   rescue e
-    # Silent failures here made permission/disk-full problems during startup
-    # hard to diagnose. Log at debug level so --debug surfaces the cause
-    # without noising up normal runs.
-    Log.debug { "ConfigInitializer.setup failed: #{e.message} (#{e.class})" }
+    # A silently-swallowed failure here (unwritable NOIR_HOME, disk full)
+    # left the config on defaults with no hint why. The old Log.debug
+    # never surfaced — nothing calls Log.setup — so report it on stderr
+    # the way the invalid-boolean warning in read_config already does.
+    STDERR.puts "WARNING: could not initialize noir config at #{@config_file} (#{e.message}); continuing with defaults.".colorize(:yellow)
+  end
+
+  # The config file's bytes, or "" when there is nothing readable there.
+  #
+  # `File.exists?` is true for a directory and for a file the process can't
+  # open, and the `File.read` that followed it sat *outside* the YAML
+  # `begin/rescue` below — so `noir scan ./app --config-file /some/dir` (and
+  # a config file with no read permission) killed the process with a raw
+  # Crystal backtrace before `CliValidation` could print either of the
+  # one-line messages it already has for both cases. Read defensively and let
+  # that validator do the reporting.
+  private def read_raw_config : String
+    return "" unless File.file?(@config_file)
+    File.read(@config_file)
+  rescue e : IO::Error
+    # Stay quiet for an explicit `--config-file`: `CliValidation` reports
+    # that one as a hard error moments later, and printing both turns one
+    # problem into two paragraphs. The default config has no such follow-up,
+    # so an unreadable one has to say so here or it silently reverts to
+    # defaults.
+    unless @is_override
+      STDERR.puts "WARNING: could not read config #{@config_file} (#{e.message}); using defaults.".colorize(:yellow)
+    end
+    ""
+  end
+
+  # One warning per key that is not a config key, with the closest real key
+  # as a hint when there is one.
+  def self.unknown_key_warnings(keys : Array(String), known : Array(String)) : Array(String)
+    (keys - known).map do |key|
+      hint = Levenshtein.find(key, known).try { |name| " (did you mean '#{name}'?)" }
+      "WARNING: unknown config key '#{key}'#{hint}; it has no effect."
+    end
   end
 
   def read_config
     # Ensure the config file is set up
     setup
 
+    # A missing file (e.g. a --config-file path that setup deliberately
+    # didn't scaffold) or an empty one is a legitimate "no overrides"
+    # state — fall back to defaults quietly. Only a file with real but
+    # unparsable content is worth warning about below.
+    raw = read_raw_config
+    return default_options if raw.strip.empty?
+
     # Read the config file, or use the default config if reading fails
     begin
-      parsed_yaml = YAML.parse(File.read(@config_file)).as_h
+      parsed_yaml = YAML.parse(raw).as_h
       symbolized_hash = parsed_yaml.transform_keys(&.to_s)
 
       # Migrate v0 deliver/probe keys to their v1 equivalents before
@@ -135,21 +185,74 @@ class ConfigInitializer
       # would otherwise raise KeyError on the next iteration, get
       # swallowed by the outer rescue, and silently revert every
       # setting to defaults.
-      BOOLEAN_CONFIG_KEYS.each do |key|
+      # Which keys get which coercion is read off the type of their
+      # default, so a new boolean/integer/array option needs no list.
+      defaults = default_options
+
+      # A misspelled key (`no_log` for `nolog`, the GitHub Action's input
+      # name) used to do nothing, silently. Name it so the user can fix it.
+      ConfigInitializer.unknown_key_warnings(symbolized_hash.keys, defaults.keys).each do |warning|
+        STDERR.puts warning.colorize(:yellow)
+      end
+
+      defaults.each do |key, default|
+        next unless default.raw.is_a?(Bool)
         value = symbolized_hash[key]?
         next if value.nil?
+        next if value.raw.is_a?(Bool) # already a real YAML bool
 
-        case value.to_s
-        when "yes"
+        case value.to_s.downcase
+        when "yes", "true"
           symbolized_hash[key] = YAML::Any.new(true)
-        when "no"
+        when "no", "false"
+          symbolized_hash[key] = YAML::Any.new(false)
+        else
+          # A malformed boolean value (a misspelling, wrong word, etc.) used
+          # to fall through to any_to_bool's silent `false`, so the feature
+          # stayed off with no hint why. Surface it instead of guessing.
+          STDERR.puts "WARNING: config key '#{key}' has invalid boolean value #{value.to_s.inspect}; expected true/false/yes/no. Treating as false.".colorize(:yellow)
           symbolized_hash[key] = YAML::Any.new(false)
         end
       end
 
+      # Coerce quoted / stringified numbers into a real Int so the
+      # `YAML::Any#as_i` reads downstream can't raise. An unparsable value
+      # drops the key entirely so the merge below restores the default —
+      # the same "warn, then fall back" shape as the boolean pass above.
+      # (Range checks live in CliValidation, which both the CLI flag and
+      # this path go through.)
+      defaults.each do |key, default|
+        next unless default.raw.is_a?(Int)
+        value = symbolized_hash[key]?
+        next if value.nil?
+        next if value.raw.is_a?(Int) # already a real YAML int
+
+        parsed = value.to_s.strip.to_i64?
+        if parsed.nil?
+          STDERR.puts "WARNING: config key '#{key}' has invalid integer value #{value.to_s.inspect}; using the default.".colorize(:yellow)
+          symbolized_hash.delete(key)
+        else
+          symbolized_hash[key] = YAML::Any.new(parsed)
+        end
+      end
+
+      # Accept a YAML sequence for the comma-separated string keys and join
+      # it, so `exclude_path: ["*.py"]` means the same thing as
+      # `exclude_path: "*.py"` instead of stringifying to an inspect form
+      # that matches nothing.
+      CSV_CONFIG_KEYS.each do |key|
+        value = symbolized_hash[key]?
+        next if value.nil?
+        raw = value.raw
+        next unless raw.is_a?(Array)
+
+        symbolized_hash[key] = YAML::Any.new(raw.map(&.to_s.strip).reject(&.empty?).join(","))
+      end
+
       # Normalize array-style keys: empty string → empty array,
       # bare string → single-element array, real array → unchanged.
-      ARRAY_CONFIG_KEYS.each do |key|
+      defaults.each do |key, default|
+        next unless default.raw.is_a?(Array)
         value = symbolized_hash[key]?
         next if value.nil?
 
@@ -164,13 +267,20 @@ class ConfigInitializer
         end
       end
 
-      final_options = default_options.merge(symbolized_hash) { |_, _, new_val| new_val }
+      final_options = defaults.merge(symbolized_hash) { |_, _, new_val| new_val }
+      # Env beats the file (flag > env > config > default). Older templates
+      # pinned `concurrency:` to the host's CPU count, so without this
+      # NOIR_CONCURRENCY was dead for anyone who had run noir once.
+      if env = env_concurrency
+        final_options["concurrency"] = YAML::Any.new(env)
+      end
       final_options
     rescue e
-      # Falling back silently made malformed-YAML bugs hard to track down.
-      # Log the cause at debug level and keep the existing default-options
-      # fallback so behavior is unchanged.
-      Log.debug { "ConfigInitializer.read_config failed, using defaults: #{e.message} (#{e.class})" }
+      # A malformed config used to revert every setting to defaults with
+      # no explanation (the old Log.debug never surfaced — nothing calls
+      # Log.setup). Surface the cause on stderr, matching the
+      # invalid-boolean warning above, then keep the default fallback.
+      STDERR.puts "WARNING: could not parse config #{@config_file} (#{e.message}); using defaults.".colorize(:yellow)
       default_options
     end
   end
@@ -179,11 +289,22 @@ class ConfigInitializer
   # safe window. The lower bound of 4 keeps low-core CI runners from
   # serializing on a single worker; the upper bound of 32 keeps
   # channel-synchronisation overhead and (under MT) GC pressure in check
-  # on very large boxes. Users who want a specific value still get it
-  # via `--concurrency N` or `concurrency:` in the config file — those
-  # paths overwrite this default.
+  # on very large boxes.
+  #
+  # NOIR_CONCURRENCY lets container/CI pipelines pin the worker count to
+  # the pod's CPU allocation without threading a flag through every noir
+  # invocation. Precedence: --concurrency > NOIR_CONCURRENCY > config
+  # `concurrency:` > this CPU-derived default. The env step is re-applied
+  # after the file merge in read_config, since this method only seeds the
+  # defaults the file overwrites.
   def default_concurrency : String
-    System.cpu_count.clamp(4, 32).to_s
+    env_concurrency || System.cpu_count.clamp(4, 32).to_s
+  end
+
+  # A valid (>= 1) NOIR_CONCURRENCY, or nil.
+  def env_concurrency : String?
+    parsed = ENV["NOIR_CONCURRENCY"]?.try(&.strip.to_i?)
+    parsed.to_s if parsed && parsed >= 1
   end
 
   def default_options
@@ -205,6 +326,7 @@ class ConfigInitializer
       "ai_context"                   => YAML::Any.new(false),
       "nolog"                        => YAML::Any.new(false),
       "no_spinner"                   => YAML::Any.new(false),
+      "strict"                       => YAML::Any.new(false),
       "output"                       => YAML::Any.new(""),
       "export_es"                    => YAML::Any.new(""),
       "probe_via"                    => YAML::Any.new(""),
@@ -223,9 +345,12 @@ class ConfigInitializer
       "url"                          => YAML::Any.new(""),
       "probe_skip"                   => YAML::Any.new([] of YAML::Any),
       "probe_match"                  => YAML::Any.new([] of YAML::Any),
+      "tls_skip_verify"              => YAML::Any.new(false),
       "all_taggers"                  => YAML::Any.new(false),
       "use_taggers"                  => YAML::Any.new(""),
       "diff"                         => YAML::Any.new(""),
+      "diff_ref"                     => YAML::Any.new(""),
+      "fail_on"                      => YAML::Any.new(""),
       "passive_scan"                 => YAML::Any.new(false),
       "passive_scan_path"            => YAML::Any.new([] of YAML::Any),
       "passive_scan_severity"        => YAML::Any.new("high"),
@@ -237,11 +362,18 @@ class ConfigInitializer
       "ai_key"                       => YAML::Any.new(""),
       "ai_agent"                     => YAML::Any.new(false),
       "ai_agent_max_steps"           => YAML::Any.new(20),
+      "ai_no_optimize"               => YAML::Any.new(false),
+      "ai_include_sensitive"         => YAML::Any.new(false),
+      "ai_dry_run"                   => YAML::Any.new(false),
       "ai_native_tools_allowlist"    => YAML::Any.new(LLM::NativeToolCalling.default_allowlist_csv),
+      "ai_scope"                     => YAML::Any.new("all"),
       "ai_max_token"                 => YAML::Any.new(0),
+      "ai_max_requests"              => YAML::Any.new(0),
+      "ai_stream"                    => YAML::Any.new(false),
+      "ai_temperature"               => YAML::Any.new(""),
+      "ai_seed"                      => YAML::Any.new(""),
       "cache_disable"                => YAML::Any.new(false),
       "cache_clear"                  => YAML::Any.new(false),
-      "analyze_feign"                => YAML::Any.new(false),
     }
 
     noir_options
@@ -268,7 +400,8 @@ class ConfigInitializer
       config_file: "#{options["config_file"]}"
 
       # The number of concurrent operations to perform
-      concurrency: "#{options["concurrency"]}"
+      # Default: CPU count clamped to 4-32 (or NOIR_CONCURRENCY). Uncomment to pin.
+      # concurrency: "#{System.cpu_count.clamp(4, 32)}"
 
       # Whether to enable debug mode
       debug: #{options["debug"]}
@@ -281,6 +414,10 @@ class ConfigInitializer
 
       # Technologies to exclude
       exclude_techs: "#{options["exclude_techs"]}"
+
+      # Restrict detection to these technologies only (comma-separated;
+      # empty = detect everything). The inverse of exclude_techs.
+      only_techs: "#{options["only_techs"]}"
 
       # File paths to exclude (comma-separated glob patterns, e.g. "*.test.js,*_test.go")
       exclude_path: "#{options["exclude_path"]}"
@@ -301,7 +438,7 @@ class ConfigInitializer
       ai_context: #{options["ai_context"]}
 
       # Optional comma-separated subset of AI-context categories to emit
-      # (empty = all). Valid: guards, sinks, validators, signals, callee.
+      # (empty = all). Valid: guards, callee, sources, sinks, validators, signals.
       ai_context_features: "#{options["ai_context_features"]}"
 
       # Whether to disable logging
@@ -309,6 +446,9 @@ class ConfigInitializer
 
       # Whether to disable loading spinners while keeping normal logs
       no_spinner: #{options["no_spinner"]}
+
+      # Whether to exit with code 2 when any analyzer fails
+      strict: #{options["strict"]}
 
       # The output file to write to
       output: "#{options["output"]}"
@@ -342,6 +482,9 @@ class ConfigInitializer
       set_pvalue_json:
       set_pvalue_path:
 
+      # Skip TLS certificate verification when probing HTTPS endpoints
+      tls_skip_verify: #{options["tls_skip_verify"]}
+
       # The status codes to use
       status_codes: #{options["status_codes"]}
 
@@ -364,11 +507,19 @@ class ConfigInitializer
 
       # The taggers to use
       # e.g "tagger1,tagger2"
-      # To see the list of all taggers, please use the noir command with --list-taggers
+      # To see the list of all taggers, run: noir list taggers
       use_taggers: "#{options["use_taggers"]}"
 
       # The diff file to use
       diff: "#{options["diff"]}"
+
+      # A git revision to diff against instead of a directory (--diff-ref)
+      # e.g "main", "origin/main", "HEAD~1"
+      diff_ref: "#{options["diff_ref"]}"
+
+      # Exit 3 when the diff has any of these (--fail-on)
+      # e.g "added,auth-removed" (added, removed, changed, auth-removed)
+      fail_on: "#{options["fail_on"]}"
 
       # The passive rules to use
       # e.g /path/to/rules
@@ -400,11 +551,36 @@ class ConfigInitializer
       # The maximum number of steps for the AI agent loop
       ai_agent_max_steps: #{options["ai_agent_max_steps"]}
 
-      # Provider allowlist for native tool-calling (comma-separated)
-      ai_native_tools_allowlist: "#{options["ai_native_tools_allowlist"]}"
+      # Skip the LLM optimizer pass over AI-found endpoints
+      ai_no_optimize: #{options["ai_no_optimize"]}
 
-      # The maximum number of tokens for AI requests (0 = no limit)
+      # Also send credentials files (.env, *.pem, id_rsa, ...) to the AI provider
+      ai_include_sensitive: #{options["ai_include_sensitive"]}
+
+      # List what the AI analyzer would send to the provider, and send nothing
+      ai_dry_run: #{options["ai_dry_run"]}
+
+      # Provider allowlist for native tool-calling (comma-separated)
+      # Commented so the built-in list keeps tracking new releases. Uncomment to pin.
+      # ai_native_tools_allowlist: "#{options["ai_native_tools_allowlist"]}"
+
+      # Files sent to the AI analyzer: all, or unmatched (skip files a static analyzer found endpoints in)
+      ai_scope: "#{options["ai_scope"]}"
+
+      # The maximum number of tokens for AI requests (0 = provider/model default)
       ai_max_token: #{options["ai_max_token"]}
+
+      # The maximum number of AI HTTP requests per run, retries included (0 = unlimited)
+      ai_max_requests: #{options["ai_max_requests"]}
+
+      # Stream endpoint-extraction replies from OpenAI-compatible providers (SSE)
+      ai_stream: #{options["ai_stream"]}
+
+      # Sampling temperature for AI requests, 0-2 ("" = 0.3; models with fixed sampling ignore it)
+      ai_temperature: "#{options["ai_temperature"]}"
+
+      # Sampling seed, sent where the provider supports one ("" = none)
+      ai_seed: "#{options["ai_seed"]}"
 
       # CACHE:
       # Disable LLM disk cache for this run

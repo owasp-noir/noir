@@ -6,4 +6,7 @@ async function listReports() {
   return NextResponse.json(reports)
 }
 
-export { listReports as GET }
+export {
+  // read-only
+  listReports as GET,
+}

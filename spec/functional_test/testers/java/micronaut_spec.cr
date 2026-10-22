@@ -31,6 +31,16 @@ expected_endpoints = [
     Param.new("author", "", "query"),
     Param.new("year", "", "query"),
   ]),
+  Endpoint.new("/books/search", "QUERY", [
+    Param.new("title", "", "json"),
+    Param.new("author", "", "json"),
+    Param.new("year", "", "json"),
+  ]),
+  Endpoint.new("/books/advanced", "QUERY", [
+    Param.new("title", "", "json"),
+    Param.new("author", "", "json"),
+    Param.new("year", "", "json"),
+  ]),
   Endpoint.new("/books/template", "GET", [
     Param.new("q", "", "query"),
   ]),
@@ -48,6 +58,8 @@ expected_endpoints = [
   Endpoint.new("/css/*.css", "GET"),
   Endpoint.new("/images/**", "GET"),
   Endpoint.new("/mn/status", "GET"),
+  # SharedOrderController.java — @Controller from another file's constant.
+  Endpoint.new("/shared-orders/{id}", "GET", [Param.new("id", "", "path")]),
   books_ws_endpoint,
   Endpoint.new("/books", "POST", [
     Param.new("title", "", "json"),
@@ -96,7 +108,19 @@ expected_endpoints = [
   ]),
 ]
 
-FunctionalTester.new("fixtures/java/micronaut/", {
+tester = FunctionalTester.new("fixtures/java/micronaut/", {
   :techs     => 1,
   :endpoints => expected_endpoints.size,
-}, expected_endpoints).perform_tests
+}, expected_endpoints)
+tester.perform_tests
+
+describe "Micronaut interface-declared routes", tags: "functional" do
+  it "names the @Override, not the interface method" do
+    lookup = tester.endpoints.find! { |ep| ep.method == "GET" && ep.url == "/books/interface/{isbn}" }
+    lookup.details.code_paths.first.path.should end_with("BookApi.java")
+    handler = lookup.handler.should_not be_nil
+    handler.name.should eq("BookController.interfaceLookup")
+    handler.path.to_s.should end_with("BookController.java")
+    handler.line.should eq(162)
+  end
+end

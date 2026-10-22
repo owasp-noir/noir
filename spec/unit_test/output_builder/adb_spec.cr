@@ -31,6 +31,21 @@ describe "OutputBuilderAdb" do
     out.should eq("adb shell am start -a 'android.intent.action.VIEW' -d 'myapp://host/path'")
   end
 
+  it "double-quotes a deep link containing '&' so the device shell keeps every param" do
+    # `adb shell` re-parses on the device; a single quote layer leaves `&`
+    # exposed and the URL is truncated after the first query param.
+    scheme = Endpoint.new("myapp://cb?code=x&state=y", "GET")
+    scheme.protocol = "mobile-scheme"
+
+    builder = build_adb_builder
+    builder.print([scheme])
+    out = builder.io.to_s.strip
+
+    # The URL token must carry an inner single-quote layer that survives the
+    # host shell, so the device shell receives 'myapp://cb?code=x&state=y'.
+    out.should contain(%(-d ''\\''myapp://cb?code=x&state=y'\\'''))
+  end
+
   it "uses the filter's action/category and constrains to the package" do
     scheme = Endpoint.new("myapp://host/path", "GET")
     scheme.protocol = "mobile-scheme"
@@ -109,7 +124,9 @@ describe "OutputBuilderAdb" do
     builder.print([intent])
     out = builder.io.to_s.strip
 
-    out.should eq("adb shell am start -n 'com.example.app/.FooActivity' --es 'token' ''")
+    # The empty value needs both quote layers too: with one, the device shell
+    # gets no argument at all and every following extra shifts by one.
+    out.should eq("adb shell am start -n 'com.example.app/.FooActivity' --es 'token' ''\\'''\\'''")
   end
 
   it "skips HTTP endpoints and only emits Android launches" do

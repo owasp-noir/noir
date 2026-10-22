@@ -36,7 +36,7 @@ tester = FunctionalTester.new("fixtures/haskell/servant_callees/", {
 })
 tester.perform_tests
 
-it "reports exact Servant callees by flattened server order" do
+it "reports exact Servant callees by flattened server order", tags: "functional" do
   list_endpoint = tester.app.endpoints.find { |found| found.url == "/v1/users" && found.method == "GET" }
   list_endpoint.should_not be_nil
   list_endpoint.try do |actual|
@@ -56,7 +56,7 @@ it "reports exact Servant callees by flattened server order" do
   end
 end
 
-it "populates Servant callee source paths" do
+it "populates Servant callee source paths", tags: "functional" do
   endpoint = tester.app.endpoints.find { |found| found.url == "/health" && found.method == "GET" }
   endpoint.should_not be_nil
   endpoint.try do |actual|
@@ -81,7 +81,7 @@ mismatch_tester = FunctionalTester.new("fixtures/haskell/servant_callees_mismatc
 })
 mismatch_tester.perform_tests
 
-it "leaves Servant callees empty when server leaf count mismatches endpoint count" do
+it "leaves Servant callees empty when server leaf count mismatches endpoint count", tags: "functional" do
   mismatch_tester.app.endpoints.each do |endpoint|
     endpoint.callees.should be_empty
   end
@@ -103,7 +103,7 @@ multi_api_tester = FunctionalTester.new("fixtures/haskell/servant_callees_multi_
 })
 multi_api_tester.perform_tests
 
-it "does not reuse a same-file generic Servant server for a different API alias" do
+it "does not reuse a same-file generic Servant server for a different API alias", tags: "functional" do
   admin = multi_api_tester.app.endpoints.find { |found| found.url == "/admin" && found.method == "GET" }
   admin.should_not be_nil
   admin.try do |endpoint|
@@ -124,7 +124,7 @@ cross_alias_tester = FunctionalTester.new("fixtures/haskell/servant_callees_cros
 })
 cross_alias_tester.perform_tests
 
-it "does not expand nested Servant server aliases from another file" do
+it "does not expand nested Servant server aliases from another file", tags: "functional" do
   cross_alias_tester.app.endpoints.each do |endpoint|
     endpoint.callees.should be_empty
   end

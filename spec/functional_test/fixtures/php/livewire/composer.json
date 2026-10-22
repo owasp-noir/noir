@@ -1,0 +1,9 @@
+{
+    "name": "laravel/laravel",
+    "require": {
+        "php": "^8.2",
+        "laravel/framework": "^11.0",
+        "livewire/livewire": "^3.5",
+        "livewire/volt": "^1.6"
+    }
+}

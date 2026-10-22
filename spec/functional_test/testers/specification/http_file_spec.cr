@@ -1,0 +1,69 @@
+require "../../func_spec.cr"
+
+# VS Code REST Client dialect: multiple requests, headers, a JSON body,
+# a form body and `{{var}}` path/placeholder handling. Its requests name
+# `api.example.com` literally, so they keep that host, and header values are
+# never copied out of the file.
+vscode_endpoints = [
+  Endpoint.new("https://api.example.com/users/:userId", "GET", [
+    Param.new("Authorization", "", "header"),
+    Param.new("verbose", "", "query"),
+    Param.new("userId", "", "path"),
+  ]),
+  Endpoint.new("https://api.example.com/users", "POST", [
+    Param.new("name", "noir", "json"),
+    Param.new("email", "noir@example.com", "json"),
+  ]),
+  Endpoint.new("https://api.example.com/users/:userId", "PUT", [
+    Param.new("name", "updated", "form"),
+    Param.new("active", "true", "form"),
+    Param.new("userId", "", "path"),
+  ]),
+]
+
+FunctionalTester.new("fixtures/specification/http_file/vscode/", {
+  :techs     => 1,
+  :endpoints => vscode_endpoints.size,
+}, vscode_endpoints).perform_tests
+
+# JetBrains HTTP Client dialect: an `@var` base URL and a `> {% ... %}`
+# response-handler block that must not leak into endpoints.
+jetbrains_endpoints = [
+  Endpoint.new("/orders", "POST", [
+    Param.new("item", "widget", "json"),
+    Param.new("qty", "3", "json"),
+  ]),
+  Endpoint.new("/orders", "GET", [
+    Param.new("status", "", "query"),
+    Param.new("Accept", "", "header"),
+  ]),
+]
+
+FunctionalTester.new("fixtures/specification/http_file/jetbrains/", {
+  :techs     => 1,
+  :endpoints => jetbrains_endpoints.size,
+}, jetbrains_endpoints).perform_tests
+
+# `.rest` extension is parsed the same as `.http`.
+FunctionalTester.new("fixtures/specification/http_file/rest_ext/", {
+  :techs     => 1,
+  :endpoints => 1,
+}, [
+  Endpoint.new("https://api.example.com/ping", "GET"),
+]).perform_tests
+
+# RFC 10008 `QUERY` round-trips: the detector recognizes a file whose only
+# request uses the verb, and the analyzer emits it unchanged with its form
+# body — no GET downgrade anywhere in the pipeline. The fixture dir also
+# holds `notes.rest`, prose whose sentences all start with "Query <url-ish>":
+# the endpoint count staying at 1 is the regression guard that mixed-case
+# "Query" prose is never fabricated into endpoints.
+FunctionalTester.new("fixtures/specification/http_file/query_method/", {
+  :techs     => 1,
+  :endpoints => 1,
+}, [
+  Endpoint.new("https://api.example.com/products/search", "QUERY", [
+    Param.new("q", "widget", "form"),
+    Param.new("limit", "10", "form"),
+  ]),
+]).perform_tests

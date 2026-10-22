@@ -2,6 +2,14 @@ require "../../../models/detector"
 
 module Detector::Javascript
   class Fresh < Detector
+    detector_for "js_fresh",
+      extensions: %w[.js .mjs .cjs .jsx .ts .tsx],
+      basenames: %w[package.json deno.json deno.jsonc]
+
+    # Fresh 1 maps `$fresh/`; Fresh 2 (`jsr:@fresh/init`) maps `fresh` to
+    # `jsr:@fresh/core` in deno.json and imports the bare specifier.
+    FRESH_MARKER = /\$fresh\/|@fresh\//
+
     def detect(filename : String, file_contents : String) : Bool
       base = File.basename(filename)
 
@@ -9,31 +17,23 @@ module Detector::Javascript
       # canonical signals are `deno.json` / `deno.jsonc` referencing
       # `$fresh/` and `fresh.config.{ts,js}` files.
       if base == "fresh.config.ts" || base == "fresh.config.js" ||
-         base == "main.ts" && file_contents.includes?("$fresh/")
+         base == "main.ts" && content_matches?(file_contents, FRESH_MARKER)
         return true
       end
 
       if (base == "deno.json" || base == "deno.jsonc") &&
-         file_contents.includes?("$fresh/")
+         content_matches?(file_contents, FRESH_MARKER)
         return true
       end
 
       # Source-side: Fresh handlers / pages import from `$fresh/`.
       if (filename.ends_with?(".ts") || filename.ends_with?(".tsx") ||
          filename.ends_with?(".js") || filename.ends_with?(".jsx")) &&
-         file_contents.includes?("$fresh/")
+         content_matches?(file_contents, FRESH_MARKER)
         return true
       end
 
       false
-    end
-
-    def applicable?(filename : String) : Bool
-      filename.ends_with?(".js") || filename.ends_with?(".mjs") || filename.ends_with?(".cjs") || filename.ends_with?(".jsx") || filename.ends_with?(".ts") || filename.ends_with?(".tsx") || File.basename(filename) == "package.json"
-    end
-
-    def set_name
-      @name = "js_fresh"
     end
   end
 end

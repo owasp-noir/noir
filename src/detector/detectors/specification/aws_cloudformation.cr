@@ -5,7 +5,14 @@ require "../../../models/code_locator"
 
 module Detector::Specification
   class AwsCloudformation < Detector
+    # Registers each template path in `CodeLocator`.
+    detector_for "aws_cloudformation", extensions: %w[.yaml .yml .json], idempotent: false
+
     SAM_TRANSFORM = "AWS::Serverless-2016-10-31"
+
+    # Every `.yml`/`.yaml`/`.json` in the tree reaches this gate, so the
+    # two-`includes?` chain it replaces was walking the whole corpus twice.
+    CANDIDATE_MARKER = Regex.union("AWSTemplateFormatVersion", SAM_TRANSFORM)
 
     def detect(filename : String, file_contents : String) : Bool
       return false unless applicable?(filename)
@@ -16,21 +23,8 @@ module Detector::Specification
                    detect_yaml(file_contents)
                  end
 
-      CodeLocator.instance.push("aws-cloudformation-spec", filename) if detected
+      CodeLocator.instance.push(Noir::LocatorKeys::AWS_CLOUDFORMATION_SPEC, filename) if detected
       detected
-    end
-
-    def applicable?(filename : String) : Bool
-      filename.ends_with?(".yaml") || filename.ends_with?(".yml") || filename.ends_with?(".json")
-    end
-
-    def set_name
-      @name = "aws_cloudformation"
-    end
-
-    # Registers each template path in `CodeLocator`.
-    def idempotent? : Bool
-      false
     end
 
     private def detect_yaml(content : String) : Bool
@@ -50,7 +44,7 @@ module Detector::Specification
     private def detect_json(content : String) : Bool
       return false unless cloudformation_candidate?(content)
 
-      data = JSON.parse(content)
+      data = parse_json_lenient(content)
       root = data.as_h?
       return false unless root
 
@@ -84,7 +78,7 @@ module Detector::Specification
     end
 
     private def cloudformation_candidate?(content : String) : Bool
-      content.includes?("AWSTemplateFormatVersion") || content.includes?(SAM_TRANSFORM)
+      content_matches?(content, CANDIDATE_MARKER)
     end
   end
 end

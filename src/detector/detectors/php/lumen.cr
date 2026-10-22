@@ -2,6 +2,10 @@ require "../../../models/detector"
 
 module Detector::Php
   class Lumen < Detector
+    detector_for "php_lumen",
+      extensions: %w[.php .phtml],
+      basenames: %w[composer.json composer.lock]
+
     def detect(filename : String, file_contents : String) : Bool
       # composer.json explicitly pulling in lumen-framework is the strongest signal.
       if filename.ends_with?("composer.json") && file_contents.includes?("laravel/lumen-framework")
@@ -15,20 +19,12 @@ module Detector::Php
       end
 
       # Any PHP file pulling in the Lumen namespace.
-      if filename.ends_with?(".php") && (file_contents.includes?("use Laravel\\Lumen\\") ||
+      if Noir::FileExtension.fold(filename).ends_with?(".php") && (file_contents.includes?("use Laravel\\Lumen\\") ||
          file_contents.includes?("namespace Laravel\\Lumen\\"))
         return true
       end
 
       false
-    end
-
-    def applicable?(filename : String) : Bool
-      filename.ends_with?(".php") || filename.ends_with?(".phtml") || File.basename(filename) == "composer.json" || File.basename(filename) == "composer.lock"
-    end
-
-    def set_name
-      @name = "php_lumen"
     end
   end
 end

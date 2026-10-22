@@ -79,4 +79,23 @@ func routes(_ app: Application) throws {
     app.get("status") { req -> String in
         return "API is running"
     }
+
+    // Chained `.grouped(...)` calls compose every prefix; middleware
+    // arguments contribute none.
+    let v3 = app.grouped("api").grouped("v3")
+    v3.get("items") { req -> String in
+        return "items"                           // GET /api/v3/items
+    }
+    let secure = app.grouped(AuthMiddleware()).grouped("secure")
+    secure.get("vault") { req -> String in
+        return "vault"                           // GET /secure/vault
+    }
+
+    // A verb called directly on a group expression.
+    app.grouped("inline").get("direct") { req -> String in
+        return "direct"                          // GET /inline/direct
+    }
+    app.grouped("a").grouped("b").post("c") { req -> String in
+        return "c"                               // POST /a/b/c
+    }
 }

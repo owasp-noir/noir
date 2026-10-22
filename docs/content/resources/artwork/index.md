@@ -6,13 +6,19 @@ sort_by = "weight"
 
 +++
 
-![](banner.jpg)
+<img src="banner.jpg" alt="The OWASP Noir wordmark in gold foil, embossed on a ribbed dark surface lit by venetian-blind shadows." width="1168" height="784" loading="lazy" decoding="async">
+
+{% mascot(mood="peace") %}
+Every pose of me lives in the artwork repository. The set below is what these docs use.
+{% end %}
+
+{% mascot_gallery() %}{% end %}
 
 ## What's Available
 
-*   **Official Logos**: Various formats and color schemes
+*   **Official Logos**: Several formats and color schemes
 *   **Mascots**: Official mascot designs and illustrations
-*   **Brand Guidelines**: Proper usage of Noir branding
+*   **Wallpapers**: Desktop wallpapers featuring Noir artwork
 *   **Other Resources**: Visual assets for presentations and documentation
 
 ## Repository
@@ -21,4 +27,4 @@ sort_by = "weight"
 
 ## Contributing
 
-Open an issue or discussion in the artwork repository to suggest new artwork or improvements.
+Open an issue in the artwork repository, or start a thread in the [project discussions](https://github.com/orgs/owasp-noir/discussions), to suggest new artwork or improvements.

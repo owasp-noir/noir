@@ -3,6 +3,9 @@ require "../../../models/code_locator"
 
 module Detector::Specification
   class Netlify < Detector
+    # Registers file paths for analyzer pass.
+    detector_for "netlify", idempotent: false, basenames: %w[_redirects netlify.toml]
+
     REDIRECTS_FILE = "_redirects"
     TOML_FILE      = "netlify.toml"
 
@@ -12,28 +15,14 @@ module Detector::Specification
 
       case base
       when REDIRECTS_FILE
-        locator.push("netlify-redirects", filename)
+        locator.push(Noir::LocatorKeys::NETLIFY_REDIRECTS, filename)
         true
       when TOML_FILE
-        locator.push("netlify-toml", filename)
+        locator.push(Noir::LocatorKeys::NETLIFY_TOML, filename)
         true
       else
         false
       end
-    end
-
-    def applicable?(filename : String) : Bool
-      base = File.basename(filename)
-      base == REDIRECTS_FILE || base == TOML_FILE
-    end
-
-    def set_name
-      @name = "netlify"
-    end
-
-    # Registers file paths for analyzer pass.
-    def idempotent? : Bool
-      false
     end
   end
 end

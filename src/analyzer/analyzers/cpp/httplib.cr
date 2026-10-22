@@ -1,5 +1,7 @@
 require "../../../models/analyzer"
 require "../../../miniparsers/cpp_callee_extractor"
+require "../../engines/c_engine"
+require "../../../utils/top_level_split"
 
 module Analyzer::Cpp
   # cpp-httplib (yhirose/cpp-httplib) — a header-only HTTP/HTTPS server & client
@@ -9,6 +11,8 @@ module Analyzer::Cpp
   # function. The library's `Client` type shares the same verb method names, so
   # we only treat calls on a *server* variable as routes.
   class Httplib < Analyzer
+    analyzer_for "cpp_httplib"
+
     CPP_EXTENSIONS = [".cpp", ".cc", ".cxx", ".h", ".hpp", ".hxx"]
 
     VERBS = {
@@ -37,17 +41,21 @@ module Analyzer::Cpp
     NAMED_PARAM_REGEX = /:([A-Za-z_][A-Za-z0-9_]*)/
     # Regex metacharacters that mark a route pattern as a regex (kept verbatim).
     REGEX_META = /[()\[\]\\+*?^$|]/
+    # Precompiled union for the per-file verb-call evidence gate in
+    # analyze_file, so it costs a single PCRE2 match instead of up to six
+    # naive substring scans.
+    VERB_CALL_EVIDENCE_RE = Regex.union(".Get(", ".Post(", ".Put(", ".Delete(", ".Patch(", ".Options(")
 
     def analyze
-      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
+      include_callee = callees_needed?
 
       begin
         locator = CodeLocator.instance
         files = CPP_EXTENSIONS.flat_map { |ext| locator.files_by_extension(ext) }
 
         parallel_analyze(files) do |path|
-          next if File.directory?(path)
           next unless File.exists?(path)
+          next if CEngine.test_path?(base_relative_path(path))
           # The vendored single-header library defines the Server/Client classes
           # themselves; never scan it for routes (avoids FPs + a big perf hit).
           next if path.ends_with?("httplib.h") || path.ends_with?("httplib.hpp")
@@ -63,9 +71,7 @@ module Analyzer::Cpp
     private def analyze_file(path : String, include_callee : Bool)
       source = read_file_content(path)
       return unless source.includes?("httplib")
-      return unless source.includes?(".Get(") || source.includes?(".Post(") ||
-                    source.includes?(".Put(") || source.includes?(".Delete(") ||
-                    source.includes?(".Patch(") || source.includes?(".Options(")
+      return unless source.matches?(VERB_CALL_EVIDENCE_RE)
 
       source = Noir::CppCalleeExtractor.strip_comments(source)
       using_ns = source.includes?("using namespace httplib")
@@ -97,7 +103,7 @@ module Analyzer::Cpp
         handler_block = handler_body(source, args[1]?, open_paren, close_paren)
         if handler_block
           body, start_line = handler_block
-          collect_params(body).each { |param| push_unique(endpoint, param) }
+          collect_params(body).each { |param| endpoint.push_param(param) }
           if include_callee
             Noir::CppCalleeExtractor.attach_to(endpoint,
               Noir::CppCalleeExtractor.callees_for_body(body, path, start_line))
@@ -118,45 +124,7 @@ module Analyzer::Cpp
       return unless handler_arg
       name = handler_arg.strip.lchop('&').strip
       return unless name.matches?(/\A[A-Za-z_][A-Za-z0-9_]*(?:::[A-Za-z_][A-Za-z0-9_]*)*\z/)
-      simple = name.split("::").last
-      extract_function_body(source, simple)
-    end
-
-    private def extract_function_body(source : String, name : String) : Tuple(String, Int32)?
-      regex = /\b#{Regex.escape(name)}\s*\(/
-      source.scan(regex) do |match|
-        match_start = source.char_index_to_byte_index(match.begin(0) || 0) || 0
-        # Skip call sites (`foo.name(`, `obj::name(`); we want the definition.
-        prev = previous_code_char(source, match_start)
-        next if prev == '.' || prev == '>' || prev == ':'
-
-        open_paren = Noir::CppCalleeExtractor.find_next_code_char(source, '(', match_start)
-        next unless open_paren
-        close_paren = Noir::CppCalleeExtractor.find_matching_delimiter(source, open_paren, '(', ')')
-        next unless close_paren
-
-        body_open = Noir::CppCalleeExtractor.find_next_code_char(source, '{', close_paren + 1)
-        next unless body_open
-        # A `;` before the `{` means this is a declaration/call, not a definition.
-        semicolon = Noir::CppCalleeExtractor.find_next_code_char(source, ';', close_paren + 1)
-        next if semicolon && semicolon < body_open
-
-        body_close = Noir::CppCalleeExtractor.find_matching_delimiter(source, body_open, '{', '}')
-        next unless body_close
-        return {source.byte_slice(body_open + 1, body_close - body_open - 1), Noir::CppCalleeExtractor.line_number_for(source, body_open)}
-      end
-
-      nil
-    end
-
-    private def previous_code_char(source : String, index : Int32) : Char?
-      cursor = index - 1
-      while cursor >= 0
-        char = source.byte_at(cursor).unsafe_chr
-        return char unless char.whitespace?
-        cursor -= 1
-      end
-      nil
+      Noir::CppCalleeExtractor.function_body(source, name.split("::").last)
     end
 
     # Collects identifiers declared with the qualified type (always) and the
@@ -185,7 +153,7 @@ module Analyzer::Cpp
     private def normalize_path(raw : String) : Tuple(String, Array(Param))
       # Regex routes are kept verbatim — the captures are positional, with no
       # named placeholders to rewrite.
-      return {raw, [] of Param} if raw.matches?(REGEX_META)
+      return {Noir::URLPath.strip_regex_anchors(raw), [] of Param} if raw.matches?(REGEX_META)
 
       params = [] of Param
       normalized = raw.gsub(NAMED_PARAM_REGEX) do
@@ -199,6 +167,12 @@ module Analyzer::Cpp
     private def collect_params(body : String) : Array(Param)
       params = [] of Param
       body.each_line do |line|
+        next unless line.includes?("param") ||
+                    line.includes?("value") ||
+                    line.includes?("header") ||
+                    line.includes?("path_params") ||
+                    line.includes?("body")
+
         line.scan(QUERY_ACCESSORS) { |m| add_param(params, Param.new(m[1], "", "query")) }
         line.scan(HEADER_ACCESSORS) { |m| add_param(params, Param.new(m[1], "", "header")) }
         line.scan(PATH_PARAM_ACCESS) { |m| add_param(params, Param.new(m[1], "", "path")) }
@@ -213,55 +187,11 @@ module Analyzer::Cpp
       params << param
     end
 
-    private def push_unique(endpoint : Endpoint, param : Param)
-      return if endpoint.params.any? { |p| p.name == param.name && p.param_type == param.param_type }
-      endpoint.push_param(param)
-    end
-
+    # Delegates to the shared splitter; `Rules::CPP` reproduces this file's
+    # previous hand-rolled loop exactly (double quotes only, backslash escapes
+    # inside quotes, per-kind clamped depth, trailing empty dropped).
     private def split_top_level_args(raw : String) : Array(String)
-      args = [] of String
-      current = String::Builder.new
-      paren = 0
-      brace = 0
-      bracket = 0
-      in_string = false
-      escaped = false
-
-      raw.each_char do |char|
-        if in_string
-          current << char
-          if escaped
-            escaped = false
-          elsif char == '\\'
-            escaped = true
-          elsif char == '"'
-            in_string = false
-          end
-          next
-        end
-
-        case char
-        when '"' then in_string = true
-        when '(' then paren += 1
-        when ')' then paren -= 1 if paren > 0
-        when '{' then brace += 1
-        when '}' then brace -= 1 if brace > 0
-        when '[' then bracket += 1
-        when ']' then bracket -= 1 if bracket > 0
-        when ','
-          if paren == 0 && brace == 0 && bracket == 0
-            args << current.to_s.strip
-            current = String::Builder.new
-            next
-          end
-        end
-
-        current << char
-      end
-
-      tail = current.to_s.strip
-      args << tail unless tail.empty?
-      args
+      Noir::TopLevelSplit.split(raw, ',', Noir::TopLevelSplit::Rules::CPP)
     end
   end
 end

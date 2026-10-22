@@ -43,7 +43,7 @@ describe Noir::TreeSitterAdonisJsExtractor do
     ].sort)
   end
 
-  it "expands .resource into the five REST API routes" do
+  it "expands an .apiOnly() resource into the REST API routes" do
     source = <<-TS
       Route.resource('articles', 'ArticlesController').apiOnly()
       TS
@@ -54,7 +54,42 @@ describe Noir::TreeSitterAdonisJsExtractor do
       {"POST", "/articles"},
       {"GET", "/articles/:id"},
       {"PUT", "/articles/:id"},
+      {"PATCH", "/articles/:id"},
       {"DELETE", "/articles/:id"},
+    ].sort)
+  end
+
+  it "adds the create and edit form routes without .apiOnly()" do
+    source = <<-TS
+      router.resource('posts', PostsController)
+      TS
+
+    routes = Noir::TreeSitterAdonisJsExtractor.extract_routes(source)
+    routes.map { |r| {r.verb, r.path} }.sort!.should eq([
+      {"GET", "/posts"},
+      {"GET", "/posts/create"},
+      {"POST", "/posts"},
+      {"GET", "/posts/:id"},
+      {"GET", "/posts/:id/edit"},
+      {"PUT", "/posts/:id"},
+      {"PATCH", "/posts/:id"},
+      {"DELETE", "/posts/:id"},
+    ].sort)
+  end
+
+  it "nests dotted resource names under the parent's id param" do
+    source = <<-TS
+      router.resource('posts.comments', CommentsController).apiOnly().only(['index', 'store', 'update'])
+      router.resource('categories.posts', PostsController).only(['show']).as('cat_posts')
+      TS
+
+    routes = Noir::TreeSitterAdonisJsExtractor.extract_routes(source)
+    routes.map { |r| {r.verb, r.path} }.sort!.should eq([
+      {"GET", "/posts/:post_id/comments"},
+      {"POST", "/posts/:post_id/comments"},
+      {"PUT", "/posts/:post_id/comments/:id"},
+      {"PATCH", "/posts/:post_id/comments/:id"},
+      {"GET", "/categories/:category_id/posts/:id"},
     ].sort)
   end
 
@@ -76,10 +111,12 @@ describe Noir::TreeSitterAdonisJsExtractor do
       TS
 
     routes = Noir::TreeSitterAdonisJsExtractor.extract_routes(source)
-    # index (GET /tags), store (POST /tags), show (GET /tags/:id) remain.
+    # index, create, store, show and edit remain.
     routes.map { |r| {r.verb, r.path} }.sort!.should eq([
       {"GET", "/tags"},
+      {"GET", "/tags/create"},
       {"GET", "/tags/:id"},
+      {"GET", "/tags/:id/edit"},
       {"POST", "/tags"},
     ].sort)
   end
@@ -100,5 +137,60 @@ describe Noir::TreeSitterAdonisJsExtractor do
 
     routes = Noir::TreeSitterAdonisJsExtractor.extract_routes(source, include_callees: true)
     routes.first.callees.map(&.[0]).should contain("UsersController.index")
+  end
+
+  it "accepts a backtick template-literal route path" do
+    source = <<-TS
+      Route.get(`/users`, 'UsersController.show')
+      TS
+
+    routes = Noir::TreeSitterAdonisJsExtractor.extract_routes(source)
+    routes.map { |r| {r.verb, r.path} }.should eq([{"GET", "/users"}])
+  end
+
+  # Regression: `string_argument_at` used to index among string nodes only,
+  # so a template literal at position 0 was invisible and the controller
+  # string slid onto index 0 — reporting `GET /UsersController.show`, a URL
+  # that exists nowhere in the app, while the real route vanished.
+  it "does not fabricate a URL from the controller argument of a template-literal route" do
+    source = <<-TS
+      Route.group(() => {
+          Route.get(`/users/${'x'}`, 'UsersController.show')
+      }).prefix('/api/v1')
+      TS
+
+    routes = Noir::TreeSitterAdonisJsExtractor.extract_routes(source, include_callees: true)
+    routes.map(&.path).should_not contain("/api/v1/UsersController.show")
+    routes.map { |r| {r.verb, r.path} }.should eq([{"GET", "/api/v1/users/{'x'}"}])
+    routes.first.callees.map(&.[0]).should contain("UsersController.show")
+  end
+
+  it "keeps a template-literal substitution as a `{expr}` path placeholder" do
+    source = <<-TS
+      Route.get(`/users/${id}/posts`, 'PostsController.index')
+      TS
+
+    routes = Noir::TreeSitterAdonisJsExtractor.extract_routes(source)
+    routes.map { |r| {r.verb, r.path} }.should eq([{"GET", "/users/{id}/posts"}])
+  end
+
+  it "does not promote a later string when the first argument is not a literal" do
+    source = <<-TS
+      Route.get(routePath, 'UsersController.show')
+      TS
+
+    Noir::TreeSitterAdonisJsExtractor.extract_routes(source).should be_empty
+  end
+
+  it "reports a prettier-broken route chain on its verb line" do
+    source = <<-TS
+      router
+        .get('/a', [UsersController, 'index'])
+        .as('users.index')
+      router.post('/b', [UsersController, 'store'])
+      TS
+
+    routes = Noir::TreeSitterAdonisJsExtractor.extract_routes(source)
+    routes.map { |r| {r.path, r.line} }.should eq([{"/a", 1}, {"/b", 3}])
   end
 end

@@ -1,3 +1,5 @@
+require "../utils/js_literal_scanner"
+
 module Noir
   # MiniToken represents a simple token in JavaScript code
   class JSToken
@@ -20,6 +22,9 @@ module Noir
     @position : Int32 = 0
     @current_char : Char = '\0'
     @tokens : Array(JSToken) = [] of JSToken
+    # End of the line on which a regex scan last failed; every '/' before
+    # it is division, so one long line is not re-scanned per '/'.
+    @regex_floor : Int32 = 0
 
     def initialize(source : String)
       # Index an Array(Char) rather than the String directly: `String#[]`
@@ -34,6 +39,7 @@ module Noir
 
     def tokenize : Array(JSToken)
       @tokens.clear
+      @regex_floor = 0
 
       while @current_char != '\0'
         case @current_char
@@ -70,7 +76,13 @@ module Noir
           add_token(:dot, ".")
           advance
         when '"', '\''
-          tokenize_string
+          if JSLiteralScanner.quote_opens_string?(@chars, @position)
+            tokenize_string
+          else
+            # Prose apostrophe (JSX text such as `don't`), not a string.
+            add_token(:unknown, @current_char.to_s)
+            advance
+          end
         when '`'
           tokenize_template_literal
         when '+'
@@ -80,11 +92,11 @@ module Noir
           add_token(:assign, "=")
           advance
         when '/'
-          if peek == '/' # Single line comment
+          if peek == '/' && !JSLiteralScanner.url_slashes?(@chars, @position) # Single line comment
             skip_line_comment
           elsif peek == '*' # Multi line comment
             skip_multiline_comment
-          elsif looks_like_regex? # Regex literal
+          elsif regex_literal_here?
             tokenize_regex
           else
             add_token(:operator, "/")
@@ -155,15 +167,25 @@ module Noir
       # start_pos = @position
       advance # Skip the opening quote
 
-      string_value = ""
-      while @current_char != quote_char && @current_char != '\0'
-        # Handle escape sequences
-        if @current_char == '\\' && (peek == quote_char || peek == '\\')
+      # String::Builder instead of per-char `String#+` — the concat form
+      # reallocated the whole accumulated value on every char, turning long
+      # literals quadratic.
+      string_value = String.build do |io|
+        # An unescaped newline ends it too: string literals cannot span
+        # lines, so a stray quote costs one line rather than the file.
+        while @current_char != quote_char && @current_char != '\0' && @current_char != '\n'
+          # Handle escape sequences (a `\` before a newline continues the line)
+          if @current_char == '\\' && (peek == quote_char || peek == '\\' || peek == '\n' || peek == '\r')
+            advance
+            # CRLF line continuation: the `\r` was escaped, the `\n` with it.
+            if @current_char == '\r' && peek == '\n'
+              advance
+            end
+          end
+
+          io << @current_char
           advance
         end
-
-        string_value += @current_char
-        advance
       end
 
       # Skip the closing quote
@@ -173,46 +195,56 @@ module Noir
     end
 
     private def tokenize_number
-      number = ""
-
-      while '0' <= @current_char <= '9' || @current_char == '.'
-        number += @current_char
-        advance
+      number = String.build do |io|
+        while '0' <= @current_char <= '9' || @current_char == '.'
+          io << @current_char
+          advance
+        end
       end
 
       add_token(:number, number)
     end
 
     private def tokenize_template_literal
+      # The end comes from the shared scanner, which tracks `${ … }`
+      # nesting: stopping at the first backtick cut
+      # `${items.map(i => `<li>${i}</li>`)}` in two and lexed the rest of
+      # the file out of phase.
+      stop = JSLiteralScanner.template_literal_end(@chars, @size, @position)
+      body_end = stop > @position + 1 && @chars[stop - 1] == '`' ? stop - 1 : stop
       advance # Skip the opening backtick
 
-      template_value = ""
-      while @current_char != '`' && @current_char != '\0'
-        # Handle escape sequences
-        if @current_char == '\\' && (peek == '`' || peek == '\\')
+      # Template literals carry the largest payloads (CSS-in-JS, GraphQL,
+      # inline HTML can be tens of KB) — per-char `String#+` made them
+      # quadratic.
+      template_value = String.build do |io|
+        while @position < body_end
+          # Handle escape sequences
+          if @current_char == '\\' && (peek == '`' || peek == '\\')
+            advance
+          end
+
+          io << @current_char
           advance
         end
-
-        template_value += @current_char
-        advance
       end
 
       # Skip the closing backtick
-      advance if @current_char == '`'
+      advance if @position < stop
 
       add_token(:template_literal, template_value)
     end
 
     private def tokenize_identifier
-      identifier = ""
-
-      while ('a' <= @current_char <= 'z') ||
-            ('A' <= @current_char <= 'Z') ||
-            ('0' <= @current_char <= '9') ||
-            @current_char == '_' ||
-            @current_char == '$'
-        identifier += @current_char
-        advance
+      identifier = String.build do |io|
+        while ('a' <= @current_char <= 'z') ||
+              ('A' <= @current_char <= 'Z') ||
+              ('0' <= @current_char <= '9') ||
+              @current_char == '_' ||
+              @current_char == '$'
+          io << @current_char
+          advance
+        end
       end
 
       # Check if it's a keyword
@@ -229,7 +261,8 @@ module Noir
         lower_identifier = identifier.downcase
         if lower_identifier == "get" || lower_identifier == "post" || lower_identifier == "put" ||
            lower_identifier == "delete" || lower_identifier == "options" || lower_identifier == "head" ||
-           lower_identifier == "patch" || lower_identifier == "del" || lower_identifier == "all"
+           lower_identifier == "patch" || lower_identifier == "del" || lower_identifier == "all" ||
+           lower_identifier == "query"
           add_token(:http_method, identifier)
         else
           add_token(:identifier, identifier)
@@ -238,66 +271,77 @@ module Noir
     end
 
     # Heuristic to determine if '/' starts a regex literal.
-    # In JavaScript, regex literals can appear after certain tokens that cannot
-    # be followed by a division operator. This covers the most common cases
-    # for route definitions but is not exhaustive for all JS contexts.
+    #
+    # The rule itself lives in `JSLiteralScanner.regex_context?` — this only
+    # maps the last token onto the (last significant char, trailing word)
+    # pair that rule takes. Keeping one copy matters: the lexer used to
+    # accept a much shorter list of preceding tokens than the scanner, so
+    # `(s) => /["']/.test(s)` lexed the '/' as division and the following
+    # quote opened a string token that ran to EOF, losing every route in
+    # the file.
     private def looks_like_regex? : Bool
       return false if @tokens.empty?
 
       last_token = @tokens.last
 
-      # Regex can follow opening brackets and parentheses
-      return true if last_token.type == :lparen
-      return true if last_token.type == :lbracket
-      return true if last_token.type == :lbrace
-
-      # Regex can follow punctuation that expects an expression
-      return true if last_token.type == :comma
-      return true if last_token.type == :colon
-      return true if last_token.type == :semicolon
-
-      # Regex can follow assignment and comparison operators
-      return true if last_token.type == :assign
-      return true if last_token.value == "="
-
-      # Regex can follow keywords that expect an expression
-      if last_token.type == :keyword
-        case last_token.value
-        when "return", "case", "throw", "in", "of", "typeof", "instanceof", "void", "delete", "new"
-          return true
-        end
+      case last_token.type
+      when :string, :template_literal, :regex
+        # Literal payloads: the token's value is data, not code, so its last
+        # character says nothing about what follows the closing delimiter.
+        # A '/' after a completed literal is always division.
+        false
+      when :keyword
+        JSLiteralScanner.regex_context?(last_token.value[-1]?, last_token.value)
+      when :plus, :unknown
+        # An adjacent identical operator token makes `i++ /` division.
+        prev = @tokens.size > 1 ? @tokens[-2] : nil
+        before = prev && prev.position + 1 == last_token.position ? prev.value[-1]? : nil
+        JSLiteralScanner.regex_context?(last_token.value[-1]?, "", before)
+      else
+        # Punctuation, operators and `:unknown` (where '!' and the '>' of
+        # '=>' land) each carry a single character; identifiers, numbers and
+        # closing brackets end in a character the shared set rejects, so the
+        # same probe covers them without a per-type list.
+        JSLiteralScanner.regex_context?(last_token.value[-1]?, "")
       end
+    end
 
-      false
+    # A '/' in regex context opens a regex only if it closes on its line.
+    private def regex_literal_here? : Bool
+      return false if @position < @regex_floor || !looks_like_regex?
+      stop, closed = JSLiteralScanner.regex_literal_end(@chars, @size, @position)
+      @regex_floor = stop unless closed
+      closed
     end
 
     # Tokenize a regex literal
     private def tokenize_regex
       advance # Skip opening /
 
-      regex_pattern = ""
       in_char_class = false
 
-      while @current_char != '\0'
-        # Check for end of regex (only if not in character class)
-        break if @current_char == '/' && !in_char_class
+      regex_pattern = String.build do |io|
+        while @current_char != '\0'
+          # Check for end of regex (only if not in character class)
+          break if @current_char == '/' && !in_char_class
 
-        if @current_char == '\\' # Handle escape sequences
-          regex_pattern += @current_char
-          advance
-          regex_pattern += @current_char if @current_char != '\0'
-          advance
-        elsif @current_char == '[' && !in_char_class
-          in_char_class = true
-          regex_pattern += @current_char
-          advance
-        elsif @current_char == ']' && in_char_class
-          in_char_class = false
-          regex_pattern += @current_char
-          advance
-        else
-          regex_pattern += @current_char
-          advance
+          if @current_char == '\\' # Handle escape sequences
+            io << @current_char
+            advance
+            io << @current_char if @current_char != '\0'
+            advance
+          elsif @current_char == '[' && !in_char_class
+            in_char_class = true
+            io << @current_char
+            advance
+          elsif @current_char == ']' && in_char_class
+            in_char_class = false
+            io << @current_char
+            advance
+          else
+            io << @current_char
+            advance
+          end
         end
       end
 

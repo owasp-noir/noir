@@ -2,10 +2,126 @@
 
 All notable changes to [Noir](https://github.com/owasp-noir/noir) will be documented in this file.
 
-## Unreleased
+## v1.4.0
+
+Noir v1.4.0 adds a PR attack-surface diff mode for CI, and makes scans faster and deterministic.
+
+### Added
+- **Diff mode**: `--diff-ref` diffs the attack surface against a git revision, reports what changed on each endpoint, flags lost auth (`auth_removed`), and renders markdown/SARIF diff reports. `--fail-on` exits 3 on matching findings, and the GitHub Action exposes `diff_ref`/`fail_on` (#2775-#2778).
+- Merged endpoints keep every contributing technology (`details.technologies`) (#2700).
+- Express routes registered through a forwarding helper, and the field form of the gRPC `google.api.http` annotation (#2708, #2706).
+- File upload params emit multipart (curl/httpie, PowerShell, OAS2/OAS3), and xml params emit `application/xml` bodies (OAS, Postman) (#2734-#2737, #2739).
+
+### Performance
+- Directory listing, file reads, passive-scan rules, and Go route parses run on worker threads, with results kept in walk order. Default scans ~1.4x, full scans ~1.75x faster (#2757-#2773).
 
 ### Fixed
-- macOS release binaries are now shipped as portable `.tar.gz` archives with bundled OpenSSL libraries, instead of a bare executable linked against Homebrew `openssl@1.1` that failed to launch on clean machines (`dyld: libssl.1.1.dylib not found`).
+- Cross-file analyzer state and passive-scan findings are merged in a stable order, so results no longer vary run to run (#2770, #2765).
+- `TextFile.read` returns valid UTF-8 for every input (#2760).
+- Analyzer accuracy: route line numbers, a dynamic root urlconf hiding other Django urlconfs, Flask-AppBuilder route bases, Lapis methods, gitea's chi routes, ASP.NET Core MVC controller discovery, and Python param names (#2698, #2704, #2707, #2705, #2701, #2744, #2695).
+- Four detectors no longer fire on other libraries' markers, and Directus ignores test snapshots (#2697, #2703).
+- File-hook analyzers report a technology and honour `--only-techs` (#2702).
+- Params dedupe by canonical type, hostless spec/file URLs are rejected, and OAS/Postman path placeholders keep hyphens (#2751, #2750, #2748, #2733, #2742).
+
+### Changed
+- The spec suite compiles once and runs in parallel (#2699).
+- Documentation and README hero refresh with the new Hak mascot set (#2693, #2694, #2752-#2756).
+
+## v1.3.1
+
+Noir v1.3.1 is a bug-fix release. It adds source line numbers to several analyzers, recovers whole route surfaces that detection or size limits were dropping, and fixes a class of scan-wide bugs where one application's endpoints overwrote another's.
+
+### Added
+- Route declaration lines for Rails `config/routes.rb`, OpenAPI/Swagger operations, Symfony (`#[Route]` and `routes.yaml`), Vert.x, and Spring reactive `RouterFunction` routes (#2686).
+- Split OpenAPI/Swagger documents: `paths` entries that `$ref` another local file are now resolved, with containment, cycle, and network restrictions (#2673).
+- The plain report now shows the protocol (`kafka`, `mqtt`, `amqp`, …) and an `[internal]` badge, matching the structured formats (#2683).
+
+### Fixed
+- macOS release tarballs are re-signed ad hoc after `install_name_tool` rewrites their dylib load paths. The bundled OpenSSL dylibs were left with a stale signature, and Apple Silicon SIGKILLs any process that maps one, so `noir-v1.3.0-osx-arm64.tar.gz` could not run at all on Apple Silicon (`zsh: killed noir`, exit 137). Packaging now verifies every signature and runs the extracted tarball before publishing it (#2691).
+- Recovered route surfaces that were missing entirely: DRF-only Django projects (detection plus three urlconf resolution defects; NetBox 987 → 1150 endpoints), Rails apps scanned without a Gemfile, the `minio/mux` gorilla fork (MinIO's whole S3 data plane), and OpenAPI documents over 10MB, which now get their own 64MB budget (#2672, #2676, #2681, #2671).
+- Fixed scan-wide endpoint tables that let one application overwrite another's routes under a shared scan base: Express, NestJS `setGlobalPrefix`, Nitro, C# `HttpListener`, and the Fastify/Hono/Koa/Oak auxiliary passes (#2684, #2685, #2678, #2689).
+- JS verb calls now require a handler argument to count as a route, removing HTTP *client* calls in test trees (NodeBB 361 → 121 `js_express` endpoints, all 240 removals verified false positives) (#2688).
+- Third-party and stdlib logging no longer lands in the middle of `-f json` / `-f sarif` / `-f yaml` output (#2687, #2677).
+- Seven passive-scan defects: base64 padding read as an empty assignment, multi-document rule files silently truncated, duplicate rule ids double-reporting, uncompilable and empty patterns, and `--passive-scan-path` still downloading the bundled ruleset (#2677).
+- CLI surface: global flags typed before the verb, broken pipes (`noir list techs | head`), the POSIX `--` marker, an unreadable `--config-file`, and a blank base path (#2679).
+- Scope and filter flags: `--exclude-techs` matching by substring (`go_httprouter` also dropped `go_http`), unstripped comma-separated tech lists, empty tech values silently scanning everything, and `--exclude-path` globs validated by parsing rather than probing. `--exclude-path` now also applies to the AI agent's filesystem tools (#2680).
+- Output fidelity: escape sequences from scanned source are neutralized before reaching the terminal, `-f toml` escapes every control character, and the plain report no longer drops form params, path param values, or a callee's file (#2683, #2682).
+- `--probe` fills typed path placeholders (`<int:pk>`, `{sha:[a-f0-9]{7,64}}`, `{file_path:path}`, `{*slug}`), and a route `?` is no longer baked in as the query delimiter (#2681, #2689).
+- Ktor placeholder and param-name extraction, fetch-mock recognized as a test stub, guarded prefixes with a trailing slash (`app.use('/admin/', …)`), and skipped paths reported in a stable order (#2681, #2667, #2690).
+
+### Changed
+- The Nix flake builds a release binary through `buildCrystalPackage` instead of overriding its phases, and `just nix-check` keeps `shards.nix` in sync with `shard.lock` (#2675).
+- CI gates each job on the files it validates; worst-case Docker leg 58 min → ~8 min (#2665).
+- Documentation CLI screenshots are generated from real runs with `just docs-capture` (#2664).
+
+## v1.3.0
+
+Noir v1.3.0 adds first-class support for the HTTP QUERY method (RFC 10008), 11 new framework analyzers, and scan-integrity reporting, on top of a large internal consolidation and bug sweep.
+
+### Added
+- **HTTP QUERY method (RFC 10008)**: end-to-end support from the core endpoint model through detection in ~24 frameworks (Express, Fastify, Hono, Node `http`/`https`, NestJS, Flask, aiohttp, Rails, Laravel, Phoenix/Plug, Echo, Fiber, Go `net/http`, axum, Ktor, http4k, Micronaut, Vert.x, JAX-RS/Quarkus/Dropwizard, ASP.NET Core, Kemal), plus OAS3 serialization and HTML report rendering.
+- New framework analyzers: Oak (Deno), Feathers.js, Sails.js, LoopBack 4, CherryPy, Masonite, Padrino, Phalcon, Helidon, ServiceStack, and Kratos.
+- Scan-integrity reporting: failed analyzers and skipped files are now reported instead of silently dropped, with `--strict` to exit non-zero when any occur.
+- Recovered iOS deep-link routes that config-only scanning missed.
+
+### Changed
+- Consolidated 44 duplicated top-level splitters into a shared `Noir::TopLevelSplit`, derived the analyzer/detector/tagger/format/tech registries from their classes, and split the largest monolithic extractors by concern.
+
+### Performance
+- Detector and tagger sweeps now run one PCRE2 pass per marker instead of N substring walks, read through the content cache, and split each file into lines once.
+- Go files are parsed once for their declaration tables; JS/TS route pre-filters collapse into precompiled unions; already-valid UTF-8 files skip the iconv decode; failed parses are memoized so N analyzers don't each pay the timeout.
+
+### Fixed
+- Multi-agent bug sweep across analyzer, detector, scan, output, and CLI layers: a single line of source (fat literals, unterminated strings, column-0 comments, escaped quotes) no longer erases a file's routes; scans no longer hang or lose coverage silently; OpenAPI documents are valid and stop dropping parameters; unprotected routes are no longer tagged authenticated.
+- Security fixes: ACP tool-permission auto-approval, AI agent symlink escape from the scan base, `--probe-header` secret leakage to cross-host targets, and world-readable AI cache.
+- Deliver/probe fixes for proxy bypass, credential forwarding, and missing timeouts.
+- Bounded AST walk depth and parse time so one file can't kill a scan.
+
+## v1.2.1
+
+Noir v1.2.1 is a bug-fix release addressing determinism and cross-framework accuracy regressions introduced in v1.2.0's performance sweep.
+
+### Fixed
+- Fixed the shared JS route extractor (Express, Fastify, Koa, Hono, Restify) cross-tagging routes from sibling frameworks in multi-framework projects.
+- Fixed non-deterministic technology attribution for deduped endpoints with no code path (e.g. static/public-dir serving) by adding technology as a final sort tiebreaker.
+- Resolved Spring `application.properties` placeholders (`${...}`) in `@RequestMapping` paths.
+- Reverted the detector content-channel buffer capacity from 64 back to 16 — re-measurement showed no throughput gain, only a doubled worst-case memory ceiling.
+
+## v1.2.0
+
+Noir v1.2.0 broadens attack-surface coverage beyond web frameworks — CLI applications, built-in HTTP servers, schema-generated platforms, and enterprise legacy stacks — and lands a codebase-wide performance sweep across every supported language.
+
+### Added
+- **CLI application endpoints**: detect command-line attack surface (argv, flags, environment variables) as endpoints across 17 languages and 40+ CLI libraries (Cobra, Click, clap, Commander, Thor, picocli, Spectre.Console, and more).
+- **Built-in web server analyzers**: stdlib HTTP servers for Go (`net/http`), Python (`http.server`), Node (`node:http`), Java (`com.sun.net.httpserver`), C# (`HttpListener`), Ruby (WEBrick), Crystal (`HTTP::Server`), Dart (`dart:io`), and Zig (`std.http.Server`).
+- **Schema-generated API analyzers**: Strapi, Directus, Payload CMS, Supabase/PostgREST, Hasura, and Appwrite — platforms that derive their HTTP surface from schema files rather than source-level routes, with attribute definitions expanded into params.
+- **Enterprise legacy stacks**: CFML/ColdFusion, Classic ASP, and ASP.NET WebForms, plus the CFML frameworks Taffy, ColdBox, Wheels, and FW/1.
+- **BEAM languages**: Erlang (Cowboy, Elli) and Gleam (Wisp).
+- New PHP CMS/platform analyzers: WordPress (REST API, admin-ajax, admin-post), Drupal (`*.routing.yml`), and Magento (Web API + MVC controller routes).
+- New framework analyzers: Django Ninja (Python) and Plumber (R).
+- **Terraform / OpenTofu analyzer**: AWS API Gateway v1/v2 routes from `.tf` HCL and `.tf.json`, resolved module-wide.
+- Realtime/event endpoint detection for SignalR, Socket.IO, Phoenix Channels, and Action Cable.
+- New specification analyzers: OpenRPC service descriptions, and `.http` / `.rest` request files (VS Code REST Client, JetBrains HTTP Client).
+- Machine-readable output for `noir list` and documented `noir cache purge`.
+- Added Claude Sonnet 5, Grok 4.5, and GPT-5.6 to the AI provider token map.
+
+### Changed
+- Redesigned the HTML report (`-f html`) as a dark-tech theme with semantic method/severity colors, path grouping, table view, and copy URL/curl actions.
+- Rebuilt the documentation site around the project's own film-noir artwork.
+
+### Performance
+- Codebase-wide analyzer and detector sweep across all 24 language groups: eliminated O(n²) non-ASCII character scans, collapsed chained `includes?` gates into precompiled `Regex.union`, memoized interpolated regexes, and routed file reads through the content cache. Large wins on real projects (e.g. F#/Giraffe 31.7s → 1.1s, Servant 101s → 4ms).
+- Guarded specification detectors before YAML/JSON parsing and memoized `applicable?` by extension/basename.
+- Memoized tree-sitter extraction results and consolidated multi-pass pre-scans into single-parse surfaces.
+
+### Fixed
+- Fixed a wide class of byte-vs-char offset bugs on non-ASCII sources, plus allocation-free line counting.
+- Robustness and correctness fixes across the `noir config`, `rules`, `cache`, `list`, and completion subcommands.
+- Fidelity and render fixes for the Mermaid mindmap output format.
+- Made endpoint ordering deterministic across machines and ran the log spinner as a fiber instead of a bare thread.
+- macOS release binaries now ship as portable `.tar.gz` archives with bundled OpenSSL, instead of a bare executable linked against Homebrew `openssl@1.1` that failed to launch on clean machines.
+- GitHub Action entrypoint CI coverage, robust image-tag resolution, and injection-safe examples.
+- Improved Java, Go, Python, Ruby, Kotlin, Rust (Axum), and tRPC v9 route accuracy.
 
 ## v1.1.0
 

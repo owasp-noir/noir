@@ -1,6 +1,7 @@
 require "../../../models/framework_tagger"
 require "../../../models/endpoint"
 
+@[Noir::TaggerFor(key: "python_misc_auth", name: "Python Misc Auth Tagger", desc: "Identifies Sanic/Tornado authentication patterns", order: 110)]
 class PythonMiscAuthTagger < FrameworkTagger
   # Sanic auth patterns
   SANIC_PATTERNS = [
@@ -22,28 +23,14 @@ class PythonMiscAuthTagger < FrameworkTagger
     {/\@authenticated/, "Tornado @authenticated"},
   ]
 
-  def initialize(options : Hash(String, YAML::Any))
-    super
-    @name = "python_misc_auth"
-  end
-
   def self.target_techs : Array(String)
     ["python_sanic", "python_tornado"]
   end
 
-  def perform(endpoints : Array(Endpoint)) : Array(Endpoint)
-    endpoints.each do |endpoint|
-      check_endpoint(endpoint)
-    end
-    endpoints
-  end
-
   private def check_endpoint(endpoint : Endpoint)
     endpoint.details.code_paths.each do |path_info|
-      content = read_file(path_info.path)
-      next if content.nil?
-
-      lines = content.split("\n")
+      lines = read_file_lines(path_info.path)
+      next if lines.nil?
       line_num = path_info.line
       next if line_num.nil?
       # Skip stale/out-of-range line refs: a line beyond the content we
@@ -68,12 +55,20 @@ class PythonMiscAuthTagger < FrameworkTagger
   end
 
   private def check_decorators(lines : Array(String), func_line : Int32) : String?
+    all_patterns = SANIC_PATTERNS + TORNADO_PATTERNS
+    # A Sanic route's line is its `@app.route` decorator, and the auth
+    # decorators that wrap the handler (`@protected()`) sit below it.
+    annotation_lines_below(lines, func_line, "@").each do |current|
+      all_patterns.each do |pattern, desc|
+        return desc if current.matches?(pattern)
+      end
+    end
+
     idx = func_line - 1
     while idx >= 0 && idx >= func_line - 5
       current = lines[idx].strip
       break if current.empty? && idx < func_line - 1
 
-      all_patterns = SANIC_PATTERNS + TORNADO_PATTERNS
       all_patterns.each do |pattern, desc|
         return desc if current.matches?(pattern)
       end

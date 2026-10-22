@@ -11,8 +11,11 @@ module Analyzer::Lua
   #   * Generic `app:match(path, handler)` and the named
   #     `app:match("name", "/path", handler)` form, both of which
   #     dispatch on any HTTP method.
-  #   * Application-table style: `["/path"] = "handler_name"` or
-  #     `["/path"] = function(self) ... end`.
+  #   * Application-table style: `["/path"] = "handler_name"`,
+  #     `["/path"] = function(self) ... end`, or a table keyed by the
+  #     verbs the path implements — `["/path"] = { GET = ..., DELETE = ... }`,
+  #     which Lapis dispatches through `respond_to` and which answers 405
+  #     for every verb it does not name.
   #   * MoonScript class actions: `"/path": =>` and the named form
   #     `[name: "/path"]: =>`.
   #
@@ -25,6 +28,8 @@ module Analyzer::Lua
   # `app.path = "/prefix"` that every route inherits, so the prefix is
   # detected per file and prepended to the routes bound on that app.
   class Lapis < Analyzer
+    analyzer_for "lua_lapis"
+
     # Crystal recompiles an interpolated regex literal on every evaluation
     # (a full PCRE2 JIT compile); the route matchers interpolate the
     # discovered app-variable alternation, so memoize them per alternation.
@@ -36,12 +41,20 @@ module Analyzer::Lua
     APP_VAR_RE       = /(?:^|[^A-Za-z0-9_])(?:local\s+)?([A-Za-z_]\w*)\s*=\s*lapis\.Application(?:\b|:extend|\s*\()/
     APP_PATH_RE      = /(?:^|[^A-Za-z0-9_.])([A-Za-z_]\w*)\.path\s*=\s*(['"])([^'"]*)\2/
     MOON_PATH_RE     = /@path\s*:\s*(['"])([^'"]*)\1/
+    # `moonscript_action?`'s two OR-ed String#includes? scans, folded into
+    # one precompiled union so the boolean gate costs a single PCRE2 match
+    # instead of up to two naive substring scans.
+    MOON_ACTION_MARKER_RE = Regex.union("=>", "respond_to")
+    # `["/path"] = ` application-table route key.
+    TABLE_ROUTE_RE = /\[\s*(['"])([^'"]+)\1\s*\]\s*=/
+    RESPOND_TO     = "respond_to"
+    # Literal values a Lapis route entry can never hold.
+    NON_HANDLER_KEYWORDS = %w[true false nil]
 
     def analyze
-      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
+      include_callee = callees_needed?
 
       all_files.each do |path|
-        next if File.directory?(path)
         next unless path.ends_with?(".lua") || path.ends_with?(".moon")
         # Skip Busted / OpenResty spec files. Lapis's own
         # `spec/**/*_spec.moon` and `spec_openresty/`/`spec_cqueues/`
@@ -70,15 +83,15 @@ module Analyzer::Lua
     private def lapis_test_path?(path : String) : Bool
       base = File.basename(path)
       return true if base.ends_with?("_spec.lua") || base.ends_with?("_spec.moon")
-      expanded_path = File.expand_path(path)
+      expanded_path = Noir::PathScope.expand(path)
 
       base_paths.any? do |root|
         next false unless path_under_root?(expanded_path, root)
 
-        expanded_root = File.expand_path(root)
-        expanded_root = expanded_root.rstrip('/') unless expanded_root == File::SEPARATOR
-        tail = expanded_path[expanded_root.size..]?.try(&.lchop(File::SEPARATOR)) || ""
-        tail.split(File::SEPARATOR).any? { |seg| seg == "spec" || seg.starts_with?("spec_") }
+        expanded_root = Noir::PathScope.expand(root)
+        expanded_root = expanded_root.rstrip('/') unless expanded_root == "/"
+        tail = expanded_path[expanded_root.size..]?.try(&.lchop('/')) || ""
+        tail.split('/').any? { |seg| seg == "spec" || seg.starts_with?("spec_") }
       end
     end
 
@@ -109,10 +122,12 @@ module Analyzer::Lua
     private def detect_app_vars(cleaned : String) : Array(String)
       vars = Set(String).new
       vars << "app"
-      cleaned.scan(APP_VAR_RE) do |match|
-        name = match[1]
-        next if name == "local"
-        vars << name
+      if cleaned.includes?("lapis.Application")
+        cleaned.scan(APP_VAR_RE) do |match|
+          name = match[1]
+          next if name == "local"
+          vars << name
+        end
       end
       vars.to_a
     end
@@ -128,10 +143,12 @@ module Analyzer::Lua
     private def detect_app_paths(cleaned : String, app_vars : Array(String)) : Hash(String, String)
       known = app_vars.to_set
       paths = {} of String => String
-      cleaned.scan(APP_PATH_RE) do |match|
-        var = match[1]
-        next unless known.includes?(var)
-        paths[var] = match[3]
+      if cleaned.includes?(".path")
+        cleaned.scan(APP_PATH_RE) do |match|
+          var = match[1]
+          next unless known.includes?(var)
+          paths[var] = match[3]
+        end
       end
       paths
     end
@@ -145,7 +162,7 @@ module Analyzer::Lua
     # is the universal convention) and prefix the file's MoonScript
     # class actions with it.
     private def detect_moonscript_prefix(cleaned : String) : String
-      if match = cleaned.match(MOON_PATH_RE)
+      if cleaned.includes?("@path") && (match = cleaned.match(MOON_PATH_RE))
         match[2]
       else
         ""
@@ -266,23 +283,265 @@ module Analyzer::Lua
       verbs
     end
 
-    # `["/path"] = "handler"` and `["/path"] = function(self) ... end`
-    # — application-table style.
+    # `["/path"] = "handler"`, `["/path"] = function(self) ... end` and
+    # `["/path"] = { GET = ..., DELETE = ... }` — application-table style.
+    # The method set comes from the value when the value declares one
+    # (see `table_route_methods`), and falls back to all verbs otherwise.
     private def emit_table_routes(path : String,
                                   content : String,
                                   cleaned : String,
                                   include_callee : Bool,
                                   handler_bodies : Hash(String, Noir::LuaCalleeExtractor::FunctionBody))
-      pattern = /\[\s*(['"])([^'"]+)\1\s*\]\s*=/
-      cleaned.scan(pattern) do |match|
+      return unless cleaned.includes?("]") && cleaned.includes?("=")
+      # Materialised once per file and shared by every route in it —
+      # `String#[]` re-walks from byte 0 on multi-byte content, so a
+      # per-route `cleaned.chars` would be O(n^2) on route-dense files.
+      cleaned_chars : Array(Char)? = nil
+      cleaned.scan(TABLE_ROUTE_RE) do |match|
         url = match[2]
         next unless url.starts_with?("/")
 
         route_offset = match.begin(0) || 0
         after_assignment = match.end(0) || route_offset
+        chars = (cleaned_chars ||= cleaned.chars)
+        next if non_handler_literal?(chars, skip_ws_chars(chars, after_assignment))
+        methods = table_route_methods(chars, after_assignment) || FALLBACK_METHODS
         callees = include_callee ? table_route_callees(path, content, after_assignment, handler_bodies) : [] of Noir::LuaCalleeExtractor::Entry
-        emit_endpoint(path, content, route_offset, url, FALLBACK_METHODS, callees)
+        emit_endpoint(path, content, route_offset, url, methods, callees)
       end
+    end
+
+    # A Lapis application-table value is a handler: a function, a
+    # `respond_to` table, or the string name of one. A boolean, `nil` or
+    # a number never is, so `["/path"] = <literal>` is a lookup table
+    # keyed by URL, not a route — Kong's
+    # `ACCEPTS_YAML = { ["/config"] = true }` is the canonical example,
+    # and it was fanning `/config` out to five methods.
+    private def non_handler_literal?(chars : Array(Char), value_start : Int32) : Bool
+      return false unless value_start < chars.size
+      char = chars[value_start]
+      return true if char.ascii_number?
+      if (char == '-' || char == '.') && chars[value_start + 1]?.try(&.ascii_number?)
+        return true
+      end
+      NON_HANDLER_KEYWORDS.any? { |keyword| keyword_at?(chars, value_start, keyword) }
+    end
+
+    private def keyword_at?(chars : Array(Char), index : Int32, keyword : String) : Bool
+      return false unless index + keyword.size <= chars.size
+      keyword.each_char_with_index do |char, offset|
+        return false unless chars[index + offset] == char
+      end
+      !identifier_part?(chars[index + keyword.size]? || '\0')
+    end
+
+    # The HTTP verbs a `["/path"] = <value>` entry actually serves, or
+    # `nil` when the value carries no method evidence and the caller
+    # should keep the all-verbs fallback.
+    #
+    # Lapis dispatches a verb-keyed handler table through `respond_to`,
+    # which answers 405 for every verb the table does not name, so the
+    # keys *are* the method set. Kong's Admin API is written entirely in
+    # this style — `["/cache"] = { DELETE = function(self) ... end }`
+    # serves DELETE and nothing else — and fanning it out to five verbs
+    # invents four requests that cannot exist.
+    #
+    # Three value shapes carry verbs:
+    #
+    #   ["/p"] = { GET = ..., DELETE = ... }        -- top-level keys
+    #   ["/p"] = { schema = s, methods = { GET = ... } }  -- Kong new-DB descriptor
+    #   ["/p"] = respond_to({ GET = ... })          -- explicit Lapis wrapper
+    #
+    # Everything else keeps the fallback: a bare `function(self)` and a
+    # `"handler_name"` string both answer any method, and a table that
+    # names no verb at all (a `before`-only filter table, an
+    # `endpoints.disable` reference) says nothing about methods.
+    #
+    # Caveat, deliberately not special-cased: Kong merges the route
+    # files named after a DAO schema into its auto-generated CRUD
+    # endpoints, so a partial table there (`{ before = ..., GET = ...,
+    # PATCH = ... }` in `certificates.lua`) is an override of a larger
+    # generated set rather than the whole route. That merge is invisible
+    # in the file, and reading it would need Kong-specific knowledge; a
+    # plain Lapis reading of the source is what we report.
+    private def table_route_methods(chars : Array(Char), after_assignment : Int32) : Array(String)?
+      value_start = skip_ws_chars(chars, after_assignment)
+      return unless value_start < chars.size
+
+      if respond_to_at?(chars, value_start)
+        return respond_to_verbs(chars, value_start)
+      end
+
+      return unless chars[value_start] == '{'
+      close_index = Noir::LuaCalleeExtractor.find_matching_delimiter(chars, value_start, '{', '}')
+      return unless close_index
+
+      keys = table_verb_keys(chars, value_start, close_index)
+      verbs = keys.compact_map { |name, _| HTTP_METHODS.includes?(name) ? name : nil }
+      return verbs unless verbs.empty?
+
+      # `{ schema = ..., methods = { GET = ... } }` — Kong's "new DB
+      # routes" descriptor keeps the verbs one level down.
+      if methods_at = keys.find { |name, _| name == "methods" }
+        nested_start = skip_ws_chars(chars, methods_at[1])
+        if nested_start < chars.size && chars[nested_start] == '{'
+          if nested_close = Noir::LuaCalleeExtractor.find_matching_delimiter(chars, nested_start, '{', '}')
+            nested = table_verb_keys(chars, nested_start, nested_close)
+              .compact_map { |name, _| HTTP_METHODS.includes?(name) ? name : nil }
+            return nested unless nested.empty?
+          end
+        end
+      end
+
+      nil
+    end
+
+    private def respond_to_at?(chars : Array(Char), index : Int32) : Bool
+      return false unless index + RESPOND_TO.size <= chars.size
+      RESPOND_TO.each_char_with_index do |char, offset|
+        return false unless chars[index + offset] == char
+      end
+      before = index > 0 ? chars[index - 1] : '\0'
+      !identifier_part?(before)
+    end
+
+    # `respond_to({ GET = ... })` / `respond_to { GET = ... }` — read the
+    # verbs out of the wrapped table. An empty result means the table is
+    # built elsewhere (`respond_to(handlers)`), which carries no evidence.
+    private def respond_to_verbs(chars : Array(Char), value_start : Int32) : Array(String)?
+      cursor = skip_ws_chars(chars, value_start + RESPOND_TO.size)
+      cursor = skip_ws_chars(chars, cursor + 1) if cursor < chars.size && chars[cursor] == '('
+      return unless cursor < chars.size && chars[cursor] == '{'
+      close_index = Noir::LuaCalleeExtractor.find_matching_delimiter(chars, cursor, '{', '}')
+      return unless close_index
+
+      verbs = table_verb_keys(chars, cursor, close_index)
+        .compact_map { |name, _| HTTP_METHODS.includes?(name) ? name : nil }
+      verbs.empty? ? nil : verbs
+    end
+
+    # Collect the `NAME =` / `["NAME"] =` keys written directly inside the
+    # table that opens at `open_index`, as `{name, index just past the =}`.
+    # Only verb names and `methods` are kept — everything else in a Lapis
+    # route table is a handler body, and Lua function bodies are *not*
+    # brace-delimited, so a handler's own statements sit at the same brace
+    # depth as the table's keys. Restricting the vocabulary keeps that
+    # noise out; a `local GET = ...` or a `t.GET = ...` inside a body is
+    # still rejected by the preceding-character check.
+    private def table_verb_keys(chars : Array(Char), open_index : Int32, close_index : Int32) : Array(Tuple(String, Int32))
+      keys = [] of Tuple(String, Int32)
+      depth = 0
+      index = open_index
+
+      while index < close_index && index < chars.size
+        char = chars[index]
+        case char
+        when '"', '\''
+          index = skip_short_string_chars(chars, index, close_index)
+          next
+        when '{'
+          depth += 1
+          index += 1
+          next
+        when '}'
+          depth -= 1
+          index += 1
+          next
+        end
+
+        if depth == 1 && table_key_position?(chars, index, open_index)
+          if char == '['
+            # `["GET"] = ...` — bracketed string key.
+            quote_index = skip_ws_chars(chars, index + 1)
+            if quote_index < close_index && (chars[quote_index] == '"' || chars[quote_index] == '\'')
+              name_end = skip_short_string_chars(chars, quote_index, close_index)
+              name = chars[(quote_index + 1)...(name_end - 1)].join
+              bracket = skip_ws_chars(chars, name_end)
+              if bracket < close_index && chars[bracket] == ']'
+                if assign = assignment_after(chars, bracket + 1, close_index)
+                  keys << {name, assign} if table_key_of_interest?(name)
+                  index = assign
+                  next
+                end
+              end
+            end
+          elsif identifier_start?(char)
+            name_end = index
+            while name_end < close_index && identifier_part?(chars[name_end])
+              name_end += 1
+            end
+            name = chars[index...name_end].join
+            if table_key_of_interest?(name)
+              if assign = assignment_after(chars, name_end, close_index)
+                keys << {name, assign}
+                index = assign
+                next
+              end
+            end
+            index = name_end
+            next
+          end
+        end
+
+        index += 1
+      end
+
+      keys
+    end
+
+    # A key in a Lua table constructor can only follow the opening brace
+    # or a `,` / `;` separator. Requiring that keeps the scan off tokens
+    # that merely look like keys inside a handler body — `local POST = 1`,
+    # `t.PUT = 2`, `obj:DELETE` — which sit at the same brace depth
+    # because Lua function bodies are delimited by `function`/`end`, not
+    # by braces.
+    private def table_key_position?(chars : Array(Char), index : Int32, floor : Int32) : Bool
+      cursor = index - 1
+      while cursor > floor && chars[cursor].whitespace?
+        cursor -= 1
+      end
+      return true if cursor == floor
+      char = chars[cursor]
+      char == '{' || char == ',' || char == ';'
+    end
+
+    private def table_key_of_interest?(name : String) : Bool
+      name == "methods" || HTTP_METHODS.includes?(name)
+    end
+
+    # Index just past a `=` that is an assignment (not `==`), skipping
+    # whitespace from `index`; `nil` when the next token is anything else.
+    private def assignment_after(chars : Array(Char), index : Int32, limit : Int32) : Int32?
+      cursor = skip_ws_chars(chars, index)
+      return unless cursor < limit && chars[cursor] == '='
+      return if chars[cursor + 1]? == '='
+      cursor + 1
+    end
+
+    private def skip_ws_chars(chars : Array(Char), index : Int32) : Int32
+      cursor = index
+      while cursor < chars.size && chars[cursor].whitespace?
+        cursor += 1
+      end
+      cursor
+    end
+
+    # Index just past the closing quote of the short string that opens at
+    # `index`, honouring backslash escapes.
+    private def skip_short_string_chars(chars : Array(Char), index : Int32, limit : Int32) : Int32
+      quote = chars[index]
+      cursor = index + 1
+      while cursor < chars.size
+        char = chars[cursor]
+        if char == '\\'
+          cursor += 2
+          next
+        end
+        return cursor + 1 if char == quote
+        break if char == '\n'
+        cursor += 1
+      end
+      cursor
     end
 
     # MoonScript class actions come in several shapes, all keyed by the
@@ -300,6 +559,7 @@ module Analyzer::Lua
     # regardless of what follows the `:` and inspect the action region to
     # recover the HTTP verbs (from a `respond_to` block) and callees.
     private def emit_moonscript_routes(path : String, content : String, cleaned : String, include_callee : Bool, moon_prefix : String)
+      return unless path.ends_with?(".moon")
       # Bracketed named routes `[name: "/path"]:` are unambiguous Lapis
       # syntax, so we accept any action body. Bare `"/path":` keys are
       # only treated as routes when the path is rooted and the body
@@ -342,7 +602,7 @@ module Analyzer::Lua
     # entry, not a route, so it is rejected — guarding the broadened
     # bare-key match against string→string maps in non-route files.
     private def moonscript_action?(region_text : String) : Bool
-      return true if region_text.includes?("=>") || region_text.includes?("respond_to")
+      return true if region_text.matches?(MOON_ACTION_MARKER_RE)
       stripped = region_text.lstrip
       return false if stripped.empty?
       first = stripped[0]
@@ -366,7 +626,7 @@ module Analyzer::Lua
                               callees : Array(Noir::LuaCalleeExtractor::Entry) = [] of Noir::LuaCalleeExtractor::Entry)
       url = normalize_lapis_url(url)
       params = extract_path_params(url)
-      line = line_for_offset(content, offset)
+      line = line_number_for_index(content, offset)
       details = Details.new(PathInfo.new(path, line))
       methods.each do |verb|
         endpoint_params = params.map { |p| Param.new(p.name, p.value, p.param_type) }
@@ -402,7 +662,7 @@ module Analyzer::Lua
                                     content : String,
                                     after_assignment : Int32,
                                     handler_bodies : Hash(String, Noir::LuaCalleeExtractor::FunctionBody)) : Array(Noir::LuaCalleeExtractor::Entry)
-      value_start = skip_ws(content, after_assignment)
+      value_start = skip_ws_chars(content.chars, after_assignment)
       if starts_with_keyword?(content, value_start, "function")
         if body = Noir::LuaCalleeExtractor.extract_function_at(content, value_start)
           body_text, start_line = body
@@ -445,9 +705,13 @@ module Analyzer::Lua
     end
 
     private def first_open_paren_before(content : String, start_index : Int32, end_index : Int32) : Int32?
+      # `String#[]` re-walks from byte 0 on every call once the source
+      # contains any multi-byte char, turning this scan O(n^2); index a
+      # materialized Array(Char) instead (O(1) per access).
+      chars = content.chars
       cursor = start_index
-      while cursor < end_index && cursor < content.size
-        return cursor if content[cursor] == '('
+      while cursor < end_index && cursor < chars.size
+        return cursor if chars[cursor] == '('
         cursor += 1
       end
 
@@ -464,30 +728,38 @@ module Analyzer::Lua
     private def identifier_handler_after(content : String, start_index : Int32, limit : Int32) : String?
       cursor = skip_ws_and_commas(content, start_index)
       return if cursor >= limit
-      return unless identifier_start?(content[cursor])
+      # `String#[]` re-walks from byte 0 on every call once the source
+      # contains any multi-byte char, turning this scan O(n^2); index a
+      # materialized Array(Char) instead (O(1) per access).
+      chars = content.chars
+      return unless identifier_start?(chars[cursor])
 
       ident_start = cursor
       cursor += 1
-      while cursor < limit && cursor < content.size && identifier_part?(content[cursor])
+      while cursor < limit && cursor < chars.size && identifier_part?(chars[cursor])
         cursor += 1
       end
 
-      trailing = skip_ws(content, cursor)
-      return if trailing < limit && content[trailing] == '('
+      trailing = skip_ws_chars(chars, cursor)
+      return if trailing < limit && chars[trailing] == '('
 
-      content[ident_start...cursor]
+      chars[ident_start...cursor].join
     end
 
     private def string_literal_at(content : String, index : Int32) : String?
       return if index >= content.size
-      quote = content[index]
+      # `String#[]` re-walks from byte 0 on every call once the source
+      # contains any multi-byte char, turning this scan O(n^2); index a
+      # materialized Array(Char) instead (O(1) per access).
+      chars = content.chars
+      quote = chars[index]
       return unless quote == '"' || quote == '\''
 
       cursor = index + 1
       escaped = false
       value = String::Builder.new
-      while cursor < content.size
-        char = content[cursor]
+      while cursor < chars.size
+        char = chars[cursor]
         if escaped
           value << char
           escaped = false
@@ -505,16 +777,12 @@ module Analyzer::Lua
     end
 
     private def skip_ws_and_commas(content : String, index : Int32) : Int32
+      # `String#[]` re-walks from byte 0 on every call once the source
+      # contains any multi-byte char, turning this scan O(n^2); index a
+      # materialized Array(Char) instead (O(1) per access).
+      chars = content.chars
       cursor = index
-      while cursor < content.size && (content[cursor].whitespace? || content[cursor] == ',')
-        cursor += 1
-      end
-      cursor
-    end
-
-    private def skip_ws(content : String, index : Int32) : Int32
-      cursor = index
-      while cursor < content.size && content[cursor].whitespace?
+      while cursor < chars.size && (chars[cursor].whitespace? || chars[cursor] == ',')
         cursor += 1
       end
       cursor
@@ -716,19 +984,6 @@ module Analyzer::Lua
       end
 
       result.to_s
-    end
-
-    private def line_for_offset(content : String, offset : Int32) : Int32
-      return 1 if offset <= 0
-      limit = offset > content.size ? content.size : offset
-      count = 1
-      # each_char advances in O(1); the old content[i] loop was O(n^2) on
-      # multi-byte (UTF-8) content, stalling large CJK files with many routes.
-      content.each_char_with_index do |ch, i|
-        break if i >= limit
-        count += 1 if ch == '\n'
-      end
-      count
     end
   end
 end

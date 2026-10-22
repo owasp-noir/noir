@@ -2,6 +2,8 @@ require "../../engines/ruby_engine"
 
 module Analyzer::Ruby
   class Roda < RubyEngine
+    analyzer_for "ruby_roda"
+
     HTTP_METHOD_MATCHERS = ["get", "post", "put", "delete", "patch", "head", "options"]
 
     # Precompile the per-verb routing-tree regexes once at load time.
@@ -19,10 +21,16 @@ module Analyzer::Ruby
       {verb, /\br\.#{verb}\b\s*(?:do\b|\{|\/|$)/}
     end
 
+    # `analyze_file`'s per-file evidence gate OR-ed two String#includes?
+    # scans as a standalone boolean gate. Folded into one precompiled union
+    # so it costs a single PCRE2 match instead of up to two naive substring
+    # scans per file.
+    RODA_EVIDENCE_RE = Regex.union("Roda", "route do")
+
     alias PrefixEntry = NamedTuple(depth: Int32, segments: Array(String), path_params: Array(String))
 
     def analyze
-      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
+      include_callee = callees_needed?
 
       parallel_file_scan do |path|
         next unless path.ends_with?(".rb")
@@ -34,8 +42,8 @@ module Analyzer::Ruby
     end
 
     private def analyze_file(path : String, include_callee : Bool)
-      content = read_file_content(path)
-      return unless content.includes?("Roda") || content.includes?("route do")
+      content = ruby_source(path)
+      return unless content.matches?(RODA_EVIDENCE_RE)
 
       lines = content.lines
       in_route = false

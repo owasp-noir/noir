@@ -19,8 +19,8 @@ describe "Detect Smithy" do
 
   it "code_locator" do
     locator = CodeLocator.instance
-    locator.clear "smithy-spec"
+    locator.clear Noir::LocatorKeys::SMITHY_SPEC
     instance.detect("service.smithy", "$version: \"2\"\n")
-    locator.all("smithy-spec").should eq(["service.smithy"])
+    locator.all(Noir::LocatorKeys::SMITHY_SPEC).should eq(["service.smithy"])
   end
 end

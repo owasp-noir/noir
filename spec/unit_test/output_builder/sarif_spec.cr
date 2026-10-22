@@ -56,9 +56,12 @@ describe "OutputBuilderSarif" do
     callees[1]["name"].as_s.should eq("AuditLog.record")
     callees[1].as_h.has_key?("path").should be_false
     callees[1]["line"].as_i.should eq(13)
-    guards = results[0]["properties"]["noir"]["ai_context"]["guards"].as_a
+    ai_context = results[0]["properties"]["noir"]["ai_context"]
+    guards = ai_context["guards"].as_a
     guards.size.should eq(1)
     guards[0]["source"].as_s.should eq("express_auth")
+    ai_context.as_h.has_key?("sinks").should be_false
+    ai_context.as_h.has_key?("callees").should be_false
   end
 
   it "print with endpoints and passive results" do
@@ -124,7 +127,9 @@ describe "OutputBuilderSarif" do
     passive_result_item = results.find { |r| r["ruleId"].as_s == "test-rule" }
     passive_result_item = passive_result_item.should_not be_nil
     passive_result_item["level"].as_s.should eq("error")
-    passive_result_item["message"]["text"].as_s.should eq("test finding")
+    # The rule name, not the extract: the extract is the secret itself.
+    passive_result_item["message"]["text"].as_s.should eq("Test Rule Name")
+    output.should_not contain("test finding")
     passive_result_item["locations"][0]["physicalLocation"]["artifactLocation"]["uri"].as_s.should eq("test.cr")
     passive_result_item["locations"][0]["physicalLocation"]["region"]["startLine"].as_i.should eq(10)
 
@@ -191,5 +196,62 @@ describe "OutputBuilderSarif" do
       result = result.should_not be_nil
       result["level"].as_s.should eq(expected_level)
     end
+  end
+
+  it "percent-encodes file paths in artifactLocation.uri" do
+    options = {
+      "debug"   => YAML::Any.new(false),
+      "verbose" => YAML::Any.new(false),
+      "color"   => YAML::Any.new(false),
+      "nolog"   => YAML::Any.new(false),
+      "output"  => YAML::Any.new(""),
+    }
+    builder = OutputBuilderSarif.new(options)
+    builder.io = IO::Memory.new
+
+    # Written raw these read as a broken URI, a `#frag?q.go` fragment+query,
+    # an escaped space instead of the literal `%20`, and a `C:` scheme.
+    paths = ["sar/d1/a b.go", "sar/d2/x#frag?q.go", "sar/d3/a%20b.go", "a:b/(x)@y.go", "C:/src/main.go"]
+    endpoints = paths.map_with_index do |path, i|
+      Endpoint.new("/e#{i}", "GET", Details.new(PathInfo.new(path, 1)))
+    end
+
+    builder.print(endpoints)
+    results = JSON.parse(builder.io.to_s)["runs"][0]["results"].as_a
+    uris = results.map(&.["locations"][0]["physicalLocation"]["artifactLocation"]["uri"].as_s)
+
+    uris.should eq(["sar/d1/a%20b.go", "sar/d2/x%23frag%3Fq.go", "sar/d3/a%2520b.go", "a%3Ab/(x)@y.go", "file:///C:/src/main.go"])
+    uris.each { |uri| URI.decode(uri.lchop("file:///")).should eq(paths[uris.index!(uri)]) }
+  end
+
+  it "gives each file one URI shape and names the relative base" do
+    options = {
+      "debug"   => YAML::Any.new(false),
+      "verbose" => YAML::Any.new(false),
+      "color"   => YAML::Any.new(false),
+      "nolog"   => YAML::Any.new(false),
+      "output"  => YAML::Any.new(""),
+    }
+    builder = OutputBuilderSarif.new(options)
+    builder.io = IO::Memory.new
+
+    # `-b .`, `-b $PWD`, `-b ./app/..`, and paths outside the working directory.
+    paths = ["./app/app.py", File.join(Dir.current, "app/app.py"), "./app/../app/app.py", "/srv/other/app.py", "../other/app.py"]
+    endpoints = paths.map_with_index do |path, i|
+      Endpoint.new("/e#{i}", "GET", Details.new(PathInfo.new(path, 1)))
+    end
+
+    builder.print(endpoints)
+    run = JSON.parse(builder.io.to_s)["runs"][0]
+    locations = run["results"].as_a.map(&.["locations"][0]["physicalLocation"]["artifactLocation"])
+
+    uris = locations.map(&.["uri"].as_s)
+    uris[0, 4].should eq(["app/app.py", "app/app.py", "app/app.py", "file:///srv/other/app.py"])
+    uris[4].should start_with("file:///")
+    uris[4].should end_with("/other/app.py")
+    locations.map(&.["uriBaseId"]?.try(&.as_s)).should eq(["%SRCROOT%", "%SRCROOT%", "%SRCROOT%", nil, nil])
+    # `file:///C:/…` on Windows, `file:///home/…` elsewhere.
+    base = run["originalUriBaseIds"]["%SRCROOT%"]["uri"].as_s
+    URI.decode(base).should eq("file:///#{Path.new(Dir.current).to_posix.to_s.lchop('/')}/")
   end
 end

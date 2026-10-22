@@ -23,25 +23,25 @@ expected_endpoints = [
 
   # namespace :admin do resources :reports end
   Endpoint.new("/admin/reports", "GET"),
-  Endpoint.new("/admin/reports/1", "GET"),
+  Endpoint.new("/admin/reports/:id", "GET"),
   Endpoint.new("/admin/reports", "POST"),
-  Endpoint.new("/admin/reports/1", "PUT"),
-  Endpoint.new("/admin/reports/1", "PATCH"),
-  Endpoint.new("/admin/reports/1", "DELETE"),
+  Endpoint.new("/admin/reports/:id", "PUT"),
+  Endpoint.new("/admin/reports/:id", "PATCH"),
+  Endpoint.new("/admin/reports/:id", "DELETE"),
 
   # member/collection actions on namespaced resource. #1359: action-scoped
   # headers must surface on the custom-action endpoint (previously dropped
   # because the controller scan only switched action context on 5 REST names).
-  Endpoint.new("/admin/refunds/1/change_status", "POST", [
+  Endpoint.new("/admin/refunds/:id/change_status", "POST", [
     Param.new("X-Refund-Reason", "", "header"),
     Param.new("status", "", "form"),
   ]),
   # DELETE custom action — no shared body params, only the action's headers.
-  Endpoint.new("/admin/refunds/1/purge", "DELETE", [
+  Endpoint.new("/admin/refunds/:id/purge", "DELETE", [
     Param.new("X-Confirm", "", "header"),
   ]),
   # `permit("note", "kind")` (string form) and member POST verb.
-  Endpoint.new("/admin/refunds/1/update_metadata", "POST", [
+  Endpoint.new("/admin/refunds/:id/update_metadata", "POST", [
     Param.new("note", "", "form"),
     Param.new("kind", "", "form"),
   ]),
@@ -65,7 +65,7 @@ expected_endpoints = [
   # Parenthesized namespace with path override keeps the controller namespace
   # while changing the URL prefix.
   Endpoint.new("/sekret/reports", "GET"),
-  Endpoint.new("/sekret/reports/1", "GET"),
+  Endpoint.new("/sekret/reports/:id", "GET"),
 
   # scope module/path variants resolve controller params through admin/.
   Endpoint.new("/backoffice/heartbeat", "GET", [
@@ -84,27 +84,27 @@ expected_endpoints = [
 
   # scope :api do resources :items, only: [:index, :show] end
   Endpoint.new("/api/items", "GET"),
-  Endpoint.new("/api/items/1", "GET"),
+  Endpoint.new("/api/items/:id", "GET"),
 
   # scope path: "internal" do resources :statements, except: [:destroy] end
   Endpoint.new("/internal/statements", "GET"),
-  Endpoint.new("/internal/statements/1", "GET"),
+  Endpoint.new("/internal/statements/:id", "GET"),
   Endpoint.new("/internal/statements", "POST"),
-  Endpoint.new("/internal/statements/1", "PUT"),
-  Endpoint.new("/internal/statements/1", "PATCH"),
+  Endpoint.new("/internal/statements/:id", "PUT"),
+  Endpoint.new("/internal/statements/:id", "PATCH"),
 
   # resources :scans, controller: "billing/scans", only: [:index]
   Endpoint.new("/scans", "GET"),
 
   # Multiline options and %i lists.
   Endpoint.new("/legacy_posts", "GET"),
-  Endpoint.new("/legacy_posts/1", "GET"),
+  Endpoint.new("/legacy_posts/:id", "GET"),
 
   # Inline custom resource scopes: collection, implicit member, and new.
   Endpoint.new("/refunds/summary", "GET", [
     Param.new("X-Summary", "", "header"),
   ]),
-  Endpoint.new("/refunds/1/preview", "GET", [
+  Endpoint.new("/refunds/:refund_id/preview", "GET", [
     Param.new("X-Preview", "", "header"),
   ]),
   Endpoint.new("/refunds/new/template", "GET", [
@@ -113,7 +113,7 @@ expected_endpoints = [
   Endpoint.new("/refunds/inline_summary", "GET", [
     Param.new("X-Inline-Summary", "", "header"),
   ]),
-  Endpoint.new("/refunds/1/inline_preview", "POST", [
+  Endpoint.new("/refunds/:id/inline_preview", "POST", [
     Param.new("X-Inline-Preview", "", "header"),
   ]),
 
@@ -122,15 +122,36 @@ expected_endpoints = [
   # with `resources :posts, concerns: :commentable` should emit nested
   # comments and preserve nested resources inside the concern.
   Endpoint.new("/posts", "GET"),
-  Endpoint.new("/posts/1", "GET"),
+  Endpoint.new("/posts/:id", "GET"),
   Endpoint.new("/posts", "POST"),
-  Endpoint.new("/posts/1", "PUT"),
-  Endpoint.new("/posts/1", "PATCH"),
-  Endpoint.new("/posts/1", "DELETE"),
-  Endpoint.new("/posts/1/comments", "GET"),
-  Endpoint.new("/posts/1/comments/1", "GET"),
-  Endpoint.new("/posts/1/comments/1/likes", "GET"),
-  Endpoint.new("/posts/1/comments/1/likes/1", "GET"),
+  Endpoint.new("/posts/:id", "PUT"),
+  Endpoint.new("/posts/:id", "PATCH"),
+  Endpoint.new("/posts/:id", "DELETE"),
+  Endpoint.new("/posts/:post_id/comments", "GET"),
+  Endpoint.new("/posts/:post_id/comments/:id", "GET"),
+  Endpoint.new("/posts/:post_id/comments/:comment_id/likes", "GET"),
+  Endpoint.new("/posts/:post_id/comments/:comment_id/likes/:id", "GET"),
+
+  # A concern's member/collection verbs apply to the resource naming it,
+  # and `with_options only: [:index], concerns:` reaches `resources :tags`
+  # (so no `show`, though the controller defines one).
+  Endpoint.new("/trends/tags", "GET"),
+  Endpoint.new("/trends/tags/:id/approve", "POST", [
+    Param.new("id", "", "path"),
+  ]),
+  Endpoint.new("/trends/tags/batch", "POST"),
+  Endpoint.new("/trends/merged", "GET", [
+    Param.new("X-Merge-Token", "", "header"),
+  ]),
+
+  # `show`/`update` live only in the parent Preferences::BaseController.
+  Endpoint.new("/preferences/notifications", "GET"),
+  Endpoint.new("/preferences/notifications", "PUT", [
+    Param.new("locale", "", "form"),
+  ]),
+  Endpoint.new("/preferences/notifications", "PATCH", [
+    Param.new("locale", "", "form"),
+  ]),
 
   # hash-rocket and to: forms. #1359: `=> "ctrl#action"` / `to: "ctrl#action"`
   # resolves the controller and attaches the action's params.
@@ -166,13 +187,47 @@ expected_endpoints = [
     Param.new("X-Ping", "", "header"),
   ]),
 
-  # devise_for :users — sample of generated routes
+  # devise_for :users — sample of generated routes. No app/models/user.rb
+  # in this fixture, so every default Devise module's routes are kept (and
+  # opt-in :omniauthable is not).
   Endpoint.new("/users/sign_in", "GET"),
-  Endpoint.new("/users/sign_in", "POST"),
+  Endpoint.new("/users/sign_in", "POST", [
+    Param.new("email", "", "form"),
+    Param.new("password", "", "form"),
+  ]),
   Endpoint.new("/users/sign_out", "DELETE"),
   Endpoint.new("/users/sign_up", "GET"),
-  Endpoint.new("/users", "POST"),
+  Endpoint.new("/users/cancel", "GET"),
+  Endpoint.new("/users", "POST", [
+    Param.new("email", "", "form"),
+    Param.new("password", "", "form"),
+    Param.new("password_confirmation", "", "form"),
+  ]),
   Endpoint.new("/users/password/new", "GET"),
+  Endpoint.new("/users/confirmation", "POST", [
+    Param.new("email", "", "form"),
+  ]),
+  Endpoint.new("/users/unlock", "POST", [
+    Param.new("email", "", "form"),
+  ]),
+
+  # devise_for :admins, only: [:sessions] and
+  # devise_for :members, only: [:sessions, :registrations], skip: [:registrations]
+  Endpoint.new("/admins/sign_in", "GET"),
+  Endpoint.new("/admins/sign_in", "POST", [
+    Param.new("email", "", "form"),
+    Param.new("password", "", "form"),
+  ]),
+  Endpoint.new("/admins/sign_out", "DELETE"),
+  Endpoint.new("/members/sign_in", "GET"),
+  Endpoint.new("/members/sign_in", "POST", [
+    Param.new("email", "", "form"),
+    Param.new("password", "", "form"),
+  ]),
+  Endpoint.new("/members/sign_out", "DELETE"),
+
+  # devise_scope :user do get 'login', to: 'devise/sessions#new' end
+  Endpoint.new("/login", "GET"),
 
   # mount Sidekiq::Web, at: "/sidekiq"
   Endpoint.new("/sidekiq", "GET"),
@@ -194,7 +249,7 @@ expected_endpoints = [
 
 # Locking the total count ensures only:/except: filters drop the expected
 # endpoints (e.g. no POST /api/items, no DELETE /internal/statements, no
-# /scans/1) and devise_for emits its full route set.
+# /scans/:id) and devise_for emits its full route set.
 total_endpoints = 1 +  # root
                   2 +  # `#{base_c_route}` interpolation resolved to 2 routes
                   1 +  # `#{ENV.fetch(...)}` nested-quote interpolation placeholder
@@ -211,16 +266,41 @@ total_endpoints = 1 +  # root
                   2 +  # multiline resources options
                   5 +  # inline collection/member/new custom routes
                   6 +  # posts
-                  4 +  # posts/1/comments + nested likes from concern
+                  4 +  # posts/:post_id/comments + nested likes from concern
+                  3 +  # trends/tags index + concern member approve + collection batch
+                  1 +  # trends/merged -> tags#merged?
+                  3 +  # preferences/notifications show/update inherited from base
                   3 +  # /up + /ping + legacy string-via match
                   3 +  # optional-segment routes /feed + /report/rss + optional scope
                   2 +  # %w[browse annotate].each unrolled to /repo/:id/browse + /annotate
-                  20 + # devise_for :users
+                  21 + # devise_for :users (default table, model not in scan)
+                  3 +  # devise_for :admins, only: [:sessions]
+                  3 +  # devise_for :members, only: [:sessions, :registrations], skip: [:registrations]
+                  1 +  # devise_scope :user do get 'login', ... end
                   1 +  # mount sidekiq
                   1 +  # multiline parenthesized get
                   3    # draw :external at root and under two scopes
 
-FunctionalTester.new("fixtures/ruby/rails_advanced/", {
+tester = FunctionalTester.new("fixtures/ruby/rails_advanced/", {
   :techs     => 1,
   :endpoints => total_endpoints,
-}, expected_endpoints).perform_tests
+}, expected_endpoints)
+tester.perform_tests
+
+it "points an inherited action's handler at the parent's def", tags: "functional" do
+  update = tester.app.endpoints.find { |e| e.url == "/preferences/notifications" && e.method == "PATCH" }
+  update.should_not be_nil
+  handler = update.not_nil!.handler.not_nil!
+  handler.name.should eq("notifications#update")
+  handler.path.to_s.should end_with("app/controllers/preferences/base_controller.rb")
+  handler.line.should eq(4)
+end
+
+it "resolves a `?` action to its `def`", tags: "functional" do
+  merged = tester.app.endpoints.find { |e| e.url == "/trends/merged" && e.method == "GET" }
+  merged.should_not be_nil
+  handler = merged.not_nil!.handler.not_nil!
+  handler.name.should eq("tags#merged?")
+  handler.path.to_s.should end_with("app/controllers/trends/tags_controller.rb")
+  handler.line.should eq(15)
+end

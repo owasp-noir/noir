@@ -20,15 +20,15 @@ Route::middleware('auth:sanctum')->get('/user', function (Request $request) {
     return $request->user();
 });
 
-Route::get('/health', function () {
+Route::get(/* liveness */ '/health', function () {
     return response()->json(['status' => 'healthy']);
 });
 
-Route::apiResource('users', ApiUserController::class);
+Route::apiResource(/* users */ 'users', ApiUserController::class);
 Route::apiResource('posts', PostController::class);
 Route::apiResource('albums.songs', PostController::class)->only(['index', 'show']);
 
-Route::prefix('v1.0')->group(function () {
+Route::prefix(/* versioned */ 'v1.0')->group(function () {
     Route::apiResource('albums.songs', PostController::class)
         ->only(['show'])
         ->parameters(['albums' => 'record', 'songs' => 'track']);

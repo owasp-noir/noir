@@ -2,6 +2,8 @@ require "../../engines/scala_engine"
 
 module Analyzer::Scala
   class Akka < ScalaEngine
+    analyzer_for "scala_akka"
+
     HTTP_METHODS = %w[get post put delete patch head options]
 
     # Crystal recompiles an interpolated regex literal on every evaluation
@@ -24,15 +26,15 @@ module Analyzer::Scala
     PATH_DIRECTIVE_RE = /(?<![.\w])path[A-Za-z]*/
 
     def analyze_file(path : String) : Array(Endpoint)
-      content = File.read(path)
-      extract_routes_from_content(path, content, any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?))
+      content = read_file_content(path)
+      extract_routes_from_content(path, content, callees_needed?)
     end
 
     # Extract routes from Akka HTTP DSL
     private def extract_routes_from_content(path : String, content : String, include_callee : Bool) : Array(Endpoint)
       endpoints = [] of Endpoint
-      lines = content.split('\n')
       lexer = scala_lexer(content)
+      lines = scala_code_text(lexer).split('\n')
       code_lines = lexer.code_lines
       structural_lines = lexer.masked_lines
       prefix_stack = [] of String
@@ -62,7 +64,7 @@ module Analyzer::Scala
           route_path = akka_path_from_args(path_args, path_param_names(stripped_line))
 
           # Build full path with prefix
-          full_path = join_paths(prefix_stack, route_path)
+          full_path = pathmatcher_stack_join(prefix_stack, route_path)
 
           # Find HTTP methods in the following lines within the same block
           block = extract_block_from_index(lines, index)
@@ -77,7 +79,7 @@ module Analyzer::Scala
           HTTP_METHODS.each do |method|
             method_param_scopes = extract_method_param_scopes(route_scope, method)
             unless method_param_scopes.empty?
-              endpoint = create_endpoint(full_path, method.upcase, path)
+              endpoint = create_endpoint(full_path, method.upcase, path, method_line(structural_lines, index, block_end, method))
 
               extract_path_params(endpoint, full_path)
 
@@ -107,7 +109,7 @@ module Analyzer::Scala
           HTTP_METHODS.each do |method|
             method_param_scopes = extract_method_param_scopes(route_scope, method)
             unless method_param_scopes.empty?
-              endpoint = create_endpoint(full_path, method.upcase, path)
+              endpoint = create_endpoint(full_path, method.upcase, path, method_line(structural_lines, index, block_end, method))
               extract_path_params(endpoint, full_path)
               extract_params_from_block(endpoint, method_param_scopes.join("\n"))
               attach_method_callees(endpoint, lines, structural_lines, index, block_end, method, path) if include_callee
@@ -135,7 +137,7 @@ module Analyzer::Scala
               next if method_param_scopes.empty?
 
               route_ranges << {index, block_end}
-              endpoint = create_endpoint(full_path, method.upcase, path)
+              endpoint = create_endpoint(full_path, method.upcase, path, method_line(structural_lines, index, block_end, method))
               extract_path_params(endpoint, full_path)
               extract_params_from_block(endpoint, method_param_scopes.join("\n"))
               attach_method_callees(endpoint, lines, structural_lines, index, block_end, method, path) if include_callee
@@ -211,66 +213,72 @@ module Analyzer::Scala
 
     # Extract parameters from a code block
     private def extract_params_from_block(endpoint : Endpoint, block : String)
-      # Extract single parameter: parameter("name") { ... }
-      block.scan(/parameter\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |match|
-        endpoint.push_param(Param.new(match[1], "", "query"))
-      end
-
-      # Extract symbol parameters: parameter('name) { ... }
-      block.scan(/parameter\s*\(\s*'(\w+)/) do |match|
-        param_name = match[1]
-        unless endpoint.params.any? { |p| p.name == param_name && p.param_type == "query" }
-          endpoint.push_param(Param.new(param_name, "", "query"))
+      # Extract query parameters
+      if block.includes?("parameter") || block.includes?("Symbol")
+        # Extract single parameter: parameter("name") { ... }
+        block.scan(/parameter\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |match|
+          endpoint.push_param(Param.new(match[1], "", "query"))
         end
-      end
 
-      # Extract Symbol("name") parameters.
-      block.scan(/parameter\s*\(\s*Symbol\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |match|
-        param_name = match[1]
-        unless endpoint.params.any? { |p| p.name == param_name && p.param_type == "query" }
-          endpoint.push_param(Param.new(param_name, "", "query"))
-        end
-      end
-
-      # Extract multiple parameters: parameters("name", "age") or parameters("name", "age".optional)
-      if params_match = block.match(/parameters\s*\(([^)]+)\)/)
-        params_content = params_match[1]
-        params_content.scan(/['"](\w+)['"]/) do |match|
+        # Extract symbol parameters: parameter('name) { ... }
+        block.scan(/parameter\s*\(\s*'(\w+)/) do |match|
           param_name = match[1]
-          # Avoid duplicating parameters already added
-          unless endpoint.params.any? { |p| p.name == param_name && p.param_type == "query" }
+          endpoint.push_param(Param.new(param_name, "", "query"))
+        end
+
+        # Extract Symbol("name") parameters.
+        block.scan(/parameter\s*\(\s*Symbol\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |match|
+          param_name = match[1]
+          endpoint.push_param(Param.new(param_name, "", "query"))
+        end
+
+        # Extract multiple parameters: parameters("name", "age") or parameters("name", "age".optional)
+        if params_match = block.match(/parameters\s*\(([^)]+)\)/)
+          params_content = params_match[1]
+          params_content.scan(/['"](\w+)['"]/) do |match|
+            param_name = match[1]
+            # Avoid duplicating parameters already added
+            endpoint.push_param(Param.new(param_name, "", "query"))
+          end
+
+          params_content.scan(/'(\w+)/) do |match|
+            param_name = match[1]
+            endpoint.push_param(Param.new(param_name, "", "query"))
+          end
+
+          params_content.scan(/Symbol\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |match|
+            param_name = match[1]
             endpoint.push_param(Param.new(param_name, "", "query"))
           end
         end
+      end
 
-        params_content.scan(/'(\w+)/) do |match|
-          param_name = match[1]
-          unless endpoint.params.any? { |p| p.name == param_name && p.param_type == "query" }
-            endpoint.push_param(Param.new(param_name, "", "query"))
-          end
-        end
-
-        params_content.scan(/Symbol\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |match|
-          param_name = match[1]
-          unless endpoint.params.any? { |p| p.name == param_name && p.param_type == "query" }
-            endpoint.push_param(Param.new(param_name, "", "query"))
+      # Extract form fields: formField("name") / formFields("a", "b".as[Int]) { ... }
+      if block.includes?("formField")
+        block.scan(/formFields?\s*\(([^)]*)\)/) do |match|
+          match[1].scan(/"([^"]+)"|'(\w+)/) do |field|
+            endpoint.push_param(Param.new(field[1]? || field[2], "", "form"))
           end
         end
       end
 
       # Extract request body: entity(as[User]) { ... }
-      if entity_match = block.match(/entity\s*\(\s*as\[([^\]]+)\]/)
-        endpoint.push_param(Param.new("body", entity_match[1], "json"))
+      if block.includes?("entity")
+        if entity_match = block.match(/entity\s*\(\s*as\[([^\]]+)\]/)
+          endpoint.push_param(Param.new("body", entity_match[1], "json"))
+        end
       end
 
       # Extract headers: headerValueByName("Authorization") { ... }
-      block.scan(/headerValueByName\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |match|
-        endpoint.push_param(Param.new(match[1], "", "header"))
-      end
+      if block.includes?("headerValue") || block.includes?("HeaderValue")
+        block.scan(/headerValueByName\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |match|
+          endpoint.push_param(Param.new(match[1], "", "header"))
+        end
 
-      # Extract optional headers: optionalHeaderValueByName("X-API-Key") { ... }
-      block.scan(/optionalHeaderValueByName\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |match|
-        endpoint.push_param(Param.new(match[1], "", "header"))
+        # Extract optional headers: optionalHeaderValueByName("X-API-Key") { ... }
+        block.scan(/optionalHeaderValueByName\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |match|
+          endpoint.push_param(Param.new(match[1], "", "header"))
+        end
       end
     end
 
@@ -287,35 +295,42 @@ module Analyzer::Scala
       scopes = [] of String
       regex = METHOD_SCOPE_PATTERNS[method]? || /(?<![.\w])#{Regex.escape(method)}(?![\w])/
       search_from = 0
+      # Crystal's `String#[](i)` walks the string from byte 0 on every call
+      # once it holds any multi-byte UTF-8 char (no cached char->byte index),
+      # so the position-tracking scans below (which reindex `content` at
+      # arbitrary offsets, not sequentially) are O(n) per char -- O(n^2)
+      # overall on non-ASCII route blocks. Materialize once and index the
+      # array instead -- same char offsets, O(1) access.
+      chars = content.chars
 
       while match = content.match(regex, search_from)
         method_start = match.begin || search_from
         method_end = match.end || method_start
-        next_index = skip_whitespace(content, method_end)
+        next_index = skip_whitespace(chars, method_end)
 
-        if next_index < content.size
-          case content[next_index]
+        if next_index < chars.size
+          case chars[next_index]
           when '{'
-            if block = balanced_slice(content, next_index, '{', '}')
+            if block = balanced_slice(chars, next_index, '{', '}')
               scopes << block
             end
           when '('
-            if args = balanced_slice(content, next_index, '(', ')')
+            if args = balanced_slice(chars, next_index, '(', ')')
               scope = args
-              after_args = skip_whitespace(content, next_index + args.size)
-              if after_args < content.size && content[after_args] == '{'
-                if block = balanced_slice(content, after_args, '{', '}')
+              after_args = skip_whitespace(chars, next_index + args.size)
+              if after_args < chars.size && chars[after_args] == '{'
+                if block = balanced_slice(chars, after_args, '{', '}')
                   scope = "#{scope}\n#{block}"
                 end
               end
               scopes << scope
             end
           else
-            if chain_block = chained_directive_scope(content, method_start)
+            if chain_block = chained_directive_scope(chars, method_start)
               scopes << chain_block
             end
           end
-        elsif method_end == content.size
+        elsif method_end == chars.size
           scopes << method
         end
 
@@ -325,33 +340,29 @@ module Analyzer::Scala
       scopes
     end
 
-    private def chained_directive_scope(content : String, method_start : Int32) : String?
-      opening_brace = next_unquoted_char(content, '{', method_start)
+    private def chained_directive_scope(chars : Array(Char), method_start : Int32) : String?
+      opening_brace = next_unquoted_char(chars, '{', method_start)
       return unless opening_brace
 
-      header = content[method_start...opening_brace]
+      header = chars[method_start...opening_brace].join
       return unless header.includes?("&")
-      block = balanced_slice(content, opening_brace, '{', '}') || content[opening_brace..]
+      block = balanced_slice(chars, opening_brace, '{', '}') || chars[opening_brace..].join
 
       "#{header}\n#{block}"
     end
 
-    private def skip_whitespace(content : String, index : Int32) : Int32
-      i = index
-      while i < content.size && content[i].whitespace?
-        i += 1
-      end
-      i
+    private def skip_whitespace(chars : Array(Char), index : Int32) : Int32
+      chars.index(index) { |c| !c.whitespace? } || chars.size
     end
 
-    private def next_unquoted_char(content : String, needle : Char, start : Int32) : Int32?
+    private def next_unquoted_char(chars : Array(Char), needle : Char, start : Int32) : Int32?
       in_string = false
       quote = '\0'
       escape = false
       i = start
 
-      while i < content.size
-        char = content[i]
+      while i < chars.size
+        char = chars[i]
         if in_string
           if escape
             escape = false
@@ -376,8 +387,8 @@ module Analyzer::Scala
       nil
     end
 
-    private def balanced_slice(content : String, start : Int32, open_char : Char, close_char : Char) : String?
-      return unless start < content.size && content[start] == open_char
+    private def balanced_slice(chars : Array(Char), start : Int32, open_char : Char, close_char : Char) : String?
+      return unless start < chars.size && chars[start] == open_char
 
       depth = 0
       in_string = false
@@ -385,8 +396,8 @@ module Analyzer::Scala
       escape = false
       i = start
 
-      while i < content.size
-        char = content[i]
+      while i < chars.size
+        char = chars[i]
         if in_string
           if escape
             escape = false
@@ -404,7 +415,7 @@ module Analyzer::Scala
             depth += 1 if char == open_char
             if char == close_char
               depth -= 1
-              return content[start..i] if depth == 0
+              return chars[start..i].join if depth == 0
             end
           end
         end
@@ -452,7 +463,7 @@ module Analyzer::Scala
       line.matches?(PATH_DIRECTIVE_RE)
     end
 
-    private def join_paths(prefix_stack : Array(String), route_path : String) : String
+    private def pathmatcher_stack_join(prefix_stack : Array(String), route_path : String) : String
       parts = prefix_stack + [route_path]
       normalized = parts.join("").gsub(%r{/+}, "/")
       normalized = "/#{normalized}" unless normalized.starts_with?("/")
@@ -462,15 +473,23 @@ module Analyzer::Scala
     private def extract_path_params(endpoint : Endpoint, route_path : String)
       route_path.scan(/\{(\w+)\}/) do |match|
         param_name = match[1]
-        unless endpoint.params.any? { |p| p.name == param_name && p.param_type == "path" }
-          endpoint.push_param(Param.new(param_name, "", "path"))
-        end
+        endpoint.push_param(Param.new(param_name, "", "path"))
       end
     end
 
+    # 1-based line of the first `method` directive in the route block
+    # `[start, finish]`, or the route directive's own line.
+    private def method_line(structural_lines : Array(String), start : Int32, finish : Int32, method : String) : Int32
+      regex = METHOD_SCOPE_PATTERNS[method]
+      (start..finish).each do |i|
+        return i + 1 if (structural_lines[i]? || "").matches?(regex)
+      end
+      start + 1
+    end
+
     # Create an endpoint with the given path and method
-    private def create_endpoint(path : String, method : String, source : String)
-      details = Details.new(PathInfo.new(source, 0))
+    private def create_endpoint(path : String, method : String, source : String, line : Int32)
+      details = Details.new(PathInfo.new(source, line))
       params = [] of Param
 
       Endpoint.new(path, method, params, details)

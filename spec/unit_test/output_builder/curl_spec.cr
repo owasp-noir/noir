@@ -36,17 +36,17 @@ describe "OutputBuilderCurl" do
     lines = output.split("\n").reject(&.empty?)
 
     get_line = lines[0]
-    get_line.should eq("curl -i -X 'GET' '/test?id=1' --cookie 'session=abc123'")
+    get_line.should eq("curl -i -g -X 'GET' '/test?id=1' --cookie 'session=abc123'")
 
     post_line = lines[1]
-    post_line.should start_with("curl -i -X 'POST' '/api/users'")
+    post_line.should start_with("curl -i -g -X 'POST' '/api/users'")
     post_line.should contain("--data-raw '{\"username\":\"test\",\"email\":\"test@example.com\"}'")
     post_line.should contain("-H 'Content-Type: application/json'")
     post_line.should contain("-H 'x-api-key: key123'")
 
     put_line = lines[2]
-    put_line.should start_with("curl -i -X 'PUT' '/api/products'")
-    put_line.should contain("--data-raw 'name=Updated Product&price=99.99'")
+    put_line.should start_with("curl -i -g -X 'PUT' '/api/products'")
+    put_line.should contain("--data-raw 'name=Updated+Product&price=99.99'")
     put_line.should contain("-H 'Content-Type: application/x-www-form-urlencoded'")
   end
 
@@ -64,8 +64,165 @@ describe "OutputBuilderCurl" do
     builder.print([Endpoint.new("/wildcard", "ANY")])
     lines = builder.io.to_s.split("\n").reject(&.empty?)
 
-    lines.size.should eq(WILDCARD_HTTP_METHODS.size)
-    lines.map { |line| line.split("'")[1] }.should eq(WILDCARD_HTTP_METHODS)
-    lines.any?(&.includes?("'ANY'")).should be_false
+    expected = WILDCARD_HTTP_METHODS.map do |method|
+      method == "HEAD" ? "curl -I -g '/wildcard'" : "curl -i -g -X '#{method}' '/wildcard'"
+    end
+    lines.should eq(expected)
+  end
+
+  it "prints a QUERY endpoint with its body intact" do
+    options = {
+      "debug"   => YAML::Any.new(false),
+      "verbose" => YAML::Any.new(false),
+      "color"   => YAML::Any.new(false),
+      "nolog"   => YAML::Any.new(false),
+      "output"  => YAML::Any.new(""),
+    }
+    builder = OutputBuilderCurl.new(options)
+    builder.io = IO::Memory.new
+
+    endpoint = Endpoint.new("/products/search", "QUERY")
+    endpoint.push_param(Param.new("q", "widget", "form"))
+
+    builder.print([endpoint])
+    line = builder.io.to_s.split("\n").reject(&.empty?)[0]
+
+    line.should start_with("curl -i -g -X 'QUERY' '/products/search'")
+    line.should contain("--data-raw 'q=widget'")
+    line.should contain("-H 'Content-Type: application/x-www-form-urlencoded'")
+  end
+
+  it "escapes newlines and carriage returns so commands remain on a single line" do
+    options = {
+      "debug"   => YAML::Any.new(false),
+      "verbose" => YAML::Any.new(false),
+      "color"   => YAML::Any.new(false),
+      "nolog"   => YAML::Any.new(false),
+      "output"  => YAML::Any.new(""),
+    }
+    builder = OutputBuilderCurl.new(options)
+    builder.io = IO::Memory.new
+
+    endpoint = Endpoint.new("/base/quote\"path?q\"uote=", "GET")
+    endpoint.push_param(Param.new("X-New\nLine", "value\r\nwith\nbreaks", "header"))
+
+    builder.print([endpoint])
+    output = builder.io.to_s.strip
+    lines = output.split("\n")
+
+    lines.size.should eq(1)
+    output.should contain("-H 'X-New\\nLine: value\\r\\nwith\\nbreaks'")
+  end
+
+  it "emits multipart fields for file uploads" do
+    options = {
+      "debug"   => YAML::Any.new(false),
+      "verbose" => YAML::Any.new(false),
+      "color"   => YAML::Any.new(false),
+      "nolog"   => YAML::Any.new(false),
+      "output"  => YAML::Any.new(""),
+    }
+    builder = OutputBuilderCurl.new(options)
+    builder.io = IO::Memory.new
+
+    upload = Endpoint.new("/modern.php", "POST")
+    upload.push_param(Param.new("name", "", "form"))
+    upload.push_param(Param.new("avatar", "", "file"))
+    upload.push_param(Param.new("AUTHORIZATION", "", "header"))
+
+    builder.print([upload])
+    line = builder.io.to_s.split("\n").reject(&.empty?).first
+
+    line.should contain("--form-string 'name='")
+    line.should contain("-F 'avatar=@avatar'")
+    line.should contain("-H 'AUTHORIZATION;'")
+    line.should_not contain("--data-raw")
+    line.should_not contain("Content-Type: application/x-www-form-urlencoded")
+  end
+
+  # `-F 'name=<script>…'` makes curl read a file named `script>…`, and
+  # `-F 'name=@/etc/passwd'` uploads that file. Text fields must be sent
+  # verbatim.
+  it "sends multipart text fields verbatim, never as file references" do
+    options = {
+      "debug"   => YAML::Any.new(false),
+      "verbose" => YAML::Any.new(false),
+      "color"   => YAML::Any.new(false),
+      "nolog"   => YAML::Any.new(false),
+      "output"  => YAML::Any.new(""),
+    }
+    builder = OutputBuilderCurl.new(options)
+    builder.io = IO::Memory.new
+
+    upload = Endpoint.new("/upload.php", "POST")
+    upload.push_param(Param.new("name", "<script>alert(1)</script>", "form"))
+    upload.push_param(Param.new("path", "@/etc/passwd", "form"))
+    upload.push_param(Param.new("kind", "a;type=text/html", "form"))
+    upload.push_param(Param.new("avatar", "", "file"))
+
+    builder.print([upload])
+    line = builder.io.to_s.split("\n").reject(&.empty?).first
+
+    line.should contain("--form-string 'name=<script>alert(1)</script>'")
+    line.should contain("--form-string 'path=@/etc/passwd'")
+    line.should contain("--form-string 'kind=a;type=text/html'")
+    line.should_not contain("-F 'name=")
+    line.should_not contain("-F 'path=")
+    line.should_not contain("-F 'kind=")
+    line.should contain("-F 'avatar=@avatar'")
+  end
+
+  # `-I` refuses to combine with `--data-raw` or `-F`, so the HEAD an ANY
+  # route expands into goes out without the body.
+  it "prints HEAD as a bodiless -I request" do
+    options = {
+      "debug"   => YAML::Any.new(false),
+      "verbose" => YAML::Any.new(false),
+      "color"   => YAML::Any.new(false),
+      "nolog"   => YAML::Any.new(false),
+      "output"  => YAML::Any.new(""),
+    }
+    builder = OutputBuilderCurl.new(options)
+    builder.io = IO::Memory.new
+
+    form = Endpoint.new("/any", "HEAD")
+    form.push_param(Param.new("name", "x", "form"))
+    form.push_param(Param.new("sid", "abc", "cookie"))
+    upload = Endpoint.new("/upload", "HEAD")
+    upload.push_param(Param.new("avatar", "", "file"))
+
+    builder.print([form, upload])
+    lines = builder.io.to_s.split("\n").reject(&.empty?)
+
+    lines.should eq(["curl -I -g '/any' --cookie 'sid=abc'", "curl -I -g '/upload'"])
+  end
+
+  # A raw `q=red shoes & socks` is a URL curl rejects (space), a `#` turns
+  # the rest into a fragment, and `&` splits one value into two params.
+  # Encoded the way HTTP::Params encodes what Noir's own probe sends.
+  it "form-encodes query and form param names and values" do
+    options = {
+      "debug"   => YAML::Any.new(false),
+      "verbose" => YAML::Any.new(false),
+      "color"   => YAML::Any.new(false),
+      "nolog"   => YAML::Any.new(false),
+      "output"  => YAML::Any.new(""),
+    }
+    builder = OutputBuilderCurl.new(options)
+    builder.io = IO::Memory.new
+
+    search = Endpoint.new("/search", "GET")
+    search.push_param(Param.new("q", "red shoes & socks", "query"))
+    search.push_param(Param.new("sort", "price#asc", "query"))
+    search.push_param(Param.new("a b", "1", "query"))
+    comment = Endpoint.new("/comment", "POST")
+    comment.push_param(Param.new("body", "50% off & free", "form"))
+    comment.push_param(Param.new("title", "hi", "form"))
+
+    builder.print([search, comment])
+    lines = builder.io.to_s.split("\n").reject(&.empty?)
+
+    lines[0].should eq("curl -i -g -X 'GET' '/search?q=red+shoes+%26+socks&sort=price%23asc&a+b=1'")
+    lines[1].should contain("--data-raw 'body=50%25+off+%26+free&title=hi'")
   end
 end

@@ -15,6 +15,7 @@ Including another URLconf
 """
 from django.apps import apps
 from django.conf import settings
+from django.conf.urls.i18n import i18n_patterns
 from django.conf.urls.static import static
 from django.contrib.sitemaps.views import sitemap
 from django.urls import include
@@ -22,6 +23,7 @@ from django.urls import path
 from django.urls import re_path
 from haystack.views import search_view_factory
 
+from blog import views as blog_views
 from blog.views import EsSearchView
 from djangoblog.admin_site import admin_site
 from djangoblog.elasticsearch_backend import ElasticSearchModelSearchForm
@@ -40,11 +42,26 @@ sitemaps = {
 handler404 = 'blog.views.page_not_found_view'
 handler500 = 'blog.views.server_error_view'
 handle403 = 'blog.views.permission_denied_view'
+
+# The REST API is assembled in its own list and mounted through a single entry
+# whose prefix is a settings value rather than a literal — the shape NetBox's
+# root urlconf uses so the whole site can be served under a deployment
+# sub-path. Everything below hangs off that one `path()` call.
+api_patterns = [
+    path('api/core/', include('core.api.urls')),
+]
+
 urlpatterns = [
                   re_path(r'', include('blog.urls', namespace='blog')),
                   path('shop/', include(apps.get_app_config('fixture_shop').urls[0])),
+                  path(settings.BASE_PATH, include(api_patterns)),
                   # [REDACTED]
               ] + static(settings.STATIC_URL, document_root=settings.STATIC_ROOT)
+# Every route in here serves under a language-code segment (`/en/intl/`).
+urlpatterns += i18n_patterns(
+    path('intl/', blog_views.shop_daily_report, name='intl-report'),
+)
+
 if settings.DEBUG:
     urlpatterns += static(settings.MEDIA_URL,
                           document_root=settings.MEDIA_ROOT)

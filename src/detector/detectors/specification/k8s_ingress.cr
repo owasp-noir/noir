@@ -4,28 +4,21 @@ require "../../../models/code_locator"
 
 module Detector::Specification
   class K8sIngress < Detector
+    # Registers each ingress manifest path in `CodeLocator`.
+    detector_for "k8s_ingress", extensions: %w[.yaml .yml], idempotent: false
+
     INGRESS_API_VERSION_PREFIXES = ["networking.k8s.io/", "extensions/v1beta1"]
+
+    # Every `.yml`/`.yaml` in the tree reaches this gate.
+    INGRESS_API_VERSION_MARKER = Regex.union(INGRESS_API_VERSION_PREFIXES)
 
     def detect(filename : String, file_contents : String) : Bool
       return false unless applicable?(filename)
       return false unless ingress_markers_present?(file_contents)
       return false unless ingress_document_present?(file_contents)
 
-      CodeLocator.instance.push("k8s-ingress-spec", filename)
+      CodeLocator.instance.push(Noir::LocatorKeys::K8S_INGRESS_SPEC, filename)
       true
-    end
-
-    def applicable?(filename : String) : Bool
-      filename.ends_with?(".yaml") || filename.ends_with?(".yml")
-    end
-
-    def set_name
-      @name = "k8s_ingress"
-    end
-
-    # Registers each ingress manifest path in `CodeLocator`.
-    def idempotent? : Bool
-      false
     end
 
     private def ingress_document_present?(content : String) : Bool
@@ -43,7 +36,7 @@ module Detector::Specification
     end
 
     private def ingress_markers_present?(content : String) : Bool
-      return false unless INGRESS_API_VERSION_PREFIXES.any? { |prefix| content.includes?(prefix) }
+      return false unless content_matches?(content, INGRESS_API_VERSION_MARKER)
 
       has_api_version = false
       has_kind = false

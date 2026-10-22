@@ -20,10 +20,10 @@ describe "Detect Kamal deploy config" do
 
   it "detects a config/deploy.yml with service, image and proxy" do
     locator = CodeLocator.instance
-    locator.clear "kamal-spec"
+    locator.clear Noir::LocatorKeys::KAMAL_SPEC
 
     instance.detect("config/deploy.yml", deploy).should be_true
-    locator.all("kamal-spec").should eq ["config/deploy.yml"]
+    locator.all(Noir::LocatorKeys::KAMAL_SPEC).should eq ["config/deploy.yml"]
   end
 
   it "detects a config that only declares servers (no proxy)" do

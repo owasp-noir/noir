@@ -25,6 +25,10 @@ describe "Detect Java Play" do
     instance.detect("test.java", "import play.mvc.Result;").should be_true
   end
 
+  it "java file with the starter's wildcard play.mvc.* import" do
+    instance.detect("HomeController.java", "package controllers;\n\nimport play.mvc.*;\n").should be_true
+  end
+
   it "java file with play.libs.Json import" do
     instance.detect("test.java", "import play.libs.Json;").should be_true
   end

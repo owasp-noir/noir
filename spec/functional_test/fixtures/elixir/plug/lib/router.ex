@@ -93,6 +93,17 @@ defmodule ElixirPlug.Router do
     send_resp(conn, 200, "Simple match")
   end
 
+  # RFC 10008 HTTP QUERY method (elixir-plug/plug#1319)
+  query "/reports" do
+    filters = conn.body_params["filters"]
+    send_resp(conn, 200, "Report results")
+  end
+
+  # `via:` also accepts a single atom, not just a list
+  match "/webhook-query", via: :query do
+    send_resp(conn, 200, "Webhook query received")
+  end
+
   # Catch-all route
   match _ do
     send_resp(conn, 404, "Not found")

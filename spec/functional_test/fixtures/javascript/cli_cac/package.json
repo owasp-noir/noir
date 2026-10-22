@@ -1,0 +1,10 @@
+{
+  "name": "cacdemo",
+  "version": "1.0.0",
+  "bin": {
+    "cacdemo": "cli.js"
+  },
+  "dependencies": {
+    "cac": "^6.7.14"
+  }
+}

@@ -38,6 +38,7 @@ require "../../../models/endpoint"
 # Scope mapping errs toward false *negatives* (a too-narrow prefix tags
 # fewer endpoints) rather than false positives, in keeping with the
 # rest of Noir's tagging.
+@[Noir::TaggerFor(key: "rust_security", name: "Rust Security Tagger", desc: "Identifies Rust framework security protections (CORS, rate limiting, security headers, body-size limits)", order: 80)]
 class RustSecurityTagger < FrameworkTagger
   # A single detected protection: the tag to emit, its human description,
   # the URL prefix it guards, and whether it is a risk (risk variants win
@@ -112,7 +113,6 @@ class RustSecurityTagger < FrameworkTagger
 
   def initialize(options : Hash(String, YAML::Any))
     super
-    @name = "rust_security"
     @protections = [] of Protection
   end
 
@@ -123,7 +123,7 @@ class RustSecurityTagger < FrameworkTagger
     [
       "rust_axum", "rust_rocket", "rust_actix_web",
       "rust_loco", "rust_rwf", "rust_tide",
-      "rust_warp", "rust_gotham",
+      "rust_warp", "rust_gotham", "rust_ntex",
     ]
   end
 
@@ -140,8 +140,7 @@ class RustSecurityTagger < FrameworkTagger
     # output non-deterministic.
     @protections.sort_by! { |p| {p.risk ? 0 : 1, p.tag, p.description} }
 
-    endpoints.each { |endpoint| apply_protections(endpoint) }
-    endpoints
+    super
   end
 
   private def pre_scan_protections
@@ -167,10 +166,15 @@ class RustSecurityTagger < FrameworkTagger
 
   # Integration tests / benches / examples define throwaway apps whose
   # middleware must not leak onto real endpoints.
+  #
+  # Scan-base-relative, never absolute: a `tests/` directory above the
+  # scan base belongs to whatever the checkout sits in, and matching it
+  # skipped the whole middleware pre-scan.
   private def test_path?(path : String) : Bool
-    path.includes?("/tests/") ||
-      path.includes?("/benches/") ||
-      path.includes?("/examples/")
+    relative = base_relative_path(path)
+    relative.includes?("/tests/") ||
+      relative.includes?("/benches/") ||
+      relative.includes?("/examples/")
   end
 
   private def scan_rust_source(content : String)
@@ -367,7 +371,7 @@ class RustSecurityTagger < FrameworkTagger
     str.count(char)
   end
 
-  private def apply_protections(endpoint : Endpoint)
+  private def check_endpoint(endpoint : Endpoint)
     url = endpoint.url
     @protections.each do |protection|
       next unless url_under_prefix?(url, protection.prefix)

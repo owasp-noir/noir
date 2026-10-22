@@ -2,6 +2,8 @@ require "../../../models/detector"
 
 module Detector::Elixir
   class Phoenix < Detector
+    detector_for "elixir_phoenix", extensions: %w[.ex .exs], basenames: %w[mix.exs]
+
     # Phoenix routers rarely write `use Phoenix.Router` directly; the
     # generated convention is `use MyAppWeb, :router`, where the
     # `:router` clause of the app's `*_web.ex` macro injects
@@ -31,18 +33,10 @@ module Detector::Elixir
       # isn't in scope (e.g. `--include-path` runs over `lib/` only).
       if filename.ends_with?(".ex") || filename.ends_with?(".exs")
         return file_contents.includes?("Phoenix.Router") ||
-          file_contents.matches?(ROUTER_USE_REGEX)
+          content_matches?(file_contents, ROUTER_USE_REGEX)
       end
 
       false
-    end
-
-    def applicable?(filename : String) : Bool
-      filename.ends_with?(".ex") || filename.ends_with?(".exs") || File.basename(filename) == "mix.exs"
-    end
-
-    def set_name
-      @name = "elixir_phoenix"
     end
   end
 end

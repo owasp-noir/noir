@@ -2,14 +2,33 @@
 #
 # Supports:
 # - LLM::General (OpenAI-compatible chat APIs)
-# - LLM::Ollama (Ollama local API with optional KV context reuse)
+# - LLM::Anthropic (Anthropic Messages API, through GeneralAdapter)
+# - LLM::Ollama (Ollama native API)
+# - LLM::ACPClient (ACP agents; includes Adapter directly)
 
+require "uri"
 require "./general/client"
+require "./anthropic/client"
 require "./ollama/ollama"
 require "./acp/client"
 require "./native_tool_calling"
+require "./prompt"
 
 module LLM
+  # Ceiling on an Ollama-native budget the user did not set. The budget is
+  # sent as `num_ctx`, which Ollama allocates up front as KV cache: the
+  # 128k-256k table values need ~16 GiB or more for an 8B model, and a load
+  # failure loses the whole scan rather than degrading it.
+  OLLAMA_DEFAULT_MAX_TOKENS = 32_768
+
+  # The token budget a run sizes its prompts for — and, for Ollama, the
+  # context it asks the server to allocate. An explicit --ai-max-token wins.
+  def self.effective_max_tokens(provider : String, model : String, user_max : Int32) : Int32
+    return user_max if user_max > 0
+    budget = get_max_tokens(provider, model)
+    AdapterFactory.ollama_native?(provider) ? Math.min(budget, OLLAMA_DEFAULT_MAX_TOKENS) : budget
+  end
+
   # A normalized adapter interface for LLM clients.
   #
   # Implementations should return a String response (JSON text after any provider-specific cleanup).
@@ -33,20 +52,25 @@ module LLM
       request_messages(messages, "json")
     end
 
-    # Whether this adapter supports server-side KV context reuse across calls.
-    def supports_context? : Bool
-      false
+    # A single system + user request.
+    def request_with_context(system : String?, user : String, format : String = "json") : String
+      request_messages(Adapter.messages(system, user), format)
     end
 
-    # Context-aware request. Adapters that support provider-side context can reuse it using a cache_key.
-    # Default implementation falls back to request_messages without context reuse.
-    def request_with_context(system : String?, user : String, format : String = "json", cache_key : String? = nil) : String
+    # A bundle request: like `request_with_context`, but an adapter that can
+    # tell raises `LLM::ContextOverflow` instead of returning "", so the
+    # bundle can be re-split rather than lost.
+    def request_bundle(system : String, user : String, format : String) : String
+      request_with_context(system, user, format)
+    end
+
+    def self.messages(system : String?, user : String) : Messages
       msgs = [] of Hash(String, String)
       if system && !system.empty?
         msgs << {"role" => "system", "content" => system}
       end
       msgs << {"role" => "user", "content" => user}
-      request_messages(msgs, format)
+      msgs
     end
 
     # Optional cleanup hook for adapters that manage external resources.
@@ -71,6 +95,10 @@ module LLM
       client.request(prompt, format)
     end
 
+    def request_bundle(system : String, user : String, format : String) : String
+      client.request_messages(Adapter.messages(system, user), format, raise_overflow: true)
+    end
+
     def supports_native_tool_calling? : Bool
       @native_tool_calling_enabled
     end
@@ -80,7 +108,7 @@ module LLM
     end
   end
 
-  # Adapter for Ollama (LLM::Ollama) with optional context reuse.
+  # Adapter for Ollama (LLM::Ollama).
   class OllamaAdapter
     include Adapter
 
@@ -89,69 +117,44 @@ module LLM
     def initialize(@client : LLM::Ollama)
     end
 
-    def supports_context? : Bool
-      true
-    end
-
     def request_messages(messages : Messages, format : String = "json") : String
-      system_msg, user_payload = flatten_messages(messages)
-      client.request_with_context(system_msg, user_payload, format, nil)
+      system_msg, user_payload = self.class.flatten_messages(messages)
+      client.request_with_context(system_msg, user_payload, format)
     end
 
     def request(prompt : String, format : String = "json") : String
       client.request(prompt, format)
     end
 
-    def request_with_context(system : String?, user : String, format : String = "json", cache_key : String? = nil) : String
-      client.request_with_context(system, user, format, cache_key)
+    def request_with_context(system : String?, user : String, format : String = "json") : String
+      client.request_with_context(system, user, format)
     end
 
-    # Promoted to a class-level pure function so the flattening rule
-    # (system messages joined with \n\n, non-system/non-user roles
-    # dropped, nil system when no system messages were present) is
-    # unit-testable without standing up a real Ollama client.
+    # `/api/generate` takes one prompt, so a conversation is flattened:
+    # system messages are joined into the system slot (nil when absent);
+    # user and assistant turns stay in order, assistant ones labelled so
+    # the agent loop still sees the actions it already took. Other roles
+    # are dropped.
     def self.flatten_messages(messages : Messages) : {String?, String}
       systems = [] of String
-      users = [] of String
+      turns = [] of String
       messages.each do |m|
         role = m["role"]?
         content = m["content"]?
         next unless role && content
         case role
-        when "system" then systems << content
-        when "user"   then users << content
+        when "system"    then systems << content
+        when "user"      then turns << content
+        when "assistant" then turns << "ASSISTANT:\n#{content}"
         end
       end
       sys = systems.empty? ? nil : systems.join("\n\n")
-      usr = users.join("\n\n")
-      {sys, usr}
-    end
-
-    private def flatten_messages(messages : Messages) : {String?, String}
-      self.class.flatten_messages(messages)
+      {sys, turns.join("\n\n")}
     end
   end
 
-  # Adapter for ACP-based agents (codex, gemini, claude, etc.).
-  class ACPAdapter
+  class ACPClient
     include Adapter
-
-    getter client : LLM::ACPClient
-
-    def initialize(@client : LLM::ACPClient)
-    end
-
-    def request_messages(messages : Messages, format : String = "json") : String
-      client.request_messages(messages, format)
-    end
-
-    def request(prompt : String, format : String = "json") : String
-      client.request(prompt, format)
-    end
-
-    def close : Nil
-      client.close
-    end
   end
 
   # Factory for creating LLM adapters based on provider configuration.
@@ -161,23 +164,77 @@ module LLM
       active_allowlist.includes?(LLM::NativeToolCalling.canonical_provider(provider))
     end
 
+    # Ollama's native API (`POST /api/generate`) is a different protocol and a
+    # different body shape from the OpenAI-compatible `/v1/chat/completions`
+    # every other provider speaks, so this decision has to be precise.
+    #
+    # It used to be `provider.downcase.includes?("ollama")` tested against the
+    # *whole* provider string. A path segment is chosen by whoever runs the
+    # gateway, so an OpenAI-compatible endpoint mounted at
+    # `http://gw.example/ollama/v1` was handed the wrong API — and, because
+    # the same full string is used as the base URL, the request went to
+    # `http://gw.example/ollama/v1/api/generate`. The 404 came back as an
+    # empty result rather than an error.
+    #
+    # Only the exact alias and the *host* decide now. A host named `ollama`
+    # that is explicitly serving the compatibility path is still an
+    # OpenAI-compatible endpoint.
+    def self.ollama_native?(provider : String) : Bool
+      prov = provider.strip.downcase
+      return true if prov == "ollama"
+      return false unless prov.includes?("://")
+
+      uri = URI.parse(prov)
+      host = uri.host
+      return false if host.nil? || !host.includes?("ollama")
+
+      !uri.path.to_s.chomp("/").ends_with?("/chat/completions")
+    rescue URI::Error
+      false
+    end
+
+    # The `anthropic` preset, an Anthropic host, or any URL already naming
+    # the Messages endpoint. An Anthropic URL that names
+    # `/chat/completions` asked for the OpenAI-compatible layer and gets it.
+    def self.anthropic_native?(provider : String) : Bool
+      prov = provider.strip.downcase
+      return true if prov == "anthropic"
+      return false unless prov.includes?("://")
+
+      uri = URI.parse(prov)
+      path = uri.path.chomp("/")
+      path.ends_with?("/messages") || (uri.host.to_s.ends_with?("anthropic.com") && !path.ends_with?("/chat/completions"))
+    rescue URI::Error
+      false
+    end
+
+    # The native API lives at the server root. A URL ending in `/v1` names
+    # the OpenAI-compatible mount: appending `/api/generate` to it yields a
+    # 404, so it is dropped before `LLM::Ollama` builds the endpoint URL.
+    def self.ollama_base_url(provider : String) : String
+      prov = provider.strip
+      return "http://localhost:11434" unless prov.includes?("://")
+      prov.chomp("/").rchop("/v1").chomp("/")
+    end
+
     def self.for(
       provider : String,
       model : String,
       api_key : String? = nil,
       event_sink : Proc(String, Nil)? = nil,
       native_tool_calling_allowlist : Array(String)? = nil,
+      context_tokens : Int32? = nil,
     ) : Adapter
       prov = provider.downcase
       if LLM::ACPClient.acp_provider?(prov)
         acp_model = LLM::ACPClient.default_model(provider, model)
-        ACPAdapter.new(LLM::ACPClient.new(provider, acp_model, event_sink))
-      elsif prov.includes?("ollama")
-        url = provider.includes?("://") ? provider : "http://localhost:11434"
-        OllamaAdapter.new(LLM::Ollama.new(url, model))
+        LLM::ACPClient.new(provider, acp_model, event_sink)
+      elsif ollama_native?(prov)
+        OllamaAdapter.new(LLM::Ollama.new(ollama_base_url(provider), model, context_tokens, api_key))
       else
         native_tool_calling = native_tool_calling_enabled_for_provider?(provider, native_tool_calling_allowlist)
-        GeneralAdapter.new(LLM::General.new(provider, model, api_key), native_tool_calling)
+        client = anthropic_native?(prov) ? LLM::Anthropic.new(provider, model, api_key) : LLM::General.new(provider, model, api_key)
+        GeneralAdapter.new(client, native_tool_calling)
       end
     end
   end

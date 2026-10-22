@@ -1,0 +1,8 @@
+{
+    "name": "acme/test-namespace-symfony",
+    "type": "project",
+    "require": {
+        "php": ">=8.1",
+        "symfony/framework-bundle": "^6.4"
+    }
+}

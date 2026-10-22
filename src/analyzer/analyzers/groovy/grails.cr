@@ -29,6 +29,8 @@ module Analyzer::Groovy
   # ...]` dispatch maps and `${name}` GString path variables are recognized,
   # while bare-status-code (`"404"`, `"500"`) error mappings are excluded.
   class Grails < Analyzer
+    analyzer_for "groovy_grails"
+
     DEFAULT_METHODS = ["GET"]
     HTTP_METHODS    = %w[GET POST PUT DELETE PATCH HEAD OPTIONS]
 
@@ -72,10 +74,29 @@ module Analyzer::Groovy
       responseFormats namespace transactional
     ]
 
+    # One precompiled `Regex.union` scan (PCRE2 JIT) replaces the two OR-ed
+    # `String#includes?` scans `url_mappings_path?` used to run over every
+    # candidate path -- Crystal's `includes?` is not Boyer-Moore accelerated,
+    # so a single regex pass is cheaper than two substring scans. `union`
+    # auto-escapes each literal, so this is exactly equivalent to the
+    # OR-chain it replaces.
+    URL_MAPPINGS_DIR_RE = Regex.union("/grails-app/conf/", "/grails-app/controllers/")
+
+    # One precompiled `Regex.union` scan (PCRE2 JIT) replaces the four OR-ed
+    # `String#includes?` scans that used to gate every verbless paren-form
+    # mapping match in emit_mapping_endpoints (runs once per match, so a
+    # UrlMappings file with many entries repeats this often). `union`
+    # auto-escapes each literal, so this is exactly equivalent to the
+    # OR-chain it replaces.
+    BODY_ARGS_KEY_RE = Regex.union("controller:", "action:", "view:", "uri:")
+
+    # Opening of a closure-form mapping, `'/path' {`; the body is brace-matched
+    # from the `{` (see emit_mapping_endpoints).
+    CLOSURE_MAPPING_HEADER = /^[ \t]*(['"])([^'"]+)\1\s*\{/m
+
     def analyze
-      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
+      include_callee = callees_needed?
       all_files.each do |path|
-        next if File.directory?(path)
         next unless path.ends_with?(".groovy")
 
         content = read_file_content(path)
@@ -103,8 +124,7 @@ module Analyzer::Groovy
       # Grails versions: 1.x/2.x kept it under `grails-app/conf/`, while
       # Grails 3+ moved it to `grails-app/controllers/`. Accept both so modern
       # apps (the common case today) are not silently skipped.
-      return false unless path.includes?("/grails-app/conf/") ||
-                          path.includes?("/grails-app/controllers/")
+      return false unless path.matches?(URL_MAPPINGS_DIR_RE)
       File.basename(path).ends_with?("UrlMappings.groovy")
     end
 
@@ -153,11 +173,14 @@ module Analyzer::Groovy
           end
         end
 
+        # Counting newlines from the file head once per action was
+        # quadratic on a controller with thousands of them.
+        next if actions.empty?
+        starts = line_starts(content)
         actions.each do |action|
           methods = allowed_methods[action[:name]]? || DEFAULT_METHODS
-          line = line_for_offset(content, body_start + action[:offset])
-          line = line_for_offset(content, match_start) if line <= 0
-          callees = include_callee ? callees_for_action(path, content, body_start, action) : [] of Noir::GroovyCalleeExtractor::Entry
+          line = line_at(starts, body_start + action[:offset])
+          callees = include_callee ? callees_for_action(path, starts, body_start, action) : [] of Noir::GroovyCalleeExtractor::Entry
           methods.each do |verb|
             url = "/#{controller_name}/#{action[:name]}"
             details = Details.new(PathInfo.new(path, line))
@@ -170,11 +193,25 @@ module Analyzer::Groovy
     end
 
     private def callees_for_action(path : String,
-                                   content : String,
+                                   line_starts : Array(Int32),
                                    class_body_start : Int32,
                                    action : Action) : Array(Noir::GroovyCalleeExtractor::Entry)
-      start_line = line_for_offset(content, class_body_start + action[:body_start])
+      start_line = line_at(line_starts, class_body_start + action[:body_start])
       Noir::GroovyCalleeExtractor.callees_for_body(action[:body], path, start_line)
+    end
+
+    # Char offset where each line of `content` starts; `line_at` turns a
+    # char offset into its 1-based line (what `line_number_for_index`
+    # answers) by binary search instead of a scan from the head.
+    private def line_starts(content : String) : Array(Int32)
+      starts = [0]
+      content.each_char_with_index { |char, i| starts << i + 1 if char == '\n' }
+      starts
+    end
+
+    private def line_at(line_starts : Array(Int32), index : Int32) : Int32
+      return 1 if index <= 0
+      line_starts.bsearch_index { |start| start > index } || line_starts.size
     end
 
     private def extends_restful_controller?(clause : String) : Bool
@@ -191,7 +228,7 @@ module Analyzer::Groovy
                                       allowed_methods : Hash(String, Array(String)),
                                       class_offset : Int32)
       methods = allowed_methods[action_name]? || [default_method]
-      line = line_for_offset(content, class_offset)
+      line = line_number_for_index(content, class_offset)
       methods.each do |verb|
         url = "/#{controller}/#{action_name}"
         @result << Endpoint.new(url, verb, [] of Param,
@@ -227,15 +264,46 @@ module Analyzer::Groovy
 
     alias Action = NamedTuple(name: String, offset: Int32, body: String, body_start: Int32)
 
+    # `\G`: anchored at the byte offset passed to `match_at_byte_index`.
+    # Matched with NO_UTF_CHECK, or PCRE2 revalidates the whole body per
+    # call; the body is built char by char, so it is valid UTF-8.
+    DEF_ACTION_RE       = /\G(public\s+|protected\s+|private\s+)?def\s+([a-z_][A-Za-z0-9_]*)\s*(?:\(|=\s*(?=\{))/
+    TYPED_ACTION_RE     = /\G((?:(?:public|protected|private|static|final|synchronized)\s+)*)([A-Z][A-Za-z0-9_]*(?:\s*<[^<>]+>)?(?:\s*\[\s*\])?)\s+([a-z_][A-Za-z0-9_]*)\s*\([^)]*\)\s*(?:throws\s+[A-Za-z0-9_,\s.]+)?\s*\{/
+    PRIMITIVE_ACTION_RE = /\G((?:(?:public|protected|private|static|final|synchronized)\s+)*)(void|int|long|boolean|byte|short|float|double|char)\s+([a-z_][A-Za-z0-9_]*)\s*\([^)]*\)\s*(?:throws\s+[A-Za-z0-9_,\s.]+)?\s*\{/
+
+    # Byte offset of each char of `chars` (plus the end), for matching a
+    # regex in place at a char position of a non-ASCII string.
+    private def char_byte_offsets(chars : Array(Char)) : Array(Int32)
+      offsets = Array(Int32).new(chars.size + 1)
+      offset = 0
+      chars.each do |char|
+        offsets << offset
+        offset += char.bytesize
+      end
+      offsets << offset
+    end
+
     private def extract_actions(body : String) : Array(Action)
       actions = [] of Action
       depth = 0
       i = 0
+      # `String#[](Int)` walks from byte 0 on every call once `body` holds any
+      # multi-byte UTF-8 char (no cached char->byte index), so indexing it on
+      # every position of this brace-depth scan was O(n) per access -- O(n^2)
+      # overall on a non-ASCII controller body. Materialize once and index
+      # the array instead; char offsets (and thus `action[:offset]`) are
+      # unchanged.
+      chars = body.chars
+      # The action regexes are `\G`-anchored and matched in place at the
+      # current position. Slicing `body[i..]` for every depth-0 char copied
+      # the rest of the body each time: quadratic on a long top-level
+      # line such as a 4000-entry `allowedMethods` map.
+      byte_offsets = body.bytesize == chars.size ? nil : char_byte_offsets(chars)
 
-      while i < body.size
-        c = body[i]
+      while i < chars.size
+        c = chars[i]
 
-        if literal_end = Noir::GroovyLiteralScanner.skip_literal(body, i)
+        if literal_end = Noir::GroovyLiteralScanner.skip_literal(chars, i)
           i = literal_end
           next
         end
@@ -254,24 +322,24 @@ module Analyzer::Groovy
         end
 
         if depth == 0
-          rest = body[i..]
+          byte_i = byte_offsets ? byte_offsets[i] : i
           # Method form: `def name(...)`
           # Closure form: `def name = { ... }` — explicitly require the
           # closure brace via lookahead so plain field assignments like
           # `def cache = [:]` or `def bookService = new BookService()`
           # are not mistaken for actions.
-          m = rest.match(/\A(public\s+|protected\s+|private\s+)?def\s+([a-z_][A-Za-z0-9_]*)\s*(?:\(|=\s*(?=\{))/)
+          m = DEF_ACTION_RE.match_at_byte_index(body, byte_i, Noir::TextFile::MATCH_OPTIONS)
           if m
             modifier = m[1]?
             name = m[2]
+            match_size = m[0].size
             unless nonpublic_modifier?(modifier) || SKIP_ACTION_NAMES.includes?(name) || accessor_name?(name)
-              if action_body = extract_braced_block(body, i + (m.end(0) || 0))
+              if action_body = extract_braced_block(body, i + match_size, chars)
                 action_body_text, action_body_start = action_body
                 actions << {name: name, offset: i, body: action_body_text, body_start: action_body_start}
               end
             end
-            match_end = m.end(0)
-            i = match_end ? i + match_end : i + 1
+            i += match_size
             next
           end
 
@@ -279,37 +347,21 @@ module Analyzer::Groovy
           # Grails 3+ allows actions with explicit return types. We
           # require the trailing `{` to avoid matching field declarations
           # like `String name = "x"` or method calls.
-          m2 = rest.match(/\A((?:(?:public|protected|private|static|final|synchronized)\s+)*)([A-Z][A-Za-z0-9_]*(?:\s*<[^<>]+>)?(?:\s*\[\s*\])?)\s+([a-z_][A-Za-z0-9_]*)\s*\([^)]*\)\s*(?:throws\s+[A-Za-z0-9_,\s.]+)?\s*\{/)
-          if m2
-            name = m2[3]
-            unless nonpublic_modifier?(m2[1]?) || SKIP_ACTION_NAMES.includes?(name) || accessor_name?(name)
-              open_brace = i + (m2.end(0) || 1) - 1
-              if action_body = extract_braced_block(body, open_brace)
-                action_body_text, action_body_start = action_body
-                actions << {name: name, offset: i, body: action_body_text, body_start: action_body_start}
-              end
-            end
-            match_end = m2.end(0)
-            i = match_end ? i + match_end : i + 1
-            next
-          end
-
           # Void / primitive-return method form: `void name(...) { ... }`,
           # `int count(...) { ... }`. Distinct from the uppercase-return
-          # pattern above to avoid colliding with field declarations and
-          # `def` actions.
-          m3 = rest.match(/\A((?:(?:public|protected|private|static|final|synchronized)\s+)*)(void|int|long|boolean|byte|short|float|double|char)\s+([a-z_][A-Za-z0-9_]*)\s*\([^)]*\)\s*(?:throws\s+[A-Za-z0-9_,\s.]+)?\s*\{/)
-          if m3
-            name = m3[3]
-            unless nonpublic_modifier?(m3[1]?) || SKIP_ACTION_NAMES.includes?(name) || accessor_name?(name)
-              open_brace = i + (m3.end(0) || 1) - 1
-              if action_body = extract_braced_block(body, open_brace)
+          # pattern to avoid colliding with field declarations and `def`
+          # actions.
+          if m2 = TYPED_ACTION_RE.match_at_byte_index(body, byte_i, Noir::TextFile::MATCH_OPTIONS) ||
+                  PRIMITIVE_ACTION_RE.match_at_byte_index(body, byte_i, Noir::TextFile::MATCH_OPTIONS)
+            name = m2[3]
+            match_size = m2[0].size
+            unless nonpublic_modifier?(m2[1]?) || SKIP_ACTION_NAMES.includes?(name) || accessor_name?(name)
+              if action_body = extract_braced_block(body, i + match_size - 1, chars)
                 action_body_text, action_body_start = action_body
                 actions << {name: name, offset: i, body: action_body_text, body_start: action_body_start}
               end
             end
-            match_end = m3.end(0)
-            i = match_end ? i + match_end : i + 1
+            i += match_size
             next
           end
         end
@@ -339,8 +391,11 @@ module Analyzer::Groovy
 
       depth = 1
       i = header_end
-      while i < body.size && depth > 0
-        c = body[i]
+      # Same non-ASCII O(n) `String#[]` concern as elsewhere in this file:
+      # materialize once and index the array instead of re-indexing `body`.
+      chars = body.chars
+      while i < chars.size && depth > 0
+        c = chars[i]
         case c
         when '['
           depth += 1
@@ -425,7 +480,12 @@ module Analyzer::Groovy
       remaining.scan(pattern) do |match|
         verb = match[1].upcase
         url_pattern = prefix + match[3]
-        line = line_for_offset(content, base_offset + (match.begin(0) || 0))
+        # Every form below takes its line from the opening quote of the URL
+        # literal, which is the one token guaranteed to sit on the mapping's
+        # own line. `match.begin(0)` does not: the optional `name <id>:` prefix
+        # is separated by `\s*`, so `name reports:` on the line above pulls the
+        # reported line up with it.
+        line = line_number_for_index(content, base_offset + (match.begin(2) || 0))
         @result << Endpoint.new(translate_pattern(url_pattern), verb,
           extract_path_params(url_pattern),
           Details.new(PathInfo.new(path, line)))
@@ -435,7 +495,11 @@ module Analyzer::Groovy
       # method: 'POST')`, the `(resources: 'name')` / `(resource: 'name')`
       # REST shortcut, and `'/path'(uri: '/some/where')` redirect-style
       # mappings.
-      simple_pattern = /(?:^|\n)\s*(?:name\s+[A-Za-z_][A-Za-z0-9_]*\s*:\s*)?(['"])([^'"]+)\1\s*\(([^)]*?)\)/m
+      # `^` is already line-anchored (`/m`), so the `(?:^|\n)\s*` this
+      # replaces only added a consumed leading newline — which made
+      # `match.begin(0)` the END of the previous line, with greedy `\s*` then
+      # swallowing every blank and comment-blanked line after it.
+      simple_pattern = /^[ \t]*(?:name\s+[A-Za-z_][A-Za-z0-9_]*\s*:\s*)?(['"])([^'"]+)\1\s*\(([^)]*?)\)/m
       remaining.scan(simple_pattern) do |match|
         # Response-code mappings (`"404"(...)`, `"500"(...)`) reuse the same
         # paren-form syntax but the "path" is an HTTP status code, not a URL.
@@ -444,7 +508,7 @@ module Analyzer::Groovy
 
         url_pattern = prefix + match[2]
         body_args = match[3]
-        line = line_for_offset(content, base_offset + (match.begin(0) || 0))
+        line = line_number_for_index(content, base_offset + (match.begin(1) || 0))
 
         if body_args.match(/\bresources:\s*['"]/)
           RESOURCES_ENDPOINTS.each do |ep|
@@ -467,8 +531,7 @@ module Analyzer::Groovy
           next
         end
 
-        next unless body_args.includes?("controller:") || body_args.includes?("action:") ||
-                    body_args.includes?("view:") || body_args.includes?("uri:")
+        next unless body_args.matches?(BODY_ARGS_KEY_RE)
 
         # A trailing closure block may declare per-verb action dispatch via
         # `action = [GET: "show", PUT: "apiUpdate"]`. When present, surface one
@@ -490,17 +553,25 @@ module Analyzer::Groovy
       end
 
       # Closure-form mapping: `'/path' { controller = 'foo'; method = 'POST' }`.
-      closure_pattern = /(?:^|\n)\s*(['"])([^'"]+)\1\s*\{([^}]*)\}/m
-      remaining.scan(closure_pattern) do |match|
+      # The body is brace-matched, not cut at the first `}`: `controller =
+      # { "x" }` nests a closure, and the `action = [POST: "save"]` verb map
+      # that follows it must still be read.
+      remaining_chars : Array(Char)? = nil
+      remaining.scan(CLOSURE_MAPPING_HEADER) do |match|
         next if status_code_mapping?(match[2])
         url_pattern = prefix + match[2]
-        body_block = match[3]
+        chars = (remaining_chars ||= remaining.chars)
+        braced = extract_braced_block(remaining, match.end(0) - 1, chars)
+        next unless braced
+        body_block = braced[0]
         next unless body_block.match(/\b(controller|action|method|view)\s*=/)
-        line = line_for_offset(content, base_offset + (match.begin(0) || 0))
-        verb = extract_method_assignment(body_block) || "GET"
-        @result << Endpoint.new(translate_pattern(url_pattern), verb,
-          extract_path_params(url_pattern),
-          Details.new(PathInfo.new(path, line)))
+        line = line_number_for_index(content, base_offset + (match.begin(1) || 0))
+        verbs = action_map_verbs(body_block) || [extract_method_assignment(body_block) || "GET"]
+        verbs.each do |verb|
+          @result << Endpoint.new(translate_pattern(url_pattern), verb,
+            extract_path_params(url_pattern),
+            Details.new(PathInfo.new(path, line)))
+        end
       end
     end
 
@@ -535,16 +606,19 @@ module Analyzer::Groovy
     end
 
     private def find_matching_brace(text : String, open_idx : Int32) : Int32?
-      return unless open_idx < text.size && text[open_idx] == '{'
+      # Same non-ASCII O(n) `String#[]` concern as elsewhere in this file:
+      # materialize once and index the array instead of re-indexing `text`.
+      chars = text.chars
+      return unless open_idx < chars.size && chars[open_idx] == '{'
       depth = 1
       i = open_idx + 1
-      while i < text.size && depth > 0
-        if literal_end = Noir::GroovyLiteralScanner.skip_literal(text, i)
+      while i < chars.size && depth > 0
+        if literal_end = Noir::GroovyLiteralScanner.skip_literal(chars, i)
           i = literal_end
           next
         end
 
-        c = text[i]
+        c = chars[i]
         case c
         when '{'
           depth += 1
@@ -595,7 +669,12 @@ module Analyzer::Groovy
       close = find_matching_brace(text, brace_pos)
       return unless close
 
-      block = text[(brace_pos + 1)...close]
+      action_map_verbs(text[(brace_pos + 1)...close])
+    end
+
+    # The HTTP verbs of an `action = [GET: "show", PUT: "apiUpdate"]` map in a
+    # mapping's closure body, or nil when there is no map (or no verb key).
+    private def action_map_verbs(block : String) : Array(String)?
       map_match = block.match(/\baction\s*=\s*\[([^\]]*)\]/)
       return unless map_match
 
@@ -629,24 +708,28 @@ module Analyzer::Groovy
       pattern.gsub(/\(\.\$\{?[A-Za-z_][A-Za-z0-9_]*\}?\)\??/, "")
     end
 
-    private def extract_braced_block(text : String, start : Int32) : Tuple(String, Int32)?
+    # `chars` is `text.chars`; a caller extracting many blocks from one
+    # text passes it in rather than re-materializing it per block.
+    private def extract_braced_block(text : String, start : Int32, chars : Array(Char) = text.chars) : Tuple(String, Int32)?
+      # Same non-ASCII O(n) `String#[]` concern as elsewhere in this file:
+      # index the char array instead of re-indexing `text`.
       i = start
-      while i < text.size && text[i] != '{'
+      while i < chars.size && chars[i] != '{'
         i += 1
       end
-      return if i >= text.size
+      return if i >= chars.size
 
       body_start = i + 1
       depth = 1
       i += 1
 
-      while i < text.size && depth > 0
-        if literal_end = Noir::GroovyLiteralScanner.skip_literal(text, i)
+      while i < chars.size && depth > 0
+        if literal_end = Noir::GroovyLiteralScanner.skip_literal(chars, i)
           i = literal_end
           next
         end
 
-        c = text[i]
+        c = chars[i]
         case c
         when '{'
           depth += 1
@@ -660,46 +743,58 @@ module Analyzer::Groovy
       end
 
       return if depth != 0
-      {text[body_start...i], body_start}
+      # Joined from `chars`: slicing a non-ASCII `text` by char index
+      # rescans it from the head, once per action.
+      {chars[body_start...i].join, body_start}
     end
 
     private def strip_groovy_comments(text : String) : String
       result = String::Builder.new
+      # This walks the *entire* file once per analyzed controller/mappings
+      # file. `String#[](Int)` walks from byte 0 on every call once `text`
+      # holds any multi-byte UTF-8 char (no cached char->byte index), so
+      # per-char indexing here was O(n) per access -- O(n^2) overall on a
+      # non-ASCII source file. Materialize once and index the array instead
+      # (including inside `append_source_range`, which copies a literal's
+      # span and would otherwise be its own O(n^2) hot spot on a large
+      # string literal).
+      chars = text.chars
+      size = chars.size
       i = 0
 
-      while i < text.size
-        c = text[i]
+      while i < size
+        c = chars[i]
 
-        if literal_end = Noir::GroovyLiteralScanner.skip_literal(text, i)
-          append_source_range(result, text, i, literal_end)
+        if literal_end = Noir::GroovyLiteralScanner.skip_literal(chars, i)
+          append_source_range(result, chars, i, literal_end)
           i = literal_end
           next
         end
 
-        if i + 1 < text.size && c == '/' && text[i + 1] == '/'
+        if i + 1 < size && c == '/' && chars[i + 1] == '/'
           result << ' '
           result << ' '
           i += 2
-          while i < text.size && text[i] != '\n'
+          while i < size && chars[i] != '\n'
             result << ' '
             i += 1
           end
-          if i < text.size
-            result << text[i]
+          if i < size
+            result << chars[i]
             i += 1
           end
           next
         end
 
-        if i + 1 < text.size && c == '/' && text[i + 1] == '*'
+        if i + 1 < size && c == '/' && chars[i + 1] == '*'
           result << ' '
           result << ' '
           i += 2
-          while i + 1 < text.size && !(text[i] == '*' && text[i + 1] == '/')
-            result << (text[i] == '\n' ? '\n' : ' ')
+          while i + 1 < size && !(chars[i] == '*' && chars[i + 1] == '/')
+            result << (chars[i] == '\n' ? '\n' : ' ')
             i += 1
           end
-          if i + 1 < text.size
+          if i + 1 < size
             result << ' '
             result << ' '
             i += 2
@@ -714,24 +809,12 @@ module Analyzer::Groovy
       result.to_s
     end
 
-    private def append_source_range(result : String::Builder, text : String, start : Int32, finish : Int32)
+    private def append_source_range(result : String::Builder, chars : Array(Char), start : Int32, finish : Int32)
       index = start
-      while index < finish && index < text.size
-        result << text[index]
+      while index < finish && index < chars.size
+        result << chars[index]
         index += 1
       end
-    end
-
-    private def line_for_offset(content : String, offset : Int32) : Int32
-      return 1 if offset <= 0
-      limit = offset > content.size ? content.size : offset
-      count = 1
-      i = 0
-      while i < limit
-        count += 1 if content[i] == '\n'
-        i += 1
-      end
-      count
     end
   end
 end

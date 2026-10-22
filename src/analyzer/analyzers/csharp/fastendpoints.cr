@@ -3,9 +3,15 @@ require "./common"
 
 module Analyzer::CSharp
   class FastEndpoints < Analyzer
+    analyzer_for "cs_fastendpoints"
+
     include Common
 
     alias RequestTypeKey = Tuple(String, String)
+
+    # One `class Request { … }` declaration: where it was found and the
+    # request properties it contributes.
+    private record RequestTypeDef, file : String, params : Array(Param)
 
     # `Endpoint<TRequest>`, `Endpoint<TRequest, TResponse>`,
     # `EndpointWithoutRequest`, `EndpointWithoutRequest<TResponse>`,
@@ -14,52 +20,149 @@ module Analyzer::CSharp
     # base is a candidate.
     BASE_TYPE_REGEX = /:\s*(?:[A-Za-z_][A-Za-z0-9_]*\s*,\s*)*(Endpoint(?:WithoutRequest)?(?:<[^>]*>)?|Ep<[^>]*>)/
 
-    VERB_CALL_REGEX       = /\b(Get|Post|Put|Patch|Delete|Options|Head)\s*\(\s*"([^"]+)"/m
+    # Whole-file gate. One JIT-compiled union beats the two `String#includes?`
+    # scans it replaces, and it also refuses files that merely mention the word
+    # "Endpoint" without declaring a FastEndpoints class.
+    ENDPOINT_SOURCE_RE = /\bFastEndpoints\b|:\s*(?:[A-Za-z_][\w.]*\s*,\s*)*(?:Endpoint(?:WithoutRequest)?\b|Ep\s*<)/
+
+    # `Post("/a", "/b")` registers every literal, not just the first.
+    VERB_CALL_REGEX       = /\b(Get|Post|Put|Patch|Delete|Options|Head)\s*\(\s*("[^)]*)\)/m
+    GROUP_CALL_REGEX      = /\bGroup\s*<\s*(?:[\w.]+\.)?(\w+)\s*>\s*\(\s*\)/
+    PREFIX_OVERRIDE_REGEX = /\bRoutePrefixOverride\s*\(\s*@?"([^"]*)"/
+    # `app.UseFastEndpoints(c => c.Endpoints.RoutePrefix = "api")`.
+    ROUTE_PREFIX_REGEX = /\.\s*Endpoints\s*\.\s*RoutePrefix\s*=\s*@?"([^"]*)"/
+    # `sealed class Admin : Group { public Admin() { Configure("admin", ...); } }`
+    # and the nested `class Sub : SubGroup<Admin>`.
+    GROUP_CLASS_REGEX     = /\bclass\s+(\w+)\s*:\s*(?:Group\b|SubGroup\s*<\s*(?:[\w.]+\.)?(\w+)\s*>)/
+    GROUP_PREFIX_REGEX    = /\bConfigure\s*\(\s*@?"([^"]*)"/
     VERBS_CALL_REGEX      = /\bVerbs\s*\(\s*([^)]*)\)/m
     ROUTES_CALL_REGEX     = /\bRoutes\s*\(\s*([^)]*)\)/m
     HTTP_VERB_TOKEN_REGEX = /(?:Http\.)?(GET|POST|PUT|PATCH|DELETE|OPTIONS|HEAD)/
 
     def analyze
-      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
+      include_callee = callees_needed?
 
-      cs_files = get_files_by_extension(".cs").reject { |f| Common.csharp_test_path?(f) }
-      request_types = build_request_type_index(cs_files)
-
+      cs_files = get_files_by_extension(".cs").reject { |f| Common.csharp_test_path?(base_relative_path(f)) }
+      # One pass picks the FastEndpoints sources and, from the same content,
+      # the request-DTO names their `Endpoint<TRequest>` bases refer to. Only
+      # those DTOs are worth indexing: the old code extracted the property
+      # list of *every* type declaration in the scan — ~28k of them in
+      # dotnet/aspnetcore, none of which FastEndpoints ever looks up.
+      endpoint_files = [] of String
+      wanted = Set(String).new
       cs_files.each do |file|
         next unless File.exists?(file)
-
         content = read_file_content(file)
-        next unless content.includes?("Endpoint") || content.includes?("FastEndpoints")
+        # Same literal prerequisite the old gate had, kept as a cheap
+        # short-circuit ahead of the structural union.
+        next unless content.includes?("Endpoint")
+        next unless content_matches?(content, ENDPOINT_SOURCE_RE)
 
-        analyze_file(file, content, include_callee, request_types)
+        endpoint_files << file
+        collect_request_types(content, wanted)
+      end
+      return @result if endpoint_files.empty?
+
+      request_types = build_request_type_index(cs_files, wanted)
+      route_prefixes, groups = collect_route_prefixes(cs_files)
+
+      endpoint_files.each do |file|
+        analyze_file(file, read_file_content(file), include_callee, request_types, route_prefixes, groups)
       end
 
       @result
     end
 
-    private def build_request_type_index(files : Array(String)) : Hash(RequestTypeKey, Array(Param))
-      index = Hash(RequestTypeKey, Array(Param)).new
+    # The global `RoutePrefix` per scan base, and each endpoint group's own
+    # `Configure("prefix")` with its `SubGroup<T>` parent.
+    private def collect_route_prefixes(files : Array(String)) : Tuple(Hash(String, String), Hash(String, Tuple(String, String?)))
+      route_prefixes = Hash(String, String).new
+      groups = Hash(String, Tuple(String, String?)).new
+      files.each do |file|
+        next unless File.exists?(file)
+        content = read_file_content(file)
+        next unless content.includes?("RoutePrefix") || content.includes?("Group")
+        code = Noir::CSharpLexer.new(content).code_source
+        if match = ROUTE_PREFIX_REGEX.match(code)
+          route_prefixes[configured_base_for(file)] ||= match[1]
+        end
+        code.scan(GROUP_CLASS_REGEX) do |group|
+          prefix = GROUP_PREFIX_REGEX.match(code, group.end).try(&.[1]) || ""
+          groups[group[1]] = {prefix, group[2]?}
+        end
+      end
+      {route_prefixes, groups}
+    end
+
+    private def group_prefix(name : String, groups : Hash(String, Tuple(String, String?)), depth = 0) : String
+      group = groups[name]?
+      return "" unless group && depth < 8
+      prefix, parent = group
+      return prefix unless parent
+      [group_prefix(parent, groups, depth + 1), prefix].reject(&.empty?).join('/')
+    end
+
+    # Request-DTO names referenced by an `Endpoint<TRequest[, TResponse]>` base
+    # in this source.
+    private def collect_request_types(content : String, wanted : Set(String))
+      content.each_line do |line|
+        next unless class_declaration_with_endpoint_base?(line)
+        base_match = BASE_TYPE_REGEX.match(line)
+        next unless base_match
+        base = base_match[1]
+        next if base.starts_with?("EndpointWithoutRequest")
+        if type_name = extract_request_type(base)
+          wanted << type_name
+        end
+      end
+    end
+
+    # Indexes every request-DTO candidate by `{base, type name}` — but keeps
+    # the *declarations* apart instead of unioning their properties.
+    #
+    # FastEndpoints' idiomatic vertical-slice layout gives every feature
+    # folder its own `Request`/`Response` pair, so a repo-wide union of
+    # everything named `Request` is catastrophic: FastEndpoints' own test
+    # harness holds 55 distinct `class Request`, and each of its endpoints was
+    # emitted with the ~110-property union of all of them. `resolve_request_params`
+    # picks one declaration per lookup instead.
+    private def build_request_type_index(files : Array(String), wanted : Set(String)) : Hash(RequestTypeKey, Array(RequestTypeDef))
+      index = Hash(RequestTypeKey, Array(RequestTypeDef)).new
+      return index if wanted.empty?
+
+      wanted_re = Regex.union(wanted.to_a.map { |name| /\b#{Regex.escape(name)}\b/ })
       type_decl_regex = /(?:class|record(?:\s+struct)?|struct)\s+([A-Za-z_][A-Za-z0-9_]*)\b/
       files.each do |file|
         next unless File.exists?(file)
         content = read_file_content(file)
+        next unless content_matches?(content, wanted_re)
         base_path = configured_base_for(file)
-        lines = content.lines
+        # Comment-blanked: `[FromHeader("X")] // note` is still an attribute line.
+        lines = Noir::CSharpLexer.new(content).code_lines
         i = 0
         while i < lines.size
           line = lines[i]
           if match = type_decl_regex.match(line)
             type_name = match[1]
             block, end_index = extract_request_type_block(lines, i)
-            params = extract_props_from_block(block)
-            if !params.empty?
+            # Property extraction is the expensive half; only the DTOs an
+            # `Endpoint<TRequest>` actually names are worth it. The block is
+            # still measured for every type so the traversal — and therefore
+            # which declarations are seen at all — does not depend on `wanted`.
+            params = wanted.includes?(type_name) ? extract_props_from_block(block) : [] of Param
+            unless params.empty?
               key = {base_path, type_name}
-              existing = index[key]? || [] of Param
-              merged = existing.dup
-              params.each do |p|
-                merged << p unless merged.any? { |e| e.name == p.name }
+              defs = index[key] ||= [] of RequestTypeDef
+              # A type declared twice in one file (partial class, or the same
+              # name in two namespaces of one file) is still one declaration
+              # site; union those.
+              if existing_idx = defs.index { |d| d.file == file }
+                merged = defs[existing_idx].params.dup
+                params.each { |p| merged << p unless merged.any? { |e| e.name == p.name } }
+                defs[existing_idx] = RequestTypeDef.new(file, merged)
+              else
+                defs << RequestTypeDef.new(file, params)
               end
-              index[key] = merged
             end
             i = end_index
           end
@@ -69,8 +172,36 @@ module Analyzer::CSharp
       index
     end
 
-    private def analyze_file(file : String, content : String, include_callee : Bool, request_types : Hash(RequestTypeKey, Array(Param)))
+    # Resolves `Endpoint<TRequest>` to one declaration of `TRequest`, nearest
+    # first: the endpoint's own file, then its directory (the vertical-slice
+    # feature folder), then a repo-unique declaration. When several unrelated
+    # declarations share the name and none is nearby, the type is ambiguous —
+    # emitting nothing beats emitting every candidate's properties at once.
+    private def resolve_request_params(index : Hash(RequestTypeKey, Array(RequestTypeDef)),
+                                       base_path : String,
+                                       type_name : String?,
+                                       file : String) : Array(Param)
+      return [] of Param unless type_name
+      defs = index[{base_path, type_name}]?
+      return [] of Param if defs.nil? || defs.empty?
+
+      if same_file = defs.find { |d| d.file == file }
+        return same_file.params
+      end
+
+      dir = File.dirname(file)
+      same_dir = defs.select { |d| File.dirname(d.file) == dir }
+      return same_dir.first.params if same_dir.size == 1
+
+      return defs.first.params if defs.size == 1
+
+      [] of Param
+    end
+
+    private def analyze_file(file : String, content : String, include_callee : Bool, request_types : Hash(RequestTypeKey, Array(RequestTypeDef)),
+                             route_prefixes : Hash(String, String), groups : Hash(String, Tuple(String, String?)))
       base_path = configured_base_for(file)
+      global_prefix = route_prefixes[base_path]? || ""
       lines = content.lines
       i = 0
       while i < lines.size
@@ -87,8 +218,13 @@ module Analyzer::CSharp
             if configure_block
               routes, methods = parse_configure(configure_block)
               if !routes.empty? && !methods.empty?
-                request_params = request_type ? (request_types[{base_path, request_type}]? || [] of Param) : [] of Param
-                routes.each do |route|
+                request_params = resolve_request_params(request_types, base_path, request_type, file)
+                code_block = strip_csharp_comments(configure_block)
+                prefix = PREFIX_OVERRIDE_REGEX.match(code_block).try(&.[1]) || global_prefix
+                group = GROUP_CALL_REGEX.match(code_block).try { |m| group_prefix(m[1], groups) } || ""
+                routes.each do |raw_route|
+                  # FastEndpoints builds `{RoutePrefix}/{group prefix}/{route}`.
+                  route = [prefix, group, raw_route].map(&.strip('/')).reject(&.empty?).join('/')
                   methods.each do |http_method|
                     endpoint = build_endpoint(route, http_method, file, i + 1, request_params)
                     next if endpoint.nil?
@@ -184,11 +320,11 @@ module Analyzer::CSharp
 
       # Verb-style: Get("/users/{id}")
       configure_block.scan(VERB_CALL_REGEX) do |match|
-        verb = match[1]?.to_s.upcase
-        path = match[2]?.to_s
-        next if verb.empty? || path.empty?
-        methods << verb
-        routes << path
+        verb = match[1].upcase
+        match[2].scan(/"([^"]+)"/) do |literal|
+          methods << verb
+          routes << literal[1]
+        end
       end
 
       # Routes("/a", "/b") additional/alternative paths
@@ -259,8 +395,7 @@ module Analyzer::CSharp
       route.scan(/\{([^}\/]+)\}/) do |match|
         raw = match[1]? || ""
         next if raw.empty?
-        cleaned = raw.split(":").first.gsub(/\?$/, "")
-        cleaned = cleaned.lstrip("*")
+        cleaned = Common.route_placeholder_name(raw)
         next if cleaned.empty?
         params << Param.new(cleaned, "", "path") unless params.any? { |p| p.name == cleaned }
       end
@@ -288,7 +423,12 @@ module Analyzer::CSharp
         io << '\n'
         brace += line.count('{') - line.count('}')
         paren += line.count('(') - line.count(')')
-        started ||= brace > 0
+        # A body that opens *and* closes on the declaration line
+        # (`public partial class AdminLogin : JsonSerializerContext { }`) leaves
+        # `brace` at 0, so `brace > 0` alone never marked the block as started
+        # and the scan ran on until some *later* type's closing brace — merging
+        # that type's properties into this one and skipping its declaration.
+        started ||= brace > 0 || line.includes?("{")
         # Record / positional record - end on `);` outside any brace.
         if !started && line.includes?(";") && paren <= 0 && line.includes?(")")
           break
@@ -300,6 +440,10 @@ module Analyzer::CSharp
       end
       {io.to_s, i}
     end
+
+    LEADING_ATTRIBUTES_RE = /\A(?:\[[^\]]*\]\s*)+/
+    # The first string argument of the attribute the text starts at.
+    ATTRIBUTE_NAME_ARG_RE = /\A\[\w+\s*\(\s*@?"([^"]+)"/
 
     private def extract_props_from_block(block : String) : Array(Param)
       params = [] of Param
@@ -314,7 +458,7 @@ module Analyzer::CSharp
         # not a request-side binding, so skip rather than mis-tag as
         # `header`.
         "FromClaim"         => "service",
-        "BindFrom"          => nil,
+        "BindFrom"          => "",
         "QueryParam"        => "query",
         "RouteParam"        => "path",
         "FromKeyedServices" => "service",
@@ -322,33 +466,40 @@ module Analyzer::CSharp
       }
       lines = block.lines
       pending_type : String? = nil
+      pending_name : String? = nil
       pending_skip = false
 
       lines.each do |raw_line|
         line = raw_line.strip
         next if line.empty?
         next if line.starts_with?("//")
-        if line.starts_with?("[") && line.ends_with?("]")
+        # Attributes may sit on their own line or lead the property's.
+        if attrs = line.match(LEADING_ATTRIBUTES_RE)
+          attr_text = attrs[0]
           from_attr_map.each do |attr, ptype|
-            if line.includes?("[#{attr}")
-              if ptype.nil?
-                pending_skip = true
-              elsif ptype == "service"
-                pending_skip = true
-              else
-                pending_type = ptype
+            next unless attr_text.includes?("[#{attr}")
+            if ptype == "service"
+              pending_skip = true
+            else
+              pending_type = ptype unless ptype.empty?
+              # `[BindFrom("last_name")]` / `[FromHeader("X-Tenant")]` bind
+              # the property under that name.
+              if name = ATTRIBUTE_NAME_ARG_RE.match(attr_text[(attr_text.index("[#{attr}") || 0)..]).try(&.[1])
+                pending_name = name
               end
             end
           end
-          next
+          line = attr_text.size < line.size ? line[attr_text.size..].strip : ""
+          next if line.empty?
         end
 
-        if match = line.match(/public\s+(?:required\s+|virtual\s+|override\s+|static\s+)*[\w\?<>\[\],\s\.]+?\s+(\w+)\s*\{\s*get;/)
+        if match = line.match(Common::AUTO_PROPERTY_RE)
           name = match[1]
           unless pending_skip
-            params << Param.new(name, "", pending_type || "")
+            params << Param.new(pending_name || name, "", pending_type || "")
           end
           pending_type = nil
+          pending_name = nil
           pending_skip = false
           next
         end

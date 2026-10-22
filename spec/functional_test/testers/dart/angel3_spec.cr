@@ -38,11 +38,11 @@ tester = FunctionalTester.new("fixtures/dart/angel3/", {
 })
 tester.perform_tests
 
-it "composes nested Angel3 group() prefixes" do
+it "composes nested Angel3 group() prefixes", tags: "functional" do
   endpoint = tester.app.endpoints.find { |found| found.url == "/api/v2/widgets" && found.method == "POST" }
   endpoint.should_not be_nil
 end
 
-it "does not treat a package:http client get() as a route" do
+it "does not treat a package:http client get() as a route", tags: "functional" do
   tester.app.endpoints.any?(&.url.includes?("example.com")).should be_false
 end

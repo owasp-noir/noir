@@ -63,6 +63,14 @@
       <wsdl:input message="tns:GetUserRequestMessage"/>
       <wsdl:output message="tns:GetUserResponseMessage"/>
     </wsdl:operation>
+    <wsdl:operation name="ListUsers">
+      <wsdl:input message="tns:GetUserRequestMessage"/>
+      <wsdl:output message="tns:GetUserResponseMessage"/>
+    </wsdl:operation>
+    <wsdl:operation name="FindUser">
+      <wsdl:input message="tns:GetUserRequestMessage"/>
+      <wsdl:output message="tns:GetUserResponseMessage"/>
+    </wsdl:operation>
     <wsdl:operation name="CreateUser">
       <wsdl:input message="tns:CreateUserRequestMessage"/>
       <wsdl:output message="tns:CreateUserResponseMessage"/>
@@ -73,6 +81,16 @@
     <soap:binding transport="http://schemas.xmlsoap.org/soap/http" style="document"/>
     <wsdl:operation name="GetUser">
       <soap:operation soapAction="http://example.com/userservice/GetUser"/>
+      <wsdl:input><soap:body use="literal"/></wsdl:input>
+      <wsdl:output><soap:body use="literal"/></wsdl:output>
+    </wsdl:operation>
+    <wsdl:operation name="ListUsers">
+      <soap:operation soapAction="http://example.com/userservice/ListUsers"/>
+      <wsdl:input><soap:body use="literal"/></wsdl:input>
+      <wsdl:output><soap:body use="literal"/></wsdl:output>
+    </wsdl:operation>
+    <wsdl:operation name="FindUser">
+      <soap:operation soapAction="http://example.com/userservice/FindUser"/>
       <wsdl:input><soap:body use="literal"/></wsdl:input>
       <wsdl:output><soap:body use="literal"/></wsdl:output>
     </wsdl:operation>

@@ -1,0 +1,1 @@
+{"name":"api","type":"module","main":"src/app.js","dependencies":{"fastify":"^4.28.0","@fastify/autoload":"^5.10.0"}}

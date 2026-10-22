@@ -41,14 +41,13 @@ describe "Tagger line-bounds safety" do
     ] of Param, details)
   }
 
-  NoirTaggers::HasFrameworkTaggers.each do |key, info|
-    runner = info[:runner]
-    tech = runner.target_techs.first? || "unknown"
-    it "#{key} does not crash on edge/out-of-range line numbers" do
+  NoirTaggers::FRAMEWORK_ENTRIES.each do |entry|
+    tech = NoirTaggers.target_techs(entry.key).first? || "unknown"
+    it "#{entry.key} does not crash on edge/out-of-range line numbers" do
       file_paths.each do |fp|
         line_values.each do |lv|
           endpoint = build_endpoint.call(fp, lv, tech)
-          tagger = runner.new(options)
+          tagger = NoirTaggers.build(entry.key, options).not_nil!
           # Must not raise regardless of how stale the line ref is.
           tagger.perform([endpoint])
         end
@@ -56,13 +55,12 @@ describe "Tagger line-bounds safety" do
     end
   end
 
-  NoirTaggers::HasTaggers.each do |key, info|
-    runner = info[:runner]
-    it "#{key} does not crash on edge/out-of-range line numbers" do
+  NoirTaggers::PLAIN_ENTRIES.each do |entry|
+    it "#{entry.key} does not crash on edge/out-of-range line numbers" do
       file_paths.each do |fp|
         line_values.each do |lv|
           endpoint = build_endpoint.call(fp, lv, nil)
-          tagger = runner.new(options)
+          tagger = NoirTaggers.build(entry.key, options).not_nil!
           tagger.perform([endpoint])
         end
       end

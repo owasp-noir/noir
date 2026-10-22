@@ -1,0 +1,1 @@
+{"name":"svc","private":true,"scripts":{"dev":"nitropack dev"},"devDependencies":{"nitropack":"^2.9.0"}}

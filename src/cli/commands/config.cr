@@ -1,6 +1,7 @@
 require "colorize"
 require "process"
 require "../common"
+require "../catalog"
 require "../../config_initializer"
 require "../../utils/home"
 
@@ -8,30 +9,116 @@ require "../../utils/home"
 #
 # Managed resource: the user-level YAML configuration file.
 module Noir::CLI::ConfigCommand
-  ACTIONS = %w[show edit init path]
+  ACTIONS = Noir::CLI::Catalog::CONFIG_ACTIONS
 
-  def self.run(argv : Array(String))
+  # Parsed argv. Extracted from `run` (mirroring `CacheCommand.parse_argv`)
+  # so the parsing rules stay unit-testable — `run` keeps the `exit`/`die`
+  # side effects. `error` is recorded rather than raised so `run` can turn
+  # it into a clean `Noir::CLI.die` line.
+  record Parsed,
+    action : String?,
+    override_path : String?,
+    help : Bool,
+    error : String?
+
+  def self.parse_argv(argv : Array(String)) : Parsed
     action = nil
-    argv.each do |a|
+    override_path = nil
+    help = false
+    error = nil
+    rest = [] of String
+
+    i = 0
+    while i < argv.size
+      a = argv[i]
       case a
       when "-h", "--help"
-        print_help
-        exit
+        help = true
+      when "--no-color", "--no-spinner"
+        # Global flags — the router consumes both before dispatching here.
+        # Accepted (not rejected as unknown) so a direct `run` call and a
+        # future router change both behave.
+      when "--config-file"
+        # Honor the global --config-file flag inside the subcommand so
+        # `noir config show --config-file X` reads X, not the default path.
+        #
+        # A missing value used to fall through as `nil` and silently
+        # resolve the DEFAULT path — so `noir config show --config-file`
+        # printed a different file than the one the user asked to inspect,
+        # and `edit` would have created it. Every other --config-file
+        # consumer errors here; so does this one now.
+        value = argv[i + 1]?
+        if value.nil? || value.empty? || value.starts_with?("-")
+          error ||= "--config-file requires an argument."
+        else
+          override_path = value
+          i += 1
+        end
+      when .starts_with?("--config-file=")
+        value = a.split("=", 2)[1]
+        if value.empty?
+          error ||= "--config-file requires an argument."
+        else
+          override_path = value
+        end
       else
-        action ||= a
+        if a.starts_with?("-")
+          # An unknown flag used to be taken as a positional and then
+          # dropped, so `noir config show --bogus` ran `show` and exited 0.
+          error ||= "Unknown option: #{a}. Run `noir config --help`."
+        elsif action.nil?
+          action = a
+        else
+          rest << a
+        end
       end
+      i += 1
     end
 
+    # Surplus positionals were dropped too: `noir config path init` quietly
+    # ran only `path`. Surface them instead of guessing which was meant —
+    # `cache` and `rules` already do.
+    if error.nil? && !rest.empty?
+      plural = rest.size > 1 ? "s" : ""
+      error = "Unexpected argument#{plural}: #{rest.join(", ")}. `noir config` takes a single action."
+    end
+
+    Parsed.new(action: action, override_path: override_path, help: help, error: error)
+  end
+
+  def self.run(argv : Array(String))
+    parsed = parse_argv(argv)
+
+    if parsed.help
+      print_help
+      exit
+    end
+
+    if err = parsed.error
+      Noir::CLI.die(err)
+    end
+
+    action = parsed.action
     if action.nil?
       print_help
       exit
     end
 
+    override_path = parsed.override_path
+
     case action
-    when "show" then show
-    when "edit" then edit
-    when "init" then init
-    when "path" then puts config_path
+    when "show" then show(override_path)
+    when "edit" then edit(override_path)
+    when "init"
+      # `init` only ever creates the DEFAULT config file — it has no
+      # override_path parameter (auto-scaffolding at a user-supplied
+      # path would mask a typo). Passing --config-file here is a no-op,
+      # so say so instead of silently ignoring it.
+      if override_path && !override_path.empty?
+        STDERR.puts "NOTE: `noir config init` always creates the default config file; --config-file #{override_path} is ignored.".colorize(:yellow)
+      end
+      init
+    when "path" then puts config_path(override_path)
     else
       Noir::CLI.die("Unknown config action: #{action}. Valid: #{ACTIONS.join(", ")}.")
     end
@@ -51,6 +138,11 @@ module Noir::CLI::ConfigCommand
         #{cyan.call("init")}                   Create the default config file (idempotent)
         #{cyan.call("path")}                   Print the resolved config file path
 
+      #{green.call("OPTIONS:")}
+        #{cyan.call("--config-file PATH")}     Operate on PATH instead of the default config file.
+                               Applies to show, edit, and path; init always
+                               creates the default file and ignores this flag.
+
       The config directory is controlled by NOIR_HOME (defaults to
       $HOME/.config/noir on Unix and %APPDATA%\\noir on Windows).
 
@@ -60,12 +152,27 @@ module Noir::CLI::ConfigCommand
       HELP
   end
 
-  def self.show
-    path = config_path
-    unless File.exists?(path)
+  def self.show(override_path : String? = nil)
+    path = config_path(override_path)
+
+    if override_path && !override_path.empty?
+      # A custom --config-file is validated the way the scan path does:
+      # a missing file or a directory is a user error. Crucially, don't
+      # print the `noir config init` hint here — init only ever creates
+      # the DEFAULT config, so following that advice can't fix a custom
+      # path. Reading a directory would also crash `File.read` with a
+      # raw backtrace, so reject it explicitly.
+      Noir::CLI.die("Config file does not exist: #{path}") unless File.exists?(path)
+    elsif !File.exists?(path)
       Noir::CLI.die("Config file does not exist: #{path}\nRun `noir config init` to create it.")
     end
-    content = File.read(path)
+    die_if_directory(path, override_path)
+
+    content = begin
+      File.read(path)
+    rescue ex : IO::Error
+      Noir::CLI.die("Cannot read config file #{path}: #{ex.os_error.try(&.message) || ex.message}")
+    end
     puts content
     warn_about_legacy_keys(content)
   end
@@ -90,6 +197,8 @@ module Noir::CLI::ConfigCommand
   # present in it as `{old_key => v1_key}`. Pulled out so the
   # detection rule can be exercised without going through STDERR.
   def self.detect_legacy_keys(content : String) : Hash(String, String)
+    # Regexes skip PCRE2's UTF check, so invalid bytes would raise.
+    content = content.scrub unless content.valid_encoding?
     ConfigInitializer::LEGACY_CONFIG_KEY_MAP.select do |old_key, _|
       content =~ /^\s*#{Regex.escape(old_key)}\s*:/m
     end
@@ -98,6 +207,7 @@ module Noir::CLI::ConfigCommand
   def self.init
     config_init = ConfigInitializer.new
     path = config_path
+    die_if_directory(path)
     if File.exists?(path)
       puts "Config file already exists at: #{path}"
       return
@@ -111,35 +221,93 @@ module Noir::CLI::ConfigCommand
     end
   end
 
-  def self.edit
+  def self.edit(override_path : String? = nil)
+    path = config_path(override_path)
+
+    # A directory at the config path would otherwise be handed straight to
+    # the editor (or crash on the create path). Reject it up front,
+    # matching `show` and the scan-path validator.
+    die_if_directory(path, override_path)
+
+    # `edit` launches an interactive terminal editor. In a non-interactive
+    # context (CI, piped stdin, background job) that editor would block
+    # forever waiting for input that never arrives, hanging the pipeline.
+    # Fail fast with a useful pointer instead.
+    unless STDIN.tty?
+      Noir::CLI.die("`noir config edit` needs an interactive terminal. Edit #{path} directly, or use `noir config show`.")
+    end
+
     # Ensure the file exists before launching the editor so users always
-    # land on something well-formed rather than a brand-new empty buffer.
-    unless File.exists?(config_path)
+    # land on something well-formed rather than a brand-new empty buffer. Only
+    # the default path is auto-created (via ConfigInitializer); a custom
+    # --config-file that doesn't exist is an error, not a place to scaffold.
+    unless File.exists?(path)
+      if override_path && !override_path.empty?
+        Noir::CLI.die("Config file does not exist: #{path}")
+      end
       ConfigInitializer.new.setup
-      if File.exists?(config_path)
-        STDERR.puts "Created default config at #{config_path}"
+      if File.exists?(path)
+        STDERR.puts "Created default config at #{path}"
       else
-        Noir::CLI.die("Failed to create config file at #{config_path}.")
+        Noir::CLI.die("Failed to create config file at #{path}.")
       end
     end
 
-    editor = pick_editor
-    command = "#{editor} #{Process.quote(config_path)}"
+    if error = launch_editor(pick_editor, path)
+      Noir::CLI.die(error)
+    end
+  end
+
+  # Runs `editor` on `path`; returns nil on success or the one-line error to
+  # die with. Split out of `edit` (which needs a TTY) so specs can reach it.
+  #
+  # The editor string is split into argv WITHOUT a shell so a poisoned
+  # $EDITOR/$VISUAL can't inject commands: `EDITOR="rm -rf /; vi"` used to
+  # run under `shell: true` and execute `rm -rf /`. Parsing to argv means
+  # metacharacters (`;`, `|`, `$()`) are passed literally, never evaluated,
+  # while still supporting editors carrying flags (e.g. `code --wait`).
+  def self.launch_editor(editor : String, path : String) : String?
+    editor_argv = Process.parse_arguments(editor)
+    return "No editor configured. Set $VISUAL or $EDITOR (or install vi)." if editor_argv.empty?
+    command = editor_argv.first
+    unless Process.find_executable(command)
+      return "Editor '#{command}' could not be started: command not found. Set $VISUAL or $EDITOR."
+    end
+
     status = Process.run(
       command,
-      shell: true,
+      args: editor_argv[1..] + [path],
       input: Process::Redirect::Inherit,
       output: Process::Redirect::Inherit,
       error: Process::Redirect::Inherit,
     )
-
-    unless status.success?
-      Noir::CLI.die("Editor '#{editor}' exited with status #{status.exit_code}.")
-    end
+    "Editor '#{editor}' exited with status #{status.exit_code? || status}." unless status.success?
+  rescue ex : ArgumentError
+    "Cannot parse editor command '#{editor}': #{ex.message}"
+  rescue ex : IO::Error
+    # Found on PATH but not runnable, e.g. a script whose interpreter is gone.
+    "Editor '#{editor}' could not be started: #{ex.os_error.try(&.message) || ex.message}"
   end
 
-  def self.config_path : String
-    File.expand_path(File.join(get_home, "config.yaml"))
+  # `File.exists?` is true for a directory, so without this `show` crashed
+  # in `File.read` and `init` claimed the file already existed.
+  private def self.die_if_directory(path : String, override_path : String? = nil)
+    return unless File.directory?(path)
+    if override_path && !override_path.empty?
+      Noir::CLI.die("--config-file is not a file: #{path}")
+    end
+    Noir::CLI.die("Config path is a directory, not a file: #{path}")
+  end
+
+  # `home: true` for the same reason `Noir::Home.path` uses it: a leading
+  # `~` only gets expanded by an interactive shell, and `--config-file`
+  # values routinely arrive from places that never do — the `=` form
+  # (`--config-file=~/x.yaml`) is not tilde-expanded by most shells, and
+  # Docker/systemd/CI wrappers don't expand at all. Without it the path
+  # resolved to a literal `~` directory under the cwd.
+  def self.config_path(override : String? = nil) : String
+    return File.expand_path(override, home: true) if override && !override.empty?
+    File.expand_path(File.join(Noir::Home.path, "config.yaml"))
   end
 
   # Resolution order: $VISUAL, $EDITOR, then a platform default.

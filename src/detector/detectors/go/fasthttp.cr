@@ -2,22 +2,12 @@ require "../../../models/detector"
 
 module Detector::Go
   class Fasthttp < Detector
+    detector_for "go_fasthttp", extensions: %w[.go], path_segments: %w[go.mod]
+
     def detect(filename : String, file_contents : String) : Bool
-      if (filename.includes? "go.mod") &&
-         (file_contents.includes? "github.com/valyala/fasthttp") &&
-         !file_contents.includes?("github.com/gofiber/fiber")
-        true
-      else
-        false
-      end
-    end
-
-    def applicable?(filename : String) : Bool
-      filename.includes?("go.mod") || filename.ends_with?(".go")
-    end
-
-    def set_name
-      @name = "go_fasthttp"
+      (filename.includes? "go.mod") &&
+        (file_contents.includes? "github.com/valyala/fasthttp") &&
+        !file_contents.includes?("github.com/gofiber/fiber")
     end
   end
 end

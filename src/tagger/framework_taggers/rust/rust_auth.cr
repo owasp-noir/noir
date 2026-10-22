@@ -1,6 +1,8 @@
 require "../../../models/framework_tagger"
 require "../../../models/endpoint"
+require "../prefix_scope"
 
+@[Noir::TaggerFor(key: "rust_auth", name: "Rust Auth Tagger", desc: "Identifies Rust authentication patterns (guards, extractors, middleware)", order: 70)]
 class RustAuthTagger < FrameworkTagger
   # Actix-Web auth middleware/extractor patterns
   ACTIX_AUTH_PATTERNS = [
@@ -31,9 +33,20 @@ class RustAuthTagger < FrameworkTagger
   MIDDLEWARE_LAYER_PATTERNS = [
     /\.wrap\s*\(\s*(\w*[Aa]uth\w*)/,
     /\.wrap\s*\(\s*HttpAuthentication/,
-    /\.layer\s*\(\s*(\w*[Aa]uth\w*)/,
-    /\.layer\s*\(\s*middleware::from_fn\s*\(\s*(\w*auth\w*)/i,
+    # ntex spells actix's `.wrap(...)` as `.middleware(...)`.
+    /\.middleware\s*\(\s*(\w*[Aa]uth\w*)/,
+    /\.(?:route_)?layer\s*\(\s*(\w*[Aa]uth\w*)/,
+    # `from_fn(auth)`, `from_fn_with_state(state.clone(), auth)`
+    /\.(?:route_)?layer\s*\(\s*(?:middleware::)?from_fn(?:_with_state)?\s*\(\s*(?:[^,()]*(?:\([^()]*\))?\s*,\s*)?(\w*auth\w*)/i,
   ]
+
+  # An Axum `.layer(...)` / `.route_layer(...)`: it wraps the routes added to
+  # the router *before* it in the builder chain, and none added after.
+  AXUM_LAYER = /\.(?:route_)?layer\s*\(/
+
+  # What an Axum builder chain mounts: `.route("/p", …)` is that one path,
+  # `.nest("/p", …)` everything under it.
+  AXUM_MOUNT = /\.(route|nest(?:_service)?)\s*\(\s*"([^"]*)"/
 
   # Guard/middleware attribute patterns
   GUARD_ATTRIBUTE_PATTERNS = [
@@ -43,28 +56,21 @@ class RustAuthTagger < FrameworkTagger
 
   def initialize(options : Hash(String, YAML::Any))
     super
-    @name = "rust_auth"
-    @middleware_scopes = [] of {prefix: String, description: String}
+    @middleware_scopes = [] of {prefix: String, exact: Bool, local: Bool, description: String}
   end
 
   def self.target_techs : Array(String)
     [
       "rust_axum", "rust_rocket", "rust_actix_web",
       "rust_loco", "rust_rwf", "rust_tide",
-      "rust_warp", "rust_gotham",
+      "rust_warp", "rust_gotham", "rust_ntex",
     ]
   end
 
   def perform(endpoints : Array(Endpoint)) : Array(Endpoint)
     # Phase 1: Pre-scan for service/scope-level middleware
     pre_scan_middleware_scopes
-
-    # Phase 2: Check each endpoint
-    endpoints.each do |endpoint|
-      check_endpoint(endpoint)
-    end
-
-    endpoints
+    super
   end
 
   private def pre_scan_middleware_scopes
@@ -108,11 +114,22 @@ class RustAuthTagger < FrameworkTagger
 
       if has_auth
         # Determine scope: use stack or walk back to find scope
-        current_scope = scope_stack.empty? ? nil : normalize_scope(scope_stack)
-        prefix = find_scope_for_line(lines, idx, current_scope)
-        if prefix
+        current_scope = scope_stack.empty? ? nil : PrefixScope.join_segments(scope_stack)
+        layer = stripped.match(AXUM_LAYER) if current_scope.nil?
+        if layer
+          axum_layered_mounts(lines, idx, layer.begin(0)).each do |kind, path|
+            @middleware_scopes << {
+              prefix:      path,
+              exact:       kind == "route",
+              local:       true,
+              description: "Protected by Rust #{middleware_name} middleware on #{path}",
+            }
+          end
+        elsif prefix = find_scope_for_line(lines, idx, current_scope)
           @middleware_scopes << {
             prefix:      prefix,
+            exact:       false,
+            local:       false,
             description: "Protected by Rust #{middleware_name} middleware on #{prefix}",
           }
         end
@@ -125,10 +142,28 @@ class RustAuthTagger < FrameworkTagger
     end
   end
 
-  private def normalize_scope(segments : Array(String)) : String
-    joined = segments.join("")
-    parts = joined.split("/").reject(&.empty?)
-    parts.empty? ? "/" : "/" + parts.join("/")
+  # The routes/nests an Axum layer at `layer_at` on line `line_idx` wraps.
+  # A layer still inside a `.route("/p", get(h).layer(…))` call wraps that
+  # one route; otherwise it wraps every mount earlier in the same builder
+  # chain, which ends going up at its `let`/`Router::new()` head or at the
+  # previous statement's `;`.
+  private def axum_layered_mounts(lines : Array(String), line_idx : Int32, layer_at : Int32) : Array({String, String})
+    head = lines[line_idx].strip[0, layer_at]
+    mounts = head.scan(AXUM_MOUNT).map { |m| {m[1], m[2]} }
+    return mounts.last(1) if head.count('(') > head.count(')')
+    return mounts if head.includes?("Router::new") || head.starts_with?("let ")
+
+    idx = line_idx - 1
+    # ponytail: line-based chain walk; a `;` inside a multi-line closure
+    # handler ends it early (a missed tag, never a false one).
+    while idx >= 0 && idx >= line_idx - 200
+      prev = lines[idx].strip
+      break if prev.ends_with?(';') || prev.starts_with?("fn ") || prev.includes?(" fn ")
+      mounts.concat(prev.scan(AXUM_MOUNT).map { |m| {m[1], m[2]} })
+      break if prev.includes?("Router::new") || prev.starts_with?("let ")
+      idx -= 1
+    end
+    mounts
   end
 
   private def find_scope_for_line(lines : Array(String), line_idx : Int32, current_scope : String?) : String?
@@ -154,10 +189,8 @@ class RustAuthTagger < FrameworkTagger
 
   private def check_endpoint(endpoint : Endpoint)
     endpoint.details.code_paths.each do |path_info|
-      content = read_file(path_info.path)
-      next if content.nil?
-
-      lines = content.split("\n")
+      lines = read_file_lines(path_info.path)
+      next if lines.nil?
       line_num = path_info.line
       next if line_num.nil?
 
@@ -205,17 +238,30 @@ class RustAuthTagger < FrameworkTagger
       end
       break unless current.starts_with?("#[") || current.starts_with?("//")
 
-      GUARD_ATTRIBUTE_PATTERNS.each do |pattern|
-        match = current.match(pattern)
-        if match
-          guard_name = match[1]? || "guard"
-          return "Protected by Rust #[guard] attribute (#{guard_name})"
-        end
+      if description = guard_attribute_description(current)
+        return description
       end
 
       idx -= 1
     end
 
+    # Attributes stacked below the route attribute guard it just the same.
+    annotation_lines_below(lines, route_line_idx, "#[").each do |below|
+      if description = guard_attribute_description(below)
+        return description
+      end
+    end
+
+    nil
+  end
+
+  private def guard_attribute_description(line : String) : String?
+    GUARD_ATTRIBUTE_PATTERNS.each do |pattern|
+      if match = line.match(pattern)
+        guard_name = match[1]? || "guard"
+        return "Protected by Rust #[guard] attribute (#{guard_name})"
+      end
+    end
     nil
   end
 
@@ -289,9 +335,14 @@ class RustAuthTagger < FrameworkTagger
     url = endpoint.url
 
     @middleware_scopes.each do |scope|
-      if url.starts_with?(scope[:prefix])
-        return scope[:description]
+      prefix = scope[:prefix]
+      covered = scope[:exact] ? url == prefix : PrefixScope.prefix_covers?(prefix, url)
+      # An Axum layer names router-local paths; that router may itself be
+      # `.nest`ed, so `/users` also covers `/api/users`.
+      if !covered && scope[:local] && prefix.starts_with?('/') && prefix.size > 1
+        covered = url.ends_with?(prefix) || (!scope[:exact] && url.includes?("#{prefix}/"))
       end
+      return scope[:description] if covered
     end
 
     nil

@@ -46,3 +46,14 @@ ksg:
     - kind: github
       handle: ksg97031
       url: https://github.com/ksg97031
+
+hak:
+  name: Hak
+  role: "Noir Docs Bot"
+  bio: "Automated docs and blog contributor for OWASP Noir. Posts as Hak via the hak-owasp-noir-bot GitHub App."
+  image: https://owasp-noir.github.io/noir/images/authors/hak.jpg
+  team: true
+  links:
+    - kind: github
+      handle: hak-owasp-noir-bot
+      url: https://github.com/apps/hak-owasp-noir-bot

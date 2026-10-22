@@ -1,0 +1,5 @@
+# Routes of the `test` environment only (symfony/web-profiler-bundle style).
+test_only_probe:
+    path: /_test-env-only
+    methods: [GET]
+    controller: App\Controller\Test\ExamController::start

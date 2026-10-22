@@ -41,7 +41,7 @@ describe "detect_techs file walker" do
 
       detected = detect_techs([temp_dir], options, [] of PassiveScan, logger)
       techs = detected[0]
-      files = locator.all("file_map")
+      files = locator.all_files
 
       techs.should contain("ios")
       files.should contain(info_plist)
@@ -69,7 +69,7 @@ describe "detect_techs file walker" do
 
       detected = detect_techs([temp_dir], options, [] of PassiveScan, logger)
       techs = detected[0]
-      files = locator.all("file_map")
+      files = locator.all_files
 
       techs.should contain("vercel")
       files.should contain(vercel_json)
@@ -103,13 +103,492 @@ describe "detect_techs file walker" do
 
       detected = detect_techs([temp_dir], options, [] of PassiveScan, logger)
       techs = detected[0]
-      files = locator.all("file_map")
+      files = locator.all_files
 
       techs.should contain("postman")
       files.should contain(postman_json)
     ensure
       FileUtils.rm_rf(temp_dir) if temp_dir
       CodeLocator.instance.clear_all
+    end
+  end
+
+  # A malformed glob makes `File.match?` raise inside the reader fiber.
+  # Pre-fix the fiber died silently: the walk stopped where it was, the
+  # remaining files were never read, and the caller saw an empty tech
+  # list — a scan that looks "clean" but covered nothing, with exit 0.
+  describe "malformed --exclude-path globs" do
+    it "raises instead of silently abandoning the walk" do
+      temp_dir = File.tempname("noir_detector_bad_glob")
+      Dir.mkdir_p(temp_dir)
+
+      begin
+        File.write(File.join(temp_dir, "collection.json"), <<-JSON)
+          {
+            "info": {
+              "name": "Example",
+              "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+            },
+            "item": []
+          }
+          JSON
+
+        options = create_test_options
+        options["base"] = YAML::Any.new([YAML::Any.new(temp_dir)])
+        options["exclude_path"] = YAML::Any.new("[unterminated")
+        logger = NoirLogger.new(false, false, false, true)
+        CodeLocator.instance.clear_all
+
+        expect_raises(Noir::InvalidExcludePathError, /invalid glob pattern/) do
+          detect_techs([temp_dir], options, [] of PassiveScan, logger)
+        end
+      ensure
+        FileUtils.rm_rf(temp_dir) if temp_dir
+        CodeLocator.instance.clear_all
+      end
+    end
+
+    # `File.match?` only raises once traversal reaches the malformed
+    # part, so a pattern with a literal prefix stays dormant until the
+    # walk descends into it — the partial-scan case.
+    it "raises for a path-prefixed pattern that only fails deeper in the walk" do
+      temp_dir = File.tempname("noir_detector_bad_glob_prefixed")
+      Dir.mkdir_p(File.join(temp_dir, "src"))
+
+      begin
+        File.write(File.join(temp_dir, "src", "collection.json"), <<-JSON)
+          {
+            "info": {
+              "name": "Example",
+              "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+            },
+            "item": []
+          }
+          JSON
+
+        options = create_test_options
+        options["base"] = YAML::Any.new([YAML::Any.new(temp_dir)])
+        options["exclude_path"] = YAML::Any.new("src/[unterminated")
+        logger = NoirLogger.new(false, false, false, true)
+        CodeLocator.instance.clear_all
+
+        expect_raises(Noir::InvalidExcludePathError, /invalid glob pattern/) do
+          detect_techs([temp_dir], options, [] of PassiveScan, logger)
+        end
+      ensure
+        FileUtils.rm_rf(temp_dir) if temp_dir
+        CodeLocator.instance.clear_all
+      end
+    end
+
+    it "still walks normally for a valid glob" do
+      temp_dir = File.tempname("noir_detector_good_glob")
+      Dir.mkdir_p(temp_dir)
+
+      begin
+        postman_json = File.join(temp_dir, "collection.json")
+        File.write(postman_json, <<-JSON)
+          {
+            "info": {
+              "name": "Example",
+              "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+            },
+            "item": []
+          }
+          JSON
+
+        options = create_test_options
+        options["base"] = YAML::Any.new([YAML::Any.new(temp_dir)])
+        options["exclude_path"] = YAML::Any.new("*.md,src/[a-z]*.go")
+        logger = NoirLogger.new(false, false, false, true)
+        locator = CodeLocator.instance
+        locator.clear_all
+
+        detected = detect_techs([temp_dir], options, [] of PassiveScan, logger)
+
+        detected[0].should contain("postman")
+        locator.all_files.should contain(postman_json)
+      ensure
+        FileUtils.rm_rf(temp_dir) if temp_dir
+        CodeLocator.instance.clear_all
+      end
+    end
+  end
+
+  # An unreadable file used to take the rest of its directory with it: the
+  # per-file `TextFile.read` sat bare inside `Dir.each_child`, whose only
+  # rescue is the directory-level one, so the raise unwound the whole
+  # listing and every remaining sibling went unregistered — silently, exit 0.
+  # Measured before the fix on a flat 501-file Gin tree: one `chmod 000`
+  # file cut the scan from 501 endpoints to 277.
+  #
+  # Two unreadable files, deliberately: readdir order is not alphabetical
+  # (and is hash-ordered on both APFS and ext4), so a single one could land
+  # last by luck and the regression would not fire.
+  it "loses only the unreadable files, not the rest of their directory" do
+    temp_dir = File.tempname("noir_detector_unreadable")
+    Dir.mkdir_p(temp_dir)
+    # Resolved before the `begin` so `ensure` can restore the modes even if
+    # creating them is what failed.
+    unreadable = ["locked_a.go", "locked_b.go"].map { |name| File.join(temp_dir, name) }
+
+    begin
+      readable = (0...50).map do |i|
+        path = File.join(temp_dir, "handler_#{i}.go")
+        File.write(path, "package main\n\nfunc Handler#{i}() {}\n")
+        path
+      end
+
+      unreadable.each do |path|
+        File.write(path, "package main\n")
+        File.chmod(path, 0o000)
+      end
+
+      # Mode bits do not apply to root, and a spec that cannot establish the
+      # condition it tests must say so rather than pass. Probe by actually
+      # reading: `File::Info#readable?` reports the mode bits, which for root
+      # says "no" about a file root can in fact read.
+      still_readable = unreadable.any? do |path|
+        File.read(path)
+        true
+      rescue File::Error
+        false
+      end
+      pending! "requires a non-root user: mode 000 is not enforced here" if still_readable
+
+      options = create_test_options
+      options["base"] = YAML::Any.new([YAML::Any.new(temp_dir)])
+      logger = NoirLogger.new(false, false, false, true)
+      locator = CodeLocator.instance
+      locator.clear_all
+
+      detect_techs([temp_dir], options, [] of PassiveScan, logger)
+      files = locator.all_files
+
+      readable.each { |path| files.should contain(path) }
+      unreadable.each { |path| files.should_not contain(path) }
+    ensure
+      unreadable.each { |path| File.chmod(path, 0o644) if File.exists?(path) }
+      FileUtils.rm_rf(temp_dir) if temp_dir
+      CodeLocator.instance.clear_all
+    end
+  end
+
+  it "survives a directory named AndroidManifest.xml" do
+    temp_dir = File.tempname("noir_detector_manifest_dir")
+    Dir.mkdir_p(File.join(temp_dir, "AndroidManifest.xml"))
+
+    begin
+      File.write(File.join(temp_dir, "Info.plist"), <<-XML)
+        <?xml version="1.0" encoding="UTF-8"?>
+        <plist version="1.0"><dict><key>CFBundleURLTypes</key><array><dict>
+        <key>CFBundleURLSchemes</key><array><string>sample</string></array>
+        </dict></array></dict></plist>
+        XML
+
+      options = create_test_options
+      options["base"] = YAML::Any.new([YAML::Any.new(temp_dir)])
+      logger = NoirLogger.new(false, false, false, true)
+      CodeLocator.instance.clear_all
+
+      detect_techs([temp_dir], options, [] of PassiveScan, logger)[0].should contain("ios")
+    ensure
+      FileUtils.rm_rf(temp_dir) if temp_dir
+      CodeLocator.instance.clear_all
+    end
+  end
+
+  it "prunes build-output names only next to a project manifest" do
+    temp_dir = File.tempname("noir_detector_manifest_scoped")
+
+    begin
+      kept = [
+        File.join(temp_dir, "routes", "vendor", "products.js"),
+        File.join(temp_dir, "src", "main", "java", "com", "acme", "build", "Ctl.java"),
+        File.join(temp_dir, "src", "main", "java", "com", "acme", "target", "Ctl.java"),
+        File.join(temp_dir, "src", "main", "java", "com", "acme", "out", "Ctl.java"),
+      ]
+      pruned = [
+        File.join(temp_dir, "vendor", "lib.js"),
+        File.join(temp_dir, "build", "Gen.java"),
+        File.join(temp_dir, "target", "Gen.java"),
+        File.join(temp_dir, "node_modules", "x", "index.js"),
+        File.join(temp_dir, "src", "node_modules", "y", "index.js"),
+      ]
+      Dir.mkdir_p(temp_dir)
+      File.write(File.join(temp_dir, "package.json"), %({"name": "x"}))
+      (kept + pruned).each do |path|
+        Dir.mkdir_p(File.dirname(path))
+        File.write(path, "// x\n")
+      end
+
+      options = create_test_options
+      options["base"] = YAML::Any.new([YAML::Any.new(temp_dir)])
+      logger = NoirLogger.new(false, false, false, true)
+      locator = CodeLocator.instance
+      locator.clear_all
+
+      detect_techs([temp_dir], options, [] of PassiveScan, logger)
+      files = locator.all_files
+
+      kept.each { |path| files.should contain(path) }
+      pruned.each { |path| files.should_not contain(path) }
+    ensure
+      FileUtils.rm_rf(temp_dir) if temp_dir
+      CodeLocator.instance.clear_all
+    end
+  end
+
+  # `-t oas3 --only-techs js_express`: the forced spec tech still needs its
+  # detector, which is what registers the spec file for the analyzer.
+  it "keeps the detector of a -t tech under --only-techs" do
+    temp_dir = File.tempname("noir_detector_forced_tech")
+
+    begin
+      Dir.mkdir_p(temp_dir)
+      spec_path = File.join(temp_dir, "openapi.yaml")
+      File.write(spec_path, "openapi: 3.0.0\npaths:\n  /items:\n    get: {}\n")
+      File.write(File.join(temp_dir, "app.js"), "const express = require('express');\n")
+
+      options = create_test_options
+      options["base"] = YAML::Any.new([YAML::Any.new(temp_dir)])
+      options["techs"] = YAML::Any.new("oas3")
+      options["only_techs"] = YAML::Any.new("js_express")
+      logger = NoirLogger.new(false, false, false, true)
+      locator = CodeLocator.instance
+      locator.clear_all
+
+      techs, _ = detect_techs([temp_dir], options, [] of PassiveScan, logger)
+
+      techs.should contain("oas3")
+      techs.should contain("js_express")
+      locator.all(Noir::LocatorKeys::OAS3_YAML).should contain(spec_path)
+    ensure
+      FileUtils.rm_rf(temp_dir) if temp_dir
+      CodeLocator.instance.clear_all
+    end
+  end
+
+  it "prunes Mix deps and _build only next to mix.exs" do
+    temp_dir = File.tempname("noir_detector_mix_scoped")
+
+    begin
+      kept = [
+        File.join(temp_dir, "web", "deps", "routes.js"),
+        File.join(temp_dir, "app", "lib", "app_web", "router.ex"),
+      ]
+      pruned = [
+        File.join(temp_dir, "app", "deps", "plug", "lib", "plug", "router.ex"),
+        File.join(temp_dir, "app", "_build", "dev", "lib", "x.ex"),
+      ]
+      Dir.mkdir_p(File.join(temp_dir, "web"))
+      Dir.mkdir_p(File.join(temp_dir, "app"))
+      File.write(File.join(temp_dir, "web", "package.json"), %({"name": "x"}))
+      File.write(File.join(temp_dir, "app", "mix.exs"), "defmodule App.MixProject do\nend\n")
+      (kept + pruned).each do |path|
+        Dir.mkdir_p(File.dirname(path))
+        File.write(path, "# x\n")
+      end
+
+      options = create_test_options
+      options["base"] = YAML::Any.new([YAML::Any.new(temp_dir)])
+      logger = NoirLogger.new(false, false, false, true)
+      locator = CodeLocator.instance
+      locator.clear_all
+
+      detect_techs([temp_dir], options, [] of PassiveScan, logger)
+      files = locator.all_files
+
+      kept.each { |path| files.should contain(path) }
+      pruned.each { |path| files.should_not contain(path) }
+    ensure
+      FileUtils.rm_rf(temp_dir) if temp_dir
+      CodeLocator.instance.clear_all
+    end
+  end
+
+  it "prunes deploy staging, stale dist and dependency vendor trees without a sibling manifest" do
+    temp_dir = File.tempname("noir_detector_build_evidence")
+
+    begin
+      kept = [
+        File.join(temp_dir, "hello_world", "app.py"),
+        File.join(temp_dir, "server", "src", "app.ts"),
+        File.join(temp_dir, "web", "vendor", "routes.php"),
+      ]
+      pruned = [
+        # `sam build` staging copy (template.yaml is not a build manifest).
+        File.join(temp_dir, ".aws-sam", "build", "HelloWorldFunction", "app.py"),
+        File.join(temp_dir, "cdk.out", "asset.1", "index.js"),
+        # Yarn Berry's committed binary.
+        File.join(temp_dir, ".yarn", "releases", "yarn-4.12.0.cjs"),
+        # Stale tsc output beside the package's `src/` and `tsconfig.json`.
+        File.join(temp_dir, "server", "dist", "app.js"),
+        # Composer / `go mod vendor` trees, known by their own contents.
+        File.join(temp_dir, "web", "app", "vendor", "autoload.php"),
+        File.join(temp_dir, "svc", "vendor", "modules.txt"),
+      ]
+      Dir.mkdir_p(temp_dir)
+      File.write(File.join(temp_dir, "template.yaml"), "Resources: {}\n")
+      Dir.mkdir_p(File.join(temp_dir, "server"))
+      File.write(File.join(temp_dir, "server", "tsconfig.json"), "{}\n")
+      (kept + pruned).each do |path|
+        Dir.mkdir_p(File.dirname(path))
+        File.write(path, "// x\n")
+      end
+
+      options = create_test_options
+      options["base"] = YAML::Any.new([YAML::Any.new(temp_dir)])
+      logger = NoirLogger.new(false, false, false, true)
+      locator = CodeLocator.instance
+      locator.clear_all
+
+      detect_techs([temp_dir], options, [] of PassiveScan, logger)
+      files = locator.all_files
+
+      kept.each { |path| files.should contain(path) }
+      pruned.each { |path| files.should_not contain(path) }
+    ensure
+      FileUtils.rm_rf(temp_dir) if temp_dir
+      CodeLocator.instance.clear_all
+    end
+  end
+
+  it "matches upper-case Windows extensions but keeps Makefile.PL distinct" do
+    temp_dir = File.tempname("noir_detector_upper_ext")
+    Dir.mkdir_p(temp_dir)
+
+    begin
+      page = File.join(temp_dir, "LOGIN.ASP")
+      File.write(page, %(<%@ Language="VBScript" %>\n<% Response.Write Request.QueryString("next") %>\n))
+      makefile = File.join(temp_dir, "Makefile.PL")
+      File.write(makefile, "use ExtUtils::MakeMaker;\nWriteMakefile(PREREQ_PM => { 'Mojolicious' => '9.0' });\n")
+
+      options = create_test_options
+      options["base"] = YAML::Any.new([YAML::Any.new(temp_dir)])
+      logger = NoirLogger.new(false, false, false, true)
+      locator = CodeLocator.instance
+      locator.clear_all
+
+      techs = detect_techs([temp_dir], options, [] of PassiveScan, logger)[0]
+      techs.should contain("asp_classic")
+      techs.should contain("perl_mojolicious")
+      locator.files_by_extension(".asp").should eq([page])
+      locator.files_by_extension(".pl").should be_empty
+    ensure
+      FileUtils.rm_rf(temp_dir) if temp_dir
+      CodeLocator.instance.clear_all
+    end
+  end
+end
+
+describe "detect_techs passive results" do
+  it "orders findings by file, then line, then rule" do
+    temp_dir = File.tempname("noir_detector_passive_order")
+    Dir.mkdir_p(File.join(temp_dir, "sub"))
+
+    begin
+      files = ["z.env", "a.env", "sub/m.env"].map { |name| File.join(temp_dir, name) }
+      files.each { |path| File.write(path, "one\nSECRET_TOKEN=x\nthree\nSECRET_TOKEN=y\n") }
+      rule = PassiveScan.new(YAML.parse(
+        "id: order-test\ncategory: secret\ntechs: ['*']\n" \
+        "info: {name: order, author: [], severity: high, description: order, reference: []}\n" \
+        "matchers-condition: or\nmatchers:\n  - {type: word, condition: or, patterns: [SECRET_TOKEN]}\n"))
+
+      options = create_test_options
+      options["base"] = YAML::Any.new([YAML::Any.new(temp_dir)])
+      logger = NoirLogger.new(false, false, false, true)
+      CodeLocator.instance.clear_all
+
+      results = detect_techs([temp_dir], options, [rule], logger)[1]
+      locations = results.map { |result| {result.file_path, result.line_number} }
+      locations.size.should eq(6)
+      locations.should eq(locations.sort)
+    ensure
+      CodeLocator.instance.clear_all
+      FileUtils.rm_rf(temp_dir)
+    end
+  end
+
+  it "processes a file once when scan bases overlap" do
+    temp_dir = File.tempname("noir_detector_overlapping_bases")
+    nested_base = File.join(temp_dir, "apps", "api")
+    Dir.mkdir_p(nested_base)
+    source = File.join(nested_base, "config.env")
+    File.write(source, "SECRET_TOKEN=value\n")
+
+    rule = PassiveScan.new(YAML.parse(
+      "id: overlap-test\ncategory: secret\ntechs: ['*']\n" \
+      "info: {name: overlap, author: [], severity: high, description: overlap, reference: []}\n" \
+      "matchers-condition: or\nmatchers:\n  - {type: word, condition: or, patterns: [SECRET_TOKEN]}\n"))
+    base_paths = [temp_dir, nested_base]
+    options = create_test_options
+    options["base"] = YAML::Any.new(base_paths.map { |path| YAML::Any.new(path) })
+    logger = NoirLogger.new(false, false, false, true)
+    locator = CodeLocator.instance
+    locator.clear_all
+
+    begin
+      findings = detect_techs(base_paths, options, [rule], logger)[1]
+
+      findings.size.should eq(1)
+      locator.all_files.count { |path| path == source }.should eq(1)
+
+      # Exclusions are evaluated relative to each configured base first: a
+      # parent-root match can be absent relative to the nested base, where
+      # that same file should still be visited once.
+      options["exclude_path"] = YAML::Any.new("apps/api/config.env")
+      nested_finding = detect_techs(base_paths, options, [rule], logger)[1]
+      nested_finding.size.should eq(1)
+    ensure
+      locator.clear_all
+      FileUtils.rm_rf(temp_dir)
+    end
+  end
+
+  it "does not cache content it read only for the passive scan" do
+    temp_dir = File.tempname("noir_detector_passive_cache")
+    Dir.mkdir_p(temp_dir)
+
+    begin
+      notes = File.join(temp_dir, "notes.txt")
+      app = File.join(temp_dir, "app.py")
+      File.write(notes, "token = noir-secret-marker\n")
+      File.write(app, "from flask import Flask\napp = Flask(__name__)\n")
+      rule = PassiveScan.new(YAML.parse(<<-YAML))
+        id: spec-marker
+        info:
+          name: "Spec marker"
+          author: ["spec"]
+          severity: "high"
+          description: "Spec marker"
+          reference: [""]
+        matchers-condition: "or"
+        matchers:
+          - type: "word"
+            patterns: ["noir-secret-marker"]
+            condition: "or"
+        category: "secret"
+        techs: ["*"]
+        YAML
+
+      options = create_test_options
+      options["base"] = YAML::Any.new([YAML::Any.new(temp_dir)])
+      logger = NoirLogger.new(false, false, false, true)
+      locator = CodeLocator.instance
+      locator.clear_all
+
+      _, passive = detect_techs([temp_dir], options, [rule], logger)
+
+      passive.map(&.file_path).should eq([notes])
+      locator.all_files.should contain(notes)
+      # Without `-P` the walk never reads notes.txt; with it, the content
+      # is read for the rule but must not take content-cache budget.
+      locator.content_for(notes).should be_nil
+      locator.content_for(app).should_not be_nil
+    ensure
+      CodeLocator.instance.clear_all
+      FileUtils.rm_rf(temp_dir) if temp_dir
     end
   end
 end

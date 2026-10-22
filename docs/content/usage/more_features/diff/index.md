@@ -1,41 +1,130 @@
 +++
 title = "Comparing Code with Diff Mode"
-description = "Compare two codebase versions to identify endpoint changes."
+description = "Compare two versions of a codebase and see which endpoints were added, removed or changed."
 weight = 2
 sort_by = "weight"
 
 +++
 
-Compare two versions of a codebase to identify endpoint changes. Useful for code reviews, security assessments, and understanding feature impacts.
+Diff mode scans two versions of a codebase and reports which endpoints were added, removed or changed. Use it in code review or in CI.
 
 ```bash
 noir scan <NEW_VERSION_PATH> --diff-path <OLD_VERSION_PATH>
 ```
 
+## Diffing against a git revision
+
+Inside a git repository you don't need a second checkout. `--diff-ref` takes any revision git understands (a branch, tag, commit or `HEAD~1`) and uses it as the old side:
+
+```bash
+# What does this branch add to the attack surface compared with main?
+noir scan . --diff-ref main
+
+# Only one service in a monorepo
+noir scan ./services/billing --diff-ref origin/main -f json
+```
+
+Noir writes the files REF tracked under the scanned paths into a temporary directory, scans them as the old side, and deletes the directory when the scan ends. Your HEAD, index and working tree are left alone, and no git hooks run. Code paths of removed endpoints are reported under the path you passed, not the temporary directory.
+
+A few things to keep in mind:
+
+- The new side is the working tree as it is, including untracked files. The old side has only the files git tracked at REF.
+- Every base path has to be inside the same repository. `--diff-ref` and `--diff-path` can't be used together.
+- A base path that didn't exist at REF is scanned as empty, so everything under it shows up as added.
+- CI checkouts are often shallow (`actions/checkout` fetches one commit by default). Fetch the revision first, for example with `fetch-depth: 0`, or Noir stops with an error that says so.
+
 ## Output
 
 ### Plain Output
 
-The default output marks each change as **Added** (new endpoints), **Removed** (deleted ones), or **Changed** (endpoints whose parameters or methods were modified).
+The default output groups changes into **Added** (new endpoints), **Removed** (deleted ones), and **Changed** (endpoints present in both versions whose parameters or tags differ). Endpoints are matched by URL and method, so a method change shows up as one Added plus one Removed. Each section renders endpoints in the standard plain format, and every Changed endpoint is followed by what changed:
 
 ```
-[*] ============== DIFF ==============
-[I] Added: / GET
-[I] Added: /update POST
-[I] Removed: /secret.html GET
-[I] Removed: /posts GET
+───────────── ✚ Added (2) ─────────────
+
+GET /
+  ○ headers: 
+    └── x-api-key
+
+POST /update
+
+──────────── ✖ Removed (1) ─────────────
+
+GET /secret.html
+
+──────────── ≠ Changed (2) ─────────────
+
+GET /public?q=
+  + query: q
+
+GET /profile
+  ! auth tag removed
 ```
+
+### What counts as changed
+
+- **Params** are compared by name and where they are sent (query, header, cookie, path, form, JSON body). A param that only changed its example or default value is not a change, since a client sends nothing different.
+- **Tags** are compared by name. Tags come from taggers, so run the diff with `-T` (or `--use-taggers`) to see them.
+- **`auth` removed**: when an endpoint had the `auth` tag before and doesn't now, the report puts `! auth tag removed` first. Check this one first in a review: it means a route that used to require login and no longer does. The auth taggers only run with `-T` or `--use-taggers`, so enable one of them to get this line.
 
 ### JSON and YAML Output
 
-Use `-f json` or `-f yaml` for structured output. Results are grouped into three categories.
+Use `-f json` or `-f yaml` for structured output. It has three endpoint lists (`added`, `removed`, `changed`) and a `changes` list.
 
 ```json
 {
   "added": [...],
   "removed": [...],
-  "changed": [...]
+  "changed": [...],
+  "changes": [
+    {
+      "method": "GET",
+      "url": "/profile",
+      "params_added": [],
+      "params_removed": [{ "name": "token", "param_type": "header" }],
+      "tags_added": [],
+      "tags_removed": ["auth"],
+      "auth_removed": true
+    }
+  ],
+  "errors": []
 }
 ```
 
-Especially useful in CI/CD: feed only the `added` and `changed` endpoints into a DAST scanner to focus on modified attack surface.
+`changed` holds the endpoints as they are now. `changes` has one record per entry in `changed`, in the same order, saying what differs. `errors` lists analyzers that failed or skipped files on either side, in the same shape as `-f json`. An endpoint in `removed` may only be missing because of one of them.
+
+### Markdown and SARIF Output
+
+`-f markdown-table` renders the diff as a pull request comment: any analyzer failures, a count table, then the routes that lost auth, then one table each for added, removed and changed endpoints.
+
+`-f sarif` reports the new attack surface for code scanning: added endpoints and new params as notes, lost auth as a warning. Removed endpoints are left out because they have no line in the reviewed code to point at. The other formats still list them.
+
+`-f toml` works too. Any other `-f` falls back to the text diff with a warning.
+
+## Failing CI on a Diff
+
+`--fail-on` makes the scan exit with code `3` when the diff contains any of the listed categories, after the report is written:
+
+```bash
+noir scan . --diff-ref origin/main --fail-on auth-removed,added -f markdown-table -o diff.md
+```
+
+| Category | Fires when |
+|---|---|
+| `added` | an endpoint exists now that didn't at the old side |
+| `removed` | an endpoint existed at the old side and doesn't now |
+| `changed` | an endpoint on both sides has different params or tags |
+| `auth-removed` | an endpoint had the `auth` tag and doesn't now |
+
+`auth-removed` depends on the auth taggers. If you passed neither `-T` nor `--use-taggers`, Noir turns on all taggers. If your `--use-taggers` list has no auth tagger, Noir adds the auth taggers to it. The reason for the failure goes to stderr even with `--no-log`. Exit code `1` is still a usage error and `2` is `--strict`'s incomplete scan, which takes precedence over `3`.
+
+The same check works locally from a git `pre-push` hook:
+
+```bash
+#!/bin/sh
+exec noir scan . --diff-ref origin/main --fail-on auth-removed --no-log
+```
+
+For a complete pull request workflow, see [GitHub Action](../../github_action/).
+
+In CI you can also feed only the `added` and `changed` endpoints to a DAST scanner, so it tests just the part of the attack surface that changed.

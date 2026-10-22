@@ -1,6 +1,8 @@
 require "../../../models/framework_tagger"
 require "../../../models/endpoint"
+require "../../../utils/c_comments"
 
+@[Noir::TaggerFor(key: "aspnet_auth", name: "ASP.NET Auth Tagger", desc: "Identifies ASP.NET authentication patterns ([Authorize], policies)", order: 170)]
 class AspnetAuthTagger < FrameworkTagger
   # ASP.NET [Authorize] attribute patterns
   AUTHORIZE_PATTERNS = [
@@ -8,6 +10,8 @@ class AspnetAuthTagger < FrameworkTagger
     {/\[Authorize\s*\(\s*Roles\s*=/, "ASP.NET [Authorize(Roles)]"},
     {/\[Authorize\s*\(\s*Policy\s*=/, "ASP.NET [Authorize(Policy)]"},
     {/\[Authorize\s*\(\s*AuthenticationSchemes\s*=/, "ASP.NET [Authorize(AuthenticationSchemes)]"},
+    # `[Authorize("Policy")]`, `[ApiController, Authorize]`, `[Authorize, HttpGet]`
+    {/\[(?:[^\]]*,\s*)?Authorize\s*[(,\]]/, "ASP.NET [Authorize]"},
   ]
 
   # Minimal API fluent auth: `app.MapGet("/x", h).RequireAuthorization();`.
@@ -17,7 +21,24 @@ class AspnetAuthTagger < FrameworkTagger
   MINIMAL_API_ALLOW_ANON   = /\.AllowAnonymous\s*\(/
 
   # Public override markers
-  ALLOW_ANONYMOUS_PATTERN = /\[AllowAnonymous\]/
+  ALLOW_ANONYMOUS_PATTERN = /\[(?:[^\]]*,\s*)?AllowAnonymous\s*[(,\]]/
+
+  # App-wide authorization that every endpoint without its own
+  # `[AllowAnonymous]` inherits: ASP.NET Core's `FallbackPolicy`, the
+  # controller-wide `MapControllers().RequireAuthorization()` / global
+  # `AuthorizeFilter`, and MVC 5's `filters.Add(new AuthorizeAttribute())`.
+  FALLBACK_POLICY    = /FallbackPolicy\s*=[^;]*RequireAuthenticatedUser\s*\(/
+  CONTROLLERS_GLOBAL = /MapControllers\s*\(\s*\)\s*\.RequireAuthorization\s*\(|Filters\.Add\s*(?:<\s*AuthorizeFilter\s*>|\(\s*new\s+AuthorizeFilter\b)|filters\.Add\s*\(\s*new\s+(?:System\.Web\.Mvc\.)?AuthorizeAttribute\b/
+  CONTROLLER_TECHS   = %w[cs_aspnet_mvc cs_aspnet_core_mvc]
+  CSPROJ             = /\.csproj\z/
+  # Test hosts (`WebApplicationFactory`, a `Foo.Tests` project's Startup)
+  # configure their own auth, which must not leak onto the app. The
+  # conventions of `Analyzer::CSharp::Common.csharp_test_path?`, plus the
+  # `*.Tests` project directory.
+  TEST_PATH            = %r{/(?:[Tt]ests?|testassets|[^/]+\.\w*Tests?)/|Tests?\.cs\z}
+  MINIMAL_API_RECEIVER = /^\s*(\w+)\s*\.\s*Map(?:Get|Post|Put|Delete|Patch|Methods|Group)\b/
+  # `var v1 = api.MapGroup("/v1")`: a nested group, which inherits `api`'s.
+  GROUP_DECLARATION_RECEIVER = /=\s*(\w+)\s*\.\s*MapGroup\b/
 
   # ASP.NET Core middleware auth in action body
   ACTION_AUTH_PATTERNS = [
@@ -26,28 +47,42 @@ class AspnetAuthTagger < FrameworkTagger
     {/HttpContext\.User/, "ASP.NET HttpContext.User check"},
   ]
 
+  def self.target_techs : Array(String)
+    ["cs_aspnet_mvc", "cs_aspnet_core_mvc", "cs_aspnet_core_minimal_api", "cs_carter", "cs_wolverine"]
+  end
+
   def initialize(options : Hash(String, YAML::Any))
     super
-    @name = "aspnet_auth"
+    @fallback_roots = Set(String?).new
+    @controllers_global_roots = Set(String?).new
+    @class_lines = Hash(String, Array(Int32)).new
   end
 
-  def self.target_techs : Array(String)
-    ["cs_aspnet_mvc", "cs_aspnet_core_mvc", "cs_aspnet_core_minimal_api", "cs_carter"]
-  end
-
+  # Collects the project roots (nearest `.csproj`) whose live, non-test
+  # code turns on app-wide authorization.
   def perform(endpoints : Array(Endpoint)) : Array(Endpoint)
-    endpoints.each do |endpoint|
-      check_endpoint(endpoint)
+    @fallback_roots.clear
+    @controllers_global_roots.clear
+    collect_files_by_extension(".cs").each do |path|
+      content = read_file(path)
+      next unless content
+      fallback = content.includes?("FallbackPolicy") && content.matches?(FALLBACK_POLICY)
+      controllers = content.includes?("Authorize") && content.matches?(CONTROLLERS_GLOBAL)
+      next unless fallback || controllers
+      next if base_relative_path(path).matches?(TEST_PATH)
+      code = Noir::CComments.strip(content)
+      next if code.includes?("WebApplicationFactory")
+      root = nearest_project_root(path, CSPROJ)
+      @fallback_roots << root if fallback && code.matches?(FALLBACK_POLICY)
+      @controllers_global_roots << root if controllers && code.matches?(CONTROLLERS_GLOBAL)
     end
-    endpoints
+    super
   end
 
   private def check_endpoint(endpoint : Endpoint)
     endpoint.details.code_paths.each do |path_info|
-      content = read_file(path_info.path)
-      next if content.nil?
-
-      lines = content.split("\n")
+      lines = read_file_lines(path_info.path)
+      next if lines.nil?
       line_num = path_info.line
       next if line_num.nil?
       # Skip stale/out-of-range line refs: a line beyond the content we
@@ -55,8 +90,10 @@ class AspnetAuthTagger < FrameworkTagger
       next if line_num < 1 || line_num > lines.size
       line_idx = line_num - 1
 
-      # Check for [AllowAnonymous] on this action
-      if has_allow_anonymous?(lines, line_idx)
+      # Check for [AllowAnonymous] on this action or its controller:
+      # anonymous access wins over any [Authorize] in ASP.NET Core.
+      class_attrs = class_attribute_lines(path_info.path, lines, line_idx)
+      if has_allow_anonymous?(lines, line_idx) || class_attrs.any?(&.matches?(ALLOW_ANONYMOUS_PATTERN))
         return
       end
 
@@ -69,15 +106,28 @@ class AspnetAuthTagger < FrameworkTagger
 
       # Check Minimal API fluent .RequireAuthorization() on the route statement
       description = check_minimal_api_fluent(lines, line_idx)
+      return if description == ""
       if description
         endpoint.add_tag(Tag.new("auth", "Protected by #{description}", "aspnet_auth"))
         return
       end
 
       # Check class-level [Authorize] (applies to all actions)
-      description = check_class_attributes(lines, line_idx)
+      class_attrs.each do |attr|
+        description ||= AUTHORIZE_PATTERNS.find { |pattern, _| attr.matches?(pattern) }.try(&.[1])
+      end
       if description
         endpoint.add_tag(Tag.new("auth", "Protected by #{description} (class-level)", "aspnet_auth"))
+        return
+      end
+
+      root = nearest_project_root(path_info.path, CSPROJ)
+      if @fallback_roots.includes?(root)
+        endpoint.add_tag(Tag.new("auth", "Protected by ASP.NET FallbackPolicy (RequireAuthenticatedUser)", "aspnet_auth"))
+        return
+      end
+      if @controllers_global_roots.includes?(root) && CONTROLLER_TECHS.includes?(endpoint.details.technology)
+        endpoint.add_tag(Tag.new("auth", "Protected by ASP.NET global authorization for controllers", "aspnet_auth"))
         return
       end
 
@@ -91,10 +141,12 @@ class AspnetAuthTagger < FrameworkTagger
   end
 
   private def has_allow_anonymous?(lines : Array(String), method_line : Int32) : Bool
+    return true if minimal_api_statement(lines, method_line).try(&.matches?(ALLOW_ANONYMOUS_PATTERN))
     idx = method_line - 1
     while idx >= 0 && idx >= method_line - 5
       current = lines[idx].strip
       break if current.empty? && idx < method_line - 1
+      break if current.ends_with?(';')
       return true if current.matches?(ALLOW_ANONYMOUS_PATTERN)
       idx -= 1
     end
@@ -102,10 +154,19 @@ class AspnetAuthTagger < FrameworkTagger
   end
 
   private def check_method_attributes(lines : Array(String), method_line : Int32) : String?
+    if statement = minimal_api_statement(lines, method_line)
+      AUTHORIZE_PATTERNS.each do |pattern, desc|
+        return desc if statement.matches?(pattern)
+      end
+    end
+
     idx = method_line - 1
     while idx >= 0 && idx >= method_line - 8
       current = lines[idx].strip
       break if current.empty? && idx < method_line - 1
+      # The end of the previous statement: what sits above it decorates
+      # something else (`app.MapGet("/a", [Authorize] () => ...);`).
+      break if current.ends_with?(';')
 
       AUTHORIZE_PATTERNS.each do |pattern, desc|
         return desc if current.matches?(pattern)
@@ -120,54 +181,71 @@ class AspnetAuthTagger < FrameworkTagger
   # Minimal API registrations chain auth fluently after the Map* call,
   # e.g. `app.MapGet("/x", h).RequireAuthorization();`, possibly split
   # across lines until the `;` terminator. Scan the whole statement, and
-  # let a chained `.AllowAnonymous()` opt the route back out.
-  private def check_minimal_api_fluent(lines : Array(String), route_line : Int32) : String?
-    idx = route_line
-    end_idx = [route_line + 6, lines.size - 1].min
-    statement = String.build do |sb|
+  # let a chained `.AllowAnonymous()` opt the route back out — returned as
+  # "" so no app-wide policy re-tags it. A route mapped on a group variable
+  # inherits the group's `.RequireAuthorization()` (`var api =
+  # app.MapGroup("/api").RequireAuthorization(); api.MapGet(...)`).
+  private def check_minimal_api_fluent(lines : Array(String), route_line : Int32, depth : Int32 = 0) : String?
+    statement = statement_at(lines, route_line)
+
+    return "" if statement.matches?(MINIMAL_API_ALLOW_ANON)
+    return "ASP.NET .RequireAuthorization()" if statement.matches?(MINIMAL_API_REQUIRE_AUTH)
+    return if depth >= 5
+
+    receiver = (statement.match(MINIMAL_API_RECEIVER) || statement.match(GROUP_DECLARATION_RECEIVER)).try(&.[1])
+    return unless receiver && receiver != "app"
+    declaration = /\b#{Regex.escape(receiver)}\s*=\s*[\w.]*MapGroup\s*\(/
+    (0...route_line).reverse_each do |idx|
+      next unless lines[idx].matches?(declaration)
+      return check_minimal_api_fluent(lines, idx, depth + 1)
+    end
+    nil
+  end
+
+  # A minimal API route carries its attributes on the handler lambda inside
+  # its own statement (`app.MapGet("/x", [Authorize] () => ...)`), never on
+  # the lines above it.
+  private def minimal_api_statement(lines : Array(String), line_idx : Int32) : String?
+    statement_at(lines, line_idx) if lines[line_idx].matches?(MINIMAL_API_RECEIVER)
+  end
+
+  private def statement_at(lines : Array(String), line_idx : Int32) : String
+    idx = line_idx
+    end_idx = [line_idx + 6, lines.size - 1].min
+    String.build do |sb|
       while idx <= end_idx
         sb << lines[idx] << ' '
         break if lines[idx].includes?(";")
         idx += 1
       end
     end
-
-    return if statement.matches?(MINIMAL_API_ALLOW_ANON)
-    return "ASP.NET .RequireAuthorization()" if statement.matches?(MINIMAL_API_REQUIRE_AUTH)
-
-    nil
   end
 
-  private def check_class_attributes(lines : Array(String), method_line : Int32) : String?
-    idx = method_line
-    while idx >= 0
-      current = lines[idx].strip
+  # The attribute lines above the class enclosing `method_line`.
+  private def class_attribute_lines(path : String, lines : Array(String), method_line : Int32) : Array(String)
+    attrs = [] of String
+    idx = nearest_match_above(@class_lines, path, lines) { |line| current = line.strip; current.includes?("class ") && (current.includes?(":") || current.includes?("{")) }[method_line]
+    return attrs if idx < 0
 
-      if current.includes?("class ") && (current.includes?(":") || current.includes?("{"))
-        # Found class definition, check attributes above
-        attr_idx = idx - 1
-        while attr_idx >= 0 && attr_idx >= idx - 5
-          attr = lines[attr_idx].strip
-          break if attr.empty? && attr_idx < idx - 1
-
-          AUTHORIZE_PATTERNS.each do |pattern, desc|
-            return desc if attr.matches?(pattern)
-          end
-
-          attr_idx -= 1
-        end
-        break
-      end
-
-      idx -= 1
+    attr_idx = idx - 1
+    while attr_idx >= 0 && attr_idx >= idx - 5
+      attr = lines[attr_idx].strip
+      break if attr.empty? && attr_idx < idx - 1
+      attrs << attr
+      attr_idx -= 1
     end
-
-    nil
+    attrs
   end
 
+  # Scans the action from its declaration to its end: the brace that closes
+  # its body, or the `;` of an expression body (`Public() => Ok("x");`) or
+  # one-statement route, so the next action's checks are never read.
   private def check_action_body(lines : Array(String), method_line : Int32) : String?
-    idx = method_line + 1
-    end_idx = [method_line + 15, lines.size - 1].min
+    idx = method_line
+    # ponytail: braces inside strings/comments skew the depth; the cap bounds it.
+    end_idx = [method_line + 200, lines.size - 1].min
+    depth = 0
+    opened = false
 
     while idx <= end_idx
       current = lines[idx].strip
@@ -176,6 +254,9 @@ class AspnetAuthTagger < FrameworkTagger
         return desc if current.matches?(pattern)
       end
 
+      depth += current.count('{') - current.count('}')
+      opened ||= current.includes?('{')
+      break if opened ? depth <= 0 : current.ends_with?(';')
       idx += 1
     end
 

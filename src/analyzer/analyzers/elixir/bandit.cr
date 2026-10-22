@@ -8,5 +8,6 @@ module Analyzer::Elixir
   # extraction logic and only rename the analyzer so endpoints get
   # tagged with the `elixir_bandit` technology.
   class Bandit < Plug
+    analyzer_for "elixir_bandit"
   end
 end

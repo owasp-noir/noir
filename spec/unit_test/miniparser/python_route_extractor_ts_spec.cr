@@ -1,10 +1,6 @@
 require "spec"
 require "../../../src/miniparsers/python_route_extractor_ts"
-require "../../../src/miniparsers/python_route_extractor"
 
-# Compares the tree-sitter Python route extractor against the existing
-# regex-based extractor on real fixtures and on edge cases the regex
-# extractor is known to mishandle.
 describe Noir::TreeSitterPythonRouteExtractor do
   it "extracts every route in the bundled Flask fixture" do
     path = File.expand_path("../../../functional_test/fixtures/python/flask/app.py", __FILE__)
@@ -20,6 +16,8 @@ describe Noir::TreeSitterPythonRouteExtractor do
       {"/delete_record", ["DELETE"], "delete_record"},
       {"/get_ip", ["GET"], "json_sample"},
       {"/login", ["POST"], "login_sample"},
+      {"/lookup", ["GET", "QUERY"], "lookup_record"},
+      {"/search", ["QUERY"], "search_record"},
       {"/sign", ["GET", "POST"], "sign_sample"},
       {"/update_record", ["POST"], "update_record"},
     ])
@@ -40,7 +38,7 @@ describe Noir::TreeSitterPythonRouteExtractor do
 
     # `my_pkg.flask` is accepted because the full dotted text is in
     # the allowlist, preserving the legacy procedural behaviour.
-    bps = Noir::TreeSitterPythonRouteExtractor.extract_blueprints(source, ["flask", "my_pkg.flask"])
+    bps = Noir::TreeSitter.parse_python(source) { |root| Noir::TreeSitterPythonRouteExtractor.extract_blueprints_from(root, source, ["flask", "my_pkg.flask"]) }
     bps.map { |b| {b.name, b.prefix} }.should eq([
       {"bare_bp", "/bare"},
       {"prefixed", "/api/v1"},
@@ -63,28 +61,6 @@ describe Noir::TreeSitterPythonRouteExtractor do
     decos[0].path.should eq("/multiline")
     decos[0].methods.sort.should eq(["GET", "POST"])
     decos[0].def_name.should eq("multi")
-
-    # Confirm the legacy regex extractor does miss it — this is the
-    # tree-sitter port's first concrete accuracy win.
-    regex_hits = source.each_line.flat_map do |line|
-      Noir::PythonRouteExtractor.scan_decorators(line.strip, line).map(&.path)
-    end.to_a
-    regex_hits.should_not contain("/multiline")
-  end
-
-  it "is at parity with the regex extractor on single-line decorators" do
-    path = File.expand_path("../../../functional_test/fixtures/python/flask/app.py", __FILE__)
-    source = File.read(path)
-
-    ts_paths = Noir::TreeSitterPythonRouteExtractor
-      .extract_decorations(source)
-      .map(&.path).sort!
-
-    regex_paths = source.each_line.flat_map do |line|
-      Noir::PythonRouteExtractor.scan_decorators(line.strip, line).map(&.path)
-    end.to_a.sort
-
-    ts_paths.should eq(regex_paths)
   end
 
   it "recognises method-specific decorators like @bp.get(\"/x\")" do
@@ -136,5 +112,43 @@ describe Noir::TreeSitterPythonRouteExtractor do
       PY
     decos = Noir::TreeSitterPythonRouteExtractor.extract_decorations(source)
     decos.map(&.path).should eq(["/static"])
+  end
+
+  it "reads a list of paths, the route= keyword and bare @route when asked" do
+    source = <<-PY
+      @http.route(["/shop", "/shop/page/<int:page>"], type="http", csrf=False)
+      def shop(self): pass
+
+      @http.route(route=["/a", "/b"])
+      def ab(self): pass
+
+      @route("/bare", auth="none")
+      def bare(self): pass
+      PY
+    decos = Noir::TreeSitterPythonRouteExtractor.extract_decorations(source, bare_route: true)
+    decos.map(&.paths).should eq([["/shop", "/shop/page/<int:page>"], ["/a", "/b"], ["/bare"]])
+    decos[0].keywords.should eq({"type" => "http", "csrf" => "False"})
+    decos[2].router_name.should eq("")
+
+    Noir::TreeSitterPythonRouteExtractor.extract_decorations(source).map(&.path).should eq(["/shop", "/a"])
+  end
+
+  it "does not read a positional verb list as paths" do
+    source = <<-PY
+      @app.route(PATH, ["GET", "POST"])
+      def handler(): pass
+      PY
+    Noir::TreeSitterPythonRouteExtractor.extract_decorations(source).should be_empty
+  end
+
+  it "keeps a decorator without a path only when pathless" do
+    source = <<-PY
+      @frappe.whitelist(allow_guest=True, methods=["POST"])
+      def ping(): pass
+      PY
+    attrs = {"whitelist" => "GET"}
+    Noir::TreeSitterPythonRouteExtractor.extract_decorations(source, ["frappe"], attrs).should be_empty
+    deco = Noir::TreeSitterPythonRouteExtractor.extract_decorations(source, ["frappe"], attrs, pathless: true).first
+    {deco.path, deco.def_name, deco.methods, deco.keywords["allow_guest"]}.should eq({"", "ping", ["POST"], "True"})
   end
 end

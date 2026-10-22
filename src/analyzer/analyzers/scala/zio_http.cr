@@ -2,20 +2,23 @@ require "../../engines/scala_engine"
 
 module Analyzer::Scala
   class ZioHttp < ScalaEngine
+    analyzer_for "scala_zio_http"
+
     HTTP_METHODS   = %w[GET POST PUT DELETE PATCH HEAD OPTIONS]
     MATCHER_IDENTS = %w[int long string uuid boolean bool trailing]
 
     def analyze_file(path : String) : Array(Endpoint)
-      content = File.read(path)
-      extract_routes_from_content(path, content, any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?))
+      content = read_file_content(path)
+      extract_routes_from_content(path, content, callees_needed?)
     end
 
     # Extract routes from ZIO HTTP DSL:
     #   Method.GET / "users" / int("id") -> handler { (id: Int, req: Request) => ... }
     private def extract_routes_from_content(path : String, content : String, include_callee : Bool) : Array(Endpoint)
       endpoints = [] of Endpoint
-      lines = content.split('\n')
-      code_lines = scala_code_lines(content)
+      lexer = scala_lexer(content)
+      lines = scala_code_text(lexer).split('\n')
+      code_lines = lexer.code_lines
 
       lines.each_with_index do |_line, index|
         stripped = code_lines[index]? || ""
@@ -71,35 +74,41 @@ module Analyzer::Scala
       params = [] of String
 
       s = segments_str
+      # Crystal's `String#[](i)` walks the string from byte 0 on every call
+      # once it holds any multi-byte UTF-8 char (no cached char->byte index),
+      # so a `while i < s.size; ch = s[i]; ...` scan is O(n) per char, i.e.
+      # O(n^2) overall on non-ASCII route expressions. Materialize once and
+      # index the array instead -- same char offsets, O(1) access.
+      chars = s.chars
       i = 0
-      while i < s.size
-        ch = s[i]
+      while i < chars.size
+        ch = chars[i]
         if ch == '/' || ch == ' ' || ch == '\t'
           i += 1
         elsif ch == '"'
           close = s.index('"', i + 1)
           break unless close
-          literal = s[(i + 1)...close]
+          literal = chars[(i + 1)...close].join
           literal.split('/').each do |part|
             segments << part unless part.empty?
           end
           i = close + 1
         elsif ch.ascii_letter? || ch == '_'
           start = i
-          while i < s.size && (s[i].ascii_alphanumeric? || s[i] == '_' || s[i] == '.')
+          while i < chars.size && (chars[i].ascii_alphanumeric? || chars[i] == '_' || chars[i] == '.')
             i += 1
           end
-          ident = s[start...i]
+          ident = chars[start...i].join
 
           j = i
-          while j < s.size && (s[j] == ' ' || s[j] == '\t')
+          while j < chars.size && (chars[j] == ' ' || chars[j] == '\t')
             j += 1
           end
 
-          if j < s.size && s[j] == '('
+          if j < chars.size && chars[j] == '('
             paren_end = s.index(')', j)
             break unless paren_end
-            inner = s[(j + 1)...paren_end]
+            inner = chars[(j + 1)...paren_end].join
             if name_match = inner.match(/"([^"]+)"/)
               name = name_match[1]
             else
@@ -155,16 +164,12 @@ module Analyzer::Scala
     private def extract_declarative_params(endpoint : Endpoint, chain : String)
       chain.scan(/\bquery\s*\[[^\]]*\]\s*\(\s*"([^"]+)"\s*\)/) do |m|
         name = m[1]
-        unless endpoint.params.any? { |p| p.name == name && p.param_type == "query" }
-          endpoint.push_param(Param.new(name, "", "query"))
-        end
+        endpoint.push_param(Param.new(name, "", "query"))
       end
 
       chain.scan(/\bheader\s*\[[^\]]*\]\s*\(\s*"([^"]+)"\s*\)/) do |m|
         name = m[1]
-        unless endpoint.params.any? { |p| p.name == name && p.param_type == "header" }
-          endpoint.push_param(Param.new(name, "", "header"))
-        end
+        endpoint.push_param(Param.new(name, "", "header"))
       end
     end
 
@@ -199,17 +204,13 @@ module Analyzer::Scala
       # Query parameters: req.url.queryParam("name"), req.queryParam("name"), queryParams("name")
       block.scan(/queryParam(?:s|ToList|OrElse)?\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |match|
         name = match[1]
-        unless endpoint.params.any? { |p| p.name == name && p.param_type == "query" }
-          endpoint.push_param(Param.new(name, "", "query"))
-        end
+        endpoint.push_param(Param.new(name, "", "query"))
       end
 
       # Headers: req.headers.get("X-Foo"), req.headers.header("X-Foo")
       block.scan(/headers\.(?:get|header|rawHeader)\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |match|
         name = match[1]
-        unless endpoint.params.any? { |p| p.name == name && p.param_type == "header" }
-          endpoint.push_param(Param.new(name, "", "header"))
-        end
+        endpoint.push_param(Param.new(name, "", "header"))
       end
 
       # Header objects read off the request: a bare reference like
@@ -218,9 +219,7 @@ module Analyzer::Scala
       # — which set RESPONSE headers, not request params (the `(?![\w(.])` guard).
       block.scan(/Header\.([A-Z][A-Za-z0-9]+)(?![\w(.])/) do |match|
         typed_name = humanize_header(match[1])
-        unless endpoint.params.any? { |p| p.name == typed_name && p.param_type == "header" }
-          endpoint.push_param(Param.new(typed_name, "", "header"))
-        end
+        endpoint.push_param(Param.new(typed_name, "", "header"))
       end
     end
 

@@ -155,5 +155,17 @@ describe "WebhookTagger" do
       endpoint.tags.size.should eq(1)
       endpoint.tags[0].name.should eq("webhook")
     end
+
+    it "treats QUERY as a read, like GET, on a medium-signal URL" do
+      tagger = WebhookTagger.new(default_tagger_options)
+
+      # Same URL as the POST case above; QUERY is safe + idempotent
+      # (RFC 10008), so the write-only medium signal must not fire.
+      endpoint = Endpoint.new("/payment/notify", "QUERY")
+
+      tagger.perform([endpoint])
+
+      endpoint.tags.size.should eq(0)
+    end
   end
 end

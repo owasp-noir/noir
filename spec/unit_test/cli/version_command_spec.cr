@@ -10,8 +10,7 @@ describe Noir::CLI::VersionCommand do
       parsed.unknown.should be_nil
     end
 
-    it "flags -V / --verbose" do
-      Noir::CLI::VersionCommand.parse_argv(["-V"]).verbose.should be_true
+    it "flags --verbose" do
       Noir::CLI::VersionCommand.parse_argv(["--verbose"]).verbose.should be_true
     end
 

@@ -106,4 +106,32 @@ describe Noir::TreeSitterHapiExtractor do
     routes = Noir::TreeSitterHapiExtractor.extract_routes(source)
     routes.should be_empty
   end
+
+  # Regression: the `path:` gate matched node type "string" only, so a route
+  # object written with a backtick path produced no endpoint at all.
+  it "accepts a backtick template-literal path value" do
+    source = <<-JS
+      server.route({
+          method: 'GET',
+          path: `/users`,
+          handler: (request, h) => []
+      });
+      JS
+
+    routes = Noir::TreeSitterHapiExtractor.extract_routes(source)
+    routes.map { |r| {r.verb, r.path} }.should eq([{"GET", "/users"}])
+  end
+
+  it "keeps a template-literal substitution as a `{expr}` path placeholder" do
+    source = <<-JS
+      server.route({
+          method: 'POST',
+          path: `/users/${id}/roles`,
+          handler: (request, h) => {}
+      });
+      JS
+
+    routes = Noir::TreeSitterHapiExtractor.extract_routes(source)
+    routes.map { |r| {r.verb, r.path} }.should eq([{"POST", "/users/{id}/roles"}])
+  end
 end

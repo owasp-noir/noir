@@ -1,0 +1,2 @@
+### Health check
+GET https://api.example.com/ping

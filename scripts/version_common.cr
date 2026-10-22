@@ -6,12 +6,21 @@ NOIR_FILE      = "src/noir.cr"
 FLAKE_FILE     = "flake.nix"
 DOCKERFILE     = "Dockerfile"
 SNAPCRAFT_FILE = "snap/snapcraft.yaml"
-DOCS_INDEX     = "docs/content/_index.md"
-DOCS_INDEX_KO  = "docs/content/_index.ko.md"
+# The version chip lives in the shared nav template, so one file covers both
+# languages. It used to be a hero badge inside each landing page.
+DOCS_NAV       = "docs/templates/partials/nav.html"
 ACTION_README  = "github-action/README.md"
 RELEASE_DOC    = "docs/content/development/how_to_release/index.md"
 RELEASE_DOC_KO = "docs/content/development/how_to_release/index.ko.md"
 PKGBUILD_FILE  = "aur/PKGBUILD"
+# Docs example pins that mirror the release version (missed by the old allowlist):
+# install binary names, SARIF driver sample, and the terminal SVGs on Running + landing.
+INSTALL_DOC    = "docs/content/get_started/installation/index.md"
+INSTALL_DOC_KO = "docs/content/get_started/installation/index.ko.md"
+SARIF_DOC      = "docs/content/usage/output_formats/sarif/index.md"
+SARIF_DOC_KO   = "docs/content/usage/output_formats/sarif/index.ko.md"
+RUNNING_SVG    = "docs/content/get_started/running/scan.svg"
+LANDING_SVG    = "docs/static/images/landing/scan-terminal.svg"
 
 # Extract version from shard.yml
 def get_shard_version : String?
@@ -51,9 +60,9 @@ rescue
   nil
 end
 
-# Extract hero-badge version from a docs index file
-def get_docs_index_version(path : String) : String?
-  match = File.read(path).match(/class="hero-badge">v([\d.]+)</)
+# Extract the version chip from the docs nav template
+def get_docs_nav_version(path : String) : String?
+  match = File.read(path).match(/class="header-version"[^>]*>v([\d.]+)</)
   match ? match[1] : nil
 rescue
   nil
@@ -83,6 +92,30 @@ rescue
   nil
 end
 
+# Extract binary example version from an install doc (noir-vX.Y.Z-...).
+def get_install_doc_version(path : String) : String?
+  match = File.read(path).match(/noir-v([\d.]+)-/)
+  match ? match[1] : nil
+rescue
+  nil
+end
+
+# Extract OWASP Noir driver version from a SARIF sample (not the SARIF schema version).
+def get_sarif_doc_version(path : String) : String?
+  match = File.read(path).match(/"name":\s*"OWASP Noir",\s*"version":\s*"([\d.]+)"/)
+  match ? match[1] : nil
+rescue
+  nil
+end
+
+# Extract the yellow banner version from a terminal SVG (Running / landing).
+def get_terminal_svg_version(path : String) : String?
+  match = File.read(path).match(/fill="#f5f543"[^>]*>v([\d.]+)</)
+  match ? match[1] : nil
+rescue
+  nil
+end
+
 # Collect (label, path, version) for every tracked file.
 def collect_versions : Array(Tuple(String, String, String?))
   [
@@ -91,12 +124,17 @@ def collect_versions : Array(Tuple(String, String, String?))
     {"flake.nix", FLAKE_FILE, get_flake_version},
     {"Dockerfile", DOCKERFILE, get_dockerfile_version},
     {"snap/snapcraft.yaml", SNAPCRAFT_FILE, get_snapcraft_version},
-    {"docs/_index.md", DOCS_INDEX, get_docs_index_version(DOCS_INDEX)},
-    {"docs/_index.ko.md", DOCS_INDEX_KO, get_docs_index_version(DOCS_INDEX_KO)},
+    {"docs/templates/partials/nav.html", DOCS_NAV, get_docs_nav_version(DOCS_NAV)},
     {"github-action/README.md", ACTION_README, get_action_readme_version},
     {"docs/.../how_to_release/index.md", RELEASE_DOC, get_release_doc_version(RELEASE_DOC)},
     {"docs/.../how_to_release/index.ko.md", RELEASE_DOC_KO, get_release_doc_version(RELEASE_DOC_KO)},
     {"aur/PKGBUILD", PKGBUILD_FILE, get_pkgbuild_version},
+    {"docs/.../installation/index.md", INSTALL_DOC, get_install_doc_version(INSTALL_DOC)},
+    {"docs/.../installation/index.ko.md", INSTALL_DOC_KO, get_install_doc_version(INSTALL_DOC_KO)},
+    {"docs/.../sarif/index.md", SARIF_DOC, get_sarif_doc_version(SARIF_DOC)},
+    {"docs/.../sarif/index.ko.md", SARIF_DOC_KO, get_sarif_doc_version(SARIF_DOC_KO)},
+    {"docs/.../running/scan.svg", RUNNING_SVG, get_terminal_svg_version(RUNNING_SVG)},
+    {"docs/static/.../scan-terminal.svg", LANDING_SVG, get_terminal_svg_version(LANDING_SVG)},
   ]
 end
 

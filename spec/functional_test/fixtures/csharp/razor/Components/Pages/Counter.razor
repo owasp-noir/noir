@@ -1,0 +1,12 @@
+@page "/counter"
+@page "/counter/{Start:int}"
+
+<h1>Counter</h1>
+
+@code {
+    [Parameter]
+    public int Start { get; set; }
+
+    [SupplyParameterFromQuery(Name = "step")]
+    public int Step { get; set; }
+}

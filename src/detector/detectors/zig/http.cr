@@ -2,6 +2,8 @@ require "../../../models/detector"
 
 module Detector::Zig
   class Http < Detector
+    detector_for "zig_http", extensions: %w[.zig], basenames: %w[build.zig.zon]
+
     def detect(filename : String, file_contents : String) : Bool
       return false unless filename.ends_with?(".zig")
 
@@ -12,14 +14,6 @@ module Detector::Zig
       has_response = file_contents.includes?(".respond(")
 
       has_std && has_server_flow && has_response
-    end
-
-    def applicable?(filename : String) : Bool
-      filename.ends_with?(".zig") || File.basename(filename) == "build.zig.zon"
-    end
-
-    def set_name
-      @name = "zig_http"
     end
   end
 end

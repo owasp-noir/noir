@@ -1,6 +1,4 @@
-def remove_start_slash(input_path : String) : String
-  input_path.lstrip('/')
-end
+require "../ext/windows_paths"
 
 def get_relative_path(base_path : String, path : String) : String
   # First, determine the path relative to the base_path, without other normalization.
@@ -24,31 +22,14 @@ def get_relative_path(base_path : String, path : String) : String
                     end
 
   # Then, normalize the resulting path.
-  relative_path = unstripped_path
+  unstripped_path
     .sub(/^\.\//, "") # Remove leading "./" only at the start
     .sub("//", "/")
-
-  remove_start_slash(relative_path)
-end
-
-def join_path(*segments : String) : String
-  path = segments
-    .reject(&.empty?)
-    .map(&.chomp("/").lstrip("/"))
-    .join("/")
-
-  path.starts_with?("/") ? path : "/#{path}"
+    .lstrip('/')
 end
 
 def any_to_bool(any) : Bool
-  case any.to_s.downcase
-  when "false", "no"
-    false
-  when "true", "yes"
-    true
-  else
-    false
-  end
+  {"true", "yes"}.includes?(any.to_s.downcase)
 end
 
 # Escapes glob metacharacters in a path string.
@@ -59,23 +40,36 @@ def escape_glob_path(path : String) : String
   path.gsub(/([{}\[\]*?\\])/) { |match| "\\#{match}" }
 end
 
-# Safely checks if a regex matches a string within a given timeout.
-# This helps mitigate ReDoS (Regular Expression Denial of Service) attacks.
-def regex_matches_with_timeout?(regex : Regex, input : String, timeout : Time::Span = 500.milliseconds) : Bool
-  # Buffered (capacity 1): on timeout the caller stops receiving, so an
-  # unbuffered send from the late-finishing fiber would block forever (fiber leak).
-  result_channel = Channel(Bool).new(1)
+# `Dir.glob(File.join(dir, pattern))` with `dir` taken literally: a project
+# under `proj [old]/` or `br[1]/` must not have its own path read as a glob
+# character class and silently match nothing. Joined by hand, not with
+# `File.join`: on Windows that rewrites every `\` to `/`
+# (src/ext/windows_paths.cr), escapes included.
+def glob_under(dir : String, pattern : String) : Array(String)
+  return Dir.glob(pattern) if dir.empty?
+  Dir.glob("#{escape_glob_path(dir.chomp('/'))}/#{pattern}")
+end
 
-  spawn do
-    result_channel.send(regex.matches?(input))
-  rescue
-    result_channel.send(false)
-  end
-
-  select
-  when matched = result_channel.receive
-    matched
-  when timeout(timeout)
-    false
-  end
+# Matches `regex` against `input`, treating a backtracking blow-up as "no
+# match" rather than an exception.
+#
+# The bound is PCRE2's own match limit, which is the only mechanism that can
+# actually interrupt a running match. When a pattern backtracks past it,
+# `Regex#matches?` raises `Regex::Error`; that is the ReDoS ceiling, and it
+# applies whether or not anything here wraps the call.
+#
+# This used to spawn a fiber and race it against `select ... when timeout`.
+# That could not work: `Regex#matches?` is a single `pcre2_match` FFI call
+# with no yield point, and the spawned fiber shared the caller's default
+# execution context (parallelism 1, one fiber at a time), so the timeout
+# branch could never be reached while the match was running. Measured
+# directly — with `timeout` set to 10ms, the wrapper returned after 17ms,
+# having run the match to completion. It bounded nothing, and cost a fiber
+# spawn plus a channel per line scanned on the one hot path that used it.
+def regex_matches_bounded?(regex : Regex, input : String) : Bool
+  regex.matches?(input)
+rescue Regex::Error
+  # Match limit exhausted (or another PCRE2 runtime error). The line is not
+  # a hit, and one pathological line must not end the scan.
+  false
 end

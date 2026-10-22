@@ -4,14 +4,19 @@ require "../../../models/code_locator"
 
 module Detector::Specification
   class Vercel < Detector
+    # Registers Vercel config paths in `CodeLocator`.
+    # Memo safety: `applicable?` consults the path
+    # (root-placement check via File.dirname), not just the basename.
+    detector_for "vercel", idempotent: false, path_sensitive: true
+
     CONFIG_FILES = {"vercel.json", "now.json"}
     @expanded_base_paths : Array(String)?
 
     def detect(filename : String, file_contents : String) : Bool
       return false unless applicable?(filename)
-      return false unless valid_json?(file_contents)
+      return false unless json_any?(file_contents)
 
-      CodeLocator.instance.push("vercel-spec", filename)
+      CodeLocator.instance.push(Noir::LocatorKeys::VERCEL_SPEC, filename)
       true
     end
 
@@ -22,23 +27,14 @@ module Detector::Specification
       parent = File.dirname(filename)
       return true if parent == "." || parent.empty?
 
-      absolute = File.expand_path(filename)
+      absolute = Noir::PathScope.expand(filename)
       expanded_base_paths.any? do |base_path|
         File.join(base_path, base) == absolute
       end
     end
 
-    def set_name
-      @name = "vercel"
-    end
-
-    # Registers Vercel config paths in `CodeLocator`.
-    def idempotent? : Bool
-      false
-    end
-
     private def expanded_base_paths : Array(String)
-      @expanded_base_paths ||= @base_paths.map { |base_path| File.expand_path(base_path) }
+      @expanded_base_paths ||= @base_paths.map { |base_path| Noir::PathScope.expand(base_path) }
     end
   end
 end

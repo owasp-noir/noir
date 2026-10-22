@@ -1,8 +1,15 @@
+require "../../../utils/url_path"
+require "../../engines/play_route_support"
 require "../../../models/analyzer"
 require "../../../miniparsers/scala_callee_extractor"
+require "../../../minilexers/scala_lexer"
 
 module Analyzer::Scala
   class Play < Analyzer
+    analyzer_for "scala_play"
+
+    include PlayRouteSupport
+
     # Stores parsed controller methods with their parameters
     alias ControllerMethod = NamedTuple(headers: Array(String), cookies: Array(String), body_type: String?, callees: Array(Noir::ScalaCalleeExtractor::Entry))
     alias ScopedKey = Tuple(String, String)
@@ -30,7 +37,10 @@ module Analyzer::Scala
         # convention) and `/src/sbt-test/` (sbt-plugin's per-fixture
         # test trees) are unambiguous — production code never adopts
         # either.
-        next if path.includes?("/src/test/") || path.includes?("/src/sbt-test/")
+        # Scan-base-relative, never absolute: a `src/test/` directory
+        # ABOVE the scan base is not this project's test tree.
+        relative = base_relative_path(path)
+        next if relative.includes?("/src/test/") || relative.includes?("/src/sbt-test/")
 
         if path.ends_with?("routes") || path.ends_with?("routes.conf") || path.includes?("/conf/routes")
           routes_files << path
@@ -79,7 +89,9 @@ module Analyzer::Scala
       want_callees = callees_needed?
 
       scala_files.each do |path|
-        content = read_file_content(path)
+        # Comments blanked (strings kept, offsets kept) so the param regexes
+        # read `request.headers.get(/* x */ "X-H")` too.
+        content = Noir::ScalaLexer.new(read_file_content(path)).code.join
         base_path = configured_base_for(path)
         # Length-preserving copy with strings/comments blanked out. Braces,
         # colons and `def` keywords that live inside literals or comments are
@@ -127,36 +139,47 @@ module Analyzer::Scala
             cookies = [] of String
             body_type : String? = nil
 
-            # Extract headers: request.headers.get("Header-Name") or request.headers("Header-Name")
-            method_body.scan(/request\s*\.\s*headers(?:\s*\.\s*get)?\s*\(\s*["']([^"']+)["']\s*\)/) do |header_match|
-              headers << header_match[1] unless headers.includes?(header_match[1])
+            if method_body.includes?("headers")
+              # Extract headers: request.headers.get("Header-Name") or request.headers("Header-Name")
+              method_body.scan(/request\s*\.\s*headers(?:\s*\.\s*get)?\s*\(\s*["']([^"']+)["']\s*\)/) do |header_match|
+                headers << header_match[1] unless headers.includes?(header_match[1])
+              end
+
+              # Also match implicit request patterns: headers.get("Header-Name")
+              method_body.scan(/headers\s*\.\s*get\s*\(\s*["']([^"']+)["']\s*\)/) do |header_match|
+                headers << header_match[1] unless headers.includes?(header_match[1])
+              end
             end
 
-            # Also match implicit request patterns: headers.get("Header-Name")
-            method_body.scan(/headers\s*\.\s*get\s*\(\s*["']([^"']+)["']\s*\)/) do |header_match|
-              headers << header_match[1] unless headers.includes?(header_match[1])
-            end
+            if method_body.includes?("cookies")
+              # Extract cookies: request.cookies.get("cookie-name")
+              method_body.scan(/request\s*\.\s*cookies\s*\.\s*get\s*\(\s*["']([^"']+)["']\s*\)/) do |cookie_match|
+                cookies << cookie_match[1] unless cookies.includes?(cookie_match[1])
+              end
 
-            # Extract cookies: request.cookies.get("cookie-name")
-            method_body.scan(/request\s*\.\s*cookies\s*\.\s*get\s*\(\s*["']([^"']+)["']\s*\)/) do |cookie_match|
-              cookies << cookie_match[1] unless cookies.includes?(cookie_match[1])
-            end
-
-            # Also match: cookies.get("cookie-name")
-            method_body.scan(/cookies\s*\.\s*get\s*\(\s*["']([^"']+)["']\s*\)/) do |cookie_match|
-              cookies << cookie_match[1] unless cookies.includes?(cookie_match[1])
+              # Also match: cookies.get("cookie-name")
+              method_body.scan(/cookies\s*\.\s*get\s*\(\s*["']([^"']+)["']\s*\)/) do |cookie_match|
+                cookies << cookie_match[1] unless cookies.includes?(cookie_match[1])
+              end
             end
 
             # Extract body type: request.body.asJson, request.body.asFormUrlEncoded, parse.json, parse.form
             body_source = "#{method_signature}\n#{method_body}"
-            if body_source.match(/request\s*\.\s*body\s*\.\s*asJson|parse\s*\.\s*json|Json\s*\.\s*parse|\.body\s*\.\s*asJson|\.body\s*\.\s*asOpt|\.body\s*\.\s*as\s*\[/)
-              body_type = "json"
-            elsif body_source.match(/request\s*\.\s*body\s*\.\s*as(?:FormUrlEncoded|MultipartFormData)|parse\s*\.\s*(?:form|multipartFormData|tolerantFormUrlEncoded)/)
-              body_type = "form"
-            elsif body_source.match(/request\s*\.\s*body\s*\.\s*asXml|parse\s*\.\s*(?:xml|tolerantXml)/)
-              body_type = "xml"
-            elsif body_source.match(/request\s*\.\s*body\s*\.\s*as(?:Text|Raw|Bytes)|parse\s*\.\s*(?:text|raw|tolerantText)/)
-              body_type = "body"
+            if body_source.includes?("body") || body_source.includes?("parse") ||
+               body_source.includes?("xml") || body_source.includes?("Xml") ||
+               body_source.includes?("json") || body_source.includes?("Json") ||
+               body_source.includes?("form") || body_source.includes?("Form") ||
+               body_source.includes?("multipart") || body_source.includes?("text") ||
+               body_source.includes?("raw")
+              if body_source.match(/request\s*\.\s*body\s*\.\s*asJson|parse\s*\.\s*json|Json\s*\.\s*parse|\.body\s*\.\s*asJson|\.body\s*\.\s*asOpt|\.body\s*\.\s*as\s*\[/)
+                body_type = "json"
+              elsif body_source.match(/request\s*\.\s*body\s*\.\s*as(?:FormUrlEncoded|MultipartFormData)|parse\s*\.\s*(?:form|multipartFormData|tolerantFormUrlEncoded)/)
+                body_type = "form"
+              elsif body_source.match(/request\s*\.\s*body\s*\.\s*asXml|parse\s*\.\s*(?:xml|tolerantXml)/)
+                body_type = "xml"
+              elsif body_source.match(/request\s*\.\s*body\s*\.\s*as(?:Text|Raw|Bytes)|parse\s*\.\s*(?:text|raw|tolerantText)/)
+                body_type = "body"
+              end
             end
 
             full_method_name = package_name.empty? ? "#{class_name}.#{method_name}" : "#{package_name}.#{class_name}.#{method_name}"
@@ -180,12 +203,20 @@ module Analyzer::Scala
     private def blank_non_code(content : String) : String
       block_depth = 0
       in_multiline_string = false
-      builder = String::Builder.new
-      lines = content.split('\n')
-      lines.each_with_index do |line, index|
+      builder = String::Builder.new(content.bytesize)
+      first = true
+      # Split on '\n' (not each_line, which chomps a trailing '\r'): a CRLF
+      # source must keep its '\r' bytes so `structure` stays byte-aligned 1:1
+      # with `content` — every downstream `content[start...end]` slice relies
+      # on that invariant.
+      content.split('\n').each do |line|
+        if first
+          first = false
+        else
+          builder << '\n'
+        end
         stripped, block_depth, in_multiline_string = Noir::ScalaCalleeExtractor.strip_non_code_with_state(line, block_depth, in_multiline_string)
         builder << stripped
-        builder << '\n' unless index == lines.size - 1
       end
       builder.to_s
     end
@@ -220,9 +251,16 @@ module Analyzer::Scala
 
       region_end = method_region_end(structure, def_line_start, base_indent)
 
+      # Crystal's `String#[](i)` walks the string from byte 0 on every call
+      # once it holds any multi-byte UTF-8 char (no cached char->byte index),
+      # so a `while i < region_end; c = structure[i]; ...` scan is O(n) per
+      # char, i.e. O(n^2) overall on non-ASCII source. Materialize once and
+      # index the array instead -- same char offsets, O(1) access.
+      chars = structure.chars
+
       # The `=` that introduces the body: skip type params, parameter lists and
       # default-value `=` (all of which sit inside brackets), and ignore `=>`.
-      eq_index = locate_body_eq(structure, cursor, region_end)
+      eq_index = locate_body_eq(chars, cursor, region_end)
 
       # Find the body separator: the first top-level `{` (brace block) or an
       # end-of-line `:` (Scala 3 indented block).
@@ -232,13 +270,13 @@ module Analyzer::Scala
       depth = 0
       i = search_from
       while i < region_end
-        c = structure[i]
+        c = chars[i]
         if depth == 0
           if c == '{'
             sep_index = i
             sep_kind = :brace
             break
-          elsif c == ':' && rest_of_line_blank?(structure, i + 1, region_end)
+          elsif c == ':' && rest_of_line_blank?(chars, i + 1, region_end)
             sep_index = i
             sep_kind = :colon
             break
@@ -256,7 +294,7 @@ module Analyzer::Scala
         # `sep_index` is always set when `sep_kind` is `:brace`/`:colon`; the
         # `if` narrows the type so we avoid `not_nil!`.
         if open_brace = sep_index
-          close = matching_brace(structure, open_brace)
+          close = matching_brace(chars, open_brace)
           body_start = open_brace + 1
           body_end = close || region_end
           {signature: source[def_start..open_brace], body: source[body_start...body_end], body_start: body_start}
@@ -270,7 +308,7 @@ module Analyzer::Scala
         # Single-expression body (`def foo = bar(x)`). Without a `=` there is no
         # value body to parse (e.g. an abstract def).
         return unless eq_index
-        body_start = skip_whitespace(structure, eq_index + 1, region_end)
+        body_start = skip_whitespace(chars, eq_index + 1, region_end)
         {signature: source[def_start..eq_index], body: source[body_start...region_end], body_start: body_start}
       end
     end
@@ -299,17 +337,17 @@ module Analyzer::Scala
     end
 
     # Index of the top-level `=` that begins the method body, or nil.
-    private def locate_body_eq(structure : String, from : Int32, region_end : Int32) : Int32?
+    private def locate_body_eq(chars : Array(Char), from : Int32, region_end : Int32) : Int32?
       depth = 0
       i = from
       while i < region_end
-        c = structure[i]
+        c = chars[i]
         if depth == 0
           if c == '='
-            nxt = structure[i + 1]?
+            nxt = chars[i + 1]?
             # Guard the index explicitly: Crystal's `[-1]?` wraps to the last
             # char rather than returning nil.
-            prv = i > 0 ? structure[i - 1]? : nil
+            prv = i > 0 ? chars[i - 1]? : nil
             return i if nxt != '>' && nxt != '=' && prv != '=' && prv != '!' && prv != '<' && prv != '>'
           elsif c == '{'
             # Brace-only body (procedure syntax `def foo { ... }`): no `=`.
@@ -326,12 +364,12 @@ module Analyzer::Scala
     end
 
     # Index of the brace matching the one at `open_index`, or nil.
-    private def matching_brace(structure : String, open_index : Int32) : Int32?
+    private def matching_brace(chars : Array(Char), open_index : Int32) : Int32?
       depth = 0
       i = open_index
-      size = structure.size
+      size = chars.size
       while i < size
-        case structure[i]
+        case chars[i]
         when '{' then depth += 1
         when '}'
           depth -= 1
@@ -342,10 +380,10 @@ module Analyzer::Scala
       nil
     end
 
-    private def rest_of_line_blank?(structure : String, from : Int32, region_end : Int32) : Bool
+    private def rest_of_line_blank?(chars : Array(Char), from : Int32, region_end : Int32) : Bool
       i = from
       while i < region_end
-        c = structure[i]
+        c = chars[i]
         break if c == '\n'
         return false unless c == ' ' || c == '\t' || c == '\r'
         i += 1
@@ -353,10 +391,10 @@ module Analyzer::Scala
       true
     end
 
-    private def skip_whitespace(structure : String, from : Int32, region_end : Int32) : Int32
+    private def skip_whitespace(chars : Array(Char), from : Int32, region_end : Int32) : Int32
       i = from
       while i < region_end
-        c = structure[i]
+        c = chars[i]
         break unless c == ' ' || c == '\t' || c == '\n' || c == '\r'
         i += 1
       end
@@ -411,11 +449,11 @@ module Analyzer::Scala
           include_prefix = include_match[1]
           include_target = include_match[2]
           if included_path = resolve_included_routes_file(include_target, routes_by_key, path)
-            process_routes_file(included_path, controller_methods, routes_by_key, join_paths(prefix, include_prefix), seen)
+            process_routes_file(included_path, controller_methods, routes_by_key, Noir::URLPath.join_trimmed(prefix, include_prefix), seen)
           elsif router = resolve_sird_router(include_target, path)
             # The include target is a programmatic SIRD router class
             # (`-> /v1/posts v1.post.PostRouter`), not a routes file.
-            process_sird_router(router, join_paths(prefix, include_prefix))
+            process_sird_router(router, Noir::URLPath.join_trimmed(prefix, include_prefix))
           end
           next
         end
@@ -466,24 +504,6 @@ module Analyzer::Scala
       index
     end
 
-    private def collect_included_routes(routes_files : Array(String), routes_by_key : Hash(ScopedKey, Array(String))) : Set(String)
-      included = Set(String).new
-
-      routes_files.each do |path|
-        read_file_content(path).each_line do |line|
-          stripped = line.strip
-          next if stripped.empty? || stripped.starts_with?("#")
-          next unless include_match = stripped.match(/^->\s+[^\s]+\s+(.+)$/)
-
-          if included_path = resolve_included_routes_file(include_match[1], routes_by_key, path)
-            included << included_path
-          end
-        end
-      end
-
-      included
-    end
-
     private def resolve_included_routes_file(target : String,
                                              routes_by_key : Hash(ScopedKey, Array(String)),
                                              including_path : String) : String?
@@ -516,12 +536,6 @@ module Analyzer::Scala
       nil
     end
 
-    private def join_paths(prefix : String, suffix : String) : String
-      return suffix if prefix.empty?
-      return prefix.rstrip('/') if suffix.empty?
-      "#{prefix.rstrip('/')}/#{suffix.lstrip('/')}"
-    end
-
     # Join a mount prefix onto a route defined in an included routes file, but
     # don't double the prefix when the included file already carries it.
     # Standard Play sub-routes are relative (`-> /appeal appeal.Routes` over
@@ -530,7 +544,7 @@ module Analyzer::Scala
     # would yield `/appeal/appeal/landing`. The boundary check (exact match or
     # `prefix/…`) keeps a coincidental relative path like `/appeals` prefixed.
     private def join_included_route(prefix : String, suffix : String) : String
-      return join_paths(prefix, suffix) if prefix.empty?
+      return Noir::URLPath.join_trimmed(prefix, suffix) if prefix.empty?
 
       normalized_prefix = prefix.rstrip('/')
       normalized_suffix = suffix.starts_with?('/') ? suffix : "/#{suffix}"
@@ -538,175 +552,7 @@ module Analyzer::Scala
         return normalized_suffix
       end
 
-      join_paths(prefix, suffix)
-    end
-
-    # Extract path parameters from route pattern
-    private def extract_path_params(endpoint : Endpoint, route_path : String)
-      # Match :param style parameters
-      route_path.scan(/:(\w+)/) do |match|
-        param_name = match[1]
-        endpoint.push_param(Param.new(param_name, "", "path"))
-      end
-
-      # Match $param<regex> style parameters
-      route_path.scan(/\$(\w+)<[^>]+>/) do |match|
-        param_name = match[1]
-        unless endpoint.params.any? { |p| p.name == param_name && p.param_type == "path" }
-          endpoint.push_param(Param.new(param_name, "", "path"))
-        end
-      end
-
-      # Match *param wildcard style parameters
-      route_path.scan(/\*(\w+)/) do |match|
-        param_name = match[1]
-        unless endpoint.params.any? { |p| p.name == param_name && p.param_type == "path" }
-          endpoint.push_param(Param.new(param_name, "", "path"))
-        end
-      end
-    end
-
-    # Extract query parameters from action signature
-    # Example: controllers.Users.show(id: Long, name: String ?= "default")
-    private def extract_params_from_action(endpoint : Endpoint, action : String)
-      # Extract parameters from action signature
-      if params_match = action.match(/\((.*)\)/)
-        params_str = params_match[1]
-
-        split_route_action_params(params_str).each do |param_def|
-          param_def = param_def.strip
-          next if param_def.empty?
-
-          if route_param = route_action_param(param_def)
-            param_name, param_type, default_value = route_param
-            next if request_route_param_type?(param_type)
-            next if endpoint.params.any? { |p| p.name == param_name && p.param_type == "path" }
-            next if endpoint.params.any? { |p| p.name == param_name }
-
-            endpoint.push_param(Param.new(param_name, default_value, "query"))
-          end
-        end
-      end
-    end
-
-    private def split_route_action_params(params_str : String) : Array(String)
-      params = [] of String
-      start = 0
-      depth = 0
-      in_string = false
-      quote = '\0'
-      escape = false
-
-      params_str.each_char_with_index do |char, index|
-        if in_string
-          if escape
-            escape = false
-          elsif char == '\\'
-            escape = true
-          elsif char == quote
-            in_string = false
-          end
-          next
-        end
-
-        case char
-        when '"', '\''
-          in_string = true
-          quote = char
-        when '(', '[', '{'
-          depth += 1
-        when ')', ']', '}'
-          depth -= 1 if depth > 0
-        when ','
-          next unless depth == 0
-
-          params << params_str[start...index].strip
-          start = index + 1
-        end
-      end
-
-      tail = params_str[start..]?.to_s.strip
-      params << tail unless tail.empty?
-      params
-    end
-
-    private def route_action_param(param_def : String) : Tuple(String, String?, String)?
-      optional_default_index = top_level_operator_index(param_def, "?=")
-      fixed_value_index = top_level_operator_index(param_def, "=")
-      return if fixed_value_index && optional_default_index.nil?
-
-      declaration_end = optional_default_index || param_def.size
-      declaration = param_def[0...declaration_end].strip
-      return if declaration.empty?
-
-      default_value = ""
-      if optional_default_index
-        raw_default = param_def[(optional_default_index + 2)..].strip
-        default_value = normalize_route_default_value(raw_default)
-      end
-
-      if colon = declaration.index(':')
-        name = declaration[0...colon].strip
-        type_name = declaration[(colon + 1)..].strip
-        return if name.empty?
-        return {name, type_name.empty? ? nil : type_name, default_value}
-      end
-
-      name = declaration.strip
-      return unless name.match(/\A[A-Za-z_][A-Za-z0-9_]*\z/)
-      {name, nil, default_value}
-    end
-
-    private def top_level_operator_index(text : String, operator : String) : Int32?
-      depth = 0
-      in_string = false
-      quote = '\0'
-      escape = false
-      i = 0
-
-      while i <= text.size - operator.size
-        char = text[i]
-
-        if in_string
-          if escape
-            escape = false
-          elsif char == '\\'
-            escape = true
-          elsif char == quote
-            in_string = false
-          end
-          i += 1
-          next
-        end
-
-        case char
-        when '"', '\''
-          in_string = true
-          quote = char
-        when '(', '[', '{'
-          depth += 1
-        when ')', ']', '}'
-          depth -= 1 if depth > 0
-        else
-          # `i` is a CHAR index; char-slice (byte_slice would treat i as a byte
-          # offset and desync the match when a multi-byte char precedes it).
-          return i if depth == 0 && text[i, operator.size]? == operator
-        end
-        i += 1
-      end
-
-      nil
-    end
-
-    private def normalize_route_default_value(raw_default : String) : String
-      value = raw_default.strip
-      return "" if value.empty?
-
-      if value.size >= 2 && ((value.starts_with?('"') && value.ends_with?('"')) || (value.starts_with?("'") && value.ends_with?("'")))
-        return value[1..-2]
-      end
-
-      value
+      Noir::URLPath.join_trimmed(prefix, suffix)
     end
 
     private def request_route_param_type?(param_type : String?) : Bool
@@ -730,16 +576,12 @@ module Analyzer::Scala
       if method_info = controller_methods[{configured_base_for(routes_path), method_name}]?
         # Add header parameters
         method_info[:headers].each do |header|
-          unless endpoint.params.any? { |p| p.name == header && p.param_type == "header" }
-            endpoint.push_param(Param.new(header, "", "header"))
-          end
+          endpoint.push_param(Param.new(header, "", "header"))
         end
 
         # Add cookie parameters
         method_info[:cookies].each do |cookie|
-          unless endpoint.params.any? { |p| p.name == cookie && p.param_type == "cookie" }
-            endpoint.push_param(Param.new(cookie, "", "cookie"))
-          end
+          endpoint.push_param(Param.new(cookie, "", "cookie"))
         end
 
         # Add body parameter if body type detected
@@ -793,7 +635,10 @@ module Analyzer::Scala
     private def process_sird_router(router : NamedTuple(path: String, content: String, class_name: String), prefix : String)
       source = router[:content]
       structure = blank_non_code(source)
-      block = extract_router_routes_block(structure, source)
+      # Cases are read from a comment-free copy (string literals kept,
+      # offsets aligned with `source`), so `// case GET(p"/old")` is not
+      # a route.
+      block = extract_router_routes_block(structure, Noir::ScalaLexer.new(source).code.join)
       return unless block
 
       body = block[:body]
@@ -804,15 +649,13 @@ module Analyzer::Scala
       body.scan(/case\s+(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)\s*\(\s*p"([^"]*)"/) do |match|
         method = match[1]
         url_path, params = normalize_sird_path(match[2])
-        full_path = join_paths(prefix, url_path)
+        full_path = Noir::URLPath.join_trimmed(prefix, url_path)
         full_path = "/" if full_path.empty?
 
         line = line_at(source, body_start + (match.begin(0) || 0))
         endpoint = create_endpoint(full_path, method, router[:path], line)
         params.each do |param_name|
-          unless endpoint.params.any? { |p| p.name == param_name && p.param_type == "path" }
-            endpoint.push_param(Param.new(param_name, "", "path"))
-          end
+          endpoint.push_param(Param.new(param_name, "", "path"))
         end
         @result << endpoint
       end
@@ -827,7 +670,7 @@ module Analyzer::Scala
 
       open_brace = structure.index('{', search_from)
       return unless open_brace
-      close = matching_brace(structure, open_brace)
+      close = matching_brace(structure.chars, open_brace)
       return unless close
 
       {body: source[(open_brace + 1)...close], start: open_brace + 1}
@@ -848,14 +691,6 @@ module Analyzer::Scala
       end
       url = "/#{url}" unless url.starts_with?("/")
       {url, params}
-    end
-
-    # Create an endpoint with the given path and method
-    private def create_endpoint(path : String, method : String, source : String, line_number : Int32)
-      details = Details.new(PathInfo.new(source, line_number))
-      params = [] of Param
-
-      Endpoint.new(path, method, params, details)
     end
   end
 end

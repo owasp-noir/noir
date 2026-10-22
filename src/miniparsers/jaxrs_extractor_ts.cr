@@ -1,9 +1,11 @@
+require "../utils/url_path"
 require "../ext/tree_sitter/tree_sitter"
 require "../models/endpoint"
 require "./java_callee_extractor"
 require "./java_parameter_extractor_ts"
 require "./java_route_extractor_ts"
 require "./import_graph"
+require "../utils/jvm_media_type"
 
 module Noir
   # Tree-sitter-backed JAX-RS / Jakarta REST extractor.
@@ -54,14 +56,15 @@ module Noir
     # to the same param formats. Listing both here keeps the
     # Quarkus analyzer a thin detector layer on top of this extractor.
     PARAM_ANNOTATION_FORMAT = {
-      "QueryParam"  => "query",
-      "HeaderParam" => "header",
-      "CookieParam" => "cookie",
-      "FormParam"   => "form",
-      "RestQuery"   => "query",
-      "RestHeader"  => "header",
-      "RestCookie"  => "cookie",
-      "RestForm"    => "form",
+      "QueryParam"    => "query",
+      "HeaderParam"   => "header",
+      "CookieParam"   => "cookie",
+      "FormParam"     => "form",
+      "FormDataParam" => "form", # Jersey multipart (org.glassfish.jersey.media.multipart)
+      "RestQuery"     => "query",
+      "RestHeader"    => "header",
+      "RestCookie"    => "cookie",
+      "RestForm"      => "form",
     }
 
     # `@PathParam` skip-list — Quarkus's `@RestPath` is a drop-in
@@ -108,9 +111,11 @@ module Noir
       getter callees : Array(Tuple(String, Int32))
       getter file_path : String?
       getter protocol : String
+      getter signature_line : Int32? # 0-based line of the method name (the handler), nil for class-level routes
 
       def initialize(@verb, @path, @class_name, @method_name, @line,
-                     @parameter_format, @params, @callees, @file_path = nil, @protocol = "http")
+                     @parameter_format, @params, @callees, @file_path = nil, @protocol = "http",
+                     @signature_line = nil)
       end
     end
 
@@ -123,10 +128,12 @@ module Noir
                        bean_index : Hash(String, Array(Param)) = {} of String => Array(Param),
                        subresource_sources : Hash(String, SourceEntry) = {} of String => SourceEntry,
                        *,
+                       custom_verb_annotations : Hash(String, String) = {} of String => String,
                        include_callees : Bool = false) : Array(Route)
       routes = [] of Route
       Noir::TreeSitter.parse_java(source) do |root|
-        routes.concat(extract_routes_from(root, source, dto_index, bean_index, subresource_sources, include_callees: include_callees))
+        routes.concat(extract_routes_from(root, source, dto_index, bean_index, subresource_sources,
+          custom_verb_annotations: custom_verb_annotations, include_callees: include_callees))
       end
       routes
     end
@@ -140,17 +147,20 @@ module Noir
                             bean_index : Hash(String, Array(Param)) = {} of String => Array(Param),
                             subresource_sources : Hash(String, SourceEntry) = {} of String => SourceEntry,
                             *,
-                            include_callees : Bool = false) : Array(Route)
+                            custom_verb_annotations : Hash(String, String) = {} of String => String,
+                            include_callees : Bool = false,
+                            project_constants : Hash(String, String)? = nil) : Array(Route)
       routes = [] of Route
       classes = collect_classes(root, source)
-      constants = TreeSitterJavaRouteExtractor.extract_string_constants_from(root, source)
+      constants = TreeSitterJavaRouteExtractor.extract_string_constants_from(root, source, project_constants)
       classes.each_value do |decl|
         next unless Noir::TreeSitter.node_type(decl) == "class_declaration"
         class_name = type_identifier_text(decl, source)
         collect_server_endpoint_route(decl, source, routes, constants, class_name)
         next unless annotation_string_value(decl, "Path", source, constants, class_name)
         collect_class_routes(decl, source, dto_index, bean_index, routes, include_callees,
-          class_index: classes, constants: constants, subresource_sources: subresource_sources)
+          class_index: classes, constants: constants, subresource_sources: subresource_sources,
+          custom_verb_annotations: custom_verb_annotations)
       end
       routes
     end
@@ -179,16 +189,10 @@ module Noir
       collect_classes(root, source).keys
     end
 
-    def extract_application_path(source : String) : String?
-      result : String? = nil
-      Noir::TreeSitter.parse_java(source) do |root|
-        result = extract_application_path_from(root, source)
-      end
-      result
-    end
-
-    def extract_application_path_from(root : LibTreeSitter::TSNode, source : String) : String?
-      constants = TreeSitterJavaRouteExtractor.extract_string_constants_from(root, source)
+    def extract_application_path_from(root : LibTreeSitter::TSNode,
+                                      source : String,
+                                      project_constants : Hash(String, String)? = nil) : String?
+      constants = TreeSitterJavaRouteExtractor.extract_string_constants_from(root, source, project_constants)
       collect_classes(root, source).each_value do |decl|
         class_name = type_identifier_text(decl, source)
         if path = annotation_string_value(decl, "ApplicationPath", source, constants, class_name)
@@ -220,6 +224,45 @@ module Noir
       results
     end
 
+    # `@HttpMethod("VERB")` is JAX-RS's general mechanism for declaring
+    # a custom HTTP verb — Jersey/RESTEasy Reactive's `QUERY` support
+    # (and any other non-standard verb a project defines) is just a
+    # user annotation type meta-annotated with it:
+    #
+    #   @HttpMethod("QUERY")
+    #   @Target(ElementType.METHOD)
+    #   @Retention(RetentionPolicy.RUNTIME)
+    #   public @interface QUERY {}
+    #
+    # Reads every `@interface` declaration in `source` and maps its
+    # simple name to the verb it declares. A name that collides with a
+    # built-in (`HTTP_VERB_ANNOTATIONS`) is skipped — the hard-coded
+    # table stays authoritative for those.
+    def extract_custom_verb_annotations(source : String) : Hash(String, String)
+      Noir::TreeSitter.parse_java(source) do |root|
+        return extract_custom_verb_annotations_from(root, source)
+      end
+      Hash(String, String).new
+    end
+
+    def extract_custom_verb_annotations_from(root : LibTreeSitter::TSNode, source : String) : Hash(String, String)
+      results = Hash(String, String).new
+      constants = TreeSitterJavaRouteExtractor.extract_string_constants_from(root, source)
+      walk_annotation_types(root) do |decl|
+        name = type_identifier_text(decl, source)
+        next if name.empty?
+        next if HTTP_VERB_ANNOTATIONS.has_key?(name)
+
+        verb = annotation_string_value(decl, "HttpMethod", source, constants, name)
+        next unless verb
+        verb = verb.strip.upcase
+        next if verb.empty?
+
+        results[name] = verb
+      end
+      results
+    end
+
     # ---- private ------------------------------------------------------
 
     private def collect_classes(root : LibTreeSitter::TSNode, source : String) : Hash(String, LibTreeSitter::TSNode)
@@ -236,6 +279,14 @@ module Noir
       block.call(node) if ty == "class_declaration" || ty == "interface_declaration"
       Noir::TreeSitter.each_named_child(node) do |child|
         walk_classes(child, &block)
+      end
+    end
+
+    private def walk_annotation_types(node : LibTreeSitter::TSNode, &block : LibTreeSitter::TSNode ->)
+      ty = Noir::TreeSitter.node_type(node)
+      block.call(node) if ty == "annotation_type_declaration"
+      Noir::TreeSitter.each_named_child(node) do |child|
+        walk_annotation_types(child, &block)
       end
     end
 
@@ -261,7 +312,8 @@ module Noir
                                      subresource_sources : Hash(String, SourceEntry) = {} of String => SourceEntry,
                                      current_file : String? = nil,
                                      visited : Set(String)? = nil,
-                                     method_excludes : Set(String) = Set(String).new)
+                                     method_excludes : Set(String) = Set(String).new,
+                                     custom_verb_annotations : Hash(String, String) = {} of String => String)
       class_name = type_identifier_text(decl, source)
       local_constants = constants || TreeSitterJavaRouteExtractor.extract_string_constants(source)
       own_class_path = annotation_string_value(decl, "Path", source, local_constants, class_name) || ""
@@ -287,13 +339,17 @@ module Noir
             verb = mapped
             verb_node = ann
             break
+          elsif mapped = custom_verb_annotations[ann_name]?
+            verb = mapped
+            verb_node = ann
+            break
           end
         end
 
         method_name = method_name_of(member, source) || ""
         method_path = annotation_string_value(member, "Path", source, local_constants, class_name) || ""
 
-        full_path = join_paths(class_path, method_path)
+        full_path = Noir::URLPath.join_trimmed(class_path, method_path)
         method_consumes = consumes_format(member, source) || class_consumes
 
         unless verb && verb_node
@@ -305,12 +361,12 @@ module Noir
             collect_class_routes(subresource, source, dto_index, bean_index, routes, include_callees,
               base_path: full_path, inherited_consumes: method_consumes, class_index: local_class_index,
               constants: local_constants, subresource_sources: subresource_sources, current_file: current_file,
-              visited: local_visited)
+              visited: local_visited, custom_verb_annotations: custom_verb_annotations)
           elsif source_entry = subresource_sources[return_type]?
             subresource_path, subresource_source = source_entry
             collect_cross_file_subresource(return_type, subresource_path, subresource_source,
               full_path, method_consumes, dto_index, bean_index, routes, include_callees,
-              subresource_sources, local_visited)
+              subresource_sources, local_visited, custom_verb_annotations)
           end
           next
         end
@@ -322,12 +378,15 @@ module Noir
         line = Noir::TreeSitter.node_start_row(verb_node)
         callees = include_callees ? collect_method_callees(member, source) : [] of Tuple(String, Int32)
         routes << Route.new(verb, full_path, class_name, method_name, line,
-          method_consumes, params, callees, current_file)
+          method_consumes, params, callees, current_file, signature_line: Noir::TreeSitter.name_row(member))
       end
 
       collect_implemented_interface_routes(decl, source, class_path, class_consumes,
         dto_index, bean_index, routes, include_callees, local_class_index,
-        local_constants, subresource_sources, current_file, local_visited)
+        local_constants, subresource_sources, current_file, local_visited, custom_verb_annotations)
+      collect_superclass_routes(decl, source, class_path, class_consumes,
+        dto_index, bean_index, routes, include_callees, local_class_index,
+        local_constants, subresource_sources, current_file, local_visited, custom_verb_annotations)
     end
 
     private def collect_implemented_interface_routes(decl : LibTreeSitter::TSNode,
@@ -342,7 +401,8 @@ module Noir
                                                      constants : Hash(String, String),
                                                      subresource_sources : Hash(String, SourceEntry),
                                                      current_file : String?,
-                                                     visited : Set(String))
+                                                     visited : Set(String),
+                                                     custom_verb_annotations : Hash(String, String) = {} of String => String)
       return unless Noir::TreeSitter.node_type(decl) == "class_declaration"
 
       implemented_names = implemented_interface_names(decl, source)
@@ -353,15 +413,82 @@ module Noir
         if interface_decl = class_index[interface_name]?
           interface_path = annotation_string_value(interface_decl, "Path", source, constants, interface_name) || ""
           collect_class_routes(interface_decl, source, dto_index, bean_index, routes, include_callees,
-            base_path: join_paths(class_path, interface_path), inherited_consumes: class_consumes,
+            base_path: Noir::URLPath.join_trimmed(class_path, interface_path), inherited_consumes: class_consumes,
             class_index: class_index, constants: constants, subresource_sources: subresource_sources,
-            current_file: current_file, visited: visited, method_excludes: method_excludes)
+            current_file: current_file, visited: visited, method_excludes: method_excludes,
+            custom_verb_annotations: custom_verb_annotations)
         elsif source_entry = subresource_sources[interface_name]?
           interface_source_path, interface_source = source_entry
           collect_cross_file_interface(interface_name, interface_source_path, interface_source,
             class_path, class_consumes, dto_index, bean_index, routes, include_callees,
-            subresource_sources, visited, method_excludes)
+            subresource_sources, visited, method_excludes, custom_verb_annotations)
         end
+      end
+    end
+
+    # Inherit HTTP-verb methods from an abstract/concrete superclass
+    # (`extends SuperClass`). JAX-RS only inherits *method*-level
+    # annotations from a superclass — never the superclass's class-level
+    # `@Path` — so the subclass's own `class_path` is used as `base_path`
+    # without re-joining any superclass path. Methods the subclass
+    # already re-annotates are excluded to avoid double emission.
+    private def collect_superclass_routes(decl : LibTreeSitter::TSNode,
+                                          source : String,
+                                          class_path : String,
+                                          class_consumes : String?,
+                                          dto_index : Hash(String, Array(TreeSitterJavaParameterExtractor::FieldInfo)),
+                                          bean_index : Hash(String, Array(Param)),
+                                          routes : Array(Route),
+                                          include_callees : Bool,
+                                          class_index : Hash(String, LibTreeSitter::TSNode),
+                                          constants : Hash(String, String),
+                                          subresource_sources : Hash(String, SourceEntry),
+                                          current_file : String?,
+                                          visited : Set(String),
+                                          custom_verb_annotations : Hash(String, String) = {} of String => String)
+      return unless Noir::TreeSitter.node_type(decl) == "class_declaration"
+
+      super_name = extended_class_name(decl, source)
+      return unless super_name
+
+      method_excludes = jaxrs_annotated_method_names(decl, source)
+      if super_decl = class_index[super_name]?
+        collect_class_routes(super_decl, source, dto_index, bean_index, routes, include_callees,
+          base_path: class_path, inherited_consumes: class_consumes,
+          class_index: class_index, constants: constants, subresource_sources: subresource_sources,
+          current_file: current_file, visited: visited, method_excludes: method_excludes,
+          custom_verb_annotations: custom_verb_annotations)
+      elsif source_entry = subresource_sources[super_name]?
+        super_source_path, super_source = source_entry
+        collect_cross_file_superclass(super_name, super_source_path, super_source,
+          class_path, class_consumes, dto_index, bean_index, routes, include_callees,
+          subresource_sources, visited, method_excludes, custom_verb_annotations)
+      end
+    end
+
+    private def collect_cross_file_superclass(super_name : String,
+                                              super_path : String,
+                                              super_source : String,
+                                              class_path : String,
+                                              class_consumes : String?,
+                                              dto_index : Hash(String, Array(TreeSitterJavaParameterExtractor::FieldInfo)),
+                                              bean_index : Hash(String, Array(Param)),
+                                              routes : Array(Route),
+                                              include_callees : Bool,
+                                              subresource_sources : Hash(String, SourceEntry),
+                                              visited : Set(String),
+                                              method_excludes : Set(String),
+                                              custom_verb_annotations : Hash(String, String) = {} of String => String)
+      Noir::TreeSitter.parse_java(super_source) do |root|
+        classes = collect_classes(root, super_source)
+        super_decl = classes[super_name]?
+        next unless super_decl
+        constants = TreeSitterJavaRouteExtractor.extract_string_constants_from(root, super_source)
+        collect_class_routes(super_decl, super_source, dto_index, bean_index, routes, include_callees,
+          base_path: class_path, inherited_consumes: class_consumes,
+          class_index: classes, constants: constants, subresource_sources: subresource_sources,
+          current_file: super_path, visited: visited, method_excludes: method_excludes,
+          custom_verb_annotations: custom_verb_annotations)
       end
     end
 
@@ -376,7 +503,8 @@ module Noir
                                              include_callees : Bool,
                                              subresource_sources : Hash(String, SourceEntry),
                                              visited : Set(String),
-                                             method_excludes : Set(String))
+                                             method_excludes : Set(String),
+                                             custom_verb_annotations : Hash(String, String) = {} of String => String)
       Noir::TreeSitter.parse_java(interface_source) do |root|
         classes = collect_classes(root, interface_source)
         interface_decl = classes[interface_name]?
@@ -384,9 +512,10 @@ module Noir
         constants = TreeSitterJavaRouteExtractor.extract_string_constants_from(root, interface_source)
         own_path = annotation_string_value(interface_decl, "Path", interface_source, constants, interface_name) || ""
         collect_class_routes(interface_decl, interface_source, dto_index, bean_index, routes, include_callees,
-          base_path: join_paths(class_path, own_path), inherited_consumes: class_consumes,
+          base_path: Noir::URLPath.join_trimmed(class_path, own_path), inherited_consumes: class_consumes,
           class_index: classes, constants: constants, subresource_sources: subresource_sources,
-          current_file: interface_path, visited: visited, method_excludes: method_excludes)
+          current_file: interface_path, visited: visited, method_excludes: method_excludes,
+          custom_verb_annotations: custom_verb_annotations)
       end
     end
 
@@ -400,7 +529,8 @@ module Noir
                                                routes : Array(Route),
                                                include_callees : Bool,
                                                subresource_sources : Hash(String, SourceEntry),
-                                               visited : Set(String))
+                                               visited : Set(String),
+                                               custom_verb_annotations : Hash(String, String) = {} of String => String)
       Noir::TreeSitter.parse_java(subresource_source) do |root|
         classes = collect_classes(root, subresource_source)
         subresource = classes[return_type]?
@@ -409,7 +539,7 @@ module Noir
         collect_class_routes(subresource, subresource_source, dto_index, bean_index, routes, include_callees,
           base_path: base_path, inherited_consumes: inherited_consumes, class_index: classes,
           constants: constants, subresource_sources: subresource_sources, current_file: subresource_path,
-          visited: visited)
+          visited: visited, custom_verb_annotations: custom_verb_annotations)
       end
     end
 
@@ -482,48 +612,58 @@ module Noir
       false
     end
 
+    # Simple names of the `implements` interfaces, read straight from the
+    # tree-sitter `interfaces` field (a `super_interfaces` node wrapping a
+    # `type_list`).
+    #
+    # Reading the field rather than slicing the class node's text at the
+    # first `{` matters: the node text starts at the `modifiers` child, so
+    # a class-level annotation whose arguments contain a brace —
+    # `@Produces({MediaType.APPLICATION_JSON})` is the canonical JAX-RS
+    # spelling — was mistaken for the class body and cut the header off
+    # before `implements` was ever reached, silently killing interface
+    # route inheritance.
     private def implemented_interface_names(class_decl : LibTreeSitter::TSNode, source : String) : Array(String)
-      header = Noir::TreeSitter.node_text(class_decl, source)
-      if body_start = header.index('{')
-        header = header[...body_start]
-      end
+      names = [] of String
+      return names unless interfaces = Noir::TreeSitter.field(class_decl, "interfaces")
 
-      match = header.match(/\bimplements\s+(.+)\z/m)
-      return [] of String unless match
-
-      names = split_top_level_commas(match[1]).compact_map do |raw|
-        type_name = strip_generic_arguments(raw.strip)
-        next if type_name.empty?
-        type_name = type_name.split(/\s+/).first? || type_name
-        if idx = type_name.rindex('.')
-          type_name[(idx + 1)..]
+      Noir::TreeSitter.each_named_child(interfaces) do |child|
+        if Noir::TreeSitter.node_type(child) == "type_list"
+          Noir::TreeSitter.each_named_child(child) do |type_node|
+            append_simple_type_name(type_node, source, names)
+          end
         else
-          type_name
+          append_simple_type_name(child, source, names)
         end
       end
-      names.uniq!
       names
     end
 
-    private def split_top_level_commas(text : String) : Array(String)
-      parts = [] of String
-      start = 0
-      depth = 0
-      text.each_char_with_index do |char, index|
-        case char
-        when '<'
-          depth += 1
-        when '>'
-          depth -= 1 if depth > 0
-        when ','
-          if depth == 0
-            parts << text[start...index]
-            start = index + 1
-          end
-        end
+    # Single superclass from `extends SuperClass`, read from the
+    # tree-sitter `superclass` field for the same reason as above.
+    # Returns the simple type name, or nil when the class does not
+    # extend anything.
+    private def extended_class_name(class_decl : LibTreeSitter::TSNode, source : String) : String?
+      return unless superclass = Noir::TreeSitter.field(class_decl, "superclass")
+
+      names = [] of String
+      Noir::TreeSitter.each_named_child(superclass) do |type_node|
+        append_simple_type_name(type_node, source, names)
       end
-      parts << text[start..]
-      parts
+      names.first?
+    end
+
+    # Appends the simple name of a type node — generics dropped, package
+    # qualifier dropped, any leading `@Annotation` on an `annotated_type`
+    # discarded — skipping empties and duplicates.
+    private def append_simple_type_name(type_node : LibTreeSitter::TSNode, source : String, names : Array(String))
+      name = strip_generic_arguments(Noir::TreeSitter.node_text(type_node, source))
+      name = name.split(/\s+/).last? || name
+      return if name.empty?
+      if idx = name.rindex('.')
+        name = name[(idx + 1)..]
+      end
+      names << name unless name.empty? || names.includes?(name)
     end
 
     private def strip_generic_arguments(text : String) : String
@@ -631,7 +771,7 @@ module Noir
 
       case Noir::TreeSitter.node_type(node)
       when "string_literal"
-        decode_string_literal(node, source)
+        Noir::TreeSitter.decode_string_literal(node, source)
       when "identifier"
         text = Noir::TreeSitter.node_text(node, source)
         constants["#{current_class}.#{text}"]? || constants[text]?
@@ -662,41 +802,17 @@ module Noir
       each_annotation(decl, source) do |name, args, _|
         next unless name == "Consumes"
         next unless args
-        text = Noir::TreeSitter.node_text(args, source)
-        if text.includes?("APPLICATION_FORM_URLENCODED") || text.includes?("application/x-www-form-urlencoded")
-          result = "form"
-        elsif text.includes?("APPLICATION_JSON") || text.includes?("application/json")
-          result = "json"
-        elsif text.includes?("MULTIPART_FORM_DATA") || text.includes?("multipart/form-data")
-          result = "form"
+        if format = Noir::JvmMediaType.body_format(Noir::TreeSitter.node_text(args, source))
+          result = format
         end
       end
       result
-    end
-
-    private def decode_string_literal(node : LibTreeSitter::TSNode, source : String) : String
-      buf = String.build do |io|
-        Noir::TreeSitter.each_named_child(node) do |child|
-          if Noir::TreeSitter.node_type(child) == "string_fragment"
-            io << Noir::TreeSitter.node_text(child, source)
-          end
-        end
-      end
-      return buf unless buf.empty?
-      raw = Noir::TreeSitter.node_text(node, source)
-      raw.size >= 2 && raw.starts_with?('"') && raw.ends_with?('"') ? raw[1..-2] : raw
     end
 
     # JAX-RS path composition: trailing-slash on the class path is
     # cosmetic — Jakarta REST normalises it. We emit `/users` rather
     # than `/users/` for the index handler, matching how callers
     # actually request the route.
-    private def join_paths(prefix : String, suffix : String) : String
-      return suffix if prefix.empty?
-      return prefix.rstrip('/') if suffix.empty?
-      "#{prefix.rstrip('/')}/#{suffix.lstrip('/')}"
-    end
-
     # ---- formal-parameter walk --------------------------------------
 
     private def collect_method_params(method : LibTreeSitter::TSNode,
@@ -799,7 +915,7 @@ module Noir
       if fields = dto_index[type_name]?
         fields.each do |field|
           next unless field.access_modifier == "public" || field.has_setter?
-          sink << Param.new(field.name, field.init_value, format)
+          sink << Param.new(field.name_for(format), field.init_value, format)
         end
       else
         sink << Param.new(param_name, type_name, format)
@@ -920,7 +1036,7 @@ module Noir
       Noir::TreeSitter.each_named_child(args) do |child|
         case Noir::TreeSitter.node_type(child)
         when "string_literal"
-          return decode_string_literal(child, source)
+          return Noir::TreeSitter.decode_string_literal(child, source)
         when "identifier", "field_access", "scoped_identifier", "binary_expression", "parenthesized_expression"
           if value = resolve_path_value(child, source, constants, current_class)
             return value

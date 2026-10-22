@@ -1,6 +1,6 @@
 require "../../func_spec.cr"
 
-describe "--ai-context on Phoenix auth fixtures" do
+describe "--ai-context on Phoenix auth fixtures", tags: "functional" do
   fixture_path = "fixtures/elixir/phoenix_auth/"
   post_suffix = "spec/functional_test/fixtures/elixir/phoenix_auth/lib/myapp_web/controllers/post_controller.ex"
   public_suffix = "spec/functional_test/fixtures/elixir/phoenix_auth/lib/myapp_web/controllers/public_controller.ex"

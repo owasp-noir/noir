@@ -22,9 +22,18 @@ expected_endpoints = [
   end,
 ]
 
-FunctionalTester.new("fixtures/typescript/nestjs_callees/", {
+tester = FunctionalTester.new("fixtures/typescript/nestjs_callees/", {
   :techs     => 1,
   :endpoints => expected_endpoints.size,
 }, expected_endpoints, {
   "include_callee" => YAML::Any.new(true),
-}).perform_tests
+})
+tester.perform_tests
+
+it "names Class.method on its declaration line as the handler", tags: "functional" do
+  path = "./spec/functional_test/fixtures/typescript/nestjs_callees/users.controller.ts"
+  find_one = tester.app.endpoints.find! { |ep| ep.method == "GET" && ep.url == "/users/:id" }
+  find_one.handler.should eq(Handler.new("UsersController.findOne", path, 15))
+  create = tester.app.endpoints.find! { |ep| ep.method == "POST" && ep.url == "/users" }
+  create.handler.should eq(Handler.new("UsersController.create", path, 6))
+end

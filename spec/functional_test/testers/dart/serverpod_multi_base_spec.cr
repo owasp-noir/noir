@@ -19,7 +19,7 @@ tester = FunctionalTester.new("fixtures/dart/serverpod_multi_base/", {
 })
 tester.perform_tests
 
-it "keeps Serverpod web route classes inside each base path" do
+it "keeps Serverpod web route classes inside each base path", tags: "functional" do
   service_a = tester.app.endpoints.find! { |endpoint| endpoint.url == "/a-web" }
   service_a.method.should eq("GET")
 

@@ -1,18 +1,16 @@
-require "../../../models/analyzer"
+require "../../engines/specification_engine"
 
 module Analyzer::Specification
-  class Apisix < Analyzer
-    def analyze
-      locator = CodeLocator.instance
+  class Apisix < SpecificationEngine
+    analyzer_for "apisix"
 
-      json_files = locator.all("apisix-json")
-      if json_files.is_a?(Array(String))
-        json_files.each { |path| process_json(path) }
+    def analyze
+      each_spec_file(Noir::LocatorKeys::APISIX_JSON) do |path|
+        process_json(path)
       end
 
-      yaml_files = locator.all("apisix-yaml")
-      if yaml_files.is_a?(Array(String))
-        yaml_files.each { |path| process_yaml(path) }
+      each_spec_file(Noir::LocatorKeys::APISIX_YAML) do |path|
+        process_yaml(path)
       end
 
       @result
@@ -23,10 +21,10 @@ module Analyzer::Specification
       details = Details.new(PathInfo.new(path))
       content = read_file_content(path)
       begin
-        data = JSON.parse(content)
+        data = parse_json_lenient(content)
         routes = data["routes"]?.try(&.as_a?)
         return unless routes
-        routes.each { |route| process_route_json(route, details) }
+        routes.each { |route| process_route(route, details) }
       rescue e
         @logger.debug "Exception processing APISIX JSON #{path}"
         @logger.debug_sub e
@@ -41,46 +39,29 @@ module Analyzer::Specification
         data = YAML.parse(content)
         routes = data["routes"]?.try(&.as_a?)
         return unless routes
-        routes.each { |route| process_route_yaml(route, details) }
+        routes.each { |route| process_route(route, details) }
       rescue e
         @logger.debug "Exception processing APISIX YAML #{path}"
         @logger.debug_sub e
       end
     end
 
-    private def process_route_json(route : JSON::Any, details : Details)
+    private def process_route(route, details : Details)
       # Skip non-object array entries; subscripting a scalar raises "Expected Hash".
       return unless route.as_h?
-      paths = route_paths_json(route)
+      paths = route_paths(route)
       return if paths.empty?
-      methods = route_methods_json(route)
-      host_params = host_params_json(route)
+      methods = route_methods(route)
+      hosts = route_hosts(route)
 
       paths.each do |path|
         methods.each do |method|
-          endpoint_params = host_params.dup
-          @result << Endpoint.new(path, method, endpoint_params, details)
+          @result << build_endpoint(path, method, hosts, details)
         end
       end
     end
 
-    private def process_route_yaml(route : YAML::Any, details : Details)
-      # Skip non-object array entries; subscripting a scalar raises "Expected Hash".
-      return unless route.as_h?
-      paths = route_paths_yaml(route)
-      return if paths.empty?
-      methods = route_methods_yaml(route)
-      host_params = host_params_yaml(route)
-
-      paths.each do |path|
-        methods.each do |method|
-          endpoint_params = host_params.dup
-          @result << Endpoint.new(path, method, endpoint_params, details)
-        end
-      end
-    end
-
-    private def route_paths_json(route : JSON::Any) : Array(String)
+    private def route_paths(route) : Array(String)
       paths = [] of String
       if uri = route["uri"]?.try(&.as_s?)
         normalized = normalize_path(uri)
@@ -97,24 +78,7 @@ module Analyzer::Specification
       paths.uniq
     end
 
-    private def route_paths_yaml(route : YAML::Any) : Array(String)
-      paths = [] of String
-      if uri = route["uri"]?.try(&.as_s?)
-        normalized = normalize_path(uri)
-        paths << normalized unless normalized.empty?
-      end
-      if uris = route["uris"]?.try(&.as_a?)
-        uris.each do |uri_node|
-          if uri_text = uri_node.as_s?
-            normalized = normalize_path(uri_text)
-            paths << normalized unless normalized.empty?
-          end
-        end
-      end
-      paths.uniq
-    end
-
-    private def route_methods_json(route : JSON::Any) : Array(String)
+    private def route_methods(route) : Array(String)
       methods = [] of String
       if method_list = route["methods"]?.try(&.as_a?)
         method_list.each do |method|
@@ -127,20 +91,28 @@ module Analyzer::Specification
       normalize_methods(methods)
     end
 
-    private def route_methods_yaml(route : YAML::Any) : Array(String)
-      methods = [] of String
-      if method_list = route["methods"]?.try(&.as_a?)
-        method_list.each do |method|
-          next unless method_text = method.as_s?
-          upper = method_text.upcase
-          next if upper.empty?
-          methods << upper
-        end
+    # A request carries exactly one `Host` header, so a route configured with
+    # several (`hosts: [a, b]`) gets one `Host` param — the first, mirroring
+    # the single-representative-server rule the OAS analyzers already apply to
+    # a multi-entry `servers` block. Emitting one param per host produced
+    # `curl -i -X DELETE /internal -H 'Host: a' -H 'Host: b'`, a request no
+    # server can answer, and left a duplicate (name, param_type) entry in the
+    # inventory that every consumer collapses anyway.
+    #
+    # The alternates are real attack surface, so they are kept as an
+    # `apisix-host` tag instead of being dropped — same shape as iris's
+    # `subdomain` and wrangler's `wrangler-zone` tags.
+    private def build_endpoint(path : String, method : String, hosts : Array(String), details : Details) : Endpoint
+      endpoint = Endpoint.new(path, method, details)
+      if primary = hosts.first?
+        endpoint.params << Param.new("Host", primary, "header")
+        alternates = hosts[1..]
+        endpoint.add_tag(Tag.new("apisix-host", alternates.join(", "), "apisix_analyzer")) unless alternates.empty?
       end
-      normalize_methods(methods)
+      endpoint
     end
 
-    private def host_params_json(route : JSON::Any) : Array(Param)
+    private def route_hosts(route) : Array(String)
       hosts = [] of String
       if host = route["host"]?.try(&.as_s?)
         hosts << host unless host.empty?
@@ -151,21 +123,7 @@ module Analyzer::Specification
           hosts << host_text unless host_text.empty?
         end
       end
-      hosts.uniq.map { |host_value| Param.new("Host", host_value, "header") }
-    end
-
-    private def host_params_yaml(route : YAML::Any) : Array(Param)
-      hosts = [] of String
-      if host = route["host"]?.try(&.as_s?)
-        hosts << host unless host.empty?
-      end
-      if host_list = route["hosts"]?.try(&.as_a?)
-        host_list.each do |host_node|
-          next unless host_text = host_node.as_s?
-          hosts << host_text unless host_text.empty?
-        end
-      end
-      hosts.uniq.map { |host_value| Param.new("Host", host_value, "header") }
+      hosts.uniq
     end
 
     private def normalize_methods(methods : Array(String)) : Array(String)

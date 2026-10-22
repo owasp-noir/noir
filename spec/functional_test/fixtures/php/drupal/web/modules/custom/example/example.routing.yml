@@ -1,0 +1,44 @@
+example.list:
+  path: '/example'
+  defaults:
+    _controller: '\Drupal\example\Controller\ExampleController::listing'
+    _title: 'Example list'
+  requirements:
+    _permission: 'access content'
+
+example.view:
+  path: '/example/{id}'
+  defaults:
+    _controller: '\Drupal\example\Controller\ExampleController::view'
+  methods: [GET]
+  requirements:
+    _permission: 'access content'
+
+example.api_submit:
+  path: '/api/example/submit'
+  defaults:
+    _controller: '\Drupal\example\Controller\ExampleController::submit'
+  methods: [POST]
+  requirements:
+    _access: 'TRUE'
+
+example.settings_form:
+  path: '/admin/config/example/settings'
+  defaults:
+    _form: '\Drupal\example\Form\SettingsForm'
+    _title: 'Example settings'
+  requirements:
+    _permission: 'administer site configuration'
+
+example.revision:
+  path: '/node/{node}/example/{revision}'
+  defaults:
+    _controller: '\Drupal\example\Controller\ExampleController::revision'
+  methods: [GET, POST]
+  requirements:
+    _permission: 'access content'
+
+# route_callbacks-style dynamic routes have no static path and must be skipped.
+example.dynamic:
+  route_callbacks:
+    - '\Drupal\example\Routing\ExampleRoutes::routes'

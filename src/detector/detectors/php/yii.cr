@@ -2,14 +2,17 @@ require "../../../models/detector"
 
 module Detector::Php
   class Yii < Detector
+    detector_for "php_yii", extensions: %w[.php .phtml], basenames: %w[composer.json composer.lock]
+
     def detect(filename : String, file_contents : String) : Bool
       # Check for composer.json with Yii2 dependency
       if filename.ends_with?("composer.json") && file_contents.includes?("yiisoft/yii2")
         return true
       end
 
-      # Check for Yii2 vendor path
-      if filename.includes?("vendor/yiisoft/")
+      # Check for Yii2 vendor path. Scan-base-relative: a `vendor/yiisoft/`
+      # directory above the base belongs to some other checkout.
+      if base_relative_path(filename).includes?("vendor/yiisoft/")
         return true
       end
 
@@ -19,12 +22,12 @@ module Detector::Php
       end
 
       # Check for use yii\... or use Yii; imports in PHP files
-      if filename.ends_with?(".php")
-        if file_contents.match(/(?:^|\n|<\?php\s+)\s*use\s+yii\\[^;\n]*;/)
+      if Noir::FileExtension.fold(filename).ends_with?(".php")
+        if file_contents.match(/(?:^|\n|<\?php\s)[ \t]*use\s+yii\\[^;\n]*;/)
           return true
         end
 
-        if file_contents.match(/(?:^|\n|<\?php\s+)\s*use\s+Yii\s*;/)
+        if file_contents.match(/(?:^|\n|<\?php\s)[ \t]*use\s+Yii\s*;/)
           return true
         end
 
@@ -35,14 +38,6 @@ module Detector::Php
       end
 
       false
-    end
-
-    def applicable?(filename : String) : Bool
-      filename.ends_with?(".php") || filename.ends_with?(".phtml") || File.basename(filename) == "composer.json" || File.basename(filename) == "composer.lock"
-    end
-
-    def set_name
-      @name = "php_yii"
     end
   end
 end

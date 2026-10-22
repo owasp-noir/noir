@@ -4,32 +4,30 @@ require "../../../models/code_locator"
 
 module Detector::Specification
   class Kong < Detector
+    detector_for "kong", extensions: %w[.yaml .yml], idempotent: false
+
+    # Necessary-condition guard: both accepted shapes require one of these
+    # literals somewhere in the document (`deck_shape?` needs a
+    # `_format_version` key, `kic_shape?` an apiVersion containing
+    # `configuration.konghq.com/`), so any YAML file without them can skip
+    # the full parse. This detector is non-idempotent and previously parsed
+    # every YAML file of the scan twice.
+    KONG_MARKER = /_format_version|configuration\.konghq\.com\//
+
     def detect(filename : String, file_contents : String) : Bool
       return false unless applicable?(filename)
-      return false unless valid_yaml?(file_contents)
+      return false unless content_matches?(file_contents, KONG_MARKER)
+      return false unless data = yaml_any?(file_contents)
 
       begin
-        data = YAML.parse(file_contents)
         if kong_doc?(data)
-          CodeLocator.instance.push("kong-spec", filename)
+          CodeLocator.instance.push(Noir::LocatorKeys::KONG_SPEC, filename)
           return true
         end
       rescue e
         logger.debug "Kong detection failed for #{filename}: #{e}"
       end
 
-      false
-    end
-
-    def applicable?(filename : String) : Bool
-      filename.ends_with?(".yaml") || filename.ends_with?(".yml")
-    end
-
-    def set_name
-      @name = "kong"
-    end
-
-    def idempotent? : Bool
       false
     end
 

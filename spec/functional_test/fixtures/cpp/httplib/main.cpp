@@ -9,6 +9,12 @@ void delete_user(const httplib::Request& req, httplib::Response& res)
     res.status = 204;
 }
 
+// Trailing return type and noexcept between `)` and `{`.
+auto get_report(const httplib::Request& req, httplib::Response& res) noexcept(true) -> void
+{
+    auto fmt = req.get_param_value("format");
+}
+
 int main()
 {
     httplib::Server svr;
@@ -40,6 +46,8 @@ int main()
         auto name = req.matches[1];
         res.set_content(name, "text/plain");
     });
+
+    svr.Get("/report", get_report);
 
     // PATCH route.
     svr.Patch("/settings", [](const httplib::Request& req, httplib::Response& res) {

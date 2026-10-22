@@ -45,6 +45,8 @@ module Analyzer::Javascript
   #   * Route groups (`(group)` directories — same convention as
   #     SvelteKit). Add when fixtures show real-world usage.
   class Fresh < JavascriptEngine
+    analyzer_for "js_fresh"
+
     HTTP_METHODS    = ["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"]
     PAGE_EXTENSIONS = [".tsx", ".jsx"]
     API_EXTENSIONS  = [".ts", ".js", ".mjs"]
@@ -59,18 +61,81 @@ module Analyzer::Javascript
     VERB_KEY_SHORTHAND_RES  = HTTP_METHODS.map { |v| {v, /(^|[\{,\s])(?:async\s+)?#{v}\s*\(/} }.to_h
     VERB_KEY_PROPERTY_RES   = HTTP_METHODS.map { |v| {v, /(^|[\{,\s])#{v}\s*:/} }.to_h
 
+    # Directories holding a Fresh project manifest. A bare `deno.json` is not
+    # enough — a plain Deno project has one too — so it only counts when it
+    # references `$fresh/`.
+    private def fresh_project_roots : Array(String)
+      roots = [] of String
+      all_files.each do |file|
+        base = File.basename(file)
+        marked =
+          if ROOT_CONFIG_BASENAMES.includes?(base)
+            true
+          elsif DENO_MANIFEST_BASENAMES.includes?(base)
+            begin
+              read_file_content(file).matches?(FRESH_IMPORT_MARKER)
+            rescue
+              false
+            end
+          else
+            false
+          end
+        next unless marked
+        root = Noir::PathScope.normalize_root(File.dirname(file))
+        roots << root unless roots.includes?(root)
+      end
+      roots
+    end
+
     # Files that are framework plumbing rather than routes.
     SKIPPED_LEAVES = ["_app", "_layout", "_404", "_500", "_middleware"]
+
+    # Fresh's own default `ignore` for the routes tree (TEST_FILE_PATTERN in
+    # `constants.ts`): `routes/foo.test.ts` and `routes/index_test.tsx` are
+    # never served.
+    TEST_FILE_PATTERN = /[._]test\.(?:[tj]sx?|[mc][tj]s)$/
+
+    # A Fresh project is anchored by `fresh.config.{ts,js}`, or by a Deno
+    # manifest that pulls in `$fresh/`. Same shape the detector already
+    # treats as authoritative.
+    ROOT_CONFIG_BASENAMES   = ["fresh.config.ts", "fresh.config.js", "fresh.config.mjs"]
+    DENO_MANIFEST_BASENAMES = ["deno.json", "deno.jsonc"]
+    # Fresh 1 maps `$fresh/`; Fresh 2 (`jsr:@fresh/init`) maps the bare
+    # `fresh` specifier to `jsr:@fresh/core`.
+    FRESH_IMPORT_MARKER = /\$fresh\/|@fresh\//
+    # Fresh 2's programmatic router: `const app = new App()` imported from
+    # `fresh`, then `app.get("/api2/:name", handler)` beside `app.fsRoutes()`.
+    FRESH_APP_MARKER = /\bnew\s+App\b/
+    FRESH_APP_IMPORT = /from\s+["'](?:fresh|jsr:@fresh\/core[^"']*|@fresh\/core)["']/
 
     def analyze
       result = [] of Endpoint
       mutex = Mutex.new
+      # `routes/` on its own is not a Fresh signal — Remix keeps its route
+      # modules in `app/routes/`, and Koa/Express/Fastify projects routinely
+      # have one too. Treating every `*/routes/*` in the scan as a Fresh
+      # file-system route meant Remix's `users.$id.tsx` and `users._index.tsx`
+      # surfaced as Fresh endpoints named after the file. Scope to the Fresh
+      # project root the same way the SvelteKit and Nitro analyzers do; with
+      # no marker found `path_under_project_roots?` waves everything through.
+      project_roots = fresh_project_roots
 
       parallel_file_scan(EXTENSIONS) do |path|
-        idx = path.index("/routes/")
-        next if idx.nil?
+        next unless path_under_project_roots?(path, project_roots)
+        next if File.basename(path).matches?(TEST_FILE_PATTERN)
+        # Scan-base-relative, never absolute: `String#index` takes the
+        # FIRST occurrence, so a same-named directory above the scan base
+        # won outright and the derived URL changed with the checkout path.
+        scoped = base_relative_path(path)
+        idx = scoped.index("/routes/")
+        next if in_test_tree?(idx ? scoped[0...idx] : File.dirname(scoped))
+        if idx.nil?
+          app_routes = app_route_endpoints(path)
+          mutex.synchronize { result.concat(app_routes) } unless app_routes.empty?
+          next
+        end
 
-        relative = path[(idx + "/routes/".size)..-1]
+        relative = scoped[(idx + "/routes/".size)..-1]
         leaf = strip_extension(File.basename(relative))
         next if SKIPPED_LEAVES.includes?(leaf)
         next if leaf.starts_with?("_") # other underscore-prefixed plumbing
@@ -90,7 +155,7 @@ module Analyzer::Javascript
 
         mutex.synchronize do
           verbs.each do |verb|
-            endpoint = build_endpoint(url, verb, path)
+            endpoint = file_route_endpoint(url, verb, path)
             attach_handler_callees(endpoint, content, path, verb) if callees_needed?
             result << endpoint
           end
@@ -100,13 +165,15 @@ module Analyzer::Javascript
       result
     end
 
-    private def build_endpoint(url : String, verb : String, path : String) : Endpoint
-      endpoint = Endpoint.new(url, verb)
-      endpoint.details = Details.new(PathInfo.new(path, 1))
-      url.scan(/\{(\w+)\}/) do |match|
-        endpoint.push_param(Param.new(match[1], "", "path"))
+    # `app.get(path, handler)` on a Fresh 2 `App`; the verb-call shape is
+    # the shared extractor's.
+    private def app_route_endpoints(path : String) : Array(Endpoint)
+      content = read_file_content(path)
+      return [] of Endpoint unless content.matches?(FRESH_APP_MARKER) && content.matches?(FRESH_APP_IMPORT)
+      Noir::JSRouteExtractor.extract_routes(path, content, @is_debug, include_callees: callees_needed?).map do |endpoint|
+        endpoint.url.scan(/:(\w+)/) { |m| endpoint.push_param(Param.new(m[1], "", "path")) }
+        endpoint
       end
-      endpoint
     end
 
     private def attach_handler_callees(endpoint : Endpoint, content : String, path : String, verb : String)
@@ -130,6 +197,11 @@ module Analyzer::Javascript
       if property = handler_block.match(HANDLER_PROPERTY_RES[verb])
         body_start = property.end(0) || 0
         body = handler_block[body_start..]? || ""
+        # NOTE(perf): `extract_handler_object` knows the block's origin offset,
+        # but `String#index` deliberately stays: it returns the FIRST occurrence
+        # of the block text, which for a byte-identical object literal appearing
+        # earlier in the file differs from the origin — passing the origin down
+        # would change the emitted callee lines in that (reachable) case.
         block_start = content.index(handler_block) || 0
         absolute_body_start = block_start + body_start
         start_line = content[0, absolute_body_start].count('\n') + 1
@@ -160,15 +232,20 @@ module Analyzer::Javascript
     end
 
     private def top_level_comma(source : String) : Int32?
+      # Integer `String#[](Int)` is O(n) on non-ASCII source (one multi-byte
+      # char defeats the single-byte optimization), so this walk — and the
+      # inner quote skip — would be O(n²); materialize once and index the
+      # array instead.
+      chars = source.chars
       depth = 0
       i = 0
-      while i < source.size
-        case source[i]
+      while i < chars.size
+        case chars[i]
         when '\'', '"', '`'
-          quote = source[i]
+          quote = chars[i]
           i += 1
-          while i < source.size && source[i] != quote
-            i += source[i] == '\\' ? 2 : 1
+          while i < chars.size && chars[i] != quote
+            i += chars[i] == '\\' ? 2 : 1
           end
         when '(', '[', '{'
           depth += 1
@@ -243,11 +320,14 @@ module Analyzer::Javascript
       content.matches?(/export\s+default\b/)
     end
 
+    # Fresh 2 wraps the object: `export const handler = define.handlers({`.
+    HANDLER_OBJECT_RE = /export\s+(?:const|let|var)\s+handler\b\s*(?::[^=]+)?=\s*(?:define\.handlers\s*(?:<[^>]*>)?\s*\(\s*)?(\{)/
+
     # Carve the `{...}` object literal out of `export const handler =
     # { ... }` (or `: Handlers = {...}`). Returns nil when the
     # handler is a function, a callable reference, or absent.
     private def extract_handler_object(content : String) : String?
-      m = content.match(/export\s+(?:const|let|var)\s+handler\b\s*(?::[^=]+)?=\s*(\{)/)
+      m = content.match(HANDLER_OBJECT_RE)
       return unless m
       after_match = m.byte_end(0)
       return unless after_match

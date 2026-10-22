@@ -16,11 +16,18 @@ Preview the generated completion script:
 noir completion zsh
 ```
 
-To load it automatically, save the script to a completions directory that Zsh picks up on startup:
+To load it automatically, save the script to a completions directory and make sure that directory is on Zsh's `fpath` before `compinit` runs:
 
 ```bash
 mkdir -p ~/.zsh/completion
 noir completion zsh > ~/.zsh/completion/_noir
+```
+
+Then add the directory to `fpath` in your `~/.zshrc` (before the `compinit` call), unless you saved the script to a directory already on `fpath` such as a `site-functions` directory:
+
+```bash
+fpath=(~/.zsh/completion $fpath)
+autoload -Uz compinit && compinit
 ```
 
 ## Bash
@@ -67,4 +74,4 @@ Once loaded, the completer registers at `$edit:completion:arg-completer[noir]`. 
 
 ## Homebrew Users
 
-If you installed Noir via Homebrew, completions are already set up; nothing to do here.
+If you installed Noir with Homebrew, completions are already set up. Nothing to do here.

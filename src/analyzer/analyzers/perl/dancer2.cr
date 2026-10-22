@@ -26,6 +26,8 @@ module Analyzer::Perl
   # `cookies`, `request->header`, `upload`) as well as the legacy
   # `param`/`params` helpers.
   class Dancer2 < PerlEngine
+    analyzer_for "perl_dancer2"
+
     # Verb spellings accepted inside an `any [...]` method list. Dancer2
     # normalizes `del` to `delete` and registers HEAD alongside GET, so the
     # arrayref form takes both the route-keyword spelling (`del`) and the
@@ -54,15 +56,15 @@ module Analyzer::Perl
     end
 
     def analyze
-      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
-      parallel_file_scan do |path|
-        result.concat(analyze_file(path, include_callee))
-      end
+      include_callee = callees_needed?
+      ordered_file_scan do |path|
+        analyze_file(path, include_callee)
+      end.each { |file_endpoints| result.concat(file_endpoints) }
       result
     end
 
     def analyze_file(path : String) : Array(Endpoint)
-      analyze_file(path, any_to_bool(@options["include_callee"]?))
+      analyze_file(path, callees_needed?)
     end
 
     private def analyze_file(path : String, include_callee : Bool) : Array(Endpoint)
@@ -105,12 +107,12 @@ module Analyzer::Perl
         route.methods.each do |method|
           endpoint = Endpoint.new(route.url, method)
           endpoint.details = Details.new(PathInfo.new(file_path, route.line_index + 1))
-          path_params.each { |param| push_unique_param(endpoint, param) }
+          path_params.each { |param| endpoint.push_param(param) unless param.name.empty? }
           # Legacy `param`/`params` accessors bucket by HTTP method (query
           # vs form), so an `any` route's params must be resolved per
           # generated method rather than once for the first method.
           if body
-            extract_params_from_body(body[0], method).each { |param| push_unique_param(endpoint, param) }
+            extract_params_from_body(body[0], method).each { |param| endpoint.push_param(param) unless param.name.empty? }
           end
 
           if include_callee && body
@@ -141,12 +143,18 @@ module Analyzer::Perl
       pod_blanked.each_with_index do |line, index|
         stripped = line.strip
         unless stripped.empty? || stripped.starts_with?('#')
-          if block = line.match(PREFIX_BLOCK_RE)
-            prefix_stack << {depth, normalize_prefix(block[2])}
-          elsif line.matches?(PREFIX_RESET_RE)
-            proc_prefix = ""
-          elsif (proc = line.match(PREFIX_PROC_RE)) && prefix_stack.empty?
-            proc_prefix = normalize_prefix(proc[2])
+          if stripped.includes?("prefix")
+            if block = line.match(PREFIX_BLOCK_RE)
+              prefix_stack << {depth, normalize_prefix(block[2])}
+            elsif line.matches?(PREFIX_RESET_RE)
+              proc_prefix = ""
+            elsif (proc = line.match(PREFIX_PROC_RE)) && prefix_stack.empty?
+              proc_prefix = normalize_prefix(proc[2])
+            else
+              line_to_routes(line, index, offsets[index], current_prefix(proc_prefix, prefix_stack)).each do |route|
+                routes << route
+              end
+            end
           else
             line_to_routes(line, index, offsets[index], current_prefix(proc_prefix, prefix_stack)).each do |route|
               routes << route
@@ -154,7 +162,8 @@ module Analyzer::Perl
           end
         end
 
-        depth += brace_delta(code_lines[index]? || "")
+        code_line = code_lines[index]? || ""
+        depth += code_line.count('{') - code_line.count('}')
         while !prefix_stack.empty? && prefix_stack.last[0] >= depth
           prefix_stack.pop
         end
@@ -169,12 +178,16 @@ module Analyzer::Perl
 
     private def line_to_routes(line : String, index : Int32, offset : Int32, prefix : String) : Array(RouteHit)
       result = [] of RouteHit
-      handler = line.match(CODEREF_RE).try(&.[1])
+      leading = line.lstrip
+      # Route keywords sit at statement start; skip ordinary body lines.
+      return result unless dancer_route_lead?(leading)
+
+      handler = line.includes?("\\&") ? line.match(CODEREF_RE).try(&.[1]) : nil
 
       if m = line.match(VERB_STRING_RE)
         url = join_url(prefix, m[3])
         result << RouteHit.new(url, [http_method(m[1])], index, offset, handler)
-      elsif m = line.match(VERB_QR_RE)
+      elsif leading.includes?("qr") && (m = line.match(VERB_QR_RE))
         body = m[2]? || m[3]? || m[4]? || m[5]? || m[6]? || ""
         url = join_url(prefix, regex_route_path(body))
         result << RouteHit.new(url, [http_method(m[1])], index, offset, handler)
@@ -189,6 +202,13 @@ module Analyzer::Perl
       end
 
       result
+    end
+
+    private def dancer_route_lead?(leading : String) : Bool
+      leading.starts_with?("get") || leading.starts_with?("post") ||
+        leading.starts_with?("put") || leading.starts_with?("patch") ||
+        leading.starts_with?("options") || leading.starts_with?("del") ||
+        leading.starts_with?("any")
     end
 
     private def body_for_route(content : String,
@@ -249,53 +269,59 @@ module Analyzer::Perl
       params = [] of Param
       read_method = method == "GET" || method == "HEAD" || method == "OPTIONS"
 
-      body.scan(/\broute_parameters\s*->\s*(?:get(?:_all)?\s*\(\s*['"]([^'"]+)['"]|\{\s*['"]?([A-Za-z_][A-Za-z0-9_-]*))/) do |m|
-        name = m[1]? || m[2]?
-        params << Param.new(name, "", "path") if name
+      if body.includes?("route_parameters")
+        body.scan(/\broute_parameters\s*->\s*(?:get(?:_all)?\s*\(\s*['"]([^'"]+)['"]|\{\s*['"]?([A-Za-z_][A-Za-z0-9_-]*))/) do |m|
+          name = m[1]? || m[2]?
+          params << Param.new(name, "", "path") if name
+        end
       end
 
-      body.scan(/\bquery_parameters\s*->\s*(?:get(?:_all)?\s*\(\s*['"]([^'"]+)['"]|\{\s*['"]?([A-Za-z_][A-Za-z0-9_-]*))/) do |m|
-        name = m[1]? || m[2]?
-        params << Param.new(name, "", "query") if name
+      if body.includes?("query_parameters")
+        body.scan(/\bquery_parameters\s*->\s*(?:get(?:_all)?\s*\(\s*['"]([^'"]+)['"]|\{\s*['"]?([A-Za-z_][A-Za-z0-9_-]*))/) do |m|
+          name = m[1]? || m[2]?
+          params << Param.new(name, "", "query") if name
+        end
       end
 
-      body.scan(/\bbody_parameters\s*->\s*(?:get(?:_all)?\s*\(\s*['"]([^'"]+)['"]|\{\s*['"]?([A-Za-z_][A-Za-z0-9_-]*))/) do |m|
-        name = m[1]? || m[2]?
-        params << Param.new(name, "", "form") if name
+      if body.includes?("body_parameters")
+        body.scan(/\bbody_parameters\s*->\s*(?:get(?:_all)?\s*\(\s*['"]([^'"]+)['"]|\{\s*['"]?([A-Za-z_][A-Za-z0-9_-]*))/) do |m|
+          name = m[1]? || m[2]?
+          params << Param.new(name, "", "form") if name
+        end
       end
 
-      body.scan(/\bupload\s*\(\s*['"]([^'"]+)['"]/) do |m|
-        params << Param.new(m[1], "", "form")
+      if body.includes?("upload")
+        body.scan(/\bupload\s*\(\s*['"]([^'"]+)['"]/) do |m|
+          params << Param.new(m[1], "", "form")
+        end
       end
 
-      body.scan(/->\s*header\s*\(\s*['"]([^'"]+)['"]/) do |m|
-        params << Param.new(m[1], "", "header")
+      if body.includes?("header")
+        body.scan(/->\s*header\s*\(\s*['"]([^'"]+)['"]/) do |m|
+          params << Param.new(m[1], "", "header")
+        end
       end
 
-      body.scan(/\bcookies?\s*(?:->\s*\{\s*['"]?([A-Za-z_][A-Za-z0-9_-]*)|\(\s*['"]([^'"]+)['"])/) do |m|
-        name = m[1]? || m[2]?
-        params << Param.new(name, "", "cookie") if name
+      if body.includes?("cookie")
+        body.scan(/\bcookies?\s*(?:->\s*\{\s*['"]?([A-Za-z_][A-Za-z0-9_-]*)|\(\s*['"]([^'"]+)['"])/) do |m|
+          name = m[1]? || m[2]?
+          params << Param.new(name, "", "cookie") if name
+        end
       end
 
       # Legacy mixed-source accessors: `param('x')` and `params->{x}`.
       # Bucket by HTTP method since the source is ambiguous.
-      param_type = read_method ? "query" : "form"
-      body.scan(/(?<![:\w>])param\s*\(\s*['"]([^'"]+)['"]/) do |m|
-        params << Param.new(m[1], "", param_type)
-      end
-      body.scan(/\bparams\s*->\s*\{\s*['"]?([A-Za-z_][A-Za-z0-9_-]*)/) do |m|
-        params << Param.new(m[1], "", param_type)
+      if body.includes?("param")
+        param_type = read_method ? "query" : "form"
+        body.scan(/(?<![:\w>])param\s*\(\s*['"]([^'"]+)['"]/) do |m|
+          params << Param.new(m[1], "", param_type)
+        end
+        body.scan(/\bparams\s*->\s*\{\s*['"]?([A-Za-z_][A-Za-z0-9_-]*)/) do |m|
+          params << Param.new(m[1], "", param_type)
+        end
       end
 
       params
-    end
-
-    private def push_unique_param(endpoint : Endpoint, param : Param)
-      return if param.name.empty?
-      endpoint.params.each do |existing|
-        return if existing.name == param.name && existing.param_type == param.param_type
-      end
-      endpoint.push_param(param)
     end
 
     private def normalize_prefix(prefix : String) : String
@@ -326,21 +352,16 @@ module Analyzer::Perl
       normalized.size > 1 && normalized.ends_with?('/') ? normalized.rchop : normalized
     end
 
-    private def brace_delta(line : String) : Int32
-      delta = 0
-      line.each_char do |char|
-        delta += 1 if char == '{'
-        delta -= 1 if char == '}'
-      end
-      delta
-    end
-
     private def code_only_lines(pod_blanked : Array(String)) : Array(String)
       Noir::PerlCalleeExtractor.strip_non_code(pod_blanked.join('\n')).lines
     end
 
     private def line_offsets(content : String) : Array(Int32)
       offsets = [0]
+      # Character offsets — `extract_sub_after` indexes `source.chars` by
+      # Unicode character. Byte offsets diverge on non-ASCII content and
+      # skip past the handler `sub` (seen on the Dancer2 fixture's notify
+      # route once a UTF-8 comment appears earlier in the file).
       content.each_char_with_index do |char, index|
         offsets << index + 1 if char == '\n'
       end

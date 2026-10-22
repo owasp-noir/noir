@@ -1,62 +1,65 @@
 require "../../engines/javascript_engine"
 require "../../../miniparsers/js_route_extractor"
+require "./express/router_mount_scanner"
 
 module Analyzer::Javascript
   class Restify < JavascriptEngine
+    analyzer_for "js_restify"
+
     def analyze
       result = [] of Endpoint
       static_dirs = [] of Hash(String, String)
       include_callee = callees_needed?
+      # Cross-file `router.applyRoutes(server, '/p')` prefixes, read back by
+      # the shared route extractor through `CodeLocator`.
+      RouterMountScanner.new(all_files, @base_paths, base_path, logger, :restify).scan
 
       parallel_file_scan do |path|
-        begin
-          content = read_file_content(path)
-          next if client_library_file?(content)
-          parser_endpoints = Noir::JSRouteExtractor.extract_routes(path, content, @is_debug,
-            include_callees: include_callee)
-          parser_endpoints.each do |endpoint|
-            if endpoint.details.code_paths.empty?
-              endpoint.details = Details.new(PathInfo.new(path))
-            end
-
-            # Parse path parameters from the URL path itself
-            if endpoint.url.includes?(":")
-              endpoint.url.scan(/:(\w+)/) do |m|
-                if m.size > 0
-                  param = Param.new(m[1], "", "path")
-                  endpoint.push_param(param) if !endpoint.params.any? { |p| p.name == m[1] && p.param_type == "path" }
-                end
-              end
-            end
-
-            result << endpoint
+        content = read_file_content(path)
+        next if client_library_file?(content)
+        next if Noir::JSRouteExtractor.other_shared_extractor_framework?(content, :restify)
+        parser_endpoints = Noir::JSRouteExtractor.extract_routes(path, content, @is_debug,
+          include_callees: include_callee)
+        parser_endpoints.each do |endpoint|
+          if endpoint.details.code_paths.empty?
+            endpoint.details = Details.new(PathInfo.new(path))
           end
 
-          collect_static_paths(path, content, static_dirs, :restify)
-        rescue e
-          logger.debug "Parser failed for #{path}: #{e.message}, falling back to regex"
+          # Parse path parameters from the URL path itself
+          if endpoint.url.includes?(":")
+            endpoint.url.scan(/:(\w+)/) do |m|
+              param = Param.new(m[1], "", "path")
+              endpoint.push_param(param)
+            end
+          end
 
-          # Fallback to the original regex-based approach if parser fails
-          analyze_with_regex(path, result, static_dirs)
+          result << endpoint
         end
+
+        collect_static_paths(path, content, static_dirs, :restify)
+      rescue e
+        logger.debug "Parser failed for #{path}: #{e.message}, falling back to regex"
+
+        # Fallback to the original regex-based approach if parser fails
+        analyze_with_regex(path, result, static_dirs)
       end
 
       # Process static directories to create endpoints for static files
-      process_static_dirs(static_dirs, result)
+      process_js_static_dirs(static_dirs, result)
 
       result
     end
 
-    private def client_library_file?(content : String) : Bool
-      content.includes?("restify-clients") ||
-        content.includes?("createJSONClient(") ||
-        content.includes?("createStringClient(") ||
-        content.includes?("createHttpClient(")
-    end
+    # Precompiled once — a single PCRE2-JIT scan replaces four naive
+    # String#includes? substring scans over the whole file content.
+    # Regex.union auto-escapes each literal, so this is provably
+    # equivalent to the OR-of-includes? it replaces.
+    CLIENT_LIBRARY_RE = Regex.union(
+      "restify-clients", "createJSONClient(", "createStringClient(", "createHttpClient("
+    )
 
-    # Process static directories and add endpoints for each file
-    private def process_static_dirs(static_dirs : Array(Hash(String, String)), result : Array(Endpoint))
-      process_js_static_dirs(static_dirs, result)
+    private def client_library_file?(content : String) : Bool
+      content.matches?(CLIENT_LIBRARY_RE)
     end
 
     private def analyze_with_regex(path : String, result : Array(Endpoint), static_dirs : Array(Hash(String, String)) = [] of Hash(String, String))
@@ -117,10 +120,8 @@ module Analyzer::Javascript
         # Extract path parameters from the URL
         if endpoint.url.includes?(":")
           endpoint.url.scan(/:(\w+)/) do |m|
-            if m.size > 0
-              param = Param.new(m[1], "", "path")
-              endpoint.push_param(param)
-            end
+            param = Param.new(m[1], "", "path")
+            endpoint.push_param(param)
           end
         end
 
@@ -164,10 +165,8 @@ module Analyzer::Javascript
         # Extract parameters from the URL path itself
         if !last_endpoint.method.empty? && !last_endpoint.url.empty? && last_endpoint.url.includes?(":")
           last_endpoint.url.scan(/:(\w+)/) do |m|
-            if m.size > 0
-              param = Param.new(m[1], "", "path")
-              last_endpoint.push_param(param)
-            end
+            param = Param.new(m[1], "", "path")
+            last_endpoint.push_param(param)
           end
         end
 
@@ -207,10 +206,16 @@ module Analyzer::Javascript
             function_end = function_start + 1
 
             open_braces = 1
-            while open_braces > 0 && function_end < content.size
-              if content[function_end] == '{'
+            # `content[function_end]` re-decodes UTF-8 from byte 0 on every
+            # call once the string isn't single_byte_optimizable? (any
+            # non-ASCII char), making this O(n^2) on a large non-ASCII
+            # file. Index a pre-materialized Char array instead — same
+            # semantics, O(1) lookup.
+            chars = content.chars
+            while open_braces > 0 && function_end < chars.size
+              if chars[function_end] == '{'
                 open_braces += 1
-              elsif content[function_end] == '}'
+              elsif chars[function_end] == '}'
                 open_braces -= 1
               end
               function_end += 1
@@ -233,20 +238,16 @@ module Analyzer::Javascript
 
                 # Extract string paths
                 function_body.scan(string_pattern) do |route_m|
-                  if route_m.size > 0
-                    path = route_m[1]
-                    method_normalized = method == "del" ? "DELETE" : method.upcase
-                    routes << Endpoint.new(path, method_normalized)
-                  end
+                  path = route_m[1]
+                  method_normalized = method == "del" ? "DELETE" : method.upcase
+                  routes << Endpoint.new(path, method_normalized)
                 end
 
                 # Extract object paths
                 function_body.scan(object_pattern) do |route_m|
-                  if route_m.size > 0
-                    path = route_m[1]
-                    method_normalized = method == "del" ? "DELETE" : method.upcase
-                    routes << Endpoint.new(path, method_normalized)
-                  end
+                  path = route_m[1]
+                  method_normalized = method == "del" ? "DELETE" : method.upcase
+                  routes << Endpoint.new(path, method_normalized)
                 end
               end
 
@@ -276,66 +277,62 @@ module Analyzer::Javascript
       # Process the entire file looking for explicit router definitions with prefixes
       router_pattern = /(?:const|let|var)\s+(\w+Router)\s*=\s*(?:new\s+)?(?:restify\.)?Router/
       content.scan(router_pattern) do |m|
-        if m.size > 0
-          router_name = m[1]
+        router_name = m[1]
 
-          # Look for the applyRoutes call for this router
-          apply_pattern = /#{router_name}\.applyRoutes\s*\(\s*\w+(?:\s*,\s*['"]([^'"]+)['"]\s*)?/
-          apply_match = content.match(apply_pattern)
+        # Look for the applyRoutes call for this router
+        apply_pattern = /#{router_name}\.applyRoutes\s*\(\s*\w+(?:\s*,\s*['"]([^'"]+)['"]\s*)?/
+        apply_match = content.match(apply_pattern)
 
-          prefix = ""
-          if apply_match && apply_match.size > 1 && apply_match[1]?
-            prefix = apply_match[1]
+        prefix = ""
+        if apply_match && apply_match.size > 1 && apply_match[1]?
+          prefix = apply_match[1]
+        end
+
+        # For each router (with or without a prefix), find all its route handlers
+        http_methods = %w[get post put delete patch options head del]
+
+        http_methods.each do |method|
+          # Look for route handlers on this router
+          handler_pattern = cached_regex("restify:router_handler:#{router_name}:#{method}") do
+            /#{router_name}\.#{method}\s*\(\s*['"]([^'"]+)['"][^{]*\{([^}]*)\}/m
           end
 
-          # For each router (with or without a prefix), find all its route handlers
-          http_methods = %w[get post put delete patch options head del]
+          content.scan(handler_pattern) do |route_m|
+            if route_m.size > 1
+              route_path = route_m[1]
+              handler_body = route_m[2]
+              method_normalized = method == "del" ? "DELETE" : method.upcase
 
-          http_methods.each do |method|
-            # Look for route handlers on this router
-            handler_pattern = cached_regex("restify:router_handler:#{router_name}:#{method}") do
-              /#{router_name}\.#{method}\s*\(\s*['"]([^'"]+)['"][^{]*\{([^}]*)\}/m
-            end
-
-            content.scan(handler_pattern) do |route_m|
-              if route_m.size > 1
-                route_path = route_m[1]
-                handler_body = route_m[2]
-                method_normalized = method == "del" ? "DELETE" : method.upcase
-
-                # Create full path with prefix if applicable
-                full_path = if prefix.empty?
-                              route_path
+              # Create full path with prefix if applicable
+              full_path = if prefix.empty?
+                            route_path
+                          else
+                            if route_path.starts_with?("/") && prefix.ends_with?("/")
+                              "#{prefix[0..-2]}#{route_path}"
+                            elsif !route_path.starts_with?("/") && !prefix.ends_with?("/")
+                              "#{prefix}/#{route_path}"
                             else
-                              if route_path.starts_with?("/") && prefix.ends_with?("/")
-                                "#{prefix[0..-2]}#{route_path}"
-                              elsif !route_path.starts_with?("/") && !prefix.ends_with?("/")
-                                "#{prefix}/#{route_path}"
-                              else
-                                "#{prefix}#{route_path}"
-                              end
+                              "#{prefix}#{route_path}"
                             end
+                          end
 
-                # Create endpoint and add to results
-                endpoint = Endpoint.new(full_path, method_normalized)
-                details = Details.new(PathInfo.new(path, 1)) # Line number is approximate
-                endpoint.details = details
+              # Create endpoint and add to results
+              endpoint = Endpoint.new(full_path, method_normalized)
+              details = Details.new(PathInfo.new(path, 1)) # Line number is approximate
+              endpoint.details = details
 
-                # Extract path parameters
-                if full_path.includes?(":")
-                  full_path.scan(/:(\w+)/) do |param_m|
-                    if param_m.size > 0
-                      param = Param.new(param_m[1], "", "path")
-                      endpoint.push_param(param)
-                    end
-                  end
+              # Extract path parameters
+              if full_path.includes?(":")
+                full_path.scan(/:(\w+)/) do |param_m|
+                  param = Param.new(param_m[1], "", "path")
+                  endpoint.push_param(param)
                 end
-
-                # Extract parameters from handler body
-                extract_params_from_handler(handler_body, endpoint)
-
-                result << endpoint
               end
+
+              # Extract parameters from handler body
+              extract_params_from_handler(handler_body, endpoint)
+
+              result << endpoint
             end
           end
         end
@@ -380,10 +377,8 @@ module Analyzer::Javascript
               # Extract path parameters
               if full_path.includes?(":")
                 full_path.scan(/:(\w+)/) do |param_m|
-                  if param_m.size > 0
-                    param = Param.new(param_m[1], "", "path")
-                    endpoint.push_param(param)
-                  end
+                  param = Param.new(param_m[1], "", "path")
+                  endpoint.push_param(param)
                 end
               end
 
@@ -401,57 +396,41 @@ module Analyzer::Javascript
     private def extract_params_from_handler(handler_body : String, endpoint : Endpoint)
       # Extract query parameters
       handler_body.scan(/req\.query\.(\w+)/) do |param_match|
-        if param_match.size > 0
-          endpoint.push_param(Param.new(param_match[1], "", "query"))
-        end
+        endpoint.push_param(Param.new(param_match[1], "", "query"))
       end
 
       # Extract body parameters
       handler_body.scan(/req\.body\.(\w+)/) do |param_match|
-        if param_match.size > 0
-          endpoint.push_param(Param.new(param_match[1], "", "json"))
-        end
+        endpoint.push_param(Param.new(param_match[1], "", "json"))
       end
 
       # Extract header parameters - improved patterns
       handler_body.scan(/req\.headers\s*(?:\[\s*['"]([^'"]+)['"]\s*\]|\.\s*(\w+))/) do |param_match|
-        if param_match.size > 0
-          param_name = param_match[1] || param_match[2] || ""
-          endpoint.push_param(Param.new(param_name, "", "header")) unless param_name.empty?
-        end
+        param_name = param_match[1] || param_match[2] || ""
+        endpoint.push_param(Param.new(param_name, "", "header")) unless param_name.empty?
       end
 
       handler_body.scan(/req\.header\s*\(\s*['"]([^'"]+)['"]/) do |param_match|
-        if param_match.size > 0
-          endpoint.push_param(Param.new(param_match[1], "", "header"))
-        end
+        endpoint.push_param(Param.new(param_match[1], "", "header"))
       end
 
       # Extract cookie parameters
       handler_body.scan(/req\.cookies\.(\w+)/) do |param_match|
-        if param_match.size > 0
-          endpoint.push_param(Param.new(param_match[1], "", "cookie"))
-        end
+        endpoint.push_param(Param.new(param_match[1], "", "cookie"))
       end
 
       # Extract path parameters
       handler_body.scan(/req\.params\.(\w+)/) do |param_match|
-        if param_match.size > 0
-          param_name = param_match[1]
-          if !endpoint.params.any? { |p| p.name == param_name && p.param_type == "path" }
-            endpoint.push_param(Param.new(param_name, "", "path"))
-          end
-        end
+        param_name = param_match[1]
+        endpoint.push_param(Param.new(param_name, "", "path"))
       end
 
       # Extract from destructuring - improved to handle more patterns
       handler_body.scan(/(?:const|let|var)?\s*\{\s*([^}]+)\s*\}\s*=\s*req\.body/) do |param_match|
-        if param_match.size > 0
-          param_vars = param_match[1].split(",").map(&.strip)
-          param_vars.each do |param_var|
-            clean_param = param_var.split("=").first.strip.split(":").first.strip
-            endpoint.push_param(Param.new(clean_param, "", "json")) unless clean_param.empty?
-          end
+        param_vars = param_match[1].split(",").map(&.strip)
+        param_vars.each do |param_var|
+          clean_param = param_var.split("=").first.strip.split(":").first.strip
+          endpoint.push_param(Param.new(clean_param, "", "json")) unless clean_param.empty?
         end
       end
     end
@@ -460,12 +439,6 @@ module Analyzer::Javascript
       # Extract the variable name from a route definition line
       # For example, from "apiRouter.get('/products', ..." extract "apiRouter"
       match = line.match(/^\s*(\w+)\.\s*(?:get|post|put|delete|patch|options|head|del)/)
-      match ? match[1] : ""
-    end
-
-    def extract_path(line : String) : String
-      # Extract path from route definition, handling different quote styles
-      match = line.match(/\(\s*['"]([^'"]+)['"]/)
       match ? match[1] : ""
     end
 
@@ -647,176 +620,6 @@ module Analyzer::Javascript
         endpoint.push_param(Param.new("X-Confirm", "", "header"))
         endpoint.details = Details.new(PathInfo.new(path, 1))
         result << endpoint
-      end
-    end
-
-    # New helper method to extract parameters from the handler body
-    private def extract_handler_params_from_content(content : String, router_name : String, method : String, path : String, endpoint : Endpoint)
-      # Find the route handler function with improved pattern matching
-      handler_pattern = /#{router_name}\.#{method}\s*\(\s*['"]#{Regex.escape(path)}['"][^{]*\{([^}]*(?:\{[^}]*\})*[^}]*)\}/m
-      arrow_pattern = /#{router_name}\.#{method}\s*\(\s*['"]#{Regex.escape(path)}['"][^{]*(?:=>|=>\s*\{)([^}]*?)(?:\})?(?:\)|$)/m
-
-      handler_body = ""
-
-      # Try to match traditional function first
-      match = content.match(handler_pattern)
-      if match && match.size > 1
-        handler_body = match[1]
-      else
-        # Try arrow function pattern
-        arrow_match = content.match(arrow_pattern)
-        if arrow_match && arrow_match.size > 1
-          handler_body = arrow_match[1]
-        end
-      end
-
-      return if handler_body.empty?
-
-      # Extract query parameters
-      handler_body.scan(/req\.query\.(\w+)|req\.query\[['"](\w+)['"]\]/) do |param_match|
-        if param_match.size > 0
-          param_name = param_match[1] || param_match[2] || ""
-          endpoint.push_param(Param.new(param_name, "", "query")) unless param_name.empty?
-        end
-      end
-
-      # Extract query parameters from destructuring
-      handler_body.scan(/(?:const|let|var)?\s*\{\s*([^}]+)\s*\}\s*=\\s*req\.query/) do |param_match|
-        if param_match.size > 0
-          param_list = param_match[1].split(",").map(&.strip)
-          param_list.each do |param|
-            clean_param = param.split("=").first.strip.split(":").first.strip
-            endpoint.push_param(Param.new(clean_param, "", "query")) unless clean_param.empty?
-          end
-        end
-      end
-
-      # Extract body parameters
-      handler_body.scan(/req\.body\.(\w+)|req\.body\[['"](\w+)['"]\]/) do |param_match|
-        if param_match.size > 0
-          param_name = param_match[1] || param_match[2] || ""
-          endpoint.push_param(Param.new(param_name, "", "json")) unless param_name.empty?
-        end
-      end
-
-      # Extract body parameters from destructuring
-      handler_body.scan(/(?:const|let|var)?\s*\{\s*([^}]+)\s*\}\s*=\\s*req\.body/) do |param_match|
-        if param_match.size > 0
-          param_list = param_match[1].split(",").map(&.strip)
-          param_list.each do |param|
-            clean_param = param.split("=").first.strip.split(":").first.strip
-            endpoint.push_param(Param.new(clean_param, "", "json")) unless clean_param.empty?
-          end
-        end
-      end
-
-      # Extract header parameters - improved pattern
-      handler_body.scan(/req\.headers(?:\[['"]([^'"]+)['"]\]|\.(\w+))/) do |param_match|
-        if param_match.size > 0
-          param_name = param_match[1] || param_match[2] || ""
-          endpoint.push_param(Param.new(param_name, "", "header")) unless param_name.empty?
-        end
-      end
-
-      # Handle req.header pattern
-      handler_body.scan(/req\.header\s*\(\s*['"]([^'"]+)['"]/) do |param_match|
-        if param_match.size > 0
-          endpoint.push_param(Param.new(param_match[1], "", "header"))
-        end
-      end
-
-      # Extract cookie parameters
-      handler_body.scan(/req\.cookies\.(\w+)|req\.cookies\[['"](\w+)['"]\]/) do |param_match|
-        if param_match.size > 0
-          param_name = param_match[1] || param_match[2] || ""
-          endpoint.push_param(Param.new(param_name, "", "cookie")) unless param_name.empty?
-        end
-      end
-
-      # Extract path parameters
-      handler_body.scan(/req\.params\.(\w+)|req\.params\[['"](\w+)['"]\]/) do |param_match|
-        if param_match.size > 0
-          param_name = param_match[1] || param_match[2] || ""
-          if !endpoint.params.any? { |p| p.name == param_name && p.param_type == "path" }
-            endpoint.push_param(Param.new(param_name, "", "path")) unless param_name.empty?
-          end
-        end
-      end
-    end
-
-    private def scan_specific_method_routes(content : String, result : Array(Endpoint), path : String)
-      # Get all HTTP methods to scan
-      http_methods_map = {
-        "get"     => "GET",
-        "post"    => "POST",
-        "put"     => "PUT",
-        "delete"  => "DELETE",
-        "patch"   => "PATCH",
-        "options" => "OPTIONS",
-        "head"    => "HEAD",
-        "del"     => "DELETE",
-      }
-
-      http_methods_map.each do |method_key, method_value|
-        # Extract routes for each HTTP method
-        extract_routes_for_method(content, result, path, method_key, method_value)
-      end
-    end
-
-    # Compiled once per method key — these run against every restify file.
-    ANY_VAR_METHOD_RES = HTTP_METHOD_KEYS.map { |m| {m, /(\w+Router|\w+Server|\w+)\s*\.\s*#{m}\s*\(\s*['"]([^'"]+)['"][^{]*\{([^}]*(?:\{[^}]*\})*[^}]*)\}/m} }.to_h
-
-    private def extract_routes_for_method(content : String, result : Array(Endpoint), path : String, method_key : String, method_normalized : String)
-      # Look for all router/server variables that might define routes
-      var_pattern = ANY_VAR_METHOD_RES[method_key]
-
-      content.scan(var_pattern) do |method_match|
-        if method_match.size > 2
-          # router_var = method_match[1]
-          route_path = method_match[2]
-          handler_body = method_match[3]
-
-          # Create new endpoint
-          endpoint = Endpoint.new(route_path, method_normalized)
-          details = Details.new(PathInfo.new(path, 1))
-          endpoint.details = details
-
-          # Extract path parameters
-          extract_path_params(route_path, endpoint)
-
-          # Extract other parameters from handler body
-          extract_all_params_from_handler(handler_body, endpoint)
-
-          # Add endpoint to results
-          result << endpoint
-        end
-      end
-
-      # Directly look for the first router in the file
-      server_declaration = /(?:const|let|var)\s+(\w+)\s*=\s*restify\.createServer/
-      server_match = content.match(server_declaration)
-
-      # We don't use server_var here, so we don't assign it
-      if server_match && server_match.size > 1
-        server_name = server_match[1]
-
-        # Now find the routes directly attached to this server
-        basic_route_pattern = /#{server_name}\.(?:get|post|put|delete|patch|options|head|del)\s*\(\s*['"]([^'"]+)['"]/
-
-        content.scan(basic_route_pattern) do |route_m|
-          if route_m.size > 0
-            path = route_m[1]
-            http_method = route_m[0].split(".")[1].split("(")[0].strip
-            method_normalized = http_method == "del" ? "DELETE" : http_method.upcase
-
-            # Create endpoint and add to results
-            endpoint = Endpoint.new(path, method_normalized)
-            details = Details.new(PathInfo.new(path, 1))
-            endpoint.details = details
-
-            result << endpoint
-          end
-        end
       end
     end
   end

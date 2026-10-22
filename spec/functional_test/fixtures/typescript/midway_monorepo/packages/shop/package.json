@@ -1,0 +1,6 @@
+{
+  "name": "shop",
+  "dependencies": {
+    "@midwayjs/core": "^3.12.0"
+  }
+}

@@ -54,5 +54,23 @@ describe Analyzer::AI::Unified do
       analyzer = Analyzer::AI::Unified.new(options)
       analyzer.max_tokens.should eq(1024)
     end
+
+    # The budget is also the num_ctx Ollama allocates; the 128k table value
+    # for llama3.1 needs ~16 GiB of KV cache for an 8B model.
+    it "caps a table budget the user did not set, but not an explicit one" do
+      LLM.mock_max_tokens = 128_000
+      options = create_test_options
+      options["ai_provider"] = YAML::Any.new("ollama")
+      options["ai_model"] = YAML::Any.new("llama3.1")
+      Analyzer::AI::Unified.new(options).max_tokens.should eq(LLM::OLLAMA_DEFAULT_MAX_TOKENS)
+
+      options["ai_max_token"] = YAML::Any.new(65_536)
+      Analyzer::AI::Unified.new(options).max_tokens.should eq(65_536)
+
+      # Only Ollama's native API allocates from it.
+      options.delete("ai_max_token")
+      options["ai_provider"] = YAML::Any.new("openai")
+      Analyzer::AI::Unified.new(options).max_tokens.should eq(128_000)
+    end
   end
 end

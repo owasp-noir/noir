@@ -1,34 +1,24 @@
 +++
-title = "Using Noir with GitHub Marketplace Models"
-description = "Use AI models from GitHub Marketplace with Noir for code analysis."
+title = "GitHub Models Provider (Retired)"
+description = "GitHub Models was retired on July 30, 2026. Read the migration note and choose a supported Noir AI provider."
 weight = 6
 sort_by = "weight"
 
 +++
 
-Use AI models from the [GitHub Marketplace](https://github.com/marketplace/models) with Noir for code analysis.
+GitHub retired [GitHub Models](https://docs.github.com/en/github-models) on July 30, 2026. Its model catalog, inference API, playground, and bring-your-own-key flow are no longer available.
 
-## Setup
+This page remains as a migration note for older Noir configurations. Do not use the `github` provider for new scans.
 
-1.  **Generate a Personal Access Token**: Create a PAT following the [GitHub documentation](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens). Ensure it has permissions to access AI models.
-2.  **Choose a Model**: Browse the [GitHub Marketplace](https://github.com/marketplace/models) for available models.
+## Choose a supported provider
 
-## Usage
+Use one of Noir's supported providers instead:
 
-**Using the GitHub API**:
+*   [Azure AI](../azure/): connect to a Microsoft Foundry resource.
+*   [OpenAI](../openai/): use OpenAI models through the OpenAI API.
+*   [OpenRouter](../openrouter/): access multiple models through one API.
+*   [ACP agents](../acp/): connect Noir to Codex, Gemini, Claude, or another ACP-compatible agent.
 
-```bash
-noir scan ./spec/functional_test/fixtures/hahwul \
-     --ai-provider=github \
-     --ai-model=gpt-5.5 \
-     --ai-key=github_pat_...
-```
-
-**Using the Azure Inference API** (for models served through Azure):
-
-```bash
-noir scan ./spec/functional_test/fixtures/hahwul \
-     --ai-provider=azure \
-     --ai-model=gpt-5.5 \
-     --ai-key=github_pat_...
-```
+{% alert_warning() %}
+Noir keeps the github provider only so older configurations still load. The service behind it is gone.
+{% end %}

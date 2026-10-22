@@ -1,55 +1,105 @@
 require "../../../models/analyzer"
+require "../../engines/cli_endpoint_support"
+require "../../engines/perl_engine"
 
 module Analyzer::Perl
   # Surfaces the command-line attack surface of Perl programs as `cli://`
-  # endpoints: Getopt::Long (GetOptions) / Getopt::Std (getopts) plus @ARGV
-  # indexing and %ENV. Line-scan; root attribution (these libs are flat),
-  # merged by URL.
+  # endpoints: Getopt::Long (GetOptions) / Getopt::Std (getopts) /
+  # Getopt::Long::Descriptive (describe_options) / MooX::Options (option)
+  # plus @ARGV indexing and %ENV. Line-scan; root attribution (these libs
+  # are flat), merged by URL.
   class Cli < Analyzer
+    analyzer_for "perl_cli"
+
+    include CliEndpointSupport
+
     # GetOptions("port=i" => \$port) — the spec string bound to a reference.
     GETOPT_KEY = /["']([a-zA-Z][\w-]*)[^"']*["']\s*=>\s*\\/
     GETOPTS    = /\bgetopts?\s*\(\s*['"]([^'"]*)['"]/
     ARGV_IDX   = /\$ARGV\s*\[\s*(\d+)\s*\]/
-    ENV_READ   = /\$ENV\{\s*['"]?([A-Za-z_]\w*)['"]?\s*\}/
+    # `$ENV{X} = v` (plain assignment) sets the variable for children; it is
+    # not input. `==`, `=~`, `||=` and `//=` still read it.
+    ENV_READ = /\$ENV\{\s*['"]?([A-Za-z_]\w*)['"]?\s*\}(?!\s*=(?![=~>]))/
+    # describe_options('%c %o', ['verbose|v' => 'be verbose'], ...) — each
+    # array-ref's leading quoted spec string. Only the leading identifier is
+    # captured so Getopt::Long::Descriptive suffix modifiers (|alias, =s,
+    # !, +, :i, ...) don't leak into the reported flag name.
+    DESCRIBE_OPT_SPEC = /\[\s*['"]([a-zA-Z][\w-]*)[^'"]*['"]/
+    # option 'name' => (is => 'ro', ...); — MooX::Options attribute decl.
+    # Only extracted when `use MooX::Options` was actually seen in the file,
+    # so an unrelated bareword sub/call literally named `option` elsewhere
+    # doesn't get misattributed as a MooX::Options flag.
+    MOOX_OPTION = /\boption\s+['"]([a-zA-Z][\w-]*)['"]\s*=>/
+    MOOX_MARKER = /\buse\s+MooX::Options\b/
 
-    MARKERS = /\buse\s+Getopt::(?:Long|Std)\b|\bGetOptions\s*\(|\bgetopts?\s*\(|\buse\s+App::Cmd\b|\bMooseX::Getopt\b|\$ARGV\s*\[\s*\d+\s*\]/
+    MARKERS = /\buse\s+Getopt::(?:Long|Std)\b|\bGetOptions\s*\(|\bgetopts?\s*\(|\buse\s+App::Cmd\b|\bMooseX::Getopt\b|\$ARGV\s*\[\s*\d+\s*\]|\buse\s+Getopt::Long::Descriptive\b|\bdescribe_options\s*\(|\buse\s+MooX::Options\b/
     WEB_RE  = /\buse\s+(?:Mojolicious|Mojo::|Dancer2?|Catalyst|Plack|Dancer)\b/
+
+    # One precompiled `Regex.union` scan (PCRE2 JIT) replaces three separate
+    # `String#includes?` scans of the same buffer -- Crystal's `includes?` is
+    # not Boyer-Moore accelerated, so a single regex pass over `lower` is
+    # cheaper than three. Equivalent to the OR-of-substrings it replaces
+    # (union escapes each literal).
+    CLI_TEST_PATH_RE = Regex.union("/t/", "/test/", "_test.")
 
     def analyze
       endpoints = {} of String => Endpoint
       [".pl", ".pm"].each do |ext|
         get_files_by_extension(ext).each do |path|
-          next if File.directory?(path)
           next if cli_test_path?(path)
           next unless File.exists?(path)
           begin
             content = read_file_content(path)
             next unless content.matches?(MARKERS)
+            # POD, `__END__` data and `#` comments are not code: a
+            # commented-out GetOptions or a `$ENV{X}` in the docs is no input.
+            lines = PerlEngine.sanitize_lines(content.lines).map { |line| PerlEngine.strip_line_comment(line) }
+            content = lines.join('\n')
+            next unless content.matches?(MARKERS)
             root_url = "cli://#{cli_binary_name(path)}"
             emit_env = !content.matches?(WEB_RE)
+            uses_moox_options = content.matches?(MOOX_MARKER)
             in_getoptions = false
             go_depth = 0
-            content.each_line.with_index do |line, index|
+            in_describe_options = false
+            do_depth = 0
+            lines.each_with_index do |line, index|
               line_no = index + 1
               # Only treat `"key" => \ref` pairs as flags inside the
               # GetOptions(...) call, so unrelated reference hashes elsewhere
               # in the file don't leak as bogus flags.
               in_getoptions = true if line.includes?("GetOptions") && line.includes?("(")
               if in_getoptions
-                line.scan(GETOPT_KEY) { |m| fetch_endpoint(endpoints, root_url, path, line_no).push_param(Param.new(m[1], "", "flag")) }
-              end
-              if in_getoptions
+                if line.includes?("=>")
+                  line.scan(GETOPT_KEY) { |m| fetch_endpoint(endpoints, root_url, path, line_no).push_param(Param.new(m[1], "", "flag")) }
+                end
                 go_depth += line.count('(') - line.count(')')
                 in_getoptions = false if go_depth <= 0
               end
-              if m = line.match(GETOPTS)
+              if line.includes?("getopt") && (m = line.match(GETOPTS))
                 parse_getopt_short(m[1], fetch_endpoint(endpoints, root_url, path, line_no))
               end
-              if m = line.match(ARGV_IDX)
+              if line.includes?("ARGV") && (m = line.match(ARGV_IDX))
                 fetch_endpoint(endpoints, root_url, path, line_no).push_param(Param.new("arg#{m[1]}", "", "argument"))
               end
-              if emit_env
+              if emit_env && line.includes?("ENV")
                 line.scan(ENV_READ) { |em| fetch_endpoint(endpoints, root_url, path, line_no).push_param(Param.new(em[1], "", "env")) }
+              end
+              # Only treat `[ 'spec' => ... ]` array-refs as option specs
+              # inside the describe_options(...) call, so unrelated array
+              # literals elsewhere in the file don't leak as bogus flags.
+              in_describe_options = true if line.includes?("describe_options") && line.includes?("(")
+              if in_describe_options
+                if line.includes?("[")
+                  line.scan(DESCRIBE_OPT_SPEC) { |opt_match| fetch_endpoint(endpoints, root_url, path, line_no).push_param(Param.new(opt_match[1], "", "flag")) }
+                end
+                do_depth += line.count('(') - line.count(')')
+                in_describe_options = false if do_depth <= 0
+              end
+              if uses_moox_options && line.includes?("option")
+                if m = line.match(MOOX_OPTION)
+                  fetch_endpoint(endpoints, root_url, path, line_no).push_param(Param.new(m[1], "", "flag"))
+                end
               end
             end
           rescue e
@@ -58,7 +108,7 @@ module Analyzer::Perl
           end
         end
       end
-      endpoints.each_value { |ep| @result << ep }
+      @result.concat(cli_endpoints(endpoints))
       @result
     end
 
@@ -69,24 +119,17 @@ module Analyzer::Perl
     private def cli_binary_name(path : String) : String
       stem = File.basename(path, File.extname(path))
       if stem == "main" || stem == "cli" || stem == "app"
-        parent = File.basename(File.dirname(path))
-        return parent unless parent.empty?
+        if name = cli_directory_binary_name(path)
+          return name
+        end
       end
       stem
     end
 
     private def cli_test_path?(path : String) : Bool
-      lower = path.downcase
-      lower.includes?("/t/") || lower.includes?("/test/") || lower.includes?("_test.")
-    end
-
-    private def fetch_endpoint(endpoints : Hash(String, Endpoint), url : String,
-                               path : String, line_no : Int32) : Endpoint
-      endpoints[url] ||= begin
-        ep = Endpoint.new(url, "CLI", Details.new(PathInfo.new(path, line_no)))
-        ep.protocol = "cli"
-        ep
-      end
+      # Scan-base-relative, never absolute: a `t/` or `test/` directory
+      # ABOVE the scan base is not this project's test tree.
+      base_relative_path(path).downcase.matches?(CLI_TEST_PATH_RE)
     end
   end
 end

@@ -19,7 +19,7 @@ tester = FunctionalTester.new("fixtures/typescript/trpc_multi_base/", {
 })
 tester.perform_tests
 
-it "keeps tRPC routers and prefixes inside each base path" do
+it "keeps tRPC routers and prefixes inside each base path", tags: "functional" do
   service_a = tester.app.endpoints.find! { |endpoint| endpoint.url == "/a/trpc/user.list" }
   service_a.method.should eq("GET")
 

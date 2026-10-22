@@ -1,19 +1,25 @@
 require "../../../models/analyzer"
 require "../../engines/ruby_engine"
+require "../../engines/cli_endpoint_support"
 
 module Analyzer::Ruby
   # Surfaces the command-line attack surface of Ruby programs as `cli://`
   # endpoints: one endpoint per (sub)command, with named options
   # (param_type "flag"), positional arguments ("argument") and consumed
   # environment variables ("env"). Covers stdlib OptionParser / ARGV plus
-  # Thor, GLI, Slop, TTY::Option and the commander gem.
+  # Thor, GLI, Slop, TTY::Option, the commander gem, Optimist, Clamp and
+  # dry-cli.
   #
   # Line-scan analyzer (house style for non-tree-sitter Ruby adapters),
   # merging endpoints by URL across files.
   class Cli < RubyEngine
+    analyzer_for "ruby_cli"
+
+    include CliEndpointSupport
+
     # OptionParser: `opts.on("-p", "--port PORT")` — prefer the long name.
     OPTPARSE_LONG  = /\.on\s*\(?[^)]*?["'](-{2}[A-Za-z0-9][\w-]*)/
-    OPTPARSE_SHORT = /\.on\s*\(\s*["'](-[A-Za-z0-9])(?:["' ]|\))/
+    OPTPARSE_SHORT = /\.on\s*\(\s*["'](-[A-Za-z0-9])(["' ]|\))/
 
     # Thor DSL.
     THOR_SUBCLASS = /<\s*Thor\b/
@@ -23,6 +29,18 @@ module Analyzer::Ruby
     # boilerplate) is a class method, never a command, so the name must be
     # followed by an argument list, whitespace or end-of-line — not `.`.
     DEF_RE = /^\s*def\s+([a-z_]\w*[?!]?)\s*(?:[(\s]|$)/
+    # `Thor::Group` steps and `Thor::Actions::*` helpers are public methods
+    # Thor never registers as commands. Other `Thor::` subclasses (`Thor::Error`,
+    # `Thor::Shell::*`) are not matched: they are not command-free by contract.
+    THOR_GROUP_SUBCLASS = /<\s*Thor::(?:Group|Actions)\b/
+    # A started `Thor::Group` is a one-command program: `Gen.start(ARGV)` runs
+    # all its steps, with `argument` / `class_option` as its inputs.
+    THOR_GROUP_ONLY = /<\s*Thor::Group\b/
+    THOR_START      = /\b([A-Z]\w*(?:::[A-Z]\w*)*)\.start\b/
+    THOR_CLASS_NAME = /^\s*class\s+([A-Z]\w*(?:::[A-Z]\w*)*)/
+    THOR_CLASS_OPEN = /^\s*class\s+(?:<<|[A-Z])/
+    THOR_ARGUMENT   = /^\s*argument\s+:?["']?([A-Za-z0-9_]+)/
+    THOR_CLASS_OPT  = /^\s*class_option\s+:?["']?([A-Za-z0-9][\w-]*)/
 
     # GLI / commander gem command blocks + flags.
     BLOCK_COMMAND = /^\s*command\s+:?["']?([A-Za-z0-9][\w-]*)/
@@ -39,8 +57,41 @@ module Analyzer::Ruby
 
     # builtin argv / env.
     ARGV_INDEX = /\bARGV\s*\[\s*(\d+)\s*\]/
-    ENV_INDEX  = /\bENV\s*\[\s*["']([^"']+)["']\s*\]/
-    ENV_FETCH  = /\bENV\.fetch\s*\(\s*["']([^"']+)["']/
+    # A plain `ENV["X"] = v` sets the variable for children; it is not
+    # input. `==`, `=~` and `||=` (default-if-unset) still read it.
+    ENV_INDEX = /\bENV\s*\[\s*["']([^"']+)["']\s*\](?!\s*=(?![=~>]))/
+    ENV_FETCH = /\bENV\.fetch\s*\(\s*["']([^"']+)["']/
+
+    # Optimist: `opt :name, "desc", type: :string` — a flat parser (no
+    # subcommand DSL), gated on the block-opening call so a bare local
+    # variable/method named `opt` elsewhere doesn't false-positive.
+    OPTIMIST_CALL = /\bOptimist(?:::|\.)options\b/
+    OPTIMIST_OPT  = /^\s*opt\s+:([A-Za-z0-9_]+)/
+
+    # Clamp: `class Foo < Clamp::Command` with `option`/`parameter` DSL and
+    # optional nested `subcommand "name", "desc" do ... end` blocks. The DSL
+    # call's first argument (the switch name or an array of switch names)
+    # must appear immediately after `option` + whitespace — a `(?=["'\[])`
+    # lookahead — so an unrelated local/instance variable assignment like
+    # `option = default? ? "--json" : "--text"` cannot masquerade as the
+    # DSL call just because a dash-prefixed quoted string appears somewhere
+    # later on the line. Mirrors CLAMP_PARAMETER, which already requires the
+    # quote directly after the keyword.
+    CLAMP_SUBCLASS     = /<\s*Clamp::Command\b/
+    CLAMP_SUBCOMMAND   = /^(\s*)subcommand\s+["']([A-Za-z0-9][\w-]*)["'][^\n]*\bdo\s*$/
+    CLAMP_OPTION_LONG  = /^\s*option\s+(?=["'\[])[^\n]*?["'](-{2}[A-Za-z0-9][\w-]*)["']/
+    CLAMP_OPTION_SHORT = /^\s*option\s+(?=["'\[])[^\n]*?["'](-[A-Za-z0-9])["']/
+    CLAMP_PARAMETER    = /^\s*parameter\s+["']\[?([A-Za-z0-9_]+)/
+
+    # dry-cli: `class Build < Dry::CLI::Command` with `option`/`argument`
+    # DSL; each subclass is its own (sub)command. DRY_CLI_MARKER (unanchored)
+    # is for whole-content evidence checks; DRY_CLI_CLASS (line-anchored, to
+    # capture indent) is for the per-line scan — `^` in Crystal only matches
+    # the very start of a multi-line string, not after every `\n`.
+    DRY_CLI_MARKER   = /<\s*Dry::CLI::Command\b/
+    DRY_CLI_CLASS    = /^(\s*)class\s+([A-Za-z0-9_]+)\s*<\s*Dry::CLI::Command\b/
+    DRY_CLI_OPTION   = /^\s*option\s+:([A-Za-z0-9_]+)/
+    DRY_CLI_ARGUMENT = /^\s*argument\s+:([A-Za-z0-9_]+)/
 
     # Program-name hints.
     COMMANDER_PROGRAM = /\bprogram\s+:name\s*,\s*["']([^"']+)["']/
@@ -48,6 +99,38 @@ module Analyzer::Ruby
 
     # Web frameworks: their ENV reads are config, not a CLI surface.
     WEB_FRAMEWORK_RE = /(?:^|\n)\s*require\s+["'](?:sinatra|rails|action_controller|active_record|grape|hanami|roda|rack|rackup|puma|unicorn|thin)\b|<\s*(?:Sinatra::Base|Grape::API|ApplicationController)\b|Rails\.application/
+
+    # `cli_evidence?` runs once per .rb file and OR-ed four String#includes?
+    # scans as a standalone boolean gate. Folded into one precompiled union
+    # so the literal-marker half of the gate costs a single PCRE2 match
+    # instead of up to four naive substring scans.
+    CLI_EVIDENCE_MARKERS_RE = Regex.union("OptionParser.new", "GLI::App", "TTY::Option", "Commander::Methods")
+
+    SLOP_CALL = /\bSlop\.(?:parse|new)\b/
+
+    # `cli_evidence?` is the gate every `.rb` in the tree passes through,
+    # and it OR-ed seven separate whole-file scans. One union is the same
+    # predicate in a single pass; the individual patterns are still needed
+    # below, where each one sets its own flag.
+    CLI_EVIDENCE_RE = Regex.union(
+      THOR_SUBCLASS, CLI_EVIDENCE_MARKERS_RE, SLOP_CALL,
+      ARGV_INDEX, OPTIMIST_CALL, CLAMP_SUBCLASS, DRY_CLI_MARKER,
+    )
+
+    # One open `class` body in a Thor file. `private` / `protected` end at the
+    # class that wrote them, so a helper section inside `class << self` or a
+    # nested class cannot hide the commands that follow it. `group` marks
+    # `Thor::Group` / `Thor::Actions` bodies (steps, never commands), `runnable`
+    # a `Thor::Group` the file starts itself.
+    private class ThorScope
+      getter indent : Int32
+      getter? group : Bool
+      getter? runnable : Bool
+      property? hidden = false
+
+      def initialize(@indent : Int32, @group : Bool, @runnable : Bool = false)
+      end
+    end
 
     def analyze
       endpoints = {} of String => Endpoint
@@ -58,16 +141,24 @@ module Analyzer::Ruby
           next if RubyEngine.ruby_test_path?(path)
 
           begin
-            content = read_file_content(path)
+            content = ruby_source(path)
+            next unless cli_evidence?(content)
+
+            # Commented-out options (`# opts.on("--old")`) and env reads are
+            # not part of the program; read code only.
+            lines = content.lines.map { |line| Noir::RubyCalleeExtractor.strip_comment(line, preserve_strings: true) }
+            content = lines.join('\n')
             next unless cli_evidence?(content)
 
             binary = ruby_binary_name(content, path)
             root_url = "cli://#{binary}"
-            lines = content.lines
-            thor = content.matches?(THOR_SUBCLASS)
-            emit_env = !content.matches?(WEB_FRAMEWORK_RE)
+            thor = content_matches?(content, THOR_SUBCLASS)
+            clamp = content_matches?(content, CLAMP_SUBCLASS)
+            dry_cli = content_matches?(content, DRY_CLI_MARKER)
+            optimist = content_matches?(content, OPTIMIST_CALL)
+            emit_env = !content_matches?(content, WEB_FRAMEWORK_RE)
 
-            scan(lines, path, root_url, endpoints, thor, emit_env)
+            scan(lines, path, root_url, endpoints, thor, emit_env, clamp, dry_cli, optimist)
           rescue e
             logger.debug "Error analyzing #{path}: #{e}"
             next
@@ -75,19 +166,13 @@ module Analyzer::Ruby
         end
       end
 
-      endpoints.each_value { |ep| @result << ep }
+      @result.concat(cli_endpoints(endpoints))
       Fiber.yield
       @result
     end
 
     private def cli_evidence?(content : String) : Bool
-      content.matches?(THOR_SUBCLASS) ||
-        content.includes?("OptionParser.new") ||
-        content.includes?("GLI::App") ||
-        content.matches?(/\bSlop\.(?:parse|new)\b/) ||
-        content.includes?("TTY::Option") ||
-        content.includes?("Commander::Methods") ||
-        content.matches?(ARGV_INDEX)
+      content_matches?(content, CLI_EVIDENCE_RE)
     end
 
     private def ruby_binary_name(content : String, path : String) : String
@@ -99,48 +184,87 @@ module Analyzer::Ruby
       end
       stem = File.basename(path, ".rb")
       if stem == "main" || stem == "cli" || stem == "app"
-        parent = File.basename(File.dirname(path))
-        return parent unless parent.empty?
+        if name = cli_directory_binary_name(path)
+          return name
+        end
       end
       stem
     end
 
     private def scan(lines : Array(String), path : String, root_url : String,
-                     endpoints : Hash(String, Endpoint), thor : Bool, emit_env : Bool)
+                     endpoints : Hash(String, Endpoint), thor : Bool, emit_env : Bool,
+                     clamp : Bool, dry_cli : Bool, optimist : Bool)
       pending_desc : String? = nil
       pending_thor_opts = [] of String
       block_cmd_url = root_url
-      thor_private = false
+      # Open `class` bodies, innermost last; the sentinel stands for the file.
+      thor_classes = [ThorScope.new(-1, false)]
+      thor_started = Set(String).new
+      lines.each { |line| line.scan(THOR_START) { |m| thor_started << m[1].split("::").last } } if thor
       no_commands_indent : Int32? = nil
+      clamp_sub_indent : Int32? = nil
+      clamp_sub_url = root_url
+      dry_cli_indent : Int32? = nil
+      dry_cli_url : String? = nil
 
       lines.each_with_index do |line, index|
         line_no = index + 1
 
+        # NOTE: `thor`/`clamp`/`dry_cli`/`optimist` are mutually exclusive
+        # branches — intentionally one-DSL-per-file, matching the existing
+        # TTY::Option-vs-Thor precedent above. A file that (unusually) mixes
+        # markers for two of these frameworks only has the first-checked
+        # framework's option/argument declarations scanned; the other
+        # framework's class still gets a root/command endpoint (via
+        # `cli_evidence?`/`DEF_RE`/etc. where applicable) but its
+        # `option`/`parameter`/`argument` lines are silently skipped rather
+        # than merged. This is a deliberate simplification: real-world Ruby
+        # CLI files essentially never combine two CLI DSLs in one file, and
+        # per-line (rather than per-file) dispatch would require detecting
+        # which framework's *block* a given line sits in, which the
+        # line-scan house style doesn't support today.
         if thor
-          # Thor's task rules: `no_commands do ... end` bodies and methods
-          # below a bare `private` are helpers, not commands. Track both so
-          # they don't surface as bogus subcommands (an indentation-matched
-          # `end` is the line-scan approximation of the block boundary).
-          # Only the `do ... end` form arms the tracker: a single-line
-          # `no_commands { ... }` closes on its own line, so treating it as
-          # an open block would suppress every later command in the file.
-          if nc = line.match(/^(\s*)no_commands\s+do\b/)
+          # Thor's task rules: `no_commands do ... end` bodies, `class << self`
+          # bodies (singleton methods) and methods below a bare `private` or
+          # `protected` are helpers, not commands. Track them so they don't
+          # surface as bogus subcommands (an indentation-matched `end` is the
+          # line-scan approximation of the block boundary).
+          # Only the `do ... end` / multi-line forms arm the tracker: a
+          # single-line `no_commands { ... }` or `class << self; ...; end`
+          # closes on its own line, so treating it as an open block would
+          # suppress every later command in the file.
+          if nc = line.match(/^(\s*)(?:no_commands\s+do\b|class\s*<<\s*self\s*$)/)
             no_commands_indent ||= nc[1].size
           elsif (indent = no_commands_indent) && (em = line.match(/^(\s*)end\b/)) && em[1].size <= indent
             no_commands_indent = nil
           end
-          if line.matches?(/^\s*private\s*$/)
-            thor_private = true
-          elsif line.matches?(/^\s*public\s*$/) || line.matches?(THOR_SUBCLASS)
-            thor_private = false
+          if line.matches?(/^\s*(?:private|protected)\s*$/)
+            thor_classes.last.hidden = true
+          elsif line.matches?(/^\s*public\s*$/)
+            thor_classes.last.hidden = false
           end
+          if em = line.match(/^(\s*)end\b/)
+            while em[1].size <= thor_classes.last.indent
+              thor_classes.pop
+            end
+          elsif line.matches?(THOR_CLASS_OPEN) && !line.matches?(/;\s*end\s*$/)
+            group = line.matches?(THOR_SUBCLASS) ? line.matches?(THOR_GROUP_SUBCLASS) : thor_classes.last.group?
+            runnable = line.matches?(THOR_GROUP_ONLY) && (cn = line.match(THOR_CLASS_NAME)) && thor_started.includes?(cn[1].split("::").last)
+            thor_classes << ThorScope.new(line.size - line.lstrip.size, group, !!runnable)
+            fetch_endpoint(endpoints, root_url, path, line_no) if runnable
+          end
+          scope = thor_classes.last
 
           if m = line.match(THOR_DESC)
             pending_desc = m[1]
           elsif m = line.match(THOR_OPTION)
             pending_thor_opts << m[1]
+          elsif scope.runnable? && (m = line.match(THOR_ARGUMENT))
+            fetch_endpoint(endpoints, root_url, path, line_no).push_param(Param.new(m[1], "", "argument"))
+          elsif scope.runnable? && (m = line.match(THOR_CLASS_OPT))
+            fetch_endpoint(endpoints, root_url, path, line_no).push_param(Param.new(m[1], "", "flag"))
           elsif (m = line.match(DEF_RE)) && (name = m[1]) != "initialize"
-            if thor_private || no_commands_indent
+            if scope.hidden? || scope.group? || no_commands_indent
               pending_desc = nil
               pending_thor_opts.clear
             else
@@ -151,6 +275,54 @@ module Analyzer::Ruby
               pending_desc = nil
               pending_thor_opts.clear
             end
+          end
+        elsif clamp
+          # Clamp: `option`/`parameter` attach to the innermost open
+          # `subcommand "name" do ... end` block (indent-scoped, never a
+          # sticky cursor), falling back to the root command.
+          if sc = line.match(CLAMP_SUBCOMMAND)
+            clamp_sub_indent = sc[1].size
+            clamp_sub_url = "#{root_url}/#{sc[2]}"
+            fetch_endpoint(endpoints, clamp_sub_url, path, line_no)
+          elsif (indent = clamp_sub_indent) && (em = line.match(/^(\s*)end\b/)) && em[1].size <= indent
+            clamp_sub_indent = nil
+            clamp_sub_url = root_url
+          end
+
+          if m = line.match(CLAMP_OPTION_LONG)
+            fetch_endpoint(endpoints, clamp_sub_url, path, line_no).push_param(Param.new(m[1].lstrip('-'), "", "flag"))
+          elsif m = line.match(CLAMP_OPTION_SHORT)
+            fetch_endpoint(endpoints, clamp_sub_url, path, line_no).push_param(Param.new(m[1].lstrip('-'), "", "flag"))
+          end
+          if m = line.match(CLAMP_PARAMETER)
+            fetch_endpoint(endpoints, clamp_sub_url, path, line_no).push_param(Param.new(m[1].downcase, "", "argument"))
+          end
+        elsif dry_cli
+          # dry-cli: each `class Xxx < Dry::CLI::Command` is its own
+          # (sub)command; `option`/`argument` attach to the innermost open
+          # class body (indent-scoped), never a sticky cursor.
+          if cm = line.match(DRY_CLI_CLASS)
+            dry_cli_indent = cm[1].size
+            new_command_url = "#{root_url}/#{cm[2].downcase}"
+            dry_cli_url = new_command_url
+            fetch_endpoint(endpoints, new_command_url, path, line_no)
+          elsif (indent = dry_cli_indent) && (em = line.match(/^(\s*)end\b/)) && em[1].size <= indent
+            dry_cli_indent = nil
+            dry_cli_url = nil
+          end
+
+          if url = dry_cli_url
+            if m = line.match(DRY_CLI_OPTION)
+              fetch_endpoint(endpoints, url, path, line_no).push_param(Param.new(m[1], "", "flag"))
+            elsif m = line.match(DRY_CLI_ARGUMENT)
+              fetch_endpoint(endpoints, url, path, line_no).push_param(Param.new(m[1], "", "argument"))
+            end
+          end
+        elsif optimist
+          # Optimist has no subcommand DSL: every `opt` declaration is a
+          # flat, root-level flag.
+          if m = line.match(OPTIMIST_OPT)
+            fetch_endpoint(endpoints, root_url, path, line_no).push_param(Param.new(m[1], "", "flag"))
           end
         else
           # TTY::Option DSL (option/flag/keyword/argument) — only outside a
@@ -199,15 +371,6 @@ module Analyzer::Ruby
             fetch_endpoint(endpoints, root_url, path, line_no).push_param(Param.new(env_match[1], "", "env"))
           end
         end
-      end
-    end
-
-    private def fetch_endpoint(endpoints : Hash(String, Endpoint), url : String,
-                               path : String, line_no : Int32) : Endpoint
-      endpoints[url] ||= begin
-        ep = Endpoint.new(url, "CLI", Details.new(PathInfo.new(path, line_no)))
-        ep.protocol = "cli"
-        ep
       end
     end
   end

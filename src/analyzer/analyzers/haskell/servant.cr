@@ -1,9 +1,12 @@
 require "../../../models/analyzer"
 require "../../../miniparsers/haskell_callee_extractor"
+require "../../../utils/top_level_split"
 require "set"
 
 module Analyzer::Haskell
   class Servant < Analyzer
+    analyzer_for "haskell_servant"
+
     HTTP_METHOD_VERBS = %w[GET POST PUT DELETE PATCH OPTIONS HEAD]
 
     alias TypeAlias = NamedTuple(body: String, source: String, line: Int32)
@@ -16,12 +19,11 @@ module Analyzer::Haskell
 
     def analyze
       type_aliases = TypeAliasIndex.new
-      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
+      include_callee = callees_needed?
       handler_bodies = include_callee ? build_handler_bodies : HandlerBodies.new
       server_bindings = include_callee ? build_server_bindings : ServerBindings.new
 
       all_files.each do |path|
-        next if File.directory?(path)
         next unless haskell_source?(path)
 
         content = read_file_content(path)
@@ -74,7 +76,6 @@ module Analyzer::Haskell
       handlers = HandlerBodies.new
 
       all_files.each do |path|
-        next if File.directory?(path)
         next unless haskell_source?(path)
 
         Noir::HaskellCalleeExtractor.function_bodies(read_file_content(path), path).each do |body|
@@ -95,7 +96,6 @@ module Analyzer::Haskell
       bindings = ServerBindings.new
 
       all_files.each do |path|
-        next if File.directory?(path)
         next unless haskell_source?(path)
 
         extract_server_binding_targets(read_file_content(path)).each do |entry|
@@ -108,7 +108,7 @@ module Analyzer::Haskell
 
     private def extract_server_binding_targets(content : String) : Array(NamedTuple(name: String, target: String))
       targets = [] of NamedTuple(name: String, target: String)
-      cleaned = strip_haskell_comments(content)
+      cleaned = Helper.strip_haskell_comments(content)
 
       cleaned.each_line do |line|
         match = line.match(/^\s*([a-z_][A-Za-z0-9_']*)\s*::.*\bServer(?:T)?\b\s*(.*)$/)
@@ -130,7 +130,7 @@ module Analyzer::Haskell
 
     private def extract_type_aliases(content : String) : Array(NamedTuple(name: String, body: String, line: Int32))
       results = [] of NamedTuple(name: String, body: String, line: Int32)
-      cleaned = strip_haskell_comments(content)
+      cleaned = Helper.strip_haskell_comments(content)
       lines = cleaned.lines
 
       i = 0
@@ -187,7 +187,7 @@ module Analyzer::Haskell
     # treats it exactly like a `type X = ...` API.
     private def extract_record_routes(content : String) : Array(NamedTuple(name: String, body: String, line: Int32))
       results = [] of NamedTuple(name: String, body: String, line: Int32)
-      cleaned = strip_haskell_comments(content)
+      cleaned = Helper.strip_haskell_comments(content)
       lines = cleaned.lines
 
       i = 0
@@ -292,82 +292,6 @@ module Analyzer::Haskell
       return true if starts_with_whitespace?(line)
       stripped = line.lstrip
       stripped.starts_with?(":<|>") || stripped.starts_with?(":>")
-    end
-
-    private def strip_haskell_comments(text : String) : String
-      result = String::Builder.new
-      chars = text.chars
-      i = 0
-      brace_depth = 0
-      in_string = false
-
-      while i < chars.size
-        c = chars[i]
-
-        if in_string
-          if c == '\\' && i + 1 < chars.size
-            result << c
-            result << chars[i + 1]
-            i += 2
-            next
-          elsif c == '"'
-            in_string = false
-            result << c
-            i += 1
-            next
-          else
-            result << c
-            i += 1
-            next
-          end
-        end
-
-        if brace_depth == 0 && c == '"'
-          in_string = true
-          result << c
-          i += 1
-          next
-        end
-
-        if i + 1 < chars.size && c == '{' && chars[i + 1] == '-'
-          # Replace the comment with whitespace, PRESERVING newlines, so a
-          # multi-line `{- -}` doesn't collapse lines and shift every later
-          # endpoint's reported line number (mirrors scotty.cr).
-          brace_depth += 1
-          result << ' '
-          result << ' '
-          i += 2
-          while i < chars.size && brace_depth > 0
-            if i + 1 < chars.size && chars[i] == '-' && chars[i + 1] == '}'
-              brace_depth -= 1
-              result << ' '
-              result << ' '
-              i += 2
-            elsif i + 1 < chars.size && chars[i] == '{' && chars[i + 1] == '-'
-              brace_depth += 1
-              result << ' '
-              result << ' '
-              i += 2
-            else
-              result << (chars[i] == '\n' ? '\n' : ' ')
-              i += 1
-            end
-          end
-          next
-        end
-
-        if brace_depth == 0 && i + 1 < chars.size && c == '-' && chars[i + 1] == '-'
-          while i < chars.size && chars[i] != '\n'
-            i += 1
-          end
-          next
-        end
-
-        result << c
-        i += 1
-      end
-
-      result.to_s
     end
 
     private def referenced_aliases(body : String, known_names : Array(String)) : Array(String)
@@ -801,12 +725,18 @@ module Analyzer::Haskell
     end
 
     private def split_head_args(segment : String) : Tuple(String, String)
+      # `String#[](Int)` re-walks from byte 0 to locate a character index
+      # whenever the string isn't single-byte-optimizable (any non-ASCII
+      # content), so indexing it inside a `while idx < size` loop is O(n^2)
+      # on such input. Materialize the chars once (O(n)) and index the
+      # Array(Char) instead, which is O(1) per lookup.
+      chars = segment.chars
       idx = 0
-      while idx < segment.size && !segment[idx].whitespace?
+      while idx < chars.size && !chars[idx].whitespace?
         idx += 1
       end
-      head = segment[0...idx]
-      args = idx < segment.size ? segment[idx..].strip : ""
+      head = chars[0...idx].join
+      args = idx < chars.size ? chars[idx..].join.strip : ""
       {head, args}
     end
 
@@ -871,59 +801,37 @@ module Analyzer::Haskell
       depth == 0
     end
 
+    # Servant type-level API operators. Double quotes only: Haskell's `'` is a
+    # tick on promoted constructors (`'[JSON]`) and a primed identifier suffix,
+    # never a string delimiter, so treating it as a quote would swallow the
+    # rest of every `Get '[JSON] X`. `<>` are deliberately NOT counted as a
+    # nest kind even though `:<|>` contains both: Haskell writes no angle
+    # generics, and counting them would leave the separator's own `<` on the
+    # depth counter and suppress every later split. Per-kind clamped counters
+    # and `Empties::DropAll` are taken verbatim from the loop this replaces
+    # (three independent `*_depth` variables, each `-= 1 if > 0`, and a final
+    # `.map(&.strip).reject(&.empty?)`), both of which are observable on the
+    # unbalanced fragments the recursive callers hand it.
+    SPLIT_RULES = Noir::TopLevelSplit::Rules.new(
+      nest: Noir::TopLevelSplit::Nest::Paren | Noir::TopLevelSplit::Nest::Bracket |
+            Noir::TopLevelSplit::Nest::Brace,
+      quotes: "\"",
+      escape: Noir::TopLevelSplit::Escape::InQuotes,
+      strip: true,
+      empties: Noir::TopLevelSplit::Empties::DropAll,
+      per_kind: true,
+      clamp: true,
+    )
+
+    # This is the hottest splitter in the file -- called (and recursed into,
+    # via flatten_route_segments/distribute_route) on expanded Servant API
+    # bodies that can run up to MAX_EXPANSION_BYTES. The hand-rolled loop this
+    # replaces materialized `input.chars` up front purely to dodge the O(n^2)
+    # that per-character `String#[](Int)` costs on non-ASCII input;
+    # `Noir::TopLevelSplit` is forward-only and needs neither the array nor the
+    # random access.
     private def split_top_level(input : String, separator : String) : Array(String)
-      parts = [] of String
-      paren_depth = 0
-      bracket_depth = 0
-      brace_depth = 0
-      start = 0
-      i = 0
-      sep_size = separator.size
-
-      while i < input.size
-        c = input[i]
-        if c == '"'
-          i += 1
-          while i < input.size && input[i] != '"'
-            i += 1 if input[i] == '\\' && i + 1 < input.size
-            i += 1
-          end
-          i += 1 if i < input.size
-          next
-        end
-
-        if c == '('
-          paren_depth += 1
-        elsif c == ')'
-          paren_depth -= 1 if paren_depth > 0
-        elsif c == '['
-          bracket_depth += 1
-        elsif c == ']'
-          bracket_depth -= 1 if bracket_depth > 0
-        elsif c == '{'
-          brace_depth += 1
-        elsif c == '}'
-          brace_depth -= 1 if brace_depth > 0
-        elsif paren_depth == 0 && bracket_depth == 0 && brace_depth == 0 && matches_at?(input, i, separator)
-          parts << input[start...i]
-          i += sep_size
-          start = i
-          next
-        end
-
-        i += 1
-      end
-
-      parts << input[start..]
-      parts.map(&.strip).reject(&.empty?)
-    end
-
-    private def matches_at?(input : String, index : Int32, sep : String) : Bool
-      return false if index + sep.size > input.size
-      sep.size.times do |k|
-        return false if input[index + k] != sep[k]
-      end
-      true
+      Noir::TopLevelSplit.split(input, separator, SPLIT_RULES)
     end
   end
 end

@@ -3,7 +3,7 @@ require "../../../spec_helper"
 require "../../../../src/tagger/tagger"
 
 describe "PythonMiscAuthTagger" do
-  fixture_base = "#{__DIR__}/../../../functional_test/fixtures/python/tornado_auth"
+  fixture_base = File.expand_path("../../../functional_test/fixtures/python/tornado_auth", __DIR__)
   app_path = "#{fixture_base}/app.py"
 
   # app.py line reference:
@@ -29,7 +29,7 @@ describe "PythonMiscAuthTagger" do
     locator = CodeLocator.instance
     Dir.glob("#{fixture_base}/**/*").each do |file|
       next if File.directory?(file)
-      locator.push("file_map", file)
+      locator.register_path(file)
     end
 
     details = Details.new(PathInfo.new(app_path, 10))
@@ -52,7 +52,7 @@ describe "PythonMiscAuthTagger" do
     locator = CodeLocator.instance
     Dir.glob("#{fixture_base}/**/*").each do |file|
       next if File.directory?(file)
-      locator.push("file_map", file)
+      locator.register_path(file)
     end
 
     details = Details.new(PathInfo.new(app_path, 15))
@@ -74,7 +74,7 @@ describe "PythonMiscAuthTagger" do
     locator = CodeLocator.instance
     Dir.glob("#{fixture_base}/**/*").each do |file|
       next if File.directory?(file)
-      locator.push("file_map", file)
+      locator.register_path(file)
     end
 
     # MainHandler has get_current_user inherited from BaseHandler
@@ -99,7 +99,7 @@ describe "PythonMiscAuthTagger" do
     locator = CodeLocator.instance
     Dir.glob("#{fixture_base}/**/*").each do |file|
       next if File.directory?(file)
-      locator.push("file_map", file)
+      locator.register_path(file)
     end
 
     details = Details.new(PathInfo.new(app_path, 19))

@@ -18,6 +18,8 @@ module Analyzer::Mobile
   # / `exclude: true`) are still emitted, tagged `excluded`, since they are
   # part of the declared surface.
   class WellKnown < Analyzer
+    analyzer_for "well_known_applinks"
+
     # Digital Asset Links relation that delegates URL handling to the app —
     # the App Links grant. Other relations (e.g. get_login_creds) are not
     # deep-link surface and are ignored.
@@ -26,10 +28,10 @@ module Analyzer::Mobile
     def analyze
       locator = CodeLocator.instance
 
-      assetlinks = locator.all("android-assetlinks")
+      assetlinks = locator.all(Noir::LocatorKeys::ANDROID_ASSETLINKS)
       assetlinks.each { |path| parse_safely(path) { |json| parse_assetlinks(json, path) } }
 
-      aasa = locator.all("ios-aasa")
+      aasa = locator.all(Noir::LocatorKeys::IOS_AASA)
       aasa.each { |path| parse_safely(path) { |json| parse_aasa(json, path) } }
 
       @result

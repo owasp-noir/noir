@@ -4,10 +4,18 @@ require "../../../ext/tree_sitter/tree_sitter"
 require "../../../miniparsers/java_callee_extractor"
 require "../../../miniparsers/java_parameter_extractor_ts"
 require "../../../miniparsers/java_route_extractor_ts"
+require "../../../utils/url_path"
+require "../../../utils/top_level_split"
 
 module Analyzer::Java
   class Armeria < Analyzer
-    REGEX_SERVER_CODE_BLOCK = /Server\s*\.builder\(\s*\)\s*\.[^;]*build\(\)\s*\./
+    analyzer_for "java_armeria"
+
+    # Anchor only — the chain body is bounded by a depth-aware scan so
+    # semicolons inside lambda/anonymous-class bodies do not truncate
+    # the match, and a trailing `.` after `build()` is not required
+    # (`Server s = Server.builder()...build();`).
+    REGEX_SERVER_BUILDER = /Server\s*\.builder\(\s*\)/
     alias RouteEntry = Tuple(String, String)
     alias ScopedClassKey = Tuple(String, String)
 
@@ -20,77 +28,72 @@ module Analyzer::Java
     PATH_PREFIX_ANNOTATION  = "PathPrefix"
 
     def analyze
-      # Source Analysis
-      channel = Channel(String).new(DEFAULT_CHANNEL_CAPACITY)
       annotated_service_prefixes = collect_annotated_service_prefixes
       service_with_routes_index = collect_service_with_routes_index
 
-      begin
-        WaitGroup.wait do |wg|
-          # Producer — tracked by the WaitGroup
-          wg.spawn do
-            all_files.each { |file| channel.send(file) }
-            channel.close
-          end
+      # Source Analysis — driven by the shared pool on `Analyzer`, not by a
+      # local copy of it. The inlined pool this replaces closed the channel
+      # as a trailing statement and caught only `IO::Error`, so any other
+      # failure in a worker (a tree-sitter parse timeout, an `IndexError` on
+      # a malformed file) killed that worker outright; once every worker was
+      # gone the producer parked forever on a full channel and the scan hung
+      # with no output. `scan_files` rescues `Exception` per file and closes
+      # in an `ensure`, and records the skip so it reaches `errors`.
+      scan_files(all_files) do |path|
+        next unless path.ends_with?(".java") || path.ends_with?(".kt")
+        next if JavaEngine.test_path?(base_relative_path(path))
+        next unless File.exists?(path)
 
-          @options["concurrency"].to_s.to_i.times do
-            wg.spawn do
-              loop do
-                begin
-                  path = channel.receive?
-                  break if path.nil?
-                  next if File.directory?(path)
-                  next if JavaEngine.test_path?(path)
+        content = read_file_content(path)
+        base = configured_base_for(path)
 
-                  if File.exists?(path) && (path.ends_with?(".java") || path.ends_with?(".kt"))
-                    content = read_file_content(path)
-                    base = configured_base_for(path)
-
-                    # Annotation-based services (`@Get("/x")` etc.) —
-                    # Kotlin files reach here too, but tree-sitter-java
-                    # doesn't parse Kotlin cleanly, so skip non-Java.
-                    if content.includes?("com.linecorp.armeria.server.annotation.") && path.ends_with?(".java")
-                      analyze_annotated_service(path, content, base, annotated_service_prefixes)
-                    end
-
-                    # Server.builder()-style routes (regex-scoped — the
-                    # builder chain isn't worth a dedicated TS walk yet).
-                    details = Details.new(PathInfo.new(path))
-                    # Both the string-constant table (a full tree-sitter
-                    # parse) and the non-code mask (a char walk) are only
-                    # needed once a `Server.builder()...build()` chain is
-                    # actually present. Most files are annotated services
-                    # with no builder chain at all, so build both lazily
-                    # on the first match to avoid parsing every file twice.
-                    #
-                    # The mask marks char offsets inside string literals or
-                    # comments, letting us drop builder chains that only
-                    # appear in documentation (e.g. a Kotlin `@Description`
-                    # value or a Java text block) — a real FP source.
-                    non_code_mask = nil.as(Array(Bool)?)
-                    constants = nil.as(Hash(String, String)?)
-                    content.scan(REGEX_SERVER_CODE_BLOCK) do |server_codeblock_match|
-                      start = server_codeblock_match.begin(0)
-                      if start
-                        mask = (non_code_mask ||= build_non_code_mask(content))
-                        next if start < mask.size && mask[start]
-                      end
-                      server_codeblock = server_codeblock_match[0]
-
-                      resolved_constants = constants ||= (path.ends_with?(".java") ? Noir::TreeSitterJavaRouteExtractor.extract_string_constants(content) : Hash(String, String).new)
-                      collect_service_routes(server_codeblock, resolved_constants, details, service_with_routes_index, base)
-                      collect_builder_routes(server_codeblock, resolved_constants, details)
-                    end
-                  end
-                rescue File::NotFoundError
-                  logger.debug "File not found: #{path}"
-                end
-              end
-            end
-          end
+        # Annotation-based services (`@Get("/x")` etc.) —
+        # Kotlin files reach here too, but tree-sitter-java
+        # doesn't parse Kotlin cleanly, so skip non-Java.
+        if content.includes?("com.linecorp.armeria.server.annotation.") && path.ends_with?(".java")
+          analyze_annotated_service(path, content, base, annotated_service_prefixes)
         end
-      rescue e
-        logger.debug e
+
+        # Server.builder()-style routes (regex-anchored, then
+        # depth-scanned — the builder chain isn't worth a
+        # dedicated TS walk yet).
+        details = Details.new(PathInfo.new(path))
+        # Both the string-constant table (a full tree-sitter
+        # parse) and the non-code mask (a char walk) are only
+        # needed once a `Server.builder()` anchor is present.
+        # Most files are annotated services with no builder
+        # chain at all, so build both lazily on the first match
+        # to avoid parsing every file twice.
+        #
+        # The mask marks char offsets inside string literals or
+        # comments, letting us drop builder chains that only
+        # appear in documentation (e.g. a Kotlin `@Description`
+        # value or a Java text block) — a real FP source. The
+        # same mask is reused when scanning the extracted block
+        # so commented-out `.service`/`.route()` calls inside an
+        # otherwise-live chain are not reported.
+        non_code_mask = nil.as(Array(Bool)?)
+        constants = nil.as(Hash(String, String)?)
+        # Comments blanked, offsets kept: the chain is parsed as text, so a
+        # comment inside `.service(...)` would otherwise read as an argument.
+        code = nil.as(String?)
+        content.scan(REGEX_SERVER_BUILDER) do |builder_match|
+          start = builder_match.begin(0)
+          next unless start
+          after_builder = builder_match.end(0)
+          next unless after_builder
+
+          mask = (non_code_mask ||= build_non_code_mask(content))
+          next if start < mask.size && mask[start]
+
+          finish = scan_server_builder_statement_end(content, after_builder, mask)
+          next unless finish && finish >= start
+          server_codeblock = (code ||= JavaEngine.strip_comments(content))[start..finish]
+
+          resolved_constants = constants ||= (path.ends_with?(".java") ? Noir::TreeSitterJavaRouteExtractor.extract_string_constants(content) : Hash(String, String).new)
+          collect_service_routes(server_codeblock, resolved_constants, details, service_with_routes_index, base, mask, start)
+          collect_builder_routes(server_codeblock, resolved_constants, details, mask, start)
+        end
       end
 
       @result
@@ -116,14 +119,16 @@ module Analyzer::Java
 
     private def collect_builder_routes(server_codeblock : String,
                                        constants : Hash(String, String),
-                                       details : Details)
+                                       details : Details,
+                                       non_code_mask : Array(Bool)? = nil,
+                                       block_start : Int32 = 0)
       emitted = Set(Tuple(String, String)).new
 
-      route_chain_expressions(server_codeblock).each do |expr|
+      route_chain_expressions(server_codeblock, non_code_mask, block_start).each do |expr|
         collect_route_expression(expr, constants, details, emitted)
       end
 
-      call_argument_expressions(server_codeblock, ".withRoute").each do |expr|
+      call_argument_expressions(server_codeblock, ".withRoute", non_code_mask, block_start).each do |expr|
         collect_route_expression(expr, constants, details, emitted)
       end
     end
@@ -181,40 +186,53 @@ module Analyzer::Java
       @result << Endpoint.new(path, method, details)
     end
 
-    private def route_chain_expressions(code : String) : Array(String)
+    private def route_chain_expressions(code : String,
+                                        non_code_mask : Array(Bool)? = nil,
+                                        base_offset : Int32 = 0) : Array(String)
       expressions = [] of String
       offset = 0
 
       while found = code.index(".route()", offset)
-        build_idx = code.index(".build", found)
-        break unless build_idx
-        open_idx = code.index('(', build_idx)
-        break unless open_idx
-        close_idx = find_matching_delimiter(code, open_idx, '(', ')')
-        if close_idx
-          expressions << code[found..close_idx]
-          offset = close_idx + 1
+        if masked_offset?(non_code_mask, base_offset + found)
+          offset = found + 8
         else
-          offset = open_idx + 1
+          build_idx = code.index(".build", found)
+          break unless build_idx
+          open_idx = code.index('(', build_idx)
+          break unless open_idx
+          close_idx = JavaEngine.find_matching_delimiter(code, open_idx, '(', ')')
+          if close_idx
+            expressions << code[found..close_idx]
+            offset = close_idx + 1
+          else
+            offset = open_idx + 1
+          end
         end
       end
 
       expressions
     end
 
-    private def call_argument_expressions(code : String, marker : String) : Array(String)
+    private def call_argument_expressions(code : String,
+                                          marker : String,
+                                          non_code_mask : Array(Bool)? = nil,
+                                          base_offset : Int32 = 0) : Array(String)
       expressions = [] of String
       offset = 0
 
       while found = code.index(marker, offset)
-        open_idx = code.index('(', found)
-        break unless open_idx
-        close_idx = find_matching_delimiter(code, open_idx, '(', ')')
-        if close_idx
-          expressions << code[(open_idx + 1)...close_idx]
-          offset = close_idx + 1
+        if masked_offset?(non_code_mask, base_offset + found)
+          offset = found + marker.size
         else
-          offset = open_idx + 1
+          open_idx = code.index('(', found)
+          break unless open_idx
+          close_idx = JavaEngine.find_matching_delimiter(code, open_idx, '(', ')')
+          if close_idx
+            expressions << code[(open_idx + 1)...close_idx]
+            offset = close_idx + 1
+          else
+            offset = open_idx + 1
+          end
         end
       end
 
@@ -248,11 +266,16 @@ module Analyzer::Java
                                        constants : Hash(String, String),
                                        details : Details,
                                        service_with_routes_index : Hash(ScopedClassKey, Array(RouteEntry)),
-                                       base : String)
+                                       base : String,
+                                       non_code_mask : Array(Bool)? = nil,
+                                       block_start : Int32 = 0)
       emitted = Set(Tuple(String, String)).new
       offset = 0
       while found = server_codeblock.index(".service", offset)
         offset = found + 8
+        if masked_offset?(non_code_mask, block_start + found)
+          next
+        end
         suffix = server_codeblock[found..]
         method_name =
           if suffix.starts_with?(".serviceIf")
@@ -268,7 +291,7 @@ module Analyzer::Java
 
         open_idx = server_codeblock.index('(', found)
         next unless open_idx
-        close_idx = find_matching_delimiter(server_codeblock, open_idx, '(', ')')
+        close_idx = JavaEngine.find_matching_delimiter(server_codeblock, open_idx, '(', ')')
         next unless close_idx
 
         args = split_top_level_args(server_codeblock[(open_idx + 1)...close_idx])
@@ -292,7 +315,7 @@ module Analyzer::Java
         if !service_routes.empty? && (method_name == "service" || method_name == "serviceUnder")
           base_path = method_name == "serviceUnder" ? endpoint : ""
           service_routes.each do |entry|
-            emit_builder_route(entry[0], join_paths(base_path, entry[1]), details, emitted)
+            emit_builder_route(entry[0], Noir::URLPath.join_trimmed(base_path, entry[1]), details, emitted)
           end
           next
         end
@@ -366,51 +389,16 @@ module Analyzer::Java
       matches.size == 1 ? matches.first : nil
     end
 
+    # Same rules as `split_top_level_args`, splitting on `+` instead of `,` so
+    # a concatenated path expression breaks into its terms.
     private def split_top_level_concat(expr : String) : Array(String)
-      parts = [] of String
-      start = 0
-      depth = 0
-      in_string = false
-      quote = '\0'
-      escape = false
-
-      expr.each_char_with_index do |char, index|
-        if in_string
-          if escape
-            escape = false
-          elsif char == '\\'
-            escape = true
-          elsif char == quote
-            in_string = false
-          end
-          next
-        end
-
-        case char
-        when '"', '\''
-          in_string = true
-          quote = char
-        when '(', '[', '{'
-          depth += 1
-        when ')', ']', '}'
-          depth -= 1 if depth > 0
-        when '+'
-          next unless depth == 0
-
-          parts << expr[start...index].strip
-          start = index + 1
-        end
-      end
-
-      tail = expr[start..]?.to_s.strip
-      parts << tail unless tail.empty?
-      parts
+      Noir::TopLevelSplit.split(expr, '+', Noir::TopLevelSplit::Rules::JAVA)
     end
 
     private def strip_wrapping_parentheses(expr : String) : String
       result = expr
       while result.starts_with?('(') && result.ends_with?(')')
-        close_idx = find_matching_delimiter(result, 0, '(', ')')
+        close_idx = JavaEngine.find_matching_delimiter(result, 0, '(', ')')
         break unless close_idx == result.size - 1
         result = result[1...-1].strip
       end
@@ -426,21 +414,21 @@ module Analyzer::Java
       registrations = Hash(ScopedClassKey, Array(String)).new { |hash, key| hash[key] = [] of String }
 
       get_files_by_extension(".java").each do |path|
-        next if JavaEngine.test_path?(path)
+        next if JavaEngine.test_path?(base_relative_path(path))
 
         content = read_file_content(path)
         next unless content.includes?(".annotatedService")
 
         constants = Noir::TreeSitterJavaRouteExtractor.extract_string_constants(content)
         base = configured_base_for(path)
-        call_argument_expressions(content, ".annotatedService").each do |expr|
+        call_argument_expressions(JavaEngine.strip_comments(content), ".annotatedService").each do |expr|
           prefix, service_class = annotated_service_registration(expr, constants)
           next if service_class.empty?
 
           registrations[{base, service_class}] << prefix
         end
-      rescue File::NotFoundError
-        logger.debug "File not found: #{path}"
+      rescue e : IO::Error
+        logger.debug "Skipping #{path}: #{e.message}"
       end
 
       registrations.each_value(&.uniq!)
@@ -451,7 +439,7 @@ module Analyzer::Java
       index = Hash(ScopedClassKey, Array(RouteEntry)).new
 
       get_files_by_extension(".java").each do |path|
-        next if JavaEngine.test_path?(path)
+        next if JavaEngine.test_path?(base_relative_path(path))
 
         content = read_file_content(path)
         next unless content.includes?("HttpServiceWithRoutes") || content.includes?("ServiceWithRoutes")
@@ -469,8 +457,8 @@ module Analyzer::Java
             index[{base, class_name}] = routes unless routes.empty?
           end
         end
-      rescue File::NotFoundError
-        logger.debug "File not found: #{path}"
+      rescue e : IO::Error
+        logger.debug "Skipping #{path}: #{e.message}"
       end
 
       index
@@ -504,7 +492,7 @@ module Analyzer::Java
 
         method_body = Noir::TreeSitter.field(member, "body")
         next unless method_body
-        route_builder_expressions(Noir::TreeSitter.node_text(method_body, content)).each do |expr|
+        route_builder_expressions(JavaEngine.strip_comments(Noir::TreeSitter.node_text(method_body, content))).each do |expr|
           routes.concat(route_entries_from_expression(expr, constants))
         end
       end
@@ -521,7 +509,7 @@ module Analyzer::Java
         break unless build_idx
         open_idx = code.index('(', build_idx)
         break unless open_idx
-        close_idx = find_matching_delimiter(code, open_idx, '(', ')')
+        close_idx = JavaEngine.find_matching_delimiter(code, open_idx, '(', ')')
         if close_idx
           expressions << code[found..close_idx]
           offset = close_idx + 1
@@ -562,45 +550,67 @@ module Analyzer::Java
       name.split(/[.$]/).last
     end
 
+    # Delegates to the shared splitter; `Rules::JAVA` reproduces this file's
+    # previous hand-rolled loop exactly (both quote styles, backslash escapes
+    # inside quotes, one clamped depth shared by `()`/`[]`/`{}`, each part
+    # stripped, interior empties kept and a trailing empty dropped).
     private def split_top_level_args(expr : String) : Array(String)
-      args = [] of String
-      start = 0
-      depth = 0
-      in_string = false
-      quote = '\0'
-      escape = false
+      Noir::TopLevelSplit.split(expr, ',', Noir::TopLevelSplit::Rules::JAVA)
+    end
 
-      expr.each_char_with_index do |char, index|
-        if in_string
-          if escape
-            escape = false
-          elsif char == '\\'
-            escape = true
-          elsif char == quote
-            in_string = false
-          end
+    # True when absolute_offset falls inside a string/comment per mask.
+    private def masked_offset?(mask : Array(Bool)?, absolute_offset : Int32) : Bool
+      return false unless mask
+      absolute_offset >= 0 && absolute_offset < mask.size && mask[absolute_offset]
+    end
+
+    # From the char after `Server.builder()`, walk forward tracking
+    # paren/brace/bracket depth while skipping string/comment offsets via
+    # `mask`. The statement ends at the first `;` at depth 0 — so
+    # semicolons inside lambda bodies do not truncate the chain, and
+    # both `.build().start()` and assignment-form `.build();` work.
+    private def scan_server_builder_statement_end(content : String,
+                                                  from : Int32,
+                                                  mask : Array(Bool)) : Int32?
+      paren = 0
+      brace = 0
+      bracket = 0
+      i = from
+      n = content.size
+
+      while i < n
+        if i < mask.size && mask[i]
+          i += 1
           next
         end
 
-        case char
-        when '"', '\''
-          in_string = true
-          quote = char
-        when '(', '[', '{'
-          depth += 1
-        when ')', ']', '}'
-          depth -= 1 if depth > 0
-        when ','
-          next unless depth == 0
-
-          args << expr[start...index].strip
-          start = index + 1
+        case content[i]
+        when '('
+          paren += 1
+        when ')'
+          paren -= 1 if paren > 0
+        when '{'
+          brace += 1
+        when '}'
+          brace -= 1 if brace > 0
+        when '['
+          bracket += 1
+        when ']'
+          bracket -= 1 if bracket > 0
+        when ';'
+          if paren == 0 && brace == 0 && bracket == 0
+            return i > from ? i - 1 : nil
+          end
         end
+        i += 1
       end
 
-      tail = expr[start..]?.to_s.strip
-      args << tail unless tail.empty?
-      args
+      # No terminating `;` (truncated input) — accept the balanced rest.
+      if paren == 0 && brace == 0 && bracket == 0 && from < n
+        return n - 1
+      end
+
+      nil
     end
 
     # Marks character offsets that fall inside a string literal or a
@@ -681,44 +691,6 @@ module Analyzer::Java
       mask
     end
 
-    private def find_matching_delimiter(code : String,
-                                        open_idx : Int32,
-                                        open_char : Char,
-                                        close_char : Char) : Int32?
-      # Scan by CHARACTER (not byte): open_idx is a char index from String#index
-      # and callers char-slice with the returned index. A byte scan corrupts both
-      # on multi-byte UTF-8. ASCII-identical to the previous byte loop.
-      depth = 1
-      in_string = false
-      quote = '\0'
-      escape = false
-
-      code.each_char_with_index do |ch, i|
-        next if i <= open_idx
-        if in_string
-          if escape
-            escape = false
-          elsif ch == '\\'
-            escape = true
-          elsif ch == quote
-            in_string = false
-          end
-        else
-          if ch == '"' || ch == '\''
-            in_string = true
-            quote = ch
-          elsif ch == open_char
-            depth += 1
-          elsif ch == close_char
-            depth -= 1
-          end
-        end
-        return i if depth == 0
-      end
-
-      nil
-    end
-
     # ---- annotation-based service routes ------------------------------
 
     private def analyze_annotated_service(path : String,
@@ -758,7 +730,7 @@ module Analyzer::Java
       prefixes = [] of String
       registration_prefixes.each do |registration_prefix|
         class_prefixes.each do |class_prefix|
-          prefixes << join_paths(registration_prefix, class_prefix)
+          prefixes << Noir::URLPath.join_trimmed(registration_prefix, class_prefix)
         end
       end
       prefixes.uniq
@@ -816,7 +788,7 @@ module Analyzer::Java
 
         prefixes.each do |prefix|
           route_paths.each do |route_path|
-            url_path = join_paths(prefix, route_path)
+            url_path = Noir::URLPath.join_trimmed(prefix, route_path)
             parameters = collect_method_params(method, content, url_path, constants, current_class, dto_index)
             endpoint = Endpoint.new(url_path, http_method, parameters, details)
             collect_method_callees(method, content, path).each do |(name, callee_path, callee_line)|
@@ -832,7 +804,7 @@ module Analyzer::Java
     private def collect_method_callees(method : LibTreeSitter::TSNode,
                                        content : String,
                                        path : String) : Array(Tuple(String, String, Int32))
-      return [] of Tuple(String, String, Int32) unless any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
+      return [] of Tuple(String, String, Int32) unless callees_needed?
       body = Noir::TreeSitter.field(method, "body")
       return [] of Tuple(String, String, Int32) unless body
 
@@ -1064,7 +1036,7 @@ module Analyzer::Java
         fields.each do |field|
           next unless field.access_modifier == "public" || field.has_setter?
 
-          sink << Param.new(field.name, field.init_value, "json")
+          sink << Param.new(field.json_name, field.init_value, "json")
           emitted = true
         end
       end
@@ -1109,8 +1081,11 @@ module Analyzer::Java
     private def decode_string_literal(node : LibTreeSitter::TSNode, content : String) : String
       buf = String.build do |io|
         Noir::TreeSitter.each_named_child(node) do |child|
-          if Noir::TreeSitter.node_type(child) == "string_fragment"
+          case Noir::TreeSitter.node_type(child)
+          when "string_fragment"
             io << Noir::TreeSitter.node_text(child, content)
+          when "escape_sequence"
+            io << Noir::TreeSitter.unescape(Noir::TreeSitter.node_text(child, content))
           end
         end
       end
@@ -1124,25 +1099,15 @@ module Analyzer::Java
         if match.size > 0
           param_name = match[1]
           # Only add if not already present
-          unless endpoint.params.any? { |p| p.name == param_name && p.param_type == "path" }
-            endpoint.push_param(Param.new(param_name, "", "path"))
-          end
+          endpoint.push_param(Param.new(param_name, "", "path"))
         end
       end
 
       url.scan(/:(\w+)/) do |match|
         next unless match.size > 0
         param_name = match[1]
-        unless endpoint.params.any? { |p| p.name == param_name && p.param_type == "path" }
-          endpoint.push_param(Param.new(param_name, "", "path"))
-        end
+        endpoint.push_param(Param.new(param_name, "", "path"))
       end
-    end
-
-    private def join_paths(prefix : String, suffix : String) : String
-      return suffix if prefix.empty?
-      return prefix.rstrip('/') if suffix.empty?
-      "#{prefix.rstrip('/')}/#{suffix.lstrip('/')}"
     end
   end
 end

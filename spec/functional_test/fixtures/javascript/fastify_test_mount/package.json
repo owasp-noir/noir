@@ -1,0 +1,10 @@
+{
+  "name": "fastify-test-mount",
+  "version": "1.0.0",
+  "dependencies": {
+    "fastify": "^4.0.0"
+  },
+  "devDependencies": {
+    "tap": "^18.0.0"
+  }
+}

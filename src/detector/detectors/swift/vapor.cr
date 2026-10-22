@@ -2,6 +2,8 @@ require "../../../models/detector"
 
 module Detector::Swift
   class Vapor < Detector
+    detector_for "swift_vapor", basenames: %w[Package.swift]
+
     def detect(filename : String, file_contents : String) : Bool
       # Check if this is a Package.swift file
       return false unless filename.includes?("Package.swift")
@@ -16,14 +18,6 @@ module Detector::Swift
       file_contents.includes?("vapor/vapor") ||
         file_contents.includes?(%(package: "vapor")) ||
         file_contents.includes?(%(name: "Vapor"))
-    end
-
-    def applicable?(filename : String) : Bool
-      File.basename(filename) == "Package.swift"
-    end
-
-    def set_name
-      @name = "swift_vapor"
     end
   end
 end

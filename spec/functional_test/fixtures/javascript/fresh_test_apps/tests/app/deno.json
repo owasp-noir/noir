@@ -1,0 +1,5 @@
+{
+  "imports": {
+    "fresh": "jsr:@fresh/core@^2.1.1"
+  }
+}

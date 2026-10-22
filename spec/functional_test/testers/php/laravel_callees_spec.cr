@@ -40,6 +40,12 @@ reports = Endpoint.new("/reports", "GET").tap do |ep|
   ep.push_callee(Callee.new("ReportBuilder::generate", line: 9))
   ep.push_callee(Callee.new("response", line: 10))
 end
+# `Route::controller(ReportController::class)->group(...)`: a bare 'index'
+# action resolves against the group's controller.
+reports_summary = Endpoint.new("/reports/summary", "GET").tap do |ep|
+  ep.push_callee(Callee.new("ReportBuilder::generate", line: 9))
+  ep.push_callee(Callee.new("response", line: 10))
+end
 photos_index = Endpoint.new("/photos", "GET")
 photos_index.push_callee(Callee.new("PhotoRepository::latest", line: 9))
 photos_index.push_callee(Callee.new("response", line: 10))
@@ -52,19 +58,20 @@ expected_endpoints = [
   webhook_delete,
   ready,
   reports,
+  reports_summary,
   photos_index,
 ]
 
 tester = FunctionalTester.new("fixtures/php/laravel_callees/", {
   :techs     => 1,
-  :endpoints => 21,
+  :endpoints => 22,
 }, expected_endpoints, {
   "include_callee" => YAML::Any.new(true),
   "only_techs"     => YAML::Any.new("php_laravel"),
 })
 tester.perform_tests
 
-describe "Laravel callee extraction" do
+describe "Laravel callee extraction", tags: "functional" do
   it "resolves callees for controller-array handlers from the controller file" do
     reports_endpoint = tester.app.endpoints.find { |e| e.method == "GET" && e.url == "/reports" }
 

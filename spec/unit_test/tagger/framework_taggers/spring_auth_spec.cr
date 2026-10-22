@@ -2,8 +2,29 @@ require "file_utils"
 require "../../../spec_helper"
 require "../../../../src/tagger/tagger"
 
+# Write `source` to a temp controller file and run SpringAuthTagger against a
+# single endpoint whose handler is recorded at `line`.
+def run_spring_class_level(source : String, line : Int32, ext : String = "java") : Endpoint
+  CodeLocator.instance.clear_all
+  tmpdir = File.tempname("spring_class_level")
+  Dir.mkdir_p(tmpdir)
+  file = File.join(tmpdir, "AdminController.#{ext}")
+  File.write(file, source)
+  CodeLocator.instance.register_path(file)
+
+  noir_options = create_test_options
+  noir_options["base"] = YAML::Any.new(tmpdir)
+  details = Details.new(PathInfo.new(file, line))
+  details.technology = "java_spring"
+  endpoint = Endpoint.new("/admin/users", "GET", [] of Param, details)
+
+  SpringAuthTagger.new(noir_options).perform([endpoint])
+  FileUtils.rm_rf(tmpdir)
+  endpoint
+end
+
 describe "SpringAuthTagger" do
-  fixture_base = "#{__DIR__}/../../../functional_test/fixtures/java/spring_auth"
+  fixture_base = File.expand_path("../../../functional_test/fixtures/java/spring_auth", __DIR__)
   controller_path = "#{fixture_base}/src/main/java/com/example/Controller.java"
   open_controller_path = "#{fixture_base}/src/main/java/com/example/OpenController.java"
 
@@ -36,7 +57,7 @@ describe "SpringAuthTagger" do
     locator = CodeLocator.instance
     Dir.glob("#{fixture_base}/**/*").each do |file|
       next if File.directory?(file)
-      locator.push("file_map", file)
+      locator.register_path(file)
     end
 
     details = Details.new(PathInfo.new(controller_path, 14))
@@ -58,7 +79,7 @@ describe "SpringAuthTagger" do
     locator = CodeLocator.instance
     Dir.glob("#{fixture_base}/**/*").each do |file|
       next if File.directory?(file)
-      locator.push("file_map", file)
+      locator.register_path(file)
     end
 
     details = Details.new(PathInfo.new(controller_path, 14))
@@ -81,7 +102,7 @@ describe "SpringAuthTagger" do
     locator = CodeLocator.instance
     Dir.glob("#{fixture_base}/**/*").each do |file|
       next if File.directory?(file)
-      locator.push("file_map", file)
+      locator.register_path(file)
     end
 
     details = Details.new(PathInfo.new(controller_path, 20))
@@ -103,7 +124,7 @@ describe "SpringAuthTagger" do
     locator = CodeLocator.instance
     Dir.glob("#{fixture_base}/**/*").each do |file|
       next if File.directory?(file)
-      locator.push("file_map", file)
+      locator.register_path(file)
     end
 
     details = Details.new(PathInfo.new(controller_path, 26))
@@ -125,7 +146,7 @@ describe "SpringAuthTagger" do
     locator = CodeLocator.instance
     Dir.glob("#{fixture_base}/**/*").each do |file|
       next if File.directory?(file)
-      locator.push("file_map", file)
+      locator.register_path(file)
     end
 
     details = Details.new(PathInfo.new(open_controller_path, 9))
@@ -145,7 +166,7 @@ describe "SpringAuthTagger" do
     locator = CodeLocator.instance
     Dir.glob("#{fixture_base}/**/*").each do |file|
       next if File.directory?(file)
-      locator.push("file_map", file)
+      locator.register_path(file)
     end
 
     endpoint = Endpoint.new("/api/other", "GET")
@@ -154,6 +175,32 @@ describe "SpringAuthTagger" do
     tagger.perform([endpoint])
 
     endpoint.tags.any? { |tag| tag.name == "auth" && tag.description.includes?("anyRequest") }.should be_true
+  end
+
+  it "reads every rule of a one-line lambda DSL chain" do
+    tmpdir = File.tempname("spring_one_line_dsl")
+    Dir.mkdir_p(tmpdir)
+    config = File.join(tmpdir, "SecurityConfig.java")
+    File.write(config, <<-JAVA)
+      public class SecurityConfig {
+          @Bean
+          public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
+              http.authorizeHttpRequests(auth -> auth.requestMatchers("/public/**").permitAll().anyRequest().authenticated());
+              return http.build();
+          }
+      }
+      JAVA
+    CodeLocator.instance.register_path(config)
+    noir_options = create_test_options
+    noir_options["base"] = YAML::Any.new(tmpdir)
+
+    items = Endpoint.new("/items", "GET")
+    info = Endpoint.new("/public/info", "GET")
+    SpringAuthTagger.new(noir_options).perform([items, info])
+    FileUtils.rm_rf(tmpdir)
+
+    items.tags.map(&.description).should eq(["Protected by Spring Security authenticated via anyRequest()"])
+    info.tags.empty?.should be_true
   end
 
   it "keeps anyRequest fallback for an unscoped chain when another chain is scoped" do
@@ -186,7 +233,7 @@ describe "SpringAuthTagger" do
 
       noir_options = create_test_options
       noir_options["base"] = YAML::Any.new(temp_dir)
-      CodeLocator.instance.push("file_map", config_path)
+      CodeLocator.instance.register_path(config_path)
 
       endpoint = Endpoint.new("/web/dashboard", "GET")
 
@@ -229,7 +276,7 @@ describe "SpringAuthTagger" do
 
       noir_options = create_test_options
       noir_options["base"] = YAML::Any.new(temp_dir)
-      CodeLocator.instance.push("file_map", config_path)
+      CodeLocator.instance.register_path(config_path)
 
       public_endpoint = Endpoint.new("/public/health", "GET")
       protected_endpoint = Endpoint.new("/secure/data", "GET")
@@ -271,7 +318,7 @@ describe "SpringAuthTagger" do
 
       noir_options = create_test_options
       noir_options["base"] = YAML::Any.new(temp_dir)
-      CodeLocator.instance.push("file_map", config_path)
+      CodeLocator.instance.register_path(config_path)
 
       public_get = Endpoint.new("/public/status", "GET")
       protected_post = Endpoint.new("/public/status", "POST")
@@ -281,6 +328,51 @@ describe "SpringAuthTagger" do
 
       public_get.tags.empty?.should be_true
       protected_post.tags.any? { |tag| tag.name == "auth" && tag.description.includes?("anyRequest") }.should be_true
+    ensure
+      FileUtils.rm_rf(temp_dir) if Dir.exists?(temp_dir)
+    end
+  end
+
+  it "reads the Kotlin authorizeHttpRequests DSL" do
+    temp_dir = File.join(Dir.tempdir, "noir-spring-auth-kotlin-dsl-#{Process.pid}-#{Time.utc.to_unix_ms}")
+    config_path = File.join(temp_dir, "src/main/kotlin/com/example/SecurityConfig.kt")
+
+    begin
+      Dir.mkdir_p(File.dirname(config_path))
+      File.write(config_path, <<-KT)
+        package com.example
+
+        import org.springframework.security.config.annotation.web.builders.HttpSecurity
+        import org.springframework.security.config.annotation.web.invoke
+        import org.springframework.security.web.SecurityFilterChain
+
+        class SecurityConfig {
+            fun filterChain(http: HttpSecurity): SecurityFilterChain {
+                http {
+                    authorizeHttpRequests {
+                        authorize("/public/**", permitAll)
+                        authorize(HttpMethod.POST, "/admin/**", hasRole("ADMIN"))
+                        authorize(anyRequest, authenticated)
+                    }
+                }
+                return http.build()
+            }
+        }
+        KT
+
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(temp_dir)
+      CodeLocator.instance.register_path(config_path)
+
+      open = Endpoint.new("/public/hello", "GET")
+      admin = Endpoint.new("/admin/users", "POST")
+      me = Endpoint.new("/me", "GET")
+
+      SpringAuthTagger.new(noir_options).perform([open, admin, me])
+
+      open.tags.should be_empty
+      admin.tags.map(&.description).should eq(["Protected by Spring Security hasRole via authorize(\"/admin/**\")"])
+      me.tags.map(&.description).should eq(["Protected by Spring Security authenticated via authorize(anyRequest)"])
     ensure
       FileUtils.rm_rf(temp_dir) if Dir.exists?(temp_dir)
     end
@@ -310,7 +402,7 @@ describe "SpringAuthTagger" do
 
       noir_options = create_test_options
       noir_options["base"] = YAML::Any.new(temp_dir)
-      CodeLocator.instance.push("file_map", config_path)
+      CodeLocator.instance.register_path(config_path)
 
       public_endpoint = Endpoint.new("/user/register", "POST")
       protected_endpoint = Endpoint.new("/user/profile", "GET")
@@ -348,7 +440,7 @@ describe "SpringAuthTagger" do
 
       noir_options = create_test_options
       noir_options["base"] = YAML::Any.new(temp_dir)
-      CodeLocator.instance.push("file_map", config_path)
+      CodeLocator.instance.register_path(config_path)
 
       endpoint = Endpoint.new("/api/v1/teams/{nation}", "GET")
 
@@ -373,5 +465,146 @@ describe "SpringAuthTagger" do
     tagger.perform([endpoint])
 
     endpoint.tags.empty?.should be_true
+  end
+end
+
+# A controller-level `@PreAuthorize`/`@Secured`/`@RolesAllowed` guards every
+# handler the class declares. The per-handler backward walk stops at the
+# `public`/`class` boundary by design, so it can never reach the class
+# declaration — every handler of an `@PreAuthorize("hasRole('ADMIN')")`
+# controller was reported as unauthenticated.
+describe "SpringAuthTagger (class-level annotations)" do
+  before_each do
+    CodeLocator.instance.clear_all
+  end
+
+  #  1 package com.example;
+  #  2 (blank)
+  #  3 @RestController
+  #  4 @RequestMapping("/admin")
+  #  5 @PreAuthorize("hasRole('ADMIN')")
+  #  6 public class AdminController {
+  #  7 (blank)
+  #  8     @GetMapping("/users")
+  #  9     public String listUsers() {
+  # 10         return "users";
+  # 11     }
+  # 12 }
+  guarded = <<-JAVA
+    package com.example;
+
+    @RestController
+    @RequestMapping("/admin")
+    @PreAuthorize("hasRole('ADMIN')")
+    public class AdminController {
+
+        @GetMapping("/users")
+        public String listUsers() {
+            return "users";
+        }
+    }
+    JAVA
+
+  it "detects a class-level @PreAuthorize" do
+    endpoint = run_spring_class_level(guarded, 9)
+    endpoint.tags.any? { |t| t.name == "auth" && t.description.includes?("@PreAuthorize") }.should be_true
+  end
+
+  it "detects a class-level @Secured" do
+    endpoint = run_spring_class_level(guarded.gsub("@PreAuthorize(\"hasRole('ADMIN')\")", "@Secured(\"ROLE_ADMIN\")"), 9)
+    endpoint.tags.any? { |t| t.name == "auth" && t.description.includes?("@Secured") }.should be_true
+  end
+
+  it "detects a class-level @RolesAllowed" do
+    endpoint = run_spring_class_level(guarded.gsub("@PreAuthorize(\"hasRole('ADMIN')\")", "@RolesAllowed({\"ROLE_ADMIN\"})"), 9)
+    endpoint.tags.any? { |t| t.name == "auth" && t.description.includes?("@RolesAllowed") }.should be_true
+  end
+
+  it "detects a class-level annotation on a Kotlin controller" do
+    kotlin = <<-KT
+      package com.example
+
+      @RestController
+      @PreAuthorize("hasRole('ADMIN')")
+      class AdminController(private val service: Service) {
+
+          @GetMapping("/users")
+          fun listUsers(): String = "users"
+      }
+      KT
+    endpoint = run_spring_class_level(kotlin, 8, "kt")
+    endpoint.tags.any? { |t| t.name == "auth" }.should be_true
+  end
+
+  it "does not tag a controller without a class-level annotation" do
+    # Same shape, annotation removed — proves the class-level check is not a
+    # blanket "any @PreAuthorize anywhere in the file" match.
+    open = <<-JAVA
+      package com.example;
+
+      @RestController
+      @RequestMapping("/admin")
+      public class AdminController {
+
+          @GetMapping("/users")
+          public String listUsers() {
+              return "users";
+          }
+      }
+      JAVA
+    endpoint = run_spring_class_level(open, 8)
+    endpoint.tags.any? { |t| t.name == "auth" }.should be_false
+  end
+
+  it "does not treat a method-level annotation as class-level" do
+    # `@PreAuthorize` guards only `secret()`; `listUsers()` above it is open.
+    mixed = <<-JAVA
+      package com.example;
+
+      @RestController
+      public class AdminController {
+
+          @GetMapping("/users")
+          public String listUsers() {
+              return "users";
+          }
+
+          @PreAuthorize("hasRole('ADMIN')")
+          @GetMapping("/secret")
+          public String secret() {
+              return "secret";
+          }
+      }
+      JAVA
+    endpoint = run_spring_class_level(mixed, 7)
+    endpoint.tags.any? { |t| t.name == "auth" }.should be_false
+  end
+
+  it "stops the annotation walk at the previous handler's bodiless declaration" do
+    kotlin = <<-KT
+      @RestController
+      class AdminController {
+          @PreAuthorize("hasRole('ADMIN')")
+          @GetMapping("/admin")
+          fun admin() = "admin"
+
+          @GetMapping("/health")
+          fun health() = "ok"
+      }
+      KT
+    run_spring_class_level(kotlin, 7, "kt").tags.any? { |t| t.name == "auth" }.should be_false
+    run_spring_class_level(kotlin, 4, "kt").tags.any? { |t| t.name == "auth" }.should be_true
+
+    java_interface = <<-JAVA
+      public interface AdminApi {
+          @PreAuthorize("hasRole('ADMIN')")
+          @GetMapping("/admin")
+          String admin();
+          @GetMapping("/health")
+          String health();
+      }
+      JAVA
+    run_spring_class_level(java_interface, 5).tags.any? { |t| t.name == "auth" }.should be_false
+    run_spring_class_level(java_interface, 3).tags.any? { |t| t.name == "auth" }.should be_true
   end
 end

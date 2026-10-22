@@ -49,4 +49,26 @@ describe "OutputBuilderJsonl" do
     second_json["params"][0]["value"].as_s.should eq("test")
     second_json["params"][0]["param_type"].as_s.should eq("json")
   end
+
+  it "writes one line per analyzer failure after the endpoints" do
+    options = {
+      "debug"   => YAML::Any.new(false),
+      "verbose" => YAML::Any.new(false),
+      "color"   => YAML::Any.new(false),
+      "nolog"   => YAML::Any.new(false),
+      "output"  => YAML::Any.new(""),
+    }
+    builder = OutputBuilderJsonl.new(options)
+    builder.io = IO::Memory.new
+    builder.analyzer_failures = [AnalyzerFailure.new("go_gin", "boom")]
+
+    builder.print([Endpoint.new("/a", "GET")])
+    lines = builder.io.to_s.split("\n").reject(&.empty?)
+
+    lines.size.should eq(2)
+    JSON.parse(lines[0])["url"].as_s.should eq("/a")
+    failure = JSON.parse(lines[1])
+    failure["tech"].as_s.should eq("go_gin")
+    failure["message"].as_s.should eq("boom")
+  end
 end

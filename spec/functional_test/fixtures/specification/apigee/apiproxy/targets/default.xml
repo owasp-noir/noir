@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<TargetEndpoint name="default">
+    <Flows>
+        <Flow name="internal">
+            <Condition>proxy.pathsuffix MatchesPath "/internal-only"</Condition>
+        </Flow>
+    </Flows>
+    <HTTPTargetConnection>
+        <URL>https://hr.internal.example.com/api</URL>
+    </HTTPTargetConnection>
+</TargetEndpoint>

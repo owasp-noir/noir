@@ -1,22 +1,13 @@
 require "../../models/analyzer"
+require "./file_scan_engine"
 require "../../miniparsers/rust_callee_extractor"
+require "../../miniparsers/rust_callee_extractor_ts"
+require "../../ext/tree_sitter/tree_sitter"
 
 module Analyzer::Rust
-  abstract class RustEngine < Analyzer
-    def analyze
-      parallel_file_scan do |path|
-        result.concat(analyze_file(path))
-      end
-      result
-    end
-
-    abstract def analyze_file(path : String) : Array(Endpoint)
-
-    # Standard set of HTTP methods that `axum::routing::any(...)` /
-    # actix `web::route()` / similar method-agnostic registrations
-    # accept. Mirrors the Go `fan_out_verbs` set so output formats
-    # see real HTTP methods instead of a non-HTTP "ANY" string.
-    ANY_FAN_OUT_VERBS = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]
+  abstract class RustEngine < FileScanEngine
+    # Lower-case verb names the route macros and builders are spelled with.
+    HTTP_VERBS = Set{"get", "post", "put", "delete", "patch", "head", "options"}
 
     # Expand `any` / `all` (case-insensitive) into the seven
     # canonical HTTP methods. Anything else passes through as a
@@ -24,33 +15,133 @@ module Analyzer::Rust
     def self.fan_out_verbs(verb : String) : Array(String)
       case verb.upcase
       when "ANY", "ALL"
-        ANY_FAN_OUT_VERBS
+        ANY_ROUTE_HTTP_METHODS
       else
         [verb]
       end
     end
 
-    # `.rs` extension filter baked in. Subclasses that want a different scan
-    # shape (e.g. a post-pass after the file walk) can override `analyze`
-    # and call this helper directly; the default `analyze` above is the
-    # simpler path.
-    protected def parallel_file_scan(&block : String -> Nil) : Nil
-      begin
-        parallel_analyze(all_files) do |path|
-          next if File.directory?(path)
-          next unless File.exists?(path) && File.extname(path) == ".rs"
-          next if RustEngine.test_path?(path)
+    # `.rs` sources from the extension index; test-path and crate-root
+    # gating lives in `scan_accepts?`.
+    protected def scan_target_files : Array(String)
+      get_files_by_extension(".rs")
+    end
 
-          begin
-            block.call(path)
-          rescue e
-            logger.debug "Error analyzing #{path}: #{e}"
-          end
+    protected def scan_accepts?(path : String) : Bool
+      return false if RustEngine.test_path?(base_relative_path(path))
+      path_under_crate_roots?(path, crate_roots)
+    end
+
+    # The Cargo dependencies that identify this analyzer's framework. An
+    # analyzer that declares them is only shown files inside a crate that
+    # actually depends on one — without that, every Rust analyzer sees every
+    # `.rs` file in the scan and the route DSLs are close enough to collide.
+    # axum's `.route("/foo", get(handler))` and actix's glob-imported
+    # `.route("/foo", get().to(handler))` are the same tree, so actix read
+    # axum's whole router as its own. Default is empty, meaning no gate.
+    protected def crate_dependencies : Array(String)
+      [] of String
+    end
+
+    # Directories holding a `Cargo.toml` that depends on one of
+    # `crate_dependencies`. Empty when the analyzer declares no dependencies,
+    # and also empty when the scan has no matching manifest at all — in which
+    # case `path_under_crate_roots?` waves everything through, so a source
+    # tree checked out without its manifest keeps working exactly as before.
+    private def crate_roots : Array(String)
+      @crate_roots ||= compute_crate_roots
+    end
+
+    @crate_roots : Array(String)?
+
+    private def compute_crate_roots : Array(String)
+      dependencies = crate_dependencies
+      return [] of String if dependencies.empty?
+
+      patterns = dependencies.map { |name| cargo_dependency_re(name) }
+      roots = [] of String
+      all_files.each do |file|
+        next unless File.basename(file) == "Cargo.toml"
+        begin
+          content = read_file_content(file)
+        rescue
+          next
         end
-      rescue e
-        logger.debug e
+        next unless patterns.any? { |pattern| content.matches?(pattern) }
+        root = Noir::PathScope.normalize_root(File.dirname(file))
+        roots << root unless roots.includes?(root)
+      end
+      roots
+    end
+
+    # `axum = "0.7"`, `axum = { path = "…" }`, `axum.workspace = true` and
+    # `[dependencies.axum]` all declare the dependency. Anchored on the key so
+    # `actix-web` does not match the `actix-web-lab` line above it.
+    private def cargo_dependency_re(name : String) : Regex
+      escaped = Regex.escape(name)
+      Regex.new("^\\s*(?:#{escaped}\\s*[=.]|\\[(?:[\\w.-]+\\.)?dependencies\\.#{escaped}\\])", Regex::Options::MULTILINE)
+    end
+
+    # The key that scopes a project-wide mount / prefix index for `path`: its
+    # Cargo workspace root, else its nearest crate root, else the scan base.
+    # Keying by scan base alone let two unrelated crates scanned as one `-b`
+    # share an index, so one crate's `scope("/a")` prefixed the other's
+    # same-named handlers. A workspace stays one scope because its member
+    # crates mount each other's routers.
+    protected def crate_scope_for(path : String) : String
+      manifests = cargo_manifest_dirs
+      return configured_base_for(path) if manifests.empty?
+
+      dir = File.dirname(Noir::PathScope.expand(path))
+      nearest = nil
+      workspace = nil
+      loop do
+        unless (is_workspace = manifests[dir]?).nil?
+          nearest ||= dir
+          workspace = dir if is_workspace
+        end
+        parent = File.dirname(dir)
+        break if parent == dir
+        dir = parent
+      end
+      workspace || nearest || configured_base_for(path)
+    end
+
+    # Normalized directory of every scanned `Cargo.toml` => whether it
+    # declares a `[workspace]`.
+    private def cargo_manifest_dirs : Hash(String, Bool)
+      @cargo_manifest_dirs ||= begin
+        dirs = {} of String => Bool
+        all_files.each do |file|
+          next unless File.basename(file) == "Cargo.toml"
+          content = read_file_content(file) rescue ""
+          dirs[Noir::PathScope.normalize_root(File.dirname(file))] = content.matches?(CARGO_WORKSPACE_RE)
+        end
+        dirs
       end
     end
+
+    @cargo_manifest_dirs : Hash(String, Bool)?
+
+    CARGO_WORKSPACE_RE = /(?m)^\s*\[workspace\]/
+
+    private def path_under_crate_roots?(path : String, roots : Array(String)) : Bool
+      return true if roots.empty?
+
+      expanded = Noir::PathScope.expand(path)
+      roots.any? { |root| Noir::PathScope.under_normalized_root?(expanded, root) }
+    end
+
+    # Workspace test crates are named after the convention without being
+    # the literal `tests/` segment: `rwf-tests`, `tests-fuzz`,
+    # `playwright-tests`, `suspense_tests`. Plural `tests` needs a `-`/`_`
+    # delimiter so `contests/` and `latest/` stay out; singular `test-app`
+    # / `test_only` are deliberately not matched. `e2e` / `playwright` count
+    # only as the whole segment, optionally with a `-test(s)` / `_test(s)`
+    # suffix: `e2e-encryption/` and `api/e2e_keys/` are Matrix-style
+    # end-to-end *encryption* code and serve real routes. Applied to the
+    # rooted scan-base-relative path, like the `/tests/` check.
+    TEST_CRATE_DIR_RE = %r{/(?:[\w.-]+[-_])?tests(?:[-_][\w.-]+)?/|/(?:e2e|playwright)(?:[-_]tests?)?/}
 
     # Cargo convention: every `.rs` immediately under a crate's
     # `tests/` directory is an integration-test binary, never a
@@ -61,14 +152,21 @@ module Analyzer::Rust
     # all park hundreds of route registrations under one of these
     # patterns. Promoted from `axum.cr#test_only_path?` (#1569) to
     # the shared engine so the rest of the Rust family benefits.
-    def self.test_path?(path : String) : Bool
-      return true if path.includes?("/tests/")
+    #
+    # Takes the scan-base-relative path (`Analyzer#base_relative_path`),
+    # never the absolute one. Cargo's conventions are relative to the
+    # crate, so matching the absolute path let a directory *above* the
+    # scan base decide the answer: the same tree cloned into
+    # `~/work/tests/myapp` reported 0 endpoints instead of 220.
+    def self.test_path?(relative_path : String) : Bool
+      return true if relative_path.includes?("/tests/")
+      return true if relative_path.matches?(TEST_CRATE_DIR_RE)
       # Cargo's `benches/` directory holds `cargo bench` harnesses
       # (`Router::new().route(...)` scaffolding for throughput tests),
       # never production endpoints — axum/tide park route-building
       # benchmarks here. Exclude it like `tests/`.
-      return true if path.includes?("/benches/")
-      base = File.basename(path)
+      return true if relative_path.includes?("/benches/")
+      base = File.basename(relative_path)
       base == "tests.rs" || base.ends_with?("_test.rs") || base.ends_with?("_tests.rs")
     end
 
@@ -91,7 +189,10 @@ module Analyzer::Rust
       bytes = source.to_slice
       pattern = /\#\s*\[\s*cfg\s*\(\s*test\s*\)\s*\]/
       source.scan(pattern) do |match|
-        attr_start = match.begin || next
+        # Byte offset: the scan below and tree-sitter's ranges are both in
+        # bytes, and `begin` counts chars, so non-ASCII text above the
+        # attribute shifted the region back over production code.
+        attr_start = match.byte_begin
         brace_idx = find_block_open_brace(bytes, attr_start + 1)
         next unless brace_idx
         close_idx = find_matching_close_brace(bytes, brace_idx)
@@ -107,8 +208,14 @@ module Analyzer::Rust
       regions.any? { |s, e| start_byte >= s && start_byte < e }
     end
 
+    # Returns nil when the item ends at a top-level `;` before any `{`
+    # (`mod tests;`, `use …;`, `const X: [u8; 4] = …;`): that item has
+    # no block, and the next `{` belongs to the following production item.
+    # Likewise at a `}` before any `{`: the attribute was on a struct field
+    # or enum variant and the enclosing block just closed.
     private def self.find_block_open_brace(bytes : Slice(UInt8), from : Int32) : Int32?
       i = from
+      nesting = 0
       while i < bytes.size
         c = bytes[i]
         case c
@@ -128,7 +235,17 @@ module Analyzer::Rust
             i += 1
           end
         when '{'.ord then return i
-        else              i += 1
+        when '}'.ord then return # left the enclosing block: a field or variant
+        when '('.ord, '['.ord
+          nesting += 1
+          i += 1
+        when ')'.ord, ']'.ord
+          nesting -= 1 if nesting > 0
+          i += 1
+        when ';'.ord
+          return if nesting == 0
+          i += 1
+        else i += 1
         end
       end
       nil
@@ -255,14 +372,6 @@ module Analyzer::Rust
       Noir::RustCalleeExtractor.attach_to(endpoint, callees)
     end
 
-    protected def extract_rust_function_body(lines : Array(String), start_index : Int32) : Tuple(String, Int32)?
-      function_body = extract_rust_function_body_with_end(lines, start_index)
-      return unless function_body
-
-      body, body_start_line, _ = function_body
-      {body, body_start_line}
-    end
-
     protected def extract_rust_function_body_with_end(lines : Array(String), start_index : Int32) : Tuple(String, Int32, Int32)?
       return if start_index >= lines.size
       return if Noir::RustCalleeExtractor.strip_comment(lines[start_index]).includes?(";")
@@ -326,6 +435,256 @@ module Analyzer::Rust
       return unless found_opening_brace
 
       {body_lines.join("\n"), body_start_line, lines.size - 1}
+    end
+
+    # ---- Shared tree-sitter walking helpers -----------------------------
+    #
+    # These were 47 byte-identical private copies across the ten Rust
+    # framework adapters. They are `protected`, so an adapter that needs
+    # different behaviour still overrides — and three do, deliberately:
+    #
+    #   * `warp#call_function_text` returns text only for a
+    #     `scoped_identifier`, nil otherwise.
+    #   * `axum#build_function_index` is an overload pair that tracks
+    #     module scope while descending.
+    #   * `actix_web#find_paired_function` differs from the shape below.
+    #
+    # Those three keep their own versions; Crystal dispatches to the
+    # subclass, so the helpers here that call them (`each_routing_pair` →
+    # `find_paired_function`, `build_function_index` → `walk`) still get
+    # the adapter's behaviour.
+
+    # Yield `node` and every named descendant, depth-first.
+    protected def walk(node : LibTreeSitter::TSNode, &block : LibTreeSitter::TSNode ->)
+      block.call(node)
+      Noir::TreeSitter.each_named_child(node) do |child|
+        walk(child, &block)
+      end
+    end
+
+    # The first named child of `node` whose type is `type`.
+    protected def find_named_child(node : LibTreeSitter::TSNode, type : String) : LibTreeSitter::TSNode?
+      Noir::TreeSitter.each_named_child(node) do |child|
+        return child if Noir::TreeSitter.node_type(child) == type
+      end
+      nil
+    end
+
+    # `function_name => function_item` over the whole tree, first
+    # definition winning.
+    protected def build_function_index(root : LibTreeSitter::TSNode, source : String) : Hash(String, LibTreeSitter::TSNode)
+      index = {} of String => LibTreeSitter::TSNode
+      walk(root) do |node|
+        next unless Noir::TreeSitter.node_type(node) == "function_item"
+        name_node = Noir::TreeSitter.field(node, "name")
+        next unless name_node
+        name = Noir::TreeSitter.node_text(name_node, source)
+        index[name] = node unless index.has_key?(name)
+      end
+      index
+    end
+
+    # 1-based line of a method call's name. A chained call node starts at
+    # the chain's first token, so `Router::new()\n.route("/a", …)\n.route("/b", …)`
+    # would put every route on the `Router::new()` line.
+    protected def call_line(call : LibTreeSitter::TSNode) : Int32
+      fn_node = Noir::TreeSitter.field(call, "function")
+      if fn_node && Noir::TreeSitter.node_type(fn_node) == "field_expression" && (field = Noir::TreeSitter.field(fn_node, "field"))
+        return Noir::TreeSitter.node_start_row(field) + 1
+      end
+      Noir::TreeSitter.node_start_row(call) + 1
+    end
+
+    # The callee text of a `call_expression` (`foo`, `Bar::baz`, …).
+    protected def call_function_text(call : LibTreeSitter::TSNode, source : String) : String?
+      fn_node = Noir::TreeSitter.field(call, "function")
+      return unless fn_node
+      Noir::TreeSitter.node_text(fn_node, source)
+    end
+
+    # Walk `node`'s children at every depth and yield `(attribute_item,
+    # function_item)` pairs where the attribute immediately precedes
+    # the function (skipping intermediate attribute_items and doc
+    # comments). This matches how `#[get(...)] async fn handler` is
+    # laid out in the AST — both are top-level siblings, not parent /
+    # child.
+    # `depth` bounds the descent. The recursive call sits *outside* the
+    # `each_named_child` block (children are materialised first so
+    # `find_paired_function` can look ahead), so the depth guard inside
+    # `each_named_child` has already unwound by the time we recurse and
+    # cannot see this walk. A `.rs` file nesting thousands of blocks deep
+    # — generated code, or a hand-built stress case — would otherwise run
+    # the fiber stack out, and a stack overflow aborts the process rather
+    # than failing the one file.
+    protected def each_routing_pair(node : LibTreeSitter::TSNode, depth : Int32 = 0, &block : LibTreeSitter::TSNode, LibTreeSitter::TSNode ->)
+      return if depth > Noir::TreeSitter::MAX_AST_DEPTH
+
+      named = [] of LibTreeSitter::TSNode
+      Noir::TreeSitter.each_named_child(node) { |c| named << c }
+      named.each_with_index do |child, idx|
+        if Noir::TreeSitter.node_type(child) == "attribute_item"
+          pair_function = find_paired_function(named, idx + 1)
+          block.call(child, pair_function) if pair_function
+        end
+        each_routing_pair(child, depth + 1, &block)
+      end
+    end
+
+    # The `function_item` that `named[start...]` leads to, skipping further
+    # attributes and comments. Anything else means the attribute does not
+    # decorate a function, so there is no pair.
+    protected def find_paired_function(named : Array(LibTreeSitter::TSNode), start : Int32) : LibTreeSitter::TSNode?
+      (start...named.size).each do |i|
+        next_node = named[i]
+        case Noir::TreeSitter.node_type(next_node)
+        when "function_item"
+          return next_node
+        when "attribute_item", "line_comment", "block_comment"
+          next
+        else
+          return
+        end
+      end
+      nil
+    end
+
+    # The full text of a `string_literal`, concatenating every
+    # `string_content` and `escape_sequence` child.
+    #
+    # tree-sitter-rust splits a literal at each escape — `"/page-{id:\d+}"`
+    # parses as string_content `/page-{id:`, escape_sequence `\d`,
+    # string_content `+}` — so reading only the first `string_content`
+    # truncates any path carrying one. That is what this method used to do,
+    # and it is why a route registered as `.at("/page-{id:\d+}")` was
+    # reported as `/page-{id:`.
+    #
+    # Returns nil for a literal with no content children (a genuinely empty
+    # `""`), which is what every caller's `|| ""` fallback expects.
+    protected def string_content(string_literal : LibTreeSitter::TSNode, source : String) : String?
+      parts = [] of String
+      Noir::TreeSitter.each_named_child(string_literal) do |child|
+        case Noir::TreeSitter.node_type(child)
+        when "string_content", "escape_sequence"
+          parts << Noir::TreeSitter.node_text(child, source)
+        end
+      end
+      parts.empty? ? nil : parts.join
+    end
+
+    # `string_content` with a type guard, for callers that hand over an
+    # arbitrary argument node and want nil when it is not a literal (an
+    # identifier, a macro call, a method chain). Keeping this separate
+    # preserves the guard that `axum#string_literal_text` carried — its
+    # callers pass `args[0]` / `named[0]` straight from a call expression.
+    protected def string_literal_content(node : LibTreeSitter::TSNode, source : String) : String?
+      return unless Noir::TreeSitter.node_type(node) == "string_literal"
+      string_content(node, source)
+    end
+
+    # The first string literal anywhere under `node`, depth-first.
+    #
+    # Ten adapters carried their own copy of this walk. Eight read only the
+    # first `string_content` child and truncated at escapes; actix_web and
+    # axum had each independently found that bug and written their own
+    # escape-aware reader, complete with a comment explaining it — the
+    # knowledge existed twice in the tree and never reached the other eight.
+    protected def first_string_literal_text(node : LibTreeSitter::TSNode?, source : String) : String?
+      return unless node
+      result : String? = nil
+      walk(node) do |child|
+        next if result
+        next unless Noir::TreeSitter.node_type(child) == "string_literal"
+        result = string_content(child, source)
+      end
+      result
+    end
+
+    # Attach the 1-hop callees of `function`'s body to `endpoint`.
+    protected def attach_handler_callees(function : LibTreeSitter::TSNode,
+                                         source : String,
+                                         path : String,
+                                         endpoint : Endpoint)
+      body = Noir::TreeSitter.field(function, "body")
+      return unless body
+      entries = Noir::RustCalleeExtractorTS.callees_in_body(body, source, path)
+      attach_rust_callees(endpoint, entries)
+    end
+
+    private def candidate_module_paths(current_path : String, module_parts : Array(String)) : Array(String)
+      return [] of String if module_parts.empty?
+
+      base_dir, parts = module_base_dir(current_path, module_parts)
+      return [] of String if parts.empty?
+
+      module_path = parts.join("/")
+      [
+        File.join(base_dir, "#{module_path}.rs"),
+        File.join(base_dir, module_path, "mod.rs"),
+      ]
+    end
+
+    private def module_base_dir(current_path : String, module_parts : Array(String)) : Tuple(String, Array(String))
+      first = module_parts.first
+      rest = module_parts[1..]? || [] of String
+
+      case first
+      when "crate"
+        {crate_src_dir(current_path), rest}
+      when "self"
+        {current_module_dir(current_path), rest}
+      when "super"
+        {File.dirname(current_module_dir(current_path)), rest}
+      else
+        {current_module_dir(current_path), module_parts}
+      end
+    end
+
+    private def current_module_dir(current_path : String) : String
+      File.dirname(current_path)
+    end
+
+    private def crate_src_dir(current_path : String) : String
+      marker = "/src/"
+      if idx = current_path.rindex(marker)
+        current_path[0, idx + marker.size - 1]
+      else
+        File.dirname(current_path)
+      end
+    end
+
+    # Canonical single module a `.rs` file is referred to by. A plain
+    # `foo.rs` is module `foo`; `foo/mod.rs` is module `foo`. A crate root
+    # (`src/main.rs` / `src/lib.rs`) has no module name of its own, so we key
+    # it by the crate directory — this keeps the identically named
+    # `examples/<x>/src/main.rs` roots of a framework example monorepo apart
+    # instead of collapsing them all to a shared `src` pseudo-module.
+    private def primary_module(path : String) : String
+      base = File.basename(path, ".rs")
+      dir = File.dirname(path)
+      case base
+      when "mod"
+        File.basename(dir)
+      when "lib", "main"
+        parent = File.basename(dir)
+        parent == "src" ? File.basename(File.dirname(dir)) : parent
+      else
+        base
+      end
+    end
+
+    # Byte range + name of every fn, for mapping a route node back to the
+    # builder fn that encloses it.
+    private def build_fn_ranges(root : LibTreeSitter::TSNode, source : String) : Array(Tuple(Int32, Int32, String))
+      ranges = [] of Tuple(Int32, Int32, String)
+      walk(root) do |n|
+        next unless Noir::TreeSitter.node_type(n) == "function_item"
+        name_node = Noir::TreeSitter.field(n, "name")
+        next unless name_node
+        s = LibTreeSitter.ts_node_start_byte(n).to_i
+        e = LibTreeSitter.ts_node_end_byte(n).to_i
+        ranges << {s, e, Noir::TreeSitter.node_text(name_node, source)}
+      end
+      ranges
     end
   end
 end

@@ -1,14 +1,10 @@
 require "../../models/tagger"
 require "../../models/endpoint"
 
+@[Noir::TaggerFor(key: "mcp", name: "MCP Tagger", desc: "Identifies Model Context Protocol endpoints", order: 70)]
 class McpTagger < Tagger
   LEGACY_SSE_SEGMENT      = "sse"
   LEGACY_MESSAGE_SEGMENTS = ["message", "messages"]
-
-  def initialize(options : Hash(String, YAML::Any))
-    super
-    @name = "mcp"
-  end
 
   def perform(endpoints : Array(Endpoint))
     legacy_prefixes = legacy_mcp_prefixes(endpoints)
@@ -88,7 +84,7 @@ class McpTagger < Tagger
   end
 
   private def path_segments(path : String) : Array(String)
-    path.split("/").reject(&.empty?)
+    path.split("/", remove_empty: true)
   end
 
   private def legacy_prefix(segments : Array(String)) : String
