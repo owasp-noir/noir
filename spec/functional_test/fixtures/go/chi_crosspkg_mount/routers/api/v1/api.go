@@ -4,6 +4,8 @@ import (
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
+
+	"example.com/crosspkg/routers/api/v1/repo"
 )
 
 // Routes builds the API router that main mounts at "/api/v1".
@@ -22,6 +24,11 @@ func Routes() http.Handler {
 			title := r.FormValue("title")
 			_ = title
 		})
+		// Handlers declared in an imported package; the regex constraint
+		// is what tells the two routes apart, and `*` takes the rest.
+		r.Get("/{owner}/{repo}/{type:issues}/{index}", repo.GetIssue)
+		r.Get("/{owner}/{repo}/{type:pulls}/{index}", repo.GetPull)
+		r.Get("/{owner}/{repo}/contents/*", repo.GetContents)
 	})
 	// A nested mount inside a mounted router composes both prefixes.
 	r.Mount("/admin", adminRouter())

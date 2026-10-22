@@ -21,6 +21,13 @@ module Analyzer::Go
     @import_aliases_cache = Hash(String, Hash(String, String)).new
     # Per-directory string constants, shared with the Mount expansion.
     @package_string_values = Hash(String, Hash(String, String)).new
+    # Where a named handler is looked up, shared with the Mount expansion.
+    @named_scope : Noir::GoNamedHandler::Scope? = nil
+    # Per-directory `{route helper name => declaring file}`, see
+    # `external_route_helper`.
+    @router_helper_files = Hash(String, Hash(String, String)).new
+    # `{file, line}` of every route a Mount expansion read from such a helper.
+    @external_route_sites = Set(Tuple(String, Int32?)).new
 
     # Go enforces per-file imports, so any file using chi's router
     # types must mention the package path. Filter on this marker
@@ -36,6 +43,7 @@ module Analyzer::Go
 
     def analyze
       result = [] of Endpoint
+      free_pass = [] of Endpoint
 
       # Pre-scan: collect per-directory file lists, mounted function names,
       # file contents, and TS-resolved route lists for each file.
@@ -161,7 +169,8 @@ module Analyzer::Go
         end
       end
 
-      named_scope = Noir::GoNamedHandler.scope(file_contents_cache)
+      named_scope = Noir::GoNamedHandler.scope(file_contents_cache, @import_dirs)
+      @named_scope = named_scope
 
       parallel_analyze(get_files_by_extension(".go")) do |path|
         next if GoEngine.go_test_file?(base_relative_path(path))
@@ -285,7 +294,7 @@ module Analyzer::Go
                   end
                 end
                 endpoint.handler = named.handler_for(route)
-                result << endpoint
+                free_pass << endpoint
                 named.bind(route, endpoint)
                 last_endpoint = endpoint
               end
@@ -314,7 +323,11 @@ module Analyzer::Go
 
         named.each_attribution { |line, ep| extract_handler_params(line, ep) }
       end
-      result
+      # A route helper declared in another file was walked at its call site
+      # by the Mount expansion; the free pass reported its routes again,
+      # without the caller's prefix.
+      free_pass.reject! { |ep| ep.details.code_paths.any? { |cp| @external_route_sites.includes?({cp.path, cp.line}) } } unless @external_route_sites.empty?
+      result.concat(free_pass)
     end
 
     private def extract_params(line : String, state : ChiRouteState, last_endpoint : Endpoint)
@@ -484,6 +497,11 @@ module Analyzer::Go
                                   file_contents_cache : Hash(String, String)) : String?
       alias_name = target[:pkg_alias]
       return dir unless alias_name
+      import_dir(file_path, alias_name, file_contents_cache)
+    end
+
+    # Directory of the scanned package `file_path` imports as `alias_name`.
+    private def import_dir(file_path : String, alias_name : String, file_contents_cache : Hash(String, String)) : String?
       return if @import_dirs.empty?
       aliases = @import_aliases_cache[file_path]? || begin
         content = file_contents_cache[file_path]? || read_file_content(file_path)
@@ -492,6 +510,34 @@ module Analyzer::Go
       import_path = aliases[alias_name]?
       return unless import_path
       @import_dirs[import_path]?
+    end
+
+    # A function that takes a router parameter (`func addGitRoutes(m
+    # *web.Router, ...)`): candidate route helper, by name, per directory.
+    ROUTER_HELPER_DECL_RE = /^func\s+([A-Za-z_]\w*)\s*\(([^)]*)\)/m
+    ROUTER_PARAM_RE       = /\w\s+\*?(?:\w+\.)?(?:Router|Mux)\b/
+
+    # `{path, source}` of the file declaring route helper `name` for a call
+    # in `from_file`: in its own package when `qualifier` is empty, else in
+    # the scanned package the file imports as `qualifier`.
+    private def external_route_helper(from_file : String, qualifier : String, name : String,
+                                      package_files : Hash(String, Array(String)),
+                                      file_contents_cache : Hash(String, String)) : Tuple(String, String)?
+      dir = qualifier.empty? ? File.dirname(from_file) : (import_dir(from_file, qualifier, file_contents_cache) || return)
+      index = @router_helper_files[dir] ||= begin
+        found = Hash(String, String).new
+        package_files[dir]?.try &.each do |path|
+          next if GoEngine.go_test_file?(path)
+          file_contents_cache[path]?.try &.scan(ROUTER_HELPER_DECL_RE) do |m|
+            found[m[1]] ||= path if m[2].matches?(ROUTER_PARAM_RE)
+          end
+        end
+        found
+      end
+      path = index[name]? || return
+      return if path == from_file
+      content = file_contents_cache[path]? || return
+      {path, content}
     end
 
     # Route paths from the walker always start with `/` (or are empty for
@@ -555,6 +601,7 @@ module Analyzer::Go
 
         found = false
         nested = [] of Endpoint
+        collected = [] of Noir::TreeSitterGoRouteExtractor::Route
         string_values = string_values_for(dir)
         Noir::TreeSitter.parse_go(content) do |root|
           find_func_declaration(root, content, func_name, recv_type) do |body|
@@ -562,20 +609,12 @@ module Analyzer::Go
             # Re-run the chi walker against the isolated body. skip_functions
             # is empty because any nested func literal inside is the inline
             # handler which the walker already ignores by convention.
-            collected = [] of Noir::TreeSitterGoRouteExtractor::Route
             helpers = Noir::TreeSitterGoRouteExtractor.collect_route_helpers(root, content)
-            Noir::TreeSitterGoRouteExtractor.walk_chi_public(body, content, collected, string_values, helpers)
-            # Capture routes' original line numbers on the endpoint details.
-            # `attach_router_function_params` uses those to bind parameter
-            # lines to the correct endpoint instead of counting verb calls,
-            # which would false-positive on `r.Header.Get(...)` / `Query().Get(...)`
-            # accessor calls inside inline handlers.
-            collected.each do |route|
-              details = Details.new(PathInfo.new(search_path, route.line + 1))
-              Noir::TreeSitterGoRouteExtractor.fan_out_verbs(route.verb).each do |verb|
-                endpoints << Endpoint.new(route.path, verb, details)
-              end
+            helpers.file = search_path
+            helpers.external = ->(from_file : String, qualifier : String, name : String) do
+              external_route_helper(from_file, qualifier, name, package_files, file_contents_cache)
             end
+            Noir::TreeSitterGoRouteExtractor.walk_chi_public(body, content, collected, string_values, helpers)
 
             lines = file_lines_cache[search_path]? || GoEngine.strip_comments(content).lines
             first_row = Noir::TreeSitter.node_start_row(body)
@@ -599,8 +638,31 @@ module Analyzer::Go
         end
         next unless found
 
-        lines = file_lines_cache[search_path]? || GoEngine.strip_comments(content).lines
-        attach_router_function_params(endpoints, lines)
+        # Capture routes' original line numbers on the endpoint details.
+        # `attach_router_function_params` uses those to bind parameter
+        # lines to the correct endpoint instead of counting verb calls,
+        # which would false-positive on `r.Header.Get(...)` / `Query().Get(...)`
+        # accessor calls inside inline handlers.
+        # A route registered by a helper in another file belongs to that
+        # file: its line, handler lookup and params are read there.
+        collected.group_by { |route| route.file || search_path }.each do |route_file, routes|
+          file_content = route_file == search_path ? content : (file_contents_cache[route_file]? || next)
+          routes.each { |route| @external_route_sites << {route_file, route.line + 1} } unless route_file == search_path
+          named = Noir::GoNamedHandler.new(file_content, route_file, routes, @named_scope)
+          file_endpoints = [] of Endpoint
+          routes.each do |route|
+            details = Details.new(PathInfo.new(route_file, route.line + 1))
+            handler = named.handler_for(route)
+            Noir::TreeSitterGoRouteExtractor.fan_out_verbs(route.verb).each do |verb|
+              endpoint = Endpoint.new(route.path, verb, details)
+              endpoint.handler = handler
+              file_endpoints << endpoint
+            end
+          end
+          lines = file_lines_cache[route_file]? || GoEngine.strip_comments(file_content).lines
+          attach_router_function_params(file_endpoints, lines)
+          endpoints.concat(file_endpoints)
+        end
         endpoints.concat(nested)
         break
       end

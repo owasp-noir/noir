@@ -36,14 +36,20 @@ class EndpointOptimizer
       # there is an unresolved gradle manifest placeholder (kept verbatim
       # and tagged by the Android analyzer), not a JS template literal.
       next if endpoint.non_http?
-      endpoint.url = normalize_url_shape(endpoint.url)
+      endpoint.url = normalize_url_shape(endpoint.url, keep_constraints: regex_placeholders?(endpoint))
       endpoints[idx] = endpoint
     end
 
     endpoints
   end
 
-  private def normalize_url_shape(url : String, normalize_colon_segments : Bool = false) : String
+  # True when the endpoint's `{name:regex}` constraints are part of the route
+  # (see `Noir::URLPath::REGEX_PLACEHOLDER_TECHS`).
+  private def regex_placeholders?(endpoint : Endpoint) : Bool
+    Noir::URLPath::REGEX_PLACEHOLDER_TECHS.includes?(endpoint.details.technology || "")
+  end
+
+  private def normalize_url_shape(url : String, normalize_colon_segments : Bool = false, keep_constraints : Bool = false) : String
     return url if url.empty?
 
     # Skip URLs that look like a verbatim regex literal — Express
@@ -59,7 +65,7 @@ class EndpointOptimizer
 
     # Spring `{name:regex}` path variables — strip the inline regex
     # constraint so downstream consumers see the canonical placeholder.
-    normalized = strip_brace_constraints(normalized)
+    normalized = strip_brace_constraints(normalized) unless keep_constraints
 
     # Postman-style full path segments: `/:id` → `/{id}`.
     # Keep embedded placeholders such as `/profiles/celeb_:USERNAME`

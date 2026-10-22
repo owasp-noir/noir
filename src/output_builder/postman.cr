@@ -26,7 +26,9 @@ class OutputBuilderPostman < OutputBuilder
       url_parts = split_route_url(endpoint)
 
       # Build URL parts
-      route_p = route_path(url_parts[:route])
+      # A regex constraint may hold a `/` (`{file:[^/]*}`), so it goes
+      # before the path is split into segments.
+      route_p = route_path(url_parts[:route]).gsub(Noir::URLPath::REGEX_PLACEHOLDER_RE, "{\\1}")
       path_parts = route_p.split("/").reject(&.empty?)
       path_parts << "" if route_p.ends_with?("/") && !path_parts.empty?
       path_with_vars = path_parts.map do |part|

@@ -375,7 +375,7 @@ module Noir::CLI::Inspect
   # `**` `{path*}` `{...rest}` `[...slug]` `[[...slug]]` `*path` `:rest*`
   # match the rest (Express's bare `*` is a catch-all, not one segment).
   REST_PLACEHOLDER = /\A(?:\*\*|\{[^}]*\*\}|\{\.\.\.[^}]*\}|\[\[\.\.\.[^\]]*\]\]|\[\.\.\.[^\]]*\]|\*[A-Za-z_]\w*|:[A-Za-z_]\w*\*|\*)/
-  ONE_PLACEHOLDER  = /\A(?:\$\{[^}]*\}|\{[^}]*\}|<[^>]*>|\[[^\]]*\]|:[A-Za-z_]\w*|\$[A-Za-z_]\w*)/
+  ONE_PLACEHOLDER  = /\A(?:\$\{[^}]*\}|\{(?:[^{}]|\{[^{}]*\})*\}|<[^>]*>|\[[^\]]*\]|:[A-Za-z_]\w*|\$[A-Za-z_]\w*)/
   PLACEHOLDER_CHAR = /[{:<\[$*]/
 
   # The regex a declared route matches request paths against, or nil for a
@@ -396,19 +396,36 @@ module Noir::CLI::Inspect
         end
       end
     end
-    Regex.new("\\A#{pattern}/?\\z")
+    Regex.new("\\A#{pattern}/?\\z") rescue nil
   end
 
   # A typed placeholder only takes what the router would route to it:
   # Werkzeug/Django `<int:id>` / `<uuid:id>`, ASP.NET `{id:int}` /
-  # `{id:guid}`. `/v1/datasets/kb-legal/documents` is not
-  # `/v1/datasets/<uuid:dataset_id>/documents`.
+  # `{id:guid}`, and a chi / gorilla regex constraint (`{type:issues}`,
+  # `{action:star|unstar}`). `/v1/datasets/kb-legal/documents` is not
+  # `/v1/datasets/<uuid:dataset_id>/documents`, and `/o/r/info/refs` is not
+  # `/{owner}/{repo}/{type:issues}/{index}`.
   private def self.typed_segment(placeholder : String) : String
     case placeholder
     when /\A<int:|\A\{\w+:(?:int|long)\}\z/ then "\\d+"
     when /\A<uuid:|\A\{\w+:guid\}\z/        then "[0-9a-fA-F]{8}-?(?:[0-9a-fA-F]{4}-?){3}[0-9a-fA-F]{12}"
+    when /\A\{\w+:([^\/]+)\}\z/             then constraint_segment($1)
     else                                         "[^/]+"
     end
+  end
+
+  # A `{name:regex}` constraint as one segment's pattern, anchored the way
+  # chi anchors it (a leading `^` / trailing `$` is optional there). A regex
+  # that does not compile takes any one segment.
+  # ponytail: a `.` or negated class in the constraint can still match a `/`;
+  # confine it to the segment if a real route ever relies on that.
+  private def self.constraint_segment(constraint : String) : String
+    body = constraint.lchop('^')
+    body = body.rchop('$') unless body.ends_with?("\\$")
+    Regex.new(body)
+    "(?:#{body})"
+  rescue ArgumentError
+    "[^/]+"
   end
 
   # Walks a route, yielding `:rest` / `:one` placeholders and `:literal`

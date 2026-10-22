@@ -106,6 +106,28 @@ describe Noir::CLI::Inspect do
       Noir::CLI::Inspect.trace(typed, "GET", "/g/5a6b7c8d9e0f4a1b8c2d3e4f5a6b7c8d").size.should eq(1)
     end
 
+    it "holds a chi / gorilla regex constraint to its regex" do
+      routes = [
+        endpoint("GET", "/{owner}/{repo}/{type:issues}/{index}"),
+        endpoint("POST", "/{owner}/{repo}/action/{action:star|unstar}"),
+        endpoint("GET", "/{owner}/{repo}/objects/{head:[0-9a-f]{2}}/{hash:^[0-9a-f]{38,62}$}"),
+        endpoint("GET", "/{owner}/{repo}/pack-{file:[0-9a-f]{40}}.pack"),
+        endpoint("GET", "/bad/{x:[unclosed}"),
+        endpoint("GET", "/{owner}/{repo}/contents/*"),
+      ]
+      trace = ->(method : String, path : String) { Noir::CLI::Inspect.trace(routes, method, path).map(&.endpoint.url) }
+      trace.call("GET", "/o/r/issues/12").should eq(["/{owner}/{repo}/{type:issues}/{index}"])
+      trace.call("GET", "/o/r/info/refs").should be_empty
+      trace.call("GET", "/o/r/myissues/12").should be_empty
+      trace.call("POST", "/o/r/action/unstar").size.should eq(1)
+      trace.call("POST", "/o/r/action/watch").should be_empty
+      trace.call("GET", "/o/r/objects/ab/#{"c" * 38}").size.should eq(1)
+      trace.call("GET", "/o/r/objects/abc/#{"c" * 38}").should be_empty
+      trace.call("GET", "/o/r/pack-#{"a" * 40}.pack").size.should eq(1)
+      trace.call("GET", "/bad/anything").should eq(["/bad/{x:[unclosed}"])
+      trace.call("GET", "/o/r/contents/docs/README.md").should eq(["/{owner}/{repo}/contents/*"])
+    end
+
     it "does not let a placeholder swallow more than one segment" do
       Noir::CLI::Inspect.trace(endpoints, "GET", "/users/42/extra").should be_empty
     end

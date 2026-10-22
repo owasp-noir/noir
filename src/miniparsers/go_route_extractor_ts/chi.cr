@@ -48,10 +48,17 @@ module Noir
     class RouteHelperIndex
       getter helpers = Hash(String, RouteHelper).new
       # Helpers whose bodies are being expanded right now (recursion guard).
-      getter active = Set(String).new
+      property active = Set(String).new
+      # The file these helpers are declared in, and a lookup for a helper
+      # called here but declared elsewhere: another file of the package
+      # (`addGitHTTPRoutes(m)`) or an imported one (`common.AddLFSRoutes(m)`).
+      # Given `{file, qualifier, name}` it answers `{path, source}` of the
+      # declaring file, or nil. Only Mount expansion sets it.
+      property file : String = ""
+      property external : Proc(String, String, String, Tuple(String, String)?)? = nil
 
       def empty? : Bool
-        helpers.empty?
+        helpers.empty? && external.nil?
       end
 
       def [](name : String) : RouteHelper?
@@ -196,6 +203,55 @@ module Noir
       helpers.active.delete(name)
     end
 
+    # A route helper declared in another file, called here: its body is
+    # walked in its own source at the call site's prefix, and the routes it
+    # registers carry that file. True when the call was one.
+    private def expand_external_helper(call : LibTreeSitter::TSNode,
+                                       qualifier : String,
+                                       name : String,
+                                       source : String,
+                                       prefix_stack : Array(String),
+                                       local_groups : Hash(String, String),
+                                       routes : Array(Route),
+                                       skip_functions : Set(String),
+                                       config : ScopedConfig,
+                                       string_values : Hash(String, String),
+                                       helpers : RouteHelperIndex) : Bool
+      external = helpers.external || return false
+      key = "#{qualifier}.#{name}"
+      return false if helpers.active.includes?(key) || helpers.active.size >= 8
+      path, helper_source = external.call(helpers.file, qualifier, name) || return false
+      expanded = false
+      Noir::TreeSitter.parse_go(helper_source) do |root|
+        index = collect_route_helpers(root, helper_source)
+        helper = index[name] || next
+        index.file = path
+        index.external = external
+        index.active = helpers.active
+        first = routes.size
+        helpers.active << key
+        # The router argument is spelled in the caller's source, so its
+        # prefix resolves here; the body then walks in the helper's own.
+        args = Noir::TreeSitter.field(call, "arguments")
+        router_arg = nil
+        position = 0
+        args.try { |a| Noir::TreeSitter.each_named_arg(a) { |arg| router_arg = arg if position == helper.router_index; position += 1 } }
+        if (arg = router_arg) && Noir::TreeSitter.node_type(arg) == "identifier"
+          base_prefix = local_groups[Noir::TreeSitter.node_text(arg, source)]? || prefix_stack.join
+          walk_chi(helper.body, helper_source, [base_prefix], Hash(String, String).new, routes, skip_functions, config, string_values, index)
+          expanded = true
+        end
+        helpers.active.delete(key)
+        (first...routes.size).each do |i|
+          next if routes[i].file
+          route = routes[i]
+          route.file = path
+          routes[i] = route
+        end
+      end
+      expanded
+    end
+
     private def walk_chi(node : LibTreeSitter::TSNode,
                          source : String,
                          prefix_stack : Array(String),
@@ -230,6 +286,13 @@ module Noir
               expand_route_helper(node, helper, name, source, prefix_stack, local_groups, routes, skip_functions, config, string_values, helpers)
               return
             end
+            return if expand_external_helper(node, "", name, source, prefix_stack, local_groups, routes, skip_functions, config, string_values, helpers)
+          elsif function && Noir::TreeSitter.node_type(function) == "selector_expression" &&
+                (operand = Noir::TreeSitter.field(function, "operand")) && Noir::TreeSitter.node_type(operand) == "identifier" &&
+                (field = Noir::TreeSitter.field(function, "field")) &&
+                expand_external_helper(node, Noir::TreeSitter.node_text(operand, source), Noir::TreeSitter.node_text(field, source),
+                  source, prefix_stack, local_groups, routes, skip_functions, config, string_values, helpers)
+            return
           elsif (ref = route_helper_reference(node, source, config.prefix_method, helpers)) &&
                 (prefix = chi_first_string_arg(node, source, string_values))
             name, helper = ref
@@ -496,7 +559,7 @@ module Noir
                                        prefix_stack : Array(String),
                                        local_groups : Hash(String, String),
                                        string_values : Hash(String, String) = Hash(String, String).new) : Array(Route)?
-      verbs = [] of Tuple(String, String, Int32)
+      verbs = [] of Tuple(String, String, Int32, Array(String))
       cursor = call
       loop do
         function = Noir::TreeSitter.field(cursor, "function")
@@ -515,13 +578,17 @@ module Noir
           return if verbs.empty?
           base_prefix = local_groups[router_name]? || prefix_stack.join
           resolved = base_prefix.empty? ? raw_path : "#{base_prefix}#{raw_path}"
-          return verbs.reverse.map do |verb, handler_text, row|
-            Route.new(router_name, verb, resolved, raw_path, handler_text, row)
+          return verbs.reverse.map do |verb, handler_text, row, handler_args|
+            Route.new(router_name, verb, resolved, raw_path, handler_text, row, handler_args: handler_args)
           end
         end
 
         return unless COMBO_VERBS.includes?(name)
-        verbs << {name.upcase, chi_last_arg_text(cursor, source), Noir::TreeSitter.node_start_row(field)}
+        handler_args = [] of String
+        if args = Noir::TreeSitter.field(cursor, "arguments")
+          Noir::TreeSitter.each_named_arg(args) { |arg| collect_handler_arg_texts(arg, source, handler_args) }
+        end
+        verbs << {name.upcase, chi_last_arg_text(cursor, source), Noir::TreeSitter.node_start_row(field), handler_args}
         return unless Noir::TreeSitter.node_type(operand) == "call_expression"
         cursor = operand
       end
@@ -560,6 +627,7 @@ module Noir
       method = nil
       raw_path = nil
       handler_text = ""
+      handler_args = [] of String
       Noir::TreeSitter.each_named_arg(args) do |arg|
         s = string_expr_text(arg, source, string_values)
         if method.nil?
@@ -571,8 +639,9 @@ module Noir
         elsif raw_path.nil?
           return if s.nil?
           raw_path = s
-        elsif handler_text.empty?
-          handler_text = Noir::TreeSitter.node_text(arg, source)
+        else
+          handler_text = Noir::TreeSitter.node_text(arg, source) if handler_text.empty?
+          collect_handler_arg_texts(arg, source, handler_args)
         end
       end
       return unless (m = method) && (path = raw_path)
@@ -581,7 +650,7 @@ module Noir
 
       base_prefix = local_groups[router_name]? || prefix_stack.join
       resolved = base_prefix.empty? ? path : group_join(base_prefix, path)
-      Route.new(router_name, m.upcase, resolved, path, handler_text, Noir::TreeSitter.node_start_row(call))
+      Route.new(router_name, m.upcase, resolved, path, handler_text, Noir::TreeSitter.node_start_row(call), handler_args: handler_args)
     end
 
     # Decode `r.HandleFunc("/path", h)` / `r.Handle("/path", h)` — chi
@@ -603,13 +672,15 @@ module Noir
       return unless args
       raw_path = nil
       handler_text = ""
+      handler_args = [] of String
       Noir::TreeSitter.each_named_arg(args) do |arg|
         s = string_expr_text(arg, source, string_values)
         if raw_path.nil?
           return if s.nil?
           raw_path = s
-        elsif handler_text.empty?
-          handler_text = Noir::TreeSitter.node_text(arg, source)
+        else
+          handler_text = Noir::TreeSitter.node_text(arg, source) if handler_text.empty?
+          collect_handler_arg_texts(arg, source, handler_args)
         end
       end
       return unless path = raw_path
@@ -618,7 +689,7 @@ module Noir
 
       base_prefix = local_groups[router_name]? || prefix_stack.join
       resolved = base_prefix.empty? ? path : group_join(base_prefix, path)
-      Route.new(router_name, "ANY", resolved, path, handler_text, Noir::TreeSitter.node_start_row(call))
+      Route.new(router_name, "ANY", resolved, path, handler_text, Noir::TreeSitter.node_start_row(call), handler_args: handler_args)
     end
 
     # Extract `{prefix, body_block, closure_node}` from a Route/Group call.
@@ -757,6 +828,7 @@ module Noir
       raw_path = nil
       path_was_literal = false
       handler_text = ""
+      handler_args = [] of String
       Noir::TreeSitter.each_named_arg(args) do |arg|
         case Noir::TreeSitter.node_type(arg)
         when "interpreted_string_literal", "raw_string_literal"
@@ -770,8 +842,9 @@ module Noir
           # treating a non-string arg as the handler.
           if raw_path.nil? && (resolved_path = string_expr_text(arg, source, string_values))
             raw_path = resolved_path
-          elsif handler_text.empty? && !raw_path.nil?
-            handler_text = Noir::TreeSitter.node_text(arg, source)
+          elsif !raw_path.nil?
+            handler_text = Noir::TreeSitter.node_text(arg, source) if handler_text.empty?
+            collect_handler_arg_texts(arg, source, handler_args)
           end
         end
       end
@@ -825,6 +898,7 @@ module Noir
         raw_path,
         handler_text,
         Noir::TreeSitter.node_start_row(call),
+        handler_args: handler_args,
       )
     end
 

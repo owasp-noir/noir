@@ -201,8 +201,9 @@ class EndpointOptimizer
       # Mobile deep-link URLs are kept verbatim: a `${...}` there is an
       # unresolved gradle manifest placeholder, not a JS template literal
       # for the shape-normalizer to rewrite.
-      tiny_tmp.url = normalize_url_shape(tiny_tmp.url) unless tiny_tmp.non_http?
-      dedup_url = tiny_tmp.non_http? ? tiny_tmp.url : normalize_url_shape(tiny_tmp.url, collection_endpoint?(tiny_tmp))
+      keep_constraints = regex_placeholders?(tiny_tmp)
+      tiny_tmp.url = normalize_url_shape(tiny_tmp.url, keep_constraints: keep_constraints) unless tiny_tmp.non_http?
+      dedup_url = tiny_tmp.non_http? ? tiny_tmp.url : normalize_url_shape(tiny_tmp.url, collection_endpoint?(tiny_tmp), keep_constraints)
       unified_url = tiny_tmp.non_http? ? dedup_url : unify_path_placeholders(dedup_url)
       # Placeholder spellings are unified only where another technology
       # reports the route too (code + spec/collection). Within one analyzer,
@@ -635,13 +636,15 @@ class EndpointOptimizer
     absolute_url = normalized.matches?(ABSOLUTE_URL_RE)
     normalized = "/#{normalized}" if !absolute_url && normalized[0] != '/' && !endpoint.non_http?
     return normalized if endpoint.non_http?
-    normalize_url_shape(normalized, collection_endpoint?(endpoint))
+    normalize_url_shape(normalized, collection_endpoint?(endpoint), regex_placeholders?(endpoint))
   end
 
   # A whole-segment path placeholder in any framework's spelling: `{id}`,
   # `:id` (Express/Rails/Postman) or `<id>` / `<int:id>` (Flask/Django).
-  # Constraints were already stripped by `normalize_url_shape`.
-  WHOLE_SEGMENT_PLACEHOLDER_RE = %r{(?<=/)(?:\{[A-Za-z_]\w*\}|:[A-Za-z_]\w*|<(?:[A-Za-z_]\w*:)?[A-Za-z_]\w*>)(?=[/?#]|\z)}
+  # Constraints were stripped by `normalize_url_shape`, except a regex
+  # router's (`{id:[0-9]+}`, `{sha:[a-f0-9]{7,64}}`), which still unifies
+  # with a spec's `{id}`.
+  WHOLE_SEGMENT_PLACEHOLDER_RE = %r{(?<=/)(?:\{[A-Za-z_]\w*(?::(?:[^{}/]|\{[^{}/]*\})+)?\}|:[A-Za-z_]\w*|<(?:[A-Za-z_]\w*:)?[A-Za-z_]\w*>)(?=[/?#]|\z)}
 
   # Dedup-key form of a URL: every whole-segment placeholder becomes `{}`, so
   # one route reported by its code (`/users/:id`) and by a spec or collection
@@ -649,7 +652,7 @@ class EndpointOptimizer
   # stays distinct. Only the key changes; the reported URL keeps its spelling.
   # Applied only across technologies (see `cross_technology_duplicate_keys`).
   # ponytail: placeholders differing only by constraint (`{id:[0-9]+}` vs
-  # `{name:[a-z]+}`) also unify, since the constraint is gone by now.
+  # `{name:[a-z]+}`) also unify, since the key ignores the constraint.
   private def unify_path_placeholders(url : String) : String
     url.gsub(WHOLE_SEGMENT_PLACEHOLDER_RE, "{}")
   end
