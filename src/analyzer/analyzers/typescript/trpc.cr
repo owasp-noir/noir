@@ -170,9 +170,9 @@ module Analyzer::Typescript
     # with `file`; a relative one is joined to the importer's directory first.
     private def specifier_score(specifier : String?, importer : String, file : String) : Int32
       return 0 unless specifier
-      spec = specifier.starts_with?('.') ? Path[importer].parent.join(specifier).normalize.to_s : specifier
+      spec = specifier.starts_with?('.') ? Path[importer].parent.join(specifier).normalize.to_posix.to_s : specifier
       spec = spec.sub(/\.[cm]?[jt]sx?\z/, "").split('/').reverse!
-      target = Path[file].normalize.to_s.sub(/\.[^.\/]+\z/, "").chomp("/index").split('/').reverse!
+      target = Path[file].normalize.to_posix.to_s.sub(/\.[^.\/]+\z/, "").chomp("/index").split('/').reverse!
       spec.zip?(target).take_while { |a, b| a == b }.size
     end
 
