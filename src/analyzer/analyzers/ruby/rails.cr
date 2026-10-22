@@ -13,14 +13,17 @@ module Analyzer::Ruby
     # controller group, action}: the template's `%{key}` slots are the
     # `path_names:` keys Devise lets an app rename (`sign_in: :login`), and
     # the group is the `controllers:` key that swaps the implementing
-    # controller (`sessions: :sessions`). Omniauth callbacks are not here.
+    # controller (`sessions: :sessions`).
+    DEVISE_SESSION_ROUTES = [
+      {"GET", "%{sign_in}", "sessions", "new"},
+      {"POST", "%{sign_in}", "sessions", "create"},
+      {"DELETE", "%{sign_out}", "sessions", "destroy"},
+    ]
     DEVISE_MODULE_ROUTES = {
-      "database_authenticatable" => [
-        {"GET", "%{sign_in}", "sessions", "new"},
-        {"POST", "%{sign_in}", "sessions", "create"},
-        {"DELETE", "%{sign_out}", "sessions", "destroy"},
-      ],
-      "registerable" => [
+      "database_authenticatable" => DEVISE_SESSION_ROUTES,
+      # devise-two-factor registers its module with `route: :session`.
+      "two_factor_authenticatable" => DEVISE_SESSION_ROUTES,
+      "registerable"               => [
         {"GET", "%{registration}/%{cancel}", "registrations", "cancel"},
         {"GET", "%{registration}/%{sign_up}", "registrations", "new"},
         {"GET", "%{registration}/%{edit}", "registrations", "edit"},
@@ -49,8 +52,8 @@ module Analyzer::Ruby
       "omniauthable" => [
         {"GET", "auth/:provider", "omniauth_callbacks", "passthru"},
         {"POST", "auth/:provider", "omniauth_callbacks", "passthru"},
-        {"GET", "auth/:provider/callback", "omniauth_callbacks", "failure"},
-        {"POST", "auth/:provider/callback", "omniauth_callbacks", "failure"},
+        {"GET", "auth/:provider/callback", "omniauth_callbacks", ":provider"},
+        {"POST", "auth/:provider/callback", "omniauth_callbacks", ":provider"},
       ],
     }
     # Modules assumed when `app/models/<scope>.rb` is not in the scan.
@@ -686,15 +689,22 @@ module Analyzer::Ruby
       # routes only exist when the model turns `:omniauthable` on. A model
       # the scan cannot see keeps the default table rather than guessing.
       model = options["class_name"]?.try(&.underscore) || singularize(scope_name)
-      modules = devise_modules("#{scan.framework_root}/app/models/#{model}.rb") || DEVISE_DEFAULT_MODULES
+      modules = devise_modules(scan.framework_root, model) || DEVISE_DEFAULT_MODULES
       sign_out_verbs = devise_sign_out_verbs(scan.framework_root, options["sign_out_via"]?)
+      # Unnamed controllers come from the enclosing `scope module:` /
+      # `namespace` (`auth/sessions`), else from Devise itself.
+      default_module = options["module"]? || current_controller_subdir(scan.stack).presence || "devise"
+      # Two modules sharing a route kind (`:database_authenticatable` and
+      # `:two_factor_authenticatable`) draw it once, as Devise does.
+      seen = Set(Tuple(String, String, String, String)).new
 
       modules.each do |mod|
         next unless routes = DEVISE_MODULE_ROUTES[mod]?
         routes.each do |default_verb, template, group, action|
           next unless devise_module_allowed?(mod, group, only_list, skip_list)
+          next unless seen.add?({default_verb, template, group, action})
           url = "#{base}/#{template % names}".gsub(%r{/+}, "/").rchop('/')
-          ctrl_name = options[group]? || "devise/#{group}"
+          ctrl_name = options[group]? || "#{default_module}/#{group}"
           ctrl_path = find_controller_file(scan.framework_root, ctrl_name, scan.stack)
           verbs = (group == "sessions" && action == "destroy") ? sign_out_verbs : [default_verb]
           verbs.each do |verb|
@@ -702,11 +712,28 @@ module Analyzer::Ruby
             promote_path_params(action_params, url_param_names(url))
             endpoint = Endpoint.new(url, verb, action_params, scan.details)
             attach_callees_for_action(endpoint, ctrl_path, action)
-            endpoint.handler = handler_for_action(ctrl_path, action)
+            endpoint.handler = devise_handler(ctrl_name, ctrl_path, group, action)
             @result << endpoint
           end
         end
       end
+    end
+
+    # The app's own action when its controller (or an app ancestor) defines
+    # it; otherwise the action is inherited from the gem and named as
+    # Devise's (`devise/sessions#new`), with no file in the scan to point at.
+    # An omniauth callback runs the app's per-provider method (`:provider`),
+    # often defined by metaprogramming, so it names the app's controller
+    # without a line. nil when the app names a controller the scan cannot see.
+    private def devise_handler(ctrl_name : String, ctrl_path : String?, group : String, action : String) : Handler?
+      if ctrl_path
+        owner = action_owner(ctrl_path, action)
+        return handler_for_action(owner, action, ctrl_path) if owner
+        return handler_for_action(ctrl_path, action) if action.starts_with?(':')
+      elsif ctrl_name != "devise/#{group}" || action.starts_with?(':')
+        return
+      end
+      Handler.new("devise/#{group}##{action}")
     end
 
     private def devise_params_for_action(framework_root : String, ctrl_path : String?,
@@ -770,13 +797,24 @@ module Analyzer::Ruby
       ["DELETE"]
     end
 
-    # The symbols of the model's `devise :a, :b, ...` declaration, which
-    # may wrap over lines; nil when the file is missing or has no such line.
-    private def devise_modules(model_path : String) : Array(String)?
+    # The symbols of every `devise :a, :b, ...` declaration (each may wrap
+    # over lines) in the model and the app concerns it includes
+    # (`include User::Omniauthable`); nil when the model file is missing or
+    # declares none.
+    private def devise_modules(framework_root : String, model : String) : Array(String)?
+      model_path = "#{framework_root}/app/models/#{model}.rb"
       return unless known_file?(model_path)
       source = ruby_source(model_path)
-      return unless m = source.match(/^\s*devise\s*\(?\s*((?::\w+\s*,?\s*(?:#[^\n]*)?\s*)+)/m)
-      mods = parse_symbol_list(m[1].gsub(/#[^\n]*/, ""))
+      concerns = source.scan(/^\s*include\s+([A-Z][\w:]*)/m).compact_map do |inc|
+        path = "#{framework_root}/app/models/concerns/#{inc[1].gsub("::", "/").underscore}.rb"
+        ruby_source(path) if known_file?(path)
+      end
+      source = concerns.unshift(source).join('\n')
+      mods = [] of String
+      source.scan(/^\s*devise\s*\(?\s*((?::\w+\s*,?\s*(?:#[^\n]*)?\s*)+)/m) do |m|
+        mods.concat(parse_symbol_list(m[1].gsub(/#[^\n]*/, "")))
+      end
+      return if mods.empty?
       mods << "omniauthable" if source.matches?(/\bomniauth_providers\s*:/) && !mods.includes?("omniauthable")
       mods
     end
