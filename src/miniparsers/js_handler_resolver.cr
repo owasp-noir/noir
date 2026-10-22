@@ -42,10 +42,15 @@ module Noir::JSHandlerResolver
 
   @@imports = Hash(String, Tuple(UInt64, Imports)).new
   @@definitions = Hash(String, Hash(String, Int32)).new
+  # Analyzers call in from parallel file-scan workers; the caches are
+  # shared, so every read and write goes through this lock.
+  @@lock = Mutex.new
 
   def reset
-    @@imports.clear
-    @@definitions.clear
+    @@lock.synchronize do
+      @@imports.clear
+      @@definitions.clear
+    end
   end
 
   # `handler_text` is the route argument as written. Returns nil unless it
@@ -72,28 +77,35 @@ module Noir::JSHandlerResolver
     end
   end
 
-  private def imports_of(content : String, file_path : String) : Imports
-    cached = @@imports[file_path]?
-    return cached[1] if cached && cached[0] == content.hash
-    @@imports[file_path] = {content.hash, begin
-      imports = Imports.new
-      content.scan(IMPORT_DEFAULT_RE) { |m| imports[m[1]] = {m[2], nil} }
-      content.scan(IMPORT_STAR_RE) { |m| imports[m[1]] = {m[2], nil} }
-      content.scan(REQUIRE_RE) { |m| imports[m[1]] = {m[2], nil} }
-      {IMPORT_NAMED_RE, REQUIRE_NAMED_RE}.each do |re|
-        content.scan(re) do |m|
-          m[1].split(',').each do |entry|
-            parts = entry.split(/\s+as\s+|\s*:\s*/, 2).map(&.strip)
-            exported = parts[0]
-            local = parts[1]? || exported
-            next if local.empty?
-            imports[local] = {m[2], exported}
-          end
+  # `await import("./x.handler")` in a handler body: `name` as exported by
+  # the module `specifier` names, or its default export when nil.
+  def resolve_module_export(specifier : String, name : String?, file_path : String) : Handler?
+    target = resolve_specifier(file_path, specifier) || return
+    wanted = name || "default"
+    Handler.new(wanted, target, definition_line(target, wanted))
+  end
+
+  def imports_of(content : String, file_path : String) : Imports
+    hash = content.hash
+    cached = @@lock.synchronize { @@imports[file_path]? }
+    return cached[1] if cached && cached[0] == hash
+    imports = Imports.new
+    content.scan(IMPORT_DEFAULT_RE) { |m| imports[m[1]] = {m[2], nil} }
+    content.scan(IMPORT_STAR_RE) { |m| imports[m[1]] = {m[2], nil} }
+    content.scan(REQUIRE_RE) { |m| imports[m[1]] = {m[2], nil} }
+    {IMPORT_NAMED_RE, REQUIRE_NAMED_RE}.each do |re|
+      content.scan(re) do |m|
+        m[1].split(',').each do |entry|
+          parts = entry.split(/\s+as\s+|\s*:\s*/, 2).map(&.strip)
+          exported = parts[0]
+          local = parts[1]? || exported
+          next if local.empty?
+          imports[local] = {m[2], exported}
         end
       end
-      imports
-    end}
-    @@imports[file_path][1]
+    end
+    @@lock.synchronize { @@imports[file_path] = {hash, imports} }
+    imports
   end
 
   # Relative specifiers only: a bare package name is not in the scan.
@@ -112,13 +124,12 @@ module Noir::JSHandlerResolver
   # is declared in; `module.exports =` / `export default` stand in for a
   # default import whose local name the target never spells.
   private def definition_line(path : String, name : String, content : String? = nil) : Int32?
-    table = @@definitions[path] ||= Hash(String, Int32).new
-    table.fetch(name) do
-      content ||= TextFile.read(path) rescue nil
-      line = content ? find_definition(content, name) : nil
-      table[name] = line || 0
-      line
-    end.try { |l| l == 0 ? nil : l }
+    cached = @@lock.synchronize { @@definitions[path]?.try(&.[name]?) }
+    return (cached == 0 ? nil : cached) if cached
+    content ||= TextFile.read(path) rescue nil
+    line = content ? find_definition(content, name) : nil
+    @@lock.synchronize { (@@definitions[path] ||= Hash(String, Int32).new)[name] = line || 0 }
+    line
   end
 
   private def find_definition(content : String, name : String) : Int32?
