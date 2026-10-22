@@ -10,10 +10,14 @@ class NextjsAuthTagger < FrameworkTagger
   # other condition (`if (!user)` after a password lookup) is a login
   # failure anonymous callers are meant to reach, so it does not count.
   UNAUTHORIZED   = /\bstatus(?:Code)?\s*(?::|\()\s*401\b/
-  SESSION_DENIED = /\bif\s*\(.*(?:!\s*session\b|\bsession\s*(?:\?\.\w+\s*)*(?:===?|!==?)\s*(?:null|undefined)\b|process\.env\.\w+\s*!==?|!==?\s*process\.env\.\w+)/
-  # ponytail: the body is the next lines up to the closing brace at column 0,
-  # capped; a handler nested in an object literal stops at the cap instead.
-  MAX_BODY_LINES = 40
+  ENV_SECRET     = /process\.env\.\w*(?:KEY|SECRET|TOKEN)\w*/
+  SESSION_DENIED = /\bif\s*\(.*(?:!\s*session\b|\bsession\s*(?:\?\.\w+\s*)*(?:===?|!==?)\s*(?:null|undefined)\b|#{ENV_SECRET}\s*!==?|!==?\s*#{ENV_SECRET})/
+  # A pages-router handler serves every verb from one body; a 401 after a
+  # `req.method` branch guards only some of them. A branch that just
+  # refuses other verbs with 405 leaves one verb, so it does not count.
+  METHOD_BRANCH = /\breq(?:uest)?\.method\b/
+  # How far above the 401 its `if` may sit (a Prettier-wrapped reply).
+  CONDITION_LOOKBACK = 6
 
   def self.target_techs : Array(String)
     ["js_nextjs"]
@@ -24,16 +28,34 @@ class NextjsAuthTagger < FrameworkTagger
     return unless target && (path = target.path) && (line = target.line)
     return unless (lines = read_file_lines(path)) && line >= 1 && line <= lines.size
 
-    body = lines[(line - 1)...{line - 1 + MAX_BODY_LINES, lines.size}.min]
-    if ends = body.index(1, &.starts_with?('}'))
-      body = body[0..ends]
+    code = function_body(lines, line - 1)
+    code.each_with_index do |text, i|
+      break if text.matches?(METHOD_BRANCH) && code[i, 3].none?(&.includes?("405"))
+      next unless text.matches?(UNAUTHORIZED)
+      i.downto({i - CONDITION_LOOKBACK, 0}.max) do |j|
+        # A block closed between the `if` and the 401 is not the 401's.
+        break if j < i && code[j].strip == "}"
+        next unless code[j].matches?(SESSION_DENIED)
+        endpoint.add_tag(Tag.new("auth", "Protected by Next.js handler check `#{code[j].strip.rchop('{').strip}` (replies 401)", "nextjs_auth"))
+        return
+      end
     end
-    body.each_with_index do |text, i|
-      next unless code_only(text).matches?(UNAUTHORIZED)
-      condition = body[{i - 3, 0}.max..i].reverse.find(&.matches?(SESSION_DENIED))
-      next unless condition
-      endpoint.add_tag(Tag.new("auth", "Protected by Next.js handler check `#{condition.strip.rchop('{').strip}` (replies 401)", "nextjs_auth"))
-      return
+  end
+
+  # The comment-stripped lines from `start` to the brace that closes the
+  # first one opened from there, or to the first `;` when a statement (an
+  # `import` at a line-1 fallback) ends before any brace opens.
+  private def function_body(lines : Array(String), start : Int32) : Array(String)
+    body = [] of String
+    depth = 0
+    opened = false
+    lines[start..].each do |raw|
+      text = code_only(raw)
+      body << text
+      depth += text.count('{') - text.count('}')
+      opened ||= text.includes?('{')
+      break if opened ? depth <= 0 : text.rstrip.ends_with?(';')
     end
+    body
   end
 end

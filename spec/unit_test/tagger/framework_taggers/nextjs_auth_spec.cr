@@ -36,6 +36,27 @@ describe "NextjsAuthTagger" do
     tag.call("app/api/login/route.ts", 4).should be_empty
   end
 
+  it "tags a pages-router handler whose only verb branch refuses others with 405" do
+    tag.call("pages/api/settings.ts", 4).map(&.name).should eq(["auth"])
+  end
+
+  it "reads a Prettier-wrapped 401 reply up to its if" do
+    tag.call("app/api/wrapped/route.ts", 4).map(&.name).should eq(["auth"])
+  end
+
+  it "leaves a shared pages-router handler untagged when a verb branch returns first" do
+    tag.call("pages/api/shared.ts", 4).should be_empty
+  end
+
+  it "stops at the handler's own closing brace" do
+    tag.call("app/api/public/route.ts", 4).should be_empty
+    tag.call("app/api/public/route.ts", 21).map(&.name).should eq(["auth"])
+  end
+
+  it "ignores a closed if, a commented condition and a non-secret env comparison above a 401" do
+    tag.call("app/api/public/route.ts", 8).should be_empty
+  end
+
   it "reads the resolved handler, not the export line" do
     noir_options = create_test_options
     noir_options["base"] = YAML::Any.new(fixture_base)
