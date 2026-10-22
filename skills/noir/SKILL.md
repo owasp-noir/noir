@@ -73,8 +73,13 @@ PATCH /items/:id  src/handlers.go:18  go_gin  handler=updateItem@src/items.go:40
   them all. `handler` is where its body *lives*, present when the analyzer
   resolved the definition (Go, Rails, Django, Express and friends). Open
   `handler` first when you need the code.
-- `guards` are auth guards only; a rate limiter is not one. `sinks` and
-  `signals` are kinds (`sql`, `command`, `file_io`, `outbound_http`,
+- `guards` are the checks that can stop a caller: authentication, and
+  permission checks (a Pundit policy, `reqRepoReader`) that often turn
+  anonymous callers away as well. A rate limiter is not one. A permission
+  check may still admit anonymous callers on public data (a public repo),
+  so for "can an anonymous caller reach this?" read the named guard when
+  the answer matters; `--no-guard` means no check of either kind was found.
+- `sinks` and `signals` are kinds (`sql`, `command`, `file_io`, `outbound_http`,
   `template_render`, `redirect`, `mass_assignment`; `idor_review`, `ssrf`,
   `open_redirect`, `guard_absence`, ...). Empty buckets are omitted.
 - `reach` adds `via`: the evidence from the named file as `kind:name@line`
