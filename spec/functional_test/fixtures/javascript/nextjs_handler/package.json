@@ -1,0 +1,8 @@
+{
+  "name": "nextjs-handler-fixture",
+  "private": true,
+  "dependencies": {
+    "next": "15.5.15",
+    "next-auth": "4.24.7"
+  }
+}

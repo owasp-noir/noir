@@ -1,6 +1,7 @@
 require "../../engines/javascript_engine"
 require "../../../miniparsers/js_callee_extractor"
 require "../../../miniparsers/js_route_extractor"
+require "../../../miniparsers/js_handler_resolver"
 require "../../../utils/top_level_split"
 require "../../../utils/char_offsets"
 
@@ -22,12 +23,29 @@ module Analyzer::Typescript
     # callees resolve.
     private record Procedure, base_path : String, name : String, method : String, value : String, file : String, line : Int32
 
+    # A Next.js pages-router mount (`pages/api/trpc/slots/[trpc].ts` handing
+    # `slotsRouter` to `createNextApiHandler`): the router's procedure paths
+    # are served under the mount's directory, `/api/trpc/slots/getSchedule`.
+    # `specifier` is where the router was imported from, which tells two
+    # same-named routers apart.
+    private record Mount, base_path : String, prefix : String, router : String, specifier : String?, file : String, line : Int32
+
+    TAGGER = "trpc_auth"
+
+    # Procedure builders and middleware (`authedProcedure = t.procedure
+    # .use(isAuthed)`, `isAuthed = t.middleware(...)`), by name, so a
+    # procedure's auth is read from the definitions its builder stacks.
+    @builder_defs = Hash(String, String).new
+    @named_procedures = Hash(String, Array(Procedure)).new
+
     def analyze
       result = [] of Endpoint
       routers = Hash(RouterKey, Router).new
+      all_routers = [] of Router
       procedures = Hash(RouterKey, Procedure).new
       procedures_by_name = Hash(String, Procedure).new
       url_prefixes = Hash(String, String).new
+      mounts = [] of Mount
 
       # Merged in file order, not worker-completion order: two apps that name
       # the same router or procedure leave the later file's in place, so the
@@ -36,33 +54,59 @@ module Analyzer::Typescript
         next if trpc_test_fixture_path?(path)
 
         raw = read_file_content(path)
-        next unless trpc_candidate?(raw)
+        base_path = configured_base_for(path)
+        mount = next_mount(path, raw, base_path)
+        defs = builder_definitions(raw)
+        none = {[] of Router, [] of Procedure, base_path, nil.as(String?), mount, defs}
+        next none unless trpc_candidate?(raw)
         # tRPC router modules may import `react` (RSC/client helpers); the
         # `createTRPCRouter`/procedure shape already gates detection, so
         # don't let the client-side-framework markers skip them.
-        next if Noir::JSRouteExtractor.test_stub_only?(path, raw, include_client_frameworks: false)
+        next none if Noir::JSRouteExtractor.test_stub_only?(path, raw, include_client_frameworks: false)
 
         content = Noir::JSRouteExtractor.strip_js_comments(raw)
-        next unless trpc_candidate?(content)
+        next none unless trpc_candidate?(content)
 
         # BYTE-indexed, so every probe below passes `byte_begin`.
         literal_mask = string_literal_mask(content)
         offsets = Noir::CharOffsets.new(content)
-        base_path = configured_base_for(path)
         collected = collect_routers(offsets, path, base_path, literal_mask)
         collected_procs = collect_procedures(offsets, path, base_path, literal_mask)
-        {collected, collected_procs, base_path, extract_prefix(content, literal_mask)}
+        {collected, collected_procs, base_path, extract_prefix(content, literal_mask), mount, defs}
       rescue e
         logger.debug "Error analyzing tRPC file #{path}: #{e.message}"
         nil
       end
-      per_file.each do |collected, collected_procs, base_path, found|
+      per_file.each do |collected, collected_procs, base_path, found, mount, defs|
         collected.each { |r| routers[router_key(r)] = r }
+        all_routers.concat(collected)
         collected_procs.each do |p|
           procedures[router_key(p.base_path, p.name)] = p
           procedures_by_name[p.name] = p
+          (@named_procedures[p.name] ||= [] of Procedure) << p
         end
         url_prefixes[base_path] = found if found
+        mounts << mount if mount
+        @builder_defs.merge!(defs)
+      end
+
+      # Each mount serves its own router's subtree. A root that is not
+      # mounted is flattened at the configured prefix as before, minus the
+      # mounted routers inside it, whose URLs are the mount's.
+      mounted = Set(RouterKey).new
+      mounts.each do |mount|
+        if router = mounted_router(mount, all_routers)
+          flatten_router(router, "", routers, procedures, procedures_by_name, mount.prefix, result, Set(RouterKey).new)
+          mounted << router_key(router)
+        else
+          # The router lives outside the scan; the mount still answers.
+          {"GET", "POST"}.each do |verb|
+            endpoint = Endpoint.new("#{mount.prefix.chomp('/')}/{trpc}", verb)
+            endpoint.details = Details.new(PathInfo.new(mount.file, mount.line))
+            endpoint.push_param(Param.new("trpc", "", "path"))
+            result << endpoint
+          end
+        end
       end
 
       return result if routers.empty?
@@ -81,11 +125,55 @@ module Analyzer::Typescript
       roots = routers.values if roots.empty?
 
       roots.each do |root|
+        next if mounted.includes?(router_key(root))
         url_prefix = url_prefixes[root.base_path]? || DEFAULT_PREFIX
-        flatten_router(root, "", routers, procedures, procedures_by_name, url_prefix, result, Set(RouterKey).new)
+        flatten_router(root, "", routers, procedures, procedures_by_name, url_prefix, result, mounted.dup)
       end
 
       result
+    end
+
+    NEXT_MOUNT_ROUTER_RE = /createNextApiHandler\s*\(\s*(?:\{[^}]*?\brouter\s*:\s*)?([A-Za-z_$][\w$]*)/
+
+    private def next_mount(path : String, raw : String, base_path : String) : Mount?
+      return unless Noir::JSRouteExtractor.trpc_next_mount?(path, raw)
+      content = Noir::JSRouteExtractor.strip_js_comments(raw)
+      m = content.match(NEXT_MOUNT_ROUTER_RE) || return
+      scoped = Noir::PathScope.base_relative(path, base_path)
+      pages = scoped.index("/pages/") || return
+      # An explicit `endpoint:` in the mount wins over its directory.
+      prefix = extract_prefix(content, string_literal_mask(content)) ||
+               scoped[(pages + "/pages".size)...(scoped.rindex('/') || scoped.size)]
+      local = m[1]
+      specifier, exported = Noir::JSHandlerResolver.imports_of(content, path)[local]? || {nil, nil}
+      Mount.new(base_path, prefix.empty? ? "/" : prefix, exported || local, specifier, path, line_number_for_index(content, m.begin(0)))
+    end
+
+    # The mounted router among those named alike: the one whose file the
+    # mount's import specifier names (`.../viewer/eventTypes/heavy/_router`
+    # beside `.../viewer/eventTypes/_router`), by trailing path segments,
+    # so a workspace alias (`@calcom/trpc/server/...`) matches too.
+    private def mounted_router(mount : Mount, all_routers : Array(Router)) : Router?
+      all_routers.select { |r| r.base_path == mount.base_path && r.name == mount.router }
+        .max_by? { |router| specifier_score(mount.specifier, mount.file, router.file) }
+    end
+
+    # `get` that a router imports from `./procedures/get`, among the
+    # procedures named alike across the scan.
+    private def imported_procedure(ident : String, router_file : String, base_path : String) : Procedure?
+      specifier, exported = Noir::JSHandlerResolver.imports_of(read_file_content(router_file), router_file)[ident]? || return
+      @named_procedures[exported || ident]?.try &.select { |p| p.base_path == base_path }
+        .max_by? { |p| specifier_score(specifier, router_file, p.file) }
+    end
+
+    # Trailing path segments `specifier` (as imported by `importer`) shares
+    # with `file`; a relative one is joined to the importer's directory first.
+    private def specifier_score(specifier : String?, importer : String, file : String) : Int32
+      return 0 unless specifier
+      spec = specifier.starts_with?('.') ? Path[importer].parent.join(specifier).normalize.to_s : specifier
+      spec = spec.sub(/\.[cm]?[jt]sx?\z/, "").split('/').reverse!
+      target = Path[file].normalize.to_s.sub(/\.[^.\/]+\z/, "").chomp("/index").split('/').reverse!
+      spec.zip?(target).take_while { |a, b| a == b }.size
     end
 
     PROCEDURE_HINTS = [
@@ -449,21 +537,25 @@ module Analyzer::Typescript
         first = chars[value_start]?
         next unless first && (first.ascii_letter? || first == '_' || first == '$')
 
-        info = procedure_terminal(offsets, chars, value_start)
+        info = procedure_terminal(chars, value_start)
         next unless info
-        method, value = info
+        method, dot = info
+        # Through the terminal call, so the resolver's handler and callees
+        # resolve as they do for an inline procedure.
+        open = chars.index('(', dot)
+        close = open && Noir::JSLiteralScanner.find_matching_paren(chars, open)
         line = offsets.line(offsets.begin(match))
-        collected << Procedure.new(base_path, match[1], method, value, path, line)
+        collected << Procedure.new(base_path, match[1], method, offsets.slice(value_start, close ? close + 1 : dot), path, line)
       end
       collected
     end
 
     # Walk the call chain from `start` (a procedure-builder identifier) and
-    # return {http_method, chain_text} once a TOP-LEVEL
+    # return {http_method, index of the terminal's `.`} once a TOP-LEVEL
     # `.query/.mutation/.subscription(` terminal is found. Nested parens —
     # the `.input(z.object({...}))` schema, refinement arrows, the resolver
     # — sit at depth > 0, so only the procedure's own terminal verb matches.
-    private def procedure_terminal(offsets : Noir::CharOffsets, chars : Array(Char), start : Int32) : Tuple(String, String)?
+    private def procedure_terminal(chars : Array(Char), start : Int32) : Tuple(String, Int32)?
       i = start
       depth = 0
       n = chars.size
@@ -480,7 +572,7 @@ module Analyzer::Typescript
         when '.'
           if depth == 0
             PROCEDURE_VERBS.each do |verb, method|
-              return {method, offsets.slice(start, i)} if verb_call_at?(chars, i + 1, verb)
+              return {method, i} if verb_call_at?(chars, i + 1, verb)
             end
           end
         else
@@ -785,7 +877,7 @@ module Analyzer::Typescript
 
           # Procedure referenced by name (modular layout: `createDocument:
           # createDocumentRoute`). Resolve to its cross-file definition.
-          if proc = procedures[router_key(base_path, ident)]? || procedures_by_name[ident]?
+          if proc = imported_procedure(ident, file, base_path) || procedures[router_key(base_path, ident)]? || procedures_by_name[ident]?
             emit_procedure(proc.value, proc.method, "#{base}/#{child_prefix}", proc.file, proc.line, result)
             next
           end
@@ -817,7 +909,104 @@ module Analyzer::Typescript
       endpoint.details = Details.new(PathInfo.new(file, line))
       attach_input_params(value, method, endpoint)
       attach_procedure_callees(value, file, line, endpoint) if callees_needed?
+      endpoint.handler = procedure_handler(value, file, line, url.split('/').last)
+      if tag = procedure_auth_tag(value)
+        endpoint.add_tag(tag)
+      end
       result << endpoint
+    end
+
+    DYNAMIC_IMPORT_RE = /\bimport\s*\(\s*['"`]([^'"`]+)['"`]\s*\)/
+    # `const { xHandler } = await import(...)`, `(await import(...)).xHandler`,
+    # `import(...).then((mod) => mod.xHandler)`: the export a lazy resolver runs.
+    IMPORTED_EXPORT_RES = [
+      /\{\s*([\w$]+)(?:\s*:\s*[\w$]+)?\s*\}\s*=\s*await\s+import\s*\(/,
+      /\(\s*await\s+import\s*\([^()]*\)\s*\)\s*\.\s*([\w$]+)/,
+      /import\s*\([^()]*\)\s*\.\s*then\s*\(\s*\(?\s*([\w$]+)\s*\)?\s*=>\s*\1\s*\.\s*([\w$]+)/,
+    ]
+    # The call a resolver returns: `getHandler({ ctx, input })`.
+    RESOLVER_CALL_RE = /(?:\A\s*|\breturn\s+)(?:await\s+)?([A-Za-z_$][\w$]*)\s*\(/
+
+    # The procedure's resolver as the function it hands off to, when that is
+    # an export of one imported module (lazily or not); else the procedure.
+    private def procedure_handler(value : String, file : String, line : Int32, name : String) : Handler
+      if body = procedure_resolver_body(value).try(&.[0])
+        specs = body.scan(DYNAMIC_IMPORT_RE).map(&.[1]).uniq!
+        handler = if specs.size == 1
+                    export = IMPORTED_EXPORT_RES.compact_map { |re| body.match(re).try { |m| m[m.size - 1] } }.first?
+                    Noir::JSHandlerResolver.resolve_module_export(specs[0], export, file)
+                  elsif specs.empty? && (call = body.match(RESOLVER_CALL_RE))
+                    Noir::JSHandlerResolver.resolve(call[1], read_file_content(file), file)
+                  end
+        return handler if handler && handler.path
+      end
+      Handler.new(name, file, line)
+    rescue
+      Handler.new(name, file, line)
+    end
+
+    AUTH_ERROR_RE     = /\bTRPCError\s*\(\s*\{[^{}]*?\bcode\s*:\s*['"`](?:UNAUTHORIZED|FORBIDDEN)['"`]/
+    BUILDER_REF_RE    = /(?<![\w$.])[A-Za-z_$][\w$]*/
+    USE_REF_RE        = /\.\s*(?:use|unstable_pipe|pipe|concat)\s*\(\s*([A-Za-z_$][\w$]*)\s*\)/
+    BASE_PROCEDURE_RE = /\.\s*procedure\b/
+
+    # Auth as the procedure's builder chain defines it: guarded when a
+    # builder or middleware it stacks rejects with UNAUTHORIZED/FORBIDDEN;
+    # anonymous only when every middleware was read, none rejects, and the
+    # chain bottoms out at tRPC's base `.procedure`. Unknown otherwise.
+    private def procedure_auth_tag(value : String) : Tag?
+      dot = procedure_terminal(value.chars, 0).try(&.[1]) || return
+      chain = value[0, dot]
+      head = chain[/\A\s*([A-Za-z_$][\w$]*)/, 1]? || return
+      read = [] of String
+      guard = chain.matches?(AUTH_ERROR_RE) ? "inline middleware" : builder_guard(chain, read, Set(String).new)
+      if guard
+        Tag.new("auth", guard == head ? "Protected by tRPC #{head}" : "Protected by tRPC #{head} (#{guard})", TAGGER)
+      elsif read.any?(&.matches?(BASE_PROCEDURE_RE)) &&
+            read.all? { |text| text.scan(USE_REF_RE).all? { |m| @builder_defs.has_key?(m[1]) } }
+        Tag.new("anonymous", "tRPC #{head} admits anonymous callers", TAGGER)
+      end
+    end
+
+    # The first definition `text` references, directly or through others,
+    # that rejects the caller. Every definition read lands in `read`.
+    private def builder_guard(text : String, read : Array(String), seen : Set(String)) : String?
+      read << text
+      text.scan(BUILDER_REF_RE) do |m|
+        definition = @builder_defs[m[0]]? || next
+        next unless seen.add?(m[0])
+        return m[0] if definition.matches?(AUTH_ERROR_RE)
+        if found = builder_guard(definition, read, seen)
+          return found
+        end
+      end
+      nil
+    end
+
+    BUILDER_DEF_HINT_RE = /\.\s*(?:use|unstable_pipe|procedure)\b|\bmiddleware\s*\(|\bTRPCError\b/
+    DEFINITION_RE       = /\b(?:(?:const|let|var)\s+([A-Za-z_$][\w$]*)(?:\s*:[^=]+)?\s*=|function\s+([A-Za-z_$][\w$]*)\s*[(<])/
+
+    # `name -> definition text` for each declaration in a tRPC module that
+    # builds procedures or middleware. Comments are stripped first: a
+    # commented-out guard does not guard.
+    # ponytail: keyed by name across the scan, so an aliased import or two
+    # same-named builders read the last one; key by file + import to fix.
+    private def builder_definitions(raw : String) : Hash(String, String)
+      defs = Hash(String, String).new
+      return defs unless content_matches?(raw, TRPC_MENTION_RE) && raw.matches?(BUILDER_DEF_HINT_RE)
+      content = Noir::JSRouteExtractor.strip_js_comments(raw)
+      literal_mask = string_literal_mask(content)
+      offsets = Noir::CharOffsets.new(content)
+      chars = offsets.chars
+      content.scan(DEFINITION_RE) do |m|
+        next if literal_position?(literal_mask, m.byte_begin(0))
+        # A function's statement starts at its `(`: a newline in the
+        # parameter list must not end it.
+        start = m[2]? ? offsets.end(m) - 1 : offsets.end(m)
+        text = offsets.slice(start, find_statement_end(chars, start))
+        defs[m[1]? || m[2]] = text if text.matches?(BUILDER_DEF_HINT_RE)
+      end
+      defs
     end
 
     # `key: router({...})` / `key: t.router({...})` / `createTRPCRouter({...})`

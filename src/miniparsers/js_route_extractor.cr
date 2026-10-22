@@ -1145,6 +1145,16 @@ module Noir
       content_matches?(content, SIBLING_FRAMEWORK_MARKER)
     end
 
+    # A Next.js pages-router tRPC mount: a `[trpc]` / `[...trpc]` file (the
+    # adapter reads the procedure path from that query key) handing a router
+    # to `createNextApiHandler`. Its URLs are the router's procedures, which
+    # ts_trpc emits, not a `{trpc}` catch-all.
+    TRPC_NEXT_MOUNT_BASENAME = /\A\[(?:\.\.\.)?trpc\]\.[cm]?[jt]sx?\z/
+
+    def self.trpc_next_mount?(file_path : String, content : String) : Bool
+      File.basename(file_path).matches?(TRPC_NEXT_MOUNT_BASENAME) && content.includes?("createNextApiHandler")
+    end
+
     # The route's last argument resolved to a definition when it is a
     # plain reference (`login`, `users.create`, `auth()`); nil for an
     # inline closure. `start_byte` is the route call's byte offset: byte
