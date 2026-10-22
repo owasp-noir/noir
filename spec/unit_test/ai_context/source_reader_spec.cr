@@ -428,6 +428,36 @@ describe NoirAIContext::SourceReader do
         end
       end
 
+      # Mastodon's webfinger route took a guard from the next route's
+      # `"/authorize_interaction?..."` string when the scope read on.
+      it "stops at a route line that ends on a name or a literal" do
+        source = <<-RB
+          get 'webfinger', to: 'webfinger#show', as: :webfinger
+          get 'proxy', to: redirect { |_, request| "/authorize_interaction?x" }, as: nil
+          resources :statuses, only: [:show]
+          get 'other', to: 'other#show'
+          RB
+
+        with_source_file(source, ".rb") do |path|
+          reader = NoirAIContext::SourceReader.new
+          reader.route_scope_snippet_for(path, 1).should eq("1: get 'webfinger', to: 'webfinger#show', as: :webfinger")
+          reader.route_scope_snippet_for(path, 3).should eq("3: resources :statuses, only: [:show]")
+        end
+      end
+
+      it "reads past an attribute to the declaration it annotates" do
+        source = <<-CS
+          [HttpGet("users")]
+          public IActionResult List()
+          CS
+
+        with_source_file(source, ".cs") do |path|
+          NoirAIContext::SourceReader.new
+            .route_scope_snippet_for(path, 1)
+            .should eq(%(1: [HttpGet("users")] | 2: public IActionResult List()))
+        end
+      end
+
       it "keeps reading while parentheses are still open" do
         source = <<-GO
           r.HandleFunc("/users",

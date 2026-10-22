@@ -27,11 +27,20 @@ module NoirAIContext
   # File-system calls as handler bodies spell them: Node's `fs` module and
   # its camelCase API (`readFileSync`, `createReadStream`, `readdir`),
   # `os.ReadFile` / `os.Open`, PHP `readfile` / `scandir`, `res.sendFile` /
-  # `send_file` / `send_from_directory`, `http.ServeFile`, gin's
-  # `c.SaveUploadedFile`. The word-bounded `read` / `file` name patterns
-  # match none of them, so a handler whose only file access was one of
-  # these carried no file_io sink.
-  FILE_IO_CALL = /\b(?:fs\.\w+|os\.(?:open|openfile|create|stat|lstat|remove|removeall)\b|(?:read|write|append)_?file(?:_?sync)?|(?:read|open|scan|list)_?dir(?:_?sync)?|create(?:read|write)stream|send_?file|send_from_directory|serve_?file|saveuploadedfile)\b/i
+  # `send_file` / `send_from_directory`, Express `res.download`,
+  # `http.ServeFile`, gin's `c.SaveUploadedFile`.
+  FILE_IO_CALL = /\b(?:fs\.\w+|os\.(?:open|openfile|create|stat|lstat|remove|removeall)\b|(?:read|write|append)_?file(?:_?sync)?|(?:read|open|scan|list)_?dir(?:_?sync)?|create(?:read|write)stream|send_?file|send_from_directory|(?:res|response|reply)\.download|serve_?file|saveuploadedfile)\b/i
+
+  # What `f` in `f.read()` / `f.Write(b)` must be bound to for the call to
+  # be file I/O: a call that opens a file (`open(p)`, `io.open`,
+  # `Path(p).open()`, `File.open`, `os.Open` / `OpenFile` / `Create`,
+  # `fs.createReadStream`, `new FileInputStream`) or Go's `*os.File` type.
+  # See `Builder#file_handle_sink`.
+  FILE_HANDLE_OPEN = /(?<![\w.])(?:io\.|codecs\.|aiofiles\.)?open\s*\(|\b(?:File|Tempfile)\.(?:open|new)\b|\bos\.(?:Open|OpenFile|Create|CreateTemp)\s*\(|\bfs\.(?:promises\.)?(?:open|createReadStream|createWriteStream)\s*\(|\bPath\s*\([^)]*\)\s*\.open\s*\(|\bnew\s+(?:File(?:Input|Output)Stream|FileReader|FileWriter|RandomAccessFile)\b|\b(?:Named)?TemporaryFile\s*\(|\*os\.File\b/
+
+  # An in-memory buffer: `send_file(io.BytesIO(data))` streams bytes the
+  # handler already holds, so no path reaches the file system.
+  IN_MEMORY_BUFFER = /(?:\bio\.)?\b(?:BytesIO|StringIO)\s*\(/
 
   # Middleware that lists a directory to the client (Express `serveIndex`,
   # Go `http.FileServer`, which lists by default). A plain static mount
@@ -68,13 +77,17 @@ module NoirAIContext
       "file_io",
       "Potential file I/O sink inferred from code or callee name",
       68,
-      # A lowercase `file.` receiver is a variable (an uploaded or parsed
-      # file, a filename string), so `file.Close` / `file.includes` are not
-      # file-system access; only its save/write is. The source scan needs
-      # a file-system call: a bare `upload` / `download` word in the scan
-      # window is usually the route's own path literal or name
-      # (`"/upload"`, `name="voucher-set-download"`), see MOBILE_DOWNLOAD_SINK.
-      name_patterns: [/\bFile\b/, /\bfile\b(?!\.)/, /\bfile\.(?:save|write)/i, /\bread\b/i, /\bupload\b/i, /\bdownload\b/i, FILE_IO_CALL],
+      # Callee names count only for a file-system API: a `File` / `IO`
+      # class method, a method named `File` (gin's `c.File`), an upload's
+      # save/write, or FILE_IO_CALL. A bare `File(...)` constructs a path
+      # or declares a FastAPI form field and reads nothing; a lowercase
+      # `file` / `read` / `upload` / `download` names a variable or a helper
+      # (`file.stream.read`, `rand.Read`, `this.service.download`). A
+      # `read` / `write` on a real file handle is `Builder#file_handle_sink`.
+      # The source scan needs a file-system call: a bare `upload` /
+      # `download` word in the scan window is usually the route's own path
+      # literal or name (`"/upload"`), see MOBILE_DOWNLOAD_SINK.
+      name_patterns: [/\b(?:File|IO)\.\w|\.File\b/, /\bfile\.(?:save|write)/i, FILE_IO_CALL],
       source_patterns: [/\bFile\.(open|read|write)/, /\bread_text\b/i, /\bwrite_text\b/i, FILE_IO_CALL, DIRECTORY_LISTING_CALL]
     ),
     MOBILE_DOWNLOAD_SINK,
@@ -280,11 +293,12 @@ module NoirAIContext
   # Mobile code names its URL fetch flows `download…`; the bare word is
   # what `Builder#normalize_mobile_sink` turns into outbound_http. Kept
   # mobile-only like the kinds above: on an HTTP route it is the route
-  # literal, not file I/O.
+  # literal or a helper's name, not file I/O.
   MOBILE_DOWNLOAD_SINK = PatternDefinition.new(
     "file_io",
     "Potential file I/O sink inferred from code or callee name",
     68,
+    name_patterns: [/\bupload\b/i, /\bdownload\b/i],
     source_patterns: [/\bdownload\b/i, /\bupload\b/i]
   )
 

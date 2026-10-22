@@ -20,6 +20,16 @@ module Noir
     # Class-body lines that change the callback chain a subclass inherits.
     CALLBACK_LINE = /^(?:include|(?:prepend_|skip_)?before_action|allow_unauthenticated_access)\b/
 
+    # Gem controllers an app subclasses, which are not in the scan: the
+    # callback lines their class bodies register. Doorkeeper's
+    # `authenticate_resource_owner!` / `authenticate_admin!` run the app's
+    # `resource_owner_authenticator` / `admin_authenticator` blocks.
+    GEM_CALLBACKS = {
+      "Doorkeeper::AuthorizationsController"         => ["before_action :authenticate_resource_owner!"],
+      "Doorkeeper::AuthorizedApplicationsController" => ["before_action :authenticate_resource_owner!"],
+      "Doorkeeper::ApplicationsController"           => ["before_action :authenticate_admin!"],
+    }
+
     ONLY_OPTION   = /\bonly:/
     EXCEPT_OPTION = /\bexcept:/
 
@@ -144,7 +154,7 @@ module Noir
     # `allow_unauthenticated_access` and their `only:` / `except:` lists. The
     # leaf's own callbacks run last, so its skips remove what the parents
     # registered. A parent outside the scan (`Devise::SessionsController`)
-    # ends the chain.
+    # ends the chain, after its `GEM_CALLBACKS` when it has any.
     def resolve(leaf : Klass, action : String?) : Resolution
       resolution = Resolution.new(Array(String).new, Array(String).new, Set(String).new)
       apply_ancestor(leaf, action, resolution, 0)
@@ -155,17 +165,27 @@ module Noir
     private def apply_ancestor(klass : Klass?, action : String?, resolution : Resolution, depth : Int32)
       return unless klass && depth < 16
       if parent = klass.parent
-        apply_ancestor(lookup(parent, klass.namespace), action, resolution, depth + 1)
+        if found = lookup(parent, klass.namespace)
+          apply_ancestor(found, action, resolution, depth + 1)
+        elsif gem = GEM_CALLBACKS[parent.lchop("::")]?
+          apply_lines(gem, "", action, resolution, depth + 1)
+        end
       end
       apply_callbacks(klass, action, resolution, depth)
     end
 
     private def apply_callbacks(klass : Klass, action : String?, resolution : Resolution, depth : Int32)
+      apply_lines(klass.callbacks, klass.namespace, action, resolution, depth)
+      # After its concerns, so the reversed list puts a class before them.
+      resolution.paths << klass.path
+    end
+
+    private def apply_lines(lines : Array(String), namespace : String, action : String?, resolution : Resolution, depth : Int32)
       active = resolution.callbacks
-      klass.callbacks.each do |line|
+      lines.each do |line|
         if line.starts_with?("include")
           line.scan(/[A-Z][\w:]*/) do |m|
-            if (mod = lookup(m[0], klass.namespace)) && depth < 16
+            if (mod = lookup(m[0], namespace)) && depth < 16
               apply_callbacks(mod, action, resolution, depth + 1)
             end
           end
@@ -190,8 +210,6 @@ module Noir
           end
         end
       end
-      # After its concerns, so the reversed list puts a class before them.
-      resolution.paths << klass.path
     end
   end
 end
