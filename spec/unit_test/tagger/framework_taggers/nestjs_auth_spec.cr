@@ -368,4 +368,88 @@ describe "NestjsAuthTagger" do
   ensure
     CodeLocator.instance.clear_all
   end
+
+  it "reads class guards past a tall docs block, any guard in the list, and optional Passport guards" do
+    CodeLocator.instance.clear_all
+    tmpdir = File.tempname("nest_optional_guard")
+    files = {
+      "package.json"               => "{}",
+      "src/api-auth.guard.ts"      => "export class ApiAuthGuard extends AuthGuard(\"api\") {}\n",
+      "src/optional-auth.guard.ts" => <<-TS,
+        export class OptionalAuthGuard extends ApiAuthGuard {
+          handleRequest(error: Error, user: any) {
+            if (user || !error) {
+              return user || null;
+            }
+            throw error;
+          }
+        }
+        TS
+      "src/items.controller.ts" => <<-TS,
+        @Controller({
+          path: "/items",
+        })
+        @UseGuards(ApiAuthGuard)
+        @ApiHeader({
+          name: "cal-api-version",
+          description: "Must be set",
+          example: "2024-06-11",
+          required: true,
+          schema: {
+            default: "2024-06-11",
+          },
+        })
+        @ApiHeader(TOKEN_HEADER)
+        export class ItemsController {
+          @Get("/")
+          list() {}
+
+          @Get("/open")
+          @UseGuards(OptionalAuthGuard)
+          open() {}
+        }
+
+        @Controller("other")
+        export class OtherController {
+          @Get("/a")
+          @UseGuards(BookingUidGuard, ApiAuthGuard)
+          a() {}
+
+          @Get("/b")
+          @UseGuards(BookingUidGuard, OptionalAuthGuard)
+          b() {}
+        }
+        TS
+    }
+    files.each do |rel, body|
+      path = File.join(tmpdir, rel)
+      Dir.mkdir_p(File.dirname(path))
+      File.write(path, body)
+      CodeLocator.instance.register_path(path)
+    end
+
+    begin
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(tmpdir)
+      controller = File.join(tmpdir, "src/items.controller.ts")
+      endpoints = {"list" => 16, "open" => 19, "a" => 26, "b" => 30}.transform_values do |line|
+        details = Details.new(PathInfo.new(controller, line))
+        details.technology = "ts_nestjs"
+        Endpoint.new("/x", "GET", [] of Param, details)
+      end
+
+      NestjsAuthTagger.new(noir_options).perform(endpoints.values)
+      tags = endpoints.transform_values(&.tags.map { |tag| "#{tag.name}: #{tag.description}" })
+
+      # `@UseGuards` sits eleven lines above the class.
+      tags["list"].should eq(["auth: Protected by NestJS auth guard (class-level)"])
+      # The class guard still runs before the optional one.
+      tags["open"].should eq(["auth: Protected by NestJS auth guard (class-level)"])
+      tags["a"].should eq(["auth: Protected by NestJS auth guard"])
+      tags["b"].should eq(["anonymous: NestJS @UseGuards(BookingUidGuard, OptionalAuthGuard) admits anonymous callers: its handleRequest returns no user instead of throwing"])
+    ensure
+      FileUtils.rm_rf(tmpdir)
+      CodeLocator.instance.clear_all
+    end
+  end
 end
