@@ -340,6 +340,45 @@ describe "Ruby route gaps" do
     find_ep(endpoints, "POST", "/users/sign_in").params.map { |p| "#{p.name}:#{p.param_type}" }.should eq(%w[email:form password:form])
   end
 
+  it "reads every Devise declaration and resolves controllers from the enclosing module scope" do
+    endpoints = scan_ruby_tree({
+      "Gemfile"            => RAILS_GEMFILE,
+      "app/models/user.rb" => <<-RUBY,
+        class User < ApplicationRecord
+          include User::Omniauthable
+          devise :two_factor_authenticatable,
+                 otp_secret_length: 32
+          devise :registerable, :recoverable,
+                 :confirmable
+        end
+        RUBY
+      "app/models/concerns/user/omniauthable.rb"    => "module User::Omniauthable\n  included do\n    devise :omniauthable\n  end\nend\n",
+      "app/controllers/auth/sessions_controller.rb" => <<-RUBY,
+        class Auth::SessionsController < Devise::SessionsController
+          def create
+            super
+          end
+        end
+        RUBY
+      "app/controllers/auth/omniauth_callbacks_controller.rb" => "class Auth::OmniauthCallbacksController < Devise::OmniauthCallbacksController\nend\n",
+      "config/routes.rb"                                      => "Rails.application.routes.draw do\n  scope module: :auth do\n    devise_for :users, path: 'auth', format: false\n  end\nend\n",
+    })
+    urls = endpoints.map { |e| "#{e.method} #{e.url}" }
+
+    ["GET /auth/sign_in", "POST /auth/sign_in", "DELETE /auth/sign_out", "GET /auth/sign_up", "POST /auth",
+     "PUT /auth", "PATCH /auth", "GET /auth/password/new", "PUT /auth/password", "GET /auth/confirmation",
+     "POST /auth/auth/:provider/callback"].each { |route| urls.should contain(route) }
+    urls.should_not contain("GET /auth/unlock/new")
+    urls.should_not contain("GET /users/sign_in")
+
+    find_ep(endpoints, "POST", "/auth/sign_in").handler.try { |h| {h.name, h.path.try { |p| File.basename(p) }, h.line} }
+      .should eq({"sessions#create", "sessions_controller.rb", 2})
+    find_ep(endpoints, "GET", "/auth/sign_in").handler.should eq(Handler.new("devise/sessions#new"))
+    # Auth::RegistrationsController is routed but not in the scan.
+    find_ep(endpoints, "POST", "/auth").handler.should be_nil
+    find_ep(endpoints, "GET", "/auth/auth/:provider/callback").handler.try(&.name).should eq("omniauth_callbacks#:provider")
+  end
+
   it "uses a subclass's redefined Devise param reader instead of Devise's built-in defaults" do
     endpoints = scan_ruby_tree({
       "Gemfile"                                   => RAILS_GEMFILE,
