@@ -19,7 +19,18 @@ expected_endpoints = [
   Endpoint.new("/user/actions/secrets/{secretname}", "DELETE"),
 ]
 
-FunctionalTester.new("fixtures/go/chi_combo_wrapper/", {
+tester = FunctionalTester.new("fixtures/go/chi_combo_wrapper/", {
   :techs     => 1,
   :endpoints => expected_endpoints.size,
-}, expected_endpoints).perform_tests
+}, expected_endpoints)
+tester.perform_tests
+
+# The wrapper's verbs take `middleware..., handler`: the handler is the last
+# argument, not the `reqToken()` in front of it.
+it "names the last argument of a wrapper verb as its handler", tags: "functional" do
+  api_go = "./spec/functional_test/fixtures/go/chi_combo_wrapper/routers/api.go"
+  list = tester.app.endpoints.find! { |ep| ep.method == "GET" && ep.url == "/user/actions/secrets" }
+  list.handler.should eq(Handler.new("listSecrets", api_go, 18))
+  token = tester.app.endpoints.find! { |ep| ep.method == "DELETE" && ep.url == "/user/token" }
+  token.handler.should eq(Handler.new("deleteToken", api_go, 14))
+end

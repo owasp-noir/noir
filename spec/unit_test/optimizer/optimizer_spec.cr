@@ -1330,6 +1330,26 @@ describe "EndpointOptimizer" do
       result[3].url.should eq("/archive/\\d{4}/")
     end
 
+    it "keeps a chi / gorilla regex constraint, which picks the route" do
+      optimizer = EndpointOptimizer.new(logger, options)
+      chi = Details.new(PathInfo.new("routers/web/web.go", 1))
+      chi.technology = "go_chi"
+      endpoints = [
+        Endpoint.new("/{owner}/{repo}/{type:issues}/{index}", "GET", chi),
+        Endpoint.new("/{owner}/{repo}/{type:pulls}/{index}", "GET", chi),
+        Endpoint.new("/{owner}/{repo}/objects/{sha:[a-f0-9]{7,64}}", "GET", chi),
+        Endpoint.new("/users/{id:[0-9]+}", "GET"),
+      ]
+
+      result = optimizer.optimize(endpoints).to_h { |ep| {ep.url, ep.params.map(&.name)} }
+      result.should eq({
+        "/{owner}/{repo}/{type:issues}/{index}"        => ["owner", "repo", "type", "index"],
+        "/{owner}/{repo}/{type:pulls}/{index}"         => ["owner", "repo", "type", "index"],
+        "/{owner}/{repo}/objects/{sha:[a-f0-9]{7,64}}" => ["owner", "repo", "sha"],
+        "/users/{id}"                                  => ["id"],
+      })
+    end
+
     it "matches braces past unbalanced openers and escapes" do
       optimizer = EndpointOptimizer.new(logger, options)
       endpoints = [

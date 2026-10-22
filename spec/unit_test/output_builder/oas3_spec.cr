@@ -158,7 +158,11 @@ describe "OutputBuilderOas3" do
 
     unsupported = Endpoint.new("/jobs", "SUBSCRIBE")
 
-    builder.print([typed_path, optional_path, mixed_body, unsupported])
+    constrained = Endpoint.new("/repos/{sha:[a-f0-9]{7,64}}/{type:issues}", "GET")
+    constrained.push_param(Param.new("sha", "", "path"))
+    constrained.push_param(Param.new("type", "", "path"))
+
+    builder.print([typed_path, optional_path, mixed_body, unsupported, constrained])
     spec = JSON.parse(builder.io.to_s)
     paths = spec["paths"]
 
@@ -178,6 +182,8 @@ describe "OutputBuilderOas3" do
     content = paths["/mixed"]["post"]["requestBody"]["content"].as_h
     content.has_key?("application/json").should be_true
     content.has_key?("application/x-www-form-urlencoded").should be_true
+
+    paths["/repos/{sha}/{type}"]["get"]["parameters"].as_a.map(&.["name"].as_s).should eq(["sha", "type"])
 
     paths["/jobs"].as_h.has_key?("subscribe").should be_false
     paths["/jobs"]["x-noir-unsupported-methods"].as_a.should contain(JSON::Any.new("SUBSCRIBE"))

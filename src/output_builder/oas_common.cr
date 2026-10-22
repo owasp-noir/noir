@@ -70,6 +70,11 @@ module OutputBuilderOasCommon
     # only says what it matches.
     path = path.gsub(/\{(\w+)=[^{}]*\}/, "{\\1}")
 
+    # A regex router's constraint (chi / gorilla `{sha:[a-f0-9]{7,64}}`,
+    # kept by the optimizer because it picks the route) is not template
+    # syntax either; the variable is `sha`.
+    path = path.gsub(Noir::URLPath::REGEX_PLACEHOLDER_RE, "{\\1}")
+
     # Express-style optional segments (`/:id{/:op}`) are not representable as
     # optional in OpenAPI path templates. Drop the route-syntax braces so the
     # emitted path remains a valid template instead of `/users/{id}{/{op}}`.
