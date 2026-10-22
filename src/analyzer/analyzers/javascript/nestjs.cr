@@ -16,6 +16,20 @@ module Analyzer::Javascript
 
     private record GlobalPrefixConfig, prefix : String, excludes : Array(GlobalPrefixExclude)
 
+    # `app.enableVersioning({...})`: whether the version is a URL segment
+    # (URI, the default) or read from the request (HEADER, MEDIA_TYPE,
+    # CUSTOM), plus the raw `defaultVersion` and version-header expressions.
+    private record VersioningConfig, uri : Bool, default_version : String?, header : String?
+
+    # Name of the `route_conditions` entry that carries a route's raw version
+    # list from the per-file scan to `separate_header_versions`.
+    VERSION_CONDITION = "nest:version"
+
+    # `(bootstrap file, config)` for every `enableVersioning` in the scan.
+    # Read before the parallel scan: the type decides each route's URL.
+    @nest_versioning = [] of Tuple(String, VersioningConfig)
+    @nest_app_roots : Array(String)? = nil
+
     # Project-wide `EnumName.Member` / `Object.prop` -> value map, used to
     # resolve `@Controller(...)` prefix constants imported from another
     # file. nil until `analyze_with_extensions` seeds it.
@@ -51,6 +65,118 @@ module Analyzer::Javascript
       acc
     end
 
+    private def collect_versioning_configs : Array(Tuple(String, VersioningConfig))
+      configs = [] of Tuple(String, VersioningConfig)
+      all_files.each do |path|
+        next unless GLOBAL_LITERAL_EXTENSIONS.any? { |ext| path.ends_with?(ext) }
+        next if ignored_nest_path?(path)
+        content = read_file_content(path)
+        next unless content.includes?("enableVersioning")
+        code = Noir::JSRouteExtractor.strip_js_comments(content)
+        code.scan(/\.enableVersioning\s*\(/) do |match|
+          open_paren = match.end(0) - 1
+          next unless close_paren = Noir::JSRouteExtractor.find_matching_paren(code, open_paren)
+          configs << {path, parse_versioning_options(code[(open_paren + 1)...close_paren])}
+        end
+      rescue
+        next
+      end
+      configs.sort_by!(&.[0])
+    end
+
+    # `enableVersioning()` defaults to URI. A CUSTOM extractor's header is
+    # the `headers[...]` key it reads.
+    private def parse_versioning_options(args : String) : VersioningConfig
+      type = args.match(/\btype\s*:\s*VersioningType\.(\w+)/).try(&.[1]) || "URI"
+      default_version = args.match(/\bdefaultVersion\s*:\s*(\[[^\]]*\]|[^,\n}]+)/).try(&.[1].strip)
+      header = args.match(/\bheader\s*:\s*([^,\n}]+)/) || args.match(/\bheaders\s*\[\s*([^\]]+?)\s*\]/)
+      VersioningConfig.new(type == "URI", default_version, header.try(&.[1].strip))
+    end
+
+    # The `enableVersioning` governing `path`: the only one, else the one of
+    # its app. Nil (no bootstrap seen) keeps the URI reading.
+    private def versioning_for(path : String) : VersioningConfig?
+      configs = @nest_versioning
+      return configs.first?.try(&.[1]) if configs.size <= 1
+      roots = @nest_app_roots || [] of String
+      root = nest_app_root_for(path, roots)
+      configs.find { |(bootstrap, _)| nest_app_root_for(bootstrap, roots) == root }.try(&.[1])
+    end
+
+    # Header-style versioning leaves the URL alone, so controllers of
+    # different versions serve one address (`/v2/schedules` in
+    # `SchedulesController_2024_04_15` and `_2024_06_11`). Unioned into one
+    # row, the first file's handler would stand for both and the guards of
+    # both would merge. The route an unversioned request reaches (no
+    # version, VERSION_NEUTRAL, or one that includes `defaultVersion`) keeps
+    # the plain row; every other version is kept apart by a route condition
+    # and, when the header name resolves, a header param naming its version.
+    private def separate_header_versions(result : Array(Endpoint))
+      return unless result.any? { |endpoint| version_condition(endpoint) }
+
+      constants : Hash(String, String)? = nil
+      result.each_index.group_by { |idx| {result[idx].method, result[idx].url} }.each_value do |idxs|
+        next unless idxs.any? { |idx| version_condition(result[idx]) }
+        shared = idxs.map { |idx| result[idx].handler.try(&.name) }.uniq!.size > 1
+        constants ||= project_constants if shared
+        idxs.each do |idx|
+          endpoint = result[idx]
+          next unless condition = version_condition(endpoint)
+          endpoint.route_conditions = [] of Param
+          if shared && (table = constants)
+            config = versioning_for(endpoint.details.code_paths.first?.try(&.path) || "")
+            versions = condition.value.split(',').flat_map { |version| resolve_constant(version, table) }
+            defaults = config.try(&.default_version).try { |expr| resolve_constant(expr, table).map(&.[0]) } || [] of String
+            unless versions.any? { |(value, _)| value == "VERSION_NEUTRAL" || defaults.includes?(value) }
+              endpoint.route_conditions = [Param.new(VERSION_CONDITION, versions.map(&.[0]).join(","), "header")]
+              # A request sends one version; the first one this route serves.
+              header = config.try(&.header).try { |expr| resolve_constant(expr, table).first? }
+              endpoint.push_param(Param.new(header[0], versions.first[0], "header")) if header && header[1] && !versions.empty?
+            end
+          end
+          result[idx] = endpoint
+        end
+      end
+    end
+
+    private def version_condition(endpoint : Endpoint) : Param?
+      endpoint.route_conditions.find { |param| param.name == VERSION_CONDITION }
+    end
+
+    # Every `const NAME = <expr>` in the scan, first definition wins. Version
+    # and header constants are usually imported (`@calcom/platform-constants`)
+    # and re-cast (`VERSION_X as unknown as VersionValue`), so the per-file
+    # literal table cannot see them.
+    PROJECT_CONST_RE = /\bconst\s+([A-Za-z_$][\w$]*)\s*(?::[^=\n]+)?=\s*(\[[^\]]*\]|[^;\n]+)/
+
+    private def project_constants : Hash(String, String)
+      table = {} of String => String
+      all_files.each do |path|
+        next unless GLOBAL_LITERAL_EXTENSIONS.any? { |ext| path.ends_with?(ext) }
+        content = read_file_content(path)
+        next unless content.includes?("const ")
+        content.scan(PROJECT_CONST_RE) { |match| table[match[1]] ||= match[2].strip }
+      rescue
+        next
+      end
+      table
+    end
+
+    # The values `expr` stands for, each with whether it reached a string
+    # literal; an identifier that resolves no further stays as itself.
+    private def resolve_constant(expr : String, table : Hash(String, String), depth : Int32 = 0) : Array(Tuple(String, Bool))
+      # `VERSION_X as unknown as VersionValue` is VERSION_X.
+      text = expr.strip.sub(/\A([A-Za-z_$][\w$.]*|(['"`])[^'"`]*\2)\s+as\s[\s\S]*\z/, "\\1")
+      if literal = text.match(/\A(['"`])([^'"`]*)\1\z/)
+        return [{literal[2], true}]
+      end
+      if text.starts_with?("[") && text.ends_with?("]")
+        return split_top_level(text[1...-1], ',').reject(&.blank?).flat_map { |part| resolve_constant(part, table, depth + 1) }
+      end
+      bound = table[text]? if depth < 8
+      bound ? resolve_constant(bound, table, depth + 1) : [{text, false}]
+    end
+
     protected def analyze_with_extensions(extensions : Array(String)) : Array(Endpoint)
       result = [] of Endpoint
       static_dirs = [] of Hash(String, String)
@@ -68,11 +194,15 @@ module Analyzer::Javascript
       # controller via `@Controller(RouteKey.User)` where `RouteKey` lives
       # in `src/enum.ts`). Built once, single-fiber, then read-only.
       @nest_global_literals = collect_global_literal_values
+      @nest_versioning = collect_versioning_configs
+      @nest_app_roots = discover_js_project_roots(app_root_markers, NEST_CONFIG_BASENAMES) if @nest_versioning.size > 1
 
       parallel_file_scan(extensions) do |path|
         next if ignored_nest_path?(path)
         analyze_nestjs_file(path, result, static_dirs, include_callee, global_prefix_holder, global_prefix_mutex)
       end
+
+      separate_header_versions(result)
 
       # Process static directories to create endpoints for static files
       process_js_static_dirs(static_dirs, result)
@@ -485,29 +615,24 @@ module Analyzer::Javascript
         global.each { |key, value| literal_values[key] = value unless literal_values.has_key?(key) }
       end
       controllers = extract_controllers(content, literal_values)
+      # URI versioning (Nest's default, and the reading when no
+      # `enableVersioning` is in the scan) prepends `v<n>`:
+      # `@Controller({ path: 'cats', version: '1' })` serves `/v1/cats`.
+      # HEADER, MEDIA_TYPE and CUSTOM versioning leave the URL untouched.
+      uri_versioning = versioning_for(path).try(&.uri) != false
 
       controllers.each do |controller_info|
-        base_paths = controller_info[:base_paths]
-        controller_content = controller_info[:content]
-        controller_start_line = controller_info[:start_line]
-
-        # Apply controller-level URI versioning. NestJS's default
-        # `VersioningType.URI` prepends `v<n>` to the route, so
-        # `@Controller({ path: 'cats', version: '1' })` becomes
-        # `/v1/cats/...`. Header/Media-Type versioning leaves the URL
-        # untouched — we conservatively emit the v-prefixed variant
-        # since URI is the most common shape in OSS Nest apps.
-        process_http_methods(controller_content, base_paths, controller_info[:versions], path, result, include_callee, controller_start_line, literal_values, controller_info[:class_name])
+        process_http_methods(controller_info[:content], controller_info[:base_paths], controller_info[:versions], uri_versioning, path, result, include_callee, controller_info[:start_line], literal_values, controller_info[:class_name])
       end
     end
 
     # Combine the controller's base paths with each version into a
     # set of `v<version>/<base>` paths. `'VERSION_NEUTRAL'` (Nest's
     # sentinel) is rendered as no prefix.
-    private def expand_versions(base_paths : Array(String), versions : Array(String)) : Array(String)
+    private def expand_versions(base_paths : Array(String), versions : Array(String), literal_values : Hash(String, Array(String))) : Array(String)
       expanded = [] of String
       versions.each do |v|
-        prefix = v == "VERSION_NEUTRAL" ? "" : "v#{v}"
+        prefix = v == "VERSION_NEUTRAL" ? "" : "v#{literal_values[v]?.try(&.first?) || v}"
         base_paths.each do |bp|
           if prefix.empty?
             expanded << bp
@@ -609,10 +734,11 @@ module Analyzer::Javascript
 
       versions = [] of String
 
-      # version: ['1', '2']
+      # version: ['1', '2'] or [VERSION_A, VERSION_NEUTRAL]
       if am = inner.match(/\bversion\s*:\s*\[([^\]]+)\]/)
-        am[1].scan(/['"]([^'"]+)['"]/) do |m|
-          versions << m[1] unless versions.includes?(m[1])
+        am[1].scan(/['"]([^'"]+)['"]|([A-Za-z_][\w.]*|\d+)/) do |m|
+          version = m[1]? || m[2]
+          versions << version unless versions.includes?(version)
         end
         return versions unless versions.empty?
       end
@@ -720,7 +846,8 @@ module Analyzer::Javascript
     end
 
     private def literal_paths_from_expression(expression : String, literal_values : Hash(String, Array(String))) : Array(String)?
-      expr = expression.strip
+      # A last object key keeps its trailing comma: `{ path: "/v2/x", }`.
+      expr = expression.strip.chomp(',').strip
       return [""] if expr.empty?
 
       expr = expr.sub(/\s+as\s+const\s*$/, "").strip
@@ -766,7 +893,7 @@ module Analyzer::Javascript
       Noir::TopLevelSplit.split(text, delimiter, Noir::TopLevelSplit::Rules::JS)
     end
 
-    private def process_http_methods(class_content : String, base_paths : Array(String), controller_versions : Array(String), file_path : String, result : Array(Endpoint), include_callee : Bool, controller_start_line : Int32, literal_values : Hash(String, Array(String)), class_name : String)
+    private def process_http_methods(class_content : String, base_paths : Array(String), controller_versions : Array(String), uri_versioning : Bool, file_path : String, result : Array(Endpoint), include_callee : Bool, controller_start_line : Int32, literal_values : Hash(String, Array(String)), class_name : String)
       method_map = route_decorator_methods
 
       # Materialised once per class: the back-walk and line count below index
@@ -812,12 +939,11 @@ module Analyzer::Javascript
         end
         signature[:close_brace].try { |close_brace| previous_body_end = close_brace + 1 }
         decorator_block = chars[decorator_block_start...signature[:start_pos]].join
-        method_versions = parse_method_versions(decorator_block)
-        effective_base_paths = if method_versions.empty?
-                                 controller_versions.empty? ? base_paths : expand_versions(base_paths, controller_versions)
-                               else
-                                 expand_versions(base_paths, method_versions)
-                               end
+        # A member's `@Version` overrides, rather than stacks on, the
+        # controller's.
+        versions = parse_method_versions(decorator_block)
+        versions = controller_versions if versions.empty?
+        effective_base_paths = uri_versioning && !versions.empty? ? expand_versions(base_paths, versions, literal_values) : base_paths
 
         # Resolve the decorator's line number inside the original
         # file: count newlines from the previous decorator (they arrive in
@@ -837,6 +963,7 @@ module Analyzer::Javascript
               endpoint = Endpoint.new(full_path, method)
               endpoint.details = Details.new(PathInfo.new(file_path, decorator_line))
               endpoint.handler = handler
+              endpoint.route_conditions = [Param.new(VERSION_CONDITION, versions.join(","), "header")] unless uri_versioning || versions.empty?
 
               extract_path_parameters(full_path, endpoint)
               extract_decorator_parameters(signature[:params], endpoint)
@@ -910,7 +1037,10 @@ module Analyzer::Javascript
       text.scan(/@Version\s*\(([\s\S]*?)\)/m) do |match|
         expr = match[1].strip
         if expr.starts_with?("[") && expr.ends_with?("]")
-          expr.scan(/['"]([^'"]+)['"]/) { |m| versions << m[1] unless versions.includes?(m[1]) }
+          expr.scan(/['"]([^'"]+)['"]|([A-Za-z_][\w.]*|\d+)/) do |m|
+            version = m[1]? || m[2]
+            versions << version unless versions.includes?(version)
+          end
         elsif sm = expr.match(/^['"]([^'"]+)['"]$/)
           versions << sm[1] unless versions.includes?(sm[1])
         elsif im = expr.match(/^([A-Za-z_][\w.]*|\d+)$/)
@@ -1042,17 +1172,20 @@ module Analyzer::Javascript
       end
     end
 
+    # Nest strips the trailing slash when it registers a route, so
+    # `@Controller('/v2/me')` + `@Get('/')` serves `/v2/me`.
     private def combine_paths(base : String, route : String) : String
       # `@Controller()` + `@Get()` is the app root; an empty URL would be
       # dropped by the optimizer.
       return "/" if base.empty? && route.empty?
-      return route if base.empty?
-      return base if route.empty?
-
-      base = base.chomp("/")
-      route = route.starts_with?("/") ? route : "/#{route}"
-
-      "#{base}#{route}"
+      path = if base.empty?
+               route
+             elsif route.empty?
+               base
+             else
+               "#{base.chomp("/")}#{route.starts_with?("/") ? route : "/#{route}"}"
+             end
+      path.size > 1 && path.ends_with?('/') ? (path.rstrip('/').presence || "/") : path
     end
 
     private def extract_path_parameters(url : String, endpoint : Endpoint)

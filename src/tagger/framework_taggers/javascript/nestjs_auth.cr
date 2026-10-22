@@ -1,6 +1,7 @@
 require "../../../models/framework_tagger"
 require "../../../models/endpoint"
 require "../../../utils/c_comments"
+require "../../../utils/js_literal_scanner"
 
 @[Noir::TaggerFor(key: "nestjs_auth", name: "NestJS Auth Tagger", desc: "Identifies NestJS-style decorator auth (Nest guards, tsoa @Security, routing-controllers @Authorized, Ts.ED @Authenticate)", order: 150)]
 class NestjsAuthTagger < FrameworkTagger
@@ -10,7 +11,8 @@ class NestjsAuthTagger < FrameworkTagger
     {/\@UseGuards\s*\(\s*JwtAuthGuard/, "NestJS @UseGuards(JwtAuthGuard)"},
     {/\@UseGuards\s*\(\s*LocalAuthGuard/, "NestJS @UseGuards(LocalAuthGuard)"},
     {/\@UseGuards\s*\(\s*AuthenticationGuard/, "NestJS @UseGuards(AuthenticationGuard)"},
-    {/\@UseGuards\s*\(\s*\w*[Aa]uth\w*Guard/, "NestJS auth guard"},
+    # Anywhere in the list: `@UseGuards(BookingUidGuard, ApiAuthGuard)`.
+    {/\@UseGuards\s*\([^)]*?\b\w*[Aa]uth\w*Guard/, "NestJS auth guard"},
     {/\@UseGuards\s*\(\s*GqlAuthGuard/, "NestJS GraphQL auth guard"},
     # The other decorator-controller frameworks mark authenticated handlers
     # and controllers the same way: tsoa `@Security`, routing-controllers
@@ -96,11 +98,22 @@ class NestjsAuthTagger < FrameworkTagger
   record SkipBranch, prop : Regex?, negated : Bool
   record GuardMetadata, skips : Array(SkipBranch), decorators : Hash(String, MetadataDecorator)
 
+  # A Passport guard's `handleRequest` override that hands back no user
+  # (`return user || null`) where the stock one throws Unauthorized: the
+  # guard authenticates whoever presents credentials and lets everyone else
+  # through, so it does not guard the route.
+  HANDLE_REQUEST  = /\bhandleRequest\s*(?:<[^>]*>)?\s*\([^)]*\)[^{]*\{/
+  NO_USER_RETURN  = /\breturn\s+(?:null|undefined)\b|(?:\|\||\?\?)\s*(?:null|undefined)\b/
+  CLASS_DECL      = /\bclass\s+(\w+)\b/
+  USE_GUARDS_ARGS = /@UseGuards\s*\(([^)]*)\)/
+  AUTH_GUARD_REF  = /\b\w*[Aa]uth\w*Guard\b/
+
   def initialize(options : Hash(String, YAML::Any))
     super
     @global_guards = Hash(String?, String).new
     @guard_metadata = Hash(String?, GuardMetadata).new
     @class_lines = Hash(String, Array(Int32)).new
+    @optional_guards = Set(String).new
   end
 
   def perform(endpoints : Array(Endpoint)) : Array(Endpoint)
@@ -113,6 +126,7 @@ class NestjsAuthTagger < FrameworkTagger
   private def find_global_auth_guards
     @global_guards.clear
     @guard_metadata.clear
+    @optional_guards.clear
     guard_sources = [] of {String?, String}
     metadata_sources = [] of {String?, String}
     {".ts", ".js"}.each do |ext|
@@ -122,10 +136,12 @@ class NestjsAuthTagger < FrameworkTagger
         registers = content.includes?("APP_GUARD") || content.includes?("useGlobalGuards")
         defines_guard = content.includes?("canActivate")
         sets_metadata = content.includes?("SetMetadata")
-        next unless registers || defines_guard || sets_metadata
+        handles_request = content.includes?("handleRequest")
+        next unless registers || defines_guard || sets_metadata || handles_request
         next if base_relative_path(path).matches?(TEST_PATH)
         root = nearest_project_root(path, PACKAGE_JSON)
         code = Noir::CComments.strip(content, quotes: %("'`))
+        collect_optional_guards(code) if handles_request
         guard_sources << {root, code} if defines_guard
         metadata_sources << {root, code} if sets_metadata
         next if !registers || @global_guards.has_key?(root)
@@ -147,6 +163,25 @@ class NestjsAuthTagger < FrameworkTagger
         break
       end
     end
+  end
+
+  private def collect_optional_guards(code : String)
+    code.scan(CLASS_DECL) do |decl|
+      next unless body_open = code.index('{', decl.end(0))
+      next unless body_close = Noir::JSLiteralScanner.find_matching_brace(code, body_open)
+      body = code[body_open..body_close]
+      next unless handler = body.match(HANDLE_REQUEST)
+      next unless handler_close = Noir::JSLiteralScanner.find_matching_brace(body, handler.end(0) - 1)
+      @optional_guards << decl[1] if body[handler.begin(0)..handler_close].matches?(NO_USER_RETURN)
+    end
+  end
+
+  # A `@UseGuards(...)` line whose every auth-named guard is optional.
+  private def optional_auth_only?(line : String) : Bool
+    return false if @optional_guards.empty?
+    return false unless args = line.match(USE_GUARDS_ARGS)
+    names = args[1].scan(AUTH_GUARD_REF).map(&.[0])
+    !names.empty? && names.all? { |name| @optional_guards.includes?(name) }
   end
 
   # What the global guard defined at `class_at` of `code` does with route
@@ -245,6 +280,14 @@ class NestjsAuthTagger < FrameworkTagger
         return
       end
 
+      # Its only auth guard is an optional one.
+      if !guard && authn_descs.empty? && authz_descs.empty? &&
+         (optional = (method_decorators + class_decorators).find { |line| optional_auth_only?(line) })
+        names = optional.match(USE_GUARDS_ARGS).try(&.[1].strip)
+        endpoint.add_tag(Tag.new("anonymous", "NestJS @UseGuards(#{names}) admits anonymous callers: its handleRequest returns no user instead of throwing", "nestjs_auth"))
+        return
+      end
+
       # Check if endpoint (or its whole controller) is explicitly public
       if public?(lines, line_idx) || class_decorators.any? { |line| PUBLIC_PATTERNS.any? { |pattern| line.matches?(pattern) } }
         return
@@ -336,8 +379,9 @@ class NestjsAuthTagger < FrameworkTagger
     ROLE_PATTERNS.each do |pattern, desc|
       authz_descs << desc if current.matches?(pattern) && !authz_descs.includes?(desc)
     end
+    optional = optional_auth_only?(current)
     GUARD_PATTERNS.each do |pattern, desc|
-      authn_descs << desc if current.matches?(pattern) && !authn_descs.includes?(desc)
+      authn_descs << desc if !optional && current.matches?(pattern) && !authn_descs.includes?(desc)
     end
     AUTH_DECORATORS.each do |pattern, desc|
       authn_descs << desc if current.matches?(pattern) && !authn_descs.includes?(desc)
@@ -350,6 +394,7 @@ class NestjsAuthTagger < FrameworkTagger
         labeled = "#{desc} (class-level)"
         authz_descs << labeled if decorator.matches?(pattern) && !authz_descs.includes?(labeled) && !authz_descs.includes?(desc)
       end
+      next if optional_auth_only?(decorator)
       GUARD_PATTERNS.each do |pattern, desc|
         labeled = "#{desc} (class-level)"
         authn_descs << labeled if decorator.matches?(pattern) && !authn_descs.includes?(labeled) && !authn_descs.includes?(desc)
@@ -363,13 +408,19 @@ class NestjsAuthTagger < FrameworkTagger
     idx = nearest_match_above(@class_lines, path, lines) { |line| current = line.strip; current.includes?("class ") && current.includes?("{") }[method_line]
     return decorators if idx < 0
 
+    # The block ends at a blank line, the previous class's `}` or an import's
+    # `;`, not at a line count: a stack of multi-line `@ApiHeader({...})`
+    # docs between `@UseGuards` and the class runs past any small window.
     class_idx = idx - 1
-    while class_idx >= 0 && class_idx >= idx - 10
+    while class_idx >= 0 && class_idx >= idx - CLASS_DECORATOR_SPAN
       decorator = lines[class_idx].strip
       break if decorator.empty? && class_idx < idx - 1
+      break if decorator == "}" || decorator.ends_with?(';')
       decorators << decorator
       class_idx -= 1
     end
     decorators
   end
+
+  CLASS_DECORATOR_SPAN = 60
 end
