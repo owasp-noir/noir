@@ -106,6 +106,17 @@ rescue ex
   false
 end
 
+# Update package.json version. Only the top-level "version" key is rewritten
+# (first match), so the file's formatting is left alone.
+def update_npm_package_version(new_version : String) : Bool
+  content = File.read(NPM_PACKAGE)
+  File.write(NPM_PACKAGE, content.sub(/("version"\s*:\s*")[\d.]+(")/, "\\1#{new_version}\\2"))
+  true
+rescue ex
+  STDERR.puts "  Error updating #{NPM_PACKAGE}: #{ex.message}"
+  false
+end
+
 # Update binary example version in an install doc (noir-vX.Y.Z-...)
 def update_install_doc_version(path : String, new_version : String) : Bool
   content = File.read(path)
@@ -213,6 +224,7 @@ updates = [
   {"how_to_release/index.md", RELEASE_DOC, get_release_doc_version(RELEASE_DOC), -> { update_release_doc_version(RELEASE_DOC, new_version) }},
   {"how_to_release/index.ko.md", RELEASE_DOC_KO, get_release_doc_version(RELEASE_DOC_KO), -> { update_release_doc_version(RELEASE_DOC_KO, new_version) }},
   {"aur/PKGBUILD", PKGBUILD_FILE, get_pkgbuild_version, -> { update_pkgbuild_version(new_version) }},
+  {"package.json", NPM_PACKAGE, get_npm_package_version, -> { update_npm_package_version(new_version) }},
   {"installation/index.md", INSTALL_DOC, get_install_doc_version(INSTALL_DOC), -> { update_install_doc_version(INSTALL_DOC, new_version) }},
   {"installation/index.ko.md", INSTALL_DOC_KO, get_install_doc_version(INSTALL_DOC_KO), -> { update_install_doc_version(INSTALL_DOC_KO, new_version) }},
   {"sarif/index.md", SARIF_DOC, get_sarif_doc_version(SARIF_DOC), -> { update_sarif_doc_version(SARIF_DOC, new_version) }},

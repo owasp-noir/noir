@@ -1,17 +1,32 @@
 {
     "name": "@owasp-noir/noir",
-    "version": "1.1.0",
+    "version": "1.4.0",
     "description": "OWASP Noir CLI",
     "license": "MIT",
+    "homepage": "https://owasp-noir.github.io/noir/",
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/owasp-noir/noir.git"
+    },
+    "bugs": {
+        "url": "https://github.com/owasp-noir/noir/issues"
+    },
     "bin": {
-        "noir": "./bin/noir"
+        "noir": "npm/noir.js"
     },
     "scripts": {
-        "postinstall": "node install.js"
+        "postinstall": "node npm/install.js",
+        "prepublishOnly": "node npm/write-checksums.js --check"
     },
     "files": [
-        "install.js"
+        "npm/assets.js",
+        "npm/checksums.json",
+        "npm/install.js",
+        "npm/noir.js"
     ],
+    "publishConfig": {
+        "access": "public"
+    },
     "engines": {
         "node": ">=18"
     }

@@ -18,11 +18,12 @@ sort_by = "weight"
 | GitHub Container Registry | [ghcr.io/owasp-noir/noir](https://github.com/owasp-noir/noir/pkgs/container/noir) | 자동 |
 | GitHub 릴리스 첨부 파일 | 바이너리(Linux, macOS, Windows), `.deb`, `.rpm`, `.apk`, SBOM | 자동 |
 | AUR | `noir` | 자동 |
+| npm | [@owasp-noir/noir](https://www.npmjs.com/package/@owasp-noir/noir) | 자동 |
 | OWASP 프로젝트 페이지 | [OWASP/www-project-noir](https://github.com/OWASP/www-project-noir) | 반자동 |
 
 ## 일반 절차
 
-1.  **버전 올리기**: 버전이 들어 있는 모든 곳(`shard.yml`, `src/noir.cr`, `flake.nix`, Dockerfile, `snap/snapcraft.yaml`, `aur/PKGBUILD`, GitHub Action README, 일부 문서 파일)을 바꿉니다. 스크립트가 한 번에 처리하며, 인자 없이 실행하면 새 버전을 물어봅니다.
+1.  **버전 올리기**: 버전이 들어 있는 모든 곳(`shard.yml`, `src/noir.cr`, `flake.nix`, Dockerfile, `snap/snapcraft.yaml`, `aur/PKGBUILD`, `package.json`, GitHub Action README, 일부 문서 파일)을 바꿉니다. 스크립트가 한 번에 처리하며, 인자 없이 실행하면 새 버전을 물어봅니다.
 
     ```bash
     just version-update 1.4.1
@@ -40,7 +41,7 @@ sort_by = "weight"
 
     추적 대상 파일이 모두 `shard.yml`의 버전과 같아야 하며, 스크립트는 마지막에 `✅ All versions match`를 출력합니다.
 
-3.  **GitHub 릴리스 생성**: [GitHub 릴리스 페이지](https://github.com/owasp-noir/noir/releases)에서 새 릴리스를 게시합니다. 게시하면 자동 워크플로가 돕니다. 바이너리가 먼저 빌드되고, 업로드가 끝나면 `.deb`, `.rpm`, `.apk`, AUR 패키지가 이어집니다. GHCR, Snapcraft, Homebrew tap, SBOM도 함께 처리됩니다.
+3.  **GitHub 릴리스 생성**: [GitHub 릴리스 페이지](https://github.com/owasp-noir/noir/releases)에서 새 릴리스를 게시합니다. 게시하면 자동 워크플로가 돕니다. 바이너리가 먼저 빌드되고, 업로드가 끝나면 `.deb`, `.rpm`, `.apk`, AUR 패키지가 이어집니다. GHCR, Snapcraft, Homebrew tap, SBOM도 함께 처리됩니다. npm은 바이너리 업로드가 끝난 뒤 게시됩니다. 워크플로가 각 바이너리의 SHA-256을 패키지에 고정하고, 패키지는 해시가 맞지 않는 다운로드를 설치하지 않습니다. `package.json` 버전이 릴리스 태그와 다르면 게시를 중단합니다. npm 게시 후에는 해당 릴리스의 바이너리를 다시 빌드하거나 교체하지 마세요. 그 버전의 npm 설치가 체크섬 검사에서 실패하므로, 대신 새 패치 릴리스를 만드세요.
 4.  **수동 릴리스**: 나머지 채널은 아래 수동 절차를 따릅니다.
 
 ## 수동 릴리스 지침

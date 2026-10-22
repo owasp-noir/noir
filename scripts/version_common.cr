@@ -1,3 +1,4 @@
+require "json"
 require "yaml"
 
 # Version file locations (shard.yml is the source of truth)
@@ -13,6 +14,7 @@ ACTION_README  = "github-action/README.md"
 RELEASE_DOC    = "docs/content/development/how_to_release/index.md"
 RELEASE_DOC_KO = "docs/content/development/how_to_release/index.ko.md"
 PKGBUILD_FILE  = "aur/PKGBUILD"
+NPM_PACKAGE    = "package.json"
 # Docs example pins that mirror the release version (missed by the old allowlist):
 # install binary names, SARIF driver sample, and the terminal SVGs on Running + landing.
 INSTALL_DOC    = "docs/content/get_started/installation/index.md"
@@ -92,6 +94,14 @@ rescue
   nil
 end
 
+# Extract version from package.json (npm wrapper; npm/install.js downloads the
+# release binary for this version, so it must match the GitHub release tag).
+def get_npm_package_version : String?
+  JSON.parse(File.read(NPM_PACKAGE))["version"].as_s
+rescue
+  nil
+end
+
 # Extract binary example version from an install doc (noir-vX.Y.Z-...).
 def get_install_doc_version(path : String) : String?
   match = File.read(path).match(/noir-v([\d.]+)-/)
@@ -129,6 +139,7 @@ def collect_versions : Array(Tuple(String, String, String?))
     {"docs/.../how_to_release/index.md", RELEASE_DOC, get_release_doc_version(RELEASE_DOC)},
     {"docs/.../how_to_release/index.ko.md", RELEASE_DOC_KO, get_release_doc_version(RELEASE_DOC_KO)},
     {"aur/PKGBUILD", PKGBUILD_FILE, get_pkgbuild_version},
+    {"package.json", NPM_PACKAGE, get_npm_package_version},
     {"docs/.../installation/index.md", INSTALL_DOC, get_install_doc_version(INSTALL_DOC)},
     {"docs/.../installation/index.ko.md", INSTALL_DOC_KO, get_install_doc_version(INSTALL_DOC_KO)},
     {"docs/.../sarif/index.md", SARIF_DOC, get_sarif_doc_version(SARIF_DOC)},
