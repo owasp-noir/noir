@@ -27,3 +27,6 @@ __pycache__/
 # Nix build result symlinks
 /result
 /result-*
+
+# Scratch output of scripts/ (agent_bench clones, benchmark fixtures)
+/tmp/
