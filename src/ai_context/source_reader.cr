@@ -214,7 +214,13 @@ module NoirAIContext
         else
           # `),` closes a list entry (`path('x', view),` in a Django
           # urlconf): the next line is the sibling route, not this one.
-          statement_done = !is_decorator && (stripped.ends_with?(";") || stripped.ends_with?(")") || stripped.ends_with?("),") || stripped.ends_with?(" do"))
+          # So does a line ending on a name or a literal, as a Rails/Phoenix
+          # route does (`get 'webfinger', to: 'webfinger#show', as: :webfinger`):
+          # read on, it took in the next route's `"/authorize_interaction"`.
+          # An attribute (`[HttpGet]`, `#[Route('/x')]`) also ends on `]` but,
+          # like a decorator, annotates the lines after it.
+          statement_done = !is_decorator && (stripped.ends_with?(";") || stripped.ends_with?(")") || stripped.ends_with?("),") || stripped.ends_with?(" do") ||
+                                             stripped.matches?(/[\w"!?]\z/) || (stripped.ends_with?("]") && !stripped.matches?(/\A#?\[/)))
           break if statement_done && paren_balance <= 0
         end
       end
