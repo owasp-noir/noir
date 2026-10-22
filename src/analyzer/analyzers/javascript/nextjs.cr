@@ -2,6 +2,7 @@ require "../../engines/javascript_engine"
 require "../../../miniparsers/js_callee_extractor"
 require "../../../miniparsers/js_route_extractor"
 require "../../../miniparsers/import_graph"
+require "../../../miniparsers/js_handler_resolver"
 require "../../../utils/top_level_split"
 
 module Analyzer::Javascript
@@ -52,6 +53,15 @@ module Analyzer::Javascript
     # handed a verb-keyed object serves exactly those methods.
     DEFAULT_EXPORT_CALL_OBJECT = /export\s+default\s+(?!(?:async|function|class)\b)[\w$.]+\s*\(\s*\{/
     VERB_MAP_KEY               = /\A(?:async\s+)?["']?(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)["']?\s*(?::|\(|\z)/
+
+    # `export default function handler(` / `export default async (req, res) =>`.
+    DEFAULT_EXPORT_FUNCTION  = /export\s+default\s+(?:async\s+)?(?:function\b\s*\*?\s*([\w$]+)?|(?:\([^)]*\)|[\w$]+)(?:\s*:\s*[^=]+?)?\s*=>)/
+    REEXPORT_DEFAULT         = /export\s*\{\s*(?:([\w$]+)\s+as\s+)?default\s*\}\s*from\s*['"`]([^'"`]+)['"`]/
+    DEFAULT_EXPORT           = /export\s+default\s+(?!(?:async|function|class)\b)/
+    WRAPPER_CALL             = /\A\s*(?!(?:async|function|new)\b)[\w$.]+\s*(?:<[^>()]*>)?\s*\(/
+    DEFAULT_KEY_OBJECT       = /\A\{\s*default\s*:\s*(.+?)\s*,?\s*\}\z/m
+    FUNCTION_DEFINITION_LINE = /\bfunction\b|=>|=\s*(?:async\s*)?\(/
+    DYNAMIC_IMPORT           = /\A(?:await\s+)?import\s*\(\s*['"`]([^'"`]+)['"`]\s*\)\z/
 
     def analyze
       result = [] of Endpoint
@@ -130,6 +140,7 @@ module Analyzer::Javascript
         logger.debug "Error reading file #{path}: #{e.message}"
         return
       end
+      return if Noir::JSRouteExtractor.trpc_next_mount?(path, content)
       sanitized = Noir::JSRouteExtractor.strip_js_comments(content)
 
       methods = detect_pages_router_methods(sanitized)
@@ -140,8 +151,10 @@ module Analyzer::Javascript
 
       methods.each do |method|
         endpoint = Endpoint.new(url, method)
-        body_info = extract_exported_method_body(sanitized, method) || default_body_info
+        handler = verb_export_handler(sanitized, path, method) || default_export_handler(sanitized, path, method)
+        body_info = extract_exported_method_body(sanitized, method) || default_body_info || same_file_body(sanitized, path, handler)
         endpoint.details = Details.new(PathInfo.new(path, body_info.try(&.[1]) || default_source_line))
+        endpoint.handler = handler
 
         extract_path_params(url, endpoint)
         extract_pages_router_params(sanitized, endpoint)
@@ -200,9 +213,15 @@ module Analyzer::Javascript
         endpoint = Endpoint.new(url, method)
         # Read from the blanked text: `export {\n  list as GET, // x\n}` hid
         # the alias, and the line fell back to 1.
+        handler = verb_export_handler(sanitized, path, method)
         method_body_info = extract_exported_method_body(sanitized, method)
-        endpoint.details = Details.new(PathInfo.new(path, method_body_info.try(&.[1]) || 1))
+        # A wrapped handler's own body misses the helpers it calls
+        # (`validateRequest(req)` reading `apiKey`), so params keep reading
+        # the whole file there; the line and callees are the handler's.
         param_source = method_body_info.try(&.[0]) || sanitized
+        method_body_info ||= same_file_body(sanitized, path, handler)
+        endpoint.details = Details.new(PathInfo.new(path, method_body_info.try(&.[1]) || 1))
+        endpoint.handler = handler
 
         extract_path_params(url, endpoint)
         extract_app_router_params(param_source, endpoint)
@@ -256,6 +275,7 @@ module Analyzer::Javascript
       endpoint = Endpoint.new(url, "POST")
       endpoint.kind = "server-action"
       endpoint.details = Details.new(PathInfo.new(path, param_body_info.try(&.[1]) || line_number_for_index(sanitized, match.begin(0) || 0)))
+      endpoint.handler = Handler.new(action_name, path, line_number_for_index(sanitized, match.begin(0) || 0))
 
       extract_server_action_params(args, body, endpoint)
       # The blanked body: a commented-out declaration of the same name no
@@ -288,6 +308,108 @@ module Analyzer::Javascript
 
       alias_match = content.match(/export\s+default\s+([A-Za-z_$][\w$]*)\s*;?/)
       extract_named_function_body(content, alias_match[1]) if alias_match
+    end
+
+    # The function serving `method` when the module exports the verb: the
+    # export itself (`export async function GET`), the local it aliases
+    # (`export { list as GET }`), or what the wrapper it is bound to wraps
+    # (`export const GET = withAuth(getHandler)`). Nil when no verb export.
+    private def verb_export_handler(content : String, path : String, method : String) : Handler?
+      if m = content.match(EXPORT_VERB_FUNCTION_RES[method]) || content.match(EXPORT_VERB_CONST_ARROW_RES[method])
+        return Handler.new(method, path, line_number_for_index(content, m.begin(0)))
+      end
+      if local = exported_alias_for_method(content, method)
+        line = line_number_for_index(content, content.index(EXPORT_VERB_BRACE_RES[method]) || 0)
+        return function_handler(local, content, path) || Handler.new(local, path, line)
+      end
+      if m = content.match(EXPORT_VERB_CONST_RES[method])
+        wrapped_handler(content, m.end(0), path, method, line_number_for_index(content, m.begin(0)))
+      end
+    end
+
+    # `export const GET = withAuth(getHandler)`: the wrapped function's body
+    # when it is declared in this file, for the line, params and callees.
+    private def same_file_body(content : String, path : String, handler : Handler?) : Tuple(String, Int32)?
+      extract_named_function_body(content, handler.name) if handler && handler.path == path
+    end
+
+    # The pages-router default export: a function declared in place, or the
+    # function it names through a wrapper call or, for a verb-keyed
+    # `export default wrapper({ GET: ... })`, through `method`'s value.
+    private def default_export_handler(content : String, path : String, method : String) : Handler?
+      if m = content.match(DEFAULT_EXPORT_FUNCTION)
+        return Handler.new(m[1]? || "default", path, line_number_for_index(content, m.begin(0)))
+      end
+      if m = content.match(REEXPORT_DEFAULT)
+        name = m[1]? || "default"
+        return Noir::JSHandlerResolver.resolve_module_export(m[2], name, path) ||
+          Handler.new(name, path, line_number_for_index(content, m.begin(0)))
+      end
+      m = content.match(DEFAULT_EXPORT) || return
+      line = line_number_for_index(content, m.begin(0))
+      if content.match(DEFAULT_EXPORT_CALL_OBJECT).try(&.begin(0)) == m.begin(0)
+        open = content.index('{', m.end(0)) || return
+        close = Noir::JSRouteExtractor.find_matching_brace(content, open) || return
+        Noir::TopLevelSplit.split(content[(open + 1)...close], ',', Noir::TopLevelSplit::Rules::JS_POSITIONAL_ARGS).each do |part|
+          key = part.match(VERB_MAP_KEY)
+          next unless key && key[1] == method
+          # `GET: wrap(h)`, shorthand `GET`; a method body `GET() {` is inline.
+          value = key[0].ends_with?(':') ? part[key.end(0)..] : (key[0].ends_with?('(') ? "" : key[1])
+          return resolved_or_export(unwrap_handler(value, content, path), "default", path, line)
+        end
+        return Handler.new("default", path, line)
+      end
+      wrapped_handler(content, m.end(0), path, "default", line)
+    end
+
+    # `export_name`'s value from `start`: a reference, or a call whose first
+    # argument (unwrapped a few levels) is one. Points at the export line
+    # when what it wraps is not a definition the scan can open.
+    private def wrapped_handler(content : String, start : Int32, path : String, export_name : String, line : Int32) : Handler
+      rest = content[start..]
+      value = if call = rest.match(WRAPPER_CALL)
+                close = Noir::JSRouteExtractor.find_matching_paren(rest, call.end(0) - 1)
+                # `withX(opts)(handler)`: the first call's argument is not the handler.
+                close && !rest[(close + 1)..].lstrip.starts_with?('(') ? rest[0..close] : ""
+              else
+                rest[/\A\s*[\w$.]+/]? || ""
+              end
+      resolved_or_export(unwrap_handler(value, content, path), export_name, path, line)
+    end
+
+    private def resolved_or_export(handler : Handler?, export_name : String, path : String, line : Int32) : Handler
+      handler || Handler.new(export_name, path, line)
+    end
+
+    # `reference` resolved to a definition that is a function: `NextAuth(
+    # authOptions)` wraps a config object, which serves nothing.
+    private def function_handler(reference : String, content : String, path : String) : Handler?
+      handler = Noir::JSHandlerResolver.resolve(reference, content, path) || return
+      def_path, def_line = handler.path, handler.line
+      return unless def_path && def_line
+      source = def_path == path ? content : (read_file_content(def_path) rescue return)
+      handler if source.lines[def_line - 1]?.try(&.matches?(FUNCTION_DEFINITION_LINE))
+    end
+
+    # `defaultResponder(handler)`, `Promise.resolve({ default: wrap(h) })`,
+    # `import("./_get")`: peel wrapper calls (first argument) and
+    # `{ default: x }` objects down to a reference or a dynamic import.
+    private def unwrap_handler(value : String, content : String, path : String) : Handler?
+      text = value.strip.chomp(';').strip
+      4.times do
+        if m = text.match(DYNAMIC_IMPORT)
+          return Noir::JSHandlerResolver.resolve_module_export(m[1], nil, path)
+        end
+        return function_handler(text, content, path) if text.matches?(Noir::JSHandlerResolver::REFERENCE_RE)
+        if m = text.match(DEFAULT_KEY_OBJECT)
+          text = m[1].strip
+          next
+        end
+        call = text.match(WRAPPER_CALL) || return
+        close = Noir::JSRouteExtractor.find_matching_paren(text, call.end(0) - 1) || return
+        text = Noir::TopLevelSplit.split(text[call.end(0)...close], ',', Noir::TopLevelSplit::Rules::JS_POSITIONAL_ARGS).first?.try(&.strip) || return
+      end
+      nil
     end
 
     private def extract_exported_method_body(content : String, method : String) : Tuple(String, Int32)?

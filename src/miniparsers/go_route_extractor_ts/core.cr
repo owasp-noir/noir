@@ -180,6 +180,9 @@ module Noir
       getter handler : String             # text of the handler argument (identifier or lambda snippet)
       getter line : Int32                 # 0-based line number of the call expression
       getter query_params : Array(String) # query-param constraints extracted from e.g. mux's `.Queries(...)`
+      # The file the route is registered in when that is not the walked
+      # source: a route helper declared in another file (see `RouteHelperIndex#external`).
+      property file : String? = nil
 
       def initialize(@router_name, @verb, @path, @raw_path, @handler, @line,
                      @query_params : Array(String) = [] of String,
