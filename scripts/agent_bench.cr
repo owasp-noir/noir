@@ -58,9 +58,11 @@ JSON.parse(File.read(CASES))["repos"].as_a.each do |repo|
   cases.each do |c|
     row = trace(report, c["request"].as_s)
     endpoint = row.try(&.["endpoint"]?)
-    # A catch-all (`/*unmatched_route`, an SPA fallback) is not a route match.
-    matched = endpoint && row.try(&.["matched_by"]?.try(&.as_s)) != "wildcard" ? endpoint : nil
     expected = c["route"].as_s?
+    # A catch-all (`/*unmatched_route`, an SPA fallback) is not a route
+    # match, unless the key names that wildcard route (`/contents/*`).
+    wildcard = row.try(&.["matched_by"]?.try(&.as_s)) == "wildcard"
+    matched = endpoint && (!wildcard || normalize_route(endpoint["url"].as_s) == normalize_route(expected)) ? endpoint : nil
 
     r = normalize_route(matched.try(&.["url"].as_s)) == normalize_route(expected)
     h = a = true
