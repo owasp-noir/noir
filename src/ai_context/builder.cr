@@ -1914,10 +1914,19 @@ module NoirAIContext
       # always need rate limiting. Also accepts source-scanned
       # credential_input signals (analyzer missed the param) so
       # destructured login handlers still light up.
+      #
+      # Only a secret the route checks counts (body / query / form /
+      # path: password, reset token, …). An `Authorization` header or
+      # session cookie is the caller presenting an already-issued
+      # credential to the auth layer, which every guarded route
+      # inherits, so it says nothing about brute force on this route.
       credential_param = endpoint.params.any? do |p|
-        PatternMatcher.matches_any?(p.name, CREDENTIAL_INPUT_NAME_PATTERNS)
+        !presented_credential_slot?(p.param_type) &&
+          PatternMatcher.matches_any?(p.name, CREDENTIAL_INPUT_NAME_PATTERNS)
       end
-      credential_signal = context.signals.any? { |s| s.kind == "credential_input" }
+      credential_signal = context.signals.any? do |s|
+        s.kind == "credential_input" && !presented_credential_slot?(s.name.split('.', 2).first)
+      end
       if (credential_param || credential_signal) && !has_rate_limit
         context.push_signal(AIContextEntry.new(
           "rate_limit_absence",
@@ -2053,6 +2062,10 @@ module NoirAIContext
     # per parameter per endpoint, and the answer never changes.
     IDENTIFIER_INPUT_NAME_PATTERNS = PARAM_PATTERNS.find! { |pattern| pattern.kind == "identifier_input" }.name_patterns
     CREDENTIAL_INPUT_NAME_PATTERNS = PARAM_PATTERNS.find! { |pattern| pattern.kind == "credential_input" }.name_patterns
+
+    private def presented_credential_slot?(param_type : String) : Bool
+      param_type == "header" || param_type == "cookie"
+    end
 
     private def identifier_like?(name : String) : Bool
       return true if PatternMatcher.matches_any?(name, IDENTIFIER_INPUT_NAME_PATTERNS)
