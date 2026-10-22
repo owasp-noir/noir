@@ -16,6 +16,17 @@ over grepping the source for route declarations.
 | Which endpoints are declared in, handled by, or call into `src/users.go`? | `noir reach src/users.go[:LINE]` |
 | Which endpoints lack an auth guard and reach a sink? Which read a cookie? | `noir query --no-guard --sink any` |
 
+## When it pays off
+
+Measured on OSS apps (#3135): when the routes sit in one or two files (a
+`routes.rb`, a `server.ts`), grepping the source answers just as fast.
+Noir earns its keep when routes and auth are spread out: blueprints and
+namespaces that add mount prefixes, decorators on hundreds of controllers,
+auth inherited from base classes or global guards. There it answered
+access-log triage with about a third fewer tool calls at the same accuracy.
+Its route and `handler` matches are the reliable part; spend verification
+reads on auth verdicts and on "none found" answers.
+
 ## The loop
 
 Scan once, ask many times with `--from`:
