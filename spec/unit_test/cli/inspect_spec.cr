@@ -106,6 +106,27 @@ describe Noir::CLI::Inspect do
       Noir::CLI::Inspect.trace(typed, "GET", "/g/5a6b7c8d9e0f4a1b8c2d3e4f5a6b7c8d").size.should eq(1)
     end
 
+    it "reads path-to-regexp optional segments and regex constraints" do
+      routes = [
+        endpoint("GET", "/posts/:id?"),
+        endpoint("GET", "/files/:name(\\d+)"),
+        endpoint("GET", "/hono/:id{[0-9]+}"),
+        endpoint("GET", "/v5/posts{/:id}"),
+        endpoint("GET", "/tree/:path+"),
+      ]
+      trace = ->(path : String) { Noir::CLI::Inspect.trace(routes, "GET", path).map(&.endpoint.url) }
+      trace.call("/posts").should eq(["/posts/:id?"])
+      trace.call("/posts/5").should eq(["/posts/:id?"])
+      trace.call("/posts/5/x").should be_empty
+      trace.call("/files/42").should eq(["/files/:name(\\d+)"])
+      trace.call("/files/abc").should be_empty
+      trace.call("/hono/7").should eq(["/hono/:id{[0-9]+}"])
+      trace.call("/hono/seven").should be_empty
+      trace.call("/v5/posts").should eq(["/v5/posts{/:id}"])
+      trace.call("/v5/posts/9").should eq(["/v5/posts{/:id}"])
+      trace.call("/tree/a/b").should eq(["/tree/:path+"])
+    end
+
     it "holds a chi / gorilla regex constraint to its regex" do
       routes = [
         endpoint("GET", "/{owner}/{repo}/{type:issues}/{index}"),
