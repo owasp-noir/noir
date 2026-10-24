@@ -139,6 +139,39 @@ describe "JsMiscAuthTagger" do
     endpoint.tags.empty?.should be_true
   end
 
+  describe "Koa middleware read at its definition" do
+    koa_base = File.expand_path("../../../functional_test/fixtures/javascript/koa_mount_rpc", __DIR__)
+    documents = "#{koa_base}/server/api/documents/documents.ts"
+
+    # documents.ts: line 7 `auth({ optional: true })`, 16 `auth()`, 26 no
+    # middleware. `auth` is imported through a tsconfig `paths` alias; its
+    # refusal (`throw AuthenticationError`) sits in a helper whose signature
+    # wraps over a `Promise<{ … }>` return type.
+    tags_at = ->(line : Int32) do
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(koa_base)
+      details = Details.new(PathInfo.new(documents, line))
+      details.technology = "js_koa"
+      endpoint = Endpoint.new("/api/x", "POST", [] of Param, details)
+      JsMiscAuthTagger.new(noir_options).perform([endpoint])
+      endpoint.tags
+    end
+
+    it "counts a middleware whose definition refuses the caller as a guard" do
+      tags = tags_at.call(16)
+      tags.size.should eq(1)
+      tags[0].description.should eq("Protected by Koa auth middleware (throw AuthenticationError)")
+    end
+
+    it "does not count it when an option the definition branches on lets the caller through" do
+      tags_at.call(7).should be_empty
+    end
+
+    it "reports nothing for a route without middleware" do
+      tags_at.call(26).should be_empty
+    end
+  end
+
   it "returns correct target_techs" do
     JsMiscAuthTagger.target_techs.should contain("js_fastify")
     JsMiscAuthTagger.target_techs.should contain("js_koa")

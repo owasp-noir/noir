@@ -50,6 +50,7 @@ module Noir::JSHandlerResolver
     @@lock.synchronize do
       @@imports.clear
       @@definitions.clear
+      @@tsconfig_paths.clear
     end
   end
 
@@ -108,16 +109,68 @@ module Noir::JSHandlerResolver
     imports
   end
 
-  # Relative specifiers only: a bare package name is not in the scan.
+  # Relative specifiers, and tsconfig `paths` aliases that map onto one: a
+  # bare package name is not in the scan.
   private def resolve_specifier(from_file : String, specifier : String) : String?
-    return unless specifier.starts_with?('.')
     boundary = CodeLocator.instance.scan_base_paths.find { |base| from_file.starts_with?(base) }
+    unless specifier.starts_with?('.')
+      target = tsconfig_alias_target(from_file, specifier, boundary) || return
+      relative = Path[target].relative_to(File.dirname(Noir::PathScope.expand(from_file))).to_posix.to_s
+      specifier = relative.starts_with?("..") ? relative : "./#{relative}"
+    end
     resolved = Noir::ImportGraph.resolve_relative_import(from_file, specifier, boundary: boundary) || return
     # ImportGraph expands to an absolute path; report it the way the route's
     # own path is reported (relative when the scan base was), so `reach`
     # matches both the same way.
     return resolved if Path[from_file].absolute?
     Path[resolved].relative_to?(Dir.current).try(&.to_posix.to_s) || resolved
+  end
+
+  TSCONFIG_PATHS_RE    = /"paths"\s*:\s*\{([^}]*)\}/m
+  TSCONFIG_ENTRY_RE    = /"([^"\s]+)"\s*:\s*\[\s*"([^"\s]+)"/
+  TSCONFIG_BASE_URL_RE = /"baseUrl"\s*:\s*"([^"]+)"/
+
+  # pattern -> first target, resolved against baseUrl (or the tsconfig's dir)
+  @@tsconfig_paths = Hash(String, Array(Tuple(String, String))).new
+
+  # The absolute path `specifier` names through `compilerOptions.paths` of
+  # the nearest tsconfig.json at or above `from_file` that declares any
+  # (`"@server/*": ["./server/*"]`), without leaving the scan base.
+  # ponytail: first target only, `extends` not followed.
+  private def tsconfig_alias_target(from_file : String, specifier : String, boundary : String?) : String?
+    dir = File.dirname(Noir::PathScope.expand(from_file))
+    stop = boundary.try { |b| Noir::PathScope.expand(b) }
+    loop do
+      aliases = tsconfig_paths(File.join(dir, "tsconfig.json"))
+      unless aliases.empty?
+        aliases.each do |pattern, target|
+          if pattern.ends_with?('*') && target.ends_with?('*')
+            stem = pattern.rchop('*')
+            return target.rchop('*') + specifier.lchop(stem) if specifier.starts_with?(stem)
+          elsif pattern == specifier
+            return target
+          end
+        end
+        return
+      end
+      parent = File.dirname(dir)
+      break if parent == dir || (stop && !parent.starts_with?(stop))
+      dir = parent
+    end
+    nil
+  end
+
+  private def tsconfig_paths(tsconfig : String) : Array(Tuple(String, String))
+    cached = @@lock.synchronize { @@tsconfig_paths[tsconfig]? }
+    return cached if cached
+    aliases = [] of Tuple(String, String)
+    if File.file?(tsconfig) && (text = TextFile.read(tsconfig) rescue nil) && (block = text.match(TSCONFIG_PATHS_RE))
+      base = File.expand_path(text.match(TSCONFIG_BASE_URL_RE).try(&.[1]) || ".", File.dirname(tsconfig))
+      block[1].scan(TSCONFIG_ENTRY_RE) { |m| aliases << {m[1], File.expand_path(m[2], base)} }
+      aliases.sort_by! { |pattern, _| -pattern.size } # TypeScript takes the longest matching prefix
+    end
+    @@lock.synchronize { @@tsconfig_paths[tsconfig] = aliases }
+    aliases
   end
 
   # 1-based line of `name`'s definition in `path`, by the shapes a handler
