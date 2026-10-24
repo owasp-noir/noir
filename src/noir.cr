@@ -6,6 +6,7 @@ module Noir
 end
 
 require "./cli/router"
+require "./ext/macos_ca"
 
 # Crystal 1.22 makes STDOUT/STDERR `exit 141` on a broken pipe before any
 # rescue runs. Keep handling it ourselves so `noir ... | head` still exits 0
