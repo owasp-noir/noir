@@ -14,7 +14,7 @@ require "./import_graph"
 module Noir::JSHandlerResolver
   extend self
 
-  REFERENCE_RE = /\A([A-Za-z_$][\w$]*)(?:\s*\.\s*([A-Za-z_$][\w$]*))?\s*(?:\(\s*\))?\z/
+  REFERENCE_RE = /\A([A-Za-z_$][\w$]*)((?:\s*\.\s*[A-Za-z_$][\w$]*)*)\s*(?:\(\s*\))?\z/
 
   # `utils.asyncHandler(login())`, `wrap(ctrl.show)`: the handler is the
   # argument, the wrapper only catches its rejection. Only names that are
@@ -34,7 +34,7 @@ module Noir::JSHandlerResolver
   IMPORT_DEFAULT_RE = /\bimport\s+([A-Za-z_$][\w$]*)\s*(?:,\s*\{[^}]*\}\s*)?from\s*['"]([^'"]+)['"]/
   IMPORT_NAMED_RE   = /\bimport\s*(?:[A-Za-z_$][\w$]*\s*,\s*)?\{([^}]*)\}\s*from\s*['"]([^'"]+)['"]/
   IMPORT_STAR_RE    = /\bimport\s*\*\s*as\s+([A-Za-z_$][\w$]*)\s*from\s*['"]([^'"]+)['"]/
-  REQUIRE_RE        = /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*require\s*\(\s*['"]([^'"]+)['"]\s*\)/
+  REQUIRE_RE        = /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*require\s*\(\s*['"]([^'"]+)['"]\s*\)(?:\s*\.\s*([A-Za-z_$][\w$]*))?/
   REQUIRE_NAMED_RE  = /\b(?:const|let|var)\s*\{([^}]*)\}\s*=\s*require\s*\(\s*['"]([^'"]+)['"]\s*\)/
 
   # name -> {specifier, exported name or nil for default/namespace}
@@ -51,6 +51,7 @@ module Noir::JSHandlerResolver
       @@imports.clear
       @@definitions.clear
       @@tsconfig_paths.clear
+      @@member_modules.clear
     end
   end
 
@@ -62,11 +63,21 @@ module Noir::JSHandlerResolver
       text = wrapped[1].strip
     end
     return unless m = text.match(REFERENCE_RE)
-    base, member = m[1], m[2]?
+    base = m[1]
+    members = m[2].split('.').map(&.strip).reject(&.empty?)
+    member = members.last?
     return if MIDDLEWARE_FACTORIES.includes?(base)
 
     if spec = imports_of(content, file_path)[base]?
       target = resolve_specifier(file_path, spec[0]) || return Handler.new(text)
+      # `auth.authorize.check`: every member but the last names a module
+      # (`get authorize() { return require('./authorize') }`).
+      if members.size > 1
+        hops = members[0...-1]
+        spec[1].try { |exported| hops.unshift(exported) }
+        hops.each { |hop| target = member_module(target, hop) || return }
+        return Handler.new(text, target, definition_line(target, members.last))
+      end
       # `import users from './users'; users.create` → `create` in ./users;
       # `import { login } from './login'` → the exported `login`.
       wanted = member || spec[1] || base
@@ -76,6 +87,27 @@ module Noir::JSHandlerResolver
     if line = definition_line(file_path, base, content)
       Handler.new(text, file_path, line)
     end
+  end
+
+  @@member_modules = Hash(Tuple(String, String), String?).new
+
+  # The module `file` exposes as its member `name`: a lazy getter or a
+  # property that `require`s it, `exports.name = require(…)`, or a whole
+  # module imported under that name (`const session = require('./session')`
+  # exported as `{ session }`). Nil when the member is not a module.
+  private def member_module(file : String, name : String) : String?
+    key = {file, name}
+    found, cached = @@lock.synchronize { {@@member_modules.has_key?(key), @@member_modules[key]?} }
+    return cached if found
+    target = (TextFile.read(file) rescue nil).try do |text|
+      e = Regex.escape(name)
+      re = /\bget\s+#{e}\s*\(\s*\)\s*\{\s*return\s+require\s*\(\s*['"]([^'"]+)['"]\s*\)\s*;?\s*\}|(?:^|[{,])\s*#{e}\s*:\s*require\s*\(\s*['"]([^'"]+)['"]\s*\)|\bexports\.#{e}\s*=\s*require\s*\(\s*['"]([^'"]+)['"]\s*\)/m
+      spec = text.match(re).try { |mm| mm[1]? || mm[2]? || mm[3]? }
+      spec ||= imports_of(text, file)[name]?.try { |imp| imp[0] unless imp[1] }
+      spec.try { |sp| resolve_specifier(file, sp) }
+    end
+    @@lock.synchronize { @@member_modules[key] = target }
+    target
   end
 
   # `await import("./x.handler")` in a handler body: `name` as exported by
@@ -93,7 +125,8 @@ module Noir::JSHandlerResolver
     imports = Imports.new
     content.scan(IMPORT_DEFAULT_RE) { |m| imports[m[1]] = {m[2], nil} }
     content.scan(IMPORT_STAR_RE) { |m| imports[m[1]] = {m[2], nil} }
-    content.scan(REQUIRE_RE) { |m| imports[m[1]] = {m[2], nil} }
+    # `require('./m').foo` binds the module's `foo`, as `{ foo } = require` does.
+    content.scan(REQUIRE_RE) { |m| imports[m[1]] = {m[2], m[3]?.try { |prop| prop == "default" ? nil : prop }} }
     {IMPORT_NAMED_RE, REQUIRE_NAMED_RE}.each do |re|
       content.scan(re) do |m|
         m[1].split(',').each do |entry|
@@ -192,7 +225,7 @@ module Noir::JSHandlerResolver
       /^[ \t]*(?:export\s+)?(?:const|let|var)\s+#{escaped}\s*[:=]/m,
       /^[ \t]*(?:export\s+)?class\s+#{escaped}\b/m,
       /^[ \t]*(?:export\s+)?(?:async\s+)?#{escaped}\s*\([^)]*\)\s*(?::[^{]*)?\{/m,
-      /^[ \t]*#{escaped}\s*:\s*(?:async\s+)?(?:function\b|\()/m,
+      /^[ \t]*#{escaped}\s*:\s*(?:async\s+)?(?:function\b|\(|\[)/m,
       /^[ \t]*(?:module\.)?exports(?:\.#{escaped})?\s*=|^[ \t]*export\s+default\b/m,
     ]
     patterns.each do |re|

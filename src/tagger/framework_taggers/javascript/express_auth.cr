@@ -40,7 +40,7 @@ class ExpressAuthTagger < FrameworkTagger
   # deliberately absent — a function that verifies a token and then calls
   # `next()` unconditionally (juice-shop's `updateAuthenticatedUsers`) is
   # not a guard, and it is `app.use()`d over every route.
-  REFUSING_DEFINITION = /\bexpress[jJ]wt\s*\(|\bpassport\.authenticate\s*\(|(?:\b\w+\.)?(?:status|sendStatus|send)\s*\(\s*40[13]\s*\)?|\bnext\s*\(\s*(?:new\s+)?\w*(?:Unauthori[sz]ed|Forbidden)\w*|\bcreateError\s*\(\s*40[13]\b|\bnext\s*\(\s*\{[^}]*\b40[13]\b/
+  REFUSING_DEFINITION = /\bexpress[jJ]wt\s*\(|\bpassport\.authenticate\s*\(|(?:\b\w+\.)?(?:status|sendStatus|send)\s*\(\s*40[13]\s*\)?|\bnext\s*\(\s*(?:new\s+)?(?:[\w$]+\.)*\w*(?:Unauthori[sz]ed|Forbidden|NoPermission|PermissionDenied)\w*|\bcreateError\s*\(\s*40[13]\b|\bnext\s*\(\s*\{[^}]*\b40[13]\b/
 
   # `(err, req, res, next)`: an error handler answers 401 *for* a guard;
   # it is not one.
@@ -210,19 +210,80 @@ class ExpressAuthTagger < FrameworkTagger
   # the marker there that lets it refuse a request; nil for an inline
   # closure, a package import, a body that only decodes and continues, or
   # — in the handler position — one that serves the request itself.
-  private def refusing_definition(arg : String, file : String, handler_position : Bool) : {String, String}?
+  private def refusing_definition(arg : String, file : String, handler_position : Bool, depth : Int32 = 0) : {String, String}?
     content = read_file(file) || return
     handler = Noir::JSHandlerResolver.resolve(arg, content, file) || return
     path, line = handler.path, handler.line
     return if path.nil? || line.nil?
-    body = definition_extent(read_file_lines(path) || return, line - 1)
+    lines = read_file_lines(path) || return
+    if elements = middleware_array(lines, line - 1)
+      return if depth >= MAX_ARRAY_DEPTH
+      elements.each do |element|
+        found = refusing_definition(element, path, false, depth + 1)
+        return {"#{handler.name.gsub(/\s+/, "")} > #{found[0]}", found[1]} if found
+      end
+      return
+    end
+    body = definition_extent(lines, line - 1)
     return if body.first?.try(&.matches?(ERROR_HANDLER_SIGNATURE))
     code = code_only(body.join("\n"))
-    evidence = code.match(REFUSING_DEFINITION) || return
+    evidence = anonymous_refusal(code) || return
     return if handler_position && code.gsub(REFUSING_DEFINITION, "").matches?(HANDLER_RESPONSE)
-    {handler.name.gsub(/\s+/, ""), evidence[0].gsub(/\s+/, "").chomp('(')}
+    {handler.name.gsub(/\s+/, ""), evidence.gsub(/\bnew\s+/, "new ").gsub(/(?<!\bnew)\s+/, "").chomp('(')}
   rescue
     nil
+  end
+
+  MAX_ARRAY_DEPTH = 4
+
+  # `authAdminApi = [authenticate, authorize, cors]`: Express flattens an
+  # array of handlers into the chain, so each element is a middleware of the
+  # route. Nil unless the definition at `idx` is an array literal.
+  private def middleware_array(lines : Array(String), idx : Int32) : Array(String)?
+    return if idx < 0 || idx >= lines.size
+    head = lines[idx].match(/\A[^=:(]*(?:=|:)\s*\[/) || return
+    text = lines[idx...Math.min(lines.size, idx + MAX_DEFINITION_LINES)].join("\n")
+    open = head.end(0) - 1
+    close = Noir::JSLiteralScanner.find_matching_bracket(text, open) || return
+    Noir::TopLevelSplit.split(code_only(text[open + 1...close]), ',', Noir::TopLevelSplit::Rules::JS_POSITIONAL_ARGS)
+  end
+
+  # `if (!req.headers.authorization) { return next(); }`: a caller without
+  # the credential is let through before anything can refuse it.
+  ANONYMOUS_PASS_THROUGH = /\bif\s*\(\s*!\s*req\.[^)]*\)\s*\{?[^{}]*?\breturn\s+next\s*\(\s*\)/
+  # `if (req.member && req.member.banned)`: the refusal needs something
+  # present first, which an anonymous caller does not have.
+  PRESENCE_CONJUNCTION = /\A\s*[\w$.?]+\s*&&/
+
+  # The first refusal in `code` that an anonymous caller can reach: not after
+  # a pass-through for a missing credential, nor inside an `if` that first
+  # requires something to be present.
+  private def anonymous_refusal(code : String) : String?
+    code.scan(REFUSING_DEFINITION) do |m|
+      at = m.begin(0)
+      return if code[0...at].matches?(ANONYMOUS_PASS_THROUGH)
+      next if presence_gated?(code, at)
+      return m[0]
+    end
+    nil
+  end
+
+  private def presence_gated?(code : String, at : Int32) : Bool
+    head = code[0...at]
+    if_at = head.rindex(/\bif\s*\(/) || return false
+    open = code.index('(', if_at) || return false
+    close = Noir::JSLiteralScanner.find_matching_paren(code, open) || return false
+    return false if close >= at
+    between = code[close + 1...at]
+    # The refusal belongs to this `if` only while its block (or single
+    # statement) is still open; an `else` after it is the absent case.
+    inside = if brace = between.index('{')
+               between[0...brace].blank? &&
+                 (Noir::JSLiteralScanner.find_matching_brace(code, close + 1 + brace) || code.size) > at
+             else
+               !between.includes?(';') && !between.includes?('}')
+             end
+    inside && code[open + 1...close].matches?(PRESENCE_CONJUNCTION)
   end
 
   # The lines of the definition starting at `idx`: a one-line arrow
