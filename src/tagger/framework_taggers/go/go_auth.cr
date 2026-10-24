@@ -607,8 +607,153 @@ class GoAuthTagger < FrameworkTagger
       end
     end
 
+    handler_guard_clause(endpoint).try { |tag| endpoint.add_tag(tag) }
+
     # Phase 3: Check group-level middleware scope
     check_middleware_scopes(endpoint).try { |tag| endpoint.add_tag(tag) }
+  end
+
+  # `if <init>; <cond> {` on one line.
+  GUARD_IF = /\Aif\s+(?:([^;{]*);\s*)?(.+?)\s*\{\z/
+
+  # The call a guard condition makes: `s.Abort(c)`, `!authorized(c)`, and
+  # the chained `Auth(c, x).Abort(c)` (head call in groups 1-2).
+  GUARD_CALL         = /\A!?\s*(?:(\w+)\s*\.\s*)?(\w+)\s*\([^()]*\)\z/
+  CHAINED_GUARD_CALL = /\A!?\s*(?:(\w+)\s*\.\s*)?(\w+)\s*\(.*\)\s*\.\s*(\w+)\s*\([^()]*\)\z/
+
+  # `name := F(`, `name, err := pkg.F(`, `name = F(`: the call that binds a
+  # guard's receiver variable.
+  CALL_BINDING = /\A\s*(\w+)\s*(?:,\s*\w+\s*)*:?=\s*(?:(\w+)\s*\.\s*)?(\w+)\s*\(/
+
+  # A method head's receiver type: `func (m *Session) Abort(` -> `Session`.
+  METHOD_RECEIVER = /\Afunc\s*\(\s*(?:\w+\s+)?\*?\s*(\w+)/
+
+  # A guard clause at the top level of the endpoint's handler body:
+  # `if <call> {` + `return` + `}` where the called function's definition
+  # refuses the request (401/403 or a login redirect, see `body_verdict`).
+  # The call is a function (`authorized(c)`, `pkg.Check(c)`) or a method on
+  # a value the handler gets from a call (`s := Auth(c, ...)` then
+  # `s.Abort(c)`, or `Auth(c, ...).Abort(c)`); the method is found through
+  # that call's declared result type. Body statements that refuse inline are
+  # not read: a login handler's `401` on a bad password is not a guard.
+  private def handler_guard_clause(endpoint : Endpoint) : Tag?
+    handler = endpoint.handler || return
+    path = handler.path || return
+    line = handler.line || return
+    lines = read_file_lines(path) || return
+    start = line - 1
+    return if start < 0 || start >= lines.size
+    head = code_only(lines[start])
+    func_at = head.index("func") || return
+    dir = File.dirname(path)
+    depth = 0
+    opened = false
+    idx = start
+    while idx < lines.size
+      code = idx == start ? head[func_at..] : code_only(lines[idx])
+      stripped = code.strip
+      if opened && depth == 1 && (m = stripped.match(GUARD_IF)) &&
+         lines[idx + 1]?.try(&.strip) == "return" && lines[idx + 2]?.try(&.strip) == "}"
+        if tag = guard_call_tag(m[2].strip, m[1]?, lines, start, idx, path, dir)
+          return tag
+        end
+      end
+      code.each_char do |char|
+        if char == '{'
+          depth += 1
+          opened = true
+        elsif char == '}'
+          depth -= 1
+        end
+      end
+      break if opened && depth <= 0
+      idx += 1
+    end
+  end
+
+  private def guard_call_tag(condition : String, init : String?, lines : Array(String), start : Int32, idx : Int32,
+                             path : String, dir : String) : Tag?
+    bodies = [] of Noir::GoCalleeExtractor::FunctionBody
+    shown = condition.lchop('!').strip
+    if chained = condition.match(CHAINED_GUARD_CALL)
+      bodies = methods_on_result(chained[1]?, chained[2], chained[3], dir)
+    elsif call = condition.match(GUARD_CALL)
+      qualifier = call[1]?
+      name = call[2]
+      if qualifier.nil?
+        @bodies.functions_for(dir)[name]?.try { |body| bodies << body }
+      elsif file_imports(path).includes?(qualifier)
+        @dirs_by_base[qualifier]?.try &.each do |pkg|
+          @bodies.functions_for(pkg)[name]?.try { |body| bodies << body }
+        end
+      else
+        binding = init.try(&.match(CALL_BINDING)).try { |b| b if b[1] == qualifier }
+        (idx - 1).downto(start + 1) do |row|
+          break if binding
+          binding = code_only(lines[row]).match(CALL_BINDING).try { |b| b if b[1] == qualifier }
+        end
+        bodies = methods_on_result(binding[2]?, binding[3], name, dir) if binding
+      end
+    end
+    verdict = bodies.max_of? { |body| body_verdict(body, nil) } || Guard::None
+    case verdict
+    when Guard::Authn
+      Tag.new("auth", "Protected by Go guard clause #{shown} (verified from its body: refuses anonymous callers)", "go_auth")
+    when Guard::Authz
+      Tag.new("authz", "Protected by Go guard clause #{shown} (verified from its body: permission check replies 403)", "go_auth")
+    end
+  end
+
+  # The `method` definitions on the type the function `qualifier.name`
+  # (resolved from `dir`) declares as its first result.
+  private def methods_on_result(qualifier : String?, name : String, method : String, dir : String) : Array(Noir::GoCalleeExtractor::FunctionBody)
+    functions = [] of Noir::GoCalleeExtractor::FunctionBody
+    if qualifier
+      @dirs_by_base[qualifier]?.try &.each { |pkg| @bodies.functions_for(pkg)[name]?.try { |body| functions << body } }
+    else
+      @bodies.functions_for(dir)[name]?.try { |body| functions << body }
+    end
+    functions.flat_map do |function|
+      result = result_type(function.source)
+      next [] of Noir::GoCalleeExtractor::FunctionBody unless result
+      type_qualifier, type_name = result
+      type_dirs = type_qualifier ? (@dirs_by_base[type_qualifier]? || [] of String) : [File.dirname(function.file_path)]
+      type_dirs.flat_map do |type_dir|
+        (@bodies.methods_for(type_dir)[method]? || [] of Noir::GoCalleeExtractor::FunctionBody).select do |body|
+          body.source.match(METHOD_RECEIVER).try(&.[1]) == type_name
+        end
+      end
+    end
+  end
+
+  # The first result type of the function whose source starts `source`:
+  # `func Auth(c *gin.Context, ...) *entity.Session {` -> {"entity",
+  # "Session"}, `func f() (s *Session, err error) {` -> {nil, "Session"}.
+  private def result_type(source : String) : Tuple(String?, String)?
+    head = source[0, source.index('{') || source.size]
+    depth = 0
+    seen = 0
+    rest = nil
+    head.each_char_with_index do |char, pos|
+      if char == '('
+        depth += 1
+      elsif char == ')'
+        depth -= 1
+        if depth.zero?
+          seen += 1
+          # A method has its receiver list before the parameter list.
+          if seen == (head.lstrip.lchop("func").lstrip.starts_with?('(') ? 2 : 1)
+            rest = head[pos + 1..]
+            break
+          end
+        end
+      end
+    end
+    first = rest.try(&.strip.lchop('(').delete(')').split(',').first?.try(&.strip.split(/\s+/).last?)) || return
+    type = first.lstrip('*')
+    return unless type.matches?(/\A(?:\w+\.)?\w+\z/)
+    qualifier, _, name = type.rpartition('.')
+    {qualifier.empty? ? nil : qualifier, name}
   end
 
   # Record a group-level middleware scope. `prefix == "/"` arises two ways:
