@@ -24,7 +24,7 @@ module Analyzer::Rust
     alias UtoipaNestEdge = Tuple(UtoipaScopedKey, String)
     alias NestScopedKey = Tuple(String, String, String)
     alias NestEdge = Tuple(NestScopedKey, String)
-    alias HandlerContext = NamedTuple(params: Array(Param), callees: Array(Noir::RustCalleeExtractor::Entry))
+    alias HandlerContext = NamedTuple(params: Array(Param), callees: Array(Noir::RustCalleeExtractor::Entry), handler: Handler?)
     alias ByteRange = Tuple(Int32, Int32)
 
     # Precompiled union for build_cross_nest_index's per-file evidence gate,
@@ -142,7 +142,7 @@ module Analyzer::Rust
               extract_path_params(path_str, endpoint)
 
               if handler_name
-                attach_handler_context(endpoint, function_index, source, path, handler_name, include_callee, handler_context_cache)
+                endpoint.handler = attach_handler_context(endpoint, function_index, source, path, handler_name, include_callee, handler_context_cache)
               end
 
               endpoints << endpoint
@@ -187,7 +187,7 @@ module Analyzer::Rust
                 extract_path_params(path_str, endpoint)
 
                 if handler_name
-                  attach_handler_context(endpoint, function_index, source, path, handler_name, include_callee, handler_context_cache)
+                  endpoint.handler = attach_handler_context(endpoint, function_index, source, path, handler_name, include_callee, handler_context_cache)
                 end
 
                 endpoints << endpoint
@@ -1016,18 +1016,16 @@ module Analyzer::Rust
                                        path : String,
                                        handler_name : String,
                                        include_callee : Bool,
-                                       handler_context_cache : Hash(String, HandlerContext))
+                                       handler_context_cache : Hash(String, HandlerContext)) : Handler?
       cache_key = "#{path}\0#{handler_name}\0#{include_callee}"
       if context = handler_context_cache[cache_key]?
-        attach_cached_handler_context(endpoint, context)
-        return
+        return attach_cached_handler_context(endpoint, context)
       end
 
       if function = function_for_handler(index, handler_name)
         context = handler_context_for_function(function, source, path, include_callee)
         handler_context_cache[cache_key] = context
-        attach_cached_handler_context(endpoint, context)
-        return
+        return attach_cached_handler_context(endpoint, context)
       end
 
       attach_external_handler_context(endpoint, handler_name, path, include_callee, handler_context_cache)
@@ -1056,21 +1054,23 @@ module Analyzer::Rust
       endpoint = Endpoint.new("", "GET")
       extract_function_params(function, source, endpoint)
       callees = include_callee ? callee_entries_for_function(function, source, path) : [] of Noir::RustCalleeExtractor::Entry
-      {params: endpoint.params, callees: callees}
+      {params: endpoint.params, callees: callees, handler: rust_handler(function, source, path)}
     end
 
-    private def attach_cached_handler_context(endpoint : Endpoint, context : HandlerContext)
+    # Returns the context's handler; `Endpoint` is a struct, so the caller assigns it.
+    private def attach_cached_handler_context(endpoint : Endpoint, context : HandlerContext) : Handler?
       context[:params].each do |param|
         endpoint.push_param(param)
       end
       attach_rust_callees(endpoint, context[:callees]) unless context[:callees].empty?
+      context[:handler]
     end
 
     private def attach_external_handler_context(endpoint : Endpoint,
                                                 handler_name : String,
                                                 current_path : String,
                                                 include_callee : Bool,
-                                                handler_context_cache : Hash(String, HandlerContext))
+                                                handler_context_cache : Hash(String, HandlerContext)) : Handler?
       parts = handler_name.split("::").reject(&.empty?)
       return if parts.size < 2
 
@@ -1082,16 +1082,15 @@ module Analyzer::Rust
 
         cache_key = "#{candidate}\0#{function_name}\0#{include_callee}"
         if context = handler_context_cache[cache_key]?
-          attach_cached_handler_context(endpoint, context)
-          return
+          return attach_cached_handler_context(endpoint, context)
         end
 
         if context = cached_external_handler_context(candidate, function_name, include_callee)
           handler_context_cache[cache_key] = context
-          attach_cached_handler_context(endpoint, context)
-          return
+          return attach_cached_handler_context(endpoint, context)
         end
       end
+      nil
     end
 
     private def cached_external_handler_context(candidate : String,
@@ -1179,7 +1178,7 @@ module Analyzer::Rust
             endpoint = Endpoint.new(url, verb, details)
             extract_path_params(url, endpoint)
             if leaf
-              attach_handler_context(endpoint, function_index, source, path, leaf, include_callee, handler_context_cache)
+              endpoint.handler = attach_handler_context(endpoint, function_index, source, path, leaf, include_callee, handler_context_cache)
             end
             endpoints << endpoint
           end

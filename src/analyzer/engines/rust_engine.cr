@@ -2,6 +2,7 @@ require "../../models/analyzer"
 require "./file_scan_engine"
 require "../../miniparsers/rust_callee_extractor"
 require "../../miniparsers/rust_callee_extractor_ts"
+require "../../miniparsers/rust_struct_fields"
 require "../../ext/tree_sitter/tree_sitter"
 
 module Analyzer::Rust
@@ -597,6 +598,67 @@ module Analyzer::Rust
         result = string_content(child, source)
       end
       result
+    end
+
+    # The `Handler` for a resolved `function_item`: its name and the line of
+    # that name (the `fn` line, past any attributes or doc comments stacked
+    # above it). `Endpoint` is a struct, so callers assign the result.
+    protected def rust_handler(function : LibTreeSitter::TSNode, source : String, path : String) : Handler?
+      name = Noir::TreeSitter.field(function, "name") || return
+      Handler.new(Noir::TreeSitter.node_text(name, source), path, Noir::TreeSitter.node_start_row(name) + 1)
+    end
+
+    # `rust_handler` for a builder-registered handler name looked up in the
+    # same file's `build_function_index`. Only an unqualified name is exact:
+    # `get(index)` can only mean a fn in scope, and a local fn of that name
+    # cannot coexist with an imported one, whereas `get(other::index)` names
+    # a different module's fn that merely shares the leaf.
+    protected def local_handler(name : String, function_index : Hash(String, LibTreeSitter::TSNode),
+                                source : String, path : String) : Handler?
+      return if name.includes?("::")
+      function = function_index[name]? || return
+      rust_handler(function, source, path)
+    end
+
+    STRUCT_DECL_RE = /\bstruct\s+([A-Za-z_]\w*)/
+
+    @struct_decl_files : Hash(String, Array(String))?
+    @struct_fields_by_file = {} of String => Hash(String, Array(String))
+    @struct_index_mutex = Mutex.new
+
+    # Wire field names of the named-field struct `name` (see
+    # `Noir::RustStructFields`), as seen from `from_path`. The definition in
+    # `from_path` wins; otherwise every same-crate definition must agree, so
+    # two unrelated `struct Data`s in one crate resolve to nothing rather
+    # than to the wrong one.
+    protected def rust_struct_fields(name : String, from_path : String) : Array(String)?
+      @struct_index_mutex.synchronize do
+        files = struct_decl_files[name]? || return
+        if files.includes?(from_path)
+          return struct_fields_in(from_path)[name]?
+        end
+        scope = crate_scope_for(from_path)
+        found = files.select { |f| crate_scope_for(f) == scope }.compact_map { |f| struct_fields_in(f)[name]? }.uniq!
+        found.size == 1 ? found.first : nil
+      end
+    end
+
+    private def struct_decl_files : Hash(String, Array(String))
+      @struct_decl_files ||= begin
+        index = {} of String => Array(String)
+        get_files_by_extension(".rs").each do |file|
+          next if RustEngine.test_path?(base_relative_path(file))
+          read_file_content(file).scan(STRUCT_DECL_RE) do |m|
+            list = (index[m[1]] ||= [] of String)
+            list << file unless list.includes?(file)
+          end
+        end
+        index
+      end
+    end
+
+    private def struct_fields_in(file : String) : Hash(String, Array(String))
+      @struct_fields_by_file[file] ||= Noir::RustStructFields.parse(read_file_content(file))
     end
 
     # Attach the 1-hop callees of `function`'s body to `endpoint`.

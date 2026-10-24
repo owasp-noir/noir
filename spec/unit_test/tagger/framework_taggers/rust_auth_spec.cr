@@ -212,3 +212,44 @@ describe "RustAuthTagger" do
     FileUtils.rm_rf(tmpdir)
   end
 end
+
+describe "RustAuthTagger request guards read from their FromRequest impls" do
+  fixture_base = File.expand_path("../../../functional_test/fixtures/rust/rocket_guards", __DIR__)
+  main_path = "#{fixture_base}/src/main.rs"
+
+  tag_handler = ->(name : String, line : Int32) do
+    CodeLocator.instance.clear_all
+    noir_options = create_test_options
+    noir_options["base"] = YAML::Any.new(fixture_base)
+    Dir.glob("#{fixture_base}/**/*").each { |f| CodeLocator.instance.register_path(f) unless File.directory?(f) }
+
+    details = Details.new(PathInfo.new(main_path, line - 1))
+    details.technology = "rust_rocket"
+    endpoint = Endpoint.new("/x", "GET", [] of Param, details)
+    endpoint.handler = Handler.new(name, main_path, line)
+    RustAuthTagger.new(noir_options).perform([endpoint])
+    endpoint.tags.map(&.description)
+  end
+
+  # Handler fn lines in main.rs (the `fn` line `Endpoint#handler` names).
+  it "tags a guard whose impl refuses through a 401 macro_rules!" do
+    tag_handler.call("me", 30).should eq(["Protected by Rust Session request guard"])
+    tag_handler.call("events", 67).should eq(["Protected by Rust Session request guard"])
+  end
+
+  it "tags a guard that forwards another guard's failure" do
+    tag_handler.call("delete_org", 37).should eq(["Protected by Rust OrgSession request guard"])
+  end
+
+  it "leaves a guard anonymous when it refuses only after a never-failing guard fails" do
+    tag_handler.call("client", 42).should be_empty
+  end
+
+  it "leaves an Option-wrapped guard anonymous" do
+    tag_handler.call("maybe", 47).should be_empty
+  end
+
+  it "does not trust a guard-like name whose impl only answers 400" do
+    tag_handler.call("hint", 52).should be_empty
+  end
+end

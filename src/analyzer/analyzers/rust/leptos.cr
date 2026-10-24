@@ -48,6 +48,7 @@ module Analyzer::Rust
           name = attribute_name(attr, source) || next
           endpoint = route_endpoint(name, attr, function, source) || next
           endpoint.details = Details.new(PathInfo.new(path, Noir::TreeSitter.node_start_row(attr) + 1))
+          endpoint.handler = rust_handler(function, source, path)
           attach_handler_callees(function, source, path, endpoint) if include_callee
           endpoints << endpoint
         end

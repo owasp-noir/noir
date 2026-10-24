@@ -17,7 +17,7 @@ get_user = Endpoint.new("/users/{id}", "GET", [
 end
 
 create_user = Endpoint.new("/api/users", "POST", [
-  Param.new("user", "", "body"),
+  Param.new("name", "", "json"),
 ]).tap do |ep|
   ep.push_callee(Callee.new("UserService::create", line: 31))
   ep.push_callee(Callee.new("user.into_inner", line: 31))

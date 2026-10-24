@@ -85,9 +85,10 @@ module Analyzer::Rust
 
           urls.each do |url|
             details = Details.new(PathInfo.new(path, attr_row))
-            params = extract_params(route_path, data_param)
+            params = extract_params(route_path, data_param, function, source, path)
             endpoint = Endpoint.new(url, method, params, details)
 
+            endpoint.handler = rust_handler(function, source, path)
             extract_function_extras(function, source, endpoint)
             attach_handler_callees(function, source, path, endpoint) if include_callee
 
@@ -485,8 +486,10 @@ module Analyzer::Rust
       end
     end
 
-    private def extract_params(route : String, data_param : String?) : Array(Param)
+    private def extract_params(route : String, data_param : String?,
+                               function : LibTreeSitter::TSNode, source : String, path : String) : Array(Param)
       params = [] of Param
+      types = parameter_types(function, source)
 
       parts = route.split("?", 2)
       path_part = parts[0]
@@ -504,13 +507,68 @@ module Analyzer::Rust
           name = match[1]
           params << Param.new(name, "", "query") unless params.any? { |p| p.name == name && p.param_type == "query" }
         end
+        # `?<data..>` hands every remaining query field to `data`'s
+        # `FromForm` type, so its fields are the query params.
+        query_part.scan(/<(\w+)\.\.>/) do |match|
+          next unless (type = types[match[1]]?) && (resolved = resolve_input_type(type))
+          rust_struct_fields(resolved[1], path).try &.each do |name|
+            params << Param.new(name, "", "query") unless params.any? { |p| p.name == name && p.param_type == "query" }
+          end
+        end
       end
 
       if data_param && !data_param.empty?
-        params << Param.new(data_param, "", "body")
+        type = types[data_param]?
+        resolved = type ? resolve_input_type(type) : nil
+        fields = resolved && resolved[0] ? rust_struct_fields(resolved[1], path) : nil
+        if fields && resolved && (location = resolved[0])
+          fields.each { |name| params << Param.new(name, "", location) }
+        else
+          params << Param.new(data_param, "", "body")
+        end
       end
 
       params
+    end
+
+    # Rocket's data guards that decode a body into a type, by wire format.
+    BODY_GUARDS = {"Json" => "json", "Form" => "form", "MsgPack" => "body"}
+    # Wrappers that change how a value decodes or whether it is required,
+    # not which fields it reads.
+    TRANSPARENT_WRAPPERS = Set{"Option", "Vec", "Box", "Strict", "Lenient"}
+
+    # `pattern => type` text of each fn parameter.
+    private def parameter_types(function : LibTreeSitter::TSNode, source : String) : Hash(String, String)
+      types = {} of String => String
+      params_node = Noir::TreeSitter.field(function, "parameters") || return types
+      Noir::TreeSitter.each_named_child(params_node) do |param|
+        next unless Noir::TreeSitter.node_type(param) == "parameter"
+        pattern = Noir::TreeSitter.field(param, "pattern")
+        type = Noir::TreeSitter.field(param, "type")
+        next unless pattern && type
+        types[Noir::TreeSitter.node_text(pattern, source).lchop("mut ").strip] = Noir::TreeSitter.node_text(type, source)
+      end
+      types
+    end
+
+    # `Json<Vec<Foo>>` -> `{"json", "Foo"}`; `Foo` -> `{nil, "Foo"}`. nil for
+    # any wrapper that is neither a body guard nor transparent, since its
+    # generic argument need not be what the request decodes into.
+    private def resolve_input_type(type : String) : Tuple(String?, String)?
+      location = nil.as(String?)
+      current = type
+      loop do
+        current = current.strip.lchop('&').strip.sub(/\A'\w+\s+/, "").sub(/\Amut\s+/, "")
+        m = current.match(/\A(?:\w+::)*(\w+)\s*<(.*)>\z/m) || break
+        if body = BODY_GUARDS[m[1]]?
+          location ||= body
+        elsif !TRANSPARENT_WRAPPERS.includes?(m[1])
+          return
+        end
+        current = m[2]
+      end
+      leaf = current.match(/\A(?:\w+::)*(\w+)\z/) || return
+      {location, leaf[1]}
     end
 
     # Cookies and headers come from the function signature + body.

@@ -15,9 +15,18 @@ expected_endpoints = [
   Endpoint.new("/service/status", "GET"),
 ]
 
-FunctionalTester.new("fixtures/rust/axum_crossfile_nest/", {
+tester = FunctionalTester.new("fixtures/rust/axum_crossfile_nest/", {
   :techs     => 1,
   :endpoints => expected_endpoints.size,
 }, expected_endpoints, {
   "only_techs" => YAML::Any.new("rust_axum"),
-}).perform_tests
+})
+tester.perform_tests
+
+it "names the fn a `get(handler)` route resolves to as its handler", tags: "functional" do
+  src = "./spec/functional_test/fixtures/rust/axum_crossfile_nest/src"
+  root = tester.app.endpoints.find! { |ep| ep.url == "/" }
+  root.handler.should eq(Handler.new("root", "#{src}/main.rs", 12))
+  users = tester.app.endpoints.find! { |ep| ep.url == "/admin/users" }
+  users.handler.should eq(Handler.new("list_users", "#{src}/admin.rs", 8))
+end
