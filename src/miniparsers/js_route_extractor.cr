@@ -369,6 +369,7 @@ module Noir
           handler = named_handler(content, start_byte, file_path)
           handler_facts = handler ? handler_definition_facts(handler, include_callees) : nil
           handler = nil if handler_facts.try(&.guard)
+          handler ||= inline_handler(content, start_byte, file_path, offsets)
           # Only a route that has a handler, named or inline: a guard-only
           # registration (`app.put('/x', security.denyAll())`) has none for
           # its steps to feed.
@@ -1172,6 +1173,26 @@ module Noir
       nil
     end
 
+    # A function literal: `function`, `x =>`, or a parameter list then `=>`
+    # (`async (ctx: Context<{ id: string }>) => …`). `(a || b)` is not one.
+    INLINE_FUNCTION_RE = /\A\s*(?:async\s+)?(?:function\b|[A-Za-z_$][\w$]*\s*=>|\([^()]*(?:\([^()]*\)[^()]*)*\)\s*(?::[^=]*)?=>)/
+
+    # The closure written inline as the route's last argument
+    # (`router.get('/x', auth(), async (ctx) => {…})`) has no name to
+    # resolve; it is the handler, at the line it starts on.
+    def self.inline_handler(content : String, start_byte : Int32, file_path : String, offsets : ByteOffsets) : Handler?
+      return if start_byte < 0
+      open_paren = content.byte_index('(', start_byte) || return
+      close_paren = JSLiteralScanner.find_matching_paren_at_byte(content, open_paren) || return
+      args_slice = content.byte_slice(open_paren + 1, close_paren - open_paren - 1)
+      arg, pos = Noir::TopLevelSplit.split_spans(args_slice, ',', Noir::TopLevelSplit::Rules::JS_POSITIONAL_ARGS, 0, args_slice.size).last? || return
+      return if !arg.matches?(INLINE_FUNCTION_RE) || arg.matches?(ERROR_HANDLER_SIGNATURE_RE)
+      leading = arg.size - arg.lstrip.size
+      Handler.new("closure", file_path, offsets.line(open_paren) + args_slice[0, pos + leading].count('\n'))
+    rescue
+      nil
+    end
+
     def self.route_arguments(content : String, start_byte : Int32) : Array(String)
       return [] of String if start_byte < 0
       open_paren = content.byte_index('(', start_byte) || return [] of String
@@ -1298,8 +1319,21 @@ module Noir
 
     def self.apply_handler_facts(endpoint : Endpoint, facts : HandlerFacts?)
       return unless facts
-      facts.params.each { |param| endpoint.push_param(param) }
+      facts.params.each do |param|
+        # A handler shared by several routes reads every route's params
+        # (`renderShare` reads `ctx.params.documentSlug` for `/s/:shareId`
+        # too); a path param this route's template does not bind is never set.
+        next if param.param_type == "path" && !route_binds_path_param?(endpoint.url, param.name)
+        endpoint.push_param(param)
+      end
       push_callees(endpoint, facts.callees)
+    end
+
+    # `:name`, `{name}`, `{*name}`, `*name`; a regex route (`(`) may bind
+    # anything, so it keeps every param.
+    private def self.route_binds_path_param?(url : String, name : String) : Bool
+      return true if url.includes?('(')
+      url.includes?(":#{name}") || url.includes?("{#{name}") || url.includes?("*#{name}")
     end
 
     def self.push_callees(endpoint : Endpoint, callees : Array(JSCalleeExtractor::Entry)?)
@@ -1373,6 +1407,54 @@ module Noir
                 end
       responds = body.matches?(RESPONDS_RE) && !body.matches?(BARE_NEXT_RE) && !body.matches?(ROUTER_BODY_RE) && !guard
       HandlerFacts.new(context.params, callees, responds, guard)
+    end
+
+    # The body of the function defined at `line` of `content`, its signature
+    # allowed to wrap lines (`function v(\n  ctx,\n): Promise<{ a: A }> {`):
+    # the first `{` after the last `=>` on the line, or after the parameter
+    # list, that follows `)` or `>` — braces inside a return type follow `<`
+    # or `:`. A concise body (`= () => jwt({ … })`) yields the definition line.
+    def self.definition_body(content : String, line : Int32) : String
+      line_start = 0
+      (line - 1).times do
+        line_start = (content.byte_index('\n', line_start) || return "") + 1
+      end
+      line_end = content.byte_index('\n', line_start) || content.bytesize
+      own_line = content.byte_slice(line_start, line_end - line_start)
+      from = line_start
+      while (arrow = content.byte_index("=>", from)) && arrow < line_end
+        from = arrow + 2
+      end
+      if from == line_start
+        paren_open = content.byte_index('(', line_start) || return own_line
+        return own_line if paren_open >= line_end
+        from = (JSLiteralScanner.find_matching_paren_at_byte(content, paren_open) || return own_line) + 1
+      end
+      bytes = content.to_slice
+      stop = Math.min(content.bytesize, from + 400)
+      pos = from
+      type_depth = 0 # braces of a return type (`Promise<{ a: A; b: B }>`)
+      while pos < stop
+        case bytes[pos]
+        when ';'.ord
+          break if type_depth == 0
+        when '}'.ord
+          type_depth -= 1
+          break if type_depth < 0
+        when '{'.ord
+          prev = pos - 1
+          while prev >= from && bytes[prev].unsafe_chr.ascii_whitespace?
+            prev -= 1
+          end
+          if type_depth == 0 && prev >= from - 1 && (bytes[prev] == ')'.ord || bytes[prev] == '>'.ord)
+            close = JSLiteralScanner.find_matching_brace_at_byte(content, pos) || break
+            return content.byte_slice(pos + 1, close - pos - 1)
+          end
+          type_depth += 1
+        end
+        pos += 1
+      end
+      own_line
     end
 
     private def self.empty_handler_facts : HandlerFacts

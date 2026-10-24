@@ -75,20 +75,33 @@ module Analyzer::Javascript
     KOA_PREFIX_ARG_RE = /\A['"]([^'"]+)['"]\z/
     KOA_ROUTES_ARG_RE = /\A(\w+)\.routes\s*\(\s*\)\z/
     KOA_BARE_ARG_RE   = /\A(\w+)\z/
+    # koa-mount: `app.use(mount('/api', api))`, `app.use(mount(routes))`.
+    KOA_MOUNT_ARG_RE = /\A\w*[mM]ount\s*\(\s*(?:['"]([^'"]*)['"]\s*,\s*)?(\w+)\s*\)\z/
     # `const api = new Router({ prefix: '/api' })`
     KOA_CTOR_PREFIX_RE = /(\w+)\s*=\s*new\s+\w*Router\s*\(\s*\{[^}]*?\bprefix\s*:\s*['"]([^'"]+)['"]/
+    # A barrel that forwards its default: `export { default } from './x'`,
+    # `module.exports = require('./x')`.
+    KOA_DEFAULT_REEXPORT_RE = /\bexport\s*\{\s*default(?:\s+as\s+default)?\s*\}\s*from\s*['"]([^'"]+)['"]|\bmodule\.exports\s*=\s*require\s*\(\s*['"]([^'"]+)['"]\s*\)/
+    MAX_KOA_REEXPORT_DEPTH  = 5
 
-    # Resolve koa-router cross-file mount prefixes and seed them into
-    # CodeLocator under each imported child router's file key. Each file
-    # that does the mounting is resolved independently — the common layout
-    # has one aggregator file (`routes/index.js`) wiring every sub-router.
+    # Resolve koa-router / koa-mount cross-file mount prefixes and seed them
+    # into CodeLocator under each mounted file's key. The mounts form one
+    # graph across files: `web.ts` mounts the `api` app at `/api`, `api.ts`
+    # hands its router the app's prefix (`api.use(router.routes())`), and
+    # that router mounts `documents.routes()` at `/`. Nodes are a file (what
+    # its default import names), a named export, or a binding local to one
+    # file; a file's bindings that no in-file mount targets start at the
+    # file's own prefix.
     private def resolve_koa_mount_prefixes
       locator = CodeLocator.instance
+      edges = [] of Tuple(String, String, String)
+      keys = Hash(String, Noir::LocatorKey(Array(String))).new
+
       all_files.each do |path|
         next unless [".js", ".ts", ".mts", ".cts", ".mjs", ".cjs"].any? { |ext| path.ends_with?(ext) }
         content = read_file_content(path)
-        # Cheap gate: the mount chain always pairs `.use(` with `.routes(`.
-        next unless content.includes?(".use(") && content.includes?(".routes(")
+        # Cheap gate: a mount chain pairs `.use(` with `.routes(` or `mount(`.
+        next unless content.includes?(".use(") && (content.includes?(".routes(") || content.includes?("ount("))
         next if Noir::JSRouteExtractor.test_file?(path, content)
         next if Noir::JSRouteExtractor.minified_content?(content)
         # `.use(/* x */ '/api', router.routes())` must keep its prefix.
@@ -99,7 +112,7 @@ module Analyzer::Javascript
         boundary = import_boundary_for(path)
         record_import = ->(var : String, spec : String) do
           resolved = Noir::ImportGraph.resolve_relative_import(path, spec, boundary: boundary)
-          imports[var] = resolved if resolved
+          imports[var] = default_export_file(resolved, boundary) if resolved
         end
         content.scan(/(?:const|let|var)\s+(\w+)\s*=\s*require\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |m|
           record_import.call(m[1], m[2]) if m.size >= 3
@@ -120,15 +133,30 @@ module Analyzer::Javascript
           end
         end
 
-        # Collect mount edges: parent.use('/prefix', child[.routes()]) and
-        # the no-prefix parent.use(child[.routes()]). Every `child.routes()`
-        # argument is a router (`use('/u', auth, users.routes(),
-        # users.allowedMethods())`); a bare `child` only as the sole router
-        # argument. A `factory()` call (e.g. `bodyParser()`) is middleware.
-        # The parent's own `new Router({ prefix })` precedes the mount path.
+        node_for = ->(var : String) do
+          if file = imports[var]?
+            node = "file:#{Noir::PathScope.expand(file)}"
+            keys[node] ||= Analyzer::Javascript::ExpressConstants.file_key(Noir::PathScope.expand(file))
+            node
+          elsif named = named_imports[var]?
+            node = "export:#{named[0]}##{named[1]}"
+            keys[node] ||= Analyzer::Javascript::ExpressConstants.function_key(Noir::PathScope.expand(named[0]), named[1])
+            node
+          else
+            "local:#{path}##{var}"
+          end
+        end
+
+        # Collect mount edges: parent.use('/prefix', child[.routes()]),
+        # parent.use(mount('/prefix', child)) and the no-prefix forms. Every
+        # `child.routes()` argument is a router (`use('/u', auth,
+        # users.routes(), users.allowedMethods())`); a bare `child` only as
+        # the sole router argument. A `factory()` call (e.g. `bodyParser()`)
+        # is middleware. The parent's own `new Router({ prefix })` precedes
+        # the mount path.
         ctor_prefixes = Hash(String, String).new
         content.scan(KOA_CTOR_PREFIX_RE) { |m| ctor_prefixes[m[1]] = m[2] }
-        edges = [] of Tuple(String, String, String)
+        file_edges = [] of Tuple(String, String, String)
         content.scan(KOA_USE_CALL_RE) do |m|
           args = Noir::JSLiteralScanner.extract_paren_content_at_byte(content, m.byte_end(0)).try(&.content)
           next unless args
@@ -140,29 +168,48 @@ module Analyzer::Javascript
           end
           mount = Noir::URLPath.join(ctor_prefixes[m[1]]? || "", mount)
           parts.each do |part|
-            child = part.match(KOA_ROUTES_ARG_RE) || (parts.size == 1 ? part.match(KOA_BARE_ARG_RE) : nil)
-            edges << {m[1], mount, child[1]} if child
+            if mounted = part.match(KOA_MOUNT_ARG_RE)
+              file_edges << {m[1], Noir::URLPath.join(mount, mounted[1]? || ""), mounted[2]}
+            elsif child = part.match(KOA_ROUTES_ARG_RE) || (parts.size == 1 ? part.match(KOA_BARE_ARG_RE) : nil)
+              file_edges << {m[1], mount, child[1]}
+            end
           end
         end
-        next if edges.empty?
+        next if file_edges.empty?
 
-        prefixes = resolve_mount_edge_prefixes(edges)
-
-        prefixes.each do |router_var, router_prefixes|
-          key = if file = imports[router_var]?
-                  Analyzer::Javascript::ExpressConstants.file_key(Noir::PathScope.expand(file))
-                elsif named = named_imports[router_var]?
-                  Analyzer::Javascript::ExpressConstants.function_key(Noir::PathScope.expand(named[0]), named[1])
-                end
-          next unless key
-          router_prefixes.each do |prefix|
-            next if prefix.empty?
-            locator.push(key, prefix) unless locator.all(key).includes?(prefix)
-          end
+        in_file_children = file_edges.map(&.[2]).to_set
+        file_node = "file:#{Noir::PathScope.expand(path)}"
+        file_edges.each do |parent, mount, child|
+          # `a.use('/x', b.routes())` with `a` imported mounts onto a's file.
+          parent_node = node_for.call(parent)
+          edges << {file_node, "", parent_node} if parent_node.starts_with?("local:") && !in_file_children.includes?(parent)
+          edges << {parent_node, mount, node_for.call(child)}
         end
       rescue e
         logger.debug "koa mount prefix resolution failed for #{path}: #{e.message}"
       end
+      return if edges.empty?
+
+      prefixes = resolve_mount_edge_prefixes(edges.uniq)
+      keys.each do |node, key|
+        prefixes[node]?.try &.each do |prefix|
+          next if prefix.empty?
+          locator.push(key, prefix) unless locator.all(key).includes?(prefix)
+        end
+      end
+    end
+
+    # The file whose routes a default import of `file` names, followed
+    # through default re-export barrels.
+    private def default_export_file(file : String, boundary : String?, depth : Int32 = 0) : String
+      return file if depth >= MAX_KOA_REEXPORT_DEPTH
+      content = read_file_content(file)
+      return file unless content.includes?("default") || content.includes?("module.exports")
+      m = Noir::JSRouteExtractor.strip_js_comments(content).match(KOA_DEFAULT_REEXPORT_RE) || return file
+      target = Noir::ImportGraph.resolve_relative_import(file, m[1]? || m[2], boundary: boundary) || return file
+      default_export_file(target, boundary, depth + 1)
+    rescue
+      file
     end
 
     # Match Strapi's declarative route entries: object literals
