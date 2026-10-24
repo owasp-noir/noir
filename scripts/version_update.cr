@@ -94,7 +94,7 @@ rescue ex
   false
 end
 
-# Update aur/PKGBUILD pkgver and reset pkgrel to 1
+# Update packaging/aur/PKGBUILD pkgver and reset pkgrel to 1
 def update_pkgbuild_version(new_version : String) : Bool
   content = File.read(PKGBUILD_FILE)
   updated = content.gsub(/^pkgver=[\d.]+/m, "pkgver=#{new_version}")
@@ -217,14 +217,14 @@ updates = [
   {"shard.yml", SHARD_FILE, get_shard_version, -> { update_shard_version(new_version) }},
   {"src/noir.cr", NOIR_FILE, get_noir_version, -> { update_noir_version(new_version) }},
   {"flake.nix", FLAKE_FILE, get_flake_version, -> { update_flake_version(new_version) }},
-  {"Dockerfile", DOCKERFILE, get_dockerfile_version, -> { update_dockerfile_version(new_version) }},
+  {"packaging/docker/Dockerfile", DOCKERFILE, get_dockerfile_version, -> { update_dockerfile_version(new_version) }},
   {"snap/snapcraft.yaml", SNAPCRAFT_FILE, get_snapcraft_version, -> { update_snapcraft_version(new_version) }},
   {"docs/templates/partials/nav.html", DOCS_NAV, get_docs_nav_version(DOCS_NAV), -> { update_docs_nav_version(DOCS_NAV, new_version) }},
   {"github-action/README.md", ACTION_README, get_action_readme_version, -> { update_action_readme_version(new_version) }},
   {"how_to_release/index.md", RELEASE_DOC, get_release_doc_version(RELEASE_DOC), -> { update_release_doc_version(RELEASE_DOC, new_version) }},
   {"how_to_release/index.ko.md", RELEASE_DOC_KO, get_release_doc_version(RELEASE_DOC_KO), -> { update_release_doc_version(RELEASE_DOC_KO, new_version) }},
-  {"aur/PKGBUILD", PKGBUILD_FILE, get_pkgbuild_version, -> { update_pkgbuild_version(new_version) }},
-  {"package.json", NPM_PACKAGE, get_npm_package_version, -> { update_npm_package_version(new_version) }},
+  {"packaging/aur/PKGBUILD", PKGBUILD_FILE, get_pkgbuild_version, -> { update_pkgbuild_version(new_version) }},
+  {"packaging/npm/package.json", NPM_PACKAGE, get_npm_package_version, -> { update_npm_package_version(new_version) }},
   {"installation/index.md", INSTALL_DOC, get_install_doc_version(INSTALL_DOC), -> { update_install_doc_version(INSTALL_DOC, new_version) }},
   {"installation/index.ko.md", INSTALL_DOC_KO, get_install_doc_version(INSTALL_DOC_KO), -> { update_install_doc_version(INSTALL_DOC_KO, new_version) }},
   {"sarif/index.md", SARIF_DOC, get_sarif_doc_version(SARIF_DOC), -> { update_sarif_doc_version(SARIF_DOC, new_version) }},

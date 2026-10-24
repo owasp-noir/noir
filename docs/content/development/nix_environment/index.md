@@ -71,7 +71,7 @@ just nix-build
 
 ## Updating Dependencies
 
-`shards.nix` pins every dependency of the Nix build by revision and hash, and it is generated rather than hand-written. Regenerate it whenever `shard.lock` changes, then verify the two agree.
+`packaging/nix/shards.nix` pins every dependency of the Nix build by revision and hash, and it is generated rather than hand-written. Regenerate it whenever `shard.lock` changes, then verify the two agree.
 
 ```sh
 just nix-update

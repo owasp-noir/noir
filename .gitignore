@@ -31,7 +31,8 @@ __pycache__/
 # Scratch output of scripts/ (agent_bench clones, benchmark fixtures)
 /tmp/
 
-# npm wrapper: binary downloaded by npm/install.js, and the per-release
-# checksums the publish workflow generates
-/npm/dist/
-/npm/checksums.json
+# npm wrapper: binary downloaded by packaging/npm/install.js, the per-release
+# checksums the publish workflow generates, and the LICENSE copied in on pack
+/packaging/npm/dist/
+/packaging/npm/checksums.json
+/packaging/npm/LICENSE

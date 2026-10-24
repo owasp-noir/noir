@@ -5,7 +5,7 @@
 # dependencies. We only track the supporting infrastructure that Dependabot
 # *can* update at the repository root:
 #   - GitHub Actions referenced by our workflows
-#   - the base image in the root Dockerfile
+#   - the base image in packaging/docker/Dockerfile
 #
 # Everything under spec/ is test fixtures: throwaway sample apps in many
 # languages whose dependencies are intentionally pinned for reproducible
@@ -31,7 +31,7 @@ updates:
       interval: weekly
 
   - package-ecosystem: docker
-    directory: /
+    directory: /packaging/docker
     schedule:
       interval: weekly
 
