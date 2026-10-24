@@ -498,7 +498,7 @@ module Analyzer::Php
 
     # The controller method a YAML route's `controller:` (or
     # `defaults: {_controller: ...}`) names as `Fqcn::method`, or an
-    # invokable `Fqcn`. Service ids (`app.foo:bar`) are not resolved.
+    # invocable `Fqcn`. Service ids (`app.foo:bar`) are not resolved.
     private def yaml_action(route_h : Hash(YAML::Any, YAML::Any)) : Action?
       ref = route_h[YAML::Any.new("controller")]?.try(&.as_s?) ||
             route_h[YAML::Any.new("defaults")]?.try(&.as_h?).try(&.[YAML::Any.new("_controller")]?).try(&.as_s?)

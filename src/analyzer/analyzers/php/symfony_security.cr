@@ -77,7 +77,7 @@ module Analyzer::Php::SymfonySecurity
   private def self.regex(node : YAML::Any?) : Regex?
     node.try(&.as_s?).try { |source| Regex.new(source) }
   rescue ArgumentError
-    # An unparseable pattern matches nothing we can vouch for.
+    # An unparsable pattern matches nothing we can vouch for.
     Regex.new("(?!)")
   end
 
