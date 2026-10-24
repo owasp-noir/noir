@@ -37,6 +37,9 @@ module Noir
     @current_route_raw_path : String? = nil
     @router_prefixes : Hash(String, Array(String)) = Hash(String, Array(String)).new { |h, k| h[k] = [] of String }
     @named_route_receivers = Set(String).new
+    # Slash-less koa-router paths accepted by `route_path_entries_from_args`;
+    # the final `valid_route_path?` filter would otherwise drop them.
+    @bare_route_paths = Set(String).new
     # Receivers this file explicitly builds a router from (`x =
     # express.Router()`, `x = new Router()`, `x = express()`), as opposed
     # to the ones inferred from a verb call — every `request.get(...)`
@@ -264,7 +267,7 @@ module Noir
       # "/Object" and sneak past `valid_route_path?`'s "/" check.
       # An empty literal path survives only where `route_path_entries_from_args`
       # accepted it for a routing receiver (it is the mount point itself).
-      routes.select! { |r| valid_route_path?(r.path) || r.raw_path.empty? }
+      routes.select! { |r| valid_route_path?(r.path) || r.raw_path.empty? || @bare_route_paths.includes?(r.raw_path) }
 
       # Strip Express param regex constraints (`:id(\d+)`, `:pk(${UUID_REGEX})`)
       # down to the bare param, then ensure a leading slash. The constraint
@@ -571,11 +574,25 @@ module Noir
       # If the first argument is not path-like, try the next top-level
       # argument before giving up.
       if second_arg_idx = next_top_level_arg_index(first_arg_idx)
-        return path_entries_from_token(second_arg_idx).select { |path| valid_route_path?(path.path) }
+        named = path_entries_from_token(second_arg_idx).select { |path| valid_route_path?(path.path) }
+        return named unless named.empty?
+      end
+
+      # @koa/router takes the first argument as the path whenever the second
+      # is not a string, slash or not: `router.post("documents.list", auth(),
+      # handler)` mounted under `use("/", r.routes())` serves
+      # `/documents.list`. Only a literal on a constructed koa Router, and
+      # only a single bare segment, so `cache.get("key", cb)` stays out.
+      if receiver && @named_route_receivers.includes?(receiver) &&
+         (token = @tokens[first_arg_idx]?) && token.type == :string && token.value.matches?(KOA_BARE_PATH_RE)
+        @bare_route_paths << token.value
+        return [PathEntry.new(token.value, false)]
       end
 
       [] of PathEntry
     end
+
+    KOA_BARE_PATH_RE = /\A[A-Za-z0-9_][\w.\-~]*\z/
 
     # True when the verb call whose `(` sits at `lparen_idx` carries an
     # argument that could be a request handler.
