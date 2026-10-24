@@ -154,11 +154,12 @@ module Noir
 
     # Routers whose `{name:regex}` constraint picks the route: chi and
     # gorilla/mux route `/{type:issues}` and `/{type:pulls}` to different
-    # handlers, so the optimizer keeps the constraint in the URL for them
+    # handlers, and Laravel's `->where()` (written into the URL by its
+    # analyzer) does the same; so the optimizer keeps the constraint for them
     # instead of collapsing both to `/{type}`. Elsewhere `{name:x}` is
     # usually a type converter (Iris `uint64`, Starlette `path`, ASP.NET
     # `int`) and is stripped as before.
-    REGEX_PLACEHOLDER_TECHS = Set{"go_chi", "go_mux"}
+    REGEX_PLACEHOLDER_TECHS = Set{"go_chi", "go_mux", "php_laravel"}
 
     # Such a `{name:regex}` placeholder, the regex allowed one level of its
     # own braces (`{sha:[a-f0-9]{7,64}}`); `$1` is the name. Path templates

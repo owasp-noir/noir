@@ -301,7 +301,7 @@ module Analyzer::Php
     # `Illuminate\Http\Request` reads (Laravel, Lumen): `$request->input('x')`,
     # `request()->query('x')`, `$request->header('X-Token')`, ... Capture 1 is
     # the accessor, capture 2 the input name.
-    ILLUMINATE_REQUEST_READ_RE = /(?:\$request|\brequest\(\s*\))\s*->\s*(input|post|get|query|header|cookie|file|string|integer|boolean|float|date|enum|array)\s*\(\s*['"]([^'"]+)['"]/
+    ILLUMINATE_REQUEST_READ_RE = /(?:\$request|\brequest\(\s*\))\s*->\s*(input|post|get|query|header|cookie|file|hasFile|has|filled|string|integer|boolean|float|date|enum|array)\s*\(\s*['"]([^'"]+)['"]/
     ILLUMINATE_READ_TYPES      = {"get" => "query", "query" => "query", "header" => "header", "cookie" => "cookie"}
     # Calls taking a validation rules array: `$request->validate([...])`,
     # `$this->validate($request, [...])`, `Validator::make($data, [...])`.
@@ -311,7 +311,9 @@ module Analyzer::Php
 
     # Input an `Illuminate\Http\Request` handler body reads: accessor calls
     # plus the keys of its validation rules. Body inputs come back as "form".
-    protected def illuminate_request_params(body : String) : Array(Param)
+    # `klass`, the source of the class the body belongs to, lets a rules
+    # argument that is not a literal (`$this->rules['update']`) be read.
+    protected def illuminate_request_params(body : String, klass : String? = nil) : Array(Param)
       params = [] of Param
       body.scan(ILLUMINATE_REQUEST_READ_RE) do |m|
         params << Param.new(m[2], "", ILLUMINATE_READ_TYPES[m[1]]? || "form")
@@ -321,18 +323,12 @@ module Analyzer::Php
         body.scan(ILLUMINATE_VALIDATE_RE) do |m|
           open = m.end(0) - 1
           next unless lexer.in_code?(open) && (close = lexer.matching_delimiter(open))
-          # The rules are the first array literal among the call's own
-          # arguments; a later one is custom messages (keyed by rule name).
-          depth = 0
-          (open + 1...close).each do |i|
-            case lexer.masked[i]
-            when '(' then depth += 1
-            when ')' then depth -= 1
-            when '['
-              next unless depth == 0
-              if array_close = lexer.matching_delimiter(i)
-                params.concat(rule_key_params(body[i..array_close]))
-              end
+          # The rules are the first argument that reads as a rules array; a
+          # later one is custom messages (keyed by rule name), an earlier one
+          # the request or its data.
+          top_level_args(lexer, body, open + 1, close).each do |arg|
+            if rules = resolve_rules(arg, body, lexer, klass, 0)
+              params.concat(rules)
               break
             end
           end
@@ -341,9 +337,120 @@ module Analyzer::Php
       dedup_params(params)
     end
 
+    # The comma-separated arguments between `from` and `to` (exclusive).
+    private def top_level_args(lexer : Noir::PhpLexer, source : String, from : Int32, to : Int32) : Array(String)
+      args = [] of String
+      pos = from
+      while pos < to
+        stop = Math.min(lexer.expression_end(pos), to)
+        arg = source[pos...stop].strip
+        args << arg unless arg.empty?
+        pos = stop + 1
+      end
+      args
+    end
+
+    RULES_SUBSCRIPT_RE = /\A(.*?)\[\s*['"]([\w-]+)['"]\s*\]\z/m
+    THIS_MEMBER_RE     = /\A\$this->(\w+)\s*(\(\s*\))?\z/
+    LOCAL_VAR_RE       = /\A\$(\w+)\z/
+
+    # Rule keys of a validate call's argument, read only where they are
+    # literal: an array, `array_merge(...)` of such, a `$this->rules()`
+    # method's returned array or `$this->rules` property initializer of the
+    # same class, optionally subscripted (`$this->rules()['update']`), or a
+    # local `$rules` assigned one of those (plus its `$rules['x'] = ...` keys).
+    # nil when the argument is not a rules array.
+    private def resolve_rules(expr : String, body : String, lexer : Noir::PhpLexer, klass : String?, depth : Int32) : Array(Param)?
+      return if depth > 2
+      expr = expr.strip
+      return rule_key_params(expr) if expr.starts_with?('[')
+
+      if merge = expr.match(/\Aarray_merge\s*\((.*)\)\z/m)
+        inner = merge[1]
+        merged = top_level_args(Noir::PhpLexer.new(inner, php_mode: true), inner, 0, inner.size)
+          .compact_map { |arg| resolve_rules(arg, body, lexer, klass, depth + 1) }.flatten
+        return merged.empty? ? nil : merged
+      end
+
+      key = nil
+      if subscript = expr.match(RULES_SUBSCRIPT_RE)
+        expr, key = subscript[1].strip, subscript[2]
+      end
+
+      if member = expr.match(THIS_MEMBER_RE)
+        array = klass.try { |source| class_member_array(source, member[1], !member[2]?.nil?) }
+        array = array_entry(array, key) if array && key
+        return array.try { |text| rule_key_params(text) }
+      end
+
+      return unless key.nil? && (local = expr.match(LOCAL_VAR_RE))
+      name = local[1]
+      return if name == "this" || name == "request"
+      params = [] of Param
+      body.scan(/\$#{name}\s*=(?![=>])/) do |assign|
+        next unless lexer.in_code?(assign.begin(0))
+        value = body[assign.end(0)...lexer.expression_end(assign.end(0))]
+        resolve_rules(value, body, lexer, klass, depth + 1).try { |found| params.concat(found) }
+      end
+      body.scan(/\$#{name}\[\s*['"]([\w-]+)['"]\s*\](?:\[\s*\])?\s*=(?![=>])/) do |entry|
+        next unless lexer.in_code?(entry.begin(0))
+        params << Param.new(entry[1], "", "form")
+        value = body[entry.end(0)...lexer.expression_end(entry.end(0))]
+        params << Param.new("#{entry[1]}_confirmation", "", "form") if value.matches?(/['"][^'"]*\bconfirmed\b/)
+      end
+      params.empty? ? nil : params
+    end
+
+    # The array literal a class's `name()` method returns, or its `$name`
+    # property is initialized to.
+    # ponytail: a `rules()` the class does not define is read as its `$rules`
+    # property, the shape a base controller's `rules()` usually has; follow
+    # the parent class if that ever misleads.
+    private def class_member_array(klass : String, name : String, method : Bool) : String?
+      if method && (sig = klass.match(/(?:public|protected|private)\s+(?:static\s+)?function\s+#{name}\s*\(/))
+        return unless method_body = extract_php_method_body_after(klass, sig.begin(0))
+        return unless ret = method_body[0].match(/\breturn\s+\[/)
+        return literal_array_at(method_body[0], ret.end(0) - 1)
+      end
+      return unless prop = klass.match(/(?:public|protected|private|var)\s+(?:static\s+)?(?:\??[\w\\|]+\s+)?\$#{name}\s*=\s*\[/)
+      literal_array_at(klass, prop.end(0) - 1)
+    end
+
+    private def literal_array_at(source : String, open : Int32) : String?
+      close = Noir::PhpLexer.new(source, php_mode: true).matching_delimiter(open)
+      source[open..close] if close
+    end
+
+    # The array value of `key` at the top level of an array literal.
+    private def array_entry(array : String, key : String) : String?
+      lexer = Noir::PhpLexer.new(array, php_mode: true)
+      depth = 0
+      last = 0
+      array.scan(/['"]#{Regex.escape(key)}['"]\s*=>\s*(?=\[)/) do |m|
+        (last...m.begin(0)).each do |i|
+          case lexer.masked[i]
+          when '[', '(' then depth += 1
+          when ']', ')' then depth -= 1
+          end
+        end
+        last = m.begin(0)
+        next unless depth == 1 && lexer.in_code?(m.end(0))
+        if close = lexer.matching_delimiter(m.end(0))
+          return array[m.end(0)..close]
+        end
+      end
+      nil
+    end
+
+    # `'password' => 'required|confirmed'`: Laravel's `confirmed` rule reads
+    # a second input, `password_confirmation`.
+    RULE_CONFIRMED_RE = /['"]([\w-]+)['"]\s*=>\s*(?:['"][^'"]*\bconfirmed\b|\[[^\]]*['"]confirmed['"])/
+
     # One "form" param per key of a validation rules array or `rules()` body.
     protected def rule_key_params(rules : String) : Array(Param)
-      rules.scan(RULE_KEY_RE).map { |m| Param.new(m[1], "", "form") }
+      params = rules.scan(RULE_KEY_RE).map { |m| Param.new(m[1], "", "form") }
+      rules.scan(RULE_CONFIRMED_RE) { |m| params << Param.new("#{m[1]}_confirmation", "", "form") }
+      params
     end
 
     # ASCII byte values for the structural delimiters scanned below.
