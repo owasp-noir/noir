@@ -23,6 +23,27 @@ def run_spring_class_level(source : String, line : Int32, ext : String = "java")
   endpoint
 end
 
+# Write each `name => source` under a temp `src/main/java/com/example/`,
+# run SpringAuthTagger over `routes` ("METHOD /path") and return each
+# route's auth tag descriptions.
+def run_spring_security_config(files : Hash(String, String), routes : Array(String)) : Hash(String, Array(String))
+  CodeLocator.instance.clear_all
+  tmpdir = File.tempname("spring_security_config")
+  dir = File.join(tmpdir, "src/main/java/com/example")
+  Dir.mkdir_p(dir)
+  files.each do |name, source|
+    path = File.join(dir, name)
+    File.write(path, source)
+    CodeLocator.instance.register_path(path)
+  end
+  noir_options = create_test_options
+  noir_options["base"] = YAML::Any.new(tmpdir)
+  endpoints = routes.map { |route| Endpoint.new(route.split(' ', 2)[1], route.split(' ', 2)[0]) }
+  SpringAuthTagger.new(noir_options).perform(endpoints)
+  FileUtils.rm_rf(tmpdir)
+  routes.zip(endpoints).to_h { |route, endpoint| {route, endpoint.tags.select(&.name.==("auth")).map(&.description)} }
+end
+
 describe "SpringAuthTagger" do
   fixture_base = File.expand_path("../../../functional_test/fixtures/java/spring_auth", __DIR__)
   controller_path = "#{fixture_base}/src/main/java/com/example/Controller.java"
@@ -606,5 +627,117 @@ describe "SpringAuthTagger (class-level annotations)" do
       JAVA
     run_spring_class_level(java_interface, 5).tags.any? { |t| t.name == "auth" }.should be_false
     run_spring_class_level(java_interface, 3).tags.any? { |t| t.name == "auth" }.should be_true
+  end
+
+  it "resolves String and String[] constants, multi-line matcher lists and matcher factories" do
+    config = <<-JAVA
+      package com.example;
+
+      import static com.example.Paths.HOOKS;
+
+      public class SecurityConfig {
+          public static final String API = "/api/**";
+          private static final String[] OPEN = new String[]{"/api/noauth/**", Paths.BASE + "/public/**"};
+          static final String[] DOCS = {"/api/docs"};
+
+          @Bean
+          SecurityFilterChain chain(HttpSecurity http) throws Exception {
+              http.authorizeHttpRequests(config -> config
+                      .requestMatchers(OPEN).permitAll() // anonymous (no token)
+                      .requestMatchers(
+                              DOCS, // docs (public)
+                              Paths.LOGIN).permitAll()
+                      .requestMatchers(antMatcher(HOOKS)).permitAll()
+                      .requestMatchers(API).authenticated()
+                      .anyRequest().permitAll());
+              return http.build();
+          }
+      }
+      JAVA
+    paths = <<-JAVA
+      package com.example;
+
+      public final class Paths {
+          public static final String BASE = "/api/v2";
+          public static final String LOGIN = "/api/auth/login";
+          public static final String HOOKS = "/api/hooks/**";
+      }
+      JAVA
+    tags = run_spring_security_config({"SecurityConfig.java" => config, "Paths.java" => paths},
+      ["GET /api/noauth/reset", "GET /api/v2/public/r/1", "GET /api/docs", "POST /api/auth/login", "POST /api/hooks/x", "GET /api/users", "GET /index.html"])
+    tags["GET /api/noauth/reset"].should be_empty
+    tags["GET /api/v2/public/r/1"].should be_empty
+    tags["GET /api/docs"].should be_empty
+    tags["POST /api/auth/login"].should be_empty
+    tags["POST /api/hooks/x"].should be_empty
+    tags["GET /api/users"].should eq(["Protected by Spring Security authenticated via requestMatchers(\"/api/**\")"])
+    tags["GET /index.html"].should be_empty
+  end
+
+  it "decides a request inside a securityMatcher-scoped chain by that chain alone" do
+    config = <<-JAVA
+      package com.example;
+
+      public class SecurityConfig {
+          public static final String DEVICE_API = "/api/v1/**";
+
+          @Bean
+          @Order(1)
+          SecurityFilterChain devices(HttpSecurity http) throws Exception {
+              http.securityMatcher(AntPathRequestMatcher.antMatcher(DEVICE_API))
+                  .authorizeHttpRequests(config -> config.requestMatchers(DEVICE_API).permitAll());
+              return http.build();
+          }
+
+          @Bean
+          @Order(2)
+          SecurityFilterChain admin(HttpSecurity http) throws Exception {
+              http.securityMatchers(matchers -> matchers.requestMatchers("/admin/**"))
+                  .authorizeHttpRequests(config -> config.anyRequest().hasRole("ADMIN"));
+              return http.build();
+          }
+
+          @Bean
+          SecurityFilterChain main(HttpSecurity http) throws Exception {
+              http.authorizeHttpRequests(config -> config
+                      .requestMatchers("/api/**").authenticated()
+                      .requestMatchers(antMatcher("/h2/**")).permitAll()
+                      .anyRequest().authenticated());
+              return http.build();
+          }
+      }
+      JAVA
+    tags = run_spring_security_config({"SecurityConfig.java" => config},
+      ["POST /api/v1/{token}/telemetry", "GET /admin/users", "GET /api/users", "GET /h2/console", "GET /other"])
+    tags["POST /api/v1/{token}/telemetry"].should be_empty
+    tags["GET /admin/users"].should eq(["Protected by Spring Security hasRole via anyRequest()"])
+    tags["GET /api/users"].should eq(["Protected by Spring Security authenticated via requestMatchers(\"/api/**\")"])
+    tags["GET /h2/console"].should be_empty
+    tags["GET /other"].should eq(["Protected by Spring Security authenticated via anyRequest()"])
+  end
+
+  it "orders overlapping scoped chains by @Order and matches a bare prefix against /**" do
+    config = <<-JAVA
+      public class SecurityConfig {
+          @Bean
+          @Order(5)
+          SecurityFilterChain api(HttpSecurity http) throws Exception {
+              http.securityMatcher("/api/**").authorizeHttpRequests(c -> c.anyRequest().authenticated());
+              return http.build();
+          }
+
+          @Bean
+          @Order(Ordered.HIGHEST_PRECEDENCE)
+          SecurityFilterChain open(HttpSecurity http) throws Exception {
+              http.securityMatcher("/api/open/**").authorizeHttpRequests(c -> c.anyRequest().permitAll());
+              return http.build();
+          }
+      }
+      JAVA
+    tags = run_spring_security_config({"SecurityConfig.java" => config}, ["GET /api/open/x", "GET /api/open", "GET /api", "GET /api/x"])
+    tags["GET /api/open/x"].should be_empty
+    tags["GET /api/open"].should be_empty
+    tags["GET /api"].should eq(["Protected by Spring Security authenticated via anyRequest()"])
+    tags["GET /api/x"].should eq(["Protected by Spring Security authenticated via anyRequest()"])
   end
 end

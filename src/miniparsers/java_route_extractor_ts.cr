@@ -142,6 +142,69 @@ module Noir
       end
     end
 
+    # The file's String constants plus its `String[]` constants
+    # (`String[] OPEN = {"/a/**", BASE + "/b"}` / `new String[]{...}`), both
+    # keyed bare, `Class.NAME` and `pkg.Class.NAME` like
+    # `extract_string_constants`. `project_constants` seeds other classes'
+    # qualified names (see `extract_string_constants_from`). An element that
+    # does not resolve to a String is left out; the rest of the array stays.
+    def extract_string_and_array_constants(source : String,
+                                           project_constants : Hash(String, String)? = nil) : {Hash(String, String), Hash(String, Array(String))}
+      strings = Hash(String, String).new
+      arrays = Hash(String, Array(String)).new
+      Noir::TreeSitter.parse_java(source) do |root|
+        strings = extract_string_constants_from(root, source, project_constants)
+        collect_string_array_constants(root, source, package_name(root, source), [] of String, strings, arrays)
+      end
+      {strings, arrays}
+    end
+
+    private def collect_string_array_constants(node : LibTreeSitter::TSNode,
+                                               source : String,
+                                               package_name : String,
+                                               class_stack : Array(String),
+                                               constants : Hash(String, String),
+                                               arrays : Hash(String, Array(String)),
+                                               depth : Int32 = 0)
+      return if depth > Noir::TreeSitter::MAX_AST_DEPTH
+
+      ty = Noir::TreeSitter.node_type(node)
+      if ty == "class_declaration" || ty == "interface_declaration" || ty == "enum_declaration"
+        name = class_simple_name(node, source)
+        class_stack = class_stack + [name] unless name.empty?
+      elsif ty == "field_declaration" || ty == "constant_declaration"
+        type_text = Noir::TreeSitter.field(node, "type").try { |type| Noir::TreeSitter.node_text(type, source).gsub(/\s+/, "") }
+        if type_text == "String[]" || type_text == "java.lang.String[]"
+          current_class = class_stack.join(".")
+          Noir::TreeSitter.each_named_child(node) do |child|
+            next unless Noir::TreeSitter.node_type(child) == "variable_declarator"
+            name = Noir::TreeSitter.field(child, "name")
+            value = Noir::TreeSitter.field(child, "value")
+            next unless name && value
+            value = Noir::TreeSitter.field(value, "value") || value if Noir::TreeSitter.node_type(value) == "array_creation_expression"
+            next unless Noir::TreeSitter.node_type(value) == "array_initializer"
+            elements = [] of String
+            Noir::TreeSitter.each_named_child(value) do |element|
+              if resolved = resolve_string_value(element, source, constants, current_class)
+                elements << resolved
+              end
+            end
+            const_name = Noir::TreeSitter.node_text(name, source)
+            arrays[const_name] ||= elements
+            unless current_class.empty?
+              arrays["#{current_class}.#{const_name}"] = elements
+              arrays["#{package_name}.#{current_class}.#{const_name}"] = elements unless package_name.empty?
+            end
+          end
+        end
+        return
+      end
+
+      Noir::TreeSitter.each_named_child(node) do |child|
+        collect_string_array_constants(child, source, package_name, class_stack, constants, arrays, depth + 1)
+      end
+    end
+
     # `_from` variant — accept a pre-parsed `root` so the Spring
     # analyzer can amortise tree-sitter parses across multiple
     # extractions on the same file. Tree lifetime is the caller's
