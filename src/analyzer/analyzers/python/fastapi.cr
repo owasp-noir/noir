@@ -13,11 +13,13 @@ module Analyzer::Python
     # they aren't recompiled (Crystal rebuilds an interpolated regex
     # literal on every evaluation). The `.to_s` expansion of the
     # interpolated constants is byte-identical to the previous inline form.
-    FASTAPI_INSTANCE_RE   = /(#{PYTHON_VAR_NAME_REGEX})(?::#{DOT_NATION})?=(?:fastapi\.)?FastAPI\(/
-    APIROUTER_INSTANCE_RE = /(#{PYTHON_VAR_NAME_REGEX})(?::#{DOT_NATION})?=(?:fastapi\.)?APIRouter\(/
-    VAR_NAME_FULL_RE      = /^#{PYTHON_VAR_NAME_REGEX}$/
-    HANDLER_CALL_RE       = /^(#{PYTHON_VAR_NAME_REGEX}(?:\.#{PYTHON_VAR_NAME_REGEX})?)\s*\(/
-    HANDLER_REF_RE        = /^#{PYTHON_VAR_NAME_REGEX}(?:\.#{PYTHON_VAR_NAME_REGEX})?$/
+    FASTAPI_INSTANCE_RE = /(#{PYTHON_VAR_NAME_REGEX})(?::#{DOT_NATION})?=(?:fastapi\.)?FastAPI\(/
+    # `class UserRouter(APIRouter):` — a project router class, constructed
+    # like APIRouter itself.
+    ROUTER_SUBCLASS_RE = /^class\s+(#{PYTHON_VAR_NAME_REGEX})\s*\(([^)]*)\)\s*:/m
+    VAR_NAME_FULL_RE   = /^#{PYTHON_VAR_NAME_REGEX}$/
+    HANDLER_CALL_RE    = /^(#{PYTHON_VAR_NAME_REGEX}(?:\.#{PYTHON_VAR_NAME_REGEX})?)\s*\(/
+    HANDLER_REF_RE     = /^#{PYTHON_VAR_NAME_REGEX}(?:\.#{PYTHON_VAR_NAME_REGEX})?$/
 
     # Route-registration matchers that interpolate a discovered instance
     # name (`app`, `router`, ...) — they can't be class constants, but a
@@ -65,6 +67,9 @@ module Analyzer::Python
         # the detector-built file_map so subtree pruning and
         # --exclude-path apply to this pass too.
         python_files = python_source_files
+        router_classes = router_class_names(python_files).map { |name| Regex.escape(name) }.join("|")
+        router_ctor_re = /\b(?:fastapi\.)?(?:#{router_classes})\s*\(/
+        router_instance_re = /(#{PYTHON_VAR_NAME_REGEX})(?::#{DOT_NATION})?=(?:fastapi\.)?(#{router_classes})\(/
         base_paths.each do |current_base_path|
           python_files.each do |path|
             next unless path_under_root?(path, current_base_path)
@@ -75,7 +80,7 @@ module Analyzer::Python
             codelines.each_with_index do |original_line, index|
               next if original_line.lstrip.starts_with?("#")
 
-              effective_line = coalesce_constructor_call(codelines, index, original_line, "APIRouter")
+              effective_line = original_line.includes?("Router") && original_line.matches?(router_ctor_re) ? join_until_python_call_closes(codelines, index, original_line) : original_line
               line = effective_line.gsub(" ", "")
               match = line.includes?("FastAPI(") ? line.match(FASTAPI_INSTANCE_RE) : nil
               unless match.nil?
@@ -104,11 +109,11 @@ module Analyzer::Python
               end
 
               # https://fastapi.tiangolo.com/tutorial/bigger-applications/
-              match = line.includes?("APIRouter(") ? line.match(APIROUTER_INSTANCE_RE) : nil
+              match = line.includes?("Router(") ? line.match(router_instance_re) : nil
               unless match.nil?
                 prefix = ""
                 router_instance_name = match[1]
-                if param_codes = effective_line.split("APIRouter", 2)[1]?
+                if param_codes = effective_line.split(match[2], 2)[1]?
                   if raw_prefix = extract_python_keyword_expression(param_codes, "prefix")
                     prefix = resolve_string_expression(raw_prefix, source, import_modules) || ""
                   end
@@ -317,6 +322,28 @@ module Analyzer::Python
       result
     end
 
+    # `APIRouter` and every project class deriving from it, directly or
+    # through another project router class (`class UserAPIRouter(APIRouter)`
+    # that only pins `dependencies=`). Their instances take `prefix=` and
+    # serve routes exactly like an APIRouter.
+    private def router_class_names(files : Array(::String)) : Array(::String)
+      bases = Hash(::String, Array(::String)).new
+      files.each do |path|
+        source = read_file_content(path)
+        next unless source.includes?("Router")
+        source.scan(ROUTER_SUBCLASS_RE) do |m|
+          bases[m[1]] = m[2].split(",").map(&.strip.split(".").last)
+        end
+      end
+      names = ["APIRouter"]
+      loop do
+        added = bases.keys.select { |name| !names.includes?(name) && bases[name].any? { |b| names.includes?(b) } }
+        break if added.empty?
+        names.concat(added)
+      end
+      names
+    end
+
     # Concatenate two URL-prefix segments, normalising the
     # boundary so `combine_router_prefixes("/api/v1", "/users")`
     # gives `/api/v1/users` and `combine_router_prefixes("",
@@ -343,14 +370,24 @@ module Analyzer::Python
 
       import_modules = find_imported_modules(app_base_path, file_path, source)
       local_base_path = File.dirname(file_path)
-      if local_base_path == app_base_path
-        @fastapi_import_cache[cache_key] = import_modules
-        return import_modules
+      unless local_base_path == app_base_path
+        local_import_modules = find_imported_modules(local_base_path, file_path, source)
+        local_import_modules.each do |name, import_info|
+          import_modules[name] = import_info unless import_modules.has_key?(name)
+        end
       end
 
-      local_import_modules = find_imported_modules(local_base_path, file_path, source)
-      local_import_modules.each do |name, import_info|
-        import_modules[name] = import_info unless import_modules.has_key?(name)
+      # The module resolver leaves a name bound to a package — `from .
+      # import auth` (auth/), or `from app.routes import router` defined in
+      # routes/__init__.py — with an empty path, which cut every prefix
+      # chain that runs through a package `__init__.py`. Fill those from
+      # the symbol resolver, which names the package's `__init__.py`.
+      if import_modules.any? { |_, info| info[0].empty? }
+        Noir::ImportGraph::Python.find_imported_symbols(app_base_path, file_path, source).each do |name, symbol|
+          existing = import_modules[name]?
+          next unless existing && existing[0].empty?
+          import_modules[name] = {symbol[0], existing[1]}
+        end
       end
 
       @fastapi_import_cache[cache_key] = import_modules
@@ -1392,14 +1429,6 @@ module Analyzer::Python
                                     line : ::String,
                                     instance_name : ::String) : ::String
       return line unless line.matches?(instance_regexes(instance_name).mount_guard)
-      join_until_python_call_closes(codelines, index, line)
-    end
-
-    private def coalesce_constructor_call(codelines : Array(::String),
-                                          index : Int32,
-                                          line : ::String,
-                                          constructor_name : ::String) : ::String
-      return line unless line.includes?(constructor_name) && line.matches?(/\b#{Regex.escape(constructor_name)}\s*\(/)
       join_until_python_call_closes(codelines, index, line)
     end
 
