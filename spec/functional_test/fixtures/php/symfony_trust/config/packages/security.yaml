@@ -1,0 +1,13 @@
+security:
+    firewalls:
+        dev:
+            pattern: ^/_profiler
+            security: false
+        main:
+            lazy: true
+
+    access_control:
+        - { path: ^/feed, roles: PUBLIC_ACCESS }
+        - { path: ^/share, role: IS_AUTHENTICATED_ANONYMOUSLY }
+        - { path: ^/public, roles: PUBLIC_ACCESS }
+        - { path: ^/, roles: ROLE_USER }

@@ -145,6 +145,45 @@ module Analyzer::Php
         .select { |dir| Noir::PathScope.under_normalized_root?(expanded, dir) }.max_by?(&.size) || ""
     end
 
+    # Short name (or alias) => FQCN for every `use` import in `content`.
+    protected def parse_use_imports(content : String) : Hash(String, String)
+      imports = {} of String => String
+
+      # Plain imports: `use App\Http\Controllers\FooController;` (optional alias).
+      content.scan(/(?:\A|[;\n{])\s*use\s+([A-Za-z_\\][\w\\]*)(?:\s+as\s+([A-Za-z_]\w*))?\s*;/) do |match|
+        fqcn = match[1]
+        short = match[2]? || fqcn.split('\\').last
+        imports[short] = fqcn unless short.empty?
+      end
+
+      # Grouped imports: `use App\Http\Controllers\{FooController, BarController as Bar};`
+      content.scan(/(?:\A|[;\n{])\s*use\s+([A-Za-z_\\][\w\\]*\\)\{([^}]+)\}/) do |match|
+        prefix = match[1]
+        match[2].split(',').each do |entry|
+          item = entry.strip
+          next if item.empty?
+          next unless m = item.match(/\A([A-Za-z_\\][\w\\]*)(?:\s+as\s+([A-Za-z_]\w*))?\z/)
+          fqcn = prefix + m[1]
+          short = m[2]? || m[1].split('\\').last
+          imports[short] = fqcn unless short.empty?
+        end
+      end
+
+      imports
+    end
+
+    # `ref` as a fully-qualified class name, resolved through `imports` and
+    # the file's `namespace` the way PHP resolves a class reference.
+    protected def qualify_class(ref : String, imports : Hash(String, String), namespace : String?) : String
+      return ref.lchop('\\') if ref.starts_with?('\\')
+      head, _, rest = ref.partition('\\')
+      if mapped = imports[head]?
+        mapped = mapped.lchop('\\')
+        return rest.empty? ? mapped : "#{mapped}\\#{rest}"
+      end
+      namespace ? "#{namespace}\\#{ref}" : ref
+    end
+
     # Route composition helper. Will migrate to a PHP route extractor when that
     # layer is introduced; kept here for now so Laravel/CakePHP/Symfony stop
     # duplicating it.

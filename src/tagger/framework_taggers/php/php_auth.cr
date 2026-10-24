@@ -54,12 +54,18 @@ class PhpAuthTagger < FrameworkTagger
     {/\$request->user\(\)/, "Laravel request user check"},
   ]
 
+  # `IsGranted('PUBLIC_ACCESS')` (and the pre-5.1 `IS_AUTHENTICATED_ANONYMOUSLY`)
+  # grants every caller, so it is not a guard.
+  SYMFONY_NOT_PUBLIC = /(?!\s*(?:attribute\s*:\s*)?(?:['"]|\\?[\w\\]+::)(?:PUBLIC_ACCESS|IS_AUTHENTICATED_ANONYMOUSLY)\b)/.source
+
   # Symfony security attributes/annotations
   SYMFONY_PATTERNS = [
-    {/#\[IsGranted\s*\(/, "Symfony #[IsGranted]"},
-    {/#\[Security\s*\(/, "Symfony #[Security]"},
-    {/@Security\s*\(/, "Symfony @Security annotation"},
-    {/@IsGranted\s*\(/, "Symfony @IsGranted annotation"},
+    {/#\[IsGranted\s*\(#{SYMFONY_NOT_PUBLIC}/, "Symfony #[IsGranted]"},
+    # A quoted expression first: NelmioApiDoc's `@Security(name="Bearer")`
+    # only documents an auth scheme.
+    {/#\[Security\s*\(\s*(?:expression\s*:\s*)?['"]/, "Symfony #[Security]"},
+    {/@Security\s*\(\s*['"]/, "Symfony @Security annotation"},
+    {/@IsGranted\s*\(#{SYMFONY_NOT_PUBLIC}/, "Symfony @IsGranted annotation"},
     {/\$this->denyAccessUnlessGranted\s*\(/, "Symfony denyAccessUnlessGranted"},
     {/\$this->isGranted\s*\(/, "Symfony isGranted check"},
   ]
