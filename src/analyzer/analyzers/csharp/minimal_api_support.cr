@@ -445,7 +445,7 @@ module Analyzer::CSharp::MinimalApiSupport
 
   # `request.Headers[TokenHeader]` / `[FromHeader(Name = TokenHeader)]`: a
   # key held in a string constant.
-  CONST_REFERENCE_RE = /[Rr]equest\.(?:Query|Headers|Cookies|Form)\[\s*[A-Za-z_]|\[From\w+\s*\(\s*Name\s*=\s*[A-Za-z_]/
+  CONST_REFERENCE_RE = /(?:Request|request)\.(?:Query|Headers|Cookies|Form)\[\s*[A-Za-z_]|\[From\w+\s*\(\s*Name\s*=\s*[A-Za-z_]/
   CONST_STRING_RE    = /\bconst\s+string\s+([A-Za-z_]\w*)\s*=\s*@?"([^"]*)"\s*;/
 
   # The file's `const string Name = "value";` declarations.
@@ -468,11 +468,11 @@ module Analyzer::CSharp::MinimalApiSupport
   private def extract_params_from_block(block : String, consts : Hash(String, String)? = nil) : Array(Param)
     params = [] of Param
     {
-      /[Rr]equest\.Query\[\s*(?:"([^"]+)"|([A-Za-z_]\w*))\s*\]/   => "query",
-      /[Rr]equest\.Headers\[\s*(?:"([^"]+)"|([A-Za-z_]\w*))\s*\]/ => "header",
-      /[Rr]equest\.Cookies\[\s*(?:"([^"]+)"|([A-Za-z_]\w*))\s*\]/ => "cookie",
-      /[Rr]equest\.Form\[\s*(?:"([^"]+)"|([A-Za-z_]\w*))\s*\]/    => "form",
-      /GetProperty\s*\(\s*"([^"]+)"\s*\)/                         => "json",
+      /(?:Request|request)\.Query\[\s*(?:"([^"]+)"|([A-Za-z_]\w*))\s*\]/   => "query",
+      /(?:Request|request)\.Headers\[\s*(?:"([^"]+)"|([A-Za-z_]\w*))\s*\]/ => "header",
+      /(?:Request|request)\.Cookies\[\s*(?:"([^"]+)"|([A-Za-z_]\w*))\s*\]/ => "cookie",
+      /(?:Request|request)\.Form\[\s*(?:"([^"]+)"|([A-Za-z_]\w*))\s*\]/    => "form",
+      /GetProperty\s*\(\s*"([^"]+)"\s*\)/                                  => "json",
     }.each do |regex, param_type|
       block.scan(regex) do |match|
         key = match[1]? || match[2]?.try { |name| consts.try(&.[name]?) }
