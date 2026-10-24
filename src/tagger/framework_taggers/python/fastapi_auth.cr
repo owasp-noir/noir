@@ -61,6 +61,11 @@ class FastAPIAuthTagger < FrameworkTagger
   AUTHZ_FIELD                = /\.(?:is_superuser|is_admin|is_staff|owner_id|roles?|permissions?|scopes)\b/
   FORBIDDEN                  = /status_code\s*=\s*(?:403\b|status\.HTTP_403_FORBIDDEN)|\bHTTP_403_FORBIDDEN\b|HTTPException\s*\(\s*403\b/
   PYTHON_DEF                 = /^(?:async\s+)?def\s+(\w+)\s*\(/
+  RETURN_ANNOTATION          = /\)\s*->\s*([^\n]+?)\s*:\s*$/m
+  UNAUTHENTICATED_MARKER     = /\b401\b|\bHTTP_401_|Unauthori[sz]ed|NotAuthenticated|AuthenticationFailed/
+  REFUSAL_MARKER             = /\b(?:401|403)\b|\bHTTP_40[13]_|Unauthori[sz]ed|Forbidden|NotAuthenticated|PermissionDenied|AuthenticationFailed/
+  CLASS_DEF                  = /^(\s*)class\s+(\w+)\s*(?:\(([^)]*)\))?\s*:/
+  CLASS_DEPENDENCY_ATTR      = /^\s*(\w+)\s*(?::[^=]+)?=\s*(?:Depends|Security)\s*\(/
   ANNOTATED_ALIAS_DEPENDENCY = /^\s*(\w+)\s*(?::\s*[\w.\[\]]+\s*)?=\s*Annotated\s*\[.*\bDepends\s*\(\s*([\w.]+)/
 
   def self.target_techs : Array(String)
@@ -75,6 +80,8 @@ class FastAPIAuthTagger < FrameworkTagger
     @file_aliases = Hash(String, Hash(String, String)).new
     @authz_defs = Hash(String, Set(String)).new
     @def_names = Hash(String, Set(String)).new
+    @refusal_verdicts = Hash({String, String}, Bool?).new
+    @soft_auth = nil.as(String?)
   end
 
   def perform(endpoints : Array(Endpoint)) : Array(Endpoint)
@@ -84,6 +91,7 @@ class FastAPIAuthTagger < FrameworkTagger
     @file_aliases.clear
     @authz_defs.clear
     @def_names.clear
+    @refusal_verdicts.clear
     collect_files_by_extension(".py").each do |path|
       content = read_file(path)
       next unless content
@@ -124,6 +132,7 @@ class FastAPIAuthTagger < FrameworkTagger
   end
 
   private def check_endpoint(endpoint : Endpoint)
+    @soft_auth = nil
     endpoint.details.code_paths.each do |path_info|
       lines = read_file_lines(path_info.path)
       next if lines.nil?
@@ -131,16 +140,23 @@ class FastAPIAuthTagger < FrameworkTagger
       next if line_num.nil?
       next if line_num < 1 || line_num > lines.size
 
-      # The route's own decorators and `def` signature, wherever they wrap,
-      # and the `dependencies=[...]` of the APIRouter / FastAPI app it is
-      # declared on.
+      # The route's own decorators and `def` signature, wherever they wrap;
+      # the `dependencies=[...]` of the APIRouter / FastAPI app it is
+      # declared on (and of a project APIRouter subclass that router is);
+      # and, for a method of a class-based view, the `Depends(...)` class
+      # attributes injected into every route of that class.
       header = handler_header(lines, line_num - 1)
-      description = auth_desc(header)
-      authz = authz_desc(header, path_info.path)
-      if (description.nil? || authz.nil?) && (receiver = header.match(ROUTE_DECORATOR).try(&.[1]))
-        router = router_statement(lines, receiver)
-        description ||= auth_desc(router)
-        authz ||= authz_desc(router, path_info.path)
+      scopes = [{header, path_info.path}]
+      if receiver = header.match(ROUTE_DECORATOR).try(&.[1])
+        scopes.concat(router_statement(lines, receiver, path_info.path))
+      end
+      scopes.concat(class_dependencies(lines, line_num - 1, path_info.path))
+
+      description = nil
+      authz = nil
+      scopes.each do |text, file|
+        description ||= auth_desc(text, file)
+        authz ||= authz_desc(text, file)
       end
       authz ||= body_authz_desc(lines, line_num - 1)
       next if description.nil? && authz.nil?
@@ -148,6 +164,156 @@ class FastAPIAuthTagger < FrameworkTagger
       endpoint.add_tag(Tag.new("auth", "Protected by #{description}", "fastapi_auth")) if description
       endpoint.add_tag(Tag.new("authz", "Protected by #{authz}", "fastapi_auth")) if authz
       return
+    end
+    if soft = @soft_auth
+      endpoint.add_tag(Tag.new("anonymous", "FastAPI Depends(#{soft}) admits anonymous callers: it returns None instead of refusing", "fastapi_auth"))
+    end
+  end
+
+  # Whether the definition of dependency `callable`, used in `path`,
+  # refuses the caller. true: its body raises a 401/403 (directly, by
+  # raising a module-level exception built with one, or through a
+  # `Depends(...)` of its own that refuses). false: it visibly admits an
+  # anonymous caller: raises nothing, is annotated to return an Optional
+  # and has a `return None`. nil: no definition, or nothing decisive.
+  private def dependency_refuses?(callable : String, path : String, depth : Int32 = 0) : Bool?
+    key = {callable, path}
+    return @refusal_verdicts[key] if @refusal_verdicts.has_key?(key)
+    return if depth > 4
+    @refusal_verdicts[key] = nil # cycle guard
+    module_name, _, name = callable.rpartition('.')
+    site = if module_name.empty?
+             python_definition_site(path, name)
+           elsif (symbol = python_imported_symbols(path)[module_name]?) && symbol[1].empty?
+             python_definition_site(symbol[0], name)
+           end
+    verdict = nil
+    if site && (body = definition_block(site[0], /^(?:async\s+)?def\s+#{Regex.escape(site[1])}\b/))
+      if refusing_raise?(body, site[0]) || body.scan(DEPENDENCY_CALL).any? { |m| dependency_refuses?(m[2], site[0], depth + 1) == true }
+        verdict = true
+      elsif !body.matches?(/^\s*raise\b/m) && body.matches?(/^\s*return\s+None\s*$/m) &&
+            body.match(RETURN_ANNOTATION).try(&.[1].matches?(/\bNone\b|\bOptional\b/))
+        verdict = false
+      end
+    end
+    @refusal_verdicts[key] = verdict
+  end
+
+  # A `raise` in `body` that answers 401/403: the status is on the raise
+  # itself, the exception's name says so, or it raises a module-level
+  # exception (`credentials_exception = HTTPException(status_code=401)`).
+  # A 403 after a role / ownership read is authorization, which
+  # `authz_desc` reports, not authentication.
+  private def refusing_raise?(body : String, file : String) : Bool
+    marker = body.matches?(AUTHZ_FIELD) ? UNAUTHENTICATED_MARKER : REFUSAL_MARKER
+    body.each_line do |line|
+      code = Analyzer::Python::Helper.strip_python_comment(line)
+      next unless code.matches?(/^\s*raise\b/)
+      return true if code.matches?(marker)
+      if (name = code.match(/^\s*raise\s+(\w+)\s*(?:from\b.*)?$/).try(&.[1])) &&
+         (site = python_definition_site(file, name)) &&
+         (statement = definition_block(site[0], /^#{Regex.escape(site[1])}\s*(?::[^=\n]+)?=/))
+        return true if statement.matches?(marker)
+      end
+    end
+    false
+  end
+
+  # The top-level statement in `file` whose first line matches `start`:
+  # through the last line indented under it, or until its brackets close
+  # for an assignment.
+  private def definition_block(file : String, start : Regex) : String?
+    lines = read_file_lines(file) || return
+    idx = lines.index(&.matches?(start)) || return
+    String.build do |io|
+      io << lines[idx] << '\n'
+      depth = lines[idx].count('(') + lines[idx].count('[') - lines[idx].count(')') - lines[idx].count(']')
+      ((idx + 1)...Math.min(lines.size, idx + 400)).each do |i|
+        line = lines[i]
+        break if depth <= 0 && !line.blank? && !line[0].ascii_whitespace? && !line.starts_with?(')')
+        io << line << '\n'
+        depth += line.count('(') + line.count('[') - line.count(')') - line.count(']')
+      end
+    end
+  end
+
+  # `{statement, file}` for each `Depends(...)` class attribute a
+  # class-based view (`@cbv(router)` / a project `@controller(router)`)
+  # injects into the route method at `start`: the enclosing class's own and
+  # those of its in-project bases, a subclass attribute shadowing a base
+  # attribute of the same name.
+  private def class_dependencies(lines : Array(String), start : Int32, path : String) : Array({String, String})
+    indent = lines[start].size - lines[start].lstrip.size
+    return [] of {String, String} if indent == 0
+    (start - 1).downto(0) do |idx|
+      line = lines[idx]
+      stripped = line.lstrip
+      next if stripped.empty? || stripped.starts_with?('#')
+      next if line.size - stripped.size >= indent
+      return [] of {String, String} unless line.matches?(CLASS_DEF)
+      attrs = Hash(String, {String, String}).new
+      collect_class_dependencies(path, idx, attrs, Set({String, Int32}).new)
+      return attrs.values
+    end
+    [] of {String, String}
+  end
+
+  private def collect_class_dependencies(file : String, class_idx : Int32, attrs : Hash(String, {String, String}), seen : Set({String, Int32}))
+    return if seen.size > 12 || !seen.add?({file, class_idx})
+    lines = read_file_lines(file) || return
+    header = lines[class_idx].match(CLASS_DEF) || return
+    class_indent = header[1].size
+    body_indent = nil
+    ((class_idx + 1)...lines.size).each do |i|
+      line = lines[i]
+      stripped = line.lstrip
+      next if stripped.empty? || stripped.starts_with?('#')
+      line_indent = line.size - stripped.size
+      break if line_indent <= class_indent
+      body_indent ||= line_indent
+      next unless line_indent == body_indent
+      if attr = line.match(CLASS_DEPENDENCY_ATTR)
+        attrs[attr[1]] = {line, file} unless attrs.has_key?(attr[1])
+      end
+    end
+    class_bases(header[3]?).each do |base|
+      next unless site = class_site(file, base)
+      collect_class_dependencies(site[0], site[1], attrs, seen)
+    end
+  end
+
+  # Base-class names of a `class X(A, mod.B[T], metaclass=M)` header.
+  private def class_bases(list : String?) : Array(String)
+    return [] of String unless list
+    list.split(',').compact_map do |base|
+      name = base.strip.sub(/\[.*\z/m, "")
+      name unless name.empty? || name.includes?('=')
+    end
+  end
+
+  # `{file, line index}` of the class definition `name` (`X` or `mod.X`)
+  # refers to from `file`.
+  private def class_site(file : String, name : String) : {String, Int32}?
+    module_name, _, class_name = name.rpartition('.')
+    site = if module_name.empty?
+             python_definition_site(file, class_name)
+           elsif (symbol = python_imported_symbols(file)[module_name]?) && symbol[1].empty?
+             python_definition_site(symbol[0], class_name)
+           end
+    return unless site
+    lines = read_file_lines(site[0]) || return
+    idx = lines.index(&.matches?(/^class\s+#{Regex.escape(site[1])}\b/)) || return
+    {site[0], idx}
+  end
+
+  # Whether the class at `site` derives from APIRouter, through project
+  # router classes.
+  private def router_class?(site : {String, Int32}, depth : Int32 = 0) : Bool
+    return false if depth > 6
+    lines = read_file_lines(site[0]) || return false
+    header = lines[site[1]].match(CLASS_DEF) || return false
+    class_bases(header[3]?).any? do |base|
+      base.split('.').last == "APIRouter" || (class_site(site[0], base).try { |s| router_class?(s, depth + 1) } || false)
     end
   end
 
@@ -243,7 +409,19 @@ class FastAPIAuthTagger < FrameworkTagger
     nil
   end
 
-  private def auth_desc(text : String) : String?
+  private def auth_desc(text : String, path : String) : String?
+    # A dependency judged by its definition: one that refuses is a guard
+    # whatever its name; one that admits anonymous callers is not, whatever
+    # its name (`try_get_current_user` returning None).
+    text.scan(DEPENDENCY_CALL) do |m|
+      case dependency_refuses?(m[2], path)
+      when true
+        return "FastAPI #{m[1]}(#{m[2]})"
+      when false
+        @soft_auth ||= m[2] if auth_callable?(m[2])
+        text = text.gsub(/#{Regex.escape(m[0])}\b/, "")
+      end
+    end
     {DEPENDS_AUTH_PATTERNS, SECURITY_PATTERNS, AUTH_PARAM_PATTERNS}.each do |patterns|
       patterns.each do |pattern, desc|
         return desc if text.matches?(pattern)
@@ -307,11 +485,22 @@ class FastAPIAuthTagger < FrameworkTagger
   end
 
   # `router = APIRouter(..., dependencies=[...])` (or `app = FastAPI(...)`)
-  # for the decorator's receiver, as one statement.
-  private def router_statement(lines : Array(String), receiver : String) : String
+  # for the decorator's receiver, as one statement, with the file to resolve
+  # its names from. A receiver built from a project APIRouter subclass
+  # (`UserRouter(prefix=...)` whose `__init__` pins `dependencies=`) also
+  # brings that class's definition and those of its router bases.
+  private def router_statement(lines : Array(String), receiver : String, path : String) : Array({String, String})
+    scopes = [] of {String, String}
+    receiver_re = /^#{Regex.escape(receiver)}\s*(?::\s*[\w.]+\s*)?=\s*([\w.]+)\s*\(/
     lines.each_with_index do |line, idx|
-      next unless line.starts_with?(receiver) && line.matches?(/^#{Regex.escape(receiver)}\s*(?::\s*\w+\s*)?=\s*(?:fastapi\.)?(?:APIRouter|FastAPI)\s*\(/)
-      return String.build do |io|
+      next unless line.starts_with?(receiver) && (ctor = line.match(receiver_re).try(&.[1]))
+      ctor_name = ctor.split('.').last
+      router_class = nil
+      unless ctor_name == "APIRouter" || ctor_name == "FastAPI"
+        router_class = class_site(path, ctor)
+        next unless router_class && router_class?(router_class)
+      end
+      statement = String.build do |io|
         depth = 0
         lines[idx, 30].each do |part|
           io << part << '\n'
@@ -319,7 +508,21 @@ class FastAPIAuthTagger < FrameworkTagger
           break if depth <= 0
         end
       end
+      scopes << {statement, path}
+      site = router_class
+      hops = 0
+      while site && hops < 6
+        file_lines = read_file_lines(site[0]) || break
+        header = file_lines[site[1]].match(CLASS_DEF) || break
+        if block = definition_block(site[0], /^class\s+#{Regex.escape(header[2])}\b/)
+          scopes << {block, site[0]}
+        end
+        current = site
+        site = class_bases(header[3]?).compact_map { |base| class_site(current[0], base) }.find { |s| router_class?(s) }
+        hops += 1
+      end
+      break
     end
-    ""
+    scopes
   end
 end
