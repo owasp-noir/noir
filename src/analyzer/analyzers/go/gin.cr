@@ -10,7 +10,10 @@ module Analyzer::Go
     def analyze
       # Source Analysis
       public_dirs = [] of (Hash(String, String))
-      package_groups, file_contents = collect_package_groups_ts(import_marker: IMPORT_MARKER)
+      # Paths built through constants of other packages and wrapper calls
+      # (`router.Group(conf.BaseUri(config.ApiUri))`).
+      string_seed = go_string_seed
+      package_groups, file_contents = collect_package_groups_ts(import_marker: IMPORT_MARKER, string_seed: string_seed)
       # Pre-pass for cross-file identifier-handler resolution. Built
       # once per analyze() so each per-file callee pass only does an
       # O(1) lookup into `package_function_bodies` rather than re-
@@ -60,7 +63,7 @@ module Analyzer::Go
         # alongside the verb shortcuts (`r.GET`, etc.),
         # so opt into the method-first decoder so those
         # registrations surface as endpoints too.
-        ts_routes = Noir::TreeSitterGoRouteExtractor.extract_routes(content, cross_file_groups, handle_method: "Handle")
+        ts_routes = Noir::TreeSitterGoRouteExtractor.extract_routes(content, cross_file_groups, handle_method: "Handle", string_seed: string_seed)
         routes_by_line = Hash(Int32, Array(Noir::TreeSitterGoRouteExtractor::Route)).new
         ts_routes.each do |r|
           routes_by_line[r.line] ||= [] of Noir::TreeSitterGoRouteExtractor::Route
@@ -150,7 +153,7 @@ module Analyzer::Go
         # from two versioned groups — `addPingRoutes(v1)` and
         # `addPingRoutes(v2)` — yields both `/v1/ping` and
         # `/v2/ping`.)
-        expand_router_builders(content, lines, path, expand_builders, callees_by_route, named, "Handle") do |line, ep|
+        expand_router_builders(content, lines, path, expand_builders, callees_by_route, named, "Handle", string_seed: string_seed) do |line, ep|
           add_gin_param_patterns(line, ep)
         end
 
