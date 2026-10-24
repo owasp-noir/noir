@@ -209,7 +209,14 @@ module Analyzer::Python
                 # style stacks.
                 def_line = find_def_line(codelines, index) || (index + 1)
 
-                params = extract_fastapi_handler_params(codelines, def_line, http_route_path, source, import_modules)
+                # Path parameters come from the whole served path: a router
+                # prefix's `{group_slug}` binds a handler or dependency
+                # parameter of that name just like the route's own.
+                full_path = normalize_fastapi_path_params(router_class.join(http_route_path))
+                params = extract_fastapi_handler_params(codelines, def_line, full_path, source, import_modules, path, import_base_path)
+                class_view_params(codelines, index, full_path, source, path, import_base_path).each do |param|
+                  params << param unless params.any? { |known| known.name == param.name && known.param_type == param.param_type }
+                end
 
                 # Honor `methods=[...]` on `@router.route(...)` /
                 # `@router.api_route(...)` decorators by emitting
@@ -221,7 +228,6 @@ module Analyzer::Python
                 emit_methods = declared_methods.empty? ? [http_method_name] : declared_methods
 
                 details = Details.new(PathInfo.new(path, index + 1))
-                full_path = normalize_fastapi_path_params(router_class.join(http_route_path))
                 base_endpoint = Endpoint.new(full_path, emit_methods.first, params, details)
                 base_endpoint.protocol = "ws" if websocket_route
                 base_endpoint.handler = handler_at(codelines, def_line, path)
@@ -286,7 +292,7 @@ module Analyzer::Python
                   handler_imports = handler_path == path ? import_modules : find_fastapi_imported_modules(import_base_path, handler_path, handler_source)
                   if handler_def_line = find_function_def_line(handler_lines, handler_name)
                     prog_handler = handler_at(handler_lines, handler_def_line, handler_path)
-                    prog_params = extract_fastapi_handler_params(handler_lines, handler_def_line, prog_full, handler_source, handler_imports)
+                    prog_params = extract_fastapi_handler_params(handler_lines, handler_def_line, prog_full, handler_source, handler_imports, handler_path, import_base_path)
                     if handler_codeblock = parse_code_block(handler_lines[handler_def_line..])
                       prog_callees.concat(build_callees_from(
                         handler_codeblock,
@@ -1095,7 +1101,10 @@ module Analyzer::Python
                                                def_line : Int32,
                                                route_path : ::String,
                                                source : ::String,
-                                               import_modules : Hash(::String, Tuple(::String, Int32))) : Array(Param)
+                                               import_modules : Hash(::String, Tuple(::String, Int32)),
+                                               path : ::String,
+                                               base_path : ::String,
+                                               depth : Int32 = 0) : Array(Param)
       params = [] of Param
       function_definition = parse_function_def(codelines, def_line)
       return params unless function_definition
@@ -1112,7 +1121,20 @@ module Analyzer::Python
           params << Param.new("username", "", "form") << Param.new("password", "", "form")
           next
         end
-        next if fastapi_dependency_param?(param)
+        # `x: Model = Depends()` / `Depends(Model)`: FastAPI calls the
+        # class, so its `__init__` parameters (or, for a Pydantic model, its
+        # fields as query parameters) are what the request carries.
+        if (dep_class = fastapi_class_dependency(param)) && depth < 3 &&
+           (site = model_site(dep_class, source, path, base_path))
+          params.concat(class_dependency_params(dep_class, site, base_path, depth))
+          next
+        end
+        if fastapi_dependency_param?(param)
+          # A dependency function's own parameters are request parameters
+          # too: FastAPI resolves them for the route.
+          params.concat(dependency_function_params(param, route_path, source, path, base_path, depth)) if depth < 3
+          next
+        end
 
         default_value = return_literal_value(param.default)
         param_type = infer_parameter_type(param.default) unless param.default.empty?
@@ -1130,7 +1152,17 @@ module Analyzer::Python
         # A lone `Body()` model is the request body itself; `embed=True`
         # nests it under the parameter name instead.
         if param_type == "json" && model && !fastapi_param_declaration(param).matches?(BODY_EMBED_RE)
-          fields = model_params_for(model, param.name, source, import_modules)
+          fields = model_params_for(model, param.name, source, path, base_path)
+          unless fields.empty?
+            params.concat(fields)
+            next
+          end
+        end
+
+        # `q: Annotated[FilterModel, Query()]` (likewise `Header()` /
+        # `Cookie()`): a parameter model, whose fields each arrive there.
+        if model && (location = param_type) && location.in?(%w[query header cookie]) && !fastapi_param_declaration(param).empty?
+          fields = model_params_for(model, param.name, source, path, base_path, location)
           unless fields.empty?
             params.concat(fields)
             next
@@ -1144,7 +1176,7 @@ module Analyzer::Python
             next if function_codeblock.nil?
             params.concat(find_dictionary_params(function_codeblock, FunctionParameter.new(param.name, model, param.default)))
           else
-            params.concat(model_params_for(model, param.name, source, import_modules))
+            params.concat(model_params_for(model, param.name, source, path, base_path))
           end
         else
           params << Param.new(fastapi_wire_name(param, param_type), default_value, param_type)
@@ -1291,11 +1323,12 @@ module Analyzer::Python
         "query"
       elsif data.matches?(/WebSocket/)
         "websocket"
+      elsif data.matches?(/\bPath\s*\(/)
+        "path"
       elsif is_param_type
         # default variable type
-        ["str", "int", "float", "bool", "EmailStr"].each do |type|
-          return "query" if data.includes?(type)
-        end
+        # Whole names only: `CreateUserRegistration` is not a `str`.
+        "query" if data.matches?(SCALAR_TYPE_RE)
       end
     end
 
@@ -1329,33 +1362,209 @@ module Analyzer::Python
     end
 
     private def model_params_for(model : ::String, param_name : ::String, source : ::String,
-                                 import_modules : Hash(::String, Tuple(::String, Int32))) : Array(Param)
-      if import_modules.has_key?(model)
-        import_module_path = import_modules[model].first
-        return [] of Param if import_module_path.empty?
-        source = read_file_content(import_module_path)
-      end
-      find_base_model_params(source, model, param_name)
+                                 path : ::String, base_path : ::String, location : ::String = "json") : Array(Param)
+      return [] of Param unless site = model_site(model, source, path, base_path)
+      find_base_model_params(site[0], model, param_name, path: site[1], base_path: base_path, location: location)
     end
 
-    # Finds the parameters for a base model class, base classes declared in
-    # the same source first (Pydantic orders inherited fields that way).
-    def find_base_model_params(source : ::String, class_name : ::String, param_name : ::String,
-                               visited : Set(::String) = Set(::String).new) : Array(Param)
+    SCALAR_TYPE_RE     = /\b(?:str|int|float|bool|EmailStr)\b/
+    STAR_IMPORT_RE     = /^from\s+([\w.]+)\s+import\s+\*/m
+    ALIAS_GENERATOR_RE = /\balias_generator\s*=\s*([\w.]+)/
+    DEPENDS_EMPTY_RE   = /\bDepends\s*\(\s*\)/
+    DEPENDS_CLASS_RE   = /\bDepends\s*\(\s*([A-Z]\w*)\s*\)/
+    INIT_DEF_RE        = /^\s+(?:async\s+)?def\s+__init__\s*\(/
+
+    # `{source, file}` declaring `class model`, as named from `path`: the
+    # same file, else the module it is imported from, following package
+    # re-exports (`from .auth import Model`, `from .auth import *` in an
+    # `__init__.py`).
+    #
+    # With `function`, the same for a top-level `def model`.
+    private def model_site(model : ::String, source : ::String, path : ::String, base_path : ::String,
+                           depth : Int32 = 0, function : Bool = false) : Tuple(::String, ::String)?
+      escaped = Regex.escape(model)
+      defined = function ? /^(?:async\s+)?def\s+#{escaped}\s*\(/m : /^\s*class\s+#{escaped}\s*[(:]/m
+      return {source, path} if source.matches?(defined)
+      return if depth > 5
+      imports = find_fastapi_imported_modules(base_path, path, source)
+      if (info = imports[model]?) && !info[0].empty? && info[0] != path
+        return model_site(model, read_file_content(info[0]), info[0], base_path, depth + 1, function)
+      end
+      source.scan(STAR_IMPORT_RE) do |m|
+        target = Noir::ImportGraph::Python.find_imported_symbols(base_path, path, "from #{m[1]} import #{model}")[model]?
+        next if target.nil? || target[0].empty? || target[0] == path
+        if found = model_site(model, read_file_content(target[0]), target[0], base_path, depth + 1, function)
+          return found
+        end
+      end
+      nil
+    end
+
+    DEPENDS_CALLEE_RE = /\b(?:Depends|Security)\s*\(\s*(?:dependency\s*=\s*)?(#{PYTHON_VAR_NAME_REGEX}(?:\.#{PYTHON_VAR_NAME_REGEX})?)\s*[,)]/
+
+    # The request parameters of the function a `Depends(func)` /
+    # `Depends(module.func)` parameter calls, read from its definition.
+    private def dependency_function_params(param : FunctionParameter, route_path : ::String, source : ::String,
+                                           path : ::String, base_path : ::String, depth : Int32) : Array(Param)
+      callee = param.default.match(DEPENDS_CALLEE_RE).try(&.[1]) || param.type.match(DEPENDS_CALLEE_RE).try(&.[1])
+      return [] of Param unless callee
+      module_name, _, name = callee.rpartition('.')
+      site = if module_name.empty?
+               model_site(name, source, path, base_path, function: true)
+             elsif (info = find_fastapi_imported_modules(base_path, path, source)[module_name]?) && !info[0].empty?
+               model_site(name, read_file_content(info[0]), info[0], base_path, function: true)
+             end
+      return [] of Param unless site
+      lines = site[0].split("\n")
+      def_re = /^(?:async\s+)?def\s+#{Regex.escape(name)}\s*\(/
+      return [] of Param unless def_idx = lines.index(&.matches?(def_re))
+      imports = find_fastapi_imported_modules(base_path, site[1], site[0])
+      extract_fastapi_handler_params(lines, def_idx, route_path, site[0], imports, site[1], base_path, depth + 1)
+    end
+
+    CLASS_HEADER_RE          = /^(\s*)class\s+(#{PYTHON_VAR_NAME_REGEX})\s*(?:\(([^)]*)\))?\s*:/
+    CLASS_DEPENDENCY_ATTR_RE = /^\s*#{PYTHON_VAR_NAME_REGEX}\s*(?::[^=]+)?=\s*(?:Depends|Security)\s*\(/
+
+    # Request parameters a class-based view (`@cbv(router)`, a project
+    # `@controller(router)`) injects into its route method at `index`:
+    # the dependencies its class and in-project bases declare as
+    # `name: T = Depends(...)` attributes, a subclass attribute shadowing a
+    # base one of the same name.
+    private def class_view_params(codelines : Array(::String), index : Int32, route_path : ::String,
+                                  source : ::String, path : ::String, base_path : ::String) : Array(Param)
       params = [] of Param
-      return params unless visited.add?(class_name)
+      indent = codelines[index].size - codelines[index].lstrip.size
+      return params if indent == 0
+      class_idx = nil
+      (index - 1).downto(0) do |idx|
+        stripped = codelines[idx].lstrip
+        next if stripped.empty? || stripped.starts_with?('#')
+        next if codelines[idx].size - stripped.size >= indent
+        class_idx = idx if codelines[idx].matches?(CLASS_HEADER_RE)
+        break
+      end
+      return params unless class_idx
+      attrs = [] of Tuple(::String, ::String, ::String)
+      collect_class_view_attrs(codelines, class_idx, source, path, base_path, attrs, Set(::String).new)
+      attrs.each do |_, statement, file|
+        file_source = file == path ? source : read_file_content(file)
+        imports = find_fastapi_imported_modules(base_path, file, file_source)
+        extract_fastapi_handler_params(["def _(#{statement}):"], 0, route_path, file_source, imports, file, base_path, 1).each do |param|
+          params << param unless params.any? { |known| known.name == param.name && known.param_type == param.param_type }
+        end
+      end
+      params
+    end
+
+    private def collect_class_view_attrs(lines : Array(::String), class_idx : Int32, source : ::String, path : ::String,
+                                         base_path : ::String, attrs : Array(Tuple(::String, ::String, ::String)),
+                                         seen : Set(::String))
+      header = lines[class_idx].match(CLASS_HEADER_RE) || return
+      return if seen.size > 12 || !seen.add?("#{path}\0#{header[2]}")
+      class_indent = header[1].size
+      body_indent = nil
+      ((class_idx + 1)...lines.size).each do |idx|
+        stripped = lines[idx].lstrip
+        next if stripped.empty? || stripped.starts_with?('#')
+        line_indent = lines[idx].size - stripped.size
+        break if line_indent <= class_indent
+        body_indent ||= line_indent
+        next unless line_indent == body_indent && stripped.matches?(CLASS_DEPENDENCY_ATTR_RE)
+        statement = strip_python_comment(stripped).strip
+        name = statement.split(/[\s:=]/, 2)[0]
+        attrs << {name, statement, path} unless attrs.any? { |attr| attr[0] == name }
+      end
+      (header[3]? || "").split(',').each do |base|
+        base = base.strip.sub(/\[.*\z/m, "")
+        next unless VAR_NAME_FULL_RE.matches?(base)
+        next unless site = model_site(base, source, path, base_path)
+        base_lines = site[0].split("\n")
+        next unless base_idx = base_lines.index(&.matches?(/^\s*class\s+#{Regex.escape(base)}\s*[(:]/))
+        collect_class_view_attrs(base_lines, base_idx, site[0], site[1], base_path, attrs, seen)
+      end
+    end
+
+    # The class a `Depends()` / `Depends(Class)` parameter instantiates.
+    private def fastapi_class_dependency(param : FunctionParameter) : ::String?
+      [param.default, param.type].each do |expression|
+        next unless expression.includes?("Depends")
+        if expression.matches?(DEPENDS_EMPTY_RE)
+          annotated = param.type.includes?("Depends") ? param.type.sub(/,\s*Depends\s*\(\s*\)\s*\]\s*\z/, "]") : param.type
+          return fastapi_model_name(annotated)
+        elsif m = expression.match(DEPENDS_CLASS_RE)
+          return m[1]
+        end
+      end
+      nil
+    end
+
+    # What a class dependency reads from the request: its `__init__`
+    # parameters, resolved like a handler's, or — without one — a Pydantic
+    # model's fields as query parameters.
+    private def class_dependency_params(class_name : ::String, site : Tuple(::String, ::String),
+                                        base_path : ::String, depth : Int32) : Array(Param)
+      source, file = site
+      lines = source.split("\n")
+      class_idx = lines.index(&.matches?(/^\s*class\s+#{Regex.escape(class_name)}\s*[(:]/)) || return [] of Param
+      class_indent = lines[class_idx].size - lines[class_idx].lstrip.size
+      ((class_idx + 1)...lines.size).each do |idx|
+        line = lines[idx]
+        stripped = line.lstrip
+        next if stripped.empty? || stripped.starts_with?('#')
+        break if line.size - stripped.size <= class_indent
+        if line.matches?(INIT_DEF_RE)
+          imports = find_fastapi_imported_modules(base_path, file, source)
+          return extract_fastapi_handler_params(lines, idx, "", source, imports, file, base_path, depth + 1)
+        end
+      end
+      find_base_model_params(source, class_name, class_name, path: file, base_path: base_path, location: "query")
+    end
+
+    # Finds the parameters for a base model class, base classes first
+    # (Pydantic orders inherited fields that way): those declared in the
+    # same source, else, given `path`, where the source imports them from.
+    # Field names follow an inherited `alias_generator` named for camelCase
+    # unless a `Field(alias=...)` names the field itself.
+    def find_base_model_params(source : ::String, class_name : ::String, param_name : ::String,
+                               visited : Set(::String) = Set(::String).new,
+                               path : ::String? = nil, base_path : ::String? = nil,
+                               location : ::String = "json") : Array(Param)
+      fields = [] of Tuple(::String, Bool, ::String)
+      result = collect_model_fields(source, class_name, param_name, visited, path, base_path, fields)
+      return result if result.is_a?(Array(Param))
+      camel = result
+      fields.map do |name, explicit, default|
+        Param.new(camel && !explicit ? name.split('_').map_with_index { |part, i| i == 0 ? part : part.capitalize }.join : name, default, location)
+      end
+    end
+
+    # Fills `fields` with `{wire name, explicit alias?, default}` for
+    # `class_name` and its bases, returning whether an alias generator
+    # camelizes them (nil when none is set), or the enum shortcut params.
+    private def collect_model_fields(source : ::String, class_name : ::String, param_name : ::String,
+                                     visited : Set(::String), path : ::String?, base_path : ::String?,
+                                     fields : Array(Tuple(::String, Bool, ::String))) : Bool? | Array(Param)
+      return unless visited.add?(class_name)
       class_codeblock = parse_code_block(source, /\s*class\s*#{class_name}\s*\(/)
-      return params if class_codeblock.nil?
+      return if class_codeblock.nil?
 
       lines = class_codeblock.split("\n")
       bases = lines[0].split("(", 2)[-1].split(")")[0]
       if bases.match(/(\b)*str,\s*(enum\.){0,1}Enum(\b)*/)
         return [Param.new(param_name.strip, "", "query")]
       end
+      camel = nil.as(Bool?)
       split_python_top_level(bases, ',').each do |base|
         base = base.strip
         next if base == "BaseModel" || !VAR_NAME_FULL_RE.matches?(base)
-        params.concat(find_base_model_params(source, base, param_name, visited))
+        base_source = source
+        base_file = path
+        unless source.matches?(/^\s*class\s+#{Regex.escape(base)}\s*\(/m)
+          next unless path && base_path && (site = model_site(base, source, path, base_path))
+          base_source, base_file = site
+        end
+        inherited = collect_model_fields(base_source, base, param_name, visited, base_file, base_path, fields)
+        camel = inherited if inherited.is_a?(Bool)
       end
 
       in_docstring = Helper.docstring_line_flags(lines)
@@ -1366,17 +1575,21 @@ module Analyzer::Python
         stripped = line.lstrip
         next if stripped.empty? || stripped.starts_with?('#')
         body_indent ||= line.size - stripped.size
-        next unless line.size - stripped.size == body_indent && stripped.matches?(MODEL_FIELD_LINE_RE)
+        next unless line.size - stripped.size == body_indent
+        if generator = stripped.match(ALIAS_GENERATOR_RE)
+          camel = generator[1].downcase.includes?("camel")
+        end
+        next unless stripped.matches?(MODEL_FIELD_LINE_RE)
 
         field = parse_function_def(["def _(#{strip_python_comment(stripped)}):"], 0).try(&.params.first?)
         next if field.nil? || field.type.empty? || field.type.starts_with?("ClassVar")
 
         name = model_field_wire_name(field.name, field.default)
-        params.reject! { |existing| existing.name == name }
-        params << Param.new(name, return_literal_value(field.default), "json")
+        fields.reject! { |existing| existing[0] == name }
+        fields << {name, name != field.name, return_literal_value(field.default)}
       end
 
-      params
+      camel
     end
 
     # Finds parameters in dictionary structures
