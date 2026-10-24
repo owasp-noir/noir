@@ -55,3 +55,16 @@ tester = FunctionalTester.new("fixtures/csharp/razor/", {
 }, expected_endpoints)
 
 tester.perform_tests
+
+describe "Razor components", tags: "functional" do
+  it "names a component's OnInitialized override as the handler, in the .razor file or its code-behind" do
+    counter = tester.app.endpoints.find! { |e| e.url == "/counter" && e.method == "GET" }
+    counter.handler.try { |h| {h.name, h.path.to_s.ends_with?("Counter.razor"), h.line} }.should eq({"OnInitialized", true, 13})
+    weather = tester.app.endpoints.find! { |e| e.url == "/weather" && e.method == "GET" }
+    weather.handler.try { |h| {h.name, h.path.to_s.ends_with?("Weather.razor.cs"), h.line} }.should eq({"OnInitializedAsync", true, 6})
+  end
+
+  it "skips the pages of a .NET MAUI Blazor Hybrid project, which has no HTTP server" do
+    tester.app.endpoints.any? { |e| e.url == "/native" }.should be_false
+  end
+end

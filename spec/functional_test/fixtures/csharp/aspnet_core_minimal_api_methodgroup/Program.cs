@@ -37,6 +37,13 @@ app.MapPost("/orders", ([FromHeader(Name = "x-request-id")] Guid requestId, Crea
     return Results.Accepted();
 });
 
+const string HookTokenHeader = "X-Hook-Token";
+app.MapPost("/hooks", (WebhookRequest hook, HttpRequest request) =>
+{
+    var token = request.Headers[HookTokenHeader];
+    return Results.Ok(hook.Url);
+});
+
 app.Run();
 
 static IResult GetProducts(IProductRepository repository, int? page, [FromQuery] string? sort)

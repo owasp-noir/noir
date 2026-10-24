@@ -36,6 +36,16 @@ namespace Demo.Controllers
 
         [HttpGet("audit")]
         public IActionResult Audit([FromHeader(Name = "X-Tenant")] string tenant) => Ok(tenant);
+
+        // A model-bound complex type is posted as its members.
+        [HttpPost("open")]
+        public IActionResult Open(OpenAccountForm form) => Ok(form);
+    }
+
+    public class OpenAccountForm
+    {
+        public string Owner { get; set; }
+        public required int Kind { get; set; }
     }
 
     public class FilterDto

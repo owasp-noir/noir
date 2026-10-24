@@ -15,8 +15,11 @@ get_product = Endpoint.new("/products/{id}", "GET", [
 ])
 get_product.push_callee(Callee.new("repository.Find"))
 
+# A body DTO is the members a client sends, camelCased as ASP.NET Core
+# writes JSON, not one field named after the argument.
 create_product = Endpoint.new("/products", "POST", [
-  Param.new("request", "", "json"),
+  Param.new("name", "", "json"),
+  Param.new("price", "", "json"),
 ])
 create_product.push_callee(Callee.new("repository.Add"))
 
@@ -42,7 +45,16 @@ inventory.push_callee(Callee.new("repository.All"))
 
 create_order = Endpoint.new("/orders", "POST", [
   Param.new("x-request-id", "", "header"),
-  Param.new("order", "", "json"),
+  Param.new("sku", "", "json"),
+  Param.new("quantity", "", "json"),
+])
+
+# A DTO declared in another file honours `[JsonPropertyName]` and drops a
+# `[JsonIgnore]` member; a header named by a `const string` resolves.
+hooks = Endpoint.new("/hooks", "POST", [
+  Param.new("X-Hook-Token", "", "header"),
+  Param.new("url", "", "json"),
+  Param.new("grant_url", "", "json"),
 ])
 create_order.push_callee(Callee.new("sender.Send"))
 
@@ -55,6 +67,7 @@ expected_endpoints = [
   upload,
   inventory,
   create_order,
+  hooks,
 ]
 
 tester = FunctionalTester.new("fixtures/csharp/aspnet_core_minimal_api_methodgroup/", {
@@ -96,6 +109,19 @@ describe "ASP.NET Core Minimal API method-group analyzer edge cases", tags: "fun
     order.should_not be_nil
     names = order.as(Endpoint).callees.map(&.name)
     names.any? { |n| n == "FromHeader" }.should be_false
+  end
+
+  it "names the handler at its definition: a method group's declaration, a lambda's first line" do
+    handler = ->(url : String, method : String) { tester.app.endpoints.find! { |e| e.url == url && e.method == method }.handler }
+    handler.call("/products", "GET").try { |h| {h.name, h.line} }.should eq({"GetProducts", 49})
+    handler.call("/products/{id}", "GET").try { |h| {h.name, h.line} }.should eq({"GetProductById", 55})
+    handler.call("/orders", "POST").try { |h| {h.name, h.line} }.should eq({"lambda", 34})
+    handler.call("/hooks", "POST").try(&.path).to_s.should end_with("Program.cs")
+  end
+
+  it "drops a [JsonIgnore] body member" do
+    hooks = tester.app.endpoints.find! { |e| e.url == "/hooks" && e.method == "POST" }
+    hooks.params.any? { |p| p.name.downcase == "secret" || p.name == "hook" }.should be_false
   end
 
   it "does not record fluent route-builder metadata as callees" do

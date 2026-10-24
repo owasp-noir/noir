@@ -238,9 +238,10 @@ module Analyzer::CSharp::MinimalApiSupport
 
     route = join_route_parts(route_prefix, route) unless route_prefix.empty?
 
-    extra_params = extract_params_from_block(block)
+    consts = string_consts(file_lines) if block.matches?(CONST_REFERENCE_RE)
+    extra_params = extract_params_from_block(block, consts)
     extra_params.concat(extract_bind_params_from_file(block, file_lines, masked_lines))
-    extra_params.concat(extract_delegate_params(block, route, methods.first, file_lines, masked_lines))
+    extra_params.concat(extract_delegate_params(block, route, methods.first, file, file_lines, masked_lines))
 
     # Method-group handlers — `MapGet("/items", GetItems)` — carry the route
     # on the `Map` line but keep their parameters and body in the referenced
@@ -249,12 +250,18 @@ module Analyzer::CSharp::MinimalApiSupport
     callee_block = block
     callee_line = line
     callee_skip_first = false
+    handler_ref = nil
     if handler = resolve_handler_method(block, file_lines, masked_lines)
-      sig, handler_block, handler_line, skip_first = handler
-      extra_params.concat(handler_signature_params(sig, route, methods.first, file_lines, masked_lines))
+      name, sig, handler_block, handler_line, skip_first, decl_line = handler
+      extra_params.concat(handler_signature_params(sig, route, methods.first, file, file_lines, masked_lines))
+      consts ||= string_consts(file_lines) if handler_block.matches?(CONST_REFERENCE_RE)
+      extra_params.concat(extract_params_from_block(handler_block, consts))
       callee_block = handler_block
       callee_line = handler_line
       callee_skip_first = skip_first
+      handler_ref = Handler.new(name, file, decl_line)
+    elsif lambda_line = lambda_handler_line(block, line)
+      handler_ref = Handler.new("lambda", file, lambda_line)
     end
 
     endpoints = [] of Endpoint
@@ -263,6 +270,7 @@ module Analyzer::CSharp::MinimalApiSupport
       next unless endpoint
 
       attach_csharp_callees(endpoint, callee_block, file, callee_line, include_callee, skip_first_line: callee_skip_first)
+      endpoint.handler = handler_ref
       endpoints << endpoint
     end
     endpoints
@@ -435,17 +443,39 @@ module Analyzer::CSharp::MinimalApiSupport
     io.to_s
   end
 
-  private def extract_params_from_block(block : String) : Array(Param)
+  # `request.Headers[TokenHeader]` / `[FromHeader(Name = TokenHeader)]`: a
+  # key held in a string constant.
+  CONST_REFERENCE_RE = /[Rr]equest\.(?:Query|Headers|Cookies|Form)\[\s*[A-Za-z_]|\[From\w+\s*\(\s*Name\s*=\s*[A-Za-z_]/
+  CONST_STRING_RE    = /\bconst\s+string\s+([A-Za-z_]\w*)\s*=\s*@?"([^"]*)"\s*;/
+
+  # The file's `const string Name = "value";` declarations.
+  private def string_consts(lines : Array(String)) : Hash(String, String)
+    consts = {} of String => String
+    lines.each do |line|
+      line.scan(CONST_STRING_RE) { |m| consts[m[1]] = m[2] } if line.includes?("const")
+    end
+    consts
+  end
+
+  # `[FromHeader(Name = TokenHeader)]` with the constant's value inlined.
+  private def inline_binding_name(param_def : String, consts : Hash(String, String)?) : String
+    return param_def unless consts
+    param_def.sub(/(\[From\w+\s*\(\s*Name\s*=\s*)([A-Za-z_]\w*)/) do |text, m|
+      (value = consts[m[2]]?) ? "#{m[1]}\"#{value}\"" : text
+    end
+  end
+
+  private def extract_params_from_block(block : String, consts : Hash(String, String)? = nil) : Array(Param)
     params = [] of Param
     {
-      /Request\.Query\["([^"]+)"\]/       => "query",
-      /Request\.Headers\["([^"]+)"\]/     => "header",
-      /Request\.Cookies\["([^"]+)"\]/     => "cookie",
-      /Request\.Form\["([^"]+)"\]/        => "form",
-      /GetProperty\s*\(\s*"([^"]+)"\s*\)/ => "json",
+      /[Rr]equest\.Query\[\s*(?:"([^"]+)"|([A-Za-z_]\w*))\s*\]/   => "query",
+      /[Rr]equest\.Headers\[\s*(?:"([^"]+)"|([A-Za-z_]\w*))\s*\]/ => "header",
+      /[Rr]equest\.Cookies\[\s*(?:"([^"]+)"|([A-Za-z_]\w*))\s*\]/ => "cookie",
+      /[Rr]equest\.Form\[\s*(?:"([^"]+)"|([A-Za-z_]\w*))\s*\]/    => "form",
+      /GetProperty\s*\(\s*"([^"]+)"\s*\)/                         => "json",
     }.each do |regex, param_type|
       block.scan(regex) do |match|
-        key = match[1]? || match[0]
+        key = match[1]? || match[2]?.try { |name| consts.try(&.[name]?) }
         params << Param.new(key, "", param_type) if key && !key.empty?
       end
     end
@@ -469,12 +499,13 @@ module Analyzer::CSharp::MinimalApiSupport
     params.uniq(&.name)
   end
 
-  private def extract_delegate_params(block : String, route : String, http_method : String,
+  private def extract_delegate_params(block : String, route : String, http_method : String, file : String,
                                       lines : Array(String), masked_lines : Array(String)) : Array(Param)
     lambda_params = extract_lambda_param_list(block)
     return [] of Param if lambda_params.empty?
 
-    bound_handler_params(lambda_params, route, http_method, lines, masked_lines)
+    lambda_params = inline_binding_name(lambda_params, string_consts(lines)) if lambda_params.matches?(CONST_REFERENCE_RE)
+    bound_handler_params(lambda_params, route, http_method, file, lines, masked_lines)
   end
 
   private def extract_lambda_param_list(block : String) : String
@@ -650,17 +681,27 @@ module Analyzer::CSharp::MinimalApiSupport
 
   # Resolves a `MapGet("/x", HandlerMethod)` style registration to the
   # referenced method's signature + body. Returns
-  # `{signature, body, body_start_line, skip_first_line}` or nil when the
-  # handler is a lambda (already handled) or can't be found in this file.
-  private def resolve_handler_method(block : String, lines : Array(String), masked_lines : Array(String)) : Tuple(String, String, Int32, Bool)?
+  # `{name, signature, body, body_start_line, skip_first_line, decl_line}`
+  # or nil when the handler is a lambda (already handled) or can't be found
+  # in this file. A qualified `Type.Method` resolves only when this file
+  # declares `Type`, so a same-named method of another class is never taken.
+  private def resolve_handler_method(block : String, lines : Array(String), masked_lines : Array(String)) : Tuple(String, String, String, Int32, Bool, Int32)?
     name = handler_method_name(block)
     return unless name
-    locate_method_definition(name, lines, masked_lines)
+    *qualifier, method = name.split('.')
+    unless qualifier.empty?
+      type_re = /\b(?:class|record|struct)\s+#{Regex.escape(qualifier.last)}\b/
+      return unless lines.any? { |l| l.includes?(qualifier.last) && l.matches?(type_re) }
+    end
+    locate_method_definition(method, lines, masked_lines).try do |sig, body, body_line, skip_first, decl_line|
+      {name, sig, body, body_line, skip_first, decl_line}
+    end
   end
 
-  # Pulls the handler argument out of the `Map*(...)` call and returns its
-  # method name when it's a method group (a bare/qualified identifier), or
-  # nil for lambdas, string literals and inline expressions.
+  # Pulls the handler argument out of the `Map*(...)` call and returns it
+  # as written (`GetItems`, `Handlers.GetItems`) when it's a method group (a
+  # bare/qualified identifier), or nil for lambdas, string literals and
+  # inline expressions.
   private def handler_method_name(block : String) : String?
     args = map_call_arguments(block)
     return if args.size < 2
@@ -672,7 +713,18 @@ module Analyzer::CSharp::MinimalApiSupport
     return if handler.starts_with?("new")
     return unless handler.matches?(/\A@?[A-Za-z_][A-Za-z0-9_]*(?:\s*\.\s*[A-Za-z_][A-Za-z0-9_]*)*\z/)
 
-    handler.gsub(/\s+/, "").lchop('@').split('.').last
+    handler.gsub(/\s+/, "").lchop('@')
+  end
+
+  # 1-based line where an inline lambda handler (the last `Map*` argument)
+  # starts, `line` being the block's first line; nil for any other handler.
+  private def lambda_handler_line(block : String, line : Int32) : Int32?
+    args = map_call_arguments(block)
+    return if args.size < 2
+    handler = args.last.strip
+    return unless handler.includes?("=>")
+    offset = block.rindex(handler) || return
+    line + block[0...offset].count('\n')
   end
 
   # Top-level argument list of the first `Map*` invocation in the block,
@@ -715,9 +767,10 @@ module Analyzer::CSharp::MinimalApiSupport
 
   # Finds a method declaration by name in the file and returns its
   # signature, body block, body start line (1-based) and whether the
-  # callee scanner should skip the first body line. Skips the
-  # registration call itself and assignment/call sites.
-  private def locate_method_definition(name : String, lines : Array(String), masked_lines : Array(String)) : Tuple(String, String, Int32, Bool)?
+  # callee scanner should skip the first body line, then the declaration
+  # line (1-based). Skips the registration call itself and assignment/call
+  # sites.
+  private def locate_method_definition(name : String, lines : Array(String), masked_lines : Array(String)) : Tuple(String, String, Int32, Bool, Int32)?
     decl = /(?:public|private|internal|protected|static|async)\b[^;={(]*\b#{Regex.escape(name)}\s*\(/
 
     lines.each_with_index do |line, idx|
@@ -729,7 +782,7 @@ module Analyzer::CSharp::MinimalApiSupport
       sig, end_idx = build_signature(lines, masked_lines, idx)
       block, body_idx, skip_first = extract_callable_body(lines, masked_lines, end_idx)
       return if block.empty?
-      return {sig, block, body_idx + 1, skip_first}
+      return {sig, block, body_idx + 1, skip_first, idx + 1}
     end
 
     nil
@@ -737,26 +790,30 @@ module Analyzer::CSharp::MinimalApiSupport
 
   # Builds params from a resolved handler's signature, reusing the delegate
   # binding rules and expanding `[AsParameters]` bundle types.
-  private def handler_signature_params(signature : String, route : String, http_method : String, lines : Array(String), masked_lines : Array(String)) : Array(Param)
+  private def handler_signature_params(signature : String, route : String, http_method : String, file : String, lines : Array(String), masked_lines : Array(String)) : Array(Param)
     list = extract_balanced_param_list(signature)
     return [] of Param unless list
 
     list = list.strip
     return [] of Param if list.empty?
 
-    bound_handler_params(list, route, http_method, lines, masked_lines)
+    list = inline_binding_name(list, string_consts(lines)) if list.matches?(CONST_REFERENCE_RE)
+    bound_handler_params(list, route, http_method, file, lines, masked_lines)
   end
 
   # Params bound from a handler's parameter list — an inline lambda's or a
-  # method group's — expanding `[AsParameters]` bundle types.
-  private def bound_handler_params(list : String, route : String, http_method : String, lines : Array(String), masked_lines : Array(String)) : Array(Param)
+  # method group's — expanding `[AsParameters]` bundle types and body DTOs
+  # (`CreateOrderRequest request` is the members a client sends, not a
+  # field called `request`).
+  private def bound_handler_params(list : String, route : String, http_method : String, file : String, lines : Array(String), masked_lines : Array(String)) : Array(Param)
     route_params = extract_route_placeholders(route)
     params = [] of Param
     split_csharp_parameters(list).each do |pdef|
       if pdef.includes?("[AsParameters]") || pdef.includes?("[AsParameters ")
-        params.concat(expand_as_parameters(pdef, lines, masked_lines, route_params, http_method))
+        params.concat(expand_as_parameters(pdef, file, lines, masked_lines, route_params, http_method))
       elsif param = delegate_param_to_noir_param(pdef, route_params, http_method)
-        params << param
+        members = body_type_params(pdef, param.param_type, file, lines, masked_lines) if param.param_type.in?("json", "form")
+        members ? params.concat(members) : (params << param)
       end
     end
     params.uniq(&.name)
@@ -766,7 +823,7 @@ module Analyzer::CSharp::MinimalApiSupport
   # from the query/route/header — never the body. Expand to those members,
   # dropping the DI-service members (a bundle like `CatalogServices` yields
   # nothing, which is exactly right).
-  private def expand_as_parameters(param_def : String, lines : Array(String), masked_lines : Array(String), route_params : Array(String), http_method : String) : Array(Param)
+  private def expand_as_parameters(param_def : String, file : String, lines : Array(String), masked_lines : Array(String), route_params : Array(String), http_method : String) : Array(Param)
     cleaned = param_def.gsub(/\[[^\]]*\]\s*/, "").strip
     type_token = cleaned.split(/\s+/).first?
     return [] of Param unless type_token
@@ -776,75 +833,11 @@ module Analyzer::CSharp::MinimalApiSupport
     return [] of Param if Common.csharp_service_type?(base)
 
     params = [] of Param
-    as_parameters_member_defs(base, lines, masked_lines).each do |member|
+    type_member_defs(base, file, lines, masked_lines).each do |member|
       param = as_parameters_member_to_param(member, route_params, http_method)
       params << param if param
     end
     params.uniq(&.name)
-  end
-
-  # Returns the member definitions (primary-constructor params or public
-  # auto-properties) of a record/class/struct used with `[AsParameters]`.
-  private def as_parameters_member_defs(type_name : String, lines : Array(String), masked_lines : Array(String)) : Array(String)
-    # Hoisted out of the loop: an interpolated regex literal recompiles
-    # (PCRE2 JIT) on every evaluation, i.e. once per line.
-    type_decl_regex = /\b(?:record|class|struct)\s+#{Regex.escape(type_name)}\b/
-    def_idx = lines.index do |l|
-      l.includes?(type_name) && l.matches?(type_decl_regex)
-    end
-    return [] of String unless def_idx
-    defline = lines[def_idx]
-    name_pos = defline.index(/\b#{Regex.escape(type_name)}\b/)
-    paren = defline.index('(', name_pos || 0)
-    if name_pos && paren && paren > name_pos
-      return split_csharp_parameters(gather_balanced_parens(lines, masked_lines, def_idx, paren))
-    end
-
-    defs = [] of String
-    # Capture any binding attributes that precede the property (they may sit
-    # on their own line, e.g. `[FromHeader(Name = "X-Tenant")]`) so the
-    # member keeps its `header`/`query` classification and explicit name.
-    extract_method_block(lines, masked_lines, def_idx).scan(/((?:\[[^\]]*\]\s*)*)(?:public|internal)\s+([\w<>\[\]\?\.]+)\s+([A-Za-z_]\w*)\s*\{\s*get/) do |m|
-      attrs = m[1].gsub(/\s+/, " ").strip
-      defs << "#{attrs} #{m[2].strip} #{m[3]}".strip
-    end
-    defs
-  end
-
-  # Collects the text inside a parenthesised group that opens at `open_pos`
-  # on `lines[start_index]`, spanning subsequent lines until balanced.
-  private def gather_balanced_parens(lines : Array(String), masked : Array(String), start_index : Int32, open_pos : Int32) : String
-    io = String::Builder.new
-    depth = 0
-    i = start_index
-    started = false
-    while i < lines.size
-      # Index over `Array(Char)` (O(1)) rather than `String#[](Int)`, which is
-      # O(n) per access on multi-byte lines and made this O(n^2) on long
-      # CJK signatures — the very regression the lexer work targets.
-      line_chars = lines[i].chars
-      mline_chars = masked[i].chars
-      from = i == start_index ? open_pos : 0
-      (from...line_chars.size).each do |k|
-        # Count over the masked twin so a `(`/`)` inside a string default
-        # value (`prop = "f(x"`) can't unbalance the group; emit raw text.
-        masked_char = k < mline_chars.size ? mline_chars[k] : ' '
-        raw_char = line_chars[k]
-        if masked_char == '('
-          depth += 1
-          started = true
-          next if depth == 1
-        elsif masked_char == ')'
-          depth -= 1
-          return io.to_s if depth == 0
-        end
-        io << raw_char if started && depth >= 1
-      end
-      io << ' '
-      break if started && depth <= 0
-      i += 1
-    end
-    io.to_s
   end
 
   # Maps a single `[AsParameters]` member to a Param. Defaults to query

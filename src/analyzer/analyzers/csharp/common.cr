@@ -345,6 +345,149 @@ module Analyzer::CSharp::Common
     {"", start_index, false}
   end
 
+  # A type declaration's name, for the cross-file type index.
+  TYPE_DECLARATION_RE = /\b(?:class|record|struct)\s+(?:class\s+|struct\s+)?([A-Z]\w*)/
+
+  # A public property with the attributes above it (`[JsonIgnore]`,
+  # `[FromHeader(Name = "X-Tenant")]`): `{attributes, type, name}`.
+  PUBLIC_PROPERTY_RE = /((?:\[[^\]]*\]\s*)*)(?:public|internal)\s+(?:(?:required|virtual|override|new)\s+)*([\w<>\[\]\?\.]+)\s+([A-Za-z_]\w*)\s*\{\s*(?:get|init|set)\b/
+
+  # A `[JsonIgnore]` that also skips the member on read (`Condition =
+  # WhenWritingNull` only affects writing).
+  JSON_IGNORE_RE        = /\bJsonIgnore(?:Attribute)?\s*(?:[\],]|\(\s*\))|JsonIgnoreCondition\.Always/
+  JSON_PROPERTY_NAME_RE = /\bJsonPropertyName(?:Attribute)?\s*\(\s*"([^"]+)"/
+
+  @csharp_type_files : Hash(String, Array(String))? = nil
+
+  # The member definitions (positional-record parameters, or public
+  # properties with their attributes) of request type `type_name`, declared
+  # in `lines` (the file at `file`) or else in the scanned `.cs` file that
+  # shares the most of `file`'s path. Empty when the scan does not declare it.
+  protected def type_member_defs(type_name : String, file : String, lines : Array(String), masked_lines : Array(String)) : Array(String)
+    if defs = member_defs_in(type_name, lines, masked_lines)
+      return defs
+    end
+    candidates = csharp_type_files[type_name]? || return [] of String
+    other = candidates.max_by? { |path| common_prefix_size(path, file) } || return [] of String
+    lexer = Noir::CSharpLexer.new(read_file_content(other))
+    member_defs_in(type_name, lexer.code_lines, lexer.masked_lines) || [] of String
+  end
+
+  private def common_prefix_size(a : String, b : String) : Int32
+    size = 0
+    a.each_char_with_index do |char, i|
+      break unless b[i]? == char
+      size += 1
+    end
+    size
+  end
+
+  # Type name => the non-test `.cs` files declaring it, built on first use.
+  private def csharp_type_files : Hash(String, Array(String))
+    @csharp_type_files ||= begin
+      index = Hash(String, Array(String)).new
+      get_files_by_extension(".cs").each do |path|
+        next if Common.csharp_test_path?(base_relative_path(path))
+        read_file_content(path).scan(TYPE_DECLARATION_RE) do |m|
+          files = index[m[1]] ||= [] of String
+          files << path unless files.includes?(path)
+        end
+      end
+      index
+    end
+  end
+
+  # nil when `lines` does not declare `type_name`.
+  private def member_defs_in(type_name : String, lines : Array(String), masked_lines : Array(String)) : Array(String)?
+    # Hoisted out of the loop: an interpolated regex literal recompiles
+    # (PCRE2 JIT) on every evaluation, i.e. once per line.
+    type_decl_regex = /\b(?:record|class|struct)\s+(?:class\s+|struct\s+)?#{Regex.escape(type_name)}\b/
+    def_idx = lines.index do |l|
+      l.includes?(type_name) && l.matches?(type_decl_regex)
+    end
+    return unless def_idx
+    defline = lines[def_idx]
+    name_pos = defline.index(/\b#{Regex.escape(type_name)}\b/)
+    paren = defline.index('(', name_pos || 0)
+    # A positional record's parameters are its properties; a class's primary
+    # constructor parameters are not members at all.
+    if name_pos && paren && paren > name_pos && defline.matches?(/\brecord\b/)
+      return split_csharp_parameters(gather_balanced_parens(lines, masked_lines, def_idx, paren))
+    end
+
+    defs = [] of String
+    extract_method_block(lines, masked_lines, def_idx).scan(PUBLIC_PROPERTY_RE) do |m|
+      attrs = m[1].gsub(/\s+/, " ").strip
+      defs << "#{attrs} #{m[2].strip} #{m[3]}".strip
+    end
+    defs
+  end
+
+  # Collects the text inside a parenthesised group that opens at `open_pos`
+  # on `lines[start_index]`, spanning subsequent lines until balanced.
+  protected def gather_balanced_parens(lines : Array(String), masked : Array(String), start_index : Int32, open_pos : Int32) : String
+    io = String::Builder.new
+    depth = 0
+    i = start_index
+    started = false
+    while i < lines.size
+      # Index over `Array(Char)` (O(1)) rather than `String#[](Int)`, which is
+      # O(n) per access on multi-byte lines and made this O(n^2) on long
+      # CJK signatures — the very regression the lexer work targets.
+      line_chars = lines[i].chars
+      mline_chars = masked[i].chars
+      from = i == start_index ? open_pos : 0
+      (from...line_chars.size).each do |k|
+        # Count over the masked twin so a `(`/`)` inside a string default
+        # value (`prop = "f(x"`) can't unbalance the group; emit raw text.
+        masked_char = k < mline_chars.size ? mline_chars[k] : ' '
+        raw_char = line_chars[k]
+        if masked_char == '('
+          depth += 1
+          started = true
+          next if depth == 1
+        elsif masked_char == ')'
+          depth -= 1
+          return io.to_s if depth == 0
+        end
+        io << raw_char if started && depth >= 1
+      end
+      io << ' '
+      break if started && depth <= 0
+      i += 1
+    end
+    io.to_s
+  end
+
+  # The members of the body type of handler parameter `param_def` bound
+  # from `param_type` (`json`/`form`), or nil when its type is not a plain
+  # type the scan declares (a primitive, a collection, a generic).
+  protected def body_type_params(param_def : String, param_type : String, file : String,
+                                 lines : Array(String), masked_lines : Array(String)) : Array(Param)?
+    decl = param_def.gsub(/\[[^\]]*\]\s*/, "").sub(/=.*/m, "").gsub(/\b(?:ref|out|in|params|this)\s+/, "").strip
+    type = decl.sub(/\s*[A-Za-z_]\w*\z/, "").rchop('?')
+    return unless type.matches?(/\A[A-Za-z_][\w.]*\z/)
+    params = type_member_defs(type.split('.').last, file, lines, masked_lines).compact_map do |member|
+      body_member_param(member, param_type)
+    end
+    params.uniq(&.name) unless params.empty?
+  end
+
+  # A body member's request name: `[JsonPropertyName]`, else the member
+  # name, camelCased for JSON as ASP.NET Core's web serializer defaults
+  # write it (reads are case-insensitive). nil for a `[JsonIgnore]` member.
+  private def body_member_param(member_def : String, param_type : String) : Param?
+    return if member_def.matches?(JSON_IGNORE_RE)
+    cleaned = member_def.gsub(/\[[^\]]*\]\s*/, "").sub(/=.*/m, "").strip
+    name = cleaned.match(/([A-Za-z_]\w*)\s*\z/).try(&.[1]) || return
+    if explicit = member_def.match(JSON_PROPERTY_NAME_RE)
+      name = explicit[1]
+    elsif param_type == "json"
+      name = name[0].downcase + name[1..]
+    end
+    Param.new(name, "", param_type)
+  end
+
   protected def attach_csharp_callees(endpoint : Endpoint,
                                       block : String,
                                       file : String,
