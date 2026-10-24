@@ -18,11 +18,12 @@ Release process for project maintainers.
 | GitHub Container Registry | [ghcr.io/owasp-noir/noir](https://github.com/owasp-noir/noir/pkgs/container/noir) | Automated |
 | GitHub Release assets | Binaries (Linux, macOS, Windows), `.deb`, `.rpm`, `.apk`, SBOM | Automated |
 | AUR | `noir` | Automated |
+| npm | [@owasp-noir/noir](https://www.npmjs.com/package/@owasp-noir/noir) | Automated |
 | OWASP Project Page | [OWASP/www-project-noir](https://github.com/OWASP/www-project-noir) | Semi-automated |
 
 ## General Procedure
 
-1.  **Update Version**: Bump the version everywhere it appears (`shard.yml`, `src/noir.cr`, `flake.nix`, the Dockerfile, `snap/snapcraft.yaml`, `aur/PKGBUILD`, the GitHub Action README and a few docs files). The script does it in one go; without an argument it prompts for the new version.
+1.  **Update Version**: Bump the version everywhere it appears (`shard.yml`, `src/noir.cr`, `flake.nix`, the Dockerfile, `snap/snapcraft.yaml`, `aur/PKGBUILD`, `package.json`, the GitHub Action README and a few docs files). The script does it in one go; without an argument it prompts for the new version.
 
     ```bash
     just version-update 1.4.1
@@ -40,7 +41,7 @@ Release process for project maintainers.
 
     Every tracked file must report the same version as `shard.yml`; the script ends with `✅ All versions match`.
 
-3.  **Create GitHub Release**: Publish a new release on the [GitHub releases page](https://github.com/owasp-noir/noir/releases). Publishing triggers the automated workflows: binaries first, then the `.deb`, `.rpm`, `.apk` and AUR packages once the binaries are uploaded, plus GHCR, Snapcraft, the Homebrew tap and the SBOM.
+3.  **Create GitHub Release**: Publish a new release on the [GitHub releases page](https://github.com/owasp-noir/noir/releases). Publishing triggers the automated workflows: binaries first, then the `.deb`, `.rpm`, `.apk` and AUR packages once the binaries are uploaded, plus GHCR, Snapcraft, the Homebrew tap and the SBOM. npm publishes once the binaries are uploaded: the workflow pins each binary's SHA-256 into the package, and the package refuses to install a download that doesn't match. It also refuses to publish if the `package.json` version does not match the release tag. Don't rebuild or replace the binaries of a release after npm has published it, or npm installs of that version will fail the checksum; cut a new patch release instead.
 4.  **Manual Releases**: Complete the manual steps below for the remaining channels.
 
 ## Manual Release Instructions

@@ -1,0 +1,76 @@
+name: Publish npm package
+
+# Runs after "Build and Release Binaries" finishes for a published release:
+# the package pins the SHA-256 of those binaries, so they must be uploaded
+# first. workflow_dispatch republishes a tag by hand (e.g. after a failure).
+on:
+  workflow_run:
+    workflows: ["Build and Release Binaries"]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to publish (e.g. v1.4.0)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  # OIDC token for npm trusted publishing and provenance; no npm token is stored.
+  id-token: write
+
+jobs:
+  publish:
+    # Skip binary builds started by hand, and failed ones.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.event == 'release' &&
+       github.event.workflow_run.conclusion == 'success')
+    runs-on: ubuntu-latest
+    env:
+      # For a release-triggered run, head_branch is the release tag.
+      TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.event.workflow_run.head_branch }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ env.TAG }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+
+      # Trusted publishing needs npm >= 11.5.1, and early Node 24 releases
+      # (which the runner's tool cache may still hold) bundle an older npm 11.
+      - name: Update npm
+        run: npm install -g npm@^11.5.1
+
+      # npm/install.js downloads the release binary named after package.json's
+      # version, so a stale version would ship a package that installs the
+      # wrong (or a missing) binary. `just version-update` keeps them in sync.
+      - name: Check package.json version matches release tag
+        run: |
+          PKG_VERSION=$(node -p "require('./package.json').version")
+          if [ "v${PKG_VERSION}" != "${TAG}" ]; then
+            echo "::error file=package.json::package.json version (${PKG_VERSION}) does not match release tag (${TAG}). Run 'just version-update' before releasing."
+            exit 1
+          fi
+
+      # Pin the SHA-256 of each release binary into the package. install.js
+      # refuses any download that doesn't match, so a release asset replaced
+      # after publishing can't reach npm users.
+      - name: Pin release binary checksums
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir release-assets \
+            --pattern 'noir-*-linux-*' --pattern 'noir-*-osx-*.tar.gz'
+          node npm/write-checksums.js release-assets
+
+      # --provenance attaches a signed record to the published package saying
+      # exactly where it was built: which GitHub repo, which commit, and which workflow run.
+      - name: Publish to npm
+        run: npm publish --provenance
