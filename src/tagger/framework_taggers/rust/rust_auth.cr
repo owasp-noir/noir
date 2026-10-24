@@ -1,6 +1,7 @@
 require "../../../models/framework_tagger"
 require "../../../models/endpoint"
 require "../prefix_scope"
+require "../../../miniparsers/rust_request_guards"
 
 @[Noir::TaggerFor(key: "rust_auth", name: "Rust Auth Tagger", desc: "Identifies Rust authentication patterns (guards, extractors, middleware)", order: 70)]
 class RustAuthTagger < FrameworkTagger
@@ -57,6 +58,8 @@ class RustAuthTagger < FrameworkTagger
   def initialize(options : Hash(String, YAML::Any))
     super
     @middleware_scopes = [] of {prefix: String, exact: Bool, local: Bool, description: String}
+    @guard_verdicts = {} of String => Bool
+    @handler_param_types = {} of String => Hash(Int32, Array(String))
   end
 
   def self.target_techs : Array(String)
@@ -70,7 +73,35 @@ class RustAuthTagger < FrameworkTagger
   def perform(endpoints : Array(Endpoint)) : Array(Endpoint)
     # Phase 1: Pre-scan for service/scope-level middleware
     pre_scan_middleware_scopes
+    pre_scan_request_guards
     super
+  end
+
+  # Which `FromRequest` / `FromRequestParts` types in the scan can refuse
+  # the caller, decided by their impls (see `Noir::RustRequestGuards`).
+  private def pre_scan_request_guards
+    facts = Noir::RustRequestGuards::Facts.new
+    collect_files_by_extension(".rs").each do |file|
+      next unless content = read_file(file)
+      Noir::RustRequestGuards.scan(content, facts)
+    rescue e
+      @logger.debug "rust request-guard scan error #{file}: #{e}"
+    end
+    @guard_verdicts = Noir::RustRequestGuards.resolve(facts)
+  end
+
+  # The first parameter of the endpoint's handler fn whose type is a
+  # request guard that can refuse the caller.
+  private def handler_request_guard(endpoint : Endpoint) : String?
+    return if @guard_verdicts.empty?
+    handler = endpoint.handler || return
+    path = handler.path || return
+    line = handler.line || return
+    types = @handler_param_types[path] ||= begin
+      content = read_file(path)
+      content ? Noir::RustRequestGuards.handler_param_types(content) : {} of Int32 => Array(String)
+    end
+    types[line]?.try &.find { |type| @guard_verdicts[type]? == true }
   end
 
   private def pre_scan_middleware_scopes
@@ -188,6 +219,11 @@ class RustAuthTagger < FrameworkTagger
   end
 
   private def check_endpoint(endpoint : Endpoint)
+    if guard = handler_request_guard(endpoint)
+      endpoint.add_tag(Tag.new("auth", "Protected by Rust #{guard} request guard", "rust_auth"))
+      return
+    end
+
     endpoint.details.code_paths.each do |path_info|
       lines = read_file_lines(path_info.path)
       next if lines.nil?
@@ -205,7 +241,7 @@ class RustAuthTagger < FrameworkTagger
       end
 
       # Check function signature for auth guard types/extractors
-      description = check_function_signature(lines, line_idx)
+      description = check_function_signature(lines, line_idx, !endpoint.handler.nil?)
       if description
         endpoint.add_tag(Tag.new("auth", description, "rust_auth"))
         return
@@ -265,7 +301,7 @@ class RustAuthTagger < FrameworkTagger
     nil
   end
 
-  private def check_function_signature(lines : Array(String), route_line_idx : Int32) : String?
+  private def check_function_signature(lines : Array(String), route_line_idx : Int32, handler_resolved : Bool = false) : String?
     # Look at lines after the route attribute for the function signature
     # Route attributes like #[get("/path")] are followed by fn handler(...)
     idx = route_line_idx
@@ -287,10 +323,13 @@ class RustAuthTagger < FrameworkTagger
         signature = sig_lines.join(" ")
 
         GUARD_TYPE_PATTERNS.each do |pattern|
-          if signature.matches?(pattern)
-            match = signature.match(pattern)
-            guard_type = match ? match[0] : "Auth"
-            return "Protected by Rust #{guard_type} request guard"
+          signature.scan(pattern) do |match|
+            # Its impl was read: it cannot refuse the caller, or it can and
+            # `handler_request_guard` already saw it would not here (an
+            # `Option<Session>` parameter). Either way the name says nothing.
+            verdict = @guard_verdicts[match[0]]?
+            next if verdict == false || (verdict && handler_resolved)
+            return "Protected by Rust #{match[0]} request guard"
           end
         end
 
