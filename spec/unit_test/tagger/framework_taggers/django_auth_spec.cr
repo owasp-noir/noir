@@ -285,4 +285,91 @@ describe "DjangoAuthTagger" do
       FileUtils.rm_rf(tmpdir)
     end
   end
+
+  it "judges DRF permission classes by their definition, through same-file bases" do
+    CodeLocator.instance.clear_all
+    tmpdir = File.tempname("django_drf_custom_perms")
+    Dir.mkdir_p(tmpdir)
+    perms = File.join(tmpdir, "permissions.py")
+    views = File.join(tmpdir, "views.py")
+    File.write(perms, <<-PY)
+      class StaffOnly(BasePermission):
+          def has_permission(self, request, view):
+              return request.user.is_staff
+
+      class Anyone(BasePermission):
+          def has_permission(self, request, view):
+              return True
+
+      class OwnerObjects(DjangoObjectPermissions):
+          pass
+
+      class ReadOrStaff(BasePermission):
+          def has_permission(self, request, view):
+              if request.method in SAFE_METHODS:
+                  return True
+              return request.user.is_staff
+      PY
+    File.write(views, <<-PY)
+      class StaffView(APIView):
+          permission_classes = [StaffOnly]
+          def get(self, request):
+              pass
+
+      class OpenView(APIView):
+          permission_classes = [Anyone]
+          def get(self, request):
+              pass
+
+      class OwnedMixin(GenericAPIView):
+          permission_classes = (OwnerObjects,)
+
+      class OwnedView(
+          OwnedMixin,
+      ):
+          class _Filter(BaseFilter):
+              pass
+
+          def get(self, request):
+              pass
+
+      class EitherView(APIView):
+          permission_classes = [IsAuthenticated | Anyone]
+          def get(self, request):
+              pass
+
+      class ReadView(APIView):
+          permission_classes = [ReadOrStaff]
+          def get(self, request):
+              pass
+          def post(self, request):
+              pass
+      PY
+    CodeLocator.instance.register_path(perms)
+    CodeLocator.instance.register_path(views)
+
+    begin
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(tmpdir)
+      at = ->(method : String, line : Int32) { Endpoint.new("/#{line}", method, [] of Param, Details.new(PathInfo.new(views, line))) }
+      staff = at.call("GET", 3)
+      open = at.call("GET", 8)
+      owned = at.call("GET", 20)
+      either = at.call("GET", 25)
+      read = at.call("GET", 30)
+      write = at.call("POST", 32)
+
+      DjangoAuthTagger.new(noir_options).perform([staff, open, owned, either, read, write])
+
+      staff.tags.map(&.description).should eq(["Protected by DRF permission_classes"])
+      open.tags.should be_empty
+      owned.tags.map(&.description).should eq(["Protected by DRF permission_classes"])
+      either.tags.should be_empty
+      read.tags.should be_empty
+      write.tags.map(&.description).should eq(["Protected by DRF permission_classes"])
+    ensure
+      FileUtils.rm_rf(tmpdir)
+      CodeLocator.instance.clear_all
+    end
+  end
 end
