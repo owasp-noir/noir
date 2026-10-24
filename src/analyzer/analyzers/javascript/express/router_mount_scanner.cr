@@ -27,7 +27,9 @@ module Analyzer::Javascript
     # {string, backtick, identifier, array} prefix forms of `<caller>.<call>(…`.
     alias MountCallRes = Tuple(Regex, Regex, Regex, Regex)
 
-    def self.mount_call_res(c : String) : MountCallRes
+    def self.mount_call_res(name : String) : MountCallRes
+      # A JS identifier may hold `$`, a regex anchor.
+      c = Regex.escape(name)
       {/(\w+)\.#{c}\s*\(\s*['"]([^'"]+)['"]\s*,\s*/,
        /(\w+)\.#{c}\s*\(\s*`([^`$]+)`\s*,\s*/,
        /(\w+)\.#{c}\s*\(\s*(\w+)\s*,\s*/,
