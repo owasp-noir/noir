@@ -1613,11 +1613,28 @@ module NoirAIContext
       nil
     end
 
+    ROUTE_PATH_LITERAL = /(["'`])\/[^"'`\n]*\1/
+
+    # The route's own path literal and its handler's declared name are not
+    # guards: `@PostMapping("/authenticate") … authorize(LoginVM vm)` names
+    # the login endpoint, it does not protect it. Only the guard scan sees
+    # the masked scope; sinks and signals still read the route as written.
+    private def without_self_names(scope : String, endpoint : Endpoint, path : String) : String
+      scope = scope.gsub(ROUTE_PATH_LITERAL, "\"\"")
+      handler = endpoint.handler
+      return scope unless handler && handler.path == path && (line = handler.line)
+      name = handler.name.split(/[.#:]/).last
+      return scope if name.empty?
+      prefix = "#{line}:"
+      scope.split(" | ").map { |seg| seg.starts_with?(prefix) ? seg.sub(name, "") : seg }.join(" | ")
+    end
+
     private def add_source_scan_entries(context : AIContext, endpoint : Endpoint)
       return if endpoint.details.code_paths.empty?
 
       source_scan_paths(endpoint).each do |path_info|
         route_scope = @reader.route_scope_snippet_for(path_info.path, path_info.line)
+        guard_scope = route_scope && without_self_names(route_scope, endpoint, path_info.path)
 
         # Try each guard category independently — a route can be
         # protected by authn, authz, csrf, and rate-limit at once,
@@ -1629,7 +1646,7 @@ module NoirAIContext
           # The framework said the route admits anonymous callers; a name
           # match in its source must not overrule that.
           next if (kind == "auth_guard" || kind == "authz_guard") && endpoint.tags.any? { |t| t.name == "anonymous" }
-          if guard = PatternMatcher.detect_from_patterns("", route_scope, patterns, path_info.path, path_info.line, "route_source")
+          if guard = PatternMatcher.detect_from_patterns("", guard_scope, patterns, path_info.path, path_info.line, "route_source")
             context.push_guard(guard)
           end
         end

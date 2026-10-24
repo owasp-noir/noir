@@ -1602,6 +1602,31 @@ describe "NoirAIContext" do
     end
   end
 
+  it "does not read the route's own path or handler name as a guard" do
+    source = <<-CODE
+      @PostMapping("/authenticate")
+      public ResponseEntity<JWTToken> authorize(@Valid @RequestBody LoginVM loginVM) {
+      }
+      @GetMapping("/admin")
+      @PreAuthorize("hasAuthority('ADMIN')")
+      public List<User> listAdmins() {
+      }
+      CODE
+
+    with_temp_ai_context_source(source, ".java") do |path|
+      login = Endpoint.new("/api/authenticate", "POST")
+      login.details = Details.new(PathInfo.new(path, 1))
+      login.handler = Handler.new("AuthenticateController.authorize", path, 2)
+      admin = Endpoint.new("/api/admin", "GET")
+      admin.details = Details.new(PathInfo.new(path, 4))
+      admin.handler = Handler.new("AdminController.listAdmins", path, 6)
+
+      contexts = NoirAIContext.apply([login, admin]).map(&.ai_context.should_not(be_nil))
+      contexts[0].guards.should be_empty
+      contexts[1].guards.map(&.kind).should contain("authz_guard")
+    end
+  end
+
   it "classifies callees by what they do, not by a word in their name (#3139)" do
     source = <<-CODE
       count = session.exec(count_statement).one()
