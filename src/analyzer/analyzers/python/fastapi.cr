@@ -1280,7 +1280,9 @@ module Analyzer::Python
           type = args.first
         elsif type.includes?('|')
           args = split_python_top_level(type, '|').map(&.strip).reject { |arg| arg == "None" }
-          return unless args.size == 1
+          # `list[A | B]` has its `|` inside brackets: the split hands the
+          # same text back, which is not a bare name and would loop forever.
+          return unless args.size == 1 && args.first != type
           type = args.first
         else
           break
