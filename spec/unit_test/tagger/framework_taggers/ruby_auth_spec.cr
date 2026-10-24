@@ -134,6 +134,87 @@ describe "RubyAuthTagger" do
     end
   end
 
+  it "reads a plainly named callback's 401/403 by what its condition checks" do
+    CodeLocator.instance.clear_all
+    tmpdir = File.tempname("ruby_denying_callbacks")
+    controllers = File.join(tmpdir, "app", "controllers")
+    Dir.mkdir_p(controllers)
+    files = {
+      "platform_controller.rb" => <<-RB,
+        class PlatformController < ActionController::API
+          before_action :load_token
+          before_action :set_platform_app
+
+          private
+
+          def load_token
+            @access_token = AccessToken.find_by(token: request.headers['api_access_token'])
+          end
+
+          def set_platform_app
+            @platform_app = @access_token.owner if @access_token
+            render json: { error: 'Invalid access_token' }, status: :unauthorized if @platform_app.blank?
+          end
+        end
+        RB
+      "apps_controller.rb" => <<-RB,
+        class AppsController < PlatformController
+          def index
+          end
+        end
+        RB
+      "public_controller.rb" => <<-RB,
+        class PublicController < ActionController::Base
+          before_action :ensure_known_host
+          before_action :ensure_active_account
+          before_action :check_optional_token
+
+          def index
+          end
+
+          private
+
+          def ensure_known_host
+            return if Domain.ours?(request.host)
+
+            render json: { error: 'unknown domain' }, status: :unauthorized and return
+          end
+
+          def ensure_active_account
+            @account = Account.find(params[:account_id])
+            render json: { error: 'suspended' }, status: :unauthorized unless @account.active?
+          end
+
+          def check_optional_token
+            return if request.headers['X-Token'].blank?
+
+            head :unauthorized unless Token.valid?(request.headers['X-Token'])
+          end
+        end
+        RB
+    }
+    files.each do |name, body|
+      path = File.join(controllers, name)
+      File.write(path, body)
+      CodeLocator.instance.register_path(path)
+    end
+
+    begin
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(tmpdir)
+      apps = Endpoint.new("/apps", "GET", [] of Param, Details.new(PathInfo.new(File.join(controllers, "apps_controller.rb"), 2)))
+      public_index = Endpoint.new("/public", "GET", [] of Param, Details.new(PathInfo.new(File.join(controllers, "public_controller.rb"), 6)))
+
+      RubyAuthTagger.new(noir_options).perform([apps, public_index])
+
+      apps.tags.map(&.description).should eq(["Protected by set_platform_app (app-defined, answers 401/403)"])
+      public_index.tags.should be_empty
+    ensure
+      FileUtils.rm_rf(tmpdir)
+      CodeLocator.instance.clear_all
+    end
+  end
+
   it "reads the controller callbacks through the handler when the route is declared in routes.rb" do
     CodeLocator.instance.clear_all
     noir_options = create_test_options

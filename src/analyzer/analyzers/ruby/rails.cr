@@ -158,7 +158,9 @@ module Analyzer::Ruby
       defined_actions : Set(String),
       helper_calls_by_action : Hash(String, Array(String)),
       callees_by_action : Hash(String, Array(Noir::RubyCalleeExtractor::Entry)),
-      action_lines : Hash(String, Int32)
+      action_lines : Hash(String, Int32),
+      # Per method, the helpers it reads only by `[:key]`, with those keys.
+      helper_keys_by_action : Hash(String, Hash(String, Set(String))) = Hash(String, Hash(String, Set(String))).new
 
     # A `concern :name do ... end` body: its routing lines, replayed wherever
     # `resources ..., concerns: :name` or `concerns :name` names it. Rails
@@ -226,6 +228,8 @@ module Analyzer::Ruby
     @gemfile_public_roots : Array(Tuple(String, String))? = nil
     @public_file_candidates : Array(PublicFileCandidate)? = nil
     @callback_chain : Noir::RailsCallbackChain? = nil
+    @framework_roots = [] of String
+    @controller_roots = Hash(String, Array(String)).new
     @replaying_concerns = Set(String).new
 
     def analyze
@@ -238,6 +242,8 @@ module Analyzer::Ruby
 
       framework_roots = discover_framework_roots(files, "config/routes.rb")
       framework_roots = base_paths if framework_roots.empty?
+      @framework_roots = framework_roots
+      @controller_roots.clear
 
       framework_roots.each do |framework_root|
         begin
@@ -262,6 +268,7 @@ module Analyzer::Ruby
         parse_routes_file(routes_path, framework_root)
       end
 
+      drop_foreign_segment_params
       @result
     end
 
@@ -1396,16 +1403,15 @@ module Analyzer::Ruby
       path_prefix = current_path_prefix(stack)
       member_prefix = shallow_nested?(stack, options) ? shallow_path_prefix(stack) : path_prefix
 
-      candidates = [] of String
-      candidates << "#{framework_root}/app/controllers/#{file_base}_controller.rb"
+      bases = [file_base]
       unless ctrl_override
-        candidates << "#{framework_root}/app/controllers/#{file_base}s_controller.rb"
-        candidates << "#{framework_root}/app/controllers/#{file_base}es_controller.rb"
+        bases << "#{file_base}s" << "#{file_base}es"
         # Irregular y->ies plural: a singular `resource :directory` is backed
         # by `DirectoriesController` (directories_controller.rb), never
         # `directorys`/`directoryes`.
-        candidates << "#{framework_root}/app/controllers/#{file_base.rchop('y')}ies_controller.rb" if file_base.ends_with?('y')
+        bases << "#{file_base.rchop('y')}ies" if file_base.ends_with?('y')
       end
+      candidates = bases.map { |base| controller_file(framework_root, base) || "#{framework_root}/app/controllers/#{base}_controller.rb" }
 
       existing_controller_path = candidates.find { |c| known_file?(c) }
       candidates.each do |ctrl_path|
@@ -1767,7 +1773,8 @@ module Analyzer::Ruby
         if line.includes?('[') || line.includes?("params.") || line.includes?("headers.")
           line.scan(/(?<![\w.])params(?:\[|\.(?:fetch|dig)\s*\()\s*(?::(\w+)|['"]([^'"]+)['"])\s*[\],)]/) do |m|
             name = (m[1]? || m[2]?).to_s.strip
-            next if name.empty? || this_method.empty?
+            # `params[:controller]` / `params[:action]` are the router's own keys.
+            next if name.empty? || this_method.empty? || name == "controller" || name == "action"
             params_body_by_action[this_method] ||= [] of Param
             params_body_by_action[this_method] << Param.new(name, "", param_type)
             params_query_by_action[this_method] ||= [] of Param
@@ -1792,10 +1799,11 @@ module Analyzer::Ruby
         end
       end
 
-      helper_calls_by_action = build_helper_call_map(method_bodies, defined_actions)
+      helper_keys_by_action = Hash(String, Hash(String, Set(String))).new
+      helper_calls_by_action = build_helper_call_map(method_bodies, defined_actions, helper_keys_by_action)
 
       data = ControllerData.new(path, param_type, params_method, params_body_by_action, params_query_by_action,
-        defined_actions, helper_calls_by_action, callees_by_action, action_lines)
+        defined_actions, helper_calls_by_action, callees_by_action, action_lines, helper_keys_by_action)
       @controller_data_cache[path] = data
       data
     end
@@ -1969,16 +1977,36 @@ module Analyzer::Ruby
     private def action_params(data : ControllerData, action : String, verb : String,
                               controller_path : String = data.path) : Array(Param)
       result = [] of Param
-      merge_action_params(result, data, action, verb)
-
-      helper_names = data.helper_calls_by_action[action]? || [] of String
-      helper_names.each do |helper_name|
-        next if helper_name == action
-        merge_action_params(result, data, helper_name, verb)
-      end
-      merge_callback_params(result, controller_path, action)
+      each_helper(data, action) { |name, keys| merge_action_params(result, data, name, verb, keys) }
+      merge_callback_params(result, controller_path, action, verb)
 
       result
+    end
+
+    # `name`, then the methods of its file it calls, transitively and each
+    # once (`create` -> `send_instructions` -> `redirect_url_param`), with
+    # the keys a caller narrowed a helper to: `profile_params[:account_id]`
+    # uses one field of the permit list, not all of them. nil = used whole,
+    # which one caller reading it whole is enough for.
+    private def each_helper(data : ControllerData, name : String, & : String, Set(String)? ->)
+      order = [name]
+      keys = {name => nil.as(Set(String)?)}
+      index = 0
+      while index < order.size
+        current = order[index]
+        index += 1
+        data.helper_calls_by_action[current]?.try &.each do |helper|
+          narrowed = data.helper_keys_by_action[current]?.try(&.[helper]?) || keys[current]
+          if keys.has_key?(helper)
+            old = keys[helper]
+            keys[helper] = old && narrowed ? old | narrowed : nil
+          else
+            order << helper
+            keys[helper] = narrowed
+          end
+        end
+      end
+      order.each { |helper| yield helper, keys[helper] }
     end
 
     # The controller data holding `action`'s `def`: the routed controller's
@@ -1997,22 +2025,52 @@ module Analyzer::Ruby
       nil
     end
 
-    # Header/cookie reads in the `before_action` callbacks that run ahead of
+    # The param reads in the `before_action` callbacks that run ahead of
     # `action`: its controller's own, its ancestors' and their concerns',
     # less what `skip_before_action` / `only:` / `except:` drop for it.
     # ApplicationController's token check reads `Authorization` for every
     # action of the app. A callback's `def` is looked up nearest first along
-    # the chain, as Ruby does.
-    private def merge_callback_params(result : Array(Param), path : String, action : String)
+    # the chain, as Ruby does. Its `params[:x]` reads carry
+    # `CALLBACK_PARAM_TAG` until `drop_foreign_segment_params` has seen the
+    # whole route table.
+    private def merge_callback_params(result : Array(Param), path : String, action : String, verb : String)
       chain = callback_chain
       return unless leaf = chain.controller_in(path)
       resolved = chain.resolve(leaf, action)
       resolved.callbacks.each do |callback|
         next unless file = resolved.paths.find { |p| extract_controller_data(p).defined_actions.includes?(callback) }
         data = extract_controller_data(file)
-        ([callback] + (data.helper_calls_by_action[callback]? || [] of String)).each do |name|
+        each_helper(data, callback) do |name, keys|
           data.params_method[name]?.try &.each { |p| push_unique_param(result, clone_param(p)) }
+          request_params(data, name, verb, keys).each do |param|
+            next if result.any? { |existing| existing.name == param.name && existing.param_type == param.param_type }
+            param = clone_param(param)
+            param.tags << CALLBACK_PARAM_TAG
+            result << param
+          end
         end
+      end
+    end
+
+    CALLBACK_PARAM_TAG = Tag.new("rails_callback_param", "", "rails")
+
+    # A callback shared by a controller's routes reads every route's URL
+    # keys: `set_contact` reads `params[:contact_id]`, a segment of the
+    # nested routes and absent from the rest, where it is no client field.
+    # So a callback read named like a path key of some route, but not of
+    # this one, is dropped; the rest stay and lose their marker.
+    private def drop_foreign_segment_params
+      segments = Set(String).new
+      @result.each { |endpoint| segments.concat(url_param_names(endpoint.url)) }
+      @result.each_with_index do |endpoint, index|
+        next unless endpoint.params.any?(&.tags.includes?(CALLBACK_PARAM_TAG))
+        endpoint.params = endpoint.params.compact_map do |param|
+          next param unless param.tags.includes?(CALLBACK_PARAM_TAG)
+          next if param.param_type != "path" && segments.includes?(param.name)
+          param.tags = param.tags - [CALLBACK_PARAM_TAG]
+          param
+        end
+        @result[index] = endpoint
       end
     end
 
@@ -2026,19 +2084,29 @@ module Analyzer::Ruby
       end
     end
 
-    private def merge_action_params(result : Array(Param), data : ControllerData, action : String, verb : String)
+    private def merge_action_params(result : Array(Param), data : ControllerData, action : String, verb : String,
+                                    keys : Set(String)? = nil)
       data.params_method[action]?.try &.each { |p| push_unique_param(result, clone_param(p)) }
-
-      source_params = case verb
-                      when "GET", "HEAD", "OPTIONS", "DELETE"
-                        dedup_by_name(data.params_query_by_action[action]? || [] of Param)
-                      else
-                        dedup_by_name(data.params_body_by_action[action]? || [] of Param)
-                      end
-
-      source_params.each do |param|
+      request_params(data, action, verb, keys).each do |param|
         push_unique_param(result, clone_param(param))
       end
+    end
+
+    # The `params` reads of method `name`, typed by the verb, limited to
+    # `keys` when its caller only reads those. Keys that name none of them
+    # index into something else (`filters[:status]` of a
+    # `params.fetch(:filter, {})`), so they leave the reads whole.
+    private def request_params(data : ControllerData, name : String, verb : String, keys : Set(String)?) : Array(Param)
+      source = case verb
+               when "GET", "HEAD", "OPTIONS", "DELETE"
+                 data.params_query_by_action[name]?
+               else
+                 data.params_body_by_action[name]?
+               end
+      params = dedup_by_name(source || [] of Param)
+      return params unless keys
+      narrowed = params.select { |p| keys.includes?(p.name) }
+      narrowed.empty? ? params : narrowed
     end
 
     private def push_unique_param(params : Array(Param), param : Param)
@@ -2063,7 +2131,8 @@ module Analyzer::Ruby
       Param.new(param.name, param.value, param.param_type)
     end
 
-    private def build_helper_call_map(method_bodies : Hash(String, Array(String)), defined_actions : Set(String)) : Hash(String, Array(String))
+    private def build_helper_call_map(method_bodies : Hash(String, Array(String)), defined_actions : Set(String),
+                                      helper_keys : Hash(String, Hash(String, Set(String)))) : Hash(String, Array(String))
       helper_calls = Hash(String, Array(String)).new
 
       # Tokenize each method body once into the set of identifiers it
@@ -2080,19 +2149,36 @@ module Analyzer::Ruby
       defined_actions.each_with_index { |action, index| action_order[action] = index }
       method_bodies.each do |method_name, body_lines|
         matches = Set(String).new
+        keys = Hash(String, Set(String)).new
+        whole = Set(String).new
         body_lines.each do |line|
           # `render :show` / `render "posts/show"` name a view, not a call,
           # so symbol and string tokens must not pull `show`'s params in.
-          blank_quoted(line).scan(/(?<![:\w])[A-Za-z_]\w*[!?=]?/) do |m|
-            token = m[0]
-            matches << token if token != method_name && action_order.has_key?(token)
+          blank_quoted(line).scan(HELPER_TOKEN) do |m|
+            token = m[1]
+            next unless token != method_name && action_order.has_key?(token)
+            matches << token
+            if key = m[2]?
+              (keys[token] ||= Set(String).new) << key
+            else
+              whole << token
+            end
           end
         end
+        whole.each { |token| keys.delete(token) }
+        helper_keys[method_name] = keys unless keys.empty?
         helper_calls[method_name] = matches.to_a.sort_by! { |action| action_order[action] } unless matches.empty?
       end
 
       helper_calls
     end
+
+    # A call to a method of this controller: a bare or `self.` identifier,
+    # never `@ivar` (`@note` is not the `note` callback) or a method on
+    # another receiver (`@contact.notes`). A trailing `[:key]` is captured:
+    # `profile_params[:account_id]` reads one field of what the helper
+    # permits.
+    HELPER_TOKEN = /(?:(?<=self\.)|(?<![:\w@.]))([A-Za-z_]\w*[!?=]?)(?:\s*\[\s*:(\w+)\s*\])?/
 
     # `articles#show` at the action's `def` line — in the routed controller,
     # or in the ancestor it inherits the action from — the file an agent
@@ -2214,13 +2300,42 @@ module Analyzer::Ruby
     private def find_controller_file(framework_root : String, ctrl_name : String,
                                      stack : Array(Frame) = [] of Frame) : String?
       return if ctrl_name.empty?
-      candidates = [] of String
       subdir = current_controller_subdir(stack)
       if !subdir.empty? && !ctrl_name.includes?('/')
-        candidates << "#{framework_root}/app/controllers/#{subdir}/#{ctrl_name}_controller.rb"
+        found = controller_file(framework_root, "#{subdir}/#{ctrl_name}")
       end
-      candidates << "#{framework_root}/app/controllers/#{ctrl_name}_controller.rb"
-      candidates.find { |c| known_file?(c) }
+      found || controller_file(framework_root, ctrl_name)
+    end
+
+    # `<root>/<base>_controller.rb` in the first of the app's controller
+    # roots that has it, the way Rails looks the constant up across its
+    # autoload paths.
+    private def controller_file(framework_root : String, base : String) : String?
+      controller_roots(framework_root).each do |root|
+        path = "#{root}/#{base}_controller.rb"
+        return path if known_file?(path)
+      end
+      nil
+    end
+
+    # Every `app/controllers` directory the app autoloads controllers from:
+    # its own first, then the others beneath it (an `enterprise/app` added
+    # to `eager_load_paths`, a non-isolated engine's `app/controllers`).
+    # One under a nested app with its own `config/routes.rb` is that app's.
+    private def controller_roots(framework_root : String) : Array(String)
+      @controller_roots[framework_root] ||= begin
+        prefix = "#{framework_root}/"
+        nested = @framework_roots.select { |root| root != framework_root && root.starts_with?(prefix) }
+        extra = Set(String).new
+        @known_files.each do |file|
+          next unless file.starts_with?(prefix) && (idx = file.index("/app/controllers/", framework_root.size))
+          dir = file[0, idx + "/app/controllers".size]
+          extra << dir unless nested.any? { |root| dir.starts_with?("#{root}/") }
+        end
+        primary = "#{framework_root}/app/controllers"
+        extra.delete(primary)
+        [primary] + extra.to_a.sort!
+      end
     end
 
     private def action_allowed?(name : String, only : Array(String), except : Array(String)) : Bool

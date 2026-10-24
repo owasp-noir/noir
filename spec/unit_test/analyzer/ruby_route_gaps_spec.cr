@@ -88,6 +88,144 @@ describe "Ruby route gaps" do
     report.params.select(&.param_type.==("query")).map(&.name).should eq(%w[page alpha beta])
   end
 
+  it "resolves Rails controllers from every app/controllers root the app autoloads" do
+    endpoints = scan_ruby_tree({
+      "Gemfile"          => RAILS_GEMFILE,
+      "config/routes.rb" => <<-RUBY,
+        Rails.application.routes.draw do
+          namespace :api do
+            resources :assistants, only: [:show] do
+              member do
+                get :metrics
+              end
+            end
+          end
+          get 'challenge/:id', to: 'domains#verify'
+        end
+        RUBY
+      "app/controllers/application_controller.rb"               => "class ApplicationController < ActionController::Base\nend\n",
+      "extra/app/controllers/api/assistants_controller.rb"      => "class Api::AssistantsController < ApplicationController\n  def show; end\n\n  def metrics\n    params[:range]\n  end\nend\n",
+      "extra/app/controllers/domains_controller.rb"             => "class DomainsController < ApplicationController\n  def verify\n  end\nend\n",
+      "nested_app/config/routes.rb"                             => "Rails.application.routes.draw do\nend\n",
+      "nested_app/app/controllers/api/assistants_controller.rb" => "class Api::AssistantsController < ActionController::Base\n  def show; end\nend\n",
+    })
+
+    metrics = find_ep(endpoints, "GET", "/api/assistants/:id/metrics")
+    metrics.handler.try(&.path).to_s.should end_with("extra/app/controllers/api/assistants_controller.rb")
+    metrics.handler.try(&.line).should eq(4)
+    param_names(metrics, "query").should eq(%w[range])
+    find_ep(endpoints, "GET", "/api/assistants/:id").handler.try(&.path).to_s.should end_with("extra/app/controllers/api/assistants_controller.rb")
+    find_ep(endpoints, "GET", "/challenge/:id").handler.try(&.path).to_s.should end_with("extra/app/controllers/domains_controller.rb")
+  end
+
+  it "attributes Rails params to the methods an action really calls, and callback reads to the routes they serve" do
+    endpoints = scan_ruby_tree({
+      "Gemfile"          => RAILS_GEMFILE,
+      "config/routes.rb" => <<-RUBY,
+        Rails.application.routes.draw do
+          resource :profile, only: [:update] do
+            member do
+              put :set_active_account
+            end
+          end
+          resources :contacts, only: [:create] do
+            resources :notes, only: [:create, :show]
+          end
+          get 'pages', to: 'pages#index'
+        end
+        RUBY
+      "app/controllers/profiles_controller.rb" => <<-RUBY,
+        class ProfilesController < ApplicationController
+          def update
+            @user.update!(profile_params)
+          end
+
+          def set_active_account
+            find_account(profile_params[:account_id])
+            allowed?(params[:controller], params[:action])
+          end
+
+          private
+
+          def profile_params
+            params.require(:profile).permit(:email, :name, :account_id)
+          end
+        end
+        RUBY
+      "app/controllers/contacts_controller.rb" => <<-RUBY,
+        class ContactsController < ApplicationController
+          before_action :set_contact
+          before_action :set_theme
+
+          def create
+            @contact = Contact.create!(params.permit(:email))
+          end
+
+          private
+
+          def set_contact
+            return if params[:contact_id].blank?
+
+            @contact = Contact.find(params[:contact_id])
+          end
+
+          def set_theme
+            @theme = params[:theme]
+          end
+        end
+        RUBY
+      "app/controllers/notes_controller.rb" => <<-RUBY,
+        class NotesController < ContactsController
+          before_action :note, except: [:create]
+
+          def create
+            @note = @contact.notes.create!(note_params)
+          end
+
+          def show; end
+
+          private
+
+          def note
+            @note ||= @contact.notes.find(params[:id])
+          end
+
+          def note_params
+            params.require(:note).permit(:content)
+          end
+        end
+        RUBY
+      "app/controllers/pages_controller.rb" => <<-RUBY,
+        class PagesController < ApplicationController
+          def index
+            render_page(params[:slug])
+          end
+
+          private
+
+          def render_page(slug)
+            locale_for(slug)
+          end
+
+          def locale_for(slug)
+            params[:locale]
+          end
+        end
+        RUBY
+    })
+
+    param_names(find_ep(endpoints, "PATCH", "/profile"), "form").should eq(%w[account_id email name])
+    param_names(find_ep(endpoints, "PUT", "/profile/set_active_account"), "form").should eq(%w[account_id])
+    # `set_contact` reads the nested routes' `:contact_id`, not a field.
+    param_names(find_ep(endpoints, "POST", "/contacts"), "form").should eq(%w[email theme])
+    note = find_ep(endpoints, "POST", "/contacts/:contact_id/notes")
+    param_names(note, "form").should eq(%w[content theme])
+    param_names(note, "path").should eq(%w[contact_id])
+    param_names(find_ep(endpoints, "GET", "/contacts/:contact_id/notes/:id"), "path").should eq(%w[contact_id id])
+    param_names(find_ep(endpoints, "GET", "/pages"), "query").should eq(%w[locale slug])
+    endpoints.each { |endpoint| endpoint.params.each(&.tags.should(be_empty)) }
+  end
+
   it "gives shallow-nested Rails resources unnested member routes" do
     controller = "class CommentsController < ApplicationController\n  def index; end\n  def create; end\n  def show; end\n  def destroy; end\nend\n"
     endpoints = scan_ruby_tree({

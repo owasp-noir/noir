@@ -121,6 +121,7 @@ class RubyAuthTagger < FrameworkTagger
     @callback_authz = Hash(String, String?).new
     @anonymous_queries = Hash(String, Bool).new
     @rejecting_defs = Hash(String, Bool).new
+    @denying_helpers = Hash(String, Bool).new
   end
 
   # Per-line flags for `check_controller_auth`, computed once per file.
@@ -356,6 +357,8 @@ class RubyAuthTagger < FrameworkTagger
       elsif !library_guard_rejects?(callback)
         desc = nil
       end
+    elsif rails_chain.defs.has_key?(callback) && denies_anonymous?(callback)
+      desc = "#{callback} (app-defined, answers 401/403)"
     end
     @callback_guards[callback] = desc
   end
@@ -398,8 +401,20 @@ class RubyAuthTagger < FrameworkTagger
     return @rejecting_defs[name] if @rejecting_defs.has_key?(name)
     top = visited.empty?
     return false unless visited.add?(name)
-    @rejecting_defs[name] = rails_chain.defs[name].any? do |path, def_idx|
-      next false unless lines = read_file_lines(path)
+    @rejecting_defs[name] = def_bodies(name).any? do |body|
+      body.each_with_index.any? do |(_, text), i|
+        rejects = text.matches?(CALLBACK_REJECTS) || (top && text.matches?(/\bsuper\b/) && library_guard_rejects?(name)) ||
+                  text.scan(/\b[a-z_]\w*[!?]?/).any? { |m| rails_chain.defs.has_key?(m[0]) && body_rejects?(m[0], visited) }
+        rejects && !credential_gated?(body, i) && !text.matches?(CREDENTIAL_PRESENT_MODIFIER)
+      end
+    end
+  end
+
+  # Each app definition of `name` as `{indent, stripped line}` rows: the
+  # `def` line's tail first, then its body, blanks and comments dropped.
+  private def def_bodies(name : String) : Array(Array({Int32, String}))
+    (rails_chain.defs[name]? || [] of {String, Int32}).compact_map do |path, def_idx|
+      next unless lines = read_file_lines(path)
       def_indent = line_indent(lines[def_idx])
       body = [] of {Int32, String}
       body << {def_indent, lines[def_idx].strip.sub(/^def\s+(?:self\.)?\w+[!?]?/, "")}
@@ -409,12 +424,82 @@ class RubyAuthTagger < FrameworkTagger
         break if line_indent(lines[idx]) <= def_indent
         body << {line_indent(lines[idx]), stripped}
       end
+      body
+    end
+  end
+
+  # An explicit 401/403 answer.
+  DENY_RESPONSE = /\bhead\s*\(?\s*(?::unauthorized|:forbidden|401|403)\b|\bstatus:\s*(?::unauthorized\b|:forbidden\b|40[13]\b)/
+  # The words a request credential is spelled with.
+  CREDENTIAL_WORD = /token|session|bearer|jwt|authoriz|api_?key|signature|hmac|secret|password|current_user|signed_in|logged_in/i
+  # `return if <no credential>` / `return unless <credential>`.
+  ANONYMOUS_EXIT     = /^return\b.*\s(if|unless)\s+(.+)\z/
+  CONDITION_MODIFIER = /\s(?:if|unless)\s+(.+)\z/
+  NEGATED            = /!|\bnot\b|\.(?:nil|blank|empty)\?/
+
+  # A callback whose name says nothing (`set_platform_app`) guards when its
+  # definition answers 401/403 unconditionally, or on a condition that
+  # reads the caller's credential: `render ..., status: :unauthorized if
+  # @app.blank?` after `@app = @access_token.owner`. A 401 on anything
+  # else (`unless account.active?`, an unknown Host) refuses a state of
+  # the app, not an anonymous caller; an early `return` when no credential
+  # was sent, or a credential-presence `if` around it, lets one through.
+  # ponytail: one assignment hop links a condition to a credential; a
+  # longer chain reads as no guard.
+  private def denies_anonymous?(name : String) : Bool
+    def_bodies(name).any? do |body|
+      assigns = Hash(String, String).new
+      body.each { |_, text| (m = text.match(/^(@?\w+)\s*\|{0,2}=(?!=)\s*(.+)/)) && (assigns[m[1]] = m[2]) }
       body.each_with_index.any? do |(_, text), i|
-        rejects = text.matches?(CALLBACK_REJECTS) || (top && text.matches?(/\bsuper\b/) && library_guard_rejects?(name)) ||
-                  text.scan(/\b[a-z_]\w*[!?]?/).any? { |m| rails_chain.defs.has_key?(m[0]) && body_rejects?(m[0], visited) }
-        rejects && !credential_gated?(body, i) && !text.matches?(CREDENTIAL_PRESENT_MODIFIER)
+        next false unless text.matches?(DENY_RESPONSE) || text.scan(/\b[a-z_]\w*[!?]?/).any? { |m| always_denies?(m[0]) }
+        next false if credential_gated?(body, i) || text.matches?(CREDENTIAL_PRESENT_MODIFIER)
+        conditions = deny_conditions(body, i)
+        next false if conditions.nil?
+        conditions.empty? || conditions.any? { |c| credential_condition?(c, assigns) }
       end
     end
+  end
+
+  # Whether the helper `name` (`render_unauthorized`) answers 401/403 on a
+  # line of its own body that no condition guards.
+  private def always_denies?(name : String) : Bool
+    return false unless rails_chain.defs.has_key?(name)
+    @denying_helpers.put_if_absent(name) do
+      def_bodies(name).any? do |body|
+        body[1..].any? { |indent, text| indent == body[1][0] && text.matches?(DENY_RESPONSE) && !text.matches?(CONDITION_MODIFIER) }
+      end
+    end
+  end
+
+  # The conditions the deny at `body[i]` sits under: its own `if`/`unless`
+  # modifier, the blocks around it, and the `return if ...` exits above
+  # it. nil when one of those exits lets a caller with no credential out.
+  private def deny_conditions(body : Array({Int32, String}), i : Int32) : Array(String)?
+    conditions = [] of String
+    if m = body[i][1].match(CONDITION_MODIFIER)
+      conditions << m[1]
+    end
+    indent = body[i][0]
+    branch_at : Int32? = nil # an `else`/`elsif` whose `if` is still above
+    (i - 1).downto(1) do |j|
+      indent_j, text = body[j]
+      # `return head :unauthorized unless ...` above is a deny of its own.
+      if (m = text.match(ANONYMOUS_EXIT)) && !text.matches?(DENY_RESPONSE)
+        negated = m[2].matches?(NEGATED)
+        return if m[2].matches?(CREDENTIAL_WORD) && (m[1] == "if" ? negated : !negated)
+        conditions << m[2]
+      elsif indent_j < indent || indent_j == branch_at
+        indent = indent_j
+        branch_at = text.matches?(/^(?:else|elsif)\b/) ? indent_j : nil
+        conditions << text if text.matches?(/^(?:if|unless|elsif|case|when)\b/)
+      end
+    end
+    conditions
+  end
+
+  private def credential_condition?(condition : String, assigns : Hash(String, String)) : Bool
+    return true if condition.matches?(CREDENTIAL_WORD)
+    condition.scan(/@?\w+/).any? { |m| assigns[m[0]]?.try(&.matches?(CREDENTIAL_WORD)) }
   end
 
   # Whether `body[i]` sits under a `CREDENTIAL_PRESENT_IF` block (at any
