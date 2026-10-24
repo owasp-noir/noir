@@ -374,8 +374,12 @@ module Noir::CLI::Inspect
   # `{id}` `:id` `<int:pk>` `[id]` `$id` `${id}` match one segment; `*`
   # `**` `{path*}` `{...rest}` `[...slug]` `[[...slug]]` `*path` `:rest*`
   # match the rest (Express's bare `*` is a catch-all, not one segment).
-  REST_PLACEHOLDER = /\A(?:\*\*|\{[^}]*\*\}|\{\.\.\.[^}]*\}|\[\[\.\.\.[^\]]*\]\]|\[\.\.\.[^\]]*\]|\*[A-Za-z_]\w*|:[A-Za-z_]\w*\*|\*)/
-  ONE_PLACEHOLDER  = /\A(?:\$\{[^}]*\}|\{(?:[^{}]|\{[^{}]*\})*\}|<[^>]*>|\[[^\]]*\]|:[A-Za-z_]\w*|\$[A-Za-z_]\w*)/
+  REST_PLACEHOLDER = /\A(?:\*\*|\{[^}]*\*\}|\{\.\.\.[^}]*\}|\[\[\.\.\.[^\]]*\]\]|\[\.\.\.[^\]]*\]|\*[A-Za-z_]\w*|:[A-Za-z_]\w*[*+]|\*)/
+  # path-to-regexp v8 (Express 5) optional group: `/posts{/:id}`.
+  OPTIONAL_GROUP = /\A\{(\/[^{}]*)\}/
+  # `:id(\d+)` (Express 4 / Koa / Fastify) and `:id{[0-9]+}` (Hono) carry a
+  # regex constraint; a trailing `?` makes the segment optional.
+  ONE_PLACEHOLDER  = /\A(?:\$\{[^}]*\}|\{(?:[^{}]|\{[^{}]*\})*\}|<[^>]*>|\[[^\]]*\]|:[A-Za-z_]\w*(?:\((?:[^()]|\([^()]*\))*\)|\{(?:[^{}]|\{[^{}]*\})*\})?\??|\$[A-Za-z_]\w*)/
   PLACEHOLDER_CHAR = /[{:<\[$*]/
 
   # The regex a declared route matches request paths against, or nil for a
@@ -387,16 +391,28 @@ module Noir::CLI::Inspect
     if endpoint.regex_path?
       return Regex.new("\\A#{URLPath.strip_regex_anchors(route).rchop('/')}/?\\z") rescue nil
     end
-    pattern = String.build do |io|
-      scan_placeholders(route) do |kind, text|
-        case kind
-        when :rest then io << ".*"
-        when :one  then io << typed_segment(text)
-        else            io << Regex.escape(text)
+    Regex.new("\\A#{route_pattern(route)}/?\\z") rescue nil
+  end
+
+  private def self.route_pattern(route : String) : String
+    parts = [] of String
+    scan_placeholders(route) do |kind, text|
+      case kind
+      when :rest     then parts << ".*"
+      when :optional then parts << "(?:#{route_pattern(text)})?"
+      when :one
+        if text.starts_with?(':') && text.ends_with?('?')
+          # Express 4 `:id?` makes the slash before it optional too:
+          # `/posts/:id?` serves both `/posts` and `/posts/5`.
+          slash = parts.last? == "/" ? parts.pop : ""
+          parts << "(?:#{slash}#{typed_segment(text.rchop('?'))})?"
+        else
+          parts << typed_segment(text)
         end
+      else parts << Regex.escape(text)
       end
     end
-    Regex.new("\\A#{pattern}/?\\z") rescue nil
+    parts.join
   end
 
   # A typed placeholder only takes what the router would route to it:
@@ -410,6 +426,7 @@ module Noir::CLI::Inspect
     when /\A<int:|\A\{\w+:(?:int|long)\}\z/ then "\\d+"
     when /\A<uuid:|\A\{\w+:guid\}\z/        then "[0-9a-fA-F]{8}-?(?:[0-9a-fA-F]{4}-?){3}[0-9a-fA-F]{12}"
     when /\A\{\w+:([^\/]+)\}\z/             then constraint_segment($1)
+    when /\A:\w+[({](.+)[)}]\z/             then constraint_segment($1)
     else                                         "[^/]+"
     end
   end
@@ -436,6 +453,9 @@ module Noir::CLI::Inspect
       if m = scanner.match(REST_PLACEHOLDER)
         yield :rest, m[0]
         scanner = scanner[m[0].size..]
+      elsif m = scanner.match(OPTIONAL_GROUP)
+        yield :optional, m[1]
+        scanner = scanner[m[0].size..]
       elsif m = scanner.match(ONE_PLACEHOLDER)
         yield :one, m[0]
         scanner = scanner[m[0].size..]
@@ -454,9 +474,9 @@ module Noir::CLI::Inspect
     literal = 0
     scan_placeholders(strip_trailing_slash(request_path(url))) do |kind, text|
       case kind
-      when :rest then rest += 1
-      when :one  then one += 1
-      else            literal += text.size
+      when :rest           then rest += 1
+      when :one, :optional then one += 1
+      else                      literal += text.size
       end
     end
     {rest, one, -literal}
