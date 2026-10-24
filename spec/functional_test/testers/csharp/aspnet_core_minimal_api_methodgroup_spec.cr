@@ -115,7 +115,7 @@ describe "ASP.NET Core Minimal API method-group analyzer edge cases", tags: "fun
     handler = ->(url : String, method : String) { tester.app.endpoints.find! { |e| e.url == url && e.method == method }.handler }
     handler.call("/products", "GET").try { |h| {h.name, h.line} }.should eq({"GetProducts", 49})
     handler.call("/products/{id}", "GET").try { |h| {h.name, h.line} }.should eq({"GetProductById", 55})
-    handler.call("/orders", "POST").try { |h| {h.name, h.line} }.should eq({"lambda", 34})
+    handler.call("/orders", "POST").try { |h| {h.name, h.line} }.should eq({"closure", 34})
     handler.call("/hooks", "POST").try(&.path).to_s.should end_with("Program.cs")
   end
 

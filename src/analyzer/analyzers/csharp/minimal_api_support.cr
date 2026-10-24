@@ -261,7 +261,7 @@ module Analyzer::CSharp::MinimalApiSupport
       callee_skip_first = skip_first
       handler_ref = Handler.new(name, file, decl_line)
     elsif lambda_line = lambda_handler_line(block, line)
-      handler_ref = Handler.new("lambda", file, lambda_line)
+      handler_ref = Handler.new("closure", file, lambda_line)
     end
 
     endpoints = [] of Endpoint
