@@ -57,6 +57,12 @@ describe "Spring parameter binding" do
     routes["POST /pick2"].should eq(["a:query", "flavor:form"])
   end
 
+  it "reads literal keys off a @RequestParam / @RequestHeader map, and request getters in a same-class helper" do
+    routes["DELETE /series"].should eq(["keys:query", "key:query"])
+    routes["GET /trace"].should eq(["X-Trace:header"])
+    routes["GET /fwd"].should eq(["X-Forwarded-Proto:header"])
+  end
+
   it "emits Pageable's page/size/sort with @PageableDefault values (#3091)" do
     routes["GET /paged"].should eq(["q:query", "page:query", "size:query", "sort:query"])
     routes["GET /paged2"].should eq(["page:query", "size:query=20", "sort:query=id"])

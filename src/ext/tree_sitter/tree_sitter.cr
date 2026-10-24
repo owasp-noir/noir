@@ -61,6 +61,7 @@ lib LibTreeSitter
   fun ts_node_start_point(node : TSNode) : TSPoint
   fun ts_node_end_point(node : TSNode) : TSPoint
   fun ts_node_is_null(node : TSNode) : Bool
+  fun ts_node_parent(node : TSNode) : TSNode
   fun ts_node_is_named(node : TSNode) : Bool
 
   # ----- Tree cursor -----
@@ -336,6 +337,11 @@ module Noir::TreeSitter
 
   def self.node_end_row(node : LibTreeSitter::TSNode) : Int32
     LibTreeSitter.ts_node_end_point(node).row.to_i
+  end
+
+  def self.parent(node : LibTreeSitter::TSNode) : LibTreeSitter::TSNode?
+    parent = LibTreeSitter.ts_node_parent(node)
+    LibTreeSitter.ts_node_is_null(parent) ? nil : parent
   end
 
   def self.field(node : LibTreeSitter::TSNode, name : String) : LibTreeSitter::TSNode?

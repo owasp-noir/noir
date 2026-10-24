@@ -73,6 +73,10 @@ module Noir
     # value. They name no single input, so they emit nothing.
     MAP_LIKE_TYPES = Set{"Map", "HashMap", "LinkedHashMap", "MultiValueMap", "LinkedMultiValueMap", "HttpHeaders"}
 
+    # Lookups by key on one of those maps (`params.get("key")`,
+    # `headers.getFirst("X-Trace")`).
+    MAP_ACCESSORS = {"get", "getFirst", "getOrDefault", "containsKey", "getValuesAsList"}
+
     # Request parameters `PageableHandlerMethodArgumentResolver` reads.
     PAGEABLE_PARAMS = {"page", "size", "sort"}
 
@@ -1017,7 +1021,11 @@ module Noir
       if simple_param || single_value
         sink << Param.new(parameter_name, default_value || "", effective_format)
       elsif SERVLET_REQUEST_TYPES.includes?(type_name)
-        scan_servlet_body(method, source, arg_name, effective_format, sink)
+        scan_accessor_calls(method, source, arg_name, {"getParameter" => effective_format, "getHeader" => "header"}, sink)
+      elsif (ann_kind == :query || ann_kind == :header) && MAP_LIKE_TYPES.includes?(simple_type_name(type_name))
+        # A `@RequestParam Map` / `@RequestHeader HttpHeaders` holds every
+        # value; the ones the handler reads by literal key are its inputs.
+        scan_accessor_calls(method, source, arg_name, MAP_ACCESSORS.to_h { |accessor| {accessor, effective_format} }, sink)
       elsif ann_kind.nil? && pageable_type?(type_name)
         PAGEABLE_PARAMS.each do |name|
           sink << Param.new(name, pageable_default_value(pageable_default, name, source, constants, current_class) || "", "query")
@@ -1221,39 +1229,79 @@ module Noir
       HTTP_HEADER_SPECIAL_CASES[normalised]? || normalised
     end
 
-    # Walk a method body for `<arg>.getParameter("x")` /
-    # `<arg>.getHeader("x")` calls, turning each into a Param on the
-    # endpoint. `arg_name` is the declared `HttpServletRequest`
-    # parameter name.
-    private def scan_servlet_body(method : LibTreeSitter::TSNode,
-                                  source : String,
-                                  arg_name : String,
-                                  parameter_format : String,
-                                  sink : Array(Param))
+    # Walk a method body for `<arg>.<accessor>("x")` calls
+    # (`request.getParameter("x")`, `params.get("key")`), turning each into
+    # a Param whose location `accessors` maps the accessor to. `arg_name` is
+    # the declared parameter. A same-class helper the handler hands the
+    # argument to (`getKeys(keysStr, params)`) is read one level deep under
+    # the name its own parameter gives it; a helper of another class is not.
+    private def scan_accessor_calls(method : LibTreeSitter::TSNode,
+                                    source : String,
+                                    arg_name : String,
+                                    accessors : Hash(String, String),
+                                    sink : Array(Param),
+                                    depth : Int32 = 0)
       body = Noir::TreeSitter.field(method, "body")
       return unless body
       Noir::TreeSitter.walk(body) do |node|
         next unless Noir::TreeSitter.node_type(node) == "method_invocation"
-        obj = Noir::TreeSitter.field(node, "object")
         name = Noir::TreeSitter.field(node, "name")
-        next unless obj && name
-        next unless Noir::TreeSitter.node_type(obj) == "identifier"
-        next unless Noir::TreeSitter.node_text(obj, source) == arg_name
-        method_name = Noir::TreeSitter.node_text(name, source)
-        next unless method_name == "getParameter" || method_name == "getHeader"
-
         args = Noir::TreeSitter.field(node, "arguments")
-        next unless args
-        Noir::TreeSitter.each_named_child(args) do |arg|
-          next unless Noir::TreeSitter.node_type(arg) == "string_literal"
-          param_name = decode_string_literal(arg, source)
+        next unless name && args
+        method_name = Noir::TreeSitter.node_text(name, source)
+        obj = Noir::TreeSitter.field(node, "object")
+
+        if obj && Noir::TreeSitter.node_type(obj) == "identifier" && Noir::TreeSitter.node_text(obj, source) == arg_name
+          next unless format = accessors[method_name]?
+          next unless key = Noir::TreeSitter.first_named_child(args)
+          next unless Noir::TreeSitter.node_type(key) == "string_literal"
+          param_name = decode_string_literal(key, source)
           next if param_name.empty?
-          format = method_name == "getHeader" ? "header" : parameter_format
           # Match legacy dedupe: same-name params collapse.
           next if sink.any? { |p| p.name == param_name && p.param_type == format }
           sink << Param.new(param_name, "", format)
+        elsif depth == 0 && (obj.nil? || Noir::TreeSitter.node_type(obj) == "this")
+          positions = [] of Int32
+          count = 0
+          Noir::TreeSitter.each_named_child(args) do |arg|
+            positions << count if Noir::TreeSitter.node_type(arg) == "identifier" && Noir::TreeSitter.node_text(arg, source) == arg_name
+            count += 1
+          end
+          next if positions.empty?
+          next unless helper = same_class_method(method, source, method_name, count)
+          helper_params = [] of String
+          Noir::TreeSitter.field(helper, "parameters").try do |fparams|
+            Noir::TreeSitter.each_named_child(fparams) do |fp|
+              next unless Noir::TreeSitter.node_type(fp) == "formal_parameter"
+              helper_params << (Noir::TreeSitter.field(fp, "name").try { |n| Noir::TreeSitter.node_text(n, source) } || "")
+            end
+          end
+          positions.each do |position|
+            next unless helper_name = helper_params[position]?
+            scan_accessor_calls(helper, source, helper_name, accessors, sink, depth + 1)
+          end
         end
       end
+    end
+
+    # The only method named `name` with `arity` formal parameters declared
+    # in `method`'s own class body; nil when there is none or overloads
+    # make it ambiguous.
+    private def same_class_method(method : LibTreeSitter::TSNode, source : String, name : String, arity : Int32) : LibTreeSitter::TSNode?
+      return unless class_body = Noir::TreeSitter.parent(method)
+      found : LibTreeSitter::TSNode? = nil
+      Noir::TreeSitter.each_named_child(class_body) do |member|
+        next unless Noir::TreeSitter.node_type(member) == "method_declaration"
+        next unless Noir::TreeSitter.field(member, "name").try { |n| Noir::TreeSitter.node_text(n, source) } == name
+        params = 0
+        Noir::TreeSitter.field(member, "parameters").try do |fparams|
+          Noir::TreeSitter.each_named_child(fparams) { |fp| params += 1 if Noir::TreeSitter.node_type(fp) == "formal_parameter" }
+        end
+        next unless params == arity
+        return if found
+        found = member
+      end
+      found
     end
 
     private def decode_string_literal(node : LibTreeSitter::TSNode, source : String) : String
