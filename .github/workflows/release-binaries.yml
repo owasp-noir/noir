@@ -71,8 +71,8 @@ jobs:
           export PKG_CONFIG_PATH="${OPENSSL_PREFIX}/lib/pkgconfig"
           BIN="build/noir-${GITHUB_REF_SLUG}-osx-${ARCH}"
           crystal build src/noir.cr -o "$BIN" --no-debug --release
-          chmod +x scripts/package-macos.sh
-          scripts/package-macos.sh "$BIN" "build/noir-${GITHUB_REF_SLUG}-osx-${ARCH}.tar.gz"
+          chmod +x packaging/macos/package.sh
+          packaging/macos/package.sh "$BIN" "build/noir-${GITHUB_REF_SLUG}-osx-${ARCH}.tar.gz"
           rm -f "$BIN"
       - if: matrix.platform == 'windows'
         name: Build binary (Windows)

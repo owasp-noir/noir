@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-// `noir` command for the npm package. Runs the binary that npm/install.js
+// `noir` command for the npm package. Runs the binary that install.js
 // downloaded, by its real path, so the macOS build finds its bundled lib/.
 
 const { spawnSync } = require("child_process");

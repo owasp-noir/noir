@@ -46,15 +46,15 @@ jobs:
 
       - name: Update PKGBUILD version
         run: |
-          sed -i "s/^pkgver=.*/pkgver=${{ env.VERSION }}/" aur/PKGBUILD
-          sed -i "s/^pkgrel=.*/pkgrel=${{ github.event.inputs.pkgrel || '1' }}/" aur/PKGBUILD
-          cat aur/PKGBUILD
+          sed -i "s/^pkgver=.*/pkgver=${{ env.VERSION }}/" packaging/aur/PKGBUILD
+          sed -i "s/^pkgrel=.*/pkgrel=${{ github.event.inputs.pkgrel || '1' }}/" packaging/aur/PKGBUILD
+          cat packaging/aur/PKGBUILD
 
       - name: Publish to AUR
         uses: KSXGitHub/github-actions-deploy-aur@v4.2.0
         with:
           pkgname: noir
-          pkgbuild: aur/PKGBUILD
+          pkgbuild: packaging/aur/PKGBUILD
           commit_username: hahwul
           commit_email: hahwul@gmail.com
           ssh_private_key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}

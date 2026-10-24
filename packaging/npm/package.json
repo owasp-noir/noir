@@ -6,23 +6,25 @@
     "homepage": "https://owasp-noir.github.io/noir/",
     "repository": {
         "type": "git",
-        "url": "git+https://github.com/owasp-noir/noir.git"
+        "url": "git+https://github.com/owasp-noir/noir.git",
+        "directory": "packaging/npm"
     },
     "bugs": {
         "url": "https://github.com/owasp-noir/noir/issues"
     },
     "bin": {
-        "noir": "npm/noir.js"
+        "noir": "noir.js"
     },
     "scripts": {
-        "postinstall": "node npm/install.js",
-        "prepublishOnly": "node npm/write-checksums.js --check"
+        "postinstall": "node install.js",
+        "prepack": "cp ../../LICENSE LICENSE",
+        "prepublishOnly": "node write-checksums.js --check"
     },
     "files": [
-        "npm/assets.js",
-        "npm/checksums.json",
-        "npm/install.js",
-        "npm/noir.js"
+        "assets.js",
+        "checksums.json",
+        "install.js",
+        "noir.js"
     ],
     "publishConfig": {
         "access": "public"

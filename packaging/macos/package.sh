@@ -9,7 +9,7 @@
 # re-signed ad hoc after the last install_name_tool call, and the packaged
 # tarball is smoke-tested before the script reports success.
 #
-# Usage: scripts/package-macos.sh <binary-path> <output-tarball>
+# Usage: packaging/macos/package.sh <binary-path> <output-tarball>
 #
 # Archive layout:
 #   noir

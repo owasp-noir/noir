@@ -23,7 +23,7 @@ Release process for project maintainers.
 
 ## General Procedure
 
-1.  **Update Version**: Bump the version everywhere it appears (`shard.yml`, `src/noir.cr`, `flake.nix`, the Dockerfile, `snap/snapcraft.yaml`, `aur/PKGBUILD`, `package.json`, the GitHub Action README and a few docs files). The script does it in one go; without an argument it prompts for the new version.
+1.  **Update Version**: Bump the version everywhere it appears (`shard.yml`, `src/noir.cr`, `flake.nix`, `snap/snapcraft.yaml`, everything under `packaging/` (Dockerfile, `PKGBUILD`, npm `package.json`), the GitHub Action README and a few docs files). The script does it in one go; without an argument it prompts for the new version.
 
     ```bash
     just version-update 1.4.1

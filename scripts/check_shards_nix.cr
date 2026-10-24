@@ -19,7 +19,7 @@
 require "yaml"
 
 LOCK_FILE  = "shard.lock"
-SHARDS_NIX = "shards.nix"
+SHARDS_NIX = "packaging/nix/shards.nix"
 
 record NixShard, url : String, rev : String, sha256 : String
 

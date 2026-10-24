@@ -48,14 +48,15 @@ jobs:
       - name: Update npm
         run: npm install -g npm@^11.5.1
 
-      # npm/install.js downloads the release binary named after package.json's
+      # install.js downloads the release binary named after package.json's
       # version, so a stale version would ship a package that installs the
       # wrong (or a missing) binary. `just version-update` keeps them in sync.
       - name: Check package.json version matches release tag
+        working-directory: packaging/npm
         run: |
           PKG_VERSION=$(node -p "require('./package.json').version")
           if [ "v${PKG_VERSION}" != "${TAG}" ]; then
-            echo "::error file=package.json::package.json version (${PKG_VERSION}) does not match release tag (${TAG}). Run 'just version-update' before releasing."
+            echo "::error file=packaging/npm/package.json::package.json version (${PKG_VERSION}) does not match release tag (${TAG}). Run 'just version-update' before releasing."
             exit 1
           fi
 
@@ -63,14 +64,16 @@ jobs:
       # refuses any download that doesn't match, so a release asset replaced
       # after publishing can't reach npm users.
       - name: Pin release binary checksums
+        working-directory: packaging/npm
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir release-assets \
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir "$RUNNER_TEMP/release-assets" \
             --pattern 'noir-*-linux-*' --pattern 'noir-*-osx-*.tar.gz'
-          node npm/write-checksums.js release-assets
+          node write-checksums.js "$RUNNER_TEMP/release-assets"
 
       # --provenance attaches a signed record to the published package saying
       # exactly where it was built: which GitHub repo, which commit, and which workflow run.
       - name: Publish to npm
+        working-directory: packaging/npm
         run: npm publish --provenance
