@@ -143,6 +143,7 @@ module Analyzer::Rust
           details = Details.new(PathInfo.new(path, attr_row))
           endpoint = Endpoint.new(route_path, method, details)
           extract_path_params(route_path, endpoint)
+          endpoint.handler = rust_handler(function, source, path)
           extract_function_params(function, source, endpoint)
           attach_handler_callees(function, source, path, endpoint) if include_callee
 
@@ -210,6 +211,7 @@ module Analyzer::Rust
           if handler_name
             leaf = handler_name.split("::").last
             if handler_function = function_index[leaf]?
+              endpoint.handler = local_handler(handler_name, function_index, original_source, path)
               extract_function_params(handler_function, original_source, endpoint)
               attach_handler_callees(handler_function, original_source, path, endpoint) if include_callee
             elsif info = @global_handler_info.try(&.[{crate_scope_for(path), leaf}]?)

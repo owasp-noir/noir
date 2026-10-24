@@ -85,6 +85,7 @@ module Analyzer::Rust
             extract_path_params(full_path, endpoint)
 
             if handler_name && (handler_function = function_index[handler_name]?)
+              endpoint.handler = local_handler(handler_name, function_index, source, path)
               scan_function(handler_function, source, endpoint)
               attach_handler_callees(handler_function, source, path, endpoint) if include_callee
             end
@@ -301,6 +302,7 @@ module Analyzer::Rust
           endpoint = Endpoint.new(assoc_path, method, details)
           extract_path_params(assoc_path, endpoint)
           if handler && (handler_function = function_index[handler]?)
+            endpoint.handler = local_handler(handler, function_index, source, path)
             scan_function(handler_function, source, endpoint)
             attach_handler_callees(handler_function, source, path, endpoint) if include_callee
           end

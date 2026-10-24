@@ -137,6 +137,7 @@ module Analyzer::Rust
                     endpoint = Endpoint.new(canonical, verb, details)
                     extract_path_params(rp, endpoint)
                     if handler_name
+                      endpoint.handler = local_handler(handler_name, function_index, source, path)
                       attach_builder_handler_context(endpoint, handler_name, function_index, source, path, include_callee)
                     end
                     endpoints << endpoint
@@ -157,6 +158,7 @@ module Analyzer::Rust
                 endpoint = Endpoint.new(canonicalize_actix_path(rp), "GET", details)
                 extract_path_params(rp, endpoint)
                 if handler_name
+                  endpoint.handler = local_handler(handler_name, function_index, source, path)
                   attach_builder_handler_context(endpoint, handler_name, function_index, source, path, include_callee)
                 end
                 endpoints << endpoint
@@ -180,6 +182,7 @@ module Analyzer::Rust
       endpoint = Endpoint.new(canonicalize_actix_path(route_path), method, details)
 
       extract_path_params(route_path, endpoint)
+      endpoint.handler = rust_handler(function, source, file_path)
       extract_function_params(function, source, endpoint)
       attach_handler_callees(function, source, file_path, endpoint) if include_callee
 

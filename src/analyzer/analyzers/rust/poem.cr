@@ -69,6 +69,7 @@ module Analyzer::Rust
             extract_path_params(route_path, endpoint)
 
             if handler_function = function_index[handler_name.split("::").last]?
+              endpoint.handler = local_handler(handler_name, function_index, source, path)
               scan_function(handler_function, source, endpoint)
               attach_handler_callees(handler_function, source, path, endpoint) if include_callee
             end
@@ -99,6 +100,7 @@ module Analyzer::Rust
             normalized = normalize_path(raw_path)
             endpoint = Endpoint.new(normalized, method, details)
             extract_path_params(raw_path, endpoint)
+            endpoint.handler = rust_handler(function, source, path)
             scan_function(function, source, endpoint, oai: true)
             attach_handler_callees(function, source, path, endpoint) if include_callee
 

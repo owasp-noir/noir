@@ -84,6 +84,7 @@ module Analyzer::Rust
           endpoint = Endpoint.new(endpoint_path, http_method, details)
 
           extract_path_params(endpoint_path, endpoint)
+          endpoint.handler = rust_handler(node, source, path)
           extract_function_params(node, source, endpoint)
           attach_handler_callees(node, source, path, endpoint) if include_callee
 
@@ -139,6 +140,7 @@ module Analyzer::Rust
           extract_path_params(full_path, endpoint)
 
           if handler_name && (handler_function = function_index[handler_name.split("::").last]?)
+            endpoint.handler = local_handler(handler_name, function_index, source, path)
             extract_function_params(handler_function, source, endpoint)
             attach_handler_callees(handler_function, source, path, endpoint) if include_callee
           end
