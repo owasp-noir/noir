@@ -137,16 +137,6 @@ module Analyzer::Php
       text.scan(MIDDLEWARE_ENTRY_RE).map { |m| m[1]? || qualify_class(m[2], imports, namespace) }
     end
 
-    private def qualify_class(ref : String, imports : Hash(String, String), namespace : String?) : String
-      return ref.lchop('\\') if ref.starts_with?('\\')
-      head, _, rest = ref.partition('\\')
-      if mapped = imports[head]?
-        mapped = mapped.lchop('\\')
-        return rest.empty? ? mapped : "#{mapped}\\#{rest}"
-      end
-      namespace ? "#{namespace}\\#{ref}" : ref
-    end
-
     # Why a group entry guards, or nil: a built-in auth alias, an alias to a
     # refusing class, or a refusing class.
     private def entry_guard(entry : String, root : String, aliases : Hash(String, String)) : String?
