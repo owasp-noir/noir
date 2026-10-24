@@ -41,7 +41,8 @@ banks_transfer_post = Endpoint.new("/banks/transfer", "POST", [Param.new("amount
 # QUERY (RFC 10008) routes through [AcceptVerbs] like any other verb string;
 # the [Route("search")] base arrives on the line after [AcceptVerbs("QUERY")]
 # and is still picked up.
-banks_search_query = Endpoint.new("/banks/search", "QUERY", [Param.new("filters", "", "json")])
+# The `[FromBody] FilterDto` body is its members, camelCased as JSON.
+banks_search_query = Endpoint.new("/banks/search", "QUERY", [Param.new("keyword", "", "json")])
 
 # An unattributed parameter on a QUERY action binds from the body, same as
 # it does on PUT/POST/PATCH, not from the URL query string.
@@ -53,6 +54,7 @@ banks_search_implicit = Endpoint.new("/banks/search/implicit", "QUERY", [Param.n
 banks_branch = Endpoint.new("/banks/branch/{branchId}", "GET", [Param.new("branchId", "", "path")])
 banks_page = Endpoint.new("/banks/page/{page}", "GET", [Param.new("page", "", "path")])
 banks_audit = Endpoint.new("/banks/audit", "GET", [Param.new("X-Tenant", "", "header")])
+banks_open = Endpoint.new("/banks/open", "POST", [Param.new("Owner", "", "form"), Param.new("Kind", "", "form")])
 
 expected_endpoints = [
   articles_list,
@@ -73,6 +75,7 @@ expected_endpoints = [
   banks_branch,
   banks_page,
   banks_audit,
+  banks_open,
 ]
 
 tester = FunctionalTester.new("fixtures/csharp/aspnet_core_mvc_modern/", {
@@ -108,7 +111,7 @@ describe "ASP.NET Core MVC modern controller edge cases", tags: "functional" do
 
   it "recognizes QUERY (RFC 10008) in [AcceptVerbs] with its [Route] base and body param" do
     search = tester.app.endpoints.find! { |e| e.url == "/banks/search" && e.method == "QUERY" }
-    search.params.map(&.name).should eq(["filters"])
+    search.params.map(&.name).should eq(["keyword"])
     search.params.first.param_type.should eq "json"
   end
 
@@ -127,6 +130,11 @@ describe "ASP.NET Core MVC modern controller edge cases", tags: "functional" do
     tester.app.endpoints.any?(&.url.includes?("{page=5}")).should be_false
     page = tester.app.endpoints.find! { |e| e.url == "/banks/page/{page}" }
     page.params.map(&.name).should eq(["page"])
+  end
+
+  it "names the action as the handler, at its signature rather than its attribute" do
+    audit = tester.app.endpoints.find! { |e| e.url == "/banks/audit" }
+    audit.handler.try { |h| {h.name, h.line} }.should eq({"BanksController.Audit", 38})
   end
 
   it "records callees from an expression-bodied action body" do

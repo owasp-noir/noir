@@ -42,14 +42,27 @@ module Analyzer::CSharp
     SETTABLE      = /\bpublic\s+(?:(?:required|virtual|override|new)\s+)*#{TYPE}\s+(\w+)\s*\{\s*get;\s*set;/
     NAME_ARGUMENT = /\bName\s*=\s*"([^"]+)"/
 
+    # The lifecycle method a component's request runs first: static SSR
+    # renders it on the server for every GET.
+    LIFECYCLE = /\b(?:protected|public)\s+override\s+(?:async\s+)?#{TYPE}\s+(OnInitialized(?:Async)?)\s*\(\s*\)/
+
+    # A .NET MAUI Blazor Hybrid app renders its components in a native
+    # WebView: there is no HTTP server, so its `@page` routes are not
+    # endpoints.
+    USE_MAUI = /<UseMaui>\s*true\s*<\/UseMaui>/i
+
     def analyze
       # Keyed case-folded: `Index.CSHTML` pairs with `Index.cshtml.cs` on the
       # case-insensitive filesystems Razor projects are written on.
       code_files = get_files_by_extension(".cs").index_by(&.downcase)
+      csprojs = get_files_by_extension(".csproj")
+      roots = Common.project_roots(csprojs)
+      maui_roots = csprojs.select { |path| read_file_content(path).matches?(USE_MAUI) }.map { |path| File.dirname(path) }.to_set
 
       get_files_by_extensions([".cshtml", ".razor"]).each do |file|
         relative = base_relative_path(file)
         next if Common.csharp_test_path?(relative)
+        next if !maui_roots.empty? && maui_roots.includes?(Common.project_root_for(file, roots))
 
         content = read_file_content(file)
         next unless content.includes?("@page") || content.includes?("@attribute")
@@ -59,7 +72,7 @@ module Analyzer::CSharp
         code = code_behind ? "#{content}\n#{strip_comments(read_file_content(code_behind))}" : content
 
         if File.extname(file).downcase == ".razor"
-          analyze_component(file, content, code)
+          analyze_component(file, content, code, code_behind)
         else
           analyze_page(file, relative, content, code)
         end
@@ -72,7 +85,8 @@ module Analyzer::CSharp
       source.gsub(COMMENT) { |comment| "\n" * comment.count('\n') }
     end
 
-    private def analyze_component(file : String, content : String, code : String)
+    private def analyze_component(file : String, content : String, code : String, code_behind : String?)
+      handler = lifecycle_handler(file, content, code, code_behind)
       query = [] of Param
       form = [] of Param
       code.scan(SUPPLIED) do |m|
@@ -86,6 +100,7 @@ module Analyzer::CSharp
           path = url(template)
           line = line_at_byte_offset(content, m.byte_begin)
           endpoint = new_endpoint(path, "GET", file, line)
+          endpoint.handler = handler
           query.each { |param| endpoint.push_param(param) }
           @result << endpoint
           next if form.empty?
@@ -93,6 +108,18 @@ module Analyzer::CSharp
           form.each { |param| endpoint.push_param(param) }
           @result << endpoint
         end
+      end
+    end
+
+    # The component's `OnInitialized[Async]` override, in the `.razor` file
+    # (`code` starts with `content`) or its code-behind.
+    private def lifecycle_handler(file : String, content : String, code : String, code_behind : String?) : Handler?
+      m = LIFECYCLE.match(code) || return
+      offset = m.byte_begin(1)
+      if offset < content.bytesize
+        Handler.new(m[1], file, line_at_byte_offset(content, offset))
+      elsif code_behind
+        Handler.new(m[1], code_behind, line_at_byte_offset(code.byte_slice(content.bytesize + 1), offset - content.bytesize - 1))
       end
     end
 

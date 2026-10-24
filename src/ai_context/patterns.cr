@@ -514,7 +514,10 @@ module NoirAIContext
       "Potential authorization guard — checks what the authenticated caller may do",
       60,
       source_patterns: [
-        /\bauthorize\w*\b/i,
+        # Not as a markup element name: Blazor's `<AuthorizeView>` /
+        # `<Authorized>` only choose what a page renders, the request is
+        # served either way. Nor as a path segment (`"/oauth/authorize"`).
+        /(?<![<\/])\bauthorize\w*\b/i,
         /\bcheckPermission\b/i,
         /\bhasAuthority\b/i,
         /\brequiresRole\b/i,

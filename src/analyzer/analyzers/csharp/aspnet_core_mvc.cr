@@ -508,6 +508,7 @@ module Analyzer::CSharp
           if signature.matches?(/\bpublic\b/) && !non_action_attribute && action_method?(signature, explicit_endpoint_attribute)
             action_name = extract_action_name(signature)
             unless action_name.empty?
+              handler = Handler.new("#{type.name}.#{action_name}", file, line_offset + i + 1)
               action_name = renamed_action || action_name
               body_block, body_line, skip_first = extract_callable_body(lines, masked_lines, end_index)
               body_params = extract_params_from_block(body_block)
@@ -520,7 +521,7 @@ module Analyzer::CSharp
                 # later line collected an empty route — fall back to the base
                 # so verb-then-`[Route]` ordering matches `[Route]`-then-verb.
                 emit_route = route_attr if emit_route.empty? && !route_attr.empty?
-                parameters = extract_parameters(signature, emit_verb)
+                parameters = extract_parameters(signature, emit_verb, file, lines, masked_lines)
                 parameters = merge_params(parameters, body_params, emit_verb)
                 routes = controller_routes.flat_map do |controller_route|
                   effective_action_route = emit_route
@@ -533,6 +534,7 @@ module Analyzer::CSharp
                 routes.each do |route|
                   details = Details.new(PathInfo.new(file, line_offset + i + 1))
                   endpoint = Endpoint.new(route, emit_verb, details)
+                  endpoint.handler = handler
 
                   align_params_with_route(parameters, route).each do |param|
                     endpoint.params << param
@@ -708,7 +710,8 @@ module Analyzer::CSharp
       match[1]
     end
 
-    private def extract_parameters(signature : String, http_method : String) : Array(Param)
+    private def extract_parameters(signature : String, http_method : String, file : String,
+                                   lines : Array(String), masked_lines : Array(String)) : Array(Param)
       parameters = [] of Param
 
       param_list = extract_balanced_param_list(signature)
@@ -738,7 +741,11 @@ module Analyzer::CSharp
             next if type_token && Common.csharp_service_type?(type_token)
           end
 
-          parameters << Param.new(explicit_name || param_name, "", param_type || default_param_type)
+          bound = param_type || default_param_type
+          # A model-bound complex type (`LoginInputModel model`) is the members
+          # a client sends, not a field named after the argument.
+          members = body_type_params(param_def, bound, file, lines, masked_lines) if bound.in?("json", "form") && explicit_name.nil?
+          members ? parameters.concat(members) : (parameters << Param.new(explicit_name || param_name, "", bound))
         end
       end
 

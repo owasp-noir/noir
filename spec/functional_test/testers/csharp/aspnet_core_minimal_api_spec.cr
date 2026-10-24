@@ -19,11 +19,11 @@ expected_endpoints = [
     Param.new("id", "", "path"),
   ]),
   Endpoint.new("/users", "POST", [
-    Param.new("req", "", "json"),
+    Param.new("name", "", "json"),
   ]),
   Endpoint.new("/users/{id}", "PUT", [
     Param.new("id", "", "path"),
-    Param.new("req", "", "json"),
+    Param.new("name", "", "json"),
   ]),
   Endpoint.new("/users/{id}", "DELETE", [
     Param.new("id", "", "path"),
@@ -40,7 +40,7 @@ expected_endpoints = [
   # QUERY (RFC 10008): HttpMethods.Query, a bare "QUERY" literal, and QUERY
   # alongside another verb in the same MapMethods array.
   Endpoint.new("/search", "QUERY", [
-    Param.new("filter", "", "json"),
+    Param.new("keyword", "", "json"),
   ]),
   Endpoint.new("/search-legacy", "QUERY"),
   Endpoint.new("/lookup", "GET"),
@@ -50,10 +50,10 @@ expected_endpoints = [
     Param.new("X-Mode", "", "header"),
   ]),
   Endpoint.new("/nested/v2/orders", "POST", [
-    Param.new("order", "", "json"),
+    Param.new("id", "", "json"),
   ]),
   Endpoint.new("/inline/submit", "POST", [
-    Param.new("req", "", "json"),
+    Param.new("name", "", "json"),
   ]),
   # `async context => …` is the RequestDelegate overload: `context` is the
   # HttpContext, not a query value.
@@ -87,7 +87,7 @@ describe "ASP.NET Core Minimal API analyzer edge cases", tags: "functional" do
 
   it "recognizes QUERY (RFC 10008) from HttpMethods.Query and the bare literal in MapMethods" do
     search = tester.app.endpoints.find! { |e| e.url == "/search" && e.method == "QUERY" }
-    search.params.map(&.name).should eq(["filter"])
+    search.params.map(&.name).should eq(["keyword"])
     search.params.first.param_type.should eq "json"
 
     tester.app.endpoints.any? { |e| e.url == "/search-legacy" && e.method == "QUERY" }.should be_true

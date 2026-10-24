@@ -304,6 +304,84 @@ describe "AspnetAuthTagger" do
     end
   end
 
+  it "inherits RequireAuthorization chained on a route-builder extension method's call site" do
+    CodeLocator.instance.clear_all
+    tmpdir = File.tempname("aspnet_extension_group")
+    Dir.mkdir_p(tmpdir)
+    program = File.join(tmpdir, "Program.cs")
+    orders = File.join(tmpdir, "OrdersApi.cs")
+    todos = File.join(tmpdir, "TodosApi.cs")
+    File.write(program, <<-CS)
+      var app = builder.Build();
+      var orders = app.NewVersionedApi("Orders");
+      orders.MapOrdersApi()
+            .RequireAuthorization();
+      app.MapGroup("/todos").RequireAuthorization().MapTodosApi();
+      app.MapGroup("/public").MapPublicApi().RequireAuthorization();
+      CS
+    File.write(orders, <<-CS)
+      public static class OrdersApi
+      {
+          public static RouteGroupBuilder MapOrdersApi(this IEndpointRouteBuilder app)
+          {
+              var api = app.MapGroup("api/orders").HasApiVersion(1.0);
+              api.MapGet("/{id}", GetOrder);
+              api.MapGet("/health", () => "ok").AllowAnonymous();
+              app.MapGet("/status", () => "up");
+              return api;
+          }
+      }
+      CS
+    File.write(todos, <<-CS)
+      public static class TodosApi
+      {
+          public static RouteGroupBuilder MapTodosApi(this RouteGroupBuilder group)
+          {
+              group.MapGet("/", () => "all");
+              return group;
+          }
+
+          public static RouteGroupBuilder MapPublicApi(this RouteGroupBuilder group)
+          {
+              var inner = group.MapGroup("/v1");
+              inner.MapGet("/", () =>
+              {
+                  var items = new[] { "a" };
+                  return items;
+              });
+              return group;
+          }
+      }
+      CS
+    {program, orders, todos}.each { |path| CodeLocator.instance.register_path(path) }
+
+    begin
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(tmpdir)
+      at = ->(path : String, line : Int32) { Endpoint.new("/#{line}", "GET", [] of Param, Details.new(PathInfo.new(path, line))) }
+      order = at.call(orders, 6)
+      health = at.call(orders, 7)
+      status = at.call(orders, 8)
+      todo = at.call(todos, 5)
+      public_v1 = at.call(todos, 12)
+
+      AspnetAuthTagger.new(noir_options).perform([order, health, status, todo, public_v1])
+
+      # The call site authorizes the group the extension returns...
+      order.tags.map(&.description).should eq(["Protected by ASP.NET .RequireAuthorization() (route group)"])
+      # ...unless the route opts out, and not a route mapped straight on `app`.
+      health.tags.should be_empty
+      status.tags.should be_empty
+      # Ahead of the call it covers the `this` group itself.
+      todo.tags.map(&.description).should eq(["Protected by ASP.NET .RequireAuthorization() (route group)"])
+      # Behind a call returning `group`, a group made from it inherits it too.
+      public_v1.tags.map(&.description).should eq(["Protected by ASP.NET .RequireAuthorization() (route group)"])
+    ensure
+      FileUtils.rm_rf(tmpdir)
+      CodeLocator.instance.clear_all
+    end
+  end
+
   it "inherits RequireAuthorization through nested MapGroup declarations" do
     tmpdir = File.tempname("aspnet_nested_group")
     Dir.mkdir_p(tmpdir)

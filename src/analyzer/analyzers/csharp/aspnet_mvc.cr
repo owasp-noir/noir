@@ -251,6 +251,7 @@ module Analyzer::CSharp
             url = build_url(controller_prefix, action_route, controller_name, action_name)
             details = Details.new(PathInfo.new(file, i + 1))
             endpoint = Endpoint.new(url, http_method, details)
+            endpoint.handler = Handler.new(action_name, file, i + 1)
 
             parameters.each do |param|
               endpoint.params << param

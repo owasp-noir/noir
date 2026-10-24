@@ -40,6 +40,11 @@ class AspnetAuthTagger < FrameworkTagger
   # `var v1 = api.MapGroup("/v1")`: a nested group, which inherits `api`'s.
   GROUP_DECLARATION_RECEIVER = /=\s*(\w+)\s*\.\s*MapGroup\b/
 
+  # A route-builder extension method, `static RouteGroupBuilder
+  # MapOrdersApi(this IEndpointRouteBuilder app)`: its name and the name of
+  # its `this` builder.
+  ROUTE_BUILDER_EXTENSION = /\bstatic\s[^;{}()=]*?\b(\w+)\s*(?:<[^<>()]*>\s*)?\(\s*this\s+(?:RouteGroupBuilder|IEndpointRouteBuilder|WebApplication)\s+(\w+)/
+
   # ASP.NET Core middleware auth in action body
   ACTION_AUTH_PATTERNS = [
     {/User\.Identity\.IsAuthenticated/, "ASP.NET User.Identity.IsAuthenticated"},
@@ -56,6 +61,7 @@ class AspnetAuthTagger < FrameworkTagger
     @fallback_roots = Set(String?).new
     @controllers_global_roots = Set(String?).new
     @class_lines = Hash(String, Array(Int32)).new
+    @extension_auth = Hash(String, Tuple(Bool, Bool)).new
   end
 
   # Collects the project roots (nearest `.csproj`) whose live, non-test
@@ -76,7 +82,55 @@ class AspnetAuthTagger < FrameworkTagger
       @fallback_roots << root if fallback && code.matches?(FALLBACK_POLICY)
       @controllers_global_roots << root if controllers && code.matches?(CONTROLLERS_GLOBAL)
     end
+    collect_extension_auth
     super
+  end
+
+  # For every route-builder extension method, whether all of its call sites
+  # authorize `{the builder it returns, its this-builder}`:
+  #
+  #   orders.MapOrdersApi().RequireAuthorization();          # returned builder
+  #   app.MapGroup("/x").RequireAuthorization().MapTodos();  # both
+  #
+  # A convention on a group applies to every group made from it, so a
+  # `.RequireAuthorization()` ahead of the call covers everything the
+  # extension maps; one after it covers only the builder it returns.
+  private def collect_extension_auth
+    @extension_auth.clear
+    sources = [] of Tuple(String, String)
+    names = Set(String).new
+    collect_files_by_extension(".cs").each do |path|
+      content = read_file(path)
+      next unless content && content.includes?("Map")
+      next if base_relative_path(path).matches?(TEST_PATH)
+      code = Noir::CComments.strip(content)
+      sources << {path, code}
+      code.scan(ROUTE_BUILDER_EXTENSION) { |m| names << m[1] }
+    end
+    return if names.empty?
+
+    sites = Hash(String, Array(Tuple(Bool, Bool))).new
+    call_re = /\.\s*(#{names.map { |n| Regex.escape(n) }.join('|')})\s*\(/
+    sources.each do |_, code|
+      next unless code.matches?(call_re)
+      statements = code.split(/[;{}]/)
+      statements.each do |statement|
+        statement.scan(call_re) do |m|
+          before = statement[0...m.begin]
+          after = statement[m.end..]
+          next if after.matches?(MINIMAL_API_ALLOW_ANON)
+          before_auth = before.matches?(MINIMAL_API_REQUIRE_AUTH)
+          if !before_auth && (receiver = before.match(/\A\s*(\w+)\s*\z/))
+            declaration = /\b#{Regex.escape(receiver[1])}\s*=[^=]/
+            before_auth = statements.any? { |s| s.matches?(declaration) && s.matches?(MINIMAL_API_REQUIRE_AUTH) && !s.matches?(MINIMAL_API_ALLOW_ANON) }
+          end
+          (sites[m[1]] ||= [] of Tuple(Bool, Bool)) << {before_auth || after.matches?(MINIMAL_API_REQUIRE_AUTH), before_auth}
+        end
+      end
+    end
+    sites.each do |name, calls|
+      @extension_auth[name] = {calls.all?(&.[0]), calls.all?(&.[1])}
+    end
   end
 
   private def check_endpoint(endpoint : Endpoint)
@@ -185,7 +239,12 @@ class AspnetAuthTagger < FrameworkTagger
   # "" so no app-wide policy re-tags it. A route mapped on a group variable
   # inherits the group's `.RequireAuthorization()` (`var api =
   # app.MapGroup("/api").RequireAuthorization(); api.MapGet(...)`).
-  private def check_minimal_api_fluent(lines : Array(String), route_line : Int32, depth : Int32 = 0) : String?
+  #
+  # Inside a route-builder extension method, the chain reaching the builder
+  # the method returns, or its `this` builder, inherits the authorization
+  # its call sites chain on (`orders.MapOrdersApi().RequireAuthorization()`).
+  private def check_minimal_api_fluent(lines : Array(String), route_line : Int32, depth : Int32 = 0,
+                                       chain : Array(String) = [] of String, origin : Int32 = route_line) : String?
     statement = statement_at(lines, route_line)
 
     return "" if statement.matches?(MINIMAL_API_ALLOW_ANON)
@@ -193,13 +252,46 @@ class AspnetAuthTagger < FrameworkTagger
     return if depth >= 5
 
     receiver = (statement.match(MINIMAL_API_RECEIVER) || statement.match(GROUP_DECLARATION_RECEIVER)).try(&.[1])
-    return unless receiver && receiver != "app"
-    declaration = /\b#{Regex.escape(receiver)}\s*=\s*[\w.]*MapGroup\s*\(/
-    (0...route_line).reverse_each do |idx|
-      next unless lines[idx].matches?(declaration)
-      return check_minimal_api_fluent(lines, idx, depth + 1)
+    return unless receiver
+    chain << receiver
+    unless receiver == "app"
+      declaration = /\b#{Regex.escape(receiver)}\s*=\s*[\w.]*MapGroup\s*\(/
+      (0...route_line).reverse_each do |idx|
+        next unless lines[idx].matches?(declaration)
+        return check_minimal_api_fluent(lines, idx, depth + 1, chain, origin)
+      end
     end
-    nil
+    extension_auth(lines, origin, chain)
+  end
+
+  # The authorization a route mapped through `chain` (route receiver first,
+  # root builder last) inherits from the call sites of the route-builder
+  # extension method enclosing `route_line`.
+  private def extension_auth(lines : Array(String), route_line : Int32, chain : Array(String)) : String?
+    return if @extension_auth.empty?
+    decl_idx = (0..route_line).reverse_each.find { |idx| lines[idx].includes?("this") && lines[idx].matches?(ROUTE_BUILDER_EXTENSION) } || return
+    decl = lines[decl_idx].match(ROUTE_BUILDER_EXTENSION) || return
+    result_auth, receiver_auth = @extension_auth[decl[1]]? || return
+
+    # The route must sit inside the method body, and the `return x;` of
+    # that body names the builder the call sites' chain applies to.
+    depth = 0
+    opened = false
+    returned = nil
+    (decl_idx...lines.size).each do |idx|
+      line = lines[idx]
+      return if opened && depth <= 0 && idx <= route_line
+      # Only the method's own `return`, not one inside a handler lambda.
+      returned ||= line.match(/\breturn\s+(\w+)\s*;/).try(&.[1]) if opened && depth == 1
+      depth += line.count('{') - line.count('}')
+      opened ||= line.includes?('{')
+      break if opened && depth <= 0
+    end
+
+    root = chain.last
+    if (receiver_auth && root == decl[2]) || (result_auth && returned && chain.includes?(returned))
+      "ASP.NET .RequireAuthorization() (route group)"
+    end
   end
 
   # A minimal API route carries its attributes on the handler lambda inside

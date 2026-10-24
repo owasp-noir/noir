@@ -41,7 +41,7 @@ expected_endpoints = [
   # route in the module hangs off the constructor base path.
   Endpoint.new("/directors", "GET"),
   Endpoint.new("/directors", "PUT", [
-    Param.new("person", "", "json"),
+    Param.new("name", "", "json"),
   ]),
   Endpoint.new("/directors/qs", "GET", [
     Param.new("name", "", "query"),
