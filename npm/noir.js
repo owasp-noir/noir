@@ -12,7 +12,8 @@ const binary = path.join(__dirname, "dist", "noir");
 if (!fs.existsSync(binary)) {
     console.error(
         "Noir binary not found. It is downloaded when the package installs; " +
-        "if install scripts were skipped, run: npm rebuild @owasp-noir/noir"
+        "if install scripts were skipped, run `npm rebuild @owasp-noir/noir` " +
+        "(pnpm: `pnpm approve-builds`)"
     );
     process.exit(1);
 }

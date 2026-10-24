@@ -37,13 +37,16 @@ jobs:
         with:
           ref: ${{ env.TAG }}
 
-      # Node 24 ships npm 11; trusted publishing needs npm >= 11.5.1
-      # (Node 22 still ships npm 10).
       - name: Setup Node.js
         uses: actions/setup-node@v7
         with:
           node-version: 24
           registry-url: https://registry.npmjs.org
+
+      # Trusted publishing needs npm >= 11.5.1, and early Node 24 releases
+      # (which the runner's tool cache may still hold) bundle an older npm 11.
+      - name: Update npm
+        run: npm install -g npm@^11.5.1
 
       # npm/install.js downloads the release binary named after package.json's
       # version, so a stale version would ship a package that installs the
