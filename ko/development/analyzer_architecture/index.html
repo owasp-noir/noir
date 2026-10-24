@@ -1,0 +1,964 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  
+  
+  <meta name="description" content="Noir의 detector, language engine, route extractor, framework adapter가 맞물리는 방식과 새 분석기를 추가하는 방법.">
+  <title>분석기 아키텍처 - OWASP Noir</title>
+  
+
+  
+  <meta name="theme-color" content="#0b0b0c" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#fbfbfa" media="(prefers-color-scheme: light)">
+
+  
+  <script>
+    (function () {
+      var r = document.documentElement;
+      r.classList.add("js");
+      try {
+        var t = localStorage.getItem("noir-theme");
+        if (t === "light" || t === "dark") r.setAttribute("data-theme", t);
+      } catch (e) {}
+    })();
+  </script>
+
+  
+  <meta property="og:title" content="분석기 아키텍처">
+  <meta property="og:type" content="article">
+  <meta property="og:url" content="https://owasp-noir.github.io/noir/ko/development/analyzer_architecture/">
+  <meta property="og:description" content="Noir의 detector, language engine, route extractor, framework adapter가 맞물리는 방식과 새 분석기를 추가하는 방법.">
+  <meta property="og:image" content="https://owasp-noir.github.io/noir/og-images/ko-development-analyzer_architecture.png">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="분석기 아키텍처">
+  <meta name="twitter:description" content="Noir의 detector, language engine, route extractor, framework adapter가 맞물리는 방식과 새 분석기를 추가하는 방법.">
+  <meta name="twitter:image" content="https://owasp-noir.github.io/noir/og-images/ko-development-analyzer_architecture.png">
+  
+  
+  <link rel="canonical" href="https://owasp-noir.github.io/noir/ko/development/analyzer_architecture/">
+  <script type="application/ld+json">{"@context":"https://schema.org","@type":"Article","headline":"분석기 아키텍처","url":"https://owasp-noir.github.io/noir/ko/development/analyzer_architecture/","dateModified":"2026-10-25T00:12:07+09:00","description":"Noir의 detector, language engine, route extractor, framework adapter가 맞물리는 방식과 새 분석기를 추가하는 방법.","image":"https://owasp-noir.github.io/noir/og-images/ko-development-analyzer_architecture.png"}</script>
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"OWASP Noir","item":"https://owasp-noir.github.io/noir/ko/"},{"@type":"ListItem","position":2,"name":"개발","item":"https://owasp-noir.github.io/noir/ko/development/"},{"@type":"ListItem","position":3,"name":"분석기 아키텍처"}]}</script>
+  
+  <link rel="alternate" hreflang="ko" href="https://owasp-noir.github.io/noir/ko/development/analyzer_architecture/">
+<link rel="alternate" hreflang="en" href="https://owasp-noir.github.io/noir/development/analyzer_architecture/">
+  
+  
+
+  <link rel="icon" href="https://owasp-noir.github.io/noir/logos/favicon.ico" sizes="any">
+  <link rel="icon" href="https://owasp-noir.github.io/noir/logos/favicon.svg" type="image/svg+xml">
+  <link rel="icon" href="https://owasp-noir.github.io/noir/logos/favicon-96x96.png" type="image/png" sizes="96x96">
+  <link rel="apple-touch-icon" href="https://owasp-noir.github.io/noir/logos/apple-touch-icon.png">
+  
+  <link rel="manifest" href="https://owasp-noir.github.io/noir/logos/site.webmanifest">
+
+  <link rel="alternate" type="application/rss+xml" title="OWASP Noir Blog" href="https://owasp-noir.github.io/noir/rss.xml">
+  <link rel="alternate" type="application/rss+xml" title="OWASP Noir Blog (한국어)" href="https://owasp-noir.github.io/noir/ko/rss.xml">
+
+  <link rel="preload" href="https://owasp-noir.github.io/noir/fonts/geist-variable-latin.woff2" as="font" type="font/woff2" crossorigin>
+
+  
+  <link rel="stylesheet" href="https://owasp-noir.github.io/noir/assets/css/highlight/atom-one-dark.min.css">
+  <link rel="stylesheet" href="https://owasp-noir.github.io/noir/css/style.css">
+  
+</head>
+<body>
+  <a class="skip-link" href="#main">본문으로 건너뛰기</a>
+  
+<svg xmlns="http://www.w3.org/2000/svg" class="icon-sprite" aria-hidden="true" focusable="false">
+  <symbol id="i-search" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M3 10a7 7 0 1 0 14 0a7 7 0 1 0 -14 0" />
+    <path d="M21 21l-6 -6" />
+  </symbol>
+  <symbol id="i-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M8 12a4 4 0 1 0 8 0a4 4 0 1 0 -8 0" />
+    <path d="M3 12h1m8 -9v1m8 8h1m-9 8v1m-6.4 -15.4l.7 .7m12.1 -.7l-.7 .7m0 11.4l.7 .7m-12.1 -.7l-.7 .7" />
+  </symbol>
+  <symbol id="i-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M12 3c.132 0 .263 0 .393 0a7.5 7.5 0 0 0 7.92 12.446a9 9 0 1 1 -8.313 -12.454l0 .008" />
+  </symbol>
+  <symbol id="i-contrast" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M3 12a9 9 0 1 0 18 0a9 9 0 1 0 -18 0" />
+    <path d="M12 17a5 5 0 0 0 0 -10v10" />
+  </symbol>
+  <symbol id="i-chevron-down" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M6 9l6 6l6 -6" />
+  </symbol>
+  <symbol id="i-menu-2" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M4 6l16 0" />
+    <path d="M4 12l16 0" />
+    <path d="M4 18l16 0" />
+  </symbol>
+  <symbol id="i-x" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M18 6l-12 12" />
+    <path d="M6 6l12 12" />
+  </symbol>
+  <symbol id="i-copy" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M7 9.667a2.667 2.667 0 0 1 2.667 -2.667h8.666a2.667 2.667 0 0 1 2.667 2.667v8.666a2.667 2.667 0 0 1 -2.667 2.667h-8.666a2.667 2.667 0 0 1 -2.667 -2.667l0 -8.666" />
+    <path d="M4.012 16.737a2.005 2.005 0 0 1 -1.012 -1.737v-10c0 -1.1 .9 -2 2 -2h10c.75 0 1.158 .385 1.5 1" />
+  </symbol>
+  <symbol id="i-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M5 12l5 5l10 -10" />
+  </symbol>
+  <symbol id="i-arrow-right" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M5 12l14 0" />
+    <path d="M13 18l6 -6" />
+    <path d="M13 6l6 6" />
+  </symbol>
+  <symbol id="i-arrow-up-right" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M17 7l-10 10" />
+    <path d="M8 7l9 0l0 9" />
+  </symbol>
+  <symbol id="i-arrow-left" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M5 12l14 0" />
+    <path d="M5 12l6 6" />
+    <path d="M5 12l6 -6" />
+  </symbol>
+  <symbol id="i-brand-github" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M9 19c-4.3 1.4 -4.3 -2.5 -6 -3m12 5v-3.5c0 -1 .1 -1.4 -.5 -2c2.8 -.3 5.5 -1.4 5.5 -6a4.6 4.6 0 0 0 -1.3 -3.2a4.2 4.2 0 0 0 -.1 -3.2s-1.1 -.3 -3.5 1.3a12.3 12.3 0 0 0 -6.2 0c-2.4 -1.6 -3.5 -1.3 -3.5 -1.3a4.2 4.2 0 0 0 -.1 3.2a4.6 4.6 0 0 0 -1.3 3.2c0 4.6 2.7 5.7 5.5 6c-.6 .6 -.6 1.2 -.5 2v3.5" />
+  </symbol>
+  <symbol id="i-pencil" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M4 20h4l10.5 -10.5a2.828 2.828 0 1 0 -4 -4l-10.5 10.5v4" />
+    <path d="M13.5 6.5l4 4" />
+  </symbol>
+  <symbol id="i-rocket" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M4 13a8 8 0 0 1 7 7a6 6 0 0 0 3 -5a9 9 0 0 0 6 -8a3 3 0 0 0 -3 -3a9 9 0 0 0 -8 6a6 6 0 0 0 -5 3" />
+    <path d="M7 14a6 6 0 0 0 -3 6a6 6 0 0 0 6 -3" />
+    <path d="M14 9a1 1 0 1 0 2 0a1 1 0 1 0 -2 0" />
+  </symbol>
+  <symbol id="i-terminal-2" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M8 9l3 3l-3 3" />
+    <path d="M13 15l3 0" />
+    <path d="M3 6a2 2 0 0 1 2 -2h14a2 2 0 0 1 2 2v12a2 2 0 0 1 -2 2h-14a2 2 0 0 1 -2 -2l0 -12" />
+  </symbol>
+  <symbol id="i-lifebuoy" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M8 12a4 4 0 1 0 8 0a4 4 0 1 0 -8 0" />
+    <path d="M3 12a9 9 0 1 0 18 0a9 9 0 1 0 -18 0" />
+    <path d="M15 15l3.35 3.35" />
+    <path d="M9 15l-3.35 3.35" />
+    <path d="M5.65 5.65l3.35 3.35" />
+    <path d="M18.35 5.65l-3.35 3.35" />
+  </symbol>
+  <symbol id="i-list" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M9 6l11 0" />
+    <path d="M9 12l11 0" />
+    <path d="M9 18l11 0" />
+    <path d="M5 6l0 .01" />
+    <path d="M5 12l0 .01" />
+    <path d="M5 18l0 .01" />
+  </symbol>
+  <symbol id="i-code" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M7 8l-4 4l4 4" />
+    <path d="M17 8l4 4l-4 4" />
+    <path d="M14 4l-4 16" />
+  </symbol>
+  <symbol id="i-rss" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M4 19a1 1 0 1 0 2 0a1 1 0 1 0 -2 0" />
+    <path d="M4 4a16 16 0 0 1 16 16" />
+    <path d="M4 11a9 9 0 0 1 9 9" />
+  </symbol>
+  <symbol id="i-calendar" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M4 7a2 2 0 0 1 2 -2h12a2 2 0 0 1 2 2v12a2 2 0 0 1 -2 2h-12a2 2 0 0 1 -2 -2v-12" />
+    <path d="M16 3v4" />
+    <path d="M8 3v4" />
+    <path d="M4 11h16" />
+    <path d="M11 15h1" />
+    <path d="M12 15v3" />
+  </symbol>
+</svg>
+
+<header class="site-header">
+  <div class="header-inner">
+    <button class="icon-btn hamburger" id="drawerToggle" aria-label="메뉴 열기" aria-expanded="false" aria-controls="sidebar">
+      <svg class="ic" aria-hidden="true"><use href="#i-menu-2"/></svg>
+    </button>
+
+    <a href="https://owasp-noir.github.io/noir/ko/" class="header-logo" aria-label="OWASP Noir 홈">
+      <img class="logo-dark" src="https://owasp-noir.github.io/noir/images/noir-dark.png" alt="OWASP Noir" width="1280" height="337">
+      <img class="logo-light" src="https://owasp-noir.github.io/noir/images/noir-light.png" alt="OWASP Noir" width="1280" height="337">
+    </a>
+    <a class="header-version" href="https://github.com/owasp-noir/noir/releases" target="_blank" rel="noopener noreferrer">v1.4.0</a>
+
+    <nav class="header-nav" aria-label="주요 메뉴">
+      <a href="https://owasp-noir.github.io/noir/ko/get_started/overview/">시작하기</a>
+      <a href="https://owasp-noir.github.io/noir/ko/usage/">사용 가이드</a>
+      <a href="https://owasp-noir.github.io/noir/ko/development/">개발</a>
+      <a href="https://owasp-noir.github.io/noir/ko/blog/">블로그</a>
+      <a href="https://owasp-noir.github.io/noir/ko/resources/">리소스</a>
+    </nav>
+
+    <div class="header-right">
+      <button class="header-btn search-trigger" id="searchTrigger" aria-label="문서 검색">
+        <svg class="ic" aria-hidden="true"><use href="#i-search"/></svg>
+        <span>검색</span>
+        <kbd>Ctrl K</kbd>
+      </button>
+
+      
+      
+      <nav class="lang-switcher" aria-label="언어">
+        
+        <a href="https://owasp-noir.github.io/noir/development/analyzer_architecture/" hreflang="en">EN</a>
+        
+        <a href="https://owasp-noir.github.io/noir/ko/development/analyzer_architecture/" hreflang="ko" aria-current="true">KO</a>
+        
+      </nav>
+      
+
+      <a class="icon-btn" href="https://github.com/owasp-noir/noir" target="_blank" rel="noopener noreferrer" aria-label="GitHub의 OWASP Noir">
+        <svg class="ic" aria-hidden="true"><use href="#i-brand-github"/></svg>
+      </a>
+
+      
+      <button class="icon-btn theme-toggle" id="themeToggle" data-mode="auto" type="button" aria-label="테마">
+        <svg class="ic ic-auto" aria-hidden="true"><use href="#i-contrast"/></svg>
+        <svg class="ic ic-light" aria-hidden="true"><use href="#i-sun"/></svg>
+        <svg class="ic ic-dark" aria-hidden="true"><use href="#i-moon"/></svg>
+      </button>
+    </div>
+  </div>
+</header>
+<div class="search-overlay" id="searchOverlay" role="dialog" aria-modal="true" aria-label="문서 검색" hidden>
+  <div class="search-modal">
+    <div class="search-input-wrap">
+      <svg class="ic" aria-hidden="true"><use href="#i-search"/></svg>
+      <input type="search" id="searchInput" aria-label="문서 검색" placeholder="문서 검색" autocomplete="off" spellcheck="false">
+      <kbd id="searchClose" role="button" tabindex="0">Esc</kbd>
+    </div>
+    <div class="search-results" id="searchResults" role="listbox" aria-label="검색"></div>
+  </div>
+</div>
+<div class="docs-container">
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<div class="drawer-scrim" id="drawerScrim"></div>
+<aside class="docs-sidebar" id="sidebar">
+  <nav class="sidebar-nav" aria-label="문서">
+
+    <details class="sidebar-group" data-group="get_started">
+      <summary class="sidebar-heading">
+        <svg class="ic" aria-hidden="true"><use href="#i-rocket"/></svg>
+        <span>시작하기</span>
+        <svg class="ic sidebar-chevron" aria-hidden="true"><use href="#i-chevron-down"/></svg>
+      </summary>
+      <ul class="sidebar-links">
+        
+        <li><a href="https://owasp-noir.github.io/noir/ko/get_started/">개요</a></li>
+
+        
+        <li><a href="https://owasp-noir.github.io/noir/ko/get_started/overview/">Noir란?</a></li>
+
+        
+        <li><a href="https://owasp-noir.github.io/noir/ko/get_started/installation/">Noir 설치</a></li>
+
+        
+        <li><a href="https://owasp-noir.github.io/noir/ko/get_started/running/">첫 번째 스캔</a></li>
+
+        
+        <li><a href="https://owasp-noir.github.io/noir/ko/get_started/ai_power/">AI 기반 분석</a></li>
+
+        
+        <li><a href="https://owasp-noir.github.io/noir/ko/get_started/migrate_v0_to_v1/">v0에서 v1으로 마이그레이션</a></li>
+
+      </ul>
+    </details>
+
+    <details class="sidebar-group" data-group="usage">
+      <summary class="sidebar-heading">
+        <svg class="ic" aria-hidden="true"><use href="#i-terminal-2"/></svg>
+        <span>사용 가이드</span>
+        <svg class="ic sidebar-chevron" aria-hidden="true"><use href="#i-chevron-down"/></svg>
+      </summary>
+      <ul class="sidebar-links">
+        
+        <li><a href="https://owasp-noir.github.io/noir/ko/usage/">개요</a></li>
+
+        
+        <li><a href="https://owasp-noir.github.io/noir/ko/usage/cli_commands/">CLI 명령어</a></li>
+
+
+        <li>
+        <details class="sidebar-subgroup" data-group="supported">
+          <summary class="sidebar-subheading">
+            <span>지원되는 기술</span>
+            <svg class="ic sidebar-chevron" aria-hidden="true"><use href="#i-chevron-down"/></svg>
+          </summary>
+          <ul class="sidebar-sub">
+            
+        <li><a href="https://owasp-noir.github.io/noir/ko/usage/supported/">개요</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/ko/usage/supported/language_and_frameworks/">언어 및 프레임워크</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/ko/usage/supported/specification/">명세</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/ko/usage/supported/callee_coverage/">Callee 커버리지</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/ko/usage/supported/ai_context_coverage/">AI 컨텍스트 커버리지</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/ko/usage/supported/mobile/">모바일 앱</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/ko/usage/supported/cli/">CLI 앱</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/ko/usage/supported/tech-commands/">기술 범위</a></li>
+
+          </ul>
+          </details>
+        </li>
+
+        <li>
+        <details class="sidebar-subgroup" data-group="formats">
+          <summary class="sidebar-subheading">
+            <span>출력 형식</span>
+            <svg class="ic sidebar-chevron" aria-hidden="true"><use href="#i-chevron-down"/></svg>
+          </summary>
+          <ul class="sidebar-sub">
+            
+        <li><a href="https://owasp-noir.github.io/noir/ko/usage/output_formats/">개요</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/ko/usage/output_formats/json/">JSON 및 JSONL</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/ko/usage/output_formats/yaml/">YAML</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/ko/usage/output_formats/curl/">HTTP 클라이언트 명령어</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/ko/usage/output_formats/openapi/">OpenAPI</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/ko/usage/output_formats/sarif/">SARIF</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/ko/usage/output_formats/html/">HTML 리포트</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/ko/usage/output_formats/mermaid/">Mermaid 차트</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/ko/usage/output_formats/more/">추가 출력 형식</a></li>
+
+          </ul>
+          </details>
+        </li>
+
+        <li>
+        <details class="sidebar-subgroup" data-group="passive">
+          <summary class="sidebar-subheading">
+            <span>패시브 스캔</span>
+            <svg class="ic sidebar-chevron" aria-hidden="true"><use href="#i-chevron-down"/></svg>
+          </summary>
+          <ul class="sidebar-sub">
+            
+        <li><a href="https://owasp-noir.github.io/noir/ko/usage/passive_scan/">개요</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/ko/usage/passive_scan/rule/">규칙 작성</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/ko/usage/passive_scan/default_rules/">기본 규칙</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/ko/usage/passive_scan/community_rules/">커뮤니티 규칙</a></li>
+
+          </ul>
+          </details>
+        </li>
+
+        <li>
+        <details class="sidebar-subgroup" data-group="more_features">
+          <summary class="sidebar-subheading">
+            <span>추가 기능</span>
+            <svg class="ic sidebar-chevron" aria-hidden="true"><use href="#i-chevron-down"/></svg>
+          </summary>
+          <ul class="sidebar-sub">
+            
+        <li><a href="https://owasp-noir.github.io/noir/ko/usage/more_features/">개요</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/ko/usage/more_features/tagger/">태거</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/ko/usage/more_features/deliver/">Deliver</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/ko/usage/more_features/diff/">Diff 모드</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/ko/usage/more_features/pipeline-for-dast/">DAST 파이프라인</a></li>
+
+          </ul>
+          </details>
+        </li>
+
+        <li>
+        <details class="sidebar-subgroup" data-group="ai_providers">
+          <summary class="sidebar-subheading">
+            <span>AI 제공업체</span>
+            <svg class="ic sidebar-chevron" aria-hidden="true"><use href="#i-chevron-down"/></svg>
+          </summary>
+          <ul class="sidebar-sub">
+            
+        <li><a href="https://owasp-noir.github.io/noir/ko/usage/ai_providers/">개요</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/ko/usage/ai_providers/openai/">OpenAI</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/ko/usage/ai_providers/xai/">xAI</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/ko/usage/ai_providers/azure/">Azure AI</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/ko/usage/ai_providers/github_marketplace/">GitHub Models (종료)</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/ko/usage/ai_providers/openrouter/">OpenRouter</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/ko/usage/ai_providers/ollama/">Ollama</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/ko/usage/ai_providers/vllm/">vLLM</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/ko/usage/ai_providers/lmstudio/">LM Studio</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/ko/usage/ai_providers/acp/">ACP 에이전트</a></li>
+
+          </ul>
+          </details>
+        </li>
+
+        <li>
+        <details class="sidebar-subgroup" data-group="configurations">
+          <summary class="sidebar-subheading">
+            <span>설정</span>
+            <svg class="ic sidebar-chevron" aria-hidden="true"><use href="#i-chevron-down"/></svg>
+          </summary>
+          <ul class="sidebar-sub">
+            
+        <li><a href="https://owasp-noir.github.io/noir/ko/usage/configurations/">개요</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/ko/usage/configurations/configuration_file/">설정 파일</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/ko/usage/configurations/shell-completion/">셸 자동완성</a></li>
+
+          </ul>
+          </details>
+        </li>
+
+        
+        <li><a href="https://owasp-noir.github.io/noir/ko/usage/github_action/">GitHub Action</a></li>
+
+      </ul>
+    </details>
+
+    <details class="sidebar-group" data-group="development" open>
+      <summary class="sidebar-heading">
+        <svg class="ic" aria-hidden="true"><use href="#i-code"/></svg>
+        <span>개발</span>
+        <svg class="ic sidebar-chevron" aria-hidden="true"><use href="#i-chevron-down"/></svg>
+      </summary>
+      <ul class="sidebar-links">
+        
+        <li><a href="https://owasp-noir.github.io/noir/ko/development/">개요</a></li>
+
+        
+        <li><a href="https://owasp-noir.github.io/noir/ko/development/how_to_build/">빌드 방법</a></li>
+
+        
+        <li><a href="https://owasp-noir.github.io/noir/ko/development/analyzer_architecture/" aria-current="page">분석기 아키텍처</a></li>
+
+        
+        <li><a href="https://owasp-noir.github.io/noir/ko/development/nix_environment/">Nix 환경</a></li>
+
+        
+        <li><a href="https://owasp-noir.github.io/noir/ko/development/debug_flags/">디버그 플래그</a></li>
+
+        
+        <li><a href="https://owasp-noir.github.io/noir/ko/development/how_to_release/">릴리스 방법</a></li>
+
+      </ul>
+    </details>
+
+    <details class="sidebar-group" data-group="resources">
+      <summary class="sidebar-heading">
+        <svg class="ic" aria-hidden="true"><use href="#i-lifebuoy"/></svg>
+        <span>리소스</span>
+        <svg class="ic sidebar-chevron" aria-hidden="true"><use href="#i-chevron-down"/></svg>
+      </summary>
+      <ul class="sidebar-links">
+        
+        <li><a href="https://owasp-noir.github.io/noir/ko/resources/">개요</a></li>
+
+        
+        <li><a href="https://owasp-noir.github.io/noir/ko/resources/faq/">FAQ</a></li>
+
+        
+        <li><a href="https://owasp-noir.github.io/noir/ko/resources/troubleshooting/">문제 해결</a></li>
+
+        
+        <li><a href="https://owasp-noir.github.io/noir/ko/resources/artwork/">아트워크</a></li>
+
+        
+        <li><a href="https://owasp-noir.github.io/noir/ko/resources/contact/">연락처</a></li>
+
+        
+        <li><a href="https://owasp-noir.github.io/noir/ko/community/">커뮤니티</a></li>
+
+        
+        <li><a href="https://owasp-noir.github.io/noir/ko/community/media/">아티클 및 발표</a></li>
+
+      </ul>
+    </details>
+
+  </nav>
+</aside>
+  <main id="main" class="docs-main">
+    <article>
+      <h1 class="docs-title">분석기 아키텍처</h1>
+      <p class="docs-lede">Noir의 detector, language engine, route extractor, framework adapter가 맞물리는 방식과 새 분석기를 추가하는 방법.</p>
+      <div class="prose">
+        <p>Noir는 프로젝트를 두 단계로 스캔합니다. 먼저 <strong>detector</strong>가 어떤 프레임워크가 있는지 판단하고, 이어서 <strong>analyzer</strong>가 감지된 프레임워크마다 엔드포인트를 추출합니다. 이 페이지에서는 분석기 쪽 구조와 새 프레임워크를 추가하는 방법을 설명합니다.</p>
+<p>프레임워크만 추가하려면 <a href="#%EC%83%88-%ED%94%84%EB%A0%88%EC%9E%84%EC%9B%8C%ED%81%AC-%EC%B6%94%EA%B0%80%ED%95%98%EA%B8%B0">새 프레임워크 추가하기</a>부터 보세요. 그 앞의 절들은 코드가 끼워질 구조를 설명합니다.</p>
+<h2 id="파이프라인-개요">파이프라인 개요</h2>
+<pre><code>프로젝트 파일
+      │
+      ▼
+  Detector         ──►  &quot;이 프로젝트는 go_gin, go_hertz, ... 를 사용&quot;
+      │
+      ▼
+  Analyzer         ──►  Endpoint 리스트 (url, method, params, details)
+      │
+      ▼
+  Optimizer, Taggers, Passive scan, Output formatter
+</code></pre>
+<p>Detector는 매니페스트 파일(<code>go.mod</code>, <code>package.json</code>, <code>Gemfile</code> 등)을 가볍게 매칭해 boolean을 반환합니다. 무거운 작업은 analyzer가 맡습니다. 소스 트리를 돌고, 라우트 선언을 파싱하고, 파라미터를 추출합니다.</p>
+<h2 id="3계층-분석기">3계층 분석기</h2>
+<p>모든 분석기는 세 계층으로 이뤄집니다. 계층은 분리해서 유지하세요. framework adapter는 파일을 직접 열거나 파싱을 다시 구현하면 안 됩니다.</p>
+<table>
+<thead>
+<tr>
+<th>Layer</th>
+<th>위치</th>
+<th>책임</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>L0 Language Engine</strong></td>
+<td><code>src/analyzer/engines/{lang}_engine.cr</code></td>
+<td>그 언어의 소스 파일 집합, 경로별 필터, worker pool, 콘텐츠 캐시. 언어당 하나입니다. 엔진 8개는 순회 자체를 <code>FileScanEngine</code>에서 가져옵니다.</td>
+</tr>
+<tr>
+<td><strong>L1 Route Extractor</strong></td>
+<td><code>src/miniparsers/{lang}_route_extractor*.cr</code></td>
+<td>소스 내용을 파싱합니다. 문자열(파일 내용)을 받아 라우트 선언(method, path, location)을 yield합니다. 파일 I/O도, 프레임워크 전용 규칙도 없습니다.</td>
+</tr>
+<tr>
+<td><strong>L2 Framework Adapter</strong></td>
+<td><code>src/analyzer/analyzers/{lang}/{framework}.cr</code></td>
+<td>프레임워크별 얇은 클래스입니다. extractor가 넘긴 라우트에 프레임워크별 파라미터 매핑, 필터, 특수 케이스를 적용합니다.</td>
+</tr>
+</tbody>
+</table>
+<p>이 규칙 중 파일 순회 부분은 <code>spec/unit_test/analyzer/layering_boundary_spec.cr</code>가 강제합니다. <code>src/analyzer/analyzers/</code> 아래에서 <code>Dir.glob</code>, <code>Dir.children</code>, <code>Dir.each_child</code>를 쓰면 테스트가 실패합니다.</p>
+<p>파일 목록은 엔진이나 detector가 만든 인덱스(<code>get_files_by_extension</code>, <code>CodeLocator#files_by_basename</code>)에서 받으세요. 디렉터리를 직접 돌면 서브트리 가지치기, <code>--exclude-path</code>, 미디어 필터, 콘텐츠 캐시를 모두 건너뜁니다.</p>
+<p><strong>참고 구현.</strong> 아직 모든 면에서 모범인 파일은 없습니다. 순회는 한 파일에서, 본문은 다른 파일에서 가져오세요.</p>
+<ul>
+<li><strong>순회 (L0)</strong>: <a href="https://github.com/owasp-noir/noir/blob/main/src/analyzer/analyzers/javascript/hono.cr"><code>javascript/hono.cr</code></a>는 <code>JavascriptEngine</code>을 상속하고 <code>ordered_scan_files(get_files_by_extensions(DEFAULT_EXTENSIONS))</code>로 순회합니다. 그래서 worker pool, 콘텐츠 캐시, 파일별 오류 격리를 따로 구현하지 않고, 파일별 결과도 입력 순서대로 돌려받습니다. 본문은 따라 하지 마세요. extractor 호출 옆에 자체 정규식 패스가 아직 남아 있습니다.</li>
+<li><strong>본문 (L1 → L2)</strong>: <a href="https://github.com/owasp-noir/noir/blob/main/src/analyzer/analyzers/javascript/hapi.cr"><code>javascript/hapi.cr</code></a>는 65줄 정도입니다. 같은 <code>ordered_scan_files</code> 순회로 <code>JavascriptEngine</code>을 타고, <code>Noir::TreeSitterHapiExtractor.extract_routes</code>를 호출해 결과를 <code>Param</code>으로 옮기는 일만 합니다. <code>javascript/elysia.cr</code>, <code>javascript/adonisjs.cr</code>, <code>kotlin/http4k.cr</code>, <code>java/spark.cr</code>도 본문은 같은 모양이지만, 순회 방식은 따라 하지 마세요. 이 네 파일은 <code>Analyzer</code>를 직접 상속하고 <code>all_files</code>를 스스로 돕니다.</li>
+</ul>
+<h2 id="현재-커버리지">현재 커버리지</h2>
+<ul>
+<li><strong>언어 엔진</strong> (<code>engines/</code>): Specification, JavaScript/TypeScript, Go, Python, PHP, Rust, Ruby, Crystal, CFML, Scala, Swift, Perl, C, Elixir.</li>
+<li>**<code>FileScanEngine</code>**은 그중 8개(C, Crystal, Elixir, Perl, PHP, Rust, Scala, Swift) 아래에 있는 공용 베이스입니다. 예전에 엔진마다 복사본을 들고 있던 <code>analyze</code> + <code>parallel_file_scan</code> 골격을 여기서 관리합니다.</li>
+<li><code>java_engine.cr</code>과 <code>kotlin_engine.cr</code>은 파일 이름과 달리 엔진이 <strong>아닙니다</strong>. 상속하는 분석기가 없습니다.
+<ul>
+<li><code>KotlinEngine</code>은 공용 <code>self.test_path?</code>만 제공합니다.</li>
+<li><code>JavaEngine</code>은 mixin(클래스가 <code>include</code>하는 모듈)이기도 해서, JVM 어댑터가 공용 헬퍼(JAX-RS 인덱스, Spring/Micronaut/Quarkus 설정 리더)를 쓰려고 <code>include</code>합니다.</li>
+<li><code>PlayRouteSupport</code>와 <code>CliEndpointSupport</code>도 같은 종류의 mixin입니다.</li>
+</ul>
+</li>
+<li><strong>라우트 추출기</strong> (<code>miniparsers/</code>):
+<ul>
+<li>JavaScript: <code>js_route_extractor.cr</code>. Express, Fastify, Hono, Koa, Restify는 <code>JSRouteExtractor.extract_routes</code>에서 라우트를 받습니다. NestJS, Next.js, Nuxt 등은 헬퍼만 씁니다.</li>
+<li>Go, Java, Kotlin, Python용 Tree-sitter 추출기. Go와 Kotlin은 umbrella <code>require</code> 뒤에 파트 파일을 둔 디렉터리 형태입니다(<code>go_route_extractor_ts/</code>, <code>kotlin_route_extractor_ts/</code>).</li>
+<li>프레임워크 전용 Tree-sitter 추출기: AdonisJS, Elysia, Hapi, http4k, JAX-RS, Micronaut, Ktor 등.</li>
+</ul>
+</li>
+<li><strong>엔진 밖에 있는 분석기</strong>: C#, VB.NET, F#, Java, Kotlin, Dart, Zig, C++, Clojure, Haskell, Lua, Groovy, Erlang, Gleam, R, Apex, Classic ASP, WebForms, 그리고 Scala Play, Go의 Chi, Httprouter, Fasthttp, Kratos, JavaScript의 AdonisJS, Elysia, Elixir의 Phoenix 채널, Android/iOS 모바일 분석기. 여러 단계를 조율하거나 추출 로직이 자체로 완결되어 있어서 <code>Analyzer</code>를 직접 상속합니다.</li>
+</ul>
+<h2 id="엔진별-순회-헬퍼">엔진별 순회 헬퍼</h2>
+<p>모든 엔진에 공통인 순회 API는 없습니다. 어댑터를 쓰기 전에 해당 언어 엔진이 무엇을 제공하는지 확인하세요.</p>
+<table>
+<thead>
+<tr>
+<th>엔진</th>
+<th>어댑터가 쓰는 것</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>FileScanEngine</code> 기반 엔진 (C, Crystal, Elixir, Perl, PHP, Rust, Scala, Swift)</td>
+<td>엔진이 <code>scan_target_files</code>로 후보 목록을, <code>scan_accepts?</code>로 경로별 거부(선택)를 제공합니다. 어댑터는 <code>analyze_file</code>을 구현합니다(아래 Shape A)</td>
+</tr>
+<tr>
+<td>JavaScript, Ruby 엔진</td>
+<td><code>parallel_file_scan</code>을 직접 정의하고 <code>scan_target_files</code>는 없습니다. 어댑터는 <code>analyze</code>를 오버라이드하고 <code>parallel_file_scan</code>을 호출하거나, 파일별 결과를 입력 순서대로 받으려면 <code>get_files_by_extensions(...)</code>에 <code>ordered_scan_files</code>를 씁니다(아래 Shape B)</td>
+</tr>
+<tr>
+<td><code>PythonEngine</code></td>
+<td>언어 전용 이터레이터: <code>python_source_files</code> / <code>each_python_source</code> / <code>parallel_python_sources</code></td>
+</tr>
+<tr>
+<td><code>SpecificationEngine</code></td>
+<td>언어 전용 이터레이터: <code>each_spec_file</code> / <code>each_spec_file_with_details</code></td>
+</tr>
+<tr>
+<td><code>CfmlEngine</code></td>
+<td>언어 전용 이터레이터: <code>cfml_components</code> / <code>cfml_pages</code></td>
+</tr>
+<tr>
+<td><code>GoEngine</code></td>
+<td><code>read_package_file_contents</code>와 <code>collect_*</code> 헬퍼로 넘겨받는 패키지 전체 내용. 대부분의 어댑터는 <code>parallel_analyze</code>로 순회합니다. <code>hertz.cr</code>와 <code>encore.cr</code>는 결과를 입력 순서대로 돌려주는 <code>ordered_parallel_analyze</code>를 쓰며, 새 코드에서는 이쪽을 쓰세요</td>
+</tr>
+<tr>
+<td>엔진 없음</td>
+<td>어댑터가 <code>Analyzer</code>를 상속하고 <code>scan_files(files, &amp;block)</code>를 씁니다. 위의 모든 엔진도 결국 이 공용 골격을 거칩니다</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Shape A. <code>analyze_file</code></strong> (단순한 파일별 처리):</p>
+<pre><code class="language-crystal hljs">class MyFramework &lt; PhpEngine
+  def analyze_file(path : String) : Array(Endpoint)
+    return [] of Endpoint unless path.ends_with?(&quot;.php&quot;)
+    # 파싱하고 엔드포인트 만들어 반환
+  end
+end
+</code></pre>
+<p><code>FileScanEngine#analyze</code>가 순회를 돌리고, 반환된 엔드포인트를 입력 순서대로 합칩니다. PHP, Rust, Swift, Crystal, Elixir, Scala 분석기 대부분이 이 방식입니다.</p>
+<p><strong>Shape B. <code>analyze</code> 직접 오버라이드</strong> (파일 간 상태, 전처리·후처리 단계가 필요할 때):</p>
+<pre><code class="language-crystal hljs">class MyFramework &lt; JavascriptEngine
+  def analyze
+    per_file = ordered_scan_files(get_files_by_extensions(DEFAULT_EXTENSIONS)) do |path|
+      endpoints = [] of Endpoint
+      static_dirs = [] of Hash(String, String)
+      # ... 이 파일 하나를 endpoints와 static_dirs로 파싱
+      {endpoints, static_dirs}
+    end
+
+    per_file.each { |endpoints, _| result.concat(endpoints) }
+    process_js_static_dirs(per_file.flat_map(&amp;.[1]), result)  # post-pass
+    result
+  end
+end
+</code></pre>
+<p>여러 파일에 걸친 상태나 후처리 단계가 필요할 때 씁니다. Express, Hono, Rails, Amber가 예입니다. worker 사이에서 상태를 공유하기 전에 이 페이지 끝의 실행 모델 참고를 먼저 읽으세요.</p>
+<h2 id="새-프레임워크-추가하기">새 프레임워크 추가하기</h2>
+<p>**Hertz (Go)**를 예로 들어 단계별로 설명합니다. 실제 PR: <a href="https://github.com/owasp-noir/noir/pull/1244">#1244</a>.</p>
+<h3 id="1-detector">1. Detector</h3>
+<p><code>src/detector/detectors/{language}/{framework}.cr</code>을 만듭니다. Detector는 대부분 한 줄짜리 매칭입니다.</p>
+<pre><code class="language-crystal hljs">require &quot;../../../models/detector&quot;
+
+module Detector::Go
+  class Hertz &lt; Detector
+    detector_for &quot;go_hertz&quot;, extensions: %w[.go], path_segments: %w[go.mod]
+
+    def detect(filename : String, file_contents : String) : Bool
+      filename.includes?(&quot;go.mod&quot;) &amp;&amp; file_contents.includes?(&quot;github.com/cloudwego/hertz&quot;)
+    end
+  end
+end
+</code></pre>
+<ul>
+<li><code>detector_for</code>는 tech 이름을 한 번 선언합니다. 또 어떤 파일을 <code>detect</code>에 넘길지 정하는 가벼운 파일 게이트 <code>applicable?</code>를 생성합니다. 게이트 키는 <code>extensions:</code>, <code>basenames:</code>, <code>path_segments:</code>입니다.</li>
+<li><code>detect</code>에 부수효과가 있다면(예: <code>CodeLocator</code>에 스펙 경로 등록) <code>idempotent: false</code>도 넘기세요. 그래야 첫 매칭 뒤에도 계속 호출됩니다.</li>
+<li>Detector는 후보 파일마다 한 번씩 실행됩니다. <code>true</code>를 반환하면 그 프레임워크가 있다고 표시되고, 파이프라인이 매칭되는 분석기를 실행합니다.</li>
+</ul>
+<p><code>spec/unit_test/detector/{language}/{framework}_spec.cr</code>에 유닛 스펙도 추가하세요. 필수입니다. 스펙이 없는 detector가 있으면 <code>spec/unit_test/techs/detector_coverage_spec.cr</code>가 실패합니다.</p>
+<h3 id="2-analyzer">2. Analyzer</h3>
+<p><code>src/analyzer/analyzers/{language}/{framework}.cr</code>을 만들고 언어 엔진을 상속합니다. Hertz는 Gin과 라우팅 방식이 같아서 구조 대부분을 Gin과 공유합니다.</p>
+<pre><code class="language-crystal hljs">require &quot;../../engines/go_engine&quot;
+
+module Analyzer::Go
+  class Hertz &lt; GoEngine
+    analyzer_for &quot;go_hertz&quot;
+
+    HTTP_METHODS_EXPANDED = %w[GET POST PUT DELETE PATCH OPTIONS HEAD]
+    IMPORT_MARKER         = &quot;github.com/cloudwego/hertz&quot;
+
+    def analyze
+      package_groups, file_contents = collect_package_groups_ts(import_marker: IMPORT_MARKER)
+
+      per_file = ordered_parallel_analyze(get_files_by_extension(&quot;.go&quot;)) do |path|
+        content = file_contents[path]? || read_file_content(path)
+        cross_file_groups = ts_groups_for_directory(package_groups, File.dirname(path))
+        routes = Noir::TreeSitterGoRouteExtractor.extract_routes(content, cross_file_groups, handle_method: &quot;Handle&quot;)
+        # ... 라우트를 엔드포인트로 변환한 뒤 라인별 파라미터 추출
+        {file_endpoints, file_public_dirs}
+      end
+
+      per_file.each { |file_endpoints, _| result.concat(file_endpoints) }
+      resolve_public_dirs(per_file.flat_map(&amp;.[1]))
+      result
+    end
+  end
+end
+</code></pre>
+<p>이 예제에서 가져갈 점:</p>
+<ul>
+<li><strong>언어 엔진을 상속하세요</strong> (여기서는 <code>GoEngine</code>). <code>collect_package_groups_ts</code>, <code>ts_groups_for_directory</code>, <code>add_param_to_endpoint</code>, <code>resolve_public_dirs</code>를 그대로 쓸 수 있습니다.</li>
+<li><strong><code>analyzer_for</code>로 tech를 선언하세요</strong>. 이 한 줄이 등록의 전부입니다(3단계 참고). 빠뜨리면 컴파일 에러가 납니다.</li>
+<li><strong>라우트 파싱은 공용 extractor에 맡기세요</strong> (<code>Noir::TreeSitterGoRouteExtractor</code>). 프레임워크 라우팅이 다르면 직접 다시 파싱하지 말고 extractor 인자(예: <code>handle_method:</code>)나 전용 진입점으로 조정하세요(Mux, GoZero 참고).</li>
+<li><strong>엔진의 순회 헬퍼를 쓰세요</strong> (Go는 <code>ordered_parallel_analyze(get_files_by_extension(&quot;.go&quot;))</code>, 다른 언어는 <code>ordered_scan_files</code>, <code>parallel_file_scan</code>, <code>analyze_file</code>). 채널과 worker pool을 다시 만들지 마세요.</li>
+<li><strong>프레임워크가 실제로 라우팅하는 verb만</strong> 메서드 테이블에 넣으세요. 특히 <code>QUERY</code>(RFC 10008)는 업스트림이 명시적으로 지원할 때만 추가합니다. 추측으로 넣으면 프레임워크가 405로 응답할 엔드포인트를 보고합니다. 와일드카드(<code>ANY</code>/<code>ALL</code>/<code>*</code>) 라우트도 같습니다. 공용 <code>WILDCARD_HTTP_METHODS</code>(<code>src/utils/http_symbols.cr</code>)에도, 분석 시점에 <code>ANY</code>를 자체 테이블로 펼치는 분석기 로컬 목록에도 <code>QUERY</code>를 추가하지 마세요.</li>
+</ul>
+<h3 id="3-tech-메타데이터-선언">3. tech 메타데이터 선언</h3>
+<p><strong>수정할 등록 목록은 없습니다.</strong> 분석기와 detector 레지스트리는 클래스에서 바로 만들어집니다. <code>initialize_analyzers</code>(<code>src/analyzer/analyzer.cr</code>)와 <code>build_detector_list</code>(<code>src/detector/detector.cr</code>)가 각각 <code>all_subclasses</code>를 훑어 <code>analyzer_for</code> / <code>detector_for</code>에서 이름을 읽습니다. 예전에는 두 목록을 손으로 관리했고, 항목을 빠뜨려도 에러나 실패하는 스펙 없이 그냥 실행되지 않는 컴포넌트가 생겼습니다.</p>
+<p>남은 일은 카탈로그 항목 하나입니다. 분석기, detector와 같은 상대 경로에 새 파일로 만듭니다.</p>
+<pre><code class="language-crystal hljs"># src/techs/catalog/go/hertz.cr
+#
+# 디렉터리는 언어, 파일명은 분석기 파일명과 같고, 상수는 그 파일명을
+# 대문자화한 것입니다. `NoirTechs::TECHS`는 `NoirTechs::Catalog` 아래 모든
+# 상수에서 매크로로 파생되므로 덧붙일 목록이 없고, 두 사람이 프레임워크를
+# 추가해도 같은 파일을 건드리지 않습니다.
+module NoirTechs::Catalog::Go
+  HERTZ = {
+    :go_hertz =&gt; {
+      :framework =&gt; &quot;Hertz&quot;,
+      :language  =&gt; &quot;Go&quot;,
+      :similar   =&gt; [&quot;hertz&quot;, &quot;go-hertz&quot;, &quot;go_hertz&quot;, &quot;cloudwego&quot;],
+      :supported =&gt; {
+        :endpoint =&gt; true,
+        :method   =&gt; true,
+        :params   =&gt; { :query =&gt; true, :path =&gt; true, :body =&gt; true, :header =&gt; true, :cookie =&gt; true },
+        :static_path =&gt; false,
+        :websocket   =&gt; false,
+      },
+      # 선택 사항. 이 tech가 지원하는 AI 컨텍스트 기능을 선언합니다.
+      # CALLEE_SUPPORTED_TECHS와 AI_CONTEXT_GUARD_SUPPORTED_TECHS는
+      # 손으로 나열하는 대신 이 플래그에서 파생됩니다.
+      :context =&gt; { :callee =&gt; true, :guards =&gt; true },
+    },
+  }
+end
+</code></pre>
+<p><code>spec/unit_test/techs/registry_integrity_spec.cr</code>가 세 요소의 연결을 양방향으로 검사합니다. 모든 분석기와 detector에 카탈로그 항목이 있어야 하고, 모든 카탈로그 항목에는 분석기와 detector가 둘 다 있어야 합니다. 카탈로그 항목이 빠지면 런타임이 아니라 이 스펙에서 실패합니다.</p>
+<h3 id="4-fixture">4. Fixture</h3>
+<p><code>spec/functional_test/fixtures/{language}/{framework}/</code>에 최소한의 앱을 만듭니다.</p>
+<pre><code>spec/functional_test/fixtures/go/hertz/
+├── go.mod            # detector가 매칭할 import 라인
+├── main.go           # 확인하려는 라우트/파라미터 패턴을 모두 넣음
+└── public/           # (옵션) static 파일 감지 테스트용
+    └── index.html
+</code></pre>
+<p>Fixture에는 현실적인 패턴을 넣으세요. path param, query/form/header/cookie, 라우트 그룹, static 서빙, 프레임워크 고유 관용구(Hertz의 <code>.Any</code>는 모든 HTTP 메서드로 펼쳐지고, Flask에는 blueprint가 있는 식) 등입니다. 전부 넣으려 하지 말고, 실제 버그가 나올 때마다 케이스를 추가하세요.</p>
+<h3 id="5-spec">5. Spec</h3>
+<p><code>spec/functional_test/testers/{language}/{framework}_spec.cr</code>을 만듭니다.</p>
+<pre><code class="language-crystal hljs">require &quot;../../func_spec.cr&quot;
+
+expected_endpoints = [
+  Endpoint.new(&quot;/ping&quot;, &quot;GET&quot;, [
+    Param.new(&quot;name&quot;, &quot;&quot;, &quot;query&quot;),
+    Param.new(&quot;age&quot;, &quot;&quot;, &quot;query&quot;),
+  ]),
+  Endpoint.new(&quot;/submit&quot;, &quot;POST&quot;, [
+    Param.new(&quot;username&quot;, &quot;&quot;, &quot;form&quot;),
+    Param.new(&quot;password&quot;, &quot;&quot;, &quot;form&quot;),
+    Param.new(&quot;User-Agent&quot;, &quot;&quot;, &quot;header&quot;),
+  ]),
+  # ... 등등
+]
+
+FunctionalTester.new(&quot;fixtures/go/hertz/&quot;, {
+  :techs     =&gt; 1,
+  :endpoints =&gt; expected_endpoints.size,
+}, expected_endpoints).perform_tests
+</code></pre>
+<p>테스터는 다음을 확인합니다.</p>
+<ul>
+<li>detector가 tech를 정확히 1개(내 프레임워크) 찾는지.</li>
+<li>analyzer가 엔드포인트를 정확히 N개(<code>expected_endpoints.size</code>) 만드는지.</li>
+<li>기대한 엔드포인트마다 URL과 method가 같은 엔드포인트가 출력에 있는지.</li>
+<li>기대한 파라미터마다 <code>name</code>과 <code>param_type</code>이 같은 파라미터가 그 엔드포인트에 붙어 있는지.</li>
+</ul>
+<h3 id="6-검증">6. 검증</h3>
+<pre><code class="language-bash hljs">just build                 # 깔끔하게 컴파일
+just test                  # unit + functional spec 통과
+just check                 # crystal tool format --check + ameba
+
+# 수동 확인
+./bin/noir scan spec/functional_test/fixtures/{lang}/{framework}
+</code></pre>
+<h2 id="다른-컴포넌트">다른 컴포넌트</h2>
+<p>출력 형식과 tagger도 같은 방식으로 등록합니다. 클래스에 어노테이션을 달면 되고, 수정할 목록은 없습니다.</p>
+<ul>
+<li><strong>출력 형식</strong>: <code>src/output_builder/{format}.cr</code>을 만들고 클래스에 <code>@[Noir::OutputFormat(name: &quot;{format}&quot;, description: &quot;…&quot;, order: 40)]</code>를 답니다. <code>src/output_builder/formats.cr</code>가 여기서 <code>-f</code> 도움말, <code>noir list formats</code>, 렌더링 디스패치를 만듭니다. <code>spec/unit_test/output_builder/{format}_spec.cr</code>도 추가하세요.</li>
+<li><strong>Tagger</strong>: <code>src/tagger/taggers/{name}.cr</code>(프레임워크 인증 tagger라면 <code>FrameworkTagger</code>를 상속해 <code>src/tagger/framework_taggers/{language}/{name}.cr</code>)을 만들고 <code>@[Noir::TaggerFor(key: &quot;{name}&quot;, name: &quot;…&quot;, desc: &quot;…&quot;, order: 180)]</code>를 답니다. <code>key</code>는 <code>--use-taggers</code>에 넣는 값이 됩니다. <code>order</code>는 tagger 실행 순서, 즉 태그가 붙는 순서를 정하므로 번호를 다시 매기지 말고 뒤에 새 값을 붙이세요. 어노테이션을 빠뜨려도 컴파일 에러는 나지 않지만 <code>registry_integrity_spec.cr</code>가 실패하면서 클래스 이름을 알려줍니다. <code>spec/unit_test/tagger/</code> 아래에 스펙을 추가하세요.</li>
+</ul>
+<h2 id="새-언어-엔진-추가하기">새 언어 엔진 추가하기</h2>
+<p>한 언어에서 분석기 2개 이상이 같은 파일 순회 패턴을 쓰면 엔진으로 뽑아내세요. <strong><code>FileScanEngine</code>을 상속하세요.</strong> 순회는 이미 거기 있습니다. 새 엔진은 언어 고유한 것만 선언합니다. 어떤 파일을 스캔할지, 무엇을 건너뛸지, 공용 라우트 조합 헬퍼 정도입니다.</p>
+<pre><code class="language-crystal hljs"># src/analyzer/engines/swift_engine.cr
+require &quot;../../models/analyzer&quot;
+
+require &quot;./file_scan_engine&quot;
+
+module Analyzer::Swift
+  abstract class SwiftEngine &lt; FileScanEngine
+    # 후보 파일. `file_map` 전체를 도는 대신 detector가 만든
+    # 확장자 인덱스를 쓰세요. 등록된 일반 파일이므로 경로마다
+    # `File.exists?` / `File.directory?`를 다시 볼 필요가 없습니다.
+    protected def scan_target_files : Array(String)
+      get_files_by_extension(&quot;.swift&quot;)
+    end
+
+    # 선택적 경로별 거부. 절대 경로가 아니라 스캔 베이스 기준 상대 경로로
+    # 판단해야 합니다. 절대 경로로 컨벤션 필터를 걸면 판단이 체크아웃
+    # 위치에 넘어가서, 같은 트리인데 클론한 디렉터리에 따라 결과가
+    # 달라집니다.
+    protected def scan_accepts?(path : String) : Bool
+      relative = base_relative_path(path)
+      return false if relative.includes?(&quot;/Tests/&quot;)
+      !relative.includes?(&quot;/.build/&quot;)
+    end
+  end
+end
+</code></pre>
+<p><code>FileScanEngine</code>은 <code>analyze</code>(순회하며 경로마다 <code>analyze_file</code>을 부르고 입력 순서대로 합침), <code>abstract def analyze_file(path) : Array(Endpoint)</code> 계약, 그리고 커스텀 <code>analyze</code>가 필요한 서브클래스를 위한 <code>parallel_file_scan</code> / <code>ordered_file_scan</code>을 제공합니다. 채널과 worker pool을 다시 만들지 마세요. <a href="https://github.com/owasp-noir/noir/pull/2465">#2465</a>에서 공용으로 올리기 전에는 엔진 9개가 똑같은 복사본을 각자 갖고 있었고, 직접 만들면 그 중복이 다시 생깁니다.</p>
+<p>엔진을 추가할 때는 같은 PR에서 기존 분석기들도 그 엔진을 상속하도록 옮기세요. 예시: <a href="https://github.com/owasp-noir/noir/pull/1236">#1236</a> (Elixir), <a href="https://github.com/owasp-noir/noir/pull/1237">#1237</a> (Swift), <a href="https://github.com/owasp-noir/noir/pull/1238">#1238</a> (Crystal).</p>
+<h2 id="route-extractor-l1-추가하기">Route extractor (L1) 추가하기</h2>
+<p>한 언어에서 분석기 2개 이상이 파일 순회가 아닌 실제 파싱 로직을 공유하면, 그 로직을 <code>src/miniparsers/</code> 아래 route extractor로 옮기세요. 순수하게 유지합니다. 소스 내용을 받아 라우트를 반환하고, <code>Analyzer</code> 의존성도 파일 I/O도 두지 않습니다.</p>
+<pre><code class="language-crystal hljs">module Noir::MyLangRouteExtractor
+  extend self
+
+  record Route, method : String, path : String, line : Int32
+
+  def extract_routes(content : String) : Array(Route)
+    # 순수 파싱
+  end
+end
+</code></pre>
+<p>어댑터는 extractor를 직접 호출하고 결과를 엔드포인트로 옮깁니다. <code>hapi.cr</code>가 <code>Noir::TreeSitterHapiExtractor.extract_routes(content, include_callee)</code>를 쓰는 방식과 같습니다. 그 언어에 이미 extractor가 있으면 인라인으로 다시 파싱하지 말고 extractor를 확장하세요.</p>
+<p>extractor가 한 파일로 감당하기 어려워지면 계속 키우지 말고 umbrella <code>require</code> 뒤에 파트 파일을 두는 디렉터리로 나누세요. <a href="https://github.com/owasp-noir/noir/tree/main/src/miniparsers/go_route_extractor_ts"><code>go_route_extractor_ts/</code></a>는 프레임워크 계열별로, <a href="https://github.com/owasp-noir/noir/tree/main/src/miniparsers/kotlin_route_extractor_ts"><code>kotlin_route_extractor_ts/</code></a>는 관심사별로 나뉘어 있습니다.</p>
+<h2 id="실행-모델-참고">실행 모델 참고</h2>
+<p>요약하면, worker는 어떤 순서로든 끝날 수 있으므로 분석기 결과가 그 순서에 좌우되면 안 됩니다.</p>
+<p><code>parallel_analyze</code>의 worker(그리고 그 위에 만든 <code>scan_files</code>, <code>parallel_file_scan</code>)는 Crystal 기본 execution context 위의 fiber입니다. 이 context는 스케줄러를 하나만 돌리지만, worker가 느린 syscall에 묶이면 런타임이 스케줄러를 다른 스레드로 넘길 수 있습니다. worker는 여전히 한 번에 하나씩 실행됩니다. 하지만 fiber가 다른 스레드에서 이어서 실행될 수 있고, 끝나는 순서도 실행할 때마다 달라집니다.</p>
+<p><code>Noir::WorkerThreads</code>의 fiber는 다릅니다. 이 풀은 실제로 병렬로 돌기 때문에 공유 상태를 건드리지 않는 순수한 작업만 맡기세요.</p>
+<p>분석기를 쓸 때 지킬 점:</p>
+<ul>
+<li>어떤 파일이 먼저 끝나느냐에 결과가 좌우되면 안 됩니다. 한 파일이 다른 파일을 덮어쓸 수 있는 병합(같은 컨트롤러 이름을 정의한 두 서비스 등)은 실행할 때마다 다른 쪽이 이깁니다.</li>
+<li>worker에서 공유 상태에 바로 추가하기보다 파일별 결과를 반환하세요. <code>FileScanEngine#analyze</code>는 이미 <code>analyze_file</code> 결과를 입력 순서대로 합칩니다. 커스텀 모양이라면 파일별 결과를 입력 순서대로 돌려주는 <code>ordered_file_scan</code>, <code>ordered_scan_files</code>, <code>ordered_parallel_analyze</code>를 쓰세요.</li>
+<li><code>Noir::WorkerThreads</code>에서 실행될 수 있는 코드라면 공유하는 가변 컬렉션을 <code>Mutex</code>로 보호하세요.</li>
+</ul>
+<p>오래된 분석기 중에는 아직 순회 안에서 공유 <code>result</code>에 바로 추가하는 것도 있습니다. 새 코드에 그대로 옮기지 마세요. 순서 의존 때문에 생긴 버그는 <a href="https://github.com/owasp-noir/noir/pull/2770">#2770</a>, <a href="https://github.com/owasp-noir/noir/pull/2874">#2874</a>를 참고하세요.</p>
+<h2 id="다음에-볼-것">다음에 볼 것</h2>
+<ul>
+<li>순회(L0) 참고: <a href="https://github.com/owasp-noir/noir/blob/main/src/analyzer/analyzers/javascript/hono.cr"><code>javascript/hono.cr</code></a></li>
+<li>얇은 어댑터(L2) 참고: <a href="https://github.com/owasp-noir/noir/blob/main/src/analyzer/analyzers/javascript/hapi.cr"><code>javascript/hapi.cr</code></a></li>
+<li>공용 파일 순회 베이스: <a href="https://github.com/owasp-noir/noir/blob/main/src/analyzer/engines/file_scan_engine.cr"><code>engines/file_scan_engine.cr</code></a></li>
+<li>엔진 + extractor 쌍: <a href="https://github.com/owasp-noir/noir/blob/main/src/analyzer/engines/go_engine.cr"><code>engines/go_engine.cr</code></a> + <a href="https://github.com/owasp-noir/noir/blob/main/src/miniparsers/go_route_extractor_ts.cr"><code>miniparsers/go_route_extractor_ts.cr</code></a></li>
+<li>커스텀 모양 예시: <a href="https://github.com/owasp-noir/noir/blob/main/src/analyzer/analyzers/javascript/express.cr"><code>javascript/express.cr</code></a> (전처리 단계 + 클로저 상태)</li>
+<li>프레임워크 어댑터 예시: <a href="https://github.com/owasp-noir/noir/blob/main/src/analyzer/analyzers/go/hertz.cr"><code>go/hertz.cr</code></a> (엔진 리팩터링 이후 처음 추가된 프레임워크)</li>
+</ul>
+
+      </div>
+      
+      
+      <footer class="docs-article-footer">
+        <a class="edit-link"
+           href="https://github.com/owasp-noir/noir/edit/main/docs/content/development/analyzer_architecture/index.ko.md"
+           target="_blank" rel="noopener noreferrer">
+          <svg class="ic" aria-hidden="true"><use href="#i-pencil"/></svg>
+          GitHub에서 이 페이지 수정
+        </a>
+        
+
+
+
+      </footer>
+    </article>
+  </main>
+  
+<nav class="docs-toc" aria-label="목차">
+  <p class="docs-toc-title">
+    <svg class="ic" aria-hidden="true"><use href="#i-list"/></svg>
+    목차
+  </p>
+  <ul><li><a href="#파이프라인-개요">파이프라인 개요</a></li><li><a href="#3계층-분석기">3계층 분석기</a></li><li><a href="#현재-커버리지">현재 커버리지</a></li><li><a href="#엔진별-순회-헬퍼">엔진별 순회 헬퍼</a></li><li><a href="#새-프레임워크-추가하기">새 프레임워크 추가하기</a><ul><li><a href="#1-detector">1. Detector</a></li><li><a href="#2-analyzer">2. Analyzer</a></li><li><a href="#3-tech-메타데이터-선언">3. tech 메타데이터 선언</a></li><li><a href="#4-fixture">4. Fixture</a></li><li><a href="#5-spec">5. Spec</a></li><li><a href="#6-검증">6. 검증</a></li></ul></li><li><a href="#다른-컴포넌트">다른 컴포넌트</a></li><li><a href="#새-언어-엔진-추가하기">새 언어 엔진 추가하기</a></li><li><a href="#route-extractor-l1-추가하기">Route extractor (L1) 추가하기</a></li><li><a href="#실행-모델-참고">실행 모델 참고</a></li><li><a href="#다음에-볼-것">다음에 볼 것</a></li></ul>
+</nav>
+
+    </main>
+  </div>
+
+  <footer class="site-footer">
+  <div class="footer-inner">
+    <span>OWASP Noir는 MIT 라이선스로 배포되는 오픈소스입니다.</span>
+    <nav class="footer-links" aria-label="푸터">
+      <a href="https://owasp-noir.github.io/noir/ko/get_started/overview/">문서</a>
+      <a href="https://owasp-noir.github.io/noir/ko/blog/">블로그</a>
+      <a href="https://github.com/owasp-noir/noir" target="_blank" rel="noopener noreferrer">GitHub</a>
+      <a href="https://owasp.org/projects/noir" target="_blank" rel="noopener noreferrer">OWASP</a>
+      <a href="https://github.com/owasp-noir/noir/blob/main/.github/CONTRIBUTING.md" target="_blank" rel="noopener noreferrer">기여하기</a>
+    </nav>
+  </div>
+</footer>
+  
+<script src="https://owasp-noir.github.io/noir/assets/js/highlight.min.js" defer></script>
+<script>
+  window.NOIR_BASE = "https://owasp-noir.github.io/noir";
+  
+  window.NOIR_I18N = {
+    copy: "복사",
+    copied: "복사됨",
+    copyManual: "Ctrl C 를 누르세요",
+    noResults: "검색 결과가 없습니다:",
+    theme: "테마",
+    themeAuto: "자동",
+    themeLight: "라이트",
+    themeDark: "다크"
+  };
+</script>
+<script src="https://owasp-noir.github.io/noir/js/theme.js" defer></script>
+<script src="https://owasp-noir.github.io/noir/js/nav.js" defer></script>
+<script src="https://owasp-noir.github.io/noir/js/code.js" defer></script>
+<script src="https://owasp-noir.github.io/noir/js/toc.js" defer></script>
+<script src="https://owasp-noir.github.io/noir/js/reveal.js" defer></script>
+<script src="https://owasp-noir.github.io/noir/js/mermaid.js" defer></script>
+<script src="https://owasp-noir.github.io/noir/js/search.js" defer></script>
+
+</body>
+</html>
