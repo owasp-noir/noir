@@ -1,6 +1,6 @@
 +++
 title = "Noir 설치"
-description = "Homebrew, Snapcraft, Docker, Nix, AUR, .deb, .rpm, .apk, 바이너리 다운로드(Linux, macOS, Windows), 소스 빌드 중 하나로 OWASP Noir를 설치합니다."
+description = "Homebrew, Snapcraft, Docker, npm, Nix, AUR, .deb, .rpm, .apk, 바이너리 다운로드(Linux, macOS, Windows), 소스 빌드 중 하나로 OWASP Noir를 설치합니다."
 weight = 2
 sort_by = "weight"
 prev_page_path = "/get_started/overview/"
@@ -69,6 +69,32 @@ docker run --rm -v $(pwd):/tmp ghcr.io/owasp-noir/noir:latest noir scan /tmp
 ```
 
 릴리즈 이미지 태그에는 `v` 접두사가 붙지 않습니다: `:1.4.0`, `:1.4`, `:1`, `:latest`. `:main` 태그는 main 브랜치를 따라갑니다. v0.29.1까지는 `:vX.Y.Z` 형태를 썼으니, 버전을 고정해 둔 참조가 있다면 바꾸세요. 전체 태그 목록은 [GitHub Packages 페이지](https://github.com/owasp-noir/noir/pkgs/container/noir)에 있습니다.
+
+## npm (macOS 및 Linux)
+
+Node.js 20 이상이 이미 있다면 [`@owasp-noir/noir`](https://www.npmjs.com/package/@owasp-noir/noir) 패키지로 설치할 수 있습니다. 설치 중에 플랫폼에 맞는 릴리즈 바이너리를 내려받고, 패키지에 고정된 SHA-256과 맞는지 확인합니다.
+
+설치:
+
+```bash
+npm install -g @owasp-noir/noir
+```
+
+업데이트:
+
+```bash
+npm update -g @owasp-noir/noir
+```
+
+설치 없이 한 번만 실행:
+
+```bash
+npx @owasp-noir/noir -h
+```
+
+{% alert_info() %}
+패키지는 x86_64와 arm64의 Linux, macOS를 지원합니다. Windows에서는 바이너리 다운로드를 쓰세요. 바이너리는 설치 스크립트가 내려받으므로, 패키지 매니저가 설치 스크립트를 건너뛰는 경우(pnpm, bun, `--ignore-scripts`를 준 npm)에는 이 패키지만 허용하세요: `pnpm approve-builds`, `bun pm trust @owasp-noir/noir`, `npm rebuild @owasp-noir/noir`.
+{% end %}
 
 ## Nix
 

@@ -1,6 +1,6 @@
 +++
 title = "Install Noir"
-description = "Install OWASP Noir via Homebrew, Snapcraft, Docker, Nix, AUR, .deb, .rpm, .apk, binary download (Linux, macOS, Windows), or from source."
+description = "Install OWASP Noir via Homebrew, Snapcraft, Docker, npm, Nix, AUR, .deb, .rpm, .apk, binary download (Linux, macOS, Windows), or from source."
 weight = 2
 sort_by = "weight"
 prev_page_path = "/get_started/overview/"
@@ -69,6 +69,32 @@ docker run --rm -v $(pwd):/tmp ghcr.io/owasp-noir/noir:latest noir scan /tmp
 ```
 
 Release images are tagged without the `v` prefix: `:1.4.0`, `:1.4`, `:1`, and `:latest`. The `:main` tag tracks the main branch. Versions up to v0.29.1 used the `:vX.Y.Z` form, so update any pinned references. All tags are on the [GitHub Packages page](https://github.com/owasp-noir/noir/pkgs/container/noir).
+
+## npm (macOS and Linux)
+
+If you already have Node.js 20 or later, install the [`@owasp-noir/noir`](https://www.npmjs.com/package/@owasp-noir/noir) package. It downloads the release binary for your platform during install and checks it against the SHA-256 pinned in the package.
+
+To install:
+
+```bash
+npm install -g @owasp-noir/noir
+```
+
+To update:
+
+```bash
+npm update -g @owasp-noir/noir
+```
+
+Or run once without installing:
+
+```bash
+npx @owasp-noir/noir -h
+```
+
+{% alert_info() %}
+The package supports Linux and macOS on x86_64 and arm64; on Windows, use the binary download instead. The binary is fetched by an install script, so if your package manager skips install scripts (pnpm, bun, or npm with `--ignore-scripts`), allow it for this package: `pnpm approve-builds`, `bun pm trust @owasp-noir/noir`, or `npm rebuild @owasp-noir/noir`.
+{% end %}
 
 ## Nix
 
