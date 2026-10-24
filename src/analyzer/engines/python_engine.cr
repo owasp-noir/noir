@@ -1152,11 +1152,17 @@ module Analyzer::Python
     def join_until_python_call_closes(lines : Array(::String),
                                       index : Int32,
                                       line : ::String) : ::String
+      python_call_span(lines, index, line)[0]
+    end
+
+    # `join_until_python_call_closes`, plus the index of the last line the
+    # call spans, so a caller can skip the lines it already read.
+    def python_call_span(lines : Array(::String), index : Int32, line : ::String) : Tuple(::String, Int32)
       # Each piece is cut at its `#` comment: joined onto one line, the
       # comment text glued onto the next argument (`add_api_route(  # v2`
       # made the path argument `# v2 "/x"`).
       delta, triple, comment = python_call_line_scan(line, nil)
-      return line unless delta > 0
+      return {line, index} unless delta > 0
       pieces = [line.byte_slice(0, comment)]
       i = index + 1
       while i < lines.size && delta > 0
@@ -1166,7 +1172,7 @@ module Analyzer::Python
         delta += line_delta
         i += 1
       end
-      pieces.join(' ')
+      {pieces.join(' '), i - 1}
     end
 
     # `(` − `)` on one physical line of a call that may span lines, plus

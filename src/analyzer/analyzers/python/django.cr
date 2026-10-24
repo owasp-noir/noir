@@ -19,6 +19,7 @@ module Analyzer::Python
     # `router = routers.DefaultRouter(trailing_slash=False)`
     DRF_SLASHLESS_ROUTER_RE = /\b([A-Za-z_][A-Za-z0-9_]*)\s*(?::[^=\n]+)?=\s*[A-Za-z_][\w.]*Router\s*\([^)]*\btrailing_slash\s*=\s*False\b/
     # `http_method_names = ["get", "post"]` on a view class.
+    DRF_TOKEN_VIEW_RE        = /\b(?:ObtainAuthToken|Token(?:ObtainPair|ObtainSliding|Refresh|RefreshSliding|Verify|Blacklist)View)\b/
     DRF_HTTP_METHOD_NAMES_RE = /^\s+http_method_names\s*=\s*[\[(]([^\])]*)[\])]/m
 
     # An auth decorator applied in the urlconf itself:
@@ -490,6 +491,10 @@ module Analyzer::Python
 
       urlpatterns_contents.each do |urlpatterns_content|
         list_line = list_start_line(original_content, urlpatterns_content)
+        splatted_router_names(urlpatterns_content).each do |router_name|
+          endpoints.concat extract_drf_router_endpoints_for_router(django_urls, "", router_name, drf_router_registrations,
+            package_map, import_aliases, route_path)
+        end
         extract_route_mappings(urlpatterns_content).each do |route_mapping|
           route, view, offset = route_mapping
           entry_path = route_entry_path(route_path, list_line, offset)
@@ -1036,7 +1041,11 @@ module Analyzer::Python
       # trailing comment would otherwise be read as code once lines are
       # joined into one logical call.
       lines = content.split("\n").map { |line| strip_python_comment(line) }
-      inline_include_depth = 0
+      # Last line of the call just read: every top-level call on it is
+      # already mapped, and a call nested in its arguments (an inline
+      # `include([...])` or Channels `URLRouter([...])` body, however its
+      # brackets wrap) is read when that include is expanded.
+      skip_through = -1
       # `i18n_patterns(path(...), ...)` serves everything it holds under a
       # language-code segment (`/en/basket/`); `{lang}` stands for it.
       # ponytail: `prefix_default_language=False` also serves the bare path
@@ -1044,16 +1053,11 @@ module Analyzer::Python
       i18n = content.lstrip.starts_with?("i18n_patterns")
 
       lines.each_with_index do |line, index|
-        if inline_include_depth > 0
-          inline_include_depth += python_bracket_delta(line)
-          inline_include_depth = 0 if inline_include_depth < 0
-          next
-        end
-
+        next if index <= skip_through
         next if line.lstrip.starts_with?("#")
         next unless line.matches?(/\b(?:url|path|re_path|register)\s*\(/)
 
-        logical_line = python_paren_delta(line) > 0 ? join_until_python_call_closes(lines, index, line) : line
+        logical_line, call_end = python_paren_delta(line) > 0 ? python_call_span(lines, index, line) : {line, index}
         mapped_before = mappings.size
 
         # One line can hold several sibling calls (`[path('a', v), path('b', w)]`,
@@ -1101,10 +1105,7 @@ module Analyzer::Python
           mappings << {route, view_expr, index}
         end
 
-        # Same for a nested Channels `path(prefix, URLRouter([...]))` body.
-        if mappings.size > mapped_before && (include_start = line.index("include([") || line.index("URLRouter(["))
-          inline_include_depth = python_bracket_delta(line[include_start..])
-        end
+        skip_through = call_end if mappings.size > mapped_before
       end
 
       mappings
@@ -1113,6 +1114,9 @@ module Analyzer::Python
     private def normalize_django_route(route : ::String) : ::String
       normalized = Noir::URLPath.strip_regex_anchors(route)
       normalized = normalize_django_named_regex_groups(normalized)
+      # `logo(?:/{filename})?` — an optional non-capturing segment is one of
+      # the paths the pattern matches; keep its text like `/?` keeps `/`.
+      normalized = normalized.gsub(/\(\?:([^()|]*)\)\??/, "\\1") if normalized.includes?("(?:")
       strip_django_optional_quantifiers(normalized)
     end
 
@@ -1288,7 +1292,8 @@ module Analyzer::Python
     end
 
     private def extract_inline_include_patterns(view : ::String) : ::String?
-      include_match = view.match(/\binclude\s*\(\s*(\[[\s\S]*\])\s*(?:,\s*namespace\s*=|\))?/m)
+      # `include([...])`, or the `include(([...], "app_name"))` tuple form.
+      include_match = view.match(/\binclude\s*\(\s*(?:\(\s*)?(\[[\s\S]*\])\s*(?:,\s*namespace\s*=|\))?/m)
       include_match ? include_match[1] : nil
     end
 
@@ -1349,6 +1354,10 @@ module Analyzer::Python
       endpoints = [] of Endpoint
 
       list_line = list_start_line(read_file_content(django_urls.filepath), pattern_content)
+      splatted_router_names(pattern_content).each do |router_name|
+        endpoints.concat extract_drf_router_endpoints_for_router(django_urls, mount_route, router_name, drf_router_registrations,
+          package_map, import_aliases, route_path)
+      end
       extract_route_mappings(pattern_content).each do |route_mapping|
         route, view, offset = route_mapping
         entry_path = route_entry_path(route_path, list_line, offset)
@@ -1465,6 +1474,20 @@ module Analyzer::Python
       end
 
       endpoints
+    end
+
+    # Routers unpacked straight into a url list: `[path(...), *router.urls]`.
+    # Only the list's own elements count; one inside a nested
+    # `include([...])` belongs to that include's mount.
+    private def splatted_router_names(list_text : ::String) : Array(::String)
+      return [] of ::String unless list_text.includes?(".urls")
+      list_text = list_text.split("\n").join("\n") { |line| strip_python_comment(line) }
+      open = list_text.index('[') || return [] of ::String
+      close = list_text.rindex(']') || return [] of ::String
+      return [] of ::String if close <= open
+      split_python_arguments(list_text[(open + 1)...close]).compact_map do |element|
+        element.strip.match(/\A\*\s*([A-Za-z_][A-Za-z0-9_]*)\.urls\z/).try(&.[1])
+      end.uniq!
     end
 
     private def extract_drf_direct_router_names(content : ::String) : Array(::String)
@@ -1737,10 +1760,21 @@ module Analyzer::Python
           class_define_line = lines[0]
           lines = lines[1..]
 
+          # The bases a view inherits from the project itself: a DRF base
+          # three mixins up still makes it an APIView.
+          chain = drf_class_chain(filepath, function_or_class_name)
+          chain_header = chain.empty? ? class_define_line : chain.join(" ", &.header)
+          # `View.dispatch` (and DRF's, which extends it) serves only the
+          # verbs the class has a handler for, so a plain `View` subclass
+          # gets no implicit GET; only the verbs it defines.
+          plain_view = chain.any? { |klass| python_class_bases(klass.header).any? { |base| base.split('.').last == "View" } }
+
           drf_generic_class = false
-          if drf_methods = default_drf_generic_view_methods(class_define_line)
+          if drf_methods = default_drf_generic_view_methods(chain_header)
             drf_generic_class = true
             suspicious_http_methods = drf_methods
+          elsif plain_view
+            suspicious_http_methods = [] of ::String
           else
             # Determine implicit HTTP methods based on class name
             if class_define_line.includes? "Form"
@@ -1796,6 +1830,7 @@ module Analyzer::Python
                   definition_base_path: @django_base_path,
                   source: content
                 )
+                method_params[method_name].concat drf_serializer_params(codeblock, filepath, chain)
               end
             elsif drf_generic_class && any_method_function_match && (drf_methods = drf_generic_action_http_methods(any_method_function_match[1]))
               current_http_methods = drf_methods
@@ -1820,20 +1855,41 @@ module Analyzer::Python
             end
           end
 
+          # A verb handler the view inherits from a project base class is
+          # served by that base's method: `post` on a shared mixin.
+          method_owners = Hash(String, DrfClass).new
+          chain.skip(1).each do |klass|
+            klass.codeblock.split("\n").each_with_index do |line, offset|
+              next unless inherited = line.match(REGEX_CBV_METHOD_DEF)
+              method_name = inherited[1].upcase
+              next if method_lines.has_key?(method_name)
+              suspicious_http_methods << method_name
+              method_lines[method_name] = klass.line_index + offset + 1
+              method_owners[method_name] = klass
+            end
+          end
+
           if declared = declared_http_method_names(view_file, class_codeblock, class_define_line)
             suspicious_http_methods = declared
           end
 
+          suspicious_http_methods = ["GET"] if suspicious_http_methods.empty? && plain_view && !drf_generic_class
           if suspicious_http_methods.empty?
             return endpoints
           end
 
           suspicious_http_methods.uniq.each do |http_method_name|
+            owner = method_owners[http_method_name]?
+            source_path = owner.try(&.filepath) || filepath
             definition_line = method_lines[http_method_name]? || class_definition_line
-            details = Details.new(PathInfo.new(filepath, definition_line))
+            details = Details.new(PathInfo.new(source_path, definition_line))
             endpoint_params = common_params + (method_params[http_method_name]? || [] of Param)
             endpoint = Endpoint.new(url, http_method_name, filter_params(http_method_name, endpoint_params), details)
-            endpoint.handler = Handler.new(function_or_class_name, filepath, definition_line)
+            # A verb with no body in the project (served by the framework
+            # base, `TemplateView.get`) has no handler to point at.
+            if method_lines.has_key?(http_method_name)
+              endpoint.handler = Handler.new(owner.try(&.name) || function_or_class_name, source_path, definition_line)
+            end
             if callees = method_callees[http_method_name]?
               callees.each { |c| endpoint.push_callee(c) }
             end
@@ -1881,6 +1937,8 @@ module Analyzer::Python
     end
 
     private def default_drf_generic_view_methods(class_define_line : ::String) : Array(::String)?
+      # DRF's and simplejwt's token views are APIViews that define only `post`.
+      return ["POST"] if class_define_line.matches?(DRF_TOKEN_VIEW_RE)
       return unless class_define_line.includes?("APIView")
 
       if class_define_line.includes?("RetrieveUpdateDestroyAPIView")
@@ -1921,62 +1979,201 @@ module Analyzer::Python
       end
     end
 
+    # One class of a ViewSet's in-repo inheritance chain.
+    private record DrfClass, filepath : ::String, name : ::String, codeblock : ::String,
+      header : ::String, line_index : Int32
+
+    # The class and the in-repo bases it inherits from, nearest first: a
+    # depth-first walk of the bases in declaration order, which is Python's
+    # MRO for the one-concrete-base-per-branch shape ViewSets use. A base
+    # that resolves to no scanned file (DRF's own) ends its branch.
+    @class_chains = Hash(Tuple(::String, ::String), Array(DrfClass)).new
+    @imported_symbols = Hash(::String, Hash(::String, Tuple(::String, ::String))).new
+
+    private def drf_class_chain(filepath : ::String, class_name : ::String) : Array(DrfClass)
+      @class_chains[{filepath, class_name}] ||= collect_class_chain(filepath, class_name, Set(::String).new, 0)
+    end
+
+    private def collect_class_chain(filepath : ::String, class_name : ::String,
+                                    seen : Set(::String), depth : Int32) : Array(DrfClass)
+      chain = [] of DrfClass
+      return chain if depth > 6 || !seen.add?("#{filepath}:#{class_name}")
+      view_file = view_file_index(filepath)
+      start = view_file.classes[class_name]? || return chain
+      codeblock = parse_python_class_codeblock(view_file.tail(start)) || return chain
+      header = extract_python_definition_header(codeblock.split("\n"))
+      chain << DrfClass.new(filepath, class_name, codeblock, header, start[0])
+
+      python_class_bases(header).each do |base|
+        if target = resolve_python_class(filepath, base)
+          chain.concat collect_class_chain(target[0], target[1], seen, depth + 1)
+        end
+      end
+      chain
+    end
+
+    # `{file, class name}` for a class `name` refers to in `filepath`: one
+    # declared there, or one imported into it (`Base`, `mixins.Base`).
+    private def resolve_python_class(filepath : ::String, name : ::String) : Tuple(::String, ::String)?
+      view_file = view_file_index(filepath)
+      return {filepath, name} if view_file.classes.has_key?(name)
+      symbols = @imported_symbols[filepath] ||= Noir::ImportGraph::Python.find_imported_symbols(@django_base_path, filepath, view_file.content)
+      head, _, attr = name.rpartition('.')
+      target = if head.empty?
+                 symbols[name]?
+               elsif imported = symbols[head]?
+                 {imported[0], imported[1].empty? ? attr : ""}
+               end
+      return unless target
+      return if target[1].empty? || !File.file?(target[0])
+      target
+    end
+
+    # `XSerializer(data=request.data)` / `self.get_serializer(data=...)`.
+    SERIALIZER_DATA_RE = /\b([A-Za-z_][A-Za-z0-9_.]*)\s*\(\s*(?:[^()]*?,\s*)?data\s*=\s*[^,()]*\brequest\.data\b/
+    # A declared serializer field: `name = serializers.CharField(`.
+    SERIALIZER_FIELD_RE = /^(\s+)([a-z_][a-z0-9_]*)\s*=\s*(?:[A-Za-z_][A-Za-z0-9_]*\.)*([A-Z][A-Za-z0-9_]*(?:Field|Serializer))\s*\(/
+
+    # Body fields a handler reads through the DRF serializer it hands
+    # `request.data`: the fields that serializer class (or a project base)
+    # declares. `get_serializer` means the view's `serializer_class`.
+    # ponytail: declared fields only; a ModelSerializer's `Meta.fields`
+    # model columns are not resolved.
+    private def drf_serializer_params(codeblock : ::String, filepath : ::String, view_chain : Array(DrfClass)) : Array(Param)
+      params = [] of Param
+      return params unless codeblock.includes?("request.data")
+      codeblock.scan(SERIALIZER_DATA_RE) do |call|
+        name = call[1]
+        if name.ends_with?("get_serializer")
+          name = view_chain.compact_map(&.codeblock.match(/^\s+serializer_class\s*=\s*([A-Za-z_][A-Za-z0-9_.]*)\s*$/m).try(&.[1])).first? || next
+        end
+        target = resolve_python_class(filepath, name) || next
+        drf_class_chain(target[0], target[1]).each do |klass|
+          body = klass.codeblock.split("\n")[1..]
+          level = body.compact_map { |line| line.size - line.lstrip.size unless line.strip.empty? }.min? || next
+          body.each_with_index do |line, index|
+            field = line.match(SERIALIZER_FIELD_RE) || next
+            next unless field[1].size == level
+            next if field[3] == "SerializerMethodField"
+            next if python_call_span(body, index, line)[0].matches?(/\bread_only\s*=\s*True\b/)
+            params << Param.new(field[2], "", "form") unless params.any? { |param| param.name == field[2] }
+          end
+        end
+      end
+      params
+    end
+
+    # `class X(A, mixins.B, C[Model], metaclass=M):` → ["A", "mixins.B", "C"].
+    private def python_class_bases(header : ::String) : Array(::String)
+      bases = [] of ::String
+      open = header.byte_index('(') || return bases
+      close = python_close_paren_byte(header.to_slice, open) || return bases
+      split_python_arguments(header.byte_slice(open + 1, close - open - 1)).each do |base|
+        base = base.strip
+        next if base.includes?('=')
+        base = base.sub(/\[[\s\S]*\z/, "").strip
+        bases << base if base.matches?(/\A[A-Za-z_][A-Za-z0-9_.]*\z/)
+      end
+      bases
+    end
+
+    # Each method of a class body with the decorator source stacked above
+    # it, as `{name, decorators, 0-based line within body_lines}`.
+    private def each_python_class_method(body_lines : Array(::String), &)
+      level = body_lines.compact_map do |line|
+        stripped = line.lstrip
+        line.size - stripped.size if stripped.starts_with?('@') || stripped.matches?(/\A(?:async\s+)?def\s/)
+      end.min?
+      return unless level
+
+      pending = [] of ::String
+      depth = 0
+      body_lines.each_with_index do |line, offset|
+        if depth > 0
+          pending << line
+          depth += python_paren_delta(line)
+          next
+        end
+        stripped = line.lstrip
+        next if stripped.empty? || stripped.starts_with?('#')
+        indent = line.size - stripped.size
+        if indent == level && stripped.starts_with?('@')
+          pending << line
+          depth = python_paren_delta(line)
+          next
+        end
+        if indent == level && (method = stripped.match(/\A(?:async\s+)?def\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(/))
+          yield method[1], pending.join("\n"), offset
+        end
+        pending.clear if indent <= level
+      end
+    end
+
+    # The argument text of an `@action(...)` decorator in `decorators`.
+    private def drf_action_decorator_args(decorators : ::String) : ::String?
+      call = decorators.match(/@(?:[A-Za-z_][A-Za-z0-9_]*\.)?action\s*\(/) || return
+      open = call.byte_end(0) - 1
+      close = python_close_paren_byte(decorators.to_slice, open) || return
+      decorators.byte_slice(open + 1, close - open - 1)
+    end
+
     private def extract_drf_viewset_endpoints(route_base : ::String, filepath : ::String, class_name : ::String,
                                               trailing_slash : Bool = true) : Array(Endpoint)
       endpoints = [] of Endpoint
-      content = read_file_content(filepath)
-      class_start_index = content.index /class\s+#{class_name}\s*[\(:]/
-      return endpoints unless class_start_index
+      chain = drf_class_chain(filepath, class_name)
+      return endpoints if chain.empty?
 
-      class_codeblock = parse_python_class_codeblock(content, class_start_index) || parse_code_block(content[class_start_index..])
-      return endpoints unless class_codeblock
+      own = chain.first
+      class_definition_line = own.line_index + 1
+      lookup_param = chain.compact_map { |klass| drf_lookup_param(klass.codeblock) }.first? || "pk"
+      # Mixins anywhere up the chain decide which standard actions exist.
+      actions = default_drf_viewset_actions(chain.join(" ", &.header))
 
-      lines = class_codeblock.split("\n")
-      class_define_line = extract_python_definition_header(lines)
-      body_lines = lines[1..]
-      body_start_line = content[0, class_start_index].count('\n')
-      class_definition_line = body_start_line + 1
-      lookup_param = extract_drf_lookup_param(class_codeblock)
-      actions = default_drf_viewset_actions(class_define_line)
+      # Python resolves a method on the nearest class that defines it, so
+      # the first definition of a name wins and a base's is shadowed.
+      defined = Set(::String).new
+      extra_actions = Hash(::String, DjangoDrfAction).new
+      mappings = [] of Tuple(::String, ::String, ::String, DrfClass, Array(::String), Int32)
+      chain.each do |klass|
+        body_lines = klass.codeblock.split("\n")[1..]
+        each_python_class_method(body_lines) do |method_name, decorators, offset|
+          next unless defined.add?(method_name)
 
-      body_lines.each_with_index do |line, offset|
-        method_match = line.match(/\s+(?:async\s+)?def\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(/)
-        next unless method_match
-
-        action_name = method_match[1]
-        method_actions = [] of DjangoDrfAction
-        if action = drf_action_for_method(action_name)
-          method_actions << action
-        else
-          method_actions = extract_drf_action_decorators(body_lines, offset, action_name)
-        end
-        next if method_actions.empty?
-
-        codeblock = parse_code_block(body_lines[offset..])
-        method_actions.each do |drf_action|
-          drf_action.definition_line = body_start_line + offset + 2
-          if codeblock
-            fold_python_continuations(codeblock.split("\n")).each do |body_line|
-              extract_params_from_line(body_line, [drf_action.method]).each do |param|
-                drf_action.params << param
-              end
-            end
-            drf_action.callees = build_callees_from(
-              codeblock,
-              body_start_line + offset + 1,
-              filepath,
-              definition_base_path: @django_base_path,
-              source: content
-            )
+          method_actions = [] of DjangoDrfAction
+          if args = drf_action_decorator_args(decorators)
+            detail = args.matches?(/\bdetail\s*=\s*True\b/)
+            # DRF: `url_path` defaults to the method name itself; only
+            # `url_name` (the reverse() name) swaps `_` for `-`.
+            url_path = normalize_django_route(extract_drf_action_url_path(args) || method_name)
+            method_actions = extract_drf_action_methods(args).map { |verb| DjangoDrfAction.new(method_name, verb, detail, url_path) }
+            extra_actions[method_name] = method_actions.first unless method_actions.empty?
+          elsif mapping = decorators.match(/@([A-Za-z_][A-Za-z0-9_]*)\.mapping\.(get|post|put|patch|delete)\b/)
+            mappings << {mapping[1], mapping[2].upcase, method_name, klass, body_lines, offset}
+            next
+          elsif action = drf_action_for_method(method_name)
+            method_actions << action
           end
 
-          actions.reject! { |existing| existing.name == drf_action.name && existing.method == drf_action.method && existing.detail == drf_action.detail }
-          actions << drf_action
+          method_actions.each do |drf_action|
+            fill_drf_action(drf_action, klass, body_lines, offset, chain)
+            actions.reject! { |existing| existing.method == drf_action.method && existing.detail == drf_action.detail && existing.path == drf_action.path }
+            actions << drf_action
+          end
         end
       end
 
+      # `@download.mapping.post def upload(...)`: another verb on the
+      # `download` action's route, served by `upload`.
+      mappings.each do |target, verb, method_name, klass, body_lines, offset|
+        base = extra_actions[target]? || next
+        drf_action = DjangoDrfAction.new(method_name, verb, base.detail, base.path)
+        fill_drf_action(drf_action, klass, body_lines, offset, chain)
+        actions.reject! { |existing| existing.method == verb && existing.detail == base.detail && existing.path == base.path }
+        actions << drf_action
+      end
+
       # View.dispatch refuses any verb missing from `http_method_names`.
-      if allowed = class_codeblock.match(DRF_HTTP_METHOD_NAMES_RE)
+      if allowed = chain.compact_map(&.codeblock.match(DRF_HTTP_METHOD_NAMES_RE)).first?
         verbs = allowed[1].scan(/['"]([A-Za-z]+)['"]/).map(&.[1].upcase)
         actions.select! { |action| verbs.includes?(action.method) }
       end
@@ -1986,13 +2183,42 @@ module Analyzer::Python
         params = filter_params(action.method, action.params)
         params << Param.new(lookup_param, "", "path") if action.detail
         params = dedupe_params(params)
-        details = Details.new(PathInfo.new(filepath, action.definition_line || class_definition_line))
+        source_path = action.filepath || own.filepath
+        details = Details.new(PathInfo.new(source_path, action.definition_line || class_definition_line))
         endpoint = Endpoint.new(endpoint_path, action.method, params, details)
+        # A standard action inherited from DRF itself has no body in the
+        # project to point at, so it gets no handler.
+        if (handler_name = action.handler) && (line = action.definition_line)
+          endpoint.handler = Handler.new(handler_name, source_path, line)
+        end
         action.callees.each { |callee| endpoint.push_callee(callee) }
         endpoints << endpoint
       end
 
       endpoints
+    end
+
+    # Point `drf_action` at the method `offset` lines into `klass`'s body:
+    # its definition site, handler name, params and callees.
+    private def fill_drf_action(drf_action : DjangoDrfAction, klass : DrfClass, body_lines : Array(::String), offset : Int32,
+                                chain : Array(DrfClass))
+      drf_action.definition_line = klass.line_index + offset + 2
+      drf_action.filepath = klass.filepath
+      drf_action.handler = "#{klass.name}.#{drf_action.name}"
+      codeblock = parse_code_block(body_lines[offset..]) || return
+      fold_python_continuations(codeblock.split("\n")).each do |body_line|
+        extract_params_from_line(body_line, [drf_action.method]).each do |param|
+          drf_action.params << param
+        end
+      end
+      drf_action.params.concat drf_serializer_params(codeblock, klass.filepath, chain)
+      drf_action.callees = build_callees_from(
+        codeblock,
+        klass.line_index + offset + 1,
+        klass.filepath,
+        definition_base_path: @django_base_path,
+        source: read_file_content(klass.filepath)
+      )
     end
 
     private def default_drf_viewset_actions(class_define_line : ::String) : Array(DjangoDrfAction)
@@ -2037,35 +2263,6 @@ module Analyzer::Python
       end
     end
 
-    private def extract_drf_action_decorators(lines : Array(::String), method_line_index : Int32, method_name : ::String) : Array(DjangoDrfAction)
-      index = method_line_index - 1
-      while index >= 0
-        stripped = lines[index].strip
-        break if stripped.empty? || stripped.starts_with?("def ") || stripped.starts_with?("class ")
-
-        if stripped.starts_with?("@action") || stripped == ")" || stripped.includes?("url_path") || stripped.includes?("methods") || stripped.includes?("detail")
-          decorator_source = collect_preceding_decorator_source(lines, index)
-          # A bare `next` here would skip the trailing `index -= 1`, spinning the
-          # `while` forever on guard matches that lack an @action decorator.
-          unless decorator_source.includes?("@action")
-            index -= 1
-            next
-          end
-
-          args_match = decorator_source.match(/@action\s*\((.*?)\)/m)
-          args = args_match ? args_match[1] : ""
-          detail = args.matches?(/\bdetail\s*=\s*True\b/)
-          methods = extract_drf_action_methods(args)
-          url_path = extract_drf_action_url_path(args) || method_name.gsub("_", "-")
-          return methods.map { |method| DjangoDrfAction.new(method_name, method, detail, url_path) }
-        end
-
-        index -= 1
-      end
-
-      [] of DjangoDrfAction
-    end
-
     private def extract_python_definition_header(lines : Array(::String)) : ::String
       header = [] of ::String
       delta = 0
@@ -2077,22 +2274,6 @@ module Analyzer::Python
       end
 
       header.join(" ")
-    end
-
-    private def collect_preceding_decorator_source(lines : Array(::String), index : Int32) : ::String
-      start_index = index
-      while start_index > 0
-        previous = lines[start_index - 1].strip
-        break if previous.empty? || previous.matches?(/^(?:async\s+)?def\s+/) || previous.starts_with?("class ")
-        start_index -= 1
-        break if previous.starts_with?("@")
-      end
-
-      lines[start_index..index].join("\n")
-    end
-
-    private def parse_python_class_codeblock(content : ::String, class_start_index : Int32) : ::String?
-      parse_python_class_codeblock(content[class_start_index..].split("\n"))
     end
 
     private def parse_python_class_codeblock(lines : Array(::String)) : ::String?
@@ -2148,16 +2329,9 @@ module Analyzer::Python
       url_path_match ? url_path_match[1] : nil
     end
 
-    private def extract_drf_lookup_param(class_codeblock : ::String) : ::String
-      if lookup_url_kwarg = class_codeblock.match(/\blookup_url_kwarg\s*=\s*[rf]?['"]([^'"]+)['"]/)
-        return lookup_url_kwarg[1]
-      end
-
-      if lookup_field = class_codeblock.match(/\blookup_field\s*=\s*[rf]?['"]([^'"]+)['"]/)
-        return lookup_field[1]
-      end
-
-      "pk"
+    private def drf_lookup_param(class_codeblock : ::String) : ::String?
+      class_codeblock.match(/\blookup_url_kwarg\s*=\s*[rf]?['"]([^'"]+)['"]/).try(&.[1]) ||
+        class_codeblock.match(/\blookup_field\s*=\s*[rf]?['"]([^'"]+)['"]/).try(&.[1])
     end
 
     private def drf_action_path(route_base : ::String, lookup_param : ::String, action : DjangoDrfAction,
@@ -2403,9 +2577,11 @@ module Analyzer::Python
     end
 
     class DjangoDrfAction
-      property name, method, detail, path, params, definition_line, callees
+      property name, method, detail, path, params, definition_line, callees, filepath, handler
 
       @definition_line : Int32?
+      @filepath : ::String?
+      @handler : ::String?
 
       def initialize(@name : ::String,
                      @method : ::String,
