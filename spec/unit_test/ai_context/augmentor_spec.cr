@@ -1993,6 +1993,26 @@ describe "NoirAIContext" do
     end
   end
 
+  it "does NOT treat Blazor <AuthorizeView> markup as a guard" do
+    source = <<-RAZOR
+      @page "/"
+      <AuthorizeView>
+          <Authorized><a href="/admin">Admin</a></Authorized>
+          <NotAuthorized><a href="/login">Log in</a></NotAuthorized>
+      </AuthorizeView>
+      RAZOR
+
+    with_temp_ai_context_source(source, ".razor") do |path|
+      endpoint = Endpoint.new("/", "GET")
+      details = endpoint.details
+      details.add_path(PathInfo.new(path, 1))
+      endpoint.details = details
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context
+      (context.try(&.guards) || [] of AIContextEntry).should be_empty
+    end
+  end
+
   it "does NOT treat FastAPI Security dependencies as authorization guards" do
     source = <<-PYTHON
       @app.get("/admin")
