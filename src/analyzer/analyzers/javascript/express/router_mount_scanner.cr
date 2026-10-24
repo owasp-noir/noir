@@ -22,11 +22,23 @@ module Analyzer::Javascript
     # `.route('/p', app)`). Compiled once per verb — interpolated regex
     # literals would otherwise be rebuilt (full PCRE2 compile) on every
     # scan_literal_mount_calls invocation.
-    MOUNT_CALL_NAMES   = %w[use route]
-    MOUNT_STRING_RES   = MOUNT_CALL_NAMES.map { |c| {c, /(\w+)\.#{c}\s*\(\s*['"]([^'"]+)['"]\s*,\s*/} }.to_h
-    MOUNT_BACKTICK_RES = MOUNT_CALL_NAMES.map { |c| {c, /(\w+)\.#{c}\s*\(\s*`([^`$]+)`\s*,\s*/} }.to_h
-    MOUNT_IDENT_RES    = MOUNT_CALL_NAMES.map { |c| {c, /(\w+)\.#{c}\s*\(\s*(\w+)\s*,\s*/} }.to_h
-    MOUNT_ARRAY_RES    = MOUNT_CALL_NAMES.map { |c| {c, /(\w+)\.#{c}\s*\(\s*\[([^\]]+)\]\s*,\s*/m} }.to_h
+    MOUNT_CALL_NAMES = %w[use route]
+
+    # {string, backtick, identifier, array} prefix forms of `<caller>.<call>(…`.
+    alias MountCallRes = Tuple(Regex, Regex, Regex, Regex)
+
+    def self.mount_call_res(c : String) : MountCallRes
+      {/(\w+)\.#{c}\s*\(\s*['"]([^'"]+)['"]\s*,\s*/,
+       /(\w+)\.#{c}\s*\(\s*`([^`$]+)`\s*,\s*/,
+       /(\w+)\.#{c}\s*\(\s*(\w+)\s*,\s*/,
+       /(\w+)\.#{c}\s*\(\s*\[([^\]]+)\]\s*,\s*/m}
+    end
+
+    MOUNT_RES = MOUNT_CALL_NAMES.map { |c| {c, mount_call_res(c)} }.to_h
+
+    # Project-local methods that forward their first parameter to `.use(…)`
+    # as the mount path (see `collect_mount_forwarders`), with their regexes.
+    @forwarder_res = {} of String => MountCallRes
 
     # Type alias for file context used in two-pass processing
     alias FileContext = NamedTuple(
@@ -89,21 +101,21 @@ module Analyzer::Javascript
           next unless (parts[1]? || parts[0]) == name
           target = resolve_require_path(file, m[2])
           next unless target
-          return parts[0] == "default" ? ExpressConstants.file_key(target) : named_export_key(target, parts[0], depth + 1)
+          return parts[0] == "default" ? module_key(target) : named_export_key(target, parts[0], depth + 1)
         end
       end
 
       content.scan(CJS_REEXPORT_RE) do |m|
         next unless (m[1]? || m[2]?) == name
         target = resolve_require_path(file, m[3])
-        return ExpressConstants.file_key(target) if target
+        return module_key(target) if target
       end
 
       Noir::JSRouteExtractor.export_bindings(content).each do |local, exported_names|
         next unless exported_names.includes?(name)
         imports = parse_imports(content, file)
         if target = imports[:require_map][local]?
-          return ExpressConstants.file_key(target)
+          return module_key(target)
         elsif target = imports[:function_map][local]?
           return named_export_key(target, exported_name(file, local), depth + 1)
         end
@@ -112,6 +124,23 @@ module Analyzer::Javascript
       ExpressConstants.function_key(file, name)
     rescue File::Error | IO::Error
       ExpressConstants.function_key(file, name)
+    end
+
+    # A module that is nothing but `module.exports = require('./app')` (or
+    # `export { default } from './app'`) exports what `./app` exports, so
+    # its prefix belongs on `./app`, where the routes and mounts are.
+    MODULE_REEXPORT_RE = /\A\s*(?:['"]use strict['"];?\s*)?(?:module\.exports\s*=\s*require\s*\(\s*['"]([^'"]+)['"]\s*\)|export\s*\{\s*default\s*\}\s*from\s*['"]([^'"]+)['"])\s*;?\s*\z/
+
+    private def module_key(file : String) : Noir::LocatorKey(Array(String))
+      MAX_REEXPORT_DEPTH.times do
+        content = read_source(file)
+        break if content.bytesize > 512
+        m = Noir::JSRouteExtractor.strip_js_comments(content).match(MODULE_REEXPORT_RE) || break
+        file = resolve_require_path(file, m[1]? || m[2]) || break
+      end
+      ExpressConstants.file_key(file)
+    rescue File::Error | IO::Error
+      ExpressConstants.file_key(file)
     end
 
     private def exported_name(main_file : String, local : String) : String
@@ -125,6 +154,8 @@ module Analyzer::Javascript
       return scan_register_mounts(main_files, locator) if @framework.in?(:fastify, :restify, :hapi)
       seed_firebase_function_mounts(main_files, locator) if @framework == :express
 
+      collect_mount_forwarders(main_files)
+
       # Global collections for two-pass processing
       file_contexts = Hash(String, FileContext).new
       global_deferred_mounts = [] of Tuple(String, String, String, String)
@@ -136,6 +167,45 @@ module Analyzer::Javascript
 
       # PASS 2: Process all deferred nested mounts now that all top-level mounts are known
       process_deferred_mounts(global_deferred_mounts, file_contexts, locator)
+    end
+
+    # `app.lazyUse = function lazyUse(mountPath, requireFn) { app.use(mountPath, …) }`
+    # and the arrow form: a method whose definition hands its first parameter
+    # to `.use(…)` as the mount path. A call to it is a mount, read the same
+    # way `.use('/p', child)` is. Read off the definition, so no wrapper name
+    # is assumed.
+    FORWARDER_FUNCTION_RE = /\.([A-Za-z_$][\w$]*)\s*=\s*(?:async\s+)?function\b[^(]*\(/
+    FORWARDER_ARROW_RE    = /\.([A-Za-z_$][\w$]*)\s*=\s*(?:async\s+)?\(/
+    FIRST_PARAM_RE        = /\A\s*([A-Za-z_$][\w$]*)\s*(?:,|\z)/
+    USE_FIRST_ARG_RE      = /\.use\s*\(\s*([A-Za-z_$][\w$]*)\s*,/
+
+    private def collect_mount_forwarders(main_files : Array(String))
+      main_files.each do |file|
+        content = read_source(file)
+        next unless content.includes?(".use(") || content.includes?(".use (")
+        content = Noir::JSRouteExtractor.strip_js_comments(content)
+        {FORWARDER_FUNCTION_RE, FORWARDER_ARROW_RE}.each do |re|
+          content.scan(re) do |m|
+            name = m[1]
+            next if MOUNT_RES.has_key?(name) || @forwarder_res.has_key?(name)
+            open_paren = m.byte_end(0) - 1
+            close_paren = Noir::JSLiteralScanner.find_matching_paren_at_byte(content, open_paren) || next
+            param = content.byte_slice(open_paren + 1, close_paren - open_paren - 1).match(FIRST_PARAM_RE).try(&.[1]) || next
+            rest = content.byte_slice(close_paren + 1, {content.bytesize - close_paren - 1, 8}.min)
+            body_start = re == FORWARDER_ARROW_RE ? rest.match(/\A\s*=>\s*\{/) : rest.match(/\A\s*\{/)
+            next unless body_start
+            open_brace = close_paren + body_start.byte_end(0)
+            close_brace = Noir::JSLiteralScanner.find_matching_brace_at_byte(content, open_brace) || next
+            body = content.byte_slice(open_brace, close_brace - open_brace + 1)
+            forwards = false
+            body.scan(USE_FIRST_ARG_RE) { |u| forwards = true if u[1] == param }
+            next unless forwards
+            @forwarder_res[name] = RouterMountScanner.mount_call_res(name)
+            @logger.debug "Mount forwarder: .#{name}(path, …) => .use(path, …) (#{file})"
+          end
+        end
+      rescue File::Error | IO::Error
+      end
     end
 
     REGISTER_CALL_RE    = /\.register\s*\(/
@@ -316,7 +386,8 @@ module Analyzer::Javascript
       # codebase (tests, helpers, UI components, fixtures), which contain
       # no router mounts at all.
       return unless content.includes?(".use(") || content.includes?(".use (") ||
-                    content.includes?(".route(") || content.includes?(".route (")
+                    content.includes?(".route(") || content.includes?(".route (") ||
+                    @forwarder_res.each_key.any? { |name| content.includes?(".#{name}(") }
       # A test app that mounts the router under a prefix of its own (or none)
       # adds a phantom prefixed copy of every production route.
       return if Noir::JSRouteExtractor.test_file?(main_file, content)
@@ -332,6 +403,12 @@ module Analyzer::Javascript
       function_map = imports[:function_map]
       var_to_function = imports[:var_to_function]
       prefix_constants = extract_string_constants(content)
+      # `const { API_PATH } = require('./paths')`: the module's own constant.
+      function_map.each do |name, file|
+        next if prefix_constants.has_key?(name)
+        value = module_string_constants(file)[name]?
+        prefix_constants[name] = value if value
+      end
 
       # Store arrays of prefixes per router variable to support multi-mount scenarios
       var_prefix = Hash(String, Array(String)).new { |h, k| h[k] = [] of String }
@@ -343,6 +420,11 @@ module Analyzer::Javascript
         require_map, function_map, var_to_function, var_prefix, global_deferred_mounts, prefix_constants)
       scan_literal_mount_calls(content, "route", main_file, locator,
         require_map, function_map, var_to_function, var_prefix, global_deferred_mounts, prefix_constants)
+      @forwarder_res.each_key do |name|
+        next unless content.includes?(".#{name}(")
+        scan_literal_mount_calls(content, name, main_file, locator,
+          require_map, function_map, var_to_function, var_prefix, global_deferred_mounts, prefix_constants)
+      end
 
       # Scan for .use(router) patterns where prefix is omitted (defaults to '/')
       # The negative lookahead `(?!\s*['"])` prevents matching calls that have a
@@ -449,7 +531,8 @@ module Analyzer::Javascript
       global_deferred_mounts : Array(Tuple(String, String, String, String)),
       prefix_constants : Hash(String, String),
     )
-      content.scan(MOUNT_STRING_RES[call_name]) do |m|
+      string_re, backtick_re, ident_re, array_re = MOUNT_RES[call_name]? || @forwarder_res[call_name]
+      content.scan(string_re) do |m|
         next unless m.size >= 3
 
         caller = m[1]
@@ -460,7 +543,7 @@ module Analyzer::Javascript
           require_map, function_map, var_to_function, var_prefix, global_deferred_mounts)
       end
 
-      content.scan(MOUNT_BACKTICK_RES[call_name]) do |m|
+      content.scan(backtick_re) do |m|
         next unless m.size >= 3
 
         caller = m[1]
@@ -471,7 +554,7 @@ module Analyzer::Javascript
           require_map, function_map, var_to_function, var_prefix, global_deferred_mounts)
       end
 
-      content.scan(MOUNT_IDENT_RES[call_name]) do |m|
+      content.scan(ident_re) do |m|
         next unless m.size >= 3
 
         prefix = prefix_constants[m[2]]?
@@ -484,7 +567,7 @@ module Analyzer::Javascript
           require_map, function_map, var_to_function, var_prefix, global_deferred_mounts)
       end
 
-      content.scan(MOUNT_ARRAY_RES[call_name]) do |m|
+      content.scan(array_re) do |m|
         next unless m.size >= 3
 
         caller = m[1]
@@ -512,6 +595,16 @@ module Analyzer::Javascript
         constants[m[1]] = value if mount_prefix?(value)
       end
       constants
+    end
+
+    @module_constants = Hash(String, Hash(String, String)).new
+
+    private def module_string_constants(file : String) : Hash(String, String)
+      @module_constants[file] ||= begin
+        extract_string_constants(Noir::JSRouteExtractor.strip_js_comments(read_source(file)))
+      rescue File::Error | IO::Error
+        Hash(String, String).new
+      end
     end
 
     private def extract_mount_prefixes_from_array(body : String, constants : Hash(String, String)) : Array(String)
@@ -926,7 +1019,7 @@ module Analyzer::Javascript
 
       if parent_prefixes.empty?
         if caller_file = require_map[caller]?
-          parent_prefixes = locator.all(ExpressConstants.file_key(caller_file)).dup
+          parent_prefixes = locator.all(module_key(caller_file)).dup
         elsif caller_func = var_to_function[caller]?
           if caller_file = function_map[caller_func]?
             parent_prefixes = locator.all(named_export_key(caller_file, exported_name(main_file, caller_func))).dup
@@ -990,7 +1083,7 @@ module Analyzer::Javascript
       if router_file_direct
         router_file = resolve_require_path(main_file, router_file_direct)
         return unless router_file
-        return {key: ExpressConstants.file_key(router_file), note: " (inline require): #{router_file}", var: nil}
+        return {key: module_key(router_file), note: " (inline require): #{router_file}", var: nil}
       end
 
       # Handle path-like router_var as inline require (for deferred mounts)
@@ -998,14 +1091,14 @@ module Analyzer::Javascript
          router_var.starts_with?("@/") || router_var.starts_with?("~/"))
         router_file = resolve_require_path(main_file, router_var)
         return unless router_file
-        return {key: ExpressConstants.file_key(router_file), note: " (inline require): #{router_file}", var: nil}
+        return {key: module_key(router_file), note: " (inline require): #{router_file}", var: nil}
       end
 
       return unless router_var
 
       # Check require_map (default imports)
       if router_file = require_map[router_var]?
-        return {key: ExpressConstants.file_key(router_file), note: ": #{router_file}", var: router_var}
+        return {key: module_key(router_file), note: ": #{router_file}", var: router_var}
       end
 
       # Check var_to_function (factory variable assignments)
@@ -1158,8 +1251,17 @@ module Analyzer::Javascript
       if place_unplaced_local_mounts(remaining, file_contexts)
         remaining = resolve_deferred_fix_point(remaining, file_contexts, locator)
       end
-      place_unplaced_mounts(remaining, file_contexts, locator)
+      # Root mounts first: a file that a still-unplaced mount reaches gets
+      # its prefix from that mount, so its own mounts wait for it instead of
+      # landing at their bare prefix (`setupApi() { api.use('/admin', …) }`
+      # behind `backend.use('/api', require('./api'))`).
+      MAX_DEFERRED_ITERATIONS.times do
+        break unless place_unplaced_mounts(remaining, file_contexts, locator)
+        remaining = resolve_deferred_fix_point(remaining, file_contexts, locator)
+      end
     end
+
+    MAX_DEFERRED_ITERATIONS = 10
 
     # Mounts of same-file routers whose parent was never located: their
     # variable takes the mount prefix, as `place_unplaced_mounts` does for
@@ -1255,9 +1357,10 @@ module Analyzer::Javascript
       remaining : Array(Tuple(String, String, String, String)),
       file_contexts : Hash(String, FileContext),
       locator : CodeLocator,
-    )
-      return if remaining.empty?
+    ) : Bool
+      return false if remaining.empty?
 
+      targets = Set(String).new
       eligible = [] of Tuple(String, String, String)
       remaining.each do |main_file, _caller, prefix, router_var|
         ctx = file_contexts[main_file]?
@@ -1267,9 +1370,19 @@ module Analyzer::Javascript
         next unless target
         key = target[:key]
         next unless key
+        targets << key.name
         next unless locator.all(key).empty?
         eligible << {main_file, router_var, prefix}
       end
+
+      # Roots only, unless every eligible mount sits in a file another
+      # pending mount reaches (a cycle, or a parent that is never placed):
+      # then all of them, as before.
+      roots = eligible.reject do |main_file, _, _|
+        own = module_key(Noir::PathScope.expand(main_file)).name
+        targets.any? { |t| t == own || t.starts_with?("#{own}:") }
+      end
+      eligible = roots unless roots.empty?
 
       eligible.each do |main_file, router_var, prefix|
         ctx = file_contexts[main_file]?
@@ -1280,6 +1393,7 @@ module Analyzer::Javascript
           log_prefix: "Mapped unplaced router prefix"
         )
       end
+      !eligible.empty?
     end
 
     # Store a single deferred mount

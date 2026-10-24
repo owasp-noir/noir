@@ -1,0 +1,1 @@
+{"name": "factory-app-mount", "dependencies": {"express": "^4.18.0", "vhost": "^3.0.2"}}
