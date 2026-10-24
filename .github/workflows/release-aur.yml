@@ -46,15 +46,20 @@ jobs:
 
       - name: Update PKGBUILD version
         run: |
-          sed -i "s/^pkgver=.*/pkgver=${{ env.VERSION }}/" packaging/aur/PKGBUILD
-          sed -i "s/^pkgrel=.*/pkgrel=${{ github.event.inputs.pkgrel || '1' }}/" packaging/aur/PKGBUILD
-          cat packaging/aur/PKGBUILD
+          # A manual run checks out the release tag, and tags cut before the
+          # packaging/ move (v1.4.0 and older) keep it at aur/PKGBUILD.
+          PKGBUILD=packaging/aur/PKGBUILD
+          [ -f "$PKGBUILD" ] || PKGBUILD=aur/PKGBUILD
+          echo "PKGBUILD=$PKGBUILD" >> "$GITHUB_ENV"
+          sed -i "s/^pkgver=.*/pkgver=${{ env.VERSION }}/" "$PKGBUILD"
+          sed -i "s/^pkgrel=.*/pkgrel=${{ github.event.inputs.pkgrel || '1' }}/" "$PKGBUILD"
+          cat "$PKGBUILD"
 
       - name: Publish to AUR
         uses: KSXGitHub/github-actions-deploy-aur@v4.2.0
         with:
           pkgname: noir
-          pkgbuild: packaging/aur/PKGBUILD
+          pkgbuild: ${{ env.PKGBUILD }}
           commit_username: hahwul
           commit_email: hahwul@gmail.com
           ssh_private_key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
