@@ -1,6 +1,7 @@
 require "../../engines/python_engine"
 require "json"
 require "../../../utils/top_level_split"
+require "./django_view_registry"
 
 module Analyzer::Python
   class Django < PythonEngine
@@ -475,7 +476,7 @@ module Analyzer::Python
       package_map = find_imported_modules(@django_base_path, url_base_path, content)
       import_aliases = extract_python_import_aliases(original_content)
       app_config_refs = extract_django_app_config_refs(original_content)
-      drf_router_registrations = extract_drf_router_registrations(content)
+      drf_router_registrations = extract_drf_router_registrations(content, django_urls.filepath)
       urlpattern_lists = extract_urlpattern_lists(content)
       route_path = PathInfo.new(django_urls.filepath)
 
@@ -502,6 +503,13 @@ module Analyzer::Python
           entry_path = route_entry_path(route_path, list_line, offset)
           route = normalize_django_route(route)
           url = "/#{django_urls.prefix}/#{route}".gsub(/\/+/, "/")
+          if registered = registry_include_endpoints(django_urls.filepath, url, view)
+            registered.each do |endpoint|
+              append_code_path(endpoint.details, entry_path)
+              endpoints << endpoint
+            end
+            next
+          end
           if new_route_path = resolve_dotted_include_target(view)
             new_django_urls = DjangoUrls.new("#{django_urls.prefix}#{route}", new_route_path, django_urls.basepath)
             unless @visited_url_paths.has_key? new_django_urls.filepath
@@ -568,7 +576,7 @@ module Analyzer::Python
           else
             wrapper = urlconf_auth_wrapper(view)
             view = extract_wrapped_view_reference(view)
-            if view_target = resolve_django_view_target(view, package_map)
+            if view_target = resolve_django_view_target(view, package_map) || imported_view_target(django_urls.filepath, view)
               filepath, function_or_class_name = view_target
               extract_endpoints_from_file(url, filepath, function_or_class_name).each do |endpoint|
                 append_code_path(endpoint.details, entry_path)
@@ -820,8 +828,46 @@ module Analyzer::Python
         file = get_class_module_file(binding[2], filepath) || next
         return {file, target}
       end
-      file, original = Noir::ImportGraph::Python.find_imported_symbols(@django_base_path, filepath, content)[name]? || return
-      {file, original} unless original.empty?
+      if imported = Noir::ImportGraph::Python.find_imported_symbols(@django_base_path, filepath, content)[name]?
+        return imported unless imported[1].empty?
+        return
+      end
+      site = python_definition_site(filepath, name)
+      site unless site.nil? || site[0] == filepath
+    end
+
+    STAR_IMPORT_RE = /^from\s+([\w.]+)\s+import\s+\*/m
+
+    # `{file, name}` of the class or function `name` names in `file`: its
+    # own declaration, else the module it re-exports it from, explicitly
+    # or through `from .mod import *` (a package `__init__.py` gathering
+    # its modules), a few hops deep.
+    @definition_sites = Hash(Tuple(::String, ::String), Tuple(::String, ::String)?).new
+
+    private def python_definition_site(file : ::String, name : ::String, depth = 0) : Tuple(::String, ::String)?
+      key = {file, name}
+      return @definition_sites[key] if @definition_sites.has_key?(key)
+      @definition_sites[key] = nil # cycle guard
+      @definition_sites[key] = find_definition_site(file, name, depth)
+    end
+
+    private def find_definition_site(file : ::String, name : ::String, depth : Int32) : Tuple(::String, ::String)?
+      view_file = view_file_index(file)
+      return {file, name} if view_file.classes.has_key?(name) || view_file.defs.has_key?(name)
+      return if depth > 4
+      symbols = @imported_symbols[file] ||= Noir::ImportGraph::Python.find_imported_symbols(@django_base_path, file, view_file.content)
+      if target = symbols[name]?
+        return if target[1].empty? || target[0] == file || !File.file?(target[0])
+        return python_definition_site(target[0], target[1], depth + 1)
+      end
+      view_file.content.scan(STAR_IMPORT_RE) do |m|
+        target = Noir::ImportGraph::Python.find_imported_symbols(@django_base_path, file, "from #{m[1]} import #{name}")[name]? || next
+        next if target[1].empty? || target[0] == file || !File.file?(target[0])
+        if site = python_definition_site(target[0], target[1], depth + 1)
+          return site
+        end
+      end
+      nil
     end
 
     # A urlconf view nothing in the tree defines. Django's own class-based
@@ -975,7 +1021,8 @@ module Analyzer::Python
           wrapper = urlconf_auth_wrapper(view)
           view = extract_wrapped_view_reference(view)
           view_target = resolve_django_view_target(view, package_map) ||
-                        resolve_app_config_view_target(view, app_config_refs, current_app_config_path, package_map)
+                        resolve_app_config_view_target(view, app_config_refs, current_app_config_path, package_map) ||
+                        imported_view_target(current_app_config_path, view)
           if view_target
             filepath, function_or_class_name = view_target
             extract_endpoints_from_file(url, filepath, function_or_class_name).each do |endpoint|
@@ -993,6 +1040,14 @@ module Analyzer::Python
       end
 
       endpoints
+    end
+
+    # A view the import map leaves unresolved, by what the urlconf's
+    # imports bind it to: `from app.views import X` naming a package whose
+    # `__init__.py` re-exports `X` (`from .misc import *`).
+    private def imported_view_target(urlconf : ::String, view : ::String) : Tuple(::String, ::String)?
+      return unless view.matches?(/\A[A-Za-z_][\w.]*\z/)
+      resolve_python_class(urlconf, view)
     end
 
     private def resolve_django_view_target(view : ::String, package_map) : Tuple(::String, ::String)?
@@ -1270,7 +1325,7 @@ module Analyzer::Python
       aliases
     end
 
-    private def extract_drf_router_registrations(content : ::String) : Hash(::String, Array(DjangoDrfRegistration))
+    private def extract_drf_router_registrations(content : ::String, file : ::String) : Hash(::String, Array(DjangoDrfRegistration))
       registrations = Hash(::String, Array(DjangoDrfRegistration)).new do |hash, key|
         hash[key] = [] of DjangoDrfRegistration
       end
@@ -1299,10 +1354,32 @@ module Analyzer::Python
         view_ref = clean_python_reference(view_ref)
         next if view_ref.empty?
 
-        registrations[register_match[1]] << DjangoDrfRegistration.new(prefix, view_ref, !slashless.includes?(register_match[1]))
+        registration = DjangoDrfRegistration.new(prefix, view_ref, !slashless.includes?(register_match[1]))
+        registration.extra_routes = drf_router_extra_routes(content, file, register_match[1])
+        registrations[register_match[1]] << registration
       end
 
       registrations
+    end
+
+    # Verbs a project router class adds to DRF's own route table, as
+    # `{detail?, verb, viewset method}`: NetBox-style bulk operations,
+    # `self.routes[0].mapping.update({"put": "bulk_update"})`. Index 0 of
+    # `SimpleRouter.routes` is the list route, 2 the detail route.
+    DRF_ROUTE_MAPPING_UPDATE_RE = /\broutes\s*\[\s*([02])\s*\]\s*\.\s*mapping\s*\.\s*update\s*\(\s*\{([^}]*)\}/
+    DRF_ROUTE_MAPPING_SET_RE    = /\broutes\s*\[\s*([02])\s*\]\s*\.\s*mapping\s*\[\s*['"](\w+)['"]\s*\]\s*=\s*['"](\w+)['"]/
+
+    private def drf_router_extra_routes(content : ::String, file : ::String, router : ::String) : Array(Tuple(Bool, ::String, ::String))
+      routes = [] of Tuple(Bool, ::String, ::String)
+      assignment = content.match(/^[ \t]*#{Regex.escape(router)}[ \t]*(?::[^=\n]+)?=[ \t]*([A-Za-z_][\w.]*)[ \t]*\(/m) || return routes
+      target = resolve_python_class(file, assignment[1]) || return routes
+      drf_class_chain(target[0], target[1]).each do |klass|
+        klass.codeblock.scan(DRF_ROUTE_MAPPING_UPDATE_RE) do |m|
+          m[2].scan(/['"](\w+)['"]\s*:\s*['"](\w+)['"]/) { |pair| routes << {m[1] == "2", pair[1].upcase, pair[2]} }
+        end
+        klass.codeblock.scan(DRF_ROUTE_MAPPING_SET_RE) { |m| routes << {m[1] == "2", m[2].upcase, m[3]} }
+      end
+      routes
     end
 
     private def extract_drf_router_include_target(view : ::String) : ::String?
@@ -1391,6 +1468,14 @@ module Analyzer::Python
         route = normalize_django_route(route)
         nested_mount = join_url_parts(mount_route, route).lchop("/")
 
+        if registered = registry_include_endpoints(django_urls.filepath, join_url_parts(django_urls.prefix, mount_route, route), view)
+          registered.each do |endpoint|
+            append_code_path(endpoint.details, entry_path)
+            endpoints << endpoint
+          end
+          next
+        end
+
         # `include("app.urls")` — the dotted-module form. `extract_endpoints`
         # has always followed it, but this sibling loop (a urlpatterns list
         # held in a local variable rather than assigned to `urlpatterns`) did
@@ -1460,7 +1545,7 @@ module Analyzer::Python
 
         wrapper = urlconf_auth_wrapper(view)
         view = extract_wrapped_view_reference(view)
-        resolved = resolve_django_view_reference(view, package_map)
+        resolved = resolve_django_view_reference(view, package_map) || imported_view_target(django_urls.filepath, view)
         if resolved
           filepath, function_or_class_name = resolved
           if /^[a-zA-Z_][a-zA-Z0-9_]*$/.match(function_or_class_name)
@@ -1549,7 +1634,7 @@ module Analyzer::Python
 
       filepath, class_name = resolved
       route_base = join_url_parts(django_urls.prefix, mount_route, registration.prefix)
-      extract_drf_viewset_endpoints(route_base, filepath, class_name, registration.trailing_slash)
+      extract_drf_viewset_endpoints(route_base, filepath, class_name, registration.trailing_slash, registration.extra_routes)
     end
 
     private def extract_drf_router_endpoints_for_router(django_urls : DjangoUrls,
@@ -1572,7 +1657,7 @@ module Analyzer::Python
         return endpoints unless File.exists?(imported_path)
 
         imported_content = read_file_content(imported_path)
-        imported_registrations = extract_drf_router_registrations(imported_content)
+        imported_registrations = extract_drf_router_registrations(imported_content, imported_path)
         imported_router_name = import_aliases[router_name]? || router_name
         registrations = imported_registrations[imported_router_name]? || [] of DjangoDrfRegistration
         return endpoints if registrations.empty?
@@ -1855,6 +1940,7 @@ module Analyzer::Python
                   source: content
                 )
                 method_params[method_name].concat drf_serializer_params(codeblock, filepath, chain)
+                method_params[method_name].concat cached_cbv_params(codeblock, filepath, chain, 0, method_name)
               end
             elsif drf_generic_class && any_method_function_match && (drf_methods = drf_generic_action_http_methods(any_method_function_match[1]))
               current_http_methods = drf_methods
@@ -1882,7 +1968,8 @@ module Analyzer::Python
           # A verb handler the view inherits from a project base class is
           # served by that base's method: `post` on a shared mixin.
           method_owners = Hash(String, DrfClass).new
-          chain.skip(1).each do |klass|
+          chain.each_with_index do |klass, owner_index|
+            next if owner_index == 0
             klass.codeblock.split("\n").each_with_index do |line, offset|
               next unless inherited = line.match(REGEX_CBV_METHOD_DEF)
               method_name = inherited[1].upcase
@@ -1890,6 +1977,10 @@ module Analyzer::Python
               suspicious_http_methods << method_name
               method_lines[method_name] = klass.line_index + offset + 1
               method_owners[method_name] = klass
+              if codeblock = parse_code_block(klass.codeblock.split("\n")[offset..])
+                method_params[method_name].concat drf_serializer_params(codeblock, klass.filepath, chain)
+                method_params[method_name].concat cached_cbv_params(codeblock, klass.filepath, chain, owner_index, method_name)
+              end
             end
           end
 
@@ -1907,6 +1998,9 @@ module Analyzer::Python
             source_path = owner.try(&.filepath) || filepath
             definition_line = method_lines[http_method_name]? || class_definition_line
             details = Details.new(PathInfo.new(source_path, definition_line))
+            # Served by a base's method: the view class itself is the
+            # endpoint's code too (its mixins and attributes apply).
+            details.add_path(PathInfo.new(filepath, class_definition_line)) if owner
             endpoint_params = common_params + (method_params[http_method_name]? || [] of Param)
             endpoint = Endpoint.new(url, http_method_name, filter_params(http_method_name, endpoint_params), details)
             # A verb with no body in the project (served by the framework
@@ -2044,13 +2138,13 @@ module Analyzer::Python
       symbols = @imported_symbols[filepath] ||= Noir::ImportGraph::Python.find_imported_symbols(@django_base_path, filepath, view_file.content)
       head, _, attr = name.rpartition('.')
       target = if head.empty?
-                 symbols[name]?
+                 symbols[name]? || python_definition_site(filepath, name)
                elsif imported = symbols[head]?
                  {imported[0], imported[1].empty? ? attr : ""}
                end
       return unless target
       return if target[1].empty? || !File.file?(target[0])
-      target
+      python_definition_site(target[0], target[1]) || target
     end
 
     # `XSerializer(data=request.data)` / `self.get_serializer(data=...)`.
@@ -2063,15 +2157,24 @@ module Analyzer::Python
     # declares. `get_serializer` means the view's `serializer_class`.
     # ponytail: declared fields only; a ModelSerializer's `Meta.fields`
     # model columns are not resolved.
+    SERIALIZER_CLASS_RE = /^\s+serializer_class\s*=\s*([A-Za-z_][A-Za-z0-9_.]*)\s*$/m
+
     private def drf_serializer_params(codeblock : ::String, filepath : ::String, view_chain : Array(DrfClass)) : Array(Param)
       params = [] of Param
       return params unless codeblock.includes?("request.data")
       codeblock.scan(SERIALIZER_DATA_RE) do |call|
         name = call[1]
+        source = filepath
         if name.ends_with?("get_serializer")
-          name = view_chain.compact_map(&.codeblock.match(/^\s+serializer_class\s*=\s*([A-Za-z_][A-Za-z0-9_.]*)\s*$/m).try(&.[1])).first? || next
+          # Named where the view declares it, which need not be where the
+          # inherited method calling `get_serializer` lives.
+          declared = view_chain.each do |klass|
+            bound = klass.codeblock.match(SERIALIZER_CLASS_RE) || next
+            break {klass.filepath, bound[1]}
+          end
+          source, name = declared || next
         end
-        target = resolve_python_class(filepath, name) || next
+        target = resolve_python_class(source, name) || next
         declared_input_fields(target).each do |field|
           params << Param.new(field, "", "form") unless params.any? { |param| param.name == field }
         end
@@ -2082,17 +2185,35 @@ module Analyzer::Python
     # The input fields class `target` and its project bases declare as
     # `name = <...>Field(` / `<...>Serializer(` attributes, the read-only
     # ones left out. Serializers and Django forms declare them alike.
+    # Field classes DRF never reads from input: `HyperlinkedIdentityField`
+    # (and project subclasses keeping the name) forces `read_only`.
+    OUTPUT_ONLY_FIELD_RE = /\A(?:SerializerMethodField|ReadOnlyField|HiddenField|\w*IdentityField)\z/
+
+    # A field class that never takes input: one of DRF's, or a project
+    # class built on one (`RelatedObjectCountField(serializers.ReadOnlyField)`).
+    private def output_only_field?(type_name : ::String, filepath : ::String) : Bool
+      return true if type_name.matches?(OUTPUT_ONLY_FIELD_RE)
+      target = resolve_python_class(filepath, type_name) || return false
+      drf_class_chain(target[0], target[1]).any? do |klass|
+        python_class_bases(klass.header).any?(&.rpartition('.')[2].matches?(OUTPUT_ONLY_FIELD_RE))
+      end
+    end
+
     private def declared_input_fields(target : Tuple(::String, ::String)) : Array(::String)
       fields = [] of ::String
+      # The nearest class declaring a name wins: a subclass redeclaring a
+      # base's field `read_only` takes it out of the input.
+      declared = Set(::String).new
       drf_class_chain(target[0], target[1]).each do |klass|
         body = klass.codeblock.split("\n")[1..]
         level = body.compact_map { |line| line.size - line.lstrip.size unless line.strip.empty? }.min? || next
         body.each_with_index do |line, index|
           field = line.match(SERIALIZER_FIELD_RE) || next
           next unless field[1].size == level
-          next if field[3] == "SerializerMethodField"
+          next unless declared.add?(field[2])
+          next if output_only_field?(field[3], klass.filepath)
           next if python_call_span(body, index, line)[0].matches?(/\bread_only\s*=\s*True\b/)
-          fields << field[2] unless fields.includes?(field[2])
+          fields << field[2]
         end
       end
       fields
@@ -2103,16 +2224,144 @@ module Analyzer::Python
     # body or the query string. Only a class the scan holds counts.
     # ponytail: declared fields only; a ModelForm's `Meta.fields` columns
     # are not resolved.
-    FORM_BINDING_RE = /(?<![\w.])([A-Za-z_][\w.]*)\s*\(\s*(?:data\s*=\s*)?request\.(POST|GET)\b(?!\s*\.|\s*\[)/
+    # Earlier arguments may come first: `AuthenticationForm(request,
+    # data=request.POST)`, `PasswordChangeForm(user=request.user, data=...)`.
+    FORM_BINDING_RE = /(?<![\w.])([A-Za-z_][\w.]*)\s*\(\s*(?:[^()]*?,\s*)?(?:data\s*=\s*)?request\.(POST|GET)\b(?!\s*\.|\s*\[)/
 
-    private def bound_form_params(code : ::String, filepath : ::String, methods : Array(::String)) : Array(Param)
+    # The input fields of the forms `django.contrib.auth.forms` ships, which
+    # the scan never holds.
+    DJANGO_AUTH_FORM_FIELDS = {
+      "AuthenticationForm"      => %w[username password],
+      "PasswordChangeForm"      => %w[old_password new_password1 new_password2],
+      "SetPasswordForm"         => %w[new_password1 new_password2],
+      "AdminPasswordChangeForm" => %w[password1 password2],
+      "PasswordResetForm"       => %w[email],
+      "UserCreationForm"        => %w[username password1 password2],
+      "BaseUserCreationForm"    => %w[username password1 password2],
+    }
+
+    private def bound_form_params(code : ::String, filepath : ::String, methods : Array(::String),
+                                  view_chain : Array(DrfClass) = [] of DrfClass,
+                                  self_forms : Array(Tuple(::String, ::String))? = nil) : Array(Param)
       params = [] of Param
       return params unless code.includes?("request.POST") || code.includes?("request.GET")
       code.scan(FORM_BINDING_RE) do |call|
-        target = resolve_python_class(filepath, call[1]) || next
         location = call[2] == "GET" ? "query" : "form"
+        if self_forms && call[1].starts_with?("self.")
+          self_forms << {call[1], location}
+          next
+        end
+        fields = form_class_fields(call[1], filepath, view_chain) || next
         methods << "POST" if location == "form" && !methods.includes?("POST")
-        declared_input_fields(target).each { |field| params << Param.new(field, "", location) }
+        fields.each { |field| params << Param.new(field, "", location) }
+      end
+      params
+    end
+
+    # The fields of form class `name` as used in `filepath`: a project
+    # class (its declared fields, and a ModelForm's `Meta.fields`), one of
+    # Django's auth forms, or `self.form` read off the view's class
+    # attribute (`form = forms.TenantForm`, nearest class first).
+    private def form_class_fields(name : ::String, filepath : ::String, view_chain : Array(DrfClass)) : Array(::String)?
+      if attr = name.lchop?("self.")
+        attr_re = /^\s+#{Regex.escape(attr)}\s*=\s*([A-Za-z_][\w.]*)\s*$/m
+        view_chain.each do |klass|
+          bound = klass.codeblock.match(attr_re) || next
+          return form_class_fields(bound[1], klass.filepath, [] of DrfClass)
+        end
+        return
+      end
+      if target = resolve_python_class(filepath, name)
+        chain = drf_class_chain(target[0], target[1])
+        return if chain.empty?
+        fields = declared_input_fields(target)
+        if chain.any?(&.header.matches?(/\bModelForm\b/))
+          chain.each do |klass|
+            meta = klass.codeblock.match(/^([ \t]+)class[ \t]+Meta\b[^\n]*\n((?:\1[ \t]+[^\n]*\n?|[ \t]*\n)*)/m) || next
+            list = meta[2].match(/^\s+fields\s*=\s*[\[(]([^\])]*)[\])]/m) || next
+            list[1].scan(/['"](\w+)['"]/) { |m| fields << m[1] unless fields.includes?(m[1]) }
+            break
+          end
+          chain.each { |klass| fields.concat(builtin_form_bases(klass)) }
+        end
+        return fields.uniq
+      end
+      short = name.rpartition('.')[2]
+      DJANGO_AUTH_FORM_FIELDS[short]? if django_auth_form_import?(filepath, short)
+    end
+
+    DJANGO_AUTH_FORM_IMPORTS = DJANGO_AUTH_FORM_FIELDS.keys.to_h do |name|
+      {name, /^\s*from\s+django\.contrib\.auth\.forms\s+import\s+(?:\([^)]*|[^\n]*)\b#{name}\b/m}
+    end
+
+    private def builtin_form_bases(klass : DrfClass) : Array(::String)
+      python_class_bases(klass.header).flat_map do |base|
+        short = base.rpartition('.')[2]
+        django_auth_form_import?(klass.filepath, short) ? (DJANGO_AUTH_FORM_FIELDS[short]? || [] of ::String) : [] of ::String
+      end
+    end
+
+    # Whether `filepath` imports `name` from `django.contrib.auth.forms`.
+    private def django_auth_form_import?(filepath : ::String, name : ::String) : Bool
+      import_re = DJANGO_AUTH_FORM_IMPORTS[name]? || return false
+      view_file_index(filepath).content.matches?(import_re)
+    end
+
+    # What a class-based view method body reads besides its own `request.X`
+    # lines: forms it binds to the request, and the `self` methods it hands
+    # `request` to (`self.get_return_url(request, obj)`), two calls deep.
+    SELF_REQUEST_CALL_RE = /\b(self|super\(\s*\))\.([A-Za-z_]\w*)\s*\(([^()\n]*)/
+
+    @cbv_reads = Hash(Tuple(::String, ::String, ::String), Tuple(Array(Param), Array(Tuple(::String, ::String)))).new
+
+    # `cbv_body_params` for a method of `chain[owner_index]`, computed once
+    # per method and verb however many views inherit it: helpers resolve on
+    # the owner's chain, and only the `self.form`-style bindings are read
+    # off each view's own chain.
+    private def cached_cbv_params(codeblock : ::String, filepath : ::String, chain : Array(DrfClass),
+                                  owner_index : Int32, verb : ::String) : Array(Param)
+      params, self_forms = @cbv_reads[{codeblock, filepath, verb}] ||= begin
+        forms = [] of Tuple(::String, ::String)
+        {cbv_body_params(codeblock, filepath, chain[owner_index..], verb, self_forms: forms), forms}
+      end
+      params = params.dup
+      self_forms.uniq.each do |name, location|
+        form_class_fields(name, filepath, chain).try &.each { |field| params << Param.new(field, "", location) }
+      end
+      params
+    end
+
+    private def cbv_body_params(codeblock : ::String, filepath : ::String, chain : Array(DrfClass), verb : ::String,
+                                depth = 0, seen = Set(::String).new,
+                                self_forms : Array(Tuple(::String, ::String))? = nil, at = 0) : Array(Param)
+      params = [] of Param
+      folded = with_request_aliases(fold_python_continuations(codeblock.split("\n")), verb)
+      code = folded.join('\n')
+      params.concat bound_form_params(code, filepath, [verb], chain, self_forms)
+      folded.each { |line| params.concat extract_params_from_line(line, [verb]) }
+      return params if depth >= 2
+      # Module functions it hands `request` to (`get_results_limit(request)`).
+      request_helper_bodies(folded, filepath, 1).each do |_, _, path, helper_lines|
+        fold_python_continuations(helper_lines).each { |line| params.concat extract_params_from_line(line, [verb]) }
+        params.concat bound_form_params(helper_lines.join('\n'), path, [verb])
+      end
+      code.scan(SELF_REQUEST_CALL_RE) do |call|
+        next unless call[3].matches?(/(?<![\w.])request\b|\bself\.request\b/)
+        # `super().get(request, ...)` runs the next class's method.
+        is_super = call[1] != "self"
+        next unless seen.add?("#{is_super}:#{call[2]}")
+        def_re = /^\s+(?:async\s+)?def\s+#{Regex.escape(call[2])}\s*\(/
+        chain.each_with_index do |klass, index_in_chain|
+          next if is_super && index_in_chain <= at
+          next unless klass.codeblock.includes?(call[2])
+          lines = klass.codeblock.split("\n")
+          index = lines.index(&.matches?(def_re)) || next
+          if body = parse_code_block(lines[index..])
+            params.concat drf_serializer_params(body, klass.filepath, chain)
+            params.concat cbv_body_params(body, klass.filepath, chain, verb, depth + 1, seen, self_forms, index_in_chain)
+          end
+          break
+        end
       end
       params
     end
@@ -2176,8 +2425,15 @@ module Analyzer::Python
     # mapping itself.
     REQUEST_ALIAS_RE = /^\s*([A-Za-z_]\w*)\s*=\s*(request\.(?:META|headers|GET|POST|COOKIES|FILES|data|query_params))\s*$/
 
-    private def with_request_aliases(lines : Array(::String)) : Array(::String)
+    # `data = request.POST if request.method == "POST" else request.GET`:
+    # which mapping the local names depends on the verb served.
+    REQUEST_VERB_ALIAS_RE = /^\s*([A-Za-z_]\w*)\s*=\s*(request\.(?:GET|POST|data|query_params))\s+if\s+request\.method\s*==\s*['"](\w+)['"]\s+else\s+(request\.(?:GET|POST|data|query_params))\s*$/
+
+    private def with_request_aliases(lines : Array(::String), verb : ::String? = nil) : Array(::String)
       aliases = lines.compact_map do |line|
+        if verb && (verb_alias = line.match(REQUEST_VERB_ALIAS_RE))
+          next {/(?<![\w.])#{verb_alias[1]}(?=\s*(?:\.get(?:list)?\s*\(|\[))/, verb_alias[3].upcase == verb.upcase ? verb_alias[2] : verb_alias[4]}
+        end
         line.match(REQUEST_ALIAS_RE).try { |m| {/(?<![\w.])#{m[1]}(?=\s*(?:\.get(?:list)?\s*\(|\[))/, m[2]} }
       end
       return lines if aliases.empty?
@@ -2300,7 +2556,8 @@ module Analyzer::Python
     end
 
     private def extract_drf_viewset_endpoints(route_base : ::String, filepath : ::String, class_name : ::String,
-                                              trailing_slash : Bool = true) : Array(Endpoint)
+                                              trailing_slash : Bool = true,
+                                              extra_routes = [] of Tuple(Bool, ::String, ::String)) : Array(Endpoint)
       endpoints = [] of Endpoint
       chain = drf_class_chain(filepath, class_name)
       return endpoints if chain.empty?
@@ -2314,12 +2571,14 @@ module Analyzer::Python
       # Python resolves a method on the nearest class that defines it, so
       # the first definition of a name wins and a base's is shadowed.
       defined = Set(::String).new
+      method_sites = Hash(::String, Tuple(DrfClass, Array(::String), Int32)).new
       extra_actions = Hash(::String, DjangoDrfAction).new
       mappings = [] of Tuple(::String, ::String, ::String, DrfClass, Array(::String), Int32)
       chain.each do |klass|
         body_lines = klass.codeblock.split("\n")[1..]
         each_python_class_method(body_lines) do |method_name, decorators, offset|
           next unless defined.add?(method_name)
+          method_sites[method_name] = {klass, body_lines, offset}
 
           method_actions = [] of DjangoDrfAction
           if args = drf_action_decorator_args(decorators)
@@ -2354,6 +2613,31 @@ module Analyzer::Python
         actions << drf_action
       end
 
+      # A route the router adds is served when the viewset has the method
+      # (DRF's `get_method_map` skips the ones it lacks).
+      extra_routes.each do |detail, verb, method_name|
+        klass, body_lines, offset = method_sites[method_name]? || next
+        next if actions.any? { |existing| existing.method == verb && existing.detail == detail && existing.path.empty? }
+        drf_action = DjangoDrfAction.new(method_name, verb, detail, "")
+        fill_drf_action(drf_action, klass, body_lines, offset, chain)
+        actions << drf_action
+      end
+
+      # A method named after a verb (`def patch(self, request)`) is what
+      # `View.dispatch` calls for that verb on every route the router built
+      # for the viewset, when no action is mapped to it there.
+      routed = actions.select(&.path.empty?).map(&.detail).uniq!
+      %w[get post put patch delete].each do |verb_name|
+        klass, body_lines, offset = method_sites[verb_name]? || next
+        verb = verb_name.upcase
+        routed.each do |detail|
+          next if actions.any? { |existing| existing.method == verb && existing.detail == detail && existing.path.empty? }
+          drf_action = DjangoDrfAction.new(verb_name, verb, detail, "")
+          fill_drf_action(drf_action, klass, body_lines, offset, chain)
+          actions << drf_action
+        end
+      end
+
       # View.dispatch refuses any verb missing from `http_method_names`.
       if allowed = chain.compact_map(&.codeblock.match(DRF_HTTP_METHOD_NAMES_RE)).first?
         verbs = allowed[1].scan(/['"]([A-Za-z]+)['"]/).map(&.[1].upcase)
@@ -2362,11 +2646,14 @@ module Analyzer::Python
 
       actions.each do |action|
         endpoint_path = drf_action_path(route_base, lookup_param, action, trailing_slash)
-        params = filter_params(action.method, action.params)
+        params = filter_params(action.method, action.params) + action.body_params
         params << Param.new(lookup_param, "", "path") if action.detail
         params = dedupe_params(params)
         source_path = action.filepath || own.filepath
         details = Details.new(PathInfo.new(source_path, action.definition_line || class_definition_line))
+        # An action a base class serves still runs on this viewset, with
+        # its permissions: the viewset class is the endpoint's code too.
+        details.add_path(PathInfo.new(own.filepath, class_definition_line)) if action.handler.try { |name| !name.starts_with?("#{own.name}.") }
         endpoint = Endpoint.new(endpoint_path, action.method, params, details)
         # A standard action inherited from DRF itself has no body in the
         # project to point at, so it gets no handler.
@@ -2393,7 +2680,12 @@ module Analyzer::Python
           drf_action.params << param
         end
       end
-      drf_action.params.concat drf_serializer_params(codeblock, klass.filepath, chain)
+      # What the action's serializer reads is its body, whatever the verb
+      # (`ChangeLogMessageSerializer(data=request.data)` on DELETE), unless
+      # the body branches on the verb and the binding may be another's.
+      serializer_params = drf_serializer_params(codeblock, klass.filepath, chain)
+      (codeblock.includes?("request.method") ? drf_action.params : drf_action.body_params).concat serializer_params
+      drf_action.params.concat cbv_body_params(codeblock, klass.filepath, chain, drf_action.method)
       drf_action.callees = build_callees_from(
         codeblock,
         klass.line_index + offset + 1,
@@ -2752,6 +3044,7 @@ module Analyzer::Python
 
     struct DjangoDrfRegistration
       property prefix, view_ref, trailing_slash
+      property extra_routes = [] of Tuple(Bool, ::String, ::String)
 
       def initialize(@prefix : ::String, @view_ref : ::String, @trailing_slash : Bool = true)
       end
@@ -2759,6 +3052,7 @@ module Analyzer::Python
 
     class DjangoDrfAction
       property name, method, detail, path, params, definition_line, callees, filepath, handler
+      property body_params = [] of Param
 
       @definition_line : Int32?
       @filepath : ::String?
