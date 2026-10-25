@@ -1,8 +1,11 @@
 require "../../../models/framework_tagger"
 require "../../../models/endpoint"
+require "./python_guard_definitions"
 
 @[Noir::TaggerFor(key: "django_auth", name: "Django Auth Tagger", desc: "Identifies Django authentication patterns (decorators, mixins, DRF permissions)", order: 10)]
 class DjangoAuthTagger < FrameworkTagger
+  include PythonGuardDefinitions
+
   DECORATOR_PATTERNS = [
     /\@login_required/,
     /\@permission_required\s*\(/,
@@ -185,9 +188,16 @@ class DjangoAuthTagger < FrameworkTagger
       # read would crash the lines[idx] walks below with IndexError.
       if line && line >= 1 && line <= lines.size
         # Check decorators by walking backwards from endpoint line
-        description = check_decorators(lines, line)
+        description = check_decorators(lines, line, ctx.path)
         if description
           endpoint.add_tag(Tag.new("auth", description, "django_auth"))
+          return
+        end
+
+        # A function view refusing in its own body, or handing this verb to
+        # a function that is guarded.
+        if guard = body_guard(ctx.path, lines, line, endpoint.method, 0)
+          endpoint.add_tag(Tag.new("auth", "Protected by #{guard}", "django_auth"))
           return
         end
 
@@ -214,7 +224,7 @@ class DjangoAuthTagger < FrameworkTagger
     end
   end
 
-  private def check_decorators(lines : Array(String), endpoint_line : Int32) : String?
+  private def check_decorators(lines : Array(String), endpoint_line : Int32, path : String) : String?
     # Walk backwards with no fixed limit — Python decorators stack directly above the def,
     # separated only by other decorators, so we stop at the first blank line or definition.
     idx = endpoint_line - 2 # 0-indexed, one line before
@@ -235,11 +245,109 @@ class DjangoAuthTagger < FrameworkTagger
       if description = method_decorator_auth(current, nil)
         return description
       end
+      # A project decorator, judged by what its definition does.
+      if current.starts_with?('@') && (guard = decorator_guard(current, path))
+        return "Protected by #{guard}"
+      end
 
       idx -= 1
     end
 
     nil
+  end
+
+  # Library decorators are judged by `DECORATOR_PATTERNS` before this is
+  # asked; an unresolved name says nothing.
+  private def decorator_description(line : String) : String?
+    nil
+  end
+
+  # Django spells the refusal of an anonymous caller its own way too: the
+  # 403 response class, a 401/403 status, `PermissionDenied`, or the login
+  # redirect.
+  DJANGO_REFUSAL  = /\bHttpResponseForbidden\s*\(|\bredirect_to_login\s*\(|\bstatus\s*=\s*40[13]\b|\braise\s+(?:\w+\.)*PermissionDenied\b/
+  ANONYMOUS_TEST  = /\bnot\s+request\.user\.is_authenticated\b|\brequest\.user\.is_anonymous\b/
+  METHOD_TEST     = /^(?:if|elif)\b.*(?<![\w.])request\.method\b/
+  RETURNED_HELPER = /\breturn\s+([A-Za-z_][\w.]*)\s*\(\s*request\s*[,)]/
+  DEF_LINE        = /^(?:async\s+)?def\s/
+
+  private def refuses_caller?(body : String) : Bool
+    super || ((body.matches?(CALLER_IDENTITY) || body.matches?(/\bis_anonymous\b/)) && body.matches?(DJANGO_REFUSAL))
+  end
+
+  # The guard a function view's own body applies to `method`, read off its
+  # top-level statements up to the first unconditional `return`: an
+  # `if not request.user.is_authenticated:` block that refuses, or the
+  # guard on the function a dispatcher returns for this verb (`if
+  # request.method == "POST": return create_check(request)`, a trailing
+  # `return get_check(request)` for the verbs no branch took).
+  private def body_guard(path : String, lines : Array(String), def_line : Int32, method : String, depth : Int32) : String?
+    def_idx = def_line - 1
+    return unless (head = lines[def_idx]?) && head.lstrip.matches?(DEF_LINE)
+    def_indent = head.size - head.lstrip.size
+    idx = def_idx
+    parens = 0
+    while idx < lines.size
+      code = Analyzer::Python::Helper.strip_python_comment(lines[idx]).rstrip
+      parens += code.count('(') - code.count(')')
+      break if parens <= 0 && code.ends_with?(':')
+      idx += 1
+    end
+    body = [] of {Int32, String}
+    ((idx + 1)...lines.size).each do |j|
+      code = Analyzer::Python::Helper.strip_python_comment(lines[j]).rstrip
+      next if code.strip.empty?
+      break if code.size - code.lstrip.size <= def_indent
+      body << {code.size - code.lstrip.size, code.strip}
+    end
+    level = body.first?.try(&.[0]) || return
+    method = method.upcase
+    branched = Set(String).new
+    body.each_with_index do |(indent, code), k|
+      next unless indent == level
+      block = body[(k + 1)..].take_while { |entry| entry[0] > level }.map(&.[1])
+      inline = code.partition(':')[2]
+      block.unshift(inline) unless inline.strip.empty?
+      if code.starts_with?("if ") && code.matches?(ANONYMOUS_TEST)
+        text = block.join('\n')
+        return "Django request.user.is_authenticated check" if text.matches?(DJANGO_REFUSAL) || text.matches?(UNAUTHENTICATED) || text.matches?(FORBIDDEN)
+      elsif code.matches?(METHOD_TEST)
+        test = code.split("request.method", 2)[1]
+        next if test.matches?(/\A\s*(?:!=|not\s+in)/)
+        verbs = test.partition(':')[0].scan(/['"]([A-Za-z]+)['"]/).map(&.[1].upcase)
+        branched.concat(verbs)
+        next unless verbs.includes?(method)
+        if depth == 0
+          block.each do |statement|
+            if (helper = statement.match(RETURNED_HELPER)) && (guard = helper_guard(path, helper[1], method))
+              return guard
+            end
+          end
+        end
+        # This verb may be answered here, before any check below.
+        return if block.any?(&.starts_with?("return"))
+      elsif code.starts_with?("return")
+        if depth == 0 && !branched.includes?(method) && (helper = code.match(RETURNED_HELPER))
+          return helper_guard(path, helper[1], method)
+        end
+        return
+      end
+    end
+    nil
+  end
+
+  # The guard on function `name` as `path` refers to it: its decorators,
+  # then its own body.
+  private def helper_guard(path : String, name : String, method : String) : String?
+    site = python_definition_site(path, name) || return
+    file, def_name = site
+    lines = read_file_lines(file) || return
+    def_re = /^(?:async\s+)?def\s+#{Regex.escape(def_name)}\s*\(/
+    def_idx = lines.index(&.matches?(def_re)) || return
+    if guard = check_decorators(lines, def_idx + 1, file)
+      return "#{guard.lchop("Protected by ")} (via #{def_name})"
+    end
+    body_guard(file, lines, def_idx + 1, method, 1).try { |own| "#{own} (via #{def_name})" }
   end
 
   private def check_enclosing_class_mixins(lines : Array(String), endpoint_line : Int32) : String?
