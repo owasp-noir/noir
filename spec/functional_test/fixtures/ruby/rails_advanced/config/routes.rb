@@ -124,6 +124,7 @@ Rails.application.routes.draw do
   # `//` left where a middle segment is removed must collapse.
   get "feed(.:format)", to: "monitor#ping"
   get "report(/:section)/rss", to: "monitor#ping"
+  get "archive(/:year)(/:month)", to: "monitor#ping"
 
   # Optional segments in scope prefixes should be normalized the same way as
   # route literals; the emitted URL is `/localized_ping`, not `/(/:locale)/...`.

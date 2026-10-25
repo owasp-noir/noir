@@ -175,6 +175,10 @@ expected_endpoints = [
   Endpoint.new("/report/:section/rss", "GET", [
     Param.new("X-Ping", "", "header"),
   ]),
+  # Adjacent groups fill in order: never `/archive/:month`.
+  Endpoint.new("/archive", "GET"),
+  Endpoint.new("/archive/:year", "GET"),
+  Endpoint.new("/archive/:year/:month", "GET"),
   Endpoint.new("/localized_ping", "GET", [
     Param.new("X-Ping", "", "header"),
   ]),
@@ -273,7 +277,7 @@ total_endpoints = 1 +  # root
                   1 +  # trends/merged -> tags#merged?
                   3 +  # preferences/notifications show/update inherited from base
                   3 +  # /up + /ping + legacy string-via match
-                  4 +  # optional-segment routes /feed + /report(/:section)/rss + optional scope
+                  7 +  # optional-segment routes /feed + /report(/:section)/rss + /archive(/:year)(/:month) + optional scope
                   2 +  # %w[browse annotate].each unrolled to /repo/:id/browse + /annotate
                   21 + # devise_for :users (default table, model not in scan)
                   3 +  # devise_for :admins, only: [:sessions]
@@ -288,6 +292,10 @@ tester = FunctionalTester.new("fixtures/ruby/rails_advanced/", {
   :endpoints => total_endpoints,
 }, expected_endpoints)
 tester.perform_tests
+
+it "expands adjacent optional groups in order only", tags: "functional" do
+  tester.app.endpoints.map(&.url).should_not contain("/archive/:month")
+end
 
 it "points an inherited action's handler at the parent's def", tags: "functional" do
   update = tester.app.endpoints.find { |e| e.url == "/preferences/notifications" && e.method == "PATCH" }

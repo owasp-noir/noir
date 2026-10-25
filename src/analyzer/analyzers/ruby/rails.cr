@@ -1532,32 +1532,26 @@ module Analyzer::Ruby
       !line.matches?(/\bend\b/)
     end
 
-    # Rails route strings carry optional segments in parentheses —
-    # `(.:format)`, `(/page/:page)`, even nested `(/:length(/page/:page))`.
-    # They are DSL syntax, not part of any concrete URL, so emitting
-    # `/domain/:id(.:format)` hands a consumer a path that 404s when hit
-    # literally. Peel every (possibly nested) optional group down to the
-    # required base path, then collapse the `//` and trailing-`/`
-    # artifacts the removal can leave behind. `(.:format)` is appended to
-    # most Rails string routes, so this touches nearly every app.
     # Every path a route with optional segments answers, shortest first:
     # `/top(/:length(/page/:page))` is `/top`, `/top/:length` and
     # `/top/:length/page/:page`. `(.:format)` is dropped, not expanded.
+    # Adjacent groups nest the way Journey matches them: `/a(/:b)(/:c)`
+    # fills `:b` before `:c`, so it is `/a`, `/a/:b`, `/a/:b/:c`, never
+    # `/a/:c`.
     # ponytail: capped at 8 variants; a route with more keeps the first 8.
     private def optional_route_variants(path : String) : Array(String)
       path = path.gsub("(.:format)", "")
       return [path] unless open = path.index('(')
       # A paren inside `#{...}` is Ruby, not an optional segment.
       return [strip_optional_route_segments(path)] if path.includes?("\#{")
-      depth = 0
-      close = (open...path.size).find do |i|
-        depth += 1 if path[i] == '('
-        depth -= 1 if path[i] == ')'
-        depth == 0
-      end
-      return [strip_optional_route_segments(path)] unless close
+      return [strip_optional_route_segments(path)] unless close = group_close(path, open)
       head, inner, tail = path[0, open], path[(open + 1)...close], path[(close + 1)..]
-      variants = optional_route_variants(head + tail) + optional_route_variants(head + inner + tail)
+      # Without this group, the groups right after it cannot be filled either.
+      rest = tail
+      while rest.starts_with?('(') && (next_close = group_close(rest, 0))
+        rest = rest[(next_close + 1)..]
+      end
+      variants = optional_route_variants(head + rest) + optional_route_variants(head + inner + tail)
       variants.map! do |variant|
         variant = variant.gsub(%r{/{2,}}, "/")
         variant.size > 1 && variant.ends_with?('/') ? variant.rchop('/') : variant
@@ -1565,6 +1559,24 @@ module Analyzer::Ruby
       variants.uniq!.first(8)
     end
 
+    # The index of the `)` closing the group opened at `path[open]`.
+    private def group_close(path : String, open : Int32) : Int32?
+      depth = 0
+      (open...path.size).find do |i|
+        depth += 1 if path[i] == '('
+        depth -= 1 if path[i] == ')'
+        depth == 0
+      end
+    end
+
+    # Rails route strings carry optional segments in parentheses —
+    # `(.:format)`, `(/page/:page)`, even nested `(/:length(/page/:page))`.
+    # They are DSL syntax, not part of any concrete URL, so emitting
+    # `/domain/:id(.:format)` hands a consumer a path that 404s when hit
+    # literally. Peel every (possibly nested) optional group down to the
+    # required base path, then collapse the `//` and trailing-`/`
+    # artifacts the removal can leave behind. Scope prefixes use it; a
+    # route path expands through `optional_route_variants`.
     private def strip_optional_route_segments(path : String) : String
       return path unless path.includes?('(')
 
