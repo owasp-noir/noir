@@ -4,7 +4,16 @@ from flask_restful import Api, Resource
 from funcy import project
 from wtforms import Form, PasswordField, StringField
 
-from helpers import order_results, org_scoped_rule, require_fields, versioned_rule
+from helpers import (
+    legacy_reader,
+    nested_rule,
+    order_results,
+    org_scoped_rule,
+    paginate,
+    reassigned_rule,
+    require_fields,
+    versioned_rule,
+)
 
 app = Flask(__name__)
 routes = Blueprint("app", __name__)
@@ -13,6 +22,11 @@ api = Api(app)
 
 def rate_limit(view):
     return view
+
+
+# Shares a name with a verb method; only a call reaches a helper.
+def post(url):
+    return request.args.get("module_post_only")
 
 
 class BaseResource(Resource):
@@ -28,9 +42,11 @@ class BaseListResource(BaseResource):
 # `get` is inherited from BaseListResource, the guard from BaseResource.
 class ItemListResource(BaseListResource):
     def post(self):
+        # legacy_reader() is gone; "legacy_reader()" in a string is no call
+        note = "see legacy_reader()"
         req = request.get_json(True)
         require_fields(req, ("name", "kind"))
-        return {}
+        return note
 
 
 # A list built on the base class's keeps its guard.
@@ -52,6 +68,9 @@ class LoginForm(Form):
     email = StringField("Email")
     password = PasswordField("Password")
 
+    class Meta:
+        csrf_field = StringField("csrf")
+
 
 @routes.route(org_scoped_rule("/login"), methods=["GET", "POST"])
 def login(org_slug=None):
@@ -63,6 +82,22 @@ def login(org_slug=None):
 @routes.route(versioned_rule("/legacy"))
 def legacy():
     return "never served at /legacy"
+
+
+@routes.route(reassigned_rule("/reassigned"))
+def reassigned():
+    return "served at /api/reassigned"
+
+
+@routes.route(nested_rule("/nested"))
+def nested():
+    return "served at /v3/nested"
+
+
+# Two hops: paginate() -> paging.read_page() reads `page`.
+@routes.route("/pages")
+def pages():
+    return paginate()
 
 
 api.add_resource(ItemListResource, "/items")

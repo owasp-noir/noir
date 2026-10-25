@@ -4,6 +4,7 @@ require "../../../miniparsers/python_route_extractor_ts"
 require "../../engines/python_engine"
 require "./flask_family"
 require "../../../utils/worker_threads"
+require "../../../utils/python_mro"
 
 module Analyzer::Python
   class Flask < PythonEngine
@@ -475,7 +476,25 @@ module Analyzer::Python
       lines = fetch_file_lines(target[0])
       idx = find_function_def(lines, target[1]) || return false
       param = lines[idx].match(/\(\s*([A-Za-z_]\w*)/).try(&.[1]) || return false
-      extract_function_body(lines, idx).each_line.any? { |line| line.strip == "return #{param}" }
+      reassign = /^\s*(?:#{param}\s*(?:[-+*\/%@&|^]|\/\/|\*\*|>>|<<)?=(?!=)|for\s+#{param}\b|with\b.*\bas\s+#{param}\b)|\b#{param}\s*:=/
+      returns = false
+      nested = nil
+      extract_function_body(lines, idx).each_line do |line|
+        next if line.blank?
+        indent = line.size - line.lstrip.size
+        # A nested `def`/`class` body is another scope: its `return rule`
+        # is not the wrapper's.
+        next if (n = nested) && indent > n
+        nested = nil
+        stripped = strip_python_comment(line).strip
+        if stripped.starts_with?("def ") || stripped.starts_with?("async def ") || stripped.starts_with?("class ")
+          nested = indent
+          next
+        end
+        return false if stripped.matches?(reassign)
+        returns ||= stripped == "return #{param}"
+      end
+      returns
     rescue
       false
     end
@@ -960,14 +979,22 @@ module Analyzer::Python
 
           next if class_def_index == -1
 
-          indent = class_lines[class_def_index].size - class_lines[class_def_index].lstrip.size
           chain = class_view_chain(class_file, class_lines, class_def_index)
+          dispatcher = own_dispatcher(chain)
 
-          # If no explicit methods, infer from class method definitions,
-          # inherited ones included.
+          # Flask's `methods` attribute, inherited like any other; else a
+          # `View` with its own `dispatch_request` serves GET, and a
+          # `MethodView`/`Resource` the verbs its MRO defines.
           if methods.empty?
-            methods.concat(extract_class_declared_methods(class_lines, class_def_index, indent))
-
+            chain.each do |link|
+              declared = extract_class_declared_methods(link.lines, link.def_index, link.indent)
+              unless declared.empty?
+                methods.concat(declared)
+                break
+              end
+            end
+          end
+          if methods.empty? && dispatcher.nil?
             chain.each do |link|
               i = link.def_index + 1
               while i < link.lines.size
@@ -983,30 +1010,28 @@ module Analyzer::Python
                 i += 1
               end
             end
-            # Default to GET if no HTTP methods inferred (matches Flask behavior)
-            methods << "GET" if methods.empty?
           end
+          # Default to GET if no HTTP methods inferred (matches Flask behavior)
+          methods << "GET" if methods.empty?
 
           # Process each declared method
           methods.uniq.each do |http_method|
             method_name = http_method.downcase
 
-            # Find method definition in the class or the nearest base
-            # defining it; the class's own `dispatch_request` otherwise.
-            # ponytail: the handler names the defining base class, so the
-            # auth tagger reads that class's `decorators`, not an override
-            # on the registered subclass; carry the registered class on the
-            # endpoint if such overrides turn up.
-            method_file, method_lines, method_def_index = class_file, class_lines, -1
-            chain.each do |link|
-              method_def_index = find_class_method_def(link.lines, link.def_index, link.indent, method_name)
-              if method_def_index != -1
-                method_file, method_lines = link.file, link.lines
-                break
+            # The project `dispatch_request` serves every method; else the
+            # first class in the MRO defining the verb.
+            method_link, method_def_index = dispatcher || {chain[0], -1}
+            if dispatcher.nil?
+              chain.each do |link|
+                method_def_index = find_class_method_def(link.lines, link.def_index, link.indent, method_name)
+                if method_def_index != -1
+                  method_link = link
+                  break
+                end
               end
             end
-            method_def_index = find_class_method_def(class_lines, class_def_index, indent, "dispatch_request") if method_def_index == -1
             next if method_def_index == -1
+            method_file, method_lines = method_link.file, method_link.lines
 
             # Parse method code block
             codeblock = parse_code_block(method_lines[method_def_index..])
@@ -1024,6 +1049,9 @@ module Analyzer::Python
               route_url = route_url.gsub("//", "/")
 
               details = Details.new(PathInfo.new(method_file, method_def_index + 1))
+              # An inherited method: the registered class is where its
+              # `decorators` resolve, so the auth tagger reads it from here.
+              details.add_path(PathInfo.new(class_file, class_def_index + 1)) unless method_link.file == class_file && method_link.def_index == class_def_index
               endpoint = Endpoint.new(route_url, http_method, params.dup)
               endpoint.details = details
               endpoint.handler = handler_at(method_lines, method_def_index, method_file)
@@ -1084,39 +1112,53 @@ module Analyzer::Python
     private record ClassLink, file : ::String, lines : Array(::String), def_index : Int32, indent : Int32
 
     # The class at `def_index` followed by the project classes it inherits
-    # from, depth first, left to right. Flask's `MethodView` and
-    # flask-restful's `Resource` dispatch to `getattr(self, verb)`, so a
-    # verb method a base class defines (redash's `BaseQueryListResource.get`)
-    # serves every subclass that doesn't override it. Bases outside the
-    # project (`Resource` itself) end the walk.
+    # from, in Python's method resolution order (C3). Flask's `MethodView`
+    # and flask-restful's `Resource` dispatch to `getattr(self, verb)`, so
+    # a verb method a base class defines (redash's
+    # `BaseQueryListResource.get`) serves every subclass that doesn't
+    # override it. Bases outside the project (`Resource` itself) are left
+    # out.
     private def class_view_chain(file : ::String, lines : Array(::String), def_index : Int32) : Array(ClassLink)
-      chain = [] of ClassLink
-      seen = Set(Tuple(::String, Int32)).new
-      walk_class_view_chain(file, lines, def_index, chain, seen)
-      chain
+      Noir::PythonMRO.linearize({file, def_index}) { |node| class_view_bases(node[0], node[1]) }.map do |node|
+        node_lines = fetch_file_lines(node[0])
+        ClassLink.new(node[0], node_lines, node[1], node_lines[node[1]].size - node_lines[node[1]].lstrip.size)
+      end
     end
 
-    private def walk_class_view_chain(file : ::String, lines : Array(::String), def_index : Int32,
-                                      chain : Array(ClassLink), seen : Set(Tuple(::String, Int32))) : Nil
-      return if chain.size > 8 || !seen.add?({file, def_index})
-      chain << ClassLink.new(file, lines, def_index, lines[def_index].size - lines[def_index].lstrip.size)
+    # `{file, class line}` of each project class the class at `def_index`
+    # in `file` names as a base, in order.
+    private def class_view_bases(file : ::String, def_index : Int32) : Array(Tuple(::String, Int32))
+      bases = [] of Tuple(::String, Int32)
+      lines = fetch_file_lines(file)
       header, _ = python_class_header(lines, def_index)
-      open = header.index('(') || return
-      close = header.rindex(')') || return
-      return if close <= open
+      open = header.index('(') || return bases
+      close = header.rindex(')') || return bases
+      return bases if close <= open
       split_python_call_args(header[(open + 1)...close]).each do |raw|
         base = raw.strip.split('[', 2)[0].strip
         next unless base.matches?(/^[A-Za-z_][\w.]*$/)
-        target = base.includes?('.') ? nil : {file, base}
-        if target && find_python_class_def(lines, base) == -1
-          target = nil
-        end
-        target ||= imported_declaration(file, base)
+        target = base.includes?('.') || find_python_class_def(lines, base) == -1 ? imported_declaration(file, base) : {file, base}
         next unless target
-        base_lines = fetch_file_lines(target[0])
-        base_index = find_python_class_def(base_lines, target[1])
-        walk_class_view_chain(target[0], base_lines, base_index, chain, seen) if base_index >= 0
+        base_index = find_python_class_def(fetch_file_lines(target[0]), target[1])
+        bases << {target[0], base_index} if base_index >= 0
       end
+      bases
+    end
+
+    # The `dispatch_request` the class's MRO resolves to in project code,
+    # as `{link, def index}`, unless it hands the request back to the
+    # framework's per-verb dispatch (`super().dispatch_request(...)`,
+    # `getattr(self, ...)`) as redash's `BaseResource` does. Flask's `View`
+    # serves every method through it; verbs then don't apply.
+    private def own_dispatcher(chain : Array(ClassLink)) : Tuple(ClassLink, Int32)?
+      chain.each do |link|
+        idx = find_class_method_def(link.lines, link.def_index, link.indent, "dispatch_request")
+        next if idx == -1
+        body = extract_function_body(link.lines, idx)
+        return if body.matches?(/\bsuper\b[^\n]*\.dispatch_request\s*\(|\bgetattr\s*\(\s*self\b/)
+        return {link, idx}
+      end
+      nil
     end
 
     private def find_class_method_def(class_lines : Array(::String), class_def_index : Int32, class_indent : Int32, method_name : ::String) : Int32
@@ -1763,7 +1805,6 @@ module Analyzer::Python
     end
 
     REQUEST_MEMBERSHIP_RE = /['"]([^'"]+)['"]\s+(?:not\s+)?in\s+request\.(\w+)\b/
-    BARE_CALL_RE          = /(?<![\w.])([A-Za-z_]\w*)\s*\(/
     # `helper(body, ("a", "b"))`: a JSON body handed to a call with a
     # literal tuple or list of key names.
     KEYS_CALL_RE = /(?<![\w.])([A-Za-z_][\w.]*)\(\s*([A-Za-z_]\w*)\s*,\s*[(\[]((?:\s*[rbu]?['"][^'"]*['"]\s*,?)+)[)\]]/
@@ -1781,9 +1822,9 @@ module Analyzer::Python
     private def indirect_request_params(codeblock_lines : Array(::String), path : ::String) : Array(Param)
       params = [] of Param
       lines = fold_python_continuations(codeblock_lines)
-      body = lines.join("\n")
       json_vars = json_variable_names(lines)
-      helper_request_params(body, path, 0, Set(Tuple(::String, Int32)).new, params)
+      helper_request_params(codeblock_lines.join("\n"), path, 0, Set(Tuple(::String, Int32)).new, params)
+      body = lines.map { |line| strip_python_comment(line) }.join("\n")
       unless json_vars.empty?
         body.scan(KEYS_CALL_RE) do |m|
           next unless json_vars.includes?(m[2]) && reads_listed_keys?(path, m[1])
@@ -1795,9 +1836,13 @@ module Analyzer::Python
           next unless target = class_definition(path, m[1])
           form_lines, class_index = target
           indent = form_lines[class_index].size - form_lines[class_index].lstrip.size
+          body_indent = nil
           form_lines[(class_index + 1)..].each do |line|
             next if line.blank?
-            break if line.size - line.lstrip.size <= indent
+            line_indent = line.size - line.lstrip.size
+            break if line_indent <= indent
+            # The form's own fields: a nested `class Meta:` is not one.
+            next unless line_indent == (body_indent ||= line_indent)
             if field = line.match(FORM_FIELD_RE)
               params << Param.new(field[1], "", "form")
             end
@@ -1807,17 +1852,22 @@ module Analyzer::Python
       params
     end
 
-    # `request.*` reads in the functions `body` (in `path`) calls by name,
-    # and in theirs: two hops, so a module's thin wrapper over a shared
-    # helper (`order_results` → `base.order_results`) still counts.
-    private def helper_request_params(body : ::String, path : ::String, depth : Int32,
+    # `request.*` reads in the functions the `def` in `source` (in `path`)
+    # calls by name, and in theirs: two hops, so a module's thin wrapper
+    # over a shared helper (`order_results` → `base.order_results`) still
+    # counts. Calls are read off the syntax tree, so a name in a comment or
+    # string, or the `def` line itself, is not a call.
+    private def helper_request_params(source : ::String, path : ::String, depth : Int32,
                                       seen : Set(Tuple(::String, Int32)), params : Array(Param)) : Nil
-      body.scan(BARE_CALL_RE) do |m|
-        next unless target = function_definition(path, m[1])
+      margin = source.size - source.lstrip.size
+      source = source.lines.map { |line| line.lchop(line[0, Math.min(margin, line.size - line.lstrip.size)]) }.join('\n') if margin > 0
+      Noir::PythonCalleeExtractor.calls_in(source).each do |name, _|
+        next if name.includes?('.')
+        next unless target = function_definition(path, name)
         next unless seen.add?({target[2], target[1]})
-        helper_body = extract_function_body(target[0], target[1])
-        params.concat(extract_request_params(helper_body.lines)) if helper_body.includes?("request.")
-        helper_request_params(helper_body, target[2], depth + 1, seen, params) if depth < 1
+        helper_source = parse_code_block(target[0][target[1]..]) || next
+        params.concat(extract_request_params(helper_source.lines)) if helper_source.includes?("request.")
+        helper_request_params(helper_source, target[2], depth + 1, seen, params) if depth < 1
       end
     end
 

@@ -2,6 +2,8 @@ from functools import partial
 
 from flask import abort, request
 
+from paging import read_page
+
 MULTI_ORG = False
 
 
@@ -17,12 +19,34 @@ def versioned_rule(rule):
     return "/v2" + rule
 
 
+# Rewrites the rule before returning it.
+def reassigned_rule(rule):
+    rule = "/api" + rule
+    return rule
+
+
+# The unchanged `return rule` belongs to a nested function.
+def nested_rule(rule):
+    def inner(rule):
+        return rule
+
+    return "/v3" + inner(rule)
+
+
 def _order_results(results, allowed):
     requested = request.args.get("order", "")
     return allowed.get(requested, results)
 
 
 order_results = partial(_order_results, allowed={})
+
+
+def paginate():
+    return read_page()
+
+
+def legacy_reader():
+    return request.args.get("legacy_token")
 
 
 def require_fields(req, fields):

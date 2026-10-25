@@ -1,11 +1,15 @@
 require "../../func_spec.cr"
 
 # Resource verbs inherited from a project base class, a route rule wrapped
-# in a helper that returns it unchanged by default (and one that always
-# rewrites it, which is not emitted), and request params read through
-# helpers: a two-hop `partial` wrapper reading `request.args`, a JSON body
-# handed to a key-checking helper or funcy's `project`, a WTForms form
-# bound to `request.form`, and a `"key" in request.form` test.
+# in a helper that returns it unchanged by default (wrappers that rewrite
+# it, reassign it before returning it, or return it only from a nested
+# function are not emitted), and request params read through helpers: a
+# two-hop `partial` wrapper and a two-hop function chain reading
+# `request.args`, a JSON body handed to a key-checking helper or funcy's
+# `project`, a WTForms form's own fields (not its `Meta`'s) bound to
+# `request.form`, and a `"key" in request.form` test. A helper named only
+# in a comment or string, or sharing its name with the verb's `def`, is
+# not followed.
 expected_endpoints = [
   Endpoint.new("/items", "GET", [Param.new("q", "", "query"), Param.new("order", "", "query")]),
   Endpoint.new("/items", "POST", [Param.new("name", "", "json"), Param.new("kind", "", "json")]),
@@ -21,6 +25,7 @@ expected_endpoints = [
     Param.new("email", "", "form"),
     Param.new("password", "", "form"),
   ]),
+  Endpoint.new("/pages", "GET", [Param.new("page", "", "query")]),
 ]
 
 FunctionalTester.new("fixtures/python/flask_restful_inherited/", {
