@@ -48,7 +48,7 @@ class FlaskAuthTagger < FrameworkTagger
 
   def initialize(options : Hash(String, YAML::Any))
     super
-    @class_decorators = Hash(Tuple(String, String), Tuple(String, Array(String))?).new
+    @class_decorators = Hash(Tuple(String, String), Array(Tuple(String, String))?).new
     @authz_params = Hash(Tuple(String, String, Int32), Array(String)?).new
   end
 
@@ -119,7 +119,7 @@ class FlaskAuthTagger < FrameworkTagger
     decorators = [] of Tuple(String, String)
     class_name = handler.name.rpartition('.')[0]
     if !class_name.empty? && (found = class_decorators(file, class_name))
-      found[1].each { |name| decorators << {"@#{name}", found[0]} }
+      found.each { |declaring_file, name| decorators << {"@#{name}", declaring_file} }
     end
     decorators_above(lines, def_idx).reverse_each { |line| decorators << {line, file} }
     auth = authz = nil
@@ -231,16 +231,18 @@ class FlaskAuthTagger < FrameworkTagger
   end
 
   # `method_decorators` / `decorators` of class `name` in `file`, or of the
-  # nearest base class declaring them, with the file that declares the
-  # list (where its names resolve). Every method of a class asks, so the
-  # answer is kept per class.
-  private def class_decorators(file : String, name : String, depth : Int32 = 0) : Tuple(String, Array(String))?
+  # nearest base class declaring them, each with the file that declares it
+  # (where its name resolves). A list built from another class's
+  # (`decorators = BaseResource.decorators + [limiter.limit(...)]`) holds
+  # that class's entries. Every method of a class asks, so the answer is
+  # kept per class.
+  private def class_decorators(file : String, name : String, depth : Int32 = 0) : Array(Tuple(String, String))?
     key = {file, name}
     return @class_decorators[key] if @class_decorators.has_key?(key)
     @class_decorators[key] = depth > 5 ? nil : scan_class_decorators(file, name, depth)
   end
 
-  private def scan_class_decorators(file : String, name : String, depth : Int32) : Tuple(String, Array(String))?
+  private def scan_class_decorators(file : String, name : String, depth : Int32) : Array(Tuple(String, String))?
     lines = read_file_lines(file) || return
     start = lines.index { |line| line.match(CLASS_DEF).try(&.[1]) == name } || return
     idx = start + 1
@@ -250,22 +252,32 @@ class FlaskAuthTagger < FrameworkTagger
         while text.count("([{") > text.count(")]}") && (idx += 1) < lines.size
           text += lines[idx]
         end
-        names = text.gsub(PY_STRING, "").scan(/(?:^\s*[\[({]?|[\[,{:])\s*([A-Za-z_][\w.]*)/).map(&.[1])
-        return {file, names}
+        names = text.gsub(PY_STRING, "").scan(/(?:^\s*[\[({]?|[\[,{:+])\s*([A-Za-z_][\w.]*)/).map(&.[1])
+        return names.flat_map do |entry|
+          if (ref = entry.match(/^(.+)\.(?:method_decorators|decorators)$/)) && (target = resolve_class(file, ref[1]))
+            class_decorators(target[0], target[1], depth + 1) || [] of Tuple(String, String)
+          else
+            [{file, entry}]
+          end
+        end
       end
       idx += 1
     end
     lines[start].match(CLASS_DEF).try(&.[2]?).to_s.split(',').each do |base|
       base = base.strip
       next if base.empty? || base.includes?('=')
-      target = resolve(file, base) do |path, class_name|
-        !!read_file_lines(path).try(&.any? { |line| line.match(CLASS_DEF).try(&.[1]) == class_name })
-      end
+      target = resolve_class(file, base)
       if target && (found = class_decorators(target[0], target[1], depth + 1))
         return found
       end
     end
     nil
+  end
+
+  private def resolve_class(file : String, name : String) : Tuple(String, String)?
+    resolve(file, name) do |path, class_name|
+      !!read_file_lines(path).try(&.any? { |line| line.match(CLASS_DEF).try(&.[1]) == class_name })
+    end
   end
 
   private def decorator_description(line : String) : String?

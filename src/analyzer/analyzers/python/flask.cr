@@ -214,7 +214,7 @@ module Analyzer::Python
       # Previously each table re-parsed the file; multi-line decorators
       # still need the AST (regex can't see them).
       ts_decorations, ts_blueprints = Noir::TreeSitterPythonRouteExtractor.extract_decorations_and_blueprints(
-        file_content, ["flask"]
+        file_content, ["flask"], rule_wrappers: true
       )
       decorations_by_line = Hash(Int32, Array(Noir::TreeSitterPythonRouteExtractor::Decoration)).new
       ts_decorations.each do |d|
@@ -443,6 +443,7 @@ module Analyzer::Python
     private def record_decorated_routes(fs : SourceScan, line_index : Int32) : Nil
       if ts_hits = fs.decorations_by_line[line_index]?
         ts_hits.each do |decoration|
+          next unless decoration.rule_wrapper.empty? || serves_rule_unchanged?(fs.path, decoration.rule_wrapper)
           methods_literal = decoration.methods.map { |m| "'#{m}'" }.join(",")
           extra_params = "methods=[#{methods_literal}]"
           router_info = Tuple(Int32, ::String, ::String, ::String).new(line_index, fs.path, decoration.path, extra_params)
@@ -450,6 +451,33 @@ module Analyzer::Python
           @routes[decoration.router_name] << router_info
         end
       end
+    end
+
+    @rule_wrapper_verdicts = Hash(Tuple(::String, ::String), Bool).new
+
+    # Whether `name` (called in `path` to wrap a route rule) is defined to
+    # hand its rule back unchanged on some path (`return rule`), so the
+    # literal is the path served by default. Redash's `org_scoped_rule`
+    # prepends `/<org_slug>` only when a setting is on; a wrapper that
+    # always rewrites the rule, or one whose definition can't be read, is
+    # not taken.
+    private def serves_rule_unchanged?(path : ::String, name : ::String) : Bool
+      key = {path, name}
+      cached = @rule_wrapper_verdicts[key]?
+      return cached unless cached.nil?
+      @rule_wrapper_verdicts[key] = rule_wrapper_identity?(path, name)
+    end
+
+    private def rule_wrapper_identity?(path : ::String, name : ::String) : Bool
+      target = imported_declaration(path, name)
+      target ||= {path, name} unless name.includes?('.')
+      return false unless target
+      lines = fetch_file_lines(target[0])
+      idx = find_function_def(lines, target[1]) || return false
+      param = lines[idx].match(/\(\s*([A-Za-z_]\w*)/).try(&.[1]) || return false
+      extract_function_body(lines, idx).each_line.any? { |line| line.strip == "return #{param}" }
+    rescue
+      false
     end
 
     # Identify view assignments: view_var = ClassName.as_view('name')
@@ -857,7 +885,9 @@ module Analyzer::Python
             # decorator's synthesized `methods=['GET']` default must not
             # override it (function routers still honour `methods=`).
             method_extra_params = is_class_router ? "" : extra_params
+            indirect_params = indirect_request_params(codeblock_lines, path)
             (prefixes || [prefix]).flat_map { |p| get_endpoints(method, route_path, method_extra_params, codeblock_lines, p) }.each do |endpoint|
+              get_filtered_params(endpoint.method, indirect_params).each { |param| endpoint.push_param(param) }
               details = Details.new(PathInfo.new(path, line_index + 1))
               endpoint.details = details
               endpoint.handler = handler_at(lines, _class_def_index, path)
@@ -931,23 +961,27 @@ module Analyzer::Python
           next if class_def_index == -1
 
           indent = class_lines[class_def_index].size - class_lines[class_def_index].lstrip.size
+          chain = class_view_chain(class_file, class_lines, class_def_index)
 
-          # If no explicit methods, infer from class method definitions
+          # If no explicit methods, infer from class method definitions,
+          # inherited ones included.
           if methods.empty?
             methods.concat(extract_class_declared_methods(class_lines, class_def_index, indent))
 
-            i = class_def_index + 1
-            while i < class_lines.size
-              infer_match = class_lines[i].match /(\s*)(async\s+)?def\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\(/
-              if infer_match && infer_match[1].size > indent
-                method_name = infer_match[3]
-                inferred_method = HTTP_METHODS.find { |m| m.downcase == method_name.downcase }
-                methods << inferred_method.upcase if inferred_method
+            chain.each do |link|
+              i = link.def_index + 1
+              while i < link.lines.size
+                infer_match = link.lines[i].match /(\s*)(async\s+)?def\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\(/
+                if infer_match && infer_match[1].size > link.indent
+                  method_name = infer_match[3]
+                  inferred_method = HTTP_METHODS.find { |m| m.downcase == method_name.downcase }
+                  methods << inferred_method.upcase if inferred_method
+                end
+                # Stop if we hit another class at same or higher level
+                class_match = link.lines[i].match /(\s*)class\s+/
+                break if class_match && class_match[1].size <= link.indent
+                i += 1
               end
-              # Stop if we hit another class at same or higher level
-              class_match = class_lines[i].match /(\s*)class\s+/
-              break if class_match && class_match[1].size <= indent && i != class_def_index
-              i += 1
             end
             # Default to GET if no HTTP methods inferred (matches Flask behavior)
             methods << "GET" if methods.empty?
@@ -957,18 +991,30 @@ module Analyzer::Python
           methods.uniq.each do |http_method|
             method_name = http_method.downcase
 
-            # Find method definition in class
-            method_def_index = find_class_method_def(class_lines, class_def_index, indent, method_name)
+            # Find method definition in the class or the nearest base
+            # defining it; the class's own `dispatch_request` otherwise.
+            # ponytail: the handler names the defining base class, so the
+            # auth tagger reads that class's `decorators`, not an override
+            # on the registered subclass; carry the registered class on the
+            # endpoint if such overrides turn up.
+            method_file, method_lines, method_def_index = class_file, class_lines, -1
+            chain.each do |link|
+              method_def_index = find_class_method_def(link.lines, link.def_index, link.indent, method_name)
+              if method_def_index != -1
+                method_file, method_lines = link.file, link.lines
+                break
+              end
+            end
             method_def_index = find_class_method_def(class_lines, class_def_index, indent, "dispatch_request") if method_def_index == -1
             next if method_def_index == -1
 
             # Parse method code block
-            codeblock = parse_code_block(class_lines[method_def_index..])
+            codeblock = parse_code_block(method_lines[method_def_index..])
             next if codeblock.nil?
             codeblock_lines = codeblock.split("\n")
 
             # Extract parameters from method body
-            suspicious_params = extract_request_params(codeblock_lines)
+            suspicious_params = extract_request_params(codeblock_lines) + indirect_request_params(codeblock_lines, method_file)
             params = get_filtered_params(http_method, suspicious_params)
 
             prefixes.each do |route_prefix|
@@ -977,18 +1023,18 @@ module Analyzer::Python
               route_url = "/#{route_url}" unless route_url.starts_with?("/")
               route_url = route_url.gsub("//", "/")
 
-              details = Details.new(PathInfo.new(class_file, method_def_index + 1))
+              details = Details.new(PathInfo.new(method_file, method_def_index + 1))
               endpoint = Endpoint.new(route_url, http_method, params.dup)
               endpoint.details = details
-              endpoint.handler = handler_at(class_lines, method_def_index, class_file)
+              endpoint.handler = handler_at(method_lines, method_def_index, method_file)
 
               push_callees_from(
                 endpoint,
                 codeblock,
                 method_def_index,
-                class_file,
-                definition_base_path: python_base_path_for(class_file),
-                source: fetch_file_content(class_file),
+                method_file,
+                definition_base_path: python_base_path_for(method_file),
+                source: fetch_file_content(method_file),
               )
 
               result << endpoint
@@ -1031,6 +1077,46 @@ module Analyzer::Python
         end
       end
       aliases
+    end
+
+    # A class in the base chain of a class view: its file, lines, `class`
+    # line and indent.
+    private record ClassLink, file : ::String, lines : Array(::String), def_index : Int32, indent : Int32
+
+    # The class at `def_index` followed by the project classes it inherits
+    # from, depth first, left to right. Flask's `MethodView` and
+    # flask-restful's `Resource` dispatch to `getattr(self, verb)`, so a
+    # verb method a base class defines (redash's `BaseQueryListResource.get`)
+    # serves every subclass that doesn't override it. Bases outside the
+    # project (`Resource` itself) end the walk.
+    private def class_view_chain(file : ::String, lines : Array(::String), def_index : Int32) : Array(ClassLink)
+      chain = [] of ClassLink
+      seen = Set(Tuple(::String, Int32)).new
+      walk_class_view_chain(file, lines, def_index, chain, seen)
+      chain
+    end
+
+    private def walk_class_view_chain(file : ::String, lines : Array(::String), def_index : Int32,
+                                      chain : Array(ClassLink), seen : Set(Tuple(::String, Int32))) : Nil
+      return if chain.size > 8 || !seen.add?({file, def_index})
+      chain << ClassLink.new(file, lines, def_index, lines[def_index].size - lines[def_index].lstrip.size)
+      header, _ = python_class_header(lines, def_index)
+      open = header.index('(') || return
+      close = header.rindex(')') || return
+      return if close <= open
+      split_python_call_args(header[(open + 1)...close]).each do |raw|
+        base = raw.strip.split('[', 2)[0].strip
+        next unless base.matches?(/^[A-Za-z_][\w.]*$/)
+        target = base.includes?('.') ? nil : {file, base}
+        if target && find_python_class_def(lines, base) == -1
+          target = nil
+        end
+        target ||= imported_declaration(file, base)
+        next unless target
+        base_lines = fetch_file_lines(target[0])
+        base_index = find_python_class_def(base_lines, target[1])
+        walk_class_view_chain(target[0], base_lines, base_index, chain, seen) if base_index >= 0
+      end
     end
 
     private def find_class_method_def(class_lines : Array(::String), class_def_index : Int32, class_indent : Int32, method_name : ::String) : Int32
@@ -1080,7 +1166,7 @@ module Analyzer::Python
         end
       end
       Noir::WorkerThreads.map(sources) do |source|
-        Noir::TreeSitterPythonRouteExtractor.extract_decorations_and_blueprints(source, ["flask"])
+        Noir::TreeSitterPythonRouteExtractor.extract_decorations_and_blueprints(source, ["flask"], rule_wrappers: true)
         nil
       end
     end
@@ -1676,19 +1762,132 @@ module Analyzer::Python
       view_arg.matches?(DOTTED_REFERENCE_RE) ? view_arg : ""
     end
 
-    # Extracts request parameters from a code block by detecting JSON variable
-    # assignments and scanning for request.field access patterns.
-    private def extract_request_params(codeblock_lines : Array(::String)) : Array(Param)
-      codeblock_lines = fold_python_continuations(codeblock_lines)
-      params = [] of Param
-      json_variable_names = [] of ::String
+    REQUEST_MEMBERSHIP_RE = /['"]([^'"]+)['"]\s+(?:not\s+)?in\s+request\.(\w+)\b/
+    BARE_CALL_RE          = /(?<![\w.])([A-Za-z_]\w*)\s*\(/
+    # `helper(body, ("a", "b"))`: a JSON body handed to a call with a
+    # literal tuple or list of key names.
+    KEYS_CALL_RE = /(?<![\w.])([A-Za-z_][\w.]*)\(\s*([A-Za-z_]\w*)\s*,\s*[(\[]((?:\s*[rbu]?['"][^'"]*['"]\s*,?)+)[)\]]/
+    # `Form(request.form)`: a WTForms form bound to the posted form data.
+    FORM_BIND_RE  = /(?<![\w.])([A-Za-z_][\w.]*)\(\s*(?:formdata\s*=\s*)?request\.form\b/
+    FORM_FIELD_RE = /^\s+([A-Za-z_]\w*)\s*=\s*(?:[A-Za-z_]\w*\.)*\w*Field\s*\(/
 
+    # Request params the handler body reads through code it calls, judged
+    # by that code's definition: a project function it calls by name that
+    # reads `request.*` itself (redash's `order_results` reading
+    # `request.args["order"]`), a helper handed the JSON body with a tuple
+    # of key names that it reads or tests (`require_fields(req, ("a",))`,
+    # funcy's `project(req, keys)`), and the fields of a WTForms form bound
+    # to `request.form`. One hop: the helper's own calls are not followed.
+    private def indirect_request_params(codeblock_lines : Array(::String), path : ::String) : Array(Param)
+      params = [] of Param
+      lines = fold_python_continuations(codeblock_lines)
+      body = lines.join("\n")
+      json_vars = json_variable_names(lines)
+      helper_request_params(body, path, 0, Set(Tuple(::String, Int32)).new, params)
+      unless json_vars.empty?
+        body.scan(KEYS_CALL_RE) do |m|
+          next unless json_vars.includes?(m[2]) && reads_listed_keys?(path, m[1])
+          m[3].scan(/['"]([^'"]*)['"]/) { |k| params << Param.new(k[1], "", "json") }
+        end
+      end
+      if body.includes?("request.form")
+        body.scan(FORM_BIND_RE) do |m|
+          next unless target = class_definition(path, m[1])
+          form_lines, class_index = target
+          indent = form_lines[class_index].size - form_lines[class_index].lstrip.size
+          form_lines[(class_index + 1)..].each do |line|
+            next if line.blank?
+            break if line.size - line.lstrip.size <= indent
+            if field = line.match(FORM_FIELD_RE)
+              params << Param.new(field[1], "", "form")
+            end
+          end
+        end
+      end
+      params
+    end
+
+    # `request.*` reads in the functions `body` (in `path`) calls by name,
+    # and in theirs: two hops, so a module's thin wrapper over a shared
+    # helper (`order_results` → `base.order_results`) still counts.
+    private def helper_request_params(body : ::String, path : ::String, depth : Int32,
+                                      seen : Set(Tuple(::String, Int32)), params : Array(Param)) : Nil
+      body.scan(BARE_CALL_RE) do |m|
+        next unless target = function_definition(path, m[1])
+        next unless seen.add?({target[2], target[1]})
+        helper_body = extract_function_body(target[0], target[1])
+        params.concat(extract_request_params(helper_body.lines)) if helper_body.includes?("request.")
+        helper_request_params(helper_body, target[2], depth + 1, seen, params) if depth < 1
+      end
+    end
+
+    # `{lines, def index}` of function `name` as `path` refers to it: a
+    # module-level `def` in `path`, or the definition it imports.
+    @function_definitions = Hash(Tuple(::String, ::String), Tuple(Array(::String), Int32, ::String)?).new
+
+    # A module-level `name = partial(func, ...)` binds `name` to `func`.
+    # Every endpoint asks about each name it calls, so answers are kept.
+    private def function_definition(path : ::String, name : ::String) : Tuple(Array(::String), Int32, ::String)?
+      key = {path, name}
+      return @function_definitions[key] if @function_definitions.has_key?(key)
+      @function_definitions[key] = scan_function_definition(path, name)
+    end
+
+    private def scan_function_definition(path : ::String, name : ::String, alias_hop : Bool = true) : Tuple(Array(::String), Int32, ::String)?
+      target = imported_declaration(path, name) || {path, name}
+      return if target[1].empty?
+      lines = fetch_file_lines(target[0])
+      if idx = find_function_def(lines, target[1])
+        return {lines, idx, target[0]} unless lines[idx][0]?.try(&.ascii_whitespace?)
+        return
+      end
+      return unless alias_hop
+      prefix = "#{target[1]} = "
+      lines.each do |line|
+        next unless line.starts_with?(prefix)
+        if m = line.match(/=\s*(?:functools\.|funcy\.)?partial\(\s*([A-Za-z_]\w*)\s*[,)]/)
+          return scan_function_definition(target[0], m[1], false)
+        end
+      end
+      nil
+    end
+
+    private def class_definition(path : ::String, name : ::String) : Tuple(Array(::String), Int32)?
+      target = imported_declaration(path, name) || (name.includes?('.') ? return : {path, name})
+      return if target[1].empty?
+      lines = fetch_file_lines(target[0])
+      idx = find_python_class_def(lines, target[1])
+      {lines, idx} if idx >= 0
+    end
+
+    # Whether `name` reads, from its first argument, each key its second
+    # argument lists: funcy's `project(mapping, keys)` by its documented
+    # contract, a project helper by a `for k in keys` loop that subscripts,
+    # `.get`s or `in`-tests the first argument with `k`.
+    private def reads_listed_keys?(path : ::String, name : ::String) : Bool
+      source = fetch_file_content(path)
+      return true if name == "project" && source.matches?(/^\s*from\s+funcy\s+import\s+[^\n]*\bproject\b/m)
+      return true if name == "funcy.project" && source.matches?(/^\s*import\s+funcy\b/m)
+      return false if name.includes?('.')
+      lines, idx, _ = function_definition(path, name) || return false
+      args = lines[idx].match(/\(\s*([A-Za-z_]\w*)\s*,\s*([A-Za-z_]\w*)/) || return false
+      mapping, keys = args[1], args[2]
+      helper_body = extract_function_body(lines, idx)
+      helper_body.scan(/\bfor\s+([A-Za-z_]\w*)\s+in\s+#{keys}\b/).any? do |loop|
+        key = loop[1]
+        helper_body.matches?(/\b#{key}\s+(?:not\s+)?in\s+#{mapping}\b|\b#{mapping}\s*\[\s*#{key}\s*\]|\b#{mapping}\.get\(\s*#{key}\b/)
+      end
+    end
+
+    # Names bound to the request's JSON body in `codeblock_lines`.
+    private def json_variable_names(codeblock_lines : Array(::String)) : Array(::String)
       # Parse JSON variable names (e.g. data = json.loads(request.data), data = request.json)
       #
       # The `(ident).*=` shape backtracks catastrophically over a long run of word
       # characters (the trailing literal's required code unit is a plain letter, so
       # PCRE2 can't pre-reject). Gate each regex on a cheap substring check so a
       # multi-kilobyte line that lacks the marker never reaches the matcher.
+      json_variable_names = [] of ::String
       codeblock_lines.each do |codeblock_line|
         if codeblock_line.includes?("json.loads")
           match = codeblock_line.match /([a-zA-Z_][a-zA-Z0-9_]*).*=\s*json\.loads\(request\.data/
@@ -1700,6 +1899,25 @@ module Analyzer::Python
           match = codeblock_line.match /([a-zA-Z_][a-zA-Z0-9_]*).*=\s*request\.(?:get_json\([^)]*\)|json)/
           if !match.nil? && match.size == 2 && !json_variable_names.includes?(match[1])
             json_variable_names << match[1]
+          end
+        end
+      end
+      json_variable_names
+    end
+
+    # Extracts request parameters from a code block by detecting JSON variable
+    # assignments and scanning for request.field access patterns.
+    private def extract_request_params(codeblock_lines : Array(::String)) : Array(Param)
+      codeblock_lines = fold_python_continuations(codeblock_lines)
+      params = [] of Param
+      json_variable_names = json_variable_names(codeblock_lines)
+
+      codeblock_lines.each do |codeblock_line|
+        next unless codeblock_line.includes?(" in request.")
+        # `"remember" in request.form`: a membership test reads the key.
+        codeblock_line.scan(REQUEST_MEMBERSHIP_RE) do |m|
+          if field = REQUEST_PARAM_FIELDS[m[2]]?
+            params << Param.new(m[1], "", field[1])
           end
         end
       end

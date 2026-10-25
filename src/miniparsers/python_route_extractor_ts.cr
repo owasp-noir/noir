@@ -30,9 +30,15 @@ module Noir
       # Every keyword argument: string literals decoded, anything else as
       # source text (`auth="user"` → "user", `csrf=False` → "False").
       getter keywords : Hash(String, String)
+      # The function a path came wrapped in (`route(org_scoped_rule("/x"))`
+      # → "org_scoped_rule"; `path` is "/x"), empty for a literal path. Only
+      # set when the caller asks for `rule_wrappers`: whether the wrapper
+      # serves its argument unchanged is for the caller to judge from the
+      # wrapper's definition.
+      getter rule_wrapper : String
 
       def initialize(@router_name, @attribute_name, @path, @methods, @decorator_line, @def_line, @def_name,
-                     @paths = [@path], @keywords = {} of String => String)
+                     @paths = [@path], @keywords = {} of String => String, @rule_wrapper = "")
       end
     end
 
@@ -111,10 +117,11 @@ module Noir
                                  results : Array(Decoration) = [] of Decoration,
                                  bare_route : Bool = false,
                                  pathless : Bool = false,
-                                 bare_routers : Array(String)? = nil) : Array(Decoration)
+                                 bare_routers : Array(String)? = nil,
+                                 rule_wrappers : Bool = false) : Array(Decoration)
       Noir::TreeSitter.walk(root) do |node|
         next unless Noir::TreeSitter.node_type(node) == "decorated_definition"
-        collect_decorations(node, source, router_names, extra_attributes, results, bare_route, pathless, bare_routers)
+        collect_decorations(node, source, router_names, extra_attributes, results, bare_route, pathless, bare_routers, rule_wrappers)
       end
       results
     end
@@ -178,8 +185,10 @@ module Noir
     def extract_decorations_and_blueprints(source : String,
                                            module_names : Array(String),
                                            router_names : Array(String)? = nil,
-                                           extra_attributes : Hash(String, String)? = nil) : Tuple(Array(Decoration), Array(BlueprintDecl))
+                                           extra_attributes : Hash(String, String)? = nil,
+                                           rule_wrappers : Bool = false) : Tuple(Array(Decoration), Array(BlueprintDecl))
       deco_tag = decoration_options_tag(router_names, extra_attributes)
+      deco_tag += "|rw" if rule_wrappers
       bp_tag = module_names.join(",")
       deco_key = ExtractionResultCache.key(source, "decorations", deco_tag)
       bp_key = ExtractionResultCache.key(source, "blueprints", bp_tag)
@@ -195,7 +204,7 @@ module Noir
       decorations = cached_deco || [] of Decoration
       blueprints = cached_bp || [] of BlueprintDecl
       Noir::TreeSitter.parse_python(source) do |root|
-        extract_decorations_from(root, source, router_names, extra_attributes, decorations) unless cached_deco
+        extract_decorations_from(root, source, router_names, extra_attributes, decorations, rule_wrappers: rule_wrappers) unless cached_deco
         extract_blueprints_from(root, source, module_names, blueprints) unless cached_bp
       end
 
@@ -294,7 +303,8 @@ module Noir
                                     sink : Array(Decoration),
                                     bare_route : Bool = false,
                                     pathless : Bool = false,
-                                    bare_routers : Array(String)? = nil)
+                                    bare_routers : Array(String)? = nil,
+                                    rule_wrappers : Bool = false)
       # A decorated_definition has one or more `decorator` named children
       # followed by a `function_definition` / `class_definition` in the
       # `definition` field.
@@ -318,8 +328,8 @@ module Noir
           end
           next
         end
-        if deco = decode_route_call(call, source, router_names, extra_attributes, bare_route, pathless, bare_routers)
-          router_name, attribute_name, paths, methods, keywords = deco
+        if deco = decode_route_call(call, source, router_names, extra_attributes, bare_route, pathless, bare_routers, rule_wrappers)
+          router_name, attribute_name, paths, methods, keywords, rule_wrapper = deco
           sink << Decoration.new(
             router_name,
             attribute_name,
@@ -330,6 +340,7 @@ module Noir
             def_name,
             paths,
             keywords,
+            rule_wrapper,
           )
         end
       end
@@ -363,7 +374,8 @@ module Noir
                                   extra_attributes : Hash(String, String)? = nil,
                                   bare_route : Bool = false,
                                   pathless : Bool = false,
-                                  bare_routers : Array(String)? = nil) : Tuple(String, String, Array(String), Array(String), Hash(String, String))?
+                                  bare_routers : Array(String)? = nil,
+                                  rule_wrappers : Bool = false) : Tuple(String, String, Array(String), Array(String), Hash(String, String), String)?
       function = Noir::TreeSitter.field(call, "function")
       return unless function
 
@@ -417,10 +429,15 @@ module Noir
       # is instead of as a path.
       positional_strings = [] of String
       positional_methods = [] of String
+      wrapped = nil
       Noir::TreeSitter.each_named_child(args) do |arg|
         case Noir::TreeSitter.node_type(arg)
         when "string"
           positional_strings << decode_string(arg, source)
+        when "call"
+          # `route(org_scoped_rule("/login"))`: a one-string call as the
+          # leading positional argument.
+          wrapped ||= wrapped_rule(arg, source) if rule_wrappers && positional_strings.empty?
         when "list"
           # `@http.route(["/shop", "/shop/page/<int:page>"])` — one handler,
           # several paths. Only the first list counts.
@@ -454,6 +471,12 @@ module Noir
             path = decode_string(value, source)
           end
         end
+      end
+
+      rule_wrapper = ""
+      if wrapped && path.empty? && positional_strings.empty? && list_paths.empty?
+        rule_wrapper, wrapped_path = wrapped
+        positional_strings << wrapped_path
       end
 
       leading_verb = nil
@@ -490,7 +513,23 @@ module Noir
         end
       end
       paths = list_paths.size > 1 && path == list_paths.first ? list_paths : [path]
-      {router_name, attr_name, paths, methods, keywords}
+      {router_name, attr_name, paths, methods, keywords, rule_wrapper}
+    end
+
+    # `{function, path}` for a `name("/path")` / `mod.name("/path")` call
+    # whose only argument is a string literal.
+    private def wrapped_rule(call : LibTreeSitter::TSNode, source : String) : Tuple(String, String)?
+      function = Noir::TreeSitter.field(call, "function") || return
+      return unless Noir::TreeSitter.node_type(function).in?("identifier", "attribute")
+      args = Noir::TreeSitter.field(call, "arguments") || return
+      only = nil
+      count = 0
+      Noir::TreeSitter.each_named_child(args) do |arg|
+        count += 1
+        only = arg
+      end
+      return unless count == 1 && only && Noir::TreeSitter.node_type(only) == "string"
+      {Noir::TreeSitter.node_text(function, source), decode_string(only, source)}
     end
 
     # Decodes a `string` node's content. Python strings are parsed as
