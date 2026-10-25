@@ -6,3 +6,14 @@ web:
 health:
     path: /health
     methods: [GET]
+
+auth:
+    resource: ../src/Controller/Web/Auth/
+    type: attribute
+    prefix: /auth
+
+legacy:
+    resource: ../src/Controller/Web/Auth/
+    type: attribute
+    prefix: /old
+    name_prefix: legacy_

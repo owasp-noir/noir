@@ -27,13 +27,21 @@ module Analyzer::Php
     REQUEST_READ_RE = /\$request->(query|request|headers|cookies|files)->(?:get|all|has|getInt|getBoolean|getAlpha|getAlnum|getDigits|getString|getEnum|filter)\s*\(\s*['"]([^'"]+)['"]|\$request->(query|request)->all\(\s*\)\s*\[\s*['"]([^'"]+)['"]|\$request->get\s*\(\s*['"]([^'"]+)['"]/
     REQUEST_BAGS    = {"query" => "query", "request" => "form", "headers" => "header", "cookies" => "cookie", "files" => "file"}
 
-    # `$form = $this->createForm(XType::class` or a form factory's
-    # `->create(XType::class` / `->createNamed('name', XType::class`.
-    FORM_CREATE_RE = /\$(\w+)\s*=\s*\$(?:this->createForm|(?:this->)?\w+->create(?:Named)?)\s*\(\s*(?:['"][^'"]*['"]\s*,\s*)?(\\?[\w\\]+)::class/
-
     # `$this->forward('Fqcn::method', ...)`: a sub-request on the same input.
     FORWARD_RE  = /\$this->forward\s*\(\s*['"]\\?([\w\\]+)::(\w+)['"]/
     FORM_ADD_RE = /->add\s*\(\s*['"]([^'"]+)['"](#{CALL_ARGS_TAIL})\)/
+
+    # A form being made: `$this->createForm(X::class` / a factory's
+    # `->create(X::class`, or `->createNamed('name', X::class`. The type may
+    # be a variable (inside a helper that takes it as an argument).
+    FORM_CALL_RE  = /(?:\$this->createForm|->create)\s*\(\s*(?:(\\?[\w\\]+)::class|\$\w+)/
+    FORM_NAMED_RE = /->createNamed\s*\(\s*(?:['"]([^'"]*)['"]|\$\w+)\s*,\s*(?:(\\?[\w\\]+)::class|\$\w+)/
+
+    # FOSRestBundle's `#[Rest\QueryParam(name: 'page')]` /
+    # `@Rest\RequestParam(name="title")` / `FileParam`, which its
+    # ParamFetcher reads from the query, the decoded body or the files.
+    FOS_PARAM_RE   = /(?:#\[|@)(?:[\w\\]*\\)?(QueryParam|RequestParam|FileParam)\s*\((#{CALL_ARGS_TAIL})\)/
+    FOS_PARAM_BAGS = {"QueryParam" => "query", "RequestParam" => "form", "FileParam" => "file"}
 
     # Symfony route configs also live in YAML under config/routes*.
     # Extend the engine's default `.php`-only source set.
@@ -45,8 +53,9 @@ module Analyzer::Php
 
     # A YAML route import (`resource: ../src/Controller/Api/`, `type:
     # attribute`, `prefix: /api/v1`): attribute routes in files under `path`
-    # are mounted under each of `prefixes`.
-    private record RouteImport, path : String, prefixes : Array(String)
+    # are mounted under each of `prefixes`. `source` is the routing file that
+    # declares it, `name_prefix` what it prepends to route names.
+    private record RouteImport, path : String, prefixes : Array(String), source : String, name_prefix : String
 
     @route_imports = [] of RouteImport
     @security_configs = [] of SymfonySecurity::Config
@@ -115,18 +124,24 @@ module Analyzer::Php
           prefix_node = route_h[YAML::Any.new("prefix")]?
           prefixes = prefix_node.try { |node| node.as_s?.try { |prefix| [prefix] } || node.as_h?.try(&.values.compact_map(&.as_s?)) }
           prefixes = [""] if prefixes.nil? || prefixes.empty?
-          imports << RouteImport.new(File.expand_path(resource, File.dirname(path)).rstrip('/'), prefixes)
+          name_prefix = route_h[YAML::Any.new("name_prefix")]?.try(&.as_s?) || ""
+          imports << RouteImport.new(File.expand_path(resource, File.dirname(path)).rstrip('/'), prefixes, path, name_prefix)
         end
       end
       imports
     end
 
-    # URL prefixes for a controller file: those of every import covering it,
-    # or just "" when no import does.
+    # URL prefixes for a controller file: those of the imports covering it,
+    # or just "" when no import does. Symfony keys routes by name, and an
+    # attribute route keeps its name (one derived from class and method when
+    # it declares none) whichever import loads it, so a later import of the
+    # same file in the same routing file replaces the earlier one's routes,
+    # unless a different `name_prefix` keeps the names apart.
     private def import_prefixes_for(path : String) : Array(String)
       file = File.expand_path(path)
       prefixes = @route_imports.select { |import| file == import.path || file.starts_with?("#{import.path}/") }
-        .flat_map(&.prefixes).uniq!
+        .group_by { |import| {import.source, import.name_prefix} }.values
+        .flat_map(&.last.prefixes).uniq!
       prefixes.empty? ? [""] : prefixes
     end
 
@@ -247,14 +262,30 @@ module Analyzer::Php
       body = extract_php_method_body_after(content, sig.begin(0))
       name = klass ? "#{klass.name}::#{sig[1]}" : sig[1]
       handler = Handler.new(name, path, line_number_for_index(content, sig.begin(1)))
-      guard = security_attribute_guard(content[member_prelude_start(content, lexer, sig.begin(0))...sig.begin(0)]) || klass.try(&.guard)
-      params = [] of Param
+      prelude = content[member_prelude_start(content, lexer, sig.begin(0))...sig.begin(0)]
+      guard = security_attribute_guard(prelude) || klass.try(&.guard)
+      params = fos_rest_params(prelude)
       if body
         sources = [{content, body[0]}] + callee_bodies(content, body[0])
         sources.each { |source, code| params.concat(extract_method_params(code) + form_params(source, code)) }
         guard ||= sources.compact_map { |_, code| refusal_in(code) }.first?
       end
       Action.new(handler, dedup_params(params), guard, body)
+    end
+
+    # The request key of each FOSRest param attribute on an action: its `key`
+    # alias when it has one, else its `name` (named or first positional).
+    private def fos_rest_params(prelude : String) : Array(Param)
+      params = [] of Param
+      return params unless prelude.includes?("Param")
+      prelude.scan(FOS_PARAM_RE) do |m|
+        args = m[2]
+        key = args.match(/(?<!\w)key\s*[:=]\s*['"]([^'"]+)['"]/) ||
+              args.match(/(?<!\w)name\s*[:=]\s*['"]([^'"]+)['"]/) ||
+              args.match(/\A\s*['"]([^'"]+)['"]/)
+        params << Param.new(key[1], "", FOS_PARAM_BAGS[m[1]]) if key
+      end
+      params
     end
 
     # `Endpoint` is a struct: callers keep the returned copy.
@@ -332,23 +363,113 @@ module Analyzer::Php
     # bound form reads input: `handleRequest($request)` reads the body (the
     # query for a `'method' => 'GET'` form); `submit($x)` reads whatever `$x`
     # was taken from. A form submitted from a literal array reads nothing.
+    #
+    # `handleRequest` reads the fields under the form's name (`edit[title]`),
+    # plus its CSRF token when the type turns CSRF protection on; `submit`
+    # is handed the field data itself, so its fields are bare.
     private def form_params(content : String, body : String) : Array(Param)
       params = [] of Param
-      return params unless body.includes?("::class")
-      body.scan(FORM_CREATE_RE) do |m|
+      return params unless body.includes?("::class") || body.includes?("$this->")
+      body.scan(/\$(\w+)\s*=\s*([^;]+);/) do |m|
         var = Regex.escape(m[1])
-        location = if body.matches?(/\$#{var}->handleRequest\s*\(/)
+        handled = body.matches?(/\$#{var}->handleRequest\s*\(/)
+        location = if handled
                      "form"
                    elsif submit = body.match(/\$#{var}->submit\s*\(([^;]*)/)
                      submitted_input(submit[1], body)
                    end
         next unless location
-        next unless type_file = class_file(qualify_class(m[2], parse_use_imports(content), php_namespace(content)))
+        next unless form = created_form(m[2], content)
+        type_file, name, call = form
         type = php_code(read_file_content(type_file))
-        location = "query" if location == "form" && type.matches?(/['"]method['"]\s*=>\s*['"]GET['"]/i)
-        params.concat(form_type_fields(type, location))
+        get_method = /['"]method['"]\s*=>\s*['"]GET['"]/i
+        location = "query" if location == "form" && (call.matches?(get_method) || type.matches?(get_method))
+        fields = form_type_fields(type, location)
+        if handled
+          name ||= form_name(type, type_file)
+          csrf_field(type).try { |field| fields << Param.new(field, "", location) }
+          fields.map! { |field| Param.new("#{name}[#{field.name}]", "", field.param_type) } unless name.empty?
+        end
+        params.concat(fields)
       end
       params
+    end
+
+    # {type file, form name (nil: the type's own), creating call} of the form
+    # `expr` makes: a direct create call with a literal type, or a call to a
+    # helper of the class (or a parent or trait) that makes one, from a
+    # literal type of its own or from the `X::class` it is handed.
+    private def created_form(expr : String, content : String) : Tuple(String, String?, String)?
+      if (call = form_call(expr)) && (type = call[1])
+        file = class_file(qualify_class(type, parse_use_imports(content), php_namespace(content)))
+        return file ? {file, call[0], expr} : nil
+      end
+      return unless (helper = expr.match(/\A\s*\$this->(\w+)\s*\(/)) && helper[1] != "createForm"
+      return unless (resolved = resolve_method(content, helper[1])) && (call = form_call(resolved[1]))
+      source, code = resolved
+      type, scope = (literal = call[1]) ? {literal, source} : {expr.match(/(\\?[\w\\]+)::class/).try(&.[1]), content}
+      return unless type && (file = class_file(qualify_class(type, parse_use_imports(scope), php_namespace(scope))))
+      {file, call[0], code}
+    end
+
+    # {form name (nil: the type's own; "" when it cannot be read), literal
+    # type or nil} of the first form-creating call in `code`.
+    private def form_call(code : String) : Tuple(String?, String?)?
+      named = code.match(FORM_NAMED_RE)
+      plain = code.match(FORM_CALL_RE)
+      if named && (plain.nil? || named.begin(0) < plain.begin(0))
+        {named[1]? || "", named[2]?}
+      elsif plain
+        {nil, plain[1]?}
+      end
+    end
+
+    # A form type's name: what its `getBlockPrefix` returns, or Symfony's
+    # default, the class's short name without a `Type` suffix in snake case
+    # (`StringUtil::fqcnToBlockPrefix`). "" when the override is not a literal.
+    private def form_name(type : String, type_file : String) : String
+      if prefix = resolve_method(type, "getBlockPrefix")
+        return prefix[1].match(/\breturn\s+['"]([^'"]*)['"]\s*;\s*\z/).try(&.[1]) || ""
+      end
+      short = type.match(/(?<!::)\bclass\s+(\w+)/).try(&.[1]) || File.basename(type_file, ".php")
+      short = short.sub(/type\z/i, "") unless short.size <= 4
+      short.gsub(/([A-Z]+)([A-Z][a-z])/, "\\1_\\2").gsub(/([a-z\d])([A-Z])/, "\\1_\\2").downcase
+    end
+
+    # The CSRF token field a type's options turn on (`'csrf_protection' =>
+    # true`, named by `csrf_field_name`, `_token` by default).
+    # ponytail: only an explicit `true` counts; the app-wide default and form
+    # type extensions that switch it off are not read.
+    private def csrf_field(type : String) : String?
+      return unless (options = resolve_method(type, "configureOptions")) &&
+                    options[1].matches?(/['"]csrf_protection['"]\s*=>\s*true\b/)
+      options[1].match(/['"]csrf_field_name['"]\s*=>\s*['"]([^'"]+)['"]/).try(&.[1]) || "_token"
+    end
+
+    # {source, body} of method `name` as the class in `content` resolves it:
+    # its own, a trait's it uses, else its parent's (recursively).
+    private def resolve_method(content : String, name : String, depth : Int32 = 0) : Tuple(String, String)?
+      if body = method_body(content, name)
+        return {content, body}
+      end
+      return if depth > 4 || content.empty?
+      trait_sources(content).each do |trait|
+        resolve_method(trait, name, depth + 1).try { |found| return found }
+      end
+      resolve_method(parent_source(content), name, depth + 1)
+    end
+
+    # Comment-stripped sources of the traits the class in `content` uses.
+    private def trait_sources(content : String) : Array(String)
+      return [] of String unless klass = content.match(/(?<!::)\b(?:class|trait)\s+\w+[^{]*\{/)
+      header = content[0...klass.begin(0)]
+      imports = parse_use_imports(header)
+      namespace = php_namespace(header)
+      content[klass.end(0)..].scan(/(?:\A|[;{}])\s*use\s+(\\?[\w\\]+(?:\s*,\s*\\?[\w\\]+)*)\s*[;{]/).flat_map do |m|
+        m[1].split(',').compact_map do |ref|
+          class_file(qualify_class(ref.strip, imports, namespace)).try { |file| php_code(read_file_content(file)) }
+        end
+      end
     end
 
     # Where the data handed to `$form->submit(...)` came from, or nil.
@@ -365,12 +486,22 @@ module Analyzer::Php
       assigned.try { |a| submitted_input(a[1], body, depth + 1) }
     end
 
-    # Submittable fields a form type's `buildForm` adds. Buttons carry no data
-    # and Symfony discards what is submitted for a disabled field.
-    private def form_type_fields(type : String, location : String) : Array(Param)
+    # Submittable fields a form type's `buildForm` (its own or inherited)
+    # adds, including through the `$this->helper(` / `parent::buildForm(`
+    # calls it makes. Buttons carry no data and Symfony discards what is
+    # submitted for a disabled field.
+    private def form_type_fields(type : String, location : String, depth : Int32 = 0) : Array(Param)
       params = [] of Param
-      return params unless build = method_body(type, "buildForm")
-      build.scan(FORM_ADD_RE) do |m|
+      return params unless found = resolve_method(type, "buildForm")
+      source, build = found
+      codes = [build]
+      build.scan(/\$this->(\w+)\s*\(/).map(&.[1]).uniq!.each do |helper|
+        resolve_method(source, helper).try { |resolved| codes << resolved[1] }
+      end
+      if depth < 4 && build.matches?(/\bparent::buildForm\s*\(/)
+        params.concat(form_type_fields(parent_source(source), location, depth + 1))
+      end
+      codes.join('\n').scan(FORM_ADD_RE) do |m|
         args = m[2]
         next if args.matches?(/\b(?:Submit|Button|Reset)Type::class/)
         next if args.matches?(/['"]disabled['"]\s*=>\s*true/)
@@ -418,6 +549,10 @@ module Analyzer::Php
       if path_match = context.match(/^\s*['"]([^'"]*)['"]/)
         return path_match[1]
       end
+
+      # Named arguments only, none of them `path` (`#[Route(methods:
+      # ['POST'], name: 'x')]`): the route is its class prefix itself.
+      return "" if context.strip.empty? || (context.matches?(/\A\s*\w+\s*[:=]/) && !context.matches?(/(?<!\w)path\s*[:=]/i))
 
       nil
     end

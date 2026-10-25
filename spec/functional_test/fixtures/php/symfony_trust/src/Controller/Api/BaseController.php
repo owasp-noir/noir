@@ -13,4 +13,9 @@ abstract class BaseController extends AbstractController
             throw new AccessDeniedException();
         }
     }
+
+    protected function createGetForm(string $type)
+    {
+        return $this->container->get('form.factory')->createNamed('', $type, null, ['method' => 'GET']);
+    }
 }

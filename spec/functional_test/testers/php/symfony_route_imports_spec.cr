@@ -10,9 +10,14 @@ expected_endpoints = [
   Endpoint.new("/status", "GET"),
   # Plain YAML route.
   Endpoint.new("/health", "GET"),
+  # Re-imported by a later import of the same routing file: Symfony replaces
+  # routes by name, so the /{_locale} copy is gone; a `name_prefix` import
+  # keeps its own copy.
+  Endpoint.new("/auth/sso/login", "GET"),
+  Endpoint.new("/old/sso/login", "GET"),
 ]
 
 FunctionalTester.new("fixtures/php/symfony_route_imports/", {
   :techs     => 2,
-  :endpoints => 4,
+  :endpoints => 6,
 }, expected_endpoints).perform_tests
