@@ -253,3 +253,54 @@ describe "RustAuthTagger request guards read from their FromRequest impls" do
     tag_handler.call("hint", 52).should be_empty
   end
 end
+
+describe "RustAuthTagger actix extractors that fail with a 401 error variant" do
+  fixture_base = File.expand_path("../../../functional_test/fixtures/rust/actix_crossfile_handler", __DIR__)
+
+  tag_handler = ->(file : String, name : String, line : Int32) do
+    CodeLocator.instance.clear_all
+    noir_options = create_test_options
+    noir_options["base"] = YAML::Any.new(fixture_base)
+    Dir.glob("#{fixture_base}/**/*").each { |f| CodeLocator.instance.register_path(f) unless File.directory?(f) }
+
+    path = "#{fixture_base}/api/src/#{file}"
+    details = Details.new(PathInfo.new("#{fixture_base}/server/src/main.rs", 12))
+    details.technology = "rust_actix_web"
+    endpoint = Endpoint.new("/x", "GET", [] of Param, details)
+    endpoint.handler = Handler.new(name, path, line)
+    RustAuthTagger.new(noir_options).perform([endpoint])
+    endpoint.tags.map(&.description)
+  end
+
+  # `Err(AppError::NotLoggedIn)` where `ResponseError::status_code` maps
+  # `AppError::NotLoggedIn => StatusCode::UNAUTHORIZED`.
+  it "tags a required extractor whose impl errs with a 401 variant" do
+    tag_handler.call("posts/create.rs", "create_post", 4).should eq(["Protected by Rust User request guard"])
+  end
+
+  it "leaves an Option-wrapped extractor anonymous" do
+    tag_handler.call("posts/read.rs", "get_post", 4).should be_empty
+  end
+
+  it "does not count an extractor whose error variant answers 400" do
+    tag_handler.call("items/handlers.rs", "list", 4).should be_empty
+  end
+
+  # `AppError::NotLoggedIn\n| AppError::NotAdmin => …UNAUTHORIZED`
+  it "reads every variant of a multi-line `|` arm, returned through `.ok_or(...)`" do
+    tag_handler.call("guarded.rs", "admin", 4).should eq(["Protected by Rust Admin request guard"])
+  end
+
+  # `Self::Banned => { StatusCode::FORBIDDEN }` + `Err(Banned)` after `use AppError::*`
+  it "reads a block arm on `Self::` and a glob-imported bare variant" do
+    tag_handler.call("guarded.rs", "member", 8).should eq(["Protected by Rust Member request guard"])
+  end
+
+  it "ignores a 401 variant that is bound to a `let` and never returned" do
+    tag_handler.call("guarded.rs", "maybe", 12).should be_empty
+  end
+
+  it "ignores a 401 variant that only appears in a match pattern" do
+    tag_handler.call("guarded.rs", "anon", 16).should be_empty
+  end
+end

@@ -119,7 +119,7 @@ module Analyzer::Rust
         # for the verb-less `web::resource("/p").to(handler)` form.
         if source.matches?(BUILDER_PASS_EVIDENCE_RE)
           scope_prefixes = collect_scope_prefixes(root, source, test_regions)
-          function_index = build_function_index(root, source)
+          function_index = free_function_index(root, source, test_regions)
           # Map each builder route back to the `.configure`d fn that encloses
           # it (only when there is at least one cross-file configure prefix).
           configure_ranges = configure_active? ? build_fn_ranges(root, source) : nil
@@ -137,8 +137,7 @@ module Analyzer::Rust
                     endpoint = Endpoint.new(canonical, verb, details)
                     extract_path_params(rp, endpoint)
                     if handler_name
-                      endpoint.handler = local_handler(handler_name, function_index, source, path)
-                      attach_builder_handler_context(endpoint, handler_name, function_index, source, path, include_callee)
+                      endpoint.handler = attach_builder_handler_context(endpoint, handler_name, function_index, source, path, include_callee)
                     end
                     endpoints << endpoint
                   end
@@ -158,8 +157,7 @@ module Analyzer::Rust
                 endpoint = Endpoint.new(canonicalize_actix_path(rp), "GET", details)
                 extract_path_params(rp, endpoint)
                 if handler_name
-                  endpoint.handler = local_handler(handler_name, function_index, source, path)
-                  attach_builder_handler_context(endpoint, handler_name, function_index, source, path, include_callee)
+                  endpoint.handler = attach_builder_handler_context(endpoint, handler_name, function_index, source, path, include_callee)
                 end
                 endpoints << endpoint
               end
@@ -183,7 +181,7 @@ module Analyzer::Rust
 
       extract_path_params(route_path, endpoint)
       endpoint.handler = rust_handler(function, source, file_path)
-      extract_function_params(function, source, endpoint)
+      extract_function_params(function, source, endpoint, file_path)
       attach_handler_callees(function, source, file_path, endpoint) if include_callee
 
       endpoint
@@ -916,18 +914,86 @@ module Analyzer::Rust
                                                function_index : Hash(String, LibTreeSitter::TSNode),
                                                source : String,
                                                path : String,
-                                               include_callee : Bool)
-      leaf = handler_name.split("::").last
-      if fn = function_index[leaf]?
-        extract_function_params(fn, source, endpoint)
-        attach_handler_callees(fn, source, path, endpoint) if include_callee
-        return
+                                               include_callee : Bool) : Handler?
+      # Follow the name to its definition: a top-level fn of this file, or
+      # through this file's imports into another module or crate.
+      if context = resolved_handler_context(handler_name, path, include_callee)
+        context[:params].each { |param| endpoint.push_param(param) }
+        attach_rust_callees(endpoint, context[:callees]) if include_callee
+        return context[:handler]
       end
 
-      entry = lookup_global_function(handler_name)
-      return unless entry
-      extract_function_params_from_text(entry[:params_text], endpoint)
-      attach_rust_callees(endpoint, entry[:callees]) if include_callee
+      # A bare name nothing imports: a free fn of this file in a nested
+      # (inline `mod`) scope. Never an impl method or a test fn.
+      if !handler_name.includes?("::") && !rust_imported?(handler_name, path) && (fn = function_index[handler_name]?)
+        extract_function_params(fn, source, endpoint, path)
+        attach_handler_callees(fn, source, path, endpoint) if include_callee
+        return rust_handler(fn, source, path)
+      end
+
+      # Unresolved: no handler, so no params read off a fn that may not be it.
+      if include_callee && (entry = lookup_global_function(handler_name))
+        attach_rust_callees(endpoint, entry[:callees])
+      end
+      nil
+    end
+
+    # `name => function_item` of every free fn (not an impl / trait method,
+    # not nested in another fn, not under `#[cfg(test)]`), first one winning.
+    private def free_function_index(root : LibTreeSitter::TSNode, source : String,
+                                    test_regions : Array(Tuple(Int32, Int32))) : Hash(String, LibTreeSitter::TSNode)
+      index = {} of String => LibTreeSitter::TSNode
+      collect_free_functions(root, source, test_regions, index, 0)
+      index
+    end
+
+    private def collect_free_functions(node : LibTreeSitter::TSNode, source : String,
+                                       test_regions : Array(Tuple(Int32, Int32)),
+                                       index : Hash(String, LibTreeSitter::TSNode), depth : Int32)
+      return if depth > Noir::TreeSitter::MAX_AST_DEPTH
+      Noir::TreeSitter.each_named_child(node) do |child|
+        case Noir::TreeSitter.node_type(child)
+        when "function_item"
+          next if RustEngine.inside_test_region?(child, test_regions)
+          if name = Noir::TreeSitter.field(child, "name")
+            index[Noir::TreeSitter.node_text(name, source).lchop("r#")] ||= child
+          end
+        when "mod_item"
+          Noir::TreeSitter.field(child, "body").try { |body| collect_free_functions(body, source, test_regions, index, depth + 1) }
+        end
+      end
+    end
+
+    alias ResolvedHandlerContext = NamedTuple(handler: Handler, params: Array(Param), callees: Array(Noir::RustCalleeExtractor::Entry))
+
+    @resolved_handler_contexts = {} of String => ResolvedHandlerContext?
+    @resolved_handler_mutex = Mutex.new
+
+    private def resolved_handler_context(handler_name : String, from_path : String, include_callee : Bool) : ResolvedHandlerContext?
+      target = resolve_rust_fn(handler_name, from_path) || return
+      file, name, line = target
+      key = "#{file}\0#{name}\0#{include_callee}"
+      cached = @resolved_handler_mutex.synchronize do
+        @resolved_handler_contexts.has_key?(key) ? {@resolved_handler_contexts[key]} : nil
+      end
+      return cached[0] if cached
+
+      context = nil.as(ResolvedHandlerContext?)
+      source = read_file_content(file)
+      Noir::TreeSitter.parse_rust(source) do |root|
+        Noir::TreeSitter.each_named_child(root) do |item|
+          next if context
+          next unless Noir::TreeSitter.node_type(item) == "function_item"
+          name_node = Noir::TreeSitter.field(item, "name") || next
+          next unless Noir::TreeSitter.node_start_row(name_node) + 1 == line
+          scratch = Endpoint.new("", "GET")
+          extract_function_params(item, source, scratch, file)
+          callees = include_callee ? (Noir::TreeSitter.field(item, "body").try { |b| Noir::RustCalleeExtractorTS.callees_in_body(b, source, file) } || [] of Noir::RustCalleeExtractor::Entry) : [] of Noir::RustCalleeExtractor::Entry
+          context = {handler: Handler.new(name, file, line), params: scratch.params, callees: callees}
+        end
+      end
+      @resolved_handler_mutex.synchronize { @resolved_handler_contexts[key] = context }
+      context
     end
 
     private def lookup_global_function(ref : String)
@@ -1196,11 +1262,12 @@ module Analyzer::Rust
     # comment / string-literal false positives.
     def extract_function_params(function : LibTreeSitter::TSNode,
                                 source : String,
-                                endpoint : Endpoint)
+                                endpoint : Endpoint,
+                                path : String? = nil)
       params_node = Noir::TreeSitter.field(function, "parameters")
       if params_node
         Noir::TreeSitter.each_named_child(params_node) do |param|
-          extract_function_param_text(Noir::TreeSitter.node_text(param, source), endpoint)
+          extract_function_param_text(Noir::TreeSitter.node_text(param, source), endpoint, path)
         end
       end
 
@@ -1209,30 +1276,58 @@ module Analyzer::Rust
       collect_header_and_cookie_params(body_node, source, endpoint)
     end
 
-    private def extract_function_params_from_text(params_text : String?, endpoint : Endpoint)
+    private def extract_function_params_from_text(params_text : String?, endpoint : Endpoint, path : String? = nil)
       return unless params_text
       params_text.split(',').each do |param_text|
-        extract_function_param_text(param_text, endpoint)
+        extract_function_param_text(param_text, endpoint, path)
       end
     end
 
-    private def extract_function_param_text(text : String, endpoint : Endpoint)
-      if extractor_param?(text, "Query")
-        endpoint.push_param(Param.new("query", "", "query"))
+    # Extractor => {param location, name used when its type's fields are unknown}.
+    EXTRACTOR_KINDS = {"Query" => {"query", "query"}, "Json" => {"json", "body"}, "Form" => {"form", "form"}}
+
+    # The type an extractor decodes into, when it is a plain (possibly
+    # module-qualified) name: `Json<CreatePost>`, `web::Query<api::Params>`.
+    EXTRACTOR_TARGET_RES = EXTRACTOR_KINDS.keys.to_h do |kind|
+      {kind, /(?<!\w)#{kind}\s*<\s*((?:[A-Za-z_]\w*::)*[A-Za-z_]\w*)\s*>/}
+    end
+
+    # An extractor's fields are the request params: `Json<CreatePost>` reads
+    # `CreatePost`'s wire field names from the body. The type is resolved
+    # through the handler file's imports, else (a bare name nothing imports,
+    # e.g. via a glob) by a same-crate name that has one definition; an
+    # unknown type leaves the generic placeholder.
+    private def extract_function_param_text(text : String, endpoint : Endpoint, path : String? = nil)
+      EXTRACTOR_KINDS.each do |kind, (location, placeholder)|
+        next unless extractor_param?(text, kind)
+        fields = path ? extractor_fields(text, kind, path) : nil
+        if fields && !fields.empty?
+          fields.each { |name| endpoint.push_param(Param.new(name, "", location)) }
+        else
+          endpoint.push_param(Param.new(placeholder, "", location))
+        end
       end
-      if extractor_param?(text, "Json")
-        endpoint.push_param(Param.new("body", "", "json"))
+    end
+
+    private def extractor_fields(text : String, kind : String, path : String) : Array(String)?
+      type = text.match(EXTRACTOR_TARGET_RES[kind]).try(&.[1]) || return
+      if fields = resolve_rust_struct_fields(type, path)
+        return fields
       end
-      if extractor_param?(text, "Form")
-        endpoint.push_param(Param.new("form", "", "form"))
-      end
+      return if type.includes?("::") || rust_imported?(type, path)
+      rust_struct_fields(type, path)
+    end
+
+    ACTIX_EXTRACTOR_RES = EXTRACTOR_KINDS.keys.to_h do |kind|
+      {kind, /(?<![\w:])(?:(?:actix_web::)?web::)?#{kind}\s*</}
     end
 
     # Whether a handler parameter's text uses the `kind` extractor
-    # (`Query` / `Json` / `Form`). actix-web exposes them as `web::Query`;
-    # forks that keep them elsewhere (ntex's `web::types::Query`) override.
+    # (`Query` / `Json` / `Form`): `web::Json<T>`, or `Json<T>` imported
+    # bare. Forks that keep them elsewhere (ntex's `web::types::Query`)
+    # override.
     protected def extractor_param?(text : String, kind : String) : Bool
-      text.includes?("web::#{kind}<") || text.includes?(": web::#{kind}")
+      text.matches?(ACTIX_EXTRACTOR_RES[kind])
     end
 
     # Scan the body for `req.headers().get("X")` / `req.cookie("X")`

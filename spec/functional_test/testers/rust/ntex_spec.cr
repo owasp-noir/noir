@@ -8,7 +8,7 @@ expected_endpoints = [
   Endpoint.new("/hey", "GET"),
   # Bare `Query<T>` / `Form<T>` imported from `ntex::web::types`.
   Endpoint.new("/search", "GET", [
-    Param.new("query", "", "query"),
+    Param.new("q", "", "query"),
   ]),
   Endpoint.new("/files/{all}", "GET", [
     Param.new("all", "", "path"),
@@ -16,10 +16,11 @@ expected_endpoints = [
   # Handlers mounted through a tuple `.service((...))` under a scope.
   Endpoint.new("/api/v1/items/{id}", "PUT", [
     Param.new("id", "", "path"),
-    Param.new("body", "", "json"),
+    Param.new("name", "", "json"),
   ]),
   Endpoint.new("/api/v1/login", "POST", [
-    Param.new("form", "", "form"),
+    Param.new("username", "", "form"),
+    Param.new("password", "", "form"),
   ]),
   Endpoint.new("/api/v1/sessions/{sid}", "DELETE", [
     Param.new("sid", "", "path"),
@@ -27,14 +28,14 @@ expected_endpoints = [
   ]),
   Endpoint.new("/api/v1/health", "GET"),
   Endpoint.new("/api/v1/stats", "GET", [
-    Param.new("query", "", "query"),
+    Param.new("q", "", "query"),
   ]),
   # Nested tuple scopes in a `.configure`d fn (src/appconfig.rs).
   Endpoint.new("/products", "GET", [
-    Param.new("query", "", "query"),
+    Param.new("name", "", "query"),
   ]),
   Endpoint.new("/products", "POST", [
-    Param.new("body", "", "json"),
+    Param.new("name", "", "json"),
   ]),
   Endpoint.new("/products/{product_id}", "GET", [
     Param.new("product_id", "", "path"),
