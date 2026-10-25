@@ -372,4 +372,84 @@ describe "DjangoAuthTagger" do
       CodeLocator.instance.clear_all
     end
   end
+
+  it "judges project decorators, view-body checks and dispatchers by definition" do
+    CodeLocator.instance.clear_all
+    tmpdir = File.tempname("django_function_view_guards")
+    Dir.mkdir_p(tmpdir)
+    decorators = File.join(tmpdir, "decorators.py")
+    views = File.join(tmpdir, "views.py")
+    File.write(decorators, <<-PY)
+      def authorize(f):
+          def wrapper(request, *args, **kwds):
+              if "X-Api-Key" not in request.headers:
+                  return JsonResponse({"error": "missing api key"}, status=401)
+              return f(request, *args, **kwds)
+          return wrapper
+
+      def cors(f):
+          def wrapper(request, *args, **kwds):
+              response = f(request, *args, **kwds)
+              if request.method == "OPTIONS":
+                  return HttpResponse(status=204)
+              return response
+          return wrapper
+      PY
+    File.write(views, <<-PY)
+      from .decorators import authorize, cors
+
+      @authorize
+      def create(request):
+          pass
+
+      @cors
+      def listing(request):
+          pass
+
+      def dispatch(request):
+          if request.method == "POST":
+              return create(request)
+          return listing(request)
+
+      def events(request, code):
+          if not request.user.is_authenticated:
+              return HttpResponseForbidden()
+          return render(request, "events.html")
+
+      def late(request):
+          if request.method == "GET":
+              return render(request, "x.html")
+          if not request.user.is_authenticated:
+              return HttpResponseForbidden()
+      PY
+    CodeLocator.instance.register_path(decorators)
+    CodeLocator.instance.register_path(views)
+
+    begin
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(tmpdir)
+      at = ->(method : String, line : Int32) { Endpoint.new("/#{method}#{line}", method, [] of Param, Details.new(PathInfo.new(views, line))) }
+      direct = at.call("POST", 4)
+      plain = at.call("GET", 8)
+      dispatch_post = at.call("POST", 11)
+      dispatch_get = at.call("GET", 11)
+      events = at.call("GET", 16)
+      late_post = at.call("POST", 21)
+      late_get = at.call("GET", 21)
+
+      DjangoAuthTagger.new(noir_options).perform([direct, plain, dispatch_post, dispatch_get, events, late_post, late_get])
+
+      direct.tags.map(&.description).should eq(["Protected by authorize"])
+      plain.tags.should be_empty
+      dispatch_post.tags.map(&.description).should eq(["Protected by authorize (via create)"])
+      dispatch_get.tags.should be_empty
+      events.tags.map(&.description).should eq(["Protected by Django request.user.is_authenticated check"])
+      # GET is answered by the branch above the check; POST still meets it.
+      late_post.tags.map(&.description).should eq(["Protected by Django request.user.is_authenticated check"])
+      late_get.tags.should be_empty
+    ensure
+      FileUtils.rm_rf(tmpdir)
+      CodeLocator.instance.clear_all
+    end
+  end
 end
