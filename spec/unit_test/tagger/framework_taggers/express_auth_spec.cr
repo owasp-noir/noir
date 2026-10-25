@@ -487,6 +487,100 @@ describe "ExpressAuthTagger" do
     end
   end
 
+  it "follows middleware arrays and module members to the definition that refuses an anonymous caller" do
+    tmpdir = File.tempname("express_mw_arrays")
+    Dir.mkdir_p(File.join(tmpdir, "auth"))
+    File.write(File.join(tmpdir, "auth", "index.js"), [
+      "module.exports = {",
+      "  get authenticate() { return require('./authenticate'); },",
+      "  get authorize() { return require('./authorize'); },",
+      "};",
+    ].join("\n"))
+    File.write(File.join(tmpdir, "auth", "authenticate.js"), [
+      "const authenticate = {",
+      "  apiKey(req, res, next) {",
+      "    if (!req.headers.authorization) {",
+      "      return next();",
+      "    }",
+      "    return next(new errors.UnauthorizedError({ message: 'bad key' }));",
+      "  },",
+      "};",
+      "module.exports = authenticate;",
+    ].join("\n"))
+    File.write(File.join(tmpdir, "auth", "authorize.js"), [
+      "module.exports = {",
+      "  authorizeApi(req, res, next) {",
+      "    if (req.user || req.api_key) {",
+      "      return next();",
+      "    }",
+      "    return next(new errors.NoPermissionError({ message: 'no' }));",
+      "  },",
+      "};",
+    ].join("\n"))
+    File.write(File.join(tmpdir, "middleware.js"), [
+      "const auth = require('./auth');",
+      "const tokenCheck = function tokenCheck(req, res, next) {",
+      "  if (!req.api_key) {",
+      "    return next();",
+      "  }",
+      "  next(new errors.NoPermissionError({ statusCode: 403 }));",
+      "};",
+      "function memberGate(req, res, next) {",
+      "  if (req.member && req.member.banned) {",
+      "    return next(new errors.NoPermissionError({}));",
+      "  }",
+      "  next();",
+      "}",
+      "function rejectAnonymous(req, res, next) {",
+      "  if (!req.member) {",
+      "    return next(new errors.UnauthorizedError({}));",
+      "  }",
+      "  next();",
+      "}",
+      "module.exports.privateApi = [auth.authenticate.apiKey, auth.authorize.authorizeApi, tokenCheck];",
+      "module.exports.publicApi = [auth.authenticate.apiKey, tokenCheck];",
+      "module.exports.memberGate = memberGate;",
+      "module.exports.rejectAnonymous = rejectAnonymous;",
+    ].join("\n"))
+    routes_js = File.join(tmpdir, "routes.js")
+    File.write(routes_js, [
+      "const mw = require('./middleware');",
+      "router.get('/posts', mw.privateApi, http(api.posts.browse));",
+      "router.get('/site', mw.publicApi, http(api.site.read));",
+      "router.post('/comments', mw.memberGate, http(api.comments.add));",
+      "router.put('/member', mw.rejectAnonymous, http(api.member.edit));",
+    ].join("\n"))
+
+    noir_options = create_test_options
+    noir_options["base"] = YAML::Any.new(tmpdir)
+    locator = CodeLocator.instance
+    Dir.glob("#{tmpdir}/**/*.js").each { |file| locator.register_path(file) }
+    previous_bases = locator.scan_base_paths
+    locator.scan_base_paths = [tmpdir]
+    Noir::JSHandlerResolver.reset
+
+    endpoints = [
+      {"GET", "/posts", 2}, {"GET", "/site", 3}, {"POST", "/comments", 4}, {"PUT", "/member", 5},
+    ].map do |method, url, line|
+      details = Details.new(PathInfo.new(routes_js, line))
+      details.technology = "js_express"
+      Endpoint.new(url, method, [] of Param, details)
+    end
+    begin
+      ExpressAuthTagger.new(noir_options).perform(endpoints)
+    ensure
+      locator.scan_base_paths = previous_bases
+      FileUtils.rm_rf(tmpdir)
+    end
+
+    endpoints.map { |ep| ep.tags.map(&.description) }.should eq([
+      ["Protected by Express mw.privateApi > auth.authorize.authorizeApi (next(new errors.NoPermissionError) middleware"],
+      [] of String, # the key check lets a caller without a key through; tokenCheck only screens keys
+      [] of String, # refuses only a member who is present
+      ["Protected by Express mw.rejectAnonymous (next(new errors.UnauthorizedError) middleware"],
+    ])
+  end
+
   it "does not read auth names in path literals or comments as middleware" do
     tmpdir = File.tempname("express_literals")
     Dir.mkdir_p(tmpdir)
