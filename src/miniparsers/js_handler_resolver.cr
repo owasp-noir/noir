@@ -4,6 +4,7 @@ require "../utils/text_file"
 require "./import_graph"
 require "../utils/js_literal_scanner"
 require "../utils/top_level_split"
+require "../utils/c_comments"
 
 # Resolves a route's named handler (`app.get('/x', login)`,
 # `router.post('/y', users.create)`, `app.use(auth())`) to the file and
@@ -55,15 +56,17 @@ module Noir::JSHandlerResolver
       @@definitions.clear
       @@tsconfig_paths.clear
       @@member_modules.clear
-      @@transparent.clear
+      @@wrapper_shapes.clear
     end
   end
 
   # `handler_text` is the route argument as written. Returns nil unless it
   # is a plain reference that resolves to a definition.
-  def resolve(handler_text : String, content : String, file_path : String) : Handler?
+  def resolve(handler_text : String, content : String, file_path : String, guards : Bool = false) : Handler?
     text = handler_text.strip
-    if inner = unwrap(text, content, file_path)
+    # `asyncHandler(withAuth(list))`: wrappers nest.
+    3.times do
+      inner = unwrap(text, content, file_path, guards) || break
       text = inner[0]
     end
     return unless m = text.match(REFERENCE_RE)
@@ -93,12 +96,16 @@ module Noir::JSHandlerResolver
     end
   end
 
-  # `asyncHandler(fn)` as `fn` and its char offset in `text`, when the
+  # A wrapper call `W(x)` as {`x`, its char offset in `text`, `W`}, when the
   # wrapper hands the request on to its argument: its definition takes a
   # function and returns one that calls it (`(fn) => (req, res, next) =>
   # Promise.resolve(fn(req, res, next)).catch(next)`). A wrapper with no
-  # definition in the scan is taken by name (`WRAPPER_NAME_RE`).
-  def unwrap(text : String, content : String, file_path : String) : Tuple(String, Int32)?
+  # definition in the scan, or one whose definition cannot be read, is taken
+  # by name (`WRAPPER_NAME_RE`). A wrapper that can itself refuse the request
+  # (`(fn) => (req, res, next) => req.user ? fn(req, res, next) :
+  # res.sendStatus(401)`) is a guard around `x`: it is only unwrapped when
+  # the caller reports that guard (`guards: true`).
+  def unwrap(text : String, content : String, file_path : String, guards : Bool = false) : Tuple(String, Int32, String)?
     m = text.match(WRAPPER_CALL_RE) || return
     open = m.end(0) - 1
     close = JSLiteralScanner.find_matching_paren(text, open) || return
@@ -109,39 +116,82 @@ module Noir::JSHandlerResolver
     return if arg.blank?
     callee = m[1].gsub(/\s+/, "")
     definition = resolve(callee, content, file_path)
-    transparent = if definition && (path = definition.path) && (line = definition.line)
-                    transparent_wrapper?(path, line)
-                  else
-                    callee.matches?(WRAPPER_NAME_RE)
-                  end
-    return unless transparent
-    {arg.strip, pos + arg.size - arg.lstrip.size}
+    shape = if definition && (path = definition.path) && (line = definition.line)
+              wrapper_shape(path, line)
+            end
+    if shape
+      transparent, refuses = shape
+      return unless transparent
+      return if refuses && !guards
+    else
+      return unless callee.matches?(WRAPPER_NAME_RE)
+    end
+    {arg.strip, pos + arg.size - arg.lstrip.size, callee}
   end
 
-  @@transparent = Hash(Tuple(String, Int32), Bool).new
+  # The wrapper head: `function name<T>(`, `name = <T extends H>(`,
+  # `= async (`, `module.exports = (`, `export default function (`; or a
+  # bare `= fn =>`.
+  WRAPPER_HEAD_RE  = /\A[^\n]*?(?:\bfunction\b\s*\*?\s*[\w$]*\s*|(?:=|\bdefault\b)\s*(?:async\s+)?)(?:<[^\n]*?>\s*)?\(/
+  WRAPPER_BARE_RE  = /\A[^\n]*?(?:=|\bdefault\b)\s*(?:async\s+)?([A-Za-z_$][\w$]*)\s*=>/
+  WRAPPER_REFUSAL  = /\b(?:status|sendStatus|code)\s*\(\s*40[13]\b|\bstatus\s*=\s*40[13]\b|\.throw\s*\(\s*40[13]\b|\bredirect\s*\(|\bthrow\s+new\b/
+  WRAPPER_MAX_SPAN = 4000
 
-  # The definition at `line` of `path` takes a parameter, returns a function,
-  # and calls that parameter with the request (`fn(req, res, next)`,
-  # `fn.apply(this, arguments)`, `fn(...args)`). `(check) => (req, res, next)
-  # => check(req) ? next() : res.sendStatus(403)` consults its argument; it
-  # does not hand the request to it.
-  # ponytail: read to the next top-level declaration (12 lines at most), not
-  # parsed; a wrapper spelled over more lines is not unwrapped.
-  private def transparent_wrapper?(path : String, line : Int32) : Bool
+  @@wrapper_shapes = Hash(Tuple(String, Int32), Tuple(Bool, Bool)?).new
+
+  # {calls its function parameter with the request, can refuse on its own}
+  # for the definition at `line` of `path`, read to the end of its
+  # statement; nil when it is not a function of one named parameter. The
+  # call must pass the request on (`fn(req, res, next)`, `fn.apply(this,
+  # arguments)`, `fn(...args)`): `(check) => (req, res, next) => check(req)
+  # ? next() : res.sendStatus(403)` consults its argument.
+  private def wrapper_shape(path : String, line : Int32) : Tuple(Bool, Bool)?
     key = {path, line}
-    cached = @@lock.synchronize { @@transparent[key]? }
-    return cached unless cached.nil?
-    found = (TextFile.read(path) rescue nil).try do |text|
-      lines = text.lines[line - 1, 12]? || [] of String
-      lines = lines.each_with_index.take_while { |row, idx| idx == 0 || !row.matches?(/\A(?:export|const|let|var|function|class|module|import)\b/) }.map(&.[0])
-      code = lines.join('\n')
-      param = code.match(/(?:\bfunction\b[^(]*|[:=]\s*(?:async\s+)?)\(\s*([A-Za-z_$][\w$]*)|[:=]\s*(?:async\s+)?([A-Za-z_$][\w$]*)\s*=>/) || next false
-      name = param[1]? || param[2]
-      rest = code[param.end(0)..]
-      rest.matches?(/=>|\bfunction\b/) && rest.matches?(/(?<![\w$.])#{Regex.escape(name)}\s*(?:\.\s*(?:call|apply)\s*\(|\(\s*(?:\.\.\.|[\w$]+\s*,))/)
-    end || false
-    @@lock.synchronize { @@transparent[key] = found }
-    found
+    found, cached = @@lock.synchronize { {@@wrapper_shapes.has_key?(key), @@wrapper_shapes[key]?} }
+    return cached if found
+    shape = (TextFile.read(path) rescue nil).try do |text|
+      lines = text.lines[line - 1, 200]? || next
+      code = Noir::CComments.strip(lines.join('\n'), quotes: %("'`)).gsub(/"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'|`(?:[^`\\]|\\.)*`/, %(""))
+      if head = code.match(WRAPPER_HEAD_RE)
+        open = head.end(0) - 1
+        close = JSLiteralScanner.find_matching_paren(code, open) || next
+        name = code[open + 1...close].match(/\A\s*([A-Za-z_$][\w$]*)\s*[:?=,)]?/).try(&.[1]) || next
+        next unless code[open + 1...close].matches?(/\A\s*#{Regex.escape(name)}\s*(?:[:?=]|,|\z)/)
+        body_from = close + 1
+      elsif bare = code.match(WRAPPER_BARE_RE)
+        name = bare[1]
+        body_from = bare.end(0)
+      else
+        next
+      end
+      body = statement_extent(code, body_from)
+      transparent = body.matches?(/=>|\bfunction\b/) &&
+                    body.matches?(/(?<![\w$.])#{Regex.escape(name)}\s*(?:\.\s*(?:call|apply)\s*\(|\(\s*(?:\.\.\.|[\w$]+\s*,))/)
+      {transparent, body.matches?(WRAPPER_REFUSAL)}
+    end
+    @@lock.synchronize { @@wrapper_shapes[key] = shape }
+    shape
+  end
+
+  # `code` from `from` to the end of the statement there: a `;` or a line
+  # that starts a new top-level statement, outside any bracket.
+  private def statement_extent(code : String, from : Int32) : String
+    depth = 0
+    idx = from
+    stop = Math.min(code.size, from + WRAPPER_MAX_SPAN)
+    while idx < stop
+      case code[idx]
+      when '(', '[', '{' then depth += 1
+      when ')', ']', '}' then depth -= 1
+      when ';'           then break if depth <= 0
+      when '\n'
+        nxt = code[idx + 1]?
+        break if depth <= 0 && nxt && !nxt.whitespace? && !"})].?:=>&|+-*".includes?(nxt)
+      end
+      break if depth < 0
+      idx += 1
+    end
+    code[from...idx]
   end
 
   @@member_modules = Hash(Tuple(String, String), String?).new

@@ -33,8 +33,10 @@ module Analyzer::Javascript
       parallel_file_scan do |path|
         content = read_file_content(path)
         next if Noir::JSRouteExtractor.other_shared_extractor_framework?(content, :express)
+        # ExpressAuthTagger reports a refusing wrapper (`withAuth(list)`) as
+        # the guard, so the handler may be the function it wraps.
         parser_endpoints = Noir::JSRouteExtractor.extract_routes(path, content, @is_debug,
-          include_callees: include_callee)
+          include_callees: include_callee, unwrap_guards: true)
         # A forwarding helper's own body carries the *shape* of a route,
         # not a route: `router.get(`/api${name}`, …)` inside
         # `setupPageRoute` is a rewrite of the caller's path, and the

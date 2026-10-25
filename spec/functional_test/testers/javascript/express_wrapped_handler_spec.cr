@@ -44,5 +44,22 @@ describe "Express wrapped handlers and in-handler caller checks", tags: "functio
     guards_of.call("GET", "/cached").should be_empty
     guards_of.call("GET", "/staff").should be_empty
     guards_of.call("GET", "/random").should be_empty
+
+    # src/review.ts: wrapper shapes (generic, multi-line), guard wrappers,
+    # identity vs. request data, renderer link, multi-line mounts.
+    handler_of.call("GET", "/r/admin").should eq({"list", 13})
+    guards_of.call("GET", "/r/admin").should eq(["express_auth"])
+    handler_of.call("GET", "/r/authed").should eq({"list", 13})
+    guards_of.call("GET", "/r/authed").should eq(["express_auth"])
+    guards_of.call("GET", "/r/schema").should eq(["express_auth"])
+    guards_of.call("GET", "/r/items/:collection").should be_empty
+    guards_of.call("GET", "/r/shared").should be_empty
+    {"/r/users/:userId/posts", "/r/leak", "/r/users/:userId/things", "/r/stats"}.each do |url|
+      guards_of.call("GET", url).should be_empty
+    end
+    guards_of.call("POST", "/r/requests/:id/accept").should be_empty
+    handler_of.call("GET", "/r/me").should eq({"showProfile", 57})
+    guards_of.call("GET", "/r/private/a").should eq(["express_auth"])
+    guards_of.call("GET", "/r/open").should be_empty
   end
 end

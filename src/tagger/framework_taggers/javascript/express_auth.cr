@@ -121,7 +121,8 @@ class ExpressAuthTagger < FrameworkTagger
           end
           next unless guard
 
-          if match = stripped.match(MOUNTED_USE)
+          # `app.use(\n  '/private',\n  auth,\n)`: the path is on a later line.
+          if match = statement.match(MOUNTED_USE)
             prefix = match[1]
             @mounted_auth_rules << {prefix: prefix, description: "#{guard} via app.use() on #{prefix}"}
           elsif match = stripped.match(BARE_USE)
@@ -164,8 +165,12 @@ class ExpressAuthTagger < FrameworkTagger
         endpoint.add_tag(Tag.new("auth", description, "express_auth"))
         # `app.get('/api/Users', security.isAuthorized())`: the guard is the
         # only callable, so the analyzer reported it as the handler. It is
-        # not one — the request falls through to the next match.
-        endpoint.handler = nil if args && idx == args.size - 1
+        # not one — the request falls through to the next match. A refusing
+        # wrapper (`withAuth(list)`) is the guard around a handler that stays.
+        # An inline closure that checks the caller itself is still the handler.
+        if args && idx == args.size - 1 && !arg.matches?(Noir::JSRouteExtractor::INLINE_FUNCTION_RE) && wrapper_guard(arg, path_info.path).nil?
+          endpoint.handler = nil
+        end
         return endpoint
       end
 
@@ -194,6 +199,11 @@ class ExpressAuthTagger < FrameworkTagger
 
     code = code_only(arg)
     return "Protected by Express JWT middleware" if JWT_MIDDLEWARE_PATTERNS.any? { |pattern| code.matches?(pattern) }
+    # `asyncHandler(adminOnly)`, `withAuth(list)`: the wrapper is judged by
+    # its own definition, and what it wraps keeps its position's judgement.
+    if wrapped = unwrapped_arg(arg, file)
+      return wrapper_guard(arg, file) || guard_description(wrapped, file, handler_position)
+    end
     AUTH_MIDDLEWARE_NAMES.each do |pattern|
       if match = code.match(pattern)
         return "Protected by Express #{match[0]} middleware"
@@ -204,6 +214,24 @@ class ExpressAuthTagger < FrameworkTagger
       name, evidence = resolved
       "Protected by Express #{name} (#{evidence}) middleware"
     end
+  end
+
+  private def unwrapped_arg(arg : String, file : String) : String?
+    content = read_file(file) || return
+    Noir::JSHandlerResolver.unwrap(code_only(arg).strip, content, file, guards: true).try(&.[0])
+  end
+
+  # The guard a wrapper call (`withAuth(list)`, `asyncHandler(withAuth(list))`)
+  # itself is: a wrapper whose definition refuses the caller before handing
+  # the request on.
+  private def wrapper_guard(arg : String, file : String, depth : Int32 = 0) : String?
+    return if depth > 3
+    content = read_file(file) || return
+    wrapped = Noir::JSHandlerResolver.unwrap(code_only(arg).strip, content, file, guards: true) || return
+    if found = refusing_definition(wrapped[2], file, false)
+      return "Protected by Express #{found[0]} (#{found[1]}) wrapper"
+    end
+    wrapper_guard(wrapped[0], file, depth + 1)
   end
 
   # `arg` resolved to its definition (same file or a relative import) and
@@ -224,17 +252,71 @@ class ExpressAuthTagger < FrameworkTagger
       end
       return
     end
+    # `export default asyncHandler(handler)`: the definition is the wrapped one.
+    if depth < MAX_ARRAY_DEPTH && (call = code_only(lines[line - 1]).match(WRAPPED_EXPORT))
+      found = refusing_definition(call[1], path, handler_position, depth + 1) || return
+      return {handler.name.gsub(/\s+/, ""), found[1]}
+    end
     body = definition_extent(lines, line - 1)
     return if body.first?.try(&.matches?(ERROR_HANDLER_SIGNATURE))
     code = code_only(body.join("\n"))
-    evidence = anonymous_refusal(code) || return
-    return if handler_position && code.gsub(REFUSING_DEFINITION, "").matches?(HANDLER_RESPONSE)
-    {handler.name.gsub(/\s+/, ""), evidence.gsub(/\bnew\s+/, "new ").gsub(/(?<!\bnew)\s+/, "").chomp('(')}
+    evidence = anonymous_refusal(code) || identity_throw(code) || return
+    # In the handler position a definition that answers the request is the
+    # handler; one that calls `next()` on success is middleware all the same
+    # (`app.use('/private', auth)`).
+    return if handler_position && !code.matches?(BARE_NEXT) && code.gsub(REFUSING_DEFINITION, "").matches?(HANDLER_RESPONSE)
+    {handler.name.gsub(/\s+/, ""), evidence.gsub(/\bnew\s+/, "new ").gsub(/(?<!\bnew)\s+/, "").chomp('(').sub(/\Athrownew\b/, "throw new")}
   rescue
     nil
   end
 
   MAX_ARRAY_DEPTH = 4
+  WRAPPED_EXPORT  = /\A\s*(?:export\s+default|(?:export\s+)?(?:const|let|var)\s+[\w$]+\s*(?::[^=]*)?=|module\.exports\s*=)\s*([A-Za-z_$][\w$.]*\s*\(\s*[A-Za-z_$][\w$]*\s*\))\s*;?\s*\z/
+  BARE_NEXT       = /\bnext\s*\(\s*\)/
+
+  # Request fields that carry what the caller sent or what the app looked
+  # up, not who the caller is: a check on them refuses bad input.
+  DATA_ROOTS = /\A(?:params|query|body|headers?|cookies|signedCookies|files?|schema|method|path|url|originalUrl|baseUrl|ip|ips|hostname|protocol|get|is|accepts|collection|sanitizedQuery|route|app|res)\z/
+
+  # `throw new ForbiddenError()` under an `if` that reads who the caller is
+  # (`if (!isAdmin(req.accountability))`): every anonymous caller takes it.
+  # A throw on request data (`req.params.collection in req.schema…`) is a
+  # 4xx for bad input, not a guard.
+  IDENTITY_THROW = /\bthrow\s+new\s+(?:[\w$]+\.)*\w*(?:Unauthori[sz]ed|Forbidden|InvalidCredentials|Unauthenticated|NotAuthenticated|PermissionDenied|NoPermission)\w*/
+
+  private def identity_throw(code : String, receivers : String = "req|request") : String?
+    code.scan(IDENTITY_THROW) do |m|
+      at = m.begin(0)
+      return if code[0...at].matches?(ANONYMOUS_PASS_THROUGH)
+      condition = enclosing_condition(code, at) || next
+      next if condition.matches?(PRESENCE_CONJUNCTION)
+      # Only a negated test is one an absent caller fails:
+      # `if (req.accountability?.share)` lets anonymous through.
+      next unless condition.matches?(/\A\s*!|!==?/)
+      return m[0] if reads_identity?(condition, receivers)
+    end
+    nil
+  end
+
+  # The condition of the `if` whose block (or single statement) holds `at`.
+  private def enclosing_condition(code : String, at : Int32) : String?
+    head = code[0...at]
+    if_at = head.rindex(/\bif\s*\(/) || return
+    open = code.index('(', if_at) || return
+    close = Noir::JSLiteralScanner.find_matching_paren(code, open) || return
+    return if close >= at
+    between = code[close + 1...at]
+    inside = if brace = between.index('{')
+               between[0...brace].blank? && (Noir::JSLiteralScanner.find_matching_brace(code, close + 1 + brace) || code.size) > at
+             else
+               !between.includes?(';') && !between.includes?('}')
+             end
+    inside ? code[open + 1...close] : nil
+  end
+
+  private def reads_identity?(text : String, receivers : String) : Bool
+    text.scan(/(?<![\w$.])(?:#{receivers})\s*\??\.\s*([A-Za-z_$][\w$]*)/).any? { |m| !m[1].matches?(DATA_ROOTS) }
+  end
 
   # `authAdminApi = [authenticate, authorize, cors]`: Express flattens an
   # array of handlers into the chain, so each element is a middleware of the
@@ -298,7 +380,9 @@ class ExpressAuthTagger < FrameworkTagger
       result << lines[i]
       code = code_only(lines[i])
       depth += code.count('{') - code.count('}')
-      break if depth <= 0
+      # `(fn) => (req, res, next) =>\n  req.user ? fn(…) : res.sendStatus(401);`
+      # continues on the next line.
+      break if depth <= 0 && !code.rstrip.matches?(/(?:=>|[(,?:=]|&&|\|\|)\z/)
       i += 1
     end
     result
@@ -427,17 +511,25 @@ class ExpressAuthTagger < FrameworkTagger
 
   # The last field of a negated read that names who is calling:
   # `!req.user`, `!req.accountability?.user`, `!req.session.userId`,
-  # `!req.isAuthenticated()`.
+  # `!req.isAuthenticated()`. The first field must not be request data
+  # (`!req.params.userId` refuses a bad URL, not an anonymous caller).
   CALLER_FIELD = /\A(?:user|userId|user_id|uid|currentUser|account|accountId|principal|identity|isAuthenticated|isLoggedIn)\z/
 
-  # What the guarded branch does to the caller it stops: throws (the app's
-  # error handler answers), refuses with 401/403, hands an error to
-  # `next(err)` or redirects to a login page.
-  BRANCH_REFUSAL = /\bthrow\b|\b(?:res|response)\s*\.\s*(?:status|sendStatus)\s*\(\s*40[13]\b|\bnext\s*\(\s*[^)\s]|\b(?:res|response)\s*\.\s*redirect\s*\(/
+  # What the guarded branch does to the caller it stops, and how that reads
+  # in the tag: throws (the app's error handler answers), answers 401/403
+  # (`res.status(401)` alone sends nothing), hands an error to `next(err)`,
+  # or redirects to a login page.
+  BRANCH_REFUSALS = {
+    /\bthrow\b/                                                                                                                                     => "throws",
+    /\b(?:res|response)\s*\.\s*sendStatus\s*\(\s*40[13]\b|\b(?:res|response)\s*\.\s*status\s*\(\s*40[13]\s*\)\s*\.\s*(?:json|send|end|render)\s*\(/ => "answers 401/403",
+    /\bnext\s*\(\s*[^)\s]/                                                                                                                          => "next(err)",
+    /\b(?:res|response)\s*\.\s*redirect\s*\(/                                                                                                       => "redirects",
+  }
 
-  # Anything that can answer or pass the request on before a later check
-  # runs; a check after one of these is not reached by every caller.
-  EARLIER_EXIT = /\breturn\b|\bnext\s*\(|\b(?:res|response)\s*\.\s*(?:json|send|sendStatus|status|render|redirect|end|sendFile|write)\s*\(/
+  # Anything that can answer, pass the request on or change state before a
+  # later check runs; a check after one of these is not what every caller
+  # meets first.
+  EARLIER_EXIT = /\breturn\b|\bawait\b|\bnext\s*\(|\b(?:res|response)\s*\.\s*(?:json|send|sendStatus|status|render|redirect|end|sendFile|write)\s*\(/
 
   TOP_LEVEL_IF  = /(?<![\w$.])if\s*\(/
   SERVICE_NEW   = /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*new\s+([A-Z][\w$]*)\s*\(/
@@ -446,40 +538,81 @@ class ExpressAuthTagger < FrameworkTagger
   # A refusal the handler's own body runs for every anonymous caller before
   # it does anything else: `if (!req.accountability?.user) throw new
   # InvalidCredentialsError()` at its top, or one hop into a method it
-  # awaits on a service it constructs (`await service.getItemPermissions()`
-  # whose body opens with `if (!this.accountability?.user) throw …`).
-  # Nil when the check sits behind an earlier return/response/next, inside
-  # a branch, or tests anything but the caller's absence.
+  # awaits first on a service it constructs from the caller's identity
+  # (`new PermissionsService({ accountability: req.accountability })`, then
+  # `await service.getItemPermissions()` whose body opens with `if
+  # (!this.accountability?.user) throw …`). Nil when the check sits behind
+  # an earlier return/await/response/next, inside a branch or `try`, tests
+  # request data, or the service was not handed the caller.
   private def handler_caller_check(endpoint : Endpoint) : String?
     handler = endpoint.handler || return
     path = handler.path || return
     line = handler.line || return
     content = read_file(path) || return
+    request = request_param(content, line) || return
     body = code_only(Noir::JSRouteExtractor.definition_body(content, line))
-    if check = caller_absence_refusal(body, "req|request")
+    if check = caller_absence_refusal(body, Regex.escape(request))
       return "Protected by Express handler check #{check}"
     end
-    bindings = Hash(String, String).new
-    body.scan(SERVICE_NEW) { |m| bindings[m[1]] = m[2] }
+    bindings = Hash(String, Tuple(String, String)).new
+    body.scan(SERVICE_NEW) do |m|
+      open = m.end(0) - 1
+      close = Noir::JSLiteralScanner.find_matching_paren(body, open) || next
+      bindings[m[1]] = {m[2], body[open + 1...close]}
+    end
     return if bindings.empty?
     body.scan(SERVICE_AWAIT) do |m|
       at = m.begin(0)
       break if body[0...at].matches?(EARLIER_EXIT)
-      next unless top_level?(body, at)
-      klass = bindings[m[1]]? || next
-      method_body = service_method_body(klass, m[2], content, path) || next
-      if check = caller_absence_refusal(method_body, "this")
-        return "Protected by Express handler call #{klass}.#{m[2]} (#{check})"
-      end
+      break unless top_level?(body, at)
+      klass, args = bindings[m[1]]? || break
+      method_body = service_method_body(klass, m[2], content, path) || break
+      check = caller_absence_refusal(method_body, "this") || break
+      field = check.match(/\A!this\??\.([A-Za-z_$][\w$]*)/).try(&.[1]) || break
+      # The service must have been handed the caller: `{ accountability:
+      # req.accountability }`, not `{ userId: req.params.userId }` or a fixed
+      # `{ accountability: { user: 'system' } }`.
+      passed = args.match(/(?<![\w$])#{Regex.escape(field)}\s*:\s*(?:#{Regex.escape(request)})\s*\??\.\s*([A-Za-z_$][\w$]*)/)
+      break if passed.nil? || passed[1].matches?(DATA_ROOTS)
+      return "Protected by Express handler call #{klass}.#{m[2]} (#{check})"
     end
     nil
   rescue
     nil
   end
 
+  # The name the handler defined at `line` gives the request: the first
+  # parameter of the last function on that line (`asyncHandler(async (req,
+  # res) => {`, `function show(request, response) {`).
+  private def request_param(content : String, line : Int32) : String?
+    text = content.lines[line - 1]? || return
+    code = code_only(text)
+    if arrow = code.rindex("=>")
+      head = code[0...arrow].rstrip
+      head = head.sub(/\)\s*:\s*[^()]*\z/, ")") # `): Promise<void>`
+      return head.match(/([A-Za-z_$][\w$]*)\z/).try(&.[1]) unless head.ends_with?(')')
+      close = head.size - 1
+      depth = 0
+      open = nil
+      close.downto(0) do |idx|
+        case head[idx]
+        when ')' then depth += 1
+        when '('
+          depth -= 1
+          if depth == 0
+            open = idx
+            break
+          end
+        end
+      end
+      return head[(open || return) + 1...close].match(/\A\s*([A-Za-z_$][\w$]*)/).try(&.[1])
+    end
+    code.match(/\bfunction\b[^(]*\(\s*([A-Za-z_$][\w$]*)/).try(&.[1])
+  end
+
   # The first `if` at the top of `body` that tests the caller's absence on
-  # `receiver` and refuses in its branch, as written; nil once anything that
-  # can answer or pass the request on comes first.
+  # `receiver` and refuses in its branch, as `<condition> (<refusal>)`; nil
+  # once anything that can answer or pass the request on comes first.
   private def caller_absence_refusal(body : String, receiver : String) : String?
     absent = /\A!\s*(?:#{receiver})((?:\s*\??\.\s*[A-Za-z_$][\w$]*)+)\s*(?:\(\s*\))?\z/
     body.scan(TOP_LEVEL_IF) do |m|
@@ -497,11 +630,13 @@ class ExpressAuthTagger < FrameworkTagger
                  rest[0, rest.index(/[;\n]/) || rest.size]
                end
       tested = Noir::TopLevelSplit.split(condition, '|', Noir::TopLevelSplit::Rules::JS_POSITIONAL_ARGS).reject(&.blank?).find do |part|
-        (hit = part.strip.match(absent)) && hit[1].split('.').last.strip.lchop('?').strip.matches?(CALLER_FIELD)
+        next false unless hit = part.strip.match(absent)
+        fields = hit[1].split('.').map(&.strip.lchop('?').strip).reject(&.empty?)
+        fields.last.matches?(CALLER_FIELD) && (receiver == "this" || !fields.first.matches?(DATA_ROOTS))
       end
       next unless tested
-      refusal = branch.match(BRANCH_REFUSAL) || next
-      return "#{tested.gsub(/\s+/, "")} (#{refusal[0].strip})"
+      refusal = BRANCH_REFUSALS.find { |re, _| branch.matches?(re) } || next
+      return "#{tested.gsub(/\s+/, "")} #{refusal[1]}"
     end
     nil
   end
