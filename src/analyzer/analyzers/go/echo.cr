@@ -174,12 +174,6 @@ module Analyzer::Go
     BIND_ANY = /\.Bind(?:Body|JSON|XML|YAML|Headers|Query|Path)?\s*\(/
     # `c.Bind(&req)`: Echo's DefaultBinder.
     BIND_CALL = /\.Bind\s*\(\s*&\s*([A-Za-z_]\w*)\s*\)/
-    # Where a bind target's type is declared in the body: `var req T`,
-    # `req T` in a `var (...)` block, `req := T{` / `&T{` / `new(T)`, or an
-    # anonymous `struct {` literal.
-    DECLARED_TYPE  = /\A\s*(?:var\s+)?(\w+)\s+\*?((?:\w+\.)?\w+)\s*\z/
-    ASSIGNED_TYPE  = /\A\s*(\w+)\s*:?=\s*(?:&\s*)?(?:new\(\s*)?((?:\w+\.)?\w+)\s*[{)]/
-    STRUCT_LITERAL = /\A\s*(?:var\s+)?(\w+)\s*(?::?=\s*)?struct\s*\{/
 
     # The fields the binds in `lines` fill, and whether any bind target did
     # not resolve to a struct.
@@ -191,7 +185,7 @@ module Analyzer::Go
         # A bind variant this does not read (`BindHeaders`, `Bind(x)`).
         unresolved = true if line.matches?(BIND_ANY) && !line.matches?(BIND_CALL)
         line.scan(BIND_CALL) do |m|
-          found = bind_target_fields(lines, m[1], file, index)
+          found = index.target_fields(lines, m[1], file)
           # A struct with no bindable tag (`struct{ Food string }` binds
           # JSON by field name) keeps the generic marker.
           if found && found.any? { |f| BIND_TAGS.any? { |key| Noir::GoStructFields.tag_value(f.tag, key) } }
@@ -202,35 +196,6 @@ module Analyzer::Go
         end
       end
       {fields, unresolved}
-    end
-
-    # The struct fields of the bind target `name`, from its declaration in
-    # `lines`; nil when it is not declared there as a known struct.
-    private def bind_target_fields(lines : Array(String), name : String, file : String, index : Noir::GoStructFields::Index) : Array(Noir::GoStructFields::Field)?
-      lines.each_with_index do |line, idx|
-        if (m = line.match(STRUCT_LITERAL)) && m[1] == name
-          return index.flatten(Noir::GoStructFields.literal(struct_literal_text(lines, idx)), file)
-        end
-        m = line.match(DECLARED_TYPE) || line.match(ASSIGNED_TYPE)
-        next unless m && m[1] == name
-        return index.resolve(m[2], file)
-      end
-      nil
-    end
-
-    # `struct { ... }` from the line `lines[start]` opens it on to the brace
-    # that closes it.
-    private def struct_literal_text(lines : Array(String), start : Int32) : String
-      first = lines[start]
-      text = first[(first.index("struct") || 0)..]
-      depth = text.count('{') - text.count('}')
-      row = start + 1
-      while depth > 0 && row < lines.size
-        text += "\n" + lines[row]
-        depth += lines[row].count('{') - lines[row].count('}')
-        row += 1
-      end
-      text[0, (text.rindex('}') || text.size - 1) + 1]
     end
 
     # Echo's DefaultBinder: `param` tags from the path, `query` tags on GET,

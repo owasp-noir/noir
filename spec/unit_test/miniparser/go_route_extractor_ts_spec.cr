@@ -254,7 +254,7 @@ describe Noir::TreeSitterGoRouteExtractor do
     routes = Noir::TreeSitterGoRouteExtractor.extract_routes(source)
     routes.map { |r| {r.verb, r.path} }.sort!.should eq([
       {"DELETE", "/bars/{id}"},
-      {"GET", "/bars/"},
+      {"GET", "/bars"},
     ].sort)
   end
 

@@ -62,10 +62,11 @@ class Noir::GoNamedHandler
   # Declarations that pin a name's type, scanned once per file (see
   # `declared_types`). Assignments are anchored at a statement start, so the
   # second name of `a, b := &X{}, newY()` is never typed `X`.
-  ASSIGNED_TYPE_RE = /(?:\A|[\n;{(])[ \t]*(?:var[ \t]+)?([A-Za-z_]\w*)[ \t]*:?=[ \t]*(?:&[ \t]*)?(?:[A-Za-z_]\w*\.)?([A-Za-z_]\w*)[ \t]*\{/
-  NEW_TYPE_RE      = /(?:\A|[\n;{(])[ \t]*(?:var[ \t]+)?([A-Za-z_]\w*)[ \t]*:?=[ \t]*new\([ \t]*(?:[A-Za-z_]\w*\.)?([A-Za-z_]\w*)[ \t]*\)/
+  # Group 2 is the type's package qualifier, if any.
+  ASSIGNED_TYPE_RE = /(?:\A|[\n;{(])[ \t]*(?:var[ \t]+)?([A-Za-z_]\w*)[ \t]*:?=[ \t]*(?:&[ \t]*)?(?:([A-Za-z_]\w*)\.)?([A-Za-z_]\w*)[ \t]*\{/
+  NEW_TYPE_RE      = /(?:\A|[\n;{(])[ \t]*(?:var[ \t]+)?([A-Za-z_]\w*)[ \t]*:?=[ \t]*new\([ \t]*(?:([A-Za-z_]\w*)\.)?([A-Za-z_]\w*)[ \t]*\)/
   # `name *T` as a parameter, receiver, struct field or `var`.
-  DECLARED_TYPE_RE = /(?:\A|[\n(,]|\bvar)[ \t]*([A-Za-z_]\w*)[ \t]+\*?(?:[A-Za-z_]\w*\.)?([A-Za-z_]\w*)/
+  DECLARED_TYPE_RE = /(?:\A|[\n(,]|\bvar)[ \t]*([A-Za-z_]\w*)[ \t]+\*?(?:([A-Za-z_]\w*)\.)?([A-Za-z_]\w*)/
 
   # Library middleware whose request read lives in a dependency the scan
   # never sees, with that read as the source line the adapters parse:
@@ -104,6 +105,8 @@ class Noir::GoNamedHandler
   # Plain-reference handler text -> the body it names (no one-hop calls).
   @handlers = Hash(String, Key).new
   @declared : Hash(String, Set(String))? = nil
+  # `name` -> {package, type} for `name := pkg.T{...}` and the like.
+  @qualified_types = Hash(String, Set({String, String})).new
   @receivers = Hash(String, Array(Tuple(Noir::GoCalleeExtractor::FunctionBody, String?, String))).new
   # `.Use` / group middleware each route runs behind, see
   # `TreeSitterGoRouteExtractor#route_middleware`.
@@ -112,6 +115,8 @@ class Noir::GoNamedHandler
   @resolved = Hash(String, Noir::GoCalleeExtractor::FunctionBody).new
   # Wrapped handler text -> the reference it answers with (`a.UpdateNote`).
   @handler_names = Hash(String, String).new
+  # Handler text -> the row of the closure its factory returns.
+  @closure_rows = Hash(String, Int32).new
 
   # `listA` -> {"", "listA"}, `h.List` -> {"h", "List"}, `RateLimit()` ->
   # {"", "RateLimit"}. Anything else (closures, calls with arguments,
@@ -201,7 +206,8 @@ class Noir::GoNamedHandler
           end
         else
           methods[name]?.try { |candidates| method_for(qualifier, name, candidates, content, "file") } ||
-          scope.try(&.bodies.methods_for(dir)[name]?).try { |candidates| method_for(qualifier, name, candidates, content, "package") }
+          scope.try(&.bodies.methods_for(dir)[name]?).try { |candidates| method_for(qualifier, name, candidates, content, "package") } ||
+          scope.try { |sc| imported_method(qualifier, name, content, aliases, sc) }
         end
       end
     end
@@ -218,6 +224,13 @@ class Noir::GoNamedHandler
         body = resolve.call(qualifier, name)
         {body, ref} if body && !registers_routes.call(body) && handler_definition?(body)
       end.uniq!(&.[0])
+      if found.empty? && (call = factory_call(handler.gsub(STRING_LITERAL, %(""))))
+        # A handler factory called with arguments (`serveFile("a.html",
+        # "text/html")`) answers with the closure it returns.
+        qualifier, _, name = call.rpartition('.')
+        body = resolve.call(qualifier, name)
+        found << {body, call} if body && !registers_routes.call(body) && returned_closure_row(body)
+      end
       next unless found.size == 1
       @resolved[handler], @handler_names[handler] = found.first
       references[handler] = {"", ""}
@@ -230,6 +243,7 @@ class Noir::GoNamedHandler
 
       key = {body.file_path, body.start_row}
       @handlers[handler] = key
+      returned_closure_row(body).try { |row| @closure_rows[handler] = row }
       # One hop further: the functions the handler body calls.
       calls = body.source.scan(CALL_RE).map(&.[1]).uniq!
       keys = (@refs[handler]? || [] of Key).concat([key]).concat(keys_for.call(calls, File.dirname(body.file_path), key))
@@ -254,6 +268,37 @@ class Noir::GoNamedHandler
       key = {path, fb.start_row}
       span_of.call(fb).each { |row| @rows[row] = key }
     end
+  end
+
+  # The callee of a handler argument that is one call and nothing else
+  # (`serveFile("a", b)`, `h.Page("x")`), or nil.
+  private def factory_call(handler : String) : String?
+    m = handler.match(/\A((?:[A-Za-z_]\w*\s*\.\s*)*[A-Za-z_]\w*)\s*\(/) || return
+    depth = 0
+    (m.end - 1...handler.size).each do |pos|
+      char = handler[pos]
+      depth += 1 if char == '('
+      next unless char == ')'
+      depth -= 1
+      return pos == handler.size - 1 ? m[1].gsub(/\s+/, "") : nil if depth.zero?
+    end
+  end
+
+  RETURNED_CLOSURE = /\A\s*return\s+func\s*\(/
+
+  # The row of the one closure a handler factory returns (`func serveFile(
+  # ...) gin.HandlerFunc { ...; return func(ctx *gin.Context) {...} }`):
+  # that closure serves the request. Nil for a handler itself, or a body
+  # that returns no closure or several.
+  private def returned_closure_row(body : Noir::GoCalleeExtractor::FunctionBody) : Int32?
+    return if handler_definition?(body)
+    row = nil
+    body.source.each_line.with_index do |line, idx|
+      next unless line.matches?(RETURNED_CLOSURE)
+      return if row
+      row = body.start_row + idx
+    end
+    row
   end
 
   # Whether `body` is declared as a handler: it takes parameters and
@@ -302,6 +347,25 @@ class Noir::GoNamedHandler
     found
   end
 
+  # The method `name` of the struct a local value is declared with when that
+  # type lives in an imported package (`h := api.UserAPI{...}` then
+  # `h.Create` -> `func (a *UserAPI) Create` in the package `api` names).
+  # Nil unless exactly one definition matches.
+  private def imported_method(qualifier : String, name : String, content : String,
+                              aliases : Hash(String, String), scope : Scope) : Noir::GoCalleeExtractor::FunctionBody?
+    declared_types(qualifier, content)
+    found = nil
+    @qualified_types[qualifier]?.try &.each do |(package, type)|
+      import_dir = aliases[package]?.try { |import_path| scope.import_dirs[import_path]? } || next
+      scope.bodies.methods_for(import_dir)[name]?.try &.each do |fb|
+        next unless fb.source.match(RECEIVER_RE).try(&.[2]) == type
+        return if found && found != fb
+        found = fb
+      end
+    end
+    found
+  end
+
   # Type names `name` is declared with in this file: `name := &T{}`,
   # `var name = T{}`, `name := new(T)`, `name *T` (parameter, field or
   # `var`), and a method receiver `(name *T)`. Empty when none is visible.
@@ -310,7 +374,10 @@ class Noir::GoNamedHandler
     declared = @declared ||= begin
       index = Hash(String, Set(String)).new
       {ASSIGNED_TYPE_RE, NEW_TYPE_RE, DECLARED_TYPE_RE}.each do |re|
-        content.scan(re) { |m| (index[m[1]] ||= Set(String).new) << m[2] }
+        content.scan(re) do |m|
+          (index[m[1]] ||= Set(String).new) << m[3]
+          (@qualified_types[m[1]] ||= Set({String, String}).new) << {m[2], m[3]} if m[2]?
+        end
       end
       index
     end
@@ -340,7 +407,7 @@ class Noir::GoNamedHandler
       return Handler.new("closure", @path, row + 1)
     end
     if key = @handlers[name]?
-      return Handler.new(@handler_names[name]? || name, key[0], key[1] + 1)
+      return Handler.new(@handler_names[name]? || name, key[0], (@closure_rows[name]? || key[1]) + 1)
     end
     if name.matches?(/\A[A-Za-z_]\w*\z/) && (row = local_closure_row(name, route.line))
       Handler.new(name, @path, row + 1)
