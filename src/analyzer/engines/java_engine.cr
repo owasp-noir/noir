@@ -128,6 +128,57 @@ module Analyzer::Java
       Noir::CComments.strip(text, leak_unterminated_tail: true)
     end
 
+    # What a Java file sees when it names a type: its package, its imports
+    # and the type names it declares itself (nested ones included).
+    record NameScope, package_name : String, imports : Array(Noir::ImportGraph::ImportRef), declared : Set(String)
+
+    DECLARATION_NODE_TYPES = Set{"class_declaration", "interface_declaration", "enum_declaration",
+                                 "record_declaration", "annotation_type_declaration"}
+
+    def self.name_scope(source : String) : NameScope
+      scope = NameScope.new("", Array(Noir::ImportGraph::ImportRef).new, Set(String).new)
+      Noir::TreeSitter.parse_java(source) do |root|
+        declared = Set(String).new
+        collect_declared_types(root, source, declared)
+        scope = NameScope.new(Noir::TreeSitterJavaParameterExtractor.extract_package_name_from(root, source),
+          Noir::TreeSitterJavaParameterExtractor.extract_imports_from(root, source), declared)
+      end
+      scope
+    end
+
+    private def self.collect_declared_types(node : LibTreeSitter::TSNode, source : String, names : Set(String))
+      if DECLARATION_NODE_TYPES.includes?(Noir::TreeSitter.node_type(node))
+        Noir::TreeSitter.field(node, "name").try { |name| names << Noir::TreeSitter.node_text(name, source) }
+      end
+      Noir::TreeSitter.each_named_child(node) { |child| collect_declared_types(child, source, names) }
+    end
+
+    # True when the type name `written` in `file` (simple or qualified,
+    # generic arguments ignored) is `fqn`, resolved the way javac does: a
+    # qualified name stands for itself; a simple one goes to a single-type
+    # import, then a type the file declares, then its own package, then an
+    # on-demand import. `unresolved` answers when none of those names it (a
+    # type from an implicit or unscanned package).
+    def self.type_resolves_to?(written : String, fqn : String, file : String, scope : NameScope,
+                               unresolved : Bool = false) : Bool
+      name = written.split('<', 2).first.strip
+      return name == fqn if name.includes?('.')
+
+      fqn_package, _, simple = fqn.rpartition('.')
+      return false unless name == simple
+      if single = scope.imports.find { |imp| !imp.wildcard? && imp.path.rpartition('.').last == name }
+        return single.path == fqn
+      end
+      return false if scope.declared.includes?(name)
+
+      dir = File.dirname(file)
+      if CodeLocator.instance.files_by_basename("#{name}.java").any? { |path| File.dirname(path) == dir }
+        return scope.package_name == fqn_package
+      end
+      return true if scope.imports.any? { |imp| imp.wildcard? && imp.path == fqn_package }
+      unresolved
+    end
+
     # Module root of a Maven/Gradle source file: everything before
     # `/src/main/java/` (or `/src/main/kotlin/`) below `base`, or the file's
     # own directory outside that layout.

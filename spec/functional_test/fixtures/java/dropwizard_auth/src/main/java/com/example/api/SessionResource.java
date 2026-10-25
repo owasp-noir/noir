@@ -1,7 +1,9 @@
 package com.example.api;
 
 import com.example.entities.CreateSession;
+import com.example.entities.Node;
 import com.example.entities.Profile;
+import com.example.other.Address;
 import io.dropwizard.auth.Auth;
 import jakarta.ws.rs.GET;
 import jakarta.ws.rs.HeaderParam;
@@ -32,10 +34,23 @@ public class SessionResource {
         return "";
     }
 
-    // No principal at all.
+    // No principal at all. Profile's `home` unwraps com.example.entities.Address
+    // (resolved from Profile's own package), not the Address imported here.
     @PUT
     @Path("/profile")
     public String profile(Profile profile) {
+        return "";
+    }
+
+    @PUT
+    @Path("/planet")
+    public String planet(Address address) {
+        return "";
+    }
+
+    @POST
+    @Path("/node")
+    public String node(Node node) {
         return "";
     }
 }

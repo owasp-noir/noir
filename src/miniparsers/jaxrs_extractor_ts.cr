@@ -112,17 +112,29 @@ module Noir
       getter file_path : String?
       getter protocol : String
       getter signature_line : Int32? # 0-based line of the method name (the handler), nil for class-level routes
-      # Handler parameter annotated `@Auth` (Dropwizard's principal
-      # injection): `:required` for a plain principal, `:optional` for
-      # `Optional<P>`, nil when there is none. What it means for access is
-      # the adapter's call: only Dropwizard's `@Auth` gates the request.
-      getter auth_principal : Symbol?
+      # The first handler parameter annotated `@Auth`, nil when none.
+      getter auth_param : AuthParam?
 
       def initialize(@verb, @path, @class_name, @method_name, @line,
                      @parameter_format, @params, @callees, @file_path = nil, @protocol = "http",
-                     @signature_line = nil, @auth_principal = nil)
+                     @signature_line = nil, @auth_param = nil)
       end
     end
+
+    # A handler parameter annotated `@Auth`, as written: the annotation's
+    # name (simple or qualified) and the parameter's declared type, plus the
+    # file whose imports resolve both (nil = the file being extracted).
+    # Which `Auth` it is and what it means for access is the adapter's call.
+    record AuthParam, annotation : String, type_name : String, file : String?
+
+    # The class whose methods implement the interface / superclass methods
+    # being walked: `{declaration, its source, its file (nil = the file
+    # being extracted)}`. Jersey merges an implementing method's parameter
+    # annotations with the declaring method's.
+    alias Impl = {LibTreeSitter::TSNode, String, String?}
+
+    # Parameter annotations that mark framework injection, never request input.
+    INJECTION_ANNOTATIONS = Set{"Context", "Suspended", "Auth"}
 
     # Public entry point — walks `source` and returns one `Route`
     # per JAX-RS endpoint defined in `path`'s file. `dto_index` maps
@@ -318,7 +330,8 @@ module Noir
                                      current_file : String? = nil,
                                      visited : Set(String)? = nil,
                                      method_excludes : Set(String) = Set(String).new,
-                                     custom_verb_annotations : Hash(String, String) = {} of String => String)
+                                     custom_verb_annotations : Hash(String, String) = {} of String => String,
+                                     impl : Impl? = nil)
       class_name = type_identifier_text(decl, source)
       local_constants = constants || TreeSitterJavaRouteExtractor.extract_string_constants(source)
       own_class_path = annotation_string_value(decl, "Path", source, local_constants, class_name) || ""
@@ -377,14 +390,16 @@ module Noir
         end
 
         next if method_excludes.includes?(method_name)
+        impl_params = impl.try { |(impl_decl, impl_source, _)| overriding_params(impl_decl, impl_source, method_name, formal_params(member).size) }
+        injected = impl && impl_params ? injected_positions(impl_params, impl[1]) : nil
         params = collect_method_params(member, source, verb, method_consumes,
-          dto_index, bean_index, local_constants, class_name)
+          dto_index, bean_index, local_constants, class_name, injected)
 
         line = Noir::TreeSitter.node_start_row(verb_node)
         callees = include_callees ? collect_method_callees(member, source) : [] of Tuple(String, Int32)
         routes << Route.new(verb, full_path, class_name, method_name, line,
           method_consumes, params, callees, current_file, signature_line: Noir::TreeSitter.name_row(member),
-          auth_principal: auth_principal_of(member, source))
+          auth_param: auth_param_of(member, source, current_file, impl_params, impl))
       end
 
       collect_implemented_interface_routes(decl, source, class_path, class_consumes,
@@ -422,12 +437,12 @@ module Noir
             base_path: Noir::URLPath.join_trimmed(class_path, interface_path), inherited_consumes: class_consumes,
             class_index: class_index, constants: constants, subresource_sources: subresource_sources,
             current_file: current_file, visited: visited, method_excludes: method_excludes,
-            custom_verb_annotations: custom_verb_annotations)
+            custom_verb_annotations: custom_verb_annotations, impl: {decl, source, current_file})
         elsif source_entry = subresource_sources[interface_name]?
           interface_source_path, interface_source = source_entry
           collect_cross_file_interface(interface_name, interface_source_path, interface_source,
             class_path, class_consumes, dto_index, bean_index, routes, include_callees,
-            subresource_sources, visited, method_excludes, custom_verb_annotations)
+            subresource_sources, visited, method_excludes, custom_verb_annotations, {decl, source, current_file})
         end
       end
     end
@@ -463,12 +478,12 @@ module Noir
           base_path: class_path, inherited_consumes: class_consumes,
           class_index: class_index, constants: constants, subresource_sources: subresource_sources,
           current_file: current_file, visited: visited, method_excludes: method_excludes,
-          custom_verb_annotations: custom_verb_annotations)
+          custom_verb_annotations: custom_verb_annotations, impl: {decl, source, current_file})
       elsif source_entry = subresource_sources[super_name]?
         super_source_path, super_source = source_entry
         collect_cross_file_superclass(super_name, super_source_path, super_source,
           class_path, class_consumes, dto_index, bean_index, routes, include_callees,
-          subresource_sources, visited, method_excludes, custom_verb_annotations)
+          subresource_sources, visited, method_excludes, custom_verb_annotations, {decl, source, current_file})
       end
     end
 
@@ -484,7 +499,8 @@ module Noir
                                               subresource_sources : Hash(String, SourceEntry),
                                               visited : Set(String),
                                               method_excludes : Set(String),
-                                              custom_verb_annotations : Hash(String, String) = {} of String => String)
+                                              custom_verb_annotations : Hash(String, String) = {} of String => String,
+                                              impl : Impl? = nil)
       Noir::TreeSitter.parse_java(super_source) do |root|
         classes = collect_classes(root, super_source)
         super_decl = classes[super_name]?
@@ -494,7 +510,7 @@ module Noir
           base_path: class_path, inherited_consumes: class_consumes,
           class_index: classes, constants: constants, subresource_sources: subresource_sources,
           current_file: super_path, visited: visited, method_excludes: method_excludes,
-          custom_verb_annotations: custom_verb_annotations)
+          custom_verb_annotations: custom_verb_annotations, impl: impl)
       end
     end
 
@@ -510,7 +526,8 @@ module Noir
                                              subresource_sources : Hash(String, SourceEntry),
                                              visited : Set(String),
                                              method_excludes : Set(String),
-                                             custom_verb_annotations : Hash(String, String) = {} of String => String)
+                                             custom_verb_annotations : Hash(String, String) = {} of String => String,
+                                             impl : Impl? = nil)
       Noir::TreeSitter.parse_java(interface_source) do |root|
         classes = collect_classes(root, interface_source)
         interface_decl = classes[interface_name]?
@@ -521,7 +538,7 @@ module Noir
           base_path: Noir::URLPath.join_trimmed(class_path, own_path), inherited_consumes: class_consumes,
           class_index: classes, constants: constants, subresource_sources: subresource_sources,
           current_file: interface_path, visited: visited, method_excludes: method_excludes,
-          custom_verb_annotations: custom_verb_annotations)
+          custom_verb_annotations: custom_verb_annotations, impl: impl)
       end
     end
 
@@ -830,30 +847,73 @@ module Noir
                                       dto_index : Hash(String, Array(TreeSitterJavaParameterExtractor::FieldInfo)),
                                       bean_index : Hash(String, Array(Param)),
                                       constants : Hash(String, String),
-                                      current_class : String) : Array(Param)
+                                      current_class : String,
+                                      injected : Set(Int32)? = nil) : Array(Param)
       params = [] of Param
-      formal = formal_parameters_node(method)
-      return params unless formal
-
       multipart_fields = multipart_form_fields(method, source)
-      Noir::TreeSitter.each_named_child(formal) do |param|
-        next unless Noir::TreeSitter.node_type(param) == "formal_parameter"
+      formal_params(method).each_with_index do |param, index|
+        # Injected through the implementing method's own annotation.
+        next if injected.try(&.includes?(index))
         emit_param_for(param, source, verb, method_format, dto_index, bean_index, constants, current_class, params, multipart_fields)
       end
       params
     end
 
-    # `:optional` for `@Auth Optional<P> p`, `:required` for any other
-    # `@Auth P p`, nil when no parameter carries `@Auth`.
-    private def auth_principal_of(method : LibTreeSitter::TSNode, source : String) : Symbol?
-      formal = formal_parameters_node(method) || return
-      Noir::TreeSitter.each_named_child(formal) do |param|
-        next unless Noir::TreeSitter.node_type(param) == "formal_parameter"
-        auth = false
-        each_annotation(param, source) { |name, _, _| auth = true if name == "Auth" }
-        next unless auth
+    private def formal_params(method : LibTreeSitter::TSNode) : Array(LibTreeSitter::TSNode)
+      list = [] of LibTreeSitter::TSNode
+      formal_parameters_node(method).try do |formal|
+        Noir::TreeSitter.each_named_child(formal) do |param|
+          list << param if Noir::TreeSitter.node_type(param) == "formal_parameter"
+        end
+      end
+      list
+    end
+
+    # Formal parameters of the method in `impl_decl` that overrides
+    # `name`/`arity` (same name, same parameter count), nil when none.
+    private def overriding_params(impl_decl : LibTreeSitter::TSNode, impl_source : String,
+                                  name : String, arity : Int32) : Array(LibTreeSitter::TSNode)?
+      body = class_body_node(impl_decl) || return
+      Noir::TreeSitter.each_named_child(body) do |member|
+        next unless Noir::TreeSitter.node_type(member) == "method_declaration"
+        next unless method_name_of(member, impl_source) == name
+        params = formal_params(member)
+        return params if params.size == arity
+      end
+      nil
+    end
+
+    private def injected_positions(params : Array(LibTreeSitter::TSNode), source : String) : Set(Int32)
+      positions = Set(Int32).new
+      params.each_with_index do |param, index|
+        each_annotation(param, source) { |name, _, _| positions << index if INJECTION_ANNOTATIONS.includes?(name) }
+      end
+      positions
+    end
+
+    # The first parameter carrying `@Auth`, on the declaring method or (at
+    # the same position) on the implementing one.
+    private def auth_param_of(method : LibTreeSitter::TSNode, source : String, current_file : String?,
+                              impl_params : Array(LibTreeSitter::TSNode)?, impl : Impl?) : AuthParam?
+      formal_params(method).each_with_index do |param, index|
+        if found = auth_param_on(param, source, current_file)
+          return found
+        end
+        if impl && (impl_param = impl_params.try(&.[index]?))
+          if found = auth_param_on(impl_param, impl[1], impl[2])
+            return found
+          end
+        end
+      end
+      nil
+    end
+
+    private def auth_param_on(param : LibTreeSitter::TSNode, source : String, file : String?) : AuthParam?
+      each_annotation(param, source) do |name, _, ann|
+        next unless name == "Auth"
+        written = Noir::TreeSitter.field(ann, "name").try { |node| Noir::TreeSitter.node_text(node, source) } || name
         type_text = Noir::TreeSitter.field(param, "type").try { |node| Noir::TreeSitter.node_text(node, source) } || ""
-        return type_text.matches?(/\A(?:java\.util\.)?Optional\s*</) ? :optional : :required
+        return AuthParam.new(written, type_text, file)
       end
       nil
     end
@@ -889,7 +949,7 @@ module Noir
           ann_arg = first_string_arg(args, source, constants, current_class)
         elsif name == "BeanParam"
           ann_kind = :bean
-        elsif name == "Context" || name == "Suspended" || name == "Auth"
+        elsif INJECTION_ANNOTATIONS.includes?(name)
           # `@Auth` is Dropwizard's authenticated-principal injection.
           ann_kind = :context
         elsif name == "DefaultValue"

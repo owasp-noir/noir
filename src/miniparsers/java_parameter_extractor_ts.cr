@@ -94,10 +94,13 @@ module Noir
     # tree-sitter reports the constant as a `field_access` node
     # (e.g. `HttpHeaders.AUTHORIZATION`), not the string value.
     HTTP_HEADER_SPECIAL_CASES = {
+      "Content-Md5"      => "Content-MD5",
+      "Dnt"              => "DNT",
       "Etag"             => "ETag",
       "Te"               => "TE",
       "Www-Authenticate" => "WWW-Authenticate",
       "X-Frame-Options"  => "X-Frame-Options",
+      "X-Xss-Protection" => "X-XSS-Protection",
     }
 
     # A Java `import` declaration. `wildcard` is true for star imports
@@ -120,7 +123,8 @@ module Noir
       # Jackson `@JsonUnwrapped(prefix, suffix)`: the field has no key of its
       # own, its type's properties sit inline in the parent object.
       # `TreeSitterJavaDtoIndex` replaces such a field with those properties.
-      getter unwrap : {String, String}?
+      # A nil affix was written as something other than a string literal.
+      getter unwrap : {String?, String?}?
 
       def initialize(@name, @access_modifier, @has_setter, @init_value, json_name : String? = nil, @type_name = "",
                      @unwrap = nil)
@@ -228,10 +232,12 @@ module Noir
     end
 
     # `{prefix, suffix}` of a `@JsonUnwrapped` field or record component
-    # (both "" by default); nil when absent or `enabled = false`.
-    private def json_unwrap(decl : LibTreeSitter::TSNode, source : String) : {String, String}?
+    # (both "" by default, nil when not a string literal); nil when absent
+    # or `enabled = false`.
+    private def json_unwrap(decl : LibTreeSitter::TSNode, source : String) : {String?, String?}?
       return unless ann = annotation_node_on(decl, source, "JsonUnwrapped")
-      prefix = suffix = ""
+      prefix : String? = ""
+      suffix : String? = ""
       if args = Noir::TreeSitter.field(ann, "arguments")
         Noir::TreeSitter.each_named_child(args) do |arg|
           next unless Noir::TreeSitter.node_type(arg) == "element_value_pair"
@@ -239,9 +245,9 @@ module Noir
           val = Noir::TreeSitter.field(arg, "value")
           next unless key && val
           return if key == "enabled" && Noir::TreeSitter.node_text(val, source) == "false"
-          next unless Noir::TreeSitter.node_type(val) == "string_literal"
-          prefix = decode_string_literal(val, source) if key == "prefix"
-          suffix = decode_string_literal(val, source) if key == "suffix"
+          literal = decode_string_literal(val, source) if Noir::TreeSitter.node_type(val) == "string_literal"
+          prefix = literal if key == "prefix"
+          suffix = literal if key == "suffix"
         end
       end
       {prefix, suffix}
@@ -744,7 +750,7 @@ module Noir
                                      source : String,
                                      lombok_setters : Bool = false) : Array(FieldInfo)
       # First pass: collect field declarations.
-      declared = [] of Tuple(String, String, String, String?, String, {String, String}?) # name, access, init_value, json_name, type, unwrap
+      declared = [] of Tuple(String, String, String, String?, String, {String?, String?}?) # name, access, init_value, json_name, type, unwrap
       setter_targets = Set(String).new
 
       Noir::TreeSitter.each_named_child(body) do |member|
@@ -1448,47 +1454,38 @@ module Noir
         absorb!(result, supers, origin, fields, file_supers, file)
       end
 
-      resolve_inheritance!(result, supers, origin)
-      flatten_unwrapped!(result, supers, origin)
+      pull_superclass_files!(result, supers, origin) unless supers.empty?
+      flatten_unwrapped!(result, origin)
+      resolve_inheritance!(result, supers)
       result
     end
 
     # Replace every `@JsonUnwrapped` field with its type's properties
     # (prefix/suffix applied to the JSON name; the form name keeps the
-    # nested `outer.inner` path a data binder would use). The unwrapped
-    # type is looked up through the DTO's own file's neighbours when the
-    # controller never imported it. An unwrapped field whose type stays
-    # unknown is dropped: its own name is never a key on the wire.
-    private def flatten_unwrapped!(result : Index,
-                                   supers : Hash(String, String),
-                                   origin : Hash(String, String))
-      owners = result.keys.select { |cls| result[cls].any?(&.unwrap) }
-      return if owners.empty?
-
-      owners.each do |cls|
-        result[cls].each do |field|
-          next unless field.unwrap
-          target = unwrap_target(field)
-          next if result.has_key?(target)
-          origin[cls]?.try { |file| load_superclass_files(result, supers, origin, file) }
-        end
+    # nested `outer.inner` path a data binder would use). Runs on each
+    # class's own fields, before inheritance merging, so every unwrapped
+    # type is resolved the way Java resolves it from the file that declares
+    # the field. A field whose type can't be pinned to one class, whose
+    # affix isn't a literal, or that unwraps into itself is dropped: its own
+    # name is never a key on the wire.
+    private def flatten_unwrapped!(result : Index, origin : Hash(String, String))
+      scopes = Hash(String, {String, Array(Noir::ImportGraph::ImportRef)}).new
+      result.keys.each do |cls|
+        next unless result[cls].any?(&.unwrap)
+        file = origin[cls]? || next
+        result[cls] = unwrapped_fields(file, cls, scopes, [] of {String, String}) || [] of TreeSitterJavaParameterExtractor::FieldInfo
       end
-
-      memo = Hash(String, Array(TreeSitterJavaParameterExtractor::FieldInfo)).new
-      owners.each { |cls| result[cls] = unwrapped_fields(cls, result, memo, Set(String).new) }
     end
 
-    private def unwrapped_fields(cls : String,
-                                 result : Index,
-                                 memo : Hash(String, Array(TreeSitterJavaParameterExtractor::FieldInfo)),
-                                 visiting : Set(String)) : Array(TreeSitterJavaParameterExtractor::FieldInfo)
-      if cached = memo[cls]?
-        return cached
-      end
-      own = result[cls]? || [] of TreeSitterJavaParameterExtractor::FieldInfo
-      return own if visiting.includes?(cls)
+    # `cls` (declared in `file`) with its unwrapped fields expanded; nil
+    # when it is not found or already on the expansion path (a cycle).
+    private def unwrapped_fields(file : String, cls : String,
+                                 scopes : Hash(String, {String, Array(Noir::ImportGraph::ImportRef)}),
+                                 path : Array({String, String})) : Array(TreeSitterJavaParameterExtractor::FieldInfo)?
+      return if path.includes?({file, cls}) || path.size > MAX_UNWRAP_DEPTH
+      own = load_file(file)[0][cls]? || return
 
-      visiting << cls
+      path << {file, cls}
       flat = [] of TreeSitterJavaParameterExtractor::FieldInfo
       own.each do |field|
         unless unwrap = field.unwrap
@@ -1496,18 +1493,48 @@ module Noir
           next
         end
         prefix, suffix = unwrap
-        unwrapped_fields(unwrap_target(field), result, memo, visiting).each do |inner|
+        next unless prefix && suffix
+        target = unwrap_target(field)
+        target_file = type_file_for(file, target, scopes) || next
+        inner_fields = unwrapped_fields(target_file, target, scopes, path) || next
+        inner_fields.each do |inner|
           flat << TreeSitterJavaParameterExtractor::FieldInfo.new("#{field.name}.#{inner.name}", inner.access_modifier,
             inner.has_setter?, inner.init_value, "#{prefix}#{inner.json_name}#{suffix}", inner.type_name)
         end
       end
-      visiting.delete(cls)
-      memo[cls] = flat
+      path.pop
+      flat
     end
+
+    MAX_UNWRAP_DEPTH = 8
 
     private def unwrap_target(field : TreeSitterJavaParameterExtractor::FieldInfo) : String
       name = field.type_name.split('<', 2).first.strip
       name.rpartition('.').last
+    end
+
+    # The file declaring the type `simple` as seen from `file`, in Java's
+    # order: the file itself, a single-type import, the same package, then
+    # on-demand imports (nil when none or more than one match).
+    private def type_file_for(file : String, simple : String,
+                              scopes : Hash(String, {String, Array(Noir::ImportGraph::ImportRef)})) : String?
+      return file if load_file(file)[0].has_key?(simple)
+
+      package_name, imports = scopes[file] ||= file_package_imports(file)
+      basename = "#{simple}.java"
+      if single = imports.find { |imp| !imp.wildcard? && imp.path.rpartition('.').last == simple }
+        suffix = "/#{single.path.gsub('.', '/')}.java"
+        found = nil
+        Noir::ImportGraph.related_files(file, package_name, [single], "java") { |f| found ||= f if f.ends_with?(suffix) }
+        return found
+      end
+
+      dir = File.dirname(file)
+      candidates = [] of String
+      Noir::ImportGraph.related_files(file, package_name, imports.select(&.wildcard?), "java") do |f|
+        candidates << f if File.basename(f) == basename
+      end
+      candidates.find { |f| File.dirname(f) == dir } || (candidates.first if candidates.size == 1)
     end
 
     # Pull a file's `{fields, supertypes}` from the shared cache,
@@ -1571,12 +1598,8 @@ module Noir
     # files that define still-unresolved superclasses (following
     # `extends` edges the controller never imported directly), then
     # folds each `extends` chain into a single flattened field list.
-    private def resolve_inheritance!(result : Index,
-                                     supers : Hash(String, String),
-                                     origin : Hash(String, String))
+    private def resolve_inheritance!(result : Index, supers : Hash(String, String))
       return if supers.empty?
-
-      pull_superclass_files!(result, supers, origin)
 
       memo = Hash(String, Array(TreeSitterJavaParameterExtractor::FieldInfo)).new
       (result.keys.to_set | supers.keys.to_set).each do |cls|
