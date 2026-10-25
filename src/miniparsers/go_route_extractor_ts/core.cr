@@ -1820,6 +1820,18 @@ module Noir
         function = Noir::TreeSitter.field(node, "function")
         args = Noir::TreeSitter.field(node, "arguments")
         return unless function && args
+        # `path.Join(uriAdmin, "/lists")`: the stdlib join, every element
+        # resolved, joined with `/` and cleaned of doubled and trailing ones.
+        if Noir::TreeSitter.node_text(function, source) == "path.Join"
+          parts = [] of String
+          Noir::TreeSitter.each_named_arg(args) do |a|
+            part = string_expr_text(a, source, values, depth + 1)
+            return unless part
+            parts << part
+          end
+          joined = parts.reject(&.empty?).join('/').squeeze('/')
+          return joined.size > 1 ? joined.rchop('/') : joined
+        end
         name = Noir::TreeSitter.node_type(function) == "selector_expression" ? Noir::TreeSitter.field(function, "field") : function
         return unless name && (template = values["#{Noir::TreeSitter.node_text(name, source)}()"]?)
         arg = nil
