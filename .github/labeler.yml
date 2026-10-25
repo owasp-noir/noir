@@ -53,7 +53,7 @@
       - any-glob-to-any-file: [.github/workflows/**, .github/labeler.yml]
 🐳 docker:
   - changed-files:
-      - any-glob-to-any-file: Dockerfile
+      - any-glob-to-any-file: packaging/docker/**
 🤖 ai-analyzer:
   - changed-files:
       - any-glob-to-any-file:

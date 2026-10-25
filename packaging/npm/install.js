@@ -2,7 +2,7 @@
 
 // npm postinstall: downloads the Noir release binary for this platform,
 // checks it against the SHA-256 pinned in checksums.json at publish time,
-// and unpacks it into npm/dist/. The `noir` command (npm/noir.js) runs it
+// and unpacks it into dist/. The `noir` command (noir.js) runs it
 // from there.
 //
 // The macOS binary loads its dylibs from @executable_path/lib, so the
@@ -15,7 +15,7 @@ const os = require("os");
 const path = require("path");
 const { getAsset } = require("./assets");
 
-const version = require("../package.json").version;
+const version = require("./package.json").version;
 const distDir = path.join(__dirname, "dist");
 
 function loadChecksums() {
@@ -24,13 +24,13 @@ function loadChecksums() {
         data = require("./checksums.json");
     } catch {
         throw new Error(
-            "npm/checksums.json is missing, so the download can't be verified. " +
+            "checksums.json is missing, so the download can't be verified. " +
             "Published packages always include it; for a local build, run " +
-            "`node npm/write-checksums.js <dir-with-release-assets>` first."
+            "`node write-checksums.js <dir-with-release-assets>` first."
         );
     }
     if (data.version !== version) {
-        throw new Error(`npm/checksums.json is for ${data.version}, but this package is ${version}.`);
+        throw new Error(`checksums.json is for ${data.version}, but this package is ${version}.`);
     }
     return data.sha256;
 }
@@ -54,14 +54,14 @@ async function download(url) {
 
     const expected = loadChecksums()[asset.name];
     if (!expected) {
-        throw new Error(`npm/checksums.json has no entry for ${asset.name}.`);
+        throw new Error(`checksums.json has no entry for ${asset.name}.`);
     }
 
     const url = `https://github.com/owasp-noir/noir/releases/download/v${version}/${asset.name}`;
     console.log(`Downloading ${asset.name}...`);
     const data = await download(url);
 
-    // Verify before touching npm/dist/, so a bad download never replaces a good install.
+    // Verify before touching dist/, so a bad download never replaces a good install.
     const actual = crypto.createHash("sha256").update(data).digest("hex");
     if (actual !== expected) {
         throw new Error(

@@ -14,7 +14,7 @@
 # reproduction tool for entrypoint output-contract bugs.
 #
 # Usage:
-#   docker build -t noir-action:local .
+#   docker build -f packaging/docker/Dockerfile -t noir-action:local .
 #   github-action/test-entrypoint.sh noir-action:local
 set -euo pipefail
 

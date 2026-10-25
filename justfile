@@ -23,12 +23,14 @@ build:
 build-release:
     shards build --release --no-debug --production
 
-# Regenerate shards.nix from shard.lock (run after changing dependencies).
+# Regenerate packaging/nix/shards.nix from shard.lock (run after changing dependencies).
+# crystal2nix always writes ./shards.nix, so move it into place afterwards.
 [group('build')]
 nix-update:
     nix-shell -p crystal2nix --run crystal2nix
+    mv shards.nix packaging/nix/shards.nix
 
-# Verify shards.nix still pins exactly what shard.lock resolves.
+# Verify packaging/nix/shards.nix still pins exactly what shard.lock resolves.
 [group('build')]
 nix-check:
     crystal run scripts/check_shards_nix.cr

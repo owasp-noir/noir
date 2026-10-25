@@ -23,7 +23,7 @@ sort_by = "weight"
 
 ## 일반 절차
 
-1.  **버전 올리기**: 버전이 들어 있는 모든 곳(`shard.yml`, `src/noir.cr`, `flake.nix`, Dockerfile, `snap/snapcraft.yaml`, `aur/PKGBUILD`, `package.json`, GitHub Action README, 일부 문서 파일)을 바꿉니다. 스크립트가 한 번에 처리하며, 인자 없이 실행하면 새 버전을 물어봅니다.
+1.  **버전 올리기**: 버전이 들어 있는 모든 곳(`shard.yml`, `src/noir.cr`, `flake.nix`, `snap/snapcraft.yaml`, `packaging/` 아래의 Dockerfile, `PKGBUILD`, npm `package.json`, GitHub Action README, 일부 문서 파일)을 바꿉니다. 스크립트가 한 번에 처리하며, 인자 없이 실행하면 새 버전을 물어봅니다.
 
     ```bash
     just version-update 1.4.1

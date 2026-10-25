@@ -8,13 +8,13 @@ on:
   push:
     branches: [main]
     # Only republish :main when something that actually lands in the image
-    # changes. `.dockerignore` excludes spec/, docs/, .github/ and *.md, so a
-    # docs or CI push produces a byte-identical image and used to rebuild and
-    # repush it anyway. Releases and manual dispatches stay unconditional.
+    # changes. The Dockerfile.dockerignore next to the Dockerfile excludes
+    # spec/, docs/, .github/ and *.md, so a docs or CI push produces a
+    # byte-identical image and used to rebuild and repush it anyway. Releases
+    # and manual dispatches stay unconditional.
     paths:
       - .github/workflows/publish-ghcr.yml
-      - Dockerfile
-      - .dockerignore
+      - packaging/docker/**
       - shard.yml
       - shard.lock
       - src/**
@@ -83,7 +83,7 @@ jobs:
         uses: docker/build-push-action@v7
         with:
           context: .
-          file: Dockerfile
+          file: packaging/docker/Dockerfile
           platforms: ${{ matrix.arch }}
           labels: ${{ steps.meta.outputs.labels }}
           outputs: type=image,name=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true,push=true

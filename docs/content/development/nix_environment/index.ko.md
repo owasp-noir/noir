@@ -71,7 +71,7 @@ just nix-build
 
 ## 의존성 업데이트
 
-`shards.nix`는 Nix 빌드가 사용하는 모든 의존성을 리비전과 해시로 고정하며, 손으로 작성하지 않고 생성합니다. `shard.lock`이 바뀌면 재생성한 뒤 둘이 일치하는지 확인하세요.
+`packaging/nix/shards.nix`는 Nix 빌드가 사용하는 모든 의존성을 리비전과 해시로 고정하며, 손으로 작성하지 않고 생성합니다. `shard.lock`이 바뀌면 재생성한 뒤 둘이 일치하는지 확인하세요.
 
 ```sh
 just nix-update

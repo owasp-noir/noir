@@ -5,7 +5,7 @@ require "yaml"
 SHARD_FILE     = "shard.yml"
 NOIR_FILE      = "src/noir.cr"
 FLAKE_FILE     = "flake.nix"
-DOCKERFILE     = "Dockerfile"
+DOCKERFILE     = "packaging/docker/Dockerfile"
 SNAPCRAFT_FILE = "snap/snapcraft.yaml"
 # The version chip lives in the shared nav template, so one file covers both
 # languages. It used to be a hero badge inside each landing page.
@@ -13,8 +13,8 @@ DOCS_NAV       = "docs/templates/partials/nav.html"
 ACTION_README  = "github-action/README.md"
 RELEASE_DOC    = "docs/content/development/how_to_release/index.md"
 RELEASE_DOC_KO = "docs/content/development/how_to_release/index.ko.md"
-PKGBUILD_FILE  = "aur/PKGBUILD"
-NPM_PACKAGE    = "package.json"
+PKGBUILD_FILE  = "packaging/aur/PKGBUILD"
+NPM_PACKAGE    = "packaging/npm/package.json"
 # Docs example pins that mirror the release version (missed by the old allowlist):
 # install binary names, SARIF driver sample, and the terminal SVGs on Running + landing.
 INSTALL_DOC    = "docs/content/get_started/installation/index.md"
@@ -86,7 +86,7 @@ rescue
   nil
 end
 
-# Extract pkgver from aur/PKGBUILD
+# Extract pkgver from packaging/aur/PKGBUILD
 def get_pkgbuild_version : String?
   match = File.read(PKGBUILD_FILE).match(/^pkgver=([\d.]+)/m)
   match ? match[1] : nil
@@ -94,7 +94,7 @@ rescue
   nil
 end
 
-# Extract version from package.json (npm wrapper; npm/install.js downloads the
+# Extract version from package.json (npm wrapper; packaging/npm/install.js downloads the
 # release binary for this version, so it must match the GitHub release tag).
 def get_npm_package_version : String?
   JSON.parse(File.read(NPM_PACKAGE))["version"].as_s
@@ -132,14 +132,14 @@ def collect_versions : Array(Tuple(String, String, String?))
     {"shard.yml", SHARD_FILE, get_shard_version},
     {"src/noir.cr", NOIR_FILE, get_noir_version},
     {"flake.nix", FLAKE_FILE, get_flake_version},
-    {"Dockerfile", DOCKERFILE, get_dockerfile_version},
+    {"packaging/docker/Dockerfile", DOCKERFILE, get_dockerfile_version},
     {"snap/snapcraft.yaml", SNAPCRAFT_FILE, get_snapcraft_version},
     {"docs/templates/partials/nav.html", DOCS_NAV, get_docs_nav_version(DOCS_NAV)},
     {"github-action/README.md", ACTION_README, get_action_readme_version},
     {"docs/.../how_to_release/index.md", RELEASE_DOC, get_release_doc_version(RELEASE_DOC)},
     {"docs/.../how_to_release/index.ko.md", RELEASE_DOC_KO, get_release_doc_version(RELEASE_DOC_KO)},
-    {"aur/PKGBUILD", PKGBUILD_FILE, get_pkgbuild_version},
-    {"package.json", NPM_PACKAGE, get_npm_package_version},
+    {"packaging/aur/PKGBUILD", PKGBUILD_FILE, get_pkgbuild_version},
+    {"packaging/npm/package.json", NPM_PACKAGE, get_npm_package_version},
     {"docs/.../installation/index.md", INSTALL_DOC, get_install_doc_version(INSTALL_DOC)},
     {"docs/.../installation/index.ko.md", INSTALL_DOC_KO, get_install_doc_version(INSTALL_DOC_KO)},
     {"docs/.../sarif/index.md", SARIF_DOC, get_sarif_doc_version(SARIF_DOC)},

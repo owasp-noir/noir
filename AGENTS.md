@@ -80,6 +80,7 @@ spec/
 - `justfile` - Task definitions (`just --list` for all commands)
 - `.ameba.yml` - Linting configuration
 - `.github/workflows/ci.yml` - CI configuration
+- `packaging/` - Distribution packaging: `docker/`, `aur/`, `nix/shards.nix`, `npm/` and the macOS tarball script. `snap/`, `flake.nix` and `action.yml` stay at the repository root because their tools only look there.
 
 ## Analyzer Layering
 

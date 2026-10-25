@@ -1,21 +1,21 @@
 #!/usr/bin/env node
 
 // Publish-time helper (not shipped in the package). Hashes the release
-// binaries listed in assets.js and writes npm/checksums.json, which
+// binaries listed in assets.js and writes checksums.json, which
 // install.js checks every download against. The release workflow runs it
 // right before `npm publish`, so the hashes are covered by npm provenance.
 //
 // Usage:
-//   node npm/write-checksums.js <dir>   hash the assets downloaded into <dir>
-//   node npm/write-checksums.js --check verify checksums.json is complete for
-//                                       this version (runs on prepublishOnly)
+//   node write-checksums.js <dir>   hash the assets downloaded into <dir>
+//   node write-checksums.js --check verify checksums.json is complete for
+//                                   this version (runs on prepublishOnly)
 
 const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
 const { allAssetNames } = require("./assets");
 
-const version = require("../package.json").version;
+const version = require("./package.json").version;
 const outFile = path.join(__dirname, "checksums.json");
 const names = allAssetNames(version);
 
@@ -26,7 +26,7 @@ function fail(message) {
 
 const arg = process.argv[2];
 if (!arg) {
-    fail("Usage: node npm/write-checksums.js <assets-dir> | --check");
+    fail("Usage: node write-checksums.js <assets-dir> | --check");
 }
 
 if (arg === "--check") {
@@ -34,16 +34,16 @@ if (arg === "--check") {
     try {
         data = JSON.parse(fs.readFileSync(outFile, "utf8"));
     } catch {
-        fail("npm/checksums.json is missing. The release workflow generates it; see .github/workflows/publish-npm.yml.");
+        fail("checksums.json is missing. The release workflow generates it; see .github/workflows/publish-npm.yml.");
     }
     if (data.version !== version) {
-        fail(`npm/checksums.json is for ${data.version}, but package.json is ${version}.`);
+        fail(`checksums.json is for ${data.version}, but package.json is ${version}.`);
     }
     const missing = names.filter((name) => !/^[0-9a-f]{64}$/.test(data.sha256?.[name] ?? ""));
     if (missing.length > 0) {
-        fail(`npm/checksums.json has no valid SHA-256 for: ${missing.join(", ")}`);
+        fail(`checksums.json has no valid SHA-256 for: ${missing.join(", ")}`);
     }
-    console.log(`npm/checksums.json OK for ${version} (${names.length} assets).`);
+    console.log(`checksums.json OK for ${version} (${names.length} assets).`);
     process.exit(0);
 }
 

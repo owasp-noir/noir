@@ -1,7 +1,7 @@
 require "openssl"
 
 # The macOS release tarballs bundle Homebrew's libssl/libcrypto
-# (scripts/package-macos.sh). Their compiled-in OPENSSLDIR still points at
+# (packaging/macos/package.sh). Their compiled-in OPENSSLDIR still points at
 # the Homebrew prefix, so on a Mac without Homebrew OpenSSL loads no CA
 # certificates and every verified HTTPS request fails (#3197). macOS ships
 # its own bundle at /etc/ssl/cert.pem; load it as well.
