@@ -1311,17 +1311,19 @@ module Analyzer::Python
 
     # Infers the type of the parameter based on its default value or type annotation
     def infer_parameter_type(data : ::String, is_param_type = false) : ::String?
-      if data.matches?(/Cookie/)
+      # Whole names only: a `SigninForm` / `SearchQuery` model is a body,
+      # not `Form()` / `Query()`.
+      if data.matches?(/\bCookie\b/)
         "cookie"
-      elsif data.matches?(/Header/)
+      elsif data.matches?(/\bHeader\b/)
         "header"
-      elsif data.matches?(/Body/)
+      elsif data.matches?(/\bBody\b/)
         "json"
-      elsif data.matches?(/Form/) || data.matches?(/File/)
+      elsif data.matches?(/\b(?:Form|File|UploadFile)\b/)
         "form"
-      elsif data.matches?(/Query/)
+      elsif data.matches?(/\bQuery\b/)
         "query"
-      elsif data.matches?(/WebSocket/)
+      elsif data.matches?(/\bWebSocket\b/)
         "websocket"
       elsif data.matches?(/\bPath\s*\(/)
         "path"

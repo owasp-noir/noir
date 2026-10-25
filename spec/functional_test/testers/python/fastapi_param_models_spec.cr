@@ -7,6 +7,8 @@ require "../../func_spec.cr"
 #     model in another module whose `alias_generator` camelizes field
 #     names (an explicit `Field(alias=...)` still wins). `Registration`
 #     is not a `str` query parameter for containing the letters "str".
+#   * `form_data: SigninForm` is a JSON body model: a class name ending
+#     in "Form" is not a `Form()` parameter.
 #   * `form: LoginForm = Depends()` — FastAPI calls the class, so its
 #     `__init__` `Form()` parameters are the request's.
 #   * `q: Annotated[FeedQuery, Query()]` — a query parameter model.
@@ -23,6 +25,10 @@ expected_endpoints = [
   Endpoint.new("/token", "POST", [
     Param.new("username", "", "form"),
     Param.new("remember_me", "false", "form"),
+  ]),
+  Endpoint.new("/signin", "POST", [
+    Param.new("email", "", "json"),
+    Param.new("password", "", "json"),
   ]),
   Endpoint.new("/feed", "GET", [
     Param.new("includeNotes", "true", "query"),

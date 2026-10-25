@@ -2,7 +2,7 @@ from typing import Annotated
 
 from fastapi import Depends, FastAPI, Query
 
-from app.schema import FeedQuery, LoginForm, Registration
+from app.schema import FeedQuery, LoginForm, Registration, SigninForm
 from app.views import router
 
 app = FastAPI()
@@ -21,4 +21,9 @@ def token(form: LoginForm = Depends()):
 
 @app.get("/feed")
 def feed(q: Annotated[FeedQuery, Query()]):
+    return {}
+
+
+@app.post("/signin")
+def signin(form_data: SigninForm):
     return {}
