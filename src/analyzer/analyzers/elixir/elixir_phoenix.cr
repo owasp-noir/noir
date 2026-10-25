@@ -20,9 +20,11 @@ module Analyzer::Elixir
     # their routes under the forward path, so the forward is not a route.
     @plug_routers = {} of String => String
     # Reverse index built once after route discovery:
-    #   base -> normalized controller key -> action -> endpoints
+    #   base -> normalized controller key -> action -> indices into `@result`
     # Replaces the previous per-controller O(|routes|) scan of `@result`.
-    @controller_endpoint_index = Hash(String, Hash(String, Hash(String, Array(Endpoint)))).new
+    # Indices, not copies: `Endpoint` is a struct, and the param pass writes
+    # the resolved handler back into `@result`.
+    @controller_endpoint_index = Hash(String, Hash(String, Hash(String, Array(Int32)))).new
 
     # `get`/`post`/… → its precompiled route regex. `add_standard_route` runs
     # once per verb per line of every `.ex` file; `Regex.new` there recompiled
@@ -355,12 +357,18 @@ module Analyzer::Elixir
       # apply to this pass too. Files are already registered in
       # CodeLocator; skip the redundant `File.exists?` syscall.
       controller_files = get_files_by_extension(".ex").select do |path|
-        next false unless path.ends_with?("_controller.ex")
         next false if elixir_test_path?(path)
         base_paths.any? { |base| path_under_root?(path, base) }
       end
 
       controller_files.each do |controller_path|
+        # A route names its plug by module, not by file: a controller need
+        # not live in a `*_controller.ex` file (`Controllers.Goals` in
+        # `controllers/goals.ex`). Any other file is read as a controller
+        # only when its module is the fully-qualified one a route names.
+        conventional = controller_path.ends_with?("_controller.ex")
+        next unless conventional || fq_controller_file?(controller_path)
+
         content = read_file_content(controller_path)
         # Action heads always bind `conn` (see the signature matcher
         # below). Controllers that never mention it cannot contribute
@@ -371,7 +379,7 @@ module Analyzer::Elixir
         controller_module = extract_controller_module(content) || controller_name
 
         # Extract parameters from each action in the controller
-        extract_params_from_controller(content, controller_module, controller_path)
+        extract_params_from_controller(content, controller_module, controller_path, fq_only: !conventional)
       rescue e
         logger.debug "Error reading controller file #{controller_path}: #{e}"
       end
@@ -387,7 +395,7 @@ module Analyzer::Elixir
     private def build_controller_endpoint_index : Nil
       @controller_endpoint_index.clear
 
-      @result.each do |endpoint|
+      @result.each_with_index do |endpoint, result_index|
         route_key = endpoint_route_map_key(endpoint)
         next unless mapping = @route_map[route_key]?
 
@@ -397,10 +405,10 @@ module Analyzer::Elixir
         norm = normalize_controller_ref(mapped)
 
         by_base = @controller_endpoint_index[base] ||=
-          Hash(String, Hash(String, Array(Endpoint))).new
+          Hash(String, Hash(String, Array(Int32))).new
         by_controller = by_base[norm] ||=
-          Hash(String, Array(Endpoint)).new { |h, k| h[k] = [] of Endpoint }
-        by_controller[action] << endpoint
+          Hash(String, Array(Int32)).new { |h, k| h[k] = [] of Int32 }
+        by_controller[action] << result_index
 
         # Short mappings are already a single segment after normalize.
         # Nothing further to index. FQ mappings stay under the full key
@@ -429,11 +437,24 @@ module Analyzer::Elixir
       false
     end
 
-    def extract_params_from_controller(content : String, controller_name : String, controller_path : String)
+    # True when a non-`*_controller.ex` file's module is a controller some
+    # route names by its full module path. The module test runs on the
+    # cached content only after the cheap index lookup says the base has
+    # fully-qualified controller keys at all.
+    private def fq_controller_file?(path : String) : Bool
+      return false unless by_base = @controller_endpoint_index[configured_base_for(path)]?
+      return false unless by_base.each_key.any?(&.includes?('.'))
+      return false unless mod = extract_module_name(read_file_content(path))
+      by_base.has_key?(normalize_controller_ref(mod))
+    end
+
+    def extract_params_from_controller(content : String, controller_name : String, controller_path : String, fq_only : Bool = false)
       lines = content.lines
       include_callee = callees_needed?
-      endpoints_by_action = endpoints_for_controller(controller_name, controller_path)
+      endpoints_by_action = endpoints_for_controller(controller_name, controller_path, fq_only)
       return if endpoints_by_action.empty?
+      spec_params = open_api_spex_params(lines)
+      defp_blocks = private_function_blocks(lines)
 
       index = 0
       while index < lines.size
@@ -467,7 +488,7 @@ module Analyzer::Elixir
         # first argument really binds `conn` before treating it as an
         # action.
         signature, body_start = assemble_def_signature(lines, index)
-        unless signature.matches?(/\(\s*(?:_?conn\b|%[^,)]*\bconn\b)/)
+        unless conn_first_arg?(signature)
           index += 1
           next
         end
@@ -488,12 +509,23 @@ module Analyzer::Elixir
         params_by_method = {} of String => Array(Param)
         param_keys = action_param_keys(signature, lines, body_start, block_end)
 
-        matching_endpoints.each do |endpoint|
+        matching_endpoints.each do |result_index|
+          endpoint = @result[result_index]
           append_code_path(endpoint.details, PathInfo.new(controller_path, index + 1))
+          # The first clause of a multi-clause action is its definition site.
+          endpoint.handler ||= Handler.new("#{controller_name}.#{action_name}", controller_path, index + 1)
 
-          params = params_by_method[endpoint.method] ||=
-            extract_params_from_function_block(lines, body_start, block_end, endpoint.method)
+          params = params_by_method[endpoint.method] ||= begin
+            found = extract_params_from_function_block(lines, body_start, block_end, endpoint.method)
+            # A private helper the action hands `conn` to reads the same
+            # request (`star_path = parse_star_path(conn)`). One level deep.
+            local_helpers_called(lines, body_start, block_end, defp_blocks).each do |(h_start, h_end)|
+              found.concat(extract_params_from_function_block(lines, h_start, h_end, endpoint.method))
+            end
+            found
+          end
           params.each { |param| endpoint.push_param(param) }
+          spec_params[action_name]?.try &.each { |param| endpoint.push_param(param) }
           unless param_keys.empty?
             path_names = endpoint.url.scan(/[:*](\w+)/).map(&.[1]).to_set
             param_type = endpoint.method == "GET" ? "query" : "form"
@@ -503,10 +535,83 @@ module Analyzer::Elixir
           end
 
           attach_elixir_callees(endpoint, callees) if callees
+          @result[result_index] = endpoint
         end
 
         index += 1
       end
+    end
+
+    # `defp name ... do ... end` blocks of a controller, by name, as
+    # `{body_start, block_end}` line spans. The `, do:` one-liner form has no
+    # block to read and is skipped.
+    private def private_function_blocks(lines : Array(String)) : Hash(String, Array(Tuple(Int32, Int32)))
+      blocks = Hash(String, Array(Tuple(Int32, Int32))).new
+      lines.each_with_index do |line, index|
+        next unless line.includes?("defp") && (m = line.match(/^\s*defp\s+(\w+[!?]?)\(/))
+        _, body_start = assemble_def_signature(lines, index)
+        next unless Noir::ElixirCalleeExtractor.strip_comment(lines[body_start]).rstrip.ends_with?("do")
+        block_end = find_function_end(lines, body_start)
+        next if block_end == -1
+        (blocks[m[1]] ||= [] of Tuple(Int32, Int32)) << {body_start, block_end}
+      end
+      blocks
+    end
+
+    # The private helpers an action body passes `conn` to
+    # (`helper(conn, ...)` or `conn |> helper(...)`).
+    private def local_helpers_called(lines : Array(String), body_start : Int32, block_end : Int32,
+                                     blocks : Hash(String, Array(Tuple(Int32, Int32)))) : Array(Tuple(Int32, Int32))
+      return [] of Tuple(Int32, Int32) if blocks.empty?
+      names = Set(String).new
+      lines[(body_start + 1)...block_end].each do |line|
+        next unless line.includes?("conn")
+        line.scan(/(?<![\w.:])(\w+[!?]?)\(\s*conn\b|\bconn\s*\|>\s*(\w+[!?]?)\(/) do |m|
+          name = m[1]? || m[2]
+          names << name if blocks.has_key?(name)
+        end
+      end
+      names.flat_map { |name| blocks[name] }
+    end
+
+    # OpenApiSpex declares an action's inputs next to it:
+    # `operation(:index, parameters: [limit: [in: :query, ...]])` or
+    # `parameters: [Operation.parameter(:id, :path, :integer, "…")]`.
+    # Returns action name -> declared query/path/header/cookie params.
+    private def open_api_spex_params(lines : Array(String)) : Hash(String, Array(Param))
+      found = Hash(String, Array(Param)).new
+      lines.each_with_index do |line, index|
+        next unless line.includes?("operation") && (m = line.match(/^\s*operation\s*\(?\s*:(\w+[!?]?)\s*,/))
+        buffer = String::Builder.new
+        depth = 0
+        lines[index, 80].each do |part|
+          code = Noir::ElixirCalleeExtractor.strip_comment(part)
+          buffer << code << ' '
+          depth += code.count("([{") - code.count(")]}")
+          break if depth <= 0
+        end
+        statement = buffer.to_s
+        next unless (at = statement.index(/\bparameters:\s*\[/)) && (list = enclosed_span(statement[at..], '[', ']'))
+        params = [] of Param
+        split_top_level_commas(list).each do |entry|
+          if kw = entry.match(/\A\s*(\w+):\s*\[.*?\bin:\s*:(query|path|header|cookie)\b/m)
+            params << Param.new(kw[1], "", kw[2])
+          elsif call = entry.match(/\bparameter\(\s*:(\w+)\s*,\s*:(query|path|header|cookie)\b/)
+            params << Param.new(call[1], "", call[2])
+          end
+        end
+        found[m[1]] = params unless params.empty?
+      end
+      found
+    end
+
+    # The head's first argument binds the connection: `conn`, `_conn`, or a
+    # pattern bound to it (`%Plug.Conn{assigns: %{site: site}} = conn`,
+    # whose commas a flat match cannot see past).
+    private def conn_first_arg?(signature : String) : Bool
+      return false unless args = enclosed_span(signature, '(', ')')
+      return false unless first = split_top_level_commas(args)[0]?
+      first.matches?(/\A\s*_?conn\b|\A\s*%[^{]*\{.*\bconn\s*\z/m)
     end
 
     # String keys an action reads from its params map: the top-level keys of
@@ -839,8 +944,8 @@ module Analyzer::Elixir
       endpoints
     end
 
-    private def endpoints_for_controller(controller_name : String, controller_path : String) : Hash(String, Array(Endpoint))
-      endpoints_by_action = Hash(String, Array(Endpoint)).new { |hash, key| hash[key] = [] of Endpoint }
+    private def endpoints_for_controller(controller_name : String, controller_path : String, fq_only : Bool = false) : Hash(String, Array(Int32))
+      endpoints_by_action = Hash(String, Array(Int32)).new { |hash, key| hash[key] = [] of Int32 }
       base = configured_base_for(controller_path)
 
       by_base = @controller_endpoint_index[base]?
@@ -853,16 +958,14 @@ module Analyzer::Elixir
       # a single segment, FQ mappings only under the full form.
       norm = normalize_controller_ref(controller_name)
       keys = [norm]
-      if norm.includes?('.')
+      if norm.includes?('.') && !fq_only
         keys << (norm.split('.').last || norm)
       end
 
       keys.uniq.each do |key|
         next unless by_controller = by_base[key]?
-        by_controller.each do |action, endpoints|
-          endpoints.each do |endpoint|
-            endpoints_by_action[action] << endpoint
-          end
+        by_controller.each do |action, indices|
+          endpoints_by_action[action].concat(indices)
         end
       end
 
