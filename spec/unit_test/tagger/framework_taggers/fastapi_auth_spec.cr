@@ -118,6 +118,43 @@ describe "FastAPIAuthTagger" do
     pin.tags.should be_empty
   end
 
+  # body_checks.py: the caller read bare, compared, passed to a helper or
+  # closed by an `else`; a non-caller `doc and` prefix; strings holding
+  # brackets; a status set on the response. A settings or form
+  # dependency is not the caller, and a `for`'s `else` is no check's.
+  # Then a class view's `self.user` and a dependency factory.
+  it "reads handler-body checks on the caller in their usual shapes" do
+    noir_options = create_test_options
+    noir_options["base"] = YAML::Any.new(fixture_base)
+    body = "#{fixture_base}/body_checks.py"
+    lines = {6 => "GET", 14 => "GET", 21 => "GET", 29 => "GET", 40 => "GET", 48 => "GET", 56 => "POST", 63 => "POST", 70 => "GET", 90 => "GET", 115 => "POST"}
+    endpoints = lines.map { |line, method| Endpoint.new("/#{line}", method, [] of Param, Details.new(PathInfo.new(body, line))) }
+
+    CodeLocator.instance.clear_all
+    CodeLocator.instance.register_path(body)
+    begin
+      endpoints = FastAPIAuthTagger.new(noir_options).perform(endpoints)
+    ensure
+      CodeLocator.instance.clear_all
+    end
+
+    verdicts = endpoints.map { |ep| {ep.url, ep.tags.map(&.description)} }.to_h
+    verdicts["/6"].should eq(["Protected by FastAPI handler 403 check"])
+    verdicts["/14"].should eq(["Protected by FastAPI handler 403 check"])
+    verdicts["/21"].should eq(["Protected by FastAPI handler ownership/role check"])
+    verdicts["/29"].should eq(["Protected by FastAPI handler ownership/role check"])
+    verdicts["/40"].should eq(["Protected by FastAPI handler 403 check"])
+    verdicts["/48"].should eq(["Protected by FastAPI handler ownership/role check"])
+    verdicts["/56"].should be_empty
+    verdicts["/63"].should be_empty
+    verdicts["/70"].should be_empty
+    # A class-based view's injected caller, read as `self.user`.
+    verdicts["/90"].should eq(["Protected by FastAPI Depends(get_current_user)", "Protected by FastAPI handler 403 check"])
+    # A router built in a factory function, guarded by a dependency
+    # factory whose argument can switch the check off.
+    verdicts["/115"].should eq(["Protected by FastAPI create_token_dependency(...) (a setting can make it public)"])
+  end
+
   # app/accounts.py imports `load_account` from loose_deps (checks nothing)
   # and strict_deps (checks `is_admin`), which both define that name.
   #  9: @router.get("/")                Depends(load_account)
