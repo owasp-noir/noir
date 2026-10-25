@@ -68,6 +68,19 @@ module Noir
     @by_name = Hash(String, Array(Klass)).new
     @by_path = Hash(String, Array(Klass)).new
 
+    # The statement starting at `lines[idx]`, joined across the lines a
+    # trailing comma continues it onto: `before_action :x,` with its
+    # `only: [...]` on the next line applies to those actions only.
+    def self.statement(lines : Array(String), idx : Int32) : String
+      text = lines[idx].strip
+      j = idx + 1
+      while text.ends_with?(',') && j < lines.size && j - idx <= 10
+        text = "#{text} #{lines[j].strip}"
+        j += 1
+      end
+      text
+    end
+
     def self.applies_to_action?(line : String, action : String?) : Bool
       if only = callback_option(line, ONLY_OPTION)
         return !!(action && only.includes?(action))
@@ -122,7 +135,7 @@ module Noir
           (@defs[m[1]] ||= [] of {String, Int32}) << {path, idx}
           def_indent = indent unless stripped.matches?(/\bend$|^def\s+[\w.?!]+(?:\([^)]*\))?\s*=[^=]/)
         elsif (top = stack.last?) && stripped.matches?(CALLBACK_LINE)
-          top[0].callbacks << stripped
+          top[0].callbacks << RailsCallbackChain.statement(lines, idx)
         end
       end
     end

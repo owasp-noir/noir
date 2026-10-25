@@ -122,7 +122,10 @@ class RubyAuthTagger < FrameworkTagger
     @anonymous_queries = Hash(String, Bool).new
     @rejecting_defs = Hash(String, Bool).new
     @denying_helpers = Hash(String, Bool).new
+    @denies_anonymous = Hash(String, Bool).new
   end
+
+  @credential_ivars : Set(String)? = nil
 
   # Per-line flags for `check_controller_auth`, computed once per file.
   #
@@ -258,7 +261,7 @@ class RubyAuthTagger < FrameworkTagger
         break
       end
 
-      current = lines[idx].strip
+      current = Noir::RailsCallbackChain.statement(lines, idx)
 
       # Check for skip_before_action that applies to this action.
       # Skip only clears authentication — keep walking for authorize callbacks.
@@ -358,7 +361,7 @@ class RubyAuthTagger < FrameworkTagger
         desc = nil
       end
     elsif rails_chain.defs.has_key?(callback) && denies_anonymous?(callback)
-      desc = "#{callback} (app-defined, answers 401/403)"
+      desc = "#{callback} (app-defined, refuses callers without a credential)"
     end
     @callback_guards[callback] = desc
   end
@@ -445,21 +448,38 @@ class RubyAuthTagger < FrameworkTagger
   # else (`unless account.active?`, an unknown Host) refuses a state of
   # the app, not an anonymous caller; an early `return` when no credential
   # was sent, or a credential-presence `if` around it, lets one through.
-  # ponytail: one assignment hop links a condition to a credential; a
+  # A redirect or another 4xx (`redirect_to "/login"`, `status: 400`) is a
+  # refusal only on a credential-absent condition: unconditional, it is a
+  # page move, not a gate. A call to another app method that refuses
+  # anonymous callers is one, on whatever conditions it sits under.
+  # ponytail: one assignment hop links a condition to a credential (or the
+  # instance variable an app method sets from one, `CREDENTIAL_IVARS`); a
   # longer chain reads as no guard.
-  private def denies_anonymous?(name : String) : Bool
-    def_bodies(name).any? do |body|
+  private def denies_anonymous?(name : String, visited : Set(String) = Set(String).new) : Bool
+    top = visited.empty?
+    return @denies_anonymous[name] if top && @denies_anonymous.has_key?(name)
+    return false unless visited.add?(name)
+    result = def_bodies(name).any? do |body|
       assigns = Hash(String, String).new
       body.each { |_, text| (m = text.match(/^(@?\w+)\s*\|{0,2}=(?!=)\s*(.+)/)) && (assigns[m[1]] = m[2]) }
       body.each_with_index.any? do |(_, text), i|
-        next false unless text.matches?(DENY_RESPONSE) || text.scan(/\b[a-z_]\w*[!?]?/).any? { |m| always_denies?(m[0]) }
+        strict = text.matches?(DENY_RESPONSE) || text.scan(/\b[a-z_]\w*[!?]?/).any? { |m| always_denies?(m[0]) } ||
+                 text.scan(BARE_CALL).any? { |m| m[0] != name && rails_chain.defs.has_key?(m[0]) && denies_anonymous?(m[0], visited) }
+        next false unless strict || text.matches?(SOFT_DENY)
         next false if credential_gated?(body, i) || text.matches?(CREDENTIAL_PRESENT_MODIFIER)
         conditions = deny_conditions(body, i)
         next false if conditions.nil?
-        conditions.empty? || conditions.any? { |c, when_true| credential_absent?(c, when_true, assigns) }
+        (strict && conditions.empty?) || conditions.any? { |c, when_true| credential_absent?(c, when_true, assigns) }
       end
     end
+    @denies_anonymous[name] = result if top
+    result
   end
+
+  # A call with no receiver: `require_login`, not `cookies.delete`.
+  BARE_CALL = /(?<![.:@\w])[a-z_]\w*[!?]?/
+  # A redirect, or a 4xx answer other than 401/403, from a callback.
+  SOFT_DENY = /\bredirect_(?:to|back(?:_or_to)?)\b|\bhead\s*\(?\s*(?::bad_request|:not_found|4\d\d)\b|\bstatus:\s*(?::bad_request\b|:not_found\b|4\d\d\b)/
 
   # Whether the helper `name` (`render_unauthorized`) answers 401/403 on a
   # line of its own body that no condition guards.
@@ -515,7 +535,42 @@ class RubyAuthTagger < FrameworkTagger
 
   private def credential_condition?(condition : String, assigns : Hash(String, String)) : Bool
     return true if condition.matches?(CREDENTIAL_WORD)
-    condition.scan(/@?\w+/).any? { |m| assigns[m[0]]?.try(&.matches?(CREDENTIAL_WORD)) }
+    condition.scan(/@?\w+/).any? { |m| assigns[m[0]]?.try(&.matches?(CREDENTIAL_WORD)) || credential_ivars.includes?(m[0]) }
+  end
+
+  # Instance variables an app controller method sets from the request's
+  # credential: `@user = user` under `if session[:u] && (user =
+  # User.find_by(session_token: ...))`, `@current_user ||=
+  # User.find_by(id: session[:user_id])`, or `@user = current_user`. A
+  # callback that refuses when one is unset (`if @user ... else
+  # redirect_to "/login"`) refuses anonymous callers. A record looked up
+  # through the caller (`@account = current_user.accounts.find(...)`) is
+  # not the caller.
+  # Where a request carries its credential.
+  CREDENTIAL_SOURCE = /\b(?:session|cookies|request\.headers)\b|token|bearer|jwt|authoriz|api_?key/i
+
+  private def credential_ivars : Set(String)
+    @credential_ivars ||= begin
+      ivars = Set(String).new
+      rails_chain.defs.each_key do |name|
+        def_bodies(name).each do |body|
+          body.each_with_index do |(indent, text), i|
+            next unless m = text.match(/^(@\w+)\s*\|{0,2}=(?!=)\s*(.+)/)
+            next ivars << m[1] if m[2].matches?(CREDENTIAL_SOURCE) || m[2].matches?(/\Acurrent_(?:user|account)\z/)
+            depth = indent
+            (i - 1).downto(1) do |j|
+              next unless body[j][0] < depth
+              depth = body[j][0]
+              if (block = body[j][1].match(BLOCK_CONDITION)) && block[2].matches?(CREDENTIAL_SOURCE)
+                ivars << m[1]
+                break
+              end
+            end
+          end
+        end
+      end
+      ivars
+    end
   end
 
   # Whether `body[i]` sits under a `CREDENTIAL_PRESENT_IF` block (at any

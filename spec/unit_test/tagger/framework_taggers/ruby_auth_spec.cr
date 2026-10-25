@@ -213,8 +213,153 @@ describe "RubyAuthTagger" do
 
       RubyAuthTagger.new(noir_options).perform([apps, public_index])
 
-      apps.tags.map(&.description).should eq(["Protected by set_platform_app (app-defined, answers 401/403)"])
+      apps.tags.map(&.description).should eq(["Protected by set_platform_app (app-defined, refuses callers without a credential)"])
       public_index.tags.should be_empty
+    ensure
+      FileUtils.rm_rf(tmpdir)
+      CodeLocator.instance.clear_all
+    end
+  end
+
+  it "reads a redirect or 4xx as a guard only when it fires for a caller the session did not log in" do
+    CodeLocator.instance.clear_all
+    tmpdir = File.tempname("ruby_session_guards")
+    controllers = File.join(tmpdir, "app", "controllers")
+    Dir.mkdir_p(File.join(controllers, "concerns"))
+    files = {
+      "concerns/session_auth.rb" => <<-RB,
+        module SessionAuth
+          extend ActiveSupport::Concern
+
+          included do
+            before_action :load_session_user
+          end
+
+          def load_session_user
+            if session[:u] && (user = User.find_by(session_token: session[:u].to_s))
+              @user = user
+            end
+          end
+
+          def require_logged_in_user
+            if @user
+              true
+            else
+              redirect_to "/login"
+            end
+          end
+
+          def require_logged_in_user_or_400
+            if @user
+              true
+            else
+              render plain: "not logged in", status: 400
+            end
+          end
+
+          def require_logged_in_moderator
+            require_logged_in_user
+
+            if @user
+              if @user.is_moderator?
+                true
+              else
+                redirect_to "/"
+              end
+            end
+          end
+        end
+        RB
+      "application_controller.rb" => <<-RB,
+        class ApplicationController < ActionController::Base
+          include SessionAuth
+          before_action :check_read_only
+
+          def check_read_only
+            return redirect_to "/" if Rails.application.read_only?
+          end
+
+          def require_no_user_or_redirect
+            redirect_to "/" if @user
+          end
+
+          def go_home
+            cookies.delete(:x)
+            redirect_to "/"
+          end
+        end
+        RB
+      "stories_controller.rb" => <<-RB,
+        class StoriesController < ApplicationController
+          before_action :require_logged_in_user_or_400,
+            only: [:flag]
+          before_action :require_logged_in_user, only: [:update]
+
+          def show
+          end
+
+          def flag
+          end
+
+          def update
+          end
+        end
+        RB
+      "login_controller.rb" => <<-RB,
+        class LoginController < ApplicationController
+          before_action :require_no_user_or_redirect
+          before_action :go_home, only: [:legacy]
+
+          def create
+          end
+
+          def legacy
+          end
+        end
+        RB
+      "mod_controller.rb" => <<-RB,
+        class ModController < ApplicationController
+          before_action :require_logged_in_moderator
+
+          def index
+          end
+        end
+        RB
+      "reports_controller.rb" => <<-RB,
+        class ReportsController < ModController
+          def index
+          end
+        end
+        RB
+    }
+    files.each do |name, body|
+      path = File.join(controllers, name)
+      File.write(path, body)
+      CodeLocator.instance.register_path(path)
+    end
+
+    begin
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(tmpdir)
+      at = ->(name : String, line : Int32) do
+        Endpoint.new("/#{name}/#{line}", "GET", [] of Param, Details.new(PathInfo.new(File.join(controllers, name), line)))
+      end
+      show, flag, update = at.call("stories_controller.rb", 6), at.call("stories_controller.rb", 9), at.call("stories_controller.rb", 12)
+      login, legacy = at.call("login_controller.rb", 5), at.call("login_controller.rb", 8)
+      mod, reports = at.call("mod_controller.rb", 4), at.call("reports_controller.rb", 2)
+
+      RubyAuthTagger.new(noir_options).perform([show, flag, update, login, legacy, mod, reports])
+
+      # `only:` on the continuation line limits the callback to `flag`.
+      show.tags.should be_empty
+      flag.tags.map(&.description).should eq(["Protected by require_logged_in_user_or_400 (app-defined, refuses callers without a credential)"])
+      update.tags.map(&.description).should eq(["Protected by require_logged_in_user (app-defined, refuses callers without a credential)"])
+      # Redirecting a logged-in user away, or everyone, is no guard.
+      login.tags.should be_empty
+      legacy.tags.should be_empty
+      # The moderator check refuses anonymous callers through the call it makes.
+      mod.tags.map(&.description).should eq(["Protected by require_logged_in_moderator (app-defined, refuses callers without a credential)"])
+      reports.tags.map(&.description).should eq(["Protected by require_logged_in_moderator (app-defined, refuses callers without a credential)"])
     ensure
       FileUtils.rm_rf(tmpdir)
       CodeLocator.instance.clear_all
