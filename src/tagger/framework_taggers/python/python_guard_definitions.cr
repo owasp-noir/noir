@@ -49,7 +49,10 @@ module PythonGuardDefinitions
     return decorator_description(line) unless target
     verdict = @verdicts[target]?
     verdict = @verdicts[target] = guard_definition?(target[0], target[1], 0) if verdict.nil?
-    name if verdict
+    return unless verdict
+    # Settings are read at run time, so whether the open path is the
+    # deployment's is not known here: report the guard and say so.
+    view_access(target[0], target[1]).configurable? ? "#{name} (a setting can make it public)" : name
   end
 
   # Whether a definition body turns an unauthenticated caller away.
@@ -67,14 +70,16 @@ module PythonGuardDefinitions
   #
   # A wrapper (a body that calls the view with `*args, **kwargs`) that
   # reads the caller and refuses with 403 or a login redirect is judged by
-  # the paths that reach the view instead: it guards only when every such
-  # path needs an identified caller (`view_access`), or when it answers
-  # 401 / checks a request credential regardless.
+  # the paths that reach the view instead: it guards when every such path
+  # needs an identified caller, or every one but those a setting opens
+  # (`view_access`), or when it answers 401 / checks a request credential
+  # regardless.
   private def guard_definition?(file : String, name : String, hops : Int32) : Bool
     body = python_defs(file)[name]
     if body.matches?(VIEW_CALL) && (body.matches?(FORBIDDEN) || body.matches?(LOGIN_REDIRECT)) &&
        identity_read?(body, file, 0)
-      return true if view_access(file, name).closed? || body.matches?(UNAUTHENTICATED) ||
+      access = view_access(file, name)
+      return true if access.closed? || access.configurable? || body.matches?(UNAUTHENTICATED) ||
                      (body.matches?(REQUEST_CREDENTIAL) && body.matches?(REJECTION))
     elsif refuses_caller?(body)
       return true
@@ -115,19 +120,23 @@ module PythonGuardDefinitions
 
   # How wrapper `def name` in `file` lets a caller who is not identified
   # reach the view, judged by the conditions above each view call: the enclosing `if` / `elif` / `else` branches and the earlier
-  # sibling `if`s that refuse. CTFd's `check_score_visibility` calls the
-  # view when the score visibility setting is public, and
-  # `require_verified_emails` whenever email verification is off, so how
-  # an anonymous caller fares depends on the deployment's settings, and
-  # neither is reported as a guard. A view call under no condition is not
+  # sibling `if`s that refuse. CTFd's `require_verified_emails` calls the
+  # view whenever email verification is off and never asks who the caller
+  # is, so it is not a guard. `check_score_visibility` calls it when the
+  # visibility setting is public and otherwise only for a logged-in caller
+  # or an admin: a guard that a setting can lift. A view call under no condition is not
   # judged (the refusal may sit in a helper it calls), and a condition on
   # the decorator's own parameters is the call site's choice
   # (`admission(roles=...)`), not the caller's.
   enum ViewAccess
     # Every judged path to the view needs an identified caller.
     Closed
-    # A path needs none, on conditions that do not read the caller.
+    # A path needs none, on conditions that do not read the caller, and
+    # no other path needs one.
     Setting
+    # A setting opens a path; every other judged path needs an identified
+    # caller.
+    Configurable
     # A path needs none although its conditions read the caller.
     Caller
   end
@@ -146,18 +155,20 @@ module PythonGuardDefinitions
         locals[m[1]] ||= m[2]
       end
     end
-    access = ViewAccess::Closed
+    open = closed = false
     lines.each_with_index do |line, idx|
       next if idx <= sig_end || !line.matches?(VIEW_CALL) || line.matches?(/^\s*(?:async\s+)?def\b/)
       conditions = view_path_conditions(lines, idx, sig_end)
       judged = conditions.compact_map do |cond, positive|
         implies_identity?(cond, positive, file, locals, params)
       end
-      next if judged.empty? || judged.includes?(true)
+      next if judged.empty?
+      next closed = true if judged.includes?(true)
       return ViewAccess::Caller if conditions.any? { |cond, _| identity_read?(cond, file, 0, locals) }
-      access = ViewAccess::Setting
+      open = true
     end
-    access
+    return ViewAccess::Closed unless open
+    closed ? ViewAccess::Configurable : ViewAccess::Setting
   end
 
   # The conditions line `idx` of a body runs under, each with whether it

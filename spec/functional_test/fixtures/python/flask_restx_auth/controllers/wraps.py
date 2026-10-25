@@ -134,7 +134,7 @@ def admins_only(view):
 
 
 def visibility_gate(view):
-    """Open when the deployment's setting is public: no guard to report."""
+    """Open when the deployment's setting is public, else members only."""
 
     @wraps(view)
     def decorated(*args, **kwargs):
