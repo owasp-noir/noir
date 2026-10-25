@@ -2,6 +2,7 @@ require "../../../models/framework_tagger"
 require "../../../models/endpoint"
 require "../../../utils/c_comments"
 require "../../../utils/js_literal_scanner"
+require "../../../miniparsers/import_graph"
 
 @[Noir::TaggerFor(key: "nestjs_auth", name: "NestJS Auth Tagger", desc: "Identifies NestJS-style decorator auth (Nest guards, tsoa @Security, routing-controllers @Authorized, Ts.ED @Authenticate)", order: 150)]
 class NestjsAuthTagger < FrameworkTagger
@@ -117,7 +118,19 @@ class NestjsAuthTagger < FrameworkTagger
   # Passport's `AuthGuard(...)` (called inline, or extended) refuses a
   # caller its strategy cannot authenticate with 401.
   PASSPORT_GUARD = /\AAuthGuard\s*\(|\bextends\s+AuthGuard\s*\(/
-  REFUSES_401    = /\bUnauthorizedException\b/
+  # What a `canActivate` does with a caller: throws 401 outright; throws 403
+  # or returns false (Nest answers 403) on what it read from the request;
+  # or only ever returns true.
+  CAN_ACTIVATE   = /\bcanActivate\s*\(/
+  THROWS_401     = /\bUnauthorizedException\b|\bHttpException\s*\([^;]*(?:\b401\b|UNAUTHORIZED)/
+  THROWS_403     = /\bForbiddenException\b|\bHttpException\s*\([^;]*(?:\b403\b|FORBIDDEN)/
+  RETURNS_REFUSE = /\breturn\s+(?:false\b|!|[^;\n]*?(?:===|!==|==|!=))/
+  READS_REQUEST  = /getRequest|switchToHttp|\bheaders\b|\bcookies\b|\.user\b|\bsession\b/
+  RETURN_STMT    = /\breturn\b\s*([^;\n]*)/
+  # The start of the next top-level statement after a declaration: a line
+  # that starts in column 0 with anything but a closing bracket.
+  NEXT_TOP_LEVEL = /\n(?=[^\s})\]])/
+  NAMED_IMPORT   = /\bimport\s+(?:type\s+)?\{([^}]*)\}\s*from\s*['"]([^'"]+)['"]/
 
   def initialize(options : Hash(String, YAML::Any))
     super
@@ -125,7 +138,10 @@ class NestjsAuthTagger < FrameworkTagger
     @guard_metadata = Hash(String?, GuardMetadata).new
     @class_lines = Hash(String, Array(Int32)).new
     @optional_guards = Set(String).new
-    @guard_decorators = Hash(String, String).new
+    # Decorator name => every `{file, root, guards}` defining it.
+    @guard_decorators = Hash(String, Array({String, String?, String})).new
+    # Guard class name => `:refuses` / `:admits`, read from its definition.
+    @guard_classes = Hash(String, Symbol).new
   end
 
   def perform(endpoints : Array(Endpoint)) : Array(Endpoint)
@@ -140,8 +156,8 @@ class NestjsAuthTagger < FrameworkTagger
     @guard_metadata.clear
     @optional_guards.clear
     @guard_decorators.clear
-    decorator_sources = [] of String
-    guard_classes = Hash(String, Bool).new
+    @guard_classes.clear
+    decorator_sources = [] of {String, String?, String}
     guard_sources = [] of {String?, String}
     metadata_sources = [] of {String?, String}
     {".ts", ".js"}.each do |ext|
@@ -159,8 +175,8 @@ class NestjsAuthTagger < FrameworkTagger
         root = nearest_project_root(path, PACKAGE_JSON)
         code = Noir::CComments.strip(content, quotes: %("'`))
         collect_optional_guards(code) if handles_request
-        collect_guard_classes(code, guard_classes) if defines_guard || passport_guard
-        decorator_sources << code if bundles_guard
+        collect_guard_classes(code) if defines_guard || passport_guard
+        decorator_sources << {path, root, code} if bundles_guard
         guard_sources << {root, code} if defines_guard
         metadata_sources << {root, code} if sets_metadata
         next if !registers || @global_guards.has_key?(root)
@@ -172,7 +188,7 @@ class NestjsAuthTagger < FrameworkTagger
       end
     end
 
-    decorator_sources.each { |code| collect_guard_decorators(code, guard_classes) }
+    decorator_sources.each { |path, root, code| collect_guard_decorators(path, root, code) }
 
     @global_guards.each do |root, guard|
       class_decl = /\bclass\s+#{Regex.escape(guard)}\b/
@@ -186,57 +202,105 @@ class NestjsAuthTagger < FrameworkTagger
     end
   end
 
-  # Guard class name => whether its definition refuses an unauthenticated
-  # caller: a Passport guard, or a `canActivate` that throws Unauthorized.
-  private def collect_guard_classes(code : String, classes : Hash(String, Bool))
+  # Guard class name => what its definition does with an unidentified
+  # caller (`guard_verdict`); a class it says nothing definite about is left
+  # out, so its name decides.
+  private def collect_guard_classes(code : String)
     code.scan(GUARD_CLASS_DECL) do |decl|
-      next if classes.has_key?(decl[1])
+      next if @guard_classes.has_key?(decl[1])
       next unless body_close = Noir::JSLiteralScanner.find_matching_brace(code, decl.end(0) - 1)
-      body = code[(decl.end(0) - 1)..body_close]
-      passport = decl[2].matches?(PASSPORT_GUARD)
-      next unless passport || body.includes?("canActivate")
-      classes[decl[1]] = passport || body.matches?(REFUSES_401)
+      if verdict = guard_verdict(decl[2], code[(decl.end(0) - 1)..body_close])
+        @guard_classes[decl[1]] = verdict
+      end
     end
   end
 
+  # `:refuses` for a Passport guard, or a `canActivate` that throws 401, or
+  # that reads the request and then throws 403 or returns false (Nest
+  # answers 403); `:admits` for one whose every return is `true` and that
+  # throws nothing; nil otherwise, including a `canActivate` that consults
+  # route metadata through the Reflector.
+  private def guard_verdict(header : String, body : String) : Symbol?
+    return :refuses if header.matches?(PASSPORT_GUARD)
+    return unless method = body.match(CAN_ACTIVATE)
+    return unless params_close = Noir::JSLiteralScanner.find_matching_paren(body, method.end(0) - 1)
+    return unless open = body.index('{', params_close)
+    return unless close = Noir::JSLiteralScanner.find_matching_brace(body, open)
+    code = body[open..close]
+    # Route metadata decides (`if (!required) return true`): a route
+    # without it is let through, so only the name speaks for the guard.
+    return if code.matches?(/\breflector\b/i)
+    return :refuses if code.matches?(THROWS_401)
+    return :refuses if code.matches?(READS_REQUEST) && (code.matches?(THROWS_403) || code.matches?(RETURNS_REFUSE))
+    returns = code.scan(RETURN_STMT).map(&.[1].strip)
+    :admits if !returns.empty? && returns.all?("true") && !code.includes?("throw")
+  end
+
   # Decorator name => the guards it applies, for every top-level function
-  # or const whose `applyDecorators(...)` includes a `UseGuards(...)` that
-  # authenticates (see `authenticating_guards`).
-  private def collect_guard_decorators(code : String, guard_classes : Hash(String, Bool))
+  # or const whose own body holds an `applyDecorators(...)` with a
+  # `UseGuards(...)` that authenticates (see `authenticating_guards`).
+  private def collect_guard_decorators(path : String, root : String?, code : String)
     decls = code.scan(TOP_LEVEL_DECL)
     code.scan(APPLY_DECORATORS) do |m|
       next unless decl = decls.reverse_each.find { |d| d.begin < m.begin }
-      next if @guard_decorators.has_key?(decl[1])
+      # A later class's static method sits past the declaration's end.
+      decl_end = code.match(NEXT_TOP_LEVEL, decl.end(0)).try(&.begin(0)) || code.size
+      next if m.begin >= decl_end
       next unless close = Noir::JSLiteralScanner.find_matching_paren(code, m.end(0) - 1)
       code[m.end(0)...close].scan(BARE_USE_GUARDS) do |use|
-        guards = authenticating_guards(use[1], guard_classes)
-        @guard_decorators[decl[1]] = guards.join(", ") unless guards.empty?
+        guards = authenticating_guards(use[1])
+        next if guards.empty?
+        defs = @guard_decorators[decl[1]] ||= [] of {String, String?, String}
+        defs << {path, root, guards.join(", ")} unless defs.any? { |d| d[0] == path }
       end
     end
   end
 
   # The guards in a `UseGuards(...)` argument list that refuse anonymous
   # callers: Passport's `AuthGuard(...)`, or a class whose definition does
-  # (`collect_guard_classes`). A guard defined outside the scan falls back
+  # (`guard_verdict`). One whose definition says nothing definite falls back
   # to its name; an optional Passport guard never counts.
-  private def authenticating_guards(args : String, guard_classes : Hash(String, Bool)) : Array(String)
+  private def authenticating_guards(args : String) : Array(String)
     args.split(',').map(&.strip).select do |guard|
       name = guard.match(/\A\w+/).try(&.[0]) || next false
       next false if @optional_guards.includes?(name)
       next true if guard.matches?(PASSPORT_GUARD)
-      guard_classes.fetch(name) { name.matches?(AUTH_GUARD_REF) }
+      verdict = @guard_classes[name]?
+      verdict ? verdict == :refuses : name.matches?(AUTH_GUARD_REF)
     end
   end
 
-  # The project guard decorator a decorator line applies, as a description.
-  private def guard_decorator_desc(line : String) : String?
+  # The project guard decorator a decorator line of `file` applies, as a
+  # description.
+  private def guard_decorator_desc(line : String, file : String) : String?
     return if @guard_decorators.empty?
     line.scan(DECORATOR_CALL) do |m|
-      if guards = @guard_decorators[m[1]]?
+      next unless defs = @guard_decorators[m[1]]?
+      if guards = guard_decorator_for(m[1], defs, file)
         return "NestJS @#{m[1]}() (applies UseGuards(#{guards}))"
       end
     end
     nil
+  end
+
+  # The definition of decorator `name` that `file` uses: its own, the one a
+  # relative import resolves to (an import of a file that defines `name`
+  # without guards is no guard), else the only one in `file`'s project.
+  private def guard_decorator_for(name : String, defs : Array({String, String?, String}), file : String) : String?
+    defs.find { |d| d[0] == file }.try { |d| return d[2] }
+    code = read_file(file) || ""
+    code.scan(NAMED_IMPORT) do |imp|
+      next unless imp[1].split(',').any? { |spec| spec.strip.lchop("type ").split(/\s+as\s+/).last.strip == name }
+      next unless imp[2].starts_with?('.')
+      target = Noir::ImportGraph.resolve_relative_import(file, imp[2]) || break
+      defs.find { |d| d[0] == target }.try { |d| return d[2] }
+      # A barrel re-exports it; anything else defines a guard-less one.
+      return if (read_file(target) || "").matches?(/\b(?:function|const|let|var)\s+#{Regex.escape(name)}\b/)
+      break
+    end
+    root = nearest_project_root(file, PACKAGE_JSON)
+    local = defs.select { |d| d[1] == root }
+    local.size == 1 ? local[0][2] : nil
   end
 
   private def collect_optional_guards(code : String)
@@ -339,8 +403,8 @@ class NestjsAuthTagger < FrameworkTagger
       method_decorators = method_decorator_lines(lines, line_idx)
       authn_descs = [] of String
       authz_descs = [] of String
-      method_decorators.each { |line| collect_decorator_line(line, authn_descs, authz_descs) }
-      collect_class_decorators(class_decorators, authn_descs, authz_descs)
+      method_decorators.each { |line| collect_decorator_line(line, path_info.path, authn_descs, authz_descs) }
+      collect_class_decorators(class_decorators, path_info.path, authn_descs, authz_descs)
 
       root = nearest_project_root(path_info.path, PACKAGE_JSON)
       guard = @global_guards[root]? if authn_descs.empty?
@@ -449,34 +513,53 @@ class NestjsAuthTagger < FrameworkTagger
     line == "}" || line.matches?(ONE_LINE_BODY)
   end
 
-  private def collect_decorator_line(current : String, authn_descs : Array(String), authz_descs : Array(String))
+  private def collect_decorator_line(current : String, file : String, authn_descs : Array(String), authz_descs : Array(String))
     ROLE_PATTERNS.each do |pattern, desc|
       authz_descs << desc if current.matches?(pattern) && !authz_descs.includes?(desc)
     end
-    optional = optional_auth_only?(current)
-    GUARD_PATTERNS.each do |pattern, desc|
-      authn_descs << desc if !optional && current.matches?(pattern) && !authn_descs.includes?(desc)
+    if refusing = use_guards_refusing(current)
+      unless refusing.empty?
+        matched = GUARD_PATTERNS.select { |pattern, _| current.matches?(pattern) }.map(&.[1])
+        matched = ["NestJS @UseGuards(#{refusing.join(", ")})"] if matched.empty?
+        matched.each { |desc| authn_descs << desc unless authn_descs.includes?(desc) }
+      end
+    else
+      GUARD_PATTERNS.each do |pattern, desc|
+        authn_descs << desc if current.matches?(pattern) && !authn_descs.includes?(desc)
+      end
     end
     AUTH_DECORATORS.each do |pattern, desc|
       authn_descs << desc if current.matches?(pattern) && !authn_descs.includes?(desc)
     end
-    if desc = guard_decorator_desc(current)
+    if desc = guard_decorator_desc(current, file)
       authn_descs << desc unless authn_descs.includes?(desc)
     end
   end
 
-  private def collect_class_decorators(decorators : Array(String), authn_descs : Array(String), authz_descs : Array(String))
+  # For a `@UseGuards(...)` line, the guards in it that refuse anonymous
+  # callers (`authenticating_guards`, the same judgment a bundling
+  # decorator gets); nil for any other line.
+  private def use_guards_refusing(line : String) : Array(String)?
+    line.match(USE_GUARDS_ARGS).try { |m| authenticating_guards(m[1]) }
+  end
+
+  private def collect_class_decorators(decorators : Array(String), file : String, authn_descs : Array(String), authz_descs : Array(String))
     decorators.each do |decorator|
       ROLE_PATTERNS.each do |pattern, desc|
         labeled = "#{desc} (class-level)"
         authz_descs << labeled if decorator.matches?(pattern) && !authz_descs.includes?(labeled) && !authz_descs.includes?(desc)
       end
-      next if optional_auth_only?(decorator)
-      GUARD_PATTERNS.each do |pattern, desc|
-        labeled = "#{desc} (class-level)"
-        authn_descs << labeled if decorator.matches?(pattern) && !authn_descs.includes?(labeled) && !authn_descs.includes?(desc)
+      refusing = use_guards_refusing(decorator)
+      descs = GUARD_PATTERNS.select { |pattern, _| decorator.matches?(pattern) }.map(&.[1])
+      if refusing
+        descs = [] of String if refusing.empty?
+        descs = ["NestJS @UseGuards(#{refusing.join(", ")})"] if descs.empty? && !refusing.empty?
       end
-      if desc = guard_decorator_desc(decorator)
+      descs.each do |desc|
+        labeled = "#{desc} (class-level)"
+        authn_descs << labeled unless authn_descs.includes?(labeled) || authn_descs.includes?(desc)
+      end
+      if desc = guard_decorator_desc(decorator, file)
         labeled = "#{desc} (class-level)"
         authn_descs << labeled unless authn_descs.includes?(labeled)
       end
