@@ -111,6 +111,8 @@ module Analyzer::Python
         # `request.POST`) exposes `getlist("key")` for repeated keys
         # (`?tag=a&tag=b`), reading the same first-arg key as `get`.
         Regex.new("request\\.#{field_name}\\.get(?:list)?\\([rf]?['\"]([^'\"]*)['\"]"),
+        # `"auto-login" in request.COOKIES`: a presence test reads the key too.
+        Regex.new("['\"]([^'\"]+)['\"]\\s+(?:not\\s+)?in\\s+request\\.#{field_name}\\b(?!\\s*[.\\[])"),
       }
     end
 
@@ -468,7 +470,7 @@ module Analyzer::Python
       # back to File.read (same encoding: utf-8, invalid: :skip) when the
       # file wasn't cached. Byte-identical either way, so the char-offset
       # -> line-number math further down is unaffected.
-      content = read_file_content(django_urls.filepath)
+      content = urlconf_source(django_urls.filepath)
       original_content = content
       package_map = find_imported_modules(@django_base_path, url_base_path, content)
       import_aliases = extract_python_import_aliases(original_content)
@@ -584,6 +586,31 @@ module Analyzer::Python
 
       endpoints.concat(direct_router_endpoints)
       endpoints
+    end
+
+    # `path(f"{prefix}admin/login/", view)`: an f-string route interpolating
+    # a module-level string reads that string, its first top-level binding
+    # (the default deployment, as `path(prefix, include(...))` mounts at "").
+    # A literal with any other interpolation is left as written.
+    FSTRING_ROUTE_RE = /(?<![\w'"])[rR]?[fF][rR]?(['"])([^'"\n]*\{[A-Za-z_]\w*\}[^'"\n]*)\1/
+    FSTRING_FIELD_RE = /\{([A-Za-z_]\w*)\}/
+    MODULE_STRING_RE = /^([A-Za-z_]\w*)\s*(?::\s*str\s*)?=\s*[rR]?(['"])([^'"\n]*)\2\s*$/m
+    @urlconf_sources = Hash(::String, ::String).new
+
+    private def urlconf_source(path : ::String) : ::String
+      @urlconf_sources[path] ||= begin
+        content = read_file_content(path)
+        if content.includes?('{') && content.matches?(FSTRING_ROUTE_RE)
+          strings = Hash(::String, ::String).new
+          content.scan(MODULE_STRING_RE) { |m| strings[m[1]] ||= m[3] }
+          content = content.gsub(FSTRING_ROUTE_RE) do |literal, m|
+            fields = m[2].scan(FSTRING_FIELD_RE).map(&.[1])
+            next literal unless fields.all? { |name| strings.has_key?(name) }
+            "#{m[1]}#{m[2].gsub(FSTRING_FIELD_RE) { |_, f| strings[f[1]] }}#{m[1]}"
+          end
+        end
+        content
+      end
     end
 
     # 1-based line in `content` where the list body `body` starts, or nil
@@ -1353,7 +1380,7 @@ module Analyzer::Python
                                                    seen : Array(::String) = [] of ::String) : Array(Endpoint)
       endpoints = [] of Endpoint
 
-      list_line = list_start_line(read_file_content(django_urls.filepath), pattern_content)
+      list_line = list_start_line(urlconf_source(django_urls.filepath), pattern_content)
       splatted_router_names(pattern_content).each do |router_name|
         endpoints.concat extract_drf_router_endpoints_for_router(django_urls, mount_route, router_name, drf_router_registrations,
           package_map, import_aliases, route_path)
@@ -1703,25 +1730,17 @@ module Analyzer::Python
             end
           end
 
-          fold_python_continuations(lines).each do |line|
-            # Check if line has 'request.method == "GET"' similar pattern
-            if line.includes? "request.method"
-              suspicious_code = line.split("request.method")[1].strip
-              HTTP_METHODS.each do |http_method_name|
-                method_name_match = suspicious_code.downcase.match REQUEST_METHOD_NAME_REGEXES[http_method_name]
-                unless method_name_match.nil?
-                  suspicious_http_methods << http_method_name.upcase
-                end
-              end
-            end
+          # A decorator-restricted view keeps its verb set: body accessors
+          # (`request.data`, `request.POST`) must not widen it.
+          suspicious_params.concat scan_function_view_lines(lines, filepath, suspicious_http_methods, restricted)
 
-            # A decorator-restricted view keeps its verb set: body accessors
-            # (`request.data`, `request.POST`) must not widen it.
-            scan_methods = restricted ? suspicious_http_methods.dup : suspicious_http_methods
-            extract_params_from_line(line, scan_methods).each do |param|
-              suspicious_params << param
-            end
+          # What the functions it hands `request` to read and test, scoped
+          # to the `request.method` branch that calls them.
+          helper_groups = request_helper_bodies(lines, filepath, 0).map do |branch, late, helper_path, helper_lines|
+            methods = branch ? branch.dup : suspicious_http_methods
+            {branch, late, scan_function_view_lines(helper_lines, helper_path, methods, restricted || !branch.nil?)}
           end
+          branch_verbs = helper_groups.compact_map(&.[0]).flatten.to_set
 
           # Build once outside the per-method emit loop: a view function
           # routinely emits multiple endpoints (one per detected HTTP
@@ -1740,7 +1759,12 @@ module Analyzer::Python
 
           suspicious_http_methods.uniq.each do |http_method_name|
             details = Details.new(PathInfo.new(filepath, definition_line))
-            endpoint = Endpoint.new(url, http_method_name, filter_params(http_method_name, suspicious_params), details)
+            method_params = suspicious_params.dup
+            helper_groups.each do |branch, late, params|
+              applies = branch ? branch.includes?(http_method_name) : !(late && branch_verbs.includes?(http_method_name))
+              method_params.concat(params) if applies
+            end
+            endpoint = Endpoint.new(url, http_method_name, filter_params(http_method_name, method_params), details)
             endpoint.handler = Handler.new(function_or_class_name, filepath, definition_line)
             handler_callees.each { |c| endpoint.push_callee(c) }
             endpoints << endpoint
@@ -2048,19 +2072,177 @@ module Analyzer::Python
           name = view_chain.compact_map(&.codeblock.match(/^\s+serializer_class\s*=\s*([A-Za-z_][A-Za-z0-9_.]*)\s*$/m).try(&.[1])).first? || next
         end
         target = resolve_python_class(filepath, name) || next
+        declared_input_fields(target).each do |field|
+          params << Param.new(field, "", "form") unless params.any? { |param| param.name == field }
+        end
+      end
+      params
+    end
+
+    # The input fields class `target` and its project bases declare as
+    # `name = <...>Field(` / `<...>Serializer(` attributes, the read-only
+    # ones left out. Serializers and Django forms declare them alike.
+    private def declared_input_fields(target : Tuple(::String, ::String)) : Array(::String)
+      fields = [] of ::String
+      drf_class_chain(target[0], target[1]).each do |klass|
+        body = klass.codeblock.split("\n")[1..]
+        level = body.compact_map { |line| line.size - line.lstrip.size unless line.strip.empty? }.min? || next
+        body.each_with_index do |line, index|
+          field = line.match(SERIALIZER_FIELD_RE) || next
+          next unless field[1].size == level
+          next if field[3] == "SerializerMethodField"
+          next if python_call_span(body, index, line)[0].matches?(/\bread_only\s*=\s*True\b/)
+          fields << field[2] unless fields.includes?(field[2])
+        end
+      end
+      fields
+    end
+
+    # `WebhookForm(request.POST)` / `SearchForm(data=request.GET)`: a form
+    # bound to the request reads every field its class declares, from the
+    # body or the query string. Only a class the scan holds counts.
+    # ponytail: declared fields only; a ModelForm's `Meta.fields` columns
+    # are not resolved.
+    FORM_BINDING_RE = /(?<![\w.])([A-Za-z_][\w.]*)\s*\(\s*(?:data\s*=\s*)?request\.(POST|GET)\b(?!\s*\.|\s*\[)/
+
+    private def bound_form_params(code : ::String, filepath : ::String, methods : Array(::String)) : Array(Param)
+      params = [] of Param
+      return params unless code.includes?("request.POST") || code.includes?("request.GET")
+      code.scan(FORM_BINDING_RE) do |call|
+        target = resolve_python_class(filepath, call[1]) || next
+        location = call[2] == "GET" ? "query" : "form"
+        methods << "POST" if location == "form" && !methods.includes?("POST")
+        declared_input_fields(target).each { |field| params << Param.new(field, "", location) }
+      end
+      params
+    end
+
+    # Verb checks and request reads in a function view's (or a helper's)
+    # body lines. A view that reads the raw body takes one: unrestricted,
+    # it answers POST.
+    RAW_BODY_RE = /(?<![\w.])request\.body\b/
+
+    private def scan_function_view_lines(lines : Array(::String), filepath : ::String,
+                                         methods : Array(::String), restricted : Bool) : Array(Param)
+      params = [] of Param
+      scan_methods = restricted ? methods.dup : methods
+      folded = with_request_aliases(fold_python_continuations(lines))
+      folded.each do |line|
+        # Check if line has 'request.method == "GET"' similar pattern
+        if line.includes? "request.method"
+          suspicious_code = line.split("request.method")[1].strip
+          HTTP_METHODS.each do |http_method_name|
+            unless suspicious_code.downcase.match(REQUEST_METHOD_NAME_REGEXES[http_method_name]).nil?
+              methods << http_method_name.upcase
+            end
+          end
+        end
+        scan_methods << "POST" if !scan_methods.includes?("POST") && line.matches?(RAW_BODY_RE)
+        params.concat extract_params_from_line(line, scan_methods)
+      end
+      code = folded.join('\n')
+      params.concat bound_form_params(code, filepath, scan_methods)
+      params.concat validated_model_params(code, filepath)
+      params
+    end
+
+    # `Spec.model_validate(request.json)` / `Model.model_validate_json(
+    # request.body)`: a Pydantic model the view validates the request body
+    # with names the JSON fields it reads, its annotated attributes.
+    # ponytail: field names as declared; `Field(alias=...)` and alias
+    # generators are not applied.
+    MODEL_VALIDATE_RE = /(?<![\w.])([A-Za-z_][\w.]*)\.model_validate(?:_json)?\s*\(\s*(?:json\.loads\s*\(\s*)?request\.\w+/
+    MODEL_FIELD_RE    = /^(\s+)([a-z_]\w*)\s*:\s*(?!ClassVar\b)\S/
+
+    private def validated_model_params(code : ::String, filepath : ::String) : Array(Param)
+      params = [] of Param
+      return params unless code.includes?("model_validate")
+      code.scan(MODEL_VALIDATE_RE) do |call|
+        target = resolve_python_class(filepath, call[1]) || next
         drf_class_chain(target[0], target[1]).each do |klass|
           body = klass.codeblock.split("\n")[1..]
           level = body.compact_map { |line| line.size - line.lstrip.size unless line.strip.empty? }.min? || next
-          body.each_with_index do |line, index|
-            field = line.match(SERIALIZER_FIELD_RE) || next
-            next unless field[1].size == level
-            next if field[3] == "SerializerMethodField"
-            next if python_call_span(body, index, line)[0].matches?(/\bread_only\s*=\s*True\b/)
-            params << Param.new(field[2], "", "form") unless params.any? { |param| param.name == field[2] }
+          body.each do |line|
+            field = line.match(MODEL_FIELD_RE) || next
+            params << Param.new(field[2], "", "json") if field[1].size == level
           end
         end
       end
       params
+    end
+
+    # `headers = request.META` then `headers.get("HTTP_USER_AGENT")`: reads
+    # through a local bound to a request mapping, spelled as reads of the
+    # mapping itself.
+    REQUEST_ALIAS_RE = /^\s*([A-Za-z_]\w*)\s*=\s*(request\.(?:META|headers|GET|POST|COOKIES|FILES|data|query_params))\s*$/
+
+    private def with_request_aliases(lines : Array(::String)) : Array(::String)
+      aliases = lines.compact_map do |line|
+        line.match(REQUEST_ALIAS_RE).try { |m| {/(?<![\w.])#{m[1]}(?=\s*(?:\.get(?:list)?\s*\(|\[))/, m[2]} }
+      end
+      return lines if aliases.empty?
+      lines.map { |line| aliases.reduce(line) { |text, (name, target)| text.gsub(name, target) } }
+    end
+
+    # `return webhook_form(request, channel)`: a function view that hands its
+    # `request` to a project function runs it to serve the request, so the
+    # verbs it tests and the data it reads are the view's. Each comes back
+    # as {verbs of the `request.method` branch calling it (nil outside one),
+    # whether the call follows such a branch (it serves the other verbs),
+    # its file, its body lines}, two calls deep.
+    REQUEST_HELPER_CALL_RE = /(?<![\w.])([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)?)\s*\(\s*request\s*[,)]/
+    METHOD_BRANCH_RE       = /^\s*(?:if|elif)\b.*(?<![\w.])request\.method\b/
+
+    private def request_helper_bodies(lines : Array(::String), filepath : ::String, depth : Int32,
+                                      seen : Set(::String) = Set(::String).new) : Array(Tuple(Array(::String)?, Bool, ::String, Array(::String)))
+      found = [] of Tuple(Array(::String)?, Bool, ::String, Array(::String))
+      return found if depth > 1 || !lines.any?(&.includes?("request"))
+      content = view_file_index(filepath).content
+      source_cache = {filepath => content}
+      import_map = callee_import_map(@django_base_path, filepath, content)
+      after_branch = false
+      lines.each_with_index do |raw, index|
+        line = strip_python_comment(raw)
+        after_branch ||= line.matches?(METHOD_BRANCH_RE)
+        next unless line.includes?("request")
+        line.scan(REQUEST_HELPER_CALL_RE) do |call|
+          definition = resolve_python_callee_definition(call[1], filepath, source_cache, import_map) || next
+          path, def_line = definition
+          next unless seen.add?("#{path}:#{def_line}")
+          helper_lines = view_file_index(path).lines
+          next unless helper_lines[def_line - 1]?.try(&.lstrip.matches?(/^(?:async\s+)?def\s/))
+          body = parse_code_block(helper_lines[(def_line - 1)..]) || next
+          body_lines = body.split("\n")[1..]
+          branch = enclosing_method_branch(lines, index)
+          late = branch.nil? && after_branch
+          found << {branch, late, path, body_lines}
+          request_helper_bodies(body_lines, path, depth + 1, seen).each do |inner_branch, inner_late, inner_path, inner_lines|
+            found << {inner_branch || branch, late || inner_late, inner_path, inner_lines}
+          end
+        end
+      end
+      found
+    end
+
+    # The verbs an `if request.method == "POST":` (or `in (...)`) header
+    # governing line `index` selects; nil under none, an `else`, or a
+    # negated test.
+    private def enclosing_method_branch(lines : Array(::String), index : Int32) : Array(::String)?
+      indent = Int32::MAX
+      index.downto(0) do |current|
+        stripped = lines[current].lstrip
+        next if stripped.empty? || stripped.starts_with?('#')
+        line_indent = lines[current].size - stripped.size
+        next if current != index && line_indent >= indent
+        indent = line_indent
+        return if stripped.starts_with?("else")
+        next unless stripped.matches?(METHOD_BRANCH_RE)
+        test = stripped.split("request.method", 2)[1]
+        return if test.matches?(/\A\s*(?:!=|not\s+in)/)
+        verbs = test.split(':', 2)[0].scan(/['"]([A-Za-z]+)['"]/).map(&.[1].upcase).select { |verb| HTTP_METHODS.any? { |m| m.upcase == verb } }
+        return verbs.empty? ? nil : verbs
+      end
+      nil
     end
 
     # `class X(A, mixins.B, C[Model], metaclass=M):` → ["A", "mixins.B", "C"].
@@ -2452,11 +2634,10 @@ module Analyzer::Python
 
       if line.includes? "request."
         REQUEST_PARAM_FIELD_PATTERNS.each do |field_pattern|
-          field_name, field_methods, param_type, bracket_re, get_re = field_pattern
-          matches = line.scan(bracket_re)
-          if matches.empty?
-            matches = line.scan(get_re)
-          end
+          field_name, field_methods, param_type, bracket_re, get_re, in_re = field_pattern
+          # Both shapes: `META.get("HTTP_X", META["REMOTE_ADDR"])` holds two.
+          matches = line.scan(bracket_re).concat(line.scan(get_re))
+          matches.concat(line.scan(in_re)) if line.includes?(" in ")
 
           unless matches.empty?
             matches.each do |match|
