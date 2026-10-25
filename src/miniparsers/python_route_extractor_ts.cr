@@ -472,7 +472,9 @@ module Noir
         end
       end
 
-      return if path.empty? && !pathless
+      # An explicit empty string (`@ns.route("")`, `@bp.get("")`) is the
+      # router's own prefix, not a missing path.
+      return if path.empty? && !pathless && positional_strings.first? != ""
 
       # `route(PATH, "POST")` — a bare verb after the path is the method.
       if methods.empty? && positional_methods.empty? && !leading_verb &&

@@ -24,8 +24,21 @@ module PythonGuardDefinitions
   CALLER_IDENTITY    = /\bcurrent_user\b|\bis_authenticated\b|\bg\.user\b/
   FORBIDDEN          = /\braise\s+(?:\w+\.)*\w*(?:Forbidden|PermissionDenied|AccessDenied)\w*\b|\babort\s*\(\s*(?:403\b|(?:\w+\.)*FORBIDDEN\b)|\breturn\b.*,\s*403\b/
 
+  # Sending the caller to the login page is how a browser view refuses
+  # an anonymous one.
+  LOGIN_REDIRECT = /\bredirect\s*\(.*\b(?:log_?in|sign_?in)\b/i
+  # Flask keeps the logged-in user in `session`; a helper such as
+  # `authed()` reads it there.
+  SESSION_READ = /(?<![\w.])session\s*(?:\.get\s*\(|\[)/
+  # A wrapper calling the view it decorates.
+  VIEW_CALL = /(?<![\w.])\w+\s*\(\s*\*\w+\s*,\s*\*\*\w+\s*\)/
+  # A condition that holds when its subject is absent or does not match.
+  NEGATED_TEST = /\A\s*not\b|\bis\s+None\b|==\s*None\b|\bis\s+False\b|==\s*False\b|\bnot\s+in\b|!=/
+
   @python_defs = Hash(String, Hash(String, String)).new
   @verdicts = Hash(Tuple(String, String), Bool).new
+  @identity_defs = Hash(Tuple(String, String, Int32), Bool).new
+  @view_access = Hash(Tuple(String, String), ViewAccess).new
 
   # The guard a decorator line names, judged by the decorator's definition
   # when the scan has it, by its name only when it does not (a library
@@ -51,15 +64,211 @@ module PythonGuardDefinitions
   # `validate_jwt_token` rejects inside `decode_jwt_token`,
   # `console_account_admission` returns `login_required(...)` of the view,
   # and `_api_prerequisite` stacks `@login_required` on its inner wrapper.
+  #
+  # A wrapper (a body that calls the view with `*args, **kwargs`) that
+  # reads the caller and refuses with 403 or a login redirect is judged by
+  # the paths that reach the view instead: it guards only when every such
+  # path needs an identified caller (`view_access`), or when it answers
+  # 401 / checks a request credential regardless.
   private def guard_definition?(file : String, name : String, hops : Int32) : Bool
     body = python_defs(file)[name]
-    return true if refuses_caller?(body)
+    if body.matches?(VIEW_CALL) && (body.matches?(FORBIDDEN) || body.matches?(LOGIN_REDIRECT)) &&
+       identity_read?(body, file, 0)
+      return true if view_access(file, name).closed? || body.matches?(UNAUTHENTICATED) ||
+                     (body.matches?(REQUEST_CREDENTIAL) && body.matches?(REJECTION))
+    elsif refuses_caller?(body)
+      return true
+    end
     return false if hops >= 2
     body.scan(CALLEE).map { |m| m[1]? || m[2] }.uniq!.any? do |callee|
       next false if callee == name
       target = resolve_def(file, callee)
       !!target && guard_definition?(target[0], target[1], hops + 1)
     end
+  end
+
+  # Whether `text` reads who the caller is: `current_user` / `g.user`, the
+  # Flask `session`, a local assigned from one, or a function that does,
+  # up to two calls deep (CTFd's `authed()` returns
+  # `bool(session.get("id"))`).
+  private def identity_read?(text : String, file : String, hops : Int32,
+                             locals : Hash(String, String)? = nil) : Bool
+    return true if text.matches?(CALLER_IDENTITY) || text.matches?(SESSION_READ)
+    if locals
+      text.scan(/(?<![\w.])[A-Za-z_]\w*/) do |m|
+        expr = locals[m[0]]?
+        return true if expr && identity_read?(expr, file, hops)
+      end
+    end
+    return false if hops >= 2
+    text.scan(CALLEE).any? do |m|
+      target = resolve_def(file, m[1]? || m[2]) || next false
+      key = {target[0], target[1], hops + 1}
+      cached = @identity_defs[key]?
+      if cached.nil?
+        @identity_defs[key] = false # cycle guard
+        cached = @identity_defs[key] = identity_read?(python_defs(target[0])[target[1]], target[0], hops + 1)
+      end
+      cached
+    end
+  end
+
+  # How wrapper `def name` in `file` lets a caller who is not identified
+  # reach the view, judged by the conditions above each view call: the enclosing `if` / `elif` / `else` branches and the earlier
+  # sibling `if`s that refuse. CTFd's `check_score_visibility` calls the
+  # view when the score visibility setting is public, and
+  # `require_verified_emails` whenever email verification is off, so how
+  # an anonymous caller fares depends on the deployment's settings, and
+  # neither is reported as a guard. A view call under no condition is not
+  # judged (the refusal may sit in a helper it calls), and a condition on
+  # the decorator's own parameters is the call site's choice
+  # (`admission(roles=...)`), not the caller's.
+  enum ViewAccess
+    # Every judged path to the view needs an identified caller.
+    Closed
+    # A path needs none, on conditions that do not read the caller.
+    Setting
+    # A path needs none although its conditions read the caller.
+    Caller
+  end
+
+  private def view_access(file : String, name : String) : ViewAccess
+    @view_access[{file, name}] ||= scan_view_access(file, name)
+  end
+
+  private def scan_view_access(file : String, name : String) : ViewAccess
+    body = python_defs(file)[name]? || return ViewAccess::Closed
+    lines = body.lines
+    sig_end, params = signature(lines)
+    locals = Hash(String, String).new
+    lines.each do |line|
+      if m = line.match(/^\s*([A-Za-z_]\w*)\s*=(?!=)\s*(.+)/)
+        locals[m[1]] ||= m[2]
+      end
+    end
+    access = ViewAccess::Closed
+    lines.each_with_index do |line, idx|
+      next if idx <= sig_end || !line.matches?(VIEW_CALL) || line.matches?(/^\s*(?:async\s+)?def\b/)
+      conditions = view_path_conditions(lines, idx, sig_end)
+      judged = conditions.compact_map do |cond, positive|
+        implies_identity?(cond, positive, file, locals, params)
+      end
+      next if judged.empty? || judged.includes?(true)
+      return ViewAccess::Caller if conditions.any? { |cond, _| identity_read?(cond, file, 0, locals) }
+      access = ViewAccess::Setting
+    end
+    access
+  end
+
+  # The conditions line `idx` of a body runs under, each with whether it
+  # is reached on that condition's true branch.
+  private def view_path_conditions(lines : Array(String), idx : Int32, sig_end : Int32) : Array(Tuple(String, Bool))
+    found = [] of Tuple(String, Bool)
+    threshold = lines[idx].size - lines[idx].lstrip.size
+    refuses = false
+    j = idx - 1
+    while j > sig_end
+      line = lines[j]
+      j -= 1
+      next if line.blank?
+      indent = line.size - line.lstrip.size
+      stripped = line.strip
+      if indent > threshold
+        refuses ||= stripped.matches?(/\A(?:return|raise)\b|\babort\s*\(/)
+        next
+      end
+      if indent == threshold
+        if refuses && (m = stripped.match(/\A(?:if|elif)\s+(.*?):?\z/))
+          found << {m[1], false}
+        end
+        refuses = false
+        next
+      end
+      break if stripped.matches?(/\A(?:async\s+)?def\b/)
+      if m = stripped.match(/\A(?:if|elif|while)\s+(.*?):?\z/)
+        found << {m[1], true}
+      end
+      if stripped.starts_with?("elif") || stripped.starts_with?("else")
+        # The earlier branches of the chain did not hold.
+        k = j
+        while k > sig_end
+          prior = lines[k]
+          k -= 1
+          next if prior.blank? || prior.size - prior.lstrip.size > indent
+          break if prior.size - prior.lstrip.size < indent
+          m = prior.strip.match(/\A(if|elif)\s+(.*?):?\z/) || break
+          found << {m[2], false}
+          break if m[1] == "if"
+        end
+      end
+      threshold = indent
+      refuses = false
+    end
+    found
+  end
+
+  CONDITION_WORDS = %w[not is None True False in and or]
+
+  # Whether reaching the true (`positive`) or false branch of `cond` needs
+  # an identified caller; nil when `cond` tests only the decorator's own
+  # parameters. `a or b` holding needs only one of them, so each must be
+  # an identity test; `a or b` failing needs each to fail, so one is
+  # enough (`and` the other way round). Grouping parentheses are not
+  # parsed: such a condition is not judged.
+  private def implies_identity?(cond : String, positive : Bool, file : String,
+                                locals : Hash(String, String), params : Array(String)) : Bool?
+    return if cond.matches?(/(?:\A|[^\w\].'"])\s*\(/)
+    disjuncts = cond.split(/\s+or\s+/)
+    if disjuncts.size > 1
+      parts = disjuncts.compact_map { |part| implies_identity?(part, positive, file, locals, params) }
+      return if parts.empty?
+      return positive ? parts.all? : parts.includes?(true)
+    end
+    conjuncts = cond.split(/\s+and\s+/)
+    if conjuncts.size > 1
+      parts = conjuncts.compact_map { |part| implies_identity?(part, positive, file, locals, params) }
+      return if parts.empty?
+      return positive ? parts.includes?(true) : parts.all?
+    end
+    words = cond.scan(/[A-Za-z_]\w*/).map(&.[0]).reject(&.in?(CONDITION_WORDS))
+    return if words.all?(&.in?(params))
+    return false unless identity_read?(cond, file, 0, locals)
+    negated = !cond.matches?(/\bis\s+not\s+None\b|!=\s*None\b/) && cond.matches?(NEGATED_TEST)
+    positive ? !negated : negated
+  end
+
+  # The index of the line closing a `def`'s parameter list (`lines[0]` is
+  # the `def`), and the parameter names, annotations and defaults dropped.
+  private def signature(lines : Array(String)) : Tuple(Int32, Array(String))
+    text = String::Builder.new
+    depth = 0
+    opened = false
+    lines.each_with_index do |line, idx|
+      line.each_char do |char|
+        if char == '('
+          text << char if opened && depth > 0
+          opened = true
+          depth += 1
+        elsif char == ')' && opened
+          depth -= 1
+          if depth == 0
+            # Brackets in annotations (`Callable[[A, B], R]`) hold commas too.
+            params = text.to_s
+            while params.includes?('[')
+              stripped = params.gsub(/\[[^\[\]]*\]/, "")
+              break if stripped == params
+              params = stripped
+            end
+            names = params.gsub(/\([^()]*\)/, "").split(',').compact_map(&.strip.lstrip('*').match(/\A[A-Za-z_]\w*/).try(&.[0]))
+            return {idx, names}
+          end
+          text << char
+        elsif opened
+          text << char
+        end
+      end
+    end
+    {0, [] of String}
   end
 
   private def resolve_def(file : String, name : String) : Tuple(String, String)?

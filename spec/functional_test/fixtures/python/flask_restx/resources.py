@@ -21,3 +21,13 @@ class UserDetail(Resource):
 class CurrentUser(Resource):
     def get(self):
         return {}
+
+
+# `route("")` is the namespace's own path: `/api/v1/users`.
+@users_ns.route("")
+class UserList(Resource):
+    def get(self):
+        return []
+
+    def post(self):
+        return {}

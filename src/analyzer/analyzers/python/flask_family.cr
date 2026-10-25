@@ -95,7 +95,8 @@ module Analyzer::Python
       endpoints = [] of Endpoint
       methods = [] of ::String
 
-      if !prefix.ends_with?("/") && !route_path.starts_with?("/")
+      # `route("")` is the prefix itself: no slash is added.
+      if !prefix.ends_with?("/") && !route_path.starts_with?("/") && !route_path.empty?
         prefix = "#{prefix}/"
       end
 

@@ -10,6 +10,9 @@ expected_endpoints = [
   Endpoint.new("/api/v1/users/<int:user_id>", "GET", [Param.new("user_id", "", "path")]),
   Endpoint.new("/api/v1/users/<int:user_id>", "DELETE", [Param.new("user_id", "", "path")]),
   Endpoint.new("/api/v1/users/me", "GET"),
+  # `@users_ns.route("")` is the namespace path itself, no trailing slash.
+  Endpoint.new("/api/v1/users", "GET"),
+  Endpoint.new("/api/v1/users", "POST"),
 ]
 
 FunctionalTester.new("fixtures/python/flask_restx/", {

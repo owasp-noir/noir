@@ -34,6 +34,13 @@ describe "--ai-context on flask-restx auth fixtures", tags: "functional" do
     # A feature-flag 403 and a local no-op named `login_required` guard
     # nothing: the tagger reads both definitions. (The route-source scan
     # still name-matches `login_required` near the route, at low confidence.)
+    # A wrapper is judged by the paths that reach the view: one that
+    # needs a logged-in caller (read off `session` through a helper) is a
+    # guard; one that lets the view run on a setting or a time window is
+    # not, even when another branch refuses.
+    guards["GET /v1/dashboard"].should eq(["auth_guard:members_only"])
+    guards["GET /v1/stats"].should eq(["auth_guard:admins_only"])
+    guards["GET /v1/scores"].should be_empty
     signup = app.endpoints.find! { |ep| ep.method == "POST" && ep.url == "/v1/signup" }
     signup.tags.select(&.tagger.==("flask_auth")).should be_empty
   end
