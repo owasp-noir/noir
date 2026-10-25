@@ -981,11 +981,7 @@ module Analyzer::Rust
       context = nil.as(ResolvedHandlerContext?)
       source = read_file_content(file)
       Noir::TreeSitter.parse_rust(source) do |root|
-        Noir::TreeSitter.each_named_child(root) do |item|
-          next if context
-          next unless Noir::TreeSitter.node_type(item) == "function_item"
-          name_node = Noir::TreeSitter.field(item, "name") || next
-          next unless Noir::TreeSitter.node_start_row(name_node) + 1 == line
+        if item = top_level_fn_at(root, line)
           scratch = Endpoint.new("", "GET")
           extract_function_params(item, source, scratch, file)
           callees = include_callee ? (Noir::TreeSitter.field(item, "body").try { |b| Noir::RustCalleeExtractorTS.callees_in_body(b, source, file) } || [] of Noir::RustCalleeExtractor::Entry) : [] of Noir::RustCalleeExtractor::Entry
@@ -1266,8 +1262,9 @@ module Analyzer::Rust
                                 path : String? = nil)
       params_node = Noir::TreeSitter.field(function, "parameters")
       if params_node
+        generics = fn_type_param_names(function, source)
         Noir::TreeSitter.each_named_child(params_node) do |param|
-          extract_function_param_text(Noir::TreeSitter.node_text(param, source), endpoint, path)
+          extract_function_param_text(Noir::TreeSitter.node_text(param, source), endpoint, path, generics)
         end
       end
 
@@ -1285,9 +1282,10 @@ module Analyzer::Rust
 
     # An extractor's fields are the request params: `Json<CreatePost>` reads
     # `CreatePost`'s wire field names from the body (`RustEngine#push_extractor_params`).
-    private def extract_function_param_text(text : String, endpoint : Endpoint, path : String? = nil)
+    private def extract_function_param_text(text : String, endpoint : Endpoint, path : String? = nil,
+                                            generics : Array(String) = [] of String)
       EXTRACTOR_KINDS.each_key do |kind|
-        push_extractor_params(text, kind, endpoint, path) if extractor_param?(text, kind)
+        push_extractor_params(text, kind, endpoint, path, generics) if extractor_param?(text, kind)
       end
     end
 

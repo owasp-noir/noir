@@ -511,7 +511,7 @@ module Analyzer::Rust
         # `FromForm` type, so its fields are the query params.
         query_part.scan(/<(\w+)\.\.>/) do |match|
           next unless (type = types[match[1]]?) && (resolved = resolve_input_type(type))
-          rust_struct_fields(resolved[1], path).try &.each do |name|
+          rust_struct_fields(resolved[1], path).try &.names.each do |name|
             params << Param.new(name, "", "query") unless params.any? { |p| p.name == name && p.param_type == "query" }
           end
         end
@@ -522,10 +522,9 @@ module Analyzer::Rust
         resolved = type ? resolve_input_type(type) : nil
         fields = resolved && resolved[0] ? rust_struct_fields(resolved[1], path) : nil
         if fields && resolved && (location = resolved[0])
-          fields.each { |name| params << Param.new(name, "", location) }
-        else
-          params << Param.new(data_param, "", "body")
+          fields.names.each { |name| params << Param.new(name, "", location) }
         end
+        params << Param.new(data_param, "", "body") unless fields && fields.complete
       end
 
       params

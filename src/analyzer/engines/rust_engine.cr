@@ -609,6 +609,18 @@ module Analyzer::Rust
       Handler.new(Noir::TreeSitter.node_text(name, source), path, Noir::TreeSitter.node_start_row(name) + 1)
     end
 
+    # The top-level `function_item` whose name sits on `line` (1-based), the
+    # definition `resolve_rust_fn` reports. Picking by line, not by name,
+    # keeps a same-named impl method or cfg twin from standing in for it.
+    protected def top_level_fn_at(root : LibTreeSitter::TSNode, line : Int32) : LibTreeSitter::TSNode?
+      Noir::TreeSitter.each_named_child(root) do |item|
+        next unless Noir::TreeSitter.node_type(item) == "function_item"
+        name_node = Noir::TreeSitter.field(item, "name") || next
+        return item if Noir::TreeSitter.node_start_row(name_node) + 1 == line
+      end
+      nil
+    end
+
     # `rust_handler` for a builder-registered handler name looked up in the
     # same file's `build_function_index`. Only an unqualified name is exact:
     # `get(index)` can only mean a fn in scope, and a local fn of that name
@@ -624,24 +636,62 @@ module Analyzer::Rust
     STRUCT_DECL_RE = /\bstruct\s+([A-Za-z_]\w*)/
 
     @struct_decl_files : Hash(String, Array(String))?
-    @struct_fields_by_file = {} of String => Hash(String, Array(String))
+    @struct_fields_by_file = {} of String => Hash(String, Noir::RustStructFields::Shape)
     @struct_index_mutex = Mutex.new
 
-    # Wire field names of the named-field struct `name` (see
+    # A struct's wire field names. `complete` is false when a
+    # `#[serde(flatten)]` field's type could not be read (an enum, a map
+    # catch-all, an external type): the body carries more than `names`.
+    record WireFields, names : Array(String), complete : Bool
+
+    # Wire fields of the named-field struct `name` (see
     # `Noir::RustStructFields`), as seen from `from_path`. The definition in
     # `from_path` wins; otherwise every same-crate definition must agree, so
     # two unrelated `struct Data`s in one crate resolve to nothing rather
     # than to the wrong one.
-    protected def rust_struct_fields(name : String, from_path : String) : Array(String)?
-      @struct_index_mutex.synchronize do
-        files = struct_decl_files[name]? || return
-        if files.includes?(from_path)
-          return struct_fields_in(from_path)[name]?
-        end
-        scope = crate_scope_for(from_path)
-        found = files.select { |f| crate_scope_for(f) == scope }.compact_map { |f| struct_fields_in(f)[name]? }.uniq!
-        found.size == 1 ? found.first : nil
+    protected def rust_struct_fields(name : String, from_path : String) : WireFields?
+      struct_fields_named(name, from_path, 0)
+    end
+
+    private def struct_fields_named(name : String, from_path : String, depth : Int32) : WireFields?
+      files = @struct_index_mutex.synchronize { struct_decl_files[name]?.try(&.dup) } || return
+      return expanded_struct_fields(from_path, name, depth) if files.includes?(from_path)
+      scope = crate_scope_for(from_path)
+      found = files.select { |f| crate_scope_for(f) == scope && struct_fields_of_file(f).has_key?(name) }
+        .map { |f| expanded_struct_fields(f, name, depth) }.uniq!
+      found.size == 1 ? found.first : nil
+    end
+
+    # Fields of the struct `ref` names from `from_path`: through the file's
+    # imports, else (a bare name nothing imports, e.g. via a glob) a
+    # same-crate name with one definition. A type imported from outside the
+    # scan is unknown.
+    private def struct_ref_fields(ref : String, from_path : String, depth : Int32) : WireFields?
+      if found = resolve_rust_item(ref, from_path, RustItemKind::Struct)
+        return expanded_struct_fields(found[0], found[1], depth)
       end
+      return if ref.includes?("::") || rust_imported?(ref, from_path)
+      struct_fields_named(ref, from_path, depth)
+    end
+
+    MAX_FLATTEN_DEPTH = 4
+    FLATTEN_TYPE_RE   = /\A(?:Option\s*<\s*)?((?:[A-Za-z_]\w*::)*[A-Za-z_]\w*)\s*(?:[<>]|\z)/
+
+    # `leaf`'s fields in `file`, each `#[serde(flatten)]` field replaced by
+    # its type's fields (the type resolved from `file`). A flattened type
+    # that is not a readable struct leaves the result incomplete, so the
+    # caller adds its placeholder instead of claiming the list is whole.
+    private def expanded_struct_fields(file : String, leaf : String, depth : Int32) : WireFields?
+      shape = struct_fields_of_file(file)[leaf]? || return
+      return WireFields.new(shape.fields, true) if shape.flattened.empty?
+      names = shape.fields.dup
+      complete = true
+      shape.flattened.each do |type|
+        inner = depth < MAX_FLATTEN_DEPTH ? type.match(FLATTEN_TYPE_RE).try { |m| struct_ref_fields(m[1], file, depth + 1) } : nil
+        complete = false unless inner && inner.complete
+        inner.try &.names.each { |field| names << field unless names.includes?(field) }
+      end
+      WireFields.new(names, complete)
     end
 
     # Extractor => {param location, name used when its type's fields are unknown}.
@@ -657,26 +707,32 @@ module Analyzer::Rust
 
     # Push the params a `kind` extractor parameter (its source `text`)
     # reads: the wire field names of the type it decodes into, resolved from
-    # `path` (an empty struct reads none), else the generic placeholder.
-    protected def push_extractor_params(text : String, kind : String, endpoint : Endpoint, path : String?)
+    # `path` (a field-less struct reads none), else the generic placeholder.
+    # `generics` are the handler fn's own type parameters: `Json<T>` under
+    # `fn h<T: DeserializeOwned>` names no struct.
+    protected def push_extractor_params(text : String, kind : String, endpoint : Endpoint, path : String?,
+                                        generics : Array(String) = [] of String)
       location, placeholder = EXTRACTOR_KINDS[kind]
-      if fields = path ? extractor_fields(text, kind, path) : nil
-        fields.each { |name| endpoint.push_param(Param.new(name, "", location)) }
-      else
-        endpoint.push_param(Param.new(placeholder, "", location))
-      end
+      fields = path ? extractor_fields(text, kind, path, generics) : nil
+      fields.try &.names.each { |name| endpoint.push_param(Param.new(name, "", location)) }
+      endpoint.push_param(Param.new(placeholder, "", location)) unless fields && fields.complete
     end
 
-    # The type is resolved through the handler file's imports, else (a bare
-    # name nothing imports, e.g. via a glob) by a same-crate name that has
-    # one definition; a type imported from outside the scan is unknown.
-    private def extractor_fields(text : String, kind : String, path : String) : Array(String)?
+    private def extractor_fields(text : String, kind : String, path : String, generics : Array(String)) : WireFields?
       type = text.match(EXTRACTOR_TARGET_RES[kind]).try(&.[1]) || return
-      if fields = resolve_rust_struct_fields(type, path)
-        return fields
+      return if generics.includes?(type)
+      struct_ref_fields(type, path, 0)
+    end
+
+    # Names of a fn item's type parameters (`fn h<T: X, U>` => T, U).
+    protected def fn_type_param_names(function : LibTreeSitter::TSNode, source : String) : Array(String)
+      names = [] of String
+      params = Noir::TreeSitter.field(function, "type_parameters") || return names
+      Noir::TreeSitter.each_named_child(params) do |param|
+        node = Noir::TreeSitter.node_type(param) == "type_identifier" ? param : (Noir::TreeSitter.field(param, "left") || Noir::TreeSitter.field(param, "name"))
+        names << Noir::TreeSitter.node_text(node, source) if node
       end
-      return if type.includes?("::") || rust_imported?(type, path)
-      rust_struct_fields(type, path)
+      names
     end
 
     private def struct_decl_files : Hash(String, Array(String))
@@ -691,10 +747,6 @@ module Analyzer::Rust
         end
         index
       end
-    end
-
-    private def struct_fields_in(file : String) : Hash(String, Array(String))
-      @struct_fields_by_file[file] ||= Noir::RustStructFields.parse(read_file_content(file))
     end
 
     # ---- Cross-file item resolution -------------------------------------
@@ -726,12 +778,6 @@ module Analyzer::Rust
       {file, leaf, rust_imports(file).fns[leaf]}
     end
 
-    # Wire field names of the struct `ref` names from `from_path`.
-    protected def resolve_rust_struct_fields(ref : String, from_path : String) : Array(String)?
-      found = resolve_rust_item(ref, from_path, RustItemKind::Struct) || return
-      struct_fields_of_file(found[0])[found[1]]?
-    end
-
     # Whether `from_path` brings `name` in with an explicit `use`. A type
     # imported that way and still unresolved comes from outside the scan,
     # so a same-named struct of the scan must not stand in for it.
@@ -741,7 +787,7 @@ module Analyzer::Rust
       imports.names.has_key?(name) || imports.ambiguous.includes?(name)
     end
 
-    private def struct_fields_of_file(file : String) : Hash(String, Array(String))
+    private def struct_fields_of_file(file : String) : Hash(String, Noir::RustStructFields::Shape)
       cached = @struct_index_mutex.synchronize { @struct_fields_by_file[file]? }
       return cached if cached
       fields = Noir::RustStructFields.parse(read_file_content(file))
