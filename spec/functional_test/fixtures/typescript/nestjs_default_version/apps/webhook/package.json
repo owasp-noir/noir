@@ -1,0 +1,4 @@
+{
+  "name": "webhook",
+  "dependencies": { "@nestjs/core": "^11.0.0" }
+}

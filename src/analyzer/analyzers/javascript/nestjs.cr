@@ -19,7 +19,11 @@ module Analyzer::Javascript
     # `app.enableVersioning({...})`: whether the version is a URL segment
     # (URI, the default) or read from the request (HEADER, MEDIA_TYPE,
     # CUSTOM), plus the raw `defaultVersion` and version-header expressions.
-    private record VersioningConfig, uri : Bool, default_version : String?, header : String?
+    # `defaults` is `defaultVersion` read as literal versions (what a
+    # controller with no version of its own serves under URI versioning) and
+    # `prefix` the URI segment's lead (`v` unless `prefix:` says otherwise).
+    private record VersioningConfig, uri : Bool, default_version : String?, header : String?,
+      defaults : Array(String) = [] of String, prefix : String = "v"
 
     # Name of the `route_conditions` entry that carries a route's raw version
     # list from the per-file scan to `separate_header_versions`.
@@ -90,15 +94,43 @@ module Analyzer::Javascript
       type = args.match(/\btype\s*:\s*VersioningType\.(\w+)/).try(&.[1]) || "URI"
       default_version = args.match(/\bdefaultVersion\s*:\s*(\[[^\]]*\]|[^,\n}]+)/).try(&.[1].strip)
       header = args.match(/\bheader\s*:\s*([^,\n}]+)/) || args.match(/\bheaders\s*\[\s*([^\]]+?)\s*\]/)
-      VersioningConfig.new(type == "URI", default_version, header.try(&.[1].strip))
+      VersioningConfig.new(type == "URI", default_version, header.try(&.[1].strip),
+        default_version.try { |expr| literal_versions(expr) } || [] of String, versioning_prefix(args))
     end
 
-    # The `enableVersioning` governing `path`: the only one, else the one of
-    # its app. Nil (no bootstrap seen) keeps the URI reading.
+    # `defaultVersion: '1'` / `['1', '2']` / `VERSION_NEUTRAL`: only the
+    # literal versions. An identifier this scan cannot see the value of is
+    # dropped rather than rendered as `v<IDENT>`.
+    private def literal_versions(expr : String) : Array(String)
+      versions = [] of String
+      expr.scan(/(['"`])([^'"`]+)\1|\b(VERSION_NEUTRAL|\d[\w.]*)\b/) do |match|
+        version = match[2]? || match[3]
+        versions << version unless versions.includes?(version)
+      end
+      versions
+    end
+
+    # `prefix: 'v'` (the default), `prefix: false` (bare version), or a
+    # template whose interpolations are a deployment context path
+    # (`${CONTEXT_PATH}v`): those resolve from the environment, empty unless
+    # configured, so only the literal text is kept.
+    private def versioning_prefix(args : String) : String
+      match = args.match(/\bprefix\s*:\s*(false\b|(['"`])([^'"`]*)\2)/)
+      return "v" unless match
+      return "" if match[1] == "false"
+      match[3].gsub(/\$\{[^}]*\}/, "")
+    end
+
+    # The `enableVersioning` governing `path`: the one of its app. A config
+    # whose bootstrap sits under no discovered app root governs the whole
+    # scan. Nil (no bootstrap seen, or another app's) keeps the URI reading
+    # with no default version: one app's `defaultVersion` does not move a
+    # sibling app's controllers.
     private def versioning_for(path : String) : VersioningConfig?
       configs = @nest_versioning
-      return configs.first?.try(&.[1]) if configs.size <= 1
+      return if configs.empty?
       roots = @nest_app_roots || [] of String
+      return configs.first[1] if configs.size == 1 && nest_app_root_for(configs.first[0], roots).empty?
       root = nest_app_root_for(path, roots)
       configs.find { |(bootstrap, _)| nest_app_root_for(bootstrap, roots) == root }.try(&.[1])
     end
@@ -195,7 +227,7 @@ module Analyzer::Javascript
       # in `src/enum.ts`). Built once, single-fiber, then read-only.
       @nest_global_literals = collect_global_literal_values
       @nest_versioning = collect_versioning_configs
-      @nest_app_roots = discover_js_project_roots(app_root_markers, NEST_CONFIG_BASENAMES) if @nest_versioning.size > 1
+      @nest_app_roots = discover_js_project_roots(app_root_markers, NEST_CONFIG_BASENAMES) unless @nest_versioning.empty?
 
       parallel_file_scan(extensions) do |path|
         next if ignored_nest_path?(path)
@@ -619,20 +651,21 @@ module Analyzer::Javascript
       # `enableVersioning` is in the scan) prepends `v<n>`:
       # `@Controller({ path: 'cats', version: '1' })` serves `/v1/cats`.
       # HEADER, MEDIA_TYPE and CUSTOM versioning leave the URL untouched.
-      uri_versioning = versioning_for(path).try(&.uri) != false
+      versioning = versioning_for(path)
+      uri_versioning = versioning.try(&.uri) != false
 
       controllers.each do |controller_info|
-        process_http_methods(controller_info[:content], controller_info[:base_paths], controller_info[:versions], uri_versioning, path, result, include_callee, controller_info[:start_line], literal_values, controller_info[:class_name])
+        process_http_methods(controller_info[:content], controller_info[:base_paths], controller_info[:versions], uri_versioning, versioning, path, result, include_callee, controller_info[:start_line], literal_values, controller_info[:class_name])
       end
     end
 
     # Combine the controller's base paths with each version into a
     # set of `v<version>/<base>` paths. `'VERSION_NEUTRAL'` (Nest's
     # sentinel) is rendered as no prefix.
-    private def expand_versions(base_paths : Array(String), versions : Array(String), literal_values : Hash(String, Array(String))) : Array(String)
+    private def expand_versions(base_paths : Array(String), versions : Array(String), literal_values : Hash(String, Array(String)), version_prefix : String = "v") : Array(String)
       expanded = [] of String
       versions.each do |v|
-        prefix = v == "VERSION_NEUTRAL" ? "" : "v#{literal_values[v]?.try(&.first?) || v}"
+        prefix = v == "VERSION_NEUTRAL" ? "" : "#{version_prefix}#{literal_values[v]?.try(&.first?) || v}"
         base_paths.each do |bp|
           if prefix.empty?
             expanded << bp
@@ -893,7 +926,7 @@ module Analyzer::Javascript
       Noir::TopLevelSplit.split(text, delimiter, Noir::TopLevelSplit::Rules::JS)
     end
 
-    private def process_http_methods(class_content : String, base_paths : Array(String), controller_versions : Array(String), uri_versioning : Bool, file_path : String, result : Array(Endpoint), include_callee : Bool, controller_start_line : Int32, literal_values : Hash(String, Array(String)), class_name : String)
+    private def process_http_methods(class_content : String, base_paths : Array(String), controller_versions : Array(String), uri_versioning : Bool, versioning : VersioningConfig?, file_path : String, result : Array(Endpoint), include_callee : Bool, controller_start_line : Int32, literal_values : Hash(String, Array(String)), class_name : String)
       method_map = route_decorator_methods
 
       # Materialised once per class: the back-walk and line count below index
@@ -943,7 +976,10 @@ module Analyzer::Javascript
         # controller's.
         versions = parse_method_versions(decorator_block)
         versions = controller_versions if versions.empty?
-        effective_base_paths = uri_versioning && !versions.empty? ? expand_versions(base_paths, versions, literal_values) : base_paths
+        # Under URI versioning a route with no version of its own serves
+        # `defaultVersion` (`/v1/auth/login` for `@Controller('auth')`).
+        effective_versions = versions.empty? && uri_versioning && versioning ? versioning.defaults : versions
+        effective_base_paths = uri_versioning && !effective_versions.empty? ? expand_versions(base_paths, effective_versions, literal_values, versioning.try(&.prefix) || "v") : base_paths
 
         # Resolve the decorator's line number inside the original
         # file: count newlines from the previous decorator (they arrive in
