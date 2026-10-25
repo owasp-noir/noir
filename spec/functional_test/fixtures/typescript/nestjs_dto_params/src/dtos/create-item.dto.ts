@@ -14,6 +14,17 @@ export class CreateItemDto {
   })
   tags?: string[];
 
+  refs: Array<
+    ItemRef
+  >;
+
+  kind:
+    ItemKind;
+
+  onSave = () => {
+    return 1;
+  };
+
   private secret: string;
 
   static create(): CreateItemDto {

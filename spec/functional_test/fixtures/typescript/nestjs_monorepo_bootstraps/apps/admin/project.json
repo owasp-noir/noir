@@ -1,0 +1,5 @@
+{
+  "name": "admin",
+  "projectType": "application",
+  "sourceRoot": "apps/admin/src"
+}
