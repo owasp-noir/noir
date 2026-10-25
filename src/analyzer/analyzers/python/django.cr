@@ -860,7 +860,8 @@ module Analyzer::Python
         return if target[1].empty? || target[0] == file || !File.file?(target[0])
         return python_definition_site(target[0], target[1], depth + 1)
       end
-      view_file.content.scan(STAR_IMPORT_RE) do |m|
+      # The last `import *` binding the name wins, as it does in Python.
+      view_file.content.scan(STAR_IMPORT_RE).reverse_each do |m|
         target = Noir::ImportGraph::Python.find_imported_symbols(@django_base_path, file, "from #{m[1]} import #{name}")[name]? || next
         next if target[1].empty? || target[0] == file || !File.file?(target[0])
         if site = python_definition_site(target[0], target[1], depth + 1)
@@ -2157,22 +2158,73 @@ module Analyzer::Python
     # declares. `get_serializer` means the view's `serializer_class`.
     # ponytail: declared fields only; a ModelSerializer's `Meta.fields`
     # model columns are not resolved.
-    SERIALIZER_CLASS_RE = /^\s+serializer_class\s*=\s*([A-Za-z_][A-Za-z0-9_.]*)\s*$/m
+    SERIALIZER_CLASS_RE         = /^\s+serializer_class\s*=\s*([A-Za-z_][A-Za-z0-9_.]*)\s*$/m
+    GET_SERIALIZER_CLASS_DEF_RE = /^\s+def\s+get_serializer_class\s*\(/
+    ACTION_BRANCH_RE            = /\A(?:if|elif)\s+self\.action\s*(==|in)\s*(.+?):\s*(.*)\z/
+    RETURN_NAME_RE              = /\Areturn\s+([A-Za-z_][\w.]*)\s*\z/
 
-    private def drf_serializer_params(codeblock : ::String, filepath : ::String, view_chain : Array(DrfClass)) : Array(Param)
+    # `{file, class}` of the serializer `get_serializer` builds for
+    # `action`: the nearest `get_serializer_class` override when its choice
+    # is static (`if self.action == "create": return CreateSer`), else the
+    # nearest `serializer_class`, named where the view declares it (not
+    # where the inherited method calling `get_serializer` lives). Nil when
+    # an override decides some other way.
+    private def view_serializer_class(view_chain : Array(DrfClass), action : ::String?) : Tuple(::String, ::String)?
+      view_chain.each do |klass|
+        lines = klass.codeblock.split("\n")
+        if index = lines.index(&.matches?(GET_SERIALIZER_CLASS_DEF_RE))
+          body = parse_code_block(lines[index..]) || return
+          case choice = static_serializer_choice(body, action)
+          when :super   then next
+          when ::String then return {klass.filepath, choice}
+          else               return
+          end
+        end
+        if bound = klass.codeblock.match(SERIALIZER_CLASS_RE)
+          return {klass.filepath, bound[1]}
+        end
+      end
+      nil
+    end
+
+    # What a `get_serializer_class` body returns for `action`: a class
+    # name, `:super` for `return super().get_serializer_class()`, nil when
+    # it branches on anything but `self.action` or returns an expression.
+    private def static_serializer_choice(body : ::String, action : ::String?) : ::String | Symbol?
+      code = body.split("\n")[1..].map { |line| strip_python_comment(line).rstrip }.reject(&.strip.empty?)
+      level = code.min_of? { |line| line.size - line.lstrip.size } || return
+      index = 0
+      while index < code.size
+        line = code[index]
+        stripped = line.strip
+        index += 1
+        next unless line.size - line.lstrip.size == level
+        if branch = stripped.match(ACTION_BRANCH_RE)
+          returned = branch[3].empty? ? code[index]?.try(&.strip) : branch[3]
+          name = returned.try(&.match(RETURN_NAME_RE)).try(&.[1]) || return
+          return name if action && branch[2].scan(/['"](\w+)['"]/).any? { |m| m[1] == action }
+        elsif stripped == "else:"
+          next
+        elsif stripped.matches?(/\Areturn\s+super\s*\(\s*\)\s*\.get_serializer_class\s*\(\s*\)\s*\z/)
+          return :super
+        elsif returned = stripped.match(RETURN_NAME_RE)
+          return returned[1]
+        else
+          return
+        end
+      end
+      nil
+    end
+
+    private def drf_serializer_params(codeblock : ::String, filepath : ::String, view_chain : Array(DrfClass),
+                                      action : ::String? = nil) : Array(Param)
       params = [] of Param
       return params unless codeblock.includes?("request.data")
       codeblock.scan(SERIALIZER_DATA_RE) do |call|
         name = call[1]
         source = filepath
         if name.ends_with?("get_serializer")
-          # Named where the view declares it, which need not be where the
-          # inherited method calling `get_serializer` lives.
-          declared = view_chain.each do |klass|
-            bound = klass.codeblock.match(SERIALIZER_CLASS_RE) || next
-            break {klass.filepath, bound[1]}
-          end
-          source, name = declared || next
+          source, name = view_serializer_class(view_chain, action) || next
         end
         target = resolve_python_class(source, name) || next
         declared_input_fields(target).each do |field|
@@ -2312,7 +2364,7 @@ module Analyzer::Python
     # `request` to (`self.get_return_url(request, obj)`), two calls deep.
     SELF_REQUEST_CALL_RE = /\b(self|super\(\s*\))\.([A-Za-z_]\w*)\s*\(([^()\n]*)/
 
-    @cbv_reads = Hash(Tuple(::String, ::String, ::String), Tuple(Array(Param), Array(Tuple(::String, ::String)))).new
+    @cbv_reads = Hash(Tuple(::String, ::String, ::String), Tuple(Array(Param), Array(Tuple(::String, ::String)), Set(::String))).new
 
     # `cbv_body_params` for a method of `chain[owner_index]`, computed once
     # per method and verb however many views inherit it: helpers resolve on
@@ -2320,9 +2372,15 @@ module Analyzer::Python
     # off each view's own chain.
     private def cached_cbv_params(codeblock : ::String, filepath : ::String, chain : Array(DrfClass),
                                   owner_index : Int32, verb : ::String) : Array(Param)
-      params, self_forms = @cbv_reads[{codeblock, filepath, verb}] ||= begin
+      params, self_forms, helpers = @cbv_reads[{codeblock, filepath, verb}] ||= begin
         forms = [] of Tuple(::String, ::String)
-        {cbv_body_params(codeblock, filepath, chain[owner_index..], verb, self_forms: forms), forms}
+        names = Set(::String).new
+        {cbv_body_params(codeblock, filepath, chain[owner_index..], verb, self_forms: forms, helpers: names), forms, names}
+      end
+      # A class before the owner overriding a helper the method calls: the
+      # override is what runs, so this view's MRO is read uncached.
+      if chain[0...owner_index].any? { |klass| helpers.any? { |name| klass.codeblock.includes?("def #{name}(") } }
+        return cbv_body_params(codeblock, filepath, chain, verb, at: owner_index)
       end
       params = params.dup
       self_forms.uniq.each do |name, location|
@@ -2333,7 +2391,8 @@ module Analyzer::Python
 
     private def cbv_body_params(codeblock : ::String, filepath : ::String, chain : Array(DrfClass), verb : ::String,
                                 depth = 0, seen = Set(::String).new,
-                                self_forms : Array(Tuple(::String, ::String))? = nil, at = 0) : Array(Param)
+                                self_forms : Array(Tuple(::String, ::String))? = nil, at = 0,
+                                helpers : Set(::String)? = nil, action : ::String? = nil) : Array(Param)
       params = [] of Param
       folded = with_request_aliases(fold_python_continuations(codeblock.split("\n")), verb)
       code = folded.join('\n')
@@ -2349,6 +2408,7 @@ module Analyzer::Python
         next unless call[3].matches?(/(?<![\w.])request\b|\bself\.request\b/)
         # `super().get(request, ...)` runs the next class's method.
         is_super = call[1] != "self"
+        helpers << call[2] if helpers && !is_super
         next unless seen.add?("#{is_super}:#{call[2]}")
         def_re = /^\s+(?:async\s+)?def\s+#{Regex.escape(call[2])}\s*\(/
         chain.each_with_index do |klass, index_in_chain|
@@ -2357,8 +2417,8 @@ module Analyzer::Python
           lines = klass.codeblock.split("\n")
           index = lines.index(&.matches?(def_re)) || next
           if body = parse_code_block(lines[index..])
-            params.concat drf_serializer_params(body, klass.filepath, chain)
-            params.concat cbv_body_params(body, klass.filepath, chain, verb, depth + 1, seen, self_forms, index_in_chain)
+            params.concat drf_serializer_params(body, klass.filepath, chain, action)
+            params.concat cbv_body_params(body, klass.filepath, chain, verb, depth + 1, seen, self_forms, index_in_chain, helpers, action)
           end
           break
         end
@@ -2617,6 +2677,7 @@ module Analyzer::Python
       # (DRF's `get_method_map` skips the ones it lacks).
       extra_routes.each do |detail, verb, method_name|
         klass, body_lines, offset = method_sites[method_name]? || next
+        next unless route_kwargs_fit?(body_lines, offset, detail, lookup_param)
         next if actions.any? { |existing| existing.method == verb && existing.detail == detail && existing.path.empty? }
         drf_action = DjangoDrfAction.new(method_name, verb, detail, "")
         fill_drf_action(drf_action, klass, body_lines, offset, chain)
@@ -2631,6 +2692,7 @@ module Analyzer::Python
         klass, body_lines, offset = method_sites[verb_name]? || next
         verb = verb_name.upcase
         routed.each do |detail|
+          next unless route_kwargs_fit?(body_lines, offset, detail, lookup_param)
           next if actions.any? { |existing| existing.method == verb && existing.detail == detail && existing.path.empty? }
           drf_action = DjangoDrfAction.new(verb_name, verb, detail, "")
           fill_drf_action(drf_action, klass, body_lines, offset, chain)
@@ -2667,6 +2729,22 @@ module Analyzer::Python
       endpoints
     end
 
+    # Whether the method `offset` lines into a class body can take the
+    # kwargs a route passes it: none on the list route, the lookup on the
+    # detail route. `def delete(self, request, id)` serves only the detail
+    # route of a viewset looked up by `id`.
+    private def route_kwargs_fit?(body_lines : Array(::String), offset : Int32, detail : Bool, lookup : ::String) : Bool
+      header, _ = python_call_span(body_lines, offset, body_lines[offset])
+      params, defaults = python_signature(header)
+      required = params[1..]? || [] of ::String # after `request`
+      required = required.reject { |param| defaults.has_key?(param) }
+      if detail
+        (required - [lookup]).empty? && (params.includes?(lookup) || header.includes?("**"))
+      else
+        required.empty?
+      end
+    end
+
     # Point `drf_action` at the method `offset` lines into `klass`'s body:
     # its definition site, handler name, params and callees.
     private def fill_drf_action(drf_action : DjangoDrfAction, klass : DrfClass, body_lines : Array(::String), offset : Int32,
@@ -2683,9 +2761,9 @@ module Analyzer::Python
       # What the action's serializer reads is its body, whatever the verb
       # (`ChangeLogMessageSerializer(data=request.data)` on DELETE), unless
       # the body branches on the verb and the binding may be another's.
-      serializer_params = drf_serializer_params(codeblock, klass.filepath, chain)
+      serializer_params = drf_serializer_params(codeblock, klass.filepath, chain, drf_action.name)
       (codeblock.includes?("request.method") ? drf_action.params : drf_action.body_params).concat serializer_params
-      drf_action.params.concat cbv_body_params(codeblock, klass.filepath, chain, drf_action.method)
+      drf_action.params.concat cbv_body_params(codeblock, klass.filepath, chain, drf_action.method, action: drf_action.name)
       drf_action.callees = build_callees_from(
         codeblock,
         klass.line_index + offset + 1,

@@ -20,3 +20,8 @@ class LoginView(View):
 class MediaView(ConditionalLoginRequiredMixin, View):
     def get(self, request, path):
         return path
+
+
+class PingView(View):
+    def get(self, request):
+        return request.GET.get("from_misc")

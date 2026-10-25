@@ -9,7 +9,11 @@ require "../../func_spec.cr"
 #   the routes the viewset has;
 # - a serializer bound to `request.data` names the body of a DELETE too,
 #   `get_serializer` resolves `serializer_class` where the viewset declares
-#   it, and a `self` helper handed `request` adds the header it reads.
+#   it, and a `self` helper handed `request` adds the header it reads;
+# - a `get_serializer_class` override choosing by `self.action` decides the
+#   serializer of that action;
+# - a verb method needing a kwarg the route does not pass
+#   (`def delete(self, request, key)` on the list route) is not routed.
 pk = Param.new("pk", "", "path")
 note = Param.new("note", "", "form")
 extracted_endpoints = [
@@ -20,6 +24,13 @@ extracted_endpoints = [
   Endpoint.new("/tags/{pk}/", "PUT", [Param.new("if-match", "", "header"), Param.new("name", "", "form"), pk]),
   Endpoint.new("/tags/{pk}/", "PATCH", [pk]),
   Endpoint.new("/tags/{pk}/", "DELETE", [note, pk]),
+  Endpoint.new("/notes/", "GET"),
+  Endpoint.new("/notes/", "POST"),
+  Endpoint.new("/notes/", "DELETE", [note]),
+  Endpoint.new("/notes/{pk}/", "GET", [pk]),
+  Endpoint.new("/notes/{pk}/", "PUT", [Param.new("if-match", "", "header"), note, pk]),
+  Endpoint.new("/notes/{pk}/", "PATCH", [pk]),
+  Endpoint.new("/notes/{pk}/", "DELETE", [note, pk]),
   Endpoint.new("/config/", "GET"),
   Endpoint.new("/config/", "PATCH", [Param.new("theme", "", "form")]),
 ]
@@ -36,7 +47,7 @@ describe "DRF router-added routes", tags: "functional" do
 
   it "names the method the router maps the verb to" do
     at.call("DELETE /tags/").should eq({"BulkDestroyMixin.bulk_destroy", "base.py", 7})
-    at.call("PATCH /config/").should eq({"ConfigViewSet.patch", "views.py", 15})
+    at.call("PATCH /config/").should eq({"ConfigViewSet.patch", "views.py", 24})
   end
 
   it "keeps the viewset among an inherited action's code" do

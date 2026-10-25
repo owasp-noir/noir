@@ -14,7 +14,9 @@ require "../../func_spec.cr"
 #   to read;
 # - Django's `AuthenticationForm` bound to `request.POST` names its fields,
 #   and `data = request.POST if request.method == "POST" else request.GET`
-#   reads the mapping of the verb served.
+#   reads the mapping of the verb served;
+# - a helper the view overrides is the one its inherited handler runs, and
+#   of two `import *` binding a name the last wins.
 pk = Param.new("pk", "", "path")
 edit_form = [Param.new("return_url", "", "query"), Param.new("note", "", "form"), Param.new("name", "", "form"), Param.new("price", "", "form")]
 extracted_endpoints = [
@@ -27,6 +29,8 @@ extracted_endpoints = [
   Endpoint.new("/login/", "GET", [Param.new("next", "", "query")]),
   Endpoint.new("/login/", "POST", [Param.new("username", "", "form"), Param.new("password", "", "form"), Param.new("next", "", "form")]),
   Endpoint.new("/media/<path:path>", "GET", [Param.new("path", "", "path")]),
+  Endpoint.new("/override/", "POST", [Param.new("override_field", "", "form")]),
+  Endpoint.new("/ping/", "GET", [Param.new("from_helpers", "", "query")]),
 ]
 
 tester = FunctionalTester.new("fixtures/python/django_view_registry/", {
@@ -43,6 +47,12 @@ describe "Django registry-built views", tags: "functional" do
     at.call("GET /shop/items/<int:pk>/").should eq({"ObjectView", "object_views.py", 17})
     at.call("POST /shop/items/<int:pk>/edit/").should eq({"ObjectEditView", "object_views.py", 27})
     at.call("GET /media/<path:path>").should eq({"MediaView", "misc.py", 21})
+    at.call("GET /ping/").should eq({"PingView", "helpers.py", 18})
+  end
+
+  it "does not read the overridden helper's params" do
+    ep = tester.endpoints.find! { |e| e.method == "POST" && e.url == "/override/" }
+    ep.params.map(&.name).should_not contain("base_field")
   end
 
   it "keeps the decorated view class among the endpoint's code" do
