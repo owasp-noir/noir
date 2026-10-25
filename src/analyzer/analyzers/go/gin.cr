@@ -197,6 +197,16 @@ module Analyzer::Go
     BIND_KIND_TAGS = {"default" => %w[json form], "json" => %w[json], "query" => %w[form],
                       "form" => %w[form], "uri" => %w[uri], "header" => %w[header]}
 
+    TAG_KEYS = %w[json form uri header].to_h { |key| {key, /(?:\A|\s)#{key}:"/} }
+
+    # The name gin's binder reads `field` by: its `key` tag (nil for `-`),
+    # or, without that tag, an exported field's own name, as gin's form
+    # mapping and encoding/json do.
+    private def gin_field_name(field : Noir::GoStructFields::Field, key : String) : String?
+      return Noir::GoStructFields.tag_value(field.tag, key) if field.tag.matches?(TAG_KEYS[key])
+      field.name if !field.embedded && field.name[0]?.try(&.uppercase?)
+    end
+
     # The binds in `lines` as {binder, fields}, and whether any bind did not
     # resolve to tagged struct fields.
     private def gin_bind_fields(lines : Array(String), file : String, index : Noir::GoStructFields::Index) : Tuple(Array(Tuple(String, Array(Noir::GoStructFields::Field))), Bool)
@@ -208,8 +218,8 @@ module Analyzer::Go
         match = line.match(BIND_CALL)
         kind = match.try { |m| gin_bind_kind(m[1]?, m[3]?) }
         fields = kind && match && index.target_fields(lines, match[2], file)
-        # A struct with no tag its binder reads keeps the generic marker.
-        if kind && fields && fields.any? { |f| BIND_KIND_TAGS[kind].any? { |key| Noir::GoStructFields.tag_value(f.tag, key) } }
+        # A struct with no field its binder reads keeps the generic marker.
+        if kind && fields && fields.any? { |f| BIND_KIND_TAGS[kind].any? { |key| gin_field_name(f, key) } }
           binds << {kind, fields}
         else
           unresolved = true
@@ -235,25 +245,25 @@ module Analyzer::Go
     # gin's binders: the default one reads the query string (`form` tags) on
     # GET, otherwise the body by Content-Type, `json` or `form` tags (either
     # encoding may be sent, so both are listed). `uri` tags fill path slots,
-    # `header` tags headers. Untagged and `-` fields are left out.
+    # `header` tags headers. A `-` field is left out.
     private def add_gin_bind_params(kind : String, fields : Array(Noir::GoStructFields::Field), ep : Endpoint)
       fields.each do |field|
         case kind
         when "uri"
-          if (name = Noir::GoStructFields.tag_value(field.tag, "uri")) && (ep.url.includes?(":#{name}") || ep.url.includes?("*#{name}"))
+          if (name = gin_field_name(field, "uri")) && (ep.url.includes?(":#{name}") || ep.url.includes?("*#{name}"))
             add_param_to_endpoint(Param.new(name, "", "path"), ep)
           end
         when "header"
-          Noir::GoStructFields.tag_value(field.tag, "header").try { |name| add_param_to_endpoint(Param.new(name, "", "header"), ep) }
+          gin_field_name(field, "header").try { |name| add_param_to_endpoint(Param.new(name, "", "header"), ep) }
         when "query"
-          Noir::GoStructFields.tag_value(field.tag, "form").try { |name| add_param_to_endpoint(Param.new(name, "", "query"), ep) }
+          gin_field_name(field, "form").try { |name| add_param_to_endpoint(Param.new(name, "", "query"), ep) }
         else
           query = ep.method == "GET"
           if kind == "json" || (kind == "default" && !query)
-            Noir::GoStructFields.tag_value(field.tag, "json").try { |name| add_param_to_endpoint(Param.new(name, "", "json"), ep) }
+            gin_field_name(field, "json").try { |name| add_param_to_endpoint(Param.new(name, "", "json"), ep) }
           end
           if kind != "json"
-            Noir::GoStructFields.tag_value(field.tag, "form").try { |name| add_param_to_endpoint(Param.new(name, "", query ? "query" : "form"), ep) }
+            gin_field_name(field, "form").try { |name| add_param_to_endpoint(Param.new(name, "", query ? "query" : "form"), ep) }
           end
         end
       end

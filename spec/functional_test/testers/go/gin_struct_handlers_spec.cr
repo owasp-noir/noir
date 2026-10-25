@@ -7,12 +7,14 @@ require "../../func_spec.cr"
 # (`serveFile("index.html")`) answers with the closure it returns. Bind
 # targets read as their struct's tagged fields: `ShouldBindJSON` json tags,
 # `MustBindWith(p, binding.Query)` form tags as query, `Bind` on a body json
-# and form tags (`form:"-"` is json-only), `ShouldBindUri` uri tags.
+# and form tags (`form:"-"` is json-only), `ShouldBindUri` uri tags. An
+# untagged exported field binds by its own name, as gin's form mapping and
+# encoding/json do.
 expected_endpoints = [
   Endpoint.new("/health", "GET"),
   Endpoint.new("/health", "HEAD"),
   Endpoint.new("/page", "GET"),
-  Endpoint.new("/message", "POST", [Param.new("title", "", "json"), Param.new("message", "", "json")]),
+  Endpoint.new("/message", "POST", [Param.new("title", "", "json"), Param.new("message", "", "json"), Param.new("Note", "", "json")]),
   Endpoint.new("/public", "GET", [Param.new("q", "", "query")]),
   Endpoint.new("/signup", "POST", [Param.new("email", "", "form")]),
   Endpoint.new("/login", "POST", [Param.new("user", "", "form")]),
@@ -23,6 +25,8 @@ expected_endpoints = [
     Param.new("name", "", "form"),
     Param.new("priority", "", "json"),
     Param.new("extras", "", "json"),
+    Param.new("Owner", "", "json"),
+    Param.new("Owner", "", "form"),
   ]),
   Endpoint.new("/client/:id", "GET", [Param.new("id", "", "path")]),
 ]
@@ -51,10 +55,7 @@ describe "gin struct-value handlers", tags: "functional" do
   it "reads bind targets as their tagged fields, not a body marker" do
     tester.app.endpoints.each { |ep| ep.params.map(&.name).should_not contain("body") }
     update = tester.app.endpoints.find! { |ep| ep.url == "/items/:id" }
-    # Untagged fields and `form:"-"` are not form-bound.
-    update.params.map(&.name).should_not contain("Owner")
+    # `form:"-"` is not form-bound.
     update.params.any? { |p| p.name == "extras" && p.param_type == "form" }.should be_false
-    message = tester.app.endpoints.find! { |ep| ep.url == "/message" }
-    message.params.map(&.name).should_not contain("Note")
   end
 end
