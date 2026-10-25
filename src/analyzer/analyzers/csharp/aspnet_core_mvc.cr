@@ -399,7 +399,7 @@ module Analyzer::CSharp
     # The `[Route]` templates and `[Area]` name a controller class declares.
     alias ClassRoutes = Tuple(Array(String), String?)
 
-    CLASS_ROUTE_RE = /(?:\[|,)\s*(?:global::)?(?:\w+\.)*Route(?:Attribute)?\s*\(\s*(?:template\s*:\s*)?@?"([^"]+)"/
+    CLASS_ROUTE_RE = /(?:\[|,)\s*(?:global::)?(?:\w+\.)*Route(?:Attribute)?\s*\(\s*(?:template\s*:\s*)?@?"([^"]*)"/
     CLASS_AREA_RE  = /(?:\[|,)\s*(?:global::)?(?:\w+\.)*Area(?:Attribute)?\s*\(\s*(?:areaName\s*:\s*)?@?"([^"]+)"/
 
     # Reads the class's own attribute list (every line of it, however many
@@ -407,7 +407,10 @@ module Analyzer::CSharp
     private def class_header_routes(lexer : Noir::CSharpLexer, type : Noir::CSharpType) : ClassRoutes
       header_end = Math.min(type.start_line + type.header.count('\n'), lexer.code_lines.size - 1)
       header = lexer.code_lines[type.start_line..header_end].join('\n')
-      routes = header.scan(CLASS_ROUTE_RE).map(&.[1])
+      # `[Route("")]` is a real template: it roots the actions at `/` and,
+      # being the class's own, replaces an inherited `[Route("[controller]")]`.
+      # Kept as `/` so it is not mistaken for "no route" downstream.
+      routes = header.scan(CLASS_ROUTE_RE).map { |match| match[1].empty? ? "/" : match[1] }
       {routes, CLASS_AREA_RE.match(header).try(&.[1])}
     end
 

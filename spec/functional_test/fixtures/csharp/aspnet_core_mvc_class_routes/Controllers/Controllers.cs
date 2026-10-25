@@ -49,3 +49,12 @@ public class DashboardController : Controller
 {
     public IActionResult Index() => View();
 }
+
+// A derived controller's own `[Route("")]` replaces the inherited
+// `[Route("api/[controller]")]` and roots its actions at `/`.
+[Route("")]
+public class TimeController : ApiControllerBase
+{
+    [HttpGet("GetUtcTime")]
+    public IActionResult GetUtcTime() => Ok();
+}
