@@ -15,9 +15,19 @@ module Analyzer::Go
     # Whether the handler argument is a bare identifier this file registers
     # routes on (`r := gin.Default(); r.GET(...); http.Handle("/", r)`).
     private def router_mount?(route, content : String) : Bool
-      name = route.handler_args.last?.try(&.strip) || return false
+      name = innermost_arg(route.handler_args.last?.try(&.strip) || return false)
       return false unless name.matches?(/\A[A-Za-z_]\w*\z/)
       content.matches?(/\b#{Regex.escape(name)}#{ROUTER_CALL_METHODS.source}/)
+    end
+
+    # What a wrapper chain ends at: `api` in `requireAuth(api)` or
+    # `http.StripPrefix("/v1", api)`.
+    private def innermost_arg(text : String) : String
+      4.times do
+        break unless text.ends_with?(')') && (open = text.index('(')) && text[0, open].matches?(/\A[\w.\s]+\z/)
+        text = Noir::TopLevelSplit.split(text[open + 1...-1], ',', Noir::TopLevelSplit::Rules.new).last?.try(&.strip) || break
+      end
+      text
     end
 
     def analyze
@@ -35,6 +45,8 @@ module Analyzer::Go
       package_function_bodies = lazy_package_bodies(file_contents)
       package_method_bodies = lazy_package_bodies(file_contents)
       framework_dirs = framework_package_dirs(file_contents, IMPORT_MARKER)
+      named_scope = named_handler_scope(file_contents)
+      resolver = Noir::GoRequestParamExtractor::Resolver.new(named_scope.bodies, file_contents, named_scope.import_dirs)
       # `route_dirs` exists only to bound the two request-param pre-passes
       # below, and those maps are consulted exclusively from
       # `params_for_routes`, which returns immediately when the file
@@ -104,10 +116,11 @@ module Analyzer::Go
         callees_by_route = Noir::GoCalleeExtractor.callees_for_routes_if(callees_needed?, content, path, route_rows, external_fns, external_methods)
         request_fns = Noir::GoRequestParamExtractor.function_bodies_for_directory(request_bodies, dir)
         request_methods = Noir::GoRequestParamExtractor.method_bodies_for_directory(request_bodies, dir)
-        params_by_route = Noir::GoRequestParamExtractor.params_for_routes(content, route_rows, route_methods_by_row, request_fns, request_methods)
+        params_by_route = Noir::GoRequestParamExtractor.params_for_routes(content, route_rows, route_methods_by_row, request_fns, request_methods,
+          resolver: resolver, path: path)
         # A same-file named handler's accessors already arrive through
         # `params_by_route`; keep its body out of the last-route heuristic.
-        named = Noir::GoNamedHandler.new(content, path, ts_routes)
+        named = Noir::GoNamedHandler.new(content, path, ts_routes, named_scope)
 
         lines.each_with_index do |line, index|
           next if named.claim?(index, line)
@@ -119,7 +132,7 @@ module Analyzer::Go
               # `http.Handle("/", r)` hands the tree to a router whose own
               # routes are already reported; it is a mount, not a route
               # answering every method at "/".
-              next if router_mount?(route, content)
+              next if router_mount?(route, content) || named.mount?(route)
               verbs = if route.verb.upcase == "ANY" || route.verb.upcase == "ALL"
                         Noir::TreeSitterGoRouteExtractor.fan_out_verbs(route.verb)
                       else
@@ -135,6 +148,12 @@ module Analyzer::Go
                 end
                 if params = params_by_route[route.line]?
                   params.each { |param| add_param_to_endpoint(param, new_endpoint) }
+                end
+                new_endpoint.handler = named.handler_for(route)
+                # The resolved definition, wherever it is declared (a method
+                # value of another package, a factory's returned method).
+                named.handler_body(route).try do |body|
+                  Noir::GoRequestParamExtractor.params_for_body(body, verb, resolver).each { |param| add_param_to_endpoint(param, new_endpoint) }
                 end
                 result << new_endpoint
                 last_endpoint = new_endpoint

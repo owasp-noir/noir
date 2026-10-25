@@ -1,5 +1,6 @@
 require "../models/endpoint"
 require "../utils/c_comments"
+require "../utils/top_level_split"
 require "./go_callee_extractor"
 require "./go_route_extractor_ts"
 
@@ -75,9 +76,10 @@ class Noir::GoNamedHandler
     {/\Agin\.BasicAuth(?:ForRealm)?\s*\(/, %(c.Request.Header.Get("Authorization"))},
   }
 
-  # A route registration with a path literal: the stand-in for the
-  # same-file route-row check on a body declared in another file.
-  ROUTE_CALL_RE = /\.(?:GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS|Get|Post|Put|Delete|Patch|Head|Options|Any|All|Handle|HandleFunc|Group|Route|Mount)\s*\(\s*"\//
+  # A route registration with a path literal (net/http's may lead with a
+  # method, `"POST /items"`): the stand-in for the same-file route-row check
+  # on a body declared in another file.
+  ROUTE_CALL_RE = /(?<!http)\.(?:GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS|Get|Post|Put|Delete|Patch|Head|Options|Any|All|Handle|HandleFunc|Group|Route|Mount)\s*\(\s*"(?:[A-Z]+\s+)?\//
 
   # Where a handler not declared in the route's own file is looked up.
   # `bodies` covers every scanned package (built per directory on first
@@ -104,6 +106,8 @@ class Noir::GoNamedHandler
   @targets = Hash(Key, Array(Endpoint)).new
   # Plain-reference handler text -> the body it names (no one-hop calls).
   @handlers = Hash(String, Key).new
+  # Plain-reference handler text -> the definition it names.
+  @handler_bodies = Hash(String, Noir::GoCalleeExtractor::FunctionBody).new
   @declared : Hash(String, Set(String))? = nil
   # `name` -> {package, type} for `name := pkg.T{...}` and the like.
   @qualified_types = Hash(String, Set({String, String})).new
@@ -117,6 +121,12 @@ class Noir::GoNamedHandler
   @handler_names = Hash(String, String).new
   # Handler text -> the row of the closure its factory returns.
   @closure_rows = Hash(String, Int32).new
+  # {route row, handler name} -> the call a local of the registering
+  # function is bound to (`probe := newProbe(store)` then `Handle(p, probe)`).
+  @bound = Hash({Int32, String}, String).new
+  # Rows of routes whose handler is a call to a function that registers
+  # routes itself (`mux.Handle("/v1/", api.NewHandler())`): a mount.
+  @mounts = Set(Int32).new
 
   # `listA` -> {"", "listA"}, `h.List` -> {"h", "List"}, `RateLimit()` ->
   # {"", "RateLimit"}. Anything else (closures, calls with arguments,
@@ -139,6 +149,9 @@ class Noir::GoNamedHandler
     references = Hash(String, Tuple(String, String)).new
     wrapped = Set(String).new
     routes.each do |r|
+      if (name = primary_arg(r)) && name.matches?(/\A[A-Za-z_]\w*\z/) && (expr = local_binding_expr(name, r.line))
+        @bound[{r.line, name}] = expr
+      end
       handler_args(r).each do |h|
         if read = LIBRARY_READS.find { |re, _| h.strip.matches?(re) }
           key = {h.strip, -1}
@@ -212,6 +225,24 @@ class Noir::GoNamedHandler
       end
     end
 
+    # A mount: the handler, or what its wrappers end at
+    # (`http.StripPrefix("/v1", api.NewHandler())`), is a call to a function
+    # that builds a router and returns it.
+    routes.each do |r|
+      text = primary_arg(r).try { |arg| @bound[{r.line, arg}]? || arg } || next
+      text = text.gsub(STRING_LITERAL, %(""))
+      4.times do
+        call = factory_call(text) || break
+        qualifier, _, name = call.rpartition('.')
+        if (body = resolve.call(qualifier, name)) && builds_router?(body)
+          @mounts << r.line
+          break
+        end
+        open = text.index('(') || break
+        text = Noir::TopLevelSplit.split(text[open + 1...-1], ',', Noir::TopLevelSplit::Rules.new).last?.try(&.strip) || break
+      end
+    end
+
     # A wrapped handler (`pm(hasID(a.UpdateSubscriber), perm)`,
     # `mw.Gzip()(h.Export)`) answers with the one function value it hands
     # in: a reference that is not called and whose definition is a handler,
@@ -224,12 +255,30 @@ class Noir::GoNamedHandler
         body = resolve.call(qualifier, name)
         {body, ref} if body && !registers_routes.call(body) && handler_definition?(body)
       end.uniq!(&.[0])
-      if found.empty? && (call = factory_call(handler.gsub(STRING_LITERAL, %(""))))
-        # A handler factory called with arguments (`serveFile("a.html",
-        # "text/html")`) answers with the closure it returns.
-        qualifier, _, name = call.rpartition('.')
-        body = resolve.call(qualifier, name)
-        found << {body, call} if body && !registers_routes.call(body) && returned_closure_row(body)
+      text = handler.gsub(STRING_LITERAL, %(""))
+      # A middleware applied to the handler (`mw(store)(newHandler(store))`)
+      # answers with what it is applied to.
+      # A wrapper around a factory call (`auth(handleRun(svc))`) answers
+      # with what the inner factory builds, tried before the wrapper itself.
+      3.times do
+        break unless found.empty?
+        inner = applied_arg(text) || wrapped_call_arg(text)
+        {inner, text}.each do |candidate|
+          next unless candidate && found.empty?
+          next unless call = factory_call(candidate)
+          # A handler factory called with arguments (`serveFile("a.html",
+          # "text/html")`) answers with the closure it returns, or with the
+          # method value it returns (`return http.HandlerFunc(h.serve)`).
+          qualifier, _, name = call.rpartition('.')
+          body = resolve.call(qualifier, name)
+          next if body.nil? || registers_routes.call(body)
+          if returned_closure_row(body)
+            found << {body, call}
+          elsif (method = returned_method(body, scope)) && !registers_routes.call(method[0])
+            found << method
+          end
+        end
+        text = inner || break
       end
       next unless found.size == 1
       @resolved[handler], @handler_names[handler] = found.first
@@ -240,9 +289,16 @@ class Noir::GoNamedHandler
       body = @resolved[handler]? || resolve.call(qualifier, name)
       # A function that registers routes itself is never claimed.
       next if body.nil? || registers_routes.call(body)
+      # A factory called with no arguments that returns a handler method
+      # value (`fever.NewHandler()` returning `http.HandlerFunc(h.serve)`)
+      # answers with that method.
+      if handler.ends_with?(')') && !@resolved.has_key?(handler) && (method = returned_method(body, scope))
+        body, @handler_names[handler] = method
+      end
 
       key = {body.file_path, body.start_row}
       @handlers[handler] = key
+      @handler_bodies[handler] = body
       returned_closure_row(body).try { |row| @closure_rows[handler] = row }
       # One hop further: the functions the handler body calls.
       calls = body.source.scan(CALL_RE).map(&.[1]).uniq!
@@ -270,6 +326,91 @@ class Noir::GoNamedHandler
     end
   end
 
+  # The handler argument that answers: the last, or the first with
+  # `handler_first`.
+  private def primary_arg(route : Noir::TreeSitterGoRouteExtractor::Route) : String?
+    (@handler_first ? route.handler_args.first? : route.handler_args.last?).try(&.strip)
+  end
+
+  # The handler a function application hands in: `B(y)` in `A(x)(B(y))`.
+  # Nil unless the text ends in a call of a call with one argument.
+  private def applied_arg(text : String) : String?
+    text = text.strip
+    return unless text.ends_with?(')')
+    depth = 0
+    (text.size - 1).downto(0) do |pos|
+      case text[pos]
+      when ')' then depth += 1
+      when '('
+        depth -= 1
+        next unless depth.zero?
+        return unless pos > 0 && text[0, pos].rstrip.ends_with?(')')
+        inner = text[pos + 1...-1].strip
+        return if inner.empty? || Noir::TopLevelSplit.split(inner, ',', Noir::TopLevelSplit::Rules.new).size != 1
+        return inner
+      end
+    end
+  end
+
+  # The one argument of a call that is itself a call: `handleRun(svc)` in
+  # `auth(handleRun(svc))`. Nil for anything else.
+  private def wrapped_call_arg(text : String) : String?
+    factory_call(text) || return
+    open = text.index('(') || return
+    args = Noir::TopLevelSplit.split(text[open + 1...-1], ',', Noir::TopLevelSplit::Rules.new)
+    return unless args.size == 1
+    arg = args.first.strip
+    arg if factory_call(arg)
+  end
+
+  RETURNED_VALUE = /\A\s*return\s+(?:(?:http\s*\.\s*)?HandlerFunc\s*\(\s*)?([A-Za-z_]\w*)\s*\.\s*([A-Za-z_]\w*)\s*\)?\s*\z/
+
+  # The handler method a factory returns as a value (`h := &T{...}` then
+  # `return http.HandlerFunc(h.serve)`): the one method `serve` on the type
+  # the body declares `h` with, in the factory's package. Nil when the body
+  # returns anything else, or several values.
+  private def returned_method(body : Noir::GoCalleeExtractor::FunctionBody, scope : Scope?) : Tuple(Noir::GoCalleeExtractor::FunctionBody, String)?
+    scope || return
+    refs = body.source.lines.compact_map(&.match(RETURNED_VALUE))
+    return unless refs.size == 1
+    receiver, name = refs.first[1], refs.first[2]
+    types = Set(String).new
+    {ASSIGNED_TYPE_RE, NEW_TYPE_RE}.each do |re|
+      body.source.scan(re) { |m| types << m[3] if m[1] == receiver && m[2]?.nil? }
+    end
+    return if types.size != 1
+    candidates = scope.bodies.methods_for(File.dirname(body.file_path))[name]? || return
+    found = candidates.select { |fb| fb.source.match(RECEIVER_RE).try(&.[2]) == types.first }
+    return unless found.size == 1 && handler_definition?(found.first)
+    {found.first, "#{receiver}.#{name}"}
+  end
+
+  # The call expression a local named `name` is bound to above `row`, in
+  # the top-level function that holds `row` (`probe := newProbe(store)`).
+  # Nil for a closure (see `local_closure_row`) or a statement that does not
+  # end on its line.
+  # ponytail: line-based like `local_closure_row`.
+  private def local_binding_expr(name : String, row : Int32) : String?
+    lines = @source_lines ||= @content.lines
+    (row - 1).downto(0) do |idx|
+      line = lines[idx]? || next
+      return if line.starts_with?("func ") || line.starts_with?("func(")
+      code = line.strip
+      # `var h http.Handler = http.HandlerFunc(admin)`.
+      code = code.lchop("var").lstrip.sub(/\A(#{Regex.escape(name)})\s+[\w.*\[\]]+\s*=/, "\\1 =") if code.starts_with?("var ")
+      next unless code.starts_with?(name)
+      rest = code[name.size..].lstrip
+      next if !rest.starts_with?(":=") && (!rest.starts_with?('=') || rest.starts_with?("=="))
+      expr = rest.lchop(":=").lchop('=').strip
+      return if expr.matches?(CLOSURE_HANDLER) || !expr.matches?(/\A[\w.]+\s*\(/)
+      return unless expr.count('(') == expr.count(')') && expr.ends_with?(')')
+      # `h = withAuth(h)` wraps the earlier binding of `h`: that one names
+      # the handler.
+      next if expr.matches?(/[(,]\s*#{Regex.escape(name)}\s*\)\z/)
+      return expr
+    end
+  end
+
   # The callee of a handler argument that is one call and nothing else
   # (`serveFile("a", b)`, `h.Page("x")`), or nil.
   private def factory_call(handler : String) : String?
@@ -284,7 +425,26 @@ class Noir::GoNamedHandler
     end
   end
 
-  RETURNED_CLOSURE = /\A\s*return\s+func\s*\(/
+  RETURNED_CLOSURE = /\A\s*return\s+(?:(?:http\s*\.\s*)?HandlerFunc\s*\(\s*)?func\s*\(/
+
+  ROUTER_RETURN = /^\s*return\s+(.+?)\s*$/m
+
+  # Whether `body` registers routes on a router it returns, bare or
+  # wrapped (`mux := http.NewServeMux(); mux.HandleFunc("GET /x", h);
+  # return cors(mux)`), not merely calls something with a path
+  # (`http.Get("/upstream")`).
+  private def builds_router?(body : Noir::GoCalleeExtractor::FunctionBody) : Bool
+    source = Noir::CComments.strip(body.source, raw_quotes: "`", leak_unterminated_tail: true)
+    source.scan(ROUTER_RETURN).any? do |m|
+      returned = m[1]
+      4.times do
+        break unless returned.ends_with?(')') && (open = returned.index('(')) && returned[0, open].matches?(/\A[\w.\s]+\z/)
+        returned = Noir::TopLevelSplit.split(returned[open + 1...-1], ',', Noir::TopLevelSplit::Rules.new).last?.try(&.strip) || break
+      end
+      returned.matches?(/\A[A-Za-z_]\w*\z/) &&
+        source.matches?(/(?<![\w.])#{Regex.escape(returned)}\s*\.\s*(?:Handle|HandleFunc|GET|POST|PUT|DELETE|PATCH|Get|Post|Put|Delete|Patch|Any|Group|Route|Mount)\s*\(\s*"/)
+    end
+  end
 
   # The row of the one closure a handler factory returns (`func serveFile(
   # ...) gin.HandlerFunc { ...; return func(ctx *gin.Context) {...} }`):
@@ -400,8 +560,16 @@ class Noir::GoNamedHandler
   # since `route.GET("/home", CookieTool(), func(c) {...})` is not handled
   # by CookieTool. A bare name bound to a closure in the registering
   # function (`isLive := func(c *gin.Context) {...}`) names that closure.
+  # The definition the route's handler resolves to (see `handler_for`), for
+  # reading its request params; nil for an inline closure.
+  def handler_body(route : Noir::TreeSitterGoRouteExtractor::Route) : Noir::GoCalleeExtractor::FunctionBody?
+    name = primary_arg(route) || return
+    @handler_bodies[@bound[{route.line, name}]? || name]?
+  end
+
   def handler_for(route : Noir::TreeSitterGoRouteExtractor::Route) : Handler?
-    name = (@handler_first ? route.handler_args.first? : route.handler_args.last?).try(&.strip) || return
+    name = primary_arg(route) || return
+    name = @bound[{route.line, name}]? || name
     if name.matches?(CLOSURE_HANDLER)
       row = route.handler_row || return
       return Handler.new("closure", @path, row + 1)
@@ -432,6 +600,13 @@ class Noir::GoNamedHandler
     end
   end
 
+  # Whether the route hands its path to a router a called function builds
+  # (`mux.Handle("/v1/", api.NewHandler(store))`): that router's own routes
+  # are reported, so the mount is not a route.
+  def mount?(route : Noir::TreeSitterGoRouteExtractor::Route) : Bool
+    @mounts.includes?(route.line)
+  end
+
   def bind(route : Noir::TreeSitterGoRouteExtractor::Route, endpoint : Endpoint)
     return if @refs.empty?
     handler_args(route).flat_map { |handler| @refs[handler.strip]? || [] of Key }.uniq!.each do |key|
@@ -441,8 +616,9 @@ class Noir::GoNamedHandler
 
   # The route's handler args behind the middleware it runs after.
   private def handler_args(route : Noir::TreeSitterGoRouteExtractor::Route) : Array(String)
+    args = route.handler_args.map { |arg| @bound[{route.line, arg.strip}]? || arg }
     mw = @middleware[{route.line, route.router_name}]?
-    mw ? mw + route.handler_args : route.handler_args
+    mw ? mw + args : args
   end
 
   # Yields each bound body's file and lines with the endpoints routed to it.
