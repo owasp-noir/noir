@@ -1,0 +1,2 @@
+ROOT_URLCONF = "urls"
+LOGIN_REQUIRED = True

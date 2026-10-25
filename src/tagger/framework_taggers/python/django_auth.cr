@@ -54,7 +54,7 @@ class DjangoAuthTagger < FrameworkTagger
 
   # A project permission class: its bases and its `has_permission` body
   # (nil when it inherits the method).
-  private record PermissionClass, bases : Array(String), has_permission : String?
+  private record PermissionClass, bases : Array(String), has_permission : String?, authenticated_users_only : String?
 
   # Whatever an anonymous `request.user` fails: `AnonymousUser` is never
   # authenticated, active, staff or superuser, and holds no permissions.
@@ -65,12 +65,16 @@ class DjangoAuthTagger < FrameworkTagger
     @login_required_middleware = false
     @drf_default_permissions = [] of String
     @permission_classes = {} of String => PermissionClass
+    @method_def_res = {} of String => Regex
+    @dispatch_guards = {} of {String, Int32, String} => String | Symbol?
   end
 
   def perform(endpoints : Array(Endpoint)) : Array(Endpoint)
     @login_required_middleware = false
     @drf_default_permissions.clear
     @permission_classes.clear
+    @dispatch_guards.clear
+    @mro_cache.clear
     scan_settings
     super
   end
@@ -118,15 +122,28 @@ class DjangoAuthTagger < FrameworkTagger
         bases_text = header[(open + 1)..].sub(/\)\s*:[\s\S]*\z/, "")
         next unless bases_text.includes?("Permission")
         bases = bases_text.split(',').map(&.strip.split('.').last.strip).reject(&.empty?)
-        @permission_classes[name] ||= PermissionClass.new(bases, method_body(lines, idx, "has_permission"))
+        flag = class_body(lines, idx).match(/\b(?:self\.)?authenticated_users_only\s*=(?!=)\s*([^\n]+)/).try(&.[1].strip)
+        @permission_classes[name] ||= PermissionClass.new(bases, method_body(lines, idx, "has_permission"), flag)
       end
     end
+  end
+
+  # The lines of the class body whose header is at `class_idx`.
+  private def class_body(lines : Array(String), class_idx : Int32) : String
+    class_indent = lines[class_idx].size - lines[class_idx].lstrip.size
+    body = [] of String
+    ((class_idx + 1)...lines.size).each do |idx|
+      current = lines[idx].lstrip
+      break if !current.empty? && !current.starts_with?('#') && lines[idx].size - current.size <= class_indent && !current.starts_with?(')')
+      body << lines[idx]
+    end
+    body.join("\n")
   end
 
   # The body of method `name` in the class whose header is at `class_idx`.
   private def method_body(lines : Array(String), class_idx : Int32, name : String) : String?
     class_indent = lines[class_idx].size - lines[class_idx].lstrip.size
-    def_re = /\Adef\s+#{name}\s*\(/
+    def_re = @method_def_res[name] ||= /\Adef\s+#{name}\s*\(/
     ((class_idx + 1)...lines.size).each do |idx|
       raw = lines[idx]
       current = raw.lstrip
@@ -179,6 +196,13 @@ class DjangoAuthTagger < FrameworkTagger
   private def check_endpoint(endpoint : Endpoint)
     contexts = read_source_context(endpoint)
     return if contexts.empty?
+    # A view served by a base class's method lists the view class itself
+    # among its code paths (its `class` line): that class's MRO, not the
+    # base's, decides what its `dispatch` and permissions do.
+    view_class = contexts.find do |ctx|
+      line = ctx.line
+      line && line >= 1 && line <= ctx.lines.size && ctx.lines[line - 1].lstrip.starts_with?("class ")
+    end
 
     contexts.each do |ctx|
       line = ctx.line
@@ -201,15 +225,18 @@ class DjangoAuthTagger < FrameworkTagger
           return
         end
 
+        class_ctx = view_class || ctx
+        class_line = class_ctx.line || line
+
         # Check enclosing class for mixins
-        description = check_enclosing_class_mixins(lines, line)
+        description = check_enclosing_class_mixins(class_ctx.lines, class_line, class_ctx.path, endpoint.method)
         if description
           endpoint.add_tag(Tag.new("auth", description, "django_auth"))
           return
         end
 
         # DRF permission_classes (view, action, or settings default)
-        description = check_drf_permissions(lines, line, endpoint.method)
+        description = check_drf_permissions(lines, line, endpoint.method, class_ctx.lines, class_line)
         if description
           endpoint.add_tag(Tag.new("auth", description, "django_auth")) unless description.empty?
           return
@@ -350,7 +377,7 @@ class DjangoAuthTagger < FrameworkTagger
     body_guard(file, lines, def_idx + 1, method, 1).try { |own| "#{own} (via #{def_name})" }
   end
 
-  private def check_enclosing_class_mixins(lines : Array(String), endpoint_line : Int32) : String?
+  private def check_enclosing_class_mixins(lines : Array(String), endpoint_line : Int32, path : String, method : String) : String?
     idx = enclosing_class(lines, endpoint_line).try(&.[0]) || return
     # `@method_decorator(..., name=...)` above the class decorates the
     # handler it names (or all of them, via `dispatch`).
@@ -360,6 +387,11 @@ class DjangoAuthTagger < FrameworkTagger
     end
     # Its bases, wherever the header wraps.
     header = class_header(lines, idx)
+    key = {path, idx, method.upcase}
+    verdict = @dispatch_guards.has_key?(key) ? @dispatch_guards[key] : (@dispatch_guards[key] = dispatch_guard(path, lines, idx, method.upcase))
+    return "Protected by #{verdict}" if verdict.is_a?(String)
+    # The walk saw where the request is served without these mixins.
+    return if verdict == :stop
     MIXIN_PATTERNS.each do |pattern|
       if header.matches?(pattern)
         mixin_name = pattern.source.gsub("\\", "")
@@ -367,6 +399,229 @@ class DjangoAuthTagger < FrameworkTagger
       end
     end
     nil
+  end
+
+  # `AccessMixin.handle_no_permission` sends the caller to the login page
+  # or raises `PermissionDenied`.
+  NO_PERMISSION = /\bself\.handle_no_permission\s*\(/
+  SETTING_READ  = /\bsettings\.([A-Z][A-Z0-9_]*)\b/
+  # A framework view whose `dispatch` serves the request without calling
+  # `super()` (Django's `View` and its generic views, DRF's `APIView` and
+  # viewsets): classes after it in the MRO never see the request.
+  FRAMEWORK_VIEW = /(?:View|ViewSet)\z/
+
+  # One class of a view's MRO: a project class (`path`, header line `idx`),
+  # or a base the scan does not hold (`path` nil).
+  private record MroClass, name : String, path : String?, idx : Int32
+
+  # The guard the `dispatch` of a class-based view applies for `method`,
+  # walking its MRO (C3, as Python computes it): the first `dispatch` that
+  # turns away a caller who is not logged in, as `Class.dispatch`, naming
+  # the setting its test depends on. `:stop` when the walk reaches a
+  # `dispatch` that serves the request without passing it on (a project one
+  # with no `super()`, a framework view's) before any guard; nil when it
+  # found nothing either way. A base the scan does not hold is judged by
+  # its name (`MIXIN_PATTERNS`), unless a class overrides
+  # `handle_no_permission` with one that does not refuse.
+  private def dispatch_guard(path : String, lines : Array(String), class_idx : Int32, method : String) : String | Symbol?
+    mro = class_mro(path, lines, class_idx)
+    soft = soft_no_permission?(mro)
+    mro.each do |klass|
+      unless file = klass.path
+        if pattern = MIXIN_PATTERNS.find { |mixin| klass.name.matches?(mixin) }
+          return soft ? :stop : "Django #{pattern.source.gsub("\\", "")}"
+        end
+        return :stop if klass.name.matches?(FRAMEWORK_VIEW)
+        next
+      end
+      class_lines = read_file_lines(file) || next
+      body = method_body(class_lines, klass.idx, "dispatch") || next
+      if setting = dispatch_refusal(body, file, class_lines, klass.idx, method, soft)
+        return setting.empty? ? "#{klass.name}.dispatch" : "#{klass.name}.dispatch (settings.#{setting} decides; a setting can make it public)"
+      end
+      return :stop unless body.matches?(/\bsuper\s*\(/)
+    end
+    nil
+  end
+
+  # Whether the first `handle_no_permission` in the MRO is a project one
+  # that lets the caller through instead of refusing.
+  private def soft_no_permission?(mro : Array(MroClass)) : Bool
+    mro.each do |klass|
+      file = klass.path || next
+      class_lines = read_file_lines(file) || next
+      body = method_body(class_lines, klass.idx, "handle_no_permission") || next
+      return !(body.matches?(/\braise\b|\bsuper\s*\(/) || body.matches?(DJANGO_REFUSAL) || body.matches?(LOGIN_REDIRECT) ||
+        body.matches?(/\bredirect\s*\(/) || body.matches?(FORBIDDEN))
+    end
+    false
+  end
+
+  @mro_cache = {} of {String, Int32} => Array(MroClass)
+
+  # The class at `class_idx` and its bases in C3 order, project classes
+  # resolved across files and package re-exports. Falls back to the
+  # depth-first order when the bases admit no C3 order.
+  private def class_mro(path : String, lines : Array(String), class_idx : Int32, depth = 0) : Array(MroClass)
+    key = {path, class_idx}
+    if cached = @mro_cache[key]?
+      return cached
+    end
+    name = lines[class_idx].match(/^\s*class\s+(\w+)/).try(&.[1]) || ""
+    own = MroClass.new(name, path, class_idx)
+    @mro_cache[key] = [own] # cycle guard
+    return [own] if depth > 8
+    bases = class_bases(class_header(lines, class_idx)).map do |base|
+      if (site = class_site(path, base)) && (base_lines = read_file_lines(site[0]))
+        class_mro(site[0], base_lines, site[1], depth + 1)
+      else
+        [MroClass.new(base.rpartition('.')[2], nil, -1)]
+      end
+    end
+    heads = bases.map(&.first)
+    mro = [own] + (c3_merge(bases + [heads]) || bases.flatten.uniq!)
+    @mro_cache[key] = mro
+  end
+
+  private def c3_merge(seqs : Array(Array(MroClass))) : Array(MroClass)?
+    seqs = seqs.map(&.dup).reject(&.empty?)
+    merged = [] of MroClass
+    until seqs.empty?
+      head = seqs.map(&.first).find { |candidate| seqs.none?(&.[1..].includes?(candidate)) } || return
+      merged << head
+      seqs.each { |seq| seq.shift if seq.first == head }
+      seqs.reject!(&.empty?)
+    end
+    merged
+  end
+
+  # The setting an `if` in a `dispatch` body tests ("" for none) when that
+  # `if` holds for an anonymous caller of `method` and its block refuses;
+  # nil when none does.
+  private def dispatch_refusal(body : String, path : String, lines : Array(String), class_idx : Int32,
+                               method : String, soft : Bool) : String?
+    code = body.lines.map { |line| Analyzer::Python::Helper.strip_python_comment(line).rstrip }
+    code.each_with_index do |line, k|
+      m = line.strip.match(/\A(?:if|elif)\s+(.+?):(.*)\z/) || next
+      indent = line.size - line.lstrip.size
+      nested = code[(k + 1)..].take_while { |inner| inner.strip.empty? || inner.size - inner.lstrip.size > indent }.reject(&.strip.empty?)
+      # Only the block's own statements: a refusal nested deeper (in the
+      # `except` of a token check) turns away a bad credential, not the
+      # anonymous caller.
+      level = nested.min_of? { |inner| inner.size - inner.lstrip.size }
+      text = ([m[2]] + nested.select { |inner| inner.size - inner.lstrip.size == level }).join('\n')
+      refuses = (!soft && text.matches?(NO_PERMISSION)) || text.matches?(DJANGO_REFUSAL) || text.matches?(FORBIDDEN) ||
+                text.matches?(UNAUTHENTICATED) || text.matches?(LOGIN_REDIRECT)
+      next unless refuses
+      if setting = anonymous_condition(m[1], method, path, lines, class_idx)
+        return setting
+      end
+    end
+    nil
+  end
+
+  NEGATED_IDENTITY  = /\Anot\s+[\w.]*\b(?:is_authenticated|is_active|is_staff|is_superuser)\b|\Anot\s+[\w.]*\bhas_(?:module_)?perms?\s*\(/
+  POSITIVE_IDENTITY = /\b(?:is_authenticated|is_active|is_staff|is_superuser|has_perms?|has_module_perms)\b/
+  METHOD_CONDITION  = /\Arequest\.method\s*(==|!=|not\s+in|in)\s*(.+)\z/
+
+  # Whether `cond` holds for an anonymous caller of `method`: "" when it
+  # does, the setting it also tests when one decides, nil when it does not
+  # hold or this cannot tell. A disjunct holds when each of its conjuncts
+  # does: a negated identity test (`not request.user.is_authenticated`,
+  # `not self.has_permission()`), `is_anonymous`, a verb test naming
+  # `method`, or a setting; a positive identity test fails for anonymous.
+  private def anonymous_condition(cond : String, method : String, path : String, lines : Array(String), class_idx : Int32) : String?
+    # Grouping parentheses are not parsed; a verb tuple is no grouping.
+    return if cond.gsub(/\bin\s*\([^()]*\)/, "in _").matches?(/(?:\A|[\s!])\(/)
+    cond.split(/\s+or\s+/).each do |disjunct|
+      setting = ""
+      anonymous = false
+      holds = disjunct.split(/\s+and\s+/).all? do |conjunct|
+        conjunct = conjunct.strip
+        if conjunct.matches?(/\bis_anonymous\b/)
+          anonymous = !conjunct.starts_with?("not ")
+        elsif conjunct.matches?(NEGATED_IDENTITY)
+          anonymous = true
+        elsif (call = conjunct.match(/\Anot\s+self\.(\w+)\s*\(/)) &&
+              chain_method_body(path, lines, class_idx, call[1], 0).try(&.matches?(ANONYMOUS_REFUSING_CHECK))
+          anonymous = true
+        elsif conjunct.matches?(POSITIVE_IDENTITY) || conjunct.matches?(/\bself\.\w+\s*\(/)
+          false
+        elsif verb = conjunct.match(METHOD_CONDITION)
+          verbs = verb[2].scan(/['"](\w+)['"]/).map(&.[1].upcase)
+          next false if verbs.empty?
+          verb[1].in?("==", "in") ? verbs.includes?(method) : !verbs.includes?(method)
+        elsif conjunct.includes?("request.method")
+          false
+        elsif named = conjunct.match(SETTING_READ)
+          setting = named[1]
+          true
+        else
+          true
+        end
+      end
+      return setting if holds && anonymous
+    end
+    nil
+  end
+
+  private def chain_method_body(path : String, lines : Array(String), class_idx : Int32, name : String, depth : Int32) : String?
+    return if depth > 8
+    if body = method_body(lines, class_idx, name)
+      return body
+    end
+    class_bases(class_header(lines, class_idx)).each do |base|
+      file, idx = class_site(path, base) || next
+      base_lines = read_file_lines(file) || next
+      if body = chain_method_body(file, base_lines, idx, name, depth + 1)
+        return body
+      end
+    end
+    nil
+  end
+
+  # `class X(A, mixins.B, C[T], metaclass=M):` -> ["A", "mixins.B", "C"].
+  private def class_bases(header : String) : Array(String)
+    open = header.index('(') || return [] of String
+    header[(open + 1)..].sub(/\)\s*:[\s\S]*\z/, "").split(',').compact_map do |base|
+      base = base.strip
+      next if base.includes?('=')
+      base.sub(/\[[\s\S]*\z/, "").strip.match(/\A[A-Za-z_][\w.]*\z/).try(&.[0])
+    end
+  end
+
+  # The module file `name` binds in `path` (`from views import generic`),
+  # tried from each enclosing directory outward. A binding back to `path`
+  # itself is skipped: `shop/views.py` importing `views` means the
+  # top-level `views` package, not itself.
+  private def imported_module(path : String, name : String) : String?
+    content = read_file(path) || return
+    dir = File.dirname(path)
+    while @base_paths.any? { |base| Noir::PathScope.under_root?(dir, base) }
+      if (target = Noir::ImportGraph::Python.find_imported_symbols(dir, path, content)[name]?) &&
+         target[1].empty? && target[0] != path
+        return target[0]
+      end
+      parent = File.dirname(dir)
+      break if parent == dir
+      dir = parent
+    end
+    nil
+  end
+
+  # `{file, line index}` of the class declaration `base` names in `path`.
+  private def class_site(path : String, base : String) : {String, Int32}?
+    mod, _, leaf = base.rpartition('.')
+    site = if mod.empty?
+             python_definition_site(path, leaf)
+           elsif module_file = imported_module(path, mod)
+             python_definition_site(module_file, leaf)
+           end
+    file, name = site || return
+    file_lines = read_file_lines(file) || return
+    class_re = /^\s*class\s+#{Regex.escape(name)}\b/
+    idx = file_lines.index(&.matches?(class_re)) || return
+    {file, idx}
   end
 
   # The auth decorator a `@method_decorator(...)` in `decorators` wraps, if
@@ -472,12 +727,14 @@ class DjangoAuthTagger < FrameworkTagger
   # The tag description; "" when the view is DRF but its permissions leave
   # this method open (so nothing else may tag it); nil when DRF has nothing
   # to say about the endpoint.
-  private def check_drf_permissions(lines : Array(String), endpoint_line : Int32, method : String) : String?
+  private def check_drf_permissions(lines : Array(String), endpoint_line : Int32, method : String,
+                                    class_lines : Array(String) = lines, class_line : Int32 = endpoint_line) : String?
     decorators = decorator_text(lines, endpoint_line)
     # `@action(..., permission_classes=[...])` / `@permission_classes([...])`
     own = bracketed_after(decorators, /permission_classes\s*[=(]/)
     drf = decorators.includes?("@api_view")
-    if !own && (klass = enclosing_class(lines, endpoint_line))
+    lines = class_lines
+    if !own && (klass = enclosing_class(class_lines, class_line))
       # The class, then the bases it inherits from in the same file: a
       # `permission_classes` (or the APIView base) set on a shared mixin
       # applies to every view built on it.
@@ -498,42 +755,80 @@ class DjangoAuthTagger < FrameworkTagger
     end
     return unless drf
     defaults = @drf_default_permissions
-    if !defaults.empty? && defaults.all? { |perms| drf_permission_desc(perms, method, "") }
-      "Protected by DRF DEFAULT_PERMISSION_CLASSES"
+    verdicts = defaults.map { |perms| permissions_refusal(perms, method) }
+    if !verdicts.empty? && verdicts.none?(Nil)
+      setting = verdicts.compact.max_by(&.size)
+      setting.empty? ? "Protected by DRF DEFAULT_PERMISSION_CLASSES" : "Protected by DRF DEFAULT_PERMISSION_CLASSES (settings.#{setting} decides; a setting can make it public)"
     else
       ""
     end
   end
 
   private def drf_permission_desc(perms : String, method : String, source : String) : String?
-    "Protected by #{source}" if permissions_refuse_anonymous?(perms, method)
+    setting = permissions_refusal(perms, method) || return
+    setting.empty? ? "Protected by #{source}" : "Protected by #{source} (settings.#{setting} decides; a setting can make it public)"
   end
 
   # DRF checks every class in `permission_classes` and refuses when any
   # one does; `A | B` refuses only when both alternatives do, `A & B`
-  # when either does.
-  private def permissions_refuse_anonymous?(perms : String, method : String) : Bool
+  # when either does. Nil when anonymous gets through; else the setting
+  # the refusal depends on ("" for none).
+  private def permissions_refusal(perms : String, method : String) : String?
     inner = perms.strip
     inner = inner[1...-1] if inner.size >= 2 && "([".includes?(inner[0])
-    inner.split(',').any? do |entry|
+    verdicts = inner.split(',').compact_map do |entry|
       alternatives = entry.split('|').map(&.strip).reject(&.empty?)
-      !alternatives.empty? && alternatives.all? do |alternative|
-        alternative.split('&').any? { |name| permission_refuses_anonymous?(name.strip(" ()\n\t\"'").split('.').last, method) }
+      next if alternatives.empty?
+      either = alternatives.map do |alternative|
+        alternative.split('&').compact_map { |name| permission_refusal(name.strip(" ()\n\t\"'").split('.').last, method) }.min_by?(&.size)
       end
+      next if either.any?(Nil)
+      either.compact.max_by(&.size)
     end
+    verdicts.min_by?(&.size)
   end
 
-  private def permission_refuses_anonymous?(name : String, method : String, depth = 0) : Bool
-    return true if name.matches?(DRF_AUTH_PERMISSION_NAME)
-    return !SAFE_METHODS.includes?(method.upcase) if name.matches?(DRF_WRITE_ONLY_PERMISSION_NAME)
-    return false if depth > 4
-    klass = @permission_classes[name]? || return false
-    if body = klass.has_permission
-      return false unless body.matches?(ANONYMOUS_REFUSING_CHECK)
-      # `if request.method in SAFE_METHODS: return True` opens reads.
-      return !(body.includes?("SAFE_METHODS") && SAFE_METHODS.includes?(method.upcase))
+  # Whether permission class `name` refuses an anonymous caller `method`,
+  # as `permissions_refusal` reports it. A project class is judged by its
+  # `has_permission` (or, when that hands on to `super()`, its bases'),
+  # and a DjangoModelPermissions subclass by the `authenticated_users_only`
+  # it sets: False lets anonymous through, a setting makes it conditional.
+  EARLY_ALLOW = /^[ \t]*if[ \t]+([^\n]+?):[ \t]*(?:\n[ \t]*)?return[ \t]+True\b/m
+
+  private def permission_refusal(name : String, method : String, depth = 0) : String?
+    return "" if name.matches?(DRF_AUTH_PERMISSION_NAME)
+    if name.matches?(DRF_WRITE_ONLY_PERMISSION_NAME)
+      return SAFE_METHODS.includes?(method.upcase) ? nil : ""
     end
-    klass.bases.any? { |base| permission_refuses_anonymous?(base, method, depth + 1) }
+    return if depth > 4
+    klass = @permission_classes[name]? || return
+    setting = nil
+    if body = klass.has_permission
+      # `if request.method in SAFE_METHODS: return True` opens reads; `if
+      # not settings.LOGIN_REQUIRED: return True` makes the rest conditional.
+      body.scan(EARLY_ALLOW) do |allow|
+        cond = allow[1]
+        return if cond.includes?("SAFE_METHODS") && !cond.matches?(/\bnot\s+in\b/) && SAFE_METHODS.includes?(method.upcase)
+        setting ||= cond.match(SETTING_READ).try(&.[1])
+      end
+      if body.matches?(ANONYMOUS_REFUSING_CHECK)
+        return if body.includes?("SAFE_METHODS") && SAFE_METHODS.includes?(method.upcase)
+        return setting || body.match(SETTING_READ).try(&.[1]) || ""
+      end
+      return unless body.matches?(/\bsuper\s*\(\s*\)\s*\.has_permission\b/)
+    end
+    # DjangoModelPermissions refuses anonymous callers only while
+    # `authenticated_users_only` holds.
+    if flag = klass.authenticated_users_only
+      return if flag == "False"
+      setting ||= flag.match(SETTING_READ).try(&.[1])
+    end
+    klass.bases.each do |base|
+      if verdict = permission_refusal(base, method, depth + 1)
+        return setting || verdict
+      end
+    end
+    nil
   end
 
   private def login_not_required?(lines : Array(String), endpoint_line : Int32) : Bool
