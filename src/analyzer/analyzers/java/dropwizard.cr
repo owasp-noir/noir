@@ -31,6 +31,23 @@ module Analyzer::Java
     # helpers isn't misclassified as a Dropwizard project.
     DROPWIZARD_BOOTSTRAP_MARKER_RE = /io\.dropwizard\.(?:core\.)?(?:Application\b|setup\.(?:Bootstrap|Environment)\b)|io\.dropwizard\.assets\.AssetsBundle\b/
 
+    TAGGER = "dropwizard_auth"
+
+    # dropwizard-auth's `AuthDynamicFeature` puts the authenticator filter on
+    # every resource method with a non-`Optional` `@Auth` parameter; that
+    # filter answers 401 when credentials are missing or rejected. An
+    # `@Auth Optional<P>` parameter gets a filter that lets absent
+    # credentials through, so it is no guard.
+    AUTH_PRINCIPAL_GUARD = "Protected by Dropwizard @Auth principal (AuthDynamicFeature answers 401 without valid credentials)"
+
+    # `io.dropwizard.auth.Auth`, imported by name or through the package
+    # (a fully-qualified `@io.dropwizard.auth.Auth` needs no import).
+    DROPWIZARD_AUTH_IMPORT_RE = /^\s*import\s+io\.dropwizard\.auth\.(?:Auth|\*)\s*;/m
+
+    private def dropwizard_auth_import?(content : String) : Bool
+      content.includes?("@io.dropwizard.auth.Auth") || content.matches?(DROPWIZARD_AUTH_IMPORT_RE)
+    end
+
     private struct DropwizardPathConfig
       getter application_context_path : String
       getter root_path : String
@@ -94,7 +111,12 @@ module Analyzer::Java
           Noir::TreeSitterJaxRsExtractor.extract_routes_from(root, content, dto_index, bean_index, subresource_sources,
             custom_verb_annotations: custom_verb_annotations, include_callees: include_callee,
             project_constants: java_project_constants(path)).each do |route|
-            @result << jvm_route_endpoint(route, Noir::URLPath.join_trimmed(base_path, route.path), route.file_path || path)
+            route_file = route.file_path || path
+            endpoint = jvm_route_endpoint(route, Noir::URLPath.join_trimmed(base_path, route.path), route_file)
+            if route.auth_principal == :required && dropwizard_auth_import?(route_file == path ? content : read_file_content(route_file))
+              endpoint.add_tag(Tag.new("auth", AUTH_PRINCIPAL_GUARD, TAGGER))
+            end
+            @result << endpoint
           end
         end
       end

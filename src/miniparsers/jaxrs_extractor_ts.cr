@@ -112,10 +112,15 @@ module Noir
       getter file_path : String?
       getter protocol : String
       getter signature_line : Int32? # 0-based line of the method name (the handler), nil for class-level routes
+      # Handler parameter annotated `@Auth` (Dropwizard's principal
+      # injection): `:required` for a plain principal, `:optional` for
+      # `Optional<P>`, nil when there is none. What it means for access is
+      # the adapter's call: only Dropwizard's `@Auth` gates the request.
+      getter auth_principal : Symbol?
 
       def initialize(@verb, @path, @class_name, @method_name, @line,
                      @parameter_format, @params, @callees, @file_path = nil, @protocol = "http",
-                     @signature_line = nil)
+                     @signature_line = nil, @auth_principal = nil)
       end
     end
 
@@ -378,7 +383,8 @@ module Noir
         line = Noir::TreeSitter.node_start_row(verb_node)
         callees = include_callees ? collect_method_callees(member, source) : [] of Tuple(String, Int32)
         routes << Route.new(verb, full_path, class_name, method_name, line,
-          method_consumes, params, callees, current_file, signature_line: Noir::TreeSitter.name_row(member))
+          method_consumes, params, callees, current_file, signature_line: Noir::TreeSitter.name_row(member),
+          auth_principal: auth_principal_of(member, source))
       end
 
       collect_implemented_interface_routes(decl, source, class_path, class_consumes,
@@ -776,7 +782,9 @@ module Noir
         text = Noir::TreeSitter.node_text(node, source)
         constants["#{current_class}.#{text}"]? || constants[text]?
       when "field_access", "scoped_identifier"
-        constants[Noir::TreeSitter.node_text(node, source)]?
+        text = Noir::TreeSitter.node_text(node, source)
+        # JAX-RS/Guava/Spring `HttpHeaders.USER_AGENT` -> `User-Agent`.
+        constants[text]? || (TreeSitterJavaParameterExtractor.normalise_http_header_constant(text) if text.starts_with?("HttpHeaders."))
       when "binary_expression"
         return unless Noir::TreeSitter.node_text(node, source).includes?("+")
         left = Noir::TreeSitter.field(node, "left")
@@ -835,6 +843,21 @@ module Noir
       params
     end
 
+    # `:optional` for `@Auth Optional<P> p`, `:required` for any other
+    # `@Auth P p`, nil when no parameter carries `@Auth`.
+    private def auth_principal_of(method : LibTreeSitter::TSNode, source : String) : Symbol?
+      formal = formal_parameters_node(method) || return
+      Noir::TreeSitter.each_named_child(formal) do |param|
+        next unless Noir::TreeSitter.node_type(param) == "formal_parameter"
+        auth = false
+        each_annotation(param, source) { |name, _, _| auth = true if name == "Auth" }
+        next unless auth
+        type_text = Noir::TreeSitter.field(param, "type").try { |node| Noir::TreeSitter.node_text(node, source) } || ""
+        return type_text.matches?(/\A(?:java\.util\.)?Optional\s*</) ? :optional : :required
+      end
+      nil
+    end
+
     private def formal_parameters_node(method : LibTreeSitter::TSNode) : LibTreeSitter::TSNode?
       Noir::TreeSitter.each_named_child(method) do |child|
         return child if Noir::TreeSitter.node_type(child) == "formal_parameters"
@@ -866,7 +889,8 @@ module Noir
           ann_arg = first_string_arg(args, source, constants, current_class)
         elsif name == "BeanParam"
           ann_kind = :bean
-        elsif name == "Context" || name == "Suspended"
+        elsif name == "Context" || name == "Suspended" || name == "Auth"
+          # `@Auth` is Dropwizard's authenticated-principal injection.
           ann_kind = :context
         elsif name == "DefaultValue"
           default_value = first_string_arg(args, source, constants, current_class)

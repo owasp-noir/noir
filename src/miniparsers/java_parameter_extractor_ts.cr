@@ -117,8 +117,13 @@ module Noir
       getter json_name : String
       # Declared Java type as written (`Pager`, `MultipartFile[]`), "" when unknown.
       getter type_name : String
+      # Jackson `@JsonUnwrapped(prefix, suffix)`: the field has no key of its
+      # own, its type's properties sit inline in the parent object.
+      # `TreeSitterJavaDtoIndex` replaces such a field with those properties.
+      getter unwrap : {String, String}?
 
-      def initialize(@name, @access_modifier, @has_setter, @init_value, json_name : String? = nil, @type_name = "")
+      def initialize(@name, @access_modifier, @has_setter, @init_value, json_name : String? = nil, @type_name = "",
+                     @unwrap = nil)
         @json_name = json_name || @name
       end
 
@@ -209,7 +214,8 @@ module Noir
         name = Noir::TreeSitter.node_text(name_node, source)
         next if name.empty?
         type_name = Noir::TreeSitter.field(component, "type").try { |node| Noir::TreeSitter.node_text(node, source) } || ""
-        fields << FieldInfo.new(name, "public", true, "", json_property_name(component, source), type_name)
+        fields << FieldInfo.new(name, "public", true, "", json_property_name(component, source), type_name,
+          json_unwrap(component, source))
       end
       fields
     end
@@ -219,6 +225,26 @@ module Noir
     private def json_property_name(decl : LibTreeSitter::TSNode, source : String) : String?
       return unless ann = annotation_node_on(decl, source, "JsonProperty")
       annotation_string_arg(ann, source).presence
+    end
+
+    # `{prefix, suffix}` of a `@JsonUnwrapped` field or record component
+    # (both "" by default); nil when absent or `enabled = false`.
+    private def json_unwrap(decl : LibTreeSitter::TSNode, source : String) : {String, String}?
+      return unless ann = annotation_node_on(decl, source, "JsonUnwrapped")
+      prefix = suffix = ""
+      if args = Noir::TreeSitter.field(ann, "arguments")
+        Noir::TreeSitter.each_named_child(args) do |arg|
+          next unless Noir::TreeSitter.node_type(arg) == "element_value_pair"
+          key = Noir::TreeSitter.field(arg, "key").try { |node| Noir::TreeSitter.node_text(node, source) }
+          val = Noir::TreeSitter.field(arg, "value")
+          next unless key && val
+          return if key == "enabled" && Noir::TreeSitter.node_text(val, source) == "false"
+          next unless Noir::TreeSitter.node_type(val) == "string_literal"
+          prefix = decode_string_literal(val, source) if key == "prefix"
+          suffix = decode_string_literal(val, source) if key == "suffix"
+        end
+      end
+      {prefix, suffix}
     end
 
     # Simple names of the `@interface` types declared in `source` that are
@@ -718,7 +744,7 @@ module Noir
                                      source : String,
                                      lombok_setters : Bool = false) : Array(FieldInfo)
       # First pass: collect field declarations.
-      declared = [] of Tuple(String, String, String, String?, String) # name, access, init_value, json_name, type
+      declared = [] of Tuple(String, String, String, String?, String, {String, String}?) # name, access, init_value, json_name, type, unwrap
       setter_targets = Set(String).new
 
       Noir::TreeSitter.each_named_child(body) do |member|
@@ -742,7 +768,7 @@ module Noir
           if value_node = Noir::TreeSitter.field(dec, "value")
             init = Noir::TreeSitter.node_text(value_node, source)
           end
-          declared << {name, access, init, json_property_name(member, source), type_name}
+          declared << {name, access, init, json_property_name(member, source), type_name, json_unwrap(member, source)}
         when "method_declaration"
           mn = Noir::TreeSitter.field(member, "name")
           next unless mn
@@ -754,9 +780,9 @@ module Noir
         end
       end
 
-      declared.map do |name, access, init, json_name, type_name|
+      declared.map do |name, access, init, json_name, type_name, unwrap|
         has_setter = lombok_setters || setter_targets.includes?(name)
-        FieldInfo.new(name, access, has_setter, init, json_name, type_name)
+        FieldInfo.new(name, access, has_setter, init, json_name, type_name, unwrap)
       end
     end
 
@@ -1222,7 +1248,7 @@ module Noir
     end
 
     # `HttpHeaders.X_FRAME_OPTIONS` → `X-Frame-Options`.
-    private def normalise_http_header_constant(raw : String) : String
+    def normalise_http_header_constant(raw : String) : String
       return raw unless raw.starts_with?("HttpHeaders.")
       header_key = raw["HttpHeaders.".size..]
       normalised = header_key.split('_').map(&.capitalize).join('-')
@@ -1423,7 +1449,65 @@ module Noir
       end
 
       resolve_inheritance!(result, supers, origin)
+      flatten_unwrapped!(result, supers, origin)
       result
+    end
+
+    # Replace every `@JsonUnwrapped` field with its type's properties
+    # (prefix/suffix applied to the JSON name; the form name keeps the
+    # nested `outer.inner` path a data binder would use). The unwrapped
+    # type is looked up through the DTO's own file's neighbours when the
+    # controller never imported it. An unwrapped field whose type stays
+    # unknown is dropped: its own name is never a key on the wire.
+    private def flatten_unwrapped!(result : Index,
+                                   supers : Hash(String, String),
+                                   origin : Hash(String, String))
+      owners = result.keys.select { |cls| result[cls].any?(&.unwrap) }
+      return if owners.empty?
+
+      owners.each do |cls|
+        result[cls].each do |field|
+          next unless field.unwrap
+          target = unwrap_target(field)
+          next if result.has_key?(target)
+          origin[cls]?.try { |file| load_superclass_files(result, supers, origin, file) }
+        end
+      end
+
+      memo = Hash(String, Array(TreeSitterJavaParameterExtractor::FieldInfo)).new
+      owners.each { |cls| result[cls] = unwrapped_fields(cls, result, memo, Set(String).new) }
+    end
+
+    private def unwrapped_fields(cls : String,
+                                 result : Index,
+                                 memo : Hash(String, Array(TreeSitterJavaParameterExtractor::FieldInfo)),
+                                 visiting : Set(String)) : Array(TreeSitterJavaParameterExtractor::FieldInfo)
+      if cached = memo[cls]?
+        return cached
+      end
+      own = result[cls]? || [] of TreeSitterJavaParameterExtractor::FieldInfo
+      return own if visiting.includes?(cls)
+
+      visiting << cls
+      flat = [] of TreeSitterJavaParameterExtractor::FieldInfo
+      own.each do |field|
+        unless unwrap = field.unwrap
+          flat << field
+          next
+        end
+        prefix, suffix = unwrap
+        unwrapped_fields(unwrap_target(field), result, memo, visiting).each do |inner|
+          flat << TreeSitterJavaParameterExtractor::FieldInfo.new("#{field.name}.#{inner.name}", inner.access_modifier,
+            inner.has_setter?, inner.init_value, "#{prefix}#{inner.json_name}#{suffix}", inner.type_name)
+        end
+      end
+      visiting.delete(cls)
+      memo[cls] = flat
+    end
+
+    private def unwrap_target(field : TreeSitterJavaParameterExtractor::FieldInfo) : String
+      name = field.type_name.split('<', 2).first.strip
+      name.rpartition('.').last
     end
 
     # Pull a file's `{fields, supertypes}` from the shared cache,
