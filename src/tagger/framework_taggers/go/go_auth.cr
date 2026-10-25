@@ -78,8 +78,9 @@ class GoAuthTagger < FrameworkTagger
   REJECTS_REQUEST = /[(,]\s*(?:\w+\.)?Status(?:Unauthorized|Forbidden)\b|[(,]\s*40[13]\s*[,)]|\b(?:\w+\.)?Err(?:Unauthorized|Forbidden)\b/
 
   # A redirect to the login page (`ctx.RedirectForLogin(...)`,
-  # `c.Redirect(302, "/login")`), matched with string literals kept.
-  LOGIN_REDIRECT = /(?=.*\bRedirect\w*\s*\().*(?:[Ll]og_?[Ii]n|[Ss]ign_?[Ii]n)/
+  # `c.Redirect(302, "/login")`, `response.HTMLRedirect(w, r, loginURL)`),
+  # matched with string literals kept.
+  LOGIN_REDIRECT = /(?=.*Redirect\w*\s*\().*(?:[Ll]og_?[Ii]n|[Ss]ign_?[Ii]n)/
 
   # A refusal whose condition asks what the caller may do
   # (`!ctx.IsUserSiteAdmin()`, `!ctx.Repo.Permission.CanRead(...)`,
@@ -175,7 +176,7 @@ class GoAuthTagger < FrameworkTagger
     @bodies = Noir::GoCalleeExtractor::LazyPackageBodies.empty
     @dirs_by_base = Hash(String, Array(String)).new
     @guards = Hash({String, String, Bool, String?}, Tag?).new
-    @helper_verdicts = Hash({String, Int32, Bool, Int32}, Guard).new
+    @helper_verdicts = Hash({String, Int32, Bool, Int32, String?, Bool}, Guard).new
     @imports = Hash(String, Set(String)).new
     @bindings = Hash(String, Hash(String, String)).new
   end
@@ -185,7 +186,7 @@ class GoAuthTagger < FrameworkTagger
       "go_echo", "go_gin", "go_chi", "go_fiber",
       "go_beego", "go_mux", "go_fasthttp",
       "go_gozero", "go_goyave",
-      "go_hertz", "go_iris", "go_gf",
+      "go_hertz", "go_iris", "go_gf", "go_http",
     ]
   end
 
@@ -561,12 +562,26 @@ class GoAuthTagger < FrameworkTagger
   # to `hops` such calls deep. A call inside an `if` condition is not a
   # statement: `if !a.check(ctx) { ctx.Next() }` lets an anonymous caller
   # through whatever `check` does to one with bad credentials.
-  private def body_verdict(body : Noir::GoCalleeExtractor::FunctionBody, fields : Hash(String, String)?, follow : Bool = true, hops : Int32 = 3) : Guard
-    key = {body.file_path, body.start_row, follow, hops}
+  #
+  # A statement calling a function of another scanned package (`response.
+  # JSONUnauthorized(w, r)`) counts when that function refuses
+  # unconditionally (`strict`): a shared error writer that picks 401 for
+  # some errors is not a refusal. A net/http middleware (one that hands on
+  # with `next.ServeHTTP`) that returns without handing on when a credential
+  # it reads off the request is empty (`apiKey := r.FormValue("api_key")`;
+  # `if apiKey == "" { ...; return }`) refuses anonymous callers whatever it
+  # writes. With `route_path`, a condition that is a path predicate of the
+  # request (`!isPublicRoute(r)`, see `path_predicate`) is read for that
+  # route: a refusal it rules out does not count.
+  private def body_verdict(body : Noir::GoCalleeExtractor::FunctionBody, fields : Hash(String, String)?, follow : Bool = true, hops : Int32 = 3,
+                           route_path : String? = nil, strict : Bool = false) : Guard
+    key = {body.file_path, body.start_row, follow, hops, route_path, strict}
     if fields.nil? && (cached = @helper_verdicts[key]?)
       return cached
     end
     source = Noir::CComments.strip(body.source, quotes: %("'`))
+    net_http = source.includes?(".ServeHTTP(")
+    credentials = Set(String).new
     params = source.match(FUNC_PARAMS).try(&.[1].split(',').compact_map(&.strip.split(/\s+/).first?)) || [] of String
     option_gated = !fields.nil? && params.any? { |param| source.includes?("#{param}.") }
     imports = file_imports(body.file_path)
@@ -576,8 +591,13 @@ class GoAuthTagger < FrameworkTagger
     depth = 0
     verdict = Guard::None
     lines = source.lines
+    branched = false
     lines.each_with_index do |raw, idx|
       line = raw.gsub(STRING_LITERAL, %("")).strip
+      branched ||= line.matches?(BRANCH_LINE)
+      if net_http && (read = raw.strip.match(CREDENTIAL_READ)) && read[2].matches?(CREDENTIAL_KEY)
+        credentials << read[1]
+      end
       closes = line.starts_with?('}')
       if closes
         depth -= 1
@@ -595,26 +615,250 @@ class GoAuthTagger < FrameworkTagger
       pop_closed(frames, depth)
 
       conditions = frames.flat_map(&.[1])
+      next if strict && (branched || !conditions.empty?)
       kind = if raw.matches?(LOGIN_REDIRECT)
                Guard::Authn
              elsif line.matches?(REJECTS_REQUEST)
                conditions.any?(&.matches?(AUTHZ_CONDITION)) ? Guard::Authz : Guard::Authn
              elsif receiver && (stmt = line.match(RECEIVER_STATEMENT)) && stmt[1] == receiver[1]
-               receiver_method(body, receiver[2], stmt[2]).max_of? { |method| body_verdict(method, nil, follow, hops - 1) } || Guard::None
+               receiver_method(body, receiver[2], stmt[2]).max_of? { |method| body_verdict(method, nil, follow, hops - 1, route_path) } || Guard::None
+             elsif (absent = line.match(IF_OPEN)) && (test = absent[1].match(ABSENCE_TEST)) &&
+                   credentials.includes?(test[1]? || test[2]? || test[3]? || "") && stops_request?(lines, idx)
+               Guard::Authn
              elsif package
-               line.scan(BODY_CALL).max_of? do |call|
+               called = line.scan(BODY_CALL).max_of? do |call|
                  package[call[1]]?.try { |helper| body_verdict(helper, nil, false) } || Guard::None
                end || Guard::None
+               called == Guard::None && !line.matches?(BRANCH_LINE) ? imported_call_verdict(line, imports) : called
              else
                Guard::None
              end
       next if kind <= verdict
       next if conditions.any? { |condition| dead_condition?(condition, params, imports, fields) }
+      next if route_path && conditions.any? { |condition| path_condition_false?(condition, body, route_path) }
       next if option_gated && conditions.none? { |condition| option_enabled?(condition, params, fields) }
       verdict = kind
     end
     @helper_verdicts[key] = verdict if fields.nil?
     verdict
+  end
+
+  # A control-flow line: a refusal under it is conditional.
+  BRANCH_LINE = /\A(?:\}\s*)?(?:else\b|if\b|for\b|switch\b|select\b|case\b|default\s*:)/
+
+  # `apiKey := r.FormValue("api_key")`: a request value bound to a local.
+  CREDENTIAL_READ = /\A(\w+)\s*:?=\s*\w+\s*\.\s*(?:FormValue|PostFormValue|Header\s*\.\s*Get|URL\s*\.\s*Query\(\)\s*\.\s*Get|Form\s*\.\s*Get)\s*\(\s*"([^"]+)"\s*\)\z/
+  # The request keys that carry a credential.
+  CREDENTIAL_KEY = /auth|token|key|session|jwt|passw|secret/i
+
+  # A call into another scanned package: `response.JSONUnauthorized(`.
+  IMPORTED_CALL = /(?<![\w.])(\w+)\s*\.\s*(\w+)\s*\(/
+
+  # The verdict of the functions of other scanned packages a statement
+  # calls, each read strictly (see `body_verdict`).
+  private def imported_call_verdict(line : String, imports : Set(String)) : Guard
+    line.scan(IMPORTED_CALL).max_of? do |call|
+      next Guard::None unless imports.includes?(call[1])
+      (@dirs_by_base[call[1]]? || [] of String).max_of? do |dir|
+        @bodies.functions_for(dir)[call[2]]?.try { |helper| body_verdict(helper, nil, false, strict: true) } || Guard::None
+      end || Guard::None
+    end || Guard::None
+  end
+
+  # Whether the `if` block opened at `lines[idx]` returns without handing the
+  # request on.
+  private def stops_request?(lines : Array(String), idx : Int32) : Bool
+    block = if_block(lines, idx)
+    block.includes?("return") && block.none?(&.matches?(PASS_STATEMENT))
+  end
+
+  # Whether `condition` is false for a request to `route_path`: a call to a
+  # path predicate of the body's package (`isPublicRoute(r)`), possibly
+  # negated or parenthesized, read against the route's path.
+  private def path_condition_false?(condition : String, body : Noir::GoCalleeExtractor::FunctionBody, route_path : String) : Bool
+    text = condition.strip
+    negated = false
+    loop do
+      if text.starts_with?('!')
+        negated = !negated
+        text = text[1..].strip
+      elsif text.starts_with?('(') && text.ends_with?(')')
+        text = text[1...-1].strip
+      else
+        break
+      end
+    end
+    call = text.match(PREDICATE_CALL) || return false
+    predicate = @bodies.functions_for(File.dirname(body.file_path))[call[1]]? || return false
+    value = path_predicate(predicate, route_path.sub("{$}", ""))
+    !value.nil? && value == negated
+  end
+
+  PREDICATE_CALL = /\A(\w+)\s*\(\s*\w+\s*\)\z/
+  PATH_BINDING   = /\A(\w+)\s*:=\s*(\w+)\.URL\.Path\z/
+  SWITCH_ON      = /\Aswitch\s+([\w.]+)\s*\{\z/
+  CASE_ARM       = /\Acase\s+(.+):\z/
+  RETURN_BOOL    = /\Areturn\s+(true|false)\z/
+  IF_TEST        = /\Aif\s+(.+?)\s*\{\z/
+  RETURN_TEST    = /\Areturn\s+(.+)\z/
+  STRING_TEST    = /\Astrings\.Has(Prefix|Suffix)\(\s*([\w.]+)\s*,\s*"([^"]*)"\s*\)\z/
+  EQUALITY_TEST  = /\A([\w.]+)\s*(==|!=)\s*"([^"]*)"\z/
+
+  # What the predicate `body` (`func isPublicRoute(r *http.Request) bool`)
+  # returns for a request to `path`, when it only reads the request path:
+  # `switch path { case "/a", "/b": return true }`, `if <test> { return
+  # true }` and a final `return <test>`, the tests being `strings.HasPrefix`
+  # / `HasSuffix`, `==` / `!=` on the path and calls to other such
+  # predicates, joined by `||`, `&&` and `!`. Nil for anything else.
+  # ponytail: the route path as declared; a predicate behind
+  # `http.StripPrefix` sees the stripped path.
+  private def path_predicate(body : Noir::GoCalleeExtractor::FunctionBody, path : String, depth : Int32 = 0) : Bool?
+    return if depth > 3
+    source = Noir::CComments.strip(body.source, quotes: %("'`))
+    return unless source.includes?(".URL.Path")
+    request = source.match(FUNC_PARAMS).try(&.[1].split(',').first?.try(&.strip.split(/\s+/).first?)) || return
+    names = Set{"#{request}.URL.Path"}
+    statements = [] of String
+    pending = ""
+    (source.lines[1..]? || [] of String).each do |raw|
+      text = raw.strip
+      next if text.empty?
+      pending = pending.empty? ? text : "#{pending} #{text}"
+      next if pending.ends_with?("||") || pending.ends_with?("&&") || pending.ends_with?(',') || pending.count('(') > pending.count(')')
+      statements << pending
+      pending = ""
+    end
+    idx = 0
+    while idx < statements.size
+      stmt = statements[idx]
+      idx += 1
+      next if stmt == "}"
+      if m = stmt.match(PATH_BINDING)
+        return unless m[2] == request
+        names << m[1]
+      elsif m = stmt.match(SWITCH_ON)
+        return unless names.includes?(m[1])
+        while idx < statements.size && statements[idx] != "}"
+          arm = statements[idx].match(CASE_ARM) || return
+          ret = statements[idx + 1]?.try(&.match(RETURN_BOOL)) || return
+          literals = arm[1].split(',').map(&.strip)
+          return unless literals.all?(&.matches?(/\A"[^"]*"\z/))
+          # A pattern that may equal a literal decides nothing.
+          matches = literals.map { |lit| path_equals?(path, lit[1...-1]) }
+          return if matches.includes?(nil)
+          return ret[1] == "true" if matches.includes?(true)
+          idx += 2
+        end
+        idx += 1
+      elsif m = stmt.match(IF_TEST)
+        test = path_test(m[1], path, names, body, depth)
+        ret = statements[idx]?.try(&.match(RETURN_BOOL))
+        return unless ret && statements[idx + 1]? == "}" && !test.nil?
+        return ret[1] == "true" if test
+        idx += 2
+      elsif m = stmt.match(RETURN_TEST)
+        return path_test(m[1], path, names, body, depth)
+      else
+        return
+      end
+    end
+  end
+
+  # One test of a path predicate, see `path_predicate`.
+  private def path_test(expr : String, path : String, names : Set(String), body : Noir::GoCalleeExtractor::FunctionBody, depth : Int32) : Bool?
+    expr = expr.strip
+    while expr.starts_with?('(') && expr.ends_with?(')') && wraps_whole?(expr)
+      expr = expr[1...-1].strip
+    end
+    {"||", "&&"}.each do |op|
+      parts = split_top_level(expr, op)
+      next if parts.size < 2
+      values = parts.map { |part| path_test(part, path, names, body, depth) }
+      decided = op == "||"
+      return decided if values.includes?(decided)
+      return values.includes?(nil) ? nil : !decided
+    end
+    return path_test(expr[1..], path, names, body, depth).try { |value| !value } if expr.starts_with?('!')
+    return true if expr == "true"
+    return false if expr == "false"
+    if m = expr.match(STRING_TEST)
+      return unless names.includes?(m[2])
+      return m[1] == "Prefix" ? path_has_prefix?(path, m[3]) : path_has_suffix?(path, m[3])
+    end
+    if m = expr.match(EQUALITY_TEST)
+      return unless names.includes?(m[1])
+      return path_equals?(path, m[3]).try { |value| m[2] == "==" ? value : !value }
+    end
+    if (m = expr.match(PREDICATE_CALL)) && (predicate = @bodies.functions_for(File.dirname(body.file_path))[m[1]]?)
+      return path_predicate(predicate, path, depth + 1)
+    end
+    nil
+  end
+
+  # Whether the parentheses opening `expr` close at its end.
+  private def wraps_whole?(expr : String) : Bool
+    depth = 0
+    expr.each_char_with_index do |char, pos|
+      depth += 1 if char == '('
+      depth -= 1 if char == ')'
+      return pos == expr.size - 1 if depth.zero?
+    end
+    false
+  end
+
+  # `expr` split at `op` outside parentheses and string literals.
+  private def split_top_level(expr : String, op : String) : Array(String)
+    parts = [] of String
+    depth = 0
+    start = 0
+    quoted = false
+    pos = 0
+    while pos < expr.size
+      char = expr[pos]
+      if char == '"' && (pos == 0 || expr[pos - 1] != '\\')
+        quoted = !quoted
+      elsif !quoted
+        depth += 1 if char == '('
+        depth -= 1 if char == ')'
+        if depth.zero? && expr[pos, op.size] == op
+          parts << expr[start...pos].strip
+          pos += op.size
+          start = pos
+          next
+        end
+      end
+      pos += 1
+    end
+    parts << expr[start..].strip
+    parts
+  end
+
+  # A ServeMux pattern's literal head before its first wildcard, and
+  # whether it has one.
+  private def static_head(path : String) : Tuple(String, Bool)
+    brace = path.index('{')
+    brace ? {path[0, brace], true} : {path, false}
+  end
+
+  private def path_equals?(path : String, literal : String) : Bool?
+    head, wild = static_head(path)
+    return head == literal unless wild
+    literal.starts_with?(head) ? nil : false
+  end
+
+  private def path_has_prefix?(path : String, literal : String) : Bool?
+    head, wild = static_head(path)
+    return true if head.starts_with?(literal)
+    return false unless wild
+    literal.starts_with?(head) ? nil : false
+  end
+
+  private def path_has_suffix?(path : String, literal : String) : Bool?
+    close = path.rindex('}') || return path.ends_with?(literal)
+    tail = path[close + 1..]
+    return if tail.empty?
+    return true if tail.ends_with?(literal)
+    literal.ends_with?(tail) ? nil : false
   end
 
   # The `name` methods declared on `type` in `body`'s package.
@@ -631,10 +875,26 @@ class GoAuthTagger < FrameworkTagger
   end
 
   # Whether the `if` opened at `lines[idx]` only lets the request through.
+  # It ends in `return`, right after handing the request on or alone
+  # (`if token == "" { log(...); next.ServeHTTP(w, r); return }`).
   private def passes_through?(lines : Array(String), idx : Int32) : Bool
-    after = idx + 1
-    after += 1 if lines[after]?.try(&.strip.matches?(PASS_STATEMENT))
-    lines[after]?.try(&.strip) == "return" && lines[after + 1]?.try(&.strip) == "}"
+    block = if_block(lines, idx)
+    return false unless block.last? == "return"
+    block.size == 1 || block[-2].matches?(PASS_STATEMENT)
+  end
+
+  # The stripped statement lines of the block opened at the end of
+  # `lines[idx]`.
+  private def if_block(lines : Array(String), idx : Int32) : Array(String)
+    block = [] of String
+    depth = 0
+    (idx...lines.size).each do |row|
+      code = lines[row].gsub(STRING_LITERAL, %(""))
+      depth += code.count('{') - code.count('}')
+      break if depth <= 0
+      block << code.strip if row > idx
+    end
+    block
   end
 
   # The condition that holds after `if condition { return }`.
@@ -675,6 +935,14 @@ class GoAuthTagger < FrameworkTagger
   end
 
   private def check_endpoint(endpoint : Endpoint)
+    # net/http registers no middleware by name or by group: only what wraps
+    # the route's handler or mux, and the handler's own guard clauses.
+    if endpoint.details.technology == "go_http"
+      net_http_guards(endpoint)
+      handler_guard_clause(endpoint).try { |tag| endpoint.add_tag(tag) }
+      return
+    end
+
     # The first `auth` and the first `authz` evidence win (`add_tag` keeps
     # one tag per name), in the order: names on the route line, a `.Use`
     # just above it, its own middleware, closures it sits in, its group.
@@ -740,6 +1008,248 @@ class GoAuthTagger < FrameworkTagger
 
     # Phase 3: Check group-level middleware scope
     check_middleware_scopes(endpoint).try { |tag| endpoint.add_tag(tag) }
+  end
+
+  # --- net/http ServeMux ---------------------------------------------------
+
+  # `mux.Handle(` / `mux.HandleFunc(` at a statement start, with the mux.
+  NET_HTTP_ROUTE = /\A\s*(\w+(?:\s*\.\s*\w+)*?)\s*\.\s*(?:Handle|HandleFunc)\s*\(/
+  # A statement binding its right-hand side: `h := x`, `h = x`, `var h T = x`.
+  NET_HTTP_ASSIGNMENT = /\A\s*(?:var\s+)?(\w+)(?:\s+[\w.*\[\]]+)?\s*:?=(?!=)\s*/
+  # Every call head in an expression: `mw.requireKey(`, `fever.Middleware(`.
+  CALL_HEAD = /(?<![\w.])((?:\w+\s*\.\s*)*\w+)\s*\(/
+  # What a local is bound to: a struct literal or a call, by type or callee.
+  BOUND_TYPE  = /\A&?\s*(?:(\w+)\.)?(\w+)\s*\{/
+  BOUND_CALL  = /\A(?:(\w+)\.)?(\w+)\s*\(/
+  RETURN_EXPR = /\A\s*return\s+(.+)\z/
+  MOUNT_HEAD  = /\A(\w+)\.(?:Handle|HandleFunc)\z/
+
+  # net/http has no `.Use`: a route's middleware wraps its handler
+  # (`mux.Handle("/x", auth(h))`, also through a local bound to the wrapped
+  # handler or to a closure that wraps it, `withAuth := func(fn
+  # http.HandlerFunc) http.Handler { return a.check(fn) }`) or the mux it is
+  # registered on (`return mw.cors(mw.auth(mux))`, `h := auth(mux)`, or
+  # `root.Handle("/", auth(mux))` and then what wraps `root`), in the
+  # function that registers the route. Each wrapper is judged by its
+  # definition, read for the route's path (see `body_verdict`).
+  # ponytail: within that function; a mux handed in as a parameter, or
+  # returned to a caller that wraps it, is not followed.
+  private def net_http_guards(endpoint : Endpoint)
+    endpoint.details.code_paths.each do |path_info|
+      next unless path_info.path.ends_with?(".go")
+      line = path_info.line || next
+      lines = read_file_lines(path_info.path) || next
+      statements = function_statements(path_info.path, lines, line - 1) || next
+      stmt = statements.find { |(row, _)| row == line - 1 }.try(&.[1]) || next
+      route = stmt.match(NET_HTTP_ROUTE) || next
+      receiver = route[1].gsub(/\s+/, "")
+      handler = call_args(stmt[route.end..]).last? || next
+      heads = handler_wrappers(handler.strip, statements, lines)
+      heads.concat(mux_wrappers(receiver, statements, Set(String).new)) unless receiver == "http"
+      heads.uniq.each do |head|
+        net_http_guard(head, path_info.path, statements, endpoint.url).try { |tag| endpoint.add_tag(tag) }
+      end
+    end
+  end
+
+  # The function holding `lines[idx]` as `{row, statement}` pairs, each
+  # statement joined across lines until its parentheses balance, read with
+  # strings blanked.
+  @function_statements = Hash({String, Int32}, Array({Int32, String})).new
+
+  private def function_statements(file : String, lines : Array(String), idx : Int32) : Array({Int32, String})?
+    return if idx < 0 || idx >= lines.size
+    start = idx
+    while start > 0 && !lines[start].starts_with?("func")
+      start -= 1
+    end
+    return unless lines[start].starts_with?("func")
+    @function_statements.put_if_absent({file, start}) do
+      statements = [] of {Int32, String}
+      depth = 0
+      pending = nil.as({Int32, String}?)
+      (start...lines.size).each do |row|
+        code = code_only(lines[row]).strip
+        text = pending ? "#{pending[1]} #{code}" : code
+        first = pending ? pending[0] : row
+        if text.count('(') > text.count(')') && row < start + 2000
+          pending = {first, text}
+        else
+          pending = nil
+          statements << {first, text}
+        end
+        depth += code.count('{') - code.count('}')
+        break if depth <= 0 && row > start
+      end
+      statements
+    end
+  end
+
+  # The wrappers of a route's handler argument, see `net_http_guards`.
+  private def handler_wrappers(handler : String, statements : Array({Int32, String}), lines : Array(String)) : Array(String)
+    expr = handler
+    if expr.matches?(/\A\w+\z/) && (bound = binding_of(expr, statements))
+      expr = bound
+    end
+    heads = [] of String
+    expr.scan(CALL_HEAD) do |m|
+      name = m[1].gsub(/\s+/, "")
+      next if name == "func"
+      if !name.includes?('.') && (returned = closure_returns(name, statements, lines))
+        heads.concat(returned)
+      else
+        heads << name
+      end
+    end
+    heads
+  end
+
+  # What the last statement binding `name` in the function assigns, unless
+  # it is a closure.
+  private def binding_of(name : String, statements : Array({Int32, String})) : String?
+    statements.reverse_each do |(_, text)|
+      assign = text.match(NET_HTTP_ASSIGNMENT) || next
+      next unless assign[1] == name
+      value = text[assign.end..].strip
+      return value.starts_with?("func") ? nil : value
+    end
+  end
+
+  # The call heads a closure bound to `name` returns (`withAuth := func(fn
+  # http.HandlerFunc) http.Handler { return a.check(fn) }` -> `a.check`).
+  private def closure_returns(name : String, statements : Array({Int32, String}), lines : Array(String)) : Array(String)?
+    row = statements.find { |(_, text)| (assign = text.match(NET_HTTP_ASSIGNMENT)) && assign[1] == name && text[assign.end..].lstrip.starts_with?("func") }.try(&.[0]) || return
+    heads = [] of String
+    depth = 0
+    (row...lines.size).each do |idx|
+      code = code_only(lines[idx])
+      if idx > row && (ret = code.match(RETURN_EXPR))
+        ret[1].scan(CALL_HEAD) { |m| heads << m[1].gsub(/\s+/, "") unless m[1] == "func" }
+      end
+      depth += code.count('{') - code.count('}')
+      break if depth <= 0 && idx > row
+    end
+    heads
+  end
+
+  # The calls that wrap the mux `receiver` in the function: those enclosing
+  # it where it is passed as a value, and, through a `Handle` mounting it on
+  # another mux or an assignment of the wrapped value, what wraps that.
+  private def mux_wrappers(receiver : String, statements : Array({Int32, String}), seen : Set(String)) : Array(String)
+    heads = [] of String
+    return heads if seen.includes?(receiver) || seen.size > 8
+    seen << receiver
+    statements.each do |(_, text)|
+      next unless text.includes?(receiver)
+      assign = text.match(NET_HTTP_ASSIGNMENT)
+      each_value_use(text, receiver) do |pos|
+        next if assign && pos < assign.end
+        mount = nil
+        enclosing_heads(text, pos).each do |head|
+          if m = head.match(MOUNT_HEAD)
+            mount = m[1]
+            break
+          end
+          heads << head
+        end
+        if mount
+          heads.concat(mux_wrappers(mount, statements, seen)) unless mount == "http"
+        elsif assign
+          heads.concat(mux_wrappers(assign[1], statements, seen))
+        end
+      end
+    end
+    heads
+  end
+
+  # Each position in `text` where `name` is used as a value: not a field,
+  # not a call, not a selector head.
+  private def each_value_use(text : String, name : String, &)
+    pos = 0
+    while found = text.index(name, pos)
+      pos = found + name.size
+      before = found > 0 ? text[found - 1] : ' '
+      next if before.alphanumeric? || before == '_' || before == '.'
+      rest = text[pos..].lstrip
+      next if (after = text[pos]?) && (after.alphanumeric? || after == '_')
+      next if rest.starts_with?('.') || rest.starts_with?('(') || rest.starts_with?(":=")
+      yield found
+    end
+  end
+
+  # The heads of the calls whose parentheses enclose `pos`, innermost
+  # first. A call of a call (`mw(x)(h)`) is headed by the inner callee.
+  private def enclosing_heads(text : String, pos : Int32) : Array(String)
+    stack = [] of String
+    (0...pos).each do |idx|
+      case text[idx]
+      when '(' then stack << call_head_before(text, idx)
+      when ')' then stack.pop?
+      end
+    end
+    stack.reverse.reject { |head| head.empty? || head == "func" }
+  end
+
+  # The callee before the `(` at `idx`: the selector chain, or for `)(`, the
+  # callee of the call that closes there.
+  private def call_head_before(text : String, idx : Int32) : String
+    stop = idx - 1
+    while stop >= 0 && text[stop].whitespace?
+      stop -= 1
+    end
+    if stop >= 0 && text[stop] == ')'
+      depth = 0
+      stop.downto(0) do |back|
+        depth += 1 if text[back] == ')'
+        depth -= 1 if text[back] == '('
+        return call_head_before(text, back) if depth.zero?
+      end
+      return ""
+    end
+    start = stop
+    while start >= 0 && (text[start].alphanumeric? || text[start] == '_' || text[start] == '.')
+      start -= 1
+    end
+    text[start + 1..stop]
+  end
+
+  # The guard a net/http wrapper `head` earns, judged by its definition for
+  # a request to `route_path`. A wrapper whose definition is not found falls
+  # back to `guard_by_definition` (a library middleware is read by name).
+  private def net_http_guard(head : String, file : String, statements : Array({Int32, String}), route_path : String) : Tag?
+    qualifier, _, name = head.rpartition('.')
+    bodies = net_http_bodies(qualifier, name, file, statements)
+    return guard_by_definition("#{head}(", file, authish_name: true) if bodies.nil? || bodies.empty?
+    case bodies.max_of { |body| body_verdict(body, nil, route_path: route_path) }
+    when Guard::Authn
+      Tag.new("auth", "Protected by Go middleware #{head} (verified from its body: refuses anonymous callers)", "go_auth")
+    when Guard::Authz
+      Tag.new("authz", "Protected by Go middleware #{head} (verified from its body: permission check replies 403)", "go_auth")
+    end
+  end
+
+  # The definitions `qualifier.name` names from `file`: a function of the
+  # package or of an imported one, or a method of the type a local of the
+  # function is bound to (`mw := newMiddleware(s)`, `a := &Auth{}`). Nil
+  # when none is found.
+  private def net_http_bodies(qualifier : String, name : String, file : String, statements : Array({Int32, String})) : Array(Noir::GoCalleeExtractor::FunctionBody)?
+    dir = File.dirname(file)
+    if qualifier.empty?
+      @bodies.functions_for(dir)[name]?.try { |body| [body] }
+    elsif qualifier.includes?('.')
+      nil
+    elsif file_imports(file).includes?(qualifier)
+      (@dirs_by_base[qualifier]? || [] of String).compact_map { |pkg| @bodies.functions_for(pkg)[name]? }
+    elsif bound = binding_of(qualifier, statements)
+      if m = bound.match(BOUND_TYPE)
+        type_dirs = m[1]? ? (@dirs_by_base[m[1]]? || [] of String) : [dir]
+        type_dirs.flat_map do |type_dir|
+          (@bodies.methods_for(type_dir)[name]? || [] of Noir::GoCalleeExtractor::FunctionBody).select { |body| body.source.match(METHOD_RECEIVER).try(&.[1]) == m[2] }
+        end
+      elsif m = bound.match(BOUND_CALL)
+        methods_on_result(m[1]?, m[2], name, dir)
+      end
+    end
   end
 
   # `if <init>; <cond> {` on one line.

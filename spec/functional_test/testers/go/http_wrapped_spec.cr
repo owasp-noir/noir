@@ -11,8 +11,14 @@ all_methods = %w[GET POST PUT DELETE PATCH HEAD OPTIONS]
 expected_endpoints = [
   Endpoint.new("/v1/items", "POST", [Param.new("body", "", "json")]),
   Endpoint.new("/v1/items/{itemID}", "GET", [Param.new("itemID", "", "path")]),
+  Endpoint.new("/reader/login", "POST", [Param.new("Email", "", "form")]),
+  Endpoint.new("/reader/edit", "POST", [Param.new("a", "", "form")]),
   Endpoint.new("/healthcheck", "GET"),
-] + all_methods.map { |m| Endpoint.new("/fever/", m) } + all_methods.map { |m| Endpoint.new("/liveness", m) }
+  Endpoint.new("/login", "GET"),
+  Endpoint.new("/items/{id}/remove", "POST", [Param.new("id", "", "path")]),
+  Endpoint.new("/share/{code}", "GET", [Param.new("code", "", "path")]),
+  Endpoint.new("/static/{file}", "GET", [Param.new("file", "", "path")]),
+] + all_methods.flat_map { |m| [Endpoint.new("/fever/", m), Endpoint.new("/liveness", m), Endpoint.new("/", m)] }
 
 tester = FunctionalTester.new("fixtures/go/http_wrapped/", {
   :techs     => 1,
@@ -22,9 +28,9 @@ tester.perform_tests
 
 describe "net/http wrapped handlers", tags: "functional" do
   base = "./spec/functional_test/fixtures/go/http_wrapped"
+  find = ->(url : String, method : String) { tester.app.endpoints.find! { |ep| ep.url == url && ep.method == method } }
 
   it "resolves method values, bound factories and applied middleware to the definition" do
-    find = ->(url : String, method : String) { tester.app.endpoints.find! { |ep| ep.url == url && ep.method == method } }
     find.call("/v1/items", "POST").handler.should eq(Handler.new("handler.createItem", "#{base}/api/handlers.go", 11))
     find.call("/healthcheck", "GET").handler.should eq(Handler.new("newProbe()", "#{base}/server/health.go", 10))
     find.call("/fever/", "POST").handler.should eq(Handler.new("h.serve", "#{base}/fever/fever.go", 12))
