@@ -3,6 +3,7 @@ require "./file_scan_engine"
 require "../../miniparsers/rust_callee_extractor"
 require "../../miniparsers/rust_callee_extractor_ts"
 require "../../miniparsers/rust_struct_fields"
+require "../../miniparsers/rust_use_imports"
 require "../../ext/tree_sitter/tree_sitter"
 
 module Analyzer::Rust
@@ -659,6 +660,222 @@ module Analyzer::Rust
 
     private def struct_fields_in(file : String) : Hash(String, Array(String))
       @struct_fields_by_file[file] ||= Noir::RustStructFields.parse(read_file_content(file))
+    end
+
+    # ---- Cross-file item resolution -------------------------------------
+    #
+    # A route names its handler the way the routing file sees it:
+    # `.to(create_post)` after `use my_api::post::create::create_post;`,
+    # `.to(handlers::get_post)`, `.to(crate::api::list)`. These resolve that
+    # name through the file's `use` imports, `crate` / `self` / `super`,
+    # child modules (`foo.rs` / `foo/mod.rs`) and the scan's workspace crates
+    # (`[package]` / `[lib]` name in `Cargo.toml`) to the file that defines
+    # it, following `pub use` re-exports. A name that does not resolve to a
+    # definition in a scanned file resolves to nil, never to a guess.
+
+    @rust_rs_files : Hash(String, String)?
+    @rust_crate_roots : Tuple(Hash(String, String), Set(String))?
+    @rust_imports_by_file = {} of String => Noir::RustUseImports::Imports
+    @rust_resolve_mutex = Mutex.new
+
+    # `{file, fn name, line}` of the top-level fn `ref` names from `from_path`.
+    protected def resolve_rust_fn(ref : String, from_path : String) : Tuple(String, String, Int32)?
+      found = resolve_rust_item(ref, from_path) { |file, leaf| rust_imports(file).fns.has_key?(leaf) }
+      return unless found
+      file, leaf = found
+      {file, leaf, rust_imports(file).fns[leaf]}
+    end
+
+    # Wire field names of the struct `ref` names from `from_path`.
+    protected def resolve_rust_struct_fields(ref : String, from_path : String) : Array(String)?
+      found = resolve_rust_item(ref, from_path) { |file, leaf| struct_fields_of_file(file).has_key?(leaf) }
+      found ? struct_fields_of_file(found[0])[found[1]]? : nil
+    end
+
+    # Whether `from_path` brings `name` in with an explicit `use`. A type
+    # imported that way and still unresolved comes from outside the scan,
+    # so a same-named struct of the scan must not stand in for it.
+    protected def rust_imported?(name : String, from_path : String) : Bool
+      from = rust_rs_files[Noir::PathScope.expand(from_path)]? || return false
+      rust_imports(from).names.has_key?(name)
+    end
+
+    private def struct_fields_of_file(file : String) : Hash(String, Array(String))
+      cached = @struct_index_mutex.synchronize { @struct_fields_by_file[file]? }
+      return cached if cached
+      fields = Noir::RustStructFields.parse(read_file_content(file))
+      @struct_index_mutex.synchronize { @struct_fields_by_file[file] ||= fields }
+    end
+
+    # `{file, leaf}` where `defines` holds, or nil.
+    private def resolve_rust_item(ref : String, from_path : String, depth : Int32 = 0,
+                                  &defines : String, String -> Bool) : Tuple(String, String)?
+      return if depth > 4
+      from = rust_rs_files[Noir::PathScope.expand(from_path)]? || return
+      parts = ref.gsub(/\s+/, "").lchop("::").split("::").reject(&.empty?)
+      return if parts.empty?
+      imports = rust_imports(from)
+      if parts.size == 1
+        leaf = parts[0]
+        return {from, leaf} if defines.call(from, leaf)
+        if (full = imports.names[leaf]?) && full != leaf
+          return resolve_rust_path(full.split("::"), from, depth, &defines)
+        end
+        imports.globs.each do |glob|
+          if found = resolve_rust_path(glob.split("::") + [leaf], from, depth, &defines)
+            return found
+          end
+        end
+        return
+      end
+      if !RUST_PATH_ROOTS.includes?(parts[0]) && (full = imports.names[parts[0]]?)
+        parts = full.split("::") + parts[1..]
+      end
+      resolve_rust_path(parts, from, depth, &defines)
+    end
+
+    RUST_PATH_ROOTS = {"crate", "self", "super"}
+
+    private def resolve_rust_path(parts : Array(String), from : String, depth : Int32,
+                                  &defines : String, String -> Bool) : Tuple(String, String)?
+      return if parts.size < 2
+      rest = parts.dup
+      head = rest.shift
+      module_file = case head
+                    when "crate" then rust_crate_root_of(from)
+                    when "self"  then from
+                    when "super" then rust_parent_module(from)
+                    else              rust_child_module(from, head) || rust_crate_roots[0]["#{crate_scope_for(from)}\0#{head}"]?
+                    end
+      return unless module_file
+      while rest.first? == "super"
+        rest.shift
+        module_file = rust_parent_module(module_file) || return
+      end
+      leaf = rest.pop? || return
+      rest.each do |segment|
+        module_file = rust_child_module(module_file, segment) || return
+      end
+      return {module_file, leaf} if defines.call(module_file, leaf)
+
+      # `pub use x::leaf;` / `pub use x::*;` re-exports from that module.
+      imports = rust_imports(module_file)
+      if imports.pub_names.includes?(leaf) && (full = imports.names[leaf]?)
+        if found = resolve_rust_item(full, module_file, depth + 1, &defines)
+          return found
+        end
+      end
+      imports.pub_globs.each do |glob|
+        if found = resolve_rust_item("#{glob}::#{leaf}", module_file, depth + 1, &defines)
+          return found
+        end
+      end
+      nil
+    end
+
+    private def rust_imports(file : String) : Noir::RustUseImports::Imports
+      cached = @rust_resolve_mutex.synchronize { @rust_imports_by_file[file]? }
+      return cached if cached
+      imports = Noir::RustUseImports.parse(read_file_content(file))
+      @rust_resolve_mutex.synchronize { @rust_imports_by_file[file] ||= imports }
+    end
+
+    # Expanded path => scanned path of every `.rs` file in the scan.
+    private def rust_rs_files : Hash(String, String)
+      @rust_resolve_mutex.synchronize do
+        @rust_rs_files ||= get_files_by_extension(".rs").to_h { |f| {Noir::PathScope.expand(f), f} }
+      end
+    end
+
+    # The directory a module file's child modules live in: `src/` for a crate
+    # root or `mod.rs`, `src/foo/` for `src/foo.rs`.
+    private def rust_module_dir(file : String) : String
+      expanded = Noir::PathScope.expand(file)
+      base = File.basename(expanded, ".rs")
+      dir = File.dirname(expanded)
+      return dir if base == "mod" || rust_crate_root?(expanded)
+      File.join(dir, base)
+    end
+
+    private def rust_child_module(file : String, name : String) : String?
+      dir = rust_module_dir(file)
+      rust_rs_files[File.join(dir, "#{name}.rs")]? || rust_rs_files[File.join(dir, name, "mod.rs")]?
+    end
+
+    private def rust_parent_module(file : String) : String?
+      expanded = Noir::PathScope.expand(file)
+      return if rust_crate_root?(expanded)
+      dir = File.dirname(expanded)
+      dir = File.dirname(dir) if File.basename(expanded) == "mod.rs"
+      {File.join(dir, "mod.rs"), File.join(dir, "lib.rs"), File.join(dir, "main.rs"), "#{dir}.rs"}.each do |candidate|
+        next unless found = rust_rs_files[candidate]?
+        return found if rust_module_dir(found) == dir
+      end
+      nil
+    end
+
+    # `src/lib.rs`, `src/main.rs` or a manifest's `[lib] path`.
+    private def rust_crate_root?(expanded : String) : Bool
+      base = File.basename(expanded)
+      ((base == "lib.rs" || base == "main.rs") && File.basename(File.dirname(expanded)) == "src") ||
+        rust_crate_roots[1].includes?(expanded)
+    end
+
+    # The crate root of the crate holding `file`: `main.rs` for `main.rs`
+    # itself, else `lib.rs`, else `main.rs`.
+    private def rust_crate_root_of(file : String) : String?
+      expanded = Noir::PathScope.expand(file)
+      return rust_rs_files[expanded]? if File.basename(expanded) == "main.rs" && rust_crate_root?(expanded)
+      dir = File.dirname(expanded)
+      manifests = cargo_manifest_dirs
+      loop do
+        if manifests.has_key?(dir)
+          return rust_rs_files[File.join(dir, "src", "lib.rs")]? || rust_rs_files[File.join(dir, "src", "main.rs")]?
+        end
+        parent = File.dirname(dir)
+        return if parent == dir
+        dir = parent
+      end
+    end
+
+    CARGO_SECTION_RE = /^\s*\[([^\]]+)\]/
+    CARGO_KEY_RE     = /^\s*(name|path)\s*=\s*"([^"]+)"/
+
+    # `"<crate scope>\0<crate name>"` => crate root file for every scanned
+    # `Cargo.toml` (a crate is named by `[lib] name` and `[package] name`,
+    # `-` read as `_`), plus the set of those roots' expanded paths.
+    private def rust_crate_roots : Tuple(Hash(String, String), Set(String))
+      if cached = @rust_resolve_mutex.synchronize { @rust_crate_roots }
+        return cached
+      end
+      files = rust_rs_files
+      roots = {} of String => String
+      all_files.each do |manifest|
+        next unless File.basename(manifest) == "Cargo.toml"
+        content = read_file_content(manifest) rescue next
+        dir = Noir::PathScope.normalize_root(File.dirname(manifest))
+        section = ""
+        names = [] of String
+        lib_path = nil.as(String?)
+        content.each_line do |line|
+          if m = line.match(CARGO_SECTION_RE)
+            section = m[1].strip
+          elsif (m = line.match(CARGO_KEY_RE)) && (section == "package" || section == "lib")
+            if m[1] == "name"
+              names << m[2].gsub('-', '_')
+            elsif section == "lib"
+              lib_path = m[2]
+            end
+          end
+        end
+        root = lib_path.try { |p| files[Noir::PathScope.expand(File.join(dir, p))]? } ||
+               files[File.join(dir, "src", "lib.rs")]? || files[File.join(dir, "src", "main.rs")]?
+        next unless root
+        scope = crate_scope_for(manifest)
+        names.uniq.each { |name| roots["#{scope}\0#{name}"] ||= root }
+      end
+      result = {roots, roots.values.map { |f| Noir::PathScope.expand(f) }.to_set}
+      @rust_resolve_mutex.synchronize { @rust_crate_roots ||= result }
     end
 
     # Attach the 1-hop callees of `function`'s body to `endpoint`.

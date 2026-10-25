@@ -17,7 +17,7 @@ get_user = Endpoint.new("/users/{id}", "GET", [
 end
 
 create_user = Endpoint.new("/api/users", "POST", [
-  Param.new("body", "", "json"),
+  Param.new("id", "", "json"),
 ]).tap do |ep|
   ep.push_callee(Callee.new("UserService::create", line: 26))
   ep.push_callee(Callee.new("body.into_inner", line: 26))
@@ -50,7 +50,7 @@ multi_route_put = Endpoint.new("/multi-c", "PUT").tap do |ep|
 end
 
 external_create = Endpoint.new("/external", "POST", [
-  Param.new("body", "", "json"),
+  Param.new("id", "", "json"),
 ]).tap do |ep|
   ep.push_callee(Callee.new("ExternalService::create", line: 6))
   ep.push_callee(Callee.new("body.into_inner", line: 6))
