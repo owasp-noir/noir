@@ -119,7 +119,7 @@ module Analyzer::Rust
         # for the verb-less `web::resource("/p").to(handler)` form.
         if source.matches?(BUILDER_PASS_EVIDENCE_RE)
           scope_prefixes = collect_scope_prefixes(root, source, test_regions)
-          function_index = build_function_index(root, source)
+          function_index = free_function_index(root, source, test_regions)
           # Map each builder route back to the `.configure`d fn that encloses
           # it (only when there is at least one cross-file configure prefix).
           configure_ranges = configure_active? ? build_fn_ranges(root, source) : nil
@@ -915,34 +915,53 @@ module Analyzer::Rust
                                                source : String,
                                                path : String,
                                                include_callee : Bool) : Handler?
-      leaf = handler_name.split("::").last
-      fn = function_index[leaf]?
-      if fn && !handler_name.includes?("::")
-        extract_function_params(fn, source, endpoint, path)
-        attach_handler_callees(fn, source, path, endpoint) if include_callee
-        return rust_handler(fn, source, path)
-      end
-
-      # The handler lives in another module or crate: follow the name
-      # through this file's imports to its definition.
+      # Follow the name to its definition: a top-level fn of this file, or
+      # through this file's imports into another module or crate.
       if context = resolved_handler_context(handler_name, path, include_callee)
         context[:params].each { |param| endpoint.push_param(param) }
         attach_rust_callees(endpoint, context[:callees]) if include_callee
         return context[:handler]
       end
 
-      # Unresolved: borrow a same-leaf fn's params, but name no handler.
-      if fn
+      # A bare name nothing imports: a free fn of this file in a nested
+      # (inline `mod`) scope. Never an impl method or a test fn.
+      if !handler_name.includes?("::") && !rust_imported?(handler_name, path) && (fn = function_index[handler_name]?)
         extract_function_params(fn, source, endpoint, path)
         attach_handler_callees(fn, source, path, endpoint) if include_callee
-        return
+        return rust_handler(fn, source, path)
       end
 
-      entry = lookup_global_function(handler_name)
-      return unless entry
-      extract_function_params_from_text(entry[:params_text], endpoint, entry[:path])
-      attach_rust_callees(endpoint, entry[:callees]) if include_callee
+      # Unresolved: no handler, so no params read off a fn that may not be it.
+      if include_callee && (entry = lookup_global_function(handler_name))
+        attach_rust_callees(endpoint, entry[:callees])
+      end
       nil
+    end
+
+    # `name => function_item` of every free fn (not an impl / trait method,
+    # not nested in another fn, not under `#[cfg(test)]`), first one winning.
+    private def free_function_index(root : LibTreeSitter::TSNode, source : String,
+                                    test_regions : Array(Tuple(Int32, Int32))) : Hash(String, LibTreeSitter::TSNode)
+      index = {} of String => LibTreeSitter::TSNode
+      collect_free_functions(root, source, test_regions, index, 0)
+      index
+    end
+
+    private def collect_free_functions(node : LibTreeSitter::TSNode, source : String,
+                                       test_regions : Array(Tuple(Int32, Int32)),
+                                       index : Hash(String, LibTreeSitter::TSNode), depth : Int32)
+      return if depth > Noir::TreeSitter::MAX_AST_DEPTH
+      Noir::TreeSitter.each_named_child(node) do |child|
+        case Noir::TreeSitter.node_type(child)
+        when "function_item"
+          next if RustEngine.inside_test_region?(child, test_regions)
+          if name = Noir::TreeSitter.field(child, "name")
+            index[Noir::TreeSitter.node_text(name, source).lchop("r#")] ||= child
+          end
+        when "mod_item"
+          Noir::TreeSitter.field(child, "body").try { |body| collect_free_functions(body, source, test_regions, index, depth + 1) }
+        end
+      end
     end
 
     alias ResolvedHandlerContext = NamedTuple(handler: Handler, params: Array(Param), callees: Array(Noir::RustCalleeExtractor::Entry))

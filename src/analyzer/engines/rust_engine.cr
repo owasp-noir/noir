@@ -677,19 +677,24 @@ module Analyzer::Rust
     @rust_crate_roots : Tuple(Hash(String, String), Set(String))?
     @rust_imports_by_file = {} of String => Noir::RustUseImports::Imports
     @rust_resolve_mutex = Mutex.new
+    @rust_resolve_memo = {} of String => Tuple(String, String)?
+
+    enum RustItemKind
+      Fn
+      Struct
+    end
 
     # `{file, fn name, line}` of the top-level fn `ref` names from `from_path`.
     protected def resolve_rust_fn(ref : String, from_path : String) : Tuple(String, String, Int32)?
-      found = resolve_rust_item(ref, from_path) { |file, leaf| rust_imports(file).fns.has_key?(leaf) }
-      return unless found
+      found = resolve_rust_item(ref, from_path, RustItemKind::Fn) || return
       file, leaf = found
       {file, leaf, rust_imports(file).fns[leaf]}
     end
 
     # Wire field names of the struct `ref` names from `from_path`.
     protected def resolve_rust_struct_fields(ref : String, from_path : String) : Array(String)?
-      found = resolve_rust_item(ref, from_path) { |file, leaf| struct_fields_of_file(file).has_key?(leaf) }
-      found ? struct_fields_of_file(found[0])[found[1]]? : nil
+      found = resolve_rust_item(ref, from_path, RustItemKind::Struct) || return
+      struct_fields_of_file(found[0])[found[1]]?
     end
 
     # Whether `from_path` brings `name` in with an explicit `use`. A type
@@ -697,7 +702,8 @@ module Analyzer::Rust
     # so a same-named struct of the scan must not stand in for it.
     protected def rust_imported?(name : String, from_path : String) : Bool
       from = rust_rs_files[Noir::PathScope.expand(from_path)]? || return false
-      rust_imports(from).names.has_key?(name)
+      imports = rust_imports(from)
+      imports.names.has_key?(name) || imports.ambiguous.includes?(name)
     end
 
     private def struct_fields_of_file(file : String) : Hash(String, Array(String))
@@ -707,22 +713,40 @@ module Analyzer::Rust
       @struct_index_mutex.synchronize { @struct_fields_by_file[file] ||= fields }
     end
 
-    # `{file, leaf}` where `defines` holds, or nil.
-    private def resolve_rust_item(ref : String, from_path : String, depth : Int32 = 0,
-                                  &defines : String, String -> Bool) : Tuple(String, String)?
-      return if depth > 4
+    private def rust_defines?(kind : RustItemKind, file : String, leaf : String) : Bool
+      kind.fn? ? rust_imports(file).fns.has_key?(leaf) : struct_fields_of_file(file).has_key?(leaf)
+    end
+
+    # `{file, leaf}` of the item `ref` names from `from_path`, memoised per
+    # `(kind, file, ref)`.
+    private def resolve_rust_item(ref : String, from_path : String, kind : RustItemKind) : Tuple(String, String)?
       from = rust_rs_files[Noir::PathScope.expand(from_path)]? || return
-      parts = ref.gsub(/\s+/, "").lchop("::").split("::").reject(&.empty?)
+      key = "#{kind}\0#{from}\0#{ref}"
+      memo = @rust_resolve_mutex.synchronize { @rust_resolve_memo.has_key?(key) ? {@rust_resolve_memo[key]} : nil }
+      return memo[0] if memo
+      found = resolve_rust_ref(ref, from, kind, Set(String).new)
+      @rust_resolve_mutex.synchronize { @rust_resolve_memo[key] = found }
+      found
+    end
+
+    # Bound on the `(file, name)` steps one resolution may take; a cyclic
+    # re-export graph (`pub use super::*` both ways) visits each step once.
+    RUST_RESOLVE_MAX_STEPS = 512
+
+    private def resolve_rust_ref(ref : String, from : String, kind : RustItemKind,
+                                 visited : Set(String)) : Tuple(String, String)?
+      return unless visit?(visited, "#{from}\0#{ref}")
+      parts = ref.gsub(/\s+/, "").lchop("::").split("::").reject(&.empty?).map(&.lchop("r#"))
       return if parts.empty?
       imports = rust_imports(from)
       if parts.size == 1
         leaf = parts[0]
-        return {from, leaf} if defines.call(from, leaf)
+        return {from, leaf} if rust_defines?(kind, from, leaf)
         if (full = imports.names[leaf]?) && full != leaf
-          return resolve_rust_path(full.split("::"), from, depth, &defines)
+          return resolve_rust_path(full.split("::"), from, kind, visited)
         end
         imports.globs.each do |glob|
-          if found = resolve_rust_path(glob.split("::") + [leaf], from, depth, &defines)
+          if found = resolve_rust_path(glob.split("::") + [leaf], from, kind, visited)
             return found
           end
         end
@@ -731,13 +755,19 @@ module Analyzer::Rust
       if !RUST_PATH_ROOTS.includes?(parts[0]) && (full = imports.names[parts[0]]?)
         parts = full.split("::") + parts[1..]
       end
-      resolve_rust_path(parts, from, depth, &defines)
+      resolve_rust_path(parts, from, kind, visited)
+    end
+
+    private def visit?(visited : Set(String), key : String) : Bool
+      return false if visited.size >= RUST_RESOLVE_MAX_STEPS
+      visited.add?(key)
     end
 
     RUST_PATH_ROOTS = {"crate", "self", "super"}
 
-    private def resolve_rust_path(parts : Array(String), from : String, depth : Int32,
-                                  &defines : String, String -> Bool) : Tuple(String, String)?
+    private def resolve_rust_path(parts : Array(String), from : String, kind : RustItemKind,
+                                  visited : Set(String)) : Tuple(String, String)?
+      parts = parts.map(&.lchop("r#"))
       return if parts.size < 2
       rest = parts.dup
       head = rest.shift
@@ -756,17 +786,18 @@ module Analyzer::Rust
       rest.each do |segment|
         module_file = rust_child_module(module_file, segment) || return
       end
-      return {module_file, leaf} if defines.call(module_file, leaf)
+      return {module_file, leaf} if rust_defines?(kind, module_file, leaf)
+      return unless visit?(visited, "#{module_file}\0#{leaf}")
 
       # `pub use x::leaf;` / `pub use x::*;` re-exports from that module.
       imports = rust_imports(module_file)
       if imports.pub_names.includes?(leaf) && (full = imports.names[leaf]?)
-        if found = resolve_rust_item(full, module_file, depth + 1, &defines)
+        if found = resolve_rust_ref(full, module_file, kind, visited)
           return found
         end
       end
       imports.pub_globs.each do |glob|
-        if found = resolve_rust_item("#{glob}::#{leaf}", module_file, depth + 1, &defines)
+        if found = resolve_rust_ref("#{glob}::#{leaf}", module_file, kind, visited)
           return found
         end
       end
@@ -797,7 +828,12 @@ module Analyzer::Rust
       File.join(dir, base)
     end
 
+    # `#[path = "…"] mod name;` decides the file when present (relative to
+    # the declaring file's directory); else `name.rs` / `name/mod.rs`.
     private def rust_child_module(file : String, name : String) : String?
+      if path = rust_imports(file).mod_paths[name]?
+        return rust_rs_files[Noir::PathScope.expand(File.join(File.dirname(Noir::PathScope.expand(file)), path))]?
+      end
       dir = rust_module_dir(file)
       rust_rs_files[File.join(dir, "#{name}.rs")]? || rust_rs_files[File.join(dir, name, "mod.rs")]?
     end
@@ -821,8 +857,9 @@ module Analyzer::Rust
         rust_crate_roots[1].includes?(expanded)
     end
 
-    # The crate root of the crate holding `file`: `main.rs` for `main.rs`
-    # itself, else `lib.rs`, else `main.rs`.
+    # The crate root `crate::` means in `file`: `main.rs` for `main.rs`
+    # itself and for modules only `main.rs` declares, else `lib.rs`, else
+    # `main.rs`.
     private def rust_crate_root_of(file : String) : String?
       expanded = Noir::PathScope.expand(file)
       return rust_rs_files[expanded]? if File.basename(expanded) == "main.rs" && rust_crate_root?(expanded)
@@ -830,7 +867,14 @@ module Analyzer::Rust
       manifests = cargo_manifest_dirs
       loop do
         if manifests.has_key?(dir)
-          return rust_rs_files[File.join(dir, "src", "lib.rs")]? || rust_rs_files[File.join(dir, "src", "main.rs")]?
+          src = File.join(dir, "src")
+          lib_root = rust_rs_files[File.join(src, "lib.rs")]?
+          main_root = rust_rs_files[File.join(src, "main.rs")]?
+          if lib_root && main_root && expanded.starts_with?("#{src}/")
+            top = expanded[(src.size + 1)..].split('/').first.rchop(".rs")
+            return main_root if rust_imports(main_root).mods.includes?(top) && !rust_imports(lib_root).mods.includes?(top)
+          end
+          return lib_root || main_root
         end
         parent = File.dirname(dir)
         return if parent == dir
