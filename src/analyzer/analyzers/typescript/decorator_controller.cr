@@ -42,7 +42,10 @@ module Analyzer::Typescript
       content.matches?({{ "#{@type}::IMPORT_RE".id }})
     end
 
-    private def extract_decorator_parameters(method_params : String, endpoint : Endpoint)
+    # Nest's DTO fields are not read here: each framework names its own
+    # whole-object decorators (`@QueryParams`, `@BodyParams`).
+    private def extract_decorator_parameters(method_params : String, endpoint : Endpoint,
+                                             _dto_fields : Hash(String, Array(String)) = {} of String => Array(String))
       method_params.scan({{ "#{@type}::PARAM_RE".id }}) do |match|
         type, fallback = {{ "#{@type}::PARAMS".id }}[match[1]]
         name = match[3]? || fallback || match[4]?

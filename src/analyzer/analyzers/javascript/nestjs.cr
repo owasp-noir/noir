@@ -2,6 +2,7 @@ require "../../engines/javascript_engine"
 require "../../../miniparsers/import_graph"
 require "../../../miniparsers/js_callee_extractor"
 require "../../../miniparsers/js_route_extractor"
+require "../../../miniparsers/ts_class_fields"
 require "../../../utils/top_level_split"
 
 module Analyzer::Javascript
@@ -19,7 +20,11 @@ module Analyzer::Javascript
     # `app.enableVersioning({...})`: whether the version is a URL segment
     # (URI, the default) or read from the request (HEADER, MEDIA_TYPE,
     # CUSTOM), plus the raw `defaultVersion` and version-header expressions.
-    private record VersioningConfig, uri : Bool, default_version : String?, header : String?
+    # `defaults` is `defaultVersion` read as literal versions (what a
+    # controller with no version of its own serves under URI versioning) and
+    # `prefix` the URI segment's lead (`v` unless `prefix:` says otherwise).
+    private record VersioningConfig, uri : Bool, default_version : String?, header : String?,
+      defaults : Array(String) = [] of String, prefix : String = "v"
 
     # Name of the `route_conditions` entry that carries a route's raw version
     # list from the per-file scan to `separate_header_versions`.
@@ -29,11 +34,26 @@ module Analyzer::Javascript
     # Read before the parallel scan: the type decides each route's URL.
     @nest_versioning = [] of Tuple(String, VersioningConfig)
     @nest_app_roots : Array(String)? = nil
+    # Every file that starts an HTTP app (`NestFactory.create(...)`): within
+    # one project root, each config belongs to the app nearest its file.
+    @nest_bootstraps = [] of String
+    # File => the URI version segments (`v1`) its routes were given, so a
+    # `setGlobalPrefix` exclude can match the route without its version.
+    @nest_version_segments = {} of String => Set(String)
+    @nest_version_mutex = Mutex.new
 
     # Project-wide `EnumName.Member` / `Object.prop` -> value map, used to
     # resolve `@Controller(...)` prefix constants imported from another
     # file. nil until `analyze_with_extensions` seeds it.
     @nest_global_literals : Hash(String, Array(String))? = nil
+
+    # DTO declarations, read lazily while routes are scanned: each file's
+    # classes/interfaces, and every declared type name => the files
+    # declaring it. Guarded by `@nest_dto_mutex` (lookups run in the scan's
+    # fibers); the mutex only wraps cache reads and writes.
+    @nest_decls_by_file = {} of String => Hash(String, Noir::TsClassFields::Decl)
+    @nest_decl_index : Hash(String, Array(String))? = nil
+    @nest_dto_mutex = Mutex.new
 
     # Extensions worth scanning for cross-file enum/object constants —
     # the enum may live in a `.ts` file even when the route-scan pass only
@@ -65,42 +85,135 @@ module Analyzer::Javascript
       acc
     end
 
+    NEST_BOOTSTRAP_CALL = /\bNestFactory\s*\.\s*create\s*[<(]/
+
+    # Every `enableVersioning` in the scan, and (into `@nest_bootstraps`)
+    # every file that bootstraps an HTTP app.
     private def collect_versioning_configs : Array(Tuple(String, VersioningConfig))
       configs = [] of Tuple(String, VersioningConfig)
+      bootstraps = [] of String
       all_files.each do |path|
         next unless GLOBAL_LITERAL_EXTENSIONS.any? { |ext| path.ends_with?(ext) }
         next if ignored_nest_path?(path)
         content = read_file_content(path)
-        next unless content.includes?("enableVersioning")
+        versioning = content.includes?("enableVersioning")
+        next unless versioning || content.includes?("NestFactory")
         code = Noir::JSRouteExtractor.strip_js_comments(content)
+        bootstraps << path if code.matches?(NEST_BOOTSTRAP_CALL)
+        next unless versioning
+        literal_values = nil
         code.scan(/\.enableVersioning\s*\(/) do |match|
           open_paren = match.end(0) - 1
           next unless close_paren = Noir::JSRouteExtractor.find_matching_paren(code, open_paren)
-          configs << {path, parse_versioning_options(code[(open_paren + 1)...close_paren])}
+          literal_values ||= file_literal_values(code)
+          configs << {path, parse_versioning_options(code[(open_paren + 1)...close_paren], literal_values)}
         end
       rescue
         next
       end
+      @nest_bootstraps = bootstraps.sort!
       configs.sort_by!(&.[0])
+    end
+
+    # `extract_literal_values` backed by the cross-file enum/object table.
+    private def file_literal_values(code : String) : Hash(String, Array(String))
+      values = extract_literal_values(code)
+      @nest_global_literals.try &.each { |key, value| values[key] = value unless values.has_key?(key) }
+      values
     end
 
     # `enableVersioning()` defaults to URI. A CUSTOM extractor's header is
     # the `headers[...]` key it reads.
-    private def parse_versioning_options(args : String) : VersioningConfig
+    private def parse_versioning_options(args : String, literal_values : Hash(String, Array(String))) : VersioningConfig
       type = args.match(/\btype\s*:\s*VersioningType\.(\w+)/).try(&.[1]) || "URI"
       default_version = args.match(/\bdefaultVersion\s*:\s*(\[[^\]]*\]|[^,\n}]+)/).try(&.[1].strip)
       header = args.match(/\bheader\s*:\s*([^,\n}]+)/) || args.match(/\bheaders\s*\[\s*([^\]]+?)\s*\]/)
-      VersioningConfig.new(type == "URI", default_version, header.try(&.[1].strip))
+      VersioningConfig.new(type == "URI", default_version, header.try(&.[1].strip),
+        default_version.try { |expr| literal_versions(expr, literal_values) } || [] of String, versioning_prefix(args))
     end
 
-    # The `enableVersioning` governing `path`: the only one, else the one of
-    # its app. Nil (no bootstrap seen) keeps the URI reading.
+    # `defaultVersion: '1'` / `['1', '2']` / `VERSION_NEUTRAL` /
+    # `API_VERSION` (a constant of the bootstrap's file or an imported enum
+    # member): the literal versions. An identifier this scan cannot see the
+    # value of is dropped rather than rendered as `v<IDENT>`.
+    private def literal_versions(expr : String, literal_values : Hash(String, Array(String))) : Array(String)
+      versions = [] of String
+      expr.scan(/(['"`])([^'"`]+)\1|\b(VERSION_NEUTRAL|\d[\w.]*)\b|([A-Za-z_$][\w$.]*)/) do |match|
+        values = match[4]? ? (literal_values[match[4]]? || [] of String) : [match[2]? || match[3]]
+        values.each { |version| versions << version unless versions.includes?(version) }
+      end
+      versions
+    end
+
+    # `prefix: 'v'` (the default), `prefix: false` (bare version), or a
+    # template whose interpolations are a deployment context path
+    # (`${CONTEXT_PATH}v`): those resolve from the environment, empty unless
+    # configured, so only the literal text is kept.
+    private def versioning_prefix(args : String) : String
+      match = args.match(/\bprefix\s*:\s*(false\b|(['"`])([^'"`]*)\2)/)
+      return "v" unless match
+      return "" if match[1] == "false"
+      match[3].gsub(/\$\{[^}]*\}/, "")
+    end
+
+    # The `enableVersioning` governing `path`: the one of its app (see
+    # `app_config_for`). Nil (no bootstrap seen, or another app's) keeps the
+    # URI reading with no default version: one app's `defaultVersion` does
+    # not move a sibling app's controllers.
     private def versioning_for(path : String) : VersioningConfig?
-      configs = @nest_versioning
-      return configs.first?.try(&.[1]) if configs.size <= 1
-      roots = @nest_app_roots || [] of String
+      app_config_for(path, @nest_versioning)
+    end
+
+    # The config of `entries` (`{file it was read from, config}`) that governs
+    # `path`. Within `path`'s project root the anchors are the app bootstraps
+    # and the config files; the ones sharing the most directories with `path`
+    # are its app, and their config counts only when they agree on one. A
+    # lone config outside every root governs the whole scan.
+    private def app_config_for(path : String, entries : Array(Tuple(String, T))) : T? forall T
+      return if entries.empty?
+      roots = nest_app_roots
       root = nest_app_root_for(path, roots)
-      configs.find { |(bootstrap, _)| nest_app_root_for(bootstrap, roots) == root }.try(&.[1])
+      anchors = (@nest_bootstraps + entries.map(&.[0])).uniq!.select { |anchor| nest_app_root_for(anchor, roots) == root }
+      if anchors.empty?
+        values = entries.map(&.[1]).uniq!
+        return values.first if values.size == 1 && entries.all? { |(file, _)| nest_app_root_for(file, roots).empty? }
+        return
+      end
+      best = anchors.max_of { |anchor| shared_dir_depth(anchor, path) }
+      nearest = anchors.select { |anchor| shared_dir_depth(anchor, path) == best }
+      found = entries.select { |(file, _)| nearest.includes?(file) }.map(&.[1]).uniq!
+      found.size == 1 ? found.first : nil
+    end
+
+    # How many leading directories `a` and `b` share.
+    private def shared_dir_depth(a : String, b : String) : Int32
+      dirs_a = File.dirname(a).split('/')
+      dirs_b = File.dirname(b).split('/')
+      depth = 0
+      while depth < dirs_a.size && depth < dirs_b.size && dirs_a[depth] == dirs_b[depth]
+        depth += 1
+      end
+      depth
+    end
+
+    # Nest's own markers plus Nx application projects (`project.json` with
+    # `"projectType": "application"`, often with no package.json of its own),
+    # and each `-b` base when several are given.
+    private def nest_app_roots : Array(String)
+      @nest_app_roots ||= begin
+        roots = discover_js_project_roots(app_root_markers, NEST_CONFIG_BASENAMES)
+        all_files.each do |file|
+          next unless File.basename(file) == "project.json"
+          next unless read_file_content(file).matches?(/"projectType"\s*:\s*"application"/)
+          add_project_root(roots, File.dirname(file))
+        rescue
+          next
+        end
+        if @normalized_base_paths.size > 1
+          @normalized_base_paths.each { |(_, base)| roots << base unless roots.includes?(base) }
+        end
+        roots
+      end
     end
 
     # Header-style versioning leaves the URL alone, so controllers of
@@ -195,7 +308,6 @@ module Analyzer::Javascript
       # in `src/enum.ts`). Built once, single-fiber, then read-only.
       @nest_global_literals = collect_global_literal_values
       @nest_versioning = collect_versioning_configs
-      @nest_app_roots = discover_js_project_roots(app_root_markers, NEST_CONFIG_BASENAMES) if @nest_versioning.size > 1
 
       parallel_file_scan(extensions) do |path|
         next if ignored_nest_path?(path)
@@ -259,11 +371,7 @@ module Analyzer::Javascript
       # Sort before anything picks a winner: the collection order is fiber
       # completion order, which is not stable across runs.
       sorted = entries.sort_by { |(path, _)| path }
-      roots = discover_js_project_roots(app_root_markers, NEST_CONFIG_BASENAMES)
-      # Separate `-b` bases are separate apps even without a marker.
-      if @normalized_base_paths.size > 1
-        @normalized_base_paths.each { |(_, base)| roots << base unless roots.includes?(base) }
-      end
+      roots = nest_app_roots
 
       by_root = {} of String => GlobalPrefixConfig
       sorted.each do |(path, config)|
@@ -276,7 +384,11 @@ module Analyzer::Javascript
       # for endpoints that carry no source file such as static-directory ones.
       # A single config inside one of several discovered apps is not that
       # case: it governs its own app only, not the apps that set no prefix.
-      if by_root.size <= 1 && (roots.size <= 1 || by_root.has_key?(""))
+      # A second app bootstrapped beside it (an Nx or plain `apps/*` layout
+      # under one package.json) is not that case either.
+      config_files = sorted.map(&.[0])
+      if by_root.size <= 1 && (roots.size <= 1 || by_root.has_key?("")) &&
+         @nest_bootstraps.all? { |file| config_files.includes?(file) }
         apply_global_prefix(result, sorted.first[1])
         return
       end
@@ -284,7 +396,7 @@ module Analyzer::Javascript
       result.each_with_index do |endpoint, idx|
         file = endpoint.details.code_paths.first?.try(&.path)
         next if file.nil?
-        config = by_root[nest_app_root_for(file, roots)]?
+        config = app_config_for(file, sorted)
         next if config.nil?
         prefixed = prefix_endpoint(endpoint, config)
         result[idx] = prefixed if prefixed
@@ -343,10 +455,22 @@ module Analyzer::Javascript
       normalized.empty? ? nil : normalized
     end
 
+    # Nest matches an exclude against the route without its URI version:
+    # `exclude: ['health']` keeps `/v1/health` out of the prefix.
     private def global_prefix_excluded?(endpoint : Endpoint, excludes : Array(GlobalPrefixExclude)) : Bool
+      urls = [endpoint.url]
+      file = endpoint.details.code_paths.first?.try(&.path)
+      segments = file && @nest_version_mutex.synchronize { @nest_version_segments[file]? }
+      if segments
+        segments.each do |segment|
+          # Routes are still relative here (`v1/health`).
+          url = endpoint.url.lchop('/')
+          urls << (url[segment.size..].presence || "/") if url == segment || url.starts_with?("#{segment}/")
+        end
+      end
       excludes.any? do |exclude|
         next false if exclude.method && exclude.method != "ALL" && exclude.method != endpoint.method
-        exclude_path_matches?(endpoint.url, exclude.path)
+        urls.any? { |url| exclude_path_matches?(url, exclude.path) }
       end
     end
 
@@ -619,20 +743,21 @@ module Analyzer::Javascript
       # `enableVersioning` is in the scan) prepends `v<n>`:
       # `@Controller({ path: 'cats', version: '1' })` serves `/v1/cats`.
       # HEADER, MEDIA_TYPE and CUSTOM versioning leave the URL untouched.
-      uri_versioning = versioning_for(path).try(&.uri) != false
+      versioning = versioning_for(path)
+      uri_versioning = versioning.try(&.uri) != false
 
       controllers.each do |controller_info|
-        process_http_methods(controller_info[:content], controller_info[:base_paths], controller_info[:versions], uri_versioning, path, result, include_callee, controller_info[:start_line], literal_values, controller_info[:class_name])
+        process_http_methods(controller_info[:content], controller_info[:base_paths], controller_info[:versions], uri_versioning, versioning, path, result, include_callee, controller_info[:start_line], literal_values, controller_info[:class_name])
       end
     end
 
     # Combine the controller's base paths with each version into a
     # set of `v<version>/<base>` paths. `'VERSION_NEUTRAL'` (Nest's
     # sentinel) is rendered as no prefix.
-    private def expand_versions(base_paths : Array(String), versions : Array(String), literal_values : Hash(String, Array(String))) : Array(String)
+    private def expand_versions(base_paths : Array(String), versions : Array(String), literal_values : Hash(String, Array(String)), version_prefix : String = "v") : Array(String)
       expanded = [] of String
       versions.each do |v|
-        prefix = v == "VERSION_NEUTRAL" ? "" : "v#{literal_values[v]?.try(&.first?) || v}"
+        prefix = v == "VERSION_NEUTRAL" ? "" : "#{version_prefix}#{literal_values[v]?.try(&.first?) || v}"
         base_paths.each do |bp|
           if prefix.empty?
             expanded << bp
@@ -893,7 +1018,7 @@ module Analyzer::Javascript
       Noir::TopLevelSplit.split(text, delimiter, Noir::TopLevelSplit::Rules::JS)
     end
 
-    private def process_http_methods(class_content : String, base_paths : Array(String), controller_versions : Array(String), uri_versioning : Bool, file_path : String, result : Array(Endpoint), include_callee : Bool, controller_start_line : Int32, literal_values : Hash(String, Array(String)), class_name : String)
+    private def process_http_methods(class_content : String, base_paths : Array(String), controller_versions : Array(String), uri_versioning : Bool, versioning : VersioningConfig?, file_path : String, result : Array(Endpoint), include_callee : Bool, controller_start_line : Int32, literal_values : Hash(String, Array(String)), class_name : String)
       method_map = route_decorator_methods
 
       # Materialised once per class: the back-walk and line count below index
@@ -943,7 +1068,12 @@ module Analyzer::Javascript
         # controller's.
         versions = parse_method_versions(decorator_block)
         versions = controller_versions if versions.empty?
-        effective_base_paths = uri_versioning && !versions.empty? ? expand_versions(base_paths, versions, literal_values) : base_paths
+        # Under URI versioning a route with no version of its own serves
+        # `defaultVersion` (`/v1/auth/login` for `@Controller('auth')`).
+        effective_versions = versions.empty? && uri_versioning && versioning ? versioning.defaults : versions
+        version_prefix = versioning.try(&.prefix) || "v"
+        effective_base_paths = uri_versioning && !effective_versions.empty? ? expand_versions(base_paths, effective_versions, literal_values, version_prefix) : base_paths
+        record_version_segments(file_path, effective_versions, literal_values, version_prefix) if uri_versioning
 
         # Resolve the decorator's line number inside the original
         # file: count newlines from the previous decorator (they arrive in
@@ -954,6 +1084,7 @@ module Analyzer::Javascript
         end
         decorator_line = controller_start_line + line_count
         callees = include_callee ? method_callees(class_content, signature, file_path, controller_start_line, chars, line_pos, line_count) : nil
+        dto_fields = dto_params(signature[:params], file_path)
         handler = Handler.new("#{class_name}.#{signature[:name]}", file_path, method_declaration_line(chars, signature[:start_pos], line_pos, decorator_line))
 
         effective_base_paths.each do |base_path|
@@ -966,7 +1097,7 @@ module Analyzer::Javascript
               endpoint.route_conditions = [Param.new(VERSION_CONDITION, versions.join(","), "header")] unless uri_versioning || versions.empty?
 
               extract_path_parameters(full_path, endpoint)
-              extract_decorator_parameters(signature[:params], endpoint)
+              extract_decorator_parameters(signature[:params], endpoint, dto_fields)
               extract_interceptor_parameters(decorator_block, endpoint)
               extract_request_object_params(class_content, signature, endpoint)
               callees.try &.each do |name, callee_path, line|
@@ -977,6 +1108,17 @@ module Analyzer::Javascript
             end
           end
         end
+      end
+    end
+
+    private def record_version_segments(file_path : String, versions : Array(String), literal_values : Hash(String, Array(String)), version_prefix : String)
+      segments = versions.compact_map do |version|
+        "#{version_prefix}#{literal_values[version]?.try(&.first?) || version}" unless version == "VERSION_NEUTRAL"
+      end
+      return if segments.empty?
+      @nest_version_mutex.synchronize do
+        set = @nest_version_segments[file_path] ||= Set(String).new
+        segments.each { |segment| set << segment }
       end
     end
 
@@ -1078,13 +1220,20 @@ module Analyzer::Javascript
       extract_decorator_parameters(signature[:params], endpoint) if signature
     end
 
-    private def extract_decorator_parameters(method_params : String, endpoint : Endpoint)
+    private def extract_decorator_parameters(method_params : String, endpoint : Endpoint,
+                                             dto_fields : Hash(String, Array(String)) = {} of String => Array(String))
+      # A whole-object `@Query()` / `@Body()` typed with a DTO is the DTO's
+      # fields; one whose type does not resolve stays a single generic param.
+      dto_fields.each do |param_type, names|
+        names.each { |name| endpoint.push_param(Param.new(name, "", param_type)) }
+      end
+
       # Extract @Query parameters
       method_params.scan(/@Query\s*\(\s*['"`]([^'"`]+)['"`][\s\S]*?\)/) do |param_match|
         param_name = param_match[1]
         endpoint.push_param(Param.new(param_name, "", "query"))
       end
-      if method_params =~ /@Query\s*\(\s*+(?:\)|[^'"`][\s\S]*?\))/
+      if !dto_fields.has_key?("query") && method_params =~ /@Query\s*\(\s*+(?:\)|[^'"`][\s\S]*?\))/
         endpoint.push_param(Param.new("query", "", "query"))
       end
 
@@ -1099,7 +1248,7 @@ module Analyzer::Javascript
         endpoint.push_param(Param.new(body_match[1], "", "body"))
       end
 
-      if method_params =~ /@Body\s*\(\s*+(?:\)|[^'"`][\s\S]*?\))/
+      if !dto_fields.has_key?("body") && method_params =~ /@Body\s*\(\s*+(?:\)|[^'"`][\s\S]*?\))/
         endpoint.push_param(Param.new("body", "", "body"))
       end
 
@@ -1133,6 +1282,156 @@ module Analyzer::Javascript
       end
       if method_params =~ /@UploadedFiles\s*\(\s*\)/
         endpoint.push_param(Param.new("files", "", "body"))
+      end
+    end
+
+    DTO_PARAM_TYPES = {"Body" => "body", "Query" => "query"}
+    DTO_PARAM_HEAD  = /@(Body|Query)\s*\(/
+    DTO_PARAM_TAIL  = /\A\s*(?:@[\w$.]+\s*(?:\([^)]*\))?\s*)*(?:readonly\s+)?[A-Za-z_$][\w$]*\s*[?!]?\s*:\s*([\s\S]+?)\s*\z/
+    DTO_TYPE_NAME   = /\A([A-Za-z_$][\w$]*)(?:\.[A-Za-z_$][\w$]*)*\s*(?:<[\s\S]*>)?\z/
+    DTO_DECL_NAME   = /\b(?:class|interface)\s+([A-Za-z_$][\w$]*)/
+    DTO_DEPTH_LIMIT = 6
+
+    # Param type => field names, for every whole-object `@Body()` /
+    # `@Query()` whose declared type resolves to fields: an inline object
+    # type, or a class/interface declared in the scan, with the fields it
+    # inherits (`extends Base`, `PickType(Base, [...])`, ...).
+    private def dto_params(method_params : String, file_path : String) : Hash(String, Array(String))
+      result = {} of String => Array(String)
+      return result unless method_params.matches?(DTO_PARAM_HEAD)
+      split_top_level(method_params, ',').each do |param|
+        head = param.match(DTO_PARAM_HEAD) || next
+        close = Noir::JSRouteExtractor.find_matching_paren(param, head.end(0) - 1) || next
+        # `@Body('field')` names one field; it is read elsewhere.
+        next if param[head.end(0)...close].strip.matches?(/\A['"`]/)
+        type = param[(close + 1)..].match(DTO_PARAM_TAIL).try(&.[1]) || next
+        fields = type_fields(type, file_path, 0)
+        next if fields.empty?
+        names = result[DTO_PARAM_TYPES[head[1]]] ||= [] of String
+        fields.each { |name| names << name unless names.includes?(name) }
+      end
+      result
+    end
+
+    private def type_fields(type : String, from_path : String, depth : Int32) : Array(String)
+      text = type.strip
+      return Noir::TsClassFields.object_type_fields(text) if text.starts_with?('{')
+      name = text.match(DTO_TYPE_NAME).try { text.split('<').first.split('.').last.strip } || return [] of String
+      named_type_fields(name, from_path, depth)
+    end
+
+    private def named_type_fields(name : String, from_path : String, depth : Int32) : Array(String)
+      return [] of String if depth > DTO_DEPTH_LIMIT
+      decl, decl_path = find_type_decl(name, from_path) || return [] of String
+      fields = decl.fields.dup
+      decl.bases.each do |base|
+        inherited = named_type_fields(base.name, decl_path, depth + 1)
+        if pick = base.pick
+          inherited = inherited.select { |field| pick.includes?(field) }
+        end
+        inherited.each { |field| fields << field unless fields.includes?(field) || base.omit.includes?(field) }
+      end
+      fields
+    end
+
+    NAMED_IMPORT   = /\bimport\s+(?:type\s+)?\{([^}]*)\}\s*from\s*['"]([^'"]+)['"]/
+    STAR_REEXPORT  = /\bexport\s+\*\s+from\s*['"](\.[^'"]+)['"]/
+    NAMED_REEXPORT = /\bexport\s+(?:type\s+)?\{([^}]*)\}\s*from\s*['"](\.[^'"]+)['"]/
+
+    # The declaration of `name` visible from `from_path`: its own file's,
+    # else the one its import resolves to (relative specifiers, through
+    # `export *` / `export { }` barrels), else the scanned file declaring it
+    # that shares the most directories with `from_path`. Two equally near
+    # declarations are ambiguous: nil, so the caller keeps the generic param.
+    # ponytail: package and tsconfig-path specifiers fall to the nearest
+    # declaration; resolving them through tsconfig `paths` is the upgrade.
+    private def find_type_decl(name : String, from_path : String) : Tuple(Noir::TsClassFields::Decl, String)?
+      if decl = type_decls(from_path)[name]?
+        return {decl, from_path}
+      end
+      if found = imported_type_decl(name, from_path)
+        return found
+      end
+      candidates = (type_decl_index[name]? || return).reject(from_path).select { |path| type_decls(path).has_key?(name) }
+      return if candidates.empty?
+      best = candidates.max_of { |path| shared_dir_depth(path, from_path) }
+      nearest = candidates.select { |path| shared_dir_depth(path, from_path) == best }
+      {type_decls(nearest[0])[name], nearest[0]} if nearest.size == 1
+    end
+
+    private def imported_type_decl(name : String, from_path : String) : Tuple(Noir::TsClassFields::Decl, String)?
+      read_file_content(from_path).scan(NAMED_IMPORT) do |imp|
+        declared = imported_name(imp[1], name) || next
+        return unless imp[2].starts_with?('.')
+        target = Noir::ImportGraph.resolve_relative_import(from_path, imp[2], boundary: import_boundary_for(from_path)) || return
+        return exported_type_decl(declared, target, 0)
+      end
+      nil
+    rescue
+      nil
+    end
+
+    # `name` as declared in `file` or re-exported by it from a relative module.
+    private def exported_type_decl(name : String, file : String, depth : Int32) : Tuple(Noir::TsClassFields::Decl, String)?
+      if decl = type_decls(file)[name]?
+        return {decl, file}
+      end
+      return if depth >= 4
+      content = read_file_content(file)
+      content.scan(NAMED_REEXPORT) do |m|
+        declared = imported_name(m[1], name) || next
+        target = Noir::ImportGraph.resolve_relative_import(file, m[2], boundary: import_boundary_for(file)) || next
+        return exported_type_decl(declared, target, depth + 1)
+      end
+      content.scan(STAR_REEXPORT) do |m|
+        target = Noir::ImportGraph.resolve_relative_import(file, m[1], boundary: import_boundary_for(file)) || next
+        if found = exported_type_decl(name, target, depth + 1)
+          return found
+        end
+      end
+      nil
+    rescue
+      nil
+    end
+
+    # The exported name behind local `name` in an `{ A, B as name }` list.
+    private def imported_name(list : String, name : String) : String?
+      list.split(',').each do |spec|
+        declared, _, local = spec.strip.lchop("type ").partition(/\s+as\s+/)
+        return declared.strip if (local.presence || declared).strip == name
+      end
+      nil
+    end
+
+    private def type_decls(path : String) : Hash(String, Noir::TsClassFields::Decl)
+      cached = @nest_dto_mutex.synchronize { @nest_decls_by_file[path]? }
+      return cached if cached
+      decls = begin
+        Noir::TsClassFields.declarations(Noir::JSRouteExtractor.strip_js_comments(read_file_content(path)))
+      rescue
+        {} of String => Noir::TsClassFields::Decl
+      end
+      @nest_dto_mutex.synchronize { @nest_decls_by_file[path] = decls }
+    end
+
+    private def type_decl_index : Hash(String, Array(String))
+      @nest_dto_mutex.synchronize do
+        @nest_decl_index ||= begin
+          index = {} of String => Array(String)
+          all_files.each do |path|
+            next unless GLOBAL_LITERAL_EXTENSIONS.any? { |ext| path.ends_with?(ext) }
+            next if ignored_nest_path?(path)
+            content = read_file_content(path)
+            next unless content.includes?("class ") || content.includes?("interface ")
+            content.scan(DTO_DECL_NAME) do |m|
+              paths = index[m[1]] ||= [] of String
+              paths << path unless paths.includes?(path)
+            end
+          rescue
+            next
+          end
+          index
+        end
       end
     end
 

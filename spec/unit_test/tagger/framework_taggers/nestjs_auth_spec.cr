@@ -452,4 +452,220 @@ describe "NestjsAuthTagger" do
       CodeLocator.instance.clear_all
     end
   end
+
+  it "reads a project decorator that bundles UseGuards by the guards' definitions" do
+    CodeLocator.instance.clear_all
+    tmpdir = File.tempname("nest_guard_decorator")
+    files = {
+      "package.json"           => "{}",
+      "src/user-auth.guard.ts" => "export class UserAuthGuard extends AuthGuard([\"jwt\", \"apikey\"]) {}\n",
+      "src/api-key.guard.ts"   => <<-TS,
+        export class ApiKeyGuard implements CanActivate {
+          canActivate(context: ExecutionContext) {
+            if (!context.switchToHttp().getRequest().headers["x-api-key"]) throw new UnauthorizedException();
+            return true;
+          }
+        }
+        export class LogsGuard implements CanActivate {
+          canActivate() { return true; }
+        }
+        TS
+      "src/auth.decorator.ts" => <<-TS,
+        export function RequireAuthentication() {
+          if (enterprise()) {
+            return EnterpriseAuth();
+          }
+          return applyDecorators(UseGuards(UserAuthGuard), ApiBearerAuth());
+        }
+        export const RequireKey = () => applyDecorators(UseGuards(ApiKeyGuard));
+        export const Logged = () => applyDecorators(UseGuards(LogsGuard), ApiTags("x"));
+        TS
+      "src/items.controller.ts" => <<-TS,
+        @Controller("items")
+        export class ItemsController {
+          @Post("/login")
+          login() {}
+
+          @Post("/switch")
+          @RequireAuthentication()
+          switch() {}
+
+          @Get("/key")
+          @RequireKey()
+          key() {}
+
+          @Get("/logged")
+          @Logged()
+          logged() {}
+        }
+
+        @RequireAuthentication()
+        @Controller("events")
+        export class EventsController {
+          @Delete("/:id")
+          remove() {}
+        }
+        TS
+    }
+    files.each do |rel, body|
+      path = File.join(tmpdir, rel)
+      Dir.mkdir_p(File.dirname(path))
+      File.write(path, body)
+      CodeLocator.instance.register_path(path)
+    end
+
+    begin
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(tmpdir)
+      controller = File.join(tmpdir, "src/items.controller.ts")
+      endpoints = {"login" => 4, "switch" => 8, "key" => 12, "logged" => 16, "remove" => 23}.transform_values do |line|
+        details = Details.new(PathInfo.new(controller, line))
+        details.technology = "ts_nestjs"
+        Endpoint.new("/x", "GET", [] of Param, details)
+      end
+
+      NestjsAuthTagger.new(noir_options).perform(endpoints.values)
+      tags = endpoints.transform_values(&.tags.map { |tag| "#{tag.name}: #{tag.description}" })
+
+      tags["login"].should be_empty
+      tags["switch"].should eq(["auth: Protected by NestJS @RequireAuthentication() (applies UseGuards(UserAuthGuard))"])
+      # No `Auth` in the name: its `canActivate` throws Unauthorized.
+      tags["key"].should eq(["auth: Protected by NestJS @RequireKey() (applies UseGuards(ApiKeyGuard))"])
+      # Its guard always returns true.
+      tags["logged"].should be_empty
+      tags["remove"].first.should start_with("auth: Protected by NestJS @RequireAuthentication() (applies UseGuards(UserAuthGuard))")
+    ensure
+      FileUtils.rm_rf(tmpdir)
+      CodeLocator.instance.clear_all
+    end
+  end
+
+  it "resolves a guard decorator through the using file's import and judges direct and bundled guards alike" do
+    CodeLocator.instance.clear_all
+    tmpdir = File.tempname("nest_guard_decorator_scope")
+    files = {
+      "apps/a/package.json"     => "{}",
+      "apps/a/src/jwt.guard.ts" => <<-TS,
+        export class JwtGuard implements CanActivate {
+          canActivate(ctx) { if (!ctx.user) throw new UnauthorizedException(); return true; }
+        }
+        TS
+      "apps/a/src/auth.decorator.ts" => <<-TS,
+        export function Auth() {
+          return applyDecorators(UseGuards(JwtGuard), ApiBearerAuth());
+        }
+        TS
+      "apps/a/src/sec.controller.ts" => <<-TS,
+        import { Auth } from './auth.decorator';
+        @Controller('sec')
+        export class SecController {
+          @Auth()
+          @Get()
+          list() {}
+        }
+        TS
+      "apps/b/package.json"          => "{}",
+      "apps/b/src/auth.decorator.ts" => <<-TS,
+        export function Auth() {
+          return applyDecorators(ApiBearerAuth(), ApiTags('auth'));
+        }
+        export class Helpers {
+          static secured() {
+            return applyDecorators(UseGuards(TokenAuthGuard));
+          }
+        }
+        TS
+      "apps/b/src/open.controller.ts" => <<-TS,
+        import { Auth } from './auth.decorator';
+        @Controller('open')
+        export class OpenController {
+          @Auth()
+          @Get()
+          list() {}
+        }
+        TS
+      "apps/b/src/key.guard.ts" => <<-TS,
+        export class ApiKeyGuard implements CanActivate {
+          canActivate(ctx) { return ctx.switchToHttp().getRequest().headers['x-api-key'] === process.env.KEY; }
+        }
+        export class AuthStubGuard implements CanActivate {
+          canActivate() { return true; }
+        }
+        export class PermsGuard implements CanActivate {
+          canActivate(ctx) {
+            const required = this.reflector.get(Perms, ctx.getHandler());
+            if (!required) return true;
+            if (!ctx.switchToHttp().getRequest().headers.authorization) throw new ForbiddenException();
+            return true;
+          }
+        }
+        export function KeyOnly() {
+          return applyDecorators(UseGuards(ApiKeyGuard));
+        }
+        TS
+      "apps/b/src/key.controller.ts" => <<-TS,
+        import { KeyOnly } from './key.guard';
+        @Controller('key')
+        export class KeyController {
+          @KeyOnly()
+          @Get('bundled')
+          bundled() {}
+
+          @UseGuards(ApiKeyGuard)
+          @Get('direct')
+          direct() {}
+
+          @UseGuards(AuthStubGuard)
+          @Get('stub')
+          stub() {}
+
+          @UseGuards(PermsGuard)
+          @Get('perms')
+          perms() {}
+        }
+        TS
+    }
+    files.each do |rel, body|
+      path = File.join(tmpdir, rel)
+      Dir.mkdir_p(File.dirname(path))
+      File.write(path, body)
+      CodeLocator.instance.register_path(path)
+    end
+
+    begin
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(tmpdir)
+      lines = {
+        "sec"     => {"apps/a/src/sec.controller.ts", 6},
+        "open"    => {"apps/b/src/open.controller.ts", 6},
+        "bundled" => {"apps/b/src/key.controller.ts", 6},
+        "direct"  => {"apps/b/src/key.controller.ts", 10},
+        "stub"    => {"apps/b/src/key.controller.ts", 14},
+        "perms"   => {"apps/b/src/key.controller.ts", 18},
+      }
+      endpoints = lines.transform_values do |(rel, line)|
+        details = Details.new(PathInfo.new(File.join(tmpdir, rel), line))
+        details.technology = "ts_nestjs"
+        Endpoint.new("/x", "GET", [] of Param, details)
+      end
+
+      NestjsAuthTagger.new(noir_options).perform(endpoints.values)
+      tags = endpoints.transform_values(&.tags.map { |tag| "#{tag.name}: #{tag.description}" })
+
+      tags["sec"].should eq(["auth: Protected by NestJS @Auth() (applies UseGuards(JwtGuard))"])
+      # apps/b's own `Auth()` only documents; the static method's
+      # applyDecorators belongs to `Helpers`, not to it.
+      tags["open"].should be_empty
+      # `false` from canActivate is a 403 to a caller without the key.
+      tags["bundled"].should eq(["auth: Protected by NestJS @KeyOnly() (applies UseGuards(ApiKeyGuard))"])
+      tags["direct"].should eq(["auth: Protected by NestJS @UseGuards(ApiKeyGuard)"])
+      # Named like an auth guard, but its definition lets everyone through.
+      tags["stub"].should be_empty
+      # Lets a route without its metadata through; its name says nothing.
+      tags["perms"].should be_empty
+    ensure
+      FileUtils.rm_rf(tmpdir)
+      CodeLocator.instance.clear_all
+    end
+  end
 end
