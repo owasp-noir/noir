@@ -981,11 +981,7 @@ module Analyzer::Rust
       context = nil.as(ResolvedHandlerContext?)
       source = read_file_content(file)
       Noir::TreeSitter.parse_rust(source) do |root|
-        Noir::TreeSitter.each_named_child(root) do |item|
-          next if context
-          next unless Noir::TreeSitter.node_type(item) == "function_item"
-          name_node = Noir::TreeSitter.field(item, "name") || next
-          next unless Noir::TreeSitter.node_start_row(name_node) + 1 == line
+        if item = top_level_fn_at(root, line)
           scratch = Endpoint.new("", "GET")
           extract_function_params(item, source, scratch, file)
           callees = include_callee ? (Noir::TreeSitter.field(item, "body").try { |b| Noir::RustCalleeExtractorTS.callees_in_body(b, source, file) } || [] of Noir::RustCalleeExtractor::Entry) : [] of Noir::RustCalleeExtractor::Entry
@@ -1266,8 +1262,9 @@ module Analyzer::Rust
                                 path : String? = nil)
       params_node = Noir::TreeSitter.field(function, "parameters")
       if params_node
+        generics = fn_type_param_names(function, source)
         Noir::TreeSitter.each_named_child(params_node) do |param|
-          extract_function_param_text(Noir::TreeSitter.node_text(param, source), endpoint, path)
+          extract_function_param_text(Noir::TreeSitter.node_text(param, source), endpoint, path, generics)
         end
       end
 
@@ -1283,39 +1280,13 @@ module Analyzer::Rust
       end
     end
 
-    # Extractor => {param location, name used when its type's fields are unknown}.
-    EXTRACTOR_KINDS = {"Query" => {"query", "query"}, "Json" => {"json", "body"}, "Form" => {"form", "form"}}
-
-    # The type an extractor decodes into, when it is a plain (possibly
-    # module-qualified) name: `Json<CreatePost>`, `web::Query<api::Params>`.
-    EXTRACTOR_TARGET_RES = EXTRACTOR_KINDS.keys.to_h do |kind|
-      {kind, /(?<!\w)#{kind}\s*<\s*((?:[A-Za-z_]\w*::)*[A-Za-z_]\w*)\s*>/}
-    end
-
     # An extractor's fields are the request params: `Json<CreatePost>` reads
-    # `CreatePost`'s wire field names from the body. The type is resolved
-    # through the handler file's imports, else (a bare name nothing imports,
-    # e.g. via a glob) by a same-crate name that has one definition; an
-    # unknown type leaves the generic placeholder.
-    private def extract_function_param_text(text : String, endpoint : Endpoint, path : String? = nil)
-      EXTRACTOR_KINDS.each do |kind, (location, placeholder)|
-        next unless extractor_param?(text, kind)
-        fields = path ? extractor_fields(text, kind, path) : nil
-        if fields && !fields.empty?
-          fields.each { |name| endpoint.push_param(Param.new(name, "", location)) }
-        else
-          endpoint.push_param(Param.new(placeholder, "", location))
-        end
+    # `CreatePost`'s wire field names from the body (`RustEngine#push_extractor_params`).
+    private def extract_function_param_text(text : String, endpoint : Endpoint, path : String? = nil,
+                                            generics : Array(String) = [] of String)
+      EXTRACTOR_KINDS.each_key do |kind|
+        push_extractor_params(text, kind, endpoint, path, generics) if extractor_param?(text, kind)
       end
-    end
-
-    private def extractor_fields(text : String, kind : String, path : String) : Array(String)?
-      type = text.match(EXTRACTOR_TARGET_RES[kind]).try(&.[1]) || return
-      if fields = resolve_rust_struct_fields(type, path)
-        return fields
-      end
-      return if type.includes?("::") || rust_imported?(type, path)
-      rust_struct_fields(type, path)
     end
 
     ACTIX_EXTRACTOR_RES = EXTRACTOR_KINDS.keys.to_h do |kind|

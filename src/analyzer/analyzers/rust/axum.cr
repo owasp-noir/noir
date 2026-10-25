@@ -214,7 +214,7 @@ module Analyzer::Rust
         # via `routes!()`, not `.route()`), composed with their OpenApiRouter
         # nest prefix.
         if source.includes?("utoipa::path")
-          collect_utoipa_endpoints(root, source, path, test_regions, include_callee, function_index, handler_context_cache, endpoints)
+          collect_utoipa_endpoints(root, source, path, test_regions, include_callee, handler_context_cache, endpoints)
         end
       end
 
@@ -848,15 +848,17 @@ module Analyzer::Rust
 
     private def extract_function_params(function : LibTreeSitter::TSNode,
                                         source : String,
-                                        endpoint : Endpoint)
+                                        endpoint : Endpoint,
+                                        path : String)
       header_vars = Set(String).new
       cookie_vars = Set(String).new
 
       params = Noir::TreeSitter.field(function, "parameters")
       if params
+        generics = fn_type_param_names(function, source)
         Noir::TreeSitter.each_named_child(params) do |param|
           text = Noir::TreeSitter.node_text(param, source)
-          extract_function_param_text(text, endpoint)
+          extract_function_param_text(text, endpoint, path, generics)
           if binding = param_binding_name(text)
             header_vars.add(binding) if text.includes?("HeaderMap")
             cookie_vars.add(binding) if text.includes?("CookieJar")
@@ -870,10 +872,12 @@ module Analyzer::Rust
       collect_header_and_cookie_params(body, source, endpoint, header_vars, cookie_vars)
     end
 
-    private def extract_function_param_text(text : String, endpoint : Endpoint)
-      endpoint.push_param(Param.new("query", "", "query")) if extractor_param?(text, "Query")
-      endpoint.push_param(Param.new("body", "", "json")) if extractor_param?(text, "Json")
-      endpoint.push_param(Param.new("form", "", "form")) if extractor_param?(text, "Form")
+    # `Json<T>` / `Query<T>` / `Form<T>` read `T`'s wire field names, `T`
+    # resolved from the handler's file (`RustEngine#push_extractor_params`).
+    private def extract_function_param_text(text : String, endpoint : Endpoint, path : String, generics : Array(String))
+      EXTRACTOR_KINDS.each_key do |kind|
+        push_extractor_params(text, kind, endpoint, path, generics) if extractor_param?(text, kind)
+      end
       # `TypedHeader<Authorization<Bearer>>` / `TypedHeader<headers::UserAgent>`:
       # the `headers` crate type names its header (`UserAgent` → `User-Agent`).
       if m = text.match(TYPED_HEADER_RE)
@@ -1003,6 +1007,10 @@ module Analyzer::Rust
         Noir::TreeSitter.each_named_child(body_node) do |child|
           build_function_index(child, source, nested_scope, index)
         end
+      when "impl_item", "trait_item"
+        # A method is `Type::method`, never reachable by a bare name, so it
+        # must not shadow a free fn of the same name.
+        return
       else
         Noir::TreeSitter.each_named_child(node) do |child|
           build_function_index(child, source, scope, index)
@@ -1024,6 +1032,14 @@ module Analyzer::Rust
 
       if function = function_for_handler(index, handler_name)
         context = handler_context_for_function(function, source, path, include_callee)
+        handler_context_cache[cache_key] = context
+        return attach_cached_handler_context(endpoint, context)
+      end
+
+      # Follow the name to its definition through this file's imports
+      # (`use`, `as` aliases, `pub use` re-exports, workspace crates).
+      if (target = resolve_rust_fn(handler_name, path)) &&
+         (context = cached_external_handler_context(target[0], target[1], include_callee, target[2]))
         handler_context_cache[cache_key] = context
         return attach_cached_handler_context(endpoint, context)
       end
@@ -1052,7 +1068,7 @@ module Analyzer::Rust
                                              path : String,
                                              include_callee : Bool) : HandlerContext
       endpoint = Endpoint.new("", "GET")
-      extract_function_params(function, source, endpoint)
+      extract_function_params(function, source, endpoint, path)
       callees = include_callee ? callee_entries_for_function(function, source, path) : [] of Noir::RustCalleeExtractor::Entry
       {params: endpoint.params, callees: callees, handler: rust_handler(function, source, path)}
     end
@@ -1095,15 +1111,16 @@ module Analyzer::Rust
 
     private def cached_external_handler_context(candidate : String,
                                                 function_name : String,
-                                                include_callee : Bool) : HandlerContext?
-      cache_key = "#{candidate}\0#{function_name}\0#{include_callee}"
-      miss_key = "#{candidate}\0#{function_name}"
+                                                include_callee : Bool,
+                                                line : Int32? = nil) : HandlerContext?
+      cache_key = "#{candidate}\0#{function_name}\0#{include_callee}\0#{line}"
+      miss_key = "#{candidate}\0#{function_name}\0#{line}"
 
       @external_handler_context_cache_mutex.synchronize do
         return @external_handler_context_cache[cache_key]? if @external_handler_context_cache.has_key?(cache_key)
         return if @external_handler_miss_cache.includes?(miss_key)
 
-        context = parse_external_handler_context(candidate, function_name, include_callee)
+        context = parse_external_handler_context(candidate, function_name, include_callee, line)
         if context
           @external_handler_context_cache[cache_key] = context
         else
@@ -1113,15 +1130,22 @@ module Analyzer::Rust
       end
     end
 
+    # The fn `function_name` of `candidate`; with `line` (a resolved
+    # definition), the top-level fn whose name sits on that line.
     private def parse_external_handler_context(candidate : String,
                                                function_name : String,
-                                               include_callee : Bool) : HandlerContext?
+                                               include_callee : Bool,
+                                               line : Int32? = nil) : HandlerContext?
       source = read_file_content(candidate)
       context = nil.as(HandlerContext?)
 
       Noir::TreeSitter.parse_rust(source) do |root|
-        index = build_function_index(root, source)
-        if function = index[function_name]?
+        function = if line
+                     top_level_fn_at(root, line)
+                   else
+                     build_function_index(root, source)[function_name]?
+                   end
+        if function
           context = handler_context_for_function(function, source, candidate, include_callee)
         end
       end
@@ -1143,7 +1167,6 @@ module Analyzer::Rust
     # handler is registered under.
     private def collect_utoipa_endpoints(root : LibTreeSitter::TSNode, source : String, path : String,
                                          test_regions : Array(Tuple(Int32, Int32)), include_callee : Bool,
-                                         function_index : Hash(String, LibTreeSitter::TSNode),
                                          handler_context_cache : Hash(String, HandlerContext),
                                          endpoints : Array(Endpoint))
       file_mod = primary_module(path)
@@ -1177,9 +1200,10 @@ module Analyzer::Rust
             details = Details.new(PathInfo.new(path, attr_row))
             endpoint = Endpoint.new(url, verb, details)
             extract_path_params(url, endpoint)
-            if leaf
-              endpoint.handler = attach_handler_context(endpoint, function_index, source, path, leaf, include_callee, handler_context_cache)
-            end
+            # The attribute sits on the handler itself: read that fn, not a
+            # name lookup that a same-named fn elsewhere could answer.
+            context = handler_context_cache["#{path}\0@#{attr_row}\0#{include_callee}"] ||= handler_context_for_function(function, source, path, include_callee)
+            endpoint.handler = attach_cached_handler_context(endpoint, context)
             endpoints << endpoint
           end
         end
