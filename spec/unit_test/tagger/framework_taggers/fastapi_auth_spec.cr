@@ -117,6 +117,35 @@ describe "FastAPIAuthTagger" do
     ])
   end
 
+  it "judges dependencies by definition across router subclasses and class-based views" do
+    base = File.expand_path("../../../functional_test/fixtures/python/fastapi_auth_cbv", __DIR__)
+    noir_options = create_test_options
+    noir_options["base"] = YAML::Any.new(base)
+    routes = "#{base}/app/routes.py"
+    optional, me, delete_one, get_public = [14, 19, 26, 33].map do |line|
+      Endpoint.new("/#{line}", "GET", [] of Param, Details.new(PathInfo.new(routes, line)))
+    end
+
+    CodeLocator.instance.clear_all
+    Dir.glob("#{base}/**/*.py").each { |path| CodeLocator.instance.register_path(path) }
+    begin
+      FastAPIAuthTagger.new(noir_options).perform([optional, me, delete_one, get_public])
+    ensure
+      CodeLocator.instance.clear_all
+    end
+
+    # `try_get_current_user` swallows the refusal and returns None.
+    optional.tags.map(&.name).should eq(["anonymous"])
+    # `UserAPIRouter.__init__` pins `dependencies=[Depends(get_current_user)]`,
+    # which raises a module-level 401 exception.
+    me.tags.map(&.description).should eq(["Protected by FastAPI Depends(get_current_user)"])
+    # Inherited `user = Depends(get_current_user)` class attribute, base
+    # class re-exported through `from .controllers import *`.
+    delete_one.tags.map(&.description).should eq(["Protected by FastAPI Depends(get_current_user)"])
+    # `load_group` 404s: a data gate, not a guard.
+    get_public.tags.should be_empty
+  end
+
   it "reads Annotated auth aliases, wrapped signatures and router dependencies" do
     CodeLocator.instance.clear_all
     tmpdir = File.tempname("fastapi_aliases")

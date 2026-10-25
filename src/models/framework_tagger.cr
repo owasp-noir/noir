@@ -118,21 +118,53 @@ class FrameworkTagger < Tagger
   @python_imports = Hash(String, Hash(String, Tuple(String, String))).new
 
   def python_imported_symbols(path : String) : Hash(String, Tuple(String, String))
-    @python_imports[path] ||= begin
-      symbols = Hash(String, Tuple(String, String)).new
-      content = read_file(path) || ""
-      dir = File.dirname(path)
-      # `under_root?`, not `starts_with?`: `-b ./app` reports paths as `app/...`.
-      while @base_paths.any? { |base| Noir::PathScope.under_root?(dir, base) }
-        Noir::ImportGraph::Python.find_imported_symbols(dir, path, content).each do |local, target|
-          symbols[local] ||= target
-        end
-        parent = File.dirname(dir)
-        break if parent == dir
-        dir = parent
+    @python_imports[path] ||= python_symbols_in(path, read_file(path) || "")
+  end
+
+  private def python_symbols_in(path : String, content : String) : Hash(String, Tuple(String, String))
+    symbols = Hash(String, Tuple(String, String)).new
+    dir = File.dirname(path)
+    # `under_root?`, not `starts_with?`: `-b ./app` reports paths as `app/...`.
+    while @base_paths.any? { |base| Noir::PathScope.under_root?(dir, base) }
+      Noir::ImportGraph::Python.find_imported_symbols(dir, path, content).each do |local, target|
+        symbols[local] ||= target
       end
-      symbols
+      parent = File.dirname(dir)
+      break if parent == dir
+      dir = parent
     end
+    symbols
+  end
+
+  PYTHON_STAR_IMPORT = /^from\s+([\w.]+)\s+import\s+\*/m
+  @python_definitions = Hash({String, String}, {String, String}?).new
+
+  # `{file, name}` of the top-level `class` / `def` / assignment that `name`,
+  # as used in Python file `path`, refers to: `path` itself, else the module
+  # it is imported from, following package re-exports (`from .mod import
+  # name`, `from .mod import *` in an `__init__.py`). Nil when no definition
+  # is found within a few hops or `name` binds a module.
+  def python_definition_site(path : String, name : String, depth : Int32 = 0) : {String, String}?
+    key = {path, name}
+    return @python_definitions[key] if @python_definitions.has_key?(key)
+    return if depth > 6
+    content = read_file(path) || return
+    escaped = Regex.escape(name)
+    site = if content.matches?(/^(?:class|(?:async\s+)?def)\s+#{escaped}\b|^#{escaped}\s*(?::[^=\n]+)?=/m)
+             {path, name}
+           elsif target = python_imported_symbols(path)[name]?
+             python_definition_site(target[0], target[1], depth + 1) unless target[1].empty? || target[0] == path
+           else
+             star = nil
+             content.scan(PYTHON_STAR_IMPORT) do |m|
+               next if star
+               if (target = python_symbols_in(path, "from #{m[1]} import #{name}")[name]?) && !target[1].empty? && target[0] != path
+                 star = python_definition_site(target[0], target[1], depth + 1)
+               end
+             end
+             star
+           end
+    @python_definitions[key] = site
   end
 
   # The handler source behind each of `endpoint`'s code paths. A path to a
