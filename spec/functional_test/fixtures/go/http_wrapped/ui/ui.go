@@ -14,6 +14,7 @@ func Serve() http.Handler {
 	mux.HandleFunc("POST /items/{id}/remove", h.removeItem)
 	mux.HandleFunc("GET /share/{code}", h.share)
 	mux.HandleFunc("GET /static/{file}", h.static)
+	mux.HandleFunc("GET /{$}", h.showLogin)
 
 	return session.handle(csrf.handle(mux))
 }

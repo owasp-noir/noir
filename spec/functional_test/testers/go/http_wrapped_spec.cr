@@ -59,3 +59,25 @@ describe "net/http wrapped handlers", tags: "functional" do
     find.call("/v1/items", "POST").params.map(&.name).should_not contain("body")
   end
 end
+
+# Mounts wrapped in middleware (`requireAuth(api)`) are mounts too; a
+# factory whose handler merely calls `http.Get("/upstream")` is not a
+# router; a package constant shadowed by a local or range variable, and an
+# outbound client helper, add no params.
+cases = FunctionalTester.new("fixtures/go/http_guard_cases/", {:techs => 1}, [
+  Endpoint.new("/items", "GET"),
+  Endpoint.new("/search", "GET", [Param.new("a", "", "query"), Param.new("b", "", "query")]),
+])
+cases.perform_tests
+
+describe "net/http lookalikes", tags: "functional" do
+  it "keeps mounts out and reads no shadowed constant or outbound read" do
+    urls = cases.app.endpoints.map(&.url)
+    %w[/api/ /legacy/ /docs/ /x/].each { |mount| urls.should_not contain(mount) }
+    search = cases.app.endpoints.find! { |ep| ep.url == "/search" }
+    search.params.map(&.name).should_not contain("title")
+    search.params.map(&.name).should_not contain("ETag")
+    search.params.map(&.name).should_not contain("upstream_page")
+    cases.app.endpoints.find! { |ep| ep.url == "/hdr" }.params.should be_empty
+  end
+end

@@ -79,7 +79,7 @@ class Noir::GoNamedHandler
   # A route registration with a path literal (net/http's may lead with a
   # method, `"POST /items"`): the stand-in for the same-file route-row check
   # on a body declared in another file.
-  ROUTE_CALL_RE = /\.(?:GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS|Get|Post|Put|Delete|Patch|Head|Options|Any|All|Handle|HandleFunc|Group|Route|Mount)\s*\(\s*"(?:[A-Z]+\s+)?\//
+  ROUTE_CALL_RE = /(?<!http)\.(?:GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS|Get|Post|Put|Delete|Patch|Head|Options|Any|All|Handle|HandleFunc|Group|Route|Mount)\s*\(\s*"(?:[A-Z]+\s+)?\//
 
   # Where a handler not declared in the route's own file is looked up.
   # `bodies` covers every scanned package (built per directory on first
@@ -225,12 +225,22 @@ class Noir::GoNamedHandler
       end
     end
 
+    # A mount: the handler, or what its wrappers end at
+    # (`http.StripPrefix("/v1", api.NewHandler())`), is a call to a function
+    # that builds a router and returns it.
     routes.each do |r|
       text = primary_arg(r).try { |arg| @bound[{r.line, arg}]? || arg } || next
-      call = factory_call(text.gsub(STRING_LITERAL, %(""))) || next
-      qualifier, _, name = call.rpartition('.')
-      body = resolve.call(qualifier, name)
-      @mounts << r.line if body && registers_routes.call(body)
+      text = text.gsub(STRING_LITERAL, %(""))
+      4.times do
+        call = factory_call(text) || break
+        qualifier, _, name = call.rpartition('.')
+        if (body = resolve.call(qualifier, name)) && builds_router?(body)
+          @mounts << r.line
+          break
+        end
+        open = text.index('(') || break
+        text = Noir::TopLevelSplit.split(text[open + 1...-1], ',', Noir::TopLevelSplit::Rules.new).last?.try(&.strip) || break
+      end
     end
 
     # A wrapped handler (`pm(hasID(a.UpdateSubscriber), perm)`,
@@ -386,12 +396,17 @@ class Noir::GoNamedHandler
       line = lines[idx]? || next
       return if line.starts_with?("func ") || line.starts_with?("func(")
       code = line.strip
+      # `var h http.Handler = http.HandlerFunc(admin)`.
+      code = code.lchop("var").lstrip.sub(/\A(#{Regex.escape(name)})\s+[\w.*\[\]]+\s*=/, "\\1 =") if code.starts_with?("var ")
       next unless code.starts_with?(name)
       rest = code[name.size..].lstrip
       next if !rest.starts_with?(":=") && (!rest.starts_with?('=') || rest.starts_with?("=="))
       expr = rest.lchop(":=").lchop('=').strip
       return if expr.matches?(CLOSURE_HANDLER) || !expr.matches?(/\A[\w.]+\s*\(/)
       return unless expr.count('(') == expr.count(')') && expr.ends_with?(')')
+      # `h = withAuth(h)` wraps the earlier binding of `h`: that one names
+      # the handler.
+      next if expr.matches?(/[(,]\s*#{Regex.escape(name)}\s*\)\z/)
       return expr
     end
   end
@@ -410,7 +425,26 @@ class Noir::GoNamedHandler
     end
   end
 
-  RETURNED_CLOSURE = /\A\s*return\s+func\s*\(/
+  RETURNED_CLOSURE = /\A\s*return\s+(?:(?:http\s*\.\s*)?HandlerFunc\s*\(\s*)?func\s*\(/
+
+  ROUTER_RETURN = /^\s*return\s+(.+?)\s*$/m
+
+  # Whether `body` registers routes on a router it returns, bare or
+  # wrapped (`mux := http.NewServeMux(); mux.HandleFunc("GET /x", h);
+  # return cors(mux)`), not merely calls something with a path
+  # (`http.Get("/upstream")`).
+  private def builds_router?(body : Noir::GoCalleeExtractor::FunctionBody) : Bool
+    source = Noir::CComments.strip(body.source, raw_quotes: "`", leak_unterminated_tail: true)
+    source.scan(ROUTER_RETURN).any? do |m|
+      returned = m[1]
+      4.times do
+        break unless returned.ends_with?(')') && (open = returned.index('(')) && returned[0, open].matches?(/\A[\w.\s]+\z/)
+        returned = Noir::TopLevelSplit.split(returned[open + 1...-1], ',', Noir::TopLevelSplit::Rules.new).last?.try(&.strip) || break
+      end
+      returned.matches?(/\A[A-Za-z_]\w*\z/) &&
+        source.matches?(/(?<![\w.])#{Regex.escape(returned)}\s*\.\s*(?:Handle|HandleFunc|GET|POST|PUT|DELETE|PATCH|Get|Post|Put|Delete|Patch|Any|Group|Route|Mount)\s*\(\s*"/)
+    end
+  end
 
   # The row of the one closure a handler factory returns (`func serveFile(
   # ...) gin.HandlerFunc { ...; return func(ctx *gin.Context) {...} }`):

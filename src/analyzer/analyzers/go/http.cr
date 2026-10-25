@@ -15,9 +15,19 @@ module Analyzer::Go
     # Whether the handler argument is a bare identifier this file registers
     # routes on (`r := gin.Default(); r.GET(...); http.Handle("/", r)`).
     private def router_mount?(route, content : String) : Bool
-      name = route.handler_args.last?.try(&.strip) || return false
+      name = innermost_arg(route.handler_args.last?.try(&.strip) || return false)
       return false unless name.matches?(/\A[A-Za-z_]\w*\z/)
       content.matches?(/\b#{Regex.escape(name)}#{ROUTER_CALL_METHODS.source}/)
+    end
+
+    # What a wrapper chain ends at: `api` in `requireAuth(api)` or
+    # `http.StripPrefix("/v1", api)`.
+    private def innermost_arg(text : String) : String
+      4.times do
+        break unless text.ends_with?(')') && (open = text.index('(')) && text[0, open].matches?(/\A[\w.\s]+\z/)
+        text = Noir::TopLevelSplit.split(text[open + 1...-1], ',', Noir::TopLevelSplit::Rules.new).last?.try(&.strip) || break
+      end
+      text
     end
 
     def analyze

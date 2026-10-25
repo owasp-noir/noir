@@ -85,6 +85,23 @@ module Noir::GoRequestParamExtractor
 
   QUERY_ALIAS = /([A-Za-z_]\w*)\s*:?=\s*\w+\s*\.\s*URL\s*\.\s*Query\s*\(\s*\)/
 
+  LOCAL_NAMES = /(?:\A|[\n;{(]|\bvar)\s*([A-Za-z_]\w*(?:\s*,\s*[A-Za-z_]\w*)*)\s*:=|\bvar\s+([A-Za-z_]\w*)|\bfor\s+([A-Za-z_]\w*(?:\s*,\s*[A-Za-z_]\w*)*)\s*:?=\s*range\b/
+
+  # `constants` minus the names `source` declares itself (a parameter, a
+  # `:=` or `var` local, a range variable): those shadow the package
+  # constant.
+  private def unshadowed(constants : Hash(String, String), source : String) : Hash(String, String)
+    return constants if constants.empty?
+    locals = Set(String).new
+    source.scan(LOCAL_NAMES) do |m|
+      (m[1]? || m[2]? || m[3]? || "").split(',').each { |name| locals << name.strip }
+    end
+    source.scan(/\bfunc\b[^{]*/) do |head|
+      head[0].scan(/[(,]\s*([A-Za-z_]\w*)(?=\s*(?:,\s*[A-Za-z_]\w*\s*)*[\s*\[\]\w.]+[,)])/) { |m| locals << m[1] }
+    end
+    locals.empty? ? constants : constants.reject { |name, _| locals.includes?(name) }
+  end
+
   REQUEST_PARAM = /([A-Za-z_]\w*)\s+\*\s*http\.Request\b/
 
   # The `*http.Request` parameters of the function whose source starts
@@ -152,7 +169,7 @@ module Noir::GoRequestParamExtractor
                         path : String? = nil) : Hash(Int32, Array(Param))
     by_route = Hash(Int32, Array(Param)).new
     return by_route if route_rows.empty?
-    bindings = path && resolver ? resolver.constants(File.dirname(path)) : Hash(String, String).new
+    bindings = path && resolver ? unshadowed(resolver.constants(File.dirname(path)), source) : Hash(String, String).new
     ctx = Context.new(resolver, path, source.lines, bindings)
 
     cache = Hash(String, Array(Param)).new
@@ -266,7 +283,7 @@ module Noir::GoRequestParamExtractor
       # The body's own package decides what its helper calls mean.
       external_functions = resolver.bodies.functions_for(dir)
       external_methods = resolver.bodies.methods_for(dir)
-      bindings = resolver.constants(dir).merge(arg_bindings)
+      bindings = unshadowed(resolver.constants(dir), fn.source).merge(arg_bindings)
     else
       bindings = arg_bindings
     end
@@ -379,7 +396,10 @@ module Noir::GoRequestParamExtractor
     fn = resolver.imported_function(file, Noir::TreeSitter.node_text(operand, source), Noir::TreeSitter.node_text(field, source)) || return
     # A response writer of another package (`response.JSON(w, r, v)`) reads
     # the request only to negotiate the reply.
-    fn unless fn.source.match(HELPER_PARAMS).try(&.[1].includes?("http.ResponseWriter"))
+    # A helper that is not handed the request (an outbound client, `client.
+    # Fetch(ctx, url)`) reads none of it.
+    params = fn.source.match(HELPER_PARAMS).try(&.[1]) || return
+    fn if params.matches?(REQUEST_PARAM) && !params.includes?("http.ResponseWriter")
   end
 
   HELPER_PARAMS = /\Afunc\s*(?:\([^)]*\)\s*)?\w+\s*(?:\[.*?\]\s*)?\(([^)]*)\)/
