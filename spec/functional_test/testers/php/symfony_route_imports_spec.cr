@@ -15,9 +15,14 @@ expected_endpoints = [
   # keeps its own copy.
   Endpoint.new("/auth/sso/login", "GET"),
   Endpoint.new("/old/sso/login", "GET"),
+  # A localized prefix renames routes `name.<locale>`: no collision with a
+  # plain-prefix import.
+  Endpoint.new("/en/sso/login", "GET"),
+  # The later `site` import excludes Admin/, so it never replaces /admin.
+  Endpoint.new("/admin/panel", "GET"),
 ]
 
 FunctionalTester.new("fixtures/php/symfony_route_imports/", {
   :techs     => 2,
-  :endpoints => 6,
+  :endpoints => 8,
 }, expected_endpoints).perform_tests

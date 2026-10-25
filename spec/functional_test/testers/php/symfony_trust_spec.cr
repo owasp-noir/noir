@@ -62,12 +62,28 @@ describe "Symfony handler / access_control auth / form params", tags: "functiona
     # the API form submitted bare inherits buildForm and a trait's helper.
     params.call(find.call("POST", "/public/tags")).should eq(["color:form", "name:form"])
     params.call(find.call("GET", "/public/tags/recent")).should eq(["from:query", "size:query"])
-    params.call(find.call("PATCH", "/public/tags/{id}/meta")).should eq(["id:path", "value:form"])
+    params.call(find.call("PATCH", "/public/tags/{id}/meta")).should eq(["id:path", "late:form", "value:form"])
     # A helper-made form bound with handleRequest: fields under the form's
     # name, plus the CSRF field its options turn on.
     params.call(find.call("POST", "/public/tags/{id}/comment")).should eq(["comment[_csrf]:form", "comment[message]:form", "id:path"])
     # A parent helper's unnamed GET form submitted from the query.
     params.call(find.call("GET", "/public/tags/search")).should eq(["term:query"])
+
+    # A path from a constant is unknown, so no route (not the class prefix);
+    # an annotation's parentheses are matched past `()` inside a string.
+    endpoints.any? { |ep| ep.url.starts_with?("/public/edge") && ep.handler.try(&.name) == "EdgeController::list" }.should be_false
+    find.call("GET", "/public/edge/ajax").handler.try(&.name).should eq("EdgeController::ajax")
+    # A form name read from a variable is unknown: its fields are not listed.
+    params.call(find.call("POST", "/public/edge/named")).should be_empty
+    # getBlockPrefix returning a class constant; the guard of the method
+    # above (no blank line between) is not this one's.
+    const_form = find.call("POST", "/public/edge/const-form")
+    params.call(const_form).should eq(["cn[title]:form"])
+    guards.call(const_form).should be_empty
+    # The helper builds the form from its second parameter, not the entity.
+    params.call(find.call("POST", "/public/edge/entity-first")).should eq(["search[term]:form"])
+    # Another package's `Route` attribute is not a Symfony route.
+    endpoints.any? { |ep| ep.handler.try(&.name).try(&.starts_with?("SpiralController")) }.should be_false
 
     update = find.call("PUT", "/public/items/{id}")
     guards.call(update).should eq(["Symfony isGranted('IS_AUTHENTICATED_FULLY') check"])

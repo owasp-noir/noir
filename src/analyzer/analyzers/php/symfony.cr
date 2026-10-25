@@ -34,14 +34,24 @@ module Analyzer::Php
     # A form being made: `$this->createForm(X::class` / a factory's
     # `->create(X::class`, or `->createNamed('name', X::class`. The type may
     # be a variable (inside a helper that takes it as an argument).
-    FORM_CALL_RE  = /(?:\$this->createForm|->create)\s*\(\s*(?:(\\?[\w\\]+)::class|\$\w+)/
-    FORM_NAMED_RE = /->createNamed\s*\(\s*(?:['"]([^'"]*)['"]|\$\w+)\s*,\s*(?:(\\?[\w\\]+)::class|\$\w+)/
+    FORM_CALL_RE  = /(?:\$this->createForm|->create)\s*\(\s*(?:(\\?[\w\\]+)::class|\$(\w+))/
+    FORM_NAMED_RE = /->createNamed\s*\(\s*(?:['"]([^'"]*)['"]|\$\w+)\s*,\s*(?:(\\?[\w\\]+)::class|\$(\w+))/
 
     # FOSRestBundle's `#[Rest\QueryParam(name: 'page')]` /
     # `@Rest\RequestParam(name="title")` / `FileParam`, which its
     # ParamFetcher reads from the query, the decoded body or the files.
-    FOS_PARAM_RE   = /(?:#\[|@)(?:[\w\\]*\\)?(QueryParam|RequestParam|FileParam)\s*\((#{CALL_ARGS_TAIL})\)/
+    FOS_PARAM_RE   = /(?:#\[|@)(?:[\w\\]*\\)?(QueryParam|RequestParam|FileParam)\s*\(/
     FOS_PARAM_BAGS = {"QueryParam" => "query", "RequestParam" => "form", "FileParam" => "file"}
+
+    # Packages whose `Route` is Symfony's (or extends it).
+    SYMFONY_ROUTE_NAMESPACES = {"Symfony\\", "FOS\\RestBundle\\", "Sensio\\Bundle\\FrameworkExtraBundle\\"}
+
+    # The options Symfony's Route attribute/annotation takes besides its path.
+    SYMFONY_ROUTE_KEYS = %w[name methods requirements defaults condition host schemes env priority locale format utf8 stateless options alias]
+
+    # Stands for a form name that cannot be read statically (`createNamed($n,
+    # …)`, a computed `getBlockPrefix`); `?` is not valid in a form name.
+    UNKNOWN_FORM_NAME = "?"
 
     # Symfony route configs also live in YAML under config/routes*.
     # Extend the engine's default `.php`-only source set.
@@ -53,9 +63,26 @@ module Analyzer::Php
 
     # A YAML route import (`resource: ../src/Controller/Api/`, `type:
     # attribute`, `prefix: /api/v1`): attribute routes in files under `path`
-    # are mounted under each of `prefixes`. `source` is the routing file that
-    # declares it, `name_prefix` what it prepends to route names.
-    private record RouteImport, path : String, prefixes : Array(String), source : String, name_prefix : String
+    # are mounted under each of `prefixes`, unless an `excludes` glob matches
+    # them. `source` is the routing file that declares it; `name_prefix` and
+    # `locales` (the keys of a localized prefix, which renames each route
+    # `name.<locale>`) decide the names its routes get.
+    private record RouteImport, path : String, prefixes : Array(String), source : String,
+      name_prefix : String, locales : Array(String), excludes : Array(String) do
+      def covers?(file : String) : Bool
+        return false unless file == path || file.starts_with?("#{path}/")
+        # Symfony's glob loader skips an excluded file, or a file under an
+        # excluded directory.
+        candidate = file
+        while candidate.size >= path.size
+          return false if excludes.any? { |glob| File.match?(glob, candidate) rescue false }
+          parent = File.dirname(candidate)
+          break if parent == candidate
+          candidate = parent
+        end
+        true
+      end
+    end
 
     @route_imports = [] of RouteImport
     @security_configs = [] of SymfonySecurity::Config
@@ -124,8 +151,13 @@ module Analyzer::Php
           prefix_node = route_h[YAML::Any.new("prefix")]?
           prefixes = prefix_node.try { |node| node.as_s?.try { |prefix| [prefix] } || node.as_h?.try(&.values.compact_map(&.as_s?)) }
           prefixes = [""] if prefixes.nil? || prefixes.empty?
+          locales = prefix_node.try(&.as_h?).try(&.keys.compact_map(&.as_s?).sort!) || [] of String
           name_prefix = route_h[YAML::Any.new("name_prefix")]?.try(&.as_s?) || ""
-          imports << RouteImport.new(File.expand_path(resource, File.dirname(path)).rstrip('/'), prefixes, path, name_prefix)
+          dir = File.dirname(path)
+          exclude_node = route_h[YAML::Any.new("exclude")]?
+          excludes = (exclude_node.try(&.as_a?).try(&.compact_map(&.as_s?)) || [exclude_node.try(&.as_s?)].compact)
+            .map { |glob| File.expand_path(glob, dir).rstrip('/') }
+          imports << RouteImport.new(File.expand_path(resource, dir).rstrip('/'), prefixes, path, name_prefix, locales, excludes)
         end
       end
       imports
@@ -136,11 +168,12 @@ module Analyzer::Php
     # attribute route keeps its name (one derived from class and method when
     # it declares none) whichever import loads it, so a later import of the
     # same file in the same routing file replaces the earlier one's routes,
-    # unless a different `name_prefix` keeps the names apart.
+    # unless a different `name_prefix`, or a localized prefix (whose routes
+    # are renamed `name.<locale>`) over other locales, keeps the names apart.
     private def import_prefixes_for(path : String) : Array(String)
       file = File.expand_path(path)
-      prefixes = @route_imports.select { |import| file == import.path || file.starts_with?("#{import.path}/") }
-        .group_by { |import| {import.source, import.name_prefix} }.values
+      prefixes = @route_imports.select(&.covers?(file))
+        .group_by { |import| {import.source, import.name_prefix, import.locales} }.values
         .flat_map(&.last.prefixes).uniq!
       prefixes.empty? ? [""] : prefixes
     end
@@ -154,54 +187,42 @@ module Analyzer::Php
       # present (`@Route` or `#[Route`).
       return endpoints unless content.includes?("Route")
       return endpoints unless content.includes?("@Route") || content.includes?("#[Route")
+      # `Route` imported from another package (Spiral's `#[Route(route:
+      # '/users')]`) is not Symfony's.
+      if (imported = parse_use_imports(content)["Route"]?) && SYMFONY_ROUTE_NAMESPACES.none? { |ns| imported.lchop('\\').starts_with?(ns) }
+        return endpoints
+      end
       lexer = Noir::PhpLexer.new(content)
       content = lexer.without_comments
 
-      classes = extract_classes(content, lexer)
+      attrs = route_attributes(content, lexer)
+      classes = extract_classes(content, lexer, attrs)
       import_prefixes = import_prefixes_for(path)
 
-      # Route annotations (@Route) first, then PHP 8 attributes (#[Route]).
-      # Track offset to find each match correctly.
-      {/@Route\s*\((.*?)\)/m, /#\[Route\s*\((.*?)\)\]/m}.each do |route_regex|
-        offset = 0
-        content.scan(route_regex) do |match|
-          route_path = extract_symfony_route_path(match[1])
-          next unless route_path
+      attrs.each do |attr|
+        next if route_applies_to_class?(content, attr.stop)
+        next unless route_path = extract_symfony_route_path(attr.args)
 
-          full_match = match[0]
+        methods = extract_methods_from_symfony_context(attr.args)
+        methods = ["GET"] if methods.empty?
 
-          # Find this specific match starting from current offset
-          route_start = content.index(full_match, offset)
-          next unless route_start
-          offset = route_start + full_match.size
-          next if route_applies_to_class?(content, offset)
-          # An attribute is code; `#[Route(...)]` written inside a string
-          # literal is text. (`@Route` lives in a docblock, so it can't be
-          # checked this way.)
-          next if full_match.starts_with?('#') && !lexer.in_code?(route_start)
+        klass = classes.find { |c| attr.start >= c.body_start && attr.start < c.body_end }
+        action = (sig = content.match(SIGNATURE_RE, attr.stop)) ? action_at(path, content, lexer, sig, klass) : nil
+        method_body = action.try(&.body)
+        body_params = action.try(&.params) || [] of Param
+        route_line = line_number_for_index(content, attr.start)
+        class_path = build_full_path(klass.try(&.prefix) || "", route_path)
 
-          # Extract methods from the annotation/attribute itself
-          methods = extract_methods_from_symfony_context(full_match)
-          methods = ["GET"] if methods.empty?
+        import_prefixes.each do |import_prefix|
+          full_path = build_full_path(import_prefix, class_path).presence || "/"
+          params = dedup_params(extract_brace_path_params(full_path) + body_params)
 
-          klass = classes.find { |c| route_start >= c.body_start && route_start < c.body_end }
-          action = (sig = content.match(SIGNATURE_RE, offset)) ? action_at(path, content, lexer, sig, klass) : nil
-          method_body = action.try(&.body)
-          body_params = action.try(&.params) || [] of Param
-          route_line = line_number_for_index(content, route_start)
-          class_path = build_full_path(klass.try(&.prefix) || "", route_path)
-
-          import_prefixes.each do |import_prefix|
-            full_path = build_full_path(import_prefix, class_path).presence || "/"
-            params = dedup_params(extract_brace_path_params(full_path) + body_params)
-
-            methods.each do |method|
-              details = Details.new(PathInfo.new(path, route_line))
-              endpoint = Endpoint.new(full_path, method.upcase, params, details)
-              endpoint = apply_action(endpoint, action)
-              attach_method_callees(endpoint, method_body, path) if include_callee
-              endpoints << endpoint
-            end
+          methods.each do |method|
+            details = Details.new(PathInfo.new(path, route_line))
+            endpoint = Endpoint.new(full_path, method.upcase, params, details)
+            endpoint = apply_action(endpoint, action)
+            attach_method_callees(endpoint, method_body, path) if include_callee
+            endpoints << endpoint
           end
         end
       end
@@ -209,8 +230,70 @@ module Analyzer::Php
       endpoints
     end
 
+    # A `@Route(...)` annotation or `#[Route(...)]` attribute: where it
+    # starts and ends, and the text between its parentheses.
+    private record RouteAttr, start : Int32, stop : Int32, args : String
+
+    # Every route annotation/attribute in `content`, its parentheses matched
+    # past strings (`condition="request.isXmlHttpRequest()"`). One whose
+    # parentheses do not balance is skipped. An attribute is code, so one
+    # written inside a string literal is text; an annotation lives in a
+    # docblock and has its ` * ` line prefixes dropped.
+    private def route_attributes(content : String, lexer : Noir::PhpLexer) : Array(RouteAttr)
+      attrs = [] of RouteAttr
+      content.scan(/(@|#\[)Route\s*\(/) do |m|
+        start = m.begin(0)
+        open = m.end(0) - 1
+        if m[1] == "#["
+          next unless lexer.in_code?(start) && (close = lexer.matching_delimiter(open))
+          attrs << RouteAttr.new(start, close + 1, content[open + 1...close])
+        else
+          block = content[open...(content.index("*/", open) || content.size)]
+          next unless close = Noir::PhpLexer.new(block, php_mode: true).matching_delimiter(0)
+          attrs << RouteAttr.new(start, open + close + 1, block[1...close].gsub(/\n\s*\*/, "\n"))
+        end
+      end
+      attrs
+    end
+
+    # The top-level comma-separated arguments of an argument list.
+    private def split_php_args(args : String) : Array(String)
+      lexer = Noir::PhpLexer.new(args, php_mode: true)
+      parts = [] of String
+      pos = 0
+      while pos < args.size
+        stop = lexer.expression_end(pos)
+        part = args[pos...stop].strip
+        parts << part unless part.empty?
+        pos = stop + 1
+      end
+      parts
+    end
+
+    # {named arguments, positional arguments} of an attribute/annotation
+    # argument list (`name: 'x'` / `name="x"`; `Foo::BAR` is positional).
+    private def attribute_args(args : String) : Tuple(Hash(String, String), Array(String))
+      named = {} of String => String
+      positional = [] of String
+      split_php_args(args).each do |arg|
+        if m = arg.match(/\A(\w+)\s*(?::(?!:)|=(?![=>]))\s*(.*)\z/m)
+          named[m[1]] = m[2]
+        else
+          positional << arg
+        end
+      end
+      {named, positional}
+    end
+
+    # The value of a single-quoted or double-quoted string literal without
+    # interpolation or escapes, else nil.
+    private def php_literal(expr : String) : String?
+      return unless m = expr.match(/\A(?:'((?:[^'\\]|\\.)*)'|"((?:[^"\\$]|\\.)*)")\z/m)
+      m[1]?.try(&.gsub("\\'", "'").gsub("\\\\", "\\")) || m[2]?
+    end
+
     # Every class in the file, with its route prefix and class-level guard.
-    private def extract_classes(content : String, lexer : Noir::PhpLexer) : Array(ClassInfo)
+    private def extract_classes(content : String, lexer : Noir::PhpLexer, attrs : Array(RouteAttr)) : Array(ClassInfo)
       classes = [] of ClassInfo
       # `(?<!::)`: `User::class` in an attribute argument is not a declaration.
       class_regex = /(?<!::)\bclass\s+(\w+)[^{]*\{/m
@@ -221,7 +304,10 @@ module Analyzer::Php
         brace_pos = class_match.end(0) - 1
         class_end = find_matching_php_close_brace(content, brace_pos)
         if class_end
-          prefix = route_prefix_before_class(content, class_start) || ""
+          # The route attribute this class declaration is the next one after.
+          attr = attrs.reverse_each.find { |a| a.stop <= class_start }
+          on_class = attr && (decl = next_declaration(content, attr.stop)) && decl.begin(0) == class_start
+          prefix = (attr && on_class ? extract_symfony_route_path(attr.args) : nil) || ""
           guard = security_attribute_guard(content[member_prelude_start(content, lexer, class_start)...class_start])
           classes << ClassInfo.new(class_match[1], prefix, guard, brace_pos + 1, class_end)
           offset = class_end + 1
@@ -279,11 +365,12 @@ module Analyzer::Php
       params = [] of Param
       return params unless prelude.includes?("Param")
       prelude.scan(FOS_PARAM_RE) do |m|
-        args = m[2]
-        key = args.match(/(?<!\w)key\s*[:=]\s*['"]([^'"]+)['"]/) ||
-              args.match(/(?<!\w)name\s*[:=]\s*['"]([^'"]+)['"]/) ||
-              args.match(/\A\s*['"]([^'"]+)['"]/)
-        params << Param.new(key[1], "", FOS_PARAM_BAGS[m[1]]) if key
+        open = m.end(0) - 1
+        block = prelude[open..]
+        next unless close = Noir::PhpLexer.new(block, php_mode: true).matching_delimiter(0)
+        named, positional = attribute_args(block[1...close].gsub(/\n\s*\*/, "\n"))
+        key = (named["key"]? || named["name"]? || positional.first?).try { |expr| php_literal(expr) }.presence
+        params << Param.new(key, "", FOS_PARAM_BAGS[m[1]]) if key
       end
       params
     end
@@ -371,12 +458,13 @@ module Analyzer::Php
       params = [] of Param
       return params unless body.includes?("::class") || body.includes?("$this->")
       body.scan(/\$(\w+)\s*=\s*([^;]+);/) do |m|
-        var = Regex.escape(m[1])
-        handled = body.matches?(/\$#{var}->handleRequest\s*\(/)
+        var = "$#{m[1]}->"
+        handled = body.includes?("#{var}handleRequest(")
         location = if handled
                      "form"
-                   elsif submit = body.match(/\$#{var}->submit\s*\(([^;]*)/)
-                     submitted_input(submit[1], body)
+                   elsif submit = body.index("#{var}submit(")
+                     arg_start = submit + var.size + "submit(".size
+                     submitted_input(body[arg_start...(body.index(';', arg_start) || body.size)], body)
                    end
         next unless location
         next unless form = created_form(m[2], content)
@@ -387,6 +475,9 @@ module Analyzer::Php
         fields = form_type_fields(type, location)
         if handled
           name ||= form_name(type, type_file)
+          # The fields sit under a name we cannot read: listing them bare
+          # would name inputs the form does not read.
+          next if name == UNKNOWN_FORM_NAME
           csrf_field(type).try { |field| fields << Param.new(field, "", location) }
           fields.map! { |field| Param.new("#{name}[#{field.name}]", "", field.param_type) } unless name.empty?
         end
@@ -398,7 +489,8 @@ module Analyzer::Php
     # {type file, form name (nil: the type's own), creating call} of the form
     # `expr` makes: a direct create call with a literal type, or a call to a
     # helper of the class (or a parent or trait) that makes one, from a
-    # literal type of its own or from the `X::class` it is handed.
+    # literal type of its own or from the `X::class` it is handed in the
+    # parameter the helper creates the form from.
     private def created_form(expr : String, content : String) : Tuple(String, String?, String)?
       if (call = form_call(expr)) && (type = call[1])
         file = class_file(qualify_class(type, parse_use_imports(content), php_namespace(content)))
@@ -407,29 +499,51 @@ module Analyzer::Php
       return unless (helper = expr.match(/\A\s*\$this->(\w+)\s*\(/)) && helper[1] != "createForm"
       return unless (resolved = resolve_method(content, helper[1])) && (call = form_call(resolved[1]))
       source, code = resolved
-      type, scope = (literal = call[1]) ? {literal, source} : {expr.match(/(\\?[\w\\]+)::class/).try(&.[1]), content}
+      type, scope = if literal = call[1]
+                      {literal, source}
+                    elsif (var = call[2]) && (index = helper_param_index(source, helper[1], var))
+                      open = helper.end(0) - 1
+                      close = Noir::PhpLexer.new(expr, php_mode: true).matching_delimiter(open)
+                      arg = close ? split_php_args(expr[open + 1...close])[index]? : nil
+                      {arg.try(&.match(/\A(\\?[\w\\]+)::class\z/)).try(&.[1]), content}
+                    else
+                      {nil, content}
+                    end
       return unless type && (file = class_file(qualify_class(type, parse_use_imports(scope), php_namespace(scope))))
       {file, call[0], code}
     end
 
-    # {form name (nil: the type's own; "" when it cannot be read), literal
-    # type or nil} of the first form-creating call in `code`.
-    private def form_call(code : String) : Tuple(String?, String?)?
+    # Position of parameter `$var` in method `name`'s signature in `source`.
+    private def helper_param_index(source : String, name : String, var : String) : Int32?
+      sig = source.match(/function\s+#{Regex.escape(name)}\s*\(([^)]*)\)/)
+      sig.try(&.[1].split(',').index { |param| param.match(/\$(\w+)/).try(&.[1]) == var })
+    end
+
+    # {form name (nil: the type's own; UNKNOWN_FORM_NAME when not a
+    # literal), literal type, type variable} of the first form-creating call
+    # in `code`.
+    private def form_call(code : String) : Tuple(String?, String?, String?)?
       named = code.match(FORM_NAMED_RE)
       plain = code.match(FORM_CALL_RE)
       if named && (plain.nil? || named.begin(0) < plain.begin(0))
-        {named[1]? || "", named[2]?}
+        {named[1]? || UNKNOWN_FORM_NAME, named[2]?, named[3]?}
       elsif plain
-        {nil, plain[1]?}
+        {nil, plain[1]?, plain[2]?}
       end
     end
 
-    # A form type's name: what its `getBlockPrefix` returns, or Symfony's
-    # default, the class's short name without a `Type` suffix in snake case
-    # (`StringUtil::fqcnToBlockPrefix`). "" when the override is not a literal.
+    # A form type's name: what its `getBlockPrefix` returns (a literal, or a
+    # string constant of the class), or Symfony's default, the class's short
+    # name without a `Type` suffix in snake case (`fqcnToBlockPrefix`).
+    # UNKNOWN_FORM_NAME when the override computes it.
     private def form_name(type : String, type_file : String) : String
       if prefix = resolve_method(type, "getBlockPrefix")
-        return prefix[1].match(/\breturn\s+['"]([^'"]*)['"]\s*;\s*\z/).try(&.[1]) || ""
+        source, code = prefix
+        returned = code.match(/\breturn\s+([^;]+);\s*\z/).try(&.[1].strip)
+        if constant = returned.try(&.match(/\A(?:self|static)::(\w+)\z/))
+          returned = source.match(/\bconst\s+(?:string\s+)?#{Regex.escape(constant[1])}\s*=\s*([^;]+);/).try(&.[1].strip)
+        end
+        return returned.try { |expr| php_literal(expr) } || UNKNOWN_FORM_NAME
       end
       short = type.match(/(?<!::)\bclass\s+(\w+)/).try(&.[1]) || File.basename(type_file, ".php")
       short = short.sub(/type\z/i, "") unless short.size <= 4
@@ -510,51 +624,29 @@ module Analyzer::Php
       params
     end
 
-    private def route_prefix_before_class(content : String, class_start : Int32) : String?
-      lookbehind_start = Math.max(0, class_start - 600)
-      prelude = content[lookbehind_start...class_start]
-
-      if attribute_match = prelude.match(/#\[Route\s*\((.*?)\)\]\s*$/m)
-        return extract_symfony_route_path(attribute_match[1])
-      end
-
-      if annotation_match = prelude.match(/@Route\s*\((.*?)\).*?\*\/\s*$/m)
-        return extract_symfony_route_path(annotation_match[1])
-      end
-
-      nil
-    end
-
-    # Whether the attribute ending at `route_end` sits on a class: the next
-    # declaration after it is `class Name`, not a method. `class:` named
+    # The next class or method declaration at or after `pos`. `class:` named
     # arguments and `Foo::class` in the attributes between are neither.
-    private def route_applies_to_class?(content : String, route_end : Int32) : Bool
-      next_target = content.match(/(?<!::)\b(class\s+\w|function\b)/m, route_end)
-      return false unless next_target
-
-      next_target[1].starts_with?("class")
+    private def next_declaration(content : String, pos : Int32) : Regex::MatchData?
+      content.match(/(?<!::)\b(class\s+\w|function\b)/m, pos)
     end
 
-    private def extract_symfony_route_path(context : String) : String?
-      # `path:` / `path =` as a standalone key. A multi-line `#[Route(\n  path:
-      # '/x',\n  …)]` puts `path` after a newline+indent, which the old
-      # `(?:^|[,(]\s*)` anchor missed — so every multi-line route attribute
-      # (Shopware's whole storefront) was dropped. A negative-lookbehind on a
-      # word char accepts any non-word boundary (start, comma, paren, newline,
-      # space) while still rejecting `subpath:` / `routePath:`.
-      if path_match = context.match(/(?<!\w)path\s*[:=]\s*['"]([^'"]*)['"]/i)
-        return path_match[1]
+    # Whether the attribute ending at `route_end` sits on a class.
+    private def route_applies_to_class?(content : String, route_end : Int32) : Bool
+      !!next_declaration(content, route_end).try(&.[1].starts_with?("class"))
+    end
+
+    # The path a route attribute/annotation declares: its `path` (or the
+    # annotation's `value`) argument, else its first positional argument,
+    # when that is a string literal. A route of named arguments that are all
+    # Symfony Route options and no path (`#[Route(methods: ['POST'], name:
+    # 'x')]`) routes its class prefix itself, so "". A path given by a
+    # constant or an expression (`self::LIST`) is nil: unknown, not "".
+    private def extract_symfony_route_path(args : String) : String?
+      named, positional = attribute_args(args)
+      if expr = named["path"]? || named["value"]? || positional.first?
+        return php_literal(expr)
       end
-
-      if path_match = context.match(/^\s*['"]([^'"]*)['"]/)
-        return path_match[1]
-      end
-
-      # Named arguments only, none of them `path` (`#[Route(methods:
-      # ['POST'], name: 'x')]`): the route is its class prefix itself.
-      return "" if context.strip.empty? || (context.matches?(/\A\s*\w+\s*[:=]/) && !context.matches?(/(?<!\w)path\s*[:=]/i))
-
-      nil
+      "" if named.each_key.all? { |key| SYMFONY_ROUTE_KEYS.includes?(key) }
     end
 
     private def extract_methods_from_symfony_context(context : String) : Array(String)
@@ -643,7 +735,7 @@ module Analyzer::Php
       content = lexer.without_comments
       method = Regex.escape(m[2]? || "__invoke")
       return unless sig = content.match(/(?:public|protected|private)\s+(?:static\s+)?function\s+(#{method})\s*\(/)
-      klass = extract_classes(content, lexer).find { |c| sig.begin(0) >= c.body_start && sig.begin(0) < c.body_end }
+      klass = extract_classes(content, lexer, [] of RouteAttr).find { |c| sig.begin(0) >= c.body_start && sig.begin(0) < c.body_end }
       action_at(file, content, lexer, sig, klass)
     end
 
