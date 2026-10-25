@@ -434,7 +434,8 @@ class RubyAuthTagger < FrameworkTagger
   CREDENTIAL_WORD = /token|session|bearer|jwt|authoriz|api_?key|signature|hmac|secret|password|current_user|signed_in|logged_in/i
   # `return if <no credential>` / `return unless <credential>`.
   ANONYMOUS_EXIT     = /^return\b.*\s(if|unless)\s+(.+)\z/
-  CONDITION_MODIFIER = /\s(?:if|unless)\s+(.+)\z/
+  CONDITION_MODIFIER = /\s(if|unless)\s+(.+)\z/
+  BLOCK_CONDITION    = /^(if|unless|elsif)\s+(.+)/
   NEGATED            = /!|\bnot\b|\.(?:nil|blank|empty)\?/
 
   # A callback whose name says nothing (`set_platform_app`) guards when its
@@ -455,7 +456,7 @@ class RubyAuthTagger < FrameworkTagger
         next false if credential_gated?(body, i) || text.matches?(CREDENTIAL_PRESENT_MODIFIER)
         conditions = deny_conditions(body, i)
         next false if conditions.nil?
-        conditions.empty? || conditions.any? { |c| credential_condition?(c, assigns) }
+        conditions.empty? || conditions.any? { |c, when_true| credential_absent?(c, when_true, assigns) }
       end
     end
   end
@@ -471,13 +472,15 @@ class RubyAuthTagger < FrameworkTagger
     end
   end
 
-  # The conditions the deny at `body[i]` sits under: its own `if`/`unless`
-  # modifier, the blocks around it, and the `return if ...` exits above
-  # it. nil when one of those exits lets a caller with no credential out.
-  private def deny_conditions(body : Array({Int32, String}), i : Int32) : Array(String)?
-    conditions = [] of String
+  # The conditions the deny at `body[i]` sits under, each with whether the
+  # deny runs when it is true: its own `if`/`unless` modifier, the blocks
+  # around it (an `else` branch runs when its `if` is false), and the
+  # `return if ...` exits above it. nil when one of those exits lets a
+  # caller with no credential out.
+  private def deny_conditions(body : Array({Int32, String}), i : Int32) : Array({String, Bool})?
+    conditions = [] of {String, Bool}
     if m = body[i][1].match(CONDITION_MODIFIER)
-      conditions << m[1]
+      conditions << {m[2], m[1] == "if"}
     end
     indent = body[i][0]
     branch_at : Int32? = nil # an `else`/`elsif` whose `if` is still above
@@ -487,14 +490,27 @@ class RubyAuthTagger < FrameworkTagger
       if (m = text.match(ANONYMOUS_EXIT)) && !text.matches?(DENY_RESPONSE)
         negated = m[2].matches?(NEGATED)
         return if m[2].matches?(CREDENTIAL_WORD) && (m[1] == "if" ? negated : !negated)
-        conditions << m[2]
+        conditions << {m[2], m[1] != "if"}
       elsif indent_j < indent || indent_j == branch_at
+        from_branch = indent_j == branch_at
         indent = indent_j
         branch_at = text.matches?(/^(?:else|elsif)\b/) ? indent_j : nil
-        conditions << text if text.matches?(/^(?:if|unless|elsif|case|when)\b/)
+        if block = text.match(BLOCK_CONDITION)
+          conditions << {block[2], (block[1] != "unless") != from_branch}
+        elsif text.matches?(/^(?:case|when)\b/)
+          conditions << {text, true}
+        end
       end
     end
     conditions
+  end
+
+  # Whether the deny fires for a caller without the credential: the
+  # condition reads one and tests its absence (`if @app.blank?`, `unless
+  # valid_token?`). `if current_user&.suspended?` refuses a present user,
+  # which lets an anonymous caller through.
+  private def credential_absent?(condition : String, when_true : Bool, assigns : Hash(String, String)) : Bool
+    credential_condition?(condition, assigns) && condition.matches?(NEGATED) == when_true
   end
 
   private def credential_condition?(condition : String, assigns : Hash(String, String)) : Bool
