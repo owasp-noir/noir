@@ -1,7 +1,8 @@
 require "../../func_spec.cr"
 
 # Controller-level `[Route]` lookup: past a long attribute list, one route
-# per `[Route]`, inherited from a base controller, and `[area]` replaced.
+# per `[Route]`, inherited from a base controller unless the class declares
+# its own (even `[Route("")]`), and `[area]` replaced.
 expected_endpoints = [
   Endpoint.new("/api/reports/{id}", "GET", [Param.new("id", "", "path")]),
   Endpoint.new("/api/products/search", "GET", [Param.new("q", "", "query")]),
@@ -9,6 +10,7 @@ expected_endpoints = [
   Endpoint.new("/legacy/products", "GET"),
   Endpoint.new("/api/Orders/{id}", "GET", [Param.new("id", "", "path")]),
   Endpoint.new("/Admin/Dashboard/Index", "GET"),
+  Endpoint.new("/GetUtcTime", "GET"),
 ]
 
 FunctionalTester.new("fixtures/csharp/aspnet_core_mvc_class_routes/", {
