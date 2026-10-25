@@ -340,7 +340,8 @@ module Analyzer::Php
     # `Illuminate\Http\Request` reads (Laravel, Lumen): `$request->input('x')`,
     # `request()->query('x')`, `$request->header('X-Token')`, ... Capture 1 is
     # the accessor, capture 2 the input name.
-    ILLUMINATE_REQUEST_READ_RE = /(?:\$request|\brequest\(\s*\))\s*->\s*(input|post|get|query|header|cookie|file|hasFile|has|filled|string|integer|boolean|float|date|enum|array)\s*\(\s*['"]([^'"]+)['"]/
+    ILLUMINATE_ACCESSORS       = "input|post|get|query|header|cookie|file|hasFile|has|filled|string|integer|boolean|float|date|enum|array"
+    ILLUMINATE_REQUEST_READ_RE = /(?:\$request|\brequest\(\s*\))\s*->\s*(#{ILLUMINATE_ACCESSORS})\s*\(\s*['"]([^'"]+)['"]/
     ILLUMINATE_READ_TYPES      = {"get" => "query", "query" => "query", "header" => "header", "cookie" => "cookie"}
     # Calls taking a validation rules array: `$request->validate([...])`,
     # `$this->validate($request, [...])`, `Validator::make($data, [...])`.
@@ -348,14 +349,29 @@ module Analyzer::Php
     # A rules-array key: `'title' =>`, `'author.name' =>` (input `author`).
     RULE_KEY_RE = /['"]([\w-]+)(?:\.[^'"]*)?['"]\s*=>/
 
-    # Input an `Illuminate\Http\Request` handler body reads: accessor calls
-    # plus the keys of its validation rules. Body inputs come back as "form".
-    # `klass`, the source of the class the body belongs to, lets a rules
-    # argument that is not a literal (`$this->rules['update']`) be read.
+    # A dynamic property read, `$request->email`: `Request::__get` returns
+    # that input. Not a call, not a chain, not an assignment, and not one of
+    # the request's own public properties (`$request->query->get(...)`).
+    ILLUMINATE_DYNAMIC_READ_RE    = /\$request\s*->\s*([a-z_]\w*)\b(?!\s*(?:\(|->|=(?![=>])))/
+    ILLUMINATE_REQUEST_PROPERTIES = Set{"attributes", "request", "query", "server", "files", "cookies", "headers", "content", "json", "session"}
+
+    # Where an accessor's input comes from; body inputs as "form".
+    protected def illuminate_read_type(accessor : String) : String
+      ILLUMINATE_READ_TYPES[accessor]? || "form"
+    end
+
+    # Input an `Illuminate\Http\Request` handler body reads: accessor calls,
+    # dynamic properties and the keys of its validation rules. Body inputs
+    # come back as "form". `klass`, the source of the class the body belongs
+    # to, lets a rules argument that is not a literal (`$this->rules['update']`)
+    # be read.
     protected def illuminate_request_params(body : String, klass : String? = nil) : Array(Param)
       params = [] of Param
       body.scan(ILLUMINATE_REQUEST_READ_RE) do |m|
-        params << Param.new(m[2], "", ILLUMINATE_READ_TYPES[m[1]]? || "form")
+        params << Param.new(m[2], "", illuminate_read_type(m[1]))
+      end
+      body.scan(ILLUMINATE_DYNAMIC_READ_RE) do |m|
+        params << Param.new(m[1], "", "form") unless ILLUMINATE_REQUEST_PROPERTIES.includes?(m[1])
       end
       if body.matches?(ILLUMINATE_VALIDATE_RE)
         lexer = Noir::PhpLexer.new(body, php_mode: true)
