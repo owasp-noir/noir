@@ -92,6 +92,69 @@ describe "FastAPIAuthTagger" do
     plain.tags.map(&.name).should eq(["auth"])
   end
 
+  # A handler-body refusal guards the route only when it refuses an
+  # anonymous caller.
+  # 73: @app.post("/signup")           403 when a setting is off
+  # 80: @app.get("/config")            role read, nothing refused
+  # 87: @app.delete("/drafts/{id}")    401 when the optional user is None
+  # 94: @app.post("/posts/{id}/pin")   403 skipped when the user is None
+  it "judges a handler-body check by whether it refuses an anonymous caller" do
+    noir_options = create_test_options
+    noir_options["base"] = YAML::Any.new(fixture_base)
+    at = ->(line : Int32, method : String) { Endpoint.new("/#{line}", method, [] of Param, Details.new(PathInfo.new(main_path, line))) }
+    signup, config, draft, pin = at.call(73, "POST"), at.call(80, "GET"), at.call(87, "DELETE"), at.call(94, "POST")
+
+    CodeLocator.instance.clear_all
+    CodeLocator.instance.register_path(main_path)
+    begin
+      FastAPIAuthTagger.new(noir_options).perform([signup, config, draft, pin])
+    ensure
+      CodeLocator.instance.clear_all
+    end
+
+    signup.tags.should be_empty
+    config.tags.should be_empty
+    draft.tags.map { |t| {t.name, t.description} }.should eq([{"auth", "Protected by FastAPI handler 401 check"}])
+    pin.tags.should be_empty
+  end
+
+  # body_checks.py: the caller read bare, compared, passed to a helper or
+  # closed by an `else`; a non-caller `doc and` prefix; strings holding
+  # brackets; a status set on the response. A settings or form
+  # dependency is not the caller, and a `for`'s `else` is no check's.
+  # Then a class view's `self.user` and a dependency factory.
+  it "reads handler-body checks on the caller in their usual shapes" do
+    noir_options = create_test_options
+    noir_options["base"] = YAML::Any.new(fixture_base)
+    body = "#{fixture_base}/body_checks.py"
+    lines = {6 => "GET", 14 => "GET", 21 => "GET", 29 => "GET", 40 => "GET", 48 => "GET", 56 => "POST", 63 => "POST", 70 => "GET", 90 => "GET", 115 => "POST"}
+    endpoints = lines.map { |line, method| Endpoint.new("/#{line}", method, [] of Param, Details.new(PathInfo.new(body, line))) }
+
+    CodeLocator.instance.clear_all
+    CodeLocator.instance.register_path(body)
+    begin
+      endpoints = FastAPIAuthTagger.new(noir_options).perform(endpoints)
+    ensure
+      CodeLocator.instance.clear_all
+    end
+
+    verdicts = endpoints.map { |ep| {ep.url, ep.tags.map(&.description)} }.to_h
+    verdicts["/6"].should eq(["Protected by FastAPI handler 403 check"])
+    verdicts["/14"].should eq(["Protected by FastAPI handler 403 check"])
+    verdicts["/21"].should eq(["Protected by FastAPI handler ownership/role check"])
+    verdicts["/29"].should eq(["Protected by FastAPI handler ownership/role check"])
+    verdicts["/40"].should eq(["Protected by FastAPI handler 403 check"])
+    verdicts["/48"].should eq(["Protected by FastAPI handler ownership/role check"])
+    verdicts["/56"].should be_empty
+    verdicts["/63"].should be_empty
+    verdicts["/70"].should be_empty
+    # A class-based view's injected caller, read as `self.user`.
+    verdicts["/90"].should eq(["Protected by FastAPI Depends(get_current_user)", "Protected by FastAPI handler 403 check"])
+    # A router built in a factory function, guarded by a dependency
+    # factory whose argument can switch the check off.
+    verdicts["/115"].should eq(["Protected by FastAPI create_token_dependency(...) (a setting can make it public)"])
+  end
+
   # app/accounts.py imports `load_account` from loose_deps (checks nothing)
   # and strict_deps (checks `is_admin`), which both define that name.
   #  9: @router.get("/")                Depends(load_account)

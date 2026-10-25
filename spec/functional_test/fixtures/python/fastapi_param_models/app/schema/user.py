@@ -1,5 +1,5 @@
 from fastapi import Form
-from pydantic import Field
+from pydantic import BaseModel, Field
 
 from .base import AppModel
 
@@ -23,3 +23,8 @@ class LoginForm:
 class FeedQuery(AppModel):
     include_notes: bool = True
     tz: str | None = None
+
+
+class SigninForm(BaseModel):
+    email: str
+    password: str

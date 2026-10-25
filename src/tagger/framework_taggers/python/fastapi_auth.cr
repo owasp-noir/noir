@@ -68,6 +68,9 @@ class FastAPIAuthTagger < FrameworkTagger
   CLASS_DEPENDENCY_ATTR      = /^\s*(\w+)\s*(?::[^=]+)?=\s*(?:Depends|Security)\s*\(/
   ANNOTATED_ALIAS_DEPENDENCY = /^\s*(\w+)\s*(?::\s*[\w.\[\]]+\s*)?=\s*Annotated\s*\[.*\bDepends\s*\(\s*([\w.]+)/
 
+  alias Condition = {Int32, Bool, Bool, Bool}
+  BODY_401_CHECK = "FastAPI handler 401 check"
+
   def self.target_techs : Array(String)
     ["python_fastapi"]
   end
@@ -148,7 +151,7 @@ class FastAPIAuthTagger < FrameworkTagger
       header = handler_header(lines, line_num - 1)
       scopes = [{header, path_info.path}]
       if receiver = header.match(ROUTE_DECORATOR).try(&.[1])
-        scopes.concat(router_statement(lines, receiver, path_info.path))
+        scopes.concat(router_statement(lines, receiver, path_info.path, line_num - 1))
       end
       scopes.concat(class_dependencies(lines, line_num - 1, path_info.path))
 
@@ -158,7 +161,9 @@ class FastAPIAuthTagger < FrameworkTagger
         description ||= auth_desc(text, file)
         authz ||= authz_desc(text, file)
       end
-      authz ||= body_authz_desc(lines, line_num - 1)
+      authz ||= body_authz_desc(lines, line_num - 1, path_info.path)
+      # Refusing a missing caller is authentication, not authorization.
+      description, authz = (description || authz), nil if authz == BODY_401_CHECK
       next if description.nil? && authz.nil?
 
       endpoint.add_tag(Tag.new("auth", "Protected by #{description}", "fastapi_auth")) if description
@@ -206,9 +211,18 @@ class FastAPIAuthTagger < FrameworkTagger
   # `authz_desc` reports, not authentication.
   private def refusing_raise?(body : String, file : String) : Bool
     marker = body.matches?(AUTHZ_FIELD) ? UNAUTHENTICATED_MARKER : REFUSAL_MARKER
-    body.each_line do |line|
+    lines = body.lines
+    lines.each_with_index do |line, idx|
       code = Analyzer::Python::Helper.strip_python_comment(line)
       next unless code.matches?(/^\s*raise\b/)
+      # A wrapped `raise HTTPException(\n status_code=401, ...)`.
+      depth = bracket_delta(code)
+      cursor = idx
+      while depth > 0 && (cursor += 1) < lines.size
+        part = Analyzer::Python::Helper.strip_python_comment(lines[cursor])
+        depth += bracket_delta(part)
+        code = "#{code} #{part.strip}"
+      end
       return true if code.matches?(marker)
       if (name = code.match(/^\s*raise\s+(\w+)\s*(?:from\b.*)?$/).try(&.[1])) &&
          (site = python_definition_site(file, name)) &&
@@ -379,7 +393,7 @@ class FastAPIAuthTagger < FrameworkTagger
 
   # The handler's own body: from its `def` to the next line at or above
   # the `def`'s indent.
-  private def body_authz_desc(lines : Array(String), start : Int32) : String?
+  private def body_authz_desc(lines : Array(String), start : Int32, path : String) : String?
     idx = start
     while idx < lines.size && idx < start + 60 && !lines[idx].lstrip.matches?(PYTHON_DEF)
       idx += 1
@@ -395,18 +409,163 @@ class FastAPIAuthTagger < FrameworkTagger
       idx += 1
       break if depth <= 0 && code.ends_with?(':')
     end
+    callers = handler_caller_names(handler_header(lines, start), path)
+    # A class-based view's injected caller, read as `self.user`.
+    class_dependencies(lines, start, path).each do |statement, file|
+      statement.scan(CALLER_PARAM) { |m| callers << "self.#{m[1]}" if m[2] == "Security" || caller_dependency?(m[3], file) }
+    end
+    # Open conditional blocks; `chain` holds, per indent, the flags of the
+    # `if`/`elif` chain an `else` there would close.
+    frames = [] of Condition
+    chain = Hash(Int32, Condition).new
     while idx < lines.size && idx < start + 400
       line = lines[idx]
-      break if !line.blank? && line.size - line.lstrip.size <= def_indent
-      code = Analyzer::Python::Helper.strip_python_comment(line)
-      if code.matches?(FORBIDDEN)
-        return "FastAPI handler 403 check"
-      elsif code.matches?(AUTHZ_FIELD)
-        return "FastAPI handler ownership/role check"
-      end
       idx += 1
+      next if line.blank?
+      indent = line.size - line.lstrip.size
+      break if indent <= def_indent
+      code = Analyzer::Python::Helper.strip_python_comment(line).strip
+      depth = bracket_delta(code)
+      while depth > 0 && idx < lines.size
+        next_line = lines[idx]
+        break if !next_line.blank? && next_line.size - next_line.lstrip.size <= def_indent
+        part = Analyzer::Python::Helper.strip_python_comment(next_line).strip
+        depth += bracket_delta(part)
+        code = "#{code} #{part}"
+        idx += 1
+      end
+      frames.reject! { |frame| frame[0] >= indent }
+      chain.reject! { |level, _| level > indent }
+
+      statement = code
+      conditions = frames
+      if m = code.match(BODY_IF)
+        frame = condition_frame(indent, m[2], callers)
+        if m[1]? && (prior = chain[indent]?)
+          chain[indent] = {indent, prior[1] || frame[1], prior[2] || frame[2], false}
+        else
+          chain[indent] = frame
+        end
+        unless one_liner = m[3]?
+          frames << frame
+          next
+        end
+        statement = one_liner
+        conditions = frames + [frame]
+      elsif code.matches?(/^else\s*:/)
+        # The `else` of a check runs exactly when the check fails, so a
+        # None caller reaches it whatever the `if` short-circuits on.
+        prior = chain.delete(indent)
+        frames << {indent, prior.try(&.[1]) || false, prior.try(&.[2]) || false, false}
+        next
+      else
+        chain.delete(indent)
+        if m = code.match(/^while\s+(.+):$/)
+          frames << condition_frame(indent, m[1], callers)
+          next
+        elsif code.matches?(/^except\b/)
+          frames << {indent, false, false, false}
+          next
+        end
+      end
+      next unless statement.matches?(/^raise\b/) || statement.matches?(FORBIDDEN) || statement.matches?(UNAUTHORIZED_STATUS)
+      if desc = refusal_desc(statement, conditions)
+        return desc
+      end
     end
     nil
+  end
+
+  BODY_IF             = /^(el)?if\s+(.+?):\s*(raise\b.*|return\b.*)?$/
+  UNAUTHORIZED_STATUS = /status_code\s*=\s*(?:401\b|status\.HTTP_401_UNAUTHORIZED)/
+  CALLER_REFERENCE    = /(?<![\w.])(?:request\.(?:state\.)?user\b|self\.[A-Za-z_]\w*|[A-Za-z_]\w*)/
+  NONE_SKIPPING_TEST  = /^\(?\s*(request\.(?:state\.)?user|(?:self\.)?[A-Za-z_]\w*)(?:\s+is\s+not\s+None)?\s*(?:\band\b|\)?\s*$)/
+  # Name components of a dependency that hands the route its caller.
+  CALLER_WORDS = %w[user account principal identity viewer actor caller]
+
+  # Net bracket depth of a line, ignoring brackets inside string literals.
+  private def bracket_delta(code : String) : Int32
+    depth = 0
+    quote = nil.as(Char?)
+    escaped = false
+    code.each_char do |char|
+      if q = quote
+        if escaped
+          escaped = false
+        elsif char == '\\'
+          escaped = true
+        elsif char == q
+          quote = nil
+        end
+        next
+      end
+      case char
+      when '"', '\''     then quote = char
+      when '(', '[', '{' then depth += 1
+      when ')', ']', '}' then depth -= 1
+      end
+    end
+    depth
+  end
+
+  # A refusal in the handler body guards it only when an anonymous caller
+  # is the one it refuses: it answers 403 unconditionally, or it sits under
+  # a condition that reads the caller's role / ownership fields or the
+  # caller itself, none of which a None caller short-circuits past.
+  # `if not ENABLE_SIGNUP: raise 403` refuses everyone on a setting;
+  # `if user and user.role != "admin": raise 403` lets anonymous through.
+  private def refusal_desc(statement : String, conditions : Array(Condition)) : String?
+    forbidden = statement.matches?(FORBIDDEN)
+    if conditions.empty?
+      return forbidden ? "FastAPI handler 403 check" : nil
+    end
+    return if conditions.any?(&.[3])
+    if conditions.any?(&.[1])
+      "FastAPI handler ownership/role check"
+    elsif conditions.any?(&.[2]) && (forbidden || statement.matches?(REFUSAL_MARKER) || statement.matches?(UNAUTHORIZED_STATUS))
+      forbidden ? "FastAPI handler 403 check" : BODY_401_CHECK
+    end
+  end
+
+  # {indent, reads a role / ownership field?, reads the caller?, skipped
+  # when the caller is None?} for one condition. Only the caller decides
+  # the last: `if doc and doc.owner_id != user.id` still refuses anonymous.
+  private def condition_frame(indent : Int32, condition : String, callers : Set(String)) : Condition
+    reads_caller = condition.scan(CALLER_REFERENCE).any? { |m| callers.includes?(m[0]) || m[0].starts_with?("request.") }
+    admits_none = (subject = condition.match(NONE_SKIPPING_TEST).try(&.[1])) &&
+                  (callers.includes?(subject) || subject.starts_with?("request."))
+    {indent, condition.matches?(AUTHZ_FIELD), reads_caller, !!admits_none}
+  end
+
+  CALLER_PARAM           = /(\w+)\s*(?::[^=,()]*(?:\[[^\]]*\][^=,()]*)?)?=\s*(Depends|Security)\s*\(\s*([\w.]*)/
+  CALLER_ANNOTATED_PARAM = /(\w+)\s*:\s*Annotated\s*\[[^\n]*?\b(Depends|Security)\s*\(\s*([\w.]*)/
+  CALLER_ALIAS_PARAM     = /(\w+)\s*:\s*(\w+)\s*[,)=]/
+
+  # The handler parameters that inject the caller: a `Security(...)`, or a
+  # `Depends(...)` (direct, in `Annotated[...]` or through an Annotated
+  # alias) whose definition is judged as authentication, whose name reads
+  # as auth, or that names who calls (`get_optional_user`). A session,
+  # settings or form dependency is not the caller.
+  private def handler_caller_names(header : String, path : String) : Set(String)
+    names = Set(String).new
+    {CALLER_PARAM, CALLER_ANNOTATED_PARAM}.each do |re|
+      header.scan(re) { |m| names << m[1] if m[2] == "Security" || caller_dependency?(m[3], path) }
+    end
+    header.scan(CALLER_ALIAS_PARAM) do |m|
+      if @auth_aliases.has_key?(m[2])
+        names << m[1]
+      elsif (callee = @dependency_aliases[m[2]]?) && caller_dependency?(callee, path)
+        names << m[1]
+      end
+    end
+    names
+  end
+
+  private def caller_dependency?(callee : String, path : String) : Bool
+    return false if callee.empty?
+    return true unless dependency_refuses?(callee, path).nil?
+    name = callee.split('.').last
+    auth_callable?(name) || name.scan(NAME_COMPONENT).any? { |m| CALLER_WORDS.includes?(m[0].downcase) }
   end
 
   private def auth_desc(text : String, path : String) : String?
@@ -422,6 +581,9 @@ class FastAPIAuthTagger < FrameworkTagger
         text = text.gsub(/#{Regex.escape(m[0])}\b/, "")
       end
     end
+    if factory = factory_dependency_desc(text, path)
+      return factory
+    end
     {DEPENDS_AUTH_PATTERNS, SECURITY_PATTERNS, AUTH_PARAM_PATTERNS}.each do |patterns|
       patterns.each do |pattern, desc|
         return desc if text.matches?(pattern)
@@ -436,6 +598,62 @@ class FastAPIAuthTagger < FrameworkTagger
       end
     end
     nil
+  end
+
+  DEPENDENCIES_LIST = /\bdependencies\s*=\s*\[([^\]]*)\]/m
+  FACTORY_ITEM      = /\A([A-Za-z_][\w.]*)\s*\(/
+  RETURNED_DEPENDS  = /^\s*return\s+(?:Depends|Security)\s*\(\s*(?:dependency\s*=\s*)?(\w+)\s*[,)]/
+  BARE_RETURN       = /^\s*return(?:\s+None)?\s*$/
+  SPLIT_RULES       = Noir::TopLevelSplit::Rules.new
+
+  # `dependencies=[make_auth(settings.token)]`: a call that builds the
+  # dependency, judged by the nested function whose `Depends(...)` it
+  # returns. A refusal its own argument can switch off
+  # (`if expected_token is None: return`) is one a setting can lift.
+  private def factory_dependency_desc(text : String, path : String) : String?
+    text.scan(DEPENDENCIES_LIST) do |list|
+      Noir::TopLevelSplit.split(list[1], ',', SPLIT_RULES).each do |item|
+        name = item.match(FACTORY_ITEM).try(&.[1])
+        next if name.nil? || name.in?("Depends", "Security")
+        module_name, _, short = name.rpartition('.')
+        site = if module_name.empty?
+                 python_definition_site(path, short)
+               elsif (symbol = python_imported_symbols(path)[module_name]?) && symbol[1].empty?
+                 python_definition_site(symbol[0], short)
+               end
+        next unless site && (body = definition_block(site[0], /^(?:async\s+)?def\s+#{Regex.escape(site[1])}\b/))
+        body_lines = body.lines
+        next unless inner = body_lines.compact_map { |line| line.match(RETURNED_DEPENDS).try(&.[1]) }.first?
+        next unless inner_idx = body_lines.index(&.matches?(/^\s+(?:async\s+)?def\s+#{Regex.escape(inner)}\b/))
+        inner_indent = body_lines[inner_idx].size - body_lines[inner_idx].lstrip.size
+        inner_lines = [body_lines[inner_idx]]
+        # The signature may wrap, its `) -> None:` back at the def's indent.
+        depth = bracket_delta(Analyzer::Python::Helper.strip_python_comment(body_lines[inner_idx]))
+        body_lines[(inner_idx + 1)..].each do |line|
+          break if depth <= 0 && !line.blank? && line.size - line.lstrip.size <= inner_indent
+          depth += bracket_delta(Analyzer::Python::Helper.strip_python_comment(line)) if depth > 0
+          inner_lines << line
+        end
+        next unless refusing_raise?(inner_lines.join('\n'), site[0])
+        params = body_lines[0].match(/\(([^)]*)\)/).try(&.[1].split(',').map(&.split(/[:=]/, 2)[0].strip).reject(&.empty?)) || [] of String
+        return "FastAPI #{name}(...)#{" (a setting can make it public)" if setting_lifted?(inner_lines, params)}"
+      end
+    end
+    nil
+  end
+
+  # An `if` on one of `params` whose block is a bare `return`, before any
+  # `raise`: the factory's argument lets every caller through.
+  private def setting_lifted?(lines : Array(String), params : Array(String)) : Bool
+    lines.each_with_index do |line, idx|
+      code = Analyzer::Python::Helper.strip_python_comment(line)
+      return false if code.matches?(/^\s*raise\b/)
+      next unless cond = code.match(/^\s*if\s+(.+):\s*(return(?:\s+None)?)?\s*$/)
+      words = cond[1].scan(CALLER_REFERENCE).map(&.[0])
+      next unless params.any? { |param| words.includes?(param) }
+      return true if cond[2]? || lines[idx + 1..].find { |next_line| !next_line.blank? }.try(&.matches?(BARE_RETURN))
+    end
+    false
   end
 
   private def dependency_desc(text : String) : String?
@@ -489,10 +707,35 @@ class FastAPIAuthTagger < FrameworkTagger
   # its names from. A receiver built from a project APIRouter subclass
   # (`UserRouter(prefix=...)` whose `__init__` pins `dependencies=`) also
   # brings that class's definition and those of its router bases.
-  private def router_statement(lines : Array(String), receiver : String, path : String) : Array({String, String})
+  #
+  # A route declared inside a function (a router factory) uses the nearest
+  # assignment above it in an enclosing scope.
+  # The nearest assignment to `receiver` in the scope of the statement at
+  # `idx` or an enclosing one: each `def` / `class` above it at a smaller
+  # indent opens the next scope out, whose statements sit at that indent.
+  private def local_assignment(lines : Array(String), idx : Int32, receiver : String, receiver_re : Regex) : Int32?
+    scope = lines[idx].size - lines[idx].lstrip.size
+    (idx - 1).downto(0) do |i|
+      stripped = lines[i].lstrip
+      next if stripped.empty?
+      indent = lines[i].size - stripped.size
+      if indent < scope && stripped.matches?(/^(?:async\s+def|def|class)\s/)
+        scope = indent
+      elsif indent == scope && stripped.starts_with?(receiver) && stripped.matches?(receiver_re)
+        return i
+      end
+      break if scope == 0
+    end
+    nil
+  end
+
+  private def router_statement(lines : Array(String), receiver : String, path : String, route_idx : Int32) : Array({String, String})
     scopes = [] of {String, String}
     receiver_re = /^#{Regex.escape(receiver)}\s*(?::\s*[\w.]+\s*)?=\s*([\w.]+)\s*\(/
-    lines.each_with_index do |line, idx|
+    route_indent = lines[route_idx].size - lines[route_idx].lstrip.size
+    local = local_assignment(lines, route_idx, receiver, receiver_re) if route_indent > 0
+    (local ? [local] : (0...lines.size)).each do |idx|
+      line = local ? lines[idx].lstrip : lines[idx]
       next unless line.starts_with?(receiver) && (ctor = line.match(receiver_re).try(&.[1]))
       ctor_name = ctor.split('.').last
       router_class = nil
