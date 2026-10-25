@@ -98,6 +98,12 @@ describe Noir::CLI::Inspect do
       Noir::CLI::Inspect.trace(endpoints, nil, "/users/42").map(&.endpoint.url).should eq(["/users/{id}", "/users/:id", "/*"])
     end
 
+    it "puts a route declared for the method before an ANY one at the same path" do
+      routes = [endpoint("ANY", "/login"), endpoint("POST", "/login")]
+      Noir::CLI::Inspect.trace(routes, "POST", "/login").map(&.endpoint.method).should eq(["POST", "ANY"])
+      Noir::CLI::Inspect.trace(routes, nil, "/login").map(&.endpoint.method).should eq(["ANY", "POST"])
+    end
+
     it "holds typed placeholders to their type" do
       typed = [endpoint("GET", "/d/<uuid:id>/docs"), endpoint("GET", "/n/{id:int}"), endpoint("GET", "/g/{id:guid}")]
       Noir::CLI::Inspect.trace(endpoints, "GET", "/posts/abc/comments").should be_empty

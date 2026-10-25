@@ -531,7 +531,10 @@ module Noir::CLI::Inspect
     end
     # Most specific first, so `--limit 1` is the route a router would pick.
     pattern.sort_by! { |m| specificity(m.endpoint.url) }
-    exact + pattern
+    # A route declared for the request's own method before an any-method
+    # one at the same path (a proxy redirect rule beside the app's view).
+    declared, any = exact.partition { |m| !method || !::synthetic_any_method?(m.endpoint.method.upcase) }
+    declared + any + pattern
   end
 
   # Nearest declared routes for a miss: most shared leading segments
