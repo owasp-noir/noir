@@ -584,4 +584,144 @@ describe "DjangoAuthTagger" do
       CodeLocator.instance.clear_all
     end
   end
+
+  it "tags a dispatch only where it refuses an anonymous caller of that verb, in MRO order" do
+    CodeLocator.instance.clear_all
+    tmpdir = File.tempname("django_cbv_dispatch_scope")
+    Dir.mkdir_p(tmpdir)
+    views = File.join(tmpdir, "views.py")
+    File.write(views, <<-PY)
+      class SignupView(View):
+          def dispatch(self, request, *args, **kwargs):
+              if request.user.is_authenticated:
+                  raise PermissionDenied
+              return super().dispatch(request, *args, **kwargs)
+
+          def get(self, request):
+              return None
+
+      class PostOnlyView(View):
+          def dispatch(self, request, *args, **kwargs):
+              if request.method == "POST" and not request.user.is_authenticated:
+                  return self.handle_no_permission()
+              return super().dispatch(request, *args, **kwargs)
+
+          def get(self, request):
+              return None
+
+          def post(self, request):
+              return None
+
+      class ProjectGuard:
+          def dispatch(self, request, *args, **kwargs):
+              if not request.user.is_authenticated:
+                  return redirect_to_login(request.get_full_path())
+              return super().dispatch(request, *args, **kwargs)
+
+      class MixinAfterView(View, ProjectGuard):
+          def get(self, request):
+              return None
+
+      class SoftLogin(LoginRequiredMixin):
+          def handle_no_permission(self):
+              return None
+
+      class SoftView(SoftLogin, View):
+          def get(self, request):
+              return None
+      PY
+    CodeLocator.instance.register_path(views)
+
+    begin
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(tmpdir)
+      at = ->(method : String, line : Int32) { Endpoint.new("/#{line}", method, [] of Param, Details.new(PathInfo.new(views, line))) }
+      signup = at.call("GET", 7)
+      post_only_read = at.call("GET", 16)
+      post_only_write = at.call("POST", 19)
+      mixin_after = at.call("GET", 29)
+      soft = at.call("GET", 37)
+
+      DjangoAuthTagger.new(noir_options).perform([signup, post_only_read, post_only_write, mixin_after, soft])
+
+      # Refusing a logged-in caller is no guard.
+      signup.tags.should be_empty
+      # A verb-scoped refusal guards that verb only.
+      post_only_read.tags.should be_empty
+      post_only_write.tags.map(&.description).should eq(["Protected by PostOnlyView.dispatch"])
+      # `View.dispatch` comes first in the MRO and never calls `super()`.
+      mixin_after.tags.should be_empty
+      # The mixin refuses through a `handle_no_permission` that lets the
+      # caller through.
+      soft.tags.should be_empty
+    ensure
+      FileUtils.rm_rf(tmpdir)
+      CodeLocator.instance.clear_all
+    end
+  end
+
+  it "reads a DRF permission's own early returns before its super() delegation" do
+    CodeLocator.instance.clear_all
+    tmpdir = File.tempname("django_drf_early_returns")
+    Dir.mkdir_p(tmpdir)
+    perms = File.join(tmpdir, "perms.py")
+    views = File.join(tmpdir, "views.py")
+    File.write(perms, <<-PY)
+      class AuthPermission(BasePermission):
+          def has_permission(self, request, view):
+              return request.user.is_authenticated
+
+      class SafeOpen(AuthPermission):
+          def has_permission(self, request, view):
+              if request.method in SAFE_METHODS:
+                  return True
+              return super().has_permission(request, view)
+
+      class LoginNotRequiredOpen(AuthPermission):
+          def has_permission(self, request, view):
+              if not settings.LOGIN_REQUIRED:
+                  return True
+              return super().has_permission(request, view)
+
+      class MyModelPerms(DjangoModelPermissions):
+          authenticated_users_only = False
+
+          def has_permission(self, request, view):
+              if not request.user.is_authenticated:
+                  return False
+              return super().has_permission(request, view)
+      PY
+    File.write(views, <<-PY)
+      class SafeViewSet(viewsets.ViewSet):
+          permission_classes = [SafeOpen]
+
+      class SettingViewSet(viewsets.ViewSet):
+          permission_classes = [LoginNotRequiredOpen]
+
+      class MPViewSet(viewsets.ViewSet):
+          permission_classes = [MyModelPerms]
+      PY
+    [perms, views].each { |path| CodeLocator.instance.register_path(path) }
+
+    begin
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(tmpdir)
+      at = ->(method : String, line : Int32) { Endpoint.new("/#{line}", method, [] of Param, Details.new(PathInfo.new(views, line))) }
+      safe_read = at.call("GET", 1)
+      safe_write = at.call("POST", 1)
+      setting = at.call("GET", 4)
+      model_perms = at.call("GET", 7)
+
+      DjangoAuthTagger.new(noir_options).perform([safe_read, safe_write, setting, model_perms])
+
+      safe_read.tags.should be_empty
+      safe_write.tags.map(&.description).should eq(["Protected by DRF permission_classes"])
+      setting.tags.map(&.description).should eq(["Protected by DRF permission_classes (settings.LOGIN_REQUIRED decides; a setting can make it public)"])
+      # Its own body refuses anonymous callers before the flag matters.
+      model_perms.tags.map(&.description).should eq(["Protected by DRF permission_classes"])
+    ensure
+      FileUtils.rm_rf(tmpdir)
+      CodeLocator.instance.clear_all
+    end
+  end
 end
