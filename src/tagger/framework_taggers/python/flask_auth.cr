@@ -162,6 +162,10 @@ class FlaskAuthTagger < FrameworkTagger
   private def decorator_authz(line : String, file : String) : String?
     match = line.match(DECORATOR_NAME) || return
     target = resolve_def(file, match[1]) || return
+    # Not where the caller's own branch reaches the view unchecked
+    # (`if in_window() or current_user.is_admin:`). A setting that skips
+    # the check (`if not RBAC_ENABLED`) still leaves one where it applies.
+    return if view_access(target[0], target[1]).caller?
     gates = authz_params(target[0], target[1], 0) || return
     args = match.post_match
     match[1] if gates.empty? || gates.any? { |gate| args.matches?(/\b#{gate}\s*=\s*(?!None\b|False\b|\(\s*\)|\[\s*\]|\{\s*\})\S/) }
@@ -224,40 +228,6 @@ class FlaskAuthTagger < FrameworkTagger
         j -= 1
       end
     end
-  end
-
-  # The index of the line closing a `def`'s parameter list (`lines[0]` is
-  # the `def`), and the parameter names, annotations and defaults dropped.
-  private def signature(lines : Array(String)) : Tuple(Int32, Array(String))
-    text = String::Builder.new
-    depth = 0
-    opened = false
-    lines.each_with_index do |line, idx|
-      line.each_char do |char|
-        if char == '('
-          text << char if opened && depth > 0
-          opened = true
-          depth += 1
-        elsif char == ')' && opened
-          depth -= 1
-          if depth == 0
-            # Brackets in annotations (`Callable[[A, B], R]`) hold commas too.
-            params = text.to_s
-            while params.includes?('[')
-              stripped = params.gsub(/\[[^\[\]]*\]/, "")
-              break if stripped == params
-              params = stripped
-            end
-            names = params.gsub(/\([^()]*\)/, "").split(',').compact_map(&.strip.lstrip('*').match(/\A[A-Za-z_]\w*/).try(&.[0]))
-            return {idx, names}
-          end
-          text << char
-        elsif opened
-          text << char
-        end
-      end
-    end
-    {0, [] of String}
   end
 
   # `method_decorators` / `decorators` of class `name` in `file`, or of the

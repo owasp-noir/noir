@@ -1,7 +1,17 @@
 from flask_restx import Namespace, Resource
 
 from controllers.base import TokenResource
-from controllers.wraps import admin_only, admission, inner_key_only, session_required, signup_enabled
+from controllers.wraps import (
+    admin_only,
+    admins_only,
+    admission,
+    during_event,
+    inner_key_only,
+    members_only,
+    session_required,
+    signup_enabled,
+    visibility_gate,
+)
 
 ns = Namespace("v1")
 
@@ -61,4 +71,26 @@ class Audit(Resource):
     @session_required
     @admin_only
     def get(self, entry_id):
+        return {}
+
+
+@ns.route("/dashboard")
+class Dashboard(Resource):
+    @members_only
+    def get(self):
+        return {}
+
+
+@ns.route("/stats")
+class Stats(Resource):
+    @admins_only
+    def get(self):
+        return {}
+
+
+@ns.route("/scores")
+class Scores(Resource):
+    @visibility_gate
+    @during_event
+    def get(self):
         return {}
