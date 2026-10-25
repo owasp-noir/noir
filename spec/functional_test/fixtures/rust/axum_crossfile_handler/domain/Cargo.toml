@@ -1,0 +1,11 @@
+[package]
+name = "my-domain"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+axum = { version = "0.8", optional = true }
+serde = "1"
+
+[features]
+axum = ["dep:axum"]

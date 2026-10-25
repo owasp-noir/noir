@@ -644,6 +644,41 @@ module Analyzer::Rust
       end
     end
 
+    # Extractor => {param location, name used when its type's fields are unknown}.
+    EXTRACTOR_KINDS = {"Query" => {"query", "query"}, "Json" => {"json", "body"}, "Form" => {"form", "form"}}
+
+    # The type an extractor decodes into, when it is a plain (possibly
+    # module-qualified, possibly generic) name: `Json<CreatePost>`,
+    # `web::Query<api::Params>`, `Json<Record<Data>>`. `Json<Vec<T>>` is a
+    # JSON array of `T`, so its params are `T`'s fields.
+    EXTRACTOR_TARGET_RES = EXTRACTOR_KINDS.keys.to_h do |kind|
+      {kind, /(?<!\w)#{kind}\s*<\s*(?:(?:(?:std::)?vec::)?Vec\s*<\s*)?((?:[A-Za-z_]\w*::)*[A-Za-z_]\w*)\s*[<>]/}
+    end
+
+    # Push the params a `kind` extractor parameter (its source `text`)
+    # reads: the wire field names of the type it decodes into, resolved from
+    # `path` (an empty struct reads none), else the generic placeholder.
+    protected def push_extractor_params(text : String, kind : String, endpoint : Endpoint, path : String?)
+      location, placeholder = EXTRACTOR_KINDS[kind]
+      if fields = path ? extractor_fields(text, kind, path) : nil
+        fields.each { |name| endpoint.push_param(Param.new(name, "", location)) }
+      else
+        endpoint.push_param(Param.new(placeholder, "", location))
+      end
+    end
+
+    # The type is resolved through the handler file's imports, else (a bare
+    # name nothing imports, e.g. via a glob) by a same-crate name that has
+    # one definition; a type imported from outside the scan is unknown.
+    private def extractor_fields(text : String, kind : String, path : String) : Array(String)?
+      type = text.match(EXTRACTOR_TARGET_RES[kind]).try(&.[1]) || return
+      if fields = resolve_rust_struct_fields(type, path)
+        return fields
+      end
+      return if type.includes?("::") || rust_imported?(type, path)
+      rust_struct_fields(type, path)
+    end
+
     private def struct_decl_files : Hash(String, Array(String))
       @struct_decl_files ||= begin
         index = {} of String => Array(String)

@@ -848,7 +848,8 @@ module Analyzer::Rust
 
     private def extract_function_params(function : LibTreeSitter::TSNode,
                                         source : String,
-                                        endpoint : Endpoint)
+                                        endpoint : Endpoint,
+                                        path : String)
       header_vars = Set(String).new
       cookie_vars = Set(String).new
 
@@ -856,7 +857,7 @@ module Analyzer::Rust
       if params
         Noir::TreeSitter.each_named_child(params) do |param|
           text = Noir::TreeSitter.node_text(param, source)
-          extract_function_param_text(text, endpoint)
+          extract_function_param_text(text, endpoint, path)
           if binding = param_binding_name(text)
             header_vars.add(binding) if text.includes?("HeaderMap")
             cookie_vars.add(binding) if text.includes?("CookieJar")
@@ -870,10 +871,12 @@ module Analyzer::Rust
       collect_header_and_cookie_params(body, source, endpoint, header_vars, cookie_vars)
     end
 
-    private def extract_function_param_text(text : String, endpoint : Endpoint)
-      endpoint.push_param(Param.new("query", "", "query")) if extractor_param?(text, "Query")
-      endpoint.push_param(Param.new("body", "", "json")) if extractor_param?(text, "Json")
-      endpoint.push_param(Param.new("form", "", "form")) if extractor_param?(text, "Form")
+    # `Json<T>` / `Query<T>` / `Form<T>` read `T`'s wire field names, `T`
+    # resolved from the handler's file (`RustEngine#push_extractor_params`).
+    private def extract_function_param_text(text : String, endpoint : Endpoint, path : String)
+      EXTRACTOR_KINDS.each_key do |kind|
+        push_extractor_params(text, kind, endpoint, path) if extractor_param?(text, kind)
+      end
       # `TypedHeader<Authorization<Bearer>>` / `TypedHeader<headers::UserAgent>`:
       # the `headers` crate type names its header (`UserAgent` → `User-Agent`).
       if m = text.match(TYPED_HEADER_RE)
@@ -1028,6 +1031,14 @@ module Analyzer::Rust
         return attach_cached_handler_context(endpoint, context)
       end
 
+      # Follow the name to its definition through this file's imports
+      # (`use`, `as` aliases, `pub use` re-exports, workspace crates).
+      if (target = resolve_rust_fn(handler_name, path)) &&
+         (context = cached_external_handler_context(target[0], target[1], include_callee))
+        handler_context_cache[cache_key] = context
+        return attach_cached_handler_context(endpoint, context)
+      end
+
       attach_external_handler_context(endpoint, handler_name, path, include_callee, handler_context_cache)
     end
 
@@ -1052,7 +1063,7 @@ module Analyzer::Rust
                                              path : String,
                                              include_callee : Bool) : HandlerContext
       endpoint = Endpoint.new("", "GET")
-      extract_function_params(function, source, endpoint)
+      extract_function_params(function, source, endpoint, path)
       callees = include_callee ? callee_entries_for_function(function, source, path) : [] of Noir::RustCalleeExtractor::Entry
       {params: endpoint.params, callees: callees, handler: rust_handler(function, source, path)}
     end
