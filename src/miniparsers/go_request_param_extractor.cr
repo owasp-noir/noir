@@ -20,6 +20,14 @@ module Noir::GoRequestParamExtractor
     text.scan(HEADER_READ_RE).map { |m| Param.new(m[1]? || m[2], "", "header") }
   end
 
+  # A read off the parsed query string: stdlib `URL.Query()` or echo's
+  # `QueryParams()` (both `url.Values`), by `.Get("x")` or `["x"]`.
+  QUERY_READ_RE = /\.(?:URL\s*\.\s*Query|QueryParams)\s*\(\s*\)\s*(?:\.\s*Get\s*\(\s*["`]([^"`]+)["`]|\[\s*["`]([^"`]+)["`]\s*\])/
+
+  def query_params(text : String) : Array(Param)
+    text.scan(QUERY_READ_RE).map { |m| Param.new(m[1]? || m[2], "", "query") }
+  end
+
   # Function and method tables restricted to `dirs`, behind the `func ` /
   # `func (` per-file gates. A directory is parsed only when a route file
   # in it asks for its table. See `Noir::GoCalleeExtractor::LazyPackageBodies`.

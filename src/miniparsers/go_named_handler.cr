@@ -45,6 +45,19 @@ class Noir::GoNamedHandler
   # in a bound body.
   NAME_RE = /(?<![\w.])[A-Za-z_]\w*/
   CALL_RE = /(?<![\w.])([A-Za-z_]\w*)\s*\(/
+  # A function value in a wrapped handler's text: a name or selector that is
+  # neither called nor a composite literal (`a.UpdateSubscriber` in
+  # `pm(hasID(a.UpdateSubscriber), auth.PermX)`).
+  VALUE_REF_RE = /(?<![\w.])((?:[A-Za-z_]\w*\s*\.\s*)*[A-Za-z_]\w*)(?![\w.]|\s*[({.])/
+  CLOSURE_ARG  = /\bfunc\s*\(/
+  # `recv.Method(` in a body: a call on a receiver.
+  RECEIVER_CALL_RE = /(?<![\w.])([A-Za-z_]\w*)\s*\.\s*([A-Za-z_]\w*)\s*\(/
+  STRING_LITERAL   = /"(?:[^"\\]|\\.)*"|`[^`]*`/
+  # The text after a definition's parameter list when it is a handler: no
+  # result (`func(c *gin.Context)`, `func(w, r)`) or an `error` (`func(c
+  # echo.Context) error`). A wrapper or factory returns the next handler
+  # (`echo.HandlerFunc`, `func(...)`), so it never matches.
+  HANDLER_RESULT = /\A\s*(?:error\s*)?\{/
 
   # Declarations that pin a name's type, scanned once per file (see
   # `declared_types`). Assignments are anchored at a statement start, so the
@@ -95,6 +108,10 @@ class Noir::GoNamedHandler
   # `.Use` / group middleware each route runs behind, see
   # `TreeSitterGoRouteExtractor#route_middleware`.
   @middleware = Hash(Tuple(Int32, String), Array(String)).new
+  # Wrapped handler text -> the definition it answers with.
+  @resolved = Hash(String, Noir::GoCalleeExtractor::FunctionBody).new
+  # Wrapped handler text -> the reference it answers with (`a.UpdateNote`).
+  @handler_names = Hash(String, String).new
 
   # `listA` -> {"", "listA"}, `h.List` -> {"h", "List"}, `RateLimit()` ->
   # {"", "RateLimit"}. Anything else (closures, calls with arguments,
@@ -107,7 +124,9 @@ class Noir::GoNamedHandler
 
   @source_lines : Array(String)? = nil
 
-  def initialize(@content : String, @path : String, routes : Array(Noir::TreeSitterGoRouteExtractor::Route), scope : Scope? = nil)
+  # `handler_first`: the handler is the first argument after the path and
+  # middleware follows it (Echo's `GET(path, h, m...)`), not the last.
+  def initialize(@content : String, @path : String, routes : Array(Noir::TreeSitterGoRouteExtractor::Route), scope : Scope? = nil, @handler_first : Bool = false)
     content = @content
     path = @path
     return if routes.empty?
@@ -131,7 +150,8 @@ class Noir::GoNamedHandler
     functions = Noir::GoCalleeExtractor.collect_function_bodies(content, path)
     methods = Noir::GoCalleeExtractor.collect_method_bodies(content, path)
     route_rows = routes.map(&.line).sort!
-    imports = nil
+    aliases = Hash(String, String).new
+    aliases_read = false
     spans = Hash(Int32, Range(Int32, Int32)).new
     dir = File.dirname(path)
     span_of = ->(fb : Noir::GoCalleeExtractor::FunctionBody) do
@@ -166,20 +186,45 @@ class Noir::GoNamedHandler
       @refs[handler] = keys.uniq unless keys.empty?
     end
 
+    # The definition a plain reference names, or nil.
+    resolve = ->(qualifier : String, name : String) do
+      if qualifier.empty?
+        functions[name]? || scope.try(&.bodies.functions_for(dir)[name]?)
+      elsif !qualifier.includes?('.')
+        unless aliases_read
+          aliases.merge!(Noir::GoCalleeExtractor.extract_import_aliases(content))
+          aliases_read = true
+        end
+        if import_path = aliases[qualifier]?
+          if scope && (import_dir = scope.import_dirs[import_path]?)
+            scope.bodies.functions_for(import_dir)[name]?
+          end
+        else
+          methods[name]?.try { |candidates| method_for(qualifier, name, candidates, content, "file") } ||
+          scope.try(&.bodies.methods_for(dir)[name]?).try { |candidates| method_for(qualifier, name, candidates, content, "package") }
+        end
+      end
+    end
+
+    # A wrapped handler (`pm(hasID(a.UpdateSubscriber), perm)`,
+    # `mw.Gzip()(h.Export)`) answers with the one function value it hands
+    # in: a reference that is not called and whose definition is a handler,
+    # not another wrapper (see `HANDLER_RESULT`).
+    wrapped.each do |handler|
+      next if handler.matches?(CLOSURE_ARG)
+      found = handler.gsub(STRING_LITERAL, %("")).scan(VALUE_REF_RE).compact_map do |m|
+        ref = m[1].gsub(/\s+/, "")
+        qualifier, _, name = ref.rpartition('.')
+        body = resolve.call(qualifier, name)
+        {body, ref} if body && !registers_routes.call(body) && handler_definition?(body)
+      end.uniq!(&.[0])
+      next unless found.size == 1
+      @resolved[handler], @handler_names[handler] = found.first
+      references[handler] = {"", ""}
+    end
+
     references.each do |handler, (qualifier, name)|
-      body = if qualifier.empty?
-               functions[name]? || scope.try(&.bodies.functions_for(dir)[name]?)
-             elsif !qualifier.includes?('.')
-               imports ||= Noir::GoCalleeExtractor.extract_import_aliases(content)
-               if import_path = imports[qualifier]?
-                 if scope && (import_dir = scope.import_dirs[import_path]?)
-                   scope.bodies.functions_for(import_dir)[name]?
-                 end
-               else
-                 methods[name]?.try { |candidates| method_for(qualifier, name, candidates, content, "file") } ||
-                   scope.try(&.bodies.methods_for(dir)[name]?).try { |candidates| method_for(qualifier, name, candidates, content, "package") }
-               end
-             end
+      body = @resolved[handler]? || resolve.call(qualifier, name)
       # A function that registers routes itself is never claimed.
       next if body.nil? || registers_routes.call(body)
 
@@ -187,7 +232,20 @@ class Noir::GoNamedHandler
       @handlers[handler] = key
       # One hop further: the functions the handler body calls.
       calls = body.source.scan(CALL_RE).map(&.[1]).uniq!
-      @refs[handler] = [key].concat(keys_for.call(calls, File.dirname(body.file_path), key)).uniq
+      keys = (@refs[handler]? || [] of Key).concat([key]).concat(keys_for.call(calls, File.dirname(body.file_path), key))
+      # ... and the methods it calls on its own receiver (`a.doReset(c)` in
+      # `func (a *App) ResetPage(c)`), matched by receiver type.
+      if (recv = body.source.match(RECEIVER_RE)) && (recv_name = recv[1]?)
+        table = scope.try(&.bodies.methods_for(File.dirname(body.file_path))) || (body.file_path == path ? methods : nil)
+        body.source.scan(RECEIVER_CALL_RE).each do |m|
+          next unless m[1] == recv_name && (candidates = table.try(&.[m[2]]?))
+          found = candidates.select { |fb| fb.source.match(RECEIVER_RE).try(&.[2]) == recv[2] }
+          next unless found.size == 1
+          next if registers_routes.call(found.first)
+          keys << {found.first.file_path, found.first.start_row}
+        end
+      end
+      @refs[handler] = keys.uniq
     end
 
     # Every route-free body in this file is claimed, bound or not.
@@ -196,6 +254,29 @@ class Noir::GoNamedHandler
       key = {path, fb.start_row}
       span_of.call(fb).each { |row| @rows[row] = key }
     end
+  end
+
+  # Whether `body` is declared as a handler: it takes parameters and
+  # returns nothing or an `error` (see `HANDLER_RESULT`).
+  private def handler_definition?(body : Noir::GoCalleeExtractor::FunctionBody) : Bool
+    source = body.source
+    groups = source.lstrip.lchop("func").lstrip.starts_with?('(') ? 2 : 1
+    depth = 0
+    seen = 0
+    open = 0
+    source.each_char_with_index do |char, pos|
+      if char == '('
+        open = pos if depth.zero?
+        depth += 1
+      elsif char == ')'
+        depth -= 1
+        next unless depth.zero?
+        seen += 1
+        next unless seen == groups
+        return !source[open + 1...pos].blank? && source[pos + 1, 32].matches?(HANDLER_RESULT)
+      end
+    end
+    false
   end
 
   # The one method in `candidates` the selector `qualifier.Name` can mean.
@@ -246,19 +327,20 @@ class Noir::GoNamedHandler
 
   # The route's handler resolved to its definition: the *last* handler
   # argument, which is the one that answers (everything before it is
-  # middleware). An inline closure there is the handler, named `closure` at
+  # middleware), or the first one with `handler_first`. A wrapped handler
+  # names the function value it hands in. An inline closure there is the handler, named `closure` at
   # the line it starts on; a middleware before a closure is never promoted,
   # since `route.GET("/home", CookieTool(), func(c) {...})` is not handled
   # by CookieTool. A bare name bound to a closure in the registering
   # function (`isLive := func(c *gin.Context) {...}`) names that closure.
   def handler_for(route : Noir::TreeSitterGoRouteExtractor::Route) : Handler?
-    name = route.handler_args.last?.try(&.strip) || return
+    name = (@handler_first ? route.handler_args.first? : route.handler_args.last?).try(&.strip) || return
     if name.matches?(CLOSURE_HANDLER)
       row = route.handler_row || return
       return Handler.new("closure", @path, row + 1)
     end
     if key = @handlers[name]?
-      return Handler.new(name, key[0], key[1] + 1)
+      return Handler.new(@handler_names[name]? || name, key[0], key[1] + 1)
     end
     if name.matches?(/\A[A-Za-z_]\w*\z/) && (row = local_closure_row(name, route.line))
       Handler.new(name, @path, row + 1)
@@ -294,6 +376,14 @@ class Noir::GoNamedHandler
   private def handler_args(route : Noir::TreeSitterGoRouteExtractor::Route) : Array(String)
     mw = @middleware[{route.line, route.router_name}]?
     mw ? mw + route.handler_args : route.handler_args
+  end
+
+  # Yields each bound body's file and lines with the endpoints routed to it.
+  def each_bound_body(& : String, Array(String), Array(Endpoint) ->)
+    @lines.each do |key, lines|
+      eps = @targets[key]?
+      yield key[0], lines, eps if eps
+    end
   end
 
   # Yields every claimed line with each endpoint routed to its handler.

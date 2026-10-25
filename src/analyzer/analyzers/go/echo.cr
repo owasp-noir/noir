@@ -1,4 +1,5 @@
 require "../../engines/go_engine"
+require "../../../miniparsers/go_struct_fields"
 
 module Analyzer::Go
   class Echo < GoEngine
@@ -22,6 +23,7 @@ module Analyzer::Go
       builder_prefixes_by_dir = resolve_router_builder_prefixes(file_contents, package_groups, BUILDER_TYPE)
       framework_dirs = framework_package_dirs(file_contents, IMPORT_MARKER)
       named_scope = named_handler_scope(file_contents)
+      struct_index = Noir::GoStructFields::Index.new(file_contents, named_scope.import_dirs)
       parallel_analyze(get_files_by_extension(".go")) do |path|
         next if GoEngine.go_test_file?(base_relative_path(path))
         next unless File.exists?(path)
@@ -46,7 +48,8 @@ module Analyzer::Go
           routes_by_line[r.line] << r
         end
 
-        named = Noir::GoNamedHandler.new(content, path, ts_routes, named_scope)
+        # Echo takes `GET(path, h, m...)`: the handler comes first.
+        named = Noir::GoNamedHandler.new(content, path, ts_routes, named_scope, handler_first: true)
         expand_builders = router_builder_expansions(content, BUILDER_TYPE, builder_prefixes_by_dir[dir]?, cross_file_groups)
         suppress_ranges = expand_builders.map { |_, rb, _| rb.start_row..rb.end_row }
 
@@ -113,7 +116,14 @@ module Analyzer::Go
           add_echo_param_patterns(line, ep)
         end
 
-        named.each_attribution { |line, ep| add_echo_param_patterns(line, ep) }
+        # A named handler's body: `c.Bind(&req)` read as the fields of
+        # `req`'s struct, the generic body marker kept only when a bind
+        # target does not resolve.
+        named.each_bound_body do |file, body_lines, eps|
+          fields, unresolved = bind_fields(body_lines, file, struct_index)
+          body_lines.each { |line| eps.each { |ep| add_echo_param_patterns(line, ep, bind_marker: unresolved) } }
+          eps.each { |ep| add_bind_params(fields, ep) }
+        end
       end
 
       resolve_public_dirs(public_dirs)
@@ -121,22 +131,28 @@ module Analyzer::Go
       result
     end
 
-    private def add_echo_param_patterns(line : String, ep : Endpoint)
+    private def add_echo_param_patterns(line : String, ep : Endpoint, bind_marker : Bool = true)
       if line.includes?("Param(") || line.includes?("FormValue(")
-        param = get_param(line)
-        # A shared helper may read a path variable this route has no slot for.
-        if param.param_type != "path" || ep.url.includes?(param.name == "*" ? "*" : ":#{param.name}")
-          add_param_to_endpoint(param, ep)
+        # Every accessor on the line (`f(c.QueryParam("a"), c.QueryParam("b"))`).
+        line.scan(ACCESSOR_RE) do |m|
+          param = Param.new(m[2].gsub("\"", "").strip, "", ACCESSOR_TYPES[m[1]])
+          # `FormValue` is net/http's: the body is parsed only for POST, PUT
+          # and PATCH, so on any other method it reads the query string.
+          param.param_type = "query" if param.param_type == "form" && !FORM_BODY_METHODS.includes?(ep.method)
+          # A shared helper may read a path variable this route has no slot for.
+          if param.param_type != "path" || ep.url.includes?(param.name == "*" ? "*" : ":#{param.name}")
+            add_param_to_endpoint(param, ep)
+          end
         end
       end
+      # `c.QueryParams().Get("from")`, `c.Request().URL.Query()["id"]`.
+      Noir::GoRequestParamExtractor.query_params(line).each { |param| add_param_to_endpoint(param, ep) }
 
-      # `c.Bind(&v)` / `c.BindBody(...)` populate the
-      # request body. Echo also exposes `BindJSON`-style
-      # helpers via the echo-contrib package. Emit a
-      # single "body" indicator without trying to decode
-      # the bound struct's shape (would need static-type
-      # resolution we don't have).
-      if line.matches?(/\.Bind(?:Body|JSON|XML|YAML|Headers|Query|Path)?\s*\(/) &&
+      # `c.Bind(&v)` / `c.BindBody(...)` populate the request body. Echo
+      # also exposes `BindJSON`-style helpers via the echo-contrib package.
+      # A single "body" indicator, unless the caller read the bound
+      # struct's fields instead (`bind_marker` false, see `bind_fields`).
+      if bind_marker && line.matches?(BIND_ANY) &&
          !line.includes?("// ")
         add_param_to_endpoint(Param.new("body", "", "json"), ep)
       end
@@ -152,6 +168,92 @@ module Analyzer::Go
         end
       end
     end
+
+    FORM_BODY_METHODS = %w[POST PUT PATCH]
+
+    BIND_ANY = /\.Bind(?:Body|JSON|XML|YAML|Headers|Query|Path)?\s*\(/
+    # `c.Bind(&req)`: Echo's DefaultBinder.
+    BIND_CALL = /\.Bind\s*\(\s*&\s*([A-Za-z_]\w*)\s*\)/
+    # Where a bind target's type is declared in the body: `var req T`,
+    # `req T` in a `var (...)` block, `req := T{` / `&T{` / `new(T)`, or an
+    # anonymous `struct {` literal.
+    DECLARED_TYPE  = /\A\s*(?:var\s+)?(\w+)\s+\*?((?:\w+\.)?\w+)\s*\z/
+    ASSIGNED_TYPE  = /\A\s*(\w+)\s*:?=\s*(?:&\s*)?(?:new\(\s*)?((?:\w+\.)?\w+)\s*[{)]/
+    STRUCT_LITERAL = /\A\s*(?:var\s+)?(\w+)\s*(?::?=\s*)?struct\s*\{/
+
+    # The fields the binds in `lines` fill, and whether any bind target did
+    # not resolve to a struct.
+    private def bind_fields(lines : Array(String), file : String, index : Noir::GoStructFields::Index) : Tuple(Array(Noir::GoStructFields::Field), Bool)
+      fields = [] of Noir::GoStructFields::Field
+      unresolved = false
+      lines.each do |line|
+        next unless line.includes?(".Bind")
+        # A bind variant this does not read (`BindHeaders`, `Bind(x)`).
+        unresolved = true if line.matches?(BIND_ANY) && !line.matches?(BIND_CALL)
+        line.scan(BIND_CALL) do |m|
+          found = bind_target_fields(lines, m[1], file, index)
+          # A struct with no bindable tag (`struct{ Food string }` binds
+          # JSON by field name) keeps the generic marker.
+          if found && found.any? { |f| BIND_TAGS.any? { |key| Noir::GoStructFields.tag_value(f.tag, key) } }
+            fields.concat(found)
+          else
+            unresolved = true
+          end
+        end
+      end
+      {fields, unresolved}
+    end
+
+    # The struct fields of the bind target `name`, from its declaration in
+    # `lines`; nil when it is not declared there as a known struct.
+    private def bind_target_fields(lines : Array(String), name : String, file : String, index : Noir::GoStructFields::Index) : Array(Noir::GoStructFields::Field)?
+      lines.each_with_index do |line, idx|
+        if (m = line.match(STRUCT_LITERAL)) && m[1] == name
+          return index.flatten(Noir::GoStructFields.literal(struct_literal_text(lines, idx)), file)
+        end
+        m = line.match(DECLARED_TYPE) || line.match(ASSIGNED_TYPE)
+        next unless m && m[1] == name
+        return index.resolve(m[2], file)
+      end
+      nil
+    end
+
+    # `struct { ... }` from the line `lines[start]` opens it on to the brace
+    # that closes it.
+    private def struct_literal_text(lines : Array(String), start : Int32) : String
+      first = lines[start]
+      text = first[(first.index("struct") || 0)..]
+      depth = text.count('{') - text.count('}')
+      row = start + 1
+      while depth > 0 && row < lines.size
+        text += "\n" + lines[row]
+        depth += lines[row].count('{') - lines[row].count('}')
+        row += 1
+      end
+      text[0, (text.rindex('}') || text.size - 1) + 1]
+    end
+
+    # Echo's DefaultBinder: `param` tags from the path, `query` tags on GET,
+    # DELETE and HEAD, then the body by Content-Type: `json` tags and `form`
+    # tags (either encoding may be sent, so both are listed). GET and HEAD
+    # carry no body. Untagged fields are left out.
+    private def add_bind_params(fields : Array(Noir::GoStructFields::Field), ep : Endpoint)
+      fields.each do |field|
+        if (name = Noir::GoStructFields.tag_value(field.tag, "param")) && ep.url.includes?(":#{name}")
+          add_param_to_endpoint(Param.new(name, "", "path"), ep)
+        end
+        if QUERY_BIND_METHODS.includes?(ep.method) && (name = Noir::GoStructFields.tag_value(field.tag, "query"))
+          add_param_to_endpoint(Param.new(name, "", "query"), ep)
+        end
+        next if NO_BODY_METHODS.includes?(ep.method)
+        Noir::GoStructFields.tag_value(field.tag, "json").try { |json| add_param_to_endpoint(Param.new(json, "", "json"), ep) }
+        Noir::GoStructFields.tag_value(field.tag, "form").try { |form| add_param_to_endpoint(Param.new(form, "", "form"), ep) }
+      end
+    end
+
+    BIND_TAGS          = %w[param query json form]
+    QUERY_BIND_METHODS = %w[GET DELETE HEAD]
+    NO_BODY_METHODS    = %w[GET HEAD]
 
     ACCESSOR_RE    = /\b(QueryParam|FormValue|Param)\s*\(([^()]*)\)/
     ACCESSOR_TYPES = {"QueryParam" => "query", "FormValue" => "form", "Param" => "path"}
