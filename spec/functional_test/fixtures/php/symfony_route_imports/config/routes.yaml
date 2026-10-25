@@ -6,3 +6,32 @@ web:
 health:
     path: /health
     methods: [GET]
+
+auth:
+    resource: ../src/Controller/Web/Auth/
+    type: attribute
+    prefix: /auth
+
+legacy:
+    resource: ../src/Controller/Web/Auth/
+    type: attribute
+    prefix: /old
+    name_prefix: legacy_
+
+localized:
+    resource: ../src/Controller/Web/Auth/
+    type: attribute
+    prefix:
+        en: /en
+
+admin:
+    resource: ../src/Controller/Admin/
+    type: attribute
+    prefix: /admin
+
+site:
+    resource: ../src/Controller/
+    type: attribute
+    exclude:
+        - '../src/Controller/{Admin,Web}/'
+        - ../src/Controller/Api/

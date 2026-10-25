@@ -289,6 +289,9 @@ class PhpAuthTagger < FrameworkTagger
     while idx >= 0 && idx >= method_line - 8
       current = lines[idx].strip
       break if current.empty? && idx < method_line - 1
+      # The previous member ends here (`}`, `;`, a one-line `function x() {
+      # ... }`): its attributes are not this route's.
+      break if current.ends_with?('}') || current.ends_with?(';') || current.ends_with?('{') || current.matches?(/\bfunction\b/)
 
       all_patterns = SYMFONY_PATTERNS
       all_patterns.each do |pattern, desc|
