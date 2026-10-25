@@ -1,0 +1,8 @@
+controllers:
+    resource: ../src/Controller/
+    type: attribute
+
+homepage:
+    path: /{page}
+    controller: App\Controller\EntryController::list
+    methods: GET
