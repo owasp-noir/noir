@@ -165,12 +165,14 @@ expected_endpoints = [
     Param.new("X-Ping", "", "header"),
   ]),
 
-  # Optional route segments `(.:format)` / `(/:section)` peeled to the
-  # required base path (nested + middle-segment `//` collapse).
+  # `(.:format)` is dropped; `(/:section)` answers with and without it.
   Endpoint.new("/feed", "GET", [
     Param.new("X-Ping", "", "header"),
   ]),
   Endpoint.new("/report/rss", "GET", [
+    Param.new("X-Ping", "", "header"),
+  ]),
+  Endpoint.new("/report/:section/rss", "GET", [
     Param.new("X-Ping", "", "header"),
   ]),
   Endpoint.new("/localized_ping", "GET", [
@@ -271,7 +273,7 @@ total_endpoints = 1 +  # root
                   1 +  # trends/merged -> tags#merged?
                   3 +  # preferences/notifications show/update inherited from base
                   3 +  # /up + /ping + legacy string-via match
-                  3 +  # optional-segment routes /feed + /report/rss + optional scope
+                  4 +  # optional-segment routes /feed + /report(/:section)/rss + optional scope
                   2 +  # %w[browse annotate].each unrolled to /repo/:id/browse + /annotate
                   21 + # devise_for :users (default table, model not in scan)
                   3 +  # devise_for :admins, only: [:sessions]
