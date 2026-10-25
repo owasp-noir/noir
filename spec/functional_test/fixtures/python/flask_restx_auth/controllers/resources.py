@@ -91,6 +91,12 @@ class Stats(Resource):
 @ns.route("/scores")
 class Scores(Resource):
     @visibility_gate
+    def get(self):
+        return {}
+
+
+@ns.route("/live")
+class Live(Resource):
     @during_event
     def get(self):
         return {}

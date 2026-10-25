@@ -36,11 +36,13 @@ describe "--ai-context on flask-restx auth fixtures", tags: "functional" do
     # still name-matches `login_required` near the route, at low confidence.)
     # A wrapper is judged by the paths that reach the view: one that
     # needs a logged-in caller (read off `session` through a helper) is a
-    # guard; one that lets the view run on a setting or a time window is
-    # not, even when another branch refuses.
+    # guard; one that lets anyone in during a time window is not, even
+    # when another branch refuses. One that needs a logged-in caller unless
+    # a setting opens the view is a guard, and says a setting can lift it.
     guards["GET /v1/dashboard"].should eq(["auth_guard:members_only"])
     guards["GET /v1/stats"].should eq(["auth_guard:admins_only"])
-    guards["GET /v1/scores"].should be_empty
+    guards["GET /v1/scores"].should eq(["auth_guard:visibility_gate (a setting can make it public)"])
+    guards["GET /v1/live"].should be_empty
     signup = app.endpoints.find! { |ep| ep.method == "POST" && ep.url == "/v1/signup" }
     signup.tags.select(&.tagger.==("flask_auth")).should be_empty
   end
