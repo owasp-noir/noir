@@ -3,6 +3,8 @@ use actix_web::{http::StatusCode, ResponseError};
 #[derive(Debug)]
 pub enum AppError {
     NotLoggedIn,
+    NotAdmin,
+    Banned,
     Invalid,
 }
 
@@ -15,7 +17,11 @@ impl std::fmt::Display for AppError {
 impl ResponseError for AppError {
     fn status_code(&self) -> StatusCode {
         match self {
-            AppError::NotLoggedIn => StatusCode::UNAUTHORIZED,
+            AppError::NotLoggedIn
+            | AppError::NotAdmin => StatusCode::UNAUTHORIZED,
+            Self::Banned => {
+                StatusCode::FORBIDDEN
+            }
             AppError::Invalid => StatusCode::BAD_REQUEST,
         }
     }

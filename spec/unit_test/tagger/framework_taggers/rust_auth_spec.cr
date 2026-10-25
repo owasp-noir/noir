@@ -285,4 +285,22 @@ describe "RustAuthTagger actix extractors that fail with a 401 error variant" do
   it "does not count an extractor whose error variant answers 400" do
     tag_handler.call("items/handlers.rs", "list", 4).should be_empty
   end
+
+  # `AppError::NotLoggedIn\n| AppError::NotAdmin => …UNAUTHORIZED`
+  it "reads every variant of a multi-line `|` arm, returned through `.ok_or(...)`" do
+    tag_handler.call("guarded.rs", "admin", 4).should eq(["Protected by Rust Admin request guard"])
+  end
+
+  # `Self::Banned => { StatusCode::FORBIDDEN }` + `Err(Banned)` after `use AppError::*`
+  it "reads a block arm on `Self::` and a glob-imported bare variant" do
+    tag_handler.call("guarded.rs", "member", 8).should eq(["Protected by Rust Member request guard"])
+  end
+
+  it "ignores a 401 variant that is bound to a `let` and never returned" do
+    tag_handler.call("guarded.rs", "maybe", 12).should be_empty
+  end
+
+  it "ignores a 401 variant that only appears in a match pattern" do
+    tag_handler.call("guarded.rs", "anon", 16).should be_empty
+  end
 end
