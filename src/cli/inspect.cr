@@ -372,9 +372,9 @@ module Noir::CLI::Inspect
   # ---- trace: concrete request path → declared route ----------------------
 
   # `{id}` `:id` `<int:pk>` `[id]` `$id` `${id}` match one segment; `*`
-  # `**` `{path*}` `{...rest}` `[...slug]` `[[...slug]]` `*path` `:rest*`
+  # `**` `{path*}` `{...rest}` `[...slug]` `[[...slug]]` `*path` `:rest*` `<path:p>`
   # match the rest (Express's bare `*` is a catch-all, not one segment).
-  REST_PLACEHOLDER = /\A(?:\*\*|\{[^}]*\*\}|\{\.\.\.[^}]*\}|\[\[\.\.\.[^\]]*\]\]|\[\.\.\.[^\]]*\]|\*[A-Za-z_]\w*|:[A-Za-z_]\w*[*+]|\*)/
+  REST_PLACEHOLDER = /\A(?:<path:[^>]*>|\*\*|\{[^}]*\*\}|\{\.\.\.[^}]*\}|\[\[\.\.\.[^\]]*\]\]|\[\.\.\.[^\]]*\]|\*[A-Za-z_]\w*|:[A-Za-z_]\w*[*+]|\*)/
   # path-to-regexp v8 (Express 5) optional group: `/posts{/:id}`.
   OPTIONAL_GROUP = /\A\{(\/[^{}]*)\}/
   # `:id(\d+)` (Express 4 / Koa / Fastify) and `:id{[0-9]+}` (Hono) carry a
