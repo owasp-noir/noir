@@ -13,3 +13,9 @@ func RouteInt64Param(r *http.Request, param string) int64 {
 func QueryFlag(r *http.Request, param string) bool {
 	return r.URL.Query().Get(param) == "1"
 }
+
+func HasFlag(r *http.Request, param string) bool {
+	values := r.URL.Query()
+	_, ok := values[param]
+	return ok
+}

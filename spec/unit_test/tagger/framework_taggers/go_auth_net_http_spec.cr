@@ -30,7 +30,7 @@ describe "GoAuthTagger net/http wrappers" do
   end
 
   it "counts a middleware that stops the request when the credential it reads is empty" do
-    guards.call("server/routes.go", 18, "/fever/", "GET").should eq(["Protected by Go middleware fever.Middleware (verified from its body: refuses anonymous callers)"])
+    guards.call("server/routes.go", 19, "/fever/", "GET").should eq(["Protected by Go middleware fever.Middleware (verified from its body: refuses anonymous callers)"])
   end
 
   it "reads a path predicate in the refusal's condition for the route" do
@@ -40,8 +40,13 @@ describe "GoAuthTagger net/http wrappers" do
     guards.call("ui/ui.go", 16, "/static/{file}", "GET").should be_empty
   end
 
+  it "says when a setting lifts the guard" do
+    # `if token == "" { return next }` in the factory.
+    guards.call("jobs/jobs.go", 11, "/jobs/run", "POST").should eq(["Protected by Go middleware auth (verified from its body: refuses anonymous callers; a setting can lift it: it hands the request on unchecked when `token == \"\"`)"])
+  end
+
   it "leaves routes no refusing wrapper reaches open" do
-    guards.call("server/routes.go", 28, "/liveness", "GET").should be_empty
-    guards.call("server/routes.go", 16, "/healthcheck", "GET").should be_empty
+    guards.call("server/routes.go", 30, "/liveness", "GET").should be_empty
+    guards.call("server/routes.go", 17, "/healthcheck", "GET").should be_empty
   end
 end

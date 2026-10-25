@@ -1,12 +1,99 @@
 require "../ext/tree_sitter/tree_sitter"
 require "../models/endpoint"
 require "./go_callee_extractor"
+require "./go_struct_fields"
 require "../utils/c_comments"
 
 module Noir::GoRequestParamExtractor
   extend self
 
   MAX_HELPER_DEPTH = 3
+
+  # Lookups across packages for the walk: a helper called through an
+  # imported package (`request.QueryBoolParam(r, "force", false)`), the
+  # string constants a package declares (`paramTagsAdd = "a"`), and the
+  # struct a decoded body fills.
+  class Resolver
+    getter bodies : Noir::GoCalleeExtractor::LazyPackageBodies
+    getter structs : Noir::GoStructFields::Index
+
+    @files_by_dir = Hash(String, Array(String)).new
+    @aliases = Hash(String, Hash(String, String)).new
+    @constants = Hash(String, Hash(String, String)).new
+    @mutex = Mutex.new
+
+    def initialize(@bodies, @file_contents : Hash(String, String), @import_dirs : Hash(String, String))
+      @structs = Noir::GoStructFields::Index.new(@file_contents, @import_dirs)
+      @file_contents.each_key do |path|
+        (@files_by_dir[File.dirname(path)] ||= [] of String) << path unless path.ends_with?("_test.go")
+      end
+    end
+
+    # The function `qualifier.name` names from `file` when `qualifier` is
+    # an import of a scanned package.
+    def imported_function(file : String, qualifier : String, name : String) : Noir::GoCalleeExtractor::FunctionBody?
+      import_path = aliases(file)[qualifier]? || return
+      dir = @import_dirs[import_path]? || return
+      @bodies.functions_for(dir)[name]?
+    end
+
+    private def aliases(file : String) : Hash(String, String)
+      @mutex.synchronize do
+        @aliases[file] ||= @file_contents[file]?.try { |c| Noir::GoCalleeExtractor.extract_import_aliases(c) } || Hash(String, String).new
+      end
+    end
+
+    CONST_LINE = /\A(?:const\s+)?([A-Za-z_]\w*)(?:\s+string)?\s*=\s*"((?:[^"\\]|\\.)*)"\s*(?:\/\/.*)?\z/
+
+    # The string constants declared in the package at `dir`, by name.
+    def constants(dir : String) : Hash(String, String)
+      @mutex.synchronize do
+        @constants[dir] ||= begin
+          table = Hash(String, String).new
+          @files_by_dir[dir]?.try &.each do |file|
+            content = @file_contents[file]? || next
+            next unless content.includes?("const")
+            in_block = false
+            content.each_line do |raw|
+              line = raw.strip
+              if line.starts_with?("const (")
+                in_block = true
+              elsif in_block && line.starts_with?(')')
+                in_block = false
+              elsif (in_block || line.starts_with?("const ")) && (m = line.match(CONST_LINE))
+                table.put_if_absent(m[1]) { m[2] }
+              end
+            end
+          end
+          table
+        end
+      end
+    end
+  end
+
+  # What a body is read with: the file it is declared in, its lines (for a
+  # decode target's declaration) and the names that stand for strings in
+  # it (package constants, and a helper's parameters bound to the literal
+  # its caller passes).
+  # `requests` names the body's `*http.Request` parameters, when known: a
+  # header read off anything else (`resp.Header.Get(...)`) is not a request
+  # input.
+  # `queries` names the locals holding the parsed query (`values :=
+  # r.URL.Query()`).
+  record Context, resolver : Resolver?, file : String?, lines : Array(String), bindings : Hash(String, String),
+    requests : Set(String)? = nil, queries : Set(String) = Set(String).new
+
+  QUERY_ALIAS = /([A-Za-z_]\w*)\s*:?=\s*\w+\s*\.\s*URL\s*\.\s*Query\s*\(\s*\)/
+
+  REQUEST_PARAM = /([A-Za-z_]\w*)\s+\*\s*http\.Request\b/
+
+  # The `*http.Request` parameters of the function whose source starts
+  # `source`; nil when it takes none.
+  private def request_params(source : String) : Set(String)?
+    list = source.match(HELPER_PARAMS).try(&.[1]) || return
+    names = list.scan(REQUEST_PARAM).map(&.[1]).to_set
+    names.empty? ? nil : names
+  end
 
   # A stdlib request-header read, whatever the request is called: `r` /
   # `req`, gin's `c.Request`, echo's `c.Request()`. `Header.Get("X")`,
@@ -46,13 +133,27 @@ module Noir::GoRequestParamExtractor
     package_bodies.methods_for(dir)
   end
 
+  # The params the handler definition `fn` reads (and the helpers it calls,
+  # through `resolver`), for a route answering `http_method`.
+  def params_for_body(fn : Noir::GoCalleeExtractor::FunctionBody, http_method : String, resolver : Resolver) : Array(Param)
+    dir = File.dirname(fn.file_path)
+    params = [] of Param
+    append_function_params(fn, http_method, resolver.bodies.functions_for(dir), resolver.bodies.methods_for(dir),
+      Hash(String, Array(Param)).new, Set(String).new, params, 0, resolver, Hash(String, String).new)
+    params
+  end
+
   def params_for_routes(source : String,
                         route_rows : Set(Int32),
                         route_methods : Hash(Int32, String),
                         external_functions : Hash(String, Noir::GoCalleeExtractor::FunctionBody),
-                        external_methods : Hash(String, Array(Noir::GoCalleeExtractor::FunctionBody))) : Hash(Int32, Array(Param))
+                        external_methods : Hash(String, Array(Noir::GoCalleeExtractor::FunctionBody)),
+                        resolver : Resolver? = nil,
+                        path : String? = nil) : Hash(Int32, Array(Param))
     by_route = Hash(Int32, Array(Param)).new
     return by_route if route_rows.empty?
+    bindings = path && resolver ? resolver.constants(File.dirname(path)) : Hash(String, String).new
+    ctx = Context.new(resolver, path, source.lines, bindings)
 
     cache = Hash(String, Array(Param)).new
     Noir::TreeSitter.parse_go(source) do |root|
@@ -72,7 +173,8 @@ module Noir::GoRequestParamExtractor
             external_methods,
             cache,
             Set(String).new,
-            params
+            params,
+            ctx
           )
         end
         by_route[row] = dedupe_params(params) unless params.empty?
@@ -89,19 +191,20 @@ module Noir::GoRequestParamExtractor
                                              external_methods : Hash(String, Array(Noir::GoCalleeExtractor::FunctionBody)),
                                              cache : Hash(String, Array(Param)),
                                              visiting : Set(String),
-                                             sink : Array(Param))
+                                             sink : Array(Param),
+                                             ctx : Context)
     case Noir::TreeSitter.node_type(handler_arg)
     when "func_literal"
       if body = Noir::TreeSitter.field(handler_arg, "body")
-        collect_params_in_body(body, source, http_method, external_functions, external_methods, cache, visiting, sink, 0)
+        collect_params_in_body(body, source, http_method, external_functions, external_methods, cache, visiting, sink, 0, ctx)
       end
     when "identifier"
       name = Noir::TreeSitter.node_text(handler_arg, source)
       if fn = external_functions[name]?
-        append_function_params(fn, http_method, external_functions, external_methods, cache, visiting, sink, 0)
+        append_function_params(fn, http_method, external_functions, external_methods, cache, visiting, sink, 0, ctx.resolver, Hash(String, String).new)
       end
     when "selector_expression"
-      append_selector_handler_params(handler_arg, source, http_method, external_functions, external_methods, cache, visiting, sink)
+      append_selector_handler_params(handler_arg, source, http_method, external_functions, external_methods, cache, visiting, sink, ctx)
     when "call_expression"
       if candidate = fallback_handler_arg_from_call(handler_arg, source, external_functions, external_methods)
         collect_params_for_handler_arg(
@@ -112,7 +215,8 @@ module Noir::GoRequestParamExtractor
           external_methods,
           cache,
           visiting,
-          sink
+          sink,
+          ctx
         )
       end
     end
@@ -125,13 +229,14 @@ module Noir::GoRequestParamExtractor
                                              external_methods : Hash(String, Array(Noir::GoCalleeExtractor::FunctionBody)),
                                              cache : Hash(String, Array(Param)),
                                              visiting : Set(String),
-                                             sink : Array(Param))
+                                             sink : Array(Param),
+                                             ctx : Context)
     field = Noir::TreeSitter.field(handler_arg, "field")
     return unless field
 
     method_name = Noir::TreeSitter.node_text(field, source)
     if (methods = external_methods[method_name]?) && methods.size == 1
-      append_function_params(methods.first, http_method, external_functions, external_methods, cache, visiting, sink, 0)
+      append_function_params(methods.first, http_method, external_functions, external_methods, cache, visiting, sink, 0, ctx.resolver, Hash(String, String).new)
     end
   end
 
@@ -142,8 +247,10 @@ module Noir::GoRequestParamExtractor
                                      cache : Hash(String, Array(Param)),
                                      visiting : Set(String),
                                      sink : Array(Param),
-                                     depth : Int32)
-    key = "#{fn.file_path}:#{fn.start_row}:#{http_method}"
+                                     depth : Int32,
+                                     resolver : Resolver? = nil,
+                                     arg_bindings : Hash(String, String) = Hash(String, String).new)
+    key = "#{fn.file_path}:#{fn.start_row}:#{http_method}:#{arg_bindings.to_a.sort!.join(',')}"
     if cached = cache[key]?
       cached.each { |param| push_param(sink, param) }
       return
@@ -154,13 +261,24 @@ module Noir::GoRequestParamExtractor
     visiting << visit_key
 
     params = [] of Param
+    dir = File.dirname(fn.file_path)
+    if resolver
+      # The body's own package decides what its helper calls mean.
+      external_functions = resolver.bodies.functions_for(dir)
+      external_methods = resolver.bodies.methods_for(dir)
+      bindings = resolver.constants(dir).merge(arg_bindings)
+    else
+      bindings = arg_bindings
+    end
+    ctx = Context.new(resolver, fn.file_path, fn.source.lines, bindings, request_params(fn.source),
+      fn.source.scan(QUERY_ALIAS).map(&.[1]).to_set)
     wrapped = "package _noir_params_wrap\n#{fn.source}\n"
     Noir::TreeSitter.parse_go(wrapped) do |root|
       Noir::TreeSitter.each_named_child(root) do |child|
         ty = Noir::TreeSitter.node_type(child)
         next unless ty == "function_declaration" || ty == "method_declaration"
         if body = Noir::TreeSitter.field(child, "body")
-          collect_params_in_body(body, wrapped, http_method, external_functions, external_methods, cache, visiting, params, depth)
+          collect_params_in_body(body, wrapped, http_method, external_functions, external_methods, cache, visiting, params, depth, ctx)
           break
         end
       end
@@ -179,50 +297,202 @@ module Noir::GoRequestParamExtractor
                                      cache : Hash(String, Array(Param)),
                                      visiting : Set(String),
                                      sink : Array(Param),
-                                     depth : Int32)
+                                     depth : Int32,
+                                     ctx : Context)
     Noir::TreeSitter.walk(body) do |node|
-      next unless Noir::TreeSitter.node_type(node) == "call_expression"
+      type = Noir::TreeSitter.node_type(node)
+      # `items := r.Form["i"]` reads the form outside any call.
+      if type == "index_expression"
+        extract_params_from_call(node, source, http_method, ctx).each { |param| push_param(sink, param) }
+      end
+      if type == "for_statement"
+        each_range_literal(node, source, ctx) do |loop_body, loop_ctx|
+          collect_params_in_body(loop_body, source, http_method, external_functions, external_methods, cache, visiting, sink, depth, loop_ctx)
+        end
+      end
+      next unless type == "call_expression"
 
-      extract_params_from_call(node, source, http_method).each do |param|
+      extract_params_from_call(node, source, http_method, ctx).each do |param|
         push_param(sink, param)
       end
 
+      imported = depth < MAX_HELPER_DEPTH ? imported_helper_for_call(node, source, ctx) : nil
+      if imported
+        # Read the helper's definition, with its parameters bound to the
+        # literals passed here; its name decides only when that reads
+        # nothing off the request.
+        found = [] of Param
+        append_function_params(imported, http_method, external_functions, external_methods, cache, visiting, found, depth + 1,
+          ctx.resolver, helper_bindings(imported, node, source, ctx))
+        found = named_helper_params(node, source, http_method) if found.empty?
+        found.each { |param| push_param(sink, param) }
+        next
+      end
+      named_helper_params(node, source, http_method).each { |param| push_param(sink, param) }
+
       next if depth >= MAX_HELPER_DEPTH
       if fn = helper_function_body_for_call(node, source, external_functions, external_methods)
-        append_function_params(fn, http_method, external_functions, external_methods, cache, visiting, sink, depth + 1)
+        append_function_params(fn, http_method, external_functions, external_methods, cache, visiting, sink, depth + 1,
+          ctx.resolver, helper_bindings(fn, node, source, ctx))
       end
     end
   end
 
+  STRING_LIST = /\A\[(?:\.\.\.)?\]string\s*\{((?:\s*"[^"]*"\s*,?)*)\s*\}\z/m
+
+  # A loop over a list of string literals (`for _, name := range
+  # [...]string{"Range", "Accept"} { r.Header.Get(name) }`, the list inline
+  # or bound to a local of the body): yields the loop body once per literal,
+  # with the loop variable bound to it.
+  private def each_range_literal(node : LibTreeSitter::TSNode, source : String, ctx : Context, &)
+    range = nil.as(LibTreeSitter::TSNode?)
+    Noir::TreeSitter.each_named_child(node) { |child| range = child if Noir::TreeSitter.node_type(child) == "range_clause" }
+    range = range || return
+    left = Noir::TreeSitter.field(range, "left") || return
+    right = Noir::TreeSitter.field(range, "right") || return
+    loop_body = Noir::TreeSitter.field(node, "body") || return
+    names = Noir::TreeSitter.node_text(left, source).split(',').map(&.strip)
+    return unless names.size == 2 && names[1].matches?(/\A[A-Za-z_]\w*\z/)
+    list = Noir::TreeSitter.node_text(right, source).strip
+    if list.matches?(/\A[A-Za-z_]\w*\z/)
+      decl = ctx.lines.join("\n").match(/(?<![\w.])#{Regex.escape(list)}\s*:?=\s*(\[(?:\.\.\.)?\]string\s*\{[^}]*\})/) || return
+      list = decl[1]
+    end
+    items = list.match(STRING_LIST) || return
+    items[1].scan(/"([^"]*)"/).each do |item|
+      bindings = ctx.bindings.dup
+      bindings[names[1]] = item[1]
+      yield loop_body, ctx.copy_with(bindings: bindings)
+    end
+  end
+
+  # The helper an imported package's function call names (`request.
+  # RouteInt64Param(r, "id")`), when the package is in the scan.
+  private def imported_helper_for_call(call : LibTreeSitter::TSNode, source : String, ctx : Context) : Noir::GoCalleeExtractor::FunctionBody?
+    resolver = ctx.resolver || return
+    file = ctx.file || return
+    function = Noir::TreeSitter.field(call, "function") || return
+    return unless Noir::TreeSitter.node_type(function) == "selector_expression"
+    operand = Noir::TreeSitter.field(function, "operand") || return
+    field = Noir::TreeSitter.field(function, "field") || return
+    return unless Noir::TreeSitter.node_type(operand) == "identifier"
+    fn = resolver.imported_function(file, Noir::TreeSitter.node_text(operand, source), Noir::TreeSitter.node_text(field, source)) || return
+    # A response writer of another package (`response.JSON(w, r, v)`) reads
+    # the request only to negotiate the reply.
+    fn unless fn.source.match(HELPER_PARAMS).try(&.[1].includes?("http.ResponseWriter"))
+  end
+
+  HELPER_PARAMS = /\Afunc\s*(?:\([^)]*\)\s*)?\w+\s*(?:\[.*?\]\s*)?\(([^)]*)\)/
+
+  # The helper's parameters bound to the string each argument of `call`
+  # stands for: a literal, or a name bound in the caller.
+  private def helper_bindings(fn : Noir::GoCalleeExtractor::FunctionBody, call : LibTreeSitter::TSNode, source : String, ctx : Context) : Hash(String, String)
+    bindings = Hash(String, String).new
+    list = fn.source.match(HELPER_PARAMS).try(&.[1]) || return bindings
+    # `param, defaultValue string` names two parameters of one type.
+    names = list.split(',').map { |part| part.strip.split(/\s+/).first? || "" }
+    args = Noir::TreeSitter.field(call, "arguments") || return bindings
+    index = 0
+    Noir::TreeSitter.each_named_arg(args) do |arg|
+      name = names[index]?
+      index += 1
+      next unless name && name.matches?(/\A[A-Za-z_]\w*\z/)
+      value = if string_literal_node?(arg)
+                decode_string_literal(arg, source)
+              elsif Noir::TreeSitter.node_type(arg) == "identifier"
+                ctx.bindings[Noir::TreeSitter.node_text(arg, source)]?
+              end
+      bindings[name] = value if value
+    end
+    bindings
+  end
+
+  # `json.NewDecoder(r.Body).Decode(&req)`, under any alias of the package.
+  JSON_DECODE   = /\b\w*json\w*\.NewDecoder\([^)]*\.Body\)\s*\.\s*Decode/
+  DECODE_TARGET = /\.Decode\s*\(\s*&\s*([A-Za-z_]\w*)\s*\)/
+  BOUND_NAME    = /(?<![\w."`])([A-Za-z_]\w*)(?![\w"`(])/
+
   private def extract_params_from_call(call : LibTreeSitter::TSNode,
                                        source : String,
-                                       http_method : String) : Array(Param)
+                                       http_method : String,
+                                       ctx : Context? = nil) : Array(Param)
     params = [] of Param
     # Comments blanked so `Get(/* c */ "q")` still matches the regexes below.
     call_text = Noir::CComments.strip(Noir::TreeSitter.node_text(call, source), raw_quotes: "`")
+    # A name bound to a string reads as that string (`r.Form.Get(paramID)`).
+    if ctx && !ctx.bindings.empty?
+      bindings = ctx.bindings
+      call_text = call_text.gsub(BOUND_NAME) { |name| (value = bindings[name]?) ? %("#{value}") : name }
+    end
 
-    if call_text.matches?(/json\.NewDecoder\([^)]*\.Body\)\s*\.\s*Decode/) ||
-       call_text.matches?(/(?:io|ioutil)\.ReadAll\([^)]*\.Body\)/)
+    if call_text.matches?(JSON_DECODE)
+      fields = decoded_fields(call_text, ctx)
+      fields ? params.concat(fields) : (params << Param.new("body", "", "json"))
+    elsif call_text.matches?(/(?:io|ioutil)\.ReadAll\([^)]*\.Body\)/)
       params << Param.new("body", "", "json")
     end
 
-    append_regex_param(params, call_text, /\.URL\s*\.\s*Query\s*\(\s*\)\s*\.\s*Get\s*\(\s*["`]([^"`]+)["`]/, "query")
+    append_regex_param(params, call_text, /\.URL\s*\.\s*Query\s*\(\s*\)\s*\.\s*(?:Get|Has)\s*\(\s*["`]([^"`]+)["`]/, "query")
+    ctx.try &.queries.each do |name|
+      call_text.scan(/(?<![\w.])#{Regex.escape(name)}\s*(?:\[\s*"([^"]+)"\s*\]|\.\s*(?:Get|Has)\s*\(\s*"([^"]+)"\s*\))/) do |m|
+        params << Param.new(m[1]? || m[2], "", "query")
+      end
+    end
     append_regex_param(params, call_text, /\.PostForm\s*\.\s*Get\s*\(\s*["`]([^"`]+)["`]/, "form")
     append_regex_param(params, call_text, /\.Form\s*\.\s*Get\s*\(\s*["`]([^"`]+)["`]/, form_value_param_type(http_method))
     append_regex_param(params, call_text, /\.PostFormValue\s*\(\s*["`]([^"`]+)["`]/, "form")
     append_regex_param(params, call_text, /\.FormValue\s*\(\s*["`]([^"`]+)["`]/, form_value_param_type(http_method))
-    params.concat(header_params(call_text))
+    # `r.PostForm["a"]` / `r.Form["i"]`: the parsed form, read by key.
+    append_regex_param(params, call_text, /\.PostForm\s*\[\s*["`]([^"`]+)["`]\s*\]/, "form")
+    append_regex_param(params, call_text, /(?<!Post)\.Form\s*\[\s*["`]([^"`]+)["`]\s*\]/, form_value_param_type(http_method))
+    params.concat(request_header_params(call_text, ctx.try(&.requests)))
     append_regex_param(params, call_text, /\.Cookie\s*\(\s*["`]([^"`]+)["`]/, "cookie")
     append_regex_param(params, call_text, /\.PathValue\s*\(\s*["`]([^"`]+)["`]/, "path")
 
-    leaf = call_function_leaf(call, source)
-    if param_type = helper_param_type(leaf, http_method)
-      if name = first_string_arg(call, source)
-        params << Param.new(name, "", param_type)
-      end
-    end
-
     dedupe_params(params)
+  end
+
+  # `header_params`, keeping only reads off one of `requests` (or a
+  # framework's `.Request`) when the request parameters are known.
+  private def request_header_params(text : String, requests : Set(String)?) : Array(Param)
+    return header_params(text) unless requests
+    params = [] of Param
+    text.scan(HEADER_READ_RE) do |m|
+      head = text[0, m.begin]
+      receiver = head.match(/([A-Za-z_]\w*)(?:\s*\(\s*\))?\s*\z/).try(&.[1]) || next
+      next unless requests.includes?(receiver) || receiver == "Request"
+      params << Param.new(m[1]? || m[2], "", "header")
+    end
+    params
+  end
+
+  # The params a helper call reads by its name alone (`QueryInt64Param(r,
+  # "page")`), for a helper whose definition is not read.
+  private def named_helper_params(call : LibTreeSitter::TSNode, source : String, http_method : String) : Array(Param)
+    leaf = call_function_leaf(call, source)
+    param_type = helper_param_type(leaf, http_method) || return [] of Param
+    name = first_string_arg(call, source) || return [] of Param
+    [Param.new(name, "", param_type)]
+  end
+
+  # The JSON names of the struct a decoded body fills (`var req T` then
+  # `Decode(&req)`): a field's `json` tag, or an exported field's own name;
+  # a `json:"-"` field is never bound. Nil when the target does not resolve
+  # to a struct with such a field.
+  private def decoded_fields(call_text : String, ctx : Context?) : Array(Param)?
+    ctx || return
+    resolver = ctx.resolver || return
+    file = ctx.file || return
+    target = call_text.match(DECODE_TARGET) || return
+    fields = resolver.structs.target_fields(ctx.lines, target[1], file) || return
+    names = fields.compact_map do |field|
+      tag = field.tag.match(/(?:\A|\s)json:"([^"]*)"/)
+      name = tag ? tag[1].split(',').first : ""
+      next if name == "-"
+      next name unless name.empty?
+      field.name if !field.embedded && field.name[0]?.try(&.uppercase?)
+    end
+    names.empty? ? nil : names.uniq.map { |name| Param.new(name, "", "json") }
   end
 
   private def append_regex_param(params : Array(Param), call_text : String, regex : Regex, param_type : String)

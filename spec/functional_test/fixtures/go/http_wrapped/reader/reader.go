@@ -21,8 +21,19 @@ func (h *readerHandler) login(w http.ResponseWriter, r *http.Request) {
 	_ = r.Form.Get("Email")
 }
 
+const (
+	paramTagsAdd = "a"
+	paramItemIDs = "i"
+)
+
 func (h *readerHandler) edit(w http.ResponseWriter, r *http.Request) {
-	_ = r.PostForm.Get("a")
+	_ = r.PostForm[paramTagsAdd]
+	_ = parseItemIDs(r)
+}
+
+func parseItemIDs(r *http.Request) []string {
+	items := r.Form[paramItemIDs]
+	return items
 }
 
 type authMiddleware struct{}

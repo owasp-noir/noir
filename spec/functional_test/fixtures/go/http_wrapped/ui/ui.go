@@ -24,4 +24,9 @@ func (h *handler) removeItem(w http.ResponseWriter, r *http.Request) {}
 
 func (h *handler) share(w http.ResponseWriter, r *http.Request) {}
 
-func (h *handler) static(w http.ResponseWriter, r *http.Request) {}
+func (h *handler) static(w http.ResponseWriter, r *http.Request) {
+	forwarded := [...]string{"Range", "Accept"}
+	for _, name := range forwarded {
+		_ = r.Header.Get(name)
+	}
+}

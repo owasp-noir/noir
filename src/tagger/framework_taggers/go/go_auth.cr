@@ -753,7 +753,7 @@ class GoAuthTagger < FrameworkTagger
       elsif m = stmt.match(IF_TEST)
         test = path_test(m[1], path, names, body, depth)
         ret = statements[idx]?.try(&.match(RETURN_BOOL))
-        return unless ret && statements[idx + 1]? == "}" && !test.nil?
+        return if ret.nil? || statements[idx + 1]? != "}" || test.nil?
         return ret[1] == "true" if test
         idx += 2
       elsif m = stmt.match(RETURN_TEST)
@@ -1220,12 +1220,29 @@ class GoAuthTagger < FrameworkTagger
     qualifier, _, name = head.rpartition('.')
     bodies = net_http_bodies(qualifier, name, file, statements)
     return guard_by_definition("#{head}(", file, authish_name: true) if bodies.nil? || bodies.empty?
+    lifted = bodies.compact_map { |body| setting_lift(body) }.first?
+    note = lifted ? "; a setting can lift it: it hands the request on unchecked when `#{lifted}`" : ""
     case bodies.max_of { |body| body_verdict(body, nil, route_path: route_path) }
     when Guard::Authn
-      Tag.new("auth", "Protected by Go middleware #{head} (verified from its body: refuses anonymous callers)", "go_auth")
+      Tag.new("auth", "Protected by Go middleware #{head} (verified from its body: refuses anonymous callers#{note})", "go_auth")
     when Guard::Authz
-      Tag.new("authz", "Protected by Go middleware #{head} (verified from its body: permission check replies 403)", "go_auth")
+      Tag.new("authz", "Protected by Go middleware #{head} (verified from its body: permission check replies 403#{note})", "go_auth")
     end
+  end
+
+  # `if <cond> {` then `return next` and `}`.
+  HANDS_ON_UNCHECKED = /^\s*if\s+([^{\n]+?)\s*\{[ \t]*(?:\/\/[^\n]*)?\n\s*return\s+(\w+)\s*(?:\/\/[^\n]*)?\n\s*\}/m
+  # A parameter typed as a handler: `next http.Handler`, `h http.HandlerFunc`.
+  HANDLER_PARAM = /\b(\w+)\s+(?:\w+\.)?Handler(?:Func)?\b/
+
+  # The condition under which a middleware factory returns the handler it
+  # wraps unwrapped (`if token == "" { return next }`): a setting the
+  # deployment chooses turns the check off. Nil when it never does.
+  private def setting_lift(body : Noir::GoCalleeExtractor::FunctionBody) : String?
+    source = Noir::CComments.strip(body.source, quotes: %("'`))
+    handlers = source.scan(HANDLER_PARAM).map(&.[1]).to_set
+    source.scan(HANDS_ON_UNCHECKED) { |m| return m[1].strip if handlers.includes?(m[2]) }
+    nil
   end
 
   # The definitions `qualifier.name` names from `file`: a function of the
@@ -1235,7 +1252,13 @@ class GoAuthTagger < FrameworkTagger
   private def net_http_bodies(qualifier : String, name : String, file : String, statements : Array({Int32, String})) : Array(Noir::GoCalleeExtractor::FunctionBody)?
     dir = File.dirname(file)
     if qualifier.empty?
-      @bodies.functions_for(dir)[name]?.try { |body| [body] }
+      @bodies.functions_for(dir)[name]?.try { |body| return [body] }
+      # A local bound to a middleware factory's result (`auth :=
+      # authMiddleware(cfg.Token)`).
+      binding_of(name, statements).try(&.match(BOUND_CALL)).try do |m|
+        next if m[1]?
+        @bodies.functions_for(dir)[m[2]]?.try { |body| [body] }
+      end
     elsif qualifier.includes?('.')
       nil
     elsif file_imports(file).includes?(qualifier)

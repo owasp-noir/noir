@@ -5,6 +5,7 @@ import (
 
 	"example.com/app/api"
 	"example.com/app/fever"
+	"example.com/app/jobs"
 	"example.com/app/reader"
 	"example.com/app/ui"
 )
@@ -19,6 +20,7 @@ func newRouter() http.Handler {
 	readerHandler := reader.NewHandler()
 	app.Handle("/reader/", readerHandler)
 	app.Handle("/v1/", api.NewHandler())
+	app.Handle("/jobs/", jobs.Handler("secret"))
 	app.Handle("/", ui.Serve())
 
 	var appHandler http.Handler = app

@@ -6,6 +6,7 @@ import (
 
 	"example.com/app/model"
 	"example.com/app/request"
+	"example.com/app/response"
 )
 
 func (h *handler) createItem(w http.ResponseWriter, r *http.Request) {
@@ -20,5 +21,9 @@ func (h *handler) createItem(w http.ResponseWriter, r *http.Request) {
 func (h *handler) getItem(w http.ResponseWriter, r *http.Request) {
 	_ = request.RouteInt64Param(r, "itemID")
 	_ = request.QueryFlag(r, "full")
+	_ = request.HasFlag(r, "verbose")
+	resp, _ := http.Get("http://upstream/items")
+	_ = resp.Header.Get("Content-Type")
+	response.Unauthorized(w, r)
 	w.WriteHeader(http.StatusOK)
 }
