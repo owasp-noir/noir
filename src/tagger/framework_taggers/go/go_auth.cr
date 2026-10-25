@@ -149,9 +149,9 @@ class GoAuthTagger < FrameworkTagger
 
   def initialize(options : Hash(String, YAML::Any))
     super
-    @middleware_scopes = [] of {prefix: String, tag: Tag, root_group: Bool, gate: {file: String, receiver: String}?}
+    @middleware_scopes = [] of {prefix: String, tag: Tag, root_group: Bool, gate: {file: String, receiver: String, rows: Range(Int32, Int32)}?}
     @closure_scopes = [] of {file: String, from: Int32, to: Int32, tag: Tag}
-    @current_gate = nil.as({file: String, receiver: String}?)
+    @current_gate = nil.as({file: String, receiver: String, rows: Range(Int32, Int32)}?)
     @bodies = Noir::GoCalleeExtractor::LazyPackageBodies.empty
     @dirs_by_base = Hash(String, Array(String)).new
     @guards = Hash({String, String, Bool, String?}, Tag?).new
@@ -245,7 +245,7 @@ class GoAuthTagger < FrameworkTagger
           end
         end
       end
-      register_auth_scopes(stripped, scopes, file) if uses && !in_closure
+      register_auth_scopes(stripped, scopes, file, lines, index) if uses && !in_closure
     end
   end
 
@@ -267,7 +267,7 @@ class GoAuthTagger < FrameworkTagger
     call_args(text.lstrip.lchop(','))
   end
 
-  private def register_auth_scopes(stripped : String, scopes : GoRouteGroupScope::Scopes, file : String)
+  private def register_auth_scopes(stripped : String, scopes : GoRouteGroupScope::Scopes, file : String, lines : Array(String), index : Int32)
     scope = resolve_use_scope(stripped, scopes) || resolve_group_middleware_scope(stripped, scopes)
     return if scope.nil?
     # The middleware guards a route group whose URL prefix we could not read
@@ -279,11 +279,12 @@ class GoAuthTagger < FrameworkTagger
     # A group that adds no path segment (`authV1 := apiV1.Group("/", auth)`)
     # shares its parent's prefix, so the prefix alone would also claim the
     # parent's own `apiV1.GET("users")`. Its middleware is credited only to
-    # routes registered on that variable in this file.
+    # routes registered on that variable in this file, inside the block that
+    # declares it: a sibling block's `g := e.Group("")` is another variable.
     # ponytail: routes such a group hands to a helper in another file
     # (`registerAuth(authV1)`) resolve by name only.
     receiver = stripped.match(REGISTRATION_RECEIVER).try &.[1]
-    @current_gate = receiver && scopes.aliases.includes?(receiver) ? {file: file, receiver: receiver} : nil
+    @current_gate = receiver && scopes.aliases.includes?(receiver) ? {file: file, receiver: receiver, rows: index..enclosing_block_end(lines, index)} : nil
 
     before = @middleware_scopes.size
 
@@ -777,7 +778,7 @@ class GoAuthTagger < FrameworkTagger
     @middleware_scopes.each do |scope|
       next unless prefix_covers?(scope[:prefix], url)
       if gate = scope[:gate]
-        next unless registered_on?(endpoint, gate[:file], gate[:receiver])
+        next unless registered_on?(endpoint, gate[:file], gate[:receiver], gate[:rows])
       end
 
       # A `.Use` on an explicit root/empty *group* (`g.Group("")` /
@@ -796,14 +797,31 @@ class GoAuthTagger < FrameworkTagger
   end
 
   # Whether one of the endpoint's route lines in `file` is a call on
-  # `receiver` (`authV1.POST("users/add", ...)`).
-  private def registered_on?(endpoint : Endpoint, file : String, receiver : String) : Bool
+  # `receiver` (`authV1.POST("users/add", ...)`) on one of `rows`.
+  private def registered_on?(endpoint : Endpoint, file : String, receiver : String, rows : Range(Int32, Int32)) : Bool
     endpoint.details.code_paths.any? do |path_info|
       next false unless path_info.path == file
       line = path_info.line
       lines = read_file_lines(file)
-      next false if line.nil? || lines.nil? || line < 1 || line > lines.size
+      next false if line.nil? || lines.nil? || line < 1 || line > lines.size || !rows.includes?(line)
       lines[line - 1].match(ROUTE_RECEIVER).try(&.[1]) == receiver
     end
+  end
+
+  # The 1-based last line of the block holding line `index` (1-based): where
+  # the braces opened from that line on first close below their start.
+  private def enclosing_block_end(lines : Array(String), index : Int32) : Int32
+    depth = 0
+    (index - 1).upto(lines.size - 1) do |row|
+      code_only(lines[row]).each_char do |char|
+        if char == '{'
+          depth += 1
+        elsif char == '}'
+          depth -= 1
+          return row + 1 if depth < 0
+        end
+      end
+    end
+    lines.size
   end
 end

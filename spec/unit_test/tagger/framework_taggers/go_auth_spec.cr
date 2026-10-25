@@ -611,6 +611,41 @@ describe "GoAuthTagger session stores" do
   end
 end
 
+# Sibling blocks each declaring their own `g := e.Group("", ...)`: a group
+# that adds no path segment is credited only to routes on that variable in
+# its own block, so the public block's `g` is not the guarded one.
+describe "GoAuthTagger (same-named groups in sibling blocks)" do
+  sibling_fixture = [
+    "package main",                           #  1
+    "func routes(e *echo.Echo) {",            #  2
+    "  {",                                    #  3
+    "    g := e.Group(\"\", requireUser)",    #  4
+    "    g.GET(\"/api/notes\", listNotes)",   #  5
+    "  }",                                    #  6
+    "  {",                                    #  7
+    "    g := e.Group(\"\")",                 #  8
+    "    g.GET(\"/api/public\", publicPage)", #  9
+    "  }",                                    # 10
+    "}",                                      # 11
+    "func requireUser(next echo.HandlerFunc) echo.HandlerFunc {",
+    "  return func(c echo.Context) error {",
+    "    if c.Request().Header.Get(\"X-User\") == \"\" {",
+    "      return echo.ErrUnauthorized",
+    "    }",
+    "    return next(c)",
+    "  }",
+    "}",
+  ]
+
+  it "tags the guarded block's routes" do
+    run_go_auth(sibling_fixture, "/api/notes", "GET", 5).tags.map(&.name).should eq(["auth"])
+  end
+
+  it "does not tag the sibling block's routes on a variable of the same name" do
+    run_go_auth(sibling_fixture, "/api/public", "GET", 9).tags.should be_empty
+  end
+end
+
 describe "GoAuthTagger handler guard clauses" do
   fixture_base = File.expand_path("../../../functional_test/fixtures/go/gin_wrapped_paths", __DIR__)
   photos = "#{fixture_base}/api/photos.go"
