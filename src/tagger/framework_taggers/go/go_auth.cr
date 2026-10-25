@@ -127,6 +127,8 @@ class GoAuthTagger < FrameworkTagger
   # A route call on a line: `m.Post(`, `.GET(`, or a chained `Delete(`.
   ROUTE_CALL = /(?:\A|\.)\s*([A-Za-z]+)\s*\(/
 
+  MULTI_VERB_CALLS = %w[Any Match]
+
   # Lines worth walking for closure-scoped middleware.
   CLOSURE_REGISTRATION = /\.\s*(?:Use|With|Group|Route)\s*\(/
 
@@ -147,15 +149,32 @@ class GoAuthTagger < FrameworkTagger
   # The variable a route line registers on: `authV1` for `authV1.POST(...)`.
   ROUTE_RECEIVER = /\A\s*(\w+)\s*\.\s*\w+\s*\(/
 
+  # The routes a group's middleware reaches: those registered on `receiver`
+  # (or a group derived from it, through `parents`) on `rows` of `file`.
+  alias Gate = {file: String, receiver: String, rows: Range(Int32, Int32), parents: Hash(String, String)}
+
+  # A statement that opens with an assignment (`authed := r.Group(...)`).
+  ASSIGNMENT_HEAD = /\A\s*\w+(?:\s*,\s*\w+)*\s*:?=/
+
+  # A local typed with a struct, so its methods resolve: `authentication :=
+  # auth.Auth{`, `var mw = &middleware.JWT{`, `mw *auth.Middleware`.
+  LOCAL_TYPE = /\b(\w+)\s*(?::?=\s*&?\s*|\s+\*?)(?:(\w+)\.)?([A-Z]\w*)\s*[{\n),]/
+
+  # `func (a *Auth) Name(`: the receiver's name and type.
+  METHOD_RECEIVER_NAME = /\Afunc\s*\(\s*(\w+)\s+\*?\s*(\w+)\s*\)/
+
+  # A statement that calls a method on a value: `a.evaluateOr401(ctx, ...)`.
+  RECEIVER_STATEMENT = /\A(\w+)\s*\.\s*(\w+)\s*\(/
+
   def initialize(options : Hash(String, YAML::Any))
     super
-    @middleware_scopes = [] of {prefix: String, tag: Tag, root_group: Bool, gate: {file: String, receiver: String, rows: Range(Int32, Int32)}?}
+    @middleware_scopes = [] of {prefix: String, tag: Tag, root_group: Bool, gate: Gate?}
     @closure_scopes = [] of {file: String, from: Int32, to: Int32, tag: Tag}
-    @current_gate = nil.as({file: String, receiver: String, rows: Range(Int32, Int32)}?)
+    @current_gate = nil.as(Gate?)
     @bodies = Noir::GoCalleeExtractor::LazyPackageBodies.empty
     @dirs_by_base = Hash(String, Array(String)).new
     @guards = Hash({String, String, Bool, String?}, Tag?).new
-    @helper_verdicts = Hash({String, Int32}, Guard).new
+    @helper_verdicts = Hash({String, Int32, Bool, Int32}, Guard).new
     @imports = Hash(String, Set(String)).new
     @bindings = Hash(String, Hash(String, String)).new
   end
@@ -284,7 +303,14 @@ class GoAuthTagger < FrameworkTagger
     # ponytail: routes such a group hands to a helper in another file
     # (`registerAuth(authV1)`) resolve by name only.
     receiver = stripped.match(REGISTRATION_RECEIVER).try &.[1]
-    @current_gate = receiver && scopes.aliases.includes?(receiver) ? {file: file, receiver: receiver, rows: index..enclosing_block_end(lines, index)} : nil
+    @current_gate = receiver && scopes.aliases.includes?(receiver) ? {file: file, receiver: receiver, rows: index..enclosing_block_end(lines, index), parents: scopes.parents} : nil
+    # `r.Group("/").Use(auth).POST("/x", h)` with the group kept nowhere:
+    # the middleware reaches only the routes chained in that statement.
+    # (Handed to a helper instead, `register(r.Group("/").Use(auth))`, it
+    # still reaches every route under the prefix.)
+    if chain = ephemeral_group_use(stripped)
+      @current_gate = {file: file, receiver: chain, rows: index..statement_end(lines, index), parents: {} of String => String}
+    end
 
     before = @middleware_scopes.size
 
@@ -304,6 +330,39 @@ class GoAuthTagger < FrameworkTagger
       tag = guard_by_definition(arg, file, authish_name: true)
       add_middleware_scope(scope, tag) if tag
     end
+  end
+
+  # The head variable of a statement that builds a group, adds middleware
+  # and registers a route on it in one chain, keeping the group nowhere
+  # (`g.Group("/").Use(auth).POST("/message", h)`); nil for any other line.
+  private def ephemeral_group_use(stripped : String) : String?
+    chain = stripped.match(GoRouteGroupScope::CHAINED_GROUP_USE) || return
+    return unless chain.begin.zero?
+    code = code_only(stripped)
+    use = code.match(/\.\s*(?:Use|Pre)\s*\(/) || return
+    depth = 0
+    (use.end...code.size).each do |pos|
+      case code[pos]
+      when '(' then depth += 1
+      when ')'
+        if depth.zero?
+          return code[pos + 1..].matches?(/\A\s*\.\s*[A-Za-z]+\s*\(/) ? chain[1] : nil
+        end
+        depth -= 1
+      end
+    end
+  end
+
+  # The 1-based last line of the statement starting on line `index`
+  # (1-based): where its parentheses balance.
+  private def statement_end(lines : Array(String), index : Int32) : Int32
+    depth = 0
+    (index - 1).upto(lines.size - 1) do |row|
+      code = code_only(lines[row])
+      depth += code.count('(') - code.count(')')
+      return row + 1 if depth <= 0
+    end
+    lines.size
   end
 
   # The middleware arguments of a registration line: everything after
@@ -345,8 +404,11 @@ class GoAuthTagger < FrameworkTagger
       extra += 1
     end
     args = (with_call = code.match(WITH_CALL)) ? call_args(code[with_call.end..]) : [] of String
-    if call = code.scan(ROUTE_CALL).find { |match| match[1].upcase == method }
-      route_args = call_args(code[call.end..]).skip_while(&.starts_with?('"'))
+    # A registrar for several verbs (`r.Any("/x", h)`, `r.Match([]string{
+    # "GET", "HEAD"}, "/x", mw, h)`) takes its path, then its handlers.
+    if call = code.scan(ROUTE_CALL).find { |match| match[1].upcase == method || MULTI_VERB_CALLS.includes?(match[1]) }
+      route_args = call_args(code[call.end..])
+      route_args = route_args[(route_args.index(&.starts_with?('"')) || 0)..].skip_while(&.starts_with?('"'))
       args.concat(route_args[0...-1])
       # The head of a chain the verb hangs off (`m.Combo("/x", reqToken()).
       # Get(h)`, on this line or the ones ending in `.` above) runs in front
@@ -378,7 +440,7 @@ class GoAuthTagger < FrameworkTagger
       reference = qualifier.empty? ? name : "#{qualifier}.#{name}"
       shown = display || reference
       fields = arg.includes?('{') ? arg.scan(LITERAL_FIELD).to_h { |field| {field[1], field[2].strip} } : nil
-      case definition_verdict(qualifier, name, File.dirname(file), fields)
+      case definition_verdict(qualifier, name, file, fields)
       when Guard::Authn
         Tag.new("auth", "Protected by Go middleware #{shown} (verified from its body: refuses anonymous callers)", "go_auth")
       when Guard::Authz
@@ -410,11 +472,15 @@ class GoAuthTagger < FrameworkTagger
   end
 
   # The strongest verdict over the definitions of `qualifier.name`, resolved
-  # from the package in `dir`; nil when no definition is found.
+  # from the package of `file`; nil when no definition is found. A method
+  # value on a local typed with another package's struct (`authentication :=
+  # auth.Auth{...}` then `authentication.RequireClient`) resolves to that
+  # type's method.
   # ponytail: same package plus a sibling package directory named like the
-  # qualifier, one hop deep; a guard reached through an interface, a third
-  # party module or a deeper call chain still resolves by name only.
-  private def definition_verdict(qualifier : String, name : String, dir : String, fields : Hash(String, String)?) : Guard?
+  # qualifier (or the local's type package), one hop deep; a guard reached
+  # through an interface or a third party module still resolves by name only.
+  private def definition_verdict(qualifier : String, name : String, file : String, fields : Hash(String, String)?) : Guard?
+    dir = File.dirname(file)
     bodies = [] of Noir::GoCalleeExtractor::FunctionBody
     if qualifier.empty?
       @bodies.functions_for(dir)[name]?.try { |body| bodies << body }
@@ -423,8 +489,25 @@ class GoAuthTagger < FrameworkTagger
       @dirs_by_base[qualifier]?.try &.each do |pkg|
         @bodies.functions_for(pkg)[name]?.try { |body| bodies << body }
       end
+      bodies.concat(local_type_methods(qualifier, name, file)) if bodies.empty? && !file_imports(file).includes?(qualifier)
     end
     bodies.max_of? { |body| body_verdict(body, fields) }
+  end
+
+  # The `name` methods of the struct type the local `qualifier` is declared
+  # with in `file`, when that type lives in another package of the scan.
+  private def local_type_methods(qualifier : String, name : String, file : String) : Array(Noir::GoCalleeExtractor::FunctionBody)
+    found = [] of Noir::GoCalleeExtractor::FunctionBody
+    source = read_file(file) || return found
+    source.scan(LOCAL_TYPE) do |m|
+      next unless m[1] == qualifier && (package = m[2]?)
+      @dirs_by_base[package]?.try &.each do |pkg|
+        @bodies.methods_for(pkg)[name]?.try &.each do |body|
+          found << body if body.source.match(METHOD_RECEIVER).try(&.[1]) == m[3]
+        end
+      end
+    end
+    found.uniq!
   end
 
   # The strongest refusal in `body` a caller can meet: a 401 or a redirect to
@@ -443,9 +526,14 @@ class GoAuthTagger < FrameworkTagger
   #   own `true` options select count.
   #
   # With `follow`, an unqualified call to a function of the same package
-  # counts as that function's verdict at the line of the call.
-  private def body_verdict(body : Noir::GoCalleeExtractor::FunctionBody, fields : Hash(String, String)?, follow : Bool = true) : Guard
-    key = {body.file_path, body.start_row * 2 + (follow ? 1 : 0)}
+  # counts as that function's verdict at the line of the call. A statement
+  # that calls a method on the body's own receiver (`a.evaluateOr401(ctx)`
+  # in `func (a *Auth) RequireClient`) counts as that method's verdict, up
+  # to `hops` such calls deep. A call inside an `if` condition is not a
+  # statement: `if !a.check(ctx) { ctx.Next() }` lets an anonymous caller
+  # through whatever `check` does to one with bad credentials.
+  private def body_verdict(body : Noir::GoCalleeExtractor::FunctionBody, fields : Hash(String, String)?, follow : Bool = true, hops : Int32 = 3) : Guard
+    key = {body.file_path, body.start_row, follow, hops}
     if fields.nil? && (cached = @helper_verdicts[key]?)
       return cached
     end
@@ -454,6 +542,7 @@ class GoAuthTagger < FrameworkTagger
     option_gated = !fields.nil? && params.any? { |param| source.includes?("#{param}.") }
     imports = file_imports(body.file_path)
     package = follow ? @bodies.functions_for(File.dirname(body.file_path)) : nil
+    receiver = hops > 0 ? source.match(METHOD_RECEIVER_NAME) : nil
     frames = [] of {Int32, Array(String)}
     depth = 0
     verdict = Guard::None
@@ -481,6 +570,8 @@ class GoAuthTagger < FrameworkTagger
                Guard::Authn
              elsif line.matches?(REJECTS_REQUEST)
                conditions.any?(&.matches?(AUTHZ_CONDITION)) ? Guard::Authz : Guard::Authn
+             elsif receiver && (stmt = line.match(RECEIVER_STATEMENT)) && stmt[1] == receiver[1]
+               receiver_method(body, receiver[2], stmt[2]).max_of? { |method| body_verdict(method, nil, follow, hops - 1) } || Guard::None
              elsif package
                line.scan(BODY_CALL).max_of? do |call|
                  package[call[1]]?.try { |helper| body_verdict(helper, nil, false) } || Guard::None
@@ -495,6 +586,13 @@ class GoAuthTagger < FrameworkTagger
     end
     @helper_verdicts[key] = verdict if fields.nil?
     verdict
+  end
+
+  # The `name` methods declared on `type` in `body`'s package.
+  private def receiver_method(body : Noir::GoCalleeExtractor::FunctionBody, type : String, name : String) : Array(Noir::GoCalleeExtractor::FunctionBody)
+    (@bodies.methods_for(File.dirname(body.file_path))[name]? || [] of Noir::GoCalleeExtractor::FunctionBody).select do |method|
+      method.source.match(METHOD_RECEIVER).try(&.[1]) == type
+    end
   end
 
   private def pop_closed(frames : Array({Int32, Array(String)}), depth : Int32)
@@ -585,7 +683,8 @@ class GoAuthTagger < FrameworkTagger
         # A block closed above the route: a `.Use` in it was that block's.
         break if above_line.starts_with?('}')
 
-        if above_line.includes?(".Use")
+        # A chain that keeps its group nowhere guards only its own routes.
+        if above_line.includes?(".Use") && !ephemeral_group_use(above_line)
           tag = middleware_args(above_line).compact_map { |arg| guard_by_definition(arg, path_info.path, authish_name: true) }.first?
           tag ||= Tag.new("auth", "Protected by Go JWT middleware", "go_auth") if JWT_PATTERNS.any? { |pattern| above_line.matches?(pattern) }
           if tag
@@ -774,11 +873,17 @@ class GoAuthTagger < FrameworkTagger
 
   private def check_middleware_scopes(endpoint : Endpoint) : Tag?
     url = endpoint.url
+    # A route chained off a group it builds in place (`g.Group("/user").
+    # Use(mw).POST("", h)`) is on no other group, whatever its prefix.
+    ephemeral = nil
 
     @middleware_scopes.each do |scope|
       next unless prefix_covers?(scope[:prefix], url)
       if gate = scope[:gate]
-        next unless registered_on?(endpoint, gate[:file], gate[:receiver], gate[:rows])
+        next unless registered_on?(endpoint, gate)
+      elsif scope[:prefix] != "/" || scope[:root_group]
+        ephemeral = ephemeral_route?(endpoint) if ephemeral.nil?
+        next if ephemeral
       end
 
       # A `.Use` on an explicit root/empty *group* (`g.Group("")` /
@@ -796,16 +901,36 @@ class GoAuthTagger < FrameworkTagger
     nil
   end
 
-  # Whether one of the endpoint's route lines in `file` is a call on
-  # `receiver` (`authV1.POST("users/add", ...)`) on one of `rows`.
-  private def registered_on?(endpoint : Endpoint, file : String, receiver : String, rows : Range(Int32, Int32)) : Bool
+  # Whether one of the endpoint's route lines in the gate's file is a call on
+  # its receiver (`authV1.POST("users/add", ...)`), or on a group derived
+  # from it (`app := authV1.Group("/app")` then `app.GET(...)`), on one of
+  # its rows.
+  private def registered_on?(endpoint : Endpoint, gate : Gate) : Bool
     endpoint.details.code_paths.any? do |path_info|
-      next false unless path_info.path == file
+      next false unless path_info.path == gate[:file]
       line = path_info.line
-      lines = read_file_lines(file)
-      next false if line.nil? || lines.nil? || line < 1 || line > lines.size || !rows.includes?(line)
-      lines[line - 1].match(ROUTE_RECEIVER).try(&.[1]) == receiver
+      lines = read_file_lines(gate[:file])
+      next false if line.nil? || lines.nil? || line < 1 || line > lines.size || !gate[:rows].includes?(line)
+      derived_from?(lines[line - 1].match(ROUTE_RECEIVER).try(&.[1]), gate[:receiver], gate[:parents])
     end
+  end
+
+  private def ephemeral_route?(endpoint : Endpoint) : Bool
+    endpoint.details.code_paths.any? do |path_info|
+      line = path_info.line || next false
+      lines = read_file_lines(path_info.path) || next false
+      next false if line < 1 || line > lines.size
+      !ephemeral_group_use(lines[line - 1].strip).nil?
+    end
+  end
+
+  private def derived_from?(name : String?, receiver : String, parents : Hash(String, String)) : Bool
+    16.times do
+      return false unless name
+      return true if name == receiver
+      name = parents[name]?
+    end
+    false
   end
 
   # The 1-based last line of the block holding line `index` (1-based): where

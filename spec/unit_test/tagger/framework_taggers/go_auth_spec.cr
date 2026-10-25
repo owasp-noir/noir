@@ -673,3 +673,48 @@ describe "GoAuthTagger handler guard clauses" do
     endpoints[1].tags.should be_empty
   end
 end
+
+# Middleware held as methods of a struct value from another package
+# (`authentication := auth.Auth{}` then `.Use(authentication.RequireUser)`),
+# read by definition through the calls on its own receiver; a chained
+# `g.Group("/").Use(mw).POST(...)` that keeps its group nowhere; and a
+# path-less group whose middleware reaches the groups derived from it.
+def go_auth_struct_tags(rows : Array({Int32, String, String})) : Hash(String, Array(String))
+  fixture_base = File.expand_path("../../../functional_test/fixtures/go/gin_struct_handlers", __DIR__)
+  router = "#{fixture_base}/router/router.go"
+  CodeLocator.instance.clear_all
+  Dir.glob("#{fixture_base}/**/*.go").each { |file| CodeLocator.instance.register_path(file) }
+  noir_options = create_test_options
+  noir_options["base"] = YAML::Any.new(fixture_base)
+  endpoints = rows.map do |(line, method, url)|
+    details = Details.new(PathInfo.new(router, line))
+    details.technology = "go_gin"
+    Endpoint.new(url, method, [] of Param, details)
+  end
+  GoAuthTagger.new(noir_options).perform(endpoints)
+  endpoints.to_h { |ep| {"#{ep.method} #{ep.url}", ep.tags.map(&.name)} }
+end
+
+describe "GoAuthTagger struct-method middleware" do
+  it "guards by the middleware's body, reaching derived groups and only the chained route" do
+    tags = go_auth_struct_tags([
+      {16, "POST", "/message"},
+      {17, "GET", "/public"},
+      {20, "POST", "/login"},
+      {27, "GET", "/items"},
+      {28, "PUT", "/items/:id"},
+      {31, "GET", "/client/:id"},
+    ])
+    tags["POST /message"].should eq(["auth"])
+    tags["GET /items"].should eq(["auth"])
+    tags["PUT /items/:id"].should eq(["auth"])
+    tags["GET /client/:id"].should eq(["auth"])
+    # The chained `.Use` above guards its own route, not the ones after it.
+    tags["GET /public"].should be_empty
+    tags["POST /login"].should be_empty
+  end
+
+  it "reads an optional middleware that passes anonymous callers on as no guard" do
+    go_auth_struct_tags([{18, "POST", "/signup"}])["POST /signup"].should be_empty
+  end
+end
