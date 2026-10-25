@@ -2,6 +2,7 @@ require "../../../models/framework_tagger"
 require "../../../models/endpoint"
 require "../../../analyzer/analyzers/python/python_helper"
 require "./python_guard_definitions"
+require "../../../utils/python_mro"
 
 @[Noir::TaggerFor(key: "flask_auth", name: "Flask Auth Tagger", desc: "Identifies Flask authentication patterns (flask-login, flask-jwt, flask-httpauth)", order: 90)]
 class FlaskAuthTagger < FrameworkTagger
@@ -31,7 +32,7 @@ class FlaskAuthTagger < FrameworkTagger
   ROUTE_DECORATOR = /^@[\w.]+\.(?:route|get|post|put|patch|delete)\s*\(/
   CLASS_DEF       = /^class\s+(\w+)\s*(?:\((.*)\))?\s*:/
   # flask-restx `Resource.method_decorators`, Flask `View.decorators`.
-  CLASS_DECORATORS = /^\s+(?:method_decorators|decorators)\s*(?::[^=]+)?=([^=].*)/
+  CLASS_DECORATORS = /^\s+(method_decorators|decorators)\s*(?::[^=]+)?=([^=].*)/
   PY_STRING        = /"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'/
 
   # What an authorization check decides on, as opposed to a feature flag or
@@ -48,7 +49,7 @@ class FlaskAuthTagger < FrameworkTagger
 
   def initialize(options : Hash(String, YAML::Any))
     super
-    @class_decorators = Hash(Tuple(String, String), Tuple(String, Array(String))?).new
+    @class_decorators = Hash(Tuple(String, String), Array(Tuple(String, String))?).new
     @authz_params = Hash(Tuple(String, String, Int32), Array(String)?).new
   end
 
@@ -117,9 +118,9 @@ class FlaskAuthTagger < FrameworkTagger
     lines = read_file_lines(file) || return none
     return none unless 0 <= def_idx < lines.size
     decorators = [] of Tuple(String, String)
-    class_name = handler.name.rpartition('.')[0]
-    if !class_name.empty? && (found = class_decorators(file, class_name))
-      found[1].each { |name| decorators << {"@#{name}", found[0]} }
+    class_file, class_name = registered_class(endpoint) || {file, handler.name.rpartition('.')[0]}
+    if !class_name.empty? && (found = class_decorators(class_file, class_name))
+      found.each { |declaring_file, name| decorators << {"@#{name}", declaring_file} }
     end
     decorators_above(lines, def_idx).reverse_each { |line| decorators << {line, file} }
     auth = authz = nil
@@ -128,6 +129,20 @@ class FlaskAuthTagger < FrameworkTagger
       authz ||= decorator_authz(line, declaring_file)
     end
     {auth, authz}
+  end
+
+  # The class view registered for the route when its handler is a method
+  # it inherits: the analyzer adds that class's `class` line as a code
+  # path. Its MRO, not the defining class's, decides the class decorators.
+  private def registered_class(endpoint : Endpoint) : Tuple(String, String)?
+    endpoint.details.code_paths.each do |path_info|
+      line = path_info.line || next
+      text = read_file_lines(path_info.path).try(&.[line - 1]?) || next
+      if name = text.lstrip.match(CLASS_DEF).try(&.[1])
+        return {path_info.path, name}
+      end
+    end
+    nil
   end
 
   # The decorator lines stacked directly above the `def` at `def_idx`,
@@ -230,42 +245,108 @@ class FlaskAuthTagger < FrameworkTagger
     end
   end
 
-  # `method_decorators` / `decorators` of class `name` in `file`, or of the
-  # nearest base class declaring them, with the file that declares the
-  # list (where its names resolve). Every method of a class asks, so the
-  # answer is kept per class.
-  private def class_decorators(file : String, name : String, depth : Int32 = 0) : Tuple(String, Array(String))?
+  # Flask `View.decorators` (wrapping the view `as_view` builds) and
+  # flask-restful / flask-restx `Resource.method_decorators` (wrapping the
+  # verb method) of class `name` in `file`, each entry with the file that
+  # declares it (where its name resolves). Each attribute is looked up the
+  # way Python does, along the class's MRO, so a subclass's own list (even
+  # `decorators = []`) wins over a base's, and a module-level
+  # `View.decorators = [...]` / `+= [...]` after the class body counts. A
+  # list built from another class's (`BaseResource.decorators + [...]`)
+  # holds that class's entries. Nil when neither attribute is set.
+  private def class_decorators(file : String, name : String) : Array(Tuple(String, String))?
     key = {file, name}
     return @class_decorators[key] if @class_decorators.has_key?(key)
-    @class_decorators[key] = depth > 5 ? nil : scan_class_decorators(file, name, depth)
+    @class_decorators[key] = nil # a self-referencing list ends here
+    found = nil
+    CLASS_DECORATOR_ATTRS.each do |attr|
+      if entries = class_attr(file, name, attr, 0)
+        (found ||= [] of Tuple(String, String)).concat(entries)
+      end
+    end
+    @class_decorators[key] = found
   end
 
-  private def scan_class_decorators(file : String, name : String, depth : Int32) : Tuple(String, Array(String))?
-    lines = read_file_lines(file) || return
+  CLASS_DECORATOR_ATTRS = %w[decorators method_decorators]
+
+  private def class_attr(file : String, name : String, attr : String, depth : Int32) : Array(Tuple(String, String))?
+    return if depth > 5
+    mro = Noir::PythonMRO.linearize({file, name}) { |node| class_bases(node[0], node[1]) }
+    mro_attr(mro, 0, attr, depth)
+  end
+
+  private def mro_attr(mro : Array(Tuple(String, String)), index : Int32, attr : String, depth : Int32) : Array(Tuple(String, String))?
+    return if index >= mro.size
+    file, name = mro[index]
+    lines = read_file_lines(file) || return mro_attr(mro, index + 1, attr, depth)
+    value = class_body_attr(lines, name, attr).try { |text| decorator_entries(text, file, depth) }
+    module_attr_assignments(lines, name, attr).each do |op, text|
+      entries = decorator_entries(text, file, depth)
+      value = op == "=" ? entries : (value || mro_attr(mro, index + 1, attr, depth) || [] of Tuple(String, String)) + entries
+    end
+    value || mro_attr(mro, index + 1, attr, depth)
+  end
+
+  # The project classes class `name` in `file` lists as bases, in order.
+  private def class_bases(file : String, name : String) : Array(Tuple(String, String))
+    lines = read_file_lines(file) || return [] of Tuple(String, String)
+    header = lines.find { |line| line.match(CLASS_DEF).try(&.[1]) == name } || return [] of Tuple(String, String)
+    header.match(CLASS_DEF).try(&.[2]?).to_s.split(',').compact_map do |base|
+      base = base.strip
+      resolve_class(file, base) unless base.empty? || base.includes?('=')
+    end
+  end
+
+  # The text assigned to `attr` in the body of class `name`.
+  private def class_body_attr(lines : Array(String), name : String, attr : String) : String?
     start = lines.index { |line| line.match(CLASS_DEF).try(&.[1]) == name } || return
     idx = start + 1
     while idx < lines.size && (lines[idx].blank? || lines[idx][0].ascii_whitespace?)
-      if m = lines[idx].match(CLASS_DECORATORS)
-        text = m[1]
-        while text.count("([{") > text.count(")]}") && (idx += 1) < lines.size
-          text += lines[idx]
-        end
-        names = text.gsub(PY_STRING, "").scan(/(?:^\s*[\[({]?|[\[,{:])\s*([A-Za-z_][\w.]*)/).map(&.[1])
-        return {file, names}
+      if (m = lines[idx].match(CLASS_DECORATORS)) && m[1] == attr
+        return joined_value(lines, idx, m[2])
       end
       idx += 1
     end
-    lines[start].match(CLASS_DEF).try(&.[2]?).to_s.split(',').each do |base|
-      base = base.strip
-      next if base.empty? || base.includes?('=')
-      target = resolve(file, base) do |path, class_name|
-        !!read_file_lines(path).try(&.any? { |line| line.match(CLASS_DEF).try(&.[1]) == class_name })
-      end
-      if target && (found = class_decorators(target[0], target[1], depth + 1))
-        return found
+    nil
+  end
+
+  # Module-level `Name.attr = [...]` / `Name.attr += [...]` statements, in
+  # order, as `{operator, value text}`.
+  private def module_attr_assignments(lines : Array(String), name : String, attr : String) : Array(Tuple(String, String))
+    prefix = "#{name}.#{attr}"
+    found = [] of Tuple(String, String)
+    lines.each_with_index do |line, idx|
+      next unless line.starts_with?(prefix)
+      if m = line[prefix.size..].match(/^\s*(\+?=)(?!=)(.*)/)
+        found << {m[1], joined_value(lines, idx, m[2])}
       end
     end
-    nil
+    found
+  end
+
+  private def joined_value(lines : Array(String), idx : Int32, text : String) : String
+    while text.count("([{") > text.count(")]}") && (idx += 1) < lines.size
+      text += lines[idx]
+    end
+    text
+  end
+
+  # The decorators a list expression names, as `{declaring file, name}`.
+  private def decorator_entries(text : String, file : String, depth : Int32) : Array(Tuple(String, String))
+    names = text.gsub(PY_STRING, "").scan(/(?:^\s*[\[({]?|[\[,{:+])\s*([A-Za-z_][\w.]*)/).map(&.[1])
+    names.flat_map do |entry|
+      if (ref = entry.match(/^(.+)\.(method_decorators|decorators)$/)) && (target = resolve_class(file, ref[1]))
+        class_attr(target[0], target[1], ref[2], depth + 1) || [] of Tuple(String, String)
+      else
+        [{file, entry}]
+      end
+    end
+  end
+
+  private def resolve_class(file : String, name : String) : Tuple(String, String)?
+    resolve(file, name) do |path, class_name|
+      !!read_file_lines(path).try(&.any? { |line| line.match(CLASS_DEF).try(&.[1]) == class_name })
+    end
   end
 
   private def decorator_description(line : String) : String?
