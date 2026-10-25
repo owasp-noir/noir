@@ -2,6 +2,7 @@ require "../../engines/javascript_engine"
 require "../../../miniparsers/import_graph"
 require "../../../miniparsers/js_callee_extractor"
 require "../../../miniparsers/js_route_extractor"
+require "../../../miniparsers/ts_class_fields"
 require "../../../utils/top_level_split"
 
 module Analyzer::Javascript
@@ -38,6 +39,14 @@ module Analyzer::Javascript
     # resolve `@Controller(...)` prefix constants imported from another
     # file. nil until `analyze_with_extensions` seeds it.
     @nest_global_literals : Hash(String, Array(String))? = nil
+
+    # DTO declarations, read lazily while routes are scanned: each file's
+    # classes/interfaces, and every declared type name => the files
+    # declaring it. Guarded by `@nest_dto_mutex` (lookups run in the scan's
+    # fibers); the mutex only wraps cache reads and writes.
+    @nest_decls_by_file = {} of String => Hash(String, Noir::TsClassFields::Decl)
+    @nest_decl_index : Hash(String, Array(String))? = nil
+    @nest_dto_mutex = Mutex.new
 
     # Extensions worth scanning for cross-file enum/object constants —
     # the enum may live in a `.ts` file even when the route-scan pass only
@@ -990,6 +999,7 @@ module Analyzer::Javascript
         end
         decorator_line = controller_start_line + line_count
         callees = include_callee ? method_callees(class_content, signature, file_path, controller_start_line, chars, line_pos, line_count) : nil
+        dto_fields = dto_params(signature[:params], file_path)
         handler = Handler.new("#{class_name}.#{signature[:name]}", file_path, method_declaration_line(chars, signature[:start_pos], line_pos, decorator_line))
 
         effective_base_paths.each do |base_path|
@@ -1002,7 +1012,7 @@ module Analyzer::Javascript
               endpoint.route_conditions = [Param.new(VERSION_CONDITION, versions.join(","), "header")] unless uri_versioning || versions.empty?
 
               extract_path_parameters(full_path, endpoint)
-              extract_decorator_parameters(signature[:params], endpoint)
+              extract_decorator_parameters(signature[:params], endpoint, dto_fields)
               extract_interceptor_parameters(decorator_block, endpoint)
               extract_request_object_params(class_content, signature, endpoint)
               callees.try &.each do |name, callee_path, line|
@@ -1114,13 +1124,20 @@ module Analyzer::Javascript
       extract_decorator_parameters(signature[:params], endpoint) if signature
     end
 
-    private def extract_decorator_parameters(method_params : String, endpoint : Endpoint)
+    private def extract_decorator_parameters(method_params : String, endpoint : Endpoint,
+                                             dto_fields : Hash(String, Array(String)) = {} of String => Array(String))
+      # A whole-object `@Query()` / `@Body()` typed with a DTO is the DTO's
+      # fields; one whose type does not resolve stays a single generic param.
+      dto_fields.each do |param_type, names|
+        names.each { |name| endpoint.push_param(Param.new(name, "", param_type)) }
+      end
+
       # Extract @Query parameters
       method_params.scan(/@Query\s*\(\s*['"`]([^'"`]+)['"`][\s\S]*?\)/) do |param_match|
         param_name = param_match[1]
         endpoint.push_param(Param.new(param_name, "", "query"))
       end
-      if method_params =~ /@Query\s*\(\s*+(?:\)|[^'"`][\s\S]*?\))/
+      if !dto_fields.has_key?("query") && method_params =~ /@Query\s*\(\s*+(?:\)|[^'"`][\s\S]*?\))/
         endpoint.push_param(Param.new("query", "", "query"))
       end
 
@@ -1135,7 +1152,7 @@ module Analyzer::Javascript
         endpoint.push_param(Param.new(body_match[1], "", "body"))
       end
 
-      if method_params =~ /@Body\s*\(\s*+(?:\)|[^'"`][\s\S]*?\))/
+      if !dto_fields.has_key?("body") && method_params =~ /@Body\s*\(\s*+(?:\)|[^'"`][\s\S]*?\))/
         endpoint.push_param(Param.new("body", "", "body"))
       end
 
@@ -1169,6 +1186,107 @@ module Analyzer::Javascript
       end
       if method_params =~ /@UploadedFiles\s*\(\s*\)/
         endpoint.push_param(Param.new("files", "", "body"))
+      end
+    end
+
+    DTO_PARAM_TYPES = {"Body" => "body", "Query" => "query"}
+    DTO_PARAM_HEAD  = /@(Body|Query)\s*\(/
+    DTO_PARAM_TAIL  = /\A\s*(?:@[\w$.]+\s*(?:\([^)]*\))?\s*)*(?:readonly\s+)?[A-Za-z_$][\w$]*\s*[?!]?\s*:\s*([\s\S]+?)\s*\z/
+    DTO_TYPE_NAME   = /\A([A-Za-z_$][\w$]*)(?:\.[A-Za-z_$][\w$]*)*\s*(?:<[\s\S]*>)?\z/
+    DTO_DECL_NAME   = /\b(?:class|interface)\s+([A-Za-z_$][\w$]*)/
+    DTO_DEPTH_LIMIT = 6
+
+    # Param type => field names, for every whole-object `@Body()` /
+    # `@Query()` whose declared type resolves to fields: an inline object
+    # type, or a class/interface declared in the scan, with the fields it
+    # inherits (`extends Base`, `PickType(Base, [...])`, ...).
+    private def dto_params(method_params : String, file_path : String) : Hash(String, Array(String))
+      result = {} of String => Array(String)
+      return result unless method_params.matches?(DTO_PARAM_HEAD)
+      split_top_level(method_params, ',').each do |param|
+        head = param.match(DTO_PARAM_HEAD) || next
+        close = Noir::JSRouteExtractor.find_matching_paren(param, head.end(0) - 1) || next
+        # `@Body('field')` names one field; it is read elsewhere.
+        next if param[head.end(0)...close].strip.matches?(/\A['"`]/)
+        type = param[(close + 1)..].match(DTO_PARAM_TAIL).try(&.[1]) || next
+        fields = type_fields(type, file_path, 0)
+        next if fields.empty?
+        names = result[DTO_PARAM_TYPES[head[1]]] ||= [] of String
+        fields.each { |name| names << name unless names.includes?(name) }
+      end
+      result
+    end
+
+    private def type_fields(type : String, from_path : String, depth : Int32) : Array(String)
+      text = type.strip
+      return Noir::TsClassFields.object_type_fields(text) if text.starts_with?('{')
+      name = text.match(DTO_TYPE_NAME).try { text.split('<').first.split('.').last.strip } || return [] of String
+      named_type_fields(name, from_path, depth)
+    end
+
+    private def named_type_fields(name : String, from_path : String, depth : Int32) : Array(String)
+      return [] of String if depth > DTO_DEPTH_LIMIT
+      decl, decl_path = find_type_decl(name, from_path) || return [] of String
+      fields = decl.fields.dup
+      decl.bases.each do |base|
+        inherited = named_type_fields(base.name, decl_path, depth + 1)
+        if pick = base.pick
+          inherited = inherited.select { |field| pick.includes?(field) }
+        end
+        inherited.each { |field| fields << field unless fields.includes?(field) || base.omit.includes?(field) }
+      end
+      fields
+    end
+
+    # The declaration of `name` visible from `from_path`: its own file's,
+    # else the scanned file declaring it that shares the longest path prefix
+    # with `from_path`.
+    # ponytail: nearest-path pick for a name declared in several packages;
+    # following the import specifier through barrels and package names is
+    # the upgrade.
+    private def find_type_decl(name : String, from_path : String) : Tuple(Noir::TsClassFields::Decl, String)?
+      if decl = type_decls(from_path)[name]?
+        return {decl, from_path}
+      end
+      candidates = type_decl_index[name]? || return
+      candidates.sort_by { |path| -common_prefix_size(path, from_path) }.each do |path|
+        next if path == from_path
+        if decl = type_decls(path)[name]?
+          return {decl, path}
+        end
+      end
+      nil
+    end
+
+    private def type_decls(path : String) : Hash(String, Noir::TsClassFields::Decl)
+      cached = @nest_dto_mutex.synchronize { @nest_decls_by_file[path]? }
+      return cached if cached
+      decls = begin
+        Noir::TsClassFields.declarations(Noir::JSRouteExtractor.strip_js_comments(read_file_content(path)))
+      rescue
+        {} of String => Noir::TsClassFields::Decl
+      end
+      @nest_dto_mutex.synchronize { @nest_decls_by_file[path] = decls }
+    end
+
+    private def type_decl_index : Hash(String, Array(String))
+      @nest_dto_mutex.synchronize do
+        @nest_decl_index ||= begin
+          index = {} of String => Array(String)
+          all_files.each do |path|
+            next unless GLOBAL_LITERAL_EXTENSIONS.any? { |ext| path.ends_with?(ext) }
+            next if ignored_nest_path?(path)
+            content = read_file_content(path)
+            next unless content.includes?("class ") || content.includes?("interface ")
+            content.scan(DTO_DECL_NAME) do |m|
+              paths = index[m[1]] ||= [] of String
+              paths << path unless paths.includes?(path)
+            end
+          rescue
+            next
+          end
+          index
+        end
       end
     end
 
