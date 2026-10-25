@@ -151,7 +151,7 @@ class GoAuthTagger < FrameworkTagger
 
   # The routes a group's middleware reaches: those registered on `receiver`
   # (or a group derived from it, through `parents`) on `rows` of `file`.
-  alias Gate = {file: String, receiver: String, rows: Range(Int32, Int32), parents: Hash(String, String)}
+  alias Gate = {file: String, receiver: String, rows: Range(Int32, Int32), parents: Hash(String, Array({String, Int32}))}
 
   # A statement that opens with an assignment (`authed := r.Group(...)`).
   ASSIGNMENT_HEAD = /\A\s*\w+(?:\s*,\s*\w+)*\s*:?=/
@@ -168,9 +168,10 @@ class GoAuthTagger < FrameworkTagger
 
   def initialize(options : Hash(String, YAML::Any))
     super
-    @middleware_scopes = [] of {prefix: String, tag: Tag, root_group: Bool, gate: Gate?}
+    @middleware_scopes = [] of {prefix: String, tag: Tag, root_group: Bool, gate: Gate?, owner: Gate?}
     @closure_scopes = [] of {file: String, from: Int32, to: Int32, tag: Tag}
     @current_gate = nil.as(Gate?)
+    @current_owner = nil.as(Gate?)
     @bodies = Noir::GoCalleeExtractor::LazyPackageBodies.empty
     @dirs_by_base = Hash(String, Array(String)).new
     @guards = Hash({String, String, Bool, String?}, Tag?).new
@@ -303,13 +304,18 @@ class GoAuthTagger < FrameworkTagger
     # ponytail: routes such a group hands to a helper in another file
     # (`registerAuth(authV1)`) resolve by name only.
     receiver = stripped.match(REGISTRATION_RECEIVER).try &.[1]
-    @current_gate = receiver && scopes.aliases.includes?(receiver) ? {file: file, receiver: receiver, rows: index..enclosing_block_end(lines, index), parents: scopes.parents} : nil
+    # The group variable the middleware is registered on, with the rows
+    # after the registration in its block: in gin a group copies its
+    # parent's middleware when it is created, so only groups derived there
+    # inherit it.
+    @current_owner = receiver ? {file: file, receiver: receiver, rows: index..enclosing_block_end(lines, index), parents: scopes.parents} : nil
+    @current_gate = receiver && scopes.aliases.includes?(receiver) ? @current_owner : nil
     # `r.Group("/").Use(auth).POST("/x", h)` with the group kept nowhere:
     # the middleware reaches only the routes chained in that statement.
     # (Handed to a helper instead, `register(r.Group("/").Use(auth))`, it
     # still reaches every route under the prefix.)
     if chain = ephemeral_group_use(stripped)
-      @current_gate = {file: file, receiver: chain, rows: index..statement_end(lines, index), parents: {} of String => String}
+      @current_gate = {file: file, receiver: chain, rows: index..statement_end(lines, index), parents: {} of String => Array({String, Int32})}
     end
 
     before = @middleware_scopes.size
@@ -346,7 +352,7 @@ class GoAuthTagger < FrameworkTagger
       when '(' then depth += 1
       when ')'
         if depth.zero?
-          return code[pos + 1..].matches?(/\A\s*\.\s*[A-Za-z]+\s*\(/) ? chain[1] : nil
+          return code[pos + 1..].matches?(/\A\s*\.\s*(?:[A-Za-z]+\s*\(|\z)/) ? chain[1] : nil
         end
         depth -= 1
       end
@@ -475,10 +481,13 @@ class GoAuthTagger < FrameworkTagger
   # from the package of `file`; nil when no definition is found. A method
   # value on a local typed with another package's struct (`authentication :=
   # auth.Auth{...}` then `authentication.RequireClient`) resolves to that
-  # type's method.
+  # type's method; when that method finds no refusal but hands the request
+  # to a call the walk does not follow (`session.Require(c)`, an interface
+  # field's `a.V.Verify(c)`), it is nil, so the name decides as for a
+  # middleware whose definition is not in the scan.
   # ponytail: same package plus a sibling package directory named like the
   # qualifier (or the local's type package), one hop deep; a guard reached
-  # through an interface or a third party module still resolves by name only.
+  # through such a delegated call still resolves by name only.
   private def definition_verdict(qualifier : String, name : String, file : String, fields : Hash(String, String)?) : Guard?
     dir = File.dirname(file)
     bodies = [] of Noir::GoCalleeExtractor::FunctionBody
@@ -489,9 +498,29 @@ class GoAuthTagger < FrameworkTagger
       @dirs_by_base[qualifier]?.try &.each do |pkg|
         @bodies.functions_for(pkg)[name]?.try { |body| bodies << body }
       end
-      bodies.concat(local_type_methods(qualifier, name, file)) if bodies.empty? && !file_imports(file).includes?(qualifier)
+      if bodies.empty? && !file_imports(file).includes?(qualifier)
+        typed = local_type_methods(qualifier, name, file)
+        verdict = typed.max_of? { |body| body_verdict(body, fields) }
+        return if verdict == Guard::None && typed.any? { |body| delegates?(body) }
+        return verdict
+      end
     end
     bodies.max_of? { |body| body_verdict(body, fields) }
+  end
+
+  # A call on a value: `session.Require(c)`, `a.V.Verify(c)`.
+  SELECTOR_CALL = /(?<![\w.])(\w+)((?:\s*\.\s*\w+)+)\s*\(/
+
+  # Whether `body` calls something other than its own parameters' methods
+  # and single methods on its own receiver, which `body_verdict` follows.
+  private def delegates?(body : Noir::GoCalleeExtractor::FunctionBody) : Bool
+    source = Noir::CComments.strip(body.source, quotes: %("'`)).gsub(STRING_LITERAL, %(""))
+    params = source.match(FUNC_PARAMS).try(&.[1].split(',').compact_map(&.strip.split(/\s+/).first?)) || [] of String
+    receiver = source.match(METHOD_RECEIVER_NAME).try(&.[1])
+    source.scan(SELECTOR_CALL).any? do |m|
+      next false if params.includes?(m[1])
+      !(m[1] == receiver && m[2].count('.') == 1)
+    end
   end
 
   # The `name` methods of the struct type the local `qualifier` is declared
@@ -868,22 +897,29 @@ class GoAuthTagger < FrameworkTagger
       tag:        tag,
       root_group: scope[:kind] == GoRouteGroupScope::ScopeKind::Group && scope[:prefix] == "/",
       gate:       @current_gate,
+      owner:      @current_owner,
     }
   end
 
   private def check_middleware_scopes(endpoint : Endpoint) : Tag?
     url = endpoint.url
     # A route chained off a group it builds in place (`g.Group("/user").
-    # Use(mw).POST("", h)`) is on no other group, whatever its prefix.
+    # Use(mw).POST("", h)`) inherits only the middleware of the group it
+    # builds on (`g`) and that group's ancestors, whatever its prefix.
     ephemeral = nil
 
     @middleware_scopes.each do |scope|
       next unless prefix_covers?(scope[:prefix], url)
       if gate = scope[:gate]
         next unless registered_on?(endpoint, gate)
-      elsif scope[:prefix] != "/" || scope[:root_group]
-        ephemeral = ephemeral_route?(endpoint) if ephemeral.nil?
-        next if ephemeral
+      elsif (owner = scope[:owner]) && (scope[:prefix] != "/" || scope[:root_group])
+        ephemeral = ephemeral_head(endpoint) if ephemeral.nil?
+        if ephemeral && (head = ephemeral[owner[:file]]?)
+          name, line = head
+          next unless owner[:rows].includes?(line) && derived_from?(name, owner, line)
+        elsif created_before?(endpoint, owner)
+          next
+        end
       end
 
       # A `.Use` on an explicit root/empty *group* (`g.Group("")` /
@@ -911,24 +947,51 @@ class GoAuthTagger < FrameworkTagger
       line = path_info.line
       lines = read_file_lines(gate[:file])
       next false if line.nil? || lines.nil? || line < 1 || line > lines.size || !gate[:rows].includes?(line)
-      derived_from?(lines[line - 1].match(ROUTE_RECEIVER).try(&.[1]), gate[:receiver], gate[:parents])
+      derived_from?(lines[line - 1].match(ROUTE_RECEIVER).try(&.[1]), gate, line)
     end
   end
 
-  private def ephemeral_route?(endpoint : Endpoint) : Bool
+  # Whether the endpoint is registered on a child of the owner's group that
+  # was created before the middleware was added (`early :=
+  # authed.Group("/early")` above `authed.Use(auth)`): gin copies a group's
+  # middleware when the child is created, so the child does not get it.
+  private def created_before?(endpoint : Endpoint, owner : Gate) : Bool
     endpoint.details.code_paths.any? do |path_info|
+      next false unless path_info.path == owner[:file]
       line = path_info.line || next false
-      lines = read_file_lines(path_info.path) || next false
+      lines = read_file_lines(owner[:file]) || next false
       next false if line < 1 || line > lines.size
-      !ephemeral_group_use(lines[line - 1].strip).nil?
+      name = lines[line - 1].match(ROUTE_RECEIVER).try(&.[1]) || next false
+      next false if name == owner[:receiver]
+      found = owner[:parents][name]?.try &.select { |(_, row)| row < line }.max_by?(&.[1])
+      !!found && found[0] == owner[:receiver] && found[1] < owner[:rows].begin
     end
   end
 
-  private def derived_from?(name : String?, receiver : String, parents : Hash(String, String)) : Bool
+  # File -> {head variable, 1-based line} of each of the endpoint's route
+  # lines that is a chain building its group in place.
+  private def ephemeral_head(endpoint : Endpoint) : Hash(String, {String, Int32})
+    heads = Hash(String, {String, Int32}).new
+    endpoint.details.code_paths.each do |path_info|
+      line = path_info.line || next
+      lines = read_file_lines(path_info.path) || next
+      next if line < 1 || line > lines.size
+      ephemeral_group_use(lines[line - 1].strip).try { |head| heads[path_info.path] = {head, line} }
+    end
+    heads
+  end
+
+  # Whether the group `name` used on `line` is the gate's receiver or was
+  # derived from it: each hop takes the assignment of the name nearest above
+  # the line inside the gate's rows, so a group created before the
+  # middleware was added, or a same-named group in another function, is not.
+  private def derived_from?(name : String?, gate : Gate, line : Int32) : Bool
     16.times do
       return false unless name
-      return true if name == receiver
-      name = parents[name]?
+      return true if name == gate[:receiver]
+      found = gate[:parents][name]?.try &.select { |(_, row)| row < line && gate[:rows].includes?(row) }.max_by?(&.[1])
+      return false unless found
+      name, line = found
     end
     false
   end
