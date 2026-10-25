@@ -40,9 +40,9 @@ module Analyzer::Php
       names
     end
 
-    # The routes file's guard: the first of the names it is loaded under that
-    # is a known auth alias or a group/alias judged to authenticate.
-    private def route_file_guard(path : String, names : Array(String)) : String?
+    # The guard among `names`: the first that is a known auth alias or a
+    # group/alias judged to authenticate.
+    private def route_guard(path : String, names : Array(String)) : String?
       return if names.empty?
       guards = @middleware_guards[composer_project_root(path)]?
       names.each do |name|
@@ -61,11 +61,27 @@ module Analyzer::Php
       File.exists?(File.join(root, "artisan")) || File.exists?(File.join(root, "bootstrap", "app.php")) ? [group] : [] of String
     end
 
-    # ponytail: any `->withoutMiddleware(...)` on the route drops the file's
-    # guard, whatever it names; compare names if that ever hides a real guard.
-    private def tag_file_guard(endpoint : Endpoint, guard : String?, statement : String) : Nil
-      return unless guard
-      return if statement.includes?("withoutMiddleware")
+    WITHOUT_MIDDLEWARE_RE = /->\s*withoutMiddleware\s*\(\s*(\[[^\]]*\]|['"][^'"]+['"])?/
+
+    # Tag the guard of a route loaded under `names` (route file, then its
+    # enclosing groups) whose own registration is `statement`. As in Laravel,
+    # the statement adds its `->middleware(...)` / `'middleware' =>` names and
+    # `->withoutMiddleware(...)` takes names away.
+    private def tag_route_guard(endpoint : Endpoint, path : String, names : Array(String), statement : String) : Nil
+      names += middleware_names(statement) if statement.includes?("iddleware")
+      if statement.includes?("withoutMiddleware")
+        statement.scan(WITHOUT_MIDDLEWARE_RE) do |m|
+          # ponytail: a class, an unreadable list, or a guarding name the route
+          # was not given by name may be a member of one of its groups; drop
+          # every guard rather than guess which.
+          return unless list = m[1]?
+          return if list.includes?("::class")
+          withdrawn = middleware_entries(list, EMPTY_IMPORTS, nil)
+          return if withdrawn.any? { |name| !names.includes?(name) && route_guard(path, [name]) }
+          names -= withdrawn
+        end
+      end
+      return unless guard = route_guard(path, names)
       endpoint.add_tag(Tag.new("auth", "Protected by #{guard}", "php_auth"))
     end
 
