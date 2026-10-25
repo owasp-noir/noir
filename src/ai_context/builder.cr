@@ -1617,16 +1617,22 @@ module NoirAIContext
 
     # The route's own path literal and its handler's declared name are not
     # guards: `@PostMapping("/authenticate") … authorize(LoginVM vm)` names
-    # the login endpoint, it does not protect it. Only the guard scan sees
-    # the masked scope; sinks and signals still read the route as written.
-    private def without_self_names(scope : String, endpoint : Endpoint, path : String) : String
+    # the login endpoint, it does not protect it. The same goes for a route
+    # table naming its handler (`post "/x", StatsController,
+    # :authenticate_shared_link`): in a file other than the handler's, the
+    # route's own line is masked. Only the guard scan sees the masked scope;
+    # sinks and signals still read the route as written.
+    private def without_self_names(scope : String, endpoint : Endpoint, path_info : PathInfo) : String
       scope = scope.gsub(ROUTE_PATH_LITERAL, "\"\"")
       handler = endpoint.handler
-      return scope unless handler && handler.path == path && (line = handler.line)
+      return scope unless handler
+      line = handler.path == path_info.path ? handler.line : path_info.line
+      return scope unless line
       name = handler.name.split(/[.#:]/).last
       return scope if name.empty?
       prefix = "#{line}:"
-      scope.split(" | ").map { |seg| seg.starts_with?(prefix) ? seg.sub(name, "") : seg }.join(" | ")
+      self_name = /(?<!\w)#{Regex.escape(name)}(?!\w)/
+      scope.split(" | ").map { |seg| seg.starts_with?(prefix) ? seg.sub(self_name, "") : seg }.join(" | ")
     end
 
     private def add_source_scan_entries(context : AIContext, endpoint : Endpoint)
@@ -1634,7 +1640,7 @@ module NoirAIContext
 
       source_scan_paths(endpoint).each do |path_info|
         route_scope = @reader.route_scope_snippet_for(path_info.path, path_info.line)
-        guard_scope = route_scope && without_self_names(route_scope, endpoint, path_info.path)
+        guard_scope = route_scope && without_self_names(route_scope, endpoint, path_info)
 
         # Try each guard category independently — a route can be
         # protected by authn, authz, csrf, and rate-limit at once,
