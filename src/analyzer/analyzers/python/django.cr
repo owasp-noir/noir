@@ -2165,7 +2165,7 @@ module Analyzer::Python
 
     # `{file, class}` of the serializer `get_serializer` builds for
     # `action`: the nearest `get_serializer_class` override when its choice
-    # is static (`if self.action == "create": return CreateSer`), else the
+    # is static (`if self.action == "create": return CreateSerializer`), else the
     # nearest `serializer_class`, named where the view declares it (not
     # where the inherited method calling `get_serializer` lives). Nil when
     # an override decides some other way.
