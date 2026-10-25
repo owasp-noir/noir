@@ -122,6 +122,8 @@ class RubyAuthTagger < FrameworkTagger
     @anonymous_queries = Hash(String, Bool).new
     @rejecting_defs = Hash(String, Bool).new
     @denying_helpers = Hash(String, Bool).new
+    @denies_anonymous = Hash(String, Bool).new
+    @caller_ivars = Hash(String, Array(String)).new
   end
 
   # Per-line flags for `check_controller_auth`, computed once per file.
@@ -185,13 +187,15 @@ class RubyAuthTagger < FrameworkTagger
       # The walk below starts over from every action, so it hops from flag
       # to flag rather than stepping past each unflagged line to the class.
       jumps = nearest_match_above(@flagged_line_jumps, path, flags) { |flag| flag != 0 }
-      controller = check_controller_auth(lines, line_idx, flags, jumps)
+      action = extract_action_name(lines, line_idx)
+      chain = rails_chain.controller_in(path).try { |leaf| rails_chain.resolve(leaf, action) }
+      controller = check_controller_auth(lines, line_idx, flags, jumps, chain)
       # skip_before_action only suppresses authentication callbacks — not
       # independent authorize / CanCanCan checks in the action body.
       unless controller[:skipped]
         authn_desc = controller[:authn]
         if authn_desc.nil? && (class_idx = controller[:class_idx])
-          authn_desc = inherited_authn(path, class_idx, extract_action_name(lines, line_idx))
+          authn_desc = inherited_authn(path, class_idx, action)
         end
       end
       authz_desc = controller[:authz]
@@ -240,7 +244,7 @@ class RubyAuthTagger < FrameworkTagger
     Noir::RailsCallbackChain.applies_to_action?(current, action_name)
   end
 
-  private def check_controller_auth(lines : Array(String), action_line : Int32, flags : Array(UInt8), jumps : Array(Int32)) : NamedTuple(authn: String?, authz: String?, skipped: Bool, opted_out: Bool, class_idx: Int32?)
+  private def check_controller_auth(lines : Array(String), action_line : Int32, flags : Array(UInt8), jumps : Array(Int32), chain : Noir::RailsCallbackChain::Resolution?) : NamedTuple(authn: String?, authz: String?, skipped: Bool, opted_out: Bool, class_idx: Int32?)
     # Walk backwards to find the controller class and before_action declarations
     idx = action_line
     action_name = extract_action_name(lines, action_line)
@@ -258,7 +262,7 @@ class RubyAuthTagger < FrameworkTagger
         break
       end
 
-      current = lines[idx].strip
+      current = Noir::RailsCallbackChain.statement(lines, idx)
 
       # Check for skip_before_action that applies to this action.
       # Skip only clears authentication — keep walking for authorize callbacks.
@@ -273,7 +277,7 @@ class RubyAuthTagger < FrameworkTagger
       if applies_to_action?(current, action_name) && !Noir::RailsCallbackChain.conditional?(current)
         Noir::RailsCallbackChain.before_action_callbacks(current).each do |callback|
           next if skipped_callbacks.includes?(callback)
-          authn_desc ||= callback_guard(callback) unless skipped
+          authn_desc ||= callback_guard(callback, chain) unless skipped
           authz_desc ||= callback_authz(callback)
         end
       end
@@ -313,7 +317,7 @@ class RubyAuthTagger < FrameworkTagger
     resolved = chain.resolve(leaf, action)
     resolved.callbacks.each do |callback|
       next if resolved.conditional.includes?(callback)
-      if desc = callback_guard(callback)
+      if desc = callback_guard(callback, resolved)
         return desc
       end
     end
@@ -348,8 +352,10 @@ class RubyAuthTagger < FrameworkTagger
   # decoder, not a gate, and tagged every public action of the app. A name
   # with no definition in the app (Devise's `authenticate_user!`) keeps
   # its pattern description.
-  private def callback_guard(callback : String) : String?
-    return @callback_guards[callback] if @callback_guards.has_key?(callback)
+  private def callback_guard(callback : String, chain : Noir::RailsCallbackChain::Resolution?) : String?
+    ivars = caller_ivars_before(callback, chain)
+    key = "#{callback}|#{ivars.join(',')}"
+    return @callback_guards[key] if @callback_guards.has_key?(key)
     desc = BEFORE_ACTION_AUTHN_PATTERNS.find { |pattern, _| "before_action :#{callback}".matches?(pattern) }.try(&.[1])
     if desc
       if rails_chain.defs.has_key?(callback)
@@ -357,10 +363,10 @@ class RubyAuthTagger < FrameworkTagger
       elsif !library_guard_rejects?(callback)
         desc = nil
       end
-    elsif rails_chain.defs.has_key?(callback) && denies_anonymous?(callback)
-      desc = "#{callback} (app-defined, answers 401/403)"
+    elsif rails_chain.defs.has_key?(callback) && denies_anonymous?(callback, ivars)
+      desc = "#{callback} (app-defined, refuses callers without a credential)"
     end
-    @callback_guards[callback] = desc
+    @callback_guards[key] = desc
   end
 
   # Doorkeeper's authenticators run a block from the app's
@@ -412,8 +418,8 @@ class RubyAuthTagger < FrameworkTagger
 
   # Each app definition of `name` as `{indent, stripped line}` rows: the
   # `def` line's tail first, then its body, blanks and comments dropped.
-  private def def_bodies(name : String) : Array(Array({Int32, String}))
-    (rails_chain.defs[name]? || [] of {String, Int32}).compact_map do |path, def_idx|
+  private def def_bodies(name : String, defs = rails_chain.defs[name]? || [] of {String, Int32}) : Array(Array({Int32, String}))
+    defs.compact_map do |path, def_idx|
       next unless lines = read_file_lines(path)
       def_indent = line_indent(lines[def_idx])
       body = [] of {Int32, String}
@@ -445,21 +451,43 @@ class RubyAuthTagger < FrameworkTagger
   # else (`unless account.active?`, an unknown Host) refuses a state of
   # the app, not an anonymous caller; an early `return` when no credential
   # was sent, or a credential-presence `if` around it, lets one through.
-  # ponytail: one assignment hop links a condition to a credential; a
-  # longer chain reads as no guard.
-  private def denies_anonymous?(name : String) : Bool
-    def_bodies(name).any? do |body|
+  # A redirect or another 4xx (`redirect_to "/login"`, `status: 400`) is a
+  # refusal only on a credential-absent condition: unconditional, it is a
+  # page move, not a gate. A call to another app method that refuses
+  # anonymous callers is one, on whatever conditions it sits under.
+  # A deny under a condition that needs the credential present (`if
+  # current_user && !current_user.admin?`) lets an anonymous caller pass.
+  # ponytail: one assignment hop links a condition to a credential (or the
+  # instance variable an earlier callback sets from one, `ivars`); a longer
+  # chain reads as no guard.
+  private def denies_anonymous?(name : String, ivars : Array(String), visited : Set(String) = Set(String).new) : Bool
+    top = visited.empty?
+    key = "#{name}|#{ivars.join(',')}"
+    return @denies_anonymous[key] if top && @denies_anonymous.has_key?(key)
+    return false unless visited.add?(name)
+    result = def_bodies(name).any? do |body|
       assigns = Hash(String, String).new
       body.each { |_, text| (m = text.match(/^(@?\w+)\s*\|{0,2}=(?!=)\s*(.+)/)) && (assigns[m[1]] = m[2]) }
       body.each_with_index.any? do |(_, text), i|
-        next false unless text.matches?(DENY_RESPONSE) || text.scan(/\b[a-z_]\w*[!?]?/).any? { |m| always_denies?(m[0]) }
+        strict = text.matches?(DENY_RESPONSE) || text.scan(/\b[a-z_]\w*[!?]?/).any? { |m| always_denies?(m[0]) } ||
+                 text.scan(BARE_CALL).any? { |m| m[0] != name && rails_chain.defs.has_key?(m[0]) && denies_anonymous?(m[0], ivars, visited) }
+        next false unless strict || text.matches?(SOFT_DENY)
         next false if credential_gated?(body, i) || text.matches?(CREDENTIAL_PRESENT_MODIFIER)
         conditions = deny_conditions(body, i)
         next false if conditions.nil?
-        conditions.empty? || conditions.any? { |c, when_true| credential_absent?(c, when_true, assigns) }
+        parts = deny_parts(conditions)
+        next false if parts.any? { |c, when_true| credential_present?(c, when_true, assigns, ivars) }
+        (strict && parts.empty?) || parts.any? { |c, when_true| credential_absent?(c, when_true, assigns, ivars) }
       end
     end
+    @denies_anonymous[key] = result if top
+    result
   end
+
+  # A call with no receiver: `require_login`, not `cookies.delete`.
+  BARE_CALL = /(?<![.:@\w])[a-z_]\w*[!?]?/
+  # A redirect, or a 4xx answer other than 401/403, from a callback.
+  SOFT_DENY = /\bredirect_(?:to|back(?:_or_to)?)\b|\bhead\s*\(?\s*(?::bad_request|:not_found|4\d\d)\b|\bstatus:\s*(?::bad_request\b|:not_found\b|4\d\d\b)/
 
   # Whether the helper `name` (`render_unauthorized`) answers 401/403 on a
   # line of its own body that no condition guards.
@@ -509,13 +537,81 @@ class RubyAuthTagger < FrameworkTagger
   # condition reads one and tests its absence (`if @app.blank?`, `unless
   # valid_token?`). `if current_user&.suspended?` refuses a present user,
   # which lets an anonymous caller through.
-  private def credential_absent?(condition : String, when_true : Bool, assigns : Hash(String, String)) : Bool
-    credential_condition?(condition, assigns) && condition.matches?(NEGATED) == when_true
+  private def credential_absent?(condition : String, when_true : Bool, assigns : Hash(String, String), ivars : Array(String)) : Bool
+    credential_condition?(condition, assigns, ivars) && condition.matches?(NEGATED) == when_true
   end
 
-  private def credential_condition?(condition : String, assigns : Hash(String, String)) : Bool
+  # The deny runs only when the caller has the credential.
+  private def credential_present?(condition : String, when_true : Bool, assigns : Hash(String, String), ivars : Array(String)) : Bool
+    credential_condition?(condition, assigns, ivars) && condition.matches?(NEGATED) != when_true
+  end
+
+  # Each conjunct a deny needs, with the value it needs: under `if a && b`
+  # both true, under `unless a || b` (or an `else`) both false.
+  private def deny_parts(conditions : Array({String, Bool})) : Array({String, Bool})
+    conditions.flat_map do |condition, when_true|
+      condition.split(when_true ? /&&|\band\b/ : /\|\||\bor\b/).map { |part| {part.strip, when_true} }
+    end
+  end
+
+  # An instance variable is the caller's credential by the assignment
+  # that runs for this request: one in the callback's own body first
+  # (`@user = User.find_by(username: params[:id])` is a looked-up record),
+  # else what the callbacks before it in the controller's chain left.
+  private def credential_condition?(condition : String, assigns : Hash(String, String), ivars : Array(String)) : Bool
     return true if condition.matches?(CREDENTIAL_WORD)
-    condition.scan(/@?\w+/).any? { |m| assigns[m[0]]?.try(&.matches?(CREDENTIAL_WORD)) }
+    condition.scan(/@?\w+/).any? do |m|
+      if value = assigns[m[0]]?
+        value.matches?(CREDENTIAL_WORD)
+      else
+        ivars.includes?(m[0])
+      end
+    end
+  end
+
+  # Where a request carries its credential.
+  CREDENTIAL_SOURCE = /\b(?:session|cookies|request\.headers)\b|token|bearer|jwt|authoriz|api_?key/i
+
+  # The instance variables the callbacks that run before `callback` in
+  # `chain` leave holding the caller: `@user = user` under `if session[:u]
+  # && (user = User.find_by(session_token: ...))`, `@current_user ||=
+  # User.find_by(id: session[:user_id])`, `@user = current_user`. A later
+  # assignment replaces an earlier one, so a `set_account` that loads
+  # `@account = Account.find(params[:account_id])` leaves a target, not
+  # the caller. A record looked up through the caller
+  # (`current_user.accounts.find(...)`) is not the caller either.
+  # ponytail: each callback's defs are read wherever the app defines that
+  # name, preferring the files of the controller's own ancestry.
+  private def caller_ivars_before(callback : String, chain : Noir::RailsCallbackChain::Resolution?) : Array(String)
+    return [] of String unless chain
+    callbacks = chain.callbacks
+    callbacks = callbacks[0, callbacks.index(callback) || callbacks.size]
+    @caller_ivars.put_if_absent("#{callbacks.join(',')}|#{chain.paths.join(',')}") do
+      state = Hash(String, Bool).new
+      callbacks.each do |name|
+        next if name == callback
+        defs = rails_chain.defs[name]? || [] of {String, Int32}
+        own = defs.select { |path, _| chain.paths.includes?(path) }
+        def_bodies(name, own.empty? ? defs : own).each do |body|
+          body.each_with_index do |(indent, text), i|
+            next unless m = text.match(/^(@\w+)\s*\|{0,2}=(?!=)\s*(.+)/)
+            state[m[1]] = caller_assignment?(body, i, indent, m[2])
+          end
+        end
+      end
+      state.select { |_, caller| caller }.keys.sort!
+    end
+  end
+
+  private def caller_assignment?(body : Array({Int32, String}), i : Int32, indent : Int32, value : String) : Bool
+    return true if value.matches?(CREDENTIAL_SOURCE) || value.matches?(/\Acurrent_(?:user|account)\z/)
+    depth = indent
+    (i - 1).downto(1) do |j|
+      next unless body[j][0] < depth
+      depth = body[j][0]
+      return true if (block = body[j][1].match(BLOCK_CONDITION)) && block[2].matches?(CREDENTIAL_SOURCE)
+    end
+    false
   end
 
   # Whether `body[i]` sits under a `CREDENTIAL_PRESENT_IF` block (at any

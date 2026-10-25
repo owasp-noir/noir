@@ -29,6 +29,11 @@ expected_endpoints = [
     Param.new("X-API-KEY", "", "header"),
   ]),
   Endpoint.new("/posts/:id", "DELETE"),
+  # `resources` also routes the `new` / `edit` form pages the controller defines.
+  Endpoint.new("/posts/new", "GET"),
+  Endpoint.new("/posts/:id/edit", "GET", [
+    Param.new("X-API-KEY", "", "header"),
+  ]),
   Endpoint.new("/posts/:id/search", "QUERY"),
   Endpoint.new("/search", "QUERY", [
     Param.new("user_name", "", "cookie"),
@@ -55,6 +60,10 @@ expected_endpoints = [
     Param.new("body", "", "form"),
     Param.new("alpha", "", "form"),
     Param.new("beta", "", "form"),
+    Param.new("gamma", "", "form"),
+    Param.new("flag", "", "form"),
+    Param.new("ref", "", "form"),
+    Param.new("pinned", "", "form"),
   ]),
   Endpoint.new("/articles/:id", "PUT", [
     Param.new("one", "", "form"),
@@ -152,6 +161,15 @@ it "reads subscript and fetch on bare params only, while attaching Devise sign_i
   login.should_not be_nil
   login.not_nil!.params.map { |p| "#{p.name}:#{p.param_type}" }.should eq(["email:json", "password:json"])
   login.not_nil!.params.map(&.name).should_not contain("remember_token")
+end
+
+it "reads nested and scalar-require params by the key the form sends, never the wrapper", tags: "functional" do
+  create = tester.app.endpoints.find { |endpoint| endpoint.url == "/articles" && endpoint.method == "POST" }
+  create.should_not be_nil
+  names = create.not_nil!.params.map(&.name)
+  names.should_not contain("article")
+  names.should_not contain("thing")
+  names.should_not contain("other")
 end
 
 it "does not carry show's params into create through `render :show`", tags: "functional" do

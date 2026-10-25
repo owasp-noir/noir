@@ -997,42 +997,45 @@ module Analyzer::Ruby
       # truncation surfaced a malformed `/#{ENV.fetch('` route.
       return unless sm = rest.match(/^\s*(['"])((?:\#\{[^}]*\}|(?!\1).)*)\1/)
 
-      path = normalize_ruby_interpolation(strip_optional_route_segments(sm[2]))
-      prefix = current_path_prefix(stack, route_scope)
-      path_part = path.starts_with?("/") ? path : "/#{path}"
-      url = prefix.empty? ? path_part : "/#{prefix}#{path_part}"
-      # `get ""` / `get "/"` inside a namespace/scope composes to a
-      # bare `/prefix/`; collapse the redundant trailing slash so the
-      # URL matches the real route (`/admin`, not `/admin/`).
-      url = url.rchop('/') if url.size > 1 && url.ends_with?('/')
+      # `/s/:id(/:title)` answers both `/s/:id` and `/s/:id/:title`.
+      optional_route_variants(sm[2]).each do |raw_path|
+        path = normalize_ruby_interpolation(raw_path)
+        prefix = current_path_prefix(stack, route_scope)
+        path_part = path.starts_with?("/") ? path : "/#{path}"
+        url = prefix.empty? ? path_part : "/#{prefix}#{path_part}"
+        # `get ""` / `get "/"` inside a namespace/scope composes to a
+        # bare `/prefix/`; collapse the redundant trailing slash so the
+        # URL matches the real route (`/admin`, not `/admin/`).
+        url = url.rchop('/') if url.size > 1 && url.ends_with?('/')
 
-      ctrl_action = parse_controller_action(rest, current_controller_scope(stack))
-      action_params = [] of Param
-      ctrl_path = nil.as(String?)
-      action_name = nil.as(String?)
-      if ctrl_action
-        ctrl_name, action = ctrl_action
-        ctrl_path = find_controller_file(scan.framework_root, ctrl_name, stack)
-        action_name = action
-        action_params = params_for_action(ctrl_path, action, verb)
-      elsif inferred = infer_implicit_controller_action(path, rest, current_controller_scope(stack))
-        ctrl_name, action = inferred
-        ctrl_path = find_controller_file(scan.framework_root, ctrl_name, stack)
-        action_name = action
-        action_params = params_for_action(ctrl_path, action, verb)
-      elsif parent = parent_resources_frame(stack)
-        if action = infer_action_from_path(path)
-          ctrl_path = parent.controller_path
+        ctrl_action = parse_controller_action(rest, current_controller_scope(stack))
+        action_params = [] of Param
+        ctrl_path = nil.as(String?)
+        action_name = nil.as(String?)
+        if ctrl_action
+          ctrl_name, action = ctrl_action
+          ctrl_path = find_controller_file(scan.framework_root, ctrl_name, stack)
           action_name = action
           action_params = params_for_action(ctrl_path, action, verb)
+        elsif inferred = infer_implicit_controller_action(path, rest, current_controller_scope(stack))
+          ctrl_name, action = inferred
+          ctrl_path = find_controller_file(scan.framework_root, ctrl_name, stack)
+          action_name = action
+          action_params = params_for_action(ctrl_path, action, verb)
+        elsif parent = parent_resources_frame(stack)
+          if action = infer_action_from_path(path)
+            ctrl_path = parent.controller_path
+            action_name = action
+            action_params = params_for_action(ctrl_path, action, verb)
+          end
         end
-      end
 
-      promote_path_params(action_params, url_param_names(url))
-      endpoint = Endpoint.new(url, verb, action_params, scan.details)
-      attach_callees_for_action(endpoint, ctrl_path, action) if action = action_name
-      endpoint.handler = handler_for_action(ctrl_path, action) if action = action_name
-      @result << endpoint
+        promote_path_params(action_params, url_param_names(url))
+        endpoint = Endpoint.new(url, verb, action_params, scan.details)
+        attach_callees_for_action(endpoint, ctrl_path, action) if action = action_name
+        endpoint.handler = handler_for_action(ctrl_path, action) if action = action_name
+        @result << endpoint
+      end
     end
 
     # `match` — Rails legacy multi-verb route. Requires `via:`
@@ -1043,38 +1046,40 @@ module Analyzer::Ruby
       stack = scan.stack
       return unless sm = rest.match(/^\s*['"]([^'"]*)['"]/)
 
-      path = normalize_ruby_interpolation(strip_optional_route_segments(sm[1]))
-      prefix = current_path_prefix(stack, parse_options(rest)["on"]?)
-      path_part = path.starts_with?("/") ? path : "/#{path}"
-      url = prefix.empty? ? path_part : "/#{prefix}#{path_part}"
-      url = url.rchop('/') if url.size > 1 && url.ends_with?('/')
+      optional_route_variants(sm[1]).each do |raw_path|
+        path = normalize_ruby_interpolation(raw_path)
+        prefix = current_path_prefix(stack, parse_options(rest)["on"]?)
+        path_part = path.starts_with?("/") ? path : "/#{path}"
+        url = prefix.empty? ? path_part : "/#{prefix}#{path_part}"
+        url = url.rchop('/') if url.size > 1 && url.ends_with?('/')
 
-      match_verbs = parse_match_verbs(rest)
-      ctrl_action = parse_controller_action(rest, current_controller_scope(stack))
+        match_verbs = parse_match_verbs(rest)
+        ctrl_action = parse_controller_action(rest, current_controller_scope(stack))
 
-      ctrl_path = nil.as(String?)
-      action_name = nil.as(String?)
-      if ctrl_action
-        ctrl_name, action = ctrl_action
-        ctrl_path = find_controller_file(scan.framework_root, ctrl_name, stack)
-        action_name = action
-      elsif inferred = infer_implicit_controller_action(path, rest, current_controller_scope(stack))
-        ctrl_name, action = inferred
-        ctrl_path = find_controller_file(scan.framework_root, ctrl_name, stack)
-        action_name = action
-      end
+        ctrl_path = nil.as(String?)
+        action_name = nil.as(String?)
+        if ctrl_action
+          ctrl_name, action = ctrl_action
+          ctrl_path = find_controller_file(scan.framework_root, ctrl_name, stack)
+          action_name = action
+        elsif inferred = infer_implicit_controller_action(path, rest, current_controller_scope(stack))
+          ctrl_name, action = inferred
+          ctrl_path = find_controller_file(scan.framework_root, ctrl_name, stack)
+          action_name = action
+        end
 
-      match_verbs.each do |match_verb|
-        action_params = if name = action_name
-                          params_for_action(ctrl_path, name, match_verb)
-                        else
-                          [] of Param
-                        end
-        promote_path_params(action_params, url_param_names(url))
-        endpoint = Endpoint.new(url, match_verb, action_params, scan.details)
-        attach_callees_for_action(endpoint, ctrl_path, action_name) if action_name
-        endpoint.handler = handler_for_action(ctrl_path, action_name) if action_name
-        @result << endpoint
+        match_verbs.each do |match_verb|
+          action_params = if name = action_name
+                            params_for_action(ctrl_path, name, match_verb)
+                          else
+                            [] of Param
+                          end
+          promote_path_params(action_params, url_param_names(url))
+          endpoint = Endpoint.new(url, match_verb, action_params, scan.details)
+          attach_callees_for_action(endpoint, ctrl_path, action_name) if action_name
+          endpoint.handler = handler_for_action(ctrl_path, action_name) if action_name
+          @result << endpoint
+        end
       end
     end
 
@@ -1527,14 +1532,51 @@ module Analyzer::Ruby
       !line.matches?(/\bend\b/)
     end
 
+    # Every path a route with optional segments answers, shortest first:
+    # `/top(/:length(/page/:page))` is `/top`, `/top/:length` and
+    # `/top/:length/page/:page`. `(.:format)` is dropped, not expanded.
+    # Adjacent groups nest the way Journey matches them: `/a(/:b)(/:c)`
+    # fills `:b` before `:c`, so it is `/a`, `/a/:b`, `/a/:b/:c`, never
+    # `/a/:c`.
+    # ponytail: capped at 8 variants; a route with more keeps the first 8.
+    private def optional_route_variants(path : String) : Array(String)
+      path = path.gsub("(.:format)", "")
+      return [path] unless open = path.index('(')
+      # A paren inside `#{...}` is Ruby, not an optional segment.
+      return [strip_optional_route_segments(path)] if path.includes?("\#{")
+      return [strip_optional_route_segments(path)] unless close = group_close(path, open)
+      head, inner, tail = path[0, open], path[(open + 1)...close], path[(close + 1)..]
+      # Without this group, the groups right after it cannot be filled either.
+      rest = tail
+      while rest.starts_with?('(') && (next_close = group_close(rest, 0))
+        rest = rest[(next_close + 1)..]
+      end
+      variants = optional_route_variants(head + rest) + optional_route_variants(head + inner + tail)
+      variants.map! do |variant|
+        variant = variant.gsub(%r{/{2,}}, "/")
+        variant.size > 1 && variant.ends_with?('/') ? variant.rchop('/') : variant
+      end
+      variants.uniq!.first(8)
+    end
+
+    # The index of the `)` closing the group opened at `path[open]`.
+    private def group_close(path : String, open : Int32) : Int32?
+      depth = 0
+      (open...path.size).find do |i|
+        depth += 1 if path[i] == '('
+        depth -= 1 if path[i] == ')'
+        depth == 0
+      end
+    end
+
     # Rails route strings carry optional segments in parentheses —
     # `(.:format)`, `(/page/:page)`, even nested `(/:length(/page/:page))`.
     # They are DSL syntax, not part of any concrete URL, so emitting
     # `/domain/:id(.:format)` hands a consumer a path that 404s when hit
     # literally. Peel every (possibly nested) optional group down to the
     # required base path, then collapse the `//` and trailing-`/`
-    # artifacts the removal can leave behind. `(.:format)` is appended to
-    # most Rails string routes, so this touches nearly every app.
+    # artifacts the removal can leave behind. Scope prefixes use it; a
+    # route path expands through `optional_route_variants`.
     private def strip_optional_route_segments(path : String) : String
       return path unless path.includes?('(')
 
@@ -1633,9 +1675,11 @@ module Analyzer::Ruby
     end
 
     # The RESTful actions `resources` routes, in the order their rows are
-    # emitted; `update` answers both PUT and PATCH.
+    # emitted; `update` answers both PUT and PATCH. `new` and `edit` serve
+    # the forms at `/posts/new` and `/posts/:id/edit`.
     RESOURCE_ACTION_VERBS = { {"index", "GET"}, {"show", "GET"}, {"create", "POST"},
-                             {"update", "PUT"}, {"update", "PATCH"}, {"destroy", "DELETE"} }
+                             {"update", "PUT"}, {"update", "PATCH"}, {"destroy", "DELETE"},
+                             {"new", "GET"}, {"edit", "GET"} }
 
     def controller_to_endpoint(
       path : String,
@@ -1661,10 +1705,12 @@ module Analyzer::Ruby
         next if singular && action == "index"
         next unless action_allowed?(action, only, except)
         next unless owner = action_owner(path, action)
-        on_collection = action == "index" || action == "create"
+        on_collection = action == "index" || action == "create" || action == "new"
         params = promote_path_params(action_params(owner, action, verb, path), on_collection ? path_params : member_params)
         details = Details.new(PathInfo.new(owner.path, owner.action_lines[action]?))
-        endpoint = Endpoint.new(on_collection ? index_url : member_url, verb, params, details)
+        url = on_collection ? index_url : member_url
+        url = "#{url}/#{action}" if action == "new" || action == "edit"
+        endpoint = Endpoint.new(url, verb, params, details)
         attach_callees_for_action(endpoint, owner, action)
         endpoint.handler = handler_for_action(owner, action, path)
         endpoints << endpoint
@@ -1743,8 +1789,9 @@ module Analyzer::Ruby
           permit_buf = "#{buf} #{line}"
           permit_mask = "#{permit_mask} #{blank_quoted(line)}"
           permit_lines += 1
-        elsif (line.includes?("permit") || line.includes?("expect")) && (masked = blank_quoted(line)).matches?(PERMIT_OPEN)
-          permit_buf = line
+        elsif (line.includes?("permit") || line.includes?("expect")) && (opener = permit_opener(line, controller_lines, index)) &&
+              (masked = blank_quoted(opener)).matches?(PERMIT_OPEN)
+          permit_buf = opener
           permit_mask = masked
           permit_lines = 1
         end
@@ -1771,8 +1818,20 @@ module Analyzer::Ruby
         # the regex ops — this runs on every line of every controller in the app.
         line = folded_lines[index]
         if line.includes?('[') || line.includes?("params.") || line.includes?("headers.")
-          line.scan(/(?<![\w.])params(?:\[|\.(?:fetch|dig)\s*\()\s*(?::(\w+)|['"]([^'"]+)['"])\s*[\],)]/) do |m|
+          line.scan(/(?<![\w.])params(?:\[|\.(?:fetch|dig|require)\s*\()\s*(?::(\w+)|['"]([^'"]+)['"])\s*[\],)]/) do |m|
             name = (m[1]? || m[2]?).to_s.strip
+            # `params[:user][:password]` reads `password` (the leaf, as a
+            # permit list names it); `params.require(:post).permit(...)` is
+            # the permit list's, and `params.require(:url)` alone reads `url`.
+            tail = line[m.end..]
+            if m[0].includes?("require")
+              chained = tail.strip.empty? ? controller_lines[index + 1]?.to_s : tail
+              next if chained.matches?(/\A\s*\.\s*(?:permit|expect|fetch|dig)\b/)
+            end
+            while nested = tail.match(/\A\s*\[\s*(?::(\w+)|['"]([^'"]+)['"])\s*\]/)
+              name = (nested[1]? || nested[2]?).to_s
+              tail = tail[nested.end..]
+            end
             # `params[:controller]` / `params[:action]` are the router's own keys.
             next if name.empty? || this_method.empty? || name == "controller" || name == "action"
             params_body_by_action[this_method] ||= [] of Param
@@ -1806,6 +1865,14 @@ module Analyzer::Ruby
         defined_actions, helper_calls_by_action, callees_by_action, action_lines, helper_keys_by_action)
       @controller_data_cache[path] = data
       data
+    end
+
+    # The line a permit list opens on, with the `params.require(:post)` a
+    # chained `.permit(` on its own line continues.
+    private def permit_opener(line : String, lines : Array(String), index : Int32) : String
+      return line unless index > 0 && line.matches?(/\A\s*\.\s*(?:permit|expect)\s*\(/)
+      previous = strip_inline_comment(lines[index - 1]).strip
+      previous.matches?(/(?<![\w.])params(?:\.(?:require|fetch)\s*\([^)]*\))?\z/) ? "#{previous}#{line.lstrip}" : line
     end
 
     PERMIT_MAX_LINES = 200
@@ -1865,6 +1932,10 @@ module Analyzer::Ruby
       Noir::TopLevelSplit.split(args, ',', PERMIT_SPLIT).each do |entry|
         if m = entry.match(/\A:?(?:"([a-z_][a-z0-9_]*)"|'([a-z_][a-z0-9_]*)'|([a-z_][a-z0-9_]*))\s*(?::(?!:)|=>|\z)/)
           names << (m[1]? || m[2]? || m[3]).to_s
+        elsif m = entry.match(/\?\s*:([a-z_]\w*)\s*:\s*(?::([a-z_]\w*)|nil)\s*\z/)
+          # `@user.admin? ? :role : nil`: a key permitted for some callers.
+          names << m[1]
+          names << m[2] if m[2]?
         end
       end
       names

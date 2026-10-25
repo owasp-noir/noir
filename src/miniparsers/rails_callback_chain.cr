@@ -68,6 +68,30 @@ module Noir
     @by_name = Hash(String, Array(Klass)).new
     @by_path = Hash(String, Array(Klass)).new
 
+    # The statement starting at `lines[idx]`, joined across the lines a
+    # trailing comma or an unclosed `[` / `(` / `{` continues it onto:
+    # `before_action :x, # note` with its `only: [...]` on the next line,
+    # or `only: [` closed lines later, applies to those actions only.
+    # Trailing comments are dropped.
+    # ponytail: a `#` inside a string on a callback line reads as a comment.
+    def self.statement(lines : Array(String), idx : Int32) : String
+      text = uncomment(lines[idx])
+      j = idx + 1
+      while (text.ends_with?(',') || open_brackets?(text)) && j < lines.size && j - idx <= 10
+        text = "#{text} #{uncomment(lines[j])}"
+        j += 1
+      end
+      text
+    end
+
+    private def self.uncomment(line : String) : String
+      line.sub(/\s+#.*\z/, "").strip
+    end
+
+    private def self.open_brackets?(text : String) : Bool
+      text.count("[({") > text.count("])}")
+    end
+
     def self.applies_to_action?(line : String, action : String?) : Bool
       if only = callback_option(line, ONLY_OPTION)
         return !!(action && only.includes?(action))
@@ -122,7 +146,7 @@ module Noir
           (@defs[m[1]] ||= [] of {String, Int32}) << {path, idx}
           def_indent = indent unless stripped.matches?(/\bend$|^def\s+[\w.?!]+(?:\([^)]*\))?\s*=[^=]/)
         elsif (top = stack.last?) && stripped.matches?(CALLBACK_LINE)
-          top[0].callbacks << stripped
+          top[0].callbacks << RailsCallbackChain.statement(lines, idx)
         end
       end
     end

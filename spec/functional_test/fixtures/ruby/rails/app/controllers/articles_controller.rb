@@ -5,6 +5,11 @@ class ArticlesController < ApplicationController
     # a `permit(` inside a string literal must not open a permit list
     logger.info "calling permit( now"
     Thing.create(params.require(:thing).permit(:alpha, :beta))
+    Other.create(params.require(:other)
+                       .permit(:gamma))
+    # a nested read names its leaf; a scalar `require` names its key
+    @article.flagged = params[:article][:flag] == "1"
+    @source = params.require(:ref)
     # an unclosed `permit(` (heredoc body) must not swallow the next action
     note = <<~TXT
       see permit( docs
@@ -21,7 +26,8 @@ class ArticlesController < ApplicationController
   def article_params
     params.require(:article).permit(
       :title,
-      :body # trailing comment
+      :body, # trailing comment
+      current_user.admin? ? :pinned : nil
     )
   end
 end
