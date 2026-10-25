@@ -92,6 +92,32 @@ describe "FastAPIAuthTagger" do
     plain.tags.map(&.name).should eq(["auth"])
   end
 
+  # A handler-body refusal guards the route only when it refuses an
+  # anonymous caller.
+  # 73: @app.post("/signup")           403 when a setting is off
+  # 80: @app.get("/config")            role read, nothing refused
+  # 87: @app.delete("/drafts/{id}")    401 when the optional user is None
+  # 94: @app.post("/posts/{id}/pin")   403 skipped when the user is None
+  it "judges a handler-body check by whether it refuses an anonymous caller" do
+    noir_options = create_test_options
+    noir_options["base"] = YAML::Any.new(fixture_base)
+    at = ->(line : Int32, method : String) { Endpoint.new("/#{line}", method, [] of Param, Details.new(PathInfo.new(main_path, line))) }
+    signup, config, draft, pin = at.call(73, "POST"), at.call(80, "GET"), at.call(87, "DELETE"), at.call(94, "POST")
+
+    CodeLocator.instance.clear_all
+    CodeLocator.instance.register_path(main_path)
+    begin
+      FastAPIAuthTagger.new(noir_options).perform([signup, config, draft, pin])
+    ensure
+      CodeLocator.instance.clear_all
+    end
+
+    signup.tags.should be_empty
+    config.tags.should be_empty
+    draft.tags.map { |t| {t.name, t.description} }.should eq([{"auth", "Protected by FastAPI handler 401 check"}])
+    pin.tags.should be_empty
+  end
+
   # app/accounts.py imports `load_account` from loose_deps (checks nothing)
   # and strict_deps (checks `is_admin`), which both define that name.
   #  9: @router.get("/")                Depends(load_account)

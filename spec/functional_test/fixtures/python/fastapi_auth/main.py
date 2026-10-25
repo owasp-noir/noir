@@ -61,3 +61,38 @@ async def update_item(item_id: int, current_user: User = Depends(get_current_use
 @app.patch("/notes/{note_id}")
 async def update_note(note_id: int, current_user: User = Depends(get_current_user)):
     return {"note": note_id}
+
+
+ENABLE_SIGNUP = False
+
+
+async def get_optional_user(token: str | None = Depends(oauth2_scheme)) -> User | None:
+    return None
+
+
+@app.post("/signup")
+async def signup():
+    if not ENABLE_SIGNUP:
+        raise HTTPException(status_code=403, detail="Signup disabled")
+    return {}
+
+
+@app.get("/config")
+async def config(user: User | None = Depends(get_optional_user)):
+    if user is not None and user.is_admin:
+        return {"admin": True}
+    return {}
+
+
+@app.delete("/drafts/{draft_id}")
+async def delete_draft(draft_id: int, user: User | None = Depends(get_optional_user)):
+    if user is None:
+        raise HTTPException(status_code=401, detail="Login required")
+    return {}
+
+
+@app.post("/posts/{post_id}/pin")
+async def pin_post(post_id: int, user: User | None = Depends(get_optional_user)):
+    if user and not user.is_admin:
+        raise HTTPException(status_code=403)
+    return {}

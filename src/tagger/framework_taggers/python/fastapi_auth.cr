@@ -68,6 +68,9 @@ class FastAPIAuthTagger < FrameworkTagger
   CLASS_DEPENDENCY_ATTR      = /^\s*(\w+)\s*(?::[^=]+)?=\s*(?:Depends|Security)\s*\(/
   ANNOTATED_ALIAS_DEPENDENCY = /^\s*(\w+)\s*(?::\s*[\w.\[\]]+\s*)?=\s*Annotated\s*\[.*\bDepends\s*\(\s*([\w.]+)/
 
+  alias Condition = {Int32, Bool, Bool, Bool}
+  BODY_401_CHECK = "FastAPI handler 401 check"
+
   def self.target_techs : Array(String)
     ["python_fastapi"]
   end
@@ -159,6 +162,8 @@ class FastAPIAuthTagger < FrameworkTagger
         authz ||= authz_desc(text, file)
       end
       authz ||= body_authz_desc(lines, line_num - 1)
+      # Refusing a missing caller is authentication, not authorization.
+      description, authz = (description || authz), nil if authz == BODY_401_CHECK
       next if description.nil? && authz.nil?
 
       endpoint.add_tag(Tag.new("auth", "Protected by #{description}", "fastapi_auth")) if description
@@ -395,18 +400,104 @@ class FastAPIAuthTagger < FrameworkTagger
       idx += 1
       break if depth <= 0 && code.ends_with?(':')
     end
+    callers = handler_caller_names(handler_header(lines, start))
+    # Open conditional blocks as {indent, reads a role field?, reads the
+    # caller?, skipped when the caller is None?}; `chain` remembers each
+    # indent's last `if`/`elif` frame for its `else`.
+    frames = [] of Condition
+    chain = Hash(Int32, Condition).new
     while idx < lines.size && idx < start + 400
       line = lines[idx]
-      break if !line.blank? && line.size - line.lstrip.size <= def_indent
-      code = Analyzer::Python::Helper.strip_python_comment(line)
-      if code.matches?(FORBIDDEN)
-        return "FastAPI handler 403 check"
-      elsif code.matches?(AUTHZ_FIELD)
-        return "FastAPI handler ownership/role check"
-      end
       idx += 1
+      next if line.blank?
+      indent = line.size - line.lstrip.size
+      break if indent <= def_indent
+      code = Analyzer::Python::Helper.strip_python_comment(line).strip
+      depth = code.count('(') + code.count('[') + code.count('{') - code.count(')') - code.count(']') - code.count('}')
+      while depth > 0 && idx < lines.size
+        part = Analyzer::Python::Helper.strip_python_comment(lines[idx]).strip
+        depth += part.count('(') + part.count('[') + part.count('{') - part.count(')') - part.count(']') - part.count('}')
+        code = "#{code} #{part}"
+        idx += 1
+      end
+      frames.reject! { |frame| frame[0] >= indent }
+      chain.reject! { |level, _| level > indent }
+
+      statement = code
+      conditions = frames
+      if m = code.match(/^(?:el)?if\s+(.+?):\s*(raise\b.*|return\b.*)?$/)
+        frame = condition_frame(indent, m[1], callers)
+        chain[indent] = frame
+        unless one_liner = m[2]?
+          frames << frame
+          next
+        end
+        statement = one_liner
+        conditions = frames + [frame]
+      elsif code.matches?(/^else\s*:/)
+        if prior = chain[indent]?
+          # The `else` of a check runs exactly when the check fails, so a
+          # None caller reaches it whatever the `if` short-circuits on.
+          frames << {indent, prior[1], prior[2], false}
+        else
+          frames << {indent, false, false, false}
+        end
+        next
+      elsif m = code.match(/^while\s+(.+):$/)
+        frames << condition_frame(indent, m[1], callers)
+        next
+      elsif code.matches?(/^except\b/)
+        frames << {indent, false, false, false}
+        next
+      end
+      next unless statement.matches?(/^raise\b/) || (statement.starts_with?("return") && statement.matches?(FORBIDDEN))
+      if desc = refusal_desc(statement, conditions)
+        return desc
+      end
     end
     nil
+  end
+
+  # A refusal in the handler body guards it only when an anonymous caller
+  # is the one it refuses: it answers 403 unconditionally, or it sits under
+  # a condition that reads the caller's role / ownership fields or the
+  # caller itself, none of which a None caller short-circuits past.
+  # `if not ENABLE_SIGNUP: raise 403` refuses everyone on a setting;
+  # `if user and user.role != "admin": raise 403` lets anonymous through.
+  private def refusal_desc(statement : String, conditions : Array(Condition)) : String?
+    forbidden = statement.matches?(FORBIDDEN)
+    if conditions.empty?
+      return forbidden ? "FastAPI handler 403 check" : nil
+    end
+    return if conditions.any?(&.[3])
+    if conditions.any?(&.[1])
+      "FastAPI handler ownership/role check"
+    elsif conditions.any?(&.[2]) && statement.matches?(REFUSAL_MARKER)
+      forbidden ? "FastAPI handler 403 check" : BODY_401_CHECK
+    end
+  end
+
+  private def condition_frame(indent : Int32, condition : String, callers : Array(String)) : Condition
+    receivers = callers + condition.scan(/(\w+)#{AUTHZ_FIELD.source}/).map(&.[1])
+    reads_caller = condition.matches?(/\brequest\.(?:state\.)?user\b/) || callers.any? do |name|
+      condition.matches?(/\b#{Regex.escape(name)}\s*\.\s*\w|\bnot\s+#{Regex.escape(name)}\b|\b#{Regex.escape(name)}\s+is\s+(?:not\s+)?None\b/)
+    end
+    admits_none = receivers.uniq.any? do |name|
+      condition.matches?(/^\(?\s*#{Regex.escape(name)}(?:\s+is\s+not\s+None)?\s*(?:\band\b|\)?\s*$)/)
+    end
+    {indent, condition.matches?(AUTHZ_FIELD), reads_caller, admits_none}
+  end
+
+  # The handler parameters a `Depends(...)` / `Security(...)` (directly,
+  # in `Annotated[...]` or through an Annotated alias) injects.
+  private def handler_caller_names(header : String) : Array(String)
+    names = [] of String
+    header.scan(/(\w+)\s*(?::[^=,()]*(?:\[[^\]]*\][^=,()]*)?)?=\s*(?:Depends|Security)\s*\(/) { |m| names << m[1] }
+    header.scan(/(\w+)\s*:\s*Annotated\s*\[[^\n]*?\b(?:Depends|Security)\s*\(/) { |m| names << m[1] }
+    header.scan(/(\w+)\s*:\s*(\w+)\s*[,)=]/) do |m|
+      names << m[1] if @dependency_aliases.has_key?(m[2]) || @auth_aliases.has_key?(m[2])
+    end
+    names.uniq
   end
 
   private def auth_desc(text : String, path : String) : String?
