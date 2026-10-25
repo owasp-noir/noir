@@ -183,6 +183,9 @@ module Noir
       # The file the route is registered in when that is not the walked
       # source: a route helper declared in another file (see `RouteHelperIndex#external`).
       property file : String? = nil
+      # 0-based row where the last handler argument starts (an inline
+      # closure is declared there), when the decoder records it.
+      property handler_row : Int32? = nil
 
       def initialize(@router_name, @verb, @path, @raw_path, @handler, @line,
                      @query_params : Array(String) = [] of String,
@@ -249,13 +252,14 @@ module Noir
                        handle_many_methods : Array(String) = [] of String,
                        closure_group_methods : Array(String) = [] of String,
                        mount_methods : Array(String) = [] of String,
-                       verb_calls : Bool = true) : Array(Route)
+                       verb_calls : Bool = true,
+                       string_seed : Hash(String, String)? = nil) : Array(Route)
       routes = [] of Route
       group_prefixes = external_groups.dup
       all_handle_many = handle_many_methods.dup
       all_handle_many << handle_many_method if handle_many_method && !all_handle_many.includes?(handle_many_method)
       Noir::TreeSitter.parse_go(source) do |root|
-        string_values = collect_string_values(root, source)
+        string_values = collect_string_values(root, source, string_seed)
         mux_chained_operands = Set(String).new
 
         drop_local_self_regroups(group_prefixes, self_regroups(root, source, group_method)) unless group_prefixes.empty?
@@ -348,10 +352,11 @@ module Noir
     def extract_groups(source : String,
                        external_groups : Hash(String, String) = Hash(String, String).new,
                        group_method : String = "Group",
-                       group_aliases : Array(String) = [] of String) : Hash(String, String)
+                       group_aliases : Array(String) = [] of String,
+                       string_seed : Hash(String, String)? = nil) : Hash(String, String)
       group_prefixes = external_groups.dup
       Noir::TreeSitter.parse_go(source) do |root|
-        string_values = collect_string_values(root, source)
+        string_values = collect_string_values(root, source, string_seed)
 
         regroups = self_regroups(root, source, group_method)
         drop_local_self_regroups(group_prefixes, regroups)
@@ -633,10 +638,11 @@ module Noir
     # line numbers stay relative to `source` so code paths remain accurate.
     def extract_routes_from_function(source : String, func_name : String,
                                      external_groups : Hash(String, String),
-                                     handle_method : String? = nil) : Array(Route)
+                                     handle_method : String? = nil,
+                                     string_seed : Hash(String, String)? = nil) : Array(Route)
       routes = [] of Route
       Noir::TreeSitter.parse_go(source) do |root|
-        string_values = collect_string_values(root, source)
+        string_values = collect_string_values(root, source, string_seed)
         find_function_body_node(root, source, func_name) do |body|
           group_prefixes = external_groups.dup
           Noir::TreeSitter.walk(body) do |node|
@@ -748,11 +754,12 @@ module Noir
     # extractors separately; only the parse is shared.
     def extract_engine_names_and_groups(source : String,
                                         group_method : String = "Group",
-                                        group_aliases : Array(String) = [] of String) : Tuple(Set(String), Hash(String, String))
+                                        group_aliases : Array(String) = [] of String,
+                                        string_seed : Hash(String, String)? = nil) : Tuple(Set(String), Hash(String, String))
       names = Set(String).new
       group_prefixes = Hash(String, String).new
       Noir::TreeSitter.parse_go(source) do |root|
-        string_values = collect_string_values(root, source)
+        string_values = collect_string_values(root, source, string_seed)
         Noir::TreeSitter.walk(root) do |node|
           case Noir::TreeSitter.node_type(node)
           when "short_var_declaration", "assignment_statement", "var_spec"
@@ -981,8 +988,8 @@ module Noir
       end
     end
 
-    private def collect_string_values(root : LibTreeSitter::TSNode, source : String) : Hash(String, String)
-      values = Hash(String, String).new
+    private def collect_string_values(root : LibTreeSitter::TSNode, source : String, seed : Hash(String, String)? = nil) : Hash(String, String)
+      values = seed ? seed.dup : Hash(String, String).new
       ambiguous = Set(String).new
       loop do
         changed = false
@@ -1206,6 +1213,7 @@ module Noir
 
       raw_path = nil
       handler_text = ""
+      handler_row = nil
       handler_args = [] of String
       arg_index = 0
       Noir::TreeSitter.each_named_arg(args) do |arg|
@@ -1228,6 +1236,7 @@ module Noir
           # `cache.Get("latest_version_cache", &v)` is a lookup.
           return if handler_text.empty? && address_of?(arg, source)
           handler_text = Noir::TreeSitter.node_text(arg, source) if handler_text.empty?
+          handler_row = Noir::TreeSitter.node_start_row(arg)
           collect_handler_arg_texts(arg, source, handler_args)
         end
         arg_index += 1
@@ -1267,7 +1276,7 @@ module Noir
       # doesn't quietly demote it to GET.
       normalized_verb = verb.upcase == "ALL" ? "ANY" : verb.upcase
 
-      Route.new(
+      route = Route.new(
         router_name,
         normalized_verb,
         resolved,
@@ -1276,6 +1285,8 @@ module Noir
         Noir::TreeSitter.node_start_row(call),
         handler_args: handler_args,
       )
+      route.handler_row = handler_row
+      route
     end
 
     private def router_operand_info(operand : LibTreeSitter::TSNode,
@@ -1799,6 +1810,131 @@ module Noir
       when "parenthesized_expression"
         child = Noir::TreeSitter.first_named_child(node)
         child ? string_expr_text(child, source, values, depth + 1) : nil
+      when "selector_expression"
+        # Another package's constant (`config.ApiUri`), when the analyzer
+        # seeded it (see `extract_string_exports`).
+        values[Noir::TreeSitter.node_text(node, source)]?
+      when "call_expression"
+        # A one-string-argument wrapper whose definition the analyzer
+        # seeded as a template (`conf.BaseUri("/s")` -> `/s`).
+        function = Noir::TreeSitter.field(node, "function")
+        args = Noir::TreeSitter.field(node, "arguments")
+        return unless function && args
+        name = Noir::TreeSitter.node_type(function) == "selector_expression" ? Noir::TreeSitter.field(function, "field") : function
+        return unless name && (template = values["#{Noir::TreeSitter.node_text(name, source)}()"]?)
+        arg = nil
+        count = 0
+        Noir::TreeSitter.each_named_arg(args) do |a|
+          arg = a
+          count += 1
+        end
+        return unless count == 1 && arg
+        value = string_expr_text(arg, source, values, depth + 1)
+        value ? template.sub(WRAPPER_ARG, value) : nil
+      end
+    end
+
+    # Stands for a wrapper's argument in its seeded template.
+    WRAPPER_ARG = "\u0000"
+
+    # A `func [(recv)] Name(p string) string {` head: the only shape
+    # `extract_string_exports` reads as a wrapper.
+    WRAPPER_SIGNATURE = /\bfunc\b[^\n{]*\(\s*\w+\s+string\s*\)\s*string\s*\{/
+
+    # An exported name bound to a string literal at a line start: the gate
+    # for an exported string constant.
+    EXPORTED_STRING_CONST = /^\s*(?:const\s+)?[A-Z]\w*\s*(?:string\s*)?=\s*["`]/m
+
+    # What this file lets other files resolve a path expression through:
+    # `pkg.Name` for each exported top-level string constant, and `Name()`
+    # for each function or method taking one string and returning a string,
+    # mapped to the template its returns build from the argument
+    # (`return res` -> `WRAPPER_ARG`, `return "/api" + p` -> `/api` +
+    # `WRAPPER_ARG`). A return not computable from the argument and the
+    # file's constants (`return c.BasePath() + res`) is skipped, so a
+    # wrapper that only adds a runtime-configured prefix reads as its
+    # default. One whose computable returns disagree, or with none, maps to
+    # nil, so the caller can drop a name defined both ways.
+    def extract_string_exports(source : String) : Hash(String, String?)
+      exports = Hash(String, String?).new
+      Noir::TreeSitter.parse_go(source) do |root|
+        values = collect_string_values(root, source)
+        package = nil
+        Noir::TreeSitter.each_named_child(root) do |decl|
+          case Noir::TreeSitter.node_type(decl)
+          when "package_clause"
+            package = Noir::TreeSitter.first_named_child(decl).try { |n| Noir::TreeSitter.node_text(n, source) }
+          when "const_declaration"
+            next unless pkg = package
+            Noir::TreeSitter.each_named_child(decl) do |spec|
+              next unless Noir::TreeSitter.node_type(spec) == "const_spec"
+              name = Noir::TreeSitter.field(spec, "name")
+              value = Noir::TreeSitter.field(spec, "value").try { |v| Noir::TreeSitter.first_named_child(v) }
+              next unless name && value
+              text = Noir::TreeSitter.node_text(name, source)
+              next unless text[0]?.try(&.uppercase?)
+              if literal = string_expr_text(value, source, values)
+                exports["#{pkg}.#{text}"] = literal
+              end
+            end
+          when "function_declaration", "method_declaration"
+            name = Noir::TreeSitter.field(decl, "name")
+            body = Noir::TreeSitter.field(decl, "body")
+            next unless name && body && (param = sole_string_param(decl, source))
+            exports["#{Noir::TreeSitter.node_text(name, source)}()"] = wrapper_template(body, source, values.merge({param => WRAPPER_ARG}))
+          end
+        end
+      end
+      exports
+    end
+
+    # The name of `decl`'s only parameter when it is a `string` and the
+    # result is a single `string`.
+    private def sole_string_param(decl : LibTreeSitter::TSNode, source : String) : String?
+      result = Noir::TreeSitter.field(decl, "result")
+      params = Noir::TreeSitter.field(decl, "parameters")
+      return unless result && params && Noir::TreeSitter.node_text(result, source) == "string"
+      found = nil
+      count = 0
+      Noir::TreeSitter.each_named_child(params) do |param|
+        count += 1
+        type = Noir::TreeSitter.field(param, "type")
+        names = 0
+        Noir::TreeSitter.each_named_child(param) { |child| names += 1 if Noir::TreeSitter.node_type(child) == "identifier" }
+        if type && names == 1 && Noir::TreeSitter.node_text(type, source) == "string"
+          found = Noir::TreeSitter.field(param, "name").try { |n| Noir::TreeSitter.node_text(n, source) }
+        end
+      end
+      count == 1 ? found : nil
+    end
+
+    private def wrapper_template(body : LibTreeSitter::TSNode, source : String, values : Hash(String, String)) : String?
+      templates = Set(String).new
+      each_return_value(body) do |expr|
+        text = string_expr_text(expr, source, values)
+        templates << text if text && text.count(WRAPPER_ARG) == 1
+      end
+      templates.size == 1 ? templates.first : nil
+    end
+
+    # The single returned expression of every `return` in `node`, closures
+    # left out.
+    private def each_return_value(node : LibTreeSitter::TSNode, depth : Int32 = 0, &block : LibTreeSitter::TSNode ->)
+      return if depth > Noir::TreeSitter::MAX_AST_DEPTH
+      Noir::TreeSitter.each_named_child(node) do |child|
+        case Noir::TreeSitter.node_type(child)
+        when "func_literal"
+          next
+        when "return_statement"
+          list = Noir::TreeSitter.first_named_child(child)
+          next unless list
+          count = 0
+          Noir::TreeSitter.each_named_child(list) { count += 1 }
+          next unless count == 1
+          Noir::TreeSitter.first_named_child(list).try { |expr| block.call(expr) }
+        else
+          each_return_value(child, depth + 1, &block)
+        end
       end
     end
 

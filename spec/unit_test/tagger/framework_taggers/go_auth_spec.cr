@@ -610,3 +610,31 @@ describe "GoAuthTagger session stores" do
     run_go_auth(lines, "/profile", "GET", 6).tags.map(&.name).should_not contain("auth")
   end
 end
+
+describe "GoAuthTagger handler guard clauses" do
+  fixture_base = File.expand_path("../../../functional_test/fixtures/go/gin_wrapped_paths", __DIR__)
+  photos = "#{fixture_base}/api/photos.go"
+
+  # `s := Auth(c)` then `if s.Abort(c) { return }`: the method is found
+  # through Auth's result type, and its body replies 401.
+  it "tags a guard clause whose method refuses the request" do
+    CodeLocator.instance.clear_all
+    Dir.glob("#{fixture_base}/**/*.go").each { |file| CodeLocator.instance.register_path(file) }
+    noir_options = create_test_options
+    noir_options["base"] = YAML::Any.new(fixture_base)
+
+    endpoints = {8 => "/api/v1/photos/:uid", 20 => "/api/v1/version"}.map do |line, url|
+      details = Details.new(PathInfo.new(photos, line))
+      details.technology = "go_gin"
+      endpoint = Endpoint.new(url, "GET", [] of Param, details)
+      endpoint.handler = Handler.new("closure", photos, line)
+      endpoint
+    end
+    GoAuthTagger.new(noir_options).perform(endpoints)
+
+    endpoints[0].tags.map(&.name).should eq(["auth"])
+    endpoints[0].tags[0].description.should contain("guard clause s.Abort(c)")
+    # `if logged(c) { return }`: logged never refuses, so it is not a guard.
+    endpoints[1].tags.should be_empty
+  end
+end

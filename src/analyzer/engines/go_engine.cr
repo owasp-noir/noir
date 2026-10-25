@@ -80,7 +80,7 @@ module Analyzer::Go
     # repos (e.g. an example monorepo where most dirs use other routers).
     # `file_contents` is still populated for every file so the per-file
     # route pass and callee pre-pass keep their read cache.
-    def collect_package_groups_ts(group_method : String = "Group", import_marker : (String | Array(String))? = nil) : Tuple(Hash(String, Hash(String, String)), Hash(String, String))
+    def collect_package_groups_ts(group_method : String = "Group", import_marker : (String | Array(String))? = nil, string_seed : Hash(String, String)? = nil) : Tuple(Hash(String, Hash(String, String)), Hash(String, String))
       package_groups = Hash(String, Hash(String, String)).new
       files_by_dir = Hash(String, Array(String)).new
       file_contents = Hash(String, String).new
@@ -120,7 +120,7 @@ module Analyzer::Go
       # before.
       parse_paths = relevant_by_dir.values.flatten.select { |p| file_contents.has_key?(p) }
       parsed = Noir::WorkerThreads.map(parse_paths) do |p|
-        Noir::TreeSitterGoRouteExtractor.extract_engine_names_and_groups(file_contents[p], group_method)
+        Noir::TreeSitterGoRouteExtractor.extract_engine_names_and_groups(file_contents[p], group_method, string_seed: string_seed)
       end
       engine_names_and_groups = Hash(String, Tuple(Set(String), Hash(String, String))).new
       parse_paths.each_with_index do |p, i|
@@ -161,7 +161,7 @@ module Analyzer::Go
           content = file_contents[path]?
           next if content.nil?
           names, own = engine_names_and_groups[path]? ||
-                       Noir::TreeSitterGoRouteExtractor.extract_engine_names_and_groups(content, group_method)
+                       Noir::TreeSitterGoRouteExtractor.extract_engine_names_and_groups(content, group_method, string_seed: string_seed)
           names.each { |n| ambiguous << n }
           own_groups_by_file[path] = own
           own.each do |k, v|
@@ -191,7 +191,7 @@ module Analyzer::Go
             relevant.each do |path|
               content = file_contents[path]?
               next if content.nil?
-              found = Noir::TreeSitterGoRouteExtractor.extract_groups(content, groups, group_method)
+              found = Noir::TreeSitterGoRouteExtractor.extract_groups(content, groups, group_method, string_seed: string_seed)
               found.each do |k, v|
                 next if ambiguous.includes?(k)
                 groups[k] ||= v
@@ -210,6 +210,39 @@ module Analyzer::Go
     # empty map when the directory has no registered groups.
     def ts_groups_for_directory(package_groups : Hash(String, Hash(String, String)), dir : String) : Hash(String, String)
       package_groups[dir]? || Hash(String, String).new
+    end
+
+    # Project-wide string facts a route or group path can be built from:
+    # other packages' exported string constants (`config.ApiUri`) and
+    # one-string wrappers read from their definitions (`conf.BaseUri("/s")`),
+    # see `TreeSitterGoRouteExtractor#extract_string_exports`. A name two
+    # files define differently is left out. Pass the result as `string_seed`.
+    def go_string_seed : Hash(String, String)
+      sources = get_files_by_extension(".go").compact_map do |path|
+        next if GoEngine.go_test_file?(base_relative_path(path))
+        content = read_file_content(path)
+        content if content.matches?(Noir::TreeSitterGoRouteExtractor::WRAPPER_SIGNATURE) ||
+                   content.matches?(Noir::TreeSitterGoRouteExtractor::EXPORTED_STRING_CONST)
+      rescue IO::Error
+        nil
+      end
+      exports = Noir::WorkerThreads.map(sources) do |source|
+        Noir::TreeSitterGoRouteExtractor.extract_string_exports(source)
+      end
+      merged = Hash(String, String?).new
+      conflicts = Set(String).new
+      exports.each do |file_exports|
+        file_exports.try &.each do |name, value|
+          if merged.has_key?(name) && merged[name] != value
+            conflicts << name
+          else
+            merged[name] = value
+          end
+        end
+      end
+      seed = Hash(String, String).new
+      merged.each { |name, value| seed[name] = value if value && !conflicts.includes?(name) }
+      seed
     end
 
     # Router-builder helpers (`func addUserRoutes(rg *gin.RouterGroup)`)
@@ -329,16 +362,18 @@ module Analyzer::Go
                                named : Noir::GoNamedHandler,
                                handle_method : String? = nil,
                                into emitted_to : Array(Endpoint) = result,
+                               string_seed : Hash(String, String)? = nil,
                                & : String, Endpoint ->)
       expansions.each do |fn, rb, pset|
         emitted = [] of Endpoint
         pset.each do |prefix|
           Noir::TreeSitterGoRouteExtractor.extract_routes_from_function(
-            content, fn, {rb.param => prefix}, handle_method: handle_method
+            content, fn, {rb.param => prefix}, handle_method: handle_method, string_seed: string_seed
           ).each do |route|
             details = Details.new(PathInfo.new(path, route.line + 1))
             Noir::TreeSitterGoRouteExtractor.fan_out_verbs(route.verb).each do |verb|
               ep = Endpoint.new(route.path, verb, details)
+              ep.handler = named.handler_for(route)
               callees_by_route[route.line]?.try &.each do |name, callee_path, callee_line|
                 ep.push_callee(Callee.new(name, path: callee_path, line: callee_line))
               end

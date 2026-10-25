@@ -105,7 +105,11 @@ class Noir::GoNamedHandler
     end
   end
 
-  def initialize(content : String, path : String, routes : Array(Noir::TreeSitterGoRouteExtractor::Route), scope : Scope? = nil)
+  @source_lines : Array(String)? = nil
+
+  def initialize(@content : String, @path : String, routes : Array(Noir::TreeSitterGoRouteExtractor::Route), scope : Scope? = nil)
+    content = @content
+    path = @path
     return if routes.empty?
     @middleware = Noir::TreeSitterGoRouteExtractor.route_middleware(content, routes)
     references = Hash(String, Tuple(String, String)).new
@@ -242,14 +246,41 @@ class Noir::GoNamedHandler
 
   # The route's handler resolved to its definition: the *last* handler
   # argument, which is the one that answers (everything before it is
-  # middleware). A closure there means the declaration line is the handler
-  # and nothing is reported; a middleware before a closure is never promoted,
+  # middleware). An inline closure there is the handler, named `closure` at
+  # the line it starts on; a middleware before a closure is never promoted,
   # since `route.GET("/home", CookieTool(), func(c) {...})` is not handled
-  # by CookieTool.
+  # by CookieTool. A bare name bound to a closure in the registering
+  # function (`isLive := func(c *gin.Context) {...}`) names that closure.
   def handler_for(route : Noir::TreeSitterGoRouteExtractor::Route) : Handler?
     name = route.handler_args.last?.try(&.strip) || return
-    key = @handlers[name]? || return
-    Handler.new(name, key[0], key[1] + 1)
+    if name.matches?(CLOSURE_HANDLER)
+      row = route.handler_row || return
+      return Handler.new("closure", @path, row + 1)
+    end
+    if key = @handlers[name]?
+      return Handler.new(name, key[0], key[1] + 1)
+    end
+    if name.matches?(/\A[A-Za-z_]\w*\z/) && (row = local_closure_row(name, route.line))
+      Handler.new(name, @path, row + 1)
+    end
+  end
+
+  CLOSURE_HANDLER = /\A\s*func\s*\(/
+
+  # The row of the nearest `name := func(` / `name = func(` above `row`,
+  # searched back to the head of the top-level function that holds `row`.
+  # ponytail: line-based; a closure rebound in a nested block above the
+  # route still reads as the nearest binding.
+  private def local_closure_row(name : String, row : Int32) : Int32?
+    lines = @source_lines ||= @content.lines
+    (row - 1).downto(0) do |idx|
+      line = lines[idx]? || next
+      return if line.starts_with?("func ") || line.starts_with?("func(")
+      code = line.lstrip
+      next unless code.starts_with?(name)
+      rest = code[name.size..].lstrip.lchop(':')
+      return idx if rest.starts_with?('=') && rest[1..].matches?(CLOSURE_HANDLER)
+    end
   end
 
   def bind(route : Noir::TreeSitterGoRouteExtractor::Route, endpoint : Endpoint)

@@ -184,7 +184,7 @@ describe "Noir::GoNamedHandler wrapped handlers and callees" do
 end
 
 describe "Noir::GoNamedHandler#handler_for" do
-  it "reports the last argument only: a named handler, never a middleware before a closure" do
+  it "reports the last argument only: a named handler or the closure, never a middleware before a closure" do
     source = <<-GO
       package main
 
@@ -203,7 +203,7 @@ describe "Noir::GoNamedHandler#handler_for" do
     routes = Noir::TreeSitterGoRouteExtractor.extract_routes(source)
     named = Noir::GoNamedHandler.new(source, "main.go", routes)
     by_path = routes.to_h { |r| {r.path, named.handler_for(r)} }
-    by_path["/home"].should be_nil
+    by_path["/home"].should eq(Handler.new("closure", "main.go", 4))
     by_path["/items"].try(&.name).should eq("createItem")
     by_path["/items"].try(&.line).should eq(12)
     by_path["/stream"].try(&.name).should eq("stream.serveHTTP()")
