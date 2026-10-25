@@ -31,6 +31,29 @@ module Analyzer::Java
     # helpers isn't misclassified as a Dropwizard project.
     DROPWIZARD_BOOTSTRAP_MARKER_RE = /io\.dropwizard\.(?:core\.)?(?:Application\b|setup\.(?:Bootstrap|Environment)\b)|io\.dropwizard\.assets\.AssetsBundle\b/
 
+    TAGGER = "dropwizard_auth"
+
+    # dropwizard-auth's `AuthDynamicFeature` decides by the first `@Auth`
+    # parameter of a resource method: a `java.util.Optional<P>` one gets a
+    # filter that lets absent credentials through, any other gets the
+    # authenticator filter, which answers 401 when credentials are missing
+    # or rejected.
+    AUTH_PRINCIPAL_GUARD = "Protected by Dropwizard @Auth principal (AuthDynamicFeature answers 401 without valid credentials)"
+    DROPWIZARD_AUTH      = "io.dropwizard.auth.Auth"
+
+    # Whether `auth` is Dropwizard's `@Auth` on a non-Optional parameter,
+    # with both names resolved through the imports of the file declaring
+    # it. `scopes` memoises each file's `NameScope`.
+    private def required_dropwizard_principal?(auth : Noir::TreeSitterJaxRsExtractor::AuthParam, file : String,
+                                               content : String, scopes : Hash(String, JavaEngine::NameScope)) : Bool
+      scope = scopes[file] ||= JavaEngine.name_scope(content)
+      return false unless JavaEngine.type_resolves_to?(auth.annotation, DROPWIZARD_AUTH, file, scope)
+      # A bare `Optional` nothing imports is java.util's, unless Guava's
+      # package is imported on demand.
+      bare_is_jdk = scope.imports.none? { |imp| imp.wildcard? && imp.path == "com.google.common.base" }
+      !JavaEngine.type_resolves_to?(auth.type_name, "java.util.Optional", file, scope, unresolved: bare_is_jdk)
+    end
+
     private struct DropwizardPathConfig
       getter application_context_path : String
       getter root_path : String
@@ -49,6 +72,7 @@ module Analyzer::Java
       bean_cache = Hash(String, Hash(String, Array(Param))).new
       source_cache = Hash(String, String).new
       custom_verb_cache = Hash(String, Hash(String, String)).new
+      name_scopes = Hash(String, JavaEngine::NameScope).new
 
       file_list = all_files()
       dropwizard_roots = dropwizard_project_roots_for(file_list)
@@ -94,7 +118,16 @@ module Analyzer::Java
           Noir::TreeSitterJaxRsExtractor.extract_routes_from(root, content, dto_index, bean_index, subresource_sources,
             custom_verb_annotations: custom_verb_annotations, include_callees: include_callee,
             project_constants: java_project_constants(path)).each do |route|
-            @result << jvm_route_endpoint(route, Noir::URLPath.join_trimmed(base_path, route.path), route.file_path || path)
+            route_file = route.file_path || path
+            endpoint = jvm_route_endpoint(route, Noir::URLPath.join_trimmed(base_path, route.path), route_file)
+            if auth = route.auth_param
+              auth_file = auth.file || path
+              auth_source = auth_file == path ? content : read_file_content(auth_file)
+              if required_dropwizard_principal?(auth, auth_file, auth_source, name_scopes)
+                endpoint.add_tag(Tag.new("auth", AUTH_PRINCIPAL_GUARD, TAGGER))
+              end
+            end
+            @result << endpoint
           end
         end
       end
