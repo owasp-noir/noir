@@ -35,6 +35,7 @@ module Analyzer::Go
       package_function_bodies = lazy_package_bodies(file_contents)
       package_method_bodies = lazy_package_bodies(file_contents)
       framework_dirs = framework_package_dirs(file_contents, IMPORT_MARKER)
+      named_scope = named_handler_scope(file_contents)
       # `route_dirs` exists only to bound the two request-param pre-passes
       # below, and those maps are consulted exclusively from
       # `params_for_routes`, which returns immediately when the file
@@ -107,7 +108,7 @@ module Analyzer::Go
         params_by_route = Noir::GoRequestParamExtractor.params_for_routes(content, route_rows, route_methods_by_row, request_fns, request_methods)
         # A same-file named handler's accessors already arrive through
         # `params_by_route`; keep its body out of the last-route heuristic.
-        named = Noir::GoNamedHandler.new(content, path, ts_routes)
+        named = Noir::GoNamedHandler.new(content, path, ts_routes, named_scope)
 
         lines.each_with_index do |line, index|
           next if named.claim?(index, line)
@@ -119,7 +120,7 @@ module Analyzer::Go
               # `http.Handle("/", r)` hands the tree to a router whose own
               # routes are already reported; it is a mount, not a route
               # answering every method at "/".
-              next if router_mount?(route, content)
+              next if router_mount?(route, content) || named.mount?(route)
               verbs = if route.verb.upcase == "ANY" || route.verb.upcase == "ALL"
                         Noir::TreeSitterGoRouteExtractor.fan_out_verbs(route.verb)
                       else
@@ -136,6 +137,7 @@ module Analyzer::Go
                 if params = params_by_route[route.line]?
                   params.each { |param| add_param_to_endpoint(param, new_endpoint) }
                 end
+                new_endpoint.handler = named.handler_for(route)
                 result << new_endpoint
                 last_endpoint = new_endpoint
               end
