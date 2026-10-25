@@ -168,6 +168,7 @@ describe "RubyAuthTagger" do
           before_action :ensure_known_host
           before_action :ensure_active_account
           before_action :check_optional_token
+          before_action :require_not_suspended!
 
           def index
           end
@@ -189,6 +190,11 @@ describe "RubyAuthTagger" do
             return if request.headers['X-Token'].blank?
 
             head :unauthorized unless Token.valid?(request.headers['X-Token'])
+          end
+
+          # A 403 for a present-but-suspended user lets anonymous callers in.
+          def require_not_suspended!
+            render json: { error: 'disabled' }, status: 403 if current_user&.account&.unavailable?
           end
         end
         RB
