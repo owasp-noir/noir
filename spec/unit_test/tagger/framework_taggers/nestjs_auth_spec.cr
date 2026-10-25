@@ -452,4 +452,91 @@ describe "NestjsAuthTagger" do
       CodeLocator.instance.clear_all
     end
   end
+
+  it "reads a project decorator that bundles UseGuards by the guards' definitions" do
+    CodeLocator.instance.clear_all
+    tmpdir = File.tempname("nest_guard_decorator")
+    files = {
+      "package.json"           => "{}",
+      "src/user-auth.guard.ts" => "export class UserAuthGuard extends AuthGuard([\"jwt\", \"apikey\"]) {}\n",
+      "src/api-key.guard.ts"   => <<-TS,
+        export class ApiKeyGuard implements CanActivate {
+          canActivate(context: ExecutionContext) {
+            if (!context.switchToHttp().getRequest().headers["x-api-key"]) throw new UnauthorizedException();
+            return true;
+          }
+        }
+        export class LogsGuard implements CanActivate {
+          canActivate() { return true; }
+        }
+        TS
+      "src/auth.decorator.ts" => <<-TS,
+        export function RequireAuthentication() {
+          if (enterprise()) {
+            return EnterpriseAuth();
+          }
+          return applyDecorators(UseGuards(UserAuthGuard), ApiBearerAuth());
+        }
+        export const RequireKey = () => applyDecorators(UseGuards(ApiKeyGuard));
+        export const Logged = () => applyDecorators(UseGuards(LogsGuard), ApiTags("x"));
+        TS
+      "src/items.controller.ts" => <<-TS,
+        @Controller("items")
+        export class ItemsController {
+          @Post("/login")
+          login() {}
+
+          @Post("/switch")
+          @RequireAuthentication()
+          switch() {}
+
+          @Get("/key")
+          @RequireKey()
+          key() {}
+
+          @Get("/logged")
+          @Logged()
+          logged() {}
+        }
+
+        @RequireAuthentication()
+        @Controller("events")
+        export class EventsController {
+          @Delete("/:id")
+          remove() {}
+        }
+        TS
+    }
+    files.each do |rel, body|
+      path = File.join(tmpdir, rel)
+      Dir.mkdir_p(File.dirname(path))
+      File.write(path, body)
+      CodeLocator.instance.register_path(path)
+    end
+
+    begin
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(tmpdir)
+      controller = File.join(tmpdir, "src/items.controller.ts")
+      endpoints = {"login" => 4, "switch" => 8, "key" => 12, "logged" => 16, "remove" => 23}.transform_values do |line|
+        details = Details.new(PathInfo.new(controller, line))
+        details.technology = "ts_nestjs"
+        Endpoint.new("/x", "GET", [] of Param, details)
+      end
+
+      NestjsAuthTagger.new(noir_options).perform(endpoints.values)
+      tags = endpoints.transform_values(&.tags.map { |tag| "#{tag.name}: #{tag.description}" })
+
+      tags["login"].should be_empty
+      tags["switch"].should eq(["auth: Protected by NestJS @RequireAuthentication() (applies UseGuards(UserAuthGuard))"])
+      # No `Auth` in the name: its `canActivate` throws Unauthorized.
+      tags["key"].should eq(["auth: Protected by NestJS @RequireKey() (applies UseGuards(ApiKeyGuard))"])
+      # Its guard always returns true.
+      tags["logged"].should be_empty
+      tags["remove"].first.should start_with("auth: Protected by NestJS @RequireAuthentication() (applies UseGuards(UserAuthGuard))")
+    ensure
+      FileUtils.rm_rf(tmpdir)
+      CodeLocator.instance.clear_all
+    end
+  end
 end

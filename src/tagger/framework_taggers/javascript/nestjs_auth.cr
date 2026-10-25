@@ -108,12 +108,24 @@ class NestjsAuthTagger < FrameworkTagger
   USE_GUARDS_ARGS = /@UseGuards\s*\(([^)]*)\)/
   AUTH_GUARD_REF  = /\b\w*[Aa]uth\w*Guard\b/
 
+  # A project decorator that bundles a guard, as the Nest docs' `Auth()`
+  # recipe does: `export function Auth() { return applyDecorators(
+  # UseGuards(AuthGuard), ApiBearerAuth()) }`.
+  APPLY_DECORATORS = /\bapplyDecorators\s*\(/
+  BARE_USE_GUARDS  = /\bUseGuards\s*\(([^)]*)\)/
+  GUARD_CLASS_DECL = /\bclass\s+(\w+)\b([^{]*)\{/
+  # Passport's `AuthGuard(...)` (called inline, or extended) refuses a
+  # caller its strategy cannot authenticate with 401.
+  PASSPORT_GUARD = /\AAuthGuard\s*\(|\bextends\s+AuthGuard\s*\(/
+  REFUSES_401    = /\bUnauthorizedException\b/
+
   def initialize(options : Hash(String, YAML::Any))
     super
     @global_guards = Hash(String?, String).new
     @guard_metadata = Hash(String?, GuardMetadata).new
     @class_lines = Hash(String, Array(Int32)).new
     @optional_guards = Set(String).new
+    @guard_decorators = Hash(String, String).new
   end
 
   def perform(endpoints : Array(Endpoint)) : Array(Endpoint)
@@ -127,6 +139,9 @@ class NestjsAuthTagger < FrameworkTagger
     @global_guards.clear
     @guard_metadata.clear
     @optional_guards.clear
+    @guard_decorators.clear
+    decorator_sources = [] of String
+    guard_classes = Hash(String, Bool).new
     guard_sources = [] of {String?, String}
     metadata_sources = [] of {String?, String}
     {".ts", ".js"}.each do |ext|
@@ -137,11 +152,15 @@ class NestjsAuthTagger < FrameworkTagger
         defines_guard = content.includes?("canActivate")
         sets_metadata = content.includes?("SetMetadata")
         handles_request = content.includes?("handleRequest")
-        next unless registers || defines_guard || sets_metadata || handles_request
+        bundles_guard = content.includes?("applyDecorators") && content.includes?("UseGuards")
+        passport_guard = content.includes?("extends AuthGuard")
+        next unless registers || defines_guard || sets_metadata || handles_request || bundles_guard || passport_guard
         next if base_relative_path(path).matches?(TEST_PATH)
         root = nearest_project_root(path, PACKAGE_JSON)
         code = Noir::CComments.strip(content, quotes: %("'`))
         collect_optional_guards(code) if handles_request
+        collect_guard_classes(code, guard_classes) if defines_guard || passport_guard
+        decorator_sources << code if bundles_guard
         guard_sources << {root, code} if defines_guard
         metadata_sources << {root, code} if sets_metadata
         next if !registers || @global_guards.has_key?(root)
@@ -153,6 +172,8 @@ class NestjsAuthTagger < FrameworkTagger
       end
     end
 
+    decorator_sources.each { |code| collect_guard_decorators(code, guard_classes) }
+
     @global_guards.each do |root, guard|
       class_decl = /\bclass\s+#{Regex.escape(guard)}\b/
       guard_sources.each do |source_root, code|
@@ -163,6 +184,59 @@ class NestjsAuthTagger < FrameworkTagger
         break
       end
     end
+  end
+
+  # Guard class name => whether its definition refuses an unauthenticated
+  # caller: a Passport guard, or a `canActivate` that throws Unauthorized.
+  private def collect_guard_classes(code : String, classes : Hash(String, Bool))
+    code.scan(GUARD_CLASS_DECL) do |decl|
+      next if classes.has_key?(decl[1])
+      next unless body_close = Noir::JSLiteralScanner.find_matching_brace(code, decl.end(0) - 1)
+      body = code[(decl.end(0) - 1)..body_close]
+      passport = decl[2].matches?(PASSPORT_GUARD)
+      next unless passport || body.includes?("canActivate")
+      classes[decl[1]] = passport || body.matches?(REFUSES_401)
+    end
+  end
+
+  # Decorator name => the guards it applies, for every top-level function
+  # or const whose `applyDecorators(...)` includes a `UseGuards(...)` that
+  # authenticates (see `authenticating_guards`).
+  private def collect_guard_decorators(code : String, guard_classes : Hash(String, Bool))
+    decls = code.scan(TOP_LEVEL_DECL)
+    code.scan(APPLY_DECORATORS) do |m|
+      next unless decl = decls.reverse_each.find { |d| d.begin < m.begin }
+      next if @guard_decorators.has_key?(decl[1])
+      next unless close = Noir::JSLiteralScanner.find_matching_paren(code, m.end(0) - 1)
+      code[m.end(0)...close].scan(BARE_USE_GUARDS) do |use|
+        guards = authenticating_guards(use[1], guard_classes)
+        @guard_decorators[decl[1]] = guards.join(", ") unless guards.empty?
+      end
+    end
+  end
+
+  # The guards in a `UseGuards(...)` argument list that refuse anonymous
+  # callers: Passport's `AuthGuard(...)`, or a class whose definition does
+  # (`collect_guard_classes`). A guard defined outside the scan falls back
+  # to its name; an optional Passport guard never counts.
+  private def authenticating_guards(args : String, guard_classes : Hash(String, Bool)) : Array(String)
+    args.split(',').map(&.strip).select do |guard|
+      name = guard.match(/\A\w+/).try(&.[0]) || next false
+      next false if @optional_guards.includes?(name)
+      next true if guard.matches?(PASSPORT_GUARD)
+      guard_classes.fetch(name) { name.matches?(AUTH_GUARD_REF) }
+    end
+  end
+
+  # The project guard decorator a decorator line applies, as a description.
+  private def guard_decorator_desc(line : String) : String?
+    return if @guard_decorators.empty?
+    line.scan(DECORATOR_CALL) do |m|
+      if guards = @guard_decorators[m[1]]?
+        return "NestJS @#{m[1]}() (applies UseGuards(#{guards}))"
+      end
+    end
+    nil
   end
 
   private def collect_optional_guards(code : String)
@@ -386,6 +460,9 @@ class NestjsAuthTagger < FrameworkTagger
     AUTH_DECORATORS.each do |pattern, desc|
       authn_descs << desc if current.matches?(pattern) && !authn_descs.includes?(desc)
     end
+    if desc = guard_decorator_desc(current)
+      authn_descs << desc unless authn_descs.includes?(desc)
+    end
   end
 
   private def collect_class_decorators(decorators : Array(String), authn_descs : Array(String), authz_descs : Array(String))
@@ -398,6 +475,10 @@ class NestjsAuthTagger < FrameworkTagger
       GUARD_PATTERNS.each do |pattern, desc|
         labeled = "#{desc} (class-level)"
         authn_descs << labeled if decorator.matches?(pattern) && !authn_descs.includes?(labeled) && !authn_descs.includes?(desc)
+      end
+      if desc = guard_decorator_desc(decorator)
+        labeled = "#{desc} (class-level)"
+        authn_descs << labeled unless authn_descs.includes?(labeled)
       end
     end
   end
