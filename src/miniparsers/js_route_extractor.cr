@@ -366,17 +366,18 @@ module Noir
           # route rather than once per prefix and expanded method.
           context = Endpoint.new("", "")
           extract_params_from_context(offsets, pattern, context)
-          handler = named_handler(content, start_byte, file_path)
+          step = handler_step(content, start_byte, file_path, offsets)
+          handler = step ? named_handler(step[0], content, file_path) : nil
           handler_facts = handler ? handler_definition_facts(handler, include_callees) : nil
           handler = nil if handler_facts.try(&.guard)
-          handler ||= inline_handler(content, start_byte, file_path, offsets)
+          handler ||= step ? inline_handler(step[0], step[1], content, file_path) : nil
           # Only a route that has a handler, named or inline: a guard-only
           # registration (`app.put('/x', security.denyAll())`) has none for
           # its steps to feed.
-          chain_callees = if include_callees
+          chain_callees = if include_callees && step
                             route_args = route_arguments(content, start_byte)
-                            if (handler && handler_facts) || route_args.last?.try(&.matches?(INLINE_CLOSURE_START_RE))
-                              chain_step_callees(route_args[0...-1], content, file_path)
+                            if (handler && handler_facts) || (handler && handler.name == "closure") || route_args.last?.try(&.matches?(INLINE_CLOSURE_START_RE))
+                              chain_step_callees(route_args[0...step[2]], content, file_path)
                             end
                           end
 
@@ -1156,17 +1157,11 @@ module Noir
       File.basename(file_path).matches?(TRPC_NEXT_MOUNT_BASENAME) && content.includes?("createNextApiHandler")
     end
 
-    # The route's last argument resolved to a definition when it is a
-    # plain reference (`login`, `users.create`, `auth()`); nil for an
-    # inline closure. `start_byte` is the route call's byte offset: byte
-    # arithmetic to the closing paren, so a non-ASCII file costs O(args)
-    # per route rather than O(file).
-    def self.named_handler(content : String, start_byte : Int32, file_path : String) : Handler?
-      args = route_arguments(content, start_byte)
-      # A `route('/x').get(h)` link carries only the handler; a plain
-      # `app.get('/x')` has only the path, which no reference regex accepts.
-      return if args.empty?
-      Noir::JSHandlerResolver.resolve(args.last, content, file_path)
+    # The handler step (`handler_step`) resolved to a definition when it is a
+    # plain reference (`login`, `users.create`, `auth()`), possibly in a
+    # transparent wrapper (`asyncHandler(login)`); nil for an inline closure.
+    def self.named_handler(step : String, content : String, file_path : String) : Handler?
+      Noir::JSHandlerResolver.resolve(step, content, file_path)
     rescue
       # Best-effort field: a resolver error must not cost the route — the
       # per-file isolation above this would drop every route in the file.
@@ -1177,20 +1172,66 @@ module Noir
     # (`async (ctx: Context<{ id: string }>) => …`). `(a || b)` is not one.
     INLINE_FUNCTION_RE = /\A\s*(?:async\s+)?(?:function\b|[A-Za-z_$][\w$]*\s*=>|\([^()]*(?:\([^()]*\)[^()]*)*\)\s*(?::[^=]*)?=>)/
 
-    # The closure written inline as the route's last argument
-    # (`router.get('/x', auth(), async (ctx) => {…})`) has no name to
-    # resolve; it is the handler, at the line it starts on.
-    def self.inline_handler(content : String, start_byte : Int32, file_path : String, offsets : ByteOffsets) : Handler?
+    # The closure written inline as the handler step (`router.get('/x',
+    # auth(), async (ctx) => {…})`, or inside a transparent wrapper:
+    # `asyncHandler(async (req, res) => {…})`) has no name to resolve; it is
+    # the handler, at the line it starts on.
+    def self.inline_handler(step : String, line : Int32, content : String, file_path : String) : Handler?
+      arg = step
+      if inner = Noir::JSHandlerResolver.unwrap(arg, content, file_path)
+        line += arg[0, inner[1]].count('\n')
+        arg = inner[0]
+      end
+      return if !arg.matches?(INLINE_FUNCTION_RE) || arg.matches?(ERROR_HANDLER_SIGNATURE_RE)
+      Handler.new("closure", file_path, line)
+    rescue
+      nil
+    end
+
+    LOCALS_READ_RE = /\b(?:res|response)\s*\.\s*locals\b/
+
+    # The route argument that serves the request, as {source, line it starts
+    # on, index}: the last one, unless the last one is a shared renderer
+    # (`router.get('/', load, respond)`: `respond` sends whatever the step
+    # before it left on `res.locals`, and ends many routes). Then it is the
+    # step before it, which does the route's work and calls `next()`.
+    def self.handler_step(content : String, start_byte : Int32, file_path : String, offsets : ByteOffsets) : Tuple(String, Int32, Int32)?
       return if start_byte < 0
       open_paren = content.byte_index('(', start_byte) || return
       close_paren = JSLiteralScanner.find_matching_paren_at_byte(content, open_paren) || return
       args_slice = content.byte_slice(open_paren + 1, close_paren - open_paren - 1)
-      arg, pos = Noir::TopLevelSplit.split_spans(args_slice, ',', Noir::TopLevelSplit::Rules::JS_POSITIONAL_ARGS, 0, args_slice.size).last? || return
-      return if !arg.matches?(INLINE_FUNCTION_RE) || arg.matches?(ERROR_HANDLER_SIGNATURE_RE)
+      # A trailing comma (`asyncHandler(…),\n)`) leaves an empty last span.
+      spans = Noir::TopLevelSplit.split_spans(args_slice, ',', Noir::TopLevelSplit::Rules::JS_POSITIONAL_ARGS, 0, args_slice.size).reject(&.[0].blank?)
+      return if spans.empty?
+      idx = spans.size - 1
+      idx -= 1 if idx >= 2 && shared_renderer?(spans[idx][0].strip, content, file_path) && passes_on?(spans[idx - 1][0], content, file_path)
+      arg, pos = spans[idx]
       leading = arg.size - arg.lstrip.size
-      Handler.new("closure", file_path, offsets.line(open_paren) + args_slice[0, pos + leading].count('\n'))
+      {arg.strip, offsets.line(open_paren) + args_slice[0, pos + leading].count('\n'), idx}
     rescue
       nil
+    end
+
+    # A named step that responds with `res.locals` and ends at least two
+    # registrations in this file: a per-route handler that reads
+    # `res.locals.user` is not one.
+    # ponytail: rescans the file per route; only reached for a step whose
+    # definition already reads res.locals.
+    private def self.shared_renderer?(step : String, content : String, file_path : String) : Bool
+      return false unless step.matches?(/\A[A-Za-z_$][\w$.]*\z/)
+      handler = Noir::JSHandlerResolver.resolve(step, content, file_path) || return false
+      return false unless handler_definition_facts(handler, false).try(&.renders_locals)
+      content.scan(/[,(]\s*#{Regex.escape(step)}\s*,?\s*\)/).size >= 2
+    end
+
+    # The step calls bare `next()` and is not a guard: the request goes on
+    # to the renderer after it.
+    private def self.passes_on?(step : String, content : String, file_path : String) : Bool
+      body = Noir::JSHandlerResolver.unwrap(step, content, file_path).try(&.[0]) || step
+      return body.matches?(BARE_NEXT_RE) && !guard_definition?(body) if body.matches?(INLINE_FUNCTION_RE)
+      handler = Noir::JSHandlerResolver.resolve(step, content, file_path) || return false
+      facts = handler_definition_facts(handler, false) || return false
+      facts.passes_on && !facts.guard
     end
 
     def self.route_arguments(content : String, start_byte : Int32) : Array(String)
@@ -1198,7 +1239,7 @@ module Noir
       open_paren = content.byte_index('(', start_byte) || return [] of String
       close_paren = JSLiteralScanner.find_matching_paren_at_byte(content, open_paren) || return [] of String
       args_slice = content.byte_slice(open_paren + 1, close_paren - open_paren - 1)
-      Noir::TopLevelSplit.split_spans(args_slice, ',', Noir::TopLevelSplit::Rules::JS_POSITIONAL_ARGS, 0, args_slice.size).map(&.[0])
+      Noir::TopLevelSplit.split_spans(args_slice, ',', Noir::TopLevelSplit::Rules::JS_POSITIONAL_ARGS, 0, args_slice.size).map(&.[0]).reject(&.blank?)
     end
 
     # Callees of the route-specific steps before the handler. In Express's
@@ -1230,7 +1271,8 @@ module Noir
     # `responds` says the body answers the request itself (sends and never
     # calls bare `next()`), which is what tells a path-mounted handler from
     # a path-mounted guard.
-    record HandlerFacts, params : Array(Param), callees : Array(JSCalleeExtractor::Entry), responds : Bool, guard : Bool = false
+    record HandlerFacts, params : Array(Param), callees : Array(JSCalleeExtractor::Entry), responds : Bool, guard : Bool = false,
+      renders_locals : Bool = false, passes_on : Bool = false
 
     RESPONDS_RE  = /\b(?:res|response|reply)\s*(?:\.status\s*\([^)]*\)\s*)?\.(?:send|sendFile|sendfile|json|jsonp|render|end|redirect|download|write)\s*\(/
     BARE_NEXT_RE = /\bnext\s*\(\s*\)/
@@ -1406,7 +1448,8 @@ module Noir
                   [] of JSCalleeExtractor::Entry
                 end
       responds = body.matches?(RESPONDS_RE) && !body.matches?(BARE_NEXT_RE) && !body.matches?(ROUTER_BODY_RE) && !guard
-      HandlerFacts.new(context.params, callees, responds, guard)
+      renders_locals = body.matches?(RESPONDS_RE) && body.matches?(LOCALS_READ_RE)
+      HandlerFacts.new(context.params, callees, responds, guard, renders_locals, body.matches?(BARE_NEXT_RE))
     end
 
     # The body of the function defined at `line` of `content`, its signature

@@ -174,7 +174,7 @@ class ExpressAuthTagger < FrameworkTagger
 
     # Check app.use() level auth: the router this route was registered on
     # first, then a path-scoped mount.
-    description = receiver_description || check_mounted_use_auth(endpoint)
+    description = receiver_description || check_mounted_use_auth(endpoint) || handler_caller_check(endpoint)
     if description
       endpoint.add_tag(Tag.new("auth", description, "express_auth"))
     end
@@ -312,7 +312,9 @@ class ExpressAuthTagger < FrameworkTagger
     head = statement.match(ROUTE_DECLARATION) || return
     open_paren = statement.index('(', head.begin(0)) || return
     close_paren = Noir::JSLiteralScanner.find_matching_paren(statement, open_paren) || statement.size
-    Noir::TopLevelSplit.split(statement[open_paren + 1...close_paren], ',', Noir::TopLevelSplit::Rules::JS_POSITIONAL_ARGS)
+    # A trailing comma leaves an empty last part; the last real argument is
+    # the handler position.
+    Noir::TopLevelSplit.split(statement[open_paren + 1...close_paren], ',', Noir::TopLevelSplit::Rules::JS_POSITIONAL_ARGS).reject(&.blank?)
   end
 
   # Get lines that make up a route statement (handles multi-line route definitions)
@@ -421,6 +423,110 @@ class ExpressAuthTagger < FrameworkTagger
       idx -= 1
     end
     line_idx
+  end
+
+  # The last field of a negated read that names who is calling:
+  # `!req.user`, `!req.accountability?.user`, `!req.session.userId`,
+  # `!req.isAuthenticated()`.
+  CALLER_FIELD = /\A(?:user|userId|user_id|uid|currentUser|account|accountId|principal|identity|isAuthenticated|isLoggedIn)\z/
+
+  # What the guarded branch does to the caller it stops: throws (the app's
+  # error handler answers), refuses with 401/403, hands an error to
+  # `next(err)` or redirects to a login page.
+  BRANCH_REFUSAL = /\bthrow\b|\b(?:res|response)\s*\.\s*(?:status|sendStatus)\s*\(\s*40[13]\b|\bnext\s*\(\s*[^)\s]|\b(?:res|response)\s*\.\s*redirect\s*\(/
+
+  # Anything that can answer or pass the request on before a later check
+  # runs; a check after one of these is not reached by every caller.
+  EARLIER_EXIT = /\breturn\b|\bnext\s*\(|\b(?:res|response)\s*\.\s*(?:json|send|sendStatus|status|render|redirect|end|sendFile|write)\s*\(/
+
+  TOP_LEVEL_IF  = /(?<![\w$.])if\s*\(/
+  SERVICE_NEW   = /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*new\s+([A-Z][\w$]*)\s*\(/
+  SERVICE_AWAIT = /\bawait\s+([A-Za-z_$][\w$]*)\s*\.\s*([A-Za-z_$][\w$]*)\s*\(/
+
+  # A refusal the handler's own body runs for every anonymous caller before
+  # it does anything else: `if (!req.accountability?.user) throw new
+  # InvalidCredentialsError()` at its top, or one hop into a method it
+  # awaits on a service it constructs (`await service.getItemPermissions()`
+  # whose body opens with `if (!this.accountability?.user) throw …`).
+  # Nil when the check sits behind an earlier return/response/next, inside
+  # a branch, or tests anything but the caller's absence.
+  private def handler_caller_check(endpoint : Endpoint) : String?
+    handler = endpoint.handler || return
+    path = handler.path || return
+    line = handler.line || return
+    content = read_file(path) || return
+    body = code_only(Noir::JSRouteExtractor.definition_body(content, line))
+    if check = caller_absence_refusal(body, "req|request")
+      return "Protected by Express handler check #{check}"
+    end
+    bindings = Hash(String, String).new
+    body.scan(SERVICE_NEW) { |m| bindings[m[1]] = m[2] }
+    return if bindings.empty?
+    body.scan(SERVICE_AWAIT) do |m|
+      at = m.begin(0)
+      break if body[0...at].matches?(EARLIER_EXIT)
+      next unless top_level?(body, at)
+      klass = bindings[m[1]]? || next
+      method_body = service_method_body(klass, m[2], content, path) || next
+      if check = caller_absence_refusal(method_body, "this")
+        return "Protected by Express handler call #{klass}.#{m[2]} (#{check})"
+      end
+    end
+    nil
+  rescue
+    nil
+  end
+
+  # The first `if` at the top of `body` that tests the caller's absence on
+  # `receiver` and refuses in its branch, as written; nil once anything that
+  # can answer or pass the request on comes first.
+  private def caller_absence_refusal(body : String, receiver : String) : String?
+    absent = /\A!\s*(?:#{receiver})((?:\s*\??\.\s*[A-Za-z_$][\w$]*)+)\s*(?:\(\s*\))?\z/
+    body.scan(TOP_LEVEL_IF) do |m|
+      at = m.begin(0)
+      return if body[0...at].matches?(EARLIER_EXIT)
+      next unless top_level?(body, at)
+      open = m.end(0) - 1
+      close = Noir::JSLiteralScanner.find_matching_paren(body, open) || return
+      condition = body[open + 1...close]
+      rest = body[close + 1..]
+      branch = if rest.lstrip.starts_with?('{')
+                 brace = close + 1 + (rest.size - rest.lstrip.size)
+                 body[brace..(Noir::JSLiteralScanner.find_matching_brace(body, brace) || return)]
+               else
+                 rest[0, rest.index(/[;\n]/) || rest.size]
+               end
+      tested = Noir::TopLevelSplit.split(condition, '|', Noir::TopLevelSplit::Rules::JS_POSITIONAL_ARGS).reject(&.blank?).find do |part|
+        (hit = part.strip.match(absent)) && hit[1].split('.').last.strip.lchop('?').strip.matches?(CALLER_FIELD)
+      end
+      next unless tested
+      refusal = branch.match(BRANCH_REFUSAL) || next
+      return "#{tested.gsub(/\s+/, "")} (#{refusal[0].strip})"
+    end
+    nil
+  end
+
+  private def top_level?(body : String, at : Int32) : Bool
+    prefix = body[0...at]
+    prefix.count("({[") == prefix.count(")}]")
+  end
+
+  # The body of method `name` in class `klass`, where `klass` is the class
+  # `file` (whose text is `content`) imports or defines.
+  private def service_method_body(klass : String, name : String, content : String, file : String) : String?
+    definition = Noir::JSHandlerResolver.resolve(klass, content, file) || return
+    path = definition.path || return
+    line = definition.line || return
+    text = read_file(path) || return
+    lines = text.lines
+    head = lines[line - 1]? || return
+    return unless head.matches?(/\bclass\s+#{Regex.escape(klass)}\b/)
+    class_start = lines[0...line - 1].sum { |row| row.size + 1 }
+    open = text.index('{', class_start) || return
+    close = Noir::JSLiteralScanner.find_matching_brace(text, open) || return
+    method = text[open...close].match(/^[ \t]*(?:(?:public|private|protected|static|override|async|readonly)\s+)*#{Regex.escape(name)}\s*(?:<[^>\n]*>)?\s*\(/m) || return
+    method_line = text[0, open + method.begin(0)].count('\n') + 1
+    code_only(Noir::JSRouteExtractor.definition_body(text, method_line))
   end
 
   private def check_mounted_use_auth(endpoint : Endpoint) : String?

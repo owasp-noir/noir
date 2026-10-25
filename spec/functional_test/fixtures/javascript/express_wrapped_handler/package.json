@@ -1,0 +1,1 @@
+{ "name": "express-wrapped-handler", "dependencies": { "express": "^4.21.0" } }

@@ -2,6 +2,8 @@ require "../models/endpoint"
 require "../models/code_locator"
 require "../utils/text_file"
 require "./import_graph"
+require "../utils/js_literal_scanner"
+require "../utils/top_level_split"
 
 # Resolves a route's named handler (`app.get('/x', login)`,
 # `router.post('/y', users.create)`, `app.use(auth())`) to the file and
@@ -17,11 +19,12 @@ module Noir::JSHandlerResolver
   REFERENCE_RE = /\A([A-Za-z_$][\w$]*)((?:\s*\.\s*[A-Za-z_$][\w$]*)*)\s*(?:\(\s*\))?\z/
 
   # `utils.asyncHandler(login())`, `wrap(ctrl.show)`: the handler is the
-  # argument, the wrapper only catches its rejection. Only names that are
-  # conventionally transparent; `validate(schema)` is middleware, not a
-  # wrapped `schema`.
-  # ponytail: a name list; reading the wrapper's body would be the upgrade.
-  WRAPPER_RE = /\A(?:[A-Za-z_$][\w$]*\.)?(?:asyncHandler|asyncWrap|asyncWrapper|asyncMiddleware|wrap|wrapAsync|catchAsync|catchErrors|handleAsync|expressAsyncHandler|tryCatch|ah)\s*\((.+)\)\z/m
+  # argument, the wrapper only catches its rejection. A wrapper defined in
+  # the scan is judged by its definition (`unwrap`); these names are the
+  # fallback for one that comes from a package (`express-async-handler`).
+  # `validate(schema)` is middleware, not a wrapped `schema`.
+  WRAPPER_NAME_RE = /(?:\A|\.)(?:asyncHandler|asyncWrap|asyncWrapper|asyncMiddleware|wrap|wrapAsync|catchAsync|catchErrors|handleAsync|expressAsyncHandler|tryCatch|ah)\z/
+  WRAPPER_CALL_RE = /\A((?:[A-Za-z_$][\w$]*\s*\.\s*)?[A-Za-z_$][\w$]*)\s*\(/
 
   # Factories that register middleware, never a route's handler. A route
   # whose last argument is one of these has no named handler to report.
@@ -52,6 +55,7 @@ module Noir::JSHandlerResolver
       @@definitions.clear
       @@tsconfig_paths.clear
       @@member_modules.clear
+      @@transparent.clear
     end
   end
 
@@ -59,8 +63,8 @@ module Noir::JSHandlerResolver
   # is a plain reference that resolves to a definition.
   def resolve(handler_text : String, content : String, file_path : String) : Handler?
     text = handler_text.strip
-    if wrapped = text.match(WRAPPER_RE)
-      text = wrapped[1].strip
+    if inner = unwrap(text, content, file_path)
+      text = inner[0]
     end
     return unless m = text.match(REFERENCE_RE)
     base = m[1]
@@ -87,6 +91,57 @@ module Noir::JSHandlerResolver
     if line = definition_line(file_path, base, content)
       Handler.new(text, file_path, line)
     end
+  end
+
+  # `asyncHandler(fn)` as `fn` and its char offset in `text`, when the
+  # wrapper hands the request on to its argument: its definition takes a
+  # function and returns one that calls it (`(fn) => (req, res, next) =>
+  # Promise.resolve(fn(req, res, next)).catch(next)`). A wrapper with no
+  # definition in the scan is taken by name (`WRAPPER_NAME_RE`).
+  def unwrap(text : String, content : String, file_path : String) : Tuple(String, Int32)?
+    m = text.match(WRAPPER_CALL_RE) || return
+    open = m.end(0) - 1
+    close = JSLiteralScanner.find_matching_paren(text, open) || return
+    return unless text[close + 1..].blank?
+    spans = TopLevelSplit.split_spans(text, ',', TopLevelSplit::Rules::JS_POSITIONAL_ARGS, open + 1, close)
+    return unless spans.size == 1
+    arg, pos = spans[0]
+    return if arg.blank?
+    callee = m[1].gsub(/\s+/, "")
+    definition = resolve(callee, content, file_path)
+    transparent = if definition && (path = definition.path) && (line = definition.line)
+                    transparent_wrapper?(path, line)
+                  else
+                    callee.matches?(WRAPPER_NAME_RE)
+                  end
+    return unless transparent
+    {arg.strip, pos + arg.size - arg.lstrip.size}
+  end
+
+  @@transparent = Hash(Tuple(String, Int32), Bool).new
+
+  # The definition at `line` of `path` takes a parameter, returns a function,
+  # and calls that parameter with the request (`fn(req, res, next)`,
+  # `fn.apply(this, arguments)`, `fn(...args)`). `(check) => (req, res, next)
+  # => check(req) ? next() : res.sendStatus(403)` consults its argument; it
+  # does not hand the request to it.
+  # ponytail: read to the next top-level declaration (12 lines at most), not
+  # parsed; a wrapper spelled over more lines is not unwrapped.
+  private def transparent_wrapper?(path : String, line : Int32) : Bool
+    key = {path, line}
+    cached = @@lock.synchronize { @@transparent[key]? }
+    return cached unless cached.nil?
+    found = (TextFile.read(path) rescue nil).try do |text|
+      lines = text.lines[line - 1, 12]? || [] of String
+      lines = lines.each_with_index.take_while { |row, idx| idx == 0 || !row.matches?(/\A(?:export|const|let|var|function|class|module|import)\b/) }.map(&.[0])
+      code = lines.join('\n')
+      param = code.match(/(?:\bfunction\b[^(]*|[:=]\s*(?:async\s+)?)\(\s*([A-Za-z_$][\w$]*)|[:=]\s*(?:async\s+)?([A-Za-z_$][\w$]*)\s*=>/) || next false
+      name = param[1]? || param[2]
+      rest = code[param.end(0)..]
+      rest.matches?(/=>|\bfunction\b/) && rest.matches?(/(?<![\w$.])#{Regex.escape(name)}\s*(?:\.\s*(?:call|apply)\s*\(|\(\s*(?:\.\.\.|[\w$]+\s*,))/)
+    end || false
+    @@lock.synchronize { @@transparent[key] = found }
+    found
   end
 
   @@member_modules = Hash(Tuple(String, String), String?).new
