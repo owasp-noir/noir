@@ -91,6 +91,12 @@ module GoRouteGroupScope
     # `clientAuth := g.Group("")`): their prefix is their parent's, so a
     # prefix match cannot tell their routes from the parent's own.
     getter aliases = Set(String).new
+    # Assignment group variable -> each variable it is derived from, with
+    # the 1-based row of that assignment (`app := clientAuth.Group("/app")`).
+    # A name assigned in several functions keeps every assignment.
+    getter parents = {} of String => Array({String, Int32})
+    # The 1-based row of the line being yielded.
+    property row = 0
 
     # The innermost enclosing closure group, or Global at file scope.
     def current : Scope
@@ -122,6 +128,7 @@ module GoRouteGroupScope
 
     content.each_line do |line|
       stripped = line.strip
+      scopes.row += 1
 
       # Resolve both group forms against the scope state as it stood *before*
       # this line. One line can be both — `admin := r.Group("/admin", func(c
@@ -138,6 +145,7 @@ module GoRouteGroupScope
 
       assigned =
         if m = stripped.match(ASSIGN_GROUP)
+          (scopes.parents[m[1]] ||= [] of {String, Int32}) << {m[2], scopes.row} unless m[1] == m[2]
           {m[1], scopes.extend(scopes.receiver(m[2]), m[3]), m[3].delete('/').empty?}
         elsif m = stripped.match(ASSIGN_GROUP_ANY)
           {m[1], UNKNOWN_SCOPE, false}

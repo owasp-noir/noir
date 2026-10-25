@@ -673,3 +673,77 @@ describe "GoAuthTagger handler guard clauses" do
     endpoints[1].tags.should be_empty
   end
 end
+
+# Middleware held as methods of a struct value from another package
+# (`authentication := auth.Auth{}` then `.Use(authentication.RequireUser)`),
+# read by definition through the calls on its own receiver; a chained
+# `g.Group("/").Use(mw).POST(...)` that keeps its group nowhere; and a
+# path-less group whose middleware reaches the groups derived from it.
+def go_auth_struct_tags(rows : Array({Int32, String, String}), fixture : String = "gin_struct_handlers") : Hash(String, Array(String))
+  fixture_base = File.expand_path("../../../functional_test/fixtures/go/#{fixture}", __DIR__)
+  router = "#{fixture_base}/router/router.go"
+  CodeLocator.instance.clear_all
+  Dir.glob("#{fixture_base}/**/*.go").each { |file| CodeLocator.instance.register_path(file) }
+  noir_options = create_test_options
+  noir_options["base"] = YAML::Any.new(fixture_base)
+  endpoints = rows.map do |(line, method, url)|
+    details = Details.new(PathInfo.new(router, line))
+    details.technology = "go_gin"
+    Endpoint.new(url, method, [] of Param, details)
+  end
+  GoAuthTagger.new(noir_options).perform(endpoints)
+  endpoints.to_h { |ep| {"#{ep.method} #{ep.url}", ep.tags.map(&.name)} }
+end
+
+describe "GoAuthTagger struct-method middleware" do
+  it "guards by the middleware's body, reaching derived groups and only the chained route" do
+    tags = go_auth_struct_tags([
+      {16, "POST", "/message"},
+      {17, "GET", "/public"},
+      {20, "POST", "/login"},
+      {27, "GET", "/items"},
+      {28, "PUT", "/items/:id"},
+      {31, "GET", "/client/:id"},
+    ])
+    tags["POST /message"].should eq(["auth"])
+    tags["GET /items"].should eq(["auth"])
+    tags["PUT /items/:id"].should eq(["auth"])
+    tags["GET /client/:id"].should eq(["auth"])
+    # The chained `.Use` above guards its own route, not the ones after it.
+    tags["GET /public"].should be_empty
+    tags["POST /login"].should be_empty
+  end
+
+  it "reads an optional middleware that passes anonymous callers on as no guard" do
+    go_auth_struct_tags([{18, "POST", "/signup"}])["POST /signup"].should be_empty
+  end
+end
+
+# gin copies a group's middleware into a child when the child is created:
+# a group chained off `authed` (`authed.Group("/x").Use(rl).GET(...)`)
+# keeps `authed`'s guard, a child created before `authed.Use` does not, and
+# a same-named group in another function inherits nothing. A struct method
+# that only hands the request to a call the walk does not follow keeps its
+# name as the verdict.
+describe "GoAuthTagger group inheritance" do
+  it "follows gin's group copy semantics" do
+    tags = go_auth_struct_tags([
+      {23, "GET", "/api/x/chained"},
+      {24, "GET", "/api/early/c"},
+      {28, "GET", "/v2/y/chained2"},
+      {51, "GET", "/app/a7"},
+      {58, "GET", "/app/p1"},
+    ], "gin_auth_groups")
+    tags["GET /api/x/chained"].should eq(["auth"])
+    tags["GET /v2/y/chained2"].should eq(["auth"])
+    tags["GET /app/a7"].should eq(["auth"])
+    tags["GET /api/early/c"].should be_empty
+    tags["GET /app/p1"].should be_empty
+  end
+
+  it "keeps the name verdict for a method that delegates" do
+    tags = go_auth_struct_tags([{33, "GET", "/three/x"}, {36, "GET", "/four/x"}], "gin_auth_groups")
+    tags["GET /three/x"].should eq(["auth"])
+    tags["GET /four/x"].should eq(["auth"])
+  end
+end

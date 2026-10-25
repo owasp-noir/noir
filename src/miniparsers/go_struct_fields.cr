@@ -93,6 +93,50 @@ module Noir::GoStructFields
       flatten(fields, decl_path, depth)
     end
 
+    # Where a bind target's type is declared in a body: `var req T`, `req T`
+    # in a `var (...)` block, `req := T{` / `&T{` / `new(T)`, or an anonymous
+    # `struct {` literal.
+    DECLARED_TYPE  = /\A\s*(?:var\s+)?(\w+)\s+\*?((?:\w+\.)?\w+)\s*\z/
+    ASSIGNED_TYPE  = /\A\s*(\w+)\s*:?=\s*(?:&\s*)?(?:new\(\s*)?((?:\w+\.)?\w+)\s*[{)]/
+    STRUCT_LITERAL = /\A\s*(?:var\s+)?(\w+)\s*(?::?=\s*)?struct\s*\{/
+
+    # The struct fields of the bind target `name`, from its declaration in
+    # the body `lines` of the file `path`; nil when it is not declared there
+    # as a known struct.
+    def target_fields(lines : Array(String), name : String, path : String) : Array(Field)?
+      lines.each_with_index do |line, idx|
+        if (m = line.match(STRUCT_LITERAL)) && m[1] == name
+          return flatten(Noir::GoStructFields.literal(struct_literal_text(lines, idx)), path)
+        end
+        m = line.match(DECLARED_TYPE) || line.match(ASSIGNED_TYPE)
+        if m && m[1] == name
+          return resolve(m[2], path)
+        end
+        # A parameter or named result of the body's own function (`func
+        # parse(c *gin.Context) (frm form.Search, err error) {`).
+        if line.includes?("func") && line.includes?(name) &&
+           (m = line.match(/[(,]\s*#{Regex.escape(name)}\s+\*?((?:\w+\.)?\w+)\s*[,)]/))
+          return resolve(m[1], path)
+        end
+      end
+      nil
+    end
+
+    # `struct { ... }` from the line `lines[start]` opens it on to the brace
+    # that closes it.
+    private def struct_literal_text(lines : Array(String), start : Int32) : String
+      first = lines[start]
+      text = first[(first.index("struct") || 0)..]
+      depth = text.count('{') - text.count('}')
+      row = start + 1
+      while depth > 0 && row < lines.size
+        text += "\n" + lines[row]
+        depth += lines[row].count('{') - lines[row].count('}')
+        row += 1
+      end
+      text[0, (text.rindex('}') || text.size - 1) + 1]
+    end
+
     # Embedded fields replaced by the fields of their struct, resolved from
     # `path`'s package.
     def flatten(fields : Array(Field), path : String, depth : Int32 = 0) : Array(Field)

@@ -1206,7 +1206,7 @@ module Noir
       # Reject known non-router operands so call shapes like
       # `gjson.Get(json, path)`, `header.Get("Content-Type")`, or
       # `params.Get("user")` don't surface as endpoints.
-      return if NON_ROUTER_OPERANDS.includes?(router_name)
+      return if non_router_operand?(router_name, groups)
 
       args = Noir::TreeSitter.field(call, "arguments")
       return unless args
@@ -1394,7 +1394,7 @@ module Noir
       router_info = router_operand_info(operand, source, groups, group_method, group_aliases, string_values)
       return unless router_info
       router_name, chain_prefix = router_info
-      return if NON_ROUTER_OPERANDS.includes?(router_name)
+      return if non_router_operand?(router_name, groups)
 
       args = Noir::TreeSitter.field(call, "arguments")
       return unless args
@@ -1476,7 +1476,7 @@ module Noir
       router_info = router_operand_info(operand, source, groups, group_method, group_aliases, string_values)
       return empty unless router_info
       router_name, chain_prefix = router_info
-      return empty if NON_ROUTER_OPERANDS.includes?(router_name)
+      return empty if non_router_operand?(router_name, groups)
 
       args = Noir::TreeSitter.field(call, "arguments")
       return empty unless args
@@ -1484,8 +1484,19 @@ module Noir
       verbs = [] of String
       path_lit = nil
       handler_text = ""
+      handler_row = nil
+      handler_args = [] of String
       Noir::TreeSitter.each_named_arg(args) do |arg|
-        case Noir::TreeSitter.node_type(arg)
+        type = Noir::TreeSitter.node_type(arg)
+        string_arg = type == "interpreted_string_literal" || type == "raw_string_literal"
+        # Every argument after the path is a handler (middleware first).
+        if !path_lit.nil? && !string_arg
+          handler_text = Noir::TreeSitter.node_text(arg, source) if handler_text.empty?
+          handler_row = Noir::TreeSitter.node_start_row(arg)
+          collect_handler_arg_texts(arg, source, handler_args)
+          next
+        end
+        case type
         when "interpreted_string_literal", "raw_string_literal"
           if verbs.empty? && path_lit.nil?
             s = decode_string_literal(arg, source)
@@ -1506,8 +1517,6 @@ module Noir
             candidate = decode_method_token(arg, source)
             verbs << candidate unless candidate.empty?
           end
-        else
-          handler_text = Noir::TreeSitter.node_text(arg, source) if handler_text.empty? && !path_lit.nil?
         end
       end
 
@@ -1519,8 +1528,10 @@ module Noir
       resolved = base_prefix.empty? ? (path_lit.empty? ? "/" : path_lit) : group_join(base_prefix, path_lit)
 
       verbs.map do |verb|
-        Route.new(router_name, verb, resolved, path_lit, handler_text,
-          Noir::TreeSitter.node_start_row(call))
+        route = Route.new(router_name, verb, resolved, path_lit, handler_text,
+          Noir::TreeSitter.node_start_row(call), handler_args: handler_args)
+        route.handler_row = handler_row
+        route
       end
     end
 
@@ -2019,8 +2030,18 @@ module Noir
     # Join a group prefix and a route path with exactly one `/` separator,
     # mirroring `GoRouteExtractor#extract_route_path`. Gin accepts paths
     # without a leading `/` under a group, so this also handles that case.
+    # An empty path is the group's own path (`api.GET("", h)` serves
+    # `/api`, not `/api/`): gin, Echo and Fiber all join it that way.
     private def group_join(prefix : String, path : String) : String
+      return prefix if path.empty? && !prefix.empty?
       "#{prefix.rstrip('/')}/#{path.lstrip('/')}"
+    end
+
+    # A receiver named like a non-router value (`client`, `config`) that the
+    # file assigns from a route group (`client := api.Group("/client")`) is
+    # that group.
+    private def non_router_operand?(name : String, groups : Hash(String, String)) : Bool
+      NON_ROUTER_OPERANDS.includes?(name) && !groups.has_key?(name)
     end
   end
 end

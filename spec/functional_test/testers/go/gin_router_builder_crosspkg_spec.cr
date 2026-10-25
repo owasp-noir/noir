@@ -5,7 +5,7 @@ require "../../func_spec.cr"
 # (`addHealth(api.Group("/health"))`) keeps its receiver's prefix too.
 expected_endpoints = [
   Endpoint.new("/api/v1/users/:id", "GET"),
-  Endpoint.new("/api/v1/users/", "POST"),
+  Endpoint.new("/api/v1/users", "POST"),
   Endpoint.new("/api/v1/posts/:slug", "GET"),
   Endpoint.new("/api/v1/health/live", "GET"),
 ]
