@@ -33,7 +33,7 @@ describe "Laravel handler / middleware-group auth / rules params", tags: "functi
     handler = update.handler.should_not be_nil
     handler.name.should eq("ItemController@update")
     handler.path.to_s.should end_with("app/Http/Controllers/ItemController.php")
-    handler.line.should eq(19)
+    handler.line.should eq(21)
     guards.call(update).should eq(["Laravel 'api' middleware group (TokenGate)"])
     update.params.map(&.name).sort!.should eq(["id", "tags", "title"])
 
@@ -49,5 +49,19 @@ describe "Laravel handler / middleware-group auth / rules params", tags: "functi
 
     find.call("GET", "/files/{path:.*}").params.map(&.name).should eq(["path"])
     find.call("GET", "/items/{id:[0-9]+}").params.map(&.name).should eq(["id"])
+
+    # `foreach` over a literal map: one route per entry, the key in the path
+    # and the value as the action; a group's `TokenGate::class` is judged by
+    # its definition. `show` reads `folder_name` from its FormRequest's trait
+    # helper and `cursor` through `Pager::resolve($request)`.
+    ping_rest = find.call("POST", "/rest/ping{format?}")
+    ping_rest.handler.try(&.name).should eq("PingController@__invoke")
+    guards.call(ping_rest).should eq(["Laravel TokenGate middleware"])
+    show = find.call("GET", "/rest/show{format?}")
+    show.handler.try(&.name).should eq("ItemController@show")
+    show.details.code_paths.first.line.should eq(15)
+    show.params.map(&.name).sort!.should eq(["cursor", "folder_name", "format", "q"])
+    # A map the file writes to is not read as its literal: no expansion.
+    endpoints.none?(&.url.starts_with?("/w/a")).should be_true
   end
 end

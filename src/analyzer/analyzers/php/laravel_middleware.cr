@@ -34,22 +34,38 @@ module Analyzer::Php
     GROUP_SHORTHAND_RE  = /->\s*(web|api)\s*\(/
 
     # Middleware names a route-wiring group's prelude applies.
-    private def middleware_names(prelude : String) : Array(String)
+    # Class entries (`Foo::class`) are qualified through `imports`.
+    private def middleware_names(prelude : String, imports : Hash(String, String) = EMPTY_IMPORTS) : Array(String)
       names = [] of String
-      prelude.scan(MIDDLEWARE_ARG_RE) { |m| names.concat(middleware_entries(m[1], EMPTY_IMPORTS, nil)) }
+      prelude.scan(MIDDLEWARE_ARG_RE) { |m| names.concat(middleware_entries(m[1], imports, nil)) }
       names
     end
 
-    # The guard among `names`: the first that is a known auth alias or a
-    # group/alias judged to authenticate.
+    # The guard among `names`: the first that is a known auth alias, a
+    # group/alias judged to authenticate, or a middleware class (named
+    # directly, `->middleware(Foo::class)`) whose definition can refuse.
     private def route_guard(path : String, names : Array(String)) : String?
       return if names.empty?
-      guards = @middleware_guards[composer_project_root(path)]?
+      root = composer_project_root(path)
+      guards = @middleware_guards[root]?
       names.each do |name|
         return "Laravel #{name} middleware" if name.matches?(AUTH_ALIAS_RE)
         guards.try(&.[name]?).try { |desc| return desc }
+        return "Laravel #{name.split('\\').last} middleware" if name.includes?('\\') && class_middleware_refuses?(name, root)
       end
       nil
+    end
+
+    @class_middleware_refuses = {} of String => Bool
+    @class_middleware_mutex = Mutex.new
+
+    # `middleware_refuses?`, once per class: every route of a group asks.
+    private def class_middleware_refuses?(fqcn : String, root : String) : Bool
+      key = "#{root}\0#{fqcn}"
+      cached = @class_middleware_mutex.synchronize { @class_middleware_refuses[key]? }
+      return cached unless cached.nil?
+      refuses = middleware_refuses?(fqcn, root)
+      @class_middleware_mutex.synchronize { @class_middleware_refuses[key] = refuses }
     end
 
     # Skeleton default when no wiring names the file: an app root serves
@@ -67,8 +83,8 @@ module Analyzer::Php
     # enclosing groups) whose own registration is `statement`. As in Laravel,
     # the statement adds its `->middleware(...)` / `'middleware' =>` names and
     # `->withoutMiddleware(...)` takes names away.
-    private def tag_route_guard(endpoint : Endpoint, path : String, names : Array(String), statement : String) : Nil
-      names += middleware_names(statement) if statement.includes?("iddleware")
+    private def tag_route_guard(endpoint : Endpoint, path : String, names : Array(String), statement : String, imports : Hash(String, String) = EMPTY_IMPORTS) : Nil
+      names += middleware_names(statement, imports) if statement.includes?("iddleware")
       if statement.includes?("withoutMiddleware")
         statement.scan(WITHOUT_MIDDLEWARE_RE) do |m|
           # ponytail: a class, an unreadable list, or a guarding name the route
