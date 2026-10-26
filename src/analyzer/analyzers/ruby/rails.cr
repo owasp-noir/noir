@@ -1396,6 +1396,13 @@ module Analyzer::Ruby
         controller_subdir = controller_subdir.empty? ? line_module : "#{controller_subdir}/#{line_module}"
       end
       ctrl_override = options["controller"]?
+      # `resources :users, only: [:index], to: "organizations#users"`: `to:`
+      # names the controller and the action every generated route serves.
+      to_action : String? = nil
+      if (to = options["to"]?) && (m = to.match(/\A([\w\/]+)#(\w+)\z/))
+        ctrl_override = m[1]
+        to_action = m[2]
+      end
       file_base = if ctrl_override
                     ctrl_override.includes?('/') ? ctrl_override : (controller_subdir.empty? ? ctrl_override : "#{controller_subdir}/#{ctrl_override}")
                   else
@@ -1433,6 +1440,7 @@ module Analyzer::Ruby
           except: except_list,
           singular: singular,
           member_param: resource_param_name(options, singular),
+          to_action: to_action,
         ))
       end
 
@@ -1691,6 +1699,7 @@ module Analyzer::Ruby
       except : Array(String) = [] of String,
       singular : Bool = false,
       member_param : String? = nil,
+      to_action : String? = nil,
     )
       endpoints = [] of Endpoint
 
@@ -1701,15 +1710,16 @@ module Analyzer::Ruby
       path_params = url_param_names(index_url)
       member_params = url_param_names(member_url)
 
-      RESOURCE_ACTION_VERBS.each do |action, verb|
-        next if singular && action == "index"
-        next unless action_allowed?(action, only, except)
+      RESOURCE_ACTION_VERBS.each do |route_action, verb|
+        next if singular && route_action == "index"
+        next unless action_allowed?(route_action, only, except)
+        action = to_action || route_action
         next unless owner = action_owner(path, action)
-        on_collection = action == "index" || action == "create" || action == "new"
+        on_collection = route_action == "index" || route_action == "create" || route_action == "new"
         params = promote_path_params(action_params(owner, action, verb, path), on_collection ? path_params : member_params)
         details = Details.new(PathInfo.new(owner.path, owner.action_lines[action]?))
         url = on_collection ? index_url : member_url
-        url = "#{url}/#{action}" if action == "new" || action == "edit"
+        url = "#{url}/#{route_action}" if route_action == "new" || route_action == "edit"
         endpoint = Endpoint.new(url, verb, params, details)
         attach_callees_for_action(endpoint, owner, action)
         endpoint.handler = handler_for_action(owner, action, path)
@@ -1751,6 +1761,12 @@ module Analyzer::Ruby
       callees_by_action = extract_action_callees(controller_content, path) if callees_needed?
 
       this_method = ""
+      # `params.require(:article).permit(...)` roots, and the reads that use
+      # a key as a hash (`params[:article].is_a?(Hash)`, `&.key?(:x)`): such a
+      # read of a permit root is the list's container, whose fields the list
+      # already names. A plain `params[:page]` read stays a field.
+      permit_roots = Set(String).new
+      container_reads = Set({String, String}).new
       permit_buf : String? = nil
       permit_mask = ""
       permit_lines = 0
@@ -1798,7 +1814,11 @@ module Analyzer::Ruby
         if buf = permit_buf
           if args = permit_args(buf, permit_mask)
             permit_buf = nil
-            names = permit_mask.match(PERMIT_OPEN).try(&.[0].includes?("expect")) ? expect_names(args) : permit_names(args)
+            scope = PermitScope.new(method_bodies[this_method]? || [] of String, controller_lines)
+            names = permit_mask.match(PERMIT_OPEN).try(&.[0].includes?("expect")) ? expect_names(args, scope) : permit_names(args, scope)
+            if !names.empty? && (root = permit_mask.match(/params\.require\s*\(\s*:(\w+)/))
+              permit_roots << root[1]
+            end
             names.each do |name|
               next if this_method.empty?
               params_body_by_action[this_method] ||= [] of Param
@@ -1808,6 +1828,15 @@ module Analyzer::Ruby
             end
           elsif permit_lines >= PERMIT_MAX_LINES
             permit_buf = nil
+          end
+        end
+
+        if !this_method.empty? && line.includes?("permitted_attributes") && (pm = line.match(PUNDIT_PERMITTED))
+          pundit_permitted_names(path, pm[1], this_method).each do |name|
+            params_body_by_action[this_method] ||= [] of Param
+            params_body_by_action[this_method] << Param.new(name, "", param_type)
+            params_query_by_action[this_method] ||= [] of Param
+            params_query_by_action[this_method] << Param.new(name, "", "query")
           end
         end
 
@@ -1832,8 +1861,17 @@ module Analyzer::Ruby
               name = (nested[1]? || nested[2]?).to_s
               tail = tail[nested.end..]
             end
+            # `params.dig(:page, :slug_suffix)` reads the leaf too.
+            if m[0].includes?("dig") && m[0].ends_with?(',')
+              while nested = tail.match(/\A\s*(?::(\w+)|['"]([^'"]+)['"])\s*([,)])/)
+                name = (nested[1]? || nested[2]?).to_s
+                tail = tail[nested.end..]
+                break if nested[3] == ")"
+              end
+            end
             # `params[:controller]` / `params[:action]` are the router's own keys.
             next if name.empty? || this_method.empty? || name == "controller" || name == "action"
+            container_reads << {this_method, name} if tail.matches?(CONTAINER_USE)
             params_body_by_action[this_method] ||= [] of Param
             params_body_by_action[this_method] << Param.new(name, "", param_type)
             params_query_by_action[this_method] ||= [] of Param
@@ -1854,6 +1892,14 @@ module Analyzer::Ruby
             next if name.empty? || this_method.empty?
             params_method[this_method] ||= [] of Param
             params_method[this_method] << Param.new(name, "", "cookie")
+          end
+        end
+      end
+
+      unless permit_roots.empty?
+        {params_body_by_action, params_query_by_action}.each do |by_action|
+          by_action.each do |method, list|
+            list.reject! { |param| permit_roots.includes?(param.name) && container_reads.includes?({method, param.name}) }
           end
         end
       end
@@ -1924,13 +1970,45 @@ module Analyzer::Ruby
       String.new(bytes)
     end
 
+    # A read that treats the value as a hash rather than a field.
+    CONTAINER_USE = /\A\s*&?\.\s*(?:is_a\?|kind_of\?|instance_of\?|class\b|key\?|has_key\?|keys\b|each\b|to_unsafe_h\b|to_h\b|slice\b|except\b)/
+
+    # Pundit's `permitted_attributes(@comment)` / `permitted_attributes(Comment)`.
+    PUNDIT_PERMITTED = /(?<![\w.])permitted_attributes\s*\(\s*(@\w+|[A-Z][\w:]*)\s*[,)]/
+
+    # The keys Pundit's `permitted_attributes(record)` permits in `action`:
+    # the record's policy's `permitted_attributes_for_<action>`, else its
+    # `permitted_attributes` (`app/policies/comment_policy.rb`).
+    # ponytail: the action is the method the call sits in, and the policy is
+    # found by convention; a policy that inherits the list yields nothing.
+    private def pundit_permitted_names(controller_path : String, record : String, action : String) : Array(String)
+      return [] of String unless idx = controller_path.rindex("/app/controllers/")
+      policy = "#{controller_path[0, idx]}/app/policies/#{record.lchop('@').camelcase.underscore.gsub("::", "/")}_policy.rb"
+      return [] of String unless known_file?(policy)
+      scope = PermitScope.new([] of String, ruby_source(policy).lines)
+      names = permit_list_names("permitted_attributes_for_#{action}", scope, 0)
+      names.empty? ? permit_list_names("permitted_attributes", scope, 0) : names
+    end
+
+    # Where a permit list's bare names are looked up: the lines of its method
+    # so far (a local list) and the whole controller file (a constant or a
+    # method that returns one).
+    private record PermitScope, body : Array(String), file : Array(String)
+
     # Param names from a permit argument list: the leading key of each
-    # top-level entry (`:title`, `"title"`, `tags: []`, `a: {b: 1}`, `:a => []`).
-    # Splats, constants and anything else that isn't a plain lowercase key are dropped.
-    private def permit_names(args : String) : Array(String)
+    # top-level entry (`:title`, `"title"`, `tags: []`, `a: {b: 1}`, `:a => []`,
+    # `{ tags: [] }`). A bare name (`permit(allowed_params)`, `*BASE`,
+    # `ALLOWED`) is a local, constant or method holding the list, read from
+    # `scope`; one that resolves to no list literal yields nothing.
+    private def permit_names(args : String, scope : PermitScope? = nil, depth : Int32 = 0) : Array(String)
       names = [] of String
       Noir::TopLevelSplit.split(args, ',', PERMIT_SPLIT).each do |entry|
-        if m = entry.match(/\A:?(?:"([a-z_][a-z0-9_]*)"|'([a-z_][a-z0-9_]*)'|([a-z_][a-z0-9_]*))\s*(?::(?!:)|=>|\z)/)
+        entry = entry.strip
+        if entry.starts_with?('{') && entry.ends_with?('}')
+          names.concat(permit_names(entry[1...-1], scope, depth))
+        elsif m = entry.match(/\A\*?([A-Za-z_]\w*)\z/)
+          names.concat(permit_list_names(m[1], scope, depth)) if scope
+        elsif m = entry.match(/\A:?(?:"([a-z_][a-z0-9_]*)"|'([a-z_][a-z0-9_]*)'|([a-z_][a-z0-9_]*))\s*(?::(?!:)|=>|\z)/)
           names << (m[1]? || m[2]? || m[3]).to_s
         elsif m = entry.match(/\?\s*:([a-z_]\w*)\s*:\s*(?::([a-z_]\w*)|nil)\s*\z/)
           # `@user.admin? ? :role : nil`: a key permitted for some callers.
@@ -1945,15 +2023,82 @@ module Analyzer::Ruby
     # (and the array-of-hashes form `comments: [[ :body ]]`) names the root key
     # whose inner list holds the fields, so the fields are the params; a bare
     # `:id` / `tags: []` is a param itself.
-    private def expect_names(args : String) : Array(String)
+    private def expect_names(args : String, scope : PermitScope? = nil) : Array(String)
       names = [] of String
       Noir::TopLevelSplit.split(args, ',', PERMIT_SPLIT).each do |entry|
         if (m = entry.match(/\A:?["']?[a-z_][a-z0-9_]*["']?\s*(?::(?!:)|=>)\s*\[(.*)\]\s*\z/m)) &&
            !(inner = m[1].strip.lchop('[').rchop(']').strip).empty?
-          names.concat(permit_names(inner))
+          names.concat(permit_names(inner, scope))
         else
-          names.concat(permit_names(entry))
+          names.concat(permit_names(entry, scope))
         end
+      end
+      names
+    end
+
+    # The keys the list `name` holds: a local assigned earlier in the method
+    # (with what `<<` / `push` / `concat` / `+=` add to it later, under any
+    # condition — a key permitted for some callers), else a constant or a
+    # method of the controller file.
+    # ponytail: one file; a list built in a concern or parent class stays
+    # unresolved and yields nothing.
+    private def permit_list_names(name : String, scope : PermitScope, depth : Int32) : Array(String)
+      return [] of String if depth > 3
+      names = [] of String
+      assign = /\A\s*#{Regex.escape(name)}\s*=(?![=~>])\s*(.*)\z/
+      if name[0].ascii_lowercase? && (idx = scope.body.rindex(&.matches?(assign)))
+        names.concat(list_literal_names(statement_from(scope.body, idx, assign), scope, depth + 1))
+        append = /\A\s*#{Regex.escape(name)}\s*(?:<<|\+=|\.(?:push|concat|append)\b\s*\(?)\s*(.+)\z/
+        ((idx + 1)...scope.body.size).each do |i|
+          next unless m = scope.body[i].match(append)
+          item = m[1].sub(/\s+(?:if|unless)\s+.*\z/, "").strip
+          item = item.rchop(')') if item.count('(') < item.count(')')
+          names.concat(list_literal_names(item.starts_with?('[') || item.starts_with?('%') ? item : "[#{item}]", scope, depth + 1))
+        end
+      elsif idx = scope.file.index(&.matches?(assign))
+        names.concat(list_literal_names(statement_from(scope.file, idx, assign), scope, depth + 1))
+      elsif idx = scope.file.index(&.matches?(/\A\s*def\s+(?:self\.)?#{Regex.escape(name)}\s*(?:\(\s*\))?\s*\z/))
+        # A method's value is its last statement: from the last body line at
+        # the body's own indent to its end.
+        indent = scope.file[idx].size - scope.file[idx].lstrip.size
+        body = scope.file[(idx + 1)..].take_while { |l| l.strip.empty? || l.size - l.lstrip.size > indent }
+          .map { |l| strip_inline_comment(l) }.reject(&.strip.empty?)
+        unless body.empty?
+          base = body.min_of { |l| l.size - l.lstrip.size }
+          start = body.rindex { |l| l.size - l.lstrip.size == base && !l.lstrip.matches?(/\A[\])}]/) } || 0
+          names.concat(list_literal_names(body[start..].join(" "), PermitScope.new(body, scope.file), depth + 1))
+        end
+      end
+      names
+    end
+
+    # The value of the assignment at `lines[idx]`, joined over the lines its
+    # brackets stay open on.
+    private def statement_from(lines : Array(String), idx : Int32, assign : Regex) : String
+      text = strip_inline_comment(lines[idx]).match(assign).try(&.[1]).to_s
+      j = idx + 1
+      while text.count("[({") > text.count("])}") && j < lines.size && j - idx < 100
+        text = "#{text} #{strip_inline_comment(lines[j])}"
+        j += 1
+      end
+      text
+    end
+
+    # The keys a list expression names: `[:a, { tags: [] }, *BASE]`,
+    # `%i[a b]`, `BASE + %i[c]`, a bare constant or local; `.freeze` and
+    # friends dropped.
+    private def list_literal_names(text : String, scope : PermitScope, depth : Int32) : Array(String)
+      text = text.strip.sub(/(?:\.(?:freeze|dup|uniq|compact|flatten)\b)+\s*\z/, "").strip
+      names = [] of String
+      parts = Noir::TopLevelSplit.split(text, '+', PERMIT_SPLIT)
+      if parts.size > 1
+        parts.each { |part| names.concat(list_literal_names(part, scope, depth)) }
+      elsif m = text.match(/\A%[iwIW][\[(](.*)[\])]\z/m)
+        names.concat(m[1].split.select(&.matches?(/\A[a-z_]\w*\z/)))
+      elsif text.starts_with?('[') && text.ends_with?(']')
+        names.concat(permit_names(text[1...-1], scope, depth))
+      elsif text.matches?(/\A[A-Za-z_]\w*\z/)
+        names.concat(permit_list_names(text, scope, depth))
       end
       names
     end
