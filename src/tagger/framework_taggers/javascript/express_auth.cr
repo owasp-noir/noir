@@ -49,7 +49,7 @@ class ExpressAuthTagger < FrameworkTagger
   # A definition that answers the request itself, refusals aside: in the
   # handler position that is the handler (`login()` answers 401 to a wrong
   # password), not a guard in front of one.
-  HANDLER_RESPONSE = /\b(?:res|response)\s*\.\s*(?:json|send|render|redirect|sendFile|end|status)\s*\(/
+  HANDLER_RESPONSE = /\b(?:res|response)\s*\.\s*(?:json|send|sendStatus|render|redirect|sendFile|end|status)\s*\(/
 
   # ponytail: brace/paren-counted spans; a registration whose closure runs
   # past 60 lines or a definition past 40 is read truncated, not re-parsed.
@@ -158,7 +158,7 @@ class ExpressAuthTagger < FrameworkTagger
       # argument may be the guard, so each is read on its own.
       route_lines = get_route_statement(lines, line_num - 1) # 0-indexed
       route_text = Noir::CComments.strip(route_lines.join("\n"), quotes: %("'`))
-      args = call_args(route_text)
+      args = helper_call_args(route_text) || call_args(route_text)
       (args || [route_text]).each_with_index do |arg, idx|
         last = !args.nil? && idx == args.size - 1
         description = guard_description(arg, path_info.path, handler_position: last) || next
@@ -199,21 +199,65 @@ class ExpressAuthTagger < FrameworkTagger
 
     code = code_only(arg)
     return "Protected by Express JWT middleware" if JWT_MIDDLEWARE_PATTERNS.any? { |pattern| code.matches?(pattern) }
+    # `[...middlewares, middleware.assert.post]`: Express flattens an array
+    # of handlers into the chain, so each element is a step of its own.
+    if elements = array_elements(code)
+      elements.each do |element|
+        found = guard_description(element.strip.lchop("...").strip, file)
+        return found if found
+      end
+      return
+    end
     # `asyncHandler(adminOnly)`, `withAuth(list)`: the wrapper is judged by
     # its own definition, and what it wraps keeps its position's judgement.
     if wrapped = unwrapped_arg(arg, file)
       return wrapper_guard(arg, file) || guard_description(wrapped, file, handler_position)
     end
-    AUTH_MIDDLEWARE_NAMES.each do |pattern|
-      if match = code.match(pattern)
-        return "Protected by Express #{match[0]} middleware"
-      end
+    if named = name_guard(code)
+      return named
     end
 
     if resolved = refusing_definition(arg, file, handler_position)
       name, evidence = resolved
       "Protected by Express #{name} (#{evidence}) middleware"
     end
+  end
+
+  # The fallback for a step whose definition is not in the scan.
+  private def name_guard(code : String) : String?
+    AUTH_MIDDLEWARE_NAMES.each do |pattern|
+      if match = code.match(pattern)
+        return "Protected by Express #{match[0]} middleware"
+      end
+    end
+    nil
+  end
+
+  private def array_elements(code : String) : Array(String)?
+    text = code.strip
+    return unless text.starts_with?('[')
+    close = Noir::JSLiteralScanner.find_matching_bracket(text, 0) || return
+    return unless close == text.size - 1
+    Noir::TopLevelSplit.split(text[1...close], ',', Noir::TopLevelSplit::Rules::JS_POSITIONAL_ARGS).reject(&.blank?)
+  end
+
+  HELPER_CALL = /\A\s*(?:await\s+)?((?:[A-Za-z_$][\w$]*\s*\.\s*)*([A-Za-z_$][\w$]*))\s*\(/
+  PATH_ARG    = /\A\s*['"`]\//
+
+  # The steps of a registration made through a route helper
+  # (`setupApiRoute(router, 'put', '/:pid/vote', [...], controllers.vote)`):
+  # the arguments after the path, which the helper hands to the router as
+  # the route's middleware and handler. Nil unless the statement opens with
+  # such a call: a verb call is a registration of its own.
+  private def helper_call_args(statement : String) : Array(String)?
+    head = statement.match(HELPER_CALL) || return
+    return if head[2].matches?(/\A(?:get|post|put|patch|delete|options|head|all|use|route)\z/)
+    open_paren = head.end(0) - 1
+    close_paren = Noir::JSLiteralScanner.find_matching_paren(statement, open_paren) || return
+    args = Noir::TopLevelSplit.split(statement[open_paren + 1...close_paren], ',', Noir::TopLevelSplit::Rules::JS_POSITIONAL_ARGS).reject(&.blank?)
+    path_at = args.index(&.matches?(PATH_ARG)) || return
+    steps = args[path_at + 1..]
+    steps unless steps.empty?
   end
 
   private def unwrapped_arg(arg : String, file : String) : String?
@@ -247,8 +291,12 @@ class ExpressAuthTagger < FrameworkTagger
     if elements = middleware_array(lines, line - 1)
       return if depth >= MAX_ARRAY_DEPTH
       elements.each do |element|
+        element = element.strip.lchop("...").strip
         found = refusing_definition(element, path, false, depth + 1)
         return {"#{handler.name.gsub(/\s+/, "")} > #{found[0]}", found[1]} if found
+        if named = name_guard(element)
+          return {"#{handler.name.gsub(/\s+/, "")} > #{element.gsub(/\s+/, "")}", named}
+        end
       end
       return
     end
@@ -260,14 +308,45 @@ class ExpressAuthTagger < FrameworkTagger
     body = definition_extent(lines, line - 1)
     return if body.first?.try(&.matches?(ERROR_HANDLER_SIGNATURE))
     code = code_only(body.join("\n"))
-    evidence = anonymous_refusal(code) || identity_throw(code) || return
+    evidence = (anonymous_refusal(code) || identity_throw(code)).try do |found|
+      found.gsub(/\bnew\s+/, "new ").gsub(/(?<!\bnew)\s+/, "").chomp('(').sub(/\Athrownew\b/, "throw new")
+    end
+    evidence ||= caller_stop(path, line) || return
     # In the handler position a definition that answers the request is the
     # handler; one that calls `next()` on success is middleware all the same
     # (`app.use('/private', auth)`).
     return if handler_position && !code.matches?(BARE_NEXT) && code.gsub(REFUSING_DEFINITION, "").matches?(HANDLER_RESPONSE)
-    {handler.name.gsub(/\s+/, ""), evidence.gsub(/\bnew\s+/, "new ").gsub(/(?<!\bnew)\s+/, "").chomp('(').sub(/\Athrownew\b/, "throw new")}
+    {handler.name.gsub(/\s+/, ""), evidence}
   rescue
     nil
+  end
+
+  # A middleware whose first check stops a caller that is not there:
+  # `if (!req.loggedIn) { return helpers.notAllowed(req, res); }`. The branch
+  # returns without `next`, so an anonymous request never reaches the route,
+  # whatever the function it returns through sends.
+  private def caller_stop(path : String, line : Int32) : String?
+    content = read_file(path) || return
+    request = request_param(content, line) || return
+    body = code_only(Noir::JSRouteExtractor.definition_body(content, line))
+    caller_absence_refusal(body, Regex.escape(request), stop_file: path)
+  end
+
+  STOP_CALL = /\breturn\s+(?:await\s+)?([A-Za-z_$][\w$]*(?:\s*\.\s*[A-Za-z_$][\w$]*)*)\s*\(/
+
+  # A branch that returns, without `next`, through a function whose own
+  # definition refuses (`return helpers.notAllowed(req, res)`, which answers
+  # 401/403 or redirects to the login page).
+  private def stop_refusal(branch : String, file : String) : String?
+    return if branch.matches?(/\bnext\b/)
+    call = branch.match(STOP_CALL) || return
+    content = read_file(file) || return
+    target = Noir::JSHandlerResolver.resolve(call[1].gsub(/\s+/, ""), content, file) || return
+    path, line = target.path, target.line
+    return if path.nil? || line.nil?
+    text = read_file(path) || return
+    body = code_only(Noir::JSRouteExtractor.definition_body(text, line))
+    "returns #{call[1].gsub(/\s+/, "")}" if anonymous_refusal(body) || body.matches?(/\b(?:res|response)\s*\.\s*redirect\s*\(/)
   end
 
   MAX_ARRAY_DEPTH = 4
@@ -513,7 +592,7 @@ class ExpressAuthTagger < FrameworkTagger
   # `!req.user`, `!req.accountability?.user`, `!req.session.userId`,
   # `!req.isAuthenticated()`. The first field must not be request data
   # (`!req.params.userId` refuses a bad URL, not an anonymous caller).
-  CALLER_FIELD = /\A(?:user|userId|user_id|uid|currentUser|account|accountId|principal|identity|isAuthenticated|isLoggedIn)\z/
+  CALLER_FIELD = /\A(?:user|userId|user_id|uid|currentUser|account|accountId|principal|identity|isAuthenticated|isLoggedIn|loggedIn)\z/
 
   # What the guarded branch does to the caller it stops, and how that reads
   # in the tag: throws (the app's error handler answers), answers 401/403
@@ -613,8 +692,11 @@ class ExpressAuthTagger < FrameworkTagger
   # The first `if` at the top of `body` that tests the caller's absence on
   # `receiver` and refuses in its branch, as `<condition> (<refusal>)`; nil
   # once anything that can answer or pass the request on comes first.
-  private def caller_absence_refusal(body : String, receiver : String) : String?
-    absent = /\A!\s*(?:#{receiver})((?:\s*\??\.\s*[A-Za-z_$][\w$]*)+)\s*(?:\(\s*\))?\z/
+  # `stop_file`: in a middleware defined there, a branch that returns
+  # through a refusing function also refuses (`stop_refusal`).
+  private def caller_absence_refusal(body : String, receiver : String, stop_file : String? = nil) : String?
+    # `!req.user`, or no positive id: `req.uid <= 0`.
+    absent = /\A(?:!\s*(?:#{receiver})((?:\s*\??\.\s*[A-Za-z_$][\w$]*)+)\s*(?:\(\s*\))?|(?:#{receiver})((?:\s*\??\.\s*[A-Za-z_$][\w$]*)+)\s*(?:<=\s*0|<\s*1))\z/
     body.scan(TOP_LEVEL_IF) do |m|
       at = m.begin(0)
       return if body[0...at].matches?(EARLIER_EXIT)
@@ -631,12 +713,14 @@ class ExpressAuthTagger < FrameworkTagger
                end
       tested = Noir::TopLevelSplit.split(condition, '|', Noir::TopLevelSplit::Rules::JS_POSITIONAL_ARGS).reject(&.blank?).find do |part|
         next false unless hit = part.strip.match(absent)
-        fields = hit[1].split('.').map(&.strip.lchop('?').strip).reject(&.empty?)
+        fields = (hit[1]? || hit[2]).split('.').map(&.strip.lchop('?').strip).reject(&.empty?)
         fields.last.matches?(CALLER_FIELD) && (receiver == "this" || !fields.first.matches?(DATA_ROOTS))
       end
       next unless tested
-      refusal = BRANCH_REFUSALS.find { |re, _| branch.matches?(re) } || next
-      return "#{tested.gsub(/\s+/, "")} #{refusal[1]}"
+      refusal = BRANCH_REFUSALS.find { |re, _| branch.matches?(re) }.try(&.[1])
+      refusal ||= stop_file.try { |file| stop_refusal(branch, file) }
+      next unless refusal
+      return "#{tested.gsub(/\s+/, "")} #{refusal}"
     end
     nil
   end

@@ -4,14 +4,15 @@ require "../../func_spec.cr"
 # 'put', '/:pid/vote', [...middlewares], controllers.write.posts.vote)`):
 # the handler is the argument the helper's definition forwards as the last
 # step (through its own `tryRoute(controller, onError)` wrapper), followed
-# through `Controllers.write = require('./write')` barrels.
-describe "Express route-helper handlers and params", tags: "functional" do
+# through `Controllers.write = require('./write')` barrels, and the
+# middleware array is judged by definition.
+describe "Express route-helper handlers, guards and params", tags: "functional" do
   before_each do
     CodeLocator.instance.clear_all
     Noir::JSHandlerResolver.reset
   end
 
-  it "resolves what the helper forwards" do
+  it "resolves what the helper forwards and judges its middleware by definition" do
     options = ConfigInitializer.new.default_options
     options["base"] = YAML::Any.new([YAML::Any.new("./spec/functional_test/fixtures/javascript/express_route_helper_handlers/")])
     options["ai_context"] = YAML::Any.new(true)
@@ -25,6 +26,9 @@ describe "Express route-helper handlers and params", tags: "functional" do
     find = ->(method : String, url : String) { endpoints.find! { |e| e.method == method && e.url == url } }
     handler_of = ->(method : String, url : String) do
       find.call(method, url).handler.try { |h| {File.basename(h.path || ""), h.line} }
+    end
+    guards_of = ->(method : String, url : String) do
+      find.call(method, url).ai_context.try(&.guards.map(&.source)) || [] of String
     end
     params_of = ->(method : String, url : String) do
       find.call(method, url).params.map { |p| "#{p.name}:#{p.param_type}" }.sort!
@@ -44,6 +48,13 @@ describe "Express route-helper handlers and params", tags: "functional" do
 
     # `router.all('/api/v3/*', middleware.markApi)`: a pass-through serves nothing.
     handler_of.call("GET", "/api/v3/*").should be_nil
+
+    # `[...middlewares, …]` where `mustBeMember` returns through a refusing helper.
+    guards_of.call("PUT", "/api/v3/posts/:pid/vote").should eq(["express_auth"])
+    # A 404 assertion, an empty answer for guests and the helper's own
+    # authenticate step are not guards.
+    guards_of.call("GET", "/api/v3/posts/:pid").should be_empty
+    guards_of.call("GET", "/api/v3/posts/:pid/mine").should be_empty
 
     # `/${name}/:pid` with `name` a parameter: the prefix really is a
     # variable there, so the route keeps its template and its handler.
