@@ -96,8 +96,26 @@ module Analyzer::Javascript
 
       # Process static directories to create endpoints for static files
       process_js_static_dirs(static_dirs, result)
+      clear_ambiguous_template_handlers(result)
 
       result
+    end
+
+    # `/${name}` registered by several modules whose `name` comes from their
+    # caller is one row once merged, with a different handler per module:
+    # none of them is that row's handler.
+    private def clear_ambiguous_template_handlers(result : Array(Endpoint)) : Nil
+      handlers = Hash(Tuple(String, String), Set(Tuple(String?, Int32?)?)).new
+      result.each do |endpoint|
+        next unless endpoint.url.includes?("${")
+        (handlers[{endpoint.method, endpoint.url}] ||= Set(Tuple(String?, Int32?)?).new) << endpoint.handler.try { |h| {h.path, h.line} }
+      end
+      # Endpoint is a struct: write the cleared copy back.
+      result.each_with_index do |endpoint, idx|
+        next unless endpoint.handler && (handlers[{endpoint.method, endpoint.url}]?.try(&.size) || 0) > 1
+        endpoint.handler = nil
+        result[idx] = endpoint
+      end
     end
 
     # Recognise the Parse Server `this.route(<method>, <path>, ...)`
@@ -1028,6 +1046,16 @@ module Analyzer::Javascript
         endpoint = Endpoint.new(route.url, route.method, details)
         route.url.scan(/:(\w+)/) do |pm|
           endpoint.push_param(Param.new(pm[1], "", "path"))
+        end
+        if handler_idx = route.handler_arg
+          source, start = route.args[handler_idx]
+          step = source.strip
+          handler = Noir::JSRouteExtractor.named_handler(step, content, path, true)
+          facts = handler ? Noir::JSRouteExtractor.handler_definition_facts(handler, false) : nil
+          handler = nil unless Noir::JSRouteExtractor.serves?(facts)
+          handler ||= Noir::JSRouteExtractor.inline_handler(step, line_number_for_index(content, start + source.size - source.lstrip.size), content, path, true)
+          endpoint.handler = handler
+          Noir::JSRouteExtractor.apply_handler_facts(endpoint, facts)
         end
         attach_js_callees(endpoint, helper_call_callees(route, content, path)) if include_callee
         result << endpoint

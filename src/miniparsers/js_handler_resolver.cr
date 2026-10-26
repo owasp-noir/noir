@@ -2,6 +2,7 @@ require "../models/endpoint"
 require "../models/code_locator"
 require "../utils/text_file"
 require "./import_graph"
+require "./extraction_result_cache"
 require "../utils/js_literal_scanner"
 require "../utils/top_level_split"
 require "../utils/c_comments"
@@ -57,7 +58,34 @@ module Noir::JSHandlerResolver
       @@tsconfig_paths.clear
       @@member_modules.clear
       @@wrapper_shapes.clear
+      @@parameter_modules.clear
+      @@sources.clear
     end
+  end
+
+  # Definition files are read once per lookup otherwise: a barrel chain
+  # (`controllers.write.posts.vote`) reads each module per hop and per name.
+  @@sources = Hash(String, String?).new
+
+  private def source(path : String) : String?
+    found, cached = @@lock.synchronize { {@@sources.has_key?(path), @@sources[path]?} }
+    return cached if found
+    text = TextFile.read(path) rescue nil
+    @@lock.synchronize { Noir::ExtractionResultCache.store_capped(@@sources, path, text, 512) }
+  end
+
+  # file (absolute) -> parameter of its exported function -> the module
+  # (absolute) every caller passes there; see `RouteHelperScanner`.
+  @@parameter_modules = Hash(String, Hash(String, String)).new
+
+  def bind_parameter(file : String, name : String, module_path : String) : Nil
+    @@lock.synchronize { (@@parameter_modules[Noir::PathScope.expand(file)] ||= Hash(String, String).new)[name] = module_path }
+  end
+
+  private def parameter_module(file_path : String, name : String) : String?
+    found = @@lock.synchronize { @@parameter_modules[Noir::PathScope.expand(file_path)]?.try(&.[name]?) } || return
+    return found if Path[file_path].absolute?
+    Path[found].relative_to?(Dir.current).try(&.to_posix.to_s) || found
   end
 
   # `handler_text` is the route argument as written. Returns nil unless it
@@ -82,18 +110,56 @@ module Noir::JSHandlerResolver
       if members.size > 1
         hops = members[0...-1]
         spec[1].try { |exported| hops.unshift(exported) }
-        hops.each { |hop| target = member_module(target, hop) || return }
-        return Handler.new(text, target, definition_line(target, members.last))
+        return follow_members(text, target, hops, members.last)
       end
       # `import users from './users'; users.create` → `create` in ./users;
       # `import { login } from './login'` → the exported `login`.
       wanted = member || spec[1] || base
       return Handler.new(text, target, definition_line(target, wanted))
     end
+    # `helpers.tryRoute` inside the module `const helpers = module.exports` defines.
+    if member && base.matches?(/\A(?:#{export_aliases(content)})\z/)
+      return definition_line(file_path, members.join('.'), content).try { |line| Handler.new(text, file_path, line) }
+    end
+    # `module.exports = function (app, middleware, controllers)` whose callers
+    # all hand it the same module.
+    if members.size > 0 && (target = parameter_module(file_path, base))
+      return follow_members(text, target, members[0...-1], members.last)
+    end
+    # `const controllers = { helpers: require('../controllers/helpers') }`.
+    if members.size > 1 && (spec = local_require_member(content, base, members.first))
+      target = resolve_specifier(file_path, spec) || return
+      return follow_members(text, target, members[1...-1], members.last)
+    end
     return if member # `security.isAuthorized` with `security` not imported here
     if line = definition_line(file_path, base, content)
       Handler.new(text, file_path, line)
     end
+  end
+
+  # `last` in the module `target` reaches through `hops`, each a member that
+  # names a module; when one does not, the rest of the chain is a property
+  # path the module exports (`Utilities.ping = {}; Utilities.ping.get = …`).
+  private def follow_members(text : String, target : String, hops : Array(String), last : String) : Handler?
+    hops.each_with_index do |hop, idx|
+      # A property path the module defines wins over a module it merely
+      # imports under the same name (`const flags = require('../flags')`
+      # beside `modsController.flags.list = …`).
+      if line = definition_line(target, hops[idx..].push(last).join('.'))
+        return Handler.new(text, target, line)
+      end
+      target = member_module(target, hop) || return
+    end
+    Handler.new(text, target, definition_line(target, last))
+  end
+
+  # The specifier of `member: require('…')` in the object literal a local
+  # `base` is declared as.
+  private def local_require_member(content : String, base : String, member : String) : String?
+    decl = content.match(/\b(?:const|let|var)\s+#{Regex.escape(base)}\s*=\s*\{/) || return
+    open = decl.end(0) - 1
+    close = JSLiteralScanner.find_matching_brace(content, open) || return
+    content[open..close].match(/(?:^|[{,])\s*#{Regex.escape(member)}\s*:\s*require\s*\(\s*['"]([^'"]+)['"]\s*\)/m).try(&.[1])
   end
 
   # A wrapper call `W(x)` as {`x`, its char offset in `text`, `W`}, when the
@@ -110,8 +176,8 @@ module Noir::JSHandlerResolver
     open = m.end(0) - 1
     close = JSLiteralScanner.find_matching_paren(text, open) || return
     return unless text[close + 1..].blank?
-    spans = TopLevelSplit.split_spans(text, ',', TopLevelSplit::Rules::JS_POSITIONAL_ARGS, open + 1, close)
-    return unless spans.size == 1
+    spans = TopLevelSplit.split_spans(text, ',', TopLevelSplit::Rules::JS_POSITIONAL_ARGS, open + 1, close).reject(&.[0].blank?)
+    return if spans.empty?
     arg, pos = spans[0]
     return if arg.blank?
     callee = m[1].gsub(/\s+/, "")
@@ -124,7 +190,9 @@ module Noir::JSHandlerResolver
       return unless transparent
       return if refuses && !guards
     else
-      return unless callee.matches?(WRAPPER_NAME_RE)
+      # Only a definition says what a second argument is
+      # (`tryRoute(controller, onError)`).
+      return unless spans.size == 1 && callee.matches?(WRAPPER_NAME_RE)
     end
     {arg.strip, pos + arg.size - arg.lstrip.size, callee}
   end
@@ -149,7 +217,7 @@ module Noir::JSHandlerResolver
     key = {path, line}
     found, cached = @@lock.synchronize { {@@wrapper_shapes.has_key?(key), @@wrapper_shapes[key]?} }
     return cached if found
-    shape = (TextFile.read(path) rescue nil).try do |text|
+    shape = source(path).try do |text|
       lines = text.lines[line - 1, 200]? || next
       code = Noir::CComments.strip(lines.join('\n'), quotes: %("'`)).gsub(/"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'|`(?:[^`\\]|\\.)*`/, %(""))
       if head = code.match(WRAPPER_HEAD_RE)
@@ -204,9 +272,10 @@ module Noir::JSHandlerResolver
     key = {file, name}
     found, cached = @@lock.synchronize { {@@member_modules.has_key?(key), @@member_modules[key]?} }
     return cached if found
-    target = (TextFile.read(file) rescue nil).try do |text|
+    target = source(file).try do |text|
       e = Regex.escape(name)
-      re = /\bget\s+#{e}\s*\(\s*\)\s*\{\s*return\s+require\s*\(\s*['"]([^'"]+)['"]\s*\)\s*;?\s*\}|(?:^|[{,])\s*#{e}\s*:\s*require\s*\(\s*['"]([^'"]+)['"]\s*\)|\bexports\.#{e}\s*=\s*require\s*\(\s*['"]([^'"]+)['"]\s*\)/m
+      exported = export_aliases(text)
+      re = /\bget\s+#{e}\s*\(\s*\)\s*\{\s*return\s+require\s*\(\s*['"]([^'"]+)['"]\s*\)\s*;?\s*\}|(?:^|[{,])\s*#{e}\s*:\s*require\s*\(\s*['"]([^'"]+)['"]\s*\)|(?<![\w$.])(?:#{exported})\s*(?:\.\s*#{e}|\[\s*['"]#{e}['"]\s*\])\s*=\s*require\s*\(\s*['"]([^'"]+)['"]\s*\)/m
       spec = text.match(re).try { |mm| mm[1]? || mm[2]? || mm[3]? }
       spec ||= imports_of(text, file)[name]?.try { |imp| imp[0] unless imp[1] }
       spec.try { |sp| resolve_specifier(file, sp) }
@@ -317,22 +386,40 @@ module Noir::JSHandlerResolver
   private def definition_line(path : String, name : String, content : String? = nil) : Int32?
     cached = @@lock.synchronize { @@definitions[path]?.try(&.[name]?) }
     return (cached == 0 ? nil : cached) if cached
-    content ||= TextFile.read(path) rescue nil
+    content ||= source(path)
     line = content ? find_definition(content, name) : nil
     @@lock.synchronize { (@@definitions[path] ||= Hash(String, Int32).new)[name] = line || 0 }
     line
   end
 
+  # Names the module's exports object goes by: `exports`, `module.exports`,
+  # and a local bound to it (`const Posts = module.exports;`, or
+  # `module.exports = Posts;` at the end), as an alternation.
+  def export_aliases(content : String) : String
+    names = ["module\\s*\\.\\s*exports", "exports"]
+    content.scan(/\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:module\s*\.\s*)?exports\s*[;\n]/) { |m| names << Regex.escape(m[1]) }
+    content.scan(/^[ \t]*module\s*\.\s*exports\s*=\s*([A-Za-z_$][\w$]*)\s*;?[ \t]*$/m) { |m| names << Regex.escape(m[1]) }
+    names.uniq.join('|')
+  end
+
   private def find_definition(content : String, name : String) : Int32?
     escaped = Regex.escape(name)
+    exported = export_aliases(content)
     patterns = [
       /^[ \t]*(?:export\s+)?(?:default\s+)?(?:async\s+)?function\s*\*?\s*#{escaped}\s*[(<]/m,
-      /^[ \t]*(?:export\s+)?(?:const|let|var)\s+#{escaped}\s*[:=]/m,
+      # Not `const pagination = require('../pagination')`: that binds a
+      # module, it defines nothing here.
+      /^[ \t]*(?:export\s+)?(?:const|let|var)\s+#{escaped}\s*(?::|=(?!\s*require\s*\())/m,
       /^[ \t]*(?:export\s+)?class\s+#{escaped}\b/m,
       /^[ \t]*(?:export\s+)?(?:async\s+)?#{escaped}\s*\([^)]*\)\s*(?::[^{]*)?\{/m,
       /^[ \t]*#{escaped}\s*:\s*(?:async\s+)?(?:function\b|\(|\[)/m,
+      # `Posts.vote = async (req, res) => …` on the exports object.
+      /^[ \t]*(?:#{exported})\s*(?:\.\s*#{escaped}|\[\s*['"]#{escaped}['"]\s*\])\s*=(?!=)/m,
       /^[ \t]*(?:module\.)?exports(?:\.#{escaped})?\s*=|^[ \t]*export\s+default\b/m,
     ]
+    # A property path (`ping.get`) is only ever an assignment on the exports
+    # object, never the module's default export.
+    patterns = patterns[-2, 1] if name.includes?('.')
     patterns.each do |re|
       if m = content.match(re)
         return content.byte_slice(0, m.byte_begin(0)).count('\n') + 1

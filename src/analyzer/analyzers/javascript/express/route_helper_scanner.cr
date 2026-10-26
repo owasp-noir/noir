@@ -77,7 +77,8 @@ module Analyzer::Javascript
       path_arg : Int32,
       path_before : String,
       path_after : String,
-      line : Int32
+      line : Int32,
+      handler_arg : Int32? = nil
 
     # A helper definition: which argument carries the router, and what the
     # body forwards.
@@ -93,7 +94,8 @@ module Analyzer::Javascript
       url : String,
       line : Int32,
       args : Array(Tuple(String, Int32)),
-      path_arg : Int32
+      path_arg : Int32,
+      handler_arg : Int32? = nil
 
     # The forwarded-registration shape, used both as the per-file gate and
     # as the extractor. Group 1 is the receiver, group 2 the verb variable
@@ -185,6 +187,8 @@ module Analyzer::Javascript
       @logger : NoirLogger,
     )
       @helpers = Hash(String, Hash(String, HelperSpec)).new
+      # {target file, argument position} -> module passed there (nil: callers disagree)
+      @module_arguments = Hash(Tuple(String, Int32), String?).new
       @call_regex_cache = Hash(String, Regex).new
     end
 
@@ -205,6 +209,8 @@ module Analyzer::Javascript
           next
         end
 
+        collect_module_arguments(file, content) if content.includes?("require")
+
         next unless content.matches?(FORWARD_CALL_GATE, options: Noir::TextFile::MATCH_OPTIONS)
         next unless content.matches?(FORWARD_CALL_RE, options: Noir::TextFile::MATCH_OPTIONS)
         next if Noir::JSRouteExtractor.minified_content?(content)
@@ -215,6 +221,128 @@ module Analyzer::Javascript
         # Keyed absolute, because `JsModuleResolver` hands back absolute
         # paths and `@all_files` is relative whenever the scan base is.
         @helpers[Noir::PathScope.expand(file)] = found unless found.empty?
+      end
+      bind_module_parameters
+    end
+
+    # ------------------------------------------------------------------
+    # Modules handed to a required module's exported function
+    # ------------------------------------------------------------------
+    #
+    #   // routes/index.js
+    #   const controllers = require('../controllers');
+    #   const _mounts = { api: require('./api') };
+    #   _mounts.api(router, middleware, controllers);
+    #
+    #   // routes/api.js
+    #   module.exports = function (app, middleware, controllers) {
+    #     router.get('/topic/pagination/:topic_id', …, controllers.topics.pagination);
+    #
+    # `controllers` in api.js is the module index.js imported, so its
+    # handlers resolve there. Bound only when every direct call of the
+    # function passes the same imported module at that position; a computed
+    # call (`_mounts[name](…)`) is not followed.
+
+    MODULE_REQUIRE_CALL = /\brequire\s*\(\s*['"]([^'"]+)['"]\s*\)\s*\(/
+    MODULE_REQUIRE_BIND = /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*require\s*\(\s*['"]([^'"]+)['"]\s*\)\s*[;\n]/
+    MODULE_REQUIRE_OBJ  = /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*\{/
+    MODULE_OBJ_MEMBER   = /(?:^|[{,])\s*(?:([A-Za-z_$][\w$]*)|['"]([^'"]+)['"])\s*:\s*require\s*\(\s*['"]([^'"]+)['"]\s*\)/m
+    MODULE_EXPORT_FN    = /^[ \t]*module\s*\.\s*exports\s*=\s*(?:async\s+)?(?:function\b[^(\n]*)?\(/m
+    IDENTIFIER          = /\A[A-Za-z_$][\w$]*\z/
+
+    # `name(`, `obj.key(`, `obj['key'](`: what a file calls, so only the
+    # bindings it calls are resolved on disk.
+    CALL_SITE = /(?<![\w$.])([A-Za-z_$][\w$]*)\s*(?:\.\s*([A-Za-z_$][\w$]*)\s*|\[\s*['"]([^'"]+)['"]\s*\]\s*)?\(/
+
+    private def collect_module_arguments(file : String, raw : String) : Nil
+      return if test_tree?(file)
+      called = Set(String).new
+      raw.scan(CALL_SITE) { |m| called << ((key = m[2]? || m[3]?) ? "#{m[1]}.#{key}" : m[1]) }
+      direct = raw.matches?(MODULE_REQUIRE_CALL)
+      bound = false
+      raw.scan(MODULE_REQUIRE_BIND) { |m| bound ||= called.includes?(m[1]) }
+      bound ||= raw.scan(MODULE_REQUIRE_OBJ).any? { |m| called.any?(&.starts_with?("#{m[1]}.")) }
+      return unless direct || bound
+
+      content = Noir::JSRouteExtractor.strip_js_comments(raw)
+      root = Noir::PathScope.longest_base(file, @base_paths) || @base_path
+      calls = [] of Tuple(String, Int32) # {target, open paren}
+      content.scan(MODULE_REQUIRE_CALL) do |m|
+        target = JsModuleResolver.resolve(file, m[1], root) || next
+        calls << {target, m.end(0) - 1}
+      end
+      callees = Hash(String, String).new
+      content.scan(MODULE_REQUIRE_BIND) do |m|
+        next unless called.includes?(m[1])
+        target = JsModuleResolver.resolve(file, m[2], root) || next
+        callees[m[1]] = target
+      end
+      content.scan(MODULE_REQUIRE_OBJ) do |m|
+        open = m.end(0) - 1
+        close = Noir::JSRouteExtractor.find_matching_brace(content, open) || next
+        content[open..close].scan(MODULE_OBJ_MEMBER) do |mm|
+          callee = "#{m[1]}.#{mm[1]? || mm[2]}"
+          next unless called.includes?(callee)
+          target = JsModuleResolver.resolve(file, mm[3], root) || next
+          callees[callee] = target
+        end
+      end
+      callees.each do |callee, target|
+        base, _, key = callee.partition('.')
+        re = if key.empty?
+               /(?<![\w$.])#{Regex.escape(base)}\s*\(/
+             else
+               /(?<![\w$.])#{Regex.escape(base)}\s*(?:\.\s*#{Regex.escape(key)}|\[\s*['"]#{Regex.escape(key)}['"]\s*\])\s*\(/
+             end
+        content.scan(re) { |m| calls << {target, m.end(0) - 1} }
+      end
+      return if calls.empty?
+
+      imports = Noir::JSHandlerResolver.imports_of(content, file)
+      functions = function_defs(content)
+      calls.each do |target, open|
+        close = Noir::JSRouteExtractor.find_matching_paren(content, open) || next
+        args = Noir::TopLevelSplit.split(content[open + 1...close], ',', Noir::TopLevelSplit::Rules::JS_POSITIONAL_ARGS).map(&.strip)
+        args.each_with_index do |arg, idx|
+          passed = nil.as(String?)
+          if arg.matches?(IDENTIFIER) && (spec = imports[arg]?) && spec[1].nil?
+            shadowed = functions.any? do |func|
+              func.body_start < open && open < func.body_end && parameter_positions(content, func).has_key?(arg)
+            end
+            passed = JsModuleResolver.resolve(file, spec[0], root) unless shadowed
+          end
+          key = {target, idx}
+          if @module_arguments.has_key?(key)
+            @module_arguments[key] = nil unless @module_arguments[key] == passed
+          else
+            @module_arguments[key] = passed
+          end
+        end
+      end
+    rescue e
+      @logger.debug "Module-argument pass failed for #{file}: #{e.message}"
+    end
+
+    private def bind_module_parameters : Nil
+      by_target = Hash(String, Array(Tuple(Int32, String))).new { |h, k| h[k] = [] of Tuple(Int32, String) }
+      @module_arguments.each do |key, passed|
+        by_target[key[0]] << {key[1], passed} if passed
+      end
+      by_target.each do |target, positions|
+        raw = CodeLocator.instance.content_for(target) || (Noir::TextFile.read(target) rescue nil)
+        next unless raw
+        content = Noir::JSRouteExtractor.strip_js_comments(raw)
+        head = content.match(MODULE_EXPORT_FN) || next
+        open = head.end(0) - 1
+        close = Noir::JSRouteExtractor.find_matching_paren(content, open) || next
+        params = Noir::TopLevelSplit.split(content[open + 1...close], ',', Noir::TopLevelSplit::Rules::JS_POSITIONAL_ARGS).map(&.strip)
+        imports = Noir::JSHandlerResolver.imports_of(content, target)
+        positions.each do |idx, passed|
+          name = params[idx]?.try(&.match(/\A([A-Za-z_$][\w$]*)\s*(?:=|\z)/).try(&.[1])) || next
+          next if imports.has_key?(name)
+          Noir::JSHandlerResolver.bind_parameter(target, name, passed)
+          @logger.debug "Bound #{target}:#{name} to #{passed}"
+        end
       end
     end
 
@@ -283,7 +411,7 @@ module Analyzer::Javascript
             prefixes.each do |prefix|
               url = prefix.empty? ? path : Noir::URLPath.join(prefix, path)
               next unless seen.add?({method, url})
-              routes << HelperRoute.new(method, url, line, args, forward.path_arg)
+              routes << HelperRoute.new(method, url, line, args, forward.path_arg, call_site_handler(forward, args))
             end
           end
         end
@@ -298,6 +426,7 @@ module Analyzer::Javascript
 
     private record ForwardMatch,
       pos : Int32,
+      open_paren : Int32,
       receiver : String,
       verb_var : String?,
       literal_verb : String?,
@@ -354,7 +483,7 @@ module Analyzer::Javascript
 
         forwards = [] of Forward
         func_matches.each do |match|
-          forward = build_forward(match, param_index, lines)
+          forward = build_forward(file, content, match, param_index, lines)
           next unless forward
           next if forwards.any? { |f| same_forward?(f, forward) }
           forwards << forward
@@ -370,7 +499,7 @@ module Analyzer::Javascript
         next unless forwards.any? { |forward| forward.path_before.empty? && forward.path_after.empty? }
 
         router_arg = param_index[forwards.first.receiver]?
-        next unless router_arg
+        next unless router_arg && router_arg >= 0
 
         specs[func.name] = HelperSpec.new(func.name, router_arg, forwards)
         @logger.debug "Indexed Express route helper #{file}:#{func.name} (#{forwards.size} forward(s))"
@@ -389,13 +518,14 @@ module Analyzer::Javascript
       content.scan(FORWARD_CALL_RE) do |m|
         pos = m.begin(0)
         next unless pos
-        matches << ForwardMatch.new(pos, m[1], m[2]?, m[3]?, m[4])
+        open_paren = m.begin(4).try { |path_at| content.rindex('(', path_at) } || next
+        matches << ForwardMatch.new(pos, open_paren, m[1], m[2]?, m[3]?, m[4])
       end
       matches
     end
 
-    private def build_forward(match : ForwardMatch, param_index : Hash(String, Int32),
-                              lines : LineIndex) : Forward?
+    private def build_forward(file : String, content : String, match : ForwardMatch,
+                              param_index : Hash(String, Int32), lines : LineIndex) : Forward?
       return unless param_index.has_key?(match.receiver)
 
       return unless match.receiver.matches?(ROUTER_PARAM_RE)
@@ -404,7 +534,7 @@ module Analyzer::Javascript
       verb_arg : Int32? = nil
       if verb_var = match.verb_var
         verb_arg = param_index[verb_var]?
-        return unless verb_arg
+        return unless verb_arg && verb_arg >= 0
       elsif literal_verb = match.literal_verb
         verb = literal_verb.downcase
       else
@@ -412,9 +542,29 @@ module Analyzer::Javascript
       end
 
       path_arg, before, after = parse_path_expression(match.path_expr, param_index)
-      return unless path_arg
+      return unless path_arg && path_arg >= 0
 
-      Forward.new(match.receiver, verb, verb_arg, path_arg, before, after, lines.line_at(match.pos))
+      Forward.new(match.receiver, verb, verb_arg, path_arg, before, after, lines.line_at(match.pos),
+        forwarded_handler(file, content, match, param_index))
+    end
+
+    # The helper parameter the forwarded registration serves the request
+    # with: its last argument, through any transparent wrapper the helper
+    # applies (`helpers.tryRoute(controller, onError)`), when that is a
+    # parameter of the helper. Negative positions count from the end of the
+    # call (`const controller = args[args.length - 1]`).
+    private def forwarded_handler(file : String, content : String, match : ForwardMatch,
+                                  param_index : Hash(String, Int32)) : Int32?
+      close = Noir::JSRouteExtractor.find_matching_paren(content, match.open_paren) || return
+      spans = Noir::TopLevelSplit.split_spans(content, ',',
+        Noir::TopLevelSplit::Rules::JS_POSITIONAL_ARGS, match.open_paren + 1, close).reject(&.[0].blank?)
+      return if spans.size < 2
+      text = spans.last[0].strip
+      3.times do
+        inner = Noir::JSHandlerResolver.unwrap(text, content, file) || break
+        text = inner[0]
+      end
+      param_index[text]?
     end
 
     # `name` → the parameter itself; `` `/api${name}` `` → the parameter
@@ -489,6 +639,10 @@ module Analyzer::Javascript
       end
 
       if rest = rest_name
+        # `const controller = args[args.length - 1]`: a position from the end.
+        content[func.body_start..func.body_end].scan(/(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*#{Regex.escape(rest)}\s*\[\s*#{Regex.escape(rest)}\s*\.\s*length\s*-\s*([1-9])\s*\]\s*[;\n]/) do |m|
+          positions[m[1]] = -m[2].to_i unless positions.has_key?(m[1])
+        end
         content[func.body_start..func.body_end].scan(REST_DESTRUCTURE_RE) do |m|
           next unless m[2] == rest
           m[1].split(',').each_with_index do |part, idx|
@@ -612,6 +766,14 @@ module Analyzer::Javascript
       return unless literal
       return unless HTTP_VERBS.includes?(literal.downcase)
       Noir::JSRouteExtractor.normalize_http_method(literal)
+    end
+
+    # The call-site argument the helper serves the request with, as an index
+    # into `args`; nil unless it comes after the path.
+    private def call_site_handler(forward : Forward, args : Array(Tuple(String, Int32))) : Int32?
+      idx = forward.handler_arg || return
+      idx += args.size if idx < 0
+      idx if idx > forward.path_arg && idx < args.size
     end
 
     private def call_site_path(forward : Forward, args : Array(Tuple(String, Int32))) : String?

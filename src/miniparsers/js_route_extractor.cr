@@ -385,7 +385,7 @@ module Noir
           step = handler_step(content, start_byte, file_path, offsets, unwrap_guards, count_last_steps)
           handler = step ? named_handler(step[0], content, file_path, unwrap_guards) : nil
           handler_facts = handler ? handler_definition_facts(handler, include_callees) : nil
-          handler = nil if handler_facts.try(&.guard)
+          handler = nil unless step.nil? || serves?(handler_facts, before_renderer: step[3])
           handler ||= step ? inline_handler(step[0], step[1], content, file_path, unwrap_guards) : nil
           # Only a route that has a handler, named or inline: a guard-only
           # registration (`app.put('/x', security.denyAll())`) has none for
@@ -1211,14 +1211,14 @@ module Noir
     LOCALS_WRITE_RE = /\b(?:res|response)\s*\.\s*locals\s*(?:\.\s*[\w$]+|\[[^\]]+\])?\s*=(?!=)/
 
     # The route argument that serves the request, as {source, line it starts
-    # on, index}: the last one, unless the last one is a shared renderer
+    # on, index, whether it precedes the renderer}: the last one, unless the last one is a shared renderer
     # (`router.get('/', load, respond)`: `respond` sends whatever the step
     # before it left on `res.locals`, and ends many registrations). Then it
     # is the step before it, when that step is the route's own work: an
     # inline closure, or a definition that writes `res.locals`, that calls
     # `next()` and is not a guard. A pass-through like `noCache` is not.
     def self.handler_step(content : String, start_byte : Int32, file_path : String, offsets : ByteOffsets,
-                          unwrap_guards : Bool = false, last_step_counts : Proc(Hash(String, Int32))? = nil) : Tuple(String, Int32, Int32)?
+                          unwrap_guards : Bool = false, last_step_counts : Proc(Hash(String, Int32))? = nil) : Tuple(String, Int32, Int32, Bool)?
       return if start_byte < 0
       open_paren = content.byte_index('(', start_byte) || return
       close_paren = JSLiteralScanner.find_matching_paren_at_byte(content, open_paren) || return
@@ -1233,7 +1233,7 @@ module Noir
       end
       arg, pos = spans[idx]
       leading = arg.size - arg.lstrip.size
-      {arg.strip, offsets.line(open_paren) + args_slice[0, pos + leading].count('\n'), idx}
+      {arg.strip, offsets.line(open_paren) + args_slice[0, pos + leading].count('\n'), idx, idx < spans.size - 1}
     rescue
       nil
     end
@@ -1297,9 +1297,9 @@ module Noir
     # calls bare `next()`), which is what tells a path-mounted handler from
     # a path-mounted guard.
     record HandlerFacts, params : Array(Param), callees : Array(JSCalleeExtractor::Entry), responds : Bool, guard : Bool = false,
-      renders_locals : Bool = false, passes_on : Bool = false, writes_locals : Bool = false
+      renders_locals : Bool = false, passes_on : Bool = false, writes_locals : Bool = false, sends : Bool = true
 
-    RESPONDS_RE  = /\b(?:res|response|reply)\s*(?:\.status\s*\([^)]*\)\s*)?\.(?:send|sendFile|sendfile|json|jsonp|render|end|redirect|download|write)\s*\(/
+    RESPONDS_RE  = /\b(?:res|response|reply)\s*(?:\.status\s*\([^)]*\)\s*)?\.(?:send|sendStatus|sendFile|sendfile|json|jsonp|render|end|redirect|download|write)\s*\(/
     BARE_NEXT_RE = /\bnext\s*\(\s*\)/
     # A router factory (`module.exports = () => { router.get('/:id', …);
     # return router }`) sends inside the routes it registers; it is a
@@ -1319,6 +1319,41 @@ module Noir
 
     Noir::ExtractionResultCache.register_clearer do
       @@handler_facts_mutex.synchronize { @@handler_facts.clear }
+      @@stripped_sources_mutex.synchronize { @@stripped_sources.clear }
+    end
+
+    # Comment-stripped definition files: many handlers live in, and hand
+    # their request to, the same few modules.
+    @@stripped_sources = Hash(String, String).new
+    @@stripped_sources_mutex = Mutex.new
+
+    private def self.stripped_source(path : String) : String
+      if hit = @@stripped_sources_mutex.synchronize { @@stripped_sources[path]? }
+        return hit
+      end
+      text = strip_js_comments(TextFile.read(path))
+      @@stripped_sources_mutex.synchronize { ExtractionResultCache.store_capped(@@stripped_sources, path, text, 512) }
+    end
+
+    # Whether the `(req, res, next)` definition at `line` does anything with
+    # its response besides `res.locals`: sends, sets, or hands it to a
+    # function that answers (`helpers.formatApiResponse(200, res)`). A shape
+    # without a response parameter (Koa's `(ctx, next)`) is taken to.
+    private def self.touches_response?(body : String, content : String, line : Int32) : Bool
+      params = definition_params(content, line)
+      response = params[1]? if params && params.size >= 3
+      return true if response.nil? || response.empty?
+      body.matches?(/(?<![\w$.])#{Regex.escape(response)}\b(?!\s*\.\s*locals\b)/)
+    end
+
+    # Whether a resolved step serves the request: not a guard, and not a
+    # pass-through that only calls `next()` (`router.all('/api/*',
+    # prepareAPI)` registers no handler). Unknown facts keep the step.
+    # The step before a shared renderer (`handler_step`) passes on by design.
+    def self.serves?(facts : HandlerFacts?, before_renderer : Bool = false) : Bool
+      return true unless facts
+      return false if facts.guard
+      before_renderer || !(facts.passes_on && !facts.sends)
     end
 
     def self.handler_definition_facts(handler : Handler, include_callees : Bool) : HandlerFacts?
@@ -1414,7 +1449,7 @@ module Noir
     end
 
     private def self.read_handler_facts(path : String, line : Int32, include_callees : Bool) : HandlerFacts
-      content = strip_js_comments(TextFile.read(path))
+      content = stripped_source(path)
       line_start = 0
       (line - 1).times do
         line_start = (content.byte_index('\n', line_start) || return empty_handler_facts) + 1
@@ -1466,6 +1501,7 @@ module Noir
       extract_path_params(signature_and_body, context)
 
       guard = guard_definition?(body)
+      request_callee_reads(body, content, path, line, context) unless guard
       callees = if include_callees && !guard
                   language = path.matches?(/\.[mc]?tsx?\z/) ? :typescript : :javascript
                   JSCalleeExtractor.callees_for_function_body(body, path, line, language: language)
@@ -1474,7 +1510,88 @@ module Noir
                 end
       responds = body.matches?(RESPONDS_RE) && !body.matches?(BARE_NEXT_RE) && !body.matches?(ROUTER_BODY_RE) && !guard
       renders_locals = body.matches?(RESPONDS_RE) && body.matches?(LOCALS_READ_RE)
-      HandlerFacts.new(context.params, callees, responds, guard, renders_locals, body.matches?(BARE_NEXT_RE), body.matches?(LOCALS_WRITE_RE))
+      HandlerFacts.new(context.params, callees, responds, guard, renders_locals, body.matches?(BARE_NEXT_RE), body.matches?(LOCALS_WRITE_RE),
+        touches_response?(body, content, line))
+    end
+
+    REQUEST_CALL_RE       = /(?<![\w$.])((?:[A-Za-z_$][\w$]*\s*\.\s*)*[A-Za-z_$][\w$]*)\s*\(/
+    NOT_A_CALLEE_RE       = /\A(?:if|for|while|switch|catch|function|return|typeof|await|new|next|super)\z|\A(?:res|response)\./
+    MAX_REQUEST_CALLEES   = 8
+    REQUEST_RECEIVER_NAME = /\A(?:req|request)\z/
+
+    # What the functions a handler hands its request to read off it: `const
+    # { uid } = await getUidFromToken(req, res)` reads `req.query.uid` in
+    # `getUidFromToken`. One hop, definitions in the scan only, and only a
+    # call that passes the request object itself (`fire('x', { req })` hands
+    # over a record, `get(req.params.id)` a value).
+    private def self.request_callee_reads(body : String, content : String, path : String, line : Int32, context : Endpoint)
+      followed = 0
+      body.scan(REQUEST_CALL_RE) do |m|
+        break if followed >= MAX_REQUEST_CALLEES
+        callee = m[1].gsub(/\s+/, "")
+        next if callee.matches?(NOT_A_CALLEE_RE)
+        open = m.end(0) - 1
+        close = JSLiteralScanner.find_matching_paren(body, open) || next
+        args = TopLevelSplit.split(body[open + 1...close], ',', TopLevelSplit::Rules::JS_POSITIONAL_ARGS).map(&.strip)
+        position = args.index(&.matches?(REQUEST_RECEIVER_NAME)) || next
+        target = Noir::JSHandlerResolver.resolve(callee, content, path) || next
+        target_path = target.path || next
+        target_line = target.line || next
+        next if target_path == path && target_line == line
+        followed += 1
+        text = target_path == path ? content : stripped_source(target_path)
+        name = definition_params(text, target_line).try(&.[position]?) || next
+        # `delete req.query.lang` drops an input; it does not read one.
+        reads = definition_body(text, target_line).gsub(/\bdelete\s+[\w$.?\[\]'"]+/, "")
+        reads = reads.gsub(/(?<![\w$.])#{Regex.escape(name)}(?=\s*\??\.)/, "req") unless name.matches?(REQUEST_RECEIVER_NAME)
+        extract_body_params(reads, context)
+        extract_query_params(reads, context)
+        extract_header_params(reads, context)
+        extract_cookie_params(reads, context)
+      end
+    rescue
+      nil
+    end
+
+    # The parameter names of the function defined at `line` (`function f(req,
+    # res)`, `f = async (req, res) =>`, `f = req =>`); "" for a destructured
+    # or rest parameter.
+    def self.definition_params(content : String, line : Int32) : Array(String)?
+      line_start = 0
+      (line - 1).times do
+        line_start = (content.byte_index('\n', line_start) || return) + 1
+      end
+      line_end = content.byte_index('\n', line_start) || content.bytesize
+      own_line = content.byte_slice(line_start, line_end - line_start)
+      if fn = own_line.match(/\bfunction\b\s*\*?\s*[\w$]*\s*\(/)
+        open = fn.end(0) - 1
+        close = JSLiteralScanner.find_matching_paren(own_line, open) || return
+      elsif arrow = own_line.rindex("=>")
+        head = own_line[0...arrow].rstrip
+        unless head.ends_with?(')')
+          return head.match(/([A-Za-z_$][\w$]*)\z/).try { |mm| [mm[1]] }
+        end
+        close = head.size - 1
+        depth = 0
+        open = nil
+        close.downto(0) do |idx|
+          case head[idx]
+          when ')' then depth += 1
+          when '('
+            depth -= 1
+            if depth == 0
+              open = idx
+              break
+            end
+          end
+        end
+        open || return
+      else
+        return
+      end
+      TopLevelSplit.split(own_line[open + 1...close], ',', TopLevelSplit::Rules::JS_POSITIONAL_ARGS).map do |param|
+        param.strip.match(/\A([A-Za-z_$][\w$]*)/).try(&.[1]) || ""
+      end
     end
 
     # The body of the function defined at `line` of `content`, its signature
