@@ -56,6 +56,39 @@ banks_page = Endpoint.new("/banks/page/{page}", "GET", [Param.new("page", "", "p
 banks_audit = Endpoint.new("/banks/audit", "GET", [Param.new("X-Tenant", "", "header")])
 banks_open = Endpoint.new("/banks/open", "POST", [Param.new("Owner", "", "form"), Param.new("Kind", "", "form")])
 
+# Body DTOs carry the members they inherit, resolved through namespaces and
+# `using`s; getter-only and privately-set members are never request input.
+members_update = Endpoint.new("/members/{id}", "PUT", [
+  Param.new("id", "", "path"),
+  Param.new("email", "", "json"),
+  Param.new("externalId", "", "json"),
+  Param.new("role", "", "json"),
+  Param.new("home", "", "json"),
+  Param.new("otp", "", "json"),
+  Param.new("tags", "", "json"),
+])
+members_batch = Endpoint.new("/members/batch", "POST", [Param.new("type", "", "json"), Param.new("ts", "", "json")])
+members_profile = Endpoint.new("/members/{id}/profile", "GET", [Param.new("id", "", "path"), Param.new("tags", "", "query")])
+members_trial = Endpoint.new("/members/trial", "POST", [
+  Param.new("trialLength", "", "json"),
+  Param.new("name", "", "json"),
+  Param.new("email", "", "json"),
+])
+# A JSON array body is its element type's members.
+members_events = Endpoint.new("/members/events", "POST", [Param.new("type", "", "json"), Param.new("ts", "", "json")])
+members_cycle = Endpoint.new("/members/cycle", "POST", [Param.new("left", "", "json"), Param.new("right", "", "json")])
+
+# Property and type shapes: block-bodied accessors, an initialized
+# getter-only collection, redeclared base members, [JsonConstructor]
+# parameters, a same-file namespace pick, a nested-type base, and binders.
+shapes_accessors = Endpoint.new("/shapes/accessors", "POST", %w[name email tags].map { |n| Param.new(n, "", "json") })
+shapes_override = Endpoint.new("/shapes/override", "POST", %w[shadow_x keep].map { |n| Param.new(n, "", "json") })
+shapes_ctor = Endpoint.new("/shapes/ctor", "POST", %w[count fooName].map { |n| Param.new(n, "", "json") })
+shapes_versioned = Endpoint.new("/shapes/versioned", "POST", %w[own fromV2].map { |n| Param.new(n, "", "json") })
+shapes_nested_base = Endpoint.new("/shapes/nested-base", "POST", %w[shallow deep].map { |n| Param.new(n, "", "json") })
+shapes_grid = Endpoint.new("/shapes/grid", "POST", [Param.new("grid", "", "json")])
+shapes_binders = Endpoint.new("/shapes/binders", "GET", %w[filter sort ids].map { |n| Param.new(n, "", "query") })
+
 expected_endpoints = [
   articles_list,
   article_get,
@@ -76,6 +109,19 @@ expected_endpoints = [
   banks_page,
   banks_audit,
   banks_open,
+  members_update,
+  members_trial,
+  members_events,
+  members_cycle,
+  members_profile,
+  members_batch,
+  shapes_accessors,
+  shapes_override,
+  shapes_ctor,
+  shapes_versioned,
+  shapes_nested_base,
+  shapes_grid,
+  shapes_binders,
 ]
 
 tester = FunctionalTester.new("fixtures/csharp/aspnet_core_mvc_modern/", {
@@ -135,6 +181,30 @@ describe "ASP.NET Core MVC modern controller edge cases", tags: "functional" do
   it "names the action as the handler, at its signature rather than its attribute" do
     audit = tester.app.endpoints.find! { |e| e.url == "/banks/audit" }
     audit.handler.try { |h| {h.name, h.line} }.should eq({"BanksController.Audit", 38})
+  end
+
+  it "reads inherited body members from the base the namespace resolves to" do
+    update = tester.app.endpoints.find! { |e| e.url == "/members/{id}" }
+    update.params.map(&.name).sort!.should eq(["email", "externalId", "home", "id", "otp", "role", "tags"])
+    trial = tester.app.endpoints.find! { |e| e.url == "/members/trial" }
+    trial.params.map(&.name).sort!.should eq(["email", "name", "trialLength"])
+  end
+
+  it "expands a JSON collection body to its element's members" do
+    events = tester.app.endpoints.find! { |e| e.url == "/members/events" }
+    events.params.map(&.name).should eq(["type", "ts"])
+  end
+
+  it "drops parameters the request never supplies ([BindNever], server-side binders)" do
+    profile = tester.app.endpoints.find! { |e| e.url == "/members/{id}/profile" }
+    profile.params.map(&.name).sort!.should eq(["id", "tags"])
+  end
+
+  it "reads exactly the members each body shape exposes" do
+    [shapes_accessors, shapes_override, shapes_ctor, shapes_versioned, shapes_nested_base, shapes_grid, shapes_binders].each do |expected|
+      found = tester.app.endpoints.find! { |e| e.url == expected.url && e.method == expected.method }
+      found.params.map(&.name).sort!.should eq(expected.params.map(&.name).sort!)
+    end
   end
 
   it "records callees from an expression-bodied action body" do

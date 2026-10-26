@@ -643,8 +643,9 @@ class EndpointOptimizer
   # `:id` (Express/Rails/Postman) or `<id>` / `<int:id>` (Flask/Django).
   # Constraints were stripped by `normalize_url_shape`, except a regex
   # router's (`{id:[0-9]+}`, `{sha:[a-f0-9]{7,64}}`), which still unifies
-  # with a spec's `{id}`.
-  WHOLE_SEGMENT_PLACEHOLDER_RE = %r{(?<=/)(?:\{[A-Za-z_]\w*(?::(?:[^{}/]|\{[^{}/]*\})+)?\}|:[A-Za-z_]\w*|<(?:[A-Za-z_]\w*:)?[A-Za-z_]\w*>)(?=[/?#]|\z)}
+  # with a spec's `{id}`. An optional slot (`{id?}`: Laravel, ASP.NET) is the
+  # slot a spec lists as `{id}`.
+  WHOLE_SEGMENT_PLACEHOLDER_RE = %r{(?<=/)(?:\{[A-Za-z_]\w*\??(?::(?:[^{}/]|\{[^{}/]*\})+)?\}|:[A-Za-z_]\w*|<(?:[A-Za-z_]\w*:)?[A-Za-z_]\w*>)(?=[/?#]|\z)}
 
   # Dedup-key form of a URL: every whole-segment placeholder becomes `{}`, so
   # one route reported by its code (`/users/:id`) and by a spec or collection

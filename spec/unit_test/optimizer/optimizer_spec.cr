@@ -95,6 +95,16 @@ describe "EndpointOptimizer" do
       result.map(&.url).sort!.should eq(["/users/{id}", "/users/{user}"])
     end
 
+    it "merges a spec's required slot with the code's optional one" do
+      optimizer = EndpointOptimizer.new(logger, options)
+      result = optimizer.optimize_endpoints([
+        tech_endpoint("/play/{songId}/{transcode}", "GET", "oas3", "/app/api-docs/api.yaml"),
+        tech_endpoint("/play/{songId}/{transcode?}", "GET", "php_laravel", "/app/routes/web.php"),
+      ])
+      result.map(&.url).should eq(["/play/{songId}/{transcode?}"])
+      result[0].details.technology.should eq("php_laravel")
+    end
+
     it "does not unify placeholders that split one technology's routes" do
       optimizer = EndpointOptimizer.new(logger, options)
       endpoints = [
