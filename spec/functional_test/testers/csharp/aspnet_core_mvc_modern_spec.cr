@@ -78,6 +78,17 @@ members_trial = Endpoint.new("/members/trial", "POST", [
 members_events = Endpoint.new("/members/events", "POST", [Param.new("type", "", "json"), Param.new("ts", "", "json")])
 members_cycle = Endpoint.new("/members/cycle", "POST", [Param.new("left", "", "json"), Param.new("right", "", "json")])
 
+# Property and type shapes: block-bodied accessors, an initialized
+# getter-only collection, redeclared base members, [JsonConstructor]
+# parameters, a same-file namespace pick, a nested-type base, and binders.
+shapes_accessors = Endpoint.new("/shapes/accessors", "POST", %w[name email tags].map { |n| Param.new(n, "", "json") })
+shapes_override = Endpoint.new("/shapes/override", "POST", %w[shadow_x keep].map { |n| Param.new(n, "", "json") })
+shapes_ctor = Endpoint.new("/shapes/ctor", "POST", %w[count fooName].map { |n| Param.new(n, "", "json") })
+shapes_versioned = Endpoint.new("/shapes/versioned", "POST", %w[own fromV2].map { |n| Param.new(n, "", "json") })
+shapes_nested_base = Endpoint.new("/shapes/nested-base", "POST", %w[shallow deep].map { |n| Param.new(n, "", "json") })
+shapes_grid = Endpoint.new("/shapes/grid", "POST", [Param.new("grid", "", "json")])
+shapes_binders = Endpoint.new("/shapes/binders", "GET", %w[filter sort ids].map { |n| Param.new(n, "", "query") })
+
 expected_endpoints = [
   articles_list,
   article_get,
@@ -104,6 +115,13 @@ expected_endpoints = [
   members_cycle,
   members_profile,
   members_batch,
+  shapes_accessors,
+  shapes_override,
+  shapes_ctor,
+  shapes_versioned,
+  shapes_nested_base,
+  shapes_grid,
+  shapes_binders,
 ]
 
 tester = FunctionalTester.new("fixtures/csharp/aspnet_core_mvc_modern/", {
@@ -180,6 +198,13 @@ describe "ASP.NET Core MVC modern controller edge cases", tags: "functional" do
   it "drops parameters the request never supplies ([BindNever], server-side binders)" do
     profile = tester.app.endpoints.find! { |e| e.url == "/members/{id}/profile" }
     profile.params.map(&.name).sort!.should eq(["id", "tags"])
+  end
+
+  it "reads exactly the members each body shape exposes" do
+    [shapes_accessors, shapes_override, shapes_ctor, shapes_versioned, shapes_nested_base, shapes_grid, shapes_binders].each do |expected|
+      found = tester.app.endpoints.find! { |e| e.url == expected.url && e.method == expected.method }
+      found.params.map(&.name).sort!.should eq(expected.params.map(&.name).sort!)
+    end
   end
 
   it "records callees from an expression-bodied action body" do

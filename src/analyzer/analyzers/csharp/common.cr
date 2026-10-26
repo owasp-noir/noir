@@ -349,15 +349,24 @@ module Analyzer::CSharp::Common
   TYPE_DECLARATION_RE = /\b(?:class|record|struct)\s+(?:class\s+|struct\s+)?([A-Z]\w*)/
 
   # A public property with the attributes above it (`[JsonIgnore]`,
-  # `[FromHeader(Name = "X-Tenant")]`): `{attributes, type, name,
-  # accessors}`, the accessors read up to the first accessor body.
-  PUBLIC_PROPERTY_RE = /((?:\[[^\]]*\]\s*)*)(?:public|internal)\s+(?:(?:required|virtual|override|new)\s+)*([\w<>\[\]\?\.]+)\s+([A-Za-z_]\w*)\s*\{(\s*(?:get|init|set)\b[^{}]*)/
+  # `[FromHeader(Name = "X-Tenant")]`): `{attributes, type, name, "{"}`, the
+  # last group marking where the accessor list opens.
+  PUBLIC_PROPERTY_RE = /((?:\[[^\]]*\]\s*)*)(?:public|internal)\s+(?:(?:required|virtual|override|new)\s+)*([\w<>\[\]\?\.,]+)\s+([A-Za-z_]\w*)\s*(\{)\s*(?:get|init|set)\b/
 
   # A public `set`/`init` accessor: what a binder or serializer writes.
   PUBLIC_SETTER_RE = /(?<!private |protected |internal )\b(?:set|init)\b/
 
   # Opts a member without a public setter into deserialization.
-  SERIALIZER_INCLUDE_RE = /\b(?:JsonInclude|JsonProperty|DataMember)\b/
+  SERIALIZER_INCLUDE_RE = /\b(?:JsonInclude|JsonProperty|DataMember)(?:Attribute)?\s*[\](,]/
+
+  # An attribute list (`[FromBody]`, `[property: JsonPropertyName("x")]`),
+  # not an array rank (`int[]`, `int[,]`).
+  ATTRIBUTE_LIST_RE = /\[(?=\s*[A-Za-z_@])[^\]]*\]\s*/
+
+  # What a type declares: the members a request can set, its base class,
+  # and every property or positional member it names (set or not), which
+  # hides a base member of the same name.
+  record TypeMembers, defs : Array(String), base : String?, names : Set(String)
 
   # A `[JsonIgnore]` that also skips the member on read (`Condition =
   # WhenWritingNull` only affects writing).
@@ -395,52 +404,64 @@ module Analyzer::CSharp::Common
     # The declaration the name reaches through namespaces and `using`s; else
     # (an import the scan cannot see, e.g. a project-file `<Using>`) the one
     # sharing the most of the handler's path.
-    other = resolve_type_file(type_name, file, masked_lines) ||
-            candidates.max_by? { |path| common_prefix_size(path, file) } || return [] of String
-    lexer = Noir::CSharpLexer.new(read_file_content(other))
-    decl = member_defs_in(type_name, lexer.code_lines, lexer.masked_lines) || return [] of String
-    with_inherited_members(decl, other, lexer.masked_lines)
+    path, namespace = resolve_type_file(type_name, file, masked_lines) ||
+                      {candidates.max_by? { |candidate| common_prefix_size(candidate, file) } || return([] of String), nil}
+    lexer = Noir::CSharpLexer.new(read_file_content(path))
+    decl = member_defs_in(type_name, lexer.code_lines, lexer.masked_lines, namespace) || return [] of String
+    with_inherited_members(decl, path, lexer.masked_lines)
   end
 
   # Appends the members of each class on `decl`'s base chain. A base is the
   # type its name reaches from the deriving file (that file's namespaces and
-  # their parents, its `using`s, the scan's `global using`s), never a
+  # their parents, its `using`s, its project's `global using`s), never a
   # same-named type elsewhere; the walk stops at a type the scan does not
-  # declare (a framework base such as `ControllerBase`) and at a cycle.
-  private def with_inherited_members(decl : Tuple(Array(String), String?), file : String, masked_lines : Array(String)) : Array(String)
-    defs, base = decl
-    defs = defs.dup
+  # declare (a framework base such as `ControllerBase`) and at a cycle. A
+  # base member the deriving type redeclares (`override`, `new`) is the
+  # deriving type's: its attributes win, even a `[JsonIgnore]`.
+  private def with_inherited_members(decl : TypeMembers, file : String, masked_lines : Array(String)) : Array(String)
+    defs = decl.defs.dup
+    names = decl.names.dup
+    base = decl.base
     seen = Set(String).new
     MAX_BASE_DEPTH.times do
       break unless base
       name = base.split('.').last
-      path = resolve_type_file(base, file, masked_lines) || break
-      break unless seen.add?("#{path}\0#{name}")
+      path, namespace = resolve_type_file(base, file, masked_lines) || break
+      break unless seen.add?("#{path}\0#{base}")
       lexer = Noir::CSharpLexer.new(read_file_content(path))
-      base_defs, base = member_defs_in(name, lexer.code_lines, lexer.masked_lines) || break
-      defs.concat(base_defs)
+      inherited = member_defs_in(name, lexer.code_lines, lexer.masked_lines, namespace) || break
+      inherited.defs.each { |member| defs << member unless names.includes?(Common.member_name(member)) }
+      names.concat(inherited.names)
+      base = inherited.base
       file = path
       masked_lines = lexer.masked_lines
     end
     defs
   end
 
-  # The scanned file declaring type `base` as seen from `file`, or nil
-  # when no declaration of that name sits in a namespace it can reach.
-  # Scopes are tried in C#'s lookup order: the file's namespace, then each
-  # enclosing one outwards, then the global namespace and the `using`s.
-  private def resolve_type_file(base : String, file : String, masked_lines : Array(String)) : String?
+  # The C# name a member definition declares (`[Attr] string Name = "x"`).
+  def self.member_name(member_def : String) : String
+    member_def.sub(/=.*/m, "").match(/([A-Za-z_]\w*)\s*\z/).try(&.[1]) || ""
+  end
+
+  # `{file, namespace}` of the scanned declaration type `base` reaches from
+  # `file`, or nil when none sits in a namespace it can see. Scopes are
+  # tried in C#'s lookup order: the file's namespace, then each enclosing
+  # one outwards, then the global namespace and the `using`s. A qualified
+  # name whose qualifier is a type (`Outer.Inner`) resolves to that type's
+  # file. The namespace is nil when the declaring file is `file` itself.
+  private def resolve_type_file(base : String, file : String, masked_lines : Array(String)) : Tuple(String, String?)?
     parts = base.split('.')
     candidates = csharp_type_files[parts.last]? || return
-    return file if parts.size == 1 && candidates.includes?(file)
+    return {file, nil} if parts.size == 1 && candidates.includes?(file)
     masked = masked_lines.join('\n')
     enclosing = [] of String
     masked.scan(NAMESPACE_DECL_RE) do |m|
       segments = m[1].split('.')
       segments.size.downto(1) { |n| enclosing << segments[0, n].join('.') }
     end
+    qualifier = parts[0...-1].join('.')
     scopes = if parts.size > 1
-               qualifier = parts[0...-1].join('.')
                enclosing.map { |ns| "#{ns}.#{qualifier}" } << qualifier
              else
                # "" is the global namespace: a file with no namespace declares into it.
@@ -453,9 +474,43 @@ module Analyzer::CSharp::Common
     end
     scopes.each do |scope|
       in_scope = candidates.select { |path| declared[path].includes?(scope) }
-      return in_scope.max_by { |path| common_prefix_size(path, file) } unless in_scope.empty?
+      return {in_scope.max_by { |path| common_prefix_size(path, file) }, scope} unless in_scope.empty?
+    end
+    if parts.size > 1 && (outer = resolve_type_file(qualifier, file, masked_lines))
+      return {outer[0], nil} if candidates.includes?(outer[0])
     end
     nil
+  end
+
+  # The namespace each line of a file sits in (`""` for the global one),
+  # following file-scoped and nested block `namespace` declarations.
+  private def line_namespaces(masked_lines : Array(String)) : Array(String)
+    file_scoped = [] of String
+    stack = [] of Tuple(String, Int32)
+    pending = nil
+    depth = 0
+    masked_lines.map do |line|
+      if m = line.match(/^\s*namespace\s+([\w.]+)\s*(;)?/)
+        m[2]? ? (file_scoped << m[1]) : (pending = m[1])
+      end
+      current = (file_scoped + stack.map(&.[0])).join('.')
+      line.each_char do |char|
+        if char == '{'
+          if name = pending
+            stack << {name, depth}
+            pending = nil
+            current = (file_scoped + stack.map(&.[0])).join('.')
+          end
+          depth += 1
+        elsif char == '}'
+          depth -= 1
+          while (last = stack.last?) && last[1] >= depth
+            stack.pop
+          end
+        end
+      end
+      current
+    end
   end
 
   private def common_prefix_size(a : String, b : String) : Int32
@@ -493,15 +548,21 @@ module Analyzer::CSharp::Common
   # base-list entry, which for a class or record is its base class.
   BASE_AFTER_NAME_RE = /\A\s*(?:<(?:[^<>]|<[^<>]*>)*>)?\s*(?:\((?:[^()]|\([^()]*\))*\))?\s*:\s*(?:global::)?([A-Za-z_][\w.]*)/
 
-  # `{members, base type name}`; nil when `lines` does not declare `type_name`.
-  private def member_defs_in(type_name : String, lines : Array(String), masked_lines : Array(String)) : Tuple(Array(String), String?)?
+  # What `lines` declares for `type_name` (in `namespace` when given and the
+  # file declares the name more than once), or nil when it does not.
+  private def member_defs_in(type_name : String, lines : Array(String), masked_lines : Array(String),
+                             namespace : String? = nil) : TypeMembers?
     # Hoisted out of the loop: an interpolated regex literal recompiles
     # (PCRE2 JIT) on every evaluation, i.e. once per line.
     type_decl_regex = /\b(?:record|class|struct)\s+(?:class\s+|struct\s+)?#{Regex.escape(type_name)}\b/
-    def_idx = lines.index do |l|
-      l.includes?(type_name) && l.matches?(type_decl_regex)
+    decl_lines = (0...lines.size).select do |i|
+      lines[i].includes?(type_name) && lines[i].matches?(type_decl_regex)
     end
-    return unless def_idx
+    def_idx = decl_lines.first? || return
+    if namespace && decl_lines.size > 1
+      namespaces = line_namespaces(masked_lines)
+      def_idx = decl_lines.find { |i| namespaces[i] == namespace } || def_idx
+    end
     base = declared_base(masked_lines, def_idx, type_decl_regex)
     defline = lines[def_idx]
     name_pos = defline.index(/\b#{Regex.escape(type_name)}\b/)
@@ -509,55 +570,112 @@ module Analyzer::CSharp::Common
     # A positional record's parameters are its properties; a class's primary
     # constructor parameters are not members at all.
     if name_pos && paren && paren > name_pos && defline.matches?(/\brecord\b/)
-      return {split_csharp_parameters(gather_balanced_parens(lines, masked_lines, def_idx, paren)), base}
+      defs = split_csharp_parameters(gather_balanced_parens(lines, masked_lines, def_idx, paren))
+      return TypeMembers.new(defs, base, defs.map { |member| Common.member_name(member) }.to_set)
     end
 
-    defs = [] of String
     block = extract_method_block(lines, masked_lines, def_idx)
-    # Brace depth per char, over the masked twin (same length): a member of
-    # the type sits at depth 1, one of a nested type deeper.
-    depth = 0
-    depth_at = extract_method_block(masked_lines, masked_lines, def_idx).chars.map do |char|
-      at = depth
-      depth += 1 if char == '{'
-      depth -= 1 if char == '}'
-      at
-    end
-    ctor_args = nil
+    masked = extract_method_block(masked_lines, masked_lines, def_idx).chars
+    depth_at = type_body_depths(masked, masked_lines[def_idx].index(type_decl_regex) || 0)
+    defs = [] of String
+    names = Set(String).new
+    ctors = nil
     block.scan(PUBLIC_PROPERTY_RE) do |m|
-      next if depth_at[m.begin(3)]?.try(&.> 1)
+      next unless depth_at[m.begin(3)]? == 1
+      names << m[3]
       attrs = m[1].gsub(/\s+/, " ").strip
+      open = m.begin(4)
+      accessors, close = accessor_list(masked, open)
       # A getter-only or privately-set property is never written from the
-      # request, unless a serializer attribute opts it in or a constructor
-      # parameter of the same name (which the deserializer binds) sets it.
-      unless m[4].matches?(PUBLIC_SETTER_RE) || attrs.matches?(SERIALIZER_INCLUDE_RE)
-        ctor_args ||= constructor_arg_names(type_name, block)
-        next unless ctor_args.includes?(m[3].downcase)
+      # request, unless a serializer attribute opts it in, a constructor
+      # parameter of the same name (which the deserializer binds) sets it,
+      # or it is initialized (`{ get; } = new()`), which Json.NET and form
+      # binding fill in place.
+      unless accessors.matches?(PUBLIC_SETTER_RE) || attrs.matches?(SERIALIZER_INCLUDE_RE) ||
+             (masked[close + 1, 40]? || [] of Char).join.matches?(/\A\s*=\s*(?:new\b|\[)/)
+        ctors ||= constructors(type_name, masked)
+        next unless ctors.any? { |params| params.any? { |param| Common.member_name(param).compare(m[3], case_insensitive: true) == 0 } }
       end
       defs << "#{attrs} #{m[2].strip} #{m[3]}".strip
     end
-    {defs, base}
-  end
-
-  # Lower-cased parameter names of every constructor (or primary
-  # constructor) of `type_name` in its declaration `block`.
-  private def constructor_arg_names(type_name : String, block : String) : Set(String)
-    names = Set(String).new
-    block.scan(/\b#{Regex.escape(type_name)}\s*\(([^()]*)\)/) do |m|
-      m[1].split(',').each do |arg|
-        arg.sub(/=.*/m, "").match(/([A-Za-z_]\w*)\s*\z/).try { |n| names << n[1].downcase }
+    # A `[JsonConstructor]` binds its parameters by name: each is a key.
+    (ctors || constructors(type_name, masked)).each do |params|
+      next unless params.first? == "[JsonConstructor]"
+      params[1..].each do |param|
+        name = Common.member_name(param)
+        defs << param unless name.empty? || defs.any? { |member| Common.member_name(member).compare(name, case_insensitive: true) == 0 }
       end
     end
-    names
+    TypeMembers.new(defs, base, names)
+  end
+
+  # Brace depth per char of a type's declaration block (masked), counted
+  # from the declaration at `start`: 1 inside the type's own body, deeper in
+  # a nested type, and 0 before it or after it closes (the block may run
+  # past it when the type shares a line with `namespace X {`).
+  private def type_body_depths(masked : Array(Char), start : Int32) : Array(Int32)
+    depth = 0
+    opened = false
+    masked.map_with_index do |char, i|
+      next 0 if i < start || (opened && depth == 0)
+      at = depth
+      if char == '{'
+        depth += 1
+        opened = true
+      elsif char == '}'
+        depth -= 1
+      end
+      at
+    end
+  end
+
+  # The accessor list of a property whose `{` is at `open` (accessor
+  # bodies dropped, so `{ get { … } set { … } }` reads `get set`), and the
+  # index of its closing `}`.
+  private def accessor_list(masked : Array(Char), open : Int32) : Tuple(String, Int32)
+    io = String::Builder.new
+    depth = 0
+    (open...masked.size).each do |i|
+      char = masked[i]
+      depth += 1 if char == '{'
+      depth -= 1 if char == '}'
+      return {io.to_s, i} if depth == 0
+      io << char if depth == 1 && char != '{'
+    end
+    {io.to_s, masked.size - 1}
+  end
+
+  # The parameter definitions of every constructor (or primary constructor)
+  # of `type_name` in its masked declaration block, each list led by
+  # `"[JsonConstructor]"` when that attribute marks it.
+  private def constructors(type_name : String, masked : Array(Char)) : Array(Array(String))
+    text = masked.join
+    lists = [] of Array(String)
+    text.scan(/\b#{Regex.escape(type_name)}\s*\(/) do |m|
+      before = text[0, m.begin(0)]
+      next if before.matches?(/\bnew\s*\z/)
+      depth = 0
+      close = (m.end(0) - 1...text.size).find do |i|
+        depth += 1 if text[i] == '('
+        depth -= 1 if text[i] == ')'
+        depth == 0
+      end || next
+      params = split_csharp_parameters(text[m.end(0)...close]).map(&.strip).reject(&.empty?)
+      # The attributes between the previous member and this one.
+      attrs = before[(before.rindex(/[;{}]/) || -1) + 1..]
+      params.unshift("[JsonConstructor]") if attrs.matches?(/\bJsonConstructor(?:Attribute)?\b/)
+      lists << params
+    end
+    lists
   end
 
   # The base class named by the declaration at `def_idx` (read up to its
   # body or `;`), or nil when it declares none.
   private def declared_base(masked_lines : Array(String), def_idx : Int32, type_decl_regex : Regex) : String?
     head = masked_lines[def_idx, 6].join(' ')
-    head = head[0, head.index(/[{;]/) || head.size]
     decl = head.match(type_decl_regex) || return
-    head[decl.end..].match(BASE_AFTER_NAME_RE).try(&.[1])
+    head = head[decl.end..]
+    head[0, head.index(/[{;]/) || head.size].match(BASE_AFTER_NAME_RE).try(&.[1])
   end
 
   # Collects the text inside a parenthesised group that opens at `open_pos`
@@ -603,7 +721,7 @@ module Analyzer::CSharp::Common
   # so its inputs are the element's members.
   protected def body_type_params(param_def : String, param_type : String, file : String,
                                  lines : Array(String), masked_lines : Array(String)) : Array(Param)?
-    decl = param_def.gsub(/\[[^\]]+\]\s*/, "").sub(/=.*/m, "").gsub(/\b(?:ref|out|in|params|this)\s+/, "").strip
+    decl = param_def.gsub(ATTRIBUTE_LIST_RE, "").sub(/=.*/m, "").gsub(/\b(?:ref|out|in|params|this)\s+/, "").strip
     type = decl.sub(/\s*[A-Za-z_]\w*\z/, "").rchop('?')
     if param_type == "json" && (element = type.match(JSON_COLLECTION_BODY_RE))
       type = element[1]? || element[2]
@@ -620,7 +738,7 @@ module Analyzer::CSharp::Common
   # write it (reads are case-insensitive). nil for a `[JsonIgnore]` member.
   private def body_member_param(member_def : String, param_type : String) : Param?
     return if member_def.matches?(JSON_IGNORE_RE)
-    cleaned = member_def.gsub(/\[[^\]]+\]\s*/, "").sub(/=.*/m, "").strip
+    cleaned = member_def.gsub(ATTRIBUTE_LIST_RE, "").sub(/=.*/m, "").strip
     name = cleaned.match(/([A-Za-z_]\w*)\s*\z/).try(&.[1]) || return
     if explicit = member_def.match(JSON_PROPERTY_NAME_RE)
       name = explicit[1]
@@ -648,40 +766,69 @@ module Analyzer::CSharp::Common
   BINDER_TYPEOF_RE        = /\btypeof\s*\(\s*([\w.]+)\s*\)/
   MODEL_BINDER_TYPEOF_RE  = /\bModelBinder(?:Attribute)?\s*\([^\]]*?\btypeof\s*\(\s*([\w.]+)\s*\)/
 
-  # A parameter the request never supplies: `[BindNever]`, or one bound by
-  # a custom model binder (`[ModelBinder(typeof(B))]`, or an attribute whose
-  # scanned definition derives from `ModelBinderAttribute` naming `B`) whose
-  # scanned definition never reads the value posted under the parameter's
-  # name (`bindingContext.ModelName`): it builds the value server-side,
-  # e.g. loading an entity by a route id. A binder the scan does not
-  # declare is assumed to read the request.
-  protected def custom_bound_parameter?(param_def : String) : Bool
-    return false unless param_def.includes?('[')
+  # Request access in a model binder's source: the value posted under the
+  # parameter's own name, a value provider, or the raw request.
+  BINDER_PARAM_NAME_READ_RE = /\b(?:ModelName|FieldName)\b/
+  BINDER_REQUEST_READ_RE    = /\bValueProvider\b|\bRequest\s*\./
+  BINDER_FIXED_KEY_RE       = /\bValueProvider\s*\.\s*GetValue\s*\(\s*"([^"]+)"\s*\)/
+
+  # How a parameter's custom binding changes what the request sends:
+  # `{drop, key}`. `drop` when the request never supplies it: `[BindNever]`,
+  # or a custom model binder (`[ModelBinder(typeof(B))]`, or an attribute
+  # whose scanned definition derives from `ModelBinderAttribute` naming B)
+  # whose scanned source, base classes included, reads nothing from the
+  # request — it builds the value server-side, e.g. loading an entity by a
+  # route id. `key` when the binder reads one fixed value-provider key
+  # (`ValueProvider.GetValue("sort")`) instead of the parameter's name. A
+  # binder the scan does not declare is assumed to read the request as
+  # usual.
+  protected def custom_binding(param_def : String) : Tuple(Bool, String?)
+    return {false, nil} unless param_def.includes?('[')
     names = param_def.scan(PARAM_ATTRIBUTE_NAME_RE).map(&.[1])
-    return true if names.any?(&.in?("BindNever", "BindNeverAttribute"))
+    return {true, nil} if names.any?(&.in?("BindNever", "BindNeverAttribute"))
     binder = param_def.match(MODEL_BINDER_TYPEOF_RE).try(&.[1])
     binder ||= names.compact_map { |attr| attribute_binder_type(attr) }.first?
-    return false unless binder
-    binder_block = type_block(binder.split('.').last) || return false
-    !binder_block.includes?("ModelName")
+    return {false, nil} unless binder
+    source = binder_source(binder.split('.').last) || return({false, nil})
+    return {false, nil} if source.matches?(BINDER_PARAM_NAME_READ_RE)
+    keys = source.scan(BINDER_FIXED_KEY_RE).map(&.[1]).uniq!
+    return {false, keys.first} if keys.size == 1
+    {!source.matches?(BINDER_REQUEST_READ_RE), nil}
   end
 
   # The binder type a custom `ModelBinderAttribute` subclass names.
   private def attribute_binder_type(attr : String) : String?
     return if attr.starts_with?("From") || attr.starts_with?("ModelBinder")
-    block = type_block(attr.ends_with?("Attribute") ? attr : "#{attr}Attribute") || return
+    block, _ = type_block(attr.ends_with?("Attribute") ? attr : "#{attr}Attribute") || return
     return unless block.matches?(/:\s*(?:[\w.]+\.)?ModelBinderAttribute\b/)
     block.match(BINDER_TYPEOF_RE).try(&.[1])
   end
 
-  # The declaration block of a type the scan declares once, or nil.
-  private def type_block(type_name : String) : String?
+  # A binder's source with its scanned base classes'; nil when the scan
+  # does not declare it.
+  private def binder_source(type_name : String) : String?
+    block, base = type_block(type_name) || return
+    io = String::Builder.new(block)
+    seen = Set{type_name}
+    MAX_BASE_DEPTH.times do
+      name = base.try(&.split('.').last) || break
+      break unless seen.add?(name)
+      base_block, base = type_block(name) || break
+      io << '\n' << base_block
+    end
+    io.to_s
+  end
+
+  # The declaration block and base class of a type the scan declares once,
+  # or nil.
+  private def type_block(type_name : String) : Tuple(String, String?)?
     files = csharp_type_files[type_name]?
     return unless files && files.size == 1
     lexer = Noir::CSharpLexer.new(read_file_content(files.first))
     lines = lexer.code_lines
-    def_idx = lines.index(&.matches?(/\b(?:class|record|struct)\s+#{Regex.escape(type_name)}\b/)) || return
-    extract_method_block(lines, lexer.masked_lines, def_idx)
+    decl_regex = /\b(?:class|record|struct)\s+#{Regex.escape(type_name)}\b/
+    def_idx = lines.index(&.matches?(decl_regex)) || return
+    {extract_method_block(lines, lexer.masked_lines, def_idx), declared_base(lexer.masked_lines, def_idx, decl_regex)}
   end
 
   protected def attach_csharp_callees(endpoint : Endpoint,
