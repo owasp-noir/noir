@@ -96,6 +96,9 @@ module Analyzer::Python
       "FILES"        => {["POST"], "form"},
       "data"         => {["POST", "PUT", "PATCH"], "form"},
       "query_params" => {nil, "query"},
+      # Not a Django attribute: what `with_request_aliases` spells a local
+      # holding `json.loads(request.body)` as, so its keys read as JSON.
+      "json_body" => {["POST"], "json"},
     }
 
     # Precompiled per-field access patterns so `extract_params_from_line`
@@ -121,6 +124,7 @@ module Analyzer::Python
     REQUEST_PARAM_TYPE_MAP = {
       "query"  => nil,
       "form"   => ["POST", "PUT", "PATCH"],
+      "json"   => ["POST", "PUT", "PATCH"],
       "cookie" => nil,
       "header" => nil,
     }
@@ -1818,7 +1822,8 @@ module Analyzer::Python
 
           # A decorator-restricted view keeps its verb set: body accessors
           # (`request.data`, `request.POST`) must not widen it.
-          suspicious_params.concat scan_function_view_lines(lines, filepath, suspicious_http_methods, restricted)
+          branched_reads = [] of Tuple(Array(::String), Array(Param))
+          suspicious_params.concat scan_function_view_lines(lines, filepath, suspicious_http_methods, restricted, branched_reads)
 
           # What the functions it hands `request` to read and test, scoped
           # to the `request.method` branch that calls them.
@@ -1850,7 +1855,10 @@ module Analyzer::Python
               applies = branch ? branch.includes?(http_method_name) : !(late && branch_verbs.includes?(http_method_name))
               method_params.concat(params) if applies
             end
-            endpoint = Endpoint.new(url, http_method_name, filter_params(http_method_name, method_params), details)
+            endpoint_params = filter_params(http_method_name, method_params)
+            # The verb branch already says which verb carries the body.
+            branched_reads.each { |verbs, params| endpoint_params.concat(params) if verbs.includes?(http_method_name) }
+            endpoint = Endpoint.new(url, http_method_name, endpoint_params, details)
             endpoint.handler = Handler.new(function_or_class_name, filepath, definition_line)
             handler_callees.each { |c| endpoint.push_callee(c) }
             endpoints << endpoint
@@ -2169,10 +2177,16 @@ module Analyzer::Python
     # nearest `serializer_class`, named where the view declares it (not
     # where the inherited method calling `get_serializer` lives). Nil when
     # an override decides some other way.
-    private def view_serializer_class(view_chain : Array(DrfClass), action : ::String?) : Tuple(::String, ::String)?
+    private def view_serializer_class(view_chain : Array(DrfClass), action : ::String?,
+                                      attribute_only = false) : Tuple(::String, ::String)?
+      # `@action(serializer_class=X)` sets the attribute for that action;
+      # a `get_serializer_class` override anywhere up the chain still
+      # decides first, as DRF resolves the method before the attribute.
+      kwarg = action_kwarg_class(view_chain, action, "serializer_class")
+      return kwarg if attribute_only && kwarg
       view_chain.each do |klass|
         lines = klass.codeblock.split("\n")
-        if index = lines.index(&.matches?(GET_SERIALIZER_CLASS_DEF_RE))
+        if !attribute_only && (index = lines.index(&.matches?(GET_SERIALIZER_CLASS_DEF_RE)))
           body = parse_code_block(lines[index..]) || return
           case choice = static_serializer_choice(body, action)
           when :super   then next
@@ -2180,9 +2194,29 @@ module Analyzer::Python
           else               return
           end
         end
+        next if kwarg && !attribute_only && view_chain.any? { |base| base.codeblock.split("\n").any?(&.matches?(GET_SERIALIZER_CLASS_DEF_RE)) }
+        return kwarg if kwarg
         if bound = klass.codeblock.match(SERIALIZER_CLASS_RE)
           return {klass.filepath, bound[1]}
         end
+      end
+      kwarg
+    end
+
+    # The class an `@action(...)` decorator on method `action` passes as
+    # `key` (`serializer_class=`, `pagination_class=`), named where that
+    # method is declared: DRF sets it on the view for that action.
+    private def action_kwarg_class(view_chain : Array(DrfClass), action : ::String?, key : ::String) : Tuple(::String, ::String)?
+      return unless action
+      view_chain.each do |klass|
+        found = nil
+        each_python_class_method(klass.codeblock.split("\n")[1..]) do |method_name, decorators, _|
+          found = decorators if method_name == action && found.nil?
+        end
+        next unless decorators = found
+        args = drf_action_decorator_args(decorators) || return
+        name = args.match(/\b#{key}\s*=\s*([A-Za-z_][\w.]*)/).try(&.[1]) || return
+        return {klass.filepath, name}
       end
       nil
     end
@@ -2225,6 +2259,8 @@ module Analyzer::Python
         source = filepath
         if name.ends_with?("get_serializer")
           source, name = view_serializer_class(view_chain, action) || next
+        elsif name == "self.serializer_class"
+          source, name = view_serializer_class(view_chain, action, attribute_only: true) || next
         end
         target = resolve_python_class(source, name) || next
         declared_input_fields(target).each do |field|
@@ -2405,10 +2441,12 @@ module Analyzer::Python
         params.concat bound_form_params(helper_lines.join('\n'), path, [verb])
       end
       code.scan(SELF_REQUEST_CALL_RE) do |call|
-        next unless call[3].matches?(/(?<![\w.])request\b|\bself\.request\b/)
+        # A method handed nothing still sees the request as `self.request`
+        # (`self.get_queryset()`); only one that reads it there counts.
+        passed = call[3].matches?(/(?<![\w.])request\b|\bself\.request\b/)
         # `super().get(request, ...)` runs the next class's method.
         is_super = call[1] != "self"
-        helpers << call[2] if helpers && !is_super
+        helpers << call[2] if helpers && !is_super && passed
         next unless seen.add?("#{is_super}:#{call[2]}")
         def_re = /^\s+(?:async\s+)?def\s+#{Regex.escape(call[2])}\s*\(/
         chain.each_with_index do |klass, index_in_chain|
@@ -2417,6 +2455,7 @@ module Analyzer::Python
           lines = klass.codeblock.split("\n")
           index = lines.index(&.matches?(def_re)) || next
           if body = parse_code_block(lines[index..])
+            break unless passed || body.matches?(/\bself\.request\b/)
             params.concat drf_serializer_params(body, klass.filepath, chain, action)
             params.concat cbv_body_params(body, klass.filepath, chain, verb, depth + 1, seen, self_forms, index_in_chain, helpers, action)
           end
@@ -2432,11 +2471,18 @@ module Analyzer::Python
     RAW_BODY_RE = /(?<![\w.])request\.body\b/
 
     private def scan_function_view_lines(lines : Array(::String), filepath : ::String,
-                                         methods : Array(::String), restricted : Bool) : Array(Param)
+                                         methods : Array(::String), restricted : Bool,
+                                         branched : Array(Tuple(Array(::String), Array(Param)))? = nil) : Array(Param)
       params = [] of Param
       scan_methods = restricted ? methods.dup : methods
       folded = with_request_aliases(fold_python_continuations(lines))
-      folded.each do |line|
+      folded.each_with_index do |line, index|
+        # A JSON body read under `if request.method == "PUT":` is that
+        # verb's alone.
+        if branched && line.includes?("request.json_body") && (verbs = enclosing_method_branch(folded, index))
+          branched << {verbs, extract_params_from_line(line, [] of ::String).select(&.param_type.==("json"))}
+          line = line.gsub(/request\.json_body\b/, "_json_body")
+        end
         # Check if line has 'request.method == "GET"' similar pattern
         if line.includes? "request.method"
           suspicious_code = line.split("request.method")[1].strip
@@ -2489,10 +2535,17 @@ module Analyzer::Python
     # which mapping the local names depends on the verb served.
     REQUEST_VERB_ALIAS_RE = /^\s*([A-Za-z_]\w*)\s*=\s*(request\.(?:GET|POST|data|query_params))\s+if\s+request\.method\s*==\s*['"](\w+)['"]\s+else\s+(request\.(?:GET|POST|data|query_params))\s*$/
 
+    # `data = json.loads(request.body)` (or `request.body.decode()`): the
+    # local's top-level keys are JSON body fields.
+    JSON_BODY_ALIAS_RE = /^\s*([A-Za-z_]\w*)\s*=\s*json\.loads\s*\(\s*request\.body\b[\w.()]*\s*\)\s*$/
+
     private def with_request_aliases(lines : Array(::String), verb : ::String? = nil) : Array(::String)
       aliases = lines.compact_map do |line|
         if verb && (verb_alias = line.match(REQUEST_VERB_ALIAS_RE))
           next {/(?<![\w.])#{verb_alias[1]}(?=\s*(?:\.get(?:list)?\s*\(|\[))/, verb_alias[3].upcase == verb.upcase ? verb_alias[2] : verb_alias[4]}
+        end
+        if json_body = line.match(JSON_BODY_ALIAS_RE)
+          next {/(?<![\w.])#{json_body[1]}(?=\s*(?:\.get\s*\(|\[))/, "request.json_body"}
         end
         line.match(REQUEST_ALIAS_RE).try { |m| {/(?<![\w.])#{m[1]}(?=\s*(?:\.get(?:list)?\s*\(|\[))/, m[2]} }
       end
@@ -2764,6 +2817,9 @@ module Analyzer::Python
       serializer_params = drf_serializer_params(codeblock, klass.filepath, chain, drf_action.name)
       (codeblock.includes?("request.method") ? drf_action.params : drf_action.body_params).concat serializer_params
       drf_action.params.concat cbv_body_params(codeblock, klass.filepath, chain, drf_action.method, action: drf_action.name)
+      if paginates?(codeblock, klass.filepath, body_lines, offset)
+        drf_action.params.concat pagination_params(chain, drf_action.name)
+      end
       drf_action.callees = build_callees_from(
         codeblock,
         klass.line_index + offset + 1,
@@ -2771,6 +2827,72 @@ module Analyzer::Python
         definition_base_path: @django_base_path,
         source: read_file_content(klass.filepath)
       )
+    end
+
+    PAGINATE_CALL_RE      = /\bself\.paginate_queryset\s*\(/
+    PAGINATION_CLASS_RE   = /^\s+pagination_class\s*=\s*([A-Za-z_][\w.]*)\s*$/m
+    PAGINATION_PARAM_ATTR = /^\s+((?:page|page_size|limit|offset|cursor)_query_param)\s*=\s*(?:['"](\w+)['"]|None)/m
+
+    # Whether the action `offset` lines into `body_lines` pages its result
+    # itself: its body calls `self.paginate_queryset`, or a project
+    # decorator stacked on it does (`@paginate` wrapping the queryset the
+    # action returns). ponytail: the stock `list` action (which pages too)
+    # is not covered; it has no body in the project to read.
+    private def paginates?(codeblock : ::String, filepath : ::String, body_lines : Array(::String), offset : Int32) : Bool
+      return true if codeblock.matches?(PAGINATE_CALL_RE)
+      def_indent = body_lines[offset].size - body_lines[offset].lstrip.size
+      index = offset - 1
+      while index >= 0
+        line = body_lines[index]
+        stripped = line.lstrip
+        break if stripped.empty?
+        indent = line.size - stripped.size
+        break if indent <= def_indent && !stripped.starts_with?('@') && !stripped.starts_with?(')')
+        if indent == def_indent && (name = stripped.match(/\A@([A-Za-z_]\w*)\s*$/).try(&.[1]))
+          if (site = python_definition_site(filepath, name)) && File.file?(site[0])
+            lines = read_file_content(site[0]).split("\n")
+            def_re = /^(?:async\s+)?def\s+#{Regex.escape(site[1])}\s*\(/
+            if (def_index = lines.index(&.matches?(def_re))) && parse_code_block(lines[def_index..]).try(&.matches?(PAGINATE_CALL_RE))
+              return true
+            end
+          end
+        end
+        index -= 1
+      end
+      false
+    end
+
+    # The query parameters the view's `pagination_class` reads, with DRF's
+    # defaults for the paginator it builds on (`page`; `limit` / `offset`;
+    # `cursor`) unless a class in its chain renames or drops one. The
+    # action's own `@action(pagination_class=...)` comes first.
+    private def pagination_params(chain : Array(DrfClass), action : ::String) : Array(Param)
+      params = [] of Param
+      source, name = action_kwarg_class(chain, action, "pagination_class") || begin
+        klass = chain.find(&.codeblock.matches?(PAGINATION_CLASS_RE)) || return params
+        {klass.filepath, klass.codeblock.match(PAGINATION_CLASS_RE).try(&.[1]) || return params}
+      end
+      return params if name == "None"
+      paginator = (target = resolve_python_class(source, name)) ? drf_class_chain(target[0], target[1]) : [] of DrfClass
+      kinds = paginator.flat_map { |base| python_class_bases(base.header) }.map(&.rpartition('.')[2])
+      kinds << name.rpartition('.')[2]
+      attrs = {} of ::String => ::String?
+      if kinds.includes?("LimitOffsetPagination")
+        attrs["limit_query_param"] = "limit"
+        attrs["offset_query_param"] = "offset"
+      elsif kinds.includes?("CursorPagination")
+        attrs["cursor_query_param"] = "cursor"
+      elsif kinds.includes?("PageNumberPagination")
+        attrs["page_query_param"] = "page"
+      else
+        return params
+      end
+      # The nearest class setting an attribute wins.
+      paginator.reverse_each do |base|
+        base.codeblock.scan(PAGINATION_PARAM_ATTR) { |m| attrs[m[1]] = m[2]? }
+      end
+      attrs.each_value { |param| params << Param.new(param, "", "query") if param }
+      params
     end
 
     private def default_drf_viewset_actions(class_define_line : ::String) : Array(DjangoDrfAction)

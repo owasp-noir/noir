@@ -724,4 +724,415 @@ describe "DjangoAuthTagger" do
       CodeLocator.instance.clear_all
     end
   end
+
+  it "judges composed DRF permissions with grouping, helper refusals and non-Permission bases" do
+    CodeLocator.instance.clear_all
+    tmpdir = File.tempname("django_drf_composed_perms")
+    Dir.mkdir_p(tmpdir)
+    perms = File.join(tmpdir, "perms.py")
+    views = File.join(tmpdir, "views.py")
+    File.write(perms, <<-PY)
+      def in_group(request, groups):
+          if not request.user.is_authenticated:
+              return False
+          return request.user.groups.filter(name__in=groups).exists()
+
+      def lenient(request):
+          if settings.OPEN:
+              return True
+          if not request.user.is_authenticated:
+              return False
+          return True
+
+      class IsMember(BasePermission):
+          def has_permission(self, request, view):
+              return in_group(request, ["member"])
+
+      class Lenient(BasePermission):
+          def has_permission(self, request, view):
+              return lenient(request)
+
+      class ReadOnly(BasePermission):
+          def has_permission(self, request, view):
+              return request.method in SAFE_METHODS
+
+      class TokenScope(TokenHasScope):
+          def has_permission(self, request, view):
+              if isinstance(request.auth, AccessToken):
+                  return super().has_permission(request, view)
+              return request.user.is_authenticated
+
+      class TokenOptional(TokenHasScope):
+          def has_permission(self, request, view):
+              if isinstance(request.auth, AccessToken):
+                  return super().has_permission(request, view)
+              return True
+      PY
+    File.write(views, <<-PY)
+      class MemberViewSet(viewsets.ViewSet):
+          permission_classes = [IsMember & TokenOptional]
+
+      class LenientViewSet(viewsets.ViewSet):
+          permission_classes = [Lenient]
+
+      class GroupedViewSet(viewsets.ViewSet):
+          permission_classes = [(ReadOnly | IsMember) & TokenScope]
+
+      class EitherViewSet(viewsets.ViewSet):
+          permission_classes = [(ReadOnly & IsMember) | TokenOptional]
+
+      class NotViewSet(viewsets.ViewSet):
+          permission_classes = [~ReadOnly]
+      PY
+    [perms, views].each { |path| CodeLocator.instance.register_path(path) }
+
+    begin
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(tmpdir)
+      at = ->(method : String, line : Int32) { Endpoint.new("/#{line}", method, [] of Param, Details.new(PathInfo.new(views, line))) }
+      member = at.call("GET", 1)
+      lenient = at.call("GET", 4)
+      grouped = at.call("GET", 7)
+      either = at.call("POST", 10)
+      inverted = at.call("POST", 13)
+
+      DjangoAuthTagger.new(noir_options).perform([member, lenient, grouped, either, inverted])
+
+      # The helper refuses an anonymous caller before anything else.
+      member.tags.map(&.description).should eq(["Protected by DRF permission_classes"])
+      # This one may let it through first.
+      lenient.tags.should be_empty
+      # `TokenScope` refuses whatever the grouped alternative allows.
+      grouped.tags.map(&.description).should eq(["Protected by DRF permission_classes"])
+      # An alternative that lets anonymous through opens the whole `|`.
+      either.tags.should be_empty
+      inverted.tags.should be_empty
+    ensure
+      FileUtils.rm_rf(tmpdir)
+      CodeLocator.instance.clear_all
+    end
+  end
+
+  it "reads a project middleware's refusal and its exempt paths by definition" do
+    CodeLocator.instance.clear_all
+    tmpdir = File.tempname("django_scope_middleware")
+    Dir.mkdir_p(File.join(tmpdir, "proj"))
+    Dir.mkdir_p(File.join(tmpdir, "app"))
+    File.write(File.join(tmpdir, "manage.py"), "")
+    File.write(File.join(tmpdir, "proj", "__init__.py"), "")
+    File.write(File.join(tmpdir, "proj", "urls.py"), "urlpatterns = []\n")
+    settings = File.join(tmpdir, "proj", "settings.py")
+    middleware = File.join(tmpdir, "app", "middleware.py")
+    soft = File.join(tmpdir, "app", "soft.py")
+    views = File.join(tmpdir, "app", "views.py")
+    File.write(settings, <<-PY)
+      ROOT_URLCONF = "proj.urls"
+      PUBLIC_PREFIXES = ["/health"]
+
+      MIDDLEWARE = [
+          "django.contrib.auth.middleware.AuthenticationMiddleware",
+          "app.middleware.LoginWall",
+          "app.soft.SoftWall",
+      ]
+      PY
+    File.write(middleware, <<-'PY')
+      import re
+
+      class LoginWall:
+          def __init__(self, get_response):
+              self.get_response = get_response
+
+          def __call__(self, request):
+              prefix = settings.SCRIPT_NAME or ''
+              OPEN = ['/login', '/static/', '/beta/']
+              if settings.DEBUG:
+                  OPEN.append('/__debug__/')
+              if request.user.is_authenticated:
+                  return self.get_response(request)
+              if re.search(r'/share/\d+/', request.path) and request.GET.get('key'):
+                  return self.get_response(request)
+              for path in OPEN:
+                  if request.path.startswith(prefix + path):
+                      return self.get_response(request)
+              if any(request.path.startswith(p) for p in settings.PUBLIC_PREFIXES):
+                  return self.get_response(request)
+              if request.path.startswith('/api/'):
+                  return JsonResponse({'detail': 'no'}, status=403)
+              return HttpResponseRedirect('/login/?next=' + request.path)
+      PY
+    File.write(soft, <<-PY)
+      class SoftWall(MiddlewareMixin):
+          def process_request(self, request):
+              if request.path.startswith('/beta/') and not request.user.is_authenticated:
+                  if settings.BETA_OPEN:
+                      return None
+                  return redirect_to_login(request.get_full_path())
+      PY
+    File.write(views, <<-PY)
+      def index(request):
+          return None
+      PY
+    [settings, middleware, soft, views].each { |path| CodeLocator.instance.register_path(path) }
+
+    begin
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(tmpdir)
+      at = ->(url : String) { Endpoint.new(url, "GET", [] of Param, Details.new(PathInfo.new(views, 1))) }
+      home = at.call("/")
+      api = at.call("/api/items/<int:pk>/")
+      login = at.call("/login/")
+      debug = at.call("/__debug__/")
+      health = at.call("/health/")
+      shared = at.call("/share/<int:pk>/")
+      catch_all = at.call("/<path:resource>")
+      beta = at.call("/beta/<slug:page>")
+
+      DjangoAuthTagger.new(noir_options).perform([home, api, login, debug, health, shared, catch_all, beta])
+
+      wall = "Protected by LoginWall (settings.MIDDLEWARE refuses unauthenticated requests outside its exempt paths)"
+      home.tags.map(&.description).should eq([wall])
+      api.tags.map(&.description).should eq([wall])
+      # Exempt by its list, the list a setting adds to, a settings list,
+      # and a caller-supplied query parameter on a matching path.
+      login.tags.should be_empty
+      debug.tags.should be_empty
+      health.tags.should be_empty
+      shared.tags.should be_empty
+      # A `<path:...>` route serves exempt paths too.
+      catch_all.tags.should be_empty
+      # A setting decides: the guard stays, saying so.
+      beta.tags.map(&.description).should eq(["Protected by SoftWall (settings.MIDDLEWARE; `settings.BETA_OPEN` decides; a setting can make it public)"])
+    ensure
+      FileUtils.rm_rf(tmpdir)
+      CodeLocator.instance.clear_all
+    end
+  end
+
+  # One Django project per case: `settings` (after ROOT_URLCONF), the
+  # `app.middleware.Wall` source, and what each GET endpoint (a view in
+  # `app/views.py`) is tagged with: "" for nothing, else a substring.
+  middleware_case = ->(settings : String, wall : String, expect : Hash(String, String)) do
+    CodeLocator.instance.clear_all
+    tmpdir = File.tempname("django_mw_case")
+    begin
+      Dir.mkdir_p(File.join(tmpdir, "proj"))
+      Dir.mkdir_p(File.join(tmpdir, "app"))
+      File.write(File.join(tmpdir, "manage.py"), "")
+      File.write(File.join(tmpdir, "proj", "__init__.py"), "")
+      File.write(File.join(tmpdir, "proj", "urls.py"), "urlpatterns = []\n")
+      File.write(File.join(tmpdir, "proj", "settings.py"), "ROOT_URLCONF = \"proj.urls\"\n#{settings}\n")
+      File.write(File.join(tmpdir, "app", "middleware.py"), wall)
+      views = File.join(tmpdir, "app", "views.py")
+      File.write(views, "def index(request):\n    return None\n")
+      Dir.glob("#{tmpdir}/**/*.py").each { |path| CodeLocator.instance.register_path(path) }
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(tmpdir)
+      endpoints = expect.keys.map { |url| Endpoint.new(url, "GET", [] of Param, Details.new(PathInfo.new(views, 1))) }
+      DjangoAuthTagger.new(noir_options).perform(endpoints)
+      endpoints.each do |endpoint|
+        want = expect[endpoint.url]
+        if want.empty?
+          endpoint.tags.should be_empty
+        else
+          endpoint.tags.size.should eq(1)
+          endpoint.tags[0].description.should contain(want)
+        end
+      end
+    ensure
+      FileUtils.rm_rf(tmpdir)
+      CodeLocator.instance.clear_all
+    end
+  end
+  installed = "MIDDLEWARE = [\"app.middleware.Wall\"]"
+  sure = "refuses unauthenticated requests outside its exempt paths"
+  unsure = "which this cannot tell"
+
+  it "treats only the request path itself as the path a middleware tests" do
+    # A transformed path (`lstrip`, `[1:]`, `split`) is not the path: the
+    # guard stays, saying the exemption cannot be read.
+    middleware_case.call(installed, <<-PY, {"/api/x/" => unsure, "/home/" => unsure})
+      EXEMPT = ["api/"]
+      class Wall:
+          def __call__(self, request):
+              path = request.path_info.lstrip("/")
+              if not request.user.is_authenticated:
+                  if not any(path.startswith(u) for u in EXEMPT):
+                      return HttpResponseRedirect("/login/")
+              return self.get_response(request)
+      PY
+    middleware_case.call(installed, <<-PY, {"/api/x/" => unsure, "/home/" => unsure})
+      class Wall:
+          def __call__(self, request):
+              if request.path[1:].startswith("api/"):
+                  return self.get_response(request)
+              if not request.user.is_authenticated:
+                  return HttpResponseRedirect("/login/")
+              return self.get_response(request)
+      PY
+    # A local holding exactly the path is the path.
+    middleware_case.call(installed, <<-PY, {"/api/x/" => "", "/home/" => sure})
+      EXEMPT = ("/api/",)
+      class Wall:
+          def __call__(self, request):
+              path = request.path_info
+              if not request.user.is_authenticated and not path.startswith(tuple(EXEMPT)):
+                  return HttpResponseRedirect(settings.LOGIN_URL)
+              return self.get_response(request)
+      PY
+  end
+
+  it "reads only bare string literals as a middleware's exempt paths" do
+    middleware_case.call(installed, <<-PY, {"/login/" => unsure, "/home/" => unsure})
+      class Wall:
+          def __call__(self, request):
+              if request.path in [reverse("login")]:
+                  return self.get_response(request)
+              if not request.user.is_authenticated:
+                  return HttpResponseRedirect("/login/")
+              return self.get_response(request)
+      PY
+    middleware_case.call(installed, <<-PY, {"/open/" => unsure})
+      OPEN = (os.environ.get("OPEN_PATHS", "/open/").split(","))
+      class Wall:
+          def __call__(self, request):
+              if not request.user.is_authenticated and not any(request.path.startswith(p) for p in OPEN):
+                  return HttpResponseRedirect("/login/")
+              return self.get_response(request)
+      PY
+  end
+
+  it "says when a setting decides a middleware guard, and drops one the view runs before" do
+    middleware_case.call("import os\nMIDDLEWARE = []\nif os.environ.get('PRIVATE'):\n    MIDDLEWARE += ['app.middleware.Wall']", <<-PY, {"/home/" => "installs it only on a condition; a setting can make it public"})
+      class Wall:
+          def __call__(self, request):
+              if not request.user.is_authenticated:
+                  return HttpResponseRedirect("/login/")
+              return self.get_response(request)
+      PY
+    middleware_case.call(installed, <<-PY, {"/home/" => "`not settings.LOGIN_REQUIRED` decides; a setting can make it public"})
+      class Wall:
+          def __call__(self, request):
+              if not settings.LOGIN_REQUIRED:
+                  return self.get_response(request)
+              if not request.user.is_authenticated:
+                  return HttpResponseRedirect("/login/")
+              return self.get_response(request)
+      PY
+    # The response is built first: the refusal only replaces it.
+    middleware_case.call(installed, <<-PY, {"/home/" => ""})
+      class Wall:
+          def __call__(self, request):
+              response = self.get_response(request)
+              if not request.user.is_authenticated:
+                  return HttpResponseRedirect("/login/")
+              return response
+      PY
+    # An anonymous caller sends no API token.
+    middleware_case.call(installed, <<-PY, {"/home/" => sure})
+      class Wall:
+          def __call__(self, request):
+              if not request.user.is_authenticated and "HTTP_X_API_TOKEN" not in request.META:
+                  return HttpResponseRedirect("/login/")
+              return self.get_response(request)
+      PY
+  end
+
+  it "applies a middleware only to the project whose settings install it" do
+    CodeLocator.instance.clear_all
+    tmpdir = File.tempname("django_mw_monorepo")
+    begin
+      {"a_svc" => true, "b_svc" => false}.each do |svc, refuses|
+        %w[proj core app].each { |dir| Dir.mkdir_p(File.join(tmpdir, svc, dir)) }
+        File.write(File.join(tmpdir, svc, "proj", "__init__.py"), "")
+        File.write(File.join(tmpdir, svc, "proj", "urls.py"), "urlpatterns = []\n")
+        File.write(File.join(tmpdir, svc, "proj", "settings.py"), "ROOT_URLCONF = \"proj.urls\"\nMIDDLEWARE = [\"core.middleware.Wall\"]\n")
+        File.write(File.join(tmpdir, svc, "app", "views.py"), "def index(request):\n    return None\n")
+        body = refuses ? "        if not request.user.is_authenticated:\n            return HttpResponseRedirect('/login/')\n" : ""
+        File.write(File.join(tmpdir, svc, "core", "middleware.py"), "class Wall:\n    def __call__(self, request):\n#{body}        return self.get_response(request)\n")
+      end
+      Dir.glob("#{tmpdir}/**/*.py").each { |path| CodeLocator.instance.register_path(path) }
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(tmpdir)
+      a = Endpoint.new("/a/", "GET", [] of Param, Details.new(PathInfo.new(File.join(tmpdir, "a_svc", "app", "views.py"), 1)))
+      b = Endpoint.new("/b/", "GET", [] of Param, Details.new(PathInfo.new(File.join(tmpdir, "b_svc", "app", "views.py"), 1)))
+      DjangoAuthTagger.new(noir_options).perform([a, b])
+      a.tags.map(&.description).should eq(["Protected by Wall (settings.MIDDLEWARE #{sure})"])
+      b.tags.should be_empty
+    ensure
+      FileUtils.rm_rf(tmpdir)
+      CodeLocator.instance.clear_all
+    end
+  end
+
+  it "judges a permission helper only when it is the whole verdict, and same-named classes only when they agree" do
+    CodeLocator.instance.clear_all
+    tmpdir = File.tempname("django_drf_helper_scope")
+    Dir.mkdir_p(tmpdir)
+    perms = File.join(tmpdir, "perms.py")
+    other = File.join(tmpdir, "other.py")
+    views = File.join(tmpdir, "views.py")
+    File.write(perms, <<-PY)
+      def in_group(request, groups):
+          if not request.user.is_authenticated:
+              return False
+          return True
+
+      class GroupOrList(BasePermission):
+          def has_permission(self, request, view):
+              return in_group(request, ["user"]) or view.action == "list"
+
+      class GroupOnPost(BasePermission):
+          def has_permission(self, request, view):
+              if request.method == "POST":
+                  return in_group(request, ["user"])
+              return True
+
+      class Gate(BasePermission):
+          def has_permission(self, request, view):
+              return True
+
+      class RecipeLike(BasePermission):
+          def has_permission(self, request, view):
+              share = request.query_params.get("share")
+              return ((in_group(request, ["guest"]) and request.method in SAFE_METHODS) or in_group(
+                  request, ["user"])) or (share and request.method in SAFE_METHODS)
+      PY
+    File.write(other, <<-PY)
+      class Gate(object):
+          def has_permission(self, request, view):
+              return request.user.is_staff
+      PY
+    File.write(views, <<-PY)
+      class AViewSet(viewsets.ViewSet):
+          permission_classes = [GroupOrList]
+
+      class BViewSet(viewsets.ViewSet):
+          permission_classes = [GroupOnPost]
+
+      class CViewSet(viewsets.ViewSet):
+          permission_classes = [Gate]
+
+      class DViewSet(viewsets.ViewSet):
+          permission_classes = [RecipeLike]
+      PY
+    [perms, other, views].each { |path| CodeLocator.instance.register_path(path) }
+
+    begin
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(tmpdir)
+      at = ->(method : String, line : Int32) { Endpoint.new("/#{line}", method, [] of Param, Details.new(PathInfo.new(views, line))) }
+      endpoints = [at.call("POST", 1), at.call("POST", 4), at.call("GET", 7)]
+      # The whole `or` / `and` return, read per verb: a share link opens
+      # reads; a write needs a group an anonymous caller is never in.
+      recipe_read = at.call("GET", 10)
+      recipe_write = at.call("PUT", 10)
+      DjangoAuthTagger.new(noir_options).perform(endpoints + [recipe_read, recipe_write])
+      endpoints.each(&.tags.should(be_empty))
+      recipe_read.tags.should be_empty
+      recipe_write.tags.map(&.description).should eq(["Protected by DRF permission_classes"])
+    ensure
+      FileUtils.rm_rf(tmpdir)
+      CodeLocator.instance.clear_all
+    end
+  end
 end

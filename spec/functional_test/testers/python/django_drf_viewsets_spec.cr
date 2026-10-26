@@ -29,6 +29,27 @@ extracted_endpoints = [
   Endpoint.new("/api/open/", "GET"),
   Endpoint.new("/api/token/", "POST"),
   Endpoint.new("/logo/{filename}/", "GET", [Param.new("filename", "", "path")]),
+  # `@action(serializer_class=...)` is the `self.serializer_class` the
+  # action hands `request.data`.
+  Endpoint.new("/api/feed/bulk/", "POST", [Param.new("reason", "", "form"), Param.new("ids", "", "form")]),
+  # A project decorator calling `self.paginate_queryset` pages the action:
+  # the view's paginator query params, renamed where its class says so.
+  Endpoint.new("/api/feed/{pk}/related/", "GET", [Param.new("page", "", "query"), Param.new("size", "", "query"), pk]),
+  # ...unless the action turns pagination off.
+  Endpoint.new("/api/feed/everything/", "GET"),
+  # `self.get_queryset()` reads `self.request` though handed nothing.
+  Endpoint.new("/api/feed/calendar/", "GET", [Param.new("tag", "", "query")]),
+  # `json.loads(request.body)`'s keys are JSON body fields, on the verb
+  # that carries a body.
+  Endpoint.new("/hook/<slug:token>/", "GET", [Param.new("token", "", "path")]),
+  Endpoint.new("/hook/<slug:token>/", "POST", [Param.new("message", "", "json"), Param.new("token", "", "path")]),
+  # A `get_serializer_class` override up the chain decides before the
+  # action's `serializer_class=`, as DRF resolves the method first.
+  Endpoint.new("/api/pick/pick/", "POST", [Param.new("ids", "", "form")]),
+  # A body read under a verb branch is that verb's alone.
+  Endpoint.new("/edit/", "GET"),
+  Endpoint.new("/edit/", "POST"),
+  Endpoint.new("/edit/", "PUT", [Param.new("title", "", "json")]),
 ]
 
 tester = FunctionalTester.new("fixtures/python/django_drf_viewsets/", {

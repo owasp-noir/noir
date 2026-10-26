@@ -77,3 +77,73 @@ class TokenView(ObtainAuthToken):
 
 def logo(request, filename=None):
     return Response()
+
+
+import json  # noqa: E402
+
+from rest_framework.pagination import PageNumberPagination  # noqa: E402
+
+from api.serializers import IdsSerializer  # noqa: E402
+
+
+def paginate(func):
+    def inner(self, *args, **kwargs):
+        page = self.paginate_queryset(func(self, *args, **kwargs))
+        return self.get_paginated_response(page)
+
+    return inner
+
+
+class FeedPagination(PageNumberPagination):
+    page_size_query_param = "size"
+
+
+class FeedViewSet(GenericViewSet):
+    pagination_class = FeedPagination
+    serializer_class = IdsSerializer
+
+    def get_queryset(self):
+        return self.request.query_params.get("tag")
+
+    @action(methods=["post"], detail=False, serializer_class=BulkSerializer)
+    def bulk(self, request):
+        serializer = self.serializer_class(data=request.data)
+        return Response(serializer)
+
+    @action(methods=["get"], detail=True)
+    @paginate
+    def related(self, request, pk=None):
+        return []
+
+    @action(methods=["get"], detail=False)
+    def calendar(self, request):
+        return Response(self.get_queryset())
+
+    @action(methods=["get"], detail=False, pagination_class=None)
+    @paginate
+    def everything(self, request):
+        return []
+
+
+def hook(request, token):
+    data = json.loads(request.body.decode())
+    return Response(data["message"]["text"])
+
+
+class PickBase(GenericViewSet):
+    def get_serializer_class(self):
+        return IdsSerializer
+
+
+class PickViewSet(PickBase):
+    @action(methods=["post"], detail=False, serializer_class=BulkSerializer)
+    def pick(self, request):
+        serializer = self.get_serializer(data=request.data)
+        return Response(serializer)
+
+
+def edit(request):
+    if request.method == "PUT":
+        body = json.loads(request.body)
+        return Response(body["title"])
+    return Response()
