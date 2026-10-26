@@ -708,7 +708,7 @@ module Analyzer::Php
         params.concat(illuminate_request_params(helper_body[0], klass))
       end
       params.concat(static_helper_request_params(body, source, routes_file_path)) if body.includes?("$request")
-      signature = SIGNATURE_RE.match_at_byte_index(source.offsets.content, signature_match.byte_end(0)).try(&.[0]) || ""
+      signature = source.offsets.match(SIGNATURE_RE, source.offsets.char(signature_match.byte_end(0))).try(&.[0]) || ""
       return params unless signature.includes?("Request")
 
       signature.scan(FORM_REQUEST_HINT_RE) do |m|
@@ -728,7 +728,7 @@ module Analyzer::Php
 
     private def static_helper_request_params(body : String, source : ControllerSource, routes_file_path : String) : Array(Param)
       params = [] of Param
-      namespace = source.offsets.content.match(NAMESPACE_DECL_RE).try(&.[1])
+      namespace = source.offsets.match(NAMESPACE_DECL_RE, 0).try(&.[1])
       root = composer_project_root(routes_file_path)
       body.scan(STATIC_REQUEST_CALL_RE) do |call|
         fqcn = qualify_class(call[1], source.imports, namespace)
