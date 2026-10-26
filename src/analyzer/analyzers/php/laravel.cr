@@ -3,6 +3,7 @@ require "../../../minilexers/php_lexer"
 require "../../../utils/char_offsets"
 require "../../../utils/http_symbols"
 require "./laravel_middleware"
+require "./laravel_route_loops"
 
 module Analyzer::Php
   class Laravel < PhpEngine
@@ -30,8 +31,9 @@ module Analyzer::Php
     # `namespace` (`'namespace' => 'App\\Http\\Controllers'` / `Route::namespace(...)`)
     # qualifies the string actions in the body; `middleware` is the names
     # the group applies.
+    # `uses` is the closure's `use ($a, $b)` capture list.
     private record RouteGroup, prefix : String, body : String, body_start : Int32, body_end : Int32, controller : String?,
-      namespace : String?, middleware : Array(String)
+      namespace : String?, middleware : Array(String), uses : Array(String)
 
     private record ResourceRouteCall, resource : String, statement : String, start_pos : Int32
 
@@ -188,6 +190,7 @@ module Analyzer::Php
       # outermost first. A `Route::group([...], …)` carries its prefix in the
       # leading options array rather than the chain.
       groups = [] of Tuple(Int32, Int32, String, Array(String))
+      imports = parse_use_imports(content)
       pos = 0
       while group_match = content.match(WIRING_GROUP_RE, pos)
         open = group_match.end(0) - 1
@@ -199,7 +202,7 @@ module Analyzer::Php
           options_end = lexer.matching_delimiter(options.end(0) - 1)
           prelude += content[options.begin(0)..options_end] if options_end
         end
-        groups << {open, close, extract_group_prefix(prelude), middleware_names(prelude)}
+        groups << {open, close, extract_group_prefix(prelude), middleware_names(prelude, imports)}
       end
 
       api_spans = content.scan(WITH_ROUTING_API_RE).map { |m| m.begin(0)...m.end(0) }
@@ -321,7 +324,10 @@ module Analyzer::Php
                                        php_mode : Bool = false,
                                        controller : String? = nil,
                                        namespace : String? = nil,
-                                       middleware : Array(String) = [] of String) : Array(Endpoint)
+                                       middleware : Array(String) = [] of String,
+                                       arrays : Hash(String, LiteralArray)? = nil,
+                                       budget : LoopBudget = LoopBudget.new,
+                                       loop_body : Bool = false) : Array(Endpoint)
       endpoints = [] of Endpoint
       # One structural pass over this file/body. `PhpLexer` masks strings,
       # comments and heredoc/nowdoc bodies a single time; every
@@ -331,7 +337,19 @@ module Analyzer::Php
       # pass below was already carved out of a PHP region.
       lexer = Noir::PhpLexer.new(content, php_mode: php_mode)
       offsets = Noir::CharOffsets.new(content)
-      route_groups = extract_route_groups(content, lexer)
+      # The constant literal arrays the file assigns, read once from the whole
+      # file: a group closure iterates one it captured with `use ($map)`.
+      arrays ||= literal_array_assignments(content, lexer)
+      route_groups = extract_route_groups(content, lexer, imports)
+      # `foreach` loops over a constant literal array register one route per
+      # entry: their bodies are scanned once per entry instead of once as
+      # written, which would emit `{$name}` as a placeholder and no handler.
+      expanded_loops = expand_route_loops(content, lexer, arrays, budget) do |body, body_start, visible|
+        analyze_routes_content(body, prefix, file_path, include_callee, base_line + offsets.line(body_start) - 1, imports, php_mode: true,
+          controller: controller, namespace: namespace, middleware: middleware, arrays: visible, budget: budget, loop_body: true)
+      end
+      loop_bodies = expanded_loops.map(&.[0])
+      route_groups.reject! { |group| loop_bodies.any?(&.includes?(group.body_start)) }
       resource_controller_cache = {} of String => ControllerActionMap?
       # Character ranges that are inside PHP comments (`//`, `#`, `/* */`),
       # string literals (`'...'`, `"..."`) or heredoc/nowdoc bodies. The
@@ -340,7 +358,10 @@ module Analyzer::Php
       # `"Try Route::get(...)"` string, or a `<<<SQL … SQL` heredoc doesn't
       # surface as a real endpoint.
       skip_ranges = lexer.skip_ranges
-      ctx = RouteScanContext.new(offsets, file_path, include_callee, base_line, lexer, imports, route_groups, skip_ranges, collect_handler_bodies(offsets, base_line, lexer), controller, namespace, middleware)
+      handler_bodies = collect_handler_bodies(offsets, base_line, lexer)
+      flag_unresolved_route_args(content, lexer, handler_bodies + loop_bodies, budget) if loop_body
+      handler_bodies.concat(loop_bodies)
+      ctx = RouteScanContext.new(offsets, file_path, include_callee, base_line, lexer, imports, route_groups, skip_ranges, handler_bodies, controller, namespace, middleware)
 
       # 1. Verb routes. Every scan below walks the body the same way, with the
       # same guards — `each_laravel_route` holds that walk once. What differs
@@ -401,7 +422,8 @@ module Analyzer::Php
       RESOURCE_CALL_RES.each_key do |kind|
         extract_resource_route_calls(offsets, kind, skip_ranges, lexer).each do |call|
           next if inside_laravel_group_body?(call.start_pos, route_groups) ||
-                  inside_php_skip_range?(call.start_pos, skip_ranges)
+                  inside_php_skip_range?(call.start_pos, skip_ranges) ||
+                  loop_bodies.any?(&.includes?(call.start_pos))
 
           actions = resource_actions_for_statement(call.statement, default_resource_actions(kind, call.statement))
           parameter_overrides = resource_parameter_overrides_for_statement(call.statement)
@@ -419,8 +441,12 @@ module Analyzer::Php
         new_prefix = group.prefix.empty? ? prefix : build_full_path(prefix, group.prefix)
         group_base_line = base_line + offsets.line(group.body_start) - 1
         endpoints.concat(analyze_routes_content(group.body, new_prefix, file_path, include_callee, group_base_line, imports, php_mode: true,
-          controller: group.controller || controller, namespace: nested_namespace(namespace, group.namespace), middleware: middleware + group.middleware))
+          controller: group.controller || controller, namespace: nested_namespace(namespace, group.namespace), middleware: middleware + group.middleware,
+          arrays: arrays_captured_by(arrays, group.uses, group.body_start), budget: budget, loop_body: loop_body))
       end
+
+      # 4. The expanded loops' routes.
+      expanded_loops.each { |(_, loop_endpoints)| endpoints.concat(loop_endpoints) }
 
       endpoints
     end
@@ -534,7 +560,7 @@ module Analyzer::Php
         params = extract_brace_path_params(full_path) + params_for_method(input_params, http_method)
         endpoint = Endpoint.new(url, http_method, dedup_params(params), details.dup)
         endpoint.handler = handler
-        tag_route_guard(endpoint, ctx.file_path, ctx.middleware, prelude + tail)
+        tag_route_guard(endpoint, ctx.file_path, ctx.middleware, prelude + tail, ctx.imports)
         attach_route_callees(endpoint, handler_body, body_start_line, action, ctx.file_path) if ctx.include_callee
         endpoints << endpoint
       end
@@ -598,7 +624,7 @@ module Analyzer::Php
       details = Details.new(PathInfo.new(ctx.file_path, route_line))
       endpoint = Endpoint.new(full_path, "GET", params, details.dup)
       match_end = ctx.offsets.end(route_match)
-      tag_route_guard(endpoint, ctx.file_path, ctx.middleware, ctx.offsets.slice(ctx.offsets.begin(route_match), ctx.lexer.statement_end(match_end)))
+      tag_route_guard(endpoint, ctx.file_path, ctx.middleware, ctx.offsets.slice(ctx.offsets.begin(route_match), ctx.lexer.statement_end(match_end)), ctx.imports)
       endpoints << endpoint
       match_end
     end
@@ -681,6 +707,7 @@ module Analyzer::Php
         next unless (helper = source.first_methods[name]?) && (helper_body = method_body(source, helper))
         params.concat(illuminate_request_params(helper_body[0], klass))
       end
+      params.concat(static_helper_request_params(body, source, routes_file_path)) if body.includes?("$request")
       signature = SIGNATURE_RE.match_at_byte_index(source.offsets.content, signature_match.byte_end(0)).try(&.[0]) || ""
       return params unless signature.includes?("Request")
 
@@ -691,6 +718,31 @@ module Analyzer::Php
         params.concat(form_request_params(request_path, routes_file_path))
       end
       dedup_params(params)
+    end
+
+    # `Resolver::resolve($request)`: a static method of an app class (one
+    # the project's PSR-4 autoload maps, never a vendor class) handed the
+    # request as its first argument reads it under its own parameter name.
+    STATIC_REQUEST_CALL_RE = /(?<![\w\\$>])(\\?[A-Z][\w\\]*)::(\w+)\s*\(\s*\$request\s*[,)]/
+    NAMESPACE_DECL_RE      = /\bnamespace\s+([\w\\]+)\s*;/
+
+    private def static_helper_request_params(body : String, source : ControllerSource, routes_file_path : String) : Array(Param)
+      params = [] of Param
+      namespace = source.offsets.content.match(NAMESPACE_DECL_RE).try(&.[1])
+      root = composer_project_root(routes_file_path)
+      body.scan(STATIC_REQUEST_CALL_RE) do |call|
+        fqcn = qualify_class(call[1], source.imports, namespace)
+        next unless (path = app_class_path(fqcn, root)) && File.exists?(path)
+        content = php_code(read_file_content(path))
+        # The first parameter takes the request: untyped or a `Request`.
+        next unless sig = content.match(/(?:public|protected|private)\s+static\s+function\s+#{call[2]}\s*\(\s*(?:\??([\w\\]+)\s+)?\$(\w+)/)
+        next if (type = sig[1]?) && !type.ends_with?("Request")
+        next unless helper = extract_php_method_body_after(content, sig.begin(0)).try(&.[0])
+        # Only the first parameter is the request this route received.
+        helper = helper.gsub(/\$request\b/, "$__noir_other").gsub(/\$#{sig[2]}\b/, "$request") unless sig[2] == "request"
+        params.concat(illuminate_request_params(helper))
+      end
+      params
     end
 
     # A FormRequest is the request: `$this->input('x')` in its own methods
@@ -714,12 +766,65 @@ module Analyzer::Php
       content = php_code(read_file_content(path))
       rules = [] of Param
       if (m = content.match(RULES_METHOD_RE)) && (rules_body = extract_php_method_body_after(content, m.begin(0)))
-        rules = rule_key_params(rules_body[0])
+        rules = rule_key_params(rules_body[0]) + composed_rule_params(content, rules_body[0], routes_file_path)
       end
       reads = form_request_reads(content, routes_file_path)
       located = reads.reject { |r| r.param_type == "form" }.map(&.name).to_set
       params = dedup_params(reads + rules.reject { |r| located.includes?(r.name) })
       @source_cache_mutex.synchronize { @form_request_params[path] ||= params }
+    end
+
+    # `rules()` composed from a helper's array, `...$this->folderRules()` or
+    # `array_merge([...], $this->folderRules())`: the helper's keys, from the
+    # class or a trait it uses.
+    SPREAD_RULES_RE    = /\.\.\.\s*\$this\s*->\s*(\w+)\s*\(\s*\)\s*(?=[,\]])/
+    ARRAY_MERGE_RE     = /\barray_merge\s*\(/
+    WHOLE_THIS_CALL_RE = /\A\$this\s*->\s*(\w+)\s*\(\s*\)\z/
+
+    private def composed_rule_params(content : String, rules : String, routes_file_path : String) : Array(Param)
+      names = composed_rule_helpers(rules)
+      return [] of Param if names.empty?
+      sources = [content] + used_trait_sources(content, routes_file_path)
+      names.flat_map do |name|
+        sig_re = /(?:public|protected|private)\s+(?:static\s+)?function\s+#{name}\s*\(\s*\)\s*(?::\s*[^{;]+)?\{/
+        sources.compact_map do |source|
+          next unless sig = source.match(sig_re)
+          extract_php_method_body_after(source, sig.begin(0)).try { |body| rule_key_params(body[0]) }
+        end.first? || [] of Param
+      end
+    end
+
+    # Helpers whose array is one of the rules: a `...$this->x()` element of
+    # the returned array itself, or a whole `$this->x()` argument of a
+    # statement-level `array_merge(...)` (`return array_merge(...)`). A call inside an entry's value (a
+    # closure rule, `Rule::when(...)`) is not.
+    private def composed_rule_helpers(rules : String) : Array(String)
+      return [] of String unless rules.includes?("$this")
+      lexer = Noir::PhpLexer.new(rules, php_mode: true)
+      names = [] of String
+      rules.scan(SPREAD_RULES_RE) do |m|
+        names << m[1] if lexer.in_code?(m.begin(0)) && open_brackets(lexer, m.begin(0)) == ['[']
+      end
+      rules.scan(ARRAY_MERGE_RE) do |m|
+        open = m.end(0) - 1
+        next unless lexer.in_code?(open) && open_brackets(lexer, m.begin(0)).empty?
+        next unless close = lexer.matching_delimiter(open)
+        top_level_args(lexer, rules, open + 1, close).each { |arg| arg.match(WHOLE_THIS_CALL_RE).try { |call| names << call[1] } }
+      end
+      names.uniq
+    end
+
+    # The brackets still open at `pos`, outermost first.
+    private def open_brackets(lexer : Noir::PhpLexer, pos : Int32) : Array(Char)
+      stack = [] of Char
+      lexer.masked.each_with_index do |c, i|
+        break if i >= pos
+        case c
+        when '(', '[', '{' then stack << c
+        when ')', ']', '}' then stack.pop?
+        end
+      end
+      stack
     end
 
     private def form_request_reads(content : String, routes_file_path : String) : Array(Param)
@@ -968,7 +1073,7 @@ module Analyzer::Php
     # `Route::namespace('X')` in a group's chain, or the `'namespace' => 'X'` attribute.
     GROUP_NAMESPACE_RE = /(?:(?:->|::)namespace\s*\(\s*|['"]namespace['"]\s*=>\s*)['"]([\w\\]+)['"]/i
 
-    private def extract_route_groups(content : String, lexer : Noir::PhpLexer) : Array(RouteGroup)
+    private def extract_route_groups(content : String, lexer : Noir::PhpLexer, imports : Hash(String, String)) : Array(RouteGroup)
       groups = [] of RouteGroup
       # `[^;()]*` (not `[^;]*?`) keeps each chained-call repetition unambiguous,
       # avoiding exponential backtracking (ReDoS) on long fluent chains that
@@ -987,7 +1092,8 @@ module Analyzer::Php
           prelude = content[group_start...body_start]
           controller = prelude.match(GROUP_CONTROLLER_RE).try(&.[1])
           namespace = prelude.match(GROUP_NAMESPACE_RE).try(&.[1])
-          groups << RouteGroup.new(extract_group_prefix(prelude), body, body_start, body_end, controller, namespace, middleware_names(prelude))
+          uses = prelude.scan(CLOSURE_USE_RE).last?.try { |m| m[1].scan(/\$(\w+)/).map(&.[1]) } || [] of String
+          groups << RouteGroup.new(extract_group_prefix(prelude), body, body_start, body_end, controller, namespace, middleware_names(prelude, imports), uses)
           pos = body_end + 1
         else
           pos = group_match.end(0)
@@ -996,6 +1102,8 @@ module Analyzer::Php
 
       groups
     end
+
+    CLOSURE_USE_RE = /\bfunction\s*\([^)]*\)\s*use\s*\(([^)]*)\)/
 
     private def extract_group_closure_body_after(content : String, pos : Int32, lexer : Noir::PhpLexer) : Tuple(String, Int32, Int32)?
       return unless pos < content.size
@@ -1060,7 +1168,7 @@ module Analyzer::Php
         params.concat(params_for_method(resolved[3], method)) if resolved
         endpoint = Endpoint.new(path, method, dedup_params(params), details)
         endpoint.handler = resolved[4] if resolved
-        tag_route_guard(endpoint, file_path, middleware, statement)
+        tag_route_guard(endpoint, file_path, middleware, statement, imports)
         if include_callee && resolved
           attach_php_callees(endpoint, Noir::PhpCalleeExtractor.callees_for_body(resolved[0], resolved[1], resolved[2]))
         end

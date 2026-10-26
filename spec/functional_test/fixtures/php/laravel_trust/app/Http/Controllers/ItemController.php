@@ -2,7 +2,10 @@
 
 namespace App\Http\Controllers;
 
+use App\Http\Requests\ShowItemRequest;
+use App\Support\Pager;
 use Illuminate\Http\Request;
+use Illuminate\Support\Arr;
 
 class ItemController extends Controller
 {
@@ -28,6 +31,14 @@ class ItemController extends Controller
         $this->validateLogin($request);
 
         return redirect('/');
+    }
+
+    public function show(ShowItemRequest $request)
+    {
+        Arr::wrap($request);
+        Pager::tenant($request, 1);
+
+        return response()->json(Pager::resolve($request));
     }
 
     public function file(string $path)
