@@ -730,6 +730,7 @@ module Analyzer::CSharp
         cleaned_def, param_type = normalize_param_definition(param_def)
         next if cleaned_def.empty?
         next if param_type == "service"
+        next if custom_bound_parameter?(param_def)
 
         if match = cleaned_def.match(/(\w+)\s*(?:=\s*[^,]+)?\s*$/)
           param_name = match[1]

@@ -824,7 +824,7 @@ module Analyzer::CSharp::MinimalApiSupport
   # dropping the DI-service members (a bundle like `CatalogServices` yields
   # nothing, which is exactly right).
   private def expand_as_parameters(param_def : String, file : String, lines : Array(String), masked_lines : Array(String), route_params : Array(String), http_method : String) : Array(Param)
-    cleaned = param_def.gsub(/\[[^\]]*\]\s*/, "").strip
+    cleaned = param_def.gsub(/\[[^\]]+\]\s*/, "").strip
     type_token = cleaned.split(/\s+/).first?
     return [] of Param unless type_token
 
@@ -846,7 +846,7 @@ module Analyzer::CSharp::MinimalApiSupport
   private def as_parameters_member_to_param(member_def : String, route_params : Array(String), http_method : String) : Param?
     explicit_name = Common.explicit_binding_name(member_def)
     param_type = Common.binding_attribute_type(member_def)
-    cleaned = member_def.gsub(/\[[^\]]*\]\s*/, "").strip
+    cleaned = member_def.gsub(/\[[^\]]+\]\s*/, "").strip
     cleaned = cleaned.sub(/=.*/, "").strip
     cleaned = cleaned.gsub(/\b(ref|out|in|params)\b/, "").strip
     return if cleaned.empty?

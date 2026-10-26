@@ -349,8 +349,15 @@ module Analyzer::CSharp::Common
   TYPE_DECLARATION_RE = /\b(?:class|record|struct)\s+(?:class\s+|struct\s+)?([A-Z]\w*)/
 
   # A public property with the attributes above it (`[JsonIgnore]`,
-  # `[FromHeader(Name = "X-Tenant")]`): `{attributes, type, name}`.
-  PUBLIC_PROPERTY_RE = /((?:\[[^\]]*\]\s*)*)(?:public|internal)\s+(?:(?:required|virtual|override|new)\s+)*([\w<>\[\]\?\.]+)\s+([A-Za-z_]\w*)\s*\{\s*(?:get|init|set)\b/
+  # `[FromHeader(Name = "X-Tenant")]`): `{attributes, type, name,
+  # accessors}`, the accessors read up to the first accessor body.
+  PUBLIC_PROPERTY_RE = /((?:\[[^\]]*\]\s*)*)(?:public|internal)\s+(?:(?:required|virtual|override|new)\s+)*([\w<>\[\]\?\.]+)\s+([A-Za-z_]\w*)\s*\{(\s*(?:get|init|set)\b[^{}]*)/
+
+  # A public `set`/`init` accessor: what a binder or serializer writes.
+  PUBLIC_SETTER_RE = /(?<!private |protected |internal )\b(?:set|init)\b/
+
+  # Opts a member without a public setter into deserialization.
+  SERIALIZER_INCLUDE_RE = /\b(?:JsonInclude|JsonProperty|DataMember)\b/
 
   # A `[JsonIgnore]` that also skips the member on read (`Condition =
   # WhenWritingNull` only affects writing).
@@ -358,19 +365,97 @@ module Analyzer::CSharp::Common
   JSON_PROPERTY_NAME_RE = /\bJsonPropertyName(?:Attribute)?\s*\(\s*"([^"]+)"/
 
   @csharp_type_files : Hash(String, Array(String))? = nil
+  # Project root ("" outside any `.csproj`) => namespaces its `global using`s import.
+  @csharp_global_usings = Hash(String, Array(String)).new
+  @csharp_project_roots = [] of String
+
+  # A one-element collection type a JSON array deserializes into, or an
+  # array of one: the element type is group 1 or 2.
+  JSON_COLLECTION_BODY_RE = /\A(?:System\.Collections\.Generic\.)?(?:IEnumerable|ICollection|IList|List|IReadOnlyList|IReadOnlyCollection|ISet|HashSet)<\s*([A-Za-z_][\w.]*)\s*\??\s*>\z|\A([A-Za-z_][\w.]*)\??\[\]\z/
+
+  # Deepest base-class chain followed.
+  MAX_BASE_DEPTH = 8
+
+  # A file's `namespace X.Y;` / `namespace X.Y {` and its `using X.Y;`
+  # imports (an alias or `using static` imports no namespace).
+  NAMESPACE_DECL_RE = /^\s*namespace\s+([\w.]+)/m
+  USING_DECL_RE     = /^\s*(?:global\s+)?using\s+([\w.]+)\s*;/m
 
   # The member definitions (positional-record parameters, or public
   # properties with their attributes) of request type `type_name`, declared
   # in `lines` (the file at `file`) or else in the scanned `.cs` file that
-  # shares the most of `file`'s path. Empty when the scan does not declare it.
+  # shares the most of `file`'s path, followed by the members it inherits
+  # from base classes the scan declares. Empty when the scan does not
+  # declare it.
   protected def type_member_defs(type_name : String, file : String, lines : Array(String), masked_lines : Array(String)) : Array(String)
-    if defs = member_defs_in(type_name, lines, masked_lines)
-      return defs
+    if decl = member_defs_in(type_name, lines, masked_lines)
+      return with_inherited_members(decl, file, masked_lines)
     end
     candidates = csharp_type_files[type_name]? || return [] of String
-    other = candidates.max_by? { |path| common_prefix_size(path, file) } || return [] of String
+    # The declaration the name reaches through namespaces and `using`s; else
+    # (an import the scan cannot see, e.g. a project-file `<Using>`) the one
+    # sharing the most of the handler's path.
+    other = resolve_type_file(type_name, file, masked_lines) ||
+            candidates.max_by? { |path| common_prefix_size(path, file) } || return [] of String
     lexer = Noir::CSharpLexer.new(read_file_content(other))
-    member_defs_in(type_name, lexer.code_lines, lexer.masked_lines) || [] of String
+    decl = member_defs_in(type_name, lexer.code_lines, lexer.masked_lines) || return [] of String
+    with_inherited_members(decl, other, lexer.masked_lines)
+  end
+
+  # Appends the members of each class on `decl`'s base chain. A base is the
+  # type its name reaches from the deriving file (that file's namespaces and
+  # their parents, its `using`s, the scan's `global using`s), never a
+  # same-named type elsewhere; the walk stops at a type the scan does not
+  # declare (a framework base such as `ControllerBase`) and at a cycle.
+  private def with_inherited_members(decl : Tuple(Array(String), String?), file : String, masked_lines : Array(String)) : Array(String)
+    defs, base = decl
+    defs = defs.dup
+    seen = Set(String).new
+    MAX_BASE_DEPTH.times do
+      break unless base
+      name = base.split('.').last
+      path = resolve_type_file(base, file, masked_lines) || break
+      break unless seen.add?("#{path}\0#{name}")
+      lexer = Noir::CSharpLexer.new(read_file_content(path))
+      base_defs, base = member_defs_in(name, lexer.code_lines, lexer.masked_lines) || break
+      defs.concat(base_defs)
+      file = path
+      masked_lines = lexer.masked_lines
+    end
+    defs
+  end
+
+  # The scanned file declaring type `base` as seen from `file`, or nil
+  # when no declaration of that name sits in a namespace it can reach.
+  # Scopes are tried in C#'s lookup order: the file's namespace, then each
+  # enclosing one outwards, then the global namespace and the `using`s.
+  private def resolve_type_file(base : String, file : String, masked_lines : Array(String)) : String?
+    parts = base.split('.')
+    candidates = csharp_type_files[parts.last]? || return
+    return file if parts.size == 1 && candidates.includes?(file)
+    masked = masked_lines.join('\n')
+    enclosing = [] of String
+    masked.scan(NAMESPACE_DECL_RE) do |m|
+      segments = m[1].split('.')
+      segments.size.downto(1) { |n| enclosing << segments[0, n].join('.') }
+    end
+    scopes = if parts.size > 1
+               qualifier = parts[0...-1].join('.')
+               enclosing.map { |ns| "#{ns}.#{qualifier}" } << qualifier
+             else
+               # "" is the global namespace: a file with no namespace declares into it.
+               project = Common.project_root_for(file, @csharp_project_roots) || ""
+               enclosing + [""] + masked.scan(USING_DECL_RE).map(&.[1]) + (@csharp_global_usings[project]? || [] of String)
+             end
+    declared = candidates.to_h do |path|
+      namespaces = read_file_content(path).scan(NAMESPACE_DECL_RE).map(&.[1])
+      {path, namespaces.empty? ? [""] : namespaces}
+    end
+    scopes.each do |scope|
+      in_scope = candidates.select { |path| declared[path].includes?(scope) }
+      return in_scope.max_by { |path| common_prefix_size(path, file) } unless in_scope.empty?
+    end
+    nil
   end
 
   private def common_prefix_size(a : String, b : String) : Int32
@@ -382,23 +467,34 @@ module Analyzer::CSharp::Common
     size
   end
 
-  # Type name => the non-test `.cs` files declaring it, built on first use.
+  # Type name => the non-test `.cs` files declaring it, built on first use
+  # (with the namespaces each project's `global using`s import).
   private def csharp_type_files : Hash(String, Array(String))
     @csharp_type_files ||= begin
       index = Hash(String, Array(String)).new
+      @csharp_project_roots = Common.project_roots(get_files_by_extension(".csproj"))
       get_files_by_extension(".cs").each do |path|
         next if Common.csharp_test_path?(base_relative_path(path))
-        read_file_content(path).scan(TYPE_DECLARATION_RE) do |m|
+        content = read_file_content(path)
+        content.scan(TYPE_DECLARATION_RE) do |m|
           files = index[m[1]] ||= [] of String
           files << path unless files.includes?(path)
         end
+        next unless content.includes?("global using")
+        usings = @csharp_global_usings[Common.project_root_for(path, @csharp_project_roots) || ""] ||= [] of String
+        content.scan(USING_DECL_RE) { |m| usings << m[1] if m[0].includes?("global") }
       end
       index
     end
   end
 
-  # nil when `lines` does not declare `type_name`.
-  private def member_defs_in(type_name : String, lines : Array(String), masked_lines : Array(String)) : Array(String)?
+  # After a declared type's name: its generic parameters and primary
+  # constructor / positional-record parameters, then `:` and the first
+  # base-list entry, which for a class or record is its base class.
+  BASE_AFTER_NAME_RE = /\A\s*(?:<(?:[^<>]|<[^<>]*>)*>)?\s*(?:\((?:[^()]|\([^()]*\))*\))?\s*:\s*(?:global::)?([A-Za-z_][\w.]*)/
+
+  # `{members, base type name}`; nil when `lines` does not declare `type_name`.
+  private def member_defs_in(type_name : String, lines : Array(String), masked_lines : Array(String)) : Tuple(Array(String), String?)?
     # Hoisted out of the loop: an interpolated regex literal recompiles
     # (PCRE2 JIT) on every evaluation, i.e. once per line.
     type_decl_regex = /\b(?:record|class|struct)\s+(?:class\s+|struct\s+)?#{Regex.escape(type_name)}\b/
@@ -406,21 +502,62 @@ module Analyzer::CSharp::Common
       l.includes?(type_name) && l.matches?(type_decl_regex)
     end
     return unless def_idx
+    base = declared_base(masked_lines, def_idx, type_decl_regex)
     defline = lines[def_idx]
     name_pos = defline.index(/\b#{Regex.escape(type_name)}\b/)
     paren = defline.index('(', name_pos || 0)
     # A positional record's parameters are its properties; a class's primary
     # constructor parameters are not members at all.
     if name_pos && paren && paren > name_pos && defline.matches?(/\brecord\b/)
-      return split_csharp_parameters(gather_balanced_parens(lines, masked_lines, def_idx, paren))
+      return {split_csharp_parameters(gather_balanced_parens(lines, masked_lines, def_idx, paren)), base}
     end
 
     defs = [] of String
-    extract_method_block(lines, masked_lines, def_idx).scan(PUBLIC_PROPERTY_RE) do |m|
+    block = extract_method_block(lines, masked_lines, def_idx)
+    # Brace depth per char, over the masked twin (same length): a member of
+    # the type sits at depth 1, one of a nested type deeper.
+    depth = 0
+    depth_at = extract_method_block(masked_lines, masked_lines, def_idx).chars.map do |char|
+      at = depth
+      depth += 1 if char == '{'
+      depth -= 1 if char == '}'
+      at
+    end
+    ctor_args = nil
+    block.scan(PUBLIC_PROPERTY_RE) do |m|
+      next if depth_at[m.begin(3)]?.try(&.> 1)
       attrs = m[1].gsub(/\s+/, " ").strip
+      # A getter-only or privately-set property is never written from the
+      # request, unless a serializer attribute opts it in or a constructor
+      # parameter of the same name (which the deserializer binds) sets it.
+      unless m[4].matches?(PUBLIC_SETTER_RE) || attrs.matches?(SERIALIZER_INCLUDE_RE)
+        ctor_args ||= constructor_arg_names(type_name, block)
+        next unless ctor_args.includes?(m[3].downcase)
+      end
       defs << "#{attrs} #{m[2].strip} #{m[3]}".strip
     end
-    defs
+    {defs, base}
+  end
+
+  # Lower-cased parameter names of every constructor (or primary
+  # constructor) of `type_name` in its declaration `block`.
+  private def constructor_arg_names(type_name : String, block : String) : Set(String)
+    names = Set(String).new
+    block.scan(/\b#{Regex.escape(type_name)}\s*\(([^()]*)\)/) do |m|
+      m[1].split(',').each do |arg|
+        arg.sub(/=.*/m, "").match(/([A-Za-z_]\w*)\s*\z/).try { |n| names << n[1].downcase }
+      end
+    end
+    names
+  end
+
+  # The base class named by the declaration at `def_idx` (read up to its
+  # body or `;`), or nil when it declares none.
+  private def declared_base(masked_lines : Array(String), def_idx : Int32, type_decl_regex : Regex) : String?
+    head = masked_lines[def_idx, 6].join(' ')
+    head = head[0, head.index(/[{;]/) || head.size]
+    decl = head.match(type_decl_regex) || return
+    head[decl.end..].match(BASE_AFTER_NAME_RE).try(&.[1])
   end
 
   # Collects the text inside a parenthesised group that opens at `open_pos`
@@ -461,11 +598,16 @@ module Analyzer::CSharp::Common
 
   # The members of the body type of handler parameter `param_def` bound
   # from `param_type` (`json`/`form`), or nil when its type is not a plain
-  # type the scan declares (a primitive, a collection, a generic).
+  # type the scan declares (a primitive, a generic). A JSON collection body
+  # (`IEnumerable<EventModel>`, `EventModel[]`) is an array of that element,
+  # so its inputs are the element's members.
   protected def body_type_params(param_def : String, param_type : String, file : String,
                                  lines : Array(String), masked_lines : Array(String)) : Array(Param)?
-    decl = param_def.gsub(/\[[^\]]*\]\s*/, "").sub(/=.*/m, "").gsub(/\b(?:ref|out|in|params|this)\s+/, "").strip
+    decl = param_def.gsub(/\[[^\]]+\]\s*/, "").sub(/=.*/m, "").gsub(/\b(?:ref|out|in|params|this)\s+/, "").strip
     type = decl.sub(/\s*[A-Za-z_]\w*\z/, "").rchop('?')
+    if param_type == "json" && (element = type.match(JSON_COLLECTION_BODY_RE))
+      type = element[1]? || element[2]
+    end
     return unless type.matches?(/\A[A-Za-z_][\w.]*\z/)
     params = type_member_defs(type.split('.').last, file, lines, masked_lines).compact_map do |member|
       body_member_param(member, param_type)
@@ -478,14 +620,68 @@ module Analyzer::CSharp::Common
   # write it (reads are case-insensitive). nil for a `[JsonIgnore]` member.
   private def body_member_param(member_def : String, param_type : String) : Param?
     return if member_def.matches?(JSON_IGNORE_RE)
-    cleaned = member_def.gsub(/\[[^\]]*\]\s*/, "").sub(/=.*/m, "").strip
+    cleaned = member_def.gsub(/\[[^\]]+\]\s*/, "").sub(/=.*/m, "").strip
     name = cleaned.match(/([A-Za-z_]\w*)\s*\z/).try(&.[1]) || return
     if explicit = member_def.match(JSON_PROPERTY_NAME_RE)
       name = explicit[1]
     elsif param_type == "json"
-      name = name[0].downcase + name[1..]
+      name = Common.json_camel_case(name)
     end
     Param.new(name, "", param_type)
+  end
+
+  # The JSON camelCase naming policy (System.Text.Json and Json.NET agree):
+  # lower the leading run of capitals, except the one that starts the next
+  # word, so `OTP` → `otp`, `URLValue` → `urlValue`, `Id` → `id`.
+  def self.json_camel_case(name : String) : String
+    return name unless name[0]?.try(&.uppercase?)
+    chars = name.chars
+    chars.each_index do |i|
+      break if i == 1 && !chars[i].uppercase?
+      break if i > 0 && i + 1 < chars.size && !chars[i + 1].uppercase?
+      chars[i] = chars[i].downcase
+    end
+    chars.join
+  end
+
+  PARAM_ATTRIBUTE_NAME_RE = /[\[,]\s*([A-Z]\w*)\s*(?=[\(\],])/
+  BINDER_TYPEOF_RE        = /\btypeof\s*\(\s*([\w.]+)\s*\)/
+  MODEL_BINDER_TYPEOF_RE  = /\bModelBinder(?:Attribute)?\s*\([^\]]*?\btypeof\s*\(\s*([\w.]+)\s*\)/
+
+  # A parameter the request never supplies: `[BindNever]`, or one bound by
+  # a custom model binder (`[ModelBinder(typeof(B))]`, or an attribute whose
+  # scanned definition derives from `ModelBinderAttribute` naming `B`) whose
+  # scanned definition never reads the value posted under the parameter's
+  # name (`bindingContext.ModelName`): it builds the value server-side,
+  # e.g. loading an entity by a route id. A binder the scan does not
+  # declare is assumed to read the request.
+  protected def custom_bound_parameter?(param_def : String) : Bool
+    return false unless param_def.includes?('[')
+    names = param_def.scan(PARAM_ATTRIBUTE_NAME_RE).map(&.[1])
+    return true if names.any?(&.in?("BindNever", "BindNeverAttribute"))
+    binder = param_def.match(MODEL_BINDER_TYPEOF_RE).try(&.[1])
+    binder ||= names.compact_map { |attr| attribute_binder_type(attr) }.first?
+    return false unless binder
+    binder_block = type_block(binder.split('.').last) || return false
+    !binder_block.includes?("ModelName")
+  end
+
+  # The binder type a custom `ModelBinderAttribute` subclass names.
+  private def attribute_binder_type(attr : String) : String?
+    return if attr.starts_with?("From") || attr.starts_with?("ModelBinder")
+    block = type_block(attr.ends_with?("Attribute") ? attr : "#{attr}Attribute") || return
+    return unless block.matches?(/:\s*(?:[\w.]+\.)?ModelBinderAttribute\b/)
+    block.match(BINDER_TYPEOF_RE).try(&.[1])
+  end
+
+  # The declaration block of a type the scan declares once, or nil.
+  private def type_block(type_name : String) : String?
+    files = csharp_type_files[type_name]?
+    return unless files && files.size == 1
+    lexer = Noir::CSharpLexer.new(read_file_content(files.first))
+    lines = lexer.code_lines
+    def_idx = lines.index(&.matches?(/\b(?:class|record|struct)\s+#{Regex.escape(type_name)}\b/)) || return
+    extract_method_block(lines, lexer.masked_lines, def_idx)
   end
 
   protected def attach_csharp_callees(endpoint : Endpoint,
