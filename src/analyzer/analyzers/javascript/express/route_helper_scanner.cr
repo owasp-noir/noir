@@ -258,9 +258,10 @@ module Analyzer::Javascript
       return if test_tree?(file)
       called = Set(String).new
       raw.scan(CALL_SITE) { |m| called << ((key = m[2]? || m[3]?) ? "#{m[1]}.#{key}" : m[1]) }
-      direct = raw.matches?(MODULE_REQUIRE_CALL)
+      # Only project modules: `express()` is a package call.
+      direct = raw.scan(MODULE_REQUIRE_CALL).any?(&.[1].starts_with?('.'))
       bound = false
-      raw.scan(MODULE_REQUIRE_BIND) { |m| bound ||= called.includes?(m[1]) }
+      raw.scan(MODULE_REQUIRE_BIND) { |m| bound ||= m[2].starts_with?('.') && called.includes?(m[1]) }
       bound ||= raw.scan(MODULE_REQUIRE_OBJ).any? { |m| called.any?(&.starts_with?("#{m[1]}.")) }
       return unless direct || bound
 
@@ -337,9 +338,15 @@ module Analyzer::Javascript
         close = Noir::JSRouteExtractor.find_matching_paren(content, open) || next
         params = Noir::TopLevelSplit.split(content[open + 1...close], ',', Noir::TopLevelSplit::Rules::JS_POSITIONAL_ARGS).map(&.strip)
         imports = Noir::JSHandlerResolver.imports_of(content, target)
+        # Another function in the file taking a parameter of the same name
+        # (`function mountAdmin(router, controllers)`) rebinds it there, and
+        # a lookup does not know which scope a reference sits in.
+        others = function_defs(content).reject { |func| func.params_open == open }
         positions.each do |idx, passed|
           name = params[idx]?.try(&.match(/\A([A-Za-z_$][\w$]*)\s*(?:=|\z)/).try(&.[1])) || next
           next if imports.has_key?(name)
+          next if others.any? { |func| parameter_positions(content, func).has_key?(name) }
+          next if content.matches?(/\b(?:const|let|var)\s+#{Regex.escape(name)}\b/)
           Noir::JSHandlerResolver.bind_parameter(target, name, passed)
           @logger.debug "Bound #{target}:#{name} to #{passed}"
         end

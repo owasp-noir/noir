@@ -1343,7 +1343,12 @@ module Noir
       params = definition_params(content, line)
       response = params[1]? if params && params.size >= 3
       return true if response.nil? || response.empty?
-      body.matches?(/(?<![\w$.])#{Regex.escape(response)}\b(?!\s*\.\s*locals\b)/)
+      return true if body.matches?(/(?<![\w$.])#{Regex.escape(response)}\b(?!\s*\.\s*locals\b)/)
+      # `req.res.json(item)`, or `reply(req, item)` answering through the request.
+      request = params.try(&.first?) || ""
+      return false if request.empty?
+      req = Regex.escape(request)
+      body.matches?(/(?<![\w$.])#{req}\s*\.\s*res\b|(?<![\w$.])(?!next\b)[A-Za-z_$][\w$.]*\s*\((?:[^()]*,)?\s*#{req}\s*[,)]/)
     end
 
     # Whether a resolved step serves the request: not a guard, and not a
@@ -1541,8 +1546,12 @@ module Noir
         followed += 1
         text = target_path == path ? content : stripped_source(target_path)
         name = definition_params(text, target_line).try(&.[position]?) || next
-        # `delete req.query.lang` drops an input; it does not read one.
+        # `fromRemote({ session }, client)`: no name to read through.
+        next if name.empty?
+        # `delete req.query.lang` drops an input and `req.body.sort = 'asc'`
+        # sets one; neither reads it.
         reads = definition_body(text, target_line).gsub(/\bdelete\s+[\w$.?\[\]'"]+/, "")
+          .gsub(/(?<![\w$.])#{Regex.escape(name)}\s*\??\.\s*(?:body|query|headers|cookies|params)\s*\??(?:\.\s*[\w$]+|\[[^\]]+\])\s*=(?![=>])/, "")
         reads = reads.gsub(/(?<![\w$.])#{Regex.escape(name)}(?=\s*\??\.)/, "req") unless name.matches?(REQUEST_RECEIVER_NAME)
         extract_body_params(reads, context)
         extract_query_params(reads, context)

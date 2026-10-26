@@ -77,6 +77,9 @@ class ExpressAuthTagger < FrameworkTagger
     super
     @mounted_auth_rules = [] of {prefix: String, description: String}
     @receiver_auth_rules = [] of {file: String, receiver: String, line: Int32, description: String}
+    # The method of the endpoint being judged, for `req.method` tests; nil
+    # while mounts are pre-scanned.
+    @method = nil.as(String?)
   end
 
   def self.target_techs : Array(String)
@@ -145,6 +148,13 @@ class ExpressAuthTagger < FrameworkTagger
   end
 
   private def check_endpoint(endpoint : Endpoint) : Endpoint
+    @method = endpoint.method
+    check_route(endpoint)
+  ensure
+    @method = nil
+  end
+
+  private def check_route(endpoint : Endpoint) : Endpoint
     receiver_description = nil
 
     # Check route definition line for auth patterns
@@ -246,8 +256,8 @@ class ExpressAuthTagger < FrameworkTagger
 
   # The steps of a registration made through a route helper
   # (`setupApiRoute(router, 'put', '/:pid/vote', [...], controllers.vote)`):
-  # the arguments after the path, which the helper hands to the router as
-  # the route's middleware and handler. Nil unless the statement opens with
+  # the arguments the helper hands to the router as the route's middleware
+  # and handler. Nil unless the statement opens with
   # such a call: a verb call is a registration of its own.
   private def helper_call_args(statement : String) : Array(String)?
     head = statement.match(HELPER_CALL) || return
@@ -255,10 +265,18 @@ class ExpressAuthTagger < FrameworkTagger
     open_paren = head.end(0) - 1
     close_paren = Noir::JSLiteralScanner.find_matching_paren(statement, open_paren) || return
     args = Noir::TopLevelSplit.split(statement[open_paren + 1...close_paren], ',', Noir::TopLevelSplit::Rules::JS_POSITIONAL_ARGS).reject(&.blank?)
-    path_at = args.index(&.matches?(PATH_ARG)) || return
-    steps = args[path_at + 1..]
+    return unless args.any?(&.matches?(PATH_ARG))
+    # Every argument but the literals (verb, path) and the router may be a
+    # step: `secured(ensureAuthenticated, router, 'get', '/x', h)` forwards
+    # its guard from before the path. The handler stays the last.
+    steps = args.reject { |arg| arg.matches?(LITERAL_ARG) || arg.strip.matches?(ROUTER_ARG) }
     steps unless steps.empty?
   end
+
+  LITERAL_ARG = /\A\s*(?:'[^']*'|"[^"]*"|`[^`]*`)\s*\z/
+  # The receiver a helper is handed, by the names the route-helper scanner
+  # accepts for it.
+  ROUTER_ARG = /\A_?(?:router|app|server|[A-Za-z_$][\w$]*(?:Router|App|Server))\z/
 
   private def unwrapped_arg(arg : String, file : String) : String?
     content = read_file(file) || return
@@ -282,7 +300,17 @@ class ExpressAuthTagger < FrameworkTagger
   # the marker there that lets it refuse a request; nil for an inline
   # closure, a package import, a body that only decodes and continues, or
   # — in the handler position — one that serves the request itself.
+  # Judged once per step: a shared middleware array is spread into hundreds
+  # of routes.
+  @refusals = Hash(Tuple(String, String, Bool, Int32, String?), {String, String}?).new
+
   private def refusing_definition(arg : String, file : String, handler_position : Bool, depth : Int32 = 0) : {String, String}?
+    key = {arg, file, handler_position, depth, @method}
+    return @refusals[key] if @refusals.has_key?(key)
+    @refusals[key] = judge_definition(arg, file, handler_position, depth)
+  end
+
+  private def judge_definition(arg : String, file : String, handler_position : Bool, depth : Int32) : {String, String}?
     content = read_file(file) || return
     handler = Noir::JSHandlerResolver.resolve(arg, content, file) || return
     path, line = handler.path, handler.line
@@ -290,6 +318,8 @@ class ExpressAuthTagger < FrameworkTagger
     lines = read_file_lines(path) || return
     if elements = middleware_array(lines, line - 1)
       return if depth >= MAX_ARRAY_DEPTH
+      # `open.splice(0, 1)`: what the array holds at the route is not its literal.
+      return if (read_file(path) || "").matches?(/(?<![\w$.])#{Regex.escape(handler.name.split('.').last)}\s*\.\s*(?:splice|push|pop|shift|unshift|length\s*=)/)
       elements.each do |element|
         element = element.strip.lchop("...").strip
         found = refusing_definition(element, path, false, depth + 1)
@@ -307,9 +337,10 @@ class ExpressAuthTagger < FrameworkTagger
     end
     body = definition_extent(lines, line - 1)
     return if body.first?.try(&.matches?(ERROR_HANDLER_SIGNATURE))
-    code = code_only(body.join("\n"))
-    evidence = (anonymous_refusal(code) || identity_throw(code)).try do |found|
-      found.gsub(/\bnew\s+/, "new ").gsub(/(?<!\bnew)\s+/, "").chomp('(').sub(/\Athrownew\b/, "throw new")
+    code = code_with_words(body.join("\n"))
+    evidence = (anonymous_refusal(code, read_file(path)) || identity_throw(code)).try do |found|
+      found, note = found.partition(SETTING_NOTE)
+      found.gsub(/\bnew\s+/, "new ").gsub(/(?<!\bnew)\s+/, "").chomp('(').sub(/\Athrownew\b/, "throw new") + note
     end
     evidence ||= caller_stop(path, line) || return
     # In the handler position a definition that answers the request is the
@@ -328,7 +359,7 @@ class ExpressAuthTagger < FrameworkTagger
   private def caller_stop(path : String, line : Int32) : String?
     content = read_file(path) || return
     request = request_param(content, line) || return
-    body = code_only(Noir::JSRouteExtractor.definition_body(content, line))
+    body = code_with_words(Noir::JSRouteExtractor.definition_body(content, line))
     caller_absence_refusal(body, Regex.escape(request), stop_file: path)
   end
 
@@ -341,12 +372,16 @@ class ExpressAuthTagger < FrameworkTagger
     return if branch.matches?(/\bnext\b/)
     call = branch.match(STOP_CALL) || return
     content = read_file(file) || return
+    # `if (!req.loggedIn) { if (meta.config.privateSite) return … }`: the
+    # return sits under a further condition.
+    reach = refusal_reach(branch, call.begin(0), content) || return
     target = Noir::JSHandlerResolver.resolve(call[1].gsub(/\s+/, ""), content, file) || return
     path, line = target.path, target.line
     return if path.nil? || line.nil?
     text = read_file(path) || return
     body = code_only(Noir::JSRouteExtractor.definition_body(text, line))
-    "returns #{call[1].gsub(/\s+/, "")}" if anonymous_refusal(body) || body.matches?(/\b(?:res|response)\s*\.\s*redirect\s*\(/)
+    return unless anonymous_refusal(body) || body.matches?(/\b(?:res|response)\s*\.\s*redirect\s*\(/)
+    "returns #{call[1].gsub(/\s+/, "")}#{SETTING_NOTE if reach == :setting}"
   end
 
   MAX_ARRAY_DEPTH = 4
@@ -419,14 +454,81 @@ class ExpressAuthTagger < FrameworkTagger
   # The first refusal in `code` that an anonymous caller can reach: not after
   # a pass-through for a missing credential, nor inside an `if` that first
   # requires something to be present.
-  private def anonymous_refusal(code : String) : String?
+  # `source` is the file the code comes from, for telling a setting from a
+  # request check (`refusal_reach`).
+  private def anonymous_refusal(code : String, source : String? = nil) : String?
+    by_setting = nil.as(String?)
     code.scan(REFUSING_DEFINITION) do |m|
       at = m.begin(0)
-      return if code[0...at].matches?(ANONYMOUS_PASS_THROUGH)
+      return by_setting if code[0...at].matches?(ANONYMOUS_PASS_THROUGH)
       next if presence_gated?(code, at)
-      return m[0]
+      case refusal_reach(code, at, source)
+      when :always  then return m[0]
+      when :setting then by_setting ||= "#{m[0]}#{SETTING_NOTE}"
+      end
     end
-    nil
+    by_setting
+  end
+
+  # `code_only`, keeping word literals (`req.method !== 'GET'`) a
+  # condition needs to be judged.
+  private def code_with_words(text : String) : String
+    Noir::CComments.strip(text, quotes: %("'`)).gsub(STRING_LITERAL) { |lit| lit.matches?(/\A['"][A-Za-z]{1,10}['"]\z/) ? lit : %("") }
+  end
+
+  SETTING_NOTE = " — a setting can lift it"
+  METHOD_TEST  = /\A\(*\s*(?:req|request)\s*\.\s*method\s*(!==?|===?)\s*['"]([A-Za-z]+)['"]\s*\)*\z/
+  IF_HEAD      = /(?<![\w$.])if\s*\(/
+  JS_WORDS     = /\A(?:true|false|null|undefined|typeof|instanceof|in|new|void|this)\z/
+
+  # Whether a refusal at `at` in `code` reaches an anonymous caller of the
+  # route's method (`@method`), by the `if`s enclosing it: `:always`;
+  # `:setting` when a condition reads only module-level state
+  # (`if (meta.config.privateSite)`, a config flag decides it); nil when a
+  # method test excludes this method. Other conditions keep the refusal, as
+  # before. Without `source` or a method, a condition is not judged.
+  private def refusal_reach(code : String, at : Int32, source : String?) : Symbol?
+    reach = :always
+    enclosing_conditions(code, at).each do |condition|
+      text = condition.strip
+      if method_test = text.match(METHOD_TEST)
+        method = @method || next
+        equal = method_test[1].starts_with?("==")
+        return unless equal == (method.upcase == method_test[2].upcase)
+      elsif source && module_state?(text, source)
+        reach = :setting
+      end
+    end
+    reach
+  end
+
+  # The conditions of every `if` whose block (or single statement) holds `at`.
+  private def enclosing_conditions(code : String, at : Int32) : Array(String)
+    conditions = [] of String
+    code[0...at].scan(IF_HEAD) do |m|
+      open = m.end(0) - 1
+      close = Noir::JSLiteralScanner.find_matching_paren(code, open) || next
+      next if close >= at
+      between = code[close + 1...at]
+      inside = if between.lstrip.starts_with?('{')
+                 brace = close + 1 + (between.size - between.lstrip.size)
+                 (Noir::JSLiteralScanner.find_matching_brace(code, brace) || code.size) > at
+               else
+                 !between.includes?(';') && !between.includes?('}')
+               end
+      conditions << code[open + 1...close] if inside
+    end
+    conditions
+  end
+
+  # A condition whose every root is module-level in `source` (an import or a
+  # top-level `const`) or `process`: configuration, not the request.
+  private def module_state?(condition : String, source : String) : Bool
+    roots = condition.gsub(/(['"`])(?:(?!\1)[^\\]|\\.)*\1/, "").scan(/(?<![\w$.])([A-Za-z_$][\w$]*)/).map(&.[1]).reject(&.matches?(JS_WORDS)).uniq!
+    return false if roots.empty?
+    roots.all? do |root|
+      root == "process" || source.matches?(/^(?:const|let|var)\s+(?:#{Regex.escape(root)}\b|\{[^}]*\b#{Regex.escape(root)}\b[^}]*\})|^import\b[^\n]*\b#{Regex.escape(root)}\b/m)
+    end
   end
 
   private def presence_gated?(code : String, at : Int32) : Bool
@@ -717,7 +819,15 @@ class ExpressAuthTagger < FrameworkTagger
         fields.last.matches?(CALLER_FIELD) && (receiver == "this" || !fields.first.matches?(DATA_ROOTS))
       end
       next unless tested
-      refusal = BRANCH_REFUSALS.find { |re, _| branch.matches?(re) }.try(&.[1])
+      source = stop_file.try { |file| read_file(file) }
+      refusal = nil.as(String?)
+      BRANCH_REFUSALS.each do |re, label|
+        hit = branch.match(re) || next
+        # `if (!req.user) { if (req.method !== 'GET') return res.sendStatus(401) }`
+        reach = refusal_reach(branch, hit.begin(0), source) || next
+        refusal = reach == :setting ? "#{label}#{SETTING_NOTE}" : label
+        break
+      end
       refusal ||= stop_file.try { |file| stop_refusal(branch, file) }
       next unless refusal
       return "#{tested.gsub(/\s+/, "")} #{refusal}"
