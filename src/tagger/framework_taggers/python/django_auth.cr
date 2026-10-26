@@ -1,10 +1,12 @@
 require "../../../models/framework_tagger"
 require "../../../models/endpoint"
 require "./python_guard_definitions"
+require "./django_middleware_guard"
 
 @[Noir::TaggerFor(key: "django_auth", name: "Django Auth Tagger", desc: "Identifies Django authentication patterns (decorators, mixins, DRF permissions)", order: 10)]
 class DjangoAuthTagger < FrameworkTagger
   include PythonGuardDefinitions
+  include DjangoMiddlewareGuard
 
   DECORATOR_PATTERNS = [
     /\@login_required/,
@@ -54,7 +56,7 @@ class DjangoAuthTagger < FrameworkTagger
 
   # A project permission class: its bases and its `has_permission` body
   # (nil when it inherits the method).
-  private record PermissionClass, bases : Array(String), has_permission : String?, authenticated_users_only : String?
+  private record PermissionClass, path : String, bases : Array(String), has_permission : String?, authenticated_users_only : String?
 
   # Whatever an anonymous `request.user` fails: `AnonymousUser` is never
   # authenticated, active, staff or superuser, and holds no permissions.
@@ -75,6 +77,9 @@ class DjangoAuthTagger < FrameworkTagger
     @permission_classes.clear
     @dispatch_guards.clear
     @mro_cache.clear
+    @middlewares.clear
+    @settings_lists.clear
+    @middleware_guards.clear
     scan_settings
     super
   end
@@ -94,9 +99,11 @@ class DjangoAuthTagger < FrameworkTagger
       next unless content
       has_middleware = content.includes?("LoginRequiredMiddleware")
       has_drf_default = content.includes?("DEFAULT_PERMISSION_CLASSES")
-      next unless has_middleware || has_drf_default
+      has_middleware_list = content.includes?("MIDDLEWARE")
+      next unless has_middleware || has_drf_default || has_middleware_list
       next if base_relative_path(path).matches?(TEST_OR_DOCS_PATH)
       code = content.lines.map(&.sub(/#.*/, "")).join("\n")
+      scan_middleware(path, code) if has_middleware_list && code.matches?(MIDDLEWARE_ASSIGNMENT)
       if has_middleware && bracketed_values_after(code, MIDDLEWARE_ASSIGNMENT).any?(&.includes?(LOGIN_REQUIRED_MIDDLEWARE))
         @login_required_middleware = true
       end
@@ -107,12 +114,14 @@ class DjangoAuthTagger < FrameworkTagger
     scan_permission_classes
   end
 
-  # Every `class X(...Permission...)` in the project, so a custom DRF
-  # permission is judged by what its definition does, not by its name.
+  # Every `class X(...Permission...)` in the project, and every class that
+  # defines `has_permission` whatever it extends (a django-oauth-toolkit
+  # `TokenHasScope` subclass), so a custom DRF permission is judged by what
+  # its definition does, not by its name.
   private def scan_permission_classes
     collect_files_by_extension(".py").each do |path|
       content = read_file(path)
-      next unless content && content.includes?("Permission")
+      next unless content && (content.includes?("Permission") || content.includes?("has_permission"))
       next if base_relative_path(path).matches?(TEST_OR_DOCS_PATH)
       lines = read_file_lines(path) || next
       lines.each_with_index do |line, idx|
@@ -120,10 +129,11 @@ class DjangoAuthTagger < FrameworkTagger
         header = class_header(lines, idx)
         open = header.index('(') || next
         bases_text = header[(open + 1)..].sub(/\)\s*:[\s\S]*\z/, "")
-        next unless bases_text.includes?("Permission")
+        has_permission = method_body(lines, idx, "has_permission")
+        next unless bases_text.includes?("Permission") || has_permission
         bases = bases_text.split(',').map(&.strip.split('.').last.strip).reject(&.empty?)
         flag = class_body(lines, idx).match(/\b(?:self\.)?authenticated_users_only\s*=(?!=)\s*([^\n]+)/).try(&.[1].strip)
-        @permission_classes[name] ||= PermissionClass.new(bases, method_body(lines, idx, "has_permission"), flag)
+        @permission_classes[name] ||= PermissionClass.new(path, bases, has_permission, flag)
       end
     end
   end
@@ -193,7 +203,18 @@ class DjangoAuthTagger < FrameworkTagger
     nil
   end
 
+  # The view's own guards first; a project middleware refusing anonymous
+  # requests guards whatever the view leaves open.
   private def check_endpoint(endpoint : Endpoint)
+    tagged = endpoint.tags.size
+    check_view_guards(endpoint)
+    return if endpoint.tags.size > tagged
+    if guard = middleware_guard(endpoint)
+      endpoint.add_tag(Tag.new("auth", guard, "django_auth"))
+    end
+  end
+
+  private def check_view_guards(endpoint : Endpoint)
     contexts = read_source_context(endpoint)
     return if contexts.empty?
     # A view served by a base class's method lists the view class itself
@@ -770,22 +791,62 @@ class DjangoAuthTagger < FrameworkTagger
   end
 
   # DRF checks every class in `permission_classes` and refuses when any
-  # one does; `A | B` refuses only when both alternatives do, `A & B`
-  # when either does. Nil when anonymous gets through; else the setting
-  # the refusal depends on ("" for none).
+  # one does, and composes classes with `~`, `&` and `|` (binding in that
+  # order, parentheses grouping): `A | B` refuses only when both
+  # alternatives do, `A & B` when either does, and `~A` is not judged.
+  # Nil when anonymous gets through; else the setting the refusal depends
+  # on ("" for none).
   private def permissions_refusal(perms : String, method : String) : String?
-    inner = perms.strip
-    inner = inner[1...-1] if inner.size >= 2 && "([".includes?(inner[0])
-    verdicts = inner.split(',').compact_map do |entry|
-      alternatives = entry.split('|').map(&.strip).reject(&.empty?)
-      next if alternatives.empty?
-      either = alternatives.map do |alternative|
-        alternative.split('&').compact_map { |name| permission_refusal(name.strip(" ()\n\t\"'").split('.').last, method) }.min_by?(&.size)
-      end
-      next if either.any?(Nil)
-      either.compact.max_by(&.size)
+    # Settings name classes by dotted path in quotes.
+    tokens = perms.gsub(/"([^"\n]*)"|'([^'\n]*)'/) { " #{$1? || $2?} " }.scan(/[A-Za-z_][\w.]*|[&|~()\[\],]/).map(&.[0])
+    perm_any(tokens, 0, method)[0]
+  end
+
+  private def perm_any(tokens : Array(String), pos : Int32, method : String) : {String?, Int32}
+    verdict, pos = perm_all(tokens, pos, method)
+    verdicts = [verdict]
+    while tokens[pos]? == "|"
+      verdict, pos = perm_all(tokens, pos + 1, method)
+      verdicts << verdict
     end
-    verdicts.min_by?(&.size)
+    {verdicts.any?(Nil) ? nil : verdicts.compact.max_by(&.size), pos}
+  end
+
+  # `&`, and the commas between `permission_classes` entries.
+  private def perm_all(tokens : Array(String), pos : Int32, method : String) : {String?, Int32}
+    verdict, pos = perm_atom(tokens, pos, method)
+    verdicts = [verdict]
+    while tokens[pos]?.in?("&", ",")
+      pos += 1
+      break if tokens[pos]?.nil? || tokens[pos].in?(")", "]")
+      verdict, pos = perm_atom(tokens, pos, method)
+      verdicts << verdict
+    end
+    {verdicts.compact.min_by?(&.size), pos}
+  end
+
+  private def perm_atom(tokens : Array(String), pos : Int32, method : String) : {String?, Int32}
+    case token = tokens[pos]?
+    when nil, ")", "]", "&", "|", "," then {nil, pos}
+    when "~"                          then {nil, perm_atom(tokens, pos + 1, method)[1]}
+    when "(", "["
+      verdict, pos = perm_any(tokens, pos + 1, method)
+      pos += 1 if tokens[pos]?.in?(")", "]")
+      {verdict, pos}
+    else
+      pos += 1
+      # An instance (`HasScope()`): its arguments are not the expression.
+      if tokens[pos]? == "("
+        depth = 0
+        while pos < tokens.size
+          depth += 1 if tokens[pos] == "("
+          depth -= 1 if tokens[pos] == ")"
+          pos += 1
+          break if depth == 0
+        end
+      end
+      {permission_refusal(token.split('.').last, method), pos}
+    end
   end
 
   # Whether permission class `name` refuses an anonymous caller `method`,
@@ -811,7 +872,7 @@ class DjangoAuthTagger < FrameworkTagger
         return if cond.includes?("SAFE_METHODS") && !cond.matches?(/\bnot\s+in\b/) && SAFE_METHODS.includes?(method.upcase)
         setting ||= cond.match(SETTING_READ).try(&.[1])
       end
-      if body.matches?(ANONYMOUS_REFUSING_CHECK)
+      if body.matches?(ANONYMOUS_REFUSING_CHECK) || refusing_helper_call?(klass.path, body)
         return if body.includes?("SAFE_METHODS") && SAFE_METHODS.includes?(method.upcase)
         return setting || body.match(SETTING_READ).try(&.[1]) || ""
       end
@@ -829,6 +890,21 @@ class DjangoAuthTagger < FrameworkTagger
       end
     end
     nil
+  end
+
+  # A helper that turns an anonymous caller away before anything lets it
+  # through: `if not request.user.is_authenticated: return False`.
+  ANONYMOUS_EARLY_REFUSAL = /^[ \t]*if[ \t]+(?:not[ \t]+[\w.]*\buser\.is_authenticated|[\w.]*\buser\.is_anonymous)\b(?:[ \t]+or\b[^:\n]*)?[ \t]*:[ \t]*(?:\n[ \t]*)?(?:return[ \t]+False\b|raise\b)/m
+
+  # Whether `body` (a `has_permission` in `file`) calls a project function
+  # that refuses an anonymous caller first: `return has_group_permission(
+  # request, ["user"])`.
+  private def refusing_helper_call?(file : String, body : String) : Bool
+    body.scan(CALLEE).map { |m| m[1]? || m[2] }.uniq!.any? do |callee|
+      target = resolve_def(file, callee) || next false
+      helper = python_defs(target[0])[target[1]]
+      !!(match = helper.match(ANONYMOUS_EARLY_REFUSAL)) && !helper[0, match.begin].matches?(/\breturn[ \t]+True\b/)
+    end
   end
 
   private def login_not_required?(lines : Array(String), endpoint_line : Int32) : Bool
