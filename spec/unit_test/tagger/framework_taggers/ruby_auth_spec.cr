@@ -1087,3 +1087,128 @@ describe "RubyAuthTagger (Grape route scope)" do
     end
   end
 end
+
+describe "RubyAuthTagger (routed controller chain)" do
+  it "reads a concern's action through the routed controller, a parent's Pundit callback and a setting-lifted guard" do
+    CodeLocator.instance.clear_all
+    tmpdir = File.tempname("ruby_routed_chain")
+    controllers = File.join(tmpdir, "app", "controllers")
+    files = {
+      "app/controllers/application_controller.rb" => <<-RB,
+        class ApplicationController < ActionController::Base
+          before_action :verify_private_site
+
+          def verify_private_site
+            return if user_signed_in? || Settings::Site.public
+            head :unauthorized
+          end
+        end
+        RB
+      "app/controllers/api/base_controller.rb" => <<-RB,
+        module Api
+          class BaseController < ApplicationController
+            def authenticate!
+              head :unauthorized unless current_user
+            end
+
+            def validate_page_limit
+              return if params[:page].to_i <= 1000
+              return if current_user
+              head :unauthorized
+            end
+          end
+        end
+        RB
+      "app/controllers/concerns/api/articles_controller.rb" => <<-RB,
+        module Api
+          module ArticlesController
+            extend ActiveSupport::Concern
+
+            included do
+              before_action :validate_page_limit, only: %i[index]
+            end
+
+            def index
+            end
+
+            def update
+            end
+          end
+        end
+        RB
+      "app/controllers/api/v1/articles_controller.rb" => <<-RB,
+        module Api
+          module V1
+            class ArticlesController < BaseController
+              include Api::ArticlesController
+              before_action :authenticate!, only: %i[update]
+            end
+          end
+        end
+        RB
+      "app/controllers/admin/application_controller.rb" => <<-RB,
+        module Admin
+          class ApplicationController < ApplicationController
+            before_action :authorize_admin
+
+            def authorize_admin
+              authorize(:dashboard, :access?, policy_class: InternalPolicy)
+            end
+          end
+        end
+        RB
+      "app/controllers/admin/users_controller.rb" => <<-RB,
+        module Admin
+          class UsersController < Admin::ApplicationController
+            def banish
+            end
+          end
+        end
+        RB
+      "app/policies/internal_policy.rb" => <<-RB,
+        class InternalPolicy < ApplicationPolicy
+          def access?
+            user.admin?
+          end
+        end
+        RB
+    }
+    files.each do |name, body|
+      path = File.join(tmpdir, name)
+      Dir.mkdir_p(File.dirname(path))
+      File.write(path, body)
+      CodeLocator.instance.register_path(path)
+    end
+
+    begin
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(tmpdir)
+      concern = File.join(controllers, "concerns/api/articles_controller.rb")
+      routed = ->(line : Int32) do
+        endpoint = Endpoint.new("/api/articles/#{line}", "GET", [] of Param, Details.new(PathInfo.new(concern, line)))
+        handler = Handler.new("articles#x", concern, line)
+        handler.dispatch_path = File.join(controllers, "api/v1/articles_controller.rb")
+        endpoint.handler = handler
+        endpoint
+      end
+      index = routed.call(9)
+      update = routed.call(12)
+      banish = Endpoint.new("/admin/users/1/banish", "POST", [] of Param,
+        Details.new(PathInfo.new(File.join(controllers, "admin/users_controller.rb"), 3)))
+
+      RubyAuthTagger.new(noir_options).perform([index, update, banish])
+
+      # A setting decides; the page-size check is the caller's own choice.
+      index.tags.map(&.description).should eq(["Protected by verify_private_site (app-defined, refuses callers without a credential; `Settings::Site.public` decides; a setting can make it public)"])
+      # The routed controller's `authenticate!` wins over the setting-lifted one.
+      update.tags.map(&.description).should eq(["Protected by authenticate! (app-defined, refuses callers without a credential)"])
+      # `class ApplicationController < ApplicationController` inside `Admin`
+      # names the top-level one; its child's Pundit `authorize` callback guards.
+      banish.tags.find { |t| t.name == "authz" }.should_not be_nil
+      banish.tags.find! { |t| t.name == "auth" }.description.should contain("a setting can make it public")
+    ensure
+      FileUtils.rm_rf(tmpdir)
+      CodeLocator.instance.clear_all
+    end
+  end
+end

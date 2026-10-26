@@ -2263,7 +2263,9 @@ module Analyzer::Ruby
 
     private def handler_for_action(data : ControllerData, action : String, controller_path : String) : Handler
       controller = File.basename(controller_path, ".rb").rchop("_controller")
-      Handler.new("#{controller}##{action}", data.path, data.action_lines[action]?)
+      handler = Handler.new("#{controller}##{action}", data.path, data.action_lines[action]?)
+      handler.dispatch_path = controller_path unless controller_path == data.path
+      handler
     end
 
     private def attach_callees_for_action(endpoint : Endpoint, controller_path : String?, action : String)

@@ -160,13 +160,17 @@ module Noir
 
     # Ruby resolves a bare constant from the innermost namespace outwards. Two
     # definitions of one name (reopened, or the same name in two apps of a
-    # monorepo) are ambiguous and resolve to nothing.
-    def lookup(name : String, namespace : String) : Klass?
+    # monorepo) are ambiguous and resolve to nothing. `skip` is the class
+    # whose superclass is being looked up: `module Admin; class
+    # ApplicationController < ApplicationController` names the top-level one,
+    # since the superclass is read before the new constant exists.
+    def lookup(name : String, namespace : String, skip : Klass? = nil) : Klass?
       name = name.lchop("::")
       scopes = namespace.split("::", remove_empty: true)
       scopes.size.downto(0) do |n|
         full = (scopes[0, n] + [name]).join("::")
         if found = @by_name[full]?
+          next if skip && found.all?(&.name.==(skip.name))
           return found.size == 1 ? found.first : nil
         end
       end
@@ -189,7 +193,7 @@ module Noir
     private def apply_ancestor(klass : Klass?, action : String?, resolution : Resolution, depth : Int32)
       return unless klass && depth < 16
       if parent = klass.parent
-        if found = lookup(parent, klass.namespace)
+        if found = lookup(parent, klass.namespace, klass)
           apply_ancestor(found, action, resolution, depth + 1)
         elsif gem = GEM_CALLBACKS[parent.lchop("::")]?
           apply_lines(gem, "", action, resolution, depth + 1)
