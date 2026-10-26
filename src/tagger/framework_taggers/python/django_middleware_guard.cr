@@ -16,11 +16,13 @@ module DjangoMiddlewareGuard
   private record MwStmt, text : String, children : Array(MwStmt)
 
   # A middleware class: the method walked, the lists its exemptions read
-  # (`NO_AUTH = [...]`, a loop variable over one), the locals holding the
-  # request path or the view's response, and the project root it serves.
-  private record MwClass, name : String, root : String, body : Array(MwStmt),
-    lists : Hash(String, Array(String)), path_vars : Array(String),
-    response_vars : Array(String), process_request : Bool
+  # (`NO_AUTH = [...]`, a loop variable over one; `nil` for one holding
+  # anything but string literals), the locals holding exactly the request
+  # path or the view's response, the project root whose views it serves,
+  # and whether settings install it only under a condition.
+  private record MwClass, dotted : String, name : String, root : String, body : Array(MwStmt),
+    lists : Hash(String, Array(String)?), path_vars : Array(String),
+    response_vars : Array(String), process_request : Bool, conditional : Bool
 
   private record MwSample, path : String, static : String, open_ended : Bool, method : String
 
@@ -40,41 +42,85 @@ module DjangoMiddlewareGuard
     FallUnresolved
   end
 
-  MW_IDENTITY       = /\b(?:is_authenticated|is_anonymous)\b/
-  MW_LOGIN_REDIRECT = /\bHttpResponseRedirect\s*\(.*\b(?:log_?in|sign_?in)\b/i
+  MW_IDENTITY = /\b(?:is_authenticated|is_anonymous)\b/
+  # `HttpResponseRedirect(settings.LOGIN_URL)`, `redirect(reverse("account_login"))`.
+  MW_LOGIN_REDIRECT = /\b(?:HttpResponseRedirect|redirect)\s*\(.*(?:log_?in|sign_?in)/i
   # What only a logged-in caller passes: `AnonymousUser` is never staff,
-  # active or permitted, and a credential check fails without one.
-  MW_ANONYMOUS_FAILS = /\buser\.(?:is_authenticated|is_staff|is_superuser|is_active)\b|\bhas_perms?\s*\(|\bauthenticate\s*\(|\b(?:headers|META|COOKIES|session)\b.*['"][\w-]*(?:key|token|auth|secret|signature|password)[\w-]*['"]/i
-  MW_CALLER_INPUT    = /\brequest\.(?:GET|POST|COOKIES|headers|META|query_params|data|body|FILES|session)\b/
-  MW_PATH_EXPR       = /(?<![\w.])request\.(?:path_info|path|get_full_path\(\s*\))(?:\[[^\]]*\])?/
-  MW_STRING          = /\A[rRfFbBuU]{0,2}(['"])(.*)\1\z/
+  # active or permitted.
+  MW_ANONYMOUS_FAILS = /\buser\.(?:is_authenticated|is_staff|is_superuser|is_active)\b|\bhas_perms?\s*\(|\bauthenticate\s*\(/
+  # A credential the caller sends in a header or cookie, which an anonymous
+  # caller does not have.
+  MW_CREDENTIAL_SOURCE = /\brequest\.(?:headers|META|COOKIES)\b/
+  MW_CREDENTIAL_NAME   = /['"](?:HTTP_)?[\w-]*(?:key|token|secret|signature|password|authorization)[\w-]*['"]/i
+  MW_CREDENTIAL_ABSENT = /\bnot\s+in\b|\bis\s+None\b|==\s*None\b/
+  MW_CALLER_INPUT      = /\brequest\.(?:GET|POST|COOKIES|headers|META|query_params|data|body|FILES|session)\b/
+  # The request path itself. A `[:N]` slice only truncates it; any other
+  # transform (`lstrip`, `[1:]`, `split`, `lower`) is not the path.
+  MW_PATH_EXPR    = /(?<![\w.])request\.(?:path_info|path|get_full_path\(\s*\))(?:\[\s*:\s*\d+\s*\])?/
+  MW_STRING       = /\A[rRfFbBuU]{0,2}(['"])(.*)\1\z/
+  ROOT_URLCONF    = /^ROOT_URLCONF\s*=\s*['"]([\w.]+)['"]/m
+  MW_SETTING_READ = /\bsettings\.[A-Z]|\bos\.(?:environ|getenv)\b|\bgetenv\s*\(/
 
   @middlewares = [] of MwClass
-  @settings_lists = Hash(String, Array(String)).new
+  @settings_lists = Hash(String, Array(String)?).new
   @middleware_guards = Hash({String, String, String}, String?).new
+  # The import root of every settings module naming a ROOT_URLCONF the
+  # scan holds: the project a view belongs to is the nearest one.
+  @django_roots = Set(String).new
+
+  # The directory a module path is imported from: the first ancestor of
+  # `file` that is not a package.
+  private def python_import_root(file : String) : String
+    dir = File.dirname(file)
+    while File.exists?(File.join(dir, "__init__.py"))
+      parent = File.dirname(dir)
+      break if parent == dir
+      dir = parent
+    end
+    dir
+  end
+
+  # `a/b.py` or `a/b/__init__.py` for module `a.b` under `root`.
+  private def module_file(root : String, dotted : String) : String?
+    rel = dotted.gsub('.', '/')
+    {File.join(root, "#{rel}.py"), File.join(root, rel, "__init__.py")}.find { |file| File.file?(file) }
+  end
+
+  # The project a settings file configures, when its ROOT_URLCONF is a
+  # module the scan holds.
+  private def register_django_root(settings_path : String, code : String)
+    urlconf = code.match(ROOT_URLCONF).try(&.[1]) || return
+    root = python_import_root(settings_path)
+    @django_roots << root if module_file(root, urlconf)
+  end
 
   # The project middleware classes a settings file lists in `MIDDLEWARE`.
+  # One listed only inside an indented block (`if os.environ.get(...):
+  # MIDDLEWARE += [...]`) is installed on a condition.
   private def scan_middleware(settings_path : String, code : String)
     collect_lists(code, @settings_lists)
-    root = nearest_project_root(settings_path, /\Amanage\.py\z/) || ""
-    bracketed_values_after(code, DjangoAuthTagger::MIDDLEWARE_ASSIGNMENT).each do |value|
+    root = python_import_root(settings_path)
+    code.scan(/^([ \t]*)MIDDLEWARE[ \t]*\+?=/m) do |assignment|
+      value = bracketed_after(code, /MIDDLEWARE[ \t]*\+?=/, assignment.begin) || next
+      conditional = !assignment[1].empty?
       value.scan(/['"]([A-Za-z_][\w.]*\.[A-Za-z_]\w*)['"]/) do |entry|
         dotted = entry[1]
         next if dotted.starts_with?("django.")
-        next if @middlewares.any? { |known| known.name == dotted && known.root == root }
-        if klass = middleware_class(dotted, root)
+        if known = @middlewares.index { |klass| klass.dotted == dotted && klass.root == root }
+          @middlewares[known] = @middlewares[known].copy_with(conditional: false) unless conditional
+          next
+        end
+        if klass = middleware_class(dotted, root, conditional)
           @middlewares << klass
         end
       end
     end
   end
 
-  private def middleware_class(dotted : String, root : String) : MwClass?
+  private def middleware_class(dotted : String, root : String, conditional : Bool) : MwClass?
     mod, _, name = dotted.rpartition('.')
-    rel = mod.gsub('.', '/')
-    files = collect_files_by_extension(".py")
-    module_file = files.find { |file| file.ends_with?("/#{rel}.py") || file.ends_with?("/#{rel}/__init__.py") } || return
-    file, class_name = python_definition_site(module_file, name) || return
+    source = module_file(root, mod) || return
+    file, class_name = python_definition_site(source, name) || return
     lines = read_file_lines(file) || return
     class_re = /^class\s+#{Regex.escape(class_name)}\b/
     idx = lines.index(&.matches?(class_re)) || return
@@ -82,33 +128,56 @@ module DjangoMiddlewareGuard
       body = method_body(lines, idx, method) || next
       body = body.gsub(PythonGuardDefinitions::DOCSTRING, "")
       next unless body.matches?(MW_IDENTITY) && mw_refusal?(body)
-      lists = Hash(String, Array(String)).new
+      lists = Hash(String, Array(String)?).new
+      # The module's lists and the method's own (the file holds both).
       collect_lists(lines.map { |line| Analyzer::Python::Helper.strip_python_comment(line) }.join('\n'), lists)
-      collect_lists(body, lists)
       # A loop variable stands for every item of the list it walks.
       body.scan(/\bfor\s+(\w+)\s+in\s+((?:settings\.)?\w+)/) do |m|
-        if items = mw_list(m[2], lists)
-          lists[m[1]] = items
-        end
+        lists[m[1]] = mw_list(m[2], lists)
       end
-      path_vars = body.scan(/^\s*(\w+)\s*=\s*#{MW_PATH_EXPR.source}/m).map(&.[1])
+      path_vars = body.scan(/^[ \t]*(\w+)[ \t]*=[ \t]*#{MW_PATH_EXPR.source}[ \t]*$/m).map(&.[1])
       response_vars = body.scan(/^\s*(\w+)\s*=\s*(?:self\.)?get_response\s*\(/m).map(&.[1])
-      return MwClass.new(class_name, root, mw_tree(body), lists, path_vars, response_vars, method == "process_request")
+      return MwClass.new(dotted, class_name, root, mw_tree(body), lists, path_vars, response_vars,
+        method == "process_request", conditional)
     end
     nil
   end
 
-  # `NAME = [...]`, `NAME += [...]`, `NAME.append("...")` / `.extend([...])`:
-  # the string literals each name may hold, wherever it is assigned.
-  private def collect_lists(code : String, into : Hash(String, Array(String)))
+  # `NAME = [...]`, `NAME += [...]`, `NAME.append("...")` / `.extend([...])`
+  # / `.insert(i, "...")`: the string literals each name may hold. A name
+  # also given anything but a bare string literal (`reverse("login")`, an
+  # environment split, a comprehension) holds nil: it cannot be read.
+  private def collect_lists(code : String, into : Hash(String, Array(String)?))
     code.scan(/^[ \t]*([A-Za-z_]\w*)[ \t]*\+?=[ \t]*(?=[\[(])/m) do |m|
-      if value = bracketed_after(code, /^[ \t]*#{m[1]}[ \t]*\+?=/m, m.begin)
-        (into[m[1]] ||= [] of String).concat(mw_literals(value))
-      end
+      value = bracketed_after(code, /#{m[1]}[ \t]*\+?=/, m.begin) || next
+      mw_extend(into, m[1], mw_strict_literals(value))
     end
-    code.scan(/\b([A-Za-z_]\w*)\.(?:append|extend|insert)\s*\(([^\n]*)\)/) do |m|
+    code.scan(/\b([A-Za-z_]\w*)\.(append|extend|insert)\s*\(([^\n]*)\)/) do |m|
       next unless into.has_key?(m[1])
-      into[m[1]].concat(mw_literals(m[2]))
+      args = m[3]
+      args = Noir::TopLevelSplit.split(args, ',', Noir::TopLevelSplit::Rules::PYTHON)[1]? || "" if m[2] == "insert"
+      mw_extend(into, m[1], m[2] == "extend" ? mw_strict_literals(args.strip) : mw_strict_literals("[#{args}]"))
+    end
+  end
+
+  private def mw_extend(into : Hash(String, Array(String)?), name : String, values : Array(String)?)
+    if values && (known = into.fetch(name, [] of String))
+      into[name] = known + values
+    else
+      into[name] = nil
+    end
+  end
+
+  # The items of a `[...]` / `(...)` literal when every one is a bare
+  # string literal; nil otherwise.
+  private def mw_strict_literals(text : String) : Array(String)?
+    text = text.strip
+    return unless text.size >= 2 && text[0].in?('[', '(') && text[-1].in?(']', ')')
+    Noir::TopLevelSplit.split(text[1...-1], ',', Noir::TopLevelSplit::Rules::PYTHON).compact_map do |item|
+      item = item.strip
+      next if item.empty?
+      m = item.match(MW_STRING) || return
+      mw_unbrace(m[2])
     end
   end
 
@@ -122,12 +191,9 @@ module DjangoMiddlewareGuard
     literal.gsub(/\{[^{}]*\}/, "")
   end
 
-  private def mw_list(name : String, lists : Hash(String, Array(String))) : Array(String)?
-    if setting = name.lchop?("settings.")
-      @settings_lists[setting]?
-    else
-      lists[name]? || @settings_lists[name]?
-    end
+  private def mw_list(name : String, lists : Hash(String, Array(String)?)) : Array(String)?
+    name = name.lchop("settings.") if name.starts_with?("settings.") && !lists.has_key?(name)
+    lists.has_key?(name) ? lists[name] : @settings_lists[name]?
   end
 
   private def mw_refusal?(text : String) : Bool
@@ -142,10 +208,14 @@ module DjangoMiddlewareGuard
     file = endpoint.details.code_paths.first?.try(&.path) || return
     key = {file, endpoint.url, endpoint.method}
     return @middleware_guards[key] if @middleware_guards.has_key?(key)
+    # The project whose settings serve this view: the nearest import root
+    # of a settings module with a ROOT_URLCONF. None found, nothing said.
+    owner = @django_roots.select { |root| Noir::PathScope.under_root?(file, root) }.max_by?(&.size)
+    return @middleware_guards[key] = nil unless owner
     sample = mw_sample(endpoint.url, endpoint.method.upcase)
     guard = nil
     @middlewares.each do |klass|
-      next unless Noir::PathScope.under_root?(file, klass.root)
+      next unless klass.root == owner
       @mw_unresolved = @mw_last_unknown = nil
       outcomes = mw_block(klass.body, klass, sample, nil)
       if klass.process_request
@@ -157,8 +227,13 @@ module DjangoMiddlewareGuard
         end
       end
       next if !outcomes.includes?(MwOutcome::Refuse) || outcomes.includes?(MwOutcome::Pass)
-      guard = if outcomes.includes?(MwOutcome::PassUnresolved)
-                "Protected by #{klass.name} (settings.MIDDLEWARE; whether it lets the request through depends on `#{@mw_unresolved.try(&.[0, 80])}`, which this cannot tell)"
+      why = @mw_unresolved.try(&.[0, 80])
+      guard = if klass.conditional
+                "Protected by #{klass.name} (settings.MIDDLEWARE installs it only on a condition; a setting can make it public)"
+              elsif outcomes.includes?(MwOutcome::PassUnresolved) && why && why.matches?(MW_SETTING_READ)
+                "Protected by #{klass.name} (settings.MIDDLEWARE; `#{why}` decides; a setting can make it public)"
+              elsif outcomes.includes?(MwOutcome::PassUnresolved)
+                "Protected by #{klass.name} (settings.MIDDLEWARE; whether it lets the request through depends on `#{why}`, which this cannot tell)"
               else
                 "Protected by #{klass.name} (settings.MIDDLEWARE refuses unauthenticated requests outside its exempt paths)"
               end
@@ -306,13 +381,13 @@ module DjangoMiddlewareGuard
         end
         reached = mw_chain_fall(branches, 0)
         return outcomes if reached == 0
-        why ||= guessed if reached == 1
+        why ||= guessed || @mw_last_unknown || "a condition" if reached == 1
       elsif text.matches?(/\A(?:async\s+)?with\b/)
         inner = mw_block(stmt.children, klass, sample, why)
         outcomes.concat(inner.reject { |outcome| mw_fall?(outcome) })
         reached = mw_fall_state(inner)
         return outcomes if reached == 0
-        why ||= @mw_last_unknown if reached == 1
+        why ||= @mw_last_unknown || "a condition" if reached == 1
       elsif text.matches?(BLOCK_KEYWORD)
         # Loops and `try` / `except` blocks may run or not.
         outcomes.concat(mw_block(stmt.children, klass, sample, why).reject { |outcome| mw_fall?(outcome) })
@@ -324,6 +399,11 @@ module DjangoMiddlewareGuard
       elsif text.starts_with?("raise ")
         outcomes << (mw_refusal?(text) ? MwOutcome::Refuse : MwOutcome::Other)
         return outcomes
+      elsif text.matches?(/\bget_response\s*\(/)
+        # `response = self.get_response(request)`: the view has run, so a
+        # refusal after it only replaces the response.
+        outcomes << (why ? MwOutcome::PassUnresolved : MwOutcome::Pass)
+        @mw_unresolved ||= why
       end
     end
     # The outermost block finishes last: its value is what falling off
@@ -431,6 +511,11 @@ module DjangoMiddlewareGuard
     when /\buser\.is_anonymous\b/ then return MwTri::T
     when MW_ANONYMOUS_FAILS       then return MwTri::F
     end
+    # `"HTTP_X_API_TOKEN" not in request.META`: an anonymous caller sends
+    # no credential.
+    if atom.matches?(MW_CREDENTIAL_SOURCE) && atom.matches?(MW_CREDENTIAL_NAME)
+      return atom.matches?(MW_CREDENTIAL_ABSENT) ? MwTri::T : MwTri::F
+    end
     # `any(request.path.startswith(url) for url in EXEMPT)`: the loop
     # variable already stands for the list.
     if generator = atom.match(/\Aany\s*\((.+)\s+for\s+\w+\s+in\s+[\w.]+\s*\)\z/m)
@@ -492,17 +577,19 @@ module DjangoMiddlewareGuard
   # other part is unreadable.
   private def mw_values(expr : String, klass : MwClass) : Array(String)?
     expr = expr.strip
-    if expr.matches?(/\A[(\[]/) && (inner = expr[1...-1]?)
-      return mw_literals(inner)
+    # `tuple(OPEN)` holds what `OPEN` does.
+    if m = expr.match(/\A(?:tuple|list|set)\s*\(\s*((?:settings\.)?\w+)\s*\)\z/)
+      return mw_list(m[1], klass.lists)
     end
+    return mw_strict_literals(expr) if expr.matches?(/\A[(\[]/)
     parts = Noir::TopLevelSplit.split(expr, '+', Noir::TopLevelSplit::Rules::PYTHON).map(&.strip)
     results = [""]
     parts.each_with_index do |part, idx|
       choices = if m = part.match(MW_STRING)
                   [mw_unbrace(m[2])]
-                elsif part.matches?(/\A(?:settings\.)?\w+\z/) && (items = mw_list(part, klass.lists))
-                  items
-                elsif idx == 0 && parts.size > 1
+                elsif part.matches?(/\A(?:settings\.)?\w+\z/) && (klass.lists.has_key?(part) || @settings_lists.has_key?(part.lchop("settings.")))
+                  mw_list(part, klass.lists) || return
+                elsif idx == 0 && parts.size > 1 && part.matches?(/\A[A-Za-z_][\w.]*\z/)
                   [""]
                 else
                   return

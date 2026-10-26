@@ -66,7 +66,7 @@ class DjangoAuthTagger < FrameworkTagger
     super
     @login_required_middleware = false
     @drf_default_permissions = [] of String
-    @permission_classes = {} of String => PermissionClass
+    @permission_classes = {} of String => Array(PermissionClass)
     @method_def_res = {} of String => Regex
     @dispatch_guards = {} of {String, Int32, String} => String | Symbol?
   end
@@ -80,6 +80,7 @@ class DjangoAuthTagger < FrameworkTagger
     @middlewares.clear
     @settings_lists.clear
     @middleware_guards.clear
+    @django_roots.clear
     scan_settings
     super
   end
@@ -100,9 +101,11 @@ class DjangoAuthTagger < FrameworkTagger
       has_middleware = content.includes?("LoginRequiredMiddleware")
       has_drf_default = content.includes?("DEFAULT_PERMISSION_CLASSES")
       has_middleware_list = content.includes?("MIDDLEWARE")
-      next unless has_middleware || has_drf_default || has_middleware_list
+      has_urlconf = content.includes?("ROOT_URLCONF")
+      next unless has_middleware || has_drf_default || has_middleware_list || has_urlconf
       next if base_relative_path(path).matches?(TEST_OR_DOCS_PATH)
       code = content.lines.map(&.sub(/#.*/, "")).join("\n")
+      register_django_root(path, code) if has_urlconf
       scan_middleware(path, code) if has_middleware_list && code.matches?(MIDDLEWARE_ASSIGNMENT)
       if has_middleware && bracketed_values_after(code, MIDDLEWARE_ASSIGNMENT).any?(&.includes?(LOGIN_REQUIRED_MIDDLEWARE))
         @login_required_middleware = true
@@ -133,7 +136,7 @@ class DjangoAuthTagger < FrameworkTagger
         next unless bases_text.includes?("Permission") || has_permission
         bases = bases_text.split(',').map(&.strip.split('.').last.strip).reject(&.empty?)
         flag = class_body(lines, idx).match(/\b(?:self\.)?authenticated_users_only\s*=(?!=)\s*([^\n]+)/).try(&.[1].strip)
-        @permission_classes[name] ||= PermissionClass.new(path, bases, has_permission, flag)
+        (@permission_classes[name] ||= [] of PermissionClass) << PermissionClass.new(path, bases, has_permission, flag)
       end
     end
   end
@@ -862,8 +865,17 @@ class DjangoAuthTagger < FrameworkTagger
       return SAFE_METHODS.includes?(method.upcase) ? nil : ""
     end
     return if depth > 4
-    klass = @permission_classes[name]? || return
+    candidates = @permission_classes[name]? || return
+    # Two project classes sharing the name: only a verdict they agree on.
+    verdicts = candidates.map { |klass| class_refusal(klass, method, depth) }.uniq!
+    verdicts.size == 1 ? verdicts.first : nil
+  end
+
+  private def class_refusal(klass : PermissionClass, method : String, depth : Int32) : String?
     setting = nil
+    if (body = klass.has_permission) && (verdict = return_verdict(klass, body, method, depth))
+      return verdict.f? ? "" : nil
+    end
     if body = klass.has_permission
       # `if request.method in SAFE_METHODS: return True` opens reads; `if
       # not settings.LOGIN_REQUIRED: return True` makes the rest conditional.
@@ -896,15 +908,77 @@ class DjangoAuthTagger < FrameworkTagger
   # through: `if not request.user.is_authenticated: return False`.
   ANONYMOUS_EARLY_REFUSAL = /^[ \t]*if[ \t]+(?:not[ \t]+[\w.]*\buser\.is_authenticated|[\w.]*\buser\.is_anonymous)\b(?:[ \t]+or\b[^:\n]*)?[ \t]*:[ \t]*(?:\n[ \t]*)?(?:return[ \t]+False\b|raise\b)/m
 
-  # Whether `body` (a `has_permission` in `file`) calls a project function
-  # that refuses an anonymous caller first: `return has_group_permission(
-  # request, ["user"])`.
-  private def refusing_helper_call?(file : String, body : String) : Bool
-    body.scan(CALLEE).map { |m| m[1]? || m[2] }.uniq!.any? do |callee|
-      target = resolve_def(file, callee) || next false
-      helper = python_defs(target[0])[target[1]]
-      !!(match = helper.match(ANONYMOUS_EARLY_REFUSAL)) && !helper[0, match.begin].matches?(/\breturn[ \t]+True\b/)
+  # A `has_permission` that is a single `return` of a boolean expression
+  # calling a project helper (`return (in_group(request, ["guest"]) and
+  # request.method in SAFE_METHODS) or in_group(request, ["user"])`),
+  # evaluated for an anonymous caller of `method`: F when it refuses, T or
+  # Unknown when it may let the caller through. Nil when the body is any
+  # other shape, which the readers below judge.
+  private def return_verdict(klass : PermissionClass, body : String, method : String, depth : Int32) : MwTri?
+    code = [] of String
+    pending = ""
+    body.each_line do |line|
+      line = Analyzer::Python::Helper.strip_python_comment(line).strip
+      next if line.empty?
+      pending = pending.empty? ? line : "#{pending} #{line}"
+      next if mw_mask(pending)[1] > 0
+      code << pending
+      pending = ""
     end
+    returned = code.last?.try(&.match(/\Areturn\s+(.+)\z/)).try(&.[1]) || return
+    # Only plain assignments may come before it.
+    return unless code[0...-1].all?(&.matches?(/\A\w+\s*=(?!=)/))
+    calls = returned.scan(/(?<![\w.])([A-Za-z_]\w*)\s*\(/).map(&.[1])
+    return unless calls.any? { |name| resolve_def(klass.path, name) }
+    perm_bool(returned, klass, method, depth)
+  end
+
+  private def perm_bool(expr : String, klass : PermissionClass, method : String, depth : Int32) : MwTri
+    expr = expr.strip
+    while expr.starts_with?('(') && mw_mask(expr)[0].index(')') == expr.size - 1
+      expr = expr[1...-1].strip
+    end
+    masked = mw_mask(expr)[0]
+    {/\s+or\s+/, /\s+and\s+/}.each_with_index do |word, kind|
+      parts = mw_split(expr, masked, word)
+      next if parts.size < 2
+      values = parts.map { |part| perm_bool(part, klass, method, depth) }
+      return kind == 0 ? mw_or(values) : mw_and(values)
+    end
+    return mw_not(perm_bool(expr[4..], klass, method, depth)) if masked.matches?(/\Anot\s/)
+    if verb = expr.match(/\Arequest\.method(?:\.upper\(\))?\s*(==|!=|not\s+in|in)\s*(.+)\z/)
+      verbs = verb[2].strip == "SAFE_METHODS" ? SAFE_METHODS : mw_literals(verb[2]).map(&.upcase)
+      hit = verbs.includes?(method.upcase)
+      return (verb[1] == "==" || verb[1] == "in") == hit ? MwTri::T : MwTri::F
+    end
+    return MwTri::F if expr.matches?(/\A[\w.]*\buser\.(?:is_authenticated|is_staff|is_superuser|is_active)\z/)
+    if expr.matches?(/\Asuper\s*\(\s*\)\s*\.has_permission\s*\(/)
+      return klass.bases.any? { |base| permission_refusal(base, method, depth + 1) } ? MwTri::F : MwTri::Unknown
+    end
+    if expr.matches?(/\A[A-Za-z_]\w*\s*\(/) && refusing_helper_call?(klass.path, "return #{expr}")
+      return MwTri::F
+    end
+    MwTri::Unknown
+  end
+
+  # Whether `body` (a `has_permission` in `file`) is nothing but `return
+  # helper(...)` of a project function that refuses an anonymous caller
+  # first: `return has_group_permission(request, ["user"])`. A call that
+  # is one alternative (`helper(...) or view.action == "list"`) or sits
+  # under a verb branch decides nothing on its own.
+  private def refusing_helper_call?(file : String, body : String) : Bool
+    code = body.lines.map { |line| Analyzer::Python::Helper.strip_python_comment(line).strip }.reject(&.empty?).join(' ')
+    call = code.match(/\Areturn\s+([A-Za-z_][\w.]*)\s*\(/) || return false
+    depth = 0
+    code.each_char_with_index do |char, idx|
+      next if idx < call.end - 1
+      depth += 1 if char == '('
+      depth -= 1 if char == ')'
+      return false if depth == 0 && idx != code.size - 1
+    end
+    target = resolve_def(file, call[1]) || return false
+    helper = python_defs(target[0])[target[1]]
+    !!(match = helper.match(ANONYMOUS_EARLY_REFUSAL)) && !helper[0, match.begin].matches?(/\breturn[ \t]+True\b/)
   end
 
   private def login_not_required?(lines : Array(String), endpoint_line : Int32) : Bool
