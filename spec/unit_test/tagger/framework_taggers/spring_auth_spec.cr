@@ -741,3 +741,308 @@ describe "SpringAuthTagger (class-level annotations)" do
     tags["GET /api/x"].should eq(["Protected by Spring Security authenticated via anyRequest()"])
   end
 end
+
+# Write `files` (path relative to a temp root => content), register them,
+# and run SpringAuthTagger over `routes` ("METHOD /path" => "relative
+# controller path:line"). Returns each route's auth tag descriptions.
+def run_spring_multi_module(files : Hash(String, String), routes : Hash(String, String)) : Hash(String, Array(String))
+  CodeLocator.instance.clear_all
+  root = File.tempname("spring_multi_module")
+  files.each do |relative, source|
+    path = File.join(root, relative)
+    Dir.mkdir_p(File.dirname(path))
+    File.write(path, source)
+    CodeLocator.instance.register_path(path)
+  end
+  noir_options = create_test_options
+  noir_options["base"] = YAML::Any.new(root)
+  endpoints = routes.map do |route, location|
+    method, url = route.split(' ', 2)
+    file, line = location.split(':')
+    Endpoint.new(url, method, [] of Param, Details.new(PathInfo.new(File.join(root, file), line.to_i)))
+  end
+  SpringAuthTagger.new(noir_options).perform(endpoints)
+  FileUtils.rm_rf(root)
+  routes.keys.zip(endpoints).to_h { |route, endpoint| {route, endpoint.tags.select(&.name.==("auth")).map(&.description)} }
+end
+
+def spring_module_pom(artifact : String, deps : Array(String)) : String
+  "<project><parent><artifactId>root</artifactId></parent><artifactId>#{artifact}</artifactId><dependencies>" +
+    deps.map { |dep| "<dependency><artifactId>#{dep}</artifactId></dependency>" }.join + "</dependencies></project>"
+end
+
+describe "SpringAuthTagger (multi-module projects)" do
+  security_config = <<-JAVA
+    package com.example.security;
+
+    import com.example.security.props.IgnoreUrlsConfig;
+
+    public class SecurityConfig {
+        @Autowired
+        private IgnoreUrlsConfig ignoreUrlsConfig;
+
+        @Bean
+        SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
+            http.authorizeHttpRequests(registry -> {
+                for (String url : ignoreUrlsConfig.getUrls()) {
+                    registry.requestMatchers(url).permitAll();
+                }
+            }).authorizeHttpRequests(registry -> registry.anyRequest().authenticated());
+            return http.build();
+        }
+    }
+    JAVA
+  ignore_urls = <<-JAVA
+    package com.example.security.props;
+
+    @ConfigurationProperties(prefix = "secure.ignored")
+    public class IgnoreUrlsConfig {
+        private List<String> urls = new ArrayList<>();
+    }
+    JAVA
+  controller = <<-JAVA
+    public class Controller {
+        @GetMapping("/x")
+        public String x() { return "x"; }
+    }
+    JAVA
+  files = {
+    "pom.xml"                                                                 => "<project><artifactId>root</artifactId><dependencyManagement><dependencies><dependency><artifactId>security</artifactId></dependency></dependencies></dependencyManagement></project>",
+    "security/pom.xml"                                                        => spring_module_pom("security", ["spring-boot-starter-security"]),
+    "security/src/main/java/com/example/security/SecurityConfig.java"         => security_config,
+    "security/src/main/java/com/example/security/props/IgnoreUrlsConfig.java" => ignore_urls,
+    "admin/pom.xml"                                                           => spring_module_pom("admin", ["security"]),
+    "admin/src/main/resources/application.yml"                                => "spring:\n  profiles:\n    active: dev\nsecure:\n  ignored:\n    urls:\n      - /admin/login\n      - /*/*.html\n",
+    "admin/src/main/java/com/example/admin/Controller.java"                   => controller,
+    "portal/pom.xml"                                                          => spring_module_pom("portal", ["security"]),
+    "portal/src/main/resources/application.properties"                        => "secure.ignored.urls[0]=/product/**\n",
+    "portal/src/main/java/com/example/portal/Controller.java"                 => controller,
+    "search/pom.xml"                                                          => spring_module_pom("search", ["spring-boot-starter-web"]),
+    "search/src/main/java/com/example/search/Controller.java"                 => controller,
+    "other/pom.xml"                                                           => spring_module_pom("other", ["spring-boot-starter-security"]),
+    "other/src/main/java/com/example/other/Controller.java"                   => controller,
+    "staged/pom.xml"                                                          => spring_module_pom("staged", ["security"]),
+    "staged/src/main/resources/application.yml"                               => "secure:\n  ignored:\n    urls: /open/**\n",
+    "staged/src/main/resources/application-dev.yml"                           => "secure:\n  ignored:\n    urls: /dev/**\n",
+    "staged/src/main/java/com/example/staged/Controller.java"                 => controller,
+    "lib/pom.xml"                                                             => spring_module_pom("lib", [] of String),
+    "lib/src/main/java/com/example/lib/Controller.java"                       => controller,
+    "app/pom.xml"                                                             => spring_module_pom("app", ["lib", "security"]),
+  }
+
+  it "reads a @ConfigurationProperties permitAll list from the serving module's own configuration" do
+    tags = run_spring_multi_module(files, {
+      "POST /admin/login"       => "admin/src/main/java/com/example/admin/Controller.java:2",
+      "GET /admin/users"        => "admin/src/main/java/com/example/admin/Controller.java:2",
+      "GET /product/updateInfo" => "admin/src/main/java/com/example/admin/Controller.java:2",
+      "GET /product/detail/1"   => "portal/src/main/java/com/example/portal/Controller.java:2",
+      "POST /admin/login2"      => "portal/src/main/java/com/example/portal/Controller.java:2",
+    })
+    tags["POST /admin/login"].should be_empty
+    tags["GET /admin/users"].should eq(["Protected by Spring Security authenticated via anyRequest()"])
+    # `/product/**` is whitelisted by the portal's configuration, not the admin's.
+    tags["GET /product/updateInfo"].should eq(["Protected by Spring Security authenticated via anyRequest()"])
+    tags["GET /product/detail/1"].should be_empty
+    tags["POST /admin/login2"].should eq(["Protected by Spring Security authenticated via anyRequest()"])
+  end
+
+  it "keeps the guard, with a note, when a profile sets the list too" do
+    tags = run_spring_multi_module(files, {"GET /open/x" => "staged/src/main/java/com/example/staged/Controller.java:2"})
+    tags["GET /open/x"].size.should eq(1)
+    tags["GET /open/x"][0].should start_with("Protected by Spring Security authenticated via anyRequest(); a setting can exempt paths")
+    tags["GET /open/x"][0].should contain("application-dev.yml")
+  end
+
+  it "applies a chain only to modules that depend on the module declaring it" do
+    tags = run_spring_multi_module(files, {
+      "GET /search" => "search/src/main/java/com/example/search/Controller.java:2",
+      "GET /other"  => "other/src/main/java/com/example/other/Controller.java:2",
+      "GET /lib"    => "lib/src/main/java/com/example/lib/Controller.java:2",
+    })
+    tags["GET /search"].should be_empty
+    # A library's controller runs behind the chains of the app that includes it.
+    tags["GET /lib"].should eq(["Protected by Spring Security authenticated via anyRequest(); a setting can exempt paths from it: the permitAll list bound from secure.ignored.urls"])
+    # Spring Security on the classpath without any of the project's chains: Boot's default.
+    tags["GET /other"].size.should eq(1)
+    tags["GET /other"][0].should start_with("Protected by Spring Boot default security")
+  end
+
+  it "reads the list from the app that runs a library's controller, not the library's own file" do
+    tags = run_spring_multi_module(files.merge({
+      "lib/src/main/resources/application.yml" => "secure:\n  ignored:\n    urls:\n      - /lib/**\n",
+      "app/src/main/resources/application.yml" => "secure:\n  ignored:\n    urls:\n      - /public/**\n",
+    }), {"GET /lib/x" => "lib/src/main/java/com/example/lib/Controller.java:2"})
+    tags["GET /lib/x"].should eq(["Protected by Spring Security authenticated via anyRequest()"])
+  end
+
+  it "judges a library file by the Boot app that serves it, not as an app of its own" do
+    tags = run_spring_multi_module(files.merge({
+      "slib/pom.xml"                                        => spring_module_pom("slib", ["spring-boot-starter-security"]),
+      "slib/src/main/resources/static/x.js"                 => "1;\n",
+      "sapp/pom.xml"                                        => spring_module_pom("sapp", ["slib", "security"]),
+      "sapp/src/main/java/com/example/sapp/App.java"        => "@SpringBootApplication\npublic class App {}\n",
+      "sapp/src/main/resources/application.yml"             => "secure:\n  ignored:\n    urls:\n      - /static/**\n",
+      "other/src/main/java/com/example/other/OtherApp.java" => "@SpringBootApplication\npublic class OtherApp {}\n",
+    }), {
+      "GET /static/x.js" => "slib/src/main/resources/static/x.js:1",
+      "GET /other"       => "other/src/main/java/com/example/other/Controller.java:2",
+    })
+    tags["GET /static/x.js"].should be_empty
+    tags["GET /other"][0].should start_with("Protected by Spring Boot default security")
+  end
+
+  it "keeps the guard when configuration is imported or set beside the module" do
+    imported = files.merge({"admin/src/main/resources/application.yml" => "spring:\n  config:\n    import: optional:configserver:http://config:8888\nsecure:\n  ignored:\n    urls:\n      - /admin/login\n"})
+    tags = run_spring_multi_module(imported, {"POST /admin/login" => "admin/src/main/java/com/example/admin/Controller.java:2"})
+    tags["POST /admin/login"][0].should contain("a spring.config import in application.yml can override")
+
+    beside = files.merge({"admin/config/application.yml" => "secure:\n  ignored:\n    urls:\n      - /x\n"})
+    tags = run_spring_multi_module(beside, {"POST /admin/login" => "admin/src/main/java/com/example/admin/Controller.java:2"})
+    tags["POST /admin/login"][0].should contain("config/application.yml beside the module also sets")
+  end
+
+  it "counts neither test-scoped nor a dependency's optional Spring Security as on the classpath" do
+    tags = run_spring_multi_module(files.merge({
+      "tested/pom.xml"                                          => spring_module_pom("tested", ["spring-boot-starter-web"]).sub("</dependencies>", "<dependency><artifactId>spring-security-test</artifactId><scope>test</scope></dependency></dependencies>"),
+      "tested/src/main/java/com/example/tested/Controller.java" => controller,
+      "optlib/pom.xml"                                          => spring_module_pom("optlib", [] of String).sub("</dependencies>", "<dependency><artifactId>spring-boot-starter-security</artifactId><optional>true</optional></dependency></dependencies>"),
+      "optapp/pom.xml"                                          => spring_module_pom("optapp", ["optlib"]),
+      "optapp/src/main/java/com/example/optapp/Controller.java" => controller,
+    }), {
+      "GET /tested" => "tested/src/main/java/com/example/tested/Controller.java:2",
+      "GET /optapp" => "optapp/src/main/java/com/example/optapp/Controller.java:2",
+    })
+    tags["GET /tested"].should be_empty
+    tags["GET /optapp"].should be_empty
+  end
+
+  it "binds a loop variable only inside its own loop" do
+    config = <<-JAVA
+      package com.example;
+
+      public class SecurityConfig {
+          @Autowired
+          private UrlProps urlProps;
+
+          @Bean
+          SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
+              http.authorizeHttpRequests(registry -> {
+                  for (String url : urlProps.getPermitUrls()) {
+                      registry.requestMatchers(url).permitAll();
+                  }
+                  for (String url : ADMIN_URLS) {
+                      registry.requestMatchers(url).hasRole("ADMIN");
+                  }
+                  registry.anyRequest().authenticated();
+              });
+              http.csrf(csrf -> {
+                  for (String url : urlProps.getCsrfIgnore()) {
+                      csrf.ignoringRequestMatchers(url);
+                  }
+              });
+              return http.build();
+          }
+          private static final String[] ADMIN_URLS = {"/admin/**"};
+      }
+      JAVA
+    props = <<-JAVA
+      package com.example;
+
+      @ConfigurationProperties(prefix = "app.security")
+      public class UrlProps {
+          private List<String> permitUrls;
+          private List<String> csrfIgnore;
+      }
+      JAVA
+    tags = run_spring_multi_module({
+      "pom.xml"                                       => "<project><artifactId>app</artifactId><dependencies><dependency><artifactId>spring-boot-starter-security</artifactId></dependency></dependencies></project>",
+      "src/main/java/com/example/SecurityConfig.java" => config,
+      "src/main/java/com/example/UrlProps.java"       => props,
+      "src/main/java/com/example/Controller.java"     => controller,
+      "src/main/resources/application.yml"            => "app:\n  security:\n    permit-urls: /public/**\n    csrf-ignore: /admin/**\n",
+    }, {
+      "GET /public/info" => "src/main/java/com/example/Controller.java:2",
+      "GET /admin/users" => "src/main/java/com/example/Controller.java:2",
+    })
+    tags["GET /public/info"].should be_empty
+    tags["GET /admin/users"].should eq(["Protected by Spring Security hasRole via requestMatchers(\"/admin/**\")"])
+  end
+
+  it "does not report Boot's default chain for an app that declares a permissive chain" do
+    config = <<-JAVA
+      public class SecurityConfig {
+          @Bean
+          SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
+              http.csrf(c -> c.disable()).authorizeHttpRequests(a -> a.anyRequest().permitAll());
+              return http.build();
+          }
+      }
+      JAVA
+    tags = run_spring_multi_module({
+      "pom.xml"                                       => "<project><artifactId>app</artifactId><dependencies><dependency><artifactId>spring-boot-starter-security</artifactId></dependency></dependencies></project>",
+      "src/main/java/com/example/SecurityConfig.java" => config,
+      "src/main/java/com/example/Controller.java"     => controller,
+    }, {"GET /x" => "src/main/java/com/example/Controller.java:2"})
+    tags["GET /x"].should be_empty
+  end
+
+  it "reads a handler's own refusal of an anonymous principal" do
+    source = <<-JAVA
+      public class InfoController {
+          @GetMapping(value = {"/info", "/me"})
+          public CommonResult info(Principal principal) {
+              if (principal == null) {
+                  return CommonResult.unauthorized(null);
+              }
+              return CommonResult.success(principal.getName());
+          }
+
+          @GetMapping("/maybe")
+          public CommonResult maybe(Principal principal) {
+              if (principal == null) {
+                  return CommonResult.success(loginFreeFeed());
+              }
+              return CommonResult.success(principal.getName());
+          }
+
+          @PostMapping("/side-effect")
+          public CommonResult sideEffect(Principal principal) {
+              service.cancel();
+              if (principal == null) throw new AccessDeniedException("x");
+              return CommonResult.success(null);
+          }
+
+          @GetMapping("/redirect")
+          public String redirect(Principal principal) {
+              if (principal == null) return "redirect:/login";
+              return "home";
+          }
+      }
+      JAVA
+    kotlin = <<-KOTLIN
+      class KController {
+          @GetMapping("/k/open")
+          fun open(): String = service.secrets()
+          @GetMapping("/k/me")
+          fun me(principal: Principal?): String {
+              if (principal == null) throw ResponseStatusException(HttpStatus.UNAUTHORIZED)
+              return principal.name
+          }
+      }
+      KOTLIN
+    tags = run_spring_multi_module({"InfoController.java" => source, "KController.kt" => kotlin}, {
+      "GET /info"         => "InfoController.java:2",
+      "GET /maybe"        => "InfoController.java:10",
+      "POST /side-effect" => "InfoController.java:18",
+      "GET /redirect"     => "InfoController.java:25",
+      "GET /k/open"       => "KController.kt:2",
+      "GET /k/me"         => "KController.kt:4",
+    })
+    tags["GET /info"].should eq(["Protected by in-handler check: refuses an anonymous caller (principal == null)"])
+    tags["GET /maybe"].should be_empty
+    tags["POST /side-effect"].should be_empty
+    tags["GET /redirect"].should eq(["Protected by in-handler check: refuses an anonymous caller (principal == null)"])
+    tags["GET /k/open"].should be_empty
+    tags["GET /k/me"].should eq(["Protected by in-handler check: refuses an anonymous caller (principal == null)"])
+  end
+end
