@@ -730,6 +730,12 @@ module Analyzer::CSharp
         cleaned_def, param_type = normalize_param_definition(param_def)
         next if cleaned_def.empty?
         next if param_type == "service"
+        unbound, binder_key = custom_binding(param_def)
+        next if unbound
+        explicit_name ||= binder_key
+        # Attributes left after the `[FromX]` ones (`[ModelBinder(BinderType
+        # = typeof(B))]`) are not part of the declaration.
+        cleaned_def = cleaned_def.gsub(Common::ATTRIBUTE_LIST_RE, "").strip
 
         if match = cleaned_def.match(/(\w+)\s*(?:=\s*[^,]+)?\s*$/)
           param_name = match[1]
