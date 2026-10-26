@@ -14,6 +14,12 @@ class ShowItemRequest extends FormRequest
         return [
             'q' => ['string'],
             ...$this->folderRules(),
+            'slug' => [fn () => array_merge([], $this->lookupRules())],
         ];
+    }
+
+    private function lookupRules(): array
+    {
+        return ['lookup_col' => 'x'];
     }
 }

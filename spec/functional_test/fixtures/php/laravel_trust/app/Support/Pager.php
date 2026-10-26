@@ -10,4 +10,9 @@ final class Pager
     {
         return $req->has('cursor') ? ['cursor', $req->input('cursor')] : ['offset', 0];
     }
+
+    public static function tenant(int $id, Request $request): string
+    {
+        return $request->input('tenant');
+    }
 }

@@ -3,6 +3,7 @@ require "../../../minilexers/php_lexer"
 require "../../../utils/char_offsets"
 require "../../../utils/http_symbols"
 require "./laravel_middleware"
+require "./laravel_route_loops"
 
 module Analyzer::Php
   class Laravel < PhpEngine
@@ -30,8 +31,9 @@ module Analyzer::Php
     # `namespace` (`'namespace' => 'App\\Http\\Controllers'` / `Route::namespace(...)`)
     # qualifies the string actions in the body; `middleware` is the names
     # the group applies.
+    # `uses` is the closure's `use ($a, $b)` capture list.
     private record RouteGroup, prefix : String, body : String, body_start : Int32, body_end : Int32, controller : String?,
-      namespace : String?, middleware : Array(String)
+      namespace : String?, middleware : Array(String), uses : Array(String)
 
     private record ResourceRouteCall, resource : String, statement : String, start_pos : Int32
 
@@ -323,7 +325,9 @@ module Analyzer::Php
                                        controller : String? = nil,
                                        namespace : String? = nil,
                                        middleware : Array(String) = [] of String,
-                                       arrays : Hash(String, Array(LoopEntry))? = nil) : Array(Endpoint)
+                                       arrays : Hash(String, LiteralArray)? = nil,
+                                       budget : LoopBudget = LoopBudget.new,
+                                       loop_body : Bool = false) : Array(Endpoint)
       endpoints = [] of Endpoint
       # One structural pass over this file/body. `PhpLexer` masks strings,
       # comments and heredoc/nowdoc bodies a single time; every
@@ -333,15 +337,19 @@ module Analyzer::Php
       # pass below was already carved out of a PHP region.
       lexer = Noir::PhpLexer.new(content, php_mode: php_mode)
       offsets = Noir::CharOffsets.new(content)
-      # The literal arrays the file assigns, read once from the whole file:
-      # a group closure iterates one it captured with `use ($map)`.
+      # The constant literal arrays the file assigns, read once from the whole
+      # file: a group closure iterates one it captured with `use ($map)`.
       arrays ||= literal_array_assignments(content, lexer)
       route_groups = extract_route_groups(content, lexer, imports)
-      # `foreach` loops over a literal array register one route per entry.
-      # Their bodies are scanned once per entry (below) instead of once as
+      # `foreach` loops over a constant literal array register one route per
+      # entry: their bodies are scanned once per entry instead of once as
       # written, which would emit `{$name}` as a placeholder and no handler.
-      loops = route_loops(content, lexer, arrays).reject { |loop| inside_laravel_group_body?(loop.body_start, route_groups) }
-      route_groups.reject! { |group| loops.any? { |loop| loop.body_start <= group.body_start && group.body_start < loop.body_end } }
+      expanded_loops = expand_route_loops(content, lexer, arrays, budget) do |body, body_start, visible|
+        analyze_routes_content(body, prefix, file_path, include_callee, base_line + offsets.line(body_start) - 1, imports, php_mode: true,
+          controller: controller, namespace: namespace, middleware: middleware, arrays: visible, budget: budget, loop_body: true)
+      end
+      loop_bodies = expanded_loops.map(&.[0])
+      route_groups.reject! { |group| loop_bodies.any?(&.includes?(group.body_start)) }
       resource_controller_cache = {} of String => ControllerActionMap?
       # Character ranges that are inside PHP comments (`//`, `#`, `/* */`),
       # string literals (`'...'`, `"..."`) or heredoc/nowdoc bodies. The
@@ -351,7 +359,8 @@ module Analyzer::Php
       # surface as a real endpoint.
       skip_ranges = lexer.skip_ranges
       handler_bodies = collect_handler_bodies(offsets, base_line, lexer)
-      loops.each { |loop| handler_bodies << (loop.body_start...loop.body_end) }
+      flag_unresolved_route_args(content, lexer, handler_bodies + loop_bodies, budget) if loop_body
+      handler_bodies.concat(loop_bodies)
       ctx = RouteScanContext.new(offsets, file_path, include_callee, base_line, lexer, imports, route_groups, skip_ranges, handler_bodies, controller, namespace, middleware)
 
       # 1. Verb routes. Every scan below walks the body the same way, with the
@@ -414,7 +423,7 @@ module Analyzer::Php
         extract_resource_route_calls(offsets, kind, skip_ranges, lexer).each do |call|
           next if inside_laravel_group_body?(call.start_pos, route_groups) ||
                   inside_php_skip_range?(call.start_pos, skip_ranges) ||
-                  loops.any? { |loop| loop.body_start <= call.start_pos && call.start_pos < loop.body_end }
+                  loop_bodies.any?(&.includes?(call.start_pos))
 
           actions = resource_actions_for_statement(call.statement, default_resource_actions(kind, call.statement))
           parameter_overrides = resource_parameter_overrides_for_statement(call.statement)
@@ -432,133 +441,14 @@ module Analyzer::Php
         new_prefix = group.prefix.empty? ? prefix : build_full_path(prefix, group.prefix)
         group_base_line = base_line + offsets.line(group.body_start) - 1
         endpoints.concat(analyze_routes_content(group.body, new_prefix, file_path, include_callee, group_base_line, imports, php_mode: true,
-          controller: group.controller || controller, namespace: nested_namespace(namespace, group.namespace), middleware: middleware + group.middleware, arrays: arrays))
+          controller: group.controller || controller, namespace: nested_namespace(namespace, group.namespace), middleware: middleware + group.middleware,
+          arrays: arrays_captured_by(arrays, group.uses, group.body_start), budget: budget, loop_body: loop_body))
       end
 
-      # 4. Loop bodies, once per entry of the array they iterate.
-      loops.each do |loop|
-        loop_base_line = base_line + offsets.line(loop.body_start) - 1
-        loop.entries.each do |entry|
-          body = substitute_loop_vars(loop.body, loop, entry)
-          endpoints.concat(analyze_routes_content(body, prefix, file_path, include_callee, loop_base_line, imports, php_mode: true,
-            controller: controller, namespace: namespace, middleware: middleware, arrays: arrays))
-        end
-      end
+      # 4. The expanded loops' routes.
+      expanded_loops.each { |(_, loop_endpoints)| endpoints.concat(loop_endpoints) }
 
       endpoints
-    end
-
-    # One entry of a literal PHP array: its string key (nil in a list) and
-    # the value's source, which is a string literal, `X::class` or
-    # `[X::class, 'method']`.
-    record LoopEntry, key : String?, value : String
-
-    private record RouteLoop, body : String, body_start : Int32, body_end : Int32,
-      key_var : String?, value_var : String, entries : Array(LoopEntry)
-
-    ASSIGNED_ARRAY_RE = /(?<![\w$>:])\$(\w+)\s*=\s*(\[|array\s*\()/
-    ARRAY_MUTATION_RE = /\$(\w+)\s*(?:\[[^\]]*\]\s*=(?!=)|[.+]=)/
-    FOREACH_RE        = /\bforeach\s*\(/
-    FOREACH_HEAD_RE   = /\A\s*(\$\w+|\[.*\]|array\s*\(.*\))\s+as\s+(?:\$(\w+)\s*=>\s*)?\$(\w+)\s*\z/m
-    ARRAY_ENTRY_RE    = /\A(?:(['"])([^'"$\\]*)\1\s*=>\s*)?(.+)\z/m
-    ARRAY_VALUE_RE    = /\A(?:'[^'\\]*'|"[^"$\\]*"|\\?[A-Za-z_][\w\\]*::class|\[\s*\\?[A-Za-z_][\w\\]*::class\s*,\s*['"]\w+['"]\s*\])\z/
-    ARRAY_SPLIT_RULES = Noir::TopLevelSplit::Rules.new
-    MAX_LOOP_ENTRIES  = 512
-    LOOP_VAR_USE_RE   = /\{\$(\w+)\}|\$(\w+)\b/
-    STRING_LITERAL_RE = /\A(['"])(.*)\1\z/m
-
-    # `$name = [...]` literal arrays in `content`, by variable name. A name
-    # assigned twice, or written to (`$name['x'] = …`, `$name[] = …`), is
-    # left out: which entries a loop sees is no longer readable from source.
-    private def literal_array_assignments(content : String, lexer : Noir::PhpLexer) : Hash(String, Array(LoopEntry))
-      arrays = {} of String => Array(LoopEntry)
-      return arrays unless content.includes?("foreach")
-      ambiguous = Set(String).new
-      content.scan(ASSIGNED_ARRAY_RE) do |m|
-        name = m[1]
-        open = m.end(0) - 1
-        next unless lexer.in_code?(m.begin(0))
-        if arrays.has_key?(name) || ambiguous.includes?(name)
-          ambiguous << name
-          next
-        end
-        close = lexer.matching_delimiter(open)
-        entries = close ? literal_array_entries(lexer.source((open + 1)...close)) : nil
-        entries ? (arrays[name] = entries) : (ambiguous << name)
-      end
-      content.scan(ARRAY_MUTATION_RE) { |m| ambiguous << m[1] if lexer.in_code?(m.begin(0)) }
-      ambiguous.each { |name| arrays.delete(name) }
-      arrays
-    end
-
-    # The entries of a literal array's inner text, or nil when one is
-    # anything the route scan cannot use verbatim (a call, a variable, a
-    # nested options array, a spread).
-    private def literal_array_entries(inner : String) : Array(LoopEntry)?
-      parts = Noir::TopLevelSplit.split(inner, ',', ARRAY_SPLIT_RULES).reject(&.empty?)
-      return if parts.empty? || parts.size > MAX_LOOP_ENTRIES
-      parts.map do |part|
-        m = part.match(ARRAY_ENTRY_RE)
-        value = m.try(&.[3].strip.gsub(/\s+/, " "))
-        return unless m && value && value.matches?(ARRAY_VALUE_RE)
-        LoopEntry.new(m[2]?, value)
-      end
-    end
-
-    # `foreach ($map as $key => $value) { … }` over a literal array — an
-    # inline one or a variable `arrays` holds.
-    private def route_loops(content : String, lexer : Noir::PhpLexer, arrays : Hash(String, Array(LoopEntry))) : Array(RouteLoop)
-      loops = [] of RouteLoop
-      return loops unless content.includes?("foreach")
-      content.scan(FOREACH_RE) do |m|
-        next unless lexer.in_code?(m.begin(0))
-        open = m.end(0) - 1
-        next unless close = lexer.matching_delimiter(open)
-        next unless head = lexer.source((open + 1)...close).match(FOREACH_HEAD_RE)
-        brace = close + 1
-        while brace < content.size && lexer.masked[brace].whitespace?
-          brace += 1
-        end
-        next unless brace < content.size && lexer.masked[brace] == '{' && (body_end = lexer.matching_delimiter(brace))
-        iterable = head[1]
-        entries = if iterable.starts_with?('$')
-                    arrays[iterable.lchop('$')]?
-                  else
-                    inner = iterable.starts_with?('[') ? iterable[1...-1] : iterable.sub(/\Aarray\s*\(/, "").rchop(")")
-                    literal_array_entries(inner)
-                  end
-        next unless entries
-        next if head[2]? && entries.any? { |entry| entry.key.nil? } # `$k => $v` over a list: keys are ints
-        body = lexer.source((brace + 1)...body_end)
-        next unless body.includes?("Route::")
-        loops << RouteLoop.new(body, brace + 1, body_end, head[2]?, head[3], entries)
-      end
-      loops
-    end
-
-    # `body` with the loop variables replaced by one entry: in code, by the
-    # entry's source (`$controller` -> `FooController::class`); inside a
-    # double-quoted string, by the string value it interpolates (only a
-    # string has one).
-    private def substitute_loop_vars(body : String, loop : RouteLoop, entry : LoopEntry) : String
-      lexer = Noir::PhpLexer.new(body, php_mode: true)
-      key_source = entry.key.try { |key| "'#{key}'" }
-      body.gsub(LOOP_VAR_USE_RE) do |whole, m|
-        name = m[1]? || m[2]
-        source = if name == loop.value_var
-                   entry.value
-                 elsif name == loop.key_var
-                   key_source
-                 end
-        next whole unless source
-        if lexer.in_code?(m.begin(0))
-          m[1]? ? whole : source
-        elsif (span = lexer.spans.find { |(kind, s, e)| kind == :string && s <= m.begin(0) && m.begin(0) < e }) && body[span[1]] == '"'
-          source.match(STRING_LITERAL_RE).try(&.[2]) || whole
-        else
-          whole
-        end
-      end
     end
 
     # Walk `regex` over the body and yield every match that is a real
@@ -830,19 +720,26 @@ module Analyzer::Php
       dedup_params(params)
     end
 
-    # `Resolver::resolve($request)`: a static method of an app class handed
-    # the request as its first argument reads it under its own parameter name.
-    STATIC_REQUEST_CALL_RE = /\b([A-Z][\w\\]*)::(\w+)\s*\(\s*\$request\s*[,)]/
+    # `Resolver::resolve($request)`: a static method of an app class (one
+    # the project's PSR-4 autoload maps, never a vendor class) handed the
+    # request as its first argument reads it under its own parameter name.
+    STATIC_REQUEST_CALL_RE = /(?<![\w\\$>])(\\?[A-Z][\w\\]*)::(\w+)\s*\(\s*\$request\s*[,)]/
+    NAMESPACE_DECL_RE      = /\bnamespace\s+([\w\\]+)\s*;/
 
     private def static_helper_request_params(body : String, source : ControllerSource, routes_file_path : String) : Array(Param)
       params = [] of Param
+      namespace = source.offsets.content.match(NAMESPACE_DECL_RE).try(&.[1])
+      root = composer_project_root(routes_file_path)
       body.scan(STATIC_REQUEST_CALL_RE) do |call|
-        next if call[1].in?("self", "static", "parent")
-        next unless (path = resolve_controller_path(call[1], routes_file_path, source.imports)) && File.exists?(path)
+        fqcn = qualify_class(call[1], source.imports, namespace)
+        next unless (path = app_class_path(fqcn, root)) && File.exists?(path)
         content = php_code(read_file_content(path))
-        next unless sig = content.match(/(?:public|protected|private)\s+static\s+function\s+#{call[2]}\s*\(\s*(?:[\w\\?|]+\s+)?\$(\w+)/)
+        # The first parameter takes the request: untyped or a `Request`.
+        next unless sig = content.match(/(?:public|protected|private)\s+static\s+function\s+#{call[2]}\s*\(\s*(?:\??([\w\\]+)\s+)?\$(\w+)/)
+        next if (type = sig[1]?) && !type.ends_with?("Request")
         next unless helper = extract_php_method_body_after(content, sig.begin(0)).try(&.[0])
-        helper = helper.gsub(/\$#{sig[1]}\b/, "$request") unless sig[1] == "request"
+        # Only the first parameter is the request this route received.
+        helper = helper.gsub(/\$request\b/, "$__noir_other").gsub(/\$#{sig[2]}\b/, "$request") unless sig[2] == "request"
         params.concat(illuminate_request_params(helper))
       end
       params
@@ -880,10 +777,12 @@ module Analyzer::Php
     # `rules()` composed from a helper's array, `...$this->folderRules()` or
     # `array_merge([...], $this->folderRules())`: the helper's keys, from the
     # class or a trait it uses.
-    COMPOSED_RULES_RE = /(?:\.\.\.|\barray_merge\s*\([^;]*?)\$this\s*->\s*(\w+)\s*\(\s*\)/
+    SPREAD_RULES_RE    = /\.\.\.\s*\$this\s*->\s*(\w+)\s*\(\s*\)\s*(?=[,\]])/
+    ARRAY_MERGE_RE     = /\barray_merge\s*\(/
+    WHOLE_THIS_CALL_RE = /\A\$this\s*->\s*(\w+)\s*\(\s*\)\z/
 
     private def composed_rule_params(content : String, rules : String, routes_file_path : String) : Array(Param)
-      names = rules.scan(COMPOSED_RULES_RE).map(&.[1]).uniq!
+      names = composed_rule_helpers(rules)
       return [] of Param if names.empty?
       sources = [content] + used_trait_sources(content, routes_file_path)
       names.flat_map do |name|
@@ -893,6 +792,39 @@ module Analyzer::Php
           extract_php_method_body_after(source, sig.begin(0)).try { |body| rule_key_params(body[0]) }
         end.first? || [] of Param
       end
+    end
+
+    # Helpers whose array is one of the rules: a `...$this->x()` element of
+    # the returned array itself, or a whole `$this->x()` argument of a
+    # statement-level `array_merge(...)` (`return array_merge(...)`). A call inside an entry's value (a
+    # closure rule, `Rule::when(...)`) is not.
+    private def composed_rule_helpers(rules : String) : Array(String)
+      return [] of String unless rules.includes?("$this")
+      lexer = Noir::PhpLexer.new(rules, php_mode: true)
+      names = [] of String
+      rules.scan(SPREAD_RULES_RE) do |m|
+        names << m[1] if lexer.in_code?(m.begin(0)) && open_brackets(lexer, m.begin(0)) == ['[']
+      end
+      rules.scan(ARRAY_MERGE_RE) do |m|
+        open = m.end(0) - 1
+        next unless lexer.in_code?(open) && open_brackets(lexer, m.begin(0)).empty?
+        next unless close = lexer.matching_delimiter(open)
+        top_level_args(lexer, rules, open + 1, close).each { |arg| arg.match(WHOLE_THIS_CALL_RE).try { |call| names << call[1] } }
+      end
+      names.uniq
+    end
+
+    # The brackets still open at `pos`, outermost first.
+    private def open_brackets(lexer : Noir::PhpLexer, pos : Int32) : Array(Char)
+      stack = [] of Char
+      lexer.masked.each_with_index do |c, i|
+        break if i >= pos
+        case c
+        when '(', '[', '{' then stack << c
+        when ')', ']', '}' then stack.pop?
+        end
+      end
+      stack
     end
 
     private def form_request_reads(content : String, routes_file_path : String) : Array(Param)
@@ -1160,7 +1092,8 @@ module Analyzer::Php
           prelude = content[group_start...body_start]
           controller = prelude.match(GROUP_CONTROLLER_RE).try(&.[1])
           namespace = prelude.match(GROUP_NAMESPACE_RE).try(&.[1])
-          groups << RouteGroup.new(extract_group_prefix(prelude), body, body_start, body_end, controller, namespace, middleware_names(prelude, imports))
+          uses = prelude.scan(CLOSURE_USE_RE).last?.try { |m| m[1].scan(/\$(\w+)/).map(&.[1]) } || [] of String
+          groups << RouteGroup.new(extract_group_prefix(prelude), body, body_start, body_end, controller, namespace, middleware_names(prelude, imports), uses)
           pos = body_end + 1
         else
           pos = group_match.end(0)
@@ -1169,6 +1102,8 @@ module Analyzer::Php
 
       groups
     end
+
+    CLOSURE_USE_RE = /\bfunction\s*\([^)]*\)\s*use\s*\(([^)]*)\)/
 
     private def extract_group_closure_body_after(content : String, pos : Int32, lexer : Noir::PhpLexer) : Tuple(String, Int32, Int32)?
       return unless pos < content.size

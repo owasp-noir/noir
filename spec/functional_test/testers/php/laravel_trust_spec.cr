@@ -33,7 +33,7 @@ describe "Laravel handler / middleware-group auth / rules params", tags: "functi
     handler = update.handler.should_not be_nil
     handler.name.should eq("ItemController@update")
     handler.path.to_s.should end_with("app/Http/Controllers/ItemController.php")
-    handler.line.should eq(21)
+    handler.line.should eq(22)
     guards.call(update).should eq(["Laravel 'api' middleware group (TokenGate)"])
     update.params.map(&.name).sort!.should eq(["id", "tags", "title"])
 
@@ -59,9 +59,29 @@ describe "Laravel handler / middleware-group auth / rules params", tags: "functi
     guards.call(ping_rest).should eq(["Laravel TokenGate middleware"])
     show = find.call("GET", "/rest/show{format?}")
     show.handler.try(&.name).should eq("ItemController@show")
-    show.details.code_paths.first.line.should eq(15)
-    show.params.map(&.name).sort!.should eq(["cursor", "folder_name", "format", "q"])
-    # A map the file writes to is not read as its literal: no expansion.
-    endpoints.none?(&.url.starts_with?("/w/a")).should be_true
+    show.details.code_paths.first.line.should eq(18)
+    # Not `decoy` (`Arr` is Illuminate's, not app/Support/Arr.php), not
+    # `tenant` (the request is not the helper's first parameter), not
+    # `lookup_col` (an `array_merge` inside a rule's closure).
+    show.params.map(&.name).sort!.should eq(["cursor", "folder_name", "format", "q", "slug"])
+
+    # Not provably constant, a loop variable the body rewrites, or past the
+    # expansion budget: the as-written route.
+    find.call("GET", "/w/{name}")
+    find.call("GET", "/s/{s}")
+    find.call("GET", "/b/{kind}")
+    find.call("GET", "/g/{x}/{y}")
+    # Nested loops expand as a whole, never half.
+    endpoints.map(&.url).select(&.starts_with?("/n/")).sort!.should eq(["/n/v1/teams", "/n/v1/users", "/n/v2/teams", "/n/v2/users"])
+    # A loop inside a handler body registers at request time.
+    endpoints.none?(&.url.starts_with?("/inner")).should be_true
+
+    # Middleware classes judged by their definition: a refusal only in the
+    # `local` environment, or on a CORS origin, is not an auth guard; one
+    # under an environment check that also needs a user is, with a note.
+    guards.call(find.call("GET", "/mw/token")).should eq(["Laravel TokenGate middleware"])
+    guards.call(find.call("GET", "/mw/local")).should be_empty
+    guards.call(find.call("GET", "/mw/cors")).should be_empty
+    guards.call(find.call("GET", "/mw/prod")).should eq(["Laravel ProdGate middleware (an environment or config check decides; a setting can make it public)"])
   end
 end
