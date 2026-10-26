@@ -1822,7 +1822,8 @@ module Analyzer::Python
 
           # A decorator-restricted view keeps its verb set: body accessors
           # (`request.data`, `request.POST`) must not widen it.
-          suspicious_params.concat scan_function_view_lines(lines, filepath, suspicious_http_methods, restricted)
+          branched_reads = [] of Tuple(Array(::String), Array(Param))
+          suspicious_params.concat scan_function_view_lines(lines, filepath, suspicious_http_methods, restricted, branched_reads)
 
           # What the functions it hands `request` to read and test, scoped
           # to the `request.method` branch that calls them.
@@ -1854,7 +1855,10 @@ module Analyzer::Python
               applies = branch ? branch.includes?(http_method_name) : !(late && branch_verbs.includes?(http_method_name))
               method_params.concat(params) if applies
             end
-            endpoint = Endpoint.new(url, http_method_name, filter_params(http_method_name, method_params), details)
+            endpoint_params = filter_params(http_method_name, method_params)
+            # The verb branch already says which verb carries the body.
+            branched_reads.each { |verbs, params| endpoint_params.concat(params) if verbs.includes?(http_method_name) }
+            endpoint = Endpoint.new(url, http_method_name, endpoint_params, details)
             endpoint.handler = Handler.new(function_or_class_name, filepath, definition_line)
             handler_callees.each { |c| endpoint.push_callee(c) }
             endpoints << endpoint
@@ -2175,10 +2179,11 @@ module Analyzer::Python
     # an override decides some other way.
     private def view_serializer_class(view_chain : Array(DrfClass), action : ::String?,
                                       attribute_only = false) : Tuple(::String, ::String)?
-      # `@action(serializer_class=X)` sets the attribute for that action.
-      if kwarg = action_kwarg_class(view_chain, action, "serializer_class")
-        return kwarg if attribute_only
-      end
+      # `@action(serializer_class=X)` sets the attribute for that action;
+      # a `get_serializer_class` override anywhere up the chain still
+      # decides first, as DRF resolves the method before the attribute.
+      kwarg = action_kwarg_class(view_chain, action, "serializer_class")
+      return kwarg if attribute_only && kwarg
       view_chain.each do |klass|
         lines = klass.codeblock.split("\n")
         if !attribute_only && (index = lines.index(&.matches?(GET_SERIALIZER_CLASS_DEF_RE)))
@@ -2189,6 +2194,7 @@ module Analyzer::Python
           else               return
           end
         end
+        next if kwarg && !attribute_only && view_chain.any? { |base| base.codeblock.split("\n").any?(&.matches?(GET_SERIALIZER_CLASS_DEF_RE)) }
         return kwarg if kwarg
         if bound = klass.codeblock.match(SERIALIZER_CLASS_RE)
           return {klass.filepath, bound[1]}
@@ -2465,11 +2471,18 @@ module Analyzer::Python
     RAW_BODY_RE = /(?<![\w.])request\.body\b/
 
     private def scan_function_view_lines(lines : Array(::String), filepath : ::String,
-                                         methods : Array(::String), restricted : Bool) : Array(Param)
+                                         methods : Array(::String), restricted : Bool,
+                                         branched : Array(Tuple(Array(::String), Array(Param)))? = nil) : Array(Param)
       params = [] of Param
       scan_methods = restricted ? methods.dup : methods
       folded = with_request_aliases(fold_python_continuations(lines))
-      folded.each do |line|
+      folded.each_with_index do |line, index|
+        # A JSON body read under `if request.method == "PUT":` is that
+        # verb's alone.
+        if branched && line.includes?("request.json_body") && (verbs = enclosing_method_branch(folded, index))
+          branched << {verbs, extract_params_from_line(line, [] of ::String).select(&.param_type.==("json"))}
+          line = line.gsub(/request\.json_body\b/, "_json_body")
+        end
         # Check if line has 'request.method == "GET"' similar pattern
         if line.includes? "request.method"
           suspicious_code = line.split("request.method")[1].strip

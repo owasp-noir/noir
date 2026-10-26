@@ -128,3 +128,22 @@ class FeedViewSet(GenericViewSet):
 def hook(request, token):
     data = json.loads(request.body.decode())
     return Response(data["message"]["text"])
+
+
+class PickBase(GenericViewSet):
+    def get_serializer_class(self):
+        return IdsSerializer
+
+
+class PickViewSet(PickBase):
+    @action(methods=["post"], detail=False, serializer_class=BulkSerializer)
+    def pick(self, request):
+        serializer = self.get_serializer(data=request.data)
+        return Response(serializer)
+
+
+def edit(request):
+    if request.method == "PUT":
+        body = json.loads(request.body)
+        return Response(body["title"])
+    return Response()
