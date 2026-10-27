@@ -1767,11 +1767,13 @@ module Analyzer::Ruby
       # already names. A plain `params[:page]` read stays a field.
       permit_roots = Set(String).new
       container_reads = Set({String, String}).new
+      plain_reads = Set({String, String}).new
       permit_buf : String? = nil
       permit_mask = ""
       permit_lines = 0
 
       controller_lines = controller_content.lines
+      class_body = own_class_body(controller_lines)
       # Subscript reads wrapped over lines (`request.headers[` / `"X-Key"` /
       # `]`) are read off this folded view; see the `'['` scans below.
       folded_lines = Noir::CallFold.fold(controller_lines) { |l| strip_inline_comment(l) }
@@ -1814,7 +1816,7 @@ module Analyzer::Ruby
         if buf = permit_buf
           if args = permit_args(buf, permit_mask)
             permit_buf = nil
-            scope = PermitScope.new(method_bodies[this_method]? || [] of String, controller_lines)
+            scope = PermitScope.new(method_bodies[this_method]? || [] of String, class_body)
             names = permit_mask.match(PERMIT_OPEN).try(&.[0].includes?("expect")) ? expect_names(args, scope) : permit_names(args, scope)
             if !names.empty? && (root = permit_mask.match(/params\.require\s*\(\s*:(\w+)/))
               permit_roots << root[1]
@@ -1871,7 +1873,7 @@ module Analyzer::Ruby
             end
             # `params[:controller]` / `params[:action]` are the router's own keys.
             next if name.empty? || this_method.empty? || name == "controller" || name == "action"
-            container_reads << {this_method, name} if tail.matches?(CONTAINER_USE)
+            (tail.matches?(CONTAINER_USE) ? container_reads : plain_reads) << {this_method, name}
             params_body_by_action[this_method] ||= [] of Param
             params_body_by_action[this_method] << Param.new(name, "", param_type)
             params_query_by_action[this_method] ||= [] of Param
@@ -1899,7 +1901,9 @@ module Analyzer::Ruby
       unless permit_roots.empty?
         {params_body_by_action, params_query_by_action}.each do |by_action|
           by_action.each do |method, list|
-            list.reject! { |param| permit_roots.includes?(param.name) && container_reads.includes?({method, param.name}) }
+            list.reject! do |param|
+              permit_roots.includes?(param.name) && container_reads.includes?({method, param.name}) && !plain_reads.includes?({method, param.name})
+            end
           end
         end
       end
@@ -1971,7 +1975,30 @@ module Analyzer::Ruby
     end
 
     # A read that treats the value as a hash rather than a field.
-    CONTAINER_USE = /\A\s*&?\.\s*(?:is_a\?|kind_of\?|instance_of\?|class\b|key\?|has_key\?|keys\b|each\b|to_unsafe_h\b|to_h\b|slice\b|except\b)/
+    # `is_a?(String)` asks whether the value is a scalar, which is a field.
+    CONTAINER_USE = /\A\s*&?\.\s*(?:(?:is_a\?|kind_of\?|instance_of\?)\s*\(?\s*(?:Hash|ActionController::Parameters|Array)\b|key\?|has_key\?|keys\b|each\b|to_unsafe_h\b|to_h\b|slice\b|except\b)/
+
+    # `lines` with the bodies of classes and modules nested in the file's
+    # first class blanked: a `class Serializer` inside a controller holds
+    # its own `ALLOWED` and `def permitted`, which the controller's bare
+    # `permitted` never names.
+    private def own_class_body(lines : Array(String)) : Array(String)
+      return lines unless first = lines.index(&.matches?(/\A\s*class\s/))
+      outer = lines[first].size - lines[first].lstrip.size
+      nested : Int32? = nil
+      lines.map_with_index do |line, idx|
+        indent = line.size - line.lstrip.size
+        if open = nested
+          nested = nil if indent == open && line.strip == "end"
+          next ""
+        end
+        if idx > first && indent > outer && line.matches?(/\A\s*(?:class|module)\s+[A-Z]/) && !line.matches?(/\bend\s*\z/)
+          nested = indent
+          next ""
+        end
+        line
+      end
+    end
 
     # Pundit's `permitted_attributes(@comment)` / `permitted_attributes(Comment)`.
     PUNDIT_PERMITTED = /(?<![\w.])permitted_attributes\s*\(\s*(@\w+|[A-Z][\w:]*)\s*[,)]/
@@ -2055,7 +2082,7 @@ module Analyzer::Ruby
           item = item.rchop(')') if item.count('(') < item.count(')')
           names.concat(list_literal_names(item.starts_with?('[') || item.starts_with?('%') ? item : "[#{item}]", scope, depth + 1))
         end
-      elsif idx = scope.file.index(&.matches?(assign))
+      elsif name[0].ascii_uppercase? && (idx = scope.file.index(&.matches?(assign)))
         names.concat(list_literal_names(statement_from(scope.file, idx, assign), scope, depth + 1))
       elsif idx = scope.file.index(&.matches?(/\A\s*def\s+(?:self\.)?#{Regex.escape(name)}\s*(?:\(\s*\))?\s*\z/))
         # A method's value is its last statement: from the last body line at
@@ -2066,7 +2093,14 @@ module Analyzer::Ruby
         unless body.empty?
           base = body.min_of { |l| l.size - l.lstrip.size }
           start = body.rindex { |l| l.size - l.lstrip.size == base && !l.lstrip.matches?(/\A[\])}]/) } || 0
-          names.concat(list_literal_names(body[start..].join(" "), PermitScope.new(body, scope.file), depth + 1))
+          if body[start].strip == "end"
+            # An `if`/`case` ends it: each branch's list is a value it returns.
+            body.each do |l|
+              names.concat(list_literal_names(l, PermitScope.new(body, scope.file), depth + 1)) if l.lstrip.matches?(/\A(?:\[|%[iwIW][\[(])/)
+            end
+          else
+            names.concat(list_literal_names(body[start..].join(" "), PermitScope.new(body, scope.file), depth + 1))
+          end
         end
       end
       names

@@ -21,6 +21,14 @@ expected_endpoints = [
     Param.new("body", "", "form"),
     Param.new("parent_id", "", "form"),
   ]),
+  Endpoint.new("/books", "POST", [
+    Param.new("title", "", "form"),
+    Param.new("author", "", "form"),
+  ]),
+  Endpoint.new("/books/:id", "PUT", [
+    Param.new("id", "", "path"),
+    Param.new("book", "", "form"),
+  ]),
   Endpoint.new("/pages/:id", "PATCH", [
     Param.new("id", "", "path"),
     Param.new("slug_suffix", "", "form"),
@@ -34,7 +42,7 @@ expected_endpoints = [
 
 tester = FunctionalTester.new("fixtures/ruby/rails_strong_params/", {
   :techs     => 1,
-  :endpoints => 7,
+  :endpoints => 10,
 }, expected_endpoints)
 tester.perform_tests
 
@@ -42,6 +50,10 @@ it "drops permit-list holders and roots, and routes `to:` on nested resources", 
   update = tester.app.endpoints.find! { |e| e.url == "/articles/:id" && e.method == "PUT" }
   update.params.map(&.name).should_not contain("allowed")
   update.params.map(&.name).should_not contain("article")
+
+  books = tester.app.endpoints.select(&.url.starts_with?("/books")).flat_map(&.params).map(&.name)
+  books.should_not contain("wrong_a")
+  books.should_not contain("isbn_wrong")
 
   users = tester.app.endpoints.find! { |e| e.url == "/organizations/:organization_id/users" }
   users.handler.not_nil!.name.should eq("organizations#users")
