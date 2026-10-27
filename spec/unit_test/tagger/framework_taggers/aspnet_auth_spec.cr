@@ -414,4 +414,58 @@ describe "AspnetAuthTagger" do
       FileUtils.rm_rf(tmpdir)
     end
   end
+
+  describe "filter attributes, inherited attributes and in-action refusals" do
+    filters_base = File.expand_path("../../../functional_test/fixtures/csharp/aspnet_auth_filters", __DIR__)
+    controllers = "#{filters_base}/Controllers/Controllers.cs"
+    source = File.read_lines(controllers)
+    tags_for = ->(signature : String, after : String) do
+      start = source.index!(&.includes?(after))
+      line = source.index!(start, &.includes?(signature)) + 1
+      details = Details.new(PathInfo.new(controllers, line))
+      details.technology = "cs_aspnet_core_mvc"
+      endpoint = Endpoint.new("/x", "GET", [] of Param, details)
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(filters_base)
+      CodeLocator.instance.clear_all
+      Dir.glob("#{filters_base}/**/*.cs").each { |path| CodeLocator.instance.register_path(path) }
+      begin
+        AspnetAuthTagger.new(noir_options).perform([endpoint])
+      ensure
+        CodeLocator.instance.clear_all
+      end
+      endpoint.tags
+    end
+
+    it "judges a base class's filter attribute by its definition, noting a permission lookup" do
+      tags = tags_for.call("IActionResult Index()", "class ReportsController")
+      tags.size.should eq(1)
+      tags[0].name.should eq("authz")
+      tags[0].description.should contain("[RequireAdmin]")
+      tags[0].description.should contain("a setting can admit anonymous callers")
+    end
+
+    it "lets an action opt out of a filter with its bool constructor argument" do
+      tags_for.call("IActionResult Status()", "class ReportsController").should be_empty
+    end
+
+    it "reads [Authorize] inherited from a base controller" do
+      tags_for.call("IActionResult Index()", "class SettingsController").map(&.description).should eq(["Protected by ASP.NET [Authorize] (inherited from SecureBase)"])
+    end
+
+    it "takes a filter refusing an unauthenticated caller as a hard guard" do
+      tags = tags_for.call("IActionResult Profile()", "class AccountController")
+      tags.map(&.name).should eq(["auth"])
+      tags[0].description.should contain("[SignedIn]")
+    end
+
+    it "ignores filters that never refuse and refusals on bad input" do
+      tags_for.call("IActionResult Login(", "class AccountController").should be_empty
+    end
+
+    it "reads a refusal conditioned on the caller, directly or through a returned helper" do
+      tags_for.call("Task<IActionResult> Orders()", "class AccountController").map(&.description).should eq(["Protected by an in-action Challenge when the caller does not qualify"])
+      tags_for.call("Task<IActionResult> Quote(", "class AccountController").map(&.description).should eq(["Protected by CheckCallerAsync() (Forbid when the caller does not qualify)"])
+    end
+  end
 end

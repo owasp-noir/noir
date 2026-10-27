@@ -1,6 +1,7 @@
 require "../../../models/framework_tagger"
 require "../../../models/endpoint"
 require "../../../utils/c_comments"
+require "../../../minilexers/csharp_lexer"
 
 @[Noir::TaggerFor(key: "aspnet_auth", name: "ASP.NET Auth Tagger", desc: "Identifies ASP.NET authentication patterns ([Authorize], policies)", order: 170)]
 class AspnetAuthTagger < FrameworkTagger
@@ -147,7 +148,11 @@ class AspnetAuthTagger < FrameworkTagger
       # Check for [AllowAnonymous] on this action or its controller:
       # anonymous access wins over any [Authorize] in ASP.NET Core.
       class_attrs = class_attribute_lines(path_info.path, lines, line_idx)
-      if has_allow_anonymous?(lines, line_idx) || class_attrs.any?(&.matches?(ALLOW_ANONYMOUS_PATTERN))
+      # `[Authorize]`/`[AllowAnonymous]` are inherited: a controller takes
+      # them from its base classes too.
+      chain = class_chain(path_info.path, lines, line_idx)
+      if has_allow_anonymous?(lines, line_idx) || class_attrs.any?(&.matches?(ALLOW_ANONYMOUS_PATTERN)) ||
+         chain.any? { |decl| decl.attributes.matches?(ALLOW_ANONYMOUS_PATTERN) }
         return
       end
 
@@ -174,6 +179,21 @@ class AspnetAuthTagger < FrameworkTagger
         endpoint.add_tag(Tag.new("auth", "Protected by #{description} (class-level)", "aspnet_auth"))
         return
       end
+      chain.each_with_index do |decl, level|
+        description ||= AUTHORIZE_PATTERNS.find { |pattern, _| decl.attributes.matches?(pattern) }.try(&.[1])
+        if description
+          endpoint.add_tag(Tag.new("auth", "Protected by #{description} (#{level == 0 ? "class-level" : "inherited from #{decl.name}"})", "aspnet_auth"))
+          return
+        end
+      end
+
+      # A filter attribute the scan declares, judged by its definition.
+      # One that configuration can open (`authz`) leaves the harder checks
+      # below to be read too.
+      if tag = filter_attribute_guard(lines, line_idx, chain)
+        endpoint.add_tag(tag)
+        return unless tag.name == "authz"
+      end
 
       root = nearest_project_root(path_info.path, CSPROJ)
       if @fallback_roots.includes?(root)
@@ -186,10 +206,251 @@ class AspnetAuthTagger < FrameworkTagger
       end
 
       # Check action body for auth checks
-      description = check_action_body(lines, line_idx)
+      description = check_action_body(lines, line_idx) || action_refusal(path_info.path, lines, line_idx)
       if description
         endpoint.add_tag(Tag.new("auth", "Protected by #{description}", "aspnet_auth"))
         return
+      end
+    end
+  end
+
+  # ---- inherited attributes and custom filters ---------------------------
+
+  # A class declaration the scan holds: its attribute list (comments
+  # stripped) and its base class.
+  record ClassDecl, name : String, attributes : String, base : String?
+
+  CLASS_DECL_NAME_RE = /\bclass\s+([A-Z]\w*)/
+  CLASS_MODIFIERS    = /(?:(?:public|internal|private|protected|abstract|sealed|static|partial|new)\s+)*/
+  DECL_BASE_RE       = /\A\s*(?:<[^{};]*?>)?\s*(?:\([^)]*\))?\s*:\s*(?:global::)?(?:\w+\.)*(\w+)/
+  # One `[Name(args)]` entry of an attribute list.
+  ATTRIBUTE_ENTRY_RE = /(?:\[|,)\s*(?:global::)?(?:\w+\.)*(\w+)\s*(?:\(((?:[^()]|\([^()]*\))*)\))?\s*(?=[\],])/
+  # An MVC filter refusing the request: an authentication challenge, a
+  # forbid, or a 401/403 status.
+  FILTER_REFUSAL_RE = /\b\w+\.Result\s*=\s*new\s+(?:ChallengeResult|ForbidResult|UnauthorizedResult|UnauthorizedObjectResult)\b|\b\w+\.Result\s*=\s*new\s+StatusCodeResult\s*\(\s*(?:40[13]\b|StatusCodes\.Status40[13]|\(int\)\s*HttpStatusCode\.(?:Unauthorized|Forbidden))/
+  # A permission lookup on an injected service: which roles hold the
+  # permission is data, so configuration decides who gets through.
+  PERMISSION_CHECK_RE = /\b_\w+\s*\.\s*(\w*(?:Authorize|Permission|Access)\w*)\s*\(([^()]*)\)/
+  TYPEOF_RE           = /\btypeof\s*\(\s*(\w+)\s*\)/
+
+  @class_files : Hash(String, Array(String))? = nil
+  @class_decls = Hash(String, Array(ClassDecl)).new
+  @class_bodies = Hash(String, String?).new
+  @filter_guards = Hash(String, Tuple(String, Bool)?).new
+  @lexers = Hash(String, Noir::CSharpLexer).new
+
+  private def class_files : Hash(String, Array(String))
+    @class_files ||= begin
+      index = Hash(String, Array(String)).new
+      collect_files_by_extension(".cs").each do |path|
+        next if base_relative_path(path).matches?(TEST_PATH)
+        content = read_file(path) || next
+        next unless content.includes?("class")
+        content.scan(CLASS_DECL_NAME_RE) do |m|
+          files = index[m[1]] ||= [] of String
+          files << path unless files.includes?(path)
+        end
+      end
+      index
+    end
+  end
+
+  private def lexer_for(path : String) : Noir::CSharpLexer?
+    @lexers[path] ||= Noir::CSharpLexer.new(read_file(path) || return)
+  end
+
+  # Every declaration of `name` in `path` (or in every file declaring it),
+  # with the position of its body's `{` (or -1 for a `;`-terminated one).
+  private def declarations(name : String, paths : Array(String)) : Array(Tuple(ClassDecl, Bool, Int32, Int32))
+    decl_re = /((?:\[[^\]]*\]\s*)*)#{CLASS_MODIFIERS.source}class\s+#{Regex.escape(name)}\b([^{};]*)([{;])/
+    found = [] of Tuple(ClassDecl, Bool, Int32, Int32)
+    paths.each do |path|
+      lexer = lexer_for(path) || next
+      code = lexer.code_source
+      lexer.masked_source.scan(decl_re) do |m|
+        attributes = code[m.begin(1), m[1].size]
+        base = m[2].match(DECL_BASE_RE).try(&.[1])
+        partial = m[0][m[1].size..].includes?("partial")
+        found << {ClassDecl.new(name, attributes, base), partial, m.begin(0), m[3] == "{" ? m.end(0) - 1 : -1}
+      end
+    end
+    found
+  end
+
+  # The scanned declarations of `name`, parts of one `partial` type merged;
+  # empty when the scan does not declare it or declares unrelated types of
+  # that name.
+  private def class_decls(name : String) : Array(ClassDecl)
+    @class_decls[name] ||= begin
+      found = declarations(name, class_files[name]? || [] of String)
+      found.size == 1 || found.all?(&.[1]) ? found.map(&.[0]) : [] of ClassDecl
+    end
+  end
+
+  # The class enclosing `method_line`, then each base class the scan
+  # declares, nearest first.
+  private def class_chain(path : String, lines : Array(String), method_line : Int32) : Array(ClassDecl)
+    idx = nearest_match_above(@class_lines, path, lines) { |line| current = line.strip; current.includes?("class ") && (current.includes?(":") || current.includes?("{")) }[method_line]
+    return [] of ClassDecl if idx < 0
+    name = lines[idx].match(CLASS_DECL_NAME_RE).try(&.[1]) || return [] of ClassDecl
+    own = declarations(name, [path]).map(&.[0])
+    chain = own.dup
+    base = own.compact_map(&.base).first?
+    seen = Set{name}
+    8.times do
+      break unless base && seen.add?(base)
+      decls = class_decls(base)
+      break if decls.empty?
+      chain.concat(decls)
+      base = decls.compact_map(&.base).first?
+    end
+    chain
+  end
+
+  # The attributes stacked on the action at `method_line`.
+  private def action_attributes(lines : Array(String), method_line : Int32) : String
+    attrs = [] of String
+    idx = method_line - 1
+    while idx >= 0 && idx >= method_line - 12
+      current = lines[idx].strip
+      break if current.empty? || current.ends_with?(';') || current.ends_with?('}') || current.ends_with?('{')
+      attrs.unshift(current) unless current.starts_with?("//")
+      idx -= 1
+    end
+    attrs.join(' ')
+  end
+
+  # The nearest instance of each attribute on the action, its class or a
+  # base class whose definition refuses the caller. An action-level
+  # instance replaces the class-level one (`[CheckAccess(ignore: true)]`
+  # opting one action out), and an instance passing `true` to a `bool`
+  # constructor parameter of the attribute is an opt-out.
+  # ponytail: "nearest instance wins" and "`true` disables" are the common
+  # filter override conventions; a filter that combines its instances some
+  # other way is read the same.
+  private def filter_attribute_guard(lines : Array(String), method_line : Int32, chain : Array(ClassDecl)) : Tag?
+    seen = Set(String).new
+    ([action_attributes(lines, method_line)] + chain.map(&.attributes)).each do |list|
+      list.scan(ATTRIBUTE_ENTRY_RE) do |m|
+        name = m[1].rchop("Attribute")
+        next unless seen.add?(name)
+        verdict = filter_guard(name) || next
+        description, configurable = verdict
+        next if opt_out?(name, m[2]?)
+        return Tag.new(configurable ? "authz" : "auth", "Protected by [#{name}] (#{description})", "aspnet_auth")
+      end
+    end
+    nil
+  end
+
+  private def opt_out?(name : String, args : String?) : Bool
+    return false unless args && args.matches?(/(?:\A|[,:])\s*true\s*(?:,|\z)/)
+    decl = attribute_decl(name) || return false
+    body = class_body(decl[0], decl[1]) || return false
+    body.matches?(/\b#{Regex.escape(decl[0])}\s*\([^)]*\bbool\s+\w+/)
+  end
+
+  private def attribute_decl(name : String) : Tuple(String, String)?
+    {"#{name}Attribute", name}.each do |candidate|
+      paths = class_files[candidate]? || next
+      return {candidate, paths.first} if paths.size == 1
+    end
+    nil
+  end
+
+  private def class_body(name : String, path : String) : String?
+    @class_bodies["#{path}\0#{name}"] ||= begin
+      entry = declarations(name, [path]).find { |found| found[3] >= 0 }
+      if entry && (lexer = lexer_for(path)) && (close = lexer.matching_delimiter(entry[3]))
+        lexer.code_source[entry[3]..close]
+      end
+    end
+  end
+
+  # `{description, configurable}` when the attribute `name` is a filter the
+  # scan declares whose definition (or the filter type it instantiates via
+  # `typeof(...)`) refuses the request; nil otherwise.
+  private def filter_guard(name : String) : Tuple(String, Bool)?
+    return @filter_guards[name] if @filter_guards.has_key?(name)
+    @filter_guards[name] = begin
+      if decl = attribute_decl(name)
+        body = class_body(decl[0], decl[1]) || ""
+        body.scan(TYPEOF_RE) do |m|
+          next if body.includes?("class #{m[1]}")
+          body += (class_files[m[1]]?.try { |paths| paths.size == 1 ? class_body(m[1], paths.first) : nil } || "")
+        end
+        if refusal = body.match(FILTER_REFUSAL_RE)
+          result = refusal[0].sub(/\A\w+\.Result\s*=\s*new\s+/, "").split(/[\s(]/).first
+          if check = body.match(PERMISSION_CHECK_RE)
+            {"refuses with #{result} unless `#{check[1]}(#{check[2].strip})` grants it; which roles hold that permission is configuration, so a setting can admit anonymous callers", true}
+          else
+            {"filter refuses with #{result}", false}
+          end
+        end
+      end
+    end
+  end
+
+  # ---- refusals in the action body ---------------------------------------
+
+  # `return Challenge();` / `Forbid()` / `Unauthorized()` / a 401/403 status.
+  ACTION_REFUSAL_RE = /\breturn\s+(?:(?:base|this)\.)?(?:Challenge|Forbid|Unauthorized)\s*\(|\breturn\s+new\s+(?:ChallengeResult|ForbidResult|UnauthorizedResult)\b|\breturn\s+StatusCode\s*\(\s*(?:40[13]\b|StatusCodes\.Status40[13]|\(int\)\s*HttpStatusCode\.(?:Unauthorized|Forbidden))/
+  # An expression reading who the caller is.
+  CALLER_RE           = /\bUser\b|\bIsAuthenticated\b|\bIs(?:Registered|Guest|SignedIn)\w*\s*\(|\bGet(?:Current|Authenticated|Signed)\w*\s*\(|\bGetUser(?:Id)?(?:Async)?\s*\(|\bCurrent(?:User|Principal|Customer|Account|Member)\b/
+  LOCAL_ASSIGNMENT_RE = /\b(?:var|[A-Z]\w*\??)\s+(\w+)\s*=\s*([^;]+);/
+
+  # A refusal under a condition that reads the caller (directly or through
+  # a local assigned from the caller), in the action body or in a helper of
+  # the same file whose result the action returns. A refusal on a bad
+  # input (`if (!valid) return Unauthorized();` in a login action) is not
+  # a guard.
+  private def action_refusal(path : String, lines : Array(String), method_line : Int32) : String?
+    body = action_body(lines, method_line)
+    if found = caller_refusal(body)
+      return "an in-action #{found} when the caller does not qualify"
+    end
+    file = lines.join('\n')
+    body.scan(/(?:\b(\w+)\s*=\s*)?(?:await\s+)?\b([A-Z]\w*)\s*\(/) do |call|
+      helper = call[2]
+      returned = body.matches?(/\breturn\s+(?:await\s+)?#{Regex.escape(helper)}\s*\(/) ||
+                 (call[1]? && body.matches?(/\breturn\s+#{Regex.escape(call[1])}\s*;/))
+      next unless returned
+      definition = file.match(/\b(?:private|protected|internal|public)\b[^;{}=()]*\bIActionResult\b[^;{}=()]*\b#{Regex.escape(helper)}\s*\([^)]*\)\s*\{/) || next
+      helper_line = file[0, definition.begin(0)].count('\n')
+      if found = caller_refusal(action_body(lines, helper_line))
+        return "#{helper}() (#{found} when the caller does not qualify)"
+      end
+    end
+    nil
+  end
+
+  private def caller_refusal(body : String) : String?
+    callers = body.scan(LOCAL_ASSIGNMENT_RE).select(&.[2].matches?(CALLER_RE)).map(&.[1])
+    body.scan(ACTION_REFUSAL_RE) do |refusal|
+      before = body[0, refusal.begin(0)]
+      condition_at = before.rindex(/\bif\s*\(/) || next
+      condition = before[condition_at..]
+      next unless condition.matches?(CALLER_RE) || callers.any? { |name| condition.matches?(/\b#{Regex.escape(name)}\b/) }
+      return refusal[0].sub(/\Areturn\s+(?:new\s+)?/, "").rstrip(" (")
+    end
+    nil
+  end
+
+  # The text of the member declared at `method_line`, through the brace
+  # that closes its body (or its expression body's `;`).
+  private def action_body(lines : Array(String), method_line : Int32) : String
+    idx = method_line
+    end_idx = [method_line + 400, lines.size - 1].min
+    depth = 0
+    opened = false
+    String.build do |io|
+      while idx <= end_idx
+        current = lines[idx]
+        io << current << '\n'
+        depth += current.count('{') - current.count('}')
+        opened ||= current.includes?('{')
+        break if opened ? depth <= 0 : current.strip.ends_with?(';')
+        idx += 1
       end
     end
   end
@@ -323,6 +584,8 @@ class AspnetAuthTagger < FrameworkTagger
     while attr_idx >= 0 && attr_idx >= idx - 5
       attr = lines[attr_idx].strip
       break if attr.empty? && attr_idx < idx - 1
+      # The end of the previous declaration: its attributes are not ours.
+      break if attr.ends_with?('}') || attr.ends_with?(';') || attr.ends_with?('{')
       attrs << attr
       attr_idx -= 1
     end
