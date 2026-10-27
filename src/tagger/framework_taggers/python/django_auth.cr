@@ -316,8 +316,14 @@ class DjangoAuthTagger < FrameworkTagger
   # Django spells the refusal of an anonymous caller its own way too: the
   # 403 response class, a 401/403 status, `PermissionDenied`, or the login
   # redirect.
-  DJANGO_REFUSAL  = /\bHttpResponseForbidden\s*\(|\bredirect_to_login\s*\(|\bstatus\s*=\s*40[13]\b|\braise\s+(?:\w+\.)*PermissionDenied\b/
-  ANONYMOUS_TEST  = /\bnot\s+request\.user\.is_authenticated\b|\brequest\.user\.is_anonymous\b/
+  DJANGO_REFUSAL = /\bHttpResponseForbidden\s*\(|\bredirect_to_login\s*\(|\bstatus\s*=\s*40[13]\b|\braise\s+(?:\w+\.)*PermissionDenied\b/
+  # `if not request.user.is_authenticated:` / `if request.user.is_anonymous:`,
+  # read off `self.request` in a class view too; `not ... is_anonymous` is
+  # the authenticated branch.
+  ANONYMOUS_TEST = /\bnot\s+(?:self\.)?request\.user\.is_authenticated\b|(?<!not )(?<![\w.])(?:self\.)?request\.user\.is_anonymous\b/
+  USER_ALIAS     = /\A([A-Za-z_]\w*)\s*=\s*(?:self\.)?request\.user\z/
+  # Refusing an anonymous caller by sending it to the login page.
+  LOGIN_REDIRECT  = /\breturn\s+(?:redirect|HttpResponseRedirect)\s*\([^\n]*\blogin/i
   METHOD_TEST     = /^(?:if|elif)\b.*(?<![\w.])request\.method\b/
   RETURNED_HELPER = /\breturn\s+([A-Za-z_][\w.]*)\s*\(\s*request\s*[,)]/
   DEF_LINE        = /^(?:async\s+)?def\s/
@@ -354,14 +360,20 @@ class DjangoAuthTagger < FrameworkTagger
     level = body.first?.try(&.[0]) || return
     method = method.upcase
     branched = Set(String).new
+    # `user = request.user`, then `if not user.is_authenticated:`.
+    aliases = [] of String
     body.each_with_index do |(indent, code), k|
       next unless indent == level
+      if user_alias = code.match(USER_ALIAS)
+        aliases << user_alias[1]
+        next
+      end
       block = body[(k + 1)..].take_while { |entry| entry[0] > level }.map(&.[1])
       inline = code.partition(':')[2]
       block.unshift(inline) unless inline.strip.empty?
-      if code.starts_with?("if ") && code.matches?(ANONYMOUS_TEST)
+      if code.starts_with?("if ") && anonymous_test?(code.partition(':')[0], aliases)
         text = block.join('\n')
-        return "Django request.user.is_authenticated check" if text.matches?(DJANGO_REFUSAL) || text.matches?(UNAUTHENTICATED) || text.matches?(FORBIDDEN)
+        return "Django request.user.is_authenticated check" if text.matches?(DJANGO_REFUSAL) || text.matches?(UNAUTHENTICATED) || text.matches?(FORBIDDEN) || text.matches?(LOGIN_REDIRECT)
       elsif code.matches?(METHOD_TEST)
         test = code.split("request.method", 2)[1]
         next if test.matches?(/\A\s*(?:!=|not\s+in)/)
@@ -385,6 +397,13 @@ class DjangoAuthTagger < FrameworkTagger
       end
     end
     nil
+  end
+
+  private def anonymous_test?(condition : String, aliases : Array(String)) : Bool
+    return true if condition.matches?(ANONYMOUS_TEST)
+    aliases.any? do |name|
+      condition.matches?(/\bnot\s+#{name}\.is_authenticated\b|(?<!not )(?<![\w.])#{name}\.is_anonymous\b/)
+    end
   end
 
   # The guard on function `name` as `path` refers to it: its decorators,

@@ -453,6 +453,60 @@ describe "DjangoAuthTagger" do
     end
   end
 
+  it "reads an early anonymous refusal through a request.user alias and self.request" do
+    CodeLocator.instance.clear_all
+    tmpdir = File.tempname("django_body_alias_guards")
+    Dir.mkdir_p(tmpdir)
+    views = File.join(tmpdir, "views.py")
+    File.write(views, <<-PY)
+      def flags(request):
+          user = request.user
+          if not user.is_authenticated:
+              return HttpResponseForbidden()
+          return HttpResponse("ok")
+
+      def inverted(request):
+          if not request.user.is_anonymous:
+              return HttpResponseForbidden()
+          return HttpResponse("ok")
+
+      class Things(APIView):
+          def get(self, request):
+              if self.request.user.is_anonymous:
+                  return redirect(settings.LOGIN_URL)
+              return Response({})
+
+      def elsewhere(request):
+          user = request.user
+          if not user.is_authenticated:
+              return redirect("home")
+          return HttpResponse("ok")
+      PY
+    CodeLocator.instance.register_path(views)
+
+    begin
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(tmpdir)
+      at = ->(line : Int32) { Endpoint.new("/#{line}", "GET", [] of Param, Details.new(PathInfo.new(views, line))) }
+      flags = at.call(1)
+      inverted = at.call(7)
+      things = at.call(13)
+      elsewhere = at.call(18)
+
+      DjangoAuthTagger.new(noir_options).perform([flags, inverted, things, elsewhere])
+
+      flags.tags.map(&.description).should eq(["Protected by Django request.user.is_authenticated check"])
+      # `not ... is_anonymous` refuses the signed-in caller, not the anonymous one.
+      inverted.tags.should be_empty
+      things.tags.map(&.description).should eq(["Protected by Django request.user.is_authenticated check"])
+      # A redirect anywhere but the login page is not a refusal.
+      elsewhere.tags.should be_empty
+    ensure
+      FileUtils.rm_rf(tmpdir)
+      CodeLocator.instance.clear_all
+    end
+  end
+
   it "judges class-based views by the dispatch their project bases define" do
     CodeLocator.instance.clear_all
     tmpdir = File.tempname("django_cbv_dispatch")
