@@ -87,6 +87,8 @@ module Analyzer::CSharp
     end
     @param_name_strip_regexes = Hash(String, Regex).new
     @type_namespaces = Hash(Noir::CSharpType, String).new
+    @closed_scopes = Set(String).new
+    @unread_route = false
 
     def analyze
       include_callee = callees_needed?
@@ -164,13 +166,15 @@ module Analyzer::CSharp
     # contributes routes from a library-style file (a plugin's route
     # provider) is mounted into a host the scan cannot tie it to, so its
     # controllers keep the default route next to their pinned templates.
-    # `[Area]` controllers that no catch-all route reaches get the standard
-    # area route instead (`area_patterns`).
+    # Outside such a table, `[Area]` controllers that no catch-all route
+    # reaches get the standard area route instead (`area_patterns`); inside
+    # one they are unreachable, and reported only at their attribute routes.
     private def load_route_patterns_by_scope(project_roots : Array(String)) : Hash(String, Array(ConventionalRoute))
       patterns_by_scope = Hash(String, Array(ConventionalRoute)).new do |hash, key|
         hash[key] = [] of ConventionalRoute
       end
       hosted = Set(String).new
+      unread = Set(String).new
 
       get_files_by_extension(".cs").each do |file|
         base = File.basename(file).downcase
@@ -180,8 +184,10 @@ module Analyzer::CSharp
         next if !host && Common.csharp_test_path?(base_relative_path(file))
         next if !host && Common.aspnet_framework_source?(content)
         scope = route_scope_for(file, project_roots)
+        @unread_route = false
         patterns = extract_route_patterns(content, file)
         hosted << scope if host && !patterns.empty?
+        unread << scope if @unread_route
         patterns_by_scope[scope].concat(patterns)
       rescue e
         logger.debug "Failed to read #{file}: #{e.message}"
@@ -189,6 +195,8 @@ module Analyzer::CSharp
 
       @base_paths.each { |base_path| patterns_by_scope[base_path] }
 
+      # A table with a call the analyzer could not read may hold the area route.
+      @closed_scopes = hosted - unread
       patterns_by_scope.each do |scope, patterns|
         unless hosted.includes?(scope) || patterns.any? { |pattern| pattern.catch_all? && pattern.reaches_area?(nil) }
           patterns << ConventionalRoute.new(DEFAULT_ROUTE)
@@ -238,16 +246,22 @@ module Analyzer::CSharp
           end
         end
 
-        pattern = args["pattern"]?.try { |expr| csharp_string_value(expr, file, before) } || next
+        unless pattern = args["pattern"]?.try { |expr| csharp_string_value(expr, file, before) }
+          @unread_route = true
+          next
+        end
         defaults = defaults_object(args["defaults"]?, file, before)
         unreadable = defaults.nil?
         defaults ||= Hash(String, String?).new
         area = if area_arg = args["areaName"]?
-                 csharp_string_value(area_arg, file, before) || next
+                 csharp_string_value(area_arg, file, before) || (@unread_route = true; next)
                else
                  defaults["area"]?
                end
-        next if defaults.has_key?("area") && area.nil?
+        if defaults.has_key?("area") && area.nil?
+          @unread_route = true
+          next
+        end
         controller = defaults["controller"]?
         action = defaults["action"]?
         unreadable ||= (defaults.has_key?("controller") && controller.nil?) || (defaults.has_key?("action") && action.nil?)
@@ -273,7 +287,7 @@ module Analyzer::CSharp
           start = i + 1
         end
       end
-      args << code[start..] unless masked[start..].blank?
+      args << code[start..] unless code[start..].blank?
       args
     end
 
@@ -386,7 +400,9 @@ module Analyzer::CSharp
           next if attributes.includes?("NonController")
           next unless CONTROLLER_SUFFIX_RE.matches?(type.name) ||
                       attributes.includes?("Controller") || attributes.includes?("ApiController")
-          selected[file] << {type, route_patterns, inherited_class_routes(parts, index, class_routes)}
+          routes = inherited_class_routes(parts, index, class_routes)
+          patterns = @closed_scopes.includes?(scope) ? route_patterns : area_patterns(route_patterns, routes[1])
+          selected[file] << {type, patterns, routes}
         end
       end
 
@@ -555,7 +571,6 @@ module Analyzer::CSharp
       # One route per controller `[Route]`; none falls back to conventional routing.
       controller_routes, area = class_routes
       controller_routes = [""] if controller_routes.empty?
-      route_patterns = area_patterns(route_patterns, area)
 
       # Accumulate every `[Http<Verb>(...)]` on the pending action so a method
       # carrying more than one (`[HttpGet(...)]` + `[HttpHead(...)]` for image/
