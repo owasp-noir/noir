@@ -1087,3 +1087,256 @@ describe "RubyAuthTagger (Grape route scope)" do
     end
   end
 end
+
+describe "RubyAuthTagger (routed controller chain)" do
+  it "reads a concern's action through the routed controller, a parent's Pundit callback and a setting-lifted guard" do
+    CodeLocator.instance.clear_all
+    tmpdir = File.tempname("ruby_routed_chain")
+    controllers = File.join(tmpdir, "app", "controllers")
+    files = {
+      "app/controllers/application_controller.rb" => <<-RB,
+        class ApplicationController < ActionController::Base
+          before_action :verify_private_site
+
+          def verify_private_site
+            return if user_signed_in? || Settings::Site.public
+            head :unauthorized
+          end
+        end
+        RB
+      "app/controllers/api/base_controller.rb" => <<-RB,
+        module Api
+          class BaseController < ApplicationController
+            def authenticate!
+              head :unauthorized unless current_user
+            end
+
+            def validate_page_limit
+              return if params[:page].to_i <= 1000
+              return if current_user
+              head :unauthorized
+            end
+          end
+        end
+        RB
+      "app/controllers/concerns/api/articles_controller.rb" => <<-RB,
+        module Api
+          module ArticlesController
+            extend ActiveSupport::Concern
+
+            included do
+              before_action :validate_page_limit, only: %i[index]
+            end
+
+            def index
+            end
+
+            def update
+            end
+          end
+        end
+        RB
+      "app/controllers/api/v1/articles_controller.rb" => <<-RB,
+        module Api
+          module V1
+            class ArticlesController < BaseController
+              include Api::ArticlesController
+              before_action :authenticate!, only: %i[update]
+            end
+          end
+        end
+        RB
+      "app/controllers/admin/application_controller.rb" => <<-RB,
+        module Admin
+          class ApplicationController < ApplicationController
+            before_action :authorize_admin
+
+            def authorize_admin
+              authorize(:dashboard, :access?, policy_class: InternalPolicy)
+            end
+          end
+        end
+        RB
+      "app/controllers/admin/users_controller.rb" => <<-RB,
+        module Admin
+          class UsersController < Admin::ApplicationController
+            def banish
+            end
+          end
+        end
+        RB
+      "app/policies/internal_policy.rb" => <<-RB,
+        class InternalPolicy < ApplicationPolicy
+          def access?
+            user.admin?
+          end
+        end
+        RB
+    }
+    files.each do |name, body|
+      path = File.join(tmpdir, name)
+      Dir.mkdir_p(File.dirname(path))
+      File.write(path, body)
+      CodeLocator.instance.register_path(path)
+    end
+
+    begin
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(tmpdir)
+      concern = File.join(controllers, "concerns/api/articles_controller.rb")
+      routed = ->(line : Int32) do
+        endpoint = Endpoint.new("/api/articles/#{line}", "GET", [] of Param, Details.new(PathInfo.new(concern, line)))
+        handler = Handler.new("articles#x", concern, line)
+        handler.dispatch_path = File.join(controllers, "api/v1/articles_controller.rb")
+        endpoint.handler = handler
+        endpoint
+      end
+      index = routed.call(9)
+      update = routed.call(12)
+      banish = Endpoint.new("/admin/users/1/banish", "POST", [] of Param,
+        Details.new(PathInfo.new(File.join(controllers, "admin/users_controller.rb"), 3)))
+
+      RubyAuthTagger.new(noir_options).perform([index, update, banish])
+
+      # A setting decides; the page-size check is the caller's own choice.
+      index.tags.map(&.description).should eq(["Protected by verify_private_site (app-defined, refuses callers without a credential; `Settings::Site.public` decides; a setting can make it public)"])
+      # The routed controller's `authenticate!` wins over the setting-lifted one.
+      update.tags.map(&.description).should eq(["Protected by authenticate! (app-defined, refuses callers without a credential)"])
+      # `class ApplicationController < ApplicationController` inside `Admin`
+      # names the top-level one; its child's Pundit `authorize` callback guards.
+      banish.tags.find { |t| t.name == "authz" }.should_not be_nil
+      banish.tags.find! { |t| t.name == "auth" }.description.should contain("a setting can make it public")
+    ensure
+      FileUtils.rm_rf(tmpdir)
+      CodeLocator.instance.clear_all
+    end
+  end
+
+  # One `before_action` per controller, each guarding `index` (line 4) the
+  # way its callback (at line 9 on) reads.
+  it "judges request-value conditions, Pundit queries and early exits by what they let through" do
+    CodeLocator.instance.clear_all
+    tmpdir = File.tempname("ruby_guard_definitions")
+    controllers = File.join(tmpdir, "app", "controllers")
+    callbacks = {
+      # Both arms of the format branch deny: no value lets a caller in.
+      "notes"   => "unless current_user\n  if params[:format] == \"json\"\n    head :unauthorized\n  else\n    redirect_to \"/login\"\n  end\nend",
+      "memos"   => "return if params[:preview]\nhead :unauthorized unless current_user",
+      "exports" => "if params[:access_code] != Rails.application.credentials.export_code && !current_user\n  head :forbidden\nend",
+      "tags"    => "authorize Tag, :index?",
+      "links"   => "authorize Link, :index?",
+      "docs"    => "authorize Doc",
+      "secrets" => "authorize(Secret, :index?)",
+      "venues"  => "authorize Venue, :index? if current_user",
+      "tickets" => "flash.now[:notice] = \"Please authorize the app\" unless cookies[:seen]",
+    }
+    policies = {
+      "tag"    => "def index?\n    true\n  end",
+      "link"   => "def index?\n    return true unless user\n\n    user.active?\n  end",
+      "doc"    => "def index?\n    user.blank? || user.reader?\n  end",
+      "secret" => "def index?\n    user.present? && user.admin?\n  end",
+      "venue"  => "def index?\n    user.present?\n  end",
+    }
+    files = {
+      "app/controllers/application_controller.rb" => <<-RB,
+        class ApplicationController < ActionController::Base
+          PUBLIC = %w[instances].freeze
+          before_action :verify_private
+
+          def verify_private
+            return if controller_name.in?(PUBLIC)
+            return if self.class.module_parent.to_s == "Admin"
+            head :unauthorized unless current_user
+          end
+        end
+        RB
+      "app/controllers/instances_controller.rb"   => "class InstancesController < ApplicationController\n  def index\n  end\nend\n",
+      "app/controllers/admin/stats_controller.rb" => "module Admin\n  class StatsController < ApplicationController\n    def index\n    end\n  end\nend\n",
+      "app/controllers/plain_controller.rb"       => "class PlainController < ApplicationController\n  def index\n  end\nend\n",
+    }
+    callbacks.each do |name, body|
+      kind = name.in?("notes", "memos", "exports") ? "ensure_member" : "authorize_#{name}"
+      indented = body.lines.map { |l| "    #{l.chomp}" }.join("\n")
+      files["app/controllers/#{name}_controller.rb"] = "class #{name.camelcase}Controller < ActionController::Base\n  before_action :#{kind}\n\n  def index\n  end\n\n  private\n\n  def #{kind}\n#{indented}\n  end\nend\n"
+    end
+    policies.each do |name, body|
+      files["app/policies/#{name}_policy.rb"] = "class #{name.camelcase}Policy\n  def initialize(user, record)\n    @user = user\n  end\n\n  #{body}\nend\n"
+    end
+    files.each do |name, body|
+      path = File.join(tmpdir, name)
+      Dir.mkdir_p(File.dirname(path))
+      File.write(path, body)
+      CodeLocator.instance.register_path(path)
+    end
+
+    begin
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(tmpdir)
+      endpoints = callbacks.keys.map do |name|
+        Endpoint.new("/#{name}", "GET", [] of Param, Details.new(PathInfo.new(File.join(controllers, "#{name}_controller.rb"), 4)))
+      end
+      instances = Endpoint.new("/instances", "GET", [] of Param, Details.new(PathInfo.new(File.join(controllers, "instances_controller.rb"), 2)))
+      stats = Endpoint.new("/admin/stats", "GET", [] of Param, Details.new(PathInfo.new(File.join(controllers, "admin/stats_controller.rb"), 3)))
+      plain = Endpoint.new("/plain", "GET", [] of Param, Details.new(PathInfo.new(File.join(controllers, "plain_controller.rb"), 2)))
+
+      RubyAuthTagger.new(noir_options).perform(endpoints + [instances, stats, plain])
+
+      guarded = (endpoints + [instances, stats, plain]).select { |e| e.tags.any?(&.name.in?("auth", "authz")) }.map(&.url)
+      guarded.should eq(["/notes", "/exports", "/secrets", "/plain"])
+      endpoints.find! { |e| e.url == "/secrets" }.tags.first.description.should contain("SecretPolicy#index?")
+    ensure
+      FileUtils.rm_rf(tmpdir)
+      CodeLocator.instance.clear_all
+    end
+  end
+
+  it "reads an inherited action through the routed controller's own skips" do
+    CodeLocator.instance.clear_all
+    tmpdir = File.tempname("ruby_routed_skips")
+    controllers = File.join(tmpdir, "app", "controllers")
+    files = {
+      "application_controller.rb"  => "class ApplicationController < ActionController::Base\nend\n",
+      "items_base_controller.rb"   => "class ItemsBaseController < ApplicationController\n  before_action :authenticate_user!\n\n  def index\n  end\n\n  def show\n  end\nend\n",
+      "public_items_controller.rb" => "class PublicItemsController < ItemsBaseController\n  skip_before_action :authenticate_user!\nend\n",
+      "only_items_controller.rb"   => "class OnlyItemsController < ItemsBaseController\n  skip_before_action :authenticate_user!, only: [:show]\nend\n",
+      "cond_items_controller.rb"   => "class CondItemsController < ItemsBaseController\n  skip_before_action :authenticate_user!, if: -> { Setting.public_items? }\nend\n",
+      "format_items_controller.rb" => "class FormatItemsController < ItemsBaseController\n  skip_before_action :authenticate_user!, if: -> { request.format.json? }\nend\n",
+    }
+    files.each do |name, body|
+      path = File.join(controllers, name)
+      Dir.mkdir_p(File.dirname(path))
+      File.write(path, body)
+      CodeLocator.instance.register_path(path)
+    end
+
+    begin
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(tmpdir)
+      base = File.join(controllers, "items_base_controller.rb")
+      routed = ->(controller : String, line : Int32) do
+        endpoint = Endpoint.new("/#{controller}/#{line}", "GET", [] of Param, Details.new(PathInfo.new(base, line)))
+        handler = Handler.new("#{controller}#x", base, line)
+        handler.dispatch_path = File.join(controllers, "#{controller}_controller.rb")
+        endpoint.handler = handler
+        endpoint
+      end
+      public_index = routed.call("public_items", 4)
+      only_index = routed.call("only_items", 4)
+      only_show = routed.call("only_items", 7)
+      cond_index = routed.call("cond_items", 4)
+      format_index = routed.call("format_items", 4)
+
+      RubyAuthTagger.new(noir_options).perform([public_index, only_index, only_show, cond_index, format_index])
+
+      public_index.tags.should be_empty
+      only_index.tags.map(&.name).should eq(["auth"])
+      only_show.tags.should be_empty
+      # An app setting decides the skip; the request format is the caller's.
+      cond_index.tags.first.description.should contain("a setting can make it public")
+      format_index.tags.should be_empty
+    ensure
+      FileUtils.rm_rf(tmpdir)
+      CodeLocator.instance.clear_all
+    end
+  end
+end

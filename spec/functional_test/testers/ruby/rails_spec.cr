@@ -9,9 +9,10 @@ expected_endpoints = [
   ]),
   Endpoint.new("/posts/:id", "GET", [
     Param.new("X-API-KEY", "", "header"),
-    # `params.fetch(:x)` and `params.dig(:top, ...)` read top-level keys too.
+    # `params.fetch(:x)` reads a top-level key; `params.dig(:filter, :status)`
+    # reads the leaf, as `params[:filter][:status]` does.
     Param.new("page", "", "query"),
-    Param.new("filter", "", "query"),
+    Param.new("status", "", "query"),
   ]),
   Endpoint.new("/posts", "POST", [
     Param.new("title", "", "json"),

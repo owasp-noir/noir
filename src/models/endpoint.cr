@@ -418,17 +418,28 @@ end
 # this is where its body *lives* — the file an agent opens next. Best-effort:
 # only analyzers with definition resolution populate it, and a route whose
 # handler is an inline closure has none to name.
-struct Handler
+#
+# A class, not a struct: `Endpoint` carries it inline otherwise, and every
+# byte `Endpoint` grows lands in the spec binary's `__crystal_main` frame
+# (one by-value slot per top-level endpoint), which sits at the edge of the
+# 8 MB main stack.
+class Handler
   include JSON::Serializable
   include YAML::Serializable
   property name, path, line
 
+  # The file of the class the route dispatches to, when that is not `path`:
+  # a Rails action defined in a concern or a parent class runs with the
+  # routed controller's callback chain, which the auth taggers read. Scan
+  # time only; never serialized.
+  @[JSON::Field(ignore: true)]
+  @[YAML::Field(ignore: true)]
+  property dispatch_path : String? = nil
+
   def initialize(@name : String, @path : String? = nil, @line : Int32? = nil)
   end
 
-  def ==(other : Handler) : Bool
-    @name == other.name && @path == other.path && @line == other.line
-  end
+  def_equals_and_hash @name, @path, @line
 end
 
 struct AIContext
