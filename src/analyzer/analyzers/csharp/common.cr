@@ -544,7 +544,7 @@ module Analyzer::CSharp::Common
   # member stay visible inside it.
   STATEMENT_BLOCK_RE          = /\b(?:if|else|for|foreach|while|do|switch|using|lock|catch|try|finally|fixed|checked|unchecked)\s*(?:\([^{};]*\))?\s*\z|=>\s*\z/
   MEMBER_BLOCK_RE             = /\b\w+\s*(?:<[^<>{}();]*>)?\s*\(([^{};]*)\)\s*(?:where\b[^{};]*)?\z/
-  EMPTY_STRING_VALUE_RE       = /\A(?:global::)?(?:System\.)?[Ss]tring\.Empty\z/
+  EMPTY_STRING_VALUE_RE       = /\A(?:global::)?(?:System\.)?(?:String|string)\.Empty\z/
   NAMEOF_VALUE_RE             = /\Anameof\s*\(\s*(?:[\w.]+\.)?(\w+)\s*\)\z/
   IDENTIFIER_VALUE_RE         = /\A[A-Za-z_]\w*\z/
   MEMBER_ACCESS_VALUE_RE      = /\A((?:[A-Za-z_]\w*\.)*[A-Za-z_]\w*)\.([A-Za-z_]\w*)\z/
