@@ -37,6 +37,25 @@ module Analyzer::Php
     GROUP_EDIT_RE       = /->\s*(?:appendToGroup|prependToGroup|group)\s*\(\s*['"]([\w-]+)['"]\s*,\s*(\[[^\]]*\]|\\?[\w\\]+::class)/
     GROUP_SHORTHAND_RE  = /->\s*(web|api)\s*\(/
 
+    EMPTY_ARRAYS = {} of String => LiteralArray
+    # `->middleware($middleware)` / `'middleware' => $middleware`: a variable
+    # handed whole as the list.
+    MIDDLEWARE_VAR_RE = /((?:->|::)middleware\s*\(\s*|['"]middleware['"]\s*=>\s*)\$(\w+)\b(?!\s*(?:\[|->|\(|::))/
+
+    # `text` with each middleware variable replaced by the literal list it
+    # holds at `at` (`$middleware = ['auth:sanctum'];` at file scope, or one
+    # a group closure captured with `use ($middleware)`), so the names read
+    # like a written-out list. A variable the scan cannot prove constant
+    # stays as written and names nothing.
+    private def expand_middleware_vars(text : String, arrays : Hash(String, LiteralArray), at : Int32) : String
+      return text if arrays.empty? || !text.includes?('$')
+      text.gsub(MIDDLEWARE_VAR_RE) do |whole, m|
+        array = arrays[m[2]]?
+        next whole unless array && array.pos < at && array.entries.all?(&.key.nil?)
+        "#{m[1]}[#{array.entries.join(", ", &.value)}]"
+      end
+    end
+
     # Middleware names a route-wiring group's prelude applies.
     # Class entries (`Foo::class`) are qualified through `imports`.
     private def middleware_names(prelude : String, imports : Hash(String, String) = EMPTY_IMPORTS) : Array(String)
@@ -48,17 +67,25 @@ module Analyzer::Php
     # The guard among `names`: the first that is a known auth alias, a
     # group/alias judged to authenticate, or a middleware class (named
     # directly, `->middleware(Foo::class)`) whose definition can refuse.
+    # One a setting can lift yields to a later one no setting can.
     private def route_guard(path : String, names : Array(String)) : String?
       return if names.empty?
       root = composer_project_root(path)
       guards = @middleware_guards[root]?
+      lifted = nil
       names.each do |name|
-        return "Laravel #{name} middleware" if name.matches?(AUTH_ALIAS_RE)
-        guards.try(&.[name]?).try { |desc| return desc }
-        next unless name.includes?('\\') && (note = class_middleware_refusal(name, root))
-        return "Laravel #{name.split('\\').last} middleware#{note.empty? ? "" : " (#{note})"}"
+        desc = if name.matches?(AUTH_ALIAS_RE)
+                 "Laravel #{name} middleware"
+               elsif found = guards.try(&.[name]?)
+                 found
+               elsif name.includes?('\\') && (note = class_middleware_refusal(name, root))
+                 "Laravel #{name.split('\\').last} middleware#{note.empty? ? "" : " (#{note})"}"
+               end
+        next unless desc
+        return desc unless desc.includes?(SETTING_NOTE)
+        lifted ||= desc
       end
-      nil
+      lifted
     end
 
     @class_middleware_refusals = {} of String => String?
@@ -86,10 +113,19 @@ module Analyzer::Php
     WITHOUT_MIDDLEWARE_RE = /->\s*withoutMiddleware\s*\(\s*(\[[^\]]*\]|['"][^'"]+['"])?/
 
     # Tag the guard of a route loaded under `names` (route file, then its
-    # enclosing groups) whose own registration is `statement`. As in Laravel,
-    # the statement adds its `->middleware(...)` / `'middleware' =>` names and
-    # `->withoutMiddleware(...)` takes names away.
-    private def tag_route_guard(endpoint : Endpoint, path : String, names : Array(String), statement : String, imports : Hash(String, String) = EMPTY_IMPORTS) : Nil
+    # enclosing groups, then its controller's constructor) whose own
+    # registration is `statement`, or the handler's own `check` when the
+    # middleware has none a setting cannot lift.
+    private def tag_route_guard(endpoint : Endpoint, path : String, names : Array(String), statement : String, imports : Hash(String, String) = EMPTY_IMPORTS,
+                                arrays : Hash(String, LiteralArray) = EMPTY_ARRAYS, at : Int32 = 0, check : String? = nil) : Nil
+      guard = statement_guard(path, names, expand_middleware_vars(statement, arrays, at), imports)
+      guard = check if check && (guard.nil? || guard.includes?(SETTING_NOTE))
+      endpoint.add_tag(Tag.new("auth", "Protected by #{guard}", "php_auth")) if guard
+    end
+
+    # As in Laravel, the statement adds its `->middleware(...)` /
+    # `'middleware' =>` names and `->withoutMiddleware(...)` takes names away.
+    private def statement_guard(path : String, names : Array(String), statement : String, imports : Hash(String, String)) : String?
       names += middleware_names(statement, imports) if statement.includes?("iddleware")
       if statement.includes?("withoutMiddleware")
         statement.scan(WITHOUT_MIDDLEWARE_RE) do |m|
@@ -103,8 +139,157 @@ module Analyzer::Php
           names -= withdrawn
         end
       end
-      return unless guard = route_guard(path, names)
-      endpoint.add_tag(Tag.new("auth", "Protected by #{guard}", "php_auth"))
+      route_guard(path, names)
+    end
+
+    # One `$this->middleware(...)` call in a controller constructor, with
+    # the `->only([...])` / `->except([...])` actions it is limited to.
+    private record ControllerMiddleware, names : Array(String), only : Array(String)?, except : Array(String)?
+
+    @controller_middleware = {} of String => Array(ControllerMiddleware)
+    CTOR_MIDDLEWARE_RE = /\$this\s*->\s*middleware\s*\(/
+    CLOSURE_ARG_RE     = /\A\s*(?:static\s+)?(?:function|fn)\b/
+
+    # Middleware names the routed controller's constructor (its own, or
+    # the one it inherits) applies to `action`. Read once per controller.
+    private def constructor_middleware(controller_path : String, action : String, routes_file_path : String) : Array(String)
+      entries = @class_middleware_mutex.synchronize { @controller_middleware[controller_path]? } || begin
+        found = read_constructor_middleware(controller_path, routes_file_path)
+        @class_middleware_mutex.synchronize { @controller_middleware[controller_path] = found }
+      end
+      action = action.downcase
+      entries.select { |entry| entry.only.try(&.includes?(action)) != false && entry.except.try(&.includes?(action)) != true }.flat_map(&.names)
+    end
+
+    # The constructor's top-level `$this->middleware('auth')` /
+    # `->middleware(Foo::class)->except([...])` calls. A closure middleware
+    # and a call under a condition are left out: their effect is not a name.
+    private def read_constructor_middleware(controller_path : String, routes_file_path : String) : Array(ControllerMiddleware)
+      list = [] of ControllerMiddleware
+      return list unless found = find_action(controller_path, "__construct", routes_file_path)
+      source, signature, _ = found
+      return list unless (body = method_body(source, signature).try(&.[0])) && body.includes?("middleware")
+      namespace = source.offsets.content.match(NAMESPACE_DECL_RE).try(&.[1])
+      lexer = Noir::PhpLexer.new(body, php_mode: true)
+      depth = 0
+      last = 0
+      body.scan(CTOR_MIDDLEWARE_RE) do |m|
+        (last...m.begin(0)).each do |i|
+          case lexer.masked[i]
+          when '{' then depth += 1
+          when '}' then depth -= 1
+          end
+        end
+        last = m.begin(0)
+        open = m.end(0) - 1
+        next unless depth == 0 && lexer.in_code?(m.begin(0)) && (close = lexer.matching_delimiter(open))
+        args = body[(open + 1)...close]
+        next if args.matches?(CLOSURE_ARG_RE)
+        names = middleware_entries(args, source.imports, namespace)
+        next if names.empty?
+        tail = body[(close + 1)...lexer.statement_end(close + 1)]
+        list << ControllerMiddleware.new(names, extract_resource_action_filter(tail, "only"), extract_resource_action_filter(tail, "except"))
+      end
+      list
+    end
+
+    # A handler that refuses an anonymous caller before doing anything: a
+    # top-level `abort_if(!$request->user(), 403)` /
+    # `abort_unless(auth()->check(), 404)`, or `if (!Auth::check()) {
+    # abort(403); }` (also on a `$user = $request->user()` it read first),
+    # before it does anything else.
+    USER_CHECK_RE  = /\G(?:abort_(if|unless)|if)\s*\(/
+    GUARD_ARG      = /(?:['"]\w+['"]|\$\w+)?/.source
+    USER_SOURCE    = /(?:\$request\s*->\s*user\s*\(\s*#{GUARD_ARG}\s*\)|(?:auth\s*\(\s*#{GUARD_ARG}\s*\)|Auth::guard\s*\(\s*#{GUARD_ARG}\s*\)|auth\s*\(\s*\)\s*->\s*guard\s*\(\s*#{GUARD_ARG}\s*\))\s*->\s*(?:user|check)\s*\(\s*\)|Auth::(?:user|check)\s*\(\s*\))/.source
+    USER_SOURCE_RE = /\A#{USER_SOURCE}\z/
+    USER_GUEST_RE  = /\A(?:auth\s*\(\s*\)\s*->\s*guest|Auth::guest)\s*\(\s*\)\z/
+    USER_ASSIGN_RE = /\G\$(\w+)\s*=\s*#{USER_SOURCE}\s*;/
+    # What an `if (!user)` block does to refuse: abort, throw, redirect, or
+    # answer 401/403.
+    BLOCK_REFUSAL_RE = /\babort\s*\(|\bthrow\b|\breturn\s+(?:redirect\b|Redirect::)|\breturn\s+response\s*\([^;]*?\b40[13]\b|->\s*json\s*\([^;]*?\b40[13]\b/
+
+    # Validating the input first refuses rather than serves (422).
+    VALIDATE_STATEMENT_RE = /\G(?:\$\w+\s*=\s*)?(?:\$this|\$request)\s*->\s*validate(?:WithBag)?\s*\(/
+
+    # Only the handler's leading statements count: reading the user,
+    # validating input, then checks. Anything else first (work, a return, a condition that is not
+    # about the user) and a later check no longer stands in front of it.
+    private def handler_user_check(body : String) : String?
+      return unless body.includes?("abort") || body.includes?("if")
+      lexer = Noir::PhpLexer.new(body, php_mode: true)
+      users = [] of String
+      pos = 0
+      loop do
+        while pos < body.size && (lexer.masked[pos].whitespace? || !lexer.in_code?(pos))
+          pos += 1
+        end
+        return unless pos < body.size
+        if assign = body.match(USER_ASSIGN_RE, pos)
+          users << assign[1]
+          pos = assign.end(0)
+          next
+        end
+        if body.match(VALIDATE_STATEMENT_RE, pos)
+          pos = lexer.statement_end(pos)
+          next
+        end
+        return unless m = body.match(USER_CHECK_RE, pos)
+        open = m.end(0) - 1
+        return unless close = lexer.matching_delimiter(open)
+        if m[1]?
+          condition = body[(open + 1)...lexer.expression_end(open + 1)]
+          refuses = m[1] == "if" ? user_missing?(condition, users) : split_condition(condition, "&&").any? { |part| user_source?(part, users) }
+          return "Laravel handler check (#{body[m.begin(0)..close].gsub(/\s+/, " ")})" if refuses
+          pos = Math.max(lexer.statement_end(close + 1), close + 1)
+        else
+          return unless user_missing?(body[(open + 1)...close], users)
+          start = close + 1
+          while start < body.size && lexer.masked[start].whitespace?
+            start += 1
+          end
+          return unless start < body.size
+          stop = lexer.masked[start] == '{' ? lexer.matching_delimiter(start) : lexer.statement_end(start)
+          return unless stop && lexer.masked[start..stop].join.matches?(BLOCK_REFUSAL_RE)
+          return "Laravel handler check (if (#{body[(open + 1)...close].strip.gsub(/\s+/, " ")}) refuses)"
+        end
+      end
+    end
+
+    # Whether `condition` holds when no user is signed in: one of its
+    # top-level `||` parts is `!<user>` or `<auth>->guest()`.
+    private def user_missing?(condition : String, users : Array(String) = [] of String) : Bool
+      split_condition(condition.strip, "||").any? do |part|
+        part.matches?(USER_GUEST_RE) || ((negated = part.lchop?('!')) && user_source?(negated, users)) || false
+      end
+    end
+
+    private def user_source?(expr : String, users : Array(String)) : Bool
+      expr = expr.strip
+      while expr.starts_with?('(') && expr.ends_with?(')')
+        expr = expr[1...-1].strip
+      end
+      expr.matches?(USER_SOURCE_RE) || ((var = expr.match(/\A\$(\w+)\z/)) && users.includes?(var[1])) || false
+    end
+
+    # `condition` split on a top-level `||` / `&&` (not one inside a call).
+    private def split_condition(condition : String, op : String) : Array(String)
+      parts = [] of String
+      depth = 0
+      start = 0
+      i = 0
+      while i < condition.size
+        case condition[i]
+        when '(', '[' then depth += 1
+        when ')', ']' then depth -= 1
+        end
+        if depth == 0 && condition[i, 2] == op
+          parts << condition[start...i].strip
+          start = i + 2
+          i += 1
+        end
+        i += 1
+      end
+      parts << condition[start..].strip
     end
 
     private def collect_middleware_guards : Hash(String, MiddlewareGuards)
@@ -197,6 +382,7 @@ module Analyzer::Php
     # check on who the caller is.
     ORIGIN_CONDITION_RE = /['"](?:origin|referer|host)['"]|->\s*(?:isMethod|getMethod|method|getHost)\s*\(/i
     IF_RE               = /\b(?:else\s*)?if\s*\(/
+    REDIRECT_RE         = /\breturn\s+(?:redirect\b|Redirect::)/
     ELSE_BLOCK_RE       = /\G\s*else\s*\{/
 
     # Whether the middleware class's `handle()` (or the `$this->` helpers it
@@ -242,9 +428,17 @@ module Analyzer::Php
         next unless (note = helpers[m[1]]?) && lexer.in_code?(m.begin(0))
         points << {m.begin(0), "", note}
       end
-      return if points.empty?
+      redirects = body.scan(REDIRECT_RE).select { |m| lexer.in_code?(m.begin(0)) }
+      return if points.empty? && redirects.empty?
 
       conditions = condition_blocks(body, lexer)
+      # A redirect anywhere (home, a locale) is not a refusal; one under a
+      # check that the caller is not signed in sends the guest away.
+      redirects.each do |m|
+        next unless conditions.any? { |(cond, block)| block.includes?(m.begin(0)) && user_missing?(cond) }
+        points << {m.begin(0), m[0], ""}
+      end
+      return if points.empty?
       verdict = nil
       points.each do |(at, text, note)|
         around = conditions.select(&.[1].includes?(at)).map(&.[0]).push(text).join(' ')

@@ -83,5 +83,52 @@ describe "Laravel handler / middleware-group auth / rules params", tags: "functi
     guards.call(find.call("GET", "/mw/local")).should be_empty
     guards.call(find.call("GET", "/mw/cors")).should be_empty
     guards.call(find.call("GET", "/mw/prod")).should eq(["Laravel ProdGate middleware (an environment or config check decides; a setting can make it public)"])
+
+    # `->middleware($middleware)` names the literal list the variable holds,
+    # at file scope or captured by `use ($middleware)`; a closure that did
+    # not capture it sees no variable.
+    auth = ["Laravel auth:sanctum,api middleware"]
+    guards.call(find.call("GET", "/vars/direct")).should eq(auth)
+    guards.call(find.call("GET", "/vars/captured")).should eq(auth)
+    guards.call(find.call("GET", "/vars/grouped")).should eq(auth)
+    guards.call(find.call("GET", "/vars/uncaptured")).should be_empty
+
+    # A group behind `domain(config(...))` is still a group, and
+    # `prefix(config('file.key'))` reads config/file.php's default.
+    find.call("GET", "/i/portfolio/cfg")
+    find.call("GET", "/deep/cfg")
+    find.call("GET", "/fallback/cfg")
+    endpoints.none?(&.url.==("/cfg")).should be_true
+
+    # Constructor `$this->middleware(...)` (own or inherited), limited by
+    # `->only` / `->except`, judged like route middleware: `staff` redirects
+    # a guest away, `guest` redirects a signed-in user. A closure middleware
+    # and one under a config check are not names.
+    staff = ["Laravel 'staff' middleware (Staff)"]
+    guards.call(find.call("GET", "/acct/open")).should be_empty
+    guards.call(find.call("POST", "/acct/close")).should eq(staff)
+    guards.call(find.call("POST", "/staff/close")).should eq(staff)
+    find.call("GET", "/acct/open").params.map(&.name).should eq(["_pe"])
+
+    # An action a used trait defines is served there; its loop over a
+    # literal field list and its paginator's page name are read.
+    profile = find.call("POST", "/acct/profile")
+    guards.call(profile).should eq(staff)
+    profile.handler.should_not be_nil
+    profile.handler.not_nil!.path.to_s.should end_with("Concerns/ManagesProfile.php")
+    profile.params.map(&.name).sort!.should eq(["bio", "p", "website"])
+
+    # A handler that refuses a guest first is guarded by it; one that
+    # returns before, nests the check, or checks a property is not.
+    guards.call(find.call("GET", "/check/mine")).should eq(["Laravel handler check (abort_unless($request->user(), 404))"])
+    find.call("GET", "/check/mine").params.map(&.name).should eq(["page"])
+    guards.call(find.call("GET", "/check/own")).should eq(["Laravel handler check (if (! $user) refuses)"])
+    guards.call(find.call("GET", "/check/late")).should be_empty
+    guards.call(find.call("GET", "/check/after")).should be_empty
+    guards.call(find.call("GET", "/check/validated")).should eq(["Laravel handler check (if (! $request->user()) refuses)"])
+    guards.call(find.call("GET", "/check/role")).should be_empty
+    inner = find.call("GET", "/check/inner/{id}")
+    guards.call(inner).should be_empty
+    inner.params.map(&.name).should eq(["id"])
   end
 end

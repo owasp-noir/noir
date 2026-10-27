@@ -373,6 +373,13 @@ module Analyzer::Php
       body.scan(ILLUMINATE_DYNAMIC_READ_RE) do |m|
         params << Param.new(m[1], "", "form") unless ILLUMINATE_REQUEST_PROPERTIES.includes?(m[1])
       end
+      if klass && body.matches?(ILLUMINATE_CONST_READ_RE)
+        body.scan(ILLUMINATE_CONST_READ_RE) do |m|
+          klass.match(/\bconst\s+#{m[2]}\s*=\s*(['"])([^'"\\$]+)\1\s*;/).try { |c| params << Param.new(c[2], "", illuminate_read_type(m[1])) }
+        end
+      end
+      params.concat(illuminate_loop_reads(body)) if body.includes?("foreach")
+      params.concat(illuminate_paginator_reads(body)) if body.includes?("aginate")
       if body.matches?(ILLUMINATE_VALIDATE_RE)
         lexer = Noir::PhpLexer.new(body, php_mode: true)
         body.scan(ILLUMINATE_VALIDATE_RE) do |m|
@@ -390,6 +397,65 @@ module Analyzer::Php
         end
       end
       dedup_params(params)
+    end
+
+    # `$request->has(self::ENTITY_KEY)`: the input named by a class constant.
+    ILLUMINATE_CONST_READ_RE = /(?:\$request|\brequest\(\s*\))\s*->\s*(#{ILLUMINATE_ACCESSORS})\s*\(\s*(?:self|static)::([A-Z_][A-Z0-9_]*)\s*[,)]/
+    # `->paginate(...)` / `simplePaginate` read the current page from the
+    # request's `page` input, `cursorPaginate` its `cursor`.
+    ILLUMINATE_PAGINATE_RE = /->\s*(paginate|simplePaginate|cursorPaginate)\s*\(/
+    # `foreach ($fields as $field)` / `foreach (['a', 'b'] as $k => $field)`.
+    ILLUMINATE_FOREACH_RE = /\bforeach\s*\(\s*(\$\w+|\[[^\[\]]*\])\s+as\s+(?:\$\w+\s*=>\s*)?\$(\w+)\s*\)\s*\{/
+    STRING_LIST_RE        = /\A\s*(?:(['"])[\w.-]+\1\s*(?:,\s*|\z))+\z/
+
+    # A paginator reads the request unless the call passes the page itself
+    # (`paginate($perPage, $columns, $pageName, $page)`, cursor as 4th too);
+    # a literal `$pageName` renames the input.
+    private def illuminate_paginator_reads(body : String) : Array(Param)
+      params = [] of Param
+      lexer = Noir::PhpLexer.new(body, php_mode: true)
+      body.scan(ILLUMINATE_PAGINATE_RE) do |m|
+        open = m.end(0) - 1
+        next unless lexer.in_code?(open) && (close = lexer.matching_delimiter(open))
+        args = top_level_args(lexer, body, open + 1, close)
+        next if args.size >= 4
+        name = m[1] == "cursorPaginate" ? "cursor" : "page"
+        if page_name = args[2]?
+          next unless literal = page_name.match(/\A(['"])([\w.-]+)\1\z/)
+          name = literal[2]
+        end
+        params << Param.new(name, "", "form")
+      end
+      params
+    end
+
+    # Input read in a loop over a literal list of names: `$fields = ['a',
+    # 'b']; foreach ($fields as $field) { $request->input($field); }` reads
+    # `a` and `b`. Only a list assigned once, of plain string names, and a
+    # loop variable the body never reassigns.
+    private def illuminate_loop_reads(body : String) : Array(Param)
+      params = [] of Param
+      lexer = Noir::PhpLexer.new(body, php_mode: true)
+      body.scan(ILLUMINATE_FOREACH_RE) do |m|
+        next unless lexer.in_code?(m.begin(0)) && (close = lexer.matching_delimiter(m.end(0) - 1))
+        var = m[2]
+        loop_body = body[m.end(0)...close]
+        next if loop_body.matches?(/\$#{var}\s*(?:[.+\-*\/]|\?\?)?=(?![=>])/)
+        reads = loop_body.scan(/(?:\$request|\brequest\(\s*\))\s*->\s*(#{ILLUMINATE_ACCESSORS})\s*\(\s*\$#{var}\s*[,)]/)
+        next if reads.empty?
+        list = m[1]
+        if list.starts_with?('$')
+          assigns = body.scan(/#{Regex.escape(list)}\b\s*(?:\[[^\]]*\]\s*)?=(?![=>])/)
+          next unless assigns.size == 1 && (open = body.index('[', assigns[0].end(0))) && body[assigns[0].end(0)...open].blank?
+          next unless list_close = lexer.matching_delimiter(open)
+          list = body[open..list_close]
+        end
+        inner = list[1...-1]
+        next unless inner.matches?(STRING_LIST_RE)
+        names = inner.scan(/['"]([\w.-]+)['"]/).map(&.[1])
+        reads.each { |read| names.each { |name| params << Param.new(name, "", illuminate_read_type(read[1])) } }
+      end
+      params
     end
 
     # The comma-separated arguments between `from` and `to` (exclusive).

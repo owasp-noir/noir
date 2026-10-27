@@ -86,10 +86,10 @@ module Analyzer::Php
     # `$name = [...]` literal arrays the file assigns once, at file scope, and
     # never writes to again anywhere (a reassignment, `$name[] = …`,
     # `array_push($name, …)`, a reference): only then does a loop over it
-    # see exactly these entries.
+    # (or a `->middleware($name)` naming it) see exactly these entries.
     private def literal_array_assignments(content : String, lexer : Noir::PhpLexer) : Hash(String, LiteralArray)
       arrays = {} of String => LiteralArray
-      return arrays unless content.includes?("foreach")
+      return arrays unless content.includes?("foreach") || content.matches?(MIDDLEWARE_VAR_RE)
       code = lexer.masked.join
       return arrays if code.matches?(DYNAMIC_VARS_RE)
       writes = variable_writes(code)
