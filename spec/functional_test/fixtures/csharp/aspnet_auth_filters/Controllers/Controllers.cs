@@ -80,4 +80,50 @@ public class AccountController : Controller
 
         return null;
     }
+
+    // Refuses one named user: anonymous passes.
+    public IActionResult Named()
+    {
+        if (User.Identity.Name == "banned") return Forbid();
+        return Ok();
+    }
+
+    // A lookup by input, not the caller.
+    public async Task<IActionResult> Lookup(int id)
+    {
+        var user = await _userService.GetUserAsync(id);
+        if (user == null) return Unauthorized();
+        return Ok(user);
+    }
+
+    // A body property named User.
+    public IActionResult Token(TokenRequest request)
+    {
+        if (request.User == null) return Unauthorized();
+        return Ok();
+    }
+
+    // Not the owner: an anonymous caller never is.
+    public async Task<IActionResult> Invoice(int orderId)
+    {
+        var order = await _orderService.GetOrderByIdAsync(orderId);
+        var customer = await _workContext.GetCurrentCustomerAsync();
+        if (order == null || customer.Id != order.CustomerId)
+            return Challenge();
+        return Ok();
+    }
+}
+
+public class ItemsController : Controller
+{
+    [AjaxOnly]
+    public IActionResult Ajax() => Ok();
+
+    [RequireLogin(true)]
+    public IActionResult Strict() => Ok();
+
+    // `[AllowAnonymous]` does not lift a filter that never reads it.
+    [AllowAnonymous]
+    [RequireLogin]
+    public IActionResult Anon() => Ok();
 }

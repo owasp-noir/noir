@@ -57,3 +57,31 @@ public class StoreClosedAttribute : Attribute, IActionFilter
     {
     }
 }
+
+// Refuses non-AJAX requests: not about who the caller is.
+public class AjaxOnlyAttribute : ActionFilterAttribute
+{
+    public override void OnActionExecuting(ActionExecutingContext context)
+    {
+        if (context.HttpContext.Request.Headers["X-Requested-With"] != "XMLHttpRequest")
+            context.Result = new StatusCodeResult(403);
+    }
+}
+
+// `true` makes it stricter, not an opt-out.
+public class RequireLoginAttribute : ActionFilterAttribute
+{
+    private readonly bool _adminOnly;
+
+    public RequireLoginAttribute(bool adminOnly = false)
+    {
+        _adminOnly = adminOnly;
+    }
+
+    public override void OnActionExecuting(ActionExecutingContext context)
+    {
+        var user = context.HttpContext.User;
+        if (!user.Identity.IsAuthenticated || (_adminOnly && !user.IsInRole("Admin")))
+            context.Result = new UnauthorizedResult();
+    }
+}

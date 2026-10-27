@@ -464,8 +464,46 @@ describe "AspnetAuthTagger" do
     end
 
     it "reads a refusal conditioned on the caller, directly or through a returned helper" do
-      tags_for.call("Task<IActionResult> Orders()", "class AccountController").map(&.description).should eq(["Protected by an in-action Challenge when the caller does not qualify"])
-      tags_for.call("Task<IActionResult> Quote(", "class AccountController").map(&.description).should eq(["Protected by CheckCallerAsync() (Forbid when the caller does not qualify)"])
+      tags_for.call("Task<IActionResult> Orders()", "class AccountController").map(&.description).should eq(["Protected by an in-action Challenge when `user == null`"])
+      tags_for.call("Task<IActionResult> Quote(", "class AccountController").map(&.description).should eq(["Protected by CheckCallerAsync() (Forbid when `!User.Identity.IsAuthenticated`)"])
+      tags_for.call("Task<IActionResult> Invoice(", "class AccountController").map(&.description).should eq(["Protected by an in-action Challenge when `customer.Id != order.CustomerId`"])
+    end
+
+    it "does not take a refusal of one identity, an input lookup or a model property as a guard" do
+      tags_for.call("IActionResult Named()", "class AccountController").should be_empty
+      tags_for.call("Task<IActionResult> Lookup(", "class AccountController").should be_empty
+      tags_for.call("IActionResult Token(", "class AccountController").should be_empty
+    end
+
+    it "does not take a filter refusing on a header as an auth guard" do
+      tags_for.call("IActionResult Ajax()", "class ItemsController").should be_empty
+    end
+
+    it "reads a `true` that makes a filter stricter as no opt-out" do
+      tags_for.call("IActionResult Strict()", "class ItemsController").map(&.name).should eq(["auth"])
+    end
+
+    it "keeps a filter that does not read [AllowAnonymous]" do
+      tags_for.call("IActionResult Anon()", "class ItemsController").map(&.description).first.should contain("[RequireLogin]")
+    end
+
+    it "resolves a base class in the deriving file's namespace" do
+      base = File.expand_path("../../../functional_test/fixtures/csharp/aspnet_auth_filters", __DIR__)
+      users = "#{base}/Admin/UsersController.cs"
+      line = File.read_lines(users).index!(&.includes?("IActionResult List()")) + 1
+      details = Details.new(PathInfo.new(users, line))
+      details.technology = "cs_aspnet_core_mvc"
+      endpoint = Endpoint.new("/api/admin/users", "GET", [] of Param, details)
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(base)
+      CodeLocator.instance.clear_all
+      Dir.glob("#{base}/**/*.cs").each { |path| CodeLocator.instance.register_path(path) }
+      begin
+        AspnetAuthTagger.new(noir_options).perform([endpoint])
+      ensure
+        CodeLocator.instance.clear_all
+      end
+      endpoint.tags.map(&.description).should eq(["Protected by ASP.NET [Authorize(Roles)]"])
     end
   end
 end
