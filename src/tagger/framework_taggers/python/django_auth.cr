@@ -317,11 +317,11 @@ class DjangoAuthTagger < FrameworkTagger
   # 403 response class, a 401/403 status, `PermissionDenied`, or the login
   # redirect.
   DJANGO_REFUSAL = /\bHttpResponseForbidden\s*\(|\bredirect_to_login\s*\(|\bstatus\s*=\s*40[13]\b|\braise\s+(?:\w+\.)*PermissionDenied\b/
-  # `if not request.user.is_authenticated:` / `if request.user.is_anonymous:`,
-  # read off `self.request` in a class view too; `not ... is_anonymous` is
-  # the authenticated branch.
-  ANONYMOUS_TEST = /\bnot\s+(?:self\.)?request\.user\.is_authenticated\b|(?<!not )(?<![\w.])(?:self\.)?request\.user\.is_anonymous\b/
   USER_ALIAS     = /\A([A-Za-z_]\w*)\s*=\s*(?:self\.)?request\.user\z/
+  # A statement that writes before the check runs, so an anonymous caller
+  # gets it done even though the response is refused.
+  WRITE_CALL = /\.(?:delete|save)\s*\(|\bobjects\b[^\n]*\.(?:create|update|bulk_create|bulk_update|get_or_create|update_or_create)\s*\(/
+  COMPOUND   = /\A(?:if|elif|else|for|while|with|try|except|finally|match|case|async\s+(?:for|with))\b/
   # Refusing an anonymous caller by sending it to the login page.
   LOGIN_REDIRECT  = /\breturn\s+(?:redirect|HttpResponseRedirect)\s*\([^\n]*\blogin/i
   METHOD_TEST     = /^(?:if|elif)\b.*(?<![\w.])request\.method\b/
@@ -360,49 +360,88 @@ class DjangoAuthTagger < FrameworkTagger
     level = body.first?.try(&.[0]) || return
     method = method.upcase
     branched = Set(String).new
-    # `user = request.user`, then `if not user.is_authenticated:`.
-    aliases = [] of String
+    # `user = request.user`, then `if not user.is_authenticated:`; a name
+    # assigned anywhere else in the function may hold another user.
+    aliases = body.compact_map { |indent, statement| statement.match(USER_ALIAS).try(&.[1]) if indent == level }
+    aliases.select! { |name| body.count { |_, statement| assigns?(statement, name) } == 1 }
+    written = false
     body.each_with_index do |(indent, code), k|
       next unless indent == level
-      if user_alias = code.match(USER_ALIAS)
-        aliases << user_alias[1]
-        next
-      end
-      block = body[(k + 1)..].take_while { |entry| entry[0] > level }.map(&.[1])
-      inline = code.partition(':')[2]
-      block.unshift(inline) unless inline.strip.empty?
+      next if code.matches?(USER_ALIAS)
+      block = body[(k + 1)..].take_while { |entry| entry[0] > level }
       if code.starts_with?("if ") && anonymous_test?(code.partition(':')[0], aliases)
-        text = block.join('\n')
-        return "Django request.user.is_authenticated check" if text.matches?(DJANGO_REFUSAL) || text.matches?(UNAUTHENTICATED) || text.matches?(FORBIDDEN) || text.matches?(LOGIN_REDIRECT)
+        return "Django request.user.is_authenticated check" if !written && refusing_block?(code.partition(':')[2].strip, block)
       elsif code.matches?(METHOD_TEST)
         test = code.split("request.method", 2)[1]
         next if test.matches?(/\A\s*(?:!=|not\s+in)/)
         verbs = test.partition(':')[0].scan(/['"]([A-Za-z]+)['"]/).map(&.[1].upcase)
         branched.concat(verbs)
         next unless verbs.includes?(method)
+        statements = block.map(&.[1])
+        inline = code.partition(':')[2].strip
+        statements.unshift(inline) unless inline.empty?
         if depth == 0
-          block.each do |statement|
+          statements.each do |statement|
             if (helper = statement.match(RETURNED_HELPER)) && (guard = helper_guard(path, helper[1], method))
               return guard
             end
           end
         end
         # This verb may be answered here, before any check below.
-        return if block.any?(&.starts_with?("return"))
+        return if statements.any?(&.starts_with?("return"))
       elsif code.starts_with?("return")
         if depth == 0 && !branched.includes?(method) && (helper = code.match(RETURNED_HELPER))
           return helper_guard(path, helper[1], method)
         end
         return
       end
+      written ||= code.matches?(WRITE_CALL) || block.any?(&.[1].matches?(WRITE_CALL))
     end
     nil
   end
 
+  # Whether every anonymous caller entering an `if` block is refused: its
+  # first top-level `return`/`raise` (or the inline one) refuses, and no
+  # nested branch before it returns anything else. A refusal under a
+  # further condition (`if strict: return redirect("login")`) leaves the
+  # other callers through.
+  private def refusing_block?(inline : String, block : Array({Int32, String})) : Bool
+    return refusal?(inline) unless inline.empty?
+    top = block.first?.try(&.[0]) || return false
+    block.each_with_index do |(indent, code), k|
+      next unless indent == top
+      if code.matches?(COMPOUND)
+        nested = block[(k + 1)..].take_while { |entry| entry[0] > top }
+        return false if nested.any? { |_, line| line.starts_with?("return") && !refusal?(line) }
+        next
+      end
+      next unless code.starts_with?("return") || code.starts_with?("raise")
+      statement = ([code] + block[(k + 1)..].take_while { |entry| entry[0] > top }.map(&.[1])).join('\n')
+      return refusal?(statement)
+    end
+    false
+  end
+
+  private def refusal?(text : String) : Bool
+    text.matches?(DJANGO_REFUSAL) || text.matches?(UNAUTHENTICATED) || text.matches?(FORBIDDEN) || text.matches?(LOGIN_REDIRECT)
+  end
+
+  # Whether statement `code` binds `name` (`name = ...`, `a, name = ...`,
+  # `for name in`, `with ... as name`).
+  private def assigns?(code : String, name : String) : Bool
+    target = code.partition(/(?<![=!<>])=(?!=)/)
+    return true if !target[1].empty? && target[0].matches?(/(?<![\w.])#{name}\b(?!\s*[.\[(])/)
+    code.matches?(/\A(?:async\s+)?for\s+[^:]*(?<![\w.])#{name}\b[^:]*\sin\s|\bas\s+#{name}\b/)
+  end
+
+  # `if not request.user.is_authenticated:` / `if request.user.is_anonymous:`
+  # (read off `self.request` in a class view, or a `request.user` alias).
+  # `not request.user.is_anonymous` / `not(...)` is the signed-in branch.
   private def anonymous_test?(condition : String, aliases : Array(String)) : Bool
-    return true if condition.matches?(ANONYMOUS_TEST)
-    aliases.any? do |name|
-      condition.matches?(/\bnot\s+#{name}\.is_authenticated\b|(?<!not )(?<![\w.])#{name}\.is_anonymous\b/)
+    return false unless condition.includes?("is_authenticated") || condition.includes?("is_anonymous")
+    (["(?:self\\.)?request\\.user"] + aliases).any? do |subject|
+      next true if condition.matches?(/\bnot\s*\(?\s*(?<![\w.])#{subject}\.is_authenticated\b/)
+      condition.matches?(/(?<![\w.])#{subject}\.is_anonymous\b/) && !condition.matches?(/\bnot\s*\(?\s*(?<![\w.])#{subject}\.is_anonymous\b/)
     end
   end
 

@@ -453,7 +453,7 @@ describe "DjangoAuthTagger" do
     end
   end
 
-  it "reads an early anonymous refusal through a request.user alias and self.request" do
+  it "reads an early anonymous refusal through a request.user alias and self.request, unconditional and before any write" do
     CodeLocator.instance.clear_all
     tmpdir = File.tempname("django_body_alias_guards")
     Dir.mkdir_p(tmpdir)
@@ -481,6 +481,31 @@ describe "DjangoAuthTagger" do
           if not user.is_authenticated:
               return redirect("home")
           return HttpResponse("ok")
+
+      def reassigned(request):
+          user = request.user
+          user = User.objects.get(pk=1)
+          if not user.is_authenticated:
+              return HttpResponseForbidden()
+          return HttpResponse("ok")
+
+      def subbranch(request):
+          if not request.user.is_authenticated:
+              if request.GET.get("strict"):
+                  return HttpResponseForbidden()
+              messages.info(request, "guest")
+          return render(request, "x.html")
+
+      def written_first(request):
+          Item.objects.filter(pk=1).delete()
+          if not request.user.is_authenticated:
+              return HttpResponseForbidden()
+          return HttpResponse("ok")
+
+      def negated_paren(request):
+          if not(request.user.is_anonymous):
+              return HttpResponseForbidden()
+          return HttpResponse("ok")
       PY
     CodeLocator.instance.register_path(views)
 
@@ -492,8 +517,12 @@ describe "DjangoAuthTagger" do
       inverted = at.call(7)
       things = at.call(13)
       elsewhere = at.call(18)
+      reassigned = at.call(24)
+      subbranch = at.call(31)
+      written_first = at.call(38)
+      negated_paren = at.call(44)
 
-      DjangoAuthTagger.new(noir_options).perform([flags, inverted, things, elsewhere])
+      DjangoAuthTagger.new(noir_options).perform([flags, inverted, things, elsewhere, reassigned, subbranch, written_first, negated_paren])
 
       flags.tags.map(&.description).should eq(["Protected by Django request.user.is_authenticated check"])
       # `not ... is_anonymous` refuses the signed-in caller, not the anonymous one.
@@ -501,6 +530,13 @@ describe "DjangoAuthTagger" do
       things.tags.map(&.description).should eq(["Protected by Django request.user.is_authenticated check"])
       # A redirect anywhere but the login page is not a refusal.
       elsewhere.tags.should be_empty
+      # The alias was rebound before the check: another user is tested.
+      reassigned.tags.should be_empty
+      # Only some anonymous callers are refused; the rest get the page.
+      subbranch.tags.should be_empty
+      # The anonymous caller's delete has already run.
+      written_first.tags.should be_empty
+      negated_paren.tags.should be_empty
     ensure
       FileUtils.rm_rf(tmpdir)
       CodeLocator.instance.clear_all
