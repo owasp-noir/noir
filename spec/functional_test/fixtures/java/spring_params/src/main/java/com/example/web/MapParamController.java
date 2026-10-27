@@ -1,6 +1,7 @@
 package com.example.web;
 
 import java.util.List;
+import java.util.Map;
 import javax.servlet.http.HttpServletRequest;
 import org.springframework.http.HttpHeaders;
 import org.springframework.util.MultiValueMap;
@@ -22,6 +23,21 @@ class MapParamController {
     @GetMapping("/fwd")
     String fwd(HttpServletRequest request) {
         return scheme(request);
+    }
+
+    @PutMapping("/pwd")
+    String pwd(@RequestBody Map<String, String> params) {
+        return params.get("oldPassword") + params.get("newPassword");
+    }
+
+    @PutMapping("/entity")
+    String entity(@RequestBody IgnoredEntity entity) {
+        return entity.toString();
+    }
+
+    @GetMapping("/entity")
+    String entityQuery(IgnoredEntity entity) {
+        return entity.toString();
     }
 
     private List<String> keys(String keysStr, MultiValueMap<String, String> params) {

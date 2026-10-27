@@ -63,6 +63,15 @@ describe "Spring parameter binding" do
     routes["GET /fwd"].should eq(["X-Forwarded-Proto:header"])
   end
 
+  it "reads literal keys off a @RequestBody map" do
+    routes["PUT /pwd"].should eq(["oldPassword:json", "newPassword:json"])
+  end
+
+  it "drops @JsonIgnore properties from a JSON body only, unless an accessor names them with @JsonProperty" do
+    routes["PUT /entity"].should eq(["secret:json", "name:json", "blob:json"])
+    routes["GET /entity"].should eq(["searchValue:query", "hidden:query", "secret:query", "name:query"])
+  end
+
   it "emits Pageable's page/size/sort with @PageableDefault values (#3091)" do
     routes["GET /paged"].should eq(["q:query", "page:query", "size:query", "sort:query"])
     routes["GET /paged2"].should eq(["page:query", "size:query=20", "sort:query=id"])
