@@ -173,6 +173,8 @@ module Analyzer::Ruby
 
     protected def each_rack_env_header(line : String, &)
       line.scan(RACK_ENV_HEADER_RE) do |m|
+        # `HTTP_VERSION` is the server's protocol variable, not a header.
+        next if m[1] == "VERSION"
         yield m[1].split('_').map(&.capitalize).join('-')
       end
     end

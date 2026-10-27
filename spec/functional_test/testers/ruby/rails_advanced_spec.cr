@@ -238,6 +238,19 @@ expected_endpoints = [
   # mount Sidekiq::Web, at: "/sidekiq"
   Endpoint.new("/sidekiq", "GET"),
 
+  # Hash-rocket `scope :module =>`, `namespace ..., :module =>`, a slashed
+  # controller inside a namespace and `namespace ..., :path => ""`.
+  Endpoint.new("/api/0.6/changeset/:id", "GET"),
+  Endpoint.new("/api/0.6/changeset/:changeset_id/download", "GET", [
+    Param.new("Accept", "", "header"),
+    Param.new("Accept-Language", "", "header"),
+    Param.new("Content-Type", "", "header"),
+  ]),
+  Endpoint.new("/api/0.6/changeset/:changeset_id/hide", "POST"),
+  Endpoint.new("/profile/description", "GET"),
+  Endpoint.new("/profile", "GET"),
+  Endpoint.new("/feeds/legacy", "GET"),
+
   # Parenthesized/multiline explicit route and Rails draw files.
   Endpoint.new("/split", "GET", [
     Param.new("X-Ping", "", "header"),
@@ -285,6 +298,7 @@ total_endpoints = 1 +  # root
                   1 +  # devise_scope :user do get 'login', ... end
                   1 +  # mount sidekiq
                   1 +  # multiline parenthesized get
+                  6 +  # module:/path: "" namespaces and scopes (hash-rocket)
                   3    # draw :external at root and under two scopes
 
 tester = FunctionalTester.new("fixtures/ruby/rails_advanced/", {
@@ -313,4 +327,16 @@ it "resolves a `?` action to its `def`", tags: "functional" do
   handler.name.should eq("tags#merged?")
   handler.path.to_s.should end_with("app/controllers/trends/tags_controller.rb")
   handler.line.should eq(15)
+end
+
+it "resolves a slashed controller inside a namespace under that namespace's module", tags: "functional" do
+  hide = tester.app.endpoints.find! { |e| e.url == "/api/0.6/changeset/:changeset_id/hide" }
+  handler = hide.handler.not_nil!
+  handler.path.to_s.should end_with("app/controllers/api/changesets/visibilities_controller.rb")
+  handler.line.should eq(4)
+end
+
+it "names Rack-spelled headers and drops the HTTP_VERSION server variable", tags: "functional" do
+  download = tester.app.endpoints.find! { |e| e.url == "/api/0.6/changeset/:changeset_id/download" }
+  download.params.select(&.param_type.==("header")).map(&.name).sort!.should eq(["Accept", "Accept-Language", "Content-Type"])
 end
