@@ -20,5 +20,6 @@ class Kernel extends HttpKernel
     protected $middlewareAliases = [
         'staff' => \App\Http\Middleware\Staff::class,
         'guest' => \App\Http\Middleware\Guest::class,
+        'guestonly' => \App\Http\Middleware\GuestOnly::class,
     ];
 }

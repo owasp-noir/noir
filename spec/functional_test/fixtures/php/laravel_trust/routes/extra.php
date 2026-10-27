@@ -42,3 +42,24 @@ Route::get('/check/role', [CheckController::class, 'role']);
 Route::get('/check/inner/{id}', [CheckController::class, 'inner']);
 Route::get('/check/after', [CheckController::class, 'after']);
 Route::get('/check/validated', [CheckController::class, 'validated']);
+Route::get('/check/branch', [CheckController::class, 'branch']);
+Route::get('/check/guarded', [CheckController::class, 'guarded']);
+
+Route::get('/ctor/index', [\App\Http\Controllers\CtorController::class, 'index']);
+Route::post('/ctor/store', [\App\Http\Controllers\CtorController::class, 'store']);
+Route::post('/ctor/parent', [\App\Http\Controllers\ParentCallController::class, 'store']);
+Route::post('/ctor/override', [\App\Http\Controllers\OverrideController::class, 'store']);
+Route::get('/ctor/braceless', [\App\Http\Controllers\BracelessController::class, 'index']);
+Route::get('/feed', [\App\Http\Controllers\FeedController::class, 'index']);
+Route::get('/feed/locked', [\App\Http\Controllers\FeedController::class, 'lockedIndex']);
+Route::get('/mw/guestonly', fn () => 'form')->middleware('guestonly');
+Route::prefix(config('later.path'))->group(function () {
+    Route::get('cfg', [ItemController::class, 'file']);
+});
+
+function adminRoutes(array $middleware)
+{
+    Route::middleware($middleware)->group(function () {
+        Route::get('/vars/shadowed', [ItemController::class, 'file']);
+    });
+}

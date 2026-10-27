@@ -40,6 +40,29 @@ class CheckController extends Controller
         }
     }
 
+    public function branch(Request $request)
+    {
+        if (! Auth::check()) {
+            if ($request->has('preview')) {
+                return view('preview');
+            }
+            abort(403);
+        }
+    }
+
+    public function guarded(Request $request)
+    {
+        if (! Auth::check()) {
+            try {
+                $x = cache('public');
+            } catch (\Exception $e) {
+                throw $e;
+            }
+
+            return view('public', ['x' => $x]);
+        }
+    }
+
     public function after(Request $request)
     {
         Item::query()->update(['seen' => true]);

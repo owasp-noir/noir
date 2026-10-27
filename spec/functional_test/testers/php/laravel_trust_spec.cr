@@ -103,9 +103,10 @@ describe "Laravel handler / middleware-group auth / rules params", tags: "functi
     # Constructor `$this->middleware(...)` (own or inherited), limited by
     # `->only` / `->except`, judged like route middleware: `staff` redirects
     # a guest away, `guest` redirects a signed-in user. A closure middleware
-    # and one under a config check are not names.
+    # is not a name; one under a config check carries the setting note.
     staff = ["Laravel 'staff' middleware (Staff)"]
-    guards.call(find.call("GET", "/acct/open")).should be_empty
+    setting = "an environment or config check decides; a setting can make it public"
+    guards.call(find.call("GET", "/acct/open")).should eq(["Laravel auth middleware (controller constructor: #{setting})"])
     guards.call(find.call("POST", "/acct/close")).should eq(staff)
     guards.call(find.call("POST", "/staff/close")).should eq(staff)
     find.call("GET", "/acct/open").params.map(&.name).should eq(["_pe"])
@@ -127,6 +128,34 @@ describe "Laravel handler / middleware-group auth / rules params", tags: "functi
     guards.call(find.call("GET", "/check/after")).should be_empty
     guards.call(find.call("GET", "/check/validated")).should eq(["Laravel handler check (if (! $request->user()) refuses)"])
     guards.call(find.call("GET", "/check/role")).should be_empty
+    # The `if (!user)` block must refuse before anything in it could answer.
+    guards.call(find.call("GET", "/check/branch")).should be_empty
+    guards.call(find.call("GET", "/check/guarded")).should be_empty
+
+    # `middleware('auth', ['except' => [...]])` options limit the names of
+    # the first argument; an unreadable `->except($this->public)` limit is
+    # only a conditional guard; a brace-less `if (config(...))` body is
+    # conditional; a child constructor inherits the parent's calls only
+    # through `parent::__construct()`.
+    guards.call(find.call("GET", "/ctor/index")).should eq(["Laravel 'staff' middleware (Staff) (controller constructor: its only/except list is not readable, so it may not apply to this action; a condition decides whether it applies)"])
+    guards.call(find.call("POST", "/ctor/store")).should eq(["Laravel auth middleware"])
+    guards.call(find.call("POST", "/ctor/parent")).should eq(["Laravel auth middleware"])
+    guards.call(find.call("POST", "/ctor/override")).should be_empty
+    guards.call(find.call("GET", "/ctor/braceless")).should eq(["Laravel auth middleware (controller constructor: #{setting})"])
+
+    # `insteadof` picks the trait an action comes from; `as` aliases one.
+    find.call("GET", "/feed").handler.not_nil!.path.to_s.should end_with("Concerns/OpenIndex.php")
+    guards.call(find.call("GET", "/feed")).should be_empty
+    find.call("GET", "/feed/locked").handler.not_nil!.path.to_s.should end_with("Concerns/LocksIndex.php")
+
+    # A redirect in the `else` of `if (!Auth::check())` sends signed-in
+    # users away, not guests.
+    guards.call(find.call("GET", "/mw/guestonly")).should be_empty
+    # The config file's own `return [`, not one inside a closure.
+    find.call("GET", "/later/cfg")
+    # A function parameter shadows the file-scope `$middleware`.
+    guards.call(find.call("GET", "/vars/shadowed")).should be_empty
+
     inner = find.call("GET", "/check/inner/{id}")
     guards.call(inner).should be_empty
     inner.params.map(&.name).should eq(["id"])

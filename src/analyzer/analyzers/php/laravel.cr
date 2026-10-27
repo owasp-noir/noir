@@ -56,11 +56,12 @@ module Analyzer::Php
       controller : String?,
       namespace : String?,
       middleware : Array(String),
-      arrays : Hash(String, LiteralArray)
+      arrays : Hash(String, LiteralArray),
+      scopes : Array(Range(Int32, Int32))
 
     # {body, controller file, body start line, request params, handler,
     # middleware the routed controller's constructor applies to the action}
-    alias ControllerActionBody = Tuple(String, String, Int32, Array(Param), Handler, Array(String))
+    alias ControllerActionBody = Tuple(String, String, Int32, Array(Param), Handler, Array(CtorName))
     alias ControllerActionMap = Hash(String, ControllerActionBody)
     EMPTY_RESOURCE_PARAMS = {} of String => String
 
@@ -347,7 +348,9 @@ module Analyzer::Php
       # The constant literal arrays the file assigns, read once from the whole
       # file: a group closure iterates one it captured with `use ($map)`.
       arrays ||= literal_array_assignments(content, lexer)
-      route_groups = extract_route_groups(content, lexer, imports, arrays, file_path)
+      # Function bodies in this content: a file-scope variable is not seen there.
+      scopes = arrays.empty? ? [] of Range(Int32, Int32) : function_scopes(content, lexer)
+      route_groups = extract_route_groups(content, lexer, imports, arrays, file_path, scopes)
       # `foreach` loops over a constant literal array register one route per
       # entry: their bodies are scanned once per entry instead of once as
       # written, which would emit `{$name}` as a placeholder and no handler.
@@ -368,7 +371,7 @@ module Analyzer::Php
       handler_bodies = collect_handler_bodies(offsets, base_line, lexer)
       flag_unresolved_route_args(content, lexer, handler_bodies + loop_bodies, budget) if loop_body
       handler_bodies.concat(loop_bodies)
-      ctx = RouteScanContext.new(offsets, file_path, include_callee, base_line, lexer, imports, route_groups, skip_ranges, handler_bodies, controller, namespace, middleware, arrays)
+      ctx = RouteScanContext.new(offsets, file_path, include_callee, base_line, lexer, imports, route_groups, skip_ranges, handler_bodies, controller, namespace, middleware, arrays, scopes)
 
       # 1. Verb routes. Every scan below walks the body the same way, with the
       # same guards — `each_laravel_route` holds that walk once. What differs
@@ -437,7 +440,7 @@ module Analyzer::Php
           call_line = base_line + offsets.line(call.start_pos) - 1
           resource_entries(kind, call, lexer, call_line).each do |name, statement, line|
             templates = resource_route_templates(prefix, name, parameter_overrides, kind, statement.matches?(SHALLOW_RE))
-            endpoints.concat(create_resource_endpoints(templates, file_path, line, actions, statement, include_callee, imports, resource_controller_cache, middleware, arrays, call.start_pos))
+            endpoints.concat(create_resource_endpoints(templates, file_path, line, actions, statement, include_callee, imports, resource_controller_cache, middleware, scoped_arrays(arrays, scopes, call.start_pos), call.start_pos))
           end
         end
       end
@@ -561,7 +564,7 @@ module Analyzer::Php
       prelude = ctx.offsets.slice(offsets.begin(route_match), action_pos)
       tail = ctx.offsets.slice(next_pos, ctx.lexer.statement_end(next_pos))
       url = constrain_placeholders(full_path, route_where_constraints(ctx, next_pos, tail))
-      names = action ? ctx.middleware + action[5] : ctx.middleware
+      controller_names = action.try(&.[5]) || NO_CTOR_NAMES
       check = (handler_body || action.try(&.[0])).try { |body| handler_user_check(body) }
 
       methods.each do |http_method|
@@ -569,7 +572,7 @@ module Analyzer::Php
         params = extract_brace_path_params(full_path) + params_for_method(input_params, http_method)
         endpoint = Endpoint.new(url, http_method, dedup_params(params), details.dup)
         endpoint.handler = handler
-        tag_route_guard(endpoint, ctx.file_path, names, prelude + tail, ctx.imports, ctx.arrays, offsets.begin(route_match), check)
+        tag_route_guard(endpoint, ctx.file_path, ctx.middleware, prelude + tail, ctx.imports, scoped_arrays(ctx.arrays, ctx.scopes, offsets.begin(route_match)), offsets.begin(route_match), check, controller_names)
         attach_route_callees(endpoint, handler_body, body_start_line, action, ctx.file_path) if ctx.include_callee
         endpoints << endpoint
       end
@@ -633,7 +636,7 @@ module Analyzer::Php
       details = Details.new(PathInfo.new(ctx.file_path, route_line))
       endpoint = Endpoint.new(full_path, "GET", params, details.dup)
       match_end = ctx.offsets.end(route_match)
-      tag_route_guard(endpoint, ctx.file_path, ctx.middleware, ctx.offsets.slice(ctx.offsets.begin(route_match), ctx.lexer.statement_end(match_end)), ctx.imports, ctx.arrays, ctx.offsets.begin(route_match))
+      tag_route_guard(endpoint, ctx.file_path, ctx.middleware, ctx.offsets.slice(ctx.offsets.begin(route_match), ctx.lexer.statement_end(match_end)), ctx.imports, scoped_arrays(ctx.arrays, ctx.scopes, ctx.offsets.begin(route_match)), ctx.offsets.begin(route_match))
       endpoints << endpoint
       match_end
     end
@@ -852,48 +855,84 @@ module Analyzer::Php
 
     # Sources of the traits the class in `content` uses, found by PSR-4.
     private def used_trait_sources(content : String, routes_file_path : String) : Array(String)
-      member_files(content, routes_file_path, parent: false).map { |file| php_code(read_file_content(file)) }
+      class_members(content, routes_file_path).traits.map { |(_, file)| php_code(read_file_content(file)) }
     end
 
-    CLASS_EXTENDS_RE = /\bclass\s+\w+\s+extends\s+(\\?[A-Za-z_][\w\\]*)/
+    CLASS_EXTENDS_RE   = /\bclass\s+\w+\s+extends\s+(\\?[A-Za-z_][\w\\]*)/
+    TRAIT_INSTEADOF_RE = /(?:([\w\\]+)::)?(\w+)\s+insteadof\s+[\w\\\s,]+;/
+    TRAIT_ALIAS_RE     = /(?:([\w\\]+)::)?(\w+)\s+as\s+(?:(?:public|protected|private)\s+)?(\w+)\s*;/
+    VISIBILITY_WORDS   = {"public", "protected", "private"}
 
-    # Files of the traits the class in `content` uses, then (with `parent`)
-    # the class it extends: where PHP looks for a method the class does not
-    # define itself, in that order.
-    private def member_files(content : String, routes_file_path : String, parent : Bool = true) : Array(String)
-      return [] of String unless decl = content.match(CLASS_DECL_RE)
+    # What a class takes its methods from besides itself: the traits it uses
+    # ({short name, file}), the `insteadof` choices and `as` aliases of its
+    # trait block, and the class it extends.
+    private record ClassMembers, traits : Array(Tuple(String, String)), insteadof : Hash(String, String),
+      aliases : Hash(String, Tuple(String?, String)), parent : String?
+
+    private def class_members(content : String, routes_file_path : String) : ClassMembers
+      traits = [] of Tuple(String, String)
+      insteadof = {} of String => String
+      aliases = {} of String => Tuple(String?, String)
+      return ClassMembers.new(traits, insteadof, aliases, nil) unless decl = content.match(CLASS_DECL_RE)
       header = content[0...decl.begin(0)]
       imports = parse_use_imports(header)
       namespace = header.match(/\bnamespace\s+([\w\\]+)\s*;/).try(&.[1])
-      refs = [] of String
-      content[decl.end(0)..].scan(TRAIT_USE_RE) { |m| m[1].split(',').each { |trait| refs << trait.strip } }
-      content[decl.begin(0)..decl.end(0)].match(CLASS_EXTENDS_RE).try { |m| refs << m[1] } if parent
-      refs.compact_map do |ref|
+      resolve = ->(ref : String) do
         file = resolve_controller_path("\\#{qualify_class(ref, imports, namespace)}", routes_file_path, EMPTY_IMPORTS)
         file if file && File.exists?(file)
       end
+      body = content[decl.end(0)..]
+      body.scan(TRAIT_USE_RE) do |m|
+        m[1].split(',').each { |ref| resolve.call(ref.strip).try { |file| traits << {ref.strip.split('\\').last, file} } }
+        next unless m[0].ends_with?('{') && (close = body.index('}', m.end(0)))
+        rules = body[m.end(0)...close]
+        rules.scan(TRAIT_INSTEADOF_RE) { |r| r[1]?.try { |trait| insteadof[r[2]] = trait.split('\\').last } }
+        rules.scan(TRAIT_ALIAS_RE) do |r|
+          aliases[r[3]] = {r[1]?.try(&.split('\\').last), r[2]} unless VISIBILITY_WORDS.includes?(r[3])
+        end
+      end
+      parent = content[decl.begin(0)..decl.end(0)].match(CLASS_EXTENDS_RE).try { |m| resolve.call(m[1]) }
+      ClassMembers.new(traits, insteadof, aliases, parent)
     end
 
-    @member_files = {} of String => Array(String)
+    @class_members = {} of String => ClassMembers
+
+    private def cached_class_members(path : String, routes_file_path : String) : ClassMembers
+      @source_cache_mutex.synchronize { @class_members[path]? } || begin
+        found = class_members(php_code(controller_source(path).offsets.content), routes_file_path)
+        @source_cache_mutex.synchronize { @class_members[path] = found }
+      end
+    end
+
+    # The class the class in `path` extends, when it is the app's.
+    private def parent_class_file(path : String, routes_file_path : String) : String?
+      cached_class_members(path, routes_file_path).parent.try { |parent| parent unless parent == path }
+    end
 
     # {source, signature, file} of `method_name` as PHP resolves it on the
-    # class in `path`: its own method, else one a used trait or the parent
-    # class (and theirs, a few levels up) provides.
+    # class in `path`: its own method, else an `as` alias or one a used
+    # trait provides (the `insteadof` choice when traits conflict), else
+    # the parent class's (and theirs, a few levels up).
     private def find_action(path : String, method_name : String, routes_file_path : String, depth : Int32 = 0) : Tuple(ControllerSource, Regex::MatchData, String)?
       source = controller_source(path)
       if method_match = source.first_methods[method_name]?
         return {source, method_match, path}
       end
       return if depth > 3
-      files = @source_cache_mutex.synchronize { @member_files[path]? } || begin
-        found = member_files(php_code(source.offsets.content), routes_file_path)
-        @source_cache_mutex.synchronize { @member_files[path] = found }
+      members = cached_class_members(path, routes_file_path)
+      traits = members.traits.reject { |(_, file)| file == path }
+      if target = members.aliases[method_name]?
+        trait, original = target
+        traits.each do |(name, file)|
+          next if trait && name != trait
+          find_action(file, original, routes_file_path, depth + 1).try { |hit| return hit }
+        end
       end
-      files.each do |file|
-        next if file == path
-        find_action(file, method_name, routes_file_path, depth + 1).try { |hit| return hit }
+      if chosen = members.insteadof[method_name]?
+        traits = traits.select { |(name, _)| name == chosen }
       end
-      nil
+      traits.each { |(_, file)| find_action(file, method_name, routes_file_path, depth + 1).try { |hit| return hit } }
+      members.parent.try { |parent| find_action(parent, method_name, routes_file_path, depth + 1) unless parent == path }
     end
 
     # The read type of the accessor helper `name` hands its first parameter
@@ -932,7 +971,7 @@ module Analyzer::Php
                                   signature_match : Regex::MatchData,
                                   controller_path : String,
                                   routes_file_path : String,
-                                  middleware : Array(String)) : ControllerActionBody?
+                                  middleware : Array(CtorName)) : ControllerActionBody?
       body, brace = method_body(source, signature_match) || return
       start_line = source.offsets.line(source.offsets.char(brace))
       signature_line = source.offsets.line(source.offsets.char(signature_match.byte_begin(1)))
@@ -1112,7 +1151,7 @@ module Analyzer::Php
     # `Route::namespace('X')` in a group's chain, or the `'namespace' => 'X'` attribute.
     GROUP_NAMESPACE_RE = /(?:(?:->|::)namespace\s*\(\s*|['"]namespace['"]\s*=>\s*)['"]([\w\\]+)['"]/i
 
-    private def extract_route_groups(content : String, lexer : Noir::PhpLexer, imports : Hash(String, String), arrays : Hash(String, LiteralArray), file_path : String) : Array(RouteGroup)
+    private def extract_route_groups(content : String, lexer : Noir::PhpLexer, imports : Hash(String, String), arrays : Hash(String, LiteralArray), file_path : String, scopes : Array(Range(Int32, Int32))) : Array(RouteGroup)
       groups = [] of RouteGroup
       pos = 0
 
@@ -1128,7 +1167,7 @@ module Analyzer::Php
           controller = prelude.match(GROUP_CONTROLLER_RE).try(&.[1])
           namespace = prelude.match(GROUP_NAMESPACE_RE).try(&.[1])
           uses = prelude.scan(CLOSURE_USE_RE).last?.try { |m| m[1].scan(/\$(\w+)/).map(&.[1]) } || [] of String
-          groups << RouteGroup.new(extract_group_prefix(prelude, file_path), body, body_start, body_end, controller, namespace, middleware_names(expand_middleware_vars(prelude, arrays, group_start), imports), uses)
+          groups << RouteGroup.new(extract_group_prefix(prelude, file_path), body, body_start, body_end, controller, namespace, middleware_names(expand_middleware_vars(prelude, scoped_arrays(arrays, scopes, group_start), group_start), imports), uses)
           pos = body_end + 1
         else
           pos = group_match.end(0)
@@ -1201,7 +1240,22 @@ module Analyzer::Php
       config = File.join(root, "config", "#{file}.php")
       return fallback unless File.exists?(config)
       content = php_code(read_file_content(config))
-      return unless (ret = content.match(/\breturn\s*\[/)) && (array = literal_array_at(content, ret.end(0) - 1))
+      # The file's own `return [`, not one inside a closure it defines.
+      file_lexer = Noir::PhpLexer.new(content)
+      depth = 0
+      last = 0
+      ret = nil
+      content.scan(/\breturn\s*\[/) do |m|
+        (last...m.begin(0)).each do |i|
+          case file_lexer.masked[i]
+          when '{' then depth += 1
+          when '}' then depth -= 1
+          end
+        end
+        last = m.begin(0)
+        ret = m if depth == 0 && file_lexer.in_code?(m.begin(0))
+      end
+      return unless ret && (array = literal_array_at(content, ret.end(0) - 1))
       keys[0...-1].each { |name| return unless array = array_entry(array, name) }
       lexer = Noir::PhpLexer.new(array, php_mode: true)
       depth = 0
@@ -1249,7 +1303,7 @@ module Analyzer::Php
         params.concat(params_for_method(resolved[3], method)) if resolved
         endpoint = Endpoint.new(path, method, dedup_params(params), details)
         endpoint.handler = resolved[4] if resolved
-        tag_route_guard(endpoint, file_path, resolved ? middleware + resolved[5] : middleware, statement, imports, arrays, at, resolved.try { |hit| handler_user_check(hit[0]) })
+        tag_route_guard(endpoint, file_path, middleware, statement, imports, arrays, at, resolved.try { |hit| handler_user_check(hit[0]) }, resolved.try(&.[5]) || NO_CTOR_NAMES)
         if include_callee && resolved
           attach_php_callees(endpoint, Noir::PhpCalleeExtractor.callees_for_body(resolved[0], resolved[1], resolved[2]))
         end
