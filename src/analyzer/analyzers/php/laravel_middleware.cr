@@ -37,6 +37,31 @@ module Analyzer::Php
     GROUP_EDIT_RE       = /->\s*(?:appendToGroup|prependToGroup|group)\s*\(\s*['"]([\w-]+)['"]\s*,\s*(\[[^\]]*\]|\\?[\w\\]+::class)/
     GROUP_SHORTHAND_RE  = /->\s*(web|api)\s*\(/
 
+    EMPTY_ARRAYS = {} of String => LiteralArray
+    # `->middleware($middleware)` / `'middleware' => $middleware`: a variable
+    # handed whole as the list.
+    MIDDLEWARE_VAR_RE = /((?:->|::)middleware\s*\(\s*|['"]middleware['"]\s*=>\s*)\$(\w+)\b(?!\s*(?:\[|->|\(|::))/
+
+    # `text` with each middleware variable replaced by the literal list it
+    # holds at `at` (`$middleware = ['auth:sanctum'];` at file scope, or one
+    # a group closure captured with `use ($middleware)`), so the names read
+    # like a written-out list. A variable the scan cannot prove constant
+    # stays as written and names nothing.
+    private def expand_middleware_vars(text : String, arrays : Hash(String, LiteralArray), at : Int32) : String
+      return text if arrays.empty? || !text.includes?('$')
+      text.gsub(MIDDLEWARE_VAR_RE) do |whole, m|
+        array = arrays[m[2]]?
+        next whole unless array && array.pos < at && array.entries.all?(&.key.nil?)
+        "#{m[1]}[#{array.entries.join(", ", &.value)}]"
+      end
+    end
+
+    # The arrays visible at `at`: none inside a function body of the content
+    # (its own scope, where a parameter may shadow the name).
+    private def scoped_arrays(arrays : Hash(String, LiteralArray), scopes : Array(Range(Int32, Int32)), at : Int32) : Hash(String, LiteralArray)
+      scopes.any?(&.includes?(at)) ? EMPTY_ARRAYS : arrays
+    end
+
     # Middleware names a route-wiring group's prelude applies.
     # Class entries (`Foo::class`) are qualified through `imports`.
     private def middleware_names(prelude : String, imports : Hash(String, String) = EMPTY_IMPORTS) : Array(String)
@@ -48,17 +73,25 @@ module Analyzer::Php
     # The guard among `names`: the first that is a known auth alias, a
     # group/alias judged to authenticate, or a middleware class (named
     # directly, `->middleware(Foo::class)`) whose definition can refuse.
+    # One a setting can lift yields to a later one no setting can.
     private def route_guard(path : String, names : Array(String)) : String?
       return if names.empty?
       root = composer_project_root(path)
       guards = @middleware_guards[root]?
+      lifted = nil
       names.each do |name|
-        return "Laravel #{name} middleware" if name.matches?(AUTH_ALIAS_RE)
-        guards.try(&.[name]?).try { |desc| return desc }
-        next unless name.includes?('\\') && (note = class_middleware_refusal(name, root))
-        return "Laravel #{name.split('\\').last} middleware#{note.empty? ? "" : " (#{note})"}"
+        desc = if name.matches?(AUTH_ALIAS_RE)
+                 "Laravel #{name} middleware"
+               elsif found = guards.try(&.[name]?)
+                 found
+               elsif name.includes?('\\') && (note = class_middleware_refusal(name, root))
+                 "Laravel #{name.split('\\').last} middleware#{note.empty? ? "" : " (#{note})"}"
+               end
+        next unless desc
+        return desc unless lifted?(desc)
+        lifted ||= desc
       end
-      nil
+      lifted
     end
 
     @class_middleware_refusals = {} of String => String?
@@ -86,10 +119,31 @@ module Analyzer::Php
     WITHOUT_MIDDLEWARE_RE = /->\s*withoutMiddleware\s*\(\s*(\[[^\]]*\]|['"][^'"]+['"])?/
 
     # Tag the guard of a route loaded under `names` (route file, then its
-    # enclosing groups) whose own registration is `statement`. As in Laravel,
-    # the statement adds its `->middleware(...)` / `'middleware' =>` names and
-    # `->withoutMiddleware(...)` takes names away.
-    private def tag_route_guard(endpoint : Endpoint, path : String, names : Array(String), statement : String, imports : Hash(String, String) = EMPTY_IMPORTS) : Nil
+    # enclosing groups) whose own registration is `statement`, with its
+    # controller constructor's middleware and the handler's own `check`:
+    # the first no setting or condition can lift, else the first at all.
+    private def tag_route_guard(endpoint : Endpoint, path : String, names : Array(String), statement : String, imports : Hash(String, String) = EMPTY_IMPORTS,
+                                arrays : Hash(String, LiteralArray) = EMPTY_ARRAYS, at : Int32 = 0, check : String? = nil,
+                                controller : Array(CtorName) = NO_CTOR_NAMES) : Nil
+      firm = controller.compact_map { |(name, note)| name unless note }
+      candidates = [statement_guard(path, names + firm, expand_middleware_vars(statement, arrays, at), imports), check]
+      controller.each do |(name, note)|
+        next unless note && (desc = route_guard(path, [name]))
+        candidates << "#{desc} (controller constructor: #{note})"
+      end
+      found = candidates.compact
+      guard = found.find { |desc| !lifted?(desc) } || found.first?
+      endpoint.add_tag(Tag.new("auth", "Protected by #{guard}", "php_auth")) if guard
+    end
+
+    # A guard a setting or a condition can lift: it may not stand.
+    private def lifted?(desc : String) : Bool
+      desc.includes?(SETTING_NOTE) || desc.includes?(CONDITION_NOTE)
+    end
+
+    # As in Laravel, the statement adds its `->middleware(...)` /
+    # `'middleware' =>` names and `->withoutMiddleware(...)` takes names away.
+    private def statement_guard(path : String, names : Array(String), statement : String, imports : Hash(String, String)) : String?
       names += middleware_names(statement, imports) if statement.includes?("iddleware")
       if statement.includes?("withoutMiddleware")
         statement.scan(WITHOUT_MIDDLEWARE_RE) do |m|
@@ -103,8 +157,243 @@ module Analyzer::Php
           names -= withdrawn
         end
       end
-      return unless guard = route_guard(path, names)
-      endpoint.add_tag(Tag.new("auth", "Protected by #{guard}", "php_auth"))
+      route_guard(path, names)
+    end
+
+    # A constructor middleware name, with why it may not apply (nil: it
+    # applies to the action).
+    alias CtorName = Tuple(String, String?)
+    NO_CTOR_NAMES = [] of CtorName
+
+    # One `$this->middleware(...)` call in a controller constructor: its
+    # names, the actions `only` / `except` limit it to (nil: no limit), and
+    # `note` when the call is conditional or its limit unreadable.
+    private record ControllerMiddleware, names : Array(String), only : Array(String)?, except : Array(String)?, note : String?
+
+    @controller_middleware = {} of String => Array(ControllerMiddleware)
+    CTOR_MIDDLEWARE_RE  = /\$this\s*->\s*middleware\s*\(/
+    PARENT_CTOR_RE      = /\bparent::__construct\s*\(/
+    CLOSURE_ARG_RE      = /\A\s*(?:static\s+)?(?:function|fn)\b/
+    CTOR_FILTER_CALL_RE = /->\s*(only|except)\s*\(/
+    CTOR_OPTION_RE      = /\A\[\s*['"](only|except)['"]\s*=>\s*(\[[^\[\]$]*\]|['"][^'"$]*['"])\s*,?\s*\]\z/
+    CONDITION_NOTE      = "a condition decides whether it applies"
+    FILTER_NOTE         = "its only/except list is not readable, so it may not apply to this action; a condition decides whether it applies"
+
+    # Middleware names the routed controller's constructor (its own, or
+    # the one it inherits) applies to `action`. Read once per controller.
+    private def constructor_middleware(controller_path : String, action : String, routes_file_path : String) : Array(CtorName)
+      entries = @class_middleware_mutex.synchronize { @controller_middleware[controller_path]? } || begin
+        found = read_constructor_middleware(controller_path, routes_file_path)
+        @class_middleware_mutex.synchronize { @controller_middleware[controller_path] = found }
+      end
+      action = action.downcase
+      entries.compact_map do |entry|
+        next if entry.only.try(&.includes?(action)) == false || entry.except.try(&.includes?(action))
+        entry.names.map { |name| {name, entry.note} }
+      end.flatten
+    end
+
+    # The constructor's `$this->middleware('auth')`,
+    # `->middleware(Foo::class)->except([...])` and
+    # `->middleware('auth', ['except' => [...]])` calls, plus the parent's
+    # when it calls `parent::__construct()`. A closure middleware is not a
+    # name; a call under a condition (braced or not) or with an unreadable
+    # limit carries a note.
+    private def read_constructor_middleware(controller_path : String, routes_file_path : String, depth : Int32 = 0) : Array(ControllerMiddleware)
+      list = [] of ControllerMiddleware
+      return list if depth > 3
+      return list unless found = find_action(controller_path, "__construct", routes_file_path)
+      source, signature, ctor_file = found
+      return list unless body = method_body(source, signature).try(&.[0])
+      return list unless body.includes?("middleware") || body.includes?("parent::")
+      namespace = source.offsets.content.match(NAMESPACE_DECL_RE).try(&.[1])
+      lexer = Noir::PhpLexer.new(body, php_mode: true)
+      conditions = condition_blocks(body, lexer)
+      body.scan(CTOR_MIDDLEWARE_RE) do |m|
+        open = m.end(0) - 1
+        next unless lexer.in_code?(m.begin(0)) && (close = lexer.matching_delimiter(open))
+        args = top_level_args(lexer, body, open + 1, close)
+        next if args.empty? || args[0].matches?(CLOSURE_ARG_RE)
+        names = middleware_entries(args[0], source.imports, namespace)
+        next if names.empty?
+        note = statement_condition(body, lexer, conditions, m.begin(0))
+        only = except = nil
+        unreadable = args.size > 2
+        if options = args[1]?
+          if option = options.gsub(/\s+/, " ").match(CTOR_OPTION_RE)
+            option[1] == "only" ? (only = literal_names(option[2])) : (except = literal_names(option[2]))
+          else
+            unreadable = true
+          end
+        end
+        tail = body[(close + 1)...lexer.statement_end(close + 1)]
+        tail.scan(CTOR_FILTER_CALL_RE) do |call|
+          filter_close = Noir::PhpLexer.new(tail, php_mode: true).matching_delimiter(call.end(0) - 1)
+          list_text = filter_close ? tail[call.end(0)...filter_close] : "$"
+          if list_text.includes?('$') || !list_text.matches?(/['"]/)
+            unreadable = true
+          else
+            call[1] == "only" ? (only = literal_names(list_text)) : (except = literal_names(list_text))
+          end
+        end
+        note ||= FILTER_NOTE if unreadable
+        list << ControllerMiddleware.new(names, unreadable ? nil : only, unreadable ? nil : except, note)
+      end
+      body.scan(PARENT_CTOR_RE) do |m|
+        next unless lexer.in_code?(m.begin(0)) && (parent = parent_class_file(ctor_file, routes_file_path))
+        note = statement_condition(body, lexer, conditions, m.begin(0))
+        read_constructor_middleware(parent, routes_file_path, depth + 1).each do |entry|
+          list << (note ? entry.copy_with(note: entry.note || note) : entry)
+        end
+      end
+      list
+    end
+
+    private def literal_names(text : String) : Array(String)
+      text.scan(/['"]([^'"]+)['"]/).map(&.[1].downcase)
+    end
+
+    # Why a statement starting at `pos` of a method body may not run: nil
+    # when it is a top-level statement, the setting note under an
+    # environment/config check, the condition note under any other `if`,
+    # loop or block (braced or a single-statement body).
+    private def statement_condition(body : String, lexer : Noir::PhpLexer, conditions : Array(Tuple(String, Range(Int32, Int32))), pos : Int32) : String?
+      enclosing = conditions.select(&.[1].includes?(pos))
+      return enclosing.any?(&.[0].matches?(ENV_CONDITION_RE)) ? SETTING_NOTE : CONDITION_NOTE unless enclosing.empty?
+      depth = 0
+      (0...pos).each do |i|
+        case lexer.masked[i]
+        when '{' then depth += 1
+        when '}' then depth -= 1
+        end
+      end
+      return CONDITION_NOTE unless depth == 0
+      i = pos - 1
+      while i >= 0 && (lexer.masked[i].whitespace? || !lexer.in_code?(i))
+        i -= 1
+      end
+      i < 0 || lexer.masked[i] == ';' || lexer.masked[i] == '}' ? nil : CONDITION_NOTE
+    end
+
+    # A handler that refuses an anonymous caller before doing anything: a
+    # top-level `abort_if(!$request->user(), 403)` /
+    # `abort_unless(auth()->check(), 404)`, or `if (!Auth::check()) {
+    # abort(403); }` (also on a `$user = $request->user()` it read first),
+    # before it does anything else.
+    USER_CHECK_RE  = /\G(?:abort_(if|unless)|if)\s*\(/
+    GUARD_ARG      = /(?:['"]\w+['"]|\$\w+)?/.source
+    USER_SOURCE    = /(?:\$request\s*->\s*user\s*\(\s*#{GUARD_ARG}\s*\)|(?:auth\s*\(\s*#{GUARD_ARG}\s*\)|Auth::guard\s*\(\s*#{GUARD_ARG}\s*\)|auth\s*\(\s*\)\s*->\s*guard\s*\(\s*#{GUARD_ARG}\s*\))\s*->\s*(?:user|check)\s*\(\s*\)|Auth::(?:user|check)\s*\(\s*\))/.source
+    USER_SOURCE_RE = /\A#{USER_SOURCE}\z/
+    USER_GUEST_RE  = /\A(?:auth\s*\(\s*\)\s*->\s*guest|Auth::guest)\s*\(\s*\)\z/
+    USER_ASSIGN_RE = /\G\$(\w+)\s*=\s*#{USER_SOURCE}\s*;/
+    # What an `if (!user)` block does to refuse: abort, throw, redirect, or
+    # answer 401/403.
+    BLOCK_REFUSAL_RE = /\A(?:abort\s*\(|throw\b|return\s+(?:redirect\b|Redirect::)|return\s+response\s*\([^;]*?\b40[13]\b|return\s+response\s*\(\s*\)\s*->\s*json\s*\([^;]*?\b40[13]\b)/
+    COMPOUND_RE      = /\A(?:if|else|try|foreach|for|while|switch|do|match)\b/
+
+    # Whether the block (or single statement) from `start` to `stop` refuses
+    # before anything else could answer: one of its top-level statements
+    # refuses, and none before it returns or branches (a nested `if` or
+    # `try` that may answer first).
+    private def block_refuses?(lexer : Noir::PhpLexer, start : Int32, stop : Int32) : Bool
+      return lexer.masked[start...stop].join.strip.matches?(BLOCK_REFUSAL_RE) unless lexer.masked[start] == '{'
+      pos = start + 1
+      while pos < stop
+        while pos < stop && (lexer.masked[pos].whitespace? || !lexer.in_code?(pos))
+          pos += 1
+        end
+        return false unless pos < stop
+        stmt_end = Math.min(lexer.statement_end(pos), stop)
+        text = lexer.masked[pos...stmt_end].join.strip
+        return true if text.matches?(BLOCK_REFUSAL_RE)
+        return false if text.matches?(COMPOUND_RE) || text.matches?(/\b(?:return|yield|exit|die)\b/) || text.includes?('{')
+        pos = Math.max(stmt_end, pos + 1)
+      end
+      false
+    end
+
+    # Validating the input first refuses rather than serves (422).
+    VALIDATE_STATEMENT_RE = /\G(?:\$\w+\s*=\s*)?(?:\$this|\$request)\s*->\s*validate(?:WithBag)?\s*\(/
+
+    # Only the handler's leading statements count: reading the user,
+    # validating input, then checks. Anything else first (work, a return, a condition that is not
+    # about the user) and a later check no longer stands in front of it.
+    private def handler_user_check(body : String) : String?
+      return unless body.includes?("abort") || body.includes?("if")
+      lexer = Noir::PhpLexer.new(body, php_mode: true)
+      users = [] of String
+      pos = 0
+      loop do
+        while pos < body.size && (lexer.masked[pos].whitespace? || !lexer.in_code?(pos))
+          pos += 1
+        end
+        return unless pos < body.size
+        if assign = body.match(USER_ASSIGN_RE, pos)
+          users << assign[1]
+          pos = assign.end(0)
+          next
+        end
+        if body.match(VALIDATE_STATEMENT_RE, pos)
+          pos = lexer.statement_end(pos)
+          next
+        end
+        return unless m = body.match(USER_CHECK_RE, pos)
+        open = m.end(0) - 1
+        return unless close = lexer.matching_delimiter(open)
+        if m[1]?
+          condition = body[(open + 1)...lexer.expression_end(open + 1)]
+          refuses = m[1] == "if" ? user_missing?(condition, users) : split_condition(condition, "&&").any? { |part| user_source?(part, users) }
+          return "Laravel handler check (#{body[m.begin(0)..close].gsub(/\s+/, " ")})" if refuses
+          pos = Math.max(lexer.statement_end(close + 1), close + 1)
+        else
+          return unless user_missing?(body[(open + 1)...close], users)
+          start = close + 1
+          while start < body.size && lexer.masked[start].whitespace?
+            start += 1
+          end
+          return unless start < body.size
+          stop = lexer.masked[start] == '{' ? lexer.matching_delimiter(start) : lexer.statement_end(start)
+          return unless stop && block_refuses?(lexer, start, stop)
+          return "Laravel handler check (if (#{body[(open + 1)...close].strip.gsub(/\s+/, " ")}) refuses)"
+        end
+      end
+    end
+
+    # Whether `condition` holds when no user is signed in: one of its
+    # top-level `||` parts is `!<user>` or `<auth>->guest()`.
+    private def user_missing?(condition : String, users : Array(String) = [] of String) : Bool
+      split_condition(condition.strip, "||").any? do |part|
+        part.matches?(USER_GUEST_RE) || ((negated = part.lchop?('!')) && user_source?(negated, users)) || false
+      end
+    end
+
+    private def user_source?(expr : String, users : Array(String)) : Bool
+      expr = expr.strip
+      while expr.starts_with?('(') && expr.ends_with?(')')
+        expr = expr[1...-1].strip
+      end
+      expr.matches?(USER_SOURCE_RE) || ((var = expr.match(/\A\$(\w+)\z/)) && users.includes?(var[1])) || false
+    end
+
+    # `condition` split on a top-level `||` / `&&` (not one inside a call).
+    private def split_condition(condition : String, op : String) : Array(String)
+      parts = [] of String
+      depth = 0
+      start = 0
+      i = 0
+      while i < condition.size
+        case condition[i]
+        when '(', '[' then depth += 1
+        when ')', ']' then depth -= 1
+        end
+        if depth == 0 && condition[i, 2] == op
+          parts << condition[start...i].strip
+          start = i + 2
+          i += 1
+        end
+        i += 1
+      end
+      parts << condition[start..].strip
     end
 
     private def collect_middleware_guards : Hash(String, MiddlewareGuards)
@@ -197,6 +486,7 @@ module Analyzer::Php
     # check on who the caller is.
     ORIGIN_CONDITION_RE = /['"](?:origin|referer|host)['"]|->\s*(?:isMethod|getMethod|method|getHost)\s*\(/i
     IF_RE               = /\b(?:else\s*)?if\s*\(/
+    REDIRECT_RE         = /\breturn\s+(?:redirect\b|Redirect::)/
     ELSE_BLOCK_RE       = /\G\s*else\s*\{/
 
     # Whether the middleware class's `handle()` (or the `$this->` helpers it
@@ -242,9 +532,18 @@ module Analyzer::Php
         next unless (note = helpers[m[1]]?) && lexer.in_code?(m.begin(0))
         points << {m.begin(0), "", note}
       end
-      return if points.empty?
+      redirects = body.scan(REDIRECT_RE).select { |m| lexer.in_code?(m.begin(0)) }
+      return if points.empty? && redirects.empty?
 
       conditions = condition_blocks(body, lexer)
+      # A redirect anywhere (home, a locale) is not a refusal; one under a
+      # check that the caller is not signed in sends the guest away.
+      redirects.each do |m|
+        innermost = conditions.select(&.[1].includes?(m.begin(0))).min_by?(&.[1].size)
+        next unless innermost && user_missing?(innermost[0])
+        points << {m.begin(0), m[0], ""}
+      end
+      return if points.empty?
       verdict = nil
       points.each do |(at, text, note)|
         around = conditions.select(&.[1].includes?(at)).map(&.[0]).push(text).join(' ')
@@ -264,7 +563,7 @@ module Analyzer::Php
     end
 
     # {condition, block it guards} for every `if` / `elseif` in `body`; an
-    # `else` block is listed under its `if`'s condition too.
+    # `else` block is listed under its negation, `!(condition)`.
     private def condition_blocks(body : String, lexer : Noir::PhpLexer) : Array(Tuple(String, Range(Int32, Int32)))
       blocks = [] of Tuple(String, Range(Int32, Int32))
       body.scan(IF_RE) do |m|
@@ -280,7 +579,7 @@ module Analyzer::Php
         next unless stop
         blocks << {cond, start...stop}
         if (other = body.match(ELSE_BLOCK_RE, stop + 1)) && (other_end = lexer.matching_delimiter(other.end(0) - 1))
-          blocks << {cond, other.end(0)...other_end}
+          blocks << {"!(#{cond})", other.end(0)...other_end}
         end
       end
       blocks
