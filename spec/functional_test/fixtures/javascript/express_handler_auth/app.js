@@ -19,6 +19,8 @@ app.post('/refused', controllers.refusedFirst)
 app.get('/counted', controllers.counted)
 app.get('/preview', controllers.previewFirst)
 app.get('/lookup/:id', controllers.lookupFirst)
+app.get('/status', controllers.pathFirst)
+app.get('/health', controllers.pathFirst)
 
 // A check inside a promise callback: the name stands in for it.
 app.get('/later', (req, res) => {

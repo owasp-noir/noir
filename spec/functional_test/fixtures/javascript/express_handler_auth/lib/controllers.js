@@ -89,6 +89,17 @@ exports.refusedFirst = (req, res) => {
   res.json({ ok: 1 })
 }
 
+// The route decides the path test: on `/status` the first branch is
+// never taken, so every caller meets the check; on `/health` it always is.
+exports.pathFirst = (req, res) => {
+  if (req.path === '/health') {
+    res.locals.health = true
+  } else if (!req.user) {
+    return res.sendStatus(401)
+  }
+  res.json({ ok: 1 })
+}
+
 // A counter is not a setting: no guard.
 exports.counted = (req, res) => {
   if (req.user) {

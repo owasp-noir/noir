@@ -80,6 +80,8 @@ class ExpressAuthTagger < FrameworkTagger
     # The method of the endpoint being judged, for `req.method` tests; nil
     # while mounts are pre-scanned.
     @method = nil.as(String?)
+    # Its URL, for `req.path` tests.
+    @url = nil.as(String?)
   end
 
   def self.target_techs : Array(String)
@@ -149,9 +151,11 @@ class ExpressAuthTagger < FrameworkTagger
 
   private def check_endpoint(endpoint : Endpoint) : Endpoint
     @method = endpoint.method
+    @url = endpoint.url
     check_route(endpoint)
   ensure
     @method = nil
+    @url = nil
   end
 
   # Whether every auth-name mention in `code` is a non-negated part of an
@@ -770,8 +774,12 @@ class ExpressAuthTagger < FrameworkTagger
     line = handler.line || return
     content = read_file(path) || return
     request = request_param(content, line) || return
-    body = code_only(Noir::JSRouteExtractor.definition_body(content, line))
-    if check = caller_absence_refusal(body, Regex.escape(request), stop_file: path)
+    definition = Noir::JSRouteExtractor.definition_body(content, line)
+    body = code_only(definition)
+    # Path literals stay: `if (req.path === '/health')` is judged against
+    # the route.
+    judged = Noir::CComments.strip(definition, quotes: %("'`)).gsub(STRING_LITERAL) { |lit| lit.matches?(PATH_LITERAL) ? lit : %("") }
+    if check = caller_absence_refusal(judged, Regex.escape(request), stop_file: path)
       return "Protected by Express handler check #{check}"
     end
     bindings = Hash(String, Tuple(String, String)).new
@@ -861,7 +869,7 @@ class ExpressAuthTagger < FrameworkTagger
                  rest[0, rest.index(/[;\n]/) || rest.size]
                end
       prior_passes = in_chain && chain_passes
-      chain_passes = prior_passes || top_refusal(branch, source, stop_file).nil?
+      chain_passes = prior_passes || (route_branch_taken?(condition) != false && top_refusal(branch, source, stop_file).nil?)
       next if prior_passes
       tested = Noir::TopLevelSplit.split(condition, '|', Noir::TopLevelSplit::Rules::JS_POSITIONAL_ARGS).reject(&.blank?).find do |part|
         next false unless hit = part.strip.match(absent)
@@ -881,6 +889,25 @@ class ExpressAuthTagger < FrameworkTagger
       return "#{condition.strip.gsub(/\s+/, "")} else #{refusal}"
     end
     nil
+  end
+
+  PATH_LITERAL = /\A(['"])\/[^'"]*\1\z/
+  PATH_FIELD   = /(?<![\w$.])(?:req|request)\s*\.\s*(?:path|url|originalUrl|baseUrl|route\s*\.\s*path)\b/
+  PATH_EQUALS  = /\A\(*\s*(?:req|request)\s*\.\s*(?:path|url|originalUrl|baseUrl)\s*===?\s*(['"])(\/[^'"]*)\1\s*\)*\z/
+
+  # Whether a caller can take the branch of an `if` on `condition`, when
+  # the request path alone decides it (`req.path === '/health'`): the
+  # caller cannot choose the path of the route it calls. True only for an
+  # equality with the endpoint's own literal URL; false for any other path
+  # test (a parameterized route, a mount-relative path, `startsWith`);
+  # nil when the condition reads anything else.
+  private def route_branch_taken?(condition : String) : Bool?
+    return unless condition.matches?(PATH_FIELD)
+    rest = condition.gsub(PATH_FIELD, "").gsub(STRING_LITERAL, "")
+    return if rest.scan(/(?<![\w$.])[A-Za-z_$][\w$]*/).any? { |m| !m[0].matches?(JS_WORDS) }
+    test = condition.strip.match(PATH_EQUALS) || return false
+    url = @url || return false
+    !url.matches?(/[:*{(]/) && test[2] == url
   end
 
   # Whether code before `at` can answer or pass the request on, leaving
