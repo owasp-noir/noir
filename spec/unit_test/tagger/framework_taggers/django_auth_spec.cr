@@ -506,6 +506,18 @@ describe "DjangoAuthTagger" do
           if not(request.user.is_anonymous):
               return HttpResponseForbidden()
           return HttpResponse("ok")
+
+      def signed_in_first(request):
+          if not request.user.is_anonymous:
+              if not request.user.has_perm("app.edit"):
+                  raise PermissionDenied
+              return HttpResponse("secret")
+          return redirect_to_login(request.get_full_path())
+
+      def signed_in_or(request):
+          if request.user.is_authenticated or settings.PUBLIC:
+              return HttpResponse("page")
+          return HttpResponseForbidden()
       PY
     CodeLocator.instance.register_path(views)
 
@@ -521,8 +533,10 @@ describe "DjangoAuthTagger" do
       subbranch = at.call(31)
       written_first = at.call(38)
       negated_paren = at.call(44)
+      signed_in_first = at.call(49)
+      signed_in_or = at.call(56)
 
-      DjangoAuthTagger.new(noir_options).perform([flags, inverted, things, elsewhere, reassigned, subbranch, written_first, negated_paren])
+      DjangoAuthTagger.new(noir_options).perform([flags, inverted, things, elsewhere, reassigned, subbranch, written_first, negated_paren, signed_in_first, signed_in_or])
 
       flags.tags.map(&.description).should eq(["Protected by Django request.user.is_authenticated check"])
       # `not ... is_anonymous` refuses the signed-in caller, not the anonymous one.
@@ -537,6 +551,10 @@ describe "DjangoAuthTagger" do
       # The anonymous caller's delete has already run.
       written_first.tags.should be_empty
       negated_paren.tags.should be_empty
+      # Signed-in callers leave inside the block; everyone else is refused.
+      signed_in_first.tags.map(&.description).should eq(["Protected by Django request.user.is_authenticated check"])
+      # `or` lets an anonymous caller into the block.
+      signed_in_or.tags.should be_empty
     ensure
       FileUtils.rm_rf(tmpdir)
       CodeLocator.instance.clear_all

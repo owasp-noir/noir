@@ -371,6 +371,10 @@ class DjangoAuthTagger < FrameworkTagger
       block = body[(k + 1)..].take_while { |entry| entry[0] > level }
       if code.starts_with?("if ") && anonymous_test?(code.partition(':')[0], aliases)
         return "Django request.user.is_authenticated check" if !written && refusing_block?(code.partition(':')[2].strip, block)
+      elsif code.starts_with?("if ") && signed_in_test?(code.partition(':')[0], aliases)
+        # `if request.user.is_authenticated: ... return` then a refusal: the
+        # signed-in callers leave inside the block, the rest are refused.
+        return "Django request.user.is_authenticated check" if !written && exits?(code.partition(':')[2].strip, block) && refusal_follows?(body, k + 1 + block.size, level)
       elsif code.matches?(METHOD_TEST)
         test = code.split("request.method", 2)[1]
         next if test.matches?(/\A\s*(?:!=|not\s+in)/)
@@ -443,6 +447,32 @@ class DjangoAuthTagger < FrameworkTagger
       next true if condition.matches?(/\bnot\s*\(?\s*(?<![\w.])#{subject}\.is_authenticated\b/)
       condition.matches?(/(?<![\w.])#{subject}\.is_anonymous\b/) && !condition.matches?(/\bnot\s*\(?\s*(?<![\w.])#{subject}\.is_anonymous\b/)
     end
+  end
+
+  # A condition only a signed-in caller passes: `request.user.is_authenticated`
+  # or `not request.user.is_anonymous`, not widened by `or`.
+  private def signed_in_test?(condition : String, aliases : Array(String)) : Bool
+    return false unless condition.includes?("is_authenticated") || condition.includes?("is_anonymous")
+    return false if condition.matches?(/\bor\b/)
+    (["(?:self\\.)?request\\.user"] + aliases).any? do |subject|
+      next true if condition.matches?(/\bnot\s*\(?\s*(?<![\w.])#{subject}\.is_anonymous\b/)
+      condition.matches?(/(?<![\w.])#{subject}\.is_authenticated\b/) && !condition.matches?(/\bnot\s*\(?\s*(?<![\w.])#{subject}\.is_authenticated\b/)
+    end
+  end
+
+  # Whether an `if` block always leaves the function: a top-level
+  # `return`/`raise` in it (or the inline statement).
+  private def exits?(inline : String, block : Array({Int32, String})) : Bool
+    return inline.starts_with?("return") || inline.starts_with?("raise") unless inline.empty?
+    top = block.first?.try(&.[0]) || return false
+    block.any? { |indent, code| indent == top && (code.starts_with?("return") || code.starts_with?("raise")) }
+  end
+
+  # Whether the top-level statement at `index` of `body` refuses the caller.
+  private def refusal_follows?(body : Array({Int32, String}), index : Int32, level : Int32) : Bool
+    indent, code = body[index]? || return false
+    return false unless indent == level && (code.starts_with?("return") || code.starts_with?("raise"))
+    refusal?(([code] + body[(index + 1)..].take_while { |entry| entry[0] > level }.map(&.[1])).join('\n'))
   end
 
   # The guard on function `name` as `path` refers to it: its decorators,
