@@ -1887,6 +1887,12 @@ module Analyzer::Python
           # gets no implicit GET; only the verbs it defines.
           plain_view = chain.any? { |klass| python_class_bases(klass.header).any? { |base| base.split('.').last == "View" } }
 
+          # A DRF view by what it inherits, not by what it is called.
+          drf_view = chain.any? do |klass|
+            view_file_index(klass.filepath).content.includes?("rest_framework") &&
+              python_class_bases(klass.header).any? { |base| base.rpartition('.')[2].matches?(/\A\w*(?:APIView|ViewSet)\z/) && resolve_python_class(klass.filepath, base).nil? }
+          end
+
           drf_generic_class = false
           if drf_methods = default_drf_generic_view_methods(chain_header)
             drf_generic_class = true
@@ -2015,7 +2021,7 @@ module Analyzer::Python
             # endpoint's code too (its mixins and attributes apply).
             details.add_path(PathInfo.new(filepath, class_definition_line)) if owner
             own_params = method_params[http_method_name]? || [] of Param
-            endpoint_params = drf_generic_class ? filter_params(http_method_name, common_params) + drf_filter_params(http_method_name, own_params) : filter_params(http_method_name, common_params + own_params)
+            endpoint_params = drf_view ? filter_params(http_method_name, common_params) + drf_filter_params(http_method_name, own_params) : filter_params(http_method_name, common_params + own_params)
             endpoint = Endpoint.new(url, http_method_name, endpoint_params, details)
             # A verb with no body in the project (served by the framework
             # base, `TemplateView.get`) has no handler to point at.
@@ -2453,6 +2459,47 @@ module Analyzer::Python
       end
     end
 
+    # The local `form` (what `form.cleaned_data` reads) is bound only to
+    # classes whose field set is closed, at least once to the request.
+    FORM_LOCAL_BINDING_RE = /^\s*form\s*=\s*([A-Za-z_][\w.]*)\s*\(/m
+
+    private def closed_form_variable?(code : ::String, filepath : ::String) : Bool
+      return false unless code.matches?(/^\s*form\s*=\s*[A-Za-z_][\w.]*\s*\([^\n]*\brequest\.(?:POST|GET)\b/m)
+      names = code.scan(FORM_LOCAL_BINDING_RE).map(&.[1]).uniq!
+      names.all? do |name|
+        target = (settings_loaded_class(code, name, filepath) unless name.includes?('.')) || resolve_python_class(filepath, name)
+        target ? closed_form_class?(target) : false
+      end
+    end
+
+    FORM_LIBRARY_BASES = %w[Form ModelForm BaseForm BaseModelForm]
+
+    # Whether the declared fields are all the input form class `target`
+    # takes: no field added at runtime (`self.fields[...] =`), no raw
+    # `self.data` read, every base resolved (or Django's own), and a
+    # ModelForm's `Meta.fields` an explicit list.
+    private def closed_form_class?(target : Tuple(::String, ::String)) : Bool
+      chain = drf_class_chain(target[0], target[1])
+      return false if chain.empty?
+      model_form = false
+      meta_list = false
+      chain.each do |klass|
+        return false if klass.codeblock.matches?(/\bself\.(?:fields\b\s*(?:\[|\.(?:update|setdefault)\b)|data\b)/)
+        python_class_bases(klass.header).each do |base|
+          short = base.rpartition('.')[2]
+          model_form ||= short.in?("ModelForm", "BaseModelForm")
+          next if short.in?(FORM_LIBRARY_BASES) || DJANGO_AUTH_FORM_FIELDS.has_key?(short)
+          return false unless resolve_python_class(klass.filepath, base)
+        end
+        if meta = klass.codeblock.match(/^([ \t]+)class[ \t]+Meta\b[^\n]*\n((?:\1[ \t]+[^\n]*\n?|[ \t]*\n)*)/m)
+          return false if meta[2].matches?(/^\s+exclude\s*=/m)
+          meta_list ||= meta[2].matches?(/^\s+fields\s*=\s*[\[(]/m)
+          return false if meta[2].matches?(/^\s+fields\s*=\s*(?![\[(])/m) && !meta_list
+        end
+      end
+      !model_form || meta_list
+    end
+
     # Whether `filepath` imports `name` from `django.contrib.auth.forms`.
     private def django_auth_form_import?(filepath : ::String, name : ::String) : Bool
       import_re = DJANGO_AUTH_FORM_IMPORTS[name]? || return false
@@ -2542,10 +2589,11 @@ module Analyzer::Python
       scan_methods = restricted ? methods.dup : methods
       folded = with_request_aliases(fold_python_continuations(lines))
       code = folded.join('\n')
-      # A bound form the scan resolves names what the request carries; a
+      form_params = bound_form_params(code, filepath, scan_methods)
+      # When every class `form` is bound to declares its whole field set, a
       # `form.cleaned_data` key it does not declare is one its `clean()`
       # computed (`cleaned_data["user"]`), not an input.
-      form_params = bound_form_params(code, filepath, scan_methods)
+      read_cleaned = !closed_form_variable?(code, filepath)
       folded.each_with_index do |line, index|
         # A JSON body read under `if request.method == "PUT":` is that
         # verb's alone.
@@ -2563,7 +2611,7 @@ module Analyzer::Python
           end
         end
         scan_methods << "POST" if !scan_methods.includes?("POST") && line.matches?(RAW_BODY_RE)
-        params.concat extract_params_from_line(line, scan_methods, cleaned_data: form_params.empty?)
+        params.concat extract_params_from_line(line, scan_methods, cleaned_data: read_cleaned)
       end
       params.concat form_params
       params.concat mapping_helper_params(code, filepath)
@@ -2634,19 +2682,24 @@ module Analyzer::Python
     private def mapping_helper_params(code : ::String, filepath : ::String) : Array(Param)
       params = [] of Param
       return params unless code.includes?("request.")
+      calls = code.scan(MAPPING_HELPER_CALL_RE)
+      return params if calls.empty?
       source_cache = {filepath => view_file_index(filepath).content}
-      import_map : Hash(::String, Tuple(::String, Int32))? = nil
-      code.scan(MAPPING_HELPER_CALL_RE) do |call|
-        import_map ||= callee_import_map(@django_base_path, filepath, source_cache[filepath])
-        site = resolve_python_callee_definition(call[1], filepath, source_cache, import_map) || next
-        next unless @mapping_helpers[site] ||= reads_key_from_mapping?(site[0], site[1])
+      import_map = callee_import_map(@django_base_path, filepath, source_cache[filepath])
+      calls.each do |call|
+        # A bare name follows re-exports (`from core.utils.common import
+        # int_from_request` naming a function defined elsewhere).
+        site = python_definition_site(filepath, call[1]).try { |file, name| view_file_index(file).defs[name]?.try { |at| {file, at[0] + 1} } } unless call[1].includes?('.')
+        site ||= resolve_python_callee_definition(call[1], filepath, source_cache, import_map) || next
+        reads = @mapping_helpers.fetch(site) { @mapping_helpers[site] = reads_key_from_mapping?(site[0], site[1]) }
+        next unless reads
         params << Param.new(call[3], "", REQUEST_PARAM_FIELD_MAP[call[2]][1])
       end
       params
     end
 
     # Whether the function defined at `path:line` looks its second argument
-    # up in its first.
+    # up in its first, neither rebound in its body.
     private def reads_key_from_mapping?(path : ::String, line : Int32) : Bool
       lines = view_file_index(path).lines
       return false unless lines[line - 1]?.try(&.lstrip.matches?(/^(?:async\s+)?def\s/))
@@ -2656,7 +2709,10 @@ module Analyzer::Python
       names = args.map(&.strip.split(/[:=]/, 2)[0].strip).reject { |name| name.empty? || name == "self" || name.starts_with?('*') }
       mapping, key = names[0]?, names[1]?
       return false unless mapping && key
-      body.matches?(/(?<![\w.])#{mapping}\s*(?:\.get(?:list)?\s*\(\s*#{key}\b|\[\s*#{key}\s*\])/)
+      rebinds = /^\s*(?:#{mapping}|#{key})\s*(?:[-+*\/|&]|\/\/)?=(?!=)|^\s*(?:async\s+)?for\s+[^:]*(?<![\w.])(?:#{mapping}|#{key})\b[^:]*\sin\s|\bas\s+(?:#{mapping}|#{key})\b|(?<![\w.])(?:#{mapping}|#{key})\s*:=/m
+      statements = body.split("\n")[1..].join('\n')
+      return false if statements.matches?(rebinds)
+      statements.matches?(/(?<![\w.])#{mapping}\s*(?:\.get(?:list)?\s*\(\s*#{key}\b|\[\s*#{key}\s*\])/)
     end
 
     # `return webhook_form(request, channel)`: a function view that hands its

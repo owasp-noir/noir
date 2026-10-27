@@ -10,5 +10,8 @@ urlpatterns = [
     path("login/", views.login_view),
     path("validate/", views.ValidateAPI.as_view()),
     path("versions/<int:pk>/", views.VersionsAPI.as_view()),
+    path("article/", views.article),
+    path("otp/", views.otp),
+    path("legacy/<int:pk>/", views.LegacyAPIView.as_view()),
     *router.urls,
 ]

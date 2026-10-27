@@ -15,6 +15,13 @@ expected_endpoints = [
   Endpoint.new("/items/{pk}/", "DELETE", [Param.new("pk", "", "path"), Param.new("reason", "", "form")]),
   Endpoint.new("/items/{pk}/notes/", "DELETE", [Param.new("pk", "", "path"), Param.new("id", "", "query")]),
   Endpoint.new("/items/{pk}/notes/", "POST", [Param.new("pk", "", "path"), Param.new("note", "", "form")]),
+  # A form whose field set is open (`fields = "__all__"`, fields added in
+  # `__init__`) keeps its cleaned_data keys.
+  Endpoint.new("/article/", "GET"),
+  Endpoint.new("/article/", "POST", [Param.new("title", "", "form")]),
+  Endpoint.new("/otp/", "GET"),
+  Endpoint.new("/otp/", "POST", [Param.new("email", "", "form"), Param.new("otp", "", "form")]),
+  Endpoint.new("/legacy/<int:pk>/", "DELETE", [Param.new("pk", "", "path")]),
 ]
 
 FunctionalTester.new("fixtures/python/django_request_inputs/", {
@@ -36,5 +43,10 @@ describe "Django indirect request inputs", tags: "functional" do
     post.params.map(&.name).should_not contain("user")
     delete = app.endpoints.find! { |ep| ep.method == "DELETE" && ep.url == "/items/{pk}/notes/" }
     delete.params.map(&.name).should_not contain("note")
+    # A plain Django View is no DRF view, whatever its name: no DELETE body.
+    legacy = app.endpoints.find! { |ep| ep.method == "DELETE" && ep.url == "/legacy/<int:pk>/" }
+    legacy.params.map(&.name).should_not contain("reason")
+    # The helper rebinds the mapping it was handed before reading it.
+    app.endpoints.select { |ep| ep.url == "/otp/" }.flat_map(&.params).map(&.name).should_not contain("page")
   end
 end

@@ -1,10 +1,12 @@
 from django.conf import settings
+from django.views import View
 from rest_framework import generics, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
+from .forms import ArticleForm, OtpForm
 from .serializers import ConfigSerializer
-from .utils import flag_from, load_class
+from .utils import describe, flag_from, load_class
 
 
 def login_view(request):
@@ -49,4 +51,27 @@ class ItemViewSet(viewsets.GenericViewSet):
             note = request.data["note"]
         elif request.method == "DELETE":
             note_id = request.GET.get("id")
+        return Response({})
+
+
+def article(request):
+    if request.method == "POST":
+        form = ArticleForm(request.POST)
+        if form.is_valid():
+            title = form.cleaned_data["title"]
+    return Response({})
+
+
+def otp(request):
+    describe(request.GET, "page")
+    if request.method == "POST":
+        form = OtpForm(request.POST)
+        if form.is_valid():
+            code = form.cleaned_data["otp"]
+    return Response({})
+
+
+class LegacyAPIView(View):
+    def delete(self, request, pk):
+        reason = request.POST.get("reason")
         return Response({})
