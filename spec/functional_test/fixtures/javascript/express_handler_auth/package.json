@@ -1,0 +1,1 @@
+{ "name": "express-handler-auth", "dependencies": { "express": "^4.21.0", "formidable": "^3.5.0" } }
