@@ -154,6 +154,25 @@ Rails.application.routes.draw do
     action: :ping
   )
 
+  # Hash-rocket `scope :module =>` adds no path segment; `namespace
+  # module:` names the controllers; a slashed `ctrl#action` inside a
+  # namespace still gets its module; `namespace path: ""` adds none.
+  namespace :api, :path => "api/0.6" do
+    resources :changesets, :path => "changeset", :only => [:show] do
+      scope :module => :changesets do
+        resource :download, :only => :show
+      end
+    end
+    post "changeset/:changeset_id/hide" => "changesets/visibilities#destroy"
+  end
+  namespace :profile, :module => :profiles do
+    resource :description, :only => [:show]
+    resource :summary, :path => "(:kind)", :only => :show
+  end
+  namespace :feeds, :path => "" do
+    resource :legacy, :path => "/feeds/legacy", :only => :show
+  end
+
   draw :external
 
   scope :v1 do

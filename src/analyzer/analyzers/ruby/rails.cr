@@ -115,7 +115,7 @@ module Analyzer::Ruby
     # Crystal doesn't cache/memoize a `Regex.new(String)` call the way it
     # embeds a non-interpolated regex *literal* at compile time. Precompile
     # both patterns once at class load instead.
-    PARSE_OPTIONS_VALUE_PATTERN = "nil|true\\b|false\\b|['\"][^'\"]+['\"]|:[a-zA-Z_]\\w*|\\[[^\\]]*\\]|%i[\\[\\(][^\\]\\)]*[\\]\\)]|%w[\\[\\(][^\\]\\)]*[\\]\\)]"
+    PARSE_OPTIONS_VALUE_PATTERN = "nil|true\\b|false\\b|['\"][^'\"]*['\"]|:[a-zA-Z_]\\w*|\\[[^\\]]*\\]|%i[\\[\\(][^\\]\\)]*[\\]\\)]|%w[\\[\\(][^\\]\\)]*[\\]\\)]"
     PARSE_OPTIONS_KEY_VALUE_RE  = Regex.new("(\\w+):\\s*(#{PARSE_OPTIONS_VALUE_PATTERN})")
     PARSE_OPTIONS_HASHROCKET_RE = Regex.new(":(\\w+)\\s*=>\\s*(#{PARSE_OPTIONS_VALUE_PATTERN})")
 
@@ -626,14 +626,17 @@ module Analyzer::Ruby
       name = m[1]? || m[2]? || ""
       options = parse_options(args)
       namespace_path = normalize_route_prefix(options.has_key?("path") ? options["path"] : name)
-      scan.stack << Frame.new(:namespace, path: namespace_path, controller_subdir: name) if opens_block
+      # `module:` overrides the controller namespace the name implies
+      # (`namespace :profile, module: :profiles` -> Profiles::*).
+      scan.stack << Frame.new(:namespace, path: namespace_path, controller_subdir: options["module"]? || name) if opens_block
     end
 
     # scope :name / scope "/admin" / scope path: ...
     private def handle_scope(args : String, opens_block : Bool, scan : RouteFileState)
       options = parse_options(args)
       scope_path = ""
-      if m = args.match(/^\s*:(\w+)/)
+      # A leading `:module => :x` is an option, not a scope name.
+      if m = args.match(/^\s*:(\w+)\b(?!\s*=>)/)
         scope_path = m[1]
       elsif m = args.match(/^\s*['"]([^'"]+)['"]/)
         scope_path = normalize_route_prefix(m[1])
@@ -888,7 +891,7 @@ module Analyzer::Ruby
       # resources/routes inside its block, so carry it on the frame's
       # controller_subdir for children to inherit. Its concerns run in the
       # same scope as the block, ahead of it.
-      frame = Frame.new(:resources, path: options["path"]? || name, resource_name: options["as"]?.presence || name,
+      frame = Frame.new(:resources, path: options["path"]?.try { |p| normalize_route_prefix(p) } || name, resource_name: options["as"]?.presence || name,
         controller_path: existing_controller_path, controller_subdir: options["module"]? || "",
         shallow: options["shallow"]? == "true", shallow_member: shallow_nested?(stack, options),
         param_name: resource_param_name(options, kind_kw == "resource"))
@@ -1411,7 +1414,7 @@ module Analyzer::Ruby
 
       only_list = parse_symbol_list(options["only"]?)
       except_list = parse_symbol_list(options["except"]?)
-      url_segment = options["path"]? || name
+      url_segment = options["path"]?.try { |p| normalize_route_prefix(p) } || name
       path_prefix = current_path_prefix(stack)
       member_prefix = shallow_nested?(stack, options) ? shallow_path_prefix(stack) : path_prefix
 
@@ -1705,8 +1708,10 @@ module Analyzer::Ruby
 
       return endpoints unless known_file?(path)
 
-      index_url = compose_url(path_prefix, "/#{resource}")
-      member_url = compose_url(member_prefix, member_param ? "/#{resource}/:#{member_param}" : "/#{resource}")
+      # `path: ""` / `path: "(:status)"` adds no segment of its own.
+      segment = resource.empty? ? "" : "/#{resource}"
+      index_url = compose_url(path_prefix, segment).presence || "/"
+      member_url = compose_url(member_prefix, member_param ? "#{segment}/:#{member_param}" : segment).presence || "/"
       path_params = url_param_names(index_url)
       member_params = url_param_names(member_url)
 
@@ -1719,7 +1724,7 @@ module Analyzer::Ruby
         params = promote_path_params(action_params(owner, action, verb, path), on_collection ? path_params : member_params)
         details = Details.new(PathInfo.new(owner.path, owner.action_lines[action]?))
         url = on_collection ? index_url : member_url
-        url = "#{url}/#{route_action}" if route_action == "new" || route_action == "edit"
+        url = "#{url.rchop('/')}/#{route_action}" if route_action == "new" || route_action == "edit"
         endpoint = Endpoint.new(url, verb, params, details)
         attach_callees_for_action(endpoint, owner, action)
         endpoint.handler = handler_for_action(owner, action, path)
@@ -1848,6 +1853,12 @@ module Analyzer::Ruby
         # a nested key). A line with none cannot match any of them, so skip
         # the regex ops — this runs on every line of every controller in the app.
         line = folded_lines[index]
+        # The http_accept_language gem's controller helper parses the
+        # `Accept-Language` header.
+        if !this_method.empty? && line.includes?("http_accept_language") && line.matches?(/(?<![\w.@:])http_accept_language\b/)
+          params_method[this_method] ||= [] of Param
+          params_method[this_method] << Param.new("Accept-Language", "", "header")
+        end
         if line.includes?('[') || line.includes?("params.") || line.includes?("headers.")
           line.scan(/(?<![\w.])params(?:\[|\.(?:fetch|dig|require)\s*\()\s*(?::(\w+)|['"]([^'"]+)['"])\s*[\],)]/) do |m|
             name = (m[1]? || m[2]?).to_s.strip
@@ -1881,9 +1892,10 @@ module Analyzer::Ruby
           end
 
           # `request.headers["X-Key"]`, `request.headers.fetch("X-Key")`, and
-          # the Rack spelling `request.env["HTTP_X_KEY"]` (named `X-Key`).
-          line.scan(/request\.(?:headers(?:\[|\.fetch\s*\()\s*['"]([^'"]+)['"]|env\[\s*['"]HTTP_(\w+)['"]\s*\])/) do |hm|
-            name = (hm[1]? || hm[2].split('_').join('-', &.capitalize)).strip
+          # the Rack spelling `request.env["HTTP_X_KEY"]` (named `X-Key`),
+          # which `request.headers["HTTP_X_KEY"]` also accepts.
+          line.scan(/request\.(?:headers(?:\[|\.fetch\s*\()\s*['"](?:HTTP_(\w+)|([^'"]+))['"]|env\[\s*['"]HTTP_(\w+)['"]\s*\])/) do |hm|
+            name = (hm[2]? || (hm[1]? || hm[3]).split('_').join('-', &.capitalize)).strip
             next if name.empty? || this_method.empty?
             params_method[this_method] ||= [] of Param
             params_method[this_method] << Param.new(name, "", "header")
@@ -2553,10 +2565,12 @@ module Analyzer::Ruby
                                      stack : Array(Frame) = [] of Frame) : String?
       return if ctrl_name.empty?
       subdir = current_controller_subdir(stack)
-      if !subdir.empty? && !ctrl_name.includes?('/')
+      # Rails prefixes the scope module onto `a/b#x` too; only a leading
+      # `/` makes the controller absolute.
+      if !subdir.empty? && !ctrl_name.starts_with?('/')
         found = controller_file(framework_root, "#{subdir}/#{ctrl_name}")
       end
-      found || controller_file(framework_root, ctrl_name)
+      found || controller_file(framework_root, ctrl_name.lchop('/'))
     end
 
     # `<root>/<base>_controller.rb` in the first of the app's controller
