@@ -114,6 +114,15 @@ describe Noir::CLI::Inspect do
       Noir::CLI::Inspect.trace(typed, "GET", "/g/5a6b7c8d9e0f4a1b8c2d3e4f5a6b7c8d").size.should eq(1)
     end
 
+    it "reads ASP.NET optional placeholders" do
+      routes = [endpoint("GET", "/boards/topic/{id}/{slug?}"), endpoint("GET", "/n/{id:int?}")]
+      trace = ->(path : String) { Noir::CLI::Inspect.trace(routes, "GET", path).map(&.endpoint.url) }
+      trace.call("/boards/topic/5").should eq(["/boards/topic/{id}/{slug?}"])
+      trace.call("/boards/topic/5/first-post").should eq(["/boards/topic/{id}/{slug?}"])
+      trace.call("/n").should eq(["/n/{id:int?}"])
+      trace.call("/n/7").should eq(["/n/{id:int?}"])
+    end
+
     it "reads path-to-regexp optional segments and regex constraints" do
       routes = [
         endpoint("GET", "/posts/:id?"),

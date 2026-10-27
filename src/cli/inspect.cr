@@ -401,11 +401,12 @@ module Noir::CLI::Inspect
       when :rest     then parts << ".*"
       when :optional then parts << "(?:#{route_pattern(text)})?"
       when :one
-        if text.starts_with?(':') && text.ends_with?('?')
-          # Express 4 `:id?` makes the slash before it optional too:
-          # `/posts/:id?` serves both `/posts` and `/posts/5`.
+        if (text.starts_with?(':') && text.ends_with?('?')) || (text.starts_with?('{') && text.ends_with?("?}"))
+          # Express 4 `:id?` and ASP.NET `{id?}` make the slash before them
+          # optional too: `/posts/:id?` serves both `/posts` and `/posts/5`.
           slash = parts.last? == "/" ? parts.pop : ""
-          parts << "(?:#{slash}#{typed_segment(text.rchop('?'))})?"
+          required = text.ends_with?('?') ? text.rchop('?') : "#{text.rchop("?}")}}"
+          parts << "(?:#{slash}#{typed_segment(required)})?"
         else
           parts << typed_segment(text)
         end

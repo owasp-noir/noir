@@ -106,7 +106,8 @@ class EndpointOptimizer
     result = String.build do |io|
       each_brace_group(url) do |start, stop, inner|
         next unless match = inner.match(BRACE_CONSTRAINT_RE)
-        io << url.byte_slice(cursor, start - cursor) << '{' << match[1] << '}'
+        # ASP.NET's `{id:int?}` is optional: the `?` outlives the constraint.
+        io << url.byte_slice(cursor, start - cursor) << '{' << match[1] << (inner.ends_with?('?') ? "?}" : "}")
         cursor = stop
       end
       io << url.byte_slice(cursor, url.bytesize - cursor)

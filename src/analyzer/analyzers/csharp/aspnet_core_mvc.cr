@@ -9,22 +9,19 @@ module Analyzer::CSharp
     include Common
 
     DEFAULT_ROUTE = "{controller=Home}/{action=Index}/{id?}"
+    # The area route every MVC template ships: what serves an `[Area]`
+    # controller when the scan shows no route that reaches its area.
+    DEFAULT_AREA_ROUTE = "{area:exists}/{controller=Home}/{action=Index}/{id?}"
+    DEFAULT_PATTERNS   = [ConventionalRoute.new(DEFAULT_ROUTE), ConventionalRoute.new(DEFAULT_AREA_ROUTE)]
 
     TAGGER                       = "aspnet_core_mvc_analyzer"
     UNRESOLVED_ROUTE_DESCRIPTION = "Route template is a constant the analyzer cannot read; reported at the controller route"
 
     CONTROLLER_PLACEHOLDER_RE = /\{controller[=:?}]/
     ACTION_PLACEHOLDER_RE     = /\{action[=:?}]/
-    # `controller = "Home"` or `action = nameof(HomeController.About)`.
-    CONTROLLER_DEFAULT_RE = /\bcontroller\s*=\s*(?:@?"(\w+)"|nameof\s*\(\s*(?:[\w.]+\.)?(\w+))/i
-    ACTION_DEFAULT_RE     = /\baction\s*=\s*(?:@?"(\w+)"|nameof\s*\(\s*(?:[\w.]+\.)?(\w+))/i
-    # Run over the call with its string literals emptied (so the template's
-    # own `{controller=Home}` can't match): a pin set from a constant or
-    # expression, or a `defaults:` object passed in a variable.
-    UNREADABLE_PIN_RE = /\b(?:controller|action)\s*=\s*(?!"|@"|nameof\b)[\w(]|\bdefaults\s*:\s*(?!new\b)\w/i
-    STRING_LITERAL_RE = /@?"[^"]*"/
+    AREA_PLACEHOLDER_RE       = /\{area[=:?}]/
 
-    # A conventional route template plus the `controller`/`action` its
+    # A conventional route template plus the `controller`/`action`/`area` its
     # `defaults` pin. A template without a `{controller}`/`{action}`
     # placeholder (`blog/{slug}` + `new { controller = "Blog", action =
     # "Show" }`) reaches only the pinned action, never every action.
@@ -33,10 +30,11 @@ module Analyzer::CSharp
     # the template is `standalone?`: reported once from its declaration
     # rather than attached to a guessed action or dropped.
     record ConventionalRoute, pattern : String, controller : String? = nil, action : String? = nil,
-      unreadable_pin : Bool = false, file : String = "", line : Int32 = 0 do
-      def applies_to?(controller_name : String, action_name : String) : Bool
+      unreadable_pin : Bool = false, file : String = "", line : Int32 = 0, area : String? = nil do
+      def applies_to?(controller_name : String, action_name : String, controller_area : String? = nil) : Bool
         return false if standalone?
-        reaches?(CONTROLLER_PLACEHOLDER_RE, controller, controller_name) &&
+        reaches_area?(controller_area) &&
+          reaches?(CONTROLLER_PLACEHOLDER_RE, controller, controller_name) &&
           reaches?(ACTION_PLACEHOLDER_RE, action, action_name)
       end
 
@@ -44,6 +42,25 @@ module Analyzer::CSharp
         unreadable_pin &&
           ((controller.nil? && !pattern.matches?(CONTROLLER_PLACEHOLDER_RE)) ||
             (action.nil? && !pattern.matches?(ACTION_PLACEHOLDER_RE)))
+      end
+
+      # Reaches every action of every controller it can reach at all.
+      def catch_all? : Bool
+        pattern.matches?(CONTROLLER_PLACEHOLDER_RE) && pattern.matches?(ACTION_PLACEHOLDER_RE)
+      end
+
+      # An `[Area]` controller carries a required `area` route value: only a
+      # route that supplies one (an `{area}` placeholder, an `area` default,
+      # `MapAreaControllerRoute`) reaches it, and such a route reaches
+      # nothing outside an area.
+      def reaches_area?(controller_area : String?) : Bool
+        if pinned = area
+          !controller_area.nil? && pinned.compare(controller_area, case_insensitive: true) == 0
+        elsif pattern.matches?(AREA_PLACEHOLDER_RE)
+          !controller_area.nil?
+        else
+          controller_area.nil?
+        end
       end
 
       private def reaches?(placeholder : Regex, pinned : String?, name : String) : Bool
@@ -69,6 +86,9 @@ module Analyzer::CSharp
       {"[#{attr}", /\[#{attr}[^\]]*\]/, type}
     end
     @param_name_strip_regexes = Hash(String, Regex).new
+    @type_namespaces = Hash(Noir::CSharpType, String).new
+    @closed_scopes = Set(String).new
+    @unread_route = false
 
     def analyze
       include_callee = callees_needed?
@@ -135,69 +155,154 @@ module Analyzer::CSharp
       params.uniq(&.name)
     end
 
+    # Conventional routes are declared wherever the app registers them:
+    # `Program.cs`/`Startup.cs`, but also an extension method or a route
+    # provider class (`IRouteProvider.RegisterRoutes(IEndpointRouteBuilder
+    # builder)`) the host calls. Every non-test `.cs` file that calls
+    # `Map*ControllerRoute` is read.
+    #
+    # A project whose host file declares routes owns its routing table: what
+    # it declares is all that reaches its controllers. A project that only
+    # contributes routes from a library-style file (a plugin's route
+    # provider) is mounted into a host the scan cannot tie it to, so its
+    # controllers keep the default route next to their pinned templates.
+    # Outside such a table, `[Area]` controllers that no catch-all route
+    # reaches get the standard area route instead (`area_patterns`); inside
+    # one they are unreachable, and reported only at their attribute routes.
     private def load_route_patterns_by_scope(project_roots : Array(String)) : Hash(String, Array(ConventionalRoute))
       patterns_by_scope = Hash(String, Array(ConventionalRoute)).new do |hash, key|
         hash[key] = [] of ConventionalRoute
       end
-      files = get_files_by_extension(".cs").select do |file|
-        base = File.basename(file).downcase
-        base == "program.cs" || base == "startup.cs"
-      end
+      hosted = Set(String).new
+      unread = Set(String).new
 
-      files.each do |file|
+      get_files_by_extension(".cs").each do |file|
+        base = File.basename(file).downcase
+        host = base == "program.cs" || base == "startup.cs"
         content = read_file_content(file)
-        patterns_by_scope[route_scope_for(file, project_roots)].concat(extract_route_patterns(content, file))
+        next unless content.includes?("ControllerRoute")
+        next if !host && Common.csharp_test_path?(base_relative_path(file))
+        next if !host && Common.aspnet_framework_source?(content)
+        scope = route_scope_for(file, project_roots)
+        @unread_route = false
+        patterns = extract_route_patterns(content, file)
+        hosted << scope if host && !patterns.empty?
+        unread << scope if @unread_route
+        patterns_by_scope[scope].concat(patterns)
       rescue e
         logger.debug "Failed to read #{file}: #{e.message}"
       end
 
-      @base_paths.each do |base_path|
-        patterns_by_scope[base_path] << ConventionalRoute.new(DEFAULT_ROUTE) if patterns_by_scope[base_path].empty?
-      end
+      @base_paths.each { |base_path| patterns_by_scope[base_path] }
 
+      # A table with a call the analyzer could not read may hold the area route.
+      @closed_scopes = hosted - unread
       patterns_by_scope.each do |scope, patterns|
-        patterns << ConventionalRoute.new(DEFAULT_ROUTE) if patterns.empty?
+        unless hosted.includes?(scope) || patterns.any? { |pattern| pattern.catch_all? && pattern.reaches_area?(nil) }
+          patterns << ConventionalRoute.new(DEFAULT_ROUTE)
+        end
         patterns_by_scope[scope] = patterns.uniq
       end
 
       patterns_by_scope
     end
 
+    # The routes that reach an `[Area]` controller: the scope's own, plus
+    # the standard area route when none of them is a catch-all for its area.
+    private def area_patterns(patterns : Array(ConventionalRoute), area : String?) : Array(ConventionalRoute)
+      return patterns unless area
+      return patterns if patterns.any? { |pattern| pattern.catch_all? && pattern.reaches_area?(area) }
+      patterns + [ConventionalRoute.new(DEFAULT_AREA_ROUTE)]
+    end
+
+    ROUTE_CALL_RE = /\bMap(Area)?ControllerRoute\s*\(|\bMapDefaultControllerRoute\s*\(/
+
+    # Every `Map[Area]ControllerRoute(...)` call, named or positional
+    # (`(name, pattern, defaults, …)`, `(name, areaName, pattern, defaults,
+    # …)`), whose template can be read; `MapDefaultControllerRoute()` is the
+    # default template.
     private def extract_route_patterns(content : String, file : String) : Array(ConventionalRoute)
       patterns = [] of ConventionalRoute
+      lexer = Noir::CSharpLexer.new(content)
+      code = lexer.code_source
+      masked = lexer.masked_source
 
-      route_regex = /Map[A-Za-z]*ControllerRoute\s*\((.*?)\)/m
-      pattern_regex = /pattern\s*:\s*"([^"]+)"/m
-      literal_regex = /"([^"]*\{[^}]+\}[^"]*)"/m
-
-      content.scan(route_regex) do |match|
-        call_content = match[1]? || ""
-        controller = CONTROLLER_DEFAULT_RE.match(call_content).try { |m| m[1]? || m[2]? }
-        action = ACTION_DEFAULT_RE.match(call_content).try { |m| m[1]? || m[2]? }
-        unreadable = call_content.gsub(STRING_LITERAL_RE, "\"\"").matches?(UNREADABLE_PIN_RE)
-        line = content[0, match.begin].count('\n') + 1
-
-        found_pattern = false
-        call_content.scan(pattern_regex) do |pattern_match|
-          value = pattern_match[1]?
-          patterns << ConventionalRoute.new(value, controller, action, unreadable, file, line) if value
-          found_pattern = true
+      masked.scan(ROUTE_CALL_RE) do |match|
+        if match[0].starts_with?("MapDefault")
+          patterns << ConventionalRoute.new(DEFAULT_ROUTE)
+          next
         end
-
-        # Handle overloads like MapControllerRoute("default", "{controller=Home}/{action=Index}/{id?}")
-        unless found_pattern
-          call_content.scan(literal_regex) do |literal_match|
-            candidate = literal_match[1]?
-            patterns << ConventionalRoute.new(candidate, controller, action, unreadable, file, line) if candidate && !candidate.empty?
+        open = match.end(0) - 1
+        close = lexer.matching_delimiter(open) || next
+        line = content[0, match.begin(0)].count('\n') + 1
+        before = code[0, match.begin(0)]
+        positional = match[1]? ? %w[name areaName pattern defaults] : %w[name pattern defaults]
+        args = Hash(String, String).new
+        top_level_args(code[open + 1...close], masked[open + 1...close]).each_with_index do |arg, index|
+          if named = arg.match(/\A\s*([A-Za-z_]\w*)\s*:(?!:)/)
+            args[named[1]] = arg[named.end(0)..]
+          elsif key = positional[index]?
+            args[key] = arg
           end
         end
-      end
 
-      if content.includes?("MapDefaultControllerRoute")
-        patterns << ConventionalRoute.new(DEFAULT_ROUTE)
+        unless pattern = args["pattern"]?.try { |expr| csharp_string_value(expr, file, before) }
+          @unread_route = true
+          next
+        end
+        defaults = defaults_object(args["defaults"]?, file, before)
+        unreadable = defaults.nil?
+        defaults ||= Hash(String, String?).new
+        area = if area_arg = args["areaName"]?
+                 csharp_string_value(area_arg, file, before) || (@unread_route = true; next)
+               else
+                 defaults["area"]?
+               end
+        if defaults.has_key?("area") && area.nil?
+          @unread_route = true
+          next
+        end
+        controller = defaults["controller"]?
+        action = defaults["action"]?
+        unreadable ||= (defaults.has_key?("controller") && controller.nil?) || (defaults.has_key?("action") && action.nil?)
+        patterns << ConventionalRoute.new(pattern, controller, action, unreadable, file, line, area)
       end
 
       patterns
+    end
+
+    # `code` split at the commas `masked` (its string-blanked twin) shows
+    # outside any bracket.
+    private def top_level_args(code : String, masked : String) : Array(String)
+      args = [] of String
+      depth = 0
+      start = 0
+      masked.each_char_with_index do |char, i|
+        case char
+        when '(', '[', '{' then depth += 1
+        when ')', ']', '}' then depth -= 1
+        when ','
+          next unless depth == 0
+          args << code[start...i]
+          start = i + 1
+        end
+      end
+      args << code[start..] unless code[start..].blank?
+      args
+    end
+
+    # The members of a `defaults: new { controller = "Home", … }` object,
+    # each nil when its value cannot be read; nil for a `defaults` argument
+    # that is not an anonymous object (a variable, a dictionary).
+    private def defaults_object(expr : String?, file : String, before : String) : Hash(String, String?)?
+      values = Hash(String, String?).new
+      return values unless expr
+      body = expr.strip.match(/\Anew\s*\{(.*)\}\z/m) || return
+      body[1].split(',').each do |member|
+        next unless m = member.match(/\A\s*@?([A-Za-z_]\w*)\s*=(.*)\z/m)
+        values[m[1].downcase] = csharp_string_value(m[2], file, before)
+      end
+      values
     end
 
     # Discovery reads the whole solution, so the gate in front of `CSharpLexer`
@@ -257,10 +362,12 @@ module Analyzer::CSharp
           next unless lexer
           next if Common.aspnet_framework_source?(lexer.code_source)
           scope = route_scope_for(file, project_roots)
+          namespace = lexer.masked_source.match(NAMESPACE_DECL_RE).try(&.[1]) || ""
           Noir::CSharpTypeExtractor.extract(lexer).each do |type|
+            @type_namespaces[type] = namespace
             types_by_scope[scope] << {file, type}
             all_types << type
-            class_routes[type] = class_header_routes(lexer, type)
+            class_routes[type] = class_header_routes(lexer, type, file)
           end
         end
 
@@ -279,7 +386,7 @@ module Analyzer::CSharp
       types_by_scope.each do |scope, entries|
         index = Hash(String, Array(Noir::CSharpType)).new
         entries.each { |_, type| (index[type.name] ||= [] of Noir::CSharpType) << type }
-        route_patterns = route_patterns_by_scope[scope]? || [ConventionalRoute.new(DEFAULT_ROUTE)]
+        route_patterns = route_patterns_by_scope[scope]? || DEFAULT_PATTERNS
         entries.each do |file, type|
           # A `partial` controller splits its modifiers, base list and
           # attributes across files: only one part carries `public class
@@ -293,7 +400,9 @@ module Analyzer::CSharp
           next if attributes.includes?("NonController")
           next unless CONTROLLER_SUFFIX_RE.matches?(type.name) ||
                       attributes.includes?("Controller") || attributes.includes?("ApiController")
-          selected[file] << {type, route_patterns, inherited_class_routes(parts, index, class_routes)}
+          routes = inherited_class_routes(parts, index, class_routes)
+          patterns = @closed_scopes.includes?(scope) ? route_patterns : area_patterns(route_patterns, routes[1])
+          selected[file] << {type, patterns, routes}
         end
       end
 
@@ -364,13 +473,23 @@ module Analyzer::CSharp
     end
 
     # The parts of one `partial` declaration, or just the type itself. Parts
-    # are matched by simple name, so only `partial` types are grouped: two
-    # unrelated `Helper` classes in different namespaces must not merge.
+    # are matched by simple name within one namespace, so only `partial`
+    # types are grouped: two unrelated `Helper` classes in different
+    # namespaces must not merge, nor a public `partial class
+    # CustomerController` with an admin area's namesake.
     private def declaration_parts(type : Noir::CSharpType,
                                   index : Hash(String, Array(Noir::CSharpType))) : Array(Noir::CSharpType)
       return [type] unless type.modifiers.includes?("partial")
-      parts = (index[type.name]? || [type]).select(&.modifiers.includes?("partial"))
+      namespace = @type_namespaces[type]?
+      parts = (index[type.name]? || [type]).select { |part| part.modifiers.includes?("partial") && @type_namespaces[part]? == namespace }
       parts.empty? ? [type] : parts
+    end
+
+    # Several local declarations of one simple name are one type only when
+    # they are the parts of one `partial` declaration.
+    private def one_declaration?(candidates : Array(Noir::CSharpType)) : Bool
+      candidates.size == 1 ||
+        (candidates.all?(&.modifiers.includes?("partial")) && candidates.map { |part| @type_namespaces[part]? }.uniq!.size == 1)
     end
 
     private def controller_attributes(parts : Array(Noir::CSharpType),
@@ -390,7 +509,7 @@ module Analyzer::CSharp
         # More than one local declaration of the same simple name is ambiguous
         # without namespace resolution — unless they are the parts of one
         # `partial` type.
-        next unless candidates.size == 1 || candidates.all?(&.modifiers.includes?("partial"))
+        next unless one_declaration?(candidates)
         attributes.concat(controller_attributes(candidates, index, visited))
       end
       attributes
@@ -400,18 +519,20 @@ module Analyzer::CSharp
     alias ClassRoutes = Tuple(Array(String), String?)
 
     CLASS_ROUTE_RE = /(?:\[|,)\s*(?:global::)?(?:\w+\.)*Route(?:Attribute)?\s*\(\s*(?:template\s*:\s*)?@?"([^"]*)"/
-    CLASS_AREA_RE  = /(?:\[|,)\s*(?:global::)?(?:\w+\.)*Area(?:Attribute)?\s*\(\s*(?:areaName\s*:\s*)?@?"([^"]+)"/
+    # `[Area("Admin")]`, or a constant: `[Area(AreaNames.Admin)]`.
+    CLASS_AREA_RE = /(?:\[|,)\s*(?:global::)?(?:\w+\.)*Area(?:Attribute)?\s*\(\s*(?:areaName\s*:\s*)?([^()\]]+)\)/
 
     # Reads the class's own attribute list (every line of it, however many
     # other attributes sit between `[Route]` and `class`).
-    private def class_header_routes(lexer : Noir::CSharpLexer, type : Noir::CSharpType) : ClassRoutes
+    private def class_header_routes(lexer : Noir::CSharpLexer, type : Noir::CSharpType, file : String) : ClassRoutes
       header_end = Math.min(type.start_line + type.header.count('\n'), lexer.code_lines.size - 1)
       header = lexer.code_lines[type.start_line..header_end].join('\n')
       # `[Route("")]` is a real template: it roots the actions at `/` and,
       # being the class's own, replaces an inherited `[Route("[controller]")]`.
       # Kept as `/` so it is not mistaken for "no route" downstream.
       routes = header.scan(CLASS_ROUTE_RE).map { |match| match[1].empty? ? "/" : match[1] }
-      {routes, CLASS_AREA_RE.match(header).try(&.[1])}
+      area = CLASS_AREA_RE.match(header).try { |match| csharp_string_value(match[1], file) }
+      {routes, area.presence}
     end
 
     # `[Route]` and `[Area]` are `Inherited = true`: a controller without its
@@ -429,7 +550,7 @@ module Analyzer::CSharp
         next unless base = part.base_name
         candidates = index[base]?
         next if candidates.nil? || candidates.empty?
-        next unless candidates.size == 1 || candidates.all?(&.modifiers.includes?("partial"))
+        next unless one_declaration?(candidates)
         base_routes, base_area = inherited_class_routes(candidates, index, class_routes, visited)
         routes = base_routes if routes.empty?
         area ||= base_area
@@ -844,9 +965,12 @@ module Analyzer::CSharp
 
       if routes.empty?
         route_patterns.each do |pattern|
-          next unless pattern.applies_to?(controller_name, action_name)
-          raw_route = replace_tokens(pattern.pattern, controller_name, action_name)
-          raw_route = prune_optional_placeholders(raw_route, parameters)
+          next unless pattern.applies_to?(controller_name, action_name, area)
+          raw_route = replace_tokens(pattern.pattern, controller_name, action_name, area)
+          # A catch-all's `{id?}` is a generic slot, kept only for an action
+          # that binds it; a template pinned to one action is that action's
+          # own URL, optional segments included.
+          raw_route = pattern.catch_all? ? prune_optional_placeholders(raw_route, parameters) : raw_route.gsub(PLACEHOLDER_DEFAULT_RE, "{\\1}")
           routes << normalize_route(raw_route)
         end
       end
@@ -884,7 +1008,10 @@ module Analyzer::CSharp
       return "" if route.empty?
 
       normalized = route.strip
-      normalized = normalized.gsub("[area]", area) if area
+      if area
+        normalized = normalized.gsub("[area]", area)
+        normalized = normalized.gsub(AREA_TOKEN_RE, area)
+      end
       normalized = normalized.gsub("[controller]", controller_name)
       normalized = normalized.gsub("{controller}", controller_name)
       normalized = normalized.gsub(/{controller=[^}]+}/, controller_name)
@@ -894,6 +1021,10 @@ module Analyzer::CSharp
 
       normalized
     end
+
+    PLACEHOLDER_DEFAULT_RE = /\{([^{}=]+)=[^{}]*\}/
+
+    AREA_TOKEN_RE = /\{area(?:[:=][^}]*)?\}/
 
     private def normalize_route(route : String) : String
       normalized = route.strip
@@ -930,15 +1061,22 @@ module Analyzer::CSharp
       result
     end
 
+    # Route values match action parameters case-insensitively
+    # (`{productid}` binds `int productId`): the parameter takes the
+    # template's spelling, which is what the client sends. A parameter that
+    # spells it exactly takes it alone: a body member `Id` beside `Guid id`
+    # stays a form field.
     private def align_params_with_route(params : Array(Param), route : String) : Array(Param)
       path_keys = extract_route_placeholders(route)
 
       mapped = params.map do |param|
-        param_copy = Param.new(param.name, param.value, param.param_type)
-        if path_keys.includes?(param.name)
-          param_copy.param_type = "path"
+        key = path_keys.find { |path_key| path_key == param.name } ||
+              path_keys.find { |path_key| path_key.compare(param.name, case_insensitive: true) == 0 && params.none? { |other| other.name == path_key } }
+        if key
+          Param.new(key, param.value, "path")
+        else
+          Param.new(param.name, param.value, param.param_type)
         end
-        param_copy
       end
 
       path_keys.each do |key|

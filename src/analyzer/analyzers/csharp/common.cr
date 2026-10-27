@@ -351,7 +351,7 @@ module Analyzer::CSharp::Common
   # A public property with the attributes above it (`[JsonIgnore]`,
   # `[FromHeader(Name = "X-Tenant")]`): `{attributes, type, name, "{"}`, the
   # last group marking where the accessor list opens.
-  PUBLIC_PROPERTY_RE = /((?:\[[^\]]*\]\s*)*)(?:public|internal)\s+(?:(?:required|virtual|override|new)\s+)*([\w<>\[\]\?\.,]+)\s+([A-Za-z_]\w*)\s*(\{)\s*(?:get|init|set)\b/
+  PUBLIC_PROPERTY_RE = /((?:\[[^\]]*\]\s*)*)(?:public|internal)\s+(?:(?:required|virtual|override|new)\s+)*((?:[\w<>\[\]\?\.]|,\s*)+)\s+([A-Za-z_]\w*)\s*(\{)\s*(?:get|init|set)\b/
 
   # A public `set`/`init` accessor: what a binder or serializer writes.
   PUBLIC_SETTER_RE = /(?<!private |protected |internal )\b(?:set|init)\b/
@@ -520,6 +520,225 @@ module Analyzer::CSharp::Common
       size += 1
     end
     size
+  end
+
+  # ---- compile-time string values ----------------------------------------
+  #
+  # Route templates and area names are often not literals at the call site:
+  # `pattern: $"{lang}/login/"`, `[Area(AreaNames.ADMIN)]`,
+  # `$"{{{RouteValue.SeName}}}"`. `csharp_string_value` reads the value an
+  # expression has when it is fixed by the source: a literal, an
+  # interpolation of readable holes, a local or `const`/`static` string, a
+  # `Type.Member` constant the scan declares, or a parameterless string
+  # method's single `return` (or an empty fall-through after
+  # setting-gated early returns). Anything else (a parameter, a
+  # concatenation, a ternary, a call with arguments) is nil, and the caller
+  # keeps its old behaviour.
+  MAX_STRING_VALUE_DEPTH    =    6
+  MAX_STRING_VALUE_STEPS    =   64
+  MAX_STRING_VALUE_SIZE     = 1024
+  STRING_LITERAL_VALUE_RE   = /\A"((?:[^"\\\n]|\\.)*)"\z/
+  VERBATIM_LITERAL_VALUE_RE = /\A@"((?:[^"]|"")*)"\z/
+  INTERPOLATED_PREFIX_RE    = /\A(?:\$@?|@\$)"/
+  # A block opener that is not a member body: locals of the enclosing
+  # member stay visible inside it.
+  STATEMENT_BLOCK_RE          = /\b(?:if|else|for|foreach|while|do|switch|using|lock|catch|try|finally|fixed|checked|unchecked)\s*(?:\([^{};]*\))?\s*\z|=>\s*\z/
+  MEMBER_BLOCK_RE             = /\b\w+\s*(?:<[^<>{}();]*>)?\s*\(([^{};]*)\)\s*(?:where\b[^{};]*)?\z/
+  EMPTY_STRING_VALUE_RE       = /\A(?:global::)?(?:System\.)?(?:String|string)\.Empty\z/
+  NAMEOF_VALUE_RE             = /\Anameof\s*\(\s*(?:[\w.]+\.)?(\w+)\s*\)\z/
+  IDENTIFIER_VALUE_RE         = /\A[A-Za-z_]\w*\z/
+  MEMBER_ACCESS_VALUE_RE      = /\A((?:[A-Za-z_]\w*\.)*[A-Za-z_]\w*)\.([A-Za-z_]\w*)\z/
+  PARAMETERLESS_CALL_VALUE_RE = /\A(?:this\.|base\.)?([A-Za-z_]\w*)\s*\(\s*\)\z/
+  CLASS_BASE_RE               = /\bclass\s+\w+\s*(?:<[^<>{}]*>)?\s*:\s*(?:global::)?([A-Za-z_][\w.]*)/
+
+  @csharp_code_cache = Hash(String, Noir::CSharpLexer).new
+  @string_value_steps = 0
+
+  protected def csharp_string_value(expr : String, file : String, before : String = "", depth : Int32 = 0) : String?
+    @string_value_steps = 0 if depth == 0
+    return if depth > MAX_STRING_VALUE_DEPTH || (@string_value_steps += 1) > MAX_STRING_VALUE_STEPS
+    value = string_value_of(expr.strip, file, before, depth)
+    value if value.nil? || value.size <= MAX_STRING_VALUE_SIZE
+  end
+
+  private def string_value_of(expr : String, file : String, before : String, depth : Int32) : String?
+    if m = expr.match(STRING_LITERAL_VALUE_RE)
+      m[1].gsub(/\\(.)/) { |_, esc| esc[1] }
+    elsif m = expr.match(VERBATIM_LITERAL_VALUE_RE)
+      m[1].gsub("\"\"", "\"")
+    elsif expr.matches?(INTERPOLATED_PREFIX_RE)
+      interpolated_body(expr).try { |body| interpolated_string_value(body, file, before, depth) }
+    elsif expr.matches?(EMPTY_STRING_VALUE_RE)
+      ""
+    elsif m = expr.match(NAMEOF_VALUE_RE)
+      m[1]
+    elsif expr.matches?(IDENTIFIER_VALUE_RE)
+      local_string_value(expr, file, before, depth)
+    elsif m = expr.match(PARAMETERLESS_CALL_VALUE_RE)
+      method_string_value(m[1], file, depth)
+    elsif m = expr.match(MEMBER_ACCESS_VALUE_RE)
+      member_string_value(m[1], m[2], file, depth)
+    end
+  end
+
+  # The text between the quotes of `expr` when the whole of it is one
+  # interpolated string, nil when anything follows the closing quote
+  # (`$"a/{x}/" + "b"`).
+  private def interpolated_body(expr : String) : String?
+    prefix = expr.match(INTERPOLATED_PREFIX_RE) || return
+    verbatim = prefix[0].includes?('@')
+    chars = expr.chars
+    i = prefix[0].size
+    while i < chars.size
+      char = chars[i]
+      if char == '\\' && !verbatim
+        i += 2
+      elsif char == '"'
+        if verbatim && chars[i + 1]? == '"'
+          i += 2
+          next
+        end
+        return i == chars.size - 1 ? chars[prefix[0].size...i].join : nil
+      elsif char == '{' && chars[i + 1]? != '{'
+        open = 0
+        while i < chars.size
+          open += 1 if chars[i] == '{'
+          open -= 1 if chars[i] == '}'
+          i += 1
+          break if open == 0
+        end
+      else
+        i += char == '{' ? 2 : 1
+      end
+    end
+    nil
+  end
+
+  # `{{`/`}}` are literal braces; every `{hole}` must itself be readable.
+  private def interpolated_string_value(body : String, file : String, before : String, depth : Int32) : String?
+    chars = body.chars
+    io = String::Builder.new
+    i = 0
+    while i < chars.size
+      char = chars[i]
+      if (char == '{' || char == '}') && chars[i + 1]? == char
+        io << char
+        i += 2
+      elsif char == '{'
+        open = 1
+        j = i + 1
+        while j < chars.size && open > 0
+          open += 1 if chars[j] == '{'
+          open -= 1 if chars[j] == '}'
+          j += 1
+        end
+        return if open > 0
+        io << (csharp_string_value(chars[i + 1...j - 1].join, file, before, depth + 1) || return)
+        i = j
+      else
+        io << char
+        i += 1
+      end
+    end
+    io.to_s
+  end
+
+  # A local the enclosing member declares before the use, else a
+  # `const`/`static` string field of the file. A parameter of the enclosing
+  # member is never read: its value is the caller's.
+  private def local_string_value(name : String, file : String, before : String, depth : Int32) : String?
+    start, params = enclosing_member(before)
+    return if params.try(&.matches?(/\b#{Regex.escape(name)}\s*(?:=[^,]*)?(?:,|\z)/))
+    local = /\b(?:var|string)\s+#{Regex.escape(name)}\s*=\s*([^;]+);/
+    last = nil
+    before[start..].scan(local) { |m| last = m }
+    if m = last
+      return csharp_string_value(m[1], file, before[0, start + m.begin(0)], depth + 1)
+    end
+    field = /\b(?:const\s+string|static\s+(?:readonly\s+)?string)\s+#{Regex.escape(name)}\s*(?:=>|=)\s*([^;]+);/
+    code = csharp_code(file).code_source
+    code.match(field).try { |found| csharp_string_value(found[1], file, "", depth + 1) }
+  end
+
+  # Where the member enclosing the end of `before` opens its body, and its
+  # parameter list (nil for top-level statements or a type body).
+  private def enclosing_member(before : String) : Tuple(Int32, String?)
+    masked = Noir::CSharpLexer.new(before).masked_source
+    depth = 0
+    i = masked.size - 1
+    while i >= 0
+      char = masked[i]
+      if char == '}'
+        depth += 1
+      elsif char == '{'
+        if depth > 0
+          depth -= 1
+        else
+          head = masked[0, i].rstrip
+          unless head.matches?(STATEMENT_BLOCK_RE)
+            m = head.match(MEMBER_BLOCK_RE) || return {i + 1, nil}
+            return {i + 1, before[m.begin(1), m[1].size]}
+          end
+        end
+      end
+      i -= 1
+    end
+    {0, nil}
+  end
+
+  # A parameterless string method of the file's class or one of its bases:
+  # its expression body, or its block body's only `return`. Several returns
+  # read only as the setting-gated optional prefix: early returns, then an
+  # empty fall-through as the method's last statement (`if (seoUrls) return
+  # "{lang}"; return string.Empty;` -> "").
+  # ponytail: that fall-through is taken as the default; the setting-gated
+  # value is not reported.
+  private def method_string_value(name : String, file : String, depth : Int32) : String?
+    definition = /\bstring\??\s+#{Regex.escape(name)}\s*\(\s*\)\s*(=>|\{)/
+    MAX_BASE_DEPTH.times do
+      lexer = csharp_code(file)
+      code = lexer.code_source
+      if m = code.match(definition)
+        return csharp_string_value(code[m.end(0)...(code.index(';', m.end(0)) || return)], file, "", depth + 1) if m[1] == "=>"
+        close = lexer.matching_delimiter(m.end(0) - 1) || return
+        body = code[m.end(0)...close]
+        masked = lexer.masked_source[m.end(0)...close]
+        returns = body.scan(/\breturn\s+([^;]+);/)
+        last = returns.last? || return
+        return csharp_string_value(last[1], file, "", depth + 1) if returns.size == 1
+        tail = masked[last.begin(0)..]
+        return unless masked[0, last.begin(0)].rstrip.ends_with?('}') || masked[0, last.begin(0)].rstrip.ends_with?(';')
+        return unless tail.index(';').try { |semi| tail[semi + 1..].blank? }
+        return unless masked[0, last.begin(0)].count('{') == masked[0, last.begin(0)].count('}')
+        return csharp_string_value(last[1], file, "", depth + 1) == "" ? "" : nil
+      end
+      base = code.match(CLASS_BASE_RE).try(&.[1]) || return
+      file = csharp_type_files[base.split('.').last]?.try(&.first?) || return
+    end
+    nil
+  end
+
+  # `Type.Member` (or `Outer.Inner.Member`): a `const`/`static` string the
+  # scanned declarations of `Type` agree on.
+  private def member_string_value(qualifier : String, member : String, file : String, depth : Int32) : String?
+    type = qualifier.split('.').last
+    files = csharp_type_files[type]? || return
+    decl = /\b(?:class|struct|record|interface)\s+#{Regex.escape(type)}\b[^{;]*\{/
+    field = /\b(?:const\s+string|static\s+(?:readonly\s+)?string)\s+#{Regex.escape(member)}\s*(?:=>|=)\s*([^;]+);|\bstatic\s+string\s+#{Regex.escape(member)}\s*\{\s*get;\s*\}\s*=\s*([^;]+);/
+    values = Set(String).new
+    files.each do |path|
+      lexer = csharp_code(path)
+      code = lexer.code_source
+      m = lexer.masked_source.match(decl) || next
+      close = lexer.matching_delimiter(m.end(0) - 1) || next
+      found = code[m.end(0)...close].match(field) || next
+      csharp_string_value(found[1]? || found[2], path, "", depth + 1).try { |value| values << value }
+    end
+    values.first if values.size == 1
+  end
+
+  private def csharp_code(file : String) : Noir::CSharpLexer
+    @csharp_code_cache[file] ||= Noir::CSharpLexer.new(read_file_content(file))
   end
 
   # Type name => the non-test `.cs` files declaring it, built on first use
