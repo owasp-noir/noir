@@ -381,7 +381,7 @@ module Noir
           # Body/query/header/... params from the handler, read once per
           # route rather than once per prefix and expanded method.
           context = Endpoint.new("", "")
-          extract_params_from_context(offsets, pattern, context)
+          extract_params_from_context(offsets, pattern, context, file_path)
           step = handler_step(content, start_byte, file_path, offsets, unwrap_guards, count_last_steps)
           handler = step ? named_handler(step[0], content, file_path, unwrap_guards) : nil
           handler_facts = handler ? handler_definition_facts(handler, include_callees) : nil
@@ -1521,7 +1521,7 @@ module Noir
 
     REQUEST_CALL_RE       = /(?<![\w$.])((?:[A-Za-z_$][\w$]*\s*\.\s*)*[A-Za-z_$][\w$]*)\s*\(/
     NOT_A_CALLEE_RE       = /\A(?:if|for|while|switch|catch|function|return|typeof|await|new|next|super)\z|\A(?:res|response)\./
-    MAX_REQUEST_CALLEES   = 8
+    MAX_REQUEST_CALLEES   = 12
     REQUEST_RECEIVER_NAME = /\A(?:req|request)\z/
 
     # What the functions a handler hands its request to read off it: `const
@@ -1531,14 +1531,19 @@ module Noir
     # over a record, `get(req.params.id)` a value).
     private def self.request_callee_reads(body : String, content : String, path : String, line : Int32, context : Endpoint)
       followed = 0
+      # A dispatcher calls the same helper from many branches
+      # (`errorForbidden(req, res)`); each is read once.
+      seen = Set(String).new
       body.scan(REQUEST_CALL_RE) do |m|
         break if followed >= MAX_REQUEST_CALLEES
         callee = m[1].gsub(/\s+/, "")
         next if callee.matches?(NOT_A_CALLEE_RE)
+        next if seen.includes?(callee)
         open = m.end(0) - 1
         close = JSLiteralScanner.find_matching_paren(body, open) || next
         args = TopLevelSplit.split(body[open + 1...close], ',', TopLevelSplit::Rules::JS_POSITIONAL_ARGS).map(&.strip)
         position = args.index(&.matches?(REQUEST_RECEIVER_NAME)) || next
+        seen << callee
         target = Noir::JSHandlerResolver.resolve(callee, content, path) || next
         target_path = target.path || next
         target_line = target.line || next
@@ -1827,7 +1832,7 @@ module Noir
 
     # Every offset here is a BYTE offset into `offsets.content` (see
     # ByteOffsets) so a route's cost is local to its own text.
-    def self.extract_params_from_context(offsets : ByteOffsets, pattern : JSRoutePattern, endpoint : Endpoint)
+    def self.extract_params_from_context(offsets : ByteOffsets, pattern : JSRoutePattern, endpoint : Endpoint, file_path : String? = nil)
       content = offsets.content
       # Extract additional parameters from the route handler content
       # Look for the route declaration and then analyze the handler function
@@ -2003,6 +2008,9 @@ module Noir
       extract_header_params(handler_body, endpoint)
       extract_cookie_params(handler_body, endpoint)
       extract_path_params(handler_body, endpoint)
+      # An inline closure hands its request to helpers as a named one does
+      # (`setReturnToFromReferer(req)` reads the referer header).
+      request_callee_reads(handler_body, content, file_path, -1, endpoint) if file_path
     end
 
     # True when `start` is a chained `.verb(` call's verb: one of `methods`
@@ -2336,10 +2344,14 @@ module Noir
         end
       end
 
-      # Check direct property access: req.body.X / req.body?.X
-      handler_body.scan(/(?:req|request)\??\.body\??\.(\w+)/) do |match|
+      # Check direct property access: req.body.X / req.body?.X. A text or
+      # array body's `length` and methods (`req.body.forEach(`) are not fields.
+      handler_body.scan(/(?:req|request)\??\.body\??\.(\w+)\b(?!\s*\()/) do |match|
+        next if match[1] == "length"
         endpoint.push_param(Param.new(match[1], "", "json"))
       end
+
+      extract_multipart_params(handler_body, endpoint)
 
       # Check array access: req.body['X'] or req.body["X"]
       handler_body.scan(/(?:req|request)\??\.body(?:\?\.)?\s*\[\s*['"]([^'"]+)['"]\s*\]/) do |match|
@@ -2372,6 +2384,27 @@ module Noir
         params.each do |param|
           clean_param = clean_destructured_param(param)
           endpoint.push_param(Param.new(clean_param, "", "json")) unless clean_param.empty?
+        end
+      end
+    end
+
+    # formidable hands the parsed multipart body to a callback, `form.parse(req,
+    # (err, fields, files) => …)`, or resolves it, `const [fields, files] =
+    # await form.parse(req)`: `files.image` is an uploaded file, `fields.title`
+    # a form field.
+    MULTIPART_CALLBACK_RE = /\.parse\s*\(\s*(?:req|request)\s*,\s*(?:async\s+)?(?:function\s*[\w$]*\s*)?\(\s*[\w$]+\s*,\s*([\w$]+)\s*,\s*([\w$]+)\s*\)/
+    MULTIPART_AWAIT_RE    = /(?:const|let|var)\s*\[\s*([\w$]+)\s*,\s*([\w$]+)\s*\]\s*=\s*await\s+[\w$.]+\.parse\s*\(\s*(?:req|request)\s*\)/
+
+    private def self.extract_multipart_params(handler_body : String, endpoint : Endpoint)
+      return unless handler_body.includes?(".parse")
+      {MULTIPART_CALLBACK_RE, MULTIPART_AWAIT_RE}.each do |re|
+        handler_body.scan(re) do |m|
+          {m[1] => "form", m[2] => "file"}.each do |name, type|
+            handler_body.scan(/(?<![\w$.])#{Regex.escape(name)}\s*\??\.\s*([A-Za-z_$][\w$]*)\b(?!\s*\()|(?<![\w$.])#{Regex.escape(name)}\s*\[\s*['"]([^'"]+)['"]\s*\]/) do |field|
+              field_name = field[1]? || field[2]
+              endpoint.push_param(Param.new(field_name, "", type)) unless field_name == "length"
+            end
+          end
         end
       end
     end
