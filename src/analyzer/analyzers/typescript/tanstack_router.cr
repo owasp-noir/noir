@@ -115,19 +115,17 @@ module Analyzer::Typescript
         # in-literal filtering.
         next if literal_position?(literal_mask, match.byte_begin(0))
 
-        if match.size > 0
-          route_path = match[1]
-          next if pathless_only_route?(route_path)
+        route_path = match[1]
+        next if pathless_only_route?(route_path)
 
-          # Convert TanStack Router path params ($param) to standard format (:param)
-          normalized_path = normalize_path(route_path)
+        # Convert TanStack Router path params ($param) to standard format (:param)
+        normalized_path = normalize_path(route_path)
 
-          endpoint = create_endpoint(normalized_path, "GET", path, match.byte_begin(0), content)
-          extract_path_parameters(normalized_path, endpoint)
-          extract_search_params(content, endpoint)
-          attach_file_route_callees(content, path, match.begin(0) || 0, endpoint) if callees_needed?
-          result << endpoint
-        end
+        endpoint = create_endpoint(normalized_path, "GET", path, match.byte_begin(0), content)
+        extract_path_parameters(normalized_path, endpoint)
+        extract_search_params(content, endpoint)
+        attach_file_route_callees(content, path, match.begin(0) || 0, endpoint) if callees_needed?
+        result << endpoint
       end
     end
 
@@ -139,18 +137,16 @@ module Analyzer::Typescript
       content.scan(lazy_file_route_pattern) do |match|
         next if literal_position?(literal_mask, match.byte_begin(0))
 
-        if match.size > 0
-          route_path = match[1]
-          next if pathless_only_route?(route_path)
+        route_path = match[1]
+        next if pathless_only_route?(route_path)
 
-          normalized_path = normalize_path(route_path)
+        normalized_path = normalize_path(route_path)
 
-          endpoint = create_endpoint(normalized_path, "GET", path, match.byte_begin(0), content)
-          extract_path_parameters(normalized_path, endpoint)
-          extract_search_params(content, endpoint)
-          attach_file_route_callees(content, path, match.begin(0) || 0, endpoint) if callees_needed?
-          result << endpoint
-        end
+        endpoint = create_endpoint(normalized_path, "GET", path, match.byte_begin(0), content)
+        extract_path_parameters(normalized_path, endpoint)
+        extract_search_params(content, endpoint)
+        attach_file_route_callees(content, path, match.begin(0) || 0, endpoint) if callees_needed?
+        result << endpoint
       end
     end
 
@@ -180,15 +176,13 @@ module Analyzer::Typescript
       content.scan(root_route_pattern) do |match|
         next if literal_position?(literal_mask, match.byte_begin(0))
 
-        if match.size > 0
-          route_path = match[1]
-          normalized_path = normalize_path(route_path)
+        route_path = match[1]
+        normalized_path = normalize_path(route_path)
 
-          endpoint = create_endpoint(normalized_path, "GET", path, match.byte_begin(0), content)
-          extract_path_parameters(normalized_path, endpoint)
-          attach_route_block_callees(match[0], path, line_for_byte_pos(content, match.byte_begin(0)), endpoint) if callees_needed?
-          result << endpoint
-        end
+        endpoint = create_endpoint(normalized_path, "GET", path, match.byte_begin(0), content)
+        extract_path_parameters(normalized_path, endpoint)
+        attach_route_block_callees(match[0], path, line_for_byte_pos(content, match.byte_begin(0)), endpoint) if callees_needed?
+        result << endpoint
       end
     end
 
@@ -387,10 +381,8 @@ module Analyzer::Typescript
     private def extract_path_parameters(url : String, endpoint : Endpoint)
       # Extract path parameters from URL patterns like :id or $id
       url.scan(/:(\w+)/) do |match|
-        if match.size > 0
-          param_name = match[1]
-          endpoint.push_param(Param.new(param_name, "", "path"))
-        end
+        param_name = match[1]
+        endpoint.push_param(Param.new(param_name, "", "path"))
       end
     end
 
@@ -403,15 +395,11 @@ module Analyzer::Typescript
       # Example: validateSearch: z.object({ page: z.number(), filter: z.string() })
       search_schema_pattern = /validateSearch\s*:\s*z\.object\s*\(\s*\{([^}]+)\}/
       content.scan(search_schema_pattern) do |match|
-        if match.size > 0
-          schema_content = match[1]
-          # Extract param names from schema
-          schema_content.scan(/(\w+)\s*:/) do |param_match|
-            if param_match.size > 0
-              param_name = param_match[1]
-              endpoint.push_param(Param.new(param_name, "", "query"))
-            end
-          end
+        schema_content = match[1]
+        # Extract param names from schema
+        schema_content.scan(/(\w+)\s*:/) do |param_match|
+          param_name = param_match[1]
+          endpoint.push_param(Param.new(param_name, "", "query"))
         end
       end
 
@@ -419,14 +407,10 @@ module Analyzer::Typescript
       # Example: search: { page: 1, filter: '' }
       search_object_pattern = /search\s*:\s*\{([^}]+)\}/
       content.scan(search_object_pattern) do |match|
-        if match.size > 0
-          search_content = match[1]
-          search_content.scan(/(\w+)\s*:/) do |param_match|
-            if param_match.size > 0
-              param_name = param_match[1]
-              endpoint.push_param(Param.new(param_name, "", "query"))
-            end
-          end
+        search_content = match[1]
+        search_content.scan(/(\w+)\s*:/) do |param_match|
+          param_name = param_match[1]
+          endpoint.push_param(Param.new(param_name, "", "query"))
         end
       end
 
@@ -441,12 +425,10 @@ module Analyzer::Typescript
       # params on the corresponding route.
       use_search_pattern = /(?:const|let|var)\s*\{([^}]+)\}\s*=\s*(?:Route\.|[\w$]+\.)?useSearch\s*\(/
       content.scan(use_search_pattern) do |match|
-        if match.size > 0
-          params_str = match[1]
-          params_str.split(",").each do |param|
-            param_name = param.strip.split(":").first.strip.split("=").first.strip
-            endpoint.push_param(Param.new(param_name, "", "query")) unless param_name.empty?
-          end
+        params_str = match[1]
+        params_str.split(",").each do |param|
+          param_name = param.strip.split(":").first.strip.split("=").first.strip
+          endpoint.push_param(Param.new(param_name, "", "query")) unless param_name.empty?
         end
       end
 
