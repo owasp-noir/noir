@@ -7,10 +7,18 @@ import org.springframework.security.web.SecurityFilterChain;
 
 @Configuration
 public class SecurityConfig {
+    private SignoutHandler signoutHandler;
+
+    // Another method's same-named parameter is not the field the chain reads.
+    @Bean
+    Object audit(com.example.audit.AuditLog signoutHandler) {
+        return signoutHandler;
+    }
+
     @Bean
     SecurityFilterChain chain(HttpSecurity http) throws Exception {
         return http.formLogin(f -> f.loginProcessingUrl("/signin/do").usernameParameter("handle").passwordParameter("secret"))
-                   .logout(l -> l.logoutUrl("/signout"))
+                   .logout(l -> l.logoutUrl("/signout").logoutSuccessHandler(signoutHandler))
                    .oauth2Login(o -> o.redirectionEndpoint(r -> r.baseUri("/sso/callback/*")))
                    .build();
     }

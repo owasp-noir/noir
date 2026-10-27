@@ -3,6 +3,7 @@ require "../../../models/endpoint"
 require "../../../miniparsers/java_route_extractor_ts"
 require "../../../utils/js_literal_scanner"
 require "../../../utils/top_level_split"
+require "../../../analyzer/engines/java_engine"
 
 @[Noir::TaggerFor(key: "spring_auth", name: "Spring Auth Tagger", desc: "Identifies Spring Security patterns (annotations, security config)", order: 20)]
 class SpringAuthTagger < FrameworkTagger
@@ -347,26 +348,11 @@ class SpringAuthTagger < FrameworkTagger
     variable = match[1]
     property = match[2]?.try { |getter| getter[0].downcase + getter[1..] } || match[3]
     return unless declared = source.match(/\b([A-Z][\w$]*)(?:<[^<>]*>)?\s+#{Regex.escape(variable)}\s*[;=,)]/)
-    return unless file = java_type_file(declared[1], source)
+    return unless file = Analyzer::Java::JavaEngine.java_type_file(declared[1], source)
     return unless (props = read_file(file)) && (bound = props.match(CONFIGURATION_PROPERTIES))
     return unless props.matches?(/\b(?:List|Set|Collection|Iterable)\s*<\s*String\s*>\s+#{Regex.escape(property)}\b|\bString\s*\[\s*\]\s+#{Regex.escape(property)}\b/)
     prefix = bound[1].strip
     prefix.empty? ? property : "#{prefix}.#{property}"
-  end
-
-  # The project file declaring Java type `type` as `source` names it: by its
-  # single-type import, else in `source`'s own package.
-  private def java_type_file(type : String, source : String) : String?
-    fqn =
-      if import = source.match(/^\s*import\s+([\w$.]+)\.#{Regex.escape(type)}\s*;/m)
-        "#{import[1]}.#{type}"
-      elsif package = source.match(/^\s*package\s+([\w$.]+)\s*;/m)
-        "#{package[1]}.#{type}"
-      else
-        type
-      end
-    suffix = "/#{fqn.gsub('.', '/')}.java"
-    CodeLocator.instance.files_by_basename("#{type}.java").find(&.ends_with?(suffix))
   end
 
   # One block per SecurityFilterChain / `configure(HttpSecurity)`. The
@@ -463,17 +449,36 @@ class SpringAuthTagger < FrameworkTagger
       end
     end
 
-    matches = rules.select do |rule|
-      rule_method = rule[:method]
-      (!rule_method || rule_method == endpoint.method.upcase) && matches_ant_pattern?(url, rule[:pattern])
+    matching = rules.select { |rule| matches_ant_pattern?(url, rule[:pattern]) }
+    deciding = ->(method : String?) do
+      matching.select { |rule| (rule_method = rule[:method]).nil? || rule_method == method }
+        .max_by? { |rule| pattern_specificity(rule[:pattern]) }
     end
-    return if matches.empty?
+    method = endpoint.method.upcase
+    best = deciding.call(method)
+    note = unresolved.empty? ? "" : "; a setting can exempt paths from it: the permitAll list bound from #{unresolved.uniq.join(", ")}"
+    if synthetic_any_method?(method)
+      # A route serving every method (`@RequestMapping` without `method`)
+      # is decided per method when a rule names one
+      # (`requestMatchers(HttpMethod.GET, "/")`): say which methods the
+      # decision leaves out instead of answering for all of them.
+      best = deciding.call(nil)
+      best_guards = best.try(&.[:protected_rule]) || false
+      exceptions = matching.compact_map(&.[:method]).uniq!.compact_map do |verb|
+        decision = deciding.call(verb)
+        {verb, decision} if (decision.try(&.[:protected_rule]) || false) != best_guards
+      end
+      unless exceptions.empty?
+        verbs = exceptions.map(&.[0]).join(", ")
+        reasons = exceptions.compact_map { |_, decision| decision.try(&.[:description]) }.uniq!.join("; ")
+        verb_form = exceptions.size == 1 ? "is" : "are"
+        return "#{best.try(&.[:description])}, except for #{verbs}, which #{verb_form} not guarded (#{reasons})#{note}" if best_guards
+        return "#{reasons}, for #{verbs} only#{note}"
+      end
+    end
+    return unless best && best[:protected_rule]
 
-    best = matches.max_by { |rule| pattern_specificity(rule[:pattern]) }
-    return unless best[:protected_rule]
-    return best[:description] if unresolved.empty?
-
-    "#{best[:description]}; a setting can exempt paths from it: the permitAll list bound from #{unresolved.uniq.join(", ")}"
+    "#{best[:description]}#{note}"
   end
 
   BUILD_FILE = /\A(?:pom\.xml|build\.gradle(?:\.kts)?)\z/
@@ -809,6 +814,9 @@ class SpringAuthTagger < FrameworkTagger
   end
 
   private def check_endpoint(endpoint : Endpoint)
+    # The login / logout / OAuth2 filters answer before any authorization rule.
+    return if endpoint.tags.includes?(Analyzer::Java::JavaEngine::SECURITY_FILTER_TAG)
+
     # Phase 2: Check annotations near code_paths
     contexts = read_source_context(endpoint)
     contexts.each do |ctx|

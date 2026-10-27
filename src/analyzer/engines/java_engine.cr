@@ -179,6 +179,30 @@ module Analyzer::Java
       unresolved
     end
 
+    # The project file declaring the JVM type `type` as `source` names it:
+    # by its single-type import, else in `source`'s own package.
+    def self.java_type_file(type : String, source : String) : String?
+      if type.includes?('.')
+        fqn = type
+        type = type.split('.').last
+      end
+      fqn ||=
+        if import = source.match(/^\s*import\s+([\w$.]+)\.#{Regex.escape(type)}\s*;?\s*$/m)
+          "#{import[1]}.#{type}"
+        elsif package = source.match(/^\s*package\s+([\w$.]+)\s*;?\s*$/m)
+          "#{package[1]}.#{type}"
+        else
+          type
+        end
+      stem = "/#{fqn.gsub('.', '/')}"
+      {".java", ".kt"}.each do |ext|
+        if file = CodeLocator.instance.files_by_basename("#{type}#{ext}").find(&.ends_with?("#{stem}#{ext}"))
+          return file
+        end
+      end
+      nil
+    end
+
     # Module root of a Maven/Gradle source file: everything before
     # `/src/main/java/` (or `/src/main/kotlin/`) below `base`, or the file's
     # own directory outside that layout.
@@ -447,6 +471,11 @@ module Analyzer::Java
     SPRING_BUILD_NOISE_RE = /<!--.*?-->|<dependencyManagement>.*?<\/dependencyManagement>|\/\*.*?\*\/|\/\/[^\n]*/m
 
     FRAMEWORK_PROVIDED_TAG = Tag.new("framework-provided", "Served by Spring Boot / Spring Security itself, not by an application controller", "spring_analyzer")
+    # The login / logout / OAuth2 routes: a filter of the chain answers them,
+    # and every one of those filters runs before the `AuthorizationFilter`,
+    # so no `authorizeHttpRequests` rule (`anyRequest().authenticated()`)
+    # ever sees the request.
+    SECURITY_FILTER_TAG = Tag.new("framework-provided", "Served by a Spring Security filter, which answers it before any authorization rule applies", "spring_analyzer")
 
     # Routes the Spring Boot runtime serves for a module with no controller
     # behind them: every file under the static-resource locations, the
@@ -493,9 +522,9 @@ module Analyzer::Java
       enabled != "false" && access != "none"
     end
 
-    private def framework_endpoint(url : String, verb : String, evidence : PathInfo, params = [] of Param) : Endpoint
+    private def framework_endpoint(url : String, verb : String, evidence : PathInfo, params = [] of Param, tag = FRAMEWORK_PROVIDED_TAG) : Endpoint
       endpoint = Endpoint.new(url, verb, params, Details.new(evidence))
-      endpoint.add_tag(FRAMEWORK_PROVIDED_TAG)
+      endpoint.add_tag(tag)
       endpoint
     end
 
@@ -527,55 +556,205 @@ module Analyzer::Java
     # Files that configure an `HttpSecurity` / `ServerHttpSecurity` chain.
     SPRING_SECURITY_FILE_RE = Regex.union("HttpSecurity", "SecurityFilterChain", "SecurityWebFilterChain", "WebSecurityConfigurerAdapter")
     # `.formLogin(` / `.logout(` (Java, Kotlin `http.` calls) or the Kotlin
-    # DSL's `formLogin {` — a bare `logout(` is any app's own method.
-    SPRING_SECURITY_DSL_RE   = /(?:\.\s*(formLogin|logout|oauth2Login)\s*\(|\b(formLogin|logout|oauth2Login)\s*\{)/
-    SPRING_SECURITY_VALUE_RE = /\b(loginPage|loginProcessingUrl|usernameParameter|passwordParameter|logoutUrl|baseUri)\s*(?:\(\s*|=\s*)"([^"\\]*)"/
+    # DSL's `formLogin {` — a bare `logout(` is any app's own method, and a
+    # dotted one counts only on an `HttpSecurity` chain (`spring_security_receiver?`).
+    SPRING_SECURITY_DSL_RE    = /(?:\.\s*(formLogin|logout|oauth2Login)\s*\(|\b(formLogin|logout|oauth2Login)\s*\{)/
+    SPRING_SECURITY_SETTER_RE = /\b(loginPage|loginProcessingUrl|usernameParameter|passwordParameter|logoutUrl|baseUri)\s*(?:\(\s*|=\s*)/
+    SPRING_SECURITY_VAR_RE    = /\b(?:Server)?HttpSecurity\s+([a-z_$][\w$]*)|\b([a-z_$][\w$]*)\s*:\s*(?:Server)?HttpSecurity\b/
+    # Where one security chain's source starts (its bean method).
+    SPRING_CHAIN_START_RE = /\bSecurity(?:Web)?FilterChain\b|configure\s*\(\s*(?:final\s+)?(?:Server)?HttpSecurity/
+    # `securityMatcher(s)(...)` / Spring 5 `http.antMatcher(...)` /
+    # `http.requestMatcher(...)`: the requests a chain (and so its filters) sees.
+    SPRING_CHAIN_SCOPE_RE = /\bsecurityMatchers?\s*\(|(?<!AntPathRequestMatcher)\.\s*(?:antMatcher|requestMatcher)\s*\(/
+    # `logoutRequestMatcher(new AntPathRequestMatcher("/x"[, "GET"]))`.
+    SPRING_LOGOUT_MATCHER_RE = /\A\s*new\s+AntPathRequestMatcher\s*\(\s*"([^"\\]*)"\s*(?:,\s*(?:"([A-Z]+)"|HttpMethod\.([A-Z]+)\.name\(\s*\)))?\s*\)\s*\)/
+    JAVA_STRING_RE           = /"(?:[^"\\\n]|\\.)*"/
 
-    # verb, path, form params, offset of the DSL call in `code`.
-    alias SpringSecurityRoute = Tuple(String, String, Array(String), Int32)
+    # `.logoutSuccessHandler(handler)` / `(new Impl())`, Kotlin
+    # `logoutSuccessHandler = handler`.
+    SPRING_LOGOUT_SUCCESS_RE = /\blogoutSuccessHandler\s*(?:\(\s*|=\s*)(?:new\s+([A-Z][\w$.]*)\s*\(|([a-z_$][\w$]*)\s*(?:\)|$))/m
+
+    # verb, path, form params, offset of the DSL call in `code`, the type
+    # of the `LogoutSuccessHandler` a logout route ends in (written as
+    # `new Impl()`) or the variable holding it, and whether the route is
+    # inside its chain's `securityMatcher` (its filter answers it).
+    alias SpringSecurityRoute = Tuple(String, String, Array(String), Int32, String?, Bool)
 
     # The login / logout / OAuth2 endpoints Spring Security's filters serve
-    # for each `formLogin` / `logout` / `oauth2Login` in a security chain,
-    # with the configured URLs and parameter names or Spring's defaults.
-    # `code` is comment-stripped source. Only string literals are read.
+    # for each `formLogin` / `logout` / `oauth2Login` of an `HttpSecurity`
+    # chain, with the configured URLs and parameter names or Spring's
+    # defaults. `code` is comment-stripped source. Values are string
+    # literals or `static final String` / `const val` constants of the file;
+    # a URL set any other way (a constant of another class, a request
+    # matcher) is unknown, so that configurer yields no route rather than
+    # the default one.
     def self.spring_security_routes(code : String) : Array(SpringSecurityRoute)
       routes = [] of SpringSecurityRoute
-      code.scan(SPRING_SECURITY_DSL_RE) do |match|
+      masked = code.gsub(JAVA_STRING_RE) { |literal| "\"#{" " * (literal.size - 2)}\"" }
+      return routes unless masked.matches?(SPRING_SECURITY_DSL_RE)
+      chars = masked.chars
+      receivers = Set(String).new
+      masked.scan(SPRING_SECURITY_VAR_RE) { |match| receivers << (match[1]? || match[2]) }
+      return routes if receivers.empty?
+
+      masked.scan(SPRING_SECURITY_DSL_RE) do |match|
+        dotted = !match[1]?.nil?
         kind = match[1]? || match[2]
-        open_idx = match.end(0) - 1
-        scope = spring_security_scope(code, open_idx)
-        next if scope.matches?(/\bdisable\b/)
-        values = spring_security_values(scope)
         offset = match.begin(0)
+        next unless spring_security_receiver?(chars, offset, dotted, receivers)
+        from, to = spring_security_scope(masked, match.end(0) - 1)
+        next if masked[from...to].matches?(/\bdisable\b/)
+        scope = code[from...to]
+        masked_scope = masked[from...to]
+        values, unknown = spring_security_values(scope, masked_scope, code)
+        scoped = spring_chain_patterns(code, masked, offset)
+        served = ->(url : String) { scoped.nil? || scoped.any? { |pattern| ant_matches?(url, pattern) } }
 
         case kind
         when "formLogin"
           # Without `loginProcessingUrl` the filter listens on the login page URL.
+          next if unknown.includes?("loginProcessingUrl") || (!values.has_key?("loginProcessingUrl") && unknown.includes?("loginPage"))
           url = values["loginProcessingUrl"]? || values["loginPage"]? || "/login"
-          routes << {"POST", url, [values["usernameParameter"]? || "username", values["passwordParameter"]? || "password"], offset}
+          params = [] of String
+          params << (values["usernameParameter"]? || "username") unless unknown.includes?("usernameParameter")
+          params << (values["passwordParameter"]? || "password") unless unknown.includes?("passwordParameter")
+          routes << {"POST", url, params, offset, nil, served.call(url)}
         when "logout"
-          routes << {"POST", values["logoutUrl"]? || "/logout", [] of String, offset}
+          verb = "POST"
+          if matcher = masked_scope.match(/\blogoutRequestMatcher\s*(?:\(|=)/)
+            next unless found = scope[matcher.end(0)..].match(SPRING_LOGOUT_MATCHER_RE)
+            url = found[1]
+            verb = found[2]? || found[3]? || "ANY"
+          else
+            next if unknown.includes?("logoutUrl")
+            url = values["logoutUrl"]? || "/logout"
+          end
+          success = masked_scope.match(SPRING_LOGOUT_SUCCESS_RE).try { |handler| handler[1]? || handler[2]? }
+          routes << {verb, url, [] of String, offset, success, served.call(url)}
         when "oauth2Login"
-          authorization = spring_security_sub_scope(scope, "authorizationEndpoint").try { |sub| spring_security_values(sub)["baseUri"]? }
-          redirection = spring_security_sub_scope(scope, "redirectionEndpoint").try { |sub| spring_security_values(sub)["baseUri"]? }
-          routes << {"GET", Noir::URLPath.join_rooted(authorization || "/oauth2/authorization", "{registrationId}"), [] of String, offset}
-          # The redirection `baseUri` is an Ant pattern; its `*` is the registration id.
-          redirection ||= "/login/oauth2/code/*"
-          callback = redirection.ends_with?('*') ? Noir::URLPath.join_rooted(redirection.rchop('*'), "{registrationId}") : redirection
-          routes << {"GET", callback, ["code", "state"], offset}
+          authorization = spring_security_sub_values(scope, masked_scope, code, "authorizationEndpoint")
+          redirection = spring_security_sub_values(scope, masked_scope, code, "redirectionEndpoint")
+          unless authorization.is_a?(Bool)
+            url = Noir::URLPath.join_rooted(authorization || "/oauth2/authorization", "{registrationId}")
+            routes << {"GET", url, [] of String, offset, nil, served.call(url)}
+          end
+          unless redirection.is_a?(Bool)
+            # The redirection `baseUri` is an Ant pattern; its `*` is the registration id.
+            redirection ||= "/login/oauth2/code/*"
+            callback = redirection.ends_with?('*') ? Noir::URLPath.join_rooted(redirection.rchop('*'), "{registrationId}") : redirection
+            routes << {"GET", callback, ["code", "state"], offset, nil, served.call(callback)}
+          end
         end
       end
       routes
     end
 
-    # The configuration a DSL call at `open_idx` (its `(` or `{`) applies:
-    # the lambda / Kotlin block body, or — for the legacy `formLogin()`
-    # chain — the calls after it up to `.and()` or the statement end.
+    # Whether the DSL call at `offset` configures an `HttpSecurity`: a
+    # dotted call's chain (`http.csrf(..).logout(..)`, `.and()` hops
+    # included) starts at one of the `receivers` variables, and a Kotlin
+    # block (`logout { }`) sits inside `http { }`. `tokenService.logout(t)`
+    # does not.
+    private def self.spring_security_receiver?(chars : Array(Char), offset : Int32, dotted : Bool, receivers : Set(String)) : Bool
+      if dotted
+        pos = offset
+        loop do
+          i = skip_space_back(chars, pos - 1)
+          if i >= 0 && chars[i] == ')'
+            depth = 0
+            while i >= 0
+              depth += 1 if chars[i] == ')'
+              depth -= 1 if chars[i] == '('
+              break if depth.zero?
+              i -= 1
+            end
+            i = skip_space_back(chars, i - 1)
+          end
+          stop = i
+          while i >= 0 && (chars[i].alphanumeric? || chars[i] == '_' || chars[i] == '$')
+            i -= 1
+          end
+          return false if i == stop
+          j = skip_space_back(chars, i)
+          return receivers.includes?(chars[(i + 1)..stop].join) unless j >= 0 && chars[j] == '.'
+          pos = j
+        end
+      else
+        depth = 0
+        i = offset - 1
+        while i >= 0
+          case chars[i]
+          when '}' then depth += 1
+          when '{'
+            if depth.zero?
+              stop = skip_space_back(chars, i - 1)
+              start = stop
+              while start >= 0 && (chars[start].alphanumeric? || chars[start] == '_' || chars[start] == '$')
+                start -= 1
+              end
+              return true if start < stop && receivers.includes?(chars[(start + 1)..stop].join)
+            else
+              depth -= 1
+            end
+          end
+          i -= 1
+        end
+        false
+      end
+    end
+
+    private def self.skip_space_back(chars : Array(Char), index : Int32) : Int32
+      while index >= 0 && chars[index].whitespace?
+        index -= 1
+      end
+      index
+    end
+
+    # The literal patterns of the `securityMatcher` that scopes the chain
+    # holding `offset`; nil when the chain is not scoped. A matcher noir
+    # cannot read gives an empty list: no URL is known to be inside it.
+    private def self.spring_chain_patterns(code : String, masked : String, offset : Int32) : Array(String)?
+      from, to = spring_chain_range(masked, offset)
+      chain = masked[from...to]
+      patterns : Array(String)? = nil
+      chain.scan(SPRING_CHAIN_SCOPE_RE) do |call|
+        patterns ||= [] of String
+        close_from, close_to = spring_security_scope(chain, call.end(0) - 1)
+        code[(from + close_from)...(from + close_to)].scan(JAVA_STRING_RE) { |literal| patterns << literal[0][1..-2] }
+      end
+      patterns
+    end
+
+    # The char range of the security chain (bean method) holding `offset`.
+    def self.spring_chain_range(masked : String, offset : Int32) : {Int32, Int32}
+      from = 0
+      to = masked.size
+      masked.scan(SPRING_CHAIN_START_RE) do |boundary|
+        if boundary.begin(0) <= offset
+          from = boundary.begin(0)
+        else
+          to = boundary.begin(0)
+          break
+        end
+      end
+      {from, to}
+    end
+
+    # Spring's ant match of a request path (`/**` also matches the bare prefix).
+    def self.ant_matches?(url : String, pattern : String) : Bool
+      pattern = "/#{pattern}" unless pattern.starts_with?('/')
+      escaped = Regex.escape(pattern).sub(/\/\\\*\\\*\z/, "(?:/.*)?").gsub("\\*\\*", ".*").gsub("\\*", "[^/]*")
+      url.matches?(/\A#{escaped}\/?\z/)
+    end
+
+    # The `(from, to)` char range of the configuration a DSL call at
+    # `open_idx` (its `(` or `{`) applies: the lambda / Kotlin block body,
+    # or — for the legacy `formLogin()` chain — the calls after it up to
+    # `.and()` or the statement end.
     #
     # ponytail: a legacy chain that hops sub-configurers with `.and()`
     # (`oauth2Login().authorizationEndpoint()...and().redirectionEndpoint()`)
     # is cut at the first `.and()`; that style is deprecated.
-    private def self.spring_security_scope(code : String, open_idx : Int32) : String
+    private def self.spring_security_scope(code : String, open_idx : Int32) : {Int32, Int32}
       open_char = code[open_idx]
       close_char = open_char == '(' ? ')' : '}'
       depth = 0
@@ -588,36 +767,116 @@ module Analyzer::Java
           break
         end
       end
-      return code[(open_idx + 1)..] unless close_idx
-      inner = code[(open_idx + 1)...close_idx]
-      return inner unless inner.blank?
+      return {open_idx + 1, code.size} unless close_idx
+      return {open_idx + 1, close_idx} unless code[(open_idx + 1)...close_idx].blank?
       rest = code[(close_idx + 1)..]
       cut = [rest.index(".and()"), rest.index(';')].compact.min?
-      cut ? rest[0, cut] : rest
+      {close_idx + 1, cut ? close_idx + 1 + cut : code.size}
     end
 
-    private def self.spring_security_sub_scope(scope : String, name : String) : String?
-      return unless match = scope.match(/\b#{name}\s*([({])/)
-      spring_security_scope(scope, match.begin(1))
+    # The `baseUri` of the `name` sub-configurer (`authorizationEndpoint`):
+    # nil when unset, false when set to a value noir cannot read.
+    private def self.spring_security_sub_values(scope : String, masked_scope : String, code : String, name : String) : (String | Bool)?
+      return unless match = masked_scope.match(/\b#{name}\s*([({])/)
+      from, to = spring_security_scope(masked_scope, match.begin(1))
+      values, unknown = spring_security_values(scope[from...to], masked_scope[from...to], code)
+      return false if unknown.includes?("baseUri")
+      values["baseUri"]?
     end
 
-    # First literal value of each configurer setter in `scope`.
-    private def self.spring_security_values(scope : String) : Hash(String, String)
+    # The first value of each configurer setter in `scope`, and the setters
+    # given a value noir cannot read.
+    private def self.spring_security_values(scope : String, masked_scope : String, code : String) : {Hash(String, String), Set(String)}
       values = Hash(String, String).new
-      scope.scan(SPRING_SECURITY_VALUE_RE) { |match| values[match[1]] ||= match[2] }
-      values
+      unknown = Set(String).new
+      masked_scope.scan(SPRING_SECURITY_SETTER_RE) do |match|
+        key = match[1]
+        next if values.has_key?(key) || unknown.includes?(key)
+        argument = scope[match.end(0)..]
+        if literal = argument.match(/\A"((?:[^"\\]|\\.)*)"/)
+          values[key] = literal[1]
+        elsif (constant = argument.match(/\A([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)\s*[),;}\n]/)) &&
+              (name = constant[1].split('.').last) &&
+              (declared = code.match(/\b(?:static\s+final\s+String|final\s+static\s+String|const\s+val)\s+#{Regex.escape(name)}\s*(?::\s*String\s*)?=\s*"((?:[^"\\]|\\.)*)"/))
+          values[key] = declared[1]
+        else
+          unknown << key
+        end
+      end
+      {values, unknown}
     end
 
     private def spring_security_endpoints(path : String, base_path : String) : Array(Endpoint)
       content = read_file_content(path)
       return [] of Endpoint unless content_matches?(content, SPRING_SECURITY_FILE_RE)
       code = JavaEngine.strip_comments(content)
-      JavaEngine.spring_security_routes(code).map do |verb, url, params, offset|
-        framework_endpoint(
+      JavaEngine.spring_security_routes(code).map do |verb, url, params, offset, success, served|
+        endpoint = framework_endpoint(
           Noir::URLPath.join_rooted(base_path, url), verb, PathInfo.new(path, line_number_for_index(code, offset)),
-          params.map { |name| Param.new(name, "", verb == "POST" ? "form" : "query") }
+          params.map { |name| Param.new(name, "", verb == "POST" ? "form" : "query") }, served ? SECURITY_FILTER_TAG : FRAMEWORK_PROVIDED_TAG
         )
+        endpoint.handler = logout_success_handler(success, code, offset) if success
+        endpoint
       end
+    end
+
+    # `Impl.onLogoutSuccess` of the project class a logout route's success
+    # handler is: `new Impl()`, or a variable declared as `Impl x` / `x: Impl`
+    # — the last declaration before the DSL call at `offset` (the chain
+    # method's parameter, else a field), the type fully qualified or
+    # resolved by import. A variable typed by the interface, or a class
+    # outside the project, has no definition to point at.
+    private def logout_success_handler(written : String, code : String, offset : Int32) : Handler?
+      type = if written[0].uppercase? || written.includes?('.')
+               written
+             else
+               spring_variable_type(written, code, offset)
+             end
+      return unless type
+      return unless file = JavaEngine.java_type_file(type, code)
+      source = JavaEngine.strip_comments(read_file_content(file))
+      return unless found = source.match(/\b(?:void|fun)\s+onLogoutSuccess\s*\(/)
+      Handler.new("#{type.split('.').last}.onLogoutSuccess", file, line_number_for_index(source, found.begin(0)))
+    end
+
+    # The declared type of `variable` as the DSL call at `offset` sees it: a
+    # declaration in the same chain method before the call (its parameter or
+    # a local), else a field of the class (`Impl x;` / Kotlin `val x: Impl`
+    # constructor property). Another method's same-named parameter is not it.
+    private def spring_variable_type(variable : String, code : String, offset : Int32) : String?
+      masked = code.gsub(JAVA_STRING_RE) { |literal| "\"#{" " * (literal.size - 2)}\"" }
+      chain_from, _ = JavaEngine.spring_chain_range(masked, offset)
+      escaped = Regex.escape(variable)
+      in_chain = nil
+      field = nil
+      masked.scan(/\b((?:[a-z_$][\w$]*\.)*[A-Z][\w$]*)(?:<[^<>]*>)?\s+#{escaped}\s*[;=,)]|\b(?:va[lr]\s+)?#{escaped}\s*:\s*((?:[a-z_$][\w$]*\.)*[A-Z][\w$]*)\b/) do |found|
+        at = found.begin(0)
+        type = found[1]? || found[2]
+        if chain_from <= at < offset
+          in_chain = type
+        elsif field.nil? && class_member_level?(masked, at, found[0].starts_with?("val") || found[0].starts_with?("var"))
+          field = type
+        end
+      end
+      in_chain || field
+    end
+
+    # Whether `at` is a class member declaration: directly in a class body
+    # (one brace deep, outside parentheses), or a Kotlin constructor
+    # property (`class S(private val x: Impl)`).
+    private def class_member_level?(masked : String, at : Int32, kotlin_property : Bool) : Bool
+      braces = 0
+      parens = 0
+      masked.each_char_with_index do |char, index|
+        break if index >= at
+        case char
+        when '{' then braces += 1
+        when '}' then braces -= 1
+        when '(' then parens += 1
+        when ')' then parens -= 1
+        end
+      end
+      (braces == 1 && parens == 0) || (kotlin_property && braces == 0 && parens == 1)
     end
 
     # Every file under a resolved static-resource directory is a GET

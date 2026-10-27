@@ -125,9 +125,13 @@ module Noir
       # `TreeSitterJavaDtoIndex` replaces such a field with those properties.
       # A nil affix was written as something other than a string literal.
       getter unwrap : {String?, String?}?
+      # Jackson `@JsonIgnore` on the field or one of its accessors: a JSON
+      # body never binds it. Form/query binding (`WebDataBinder`) ignores
+      # Jackson annotations, so it still binds there.
+      getter? json_ignored : Bool
 
       def initialize(@name, @access_modifier, @has_setter, @init_value, json_name : String? = nil, @type_name = "",
-                     @unwrap = nil)
+                     @unwrap = nil, @json_ignored = false)
         @json_name = json_name || @name
       end
 
@@ -219,7 +223,7 @@ module Noir
         next if name.empty?
         type_name = Noir::TreeSitter.field(component, "type").try { |node| Noir::TreeSitter.node_text(node, source) } || ""
         fields << FieldInfo.new(name, "public", true, "", json_property_name(component, source), type_name,
-          json_unwrap(component, source))
+          json_unwrap(component, source), json_ignore?(component, source))
       end
       fields
     end
@@ -229,6 +233,12 @@ module Noir
     private def json_property_name(decl : LibTreeSitter::TSNode, source : String) : String?
       return unless ann = annotation_node_on(decl, source, "JsonProperty")
       annotation_string_arg(ann, source).presence
+    end
+
+    # `@JsonIgnore` (not `@JsonIgnore(false)`) on a field or accessor.
+    private def json_ignore?(decl : LibTreeSitter::TSNode, source : String) : Bool
+      return false unless ann = annotation_node_on(decl, source, "JsonIgnore")
+      !annotation_text(ann, source).matches?(/\(\s*(?:value\s*=\s*)?false\s*\)/)
     end
 
     # `{prefix, suffix}` of a `@JsonUnwrapped` field or record component
@@ -752,6 +762,13 @@ module Noir
       # First pass: collect field declarations.
       declared = [] of Tuple(String, String, String, String?, String, {String?, String?}?) # name, access, init_value, json_name, type, unwrap
       setter_targets = Set(String).new
+      # Jackson drops a property any accessor `@JsonIgnore`s, unless another
+      # one names it with `@JsonProperty` (the write-only password idiom:
+      # `@JsonIgnore` getter, `@JsonProperty` setter).
+      json_ignored = Set(String).new
+      json_kept = Set(String).new
+      # `@JsonProperty("hh") setH(..)`: the accessor names the property's key.
+      renamed = Hash(String, String).new
 
       Noir::TreeSitter.each_named_child(body) do |member|
         case Noir::TreeSitter.node_type(member)
@@ -775,10 +792,26 @@ module Noir
             init = Noir::TreeSitter.node_text(value_node, source)
           end
           declared << {name, access, init, json_property_name(member, source), type_name, json_unwrap(member, source)}
+          json_ignored << name if json_ignore?(member, source)
+          json_kept << name if annotation_node_on(member, source, "JsonProperty")
         when "method_declaration"
           mn = Noir::TreeSitter.field(member, "name")
           next unless mn
           name = Noir::TreeSitter.node_text(mn, source)
+          accessor = name.match(/\A(?:get|set|is)([A-Z]\w*)\z/)
+          property = accessor.try { |found| found[1][0].downcase.to_s + found[1][1..] }
+          json_ignored << property if property && json_ignore?(member, source)
+          # `@JsonSetter("encryptedValue") setEncryptedValueBase64(..)` binds
+          # the key it names, whatever the method is called.
+          {"JsonProperty", "JsonSetter"}.each do |binding|
+            next unless ann = annotation_node_on(member, source, binding)
+            named = annotation_string_arg(ann, source).presence
+            json_kept << named if named
+            if property
+              json_kept << property
+              renamed[property] ||= named if named
+            end
+          end
           next unless name.starts_with?("set") && name.size > 3
           # Convert `setFoo` → `foo` for field-name matching.
           base = name[3].downcase.to_s + name[4..]
@@ -788,7 +821,9 @@ module Noir
 
       declared.map do |name, access, init, json_name, type_name, unwrap|
         has_setter = lombok_setters || setter_targets.includes?(name)
-        FieldInfo.new(name, access, has_setter, init, json_name, type_name, unwrap)
+        json_name ||= renamed[name]?
+        ignored = json_ignored.includes?(name) && !json_kept.includes?(name) && !(json_name && json_kept.includes?(json_name))
+        FieldInfo.new(name, access, has_setter, init, json_name, type_name, unwrap, ignored)
       end
     end
 
@@ -1054,10 +1089,16 @@ module Noir
         sink << Param.new(parameter_name, default_value || "", effective_format)
       elsif SERVLET_REQUEST_TYPES.includes?(type_name)
         scan_accessor_calls(method, source, arg_name, {"getParameter" => effective_format, "getHeader" => "header"}, sink)
-      elsif (ann_kind == :query || ann_kind == :header) && MAP_LIKE_TYPES.includes?(simple_type_name(type_name))
-        # A `@RequestParam Map` / `@RequestHeader HttpHeaders` holds every
-        # value; the ones the handler reads by literal key are its inputs.
-        scan_accessor_calls(method, source, arg_name, MAP_ACCESSORS.to_h { |accessor| {accessor, effective_format} }, sink)
+      elsif (ann_kind == :query || ann_kind == :header || ann_kind == :body) && MAP_LIKE_TYPES.includes?(simple_type_name(type_name))
+        # A `@RequestParam Map` / `@RequestHeader HttpHeaders` / `@RequestBody
+        # Map` holds every value; the ones the handler reads by literal key
+        # are its inputs.
+        # A form-encoded `@RequestBody MultiValueMap` is a form body; a
+        # reassigned variable no longer holds the request's values.
+        map_format = ann_kind == :body && simple_type_name(type_name).ends_with?("MultiValueMap") ? "form" : effective_format
+        unless reassigned?(method, source, arg_name)
+          scan_accessor_calls(method, source, arg_name, MAP_ACCESSORS.to_h { |accessor| {accessor, map_format} }, sink)
+        end
       elsif ann_kind.nil? && pageable_type?(type_name)
         PAGEABLE_PARAMS.each do |name|
           sink << Param.new(name, pageable_default_value(pageable_default, name, source, constants, current_class) || "", "query")
@@ -1074,6 +1115,7 @@ module Noir
         json_body = effective_format == "json"
         fields.each do |field|
           next unless json_body || field.access_modifier == "public" || field.has_setter?
+          next if json_body && field.json_ignored?
           # `default_value` comes from an annotation and is already literal;
           # `init_value` is raw Java source and only becomes a value when it
           # is one. See `Noir::JvmLiteral`.
@@ -1316,6 +1358,18 @@ module Noir
       end
     end
 
+    # Whether `method`'s body assigns `name` (`body = loadOther();`).
+    private def reassigned?(method : LibTreeSitter::TSNode, source : String, name : String) : Bool
+      return false unless body = Noir::TreeSitter.field(method, "body")
+      found = false
+      Noir::TreeSitter.walk(body) do |node|
+        next if found || Noir::TreeSitter.node_type(node) != "assignment_expression"
+        left = Noir::TreeSitter.field(node, "left")
+        found = true if left && Noir::TreeSitter.node_type(left) == "identifier" && Noir::TreeSitter.node_text(left, source) == name
+      end
+      found
+    end
+
     # The only method named `name` with `arity` formal parameters declared
     # in `method`'s own class body; nil when there is none or overloads
     # make it ambiguous.
@@ -1499,7 +1553,7 @@ module Noir
         inner_fields = unwrapped_fields(target_file, target, scopes, path) || next
         inner_fields.each do |inner|
           flat << TreeSitterJavaParameterExtractor::FieldInfo.new("#{field.name}.#{inner.name}", inner.access_modifier,
-            inner.has_setter?, inner.init_value, "#{prefix}#{inner.json_name}#{suffix}", inner.type_name)
+            inner.has_setter?, inner.init_value, "#{prefix}#{inner.json_name}#{suffix}", inner.type_name, json_ignored: inner.json_ignored?)
         end
       end
       path.pop
