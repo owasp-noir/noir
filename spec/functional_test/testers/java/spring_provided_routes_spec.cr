@@ -53,4 +53,11 @@ describe "Spring framework-provided routes", tags: "functional" do
       "/sso/callback/{registrationId}",
     ])
   end
+
+  it "points the logout route at its LogoutSuccessHandler" do
+    handler = tester.endpoints.find!(&.url.==("/signout")).handler.not_nil!
+    handler.name.should eq("SignoutHandler.onLogoutSuccess")
+    handler.path.not_nil!.should end_with("com/example/SignoutHandler.java")
+    handler.line.should eq(10)
+  end
 end

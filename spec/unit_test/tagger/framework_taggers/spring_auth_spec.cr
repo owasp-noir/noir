@@ -354,6 +354,53 @@ describe "SpringAuthTagger" do
     end
   end
 
+  it "names the methods a method-scoped matcher exempts from an any-method route's decision" do
+    config = <<-JAVA
+      package com.example;
+
+      import org.springframework.http.HttpMethod;
+
+      class SecurityConfig {
+          SecurityFilterChain chain(HttpSecurity http) throws Exception {
+              return http.authorizeHttpRequests(auth -> auth
+                  .requestMatchers(HttpMethod.GET, "/", "/*.html").permitAll()
+                  .requestMatchers(HttpMethod.DELETE, "/open/**").authenticated()
+                  .anyRequest().permitAll()
+              ).build();
+          }
+      }
+      JAVA
+    tags = run_spring_security_config({"SecurityConfig.java" => config}, ["ANY /", "ANY /open/x", "ANY /other"])
+    tags["ANY /"].should be_empty
+    tags["ANY /open/x"].should eq(["Protected by Spring Security authenticated via requestMatchers(\"/open/**\"), for DELETE only"])
+    tags["ANY /other"].should be_empty
+
+    guarded = config.sub(".anyRequest().permitAll()", ".anyRequest().authenticated()")
+    tags = run_spring_security_config({"SecurityConfig.java" => guarded}, ["ANY /", "GET /", "POST /"])
+    tags["ANY /"].should eq(["Protected by Spring Security authenticated via anyRequest(), except for GET, which is not guarded (Public by Spring Security permitAll via requestMatchers(\"/\"))"])
+    tags["GET /"].should be_empty
+    tags["POST /"].should eq(["Protected by Spring Security authenticated via anyRequest()"])
+  end
+
+  it "leaves the routes a Spring Security filter answers unguarded" do
+    CodeLocator.instance.clear_all
+    tmpdir = File.tempname("spring_security_filter")
+    path = File.join(tmpdir, "src/main/java/com/example/SecurityConfig.java")
+    Dir.mkdir_p(File.dirname(path))
+    File.write(path, "class SecurityConfig { SecurityFilterChain c(HttpSecurity http) { return http.authorizeHttpRequests(a -> a.anyRequest().authenticated()).logout(l -> l.logoutUrl(\"/logout\")).build(); } }")
+    CodeLocator.instance.register_path(path)
+    noir_options = create_test_options
+    noir_options["base"] = YAML::Any.new(tmpdir)
+    logout = Endpoint.new("/logout", "POST")
+    logout.add_tag(Analyzer::Java::JavaEngine::SECURITY_FILTER_TAG)
+    actuator = Endpoint.new("/actuator/health", "GET")
+    actuator.add_tag(Analyzer::Java::JavaEngine::FRAMEWORK_PROVIDED_TAG)
+    SpringAuthTagger.new(noir_options).perform([logout, actuator])
+    FileUtils.rm_rf(tmpdir)
+    logout.tags.none?(&.name.==("auth")).should be_true
+    actuator.tags.any?(&.name.==("auth")).should be_true
+  end
+
   it "reads the Kotlin authorizeHttpRequests DSL" do
     temp_dir = File.join(Dir.tempdir, "noir-spring-auth-kotlin-dsl-#{Process.pid}-#{Time.utc.to_unix_ms}")
     config_path = File.join(temp_dir, "src/main/kotlin/com/example/SecurityConfig.kt")

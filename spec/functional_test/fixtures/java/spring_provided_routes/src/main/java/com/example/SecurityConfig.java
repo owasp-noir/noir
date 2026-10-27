@@ -7,10 +7,12 @@ import org.springframework.security.web.SecurityFilterChain;
 
 @Configuration
 public class SecurityConfig {
+    private SignoutHandler signoutHandler;
+
     @Bean
     SecurityFilterChain chain(HttpSecurity http) throws Exception {
         return http.formLogin(f -> f.loginProcessingUrl("/signin/do").usernameParameter("handle").passwordParameter("secret"))
-                   .logout(l -> l.logoutUrl("/signout"))
+                   .logout(l -> l.logoutUrl("/signout").logoutSuccessHandler(signoutHandler))
                    .oauth2Login(o -> o.redirectionEndpoint(r -> r.baseUri("/sso/callback/*")))
                    .build();
     }

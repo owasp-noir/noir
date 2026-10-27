@@ -179,6 +179,26 @@ module Analyzer::Java
       unresolved
     end
 
+    # The project file declaring the JVM type `type` as `source` names it:
+    # by its single-type import, else in `source`'s own package.
+    def self.java_type_file(type : String, source : String) : String?
+      fqn =
+        if import = source.match(/^\s*import\s+([\w$.]+)\.#{Regex.escape(type)}\s*;?\s*$/m)
+          "#{import[1]}.#{type}"
+        elsif package = source.match(/^\s*package\s+([\w$.]+)\s*;?\s*$/m)
+          "#{package[1]}.#{type}"
+        else
+          type
+        end
+      stem = "/#{fqn.gsub('.', '/')}"
+      {".java", ".kt"}.each do |ext|
+        if file = CodeLocator.instance.files_by_basename("#{type}#{ext}").find(&.ends_with?("#{stem}#{ext}"))
+          return file
+        end
+      end
+      nil
+    end
+
     # Module root of a Maven/Gradle source file: everything before
     # `/src/main/java/` (or `/src/main/kotlin/`) below `base`, or the file's
     # own directory outside that layout.
@@ -447,6 +467,11 @@ module Analyzer::Java
     SPRING_BUILD_NOISE_RE = /<!--.*?-->|<dependencyManagement>.*?<\/dependencyManagement>|\/\*.*?\*\/|\/\/[^\n]*/m
 
     FRAMEWORK_PROVIDED_TAG = Tag.new("framework-provided", "Served by Spring Boot / Spring Security itself, not by an application controller", "spring_analyzer")
+    # The login / logout / OAuth2 routes: a filter of the chain answers them,
+    # and every one of those filters runs before the `AuthorizationFilter`,
+    # so no `authorizeHttpRequests` rule (`anyRequest().authenticated()`)
+    # ever sees the request.
+    SECURITY_FILTER_TAG = Tag.new("framework-provided", "Served by a Spring Security filter, which answers it before any authorization rule applies", "spring_analyzer")
 
     # Routes the Spring Boot runtime serves for a module with no controller
     # behind them: every file under the static-resource locations, the
@@ -493,9 +518,9 @@ module Analyzer::Java
       enabled != "false" && access != "none"
     end
 
-    private def framework_endpoint(url : String, verb : String, evidence : PathInfo, params = [] of Param) : Endpoint
+    private def framework_endpoint(url : String, verb : String, evidence : PathInfo, params = [] of Param, tag = FRAMEWORK_PROVIDED_TAG) : Endpoint
       endpoint = Endpoint.new(url, verb, params, Details.new(evidence))
-      endpoint.add_tag(FRAMEWORK_PROVIDED_TAG)
+      endpoint.add_tag(tag)
       endpoint
     end
 
@@ -531,8 +556,14 @@ module Analyzer::Java
     SPRING_SECURITY_DSL_RE   = /(?:\.\s*(formLogin|logout|oauth2Login)\s*\(|\b(formLogin|logout|oauth2Login)\s*\{)/
     SPRING_SECURITY_VALUE_RE = /\b(loginPage|loginProcessingUrl|usernameParameter|passwordParameter|logoutUrl|baseUri)\s*(?:\(\s*|=\s*)"([^"\\]*)"/
 
-    # verb, path, form params, offset of the DSL call in `code`.
-    alias SpringSecurityRoute = Tuple(String, String, Array(String), Int32)
+    # `.logoutSuccessHandler(handler)` / `(new Impl())`, Kotlin
+    # `logoutSuccessHandler = handler`.
+    SPRING_LOGOUT_SUCCESS_RE = /\blogoutSuccessHandler\s*(?:\(\s*|=\s*)(?:new\s+([A-Z][\w$]*)\s*\(|([a-z_$][\w$]*)\s*(?:\)|$))/m
+
+    # verb, path, form params, offset of the DSL call in `code`, and the
+    # type of the `LogoutSuccessHandler` a logout route ends in (written as
+    # `new Impl()`) or the variable holding it.
+    alias SpringSecurityRoute = Tuple(String, String, Array(String), Int32, String?)
 
     # The login / logout / OAuth2 endpoints Spring Security's filters serve
     # for each `formLogin` / `logout` / `oauth2Login` in a security chain,
@@ -552,17 +583,18 @@ module Analyzer::Java
         when "formLogin"
           # Without `loginProcessingUrl` the filter listens on the login page URL.
           url = values["loginProcessingUrl"]? || values["loginPage"]? || "/login"
-          routes << {"POST", url, [values["usernameParameter"]? || "username", values["passwordParameter"]? || "password"], offset}
+          routes << {"POST", url, [values["usernameParameter"]? || "username", values["passwordParameter"]? || "password"], offset, nil}
         when "logout"
-          routes << {"POST", values["logoutUrl"]? || "/logout", [] of String, offset}
+          success = scope.match(SPRING_LOGOUT_SUCCESS_RE).try { |found| found[1]? || found[2]? }
+          routes << {"POST", values["logoutUrl"]? || "/logout", [] of String, offset, success}
         when "oauth2Login"
           authorization = spring_security_sub_scope(scope, "authorizationEndpoint").try { |sub| spring_security_values(sub)["baseUri"]? }
           redirection = spring_security_sub_scope(scope, "redirectionEndpoint").try { |sub| spring_security_values(sub)["baseUri"]? }
-          routes << {"GET", Noir::URLPath.join_rooted(authorization || "/oauth2/authorization", "{registrationId}"), [] of String, offset}
+          routes << {"GET", Noir::URLPath.join_rooted(authorization || "/oauth2/authorization", "{registrationId}"), [] of String, offset, nil}
           # The redirection `baseUri` is an Ant pattern; its `*` is the registration id.
           redirection ||= "/login/oauth2/code/*"
           callback = redirection.ends_with?('*') ? Noir::URLPath.join_rooted(redirection.rchop('*'), "{registrationId}") : redirection
-          routes << {"GET", callback, ["code", "state"], offset}
+          routes << {"GET", callback, ["code", "state"], offset, nil}
         end
       end
       routes
@@ -612,12 +644,32 @@ module Analyzer::Java
       content = read_file_content(path)
       return [] of Endpoint unless content_matches?(content, SPRING_SECURITY_FILE_RE)
       code = JavaEngine.strip_comments(content)
-      JavaEngine.spring_security_routes(code).map do |verb, url, params, offset|
-        framework_endpoint(
+      JavaEngine.spring_security_routes(code).map do |verb, url, params, offset, success|
+        endpoint = framework_endpoint(
           Noir::URLPath.join_rooted(base_path, url), verb, PathInfo.new(path, line_number_for_index(code, offset)),
-          params.map { |name| Param.new(name, "", verb == "POST" ? "form" : "query") }
+          params.map { |name| Param.new(name, "", verb == "POST" ? "form" : "query") }, SECURITY_FILTER_TAG
         )
+        endpoint.handler = logout_success_handler(success, code) if success
+        endpoint
       end
+    end
+
+    # `Impl.onLogoutSuccess` of the project class a logout route's success
+    # handler is: `new Impl()`, or a variable declared as `Impl x`
+    # (`x: Impl` in Kotlin). A variable typed by the interface, or a class
+    # outside the project, has no definition to point at.
+    private def logout_success_handler(written : String, code : String) : Handler?
+      type = if written[0].uppercase?
+               written
+             else
+               escaped = Regex.escape(written)
+               code.match(/\b([A-Z][\w$]*)(?:<[^<>]*>)?\s+#{escaped}\s*[;=,)]|\b#{escaped}\s*:\s*([A-Z][\w$]*)\b/).try { |found| found[1]? || found[2]? }
+             end
+      return unless type
+      return unless file = JavaEngine.java_type_file(type, code)
+      source = JavaEngine.strip_comments(read_file_content(file))
+      return unless found = source.match(/\b(?:void|fun)\s+onLogoutSuccess\s*\(/)
+      Handler.new("#{type}.onLogoutSuccess", file, line_number_for_index(source, found.begin(0)))
     end
 
     # Every file under a resolved static-resource directory is a GET
