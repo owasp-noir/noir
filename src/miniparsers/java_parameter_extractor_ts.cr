@@ -223,7 +223,7 @@ module Noir
         next if name.empty?
         type_name = Noir::TreeSitter.field(component, "type").try { |node| Noir::TreeSitter.node_text(node, source) } || ""
         fields << FieldInfo.new(name, "public", true, "", json_property_name(component, source), type_name,
-          json_unwrap(component, source))
+          json_unwrap(component, source), json_ignore?(component, source))
       end
       fields
     end
@@ -767,6 +767,8 @@ module Noir
       # `@JsonIgnore` getter, `@JsonProperty` setter).
       json_ignored = Set(String).new
       json_kept = Set(String).new
+      # `@JsonProperty("hh") setH(..)`: the accessor names the property's key.
+      renamed = Hash(String, String).new
 
       Noir::TreeSitter.each_named_child(body) do |member|
         case Noir::TreeSitter.node_type(member)
@@ -803,8 +805,11 @@ module Noir
           # the key it names, whatever the method is called.
           {"JsonProperty", "JsonSetter"}.each do |binding|
             next unless ann = annotation_node_on(member, source, binding)
-            if named = annotation_string_arg(ann, source).presence || property
-              json_kept << named
+            named = annotation_string_arg(ann, source).presence
+            json_kept << named if named
+            if property
+              json_kept << property
+              renamed[property] ||= named if named
             end
           end
           next unless name.starts_with?("set") && name.size > 3
@@ -816,7 +821,9 @@ module Noir
 
       declared.map do |name, access, init, json_name, type_name, unwrap|
         has_setter = lombok_setters || setter_targets.includes?(name)
-        FieldInfo.new(name, access, has_setter, init, json_name, type_name, unwrap, json_ignored.includes?(name) && !json_kept.includes?(name))
+        json_name ||= renamed[name]?
+        ignored = json_ignored.includes?(name) && !json_kept.includes?(name) && !(json_name && json_kept.includes?(json_name))
+        FieldInfo.new(name, access, has_setter, init, json_name, type_name, unwrap, ignored)
       end
     end
 
@@ -1086,7 +1093,12 @@ module Noir
         # A `@RequestParam Map` / `@RequestHeader HttpHeaders` / `@RequestBody
         # Map` holds every value; the ones the handler reads by literal key
         # are its inputs.
-        scan_accessor_calls(method, source, arg_name, MAP_ACCESSORS.to_h { |accessor| {accessor, effective_format} }, sink)
+        # A form-encoded `@RequestBody MultiValueMap` is a form body; a
+        # reassigned variable no longer holds the request's values.
+        map_format = ann_kind == :body && simple_type_name(type_name).ends_with?("MultiValueMap") ? "form" : effective_format
+        unless reassigned?(method, source, arg_name)
+          scan_accessor_calls(method, source, arg_name, MAP_ACCESSORS.to_h { |accessor| {accessor, map_format} }, sink)
+        end
       elsif ann_kind.nil? && pageable_type?(type_name)
         PAGEABLE_PARAMS.each do |name|
           sink << Param.new(name, pageable_default_value(pageable_default, name, source, constants, current_class) || "", "query")
@@ -1344,6 +1356,18 @@ module Noir
           end
         end
       end
+    end
+
+    # Whether `method`'s body assigns `name` (`body = loadOther();`).
+    private def reassigned?(method : LibTreeSitter::TSNode, source : String, name : String) : Bool
+      return false unless body = Noir::TreeSitter.field(method, "body")
+      found = false
+      Noir::TreeSitter.walk(body) do |node|
+        next if found || Noir::TreeSitter.node_type(node) != "assignment_expression"
+        left = Noir::TreeSitter.field(node, "left")
+        found = true if left && Noir::TreeSitter.node_type(left) == "identifier" && Noir::TreeSitter.node_text(left, source) == name
+      end
+      found
     end
 
     # The only method named `name` with `arity` formal parameters declared

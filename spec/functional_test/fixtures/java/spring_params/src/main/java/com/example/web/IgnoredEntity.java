@@ -29,4 +29,11 @@ public class IgnoredEntity {
 
     @JsonSetter("blob")
     public void setBlobBase64(String value) { this.blob = value.getBytes(); }
+
+    private String nick;
+
+    @JsonIgnore
+    public String getNick() { return nick; }
+    @JsonProperty("nickname")
+    public void setNick(String nick) { this.nick = nick; }
 }
