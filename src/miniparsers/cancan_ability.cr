@@ -232,8 +232,8 @@ module Noir
       text = text[1..-2].strip if text.starts_with?('(') && text.ends_with?(')') && balanced?(text[1..-2])
       ors = split_top(text, /\|\||\bor\b/)
       return combine(ors.map { |part| condition(part, negate) }, !negate) if ors.size > 1
-      ands = split_top(text, /&&|\band\b/)
-      return combine(ands.map { |part| condition(part, negate) }, negate) if ands.size > 1
+      conjuncts = split_top(text, /&&|\band\b/)
+      return combine(conjuncts.map { |part| condition(part, negate) }, negate) if conjuncts.size > 1
       if text.starts_with?('!') && !text.starts_with?("!=")
         return condition(text[1..], !negate)
       elsif text.starts_with?("not ")
