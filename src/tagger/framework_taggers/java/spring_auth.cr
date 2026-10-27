@@ -456,6 +456,7 @@ class SpringAuthTagger < FrameworkTagger
     end
     method = endpoint.method.upcase
     best = deciding.call(method)
+    note = unresolved.empty? ? "" : "; a setting can exempt paths from it: the permitAll list bound from #{unresolved.uniq.join(", ")}"
     if synthetic_any_method?(method)
       # A route serving every method (`@RequestMapping` without `method`)
       # is decided per method when a rule names one
@@ -470,14 +471,14 @@ class SpringAuthTagger < FrameworkTagger
       unless exceptions.empty?
         verbs = exceptions.map(&.[0]).join(", ")
         reasons = exceptions.compact_map { |_, decision| decision.try(&.[:description]) }.uniq!.join("; ")
-        return "#{best.try(&.[:description])}, except for #{verbs}, which is not guarded (#{reasons})" if best_guards
-        return "#{reasons}, for #{verbs} only"
+        verb_form = exceptions.size == 1 ? "is" : "are"
+        return "#{best.try(&.[:description])}, except for #{verbs}, which #{verb_form} not guarded (#{reasons})#{note}" if best_guards
+        return "#{reasons}, for #{verbs} only#{note}"
       end
     end
     return unless best && best[:protected_rule]
-    return best[:description] if unresolved.empty?
 
-    "#{best[:description]}; a setting can exempt paths from it: the permitAll list bound from #{unresolved.uniq.join(", ")}"
+    "#{best[:description]}#{note}"
   end
 
   BUILD_FILE = /\A(?:pom\.xml|build\.gradle(?:\.kts)?)\z/
