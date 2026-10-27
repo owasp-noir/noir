@@ -31,7 +31,6 @@ class RubyAuthTagger < FrameworkTagger
   # Pundit / CanCanCan authorization in action body. `\b`: not the
   # `doorkeeper_authorize!` / `authorize_if_got_token!` an API calls.
   ACTION_AUTH_PATTERNS = [
-    {/\bauthorize\s+@?\w+/, "Pundit authorize"},
     {/\bauthorize!/, "CanCanCan authorize!"},
     {/load_and_authorize_resource/, "CanCanCan load_and_authorize_resource"},
   ]
@@ -119,7 +118,8 @@ class RubyAuthTagger < FrameworkTagger
     @flagged_line_jumps = Hash(String, Array(Int32)).new
     @callback_guards = Hash(String, String?).new
     @callback_authz = Hash(String, String?).new
-    @anonymous_queries = Hash(String, Bool).new
+    @pundit_verdicts = Hash(String, Symbol).new
+    @callback_exits = Hash({String, String}, Bool).new
     @rejecting_defs = Hash(String, Bool).new
     @denying_helpers = Hash(String, Bool).new
     @denies_anonymous = Hash(String, Bool).new
@@ -190,25 +190,36 @@ class RubyAuthTagger < FrameworkTagger
       jumps = nearest_match_above(@flagged_line_jumps, path, flags) { |flag| flag != 0 }
       action = extract_action_name(lines, line_idx)
       # An action a concern or parent class defines runs with the routed
-      # controller's chain, not with the one of the file it is written in.
+      # controller's chain alone: the defining file's own callbacks and
+      # skips count only as far as that chain carries them.
       dispatch = endpoint.handler.try(&.dispatch_path).try { |dispatch_path| rails_chain.controller_in(dispatch_path) } if endpoint.handler.try(&.path) == path
-      chain = (dispatch || rails_chain.controller_in(path)).try { |leaf| rails_chain.resolve(leaf, action) }
-      controller = check_controller_auth(lines, line_idx, flags, jumps, chain)
-      authz_desc = controller[:authz]
-      # skip_before_action only suppresses authentication callbacks — not
-      # independent authorize / CanCanCan checks in the action body.
-      unless controller[:skipped]
-        authn_desc = controller[:authn]
-        leaf = dispatch || controller[:class_idx].try { |class_idx| rails_chain.classes[{path, class_idx}]? }
-        if leaf && (dispatch || leaf.parent) && (authn_desc.nil? || setting_lifted?(authn_desc) || authz_desc.nil?)
-          inherited = chain_guards(leaf, action)
-          authn_desc = stronger(authn_desc, inherited[:authn])
-          authz_desc ||= inherited[:authz]
+      skipped = opted_out = false
+      if dispatch
+        routed = chain_guards(dispatch, action)
+        authn_desc = routed[:authn]
+        authz_desc = routed[:authz]
+      else
+        own = rails_chain.controller_in(path)
+        chain = own.try { |leaf| rails_chain.resolve(leaf, action) }
+        controller = check_controller_auth(lines, line_idx, flags, jumps, chain, own)
+        authz_desc = controller[:authz]
+        skipped = controller[:skipped]
+        opted_out = controller[:opted_out]
+        # skip_before_action only suppresses authentication callbacks — not
+        # independent authorize / CanCanCan checks in the action body.
+        unless skipped
+          authn_desc = controller[:authn]
+          leaf = controller[:class_idx].try { |class_idx| rails_chain.classes[{path, class_idx}]? }
+          if leaf && leaf.parent && (authn_desc.nil? || setting_lifted?(authn_desc) || authz_desc.nil?)
+            inherited = chain_guards(leaf, action)
+            authn_desc = stronger(authn_desc, inherited[:authn])
+            authz_desc ||= inherited[:authz]
+          end
         end
       end
 
       # Action-body authorization (Pundit/CanCanCan) stacks with controller authn.
-      body = check_action_body_auth(lines, line_idx)
+      body = check_action_body_auth(lines, line_idx, action)
       authz_desc ||= body[:authz]
 
       # add_tag dedupes by (name, tagger), so authn/authz need distinct names.
@@ -222,7 +233,7 @@ class RubyAuthTagger < FrameworkTagger
       if authn_desc.nil? && authz_desc.nil? && (policy = body[:anonymous])
         endpoint.add_tag(Tag.new("anonymous", "Pundit #{policy} admits anonymous callers", "ruby_auth"))
       end
-      return if authn_desc || authz_desc || body[:anonymous] || controller[:skipped] || controller[:opted_out]
+      return if authn_desc || authz_desc || body[:anonymous] || skipped || opted_out || dispatch
 
       # Sinatra/Rack patterns first, then Grape (before blocks, http_basic,
       # etc.), both over the same route scope.
@@ -251,7 +262,7 @@ class RubyAuthTagger < FrameworkTagger
     Noir::RailsCallbackChain.applies_to_action?(current, action_name)
   end
 
-  private def check_controller_auth(lines : Array(String), action_line : Int32, flags : Array(UInt8), jumps : Array(Int32), chain : Noir::RailsCallbackChain::Resolution?) : NamedTuple(authn: String?, authz: String?, skipped: Bool, opted_out: Bool, class_idx: Int32?)
+  private def check_controller_auth(lines : Array(String), action_line : Int32, flags : Array(UInt8), jumps : Array(Int32), chain : Noir::RailsCallbackChain::Resolution?, leaf : Noir::RailsCallbackChain::Klass?) : NamedTuple(authn: String?, authz: String?, skipped: Bool, opted_out: Bool, class_idx: Int32?)
     # Walk backwards to find the controller class and before_action declarations
     idx = action_line
     action_name = extract_action_name(lines, action_line)
@@ -283,9 +294,9 @@ class RubyAuthTagger < FrameworkTagger
       end
       if applies_to_action?(current, action_name) && !Noir::RailsCallbackChain.conditional?(current)
         Noir::RailsCallbackChain.before_action_callbacks(current).each do |callback|
-          next if skipped_callbacks.includes?(callback)
+          next if skipped_callbacks.includes?(callback) || exits_for?(callback, leaf)
           authn_desc = stronger(authn_desc, callback_guard(callback, chain)) unless skipped
-          authz_desc ||= callback_authz(callback)
+          authz_desc ||= callback_authz(callback, action_name, chain.try(&.paths) || [] of String)
         end
       end
 
@@ -324,11 +335,60 @@ class RubyAuthTagger < FrameworkTagger
     authn : String? = nil
     authz : String? = nil
     resolved.callbacks.each do |callback|
-      next if resolved.conditional.includes?(callback)
-      authn = stronger(authn, callback_guard(callback, resolved))
-      authz ||= callback_authz(callback)
+      next if resolved.conditional.includes?(callback) || exits_for?(callback, leaf)
+      guard = callback_guard(callback, resolved)
+      gate = callback_authz(callback, action, resolved.paths)
+      # `skip_before_action :x, if: -> { ... }`: a request value the caller
+      # sends lifts it at will; anything else is the app's to decide.
+      if lift = resolved.lifted[callback]?
+        next if lift.matches?(/\b(?:request|params)\b/)
+        note = "; `skip_before_action #{lift}` decides; #{SETTING_LIFTED}"
+        guard = guard.try { |desc| "#{desc}#{note}" }
+        gate = gate.try { |desc| "#{desc}#{note}" }
+      end
+      authn = stronger(authn, guard)
+      authz ||= gate
     end
     {authn: authn, authz: authz}
+  end
+
+  # Whether `callback` returns before refusing anyone for `leaf`'s
+  # requests: a leading `return if controller_name.in?(PUBLIC)` whose
+  # constant lists the controller, or `return if
+  # self.class.module_parent.to_s == "Admin"` for a controller in `Admin`.
+  # Exits on anything else are left to `denies_anonymous?`.
+  private def exits_for?(callback : String, leaf : Noir::RailsCallbackChain::Klass?) : Bool
+    return false unless leaf
+    controller = leaf.name.split("::").last.underscore.rchop("_controller")
+    @callback_exits.put_if_absent({callback, leaf.name}) do
+      (rails_chain.defs[callback]? || [] of {String, Int32}).any? do |path, def_idx|
+        next false unless lines = read_file_lines(path)
+        body = def_bodies(callback, [{path, def_idx}]).first? || [] of {Int32, String}
+        body[1..].take_while { |_, text| !text.matches?(DENY_RESPONSE) && !text.matches?(SOFT_DENY) }.any? do |_, text|
+          next false unless m = text.match(/\Areturn\b[^#]*?\s+if\s+(.+)\z/)
+          condition = m[1].strip
+          if c = condition.match(/\Acontroller_name\.in\?\(\s*([A-Z]\w*)\s*\)\z|\A([A-Z]\w*)\.include\?\(\s*controller_name\s*\)\z/)
+            constant_words(lines, c[1]? || c[2]).includes?(controller)
+          elsif c = condition.match(/\Aself\.class\.module_parent(?:\.to_s|\.name)?\s*==\s*["']?([A-Z][\w:]*)["']?\z/)
+            leaf.namespace == c[1]
+          else
+            false
+          end
+        end
+      end
+    end
+  end
+
+  # The words of `NAME = %w[...]` (or `["a", "b"]`) in `lines`.
+  private def constant_words(lines : Array(String), name : String) : Array(String)
+    return [] of String unless idx = lines.index(&.matches?(/\A\s*#{name}\s*=/))
+    text = lines[idx].sub(/\A\s*#{name}\s*=/, "")
+    j = idx + 1
+    while text.count("[(") > text.count("])") && j < lines.size && j - idx < 100
+      text = "#{text} #{lines[j]}"
+      j += 1
+    end
+    text.scan(/\b[a-z_]\w*\b/).map(&.[0]).reject { |word| {"w", "i", "freeze"}.includes?(word) }
   end
 
   # The marker `denies_anonymous?` leaves on a guard an app setting decides.
@@ -376,7 +436,8 @@ class RubyAuthTagger < FrameworkTagger
   # its pattern description.
   private def callback_guard(callback : String, chain : Noir::RailsCallbackChain::Resolution?) : String?
     ivars = caller_ivars_before(callback, chain)
-    key = "#{callback}|#{ivars.join(',')}"
+    paths = chain.try(&.paths) || [] of String
+    key = deny_key(callback, ivars, paths)
     return @callback_guards[key] if @callback_guards.has_key?(key)
     desc = BEFORE_ACTION_AUTHN_PATTERNS.find { |pattern, _| "before_action :#{callback}".matches?(pattern) }.try(&.[1])
     if desc
@@ -385,8 +446,8 @@ class RubyAuthTagger < FrameworkTagger
       elsif !library_guard_rejects?(callback)
         desc = nil
       end
-    elsif rails_chain.defs.has_key?(callback) && denies_anonymous?(callback, ivars)
-      desc = if setting = @deny_settings["#{callback}|#{ivars.join(',')}"]?
+    elsif rails_chain.defs.has_key?(callback) && denies_anonymous?(callback, ivars, paths)
+      desc = if setting = @deny_settings[key]?
                "#{callback} (app-defined, refuses callers without a credential; `#{setting}` decides; #{SETTING_LIFTED})"
              else
                "#{callback} (app-defined, refuses callers without a credential)"
@@ -414,11 +475,35 @@ class RubyAuthTagger < FrameworkTagger
 
   # The same reading for an authorization callback: `authorize_if_got_token!`
   # that only checks scopes when a token was sent lets anonymous callers in.
-  private def callback_authz(callback : String) : String?
-    return @callback_authz[callback] if @callback_authz.has_key?(callback)
+  # An app-defined one guards when its body rejects, or calls Pundit
+  # `authorize` with a policy query that refuses a nil user.
+  private def callback_authz(callback : String, action : String?, paths : Array(String)) : String?
+    key = "#{callback}|#{action}|#{own_defs(callback, paths).join(',')}"
+    return @callback_authz[key] if @callback_authz.has_key?(key)
     desc = BEFORE_ACTION_AUTHZ_PATTERNS.find { |pattern, _| "before_action :#{callback}".matches?(pattern) }.try(&.[1])
-    desc = nil if desc && rails_chain.defs.has_key?(callback) && !body_rejects?(callback, Set(String).new)
-    @callback_authz[callback] = desc
+    if desc && rails_chain.defs.has_key?(callback)
+      desc = if policy = pundit_refuses(callback, action, paths)
+               "#{callback} (app-defined, Pundit #{policy} refuses a nil user)"
+             elsif body_rejects?(callback, Set(String).new)
+               desc
+             end
+    end
+    @callback_authz[key] = desc
+  end
+
+  # The policy query (`InternalPolicy#access?`) a body line of `name`
+  # asks through Pundit `authorize` that refuses a nil user, under no
+  # condition that needs a credential; nil when there is none.
+  private def pundit_refuses(name : String, action : String?, paths : Array(String)) : String?
+    def_bodies(name, own_defs(name, paths)).each do |body|
+      body.each_with_index do |(_, text), i|
+        code = code_only(text)
+        next unless code.matches?(PUNDIT_AUTHORIZE)
+        next if credential_gated?(body, i) || credential_present_modifier?(code)
+        verdict, label = pundit_verdict(code, action)
+        return label if verdict == :refuses
+      end
+    end
   end
 
   # Whether any definition of `name` can reject a request: a
@@ -436,7 +521,6 @@ class RubyAuthTagger < FrameworkTagger
     @rejecting_defs[name] = def_bodies(name).any? do |body|
       body.each_with_index.any? do |(_, text), i|
         rejects = text.matches?(CALLBACK_REJECTS) || (top && text.matches?(/\bsuper\b/) && library_guard_rejects?(name)) ||
-                  (text.matches?(PUNDIT_AUTHORIZE) && !anonymous_policy(text)) ||
                   text.scan(/\b[a-z_]\w*[!?]?/).any? { |m| rails_chain.defs.has_key?(m[0]) && body_rejects?(m[0], visited) }
         rejects && !credential_gated?(body, i) && !text.matches?(CREDENTIAL_PRESENT_MODIFIER)
       end
@@ -487,43 +571,65 @@ class RubyAuthTagger < FrameworkTagger
   # ponytail: one assignment hop links a condition to a credential (or the
   # instance variable an earlier callback sets from one, `ivars`); a longer
   # chain reads as no guard.
-  private def denies_anonymous?(name : String, ivars : Array(String), visited : Set(String) = Set(String).new) : Bool
+  private def denies_anonymous?(name : String, ivars : Array(String), paths : Array(String), visited : Set(String) = Set(String).new) : Bool
     top = visited.empty?
-    key = "#{name}|#{ivars.join(',')}"
+    key = deny_key(name, ivars, paths)
     return @denies_anonymous[key] if top && @denies_anonymous.has_key?(key)
     return false unless visited.add?(name)
-    # The setting each deny also waits on; nil for a deny none decides.
-    settings = [] of String?
-    def_bodies(name).each do |body|
-      break unless settings.empty? || (top && settings.all?)
+    # Each deny that refuses an anonymous caller: the setting it also waits
+    # on (nil when none decides) and the request-value conditions it needs.
+    denies = [] of {String?, Array({String, Bool})}
+    def_bodies(name, own_defs(name, paths)).each do |body|
       assigns = Hash(String, String).new
       body.each { |_, text| (m = text.match(/^(@?\w+)\s*\|{0,2}=(?!=)\s*(.+)/)) && (assigns[m[1]] = m[2]) }
       body.each_with_index do |(_, text), i|
         strict = text.matches?(DENY_RESPONSE) || text.scan(/\b[a-z_]\w*[!?]?/).any? { |m| always_denies?(m[0]) } ||
-                 text.scan(BARE_CALL).any? { |m| m[0] != name && rails_chain.defs.has_key?(m[0]) && denies_anonymous?(m[0], ivars, visited) }
+                 text.scan(BARE_CALL).any? { |m| m[0] != name && rails_chain.defs.has_key?(m[0]) && denies_anonymous?(m[0], ivars, paths, visited) }
         next unless strict || text.matches?(SOFT_DENY)
         next if credential_gated?(body, i) || text.matches?(CREDENTIAL_PRESENT_MODIFIER)
         next unless conditions = deny_conditions(body, i)
         parts = deny_parts(conditions)
         next if parts.any? { |c, when_true| credential_present?(c, when_true, assigns, ivars) }
-        # `return if params[:page].to_i <= 1000` above the 401: a request
-        # value that is no credential, so the caller picks whether it fires.
-        next if parts.any? { |c, _| c.matches?(/(?<![\w.@])params\b/) && !credential_condition?(c, assigns, ivars) }
         next unless (strict && parts.empty?) || parts.any? { |c, when_true| credential_absent?(c, when_true, assigns, ivars) }
-        settings << parts.find { |c, _| app_setting?(c) }.try(&.[0].lchop('!').strip)
-        # Past the first deny only a top-level read looks on, for one no
-        # setting decides.
-        break unless top && settings.last
+        chosen = parts.select { |c, _| c.matches?(PARAMS_READ) && !credential_condition?(c, assigns, ivars) }
+        denies << {parts.find { |c, _| app_setting?(c) }.try(&.[0].lchop('!').strip), chosen}
       end
     end
-    result = !settings.empty?
+    # `return if params[:page].to_i <= 1000` above the only 401: the caller
+    # picks a request value that skips every deny. An `if/else` on the value
+    # that denies on both arms leaves no such value.
+    avoidable = !denies.empty? && denies.first[1].any? do |part|
+      denies.all? { |_, chosen| chosen.includes?(part) }
+    end
+    result = !denies.empty? && !avoidable
     if top
       @denies_anonymous[key] = result
+      settings = denies.map(&.[0])
       first = settings.first?
-      @deny_settings[key] = first if first && settings.none?(Nil)
+      @deny_settings[key] = first if result && first && settings.none?(Nil)
     end
     result
   end
+
+  # The definitions of `name` Ruby finds for a controller whose ancestry
+  # spans `paths`: those in its own files when there are any (two
+  # controllers each defining a private `ensure_member` are two methods),
+  # else every one the app has.
+  private def own_defs(name : String, paths : Array(String)) : Array({String, Int32})
+    defs = rails_chain.defs[name]? || [] of {String, Int32}
+    own = defs.select { |path, _| paths.includes?(path) }
+    own.empty? ? defs : own
+  end
+
+  private def deny_key(name : String, ivars : Array(String), paths : Array(String)) : String
+    "#{name}|#{ivars.join(',')}|#{own_defs(name, paths).join(',')}"
+  end
+
+  # A request value read off `params`.
+  PARAMS_READ = /(?<![\w.@])params\b/
+  # The other side of a comparison that makes a request value a credential
+  # whatever its key: a secret, the app's credentials, ENV or a config read.
+  SECRET_SOURCE = /\bENV\b|\bcredentials\b|\bsecrets?\b|Rails\.(?:application|configuration)\b|(?:::)?[A-Z]\w*(?:::[A-Z]\w*)*\.[a-z_]\w*/
 
   # A condition that reads the app's configuration rather than the request:
   # a call on a constant (`Settings::UserExperience.public`,
@@ -612,6 +718,8 @@ class RubyAuthTagger < FrameworkTagger
   # else what the callbacks before it in the controller's chain left.
   private def credential_condition?(condition : String, assigns : Hash(String, String), ivars : Array(String)) : Bool
     return true if condition.matches?(CREDENTIAL_WORD)
+    return true if condition.matches?(PARAMS_READ) && condition.matches?(/[!=]=|secure_compare/) &&
+                   condition.gsub(/(?<![\w.@])params\s*(?:\[[^\]]*\]|\.\w+\([^)]*\))*/, "").matches?(SECRET_SOURCE)
     condition.scan(/@?\w+/).any? do |m|
       if value = assigns[m[0]]?
         value.matches?(CREDENTIAL_WORD)
@@ -674,29 +782,40 @@ class RubyAuthTagger < FrameworkTagger
       next unless body[j][0] < indent
       indent = body[j][0]
       next unless body[j][1].matches?(CREDENTIAL_PRESENT_IF)
+      # `if params[:format] == "json"` / `if request.format.json?` asks
+      # about the request, not whether it carries a credential.
+      next if body[j][1].matches?(/\b(?:request|params)\b/) && !body[j][1].matches?(/\b(?:cookies|session|token|header|bearer|jwt|authorization)\b/i) &&
+              !body[j][1].matches?(CREDENTIAL_WORD)
       return true unless ((j + 1)...i).any? { |k| body[k][0] == indent && body[k][1].matches?(/^els(?:e|if)\b/) }
     end
     false
   end
 
-  private def check_action_body_auth(lines : Array(String), action_line : Int32) : NamedTuple(authz: String?, anonymous: String?)
+  private def check_action_body_auth(lines : Array(String), action_line : Int32, action : String?) : NamedTuple(authz: String?, anonymous: String?)
     # Scan forward from the action definition for auth calls
     idx = action_line + 1
     end_idx = [action_line + 20, lines.size - 1].min
     anonymous : String? = nil
 
     while idx <= end_idx
-      current = lines[idx].strip
+      current = code_only(lines[idx].strip)
       # Stop at next method definition
       break if current.starts_with?("def ") && idx > action_line
 
-      ACTION_AUTH_PATTERNS.each do |pattern, desc|
-        next unless current.matches?(pattern)
-        if policy = anonymous_policy(current)
+      if current.matches?(PUNDIT_AUTHORIZE) && !credential_present_modifier?(current)
+        verdict, policy = pundit_verdict(current, action)
+        case verdict
+        when :refuses
+          return {authz: "Pundit authorize", anonymous: nil}
+        when :admits
           anonymous ||= policy
         else
-          return {authz: desc, anonymous: nil}
+          # An unresolved policy keeps the call's plain-form reading.
+          return {authz: "Pundit authorize", anonymous: nil} if current.matches?(/\bauthorize\s+@?\w+/)
         end
+      end
+      ACTION_AUTH_PATTERNS.each do |pattern, desc|
+        return {authz: desc, anonymous: nil} if current.matches?(pattern)
       end
 
       idx += 1
@@ -705,32 +824,104 @@ class RubyAuthTagger < FrameworkTagger
     {authz: nil, anonymous: anonymous}
   end
 
-  # Pundit `authorize @status, :show?` asks `StatusPolicy#show?`. A query
-  # that answers true for a nil caller (`current_account.nil? || ...`) is a
-  # visibility rule anonymous requests pass, not a check on who calls.
-  # ponytail: the policy is the call's `policy_class:`, else found by Rails
-  # convention (`@status` / `Status` → `policies/status_policy.rb`); a record
-  # named otherwise keeps its tag.
-  PUNDIT_CALL = /\bauthorize\s*\(?\s*(@\w+|[A-Z][\w:]*|[a-z_]\w*)\s*,\s*:(\w+\?)/
+  # `text` with its string literals emptied and a trailing comment dropped:
+  # `flash[:notice] = "Please authorize the app"` calls nothing.
+  private def code_only(text : String) : String
+    text.gsub(/"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'/, %("")).sub(/\s#(?!\{).*\z/, "")
+  end
+
+  # `authorize @venue, :index? if current_user`: runs only for a caller
+  # who has the credential.
+  private def credential_present_modifier?(code : String) : Bool
+    return false unless m = code.match(CONDITION_MODIFIER)
+    credential_present?(m[2], m[1] == "if", Hash(String, String).new, [] of String)
+  end
+
+  # Pundit `authorize @status, :show?` asks `StatusPolicy#show?`;
+  # `authorize Article` asks the action's own query (`index?` for index).
+  # The verdict reads the query's definition (and the policy's
+  # initializer, up its parent policies): `:refuses` when a nil user gets
+  # false (or an error), `:admits` when one passes (`true`, `return true
+  # unless user`, `user.nil? || ...`),
+  # `:unknown` when the policy or query cannot be found.
+  # ponytail: the policy is the call's `policy_class:`, else found by
+  # convention (`@status` / `Status` / `:status` →
+  # `policies/status_policy.rb`); a record held in a method is unknown.
+  PUNDIT_ARGS = /(?<![.\w])authorize\s*\(?\s*([:@]?\w+|[A-Z][\w:]*)(?:\s*,\s*:(\w+[?!]?))?/
   # A Pundit `authorize` call: it raises `NotAuthorizedError` when the
   # policy query answers false.
-  PUNDIT_AUTHORIZE = /(?<![.\w])authorize(?:\s*\(|\s+(?=[@A-Za-z_]))/
-  ANONYMOUS_ADMITS = /\b(?:current_account|current_user|user|account)\.nil\?|!\s*user_signed_in\?/
+  PUNDIT_AUTHORIZE = /(?<![.\w])authorize(?:\s*\(|\s+(?=[:@A-Za-z_]))/
+  # A query body line that lets a nil user pass.
+  NIL_USER          = /@?(?:current_)?(?:user|account)/
+  NIL_ADMITS        = /\A(?:return\s+true\s+unless\s+#{NIL_USER}\s*\z|return\s+true\s+if\s+(?:!\s*#{NIL_USER}\s*|#{NIL_USER}\.(?:nil|blank)\?\s*)\z)|(?:#{NIL_USER}\.(?:nil|blank)\?|!\s*#{NIL_USER}(?![\w.&?])|!\s*user_signed_in\?)\s*(?:\|\||\bor\b|\z)/
+  NIL_RAISES        = /\braise\b.*\s(?:unless\s+#{NIL_USER}\s*\z|if\s+(?:!\s*#{NIL_USER}|#{NIL_USER}\.(?:nil|blank)\?)\s*\z)/
+  USER_PRESENT_EXIT = /\Areturn\b.*\sif\s+#{NIL_USER}(?:\.present\?)?\s*\z/
 
-  # `StatusPolicy#show?` when the Pundit call on `line` asks a query that
-  # admits a nil caller, nil otherwise.
-  private def anonymous_policy(line : String) : String?
-    return unless m = line.match(PUNDIT_CALL)
-    policy = line.match(/\bpolicy_class:\s*([A-Z][\w:]*)/).try(&.[1]) || "#{m[1].lchop('@').camelcase}Policy"
-    label = "#{policy}##{m[2]}"
-    admits = @anonymous_queries.put_if_absent(label) do
-      suffix = "/policies/#{policy.underscore.gsub("::", "/")}.rb"
-      lines = collect_files_by_extension(".rb").find(&.ends_with?(suffix)).try { |path| read_file_lines(path) } || [] of String
-      next false unless def_idx = lines.index(&.strip.starts_with?("def #{m[2]}"))
-      body = lines[(def_idx + 1)..].take_while { |source| source.strip.empty? || line_indent(source) > line_indent(lines[def_idx]) }
-      body.any?(&.matches?(ANONYMOUS_ADMITS))
+  private def pundit_verdict(line : String, action : String?) : {Symbol, String?}
+    return {:unknown, nil} unless m = line.match(PUNDIT_ARGS)
+    record = m[1]
+    query = m[2]? || action.try { |name| "#{name}?" }
+    policy = line.match(/\bpolicy_class:\s*([A-Z][\w:]*)/).try(&.[1])
+    policy ||= "#{record.lchop('@').lchop(':').camelcase}Policy" if record[0].in?('@', ':') || record[0].ascii_uppercase?
+    return {:unknown, nil} unless query && policy
+    label = "#{policy}##{query}"
+    {@pundit_verdicts.put_if_absent(label) { policy_verdict(policy, query, 0) }, label}
+  end
+
+  private def policy_verdict(policy : String, query : String, depth : Int32) : Symbol
+    return :refuses if policy_raises_for_nil?(policy, "initialize", false, Set(String).new)
+    return :unknown unless body = policy_def(policy, query, false)
+    joined = body.join(" ").strip
+    return :admits if joined == "true"
+    return :refuses if joined == "false" || joined.empty?
+    return :admits if body.any?(&.matches?(NIL_ADMITS))
+    if (other = joined.match(/\A(\w+\?)\z/)) && depth < 3
+      # A query that delegates (`email_registrable?`, a `delegate`d
+      # `staff?` we cannot read) answers what the other one does.
+      verdict = policy_verdict(policy, other[1], depth + 1)
+      return verdict == :unknown ? :refuses : verdict
     end
-    label if admits
+    # A check on the caller (`role.can?(:manage_users)`, `user.admin?`) a
+    # nil one fails; one that never reads the caller (`record.published?`,
+    # a registration setting) lets it through.
+    joined.gsub(/(?<![\w:]):\w+/, "").matches?(CALLER_REF) ? :refuses : :admits
+  end
+
+  # A policy's reference to the caller it was built with.
+  CALLER_REF = /(?<![\w.:])@?(?:user|current_user|current_account|account|account_user|user_context|pundit_user|role)\b(?!\s*:(?!:))/
+
+  # Whether `name` (an instance or `self.` method of `policy` or the policies
+  # it inherits from) raises for a nil user: `raise ... unless user`, a
+  # `raise` after `return true if user`, or a call to a method that does.
+  private def policy_raises_for_nil?(policy : String, name : String, singleton : Bool, visited : Set(String)) : Bool
+    return false unless visited.add?("#{singleton}#{name}") && visited.size < 12
+    return false unless body = policy_def(policy, name, singleton)
+    exited = false
+    body.each do |text|
+      return true if text.matches?(NIL_RAISES) || (exited && text.matches?(/\Araise\b/))
+      exited ||= text.matches?(USER_PRESENT_EXIT)
+      text.scan(/(?<![\w.@:])(self\.class\.|self\.)?([a-z_]\w*[!?]?)/) do |call|
+        next if call[2] == name || {"raise", "return", "if", "unless", "true", "false", "nil", "super"}.includes?(call[2])
+        return true if policy_raises_for_nil?(policy, call[2], !call[1]?.nil?, visited)
+      end
+    end
+    false
+  end
+
+  # The body lines (code only) of `def name` / `def self.name` in `policy`'s
+  # file, else in the policies it inherits from.
+  private def policy_def(policy : String, name : String, singleton : Bool, depth : Int32 = 0) : Array(String)?
+    return if depth > 5
+    suffix = "/policies/#{policy.underscore.gsub("::", "/")}.rb"
+    return unless lines = collect_files_by_extension(".rb").find(&.ends_with?(suffix)).try { |path| read_file_lines(path) }
+    head = singleton ? "self\\.#{Regex.escape(name)}" : Regex.escape(name)
+    if def_idx = lines.index(&.matches?(/\A\s*def\s+#{head}(?![\w?!])/))
+      indent = line_indent(lines[def_idx])
+      return lines[(def_idx + 1)..].take_while { |source| source.strip.empty? || line_indent(source) > indent }
+        .map { |source| code_only(source.strip) }.reject(&.empty?)
+    end
+    parent = lines.compact_map { |source| source.match(/\A\s*class\s+[\w:]+\s*<\s*([A-Z][\w:]*)/).try(&.[1]) }.first?
+    parent.try { |name_of_parent| policy_def(name_of_parent, name, singleton, depth + 1) }
   end
 
   private def extract_action_name(lines : Array(String), line_idx : Int32) : String?

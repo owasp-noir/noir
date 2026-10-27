@@ -14,8 +14,11 @@ module Noir
     # The callbacks left active for an action, in registration order, the
     # files of the classes/modules it passed through, nearest first (where
     # Ruby looks a callback's `def` up), and the active callbacks registered
-    # under an `if:` condition (see `conditional?`).
-    record Resolution, callbacks : Array(String), paths : Array(String), conditional : Set(String)
+    # under an `if:` condition (see `conditional?`), and the active callbacks
+    # a `skip_before_action ..., if:` / `unless:` lifts on a condition, with
+    # that condition's text.
+    record Resolution, callbacks : Array(String), paths : Array(String), conditional : Set(String),
+      lifted : Hash(String, String) = Hash(String, String).new
 
     # Class-body lines that change the callback chain a subclass inherits.
     CALLBACK_LINE = /^(?:include|(?:prepend_|skip_)?before_action|allow_unauthenticated_access)\b/
@@ -222,9 +225,17 @@ module Noir
         elsif line.starts_with?("skip_")
           next unless RailsCallbackChain.applies_to_action?(line, action)
           next unless m = line.match(/^skip_before_action\s+((?::\w+[!?]?\s*,?\s*)+)/)
+          # A skip on a condition leaves the callback registered: whether it
+          # runs is that condition's to decide.
+          lift = line.match(/\b(?:if|unless):\s*(.+)\z/).try(&.[0])
           m[1].scan(/:(\w+[!?]?)/) do |name|
-            active.delete(name[1])
-            resolution.conditional.delete(name[1])
+            if lift
+              resolution.lifted[name[1]] = lift
+            else
+              active.delete(name[1])
+              resolution.conditional.delete(name[1])
+              resolution.lifted.delete(name[1])
+            end
           end
         elsif RailsCallbackChain.applies_to_action?(line, action)
           RailsCallbackChain.before_action_callbacks(line).each do |callback|
@@ -234,6 +245,7 @@ module Noir
             else
               resolution.conditional.delete(callback)
             end
+            resolution.lifted.delete(callback)
             active << callback unless active.includes?(callback)
           end
         end
