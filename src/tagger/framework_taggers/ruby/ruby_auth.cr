@@ -1,6 +1,7 @@
 require "../../../models/framework_tagger"
 require "../../../models/endpoint"
 require "../../../miniparsers/rails_callback_chain"
+require "../../../miniparsers/cancan_ability"
 
 @[Noir::TaggerFor(key: "ruby_auth", name: "Ruby Auth Tagger", desc: "Identifies Ruby authentication patterns (Devise, Pundit, CanCanCan, Warden)", order: 120)]
 class RubyAuthTagger < FrameworkTagger
@@ -125,6 +126,8 @@ class RubyAuthTagger < FrameworkTagger
     @denies_anonymous = Hash(String, Bool).new
     @deny_settings = Hash(String, String).new
     @caller_ivars = Hash(String, Array(String)).new
+    @cancan_verdicts = Hash({String, String}, String?).new
+    @cancan_abilities = Hash(String, Noir::CanCanAbility?).new
   end
 
   # Per-line flags for `check_controller_auth`, computed once per file.
@@ -221,6 +224,7 @@ class RubyAuthTagger < FrameworkTagger
       # Action-body authorization (Pundit/CanCanCan) stacks with controller authn.
       body = check_action_body_auth(lines, line_idx, action)
       authz_desc ||= body[:authz]
+      authz_desc ||= (dispatch || rails_chain.controller_in(path)).try { |cancan_leaf| cancan_refuses(cancan_leaf, action) }
 
       # add_tag dedupes by (name, tagger), so authn/authz need distinct names.
       if authn_desc
@@ -419,7 +423,7 @@ class RubyAuthTagger < FrameworkTagger
   # Lines that end the request: a 401/403, a redirect, a raise, the
   # `authenticate_or_request_with_*` / `request_http_*` helpers that answer
   # 401 themselves, or a bang auth call.
-  CALLBACK_REJECTS = /\b(?:head\s+(?::unauthorized|:forbidden|401|403)|status:\s*(?::unauthorized|:forbidden|401|403)|redirect_to|redirect_back|raise|throw|halt|authenticate_or_request_with_http_\w+|request_http_\w+_authentication)\b|\w*auth\w*!/
+  CALLBACK_REJECTS = /\b(?:head\s+(?::unauthorized|:forbidden|401|403)|status(?::|\s*=>)\s*(?::unauthorized|:forbidden|401|403)|redirect_to|redirect_back|raise|throw|halt|authenticate_or_request_with_http_\w+|request_http_\w+_authentication)\b|\w*auth\w*!/
   # An `if` whose condition only asks whether a credential was sent: the
   # rejection under it never fires for a request that carries none.
   CREDENTIAL_PRESENT_IF = /^if\s+(?!.*(?:!|\bnot\b|\.(?:nil|blank|empty)\?)).*\b(?:request|params|cookies|session|token|header|bearer|jwt|authorization)\b/i
@@ -546,7 +550,7 @@ class RubyAuthTagger < FrameworkTagger
   end
 
   # An explicit 401/403 answer.
-  DENY_RESPONSE = /\bhead\s*\(?\s*(?::unauthorized|:forbidden|401|403)\b|\bstatus:\s*(?::unauthorized\b|:forbidden\b|40[13]\b)/
+  DENY_RESPONSE = /\bhead\s*\(?\s*(?::unauthorized|:forbidden|401|403)\b|\bstatus(?::|\s*=>)\s*(?::unauthorized\b|:forbidden\b|40[13]\b)/
   # The words a request credential is spelled with.
   CREDENTIAL_WORD = /token|session|bearer|jwt|authoriz|api_?key|signature|hmac|secret|password|current_user|signed_in|logged_in/i
   # `return if <no credential>` / `return unless <credential>`.
@@ -645,7 +649,7 @@ class RubyAuthTagger < FrameworkTagger
   # A call with no receiver: `require_login`, not `cookies.delete`.
   BARE_CALL = /(?<![.:@\w])[a-z_]\w*[!?]?/
   # A redirect, or a 4xx answer other than 401/403, from a callback.
-  SOFT_DENY = /\bredirect_(?:to|back(?:_or_to)?)\b|\bhead\s*\(?\s*(?::bad_request|:not_found|4\d\d)\b|\bstatus:\s*(?::bad_request\b|:not_found\b|4\d\d\b)/
+  SOFT_DENY = /\bredirect_(?:to|back(?:_or_to)?)\b|\bhead\s*\(?\s*(?::bad_request|:not_found|4\d\d)\b|\bstatus(?::|\s*=>)\s*(?::bad_request\b|:not_found\b|4\d\d\b)/
 
   # Whether the helper `name` (`render_unauthorized`) answers 401/403 on a
   # line of its own body that no condition guards.
@@ -922,6 +926,76 @@ class RubyAuthTagger < FrameworkTagger
     end
     parent = lines.compact_map { |source| source.match(/\A\s*class\s+[\w:]+\s*<\s*([A-Z][\w:]*)/).try(&.[1]) }.first?
     parent.try { |name_of_parent| policy_def(name_of_parent, name, singleton, depth + 1) }
+  end
+
+  # A CanCanCan `authorize_resource` / `load_and_authorize_resource` in
+  # `leaf`'s chain that runs `authorize!(action, resource)` for `action`,
+  # when the ability `current_ability` builds grants that action on that
+  # resource to no nil user: CanCan raises `AccessDenied`, which the app
+  # answers with a refusal (or a 500). nil when an ability rule may admit
+  # an anonymous caller, or the ability cannot be read.
+  private def cancan_refuses(leaf : Noir::RailsCallbackChain::Klass, action : String?) : String?
+    return unless action
+    @cancan_verdicts.put_if_absent({leaf.name, action}) do
+      resolved = rails_chain.resolve(leaf, action)
+      next if resolved.cancan.empty?
+      abilities = cancan_ability_classes(resolved.paths)
+      readers = abilities.compact_map { |name| cancan_ability(name) }
+      next if readers.empty? || readers.size != abilities.size
+      controller = leaf.name.split("::").last.underscore.rchop("_controller")
+      resolved.cancan.each do |line|
+        subject, query = cancan_target(line, controller, action)
+        next unless readers.all?(&.verdict(query, subject).no?)
+        macro_name = line[/\A\w+/]
+        break "CanCanCan #{macro_name} (#{abilities.join(", ")} grants :#{query} on #{subject} to no nil user)"
+      end
+    end
+  end
+
+  # The subject and the action `authorize!` is called with: the resource
+  # class named by the macro (`:class => Trace`), a symbol when `:class =>
+  # false` / `:class => :profile`, else the controller's model. A macro
+  # naming another resource (`authorize_resource :changeset` in
+  # `DownloadsController`) authorizes its parent, with `:show`.
+  private def cancan_target(line : String, controller : String, action : String) : {String, String}
+    name = line.match(/\A\w+\s*\(?\s*:(\w+)\b(?!\s*=>)/).try(&.[1])
+    klass = line.match(/(?:\bclass:|:class\s*=>)\s*(false\b|:\w+|["']?[A-Z][\w:]*)/).try(&.[1].delete("\"'"))
+    singular = cancan_singular(controller)
+    subject = klass == "false" ? ":#{name || singular}" : klass || (name || singular).camelcase
+    parent = if m = line.match(/(?:\bparent:|:parent\s*=>)\s*(true|false)\b/)
+               m[1] == "true"
+             else
+               !name.nil? && name != singular && name != controller
+             end
+    {subject, parent ? "show" : action}
+  end
+
+  private def cancan_singular(name : String) : String
+    return "#{name.rchop("ies")}y" if name.ends_with?("ies")
+    return name.rchop("es") if name.matches?(/(?:ss|x|ch|sh|us)es\z/)
+    name.ends_with?('s') && !name.ends_with?("ss") ? name.rchop('s') : name
+  end
+
+  # The ability classes the controller's `current_ability` builds
+  # (`ApiAbility.new(user, scopes)`), else CanCan's default `Ability`.
+  private def cancan_ability_classes(paths : Array(String)) : Array(String)
+    defs = (rails_chain.defs["current_ability"]? || [] of {String, Int32}).select { |path, _| paths.includes?(path) }
+    return ["Ability"] if defs.empty?
+    # Nearest class first: the override Ruby calls.
+    nearest = defs.min_by { |path, _| paths.index(path) || paths.size }
+    def_bodies("current_ability", [nearest]).flat_map(&.flat_map { |_, text| text.scan(/\b([A-Z][\w:]*)\.new\b/).map(&.[1]) }).uniq!
+  end
+
+  private def cancan_ability(name : String) : Noir::CanCanAbility?
+    @cancan_abilities.put_if_absent(name) do
+      suffix = "/#{name.underscore.gsub("::", "/")}.rb"
+      collect_files_by_extension(".rb").each do |path|
+        next unless path.ends_with?(suffix) && (lines = read_file_lines(path))
+        next unless lines.any?(&.matches?(/\A\s*include\s+CanCan::Ability\b/))
+        ability = Noir::CanCanAbility.new(lines)
+        break ability if ability.readable?
+      end
+    end
   end
 
   private def extract_action_name(lines : Array(String), line_idx : Int32) : String?

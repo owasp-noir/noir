@@ -1339,4 +1339,165 @@ describe "RubyAuthTagger (routed controller chain)" do
       CodeLocator.instance.clear_all
     end
   end
+
+  it "reads CanCanCan authorize_resource against the ability's rules for a nil user, and hash-rocket only:" do
+    CodeLocator.instance.clear_all
+    tmpdir = File.tempname("ruby_cancan")
+    files = {
+      "app/controllers/application_controller.rb" => <<-RB,
+        class ApplicationController < ActionController::Base
+          rescue_from CanCan::AccessDenied, :with => :deny_access
+
+          def current_ability
+            Ability.new(current_user)
+          end
+        end
+        RB
+      "app/controllers/api_controller.rb" => <<-RB,
+        class ApiController < ApplicationController
+          def authorize
+            setup_user_auth
+            render :plain => "no", :status => :unauthorized unless current_user
+          end
+
+          def current_ability
+            ApiAbility.new(current_user, scopes)
+          end
+        end
+        RB
+      "app/controllers/api/notes_controller.rb" => <<-RB,
+        module Api
+          class NotesController < ApiController
+            before_action :authorize, :only => [:close]
+
+            authorize_resource
+
+            def search
+            end
+
+            def create
+            end
+
+            def close
+            end
+
+            def destroy
+            end
+          end
+        end
+        RB
+      "app/controllers/api/notes/downloads_controller.rb" => <<-RB,
+        module Api
+          module Notes
+            class DownloadsController < ApiController
+              authorize_resource :note
+
+              def show
+              end
+            end
+          end
+        end
+        RB
+      "app/controllers/issues_controller.rb" => <<-RB,
+        class IssuesController < ApplicationController
+          authorize_resource
+
+          def index
+          end
+
+          def resolve
+          end
+        end
+        RB
+      "app/controllers/sections_controller.rb" => <<-RB,
+        class SectionsController < ApplicationController
+          authorize_resource :class => :profile
+
+          def show
+          end
+
+          def update
+          end
+        end
+        RB
+      "app/controllers/descriptions_controller.rb" => <<-RB,
+        class DescriptionsController < SectionsController
+          skip_authorize_resource :only => :show
+        end
+        RB
+      "app/models/ability.rb" => <<-RB,
+        class Ability
+          include CanCan::Ability
+
+          def initialize(user)
+            can :read, Issue if Settings.status != "offline"
+
+            if user&.active?
+              can [:read, :update], [:preferences, :profile]
+              can :resolve, Issue if user.moderator?
+            end
+          end
+        end
+        RB
+      "app/abilities/api_ability.rb" => <<-RB,
+        class ApiAbility
+          include CanCan::Ability
+
+          def initialize(user, scopes)
+            can [:read, :search], Note
+            can :create, Note unless user
+
+            if user
+              can [:create, :close], Note if scopes.include?("write_notes")
+            end
+            can :destroy, Note if scopes.include?("moderate")
+          end
+        end
+        RB
+    }
+    paths = files.to_h do |name, body|
+      path = File.join(tmpdir, name)
+      Dir.mkdir_p(File.dirname(path))
+      File.write(path, body)
+      CodeLocator.instance.register_path(path)
+      {name, path}
+    end
+
+    begin
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(tmpdir)
+      at = ->(name : String, line : Int32, routed : String?) do
+        path = paths[name]
+        endpoint = Endpoint.new("/#{File.basename(name, ".rb")}/#{line}", "GET", [] of Param, Details.new(PathInfo.new(path, line)))
+        handler = Handler.new("x#y", path, line)
+        handler.dispatch_path = paths[routed] if routed
+        endpoint.handler = handler
+        endpoint
+      end
+      notes = "app/controllers/api/notes_controller.rb"
+      search, create, close, destroy = at.call(notes, 7, nil), at.call(notes, 10, nil), at.call(notes, 13, nil), at.call(notes, 16, nil)
+      download = at.call("app/controllers/api/notes/downloads_controller.rb", 6, nil)
+      issues = "app/controllers/issues_controller.rb"
+      index, resolve = at.call(issues, 4, nil), at.call(issues, 7, nil)
+      sections = "app/controllers/sections_controller.rb"
+      update = at.call(sections, 7, "app/controllers/descriptions_controller.rb")
+      show = at.call(sections, 4, "app/controllers/descriptions_controller.rb")
+      endpoints = [search, create, close, destroy, download, index, resolve, update, show]
+
+      RubyAuthTagger.new(noir_options).perform(endpoints)
+
+      # Granted to everyone, `unless user`, behind a setting, or to the
+      # parent `:note` resource's `:show`: open. `:only => [:close]` keeps
+      # `authorize` off the other actions.
+      [search, create, download, index, show].each(&.tags.should(be_empty))
+      close.tags.map(&.description).should contain("Protected by authorize")
+      resolve.tags.first.description.should contain("CanCanCan authorize_resource (Ability grants :resolve on Issue to no nil user)")
+      update.tags.first.description.should contain("grants :update on :profile")
+      # A rule under a condition the reader cannot judge is not a refusal.
+      destroy.tags.should be_empty
+    ensure
+      FileUtils.rm_rf(tmpdir)
+      CodeLocator.instance.clear_all
+    end
+  end
 end

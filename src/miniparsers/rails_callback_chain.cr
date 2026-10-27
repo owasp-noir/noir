@@ -16,12 +16,13 @@ module Noir
     # Ruby looks a callback's `def` up), and the active callbacks registered
     # under an `if:` condition (see `conditional?`), and the active callbacks
     # a `skip_before_action ..., if:` / `unless:` lifts on a condition, with
-    # that condition's text.
+    # that condition's text, and the CanCanCan `authorize_resource` /
+    # `load_and_authorize_resource` statements left active for the action.
     record Resolution, callbacks : Array(String), paths : Array(String), conditional : Set(String),
-      lifted : Hash(String, String) = Hash(String, String).new
+      lifted : Hash(String, String) = Hash(String, String).new, cancan : Array(String) = [] of String
 
     # Class-body lines that change the callback chain a subclass inherits.
-    CALLBACK_LINE = /^(?:include|(?:prepend_|skip_)?before_action|allow_unauthenticated_access)\b/
+    CALLBACK_LINE = /^(?:include|(?:prepend_|skip_)?before_action|allow_unauthenticated_access|(?:skip_)?(?:load_and_)?authorize_resource)\b/
 
     # Gem controllers an app subclasses, which are not in the scan: the
     # callback lines their class bodies register. Doorkeeper's
@@ -33,8 +34,13 @@ module Noir
       "Doorkeeper::ApplicationsController"           => ["before_action :authenticate_admin!"],
     }
 
-    ONLY_OPTION   = /\bonly:/
-    EXCEPT_OPTION = /\bexcept:/
+    # CanCanCan's class macros, which register a `before_action` that runs
+    # `authorize!(action, resource)`.
+    CANCAN_LINE = /\A(?:skip_)?(?:load_and_)?authorize_resource\b/
+
+    # `only: [...]` or the hash-rocket `:only => [...]` older apps write.
+    ONLY_OPTION   = /\bonly:|:only\s*=>/
+    EXCEPT_OPTION = /\bexcept:|:except\s*=>/
 
     # `before_action :a, :b` — the symbol callbacks it registers.
     SYMBOL_CALLBACKS = /(?<!skip_)before_action\s*\(?\s*((?::\w+[!?]?\s*,?\s*)+)/
@@ -63,7 +69,7 @@ module Noir
     # `unless:` is read as an exemption, the way `except:` is —
     # `unless: :devise_controller?` guards every app controller.
     def self.conditional?(line : String) : Bool
-      line.matches?(/\bif:/)
+      line.matches?(/\bif:|:if\s*=>/)
     end
 
     getter classes = Hash({String, Int32}, Klass).new
@@ -113,7 +119,7 @@ module Noir
       match = line.match(option)
       return unless match
       value = line[match.end..]
-      if stop = value.index(/\b\w+:(?!:)/)
+      if stop = value.index(/\b\w+:(?!:)|:\w+\s*=>/)
         value = value[0, stop]
       end
       value.gsub(/%[iwIW][\[(]/, " ").scan(/\w+[?!]?/).map(&.[0])
@@ -222,12 +228,20 @@ module Noir
           end
         elsif line.starts_with?("allow_unauthenticated_access")
           active.delete("require_authentication") if RailsCallbackChain.applies_to_action?(line, action)
+        elsif line.matches?(CANCAN_LINE)
+          next unless RailsCallbackChain.applies_to_action?(line, action)
+          # ponytail: a skip drops every macro, not only the named resource's.
+          if line.starts_with?("skip_")
+            resolution.cancan.clear
+          elsif !RailsCallbackChain.conditional?(line) && !line.matches?(/(?:\bunless:|:unless\s*=>)/)
+            resolution.cancan << line
+          end
         elsif line.starts_with?("skip_")
           next unless RailsCallbackChain.applies_to_action?(line, action)
           next unless m = line.match(/^skip_before_action\s+((?::\w+[!?]?\s*,?\s*)+)/)
           # A skip on a condition leaves the callback registered: whether it
           # runs is that condition's to decide.
-          lift = line.match(/\b(?:if|unless):\s*(.+)\z/).try(&.[0])
+          lift = line.match(/(?:\b(?:if|unless):|:(?:if|unless)\s*=>)\s*(.+)\z/).try(&.[0])
           m[1].scan(/:(\w+[!?]?)/) do |name|
             if lift
               resolution.lifted[name[1]] = lift
