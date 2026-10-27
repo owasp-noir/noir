@@ -1953,9 +1953,13 @@ module Analyzer::Python
               end
             elsif drf_generic_class && any_method_function_match && (drf_methods = drf_generic_action_http_methods(any_method_function_match[1]))
               current_http_methods = drf_methods
+              # `create` validating `self.get_serializer(data=request.data)`
+              # reads that serializer's fields for the verbs it serves.
+              action_serializer_params = parse_code_block(lines[offset..]).try { |codeblock| drf_serializer_params(codeblock, filepath, chain) }
               drf_methods.each do |method_name|
                 next unless suspicious_http_methods.includes?(method_name)
                 method_lines[method_name] ||= body_start_line + offset + 2
+                action_serializer_params.try { |found| method_params[method_name].concat found }
               end
             end
 
@@ -2010,8 +2014,9 @@ module Analyzer::Python
             # Served by a base's method: the view class itself is the
             # endpoint's code too (its mixins and attributes apply).
             details.add_path(PathInfo.new(filepath, class_definition_line)) if owner
-            endpoint_params = common_params + (method_params[http_method_name]? || [] of Param)
-            endpoint = Endpoint.new(url, http_method_name, filter_params(http_method_name, endpoint_params), details)
+            own_params = method_params[http_method_name]? || [] of Param
+            endpoint_params = drf_generic_class ? filter_params(http_method_name, common_params) + drf_filter_params(http_method_name, own_params) : filter_params(http_method_name, common_params + own_params)
+            endpoint = Endpoint.new(url, http_method_name, endpoint_params, details)
             # A verb with no body in the project (served by the framework
             # base, `TemplateView.get`) has no handler to point at.
             if method_lines.has_key?(http_method_name)
@@ -2339,7 +2344,8 @@ module Analyzer::Python
           self_forms << {call[1], location}
           next
         end
-        fields = form_class_fields(call[1], filepath, view_chain) || next
+        target = settings_loaded_class(code, call[1], filepath) unless call[1].includes?('.')
+        fields = form_class_fields(call[1], filepath, view_chain, target) || next
         methods << "POST" if location == "form" && !methods.includes?("POST")
         fields.each { |field| params << Param.new(field, "", location) }
       end
@@ -2350,7 +2356,8 @@ module Analyzer::Python
     # class (its declared fields, and a ModelForm's `Meta.fields`), one of
     # Django's auth forms, or `self.form` read off the view's class
     # attribute (`form = forms.TenantForm`, nearest class first).
-    private def form_class_fields(name : ::String, filepath : ::String, view_chain : Array(DrfClass)) : Array(::String)?
+    private def form_class_fields(name : ::String, filepath : ::String, view_chain : Array(DrfClass),
+                                  target : Tuple(::String, ::String)? = nil) : Array(::String)?
       if attr = name.lchop?("self.")
         attr_re = /^\s+#{Regex.escape(attr)}\s*=\s*([A-Za-z_][\w.]*)\s*$/m
         view_chain.each do |klass|
@@ -2359,7 +2366,7 @@ module Analyzer::Python
         end
         return
       end
-      if target = resolve_python_class(filepath, name)
+      if target ||= resolve_python_class(filepath, name)
         chain = drf_class_chain(target[0], target[1])
         return if chain.empty?
         fields = declared_input_fields(target)
@@ -2376,6 +2383,63 @@ module Analyzer::Python
       end
       short = name.rpartition('.')[2]
       DJANGO_AUTH_FORM_FIELDS[short]? if django_auth_form_import?(filepath, short)
+    end
+
+    # `login_form = import_string(settings.USER_LOGIN_FORM)`: a local bound
+    # to the class a setting names by dotted path, through Django's
+    # `import_string` or a project function that ends in it.
+    SETTINGS_LOADED_RE = /^\s*([A-Za-z_]\w*)\s*=\s*([A-Za-z_][\w.]*)\s*\(\s*settings\.([A-Z][A-Z0-9_]*)\s*\)\s*$/m
+    IMPORT_STRING_CALL = /(?<![\w.])(?:module_loading\.)?import_string\s*\(/
+
+    @string_importers = Hash(Tuple(::String, Int32), Bool).new
+    @settings_strings = Hash(::String, Hash(::String, Set(::String))).new
+
+    # `{file, class}` of the class local `name` holds, nil unless the scan
+    # holds it and every settings module that sets the setting agrees.
+    private def settings_loaded_class(code : ::String, name : ::String, filepath : ::String) : Tuple(::String, ::String)?
+      return unless code.includes?("settings.")
+      binding = code.scan(SETTINGS_LOADED_RE).find { |m| m[1] == name } || return
+      return unless string_importer?(binding[2], filepath, 0)
+      values = settings_string_values[binding[3]]? || return
+      return unless values.size == 1
+      module_path, _, class_name = values.first.rpartition('.')
+      return if module_path.empty?
+      relative = module_path.tr(".", "/")
+      file = {"#{relative}.py", "#{relative}/__init__.py"}.map { |rel| File.join(@django_base_path, rel) }.find { |path| File.file?(path) } || return
+      python_definition_site(file, class_name)
+    end
+
+    # Whether calling `callee` from `filepath` imports a dotted path:
+    # Django's `import_string`, or a project function whose body calls it
+    # (or returns a call to one that does).
+    private def string_importer?(callee : ::String, filepath : ::String, depth : Int32) : Bool
+      return view_file_index(filepath).content.includes?("module_loading") if callee.matches?(/\A(?:module_loading\.)?import_string\z/)
+      return false if depth > 1
+      source_cache = {filepath => view_file_index(filepath).content}
+      site = resolve_python_callee_definition(callee, filepath, source_cache, callee_import_map(@django_base_path, filepath, source_cache[filepath])) || return false
+      cached = @string_importers[site]?
+      return cached unless cached.nil?
+      @string_importers[site] = false # cycle guard
+      lines = view_file_index(site[0]).lines
+      body = (parse_code_block(lines[(site[1] - 1)..]) if lines[site[1] - 1]?.try(&.lstrip.matches?(/^def\s/))) || ""
+      found = body.matches?(IMPORT_STRING_CALL) && view_file_index(site[0]).content.includes?("module_loading")
+      found ||= body.scan(/^\s*return\s+([A-Za-z_][\w.]*)\s*\(/m).any? { |m| string_importer?(m[1], site[0], depth + 1) }
+      @string_importers[site] = found
+    end
+
+    # Every string value a project settings module assigns each
+    # upper-case setting at module level.
+    private def settings_string_values : Hash(::String, Set(::String))
+      @settings_strings[@django_base_path] ||= begin
+        values = Hash(::String, Set(::String)).new
+        all_files.each do |file|
+          next unless file.ends_with?(".py") && django_settings_path?(file) && file.starts_with?(@django_base_path)
+          read_file_content(file).scan(/^([A-Z][A-Z0-9_]*)\s*=\s*[rf]?['"]([\w.]+)['"]\s*$/m) do |m|
+            (values[m[1]] ||= Set(::String).new) << m[2]
+          end
+        end
+        values
+      end
     end
 
     DJANGO_AUTH_FORM_IMPORTS = DJANGO_AUTH_FORM_FIELDS.keys.to_h do |name|
@@ -2433,6 +2497,7 @@ module Analyzer::Python
       folded = with_request_aliases(fold_python_continuations(codeblock.split("\n")), verb)
       code = folded.join('\n')
       params.concat bound_form_params(code, filepath, [verb], chain, self_forms)
+      params.concat mapping_helper_params(code, filepath)
       folded.each { |line| params.concat extract_params_from_line(line, [verb]) }
       return params if depth >= 2
       # Module functions it hands `request` to (`get_results_limit(request)`).
@@ -2476,6 +2541,11 @@ module Analyzer::Python
       params = [] of Param
       scan_methods = restricted ? methods.dup : methods
       folded = with_request_aliases(fold_python_continuations(lines))
+      code = folded.join('\n')
+      # A bound form the scan resolves names what the request carries; a
+      # `form.cleaned_data` key it does not declare is one its `clean()`
+      # computed (`cleaned_data["user"]`), not an input.
+      form_params = bound_form_params(code, filepath, scan_methods)
       folded.each_with_index do |line, index|
         # A JSON body read under `if request.method == "PUT":` is that
         # verb's alone.
@@ -2493,10 +2563,10 @@ module Analyzer::Python
           end
         end
         scan_methods << "POST" if !scan_methods.includes?("POST") && line.matches?(RAW_BODY_RE)
-        params.concat extract_params_from_line(line, scan_methods)
+        params.concat extract_params_from_line(line, scan_methods, cleaned_data: form_params.empty?)
       end
-      code = folded.join('\n')
-      params.concat bound_form_params(code, filepath, scan_methods)
+      params.concat form_params
+      params.concat mapping_helper_params(code, filepath)
       params.concat validated_model_params(code, filepath)
       params
     end
@@ -2551,6 +2621,42 @@ module Analyzer::Python
       end
       return lines if aliases.empty?
       lines.map { |line| aliases.reduce(line) { |text, (name, target)| text.gsub(name, target) } }
+    end
+
+    # `bool_from_request(request.GET, "include_predictions", False)`: a
+    # project function handed a request mapping and a key reads that key
+    # when its body looks the key up in the mapping (`params.get(key, ...)`,
+    # `params[key]`), judged by its definition.
+    MAPPING_HELPER_CALL_RE = /(?<![\w.])([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)?)\s*\(\s*(?:self\.)?request\.(GET|POST|data|query_params)\s*,\s*[rf]?['"]([^'"]+)['"]/
+
+    @mapping_helpers = Hash(Tuple(::String, Int32), Bool).new
+
+    private def mapping_helper_params(code : ::String, filepath : ::String) : Array(Param)
+      params = [] of Param
+      return params unless code.includes?("request.")
+      source_cache = {filepath => view_file_index(filepath).content}
+      import_map : Hash(::String, Tuple(::String, Int32))? = nil
+      code.scan(MAPPING_HELPER_CALL_RE) do |call|
+        import_map ||= callee_import_map(@django_base_path, filepath, source_cache[filepath])
+        site = resolve_python_callee_definition(call[1], filepath, source_cache, import_map) || next
+        next unless @mapping_helpers[site] ||= reads_key_from_mapping?(site[0], site[1])
+        params << Param.new(call[3], "", REQUEST_PARAM_FIELD_MAP[call[2]][1])
+      end
+      params
+    end
+
+    # Whether the function defined at `path:line` looks its second argument
+    # up in its first.
+    private def reads_key_from_mapping?(path : ::String, line : Int32) : Bool
+      lines = view_file_index(path).lines
+      return false unless lines[line - 1]?.try(&.lstrip.matches?(/^(?:async\s+)?def\s/))
+      body = parse_code_block(lines[(line - 1)..]) || return false
+      header = extract_python_definition_header(body.split("\n"))
+      args = header.match(/\((.*)\)/m).try { |m| split_python_arguments(m[1]) } || return false
+      names = args.map(&.strip.split(/[:=]/, 2)[0].strip).reject { |name| name.empty? || name == "self" || name.starts_with?('*') }
+      mapping, key = names[0]?, names[1]?
+      return false unless mapping && key
+      body.matches?(/(?<![\w.])#{mapping}\s*(?:\.get(?:list)?\s*\(\s*#{key}\b|\[\s*#{key}\s*\])/)
     end
 
     # `return webhook_form(request, channel)`: a function view that hands its
@@ -2817,6 +2923,11 @@ module Analyzer::Python
       serializer_params = drf_serializer_params(codeblock, klass.filepath, chain, drf_action.name)
       (codeblock.includes?("request.method") ? drf_action.params : drf_action.body_params).concat serializer_params
       drf_action.params.concat cbv_body_params(codeblock, klass.filepath, chain, drf_action.method, action: drf_action.name)
+      # A DELETE action's own body reads, unless it branches on the verb
+      # and they may be another's.
+      if drf_action.method == "DELETE" && !codeblock.includes?("request.method")
+        drf_action.body_params.concat drf_filter_params(drf_action.method, drf_action.params)
+      end
       if paginates?(codeblock, klass.filepath, body_lines, offset)
         drf_action.params.concat pagination_params(chain, drf_action.name)
       end
@@ -3121,7 +3232,7 @@ module Analyzer::Python
     end
 
     # Extract parameters from a line of code
-    def extract_params_from_line(line : ::String, endpoint_methods : Array(::String))
+    def extract_params_from_line(line : ::String, endpoint_methods : Array(::String), cleaned_data = true)
       suspicious_params = Array(Param).new
 
       if line.includes? "request."
@@ -3156,7 +3267,7 @@ module Analyzer::Python
         end
       end
 
-      if line.includes? "form.cleaned_data"
+      if cleaned_data && line.includes?("form.cleaned_data")
         matches = line.scan(/form\.cleaned_data\[[rf]?['"]([^'"]*)['"]\]/)
         if matches.empty?
           matches = line.scan(/form\.cleaned_data\.get\([rf]?['"]([^'"]*)['"]/)
@@ -3180,6 +3291,12 @@ module Analyzer::Python
     private def meta_header_name(key : ::String) : ::String?
       return key.downcase.tr("_", "-") if key.in?("CONTENT_TYPE", "CONTENT_LENGTH")
       http_header_name(key)
+    end
+
+    # DRF parses the body of a DELETE into `request.data` as it does for
+    # POST, so what a DRF view's DELETE handler reads from it is its input.
+    private def drf_filter_params(method : ::String, params : Array(Param)) : Array(Param)
+      filter_params(method.upcase == "DELETE" ? "POST" : method, params)
     end
 
     # Filter parameters based on HTTP method
