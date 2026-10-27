@@ -154,6 +154,35 @@ class ExpressAuthTagger < FrameworkTagger
     @method = nil
   end
 
+  # Whether every auth-name mention in `code` is a non-negated part of an
+  # `if` condition whose branch refuses nobody.
+  private def feature_tests_only?(code : String) : Bool
+    ifs = [] of {Int32, Int32}
+    code.scan(IF_HEAD) do |m|
+      open = m.end(0) - 1
+      close = Noir::JSLiteralScanner.find_matching_paren(code, open) || next
+      ifs << {open, close}
+    end
+    AUTH_MIDDLEWARE_NAMES.all? do |pattern|
+      code.scan(pattern).all? do |hit|
+        at = hit.begin(0)
+        range = ifs.reverse.find { |r| r[0] < at && at < r[1] }
+        next false unless range
+        open, close = range
+        part = code[open + 1...at].split(/&&|\|\|/).last
+        next false if part.includes?('!')
+        rest = code[close + 1..]
+        branch = if rest.lstrip.starts_with?('{')
+                   brace = close + 1 + (rest.size - rest.lstrip.size)
+                   code[brace..(Noir::JSLiteralScanner.find_matching_brace(code, brace) || code.size - 1)]
+                 else
+                   rest[0, rest.index(/[;\n]/) || rest.size]
+                 end
+        BRANCH_REFUSALS.keys.none? { |re| branch.matches?(re) }
+      end
+    end
+  end
+
   private def check_route(endpoint : Endpoint) : Endpoint
     receiver_description = nil
 
@@ -223,10 +252,12 @@ class ExpressAuthTagger < FrameworkTagger
     if wrapped = unwrapped_arg(arg, file)
       return wrapper_guard(arg, file) || guard_description(wrapped, file, handler_position)
     end
-    # A name inside the handler closure is a call or a read
-    # (`if (config.debug && req.isAuthenticated()) log()`), not a step:
-    # `handler_caller_check` judges that body by what it does.
-    if !(handler_position && arg.matches?(Noir::JSRouteExtractor::INLINE_FUNCTION_RE)) && (named = name_guard(code))
+    # A name inside the handler closure is a call or a read, not a step.
+    # It still stands in for a check `handler_caller_check` cannot read
+    # (one inside a `.then` callback), but not when every mention is a
+    # plain test whose branch refuses nobody (`if (config.debug &&
+    # req.isAuthenticated()) log()`).
+    if (named = name_guard(code)) && !(handler_position && arg.matches?(Noir::JSRouteExtractor::INLINE_FUNCTION_RE) && feature_tests_only?(code))
       return named
     end
 
@@ -384,6 +415,8 @@ class ExpressAuthTagger < FrameworkTagger
     text = read_file(path) || return
     body = code_only(Noir::JSRouteExtractor.definition_body(text, line))
     return unless anonymous_refusal(body) || body.matches?(/\b(?:res|response)\s*\.\s*redirect\s*\(/)
+    # `showPublic` redirects one caller and renders the page for the rest.
+    return if success_response?(body)
     "returns #{call[1].gsub(/\s+/, "")}#{SETTING_NOTE if reach == :setting}"
   end
 
@@ -530,7 +563,10 @@ class ExpressAuthTagger < FrameworkTagger
     roots = condition.gsub(/(['"`])(?:(?!\1)[^\\]|\\.)*\1/, "").scan(/(?<![\w$.])([A-Za-z_$][\w$]*)/).map(&.[1]).reject(&.matches?(JS_WORDS)).uniq!
     return false if roots.empty?
     roots.all? do |root|
-      root == "process" || source.matches?(/^(?:const|let|var)\s+(?:#{Regex.escape(root)}\b|\{[^}]*\b#{Regex.escape(root)}\b[^}]*\})|^import\b[^\n]*\b#{Regex.escape(root)}\b/m)
+      # A `let`/`var` is state only when it is a `require`: `let hits = 0`
+      # is a counter the app changes, not a setting.
+      name = Regex.escape(root)
+      root == "process" || source.matches?(/^(?:const\s+(?:#{name}\b|\{[^}]*\b#{name}\b[^}]*\})|(?:let|var)\s+(?:#{name}|\{[^}]*\b#{name}\b[^}]*\})\s*=\s*require\s*\()|^import\b[^\n]*\b#{name}\b/m)
     end
   end
 
@@ -706,7 +742,7 @@ class ExpressAuthTagger < FrameworkTagger
   BRANCH_REFUSALS = {
     /\bthrow\b/                                                                                                                                     => "throws",
     /\b(?:res|response)\s*\.\s*sendStatus\s*\(\s*40[13]\b|\b(?:res|response)\s*\.\s*status\s*\(\s*40[13]\s*\)\s*\.\s*(?:json|send|end|render)\s*\(/ => "answers 401/403",
-    /\bnext\s*\(\s*[^)\s]/                                                                                                                          => "next(err)",
+    /\bnext\s*\(\s*[^)\s'"`]/                                                                                                                       => "next(err)",
     /\b(?:res|response)\s*\.\s*redirect\s*\(/                                                                                                       => "redirects",
   }
 
@@ -802,13 +838,16 @@ class ExpressAuthTagger < FrameworkTagger
   private def caller_absence_refusal(body : String, receiver : String, stop_file : String? = nil) : String?
     # `!req.user`, or no positive id: `req.uid <= 0`.
     absent = /\A(?:!\s*(?:#{receiver})((?:\s*\??\.\s*[A-Za-z_$][\w$]*)+)\s*(?:\(\s*\))?|(?:#{receiver})((?:\s*\??\.\s*[A-Za-z_$][\w$]*)+)\s*(?:<=\s*0|<\s*1))\z/
+    source = stop_file.try { |file| read_file(file) }
+    # Whether an earlier branch of the current `if`/`else if` chain can let
+    # a caller through: `if (x) { … } else if (!req.user) …` is never met by
+    # a caller taking the first branch, unless that branch refuses too.
+    chain_passes = false
     body.scan(TOP_LEVEL_IF) do |m|
       at = m.begin(0)
       return if earlier_exit?(body, at, stop_file)
       next unless top_level?(body, at)
-      # `if (x) { … } else if (!req.user) …`: a caller taking the first
-      # branch never meets the check.
-      next if body[0...at].rstrip.ends_with?("else")
+      in_chain = body[0...at].rstrip.ends_with?("else")
       open = m.end(0) - 1
       close = Noir::JSLiteralScanner.find_matching_paren(body, open) || return
       condition = body[open + 1...close]
@@ -821,11 +860,13 @@ class ExpressAuthTagger < FrameworkTagger
                else
                  rest[0, rest.index(/[;\n]/) || rest.size]
                end
+      prior_passes = in_chain && chain_passes
+      chain_passes = prior_passes || top_refusal(branch, source, stop_file).nil?
+      next if prior_passes
       tested = Noir::TopLevelSplit.split(condition, '|', Noir::TopLevelSplit::Rules::JS_POSITIONAL_ARGS).reject(&.blank?).find do |part|
         next false unless hit = part.strip.match(absent)
         caller_fields?(hit[1]? || hit[2], receiver)
       end
-      source = stop_file.try { |file| read_file(file) }
       if tested
         refusal = branch_refusal(branch, source, stop_file) || next
         return "#{tested.gsub(/\s+/, "")} #{refusal}"
@@ -847,7 +888,9 @@ class ExpressAuthTagger < FrameworkTagger
   # (req.body.length > max) { return errorTooLong(req, res) }`, the helper
   # answering 4xx): that branch lets no caller through.
   private def earlier_exit?(body : String, at : Int32, stop_file : String?) : Bool
-    prefix = body[0...at]
+    # `const note = await Note.findOne({ id: req.params.id })`: a lookup
+    # handed neither the response nor `next` cannot answer the request.
+    prefix = body[0...at].gsub(QUIET_AWAIT) { |call| call.matches?(/(?<![\w$.])(?:res|response|next)(?![\w$])/) ? call : " " * call.size }
     return false unless prefix.matches?(EARLIER_EXIT)
     return true unless stop_file
     prefix.scan(TOP_LEVEL_IF) do |m|
@@ -863,11 +906,25 @@ class ExpressAuthTagger < FrameworkTagger
     prefix.matches?(EARLIER_EXIT)
   end
 
+  QUIET_AWAIT        = /\bawait\s+[A-Za-z_$][\w$]*(?:\s*\.\s*[A-Za-z_$][\w$]*)*\s*\((?:[^()]|\([^()]*\))*\)/
   INPUT_REFUSAL_CALL = /\A\{\s*return\s+([A-Za-z_$][\w$]*(?:\s*\.\s*[A-Za-z_$][\w$]*)*)\s*\([^;{}]*\)\s*;?\s*\}\z/
-  STATUS_4XX         = /\(\s*(?:[\w$.]+\s*,\s*)*['"]?4\d\d['"]?\s*[,)]/
+  # A 4xx answer as a definition writes it: `res.status(413)`,
+  # `res.sendStatus(400)`, or a reply helper handed the response and the
+  # code (`responseError(res, '413', …)`).
+  STATUS_4XX = /\b(?:res|response)\s*\.\s*(?:status|sendStatus)\s*\(\s*['"]?4\d\d\b|\b[A-Za-z_$][\w$.]*\s*\(\s*(?:res|response)\s*,\s*['"]?4\d\d['"]?\s*[,)]/
+  # A response that is not a refusal: anything sent without a 4xx status
+  # chained before it.
+  STATUS_4XX_CHAIN = /\b(?:res|response)\s*\.\s*status\s*\(\s*['"]?4\d\d['"]?\s*\)\s*\.\s*[A-Za-z]+\s*\(/
+  SUCCESS_RESPONSE = /\b(?:res|response)\s*\.\s*(?:json|jsonp|send|render|sendFile|download|end|write)\s*\(|\.pipe\s*\(\s*(?:res|response)\s*\)/
 
-  # A block that is only `return f(…)` through a function whose definition
-  # answers a 4xx status (`res.status(413)`, `responseError(res, '413', …)`).
+  # Whether `code` answers anything but a refusal.
+  private def success_response?(code : String) : Bool
+    code.gsub(STATUS_4XX_CHAIN, "").matches?(SUCCESS_RESPONSE)
+  end
+
+  # A block that is only `return f(…)` through a function whose every
+  # answer is a 4xx (`res.status(413).send(…)`, `responseError(res, '413',
+  # …)`): whoever takes it, on whatever input, is refused.
   private def input_refusal?(block : String, file : String) : Bool
     call = block.match(INPUT_REFUSAL_CALL) || return false
     content = read_file(file) || return false
@@ -875,7 +932,8 @@ class ExpressAuthTagger < FrameworkTagger
     path, line = target.path, target.line
     return false if path.nil? || line.nil?
     text = read_file(path) || return false
-    Noir::CComments.strip(Noir::JSRouteExtractor.definition_body(text, line), quotes: %("'`)).matches?(STATUS_4XX)
+    definition = Noir::CComments.strip(Noir::JSRouteExtractor.definition_body(text, line), quotes: %("'`))
+    definition.matches?(STATUS_4XX) && !success_response?(definition) && !definition.matches?(/\bnext\b/)
   end
 
   # The last field names the caller and the first is not request data
@@ -911,12 +969,35 @@ class ExpressAuthTagger < FrameworkTagger
       return unless inner.starts_with?('{')
       inner_close = Noir::JSLiteralScanner.find_matching_brace(inner, 0) || return
       return if inner[inner_close + 1..].matches?(/\A\s*else\b/)
-      found = branch_refusal(inner[0..inner_close], source, stop_file) || return
+      found = top_refusal(inner[0..inner_close], source, stop_file) || return
       return found.ends_with?(SETTING_NOTE) ? found : "#{found}#{SETTING_NOTE}"
     end
     return unless branch.starts_with?('{')
     close = Noir::JSLiteralScanner.find_matching_brace(branch, 0) || return
-    branch_refusal(branch[0..close], source, stop_file)
+    top_refusal(branch[0..close], source, stop_file)
+  end
+
+  # The refusal a block makes on its own top level, for every caller that
+  # enters it: not one under a nested `if` or inside a callback (`if (err)
+  # return next(err)`), and nil when the block also answers the request
+  # (`res.json(publicFeed)`).
+  private def top_refusal(block : String, source : String?, stop_file : String?) : String?
+    inner = block.strip
+    inner = inner[1...-1] if inner.starts_with?('{') && inner.ends_with?('}')
+    return if success_response?(inner)
+    BRANCH_REFUSALS.each do |re, label|
+      inner.scan(re) do |hit|
+        at = hit.begin(0)
+        return label if top_level?(inner, at) && enclosing_conditions(inner, at).empty?
+      end
+    end
+    file = stop_file || return
+    inner.scan(STOP_CALL) do |hit|
+      at = hit.begin(0)
+      next unless top_level?(inner, at) && enclosing_conditions(inner, at).empty?
+      return stop_refusal(inner[at..], file)
+    end
+    nil
   end
 
   private def top_level?(body : String, at : Int32) : Bool

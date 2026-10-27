@@ -2401,7 +2401,8 @@ module Noir
         handler_body.scan(re) do |m|
           {m[1] => "form", m[2] => "file"}.each do |name, type|
             handler_body.scan(/(?<![\w$.])#{Regex.escape(name)}\s*\??\.\s*([A-Za-z_$][\w$]*)\b(?!\s*\()|(?<![\w$.])#{Regex.escape(name)}\s*\[\s*['"]([^'"]+)['"]\s*\]/) do |field|
-              endpoint.push_param(Param.new(field[1]? || field[2], "", type))
+              field_name = field[1]? || field[2]
+              endpoint.push_param(Param.new(field_name, "", type)) unless field_name == "length"
             end
           end
         end

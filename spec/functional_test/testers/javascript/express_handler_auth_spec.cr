@@ -30,7 +30,12 @@ describe "Express in-handler auth checks and helper params", tags: "functional" 
     guards_of.call("POST", "/history/:noteId").should eq(["Protected by Express handler check req.isAuthenticated() else returns errorForbidden"])
     guards_of.call("GET", "/me/delete/:token").should eq(["Protected by Express handler check !req.isAuthenticated() returns errorForbidden"])
     guards_of.call("GET", "/new").should eq(["Protected by Express handler check req.isAuthenticated() else returns errorForbidden — a setting can lift it"])
-    {"/notes/:noteId" => "PUT", "/keyed" => "GET", "/either" => "GET", "/logout" => "GET"}.each do |url, method|
+    guards_of.call("POST", "/refused").should eq(["Protected by Express handler check !req.user throws"])
+    guards_of.call("GET", "/lookup/:id").should eq(["Protected by Express handler check !req.user answers 401/403"])
+    # A check the body judgement cannot reach keeps the name fallback.
+    guards_of.call("GET", "/later").should eq(["Protected by Express isAuthenticated middleware"])
+    {"/notes/:noteId" => "PUT", "/keyed" => "GET", "/either" => "GET", "/logout" => "GET",
+     "/public" => "GET", "/next" => "GET", "/counted" => "GET", "/preview" => "GET"}.each do |url, method|
       guards_of.call(method, url).should be_empty
     end
 
