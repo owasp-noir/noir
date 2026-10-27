@@ -1500,4 +1500,103 @@ describe "RubyAuthTagger (routed controller chain)" do
       CodeLocator.instance.clear_all
     end
   end
+
+  it "judges CanCanCan rule conditions per class or record check, and keeps guards behind opaque only:/skip lists" do
+    CodeLocator.instance.clear_all
+    tmpdir = File.tempname("ruby_cancan_conditions")
+    ctrl = ->(name : String, macro_line : String) do
+      "class #{name.camelcase}Controller < ApplicationController\n  #{macro_line}\n  def index; end\n  def show; end\n  def update; end\nend\n"
+    end
+    files = {
+      "app/controllers/application_controller.rb" => "class ApplicationController < ActionController::Base\nend\n",
+      "app/controllers/notes_controller.rb"       => ctrl.call("notes", "load_and_authorize_resource"),
+      "app/controllers/posts_controller.rb"       => ctrl.call("posts", "authorize_resource"),
+      "app/controllers/people_controller.rb"      => ctrl.call("people", "load_and_authorize_resource"),
+      "app/controllers/quizzes_controller.rb"     => ctrl.call("quizzes", "load_and_authorize_resource"),
+      "app/controllers/drafts_controller.rb"      => ctrl.call("drafts", "load_and_authorize_resource"),
+      "app/controllers/secrets_controller.rb"     => ctrl.call("secrets", "load_and_authorize_resource"),
+      "app/controllers/b1_controller.rb"          => "class B1Controller < ApplicationController\n  before_action :require_login, only: PROTECTED\n  skip_before_action :require_login, :only => PUBLIC\n  def index; end\n\n  def require_login\n    head :unauthorized unless current_user\n  end\nend\n",
+      "app/models/ability.rb"                     => <<-RB,
+        class Ability
+          include CanCan::Ability
+
+          def initialize(user)
+            can :read, Note, user_id: user.id
+            can :update, Post, user_id: user.id
+            can :read, [Person, Quiz]
+            can :read, Draft
+            cannot :read, Draft
+            can :read, Secret
+            cannot :read, Secret, hidden: true
+          end
+        end
+        RB
+      # Not the app's ability: a spec helper and another engine's.
+      "spec/support/ability.rb"              => "class Ability\n  include CanCan::Ability\n\n  def initialize(user)\n    return unless user\n    can :manage, :all\n  end\nend\n",
+      "engines/legacy/app/models/ability.rb" => "class Ability\n  include CanCan::Ability\n\n  def initialize(user)\n  end\nend\n",
+    }
+    paths = files.to_h do |name, body|
+      path = File.join(tmpdir, name)
+      Dir.mkdir_p(File.dirname(path))
+      File.write(path, body)
+      CodeLocator.instance.register_path(path)
+      {name, path}
+    end
+
+    begin
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(tmpdir)
+      at = ->(controller : String, url : String, line : Int32) do
+        path = paths["app/controllers/#{controller}_controller.rb"]
+        endpoint = Endpoint.new(url, "GET", [] of Param, Details.new(PathInfo.new(path, line)))
+        endpoint.handler = Handler.new("x#y", path, line)
+        endpoint
+      end
+      note_index, note_show = at.call("notes", "/notes", 3), at.call("notes", "/notes/:id", 4)
+      post_update = at.call("posts", "/posts/:id", 5)
+      people, quizzes = at.call("people", "/people/:id", 4), at.call("quizzes", "/quizzes", 3)
+      draft, secret = at.call("drafts", "/drafts/:id", 4), at.call("secrets", "/secrets/:id", 4)
+      b1 = at.call("b1", "/b1", 4)
+      endpoints = [note_index, note_show, post_update, people, quizzes, draft, secret, b1]
+
+      RubyAuthTagger.new(noir_options).perform(endpoints)
+
+      # A class check ignores conditions; a loaded record must match the
+      # caller, which a nil user does not. Bare `authorize_resource`
+      # checks the class.
+      note_index.tags.should be_empty
+      note_show.tags.first.description.should contain("grants :show on Note to no nil user")
+      post_update.tags.should be_empty
+      # Irregular plurals name the rule's model.
+      people.tags.should be_empty
+      quizzes.tags.should be_empty
+      # An unconditional `cannot` wins; a conditioned one refuses some records only.
+      draft.tags.first.description.should contain("on Draft")
+      secret.tags.should be_empty
+      # `only: PROTECTED` runs for every action; `skip ..., :only => PUBLIC` for none.
+      b1.tags.map(&.name).should eq(["auth"])
+    ensure
+      FileUtils.rm_rf(tmpdir)
+      CodeLocator.instance.clear_all
+    end
+  end
+
+  it "reads a guest user object's caller conditions on a record as unknown" do
+    ability = Noir::CanCanAbility.new(<<-RB.lines)
+      class Ability
+        include CanCan::Ability
+
+        def initialize(user)
+          user ||= User.new
+          can :read, Note, user_id: user.id
+          can :manage, :all if user.admin?
+        end
+      end
+      RB
+    ability.verdict("index", "Note").yes?.should be_true
+    ability.verdict("show", "Note", instance: true).maybe?.should be_true
+    ability.verdict("destroy", "Note", instance: true).no?.should be_true
+    # A subject no rule names (`:all` aside) may be misread: unknown.
+    Noir::CanCanAbility.new("class A\n  include CanCan::Ability\n\n  def initialize(user)\n    can :read, Note\n  end\nend\n".lines).verdict("show", "Medium").maybe?.should be_true
+  end
 end

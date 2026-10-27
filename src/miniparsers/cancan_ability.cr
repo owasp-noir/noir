@@ -16,7 +16,10 @@ module Noir
       Maybe
     end
 
-    record Rule, actions : Array(String), subjects : Array(String), grant : Grant, allows : Bool
+    # `conditioned`: the rule carries hash or block conditions; `on_user`:
+    # those conditions read the caller.
+    record Rule, actions : Array(String), subjects : Array(String), grant : Grant, allows : Bool,
+      conditioned : Bool = false, on_user : Bool = false
 
     getter rules = [] of Rule
     getter? readable = true
@@ -45,14 +48,30 @@ module Noir
 
     # `Yes` when a nil user is allowed `action` on `subject`, `No` when
     # every rule that could allow it needs a user, `Maybe` otherwise.
-    # `subject` is a class (`Note`) or symbol (`:profile`) name.
-    def verdict(action : String, subject : String) : Grant
+    # `subject` is a class (`Note`) or symbol (`:profile`) name. `instance`:
+    # CanCan checks a loaded record, not the class. On a class check it
+    # ignores a rule's hash/block conditions: a conditioned `can` allows, a
+    # conditioned `cannot` is skipped. On a record, a `can` whose conditions
+    # read the caller fails for a nil user (and is unknown for a guest
+    # object); a conditioned `cannot` refuses
+    # only some records and is skipped. A subject no rule names (`:all`
+    # aside) is one this reader may have derived wrongly: `Maybe`.
+    def verdict(action : String, subject : String, instance : Bool = false) : Grant
       return Grant::Maybe unless readable?
+      return Grant::Maybe unless rules.any?(&.subjects.any? { |name| name == "all" || name == "*" || same_subject?(name, subject) })
       result = Grant::No
       rules.each do |rule|
         next unless covers?(rule.actions, action, 0) && rule.subjects.any? { |name| name == "all" || name == "*" || same_subject?(name, subject) }
+        next if rule.conditioned && !rule.allows
+        grant = rule.grant
+        if rule.conditioned && instance && rule.on_user
+          # A guest object (`user ||= User.new`) is compared, not nil:
+          # whether a record matches it is the data's to say.
+          next unless @guest
+          grant = Grant::Maybe unless grant.no?
+        end
         polarity = rule.allows ? Grant::Yes : Grant::No
-        result = case rule.grant
+        result = case grant
                  when Grant::Yes then polarity
                  when Grant::No  then result
                  else                 result == polarity ? result : Grant::Maybe
@@ -145,7 +164,7 @@ module Noir
     # `can [:read, :create], [Note, :search], user_id: user.id if x`.
     private def read_rule(text : String, current : Array(Grant))
       allows = !text.starts_with?("cannot")
-      body = text.sub(/\A(?:can|cannot)\s*\(?\s*/, "")
+      body = text.sub(/\A(?:cannot|can)\s*\(?\s*/, "")
       grants = current.dup
       if m = body.match(/\A(.+?)\s+(if|unless)\s+(.+)\z/)
         body = m[1]
@@ -155,16 +174,13 @@ module Noir
       actions = symbols(args[0]? || "")
       subjects = subjects_of(args[1]? || "")
       grant = all(grants)
-      # Hash or block conditions on the caller fail for a nil user.
-      if (args.size > 2 || body.matches?(/\bdo\b|\{/)) && body.matches?(user_ref)
-        grant = Grant::No
-      end
+      conditioned = args.size > 2 || body.matches?(/\bdo\b|\{/)
       if actions.empty? || subjects.empty?
         actions = ["*"]
         subjects = ["*"]
         grant = Grant::Maybe if grant == Grant::Yes
       end
-      @rules << Rule.new(actions, subjects, grant, allows)
+      @rules << Rule.new(actions, subjects, grant, allows, conditioned, conditioned && body.matches?(user_ref))
     end
 
     private def split_args(text : String) : Array(String)

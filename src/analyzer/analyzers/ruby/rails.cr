@@ -2,6 +2,7 @@ require "../../engines/ruby_engine"
 require "../../../utils/top_level_split"
 require "../../../utils/call_fold"
 require "../../../miniparsers/rails_callback_chain"
+require "../../../utils/ruby_inflector"
 
 module Analyzer::Ruby
   class Rails < RubyEngine
@@ -829,21 +830,8 @@ module Analyzer::Ruby
       mods
     end
 
-    SINGULAR_IRREGULARS = {"people" => "person", "men" => "man", "children" => "child"}
-
-    # The common subset of ActiveSupport's singular rules, applied to the
-    # word's tail as Rails does (`scheduled_statuses` -> `scheduled_status`).
-    # It names nested route keys (`:status_id`), so it has to agree with Rails.
-    # ponytail: no `-ves`/`-oes`/`-ices` rules and a short irregular list;
-    # add one when a route key comes out wrong.
     private def singularize(name : String) : String
-      return name if name.matches?(/(?:\A|_)(?:news|series|species|information|equipment|money|rice|fish|sheep|jeans|police)\z/)
-      SINGULAR_IRREGULARS.each { |plural, single| return name.rchop(plural) + single if name.ends_with?(plural) }
-      return name.rchop("es") if name.matches?(/(?:alias|status|bus|ss|x|ch|sh)es\z/)
-      return "#{name.rchop("ies")}y" if name.matches?(/(?:[^aeiouy]|qu)ies\z/)
-      return "#{name.rchop('a')}um" if name.matches?(/[ti]a\z/)
-      return name.rchop('s') if name.ends_with?('s') && !name.ends_with?("ss") && name.size > 1
-      name
+      Noir::RubyInflector.singularize(name)
     end
 
     # use_doorkeeper / use_doorkeeper do ... end
@@ -1895,7 +1883,12 @@ module Analyzer::Ruby
           # the Rack spelling `request.env["HTTP_X_KEY"]` (named `X-Key`),
           # which `request.headers["HTTP_X_KEY"]` also accepts.
           line.scan(/request\.(?:headers(?:\[|\.fetch\s*\()\s*['"](?:HTTP_(\w+)|([^'"]+))['"]|env\[\s*['"]HTTP_(\w+)['"]\s*\])/) do |hm|
-            name = (hm[2]? || (hm[1]? || hm[3]).split('_').join('-', &.capitalize)).strip
+            # `HTTP_VERSION` is the server's protocol variable, not a header;
+            # `CONTENT_TYPE` / `CONTENT_LENGTH` are the CGI spellings of theirs.
+            next if hm[1]? == "VERSION" || hm[3]? == "VERSION"
+            raw = hm[2]?
+            raw = raw.split('_').join('-', &.capitalize) if raw && raw.in?("CONTENT_TYPE", "CONTENT_LENGTH")
+            name = (raw || (hm[1]? || hm[3]).split('_').join('-', &.capitalize)).strip
             next if name.empty? || this_method.empty?
             params_method[this_method] ||= [] of Param
             params_method[this_method] << Param.new(name, "", "header")

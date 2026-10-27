@@ -2,6 +2,7 @@ require "../../../models/framework_tagger"
 require "../../../models/endpoint"
 require "../../../miniparsers/rails_callback_chain"
 require "../../../miniparsers/cancan_ability"
+require "../../../utils/ruby_inflector"
 
 @[Noir::TaggerFor(key: "ruby_auth", name: "Ruby Auth Tagger", desc: "Identifies Ruby authentication patterns (Devise, Pundit, CanCanCan, Warden)", order: 120)]
 class RubyAuthTagger < FrameworkTagger
@@ -126,8 +127,8 @@ class RubyAuthTagger < FrameworkTagger
     @denies_anonymous = Hash(String, Bool).new
     @deny_settings = Hash(String, String).new
     @caller_ivars = Hash(String, Array(String)).new
-    @cancan_verdicts = Hash({String, String}, String?).new
-    @cancan_abilities = Hash(String, Noir::CanCanAbility?).new
+    @cancan_verdicts = Hash({String, String, String, Bool}, Bool).new
+    @cancan_abilities = Hash({String, String}, Noir::CanCanAbility?).new
   end
 
   # Per-line flags for `check_controller_auth`, computed once per file.
@@ -224,7 +225,7 @@ class RubyAuthTagger < FrameworkTagger
       # Action-body authorization (Pundit/CanCanCan) stacks with controller authn.
       body = check_action_body_auth(lines, line_idx, action)
       authz_desc ||= body[:authz]
-      authz_desc ||= (dispatch || rails_chain.controller_in(path)).try { |cancan_leaf| cancan_refuses(cancan_leaf, action) }
+      authz_desc ||= (dispatch || rails_chain.controller_in(path)).try { |cancan_leaf| cancan_refuses(cancan_leaf, action, endpoint.url.scan(/:(\w+)/).map(&.[1])) }
 
       # add_tag dedupes by (name, tagger), so authn/authz need distinct names.
       if authn_desc
@@ -933,47 +934,50 @@ class RubyAuthTagger < FrameworkTagger
   # when the ability `current_ability` builds grants that action on that
   # resource to no nil user: CanCan raises `AccessDenied`, which the app
   # answers with a refusal (or a 500). nil when an ability rule may admit
-  # an anonymous caller, or the ability cannot be read.
-  private def cancan_refuses(leaf : Noir::RailsCallbackChain::Klass, action : String?) : String?
+  # an anonymous caller, or the ability cannot be read. `url_params` are
+  # the route's keys: `load_and_authorize_resource` checks a loaded record
+  # only when the route carries its id.
+  private def cancan_refuses(leaf : Noir::RailsCallbackChain::Klass, action : String?, url_params : Array(String)) : String?
     return unless action
-    @cancan_verdicts.put_if_absent({leaf.name, action}) do
-      resolved = rails_chain.resolve(leaf, action)
-      next if resolved.cancan.empty?
-      abilities = cancan_ability_classes(resolved.paths)
-      readers = abilities.compact_map { |name| cancan_ability(name) }
-      next if readers.empty? || readers.size != abilities.size
-      controller = leaf.name.split("::").last.underscore.rchop("_controller")
-      resolved.cancan.each do |line|
-        subject, query = cancan_target(line, controller, action)
-        next unless readers.all?(&.verdict(query, subject).no?)
-        macro_name = line[/\A\w+/]
-        break "CanCanCan #{macro_name} (#{abilities.join(", ")} grants :#{query} on #{subject} to no nil user)"
+    resolved = rails_chain.resolve(leaf, action)
+    return if resolved.cancan.empty?
+    abilities = cancan_ability_classes(resolved.paths)
+    readers = abilities.compact_map { |name| cancan_ability(name, leaf.path) }
+    return if readers.empty? || readers.size != abilities.size
+    controller = leaf.name.split("::").last.underscore.rchop("_controller")
+    resolved.cancan.each do |line|
+      subject, query, id_key = cancan_target(line, controller, action)
+      instance = line.starts_with?("load_and_authorize_resource") && !id_key.nil? && url_params.includes?(id_key)
+      verdict = @cancan_verdicts.put_if_absent({leaf.path, line, action, instance}) do
+        readers.all?(&.verdict(query, subject, instance).no?)
       end
+      next unless verdict
+      macro_name = line[/\A\w+/]
+      return "CanCanCan #{macro_name} (#{abilities.join(", ")} grants :#{query} on #{subject} to no nil user)"
     end
+    nil
   end
 
-  # The subject and the action `authorize!` is called with: the resource
-  # class named by the macro (`:class => Trace`), a symbol when `:class =>
-  # false` / `:class => :profile`, else the controller's model. A macro
-  # naming another resource (`authorize_resource :changeset` in
+  # The subject and the action `authorize!` is called with, and the route
+  # key of the record `load_and_authorize_resource` loads (nil when it
+  # builds a new one or loads a collection): the resource class named by
+  # the macro (`:class => Trace`), a symbol when `:class => false` /
+  # `:class => :profile`, else the controller's model. A macro naming
+  # another resource (`authorize_resource :changeset` in
   # `DownloadsController`) authorizes its parent, with `:show`.
-  private def cancan_target(line : String, controller : String, action : String) : {String, String}
+  private def cancan_target(line : String, controller : String, action : String) : {String, String, String?}
     name = line.match(/\A\w+\s*\(?\s*:(\w+)\b(?!\s*=>)/).try(&.[1])
     klass = line.match(/(?:\bclass:|:class\s*=>)\s*(false\b|:\w+|["']?[A-Z][\w:]*)/).try(&.[1].delete("\"'"))
-    singular = cancan_singular(controller)
+    singular = Noir::RubyInflector.singularize(controller)
     subject = klass == "false" ? ":#{name || singular}" : klass || (name || singular).camelcase
     parent = if m = line.match(/(?:\bparent:|:parent\s*=>)\s*(true|false)\b/)
                m[1] == "true"
              else
                !name.nil? && name != singular && name != controller
              end
-    {subject, parent ? "show" : action}
-  end
-
-  private def cancan_singular(name : String) : String
-    return "#{name.rchop("ies")}y" if name.ends_with?("ies")
-    return name.rchop("es") if name.matches?(/(?:ss|x|ch|sh|us)es\z/)
-    name.ends_with?('s') && !name.ends_with?("ss") ? name.rchop('s') : name
+    return {subject, "show", "#{name || singular}_id"} if parent
+    id_key = line.match(/(?:\bid_param:|:id_param\s*=>)\s*:(\w+)/).try(&.[1]) || "id"
+    {subject, action, action.in?("index", "new", "create") ? nil : id_key}
   end
 
   # The ability classes the controller's `current_ability` builds
@@ -986,15 +990,22 @@ class RubyAuthTagger < FrameworkTagger
     def_bodies("current_ability", [nearest]).flat_map(&.flat_map { |_, text| text.scan(/\b([A-Z][\w:]*)\.new\b/).map(&.[1]) }).uniq!
   end
 
-  private def cancan_ability(name : String) : Noir::CanCanAbility?
-    @cancan_abilities.put_if_absent(name) do
+  # The ability class `name` of the app the controller at `controller_path`
+  # belongs to: its file by Rails naming under that app's `app/` (a spec
+  # helper or another engine's class of the same name is not it). nil when
+  # there is none, or more than one.
+  private def cancan_ability(name : String, controller_path : String) : Noir::CanCanAbility?
+    return unless idx = controller_path.rindex("/app/controllers/")
+    app = controller_path[0, idx + "/app/".size]
+    @cancan_abilities.put_if_absent({name, app}) do
       suffix = "/#{name.underscore.gsub("::", "/")}.rb"
-      collect_files_by_extension(".rb").each do |path|
-        next unless path.ends_with?(suffix) && (lines = read_file_lines(path))
-        next unless lines.any?(&.matches?(/\A\s*include\s+CanCan::Ability\b/))
-        ability = Noir::CanCanAbility.new(lines)
-        break ability if ability.readable?
+      found = collect_files_by_extension(".rb").select do |path|
+        path.starts_with?(app) && path.ends_with?(suffix) && !path[app.size..].matches?(%r{(?:\A|/)(?:spec|test)s?/}) &&
+          read_file_lines(path).try(&.any?(&.matches?(/\A\s*include\s+CanCan::Ability\b/)))
       end
+      next unless found.size == 1 && (lines = read_file_lines(found.first))
+      ability = Noir::CanCanAbility.new(lines)
+      ability if ability.readable?
     end
   end
 

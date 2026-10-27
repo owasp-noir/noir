@@ -101,7 +101,14 @@ module Noir
       text.count("[({") > text.count("])}")
     end
 
+    # An `only:` / `except:` naming its actions through a constant or a
+    # method (`only: PROTECTED`) lists actions this reader cannot see: a
+    # callback is taken to run for every action and a skip for none, which
+    # keeps the guard.
     def self.applies_to_action?(line : String, action : String?) : Bool
+      if opaque_option?(line)
+        return !line.matches?(/\A(?:skip_|allow_unauthenticated_access\b)/)
+      end
       if only = callback_option(line, ONLY_OPTION)
         return !!(action && only.includes?(action))
       end
@@ -123,6 +130,12 @@ module Noir
         value = value[0, stop]
       end
       value.gsub(/%[iwIW][\[(]/, " ").scan(/\w+[?!]?/).map(&.[0])
+    end
+
+    def self.opaque_option?(line : String) : Bool
+      {ONLY_OPTION, EXCEPT_OPTION}.any? do |option|
+        (m = line.match(option)) && line[m.end..].matches?(/\A\s*[A-Za-z_@]/)
+      end
     end
 
     # Indexes every class and module `lines` declares, with its class-body
