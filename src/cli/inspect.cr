@@ -121,8 +121,9 @@ module Noir::CLI::Inspect
       # Nothing is scanned, so a scan path or flag here is a mistake — and a
       # mistyped filter (`--no-gaurd`) would otherwise return the whole
       # surface as if it were the answer.
-      unless scan_argv.empty?
-        Noir::CLI.die("--from reads a report and scans nothing; unexpected argument(s): #{scan_argv.join(" ")}", EXIT_USAGE)
+      unexpected = report_scan_args(scan_argv)
+      unless unexpected.empty?
+        Noir::CLI.die("--from reads a report and scans nothing; unexpected argument(s): #{unexpected.join(" ")}", EXIT_USAGE)
       end
       load_report(from)
     else
@@ -137,6 +138,12 @@ module Noir::CLI::Inspect
       ScanCommand.prepare!(options, args)
       ScanCommand.collect(options).endpoints
     end
+  end
+
+  # Global output flags are already applied by the router, and remain valid
+  # when a verb reads a report instead of scanning a path.
+  def self.report_scan_args(scan_argv : Array(String)) : Array(String)
+    scan_argv.reject { |arg| Noir::CLI::GLOBAL_FLAGS.includes?(arg) }
   end
 
   # Flags scan's parser would reject. Caught here so the verb keeps its exit
@@ -502,7 +509,7 @@ module Noir::CLI::Inspect
   end
 
   private def self.normalize(path : String) : String
-    strip_trailing_slash(path.split('?', 2)[0])
+    strip_trailing_slash(request_path(path).split('?', 2)[0])
   end
 
   record Match, endpoint : Endpoint, matched_by : String
@@ -593,7 +600,7 @@ module Noir::CLI::Inspect
   # ponytail: declaration lines only — no function spans, so `:line` orders
   # rather than filters. Tree-sitter spans would make it a filter.
   def self.reach(endpoints : Array(Endpoint), file : String, line : Int32?, full : Bool) : Array(Row)
-    file = file.lchop("./")
+    file = resolve_reach_path(file)
     rows = endpoints.compact_map do |endpoint|
       via = [] of Via
       declared = nil
@@ -643,6 +650,15 @@ module Noir::CLI::Inspect
     rows
   end
 
+  private def self.resolve_reach_path(file : String) : String
+    return file.lchop("./") unless file.starts_with?("./") || Path.new(file).absolute?
+
+    absolute = File.expand_path(file)
+    cwd = File.expand_path(".")
+    prefix = cwd.ends_with?(File::SEPARATOR_STRING) ? cwd : "#{cwd}#{File::SEPARATOR_STRING}"
+    absolute.starts_with?(prefix) ? absolute[prefix.size..] : absolute
+  end
+
   # ---- query: AND-ed filters, comma lists OR ------------------------------
 
   record Filters,
@@ -687,7 +703,9 @@ module Noir::CLI::Inspect
     end
 
     private def param_matches?(param : Param) : Bool
-      return false unless params.empty? || params.includes?(param.name)
+      return false unless params.empty? || params.any? do |name|
+                            param.param_type == "header" ? name.compare(param.name, case_insensitive: true) == 0 : name == param.name
+                          end
       param_types.empty? || param_types.includes?(param.param_type) || param_types.includes?(param.request_type)
     end
   end
@@ -765,7 +783,12 @@ module Noir::CLI::Inspect
       {"validator kind", filters.validators, contexts.flat_map(&.validators.map(&.kind))},
     }.each do |label, wanted, seen|
       seen = seen.uniq.sort!
-      unknown = wanted.reject { |k| k == "any" || seen.includes?(k) }
+      unknown = wanted.reject do |k|
+        k == "any" || seen.includes?(k) ||
+          (label == "param" && endpoints.any? do |e|
+            e.params.any? { |p| p.param_type == "header" && p.name.compare(k, case_insensitive: true) == 0 }
+          end)
+      end
       next if unknown.empty?
       # A signal the compact row hides (it restates method/url/tech) is not
       # "unknown"; say why it does not filter.
