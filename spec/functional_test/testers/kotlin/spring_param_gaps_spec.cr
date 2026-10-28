@@ -38,6 +38,15 @@ expected_endpoints = [
     Param.new("species", "", "query"),
   ]),
   Endpoint.new("/zoo/ping", "POST", [Param.new("who", "", "json")]),
+  # #3254: opaque request bodies and request-param maps have no single wire name;
+  # explicit urlencoded form requests bind RequestParam values from the body.
+  Endpoint.new("/zoo/items", "POST"),
+  Endpoint.new("/zoo/events", "POST"),
+  Endpoint.new("/zoo/token", "POST"),
+  Endpoint.new("/zoo/revoke", "POST", [
+    Param.new("token", "", "form"),
+    Param.new("token_type_hint", "", "form"),
+  ]),
 ]
 
 FunctionalTester.new("fixtures/kotlin/spring_param_gaps/", {
