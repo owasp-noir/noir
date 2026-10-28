@@ -22,7 +22,18 @@ module Analyzer::Specification
       @result
     end
 
-    private record Frame, kind : String, value : String, line : Int32, modifier : String = ""
+    private class Frame
+      getter kind : String
+      getter value : String
+      getter line : Int32
+      getter modifier : String
+      getter result_start : Int32?
+      property denial_seen : Bool = false
+      property other_effect : Bool = false
+
+      def initialize(@kind : String, @value : String, @line : Int32, @modifier : String = "", @result_start : Int32? = nil)
+      end
+    end
 
     private def process_content(content : String, details : Details)
       stack = [] of Frame
@@ -50,6 +61,7 @@ module Analyzer::Specification
 
         depth_before = stack.size
         structure = balanced
+        directive_line = balanced
         if balanced.matches?(/^server\s*\{/)
           stack << Frame.new("server", "", idx + 1)
           server_names = [] of String
@@ -65,8 +77,9 @@ module Analyzer::Specification
           # The path's own braces (`^/v\d{1,2}/u$`) are not structure; only
           # what follows it, plus a `{` glued to its end, opens a block.
           structure = "#{'{' if raw_location.ends_with?('{')}#{balanced[m.end(0)..]}"
+          directive_line = structure
           unless location.empty? || internal_location?(raw_location) || internal_location?(location)
-            stack << Frame.new("location", location, idx + 1, modifier)
+            stack << Frame.new("location", location, idx + 1, modifier, @result.size)
             emit_location(details, location, modifier, METHOD_ANY, server_names, server_tls, idx + 1)
           end
         elsif m = METHOD_BLOCK_RE.match(balanced)
@@ -74,6 +87,10 @@ module Analyzer::Specification
           if loc = current_location(stack)
             emit_location(details, loc.value, loc.modifier, method, server_names, server_tls, idx + 1)
           end
+        end
+
+        if loc = current_location(stack)
+          track_location_effect(loc, directive_line)
         end
 
         # Every `{` opens a frame and every `}` closes one. The handlers above
@@ -91,7 +108,28 @@ module Analyzer::Specification
     end
 
     private def pop_frame(stack : Array(Frame))
-      stack.pop unless stack.empty?
+      frame = stack.pop?
+      return unless frame
+      return unless frame.kind == "location" && frame.denial_seen && !frame.other_effect
+
+      if start = frame.result_start
+        @result.pop(@result.size - start) if @result.size > start
+      end
+    end
+
+    private def track_location_effect(location : Frame, line : String)
+      line = line.gsub(/\{\{.*?\}\}/, "").gsub(/[{}]/, " ")
+      line.split(';').each do |statement|
+        directive = statement.strip
+        next if directive.empty?
+
+        if directive.matches?(/\Areturn\s+4\d\d(?:\s|$)/i) || directive.matches?(/\Adeny\s+all\z/i)
+          location.denial_seen = true
+        else
+          # Conditional returns and other directives may still serve content.
+          location.other_effect = true
+        end
+      end
     end
 
     private def current_location(stack : Array(Frame)) : Frame?
