@@ -240,6 +240,10 @@ module Noir::CLI::Inspect
     # only above one, so the agent knows `path` is one of several.
     @[JSON::Field(ignore_serialize: declarations.nil?)]
     property declarations : Int32?
+    # The monorepo project the route belongs to (`details.project`); set only
+    # when it has one.
+    @[JSON::Field(ignore_serialize: project.nil?)]
+    property project : String?
     @[JSON::Field(ignore_serialize: tech.nil?)]
     property tech : String?
     @[JSON::Field(ignore_serialize: handler.nil?)]
@@ -286,6 +290,7 @@ module Noir::CLI::Inspect
         copies = endpoint.details.code_paths.size
         row.declarations = copies if copies > 1
       end
+      row.project = endpoint.details.project unless endpoint.details.project.empty?
       row.tech = endpoint.details.technology
       row.handler = endpoint.handler
       row.params = endpoint.params.map { |p| "#{p.name}:#{p.param_type}" }
@@ -649,6 +654,7 @@ module Noir::CLI::Inspect
     methods : Array(String) = [] of String,
     url : String? = nil,
     path : String? = nil,
+    projects : Array(String) = [] of String,
     handler : String? = nil,
     techs : Array(String) = [] of String,
     tags : Array(String) = [] of String,
@@ -664,6 +670,7 @@ module Noir::CLI::Inspect
       return false unless methods.empty? || methods.includes?(endpoint.method.upcase)
       return false unless (u = url).nil? || Inspect.glob_or_substring?(u, endpoint.url)
       return false unless (p = path).nil? || endpoint.details.code_paths.any? { |cp| Inspect.path_glob?(p, cp.path) }
+      return false unless projects.empty? || projects.any? { |wanted| Inspect.project_matches?(wanted, endpoint.details.project) }
       return false unless (h = handler).nil? || endpoint.handler.try { |eh| Inspect.glob_or_substring?(h, eh.name) || Inspect.path_glob?(h, eh.path || "") }
       unless techs.empty?
         have = endpoint.details.technologies.empty? ? [endpoint.details.technology].compact : endpoint.details.technologies
@@ -719,6 +726,15 @@ module Noir::CLI::Inspect
     glob_regex(pattern, anchored: false).matches?(value)
   end
 
+  # A project is named by its directory under the scan base, so `services/orders`
+  # is that project and not `services/orders-v2`. A glob (same rules as above)
+  # matches the whole name. An endpoint with no project matches nothing.
+  def self.project_matches?(wanted : String, project : String) : Bool
+    return false if project.empty?
+    return glob_regex(wanted).matches?(project) if wanted.matches?(GLOB_CHARS)
+    wanted.chomp('/') == project
+  end
+
   @@glob_regexes = Hash(String, Regex).new
 
   private def self.glob_regex(pattern : String, anchored : Bool = true) : Regex
@@ -758,6 +774,7 @@ module Noir::CLI::Inspect
       {"tag", filters.tags, endpoints.flat_map(&.tags.map(&.name))},
       {"param", filters.params, endpoints.flat_map(&.params.map(&.name))},
       {"param type", filters.param_types, endpoints.flat_map { |e| e.params.flat_map { |p| [p.param_type, p.request_type] } }},
+      {"project", filters.projects.reject(&.matches?(GLOB_CHARS)).map(&.chomp('/')), endpoints.map(&.details.project).reject(&.empty?)},
       {"protocol", filters.protocols, endpoints.map(&.protocol)},
       {"sink kind", filters.sinks, contexts.flat_map(&.sinks.map(&.kind))},
       {"source kind", filters.sources, contexts.flat_map(&.sources.map(&.kind))},

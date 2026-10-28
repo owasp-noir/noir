@@ -386,3 +386,34 @@ describe "Details#detached_copy" do
     original.technologies.should eq(["zeta", "", "alpha", "zeta", "mid"])
   end
 end
+
+describe "Details project" do
+  it "is omitted from JSON and YAML until it is set, and round-trips once it is" do
+    details = Details.new(PathInfo.new("mono/services/orders/app.py", 7))
+    details.technology = "python_flask"
+    endpoint = Endpoint.new("/items", "POST", details)
+    unset_json = endpoint.to_json
+
+    JSON.parse(unset_json)["details"].as_h.has_key?("project").should be_false
+    YAML.parse(endpoint.to_yaml)["details"].as_h.has_key?("project").should be_false
+
+    details.project = "services/orders"
+    endpoint = Endpoint.new("/items", "POST", details)
+    JSON.parse(endpoint.to_json)["details"]["project"].should eq("services/orders")
+    YAML.parse(endpoint.to_yaml)["details"]["project"].should eq("services/orders")
+    Endpoint.from_json(endpoint.to_json).details.project.should eq("services/orders")
+    Endpoint.from_json(unset_json).details.project.should eq("")
+  end
+
+  it "survives detached_copy and takes part in equality" do
+    details = Details.new(PathInfo.new("a.py", 1))
+    details.project = "services/orders"
+    details.detached_copy.project.should eq("services/orders")
+
+    other = details.detached_copy
+    other.project = "services/users"
+    (details == other).should be_false
+    other.project = "services/orders"
+    (details == other).should be_true
+  end
+end

@@ -505,3 +505,51 @@ describe "query verb reliability (#3139)" do
     Noir::CLI::ReachCommand.empty_hint([ep], "nothing.rb").should start_with("no recorded location ends with nothing.rb")
   end
 end
+
+describe "query --project" do
+  mono = ->(url : String, project : String, path : String) do
+    details = Details.new(PathInfo.new(path, 1))
+    details.technology = "python_flask"
+    details.project = project
+    Endpoint.new(url, "POST", details)
+  end
+  orders = mono.call("/items", "services/orders", "mono/services/orders/app.py")
+  orders_v2 = mono.call("/items", "services/orders-v2", "mono/services/orders-v2/app.py")
+  users = mono.call("/items", "services/users", "mono/services/users/app.py")
+  loose = endpoint("GET", "/health", "mono/health.py", 1)
+  endpoints = [orders, orders_v2, users, loose]
+
+  it "matches the project exactly, so a longer sibling name does not match" do
+    f = Noir::CLI::QueryCommand.parse_filters(["--project", "services/orders"]).filters
+    Noir::CLI::Inspect.query(endpoints, f, false).map(&.project).should eq(["services/orders"])
+    f = Noir::CLI::QueryCommand.parse_filters(["--project", "services/orders/"]).filters
+    Noir::CLI::Inspect.query(endpoints, f, false).size.should eq(1)
+  end
+
+  it "ORs a comma list, accepts a glob, and never matches an endpoint with no project" do
+    f = Noir::CLI::QueryCommand.parse_filters(["--project", "services/orders,services/users"]).filters
+    Noir::CLI::Inspect.query(endpoints, f, false).map(&.project).should eq(["services/orders", "services/users"])
+    f = Noir::CLI::QueryCommand.parse_filters(["--project", "services/*"]).filters
+    Noir::CLI::Inspect.query(endpoints, f, false).size.should eq(3)
+    f = Noir::CLI::QueryCommand.parse_filters(["--project", "*"]).filters
+    Noir::CLI::Inspect.query(endpoints, f, false).map(&.url).should_not contain("/health")
+  end
+
+  it "ANDs with the other filters" do
+    f = Noir::CLI::QueryCommand.parse_filters(["--project", "services/users", "--url", "/items"]).filters
+    Noir::CLI::Inspect.query(endpoints, f, false).map(&.project).should eq(["services/users"])
+    f = Noir::CLI::QueryCommand.parse_filters(["--project", "services/users", "--url", "/health"]).filters
+    Noir::CLI::Inspect.query(endpoints, f, false).should be_empty
+  end
+
+  it "warns about a project no endpoint carries, naming the ones the report has" do
+    f = Noir::CLI::QueryCommand.parse_filters(["--project", "services/billing"]).filters
+    Noir::CLI::Inspect.filter_warnings(endpoints, f).should eq(["no endpoint carries project services/billing; in this report: services/orders, services/orders-v2, services/users"])
+  end
+
+  it "shows the project on the compact row only when there is one" do
+    Noir::CLI::Inspect::Row.compact(orders).project.should eq("services/orders")
+    JSON.parse(Noir::CLI::Inspect::Row.compact(orders).to_json)["project"].should eq("services/orders")
+    JSON.parse(Noir::CLI::Inspect::Row.compact(loose).to_json).as_h.has_key?("project").should be_false
+  end
+end

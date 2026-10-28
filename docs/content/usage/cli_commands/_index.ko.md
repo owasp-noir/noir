@@ -162,11 +162,11 @@ callee, 가드, 소스, 싱크, 검증기)와 비교해 근거를 `via`에 나�
 번호는 필터가 아니라 정렬 기준입니다. 상속과 동적 로딩은 따라가지 않습니다.
 
 `query`의 필터는 AND로 결합되고, 한 필터 안의 쉼표 목록은 OR입니다:
-`--method`, `--url`, `--path`, `--handler`, `--tech`, `--tag`, `--param`, `--param-type`,
+`--method`, `--url`, `--path`, `--project`, `--handler`, `--tech`, `--tag`, `--param`, `--param-type`,
 `--protocol`, `--guard` / `--no-guard`, `--sink`, `--source`, `--signal`,
 `--validator` (`any`는 비어 있지 않은 버킷에 매칭). 글롭(`*`, `?`, `[`)에서 `*`는
 `/`를 넘어 매칭되고 `{id}`는 글자 그대로이며, 글롭 문자가 없으면 부분 문자열입니다.
-`--param`과 `--param-type`은 같은 파라미터가 둘 다 만족해야 합니다. rate limiter는
+`--project`는 스캔 기준 경로에 상대적인 모노레포 프로젝트 디렉터리(`details.project` 참고)를 받아 정확히, 또는 글롭으로 매칭합니다. `--param`과 `--param-type`은 같은 파라미터가 둘 다 만족해야 합니다. rate limiter는
 행에서도 `--guard`에서도 가드로 치지 않으며, 어떤 엔드포인트도 갖지 않은 값을 주면
 stderr에 리포트에 있는 값 목록과 함께 알려줍니다.
 
