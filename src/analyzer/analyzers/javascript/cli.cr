@@ -33,6 +33,10 @@ module Analyzer::Javascript
     BUN_ARGV   = /\bBun\.argv\b/
     ARGV_SLICE = /\bprocess\.argv\.slice\s*\(\s*2\s*\)/
 
+    FUNCTION_ARGV_PARAM_RE = /\bfunction\s+([A-Za-z_$][\w$]*)\s*\(\s*([A-Za-z_$][\w$]*)/
+    ARROW_ARGV_PARAM_RE    = /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*\(?\s*([A-Za-z_$][\w$]*)\s*\)?\s*=>/
+    ARGV_ALIAS_RE          = /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*process\.argv(?:\.slice\s*\(\s*2\s*\))?/
+
     # object-literal schema headers (keys become root flags).
     PARSEARGS_CALL_RE = /\bparseArgs\s*\(/
     PARSEARGS_HEADER  = /\boptions\s*:\s*\{/
@@ -193,6 +197,9 @@ module Analyzer::Javascript
                      endpoints : Hash(String, Endpoint), emit_env : Bool,
                      has_parseargs : Bool, has_meow : Bool)
       current_url = root_url
+      argv_names = process_argv_names(lines)
+      switch_flags_by_line = Hash(Int32, Array(String)).new { |h, k| h[k] = [] of String }
+      switch_case_flags(lines, argv_names).each { |name, line| switch_flags_by_line[line] << name }
 
       # citty subcommand context: a stack of (url, brace-depth-at-which-this
       # subcommand's own `defineCommand({` opened). Args attach to the
@@ -224,6 +231,10 @@ module Analyzer::Javascript
         # to root before this line's .command (if any) re-sets it, so a global
         # `program.option(...)` after a subcommand attributes to the root.
         current_url = root_url if line.lstrip.matches?(NEW_CHAIN_RE)
+
+        if names = switch_flags_by_line[line_no]?
+          names.each { |name| fetch_endpoint(endpoints, root_url, path, line_no).push_param(Param.new(name, "", "flag")) }
+        end
 
         # Subcommand: set the cursor so subsequent option/argument lines (and
         # ones chained on the same line) attribute to it.
@@ -342,6 +353,91 @@ module Analyzer::Javascript
           citty_stack.push({pending_citty_url, brace_depth})
         end
 
+        index += 1
+      end
+    end
+
+    private def process_argv_names(lines : Array(String)) : Set(String)
+      names = Set{"process.argv"}
+      lines.each do |line|
+        if m = line.match(ARGV_ALIAS_RE)
+          names << m[1]
+        end
+      end
+
+      source = lines.join("\n")
+      function_params = [] of Tuple(String, String)
+      source.scan(FUNCTION_ARGV_PARAM_RE) do |m|
+        function_params << {m[1], m[2]}
+      end
+      source.scan(ARROW_ARGV_PARAM_RE) do |m|
+        function_params << {m[1], m[2]}
+      end
+      function_params.each do |function_name, parameter_name|
+        argv_sources = names.map { |name| Regex.escape(name) }.join("|")
+        call = Regex.new("\\b#{Regex.escape(function_name)}\\s*\\(\\s*(?:#{argv_sources})\\b")
+        names << parameter_name if source.matches?(call)
+      end
+      names
+    end
+
+    private def switch_case_flags(lines : Array(String), argv_names : Set(String)) : Array(Tuple(String, Int32))
+      source = lines.join("\n")
+      tokens = Noir::JSLexer.new(source).tokenize
+      flags = [] of Tuple(String, Int32)
+      index = 0
+      while index < tokens.size
+        token = tokens[index]
+        if token.type == :keyword && token.value == "switch" && tokens[index + 1]?.try(&.type) == :lparen
+          close_paren = matching_token(tokens, index + 1, :lparen, :rparen)
+          if close_paren && argv_names.includes?(switch_argv_array_name(tokens, index + 2, close_paren) || "")
+            open_brace = close_paren + 1
+            if tokens[open_brace]?.try(&.type) == :lbrace
+              if close_brace = matching_token(tokens, open_brace, :lbrace, :rbrace)
+                depth = 0
+                case_index = open_brace + 1
+                while case_index < close_brace
+                  case_token = tokens[case_index]
+                  if depth == 0 && case_token.type == :keyword && case_token.value == "case"
+                    label = tokens[case_index + 1]?
+                    colon = tokens[case_index + 2]?
+                    if label && colon && label.type == :string && label.value.starts_with?('-') && label.value.size > 1 && colon.type == :colon
+                      name = option_name(label.value)
+                      flags << {name, source[0...label.position].count('\n') + 1} unless name.empty? || name == label.value
+                    end
+                  end
+                  depth += 1 if case_token.type == :lbrace
+                  depth -= 1 if case_token.type == :rbrace && depth > 0
+                  case_index += 1
+                end
+                index = close_brace
+              end
+            end
+          end
+        end
+        index += 1
+      end
+      flags
+    end
+
+    private def switch_argv_array_name(tokens : Array(Noir::JSToken), start : Int32, stop : Int32) : String?
+      return if start >= stop
+      if tokens[start].value == "process" && tokens[start + 1]?.try(&.type) == :dot && tokens[start + 2]?.try(&.value) == "argv"
+        return "process.argv" if tokens[start + 3]?.try(&.type) == :lbracket && tokens[stop - 1]?.try(&.type) == :rbracket
+      elsif tokens[start].type == :identifier
+        return tokens[start].value if tokens[start + 1]?.try(&.type) == :lbracket && tokens[stop - 1]?.try(&.type) == :rbracket
+      end
+    end
+
+    private def matching_token(tokens : Array(Noir::JSToken), start : Int32, opening : Symbol, closing : Symbol) : Int32?
+      depth = 0
+      index = start
+      while index < tokens.size
+        depth += 1 if tokens[index].type == opening
+        if tokens[index].type == closing
+          depth -= 1
+          return index if depth == 0
+        end
         index += 1
       end
     end
