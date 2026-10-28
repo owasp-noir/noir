@@ -1092,4 +1092,175 @@ describe "SpringAuthTagger (multi-module projects)" do
     tags["GET /k/open"].should be_empty
     tags["GET /k/me"].should eq(["Protected by in-handler check: refuses an anonymous caller (principal == null)"])
   end
+
+  it "reads .anonymous(), .denyAll(), and formLogin(...).permitAll() rules" do
+    config = <<-JAVA
+      @Configuration
+      @EnableWebSecurity
+      public class SecurityConfig {
+          @Bean
+          SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
+              return http
+                  .authorizeHttpRequests(auth -> auth
+                      .requestMatchers("/public/**").permitAll()
+                      .requestMatchers("/guest/**").anonymous()
+                      .requestMatchers("/legacy/**").denyAll()
+                      .anyRequest().authenticated())
+                  .formLogin(form -> form.loginPage("/signin").permitAll())
+                  .build();
+          }
+      }
+      JAVA
+
+    tags = run_spring_security_config({"SecurityConfig.java" => config}, [
+      "GET /public/info",
+      "GET /guest/welcome",
+      "GET /signin",
+      "POST /signin",
+      "GET /legacy/export",
+      "GET /items",
+      "POST /items",
+    ])
+
+    tags["GET /public/info"].should be_empty
+    tags["GET /guest/welcome"].should be_empty
+    tags["GET /signin"].should be_empty
+    tags["POST /signin"].should be_empty
+    tags["GET /legacy/export"].should eq(["Protected by Spring Security denyAll via requestMatchers(\"/legacy/**\")"])
+    tags["GET /items"].should eq(["Protected by Spring Security authenticated via anyRequest()"])
+    tags["POST /items"].should eq(["Protected by Spring Security authenticated via anyRequest()"])
+  end
+
+  it "supports chained and Kotlin DSL formLogin permitAll and Kotlin anonymous/denyAll rules" do
+    java_config = <<-JAVA
+      public class SecurityConfig extends WebSecurityConfigurerAdapter {
+          @Override
+          protected void configure(HttpSecurity http) throws Exception {
+              http
+                  .authorizeRequests()
+                      .antMatchers("/anon/**").hasRole("ANONYMOUS")
+                      .anyRequest().denyAll()
+                      .and()
+                  .formLogin()
+                      .loginPage("/login-page")
+                      .loginProcessingUrl("/do-login")
+                      .failureUrl("/login-fail?error=true")
+                      .permitAll();
+          }
+      }
+      JAVA
+
+    tags = run_spring_security_config({"SecurityConfig.java" => java_config}, [
+      "GET /anon/hello",
+      "GET /login-page",
+      "POST /do-login",
+      "GET /login-fail",
+      "GET /other",
+    ])
+    tags["GET /anon/hello"].should be_empty
+    tags["GET /login-page"].should be_empty
+    tags["POST /do-login"].should be_empty
+    tags["GET /login-fail"].should be_empty
+    tags["GET /other"].should eq(["Protected by Spring Security denyAll via anyRequest()"])
+
+    kotlin_config = <<-KOTLIN
+      @Configuration
+      class KotlinSecurityConfig {
+          @Bean
+          fun filterChain(http: HttpSecurity): SecurityFilterChain {
+              http {
+                  authorizeHttpRequests {
+                      authorize("/guest/**", anonymous)
+                      authorize("/legacy/**", denyAll)
+                      authorize(anyRequest, authenticated)
+                  }
+                  formLogin {
+                      loginPage = "/k-signin"
+                      permitAll()
+                  }
+              }
+              return http.build()
+          }
+      }
+      KOTLIN
+
+    CodeLocator.instance.clear_all
+    tmpdir = File.tempname("spring_kotlin_security")
+    Dir.mkdir_p(tmpdir)
+    kt_path = File.join(tmpdir, "KotlinSecurityConfig.kt")
+    File.write(kt_path, kotlin_config)
+    CodeLocator.instance.register_path(kt_path)
+
+    noir_options = create_test_options
+    noir_options["base"] = YAML::Any.new(tmpdir)
+    endpoints = [
+      Endpoint.new("/guest/hi", "GET"),
+      Endpoint.new("/k-signin", "GET"),
+      Endpoint.new("/legacy/old", "GET"),
+      Endpoint.new("/items", "GET"),
+    ]
+    SpringAuthTagger.new(noir_options).perform(endpoints)
+    FileUtils.rm_rf(tmpdir)
+
+    endpoints[0].tags.should be_empty
+    endpoints[1].tags.should be_empty
+    endpoints[2].tags.map(&.description).should eq(["Protected by Spring Security denyAll via authorize(\"/legacy/**\")"])
+    endpoints[3].tags.map(&.description).should eq(["Protected by Spring Security authenticated via authorize(anyRequest)"])
+  end
+
+  it "records the SecurityConfig path and rule line on chain auth tags and targets java_jaxrs endpoints" do
+    SpringAuthTagger.target_techs.should contain("java_jaxrs")
+
+    config = <<-JAVA
+      package com.example;
+
+      @Configuration
+      @EnableWebSecurity
+      public class SecurityConfig {
+          @Bean
+          SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
+              return http
+                  .authorizeHttpRequests(auth -> auth
+                      .requestMatchers("/legacy/**").denyAll()
+                      .anyRequest().authenticated())
+                  .build();
+          }
+      }
+      JAVA
+
+    CodeLocator.instance.clear_all
+    tmpdir = File.tempname("spring_tag_location")
+    Dir.mkdir_p(tmpdir)
+    config_path = File.join(tmpdir, "SecurityConfig.java")
+    controller_path = File.join(tmpdir, "ItemResource.java")
+    File.write(config_path, config)
+    File.write(controller_path, "@Path(\"/jaxrs/items\")\npublic class ItemResource {\n  @GET\n  public String list() { return \"[]\"; }\n}\n")
+    CodeLocator.instance.register_path(config_path)
+    CodeLocator.instance.register_path(controller_path)
+
+    noir_options = create_test_options
+    noir_options["base"] = YAML::Any.new(tmpdir)
+
+    jaxrs_details = Details.new(PathInfo.new(controller_path, 4))
+    jaxrs_details.technology = "java_jaxrs"
+    jaxrs_ep = Endpoint.new("/jaxrs/items", "GET", [] of Param, jaxrs_details)
+
+    legacy_details = Details.new(PathInfo.new(controller_path, 4))
+    legacy_details.technology = "java_spring"
+    legacy_ep = Endpoint.new("/legacy/export", "GET", [] of Param, legacy_details)
+
+    endpoints = [jaxrs_ep, legacy_ep]
+    NoirTaggers.run_tagger(endpoints, noir_options, "spring_auth")
+    FileUtils.rm_rf(tmpdir)
+
+    jaxrs_tag = endpoints[0].tags.find { |t| t.name == "auth" }.should_not be_nil
+    jaxrs_tag.description.should eq("Protected by Spring Security authenticated via anyRequest()")
+    jaxrs_tag.path.should eq(config_path)
+    jaxrs_tag.line.should eq(11)
+
+    legacy_tag = endpoints[1].tags.find { |t| t.name == "auth" }.should_not be_nil
+    legacy_tag.description.should eq("Protected by Spring Security denyAll via requestMatchers(\"/legacy/**\")")
+    legacy_tag.path.should eq(config_path)
+    legacy_tag.line.should eq(10)
+  end
 end
