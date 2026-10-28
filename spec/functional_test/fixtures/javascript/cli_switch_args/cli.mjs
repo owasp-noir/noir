@@ -28,6 +28,7 @@ function inspect(values) {
       break;
   }
 }
+const inspectDocs = "Example: inspect(process.argv.slice(2))";
 
 const parseAlt = (args) => {
   switch (args[0]) {

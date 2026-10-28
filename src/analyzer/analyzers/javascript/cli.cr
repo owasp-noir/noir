@@ -358,25 +358,28 @@ module Analyzer::Javascript
     end
 
     private def process_argv_names(lines : Array(String)) : Set(String)
+      source = lines.join("\n")
+      literal_mask = string_literal_mask(source)
       names = Set{"process.argv"}
-      lines.each do |line|
-        if m = line.match(ARGV_ALIAS_RE)
-          names << m[1]
-        end
+      source.scan(ARGV_ALIAS_RE) do |m|
+        names << m[1] unless literal_position?(literal_mask, m.begin(0))
       end
 
-      source = lines.join("\n")
       function_params = [] of Tuple(String, String)
       source.scan(FUNCTION_ARGV_PARAM_RE) do |m|
-        function_params << {m[1], m[2]}
+        function_params << {m[1], m[2]} unless literal_position?(literal_mask, m.begin(0))
       end
       source.scan(ARROW_ARGV_PARAM_RE) do |m|
-        function_params << {m[1], m[2]}
+        function_params << {m[1], m[2]} unless literal_position?(literal_mask, m.begin(0))
       end
       function_params.each do |function_name, parameter_name|
         argv_sources = names.map { |name| Regex.escape(name) }.join("|")
         call = Regex.new("\\b#{Regex.escape(function_name)}\\s*\\(\\s*(?:#{argv_sources})\\b")
-        names << parameter_name if source.matches?(call)
+        argv_call = false
+        source.scan(call) do |m|
+          argv_call = true unless literal_position?(literal_mask, m.begin(0))
+        end
+        names << parameter_name if argv_call
       end
       names
     end
