@@ -2018,6 +2018,79 @@ describe "NoirAIContext" do
     end
   end
 
+  it "detects authz_guard via permission and role annotation variants" do
+    variants = [
+      "@RequirePermission(\"user:read\")",
+      "@RequirePermissions({\"user:read\"})",
+      "@RequiresPermission(\"user:read\")",
+      "@RequiresPermissions({\"user:read\"})",
+      "@CheckPermission(\"user:read\")",
+      "@CheckPermissions({\"user:read\"})",
+      "@RequireRole(\"ADMIN\")",
+      "@RequireRoles({\"ADMIN\"})",
+      "@RequiresRole(\"ADMIN\")",
+      "@RequiresRoles({\"ADMIN\"})",
+      "@Role(\"ADMIN\")",
+      "@Roles({\"ADMIN\"})",
+      "@Permission(\"user:read\")",
+      "@Permissions({\"user:read\"})",
+      "@PostAuthorize(\"returnObject.owner == authentication.name\")",
+      "checkPermission(\"read\");",
+      "checkPermissions(\"read\");",
+      "hasAuthority(\"ROLE_ADMIN\")",
+      "hasAuthorities(\"ROLE_ADMIN\")",
+      "roles_required = ['admin']",
+      "permissions_required = ['edit']",
+      "require_role('admin')",
+      "require_permissions('write')",
+    ]
+
+    variants.each do |code_variant|
+      source = <<-CODE
+        #{code_variant}
+        @GetMapping("/resource/{id}")
+        public ResponseEntity getResource(@PathVariable Long id) {
+            return service.get(id);
+        }
+        CODE
+
+      with_temp_ai_context_source(source) do |path|
+        endpoint = Endpoint.new("/resource/{id}", "GET")
+        details = endpoint.details
+        details.add_path(PathInfo.new(path, 1))
+        endpoint.details = details
+        endpoint.push_param(Param.new("id", "1", "path"))
+
+        context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+        context.guards.map(&.kind).should contain("authz_guard")
+      end
+    end
+  end
+
+  it "creates auth_guard and authz_guard for Spring meta-annotations" do
+    endpoint = Endpoint.new("/api/admin/users", "GET")
+    endpoint.add_tag(Tag.new("auth", "Protected by Spring @PreAuthorize (@AdminOnly)", "spring_auth"))
+
+    context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+    guard_kinds = context.guards.map(&.kind)
+    guard_kinds.should contain("auth_guard")
+    guard_kinds.should contain("authz_guard")
+    context.guards.find { |g| g.kind == "auth_guard" }.should_not be_nil
+    authz = context.guards.find { |g| g.kind == "authz_guard" }
+    authz.should_not be_nil
+    authz.not_nil!.name.should eq("Spring @PreAuthorize (@AdminOnly)")
+  end
+
+  it "creates auth_guard for Spring HandlerInterceptor" do
+    endpoint = Endpoint.new("/api/items", "GET")
+    endpoint.add_tag(Tag.new("auth", "Protected by Spring HandlerInterceptor AuthInterceptor", "spring_auth"))
+
+    context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+    guard = context.guards.find { |g| g.kind == "auth_guard" }
+    guard.should_not be_nil
+    guard.not_nil!.name.should eq("Spring HandlerInterceptor AuthInterceptor")
+  end
+
   it "does NOT treat Blazor <AuthorizeView> markup as a guard" do
     source = <<-RAZOR
       @page "/"

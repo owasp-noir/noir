@@ -2132,7 +2132,7 @@ module NoirAIContext
     private def spring_authorization_annotation_tag?(tag : Tag) : Bool
       tag.name == "auth" &&
         tag.tagger == "spring_auth" &&
-        tag.description.matches?(/@(PreAuthorize|Secured|RolesAllowed)\b/)
+        tag.description.matches?(/@(PreAuthorize|PostAuthorize|Secured|RolesAllowed)\b/)
     end
 
     # Resolved once from the catalog instead of re-scanning PARAM_PATTERNS
