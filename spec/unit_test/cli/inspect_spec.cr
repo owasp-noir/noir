@@ -40,6 +40,11 @@ describe Noir::CLI::Inspect do
       common = Noir::CLI::Inspect.parse_common(["-f", "xml", "--limit", "0"])
       common.errors.size.should eq(2)
     end
+
+    it "allows global flags when a report supplies the endpoints" do
+      Noir::CLI::Inspect.report_scan_args(["--no-color", "--no-spinner"]).should be_empty
+      Noir::CLI::Inspect.report_scan_args(["--bogus"]).should eq(["--bogus"])
+    end
   end
 
   describe ".split_positionals" do
@@ -90,6 +95,10 @@ describe Noir::CLI::Inspect do
         matches = Noir::CLI::Inspect.trace(endpoints, "GET", request)
         matches.map(&.endpoint.url).should eq([route]), "#{request} should match #{route}"
       end
+    end
+
+    it "strips the scheme and authority from an absolute request URL" do
+      Noir::CLI::Inspect.trace(endpoints, "GET", "http://localhost:8080/users/42?expand=1").map(&.endpoint.url).should eq(["/users/{id}"])
     end
 
     it "filters by method, treating ANY as every method, and ignores method when nil" do
@@ -209,6 +218,12 @@ describe Noir::CLI::Inspect do
       Noir::CLI::Inspect.path_matches?("./src/api/items.go", "src/api/items.go").should be_true
       Noir::CLI::Inspect.path_matches?("src/api/items.go", "tems.go").should be_false
       Noir::CLI::Inspect.path_matches?(nil, "items.go").should be_false
+    end
+
+    it "resolves absolute and ./ paths against the current directory" do
+      absolute = File.expand_path("src/api/items.go")
+      Noir::CLI::Inspect.reach([handler], absolute, nil, false).map(&.url).should eq(["/items/:id"])
+      Noir::CLI::Inspect.reach([handler], "./src/api/items.go", nil, false).map(&.url).should eq(["/items/:id"])
     end
 
     it "names the handler's file as evidence and projects it onto the row" do
@@ -465,6 +480,19 @@ describe "query verb reliability (#3139)" do
     Noir::CLI::Inspect.query([ep], both, false).should be_empty
     same = Noir::CLI::QueryCommand.parse_filters(["--param", "email", "--param-type", "json"]).filters
     Noir::CLI::Inspect.query([ep], same, false).size.should eq(1)
+  end
+
+  it "matches header parameter names case-insensitively" do
+    ep = endpoint("GET", "/items")
+    ep.push_param(Param.new("Authorization", "", "header"))
+    ep.push_param(Param.new("userId", "", "query"))
+
+    lower_header = Noir::CLI::QueryCommand.parse_filters(["--param", "authorization"]).filters
+    Noir::CLI::Inspect.query([ep], lower_header, false).map(&.url).should eq(["/items"])
+    Noir::CLI::Inspect.filter_warnings([ep], lower_header).should be_empty
+
+    wrong_case_query = Noir::CLI::QueryCommand.parse_filters(["--param", "userid"]).filters
+    Noir::CLI::Inspect.query([ep], wrong_case_query, false).should be_empty
   end
 
   it "warns for every filter value nobody carries, and explains restating signals" do
