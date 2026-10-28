@@ -1027,6 +1027,9 @@ module Noir
       end
       case ann_kind
       when :body
+        # Map and JsonNode describe the whole JSON document, not a wire
+        # field named after the Kotlin variable.
+        return parameter_format if type_name == "Map" || type_name == "JsonNode"
         # @RequestBody is JSON unless an explicit `consumes` already pinned
         # the format (e.g. form-urlencoded). Only the method-level format
         # counts: the carry-over from a preceding @RequestParam/@RequestHeader/
@@ -1034,7 +1037,7 @@ module Noir
         # body's media type.
         effective_format = method_format || "json"
       when :query
-        effective_format = "query"
+        effective_format = method_format == "form" ? "form" : "query"
       when :header
         effective_format = "header"
       when :cookie
@@ -1080,7 +1083,10 @@ module Noir
       end
 
       case ann_kind
-      when :query, :header, :cookie
+      when :query
+        # A Map captures every request value, so it has no single parameter name.
+        sink << Param.new(parameter_name, default_value || "", effective_format) unless type_name == "Map"
+      when :header, :cookie
         # An explicit scalar request input (possibly a collection of
         # scalars like `@RequestParam ids: List<Long>`) — emit by its
         # declared name; never DTO-expand.
