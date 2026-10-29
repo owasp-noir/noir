@@ -48,6 +48,10 @@ module Noir::RustRequestGuards
   ENUM_DEF_RE       = /\benum\s+([A-Z]\w*)/
   IMPL_KEYWORD_RE   = /\bimpl\b/
   CRATE_USE_RE      = /\buse\s+crate::[^;]*;/
+  # A raw string (`r#"say "hi""#`) or a char literal (`'"'`, `'\''`,
+  # `'\u{1F600}'`), neither of which the C-style stripper can read; not a
+  # lifetime (`'a`).
+  RUST_LITERAL_RE = /(?<![\w'])b?r(#*)"[\s\S]*?"\1|'(?:[^'\\\n]|\\(?:u\{[0-9a-fA-F]{1,6}\}|x[0-9a-fA-F]{2}|.))'/
   # An enum path in a match pattern: `AppError::NotLoggedIn`, `NotLoggedIn`.
   PATTERN_PATH_RE = /(?<![\w:])((?:[A-Za-z_]\w*::)*[A-Z]\w*)(?![\w:])/
   VARIANT_PATH_RE = /\A(?:\w+::)*[A-Z]\w*\z/
@@ -107,7 +111,7 @@ module Noir::RustRequestGuards
     status_fn = source.matches?(STATUS_FN_RE)
     if status_fn || source.includes?("enum")
       # `'` also opens a lifetime, so only `"` opens a string here.
-      code = Noir::CComments.strip(source, quotes: %("))
+      code = Noir::CComments.strip(blank_literals(source), quotes: %("))
       code.scan(ENUM_DEF_RE) { |m| (facts.enum_files["#{crate}|#{m[1]}"] ||= Set(String).new) << path }
       collect_status_arms(code, globs, facts, path, crate) if status_fn
     end
@@ -117,6 +121,22 @@ module Noir::RustRequestGuards
     end
     Noir::TreeSitter.parse_rust(source) do |root|
       collect(root, source, globs, facts, path, crate, 0)
+    end
+  end
+
+  # `source` with its raw strings as `""` and its char literals as `' '`.
+  private def self.blank_literals(source : String) : String
+    return source unless source.includes?('\'') || source.includes?("r#") || source.includes?("r\"")
+    utf = source.valid_encoding? ? Regex::MatchOptions::NO_UTF_CHECK : Regex::MatchOptions::None
+    bytes = source.to_slice
+    String.build(source.bytesize) do |io|
+      pos = 0
+      while m = RUST_LITERAL_RE.match_at_byte_index(source, pos, utf)
+        io.write(bytes[pos, m.byte_begin - pos])
+        io << (m[0].starts_with?('\'') ? "' '" : %(""))
+        pos = m.byte_end
+      end
+      io.write(bytes[pos, bytes.size - pos])
     end
   end
 

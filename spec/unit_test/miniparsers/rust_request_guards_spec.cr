@@ -443,4 +443,28 @@ describe Noir::RustRequestGuards do
     verdicts["D"]?.should_not be_true
     verdicts["T"]?.should_not be_true
   end
+
+  it "reads a mapping after a char literal or raw string holding a quote" do
+    mapping = <<-RUST
+      impl IntoResponse for AppError {
+          fn into_response(self) -> Response {
+              let docs = "https://docs.example.com/errors";
+              match self {
+                  AppError::NotLoggedIn => (StatusCode::UNAUTHORIZED, docs).into_response(),
+                  AppError::Internal => (StatusCode::INTERNAL_SERVER_ERROR, docs).into_response(),
+              }
+          }
+      }
+      impl<S: Send + Sync> FromRequestParts<S> for User {
+          type Rejection = AppError;
+          async fn from_request_parts<'a>(parts: &'a mut Parts, _s: &S) -> Result<Self, Self::Rejection> {
+              parts.extensions.get::<u64>().map(|id| User(*id)).ok_or(AppError::NotLoggedIn)
+          }
+      }
+      RUST
+    [%(pub fn quote() -> char { '"' }\n), %(pub fn esc() -> char { '\\'' }\n),
+     %(pub const RAW: &str = r#"say "hi"#;\n)].each do |head|
+      rust_guard_verdicts(head + mapping)["User"]?.should be_true
+    end
+  end
 end

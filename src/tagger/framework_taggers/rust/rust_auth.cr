@@ -416,9 +416,18 @@ class RustAuthTagger < FrameworkTagger
     return true if required_params.any? { |type| @guard_verdicts[type]? == true }
     code = Noir::CComments.strip(body)
     # What a body does to the response it got (`let res = next.run(req).await;`
-    # then `if res.status() == 401 { redirect }`) refuses no caller.
-    if handed = code.match(HANDED_ON)
-      code = code[0, handed.begin]
+    # then `if res.status() == 401 { redirect }`) refuses no caller. Only a
+    # binding at the body's own top level hands on every request; one in a
+    # branch or a closure does not.
+    # ponytail: braces are counted raw, so a lone `{` in a string skews it.
+    offset = 0
+    while handed = code.match(HANDED_ON, offset)
+      head = code[0, handed.begin]
+      if head.count('{') - head.count('}') == 1
+        code = head
+        break
+      end
+      offset = handed.end
     end
     if ref.matches?(CSRF_NAME) || code.matches?(CSRF_NAME)
       return false unless code.gsub(CSRF_NAME, "").matches?(CREDENTIAL)

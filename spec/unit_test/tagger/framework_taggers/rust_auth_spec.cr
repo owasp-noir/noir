@@ -705,6 +705,38 @@ describe "RustAuthTagger" do
     axum_guarded_urls({"src/main.rs" => src}, ["/a", "/b", "/c"]).should be_empty
   end
 
+  it "guards with a middleware that hands on only in a branch or a closure" do
+    src = <<-RUST
+      async fn mw_a(req: Request<Body>, next: Next) -> Result<Response, StatusCode> {
+          if req.headers().get("x-key").is_some() {
+              let res = next.run(req).await;
+              return Ok(res);
+          }
+          Err(StatusCode::UNAUTHORIZED)
+      }
+      async fn mw_b(req: Request<Body>, next: Next) -> Response {
+          let run = |r: Request<Body>| async move { let res = next.run(r).await; res };
+          if req.headers().get("cookie").is_none() {
+              return Redirect::to("/login").into_response();
+          }
+          run(req).await
+      }
+      async fn mw_c(req: Request<Body>, next: Next) -> Result<Response, StatusCode> {
+          match req.headers().get("authorization") {
+              Some(_) => { let res = next.run(req).await; Ok(res) }
+              None => Err(StatusCode::FORBIDDEN),
+          }
+      }
+      fn app() -> Router {
+          Router::new()
+              .merge(Router::new().route("/a", post(h)).route_layer(middleware::from_fn(mw_a)))
+              .merge(Router::new().route("/b", post(h)).route_layer(middleware::from_fn(mw_b)))
+              .merge(Router::new().route("/c", post(h)).route_layer(middleware::from_fn(mw_c)))
+      }
+      RUST
+    axum_guarded_urls({"src/main.rs" => src}, ["/a", "/b", "/c"]).should eq(["/a", "/b", "/c"])
+  end
+
   it "guards with a middleware from another crate that redirects to a login page" do
     main = <<-RUST
       use lib_auth::require_auth;
