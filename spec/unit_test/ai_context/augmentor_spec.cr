@@ -2066,6 +2066,29 @@ describe "NoirAIContext" do
     end
   end
 
+  it "reads a route-source @PostAuthorize as a guard on reads only" do
+    {"GetMapping" => true, "DeleteMapping" => false}.each do |mapping, guarded|
+      source = <<-CODE
+        @PostAuthorize("returnObject.owner == authentication.name")
+        @#{mapping}("/docs/{id}")
+        public Doc handle(@PathVariable Long id) {
+            return service.handle(id);
+        }
+        CODE
+
+      with_temp_ai_context_source(source) do |path|
+        endpoint = Endpoint.new("/docs/{id}", mapping == "GetMapping" ? "GET" : "DELETE")
+        details = endpoint.details
+        details.add_path(PathInfo.new(path, 1))
+        endpoint.details = details
+        endpoint.push_param(Param.new("id", "1", "path"))
+
+        context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+        context.guards.map(&.kind).should eq(guarded ? ["authz_guard"] : [] of String)
+      end
+    end
+  end
+
   it "creates auth_guard and authz_guard for Spring meta-annotations" do
     endpoint = Endpoint.new("/api/admin/users", "GET")
     endpoint.add_tag(Tag.new("auth", "Protected by Spring @PreAuthorize (@AdminOnly)", "spring_auth"))

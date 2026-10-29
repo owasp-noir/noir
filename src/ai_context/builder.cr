@@ -1619,6 +1619,10 @@ module NoirAIContext
 
     ROUTE_PATH_LITERAL = /(["'`])\/[^"'`\n]*\1/
 
+    # `@PostAuthorize(...)` up to the scope's next line: Spring evaluates it
+    # after the handler returns, so on a write it guards nothing.
+    POST_AUTHORIZE_ANNOTATION = /@PostAuthorize\b[^|]*/
+
     # The route's own path literal and its handler's declared name are not
     # guards: `@PostMapping("/authenticate") … authorize(LoginVM vm)` names
     # the login endpoint, it does not protect it. The same goes for a route
@@ -1645,6 +1649,7 @@ module NoirAIContext
       source_scan_paths(endpoint).each do |path_info|
         route_scope = @reader.route_scope_snippet_for(path_info.path, path_info.line)
         guard_scope = route_scope && without_self_names(route_scope, endpoint, path_info)
+        guard_scope = guard_scope.gsub(POST_AUTHORIZE_ANNOTATION, "") if guard_scope && !SAFE_METHODS.includes?(endpoint.method.upcase)
 
         # Try each guard category independently — a route can be
         # protected by authn, authz, csrf, and rate-limit at once,

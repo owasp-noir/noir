@@ -1766,6 +1766,50 @@ describe "SpringAuthTagger (HandlerInterceptor)" do
 end
 
 describe "SpringAuthTagger (Meta-annotations)" do
+  it "counts @PostAuthorize as a guard on reads only, since it runs after the handler" do
+    meta_annotation = <<-JAVA
+      package com.example.security;
+
+      @Target(ElementType.METHOD)
+      @Retention(RetentionPolicy.RUNTIME)
+      @PostAuthorize("returnObject.owner == authentication.name")
+      public @interface OwnerOnly {
+      }
+      JAVA
+
+    controller = <<-JAVA
+      package com.example.controller;
+
+      @RestController
+      public class DocController {
+          @PostAuthorize("returnObject.owner == authentication.name")
+          @GetMapping("/docs/{id}")
+          public Doc get(@PathVariable Long id) { return repo.find(id); }
+
+          @PostAuthorize("returnObject.owner == authentication.name")
+          @DeleteMapping("/docs/{id}")
+          public Doc delete(@PathVariable Long id) { return repo.delete(id); }
+
+          @OwnerOnly
+          @PutMapping("/docs/{id}")
+          public Doc update(@PathVariable Long id) { return repo.save(id); }
+      }
+      JAVA
+
+    endpoints = run_spring_endpoints_map({
+      "src/main/java/com/example/security/OwnerOnly.java"       => meta_annotation,
+      "src/main/java/com/example/controller/DocController.java" => controller,
+    }, {
+      "GET /docs/{id}"    => "src/main/java/com/example/controller/DocController.java:6",
+      "DELETE /docs/{id}" => "src/main/java/com/example/controller/DocController.java:10",
+      "PUT /docs/{id}"    => "src/main/java/com/example/controller/DocController.java:14",
+    })
+
+    endpoints["GET /docs/{id}"].tags.map(&.description).should eq(["Protected by Spring @PostAuthorize"])
+    endpoints["DELETE /docs/{id}"].tags.should be_empty
+    endpoints["PUT /docs/{id}"].tags.should be_empty
+  end
+
   it "does not read a longer class annotation as a meta-annotation that prefixes it" do
     meta_annotation = <<-JAVA
       package com.example.security;

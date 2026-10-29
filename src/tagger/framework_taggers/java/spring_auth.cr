@@ -1108,9 +1108,17 @@ class SpringAuthTagger < FrameworkTagger
     end || 0
   end
 
-  private def check_annotations(ctx : SourceContext) : String?
+  private def check_annotations(ctx : SourceContext, method : String) : String?
     line = ctx.line
     return unless line
+
+    # `@PostAuthorize` is evaluated after the handler returns: it hides a
+    # read's result, but a write has already happened when it refuses.
+    post_ok = SAFE_HTTP_METHODS.includes?(method.upcase)
+    patterns = post_ok ? ANNOTATION_PATTERNS : ANNOTATION_PATTERNS.reject(&.source.includes?("PostAuthorize"))
+    class_names = post_ok ? CLASS_ANNOTATION_NAMES : CLASS_ANNOTATION_NAMES - ["@PostAuthorize"]
+    metas = @security_meta_annotations.values
+    metas.reject!(&.spring_annotation.==("@PostAuthorize")) unless post_ok
 
     # Walk backwards from endpoint line to find annotations
     # `line` is 1-indexed (from PathInfo), array is 0-indexed
@@ -1132,14 +1140,14 @@ class SpringAuthTagger < FrameworkTagger
       # or a bodiless interface method `String admin();`.
       break if current_line.ends_with?(";") || current_line.matches?(KOTLIN_FUN_DECLARATION)
 
-      ANNOTATION_PATTERNS.each do |pattern|
+      patterns.each do |pattern|
         if current_line.matches?(pattern)
           annotation_name = current_line.split("(").first.strip
           return "Protected by Spring #{annotation_name}"
         end
       end
 
-      @security_meta_annotations.each_value do |meta|
+      metas.each do |meta|
         if current_line.matches?(/(?:\A|[^@\w])@#{Regex.escape(meta.name)}\b/)
           return "Protected by Spring #{meta.spring_annotation} (@#{meta.name})"
         end
@@ -1149,14 +1157,14 @@ class SpringAuthTagger < FrameworkTagger
     end
 
     annotation_lines_below(lines, endpoint_idx, "@").each do |below|
-      ANNOTATION_PATTERNS.each do |pattern|
+      patterns.each do |pattern|
         if below.matches?(pattern)
           annotation_name = below.split("(").first.strip
           return "Protected by Spring #{annotation_name}"
         end
       end
 
-      @security_meta_annotations.each_value do |meta|
+      metas.each do |meta|
         if below.matches?(/(?:\A|[^@\w])@#{Regex.escape(meta.name)}\b/)
           return "Protected by Spring #{meta.spring_annotation} (@#{meta.name})"
         end
@@ -1168,13 +1176,13 @@ class SpringAuthTagger < FrameworkTagger
     # stops at the `public`/`class` boundary by design, so a handler under an
     # `@PreAuthorize("hasRole('ADMIN')")` controller was reported as
     # unauthenticated. Check the class declaration separately.
-    CLASS_ANNOTATION_NAMES.each do |annotation_name|
+    class_names.each do |annotation_name|
       if class_line = class_level_annotation(ctx.path, lines, annotation_name)
         return "Protected by Spring #{class_line.split("(").first.strip} on the controller class"
       end
     end
 
-    @security_meta_annotations.each_value do |meta|
+    metas.each do |meta|
       # The lookup matches by prefix: `@Admin` must not take `@AdminApi`.
       if class_level_annotation(ctx.path, lines, "@#{meta.name}").try(&.matches?(/\A@#{Regex.escape(meta.name)}\b/))
         return "Protected by Spring #{meta.spring_annotation} (@#{meta.name}) on the controller class"
@@ -1191,7 +1199,7 @@ class SpringAuthTagger < FrameworkTagger
     # Phase 2: Check annotations near code_paths
     contexts = read_source_context(endpoint)
     contexts.each do |ctx|
-      if description = check_annotations(ctx)
+      if description = check_annotations(ctx, endpoint.method)
         endpoint.add_tag(Tag.new("auth", description, "spring_auth"))
         return
       end
