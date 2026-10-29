@@ -1775,6 +1775,120 @@ describe "NoirAIContext" do
     end
   end
 
+  it "does not flag the Express raw body parser as an xss sink" do
+    source = <<-CODE
+      const express = require('express')
+      const app = express()
+
+      app.post('/webhooks/stripe', express.raw({ type: 'application/json' }), (req, res) => {
+        handleStripeEvent(req.body, req.headers['stripe-signature'])
+        res.sendStatus(200)
+      })
+
+      app.listen(3000)
+      CODE
+
+    with_temp_ai_context_source(source, ".js") do |path|
+      endpoint = Endpoint.new("/webhooks/stripe", "POST")
+      details = endpoint.details
+      details.add_path(PathInfo.new(path, 4))
+      endpoint.details = details
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+      context.sinks.map(&.kind).should_not contain("xss")
+    end
+  end
+
+  it "does not flag body-parser raw() calls as xss sinks" do
+    [
+      "bodyParser.raw({ type: '*/*' })",
+      "bodyParser.raw ({ type: '*/*' })",
+      "bodyparser.raw()",
+      "express.raw()",
+    ].each do |parser|
+      source = <<-CODE
+        app.post('/hooks', #{parser}, (req, res) => {
+          verifySignature(req.body)
+          res.sendStatus(204)
+        })
+        CODE
+
+      with_temp_ai_context_source(source, ".js") do |path|
+        endpoint = Endpoint.new("/hooks", "POST")
+        details = endpoint.details
+        details.add_path(PathInfo.new(path, 1))
+        endpoint.details = details
+
+        context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+        context.sinks.map(&.kind).should_not contain("xss"), "expected no xss sink for #{parser}"
+      end
+    end
+  end
+
+  it "flags Rails raw() as an xss sink" do
+    source = <<-CODE
+      def show
+        @greeting = raw(params[:name])
+      end
+      CODE
+
+    with_temp_ai_context_source(source, ".rb") do |path|
+      endpoint = Endpoint.new("/greet", "GET")
+      details = endpoint.details
+      details.add_path(PathInfo.new(path, 1))
+      endpoint.details = details
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+      sink = context.sinks.find { |entry| entry.kind == "xss" }
+      sink.should_not be_nil
+      sink.not_nil!.name.should eq("raw(params[:name])")
+    end
+  end
+
+  it "keeps flagging receiver-qualified raw HTML helpers as xss sinks" do
+    [
+      "helpers.raw(params[:bio])",
+      "Phoenix.HTML.raw(bio)",
+      "@Html.Raw(Model.Bio)",
+    ].each do |call|
+      source = <<-CODE
+        def show
+          #{call}
+        end
+        CODE
+
+      with_temp_ai_context_source(source) do |path|
+        endpoint = Endpoint.new("/bio", "GET")
+        details = endpoint.details
+        details.add_path(PathInfo.new(path, 1))
+        endpoint.details = details
+
+        context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+        context.sinks.map(&.kind).should contain("xss"), "expected an xss sink for #{call}"
+      end
+    end
+  end
+
+  it "still flags a raw() HTML helper next to the Express raw body parser" do
+    source = <<-CODE
+      app.post('/preview', express.raw({ type: 'text/html' }), (req, res) => {
+        res.send(raw(req.body.toString()))
+      })
+      CODE
+
+    with_temp_ai_context_source(source, ".js") do |path|
+      endpoint = Endpoint.new("/preview", "POST")
+      details = endpoint.details
+      details.add_path(PathInfo.new(path, 1))
+      endpoint.details = details
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+      sink = context.sinks.find { |entry| entry.kind == "xss" }
+      sink.should_not be_nil
+      sink.not_nil!.name.should eq("raw(req.body.toString())")
+    end
+  end
+
   it "flags pickle.loads as a deserialization sink" do
     source = <<-CODE
       @app.route('/restore', methods=['POST'])
