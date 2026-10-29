@@ -6,6 +6,7 @@ expected_endpoints = [
   Endpoint.new("/items", "GET"),
   Endpoint.new("/items", "POST"),
   Endpoint.new("/items/archived", "GET"),
+  Endpoint.new("/", "GET"),
   Endpoint.new("/clients/{client-uuid}/roles/{role.name}", "GET", [
     Param.new("client-uuid", "", "path"),
     Param.new("role.name", "", "path"),

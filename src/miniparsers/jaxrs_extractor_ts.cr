@@ -370,6 +370,8 @@ module Noir
         # JAX-RS drops a template's trailing `/`, so `@Path("/")` on a
         # method adds no segment: `/items` + `/` is `/items`, not `/items/`.
         full_path = Noir::URLPath.join_trimmed(class_path, method_path.rstrip('/'))
+        # ...but an unmapped class plus `@Path("/")` is still the root.
+        full_path = "/" if full_path.empty? && !method_path.empty?
         method_consumes = consumes_format(member, source) || class_consumes
 
         unless verb && verb_node
