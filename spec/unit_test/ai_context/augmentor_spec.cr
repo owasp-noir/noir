@@ -1466,6 +1466,144 @@ describe "NoirAIContext" do
     end
   end
 
+  # #3255: LINQ `_keys.Select(...)` and the `System.` namespace head of
+  # `System.IO.File.Exists` were sql / command_exec sinks by name alone.
+  it "counts select and system callees only as a query builder or a shell call" do
+    {
+      "_keys.Select"                  => {"sql", false},
+      "items.select"                  => {"sql", false},
+      "db.Select"                     => {"sql", true},
+      "knex.select"                   => {"sql", true},
+      "this.qb.select"                => {"sql", true},
+      "System.IO.File.Exists"         => {"command_exec", false},
+      "System.Text.Json.JsonDocument" => {"command_exec", false},
+      "platform.system"               => {"command_exec", false},
+      "system"                        => {"command_exec", true},
+      "os.system"                     => {"command_exec", true},
+      "Kernel.system"                 => {"command_exec", true},
+      "std::system"                   => {"command_exec", true},
+      "Process.Start"                 => {"command_exec", true},
+    }.each do |name, (kind, expected)|
+      endpoint = Endpoint.new("/items", "GET")
+      endpoint.push_callee(Callee.new(name, "app.cs", 3))
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+
+      context.sinks.map(&.kind).includes?(kind).should eq(expected), name
+    end
+  end
+
+  # #3255: a project helper named like a sink is judged by its body.
+  it "does not read a project's own render helper returning a map as a template_render sink" do
+    source = <<-KOTLIN
+      @RestController
+      class ItemController {
+          @GetMapping("/items/{id}")
+          fun get(@PathVariable id: String): Map<String, Any?> = render(id)
+
+          private fun render(id: String): Map<String, Any?> = mapOf("id" to id)
+      }
+      KOTLIN
+
+    with_temp_ai_context_source(source, ".kt") do |path|
+      endpoint = Endpoint.new("/items/{id}", "GET")
+      details = endpoint.details
+      details.technology = "kotlin_spring"
+      details.add_path(PathInfo.new(path, 3))
+      endpoint.details = details
+      endpoint.push_callee(Callee.new("render", path, 4))
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+      context.sinks.map(&.kind).should_not contain("template_render")
+    end
+  end
+
+  it "keeps a project render helper whose body renders a template, and a framework render" do
+    source = <<-PY
+      @app.route("/page")
+      def page():
+          return render("page.html")
+
+      def render(name):
+          return render_template(name, user=current_user)
+      PY
+
+    with_temp_ai_context_source(source, ".py") do |path|
+      endpoint = Endpoint.new("/page", "GET")
+      details = endpoint.details
+      details.add_path(PathInfo.new(path, 1))
+      endpoint.details = details
+      endpoint.push_callee(Callee.new("render", path, 5))
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+      context.sinks.map(&.kind).should contain("template_render")
+    end
+
+    rails = "class PostsController < ApplicationController\n  def show\n    render :show\n  end\nend"
+    with_temp_ai_context_source(rails, ".rb") do |path|
+      endpoint = Endpoint.new("/posts/:id", "GET")
+      endpoint.push_callee(Callee.new("render", path, 3))
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+      context.sinks.map(&.kind).should contain("template_render")
+    end
+  end
+
+  # CTFd `utils/security/signing.py`: `unserialize` wraps itsdangerous'
+  # signed-JSON `loads`, which revives no objects.
+  it "does not read a project's own unserialize helper as a deserialization sink" do
+    helper = <<-PY
+      from itsdangerous import URLSafeTimedSerializer
+
+
+      def unserialize(data, secret="k", max_age=3600):
+          s = URLSafeTimedSerializer(secret)
+          return s.loads(data, max_age=max_age)
+      PY
+    view = <<-PY
+      @app.route("/files")
+      def files():
+          data = unserialize(request.args.get("token"))
+          return str(data)
+      PY
+
+    with_temp_ai_context_source(helper, ".py") do |helper_path|
+      with_temp_ai_context_source(view, ".py") do |view_path|
+        endpoint = Endpoint.new("/files", "GET")
+        details = endpoint.details
+        details.add_path(PathInfo.new(view_path, 1))
+        endpoint.details = details
+        endpoint.push_callee(Callee.new("unserialize", helper_path, 4))
+
+        context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+        context.sinks.map(&.kind).should_not contain("deserialization")
+      end
+    end
+  end
+
+  it "keeps the PHP unserialize builtin and a project helper around pickle.loads as deserialization sinks" do
+    php = "<?php\n$data = unserialize($_GET['state']);\n"
+    with_temp_ai_context_source(php, ".php") do |path|
+      endpoint = Endpoint.new("/state", "GET")
+      details = endpoint.details
+      details.add_path(PathInfo.new(path, 2))
+      endpoint.details = details
+      endpoint.push_callee(Callee.new("unserialize", path, 2))
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+      context.sinks.map(&.kind).should contain("deserialization")
+    end
+
+    helper = "import pickle\n\ndef unserialize(data):\n    return pickle.loads(data)\n"
+    with_temp_ai_context_source(helper, ".py") do |path|
+      endpoint = Endpoint.new("/load", "POST")
+      endpoint.push_callee(Callee.new("unserialize", path, 3))
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+      context.sinks.map(&.kind).should contain("deserialization")
+    end
+  end
+
   it "does not source-scan a command-object execute as a sql sink" do
     source = <<-JS
       app.post('/orders', (req, res) => {

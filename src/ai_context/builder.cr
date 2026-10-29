@@ -30,6 +30,7 @@ module NoirAIContext
     @reader : SourceReader
     @declared_types = {} of Tuple(String, String) => String?
     @repository_types = {} of String => Bool
+    @definition_headers = {} of String => Regex
 
     def initialize
       @reader = SourceReader.new
@@ -77,8 +78,8 @@ module NoirAIContext
       add_mobile_deep_link_source(context, endpoint, anchor, route_snippet)
       add_tag_entries(context, endpoint, anchor, route_snippet)
       add_graphql_resolver_signal(context, endpoint)
-      add_callee_entries(context, endpoint)
-      add_source_scan_entries(context, endpoint)
+      inert_helpers = add_callee_entries(context, endpoint)
+      add_source_scan_entries(context, endpoint, inert_helpers)
       add_credential_from_source_signal(context, endpoint, anchor)
       add_missing_guard_signal(context, endpoint, anchor, route_snippet)
       add_combination_signals(context, endpoint, anchor, route_snippet)
@@ -1383,8 +1384,12 @@ module NoirAIContext
       endpoint.mobile? ? SINK_PATTERNS : NON_MOBILE_SINK_PATTERNS
     end
 
-    private def add_callee_entries(context : AIContext, endpoint : Endpoint)
+    # Returns the names of project helpers judged inert (see
+    # `inert_project_helper`), so the source scan does not re-read their
+    # call in the handler as the sink their name suggests.
+    private def add_callee_entries(context : AIContext, endpoint : Endpoint) : Array(String)
       sink_patterns = sink_patterns_for(endpoint)
+      inert_helpers = [] of String
       endpoint.callees.each do |callee|
         callee_snippet = @reader.snippet_for(callee.path, callee.line, CALLEE_SNIPPET_RADIUS)
 
@@ -1405,8 +1410,12 @@ module NoirAIContext
           context.push_sink(handle_sink)
         elsif (raw_sink = PatternMatcher.detect_from_patterns(callee.name, callee_snippet, sink_patterns, callee.path, callee.line, "callee")) &&
               !in_memory_send_file?(raw_sink, callee)
-          sink = normalize_mobile_sink(endpoint, raw_sink)
-          context.push_sink(enrich_callee_sink(sink, callee, callee_snippet))
+          if helper = inert_project_helper(raw_sink, callee, sink_patterns)
+            inert_helpers << helper
+          else
+            sink = normalize_mobile_sink(endpoint, raw_sink)
+            context.push_sink(enrich_callee_sink(sink, callee, callee_snippet))
+          end
         end
         unless context.sinks.any? { |entry| entry.kind == "sql" }
           helper_repository_sink(callee).try { |entry| context.push_sink(entry) }
@@ -1416,6 +1425,7 @@ module NoirAIContext
           context.push_validator(validator)
         end
       end
+      inert_helpers
     end
 
     # `f.read()` / `f.Write(b)` touches the file system only when `f` holds a
@@ -1451,6 +1461,52 @@ module NoirAIContext
     end
 
     SEND_IN_MEMORY_BUFFER = /\bsend_?file\s*\(\s*#{IN_MEMORY_BUFFER}/i
+
+    # Sink kinds whose callee names are words a project reuses for its own
+    # helpers (`render`, `unserialize`). The other kinds keep the name match:
+    # their catalogs miss common body forms (Python `open(`, Django
+    # `HttpResponseRedirect`), so judging a helper's body would drop real ones.
+    BODY_JUDGED_SINK_KINDS = Set{"template_render", "deserialization"}
+
+    # A callee the project defines itself (Kotlin `private fun render(id)`
+    # returning a Map, a `def unserialize` wrapping itsdangerous `loads`): the
+    # name is the project's choice, so the sink stands only when the
+    # definition's body reaches that kind's call (`render_template(`,
+    # `pickle.loads(`, `Html(`). A framework `render` / PHP `unserialize`
+    # has no definition in the project and keeps the name match. Returns the
+    # helper's name when it is inert.
+    # ponytail: the definition is the callee's own line (analyzers that
+    # resolve callees) or a same-named one in the call-site file; a helper
+    # defined in another file and reported at its call site is not found.
+    private def inert_project_helper(sink : AIContextEntry, callee : Callee, patterns : Array(PatternDefinition)) : String?
+      return unless BODY_JUDGED_SINK_KINDS.includes?(sink.kind)
+      return unless (path = callee.path) && (line = callee.line)
+      return unless name = callee.name.match(/(?:\A|[.:>])(\w+)\z/).try(&.[1])
+      return unless def_line = project_definition_line(path, line, name, bare: callee.name.matches?(/\A(?:(?:self|this)\.)?\w+\z/))
+      return unless pattern = patterns.find { |entry| entry.kind == sink.kind }
+      return unless body = @reader.route_scope_snippet_for(path, def_line, 40, 4000)
+
+      body = body.sub(definition_header(name), "")
+      name if (pattern.source_patterns + pattern.name_patterns).none? { |regex| body.matches?(regex) }
+    end
+
+    # The definition of `name` that `callee.line` points at, or, for a bare
+    # callee reported at its call site, the first one in the same file.
+    private def project_definition_line(path : String, line : Int32, name : String, bare : Bool) : Int32?
+      header = definition_header(name)
+      lines = @reader.lines_for(path)
+      return line if lines[line - 1]?.try(&.matches?(header))
+      return unless bare
+
+      lines.index(&.matches?(header)).try(&.succ)
+    end
+
+    # `def name`, `fun name`, `function name`, `func (r *T) name`, `fn name`,
+    # `sub name`, `const name = `, or a modifier-led JVM / .NET method
+    # (`private Map<String, Object> name(`).
+    private def definition_header(name : String) : Regex
+      @definition_headers[name] ||= /(?:\b(?:def|defp|fun|function|func|fn|sub)\s+(?:\([^)]*\)\s*)?(?:self\.)?|\b(?:const|let|var)\s+|\b(?:public|private|protected|internal|static)\s+(?:[\w<>\[\],.?]+\s+)*)#{Regex.escape(name)}\b(?!\s*\.)/
+    end
 
     # Whether the nearest binding of `name` at or above `line` takes its value
     # from `value`: `name = value`, `name, err := value`, `with value as name`,
@@ -1687,8 +1743,9 @@ module NoirAIContext
       scope.split(" | ").map { |seg| seg.starts_with?(prefix) ? seg.sub(self_name, "") : seg }.join(" | ")
     end
 
-    private def add_source_scan_entries(context : AIContext, endpoint : Endpoint)
+    private def add_source_scan_entries(context : AIContext, endpoint : Endpoint, inert_helpers : Array(String))
       return if endpoint.details.code_paths.empty?
+      inert_call = Regex.union(inert_helpers.map { |name| /\b#{Regex.escape(name)}\s*\(/ }) unless inert_helpers.empty?
 
       source_scan_paths(endpoint).each do |path_info|
         route_scope = @reader.route_scope_snippet_for(path_info.path, path_info.line)
@@ -1759,9 +1816,14 @@ module NoirAIContext
         # double-emit but a route that's both `xss` and `sql` will
         # surface both. Previously we capped the whole route at one
         # sink, which silently dropped the second / third class.
+        # A call to an inert project helper is blanked for the kinds its name
+        # would match; the entry still quotes the source as written.
+        helper_free = inert_call ? snippet.gsub(inert_call, "(") : snippet
         sink_patterns_for(endpoint).each do |pattern|
           next if context.sinks.any? { |s| s.kind == pattern.kind }
-          if raw_sink = PatternMatcher.detect_single_pattern(pattern, "", snippet, path_info.path, path_info.line, "route_source")
+          scan = BODY_JUDGED_SINK_KINDS.includes?(pattern.kind) ? helper_free : snippet
+          if raw_sink = PatternMatcher.detect_single_pattern(pattern, "", scan, path_info.path, path_info.line, "route_source")
+            raw_sink.snippet = snippet
             context.push_sink(normalize_mobile_sink(endpoint, raw_sink))
           end
         end

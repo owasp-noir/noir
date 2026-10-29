@@ -12,8 +12,11 @@ module NoirAIContext
   # (`c.Query`, FastAPI `Query()`, `params.query`) or command objects
   # (`useCase.execute`), so they count as SQL only on a DB-ish
   # receiver. Raw SQL on any other receiver still surfaces through the
-  # `select ... from` source pattern.
-  SQL_RECEIVER_CALL = /\b(?:\w*db|db\w*|database|\w*conn(?:ection)?|con|cursor|cur|_?cr|pool|session|tx|transaction|stmt|statement|knex|sequelize|pg\w*|mysqli?|sqlite3?|pdo|sqlx?|repo|queryRunner|manager|jdbcTemplate|entityManager|dataSource)(?:\.|->|::)(?:query|execute|exec)\b/i
+  # `select ... from` source pattern. `select` is the same: on a query
+  # builder (`knex.select`, sqlx `db.Select`, jOOQ `dsl.select`) it runs
+  # SQL, while `_keys.Select(...)` is LINQ and `items.select { }` Ruby's
+  # Enumerable.
+  SQL_RECEIVER_CALL = /\b(?:\w*db|db\w*|database|\w*conn(?:ection)?|con|cursor|cur|_?cr|pool|session|tx|transaction|stmt|statement|knex|sequelize|pg\w*|mysqli?|sqlite3?|pdo|sqlx?|repo|queryRunner|manager|jdbcTemplate|entityManager|dataSource|dsl|qb|\w*queryBuilder)(?:\.|->|::)(?:query|execute|exec|select)\b/i
 
   # The JVM receiver names no rule above can see (`this.owners.save`),
   # read off the declaration instead: a type named `*Repository` / `*Dao`,
@@ -62,16 +65,20 @@ module NoirAIContext
       "sql",
       "Potential SQL/data-store sink inferred from code or callee name",
       78,
-      name_patterns: [/raw_?sql/i, /find_?by_?sql/i, SQL_RECEIVER_CALL, /\bselect\b/i],
+      name_patterns: [/raw_?sql/i, /find_?by_?sql/i, SQL_RECEIVER_CALL],
       source_patterns: [/find_by_sql/i, /\braw(sql|_sql)\b/i, /\bselect\b.+\bfrom\b/i, /\bexecute(?:Query|Sql)\b/i, SQL_RECEIVER_CALL]
     ),
     PatternDefinition.new(
       "command_exec",
       "Potential command execution sink inferred from code or callee name",
       82,
-      name_patterns: [/\bexec\b/i, /\bsystem\b/i, /\bspawn\b/i, /\bpopen\b/i, /\bshell\b/i],
+      # `system` is the libc / PHP / Ruby / Perl builtin, or Python's
+      # `os.system`: the whole callee or its last segment on one of those
+      # receivers. A namespace head (`System.IO.File.Exists`) or a property
+      # (`platform.system`) runs nothing. .NET spawns through `Process.Start`.
+      name_patterns: [/\bexec\b/i, /\A(?:(?:os|Kernel|std|posix)?(?:\.|::))?system\z/, /\bProcess\.Start\b/, /\bspawn\b/i, /\bpopen\b/i, /\bshell\b/i],
       # `session.exec(` / `cursor.exec(` are queries, see SQL_RECEIVER_CALL.
-      source_patterns: [/(?<!session\.|cursor\.|conn\.|pool\.|stmt\.|db\.|tx\.|sql\.)\bexec\s*\(/i, /\bsystem\s*\(/i, /\bspawn\s*\(/i, /\bpopen\s*\(/i, /ProcessBuilder/i, /Runtime\.getRuntime/i, /subprocess\./i]
+      source_patterns: [/(?<!session\.|cursor\.|conn\.|pool\.|stmt\.|db\.|tx\.|sql\.)\bexec\s*\(/i, /\bsystem\s*\(/i, /\bProcess\.Start\s*\(/, /\bspawn\s*\(/i, /\bpopen\s*\(/i, /ProcessBuilder/i, /Runtime\.getRuntime/i, /subprocess\./i]
     ),
     PatternDefinition.new(
       "file_io",
@@ -87,7 +94,7 @@ module NoirAIContext
       # The source scan needs a file-system call: a bare `upload` /
       # `download` word in the scan window is usually the route's own path
       # literal or name (`"/upload"`), see MOBILE_DOWNLOAD_SINK.
-      name_patterns: [/\b(?:File|IO)\.\w|\.File\b/, /\bfile\.(?:save|write)/i, FILE_IO_CALL],
+      name_patterns: [/\b(?:File|IO)\.\w+|\.File\b/, /\bfile\.(?:save|write)/i, FILE_IO_CALL],
       source_patterns: [/\bFile\.(open|read|write)/, /\bread_text\b/i, /\bwrite_text\b/i, FILE_IO_CALL, DIRECTORY_LISTING_CALL]
     ),
     MOBILE_DOWNLOAD_SINK,
