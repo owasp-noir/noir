@@ -161,6 +161,19 @@ describe "OAS3 Analyzer" do
                 - {}
                 - bearerAuth: []
               responses: {'200': {description: ok}}
+          /undefined:
+            get:
+              security:
+                - nosuch: []
+              responses: {'200': {description: ok}}
+          /partly-undefined:
+            get:
+              security:
+                - nosuch: []
+                - bearerAuth: []
+                  nosuch: []
+                - apiKey: []
+              responses: {'200': {description: ok}}
         YAML
       File.write(File.join(dir, "openapi.yaml"), yaml)
       File.write(File.join(dir, "openapi.json"), YAML.parse(yaml).to_json)
@@ -171,7 +184,7 @@ describe "OAS3 Analyzer" do
       options["base"] = YAML::Any.new([YAML::Any.new(dir)])
 
       endpoints = Analyzer::Specification::Oas3.new(options).analyze
-      endpoints.size.should eq(8)
+      endpoints.size.should eq(12)
       endpoints.each do |endpoint|
         details = endpoint.details
         details.technology = "oas3"
@@ -179,10 +192,13 @@ describe "OAS3 Analyzer" do
       end
       tags = endpoints.map { |e| {e.url, e.tags.map { |t| {t.name, t.description} }} }.uniq!
       tags.should eq([
-        {"/items", [{"auth", "Protected by OAS security bearerAuth"}]},
+        {"/items", [{"auth", "Protected by OAS security bearerAuth (inherited from the spec's root security)"}]},
         {"/items/{item_id}", [{"auth", "Protected by OAS security bearerAuth + apiKey or apiKey"}]},
         {"/public/feedback", [{"anonymous", "OAS security admits anonymous callers"}]},
         {"/maybe", [{"anonymous", "OAS security admits anonymous callers"}]},
+        # A scheme the document never defines guards nothing.
+        {"/undefined", [] of Tuple(String, String)},
+        {"/partly-undefined", [{"auth", "Protected by OAS security apiKey"}]},
       ])
 
       signals = NoirAIContext.apply(endpoints[0, 4]).to_h do |endpoint|
@@ -207,7 +223,7 @@ describe "OAS3 Analyzer" do
 
     tags = Analyzer::Specification::Oas2.new(options).analyze.map { |e| {e.method, e.url, e.tags.map(&.description)} }
     tags.should eq([
-      {"GET", "/v1/items", ["Protected by OAS security ApiKeyHeader"]},
+      {"GET", "/v1/items", ["Protected by OAS security ApiKeyHeader (inherited from the spec's root security)"]},
       {"POST", "/v1/items", ["Protected by OAS security BasicAuth"]},
       {"GET", "/v1/public", ["OAS security admits anonymous callers"]},
       {"GET", "/v1/search", ["Protected by OAS security ApiKeyQuery"]},

@@ -798,25 +798,51 @@ module Analyzer::Specification
     # alternative names a scheme. `[]` and an empty `{}` alternative (the
     # spelling for optional auth) admit them. No `security` at all says
     # nothing, so it adds no tag.
-    protected def security_access_tag(effective) : Tag?
+    #
+    # An alternative naming a scheme the document does not define
+    # (`defined_schemes`, nil when it defines none) cannot be checked by
+    # anyone, so it is not evidence of a guard. `inherited`: the operation
+    # took the root `security` rather than stating its own, which the
+    # description says, since generators set that default for every route.
+    protected def security_access_tag(effective, inherited : Bool, defined_schemes : Set(String)?) : Tag?
       return unless requirements = effective.try(&.as_a?)
 
       alternatives = requirements.compact_map do |requirement|
         requirement.as_h?.try(&.keys.map(&.to_s))
+      end
+      if defined_schemes
+        alternatives.select!(&.all? { |scheme| defined_schemes.includes?(scheme) })
       end
       return if alternatives.empty? && !requirements.empty?
       if alternatives.empty? || alternatives.any?(&.empty?)
         return Tag.new("anonymous", "OAS security admits anonymous callers", Tag.declared_access_tagger(tech))
       end
 
-      declared_access_tag("Protected by OAS security #{alternatives.map(&.join(" + ")).join(" or ")}")
+      origin = " (inherited from the spec's root security)" if inherited
+      declared_access_tag("Protected by OAS security #{alternatives.map(&.join(" + ")).join(" or ")}#{origin}")
+    end
+
+    # OAS2/OAS3: the scheme names a `securitySchemes` / `securityDefinitions`
+    # mapping defines, or nil when the document has none.
+    protected def defined_security_schemes(registry) : Set(String)?
+      registry.try(&.as_h?).try(&.keys.map(&.to_s).to_set)
+    end
+
+    # OAS2/OAS3: whether the operation states its own `security`.
+    protected def declares_security?(operation : JSON::Any) : Bool
+      operation.as_h?.try(&.has_key?("security")) || false
+    end
+
+    protected def declares_security?(operation : YAML::Any) : Bool
+      operation.as_h?.try(&.has_key?(YAML::Any.new("security"))) || false
     end
 
     # OAS2/OAS3: records one operation, with what its effective `security`
     # says about anonymous callers.
-    protected def push_operation(url : String, method : String, params : Array(Param), details : Details, effective_security) : Nil
+    protected def push_operation(url : String, method : String, params : Array(Param), details : Details,
+                                 effective_security, inherited : Bool, defined_schemes : Set(String)?) : Nil
       endpoint = params.empty? ? Endpoint.new(url, method, details) : Endpoint.new(url, method, params, details)
-      security_access_tag(effective_security).try { |tag| endpoint.add_tag(tag) }
+      security_access_tag(effective_security, inherited, defined_schemes).try { |tag| endpoint.add_tag(tag) }
       @result << endpoint
     end
 

@@ -4,15 +4,15 @@ module Analyzer::Specification
   class K8sIngress < SpecificationEngine
     analyzer_for "k8s_ingress"
 
-    DEFAULT_METHOD     = "GET"
-    REWRITE_ANNOTATION = "nginx.ingress.kubernetes.io/rewrite-target"
-    AUTH_ANNOTATION    = "nginx.ingress.kubernetes.io/"
-    DEFAULT_PATH_TYPE  = "ImplementationSpecific"
-    API_VERSION_LINE   = /(?m)^[ \t-]*apiVersion:\s*["']?(?:networking\.k8s\.io\/[^"'\s#]+|extensions\/v1beta1)["']?\s*(?:#.*)?$/
-    KIND_LINE          = /(?m)^[ \t-]*kind:\s*["']?Ingress["']?\s*(?:#.*)?$/
-    PATH_LINE          = /^[ \t-]*path:\s*(.*)$/
-    PATH_TYPE_LINE     = /^[ \t-]*pathType:\s*(.*)$/
-    HOST_LINE          = /^[ \t-]*host:\s*(.*)$/
+    DEFAULT_METHOD         = "GET"
+    REWRITE_ANNOTATION     = "nginx.ingress.kubernetes.io/rewrite-target"
+    AUTH_ANNOTATION_PREFIX = "nginx.ingress.kubernetes.io/"
+    DEFAULT_PATH_TYPE      = "ImplementationSpecific"
+    API_VERSION_LINE       = /(?m)^[ \t-]*apiVersion:\s*["']?(?:networking\.k8s\.io\/[^"'\s#]+|extensions\/v1beta1)["']?\s*(?:#.*)?$/
+    KIND_LINE              = /(?m)^[ \t-]*kind:\s*["']?Ingress["']?\s*(?:#.*)?$/
+    PATH_LINE              = /^[ \t-]*path:\s*(.*)$/
+    PATH_TYPE_LINE         = /^[ \t-]*pathType:\s*(.*)$/
+    HOST_LINE              = /^[ \t-]*host:\s*(.*)$/
 
     def analyze
       each_spec_file_with_details(Noir::LocatorKeys::K8S_INGRESS_SPEC) do |path, details|
@@ -74,19 +74,29 @@ module Analyzer::Specification
     # (`optional`, `optional_no_ca` and `off` admit callers without one).
     # ponytail: the default `nginx.ingress.kubernetes.io` prefix only; a
     # controller run with `--annotations-prefix` is not recognised.
+    #
+    # A value with a Helm action in it (`{{ .Values.authUrl }}`, `{{ if }}`)
+    # is whatever the chart's values make it, possibly empty, so a guard that
+    # rests only on such values is one a setting can lift.
     private def access_tag(annotations : Hash(YAML::Any, YAML::Any)) : Tag?
-      value = ->(name : String) { annotations[YAML::Any.new(AUTH_ANNOTATION + name)]?.try(&.as_s?).try(&.strip).presence }
-      guards = [] of String
+      value = ->(name : String) { annotations[YAML::Any.new(AUTH_ANNOTATION_PREFIX + name)]?.try(&.as_s?).try(&.strip).presence }
+      templated = ->(values : Array(String)) { values.any?(&.includes?("{{")) }
+      guards = [] of Tuple(String, Bool)
       if url = value.call("auth-url")
-        guards << "auth-url #{url}"
+        guards << {"auth-url #{url}", templated.call([url])}
       end
-      if (type = value.call("auth-type")) && value.call("auth-secret")
-        guards << "auth-type #{type}"
+      if (type = value.call("auth-type")) && (secret = value.call("auth-secret"))
+        guards << {"auth-type #{type}", templated.call([type, secret])}
       end
-      if value.call("auth-tls-secret") && (value.call("auth-tls-verify-client") || "on").downcase == "on"
-        guards << "auth-tls-verify-client on"
+      tls_secret = value.call("auth-tls-secret")
+      verify = value.call("auth-tls-verify-client") || "on"
+      if tls_secret && (verify.downcase == "on" || templated.call([verify]))
+        guards << {"auth-tls-verify-client on", templated.call([tls_secret, verify])}
       end
-      declared_access_tag("Protected by ingress-nginx #{guards.join(", ")}") unless guards.empty?
+      return if guards.empty?
+
+      note = " (a setting can make it public)" if guards.all?(&.[1])
+      declared_access_tag("Protected by ingress-nginx #{guards.join(", ", &.[0])}#{note}")
     end
 
     private def supported_api_version?(api_version : String?) : Bool

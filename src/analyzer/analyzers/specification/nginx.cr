@@ -12,8 +12,23 @@ module Analyzer::Specification
     LISTEN_TLS_RE   = /\bssl\b|\bhttp2\b/
     LISTEN_RE       = /^listen\b/
     METHOD_BLOCK_RE = /^if\s*\(\s*\$request_method\s*=\s*([A-Z]+)\s*\)/
-    AUTH_RE         = /\A(auth_basic|auth_request|auth_jwt)\s+(.+)\z/
+    AUTH_RE         = /\A(auth_basic|auth_request|auth_jwt|satisfy)\s+(.+)\z/
     ACCESS_RE       = /\A(allow|deny)\s+(\S+)\z/
+    # `${VAR}`: an nginx variable, or an envsubst placeholder. Its braces are
+    # not structure.
+    ENVSUBST_RE = /\$\{\w+\}/
+    BRACE_RE    = /\$\{\w+\}|[{}]/
+    # `{{ if }}` / `{{- with }}` ... `{{ end }}` around directives in a
+    # `.tmpl` / `.template` file.
+    TEMPLATE_OPEN_RE  = /\{\{-?\s*(?:if|with|range)\b/
+    TEMPLATE_CLOSE_RE = /\{\{-?\s*end\b/
+    SETTING_NOTE      = " (a setting can make it public)"
+
+    # A directive as written in one block. `conditional`: a template action
+    # or a variable decides its value, or a template `if` around it decides
+    # whether it is there at all.
+    record Setting, value : String, line : Int32, conditional : Bool
+    record Rule, verb : String, address : String, line : Int32, conditional : Bool
 
     def analyze
       each_spec_file_with_details(Noir::LocatorKeys::NGINX_SPEC) do |path, details|
@@ -34,13 +49,12 @@ module Analyzer::Specification
       property? denial_seen : Bool = false
       property? other_effect : Bool = false
       getter parent : Frame?
-      # `auth_basic` / `auth_request` / `auth_jwt` set in this block, with
-      # the line they are set on; `off` is kept, since it cancels an
-      # inherited one.
-      getter auth = {} of String => Tuple(String, Int32)
+      # `auth_basic` / `auth_request` / `auth_jwt` / `satisfy` set in this
+      # block; `off` is kept, since it cancels an inherited one.
+      getter settings = {} of String => Setting
       # `allow` / `deny` in this block, in order: like every array directive,
       # any of them here replaces the whole inherited list.
-      getter access = [] of Tuple(String, String, Int32)
+      getter access = [] of Rule
 
       def initialize(@kind : String, @value : String, @line : Int32, @modifier : String = "", @result_start : Int32? = nil, @parent : Frame? = nil)
       end
@@ -65,9 +79,16 @@ module Analyzer::Specification
       # guards them.
       base = @result.size
       owners = [] of Frame
+      template_depth = 0
 
       content.each_line.with_index do |raw, idx|
-        line = strip_template_actions(strip_comment(raw)).strip
+        uncommented = strip_comment(raw)
+        templated = uncommented.includes?("{{")
+        conditional = template_depth > 0 || templated
+        if templated
+          template_depth = Math.max(0, template_depth + uncommented.scan(TEMPLATE_OPEN_RE).size - uncommented.scan(TEMPLATE_CLOSE_RE).size)
+        end
+        line = strip_template_actions(uncommented).strip
         next if line.empty?
 
         # Pre-handle a trailing `}` so we pop the closing frame
@@ -87,7 +108,7 @@ module Analyzer::Specification
         depth_before = stack.size
         structure = balanced
         directive_line = balanced
-        if balanced.matches?(/^server\s*\{/)
+        if balanced.matches?(/^server\s*(?:\{|\z)/)
           stack << Frame.new("server", "", idx + 1, parent: stack.last?)
           server_names = [] of String
           server_tls = false
@@ -95,6 +116,8 @@ module Analyzer::Specification
           m[1].split(/\s+/).reject(&.empty?).each { |n| server_names << n }
         elsif balanced.matches?(LISTEN_RE)
           server_tls = true if balanced.matches?(LISTEN_TLS_RE)
+        elsif balanced.matches?(/^http\s*(?:\{|\z)/)
+          stack << Frame.new("block", "http", idx + 1, parent: stack.last?)
         elsif m = LOCATION_RE.match(balanced)
           modifier = m[1]? || ""
           raw_location = m[2]
@@ -123,9 +146,9 @@ module Analyzer::Specification
         end
         # A line that opens an `if (...) {` or `limit_except` block holds
         # that block's directives, not the enclosing one's.
-        opens_block = stack.size == depth_before && structure.count('{') > owed
+        opens_block = stack.size == depth_before && structure.gsub(ENVSUBST_RE, "").count('{') > owed
         if (scope = stack.last?) && scope.access_scope? && !opens_block
-          track_access(scope, directive_line, idx + 1)
+          track_access(scope, directive_line, idx + 1, conditional, templated)
         end
 
         # Every `{` opens a frame and every `}` closes one. The handlers above
@@ -134,11 +157,10 @@ module Analyzer::Specification
         # location or a quoted `'{}'` closes only what it opened. Popping on every `}` without the matching push emptied the
         # stack early: the location lost its later `$request_method` blocks
         # and the server's host/TLS reset mid-block. `owed` covers a location
-        # whose `{` sits on the next line.
+        # (or `server` / `http` block) whose `{` sits on the next line.
         net = structure.count('{') - (stack.size - depth_before) - owed
         owed = net < 0 ? -net : 0
-        head = balanced.matches?(/\Ahttp\s*\{/) ? "http" : ""
-        net.times { stack << Frame.new("block", head, idx + 1, parent: stack.last?) }
+        net.times { stack << Frame.new("block", "", idx + 1, parent: stack.last?) }
         structure.count('}').times { pop_frame(stack, owners, base) }
       end
 
@@ -150,50 +172,83 @@ module Analyzer::Specification
       end
     end
 
-    private def track_access(frame : Frame, line : String, number : Int32)
-      line.gsub(/[{}]/, " ").split(';').each do |statement|
+    # `templated`: a template action sat on this line, so the value left
+    # after stripping it is not what nginx reads and is not shown; a literal
+    # `off` is still an `off`.
+    private def track_access(frame : Frame, line : String, number : Int32, conditional : Bool, templated : Bool)
+      line.gsub(BRACE_RE) { |token| token.size > 1 ? token : " " }.split(';').each do |statement|
         directive = statement.strip
         if m = AUTH_RE.match(directive)
-          frame.auth[m[1]] = {m[2].strip, number}
+          value = m[2].strip
+          value = "" if templated && !off?(value)
+          # A variable's value is configuration: a `map` can make it `off`.
+          frame.settings[m[1]] = Setting.new(value, number, conditional || value.includes?('$'))
         elsif m = ACCESS_RE.match(directive)
-          frame.access << {m[1], m[2], number}
+          frame.access << Rule.new(m[1], m[2], number, conditional)
         end
       end
+    end
+
+    # The setting a location inherits: the nearest enclosing block that sets
+    # it. A conditional `off` may not be there, so then the inherited value
+    # still applies, on a setting.
+    private def effective_setting(frame : Frame?, name : String) : Setting?
+      while frame
+        if setting = frame.settings[name]?
+          return setting unless setting.conditional && off?(setting.value)
+          return effective_setting(frame.parent, name).try(&.copy_with(conditional: true))
+        end
+        frame = frame.parent
+      end
+    end
+
+    private def off?(value : String) : Bool
+      value.delete("\"'") == "off"
     end
 
     # The guard nginx applies to a location: each directive comes from the
     # nearest enclosing block that sets it. `allow ...; deny all;` refuses
     # every other client address. A lone `deny all` admits no caller at all,
     # so it is not read as a guard here (`pop_frame` drops such a location).
+    #
+    # Under `satisfy all` (the default) a caller must pass every check; under
+    # `satisfy any` one is enough, so an access list that admits every
+    # address (`allow all`) opens the location whatever auth it also has.
+    # That is the usual way to open a sub-location of an `auth_basic` server.
     # ponytail: one file at a time; a directive pulled in by `include` from
     # another file is not seen.
     private def access_tag(location : Frame, details : Details) : Tag?
-      guards = [] of Tuple(String, Int32)
+      guards = [] of Setting
       {"auth_basic", "auth_request", "auth_jwt"}.each do |name|
-        frame = location
-        while frame && !frame.auth.has_key?(name)
-          frame = frame.parent
-        end
-        next unless frame
-        value, line = frame.auth[name]
-        guards << {"#{name} #{value}", line} unless value.delete("\"'") == "off"
+        next unless setting = effective_setting(location, name)
+        next if off?(setting.value)
+        shown = setting.value.empty? ? name : "#{name} #{setting.value}"
+        guards << setting.copy_with(value: shown)
       end
 
       frame = location
       while frame && frame.access.empty?
         frame = frame.parent
       end
+      any = effective_setting(location, "satisfy").try(&.value) == "any"
       if frame
         rules = frame.access
         # First match wins, so only the rules up to the first `all` count.
-        cut = rules.index { |rule| rule[1] == "all" }
-        if cut && cut > 0 && rules[cut][0] == "deny"
-          guards << {rules[0..cut].join("; ") { |rule| "#{rule[0]} #{rule[1]}" }, rules[0][2]}
+        cut = rules.index { |rule| rule.address == "all" }
+        if cut && rules[cut].verb == "allow"
+          return if any
+        elsif cut && cut > 0
+          used = rules[0..cut]
+          guards << Setting.new(used.join("; ") { |rule| "#{rule.verb} #{rule.address}" }, used[0].line, used.any?(&.conditional))
         end
       end
       return if guards.empty?
 
-      declared_access_tag("Protected by nginx #{guards.join(", ", &.first)}", details.code_paths.first.path, guards.first[1])
+      # Any one guard is enough to pass under `satisfy any`, so one a setting
+      # decides opens the location; under `all` every one has to be lifted.
+      conditional = any ? guards.any?(&.conditional) : guards.all?(&.conditional)
+      description = "Protected by nginx #{guards.join(any ? " or " : ", ", &.value)}#{SETTING_NOTE if conditional}"
+      declared_access_tag(description, details.code_paths.first.path, guards.first.line)
     end
 
     private def pop_frame(stack : Array(Frame), owners : Array(Frame), base : Int32)

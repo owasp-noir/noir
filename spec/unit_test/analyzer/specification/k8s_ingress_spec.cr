@@ -240,5 +240,41 @@ describe "Kubernetes Ingress Analyzer" do
         guards.call(analyze_ingress(ingress.call(annotations))).should be_empty
       end
     end
+
+    # A Helm value can render the annotation empty.
+    it "marks a guard that rests only on Helm values" do
+      {
+        %(    nginx.ingress.kubernetes.io/auth-url: "{{ .Values.ingress.authUrl }}")                                                                                                                => "Protected by ingress-nginx auth-url {{ .Values.ingress.authUrl }} (a setting can make it public)",
+        "    nginx.ingress.kubernetes.io/auth-type: basic\n    nginx.ingress.kubernetes.io/auth-secret: '{{ if .Values.auth.enabled }}basic-auth{{ end }}'"                                         => "Protected by ingress-nginx auth-type basic (a setting can make it public)",
+        "    nginx.ingress.kubernetes.io/auth-url: https://auth.example.com\n    nginx.ingress.kubernetes.io/auth-type: basic\n    nginx.ingress.kubernetes.io/auth-secret: '{{ .Values.secret }}'" => "Protected by ingress-nginx auth-url https://auth.example.com, auth-type basic",
+      }.each do |annotations, expected|
+        guards.call(analyze_ingress(ingress.call(annotations))).should eq([expected])
+      end
+    end
+
+    it "gives no guard to an annotation inside a Helm if block" do
+      endpoints = analyze_ingress <<-YAML
+        apiVersion: networking.k8s.io/v1
+        kind: Ingress
+        metadata:
+          name: app
+          annotations:
+            {{- if .Values.auth.enabled }}
+            nginx.ingress.kubernetes.io/auth-url: "https://auth.example.com/check"
+            {{- end }}
+        spec:
+          rules:
+          - host: a.example.com
+            http:
+              paths:
+              - path: /ifauth
+                pathType: Prefix
+                backend:
+                  service: {name: a, port: {number: 80}}
+        YAML
+
+      endpoints.map(&.url).should eq(["/ifauth"])
+      guards.call(endpoints).should be_empty
+    end
   end
 end
