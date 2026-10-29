@@ -105,8 +105,14 @@ class GoAuthTagger < FrameworkTagger
   # `options.SignInRequired` / `!options.SignOutRequired` read off a parameter.
   OPTION_FIELD = /\A(!?)\s*(\w+)\.(\w+)\z/
 
+  # `required` / `!required`: a bare (flag) parameter.
+  FLAG_TEST = /\A(!?)\s*(\w+)\z/
+
   # `pkg.Var.Field` with no call: a package-level (configuration) value.
   PACKAGE_VALUE = /\A!?\s*(\w+)(?:\.\w+)+\z/
+
+  # A middleware config's `Skipper:` set to anything but the default.
+  SKIPPER_FIELD = /\bSkipper\s*:(?!\s*(?:nil\b|(?:\w+\.)?DefaultSkipper\b))/
 
   # `Field: value` inside a call-site struct literal.
   LITERAL_FIELD = /(\w+)\s*:\s*([^,{}]+)/
@@ -169,7 +175,7 @@ class GoAuthTagger < FrameworkTagger
 
   def initialize(options : Hash(String, YAML::Any))
     super
-    @middleware_scopes = [] of {prefix: String, tag: Tag, root_group: Bool, gate: Gate?, owner: Gate?}
+    @middleware_scopes = [] of {prefix: String, tag: Tag, root_group: Bool, gate: Gate?, owner: Gate?, module: String}
     @closure_scopes = [] of {file: String, from: Int32, to: Int32, tag: Tag}
     @current_gate = nil.as(Gate?)
     @current_owner = nil.as(Gate?)
@@ -179,6 +185,7 @@ class GoAuthTagger < FrameworkTagger
     @helper_verdicts = Hash({String, Int32, Bool, Int32, String?, Bool, String?}, Guard).new
     @imports = Hash(String, Set(String)).new
     @bindings = Hash(String, Hash(String, String)).new
+    @modules = Hash(String, String).new
   end
 
   def self.target_techs : Array(String)
@@ -216,6 +223,8 @@ class GoAuthTagger < FrameworkTagger
     @dirs_by_base = contents.keys.map { |path| File.dirname(path) }.uniq!.group_by { |dir| File.basename(dir) }
 
     files.each do |file|
+      # A test's router is its own program, not the one it tests.
+      next if file.ends_with?("_test.go")
       content = read_file(file)
       scan_group_middleware(content, file) if content
     end
@@ -320,22 +329,26 @@ class GoAuthTagger < FrameworkTagger
     end
 
     before = @middleware_scopes.size
+    # The whole statement, so a config literal spread over the lines below
+    # (`KeyAuthWithConfig(middleware.KeyAuthConfig{` / `Skipper: ...`) is
+    # read with its fields.
+    args = middleware_args((index..statement_end(lines, index)).join(" ") { |row| code_only(lines[row - 1]) })
 
     # Check for JWT library middleware
     JWT_PATTERNS.each do |pattern|
-      if stripped.matches?(pattern) && stripped.includes?(".Use")
+      if stripped.matches?(pattern) && stripped.includes?(".Use") && args.none?(&.matches?(SKIPPER_FIELD))
         jwt_match = stripped.match(pattern)
         jwt_name = jwt_match ? jwt_match[0] : "JWT"
-        add_middleware_scope(scope, Tag.new("auth", "Protected by Go JWT middleware (#{jwt_name})", "go_auth"))
+        add_middleware_scope(scope, file, Tag.new("auth", "Protected by Go JWT middleware (#{jwt_name})", "go_auth"))
       end
     end
     return unless before == @middleware_scopes.size
 
     # Read each middleware argument's definition; its name counts only when
     # the definition is not in the scan.
-    middleware_args(stripped).each do |arg|
+    args.each do |arg|
       tag = guard_by_definition(arg, file, authish_name: true)
-      add_middleware_scope(scope, tag) if tag
+      add_middleware_scope(scope, file, tag) if tag
     end
   end
 
@@ -440,6 +453,9 @@ class GoAuthTagger < FrameworkTagger
   # verifyAuth(&Options{SignInRequired: true})`).
   private def guard_by_definition(arg : String, file : String, authish_name : Bool = false, display : String? = nil) : Tag?
     @guards.put_if_absent({arg, file, authish_name, display}) do
+      # A config with a `Skipper` lets the requests it picks through
+      # unchecked: not an unconditional guard.
+      next if arg.matches?(SKIPPER_FIELD)
       ref = arg.match(MIDDLEWARE_REFERENCE)
       next unless ref
       qualifier = ref[1].gsub(/\s+/, "").rchop('.')
@@ -447,6 +463,12 @@ class GoAuthTagger < FrameworkTagger
       reference = qualifier.empty? ? name : "#{qualifier}.#{name}"
       shown = display || reference
       fields = arg.includes?('{') ? arg.scan(LITERAL_FIELD).to_h { |field| {field[1], field[2].strip} } : nil
+      # A factory called with flags only (`Auth(false)`): each keyed by its
+      # position, read under its parameter's name by `body_verdict`.
+      if fields.nil? && arg[ref.end - 1]? == '('
+        flags = call_args(arg[ref.end..])
+        fields = flags.each_with_index.to_h { |(flag, i)| {i.to_s, flag} } if !flags.empty? && flags.all? { |flag| flag == "true" || flag == "false" }
+      end
       case definition_verdict(qualifier, name, file, fields)
       when Guard::Authn
         Tag.new("auth", "Protected by Go middleware #{shown} (verified from its body: refuses anonymous callers)", "go_auth")
@@ -467,9 +489,14 @@ class GoAuthTagger < FrameworkTagger
   private def local_binding(file : String, name : String) : String?
     bindings = @bindings.put_if_absent(file) do
       map = Hash(String, String).new
-      read_file_lines(file).try &.each do |line|
+      lines = read_file_lines(file) || [] of String
+      lines.each_with_index do |line, idx|
         next unless line.includes?('=')
-        if match = code_only(line).match(LOCAL_BINDING)
+        code = code_only(line)
+        next unless code.matches?(LOCAL_BINDING)
+        # A call spread over the lines below, read whole.
+        code = (idx + 1..statement_end(lines, idx + 1)).join(" ") { |row| code_only(lines[row - 1]) } if code.count('(') > code.count(')')
+        if match = code.match(LOCAL_BINDING)
           map.put_if_absent(match[1]) { match[2].strip }
         end
       end
@@ -590,6 +617,7 @@ class GoAuthTagger < FrameworkTagger
     net_http = source.includes?(".ServeHTTP(")
     credentials = Set(String).new
     params = source.match(FUNC_PARAMS).try(&.[1].split(',').compact_map(&.strip.split(/\s+/).first?)) || [] of String
+    fields = fields.transform_keys { |name| name.to_i?.try { |i| params[i]? } || name } if fields
     option_gated = !fields.nil? && params.any? { |param| source.includes?("#{param}.") }
     imports = file_imports(body.file_path)
     package = follow ? @bodies.functions_for(File.dirname(body.file_path)) : nil
@@ -950,6 +978,10 @@ class GoAuthTagger < FrameworkTagger
     if match = condition.match(PRESENCE_TEST)
       return !params.includes?(match[1]? || match[2]?)
     end
+    # `if required {` on a flag the call site passes (`Auth(false)`).
+    if fields && (match = condition.match(FLAG_TEST)) && params.includes?(match[2]) && (flag = fields[match[2]]?)
+      return (flag == "true") == (match[1] == "!")
+    end
     condition.lstrip('!').strip.lchop('(').rchop(')').split("||").all? do |part|
       (match = part.strip.match(PACKAGE_VALUE)) && imports.includes?(match[1])
     end
@@ -1003,6 +1035,9 @@ class GoAuthTagger < FrameworkTagger
 
       # Check up to 5 lines above for middleware applied to this specific route
       # Go middleware is typically chained immediately before the route handler
+      # on the same router: a `.Use` on another group (`v1.Use(auth)` above
+      # `health.GET(...)`) is that group's.
+      route_receiver = lines[line_idx].match(ROUTE_RECEIVER).try(&.[1])
       check_idx = line_idx - 1
       while check_idx >= 0 && check_idx >= line_idx - 5
         above_line = lines[check_idx].strip
@@ -1014,7 +1049,9 @@ class GoAuthTagger < FrameworkTagger
         break if above_line.starts_with?('}')
 
         # A chain that keeps its group nowhere guards only its own routes.
-        if above_line.includes?(".Use") && !ephemeral_group_use(above_line)
+        use_receiver = above_line.match(GoRouteGroupScope::USE_CALL).try(&.[1])
+        if above_line.includes?(".Use") && !ephemeral_group_use(above_line) &&
+           (route_receiver.nil? || use_receiver.nil? || use_receiver == route_receiver)
           tag = middleware_args(above_line).compact_map { |arg| guard_by_definition(arg, path_info.path, authish_name: true) }.first?
           tag ||= Tag.new("auth", "Protected by Go JWT middleware", "go_auth") if JWT_PATTERNS.any? { |pattern| above_line.matches?(pattern) }
           if tag
@@ -1625,14 +1662,25 @@ class GoAuthTagger < FrameworkTagger
   # *group* `g.Group("")` / `g.Group("/")` with a chained `.Use(...)`. Only
   # the latter is a sub-group whose middleware does not reach engine-level
   # static routes, so flag it to scope the coverage refinement below.
-  private def add_middleware_scope(scope : GoRouteGroupScope::Scope, tag : Tag)
+  private def add_middleware_scope(scope : GoRouteGroupScope::Scope, file : String, tag : Tag)
     @middleware_scopes << {
       prefix:     scope[:prefix],
       tag:        tag,
       root_group: scope[:kind] == GoRouteGroupScope::ScopeKind::Group && scope[:prefix] == "/",
       gate:       @current_gate,
       owner:      @current_owner,
+      module:     go_module(file),
     }
+  end
+
+  # The directory of the `go.mod` nearest above `path`, or the filesystem
+  # root when there is none. A program's middleware never reaches another
+  # module's routes.
+  private def go_module(path : String) : String
+    dir = File.dirname(path)
+    @modules.put_if_absent(dir) do
+      File.exists?(File.join(dir, "go.mod")) || File.dirname(dir) == dir ? dir : go_module(dir)
+    end
   end
 
   private def check_middleware_scopes(endpoint : Endpoint) : Tag?
@@ -1644,16 +1692,24 @@ class GoAuthTagger < FrameworkTagger
 
     @middleware_scopes.each do |scope|
       next unless prefix_covers?(scope[:prefix], url)
+      next if !endpoint.details.code_paths.empty? && endpoint.details.code_paths.none? { |path_info| go_module(path_info.path) == scope[:module] }
       if gate = scope[:gate]
         next unless registered_on?(endpoint, gate)
-      elsif (owner = scope[:owner]) && (scope[:prefix] != "/" || scope[:root_group])
-        ephemeral = ephemeral_head(endpoint) if ephemeral.nil?
-        if ephemeral && (head = ephemeral[owner[:file]]?)
-          name, line = head
-          next unless owner[:rows].includes?(line) && derived_from?(name, owner, line)
-        elsif created_before?(endpoint, owner)
-          next
+      elsif owner = scope[:owner]
+        if scope[:prefix] != "/" || scope[:root_group]
+          ephemeral = ephemeral_head(endpoint) if ephemeral.nil?
+          if ephemeral && (head = ephemeral[owner[:file]]?)
+            name, line = head
+            next unless owner[:rows].includes?(line) && derived_from?(name, owner, line)
+          elsif created_before?(endpoint, owner)
+            next
+          end
         end
+        # Echo runs `e.Use` middleware for every route, whenever it was
+        # registered; a group's, and gin's, fiber's or Iris', reach only the
+        # routes registered after it.
+        ordered = !(endpoint.details.technology == "go_echo" && scope[:prefix] == "/" && !scope[:root_group])
+        next if other_router?(endpoint, owner, ordered)
       end
 
       # A `.Use` on an explicit root/empty *group* (`g.Group("")` /
@@ -1700,6 +1756,108 @@ class GoAuthTagger < FrameworkTagger
       found = owner[:parents][name]?.try &.select { |(_, row)| row < line }.max_by?(&.[1])
       !!found && found[0] == owner[:receiver] && found[1] < owner[:rows].begin
     end
+  end
+
+  # Whether one of the endpoint's route lines is provably on a router the
+  # owner's middleware does not reach. In the owner's function: a router
+  # neither the owner nor derived from it (`ping := r.Group("/api/ping")`
+  # next to `v1 := r.Group("/api")`; `v1.Use(auth)`), or, with `ordered`, a
+  # route registered (in gin, a group created) before the `.Use`. In another
+  # function: a router of its own (`r := chi.NewRouter()`) while the owner
+  # is one too, so neither can be the other. A router handed in as a
+  # parameter may be the owner's, so it is left to the prefix.
+  # ponytail: a router returned by a project helper (`r := newRouter()`) or
+  # a group handed to a helper before the `.Use` (`register(v1.Group("/x"))`
+  # in gin) is still read by prefix.
+  private def other_router?(endpoint : Endpoint, owner : Gate, ordered : Bool) : Bool
+    use_row = owner[:rows].begin
+    owner_lines = read_file_lines(owner[:file]) || return false
+    endpoint.details.code_paths.any? do |path_info|
+      line = path_info.line || next false
+      lines = read_file_lines(path_info.path) || next false
+      next false if line < 1 || line > lines.size
+      name = lines[line - 1].match(ROUTE_RECEIVER).try(&.[1]) || next false
+      chain, local = router_chain(path_info.path, lines, line, name)
+      if path_info.path == owner[:file] && function_start(lines, line) == function_start(lines, use_row)
+        hop = chain.find { |(router, _)| router == owner[:receiver] }
+        # fiber matches middleware in registration order, so only the
+        # route's own line counts; gin copies a group's handlers when it is
+        # created.
+        hop.nil? || (ordered && (endpoint.details.technology == "go_fiber" ? line : hop[1]) < use_row)
+      else
+        # From the row below the registration, so `v1 := r.Group("/api",
+        # auth)` is read as derived from `r`.
+        (local && router_chain(owner[:file], owner_lines, use_row + 1, owner[:receiver])[1]) ||
+          (ordered && helper_called_before?(lines, line, owner, owner_lines))
+      end
+    end
+  end
+
+  FUNC_NAME = /\Afunc\s*(?:\([^)]*\)\s*)?(\w+)/
+
+  # Whether the owner's function calls the function holding route line
+  # `line`, handing it the owner's router, only above the `.Use`
+  # (`users.UsersRegister(v1.Group("/users"))` then `v1.Use(auth)`).
+  private def helper_called_before?(lines : Array(String), line : Int32, owner : Gate, owner_lines : Array(String)) : Bool
+    start = function_start(lines, line)
+    return false if start < 0
+    name = lines[start].match(FUNC_NAME).try(&.[1]) || return false
+    use_row = owner[:rows].begin
+    calls = ((function_start(owner_lines, use_row) + 1)...Math.min(owner[:rows].end, owner_lines.size)).select do |row|
+      code = code_only(owner_lines[row])
+      at = code.index("#{name}(")
+      !at.nil? && (at.zero? || !code[at - 1].alphanumeric? && code[at - 1] != '_') && code.split(/\W+/).includes?(owner[:receiver])
+    end
+    !calls.empty? && calls.all? { |row| row + 1 < use_row }
+  end
+
+  ROUTER_ASSIGNMENT = /\A(?:var\s+)?(\w+)(?:\s+[\w.*\[\]]+)?\s*:?=(?!=)\s*(.+)\z/
+  ROUTER_FROM       = /\A(\w+)\s*(?:\.\s*(?:Group|Route|Party|PartyFunc)\s*\(|\z)/
+  # A library's router constructor: `gin.Default()`, `chi.NewRouter()`,
+  # `fiber.New(...)`.
+  ROUTER_CONSTRUCTOR = /\A&?\s*(\w+)\s*\.\s*(?:New\w*|Default)\s*\(/
+  # A closure handed to a call on a router, taking the router:
+  # `r.Route("/x", func(r chi.Router) {`.
+  CLOSURE_ROUTER_PARAM = /(\w+)\s*\.\s*\w+\s*\(.*\bfunc\s*\(\s*(\w+)\b/
+
+  # The routers the route `name.VERB(...)` on `line` (1-based) registers
+  # through, walking up its function: each with the row it is used or
+  # derived on (`ping` on the route's line, then `r` on `ping :=
+  # r.Group(...)`), and whether the last was built there by a library
+  # constructor rather than handed in.
+  private def router_chain(path : String, lines : Array(String), line : Int32, name : String) : {Array({String, Int32}), Bool}
+    chain = [{name, line}]
+    depth = 0
+    (line - 2).downto(0) do |row|
+      code = code_only(lines[row]).strip
+      depth += code.count('}') - code.count('{')
+      enclosing = depth < 0
+      if depth <= 0
+        depth = 0
+        current = chain.last[0]
+        if (m = code.match(ROUTER_ASSIGNMENT)) && m[1] == current
+          hop = m[2].match(ROUTER_FROM)
+          return {chain, local_router?(m[2], path)} unless hop
+          chain << {hop[1], row + 1}
+        elsif enclosing && (m = code.match(CLOSURE_ROUTER_PARAM)) && m[2] == current
+          chain << {m[1], row + 1}
+        end
+      end
+      break if lines[row].starts_with?("func")
+    end
+    {chain, false}
+  end
+
+  private def local_router?(expr : String, path : String) : Bool
+    m = expr.match(ROUTER_CONSTRUCTOR) || return false
+    file_imports(path).includes?(m[1]) && !@dirs_by_base.has_key?(m[1])
+  end
+
+  # The 0-based row of the `func` that holds line `row` (1-based); -1 at
+  # file scope.
+  private def function_start(lines : Array(String), row : Int32) : Int32
+    (row - 1).downto(0) { |idx| return idx if lines[idx]?.try(&.starts_with?("func")) }
+    -1
   end
 
   # File -> {head variable, 1-based line} of each of the endpoint's route
