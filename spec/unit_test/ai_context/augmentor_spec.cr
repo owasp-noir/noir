@@ -2040,7 +2040,6 @@ describe "NoirAIContext" do
       "hasAuthority(\"ROLE_ADMIN\")",
       "hasAuthorities(\"ROLE_ADMIN\")",
       "roles_required = ['admin']",
-      "permissions_required = ['edit']",
       "require_role('admin')",
       "require_permissions('write')",
     ]

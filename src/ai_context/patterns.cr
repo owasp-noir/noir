@@ -522,8 +522,9 @@ module NoirAIContext
         /\bhasAuthorit(?:y|ies)\b/i,
         /\brequires?Roles?\b/i,
         /\brequires?Permissions?\b/i,
+        # Not `permission_required`: django_auth and flask_auth already judge
+        # that decorator, and a name match would add a second guard for it.
         /\broles?_required\b/i,
-        /\bpermissions?_required\b/i,
         /\badmin_required\b/i,
         /\brequire_roles?\b/i,
         /\brequire_any_roles?\b/i,
