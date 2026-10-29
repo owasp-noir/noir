@@ -786,6 +786,40 @@ module Analyzer::Specification
       end
     end
 
+    # The guard a declaration states for its own route; see
+    # `Tag.declared_access_tagger` for why the tagger names the technology.
+    protected def declared_access_tag(description : String, path : String? = nil, line : Int32? = nil) : Tag
+      Tag.new("auth", description, Tag.declared_access_tagger(tech), path, line)
+    end
+
+    # OAS2/OAS3: what the effective `security` says about anonymous callers.
+    # The requirements are alternatives and each one's schemes are all
+    # needed, so the operation refuses anonymous callers only when every
+    # alternative names a scheme. `[]` and an empty `{}` alternative (the
+    # spelling for optional auth) admit them. No `security` at all says
+    # nothing, so it adds no tag.
+    protected def security_access_tag(effective) : Tag?
+      return unless requirements = effective.try(&.as_a?)
+
+      alternatives = requirements.compact_map do |requirement|
+        requirement.as_h?.try(&.keys.map(&.to_s))
+      end
+      return if alternatives.empty? && !requirements.empty?
+      if alternatives.empty? || alternatives.any?(&.empty?)
+        return Tag.new("anonymous", "OAS security admits anonymous callers", Tag.declared_access_tagger(tech))
+      end
+
+      declared_access_tag("Protected by OAS security #{alternatives.map(&.join(" + ")).join(" or ")}")
+    end
+
+    # OAS2/OAS3: records one operation, with what its effective `security`
+    # says about anonymous callers.
+    protected def push_operation(url : String, method : String, params : Array(Param), details : Details, effective_security) : Nil
+      endpoint = params.empty? ? Endpoint.new(url, method, details) : Endpoint.new(url, method, params, details)
+      security_access_tag(effective_security).try { |tag| endpoint.add_tag(tag) }
+      @result << endpoint
+    end
+
     # OAS2/OAS3: resolves the `$ref` a Path Item may stand in for, and
     # reports which document the result came from: with the operations in
     # `./paths/activity/activities.yaml`, every ref inside them resolves from

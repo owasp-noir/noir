@@ -319,11 +319,7 @@ module Analyzer::Specification
             apply_security(effective_security, schemes, params)
 
             op_details = operation_details(details, line_index, ["paths", path, method])
-            if params.size > 0
-              @result << Endpoint.new(base_path + path, method.upcase, params, op_details)
-            else
-              @result << Endpoint.new(base_path + path, method.upcase, op_details)
-            end
+            push_operation(base_path + path, method.upcase, params, op_details, effective_security)
           rescue e
             record_skipped_entry(swagger_json, "#{method.to_s.upcase} #{path}", e)
           end
@@ -398,11 +394,7 @@ module Analyzer::Specification
             apply_security(effective_security, schemes, params)
 
             op_details = operation_details(details, line_index, ["paths", path.to_s, method.to_s])
-            if params.size > 0
-              @result << Endpoint.new(base_path + path.to_s, method.to_s.upcase, params, op_details)
-            else
-              @result << Endpoint.new(base_path + path.to_s, method.to_s.upcase, op_details)
-            end
+            push_operation(base_path + path.to_s, method.to_s.upcase, params, op_details, effective_security)
           rescue e
             record_skipped_entry(swagger_yaml, "#{method.to_s.upcase} #{path}", e)
           end

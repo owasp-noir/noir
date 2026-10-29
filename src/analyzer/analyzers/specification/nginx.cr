@@ -12,6 +12,8 @@ module Analyzer::Specification
     LISTEN_TLS_RE   = /\bssl\b|\bhttp2\b/
     LISTEN_RE       = /^listen\b/
     METHOD_BLOCK_RE = /^if\s*\(\s*\$request_method\s*=\s*([A-Z]+)\s*\)/
+    AUTH_RE         = /\A(auth_basic|auth_request|auth_jwt)\s+(.+)\z/
+    ACCESS_RE       = /\A(allow|deny)\s+(\S+)\z/
 
     def analyze
       each_spec_file_with_details(Noir::LocatorKeys::NGINX_SPEC) do |path, details|
@@ -31,8 +33,24 @@ module Analyzer::Specification
       property result_end : Int32?
       property? denial_seen : Bool = false
       property? other_effect : Bool = false
+      getter parent : Frame?
+      # `auth_basic` / `auth_request` / `auth_jwt` set in this block, with
+      # the line they are set on; `off` is kept, since it cancels an
+      # inherited one.
+      getter auth = {} of String => Tuple(String, Int32)
+      # `allow` / `deny` in this block, in order: like every array directive,
+      # any of them here replaces the whole inherited list.
+      getter access = [] of Tuple(String, String, Int32)
 
-      def initialize(@kind : String, @value : String, @line : Int32, @modifier : String = "", @result_start : Int32? = nil)
+      def initialize(@kind : String, @value : String, @line : Int32, @modifier : String = "", @result_start : Int32? = nil, @parent : Frame? = nil)
+      end
+
+      # Only the blocks nginx inherits these directives through. An `if` or
+      # `limit_except` placeholder does not guard its whole location.
+      # ponytail: `limit_except GET { auth_basic ...; }` (guards the other
+      # verbs only) is not modelled.
+      def access_scope? : Bool
+        kind == "location" || kind == "server" || value == "http"
       end
     end
 
@@ -41,6 +59,12 @@ module Analyzer::Specification
       server_names = [] of String
       server_tls = false
       owed = 0
+      # The location each row of this file was emitted from, by its index
+      # from `base`. Access rules are resolved only after the whole file is
+      # read: a server-level `auth_basic` written below its locations still
+      # guards them.
+      base = @result.size
+      owners = [] of Frame
 
       content.each_line.with_index do |raw, idx|
         line = strip_template_actions(strip_comment(raw)).strip
@@ -50,7 +74,7 @@ module Analyzer::Specification
         # before processing the rest of the line's directives.
         balanced = line
         while balanced.starts_with?("}")
-          pop_frame(stack)
+          pop_frame(stack, owners, base)
           if stack.empty?
             server_names = [] of String
             server_tls = false
@@ -64,7 +88,7 @@ module Analyzer::Specification
         structure = balanced
         directive_line = balanced
         if balanced.matches?(/^server\s*\{/)
-          stack << Frame.new("server", "", idx + 1)
+          stack << Frame.new("server", "", idx + 1, parent: stack.last?)
           server_names = [] of String
           server_tls = false
         elsif m = SERVER_NAME_RE.match(balanced)
@@ -80,20 +104,28 @@ module Analyzer::Specification
           structure = "#{'{' if raw_location.ends_with?('{')}#{balanced[m.end(0)..]}"
           directive_line = structure
           unless location.empty? || internal_location?(raw_location) || internal_location?(location)
-            frame = Frame.new("location", location, idx + 1, modifier, @result.size)
+            frame = Frame.new("location", location, idx + 1, modifier, @result.size, stack.last?)
             stack << frame
             emit_location(details, location, modifier, METHOD_ANY, server_names, server_tls, idx + 1)
             frame.result_end = @result.size
+            (@result.size - base - owners.size).times { owners << frame }
           end
         elsif m = METHOD_BLOCK_RE.match(balanced)
           method = m[1].upcase
           if loc = current_location(stack)
             emit_location(details, loc.value, loc.modifier, method, server_names, server_tls, idx + 1)
+            (@result.size - base - owners.size).times { owners << loc }
           end
         end
 
         if loc = current_location(stack)
           track_location_effect(loc, directive_line)
+        end
+        # A line that opens an `if (...) {` or `limit_except` block holds
+        # that block's directives, not the enclosing one's.
+        opens_block = stack.size == depth_before && structure.count('{') > owed
+        if (scope = stack.last?) && scope.access_scope? && !opens_block
+          track_access(scope, directive_line, idx + 1)
         end
 
         # Every `{` opens a frame and every `}` closes one. The handlers above
@@ -105,12 +137,66 @@ module Analyzer::Specification
         # whose `{` sits on the next line.
         net = structure.count('{') - (stack.size - depth_before) - owed
         owed = net < 0 ? -net : 0
-        net.times { stack << Frame.new("block", "", idx + 1) }
-        structure.count('}').times { pop_frame(stack) }
+        head = balanced.matches?(/\Ahttp\s*\{/) ? "http" : ""
+        net.times { stack << Frame.new("block", head, idx + 1, parent: stack.last?) }
+        structure.count('}').times { pop_frame(stack, owners, base) }
+      end
+
+      owners.each_with_index do |frame, i|
+        next unless tag = access_tag(frame, details)
+        endpoint = @result[base + i]
+        endpoint.add_tag(tag)
+        @result[base + i] = endpoint
       end
     end
 
-    private def pop_frame(stack : Array(Frame))
+    private def track_access(frame : Frame, line : String, number : Int32)
+      line.gsub(/[{}]/, " ").split(';').each do |statement|
+        directive = statement.strip
+        if m = AUTH_RE.match(directive)
+          frame.auth[m[1]] = {m[2].strip, number}
+        elsif m = ACCESS_RE.match(directive)
+          frame.access << {m[1], m[2], number}
+        end
+      end
+    end
+
+    # The guard nginx applies to a location: each directive comes from the
+    # nearest enclosing block that sets it. `allow ...; deny all;` refuses
+    # every other client address. A lone `deny all` admits no caller at all,
+    # so it is not read as a guard here (`pop_frame` drops such a location).
+    # ponytail: one file at a time; a directive pulled in by `include` from
+    # another file is not seen.
+    private def access_tag(location : Frame, details : Details) : Tag?
+      guards = [] of Tuple(String, Int32)
+      {"auth_basic", "auth_request", "auth_jwt"}.each do |name|
+        frame = location
+        while frame && !frame.auth.has_key?(name)
+          frame = frame.parent
+        end
+        next unless frame
+        value, line = frame.auth[name]
+        guards << {"#{name} #{value}", line} unless value.delete("\"'") == "off"
+      end
+
+      frame = location
+      while frame && frame.access.empty?
+        frame = frame.parent
+      end
+      if frame
+        rules = frame.access
+        # First match wins, so only the rules up to the first `all` count.
+        cut = rules.index { |rule| rule[1] == "all" }
+        if cut && cut > 0 && rules[cut][0] == "deny"
+          guards << {rules[0..cut].join("; ") { |rule| "#{rule[0]} #{rule[1]}" }, rules[0][2]}
+        end
+      end
+      return if guards.empty?
+
+      declared_access_tag("Protected by nginx #{guards.join(", ", &.first)}", details.code_paths.first.path, guards.first[1])
+    end
+
+    private def pop_frame(stack : Array(Frame), owners : Array(Frame), base : Int32)
       frame = stack.pop?
       return unless frame
       return unless frame.kind == "location" && frame.denial_seen?
@@ -120,7 +206,9 @@ module Analyzer::Specification
       # does not run the parent's `return`.
       start = frame.result_start
       stop = frame.result_end
-      @result.delete_at(start...stop) if start && stop && stop > start
+      return unless start && stop && stop > start
+      @result.delete_at(start...stop)
+      owners.delete_at((start - base)...(stop - base))
     end
 
     private def track_location_effect(location : Frame, line : String)

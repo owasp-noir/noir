@@ -548,11 +548,7 @@ module Analyzer::Specification
           apply_security(effective_security, schemes, params)
 
           op_details = operation_details(details, line_index, ["paths", path, method])
-          if params.size > 0
-            @result << Endpoint.new(join_base_path(op_base, path), method.upcase, params, op_details)
-          else
-            @result << Endpoint.new(join_base_path(op_base, path), method.upcase, op_details)
-          end
+          push_operation(join_base_path(op_base, path), method.upcase, params, op_details, effective_security)
         rescue e
           record_skipped_entry(doc.path, "#{method.to_s.upcase} #{path}", e)
         end
@@ -615,11 +611,7 @@ module Analyzer::Specification
           apply_security(effective_security, schemes, params)
 
           op_details = operation_details(details, line_index, ["paths", path.to_s, method.to_s])
-          if params.size > 0
-            @result << Endpoint.new(join_base_path(op_base, path.to_s), method.to_s.upcase, params, op_details)
-          else
-            @result << Endpoint.new(join_base_path(op_base, path.to_s), method.to_s.upcase, op_details)
-          end
+          push_operation(join_base_path(op_base, path.to_s), method.to_s.upcase, params, op_details, effective_security)
         rescue e
           record_skipped_entry(doc.path, "#{method.to_s.upcase} #{path}", e)
         end

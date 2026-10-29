@@ -6,6 +6,7 @@ module Analyzer::Specification
 
     DEFAULT_METHOD     = "GET"
     REWRITE_ANNOTATION = "nginx.ingress.kubernetes.io/rewrite-target"
+    AUTH_ANNOTATION    = "nginx.ingress.kubernetes.io/"
     DEFAULT_PATH_TYPE  = "ImplementationSpecific"
     API_VERSION_LINE   = /(?m)^[ \t-]*apiVersion:\s*["']?(?:networking\.k8s\.io\/[^"'\s#]+|extensions\/v1beta1)["']?\s*(?:#.*)?$/
     KIND_LINE          = /(?m)^[ \t-]*kind:\s*["']?Ingress["']?\s*(?:#.*)?$/
@@ -54,15 +55,38 @@ module Analyzer::Specification
       metadata = root[YAML::Any.new("metadata")]?.try(&.as_h?) || {} of YAML::Any => YAML::Any
       annotations = metadata[YAML::Any.new("annotations")]?.try(&.as_h?) || {} of YAML::Any => YAML::Any
       rewrite_target = annotations[YAML::Any.new(REWRITE_ANNOTATION)]?.try(&.as_s?)
+      access = access_tag(annotations)
 
       spec = root[YAML::Any.new("spec")]?.try(&.as_h?)
       return unless spec
 
       tls_hosts = collect_tls_hosts(spec[YAML::Any.new("tls")]?)
-      process_default_backend(spec[YAML::Any.new("defaultBackend")]?, tls_hosts, details)
+      process_default_backend(spec[YAML::Any.new("defaultBackend")]?, tls_hosts, details, access)
 
       rules = spec[YAML::Any.new("rules")]?.try(&.as_a?) || [] of YAML::Any
-      rules.each { |rule| process_rule(rule, tls_hosts, rewrite_target, details, path_lines) }
+      rules.each { |rule| process_rule(rule, tls_hosts, rewrite_target, details, path_lines, access) }
+    end
+
+    # ingress-nginx enforces these on every location the Ingress generates:
+    # `auth-url` is an nginx `auth_request` subrequest, `auth-type` with its
+    # `auth-secret` is `auth_basic`/digest, and `auth-tls-secret` verifies
+    # client certificates unless `auth-tls-verify-client` relaxes it
+    # (`optional`, `optional_no_ca` and `off` admit callers without one).
+    # ponytail: the default `nginx.ingress.kubernetes.io` prefix only; a
+    # controller run with `--annotations-prefix` is not recognised.
+    private def access_tag(annotations : Hash(YAML::Any, YAML::Any)) : Tag?
+      value = ->(name : String) { annotations[YAML::Any.new(AUTH_ANNOTATION + name)]?.try(&.as_s?).try(&.strip).presence }
+      guards = [] of String
+      if url = value.call("auth-url")
+        guards << "auth-url #{url}"
+      end
+      if (type = value.call("auth-type")) && value.call("auth-secret")
+        guards << "auth-type #{type}"
+      end
+      if value.call("auth-tls-secret") && (value.call("auth-tls-verify-client") || "on").downcase == "on"
+        guards << "auth-tls-verify-client on"
+      end
+      declared_access_tag("Protected by ingress-nginx #{guards.join(", ")}") unless guards.empty?
     end
 
     private def supported_api_version?(api_version : String?) : Bool
@@ -89,7 +113,7 @@ module Analyzer::Specification
       hosts_set
     end
 
-    private def process_rule(rule : YAML::Any, tls_hosts : Set(String), rewrite_target : String?, details : Details, path_lines : Hash(String, Int32))
+    private def process_rule(rule : YAML::Any, tls_hosts : Set(String), rewrite_target : String?, details : Details, path_lines : Hash(String, Int32), access : Tag?)
       rule_h = rule.as_h?
       return unless rule_h
 
@@ -108,28 +132,28 @@ module Analyzer::Specification
 
         path_type = path_h[YAML::Any.new("pathType")]?.try(&.as_s?) || DEFAULT_PATH_TYPE
         rule_details = line_details(details, path_lines[path]?)
-        emit_endpoint(path, path_type, host, tls_hosts, rule_details)
+        emit_endpoint(path, path_type, host, tls_hosts, rule_details, access: access)
 
         if rewrite_target && !rewrite_target.empty?
           rewritten = strip_capture_groups(rewrite_target)
           if rewritten != path
-            emit_endpoint(rewritten, path_type, host, tls_hosts, rule_details, "rewrite")
+            emit_endpoint(rewritten, path_type, host, tls_hosts, rule_details, "rewrite", access)
           end
         end
       end
     end
 
-    private def process_default_backend(default_backend : YAML::Any?, tls_hosts : Set(String), details : Details)
+    private def process_default_backend(default_backend : YAML::Any?, tls_hosts : Set(String), details : Details, access : Tag?)
       return unless backend_present?(default_backend)
 
-      emit_endpoint("/", DEFAULT_PATH_TYPE, "", tls_hosts, details, "default-backend")
+      emit_endpoint("/", DEFAULT_PATH_TYPE, "", tls_hosts, details, "default-backend", access)
     end
 
     private def backend_present?(backend : YAML::Any?) : Bool
       backend.try(&.as_h?) != nil
     end
 
-    private def emit_endpoint(path : String, path_type : String, host : String, tls_hosts : Set(String), details : Details, origin : String = "rule")
+    private def emit_endpoint(path : String, path_type : String, host : String, tls_hosts : Set(String), details : Details, origin : String = "rule", access : Tag? = nil)
       # ingress-nginx reads `ImplementationSpecific` paths as regexes when
       # `use-regex` is on; `Exact` / `Prefix` paths are literal.
       # GCE / ALB spell a prefix as `/static/*` under the same path type.
@@ -140,6 +164,7 @@ module Analyzer::Specification
       endpoint.add_tag(Tag.new("ingress-path-type", path_type.downcase, "k8s_ingress_analyzer"))
       endpoint.add_tag(Tag.new("ingress-host", host, "k8s_ingress_analyzer")) unless host.empty?
       endpoint.add_tag(Tag.new("ingress-source", origin, "k8s_ingress_analyzer"))
+      endpoint.add_tag(access) if access
       endpoint.protocol = "https" if !host.empty? && tls_hosts.includes?(host)
       @result << endpoint
     end

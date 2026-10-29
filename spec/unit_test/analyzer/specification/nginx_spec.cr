@@ -262,4 +262,110 @@ describe "Nginx Analyzer" do
       {"/v[0-9]{1,2}/.+.json", "POST", "regex"},
     ])
   end
+
+  describe "access rules" do
+    guards = ->(endpoints : Array(Endpoint)) do
+      endpoints.map { |e| {e.url, e.tags.select { |t| t.name == "auth" }.map(&.description)} }.sort!
+    end
+
+    it "turns auth_basic, auth_request and allow/deny all into guards" do
+      endpoints = analyze_nginx <<-CONF
+        server {
+            location /admin/ {
+                allow 127.0.0.1;
+                deny all;
+                proxy_pass http://backend;
+            }
+            location /reports/ {
+                auth_basic "restricted";
+                auth_basic_user_file /etc/nginx/htpasswd;
+                proxy_pass http://backend;
+            }
+            location /items {
+                auth_request /_auth;
+                proxy_pass http://backend;
+            }
+            location /public {
+                proxy_pass http://backend;
+            }
+        }
+        CONF
+
+      guards.call(endpoints).should eq([
+        {"/admin/", ["Protected by nginx allow 127.0.0.1; deny all"]},
+        {"/items", ["Protected by nginx auth_request /_auth"]},
+        {"/public", [] of String},
+        {"/reports/", ["Protected by nginx auth_basic \"restricted\""]},
+      ])
+      reports = endpoints.find! { |e| e.url == "/reports/" }
+      reports.tags.find!(&.name.==("auth")).line.should eq(8)
+    end
+
+    it "inherits from server and http blocks unless a location overrides it" do
+      endpoints = analyze_nginx <<-CONF
+        http {
+            auth_basic "site";
+            server {
+                location /inherited { proxy_pass http://a; }
+                location /health {
+                    auth_basic off;
+                    proxy_pass http://a;
+                }
+                location /outer {
+                    location /outer/inner { proxy_pass http://a; }
+                    proxy_pass http://a;
+                }
+            }
+            server {
+                auth_basic off;
+                location /late { proxy_pass http://b; }
+                allow 10.0.0.0/8;
+                deny all;
+            }
+        }
+        CONF
+
+      guards.call(endpoints).should eq([
+        {"/health", [] of String},
+        {"/inherited", ["Protected by nginx auth_basic \"site\""]},
+        {"/late", ["Protected by nginx allow 10.0.0.0/8; deny all"]},
+        {"/outer", ["Protected by nginx auth_basic \"site\""]},
+        {"/outer/inner", ["Protected by nginx auth_basic \"site\""]},
+      ])
+    end
+
+    it "does not guard on open or unreachable access lists or on an if block" do
+      endpoints = analyze_nginx <<-CONF
+        server {
+            location /allow-all {
+                allow all;
+                deny all;
+                proxy_pass http://a;
+            }
+            location /blocklist {
+                deny 192.0.2.1;
+                proxy_pass http://a;
+            }
+            location /deny-only {
+                deny all;
+                proxy_pass http://a;
+            }
+            location /conditional {
+                if ($bad) {
+                    allow 127.0.0.1;
+                    deny all;
+                }
+                proxy_pass http://a;
+            }
+            location /limit {
+                limit_except GET { auth_basic "writes"; }
+                proxy_pass http://a;
+            }
+        }
+        CONF
+
+      endpoints.size.should eq(5)
+      guards.call(endpoints).each { |_, descriptions| descriptions.should be_empty }
+    end
+  end
 end

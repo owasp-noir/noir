@@ -248,6 +248,7 @@ class EndpointOptimizer
           # would name slots that URL does not have.
           merge_params(dup, tiny_tmp, source_collection_pair?(dup, tiny_tmp), skip_path: dup.url != tiny_tmp.url)
         end
+        merge_declared_access(dup, tiny_tmp)
         tiny_tmp.tags.each { |tag| merge_tag(dup, tag) }
         tiny_tmp.callees.each do |callee|
           dup.push_callee(callee)
@@ -550,6 +551,39 @@ class EndpointOptimizer
     source.details.technologies.each { |technology| details.add_technology(technology) }
     target.details = details
     target
+  end
+
+  # Declarations are unscoped, so two Ingress rules, two nginx `server`
+  # blocks or two spec files routing one path merge into one row. The access
+  # rule each declares guards only its own, so a guarded and an open
+  # declaration of the same technology make an open row: the guard is kept
+  # only while every declaration of that technology merged so far states
+  # one. Runs before the tags merge, which would otherwise union them.
+  #
+  # nginx and an Ingress enforce their rule in front of whatever serves the
+  # route, so it holds over the code behind them too. An OAS `security`
+  # only documents the API, and a generator's global default (swaggo's
+  # `@security`) covers the login and share-link routes the code leaves
+  # open. Once code serves the route, its own guards decide.
+  private def merge_declared_access(target : Endpoint, source : Endpoint) : Nil
+    if code_technology_contributed?(target) || code_technology_contributed?(source)
+      SPEC_ONLY_TECHNOLOGIES.each do |documented|
+        tagger = Tag.declared_access_tagger(documented)
+        target.tags.reject!(&.tagger.==(tagger))
+        source.tags.reject!(&.tagger.==(tagger))
+      end
+    end
+
+    return unless technology = source.details.technology
+    # The first declaration of this technology brings its guard in as is.
+    return unless target.details.technologies.includes?(technology)
+
+    tagger = Tag.declared_access_tagger(technology)
+    guarded = ->(endpoint : Endpoint) { endpoint.tags.any? { |tag| tag.name == "auth" && tag.tagger == tagger } }
+    return if guarded.call(target) && guarded.call(source)
+
+    target.tags.reject! { |tag| tag.name == "auth" && tag.tagger == tagger }
+    source.tags.reject! { |tag| tag.name == "auth" && tag.tagger == tagger }
   end
 
   private def merge_tag(target : Endpoint, tag : Tag) : Nil

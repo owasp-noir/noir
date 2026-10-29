@@ -407,6 +407,15 @@ struct Tag
     @line = line && line > 0 ? line : nil
   end
 
+  # Tagger of an access rule a declaration states for its own route (nginx
+  # `auth_basic`, an Ingress `auth-url`, OAS `security`). It names the
+  # technology because the rule belongs to one declaration: the optimizer
+  # keeps it on a merged route only when every declaration of that
+  # technology states one (`Optimizer#merge_declared_access`).
+  def self.declared_access_tagger(technology : String) : String
+    "#{technology}_access"
+  end
+
   def ==(other : Tag) : Bool
     @name == other.name &&
       @description == other.description &&
