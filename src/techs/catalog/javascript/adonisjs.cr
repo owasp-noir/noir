@@ -20,7 +20,7 @@ module NoirTechs::Catalog::Javascript
         :static_path => false,
         :websocket   => false,
       },
-      :context => {:callee => true},
+      :context => {:callee => true, :guards => true},
     },
   }
 end

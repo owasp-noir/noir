@@ -135,6 +135,9 @@ class NestjsAuthTagger < FrameworkTagger
   def initialize(options : Hash(String, YAML::Any))
     super
     @global_guards = Hash(String?, String).new
+    # Where each app's global guard is declared (its class), else where it
+    # is registered: the evidence `noir reach` on that file follows.
+    @global_guard_sites = Hash(String?, {String, Int32}).new
     @guard_metadata = Hash(String?, GuardMetadata).new
     @class_lines = Hash(String, Array(Int32)).new
     @optional_guards = Set(String).new
@@ -153,12 +156,16 @@ class NestjsAuthTagger < FrameworkTagger
   # `package.json`), read from live, non-test code only.
   private def find_global_auth_guards
     @global_guards.clear
+    @global_guard_sites.clear
     @guard_metadata.clear
     @optional_guards.clear
     @guard_decorators.clear
     @guard_classes.clear
     decorator_sources = [] of {String, String?, String}
     guard_sources = [] of {String?, String}
+    # Every file declaring a guard class, passport ones (`extends
+    # AuthGuard('jwt')`, no `canActivate`) included: where the tag points.
+    class_sources = [] of {String?, String, String}
     metadata_sources = [] of {String?, String}
     {".ts", ".js"}.each do |ext|
       collect_files_by_extension(ext).each do |path|
@@ -178,11 +185,15 @@ class NestjsAuthTagger < FrameworkTagger
         collect_guard_classes(code) if defines_guard || passport_guard
         decorator_sources << {path, root, code} if bundles_guard
         guard_sources << {root, code} if defines_guard
+        class_sources << {root, code, path} if defines_guard || passport_guard
         metadata_sources << {root, code} if sets_metadata
         next if !registers || @global_guards.has_key?(root)
         GLOBAL_GUARD_PATTERNS.each do |pattern|
           code.scan(pattern) do |m|
-            @global_guards[root] ||= m[1] if m[1].matches?(AUTH_GUARD_NAME)
+            next if @global_guards.has_key?(root) || !m[1].matches?(AUTH_GUARD_NAME)
+            @global_guards[root] = m[1]
+            # The stripped copy keeps the layout, so its lines are the file's.
+            @global_guard_sites[root] = {path, code[0, m.begin(1)].count('\n') + 1}
           end
         end
       end
@@ -192,6 +203,11 @@ class NestjsAuthTagger < FrameworkTagger
 
     @global_guards.each do |root, guard|
       class_decl = /\bclass\s+#{Regex.escape(guard)}\b/
+      class_sources.each do |source_root, code, source_path|
+        next unless source_root == root && (declared_at = code.index(class_decl))
+        @global_guard_sites[root] = {source_path, code[0, declared_at].count('\n') + 1}
+        break
+      end
       guard_sources.each do |source_root, code|
         next unless source_root == root && (class_at = code.index(class_decl))
         if metadata = read_guard_metadata(code, class_at, metadata_sources.select { |source| source[0] == root }.map(&.[1]))
@@ -449,7 +465,8 @@ class NestjsAuthTagger < FrameworkTagger
       # add_tag dedupes by (name, tagger), so authn and authz need distinct
       # names to stack on the same endpoint.
       if authn = authn_descs.first?
-        endpoint.add_tag(Tag.new("auth", "Protected by #{authn}", "nestjs_auth"))
+        site = @global_guard_sites[root]? if guard
+        endpoint.add_tag(Tag.new("auth", "Protected by #{authn}", "nestjs_auth", site.try(&.[0]), site.try(&.[1])))
       end
       if authz = authz_descs.first?
         endpoint.add_tag(Tag.new("authz", "Protected by #{authz}", "nestjs_auth"))

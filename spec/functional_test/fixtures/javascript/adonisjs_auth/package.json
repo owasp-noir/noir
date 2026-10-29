@@ -1,0 +1,9 @@
+{
+  "name": "adonisjs-auth-fixture",
+  "version": "1.0.0",
+  "private": true,
+  "dependencies": {
+    "@adonisjs/core": "^6.0.0",
+    "@adonisjs/auth": "^9.0.0"
+  }
+}

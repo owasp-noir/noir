@@ -668,4 +668,44 @@ describe "NestjsAuthTagger" do
       CodeLocator.instance.clear_all
     end
   end
+
+  # nestjs_global_guard_site: `JwtAuthGuard` registered as APP_GUARD in
+  # app.module.ts and declared at line 5 of jwt-auth.guard.ts (#3308).
+  it "locates a global APP_GUARD tag at the guard's class" do
+    base = File.expand_path("../../../functional_test/fixtures/javascript/nestjs_global_guard_site", __DIR__)
+    noir_options = create_test_options
+    noir_options["base"] = YAML::Any.new(base)
+    Dir.glob("#{base}/src/*.ts").each { |path| CodeLocator.instance.register_path(path) }
+    details = Details.new(PathInfo.new("#{base}/src/items.controller.ts", 5))
+    details.technology = "ts_nestjs"
+    endpoint = Endpoint.new("/items", "GET", [] of Param, details)
+
+    endpoint = NestjsAuthTagger.new(noir_options).perform([endpoint]).first
+    tag = endpoint.tags.find! { |t| t.name == "auth" }
+    tag.description.should eq("Protected by NestJS global APP_GUARD (JwtAuthGuard)")
+    tag.path.should eq("#{base}/src/jwt-auth.guard.ts")
+    tag.line.should eq(5)
+  end
+
+  it "locates a passport APP_GUARD at its class, past a commented-out one" do
+    tmpdir = File.tempname("nest_passport_guard_site")
+    Dir.mkdir_p("#{tmpdir}/src")
+    File.write("#{tmpdir}/package.json", %({"dependencies":{"@nestjs/core":"^10.0.0"}}))
+    File.write("#{tmpdir}/src/app.module.ts", "@Module({ providers: [{ provide: APP_GUARD, useClass: JwtAuthGuard }] })\nexport class AppModule {}\n")
+    File.write("#{tmpdir}/src/jwt.guard.ts", "/**\n * class JwtAuthGuard example\n */\n@Injectable()\nexport class JwtAuthGuard extends AuthGuard('jwt') {}\n")
+    File.write("#{tmpdir}/src/items.controller.ts", "@Controller('items')\nexport class ItemsController {\n  @Get()\n  list() { return []; }\n}\n")
+    begin
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(tmpdir)
+      Dir.glob("#{tmpdir}/src/*.ts").each { |path| CodeLocator.instance.register_path(path) }
+      details = Details.new(PathInfo.new("#{tmpdir}/src/items.controller.ts", 3))
+      details.technology = "ts_nestjs"
+      endpoint = NestjsAuthTagger.new(noir_options).perform([Endpoint.new("/items", "GET", [] of Param, details)]).first
+      tag = endpoint.tags.find! { |t| t.name == "auth" }
+      tag.path.should eq("#{tmpdir}/src/jwt.guard.ts")
+      tag.line.should eq(5)
+    ensure
+      FileUtils.rm_rf(tmpdir)
+    end
+  end
 end
