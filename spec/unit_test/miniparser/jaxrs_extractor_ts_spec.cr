@@ -145,7 +145,7 @@ describe Noir::TreeSitterJaxRsExtractor do
       JAVA
 
     sources = {
-      "UserProfileResource" => {"UserProfileResource.java", profile},
+      "UserProfileResource" => {"UserProfileResource.java", profile, nil.as(Proc(Noir::TreeSitterJaxRsExtractor::IndexScope)?)},
     } of String => Noir::TreeSitterJaxRsExtractor::SourceEntry
 
     routes = Noir::TreeSitterJaxRsExtractor.extract_routes(root, subresource_sources: sources)
