@@ -1377,6 +1377,32 @@ module Analyzer::Python
       "ViewMenuModelView"          => {FAB_VIEW_KIND, "/viewmenus", nil, nil},
     }
 
+    # The routes `ModelRestApi` serves on its own, by the method name
+    # `include_route_methods` / `exclude_route_methods` select them with
+    # (`flask_appbuilder/api/__init__.py`).
+    FAB_MODEL_REST_ROUTES = [
+      {"get_list", "GET", "/"},
+      {"post", "POST", "/"},
+      {"get", "GET", "/<pk>"},
+      {"put", "PUT", "/<pk>"},
+      {"delete", "DELETE", "/<pk>"},
+      {"info", "GET", "/_info"},
+    ]
+
+    # Route-method sets as Superset's `RouteMethod` spells them; any other
+    # `RouteMethod.NAME` is the lowercased name.
+    FAB_ROUTE_METHOD_SETS = {
+      "REST_MODEL_VIEW_CRUD_SET" => %w[delete get get_list post put info],
+      "CRUD_SET"                 => %w[add list edit delete action_post show],
+      "RELATED_VIEW_SET"         => %w[add list edit delete],
+      "API_SET"                  => %w[api_create api_delete api_get api_read api_update],
+      "IMPORT"                   => %w[import_],
+    }
+    FAB_ROUTE_METHODS_ATTR_RE = /^(include_route_methods|exclude_route_methods)\s*(?::[^=]+)?=\s*(.+)$/m
+    # `appbuilder.add_api(X)` / `add_view(X, ...)`, and an Airflow plugin's
+    # `appbuilder_views = [{"view": X()}]`.
+    FAB_REGISTER_RE = /\.add_(?:api|view|view_no_menu)\s*\(\s*([A-Za-z_][\w.]*)|['"]view['"]\s*:\s*([A-Za-z_][\w.]*)/
+
     # `from flask_appbuilder[.x] import A, B as C` / `import flask_appbuilder`.
     # The import graph resolves names to files inside the scanned project, so
     # a third-party base class never resolves through it; this maps the local
@@ -1391,7 +1417,8 @@ module Analyzer::Python
     private record FabExpose,
       route_path : ::String,
       methods : Array(::String),
-      line_index : Int32
+      line_index : Int32,
+      handler : ::String?
 
     # One `class Foo(Bar):` declaration that may take part in a
     # Flask-AppBuilder route chain. Collected for every class in a
@@ -1406,7 +1433,10 @@ module Analyzer::Python
       route_base : ::String?,
       resource_name : ::String?,
       version : ::String?,
-      exposes : Array(FabExpose)
+      exposes : Array(FabExpose),
+      line_index : Int32,
+      include_methods : Array(::String)?,
+      exclude_methods : Array(::String)?
 
     # Everything phase two needs about Flask-AppBuilder classes: the
     # declarations themselves, an index by class name, and the per-file
@@ -1417,6 +1447,10 @@ module Analyzer::Python
       getter aliases = Hash(::String, Hash(::String, ::String)).new
       getter import_maps = Hash(::String, Hash(::String, Tuple(::String, Int32))).new
       getter collected = Set(::String).new
+      # Class names handed to `add_api` / `add_view` / `add_view_no_menu`,
+      # with `{file, base path}` of each registering file.
+      getter registered = Set(::String).new
+      getter registrations = [] of Tuple(::String, ::String, ::String)
 
       def add(decl : FabClassDecl) : Nil
         @decls << decl
@@ -1449,6 +1483,13 @@ module Analyzer::Python
                                                  source : ::String, fab : FabState,
                                                  force : Bool = false) : Nil
       return if fab.collected.includes?(path)
+      if source.includes?(".add_") || source.includes?("view")
+        source.scan(FAB_REGISTER_RE) do |m|
+          name = (m[1]? || m[2]).split('.').last
+          fab.registered << name
+          fab.registrations << {name, path, base_path}
+        end
+      end
       return unless force || flask_appbuilder_relevant_source?(source)
       fab.collected << path
 
@@ -1467,10 +1508,14 @@ module Analyzer::Python
       resource_name : ::String? = nil
       version : ::String? = nil
       exposes = [] of FabExpose
+      class_line = 0
+      include_methods : Array(::String)? = nil
+      exclude_methods : Array(::String)? = nil
 
       flush = -> do
         if name = class_name
-          fab.add(FabClassDecl.new(path, base_path, name, bases, route_base, resource_name, version, exposes))
+          fab.add(FabClassDecl.new(path, base_path, name, bases, route_base, resource_name, version, exposes,
+            class_line, include_methods, exclude_methods))
         end
         class_name = nil
         body_indent = nil
@@ -1479,6 +1524,8 @@ module Analyzer::Python
         resource_name = nil
         version = nil
         exposes = [] of FabExpose
+        include_methods = nil
+        exclude_methods = nil
       end
 
       skip_until = -1
@@ -1495,6 +1542,7 @@ module Analyzer::Python
             flush.call
             class_name = class_match[1]
             class_indent = indent
+            class_line = index
             bases = parse_python_base_classes(class_match[2]?)
             skip_until = header_end
             next
@@ -1521,6 +1569,11 @@ module Analyzer::Python
             end
             next
           end
+          if stripped.includes?("_route_methods") && (methods_match = stripped.match(FAB_ROUTE_METHODS_ATTR_RE))
+            names = fab_route_method_names(collect_python_value(lines, index, methods_match[2]))
+            methods_match[1] == "include_route_methods" ? (include_methods = names) : (exclude_methods = names)
+            next
+          end
         end
 
         next unless stripped.starts_with?("@expose")
@@ -1528,7 +1581,8 @@ module Analyzer::Python
         expose_call = python_paren_delta(line) > 0 ? join_until_python_call_closes(lines, index, line) : line
         next unless expose = parse_flask_appbuilder_expose_call(expose_call)
 
-        exposes << FabExpose.new(expose[0], expose[1], index)
+        handler = find_def_line(lines, index).try { |def_index| lines[def_index].match(/def\s+([A-Za-z_]\w*)/).try(&.[1]) }
+        exposes << FabExpose.new(expose[0], expose[1], index, handler)
       end
 
       flush.call
@@ -1571,6 +1625,42 @@ module Analyzer::Python
         names << segment if segment.matches?(/^[A-Za-z_][A-Za-z0-9_]*$/)
       end
       names
+    end
+
+    # `value` continued over the following lines until its brackets close.
+    private def collect_python_value(lines : Array(::String), index : Int32, value : ::String) : ::String
+      text = strip_python_line_comment(value)
+      depth = text.count("({[") - text.count(")}]")
+      i = index + 1
+      while depth > 0 && i < lines.size
+        line = strip_python_line_comment(lines[i])
+        text += "\n#{line}"
+        depth += line.count("({[") - line.count(")}]")
+        i += 1
+      end
+      text
+    end
+
+    # `RouteMethod.REST_MODEL_VIEW_CRUD_SET | {RouteMethod.RELATED, "bulk_delete"}`
+    # -> the method names it selects.
+    private def fab_route_method_names(expression : ::String) : Array(::String)?
+      names = [] of ::String
+      expression.scan(/['"]([A-Za-z_]\w*)['"]|\bRouteMethod\.([A-Z_]+)/) do |m|
+        if literal = m[1]?
+          names << literal
+        elsif constant = m[2]?
+          if set = FAB_ROUTE_METHOD_SETS[constant]?
+            names.concat(set)
+          elsif constant.ends_with?("_SET")
+            # A set this table does not know: filtering on a guess would
+            # drop real routes, so do not filter at all.
+            return
+          else
+            names << constant.downcase
+          end
+        end
+      end
+      names.uniq
     end
 
     # The resolved head of a `class Foo(Bar)` chain: either another
@@ -1677,14 +1767,43 @@ module Analyzer::Python
       # Several route classes usually share one module; splitting its
       # content once per class re-allocates every line of it.
       lines_by_path = Hash(::String, Array(::String)).new
-      fab.decls.each do |decl|
-        next if decl.exposes.empty?
+      # A registered class whose module never names Flask-AppBuilder (it
+      # subclasses a project base) is collected through the registering
+      # file's imports, like an intermediate base.
+      fab.registrations.each do |name, path, base_path|
+        next if fab.by_name.has_key?(name)
+        import_map = fab.import_maps[path] ||= find_imported_modules(base_path, path)
+        if source_file = import_map[name]?.try(&.[0])
+          ensure_flask_appbuilder_file(source_file, base_path, fab) unless source_file.empty?
+        end
+      end
+      chains = fab.decls.to_h { |decl| {decl, flask_appbuilder_chain(decl, fab)} }
+      # A registration is evidence only when it names a class seen here: a
+      # loop variable (`add_api(api)`) or a Flask-Admin `add_view(ModelView(...))`
+      # says nothing. With none, every class counts as served.
+      registered = fab.registered.select { |name| fab.by_name.has_key?(name) }.to_set
+      # A class another one subclasses is a base: its `@expose` routes are
+      # served under each subclass, not under a URL built from its own
+      # name, unless it is registered itself.
+      bases = Set(FabClassDecl).new
+      chains.each do |decl, chain|
+        chain.each { |link| bases << link if link.is_a?(FabClassDecl) && link != decl }
+      end
 
-        chain = flask_appbuilder_chain(decl, fab)
+      fab.decls.each do |decl|
+        next if bases.includes?(decl) && !registered.empty? && !registered.includes?(decl.name)
+
+        chain = chains[decl]? || flask_appbuilder_chain(decl, fab)
         kind = nil
         route_base = nil
         resource_name = nil
         version = nil
+        include_methods = nil
+        exclude_methods = nil
+        model_rest = false
+        # `{declaring class, expose}`, nearest class first; a subclass's
+        # method overrides the base's of the same name.
+        exposes = [] of Tuple(FabClassDecl, FabExpose)
         chain.each do |link|
           case link
           in ::String
@@ -1693,10 +1812,19 @@ module Analyzer::Python
             route_base = route_base.nil? ? builtin[1] : route_base
             resource_name ||= builtin[2]
             version ||= builtin[3]
+            model_rest ||= link == "ModelRestApi"
           in FabClassDecl
             route_base = route_base.nil? ? link.route_base : route_base
             resource_name ||= link.resource_name
             version ||= link.version
+            include_methods ||= link.include_methods
+            exclude_methods ||= link.exclude_methods
+            link.exposes.each do |expose|
+              # Stacked `@expose` on one method are all served; a nearer
+              # class's method of the same name overrides this one.
+              next if expose.handler && exposes.any? { |owner, seen| owner != link && seen.handler == expose.handler }
+              exposes << {link, expose}
+            end
           end
         end
 
@@ -1714,8 +1842,21 @@ module Analyzer::Python
                  "/#{decl.name.downcase}"
                end
 
-        lines = lines_by_path[decl.path] ||= fetch_file_content(decl.path).split("\n")
-        decl.exposes.each do |expose|
+        # Only a class the app hands to `add_api` serves them (any class
+        # when the scan sees no registration at all).
+        if model_rest && (registered.empty? || registered.includes?(decl.name))
+          FAB_MODEL_REST_ROUTES.each do |handler, method, suffix|
+            next unless fab_route_served?(handler, include_methods, exclude_methods)
+            next if exposes.any? { |_, expose| expose.handler == handler }
+            normalized_path, path_params = normalize_flask_path_params(Helper.normalized_join(base, suffix))
+            result << Endpoint.new(normalized_path, method, path_params,
+              Details.new(PathInfo.new(decl.path, decl.line_index + 1)))
+          end
+        end
+
+        exposes.each do |owner, expose|
+          next unless fab_route_served?(expose.handler, include_methods, exclude_methods)
+          lines = lines_by_path[owner.path] ||= fetch_file_content(owner.path).split("\n")
           # `route_base` becomes the blueprint's `url_prefix`, so Flask joins
           # it as `url_prefix.rstrip("/") + rule`: `@expose("/")` on
           # `route_base = "/api/v1/chart"` is `/api/v1/chart/`, WITH the
@@ -1730,10 +1871,18 @@ module Analyzer::Python
             end
 
             result << Endpoint.new(normalized_path, method, params,
-              Details.new(PathInfo.new(decl.path, expose.line_index + 1)))
+              Details.new(PathInfo.new(owner.path, expose.line_index + 1)))
           end
         end
       end
+    end
+
+    # FAB registers a method only if `include_route_methods` (when set)
+    # names it and `exclude_route_methods` does not.
+    private def fab_route_served?(handler : ::String?, only : Array(::String)?, excluded : Array(::String)?) : Bool
+      return true unless handler
+      return false if only && !only.includes?(handler)
+      !(excluded && excluded.includes?(handler))
     end
 
     private def parse_flask_appbuilder_expose_call(line : ::String) : Tuple(::String, Array(::String))?
