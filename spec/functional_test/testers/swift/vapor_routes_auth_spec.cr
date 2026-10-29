@@ -17,9 +17,9 @@ describe "Vapor shorthand groups, multi-line routes, unresolved paths, and auth 
 
     routes = app.endpoints.map { |endpoint| "#{endpoint.method} #{endpoint.url}" }.sort!
     routes.should eq([
-      "GET /:owner/:repo/:ref/{.fragment(.faviconIco)}",
-      "GET /:owner/:repo/:ref/{.fragment(.logoPng)}",
-      "GET /{SiteURL.faq}",
+      "GET /:owner/:repo/:ref/.fragment(.faviconIco)",
+      "GET /:owner/:repo/:ref/.fragment(.logoPng)",
+      "GET /SiteURL.faq",
       "GET /api/packages/:owner/:repository",
       "GET /channels",
       "GET /me",
@@ -27,7 +27,7 @@ describe "Vapor shorthand groups, multi-line routes, unresolved paths, and auth 
       "GET /previous-only",
       "GET /profile",
       "GET /search",
-      "POST /{SiteURL.validate}",
+      "POST /SiteURL.validate",
       "POST /notify-inbound-email",
     ])
     routes.should_not contain("GET /")
