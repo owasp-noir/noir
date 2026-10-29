@@ -127,10 +127,9 @@ module Analyzer::Php
     # `route_url` with `{id}`-style params, plus the handler's other
     # arguments (Nextcloud fills them from the query string / body) and its
     # security attributes.
-    private def endpoint(route_url : String, verb : String, details : Details,
-                         method : {String, Noir::PhpClassMembers::Member}?) : Endpoint
+    private def endpoint(route_url : String, verb : String, details : Details, method : Resolved) : Endpoint
       params = extract_brace_path_params(route_url)
-      if method
+      if method.is_a?(Tuple)
         controller_path, member = method
         details.add_path(PathInfo.new(controller_path, member.line)) unless details.code_paths.first?.try(&.path) == controller_path
         arg_type = verb == "GET" || verb == "DELETE" ? "query" : "form"
@@ -139,9 +138,10 @@ module Analyzer::Php
         end
       end
       endpoint = Endpoint.new(route_url, verb, params, details)
-      # A method the scan cannot find still runs behind Nextcloud's default
-      # login + admin check: only an attribute on it relaxes that.
-      tag(endpoint, method.try(&.[1].prelude) || "")
+      case method
+      when Tuple  then tag(endpoint, method[1].prelude)
+      when String then tag(endpoint, method)
+      end
       endpoint
     end
 
@@ -195,17 +195,35 @@ module Analyzer::Php
       fields
     end
 
+    # How a route's action resolved: `{controller file, method}` in the app;
+    # the security attributes it has where the class chain ends at an OCP
+    # base (`""` for a method no attribute relaxes, which Nextcloud serves
+    # behind its default login + admin check); nil when the chain leaves
+    # what the scan can follow (a trait, another app, a subdirectory).
+    alias Resolved = ({String, Noir::PhpClassMembers::Member} | String)?
+
+    # `OCP\AppFramework` base controllers, and the attributes of the actions
+    # they give their subclasses.
+    OCP_BASE_ACTIONS = {
+      "Controller"                => {} of String => String,
+      "OCSController"             => {"preflightedcors" => "#[PublicPage] #[NoCSRFRequired] #[NoAdminRequired]"},
+      "ApiController"             => {"preflightedcors" => "#[PublicPage] #[NoCSRFRequired] #[NoAdminRequired]"},
+      "PublicShareController"     => {} of String => String,
+      "AuthPublicShareController" => {"showauthenticate" => "#[PublicPage]", "authenticate" => "#[PublicPage]"},
+    }
+
     # `note_api` + `get_all` → `NoteApiController::getAll` in the app, or
-    # the action it inherits from a parent controller of the app.
-    private def find_method(cache : Hash(String, Methods), root : String, controller : String, action : String)
+    # the action it inherits from a parent controller.
+    private def find_method(cache : Hash(String, Methods), root : String, controller : String, action : String) : Resolved
       return if controller.empty? || action.empty?
       name = camel(controller)
       class_method(cache, root, "#{name[0].upcase}#{name[1..]}Controller", camel(action).downcase)
     end
 
-    PARENT_CLASS_RE = /\bclass\s+\w+\s+extends\s+\\?(?:[\w\\]+\\)?(\w+)/
+    PARENT_CLASS_RE = /\bclass\s+\w+\s+extends\s+(\\?[\w\\]+)/
+    NAMESPACE_DECL  = /\bnamespace\s+([\w\\]+)\s*;/
 
-    private def class_method(cache : Hash(String, Methods), root : String, class_name : String, action : String, depth : Int32 = 0)
+    private def class_method(cache : Hash(String, Methods), root : String, class_name : String, action : String, depth : Int32 = 0) : Resolved
       file = "#{class_name}.php"
       # `OCA\<App>\Controller\<Name>Controller` autoloads from `lib/Controller/`.
       expected = File.join(root, "lib", "Controller", file)
@@ -219,8 +237,15 @@ module Analyzer::Php
         return {path, member}
       end
       return if depth >= 3
-      parent = read_file_content(path).match(PARENT_CLASS_RE).try(&.[1]) || return
-      class_method(cache, root, parent, action, depth + 1) unless parent == class_name
+      content = read_file_content(path)
+      parent = content.match(PARENT_CLASS_RE).try(&.[1]) || return
+      fqcn = qualify_class(parent, parse_use_imports(content), content.match(NAMESPACE_DECL).try(&.[1])).lchop('\\')
+      short = fqcn.split('\\').last
+      if fqcn.starts_with?("OCP\\")
+        OCP_BASE_ACTIONS[short]?.try { |actions| actions[action]? || "" }
+      elsif short != class_name
+        class_method(cache, root, short, action, depth + 1)
+      end
     end
 
     private def each_method(content : String, &)

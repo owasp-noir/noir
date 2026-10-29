@@ -53,7 +53,7 @@ module Analyzer::Php
     # that nor standalone operation attributes gets the defaults.
     private record Resource, short_name : String, uri_template : String?, route_prefix : String?,
       parameters : Array(Param), line : Int32, declared : Bool, operations : Array(Operation),
-      identifier : String, security : String? = nil, write_groups : Array(String) = [] of String,
+      identifier : String, security : String? = nil, post_security : String? = nil, write_groups : Array(String) = [] of String,
       props : ClassProps = ClassProps.new
     # What the class's properties declare: `#[QueryParameter]` names (the
     # collection's query string) and each property's serializer `#[Groups]`.
@@ -136,7 +136,7 @@ module Analyzer::Php
             literal(named["routePrefix"]?),
             parameters(named["parameters"]?),
             line, named.has_key?("operations"), operations, identifier,
-            security_of(named), groups_of(named["denormalizationContext"]?), props)
+            literal(named["security"]?), literal(named["securityPostDenormalize"]?), groups_of(named["denormalizationContext"]?), props)
         else
           # A standalone operation attribute joins the resource declared
           # above it, or forms a resource of its own.
@@ -250,23 +250,20 @@ module Analyzer::Php
         end
       params = extract_brace_path_params(url) + resource.parameters + parameters(named["parameters"]?)
       params.concat(resource.props.query.map { |name| Param.new(name, "", "query") }) if kind == "GetCollection"
-      if {"POST", "PUT", "PATCH"}.includes?(method)
+      write = {"POST", "PUT", "PATCH"}.includes?(method)
+      if write
         groups = named.has_key?("denormalizationContext") ? groups_of(named["denormalizationContext"]?) : resource.write_groups
         resource.props.groups.each do |name, prop_groups|
           params << Param.new(name, "", "json") if prop_groups.any? { |group| groups.includes?(group) }
         end
       end
       endpoint = Endpoint.new(url, method, dedup_params(params), Details.new(PathInfo.new(path, line)))
-      if (security = security_of(named) || resource.security) && (guard = security_guard(security))
+      security = literal(named["security"]?) || (write ? literal(named["securityPostDenormalize"]?) : nil) ||
+                 resource.security || (write ? resource.post_security : nil)
+      if security && (guard = security_guard(security))
         endpoint.add_tag(Tag.new(guard, "Protected by API Platform security (#{security})", TAGGER))
       end
       endpoints << endpoint
-    end
-
-    # The `security:` (or `securityPostDenormalize:`) expression of a
-    # resource or operation.
-    private def security_of(named : Hash(String, String)) : String?
-      literal(named["security"]?) || literal(named["securityPostDenormalize"]?)
     end
 
     # The guard kind an expression imposes, nil when it lets anyone in.

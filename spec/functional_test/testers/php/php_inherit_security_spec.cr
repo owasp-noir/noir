@@ -1,8 +1,8 @@
 require "../../func_spec.cr"
 
 # #3316: a Nextcloud action inherited from a parent controller keeps its
-# handler, params and guard (and an unresolvable one keeps the default
-# login + admin guard); a Symfony docblock `@Route` over a commented-out
+# handler, params and guard (an action only an OCP base controller declares
+# gets its attributes there, or the default login + admin guard); a Symfony docblock `@Route` over a commented-out
 # method registers nothing; API Platform `security:` is a guard and
 # property `#[QueryParameter]` / write-group fields are params.
 describe "Nextcloud / Symfony / API Platform shapes", tags: "functional" do
@@ -29,7 +29,12 @@ describe "Nextcloud / Symfony / API Platform shapes", tags: "functional" do
     guards.call(v11).should eq(["Nextcloud login (NoAdminRequired)"])
     v11.params.map(&.name).sort!.should eq(["attachmentId", "type"])
     v11.details.code_paths.map(&.path).any?(&.ends_with?("AttachmentApiController.php")).should be_true
-    guards.call(find.call(endpoints, "GET", "/apps/deck/api/missing")).should eq(["Nextcloud login + admin (default)"])
+    # A method only OCP's base declares: `preflightedCors` is a PublicPage,
+    # anything else runs behind the default login + admin check.
+    guards.call(find.call(endpoints, "OPTIONS", "/apps/deck/api/v1.1/{path}")).should be_empty
+    guards.call(find.call(endpoints, "GET", "/apps/deck/api/v1.1/undeclared")).should eq(["Nextcloud login + admin (default)"])
+    # A controller the scan cannot find says nothing either way.
+    guards.call(find.call(endpoints, "GET", "/apps/deck/api/missing")).should be_empty
   end
 
   it "skips a docblock route whose method is commented out" do
