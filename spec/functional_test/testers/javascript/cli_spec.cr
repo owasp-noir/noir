@@ -197,3 +197,19 @@ FunctionalTester.new("fixtures/javascript/cli_citty_var_subcommand/", {
   :techs     => 1,
   :endpoints => citty_var_endpoints.size,
 }, citty_var_endpoints).perform_tests
+
+# --- switch over process.argv / a parser parameter ------------------------
+switch_endpoints = [
+  build.call("cli://switchdemo", [
+    Param.new("init", "", "flag"),
+    Param.new("validate", "", "flag"),
+    Param.new("port", "", "flag"),
+    Param.new("version", "", "flag"),
+    Param.new("dry-run", "", "flag"),
+  ]),
+]
+
+FunctionalTester.new("fixtures/javascript/cli_switch_args/", {
+  :techs     => 1,
+  :endpoints => 1,
+}, switch_endpoints).perform_tests

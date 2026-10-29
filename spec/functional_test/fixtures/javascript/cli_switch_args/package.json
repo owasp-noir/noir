@@ -1,0 +1,7 @@
+{
+  "name": "switchdemo",
+  "type": "module",
+  "bin": {
+    "switchdemo": "./cli.mjs"
+  }
+}
