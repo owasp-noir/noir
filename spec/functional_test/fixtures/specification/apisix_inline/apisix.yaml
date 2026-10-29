@@ -1,0 +1,19 @@
+routes:
+  -
+    uri: /hello
+    methods: [GET]
+    upstream:
+      nodes:
+        "127.0.0.1:1980": 1
+      type: roundrobin
+  -
+    uris: [/orders/*]
+    service_id: 1
+services:
+  -
+    id: 1
+    upstream:
+      nodes:
+        "127.0.0.1:1980": 1
+      type: roundrobin
+#END

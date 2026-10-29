@@ -90,13 +90,14 @@ module Analyzer::Specification
                  else                action.upcase
                  end
 
-        channel_path = resolve_channel_path_json(root, op_h["channel"]?, channels)
+        channel_ref = op_h["channel"]?
+        channel_path = resolve_channel_path_json(root, channel_ref, channels)
         next if channel_path.empty?
 
         params = [] of Param
-        if messages = op_h["messages"]?.try(&.as_a?)
-          messages.each { |m| collect_message_payload_json(root, m, params) }
-        end
+        channel = resolved_channel_json(root, channel_ref)
+        collect_v3_messages_json(root, op_h, channel, params)
+        collect_ws_query_json(root, channel, params)
 
         push_endpoint(channel_path, method, params, protocol, details)
       end
@@ -118,6 +119,44 @@ module Analyzer::Specification
         return addr
       end
       ""
+    end
+
+    # AsyncAPI 3: omitted `operation.messages` means every message on the
+    # channel. A present key, even an empty list, is an explicit selection.
+    private def collect_v3_messages_json(root : JSON::Any, op_h : Hash(String, JSON::Any), channel : JSON::Any?, params : Array(Param))
+      if messages_node = op_h["messages"]?
+        collect_message_list_json(root, messages_node, params)
+        return
+      end
+      return unless channel
+      if messages_node = channel["messages"]?
+        collect_message_list_json(root, messages_node, params)
+      end
+    end
+
+    private def collect_message_list_json(root : JSON::Any, messages_node : JSON::Any, params : Array(Param))
+      if messages = messages_node.as_a?
+        messages.each { |m| collect_message_payload_json(root, m, params) }
+      elsif messages = messages_node.as_h?
+        messages.each_value { |m| collect_message_payload_json(root, m, params) }
+      end
+    end
+
+    private def resolved_channel_json(root : JSON::Any, channel_ref : JSON::Any?) : JSON::Any?
+      return unless channel_ref && channel_ref.as_h?
+      if ref = channel_ref["$ref"]?.try(&.as_s?)
+        return resolve_ref_json(root, ref)
+      end
+      channel_ref
+    end
+
+    private def collect_ws_query_json(root : JSON::Any, channel : JSON::Any?, params : Array(Param))
+      return unless channel
+      query = channel["bindings"]?.try(&.as_h?)
+        .try(&.["ws"]?).try(&.as_h?)
+        .try(&.["query"]?)
+      return unless query
+      collect_schema_props_json(root, query, "query", params)
     end
 
     private def collect_message_payload_json(root : JSON::Any, message : JSON::Any, params : Array(Param), seen : Set(String) = Set(String).new)
@@ -145,8 +184,12 @@ module Analyzer::Specification
     private def collect_schema_props_json(root : JSON::Any, schema : JSON::Any, param_type : String, params : Array(Param), seen : Set(String) = Set(String).new)
       # A scalar schema (e.g. JSON-Schema boolean, or an allOf element `true`)
       # makes the `["..."]?` subscripts below raise "Expected Hash".
-      return unless schema.as_h?
-      if ref = schema["$ref"]?.try(&.as_s?)
+      # `schemaFormat` marks a Multi Format Schema Object: the schema itself
+      # lives under `schema`, not beside the format string. A payload that
+      # already has `properties` at the top has no `schemaFormat` and stays.
+      node = schema_node_json(schema)
+      return unless node.as_h?
+      if ref = node["$ref"]?.try(&.as_s?)
         return if seen.includes?(ref)
         seen << ref
         if resolved = resolve_ref_json(root, ref)
@@ -155,15 +198,21 @@ module Analyzer::Specification
         return
       end
 
-      if props = schema["properties"]?.try(&.as_h?)
+      if props = node["properties"]?.try(&.as_h?)
         props.each do |name, _|
           add_param(params, name.to_s, param_type)
         end
       end
 
-      if all_of = schema["allOf"]?.try(&.as_a?)
+      if all_of = node["allOf"]?.try(&.as_a?)
         all_of.each { |s| collect_schema_props_json(root, s, param_type, params, seen) }
       end
+    end
+
+    private def schema_node_json(schema : JSON::Any) : JSON::Any
+      return schema unless hash = schema.as_h?
+      return schema unless hash["schemaFormat"]?
+      hash["schema"]? || schema
     end
 
     # --- YAML path ------------------------------------------------------
@@ -233,11 +282,9 @@ module Analyzer::Specification
         next if channel_path.empty?
 
         params = [] of Param
-        if messages_node = op_h[YAML::Any.new("messages")]?
-          if messages = messages_node.as_a?
-            messages.each { |m| collect_message_payload_yaml(root, m, params) }
-          end
-        end
+        channel = resolved_channel_yaml(root, channel_ref)
+        collect_v3_messages_yaml(root, op_h, channel, params)
+        collect_ws_query_yaml(root, channel, params)
 
         push_endpoint(channel_path, method, params, protocol, details)
       end
@@ -263,6 +310,44 @@ module Analyzer::Specification
         end
       end
       ""
+    end
+
+    private def collect_v3_messages_yaml(root : YAML::Any, op_h : Hash(YAML::Any, YAML::Any), channel : YAML::Any?, params : Array(Param))
+      if messages_node = op_h[YAML::Any.new("messages")]?
+        collect_message_list_yaml(root, messages_node, params)
+        return
+      end
+      return unless channel
+      if messages_node = channel[YAML::Any.new("messages")]?
+        collect_message_list_yaml(root, messages_node, params)
+      end
+    end
+
+    private def collect_message_list_yaml(root : YAML::Any, messages_node : YAML::Any, params : Array(Param))
+      if messages = messages_node.as_a?
+        messages.each { |m| collect_message_payload_yaml(root, m, params) }
+      elsif messages = messages_node.as_h?
+        messages.each_value { |m| collect_message_payload_yaml(root, m, params) }
+      end
+    end
+
+    private def resolved_channel_yaml(root : YAML::Any, channel_ref : YAML::Any?) : YAML::Any?
+      return unless channel_ref && channel_ref.as_h?
+      if ref = channel_ref[YAML::Any.new("$ref")]?.try(&.as_s?)
+        return resolve_ref_yaml(root, ref)
+      end
+      channel_ref
+    end
+
+    private def collect_ws_query_yaml(root : YAML::Any, channel : YAML::Any?, params : Array(Param))
+      return unless channel
+      bindings = channel[YAML::Any.new("bindings")]?.try(&.as_h?)
+      return unless bindings
+      ws = bindings[YAML::Any.new("ws")]?.try(&.as_h?)
+      return unless ws
+      query = ws[YAML::Any.new("query")]?
+      return unless query
+      collect_schema_props_yaml(root, query, "query", params)
     end
 
     private def collect_message_payload_yaml(root : YAML::Any, message : YAML::Any, params : Array(Param), seen : Set(String) = Set(String).new)
@@ -292,8 +377,12 @@ module Analyzer::Specification
     private def collect_schema_props_yaml(root : YAML::Any, schema : YAML::Any, param_type : String, params : Array(Param), seen : Set(String) = Set(String).new)
       # A scalar schema (e.g. JSON-Schema boolean, or an allOf element `true`)
       # makes the `[...]?` subscripts below raise "Expected Hash".
-      return unless schema.as_h?
-      if ref_node = schema[YAML::Any.new("$ref")]?
+      # `schemaFormat` marks a Multi Format Schema Object: the schema itself
+      # lives under `schema`, not beside the format string. A payload that
+      # already has `properties` at the top has no `schemaFormat` and stays.
+      node = schema_node_yaml(schema)
+      return unless node.as_h?
+      if ref_node = node[YAML::Any.new("$ref")]?
         if ref = ref_node.as_s?
           return if seen.includes?(ref)
           seen << ref
@@ -304,7 +393,7 @@ module Analyzer::Specification
         return
       end
 
-      if props_node = schema[YAML::Any.new("properties")]?
+      if props_node = node[YAML::Any.new("properties")]?
         if props = props_node.as_h?
           props.each do |name, _|
             add_param(params, name.to_s, param_type)
@@ -312,11 +401,17 @@ module Analyzer::Specification
         end
       end
 
-      if all_of_node = schema[YAML::Any.new("allOf")]?
+      if all_of_node = node[YAML::Any.new("allOf")]?
         if all_of = all_of_node.as_a?
           all_of.each { |s| collect_schema_props_yaml(root, s, param_type, params, seen) }
         end
       end
+    end
+
+    private def schema_node_yaml(schema : YAML::Any) : YAML::Any
+      return schema unless hash = schema.as_h?
+      return schema unless hash[YAML::Any.new("schemaFormat")]?
+      hash[YAML::Any.new("schema")]? || schema
     end
 
     # --- shared ---------------------------------------------------------

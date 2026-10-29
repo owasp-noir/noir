@@ -46,7 +46,7 @@ module Detector::Specification
       has_path = non_empty_json_string?(route_obj["uri"]?) ||
                  route_obj["uris"]?.try(&.as_a?).try(&.any? { |uri| non_empty_json_string?(uri) }) == true
       return false unless has_path
-      route_obj["upstream_id"]? != nil || route_obj["plugins"]?.try(&.as_h?).try(&.empty?) == false
+      apisix_route_payload_json?(route_obj)
     end
 
     private def apisix_routes_yaml?(data : YAML::Any) : Bool
@@ -63,8 +63,21 @@ module Detector::Specification
       has_path = non_empty_yaml_string?(route_obj[YAML::Any.new("uri")]?) ||
                  route_obj[YAML::Any.new("uris")]?.try(&.as_a?).try(&.any? { |uri| non_empty_yaml_string?(uri) }) == true
       return false unless has_path
+      apisix_route_payload_yaml?(route_obj)
+    end
+
+    private def apisix_route_payload_json?(route_obj : Hash(String, JSON::Any)) : Bool
+      route_obj["upstream_id"]? != nil ||
+        route_obj["service_id"]? != nil ||
+        route_obj["plugins"]?.try(&.as_h?).try(&.empty?) == false ||
+        route_obj["upstream"]?.try(&.as_h?) != nil
+    end
+
+    private def apisix_route_payload_yaml?(route_obj : Hash(YAML::Any, YAML::Any)) : Bool
       route_obj[YAML::Any.new("upstream_id")]? != nil ||
-        route_obj[YAML::Any.new("plugins")]?.try(&.as_h?).try(&.empty?) == false
+        route_obj[YAML::Any.new("service_id")]? != nil ||
+        route_obj[YAML::Any.new("plugins")]?.try(&.as_h?).try(&.empty?) == false ||
+        route_obj[YAML::Any.new("upstream")]?.try(&.as_h?) != nil
     end
 
     private def non_empty_json_string?(value : JSON::Any?) : Bool
@@ -80,15 +93,19 @@ module Detector::Specification
     end
 
     # Word-bounded guard markers. The accepted shapes require actual
-    # `routes` / `uri`(`uris`) / `upstream_id` or `plugins` keys, which
-    # always appear word-bounded in the raw document (`"uri":` / `uri:`),
-    # so `\b` keeps the guard a necessary condition while no longer
-    # tripping on substrings — the bare `includes?("uri")` matched
-    # "security" and made large OpenAPI JSON specs pay a full redundant
-    # parse here on every scan (this detector is non-idempotent).
+    # `routes` / `uri`(`uris`) plus `upstream_id`, `plugins`, an inline
+    # `upstream` mapping, or `service_id`. Those keys always appear
+    # word-bounded in the raw document (`"uri":` / `uri:`), so `\b` keeps
+    # the guard a necessary condition while no longer tripping on
+    # substrings — the bare `includes?("uri")` matched "security" and made
+    # large OpenAPI JSON specs pay a full redundant parse here on every
+    # scan (this detector is non-idempotent). `\bupstream\b` does not match
+    # `upstream_id` (`_` is a word character), and the signature check
+    # below still requires `upstream` to be a mapping, so a prose mention
+    # or a scalar value never accepts the file.
     ROUTES_MARKER  = /\broutes\b/
     URI_MARKER     = /\buris?\b/
-    PAYLOAD_MARKER = /\bupstream_id\b|\bplugins\b/
+    PAYLOAD_MARKER = /\bupstream_id\b|\bservice_id\b|\bplugins\b|\bupstream\b/
 
     private def apisix_candidate?(content : String) : Bool
       content_matches?(content, ROUTES_MARKER) &&

@@ -48,6 +48,46 @@ describe "AsyncAPI Analyzer" do
     endpoints[0].params.map(&.name).should eq(["lumens", "sentAt", "reason"])
   end
 
+  it "falls back to channel messages and unwraps a multi-format schema (JSON)" do
+    json = <<-JSON
+      {
+        "asyncapi": "3.0.0",
+        "info": {"title": "t", "version": "1.0.0"},
+        "channels": {
+          "rooms": {
+            "address": "/rooms/{roomId}",
+            "messages": {
+              "chat": {"$ref": "#/components/messages/chat"}
+            },
+            "bindings": {
+              "ws": {"query": {"type": "object", "properties": {"heartbeat": {"type": "boolean"}}}}
+            }
+          }
+        },
+        "operations": {
+          "sendRoom": {"action": "send", "channel": {"$ref": "#/channels/rooms"}}
+        },
+        "components": {
+          "messages": {
+            "chat": {
+              "payload": {
+                "schemaFormat": "application/schema+json;version=draft-07",
+                "schema": {"type": "object", "properties": {"text": {"type": "string"}}}
+              }
+            }
+          }
+        }
+      }
+      JSON
+
+    endpoints = analyze_asyncapi(json, Noir::LocatorKeys::ASYNCAPI_JSON, ".json")
+    endpoints.size.should eq(1)
+    endpoints[0].params.map { |param| {param.name, param.param_type} }.sort!.should eq([
+      {"heartbeat", "query"},
+      {"text", "json"},
+    ])
+  end
+
   it "collects payload params from every message of a 2.x oneOf (JSON)" do
     json = YAML.parse(ONE_OF_YAML).to_json
     endpoints = analyze_asyncapi(json, Noir::LocatorKeys::ASYNCAPI_JSON, ".json")
