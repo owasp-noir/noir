@@ -39,7 +39,7 @@ class App < Roda
         end
       end
       r.get 'entry', [Integer, true] do |id|
-        'entry'
+        r.params['q']
       end
     end
   end

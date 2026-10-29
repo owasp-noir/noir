@@ -10,8 +10,9 @@ expected_endpoints = [
   Endpoint.new("/settings/tokens", "GET"),
   Endpoint.new("/reports/income", "GET"),
   Endpoint.new("/reports/income/{year}", "GET", [Param.new("year", "", "path")]),
-  Endpoint.new("/reports/entry", "GET"),
-  Endpoint.new("/reports/entry/{id}", "GET", [Param.new("id", "", "path")]),
+  # The block's params reach both rows of the optional matcher.
+  Endpoint.new("/reports/entry", "GET", [Param.new("q", "", "query")]),
+  Endpoint.new("/reports/entry/{id}", "GET", [Param.new("id", "", "path"), Param.new("q", "", "query")]),
 ]
 
 FunctionalTester.new("fixtures/ruby/roda_tree/", {

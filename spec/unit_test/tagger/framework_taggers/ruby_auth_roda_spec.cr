@@ -33,6 +33,7 @@ describe "RubyAuthTagger (Roda routing tree)" do
     File.write(app, <<-RB)
       class App < Roda
         plugin :rodauth
+        def require_login; rodauth.require_authentication; end
         route do |r|
           r.get 'public' do
             'anyone'
@@ -45,8 +46,27 @@ describe "RubyAuthTagger (Roda routing tree)" do
             end
           end
 
+          r.get('inline') { rodauth.require_authentication; 'x' }
+          if rodauth.logged_in?
+            r.get 'dash' do
+              'dash'
+            end
+          else
+            r.get 'login' do
+              'login'
+            end
+          end
+
           r.get 'after' do
             'anyone'
+          end
+
+          unless rodauth.logged_in?
+            r.redirect '/login'
+          end
+
+          r.get 'account' do
+            'account'
           end
         end
       end
@@ -55,15 +75,23 @@ describe "RubyAuthTagger (Roda routing tree)" do
     begin
       noir_options = create_test_options
       noir_options["base"] = YAML::Any.new(dir)
-      public_route = roda_endpoint.call(app, "/public", 4)
-      panel = roda_endpoint.call(app, "/admin/panel", 10)
-      after = roda_endpoint.call(app, "/after", 15)
+      public_route = roda_endpoint.call(app, "/public", 5)
+      panel = roda_endpoint.call(app, "/admin/panel", 11)
+      inline = roda_endpoint.call(app, "/inline", 16)
+      dash = roda_endpoint.call(app, "/dash", 18)
+      login = roda_endpoint.call(app, "/login", 22)
+      after = roda_endpoint.call(app, "/after", 27)
+      account = roda_endpoint.call(app, "/account", 35)
 
-      RubyAuthTagger.new(noir_options).perform([public_route, panel, after])
+      RubyAuthTagger.new(noir_options).perform([public_route, panel, inline, dash, login, after, account])
 
       public_route.tags.should be_empty
+      login.tags.should be_empty
       after.tags.should be_empty
       panel.tags.map(&.description).should eq(["Protected by Rodauth require_authentication"])
+      inline.tags.map(&.description).should eq(["Protected by Rodauth require_authentication"])
+      dash.tags.map(&.description).should eq(["Protected by Rodauth logged_in?"])
+      account.tags.map(&.description).should eq(["Protected by Rodauth logged_in?"])
     ensure
       FileUtils.rm_rf(dir)
     end

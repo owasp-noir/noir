@@ -27,10 +27,7 @@ module Analyzer::Ruby
     # scans per file.
     RODA_EVIDENCE_RE = Regex.union("Roda", "route do")
 
-    # `[Integer, true]`: an array matcher whose `true` alternative matches the
-    # empty remaining path, so the segment is optional.
-    RODA_OPTIONAL_MATCHER = /,?\s*\[[^\]]*\btrue\s*\]/
-    MATCHER_SPLIT         = Noir::TopLevelSplit::Rules.new
+    MATCHER_SPLIT = Noir::TopLevelSplit::Rules.new
 
     alias PrefixEntry = NamedTuple(depth: Int32, segments: Array(String), path_params: Array(String))
 
@@ -101,7 +98,7 @@ module Analyzer::Ruby
                                    lines : Array(String),
                                    include_callee : Bool) : Int32
       if m = line.match(/\br\.(?:on|is)\s+(.+?)\s*(?:do\b\s*(?:\|([^|]*)\|)?|\{\s*(?:\|([^|]*)\|)?)/)
-        segments, path_params = parse_on_args(m[1], m[2]? || m[3]?)
+        segments, path_params, _ = parse_on_args(m[1], m[2]? || m[3]?)
         unless segments.empty? && path_params.empty?
           prefix_stack << {depth: depth + 1, segments: segments, path_params: path_params}
         end
@@ -124,15 +121,18 @@ module Analyzer::Ruby
 
       HTTP_METHOD_MATCHERS.each do |verb|
         if m = line.match(RODA_VERB_BLOCK[verb])
-          block_args = m[2]? || m[3]?
-          segments, path_params = parse_on_args(m[1], block_args)
+          segments, path_params, optional = parse_on_args(m[1], m[2]? || m[3]?)
           # `r.get true do` matches only the empty remaining path: the prefix.
           if !(segments.empty? && path_params.empty?) || m[1].strip == "true"
-            if (bare = m[1].sub(RODA_OPTIONAL_MATCHER, "")) != m[1]
-              bare_segments, bare_params = parse_on_args(bare, block_args)
-              emit_verb_route(verb, bare_segments, bare_params, prefix_stack, path, index, lines, include_callee)
+            # `[Integer, true]` also matches nothing, so the route answers
+            # without that segment too. Returns the first of the rows so the
+            # block's params reach both.
+            first = unless optional.empty?
+              emit_verb_route(verb, segments - optional, path_params - optional.map(&.strip('{').strip('}')),
+                prefix_stack, path, index, lines, include_callee)
             end
-            return emit_verb_route(verb, segments, path_params, prefix_stack, path, index, lines, include_callee)
+            last = emit_verb_route(verb, segments, path_params, prefix_stack, path, index, lines, include_callee)
+            return first || last
           end
         end
 
@@ -262,11 +262,14 @@ module Analyzer::Ruby
       {body.strip, current_depth}
     end
 
+    # `last_endpoint_index` is the first row the current route emitted; an
+    # optional matcher's two rows both take the block's params.
     private def extract_params_for_line(line : String, last_endpoint_index : Int32)
       return unless last_endpoint_index >= 0 && last_endpoint_index < @result.size
+      (last_endpoint_index...@result.size).each { |idx| extract_params_into(line, @result[idx]) }
+    end
 
-      endpoint = @result[last_endpoint_index]
-
+    private def extract_params_into(line : String, endpoint : Endpoint)
       line.scan(/r\.params\[['"]([\w\-]+)['"]\]/) do |m|
         endpoint.push_param(Param.new(m[1], "", "query")) if m.size > 1
       end
@@ -322,9 +325,12 @@ module Analyzer::Ruby
       end
     end
 
-    private def parse_on_args(args : String, block_args : String? = nil) : Tuple(Array(String), Array(String))
+    # The URL segments and path params a matcher list binds, plus the
+    # segments an optional `[X, true]` matcher may leave out.
+    private def parse_on_args(args : String, block_args : String? = nil) : Tuple(Array(String), Array(String), Array(String))
       segments = [] of String
       path_params = [] of String
+      optional = [] of String
       matcher_arg_names = block_args ? block_args.split(",").map(&.strip).reject(&.empty?) : [] of String
       matcher_index = 0
 
@@ -332,8 +338,11 @@ module Analyzer::Ruby
         token = part.strip
         # An array matcher is an alternation; its first element names the
         # segment (`[Integer, true]` binds one block arg like `Integer`).
+        optional_from = -1
         if token.starts_with?('[') && token.ends_with?(']')
-          token = Noir::TopLevelSplit.split(token[1...-1], ',', MATCHER_SPLIT).first?.to_s.strip
+          alternatives = Noir::TopLevelSplit.split(token[1...-1], ',', MATCHER_SPLIT).map(&.strip)
+          optional_from = segments.size if alternatives.includes?("true")
+          token = alternatives.first? || ""
         end
         next if token.empty?
         if token.starts_with?(':')
@@ -355,8 +364,9 @@ module Analyzer::Ruby
         elsif m = token.match(/['"]([^'"]+)['"]/)
           segments << m[1]
         end
+        optional.concat(segments[optional_from..]) if optional_from >= 0
       end
-      {segments, path_params}
+      {segments, path_params, optional}
     end
 
     private def strip_comment(line : String) : String

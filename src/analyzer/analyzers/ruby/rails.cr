@@ -231,8 +231,12 @@ module Analyzer::Ruby
     @callback_chain : Noir::RailsCallbackChain? = nil
     @framework_roots = [] of String
     @controller_roots = Hash(String, Array(String)).new
-    # Framework root -> controller directory of the module its engine
-    # isolates (`isolate_namespace Shop` -> `shop`).
+    # Engine constant -> controller directory of the module it isolates
+    # (`isolate_namespace Shop` -> `shop`; "" for a non-isolated engine), and
+    # framework root -> the isolated directory of an engine under its `lib/`,
+    # for a draw on an engine defined outside the scan (Spree's API gem draws
+    # with `Spree::Core::Engine.add_routes`).
+    @engine_namespaces = Hash(String, String).new
     @isolated_namespaces = Hash(String, String).new
     @replaying_concerns = Set(String).new
     # Verbs a `def patch(*) end` in the draw block shadows on the mapper:
@@ -253,7 +257,7 @@ module Analyzer::Ruby
       framework_roots = base_paths if framework_roots.empty?
       @framework_roots = framework_roots
       @controller_roots.clear
-      @isolated_namespaces = isolated_namespaces(files, framework_roots)
+      index_engine_namespaces(files, framework_roots)
 
       framework_roots.each do |framework_root|
         begin
@@ -470,7 +474,7 @@ module Analyzer::Ruby
         if opens_block && (em = line.match(/^(?:::)?([A-Z][A-Za-z0-9_:]*)\.(?:routes\.draw|add_routes)\b/))
           @disabled_route_verbs.clear # a new mapper
           mount_prefix = @engine_mount_prefixes[{configured_base_for(scan.routes_path), em[1]}]?
-          isolated = @isolated_namespaces[scan.framework_root]? || ""
+          isolated = @engine_namespaces[em[1]]? || @isolated_namespaces[scan.framework_root]? || ""
           if mount_prefix && !mount_prefix.empty?
             scan.stack << Frame.new(:scope, path: mount_prefix, controller_subdir: isolated)
           else
@@ -1271,18 +1275,22 @@ module Analyzer::Ruby
       map
     end
 
-    # `isolate_namespace Shop` in an engine under a root's `lib/` makes Rails
-    # resolve that engine's `api/v3/products` to
-    # `app/controllers/shop/api/v3/products_controller.rb`.
-    private def isolated_namespaces(files : Array(String), roots : Array(String)) : Hash(String, String)
-      map = Hash(String, String).new
-      files.each do |file|
+    # `isolate_namespace Shop` in an engine makes Rails resolve that engine's
+    # `api/v3/products` to `app/controllers/shop/api/v3/products_controller.rb`.
+    private def index_engine_namespaces(files : Array(String), roots : Array(String))
+      @engine_namespaces = Hash(String, String).new
+      @isolated_namespaces = Hash(String, String).new
+      files.sort.each do |file|
         next unless file.ends_with?("engine.rb") && file.includes?("/lib/")
-        next unless m = ruby_source(file).match(/^\s*isolate_namespace\s+(?:::)?([A-Z][\w:]*)/m)
+        content = ruby_source(file)
+        next unless klass = content.match(/^\s*class\s+(?:::)?([A-Z][\w:]*)\s*<\s*(?:::)?Rails::Engine\b/m)
+        isolated = content.match(/^\s*isolate_namespace\s+(?:::)?([A-Z][\w:]*)/m).try(&.[1].gsub("::", "/").underscore) || ""
+        modules = content.scan(/^\s*module\s+(?:::)?([A-Z][\w:]*)/m).map(&.[1])
+        @engine_namespaces[(modules << klass[1]).join("::")] = isolated
+        next if isolated.empty?
         next unless root = roots.select { |r| file.starts_with?("#{r}/lib/") }.max_by?(&.size)
-        map[root] ||= m[1].gsub("::", "/").underscore
+        @isolated_namespaces[root] ||= isolated
       end
-      map
     end
 
     private def normalize_mount_prefix(at : String) : String

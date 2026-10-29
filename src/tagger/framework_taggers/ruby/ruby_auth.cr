@@ -1233,19 +1233,37 @@ class RubyAuthTagger < FrameworkTagger
   end
 
   # Roda routes by running the tree top-down, so a guard covers a route
-  # when it sits in the route's own block or runs earlier in a block that
+  # when it sits in the route's own block, runs earlier in a block that
   # encloses it (`rodauth.require_authentication` at the top of `route do`,
-  # or of an `r.on 'admin'` branch). A sibling branch's body never runs
-  # before the route, so its guard does not count.
+  # or of an `r.on 'admin'` branch), or is the `if` that encloses it. A
+  # sibling branch's body never runs before the route, so its guard does not
+  # count: neither a one-line sibling route block nor the `if` of an `else`
+  # branch the route sits in. The walk stops at `route do`.
   private def check_roda_auth(path : String, lines : Array(String), route_line : Int32) : NamedTuple(authn: String?, authz: String?)
     index = scope_lines(path, lines)
     scope = ruby_block_lines(index, route_line)
     idx = route_line
     while idx >= 0
+      header = index.stripped[idx]
+      break if idx != route_line && header.matches?(/\broute\s*(?:do\b|\{)/)
+      # In an `else`/`elsif`/`when` branch, the earlier siblings up to the
+      # opening `if`/`unless`/`case` are the other branches' tests.
+      other_branches = header.matches?(/^(?:else|elsif|when|in)\b/)
+      scope << header if idx != route_line && !header.matches?(/^(?:unless|until)\b/)
       indent = index.indent[idx]
       idx = index.prev_level[idx]
       while idx >= 0 && index.indent[idx] == indent
-        scope << index.stripped[idx]
+        sibling = index.stripped[idx]
+        if other_branches
+          other_branches = false if sibling.matches?(/^(?:if|unless|case)\b/)
+        elsif sibling.matches?(/^(?:if|unless)\b/)
+          # `unless rodauth.logged_in?` / `r.redirect` / `end` guards what
+          # follows; `if rodauth.logged_in?` around other routes does not.
+          block = ruby_block_lines(index, idx)
+          scope.concat(block) if block.any?(&.matches?(/\b(?:r\.)?(?:halt|redirect)\b/))
+        elsif !sibling.matches?(/^r\.\w+.*(?:\{|\bdo\b)/)
+          scope << sibling
+        end
         idx = index.prev_level[idx]
       end
     end
