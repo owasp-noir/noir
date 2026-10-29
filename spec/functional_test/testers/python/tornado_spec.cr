@@ -57,3 +57,9 @@ it "marks Tornado WebSocketHandler endpoints with ws protocol", tags: "functiona
   websocket_route.should_not be_nil
   websocket_route.try(&.protocol).should eq("ws")
 end
+
+it "keeps capture-group routes out of kind=regex", tags: "functional" do
+  # A Tornado group is a handler argument, so `/products/([0-9]+)` is a
+  # path with a param, not a pattern to skip in OAS/curl output.
+  tester.app.endpoints.select { |endpoint| endpoint.kind == "regex" }.should be_empty
+end

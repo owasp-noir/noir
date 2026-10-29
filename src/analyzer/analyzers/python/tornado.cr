@@ -15,11 +15,30 @@ module Analyzer::Python
     APP_INSTANCE_RE = /(#{PYTHON_VAR_NAME_REGEX})(?::#{PYTHON_VAR_NAME_REGEX})?=(?:tornado\.web\.)?Application\(/
     HANDLER_LIST_RE = /^(#{PYTHON_VAR_NAME_REGEX})(?::#{DOT_NATION})?=\[/
 
+    # A route tuple's pattern: an `r` / `f` / `rf` literal, optionally
+    # formatted with `% NAME` or `% (A, B)` (Jupyter Server's
+    # `r"/api/kernels/%s" % _kernel_id_regex`).
+    ROUTE_TUPLE_RE         = /\(\s*([rRfF]{0,2})(["'])(.*?)\2\s*(?:%\s*([A-Za-z_][\w.]*|\([^()]*\)))?\s*,\s*([^),]+)/
+    ROUTE_TUPLE_PARTIAL_RE = /\(\s*([rRfF]{0,2})(["'])(.*?)\2\s*(?:%\s*([A-Za-z_][\w.]*|\([^()]*\)))?\s*,\s*$/
+    ROUTE_TUPLE_TEXT_RE    = /\(\s*([rRfF]{0,2})["']([^"']*)["']\s*(?:%\s*([A-Za-z_][\w.]*|\([^()]*\)))?\s*,\s*([a-zA-Z_][a-zA-Z0-9_.]*)/
+    URL_SPEC_TEXT_RE       = /(?:^|[^a-zA-Z0-9_.])(?:tornado\.web\.)?(?:url|URLSpec)\s*\(\s*([rRfF]{0,2})["']([^"']*)["']\s*(?:%\s*([A-Za-z_][\w.]*|\([^()]*\)))?\s*,\s*([a-zA-Z_][a-zA-Z0-9_.]*)/
+    # `_kernel_id_regex = r"(?P<kernel_id>...)"` at module level.
+    MODULE_PATTERN_CONST_RE = /^([A-Za-z_]\w*)\s*(?::\s*str\s*)?=\s*[rRuU]?(["'])(.*)\2\s*$/
+    # What a route keeps as a path param for the regex-route test: a named
+    # or unnamed capture group (Tornado hands either to the handler), an
+    # optional non-capturing group around one, and a trailing `/?`. A group
+    # of alternatives (`(robots\.txt|favicon\.ico)`) is left, so it alone
+    # marks the route as a regex.
+    PARAM_GROUP_RE          = /\((?:\?P<\w+>)?(?!\?)[^()|]*\)/
+    OPTIONAL_GROUP_RE       = /\(\?:[^()|]*\)\??/
+    TRAILING_OPTIONAL_SLASH = /\/\?\z/
+
     @file_content_cache = Hash(::String, ::String).new
     @file_lines_cache = Hash(::String, Array(::String)).new
     @class_line_cache = Hash(::String, Hash(::String, Int32)).new
     @routes = Hash(::String, Array(Tuple(Int32, ::String, ::String, ::String))).new
     @import_modules_cache = Hash(::String, Hash(::String, Tuple(::String, Int32))).new
+    @pattern_consts_cache = Hash(::String, Hash(::String, ::String)).new
 
     def analyze
       tornado_app_instances = Hash(::String, ::String).new
@@ -103,10 +122,14 @@ module Analyzer::Python
         @routes[path]?.try &.each do |route_info|
           line_index, _, route_path, handler_class = route_info
           # Tornado routes are regexes; `^` / `$` are anchors, not path text.
-          endpoints = extract_endpoints_from_handler(path, Noir::URLPath.strip_regex_anchors(route_path), handler_class)
+          route = Noir::URLPath.strip_regex_anchors(route_path)
+          # `/(robots\.txt|favicon\.ico)` is a pattern, not a path anyone requests.
+          regex = Noir::URLPath.regex_route?(route.gsub(PARAM_GROUP_RE, "{x}").gsub(OPTIONAL_GROUP_RE, "{x}").sub(TRAILING_OPTIONAL_SLASH, "/"))
+          endpoints = extract_endpoints_from_handler(path, route, handler_class)
           endpoints.each do |endpoint|
             details = Details.new(PathInfo.new(path, line_index + 1))
             endpoint.details = details
+            endpoint.kind = "regex" if regex
             result << endpoint
           end
         end
@@ -311,17 +334,17 @@ module Analyzer::Python
         in_string = false
 
         # Match URL pattern: (r"/path", HandlerClass)
-        pattern_match = line.match /\(\s*r?(["'])(.*?)\1\s*,\s*([^),]+)/
+        pattern_match = line.match ROUTE_TUPLE_RE
         if pattern_match
-          route_path = pattern_match[2]
-          handler_class = pattern_match[3].strip
+          route_path = expand_route_pattern(file_path, pattern_match[1], pattern_match[3], pattern_match[4]?)
+          handler_class = pattern_match[5].strip
           # Gate on the 2nd element looking like a RequestHandler class.
           # Without this, `self.log.debug("Writing PID %i to %s", pid)`
           # and similar `("format string", lowercase_arg)` calls were
           # mistaken for route tuples and surfaced as phantom GET
           # endpoints (jupyterhub app.py log messages).
           @routes[file_path] << {i, "ALL", route_path, handler_class} if tornado_handler_ref?(handler_class)
-        elsif partial_match = line.match(/\(\s*r?(["'])(.*?)\1\s*,\s*$/)
+        elsif partial_match = line.match(ROUTE_TUPLE_PARTIAL_RE)
           # Route tuple split across lines — handler on next line
           j = i + 1
           while j < lines.size && lines[j].strip.empty?
@@ -330,7 +353,8 @@ module Analyzer::Python
           if j < lines.size
             handler_match = lines[j].strip.match(/^([a-zA-Z_][a-zA-Z0-9_.]*)/)
             if handler_match && tornado_handler_ref?(handler_match[1].strip)
-              @routes[file_path] << {i, "ALL", partial_match[2], handler_match[1].strip}
+              route_path = expand_route_pattern(file_path, partial_match[1], partial_match[3], partial_match[4]?)
+              @routes[file_path] << {i, "ALL", route_path, handler_match[1].strip}
             end
           end
         end
@@ -350,24 +374,64 @@ module Analyzer::Python
       existing_routes = (@routes[file_path]? || [] of Tuple(Int32, ::String, ::String, ::String))
         .map { |info| {info[2], info[3]} }
         .to_set
-      block_text.scan(/\(\s*r?["']([^"']*)["']\s*,\s*([a-zA-Z_][a-zA-Z0-9_.]*)/) do |match|
-        next unless match.size >= 3
-        route_path = match[1]
-        handler_class = match[2]
+      block_text.scan(ROUTE_TUPLE_TEXT_RE) do |match|
+        route_path = expand_route_pattern(file_path, match[1], match[2], match[3]?)
+        handler_class = match[4]
         next unless tornado_handler_ref?(handler_class)
         next if existing_routes.includes?({route_path, handler_class})
         @routes[file_path] << {start_index, "ALL", route_path, handler_class}
         existing_routes << {route_path, handler_class}
       end
 
-      block_text.scan(/(?:^|[^a-zA-Z0-9_.])(?:tornado\.web\.)?(?:url|URLSpec)\s*\(\s*r?["']([^"']*)["']\s*,\s*([a-zA-Z_][a-zA-Z0-9_.]*)/) do |match|
-        next unless match.size >= 3
-        route_path = match[1]
-        handler_class = match[2]
+      block_text.scan(URL_SPEC_TEXT_RE) do |match|
+        route_path = expand_route_pattern(file_path, match[1], match[2], match[3]?)
+        handler_class = match[4]
         next unless tornado_handler_ref?(handler_class)
         next if existing_routes.includes?({route_path, handler_class})
         @routes[file_path] << {start_index, "ALL", route_path, handler_class}
         existing_routes << {route_path, handler_class}
+      end
+    end
+
+    # The route a pattern literal builds: `{NAME}` fields of an f-string and
+    # `%s` slots of a `% NAME` / `% (A, B)` format take the module-level
+    # string constant they name (here or imported); one that does not
+    # resolve becomes a `{name}` path param.
+    private def expand_route_pattern(file_path : ::String, prefix : ::String, literal : ::String, format_arg : ::String?) : ::String
+      route = literal
+      if prefix.downcase.includes?('f')
+        route = route.gsub(/\{([A-Za-z_]\w*)\}/) { |field, m| pattern_const(file_path, m[1]) || field }
+      end
+      if format_arg
+        names = format_arg.strip.lchop('(').rchop(')').split(',').map(&.strip).reject(&.empty?)
+        slot = -1
+        route = route.gsub("%s") do |placeholder|
+          slot += 1
+          next placeholder unless name = names[slot]?
+          pattern_const(file_path, name) || "{#{name.split('.').last.lchop('_')}}"
+        end
+      end
+      route
+    end
+
+    private def pattern_const(file_path : ::String, name : ::String) : ::String?
+      if value = pattern_consts(file_path)[name]?
+        return value
+      end
+      imported = resolve_imports(file_path)[name]? || return
+      pattern_consts(imported[0])[name]?
+    end
+
+    private def pattern_consts(file_path : ::String) : Hash(::String, ::String)
+      @pattern_consts_cache[file_path] ||= begin
+        consts = Hash(::String, ::String).new
+        memoized_file_content(file_path).each_line do |line|
+          next unless line.includes?('=') && (m = line.match(MODULE_PATTERN_CONST_RE))
+          consts[m[1]] ||= m[3]
+        end
+        consts
+      rescue File::Error
+        Hash(::String, ::String).new
       end
     end
 
