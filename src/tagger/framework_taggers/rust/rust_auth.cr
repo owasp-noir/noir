@@ -66,8 +66,11 @@ class RustAuthTagger < FrameworkTagger
   MIDDLEWARE_REFUSAL = /#{Noir::RustRequestGuards::REFUSAL_RE}|\b\w+::(?:Unauthori[sz]ed|Unauthenticated|Forbidden)\b/
   # An error whose status is decided elsewhere: `Err(...)`, `ctx?`, `f()?`.
   ERROR_EXIT = /\bErr\s*\(|[\w)]\?/
-  AUTH_NAME  = /auth|jwt|bearer/i
-  CSRF_NAME  = /[\w-]*(?:csrf|xsrf)[\w-]*/i
+  # A path compared against (`res.status() == StatusCode::UNAUTHORIZED`):
+  # read, not answered.
+  COMPARED  = /(?:\w+::)*\w+\s*[=!]=|[=!]=\s*(?:\w+::)*\w+/
+  AUTH_NAME = /auth|jwt|bearer/i
+  CSRF_NAME = /[\w-]*(?:csrf|xsrf)[\w-]*/i
   # What a middleware reads to tell who the caller is (CSRF names cut out).
   CREDENTIAL = /authoriz|bearer|jwt|token|api[-_]?key|claims|session|login/i
 
@@ -389,7 +392,7 @@ class RustAuthTagger < FrameworkTagger
     if ref.matches?(CSRF_NAME) || code.matches?(CSRF_NAME)
       return false unless code.gsub(CSRF_NAME, "").matches?(CREDENTIAL)
     end
-    code.matches?(MIDDLEWARE_REFUSAL) || (ref.matches?(AUTH_NAME) && code.matches?(ERROR_EXIT))
+    code.gsub(COMPARED, "").matches?(MIDDLEWARE_REFUSAL) || (ref.matches?(AUTH_NAME) && code.matches?(ERROR_EXIT))
   end
 
   private def collect_axum_layer_mounts(

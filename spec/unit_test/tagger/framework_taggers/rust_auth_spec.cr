@@ -549,6 +549,22 @@ describe "RustAuthTagger" do
       RUST
     axum_guarded_urls({"src/main.rs" => src}, ["/a", "/b"]).should eq(["/a"])
   end
+
+  it "does not read a 401 the middleware only compares against as a refusal" do
+    src = <<-RUST
+      async fn auth_metrics(req: Request, next: Next) -> Response {
+          let res = next.run(req).await;
+          if res.status() == StatusCode::UNAUTHORIZED || StatusCode::FORBIDDEN != res.status() {
+              counter!("denied").increment(1);
+          }
+          res
+      }
+      fn app() -> Router {
+          Router::new().route("/a", get(a)).route_layer(middleware::from_fn(auth_metrics))
+      }
+      RUST
+    axum_guarded_urls({"src/main.rs" => src}, ["/a"]).should be_empty
+  end
 end
 
 describe "RustAuthTagger request guards read from their FromRequest impls" do
