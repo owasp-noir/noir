@@ -5,10 +5,14 @@ module Detector::Javascript
     detector_for "js_hono", extensions: %w[.js .mjs .cjs .jsx .ts .mts .cts .tsx], basenames: %w[package.json]
 
     # Single precompiled alternation — one PCRE2 scan instead of three.
+    # `@hono/zod-openapi` re-exports Hono as `OpenAPIHono`; an app built on
+    # it need never import `hono` itself.
     SIGNAL = Regex.union(
       /require\(['"]hono['"]\)/,
       /from ['"]hono['"]/,
       /new\s+Hono\s*\(/,
+      /from ['"]@hono\/zod-openapi['"]/,
+      /new\s+OpenAPIHono\s*\(/,
     )
 
     def detect(filename : String, file_contents : String) : Bool

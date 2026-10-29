@@ -310,6 +310,64 @@ module Noir
       end
     end
 
+    # --- @hono/zod-openapi -------------------------------------------------
+
+    HONO_OPENAPI_FIELDS = {"query" => "query", "headers" => "header", "cookies" => "cookie"}
+
+    # `createRoute({ method, path, request })`, one route each wherever it
+    # is written: handed inline to `app.openapi(...)` or kept as a constant
+    # (often in a separate `*.routes.ts` that the app imports).
+    def hono_openapi(source : String) : Array(Route)
+      extract(source) { |node, ctx| hono_openapi_routes(node, ctx) }
+    end
+
+    private def hono_openapi_routes(node : LibTreeSitter::TSNode, ctx : Context) : Array(Route)
+      if create_route_call?(node, ctx) && (obj = first_arg(node)) && TreeSitter.node_type(obj) == "object"
+        method = object_string(obj, "method", ctx)
+        path = object_string(obj, "path", ctx)
+        if method && path
+          route = Route.new(method.upcase, path, TreeSitter.node_start_row(node) + 1)
+          each_pair(obj, ctx) do |key, request|
+            next unless key == "request" && TreeSitter.node_type(request) == "object"
+            each_pair(request, ctx) do |part, value|
+              if type = HONO_OPENAPI_FIELDS[part]?
+                route.add_fields(schema_fields(value, ctx), type)
+              elsif part == "body"
+                route.add_fields(body_schema_fields(value, ctx), "json")
+              end
+            end
+          end
+          return [route]
+        end
+      end
+      descend(node) { |child| hono_openapi_routes(child, ctx) }
+    end
+
+    private def create_route_call?(node : LibTreeSitter::TSNode, ctx : Context) : Bool
+      return false unless TreeSitter.node_type(node) == "call_expression"
+      function = TreeSitter.field(node, "function") || return false
+      TreeSitter.node_type(function) == "identifier" ? text(function, ctx) == "createRoute" : call_property(node, ctx) == "createRoute"
+    end
+
+    # `body: { content: { 'application/json': { schema } } }`, or a helper
+    # that takes the schema first (`jsonContentRequired(schema, '...')`).
+    private def body_schema_fields(value : LibTreeSitter::TSNode, ctx : Context) : Array(String)
+      fields = [] of String
+      case TreeSitter.node_type(value)
+      when "object"
+        each_pair(value, ctx) do |key, child|
+          if key == "schema"
+            fields.concat(schema_fields(child, ctx))
+          elsif TreeSitter.node_type(child).in?("object", "call_expression")
+            fields.concat(body_schema_fields(child, ctx))
+          end
+        end
+      when "call_expression"
+        first_arg(value).try { |arg| fields.concat(schema_fields(arg, ctx)) }
+      end
+      fields.uniq
+    end
+
     # --- shared ------------------------------------------------------------
 
     # Parses `source` and hands each top-level declaration to `collect`.

@@ -111,6 +111,10 @@ module Noir
       getter path : String
       getter line : Int32
       getter callees : Array(JSCalleeExtractor::Entry)
+      # `{controller, action}` the route names (`[NotesController, 'store']`,
+      # `'NotesController.store'`), or the text of an inline handler.
+      property controller : Tuple(String, String)? = nil
+      property handler_source : String? = nil
 
       def initialize(@verb, @path, @line, @callees = [] of JSCalleeExtractor::Entry)
       end
@@ -229,7 +233,35 @@ module Noir
       full = Noir::URLPath.join_trimmed(prefix, path)
       line = Noir::TreeSitter.call_name_row(call)
       callees = include_callees ? route_callees(call, source, line) : [] of JSCalleeExtractor::Entry
-      routes << Route.new(verb, full, line, callees)
+      route = Route.new(verb, full, line, callees)
+      route.controller = controller_reference(call, source)
+      route.handler_source = function_argument(call).try { |fn| Noir::TreeSitter.node_text(fn, source) }
+      routes << route
+    end
+
+    # `[NotesController, 'store']` (v6) or `'NotesController.store'` (v5).
+    private def controller_reference(call : LibTreeSitter::TSNode, source : String) : Tuple(String, String)?
+      if text = string_argument_at(call, source, 1)
+        dot = text.rindex('.') || return
+        return {text[0, dot], text[(dot + 1)..]}
+      end
+      args = arguments_node(call) || return
+      index = 0
+      Noir::TreeSitter.each_named_child(args) do |arg|
+        next if Noir::TreeSitter.node_type(arg) == "comment"
+        if index == 1
+          return unless Noir::TreeSitter.node_type(arg) == "array"
+          parts = [] of String
+          Noir::TreeSitter.each_named_child(arg) do |elem|
+            type = Noir::TreeSitter.node_type(elem)
+            parts << (STRING_LITERAL_TYPES.includes?(type) ? decode_string(elem, source) : Noir::TreeSitter.node_text(elem, source))
+          end
+          # `[NotesController]` alone calls `handle`.
+          return parts.size >= 1 ? {parts[0], parts[1]? || "handle"} : nil
+        end
+        index += 1
+      end
+      nil
     end
 
     private def emit_resource(call : LibTreeSitter::TSNode, source : String, prefix : String, actions : Array(String), routes : Array(Route), include_callees : Bool)
@@ -242,7 +274,9 @@ module Noir
         next unless actions.includes?(action)
         url = suffix.empty? ? base : "#{base.rstrip('/')}#{suffix}"
         callees = include_callees ? [{controller_action(call, source, action), "", line + 1}] : [] of JSCalleeExtractor::Entry
-        routes << Route.new(verb, url, line, callees)
+        route = Route.new(verb, url, line, callees)
+        route.controller = resource_controller(call, source).try { |controller| {controller, action} }
+        routes << route
       end
     end
 
@@ -269,6 +303,19 @@ module Noir
         entries = JSCalleeExtractor.callees_for_handler_node(handler, source, "")
       end
       entries
+    end
+
+    # `resource('notes', NotesController)` / `'NotesController'`.
+    private def resource_controller(call : LibTreeSitter::TSNode, source : String) : String?
+      return string_argument_at(call, source, 1) if string_argument_at(call, source, 1)
+      args = arguments_node(call) || return
+      index = 0
+      Noir::TreeSitter.each_named_child(args) do |arg|
+        next if Noir::TreeSitter.node_type(arg) == "comment"
+        return (Noir::TreeSitter.node_type(arg) == "identifier" ? Noir::TreeSitter.node_text(arg, source) : nil) if index == 1
+        index += 1
+      end
+      nil
     end
 
     private def controller_action(call : LibTreeSitter::TSNode, source : String, action : String) : String

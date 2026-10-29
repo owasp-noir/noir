@@ -69,6 +69,9 @@ module Analyzer::Javascript
           analyze_page(path, url_for(relative, base), result, mutex)
         elsif page_server_file?(leaf)
           analyze_page_server(path, url_for(relative, base), result, mutex)
+          analyze_page_module(path, url_for(relative, base), result, mutex)
+        elsif page_load_file?(leaf)
+          analyze_page_module(path, url_for(relative, base), result, mutex)
         elsif server_file?(leaf)
           analyze_api_route(path, url_for(relative, base), result, mutex, include_callee)
         end
@@ -111,6 +114,20 @@ module Analyzer::Javascript
     private def page_server_file?(leaf : String) : Bool
       return false unless leaf.starts_with?("+page.server")
       API_EXTENSIONS.any? { |ext| leaf.ends_with?(ext) }
+    end
+
+    # `+page.js` / `+page.ts`: the universal `load` of a page.
+    private def page_load_file?(leaf : String) : Bool
+      API_EXTENSIONS.any? { |ext| leaf == "+page#{ext}" }
+    end
+
+    # A page with only a `+page.js` / `+page.server.ts` (usually a `load`
+    # that redirects) still answers GET; with a `+page.svelte` sibling that
+    # sibling reports it.
+    private def analyze_page_module(path : String, url : String, result : Array(Endpoint), mutex : Mutex)
+      dir = File.dirname(path)
+      return if PAGE_EXTENSIONS.any? { |ext| File.exists?(File.join(dir, "+page#{ext}")) }
+      analyze_page(path, url, result, mutex)
     end
 
     private def analyze_page(path : String, url : String, result : Array(Endpoint), mutex : Mutex)

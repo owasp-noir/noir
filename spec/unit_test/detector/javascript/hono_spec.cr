@@ -5,6 +5,12 @@ describe "Detect JS Hono" do
   options = create_test_options
   instance = Detector::Javascript::Hono.new options
 
+  # #3309
+  it "detects an @hono/zod-openapi app" do
+    instance.detect("index.ts", %(import { OpenAPIHono, createRoute } from "@hono/zod-openapi";)).should be_true
+    instance.detect("app.ts", "const app = new OpenAPIHono();").should be_true
+  end
+
   it "require_single_quot" do
     instance.detect("index.js", "require('hono')").should be_true
   end
