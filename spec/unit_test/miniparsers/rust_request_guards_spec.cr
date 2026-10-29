@@ -7,6 +7,13 @@ def rust_guard_verdicts(source : String) : Hash(String, Bool)
   Noir::RustRequestGuards.resolve(facts)
 end
 
+# Verdicts over several files, each scanned under its own path.
+def rust_guard_verdicts_in(files : Hash(String, String)) : Hash(String, Bool)
+  facts = Noir::RustRequestGuards::Facts.new
+  files.each { |path, source| Noir::RustRequestGuards.scan(source, facts, path) }
+  Noir::RustRequestGuards.resolve(facts)
+end
+
 describe Noir::RustRequestGuards do
   it "treats Self:: in an inherent status_code impl as that type" do
     source = <<-RUST
@@ -218,5 +225,170 @@ describe Noir::RustRequestGuards do
       }
       RUST
     rust_guard_verdicts(source)["ItemRef"]?.should_not be_true
+  end
+
+  it "reads the arms of many impls in one non-ASCII file in linear time" do
+    rejections = (0...2000).join do |i|
+      %(pub struct Rej#{i};\nimpl Rej#{i} {\n    pub fn new() -> Self { Rej#{i} }\n}\n) +
+        %(impl IntoResponse for Rej#{i} {\n    fn into_response(self) -> Response {\n) +
+        %(        (StatusCode::BAD_REQUEST, "거절 #{i}").into_response()\n    }\n}\n)
+    end
+    source = %(use axum::http::StatusCode;\nconst NOTE: &str = "한국어";\n) + rejections + <<-RUST
+      impl IntoResponse for AppError {
+          fn into_response(self) -> Response {
+              match self {
+                  AppError::NotLoggedIn => (StatusCode::UNAUTHORIZED, "로그인").into_response(),
+              }
+          }
+      }
+      impl<S> FromRequestParts<S> for CurrentUser {
+          type Rejection = AppError;
+          async fn from_request_parts(parts: &mut Parts, _s: &S) -> Result<Self, AppError> {
+              parts.extensions.get::<CurrentUser>().cloned().ok_or(AppError::NotLoggedIn)
+          }
+      }
+      RUST
+    verdicts = {} of String => Bool
+    elapsed = Time.measure { verdicts = rust_guard_verdicts(source) }
+    verdicts["CurrentUser"]?.should be_true
+    elapsed.should be < 2.seconds
+  end
+
+  # Two `enum Error` in one crate: the extractor's own file defines the one
+  # it returns, whose catch-all answers 400; the other file's 401 for the
+  # same-named variant is not it.
+  it "reads a variant in the mapping of the file that defines its enum" do
+    auth = <<-RUST
+      pub enum Error { MissingHeader, BadToken }
+      impl Error {
+          pub fn http_status(&self) -> StatusCode {
+              match self {
+                  Error::MissingHeader => StatusCode::UNAUTHORIZED,
+                  Error::BadToken => StatusCode::UNAUTHORIZED,
+              }
+          }
+      }
+      RUST
+    ct = <<-RUST
+      pub enum Error { MissingHeader, Db }
+      impl IntoResponse for Error {
+          fn into_response(self) -> Response {
+              match self {
+                  Error::Db => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+                  _ => StatusCode::BAD_REQUEST.into_response(),
+              }
+          }
+      }
+      impl<S: Send + Sync> FromRequestParts<S> for ContentType {
+          type Rejection = Error;
+          async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
+              parts.headers.get("content-type").map(|v| ContentType(format!("{v:?}"))).ok_or(Error::MissingHeader)
+          }
+      }
+      RUST
+    rust_guard_verdicts_in({File.join("src", "auth.rs") => auth, File.join("src", "ct.rs") => ct})["ContentType"]?.should_not be_true
+
+    # The same extractor beside the 401 mapping is a guard.
+    own = auth + ct.sub(/pub enum Error \{[^}]*\}/, "").sub(/impl IntoResponse for Error \{.*?\n\}\n/m, "")
+    rust_guard_verdicts_in({File.join("src", "auth.rs") => own})["ContentType"]?.should be_true
+  end
+
+  it "does not read a variant through a crate where two files define its enum" do
+    mapping = <<-RUST
+      pub enum Error { NoAuth }
+      impl Error {
+          pub fn http_status(&self) -> StatusCode {
+              match self {
+                  Error::NoAuth => StatusCode::UNAUTHORIZED,
+              }
+          }
+      }
+      RUST
+    guard = <<-RUST
+      impl<S> FromRequestParts<S> for User {
+          type Rejection = Error;
+          async fn from_request_parts(parts: &mut Parts, _s: &S) -> Result<Self, Error> {
+              parts.extensions.get::<User>().cloned().ok_or(Error::NoAuth)
+          }
+      }
+      RUST
+    files = {File.join("src", "a.rs") => mapping, File.join("src", "guard.rs") => guard}
+    rust_guard_verdicts_in(files)["User"]?.should be_true
+    files[File.join("src", "b.rs")] = "pub enum Error { NoAuth, Other }"
+    rust_guard_verdicts_in(files)["User"]?.should_not be_true
+  end
+
+  it "reads a redirect to a login page as a refusal, and no other redirect" do
+    source = <<-RUST
+      impl AppError {
+          fn status_code(&self) -> StatusCode {
+              match self {
+                  Self::NotLoggedIn => StatusCode::UNAUTHORIZED,
+                  Self::Moved => StatusCode::UNAUTHORIZED,
+                  Self::Internal => StatusCode::INTERNAL_SERVER_ERROR,
+              }
+          }
+      }
+      impl IntoResponse for AppError {
+          fn into_response(self) -> Response {
+              match self {
+                  Self::NotLoggedIn => (StatusCode::SEE_OTHER, [(header::LOCATION, "/login")]).into_response(),
+                  Self::Moved => Redirect::permanent("/docs/v2").into_response(),
+                  other => (other.status_code(), "err").into_response(),
+              }
+          }
+      }
+      impl<S: Send + Sync> FromRequestParts<S> for User {
+          type Rejection = AppError;
+          async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
+              parts.extensions.get::<u64>().map(|id| User(*id)).ok_or(AppError::NotLoggedIn)
+          }
+      }
+      impl<S: Send + Sync> FromRequestParts<S> for Legacy {
+          type Rejection = AppError;
+          async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
+              parts.extensions.get::<u64>().map(|_| Legacy).ok_or(AppError::Moved)
+          }
+      }
+      RUST
+    verdicts = rust_guard_verdicts(source)
+    verdicts["User"]?.should be_true
+    verdicts["Legacy"]?.should_not be_true
+  end
+
+  it "reads a struct variant built as the error" do
+    source = <<-RUST
+      impl IntoResponse for ApiError {
+          fn into_response(self) -> Response {
+              match self {
+                  Self::Unauthorized { reason } => (axum::http::StatusCode::UNAUTHORIZED, reason).into_response(),
+                  ApiError::Bad { .. } => (StatusCode::BAD_REQUEST, "x").into_response(),
+                  ApiError::Teapot => (StatusCode::from_u16(401).unwrap(), "x").into_response(),
+              }
+          }
+      }
+      impl<S: Send + Sync> FromRequestParts<S> for A {
+          type Rejection = ApiError;
+          async fn from_request_parts(parts: &mut Parts, _s: &S) -> Result<Self, Self::Rejection> {
+              parts.extensions.get::<u64>().map(|_| A).ok_or(ApiError::Unauthorized { reason: "x".into() })
+          }
+      }
+      impl<S: Send + Sync> FromRequestParts<S> for D {
+          type Rejection = ApiError;
+          async fn from_request_parts(parts: &mut Parts, _s: &S) -> Result<Self, Self::Rejection> {
+              parts.extensions.get::<u64>().map(|_| D).ok_or(ApiError::Bad { field: ApiError::Unauthorized { reason: "x".into() } })
+          }
+      }
+      impl<S: Send + Sync> FromRequestParts<S> for T {
+          type Rejection = ApiError;
+          async fn from_request_parts(parts: &mut Parts, _s: &S) -> Result<Self, Self::Rejection> {
+              parts.extensions.get::<u64>().map(|_| T).ok_or(ApiError::Teapot)
+          }
+      }
+      RUST
+    verdicts = rust_guard_verdicts(source)
+    verdicts["A"]?.should be_true
+    verdicts["D"]?.should_not be_true
+    verdicts["T"]?.should_not be_true
   end
 end

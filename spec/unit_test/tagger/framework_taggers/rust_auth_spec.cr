@@ -633,6 +633,68 @@ describe "RustAuthTagger" do
     files["crates/services/web-server/src/main.rs"] = main.sub("lib_web::", "lib_decoy::")
     axum_guarded_urls(files, ["/api/rpc", "/api/peek", "/api/login"]).should be_empty
   end
+
+  it "resolves a crate import to the crate of the importing app in a monorepo" do
+    refusing = <<-RUST
+      pub async fn mw_ctx(req: Request<Body>, next: Next) -> Result<Response, StatusCode> {
+          if req.headers().get("authorization").is_none() {
+              return Err(StatusCode::FORBIDDEN);
+          }
+          Ok(next.run(req).await)
+      }
+      RUST
+    reading = <<-RUST
+      pub async fn mw_ctx(req: Request<Body>, next: Next) -> Result<Response, StatusCode> {
+          tracing::debug!("{}", req.uri());
+          Ok(next.run(req).await)
+      }
+      RUST
+    main = <<-RUST
+      use web::mw::mw_ctx;
+      fn app() -> Router {
+          Router::new().route("/rpc", post(handler)).route_layer(middleware::from_fn(mw_ctx))
+      }
+      RUST
+    {"app_a" => {refusing, ["/rpc"]}, "app_b" => {reading, [] of String}}.each do |app, (mw, guarded)|
+      other = app == "app_a" ? "app_b" : "app_a"
+      files = {
+        "#{app}/crates/server/src/main.rs" => main,
+        "#{app}/crates/web/src/mw.rs"      => mw,
+        "#{other}/crates/web/src/mw.rs"    => mw == refusing ? reading : refusing,
+      }
+      axum_guarded_urls(files, ["/rpc"]).should eq(guarded)
+    end
+
+    # Two crates as near as each other: neither is read.
+    files = {
+      "server/src/main.rs" => main,
+      "a/web/src/mw.rs"    => refusing,
+      "b/web/src/mw.rs"    => refusing,
+    }
+    axum_guarded_urls(files, ["/rpc"]).should be_empty
+  end
+
+  it "guards with a middleware from another crate that redirects to a login page" do
+    main = <<-RUST
+      use lib_auth::require_auth;
+      fn app() -> Router {
+          Router::new().route("/admin", post(handler)).route_layer(middleware::from_fn(require_auth))
+      }
+      RUST
+    mw = <<-RUST
+      pub async fn require_auth(req: Request<Body>, next: Next) -> Response {
+          match req.headers().get("cookie") {
+              Some(_) => next.run(req).await,
+              None => Redirect::to("/login").into_response(),
+          }
+      }
+      RUST
+    files = {"crates/server/src/main.rs" => main, "crates/lib-auth/src/lib.rs" => mw}
+    axum_guarded_urls(files, ["/admin"]).should eq(["/admin"])
+
+    files["crates/lib-auth/src/lib.rs"] = mw.sub(%("/login"), %("/v2/admin"))
+    axum_guarded_urls(files, ["/admin"]).should be_empty
+  end
 end
 
 describe "RustAuthTagger request guards read from their FromRequest impls" do
