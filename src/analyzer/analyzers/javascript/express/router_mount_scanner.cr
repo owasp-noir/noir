@@ -545,18 +545,13 @@ module Analyzer::Javascript
           require_map, function_map, var_to_function, var_prefix, global_deferred_mounts)
       end
 
-      template_constants = nil.as(Hash(String, String)?)
       content.scan(backtick_re) do |m|
         next unless m.size >= 3
 
         caller = m[1]
-        prefix = m[2]
         # `/${rootPath}`: known constants are substituted; an unknown one
         # stays a placeholder segment rather than dropping the mount.
-        if prefix.includes?("${")
-          template_constants ||= Noir::JSRouteExtractor.file_string_constants(main_file, content)
-          prefix = "/#{Noir::JSRouteExtractor.resolve_template(prefix, template_constants)}".squeeze('/')
-        end
+        prefix = Noir::JSRouteExtractor.resolve_mount_template(m[2], main_file, content)
         next unless mount_prefix?(prefix)
         match_end = m.byte_end(0)
 
@@ -890,13 +885,24 @@ module Analyzer::Javascript
         if m.size >= 3
           var_name = m[1]
           func_name = m[2]
-          if function_map.has_key?(func_name) || require_map.has_key?(func_name)
+          next unless function_map.has_key?(func_name) || require_map.has_key?(func_name)
+          call_args = Noir::JSLiteralScanner.extract_paren_content_at_byte(content, m.byte_end(0)).try(&.content) || ""
+          unless wraps_import?(call_args, require_map, function_map)
             var_to_function[var_name] = func_name
           end
         end
       end
 
       {require_map: require_map, function_map: function_map, var_to_function: var_to_function}
+    end
+
+    # `withAuth(apiRouter)`, `wrap(ctrl)`: a call handed an imported binding
+    # wraps it; only a call on literals/locals (`itemsController('/b')`) is
+    # taken for a router factory.
+    private def wraps_import?(call_args : String, require_map : Hash(String, String), function_map : Hash(String, String)) : Bool
+      call_args.gsub(/'[^']*'|"[^"]*"|`[^`]*`/, "").scan(/(?<![.\w$])([A-Za-z_$][\w$]*)/).any? do |m|
+        require_map.has_key?(m[1]) || function_map.has_key?(m[1])
+      end
     end
 
     # Extract router reference from .use() arguments
@@ -913,9 +919,10 @@ module Analyzer::Javascript
       # If no inline require, check for factory function call or identifiers
       unless router_file_direct
         # Check for factory function call: createRouter(), itemsController('/b')
-        if args =~ /(\w+)\s*\((?:[^()]|\([^()]*\))*\)\s*$/
+        if args =~ /(\w+)\s*\(((?:[^()]|\([^()]*\))*)\)\s*$/
           factory_name = $1
-          if function_map[factory_name]? || require_map[factory_name]? || var_to_function[factory_name]?
+          if (function_map[factory_name]? || require_map[factory_name]? || var_to_function[factory_name]?) &&
+             !wraps_import?($2, require_map, function_map)
             router_var = factory_name
           end
         end

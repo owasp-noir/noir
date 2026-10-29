@@ -204,13 +204,8 @@ module Analyzer::Javascript
       prefixes = CodeLocator.instance.all(ExpressConstants.file_key(Noir::PathScope.expand(path)))
       prefixes = [""] if prefixes.empty?
 
-      template_constants = nil.as(Hash(String, String)?)
       content.scan(USE_PATH_RE) do |m|
-        raw_path = m[1]? || m[2]
-        if raw_path.includes?("${")
-          template_constants ||= Noir::JSRouteExtractor.file_string_constants(path, content)
-          raw_path = "/#{Noir::JSRouteExtractor.resolve_template(raw_path, template_constants)}".squeeze('/')
-        end
+        raw_path = m[1]? || Noir::JSRouteExtractor.resolve_mount_template(m[2], path, content)
         call_start = m.begin(0)
         paren_open = content.index('(', call_start) || next
         paren_close = Noir::JSRouteExtractor.find_matching_paren(content, paren_open) || next

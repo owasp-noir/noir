@@ -92,23 +92,25 @@ module Analyzer::Javascript
       result
     end
 
+    # Every config is recorded, a missing `basePath` as "": a nested app
+    # without one must not inherit its parent's.
     private def collect_base_paths : Hash(String, String)
       base_paths = {} of String => String
-      all_files.each do |file|
-        next unless CONFIG_BASENAMES.includes?(File.basename(file))
-        content = Noir::JSRouteExtractor.strip_js_comments(read_file_content(file))
-        if match = content.match(BASE_PATH_RE)
-          base_paths[File.dirname(Noir::PathScope.expand(file))] = match[2].rstrip('/')
+      CONFIG_BASENAMES.each do |basename|
+        get_files_by_basename(basename).each do |file|
+          content = Noir::JSRouteExtractor.strip_js_comments(read_file_content(file))
+          dir = File.dirname(Noir::PathScope.expand(file))
+          base_paths[dir] = content.match(BASE_PATH_RE).try(&.[2].rstrip('/')) || base_paths[dir]? || ""
+        rescue IO::Error
+          next
         end
-      rescue IO::Error
-        next
       end
       base_paths
     end
 
     # `basePath` of the closest `next.config.*` above `path`.
     private def base_path_for(path : String) : String
-      return "" if @next_base_paths.empty?
+      return "" if @next_base_paths.values.all?(&.empty?)
       dir = File.dirname(Noir::PathScope.expand(path))
       loop do
         return @next_base_paths[dir] if @next_base_paths.has_key?(dir)

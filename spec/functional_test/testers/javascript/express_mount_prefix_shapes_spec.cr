@@ -6,13 +6,16 @@ require "../../func_spec.cr"
 #   tpl/ - a template-literal mount path, `process.env.X || 'shop'` read as
 #          its literal fallback; the path-mounted handler is reported too.
 #   imp/ - a route path built from a constant imported from another module.
+#   wrap/ - `withAuth(apiRouter)` is a wrapper around the router, not a factory.
 methods = %w[GET POST PUT DELETE PATCH HEAD OPTIONS]
 expected_endpoints = [
   Endpoint.new("/error/404", "GET"),
   Endpoint.new("/common/layout/404", "GET"),
   Endpoint.new("/shop/:version/list", "GET", [Param.new("version", "", "path")]),
   Endpoint.new("/shop/items", "GET"),
+  Endpoint.new("/shop/concat", "GET"),
   Endpoint.new("/local/items", "GET"),
+  Endpoint.new("/secure/vault", "GET"),
 ] of Endpoint
 %w[/a /b /c /shop].each do |prefix|
   expected_endpoints << Endpoint.new("#{prefix}/list", "GET", [Param.new("q", "", "query")])

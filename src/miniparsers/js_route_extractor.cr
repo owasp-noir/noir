@@ -115,8 +115,9 @@ module Noir
         # `this.route('GET', '/p')`), so a comment inside a call would hide
         # the literal. Blanking keeps every line and column.
         content = strip_js_comments(content)
-        # `${BASE_URL}/items` with `BASE_URL` imported from `./config`.
-        constants = content.includes?("${") ? file_string_constants(file_path, content) : nil
+        # `${BASE_URL}/items` or `BASE_URL + '/items'`, `BASE_URL` imported
+        # from `./config`.
+        constants = content.includes?("${") || content.includes?('+') ? file_string_constants(file_path, content) : nil
         parser = JSParser.new(content, this_receiver_ok: content_matches?(content, SERVER_EVIDENCE_MARKER), constants: constants)
         route_patterns = parser.parse_routes
 
@@ -1757,7 +1758,8 @@ module Noir
 
     # `const NAME = 'lit'`, and `process.env.X || 'lit'` (`??` too): the
     # literal is what the app serves when the variable is unset.
-    STRING_CONST_RE = /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*(?::\s*[\w.]+\s*)?=\s*(?:process\.env(?:\.\w+|\[['"][^'"]+['"]\])\s*(?:\|\||\?\?)\s*)?(?:'([^'\n]*)'|"([^"\n]*)"|`([^`$]*)`)/
+    # The literal must end the expression: `'/api/' + version` is no constant.
+    STRING_CONST_RE = /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*(?::\s*[\w.]+\s*)?=\s*(?:process\.env(?:\.\w+|\[['"][^'"]+['"]\])\s*(?:\|\||\?\?)\s*)?(?:'([^'\n]*)'|"([^"\n]*)"|`([^`$]*)`)(?:\s+as\s+const)?(?=\s*(?:[;,\n]|\z))/
     # `import { A, B as C } from './x'`, `const { A, B: C } = require('./x')`.
     NAMED_RELATIVE_IMPORT_RE = /\bimport\s*(?:[\w$]+\s*,\s*)?\{([^}]*)\}\s*from\s*['"](\.[^'"]*)['"]|\b(?:const|let|var)\s*\{([^}]*)\}\s*=\s*require\s*\(\s*['"](\.[^'"]*)['"]\s*\)/
 
@@ -1775,7 +1777,7 @@ module Noir
         content.scan(NAMED_RELATIVE_IMPORT_RE) do |m|
           names = m[1]? || m[3]
           target = Noir::ImportGraph.resolve_relative_import(file_path, m[2]? || m[4]) || next
-          exported = string_constants(CodeLocator.instance.content_for(target) || Noir::TextFile.read(target))
+          exported = string_constants(stripped_source(target))
           names.split(',').each do |item|
             parts = item.strip.split(/\s*:\s*|\s+as\s+/)
             value = exported[parts.first]? || next
@@ -1791,6 +1793,12 @@ module Noir
     def self.resolve_template(template : String, constants : Hash(String, String)) : String
       return template unless template.includes?("${")
       template.gsub(/\$\{\s*([A-Za-z_$][\w$]*)\s*\}/) { |whole, m| constants[m[1]]? || whole }
+    end
+
+    # A template-literal mount path (`` `/${rootPath}` ``) as a rooted path.
+    def self.resolve_mount_template(template : String, file_path : String, content : String) : String
+      return template unless template.includes?("${")
+      "/#{resolve_template(template, file_string_constants(file_path, content))}".squeeze('/')
     end
 
     # Pushes mount prefixes along `{parent, prefix, child}` edges into
