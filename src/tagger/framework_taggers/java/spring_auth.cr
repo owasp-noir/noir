@@ -4,6 +4,7 @@ require "../../../miniparsers/java_route_extractor_ts"
 require "../../../utils/js_literal_scanner"
 require "../../../utils/top_level_split"
 require "../../../analyzer/engines/java_engine"
+require "../../../analyzer/engines/kotlin_engine"
 
 @[Noir::TaggerFor(key: "spring_auth", name: "Spring Auth Tagger", desc: "Identifies Spring Security patterns (annotations, security config)", order: 20)]
 class SpringAuthTagger < FrameworkTagger
@@ -30,10 +31,11 @@ class SpringAuthTagger < FrameworkTagger
 
   # A servlet filter class (`OncePerRequestFilter`, `GenericFilterBean`,
   # `Filter`). `refusal` ("401", "403", an exception name) is nil when its
-  # `doFilter` does not turn a caller without a credential away. `required`
-  # / `excluded` are the paths its `shouldNotFilter` and early
-  # `chain.doFilter(...); return` pass-throughs leave it on: every set in
-  # `required` must hold a test the URL passes, and no `excluded` one may.
+  # `doFilter` does not plainly turn a caller without a credential away.
+  # `required` / `excluded` are the paths its `shouldNotFilter` and
+  # pass-through branches leave it on: every set in `required` must hold a
+  # test the URL passes, and no `excluded` one may. `settings` say how a
+  # setting can lift it.
   record ServletFilterDef,
     name : String,
     file_path : String,
@@ -43,17 +45,20 @@ class SpringAuthTagger < FrameworkTagger
     component : Bool,
     web_filter_patterns : Array(String)?,
     required : Array(Array(PathTest)),
-    excluded : Array(PathTest)
+    excluded : Array(PathTest),
+    settings : Array(String)
 
   # A `FilterRegistrationBean`: `names` are the filter types it may hold,
-  # `patterns` its servlet URL patterns (nil: one noir cannot read).
+  # `patterns` its servlet URL patterns (nil: one noir cannot read),
+  # `settings` the properties it is registered under.
   record ServletFilterRegistration,
     names : Array(String),
     file_path : String,
     line : Int32,
     patterns : Array(String)?,
     enabled : Bool,
-    module_dir : String?
+    module_dir : String?,
+    settings : Array(String)
 
   ANNOTATION_PATTERNS = [
     /\@PreAuthorize\s*\(/,
@@ -147,10 +152,11 @@ class SpringAuthTagger < FrameworkTagger
     @security_meta_annotations = Hash(String, MetaAnnotation).new
     @interceptor_defs = Hash(String, InterceptorDef).new
     @registered_interceptors = [] of RegisteredInterceptor
-    @servlet_filters = Hash(String, ServletFilterDef).new
+    # Filter state is per build unit: classes of one simple name may live in two apps.
+    @servlet_filters = [] of ServletFilterDef
     @filter_registrations = [] of ServletFilterRegistration
-    @bean_types = Set(String).new
-    @servlet_component_scan = false
+    @bean_types = Set({String?, String}).new
+    @servlet_component_scans = Set(String?).new
   end
 
   def self.target_techs : Array(String)
@@ -174,7 +180,7 @@ class SpringAuthTagger < FrameworkTagger
     @servlet_filters.clear
     @filter_registrations.clear
     @bean_types.clear
-    @servlet_component_scan = false
+    @servlet_component_scans.clear
 
     # Find Java and Kotlin security config files
     extensions = [".java", ".kt"]
@@ -201,10 +207,12 @@ class SpringAuthTagger < FrameworkTagger
           scan_interceptor_registration(content, file, module_dir)
         end
 
-        scan_servlet_filter_defs(content, file, module_dir) if content.includes?("doFilter")
-        scan_filter_registrations(content, file, module_dir) if content.includes?("FilterRegistrationBean")
-        scan_bean_types(content) if content.includes?("@Bean")
-        @servlet_component_scan = true if content.includes?("@ServletComponentScan")
+        unless test_source?(file)
+          scan_servlet_filter_defs(content, file, module_dir) if content.includes?("doFilter")
+          scan_filter_registrations(content, file, module_dir) if content.includes?("FilterRegistrationBean")
+          scan_bean_types(content, module_dir) if content.includes?("@Bean")
+          @servlet_component_scans << module_dir if content.includes?("@ServletComponentScan")
+        end
 
         next unless content.includes?("SecurityFilterChain") || content.includes?("HttpSecurity") || content.includes?("WebSecurityConfigurerAdapter")
 
@@ -408,9 +416,10 @@ class SpringAuthTagger < FrameworkTagger
   SERVLET_FILTER_CLASS  = /\bclass\s+([A-Za-z_$][\w$]*)[^{;]*?(?:\bextends\s+(?:[\w.]+\.)?(?:OncePerRequestFilter|GenericFilterBean|HttpFilter)\b|\bimplements\s+[^{;]*?\b(?:[\w.]+\.)?Filter\b(?!\s*[<.])|:\s*(?:[^{;]*?,\s*)?(?:[\w.]+\.)?(?:(?:OncePerRequestFilter|GenericFilterBean|HttpFilter)\s*\(|Filter\b(?!\s*[<.(])))/
   DO_FILTER_DECLARATION = /(?:\bvoid|\bfun)\s+(?:doFilterInternal|doFilter)\s*\(/
   SHOULD_NOT_FILTER     = /(?:\bboolean|\bfun)\s+shouldNotFilter\s*\(/
-  # A 401/403 status handed to a response helper (`writeError(res, SC_UNAUTHORIZED)`)
-  # or a call named for the refusal (`sendUnauthorized(res)`, Kotlin `throw ForbiddenException()`).
-  REFUSAL_STATUS_CONSTANT = /\b(?:HttpServletResponse\.)?SC_(?:UNAUTHORIZED|FORBIDDEN)\b|\bHttpStatus\.(?:UNAUTHORIZED|FORBIDDEN)\b|\b\w*(?:Unauthori[sz]ed|Forbidden)\w*\s*\(/i
+  # A 401/403 status handed to a response helper (`writeError(res, SC_UNAUTHORIZED)`).
+  REFUSAL_STATUS_CONSTANT = /\b(?:HttpServletResponse\.)?SC_(?:UNAUTHORIZED|FORBIDDEN)\b|\bHttpStatus\.(?:UNAUTHORIZED|FORBIDDEN)\b/
+  # A statement that is one call (`sendUnauthorized(res)`, `throw ForbiddenException()`), and its name.
+  STATEMENT_CALL = /\A(?:return\s+|throw\s+(?:new\s+)?)?(?:[\w$]+\s*(?:\(\s*\))?\s*\.\s*)*([\w$]+)\s*\(/
   # Filters that refuse for another reason than a missing credential.
   # ponytail: a name list; a filter named for its credential check is not read further.
   NON_AUTH_FILTER_NAME = /Csrf|Xsrf|Origin|Refer|RateLimit|Throttl|Cors|Xss/i
@@ -419,16 +428,51 @@ class SpringAuthTagger < FrameworkTagger
   FILTER_CREDENTIAL_READ = /\bget(?:Header|Parameter)\s*\(\s*(?:HttpHeaders\.AUTHORIZATION\b|"[^"]*(?:auth|token|key|jwt|bearer|session|credential)[^"]*"|[\w$.]*(?:auth|token|key|jwt|session)[\w$]*(?:\s*\(\s*\))?\s*\))|\bgetSession\s*\(|\brequest\.session\b|\b(?:getUserPrincipal|userPrincipal|getRemoteUser|remoteUser|SecurityContextHolder)\b|\bgetCookies\s*\(|\.cookies\b|\b\w*(?:token|auth|jwt|session|credential|principal)\w*\s*\(\s*(?:request|req|httpRequest|httpServletRequest|servletRequest)\b[^()]*\)/i
   # A credential read with its receiver (`request.getHeader("X-Api-Key")`).
   CREDENTIAL_EXPRESSION = /(?:[\w$]+\s*\.\s*)*(?:#{FILTER_CREDENTIAL_READ.source})/i
-  # A test that the credential is missing (or a prefix like `Bearer ` is):
-  # a pass-through on it lets anonymous callers in.
-  ABSENCE_TEST = /==\s*null\b|\bnull\s*==|\b(?:isEmpty|isBlank|isNullOrEmpty|isNullOrBlank|hasText|hasLength|isNotEmpty|isNotBlank|startsWith)\b/
-  # The condition a refusal sits under, when it turns away a caller without
-  # a credential: negated (`!valid(token)`, `key != expected`) or an absence test.
-  REFUSAL_CONDITION = /!|#{ABSENCE_TEST.source}/
+  # Reads of the current request that do not name the request parameter.
+  REQUEST_HOLDER = /\b(?:RequestContextHolder|RequestAttributes|ServletRequestAttributes|HttpServletRequest|currentRequest)\b/
   # `path.startsWith("/admin")`, `request.servletPath == "/login"`.
   PATH_TEST = /(!\s*)?((?:[\w$]+(?:\s*\(\s*\))?\s*\.\s*)*[\w$]+(?:\s*\(\s*\))?)\s*(?:\.\s*(startsWith|equals)\s*\(\s*"(\/[^"]*)"\s*\)|(==|!=)\s*"(\/[^"]*)")/
   # `request.requestURI in OPEN`, `OPEN.contains(uri)` over a field of literals.
   MEMBERSHIP_TEST = /(!\s*)?(?:(?:[\w$]+(?:\s*\(\s*\))?\s*\.\s*)*[\w$]+(?:\s*\(\s*\))?\s+(!?in)\s+([A-Za-z_$][\w$]*)\b(?!\s*[.(])|([A-Za-z_$][\w$]*)\s*\.\s*contains\s*\(\s*(?:[\w$]+(?:\s*\(\s*\))?\s*\.\s*)*[\w$]+(?:\s*\(\s*\))?\s*\))/
+  # A bean or filter registered only under a property or profile.
+  CONDITIONAL_REGISTRATION = /@(?:ConditionalOn\w+|Profile)\b(?:\s*\([^()]*\))?/
+  IDENTIFIER               = /[A-Za-z_$][\w$]*/
+
+  # How a block of a filter treats a caller who presents no credential.
+  enum Walk
+    Guard   # refused before anything hands the request on
+    Pass    # handed on (`chain.doFilter`)
+    Through # neither: control leaves the block's end
+    Unknown
+  end
+
+  # What a condition is for a caller without a credential: true, false,
+  # unknown, or `limited` to the paths of `tests` (the same shape as
+  # `path_tests`) and the settings named in `settings`.
+  record CondVerdict,
+    kind : Symbol,
+    tests : Array({Array(PathTest), Bool}) = [] of {Array(PathTest), Bool},
+    settings : Array(String) = [] of String
+
+  # The names of one filter method and what the walk found so far.
+  class FilterReading
+    getter tainted : Set(String)
+    getter credential : Set(String)
+    getter body : String
+    getter helpers : Hash(String, String)
+    getter declared : Set(String)
+    getter required = [] of Array(PathTest)
+    getter excluded = [] of PathTest
+    getter settings = [] of String
+
+    def initialize(@tainted, @credential, @body, @helpers, @declared)
+    end
+  end
+
+  private def test_source?(file : String) : Bool
+    relative = base_relative_path(file)
+    Analyzer::Java::JavaEngine.test_path?(relative) || Analyzer::Kotlin::KotlinEngine.test_path?(relative)
+  end
 
   private def scan_servlet_filter_defs(content : String, file : String, module_dir : String?)
     clean = Noir::CComments.strip(content)
@@ -450,16 +494,18 @@ class SpringAuthTagger < FrameworkTagger
         component: lead.matches?(/@Component\b/),
         web_filter_patterns: web_filter_patterns(lead),
         required: [] of Array(PathTest),
-        excluded: [] of PathTest
+        excluded: [] of PathTest,
+        settings: lead.scan(CONDITIONAL_REGISTRATION).map { |found| "it is registered only under `#{found[0]}`" }
       )
-      @servlet_filters[name] = judge_servlet_filter(filter, body) || filter
+      @servlet_filters << (judge_servlet_filter(filter, body) || filter)
     end
   end
 
-  # `filter` with the refusal and pass-through paths read from its class
-  # `body`; nil when it is not an auth guard: it reads no credential, does
-  # not refuse, or lets requests through on a condition noir cannot read as
-  # a path test (a missing token, a whitelist).
+  # `filter` with its refusal, the paths its pass-throughs leave it on and
+  # the settings that can lift it, read from its class `body`; nil when it
+  # is not plainly an auth guard: when a caller without a credential can
+  # reach `chain.doFilter` (or the handler) on any path or condition noir
+  # cannot read.
   private def judge_servlet_filter(filter : ServletFilterDef, body : String) : ServletFilterDef?
     return if filter.name.matches?(NON_AUTH_FILTER_NAME) || body.matches?(/csrf|xsrf/i) || !body.matches?(FILTER_CREDENTIAL_READ)
     return unless decl = body.match(DO_FILTER_DECLARATION)
@@ -468,82 +514,398 @@ class SpringAuthTagger < FrameworkTagger
     return unless close = Noir::JSLiteralScanner.find_matching_brace_at_byte(body, open)
     method = body.byte_slice(open + 1, close - open - 1)
 
-    # The first refusal in doFilter: a 401/403 status or auth exception, a
-    # status constant handed to a helper, or a call to a class method that refuses.
-    helpers = refusing_helpers(body)
-    candidates = [method.match(INTERCEPTOR_REJECTION_RE), method.match(REFUSAL_STATUS_CONSTANT)]
-    helpers.each_key { |helper| candidates << method.match(/\b#{Regex.escape(helper)}\s*\(/) }
-    return unless first = candidates.compact.min_by?(&.begin(0))
-    # A refusal only when the caller presents something (`if (hasSessionCookie(req))`)
-    # lets an anonymous caller through: it must sit under a negated or absence test.
-    if (cond = enclosing_condition(method, first.begin(0))) && !cond.matches?(REFUSAL_CONDITION)
-      return
-    end
-    refusal_text = helpers.find { |helper, _| first[0].starts_with?(helper) }.try(&.[1]) || first[0]
-    refusal = if refusal_text.matches?(/401|UNAUTHORIZED/i)
-                "401"
-              elsif refusal_text.matches?(/403|FORBIDDEN/i)
-                "403"
-              else
-                refusal_text.match(/new\s+([\w$]+)/).try(&.[1]) || "an exception"
-              end
-
-    required = [] of Array(PathTest)
-    excluded = [] of PathTest
-    # Early pass-throughs: `if (cond) { chain.doFilter(..); return; }`.
-    names = request_names(params[0], method)
-    method[0, first.begin(0)].scan(/(\breturn\s+)?(?:[\w$]+\s*\.\s*)+doFilter\s*\(/) do |call|
-      next unless call[1]? || method[call.end(0)..].matches?(/\A[^;{}]*\)\s*;?\s*return\b/)
-      # ponytail: the condition is the nearest `if (` before the call, not an AST read.
-      return unless cond_at = method[0, call.begin(0)].rindex(/\bif\s*\(/)
-      paren = method.index!('(', cond_at)
-      return unless cond_close = Noir::JSLiteralScanner.find_matching_paren(method, paren)
-      return unless read_skip_condition(method[(paren + 1)...cond_close], names, body, required, excluded)
-    end
+    helpers, declared = refusing_helpers(body)
+    tainted, credential = request_names(params[0], method)
+    reading = FilterReading.new(tainted, credential, body, helpers, declared)
+    walk, refusal = walk_block(method, reading)
+    return unless walk.guard? && refusal
 
     if skip = body.match(SHOULD_NOT_FILTER)
-      return unless read_should_not_filter(body, skip, required, excluded)
+      return unless read_should_not_filter(body, skip, reading)
     end
 
-    filter.copy_with(refusal: refusal, required: required, excluded: excluded)
+    filter.copy_with(refusal: refusal_code(refusal), required: reading.required, excluded: reading.excluded,
+      settings: filter.settings + reading.settings.map { |cond| "it hands the request on unchecked when `#{cond.gsub(/\s+/, " ")}`" })
   end
 
-  # The condition of the innermost `if` whose block (or single statement)
-  # holds char offset `pos` of `code`; nil at the top level.
-  private def enclosing_condition(code : String, pos : Int32) : String?
-    ifs = [] of Int32
-    code[0, pos].scan(/\bif\s*\(/) { |found| ifs << found.end(0) - 1 }
-    ifs.reverse_each do |paren|
-      next unless close = Noir::JSLiteralScanner.find_matching_paren(code, paren)
-      next if close >= pos
-      after = code[(close + 1)..]
-      body_at = close + 1 + after.size - after.lstrip.size
-      stop = if code[body_at]? == '{'
-               Noir::JSLiteralScanner.find_matching_brace(code, body_at)
-             else
-               code.index(/[;\n]/, body_at)
-             end
-      return code[(paren + 1)...close] if stop.nil? || stop > pos
+  private def refusal_code(text : String) : String
+    if text.matches?(/401|UNAUTHORI[SZ]ED/i)
+      "401"
+    elsif text.matches?(/403|FORBIDDEN/i)
+      "403"
+    else
+      text.match(/(?:new\s+)?([A-Z][\w$]*)/).try(&.[1]) || "an exception"
     end
-    nil
   end
 
-  # Methods of a filter class whose body refuses the request, with the refusing text.
-  private def refusing_helpers(body : String) : Hash(String, String)
+  # Walks the statements of `code` in order for a caller without a
+  # credential. The first one that refuses (Guard) or hands the request on
+  # (Pass) decides; an if/else chain, `when`, or `try` is decided by the
+  # branch that caller takes.
+  private def walk_block(code : String, reading : FilterReading) : {Walk, String?}
+    masked = mask_literals(code)
+    each_statement(masked) do |start, stop|
+      text = code[start...stop]
+      head = masked[start...stop]
+      verdict = if head.matches?(/\Aif\s*\(/)
+                  walk_branches(if_branches(text), reading)
+                elsif head.matches?(/\Atry\b/)
+                  walk_try(text, reading)
+                elsif head.matches?(/\Awhen\b/)
+                  (branches = when_branches(text)) ? walk_branches(branches, reading) : {Walk::Unknown, nil}
+                elsif head.matches?(/\A(?:for|while|do|switch|synchronized)\b/)
+                  head.includes?("doFilter") || refusal_in(head, reading) ? {Walk::Unknown, nil} : {Walk::Through, nil}
+                elsif head.matches?(/\A(?:return\s+)?(?:[\w$]+\s*\.\s*)+doFilter\s*\(/)
+                  {Walk::Pass, nil}
+                elsif found = refusal_in(head, reading)
+                  {Walk::Guard, found}
+                elsif head.includes?("doFilter") || head.matches?(/\A(?:return|throw)\b/)
+                  {Walk::Unknown, nil}
+                else
+                  {Walk::Through, nil}
+                end
+      return verdict unless verdict[0].through?
+    end
+    {Walk::Through, nil}
+  end
+
+  # The refusing text of a statement: a 401/403 status or auth exception, a
+  # status constant handed to a call, a call to a method of the class that
+  # refuses, or a call named for the refusal that the class does not declare.
+  private def refusal_in(statement : String, reading : FilterReading) : String?
+    if found = statement.match(INTERCEPTOR_REJECTION_RE) || statement.match(REFUSAL_STATUS_CONSTANT)
+      return found[0]
+    end
+    return unless call = statement.match(STATEMENT_CALL)
+    name = call[1]
+    return reading.helpers[name] if reading.helpers.has_key?(name)
+    name if !reading.declared.includes?(name) && name.matches?(/Unauthori[sz]ed|Forbidden|AccessDenied|Authentication\w*Exception/i)
+  end
+
+  # Branch by branch: a branch the caller takes decides; one on paths or
+  # settings that hands the request on narrows the filter to the rest.
+  private def walk_branches(branches : Array({String?, String}), reading : FilterReading) : {Walk, String?}
+    walked = branches.map { |cond, body| {cond.try { |text| evaluate_condition(text, reading) } || CondVerdict.new(:true), walk_block(unwrap_block(body), reading)} }
+    walked.each_with_index do |(verdict, result), index|
+      if result[0].through?
+        return result if verdict.kind == :true
+        next if verdict.kind == :false
+        # Taken or not, nothing else happens there, unless a later branch acts.
+        return {Walk::Unknown, nil} if walked[(index + 1)..].any? { |_, later| !later[0].through? }
+        next
+      end
+      case verdict.kind
+      when :true  then return result
+      when :false then next
+      when :limited
+        if result[0].pass?
+          verdict.tests.each do |paths, negated|
+            negated ? reading.required << paths : reading.excluded.concat(paths)
+          end
+          reading.settings.concat(verdict.settings)
+          next
+        end
+        if result[0].guard? && verdict.tests.empty?
+          reading.settings.concat(verdict.settings.map { |setting| "!(#{setting})" })
+          return result
+        end
+        return {Walk::Unknown, nil}
+      else
+        return {Walk::Unknown, nil}
+      end
+    end
+    {Walk::Through, nil}
+  end
+
+  # `try { .. } catch { .. }`: a try block that hands the request on decides
+  # alone (a catch then answers for the handler, after it ran). One that
+  # passes the credential to a call, with a catch that refuses, refuses a
+  # missing credential.
+  private def walk_try(text : String, reading : FilterReading) : {Walk, String?}
+    masked = mask_literals(text)
+    return {Walk::Unknown, nil} unless open = masked.index('{')
+    return {Walk::Unknown, nil} unless close = Noir::JSLiteralScanner.find_matching_brace(masked, open)
+    block = text[(open + 1)...close]
+    result = walk_block(block, reading)
+    return result unless result[0].through?
+    return result if mask_literals(block).includes?("doFilter")
+
+    hands_credential = block.matches?(CREDENTIAL_EXPRESSION) || block.scan(IDENTIFIER).any? { |ident| reading.credential.includes?(ident[0]) }
+    rest = masked[(close + 1)..]
+    offset = close + 1
+    while found = rest.match(/\A\s*catch\s*\(/)
+      paren = offset + found.end(0) - 1
+      break unless paren_close = Noir::JSLiteralScanner.find_matching_paren(masked, paren)
+      break unless (catch_open = masked.index('{', paren_close)) && (catch_close = Noir::JSLiteralScanner.find_matching_brace(masked, catch_open))
+      caught = walk_block(text[(catch_open + 1)...catch_close], reading)
+      # ponytail: assumes the call throws for a missing credential, as a validator does.
+      return caught if hands_credential && caught[0].guard?
+      offset = catch_close + 1
+      rest = masked[offset..]
+    end
+    {Walk::Through, nil}
+  end
+
+  # `{cond, body}` of each branch of an if / else-if / else chain (nil cond: `else`).
+  private def if_branches(text : String) : Array({String?, String})
+    masked = mask_literals(text)
+    branches = [] of {String?, String}
+    pos = 0
+    loop do
+      return branches unless (paren = masked.index('(', pos)) && (close = Noir::JSLiteralScanner.find_matching_paren(masked, paren))
+      stop = branch_body_end(masked, close + 1)
+      branches << {text[(paren + 1)...close], text[(close + 1)...stop].strip}
+      return branches unless follow = masked[stop..].match(/\A\s*else\b\s*/)
+      pos = stop + follow.end(0)
+      next if masked[pos..].matches?(/\Aif\s*\(/)
+      branches << {nil, text[pos...branch_body_end(masked, pos)].strip}
+      return branches
+    end
+  end
+
+  # Kotlin `when { cond -> .. }` / `when (subject) { null -> .. }` as
+  # branches; nil for a subject noir cannot read (`when (val t = ..)`).
+  private def when_branches(text : String) : Array({String?, String})?
+    masked = mask_literals(text)
+    subject = nil
+    head = masked.match!(/\Awhen\s*/).end(0)
+    if masked[head]? == '('
+      return unless close = Noir::JSLiteralScanner.find_matching_paren(masked, head)
+      subject = text[(head + 1)...close].strip
+      return if subject.matches?(/\A(?:val|var)\b/)
+      head = close + 1
+    end
+    return unless (open = masked.index('{', head)) && (close = Noir::JSLiteralScanner.find_matching_brace(masked, open))
+    Noir::TopLevelSplit.split(text[(open + 1)...close], '\n', Noir::TopLevelSplit::Rules.new).compact_map do |entry|
+      parts = Noir::TopLevelSplit.split(entry, "->", Noir::TopLevelSplit::Rules.new)
+      next if parts.size < 2
+      cond = parts[0].strip
+      body = parts[1..].join("->")
+      if cond == "else"
+        {nil, body}
+      elsif subject
+        {"#{subject} == #{cond}", body}
+      else
+        {cond, body}
+      end
+    end
+  end
+
+  private def unwrap_block(body : String) : String
+    body = body.strip
+    return body unless body.starts_with?('{') && Noir::JSLiteralScanner.find_matching_brace(mask_literals(body), 0) == body.size - 1
+    body[1...-1]
+  end
+
+  # Yields `{start, stop}` of each top-level statement of masked `code`.
+  private def each_statement(code : String, &)
+    pos = 0
+    while pos < code.size
+      if code[pos].whitespace? || code[pos] == ';'
+        pos += 1
+        next
+      end
+      stop = statement_end(code, pos)
+      stop = pos + 1 if stop <= pos
+      yield pos, stop
+      pos = stop
+    end
+  end
+
+  private def statement_end(code : String, pos : Int32) : Int32
+    rest = code[pos..]
+    if rest.matches?(/\Aif\s*\(/)
+      loop do
+        return code.size unless (paren = code.index('(', pos)) && (close = Noir::JSLiteralScanner.find_matching_paren(code, paren))
+        stop = branch_body_end(code, close + 1)
+        return stop unless follow = code[stop..].match(/\A\s*else\b\s*/)
+        pos = stop + follow.end(0)
+        return branch_body_end(code, pos) unless code[pos..].matches?(/\Aif\s*\(/)
+      end
+    elsif rest.matches?(/\Atry\b/)
+      stop = branch_body_end(code, pos + 3)
+      while found = code[stop..].match(/\A\s*(?:catch\s*\(|finally\b)/)
+        at = stop + found.end(0)
+        if found[0].includes?('(')
+          return code.size unless close = Noir::JSLiteralScanner.find_matching_paren(code, at - 1)
+          at = close + 1
+        end
+        stop = branch_body_end(code, at)
+      end
+      stop
+    elsif found = rest.match(/\A(?:for|while|switch|synchronized|when)\s*(?=\()/)
+      return code.size unless close = Noir::JSLiteralScanner.find_matching_paren(code, pos + found.end(0))
+      branch_body_end(code, close + 1)
+    elsif found = rest.match(/\Awhen\s*(?=\{)/)
+      branch_body_end(code, pos + found.end(0))
+    else
+      simple_statement_end(code, pos)
+    end
+  end
+
+  # End of a block `{ .. }` or single statement starting after `pos`.
+  private def branch_body_end(code : String, pos : Int32) : Int32
+    while pos < code.size && code[pos].whitespace?
+      pos += 1
+    end
+    return code.size if pos >= code.size
+    if code[pos] == '{'
+      (Noir::JSLiteralScanner.find_matching_brace(code, pos) || code.size - 1) + 1
+    else
+      statement_end(code, pos)
+    end
+  end
+
+  # End of a simple statement: `;`, a newline that does not continue the
+  # expression (Kotlin), an `else`, or the enclosing block's close.
+  private def simple_statement_end(code : String, pos : Int32) : Int32
+    depth = 0
+    index = pos
+    while index < code.size
+      char = code[index]
+      case char
+      when '(', '[', '{' then depth += 1
+      when ')', ']', '}'
+        return index if depth == 0
+        depth -= 1
+      when ';'
+        return index + 1 if depth == 0
+      when '\n'
+        if depth == 0
+          before = code[pos...index].rstrip[-1]?
+          after = code[index..].lstrip
+          return index unless before.nil? || "=+-*/%&|,(.:?<>!".includes?(before) || after.matches?(/\A(?:\.|\?[.:]|&&|\|\||:|\+)/)
+        end
+      when 'e'
+        return index if depth == 0 && index > pos && code[index - 1].whitespace? && code[index..].matches?(/\Aelse\b/)
+      end
+      index += 1
+    end
+    code.size
+  end
+
+  # `text` with the inside of every string and char literal blanked, same length.
+  private def mask_literals(text : String) : String
+    text.gsub(STRING_LITERAL) { |literal| "#{literal[0]}#{"x" * (literal.size - 2)}#{literal[-1]}" }
+  end
+
+  # What `cond` is for a caller without a credential. Each `||` disjunct
+  # is a config switch that reads only fields (limited to a setting), a
+  # path test (limited to paths), or a conjunction of credential tests
+  # (`key == null`: true; `key != null && !valid(key)`: false). Anything
+  # else, a method or path conjunct in particular, is unknown.
+  private def evaluate_condition(cond : String, reading : FilterReading) : CondVerdict
+    tests = [] of {Array(PathTest), Bool}
+    settings = [] of String
+    unknown = false
+    Noir::TopLevelSplit.split(cond, "||", Noir::TopLevelSplit::Rules.new).each do |part|
+      disjunct = strip_parens(part)
+      next if disjunct == "false" || options_test?(disjunct)
+      return CondVerdict.new(:true) if disjunct == "true"
+      if found = path_tests(disjunct, reading.body)
+        tests.concat(found)
+      elsif config_switch?(disjunct, reading)
+        settings << disjunct
+      else
+        conjuncts = Noir::TopLevelSplit.split(disjunct, "&&", Noir::TopLevelSplit::Rules.new).map { |atom| evaluate_atom(atom, reading) }
+        if conjuncts.includes?(:false)
+          next
+        elsif conjuncts.all?(:true)
+          return CondVerdict.new(:true)
+        else
+          unknown = true
+        end
+      end
+    end
+    return CondVerdict.new(:unknown) if unknown
+    return CondVerdict.new(:false) if tests.empty? && settings.empty?
+    CondVerdict.new(:limited, tests, settings)
+  end
+
+  # One credential test: true when a missing credential satisfies it.
+  private def evaluate_atom(atom : String, reading : FilterReading) : Symbol
+    atom = strip_parens(atom)
+    negated = atom.starts_with?('!') && !atom.starts_with?("!=")
+    atom = atom[1..].strip if negated
+    value = if atom.starts_with?('(') && Noir::JSLiteralScanner.find_matching_paren(mask_literals(atom), 0) == atom.size - 1
+              case evaluate_condition(atom[1...-1], reading).kind
+              when :true  then :true
+              when :false then :false
+              else             :unknown
+              end
+            else
+              credential_test(atom, reading)
+            end
+    return value if value == :unknown || !negated
+    value == :true ? :false : :true
+  end
+
+  private def credential_test(atom : String, reading : FilterReading) : Symbol
+    return :unknown unless atom.matches?(CREDENTIAL_EXPRESSION) || identifiers(atom).any? { |ident| reading.credential.includes?(ident) }
+    rest = atom.gsub(CREDENTIAL_EXPRESSION, " ")
+    return :unknown if identifiers(rest).any? { |ident| reading.tainted.includes?(ident) && !reading.credential.includes?(ident) }
+    masked = mask_literals(atom)
+    if masked.matches?(/(?<![!=])===?\s*null\b|\bnull\s*===?(?!=)/)
+      :true
+    elsif masked.matches?(/!==?\s*null\b|\bnull\s*!==?/)
+      :false
+    elsif masked.matches?(/\b(?:isEmpty|isBlank|isNullOrEmpty|isNullOrBlank)\s*\(/)
+      :true
+    elsif masked.matches?(/!=/) || masked.matches?(/\s!in\s/)
+      :true
+    elsif masked.matches?(/[<>]/)
+      :unknown
+    else
+      # `key == expected`, `key in keys`, `valid(key)`, `hasText(key)`,
+      # `key.startsWith("Bearer ")`, a validated flag: a missing credential fails it.
+      :false
+    end
+  end
+
+  private def options_test?(disjunct : String) : Bool
+    disjunct.matches?(/"OPTIONS"|HttpMethod\.OPTIONS\b/) && disjunct.matches?(/\bmethod\b|getMethod\s*\(/) && !disjunct.includes?("&&")
+  end
+
+  # A condition that reads only fields and properties (`!enabled`,
+  # `!props.isEnabled()`), nothing request-derived.
+  private def config_switch?(disjunct : String, reading : FilterReading) : Bool
+    masked = mask_literals(disjunct)
+    idents = identifiers(disjunct)
+    !idents.empty? && idents.none? { |ident| reading.tainted.includes?(ident) } &&
+      !masked.matches?(REQUEST_HOLDER) && !masked.matches?(/[\w$]\s*\(\s*[^)\s]/) && !masked.matches?(/->|\{/)
+  end
+
+  private def identifiers(text : String) : Array(String)
+    text.gsub(STRING_LITERAL, "\"\"").scan(IDENTIFIER).map(&.[0])
+  end
+
+  private def strip_parens(text : String) : String
+    text = text.strip
+    while text.starts_with?('(') && Noir::JSLiteralScanner.find_matching_paren(mask_literals(text), 0) == text.size - 1
+      text = text[1...-1].strip
+    end
+    text
+  end
+
+  # Methods of a filter class whose body refuses the request, with the
+  # refusing text, and every method name the class declares.
+  private def refusing_helpers(body : String) : {Hash(String, String), Set(String)}
     helpers = Hash(String, String).new
+    declared = Set(String).new
     body.scan(/(?:\bfun|\bvoid|\b[\w$<>\[\]]+)\s+([a-z_$][\w$]*)\s*\(/) do |decl|
       name = decl[1]
-      next if name.starts_with?("doFilter") || name == "shouldNotFilter"
       next unless params = paren_inner(body, decl.byte_end(0) - 1)
       rest = params[1]
       next unless open = body.byte_index('{', rest)
       next unless body.byte_slice(rest, open - rest).matches?(/\A[^;=]*\z/)
+      declared << name
+      next if name.starts_with?("doFilter") || name == "shouldNotFilter"
       next unless close = Noir::JSLiteralScanner.find_matching_brace_at_byte(body, open)
       if found = body.byte_slice(open, close - open + 1).match(INTERCEPTOR_REJECTION_RE)
         helpers[name] = found[0]
       end
     end
-    helpers
+    {helpers, declared}
   end
 
   # The request parameter of a filter method (the first one) and the locals
@@ -556,8 +918,8 @@ class SpringAuthTagger < FrameworkTagger
     credential = Set(String).new
     2.times do
       body.scan(/\b([a-z_$][\w$]*)\s*(?::\s*[\w$.<>?]+\s*)?=(?!=)\s*([^;\n]+)/) do |assign|
-        idents = assign[2].scan(/[A-Za-z_$][\w$]*/).map(&.[0])
-        tainted << assign[1] if idents.any? { |ident| tainted.includes?(ident) }
+        idents = identifiers(assign[2])
+        tainted << assign[1] if idents.any? { |ident| tainted.includes?(ident) } || assign[2].matches?(REQUEST_HOLDER)
         credential << assign[1] if assign[2].matches?(FILTER_CREDENTIAL_READ) || idents.any? { |ident| credential.includes?(ident) }
       end
     end
@@ -565,64 +927,38 @@ class SpringAuthTagger < FrameworkTagger
   end
 
   # `shouldNotFilter` returns true for the requests the filter skips: read
-  # its expression body, or the `if (c) return true` / `return e` of its block.
-  private def read_should_not_filter(body : String, decl : Regex::MatchData, required : Array(Array(PathTest)), excluded : Array(PathTest)) : Bool
+  # its expression body, or the `if (c) return true` / `return e` of its
+  # block. Each condition must be a path test or a config switch.
+  private def read_should_not_filter(body : String, decl : Regex::MatchData, filter_reading : FilterReading) : Bool
     return false unless params = paren_inner(body, decl.byte_end(0) - 1)
     rest = body.byte_slice(params[1])
-    if expr = rest.match(/\A\s*(?::\s*Boolean\s*)?=\s*(.+?)(?=\n\s*(?:override\b|fun\b|public\b|protected\b|private\b|@|\})|\z)/m)
-      return read_skip_condition(expr[1], request_names(params[0], expr[1]), body, required, excluded)
-    end
-    return false unless (open = rest.index('{')) && (close = Noir::JSLiteralScanner.find_matching_brace(rest, open))
-    block = rest[(open + 1)...close]
-    names = request_names(params[0], block)
     conditions = [] of String
-    block.scan(/\bif\s*\(/) do |found|
-      return false unless cond_close = Noir::JSLiteralScanner.find_matching_paren(block, found.end(0) - 1)
-      returned = block[(cond_close + 1)..].match(/\A\s*\{?\s*return\s+(true|false)\b/)
-      return false if returned.nil? || returned[1] == "false"
-      conditions << block[found.end(0)...cond_close]
-    end
-    block.scan(/(?:\A|[;{}\n])\s*return\s+([^;\n]+)/) do |ret|
-      next if ret[1].strip == "false" || block[0, ret.begin(0) + 1].matches?(/\bif\s*\([^;{}]*\)\s*\{?\s*\z/)
-      conditions << ret[1]
-    end
-    conditions.all? { |cond| read_skip_condition(cond, names, body, required, excluded) }
-  end
-
-  # Reads a condition under which the filter lets a request through
-  # unchecked. Each `||` disjunct is one of: a config switch that does not
-  # look at the request, or a CORS preflight (ignored: the guard is on when
-  # enabled); a valid credential (`claims != null`, `matches(request.getHeader(K))`:
-  # the guard's own success path); `!p.startsWith(X) [&& !p.startsWith(Y)]`
-  # or `p !in OPEN` (the filter runs only there); a single `p.startsWith(X)`
-  # or `p in OPEN` (it never runs there). Anything else, a missing
-  # credential in particular, makes the filter no guard: false.
-  private def read_skip_condition(cond : String, names : {Set(String), Set(String)}, body : String, required : Array(Array(PathTest)), excluded : Array(PathTest)) : Bool
-    tainted, credential = names
-    Noir::TopLevelSplit.split(cond, "||", Noir::TopLevelSplit::Rules.new).each do |disjunct|
-      while disjunct.starts_with?('(') && Noir::JSLiteralScanner.find_matching_paren(disjunct, 0) == disjunct.size - 1
-        disjunct = disjunct[1...-1].strip
+    block = ""
+    if expr = rest.match(/\A\s*(?::\s*Boolean\s*)?=\s*(.+?)(?=\n\s*(?:override\b|fun\b|public\b|protected\b|private\b|@|\})|\z)/m)
+      conditions << expr[1]
+      block = expr[1]
+    else
+      return false unless (open = rest.index('{')) && (close = Noir::JSLiteralScanner.find_matching_brace(rest, open))
+      block = rest[(open + 1)...close]
+      block.scan(/\bif\s*\(/) do |found|
+        return false unless cond_close = Noir::JSLiteralScanner.find_matching_paren(block, found.end(0) - 1)
+        returned = block[(cond_close + 1)..].match(/\A\s*\{?\s*return\s+(true|false)\b/)
+        return false if returned.nil? || returned[1] == "false"
+        conditions << block[found.end(0)...cond_close]
       end
-      return false if disjunct == "true"
-      idents = disjunct.gsub(STRING_LITERAL, "\"\"").scan(/[A-Za-z_$][\w$]*/).map(&.[0])
-      next if idents.none? { |ident| tainted.includes?(ident) } || disjunct.matches?(/"OPTIONS"|HttpMethod\.OPTIONS\b/)
-
-      if tests = path_tests(disjunct, body)
-        if tests.all?(&.[1])
-          required << tests.flat_map(&.[0])
-        elsif tests.size == 1
-          excluded.concat(tests[0][0])
-        else
-          return false
-        end
-        next
+      block.scan(/(?:\A|[;{}\n])\s*return\s+([^;\n]+)/) do |ret|
+        next if ret[1].strip == "false" || block[0, ret.begin(0) + 1].matches?(/\bif\s*\([^;{}]*\)\s*\{?\s*\z/)
+        conditions << ret[1]
       end
-
-      rest = disjunct.gsub(CREDENTIAL_EXPRESSION, " ")
-      rest_idents = rest.gsub(STRING_LITERAL, "\"\"").scan(/[A-Za-z_$][\w$]*/).map(&.[0])
-      return false if rest.matches?(ABSENCE_TEST)
-      return false unless rest != disjunct || rest_idents.any? { |ident| credential.includes?(ident) }
-      return false unless rest_idents.all? { |ident| !tainted.includes?(ident) || credential.includes?(ident) }
+    end
+    tainted, credential = request_names(params[0], block)
+    reading = FilterReading.new(tainted, credential, body, filter_reading.helpers, filter_reading.declared)
+    conditions.each do |cond|
+      verdict = evaluate_condition(cond, reading)
+      next if verdict.kind == :false
+      return false unless verdict.kind == :limited
+      verdict.tests.each { |paths, negated| negated ? filter_reading.required << paths : filter_reading.excluded.concat(paths) }
+      filter_reading.settings.concat(verdict.settings)
     end
     true
   end
@@ -642,7 +978,9 @@ class SpringAuthTagger < FrameworkTagger
       tests << {paths.map { |path| {path: path, exact: true} }, !test[1]?.nil? ^ (test[2]? == "!in")}
     end
     return if tests.empty? || !disjunct.gsub(PATH_TEST, "").gsub(MEMBERSHIP_TEST, "").matches?(/\A[\s&()]*\z/)
-    tests
+    # A conjunction of tests is read only when every one is negated (the filter runs on any of them).
+    return if tests.size > 1 && !tests.all?(&.[1])
+    tests.size > 1 ? [{tests.flat_map(&.[0]), true}] : tests
   end
 
   # The text inside the parenthesis opening at byte `open` of `text`, and
@@ -704,6 +1042,10 @@ class SpringAuthTagger < FrameworkTagger
       if member = chunk.match(/\n\s*(?:public\b|protected\b|private\b|fun\b|override\b|@)/)
         chunk = chunk[0, member.begin(0)]
       end
+      # The annotations of the `@Bean` method holding it.
+      lead_start = [found.byte_begin(0) - 600, 0].max
+      lead = clean.byte_slice(lead_start, found.byte_begin(0) - lead_start).scrub
+      bean_lead = (at = lead.rindex("@Bean")) ? lead[at..] : ""
 
       args = [] of String
       if ctor = paren_inner(clean, found.byte_end(0) - 1)
@@ -718,9 +1060,8 @@ class SpringAuthTagger < FrameworkTagger
       chunk.scan(/(?<![\w.$])filter\s*=\s*([^;\n]+)/) { |assign| args << assign[1].strip }
       names = args.compact_map { |arg| resolve_interceptor_type(arg, clean) }
       if names.empty?
-        lead_start = [found.byte_begin(0) - 300, 0].max
-        lead = clean.byte_slice(lead_start, found.byte_begin(0) - lead_start).scrub + found[0]
-        lead.scan(/FilterRegistrationBean\s*<\s*([A-Z][\w$]*)/) { |generic| names = [generic[1]] }
+        generic_text = (lead[-300..]? || lead) + found[0]
+        generic_text.scan(/FilterRegistrationBean\s*<\s*([A-Z][\w$]*)/) { |generic| names = [generic[1]] }
       end
       next if names.empty?
 
@@ -741,66 +1082,92 @@ class SpringAuthTagger < FrameworkTagger
       # A registration without URL patterns maps the filter to every request.
       patterns << "/*" if readable && patterns.empty?
 
+      enabled = chunk.match(/\bsetEnabled\s*\(\s*([^()]*?)\s*\)|\b(?:isEnabled|enabled)\s*=\s*([^;\n]+)/)
+      enabled_call = enabled.try(&.[0].strip)
+      enabled_value = enabled.try { |found_enabled| (found_enabled[1]? || found_enabled[2]).strip }
+      settings = bean_lead.scan(CONDITIONAL_REGISTRATION).map { |conditional| "it is registered only under `#{conditional[0]}`" }
+      settings << "its registration is enabled by `#{enabled_call}`" if enabled_value && enabled_value != "true" && enabled_value != "false"
+
       @filter_registrations << ServletFilterRegistration.new(
         names: names.uniq,
         file_path: file,
         line: clean.byte_slice(0, found.byte_begin(0)).count('\n') + 1,
         patterns: readable ? patterns : nil,
-        enabled: !chunk.matches?(/\bsetEnabled\s*\(\s*false\s*\)|\b(?:isEnabled|enabled)\s*=\s*false\b/),
-        module_dir: module_dir
+        enabled: enabled_value != "false",
+        module_dir: module_dir,
+        settings: settings
       )
     end
   end
 
   # Types returned by `@Bean` methods: Spring Boot maps a filter bean to
-  # every request unless a `FilterRegistrationBean` registers it.
-  private def scan_bean_types(content : String)
+  # every request unless a `FilterRegistrationBean` registers it. A bean
+  # method that returns null registers nothing.
+  private def scan_bean_types(content : String, module_dir : String?)
     clean = Noir::CComments.strip(content)
     clean.scan(/@Bean\b/) do |found|
       after = clean.byte_slice(found.byte_end(0), [clean.bytesize - found.byte_end(0), 400].min).scrub
+      next if after.matches?(/\A[^{=]*\{\s*return\s+null\s*;?\s*\}/)
       if java = after.match(/\A(?:\s*@[\w.]+(?:\([^)]*\))?)*\s*(?:(?:public|protected|private|static|final)\s+)*([A-Z][\w$]*)(?:\s*<[^>]*>)?\s+[a-z_$][\w$]*\s*\(/)
-        @bean_types << java[1]
+        @bean_types << {module_dir, java[1]}
       elsif kotlin = after.match(/\A(?:\s*@[\w.]+(?:\([^)]*\))?)*\s*(?:\w+\s+)*fun\s+[\w$]+\s*\([^)]*\)\s*(?::\s*([A-Z][\w$]*)|=\s*([A-Z][\w$]*)\s*\()/)
-        @bean_types << (kotlin[1]? || kotlin[2])
+        @bean_types << {module_dir, kotlin[1]? || kotlin[2]}
       end
     end
   end
 
   # "Protected by Servlet filter X on PATTERN (refuses with N)" when a
-  # refusing filter on the classpath is mapped to the endpoint URL.
-  private def servlet_filter_decision(endpoint : Endpoint, classpath : Set(String)?) : Tuple(String, String, Int32)?
+  # refusing filter on the classpath is mapped to the endpoint URL. The URL
+  # is matched below the app's `server.servlet.context-path`.
+  private def servlet_filter_decision(endpoint : Endpoint, classpath : Set(String)?, app : String?) : Tuple(String, String, Int32)?
     url = normalize_security_path(endpoint.url)
+    if app
+      values, note = module_config_list(app, "server.servlet.context-path")
+      return if note
+      if context = values.try(&.first?).try { |value| normalize_security_path(value).rchop('/') }
+        unless context.empty?
+          return unless url == context || url.starts_with?("#{context}/")
+          url = normalize_security_path(url[context.size..])
+        end
+      end
+    end
     applies = ->(owner : String?) { owner.nil? || classpath.nil? || classpath.includes?(owner) }
 
-    @servlet_filters.each_value do |filter|
-      next unless refusal = filter.refusal
+    @servlet_filters.each do |filter|
+      next unless (refusal = filter.refusal) && applies.call(filter.module_dir)
       next unless filter.required.all? { |tests| tests.any? { |test| path_test_matches?(url, test) } }
       next if filter.excluded.any? { |test| path_test_matches?(url, test) }
 
-      mappings = [] of {String, String, Int32}
-      registrations = @filter_registrations.select(&.names.includes?(filter.name))
-      registrations.each do |reg|
-        next unless reg.enabled && applies.call(reg.module_dir)
-        reg.patterns.try &.each { |pattern| mappings << {pattern, reg.file_path, reg.line} }
+      # A registration names its filter by type: the one in its own module when there is one.
+      registrations = @filter_registrations.select do |reg|
+        reg.names.includes?(filter.name) && applies.call(reg.module_dir) &&
+          (reg.module_dir == filter.module_dir || @servlet_filters.none? { |other| other.name == filter.name && other.module_dir == reg.module_dir })
       end
-      if applies.call(filter.module_dir)
-        # Spring Boot maps a filter bean it finds no registration for to `/*`.
-        # ponytail: a `@Component @WebFilter` class is read as its `@WebFilter`
-        # patterns, though Boot registers that bean for `/*` as well.
-        if registrations.empty? && filter.web_filter_patterns.nil? && (filter.component || @bean_types.includes?(filter.name))
-          mappings << {"/*", filter.file_path, filter.line}
-        end
-        if (patterns = filter.web_filter_patterns) && (@servlet_component_scan || @boot_apps.empty?)
-          patterns.each { |pattern| mappings << {pattern, filter.file_path, filter.line} }
-        end
+      mappings = [] of {String, String, Int32, Array(String)}
+      registrations.each do |reg|
+        next unless reg.enabled
+        reg.patterns.try &.each { |pattern| mappings << {pattern, reg.file_path, reg.line, reg.settings} }
+      end
+      # Spring Boot maps a filter bean it finds no registration for to `/*`.
+      # ponytail: a `@Component @WebFilter` class is read as its `@WebFilter`
+      # patterns, and a `@Component` that is also registered as its
+      # registration's, though Boot registers that bean for `/*` as well.
+      bean = filter.component || @bean_types.any? { |owner, type| type == filter.name && applies.call(owner) }
+      if registrations.empty? && filter.web_filter_patterns.nil? && bean
+        mappings << {"/*", filter.file_path, filter.line, [] of String}
+      end
+      if (patterns = filter.web_filter_patterns) && (@boot_apps.empty? || @servlet_component_scans.any? { |owner| applies.call(owner) })
+        patterns.each { |pattern| mappings << {pattern, filter.file_path, filter.line, [] of String} }
       end
 
-      next unless mapping = mappings.find { |pattern, _, _| servlet_pattern_matches?(url, pattern) }
+      next unless mapping = mappings.find { |pattern, _, _, _| servlet_pattern_matches?(url, pattern) }
       scope = mapping[0]
       if scope == "/*" && (inside = filter.required.flatten.find { |test| path_test_matches?(url, test) })
         scope = inside[:exact] ? inside[:path] : "#{inside[:path]}*"
       end
-      return {"Protected by Servlet filter #{filter.name} on #{scope} (refuses with #{refusal})", mapping[1], mapping[2]}
+      settings = filter.settings + mapping[3]
+      note = settings.empty? ? "" : "; a setting can lift it: #{settings.uniq.join("; ")}"
+      return {"Protected by Servlet filter #{filter.name} on #{scope} (refuses with #{refusal})#{note}", mapping[1], mapping[2]}
     end
     nil
   end
@@ -1790,32 +2157,33 @@ class SpringAuthTagger < FrameworkTagger
 
   private def check_interceptor_rules(endpoint : Endpoint) : Tuple(String, String, Int32)?
     return if @registered_interceptors.empty?
-    per_serving_classpath(endpoint) { |classpath| interceptor_decision(endpoint, classpath) }
+    per_serving_classpath(endpoint) { |classpath, _| interceptor_decision(endpoint, classpath) }
   end
 
   private def check_servlet_filter_rules(endpoint : Endpoint) : Tuple(String, String, Int32)?
     return if @servlet_filters.empty?
-    per_serving_classpath(endpoint) { |classpath| servlet_filter_decision(endpoint, classpath) }
+    per_serving_classpath(endpoint) { |classpath, app| servlet_filter_decision(endpoint, classpath, app) }
   end
 
   # The first decision of the block for the runtime classpath of each app
-  # serving `endpoint` (nil: unknown, everything applies).
-  private def per_serving_classpath(endpoint : Endpoint, & : Set(String)? -> Tuple(String, String, Int32)?) : Tuple(String, String, Int32)?
+  # serving `endpoint` (nil: unknown, everything applies) and that app's
+  # module directory (nil when unknown).
+  private def per_serving_classpath(endpoint : Endpoint, & : Set(String)?, String? -> Tuple(String, String, Int32)?) : Tuple(String, String, Int32)?
     modules = endpoint.details.code_paths.compact_map do |path_info|
       path = path_info.path
       build_module(path) unless MediaFilter.spec_document?(path) || File.basename(path).matches?(BUILD_FILE)
     end.uniq!
 
-    return yield nil if modules.empty?
+    return yield nil, nil if modules.empty?
 
     modules.each do |module_dir|
       if apps = serving_apps(module_dir)
         apps.each do |app|
-          if desc = yield module_classpath(app).try(&.[0])
+          if desc = yield module_classpath(app).try(&.[0]), app
             return desc
           end
         end
-      elsif desc = yield Set{module_dir}
+      elsif desc = yield Set{module_dir}, module_dir
         return desc
       end
     end
