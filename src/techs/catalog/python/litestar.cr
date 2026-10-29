@@ -20,7 +20,7 @@ module NoirTechs::Catalog::Python
         :static_path => false,
         :websocket   => true,
       },
-      :context => {:callee => true},
+      :context => {:callee => true, :guards => true},
     },
   }
 end

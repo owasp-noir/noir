@@ -4,8 +4,8 @@ expected_endpoints = [
   Endpoint.new("/", "GET"),
   Endpoint.new("/users", "GET"),
   Endpoint.new("/users/{user_id}", "GET", [Param.new("user_id", "", "path")]),
-  Endpoint.new("/users", "POST", [Param.new("data", "", "json")]),
-  Endpoint.new("/users/{user_id}", "PUT", [Param.new("user_id", "", "path"), Param.new("data", "", "json")]),
+  Endpoint.new("/users", "POST", [Param.new("name", "", "json"), Param.new("email", "", "json")]),
+  Endpoint.new("/users/{user_id}", "PUT", [Param.new("user_id", "", "path"), Param.new("name", "", "json")]),
   Endpoint.new("/users/{user_id}", "DELETE", [Param.new("user_id", "", "path")]),
   Endpoint.new("/search", "GET", [Param.new("q", "", "query")]),
   Endpoint.new("/dependency/{user_id}", "GET", [
@@ -31,7 +31,7 @@ expected_endpoints = [
   ]),
   Endpoint.new("/admin/reports/{org_id}", "POST", [
     Param.new("org_id", "", "path"),
-    Param.new("data", "", "json"),
+    Param.new("title", "", "json"),
   ]),
   Endpoint.new("/external/summary", "GET", [Param.new("mode", "", "query")]),
   Endpoint.new("/absolute/status", "GET"),

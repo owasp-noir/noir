@@ -1,7 +1,7 @@
 require "../../../models/framework_tagger"
 require "../../../models/endpoint"
 
-@[Noir::TaggerFor(key: "python_misc_auth", name: "Python Misc Auth Tagger", desc: "Identifies Sanic/Tornado authentication patterns", order: 110)]
+@[Noir::TaggerFor(key: "python_misc_auth", name: "Python Misc Auth Tagger", desc: "Identifies Sanic/Tornado/Litestar authentication patterns", order: 110)]
 class PythonMiscAuthTagger < FrameworkTagger
   # Sanic auth patterns
   SANIC_PATTERNS = [
@@ -23,8 +23,12 @@ class PythonMiscAuthTagger < FrameworkTagger
     {/\@authenticated/, "Tornado @authenticated"},
   ]
 
+  # Litestar's own guard mechanism: `guards=[fn]` on a route decorator, or
+  # `guards = [fn]` on the Controller. An empty list guards nothing.
+  LITESTAR_GUARDS_RE = /\bguards\s*=\s*\[\s*([A-Za-z_][\w.]*)/
+
   def self.target_techs : Array(String)
-    ["python_sanic", "python_tornado"]
+    ["python_sanic", "python_tornado", "python_litestar"]
   end
 
   private def check_endpoint(endpoint : Endpoint)
@@ -37,6 +41,14 @@ class PythonMiscAuthTagger < FrameworkTagger
       # read would crash the lines[idx] walks below with IndexError.
       next if line_num < 1 || line_num > lines.size
       line_idx = line_num - 1
+
+      if endpoint.details.technology == "python_litestar"
+        if guard = litestar_guard(lines, line_idx)
+          endpoint.add_tag(Tag.new("auth", "Protected by Litestar guards=[#{guard}]", "python_misc_auth"))
+          return
+        end
+        next
+      end
 
       # Check decorators above function/method
       description = check_decorators(lines, line_idx)
@@ -73,6 +85,47 @@ class PythonMiscAuthTagger < FrameworkTagger
         return desc if current.matches?(pattern)
       end
 
+      idx -= 1
+    end
+    nil
+  end
+
+  # The guard named by the route decorator at `route_idx` (its call may
+  # span lines), else by the enclosing Controller's `guards` attribute.
+  private def litestar_guard(lines : Array(String), route_idx : Int32) : String?
+    call = lines[route_idx]
+    depth = bracket_balance(call)
+    idx = route_idx + 1
+    while depth > 0 && idx < lines.size && idx < route_idx + 30
+      call += lines[idx]
+      depth += bracket_balance(lines[idx])
+      idx += 1
+    end
+    if m = call.match(LITESTAR_GUARDS_RE)
+      return m[1]
+    end
+
+    route_indent = lines[route_idx].size - lines[route_idx].lstrip.size
+    return if route_indent == 0
+    idx = route_idx - 1
+    while idx >= 0
+      line = lines[idx]
+      stripped = line.lstrip
+      indent = line.size - stripped.size
+      if !stripped.empty? && !stripped.starts_with?('#') && indent < route_indent
+        return unless stripped.starts_with?("class ")
+        body = idx + 1
+        while body < lines.size
+          body_line = lines[body]
+          body_stripped = body_line.lstrip
+          break if !body_stripped.empty? && !body_stripped.starts_with?('#') && body_line.size - body_stripped.size <= indent
+          if body_line.size - body_stripped.size == route_indent && (m = body_stripped.match(/\Aguards\s*(?::[^=]+)?=\s*\[\s*([A-Za-z_][\w.]*)/))
+            return m[1]
+          end
+          body += 1
+        end
+        return
+      end
       idx -= 1
     end
     nil

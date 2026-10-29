@@ -141,6 +141,9 @@ module Analyzer::Python
           # when the file wasn't cached.
           file_content = read_file_content(path)
           lines = file_content.lines
+          if file_content.includes?("HomeAssistantView")
+            emit_home_assistant_views(path, lines, file_content, current_base_path)
+          end
           next unless aiohttp_relevant_source?(file_content)
 
           import_modules = find_imported_modules(current_base_path, path, file_content)
@@ -643,6 +646,70 @@ module Analyzer::Python
 
     private def websocket_response_body?(function_body : ::String) : Bool
       function_body.includes?("WebSocketResponse")
+    end
+
+    # Home Assistant's `HomeAssistantView.register` adds each verb method of
+    # a view at its `url` and `extra_urls` with `router.add_route`.
+    # `requires_auth` defaults to True on the base.
+    HA_VIEW_CLASS_RE   = /^(\s*)class\s+([A-Za-z_]\w*)\s*\(([^)]*\bHomeAssistantView\b[^)]*)\)\s*:/
+    HA_VIEW_URL_RE     = /^url\s*(?::[^=]+)?=\s*(?:[rf]?['"]([^'"]+)['"]|([A-Z_][A-Z0-9_]*)\s*$)/
+    HA_VIEW_EXTRA_RE   = /^extra_urls\s*(?::[^=]+)?=\s*\[([^\]]*)\]/
+    HA_VIEW_NO_AUTH_RE = /^requires_auth\s*(?::[^=]+)?=\s*False\b/
+    HA_VIEW_STRINGS_RE = /[rf]?['"]([^'"]+)['"]/
+
+    # `URL_API_STATES = "/api/states"`: a module-level string constant in
+    # `source` or the module it is imported from (`homeassistant.const`).
+    private def ha_string_constant(path : ::String, source : ::String, base_path : ::String, name : ::String) : ::String?
+      const_re = /^#{Regex.escape(name)}\s*(?::[^=\n]+)?=\s*[rf]?['"]([^'"\n]+)['"]/m
+      if m = source.match(const_re)
+        return m[1]
+      end
+      imported = find_imported_modules(base_path, path, source)[name]? || return
+      read_file_content(imported[0]).match(const_re).try(&.[1])
+    end
+
+    private def emit_home_assistant_views(path : ::String, lines : Array(::String), source : ::String,
+                                          base_path : ::String) : Nil
+      lines.each_with_index do |line, class_index|
+        next unless line.includes?("HomeAssistantView") && (header = line.match(HA_VIEW_CLASS_RE))
+        class_indent = header[1].size
+        urls = [] of ::String
+        requires_auth = true
+        body_indent = nil
+        ((class_index + 1)...lines.size).each do |i|
+          stripped = lines[i].lstrip
+          next if stripped.empty? || stripped.starts_with?('#')
+          indent = lines[i].size - stripped.size
+          break if indent <= class_indent
+          body_indent ||= indent
+          next unless indent == body_indent
+          if url = stripped.match(HA_VIEW_URL_RE)
+            if literal = url[1]?
+              urls.unshift(literal)
+            elsif value = ha_string_constant(path, source, base_path, url[2])
+              urls.unshift(value)
+            end
+          elsif extra = stripped.match(HA_VIEW_EXTRA_RE)
+            extra[1].scan(HA_VIEW_STRINGS_RE) { |m| urls << m[1] }
+          elsif stripped.matches?(HA_VIEW_NO_AUTH_RE)
+            requires_auth = false
+          end
+        end
+        next if urls.empty?
+
+        find_class_http_method_defs(lines, class_index).each do |method, method_index|
+          body = extract_function_body(lines, method_index)
+          request_params = extract_request_params(body, method, "request")
+          urls.uniq.each do |url|
+            emit_endpoint_with_params_and_callees(path, url, method, method_index, method_index + 1, body, request_params,
+              definition_base_path: base_path, source: source, handler: handler_at(lines, method_index, path))
+            next unless requires_auth
+            endpoint = result.pop
+            endpoint.add_tag(Tag.new("auth", "Protected by HomeAssistantView requires_auth", "python_aiohttp"))
+            result << endpoint
+          end
+        end
+      end
     end
 
     private def find_class_def(lines : Array(::String), class_name : ::String) : Int32?
