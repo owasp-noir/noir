@@ -38,7 +38,8 @@ module Analyzer::Java
       "/src/testFixtures/",
       "/src/jmh/",
       "/src/integrationTest/",
-      "/src/integration/",
+      # Not when a `src/main/` follows: then `integration` is a module name.
+      %r{/src/integration/(?!(?:.*/)?src/main/)},
       "/src/functionalTest/",
     )
 

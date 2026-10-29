@@ -9,11 +9,13 @@ require "../../func_spec.cr"
 # - webxml_appclass: web.xml naming an Application class (`demo.App`) that
 #   carries no `@ApplicationPath`.
 fixture = "./spec/functional_test/fixtures/java/jaxrs_servlet_prefix"
-base_paths = %w[metrics programmatic webxml_packages webxml_appclass].map { |dir| YAML::Any.new("#{fixture}/#{dir}") }
+base_paths = %w[metrics programmatic programmatic_multi webxml_packages webxml_appclass].map { |dir| YAML::Any.new("#{fixture}/#{dir}") }
 
 expected_endpoints = [
   Endpoint.new("/items/{id}", "GET", [Param.new("id", "", "path")]),
   Endpoint.new("/api/v1/version", "GET"),
+  Endpoint.new("/api/a", "GET"),
+  Endpoint.new("/admin/b", "GET"),
   Endpoint.new("/api/v2/version", "GET"),
   Endpoint.new("/api/v3/version", "GET"),
 ]

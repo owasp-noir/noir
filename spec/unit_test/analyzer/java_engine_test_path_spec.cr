@@ -13,6 +13,10 @@ describe "Analyzer::Java::JavaEngine.test_path?" do
     Analyzer::Java::JavaEngine.test_path?("/x/src/main/java/a/FooTests.java").should be_true
   end
 
+  it "keeps a module that is named integration" do
+    Analyzer::Java::JavaEngine.test_path?("/x/src/integration/src/main/java/a/FooResource.java").should be_false
+  end
+
   it "keeps real controllers, including names that only resemble the suffix" do
     Analyzer::Java::JavaEngine.test_path?("/x/src/main/java/a/Latest.java").should be_false
     Analyzer::Java::JavaEngine.test_path?("/x/src/main/java/a/TestParametersService.java").should be_false

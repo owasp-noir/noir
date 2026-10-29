@@ -108,6 +108,9 @@ module Analyzer::Java
       base_paths = Hash(ApplicationBaseKey, String).new
       application_packages = Hash(String, Array(ApplicationBaseKey)).new { |hash, key| hash[key] = [] of ApplicationBaseKey }
       servlet_mounts = Hash(ApplicationBaseKey, String).new
+      # Keys two mounts claim with different prefixes (e.g. two servlets
+      # with no packages in one module): no single prefix is right.
+      conflicting_mounts = Set(ApplicationBaseKey).new
 
       file_list.each do |path|
         next unless jvm_source?(path)
@@ -117,7 +120,12 @@ module Analyzer::Java
         content = read_file_content(path)
         if content_matches?(content, SERVLET_CONTAINER_RE) && content_matches?(content, ADD_SERVLET_RE)
           mount_root = project_root_for(path)
-          programmatic_servlet_mounts(content).each { |package_name, prefix| servlet_mounts[{mount_root, package_name}] = prefix }
+          programmatic_servlet_mounts(content).each do |package_name, prefix|
+            key = {mount_root, package_name}
+            existing = servlet_mounts[key]?
+            conflicting_mounts << key if existing && existing != prefix
+            servlet_mounts[key] = prefix
+          end
         end
 
         # One precompiled matcher per gate instead of a `String#includes?`
@@ -151,6 +159,7 @@ module Analyzer::Java
       web_xml_base_paths_for(file_list, application_packages).each do |key, base_path|
         base_paths[key] = base_path
       end
+      conflicting_mounts.each { |key| servlet_mounts.delete(key) }
       base_paths.merge!(servlet_mounts)
 
       base_paths
@@ -182,18 +191,19 @@ module Analyzer::Java
         pattern = args[1].strip
         next unless pattern.size >= 2 && pattern.starts_with?('"') && pattern.ends_with?('"')
 
-        holder = resolve_local(code, args[0].strip)
+        call_at = match.begin(0)
+        holder = resolve_local(code, args[0].strip, call_at)
         container = holder.match(SERVLET_CONTAINER_RE)
         next unless container
         container_close = JavaEngine.find_matching_delimiter(holder, container.end(0) - 1, '(', ')')
         next unless container_close
         config_arg = holder[container.end(0)...container_close].strip
-        config = resolve_local(code, config_arg)
+        config = resolve_local(code, config_arg, call_at)
 
         packages = [] of String
         config.scan(PACKAGES_CALL_RE) { |call| collect_string_literals(call[1], packages) }
         if config_arg.matches?(IDENTIFIER_RE)
-          code.scan(/\b#{Regex.escape(config_arg)}\s*#{PACKAGES_CALL_RE}/) { |call| collect_string_literals(call[1], packages) }
+          code[0...call_at].scan(/\b#{Regex.escape(config_arg)}\s*#{PACKAGES_CALL_RE}/) { |call| collect_string_literals(call[1], packages) }
         end
         if packages.empty? && (type = config.match(/\Anew\s+([\w.]+)\s*\(/).try(&.[1]))
           packages << class_package(code, type) unless type == "ResourceConfig" || type.starts_with?("org.glassfish.")
@@ -210,11 +220,14 @@ module Analyzer::Java
       text.scan(STRING_LITERAL_RE) { |literal| into << literal[1] }
     end
 
-    # The initializer of local `name` (`name = <expr>;`), or `name` itself
-    # when it is not a plain identifier with one.
-    private def resolve_local(code : String, name : String) : String
+    # The value of local `name` at `before`: its last assignment
+    # (`name = <expr>;`) ahead of that offset, or `name` itself when it is
+    # not a plain identifier with one.
+    private def resolve_local(code : String, name : String, before : Int32) : String
       return name unless name.matches?(IDENTIFIER_RE)
-      code.match(/\b#{Regex.escape(name)}\s*=(?!=)\s*([^;]+);/).try(&.[1].strip) || name
+      value = nil
+      code[0...before].scan(/\b#{Regex.escape(name)}\s*=(?!=)\s*([^;]+);/) { |assignment| value = assignment[1].strip }
+      value || name
     end
 
     # Package of class `type` as `code` names it: the qualifier of a dotted
