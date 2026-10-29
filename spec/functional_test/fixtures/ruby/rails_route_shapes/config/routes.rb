@@ -1,6 +1,15 @@
+class ApiConstraint
+  def get(request)
+    true
+  end
+end
+
 Rails.application.routes.draw do
   def patch(*)
   end # Disable PATCH requests
+
+  def delete!(*)
+  end
 
   namespace :api do
     scope :v1_alpha, module: :v1 do
@@ -18,6 +27,7 @@ Rails.application.routes.draw do
   end
 
   namespace :admin do
+    def keys_name = "keys"
     resources :api, only: [:index] do
       collection do
         resources :keys, controller: "api", only: %i[index update]
@@ -25,6 +35,6 @@ Rails.application.routes.draw do
     end
   end
 
-  resources :posts, only: [:update]
+  resources :posts, only: [:update, :destroy]
   patch "posts/:id/touch" => "posts#update"
 end

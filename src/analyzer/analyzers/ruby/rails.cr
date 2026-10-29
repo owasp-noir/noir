@@ -450,6 +450,7 @@ module Analyzer::Ruby
 
         # Outermost: Rails.application.routes.draw do ... end
         if line.starts_with?("Rails.application.routes.draw")
+          @disabled_route_verbs.clear # a new mapper
           scan.stack << Frame.new(:neutral) if opens_block
           next
         end
@@ -460,6 +461,7 @@ module Analyzer::Ruby
         # it as a scope. Unknown mounts (engine shipped as a library, host
         # not in scan) fall back to a transparent frame — same as before.
         if opens_block && (em = line.match(/^(?:::)?([A-Z][A-Za-z0-9_:]*)\.routes\.draw\b/))
+          @disabled_route_verbs.clear # a new mapper
           mount_prefix = @engine_mount_prefixes[{configured_base_for(scan.routes_path), em[1]}]?
           if mount_prefix && !mount_prefix.empty?
             scan.stack << Frame.new(:scope, path: mount_prefix)
@@ -498,12 +500,14 @@ module Analyzer::Ruby
           handle_verb_route(directive.upcase, args, scan)
         when "match" then handle_match(args, scan)
         when "def"
-          if m = args.match(/\A\s*(get|post|put|patch|delete)\b/)
+          # Only a `def` on the mapper itself shadows its verb helper, not
+          # one in a constraint class defined alongside the routes.
+          if (m = args.match(/\A\s*(get|post|put|patch|delete|options)(?![\w?!=])/)) && scan.stack.none? { |f| f.kind == :class }
             @disabled_route_verbs << m[1].upcase
           end
-          # A multi-line `def` body ends with its own `end`; without a frame
-          # that `end` would pop the enclosing scope.
-          scan.stack << Frame.new(:neutral) unless line.matches?(/\bend\b/)
+          scan.stack << Frame.new(:neutral) if opens_block
+        when "class", "module"
+          scan.stack << Frame.new(:class) if opens_block
         else
           # Unknown DSL line that still opens a block (e.g. `constraints ... do`).
           scan.stack << Frame.new(:neutral) if opens_block
@@ -1412,8 +1416,13 @@ module Analyzer::Ruby
                     # Rails resolves `controller: 'trends/tags'` inside the
                     # namespace module too; only a leading `/` is absolute.
                     # Absolute-style names without the slash still resolve.
-                    scoped = controller_subdir.empty? || ctrl_override.starts_with?('/') ? ctrl_override.lchop('/') : "#{controller_subdir}/#{ctrl_override}"
-                    ctrl_override.includes?('/') && !controller_file(framework_root, scoped) ? ctrl_override.lchop('/') : scoped
+                    absolute = ctrl_override.lchop('/')
+                    scoped = controller_subdir.empty? || ctrl_override.starts_with?('/') ? absolute : "#{controller_subdir}/#{ctrl_override}"
+                    if ctrl_override.includes?('/') && !controller_file(framework_root, scoped)
+                      absolute
+                    else
+                      scoped
+                    end
                   else
                     controller_subdir.empty? ? name : "#{controller_subdir}/#{name}"
                   end
@@ -1547,8 +1556,12 @@ module Analyzer::Ruby
     # surrounding prefix intact for routes inside and restores it after.
     # Modifier forms (`get 'x' if cond`, `redirect_to y unless z`) keep the
     # keyword mid-line, never at the anchored start, so they stay uncounted.
+    #
+    # A `def`/`class`/`module` body closes with its own `end` too; an endless
+    # `def patch(*) = nil` has none.
     private def opens_keyword_block?(line : String) : Bool
-      return false unless line.matches?(/^(?:if|unless|case|begin|while|until|for)\b/)
+      return false unless line.matches?(/^(?:if|unless|case|begin|while|until|for|def|class|module)\b/)
+      return false if line.matches?(/\Adef\s+[\w.]+[?!]?(?:\([^)]*\)\s*|\s+)=(?![=~])/)
       !line.matches?(/\bend\b/)
     end
 
