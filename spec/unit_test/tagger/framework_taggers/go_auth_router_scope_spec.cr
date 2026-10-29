@@ -210,6 +210,120 @@ describe "GoAuthTagger (router identity of .Use guards)" do
     guarded?(result["GET /api/late"]).should be_true
   end
 
+  it "still guards a subrouter mounted on the guarded router (chi Mount, mux Subrouter)" do
+    chi = <<-GO
+      package main
+
+      import "github.com/go-chi/chi/v5"
+
+      func adminRouter() chi.Router {
+      \ts := chi.NewRouter()
+      \ts.Get("/users", h)
+      \treturn s
+      }
+
+      func main() {
+      \tr := chi.NewRouter()
+      \tr.Use(RequireAuth)
+      \tr.Mount("/admin", adminRouter())
+      \tlocal := chi.NewRouter()
+      \tlocal.Get("/x", h)
+      \tr.Mount("/local", local)
+      }
+      GO
+    result = router_scope_scan({"go.mod" => "module c\n", "main.go" => chi},
+      [{"GET", "/admin/users", "main.go", %("/users")}, {"GET", "/local/x", "main.go", %("/x")}], "go_chi")
+    guarded?(result["GET /admin/users"]).should be_true
+    guarded?(result["GET /local/x"]).should be_true
+
+    mux = <<-GO
+      package main
+
+      import "github.com/gorilla/mux"
+
+      func main() {
+      \tr := mux.NewRouter()
+      \tr.Use(authMiddleware)
+      \tapi := r.PathPrefix("/api").Subrouter()
+      \tapi.HandleFunc("/users", h)
+      }
+      GO
+    result = router_scope_scan({"go.mod" => "module m\n", "main.go" => mux},
+      [{"GET", "/api/users", "main.go", %("/users")}], "go_mux")
+    guarded?(result["GET /api/users"]).should be_true
+  end
+
+  it "still guards routes another module of the workspace registers" do
+    main = GIN_AUTH + <<-GO
+      func main() {
+      \tr := gin.Default()
+      \tr.Use(Auth())
+      \tapi.Register(r)
+      }
+      GO
+    api = <<-GO
+      package api
+
+      import "github.com/gin-gonic/gin"
+
+      func Register(r *gin.Engine) {
+      \tr.GET("/users", func(c *gin.Context) {})
+      }
+      GO
+    result = router_scope_scan({"app/go.mod" => "module example.com/app\n\nrequire example.com/api v0.0.0\n", "app/main.go" => main,
+                                "api/go.mod" => "module example.com/api\n", "api/api.go" => api},
+      [{"GET", "/users", "api/api.go", %("/users")}], "go_gin")
+    guarded?(result["GET /users"]).should be_true
+  end
+
+  it "reads every call of a helper in the owner's function, past nested blocks" do
+    main = GIN_AUTH + <<-GO
+      func main() {
+      \tr := gin.Default()
+      \tv1 := r.Group("/api")
+      \tregister(v1.Group("/a"))
+      \tif auth {
+      \t\tv1.Use(Auth())
+      \t}
+      \tregister(v1.Group("/b"))
+      }
+      GO
+    helper = <<-GO
+      package main
+
+      import "github.com/gin-gonic/gin"
+
+      func register(g *gin.RouterGroup) {
+      \tg.GET("/items", func(c *gin.Context) {})
+      }
+      GO
+    result = router_scope_scan({"go.mod" => GIN_MOD, "main.go" => main, "helper.go" => helper},
+      [{"GET", "/api/b/items", "helper.go", %("/items")}], "go_gin")
+    guarded?(result["GET /api/b/items"]).should be_true
+  end
+
+  it "reads a .Use just above the route across its lines and through a derived group" do
+    src = <<-GO
+      package main
+
+      func main() {
+      \te := echo.New()
+      \tpub := e.Group("/pub")
+      \tpub.Use(echojwt.WithConfig(echojwt.Config{SigningKey: k,
+      \t\tSkipper: skipPublic}))
+      \tpub.GET("/feed", h)
+      \tv1 := e.Group("/v1")
+      \tv1.Use(echojwt.JWT(k))
+      \tusers := v1.Group("/users")
+      \tusers.GET("/me", h)
+      }
+      GO
+    result = router_scope_scan({"go.mod" => "module e\n", "main.go" => src},
+      [{"GET", "/pub/feed", "main.go", %("/feed")}, {"GET", "/v1/users/me", "main.go", %("/me")}], "go_echo")
+    guarded?(result["GET /pub/feed"]).should be_false
+    guarded?(result["GET /v1/users/me"]).should be_true
+  end
+
   it "guards an echo route registered before e.Use (router-level middleware)" do
     src = <<-GO
       package main

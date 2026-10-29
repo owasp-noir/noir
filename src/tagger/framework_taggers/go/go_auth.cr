@@ -186,6 +186,9 @@ class GoAuthTagger < FrameworkTagger
     @imports = Hash(String, Set(String)).new
     @bindings = Hash(String, Hash(String, String)).new
     @modules = Hash(String, String).new
+    @linked_modules = Hash({String, String}, Bool).new
+    @router_chains = Hash({String, Int32, String}, {Array({String, Int32}), Bool}).new
+    @owner_uses = Hash({String, Int32, String, String}, Array(Int32)).new
   end
 
   def self.target_techs : Array(String)
@@ -332,12 +335,13 @@ class GoAuthTagger < FrameworkTagger
     # The whole statement, so a config literal spread over the lines below
     # (`KeyAuthWithConfig(middleware.KeyAuthConfig{` / `Skipper: ...`) is
     # read with its fields.
-    args = middleware_args((index..statement_end(lines, index)).join(" ") { |row| code_only(lines[row - 1]) })
+    statement = statement_text(lines, index)
+    args = middleware_args(statement)
 
     # Check for JWT library middleware
     JWT_PATTERNS.each do |pattern|
-      if stripped.matches?(pattern) && stripped.includes?(".Use") && args.none?(&.matches?(SKIPPER_FIELD))
-        jwt_match = stripped.match(pattern)
+      if statement.matches?(pattern) && stripped.includes?(".Use") && args.none?(&.matches?(SKIPPER_FIELD))
+        jwt_match = statement.match(pattern)
         jwt_name = jwt_match ? jwt_match[0] : "JWT"
         add_middleware_scope(scope, file, Tag.new("auth", "Protected by Go JWT middleware (#{jwt_name})", "go_auth"))
       end
@@ -371,6 +375,12 @@ class GoAuthTagger < FrameworkTagger
         depth -= 1
       end
     end
+  end
+
+  # The statement starting on line `index` (1-based) as code on one line,
+  # up to 30 lines of it.
+  private def statement_text(lines : Array(String), index : Int32) : String
+    (index..Math.min(statement_end(lines, index), index + 30)).join(" ") { |row| code_only(lines[row - 1]) }
   end
 
   # The 1-based last line of the statement starting on line `index`
@@ -494,8 +504,9 @@ class GoAuthTagger < FrameworkTagger
         next unless line.includes?('=')
         code = code_only(line)
         next unless code.matches?(LOCAL_BINDING)
-        # A call spread over the lines below, read whole.
-        code = (idx + 1..statement_end(lines, idx + 1)).join(" ") { |row| code_only(lines[row - 1]) } if code.count('(') > code.count(')')
+        # A call spread over the lines below, read whole (not a closure's
+        # body).
+        code = statement_text(lines, idx + 1) if code.count('(') > code.count(')') && !code.includes?("func")
         if match = code.match(LOCAL_BINDING)
           map.put_if_absent(match[1]) { match[2].strip }
         end
@@ -1051,9 +1062,14 @@ class GoAuthTagger < FrameworkTagger
         # A chain that keeps its group nowhere guards only its own routes.
         use_receiver = above_line.match(GoRouteGroupScope::USE_CALL).try(&.[1])
         if above_line.includes?(".Use") && !ephemeral_group_use(above_line) &&
-           (route_receiver.nil? || use_receiver.nil? || use_receiver == route_receiver)
-          tag = middleware_args(above_line).compact_map { |arg| guard_by_definition(arg, path_info.path, authish_name: true) }.first?
-          tag ||= Tag.new("auth", "Protected by Go JWT middleware", "go_auth") if JWT_PATTERNS.any? { |pattern| above_line.matches?(pattern) }
+           (route_receiver.nil? || use_receiver.nil? ||
+           router_chain(path_info.path, lines, line_num, route_receiver)[0].any? { |(router, _)| router == use_receiver })
+          statement = statement_text(lines, check_idx + 1)
+          args = middleware_args(statement)
+          tag = args.compact_map { |arg| guard_by_definition(arg, path_info.path, authish_name: true) }.first?
+          if tag.nil? && args.none?(&.matches?(SKIPPER_FIELD)) && JWT_PATTERNS.any? { |pattern| statement.matches?(pattern) }
+            tag = Tag.new("auth", "Protected by Go JWT middleware", "go_auth")
+          end
           if tag
             endpoint.add_tag(tag)
             break
@@ -1683,6 +1699,22 @@ class GoAuthTagger < FrameworkTagger
     end
   end
 
+  GO_MODULE_PATH = /^module\s+(\S+)/m
+
+  # Whether module `a` is module `b` or one of them requires the other (a
+  # go.work / `replace` workspace wires routes across modules).
+  private def same_program?(a : String, b : String) : Bool
+    return true if a == b
+    @linked_modules.put_if_absent({a, b}) do
+      mod_a = File.read(File.join(a, "go.mod")) rescue ""
+      mod_b = File.read(File.join(b, "go.mod")) rescue ""
+      path_a = mod_a.match(GO_MODULE_PATH).try(&.[1])
+      path_b = mod_b.match(GO_MODULE_PATH).try(&.[1])
+      next false if path_a.nil? || path_b.nil? || path_a == path_b
+      mod_b.split.includes?(path_a) || mod_a.split.includes?(path_b)
+    end
+  end
+
   private def check_middleware_scopes(endpoint : Endpoint) : Tag?
     url = endpoint.url
     # A route chained off a group it builds in place (`g.Group("/user").
@@ -1692,7 +1724,7 @@ class GoAuthTagger < FrameworkTagger
 
     @middleware_scopes.each do |scope|
       next unless prefix_covers?(scope[:prefix], url)
-      next if !endpoint.details.code_paths.empty? && endpoint.details.code_paths.none? { |path_info| go_module(path_info.path) == scope[:module] }
+      next if !endpoint.details.code_paths.empty? && endpoint.details.code_paths.none? { |path_info| same_program?(go_module(path_info.path), scope[:module]) }
       if gate = scope[:gate]
         next unless registered_on?(endpoint, gate)
       elsif owner = scope[:owner]
@@ -1759,19 +1791,30 @@ class GoAuthTagger < FrameworkTagger
   end
 
   # Whether one of the endpoint's route lines is provably on a router the
-  # owner's middleware does not reach. In the owner's function: a router
-  # neither the owner nor derived from it (`ping := r.Group("/api/ping")`
-  # next to `v1 := r.Group("/api")`; `v1.Use(auth)`), or, with `ordered`, a
-  # route registered (in gin, a group created) before the `.Use`. In another
-  # function: a router of its own (`r := chi.NewRouter()`) while the owner
-  # is one too, so neither can be the other. A router handed in as a
-  # parameter may be the owner's, so it is left to the prefix.
-  # ponytail: a router returned by a project helper (`r := newRouter()`) or
-  # a group handed to a helper before the `.Use` (`register(v1.Group("/x"))`
-  # in gin) is still read by prefix.
+  # owner's middleware does not reach.
+  #
+  # * In the owner's function: a router built there by a library
+  #   constructor (`s := chi.NewRouter()`) and never mounted on the owner,
+  #   or one derived from a router the owner is derived from too, but not
+  #   from the owner (`ping := r.Group("/api/ping")` next to `v1 :=
+  #   r.Group("/api")`; `v1.Use(auth)`); with `ordered`, a route registered
+  #   (in gin, a group created) before the `.Use`.
+  # * In another function: one the owner's function hands the owner's
+  #   router (`register(v1.Group("/x"))`, `r.Mount("/admin", adminRouter())`)
+  #   only above the `.Use`, with `ordered`; or, when the owner's function
+  #   never does, a router built by a library constructor while the owner
+  #   is one too (`r := chi.NewRouter()` in `main` and in `adminRouter`).
+  #
+  # A router handed in as a parameter, or built some other way, may be the
+  # owner's, so it is left to the prefix.
+  # ponytail: one hop; a router mounted through a helper of a helper is
+  # judged by the call the owner's function makes.
   private def other_router?(endpoint : Endpoint, owner : Gate, ordered : Bool) : Bool
     use_row = owner[:rows].begin
     owner_lines = read_file_lines(owner[:file]) || return false
+    # From the row below the registration, so `v1 := r.Group("/api",
+    # auth)` is read as derived from `r`.
+    owner_chain, owner_local = router_chain(owner[:file], owner_lines, use_row + 1, owner[:receiver])
     endpoint.details.code_paths.any? do |path_info|
       line = path_info.line || next false
       lines = read_file_lines(path_info.path) || next false
@@ -1779,40 +1822,50 @@ class GoAuthTagger < FrameworkTagger
       name = lines[line - 1].match(ROUTE_RECEIVER).try(&.[1]) || next false
       chain, local = router_chain(path_info.path, lines, line, name)
       if path_info.path == owner[:file] && function_start(lines, line) == function_start(lines, use_row)
-        hop = chain.find { |(router, _)| router == owner[:receiver] }
-        # fiber matches middleware in registration order, so only the
-        # route's own line counts; gin copies a group's handlers when it is
-        # created.
-        hop.nil? || (ordered && (endpoint.details.technology == "go_fiber" ? line : hop[1]) < use_row)
+        if hop = chain.find { |(router, _)| router == owner[:receiver] }
+          # fiber matches middleware in registration order, so only the
+          # route's own line counts; gin copies a group's handlers when it
+          # is created.
+          ordered && (endpoint.details.technology == "go_fiber" ? line : hop[1]) < use_row
+        elsif local
+          owner_uses(owner, owner_lines, chain.last[0]).empty?
+        else
+          chain.any? { |(router, _)| owner_chain.any? { |(other, _)| other == router } }
+        end
       else
-        # From the row below the registration, so `v1 := r.Group("/api",
-        # auth)` is read as derived from `r`.
-        (local && router_chain(owner[:file], owner_lines, use_row + 1, owner[:receiver])[1]) ||
-          (ordered && helper_called_before?(lines, line, owner, owner_lines))
+        start = function_start(lines, line)
+        helper = start < 0 ? nil : lines[start].match(FUNC_NAME).try(&.[1])
+        calls = helper ? owner_uses(owner, owner_lines, helper) : [] of Int32
+        calls.empty? ? local && owner_local : ordered && calls.all? { |row| row < use_row }
       end
     end
   end
 
   FUNC_NAME = /\Afunc\s*(?:\([^)]*\)\s*)?(\w+)/
 
-  # Whether the owner's function calls the function holding route line
-  # `line`, handing it the owner's router, only above the `.Use`
-  # (`users.UsersRegister(v1.Group("/users"))` then `v1.Use(auth)`).
-  private def helper_called_before?(lines : Array(String), line : Int32, owner : Gate, owner_lines : Array(String)) : Bool
-    start = function_start(lines, line)
-    return false if start < 0
-    name = lines[start].match(FUNC_NAME).try(&.[1]) || return false
-    use_row = owner[:rows].begin
-    calls = ((function_start(owner_lines, use_row) + 1)...Math.min(owner[:rows].end, owner_lines.size)).select do |row|
-      code = code_only(owner_lines[row])
-      at = code.index("#{name}(")
-      !at.nil? && (at.zero? || !code[at - 1].alphanumeric? && code[at - 1] != '_') && code.split(/\W+/).includes?(owner[:receiver])
+  # The 1-based rows of the owner's function that hand the owner's router
+  # `target`: a line naming the owner that calls `target(` or mounts
+  # `target` (`r.Mount("/s", s)`).
+  private def owner_uses(owner : Gate, owner_lines : Array(String), target : String) : Array(Int32)
+    @owner_uses.put_if_absent({owner[:file], owner[:rows].begin, owner[:receiver], target}) do
+      start = function_start(owner_lines, owner[:rows].begin)
+      last = start < 0 ? owner_lines.size : enclosing_block_end(owner_lines, start + 2)
+      ((start + 1)...Math.min(last, owner_lines.size)).compact_map do |row|
+        code = code_only(owner_lines[row])
+        next unless code.includes?(target)
+        tokens = code.split(/\W+/)
+        next unless tokens.includes?(owner[:receiver])
+        at = code.index("#{target}(")
+        called = !at.nil? && (at.zero? || !code[at - 1].alphanumeric? && code[at - 1] != '_')
+        row + 1 if called || (code.includes?("Mount(") && tokens.includes?(target))
+      end
     end
-    !calls.empty? && calls.all? { |row| row + 1 < use_row }
   end
 
   ROUTER_ASSIGNMENT = /\A(?:var\s+)?(\w+)(?:\s+[\w.*\[\]]+)?\s*:?=(?!=)\s*(.+)\z/
-  ROUTER_FROM       = /\A(\w+)\s*(?:\.\s*(?:Group|Route|Party|PartyFunc)\s*\(|\z)/
+  # A router read off another variable: `r.Group("/x")`, `r.PathPrefix("/api").
+  # Subrouter()`, `r.With(mw)`, or `r` itself.
+  ROUTER_FROM = /\A(\w+)\s*(?:\.|\z)/
   # A library's router constructor: `gin.Default()`, `chi.NewRouter()`,
   # `fiber.New(...)`.
   ROUTER_CONSTRUCTOR = /\A&?\s*(\w+)\s*\.\s*(?:New\w*|Default)\s*\(/
@@ -1826,26 +1879,32 @@ class GoAuthTagger < FrameworkTagger
   # r.Group(...)`), and whether the last was built there by a library
   # constructor rather than handed in.
   private def router_chain(path : String, lines : Array(String), line : Int32, name : String) : {Array({String, Int32}), Bool}
-    chain = [{name, line}]
-    depth = 0
-    (line - 2).downto(0) do |row|
-      code = code_only(lines[row]).strip
-      depth += code.count('}') - code.count('{')
-      enclosing = depth < 0
-      if depth <= 0
-        depth = 0
-        current = chain.last[0]
-        if (m = code.match(ROUTER_ASSIGNMENT)) && m[1] == current
-          hop = m[2].match(ROUTER_FROM)
-          return {chain, local_router?(m[2], path)} unless hop
-          chain << {hop[1], row + 1}
-        elsif enclosing && (m = code.match(CLOSURE_ROUTER_PARAM)) && m[2] == current
-          chain << {m[1], row + 1}
+    @router_chains.put_if_absent({path, line, name}) do
+      chain = [{name, line}]
+      local = false
+      depth = 0
+      (line - 2).downto(0) do |row|
+        code = code_only(lines[row]).strip
+        depth += code.count('}') - code.count('{')
+        enclosing = depth < 0
+        if depth <= 0
+          depth = 0
+          current = chain.last[0]
+          if (m = code.match(ROUTER_ASSIGNMENT)) && m[1] == current
+            hop = m[2].match(ROUTER_FROM)
+            if hop.nil? || file_imports(path).includes?(hop[1])
+              local = local_router?(m[2], path)
+              break
+            end
+            chain << {hop[1], row + 1}
+          elsif enclosing && (m = code.match(CLOSURE_ROUTER_PARAM)) && m[2] == current
+            chain << {m[1], row + 1}
+          end
         end
+        break if lines[row].starts_with?("func")
       end
-      break if lines[row].starts_with?("func")
+      {chain, local}
     end
-    {chain, false}
   end
 
   private def local_router?(expr : String, path : String) : Bool
