@@ -518,14 +518,20 @@ describe NoirAIContext::SourceReader do
         end
       end
 
-      it "truncates at MAX_SNIPPET_CHARS by default" do
+      it "truncates at MAX_SNIPPET_CHARS by default, finishing the cut word" do
         body = (1..20).map { |i| "  someCall#{i}(withArguments, andMore)" }.join("\n")
         source = "app.get('/a', (req, res) => {\n#{body}\n})"
 
         with_source_file(source, ".js") do |path|
-          NoirAIContext::SourceReader.new
-            .route_scope_snippet_for(path, 1)
-            .not_nil!.size.should eq(NoirAIContext::SourceReader::MAX_SNIPPET_CHARS)
+          reader = NoirAIContext::SourceReader.new
+          snippet = reader.route_scope_snippet_for(path, 1).not_nil!
+          full = reader.route_scope_snippet_for(path, 1, max_lines: 40, max_chars: 10_000).not_nil!
+          max = NoirAIContext::SourceReader::MAX_SNIPPET_CHARS
+          snippet.size.should be >= max
+          snippet.size.should be <= max + NoirAIContext::SourceReader::MAX_WORD_OVERRUN
+          full.starts_with?(snippet).should be_true
+          # The cut lands between words, so a guard scan never reads a fragment.
+          full[snippet.size].alphanumeric?.should be_false
         end
       end
     end

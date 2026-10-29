@@ -1931,6 +1931,187 @@ describe "NoirAIContext" do
     end
   end
 
+  it "does not read a route path constant or bare segment as a guard (#3255)" do
+    source = <<-CODE
+      @RestController
+      class LoginController {
+          @GetMapping(AUTHORIZE_PATH)
+          fun authorize(@RequestParam("client_id") clientId: String): String = clientId
+
+          @GetMapping(ADMIN_PATH)
+          @PreAuthorize("hasRole('ADMIN')")
+          fun listAdmins(): String = "ok"
+      }
+      CODE
+
+    with_temp_ai_context_source(source, ".kt") do |path|
+      login = Endpoint.new("/oauth/authorize", "GET")
+      login.details = Details.new(PathInfo.new(path, 3))
+      login.handler = Handler.new("LoginController.authorize", path, 4)
+      admin = Endpoint.new("/admin", "GET")
+      admin.details = Details.new(PathInfo.new(path, 6))
+      admin.handler = Handler.new("LoginController.listAdmins", path, 8)
+
+      contexts = NoirAIContext.apply([login, admin]).map(&.ai_context.should_not(be_nil))
+      contexts[0].guards.should be_empty
+      guard = contexts[1].guards.find!(&.kind.==("authz_guard"))
+      # The snippet quotes the source, not the scope the scan masked, and
+      # the class annotation once.
+      snippet = guard.snippet.should_not be_nil
+      snippet.should contain("fun listAdmins()")
+      snippet.should contain("@GetMapping(ADMIN_PATH)")
+      snippet.scan("1: @RestController").size.should eq(1)
+    end
+
+    grape = <<-CODE
+      post 'authorize' do
+      get 'authenticate' do
+      CODE
+    with_temp_ai_context_source(grape, ".rb") do |path|
+      endpoints = [1, 2].map do |line|
+        Endpoint.new("/state/x", "POST").tap { |e| e.details = Details.new(PathInfo.new(path, line)) }
+      end
+      NoirAIContext.apply(endpoints).each { |e| e.ai_context.should_not(be_nil).guards.should be_empty }
+    end
+
+    # A guard passed as middleware to the route call is still a guard.
+    express = <<-CODE
+      router.get(AUTHORIZE_PATH, authenticate, handler);
+      CODE
+    with_temp_ai_context_source(express, ".js") do |path|
+      endpoint = Endpoint.new("/authorize", "GET")
+      endpoint.details = Details.new(PathInfo.new(path, 1))
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+      context.guards.map(&.kind).should eq(["auth_guard"])
+    end
+  end
+
+  it "does not read a Rocket parameter the route binds as a guard (#3255)" do
+    source = <<-CODE
+      #[get("/connect/authorize?<data..>")]
+      async fn authorize(data: AuthorizeData) -> String { let AuthorizeData { redirect_uri, .. } = data; redirect_uri }
+
+      #[get("/panel?<data..>")]
+      fn panel(data: AuthorizeData, user: AuthorizedUser) -> String { user.name }
+      CODE
+
+    with_temp_ai_context_source(source, ".rs") do |path|
+      open = Endpoint.new("/connect/authorize", "GET")
+      open.details = Details.new(PathInfo.new(path, 1))
+      open.handler = Handler.new("authorize", path, 2)
+      guarded = Endpoint.new("/panel", "GET")
+      guarded.details = Details.new(PathInfo.new(path, 4))
+      guarded.handler = Handler.new("panel", path, 5)
+
+      contexts = NoirAIContext.apply([open, guarded]).map(&.ai_context.should_not(be_nil))
+      contexts[0].guards.should be_empty
+      # An unbound parameter is a request guard.
+      contexts[1].guards.map { |g| {g.kind, g.name} }.should eq([{"authz_guard", "AuthorizedUser"}])
+    end
+  end
+
+  it "masks only the route's own declaration, not guards near it (#3255)" do
+    # {source, ext, route line, {handler name, line}, expected guard names}
+    cases = [
+      # rustfmt puts each parameter on its own line.
+      {"#[get(\"/connect/authorize?<data..>\")]\nasync fn authorize(\n    data: AuthorizeData,\n    conn: DbConn,\n) -> &'static str {\n    \"a\"\n}",
+       ".rs", 1, {"authorize", 2}, [] of String},
+      # `<token>` in a body string binds nothing.
+      {"#[get(\"/me\")]\nfn me(token: AuthorizedToken) -> &'static str {\n    err!(\"Bearer <token>\");\n    \"me\"\n}",
+       ".rs", 1, {"me", 2}, ["AuthorizedToken"]},
+      # A type an unbound parameter also has is a guard type.
+      {"#[get(\"/d/<id>\")]\nfn d(id: AuthorizedId, guard: AuthorizedId) -> &'static str { \"d\" }",
+       ".rs", 1, {"d", 2}, ["AuthorizedId"]},
+      # Body calls whose first argument is a guard.
+      {"get(\"/b\") {\n    get(authorizeAdmin)\n    call.respondText(\"b\")\n}", ".kt", 1, nil, ["authorizeAdmin"]},
+      {"app.get('/i', (req, res) => {\n  route(authorizeRequest)\n  res.send('i')\n});", ".js", 1, nil, ["authorizeRequest"]},
+      # An options object is not a path list.
+      {"fastify.route({ authenticate, method: 'GET', url: '/c', handler: async () => 'c' });", ".js", 1, nil, ["authenticate"]},
+      # Every path of a mapping list, and a handler string on the route line.
+      {"@GetMapping({AUTHORIZE_PATH, AUTHORIZE_ALT})\npublic String c() { return \"c\"; }", ".java", 1, nil, [] of String},
+      {"get 'authorize' => 'oauth#authorize'", ".rb", 1, nil, [] of String},
+      {"Route::get('authorize', 'OAuthController@authorize');", ".php", 1, nil, [] of String},
+      # A Ruby route block reads to its `end`.
+      {"post '/c' do\n  authenticate!\n  'c'\nend\n\nget '/d' do\n  'd'\nend", ".rb", 1, nil, ["authenticate"]},
+      {"post '/c' do\n  'c'\nend\n\nget '/d' do\n  authenticate!\nend", ".rb", 1, nil, [] of String},
+      # Comment text checks nothing; a `#` in a string, an interpolation or
+      # a Perl `s#a#b#` does not start a comment.
+      {"get '/c' do\n  # authenticate later\n  'c'\nend", ".rb", 1, nil, [] of String},
+      {"get '/g' do\n  log \"id=\#{id}\"; authenticate!\nend", ".rb", 1, nil, ["authenticate"]},
+      {"post '/d' do\n  re = %r{\#{params[:x]}}; authenticate!\n  'd'\nend", ".rb", 1, nil, ["authenticate"]},
+      {"get '/p' => sub {\n  my $c = shift; $c->param('x') =~ s#a#b#; authenticate($c);\n};", ".pl", 1, nil, ["authenticate"]},
+      {"@app.route(\"/finding/<fid>\")\ndef view_finding(request, fid):\n    # Make sure the user is authorized\n    user_has_permission_or_403(request.user, finding, Permissions.Finding_View)\n    return render(request, \"x.html\")",
+       ".py", 1, {"view_finding", 2}, ["user_has_permission_or_403"]},
+      {"@router.patch(\"/users/{int:user_id}\")\ndef update_user(request, user_id: int):\n    # Resolve against the authorized view queryset first\n    _require_config_permission(request, \"auth.change_user\")",
+       ".py", 1, {"update_user", 2}, ["_require_config_permission"]},
+      # A local whose read is the refusal stays a guard.
+      {"@app.route(\"/csrf\", methods=[\"POST\"])\ndef csrf():\n    csrf_token = request.form.get(\"csrf_token\")\n    if csrf_token != session.get(\"csrf_token\"):\n        abort(403)\n    return \"ok\"",
+       ".py", 1, {"csrf", 2}, ["csrf_token"]},
+      {"@app.route(\"/own/<int:pid>\", methods=[\"POST\"])\ndef own(pid):\n    current_user = load_user()\n    post = Post.query.get(pid)\n    if current_user.id != post.owner_id:\n        abort(403)\n    return \"ok\"",
+       ".py", 1, {"own", 2}, ["current_user.id != post.owner_id"]},
+      {"get '/a' do\n  authorized = current_user&.admin?\n  halt 403 unless authorized\n  'a'\nend", ".rb", 1, nil, ["authorized"]},
+      {"post '/c' do\n  x = 1\n  halt 403 unless can?(current_user, :update, Project.find(params.fetch(:id)))\n  'c'\nend", ".rb", 1, nil,
+       ["can?(current_user, :update, Project.find(params.fetch(:id)))"]},
+      {"get '/h' do\n  user = authenticate_user!\nend", ".rb", 1, nil, ["authenticate_user"]},
+      # `can?` picking a presenter refuses nobody; `forbidden! unless can?` does.
+      {"get '/d' do\n  present x, with: can?(:read, x) ? Full : Basic\nend", ".rb", 1, nil, [] of String},
+      {"get '/e' do\n  forbidden! unless can?(:read, x)\nend", ".rb", 1, nil, ["can?(:read, x)"]},
+      # A multi-line Rocket attribute binds `data` too.
+      {"#[post(\n    \"/connect/authorize\",\n    data = \"<data>\"\n)]\nfn authorize(data: Form<AuthorizeData>) -> &'static str { \"a\" }",
+       ".rs", 1, {"authorize", 5}, [] of String},
+    ]
+
+    mismatches = [] of {String, Array(String)}
+    cases.each do |source, ext, route_line, handler, expected|
+      with_temp_ai_context_source(source, ext) do |path|
+        endpoint = Endpoint.new("/x", "GET")
+        endpoint.details = Details.new(PathInfo.new(path, route_line))
+        endpoint.handler = Handler.new(handler[0], path, handler[1]) if handler
+        context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+        names = context.guards.map(&.name)
+        mismatches << {source, names} unless names == expected
+      end
+    end
+    mismatches.should be_empty
+  end
+
+  it "does not read Ruby respond_to? or Hash#fetch in a route block as sinks (#3255)" do
+    source = <<-CODE
+      post ':id/allowlist' do
+        ids = params['ids'].split(',') if params['ids'].respond_to?(:split)
+        target_id = declared_params(include_missing: false).fetch(:target_id)
+        cursor = params.fetch("cursor")
+        present target_id
+      end
+      CODE
+
+    with_temp_ai_context_source(source, ".rb") do |path|
+      endpoint = Endpoint.new("/x/{id}/allowlist", "POST")
+      endpoint.details = Details.new(PathInfo.new(path, 1))
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+      context.sinks.map(&.kind).should_not contain("template_render")
+      context.sinks.map(&.kind).should_not contain("outbound_http")
+    end
+
+    # Nor as callees; a bare `fetch(url)` still is.
+    calls = <<-CODE
+      get '/j' do
+        q = params.fetch(:q)
+        home = ENV.fetch("HOME")
+        r = fetch("http://example.com/" + q)
+      end
+      CODE
+    with_temp_ai_context_source(calls, ".rb") do |path|
+      endpoint = Endpoint.new("/j", "GET")
+      endpoint.details = Details.new(PathInfo.new(path, 1))
+      endpoint.push_callee(Callee.new("params.fetch", path, 2))
+      endpoint.push_callee(Callee.new("ENV.fetch", path, 3))
+      endpoint.push_callee(Callee.new("fetch", path, 4))
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+      context.sinks.select(&.kind.==("outbound_http")).map(&.line).should eq([4])
+    end
+  end
+
   it "classifies callees by what they do, not by a word in their name (#3139)" do
     source = <<-CODE
       count = session.exec(count_statement).one()

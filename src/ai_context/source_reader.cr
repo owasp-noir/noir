@@ -10,6 +10,8 @@ module NoirAIContext
   class SourceReader
     MAX_SNIPPET_CHARS     = 240
     MAX_ROUTE_SCOPE_LINES =  12
+    MAX_WORD_OVERRUN      =  32
+    RUBY_DO_BLOCK_OPEN    = /\bdo\s*(?:\|[^|]*\|)?\s*(?:#.*)?\z/
 
     # Maximum number of decorator / annotation lines to capture
     # *before* path_info.line. Lets negative-protection markers
@@ -124,7 +126,9 @@ module NoirAIContext
       # source-scan that already handles method-level annotations, without
       # treating an annotation on a sibling class as route evidence.
       class_lead_lines = class_level_lead_lines(path, lines, line - 1)
-      lead_lines = class_lead_lines + lead_lines unless class_lead_lines.empty?
+      # A Kotlin/Java class indented like Python reaches both lookups; keep
+      # its annotations once.
+      lead_lines = (class_lead_lines + lead_lines).uniq unless class_lead_lines.empty?
 
       start_idx = line - 1
       selected = lead_lines
@@ -188,7 +192,13 @@ module NoirAIContext
         # Lock in a block style on the first line that opens one. Once
         # locked, later lines don't change the kind.
         if block_style.nil?
-          if opens > 0 || sanitized.matches?(/\bdo\b/)
+          # A route block (`post 'x' do`, `get "/" do |env|`) runs to the
+          # `end` at its own indent, like a `def`; read only to the `do`
+          # line, the scope missed the body's `authenticate!`.
+          if opens == 0 && stripped.matches?(RUBY_DO_BLOCK_OPEN)
+            block_style = :ruby
+            def_indent = line_indent
+          elsif opens > 0 || sanitized.matches?(/\bdo\b/)
             block_style = :brace
           elsif !is_decorator && stripped.ends_with?(":")
             block_style = :python
@@ -227,9 +237,26 @@ module NoirAIContext
 
       snippet = selected.join(" | ").gsub(/\s+/, " ").strip
       return if snippet.empty?
-      snippet = snippet.size > max_chars ? snippet[0, max_chars] : snippet
+      snippet = clip_at_word_end(snippet, max_chars)
       @route_scope_cache[cache_key] = snippet
       snippet
+    end
+
+    # The budget cut the scope mid-word, and the guard scan took the
+    # fragment for a name (`authorize_read_packa`). Finish the word, a few
+    # characters at most, instead.
+    private def clip_at_word_end(snippet : String, max_chars : Int32) : String
+      return snippet if snippet.size <= max_chars
+      stop = max_chars
+      limit = Math.min(snippet.size, max_chars + MAX_WORD_OVERRUN)
+      while stop < limit && word_char?(snippet[stop])
+        stop += 1
+      end
+      snippet[0, stop]
+    end
+
+    private def word_char?(char : Char) : Bool
+      char.alphanumeric? || char == '_' || char == '!' || char == '?'
     end
 
     private def decorator_lines_before(lines : Array(String), before_idx : Int32) : Array(String)

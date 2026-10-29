@@ -114,7 +114,8 @@ module NoirAIContext
       62,
       # `html.EscapeString` / `html.escape` sanitize; they are not a render.
       name_patterns: [/\brender\b/i, /\btemplate\b/i, /\bhtml\b(?!\.(?:un)?escape)/i, /\brespond\b/i],
-      source_patterns: [/\brender(_template)?\s*\(/i, /\breturn\s+render\b/i, /\brespond_to\b/i]
+      # Not Ruby `obj.respond_to?(:split)`, a method-existence check.
+      source_patterns: [/\brender(_template)?\s*\(/i, /\breturn\s+render\b/i, /\brespond_to\b(?!\?)/i]
     ),
     PatternDefinition.new(
       "outbound_http",
@@ -133,7 +134,8 @@ module NoirAIContext
       ],
       source_patterns: [
         /requests\.(get|post|put|delete)/i,
-        /\bfetch\s*\(/i,
+        # Not Ruby `params.fetch(:key)` / `ENV.fetch("X")`, a hash lookup.
+        /(?<!\bparams\.|\bENV\.|\boptions\.|\bopts\.|\bconfig\.|\bsettings\.|\bsession\.|\bhash\.)\bfetch\s*\((?!\s*:)/i,
         /\baxios\./i,
         /\bhttp\.(Get|Post|NewRequest)/,
         /\bclient\.(get|post|request)/i,
@@ -547,11 +549,12 @@ module NoirAIContext
         /\brequire_roles?\b/i,
         /\brequire_any_roles?\b/i,
         /\brequire_all_roles?\b/i,
-        /\brequire_permissions?\b/i,
-        /\brequire_any_permissions?\b/i,
-        /\brequire_all_permissions?\b/i,
+        # Also a private `_require_config_permission(request, "x")` helper.
+        /\b_?require_(?:\w+_)?permissions?\b/i,
         /\buser_has_roles?\b/i,
-        /\buser_has_permissions?\b/i,
+        # DefectDojo `user_has_permission_or_403(...)`, `user_has_global_permission`,
+        # `user_has_configuration_permission`.
+        /\buser_has_(?:\w+_)?permissions?(?:_or_40[13])?\b/i,
         /@PreAuthorize\b/,
         /@PostAuthorize\b/,
         /@RolesAllowed\b/,
@@ -562,7 +565,8 @@ module NoirAIContext
         /@Requires?Roles?\b/,
         /@Security\s*\(/,
         /\bPundit\b.*\bauthorize\b/i,
-        /\bcan\?\s*\(/,
+        # Not a ternary that picks a presenter (`can?(:read, x) ? Full : Basic`).
+        /\bcan\?\s*\((?!(?:[^()]++|(\((?:[^()]++|(?1))*\)))*\)\s*\?)/,
         /\b(can|cannot)\s+:[\w_!?]+/,
         /\bability\.\w+/i,
         # Inline ownership check: the loaded record's owner compared with
