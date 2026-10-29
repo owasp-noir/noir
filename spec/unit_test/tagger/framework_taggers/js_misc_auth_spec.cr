@@ -172,6 +172,50 @@ describe "JsMiscAuthTagger" do
     end
   end
 
+  # koa_router_use_guard/src/app.ts: `admin.use(requireLogin)` before
+  # `admin.get('/items')`; `scoped.use('/private', requireLogin)` between
+  # `/before` and the `/private` and `/public` routes; a route that only
+  # reads `ctx.state.user` and one that refuses without it (#3263).
+  # index.ts: `auth()` in front of a short handler and of one over 80
+  # lines (#3308).
+  describe "Koa router.use and long route calls" do
+    koa_base = File.expand_path("../../../functional_test/fixtures/javascript/koa_router_use_guard", __DIR__)
+    verdicts = ->(file : String, lines : Hash(Int32, String)) do
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(koa_base)
+      endpoints = lines.map do |line, url|
+        details = Details.new(PathInfo.new("#{koa_base}/src/#{file}", line))
+        details.technology = "js_koa"
+        Endpoint.new(url, "GET", [] of Param, details)
+      end
+      JsMiscAuthTagger.new(noir_options).perform(endpoints).to_h { |ep| {ep.url, ep.tags.map(&.description)} }
+    end
+
+    it "applies router.use middleware to that router's later routes, scoped by its path" do
+      tags = verdicts.call("app.ts", {12 => "/admin/items", 13 => "/me", 14 => "/whoami", 15 => "/mine", 21 => "/before", 23 => "/private/report", 24 => "/public/report",
+                                      34 => "/health", 36 => "/status", 43 => "/ops/run", 44 => "/docs"})
+      tags["/admin/items"].should eq(["Protected by Koa requireLogin middleware (ctx.throw(401))"])
+      tags["/me"].should eq(["Protected by Koa requireLogin middleware (ctx.throw(401))"])
+      tags["/whoami"].should be_empty
+      tags["/mine"].should eq(["Protected by Koa ctx.state.user check"])
+      tags["/before"].should be_empty
+      tags["/private/report"].should eq(["Protected by Koa requireLogin middleware (ctx.throw(401))"])
+      tags["/public/report"].should be_empty
+      # A same-named router in another function, a commented-out use and a
+      # use after the route guard nothing; a list of paths scopes the use.
+      tags["/health"].should be_empty
+      tags["/status"].should be_empty
+      tags["/ops/run"].should eq(["Protected by Koa requireLogin middleware (ctx.throw(401))"])
+      tags["/docs"].should be_empty
+    end
+
+    it "reads a route's middleware however long its handler runs" do
+      tags = verdicts.call("index.ts", {14 => "/items.short", 17 => "/items.long"})
+      tags["/items.short"].should eq(["Protected by Koa auth middleware (throw AuthenticationError)"])
+      tags["/items.long"].should eq(["Protected by Koa auth middleware (throw AuthenticationError)"])
+    end
+  end
+
   it "returns correct target_techs" do
     JsMiscAuthTagger.target_techs.should contain("js_fastify")
     JsMiscAuthTagger.target_techs.should contain("js_koa")

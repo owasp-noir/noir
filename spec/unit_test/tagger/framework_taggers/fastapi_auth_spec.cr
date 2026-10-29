@@ -383,4 +383,33 @@ describe "FastAPIAuthTagger" do
     # Its other mount's dependency (`rate_limit`) is no auth check.
     verdicts["/members/feed"].should be_empty
   end
+
+  # fastapi_factory_deps/app.py: a dependency defined inside `create_app()`
+  # and a module-level `internal = Depends(require_internal)` listed as
+  # `dependencies=[internal]` refuse like the direct forms (#3263).
+  it "judges a factory-nested dependency and a dependency bound to a name" do
+    base = File.expand_path("../../../functional_test/fixtures/python/fastapi_factory_deps", __DIR__)
+    app = "#{base}/app.py"
+    noir_options = create_test_options
+    noir_options["base"] = YAML::Any.new(base)
+    endpoints = {20 => "/nested", 24 => "/aliased", 28 => "/direct", 32 => "/literal", 36 => "/open", 40 => "/limited"}.map do |line, url|
+      Endpoint.new(url, "GET", [] of Param, Details.new(PathInfo.new(app, line)))
+    end
+
+    CodeLocator.instance.clear_all
+    CodeLocator.instance.register_path(app)
+    begin
+      endpoints = FastAPIAuthTagger.new(noir_options).perform(endpoints)
+    ensure
+      CodeLocator.instance.clear_all
+    end
+
+    verdicts = endpoints.map { |ep| {ep.url, ep.tags.map(&.description)} }.to_h
+    verdicts["/nested"].should eq(["Protected by FastAPI Depends(require_service)"])
+    verdicts["/aliased"].should eq(["Protected by FastAPI Depends(require_internal)"])
+    verdicts["/direct"].should eq(["Protected by FastAPI Depends(require_internal)"])
+    verdicts["/literal"].should eq(["Protected by FastAPI Depends(require_internal)"])
+    verdicts["/open"].should be_empty
+    verdicts["/limited"].should be_empty
+  end
 end

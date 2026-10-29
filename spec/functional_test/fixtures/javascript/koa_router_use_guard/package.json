@@ -1,0 +1,1 @@
+{"name":"api","main":"src/app.ts","dependencies":{"koa":"^2.15.0","@koa/router":"^12.0.1"}}

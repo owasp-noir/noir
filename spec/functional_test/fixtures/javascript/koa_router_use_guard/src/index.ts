@@ -1,0 +1,105 @@
+import Koa from "koa";
+import Router from "@koa/router";
+
+function auth() {
+  return async function authMiddleware(ctx: any, next: any) {
+    if (!ctx.get("authorization")) {
+      throw AuthenticationError("Authentication required");
+    }
+    return next();
+  };
+}
+
+const router = new Router();
+router.post("items.short", auth(), async (ctx) => {
+  ctx.body = { ok: true };
+});
+router.post("items.long", auth(), async (ctx) => {
+  const v0 = 0;
+  const v1 = 1;
+  const v2 = 2;
+  const v3 = 3;
+  const v4 = 4;
+  const v5 = 5;
+  const v6 = 6;
+  const v7 = 7;
+  const v8 = 8;
+  const v9 = 9;
+  const v10 = 10;
+  const v11 = 11;
+  const v12 = 12;
+  const v13 = 13;
+  const v14 = 14;
+  const v15 = 15;
+  const v16 = 16;
+  const v17 = 17;
+  const v18 = 18;
+  const v19 = 19;
+  const v20 = 20;
+  const v21 = 21;
+  const v22 = 22;
+  const v23 = 23;
+  const v24 = 24;
+  const v25 = 25;
+  const v26 = 26;
+  const v27 = 27;
+  const v28 = 28;
+  const v29 = 29;
+  const v30 = 30;
+  const v31 = 31;
+  const v32 = 32;
+  const v33 = 33;
+  const v34 = 34;
+  const v35 = 35;
+  const v36 = 36;
+  const v37 = 37;
+  const v38 = 38;
+  const v39 = 39;
+  const v40 = 40;
+  const v41 = 41;
+  const v42 = 42;
+  const v43 = 43;
+  const v44 = 44;
+  const v45 = 45;
+  const v46 = 46;
+  const v47 = 47;
+  const v48 = 48;
+  const v49 = 49;
+  const v50 = 50;
+  const v51 = 51;
+  const v52 = 52;
+  const v53 = 53;
+  const v54 = 54;
+  const v55 = 55;
+  const v56 = 56;
+  const v57 = 57;
+  const v58 = 58;
+  const v59 = 59;
+  const v60 = 60;
+  const v61 = 61;
+  const v62 = 62;
+  const v63 = 63;
+  const v64 = 64;
+  const v65 = 65;
+  const v66 = 66;
+  const v67 = 67;
+  const v68 = 68;
+  const v69 = 69;
+  const v70 = 70;
+  const v71 = 71;
+  const v72 = 72;
+  const v73 = 73;
+  const v74 = 74;
+  const v75 = 75;
+  const v76 = 76;
+  const v77 = 77;
+  const v78 = 78;
+  const v79 = 79;
+  const v80 = 80;
+  const v81 = 81;
+  const v82 = 82;
+  const v83 = 83;
+  const v84 = 84;
+  const v85 = 85;
+  ctx.body = { ok: true };
+});

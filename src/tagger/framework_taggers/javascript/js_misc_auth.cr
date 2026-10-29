@@ -26,7 +26,6 @@ class JsMiscAuthTagger < FrameworkTagger
     {/koa-jwt/, "Koa JWT middleware"},
     {/koa-session/, "Koa session middleware"},
     {/passport\.authenticate\s*\(/, "Koa Passport authenticate"},
-    {/ctx\.state\.user/, "Koa ctx.state.user check"},
     {/ctx\.isAuthenticated\s*\(\)/, "Koa isAuthenticated check"},
   ]
 
@@ -87,27 +86,79 @@ class JsMiscAuthTagger < FrameworkTagger
   # refuses the caller (itself, or one same-module helper it calls), unless
   # the call passes an option the definition branches on to let the caller
   # through (`auth({ optional: true })`). The last argument is the handler.
+  # Middleware a `router.use(...)` earlier in the file adds to the same
+  # router counts too: koa-router runs it before each later route of that
+  # router, or of those under its path when it names one.
   private def koa_guard(path : String, line_idx : Int32) : String?
     lines = read_file_lines(path) || return
-    statement = code_only(lines[line_idx, MAX_KOA_ARG_LINES].join("\n"))
-    head = statement.match(KOA_ROUTE_CALL) || return
-    open_paren = head.end(0) - 1
-    close_paren = Noir::JSLiteralScanner.find_matching_paren(statement, open_paren) || return
-    args = Noir::TopLevelSplit.split(statement[open_paren + 1...close_paren], ',', Noir::TopLevelSplit::Rules::JS_POSITIONAL_ARGS)
-    return if args.size < 3
+    route = koa_call(lines, line_idx, KOA_ROUTE_CALL) || return
+    receiver, args = route
     content = read_file(path) || return
-    args[1...-1].each do |arg|
-      call = arg.strip.match(KOA_MIDDLEWARE_CALL) || next
-      handler = Noir::JSHandlerResolver.resolve(call[1], content, path) || next
-      evidence = refusal_in_definition(handler) || next
-      options = call[2]? || ""
-      body = koa_definition_body(handler) || next
-      next if options.scan(KOA_DISABLING_OPTION).any? { |m| body.matches?(/\bif\s*\([^)]*\b#{Regex.escape(m[1])}\b/) }
-      return "Koa #{call[1].gsub(/\s+/, "")} middleware (#{evidence.gsub(/\s+/, " ").chomp('(')})"
+    if args.size >= 3
+      args[1...-1].each do |arg|
+        desc = koa_middleware_guard(arg, content, path)
+        return desc if desc
+      end
+    end
+    return unless receiver
+    route_path = args[0]?.try(&.strip.match(/\A['"`]([^'"`]*)['"`]\z/).try(&.[1]))
+    use_call = /(?<![\w$.])#{Regex.escape(receiver)}\s*\.\s*use\s*\(/
+    # Back to where this router is declared: a same-named router in another
+    # function is a different one.
+    declared = /\b(?:const|let|var)\s+#{Regex.escape(receiver)}\s*=/
+    (line_idx - 1).downto(0) do |idx|
+      break if lines[idx].matches?(declared)
+      next unless lines[idx].matches?(use_call)
+      use = koa_call(lines, idx, use_call) || next
+      middleware = use[1]
+      first = middleware.first?.try(&.strip) || ""
+      # A path, or a list of them (`['/admin', '/ops']`), scopes the use.
+      if first.matches?(/\A(?:['"`]|\[)/)
+        scopes = first.scan(/['"`]([^'"`]*)['"`]/).map(&.[1].rchop('/'))
+        next unless route_path && scopes.any? { |prefix| prefix.empty? || route_path == prefix || route_path.starts_with?("#{prefix}/") }
+        middleware = middleware[1..]
+      end
+      middleware.each do |arg|
+        desc = koa_middleware_guard(arg, content, path)
+        return desc if desc
+      end
     end
     nil
   rescue
     nil
+  end
+
+  # The receiver and top-level arguments of the call `call_re` matches on
+  # line `line_idx`, read to its closing paren however long the handler
+  # runs: a cut-off slice used to lose the whole call.
+  private def koa_call(lines : Array(String), line_idx : Int32, call_re : Regex) : {String?, Array(String)}?
+    span = MAX_KOA_ARG_LINES
+    loop do
+      statement = Noir::CComments.strip(lines[line_idx, span].join("\n"), quotes: %("'`))
+      head = statement.match(call_re) || return
+      # A call commented out on this line must not borrow a later one.
+      return if statement[0, head.begin(0)].includes?('\n')
+      open_paren = head.end(0) - 1
+      if close_paren = Noir::JSLiteralScanner.find_matching_paren(statement, open_paren)
+        receiver = statement[0...head.begin(0)].match(/([A-Za-z_$][\w$]*)\s*\z/).try(&.[1])
+        args = Noir::TopLevelSplit.split(statement[open_paren + 1...close_paren], ',', Noir::TopLevelSplit::Rules::JS_POSITIONAL_ARGS)
+        return {receiver, args}
+      end
+      return if line_idx + span >= lines.size
+      span *= 4
+    end
+  end
+
+  private def koa_middleware_guard(arg : String, content : String, path : String) : String?
+    call = arg.strip.match(KOA_MIDDLEWARE_CALL) || return
+    handler = Noir::JSHandlerResolver.resolve(call[1], content, path) || return
+    evidence = refusal_in_definition(handler) || return
+    options = call[2]? || ""
+    body = koa_definition_body(handler) || return
+    return if options.scan(KOA_DISABLING_OPTION).any? { |m| body.matches?(/\bif\s*\([^)]*\b#{Regex.escape(m[1])}\b/) }
+    evidence = evidence.gsub(/\s+/, " ").chomp('(')
+    evidence += ")" * (evidence.count('(') - evidence.count(')')).clamp(0, 3)
+    "Koa #{call[1].gsub(/\s+/, "")} middleware (#{evidence})"
   end
 
   private def koa_definition_body(handler : Handler) : String?
@@ -136,6 +187,9 @@ class JsMiscAuthTagger < FrameworkTagger
   end
 
   private def check_route_scope(scope : Array(String)) : String?
+    # Reading `ctx.state.user` is no check; refusing when it is missing is.
+    text = scope.join('\n')
+    return "Koa ctx.state.user check" if text.matches?(/\bctx\.state\.user\b/) && text.matches?(KOA_REFUSAL)
     all_patterns = FASTIFY_PATTERNS + KOA_PATTERNS + RESTIFY_PATTERNS + GENERIC_NODE_AUTH
     scope.each do |current|
       all_patterns.each do |pattern, desc|

@@ -231,7 +231,8 @@ module Analyzer::Python
                 # parameter of that name just like the route's own.
                 full_path = normalize_fastapi_path_params(router_class.join(http_route_path))
                 params = extract_fastapi_handler_params(codelines, def_line, full_path, source, import_modules, path, import_base_path)
-                class_view_params(codelines, index, full_path, source, path, import_base_path).each do |param|
+                (class_view_params(codelines, index, full_path, source, path, import_base_path) +
+                  decorator_dependency_params(effective_line, full_path, source, path, import_base_path)).each do |param|
                   params << param unless params.any? { |known| known.name == param.name && known.param_type == param.param_type }
                 end
 
@@ -1448,6 +1449,10 @@ module Analyzer::Python
           return found
         end
       end
+      # A dependency defined inside an app factory (`def create_app():`).
+      # ponytail: any nested def of that name in the route's file, not
+      # the one in the route's enclosing scope.
+      return {source, path} if function && depth == 0 && source.matches?(/^\s+(?:async\s+)?def\s+#{escaped}\s*\(/m)
       nil
     end
 
@@ -1477,6 +1482,32 @@ module Analyzer::Python
                                            path : ::String, base_path : ::String, depth : Int32) : Array(Param)
       callee = param.default.match(DEPENDS_CALLEE_RE).try(&.[1]) || param.type.match(DEPENDS_CALLEE_RE).try(&.[1])
       return [] of Param unless callee
+      dependency_callee_params(callee, route_path, source, path, base_path, depth)
+    end
+
+    # The request parameters of the dependencies a route decorator lists in
+    # `dependencies=[...]`: FastAPI resolves them for the route like a
+    # parameter's `Depends(...)`. An item may be a name bound to one in the
+    # same file (`internal = Depends(require_internal)`).
+    private def decorator_dependency_params(decorator : ::String, route_path : ::String, source : ::String,
+                                            path : ::String, base_path : ::String) : Array(Param)
+      params = [] of Param
+      list = extract_python_keyword_expression(decorator, "dependencies") || return params
+      list = list.strip
+      return params unless list.starts_with?('[') && list.ends_with?(']')
+      split_python_arguments(list[1...-1]).each do |item|
+        item = item.strip
+        callee = item.match(DEPENDS_CALLEE_RE).try(&.[1])
+        if callee.nil? && item.matches?(VAR_NAME_FULL_RE)
+          callee = source.match(/^[ \t]*#{Regex.escape(item)}[ \t]*(?::[^=\n]+)?=[ \t]*([^\n]*)/m).try(&.[1].match(DEPENDS_CALLEE_RE)).try(&.[1])
+        end
+        params.concat(dependency_callee_params(callee, route_path, source, path, base_path, 0)) if callee
+      end
+      params
+    end
+
+    private def dependency_callee_params(callee : ::String, route_path : ::String, source : ::String,
+                                         path : ::String, base_path : ::String, depth : Int32) : Array(Param)
       module_name, _, name = callee.rpartition('.')
       site = if module_name.empty?
                model_site(name, source, path, base_path, function: true)
@@ -1486,7 +1517,8 @@ module Analyzer::Python
       return [] of Param unless site
       lines = site[0].split("\n")
       def_re = /^(?:async\s+)?def\s+#{Regex.escape(name)}\s*\(/
-      return [] of Param unless def_idx = lines.index(&.matches?(def_re))
+      nested_re = /^\s+(?:async\s+)?def\s+#{Regex.escape(name)}\s*\(/
+      return [] of Param unless def_idx = lines.index(&.matches?(def_re)) || lines.index(&.matches?(nested_re))
       imports = find_fastapi_imported_modules(base_path, site[1], site[0])
       extract_fastapi_handler_params(lines, def_idx, route_path, site[0], imports, site[1], base_path, depth + 1)
     end

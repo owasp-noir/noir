@@ -168,6 +168,7 @@ class FastAPIAuthTagger < FrameworkTagger
         scopes.concat(include_dependencies(path_info.path, receiver))
       end
       scopes.concat(class_dependencies(lines, line_num - 1, path_info.path))
+      scopes.concat(scopes.flat_map { |text, file| dependency_variables(text, file) })
 
       description = nil
       authz = nil
@@ -206,8 +207,16 @@ class FastAPIAuthTagger < FrameworkTagger
            elsif (symbol = python_imported_symbols(path)[module_name]?) && symbol[1].empty?
              python_definition_site(symbol[0], name)
            end
+    start = /^(?:async\s+)?def\s+#{Regex.escape(site[1])}\b/ if site
+    # A dependency defined inside an app factory (`def create_app():`).
+    # ponytail: any nested def of that name in the route's file, not the
+    # one in the route's enclosing scope.
+    if site.nil? && module_name.empty? && read_file(path).try(&.matches?(/^\s+(?:async\s+)?def\s+#{Regex.escape(name)}\b/m))
+      site = {path, name}
+      start = /^\s+(?:async\s+)?def\s+#{Regex.escape(name)}\b/
+    end
     verdict = nil
-    if site && (body = definition_block(site[0], /^(?:async\s+)?def\s+#{Regex.escape(site[1])}\b/))
+    if site && start && (body = definition_block(site[0], start))
       if refusing_raise?(body, site[0]) || body.scan(DEPENDENCY_CALL).any? { |m| dependency_refuses?(m[2], site[0], depth + 1) == true }
         verdict = true
       elsif !body.matches?(/^\s*raise\b/m) && body.matches?(/^\s*return\s+None\s*$/m) &&
@@ -247,18 +256,19 @@ class FastAPIAuthTagger < FrameworkTagger
     false
   end
 
-  # The top-level statement in `file` whose first line matches `start`:
-  # through the last line indented under it, or until its brackets close
-  # for an assignment.
+  # The statement in `file` whose first line matches `start`: through the
+  # last line indented under it, or until its brackets close for an
+  # assignment.
   private def definition_block(file : String, start : Regex) : String?
     lines = read_file_lines(file) || return
     idx = lines.index(&.matches?(start)) || return
+    indent = lines[idx].size - lines[idx].lstrip.size
     String.build do |io|
       io << lines[idx] << '\n'
       depth = lines[idx].count('(') + lines[idx].count('[') - lines[idx].count(')') - lines[idx].count(']')
       ((idx + 1)...Math.min(lines.size, idx + 400)).each do |i|
         line = lines[i]
-        break if depth <= 0 && !line.blank? && !line[0].ascii_whitespace? && !line.starts_with?(')')
+        break if depth <= 0 && !line.blank? && line.size - line.lstrip.size <= indent && !line.lstrip.starts_with?(')')
         io << line << '\n'
         depth += line.count('(') + line.count('[') - line.count(')') - line.count(']')
       end
@@ -774,6 +784,29 @@ class FastAPIAuthTagger < FrameworkTagger
     elsif (symbol = python_imported_symbols(call.file)[module_name]?) && symbol[1].empty?
       python_definition_site(symbol[0], name)
     end
+  end
+
+  # The assignment each bare name in a `dependencies=[...]` list is bound
+  # to (`internal = Depends(require_internal)`; `dependencies=[internal]`),
+  # with the file that declares it.
+  private def dependency_variables(text : String, path : String) : Array({String, String})
+    found = [] of {String, String}
+    text.scan(DEPENDENCIES_LIST) do |list|
+      Noir::TopLevelSplit.split(list[1], ',', SPLIT_RULES).each do |item|
+        name = item.strip
+        next unless name.matches?(/\A[A-Za-z_][\w.]*\z/)
+        module_name, _, leaf = name.rpartition('.')
+        site = if module_name.empty?
+                 python_definition_site(path, leaf)
+               elsif (symbol = python_imported_symbols(path)[module_name]?) && symbol[1].empty?
+                 python_definition_site(symbol[0], leaf)
+               end
+        next unless site
+        statement = definition_block(site[0], /^#{Regex.escape(site[1])}\s*(?::[^=\n]+)?=\s*(?:Depends|Security)\s*\(/) || next
+        found << {statement, site[0]}
+      end
+    end
+    found
   end
 
   # `router = APIRouter(..., dependencies=[...])` (or `app = FastAPI(...)`)
