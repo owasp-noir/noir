@@ -262,4 +262,236 @@ describe "Nginx Analyzer" do
       {"/v[0-9]{1,2}/.+.json", "POST", "regex"},
     ])
   end
+
+  describe "access rules" do
+    guards = ->(endpoints : Array(Endpoint)) do
+      endpoints.map { |e| {e.url, e.tags.select { |t| t.name == "auth" }.map(&.description)} }.sort!
+    end
+
+    it "turns auth_basic, auth_request and allow/deny all into guards" do
+      endpoints = analyze_nginx <<-CONF
+        server {
+            location /admin/ {
+                allow 127.0.0.1;
+                deny all;
+                proxy_pass http://backend;
+            }
+            location /reports/ {
+                auth_basic "restricted";
+                auth_basic_user_file /etc/nginx/htpasswd;
+                proxy_pass http://backend;
+            }
+            location /items {
+                auth_request /_auth;
+                proxy_pass http://backend;
+            }
+            location /public {
+                proxy_pass http://backend;
+            }
+        }
+        CONF
+
+      guards.call(endpoints).should eq([
+        {"/admin/", ["Protected by nginx allow 127.0.0.1; deny all"]},
+        {"/items", ["Protected by nginx auth_request /_auth"]},
+        {"/public", [] of String},
+        {"/reports/", ["Protected by nginx auth_basic \"restricted\""]},
+      ])
+      reports = endpoints.find! { |e| e.url == "/reports/" }
+      reports.tags.find!(&.name.==("auth")).line.should eq(8)
+    end
+
+    it "inherits from server and http blocks unless a location overrides it" do
+      endpoints = analyze_nginx <<-CONF
+        http {
+            auth_basic "site";
+            server {
+                location /inherited { proxy_pass http://a; }
+                location /health {
+                    auth_basic off;
+                    proxy_pass http://a;
+                }
+                location /outer {
+                    location /outer/inner { proxy_pass http://a; }
+                    proxy_pass http://a;
+                }
+            }
+            server {
+                auth_basic off;
+                location /late { proxy_pass http://b; }
+                allow 10.0.0.0/8;
+                deny all;
+            }
+        }
+        CONF
+
+      guards.call(endpoints).should eq([
+        {"/health", [] of String},
+        {"/inherited", ["Protected by nginx auth_basic \"site\""]},
+        {"/late", ["Protected by nginx allow 10.0.0.0/8; deny all"]},
+        {"/outer", ["Protected by nginx auth_basic \"site\""]},
+        {"/outer/inner", ["Protected by nginx auth_basic \"site\""]},
+      ])
+    end
+
+    it "does not guard on open or unreachable access lists or on an if block" do
+      endpoints = analyze_nginx <<-CONF
+        server {
+            location /allow-all {
+                allow all;
+                deny all;
+                proxy_pass http://a;
+            }
+            location /blocklist {
+                deny 192.0.2.1;
+                proxy_pass http://a;
+            }
+            location /deny-only {
+                deny all;
+                proxy_pass http://a;
+            }
+            location /conditional {
+                if ($bad) {
+                    allow 127.0.0.1;
+                    deny all;
+                }
+                proxy_pass http://a;
+            }
+            location /limit {
+                limit_except GET { auth_basic "writes"; }
+                proxy_pass http://a;
+            }
+        }
+        CONF
+
+      endpoints.size.should eq(5)
+      guards.call(endpoints).each { |_, descriptions| descriptions.should be_empty }
+    end
+
+    # `satisfy any; allow all;` is how a sub-location of an auth_basic server
+    # is opened: either check is enough, and the address check admits all.
+    it "reads satisfy any as alternatives" do
+      endpoints = analyze_nginx <<-CONF
+        http {
+          server {
+            auth_basic "Restricted";
+            auth_basic_user_file /etc/nginx/.htpasswd;
+            location /admin { proxy_pass http://app; }
+            location /public {
+              satisfy any;
+              allow all;
+              proxy_pass http://app;
+            }
+          }
+          server {
+            location /sat {
+              satisfy any;
+              allow all;
+              auth_basic "x";
+              proxy_pass http://sat;
+            }
+            location /satok {
+              satisfy any;
+              allow 10.0.0.0/8;
+              deny all;
+              auth_basic "x";
+              proxy_pass http://satok;
+            }
+            location /all-allow {
+              satisfy all;
+              allow all;
+              auth_basic "x";
+              proxy_pass http://all;
+            }
+          }
+        }
+        CONF
+
+      guards.call(endpoints).should eq([
+        {"/admin", ["Protected by nginx auth_basic \"Restricted\""]},
+        {"/all-allow", ["Protected by nginx auth_basic \"x\""]},
+        {"/public", [] of String},
+        {"/sat", [] of String},
+        {"/satok", ["Protected by nginx auth_basic \"x\" or allow 10.0.0.0/8; deny all"]},
+      ])
+    end
+
+    # A template `if`, a template action in the value or an nginx variable
+    # decides the value at deploy time; `auth_basic $var` can be mapped to
+    # `off`. `${VAR}` braces are not blocks.
+    it "marks settings a template or variable decides" do
+      endpoints = analyze_nginx <<-CONF
+        server
+        {
+          listen 80;
+          location /tmpl {
+            {{ if .AuthEnabled }}
+            auth_basic "{{ .Realm }}";
+            {{ end }}
+            proxy_pass http://app;
+          }
+          location /envsubst {
+            auth_basic ${AUTH_REALM};
+            proxy_pass http://app;
+          }
+          location /var {
+            auth_basic $authvar;
+            proxy_pass http://app;
+          }
+          location /var-and-request {
+            auth_basic $authvar;
+            auth_request /auth;
+            proxy_pass http://app;
+          }
+          location /after {
+            auth_basic "plain";
+            proxy_pass http://app;
+          }
+        }
+        server {
+          auth_basic "site";
+          location /maybe-open {
+            {{ if .Public }}auth_basic off;{{ end }}
+            proxy_pass http://app;
+          }
+        }
+        CONF
+
+      guards.call(endpoints).should eq([
+        {"/after", ["Protected by nginx auth_basic \"plain\""]},
+        {"/envsubst", ["Protected by nginx auth_basic ${AUTH_REALM} (a setting can make it public)"]},
+        {"/maybe-open", ["Protected by nginx auth_basic \"site\" (a setting can make it public)"]},
+        {"/tmpl", ["Protected by nginx auth_basic (a setting can make it public)"]},
+        {"/var", ["Protected by nginx auth_basic $authvar (a setting can make it public)"]},
+        {"/var-and-request", ["Protected by nginx auth_basic $authvar, auth_request /auth"]},
+      ])
+    end
+
+    it "reads a server block whose brace is on the next line and http-level access lists" do
+      endpoints = analyze_nginx <<-CONF
+        http
+        {
+          allow 10.0.0.0/8;
+          deny all;
+          server
+          {
+            location /x { proxy_pass http://x; }
+            location /y { allow all; proxy_pass http://y; }
+            location /z { deny 1.2.3.4; proxy_pass http://z; }
+          }
+          server {
+            auth_basic "x";
+            location /a { proxy_pass http://a; }
+          }
+        }
+        CONF
+
+      guards.call(endpoints).should eq([
+        {"/a", ["Protected by nginx auth_basic \"x\", allow 10.0.0.0/8; deny all"]},
+        {"/x", ["Protected by nginx allow 10.0.0.0/8; deny all"]},
+        {"/y", [] of String},
+        {"/z", [] of String},
+      ])
+    end
+  end
 end

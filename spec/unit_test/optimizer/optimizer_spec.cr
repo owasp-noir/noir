@@ -22,6 +22,57 @@ describe "EndpointOptimizer" do
   end
 
   describe "optimize_endpoints" do
+    # Two Ingress rules on different hosts route `/` to one row. The guard
+    # one of them declares does not protect the other.
+    describe "declared access guards" do
+      guarded = ->(url : String, path : String, line : Int32) do
+        endpoint = tech_endpoint(url, "GET", "k8s_ingress", path, line)
+        endpoint.add_tag(Tag.new("auth", "Protected by ingress-nginx auth-url https://a", Tag.declared_access_tagger("k8s_ingress")))
+        endpoint
+      end
+      auth_tags = ->(endpoint : Endpoint) { endpoint.tags.select { |tag| tag.name == "auth" } }
+
+      it "drops the guard when a declaration of the same technology is open" do
+        optimizer = EndpointOptimizer.new(logger, options)
+        open = -> { tech_endpoint("/", "GET", "k8s_ingress", "b.yaml", 3) }
+        {[guarded.call("/", "a.yaml", 3), open.call], [guarded.call("/", "c.yaml", 3), open.call],
+         [guarded.call("/", "a.yaml", 3), open.call, guarded.call("/", "c.yaml", 3)]}.each do |inputs|
+          result = optimizer.optimize_endpoints(inputs)
+          result.size.should eq(1)
+          auth_tags.call(result[0]).should be_empty
+        end
+      end
+
+      it "keeps the guard when every declaration states one" do
+        optimizer = EndpointOptimizer.new(logger, options)
+        result = optimizer.optimize_endpoints([guarded.call("/", "a.yaml", 3), guarded.call("/", "c.yaml", 9)])
+        result.size.should eq(1)
+        auth_tags.call(result[0]).size.should eq(1)
+      end
+
+      it "keeps an Ingress guard on the code route it merges into" do
+        optimizer = EndpointOptimizer.new(logger, options)
+        code = tech_endpoint("/", "GET", "js_express", "app.js", 2)
+        result = optimizer.optimize_endpoints([code, guarded.call("/", "a.yaml", 3)])
+        result.size.should eq(1)
+        auth_tags.call(result[0]).size.should eq(1)
+      end
+
+      # A generator's global `security` also covers the login route the code
+      # serves openly; the code's own guards decide.
+      it "drops an OAS security guard once code serves the route" do
+        optimizer = EndpointOptimizer.new(logger, options)
+        {"openapi.yaml", "z.yaml"}.each do |spec_path|
+          spec = tech_endpoint("/login", "POST", "oas3", spec_path, 3)
+          spec.add_tag(Tag.new("auth", "Protected by OAS security bearerAuth", Tag.declared_access_tagger("oas3")))
+          spec.add_tag(Tag.new("anonymous", "OAS security admits anonymous callers", Tag.declared_access_tagger("oas3")))
+          result = optimizer.optimize_endpoints([spec, tech_endpoint("/login", "POST", "go_gin", "server.go", 2)])
+          result.size.should eq(1)
+          result[0].tags.should be_empty
+        end
+      end
+    end
+
     it "folds an AI endpoint into the static route under a different param spelling" do
       optimizer = EndpointOptimizer.new(logger, options)
       static = tech_endpoint("/users/:id", "GET", "js_express", "server.js", 4)

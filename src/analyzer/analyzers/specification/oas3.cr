@@ -502,6 +502,7 @@ module Analyzer::Specification
     private def process_paths_json(doc : SpecDoc(JSON::Any), base_path : String, details : Details,
                                    line_index : Noir::SpecLineIndex)
       schemes = security_schemes_json(doc)
+      defined_schemes = defined_security_schemes(doc.root["components"]?.try(&.as_h?).try(&.["securitySchemes"]?))
       global_security = doc.root["security"]?
       paths = doc.root["paths"].as_h
       paths.each do |path, path_obj|
@@ -548,11 +549,8 @@ module Analyzer::Specification
           apply_security(effective_security, schemes, params)
 
           op_details = operation_details(details, line_index, ["paths", path, method])
-          if params.size > 0
-            @result << Endpoint.new(join_base_path(op_base, path), method.upcase, params, op_details)
-          else
-            @result << Endpoint.new(join_base_path(op_base, path), method.upcase, op_details)
-          end
+          push_operation(join_base_path(op_base, path), method.upcase, params, op_details, effective_security,
+            !declares_security?(method_obj), defined_schemes)
         rescue e
           record_skipped_entry(doc.path, "#{method.to_s.upcase} #{path}", e)
         end
@@ -568,6 +566,7 @@ module Analyzer::Specification
     private def process_paths_yaml(doc : SpecDoc(YAML::Any), base_path : String, details : Details,
                                    line_index : Noir::SpecLineIndex)
       schemes = security_schemes_yaml(doc)
+      defined_schemes = defined_security_schemes(doc.root[YAML::Any.new("components")]?.try(&.as_h?).try(&.[YAML::Any.new("securitySchemes")]?))
       global_security = doc.root[YAML::Any.new("security")]?
       paths = doc.root["paths"].as_h
       paths.each do |path, path_obj|
@@ -615,11 +614,8 @@ module Analyzer::Specification
           apply_security(effective_security, schemes, params)
 
           op_details = operation_details(details, line_index, ["paths", path.to_s, method.to_s])
-          if params.size > 0
-            @result << Endpoint.new(join_base_path(op_base, path.to_s), method.to_s.upcase, params, op_details)
-          else
-            @result << Endpoint.new(join_base_path(op_base, path.to_s), method.to_s.upcase, op_details)
-          end
+          push_operation(join_base_path(op_base, path.to_s), method.to_s.upcase, params, op_details, effective_security,
+            !declares_security?(method_obj), defined_schemes)
         rescue e
           record_skipped_entry(doc.path, "#{method.to_s.upcase} #{path}", e)
         end

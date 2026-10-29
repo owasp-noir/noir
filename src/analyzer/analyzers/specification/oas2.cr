@@ -280,6 +280,7 @@ module Analyzer::Specification
       # own. Only the path items and what hangs off them travel.
       doc = SpecDoc.new(json_obj, swagger_json)
       schemes = security_schemes_json(json_obj)
+      defined_schemes = defined_security_schemes(json_obj["securityDefinitions"]?)
       global_security = json_obj["security"]?
       begin
         paths = json_obj["paths"].as_h
@@ -319,11 +320,8 @@ module Analyzer::Specification
             apply_security(effective_security, schemes, params)
 
             op_details = operation_details(details, line_index, ["paths", path, method])
-            if params.size > 0
-              @result << Endpoint.new(base_path + path, method.upcase, params, op_details)
-            else
-              @result << Endpoint.new(base_path + path, method.upcase, op_details)
-            end
+            push_operation(base_path + path, method.upcase, params, op_details, effective_security,
+              !declares_security?(method_obj), defined_schemes)
           rescue e
             record_skipped_entry(swagger_json, "#{method.to_s.upcase} #{path}", e)
           end
@@ -356,6 +354,7 @@ module Analyzer::Specification
       # from the entry document.
       doc = SpecDoc.new(yaml_obj, swagger_yaml)
       schemes = security_schemes_yaml(yaml_obj)
+      defined_schemes = defined_security_schemes(yaml_obj[YAML::Any.new("securityDefinitions")]?)
       global_security = yaml_obj[YAML::Any.new("security")]?
       begin
         paths = yaml_obj["paths"].as_h
@@ -398,11 +397,8 @@ module Analyzer::Specification
             apply_security(effective_security, schemes, params)
 
             op_details = operation_details(details, line_index, ["paths", path.to_s, method.to_s])
-            if params.size > 0
-              @result << Endpoint.new(base_path + path.to_s, method.to_s.upcase, params, op_details)
-            else
-              @result << Endpoint.new(base_path + path.to_s, method.to_s.upcase, op_details)
-            end
+            push_operation(base_path + path.to_s, method.to_s.upcase, params, op_details, effective_security,
+              !declares_security?(method_obj), defined_schemes)
           rescue e
             record_skipped_entry(swagger_yaml, "#{method.to_s.upcase} #{path}", e)
           end

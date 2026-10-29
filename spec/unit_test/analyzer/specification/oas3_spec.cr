@@ -1,6 +1,8 @@
 require "../../../spec_helper"
 require "file_utils"
 require "../../../../src/analyzer/analyzers/specification/oas3"
+require "../../../../src/analyzer/analyzers/specification/oas2"
+require "../../../../src/ai_context/augmentor"
 require "../../../../src/models/code_locator"
 require "../../../../src/models/locator_keys"
 
@@ -119,5 +121,114 @@ describe "OAS3 Analyzer" do
       CodeLocator.instance.clear_all
       FileUtils.rm_rf(dir)
     end
+  end
+
+  # The effective `security` (operation-level, else global) is an auth guard;
+  # `[]` and an empty `{}` alternative admit anonymous callers.
+  it "turns the effective security requirement into an auth guard" do
+    dir = File.tempname("noir_oas3_security")
+    Dir.mkdir_p(dir)
+    begin
+      yaml = <<-YAML
+        openapi: 3.0.3
+        info: {title: Items API, version: 1.0.0}
+        security:
+          - bearerAuth: []
+        components:
+          securitySchemes:
+            bearerAuth: {type: http, scheme: bearer}
+            apiKey: {type: apiKey, in: header, name: X-API-Key}
+        paths:
+          /items:
+            post:
+              responses: {'201': {description: created}}
+          /items/{item_id}:
+            delete:
+              security:
+                - bearerAuth: []
+                  apiKey: []
+                - apiKey: []
+              parameters:
+                - {name: item_id, in: path, required: true, schema: {type: string}}
+              responses: {'204': {description: deleted}}
+          /public/feedback:
+            post:
+              security: []
+              responses: {'200': {description: ok}}
+          /maybe:
+            post:
+              security:
+                - {}
+                - bearerAuth: []
+              responses: {'200': {description: ok}}
+          /undefined:
+            get:
+              security:
+                - nosuch: []
+              responses: {'200': {description: ok}}
+          /partly-undefined:
+            get:
+              security:
+                - nosuch: []
+                - bearerAuth: []
+                  nosuch: []
+                - apiKey: []
+              responses: {'200': {description: ok}}
+        YAML
+      File.write(File.join(dir, "openapi.yaml"), yaml)
+      File.write(File.join(dir, "openapi.json"), YAML.parse(yaml).to_json)
+      CodeLocator.instance.clear_all
+      CodeLocator.instance.push(Noir::LocatorKeys::OAS3_YAML, File.join(dir, "openapi.yaml"))
+      CodeLocator.instance.push(Noir::LocatorKeys::OAS3_JSON, File.join(dir, "openapi.json"))
+      options = create_test_options
+      options["base"] = YAML::Any.new([YAML::Any.new(dir)])
+
+      endpoints = Analyzer::Specification::Oas3.new(options).analyze
+      endpoints.size.should eq(12)
+      endpoints.each do |endpoint|
+        details = endpoint.details
+        details.technology = "oas3"
+        endpoint.details = details
+      end
+      tags = endpoints.map { |e| {e.url, e.tags.map { |t| {t.name, t.description} }} }.uniq!
+      tags.should eq([
+        {"/items", [{"auth", "Protected by OAS security bearerAuth (inherited from the spec's root security)"}]},
+        {"/items/{item_id}", [{"auth", "Protected by OAS security bearerAuth + apiKey or apiKey"}]},
+        {"/public/feedback", [{"anonymous", "OAS security admits anonymous callers"}]},
+        {"/maybe", [{"anonymous", "OAS security admits anonymous callers"}]},
+        # A scheme the document never defines guards nothing.
+        {"/undefined", [] of Tuple(String, String)},
+        {"/partly-undefined", [{"auth", "Protected by OAS security apiKey"}]},
+      ])
+
+      signals = NoirAIContext.apply(endpoints[0, 4]).to_h do |endpoint|
+        context = endpoint.ai_context.should_not be_nil
+        {endpoint.url, context.guards.map(&.kind) + context.signals.map(&.kind).select(&.in?("guard_absence", "idor_review"))}
+      end
+      signals["/items"].should eq(["auth_guard"])
+      signals["/items/{item_id}"].should eq(["auth_guard"])
+      signals["/public/feedback"].should eq(["guard_absence"])
+    ensure
+      CodeLocator.instance.clear_all
+      FileUtils.rm_rf(dir)
+    end
+  end
+
+  it "reads Swagger 2 security the same way" do
+    CodeLocator.instance.clear_all
+    fixture = "./spec/functional_test/fixtures/specification/oas2_security/doc.yml"
+    CodeLocator.instance.push(Noir::LocatorKeys::SWAGGER_YAML, fixture)
+    options = create_test_options
+    options["base"] = YAML::Any.new([YAML::Any.new("./spec/functional_test/fixtures/specification/oas2_security")])
+
+    tags = Analyzer::Specification::Oas2.new(options).analyze.map { |e| {e.method, e.url, e.tags.map(&.description)} }
+    tags.should eq([
+      {"GET", "/v1/items", ["Protected by OAS security ApiKeyHeader (inherited from the spec's root security)"]},
+      {"POST", "/v1/items", ["Protected by OAS security BasicAuth"]},
+      {"GET", "/v1/public", ["OAS security admits anonymous callers"]},
+      {"GET", "/v1/search", ["Protected by OAS security ApiKeyQuery"]},
+    ])
+  ensure
+    CodeLocator.instance.clear_all
   end
 end
