@@ -1958,7 +1958,10 @@ module Analyzer::Python
     # literal tuple or list of key names.
     KEYS_CALL_RE = /(?<![\w.])([A-Za-z_][\w.]*)\(\s*([A-Za-z_]\w*)\s*,\s*[(\[]((?:\s*[rbu]?['"][^'"]*['"]\s*,?)+)[)\]]/
     # `Form(request.form)`: a WTForms form bound to the posted form data.
-    FORM_BIND_RE  = /(?<![\w.])([A-Za-z_][\w.]*)\(\s*(?:formdata\s*=\s*)?request\.form\b/
+    FORM_BIND_RE = /(?<![\w.])([A-Za-z_][\w.]*)\(\s*(?:formdata\s*=\s*)?request\.form\b/
+    # `LoginForm()`: a Flask-WTF form binds the posted form data itself,
+    # unless handed its source (`formdata=None`, `request.args`).
+    FORM_CALL_RE  = /(?<![\w.])([A-Za-z_][\w.]*)\((?!(?:[^()\n]|\([^()\n]*\))*\bformdata\s*=)(?!\s*request\.)/
     FORM_FIELD_RE = /^\s+([A-Za-z_]\w*)\s*=\s*(?:[A-Za-z_]\w*\.)*\w*Field\s*\(/
 
     # Request params the handler body reads through code it calls, judged
@@ -1980,16 +1983,19 @@ module Analyzer::Python
           m[3].scan(/['"]([^'"]*)['"]/) { |k| params << Param.new(k[1], "", "json") }
         end
       end
-      if body.includes?("request.form")
-        body.scan(FORM_BIND_RE) do |m|
-          next unless target = class_definition(path, m[1])
-          form_lines, class_index = target
-          indent = form_lines[class_index].size - form_lines[class_index].lstrip.size
+      forms = Set(::String).new
+      body.scan(FORM_BIND_RE) { |m| forms << m[1] } if body.includes?("request.form")
+      body.scan(FORM_CALL_RE) { |m| forms << m[1] if m[1].rpartition('.')[2][0]?.try(&.uppercase?) && flask_form?(path, m[1]) }
+      forms.each do |form|
+        form_lines, class_index, form_path = class_definition(path, form) || next
+        # The fields of the form and of the project forms it inherits.
+        class_view_chain(form_path, form_lines, class_index).each do |link|
+          _, header_end = python_class_header(link.lines, link.def_index)
           body_indent = nil
-          form_lines[(class_index + 1)..].each do |line|
+          link.lines[(header_end + 1)..].each do |line|
             next if line.blank?
             line_indent = line.size - line.lstrip.size
-            break if line_indent <= indent
+            break if line_indent <= link.indent
             # The form's own fields: a nested `class Meta:` is not one.
             next unless line_indent == (body_indent ||= line_indent)
             if field = line.match(FORM_FIELD_RE)
@@ -2051,12 +2057,26 @@ module Analyzer::Python
       nil
     end
 
-    private def class_definition(path : ::String, name : ::String) : Tuple(Array(::String), Int32)?
+    private def class_definition(path : ::String, name : ::String) : Tuple(Array(::String), Int32, ::String)?
       target = imported_declaration(path, name) || (name.includes?('.') ? return : {path, name})
       return if target[1].empty?
       lines = fetch_file_lines(target[0])
       idx = find_python_class_def(lines, target[1])
-      {lines, idx} if idx >= 0
+      {lines, idx, target[0]} if idx >= 0
+    end
+
+    @flask_forms = Hash(Tuple(::String, ::String), Bool).new
+
+    # Whether class `name`, as `path` refers to it, is a Flask-WTF form:
+    # `FlaskForm` is among its bases, directly or through project ones.
+    private def flask_form?(path : ::String, name : ::String) : Bool
+      @flask_forms.fetch({path, name}) do
+        @flask_forms[{path, name}] = !!class_definition(path, name).try do |(lines, idx, file)|
+          class_view_chain(file, lines, idx).any? do |link|
+            python_class_header(link.lines, link.def_index)[0].matches?(/[(,\s.]FlaskForm\s*[,)\[]/)
+          end
+        end
+      end
     end
 
     # Whether `name` reads, from its first argument, each key its second

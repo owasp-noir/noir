@@ -1138,6 +1138,17 @@ module Analyzer::Python
         next if param.name == "*" || path_param_names.includes?(param.name)
         next if param.name.in?(%w[self cls])
         next if param.type == "WebSocket"
+        # `common: CommonParameters`, a module-level `Annotated[...]` alias:
+        # read as the expression it names, in the file that assigns it.
+        if depth < 3 && VAR_NAME_FULL_RE.matches?(param.type) &&
+           (import_modules.has_key?(param.type) || source.includes?("Annotated") || source.includes?("import *")) &&
+           (alias_site = annotated_alias(param.type, source, path, base_path))
+          expression, alias_source, alias_path = alias_site
+          default = param.default.empty? ? "" : " = #{param.default}"
+          params.concat(extract_fastapi_handler_params(["def _(#{param.name}: #{expression}#{default}):"], 0, route_path, alias_source,
+            find_fastapi_imported_modules(base_path, alias_path, alias_source), alias_path, base_path, depth + 1))
+          next
+        end
         # `Depends()` on a password-flow form model reads the two
         # `application/x-www-form-urlencoded` fields the client must send.
         if param.type.includes?("OAuth2PasswordRequestForm")
@@ -1421,23 +1432,41 @@ module Analyzer::Python
     #
     # With `function`, the same for a top-level `def model`.
     private def model_site(model : ::String, source : ::String, path : ::String, base_path : ::String,
-                           depth : Int32 = 0, function : Bool = false) : Tuple(::String, ::String)?
+                           depth : Int32 = 0, function : Bool = false, defined : Regex? = nil) : Tuple(::String, ::String)?
       escaped = Regex.escape(model)
-      defined = function ? /^(?:async\s+)?def\s+#{escaped}\s*\(/m : /^\s*class\s+#{escaped}\s*[(:]/m
+      defined ||= function ? /^(?:async\s+)?def\s+#{escaped}\s*\(/m : /^\s*class\s+#{escaped}\s*[(:]/m
       return {source, path} if source.matches?(defined)
       return if depth > 5
       imports = find_fastapi_imported_modules(base_path, path, source)
       if (info = imports[model]?) && !info[0].empty? && info[0] != path
-        return model_site(model, read_file_content(info[0]), info[0], base_path, depth + 1, function)
+        return model_site(model, read_file_content(info[0]), info[0], base_path, depth + 1, function, defined)
       end
       source.scan(STAR_IMPORT_RE) do |m|
         target = Noir::ImportGraph::Python.find_imported_symbols(base_path, path, "from #{m[1]} import #{model}")[model]?
         next if target.nil? || target[0].empty? || target[0] == path
-        if found = model_site(model, read_file_content(target[0]), target[0], base_path, depth + 1, function)
+        if found = model_site(model, read_file_content(target[0]), target[0], base_path, depth + 1, function, defined)
           return found
         end
       end
       nil
+    end
+
+    @annotated_aliases = Hash(Tuple(::String, ::String), Tuple(::String, ::String, ::String)?).new
+
+    # The `Annotated[...]` expression a module-level alias names
+    # (`CommonParameters = Annotated[dict, Depends(f)]`, possibly over
+    # several lines), with the source and path of the file assigning it,
+    # followed through imports.
+    private def annotated_alias(name : ::String, source : ::String, path : ::String,
+                                base_path : ::String) : Tuple(::String, ::String, ::String)?
+      @annotated_aliases.fetch({path, name}) do
+        defined = /^#{Regex.escape(name)}\s*(?::[^=\n]+)?=\s*(?:[A-Za-z_]\w*\.)?Annotated\s*\[/m
+        @annotated_aliases[{path, name}] = if site = model_site(name, source, path, base_path, defined: defined)
+                                             fold_python_continuations(site[0].split("\n")).find(&.matches?(defined)).try do |line|
+                                               {line.split('=', 2)[1].strip, site[0], site[1]}
+                                             end
+                                           end
+      end
     end
 
     DEPENDS_CALLEE_RE = /\b(?:Depends|Security)\s*\(\s*(?:dependency\s*=\s*)?(#{PYTHON_VAR_NAME_REGEX}(?:\.#{PYTHON_VAR_NAME_REGEX})?)\s*[,)]/
