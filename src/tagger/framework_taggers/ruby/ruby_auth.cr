@@ -410,14 +410,12 @@ class RubyAuthTagger < FrameworkTagger
     other && setting_lifted?(current) && !setting_lifted?(other) ? other : current
   end
 
-  # Every class and module under a `controllers` directory.
+  # Every class and module under a `controllers` directory, and the `lib/`
+  # modules those controllers include.
   private def rails_chain : Noir::RailsCallbackChain
-    @rails_chain ||= Noir::RailsCallbackChain.new.tap do |chain|
-      collect_files_by_extension(".rb").each do |path|
-        next unless base_relative_path(path).includes?("controllers")
-        next unless lines = read_file_lines(path)
-        chain.add_file(path, lines)
-      end
+    @rails_chain ||= begin
+      controllers, others = collect_files_by_extension(".rb").partition { |path| base_relative_path(path).includes?("controllers") }
+      Noir::RailsCallbackChain.build(controllers, others) { |path| read_file_lines(path) }
     end
   end
 
@@ -442,7 +440,8 @@ class RubyAuthTagger < FrameworkTagger
   private def callback_guard(callback : String, chain : Noir::RailsCallbackChain::Resolution?) : String?
     ivars = caller_ivars_before(callback, chain)
     paths = chain.try(&.paths) || [] of String
-    key = deny_key(callback, ivars, paths)
+    settings = chain.try(&.settings) || NO_SETTINGS
+    key = deny_key(callback, ivars, paths, settings)
     return @callback_guards[key] if @callback_guards.has_key?(key)
     desc = BEFORE_ACTION_AUTHN_PATTERNS.find { |pattern, _| "before_action :#{callback}".matches?(pattern) }.try(&.[1])
     if desc
@@ -451,7 +450,7 @@ class RubyAuthTagger < FrameworkTagger
       elsif !library_guard_rejects?(callback)
         desc = nil
       end
-    elsif rails_chain.defs.has_key?(callback) && denies_anonymous?(callback, ivars, paths)
+    elsif rails_chain.defs.has_key?(callback) && denies_anonymous?(callback, ivars, paths, settings)
       desc = if setting = @deny_settings[key]?
                "#{callback} (app-defined, refuses callers without a credential; `#{setting}` decides; #{SETTING_LIFTED})"
              else
@@ -492,8 +491,32 @@ class RubyAuthTagger < FrameworkTagger
              elsif body_rejects?(callback, Set(String).new)
                desc
              end
+    elsif desc.nil? && rails_chain.defs.has_key?(callback) && (role = role_denied(callback, paths))
+      desc = "#{callback} (app-defined, refuses callers without #{role})"
     end
     @callback_authz[key] = desc
+  end
+
+  # A role or permission check on the caller: `current_user.admin?`, `can?(:x)`.
+  ROLE_CHECK = /\.(?:\w*admin|staff|moderator|superuser)\?|\b(?:can|has_role|has_permission)\?|\.role\b/
+
+  # The role check a deny in `name`'s own body refuses on (`raise
+  # InvalidAccess unless current_user && current_user.admin?`), under no
+  # condition that lets an anonymous caller past it; nil when there is none.
+  # ponytail: the callback's own body only, not the helpers it calls.
+  private def role_denied(name : String, paths : Array(String)) : String?
+    def_bodies(name, own_defs(name, paths)).each do |body|
+      body.each_with_index do |(_, text), i|
+        next unless text.matches?(DENY_RESPONSE) || text.matches?(SOFT_DENY)
+        next if credential_gated?(body, i)
+        next unless conditions = deny_conditions(body, i)
+        parts = deny_parts(conditions)
+        next if parts.any? { |c, when_true| credential_present?(c, when_true, Hash(String, String).new, [] of String) }
+        parts.each do |c, when_true|
+          return c[ROLE_CHECK].lchop('.') if c.matches?(ROLE_CHECK) && c.matches?(NEGATED) == when_true
+        end
+      end
+    end
   end
 
   # The policy query (`InternalPolicy#access?`) a body line of `name`
@@ -527,7 +550,10 @@ class RubyAuthTagger < FrameworkTagger
       body.each_with_index.any? do |(_, text), i|
         rejects = text.matches?(CALLBACK_REJECTS) || (top && text.matches?(/\bsuper\b/) && library_guard_rejects?(name)) ||
                   text.scan(/\b[a-z_]\w*[!?]?/).any? { |m| rails_chain.defs.has_key?(m[0]) && body_rejects?(m[0], visited) }
-        rejects && !credential_gated?(body, i) && !text.matches?(CREDENTIAL_PRESENT_MODIFIER)
+        # `return nil if request.headers["Api-Key"].blank?` above a `raise`
+        # lets a caller who sent no credential through: the raise refuses a
+        # bad one, not an anonymous caller.
+        rejects && !credential_gated?(body, i) && !text.matches?(CREDENTIAL_PRESENT_MODIFIER) && !deny_conditions(body, i).nil?
       end
     end
   end
@@ -553,7 +579,7 @@ class RubyAuthTagger < FrameworkTagger
   # An explicit 401/403 answer.
   DENY_RESPONSE = /\bhead\s*\(?\s*(?::unauthorized|:forbidden|401|403)\b|\bstatus(?::|\s*=>)\s*(?::unauthorized\b|:forbidden\b|40[13]\b)/
   # The words a request credential is spelled with.
-  CREDENTIAL_WORD = /token|session|bearer|jwt|authoriz|api_?key|signature|hmac|secret|password|current_user|signed_in|logged_in/i
+  CREDENTIAL_WORD = /token|session|bearer|jwt|authoriz|api[-_]?key|signature|hmac|secret|password|current_user|signed_in|logged_in/i
   # `return if <no credential>` / `return unless <credential>`.
   ANONYMOUS_EXIT     = /^return\b.*\s(if|unless)\s+(.+)\z/
   CONDITION_MODIFIER = /\s(if|unless)\s+(.+)\z/
@@ -576,9 +602,9 @@ class RubyAuthTagger < FrameworkTagger
   # ponytail: one assignment hop links a condition to a credential (or the
   # instance variable an earlier callback sets from one, `ivars`); a longer
   # chain reads as no guard.
-  private def denies_anonymous?(name : String, ivars : Array(String), paths : Array(String), visited : Set(String) = Set(String).new) : Bool
+  private def denies_anonymous?(name : String, ivars : Array(String), paths : Array(String), settings : Set(String), visited : Set(String) = Set(String).new) : Bool
     top = visited.empty?
-    key = deny_key(name, ivars, paths)
+    key = deny_key(name, ivars, paths, settings)
     return @denies_anonymous[key] if top && @denies_anonymous.has_key?(key)
     return false unless visited.add?(name)
     # Each deny that refuses an anonymous caller: the setting it also waits
@@ -589,11 +615,11 @@ class RubyAuthTagger < FrameworkTagger
       body.each { |_, text| (m = text.match(/^(@?\w+)\s*\|{0,2}=(?!=)\s*(.+)/)) && (assigns[m[1]] = m[2]) }
       body.each_with_index do |(_, text), i|
         strict = text.matches?(DENY_RESPONSE) || text.scan(/\b[a-z_]\w*[!?]?/).any? { |m| always_denies?(m[0]) } ||
-                 text.scan(BARE_CALL).any? { |m| m[0] != name && rails_chain.defs.has_key?(m[0]) && denies_anonymous?(m[0], ivars, paths, visited) }
+                 text.scan(BARE_CALL).any? { |m| m[0] != name && rails_chain.defs.has_key?(m[0]) && denies_anonymous?(m[0], ivars, paths, settings, visited) }
         next unless strict || text.matches?(SOFT_DENY)
         next if credential_gated?(body, i) || text.matches?(CREDENTIAL_PRESENT_MODIFIER)
         next unless conditions = deny_conditions(body, i)
-        parts = deny_parts(conditions)
+        next unless parts = class_settings(deny_parts(conditions), settings)
         next if parts.any? { |c, when_true| credential_present?(c, when_true, assigns, ivars) }
         next unless (strict && parts.empty?) || parts.any? { |c, when_true| credential_absent?(c, when_true, assigns, ivars) }
         chosen = parts.select { |c, _| c.matches?(PARAMS_READ) && !credential_condition?(c, assigns, ivars) }
@@ -626,8 +652,49 @@ class RubyAuthTagger < FrameworkTagger
     own.empty? ? defs : own
   end
 
-  private def deny_key(name : String, ivars : Array(String), paths : Array(String)) : String
-    "#{name}|#{ivars.join(',')}|#{own_defs(name, paths).join(',')}"
+  NO_SETTINGS = Set(String).new
+
+  private def deny_key(name : String, ivars : Array(String), paths : Array(String), settings : Set(String)) : String
+    # A deny on `self.class.<setting>`, in this callback or one it calls,
+    # answers per the class macros the routed class calls for the action.
+    "#{name}|#{ivars.join(',')}|#{own_defs(name, paths).join(',')}|#{settings.join(',')}"
+  end
+
+  # `if arg = self.class.requires_login_arg`: a class setting the routed
+  # controller turns on by calling the class macro that assigns it
+  # (`requires_login`, a `def self.requires_login` storing
+  # `@requires_login_arg`); `settings` are the macros it calls for this
+  # action (see `RailsCallbackChain::Resolution#settings`). Such a part is
+  # dropped when the setting holds the way the deny needs; nil when it does
+  # not, so the deny never fires. A setting no macro is found for stays a
+  # plain condition.
+  CLASS_SETTING = /\A(?:@?\w+\s*=\s*)?(!\s*)?self\.class\.(\w+\??)\z/
+
+  private def class_settings(parts : Array({String, Bool}), settings : Set(String)) : Array({String, Bool})?
+    return parts unless parts.any?(&.[0].includes?("self.class."))
+    kept = [] of {String, Bool}
+    parts.each do |condition, when_true|
+      m = condition.match(CLASS_SETTING)
+      macros = m.try { |match| setting_macros(match[2]) }
+      if m.nil? || macros.nil? || macros.empty?
+        kept << {condition, when_true}
+        next
+      end
+      set = macros.any? { |name| settings.includes?(name) }
+      return unless (set != !m[1]?.nil?) == when_true
+    end
+    kept
+  end
+
+  # The class macros that assign the instance variable the class method
+  # `reader` returns.
+  private def setting_macros(reader : String) : Array(String)?
+    return unless body = def_bodies(reader).first?
+    return unless ivar = body[1..].join(" ", &.[1])[/\A!*(@\w+)\z/, 1]?
+    assigns = /\A#{Regex.escape(ivar)}\s*=(?!=)/
+    rails_chain.macros.keys.select do |name|
+      def_bodies(name).any?(&.any? { |_, text| text.matches?(assigns) })
+    end
   end
 
   # A request value read off `params`.
@@ -649,8 +716,10 @@ class RubyAuthTagger < FrameworkTagger
 
   # A call with no receiver: `require_login`, not `cookies.delete`.
   BARE_CALL = /(?<![.:@\w])[a-z_]\w*[!?]?/
-  # A redirect, or a 4xx answer other than 401/403, from a callback.
-  SOFT_DENY = /\bredirect_(?:to|back(?:_or_to)?)\b|\bhead\s*\(?\s*(?::bad_request|:not_found|4\d\d)\b|\bstatus(?::|\s*=>)\s*(?::bad_request\b|:not_found\b|4\d\d\b)/
+  # A redirect, a `raise` (an app's `rescue_from` answers it, Discourse's
+  # `raise Discourse::NotLoggedIn`), or a 4xx answer other than 401/403,
+  # from a callback.
+  SOFT_DENY = /\bredirect_(?:to|back(?:_or_to)?)\b|(?<![\w.:])raise\b|\bhead\s*\(?\s*(?::bad_request|:not_found|4\d\d)\b|\bstatus(?::|\s*=>)\s*(?::bad_request\b|:not_found\b|4\d\d\b)/
 
   # Whether the helper `name` (`render_unauthorized`) answers 401/403 on a
   # line of its own body that no condition guards.
@@ -816,7 +885,7 @@ class RubyAuthTagger < FrameworkTagger
           anonymous ||= policy
         else
           # An unresolved policy keeps the call's plain-form reading.
-          return {authz: "Pundit authorize", anonymous: nil} if current.matches?(/\bauthorize\s+@?\w+/)
+          return {authz: "Pundit authorize", anonymous: nil} if current.matches?(/\bauthorize\s*\(?\s*(?:[@:]?\w+|\[)/)
         end
       end
       ACTION_AUTH_PATTERNS.each do |pattern, desc|
@@ -853,9 +922,11 @@ class RubyAuthTagger < FrameworkTagger
   # convention (`@status` / `Status` / `:status` →
   # `policies/status_policy.rb`); a record held in a method is unknown.
   PUNDIT_ARGS = /(?<![.\w])authorize\s*\(?\s*([:@]?\w+|[A-Z][\w:]*)(?:\s*,\s*:(\w+[?!]?))?/
+  # The namespaced form, `authorize [:admin, @status], :review?`.
+  PUNDIT_ARRAY = /(?<![.\w])authorize\s*\(?\s*\[([^\[\]]*)\](?:\s*,\s*:(\w+[?!]?))?/
   # A Pundit `authorize` call: it raises `NotAuthorizedError` when the
   # policy query answers false.
-  PUNDIT_AUTHORIZE = /(?<![.\w])authorize(?:\s*\(|\s+(?=[:@A-Za-z_]))/
+  PUNDIT_AUTHORIZE = /(?<![.\w])authorize(?:\s*\(|\s+(?=[:@A-Za-z_\[]))/
   # A query body line that lets a nil user pass.
   NIL_USER          = /@?(?:current_)?(?:user|account)/
   NIL_ADMITS        = /\A(?:return\s+true\s+unless\s+#{NIL_USER}\s*\z|return\s+true\s+if\s+(?:!\s*#{NIL_USER}\s*|#{NIL_USER}\.(?:nil|blank)\?\s*)\z)|(?:#{NIL_USER}\.(?:nil|blank)\?|!\s*#{NIL_USER}(?![\w.&?])|!\s*user_signed_in\?)\s*(?:\|\||\bor\b|\z)/
@@ -863,11 +934,18 @@ class RubyAuthTagger < FrameworkTagger
   USER_PRESENT_EXIT = /\Areturn\b.*\sif\s+#{NIL_USER}(?:\.present\?)?\s*\z/
 
   private def pundit_verdict(line : String, action : String?) : {Symbol, String?}
+    # `authorize [:admin, :status], :review?` asks `Admin::StatusPolicy`.
+    policy = line.match(/\bpolicy_class:\s*([A-Z][\w:]*)/).try(&.[1])
+    namespace = ""
+    if array = line.match(PUNDIT_ARRAY)
+      items = array[1].split(',').map(&.strip)
+      namespace = items[0...-1].join { |item| "#{item.lchop(':').camelcase}::" }
+      line = "authorize #{items.last? || ""}#{array[2]?.try { |query| ", :#{query}" }}"
+    end
     return {:unknown, nil} unless m = line.match(PUNDIT_ARGS)
     record = m[1]
     query = m[2]? || action.try { |name| "#{name}?" }
-    policy = line.match(/\bpolicy_class:\s*([A-Z][\w:]*)/).try(&.[1])
-    policy ||= "#{record.lchop('@').lchop(':').camelcase}Policy" if record[0].in?('@', ':') || record[0].ascii_uppercase?
+    policy ||= "#{namespace}#{record.lchop('@').lchop(':').camelcase}Policy" if record[0].in?('@', ':') || record[0].ascii_uppercase?
     return {:unknown, nil} unless query && policy
     label = "#{policy}##{query}"
     {@pundit_verdicts.put_if_absent(label) { policy_verdict(policy, query, 0) }, label}
@@ -924,6 +1002,13 @@ class RubyAuthTagger < FrameworkTagger
       indent = line_indent(lines[def_idx])
       return lines[(def_idx + 1)..].take_while { |source| source.strip.empty? || line_indent(source) > indent }
         .map { |source| code_only(source.strip) }.reject(&.empty?)
+    end
+    # `alias purge? index?` / `alias_method :purge?, :index?` answers what
+    # the aliased query does.
+    unless singleton
+      alias_line = /\A\s*alias(?:_method)?\s+:?#{head}(?![\w?!])\s*,?\s*:?(\w+[?!]?)/
+      aliased = lines.compact_map { |source| source.match(alias_line).try(&.[1]) }.first?
+      return policy_def(policy, aliased, singleton, depth + 1) if aliased && aliased != name
     end
     parent = lines.compact_map { |source| source.match(/\A\s*class\s+[\w:]+\s*<\s*([A-Z][\w:]*)/).try(&.[1]) }.first?
     parent.try { |name_of_parent| policy_def(name_of_parent, name, singleton, depth + 1) }

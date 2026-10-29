@@ -17,9 +17,12 @@ module Noir
     # under an `if:` condition (see `conditional?`), and the active callbacks
     # a `skip_before_action ..., if:` / `unless:` lifts on a condition, with
     # that condition's text, and the CanCanCan `authorize_resource` /
-    # `load_and_authorize_resource` statements left active for the action.
+    # `load_and_authorize_resource` statements left active for the action,
+    # and the class macros (`requires_login`) the class's own body calls for
+    # the action, which may set what a callback reads off `self.class`.
     record Resolution, callbacks : Array(String), paths : Array(String), conditional : Set(String),
-      lifted : Hash(String, String) = Hash(String, String).new, cancan : Array(String) = [] of String
+      lifted : Hash(String, String) = Hash(String, String).new, cancan : Array(String) = [] of String,
+      settings : Set(String) = Set(String).new
 
     # Class-body lines that change the callback chain a subclass inherits.
     CALLBACK_LINE = /^(?:include|(?:prepend_|skip_)?before_action|allow_unauthenticated_access|(?:skip_)?(?:load_and_)?authorize_resource)\b/
@@ -74,6 +77,12 @@ module Noir
 
     getter classes = Hash({String, Int32}, Klass).new
     getter defs = Hash(String, Array({String, Int32})).new
+    # A `def self.requires_login(arg = {})` body: the file defining it, the
+    # patterns that drop or bind the parameter the call's arguments go to,
+    # and the callback lines the body registers (`before_action
+    # :ensure_logged_in, arg`).
+    record ClassMacro, path : String, drop : Regex?, bind : Regex?, body : Array(String)
+    getter macros = Hash(String, Array(ClassMacro)).new
     @by_name = Hash(String, Array(Klass)).new
     @by_path = Hash(String, Array(Klass)).new
 
@@ -145,12 +154,17 @@ module Noir
     def add_file(path : String, lines : Array(String))
       stack = [] of {Klass, Int32}
       def_indent : Int32? = nil
+      macro_body : Array(String)? = nil
       lines.each_with_index do |line, idx|
         stripped = line.strip
         next if stripped.empty? || stripped.starts_with?('#')
         indent = line.size - line.lstrip.size
         if open_def = def_indent
-          def_indent = nil if indent <= open_def && stripped == "end"
+          if indent <= open_def && stripped == "end"
+            def_indent = nil
+          elsif (body = macro_body) && stripped.matches?(CALLBACK_LINE)
+            body << RailsCallbackChain.statement(lines, idx)
+          end
           next
         end
         while (top = stack.last?) && top[1] >= indent
@@ -164,13 +178,66 @@ module Noir
           (@by_name[full] ||= [] of Klass) << klass
           (@by_path[path] ||= [] of Klass) << klass
           stack << {klass, indent}
-        elsif m = stripped.match(/^def\s+(?:self\.)?(\w+[!?]?)/)
-          (@defs[m[1]] ||= [] of {String, Int32}) << {path, idx}
+        elsif m = stripped.match(/^def\s+(self\.)?(\w+[!?]?)/)
+          (@defs[m[2]] ||= [] of {String, Int32}) << {path, idx}
           def_indent = indent unless stripped.matches?(/\bend$|^def\s+[\w.?!]+(?:\([^)]*\))?\s*=[^=]/)
+          macro_body = nil
+          if m[1]? && def_indent
+            macro_body = [] of String
+            param = stripped.match(/\A[^(]*\(\s*\*{0,2}(\w+)/).try(&.[1])
+            (@macros[m[2]] ||= [] of ClassMacro) << ClassMacro.new(path, param.try { |name| /\s*,\s*\*{0,2}#{name}\b/ },
+              param.try { |name| /(?<![\w@:])\*{0,2}#{name}\b/ }, macro_body)
+          end
         elsif (top = stack.last?) && stripped.matches?(CALLBACK_LINE)
+          top[0].callbacks << RailsCallbackChain.statement(lines, idx)
+        elsif (top = stack.last?) && stripped.matches?(MACRO_CALL)
+          # A class macro the app may define (`requires_login`): kept for
+          # `apply_lines`, which expands it once every file is indexed.
           top[0].callbacks << RailsCallbackChain.statement(lines, idx)
         end
       end
+    end
+
+    # A class-body call with no receiver: `requires_login`, `requires_login only: [:x]`.
+    MACRO_CALL = /\A[a-z_]\w*[!?]?(?:\s+[^=\s]|\(|\z)/
+
+    # A chain over the `controllers` files, plus the `lib/` modules they (and
+    # the modules those pull in) include: a controller's concern kept outside
+    # `app/controllers`. `others` are the rest of the scan's Ruby files.
+    def self.build(controllers : Enumerable(String), others : Enumerable(String), & : String -> Array(String)?) : RailsCallbackChain
+      chain = new
+      controllers.each { |path| yield(path).try { |lines| chain.add_file(path, lines) } }
+      added = Set(String).new
+      4.times do
+        suffixes = chain.missing_include_paths.map { |lib_path| "/#{lib_path}" }
+        break if suffixes.empty?
+        found = others.select { |path| !added.includes?(path) && suffixes.any? { |suffix| path.ends_with?(suffix) } }
+        break if found.empty?
+        found.each do |path|
+          added << path
+          yield(path).try { |lines| chain.add_file(path, lines) }
+        end
+      end
+      chain
+    end
+
+    # The `lib/` paths Rails autoloads the modules indexed classes `include`
+    # from, for each one no indexed file declares: `include UploadHelpers` in
+    # `Admin::UploadsController` is `lib/admin/upload_helpers.rb` or
+    # `lib/upload_helpers.rb`, nearest namespace first, as Zeitwerk looks.
+    def missing_include_paths : Array(String)
+      @classes.values.flat_map do |klass|
+        scopes = klass.namespace.split("::", remove_empty: true)
+        klass.callbacks.select(&.starts_with?("include")).flat_map do |line|
+          line.scan(/[A-Z][\w:]*/).flat_map do |m|
+            next [] of String if lookup(m[0], klass.namespace)
+            name = m[0].lchop("::")
+            (m[0].starts_with?("::") ? 0 : scopes.size).downto(0).map do |n|
+              "lib/#{(scopes[0, n] + [name]).join("::").underscore.gsub("::", "/")}.rb"
+            end
+          end
+        end
+      end.uniq!
     end
 
     # The controller class `path` declares.
@@ -225,12 +292,12 @@ module Noir
     end
 
     private def apply_callbacks(klass : Klass, action : String?, resolution : Resolution, depth : Int32)
-      apply_lines(klass.callbacks, klass.namespace, action, resolution, depth)
+      apply_lines(klass.callbacks, klass.namespace, action, resolution, depth, klass.path)
       # After its concerns, so the reversed list puts a class before them.
       resolution.paths << klass.path
     end
 
-    private def apply_lines(lines : Array(String), namespace : String, action : String?, resolution : Resolution, depth : Int32)
+    private def apply_lines(lines : Array(String), namespace : String, action : String?, resolution : Resolution, depth : Int32, own_path : String? = nil)
       active = resolution.callbacks
       lines.each do |line|
         if line.starts_with?("include")
@@ -264,6 +331,24 @@ module Noir
               resolution.lifted.delete(name[1])
             end
           end
+        elsif !line.matches?(CALLBACK_LINE) && (macro_name = line[/\A[a-z_]\w*[!?]?/]?) && depth < 16 &&
+              (class_macro = @macros[macro_name]?.try(&.find { |defined| defined.path == own_path || resolution.paths.includes?(defined.path) }))
+          # A macro the class or one of its ancestors defines, its lines with
+          # the parameter bound to the call's arguments: `requires_login
+          # only: [:x]` registers `before_action :ensure_logged_in, only: [:x]`.
+          # ponytail: a class instance variable is the routed class's own, so
+          # only its body (depth 0) sets one; a `class_attribute` a parent
+          # sets reads as unset.
+          resolution.settings << macro_name if depth == 0 && RailsCallbackChain.applies_to_action?(line, action)
+          args = line[macro_name.size..].strip.lchop('(').rchop(')').strip
+          expanded = class_macro.body.map do |text|
+            if args.empty?
+              class_macro.drop.try { |drop| text.sub(drop, "") } || text
+            else
+              class_macro.bind.try { |bind| text.gsub(bind, args) } || text
+            end
+          end
+          apply_lines(expanded, namespace, action, resolution, depth + 1, own_path)
         elsif RailsCallbackChain.applies_to_action?(line, action)
           RailsCallbackChain.before_action_callbacks(line).each do |callback|
             # Registering a callback again replaces its options.
