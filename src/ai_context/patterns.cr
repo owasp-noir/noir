@@ -139,6 +139,12 @@ module NoirAIContext
     # dangerouslySetInnerHTML, Rails' html_safe / raw, Django /
     # Jinja's |safe + mark_safe / Markup, Vue's v-html, Svelte's
     # {@html ...}).
+    #
+    # `raw(` stays case-insensitive and open to a receiver, so Rails'
+    # `raw` / `helpers.raw`, Phoenix's `Phoenix.HTML.raw` and Razor's
+    # `Html.Raw` all count. Only the Express / body-parser raw body
+    # parser (`express.raw()`, `bodyParser.raw()`) is excluded: it reads
+    # the request body into a Buffer and writes no HTML.
     PatternDefinition.new(
       "xss",
       "Potential XSS sink — unsafe HTML output bypassing the framework's auto-escaping",
@@ -155,7 +161,7 @@ module NoirAIContext
         /\bmark_safe\s*\(/,
         /\|\s*safe\b/,
         /\.html_safe\b/,
-        /\braw\s*\(/i,
+        /(?<!\bexpress\.)(?<!\bbodyParser\.)\braw\s*\(/i,
         /\bbypassSecurityTrust(Html|Script|Style|Url|ResourceUrl)\b/,
       ]
     ),
