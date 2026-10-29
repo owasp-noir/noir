@@ -232,6 +232,11 @@ module Analyzer::Ruby
     @framework_roots = [] of String
     @controller_roots = Hash(String, Array(String)).new
     @replaying_concerns = Set(String).new
+    # Verbs a `def patch(*) end` in the draw block shadows on the mapper:
+    # `resources` registers `update` through `patch`, so no PATCH route is
+    # drawn, and explicit `patch "x"` lines are no-ops. Per draw (top-level
+    # routes file plus the files it `draw`s, which share its mapper).
+    @disabled_route_verbs = Set(String).new
 
     def analyze
       files = all_files.reject { |file| ruby_non_production_path?(file) }
@@ -281,6 +286,7 @@ module Analyzer::Ruby
 
     private def parse_routes_file(routes_path : String, framework_root : String)
       parsed_route_files = Set(String).new
+      @disabled_route_verbs = Set(String).new
       parse_routes_file(routes_path, framework_root, parsed_route_files, [] of Frame, {} of String => ConcernBody)
     end
 
@@ -491,6 +497,13 @@ module Analyzer::Ruby
         when "get", "post", "put", "patch", "delete", "head", "options", "query"
           handle_verb_route(directive.upcase, args, scan)
         when "match" then handle_match(args, scan)
+        when "def"
+          if m = args.match(/\A\s*(get|post|put|patch|delete)\b/)
+            @disabled_route_verbs << m[1].upcase
+          end
+          # A multi-line `def` body ends with its own `end`; without a frame
+          # that `end` would pop the enclosing scope.
+          scan.stack << Frame.new(:neutral) unless line.matches?(/\bend\b/)
         else
           # Unknown DSL line that still opens a block (e.g. `constraints ... do`).
           scan.stack << Frame.new(:neutral) if opens_block
@@ -913,6 +926,7 @@ module Analyzer::Ruby
     # verb routes, in their three shapes (resource action symbol, standalone
     # symbol segment, path literal).
     private def handle_verb_route(verb : String, rest : String, scan : RouteFileState)
+      return if @disabled_route_verbs.includes?(verb)
       stack = scan.stack
       options = parse_options(rest)
 
@@ -1395,7 +1409,11 @@ module Analyzer::Ruby
         to_action = m[2]
       end
       file_base = if ctrl_override
-                    ctrl_override.includes?('/') ? ctrl_override : (controller_subdir.empty? ? ctrl_override : "#{controller_subdir}/#{ctrl_override}")
+                    # Rails resolves `controller: 'trends/tags'` inside the
+                    # namespace module too; only a leading `/` is absolute.
+                    # Absolute-style names without the slash still resolve.
+                    scoped = controller_subdir.empty? || ctrl_override.starts_with?('/') ? ctrl_override.lchop('/') : "#{controller_subdir}/#{ctrl_override}"
+                    ctrl_override.includes?('/') && !controller_file(framework_root, scoped) ? ctrl_override.lchop('/') : scoped
                   else
                     controller_subdir.empty? ? name : "#{controller_subdir}/#{name}"
                   end
@@ -1417,6 +1435,9 @@ module Analyzer::Ruby
       candidates = bases.map { |base| controller_file(framework_root, base) || "#{framework_root}/app/controllers/#{base}_controller.rb" }
 
       existing_controller_path = candidates.find { |c| known_file?(c) }
+      # `only: []` draws no routes of its own (it only nests); an empty list
+      # here must not read as "no filter".
+      return existing_controller_path if options.has_key?("only") && only_list.empty?
       candidates.each do |ctrl_path|
         # `concat`, not `+=`. `controller_to_endpoint` used to build its
         # return value in `@result` — reassigning it to a fresh array on
@@ -1633,12 +1654,15 @@ module Analyzer::Ruby
     end
 
     # `route_scope` (`member`/`collection`/`new`) applies to the innermost
-    # `resources` frame; the frames above it are always nested routes.
+    # `resources` frame. An enclosing one takes the scope of a
+    # `member`/`collection`/`new` block opened directly inside it, so
+    # `collection do resources :keys end` under `resources :api` is
+    # `api/keys`, not `api/:api_id/keys`.
     private def current_path_prefix(stack : Array(Frame), route_scope : String? = nil) : String
       own = stack.rindex { |f| f.kind == :resources }
       parts = [] of String
       stack.each_with_index do |f, i|
-        scope = i == own ? route_scope : nil
+        scope = (i == own ? route_scope : nil) || (f.kind == :resources ? enclosed_route_scope(stack, i) : nil)
         # A shallow resource's member and nested routes drop the parents'
         # segments; its collection and `new` routes keep them.
         if f.shallow_member? && scope != "collection" && scope != "new"
@@ -1648,6 +1672,17 @@ module Analyzer::Ruby
         parts << path unless path.empty?
       end
       parts.join("/")
+    end
+
+    # The `member`/`collection`/`new` block opened under the `resources`
+    # frame at `idx`, before any deeper `resources` frame.
+    private def enclosed_route_scope(stack : Array(Frame), idx : Int32) : String?
+      (idx + 1...stack.size).each do |j|
+        kind = stack[j].kind
+        return if kind == :resources
+        return kind.to_s if kind == :member || kind == :collection || kind == :new
+      end
+      nil
     end
 
     # Rails `shallow`: a resource nested in a shallow scope keeps its
@@ -1706,6 +1741,7 @@ module Analyzer::Ruby
       RESOURCE_ACTION_VERBS.each do |route_action, verb|
         next if singular && route_action == "index"
         next unless action_allowed?(route_action, only, except)
+        next if @disabled_route_verbs.includes?(verb)
         action = to_action || route_action
         next unless owner = action_owner(path, action)
         on_collection = route_action == "index" || route_action == "create" || route_action == "new"
