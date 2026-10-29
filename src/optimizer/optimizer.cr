@@ -816,7 +816,8 @@ class EndpointOptimizer
       # The package clause follows the license header; 4 KB covers one.
       buffer = Bytes.new(4096)
       read = io.read(buffer)
-      String.new(buffer[0, read]).matches?(/^package\s+main\b/m)
+      # Scrubbed: the cut can split a multibyte character, which PCRE refuses.
+      String.new(buffer[0, read]).scrub.matches?(/^package\s+main\b/m)
     end
   rescue IO::Error
     false
