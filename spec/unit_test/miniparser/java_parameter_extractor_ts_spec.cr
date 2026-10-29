@@ -598,7 +598,8 @@ describe Noir::TreeSitterJavaParameterExtractor do
             public void d(String plain, @RequestBody Body body) {}
         }
         JAVA
-      {"a" => {"flag", "query"}, "c" => {"X-T", "header"}, "g" => {"sid", "cookie"}, "d" => {"plain", "form"}}.each do |method, first|
+      # `plain` binds implicitly; next to a JSON body it can only be query (#3271).
+      {"a" => {"flag", "query"}, "c" => {"X-T", "header"}, "g" => {"sid", "cookie"}, "d" => {"plain", "query"}}.each do |method, first|
         params = method_params(source, "C", method, "POST", nil, class_fields)
         params.map { |p| {p.name, p.param_type} }.should eq([first, {"email", "json"}, {"password", "json"}])
       end

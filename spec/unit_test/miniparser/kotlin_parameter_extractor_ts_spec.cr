@@ -179,8 +179,9 @@ describe Noir::TreeSitterKotlinParameterExtractor do
         }
         KT
 
+      # Next to a JSON body, an implicitly bound `plain` can only be query (#3271).
       extract(source, "C", "d", "POST").map { |p| {p.name, p.param_type} }.should eq([
-        {"plain", "form"}, {"body", "json"},
+        {"plain", "query"}, {"body", "json"},
       ])
       extract(source, "C", "h", "POST").map { |p| {p.name, p.param_type} }.should eq([
         {"X-T", "header"}, {"sid", "cookie"}, {"plain", "form"},
@@ -695,12 +696,13 @@ describe Noir::TreeSitterKotlinParameterExtractor do
         }
         KT
       # The analyzer passes consumes-only (nil here); the POST verb default
-      # is applied per-parameter, so @RequestBody is json and the
-      # un-annotated command object is form.
+      # is applied per-parameter, so @RequestBody is json. The un-annotated
+      # command object binds from request values, which next to a JSON body
+      # can only be the query string (#3271).
       params = extract(source, "C", "create", "POST", parameter_format: nil, fields: fields)
       params.map { |p| {p.name, p.param_type} }.should eq([
         {"a", "json"},
-        {"b", "form"},
+        {"b", "query"},
       ])
     end
 

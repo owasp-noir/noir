@@ -167,6 +167,8 @@ module Analyzer::Java
         stomp_application_prefixes = stomp_prefixes[project_root]? || [""]
         configured_base_path = path_config.web_base_path
         injected_annotations = injected_annotation_index[project_root]?
+        resolver_bound = resolver_injected_annotations(path)
+        injected_annotations = (injected_annotations || Set(String).new) | resolver_bound unless resolver_bound.empty?
         converted_types = converted_type_index[project_root]?
         content = read_file_content(path)
         # ponytail: file-scoped, ignores `@InitBinder("name")` targets and advice selectors.
@@ -195,7 +197,7 @@ module Analyzer::Java
             package_name = Noir::TreeSitterJavaParameterExtractor.extract_package_name_from(root, content)
             next if package_name.empty?
 
-            dto_index = dto_builder.build_for_with_root(path, content, root)
+            dto_index = with_default_json_naming(dto_builder.build_for_with_root(path, content, root), path)
             feign_clients = Noir::TreeSitterJavaParameterExtractor.extract_feign_client_classes_from(root, content)
             http_exchange_clients = Noir::TreeSitterJavaParameterExtractor.extract_http_exchange_client_classes_from(root, content)
             visible_meta_mappings = visible_meta_annotation_mappings(path, content, package_name, meta_annotation_index)
@@ -653,7 +655,7 @@ module Analyzer::Java
       indexes_by_path.each do |entry_path, indexes|
         source = entries[indexes.first].source
         Noir::TreeSitter.parse_java(source) do |interface_root|
-          dto_index = dto_builder.build_for_with_root(entry_path, source, interface_root)
+          dto_index = with_default_json_naming(dto_builder.build_for_with_root(entry_path, source, interface_root), entry_path)
           param_index = Noir::TreeSitterJavaParameterExtractor.build_file_index(interface_root, source)
           constants = Noir::TreeSitterJavaRouteExtractor.extract_string_constants_from(interface_root, source)
           indexes.each do |i|

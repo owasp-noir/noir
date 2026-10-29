@@ -110,7 +110,7 @@ module Analyzer::Java
           bean_index = bean_index_for(path, content, package_name, bean_cache, imports,
             Noir::TreeSitterJaxRsExtractor.extract_bean_fields_from(root, content))
           subresource_sources = subresource_sources_for(path, content, package_name, source_cache, imports,
-            Noir::TreeSitterJaxRsExtractor.extract_class_names_from(root, content))
+            Noir::TreeSitterJaxRsExtractor.extract_class_names_from(root, content), dto_builder, bean_cache)
           custom_verb_annotations = custom_verb_index_for(path, content, package_name, custom_verb_cache, imports,
             Noir::TreeSitterJaxRsExtractor.extract_custom_verb_annotations_from(root, content))
           base_path = path_config.base_path

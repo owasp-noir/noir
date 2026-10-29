@@ -3,6 +3,7 @@ require "../../miniparsers/jaxrs_extractor_ts"
 require "../../miniparsers/kotlin_route_extractor_ts"
 require "../../miniparsers/import_graph"
 require "../../utils/c_comments"
+require "../../utils/jackson_naming"
 require "yaml"
 require "../../utils/path_scope"
 require "../../utils/url_path"
@@ -361,7 +362,9 @@ module Analyzer::Java
                                         package_name : String,
                                         cache : Hash(String, String),
                                         imports : Array(Noir::ImportGraph::ImportRef)? = nil,
-                                        current_file_class_names : Array(String)? = nil) : Hash(String, Noir::TreeSitterJaxRsExtractor::SourceEntry)
+                                        current_file_class_names : Array(String)? = nil,
+                                        dto_builder : Noir::TreeSitterJavaDtoIndex? = nil,
+                                        bean_cache : Hash(String, Hash(String, Array(Param)))? = nil) : Hash(String, Noir::TreeSitterJaxRsExtractor::SourceEntry)
       result = Hash(String, Noir::TreeSitterJaxRsExtractor::SourceEntry).new
       resolved_imports = imports || Noir::TreeSitterJavaParameterExtractor.extract_imports(content)
 
@@ -375,8 +378,22 @@ module Analyzer::Java
         next unless body.includes?("jakarta.ws.rs") || body.includes?("javax.ws.rs")
 
         class_names = file == path && current_file_class_names ? current_file_class_names : Noir::TreeSitterJaxRsExtractor.extract_class_names(body)
+        # Built only when the extractor descends into a class of this file.
+        scope = nil.as(Proc(Noir::TreeSitterJaxRsExtractor::IndexScope)?)
+        if file != path && dto_builder && bean_cache
+          built = nil.as(Noir::TreeSitterJaxRsExtractor::IndexScope?)
+          scope = Proc(Noir::TreeSitterJaxRsExtractor::IndexScope).new do
+            if cached = built
+              next cached
+            end
+            package = Noir::TreeSitterJavaParameterExtractor.extract_package_name(body)
+            value = {dto_builder.build_for(file, body), bean_index_for(file, body, package, bean_cache)}
+            built = value
+            value
+          end
+        end
         class_names.each do |name|
-          result[name] ||= {file, body}
+          result[name] ||= {file, body, scope}
         end
       end
 
@@ -938,6 +955,56 @@ module Analyzer::Java
     JAVA_STRING_CONSTANT_RE = /\bstatic\s+final\s+(?:java\.lang\.)?String\b|\bfinal\s+static\s+(?:java\.lang\.)?String\b|\binterface\s/
 
     @java_project_constants : Hash(String, Hash(String, String))? = nil
+    @resolver_injected_annotations : Hash(String, Set(String))? = nil
+    @json_naming_defaults = Hash(String, String?).new
+
+    # The module's `spring.jackson.property-naming-strategy`, normalised.
+    private def default_json_naming(path : String) : String?
+      root = project_root_for(path)
+      return @json_naming_defaults[root] if @json_naming_defaults.has_key?(root)
+      value = spring_config_values_for(root)["spring.jackson.property-naming-strategy"]?
+      @json_naming_defaults[root] = value.try { |raw| Noir::JacksonNaming.strategy(raw) }
+    end
+
+    # `index` with the module's Jackson default applied to every field that
+    # neither `@JsonProperty` nor a class `@JsonNaming` renamed. Returns a
+    # copy: the DTO index is shared across files.
+    private def with_default_json_naming(index : Hash(String, Array(F)), path : String) : Hash(String, Array(F)) forall F
+      return index unless strategy = default_json_naming(path)
+      index.transform_values do |fields|
+        fields.map do |field|
+          field.json_name = Noir::JacksonNaming.translate(field.name, strategy) unless field.json_name_fixed?
+          field
+        end
+      end
+    end
+
+    # Annotations Spring itself binds or validates from the request; a
+    # resolver that checks them does not make them server-filled.
+    SPRING_BINDING_ANNOTATIONS = Set{"Valid", "Validated", "ModelAttribute", "RequestBody", "RequestParam",
+                                     "RequestHeader", "RequestPart", "PathVariable", "CookieValue", "MatrixVariable"}
+    RESOLVER_SUPPORTS_RE = /\b(?:has|get)ParameterAnnotation\s*\(\s*(?:[\w.]+\.)?(\w+)\s*(?:\.\s*class|::\s*class(?:\s*\.\s*java)?)\b/
+
+    # Parameter annotations a custom `HandlerMethodArgumentResolver` binds
+    # (`supportsParameter` -> `parameter.hasParameterAnnotation(CurrentAccount.class)`),
+    # from every `.java`/`.kt` source under `path`'s configured base. The
+    # server fills such a parameter, so it is not request input. Keyed by
+    # scan base, not module: the resolver usually lives in a shared module.
+    # ponytail: simple names, not import-resolved.
+    private def resolver_injected_annotations(path : String) : Set(String)
+      tables = @resolver_injected_annotations ||= begin
+        by_base = Hash(String, Set(String)).new
+        (get_files_by_extension(".java") + get_files_by_extension(".kt")).each do |file|
+          next if JavaEngine.test_path?(base_relative_path(file))
+          content = read_file_content(file)
+          next unless content.includes?("ParameterAnnotation") && content.includes?("HandlerMethodArgumentResolver")
+          names = by_base[configured_base_for(file)] ||= Set(String).new
+          content.scan(RESOLVER_SUPPORTS_RE) { |match| names << match[1] unless SPRING_BINDING_ANNOTATIONS.includes?(match[1]) }
+        end
+        by_base
+      end
+      tables[configured_base_for(path)]? || Set(String).new
+    end
 
     # Qualified (`Paths.API`, `com.ex.Paths.API`) String constants from
     # every `.java` source under `path`'s configured base, so a controller

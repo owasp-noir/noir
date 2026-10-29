@@ -6,6 +6,7 @@ require "./import_graph"
 require "./kotlin_source_mask"
 require "../utils/text_file"
 require "../utils/jvm_literal"
+require "../utils/jackson_naming"
 
 module Noir
   # Tree-sitter-backed parameter extractor for Kotlin Spring.
@@ -65,6 +66,8 @@ module Noir
     # implicit-binding path that would otherwise expand its DTO fields
     # into phantom params. Validation annotations (`@Valid`, …) are
     # intentionally absent — they leave binding semantics untouched.
+    HEADER_MAP_TYPES = Set{"HttpHeaders", "Map", "MutableMap", "MultiValueMap"}
+
     INJECTED_PARAM_ANNOTATIONS = Set{
       "AuthenticationPrincipal", "CurrentUser", "CurrentSecurityContext",
       "SessionAttribute", "RequestAttribute",
@@ -97,8 +100,12 @@ module Noir
       # True when `init_value` came from a `string_literal` node and was
       # therefore already decoded (quotes stripped) on the way in.
       getter? init_string_literal : Bool
-      # Wire name in a JSON body: `@JsonProperty("display_name")`, else `name`.
-      getter json_name : String
+      # Wire name in a JSON body: `@JsonProperty("display_name")`, else
+      # `name` (or its `@JsonNaming` translation).
+      property json_name : String
+      # The JSON key is settled by `@JsonProperty` or the class `@JsonNaming`;
+      # the module-wide Jackson default leaves it alone.
+      property? json_name_fixed : Bool = false
 
       def initialize(@name, @access_modifier, @has_setter, @init_value,
                      @null_validation_groups = [] of String, @server_managed = false,
@@ -106,6 +113,7 @@ module Noir
                      @init_string_literal = false,
                      json_name : String? = nil)
         @json_name = json_name || @name
+        @json_name_fixed = !json_name.nil?
       end
 
       # Jackson renames apply to JSON bodies only.
@@ -164,10 +172,47 @@ module Noir
       walk_class_containers(root) do |decl|
         name = type_identifier_text(decl, source)
         next if name.empty?
-        fields = collect_class_fields(decl, source)
+        fields = apply_json_naming(collect_class_fields(decl, source), json_naming_of(decl, source))
         results[name] = fields unless fields.empty?
       end
       results
+    end
+
+    # Apply a class-level Jackson naming strategy to the fields that have no
+    # explicit `@JsonProperty`, and mark every field settled either way.
+    def apply_json_naming(fields : Array(FieldInfo), strategy : String?) : Array(FieldInfo)
+      return fields unless strategy
+      fields.map do |field|
+        field.json_name = Noir::JacksonNaming.translate(field.name, strategy) unless field.json_name_fixed?
+        field.json_name_fixed = true
+        field
+      end
+    end
+
+    # Not the `::class` inside the header's own annotations.
+    CLASS_KEYWORD_RE = /(?<!::)(?<!\.)\b(?:class|object|interface)\b/
+
+    private def json_naming_of(decl : LibTreeSitter::TSNode, source : String) : String?
+      text = Noir::TreeSitter.node_text(decl, source)
+      # `@Schema(description = "request class")` must not end the header.
+      masked = text.gsub(/"(?:[^"\\]|\\.)*"/) { |literal| " " * literal.size }
+      header = text[0, masked.index(CLASS_KEYWORD_RE) || 0]
+      Noir::JacksonNaming.annotation_strategy(header) || Noir::JacksonNaming.annotation_strategy(leading_annotation_lines(decl, source))
+    end
+
+    # tree-sitter-kotlin leaves an annotation on its own line outside the
+    # following `data class` node when another declaration precedes it, so
+    # also read the annotation/comment lines directly above the node.
+    private def leading_annotation_lines(decl : LibTreeSitter::TSNode, source : String) : String
+      before = source.byte_slice(0, LibTreeSitter.ts_node_start_byte(decl).to_i)
+      kept = [] of String
+      before.lines.reverse_each do |line|
+        stripped = line.strip
+        break unless stripped.empty? || stripped.starts_with?('@') || stripped.starts_with?("//") ||
+                     stripped.starts_with?("/*") || stripped.starts_with?('*')
+        kept << stripped
+      end
+      kept.reverse.join('\n')
     end
 
     # Map each class to the simple name of its superCLASS (the supertype
@@ -231,11 +276,12 @@ module Noir
                                        parameter_format : String?,
                                        class_fields : Hash(String, Array(FieldInfo)),
                                        string_constants = Hash(String, String).new,
-                                       local_string_constants = Hash(String, String).new) : Array(Param)
+                                       local_string_constants = Hash(String, String).new,
+                                       injected_annotations = Set(String).new) : Array(Param)
       method = find_function(root, source, class_name, method_name)
       return [] of Param unless method
       extract_method_parameters_from_method(
-        method, source, verb, parameter_format, class_fields, string_constants, local_string_constants
+        method, source, verb, parameter_format, class_fields, string_constants, local_string_constants, injected_annotations
       )
     end
 
@@ -245,9 +291,10 @@ module Noir
                                               parameter_format : String?,
                                               class_fields : Hash(String, Array(FieldInfo)),
                                               string_constants = Hash(String, String).new,
-                                              local_string_constants = Hash(String, String).new) : Array(Param)
+                                              local_string_constants = Hash(String, String).new,
+                                              injected_annotations = Set(String).new) : Array(Param)
       params = collect_method_params(
-        method, source, verb, parameter_format, class_fields, string_constants, local_string_constants
+        method, source, verb, parameter_format, class_fields, string_constants, local_string_constants, injected_annotations
       )
       append_constraint_params(method, source, verb, params, string_constants, local_string_constants)
       params
@@ -917,7 +964,8 @@ module Noir
                                       parameter_format : String?,
                                       class_fields : Hash(String, Array(FieldInfo)),
                                       string_constants : Hash(String, String),
-                                      local_string_constants : Hash(String, String)) : Array(Param)
+                                      local_string_constants : Hash(String, String),
+                                      injected_annotations = Set(String).new) : Array(Param)
       params = [] of Param
       fparams = function_value_parameters(method)
       return params unless fparams
@@ -932,9 +980,18 @@ module Noir
         when "parameter"
           current_format = emit_param_for(
             child, pending_modifiers, source, verb, current_format, parameter_format, class_fields, params,
-            string_constants, local_string_constants
+            string_constants, local_string_constants, injected_annotations
           )
           pending_modifiers = nil
+        end
+      end
+      # A JSON body and a form body cannot share one request: a value Spring
+      # binds implicitly next to a JSON `@RequestBody` (`create(type: String,
+      # @RequestBody req: Ev)`) can only arrive on the query string.
+      if params.any? { |param| param.param_type == "json" }
+        params.map! do |param|
+          param.param_type = "query" if param.param_type == "form"
+          param
         end
       end
       params
@@ -958,7 +1015,8 @@ module Noir
                                class_fields : Hash(String, Array(FieldInfo)),
                                sink : Array(Param),
                                string_constants : Hash(String, String),
-                               local_string_constants : Hash(String, String)) : String?
+                               local_string_constants : Hash(String, String),
+                               injected_annotations : Set(String)) : String?
       arg_name = ""
       type_name = ""
       Noir::TreeSitter.each_named_child(param) do |child|
@@ -982,7 +1040,7 @@ module Noir
         Noir::TreeSitter.each_named_child(modifiers) do |ann|
           next unless Noir::TreeSitter.node_type(ann) == "annotation"
           name = annotation_simple_name(ann, source)
-          injected_param = true if INJECTED_PARAM_ANNOTATIONS.includes?(name)
+          injected_param = true if INJECTED_PARAM_ANNOTATIONS.includes?(name) || injected_annotations.includes?(name)
           case name
           when "PathVariable", "DestinationVariable"
             ann_kind = :path
@@ -1087,6 +1145,9 @@ module Noir
         # A Map captures every request value, so it has no single parameter name.
         sink << Param.new(parameter_name, default_value || "", effective_format) unless type_name == "Map"
       when :header, :cookie
+        # `@RequestHeader headers: HttpHeaders` (or a Map) receives every
+        # header; no header is named after the variable.
+        return parameter_format if ann_kind == :header && HEADER_MAP_TYPES.includes?(type_name)
         # An explicit scalar request input (possibly a collection of
         # scalars like `@RequestParam ids: List<Long>`) — emit by its
         # declared name; never DTO-expand.
