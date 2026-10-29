@@ -605,10 +605,20 @@ module Noir::ImportGraph::Python
   # Python matches module names case-sensitively; a case-insensitive file
   # system (macOS, Windows) would otherwise let `from .models import
   # Order` bind the module `order.py` instead of the re-exported class.
+  @@dir_entries = Hash(String, Set(String)).new
+  @@dir_entries_mutex = Mutex.new
+
   private def self.exact_entry?(dir : String, name : String) : Bool
-    Dir.children(dir).includes?(name)
-  rescue File::Error
-    false
+    entries = @@dir_entries_mutex.synchronize { @@dir_entries[dir]? }
+    unless entries
+      entries = begin
+        Dir.children(dir).to_set
+      rescue File::Error
+        Set(String).new
+      end
+      @@dir_entries_mutex.synchronize { @@dir_entries[dir] = entries }
+    end
+    entries.includes?(name)
   end
 
   # Yield every `import` / `from … import …` statement as `{from part,

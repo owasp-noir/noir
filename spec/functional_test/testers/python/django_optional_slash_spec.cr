@@ -10,6 +10,7 @@ require "../../func_spec.cr"
 # shorter is reported, so it merges with a spec's `/tags`.
 extracted_endpoints = [
   Endpoint.new("/tags", "GET"),
+  Endpoint.new("/{lang}/i18n/tags", "GET", [Param.new("lang", "", "path")]),
   Endpoint.new("/search", "GET", [
     Param.new("q", "", "query"),
   ]),

@@ -1,3 +1,4 @@
+from django.conf.urls.i18n import i18n_patterns
 from django.urls import re_path
 
 from . import views
@@ -28,3 +29,7 @@ urlpatterns = [
         views.image,
     ),
 ]
+
+urlpatterns += i18n_patterns(
+    re_path(r"^i18n/tags/?$", views.tags),
+)
