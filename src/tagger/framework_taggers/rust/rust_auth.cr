@@ -70,6 +70,7 @@ class RustAuthTagger < FrameworkTagger
   # read, not answered.
   COMPARED  = /(?:\w+::)*\w+\s*[=!]=|[=!]=\s*(?:\w+::)*\w+/
   AUTH_NAME = /auth|jwt|bearer/i
+  HANDED_ON = /\blet\s+(?:mut\s+)?\w+\s*(?::[^=;]+)?=\s*next\s*\.\s*run\s*\(/
   CSRF_NAME = /[\w-]*(?:csrf|xsrf)[\w-]*/i
   # What a middleware reads to tell who the caller is (CSRF names cut out).
   CREDENTIAL = /authoriz|bearer|jwt|token|api[-_]?key|claims|session|login/i
@@ -86,6 +87,7 @@ class RustAuthTagger < FrameworkTagger
     @guard_verdicts = {} of String => Bool
     @handler_param_types = {} of String => Hash(Int32, Array(String))
     @fn_index = Hash(String, Array(RustFnEntry)).new
+    @crate_fn_index = Hash(String, Array(RustFnEntry)).new
     @file_fn_index = Hash(String, Hash(String, RustFnEntry)).new
     @file_imports = Hash(String, Noir::RustUseImports::Imports).new
     @fn_mounts_cache = Hash(String, Array({String, String})).new
@@ -112,7 +114,7 @@ class RustAuthTagger < FrameworkTagger
     facts = Noir::RustRequestGuards::Facts.new
     collect_files_by_extension(".rs").each do |file|
       next unless content = read_file(file)
-      Noir::RustRequestGuards.scan(content, facts)
+      Noir::RustRequestGuards.scan(content, facts, file)
     rescue e
       @logger.debug "rust request-guard scan error #{file}: #{e}"
     end
@@ -136,6 +138,7 @@ class RustAuthTagger < FrameworkTagger
   private def pre_scan_middleware_scopes
     @middleware_scopes.clear
     @fn_index.clear
+    @crate_fn_index.clear
     @file_fn_index.clear
     @file_imports.clear
     @fn_mounts_cache.clear
@@ -248,6 +251,13 @@ class RustAuthTagger < FrameworkTagger
 
     (@fn_index[entry.name] ||= [] of RustFnEntry) << entry
 
+    # A workspace crate's fn under its crate name, as another crate `use`s it:
+    # `crates/libs/lib-web/src/a/b.rs` -> `lib_web::a::b::f`.
+    if (src = parts.rindex("src")) && src > 0
+      crate_key = ([parts[src - 1].tr("-", "_")] + parts[(src + 1)..]).join("::")
+      (@crate_fn_index[crate_key] ||= [] of RustFnEntry) << entry
+    end
+
     file_map = (@file_fn_index[entry.file_path] ||= Hash(String, RustFnEntry).new)
     file_map[entry.name] ||= entry
     file_map[full] ||= entry
@@ -286,7 +296,22 @@ class RustAuthTagger < FrameworkTagger
       return matches.first
     end
 
-    nil
+    @crate_fn_index[cleaned]?.try { |crate_matches| nearest_crate_entry(crate_matches, from_file) }
+  end
+
+  # The crate-keyed fn sharing the longest path prefix with `from_file`, so
+  # each app of a monorepo reaches its own `web` crate. Two crate dirs tied
+  # for it resolve to nothing.
+  private def nearest_crate_entry(entries : Array(RustFnEntry), from_file : String) : RustFnEntry?
+    from = from_file.split(File::SEPARATOR)
+    shared = entries.map do |entry|
+      parts = entry.file_path.split(File::SEPARATOR)
+      from.zip?(parts).index { |(a, b)| a != b } || [from.size, parts.size].min
+    end
+    best = shared.max
+    nearest = entries.each_index.select { |i| shared[i] == best }.map { |i| entries[i] }.to_a
+    crate_dirs = nearest.map { |entry| entry.file_path.rpartition("#{File::SEPARATOR}src#{File::SEPARATOR}")[0] }.uniq!
+    crate_dirs.size == 1 ? nearest.first : nil
   end
 
   private def scan_axum_layers(files : Array(String))
@@ -383,16 +408,32 @@ class RustAuthTagger < FrameworkTagger
   end
 
   # A body refuses the caller through an extractor that refuses, or answers
-  # 401/403 itself unless all it checks is a CSRF token. An auth-named
+  # 401/403 (or a redirect to a login page) itself unless all it checks is
+  # a CSRF token. An auth-named
   # middleware that exits with an error (`Err(AppError::X)`, `ctx?`) whose
   # status is mapped elsewhere keeps the benefit of its name.
   private def body_guards?(ref : String, body : String, required_params : Array(String)) : Bool
     return true if required_params.any? { |type| @guard_verdicts[type]? == true }
     code = Noir::CComments.strip(body)
+    # What a body does to the response it got (`let res = next.run(req).await;`
+    # then `if res.status() == 401 { redirect }`) refuses no caller. Only a
+    # binding at the body's own top level hands on every request; one in a
+    # branch or a closure does not.
+    # ponytail: braces are counted raw, so a lone `{` in a string skews it.
+    offset = 0
+    while handed = code.match(HANDED_ON, offset)
+      head = code[0, handed.begin]
+      if head.count('{') - head.count('}') == 1
+        code = head
+        break
+      end
+      offset = handed.end
+    end
     if ref.matches?(CSRF_NAME) || code.matches?(CSRF_NAME)
       return false unless code.gsub(CSRF_NAME, "").matches?(CREDENTIAL)
     end
-    code.gsub(COMPARED, "").matches?(MIDDLEWARE_REFUSAL) || (ref.matches?(AUTH_NAME) && code.matches?(ERROR_EXIT))
+    code.gsub(COMPARED, "").matches?(MIDDLEWARE_REFUSAL) || code.matches?(Noir::RustRequestGuards::LOGIN_REDIRECT_RE) ||
+      (ref.matches?(AUTH_NAME) && code.matches?(ERROR_EXIT))
   end
 
   private def collect_axum_layer_mounts(

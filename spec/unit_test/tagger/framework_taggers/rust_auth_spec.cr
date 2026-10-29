@@ -565,6 +565,199 @@ describe "RustAuthTagger" do
       RUST
     axum_guarded_urls({"src/main.rs" => src}, ["/a"]).should be_empty
   end
+
+  # rust10x/rust-web-app (Issue #3265): the middleware lives in another
+  # workspace crate and refuses only through `ctx?`, whose error maps to 403
+  # in a `&self` helper of that crate's `Error`.
+  it "guards a route_layer middleware imported from another workspace crate" do
+    main = <<-RUST
+      use lib_web::middleware::mw_auth::{mw_ctx_require, mw_ctx_peek};
+      use axum::{middleware, Router};
+      fn app() -> Router {
+          let routes_rpc = web::routes_rpc::routes(mm.clone())
+              .route_layer(middleware::from_fn(mw_ctx_require));
+          let routes_peek = web::routes_peek::routes()
+              .route_layer(middleware::from_fn(mw_ctx_peek));
+          Router::new()
+              .merge(routes_login::routes(mm.clone()))
+              .nest("/api", routes_rpc)
+              .nest("/api", routes_peek)
+      }
+      RUST
+    mw = <<-RUST
+      pub async fn mw_ctx_require(ctx: Result<CtxW>, req: Request<Body>, next: Next) -> Result<Response> {
+          debug!("{:<12} - mw_ctx_require - {ctx:?}", "MIDDLEWARE");
+          ctx?;
+          Ok(next.run(req).await)
+      }
+      pub async fn mw_ctx_peek(ctx: Result<CtxW>, req: Request<Body>, next: Next) -> Response {
+          let _ctx = ctx.ok();
+          next.run(req).await
+      }
+      impl<S: Send + Sync> FromRequestParts<S> for CtxW {
+          type Rejection = Error;
+          async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self> {
+              parts.extensions.get::<CtxExtResult>().ok_or(Error::CtxExt(CtxExtError::CtxNotInRequestExt))?.clone().map_err(Error::CtxExt)
+          }
+      }
+      RUST
+    error = <<-RUST
+      impl Error {
+          pub fn client_status_and_error(&self) -> (StatusCode, ClientError) {
+              use Error::*;
+              match self {
+                  CtxExt(_) => (StatusCode::FORBIDDEN, ClientError::NO_AUTH),
+                  _ => (StatusCode::INTERNAL_SERVER_ERROR, ClientError::SERVICE_ERROR),
+              }
+          }
+      }
+      RUST
+    # A same-named fn in another crate that does not refuse: only the
+    # imported crate's definition counts.
+    decoy = <<-RUST
+      pub async fn mw_ctx_require(req: Request<Body>, next: Next) -> Response {
+          next.run(req).await
+      }
+      RUST
+    files = {
+      "crates/services/web-server/src/main.rs"             => main,
+      "crates/services/web-server/src/web/routes_rpc.rs"   => %(pub fn routes(mm: ModelManager) -> Router { Router::new().route("/rpc", post(rpc)) }),
+      "crates/services/web-server/src/web/routes_peek.rs"  => %(pub fn routes() -> Router { Router::new().route("/peek", post(peek)) }),
+      "crates/services/web-server/src/web/routes_login.rs" => %(pub fn routes(mm: ModelManager) -> Router { Router::new().route("/api/login", post(login)) }),
+      "crates/libs/lib-web/src/middleware/mw_auth.rs"      => mw,
+      "crates/libs/lib-web/src/error.rs"                   => error,
+      "crates/libs/lib-decoy/src/middleware/mw_auth.rs"    => decoy,
+    }
+    axum_guarded_urls(files, ["/api/rpc", "/api/peek", "/api/login"]).should eq(["/api/rpc"])
+
+    files["crates/services/web-server/src/main.rs"] = main.sub("lib_web::", "lib_decoy::")
+    axum_guarded_urls(files, ["/api/rpc", "/api/peek", "/api/login"]).should be_empty
+  end
+
+  it "resolves a crate import to the crate of the importing app in a monorepo" do
+    refusing = <<-RUST
+      pub async fn mw_ctx(req: Request<Body>, next: Next) -> Result<Response, StatusCode> {
+          if req.headers().get("authorization").is_none() {
+              return Err(StatusCode::FORBIDDEN);
+          }
+          Ok(next.run(req).await)
+      }
+      RUST
+    reading = <<-RUST
+      pub async fn mw_ctx(req: Request<Body>, next: Next) -> Result<Response, StatusCode> {
+          tracing::debug!("{}", req.uri());
+          Ok(next.run(req).await)
+      }
+      RUST
+    main = <<-RUST
+      use web::mw::mw_ctx;
+      fn app() -> Router {
+          Router::new().route("/rpc", post(handler)).route_layer(middleware::from_fn(mw_ctx))
+      }
+      RUST
+    {"app_a" => {refusing, ["/rpc"]}, "app_b" => {reading, [] of String}}.each do |app, (mw, guarded)|
+      other = app == "app_a" ? "app_b" : "app_a"
+      files = {
+        "#{app}/crates/server/src/main.rs" => main,
+        "#{app}/crates/web/src/mw.rs"      => mw,
+        "#{other}/crates/web/src/mw.rs"    => mw == refusing ? reading : refusing,
+      }
+      axum_guarded_urls(files, ["/rpc"]).should eq(guarded)
+    end
+
+    # Two crates as near as each other: neither is read.
+    files = {
+      "server/src/main.rs" => main,
+      "a/web/src/mw.rs"    => refusing,
+      "b/web/src/mw.rs"    => refusing,
+    }
+    axum_guarded_urls(files, ["/rpc"]).should be_empty
+  end
+
+  it "does not guard with a middleware that only rewrites or logs the response it got" do
+    src = <<-RUST
+      async fn mw_unauth_to_login(req: Request<Body>, next: Next) -> Response {
+          let res = next.run(req).await;
+          if res.status() == StatusCode::UNAUTHORIZED {
+              return Redirect::to("/login").into_response();
+          }
+          res
+      }
+      async fn mw_forbid_after(req: Request<Body>, next: Next) -> Response {
+          let res: Response = next.run(req).await;
+          if res.headers().contains_key("x-internal") {
+              return StatusCode::FORBIDDEN.into_response();
+          }
+          res
+      }
+      async fn mw_location_log(req: Request<Body>, next: Next) -> Response {
+          let res = next.run(req).await;
+          if let Some(location) = res.headers().get("location") { tracing::info!("redirect {location:?} (login flow)") }
+          res
+      }
+      fn app() -> Router {
+          Router::new()
+              .merge(Router::new().route("/a", post(h)).route_layer(middleware::from_fn(mw_unauth_to_login)))
+              .merge(Router::new().route("/b", post(h)).route_layer(middleware::from_fn(mw_forbid_after)))
+              .merge(Router::new().route("/c", post(h)).route_layer(middleware::from_fn(mw_location_log)))
+      }
+      RUST
+    axum_guarded_urls({"src/main.rs" => src}, ["/a", "/b", "/c"]).should be_empty
+  end
+
+  it "guards with a middleware that hands on only in a branch or a closure" do
+    src = <<-RUST
+      async fn mw_a(req: Request<Body>, next: Next) -> Result<Response, StatusCode> {
+          if req.headers().get("x-key").is_some() {
+              let res = next.run(req).await;
+              return Ok(res);
+          }
+          Err(StatusCode::UNAUTHORIZED)
+      }
+      async fn mw_b(req: Request<Body>, next: Next) -> Response {
+          let run = |r: Request<Body>| async move { let res = next.run(r).await; res };
+          if req.headers().get("cookie").is_none() {
+              return Redirect::to("/login").into_response();
+          }
+          run(req).await
+      }
+      async fn mw_c(req: Request<Body>, next: Next) -> Result<Response, StatusCode> {
+          match req.headers().get("authorization") {
+              Some(_) => { let res = next.run(req).await; Ok(res) }
+              None => Err(StatusCode::FORBIDDEN),
+          }
+      }
+      fn app() -> Router {
+          Router::new()
+              .merge(Router::new().route("/a", post(h)).route_layer(middleware::from_fn(mw_a)))
+              .merge(Router::new().route("/b", post(h)).route_layer(middleware::from_fn(mw_b)))
+              .merge(Router::new().route("/c", post(h)).route_layer(middleware::from_fn(mw_c)))
+      }
+      RUST
+    axum_guarded_urls({"src/main.rs" => src}, ["/a", "/b", "/c"]).should eq(["/a", "/b", "/c"])
+  end
+
+  it "guards with a middleware from another crate that redirects to a login page" do
+    main = <<-RUST
+      use lib_auth::require_auth;
+      fn app() -> Router {
+          Router::new().route("/admin", post(handler)).route_layer(middleware::from_fn(require_auth))
+      }
+      RUST
+    mw = <<-RUST
+      pub async fn require_auth(req: Request<Body>, next: Next) -> Response {
+          match req.headers().get("cookie") {
+              Some(_) => next.run(req).await,
+              None => Redirect::to("/login").into_response(),
+          }
+      }
+      RUST
+    files = {"crates/server/src/main.rs" => main, "crates/lib-auth/src/lib.rs" => mw}
+    axum_guarded_urls(files, ["/admin"]).should eq(["/admin"])
+
+    files["crates/lib-auth/src/lib.rs"] = mw.sub(%("/login"), %("/v2/admin"))
+    axum_guarded_urls(files, ["/admin"]).should be_empty
+  end
 end
 
 describe "RustAuthTagger request guards read from their FromRequest impls" do
