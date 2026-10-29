@@ -652,10 +652,21 @@ module Analyzer::Python
     # a view at its `url` and `extra_urls` with `router.add_route`.
     # `requires_auth` defaults to True on the base.
     HA_VIEW_CLASS_RE   = /^(\s*)class\s+([A-Za-z_]\w*)\s*\(([^)]*\bHomeAssistantView\b[^)]*)\)\s*:/
-    HA_VIEW_URL_RE     = /^url\s*(?::[^=]+)?=\s*[rf]?['"]([^'"]+)['"]/
+    HA_VIEW_URL_RE     = /^url\s*(?::[^=]+)?=\s*(?:[rf]?['"]([^'"]+)['"]|([A-Z_][A-Z0-9_]*)\s*$)/
     HA_VIEW_EXTRA_RE   = /^extra_urls\s*(?::[^=]+)?=\s*\[([^\]]*)\]/
     HA_VIEW_NO_AUTH_RE = /^requires_auth\s*(?::[^=]+)?=\s*False\b/
     HA_VIEW_STRINGS_RE = /[rf]?['"]([^'"]+)['"]/
+
+    # `URL_API_STATES = "/api/states"`: a module-level string constant in
+    # `source` or the module it is imported from (`homeassistant.const`).
+    private def ha_string_constant(path : ::String, source : ::String, base_path : ::String, name : ::String) : ::String?
+      const_re = /^#{Regex.escape(name)}\s*(?::[^=\n]+)?=\s*[rf]?['"]([^'"\n]+)['"]/m
+      if m = source.match(const_re)
+        return m[1]
+      end
+      imported = find_imported_modules(base_path, path, source)[name]? || return
+      read_file_content(imported[0]).match(const_re).try(&.[1])
+    end
 
     private def emit_home_assistant_views(path : ::String, lines : Array(::String), source : ::String,
                                           base_path : ::String) : Nil
@@ -673,7 +684,11 @@ module Analyzer::Python
           body_indent ||= indent
           next unless indent == body_indent
           if url = stripped.match(HA_VIEW_URL_RE)
-            urls.unshift(url[1])
+            if literal = url[1]?
+              urls.unshift(literal)
+            elsif value = ha_string_constant(path, source, base_path, url[2])
+              urls.unshift(value)
+            end
           elsif extra = stripped.match(HA_VIEW_EXTRA_RE)
             extra[1].scan(HA_VIEW_STRINGS_RE) { |m| urls << m[1] }
           elsif stripped.matches?(HA_VIEW_NO_AUTH_RE)

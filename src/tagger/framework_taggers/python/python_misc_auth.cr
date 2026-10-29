@@ -106,18 +106,19 @@ class PythonMiscAuthTagger < FrameworkTagger
     end
 
     route_indent = lines[route_idx].size - lines[route_idx].lstrip.size
+    return if route_indent == 0
     idx = route_idx - 1
     while idx >= 0
       line = lines[idx]
       stripped = line.lstrip
       indent = line.size - stripped.size
-      if !stripped.empty? && indent < route_indent
+      if !stripped.empty? && !stripped.starts_with?('#') && indent < route_indent
         return unless stripped.starts_with?("class ")
         body = idx + 1
         while body < lines.size
           body_line = lines[body]
           body_stripped = body_line.lstrip
-          break if !body_stripped.empty? && body_line.size - body_stripped.size <= indent
+          break if !body_stripped.empty? && !body_stripped.starts_with?('#') && body_line.size - body_stripped.size <= indent
           if body_line.size - body_stripped.size == route_indent && (m = body_stripped.match(/\Aguards\s*(?::[^=]+)?=\s*\[\s*([A-Za-z_][\w.]*)/))
             return m[1]
           end

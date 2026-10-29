@@ -6,10 +6,15 @@ from litestar.di import Provide
 from litestar.enums import RequestEncodingType
 from litestar.params import Body
 
-from app.schemas import AccountLogin
+from app.schemas import AccountLogin, UserCreate
+from app.services import create_service_dependencies
 
 
 class UserService:
+    pass
+
+
+class RefreshTokenService:
     pass
 
 
@@ -24,7 +29,10 @@ class ForgotPassword:
 
 class AccessController(Controller):
     path = "/api/access"
-    dependencies = {"users_service": Provide(provide_users_service)}
+    dependencies = create_service_dependencies(
+        RefreshTokenService,
+        key="refresh_token_service",
+    ) | {"users_service": Provide(provide_users_service)}
 
     @post("/forgot-password")
     async def forgot_password(self, users_service: UserService, data: ForgotPassword) -> None:
@@ -34,6 +42,11 @@ class AccessController(Controller):
     async def login(
         self,
         users_service: UserService,
+        refresh_token_service: RefreshTokenService,
         data: Annotated[AccountLogin, Body(media_type=RequestEncodingType.URL_ENCODED)],
     ) -> None:
+        return None
+
+    @post("/signup")
+    async def signup(self, data: UserCreate) -> None:
         return None

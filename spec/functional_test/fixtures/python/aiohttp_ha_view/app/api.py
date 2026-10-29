@@ -1,5 +1,6 @@
 from aiohttp import web
 
+from app.const import URL_API_CONFIG
 from app.http import HomeAssistantView
 
 
@@ -18,6 +19,13 @@ class APIEntityStateView(HomeAssistantView):
 class APIStatusView(HomeAssistantView):
     url = "/api/"
     requires_auth = False
+
+    async def get(self, request: web.Request) -> web.Response:
+        return web.Response()
+
+
+class APIConfigView(HomeAssistantView):
+    url = URL_API_CONFIG
 
     async def get(self, request: web.Request) -> web.Response:
         return web.Response()
