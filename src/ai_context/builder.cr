@@ -1952,11 +1952,7 @@ module NoirAIContext
     ROUTE_DECL_FIRST_ARG = /\A(\d+: #{ROUTE_DECL_HEAD.source}(?:\s*\(\s*|\s+)(?:(?:value|path)\s*=\s*)?)(?:\[\s*#{ROUTE_ARG_LIST.source}\s*\]|\{\s*#{ROUTE_ARG_LIST.source}\s*\}|arrayOf\s*\(\s*#{ROUTE_ARG_LIST.source}\s*\)|#{ROUTE_ARG.source}(?:\s*(?:=>|,)\s*#{ROUTE_HANDLER_STR.source})?)#{ROUTE_DECL_ARG_TAIL.source}/i
 
     HASH_COMMENT_EXTENSIONS = {".rb", ".rake", ".ru", ".cr", ".ex", ".exs", ".py", ".pl", ".pm"}
-    # `authorize_url = …` at the start of a line; `a = b` with spaces, so a
-    # keyword argument (`authorize=True`) is not taken for it.
-    LOCAL_ASSIGNMENT_TARGET = /\A(?:(?:my|our)\s+)?[$@]?([a-z_]\w*)(?=\s+=\s)/
-    # A read of such a name; not a call (`authorize!`, `authorize(x)`).
-    LOCAL_NAME = /(?<![\w.:])[a-z_]\w*(?![\w!?(:])/
+    PERL_HASH_DELIMITED_OP  = /(?<![\w$@%])(?:s|m|y|tr|q|qq|qw|qr)\z/
 
     SCOPE_SEGMENT_LINE   = /\A(\d+): /
     ANNOTATION_SEGMENT   = /\A\d+: (?:@|#\[|\[)/
@@ -2025,17 +2021,14 @@ module NoirAIContext
       end
     end
 
-    # What a `#` comment or a local variable's name says checks nothing:
-    # `# authenticate later`, `authorize_url = "https://idp/oauth"` and its
-    # later reads (`redirect authorize_url`). These used to stay out of a
-    # Ruby/Elixir/Crystal route's scope only because the scope stopped at
-    # its `do` line.
+    # What a `#` comment says checks nothing (`# authenticate later`). It
+    # used to stay out of a Ruby/Elixir/Crystal route's scope only because
+    # the scope stopped at its `do` line.
     # ponytail: the quote tracking is per line, so a `#` inside a heredoc or
     # a multi-line string is read as a comment start.
     private def without_hash_comments(segments : Array(String)) : Array(String)
       in_comment = false
-      locals = Set(String).new
-      segments = segments.map do |seg|
+      segments.map do |seg|
         prefix = seg[SCOPE_SEGMENT_LINE]?
         if prefix.nil?
           next "" if in_comment
@@ -2045,13 +2038,8 @@ module NoirAIContext
         cut = hash_comment_start(code)
         in_comment = !cut.nil?
         code = code[0, cut] if cut
-        if local = code.match(LOCAL_ASSIGNMENT_TARGET)
-          locals << local[1]
-        end
         prefix + code
       end
-      return segments if locals.empty?
-      segments.map { |seg| seg.gsub(LOCAL_NAME) { |word| locals.includes?(word) ? "" : word } }
     end
 
     private def hash_comment_start(code : String) : Int32?
@@ -2069,7 +2057,10 @@ module NoirAIContext
           end
         elsif char == '"' || char == '\'' || char == '`'
           quote = char
-        elsif char == '#' && prev != '$' # Perl `$#array`
+        elsif char == '#' && prev != '$' && code[idx + 1]? != '{' # Perl `$#array`, `#{interpolation}`
+          # Perl `s#a#b#` / `m#x#`: `#` delimits the operator, the rest of
+          # the line is code.
+          return if PERL_HASH_DELIMITED_OP.matches?(code[0, idx])
           return idx
         end
         prev = char

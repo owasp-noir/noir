@@ -549,11 +549,12 @@ module NoirAIContext
         /\brequire_roles?\b/i,
         /\brequire_any_roles?\b/i,
         /\brequire_all_roles?\b/i,
-        /\brequire_permissions?\b/i,
-        /\brequire_any_permissions?\b/i,
-        /\brequire_all_permissions?\b/i,
+        # Also a private `_require_config_permission(request, "x")` helper.
+        /\b_?require_(?:\w+_)?permissions?\b/i,
         /\buser_has_roles?\b/i,
-        /\buser_has_permissions?\b/i,
+        # DefectDojo `user_has_permission_or_403(...)`, `user_has_global_permission`,
+        # `user_has_configuration_permission`.
+        /\buser_has_(?:\w+_)?permissions?(?:_or_40[13])?\b/i,
         /@PreAuthorize\b/,
         /@PostAuthorize\b/,
         /@RolesAllowed\b/,
@@ -565,7 +566,7 @@ module NoirAIContext
         /@Security\s*\(/,
         /\bPundit\b.*\bauthorize\b/i,
         # Not a ternary that picks a presenter (`can?(:read, x) ? Full : Basic`).
-        /\bcan\?\s*\((?:[^()]|\([^()]*\))*\)(?!\s*\?)/,
+        /\bcan\?\s*\((?!(?:[^()]++|(\((?:[^()]++|(?1))*\)))*\)\s*\?)/,
         /\b(can|cannot)\s+:[\w_!?]+/,
         /\bability\.\w+/i,
         # Inline ownership check: the loaded record's owner compared with

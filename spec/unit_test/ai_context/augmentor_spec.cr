@@ -2034,12 +2034,24 @@ describe "NoirAIContext" do
       # A Ruby route block reads to its `end`.
       {"post '/c' do\n  authenticate!\n  'c'\nend\n\nget '/d' do\n  'd'\nend", ".rb", 1, nil, ["authenticate"]},
       {"post '/c' do\n  'c'\nend\n\nget '/d' do\n  authenticate!\nend", ".rb", 1, nil, [] of String},
-      # Comment text and a local variable's name check nothing; a `#` in a
-      # string is not a comment.
+      # Comment text checks nothing; a `#` in a string, an interpolation or
+      # a Perl `s#a#b#` does not start a comment.
       {"get '/c' do\n  # authenticate later\n  'c'\nend", ".rb", 1, nil, [] of String},
-      {"get \"/a\" do |env|\n  authorize_url = \"https://idp\"\n  env.redirect authorize_url\nend", ".cr", 1, nil, [] of String},
-      {"  get \"/a\" do\n    authorize_url = \"https://idp/oauth\"\n    send_resp(conn, 302, authorize_url)\n  end", ".ex", 1, nil, [] of String},
       {"get '/g' do\n  log \"id=\#{id}\"; authenticate!\nend", ".rb", 1, nil, ["authenticate"]},
+      {"post '/d' do\n  re = %r{\#{params[:x]}}; authenticate!\n  'd'\nend", ".rb", 1, nil, ["authenticate"]},
+      {"get '/p' => sub {\n  my $c = shift; $c->param('x') =~ s#a#b#; authenticate($c);\n};", ".pl", 1, nil, ["authenticate"]},
+      {"@app.route(\"/finding/<fid>\")\ndef view_finding(request, fid):\n    # Make sure the user is authorized\n    user_has_permission_or_403(request.user, finding, Permissions.Finding_View)\n    return render(request, \"x.html\")",
+       ".py", 1, {"view_finding", 2}, ["user_has_permission_or_403"]},
+      {"@router.patch(\"/users/{int:user_id}\")\ndef update_user(request, user_id: int):\n    # Resolve against the authorized view queryset first\n    _require_config_permission(request, \"auth.change_user\")",
+       ".py", 1, {"update_user", 2}, ["_require_config_permission"]},
+      # A local whose read is the refusal stays a guard.
+      {"@app.route(\"/csrf\", methods=[\"POST\"])\ndef csrf():\n    csrf_token = request.form.get(\"csrf_token\")\n    if csrf_token != session.get(\"csrf_token\"):\n        abort(403)\n    return \"ok\"",
+       ".py", 1, {"csrf", 2}, ["csrf_token"]},
+      {"@app.route(\"/own/<int:pid>\", methods=[\"POST\"])\ndef own(pid):\n    current_user = load_user()\n    post = Post.query.get(pid)\n    if current_user.id != post.owner_id:\n        abort(403)\n    return \"ok\"",
+       ".py", 1, {"own", 2}, ["current_user.id != post.owner_id"]},
+      {"get '/a' do\n  authorized = current_user&.admin?\n  halt 403 unless authorized\n  'a'\nend", ".rb", 1, nil, ["authorized"]},
+      {"post '/c' do\n  x = 1\n  halt 403 unless can?(current_user, :update, Project.find(params.fetch(:id)))\n  'c'\nend", ".rb", 1, nil,
+       ["can?(current_user, :update, Project.find(params.fetch(:id)))"]},
       {"get '/h' do\n  user = authenticate_user!\nend", ".rb", 1, nil, ["authenticate_user"]},
       # `can?` picking a presenter refuses nobody; `forbidden! unless can?` does.
       {"get '/d' do\n  present x, with: can?(:read, x) ? Full : Basic\nend", ".rb", 1, nil, [] of String},
