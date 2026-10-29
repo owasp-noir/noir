@@ -26,7 +26,7 @@ That inventory feeds three audiences:
 
 **Extract endpoints.** Static analysis pulls endpoints, parameters, headers, and cookies out of source, including the ones nobody documented.
 
-**Cover the stack.** A single binary supports 261 frameworks across 32 languages, including Crystal, Go, Java, JavaScript, Kotlin, PHP, Python, Ruby, Rust, and Swift. No plugins or per-language setup.
+**Cover the stack.** A single binary supports 262 frameworks across 32 languages, including Crystal, Go, Java, JavaScript, Kotlin, PHP, Python, Ruby, Rust, and Swift. No plugins or per-language setup.
 
 **Fall back to an LLM.** When a framework isn't natively supported, or its routing is too custom for static rules, point Noir at an LLM (OpenAI, Ollama, and so on) to fill the gap.
 
