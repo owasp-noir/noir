@@ -377,9 +377,26 @@ end
 struct Tag
   include JSON::Serializable
   include YAML::Serializable
-  property name, description, tagger
+  property name : String
+  property description : String
+  property tagger : String
+  @[JSON::Field(emit_null: false)]
+  @[YAML::Field(emit_null: false)]
+  property path : String?
+  @[JSON::Field(emit_null: false)]
+  @[YAML::Field(emit_null: false)]
+  property line : Int32?
 
-  def initialize(@name : String, @description : String, @tagger : String)
+  def initialize(@name : String, @description : String, @tagger : String, @path : String? = nil, line : Int32? = nil)
+    @line = line && line > 0 ? line : nil
+  end
+
+  def ==(other : Tag) : Bool
+    @name == other.name &&
+      @description == other.description &&
+      @tagger == other.tagger &&
+      @path == other.path &&
+      @line == other.line
   end
 end
 

@@ -57,13 +57,17 @@ class SpringAuthTagger < FrameworkTagger
   # found by paren matching (it nests `antMatcher(X)` calls and spans lines),
   # so only the call opener is a regex.
   MATCHERS_CALL    = /\.\s*(antMatchers|requestMatchers|mvcMatchers)\s*\(/
-  RULE_AFTER_CALL  = /\A\s*\.\s*(permitAll|authenticated|fullyAuthenticated|hasRole|hasAnyRole|hasAuthority|hasAnyAuthority|access)\s*(?:\(|\{)/
-  ANY_REQUEST_AUTH = /\.\s*anyRequest\s*\(\s*\)\s*\.\s*(authenticated|fullyAuthenticated|hasRole|hasAnyRole|hasAuthority|hasAnyAuthority|access)\s*(?:\(|\{)/
+  RULE_AFTER_CALL  = /\A\s*\.\s*(permitAll|anonymous|denyAll|authenticated|fullyAuthenticated|hasRole|hasAnyRole|hasAuthority|hasAnyAuthority|access)\s*(?:\(|\{)/
+  ANY_REQUEST_AUTH = /\.\s*anyRequest\s*\(\s*\)\s*\.\s*(permitAll|anonymous|denyAll|authenticated|fullyAuthenticated|hasRole|hasAnyRole|hasAuthority|hasAnyAuthority|access)\s*(?:\(|\{)/
 
   # The Kotlin DSL Spring Security documents for Kotlin apps:
   # `authorizeHttpRequests { authorize("/public/**", permitAll);
   # authorize(anyRequest, authenticated) }`.
-  KOTLIN_AUTHORIZE_RULE = /\bauthorize\s*\(\s*(?:HttpMethod\.(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\s*,\s*)?(?:"([^"]+)"|(anyRequest))\s*,\s*(permitAll|authenticated|fullyAuthenticated|hasRole|hasAnyRole|hasAuthority|hasAnyAuthority|access)\b/
+  KOTLIN_AUTHORIZE_RULE = /\bauthorize\s*\(\s*(?:HttpMethod\.(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\s*,\s*)?(?:"([^"]+)"|(anyRequest))\s*,\s*(permitAll|anonymous|denyAll|authenticated|fullyAuthenticated|hasRole|hasAnyRole|hasAuthority|hasAnyAuthority|access)\b/
+
+  FORM_LOGIN_DSL     = /(?:\.\s*formLogin\s*\(|\bformLogin\s*\(|\bformLogin\s*\{)/
+  FORM_LOGIN_SETTER  = /\b(loginPage|loginProcessingUrl|failureUrl)\s*(?:\(\s*|=\s*)/
+  PERMIT_ALL_PATTERN = /\bpermitAll\s*\(\s*(?:true\s*)?\)/
 
   # A chain is "scoped" when restricted by `securityMatcher(...)`,
   # `securityMatchers(m -> m.requestMatchers(...))` or Spring 5's
@@ -95,7 +99,7 @@ class SpringAuthTagger < FrameworkTagger
   # `@ConfigurationProperties` list (`for (String url : props.getUrls())
   # registry.requestMatchers(url).permitAll()`): they are read per endpoint
   # from the configuration of the module that serves it.
-  alias SecurityRule = NamedTuple(pattern: String, method: String?, description: String, protected_rule: Bool, module: String?, config_key: String?)
+  alias SecurityRule = NamedTuple(pattern: String, method: String?, description: String, protected_rule: Bool, module: String?, config_key: String?, path: String?, line: Int32?)
 
   # A `securityMatcher`-scoped SecurityFilterChain: requests its `scope`
   # matches are served by this chain alone (Spring hands a request to the
@@ -119,7 +123,7 @@ class SpringAuthTagger < FrameworkTagger
   end
 
   def self.target_techs : Array(String)
-    ["java_spring", "kotlin_spring"]
+    ["java_spring", "kotlin_spring", "java_jaxrs"]
   end
 
   def perform(endpoints : Array(Endpoint)) : Array(Endpoint)
@@ -164,7 +168,7 @@ class SpringAuthTagger < FrameworkTagger
 
         next unless content.includes?("SecurityFilterChain") || content.includes?("HttpSecurity") || content.includes?("WebSecurityConfigurerAdapter")
 
-        scan_security_config(content, file.ends_with?(".java"), module_dir)
+        scan_security_config(content, file.ends_with?(".java"), module_dir, file)
       end
     end
   end
@@ -363,14 +367,14 @@ class SpringAuthTagger < FrameworkTagger
     capitalized
   end
 
-  private def scan_security_config(content : String, java : Bool, module_dir : String?)
+  private def scan_security_config(content : String, java : Bool, module_dir : String?, file_path : String)
     strings, arrays = java ? security_constants(content) : {Hash(String, String).new, Hash(String, Array(String)).new}
     code = Noir::CComments.strip(content)
     # A declared chain replaces Boot's default one even when it adds no
     # authorization rule (`anyRequest().permitAll()`, csrf/cors only).
     @chain_modules << module_dir if code.matches?(CHAIN_DECLARATION)
-    split_into_chain_blocks(code).each do |block|
-      scan_security_chain(block, strings, arrays, module_dir, java ? code : nil)
+    split_into_chain_blocks(code).each do |block, block_start_line|
+      scan_security_chain(block, strings, arrays, module_dir, java ? code : nil, file_path, block_start_line)
     end
   end
 
@@ -410,7 +414,7 @@ class SpringAuthTagger < FrameworkTagger
     {strings, arrays}
   end
 
-  private def scan_security_chain(block : String, strings : Hash(String, String), arrays : Hash(String, Array(String)), module_dir : String?, java_source : String?)
+  private def scan_security_chain(block : String, strings : Hash(String, String), arrays : Hash(String, Array(String)), module_dir : String?, java_source : String?, file_path : String, block_start_line : Int32)
     scope = chain_scope(block, strings, arrays)
     rules = [] of SecurityRule
     loops = java_source ? loop_bindings(block) : [] of LoopBinding
@@ -418,46 +422,92 @@ class SpringAuthTagger < FrameworkTagger
     block.scan(MATCHERS_CALL) do |match|
       open = match.byte_end(0) - 1
       next unless close = Noir::JSLiteralScanner.find_matching_paren_at_byte(block, open)
-      next unless rule = block.byte_slice(close + 1, 96).match(RULE_AFTER_CALL)
+      slice_len = Math.min(96, block.bytesize - (close + 1))
+      next unless rule = block.byte_slice(close + 1, slice_len).match(RULE_AFTER_CALL)
 
       args = block.byte_slice(open + 1, close - open - 1)
       auth_type = rule[1]
-      protected_rule = auth_type != "permitAll"
+      is_anonymous = auth_type == "anonymous" ||
+                     (auth_type == "hasRole" && block.byte_slice(close + 1, slice_len).matches?(/\A\s*\.\s*hasRole\s*\(\s*["'](?:ROLE_)?ANONYMOUS["']\s*\)/)) ||
+                     (auth_type == "hasAuthority" && block.byte_slice(close + 1, slice_len).matches?(/\A\s*\.\s*hasAuthority\s*\(\s*["'](?:ROLE_)?ANONYMOUS["']\s*\)/))
+      protected_rule = auth_type != "permitAll" && !is_anonymous
       matcher_method = request_matcher_method(args)
       config_keys = [] of String
       in_scope = loops_enclosing(loops, open)
+      rule_line = block_start_line + block[0, match.begin(1)].count('\n')
       matcher_patterns(args, strings, arrays, loops: in_scope, config_keys: config_keys, java_source: java_source).uniq.each do |url_pattern|
         description =
           if protected_rule
             "Protected by Spring Security #{auth_type} via #{match[1]}(\"#{url_pattern}\")"
+          elsif is_anonymous
+            "Public by Spring Security anonymous via #{match[1]}(\"#{url_pattern}\")"
           else
             "Public by Spring Security permitAll via #{match[1]}(\"#{url_pattern}\")"
           end
-        rules << {pattern: url_pattern, method: matcher_method, description: description, protected_rule: protected_rule, module: module_dir, config_key: nil}
+        rules << {pattern: url_pattern, method: matcher_method, description: description, protected_rule: protected_rule, module: module_dir, config_key: nil, path: file_path, line: rule_line}
       end
       config_keys.uniq.each do |key|
-        rules << {pattern: "", method: matcher_method, description: auth_type, protected_rule: protected_rule, module: module_dir, config_key: key}
+        rules << {pattern: "", method: matcher_method, description: auth_type, protected_rule: protected_rule, module: module_dir, config_key: key, path: file_path, line: rule_line}
       end
+    end
+
+    scan_form_login_rules(block, strings, file_path, block_start_line, module_dir).each do |rule|
+      rules << rule
     end
 
     # A scoped chain's `anyRequest()` covers its scope; an unscoped chain's
     # covers everything. A chain scoped by a matcher noir cannot read drops
     # it — the old behaviour, since what it covers is unknown.
     any_request_covered = scope.nil? || !scope.empty?
-    block.each_line do |line|
+    block.each_line.with_index(block_start_line) do |line, line_num|
       line.scan(KOTLIN_AUTHORIZE_RULE) do |match|
         auth_type = match[4]
-        protected_rule = auth_type != "permitAll"
+        is_anonymous = auth_type == "anonymous"
+        protected_rule = auth_type != "permitAll" && !is_anonymous
         if url_pattern = match[2]?
-          verb = protected_rule ? "Protected by Spring Security #{auth_type}" : "Public by Spring Security permitAll"
-          rules << {pattern: url_pattern, method: match[1]?, description: "#{verb} via authorize(\"#{url_pattern}\")", protected_rule: protected_rule, module: module_dir, config_key: nil}
-        elsif any_request_covered && protected_rule
-          rules << {pattern: "/**", method: nil, description: "Protected by Spring Security #{auth_type} via authorize(anyRequest)", protected_rule: true, module: module_dir, config_key: nil}
+          verb =
+            if protected_rule
+              "Protected by Spring Security #{auth_type}"
+            elsif is_anonymous
+              "Public by Spring Security anonymous"
+            else
+              "Public by Spring Security permitAll"
+            end
+          rules << {pattern: url_pattern, method: match[1]?, description: "#{verb} via authorize(\"#{url_pattern}\")", protected_rule: protected_rule, module: module_dir, config_key: nil, path: file_path, line: line_num}
+        elsif any_request_covered
+          verb =
+            if protected_rule
+              "Protected by Spring Security #{auth_type}"
+            elsif is_anonymous
+              "Public by Spring Security anonymous"
+            else
+              "Public by Spring Security permitAll"
+            end
+          rules << {pattern: "/**", method: nil, description: "#{verb} via authorize(anyRequest)", protected_rule: protected_rule, module: module_dir, config_key: nil, path: file_path, line: line_num}
         end
       end
     end
-    if any_request_covered && (match = block.match(ANY_REQUEST_AUTH))
-      rules << {pattern: "/**", method: nil, description: "Protected by Spring Security #{match[1]} via anyRequest()", protected_rule: true, module: module_dir, config_key: nil}
+
+    if any_request_covered
+      block.scan(ANY_REQUEST_AUTH) do |match|
+        auth_type = match[1]
+        len = Math.min(120, block.bytesize - match.byte_begin(0))
+        slice = block.byte_slice(match.byte_begin(0), len)
+        is_anonymous = auth_type == "anonymous" ||
+                       (auth_type == "hasRole" && slice.matches?(/\.\s*anyRequest\s*\(\s*\)\s*\.\s*hasRole\s*\(\s*["'](?:ROLE_)?ANONYMOUS["']\s*\)/)) ||
+                       (auth_type == "hasAuthority" && slice.matches?(/\.\s*anyRequest\s*\(\s*\)\s*\.\s*hasAuthority\s*\(\s*["'](?:ROLE_)?ANONYMOUS["']\s*\)/))
+        protected_rule = auth_type != "permitAll" && !is_anonymous
+        rule_line = block_start_line + block[0, match.begin(1)].count('\n')
+        description =
+          if protected_rule
+            "Protected by Spring Security #{auth_type} via anyRequest()"
+          elsif is_anonymous
+            "Public by Spring Security anonymous via anyRequest()"
+          else
+            "Public by Spring Security permitAll via anyRequest()"
+          end
+        rules << {pattern: "/**", method: nil, description: description, protected_rule: protected_rule, module: module_dir, config_key: nil, path: file_path, line: rule_line}
+      end
     end
 
     if scope && !scope.empty?
@@ -465,6 +515,69 @@ class SpringAuthTagger < FrameworkTagger
     else
       @security_rules.concat(rules)
     end
+  end
+
+  private def scan_form_login_rules(block : String, strings : Hash(String, String), file_path : String, block_start_line : Int32, module_dir : String?) : Array(SecurityRule)
+    form_rules = [] of SecurityRule
+    block.scan(FORM_LOGIN_DSL) do |match|
+      open = match.byte_end(0) - 1
+      open_char = block[open]
+      scope = ""
+      if open_char == '('
+        next unless close = Noir::JSLiteralScanner.find_matching_paren_at_byte(block, open)
+        inner = block.byte_slice(open + 1, close - open - 1)
+        if inner.strip.empty?
+          # Chained formLogin().loginPage(...).permitAll()
+          rest = block.byte_slice(close + 1, block.bytesize - (close + 1))
+          cut = [rest.index(".and()"), rest.index(';'), rest.index(".authorizeHttpRequests"), rest.index(".logout")].compact.min?
+          scope = cut ? rest[0...cut] : rest
+        else
+          # Lambda formLogin(f -> f.loginPage(...).permitAll())
+          scope = inner
+        end
+      elsif open_char == '{'
+        # Kotlin DSL formLogin { loginPage = "..."; permitAll() }
+        next unless close = Noir::JSLiteralScanner.find_matching_brace_at_byte(block, open)
+        scope = block.byte_slice(open + 1, close - open - 1)
+      end
+
+      next unless scope.matches?(PERMIT_ALL_PATTERN)
+
+      urls = Hash(String, String).new
+      scope.scan(FORM_LOGIN_SETTER) do |setter|
+        key = setter[1]
+        arg_rest = scope[setter.byte_end(0)..]
+        if lit = arg_rest.match(/\A\s*"([^"\\]*)"/)
+          urls[key] = lit[1]
+        elsif (ident = arg_rest.match(/\A\s*([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)/)) && (str = strings[ident[1]]?)
+          urls[key] = str
+        end
+      end
+
+      target_urls = [] of String
+      target_urls << (urls["loginPage"]? || "/login")
+      if proc_url = urls["loginProcessingUrl"]?
+        target_urls << proc_url
+      end
+      if fail_url = urls["failureUrl"]?
+        target_urls << fail_url.split('?').first
+      end
+
+      rule_line = block_start_line + block[0, match.begin(0)].count('\n')
+      target_urls.uniq.each do |url|
+        form_rules << {
+          pattern:        url,
+          method:         nil,
+          description:    "Public by Spring Security permitAll via formLogin()",
+          protected_rule: false,
+          module:         module_dir,
+          config_key:     nil,
+          path:           file_path,
+          line:           rule_line,
+        }
+      end
+    end
+    form_rules
   end
 
   # nil for a chain that serves every request; the scope's ant patterns
@@ -604,24 +717,26 @@ class SpringAuthTagger < FrameworkTagger
     prefix.empty? ? property : "#{prefix}.#{property}"
   end
 
-  # One block per SecurityFilterChain / `configure(HttpSecurity)`. The
-  # annotations right above a boundary (`@Bean @Order(1)`) belong to the
+  # One block per SecurityFilterChain / `configure(HttpSecurity)` and its 1-based start line.
+  # The annotations right above a boundary (`@Bean @Order(1)`) belong to the
   # chain below it, so they move into its block.
-  private def split_into_chain_blocks(content : String) : Array(String)
-    blocks = [] of String
+  private def split_into_chain_blocks(content : String) : Array(Tuple(String, Int32))
+    blocks = [] of Tuple(String, Int32)
     current = [] of String
+    current_start = 1
     content.each_line do |raw|
       if raw.matches?(CHAIN_BOUNDARY) && !current.empty?
         header = [] of String
         while (last = current.last?) && (last.strip.empty? || last.lstrip.starts_with?('@'))
           header.unshift(current.pop)
         end
-        blocks << current.join("\n") unless current.empty?
+        blocks << {current.join("\n"), current_start} unless current.empty?
+        current_start += current.size
         current = header
       end
       current << raw
     end
-    blocks << current.join("\n") unless current.empty?
+    blocks << {current.join("\n"), current_start} unless current.empty?
     blocks
   end
 
@@ -645,7 +760,7 @@ class SpringAuthTagger < FrameworkTagger
   # A build file is no evidence of the serving module: a framework-provided
   # route (`/actuator`) points at the parent pom that declares the
   # dependency every child app inherits.
-  private def check_security_config_rules(endpoint : Endpoint) : String?
+  private def check_security_config_rules(endpoint : Endpoint) : Tuple(String, String?, Int32?)?
     modules = endpoint.details.code_paths.compact_map do |path_info|
       path = path_info.path
       build_module(path) unless MediaFilter.spec_document?(path) || File.basename(path).matches?(BUILD_FILE)
@@ -654,12 +769,12 @@ class SpringAuthTagger < FrameworkTagger
     modules.each do |module_dir|
       if apps = serving_apps(module_dir)
         apps.each do |app|
-          if description = security_decision(endpoint, app, module_classpath(app).try(&.[0]))
-            return description
+          if decision = security_decision(endpoint, app, module_classpath(app).try(&.[0]))
+            return decision
           end
         end
-      elsif description = security_decision(endpoint, module_dir, nil)
-        return description
+      elsif decision = security_decision(endpoint, module_dir, nil)
+        return decision
       end
     end
     nil
@@ -667,14 +782,14 @@ class SpringAuthTagger < FrameworkTagger
 
   # `config_dir` holds the configuration lists are read from; `classpath`
   # (nil: unknown, every chain applies) the modules whose chains apply.
-  private def security_decision(endpoint : Endpoint, config_dir : String?, classpath : Set(String)?) : String?
+  private def security_decision(endpoint : Endpoint, config_dir : String?, classpath : Set(String)?) : Tuple(String, String?, Int32?)?
     url = endpoint.url
     applies = ->(owner : String?) { owner.nil? || classpath.nil? || classpath.includes?(owner) }
     if config_dir && classpath && @chain_modules.none? { |owner| applies.call(owner) } &&
        (@boot_apps.empty? || @boot_apps.includes?(config_dir)) && module_classpath(config_dir).try(&.[1])
       # The app declares no chain, yet Spring Security is on its classpath:
       # Boot's default chain authenticates every request.
-      return "Protected by Spring Boot default security (Spring Security on the app's classpath, no SecurityFilterChain in it)"
+      return {"Protected by Spring Boot default security (Spring Security on the app's classpath, no SecurityFilterChain in it)", nil, nil}
     end
     scoped = @scoped_chains.select { |chain| applies.call(chain[:module]) && chain[:scope].any? { |pattern| matches_ant_pattern?(url, pattern) } }
     rules =
@@ -694,7 +809,7 @@ class SpringAuthTagger < FrameworkTagger
       end
       values.map do |pattern|
         description = rule[:protected_rule] ? "Protected by Spring Security #{rule[:description]} via #{key} (\"#{pattern}\")" : "Public by Spring Security permitAll via #{key} (\"#{pattern}\")"
-        {pattern: pattern, method: rule[:method], description: description, protected_rule: rule[:protected_rule], module: rule[:module], config_key: nil}
+        {pattern: pattern, method: rule[:method], description: description, protected_rule: rule[:protected_rule], module: rule[:module], config_key: nil, path: rule[:path], line: rule[:line]}
       end
     end
 
@@ -721,13 +836,14 @@ class SpringAuthTagger < FrameworkTagger
         verbs = exceptions.map(&.[0]).join(", ")
         reasons = exceptions.compact_map { |_, decision| decision.try(&.[:description]) }.uniq!.join("; ")
         verb_form = exceptions.size == 1 ? "is" : "are"
-        return "#{best.try(&.[:description])}, except for #{verbs}, which #{verb_form} not guarded (#{reasons})#{note}" if best_guards
-        return "#{reasons}, for #{verbs} only#{note}"
+        return {"#{best.try(&.[:description])}, except for #{verbs}, which #{verb_form} not guarded (#{reasons})#{note}", best.try(&.[:path]), best.try(&.[:line])} if best_guards
+        first_guard = exceptions.compact_map { |_, decision| decision }.first?
+        return {"#{reasons}, for #{verbs} only#{note}", first_guard.try(&.[:path]) || best.try(&.[:path]), first_guard.try(&.[:line]) || best.try(&.[:line])}
       end
     end
     return unless best && best[:protected_rule]
 
-    "#{best[:description]}#{note}"
+    {"#{best[:description]}#{note}", best[:path], best[:line]}
   end
 
   BUILD_FILE = /\A(?:pom\.xml|build\.gradle(?:\.kts)?)\z/
@@ -1101,9 +1217,9 @@ class SpringAuthTagger < FrameworkTagger
     end
 
     # Phase 3: Match endpoint URL against security config rules
-    description = check_security_config_rules(endpoint)
-    if description
-      endpoint.add_tag(Tag.new("auth", description, "spring_auth"))
+    if decision = check_security_config_rules(endpoint)
+      description, rule_path, rule_line = decision
+      endpoint.add_tag(Tag.new("auth", description, "spring_auth", rule_path, rule_line))
       return
     end
 

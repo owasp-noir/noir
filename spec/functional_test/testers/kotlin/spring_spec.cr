@@ -19,7 +19,7 @@ expected_endpoints = [
     Param.new("addedAt", "", "json"),
     Param.new("deleted", "", "json"),
   ]),
-  Endpoint.new("/article2", "POST", [Param.new("title", "", "query"), Param.new("content", "", "query")]),
+  Endpoint.new("/article2", "POST", [Param.new("title", "", "form"), Param.new("content", "", "form")]),
   Endpoint.new("/article/{slug}", "GET", [Param.new("slug", "", "path"), Param.new("preview", "false", "query")]),
   Endpoint.new("/article/{id}", "PUT", [Param.new("id", "", "path")]),
   Endpoint.new("/article/{id}", "DELETE", [Param.new("id", "", "path"), Param.new("soft", "", "form"), Param.new("X-Custom-Header", "soft-delete", "header")]),

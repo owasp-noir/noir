@@ -8,6 +8,8 @@ import com.acme.zoo.web.dto.FeedRequest
 import com.acme.zoo.web.dto.PingReq
 import com.acme.zoo.web.dto.SearchFilter
 import com.acme.zoo.web.dto.SprocketBatch
+import com.fasterxml.jackson.databind.JsonNode
+import org.springframework.http.MediaType
 import org.springframework.web.bind.annotation.*
 
 @RestController
@@ -60,6 +62,18 @@ class ZooController {
 
     @PostMapping("/ping")
     fun ping(@RequestBody req: PingReq): String = req.who
+
+    @PostMapping("/items")
+    fun items(@RequestBody body: Map<String, Any?>): Map<String, Any?> = body
+
+    @PostMapping("/events")
+    fun events(@RequestBody payload: JsonNode): String = "ok"
+
+    @PostMapping("/token", consumes = [MediaType.APPLICATION_FORM_URLENCODED_VALUE])
+    fun token(@RequestParam form: Map<String, String>): String = "ok"
+
+    @PostMapping("/revoke", consumes = [MediaType.APPLICATION_FORM_URLENCODED_VALUE])
+    fun revoke(@RequestParam token: String, @RequestParam("token_type_hint", required = false) hint: String?): String = "ok"
 
     companion object {
         const val TOKEN_HDR = "X-Widget-Token"
