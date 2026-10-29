@@ -16,14 +16,14 @@ module Analyzer::CSharp::MinimalApiSupport
   # `app.MapPut<Person>("/", …)` and the typed `MapGet<T>` helpers some
   # libraries ship. Without the optional `<…>` the route literal was never
   # reached and the registration produced no endpoint at all.
-  MAP_VERB_ROUTE_RE = /(?:\b([A-Za-z_][A-Za-z0-9_]*)\s*\.\s*)?Map(Get|Post|Put|Delete|Patch|Head|Options)\s*(?:<[^<>()]*>\s*)?\(\s*(?:[A-Za-z_][A-Za-z0-9_]*\s*:\s*)?@?"([^"]+)"/m
-  MAP_METHODS_RE    = /(?:\b([A-Za-z_][A-Za-z0-9_]*)\s*\.\s*)?MapMethods\s*(?:<[^<>()]*>\s*)?\(\s*(?:[A-Za-z_][A-Za-z0-9_]*\s*:\s*)?@?"([^"]+)"\s*,\s*([\s\S]+?)(?:=>|\);)/m
+  MAP_VERB_ROUTE_RE = /(?:\b([A-Za-z_][A-Za-z0-9_]*)\s*\.\s*)?Map(Get|Post|Put|Delete|Patch|Head|Options)\s*(?:<[^<>()]*>\s*)?\(\s*(?:[A-Za-z_][A-Za-z0-9_]*\s*:\s*)?@?"([^"]*)"/m
+  MAP_METHODS_RE    = /(?:\b([A-Za-z_][A-Za-z0-9_]*)\s*\.\s*)?MapMethods\s*(?:<[^<>()]*>\s*)?\(\s*(?:[A-Za-z_][A-Za-z0-9_]*\s*:\s*)?@?"([^"]*)"\s*,\s*([\s\S]+?)(?:=>|\);)/m
   MAP_CALL_RE       = /\bMap(?:Get|Post|Put|Delete|Patch|Head|Options|Methods|HealthChecks|Forwarder)?\s*(?:<[^<>()]*>\s*)?\(/
   MAP_ANY_PREFIX_RE = /\.?\s*Map(?:Get|Post|Put|Delete|Patch|Head|Options|Methods|HealthChecks|Forwarder)?\s*(?:<[^<>()]*>\s*)?\(/
   # `Map(pattern, …)` and the extensions that wrap it with no method filter:
   # `MapHealthChecks("/health")`, YARP's `MapForwarder("/x/{id}", …)`.
   MAP_ANY_METHOD_RE = /\.\s*Map(?:HealthChecks|Forwarder)?\s*\(/
-  MAP_ANY_ROUTE_RE  = /(?:\b([A-Za-z_][A-Za-z0-9_]*)\s*\.\s*)?Map(?:HealthChecks|Forwarder)?\s*\(\s*(?:[A-Za-z_][A-Za-z0-9_]*\s*:\s*)?@?"([^"]+)"/m
+  MAP_ANY_ROUTE_RE  = /(?:\b([A-Za-z_][A-Za-z0-9_]*)\s*\.\s*)?Map(?:HealthChecks|Forwarder)?\s*\(\s*(?:[A-Za-z_][A-Za-z0-9_]*\s*:\s*)?@?"([^"]*)"/m
 
   private def analyze_minimal_api_files(include_callee : Bool)
     sources = [] of Tuple(String, String)
@@ -615,7 +615,8 @@ module Analyzer::CSharp::MinimalApiSupport
   end
 
   private def build_endpoint_from_route(raw_route : String, http_method : String, file : String, line : Int32, extra_params : Array(Param) = [] of Param) : Endpoint?
-    return if raw_route.empty?
+    # `MapGet("", …)` maps the group prefix itself, or `/` outside a group.
+    raw_route = "/" if raw_route.empty?
 
     route = normalize_route(raw_route)
     params = build_path_params(route)
