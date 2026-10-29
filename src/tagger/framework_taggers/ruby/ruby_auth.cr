@@ -126,7 +126,6 @@ class RubyAuthTagger < FrameworkTagger
     @denying_helpers = Hash(String, Bool).new
     @denies_anonymous = Hash(String, Bool).new
     @deny_settings = Hash(String, String).new
-    @reads_class_setting = Hash(String, Bool).new
     @caller_ivars = Hash(String, Array(String)).new
     @cancan_verdicts = Hash({String, String, String, Bool}, Bool).new
     @cancan_abilities = Hash({String, String}, Noir::CanCanAbility?).new
@@ -414,19 +413,9 @@ class RubyAuthTagger < FrameworkTagger
   # Every class and module under a `controllers` directory, and the `lib/`
   # modules those controllers include.
   private def rails_chain : Noir::RailsCallbackChain
-    @rails_chain ||= Noir::RailsCallbackChain.new.tap do |chain|
-      files = collect_files_by_extension(".rb")
-      files.each do |path|
-        next unless base_relative_path(path).includes?("controllers")
-        next unless lines = read_file_lines(path)
-        chain.add_file(path, lines)
-      end
-      libs = chain.missing_include_paths
-      files.each do |path|
-        next unless libs.any? { |lib_path| path.ends_with?("/#{lib_path}") }
-        next unless lines = read_file_lines(path)
-        chain.add_file(path, lines)
-      end
+    @rails_chain ||= begin
+      controllers, others = collect_files_by_extension(".rb").partition { |path| base_relative_path(path).includes?("controllers") }
+      Noir::RailsCallbackChain.build(controllers, others) { |path| read_file_lines(path) }
     end
   end
 
@@ -666,13 +655,9 @@ class RubyAuthTagger < FrameworkTagger
   NO_SETTINGS = Set(String).new
 
   private def deny_key(name : String, ivars : Array(String), paths : Array(String), settings : Set(String)) : String
-    key = "#{name}|#{ivars.join(',')}|#{own_defs(name, paths).join(',')}"
-    # A deny on `self.class.<setting>` answers per routed class and action.
-    reads_class_setting?(name) ? "#{key}|#{settings.join(',')}" : key
-  end
-
-  private def reads_class_setting?(name : String) : Bool
-    @reads_class_setting.put_if_absent(name) { def_bodies(name).any?(&.any?(&.[1].includes?("self.class."))) }
+    # A deny on `self.class.<setting>`, in this callback or one it calls,
+    # answers per the class macros the routed class calls for the action.
+    "#{name}|#{ivars.join(',')}|#{own_defs(name, paths).join(',')}|#{settings.join(',')}"
   end
 
   # `if arg = self.class.requires_login_arg`: a class setting the routed
@@ -706,8 +691,9 @@ class RubyAuthTagger < FrameworkTagger
   private def setting_macros(reader : String) : Array(String)?
     return unless body = def_bodies(reader).first?
     return unless ivar = body[1..].join(" ", &.[1])[/\A!*(@\w+)\z/, 1]?
+    assigns = /\A#{Regex.escape(ivar)}\s*=(?!=)/
     rails_chain.macros.keys.select do |name|
-      def_bodies(name).any?(&.any? { |_, text| text.matches?(/\A#{Regex.escape(ivar)}\s*=(?!=)/) })
+      def_bodies(name).any?(&.any? { |_, text| text.matches?(assigns) })
     end
   end
 
@@ -949,6 +935,7 @@ class RubyAuthTagger < FrameworkTagger
 
   private def pundit_verdict(line : String, action : String?) : {Symbol, String?}
     # `authorize [:admin, :status], :review?` asks `Admin::StatusPolicy`.
+    policy = line.match(/\bpolicy_class:\s*([A-Z][\w:]*)/).try(&.[1])
     namespace = ""
     if array = line.match(PUNDIT_ARRAY)
       items = array[1].split(',').map(&.strip)
@@ -958,7 +945,6 @@ class RubyAuthTagger < FrameworkTagger
     return {:unknown, nil} unless m = line.match(PUNDIT_ARGS)
     record = m[1]
     query = m[2]? || action.try { |name| "#{name}?" }
-    policy = line.match(/\bpolicy_class:\s*([A-Z][\w:]*)/).try(&.[1])
     policy ||= "#{namespace}#{record.lchop('@').lchop(':').camelcase}Policy" if record[0].in?('@', ':') || record[0].ascii_uppercase?
     return {:unknown, nil} unless query && policy
     label = "#{policy}##{query}"
@@ -1020,7 +1006,8 @@ class RubyAuthTagger < FrameworkTagger
     # `alias purge? index?` / `alias_method :purge?, :index?` answers what
     # the aliased query does.
     unless singleton
-      aliased = lines.compact_map { |source| source.match(/\A\s*alias(?:_method)?\s+:?#{head}(?![\w?!])\s*,?\s*:?(\w+[?!]?)/).try(&.[1]) }.first?
+      alias_line = /\A\s*alias(?:_method)?\s+:?#{head}(?![\w?!])\s*,?\s*:?(\w+[?!]?)/
+      aliased = lines.compact_map { |source| source.match(alias_line).try(&.[1]) }.first?
       return policy_def(policy, aliased, singleton, depth + 1) if aliased && aliased != name
     end
     parent = lines.compact_map { |source| source.match(/\A\s*class\s+[\w:]+\s*<\s*([A-Z][\w:]*)/).try(&.[1]) }.first?

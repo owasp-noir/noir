@@ -126,7 +126,8 @@ module Analyzer::Php
                                 arrays : Hash(String, LiteralArray) = EMPTY_ARRAYS, at : Int32 = 0, check : String? = nil,
                                 controller : Array(CtorName) = NO_CTOR_NAMES) : Nil
       firm = controller.compact_map { |(name, note)| name unless note }
-      candidates = [statement_guard(path, names + firm, expand_middleware_vars(statement, arrays, at), imports), check]
+      statement = expand_middleware_vars(statement, arrays, at)
+      candidates = [statement_guard(path, names + firm, statement, imports), check]
       controller.each do |(name, note)|
         next unless note && (desc = route_guard(path, [name]))
         candidates << "#{desc} (controller constructor: #{note})"
@@ -137,8 +138,8 @@ module Analyzer::Php
       # `can:` is the `Authorize` middleware: `Gate::authorize` answers 403
       # when the ability is denied.
       # ponytail: a `->withoutMiddleware('can:...')` on the route is not subtracted.
-      statement = expand_middleware_vars(statement, arrays, at)
-      ability = (names + firm + (statement.includes?("iddleware") ? middleware_names(statement, imports) : [] of String)).find(&.starts_with?("can:"))
+      ability = (names + firm).find(&.starts_with?("can:"))
+      ability ||= middleware_names(statement, imports).find(&.starts_with?("can:")) if statement.includes?("can:")
       endpoint.add_tag(Tag.new("authz", "Protected by Laravel #{ability} middleware", "php_auth")) if ability
     end
 

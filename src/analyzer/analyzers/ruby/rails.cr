@@ -2332,15 +2332,9 @@ module Analyzer::Ruby
     # Every class and module under a `controllers` directory of the scan,
     # and the `lib/` modules those controllers include.
     private def callback_chain : Noir::RailsCallbackChain
-      @callback_chain ||= Noir::RailsCallbackChain.new.tap do |chain|
-        @known_files.each do |path|
-          next unless path.ends_with?(".rb") && base_relative_path(path).includes?("controllers")
-          chain.add_file(path, ruby_source(path).lines)
-        end
-        libs = chain.missing_include_paths
-        @known_files.each do |path|
-          chain.add_file(path, ruby_source(path).lines) if libs.any? { |lib_path| path.ends_with?("/#{lib_path}") }
-        end
+      @callback_chain ||= begin
+        controllers, others = @known_files.select(&.ends_with?(".rb")).partition { |path| base_relative_path(path).includes?("controllers") }
+        Noir::RailsCallbackChain.build(controllers, others) { |path| ruby_source(path).lines }
       end
     end
 
