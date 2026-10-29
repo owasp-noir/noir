@@ -3,7 +3,7 @@ require "../../../src/analyzer/engines/java_engine"
 
 describe "Analyzer::Java::JavaEngine.test_path?" do
   it "flags the Maven/Gradle test source sets" do
-    {"src/test", "src/it", "src/testFixtures", "src/jmh", "src/integrationTest", "src/functionalTest"}.each do |set|
+    {"src/test", "src/it", "src/testFixtures", "src/jmh", "src/integrationTest", "src/integration", "src/functionalTest"}.each do |set|
       Analyzer::Java::JavaEngine.test_path?("/app/#{set}/java/a/FooController.java").should be_true
     end
   end
@@ -11,6 +11,10 @@ describe "Analyzer::Java::JavaEngine.test_path?" do
   it "flags JUnit classes by their Test.java / Tests.java suffix outside src/test" do
     Analyzer::Java::JavaEngine.test_path?("/x/src/main/java/a/FooTest.java").should be_true
     Analyzer::Java::JavaEngine.test_path?("/x/src/main/java/a/FooTests.java").should be_true
+  end
+
+  it "keeps a module that is named integration" do
+    Analyzer::Java::JavaEngine.test_path?("/x/src/integration/src/main/java/a/FooResource.java").should be_false
   end
 
   it "keeps real controllers, including names that only resemble the suffix" do

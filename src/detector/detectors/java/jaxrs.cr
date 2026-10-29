@@ -8,7 +8,9 @@ module Detector::Java
     # Frameworks that ride on JAX-RS but ship their own detector.
     # Quarkus / Dropwizard / Helidon MP projects should report as that
     # specific framework, not as plain JAX-RS.
-    DERIVATIVE_MARKERS = ["io.quarkus", "io.dropwizard", "io.helidon.microprofile"]
+    # `io.dropwizard.metrics` is the standalone Metrics library (its own
+    # Maven groupId), which plain Jersey apps depend on without Dropwizard.
+    DERIVATIVE_MARKERS_RE = /io\.quarkus|io\.dropwizard(?!\.metrics)|io\.helidon\.microprofile/
 
     # `derivative_project?` answers a project-wide question — "does any
     # source file under this root pull in Quarkus/Dropwizard?" — whose
@@ -25,7 +27,7 @@ module Detector::Java
 
     def detect(filename : String, file_contents : String) : Bool
       return false unless filename.ends_with?(".java") || filename.ends_with?(".kt")
-      return false if DERIVATIVE_MARKERS.any? { |marker| file_contents.includes?(marker) }
+      return false if content_matches?(file_contents, DERIVATIVE_MARKERS_RE)
       return false if derivative_project?(filename)
       file_contents.includes?("jakarta.ws.rs") || file_contents.includes?("javax.ws.rs")
     end
@@ -59,7 +61,7 @@ module Detector::Java
           # The detector pass already read most of these files; reuse the
           # cached content so the one-time sweep avoids a second disk read.
           content = locator.content_for(path) || File.read(path)
-          DERIVATIVE_MARKERS.any? { |marker| content.includes?(marker) }
+          content_matches?(content, DERIVATIVE_MARKERS_RE)
         rescue
           false
         end

@@ -4,6 +4,7 @@ require "../../../miniparsers/jaxrs_extractor_ts"
 require "../../../miniparsers/kotlin_route_extractor_ts"
 require "xml"
 require "../../../utils/url_path"
+require "../../../utils/top_level_split"
 require "../../../utils/xml_comments"
 
 module Analyzer::Java
@@ -106,6 +107,10 @@ module Analyzer::Java
     private def application_base_paths_for(file_list : Array(String)) : Hash(ApplicationBaseKey, String)
       base_paths = Hash(ApplicationBaseKey, String).new
       application_packages = Hash(String, Array(ApplicationBaseKey)).new { |hash, key| hash[key] = [] of ApplicationBaseKey }
+      servlet_mounts = Hash(ApplicationBaseKey, String).new
+      # Keys two mounts claim with different prefixes (e.g. two servlets
+      # with no packages in one module): no single prefix is right.
+      conflicting_mounts = Set(ApplicationBaseKey).new
 
       file_list.each do |path|
         next unless jvm_source?(path)
@@ -113,6 +118,16 @@ module Analyzer::Java
         next unless File.exists?(path)
 
         content = read_file_content(path)
+        if content_matches?(content, SERVLET_CONTAINER_RE) && content_matches?(content, ADD_SERVLET_RE)
+          mount_root = project_root_for(path)
+          programmatic_servlet_mounts(content).each do |package_name, prefix|
+            key = {mount_root, package_name}
+            existing = servlet_mounts[key]?
+            conflicting_mounts << key if existing && existing != prefix
+            servlet_mounts[key] = prefix
+          end
+        end
+
         # One precompiled matcher per gate instead of a `String#includes?`
         # scan per `.java` file — this walks the whole Java source set.
         next unless content_matches?(content, APPLICATION_PATH_RE)
@@ -144,8 +159,85 @@ module Analyzer::Java
       web_xml_base_paths_for(file_list, application_packages).each do |key, base_path|
         base_paths[key] = base_path
       end
+      conflicting_mounts.each { |key| servlet_mounts.delete(key) }
+      base_paths.merge!(servlet_mounts)
 
       base_paths
+    end
+
+    SERVLET_CONTAINER_RE = /\bnew\s+ServletContainer\s*\(/
+    ADD_SERVLET_RE       = /\.addServlet\s*\(/
+    PACKAGES_CALL_RE     = /\.\s*packages\s*\(([^)]*)\)/
+    STRING_LITERAL_RE    = /"([^"\\]*)"/
+    IDENTIFIER_RE        = /\A\w+\z/
+
+    # Jersey mounted in code (embedded Jetty), as `{package, prefix}` pairs:
+    # `context.addServlet(holder, "/api/*")` where
+    # `holder = new ServletHolder(..., new ServletContainer(config))` and
+    # `config.packages("demo.resources")`, or
+    # `new ServletContainer(new demo.api.ApiConfig())`, keyed by that
+    # class's package. A container with neither mounts the whole root (`""`).
+    # ponytail: textual and single-file; a config built in another method's
+    # local or another file is not followed.
+    private def programmatic_servlet_mounts(content : String) : Array(Tuple(String, String))
+      mounts = [] of Tuple(String, String)
+      code = JavaEngine.strip_comments(content)
+      code.scan(ADD_SERVLET_RE) do |match|
+        open_idx = match.end(0) - 1
+        close_idx = JavaEngine.find_matching_delimiter(code, open_idx, '(', ')')
+        next unless close_idx
+        args = Noir::TopLevelSplit.split(code[open_idx + 1...close_idx], ',', Noir::TopLevelSplit::Rules::JAVA)
+        next unless args.size == 2
+        pattern = args[1].strip
+        next unless pattern.size >= 2 && pattern.starts_with?('"') && pattern.ends_with?('"')
+
+        call_at = match.begin(0)
+        holder = resolve_local(code, args[0].strip, call_at)
+        container = holder.match(SERVLET_CONTAINER_RE)
+        next unless container
+        container_close = JavaEngine.find_matching_delimiter(holder, container.end(0) - 1, '(', ')')
+        next unless container_close
+        config_arg = holder[container.end(0)...container_close].strip
+        config = resolve_local(code, config_arg, call_at)
+
+        packages = [] of String
+        config.scan(PACKAGES_CALL_RE) { |call| collect_string_literals(call[1], packages) }
+        if config_arg.matches?(IDENTIFIER_RE)
+          code[0...call_at].scan(/\b#{Regex.escape(config_arg)}\s*#{PACKAGES_CALL_RE}/) { |call| collect_string_literals(call[1], packages) }
+        end
+        if packages.empty? && (type = config.match(/\Anew\s+([\w.]+)\s*\(/).try(&.[1]))
+          packages << class_package(code, type) unless type == "ResourceConfig" || type.starts_with?("org.glassfish.")
+        end
+        packages << "" if packages.empty?
+
+        prefix = normalize_servlet_pattern(pattern[1...-1])
+        packages.each { |package_name| mounts << {package_name, prefix} }
+      end
+      mounts
+    end
+
+    private def collect_string_literals(text : String, into : Array(String)) : Nil
+      text.scan(STRING_LITERAL_RE) { |literal| into << literal[1] }
+    end
+
+    # The value of local `name` at `before`: its last assignment
+    # (`name = <expr>;`) ahead of that offset, or `name` itself when it is
+    # not a plain identifier with one.
+    private def resolve_local(code : String, name : String, before : Int32) : String
+      return name unless name.matches?(IDENTIFIER_RE)
+      value = nil
+      code[0...before].scan(/\b#{Regex.escape(name)}\s*=(?!=)\s*([^;]+);/) { |assignment| value = assignment[1].strip }
+      value || name
+    end
+
+    # Package of class `type` as `code` names it: the qualifier of a dotted
+    # name, else its import, else the file's own package.
+    private def class_package(code : String, type : String) : String
+      if index = type.rindex('.')
+        return type[0...index]
+      end
+      code.match(/\bimport\s+([\w.]+)\.#{Regex.escape(type)}\s*;/).try(&.[1]) ||
+        code.match(/\bpackage\s+([\w.]+)\s*;/).try(&.[1]) || ""
     end
 
     # Manifest basenames a derivative framework can *only* show up in.
@@ -212,6 +304,7 @@ module Analyzer::Java
           mappings.each do |mapping|
             base_path = normalize_servlet_pattern(mapping[:pattern])
             app_packages = application_packages_for_mapping(mapping[:application_classes], application_packages, project_root)
+            mapping[:packages].each { |package_name| app_packages << {project_root, package_name} }
             if app_packages.empty?
               global_candidates[project_root] << base_path if mapping[:jaxrs_servlet]
             else
@@ -230,6 +323,9 @@ module Analyzer::Java
 
         keys = application_packages.values.flatten.select { |key| key[0] == project_root }
         keys.uniq!
+        # No `@ApplicationPath` class to attach the mapping to: the servlet
+        # serves every resource in the module.
+        keys << {project_root, ""} if keys.empty?
         keys.each do |key|
           base_paths[key] = candidates.first
         end
@@ -259,11 +355,14 @@ module Analyzer::Java
       packages
     end
 
-    private def parse_web_xml_jaxrs_mappings(content : String) : Array(NamedTuple(pattern: String, application_classes: Array(String), jaxrs_servlet: Bool))
-      mappings = [] of NamedTuple(pattern: String, application_classes: Array(String), jaxrs_servlet: Bool)
+    alias WebXmlServlet = NamedTuple(application_classes: Array(String), packages: Array(String), jaxrs_servlet: Bool)
+    alias WebXmlMapping = NamedTuple(pattern: String, application_classes: Array(String), packages: Array(String), jaxrs_servlet: Bool)
+
+    private def parse_web_xml_jaxrs_mappings(content : String) : Array(WebXmlMapping)
+      mappings = [] of WebXmlMapping
       doc = Noir::XmlComments.parse(content)
       root = find_xml_child(doc, "web-app") || doc
-      servlets = Hash(String, NamedTuple(application_classes: Array(String), jaxrs_servlet: Bool)).new
+      servlets = Hash(String, WebXmlServlet).new
 
       each_xml_child(root, "servlet") do |servlet|
         name = xml_child_text(servlet, "servlet-name")
@@ -272,16 +371,21 @@ module Analyzer::Java
         servlet_class = xml_child_text(servlet, "servlet-class")
         application_classes = [] of String
         application_classes << servlet_class unless servlet_class.empty?
+        packages = [] of String
 
         each_xml_child(servlet, "init-param") do |param|
           param_name = xml_child_text(param, "param-name")
-          next unless param_name == "javax.ws.rs.Application" || param_name == "jakarta.ws.rs.Application"
           value = xml_child_text(param, "param-value")
-          application_classes << value unless value.empty?
+          if param_name == "jersey.config.server.provider.packages"
+            packages.concat(value.split(/[\s,;]+/, remove_empty: true))
+          elsif param_name == "javax.ws.rs.Application" || param_name == "jakarta.ws.rs.Application"
+            application_classes << value unless value.empty?
+          end
         end
 
         servlets[name] = {
           application_classes: application_classes,
+          packages:            packages,
           jaxrs_servlet:       jaxrs_servlet_class?(servlet_class) || application_classes.any? { |value| jaxrs_application_class_name?(value) },
         }
       end
@@ -298,6 +402,7 @@ module Analyzer::Java
           mappings << {
             pattern:             pattern,
             application_classes: servlet[:application_classes],
+            packages:            servlet[:packages],
             jaxrs_servlet:       servlet[:jaxrs_servlet],
           }
         end
@@ -365,8 +470,9 @@ module Analyzer::Java
     # vanilla Jersey / RESTEasy resources without double-counting.
     # `io.helidon.microprofile` routes to `Analyzer::Java::HelidonMp`,
     # which drives this same extractor under the `java_helidon_mp` tech.
-    DERIVATIVE_MARKERS    = ["io.quarkus", "io.dropwizard", "io.helidon.microprofile"]
-    DERIVATIVE_MARKERS_RE = Regex.union(DERIVATIVE_MARKERS)
+    # `io.dropwizard.metrics` is the standalone Metrics library, not the
+    # framework (see the detector's copy of this list).
+    DERIVATIVE_MARKERS_RE = /io\.quarkus|io\.dropwizard(?!\.metrics)|io\.helidon\.microprofile/
 
     private def claimed_by_derivative?(content : String) : Bool
       content_matches?(content, DERIVATIVE_MARKERS_RE)
