@@ -402,9 +402,9 @@ module Noir
                           end
 
           # A middleware-only `.all` (`router.all(['/apps', '/apps/*'], requireStaff)`)
-          # serves nothing. Expanding it mints seven routes per path, and those
-          # rows are the only place the guard used to be visible.
-          next if normalized_method == "ALL" && handler.nil?
+          # serves nothing. Expanding it mints seven routes per path. An
+          # unresolved name has no facts and stays: unknown steps are routes.
+          next if normalized_method == "ALL" && handler.nil? && handler_facts
 
           # Handle router.all by expanding to all HTTP methods
           prefixes.each do |prefix|
