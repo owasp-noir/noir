@@ -7,15 +7,40 @@ require "../../../analyzer/engines/java_engine"
 
 @[Noir::TaggerFor(key: "spring_auth", name: "Spring Auth Tagger", desc: "Identifies Spring Security patterns (annotations, security config)", order: 20)]
 class SpringAuthTagger < FrameworkTagger
+  record MetaAnnotation,
+    name : String,
+    spring_annotation : String
+
+  record InterceptorDef,
+    name : String,
+    file_path : String,
+    line : Int32,
+    is_auth_guard : Bool,
+    module_dir : String?
+
+  record RegisteredInterceptor,
+    interceptor_name : String,
+    file_path : String,
+    line : Int32,
+    add_patterns : Array(String),
+    exclude_patterns : Array(String),
+    module_dir : String?
+
   ANNOTATION_PATTERNS = [
     /\@PreAuthorize\s*\(/,
+    /\@PostAuthorize\s*\(/,
     /\@Secured\s*\(/,
     /\@RolesAllowed\s*\(/,
   ]
 
   # The same authorization annotations, as the bare names they are matched by
   # when they decorate the controller *class* instead of a single handler.
-  CLASS_ANNOTATION_NAMES = ["@PreAuthorize", "@Secured", "@RolesAllowed"]
+  CLASS_ANNOTATION_NAMES = ["@PreAuthorize", "@PostAuthorize", "@Secured", "@RolesAllowed"]
+
+  # What a `preHandle` that turns the caller away does: a 401/403 status or
+  # an auth exception. `return false` alone is not read: a rate limiter or
+  # maintenance switch returns false too.
+  INTERCEPTOR_REJECTION_RE = /(?:setStatus\s*\(\s*(?:40[13]|(?:HttpServletResponse\.)?SC_(?:UNAUTHORIZED|FORBIDDEN)|HttpStatus\.(?:UNAUTHORIZED|FORBIDDEN))\b|sendError\s*\(\s*(?:40[13]|(?:HttpServletResponse\.)?SC_(?:UNAUTHORIZED|FORBIDDEN)|HttpStatus\.(?:UNAUTHORIZED|FORBIDDEN))\b|\bstatus\s*=\s*(?:40[13]|(?:HttpServletResponse\.)?SC_(?:UNAUTHORIZED|FORBIDDEN)|HttpStatus\.(?:UNAUTHORIZED|FORBIDDEN))\b|throw\s+new\s+(?:\w*(?:Auth(?!or)|AccessDenied|Unauthorized|Forbidden|Security)\w*|ResponseStatusException\s*\(\s*HttpStatus\.(?:UNAUTHORIZED|FORBIDDEN))\b)/i
 
   # Security config URL rules. `access { ... }` is a protected rule too;
   # `permitAll()` is intentionally tracked so a more-specific public matcher
@@ -83,6 +108,9 @@ class SpringAuthTagger < FrameworkTagger
     # and the ones holding a Boot entry point (`@SpringBootApplication`, `SpringApplication.run`).
     @chain_modules = Set(String?).new
     @boot_apps = Set(String).new
+    @security_meta_annotations = Hash(String, MetaAnnotation).new
+    @interceptor_defs = Hash(String, InterceptorDef).new
+    @registered_interceptors = [] of RegisteredInterceptor
   end
 
   def self.target_techs : Array(String)
@@ -100,6 +128,9 @@ class SpringAuthTagger < FrameworkTagger
     @scoped_chains.clear
     @chain_modules.clear
     @boot_apps.clear
+    @security_meta_annotations.clear
+    @interceptor_defs.clear
+    @registered_interceptors.clear
 
     # Find Java and Kotlin security config files
     extensions = [".java", ".kt"]
@@ -111,11 +142,216 @@ class SpringAuthTagger < FrameworkTagger
         if !file.includes?("/src/test/") && BOOT_APP_MARKERS.any? { |marker| content.includes?(marker) } && (app = build_module(file))
           @boot_apps << app
         end
+
+        module_dir = build_module(file)
+
+        if content.includes?("@interface") || content.includes?("annotation class")
+          scan_meta_annotations(content, file, module_dir)
+        end
+
+        if content.includes?("HandlerInterceptor") || content.includes?("HandlerInterceptorAdapter")
+          scan_interceptor_def(content, file, module_dir)
+        end
+
+        if content.includes?("addInterceptors")
+          scan_interceptor_registration(content, file, module_dir)
+        end
+
         next unless content.includes?("SecurityFilterChain") || content.includes?("HttpSecurity") || content.includes?("WebSecurityConfigurerAdapter")
 
-        scan_security_config(content, file.ends_with?(".java"), build_module(file), file)
+        scan_security_config(content, file.ends_with?(".java"), module_dir, file)
       end
     end
+  end
+
+  private def scan_meta_annotations(content : String, file : String, module_dir : String?)
+    clean_content = Noir::CComments.strip(content)
+    lines = clean_content.lines
+
+    lines.each_with_index do |line, idx|
+      name = if match = line.match(/(?:public\s+|protected\s+|private\s+)?@interface\s+([A-Za-z0-9_$]+)/)
+               match[1]
+             elsif match = line.match(/\bannotation\s+class\s+([A-Za-z0-9_$]+)/)
+               match[1]
+             end
+      next unless name
+
+      annotations_text = [] of String
+      j = idx - 1
+      while j >= 0 && j >= idx - 20
+        prev = lines[j].strip
+        break if prev.starts_with?("package ") || prev.starts_with?("import ")
+        break if prev.includes?("class ") || prev.includes?("@interface ")
+        annotations_text.unshift(prev)
+        j -= 1
+      end
+      annotations_text << line
+
+      full_block = annotations_text.join("\n")
+      if match = full_block.match(/@(PreAuthorize|PostAuthorize|Secured|RolesAllowed)\s*\(/)
+        @security_meta_annotations[name] = MetaAnnotation.new(name, "@#{match[1]}")
+      elsif @security_meta_annotations.present?
+        @security_meta_annotations.each_value do |meta|
+          if full_block.matches?(/(?:\A|[^@\w])@#{Regex.escape(meta.name)}\b/)
+            @security_meta_annotations[name] = MetaAnnotation.new(name, meta.spring_annotation)
+            break
+          end
+        end
+      end
+    end
+  end
+
+  private def scan_interceptor_def(content : String, file : String, module_dir : String?)
+    clean_content = Noir::CComments.strip(content)
+    lines = clean_content.lines
+
+    lines.each_with_index do |line, idx|
+      class_name = nil
+
+      if match = line.match(/(?:public\s+|protected\s+|private\s+)?(?:final\s+|abstract\s+)?class\s+([A-Za-z0-9_$]+)[^{]*(?:implements\s+[^{]*\bHandlerInterceptor\b|extends\s+[^{]*\bHandlerInterceptorAdapter\b)/)
+        class_name = match[1]
+      elsif match = line.match(/(?:class|open\s+class)\s+([A-Za-z0-9_$]+)[^{:]*:\s*[^{]*(?:\bHandlerInterceptor\b|\bHandlerInterceptorAdapter\b)/)
+        class_name = match[1]
+      elsif line.includes?("HandlerInterceptor") || line.includes?("HandlerInterceptorAdapter")
+        combined = lines[[0, idx - 2].max..idx].map(&.strip).join(" ")
+        if match = combined.match(/class\s+([A-Za-z0-9_$]+)[^{:]*(?:implements|extends|:)[^{]*(?:\bHandlerInterceptor\b|\bHandlerInterceptorAdapter\b)/)
+          class_name = match[1]
+        end
+      end
+
+      next unless class_name
+
+      # The class's own body: a file can declare several interceptors.
+      line_start = clean_content.lines(chomp: false)[0, idx].sum(&.bytesize)
+      next unless open = clean_content.byte_index('{', line_start)
+      close = Noir::JSLiteralScanner.find_matching_brace_at_byte(clean_content, open) || clean_content.bytesize - 1
+      is_auth = check_pre_handle_auth(clean_content.byte_slice(open, close - open + 1))
+      @interceptor_defs[class_name] = InterceptorDef.new(
+        name: class_name,
+        file_path: file,
+        line: idx + 1,
+        is_auth_guard: is_auth,
+        module_dir: module_dir
+      )
+    end
+  end
+
+  private def check_pre_handle_auth(content : String) : Bool
+    pre_handle_match = content.match(/(?:\bboolean\s+preHandle\b|(?:override\s+)?fun\s+preHandle\b)[^{]*\{/m)
+    return false unless pre_handle_match
+
+    open_brace_idx = pre_handle_match.byte_end(0) - 1
+    close_brace_idx = Noir::JSLiteralScanner.find_matching_brace_at_byte(content, open_brace_idx)
+    body = close_brace_idx ? content.byte_slice(open_brace_idx + 1, close_brace_idx - open_brace_idx - 1) : content.byte_slice(open_brace_idx + 1, [content.bytesize - open_brace_idx - 1, 1500].min)
+
+    body.matches?(INTERCEPTOR_REJECTION_RE)
+  end
+
+  private def scan_interceptor_registration(content : String, file : String, module_dir : String?)
+    clean_content = Noir::CComments.strip(content)
+    add_int_match = clean_content.match(/\baddInterceptors\s*\(\s*(?:(?:final\s+)?InterceptorRegistry\s+(\w+)|(\w+)\s*:\s*InterceptorRegistry)\s*\)[^{]*\{/m)
+    return unless add_int_match
+
+    reg_param = add_int_match[1]? || add_int_match[2]? || "registry"
+    open_brace_idx = add_int_match.byte_end(0) - 1
+    close_brace_idx = Noir::JSLiteralScanner.find_matching_brace_at_byte(clean_content, open_brace_idx)
+    return unless close_brace_idx
+
+    body = clean_content.byte_slice(open_brace_idx + 1, close_brace_idx - open_brace_idx - 1)
+    reg_re = /(?:(?:InterceptorRegistration|val|var)\s+(\w+)\s*=\s*)?#{Regex.escape(reg_param)}\s*\.\s*addInterceptor\s*\(/m
+
+    body.scan(reg_re) do |match|
+      var_name = match[1]?
+      call_open_paren = match.byte_end(0) - 1
+      call_close_paren = Noir::JSLiteralScanner.find_matching_paren_at_byte(body, call_open_paren)
+      next unless call_close_paren
+
+      arg = body.byte_slice(call_open_paren + 1, call_close_paren - call_open_paren - 1).strip
+
+      remaining = body.byte_slice(call_close_paren + 1, body.bytesize - call_close_paren - 1)
+      # The statement ends at `;`, or in Kotlin at the next registration.
+      stop = [remaining.index(';'), remaining.index(/\b#{Regex.escape(reg_param)}\s*\./)].compact.min?
+      chain_slice = stop ? remaining[0...stop] : remaining[0, 500]
+
+      chain_text = chain_slice
+      if var_name
+        body.scan(/\b#{Regex.escape(var_name)}\s*\.\s*(?:addPathPatterns|excludePathPatterns)\s*\(/m) do |vmatch|
+          v_open = vmatch.byte_end(0) - 1
+          if v_close = Noir::JSLiteralScanner.find_matching_paren_at_byte(body, v_open)
+            chain_text += "\n" + body.byte_slice(vmatch.byte_begin(0), v_close - vmatch.byte_begin(0) + 1)
+          end
+        end
+      end
+
+      add_patterns = [] of String
+      chain_text.scan(/\.addPathPatterns\s*\(/) do |pmatch|
+        p_open = pmatch.byte_end(0) - 1
+        if p_close = Noir::JSLiteralScanner.find_matching_paren_at_byte(chain_text, p_open)
+          p_args = chain_text.byte_slice(p_open + 1, p_close - p_open - 1)
+          p_args.scan(/"((?:[^"\\]|\\.)*)"/) { |sm| add_patterns << sm[1] }
+        end
+      end
+
+      add_patterns = ["/**"] if add_patterns.empty?
+
+      exclude_patterns = [] of String
+      chain_text.scan(/\.excludePathPatterns\s*\(/) do |pmatch|
+        p_open = pmatch.byte_end(0) - 1
+        if p_close = Noir::JSLiteralScanner.find_matching_paren_at_byte(chain_text, p_open)
+          p_args = chain_text.byte_slice(p_open + 1, p_close - p_open - 1)
+          p_args.scan(/"((?:[^"\\]|\\.)*)"/) { |sm| exclude_patterns << sm[1] }
+        end
+      end
+
+      interceptor_type = resolve_interceptor_type(arg, clean_content)
+      next unless interceptor_type
+
+      match_byte_in_content = open_brace_idx + 1 + match.byte_begin(0)
+      line_num = clean_content.byte_slice(0, match_byte_in_content).count('\n') + 1
+
+      @registered_interceptors << RegisteredInterceptor.new(
+        interceptor_name: interceptor_type,
+        file_path: file,
+        line: line_num,
+        add_patterns: add_patterns,
+        exclude_patterns: exclude_patterns,
+        module_dir: module_dir
+      )
+    end
+  end
+
+  private def resolve_interceptor_type(arg : String, content : String) : String?
+    if match = arg.match(/\bnew\s+([A-Za-z0-9_$]+)\s*\(/)
+      return match[1]
+    elsif match = arg.match(/\A\s*([A-Z][A-Za-z0-9_$]*)\s*\(/)
+      return match[1]
+    end
+
+    ident = arg.sub(/\s*\(.*\)\z/, "").strip
+    return if ident.empty?
+
+    if match = content.match(/(?:private|protected|public)?\s*(?:final\s+)?([A-Za-z0-9_$]+)\s+#{Regex.escape(ident)}\s*;/m)
+      type_name = match[1]
+      return type_name if type_name != "var" && type_name != "val"
+    end
+
+    if match = content.match(/\b([A-Za-z0-9_$]+)\s+#{Regex.escape(ident)}\b[,\)]/)
+      type_name = match[1]
+      return type_name if type_name != "final" && type_name != "var" && type_name != "val"
+    elsif match = content.match(/\b#{Regex.escape(ident)}\s*:\s*([A-Za-z0-9_$]+)/)
+      return match[1]
+    end
+
+    if match = content.match(/\b([A-Za-z0-9_$]+)\s+#{Regex.escape(ident)}\s*\(\s*\)/)
+      return match[1]
+    elsif match = content.match(/fun\s+#{Regex.escape(ident)}\s*\(\s*\)\s*:\s*([A-Za-z0-9_$]+)/)
+      return match[1]
+    end
+
+    return ident if ident[0].ascii_uppercase?
+
+    capitalized = ident[0].upcase + ident[1..]
+    capitalized
   end
 
   private def scan_security_config(content : String, java : Bool, module_dir : String?, file_path : String)
@@ -872,9 +1108,17 @@ class SpringAuthTagger < FrameworkTagger
     end || 0
   end
 
-  private def check_annotations(ctx : SourceContext) : String?
+  private def check_annotations(ctx : SourceContext, method : String) : String?
     line = ctx.line
     return unless line
+
+    # `@PostAuthorize` is evaluated after the handler returns: it hides a
+    # read's result, but a write has already happened when it refuses.
+    post_ok = SAFE_HTTP_METHODS.includes?(method.upcase)
+    patterns = post_ok ? ANNOTATION_PATTERNS : ANNOTATION_PATTERNS.reject(&.source.includes?("PostAuthorize"))
+    class_names = post_ok ? CLASS_ANNOTATION_NAMES : CLASS_ANNOTATION_NAMES - ["@PostAuthorize"]
+    metas = @security_meta_annotations.values
+    metas.reject!(&.spring_annotation.==("@PostAuthorize")) unless post_ok
 
     # Walk backwards from endpoint line to find annotations
     # `line` is 1-indexed (from PathInfo), array is 0-indexed
@@ -896,10 +1140,16 @@ class SpringAuthTagger < FrameworkTagger
       # or a bodiless interface method `String admin();`.
       break if current_line.ends_with?(";") || current_line.matches?(KOTLIN_FUN_DECLARATION)
 
-      ANNOTATION_PATTERNS.each do |pattern|
+      patterns.each do |pattern|
         if current_line.matches?(pattern)
           annotation_name = current_line.split("(").first.strip
           return "Protected by Spring #{annotation_name}"
+        end
+      end
+
+      metas.each do |meta|
+        if current_line.matches?(/(?:\A|[^@\w])@#{Regex.escape(meta.name)}\b/)
+          return "Protected by Spring #{meta.spring_annotation} (@#{meta.name})"
         end
       end
 
@@ -907,10 +1157,16 @@ class SpringAuthTagger < FrameworkTagger
     end
 
     annotation_lines_below(lines, endpoint_idx, "@").each do |below|
-      ANNOTATION_PATTERNS.each do |pattern|
+      patterns.each do |pattern|
         if below.matches?(pattern)
           annotation_name = below.split("(").first.strip
           return "Protected by Spring #{annotation_name}"
+        end
+      end
+
+      metas.each do |meta|
+        if below.matches?(/(?:\A|[^@\w])@#{Regex.escape(meta.name)}\b/)
+          return "Protected by Spring #{meta.spring_annotation} (@#{meta.name})"
         end
       end
     end
@@ -920,9 +1176,16 @@ class SpringAuthTagger < FrameworkTagger
     # stops at the `public`/`class` boundary by design, so a handler under an
     # `@PreAuthorize("hasRole('ADMIN')")` controller was reported as
     # unauthenticated. Check the class declaration separately.
-    CLASS_ANNOTATION_NAMES.each do |annotation_name|
+    class_names.each do |annotation_name|
       if class_line = class_level_annotation(ctx.path, lines, annotation_name)
         return "Protected by Spring #{class_line.split("(").first.strip} on the controller class"
+      end
+    end
+
+    metas.each do |meta|
+      # The lookup matches by prefix: `@Admin` must not take `@AdminApi`.
+      if class_level_annotation(ctx.path, lines, "@#{meta.name}").try(&.matches?(/\A@#{Regex.escape(meta.name)}\b/))
+        return "Protected by Spring #{meta.spring_annotation} (@#{meta.name}) on the controller class"
       end
     end
 
@@ -936,8 +1199,7 @@ class SpringAuthTagger < FrameworkTagger
     # Phase 2: Check annotations near code_paths
     contexts = read_source_context(endpoint)
     contexts.each do |ctx|
-      description = check_annotations(ctx)
-      if description
+      if description = check_annotations(ctx, endpoint.method)
         endpoint.add_tag(Tag.new("auth", description, "spring_auth"))
         return
       end
@@ -950,13 +1212,73 @@ class SpringAuthTagger < FrameworkTagger
       return
     end
 
-    # Phase 4: a handler that refuses an anonymous caller itself.
+    # Phase 4: Match endpoint URL against registered HandlerInterceptors
+    if decision = check_interceptor_rules(endpoint)
+      description, rule_path, rule_line = decision
+      endpoint.add_tag(Tag.new("auth", description, "spring_auth", rule_path, rule_line))
+      return
+    end
+
+    # Phase 5: a handler that refuses an anonymous caller itself.
     contexts.each do |ctx|
       if description = anonymous_refusal(ctx)
         endpoint.add_tag(Tag.new("auth", description, "spring_auth"))
         return
       end
     end
+  end
+
+  private def check_interceptor_rules(endpoint : Endpoint) : Tuple(String, String, Int32)?
+    return if @registered_interceptors.empty?
+
+    modules = endpoint.details.code_paths.compact_map do |path_info|
+      path = path_info.path
+      build_module(path) unless MediaFilter.spec_document?(path) || File.basename(path).matches?(BUILD_FILE)
+    end.uniq!
+
+    if modules.empty?
+      return interceptor_decision(endpoint, nil)
+    end
+
+    modules.each do |module_dir|
+      if apps = serving_apps(module_dir)
+        apps.each do |app|
+          classpath = module_classpath(app).try(&.[0])
+          if desc = interceptor_decision(endpoint, classpath)
+            return desc
+          end
+        end
+      elsif desc = interceptor_decision(endpoint, Set{module_dir})
+        return desc
+      end
+    end
+    nil
+  end
+
+  private def interceptor_decision(endpoint : Endpoint, classpath : Set(String)?) : Tuple(String, String, Int32)?
+    url = endpoint.url
+    applies = ->(owner : String?) { owner.nil? || classpath.nil? || classpath.includes?(owner) }
+
+    @registered_interceptors.each do |reg|
+      next unless applies.call(reg.module_dir)
+
+      interceptor = @interceptor_defs[reg.interceptor_name]?
+      if interceptor.nil?
+        if entry = @interceptor_defs.find { |k, _| k.downcase == reg.interceptor_name.downcase }
+          interceptor = entry[1]
+        end
+      end
+      next unless interceptor && interceptor.is_auth_guard
+
+      matches_add = reg.add_patterns.any? { |pattern| matches_ant_pattern?(url, pattern) }
+      next unless matches_add
+
+      matches_exclude = reg.exclude_patterns.any? { |pattern| matches_ant_pattern?(url, pattern) }
+      next if matches_exclude
+
+      return {"Protected by Spring HandlerInterceptor #{interceptor.name}", reg.file_path, reg.line}
+    end
+    nil
   end
 
   HANDLER_PRINCIPAL_PARAM = /(?:\b(?:java\.security\.)?(?:Principal|Authentication)\s+([a-z_$][\w$]*)\s*[,)]|@AuthenticationPrincipal\s+(?:final\s+)?[\w$.<>?]+\s+([a-z_$][\w$]*)\s*[,)]|\b([a-z_][\w]*)\s*:\s*(?:java\.security\.)?(?:Principal|Authentication)\?)/

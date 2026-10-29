@@ -1264,3 +1264,777 @@ describe "SpringAuthTagger (multi-module projects)" do
     legacy_tag.line.should eq(10)
   end
 end
+
+def run_spring_endpoints_map(files : Hash(String, String), routes : Hash(String, String)) : Hash(String, Endpoint)
+  CodeLocator.instance.clear_all
+  root = File.tempname("spring_endpoints_map")
+  files.each do |relative, source|
+    path = File.join(root, relative)
+    Dir.mkdir_p(File.dirname(path))
+    File.write(path, source)
+    CodeLocator.instance.register_path(path)
+  end
+  noir_options = create_test_options
+  noir_options["base"] = YAML::Any.new(root)
+  endpoints = routes.map do |route, location|
+    method, url = route.split(' ', 2)
+    file, line = location.split(':')
+    Endpoint.new(url, method, [] of Param, Details.new(PathInfo.new(File.join(root, file), line.to_i)))
+  end
+  SpringAuthTagger.new(noir_options).perform(endpoints)
+  FileUtils.rm_rf(root)
+  routes.keys.zip(endpoints).to_h
+end
+
+describe "SpringAuthTagger (HandlerInterceptor)" do
+  it "detects Java HandlerInterceptor rejecting unauthorized callers with path patterns" do
+    interceptor = <<-JAVA
+      package com.example.security;
+
+      import javax.servlet.http.HttpServletRequest;
+      import javax.servlet.http.HttpServletResponse;
+      import org.springframework.web.servlet.HandlerInterceptor;
+
+      public class AuthInterceptor implements HandlerInterceptor {
+          @Override
+          public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) throws Exception {
+              String token = request.getHeader("Authorization");
+              if (token == null) {
+                  response.sendError(HttpServletResponse.SC_UNAUTHORIZED, "Unauthorized");
+                  return false;
+              }
+              return true;
+          }
+      }
+      JAVA
+
+    config = <<-JAVA
+      package com.example.config;
+
+      import com.example.security.AuthInterceptor;
+      import org.springframework.context.annotation.Configuration;
+      import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
+      import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
+
+      @Configuration
+      public class WebConfig implements WebMvcConfigurer {
+          @Override
+          public void addInterceptors(InterceptorRegistry registry) {
+              registry.addInterceptor(new AuthInterceptor())
+                      .addPathPatterns("/api/**")
+                      .excludePathPatterns("/api/login", "/api/public/**");
+          }
+      }
+      JAVA
+
+    controller = <<-JAVA
+      package com.example.controller;
+
+      import org.springframework.web.bind.annotation.*;
+
+      @RestController
+      public class ApiController {
+          @GetMapping("/api/items")
+          public String items() { return "items"; }
+
+          @PostMapping("/api/login")
+          public String login() { return "login"; }
+
+          @GetMapping("/api/public/health")
+          public String health() { return "ok"; }
+
+          @GetMapping("/other/status")
+          public String status() { return "ok"; }
+      }
+      JAVA
+
+    endpoints = run_spring_endpoints_map({
+      "src/main/java/com/example/security/AuthInterceptor.java" => interceptor,
+      "src/main/java/com/example/config/WebConfig.java"         => config,
+      "src/main/java/com/example/controller/ApiController.java" => controller,
+    }, {
+      "GET /api/items"         => "src/main/java/com/example/controller/ApiController.java:7",
+      "POST /api/login"        => "src/main/java/com/example/controller/ApiController.java:10",
+      "GET /api/public/health" => "src/main/java/com/example/controller/ApiController.java:13",
+      "GET /other/status"      => "src/main/java/com/example/controller/ApiController.java:16",
+    })
+
+    endpoints["GET /api/items"].tags.select(&.name.==("auth")).map(&.description).should eq([
+      "Protected by Spring HandlerInterceptor AuthInterceptor",
+    ])
+    endpoints["POST /api/login"].tags.select(&.name.==("auth")).should be_empty
+    endpoints["GET /api/public/health"].tags.select(&.name.==("auth")).should be_empty
+    endpoints["GET /other/status"].tags.select(&.name.==("auth")).should be_empty
+  end
+
+  it "defaults to /** when addPathPatterns is omitted on registered HandlerInterceptor" do
+    interceptor = <<-JAVA
+      package com.example.security;
+
+      import javax.servlet.http.HttpServletRequest;
+      import javax.servlet.http.HttpServletResponse;
+      import org.springframework.web.servlet.handler.HandlerInterceptorAdapter;
+
+      public class SessionInterceptor extends HandlerInterceptorAdapter {
+          @Override
+          public boolean preHandle(HttpServletRequest req, HttpServletResponse res, Object handler) {
+              if (req.getSession(false) == null) {
+                  res.setStatus(403);
+                  return false;
+              }
+              return true;
+          }
+      }
+      JAVA
+
+    config = <<-JAVA
+      package com.example.config;
+
+      import com.example.security.SessionInterceptor;
+      import org.springframework.beans.factory.annotation.Autowired;
+      import org.springframework.context.annotation.Configuration;
+      import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
+      import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
+
+      @Configuration
+      public class WebConfig implements WebMvcConfigurer {
+          @Autowired
+          private SessionInterceptor sessionInterceptor;
+
+          @Override
+          public void addInterceptors(InterceptorRegistry registry) {
+              registry.addInterceptor(sessionInterceptor);
+          }
+      }
+      JAVA
+
+    controller = <<-JAVA
+      package com.example.controller;
+
+      import org.springframework.web.bind.annotation.GetMapping;
+      import org.springframework.web.bind.annotation.RestController;
+
+      @RestController
+      public class DashboardController {
+          @GetMapping("/dashboard")
+          public String dashboard() { return "dash"; }
+      }
+      JAVA
+
+    endpoints = run_spring_endpoints_map({
+      "src/main/java/com/example/security/SessionInterceptor.java"    => interceptor,
+      "src/main/java/com/example/config/WebConfig.java"               => config,
+      "src/main/java/com/example/controller/DashboardController.java" => controller,
+    }, {
+      "GET /dashboard" => "src/main/java/com/example/controller/DashboardController.java:7",
+    })
+
+    endpoints["GET /dashboard"].tags.select(&.name.==("auth")).map(&.description).should eq([
+      "Protected by Spring HandlerInterceptor SessionInterceptor",
+    ])
+  end
+
+  it "does not tag endpoints for non-rejecting interceptors like LoggingInterceptor" do
+    interceptor = <<-JAVA
+      package com.example.interceptor;
+
+      import javax.servlet.http.HttpServletRequest;
+      import javax.servlet.http.HttpServletResponse;
+      import org.springframework.web.servlet.HandlerInterceptor;
+
+      public class LoggingInterceptor implements HandlerInterceptor {
+          @Override
+          public boolean preHandle(HttpServletRequest req, HttpServletResponse res, Object handler) {
+              System.out.println("Path: " + req.getRequestURI());
+              return true;
+          }
+      }
+      JAVA
+
+    config = <<-JAVA
+      package com.example.config;
+
+      import com.example.interceptor.LoggingInterceptor;
+      import org.springframework.context.annotation.Configuration;
+      import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
+      import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
+
+      @Configuration
+      public class WebConfig implements WebMvcConfigurer {
+          @Override
+          public void addInterceptors(InterceptorRegistry registry) {
+              registry.addInterceptor(new LoggingInterceptor()).addPathPatterns("/api/**");
+          }
+      }
+      JAVA
+
+    controller = <<-JAVA
+      package com.example.controller;
+
+      import org.springframework.web.bind.annotation.GetMapping;
+      import org.springframework.web.bind.annotation.RestController;
+
+      @RestController
+      public class ApiController {
+          @GetMapping("/api/items")
+          public String items() { return "items"; }
+      }
+      JAVA
+
+    endpoints = run_spring_endpoints_map({
+      "src/main/java/com/example/interceptor/LoggingInterceptor.java" => interceptor,
+      "src/main/java/com/example/config/WebConfig.java"               => config,
+      "src/main/java/com/example/controller/ApiController.java"       => controller,
+    }, {
+      "GET /api/items" => "src/main/java/com/example/controller/ApiController.java:7",
+    })
+
+    endpoints["GET /api/items"].tags.select(&.name.==("auth")).should be_empty
+  end
+
+  it "detects Kotlin HandlerInterceptor rejecting callers" do
+    interceptor = <<-KT
+      package com.example.security
+
+      import javax.servlet.http.HttpServletRequest
+      import javax.servlet.http.HttpServletResponse
+      import org.springframework.web.servlet.HandlerInterceptor
+
+      class KotlinAuthInterceptor : HandlerInterceptor {
+          override fun preHandle(request: HttpServletRequest, response: HttpServletResponse, handler: Any): Boolean {
+              val token = request.getHeader("Authorization")
+              if (token == null) {
+                  response.status = 401
+                  return false
+              }
+              return true
+          }
+      }
+      KT
+
+    config = <<-KT
+      package com.example.config
+
+      import com.example.security.KotlinAuthInterceptor
+      import org.springframework.context.annotation.Configuration
+      import org.springframework.web.servlet.config.annotation.InterceptorRegistry
+      import org.springframework.web.servlet.config.annotation.WebMvcConfigurer
+
+      @Configuration
+      class WebConfig : WebMvcConfigurer {
+          override fun addInterceptors(registry: InterceptorRegistry) {
+              registry.addInterceptor(KotlinAuthInterceptor()).addPathPatterns("/kapi/**")
+          }
+      }
+      KT
+
+    controller = <<-KT
+      package com.example.controller
+
+      import org.springframework.web.bind.annotation.GetMapping
+      import org.springframework.web.bind.annotation.RestController
+
+      @RestController
+      class KotlinController {
+          @GetMapping("/kapi/profile")
+          fun profile(): String = "profile"
+
+          @GetMapping("/kpublic/info")
+          fun info(): String = "info"
+      }
+      KT
+
+    endpoints = run_spring_endpoints_map({
+      "src/main/kotlin/com/example/security/KotlinAuthInterceptor.kt" => interceptor,
+      "src/main/kotlin/com/example/config/WebConfig.kt"               => config,
+      "src/main/kotlin/com/example/controller/KotlinController.kt"    => controller,
+    }, {
+      "GET /kapi/profile" => "src/main/kotlin/com/example/controller/KotlinController.kt:7",
+      "GET /kpublic/info" => "src/main/kotlin/com/example/controller/KotlinController.kt:10",
+    })
+
+    endpoints["GET /kapi/profile"].tags.select(&.name.==("auth")).map(&.description).should eq([
+      "Protected by Spring HandlerInterceptor KotlinAuthInterceptor",
+    ])
+    endpoints["GET /kpublic/info"].tags.select(&.name.==("auth")).should be_empty
+  end
+
+  it "respects multi-module scoping for HandlerInterceptor" do
+    module_a_pom = spring_module_pom("service-a", [] of String)
+    module_b_pom = spring_module_pom("service-b", [] of String)
+
+    interceptor = <<-JAVA
+      package com.example.a;
+      import javax.servlet.http.HttpServletRequest;
+      import javax.servlet.http.HttpServletResponse;
+      import org.springframework.web.servlet.HandlerInterceptor;
+      public class InterceptorA implements HandlerInterceptor {
+          public boolean preHandle(HttpServletRequest req, HttpServletResponse res, Object h) throws Exception {
+              res.sendError(401);
+              return false;
+          }
+      }
+      JAVA
+
+    config = <<-JAVA
+      package com.example.a;
+      import org.springframework.context.annotation.Configuration;
+      import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
+      import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
+      @Configuration
+      public class ConfigA implements WebMvcConfigurer {
+          public void addInterceptors(InterceptorRegistry registry) {
+              registry.addInterceptor(new InterceptorA()).addPathPatterns("/api/**");
+          }
+      }
+      JAVA
+
+    controller_a = <<-JAVA
+      package com.example.a;
+      import org.springframework.web.bind.annotation.GetMapping;
+      import org.springframework.web.bind.annotation.RestController;
+      @RestController
+      public class ControllerA {
+          @GetMapping("/api/a")
+          public String a() { return "a"; }
+      }
+      JAVA
+
+    controller_b = <<-JAVA
+      package com.example.b;
+      import org.springframework.web.bind.annotation.GetMapping;
+      import org.springframework.web.bind.annotation.RestController;
+      @RestController
+      public class ControllerB {
+          @GetMapping("/api/b")
+          public String b() { return "b"; }
+      }
+      JAVA
+
+    endpoints = run_spring_endpoints_map({
+      "pom.xml"                                                 => "<project><artifactId>root</artifactId></project>",
+      "service-a/pom.xml"                                       => module_a_pom,
+      "service-a/src/main/java/com/example/a/InterceptorA.java" => interceptor,
+      "service-a/src/main/java/com/example/a/ConfigA.java"      => config,
+      "service-a/src/main/java/com/example/a/ControllerA.java"  => controller_a,
+      "service-b/pom.xml"                                       => module_b_pom,
+      "service-b/src/main/java/com/example/b/ControllerB.java"  => controller_b,
+    }, {
+      "GET /api/a" => "service-a/src/main/java/com/example/a/ControllerA.java:6",
+      "GET /api/b" => "service-b/src/main/java/com/example/b/ControllerB.java:6",
+    })
+
+    endpoints["GET /api/a"].tags.select(&.name.==("auth")).map(&.description).should eq([
+      "Protected by Spring HandlerInterceptor InterceptorA",
+    ])
+    endpoints["GET /api/b"].tags.select(&.name.==("auth")).should be_empty
+  end
+
+  it "reads a 401/403 status or auth exception as the refusal, not a bare return false" do
+    interceptors = <<-JAVA
+      package com.example.web;
+
+      import org.springframework.web.servlet.HandlerInterceptor;
+
+      public class RateLimitInterceptor implements HandlerInterceptor {
+          @Override
+          public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) {
+              String token = request.getHeader("X-Api-Token");
+              if (!limiter.tryAcquire(token)) {
+                  response.setStatus(429);
+                  return false;
+              }
+              return true;
+          }
+      }
+
+      class SessionInterceptor implements HandlerInterceptor {
+          @Override
+          public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) {
+              if (request.getSession(false) == null) {
+                  response.setStatus(HttpStatus.UNAUTHORIZED.value());
+                  return false;
+              }
+              return true;
+          }
+      }
+      JAVA
+
+    config = <<-JAVA
+      package com.example.web;
+
+      @Configuration
+      public class WebConfig implements WebMvcConfigurer {
+          @Override
+          public void addInterceptors(InterceptorRegistry registry) {
+              registry.addInterceptor(new RateLimitInterceptor()).addPathPatterns("/api/**");
+              registry.addInterceptor(new SessionInterceptor()).addPathPatterns("/account/**");
+          }
+      }
+      JAVA
+
+    controller = <<-JAVA
+      package com.example.web;
+
+      @RestController
+      public class ItemController {
+          @GetMapping("/api/items")
+          public String items() { return "ok"; }
+
+          @GetMapping("/account/me")
+          public String me() { return "ok"; }
+      }
+      JAVA
+
+    endpoints = run_spring_endpoints_map({
+      "src/main/java/com/example/web/Interceptors.java"   => interceptors,
+      "src/main/java/com/example/web/WebConfig.java"      => config,
+      "src/main/java/com/example/web/ItemController.java" => controller,
+    }, {
+      "GET /api/items"  => "src/main/java/com/example/web/ItemController.java:5",
+      "GET /account/me" => "src/main/java/com/example/web/ItemController.java:8",
+    })
+
+    endpoints["GET /api/items"].tags.should be_empty
+    tag = endpoints["GET /account/me"].tags.should_not be_empty
+    tag.map(&.description).should eq(["Protected by Spring HandlerInterceptor SessionInterceptor"])
+    tag[0].path.not_nil!.ends_with?("src/main/java/com/example/web/WebConfig.java").should be_true
+    tag[0].line.should eq(8)
+  end
+
+  it "keeps each Kotlin registration's path patterns to its own interceptor" do
+    interceptors = <<-KT
+      package com.example.web
+
+      class AuthInterceptor : HandlerInterceptor {
+          override fun preHandle(request: HttpServletRequest, response: HttpServletResponse, handler: Any): Boolean {
+              if (request.getSession(false) == null) {
+                  response.status = 401
+                  return false
+              }
+              return true
+          }
+      }
+
+      class LoggingInterceptor : HandlerInterceptor {
+          override fun preHandle(request: HttpServletRequest, response: HttpServletResponse, handler: Any): Boolean {
+              log.info(request.requestURI)
+              return true
+          }
+      }
+      KT
+
+    config = <<-KT
+      package com.example.web
+
+      @Configuration
+      class WebConfig : WebMvcConfigurer {
+          override fun addInterceptors(registry: InterceptorRegistry) {
+              registry.addInterceptor(AuthInterceptor()).addPathPatterns("/kapi/**")
+              registry.addInterceptor(LoggingInterceptor()).addPathPatterns("/kpublic/**")
+          }
+      }
+      KT
+
+    controller = <<-KT
+      package com.example.web
+
+      @RestController
+      class KotlinController {
+          @GetMapping("/kapi/profile")
+          fun profile(): String = "profile"
+
+          @GetMapping("/kpublic/info")
+          fun info(): String = "info"
+      }
+      KT
+
+    endpoints = run_spring_endpoints_map({
+      "src/main/kotlin/com/example/web/Interceptors.kt"     => interceptors,
+      "src/main/kotlin/com/example/web/WebConfig.kt"        => config,
+      "src/main/kotlin/com/example/web/KotlinController.kt" => controller,
+    }, {
+      "GET /kapi/profile" => "src/main/kotlin/com/example/web/KotlinController.kt:5",
+      "GET /kpublic/info" => "src/main/kotlin/com/example/web/KotlinController.kt:8",
+    })
+
+    endpoints["GET /kapi/profile"].tags.map(&.description).should eq([
+      "Protected by Spring HandlerInterceptor AuthInterceptor",
+    ])
+    endpoints["GET /kpublic/info"].tags.should be_empty
+  end
+end
+
+describe "SpringAuthTagger (Meta-annotations)" do
+  it "counts @PostAuthorize as a guard on reads only, since it runs after the handler" do
+    meta_annotation = <<-JAVA
+      package com.example.security;
+
+      @Target(ElementType.METHOD)
+      @Retention(RetentionPolicy.RUNTIME)
+      @PostAuthorize("returnObject.owner == authentication.name")
+      public @interface OwnerOnly {
+      }
+      JAVA
+
+    controller = <<-JAVA
+      package com.example.controller;
+
+      @RestController
+      public class DocController {
+          @PostAuthorize("returnObject.owner == authentication.name")
+          @GetMapping("/docs/{id}")
+          public Doc get(@PathVariable Long id) { return repo.find(id); }
+
+          @PostAuthorize("returnObject.owner == authentication.name")
+          @DeleteMapping("/docs/{id}")
+          public Doc delete(@PathVariable Long id) { return repo.delete(id); }
+
+          @OwnerOnly
+          @PutMapping("/docs/{id}")
+          public Doc update(@PathVariable Long id) { return repo.save(id); }
+      }
+      JAVA
+
+    endpoints = run_spring_endpoints_map({
+      "src/main/java/com/example/security/OwnerOnly.java"       => meta_annotation,
+      "src/main/java/com/example/controller/DocController.java" => controller,
+    }, {
+      "GET /docs/{id}"    => "src/main/java/com/example/controller/DocController.java:6",
+      "DELETE /docs/{id}" => "src/main/java/com/example/controller/DocController.java:10",
+      "PUT /docs/{id}"    => "src/main/java/com/example/controller/DocController.java:14",
+    })
+
+    endpoints["GET /docs/{id}"].tags.map(&.description).should eq(["Protected by Spring @PostAuthorize"])
+    endpoints["DELETE /docs/{id}"].tags.should be_empty
+    endpoints["PUT /docs/{id}"].tags.should be_empty
+  end
+
+  it "does not read a longer class annotation as a meta-annotation that prefixes it" do
+    meta_annotation = <<-JAVA
+      package com.example.security;
+
+      @Target(ElementType.TYPE)
+      @Retention(RetentionPolicy.RUNTIME)
+      @PreAuthorize("hasRole('ADMIN')")
+      public @interface Admin {
+      }
+      JAVA
+
+    controller = <<-JAVA
+      package com.example.controller;
+
+      @AdminApi
+      @RestController
+      public class DocsController {
+          @GetMapping("/docs")
+          public String docs() { return "docs"; }
+      }
+      JAVA
+
+    endpoints = run_spring_endpoints_map({
+      "src/main/java/com/example/security/Admin.java"            => meta_annotation,
+      "src/main/java/com/example/controller/DocsController.java" => controller,
+    }, {
+      "GET /docs" => "src/main/java/com/example/controller/DocsController.java:6",
+    })
+
+    endpoints["GET /docs"].tags.should be_empty
+  end
+
+  it "detects Java method-level meta-annotation with @Secured" do
+    meta_annotation = <<-JAVA
+      package com.example.security;
+
+      import java.lang.annotation.ElementType;
+      import java.lang.annotation.Retention;
+      import java.lang.annotation.RetentionPolicy;
+      import java.lang.annotation.Target;
+      import org.springframework.security.access.annotation.Secured;
+
+      @Target({ElementType.METHOD, ElementType.TYPE})
+      @Retention(RetentionPolicy.RUNTIME)
+      @Secured("ROLE_USER")
+      public @interface LoginRequired {
+      }
+      JAVA
+
+    controller = <<-JAVA
+      package com.example.controller;
+
+      import com.example.security.LoginRequired;
+      import org.springframework.web.bind.annotation.GetMapping;
+      import org.springframework.web.bind.annotation.RestController;
+
+      @RestController
+      public class UserController {
+          @GetMapping("/profile")
+          @LoginRequired
+          public String profile() {
+              return "profile";
+          }
+      }
+      JAVA
+
+    endpoints = run_spring_endpoints_map({
+      "src/main/java/com/example/security/LoginRequired.java"    => meta_annotation,
+      "src/main/java/com/example/controller/UserController.java" => controller,
+    }, {
+      "GET /profile" => "src/main/java/com/example/controller/UserController.java:9",
+    })
+
+    endpoints["GET /profile"].tags.select(&.name.==("auth")).map(&.description).should eq([
+      "Protected by Spring @Secured (@LoginRequired)",
+    ])
+  end
+
+  it "detects Java method-level meta-annotation with @PreAuthorize" do
+    meta_annotation = <<-JAVA
+      package com.example.security;
+
+      import java.lang.annotation.ElementType;
+      import java.lang.annotation.Retention;
+      import java.lang.annotation.RetentionPolicy;
+      import java.lang.annotation.Target;
+      import org.springframework.security.access.prepost.PreAuthorize;
+
+      @Target({ElementType.METHOD, ElementType.TYPE})
+      @Retention(RetentionPolicy.RUNTIME)
+      @PreAuthorize("hasRole('ADMIN')")
+      public @interface AdminOnly {
+      }
+      JAVA
+
+    controller = <<-JAVA
+      package com.example.controller;
+
+      import com.example.security.AdminOnly;
+      import org.springframework.web.bind.annotation.PostMapping;
+      import org.springframework.web.bind.annotation.RestController;
+
+      @RestController
+      public class AdminController {
+          @PostMapping("/admin/reset")
+          @AdminOnly
+          public String reset() {
+              return "reset";
+          }
+      }
+      JAVA
+
+    endpoints = run_spring_endpoints_map({
+      "src/main/java/com/example/security/AdminOnly.java"         => meta_annotation,
+      "src/main/java/com/example/controller/AdminController.java" => controller,
+    }, {
+      "POST /admin/reset" => "src/main/java/com/example/controller/AdminController.java:9",
+    })
+
+    endpoints["POST /admin/reset"].tags.map(&.description).should eq([
+      "Protected by Spring @PreAuthorize (@AdminOnly)",
+    ])
+  end
+
+  it "detects Java class-level meta-annotation with @PreAuthorize" do
+    meta_annotation = <<-JAVA
+      package com.example.security;
+
+      import java.lang.annotation.ElementType;
+      import java.lang.annotation.Retention;
+      import java.lang.annotation.RetentionPolicy;
+      import java.lang.annotation.Target;
+      import org.springframework.security.access.prepost.PreAuthorize;
+
+      @Target(ElementType.TYPE)
+      @Retention(RetentionPolicy.RUNTIME)
+      @PreAuthorize("hasAuthority('ROLE_ADMIN')")
+      public @interface AdminControllerAnnotation {
+      }
+      JAVA
+
+    controller = <<-JAVA
+      package com.example.controller;
+
+      import com.example.security.AdminControllerAnnotation;
+      import org.springframework.web.bind.annotation.GetMapping;
+      import org.springframework.web.bind.annotation.RestController;
+
+      @RestController
+      @AdminControllerAnnotation
+      public class AdminMgmtController {
+          @GetMapping("/mgmt/users")
+          public String listUsers() {
+              return "users";
+          }
+      }
+      JAVA
+
+    endpoints = run_spring_endpoints_map({
+      "src/main/java/com/example/security/AdminControllerAnnotation.java" => meta_annotation,
+      "src/main/java/com/example/controller/AdminMgmtController.java"     => controller,
+    }, {
+      "GET /mgmt/users" => "src/main/java/com/example/controller/AdminMgmtController.java:10",
+    })
+
+    endpoints["GET /mgmt/users"].tags.map(&.description).should eq([
+      "Protected by Spring @PreAuthorize (@AdminControllerAnnotation) on the controller class",
+    ])
+  end
+
+  it "detects Kotlin meta-annotations with @Secured and @PreAuthorize" do
+    meta_annotation = <<-KT
+      package com.example.security
+
+      import org.springframework.security.access.annotation.Secured
+      import org.springframework.security.access.prepost.PreAuthorize
+
+      @Target(AnnotationTarget.FUNCTION, AnnotationTarget.CLASS)
+      @Retention(AnnotationRetention.RUNTIME)
+      @Secured("ROLE_USER")
+      annotation class UserAuth
+
+      @Target(AnnotationTarget.CLASS)
+      @Retention(AnnotationRetention.RUNTIME)
+      @PreAuthorize("hasRole('ADMIN')")
+      annotation class AdminService
+      KT
+
+    controller = <<-KT
+      package com.example.controller
+
+      import com.example.security.UserAuth
+      import com.example.security.AdminService
+      import org.springframework.web.bind.annotation.GetMapping
+      import org.springframework.web.bind.annotation.RestController
+
+      @RestController
+      class MemberController {
+          @GetMapping("/member/settings")
+          @UserAuth
+          fun settings(): String = "settings"
+      }
+
+      @RestController
+      @AdminService
+      class AdminKController {
+          @GetMapping("/admin/audit")
+          fun audit(): String = "audit"
+      }
+      KT
+
+    endpoints = run_spring_endpoints_map({
+      "src/main/kotlin/com/example/security/Annotations.kt"   => meta_annotation,
+      "src/main/kotlin/com/example/controller/Controllers.kt" => controller,
+    }, {
+      "GET /member/settings" => "src/main/kotlin/com/example/controller/Controllers.kt:10",
+      "GET /admin/audit"     => "src/main/kotlin/com/example/controller/Controllers.kt:18",
+    })
+
+    endpoints["GET /member/settings"].tags.select(&.name.==("auth")).map(&.description).should eq([
+      "Protected by Spring @Secured (@UserAuth)",
+    ])
+
+    endpoints["GET /admin/audit"].tags.map(&.description).should eq([
+      "Protected by Spring @PreAuthorize (@AdminService) on the controller class",
+    ])
+  end
+end
