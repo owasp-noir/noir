@@ -3,10 +3,11 @@ require "../../../models/endpoint"
 
 @[Noir::TaggerFor(key: "swift_auth", name: "Swift Auth Tagger", desc: "Identifies Vapor/Kitura/Hummingbird authentication patterns", order: 220)]
 class SwiftAuthTagger < FrameworkTagger
-  # `.grouped(` followed by any earlier arguments, so a pattern after it
-  # matches at the start of ANY argument: `app.grouped(UserToken.authenticator(),
-  # User.guardMiddleware())` is guarded by its second one.
-  GROUPED_ARG = /\.grouped\s*\((?:[^(),]*(?:\([^()]*\)[^(),]*)?,\s*)*\s*/.source
+  # `.group(` / `.grouped(` followed by any earlier arguments, so a pattern
+  # after it matches at the start of ANY argument:
+  # `app.grouped(UserToken.authenticator(), User.guardMiddleware())` is
+  # guarded by its second one. `.group(...) { name in` is the closure form.
+  GROUPED_ARG = /\.group(?:ed)?\s*\((?:[^(),]*(?:\([^()]*\)[^(),]*)?,\s*)*\s*/.source
 
   # Vapor middleware patterns
   VAPOR_MIDDLEWARE_PATTERNS = [
@@ -15,6 +16,11 @@ class SwiftAuthTagger < FrameworkTagger
     {/#{GROUPED_ARG}Token\.authenticator\(\)/, "Vapor Token.authenticator()"},
     {/#{GROUPED_ARG}User\.guardMiddleware\(\)/, "Vapor User.guardMiddleware()"},
     {/#{GROUPED_ARG}\w+\.guardMiddleware\(\)/, "Vapor guardMiddleware"},
+    # After the guardMiddleware patterns so
+    # `grouped(UserToken.authenticator(), User.guardMiddleware())` keeps the
+    # guard description. `UserToken` has no `[Aa]uth` and is neither `User.`
+    # nor `Token.`.
+    {/#{GROUPED_ARG}UserToken\.authenticator\(\)/, "Vapor UserToken.authenticator()"},
     {/#{GROUPED_ARG}BearerAuthenticator/, "Vapor BearerAuthenticator"},
     {/#{GROUPED_ARG}BasicAuthenticator/, "Vapor BasicAuthenticator"},
     {/#{GROUPED_ARG}SessionAuthenticator/, "Vapor SessionAuthenticator"},
@@ -75,33 +81,46 @@ class SwiftAuthTagger < FrameworkTagger
   private def check_middleware_group(lines : Array(String), route_line : Int32) : String?
     return if route_line < 0 || route_line >= lines.size
 
-    route_line_text = lines[route_line].strip
-
     # Extract the receiver variable from the route line (e.g., "protected" from "protected.get(...)")
-    receiver_match = route_line_text.match(/^(\w+)\.(get|post|put|delete|patch|group)/)
+    receiver_match = lines[route_line].strip.match(/^(\w+)\.(?:get|post|put|delete|patch|on|group)\b/)
     return unless receiver_match
     receiver = receiver_match[1]
 
-    # Walk backwards to find if this receiver was assigned from .grouped(AuthMiddleware)
+    # The binding may sit anywhere in this function (`let x = app.grouped(...)`
+    # or `group(...) { x in`). Stop at the enclosing func/type so a same-named
+    # receiver in the previous function is not this route's guard.
     idx = route_line - 1
-    while idx >= 0 && idx >= route_line - 20
-      current = lines[idx]
-      stripped = current.strip
+    while idx >= 0
+      stripped = lines[idx].strip
+      break if function_boundary?(stripped)
 
-      # Check if this line assigns the receiver variable from a .grouped() call
-      # e.g., "let protected = app.grouped(UserAuthenticator())" — receiver must be "protected"
-      assign_match = stripped.match(/(?:let|var)\s+(\w+)\s*=\s*\w+\.grouped\s*\(/)
-      if assign_match && assign_match[1] == receiver
-        all_patterns = VAPOR_MIDDLEWARE_PATTERNS + KITURA_AUTH_PATTERNS + HUMMINGBIRD_AUTH_PATTERNS
-        all_patterns.each do |pattern, desc|
-          return desc if stripped.matches?(pattern)
-        end
+      if binds_receiver?(stripped, receiver)
+        return middleware_description(stripped)
       end
 
-      # Stop at function/class definition
-      break if stripped.starts_with?("func ") || stripped.starts_with?("class ") || stripped.starts_with?("struct ")
-
       idx -= 1
+    end
+
+    nil
+  end
+
+  private def function_boundary?(line : String) : Bool
+    line.matches?(/^(?:(?:public|private|internal|open|fileprivate|final|override|static|class|mutating|nonmutating)\s+)*func\b/) ||
+      line.matches?(/^(?:(?:public|private|internal|open|fileprivate|final|override)\s+)*(?:class|struct|enum|extension|actor|protocol)\b/)
+  end
+
+  private def binds_receiver?(line : String, receiver : String) : Bool
+    if assign = line.match(/(?:let|var)\s+(\w+)\s*=\s*.*\.group(?:ed)?\s*\(/)
+      return true if assign[1] == receiver
+    end
+
+    return false unless line.matches?(/\.group(?:ed)?\s*\(/)
+    line.matches?(/\{\s*#{Regex.escape(receiver)}\s+in\b/)
+  end
+
+  private def middleware_description(line : String) : String?
+    (VAPOR_MIDDLEWARE_PATTERNS + KITURA_AUTH_PATTERNS + HUMMINGBIRD_AUTH_PATTERNS).each do |pattern, desc|
+      return desc if line.matches?(pattern)
     end
 
     nil

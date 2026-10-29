@@ -10,17 +10,20 @@ module Analyzer::Swift
     # app.post("path", "segment") { ... }
     # routes.get("path", ":param") { ... }
     # users.get { ... }   (trailing closure, no parens: the receiver's own path)
-    ROUTE_PATTERN    = /([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\.(get|post|put|delete|patch)\s*([({])/
-    ON_ROUTE_PATTERN = /([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\.on\s*\(/
+    # $0.get(...)         (shorthand parameter of `group { ... }`)
+    # A receiver segment is an identifier or a shorthand closure param (`$0`).
+    SWIFT_RECEIVER   = /(?:\$\d+|[A-Za-z_]\w*)(?:\.(?:\$\d+|[A-Za-z_]\w*))*/
+    ROUTE_PATTERN    = /(#{SWIFT_RECEIVER})\.(get|post|put|delete|patch)\s*([({])/
+    ON_ROUTE_PATTERN = /(#{SWIFT_RECEIVER})\.on\s*\(/
     # The base may be a dotted receiver (`app.routes.grouped(...)`), an implicit
     # `self` (bare `grouped(...)`), or a single identifier (`router.grouped(...)`).
-    GROUP_ASSIGN_PATTERN  = /\b(?:let|var)\s+([A-Za-z_]\w*)\s*=\s*(?:([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\.)?grouped\s*\(/
-    GROUP_CLOSURE_PATTERN = /([A-Za-z_]\w*)\.group(?:ed)?\s*\(/
+    GROUP_ASSIGN_PATTERN  = /\b(?:let|var)\s+([A-Za-z_]\w*)\s*=\s*(?:(#{SWIFT_RECEIVER})\.)?grouped\s*\(/
+    GROUP_CLOSURE_PATTERN = /(#{SWIFT_RECEIVER})\.group(?:ed)?\s*\(/
     # `app.grouped("a").grouped("b")` — a group call chained onto the previous
     # one; `app.grouped("a").get("b")` — a route verb called straight on a
     # group expression.
     CHAINED_GROUP_PATTERN = /^\s*\.group(?:ed)?\s*\(/
-    INLINE_GROUP_PATTERN  = /([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\.grouped\s*\(/
+    INLINE_GROUP_PATTERN  = /(#{SWIFT_RECEIVER})\.grouped\s*\(/
     INLINE_VERB_PATTERN   = /^\s*\.(?:(?:get|post|put|delete|patch)\s*[({]|on\s*\()/
 
     # A function parameter (or binding) typed as a Vapor router:
@@ -70,7 +73,8 @@ module Analyzer::Swift
       code_lines = strip_code_lines(lines, keep_strings: true)
       stripped_lines = nil.as(Array(String)?)
       prefix_by_receiver = {} of String => String
-      group_prefix_stack = [] of Tuple(String, Int32)
+      # variable, depth at which it was bound, prefix it shadowed (nil if new)
+      group_prefix_stack = [] of Tuple(String, Int32, String?)
       brace_depth = 0
 
       # Seed the router-receiver set so route detection is receiver-aware.
@@ -80,7 +84,7 @@ module Analyzer::Swift
         register_group_assignment(stripped_line, prefix_by_receiver)
         register_group_closure(stripped_line, prefix_by_receiver, group_prefix_stack, brace_depth)
 
-        route = route_parts(stripped_line, prefix_by_receiver)
+        route = route_parts(code_lines, index, prefix_by_receiver)
         unless route
           brace_depth = update_group_depth(stripped_line, brace_depth, group_prefix_stack, prefix_by_receiver)
           next
@@ -119,28 +123,43 @@ module Analyzer::Swift
     # "hello" -> /hello
     # "users", ":id" -> /users/:id
     # "api", "users", ":userID" -> /api/users/:userID
+    # SiteURL.faq.pathComponents -> /SiteURL.faq
+    # ":owner", .fragment(.faviconIco) -> /:owner/.fragment(.faviconIco)
     def parse_route_path(route_args : String) : String
       # Remove whitespace and split by comma
       segments = route_args.split(',').map(&.strip)
 
-      # Extract quoted strings only (path segments)
       path_segments = [] of String
       segments.each do |seg|
-        break if seg.match(/^\w+\s*:/)
+        break if seg.matches?(/^\w+\s*:/)
+        next if seg.empty?
 
-        # Match quoted strings
         if match = seg.match(/^["']([^"']+)["']/)
           path_segments << match[1]
+        elsif unresolved = unresolved_path_segment(seg)
+          path_segments << unresolved
         end
       end
 
-      # Build the path
-      if path_segments.empty?
-        return "/"
+      return "/" if path_segments.empty?
+
+      "/" + path_segments.join("/")
+    end
+
+    # Path expressions that are not string literals. A call that is not an
+    # implicit member (`AuthMiddleware()`, `User.guardMiddleware()`) is
+    # middleware, not a path, and stays dropped so
+    # `grouped(AuthMiddleware()).grouped("secure")` keeps `/secure`.
+    private def unresolved_path_segment(seg : String) : String?
+      if seg.matches?(/\.pathComponents(?:\(\))?$/)
+        name = seg.sub(/\.pathComponents(?:\(\))?$/, "").strip
+        return name unless name.empty?
       end
 
-      path = "/" + path_segments.join("/")
-      path
+      # Braces would be a path placeholder (`{id}`), so the expression is
+      # the segment text. `.fragment(.faviconIco)` stays distinct from
+      # `.fragment(.logoPng)` and does not match an arbitrary request.
+      seg if seg.starts_with?(".")
     end
 
     # Check if a line contains a route definition
@@ -218,8 +237,11 @@ module Analyzer::Swift
 
     # The last element is the prefix of a group expression the verb was called
     # on directly (`app.grouped("a").get("b")`), "" otherwise.
-    private def route_parts(line : String, prefix_by_receiver : Hash(String, String)) : Tuple(String, String, String, String)?
+    private def route_parts(lines : Array(String), index : Int32, prefix_by_receiver : Hash(String, String)) : Tuple(String, String, String, String)?
+      line = lines[index]?
+      return unless line
       return unless route_definition_line?(line)
+      line = joined_route_call(lines, index)
 
       inline_prefix = ""
       if group = line.match(INLINE_GROUP_PATTERN)
@@ -240,7 +262,7 @@ module Analyzer::Swift
         return unless args
 
         route_args = args[0]
-        method_match = route_args.match(/^\s*\.(GET|POST|PUT|DELETE|PATCH|OPTIONS|HEAD)\s*,(.*)$/)
+        method_match = route_args.match(/^\s*\.(GET|POST|PUT|DELETE|PATCH|OPTIONS|HEAD)\s*,([\s\S]*)$/)
         return unless method_match
 
         return {match[1], method_match[1], method_match[2], inline_prefix}
@@ -258,6 +280,30 @@ module Analyzer::Swift
       end
 
       nil
+    end
+
+    # `.on(` / `.get(` may close on a later line. `call_arguments` reads one
+    # string, so fold following lines until the paren balances. The cap keeps
+    # an unclosed `(` from swallowing the rest of the file.
+    private def joined_route_call(lines : Array(String), index : Int32) : String
+      line = lines[index]
+      match = line.match(ROUTE_CALL_RE)
+      return line unless match
+
+      open_at = match.end(0) || 0
+      return line unless open_at > 0 && line[open_at - 1] == '('
+      return line if call_arguments(line, open_at)
+
+      parts = [line]
+      next_index = index + 1
+      while next_index < lines.size && next_index - index < 40
+        parts << lines[next_index]
+        joined = parts.join('\n')
+        return joined if call_arguments(joined, open_at)
+        next_index += 1
+      end
+
+      line
     end
 
     # A `.get`/`.post`/... call counts as a route only when its receiver is a
@@ -331,7 +377,7 @@ module Analyzer::Swift
 
     private def register_group_closure(line : String,
                                        prefix_by_receiver : Hash(String, String),
-                                       group_prefix_stack : Array(Tuple(String, Int32)),
+                                       group_prefix_stack : Array(Tuple(String, Int32, String?)),
                                        brace_depth : Int32)
       match = line.match(GROUP_CLOSURE_PATTERN)
       return unless match
@@ -341,24 +387,34 @@ module Analyzer::Swift
       return unless chain
 
       after_call = line[(chain[1] + 1)..]? || ""
-      closure_match = after_call.match(/^\s*\{\s*([A-Za-z_]\w*)\s+in/)
-      return unless closure_match
+      variable = if named = after_call.match(/^\s*\{\s*([A-Za-z_]\w*)\s+in\b/)
+                   named[1]
+                 elsif after_call.matches?(/^\s*\{/)
+                   # No parameter name: the group receiver inside the closure is `$0`.
+                   "$0"
+                 else
+                   return
+                 end
 
-      variable = closure_match[1]
+      previous = prefix_by_receiver[variable]?
       prefix_by_receiver[variable] = chain[0]
-      group_prefix_stack << {variable, brace_depth + 1}
+      group_prefix_stack << {variable, brace_depth + 1, previous}
     end
 
     private def update_group_depth(line : String,
                                    brace_depth : Int32,
-                                   group_prefix_stack : Array(Tuple(String, Int32)),
+                                   group_prefix_stack : Array(Tuple(String, Int32, String?)),
                                    prefix_by_receiver : Hash(String, String)) : Int32
       structural, _, _ = Noir::SwiftCalleeExtractor.strip_non_code_with_state(line, 0, false)
       depth = brace_depth + structural.count('{') - structural.count('}')
 
       while !group_prefix_stack.empty? && depth < group_prefix_stack.last[1]
-        variable, _ = group_prefix_stack.pop
-        prefix_by_receiver.delete(variable)
+        variable, _, previous = group_prefix_stack.pop
+        if previous
+          prefix_by_receiver[variable] = previous
+        else
+          prefix_by_receiver.delete(variable)
+        end
       end
 
       depth
