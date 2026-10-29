@@ -2842,7 +2842,7 @@ REVIEW_FILTERS = {
 # Auth tag descriptions of the review app's routes, with `filter` in place
 # (`extra`: more files; `prefix`: the routes' context path).
 def review_case(name : String, extra = {} of String => String, prefix = "") : Hash(String, Array(String))
-  path, source = REVIEW_FILTERS[name]
+  path, source = REVIEW_FILTERS[name]? || REVIEW_FILTERS2[name]
   files = {"build.gradle" => "plugins { id 'org.springframework.boot' version '3.2.0'; id 'java' }\n",
            "src/main/java/app/App.java" => "@SpringBootApplication\npublic class App { public static void main(String[] a) { SpringApplication.run(App.class, a); } }\n",
            "src/main/java/app/AdminController.java" => REVIEW_JAVA_CONTROLLER, path => source}.merge(extra)
@@ -2948,5 +2948,449 @@ describe "SpringAuthTagger (servlet filter review cases)" do
     })
     components["GET /appa/admin/users"].size.should eq(1)
     components["GET /appb/admin/users"].should be_empty
+  end
+end
+
+# Round two of the #3255 review: shapes where a caller without a credential
+# still reaches the handler (lambdas, a refusal without `return`, murky
+# credential locals, no-argument predicates), plus the context path.
+REVIEW_FILTERS2 = {
+  "j01_noarg_predicate_threadlocal" => {"src/main/java/app/KeyFilter.java", <<-JAVA},
+    package app;
+    @Component
+    public class KeyFilter extends OncePerRequestFilter {
+
+        private boolean isPublic() {
+            HttpServletRequest r = CURRENT.get();
+            return r.getRequestURI().startsWith("/admin");
+        }
+        @Override
+        protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain) throws ServletException, IOException {
+
+            if (isPublic()) {
+                chain.doFilter(request, response);
+                return;
+            }
+            if (request.getHeader("Authorization") == null) {
+                response.sendError(401);
+                return;
+            }
+            chain.doFilter(request, response);
+        }
+    }
+    JAVA
+  "j02_isenabled_reads_header" => {"src/main/java/app/KeyFilter.java", <<-JAVA},
+    package app;
+    @Component
+    public class KeyFilter extends OncePerRequestFilter {
+
+        private final ThreadLocal<HttpServletRequest> holder = new ThreadLocal<>();
+        private boolean isEnabled() { return holder.get().getHeader("X-Skip") == null; }
+        @Override
+        protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain) throws ServletException, IOException {
+
+            holder.set(request);
+            if (!isEnabled()) {
+                chain.doFilter(request, response);
+                return;
+            }
+            if (request.getHeader("Authorization") == null) {
+                response.sendError(401);
+                return;
+            }
+            chain.doFilter(request, response);
+        }
+    }
+    JAVA
+  "j03_senderror_no_return" => {"src/main/java/app/KeyFilter.java", <<-JAVA},
+    package app;
+    @Component
+    public class KeyFilter extends OncePerRequestFilter {
+
+        @Override
+        protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain) throws ServletException, IOException {
+
+            if (request.getHeader("Authorization") == null) {
+                response.sendError(401);
+            }
+            chain.doFilter(request, response);
+        }
+    }
+    JAVA
+  "j04_optional_ifpresent" => {"src/main/java/app/KeyFilter.java", <<-JAVA},
+    package app;
+    @Component
+    public class KeyFilter extends OncePerRequestFilter {
+
+        @Override
+        protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain) throws ServletException, IOException {
+
+            Optional.ofNullable(request.getHeader("Authorization"))
+                .filter(t -> !tokens.valid(t))
+                .ifPresent(t -> response.setStatus(401));
+            if (response.getStatus() == 401) return;
+            chain.doFilter(request, response);
+        }
+    }
+    JAVA
+  "j06_refusal_after_chain" => {"src/main/java/app/KeyFilter.java", <<-JAVA},
+    package app;
+    @Component
+    public class KeyFilter extends OncePerRequestFilter {
+
+        @Override
+        protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain) throws ServletException, IOException {
+
+            String token = request.getHeader("Authorization");
+            chain.doFilter(request, response);
+            if (token == null) {
+                response.setStatus(401);
+            }
+        }
+    }
+    JAVA
+  "j07_early_return_no_chain" => {"src/main/java/app/KeyFilter.java", <<-JAVA},
+    package app;
+    @Component
+    public class KeyFilter extends OncePerRequestFilter {
+
+        @Override
+        protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain) throws ServletException, IOException {
+
+            String token = request.getHeader("Authorization");
+            if (token != null && !valid(token)) {
+                return;
+            }
+            chain.doFilter(request, response);
+        }
+    }
+    JAVA
+  "j08_status_ternary" => {"src/main/java/app/KeyFilter.java", <<-JAVA},
+    package app;
+    @Component
+    public class KeyFilter extends OncePerRequestFilter {
+
+        @Override
+        protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain) throws ServletException, IOException {
+
+            String token = request.getHeader("Authorization");
+            if (token != null && !valid(token)) {
+                response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
+                return;
+            }
+            chain.doFilter(request, response);
+        }
+    }
+    JAVA
+  "j09_static_noarg_bypass" => {"src/main/java/app/KeyFilter.java", <<-JAVA},
+    package app;
+    @Component
+    public class KeyFilter extends OncePerRequestFilter {
+
+        @Override
+        protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain) throws ServletException, IOException {
+
+            if (SecurityBypass.isAnonymousAllowed()) {
+                chain.doFilter(request, response);
+                return;
+            }
+            if (request.getHeader("X-Api-Key") == null) {
+                response.sendError(401);
+                return;
+            }
+            chain.doFilter(request, response);
+        }
+    }
+    JAVA
+  "j10_local_from_noarg" => {"src/main/java/app/KeyFilter.java", <<-JAVA},
+    package app;
+    @Component
+    public class KeyFilter extends OncePerRequestFilter {
+
+        @Override
+        protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain) throws ServletException, IOException {
+
+            String path = currentPath();
+            if (path.startsWith("/admin")) {
+                chain.doFilter(request, response);
+                return;
+            }
+            if (request.getHeader("X-Api-Key") == null) {
+                response.sendError(401);
+                return;
+            }
+            chain.doFilter(request, response);
+        }
+    }
+    JAVA
+  "j11_refusal_in_string" => {"src/main/java/app/KeyFilter.java", <<-JAVA},
+    package app;
+    @Component
+    public class KeyFilter extends OncePerRequestFilter {
+
+        @Override
+        protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain) throws ServletException, IOException {
+
+            String token = request.getHeader("Authorization");
+            log.info("would sendError(401) for {}", token);
+            chain.doFilter(request, response);
+        }
+    }
+    JAVA
+  "j12_default_credential" => {"src/main/java/app/KeyFilter.java", <<-JAVA},
+    package app;
+    @Component
+    public class KeyFilter extends OncePerRequestFilter {
+
+        @Override
+        protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain) throws ServletException, IOException {
+
+            String token = request.getHeader("Authorization");
+            if (token == null) token = "guest";
+            if (!tokens.contains(token)) {
+                response.sendError(401);
+                return;
+            }
+            chain.doFilter(request, response);
+        }
+    }
+    JAVA
+  "j13_flag_or_missing" => {"src/main/java/app/KeyFilter.java", <<-JAVA},
+    package app;
+    @Component
+    public class KeyFilter extends OncePerRequestFilter {
+
+        @Override
+        protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain) throws ServletException, IOException {
+
+            String token = request.getHeader("Authorization");
+            boolean ok = token == null || tokens.valid(token);
+            if (!ok) {
+                response.sendError(401);
+                return;
+            }
+            chain.doFilter(request, response);
+        }
+    }
+    JAVA
+  "j16_jwt_passthrough" => {"src/main/java/app/KeyFilter.java", <<-JAVA},
+    package app;
+    @Component
+    public class KeyFilter extends OncePerRequestFilter {
+
+        @Override
+        protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain) throws ServletException, IOException {
+
+            String header = request.getHeader("Authorization");
+            if (header == null || !header.startsWith("Bearer ")) {
+                chain.doFilter(request, response);
+                return;
+            }
+            if (!jwt.valid(header.substring(7))) {
+                response.sendError(401);
+                return;
+            }
+            chain.doFilter(request, response);
+        }
+    }
+    JAVA
+  "k01_let_refusal" => {"src/main/kotlin/app/KeyFilter.kt", <<-KOTLIN},
+    package app
+    @Component
+    class KeyFilter : OncePerRequestFilter() {
+
+        override fun doFilterInternal(request: HttpServletRequest, response: HttpServletResponse, chain: FilterChain) {
+
+            request.getHeader("Authorization")?.let {
+                if (!valid(it)) {
+                    response.sendError(401)
+                    return
+                }
+            }
+            chain.doFilter(request, response)
+        }
+    }
+    KOTLIN
+  "k04_when_no_else" => {"src/main/kotlin/app/KeyFilter.kt", <<-KOTLIN},
+    package app
+    @Component
+    class KeyFilter : OncePerRequestFilter() {
+
+        override fun doFilterInternal(request: HttpServletRequest, response: HttpServletResponse, chain: FilterChain) {
+
+            val token = request.getHeader("Authorization")
+            when {
+                token != null && !valid(token) -> {
+                    response.status = 401
+                    return
+                }
+            }
+            chain.doFilter(request, response)
+        }
+    }
+    KOTLIN
+  "k05_takeif_chain" => {"src/main/kotlin/app/KeyFilter.kt", <<-KOTLIN},
+    package app
+    @Component
+    class KeyFilter : OncePerRequestFilter() {
+
+        override fun doFilterInternal(request: HttpServletRequest, response: HttpServletResponse, chain: FilterChain) {
+
+            val ok = request.getHeader("Authorization")
+                ?.takeIf { it.isNotBlank() }
+                ?.let { valid(it) } ?: true
+            if (!ok) {
+                response.status = 401
+                return
+            }
+            chain.doFilter(request, response)
+        }
+    }
+    KOTLIN
+  "k06_multiline_condition" => {"src/main/kotlin/app/KeyFilter.kt", <<-KOTLIN},
+    package app
+    @Component
+    class KeyFilter : OncePerRequestFilter() {
+
+        override fun doFilterInternal(request: HttpServletRequest, response: HttpServletResponse, chain: FilterChain) {
+
+            val token = request.getHeader("Authorization")
+            if (request.method == "POST" &&
+                token == null
+            ) {
+                response.status = 401
+                return
+            }
+            chain.doFilter(request, response)
+        }
+    }
+    KOTLIN
+  "k08_noarg_isPublic" => {"src/main/kotlin/app/KeyFilter.kt", <<-KOTLIN},
+    package app
+    @Component
+    class KeyFilter : OncePerRequestFilter() {
+
+        private val isPublic: Boolean get() = RequestHolder.current().requestURI.startsWith("/admin")
+        override fun doFilterInternal(request: HttpServletRequest, response: HttpServletResponse, chain: FilterChain) {
+
+            if (isPublic) return chain.doFilter(request, response)
+            if (request.getHeader("Authorization") == null) {
+                response.status = 401
+                return
+            }
+            chain.doFilter(request, response)
+        }
+    }
+    KOTLIN
+  "k02_elvis_refusal" => {"src/main/kotlin/app/KeyFilter.kt", <<-KOTLIN},
+    package app
+    @Component
+    class KeyFilter : OncePerRequestFilter() {
+
+        override fun doFilterInternal(request: HttpServletRequest, response: HttpServletResponse, chain: FilterChain) {
+
+            val token = request.getHeader("Authorization") ?: run {
+                response.sendError(401)
+                return
+            }
+            chain.doFilter(request, response)
+        }
+    }
+    KOTLIN
+  "k03_return_at_label" => {"src/main/kotlin/app/KeyFilter.kt", <<-KOTLIN},
+    package app
+    @Component
+    class KeyFilter : OncePerRequestFilter() {
+
+        override fun doFilterInternal(request: HttpServletRequest, response: HttpServletResponse, chain: FilterChain) {
+
+            val token = request.getHeader("Authorization")
+            if (token == null) {
+                response.status = 401
+                return@doFilterInternal
+            }
+            chain.doFilter(request, response)
+        }
+    }
+    KOTLIN
+  "k07_if_expression_noelse_brace" => {"src/main/kotlin/app/KeyFilter.kt", <<-KOTLIN},
+    package app
+    @Component
+    class KeyFilter : OncePerRequestFilter() {
+
+        override fun doFilterInternal(request: HttpServletRequest, response: HttpServletResponse, chain: FilterChain) {
+
+            val token = request.getHeader("Authorization")
+            if (token == null) response.sendError(401)
+            else chain.doFilter(request, response)
+        }
+    }
+    KOTLIN
+  "cp1_properties" => {"src/main/java/app/KeyFilter.java", <<-JAVA},
+    package app;
+    public class KeyFilter extends OncePerRequestFilter {
+        @Override
+        protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain) throws ServletException, IOException {
+            if (request.getHeader("X-Api-Key") == null) {
+                response.sendError(401);
+                return;
+            }
+            chain.doFilter(request, response);
+        }
+    }
+    @Configuration
+    class FilterConfig {
+        @Bean
+        public FilterRegistrationBean<KeyFilter> reg() {
+            FilterRegistrationBean<KeyFilter> r = new FilterRegistrationBean<>(new KeyFilter());
+            r.addUrlPatterns("/admin/*");
+            return r;
+        }
+    }
+    JAVA
+}
+
+describe "SpringAuthTagger (servlet filter review cases, round two)" do
+  it "emits no guard when a missing credential can reach chain.doFilter" do
+    %w[j01_noarg_predicate_threadlocal j02_isenabled_reads_header j03_senderror_no_return j04_optional_ifpresent j06_refusal_after_chain j07_early_return_no_chain j08_status_ternary j09_static_noarg_bypass j10_local_from_noarg j11_refusal_in_string j12_default_credential j13_flag_or_missing j16_jwt_passthrough k01_let_refusal k04_when_no_else k05_takeif_chain k06_multiline_condition k08_noarg_isPublic].each do |name|
+      review_case(name).each do |route, tags|
+        {name, route, tags}.should eq({name, route, [] of String})
+      end
+    end
+  end
+
+  it "guards an elvis refusal, a labelled return and a refusal whose else hands on" do
+    %w[k02_elvis_refusal k03_return_at_label k07_if_expression_noelse_brace].each do |name|
+      review_case(name).values.should eq([["Protected by Servlet filter KeyFilter on /* (refuses with 401)"]] * 3)
+    end
+  end
+
+  it "reads the context path from properties or YAML, and not from a profile or placeholder" do
+    guarded = ["Protected by Servlet filter KeyFilter on /admin/* (refuses with 401)"]
+    {
+      "src/main/resources/application.properties" => "server.servlet.context-path=/admin\n",
+      "src/main/resources/application.yml"        => "server:\n  servlet:\n    context-path: /admin\n",
+      "src/main/resources/application.yaml"       => "server.servlet.context-path: /admin\n",
+    }.each do |path, config|
+      tags = review_case("cp1_properties", {path => config}, "/admin")
+      tags["GET /admin/admin/users"].should eq(guarded)
+      tags["GET /admin/items"].should be_empty
+    end
+    {
+      "src/main/resources/application-prod.yml"   => "server:\n  servlet:\n    context-path: /admin\n",
+      "src/main/resources/application.properties" => "server.servlet.context-path=${CTX:/admin}\n",
+    }.each do |path, config|
+      review_case("cp1_properties", {path => config}, "/admin").values.flatten.should be_empty
+    end
+  end
+
+  it "maps a @Component of a library module only for the apps that scan its package" do
+    tags = review_reactor({
+      "lib"   => {[] of String, {"lib/TokenFilter.java" => review_filter("lib", "TokenFilter", "@Component")}},
+      "app-a" => {["lib"], {"appa/Scan.java" => "package appa;\n@Configuration\n@ComponentScan(\"lib\")\npublic class Scan {}\n"}},
+      "app-b" => {["lib"], {} of String => String},
+    })
+    tags["GET /appa/admin/users"].should eq(["Protected by Servlet filter TokenFilter on /* (refuses with 401)"])
+    tags["GET /appb/admin/users"].should be_empty
   end
 end

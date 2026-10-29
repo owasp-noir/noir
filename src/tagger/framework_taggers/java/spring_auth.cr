@@ -41,6 +41,7 @@ class SpringAuthTagger < FrameworkTagger
     file_path : String,
     line : Int32,
     module_dir : String?,
+    package_name : String,
     refusal : String?,
     component : Bool,
     web_filter_patterns : Array(String)?,
@@ -157,6 +158,8 @@ class SpringAuthTagger < FrameworkTagger
     @filter_registrations = [] of ServletFilterRegistration
     @bean_types = Set({String?, String}).new
     @servlet_component_scans = Set(String?).new
+    @scan_packages = Hash(String, Array(String)).new
+    @scan_imports = Hash(String, Array(String)).new
   end
 
   def self.target_techs : Array(String)
@@ -181,6 +184,9 @@ class SpringAuthTagger < FrameworkTagger
     @filter_registrations.clear
     @bean_types.clear
     @servlet_component_scans.clear
+    @scan_packages.clear
+    @scan_imports.clear
+    @context_paths.clear
 
     # Find Java and Kotlin security config files
     extensions = [".java", ".kt"]
@@ -212,6 +218,7 @@ class SpringAuthTagger < FrameworkTagger
           scan_filter_registrations(content, file, module_dir) if content.includes?("FilterRegistrationBean")
           scan_bean_types(content, module_dir) if content.includes?("@Bean")
           @servlet_component_scans << module_dir if content.includes?("@ServletComponentScan")
+          scan_component_packages(content, module_dir) if module_dir && (content.includes?("@SpringBootApplication") || content.includes?("@ComponentScan") || content.includes?("@Import"))
         end
 
         next unless content.includes?("SecurityFilterChain") || content.includes?("HttpSecurity") || content.includes?("WebSecurityConfigurerAdapter")
@@ -428,6 +435,11 @@ class SpringAuthTagger < FrameworkTagger
   FILTER_CREDENTIAL_READ = /\bget(?:Header|Parameter)\s*\(\s*(?:HttpHeaders\.AUTHORIZATION\b|"[^"]*(?:auth|token|key|jwt|bearer|session|credential)[^"]*"|[\w$.]*(?:auth|token|key|jwt|session)[\w$]*(?:\s*\(\s*\))?\s*\))|\bgetSession\s*\(|\brequest\.session\b|\b(?:getUserPrincipal|userPrincipal|getRemoteUser|remoteUser|SecurityContextHolder)\b|\bgetCookies\s*\(|\.cookies\b|\b\w*(?:token|auth|jwt|session|credential|principal)\w*\s*\(\s*(?:request|req|httpRequest|httpServletRequest|servletRequest)\b[^()]*\)/i
   # A credential read with its receiver (`request.getHeader("X-Api-Key")`).
   CREDENTIAL_EXPRESSION = /(?:[\w$]+\s*\.\s*)*(?:#{FILTER_CREDENTIAL_READ.source})/i
+  # A credential local whose value for a missing credential is not plain:
+  # it tests for null or emptiness itself, or falls back with `?:` / a ternary.
+  MURKY_VALUE = /\bnull\b|\?:|\s\?\s|\|\||&&|\b(?:isEmpty|isBlank|isNullOrEmpty|isNullOrBlank|hasText|hasLength|isNotEmpty|isNotBlank|orElse\w*|getOrDefault|ifEmpty)\b/
+  # A field holding configuration: `@Value`-injected, or typed `*Properties` / `*Config`.
+  CONFIG_FIELD_TYPE = /(?:Properties|Config|Configuration|Settings)\??\z/
   # Reads of the current request that do not name the request parameter.
   REQUEST_HOLDER = /\b(?:RequestContextHolder|RequestAttributes|ServletRequestAttributes|HttpServletRequest|currentRequest)\b/
   # `path.startsWith("/admin")`, `request.servletPath == "/login"`.
@@ -440,7 +452,8 @@ class SpringAuthTagger < FrameworkTagger
 
   # How a block of a filter treats a caller who presents no credential.
   enum Walk
-    Guard   # refused before anything hands the request on
+    Guard   # refused, and the request stops there
+    Refused # refused, but control leaves the block's end: what follows decides
     Pass    # handed on (`chain.doFilter`)
     Through # neither: control leaves the block's end
     Unknown
@@ -458,6 +471,9 @@ class SpringAuthTagger < FrameworkTagger
   class FilterReading
     getter tainted : Set(String)
     getter credential : Set(String)
+    # Credential locals whose value for a missing credential noir cannot
+    # tell (`ok = token == null || valid(token)`, reassigned, `?: true`).
+    getter murky : Set(String)
     getter body : String
     getter helpers : Hash(String, String)
     getter declared : Set(String)
@@ -465,7 +481,7 @@ class SpringAuthTagger < FrameworkTagger
     getter excluded = [] of PathTest
     getter settings = [] of String
 
-    def initialize(@tainted, @credential, @body, @helpers, @declared)
+    def initialize(@tainted, @credential, @murky, @body, @helpers, @declared)
     end
   end
 
@@ -490,6 +506,7 @@ class SpringAuthTagger < FrameworkTagger
         file_path: file,
         line: clean.byte_slice(0, match.byte_begin(0)).count('\n') + 1,
         module_dir: module_dir,
+        package_name: clean.match(/^\s*package\s+([\w.]+)/m).try(&.[1]) || "",
         refusal: nil,
         component: lead.matches?(/@Component\b/),
         web_filter_patterns: web_filter_patterns(lead),
@@ -515,10 +532,11 @@ class SpringAuthTagger < FrameworkTagger
     method = body.byte_slice(open + 1, close - open - 1)
 
     helpers, declared = refusing_helpers(body)
-    tainted, credential = request_names(params[0], method)
-    reading = FilterReading.new(tainted, credential, body, helpers, declared)
+    tainted, credential, murky = request_names(params[0], method)
+    reading = FilterReading.new(tainted, credential, murky, body, helpers, declared)
     walk, refusal = walk_block(method, reading)
-    return unless walk.guard? && refusal
+    # A refusal at the end of doFilter stops the request as well.
+    return unless (walk.guard? || walk.refused?) && refusal
 
     if skip = body.match(SHOULD_NOT_FILTER)
       return unless read_should_not_filter(body, skip, reading)
@@ -539,14 +557,18 @@ class SpringAuthTagger < FrameworkTagger
   end
 
   # Walks the statements of `code` in order for a caller without a
-  # credential. The first one that refuses (Guard) or hands the request on
-  # (Pass) decides; an if/else chain, `when`, or `try` is decided by the
+  # credential. The first one that hands the request on (Pass) decides, or
+  # a refusal followed by `return` / `throw` (Guard); a refusal that control
+  # runs past is Refused, and a later `chain.doFilter` means the handler
+  # runs anyway. An if/else chain, `when`, or `try` is decided by the
   # branch that caller takes.
   private def walk_block(code : String, reading : FilterReading) : {Walk, String?}
     masked = mask_literals(code)
+    refused = nil
     each_statement(masked) do |start, stop|
       text = code[start...stop]
       head = masked[start...stop]
+      stops = head.matches?(/\A(?:return|throw)\b/)
       verdict = if head.matches?(/\Aif\s*\(/)
                   walk_branches(if_branches(text), reading)
                 elsif head.matches?(/\Atry\b/)
@@ -558,15 +580,49 @@ class SpringAuthTagger < FrameworkTagger
                 elsif head.matches?(/\A(?:return\s+)?(?:[\w$]+\s*\.\s*)+doFilter\s*\(/)
                   {Walk::Pass, nil}
                 elsif found = refusal_in(head, reading)
-                  {Walk::Guard, found}
-                elsif head.includes?("doFilter") || head.matches?(/\A(?:return|throw)\b/)
+                  statement_refusal(head, found)
+                elsif refused && stops
+                  {Walk::Guard, refused}
+                elsif head.includes?("doFilter") || stops
                   {Walk::Unknown, nil}
                 else
                   {Walk::Through, nil}
                 end
-      return verdict unless verdict[0].through?
+      case verdict[0]
+      when .through?
+        next
+      when .refused?
+        refused ||= verdict[1]
+        next
+      when .guard?
+        return verdict
+      else
+        # After a refusal, the handler still runs: no guard.
+        return refused ? {Walk::Unknown, nil} : verdict
+      end
     end
-    {Walk::Through, nil}
+    refused ? {Walk::Refused, refused} : {Walk::Through, nil}
+  end
+
+  # A statement holding refusal `found`: Guard when it also stops the
+  # request (`throw ..`, `return sendError(..)`, Kotlin `?: run { ..; return }`),
+  # Refused when control goes on; Unknown when the refusal sits in a lambda
+  # or block that a missing credential may never run (`?.let { .. }`, `ifPresent(t -> ..)`).
+  private def statement_refusal(head : String, found : String) : {Walk, String?}
+    at = head.index(found) || 0
+    before = head[0, at]
+    nested = before.includes?("->") || before.count('{') > before.count('}')
+    if nested
+      return {Walk::Unknown, nil} unless elvis = before.index("?:")
+      after = head[(elvis + 2)..]
+      return {Walk::Unknown, nil} unless after.matches?(/\A\s*(?:run\s*)?\{/) && after.matches?(/\breturn\b/)
+      return {Walk::Unknown, nil} if before[0, elvis].includes?("->") || before[0, elvis].count('{') > before[0, elvis].count('}')
+      return {Walk::Guard, found}
+    end
+    if (elvis = before.index("?:")) && head[(elvis + 2)..].matches?(/\A\s*return\b/)
+      return {Walk::Guard, found}
+    end
+    head.matches?(/\A(?:return|throw)\b/) ? {Walk::Guard, found} : {Walk::Refused, found}
   end
 
   # The refusing text of a statement: a 401/403 status or auth exception, a
@@ -605,7 +661,7 @@ class SpringAuthTagger < FrameworkTagger
           reading.settings.concat(verdict.settings)
           next
         end
-        if result[0].guard? && verdict.tests.empty?
+        if (result[0].guard? || result[0].refused?) && verdict.tests.empty?
           reading.settings.concat(verdict.settings.map { |setting| "!(#{setting})" })
           return result
         end
@@ -639,7 +695,7 @@ class SpringAuthTagger < FrameworkTagger
       break unless (catch_open = masked.index('{', paren_close)) && (catch_close = Noir::JSLiteralScanner.find_matching_brace(masked, catch_open))
       caught = walk_block(text[(catch_open + 1)...catch_close], reading)
       # ponytail: assumes the call throws for a missing credential, as a validator does.
-      return caught if hands_credential && caught[0].guard?
+      return caught if hands_credential && (caught[0].guard? || caught[0].refused?)
       offset = catch_close + 1
       rest = masked[offset..]
     end
@@ -802,7 +858,7 @@ class SpringAuthTagger < FrameworkTagger
       disjunct = strip_parens(part)
       next if disjunct == "false" || options_test?(disjunct)
       return CondVerdict.new(:true) if disjunct == "true"
-      if found = path_tests(disjunct, reading.body)
+      if identifiers(disjunct).any? { |ident| reading.tainted.includes?(ident) } && (found = path_tests(disjunct, reading.body))
         tests.concat(found)
       elsif config_switch?(disjunct, reading)
         settings << disjunct
@@ -842,6 +898,7 @@ class SpringAuthTagger < FrameworkTagger
 
   private def credential_test(atom : String, reading : FilterReading) : Symbol
     return :unknown unless atom.matches?(CREDENTIAL_EXPRESSION) || identifiers(atom).any? { |ident| reading.credential.includes?(ident) }
+    return :unknown if identifiers(atom).any? { |ident| reading.murky.includes?(ident) }
     rest = atom.gsub(CREDENTIAL_EXPRESSION, " ")
     return :unknown if identifiers(rest).any? { |ident| reading.tainted.includes?(ident) && !reading.credential.includes?(ident) }
     masked = mask_literals(atom)
@@ -868,11 +925,32 @@ class SpringAuthTagger < FrameworkTagger
 
   # A condition that reads only fields and properties (`!enabled`,
   # `!props.isEnabled()`), nothing request-derived.
-  private def config_switch?(disjunct : String, reading : FilterReading) : Bool
+  # Each value read is a configuration field (`enabled` under `@Value`,
+  # `authConfig.isEnabled()` on a `*Config` field), or a no-argument
+  # method of the class that returns only such a read. A no-argument call
+  # on anything else (`isPublic()`, `SecurityBypass.isAnonymousAllowed()`)
+  # can read the request through a ThreadLocal.
+  private def config_switch?(disjunct : String, reading : FilterReading, depth = 0) : Bool
     masked = mask_literals(disjunct)
-    idents = identifiers(disjunct)
-    !idents.empty? && idents.none? { |ident| reading.tainted.includes?(ident) } &&
-      !masked.matches?(REQUEST_HOLDER) && !masked.matches?(/[\w$]\s*\(\s*[^)\s]/) && !masked.matches?(/->|\{/)
+    return false if masked.matches?(REQUEST_HOLDER) || masked.matches?(/[\w$]\s*\(\s*[^)\s]|->|\{/)
+    roots = masked.scan(/(?<![\w$.])(?:this\s*\.\s*)?([A-Za-z_$][\w$]*)(\s*\()?/).reject { |root| {"true", "false", "null", "this"}.includes?(root[1]) }
+    return false if roots.empty?
+    roots.all? do |root|
+      name = root[1]
+      next false if reading.tainted.includes?(name)
+      if root[2]?
+        depth == 0 && (value = reading.body.match(/\b(?:boolean|Boolean|fun)\s+#{Regex.escape(name)}\s*\(\s*\)\s*(?::\s*Boolean\s*)?(?:\{\s*return\s+([^;{}]+?)\s*;?\s*\}|=\s*([^\n;{}]+))/)) &&
+          config_switch?(value[1]? || value[2], reading, depth + 1)
+      else
+        config_field?(name, reading.body)
+      end
+    end
+  end
+
+  private def config_field?(name : String, body : String) : Bool
+    escaped = Regex.escape(name)
+    return false unless found = body.match(/(@Value\s*\([^)]*\)\s*)?(?:(?:private|protected|public|internal|final|static|lateinit|override)\s+)*(?:(?:val|var)\s+#{escaped}\s*:\s*([\w.<>?]+)|([\w.<>]+)\s+#{escaped}\s*[;=])/)
+    !found[1]?.nil? || (found[2]? || found[3]).matches?(CONFIG_FIELD_TYPE)
   end
 
   private def identifiers(text : String) : Array(String)
@@ -911,19 +989,31 @@ class SpringAuthTagger < FrameworkTagger
   # The request parameter of a filter method (the first one) and the locals
   # derived from it (`String path = request.getRequestURI()`), then the
   # subset of those holding the caller's credential (`token = request.getHeader("Authorization")`).
-  private def request_names(params : String, body : String) : {Set(String), Set(String)}
+  private def request_names(params : String, body : String) : {Set(String), Set(String), Set(String)}
     first = Noir::TopLevelSplit.split(params, ',', Noir::TopLevelSplit::Rules.new).first? || ""
     name = first.includes?(':') ? first.split(':').first : first.split(/\s+/).last
     tainted = Set{name.strip}
     credential = Set(String).new
+    murky = Set(String).new
+    masked = mask_literals(body)
+    assignments = [] of {String, String}
+    masked.scan(/(?<![\w$.])([a-z_$][\w$]*)\s*(?::\s*[\w$.<>?]+\s*)?=(?![=>])/) do |assign|
+      assignments << {assign[1], body[assign.end(0)...simple_statement_end(masked, assign.end(0))]}
+    end
     2.times do
-      body.scan(/\b([a-z_$][\w$]*)\s*(?::\s*[\w$.<>?]+\s*)?=(?!=)\s*([^;\n]+)/) do |assign|
-        idents = identifiers(assign[2])
-        tainted << assign[1] if idents.any? { |ident| tainted.includes?(ident) } || assign[2].matches?(REQUEST_HOLDER)
-        credential << assign[1] if assign[2].matches?(FILTER_CREDENTIAL_READ) || idents.any? { |ident| credential.includes?(ident) }
+      assignments.each do |local, value|
+        idents = identifiers(value)
+        tainted << local if idents.any? { |ident| tainted.includes?(ident) } || value.matches?(REQUEST_HOLDER)
+        unless value.matches?(FILTER_CREDENTIAL_READ) || idents.any? { |ident| credential.includes?(ident) }
+          # A credential local given a value of another kind (`token = "guest"`).
+          murky << local if credential.includes?(local)
+          next
+        end
+        credential << local
+        murky << local if mask_literals(value).matches?(MURKY_VALUE) || idents.any? { |ident| murky.includes?(ident) }
       end
     end
-    {tainted, credential}
+    {tainted, credential, murky}
   end
 
   # `shouldNotFilter` returns true for the requests the filter skips: read
@@ -951,8 +1041,8 @@ class SpringAuthTagger < FrameworkTagger
         conditions << ret[1]
       end
     end
-    tainted, credential = request_names(params[0], block)
-    reading = FilterReading.new(tainted, credential, body, filter_reading.helpers, filter_reading.declared)
+    tainted, credential, murky = request_names(params[0], block)
+    reading = FilterReading.new(tainted, credential, murky, body, filter_reading.helpers, filter_reading.declared)
     conditions.each do |cond|
       verdict = evaluate_condition(cond, reading)
       next if verdict.kind == :false
@@ -1100,6 +1190,24 @@ class SpringAuthTagger < FrameworkTagger
     end
   end
 
+  # The packages `module_dir` component-scans and the classes it imports.
+  private def scan_component_packages(content : String, module_dir : String)
+    clean = Noir::CComments.strip(content)
+    packages = @scan_packages[module_dir] ||= [] of String
+    if clean.includes?("@SpringBootApplication") && (package = clean.match(/^\s*package\s+([\w.]+)/m))
+      packages << package[1]
+    end
+    clean.scan(/@(?:SpringBootApplication|ComponentScan)\s*\(/) do |found|
+      next unless args = paren_inner(clean, found.byte_end(0) - 1)
+      args[0].scan(/"([\w.]+)"/) { |literal| packages << literal[1] }
+      args[0].scan(/\b([A-Z][\w$]*)(?:::|\.)class\b/) { |klass| (@scan_imports[module_dir] ||= [] of String) << klass[1] }
+    end
+    clean.scan(/@Import\s*\(/) do |found|
+      next unless args = paren_inner(clean, found.byte_end(0) - 1)
+      args[0].scan(/\b([A-Z][\w$]*)(?:::|\.)class\b/) { |klass| (@scan_imports[module_dir] ||= [] of String) << klass[1] }
+    end
+  end
+
   # Types returned by `@Bean` methods: Spring Boot maps a filter bean to
   # every request unless a `FilterRegistrationBean` registers it. A bean
   # method that returns null registers nothing.
@@ -1122,13 +1230,10 @@ class SpringAuthTagger < FrameworkTagger
   private def servlet_filter_decision(endpoint : Endpoint, classpath : Set(String)?, app : String?) : Tuple(String, String, Int32)?
     url = normalize_security_path(endpoint.url)
     if app
-      values, note = module_config_list(app, "server.servlet.context-path")
-      return if note
-      if context = values.try(&.first?).try { |value| normalize_security_path(value).rchop('/') }
-        unless context.empty?
-          return unless url == context || url.starts_with?("#{context}/")
-          url = normalize_security_path(url[context.size..])
-        end
+      return unless context = servlet_context_path(app)
+      unless context.empty?
+        return unless url == context || url.starts_with?("#{context}/")
+        url = normalize_security_path(url[context.size..])
       end
     end
     applies = ->(owner : String?) { owner.nil? || classpath.nil? || classpath.includes?(owner) }
@@ -1152,11 +1257,11 @@ class SpringAuthTagger < FrameworkTagger
       # ponytail: a `@Component @WebFilter` class is read as its `@WebFilter`
       # patterns, and a `@Component` that is also registered as its
       # registration's, though Boot registers that bean for `/*` as well.
-      bean = filter.component || @bean_types.any? { |owner, type| type == filter.name && applies.call(owner) }
+      bean = (filter.component && scanned_by?(filter, app)) || @bean_types.any? { |owner, type| type == filter.name && applies.call(owner) }
       if registrations.empty? && filter.web_filter_patterns.nil? && bean
         mappings << {"/*", filter.file_path, filter.line, [] of String}
       end
-      if (patterns = filter.web_filter_patterns) && (@boot_apps.empty? || @servlet_component_scans.any? { |owner| applies.call(owner) })
+      if (patterns = filter.web_filter_patterns) && (@boot_apps.empty? || @servlet_component_scans.any? { |owner| applies.call(owner) }) && scanned_by?(filter, app)
         patterns.each { |pattern| mappings << {pattern, filter.file_path, filter.line, [] of String} }
       end
 
@@ -1170,6 +1275,27 @@ class SpringAuthTagger < FrameworkTagger
       return {"Protected by Servlet filter #{filter.name} on #{scope} (refuses with #{refusal})#{note}", mapping[1], mapping[2]}
     end
     nil
+  end
+
+  @context_paths = Hash(String, String?).new
+
+  # Whether `app` component-scans `filter`: a filter of the app's own
+  # module, or one in another module under a package the app's
+  # `@SpringBootApplication` / `scanBasePackages` / `@ComponentScan` names
+  # or that it `@Import`s.
+  private def scanned_by?(filter : ServletFilterDef, app : String?) : Bool
+    return true if app.nil? || filter.module_dir == app
+    return true if @scan_imports[app]?.try(&.includes?(filter.name))
+    @scan_packages[app]?.try(&.any? { |package| filter.package_name == package || filter.package_name.starts_with?("#{package}.") }) || false
+  end
+
+  # `server.servlet.context-path` of `app` ("" unset), nil when a profile,
+  # an import or a placeholder can set it.
+  private def servlet_context_path(app : String) : String?
+    @context_paths.put_if_absent(app) do
+      values, note = module_config_list(app, "server.servlet.context-path")
+      note ? nil : (values.try(&.first?).try { |value| normalize_security_path(value).rchop('/') } || "")
+    end
   end
 
   # Servlet URL-pattern matching: `/x/*` prefix, `*.ext` extension, `/` and
@@ -2161,7 +2287,7 @@ class SpringAuthTagger < FrameworkTagger
   end
 
   private def check_servlet_filter_rules(endpoint : Endpoint) : Tuple(String, String, Int32)?
-    return if @servlet_filters.empty?
+    return if @servlet_filters.none?(&.refusal)
     per_serving_classpath(endpoint) { |classpath, app| servlet_filter_decision(endpoint, classpath, app) }
   end
 
