@@ -2,6 +2,35 @@ require "file_utils"
 require "../../../spec_helper"
 require "../../../../src/tagger/tagger"
 
+# The URLs `RustAuthTagger` guards when each is mounted from the first file.
+private def axum_guarded_urls(files : Hash(String, String), urls : Array(String)) : Array(String)
+  CodeLocator.instance.clear_all
+  tmpdir = File.tempname("axum_layers")
+  files.each do |rel, src|
+    path = File.join(tmpdir, rel)
+    Dir.mkdir_p(File.dirname(path))
+    File.write(path, src)
+    CodeLocator.instance.register_path(path)
+  end
+  noir_options = create_test_options
+  noir_options["base"] = YAML::Any.new(tmpdir)
+  main = File.join(tmpdir, files.keys.first)
+  endpoints = urls.map { |url| Endpoint.new(url, "GET", [] of Param, Details.new(PathInfo.new(main, 1)).tap(&.technology=("rust_axum"))) }
+  RustAuthTagger.new(noir_options).perform(endpoints)
+  FileUtils.rm_rf(tmpdir)
+  endpoints.reject(&.tags.empty?).map(&.url).sort!
+end
+
+AXUM_REQUIRE_AUTH = <<-RUST
+  async fn require_auth(req: Request, next: Next) -> Result<Response, StatusCode> {
+      if req.headers().get("authorization").is_none() {
+          return Err(StatusCode::UNAUTHORIZED);
+      }
+      Ok(next.run(req).await)
+  }
+
+  RUST
+
 describe "RustAuthTagger" do
   fixture_base = File.expand_path("../../../functional_test/fixtures/rust/actix_auth", __DIR__)
   main_path = "#{fixture_base}/src/main.rs"
@@ -210,6 +239,331 @@ describe "RustAuthTagger" do
     endpoints.reject(&.tags.empty?).map(&.url).should eq(["/api/users"])
 
     FileUtils.rm_rf(tmpdir)
+  end
+
+  it "follows Axum route_layer across functions and merges across modules (Issue #3265 item 1)" do
+    tmpdir = File.tempname("axum_layer_merge")
+    Dir.mkdir_p(File.join(tmpdir, "src", "web"))
+    main_rs = File.join(tmpdir, "src", "main.rs")
+    items_rs = File.join(tmpdir, "src", "web", "items.rs")
+    health_rs = File.join(tmpdir, "src", "web", "health.rs")
+
+    File.write(main_rs, [
+      "async fn require_auth(req: Request, next: Next) -> Result<Response, StatusCode> {",
+      "    if req.headers().get(\"authorization\").is_none() {",
+      "        return Err(StatusCode::UNAUTHORIZED);",
+      "    }",
+      "    Ok(next.run(req).await)",
+      "}",
+      "",
+      "fn protected() -> Router {",
+      "    Router::new()",
+      "        .merge(web::items::routes())",
+      "        .route(\"/orders\", get(orders))",
+      "}",
+      "",
+      "#[tokio::main]",
+      "async fn main() {",
+      "    let app = protected()",
+      "        .route_layer(middleware::from_fn(require_auth))",
+      "        .merge(web::health::routes());",
+      "}",
+    ].join("\n"))
+
+    File.write(items_rs, [
+      "pub fn routes() -> Router {",
+      "    Router::new().route(\"/items\", get(list_items))",
+      "}",
+    ].join("\n"))
+
+    File.write(health_rs, [
+      "pub fn routes() -> Router {",
+      "    Router::new().route(\"/up\", get(up))",
+      "}",
+    ].join("\n"))
+
+    noir_options = create_test_options
+    noir_options["base"] = YAML::Any.new(tmpdir)
+    CodeLocator.instance.register_path(main_rs)
+    CodeLocator.instance.register_path(items_rs)
+    CodeLocator.instance.register_path(health_rs)
+
+    endpoints = [
+      Endpoint.new("/orders", "GET", [] of Param, Details.new(PathInfo.new(main_rs, 11)).tap(&.technology=("rust_axum"))),
+      Endpoint.new("/items", "GET", [] of Param, Details.new(PathInfo.new(items_rs, 2)).tap(&.technology=("rust_axum"))),
+      Endpoint.new("/up", "GET", [] of Param, Details.new(PathInfo.new(health_rs, 2)).tap(&.technology=("rust_axum"))),
+    ]
+
+    RustAuthTagger.new(noir_options).perform(endpoints)
+
+    tagged = endpoints.reject(&.tags.empty?).map(&.url)
+    tagged.sort.should eq(["/items", "/orders"])
+
+    FileUtils.rm_rf(tmpdir)
+  end
+
+  it "detects from_fn_with_state wrapped over multiple lines (Issue #3265 item 2)" do
+    tmpdir = File.tempname("axum_multiline_from_fn")
+    Dir.mkdir_p(File.join(tmpdir, "src"))
+    main_rs = File.join(tmpdir, "src", "main.rs")
+
+    File.write(main_rs, [
+      "fn app() -> Router {",
+      "    let app = Router::new()",
+      "        .route(\"/orders\", get(orders))",
+      "        .route_layer(middleware::from_fn_with_state(",
+      "            state.clone(),",
+      "            auth::middleware,",
+      "        ))",
+      "        .with_state(state);",
+      "    app",
+      "}",
+    ].join("\n"))
+
+    noir_options = create_test_options
+    noir_options["base"] = YAML::Any.new(tmpdir)
+    CodeLocator.instance.register_path(main_rs)
+
+    endpoints = [
+      Endpoint.new("/orders", "GET", [] of Param, Details.new(PathInfo.new(main_rs, 3)).tap(&.technology=("rust_axum"))),
+    ]
+
+    RustAuthTagger.new(noir_options).perform(endpoints)
+
+    endpoints[0].tags.empty?.should be_false
+    endpoints[0].tags[0].name.should eq("auth")
+    endpoints[0].tags[0].description.should contain("/orders")
+
+    FileUtils.rm_rf(tmpdir)
+  end
+
+  it "does not tag routes wrapped by a CSRF-only middleware even in an auth module (Issue #3265 item 3)" do
+    tmpdir = File.tempname("axum_csrf_middleware")
+    Dir.mkdir_p(File.join(tmpdir, "src"))
+    main_rs = File.join(tmpdir, "src", "main.rs")
+
+    File.write(main_rs, [
+      "mod auth {",
+      "    pub mod csrf {",
+      "        use super::super::*;",
+      "        pub async fn middleware(State(_s): State<()>, req: Request, next: Next) -> Result<Response, StatusCode> {",
+      "            if req.headers().get(\"x-csrf-token\").is_none() {",
+      "                return Err(StatusCode::FORBIDDEN);",
+      "            }",
+      "            Ok(next.run(req).await)",
+      "        }",
+      "    }",
+      "}",
+      "",
+      "fn app() -> Router {",
+      "    let app = Router::new()",
+      "        .route(\"/orders\", post(create_order))",
+      "        .route_layer(middleware::from_fn_with_state(state.clone(), auth::csrf::middleware))",
+      "        .with_state(state);",
+      "    app",
+      "}",
+    ].join("\n"))
+
+    noir_options = create_test_options
+    noir_options["base"] = YAML::Any.new(tmpdir)
+    CodeLocator.instance.register_path(main_rs)
+
+    endpoints = [
+      Endpoint.new("/orders", "POST", [] of Param, Details.new(PathInfo.new(main_rs, 15)).tap(&.technology=("rust_axum"))),
+    ]
+
+    RustAuthTagger.new(noir_options).perform(endpoints)
+
+    endpoints[0].tags.empty?.should be_true
+
+    FileUtils.rm_rf(tmpdir)
+  end
+
+  it "tags route when middleware function body refuses unauthenticated caller even if not named auth" do
+    tmpdir = File.tempname("axum_body_guard")
+    Dir.mkdir_p(File.join(tmpdir, "src"))
+    main_rs = File.join(tmpdir, "src", "main.rs")
+
+    File.write(main_rs, [
+      "async fn check_token(req: Request, next: Next) -> Result<Response, StatusCode> {",
+      "    if req.headers().get(\"authorization\").is_none() {",
+      "        return Err(StatusCode::UNAUTHORIZED);",
+      "    }",
+      "    Ok(next.run(req).await)",
+      "}",
+      "",
+      "fn app() -> Router {",
+      "    Router::new()",
+      "        .route(\"/secure\", get(secure_handler))",
+      "        .route_layer(middleware::from_fn(check_token))",
+      "}",
+    ].join("\n"))
+
+    noir_options = create_test_options
+    noir_options["base"] = YAML::Any.new(tmpdir)
+    CodeLocator.instance.register_path(main_rs)
+
+    endpoints = [
+      Endpoint.new("/secure", "GET", [] of Param, Details.new(PathInfo.new(main_rs, 10)).tap(&.technology=("rust_axum"))),
+    ]
+
+    RustAuthTagger.new(noir_options).perform(endpoints)
+
+    endpoints[0].tags.empty?.should be_false
+    endpoints[0].tags[0].name.should eq("auth")
+
+    FileUtils.rm_rf(tmpdir)
+  end
+
+  it "reads a `let` router binding in its own fn and scope, never a later or same-named one" do
+    src = AXUM_REQUIRE_AUTH + <<-RUST
+      fn public_routes() -> Router {
+          let router = Router::new().route("/health", get(h));
+          router
+      }
+      fn private_routes() -> Router {
+          let router = Router::new().route("/admin", get(a));
+          router.route_layer(middleware::from_fn(require_auth))
+      }
+      fn build() -> Router {
+          let app = Router::new().route("/a", get(a));
+          let app = app.route("/b", get(b));
+          let app = app.route_layer(middleware::from_fn(require_auth));
+          app.route("/c", get(c))
+      }
+      RUST
+    axum_guarded_urls({"src/main.rs" => src}, ["/health", "/admin", "/a", "/b", "/c"]).should eq(["/a", "/admin", "/b"])
+  end
+
+  it "does not read a Router parameter as the same-named fn" do
+    src = AXUM_REQUIRE_AUTH + <<-RUST
+      fn app() -> Router {
+          Router::new().route("/open", get(o))
+      }
+      fn with_auth(app: Router) -> Router {
+          let app = app.route_layer(middleware::from_fn(require_auth));
+          app
+      }
+      RUST
+    axum_guarded_urls({"src/main.rs" => src}, ["/open"]).should be_empty
+  end
+
+  it "judges only the constructor of a non-`from_fn` layer by name" do
+    src = <<-RUST
+      fn app() -> Router {
+          let open = Router::new()
+              .route("/open", get(o))
+              .layer(Extension(oauth_client))
+              .layer(SessionManagerLayer::new(store))
+              .layer(SetSensitiveRequestHeadersLayer::new(once(AUTHORIZATION)));
+          Router::new().route("/me", get(me)).layer(AuthLayer::new(keys)).merge(open)
+      }
+      RUST
+    axum_guarded_urls({"src/main.rs" => src}, ["/open", "/me"]).should eq(["/me"])
+  end
+
+  it "judges a middleware found in the scan by its body, not its name" do
+    src = <<-RUST
+      async fn auth_logger(req: Request, next: Next) -> Response {
+          // would return 401 if StatusCode::UNAUTHORIZED were wired
+          tracing::info!("authorization: {:?}", req.headers().get("authorization"));
+          next.run(req).await
+      }
+      async fn rate_limit(req: Request, next: Next) -> Response {
+          if too_many(req.headers().get("user-agent")) {
+              return StatusCode::TOO_MANY_REQUESTS.into_response();
+          }
+          next.run(req).await
+      }
+      async fn auth_session(req: Request, next: Next) -> Result<Response, AppError> {
+          let token = req.headers().get("authorization").ok_or(AppError::Session)?;
+          Ok(next.run(req).await)
+      }
+      fn app() -> Router {
+          Router::new()
+              .route("/logged", get(a))
+              .route_layer(middleware::from_fn(auth_logger))
+              .merge(Router::new().route("/limited", get(b)).route_layer(middleware::from_fn(rate_limit)))
+              .merge(Router::new().route("/session", get(c)).route_layer(middleware::from_fn(auth_session)))
+              .merge(Router::new().route("/inline", get(d)).route_layer(middleware::from_fn(|req: Request, next: Next| async move {
+                  if req.headers().get("authorization").is_none() {
+                      return Err(StatusCode::UNAUTHORIZED);
+                  }
+                  Ok(next.run(req).await)
+              })))
+      }
+      RUST
+    axum_guarded_urls({"src/main.rs" => src}, ["/logged", "/limited", "/session", "/inline"]).should eq(["/inline", "/session"])
+  end
+
+  it "guards with a middleware that extracts a refusing guard, also through `Result` and `?`" do
+    src = <<-RUST
+      struct CurrentUser;
+      impl<S> FromRequestParts<S> for CurrentUser {
+          type Rejection = AppError;
+          async fn from_request_parts(parts: &mut Parts, _s: &S) -> Result<Self, AppError> {
+              parts.extensions.get::<CurrentUser>().cloned().ok_or(AppError::NoCtx)
+          }
+      }
+      impl ResponseError for AppError {
+          fn status_code(&self) -> StatusCode {
+              match self {
+                  AppError::NoCtx => StatusCode::FORBIDDEN,
+              }
+          }
+      }
+      async fn require_login(_user: CurrentUser, req: Request, next: Next) -> Response {
+          next.run(req).await
+      }
+      async fn mw_ctx_require(ctx: Result<CurrentUser>, req: Request, next: Next) -> Result<Response> {
+          debug!("{ctx:?}");
+          ctx?;
+          Ok(next.run(req).await)
+      }
+      async fn mw_ctx_resolve(ctx: Result<CurrentUser>, req: Request, next: Next) -> Response {
+          debug!("{ctx:?}");
+          next.run(req).await
+      }
+      fn app() -> Router {
+          Router::new()
+              .route("/login", get(a))
+              .route_layer(middleware::from_fn(require_login))
+              .merge(Router::new().route("/rpc", post(b)).route_layer(middleware::from_fn(mw_ctx_require)))
+              .merge(Router::new().route("/open", get(c)).route_layer(middleware::from_fn(mw_ctx_resolve)))
+      }
+      RUST
+    axum_guarded_urls({"src/main.rs" => src}, ["/login", "/rpc", "/open"]).should eq(["/login", "/rpc"])
+  end
+
+  it "reads the mounts of the called fn only, not a same-named fn in another mod" do
+    src = AXUM_REQUIRE_AUTH + <<-RUST
+      mod a {
+          pub fn routes() -> Router { Router::new().route("/a", get(a)) }
+      }
+      mod b {
+          pub fn routes() -> Router { Router::new().route("/b", get(b)) }
+      }
+      fn app() -> Router {
+          a::routes().route_layer(middleware::from_fn(require_auth)).merge(b::routes())
+      }
+      RUST
+    axum_guarded_urls({"src/main.rs" => src}, ["/a", "/b"]).should eq(["/a"])
+  end
+
+  it "does not read a 401 the middleware only compares against as a refusal" do
+    src = <<-RUST
+      async fn auth_metrics(req: Request, next: Next) -> Response {
+          let res = next.run(req).await;
+          if res.status() == StatusCode::UNAUTHORIZED || StatusCode::FORBIDDEN != res.status() {
+              counter!("denied").increment(1);
+          }
+          res
+      }
+      fn app() -> Router {
+          Router::new().route("/a", get(a)).route_layer(middleware::from_fn(auth_metrics))
+      }
+      RUST
+    axum_guarded_urls({"src/main.rs" => src}, ["/a"]).should be_empty
   end
 end
 
