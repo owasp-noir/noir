@@ -45,6 +45,28 @@ describe "Nginx Analyzer" do
     endpoints.each(&.protocol.should(eq("https")))
   end
 
+  it "drops denial-only locations but keeps responses and content handlers" do
+    endpoints = analyze_nginx <<-CONF
+      server {
+          location /health { return 200 'ok'; }
+          location / { return 404; }
+          location /private {
+              deny all;
+          }
+          location /mixed {
+              proxy_pass http://app;
+              return 404;
+          }
+          location /legacy {
+              return 410;
+              location /legacy/feed { proxy_pass http://app; }
+          }
+      }
+      CONF
+
+    endpoints.map(&.url).sort!.should eq(["/health", "/legacy/feed", "/mixed"])
+  end
+
   it "marks a regex location as kind regex only while it still reads as a pattern" do
     endpoints = analyze_nginx <<-CONF
       server {
@@ -88,7 +110,7 @@ describe "Nginx Analyzer" do
     endpoints = analyze_nginx <<-CONF
       server {
           location ~* (?:#.*#|\\.(?:bak|conf|log)|~)$ {
-              deny all;
+              proxy_pass http://assets;
           }
       }
       CONF
@@ -184,7 +206,7 @@ describe "Nginx Analyzer" do
               proxy_pass http://fallback;
           }
           location ~ ^/v\d{1,2}/items$ {
-              deny all;
+              proxy_pass http://items;
           }
           location /api
           {
