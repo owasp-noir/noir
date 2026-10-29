@@ -115,6 +115,25 @@ describe "GoAuthTagger router handler wrappers" do
     order.call(17, "/loginreq").should be_empty
   end
 
+  it "reads a skip arm's closure as conditional, a credential beside a CSRF test, and a predicate as no handler" do
+    more = ->(line : Int32, url : String, method : String) do
+      guards.call("http_wrap_order", "more.go", line, url, method, "go_http")
+    end
+    guard = ->(name : String) { ["Protected by Go middleware #{name} (verified from its body: refuses anonymous callers)"] }
+    # `if public { run(func() { next.ServeHTTP(w, r) }); return }`.
+    more.call(7, "/nestedskip", "GET").should eq(guard.call("authNestedSkip"))
+    # `cookie == "" && !csrfExempt(r)`.
+    more.call(8, "/csrfexempt", "GET").should eq(guard.call("authCSRFExempt"))
+    more.call(9, "/csrfparam", "GET").should eq(guard.call("authCSRFParam"))
+    more.call(10, "/gofunc", "GET").should eq(guard.call("authGoFunc"))
+    # `check func(*http.Request) bool` is a password check, not a handler.
+    more.call(11, "/loginpost", "POST").should be_empty
+  end
+
+  it "resolves an import replaced by a local directory" do
+    guards.call("http_wrap_replace", "app/main.go", 11, "/forked", "GET", "go_http").should eq(["Protected by Go middleware mw.Wrap (verified from its body: refuses anonymous callers)"])
+  end
+
   it "resolves an import through its module's path, not the directory names" do
     # Both modules have `internal/mw`; beta-service's `Wrap` only passes on.
     guards.call("http_wrap_modules", "svc2/cmd/main.go", 11, "/beta", "GET", "go_http").should be_empty

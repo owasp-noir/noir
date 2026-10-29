@@ -911,17 +911,23 @@ class GoAuthTagger < FrameworkTagger
   CSRF_TEST = /csrf|xsrf/i
   CSRF_KEY  = /\.\s*(?:Get|GetHeader|FormValue|PostFormValue|PostForm|Query|QueryParam|Cookie)\s*\(\s*"[^"]*(?:csrf|xsrf)[^"]*"\s*\)/i
 
+  # A test of the caller's credential or session, as written.
+  CREDENTIAL_TEST = /cookie|session|\bsess\b|auth|bearer|jwt|user|login|token/i
+
   # Whether an `if` condition (as read, as written) is nothing but CSRF
   # token tests, joined by `||`: a refusal under it protects a form, not an
-  # account. A session test beside it (`sess == nil || !csrfOK(r)`) keeps
-  # the refusal a guard.
+  # account. A session test beside it (`sess == nil || !csrfOK(r)`), or
+  # joined to it by `&&` (`cookie == "" && !csrfExempt(r)`), keeps the
+  # refusal a guard.
   private def csrf_only?(condition : {String, String}?) : Bool
     return false unless condition
     read = condition[0].split("||").map(&.strip)
     written = condition[1].split("||").map(&.strip)
     return false if read.empty?
     read.each_with_index.all? do |(part, i)|
-      part.matches?(CSRF_TEST) || (read.size == written.size && written[i].matches?(CSRF_KEY))
+      shown = read.size == written.size ? written[i] : part
+      next false unless part.matches?(CSRF_TEST) || shown.matches?(CSRF_KEY)
+      shown.split("&&").none? { |test| !test.matches?(CSRF_TEST) && test.matches?(CREDENTIAL_TEST) }
     end
   end
 
@@ -941,11 +947,14 @@ class GoAuthTagger < FrameworkTagger
     end
   end
 
-  # Whether a statement in the blocks `blocks` runs on every request the
-  # innermost closure gets: no block between it and the closure but loops.
+  # Whether a statement in the blocks `blocks` runs on every request: each
+  # block down to it is a function, a closure or a loop, so a hand-on in a
+  # closure inside a skip arm (`if public { run(func() { next(w, r) }) }`)
+  # stays conditional.
+  # ponytail: a closure is assumed to run when reached; one stored or
+  # started (`go func() { next(...) }()`) reads as a hand-on too.
   private def unconditional?(blocks : Array(Char)) : Bool
-    start = blocks.rindex('f') || return blocks.empty?
-    blocks[start + 1..].all?('l')
+    blocks.all? { |kind| kind == 'f' || kind == 'l' }
   end
 
   # A control-flow line: a refusal under it is conditional.
@@ -1265,6 +1274,10 @@ class GoAuthTagger < FrameworkTagger
       dirs = (dirs + (@dirs_by_base[File.basename(import)]? || [] of String)).uniq
       exact = dirs.select { |dir| dir_import_path(dir) == import }
       return exact unless exact.empty?
+      if local = replaced_dir(file, import)
+        exact = dirs.select { |dir| File.expand_path(dir) == local }
+        return exact unless exact.empty?
+      end
       return [] of String if !dirs.empty? && dirs.all? { |dir| dir_import_path(dir) }
     end
     return dirs if dirs.size < 2 || import.nil?
@@ -1277,6 +1290,27 @@ class GoAuthTagger < FrameworkTagger
   end
 
   @dir_import_paths = Hash(String, String?).new
+  @replaces = Hash(String, Array({String, String})).new
+
+  # A `replace` of a module by a local directory, in a block or on its own
+  # line: `example.com/lib => ../lib`.
+  GO_REPLACE = /^\s*(?:replace\s+)?(\S+)(?:\s+v\S+)?\s+=>\s+(\.{1,2}\/\S*|\/\S*)\s*$/m
+
+  # The local directory `import` names through a `replace` in the go.mod of
+  # `file`'s module (`example.com/up/authlib => ../third_party/authlib`),
+  # expanded; nil when none applies.
+  private def replaced_dir(file : String, import : String) : String?
+    root = go_module(file)
+    replaces = @replaces.put_if_absent(root) do
+      mod = File.read(File.join(root, "go.mod")) rescue ""
+      mod.scan(GO_REPLACE).map { |m| {m[1], m[2]} }
+    end
+    replaces.each do |(from, to)|
+      next unless import == from || import.starts_with?("#{from}/")
+      return File.expand_path(File.join(root, to, import[from.size..]))
+    end
+    nil
+  end
 
   # The import path of the package in `dir`: its module's path plus the
   # directory below the module root, or the path below `vendor/`; nil when
@@ -1940,12 +1974,22 @@ class GoAuthTagger < FrameworkTagger
   @middleware_definitions = Hash({String, Int32}, Bool).new
   @handler_params = Hash({String, Int32}, Set(String)).new
 
-  # A parameter typed as a function, with its parameter list.
-  FUNC_PARAM = /[(,]\s*(\w+)\s+func\s*\(([^()]*)\)/
-  # A parameter list a request handler takes: the router's context or the
-  # request (`echo.Context`, `*gin.Context`, `http.ResponseWriter, *http.
-  # Request`), not a `context.Context` or a plain value.
-  HANDLER_SIGNATURE = /(?<!context)\.\s*(?:Context|Ctx|ResponseWriter|Request|RequestCtx)\b/
+  # A parameter typed as a function, with its parameter list and the start
+  # of its result (a type, `(` for several, or none).
+  FUNC_PARAM = /[(,]\s*(\w+)\s+func\s*\(([^()]*)\)[ \t]*(\(|[\w.*\[\]]+)?/
+  # The parameters a request handler takes: the router's context
+  # (`echo.Context`, `*gin.Context`, `*fiber.Ctx`), not a `context.Context`,
+  # or both halves of a net/http handler.
+  ROUTER_CONTEXT = /(?<!context)\.\s*(?:Context|Ctx|RequestCtx|RequestContext)\b/
+
+  # Whether a function type with parameters `params` and result `result`
+  # is a handler: it takes the request (the router's context, or a net/http
+  # writer and request) and returns an `error` or nothing. A predicate
+  # (`check func(*http.Request) bool`) is not one.
+  private def handler_shape?(params : String, result : String?) : Bool
+    return false unless result.nil? || result == "error"
+    params.matches?(ROUTER_CONTEXT) || (params.includes?("ResponseWriter") && params.includes?("Request"))
+  end
 
   # The parameters of `body` that are handlers: typed as one (`next
   # http.Handler`, `h echo.HandlerFunc`) or as a function of the handler's
@@ -1955,7 +1999,7 @@ class GoAuthTagger < FrameworkTagger
     @handler_params.put_if_absent({body.file_path, body.start_row}) do
       source = Noir::CComments.strip(body.source, quotes: %("'`))
       names = source.scan(HANDLER_PARAM).map(&.[1]).to_set
-      source.scan(FUNC_PARAM) { |m| names << m[1] if m[2].matches?(HANDLER_SIGNATURE) }
+      source.scan(FUNC_PARAM) { |m| names << m[1] if handler_shape?(m[2], m[3]?) }
       # `return http.HandlerFunc(...)` is a conversion, not a parameter.
       names.delete("return")
       names
