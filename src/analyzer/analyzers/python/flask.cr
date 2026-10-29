@@ -2109,7 +2109,7 @@ module Analyzer::Python
     private def extract_request_params(codeblock_lines : Array(::String)) : Array(Param)
       codeblock_lines = fold_python_continuations(codeblock_lines)
       params = [] of Param
-      json_variable_names = json_variable_names(codeblock_lines)
+      aliases = json_variable_names(codeblock_lines).map { |name| {name, "json"} } + request_field_aliases(codeblock_lines)
 
       codeblock_lines.each do |codeblock_line|
         next unless codeblock_line.includes?(" in request.")
@@ -2124,43 +2124,7 @@ module Analyzer::Python
       # Parse declared parameters from request field access patterns.
       # Patterns are precompiled in REQUEST_PARAM_FIELD_PATTERNS so this
       # per-route loop never recompiles a PCRE2 regex.
-      codeblock_lines.each do |codeblock_line|
-        REQUEST_PARAM_FIELD_PATTERNS.each do |field_pattern|
-          noir_param_type, bracket_re, get_re = field_pattern
-          matches = codeblock_line.scan(bracket_re)
-          if matches.empty?
-            matches = codeblock_line.scan(get_re)
-          end
-
-          matches.each do |parameter_match|
-            next if parameter_match.size != 2
-            param_name = parameter_match[1]
-            params << Param.new(param_name, "", noir_param_type)
-          end
-        end
-
-        # JSON dict access on the variables found above. This used to run
-        # inside the field-pattern loop (once per missed field — i.e.
-        # effectively per field per line), recompiling two interpolated
-        # regexes each time and appending the same matches repeatedly;
-        # `get_filtered_params` deduplicates by (name, param_type), so
-        # scanning once per line is output-identical.
-        json_variable_names.each do |json_variable_name|
-          bracket_json_re, get_json_re = json_param_regexes(json_variable_name)
-          matches = codeblock_line.scan(bracket_json_re)
-          if matches.empty?
-            matches = codeblock_line.scan(get_json_re)
-          end
-          next if matches.empty?
-
-          matches.each do |parameter_match|
-            next if parameter_match.size != 2
-            params << Param.new(parameter_match[1], "", "json")
-          end
-          break
-        end
-      end
-
+      codeblock_lines.each { |line| scan_request_reads(line, aliases, params) }
       params
     end
 

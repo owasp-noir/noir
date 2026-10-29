@@ -1,0 +1,8 @@
+{
+  "name": "koa-multer",
+  "dependencies": {
+    "koa": "^2.14.0",
+    "@koa/router": "^12.0.0",
+    "@koa/multer": "^3.0.2"
+  }
+}

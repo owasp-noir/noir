@@ -49,9 +49,46 @@ module Analyzer::Python
 
     private def json_param_regexes(json_variable_name : ::String) : Tuple(Regex, Regex)
       @json_param_regex_cache[json_variable_name] ||= {
-        /[^a-zA-Z_]#{Regex.escape(json_variable_name)}\[[rf]?['"]([^'"]*)['"]\]/,
-        /[^a-zA-Z_]#{Regex.escape(json_variable_name)}\.get\([rf]?['"]([^'"]*)['"]/,
+        # Not `request.args[...]` for a variable named `args`.
+        /(?<![\w.])#{Regex.escape(json_variable_name)}\[[rf]?['"]([^'"]*)['"]\]/,
+        /(?<![\w.])#{Regex.escape(json_variable_name)}\.get(?:list)?\([rf]?['"]([^'"]*)['"]/,
       }
+    end
+
+    # `data = request.form` (or `await request.form`, `.to_dict()`,
+    # `request.form or {}`): reads through `data[...]` / `data.get(...)` are
+    # that field's params. Not `name = request.form.get("name")`, which binds
+    # one value, nor a `form=request.form` keyword argument.
+    REQUEST_FIELD_ALIAS_RE = /\A\s*([a-zA-Z_]\w*)\s*(?::[^=]+)?=\s*(?:await\s+)?request\.(form|args|values|files|headers|cookies)(?:\.to_dict\([^)]*\))?(?![\w.\[(]|\s+[.\[(])/
+
+    # `request.form["a"]` / `request.form.get("b")` reads on `line`, and the
+    # same reads through each `{variable, param_type}` alias (a JSON body
+    # variable, `data = request.form`). Bracket and `.get` reads both count:
+    # `"{} {}".format(data["a"], data.get("b"))` reads two fields.
+    # (Alias regexes are memoized in @json_param_regex_cache: they
+    # interpolate a discovered identifier so they can't be consts.)
+    private def scan_request_reads(line : ::String, aliases : Array(Tuple(::String, ::String)), params : Array(Param))
+      REQUEST_PARAM_FIELD_PATTERNS.each do |param_type, bracket_re, get_re|
+        line.scan(bracket_re) { |m| params << Param.new(m[1], "", param_type) }
+        line.scan(get_re) { |m| params << Param.new(m[1], "", param_type) }
+      end
+      aliases.each do |name, param_type|
+        bracket_re, get_re = json_param_regexes(name)
+        line.scan(bracket_re) { |m| params << Param.new(m[1], "", param_type) }
+        line.scan(get_re) { |m| params << Param.new(m[1], "", param_type) }
+      end
+    end
+
+    # `{variable, param_type}` for each such alias in `codeblock_lines`.
+    private def request_field_aliases(codeblock_lines : Array(::String)) : Array(Tuple(::String, ::String))
+      aliases = [] of Tuple(::String, ::String)
+      codeblock_lines.each do |line|
+        next unless line.includes?("request.")
+        if m = line.match(REQUEST_FIELD_ALIAS_RE)
+          aliases << {m[1], REQUEST_PARAM_FIELDS[m[2]][1]}
+        end
+      end
+      aliases.uniq
     end
 
     # Fetch file content, preferring the detector-populated global
