@@ -26,7 +26,7 @@ Noir는 오픈 소스 SAST 도구입니다. 소스 코드를 읽어 애플리케
 
 **엔드포인트 추출.** 정적 분석으로 소스에서 엔드포인트, 파라미터, 헤더, 쿠키를 뽑아냅니다. 아무도 문서화하지 않은 것까지 포함합니다.
 
-**스택 전반.** 단일 바이너리로 Crystal, Go, Java, JavaScript, Kotlin, PHP, Python, Ruby, Rust, Swift 등 32개 언어, 261개 프레임워크를 지원합니다. 플러그인이나 언어별 설정은 필요 없습니다.
+**스택 전반.** 단일 바이너리로 Crystal, Go, Java, JavaScript, Kotlin, PHP, Python, Ruby, Rust, Swift 등 32개 언어, 262개 프레임워크를 지원합니다. 플러그인이나 언어별 설정은 필요 없습니다.
 
 **LLM 폴백.** 기본 지원하지 않는 프레임워크이거나 정적 규칙이 통하지 않는 커스텀 라우팅이라면, LLM(OpenAI, Ollama 등)을 연결해 빈자리를 채우세요.
 

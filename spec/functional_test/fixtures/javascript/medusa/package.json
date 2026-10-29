@@ -1,0 +1,7 @@
+{
+  "name": "medusa-file-routes",
+  "dependencies": {
+    "@medusajs/medusa": "2.8.0",
+    "@medusajs/framework": "2.8.0"
+  }
+}
