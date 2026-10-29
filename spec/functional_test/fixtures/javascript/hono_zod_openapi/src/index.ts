@@ -15,4 +15,7 @@ app.openapi(
 );
 app.doc("/doc", { openapi: "3.0.0", info: { title: "x", version: "1" } });
 app.get("/health", (c) => c.text("ok"));
+// Firestore-shaped. Not an OpenAPIHono receiver, so not a route.
+const db = { doc(id: string) { return id } };
+db.doc("users/1");
 export default app;

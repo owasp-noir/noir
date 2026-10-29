@@ -10,3 +10,4 @@ router
   .prefix('/api')
   .use(middleware.auth())
 router.delete('/notes/:id', [NotesController, 'destroy'])
+router.put('/notes/inline', [() => import('#controllers/notes_controller'), 'store'])

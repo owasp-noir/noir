@@ -1,4 +1,5 @@
 require "../utils/url_path"
+require "../utils/js_literal_scanner"
 require "../ext/tree_sitter/tree_sitter"
 require "../models/endpoint"
 require "./js_callee_extractor"
@@ -128,6 +129,32 @@ module Noir
       routes
     end
 
+    # Statements that share a method's `name(` shape. A call to one of
+    # these is not a controller action.
+    METHOD_KEYWORDS = Set{
+      "if", "for", "while", "switch", "catch", "function", "return",
+      "with", "do", "else", "try", "new", "await", "import", "class",
+    }
+    # `async store({ request }: HttpContext): Promise<{ id: number }> {`.
+    # The `{` of `Promise<{...}>` is not the body. A bare `store(data)`
+    # call is not a method either: it has no body brace after the params.
+    METHOD_DECL_RE = /^[ \t]*(?:(?:public|private|protected|static|async|override|readonly|abstract|declare)\s+)*([A-Za-z_$][\w$]*)\s*(?:<[^\n{}]*>\s*)?\(/m
+
+    # The `{...}` body of `action` in a controller module, or nil when
+    # the name is only a call. `source` is comment-stripped.
+    def method_body(source : String, action : String) : String?
+      source.scan(METHOD_DECL_RE) do |m|
+        next unless m[1] == action
+        next if METHOD_KEYWORDS.includes?(m[1])
+        open = source.index('(', m.end(0) - 1) || next
+        close = JSLiteralScanner.find_matching_paren(source, open) || next
+        brace = method_body_brace(source, close) || next
+        stop = JSLiteralScanner.find_matching_brace(source, brace) || next
+        return source[brace..stop]
+      end
+      nil
+    end
+
     # ---- traversal --------------------------------------------------
 
     private def walk(node : LibTreeSitter::TSNode, source : String, prefix : String, routes : Array(Route), depth : Int32, include_callees : Bool)
@@ -239,29 +266,35 @@ module Noir
       routes << route
     end
 
-    # `[NotesController, 'store']` (v6) or `'NotesController.store'` (v5).
+    # `[NotesController, 'store']` (v6), `'NotesController.store'` (v5),
+    # or `[() => import('#controllers/notes_controller'), 'store']`.
     private def controller_reference(call : LibTreeSitter::TSNode, source : String) : Tuple(String, String)?
       if text = string_argument_at(call, source, 1)
         dot = text.rindex('.') || return
         return {text[0, dot], text[(dot + 1)..]}
       end
-      args = arguments_node(call) || return
-      index = 0
-      Noir::TreeSitter.each_named_child(args) do |arg|
-        next if Noir::TreeSitter.node_type(arg) == "comment"
-        if index == 1
-          return unless Noir::TreeSitter.node_type(arg) == "array"
-          parts = [] of String
-          Noir::TreeSitter.each_named_child(arg) do |elem|
-            type = Noir::TreeSitter.node_type(elem)
-            parts << (STRING_LITERAL_TYPES.includes?(type) ? decode_string(elem, source) : Noir::TreeSitter.node_text(elem, source))
-          end
-          # `[NotesController]` alone calls `handle`.
-          return parts.size >= 1 ? {parts[0], parts[1]? || "handle"} : nil
-        end
-        index += 1
+      arg = argument_at(call, 1) || return
+      return unless Noir::TreeSitter.node_type(arg) == "array"
+      parts = [] of String
+      Noir::TreeSitter.each_named_child(arg) do |elem|
+        parts << array_element_text(elem, source)
       end
-      nil
+      # `[NotesController]` alone calls `handle`.
+      parts.size >= 1 ? {parts[0], parts[1]? || "handle"} : nil
+    end
+
+    private def array_element_text(elem : LibTreeSitter::TSNode, source : String) : String
+      type = Noir::TreeSitter.node_type(elem)
+      return decode_string(elem, source) if STRING_LITERAL_TYPES.includes?(type)
+      lazy_import_specifier(elem, source) || Noir::TreeSitter.node_text(elem, source)
+    end
+
+    # `() => import('#controllers/notes_controller')` — the specifier,
+    # not the arrow's source text.
+    private def lazy_import_specifier(node : LibTreeSitter::TSNode, source : String) : String?
+      type = Noir::TreeSitter.node_type(node)
+      return unless type == "arrow_function" || type == "function_expression" || type == "function" || type == "call_expression"
+      Noir::TreeSitter.node_text(node, source).match(/\bimport\s*\(\s*['"]([^'"]+)['"]\s*\)/).try(&.[1])
     end
 
     private def emit_resource(call : LibTreeSitter::TSNode, source : String, prefix : String, actions : Array(String), routes : Array(Route), include_callees : Bool)
@@ -307,15 +340,13 @@ module Noir
 
     # `resource('notes', NotesController)` / `'NotesController'`.
     private def resource_controller(call : LibTreeSitter::TSNode, source : String) : String?
-      return string_argument_at(call, source, 1) if string_argument_at(call, source, 1)
-      args = arguments_node(call) || return
-      index = 0
-      Noir::TreeSitter.each_named_child(args) do |arg|
-        next if Noir::TreeSitter.node_type(arg) == "comment"
-        return (Noir::TreeSitter.node_type(arg) == "identifier" ? Noir::TreeSitter.node_text(arg, source) : nil) if index == 1
-        index += 1
+      if text = string_argument_at(call, source, 1)
+        return text
       end
-      nil
+      arg = argument_at(call, 1) || return
+      type = Noir::TreeSitter.node_type(arg)
+      return Noir::TreeSitter.node_text(arg, source) if type == "identifier"
+      lazy_import_specifier(arg, source)
     end
 
     private def controller_action(call : LibTreeSitter::TSNode, source : String, action : String) : String
@@ -413,6 +444,20 @@ module Noir
       string_argument_at(call, source, 0)
     end
 
+    # The nth argument (comments skipped). `string_argument_at`,
+    # `controller_reference` and `resource_controller` all used to walk
+    # this themselves.
+    private def argument_at(call : LibTreeSitter::TSNode, target_index : Int32) : LibTreeSitter::TSNode?
+      args = arguments_node(call) || return
+      index = 0
+      Noir::TreeSitter.each_named_child(args) do |arg|
+        next if Noir::TreeSitter.node_type(arg) == "comment"
+        return arg if index == target_index
+        index += 1
+      end
+      nil
+    end
+
     # Index over EVERY argument, not only the string-shaped ones.
     # Counting string nodes alone made the positions depend on which
     # arguments happened to be strings, so a non-string first argument
@@ -422,16 +467,90 @@ module Noir
     # because the template literal was invisible to this counter and the
     # controller string landed on index 0.
     private def string_argument_at(call : LibTreeSitter::TSNode, source : String, target_index : Int32) : String?
-      args = arguments_node(call)
-      return unless args
-      index = 0
-      Noir::TreeSitter.each_named_child(args) do |arg|
-        type = Noir::TreeSitter.node_type(arg)
-        next if type == "comment"
-        if index == target_index
-          return STRING_LITERAL_TYPES.includes?(type) ? decode_string(arg, source) : nil
+      arg = argument_at(call, target_index) || return
+      type = Noir::TreeSitter.node_type(arg)
+      STRING_LITERAL_TYPES.includes?(type) ? decode_string(arg, source) : nil
+    end
+
+    # `{` that opens `action`'s body, past a return type. Nil for a call
+    # (`store(data);`) that never opens a body.
+    private def method_body_brace(source : String, close_paren : Int32) : Int32?
+      i = skip_ws(source, close_paren + 1) || return
+      char = source[i]
+      return if char == ';' || char == ',' || char == '.'
+      return i if char == '{'
+      return unless char == ':'
+      i = skip_ws(source, i + 1) || return
+      skip_return_type_to_body(source, i)
+    end
+
+    # `Promise<{ id: number }>` keeps its `{` inside the angle brackets.
+    # An object return type (`: { id: number } {`) is the brace whose
+    # match is followed by the real body.
+    private def skip_return_type_to_body(source : String, i : Int32) : Int32?
+      angle = 0
+      paren = 0
+      bracket = 0
+      brace = 0
+      while i < source.size
+        char = source[i]
+        if char == '"' || char == '\'' || char == '`'
+          i = skip_js_string(source, i) || return
+          next
         end
-        index += 1
+        case char
+        when '<'
+          angle += 1
+        when '>'
+          angle -= 1 if angle > 0
+        when '('
+          paren += 1
+        when ')'
+          return if paren == 0 && angle == 0 && bracket == 0 && brace == 0
+          paren -= 1 if paren > 0
+        when '['
+          bracket += 1
+        when ']'
+          bracket -= 1 if bracket > 0
+        when '{'
+          if angle == 0 && paren == 0 && bracket == 0 && brace == 0
+            stop = JSLiteralScanner.find_matching_brace(source, i) || return
+            nxt = skip_ws(source, stop + 1)
+            return nxt if nxt && source[nxt] == '{'
+            return i
+          end
+          brace += 1
+        when '}'
+          brace -= 1 if brace > 0
+        when ';'
+          return if angle == 0 && paren == 0 && bracket == 0 && brace == 0
+        end
+        i += 1
+      end
+      nil
+    end
+
+    private def skip_ws(source : String, i : Int32) : Int32?
+      while i < source.size
+        char = source[i]
+        break unless char == ' ' || char == '\t' || char == '\n' || char == '\r'
+        i += 1
+      end
+      i < source.size ? i : nil
+    end
+
+    private def skip_js_string(source : String, i : Int32) : Int32?
+      quote = source[i]
+      i += 1
+      while i < source.size
+        char = source[i]
+        if char == '\\'
+          i += 2
+          next
+        end
+        return i + 1 if char == quote
+        return if quote != '`' && char == '\n'
+        i += 1
       end
       nil
     end
