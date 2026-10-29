@@ -522,8 +522,26 @@ module Noir::CLI::Inspect
     declared == wanted || ::synthetic_any_method?(declared) || (wanted == "HEAD" && declared == "GET")
   end
 
-  # Routes matching a concrete request, exact matches first.
+  # Routes matching a concrete request, exact matches first. A PHP front
+  # controller also answers its routes under another spelling: `/index.php/x`
+  # is `/x` (PATH_INFO routing, Nextcloud without pretty URLs), and Nextcloud
+  # serves `/ocs/v2.php/...` as `/ocs/v1.php/...` too. Those are tried
+  # against the PHP routes when the request itself matches nothing.
   def self.trace(endpoints : Array(Endpoint), method : String?, path : String) : Array(Match)
+    matches = trace_path(endpoints, method, path)
+    return matches unless matches.empty?
+    wanted = normalize(path)
+    alias_path = if wanted.starts_with?("/index.php/")
+                   wanted.lchop("/index.php")
+                 elsif wanted.starts_with?("/ocs/v1.php/")
+                   "/ocs/v2.php" + wanted.lchop("/ocs/v1.php")
+                 end
+    return matches unless alias_path
+    php = endpoints.select { |endpoint| endpoint.details.technology.try(&.starts_with?("php_")) }
+    trace_path(php, method, alias_path)
+  end
+
+  private def self.trace_path(endpoints : Array(Endpoint), method : String?, path : String) : Array(Match)
     wanted = normalize(path)
     exact = [] of Match
     pattern = [] of Match

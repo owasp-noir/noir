@@ -202,6 +202,7 @@ module Analyzer::Php
       attrs.each do |attr|
         next if route_applies_to_class?(content, attr.stop)
         next unless route_path = extract_symfony_route_path(attr.args)
+        next if docblock_orphaned?(content, attr)
 
         methods = extract_methods_from_symfony_context(attr.args)
         methods = ["GET"] if methods.empty?
@@ -560,6 +561,17 @@ module Analyzer::Php
         params << Param.new(m[1], "", args.matches?(/\bFileType::class/) ? "file" : location)
       end
       params
+    end
+
+    # A docblock `@Route` that documents nothing: what follows the docblock
+    # is not a declaration (its method was commented out, which
+    # `without_comments` blanked) — Symfony registers no route for it.
+    DOCBLOCK_FOLLOWER_RE = /\G\s*(?:#\[|(?:(?:public|protected|private|static|final|abstract|readonly)\s+)*(?:function|class)\b)/
+
+    private def docblock_orphaned?(content : String, attr : RouteAttr) : Bool
+      return false unless content[attr.start]? == '@'
+      close = content.index("*/", attr.stop) || return false
+      !content.match(DOCBLOCK_FOLLOWER_RE, close + 2)
     end
 
     private def analyze_yaml_routes(path : String) : Array(Endpoint)

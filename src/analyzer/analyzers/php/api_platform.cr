@@ -18,6 +18,8 @@ module Analyzer::Php
   class ApiPlatform < PhpEngine
     analyzer_for "php_api_platform"
 
+    TAGGER = "api_platform_analyzer"
+
     OPERATION_METHODS = {
       "Get"           => "GET",
       "GetCollection" => "GET",
@@ -51,7 +53,11 @@ module Analyzer::Php
     # that nor standalone operation attributes gets the defaults.
     private record Resource, short_name : String, uri_template : String?, route_prefix : String?,
       parameters : Array(Param), line : Int32, declared : Bool, operations : Array(Operation),
-      identifier : String
+      identifier : String, security : String? = nil, post_security : String? = nil, write_groups : Array(String) = [] of String,
+      props : ClassProps = ClassProps.new
+    # What the class's properties declare: `#[QueryParameter]` names (the
+    # collection's query string) and each property's serializer `#[Groups]`.
+    private record ClassProps, query : Array(String) = [] of String, groups : Hash(String, Array(String)) = {} of String => Array(String)
     # Laravel's `route_prefix` is only the default for `routePrefix`, which
     # replaces it; Symfony's route-import prefix sits in front of it.
     private record Prefix, path : String, replaceable : Bool
@@ -79,6 +85,7 @@ module Analyzer::Php
       class_pos = -1
       is_enum = false
       identifier = "id"
+      props = ClassProps.new
       flush = -> do
         resources.each { |resource| emit_resource(endpoints, path, prefix, resource, is_enum) }
         resources.clear
@@ -110,6 +117,7 @@ module Analyzer::Php
           class_pos = decl_pos
           is_enum = keyword == "enum"
           identifier = identifier_of(scan, lexer, decl_pos)
+          props = class_props(text, lexer, decl_pos)
         end
 
         line = line_number_for_index(scan, attr_start)
@@ -127,12 +135,13 @@ module Analyzer::Php
             literal(named["uriTemplate"]? || positional.first?),
             literal(named["routePrefix"]?),
             parameters(named["parameters"]?),
-            line, named.has_key?("operations"), operations, identifier)
+            line, named.has_key?("operations"), operations, identifier,
+            literal(named["security"]?), literal(named["securityPostDenormalize"]?), groups_of(named["denormalizationContext"]?), props)
         else
           # A standalone operation attribute joins the resource declared
           # above it, or forms a resource of its own.
           if resources.empty?
-            resources << Resource.new(class_name, nil, nil, [] of Param, line, false, [] of Operation, identifier)
+            resources << Resource.new(class_name, nil, nil, [] of Param, line, false, [] of Operation, identifier, props: props)
           end
           resources.last.operations << Operation.new(match[2], args, line)
         end
@@ -240,7 +249,67 @@ module Analyzer::Php
           build_full_path(build_full_path(prefix.path, route_prefix || ""), uri)
         end
       params = extract_brace_path_params(url) + resource.parameters + parameters(named["parameters"]?)
-      endpoints << Endpoint.new(url, method, dedup_params(params), Details.new(PathInfo.new(path, line)))
+      params.concat(resource.props.query.map { |name| Param.new(name, "", "query") }) if kind == "GetCollection"
+      write = {"POST", "PUT", "PATCH"}.includes?(method)
+      if write
+        groups = named.has_key?("denormalizationContext") ? groups_of(named["denormalizationContext"]?) : resource.write_groups
+        resource.props.groups.each do |name, prop_groups|
+          params << Param.new(name, "", "json") if prop_groups.any? { |group| groups.includes?(group) }
+        end
+      end
+      endpoint = Endpoint.new(url, method, dedup_params(params), Details.new(PathInfo.new(path, line)))
+      security = literal(named["security"]?) || (write ? literal(named["securityPostDenormalize"]?) : nil) ||
+                 resource.security || (write ? resource.post_security : nil)
+      if security && (guard = security_guard(security))
+        endpoint.add_tag(Tag.new(guard, "Protected by API Platform security (#{security})", TAGGER))
+      end
+      endpoints << endpoint
+    end
+
+    # The guard kind an expression imposes, nil when it lets anyone in.
+    # Only a login check is authentication; roles, voters and ownership
+    # (`object.owner == user`) are authorization.
+    private def security_guard(expression : String) : String?
+      return if expression.strip == "true" || expression.matches?(/PUBLIC_ACCESS|IS_AUTHENTICATED_ANONYMOUSLY/)
+      login = /\A\s*is_granted\(\s*['"](?:IS_AUTHENTICATED_(?:FULLY|REMEMBERED)|ROLE_USER)['"]\s*\)\s*\z/
+      expression.matches?(login) ? "auth" : "authz"
+    end
+
+    # `['groups' => ['Book:write']]`'s group names.
+    private def groups_of(context : String?) : Array(String)
+      list = context.try(&.match(/['"]groups['"]\s*=>\s*(\[[^\]]*\]|['"][^'"]*['"])/)).try(&.[1]) || return [] of String
+      list.scan(/['"]([^'"]+)['"]/).map(&.[1])
+    end
+
+    PROPERTY_RE    = /(?:public|protected|private)\s+(?:readonly\s+)?(?:\??[\w\\|]+\s+)?\$(\w+)\s*[;=,)]/
+    QUERY_PARAM_RE = /#\[\s*(?:[\w\\]*\\)?QueryParameter\b\s*(?:\(([^\]]*)\))?/
+    GROUPS_ATTR_RE = /#\[\s*(?:[\w\\]*\\)?Groups\s*\(\s*(?:groups\s*:\s*)?(\[[^\]]*\]|['"][^'"]*['"])/
+
+    # `#[QueryParameter]` and `#[Groups([...])]` on the properties of the
+    # class declared at `decl_pos`: the attributes between a property and
+    # the statement before it.
+    private def class_props(text : String, lexer : Noir::PhpLexer, decl_pos : Int32) : ClassProps
+      props = ClassProps.new
+      open = text.index('{', decl_pos)
+      close = open && lexer.matching_delimiter(open)
+      return props unless open && close
+
+      body = text[(open + 1)...close]
+      return props unless body.includes?("QueryParameter") || body.includes?("Groups")
+      last = 0
+      body.scan(PROPERTY_RE) do |m|
+        prelude = body[last...m.begin(0)]
+        prelude = prelude[(prelude.rindex(/[;{}]/) || -1) + 1..]
+        last = m.end(0)
+        name = m[1]
+        if q = prelude.match(QUERY_PARAM_RE)
+          props.query << (q[1]?.try { |args| literal(split_args(args)[0]["key"]?) } || name)
+        end
+        if g = prelude.match(GROUPS_ATTR_RE)
+          props.groups[name] = g[1].scan(/['"]([^'"]+)['"]/).map(&.[1])
+        end
+      end
+      props
     end
 
     # Named (`key: value`) and positional arguments of an attribute or `new`

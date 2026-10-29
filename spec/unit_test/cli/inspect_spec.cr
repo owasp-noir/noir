@@ -5,9 +5,9 @@ require "../../../src/cli/commands/trace"
 require "../../../src/cli/commands/reach"
 require "../../../src/cli/commands/query"
 
-private def endpoint(method : String, url : String, path : String? = nil, line : Int32? = nil, kind : String = "")
+private def endpoint(method : String, url : String, path : String? = nil, line : Int32? = nil, kind : String = "", tech : String = "go_gin")
   details = path ? Details.new(PathInfo.new(path, line)) : Details.new
-  details.technology = "go_gin"
+  details.technology = tech
   ep = Endpoint.new(url, method, details)
   ep.kind = kind
   ep
@@ -105,6 +105,14 @@ describe Noir::CLI::Inspect do
       Noir::CLI::Inspect.trace(endpoints, "DELETE", "/users/42").map(&.endpoint.url).should eq(["/users/:id"])
       Noir::CLI::Inspect.trace(endpoints, "POST", "/any").size.should eq(1)
       Noir::CLI::Inspect.trace(endpoints, nil, "/users/42").map(&.endpoint.url).should eq(["/users/{id}", "/users/:id", "/*"])
+    end
+
+    it "traces PHP front-controller spellings (/index.php/..., /ocs/v1.php/...) to PHP routes" do
+      php = [endpoint("GET", "/apps/deck/api/v1.0/attachments/{id}", tech: "php_nextcloud"), endpoint("GET", "/ocs/v2.php/apps/deck/files/{id}", tech: "php_nextcloud")]
+      Noir::CLI::Inspect.trace(php, "GET", "/index.php/apps/deck/api/v1.0/attachments/1").size.should eq(1)
+      Noir::CLI::Inspect.trace(php, "GET", "/ocs/v1.php/apps/deck/files/1").size.should eq(1)
+      go = [endpoint("GET", "/apps/x")]
+      Noir::CLI::Inspect.trace(go, "GET", "/index.php/apps/x").should be_empty
     end
 
     it "puts a route declared for the method before an ANY one at the same path" do
