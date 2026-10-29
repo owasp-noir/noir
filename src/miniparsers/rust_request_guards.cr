@@ -10,7 +10,10 @@ require "../ext/tree_sitter/tree_sitter"
 # whose body does, or returns as its error a variant that
 # `fn status_code` maps to 401/403: `Err(MyError::IncorrectLogin)`
 # / `.ok_or(MyError::IncorrectLogin)` after
-# `MyError::IncorrectLogin => StatusCode::UNAUTHORIZED`), or forwards the
+# `MyError::IncorrectLogin => StatusCode::UNAUTHORIZED`; `into_response`
+# and any `&self` method returning a `StatusCode`, such as
+# `fn client_status_and_error(&self) -> (StatusCode, ClientError)`, map
+# variants the same way), or forwards the
 # failure of a type that refuses
 # (`try_outcome!(Headers::from_request(req).await)`, `X::from_request_parts(..).await?`).
 # A refusal that only fires when another in-crate guard fails
@@ -25,8 +28,11 @@ module Noir::RustRequestGuards
   TRAIT_RE       = /\A(?:\w+::)*FromRequest(?:Parts)?\b/
   SUCCESS_ARM_RE = /\A(?:(?:\w+::)*Outcome::)?(?:Success|Ok)\s*\(/
   EVIDENCE_RE    = /\bFromRequest|macro_rules!/
-  STATUS_FN_RE   = /\bfn\s+status_code\b/
+  # ponytail: a status mapping is read off its signature, not its callers;
+  # a `&self -> StatusCode` helper nothing calls still maps its variants.
+  STATUS_FN_RE   = /\bfn\s+(?:status_code|into_response)\b|\bfn\s+\w+\s*\(\s*&?\s*(?:mut\s+)?self\b[^)]*\)\s*->\s*[^{;]*\bStatusCode\b/
   AUTH_STATUS_RE = /\bStatusCode::(?:UNAUTHORIZED|FORBIDDEN)\b/
+  ANY_STATUS_RE  = /\bStatusCode::[A-Z]\w*/
   # An enum path in a match pattern: `AppError::NotLoggedIn`, `NotLoggedIn`.
   PATTERN_PATH_RE = /(?<![\w:])((?:[A-Za-z_]\w*::)*[A-Z]\w*)(?![\w:])/
   VARIANT_PATH_RE = /\A(?:\w+::)*[A-Z]\w*\z/
@@ -139,9 +145,10 @@ module Noir::RustRequestGuards
     cond.nil? || guards.includes?(cond) || !known.includes?(cond)
   end
 
-  # The match arms of every `fn status_code` body. The body is cut out by
-  # its braces and parsed on its own, so a `ResponseError` impl inside a
-  # `macro_rules!` / `cfg_select!` token tree is read as well.
+  # The match arms of every status-mapping fn body (`STATUS_FN_RE`). The
+  # body is cut out by its braces and parsed on its own, so a
+  # `ResponseError` impl inside a `macro_rules!` / `cfg_select!` token tree
+  # is read as well.
   private def self.collect_status_arms(source : String, globs : Array(String), facts : Facts)
     offset = 0
     while m = source.match(STATUS_FN_RE, offset)
@@ -155,7 +162,11 @@ module Noir::RustRequestGuards
           next unless Noir::TreeSitter.node_type(arm) == "match_arm"
           pattern = Noir::TreeSitter.field(arm, "pattern") || next
           value = Noir::TreeSitter.field(arm, "value") || next
-          target = Noir::TreeSitter.node_text(value, body).matches?(AUTH_STATUS_RE) ? facts.refusing_variants : facts.other_variants
+          text = Noir::TreeSitter.node_text(value, body)
+          # An arm naming no status (`=> return (self.status_code(), ..)`,
+          # `=> log::error!(..)`) leaves the variant to another arm.
+          next unless text.matches?(ANY_STATUS_RE)
+          target = text.matches?(AUTH_STATUS_RE) ? facts.refusing_variants : facts.other_variants
           Noir::TreeSitter.node_text(pattern, body).scan(PATTERN_PATH_RE) do |path|
             variant_keys(path[1], impl_type, globs).each { |key| target << key }
           end

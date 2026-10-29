@@ -248,6 +248,13 @@ class RustAuthTagger < FrameworkTagger
 
     (@fn_index[entry.name] ||= [] of RustFnEntry) << entry
 
+    # A workspace crate's fn under its crate name, as another crate `use`s it:
+    # `crates/libs/lib-web/src/a/b.rs` -> `lib_web::a::b::f`.
+    if (src = parts.rindex("src")) && src > 0
+      crate_key = ([parts[src - 1].tr("-", "_")] + parts[(src + 1)..]).join("::")
+      (@fn_index[crate_key] ||= [] of RustFnEntry) << entry
+    end
+
     file_map = (@file_fn_index[entry.file_path] ||= Hash(String, RustFnEntry).new)
     file_map[entry.name] ||= entry
     file_map[full] ||= entry

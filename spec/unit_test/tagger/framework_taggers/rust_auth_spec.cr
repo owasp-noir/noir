@@ -565,6 +565,74 @@ describe "RustAuthTagger" do
       RUST
     axum_guarded_urls({"src/main.rs" => src}, ["/a"]).should be_empty
   end
+
+  # rust10x/rust-web-app (Issue #3265): the middleware lives in another
+  # workspace crate and refuses only through `ctx?`, whose error maps to 403
+  # in a `&self` helper of that crate's `Error`.
+  it "guards a route_layer middleware imported from another workspace crate" do
+    main = <<-RUST
+      use lib_web::middleware::mw_auth::{mw_ctx_require, mw_ctx_peek};
+      use axum::{middleware, Router};
+      fn app() -> Router {
+          let routes_rpc = web::routes_rpc::routes(mm.clone())
+              .route_layer(middleware::from_fn(mw_ctx_require));
+          let routes_peek = web::routes_peek::routes()
+              .route_layer(middleware::from_fn(mw_ctx_peek));
+          Router::new()
+              .merge(routes_login::routes(mm.clone()))
+              .nest("/api", routes_rpc)
+              .nest("/api", routes_peek)
+      }
+      RUST
+    mw = <<-RUST
+      pub async fn mw_ctx_require(ctx: Result<CtxW>, req: Request<Body>, next: Next) -> Result<Response> {
+          debug!("{:<12} - mw_ctx_require - {ctx:?}", "MIDDLEWARE");
+          ctx?;
+          Ok(next.run(req).await)
+      }
+      pub async fn mw_ctx_peek(ctx: Result<CtxW>, req: Request<Body>, next: Next) -> Response {
+          let _ctx = ctx.ok();
+          next.run(req).await
+      }
+      impl<S: Send + Sync> FromRequestParts<S> for CtxW {
+          type Rejection = Error;
+          async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self> {
+              parts.extensions.get::<CtxExtResult>().ok_or(Error::CtxExt(CtxExtError::CtxNotInRequestExt))?.clone().map_err(Error::CtxExt)
+          }
+      }
+      RUST
+    error = <<-RUST
+      impl Error {
+          pub fn client_status_and_error(&self) -> (StatusCode, ClientError) {
+              use Error::*;
+              match self {
+                  CtxExt(_) => (StatusCode::FORBIDDEN, ClientError::NO_AUTH),
+                  _ => (StatusCode::INTERNAL_SERVER_ERROR, ClientError::SERVICE_ERROR),
+              }
+          }
+      }
+      RUST
+    # A same-named fn in another crate that does not refuse: only the
+    # imported crate's definition counts.
+    decoy = <<-RUST
+      pub async fn mw_ctx_require(req: Request<Body>, next: Next) -> Response {
+          next.run(req).await
+      }
+      RUST
+    files = {
+      "crates/services/web-server/src/main.rs"             => main,
+      "crates/services/web-server/src/web/routes_rpc.rs"   => %(pub fn routes(mm: ModelManager) -> Router { Router::new().route("/rpc", post(rpc)) }),
+      "crates/services/web-server/src/web/routes_peek.rs"  => %(pub fn routes() -> Router { Router::new().route("/peek", post(peek)) }),
+      "crates/services/web-server/src/web/routes_login.rs" => %(pub fn routes(mm: ModelManager) -> Router { Router::new().route("/api/login", post(login)) }),
+      "crates/libs/lib-web/src/middleware/mw_auth.rs"      => mw,
+      "crates/libs/lib-web/src/error.rs"                   => error,
+      "crates/libs/lib-decoy/src/middleware/mw_auth.rs"    => decoy,
+    }
+    axum_guarded_urls(files, ["/api/rpc", "/api/peek", "/api/login"]).should eq(["/api/rpc"])
+
+    files["crates/services/web-server/src/main.rs"] = main.sub("lib_web::", "lib_decoy::")
+    axum_guarded_urls(files, ["/api/rpc", "/api/peek", "/api/login"]).should be_empty
+  end
 end
 
 describe "RustAuthTagger request guards read from their FromRequest impls" do
