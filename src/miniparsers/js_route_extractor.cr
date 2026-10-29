@@ -222,7 +222,7 @@ module Noir
         # the prefix directly to routes whose start position falls inside.
         anonymous_register_ranges = [] of Tuple(Int32, Int32, String)
         anonymous_register_patterns = [
-          /\b\w+\.register\s*\(\s*(?:async\s+)?function\s*\([^)]*\)\s*\{/,
+          /\b\w+\.register\s*\(\s*(?:async\s+)?function\s*[\w$]*\s*\([^)]*\)\s*\{/,
           /\b\w+\.register\s*\(\s*(?:async\s+)?\([^)]*\)\s*=>\s*\{/,
           /\b\w+\.register\s*\(\s*(?:async\s+)?\w+\s*=>\s*\{/,
         ]

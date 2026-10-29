@@ -1,6 +1,7 @@
 require "../../engines/javascript_engine"
 require "../../../miniparsers/js_callee_extractor"
 require "../../../miniparsers/js_route_extractor"
+require "../../../miniparsers/wasp_extractor"
 require "../../../utils/url_path"
 require "./express/router_mount_scanner"
 
@@ -45,6 +46,7 @@ module Analyzer::Javascript
         # de-duplication (a Set: scanning the whole result per route was
         # quadratic).
         recorded = Set(String).new
+        schema_by_line = parser_endpoints.empty? ? nil : schema_params_by_line(content)
         parser_endpoints.each do |endpoint|
           # The shared JS parser emits `.query(` shorthand for any receiver
           # and without the addHttpMethod('QUERY') gate or plugin prefixes.
@@ -71,6 +73,10 @@ module Analyzer::Javascript
                 endpoint.push_param(param)
               end
             end
+          end
+
+          endpoint.details.code_paths.first?.try(&.line).try { |line| schema_by_line.try(&.[line]?) }.try &.each do |param|
+            endpoint.push_param(param)
           end
 
           result << endpoint
@@ -238,7 +244,7 @@ module Analyzer::Javascript
       # 1. Anonymous plugin functions:
       #    fastify.register(function (instance) { ... }, { prefix: '/x' })
       #    fastify.register((instance) => { ... }, { prefix: '/x' })
-      content.scan(/\b\w+\.register\s*\(\s*(?:async\s+)?(?:function\s*\([^)]*\)|\([^)]*\)\s*=>|\w+\s*=>)\s*\{/) do |m|
+      content.scan(/\b\w+\.register\s*\(\s*(?:async\s+)?(?:function\s*[\w$]*\s*\([^)]*\)|\([^)]*\)\s*=>|\w+\s*=>)\s*\{/) do |m|
         open_brace = content.byte_index('{', m.byte_begin(0))
         next unless open_brace
         close_brace = Noir::JSLiteralScanner.find_matching_brace_at_byte(content, open_brace)
@@ -406,6 +412,7 @@ module Analyzer::Javascript
       # would clip multi-line objects.
       ranges = nil
       offsets = nil
+      decls = nil
       content.scan(ROUTE_CONFIG_CALL_RE) do |m|
         # Byte offsets throughout: a char offset costs O(offset) per call.
         call_start = m.byte_begin(0)
@@ -468,6 +475,8 @@ module Analyzer::Javascript
           p = line_to_param(handler_line)
           body_params << p if !p.name.empty? && !body_params.any? { |bp| bp.name == p.name && bp.param_type == p.param_type }
         end
+        decls ||= schema_decls(content)
+        body_params.concat(schema_params(config, decls))
         route_callees = include_callee ? route_config_callees(config, path, line_no) : [] of Noir::JSCalleeExtractor::Entry
 
         methods.each do |http_method|
@@ -592,6 +601,74 @@ module Analyzer::Javascript
       end
 
       i
+    end
+
+    # A route's `schema` is its declared input, validated by Fastify itself.
+    SCHEMA_PARAM_TYPES   = {"querystring" => "query", "query" => "query", "body" => "json", "headers" => "header"}
+    SCHEMA_ROUTE_CALL_RE = /\b[A-Za-z_$][\w$]*\.(get|post|put|delete|patch|head|options|all|route)\s*\(/
+    # TypeBox `Type.Object({...})`: its first argument lists the properties.
+    TYPEBOX_OBJECT_RE = /\A(?:[\w$]+\.)?Object\s*\(/
+
+    # `const X = {...}` / `const X = Type.Object({...})`: a schema named by
+    # a route instead of written inline.
+    SCHEMA_DECL_RE = /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*(?::[^=\n]+)?=\s*(?=\{|(?:[\w$]+\.)?Object\s*\()/
+    IDENTIFIER_RE  = /\A[A-Za-z_$][\w$]*\z/
+
+    # Route-call line => params its `schema` declares, for the shorthand
+    # (`app.get(url, { schema }, h)`, or `{ schema, handler }` alone) and
+    # the `app.route({ schema })` forms.
+    private def schema_params_by_line(content : String) : Hash(Int32, Array(Param))
+      by_line = Hash(Int32, Array(Param)).new
+      return by_line unless content.includes?("schema")
+      decls = schema_decls(content)
+      offsets = Noir::JSRouteExtractor::ByteOffsets.new(content)
+      content.scan(SCHEMA_ROUTE_CALL_RE) do |m|
+        args_text = Noir::JSLiteralScanner.extract_paren_content_at_byte(content, m.byte_end(0)).try(&.content) || next
+        args = Noir::TopLevelSplit.split(args_text, ',', Noir::TopLevelSplit::Rules::JS)
+        options = m[1] == "route" ? args[0]? : args[1]?
+        next unless options && (m[1] == "route" || args.size >= 3 || options.lstrip.starts_with?('{'))
+        params = schema_params(options, decls)
+        by_line[offsets.line(m.byte_begin(0))] = params unless params.empty?
+      end
+      by_line
+    end
+
+    private def schema_decls(content : String) : Hash(String, String)
+      decls = Hash(String, String).new
+      return decls unless content.includes?("schema")
+      content.scan(SCHEMA_DECL_RE) do |m|
+        open = content.index('{', m.end(0)) || next
+        close = Noir::JSLiteralScanner.find_matching_brace(content, open) || next
+        decls[m[1]] = content[m.end(0)..close]
+      end
+      decls
+    end
+
+    private def schema_params(options : String, decls : Hash(String, String)) : Array(Param)
+      params = [] of Param
+      schema = object_entries_of(options, decls).try(&.["schema"]?) || return params
+      parts = object_entries_of(schema, decls) || return params
+      SCHEMA_PARAM_TYPES.each do |part, type|
+        definition = parts[part]? || next
+        definition = decls[definition.strip]? || definition
+        properties = object_entries_of(definition, decls) || next
+        # JSON Schema nests the fields under `properties`; TypeBox does not.
+        unless definition.strip.matches?(TYPEBOX_OBJECT_RE)
+          properties = properties["properties"]?.try { |p| object_entries_of(p, decls) } || next
+        end
+        properties.each_key { |name| params << Param.new(name, "", type) }
+      end
+      params
+    end
+
+    # Entries of an object literal, a TypeBox `Type.Object({...})`, or a
+    # same-file declaration of either that `value` names.
+    private def object_entries_of(value : String, decls : Hash(String, String)) : Hash(String, String)?
+      text = value.strip
+      text = (decls[text]? || return).strip if text.matches?(IDENTIFIER_RE)
+      text = text[(text.index('(') || return) + 1..].lstrip if text.matches?(TYPEBOX_OBJECT_RE)
+      body = Noir::WaspExtractor.object_body(text) || return
+      Noir::WaspExtractor.object_entries(body)
     end
 
     # Helper method to create an endpoint with details

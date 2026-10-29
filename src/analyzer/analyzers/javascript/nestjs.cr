@@ -442,7 +442,14 @@ module Analyzer::Javascript
       # would put them; prefixing again would double it.
       return if endpoint.url.starts_with?(normalized + "/") || endpoint.url == normalized
 
-      endpoint.url = endpoint.url.starts_with?("/") ? "#{normalized}#{endpoint.url}" : "#{normalized}/#{endpoint.url}"
+      # A root `@Get()` is served at the bare prefix: `/api`, not `/api/`.
+      endpoint.url = if endpoint.url == "/"
+                       normalized
+                     elsif endpoint.url.starts_with?("/")
+                       "#{normalized}#{endpoint.url}"
+                     else
+                       "#{normalized}/#{endpoint.url}"
+                     end
       endpoint
     end
 

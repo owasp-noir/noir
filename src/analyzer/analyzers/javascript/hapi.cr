@@ -14,7 +14,8 @@ module Analyzer::Javascript
     # Regex.union auto-escapes each literal (including the parens in
     # "require('hapi')"), so it is provably equivalent to the
     # OR-of-includes? it replaces.
-    HAPI_MARKERS_RE = Regex.union("@hapi/hapi", "require('hapi')", "require(\"hapi\")", "from 'hapi'", "from \"hapi\"")
+    HAPI_MARKERS_RE         = Regex.union("@hapi/hapi", "require('hapi')", "require(\"hapi\")", "from 'hapi'", "from \"hapi\"")
+    HAUTE_COUTURE_IMPORT_RE = /['"](?:@hapipal\/)?haute-couture['"]/
 
     def analyze
       # A plugin module (`exports.plugin = { register(server) { server.route(…) } }`)
@@ -25,25 +26,40 @@ module Analyzer::Javascript
       # keyed per plugin file in `CodeLocator`.
       RouterMountScanner.new(all_files, @base_paths, base_path, logger, :hapi).scan
       include_callee = callees_needed?
+      files = get_files_by_extensions(JS_EXTENSIONS)
+      # haute-couture registers every module under `routes/` itself, so the
+      # module's exported value is the route config. The closest package.json
+      # decides; a file with none counts when the scan's code imports it.
+      haute_couture = js_package_owners(["haute-couture\""])
+      route_files = files.select { |path| base_relative_path(path).includes?("/routes/") }
+      unowned_haute_couture = route_files.any? { |path| js_package_dir(path, haute_couture).nil? } &&
+                              files.any? { |file| (read_file_content(file).matches?(HAUTE_COUTURE_IMPORT_RE) rescue false) }
 
-      per_file = ordered_scan_files(get_files_by_extensions(JS_EXTENSIONS)) do |path|
+      per_file = ordered_scan_files(files) do |path|
         content = read_file_content(path)
         # `server.route(...)` in a lab/mocha suite is driven by `server.inject`,
         # never served. Import-blind: `test_stub_only?` would drop a hapi
         # server that also imports axios.
         next if Noir::JSRouteExtractor.test_file?(path, content)
+        route_module = haute_couture_module?(path, haute_couture, unowned_haute_couture)
         in_project = !project_roots.empty? && path_under_project_roots?(path, project_roots)
-        next unless in_project || content.matches?(HAPI_MARKERS_RE)
+        next unless in_project || route_module || content.matches?(HAPI_MARKERS_RE)
 
         mounts = CodeLocator.instance.all(ExpressConstants.file_key(Noir::PathScope.expand(path)))
         mounts = [""] if mounts.empty?
-        Noir::TreeSitterHapiExtractor.extract_routes(content, include_callee).flat_map do |route|
+        Noir::TreeSitterHapiExtractor.extract_routes(content, include_callee, module_exports: route_module).flat_map do |route|
           mounts.map { |prefix| build_endpoint(route, prefix, path, include_callee) }
         end
       end
 
       per_file.each { |endpoints| @result.concat(endpoints) }
       @result
+    end
+
+    private def haute_couture_module?(path : String, owners : Hash(String, Bool), unowned : Bool) : Bool
+      return false unless base_relative_path(path).includes?("/routes/")
+      dir = js_package_dir(path, owners)
+      dir ? owners[dir] : unowned
     end
 
     private def build_endpoint(route : Noir::TreeSitterHapiExtractor::Route, prefix : String, path : String, include_callee : Bool) : Endpoint

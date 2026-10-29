@@ -33,14 +33,14 @@ expected_endpoints = [
   Endpoint.new("/api/users/{id}", "DELETE"),
   Endpoint.new("/api/users/{id}", "PATCH"),
 
-  # ---- Pages Router: /api/posts/{slug} ([...slug] catch-all) ----
-  Endpoint.new("/api/posts/{slug}", "GET", [
+  # ---- Pages Router: /api/posts/{*slug} ([...slug] catch-all) ----
+  Endpoint.new("/api/posts/{*slug}", "GET", [
     Param.new("slug", "", "path"),
   ]),
-  Endpoint.new("/api/posts/{slug}", "POST"),
-  Endpoint.new("/api/posts/{slug}", "PUT"),
-  Endpoint.new("/api/posts/{slug}", "DELETE"),
-  Endpoint.new("/api/posts/{slug}", "PATCH"),
+  Endpoint.new("/api/posts/{*slug}", "POST"),
+  Endpoint.new("/api/posts/{*slug}", "PUT"),
+  Endpoint.new("/api/posts/{*slug}", "DELETE"),
+  Endpoint.new("/api/posts/{*slug}", "PATCH"),
 
   # ---- Pages Router: /api/auth/login (POST-only inferred from req.method check) ----
   Endpoint.new("/api/auth/login", "POST", [

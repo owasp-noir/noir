@@ -70,27 +70,55 @@ module Noir
       end
     end
 
-    def extract_routes(source : String, include_callees : Bool = false) : Array(Route)
+    # `module_exports`: the module's exported value is a route config too
+    # (`module.exports = {...}`, `= [...]`, `= Helpers.withDefaults({...})`,
+    # `export default {...}`), as in a haute-couture `routes/` module, which
+    # haute-couture hands to `server.route()` itself.
+    def extract_routes(source : String, include_callees : Bool = false, module_exports : Bool = false) : Array(Route)
       routes = [] of Route
       Noir::TreeSitter.parse_javascript(source) do |root|
-        walk(root, source, routes, 0, include_callees)
+        walk(root, source, routes, 0, include_callees, module_exports)
       end
       routes
     end
 
     # ---- traversal --------------------------------------------------
 
-    private def walk(node : LibTreeSitter::TSNode, source : String, routes : Array(Route), depth : Int32, include_callees : Bool)
+    private def walk(node : LibTreeSitter::TSNode, source : String, routes : Array(Route), depth : Int32, include_callees : Bool, module_exports : Bool)
       return if depth > Noir::TreeSitter::MAX_AST_DEPTH
 
       if Noir::TreeSitter.node_type(node) == "call_expression" && route_call?(node, source)
         emit_routes(node, source, routes, include_callees)
         return
       end
+      # No early return: a plugin exported from `routes/` still registers
+      # its own `server.route(...)` calls below.
+      if module_exports && (exported = exported_value(node, source))
+        if Noir::TreeSitter.node_type(exported) == "call_expression"
+          emit_routes(exported, source, routes, include_callees)
+        else
+          emit_config(exported, source, routes, include_callees)
+        end
+      end
 
       Noir::TreeSitter.each_named_child(node) do |child|
-        walk(child, source, routes, depth + 1, include_callees)
+        walk(child, source, routes, depth + 1, include_callees, module_exports)
       end
+    end
+
+    private def exported_value(node : LibTreeSitter::TSNode, source : String) : LibTreeSitter::TSNode?
+      case Noir::TreeSitter.node_type(node)
+      when "assignment_expression"
+        left = Noir::TreeSitter.first_named_child(node) || return
+        return unless Noir::TreeSitter.node_text(left, source) == "module.exports"
+      when "export_statement"
+        return unless Noir::TreeSitter.node_text(node, source).starts_with?("export default")
+      else
+        return
+      end
+      value = nil.as(LibTreeSitter::TSNode?)
+      Noir::TreeSitter.each_named_child(node) { |child| value = child }
+      value
     end
 
     private def route_call?(call : LibTreeSitter::TSNode, source : String) : Bool
@@ -111,13 +139,18 @@ module Noir
       return unless args
 
       Noir::TreeSitter.each_named_child(args) do |arg|
-        case Noir::TreeSitter.node_type(arg)
-        when "object"
-          emit_route_object(arg, source, routes, include_callees)
-        when "array"
-          Noir::TreeSitter.each_named_child(arg) do |elem|
-            emit_route_object(elem, source, routes, include_callees) if Noir::TreeSitter.node_type(elem) == "object"
-          end
+        emit_config(arg, source, routes, include_callees)
+      end
+    end
+
+    # One route config object, or an array of them.
+    private def emit_config(node : LibTreeSitter::TSNode, source : String, routes : Array(Route), include_callees : Bool)
+      case Noir::TreeSitter.node_type(node)
+      when "object"
+        emit_route_object(node, source, routes, include_callees)
+      when "array"
+        Noir::TreeSitter.each_named_child(node) do |elem|
+          emit_route_object(elem, source, routes, include_callees) if Noir::TreeSitter.node_type(elem) == "object"
         end
       end
     end
@@ -139,6 +172,9 @@ module Noir
           path = decode_string(value, source) if STRING_LITERAL_TYPES.includes?(Noir::TreeSitter.node_type(value))
         when "handler"
           handler = value
+        when "options", "config"
+          # `options: { auth, handler }`, the shape hapi 17+ documents.
+          handler ||= nested_handler(value, source) if Noir::TreeSitter.node_type(value) == "object"
         end
       end
 
@@ -168,6 +204,15 @@ module Noir
         routes << Route.new(verb, resolved_path, line, has_body,
           query_params, header_params, cookie_params, callees)
       end
+    end
+
+    private def nested_handler(obj : LibTreeSitter::TSNode, source : String) : LibTreeSitter::TSNode?
+      Noir::TreeSitter.each_named_child(obj) do |pair|
+        next unless Noir::TreeSitter.node_type(pair) == "pair"
+        key, value = pair_key_value(pair, source)
+        return value if key == "handler"
+      end
+      nil
     end
 
     private def pair_key_value(pair : LibTreeSitter::TSNode, source : String) : Tuple(String, LibTreeSitter::TSNode?)

@@ -70,7 +70,6 @@ UNTESTED_DETECTORS = [
   "haskell/cli",
   "java/cli",
   "javascript/cli",
-  "javascript/hapi",
   "javascript/sveltekit",
   "kotlin/cli",
   "kotlin/http4k",

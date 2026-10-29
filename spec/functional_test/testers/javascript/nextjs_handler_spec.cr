@@ -5,7 +5,7 @@ require "../../func_spec.cr"
 # `withAuth(getHandler)`, `{ GET: Promise.resolve({ default: wrap(h) }) }`).
 all_methods = ["GET", "POST", "PUT", "DELETE", "PATCH"]
 expected_endpoints = all_methods.map { |m| Endpoint.new("/api/book", m) } +
-                     all_methods.map { |m| Endpoint.new("/api/auth/{nextauth}", m) } +
+                     all_methods.map { |m| Endpoint.new("/api/auth/{*nextauth}", m) } +
                      all_methods.map { |m| Endpoint.new("/api/verify", m) } + [
   Endpoint.new("/api/legacy", "GET"),
   Endpoint.new("/api/legacy", "POST"),
@@ -32,7 +32,7 @@ describe "Next.js route handlers", tags: "functional" do
     handler.call("POST", "/api/legacy").should eq({"default", "pages/api/_post.ts", 1})
     handler.call("GET", "/api/verify").should eq({"handler", "lib/verify.ts", 3})
     # `NextAuth(authOptions)` wraps a config object, not a handler.
-    handler.call("GET", "/api/auth/{nextauth}").should eq({"default", "pages/api/auth/[...nextauth].ts", 8})
+    handler.call("GET", "/api/auth/{*nextauth}").should eq({"default", "pages/api/auth/[...nextauth].ts", 8})
   end
 
   it "unwraps a verb export and reads the wrapped function's body" do
