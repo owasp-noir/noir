@@ -534,6 +534,21 @@ describe "RustAuthTagger" do
       RUST
     axum_guarded_urls({"src/main.rs" => src}, ["/login", "/rpc", "/open"]).should eq(["/login", "/rpc"])
   end
+
+  it "reads the mounts of the called fn only, not a same-named fn in another mod" do
+    src = AXUM_REQUIRE_AUTH + <<-RUST
+      mod a {
+          pub fn routes() -> Router { Router::new().route("/a", get(a)) }
+      }
+      mod b {
+          pub fn routes() -> Router { Router::new().route("/b", get(b)) }
+      }
+      fn app() -> Router {
+          a::routes().route_layer(middleware::from_fn(require_auth)).merge(b::routes())
+      }
+      RUST
+    axum_guarded_urls({"src/main.rs" => src}, ["/a", "/b"]).should eq(["/a"])
+  end
 end
 
 describe "RustAuthTagger request guards read from their FromRequest impls" do

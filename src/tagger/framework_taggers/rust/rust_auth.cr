@@ -516,21 +516,10 @@ class RustAuthTagger < FrameworkTagger
     end
 
     fn_mounts = [] of {String, String}
-    fn_content = read_file(entry.file_path)
-    if fn_content
-      Noir::TreeSitter.parse_rust(fn_content) do |root|
-        Noir::TreeSitter.walk(root) do |n|
-          if Noir::TreeSitter.node_type(n) == "function_item"
-            if name_node = Noir::TreeSitter.field(n, "name")
-              if Noir::TreeSitter.node_text(name_node, fn_content).lchop("r#") == entry.name
-                if body_node = Noir::TreeSitter.field(n, "body")
-                  scan_function_body_for_mounts(body_node, fn_content, entry.file_path, visited_fns, fn_mounts)
-                end
-              end
-            end
-          end
-        end
-      end
+    # Only the fn's own body, so a big file is not reparsed once per fn.
+    body_source = "fn f() #{entry.body_text}"
+    Noir::TreeSitter.parse_rust(body_source) do |root|
+      scan_function_body_for_mounts(root, body_source, entry.file_path, visited_fns, fn_mounts)
     end
 
     @fn_mounts_cache[entry.full_path] = fn_mounts
