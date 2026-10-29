@@ -447,6 +447,93 @@ describe "RustAuthTagger" do
       RUST
     axum_guarded_urls({"src/main.rs" => src}, ["/open"]).should be_empty
   end
+
+  it "judges only the constructor of a non-`from_fn` layer by name" do
+    src = <<-RUST
+      fn app() -> Router {
+          let open = Router::new()
+              .route("/open", get(o))
+              .layer(Extension(oauth_client))
+              .layer(SessionManagerLayer::new(store))
+              .layer(SetSensitiveRequestHeadersLayer::new(once(AUTHORIZATION)));
+          Router::new().route("/me", get(me)).layer(AuthLayer::new(keys)).merge(open)
+      }
+      RUST
+    axum_guarded_urls({"src/main.rs" => src}, ["/open", "/me"]).should eq(["/me"])
+  end
+
+  it "judges a middleware found in the scan by its body, not its name" do
+    src = <<-RUST
+      async fn auth_logger(req: Request, next: Next) -> Response {
+          // would return 401 if StatusCode::UNAUTHORIZED were wired
+          tracing::info!("authorization: {:?}", req.headers().get("authorization"));
+          next.run(req).await
+      }
+      async fn rate_limit(req: Request, next: Next) -> Response {
+          if too_many(req.headers().get("user-agent")) {
+              return StatusCode::TOO_MANY_REQUESTS.into_response();
+          }
+          next.run(req).await
+      }
+      async fn auth_session(req: Request, next: Next) -> Result<Response, AppError> {
+          let token = req.headers().get("authorization").ok_or(AppError::Session)?;
+          Ok(next.run(req).await)
+      }
+      fn app() -> Router {
+          Router::new()
+              .route("/logged", get(a))
+              .route_layer(middleware::from_fn(auth_logger))
+              .merge(Router::new().route("/limited", get(b)).route_layer(middleware::from_fn(rate_limit)))
+              .merge(Router::new().route("/session", get(c)).route_layer(middleware::from_fn(auth_session)))
+              .merge(Router::new().route("/inline", get(d)).route_layer(middleware::from_fn(|req: Request, next: Next| async move {
+                  if req.headers().get("authorization").is_none() {
+                      return Err(StatusCode::UNAUTHORIZED);
+                  }
+                  Ok(next.run(req).await)
+              })))
+      }
+      RUST
+    axum_guarded_urls({"src/main.rs" => src}, ["/logged", "/limited", "/session", "/inline"]).should eq(["/inline", "/session"])
+  end
+
+  it "guards with a middleware that extracts a refusing guard, also through `Result` and `?`" do
+    src = <<-RUST
+      struct CurrentUser;
+      impl<S> FromRequestParts<S> for CurrentUser {
+          type Rejection = AppError;
+          async fn from_request_parts(parts: &mut Parts, _s: &S) -> Result<Self, AppError> {
+              parts.extensions.get::<CurrentUser>().cloned().ok_or(AppError::NoCtx)
+          }
+      }
+      impl ResponseError for AppError {
+          fn status_code(&self) -> StatusCode {
+              match self {
+                  AppError::NoCtx => StatusCode::FORBIDDEN,
+              }
+          }
+      }
+      async fn require_login(_user: CurrentUser, req: Request, next: Next) -> Response {
+          next.run(req).await
+      }
+      async fn mw_ctx_require(ctx: Result<CurrentUser>, req: Request, next: Next) -> Result<Response> {
+          debug!("{ctx:?}");
+          ctx?;
+          Ok(next.run(req).await)
+      }
+      async fn mw_ctx_resolve(ctx: Result<CurrentUser>, req: Request, next: Next) -> Response {
+          debug!("{ctx:?}");
+          next.run(req).await
+      }
+      fn app() -> Router {
+          Router::new()
+              .route("/login", get(a))
+              .route_layer(middleware::from_fn(require_login))
+              .merge(Router::new().route("/rpc", post(b)).route_layer(middleware::from_fn(mw_ctx_require)))
+              .merge(Router::new().route("/open", get(c)).route_layer(middleware::from_fn(mw_ctx_resolve)))
+      }
+      RUST
+    axum_guarded_urls({"src/main.rs" => src}, ["/login", "/rpc", "/open"]).should eq(["/login", "/rpc"])
+  end
 end
 
 describe "RustAuthTagger request guards read from their FromRequest impls" do

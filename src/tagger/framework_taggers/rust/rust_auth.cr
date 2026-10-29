@@ -4,6 +4,7 @@ require "../prefix_scope"
 require "../../../miniparsers/rust_request_guards"
 require "../../../miniparsers/rust_use_imports"
 require "../../../ext/tree_sitter/tree_sitter"
+require "../../../utils/c_comments"
 
 @[Noir::TaggerFor(key: "rust_auth", name: "Rust Auth Tagger", desc: "Identifies Rust authentication patterns (guards, extractors, middleware)", order: 70)]
 class RustAuthTagger < FrameworkTagger
@@ -12,9 +13,10 @@ class RustAuthTagger < FrameworkTagger
     getter name : String
     getter module_path : Array(String)
     getter body_text : String
-    getter full_text : String
+    # Leaf types of the parameters that must extract for the fn to run.
+    getter required_params : Array(String)
 
-    def initialize(@file_path : String, @name : String, @module_path : Array(String), @body_text : String, @full_text : String)
+    def initialize(@file_path : String, @name : String, @module_path : Array(String), @body_text : String, @required_params : Array(String))
     end
 
     def full_path : String
@@ -59,6 +61,16 @@ class RustAuthTagger < FrameworkTagger
     /\.middleware\s*\(\s*(\w*[Aa]uth\w*)/,
   ]
 
+  # A 401/403 a middleware answers itself: a status, an actix error helper,
+  # or an error variant spelled as one (`AuthError::Unauthorized`).
+  MIDDLEWARE_REFUSAL = /#{Noir::RustRequestGuards::REFUSAL_RE}|\b\w+::(?:Unauthori[sz]ed|Unauthenticated|Forbidden)\b/
+  # An error whose status is decided elsewhere: `Err(...)`, `ctx?`, `f()?`.
+  ERROR_EXIT = /\bErr\s*\(|[\w)]\?/
+  AUTH_NAME  = /auth|jwt|bearer/i
+  CSRF_NAME  = /[\w-]*(?:csrf|xsrf)[\w-]*/i
+  # What a middleware reads to tell who the caller is (CSRF names cut out).
+  CREDENTIAL = /authoriz|bearer|jwt|token|api[-_]?key|claims|session|login/i
+
   # Guard/middleware attribute patterns
   GUARD_ATTRIBUTE_PATTERNS = [
     /#\[guard\s*=\s*"(\w+)"\]/,
@@ -85,9 +97,9 @@ class RustAuthTagger < FrameworkTagger
   end
 
   def perform(endpoints : Array(Endpoint)) : Array(Endpoint)
-    # Phase 1: Pre-scan for service/scope-level middleware
-    pre_scan_middleware_scopes
+    # Middleware is judged by the request guards it extracts, so those first.
     pre_scan_request_guards
+    pre_scan_middleware_scopes
     super
   end
 
@@ -189,16 +201,36 @@ class RustAuthTagger < FrameworkTagger
           fn_name = Noir::TreeSitter.node_text(name_node, source).lchop("r#")
           body_node = Noir::TreeSitter.field(child, "body")
           body_text = body_node ? Noir::TreeSitter.node_text(body_node, source) : ""
-          full_text = Noir::TreeSitter.node_text(child, source)
           full_mod = file_mod_parts + inline_mod_stack
 
-          entry = RustFnEntry.new(file_path, fn_name, full_mod, body_text, full_text)
+          entry = RustFnEntry.new(file_path, fn_name, full_mod, body_text, required_param_types(child, body_text, source))
           register_function(entry)
         end
       else
         collect_functions_in_node(child, source, file_path, file_mod_parts, inline_mod_stack)
       end
     end
+  end
+
+  # All but `Option<X>`, and `Result<X, _>` only when the body `?`s it
+  # (`ctx: Result<CtxW>` then `ctx?`).
+  private def required_param_types(fn_node : LibTreeSitter::TSNode, body : String, source : String) : Array(String)
+    types = [] of String
+    params = Noir::TreeSitter.field(fn_node, "parameters") || return types
+    Noir::TreeSitter.each_named_child(params) do |param|
+      next unless Noir::TreeSitter.node_type(param) == "parameter"
+      type_node = Noir::TreeSitter.field(param, "type") || next
+      type = Noir::TreeSitter.node_text(type_node, source)
+      leaf = Noir::RustRequestGuards.type_leaf(type) || next
+      next if leaf == "Option"
+      if leaf == "Result"
+        name = Noir::TreeSitter.field(param, "pattern").try { |pattern| Noir::TreeSitter.node_text(pattern, source) } || next
+        next unless body.matches?(/\b#{Regex.escape(name)}\s*\?/)
+        leaf = Noir::RustRequestGuards.type_leaf(type.partition('<')[2]) || next
+      end
+      types << leaf
+    end
+    types
   end
 
   private def register_function(entry : RustFnEntry)
@@ -270,7 +302,7 @@ class RustAuthTagger < FrameworkTagger
             args = named_call_args(node)
             next if args.empty?
 
-            middleware_name = extract_and_judge_auth_middleware(args[0], content, file)
+            middleware_name = layer_guard(args[0], content, file)
             next unless middleware_name
 
             mounts = collect_axum_layer_mounts(node, content, file)
@@ -315,106 +347,49 @@ class RustAuthTagger < FrameworkTagger
     nil
   end
 
-  private def extract_and_judge_auth_middleware(arg_node : LibTreeSitter::TSNode, source : String, file : String) : String?
-    fn_ref = extract_middleware_fn_ref(arg_node, source) || return
-    auth_middleware?(fn_ref, file)
+  # The name a layer argument guards under, or nil when it does not guard.
+  # `from_fn(f)` / `from_fn_with_state(s, f)` is judged by `f`; any other
+  # layer (`AuthLayer::new(..)`, `auth_layer`) by the name it is built from.
+  private def layer_guard(arg : LibTreeSitter::TSNode, source : String, file : String) : String?
+    if Noir::TreeSitter.node_type(arg) == "call_expression"
+      args = named_call_args(arg)
+      case call_func_leaf_name(arg, source)
+      when "from_fn"            then return args[0]?.try { |f| middleware_guard(f, source, file) }
+      when "from_fn_with_state" then return args[1]?.try { |f| middleware_guard(f, source, file) }
+      end
+    end
+    Noir::TreeSitter.node_text(arg, source).partition('(')[0].match(/\w*[Aa]uth\w*/).try(&.[0])
   end
 
-  private def extract_middleware_fn_ref(arg_node : LibTreeSitter::TSNode, source : String) : String?
-    case Noir::TreeSitter.node_type(arg_node)
-    when "call_expression"
-      fn_leaf = call_func_leaf_name(arg_node, source)
-      case fn_leaf
-      when "from_fn"
-        args = named_call_args(arg_node)
-        return unless args.size >= 1
-        Noir::TreeSitter.node_text(args[0], source).strip
-      when "from_fn_with_state"
-        args = named_call_args(arg_node)
-        return unless args.size >= 2
-        Noir::TreeSitter.node_text(args[1], source).strip
-      else
-        Noir::TreeSitter.node_text(arg_node, source).strip
-      end
-    when "identifier", "scoped_identifier"
-      Noir::TreeSitter.node_text(arg_node, source).strip
-    else
-      Noir::TreeSitter.node_text(arg_node, source).strip
+  # A middleware fn whose definition (or closure) is in the scan guards when
+  # its body does; one from a library when its path reads as auth and not
+  # CSRF (`axum_auth::require`, `auth::middleware`).
+  private def middleware_guard(f : LibTreeSitter::TSNode, source : String, file : String) : String?
+    text = Noir::TreeSitter.node_text(f, source).strip
+    if Noir::TreeSitter.node_type(f) == "closure_expression"
+      return body_guards?("", text, [] of String) ? "closure" : nil
+    end
+    ref = text.lchop("::").lchop("crate::").lchop("self::")
+    segments = ref.split("::")
+    name = segments.reverse_each.find(&.matches?(AUTH_NAME)) || segments.last
+    if entry = lookup_function(ref, file)
+      body_guards?(ref, entry.body_text, entry.required_params) ? name : nil
+    elsif ref.matches?(AUTH_NAME) && !ref.matches?(CSRF_NAME)
+      name
     end
   end
 
-  private def auth_middleware?(fn_ref : String, current_file : String) : String?
-    cleaned = fn_ref.lchop("::").lchop("crate::").lchop("self::")
-    leaf = cleaned.split("::").last
-
-    # 1. CSRF check:
-    is_csrf_named = cleaned.downcase.includes?("csrf")
-
-    # 2. Look up function definition
-    entry = lookup_function(cleaned, current_file)
-
-    if entry
-      body = entry.body_text
-      lower_body = body.downcase
-
-      body_has_csrf = lower_body.includes?("csrf")
-      has_auth_check = auth_body_checks?(body)
-
-      if (is_csrf_named || body_has_csrf) && !has_auth_check
-        return # Clearly CSRF-only!
-      end
-
-      if refuses_caller?(body) && (has_auth_check || auth_named?(cleaned))
-        return leaf.includes?("auth") ? leaf : "auth"
-      end
-
-      if auth_named?(cleaned)
-        return leaf.includes?("auth") ? leaf : "auth"
-      end
-
-      nil
-    else
-      return if is_csrf_named
-
-      if auth_named?(cleaned)
-        return leaf.includes?("auth") ? leaf : "auth"
-      end
-
-      nil
+  # A body refuses the caller through an extractor that refuses, or answers
+  # 401/403 itself unless all it checks is a CSRF token. An auth-named
+  # middleware that exits with an error (`Err(AppError::X)`, `ctx?`) whose
+  # status is mapped elsewhere keeps the benefit of its name.
+  private def body_guards?(ref : String, body : String, required_params : Array(String)) : Bool
+    return true if required_params.any? { |type| @guard_verdicts[type]? == true }
+    code = Noir::CComments.strip(body)
+    if ref.matches?(CSRF_NAME) || code.matches?(CSRF_NAME)
+      return false unless code.gsub(CSRF_NAME, "").matches?(CREDENTIAL)
     end
-  end
-
-  private def auth_named?(name : String) : Bool
-    name.matches?(/\b\w*[Aa]uth\w*\b/) || name.matches?(/\b(?:authenticate|authorization|bearer|jwt|session)\w*\b/i)
-  end
-
-  private def refuses_caller?(body : String) : Bool
-    body.includes?("StatusCode::UNAUTHORIZED") ||
-      body.includes?("StatusCode::FORBIDDEN") ||
-      body.matches?(/\b401\b/) ||
-      (body.includes?("Err(") && (body.includes?("UNAUTHORIZED") || body.includes?("FORBIDDEN") || body.includes?("Unauthorized") || body.includes?("Forbidden"))) ||
-      body.includes?("into_response")
-  end
-
-  private def auth_body_checks?(body : String) : Bool
-    lower = body.downcase
-    return true if lower.includes?("authorization")
-    return true if lower.includes?("bearer")
-    return true if lower.includes?("jwt")
-    return true if lower.includes?("claims")
-    return true if lower.includes?("session")
-    return true if lower.includes?("cookie")
-    return true if lower.includes?("api_key") || lower.includes?("apikey")
-    return true if lower.includes?("user")
-    return true if lower.includes?("role") || lower.includes?("permission")
-    return true if lower.includes?("unauthorized") || lower.includes?("401")
-
-    if lower.includes?("token")
-      cleaned_body = lower.gsub(/x-csrf-token|csrf_token|csrf-token|csrf/, "")
-      return true if cleaned_body.includes?("token")
-    end
-
-    false
+    code.matches?(MIDDLEWARE_REFUSAL) || (ref.matches?(AUTH_NAME) && code.matches?(ERROR_EXIT))
   end
 
   private def collect_axum_layer_mounts(
