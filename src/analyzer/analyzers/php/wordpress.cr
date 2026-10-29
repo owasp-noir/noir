@@ -28,6 +28,8 @@ module Analyzer::Php
 
     ALL_HTTP_VERBS = ["GET", "POST", "PUT", "PATCH", "DELETE"]
 
+    TAGGER = "wordpress_analyzer"
+
     # `WP_REST_Server::` method-group constants → concrete HTTP verbs.
     REST_METHOD_CONSTANTS = {
       "READABLE"   => ["GET"],
@@ -36,6 +38,32 @@ module Analyzer::Php
       "DELETABLE"  => ["DELETE"],
       "ALLMETHODS" => ["GET", "POST", "PUT", "PATCH", "DELETE"],
     }
+
+    # add_action('wp_ajax_foo', ...) / wp_ajax_nopriv_foo
+    # add_action('admin_post_foo', ...) / admin_post_nopriv_foo
+    #
+    # The trailing `\s*,` requires the hook name to be a *complete* string
+    # literal (followed by the callback argument). This rejects a
+    # prefix+variable concatenation like `'wp_ajax_myplugin_' . $tab`,
+    # whose closing quote is followed by `.` — otherwise we would emit the
+    # truncated phantom action `myplugin_`.
+    HOOK_RE = /add_action\s*\(\s*['"](wp_ajax_(?:nopriv_)?|admin_post_(?:nopriv_)?)([A-Za-z0-9_\-]+)['"]\s*,/i
+
+    # URLs some file of the scan registers a `nopriv_` hook for: the
+    # dispatcher serves those to anyone, whichever file adds the hook.
+    @public_hook_urls = Set(String).new
+
+    def analyze
+      scan_target_files.each do |path|
+        next unless path.ends_with?(".php")
+        content = read_file_content(path)
+        next unless content.includes?("nopriv_")
+        php_code(content).scan(HOOK_RE) do |m|
+          @public_hook_urls << hook_url(m[1], m[2]) if m[1].downcase.ends_with?("nopriv_")
+        end
+      end
+      super
+    end
 
     def analyze_file(path : String) : Array(Endpoint)
       endpoints = [] of Endpoint
@@ -59,7 +87,7 @@ module Analyzer::Php
     private def analyze_rest_routes(content : String, path : String, offsets : Noir::CharOffsets) : Array(Endpoint)
       endpoints = [] of Endpoint
 
-      properties = string_properties(content)
+      classes = class_scopes(content)
       offset = 0
       while call_start = content.index("register_rest_route", offset)
         paren_open = content.index('(', call_start)
@@ -71,6 +99,8 @@ module Analyzer::Php
           args = content[(paren_open + 1)...paren_close]
 
           parts = split_top_level_args(args)
+          klass = classes.find(&.[0].includes?(call_start))
+          properties = klass.try(&.[1]) || NO_PROPERTIES
           # The namespace/route are the first two *positional* args, each
           # string literals, `$this->prop` (a WP_REST_Controller's
           # `protected $namespace = '...'`) or a `.` concatenation of those.
@@ -84,13 +114,15 @@ module Analyzer::Php
             path_params = extract_wp_path_params(full_path)
             details = Details.new(PathInfo.new(path, offsets.line(call_start)))
 
-            rest_handlers(parts[2]? || "").each do |method, arg_names|
+            rest_handlers(parts[2]? || "", content, klass.try(&.[0]), classes).each do |method, (arg_names, guard)|
               params = path_params.dup
               type = method == "GET" || method == "DELETE" ? "query" : "form"
               arg_names.each do |name|
                 params << Param.new(name, "", type) unless params.any? { |param| param.name == name }
               end
-              endpoints << Endpoint.new(full_path, method, params, details.dup)
+              endpoint = Endpoint.new(full_path, method, params, details.dup)
+              guard.try { |(kind, name)| endpoint.add_tag(Tag.new(kind, "Protected by #{name}", TAGGER)) }
+              endpoints << endpoint
             end
           end
         else
@@ -103,24 +135,98 @@ module Analyzer::Php
       endpoints
     end
 
+    # `{tag name, guard name}` of a route's `permission_callback`.
+    alias Guard = Tuple(String, String)
+
     # The verbs a route's third argument registers, each with the `'args'`
-    # names its handler declares. That argument is one handler array or an
-    # array of them, one per verb group.
-    private def rest_handlers(handlers_arg : String) : Hash(String, Array(String))
+    # names its handler declares and the guard its `permission_callback`
+    # imposes. That argument is one handler array or an array of them, one
+    # per verb group.
+    private def rest_handlers(handlers_arg : String, content : String, klass : Range(Int32, Int32)?,
+                              classes : Array(Tuple(Range(Int32, Int32), Hash(String, String)))) : Hash(String, Tuple(Array(String), Guard?))
       handlers = [handlers_arg]
       if body = php_array_body(handlers_arg)
         elements = split_top_level_args(body).map(&.strip).reject(&.empty?)
         handlers = elements if !elements.empty? && elements.all? { |element| php_array_body(element) }
       end
 
-      result = {} of String => Array(String)
+      result = {} of String => Tuple(Array(String), Guard?)
       handlers.each do |handler|
         methods = extract_rest_methods(handler)
         methods = ["GET"] if methods.empty?
         names = rest_arg_names(handler)
-        methods.each { |method| (result[method] ||= [] of String).concat(names) }
+        guard = permission_guard(handler, content, klass, classes)
+        methods.each do |method|
+          # A verb two handler groups register is guarded only when both are.
+          known = result[method]?
+          result[method] = known ? {known[0] + names, known[1] && guard} : {names, guard}
+        end
       end
       result
+    end
+
+    PERMISSION_KEY_RE = /\A['"]permission_callback['"]\s*=>\s*/
+    # `array( $this, 'check' )` / `[ __CLASS__, 'check' ]` / `'check'` /
+    # `'Class::check'`: the name of the method or function called.
+    CALLABLE_ARRAY_RE  = /\A(?:array\s*\(|\[)\s*[^,]+,\s*['"](\w+)['"]\s*(?:\)|\])\z/i
+    CALLABLE_STRING_RE = /\A['"](?:[\w\\]+::)?(\w+)['"]\z/
+    CAPABILITY_FNS     = "current_user_can|user_can|current_user_can_for_site|current_user_can_for_blog"
+    LOGIN_FNS          = "is_user_logged_in"
+    # A check that decides the callback: its return value
+    # (`return current_user_can('x');`), or the whole condition of an `if`
+    # that refuses (`if ( ! current_user_can('x') ) { return new WP_Error(...); }`).
+    # A check under a further condition (`'edit' === $context && ! ...`)
+    # leaves the default path open, so it is not one.
+    CAPABILITY_CHECK_RE = /(?:\breturn\s+(?:\(\s*bool\s*\)\s*)?|\bif\s*\(\s*!\s*)(?:#{CAPABILITY_FNS})\s*\((?:[^,()]*,)?\s*(?:['"]([\w-]+)['"])?(?:[^()]|\([^()]*\))*\)\s*(?:;|\)\s*(?:\{\s*)?(?:return|throw)\b)/
+    LOGIN_CHECK_RE      = /(?:\breturn\s+(?:\(\s*bool\s*\)\s*)?|\bif\s*\(\s*!\s*)(?:#{LOGIN_FNS})\s*\(\s*\)\s*(?:;|\)\s*(?:\{\s*)?(?:return|throw)\b)/
+
+    # The guard a handler's `permission_callback` imposes: a capability check
+    # (`current_user_can('edit_posts')`) is authorization, a logged-in check
+    # authentication. The callback is a closure, a method of the route's
+    # class, or a function of the file outside any class. `__return_true`,
+    # a callback the file does not show, or one that checks neither
+    # decisively, is no guard.
+    private def permission_guard(handler : String, content : String, klass : Range(Int32, Int32)?,
+                                 classes : Array(Tuple(Range(Int32, Int32), Hash(String, String)))) : Guard?
+      body = php_array_body(handler) || return
+      value = nil
+      split_top_level_args(body).each do |element|
+        element = element.strip
+        if m = element.match(PERMISSION_KEY_RE)
+          value = element[m.end(0)..].strip
+          break
+        end
+      end
+      return unless value
+      code = if value.matches?(/\A(?:static\s+)?(?:function|fn)\b/)
+               value
+             elsif name = (value.match(CALLABLE_ARRAY_RE) || value.match(CALLABLE_STRING_RE)).try(&.[1])
+               return if name == "__return_true"
+               function_body(content, name, klass, classes)
+             end
+      return unless code
+      if m = code.match(CAPABILITY_CHECK_RE)
+        {"authz", "WordPress permission_callback #{m[1]? ? "current_user_can('#{m[1]}')" : "capability check"}"}
+      elsif code.matches?(LOGIN_CHECK_RE)
+        {"auth", "WordPress permission_callback login check"}
+      end
+    end
+
+    # The body of `function name(...) { ... }`: inside `klass` (a method of
+    # the route's class), else a free function, outside every class.
+    private def function_body(content : String, name : String, klass : Range(Int32, Int32)?,
+                              classes : Array(Tuple(Range(Int32, Int32), Hash(String, String)))) : String?
+      decl = /\bfunction\s+#{Regex.escape(name)}\s*\([^{;]*\{/m
+      content.scan(decl) do |m|
+        inside = klass ? klass.includes?(m.begin(0)) : classes.none?(&.[0].includes?(m.begin(0)))
+        next unless inside
+        close = find_matching_php_close_brace(content, m.end(0) - 1) || return
+        return content[m.end(0)...close]
+      end
+      if klass
+        # A plain function the route's class names as a string callback.
+        function_body(content, name, nil, classes)
+      end
     end
 
     REST_ARGS_KEY_RE = /\A['"]args['"]\s*=>\s*/
@@ -151,14 +257,40 @@ module Analyzer::Php
     end
 
     STRING_PROPERTY_RE = /\b(?:public|protected|private|var)\s+(?:static\s+)?(?:\??[\w\\]+\s+)?\$(\w+)\s*=\s*(?:'([^'\\]*)'|"([^"\\$]*)")/
+    # `$this->namespace = 'wp/v2';`, as a constructor sets it.
+    THIS_ASSIGN_RE = /\$this\s*->\s*(\w+)\s*=\s*(?:'([^'\\]*)'|"([^"\\$]*)")\s*;/
+    CLASS_DECL_RE  = /(?<![:\w$>])(?<!new\s)\bclass\s+(\w+)(?:\s+extends\s+\\?(?:[\w\\]+\\)?(\w+))?[^{;]*\{/
+    NO_PROPERTIES  = {} of String => String
 
-    # `protected $namespace = 'myplugin/v2';`-style string properties of the
-    # file's classes, for resolving `$this->namespace`. A property inherited
-    # from a class in another file is not seen.
-    private def string_properties(content : String) : Hash(String, String)
-      properties = {} of String => String
-      content.scan(STRING_PROPERTY_RE) { |m| properties[m[1]] ||= m[2]? || m[3] }
-      properties
+    # `{body range, string properties}` of each class in the file, for
+    # resolving `$this->namespace` against the class the call sits in. A
+    # property is declared (`protected $namespace = 'myplugin/v2';`) or
+    # assigned in a method (`$this->namespace = 'wp/v2';`, which wins), in
+    # the class or a parent class of the same file. One inherited from a
+    # class in another file, or a trait, is not seen.
+    private def class_scopes(content : String) : Array(Tuple(Range(Int32, Int32), Hash(String, String)))
+      lexer = Noir::PhpLexer.new(content)
+      found = [] of Tuple(String, String?, Range(Int32, Int32), Hash(String, String))
+      content.scan(CLASS_DECL_RE) do |m|
+        next unless lexer.in_code?(m.begin(0))
+        open = m.end(0) - 1
+        close = lexer.matching_delimiter(open) || next
+        body = content[open...close]
+        properties = {} of String => String
+        assigned = {} of String => String
+        body.scan(STRING_PROPERTY_RE) { |prop| properties[prop[1]] ||= prop[2]? || prop[3] }
+        body.scan(THIS_ASSIGN_RE) { |prop| assigned[prop[1]] ||= prop[2]? || prop[3] }
+        found << {m[1], m[2]?, open..close, properties.merge(assigned)}
+      end
+      by_name = found.to_h { |(name, parent, _, props)| {name, {parent, props}} }
+      found.map do |(_, parent, range, props)|
+        seen = Set(String).new
+        while parent && seen.add?(parent) && (inherited = by_name[parent]?)
+          props = inherited[1].merge(props)
+          parent = inherited[0]
+        end
+        {range, props}
+      end
     end
 
     # The value of a string literal, `$this->prop`, or a `.` concatenation of
@@ -225,22 +357,13 @@ module Analyzer::Php
       endpoints = [] of Endpoint
       seen = Set(String).new
 
-      # add_action('wp_ajax_foo', ...) / wp_ajax_nopriv_foo
-      # add_action('admin_post_foo', ...) / admin_post_nopriv_foo
-      #
-      # The trailing `\s*,` requires the hook name to be a *complete* string
-      # literal (followed by the callback argument). This rejects a
-      # prefix+variable concatenation like `'wp_ajax_myplugin_' . $tab`,
-      # whose closing quote is followed by `.` — otherwise we would emit the
-      # truncated phantom action `myplugin_`.
-      pattern = /add_action\s*\(\s*['"](wp_ajax_(?:nopriv_)?|admin_post_(?:nopriv_)?)([A-Za-z0-9_\-]+)['"]\s*,/i
-      content.scan(pattern) do |match|
-        hook_prefix = match[1].downcase
+      # The dispatcher runs `wp_ajax_<action>` / `admin_post_<action>` for a
+      # logged-in user only; the `nopriv_` hook is what serves anyone else.
+      content.scan(HOOK_RE) do |match|
         action = match[2]
         next if action.empty?
 
-        base_path = hook_prefix.starts_with?("wp_ajax_") ? ADMIN_AJAX_PATH : ADMIN_POST_PATH
-        url = "#{base_path}?action=#{action}"
+        url = hook_url(match[1], action)
         details = Details.new(PathInfo.new(path, offsets.line(offsets.begin(match))))
 
         DISPATCH_METHODS.each do |method|
@@ -249,11 +372,20 @@ module Analyzer::Php
           seen.add(dedup_key)
 
           params = [Param.new("action", action, "query")]
-          endpoints << Endpoint.new(url, method, params, details.dup)
+          endpoint = Endpoint.new(url, method, params, details.dup)
+          unless @public_hook_urls.includes?(url)
+            endpoint.add_tag(Tag.new("auth", "Protected by WordPress #{match[1].downcase} hook (logged-in users only)", TAGGER))
+          end
+          endpoints << endpoint
         end
       end
 
       endpoints
+    end
+
+    private def hook_url(hook_prefix : String, action : String) : String
+      base_path = hook_prefix.downcase.starts_with?("wp_ajax_") ? ADMIN_AJAX_PATH : ADMIN_POST_PATH
+      "#{base_path}?action=#{action}"
     end
 
     # -- Helpers ---------------------------------------------------------
