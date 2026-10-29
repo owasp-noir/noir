@@ -139,7 +139,9 @@ module Analyzer::Php
         end
       end
       endpoint = Endpoint.new(route_url, verb, params, details)
-      tag(endpoint, method[1].prelude) if method
+      # A method the scan cannot find still runs behind Nextcloud's default
+      # login + admin check: only an attribute on it relaxes that.
+      tag(endpoint, method.try(&.[1].prelude) || "")
       endpoint
     end
 
@@ -193,11 +195,18 @@ module Analyzer::Php
       fields
     end
 
-    # `note_api` + `get_all` → `NoteApiController::getAll` in the app.
+    # `note_api` + `get_all` → `NoteApiController::getAll` in the app, or
+    # the action it inherits from a parent controller of the app.
     private def find_method(cache : Hash(String, Methods), root : String, controller : String, action : String)
       return if controller.empty? || action.empty?
       name = camel(controller)
-      file = "#{name[0].upcase}#{name[1..]}Controller.php"
+      class_method(cache, root, "#{name[0].upcase}#{name[1..]}Controller", camel(action).downcase)
+    end
+
+    PARENT_CLASS_RE = /\bclass\s+\w+\s+extends\s+\\?(?:[\w\\]+\\)?(\w+)/
+
+    private def class_method(cache : Hash(String, Methods), root : String, class_name : String, action : String, depth : Int32 = 0)
+      file = "#{class_name}.php"
       # `OCA\<App>\Controller\<Name>Controller` autoloads from `lib/Controller/`.
       expected = File.join(root, "lib", "Controller", file)
       path = get_files_by_basename(file).find(&.==(expected)) || return
@@ -206,8 +215,12 @@ module Analyzer::Php
         each_method(read_file_content(path)) { |member| found[member.name.downcase] = member }
         found
       end
-      member = methods[camel(action).downcase]? || return
-      {path, member}
+      if member = methods[action]?
+        return {path, member}
+      end
+      return if depth >= 3
+      parent = read_file_content(path).match(PARENT_CLASS_RE).try(&.[1]) || return
+      class_method(cache, root, parent, action, depth + 1) unless parent == class_name
     end
 
     private def each_method(content : String, &)
