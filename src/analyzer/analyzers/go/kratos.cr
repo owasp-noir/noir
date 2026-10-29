@@ -1,4 +1,5 @@
 require "../../../models/analyzer"
+require "../../engines/go_engine"
 require "../../../miniparsers/go_callee_extractor"
 require "../../../miniparsers/go_route_extractor_ts"
 
@@ -27,6 +28,7 @@ module Analyzer::Go
   # derives `Param` entries from `{...}` placeholders for every analyzer,
   # so they don't need to be extracted here.
   class Kratos < Analyzer
+    include GoTestPath
     analyzer_for "go_kratos"
 
     # Only `.go` files that import Kratos' own HTTP transport package
@@ -58,7 +60,7 @@ module Analyzer::Go
       package_function_bodies = Noir::GoCalleeExtractor.lazy_package_bodies_if(callees_needed?, file_contents)
 
       parallel_analyze(get_files_by_extension(".go")) do |path|
-        next if GoEngine.go_test_file?(base_relative_path(path))
+        next if go_test_path?(path)
         next unless File.exists?(path)
         content = file_contents[path]? || read_file_content(path)
         next unless content_matches?(content, IMPORT_MARKER)

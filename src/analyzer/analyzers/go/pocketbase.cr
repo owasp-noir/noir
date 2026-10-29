@@ -13,14 +13,19 @@ module Analyzer::Go
     analyzer_for "go_pocketbase"
 
     IMPORT_MARKER = "github.com/pocketbase/pocketbase"
+    # `func bindBackupApi(app core.App, rg *router.RouterGroup[*core.RequestEvent])`.
+    BUILDER_TYPE = "*router.RouterGroup"
 
     def analyze
       public_dirs = [] of Hash(String, String)
       package_groups, file_contents = collect_package_groups_ts(import_marker: IMPORT_MARKER)
       package_function_bodies = lazy_package_bodies(file_contents)
       framework_dirs = framework_package_dirs(file_contents, IMPORT_MARKER)
+      # `apis.BindBackupApi(app, api)` with `api := se.Router.Group("/api")`:
+      # the prefix lives at the call site (see `resolve_router_builder_prefixes`).
+      builder_prefixes_by_dir = resolve_router_builder_prefixes(file_contents, package_groups, BUILDER_TYPE)
       parallel_analyze(get_files_by_extension(".go")) do |path|
-        next if GoEngine.go_test_file?(base_relative_path(path))
+        next if go_test_path?(path)
         next unless File.exists?(path)
         content = file_contents[path]? || read_file_content(path)
         dir = File.dirname(path)
@@ -39,8 +44,13 @@ module Analyzer::Go
         external_fns = ts_function_bodies_for_directory(package_function_bodies, dir)
         callees_by_route = Noir::GoCalleeExtractor.callees_for_routes_if(callees_needed?, content, path, route_rows, external_fns)
 
+        expand_builders = router_builder_expansions(content, BUILDER_TYPE, builder_prefixes_by_dir[dir]?, cross_file_groups)
+        suppress_ranges = expand_builders.map { |_, rb, _| rb.start_row..rb.end_row }
+
         lines = GoEngine.strip_comments(content).lines
         lines.each_with_index do |_line, index|
+          # Expanded router-builder bodies are emitted below with their call-site prefix.
+          next if suppress_ranges.any?(&.includes?(index))
           details = Details.new(PathInfo.new(path, index + 1))
           if ts_hits = routes_by_line[index]?
             ts_hits.each do |route|
@@ -57,6 +67,8 @@ module Analyzer::Go
             end
           end
         end
+
+        expand_router_builders(content, lines, path, expand_builders, callees_by_route, nil) { }
       end
 
       resolve_public_dirs(public_dirs)

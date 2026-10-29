@@ -67,7 +67,7 @@ module Analyzer::Go
       file_contents_cache = Hash(String, String).new
 
       get_files_by_extension(".go").each do |scan_path|
-        next if GoEngine.go_test_file?(base_relative_path(scan_path))
+        next if go_test_path?(scan_path)
         begin
           dir = File.dirname(scan_path)
           package_files[dir] ||= [] of String
@@ -90,7 +90,7 @@ module Analyzer::Go
 
       mutex = Mutex.new
       parallel_analyze(get_files_by_extension(".go")) do |path|
-        next if GoEngine.go_test_file?(base_relative_path(path))
+        next if go_test_path?(path)
         next unless File.exists?(path)
 
         content = file_contents_cache[path]? || read_file_content(path)

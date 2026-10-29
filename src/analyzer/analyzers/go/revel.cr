@@ -23,7 +23,7 @@ module Analyzer::Go
     ACTION_RE = /^func\s*\(\s*\w+\s+\*?(\w+)\s*\)\s*(\w+)\s*\(([^)]*)\)\s*revel\.Result/m
 
     def analyze
-      go_files = get_files_by_extension(".go").reject { |path| GoEngine.go_test_file?(base_relative_path(path)) }
+      go_files = get_files_by_extension(".go").reject { |path| go_test_path?(path) }
 
       get_files_by_basename("routes").each do |routes|
         conf = File.dirname(routes)

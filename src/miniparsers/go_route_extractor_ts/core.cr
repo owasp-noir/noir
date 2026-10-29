@@ -531,19 +531,29 @@ module Noir
     # Returns `{func_name => RouterBuilder}`; only functions with exactly
     # one `*gin.RouterGroup` parameter qualify (an ambiguous count can't be
     # bound to a single prefix). `type_name` is the group type's final
-    # identifier: `RouterGroup` for Gin/Hertz, `Group` for Echo.
+    # identifier: `RouterGroup` for Gin/Hertz, `Group` for Echo. Methods
+    # count too (`func (h *Handler) Register(v1 *echo.Group)`, called as
+    # `h.Register(v1)`), keyed by the method name.
     def collect_router_group_builders(source : String, type_name : String = "RouterGroup") : Hash(String, RouterBuilder)
       result = Hash(String, RouterBuilder).new
+      duplicates = Set(String).new
       Noir::TreeSitter.parse_go(source) do |root|
         Noir::TreeSitter.walk(root) do |node|
-          next unless Noir::TreeSitter.node_type(node) == "function_declaration"
+          next unless {"function_declaration", "method_declaration"}.includes?(Noir::TreeSitter.node_type(node))
           name_node = Noir::TreeSitter.field(node, "name")
           params = Noir::TreeSitter.field(node, "parameters")
           next unless name_node && params
           param = router_group_param_name(params, source, type_name)
           next unless param
-          result[Noir::TreeSitter.node_text(name_node, source)] =
-            RouterBuilder.new(param, Noir::TreeSitter.node_start_row(node), Noir::TreeSitter.node_end_row(node))
+          name = Noir::TreeSitter.node_text(name_node, source)
+          # Two methods sharing a name (`(*UserH).Register`, `(*PostH).Register`)
+          # can't be told apart at a `h.Register(g)` call site: neither expands.
+          if result.has_key?(name) || duplicates.includes?(name)
+            duplicates << name
+            result.delete(name)
+            next
+          end
+          result[name] = RouterBuilder.new(param, Noir::TreeSitter.node_start_row(node), Noir::TreeSitter.node_end_row(node))
         end
       end
       result
@@ -559,7 +569,9 @@ module Noir
         type_node = Noir::TreeSitter.field(decl, "type")
         name_node = Noir::TreeSitter.field(decl, "name")
         next unless type_node && name_node
-        final = Noir::TreeSitter.node_text(type_node, source).lchop('*').split('.').last
+        # Generic arguments are not part of the name:
+        # `*router.RouterGroup[*core.RequestEvent]` is a `RouterGroup`.
+        final = Noir::TreeSitter.node_text(type_node, source).lchop('*').split('[').first.split('.').last
         next unless final == type_name
         count += 1
         found = Noir::TreeSitter.node_text(name_node, source)
@@ -568,12 +580,16 @@ module Noir
     end
 
     # Finds calls to any of the named builder functions and returns
-    # `[{func_name, first_arg_identifier, qualifier}]`. The first argument
-    # names the group passed in (`addUserRoutes(v1)` ->
-    # `{"addUserRoutes", "v1", ""}`), which the caller resolves to a prefix
-    # via the package group map; `qualifier` is the package alias of a
-    # cross-package call (`routes.AddUsers(v1)` -> `"routes"`).
-    # An inline `addX(api.Group("/posts"))` comes back as the composed
+    # `[{func_name, group_arg, qualifier}]`. The group argument names the
+    # group passed in (`addUserRoutes(v1)` -> `{"addUserRoutes", "v1", ""}`),
+    # which the caller resolves to a prefix via the package group map;
+    # `qualifier` is the package alias of a cross-package call
+    # (`routes.AddUsers(v1)` -> `"routes"`) or the receiver of a method call
+    # (`h.Register(v1)` -> `"h"`). The group is the first argument `groups`
+    # knows, so `BindBackupApi(app, api)` reads `api`; with none known it is
+    # the first argument, as before.
+    # An inline `addX(api.Group("/posts"))` (or mux's
+    # `addX(r.PathPrefix("/posts").Subrouter())`) comes back as the composed
     # prefix when `groups` knows `api` (`/api/v1/posts`), else as the literal.
     def collect_router_builder_callsites(source : String, builders : Set(String),
                                          groups : Hash(String, String) = Hash(String, String).new) : Array(Tuple(String, String, String))
@@ -589,34 +605,22 @@ module Noir
           next unless builders.includes?(name)
           args = Noir::TreeSitter.field(node, "arguments")
           next unless args
-          first_arg = nil
-          Noir::TreeSitter.each_named_arg(args) { |a| first_arg ||= a }
-          next unless first_arg
-          arg_text = if Noir::TreeSitter.node_type(first_arg) == "identifier"
-                       Noir::TreeSitter.node_text(first_arg, source)
-                     elsif Noir::TreeSitter.node_type(first_arg) == "call_expression"
-                       # Support inline `addX(router.Group("/v1"))` — treat the
-                       # literal prefix as the "arg" key (resolve will see it
-                       # starts with / and use directly).
-                       gfn = Noir::TreeSitter.field(first_arg, "function")
-                       if gfn && Noir::TreeSitter.node_text(gfn, source).split(".").last == "Group"
-                         gargs = Noir::TreeSitter.field(first_arg, "arguments")
-                         if gargs
-                           lit = nil
-                           Noir::TreeSitter.each_named_child(gargs) do |ga|
-                             if s = string_expr_text(ga, source, {} of String => String)
-                               if s.starts_with?("/")
-                                 lit = s
-                                 break
-                               end
-                             end
-                           end
-                           operand = Noir::TreeSitter.field(gfn, "operand")
-                           parent = operand && groups[Noir::TreeSitter.node_text(operand, source)]?
-                           lit && parent ? group_join(parent, lit) : lit
-                         end
-                       end
-                     end
+          first_text = nil
+          first_seen = false
+          arg_text = nil
+          Noir::TreeSitter.each_named_arg(args) do |arg|
+            text = builder_arg_text(arg, source, groups)
+            unless first_seen
+              first_seen = true
+              first_text = text
+            end
+            if text && (text.starts_with?('/') || groups.has_key?(text))
+              arg_text = text
+              break
+            end
+          end
+          next unless first_seen
+          arg_text ||= first_text
           if arg_text
             calls << {name, arg_text, qualifier}
           else
@@ -630,16 +634,48 @@ module Noir
       calls
     end
 
+    # A router-builder call argument as `collect_router_builder_callsites`
+    # reports it: an identifier's name, or the prefix an inline
+    # `router.Group("/v1")` / `r.PathPrefix("/v1").Subrouter()` builds
+    # (stacked on the receiver's prefix when `groups` knows it).
+    private def builder_arg_text(arg : LibTreeSitter::TSNode, source : String, groups : Hash(String, String)) : String?
+      return Noir::TreeSitter.node_text(arg, source) if Noir::TreeSitter.node_type(arg) == "identifier"
+      return unless Noir::TreeSitter.node_type(arg) == "call_expression"
+      gfn = Noir::TreeSitter.field(arg, "function")
+      return unless gfn && Noir::TreeSitter.node_type(gfn) == "selector_expression"
+      operand = Noir::TreeSitter.field(gfn, "operand")
+      case Noir::TreeSitter.node_text(gfn, source).split(".").last
+      when "Group"
+        gargs = Noir::TreeSitter.field(arg, "arguments")
+        return unless gargs
+        lit = nil
+        Noir::TreeSitter.each_named_child(gargs) do |ga|
+          if (text = string_expr_text(ga, source, {} of String => String)) && text.starts_with?("/")
+            lit = text
+            break
+          end
+        end
+        parent = operand && groups[Noir::TreeSitter.node_text(operand, source)]?
+        lit && parent ? group_join(parent, lit) : lit
+      when "Subrouter"
+        operand.try { |chain| subrouter_chain_prefix(chain, source, groups, {} of String => String) }
+      end
+    end
+
     # Extracts the verb routes registered inside one named function's body,
     # seeding `external_groups` with the function's group parameter bound to
     # a call-site prefix (`{rg => "/v1"}`). This grafts the call-site prefix
     # onto routes a router-builder helper registers on its parameter group
     # (`users := rg.Group("/users"); users.GET("/")` -> `/v1/users/`). Route
     # line numbers stay relative to `source` so code paths remain accurate.
+    # `group_method: "Subrouter", handlefunc_methods: true` reads a mux
+    # helper (`func InitUser(users *mux.Router)`) the way `extract_routes` does.
     def extract_routes_from_function(source : String, func_name : String,
                                      external_groups : Hash(String, String),
                                      handle_method : String? = nil,
-                                     string_seed : Hash(String, String)? = nil) : Array(Route)
+                                     string_seed : Hash(String, String)? = nil,
+                                     group_method : String = "Group",
+                                     handlefunc_methods : Bool = false) : Array(Route)
       routes = [] of Route
       Noir::TreeSitter.parse_go(source) do |root|
         string_values = collect_string_values(root, source, string_seed)
@@ -647,11 +683,21 @@ module Noir
           group_prefixes = external_groups.dup
           Noir::TreeSitter.walk(body) do |node|
             next unless group_assignment_node?(node)
-            collect_group(node, source, group_prefixes, "Group", [] of String, string_values)
+            collect_group(node, source, group_prefixes, group_method, [] of String, string_values)
+          end
+          chained = Set(String).new
+          if handlefunc_methods
+            Noir::TreeSitter.walk(body) do |node|
+              next unless Noir::TreeSitter.node_type(node) == "call_expression" && mux_route_chain_call?(node, source)
+              operand = Noir::TreeSitter.field(node, "function").try { |fn| Noir::TreeSitter.field(fn, "operand") }
+              chained << node_key(operand) if operand && Noir::TreeSitter.node_type(operand) == "call_expression"
+            end
           end
           Noir::TreeSitter.walk(body) do |node|
             next unless Noir::TreeSitter.node_type(node) == "call_expression"
-            if route = decode_verb_call(node, source, group_prefixes, [] of String, "Group", [] of String, string_values)
+            if handlefunc_methods
+              decode_handlefunc_methods_call(node, source, group_prefixes).each { |r| routes << r } unless chained.includes?(node_key(node))
+            elsif route = decode_verb_call(node, source, group_prefixes, [] of String, "Group", [] of String, string_values)
               routes << route
             elsif handle_method && (route = decode_handle_call(node, source, group_prefixes, handle_method))
               routes << route
@@ -663,7 +709,7 @@ module Noir
     end
 
     private def find_function_body_node(node : LibTreeSitter::TSNode, source : String, name : String, &block : LibTreeSitter::TSNode ->)
-      if Noir::TreeSitter.node_type(node) == "function_declaration"
+      if {"function_declaration", "method_declaration"}.includes?(Noir::TreeSitter.node_type(node))
         if (nn = Noir::TreeSitter.field(node, "name")) && Noir::TreeSitter.node_text(nn, source) == name
           if body = Noir::TreeSitter.field(node, "body")
             yield body
@@ -956,6 +1002,8 @@ module Noir
       Bind
       MethodFunc
       HandleAll
+      PathGroup
+      MatchPath
     end
 
     private def node_key(node : LibTreeSitter::TSNode) : String
@@ -1064,7 +1112,8 @@ module Noir
       var_name_node = identifier_or_first_child(left)
       rhs_node = Noir::TreeSitter.first_named_child(right)
       return unless var_name_node && rhs_node
-      return unless Noir::TreeSitter.node_type(var_name_node) == "identifier"
+      # `api.BaseRoutes.Users = ...Subrouter()` binds a field path the same way.
+      return unless var_name = receiver_key(var_name_node, source)
       return unless Noir::TreeSitter.node_type(rhs_node) == "call_expression"
 
       function = Noir::TreeSitter.field(rhs_node, "function")
@@ -1100,7 +1149,6 @@ module Noir
       if group_aliases.includes?(method_name) && Noir::TreeSitter.node_type(parent_node) == "identifier"
         parent_name = Noir::TreeSitter.node_text(parent_node, source)
         if parent_prefix = groups[parent_name]?
-          var_name = Noir::TreeSitter.node_text(var_name_node, source)
           groups[var_name] ||= parent_prefix
         end
         return
@@ -1116,44 +1164,9 @@ module Noir
       # takes the prefix as its own argument, which falls through to the
       # default path-extraction branch below.
       if group_method == "Subrouter" && Noir::TreeSitter.node_type(parent_node) == "call_expression"
-        # Walk the whole route-builder chain under `.Subrouter()`:
-        # matchers (`.Methods("GET")`, `.Host(...)`) may sit on either side
-        # of `.PathPrefix(...)`, so `r.PathPrefix("/d").Methods("GET")` and
-        # `r.Host("h").PathPrefix("/d")` both scope the subrouter to `/d`.
-        segments = [] of String
-        current = parent_node
-        while Noir::TreeSitter.node_type(current) == "call_expression"
-          inner_function = Noir::TreeSitter.field(current, "function")
-          # A plain call (`newRouter()`) is the chain root.
-          break unless inner_function && Noir::TreeSitter.node_type(inner_function) == "selector_expression"
-          inner_field = Noir::TreeSitter.field(inner_function, "field")
-          inner_operand = Noir::TreeSitter.field(inner_function, "operand")
-          break unless inner_field && inner_operand
-          case Noir::TreeSitter.node_text(inner_field, source)
-          when "PathPrefix", "Path"
-            inner_args = Noir::TreeSitter.field(current, "arguments")
-            return unless inner_args
-            segment = nil
-            Noir::TreeSitter.each_named_child(inner_args) do |arg|
-              segment = string_expr_text(arg, source, string_values)
-              break if segment
-            end
-            return unless segment
-            segments.unshift(segment)
-          when "Methods", "Host", "Schemes", "Headers", "HeadersRegexp", "Queries", "MatcherFunc", "Name", "NewRoute"
-            # Matcher only; no path segment.
-          else
-            break # chain root, e.g. `mux.NewRouter()`
-          end
-          current = inner_operand
+        if prefix = subrouter_chain_prefix(parent_node, source, groups, string_values)
+          groups[var_name] = prefix
         end
-
-        parent_prefix = if Noir::TreeSitter.node_type(current) == "identifier"
-                          groups[Noir::TreeSitter.node_text(current, source)]?
-                        end
-        return if segments.empty? && parent_prefix.nil?
-        groups[Noir::TreeSitter.node_text(var_name_node, source)] =
-          segments.reduce(parent_prefix) { |acc, seg| acc ? group_join(acc, seg) : seg }.as(String)
         return
       end
 
@@ -1169,15 +1182,54 @@ module Noir
       return unless prefix
 
       # Stack onto parent group's prefix when it's known.
-      if Noir::TreeSitter.node_type(parent_node) == "identifier"
-        parent_name = Noir::TreeSitter.node_text(parent_node, source)
-        if parent_prefix = groups[parent_name]?
-          prefix = group_join(parent_prefix, prefix)
-        end
+      if (parent_name = receiver_key(parent_node, source)) && (parent_prefix = groups[parent_name]?)
+        prefix = group_join(parent_prefix, prefix)
       end
 
-      var_name = Noir::TreeSitter.node_text(var_name_node, source)
       groups[var_name] = prefix
+    end
+
+    # The prefix a mux `<chain>.Subrouter()` is scoped to, from the
+    # route-builder chain under it (`chain` is the `.Subrouter` operand):
+    # matchers (`.Methods("GET")`, `.Host(...)`) may sit on either side of
+    # `.PathPrefix(...)`, so `r.PathPrefix("/d").Methods("GET")` and
+    # `r.Host("h").PathPrefix("/d")` both scope the subrouter to `/d`.
+    # Stacks onto the chain root's own prefix when `groups` knows it.
+    private def subrouter_chain_prefix(chain : LibTreeSitter::TSNode,
+                                       source : String,
+                                       groups : Hash(String, String),
+                                       string_values : Hash(String, String)) : String?
+      segments = [] of String
+      current = chain
+      while Noir::TreeSitter.node_type(current) == "call_expression"
+        inner_function = Noir::TreeSitter.field(current, "function")
+        # A plain call (`newRouter()`) is the chain root.
+        break unless inner_function && Noir::TreeSitter.node_type(inner_function) == "selector_expression"
+        inner_field = Noir::TreeSitter.field(inner_function, "field")
+        inner_operand = Noir::TreeSitter.field(inner_function, "operand")
+        break unless inner_field && inner_operand
+        case Noir::TreeSitter.node_text(inner_field, source)
+        when "PathPrefix", "Path"
+          inner_args = Noir::TreeSitter.field(current, "arguments")
+          return unless inner_args
+          segment = nil
+          Noir::TreeSitter.each_named_child(inner_args) do |arg|
+            segment = string_expr_text(arg, source, string_values)
+            break if segment
+          end
+          return unless segment
+          segments.unshift(segment)
+        when "Methods", "Host", "Schemes", "Headers", "HeadersRegexp", "Queries", "MatcherFunc", "Name", "NewRoute"
+          # Matcher only; no path segment.
+        else
+          break # chain root, e.g. `mux.NewRouter()`
+        end
+        current = inner_operand
+      end
+
+      parent_prefix = receiver_key(current, source).try { |key| groups[key]? }
+      return if segments.empty? && parent_prefix.nil?
+      segments.reduce(parent_prefix) { |acc, seg| acc ? group_join(acc, seg) : seg }
     end
 
     # Decode `<router>.<VERB>("/path", <handler>...)`.
@@ -1738,14 +1790,12 @@ module Noir
 
         operand = Noir::TreeSitter.field(fn, "operand")
         return empty unless operand
-        case Noir::TreeSitter.node_type(operand)
-        when "identifier"
-          router_name = Noir::TreeSitter.node_text(operand, source)
-          break
-        when "call_expression"
+        if Noir::TreeSitter.node_type(operand) == "call_expression"
           current = operand
         else
-          return empty
+          # `r.HandleFunc(...)` or a struct-field router `api.BaseRoutes.Users.Handle(...)`.
+          router_name = receiver_key(operand, source) || return empty
+          break
         end
       end
 
@@ -1754,7 +1804,7 @@ module Noir
       return empty if handler_text.empty?
       verbs << (saw_methods ? "GET" : "ANY") if verbs.empty?
 
-      return [] of Route if NON_ROUTER_OPERANDS.includes?(router_name)
+      return [] of Route if NON_ROUTER_OPERANDS.includes?(router_name.rpartition('.').last)
       resolved = if prefix = groups[router_name]?
                    group_join(prefix, raw_path)
                  else
@@ -1784,6 +1834,19 @@ module Noir
         deduped << route
       end
       deduped
+    end
+
+    # The group-map key for a receiver: an identifier (`users`) or a
+    # field path made only of identifiers (`api.BaseRoutes.Users`, the
+    # struct-field subrouters mattermost registers on). Nil for anything
+    # computed (`s.Router()`, `routes[i]`).
+    private def receiver_key(node : LibTreeSitter::TSNode, source : String) : String?
+      current = node
+      while Noir::TreeSitter.node_type(current) == "selector_expression"
+        current = Noir::TreeSitter.field(current, "operand") || return
+      end
+      return unless Noir::TreeSitter.node_type(current) == "identifier"
+      Noir::TreeSitter.node_text(node, source)
     end
 
     # Return the first named child of `node`, or nil if there isn't one.
@@ -1965,14 +2028,19 @@ module Noir
     # literals (`"foo"`) expose an `interpreted_string_literal_content`
     # named child; raw literals (`` `foo` ``) keep their contents as the
     # whole node text minus the backticks. We concatenate content children
-    # for interpreted literals and strip backticks for raw literals.
+    # for interpreted literals (decoding their `escape_sequence` children,
+    # so `"[\\_\\-]"` is the `[\_\-]` Go builds) and strip backticks for
+    # raw literals.
     private def decode_string_literal(node : LibTreeSitter::TSNode, source : String) : String
       case Noir::TreeSitter.node_type(node)
       when "interpreted_string_literal"
         buf = String.build do |io|
           Noir::TreeSitter.each_named_child(node) do |child|
-            if Noir::TreeSitter.node_type(child) == "interpreted_string_literal_content"
+            case Noir::TreeSitter.node_type(child)
+            when "interpreted_string_literal_content"
               io << Noir::TreeSitter.node_text(child, source)
+            when "escape_sequence"
+              decode_escape(Noir::TreeSitter.node_text(child, source), io)
             end
           end
         end
@@ -1982,6 +2050,28 @@ module Noir
         text.starts_with?('`') && text.ends_with?('`') ? text[1..-2] : text
       else
         ""
+      end
+    end
+
+    GO_SIMPLE_ESCAPES = {'n' => "\n", 't' => "\t", 'r' => "\r", 'a' => "\a", 'b' => "\b", 'f' => "\f", 'v' => "\v"}
+
+    # Writes what one Go escape sequence (`\\`, `\"`, `\n`, `\x41`, `\u00e9`)
+    # stands for to `io`. `\xNN` and octal escapes are single bytes, as in Go
+    # (`"\xc3\xa9"` is `é`); `\u`/`\U` are code points.
+    private def decode_escape(text : String, io : IO)
+      kind = text[1]?
+      if kind.nil?
+        io << text
+      elsif simple = GO_SIMPLE_ESCAPES[kind]?
+        io << simple
+      elsif kind == 'x' || kind.ascii_number?
+        byte = kind == 'x' ? text[2..].to_u8?(16) : text[1..].to_u8?(8)
+        byte ? io.write_byte(byte) : (io << text)
+      elsif kind == 'u' || kind == 'U'
+        code = text[2..].to_i?(16)
+        code && code <= 0x10FFFF && !(0xD800..0xDFFF).includes?(code) ? (io << code.chr) : (io << text)
+      else
+        io << text[1..] # `\\`, `\"`, `\'`
       end
     end
 

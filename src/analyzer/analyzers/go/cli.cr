@@ -158,7 +158,7 @@ module Analyzer::Go
       endpoints = {} of String => Endpoint
 
       get_files_by_extension(".go").each do |path|
-        next if GoEngine.go_test_file?(base_relative_path(path))
+        next if go_test_path?(path)
         next unless File.exists?(path)
 
         begin
