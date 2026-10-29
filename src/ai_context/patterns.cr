@@ -155,10 +155,7 @@ module NoirAIContext
         /\bmark_safe\s*\(/,
         /\|\s*safe\b/,
         /\.html_safe\b/,
-        # `express.raw` / `bodyParser.raw` parse a request body and
-        # `DB::raw` is SQL. Other receivers stay: `Phoenix.HTML.raw` and
-        # Rails `helpers.raw` are the unescaped-output helper.
-        /(?<!\bexpress\.|\bbodyParser\.|::)\braw\s*\(/i,
+        /\braw\s*\(/i,
         /\bbypassSecurityTrust(Html|Script|Style|Url|ResourceUrl)\b/,
       ]
     ),
