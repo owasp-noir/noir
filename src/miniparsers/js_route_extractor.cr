@@ -401,6 +401,11 @@ module Noir
                             end
                           end
 
+          # A middleware-only `.all` (`router.all(['/apps', '/apps/*'], requireStaff)`)
+          # serves nothing. Expanding it mints seven routes per path, and those
+          # rows are the only place the guard used to be visible.
+          next if normalized_method == "ALL" && handler.nil?
+
           # Handle router.all by expanding to all HTTP methods
           prefixes.each do |prefix|
             path_with_prefix = prefix.empty? ? pattern.path : URLPath.join(prefix, pattern.path)
