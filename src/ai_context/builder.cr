@@ -298,6 +298,50 @@ module NoirAIContext
     # same word in regex.
     MUTATING_CALLEE_PATTERN = /\b(create|destroy|delete|update|save|insert|remove|drop|truncate|persist|flush|commit|rollback|set_)\w*/i
 
+    # Receivers whose mutating-named methods touch only a local value: a
+    # URL or search-param bag (`params.delete`, `redirSearchParams.delete`),
+    # headers, a bare Map/Set, a hash module, and a hash/HMAC built by a
+    # call (`crypto.createHash().update()`, `hashlib.sha256().update`).
+    # Case-sensitive: `Url.create` and `Digest.create` are model classes.
+    PURE_CALLEE_RECEIVER  = /\A(?:crypto|hashlib|hmac|hash|hasher|digest|\w*SearchParams|searchParams|params|urlParams|queryParams|headers|url|map|set)\z/
+    CRYPTO_FACTORY_CALLEE = /\A(?:create(?:Hash|Hmac|Cipheriv|Decipheriv|Sign|Verify)|md5|sha\d*)\z/
+    MUTATING_VERB_SEGMENT = /\A(?:create|destroy|delete|update|save|insert|remove|drop|truncate|persist|flush|commit|rollback|set_)/i
+    # ponytail: name-only guess for receiverless text helpers
+    # (`remove_links`, `remove_playground_links`); resolve the callee's
+    # definition if more of these turn up.
+    PURE_TEXT_HELPER_CALLEE = /\Aremove_?\w*?(?:links|html|markup|whitespace|spaces|newlines|accents|diacritics|emojis?|punctuation|chars|characters|ansi|prefix|suffix|quotes|markdown|formatting|trailing_?slash(?:es)?|slashes|extension|indent(?:ation)?)\z/i
+
+    # A callee changes state when one of its chain segments is a mutating
+    # verb whose immediate receiver is not a known pure value. Judging the
+    # segment with its receiver keeps `crypto.createHash().update().digest`
+    # and `params.delete('debug')` out while `User.destroy`,
+    # `db.session.commit` and `doc.set().save` stay in.
+    def self.mutating_callee?(name : String) : Bool
+      return false unless name.matches?(MUTATING_CALLEE_PATTERN)
+      # Empty call arguments first: in `User.find(req.params.id).destroy`
+      # the `params` is an argument, not the receiver of `destroy`.
+      bare = name
+      loop do
+        stripped = bare.gsub(/\([^()]+\)/, "()")
+        break if stripped == bare
+        bare = stripped
+      end
+      # `/` splits Clojure's `user.service/create!`.
+      segments = bare.split(/\.|->|::|\//).map(&.strip.lstrip("$&*"))
+      segments.each_with_index.any? do |segment, idx|
+        verb = segment.rchop("()")
+        next false unless verb.matches?(MUTATING_VERB_SEGMENT)
+        next false if verb.matches?(CRYPTO_FACTORY_CALLEE)
+        next !verb.matches?(PURE_TEXT_HELPER_CALLEE) if idx == 0
+        receiver = segments[idx - 1]
+        if call = receiver.rchop?("()")
+          !call.matches?(CRYPTO_FACTORY_CALLEE)
+        else
+          !receiver.matches?(PURE_CALLEE_RECEIVER)
+        end
+      end
+    end
+
     # Suppression for unsafe_method: route handlers that branch on
     # `request.method` (Flask / Django) or `req.method` (Express,
     # Node, Go's r.Method, Java's request.getMethod()) typically
@@ -314,7 +358,7 @@ module NoirAIContext
       return unless SAFE_METHODS.includes?(endpoint.method.upcase)
       return if context.signals.any? { |s| s.kind == "unsafe_method" }
 
-      mutating = endpoint.callees.find(&.name.matches?(MUTATING_CALLEE_PATTERN))
+      mutating = endpoint.callees.find { |callee| Builder.mutating_callee?(callee.name) }
       return unless mutating
 
       # If the handler dispatches on HTTP method internally, we
@@ -682,7 +726,7 @@ module NoirAIContext
       return unless state_changing_endpoint?(endpoint)
       return unless endpoint.params.any? { |p| p.param_type == "path" && identifier_like?(p.name) }
 
-      mutating = endpoint.callees.find(&.name.matches?(MUTATING_CALLEE_PATTERN))
+      mutating = endpoint.callees.find { |callee| Builder.mutating_callee?(callee.name) }
       return unless mutating
 
       context.push_signal(AIContextEntry.new(

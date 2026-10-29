@@ -3177,6 +3177,62 @@ describe "NoirAIContext" do
     context.signals.map(&.kind).should_not contain("unsafe_method")
   end
 
+  it "does NOT emit unsafe_method for pure calls that only share a mutating verb name (#3311)" do
+    [
+      "crypto.createHash().update().digest",
+      "remove_links",
+      "remove_playground_links",
+      "params.delete",
+      "redirSearchParams.delete",
+      "url.searchParams.delete",
+      "hashlib.sha256().update",
+      "headers.delete",
+    ].each do |name|
+      endpoint = Endpoint.new("/etag", "GET")
+      endpoint.push_callee(Callee.new(name, "index.js", 5))
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+      context.signals.map(&.kind).should_not contain("unsafe_method"), "#{name} raised unsafe_method"
+    end
+  end
+
+  it "keeps unsafe_method for mutating calls next to pure-looking text" do
+    [
+      "User.destroy",
+      "db.session.commit",
+      "db.users.deleteOne",
+      "User.find(req.params.id).destroy",
+      "queryset.delete",
+      "$this->repo->save",
+      "removeUser",
+      "createOrder",
+      "user.service/create!",
+      "Url.create",
+      "Digest.create",
+      "doc.set().save",
+    ].each do |name|
+      endpoint = Endpoint.new("/users/:id", "GET")
+      endpoint.push_callee(Callee.new(name, "app.js", 5))
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+      context.signals.map(&.kind).should contain("unsafe_method"), "#{name} lost unsafe_method"
+    end
+  end
+
+  it "judges object_write callees with the same receiver check as unsafe_method" do
+    pure = Endpoint.new("/posts/:id", "PUT")
+    pure.push_param(Param.new("id", "", "path"))
+    pure.push_callee(Callee.new("params.delete", "app.js", 5))
+    pure_context = NoirAIContext.apply([pure])[0].ai_context
+    (pure_context.try(&.signals.map(&.kind)) || [] of String).should_not contain("object_write")
+
+    real = Endpoint.new("/posts/:id", "PUT")
+    real.push_param(Param.new("id", "", "path"))
+    real.push_callee(Callee.new("Post.update", "app.js", 5))
+    real_context = NoirAIContext.apply([real])[0].ai_context.should_not be_nil
+    real_context.signals.map(&.kind).should contain("object_write")
+  end
+
   it "emits log_injection when handler logs request-controlled input" do
     source = <<-CODE
       app.post('/feedback', (req, res) => {
