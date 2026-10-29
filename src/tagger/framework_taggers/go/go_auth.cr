@@ -1264,6 +1264,7 @@ class GoAuthTagger < FrameworkTagger
       route_middleware_args(lines, line_idx, endpoint.method).each do |arg|
         guard_by_definition(arg, path_info.path).try { |guard| endpoint.add_tag(guard) }
       end
+      router_wrap_guards(path_info.path, lines, line_idx, endpoint).each { |guard| endpoint.add_tag(guard) }
 
       case endpoint.details.technology
       when "go_pocketbase"
@@ -1296,6 +1297,39 @@ class GoAuthTagger < FrameworkTagger
     # Phase 3: Check group-level middleware scope
     check_middleware_scopes(endpoint).try { |tag| endpoint.add_tag(tag) }
     @server_scopes.each { |scope| endpoint.add_tag(scope[:tag]) if served_by?(endpoint, scope[:owner]) }
+  end
+
+  # The registrars of a router that takes a bare handler (gorilla's
+  # `r.Handle("/x", auth(h)).Methods("GET")`).
+  HANDLE_CALLS = %w[Handle HandleFunc]
+
+  # A guard can wrap a router's handler instead of sitting beside it
+  # (`admin.GET("/users", withAdminAuth(func(c echo.Context, u User) error
+  # {...}))`, `r.Get("/x", requireAuth(h))`, or a local bound to the wrapped
+  # handler): each wrapper of a route argument after the path is judged as a
+  # net/http wrapper is (see `net_http_guard`), by its definition only, so a
+  # handler factory whose name reads as a guard (`auth.Login(svc)`) is not
+  # one and a conversion (`echo.WrapHandler(h)`) is not read at all.
+  private def router_wrap_guards(file : String, lines : Array(String), idx : Int32, endpoint : Endpoint) : Array(Tag)
+    tags = [] of Tag
+    statements = function_statements(file, lines, idx)
+    index = statements.try &.index { |stmt| stmt.row == idx }
+    # A route inside a closure group is not a statement of its function:
+    # read the route alone, without the locals around it.
+    text = statements && index ? statements[index].text : statement_text(lines, idx + 1)
+    statements = [] of NetHttpStatement if statements.nil? || index.nil?
+    call = text.scan(ROUTE_CALL).find do |match|
+      match[1].upcase == endpoint.method || MULTI_VERB_CALLS.includes?(match[1]) || HANDLE_CALLS.includes?(match[1])
+    end
+    return tags unless call
+    args = call_args(text[call.end..])
+    args = args[(args.index(&.starts_with?('"')) || 0)..].skip_while(&.starts_with?('"'))
+    args.each do |arg|
+      handler_wraps(arg.strip, statements, index || 0, lines, 0).uniq.each do |(head, conditional)|
+        net_http_guard(head, file, statements, endpoint.url, endpoint.method, conditional, by_name: false).try { |tag| tags << tag }
+      end
+    end
+    tags
   end
 
   # --- go-zero / GoFrame ---------------------------------------------------
@@ -1481,9 +1515,11 @@ class GoAuthTagger < FrameworkTagger
       break if text.starts_with?("func")
       m = text.match(LEADING_CALL) || break
       open = m.end - 1
-      close = closing_paren(text, open) || break
+      # A statement cut short (a closure handler over the lines read) has no
+      # closing paren: what is left is still the call's last argument.
+      close = closing_paren(text, open)
       head = m[1].gsub(/\s+/, "")
-      if close == text.size - 1
+      if close.nil? || close == text.size - 1
         heads << head
         text = call_args(text[open + 1..]).last?.try(&.strip) || break
       elsif text[close + 1..].lstrip.starts_with?('(') && (second = text.index('(', close + 1)) && closing_paren(text, second) == text.size - 1
@@ -1725,10 +1761,11 @@ class GoAuthTagger < FrameworkTagger
   # wrapper whose definition is not found falls back to `guard_by_definition`
   # (a library middleware is read by name).
   private def net_http_guard(head : String, file : String, statements : Array(NetHttpStatement), route_path : String,
-                             route_method : String, conditional : Bool) : Tag?
+                             route_method : String, conditional : Bool, by_name : Bool = true) : Tag?
     qualifier, _, name = head.rpartition('.')
     bodies = net_http_bodies(qualifier, name, file, statements)
     if bodies.nil? || bodies.empty?
+      return unless by_name
       tag = guard_by_definition("#{head}(", file, authish_name: true) || return
       return conditional ? Tag.new(tag.name, "#{tag.description} (applied only when a setting can lift it: inside a conditional block)", tag.tagger) : tag
     end
@@ -1756,10 +1793,15 @@ class GoAuthTagger < FrameworkTagger
   # next)`). A route registrar takes a mux; a handler factory takes none.
   private def middleware_definition?(body : Noir::GoCalleeExtractor::FunctionBody) : Bool
     source = Noir::CComments.strip(body.source, quotes: %("'`))
-    source.scan(HANDLER_PARAM).any? do |m|
-      source.scan(/(?<![\w.])#{Regex.escape(m[1])}(?!\w)/).size >= 2
+    head = source[0, source.index('{') || source.size]
+    (source.scan(HANDLER_PARAM).map(&.[1]) + head.scan(FUNC_PARAM).map(&.[1])).any? do |param|
+      source.scan(/(?<![\w.])#{Regex.escape(param)}(?!\w)/).size >= 2
     end
   end
+
+  # A parameter typed as a function (`next func(echo.Context, User) error`):
+  # a handler of the router's own shape, read in a function's head.
+  FUNC_PARAM = /[(,]\s*(\w+)\s+func\s*\(/
 
   # `if <cond> {` then `return next` and `}`.
   HANDS_ON_UNCHECKED = /^\s*if\s+([^{\n]+?)\s*\{[ \t]*(?:\/\/[^\n]*)?\n\s*return\s+(\w+)\s*(?:\/\/[^\n]*)?\n\s*\}/m
