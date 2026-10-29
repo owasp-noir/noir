@@ -1,4 +1,5 @@
 require "../../engines/php_engine"
+require "./symfony_route_attributes"
 
 module Analyzer::Php
   # Drupal 8+ attack-surface extractor.
@@ -18,21 +19,71 @@ module Analyzer::Php
   #
   # We parse only `*.routing.yml` files — a Drupal tree carries many
   # other YAML files (`*.info.yml`, `*.services.yml`, `*.libraries.yml`,
-  # `*.schema.yml`) that must never be treated as routes.
+  # `*.schema.yml`) that must never be treated as routes. Drupal 10.? and
+  # later also take Symfony's `#[Route(...)]` attribute on controller
+  # methods, read from `.php` files.
+  #
+  # A route's `requirements` are its access checks: `_permission`, `_role`,
+  # `_entity_access` and the like are authorization, `_user_is_logged_in:
+  # 'TRUE'` authentication. `_access: 'TRUE'` lets anyone in.
   class Drupal < PhpEngine
     analyzer_for "php_drupal"
 
-    # Drupal routing lives in YAML, not PHP; scan those files instead of
-    # the engine's default `.php`-only set.
+    include SymfonyRouteAttributes
+
+    TAGGER = "drupal_analyzer"
+
+    # Requirement keys that check the request, not who makes it.
+    NON_ACCESS_REQUIREMENTS = Set{"_access", "_format", "_content_type_format", "_method", "_module_dependencies",
+                                  "_csrf_token", "_csrf_request_header_token", "_user_is_logged_in"}
+
+    # Drupal routing lives in YAML; `#[Route]` controllers are `.php`.
     protected def php_source_files : Array(String)
-      get_files_by_extension(".yml") + get_files_by_extension(".yaml")
+      get_files_by_extension(".yml") + get_files_by_extension(".yaml") + get_files_by_extension(".php")
     end
 
     def analyze_file(path : String) : Array(Endpoint)
-      endpoints = [] of Endpoint
-      return endpoints unless path.ends_with?(".routing.yml") || path.ends_with?(".routing.yaml")
+      return analyze_routing_file(path) if path.ends_with?(".routing.yml") || path.ends_with?(".routing.yaml")
+      return analyze_route_attributes(path) if path.ends_with?(".php")
+      [] of Endpoint
+    end
 
-      analyze_routing_file(path)
+    # Controller methods carrying `#[Route(path: ..., methods: ..., requirements: [...])]`.
+    # ponytail: a class-level `#[Route]` prefix is not applied.
+    private def analyze_route_attributes(path : String) : Array(Endpoint)
+      endpoints = [] of Endpoint
+      content = read_file_content(path)
+      return endpoints unless content.includes?("#[Route")
+      lexer = Noir::PhpLexer.new(content)
+      content = lexer.without_comments
+      route_attributes(content, lexer).each do |attr|
+        next unless content[attr.start, 2] == "#["
+        next unless route_path = extract_symfony_route_path(attr.args).presence
+        methods = extract_methods_from_symfony_context(attr.args)
+        methods = ["GET"] if methods.empty?
+        requirements = {} of String => String
+        if expr = attribute_args(attr.args)[0]["requirements"]?
+          expr.scan(/['"](\w+)['"]\s*=>\s*(?:'([^']*)'|"([^"]*)")/) { |m| requirements[m[1]] = m[2]? || m[3] }
+        end
+        details = Details.new(PathInfo.new(path, line_number_for_index(content, attr.start)))
+        methods.each do |method|
+          endpoint = Endpoint.new(route_path, method.upcase, extract_route_params(route_path), details.dup)
+          tag_requirements(endpoint, requirements)
+          endpoints << endpoint
+        end
+      end
+      endpoints
+    end
+
+    # Tags the guard each access check in `requirements` imposes.
+    private def tag_requirements(endpoint : Endpoint, requirements : Hash(String, String))
+      if requirements["_user_is_logged_in"]?.try(&.strip.upcase) == "TRUE"
+        endpoint.add_tag(Tag.new("auth", "Protected by Drupal _user_is_logged_in", TAGGER))
+      end
+      requirements.each do |key, value|
+        next if !key.starts_with?('_') || NON_ACCESS_REQUIREMENTS.includes?(key)
+        endpoint.add_tag(Tag.new("authz", "Protected by Drupal #{key} (#{value})", TAGGER))
+      end
     end
 
     private def analyze_routing_file(path : String) : Array(Endpoint)
@@ -60,9 +111,15 @@ module Analyzer::Php
           methods = ["GET"] if methods.empty?
 
           params = extract_route_params(route_path)
+          requirements = {} of String => String
+          route_h[YAML::Any.new("requirements")]?.try(&.as_h?).try &.each do |key, value|
+            requirements[key.to_s] = value.raw.to_s if key.as_s?
+          end
 
           methods.each do |method|
-            endpoints << Endpoint.new(route_path, method.upcase, params.dup, details.dup)
+            endpoint = Endpoint.new(route_path, method.upcase, params.dup, details.dup)
+            tag_requirements(endpoint, requirements)
+            endpoints << endpoint
           end
         end
       rescue e

@@ -1,0 +1,20 @@
+demo.admin:
+  path: '/admin/demo'
+  defaults:
+    _form: '\Drupal\demo\Form\DemoSettingsForm'
+  requirements:
+    _permission: 'administer site configuration'
+
+demo.mine:
+  path: '/demo/mine'
+  defaults:
+    _controller: '\Drupal\demo\Controller\DemoController::mine'
+  requirements:
+    _user_is_logged_in: 'TRUE'
+
+demo.open:
+  path: '/demo/open'
+  defaults:
+    _controller: '\Drupal\demo\Controller\DemoController::open'
+  requirements:
+    _access: 'TRUE'
