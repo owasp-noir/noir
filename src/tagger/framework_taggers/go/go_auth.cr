@@ -709,7 +709,7 @@ class GoAuthTagger < FrameworkTagger
       @bodies.functions_for(dir)[name]?.try { |body| bodies << body }
     else
       @bodies.methods_for(dir)[name]?.try { |list| bodies.concat(list) }
-      @dirs_by_base[qualifier]?.try &.each do |pkg|
+      package_dirs(qualifier, file).each do |pkg|
         @bodies.functions_for(pkg)[name]?.try { |body| bodies << body }
       end
       if bodies.empty? && !file_imports(file).includes?(qualifier)
@@ -808,7 +808,20 @@ class GoAuthTagger < FrameworkTagger
     imports = file_imports(body.file_path)
     package = follow ? @bodies.functions_for(File.dirname(body.file_path)) : nil
     receiver = hops > 0 ? source.match(METHOD_RECEIVER_NAME) : nil
-    passers = source.scan(HANDLER_PARAM).map(&.[1]).to_set
+    passers = handler_params(body)
+    # A refusal after the request reached the wrapped handler maps the
+    # handler's own error (`err := next(c); if err == ErrUnauthorized {
+    # 401 }`), and one in a deferred closure runs after it too. Only a call
+    # at the top statement level of a closure (or of a loop in it, a retry)
+    # hands the request on: one in any other block (`if public { return
+    # next(c) }`, a `switch` case) is an early skip that leaves the check
+    # after it. `blocks` holds, per open block, its kind (see `block_kind`).
+    pass_call = passers.empty? ? nil : /(?<![\w.])(?:#{passers.join('|') { |name| Regex.escape(name) }})\s*(?:\.\s*ServeHTTP\s*)?\(/
+    blocks = [] of Char
+    handed = false
+    # Per block depth, the condition of the `if` arm open there, as read and
+    # as written (not the negations it inherits from the arms before it).
+    own = Hash(Int32, {String, String}).new
     # Each open condition, as read (strings blanked) and as written.
     frames = [] of {Int32, Array(String), Array(String)}
     # Per depth, the negations of the arms of the `if` chain open there.
@@ -820,6 +833,7 @@ class GoAuthTagger < FrameworkTagger
     lines.each_with_index do |raw, idx|
       line = raw.gsub(STRING_LITERAL, %("")).strip
       branched ||= line.matches?(BRANCH_LINE)
+      handed ||= unconditional?(blocks) && !!pass_call.try { |call| line.matches?(call) }
       if net_http && (read = raw.strip.match(CREDENTIAL_READ)) && CREDENTIAL_KEYS.includes?(read[2].downcase.delete("-_"))
         credentials << read[1]
       end
@@ -842,8 +856,16 @@ class GoAuthTagger < FrameworkTagger
         prior = chains[depth]? || {[] of String, [] of String}
         frames << {depth + opened, prior[0], prior[1]}
       end
+      before = depth
       depth += opened
       pop_closed(frames, depth)
+      blocks = blocks.first(Math.max(depth, 0))
+      blocks.concat([block_kind(line)] * (depth - blocks.size)) if blocks.size < depth
+      own.reject! { |level, _| level > depth || level > before }
+      if (own_if = line.match(IF_OPEN)) && opened > 0
+        own[depth] = {own_if[1], raw.strip.match(IF_OPEN).try(&.[1]) || own_if[1]}
+      end
+      next if handed || blocks.includes?('d')
 
       conditions = frames.flat_map(&.[1])
       written_conditions = frames.flat_map(&.[2])
@@ -854,7 +876,13 @@ class GoAuthTagger < FrameworkTagger
                # A test of the route's path or method says nothing about what
                # the caller may do.
                tests = route_path && conditions.size == written_conditions.size ? conditions.each_with_index.reject { |(_, i)| !request_test(written_conditions[i], body, route_path, route_method).nil? }.map(&.[0]).to_a : conditions
-               tests.any?(&.matches?(AUTHZ_CONDITION)) ? Guard::Authz : Guard::Authn
+               # A refusal under a CSRF token test protects a form, not an
+               # account.
+               if csrf_only?(own[depth]?)
+                 Guard::None
+               else
+                 tests.any?(&.matches?(AUTHZ_CONDITION)) ? Guard::Authz : Guard::Authn
+               end
              elsif receiver && (stmt = line.match(RECEIVER_STATEMENT)) && stmt[1] == receiver[1]
                receiver_method(body, receiver[2], stmt[2]).max_of? { |method| body_verdict(method, nil, follow, hops - 1, route_path, route_method: route_method) } || Guard::None
              elsif (absent = line.match(IF_OPEN)) && (test = absent[1].match(ABSENCE_TEST)) &&
@@ -876,6 +904,57 @@ class GoAuthTagger < FrameworkTagger
     end
     @helper_verdicts[key] = verdict if fields.nil?
     verdict
+  end
+
+  # A test of a CSRF token: a call named for it (`!csrfOK(r)`) or a read of
+  # a request key named for it (`Header.Get("X-CSRF-Token")`).
+  CSRF_TEST = /csrf|xsrf/i
+  CSRF_KEY  = /\.\s*(?:Get|GetHeader|FormValue|PostFormValue|PostForm|Query|QueryParam|Cookie)\s*\(\s*"[^"]*(?:csrf|xsrf)[^"]*"\s*\)/i
+
+  # A test of the caller's credential or session, as written.
+  CREDENTIAL_TEST = /cookie|session|\bsess\b|auth|bearer|jwt|user|login|token/i
+
+  # Whether an `if` condition (as read, as written) is nothing but CSRF
+  # token tests, joined by `||`: a refusal under it protects a form, not an
+  # account. A session test beside it (`sess == nil || !csrfOK(r)`), or
+  # joined to it by `&&` (`cookie == "" && !csrfExempt(r)`), keeps the
+  # refusal a guard.
+  private def csrf_only?(condition : {String, String}?) : Bool
+    return false unless condition
+    read = condition[0].split("||").map(&.strip)
+    written = condition[1].split("||").map(&.strip)
+    return false if read.empty?
+    read.each_with_index.all? do |(part, i)|
+      shown = read.size == written.size ? written[i] : part
+      next false unless part.matches?(CSRF_TEST) || shown.matches?(CSRF_KEY)
+      shown.split("&&").none? { |test| !test.matches?(CSRF_TEST) && test.matches?(CREDENTIAL_TEST) }
+    end
+  end
+
+  # A line's opening brace starts a deferred closure (`d`), a closure or a
+  # function (`f`), a loop (`l`), or another block (`c`: an `if` / `else`
+  # arm, a `switch`, a `select`, an `if` whose condition began on the line
+  # above).
+  private def block_kind(line : String) : Char
+    if line.matches?(/\Adefer\s+func\b/)
+      'd'
+    elsif line.matches?(/\bfunc\b/) && !line.matches?(/\A(?:\}\s*)?(?:else\s+)?(?:if|switch|for)\b/)
+      'f'
+    elsif line.matches?(/\Afor\b/)
+      'l'
+    else
+      'c'
+    end
+  end
+
+  # Whether a statement in the blocks `blocks` runs on every request: each
+  # block down to it is a function, a closure or a loop, so a hand-on in a
+  # closure inside a skip arm (`if public { run(func() { next(w, r) }) }`)
+  # stays conditional.
+  # ponytail: a closure is assumed to run when reached; one stored or
+  # started (`go func() { next(...) }()`) reads as a hand-on too.
+  private def unconditional?(blocks : Array(Char)) : Bool
+    blocks.all? { |kind| kind == 'f' || kind == 'l' }
   end
 
   # A control-flow line: a refusal under it is conditional.
@@ -1178,6 +1257,77 @@ class GoAuthTagger < FrameworkTagger
     fields.try(&.[match[3]]?) == "true"
   end
 
+  # The scanned directories the package `qualifier` of `file` can be: those
+  # named like it, narrowed by the path `file` imports it from when several
+  # share the name (`a/mw` and `b/mw`, imported as `example.com/app/b/mw`),
+  # or named like that path when `qualifier` is an alias (`amw
+  # "example.com/app/a/mw"`).
+  #
+  # A directory under a `go.mod` has a known import path (the module path
+  # plus the directory below it): the one equal to the import wins, and
+  # when every candidate's path is known and none is, the import is a
+  # package outside the scan.
+  private def package_dirs(qualifier : String, file : String) : Array(String)
+    import = import_paths(file)[qualifier]?
+    dirs = @dirs_by_base[qualifier]? || [] of String
+    if import
+      dirs = (dirs + (@dirs_by_base[File.basename(import)]? || [] of String)).uniq
+      exact = dirs.select { |dir| dir_import_path(dir) == import }
+      return exact unless exact.empty?
+      if local = replaced_dir(file, import)
+        exact = dirs.select { |dir| File.expand_path(dir) == local }
+        return exact unless exact.empty?
+      end
+      return [] of String if !dirs.empty? && dirs.all? { |dir| dir_import_path(dir) }
+    end
+    return dirs if dirs.size < 2 || import.nil?
+    segments = import.split('/').reverse!
+    tails = dirs.to_h do |dir|
+      {dir, dir.split('/').reverse!.zip?(segments).take_while { |(a, b)| a == b }.size}
+    end
+    best = tails.values.max
+    dirs.select { |dir| tails[dir] == best }
+  end
+
+  @dir_import_paths = Hash(String, String?).new
+  @replaces = Hash(String, Array({String, String})).new
+
+  # A `replace` of a module by a local directory, in a block or on its own
+  # line: `example.com/lib => ../lib`.
+  GO_REPLACE = /^\s*(?:replace\s+)?(\S+)(?:\s+v\S+)?\s+=>\s+(\.{1,2}\/\S*|\/\S*)\s*$/m
+
+  # The local directory `import` names through a `replace` in the go.mod of
+  # `file`'s module (`example.com/up/authlib => ../third_party/authlib`),
+  # expanded; nil when none applies.
+  private def replaced_dir(file : String, import : String) : String?
+    root = go_module(file)
+    replaces = @replaces.put_if_absent(root) do
+      mod = File.read(File.join(root, "go.mod")) rescue ""
+      mod.scan(GO_REPLACE).map { |m| {m[1], m[2]} }
+    end
+    replaces.each do |(from, to)|
+      next unless import == from || import.starts_with?("#{from}/")
+      return File.expand_path(File.join(root, to, import[from.size..]))
+    end
+    nil
+  end
+
+  # The import path of the package in `dir`: its module's path plus the
+  # directory below the module root, or the path below `vendor/`; nil when
+  # no `go.mod` names it.
+  private def dir_import_path(dir : String) : String?
+    @dir_import_paths.put_if_absent(dir) do
+      if vendor = dir.index("/vendor/")
+        next dir[vendor + 8..]
+      end
+      root = go_module(File.join(dir, "_.go"))
+      mod = File.read(File.join(root, "go.mod")) rescue nil
+      path = mod.try(&.match(GO_MODULE_PATH)).try(&.[1])
+      next unless path
+      dir == root ? path : "#{path}/#{dir[root.size..].lchop('/')}"
+    end
+  end
+
   # The package names `path` imports.
   private def file_imports(path : String) : Set(String)
     @imports.put_if_absent(path) { import_paths(path).keys.to_set }
@@ -1261,9 +1411,11 @@ class GoAuthTagger < FrameworkTagger
 
       # Read the definition of each middleware argument (everything between
       # the path and the handler).
-      route_middleware_args(lines, line_idx, endpoint.method).each do |arg|
+      route_middleware = route_middleware_args(lines, line_idx, endpoint.method)
+      route_middleware.each do |arg|
         guard_by_definition(arg, path_info.path).try { |guard| endpoint.add_tag(guard) }
       end
+      router_wrap_guards(path_info.path, lines, line_idx, endpoint, route_middleware).each { |guard| endpoint.add_tag(guard) }
 
       case endpoint.details.technology
       when "go_pocketbase"
@@ -1296,6 +1448,50 @@ class GoAuthTagger < FrameworkTagger
     # Phase 3: Check group-level middleware scope
     check_middleware_scopes(endpoint).try { |tag| endpoint.add_tag(tag) }
     @server_scopes.each { |scope| endpoint.add_tag(scope[:tag]) if served_by?(endpoint, scope[:owner]) }
+  end
+
+  # The registrars of a router that takes a bare handler (gorilla's
+  # `r.Handle("/x", auth(h)).Methods("GET")`).
+  HANDLE_CALLS = %w[Handle HandleFunc]
+
+  # A guard can wrap a router's handler instead of sitting beside it
+  # (`admin.GET("/users", withAdminAuth(func(c echo.Context, u User) error
+  # {...}))`, `r.Get("/x", requireAuth(h))`, or a local bound to the wrapped
+  # handler): each wrapper of the route's handler argument is judged as a
+  # net/http wrapper is (see `net_http_guard`), by its definition only, so a
+  # handler factory whose name reads as a guard (`auth.Login(svc)`) is not
+  # one and a conversion (`echo.WrapHandler(h)`) is not read at all. The
+  # handler is the first argument after the path on Echo, which takes its
+  # middleware after it, and the last one elsewhere: both are read, and
+  # only a wrapper whose own parameters take the handler counts, so a
+  # trailing middleware factory (`requireAuthOpts(AuthOptions{...})`) is
+  # left to `route_middleware_args` (`middleware`), which reads it with its
+  # call site's options.
+  private def router_wrap_guards(file : String, lines : Array(String), idx : Int32, endpoint : Endpoint,
+                                 middleware : Array(String)) : Array(Tag)
+    tags = [] of Tag
+    statements = function_statements(file, lines, idx)
+    index = statements.try &.index { |stmt| stmt.row == idx }
+    # A route inside a closure group is not a statement of its function:
+    # read the route alone, without the locals around it.
+    text = statements && index ? statements[index].text : statement_text(lines, idx + 1)
+    statements = [] of NetHttpStatement if statements.nil? || index.nil?
+    call = text.scan(ROUTE_CALL).find do |match|
+      match[1].upcase == endpoint.method || MULTI_VERB_CALLS.includes?(match[1]) || HANDLE_CALLS.includes?(match[1])
+    end
+    return tags unless call
+    args = call_args(text[call.end..]).map(&.strip)
+    # The path, whatever its form (`"/x"`, `usersPath`), and a `Match`'s
+    # methods before it; a chained verb with one argument has none.
+    args = args[(call[1] == "Match" ? 2 : 1)..]? || [] of String if args.size > 1
+    seen = middleware.map(&.gsub(/\s+/, ""))
+    [args.first?, args.last?].compact.uniq!.each do |handler|
+      next if seen.includes?(handler.gsub(/\s+/, ""))
+      handler_wraps(handler, statements, index || 0, lines, 0).uniq.each do |(head, conditional)|
+        net_http_guard(head, file, statements, endpoint.url, endpoint.method, conditional, by_name: false).try { |tag| tags << tag }
+      end
+    end
+    tags
   end
 
   # --- go-zero / GoFrame ---------------------------------------------------
@@ -1481,9 +1677,11 @@ class GoAuthTagger < FrameworkTagger
       break if text.starts_with?("func")
       m = text.match(LEADING_CALL) || break
       open = m.end - 1
-      close = closing_paren(text, open) || break
+      # A statement cut short (a closure handler over the lines read) has no
+      # closing paren: what is left is still the call's last argument.
+      close = closing_paren(text, open)
       head = m[1].gsub(/\s+/, "")
-      if close == text.size - 1
+      if close.nil? || close == text.size - 1
         heads << head
         text = call_args(text[open + 1..]).last?.try(&.strip) || break
       elsif text[close + 1..].lstrip.starts_with?('(') && (second = text.index('(', close + 1)) && closing_paren(text, second) == text.size - 1
@@ -1725,14 +1923,15 @@ class GoAuthTagger < FrameworkTagger
   # wrapper whose definition is not found falls back to `guard_by_definition`
   # (a library middleware is read by name).
   private def net_http_guard(head : String, file : String, statements : Array(NetHttpStatement), route_path : String,
-                             route_method : String, conditional : Bool) : Tag?
+                             route_method : String, conditional : Bool, by_name : Bool = true) : Tag?
     qualifier, _, name = head.rpartition('.')
     bodies = net_http_bodies(qualifier, name, file, statements)
     if bodies.nil? || bodies.empty?
+      return unless by_name
       tag = guard_by_definition("#{head}(", file, authish_name: true) || return
       return conditional ? Tag.new(tag.name, "#{tag.description} (applied only when a setting can lift it: inside a conditional block)", tag.tagger) : tag
     end
-    bodies = bodies.select { |body| middleware_definition?(body) }
+    bodies = bodies.select { |body| middleware_definition?(body) && (by_name || takes_handler?(body)) }
     return if bodies.empty?
     lifted = bodies.compact_map { |body| setting_lift(body) }.first?
     note = if lifted
@@ -1755,9 +1954,55 @@ class GoAuthTagger < FrameworkTagger
   # handing it on (`next.ServeHTTP(w, r)`, `next(w, r)`, `m.serve(w, r,
   # next)`). A route registrar takes a mux; a handler factory takes none.
   private def middleware_definition?(body : Noir::GoCalleeExtractor::FunctionBody) : Bool
+    @middleware_definitions.put_if_absent({body.file_path, body.start_row}) do
+      source = Noir::CComments.strip(body.source, quotes: %("'`))
+      handler_params(body).any? do |param|
+        source.scan(/(?<![\w.])#{Regex.escape(param)}(?!\w)/).size >= 2
+      end
+    end
+  end
+
+  # Whether `body`'s own parameters (not those of a closure it returns)
+  # include a handler: `withAuth(next echo.HandlerFunc)`, not the factory
+  # `requireAuth(required bool) echo.MiddlewareFunc`.
+  private def takes_handler?(body : Noir::GoCalleeExtractor::FunctionBody) : Bool
     source = Noir::CComments.strip(body.source, quotes: %("'`))
-    source.scan(HANDLER_PARAM).any? do |m|
-      source.scan(/(?<![\w.])#{Regex.escape(m[1])}(?!\w)/).size >= 2
+    head = source.match(FUNC_PARAMS).try(&.[0]) || return false
+    handler_params(body).any? { |param| head.matches?(/[(,]\s*#{Regex.escape(param)}\s/) }
+  end
+
+  @middleware_definitions = Hash({String, Int32}, Bool).new
+  @handler_params = Hash({String, Int32}, Set(String)).new
+
+  # A parameter typed as a function, with its parameter list and the start
+  # of its result (a type, `(` for several, or none).
+  FUNC_PARAM = /[(,]\s*(\w+)\s+func\s*\(([^()]*)\)[ \t]*(\(|[\w.*\[\]]+)?/
+  # The parameters a request handler takes: the router's context
+  # (`echo.Context`, `*gin.Context`, `*fiber.Ctx`), not a `context.Context`,
+  # or both halves of a net/http handler.
+  ROUTER_CONTEXT = /(?<!context)\.\s*(?:Context|Ctx|RequestCtx|RequestContext)\b/
+
+  # Whether a function type with parameters `params` and result `result`
+  # is a handler: it takes the request (the router's context, or a net/http
+  # writer and request) and returns an `error` or nothing. A predicate
+  # (`check func(*http.Request) bool`) is not one.
+  private def handler_shape?(params : String, result : String?) : Bool
+    return false unless result.nil? || result == "error"
+    params.matches?(ROUTER_CONTEXT) || (params.includes?("ResponseWriter") && params.includes?("Request"))
+  end
+
+  # The parameters of `body` that are handlers: typed as one (`next
+  # http.Handler`, `h echo.HandlerFunc`) or as a function of the handler's
+  # shape (`next func(echo.Context, User) error`). A callback of another
+  # shape (`verify func(string) bool`) is not.
+  private def handler_params(body : Noir::GoCalleeExtractor::FunctionBody) : Set(String)
+    @handler_params.put_if_absent({body.file_path, body.start_row}) do
+      source = Noir::CComments.strip(body.source, quotes: %("'`))
+      names = source.scan(HANDLER_PARAM).map(&.[1]).to_set
+      source.scan(FUNC_PARAM) { |m| names << m[1] if handler_shape?(m[2], m[3]?) }
+      # `return http.HandlerFunc(...)` is a conversion, not a parameter.
+      names.delete("return")
+      names
     end
   end
 
@@ -1771,7 +2016,7 @@ class GoAuthTagger < FrameworkTagger
   # deployment chooses turns the check off. Nil when it never does.
   private def setting_lift(body : Noir::GoCalleeExtractor::FunctionBody) : String?
     source = Noir::CComments.strip(body.source, quotes: %("'`))
-    handlers = source.scan(HANDLER_PARAM).map(&.[1]).to_set
+    handlers = handler_params(body)
     source.scan(HANDS_ON_UNCHECKED) { |m| return m[1].strip if handlers.includes?(m[2]) }
     nil
   end
@@ -1793,7 +2038,7 @@ class GoAuthTagger < FrameworkTagger
     elsif qualifier.includes?('.')
       nil
     elsif file_imports(file).includes?(qualifier)
-      (@dirs_by_base[qualifier]? || [] of String).compact_map { |pkg| @bodies.functions_for(pkg)[name]? }
+      package_dirs(qualifier, file).compact_map { |pkg| @bodies.functions_for(pkg)[name]? }
     elsif bound = binding_of(qualifier, statements)
       if m = bound.match(BOUND_TYPE)
         type_dirs = m[1]? ? (@dirs_by_base[m[1]]? || [] of String) : [dir]
@@ -1876,7 +2121,7 @@ class GoAuthTagger < FrameworkTagger
       if qualifier.nil?
         @bodies.functions_for(dir)[name]?.try { |body| bodies << body }
       elsif file_imports(path).includes?(qualifier)
-        @dirs_by_base[qualifier]?.try &.each do |pkg|
+        package_dirs(qualifier, path).each do |pkg|
           @bodies.functions_for(pkg)[name]?.try { |body| bodies << body }
         end
       else
