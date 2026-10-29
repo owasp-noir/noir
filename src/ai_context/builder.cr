@@ -1,6 +1,7 @@
 require "../models/endpoint"
 require "../utils/media_filter"
 require "../utils/http_symbols"
+require "../utils/js_literal_scanner"
 require "./patterns"
 require "./pattern_matcher"
 require "./source_reader"
@@ -31,6 +32,10 @@ module NoirAIContext
     @declared_types = {} of Tuple(String, String) => String?
     @repository_types = {} of String => Bool
     @definition_headers = {} of String => Regex
+    @definition_lines = {} of Tuple(String, String) => Array(Int32)
+    @imported_names = {} of String => Set(String)
+    @helper_verdicts = {} of Tuple(String, Int32, String) => Bool
+    @inert_call_patterns = {} of Array(String) => Regex
 
     def initialize
       @reader = SourceReader.new
@@ -1474,28 +1479,48 @@ module NoirAIContext
     # own catalog: Django `render_to_string`, Go `tpls.ExecuteTemplate(w, ...)`,
     # Thymeleaf `engine.process(view, c)`, a PHP `include` of a variable view
     # path; `from pickle import loads` + bare `loads(d)`, `yaml.unsafe_load`,
-    # `pickle.Unpickler(...).load()`, Ruby `Marshal.restore`. Body-only: the
-    # callee-name catalog stays as narrow as it was.
+    # `cloudpickle.loads`, `pickle.Unpickler(...).load()`, Ruby
+    # `Marshal.restore`. Body-only: the callee-name catalog stays as narrow as
+    # it was.
     HELPER_BODY_SINK_CALLS = {
-      "template_render" => /\brender_to_string\b|\bExecute(?:Template)?\s*\(|\b\w*(?:engine|template|tpl|tmpl|view)\w*\.(?:process|render|execute|evaluate|merge|fill)\w*\s*\(|\bget_template\b|\bTemplateResponse\b|\bModelAndView\b|\b(?:include|require)(?:_once)?\b[^;|]*\$|(?<![\w.>])view\s*\(/i,
-      "deserialization" => /\b(?:c?pickle|dill|shelve|marshal|jsonpickle)\.\w*load|\bUnpickler\b|(?<![\w.])loads?\s*\(|\b(?:yaml|YAML|Psych)\.(?:unsafe_|full_)?load\b|\bMarshal\.(?:load|restore)\b|\bObjectInputStream\b|\breadObject\b|\b(?:BinaryFormatter|SoapFormatter|LosFormatter|NetDataContractSerializer)\b|\bunserialize\s*\(/,
+      "template_render" => /\brender_to_string\b|\bExecute(?:Template)?\s*\(|\b\w*(?:engine|template|tpl|tmpl|view)\w*\.(?:process|render|execute|evaluate|merge|fill)\w*\s*\(|\bget_template\b|\bTemplateResponse\b|\bModelAndView\b|\b(?:include|require)(?:_once)?\b[^;|]*\$|(?<![\w.>])view\s*\(|\b(?:ERB|Erubi|Liquid|Handlebars|Mustache|Jinja2?|Velocity|Twig)\b/i,
+      "deserialization" => /\b\w*pickle\.\w*load|\b(?:dill|shelve|marshal|jsonpickle)\.\w*load|\bUnpickler\b|(?<![\w.])loads?\s*\(|\b(?:yaml|YAML|Psych)\.(?:unsafe_|full_)?load\b|\bMarshal\.(?:load|restore)\b|\bObjectInputStream\b|\breadObject\b|\b(?:BinaryFormatter|SoapFormatter|LosFormatter|NetDataContractSerializer)\b|\bunserialize\s*\(/,
     }
 
     # A call in a helper's body the judge cannot follow but that may well be
-    # the render / revive: such a helper keeps its sink.
-    SINKISH_CALL_NAME = /render|template|tpl|tmpl|view|load|deserial|unserial|unmarshal|pickle|restore|decode/i
+    # the render / revive, by the call's last segment, qualified or not
+    # (`torch.load(b)`, `Oj.load`, `$smarty->display($tpl)`,
+    # `ERB.new(src).result(binding)`, `cfg.getTemplate(n).process(m, out)`):
+    # such a helper keeps its sink.
+    SINKISH_CALL_NAME = {
+      "template_render" => /render|template|tpl|tmpl|view|display|fetch|result|process|merge|evaluate|compile/i,
+      "deserialization" => /load|restore|deserial|unserial|unmarshal|unpickle|decode|revive|thaw/i,
+    }
 
-    # A bare or self-qualified call in a helper body: `_restore(b)`, `self.load(b)`.
-    HELPER_BODY_CALL     = /(?<![\w.:>$\\])((?:self\.|this\.)?[A-Za-z_]\w*)\s*\(/
+    # Receivers whose `loads` / `decode` revive no objects: the JSON
+    # modules, byte codecs, and a name bound in the body to itsdangerous'
+    # signed-JSON serializers (CTFd: `s = URLSafeTimedSerializer(secret)`
+    # then `s.loads(...)`).
+    SAFE_DECODE_RECEIVER  = /\A(?:json|simplejson|ujson|orjson|JSON|base64|binascii|codecs)\z/
+    SAFE_SERIALIZER_CLASS = /\b(?:URLSafe)?(?:Timed)?(?:JSONWebSignature)?Serializer\b|\b(?:Timestamp)?Signer\b|\bJSONDecoder\b/
+
+    # Every call in a helper body: an optional receiver (`torch`, `$smarty`,
+    # none after `)`), the operator, and the called name.
+    HELPER_BODY_CALL     = /(?:(?<recv>\$?\w+)?(?<op>\.|->|::)\s*)?(?<![\w$\\])(?<name>\w+)\s*\(/
     HELPER_BODY_KEYWORDS = Set{"if", "elif", "for", "while", "switch", "catch", "return", "def", "fun", "function", "func", "fn", "sub", "new", "not", "and", "or", "in", "print", "super", "lambda", "with", "match", "when", "unless", "until"}
-    HELPER_FOLLOW_DEPTH  = 2
 
     # Extensions where a bare call reaches a method of the caller's own class
     # (Kotlin `render(id)` inside the controller, a Ruby private method).
     # Elsewhere a bare name is a module-level function.
     OWN_CLASS_CALL_EXTS = Set{".java", ".kt", ".cs", ".scala", ".groovy", ".swift", ".dart", ".rb", ".cr"}
 
-    CLASS_HEADER = /\A\s*(?:(?:public|private|protected|internal|static|final|abstract|sealed|open|data|partial|export|default|inner|companion)\s+)*(?:class|object|module|struct|interface|trait|impl|enum|record|defmodule)\b/
+    CLASS_HEADER = /\A\s*(?:(?:public|private|protected|internal|static|final|abstract|sealed|open|data|partial|export|default|inner)\s+)*(?:class|object|module|struct|interface|trait|impl|enum|record|defmodule)\b/
+    # A Kotlin `companion object` belongs to its class: a bare call reaches it.
+    COMPANION_HEADER = /\A\s*(?:(?:private|internal|public)\s+)?companion\s+object\b/
+
+    # Lines that bring names in from elsewhere: Python `from x import a as
+    # render`, `import` / `use` statements, `require(...)`.
+    IMPORT_LINE = /\A\s*(?:from\s+\S+\s+import|import|use)\b|\brequire\s*\(/
 
     # A callee the project defines itself (Kotlin `private fun render(id)`
     # returning a Map, a `def unserialize` wrapping itsdangerous `loads`): the
@@ -1508,55 +1533,77 @@ module NoirAIContext
     # ponytail: the definition is the callee's own line (analyzers that
     # resolve callees) or a same-named one in the call-site file, scoped by
     # indentation; a helper defined in another file and reported at its call
-    # site is not found, and a body is followed HELPER_FOLLOW_DEPTH levels.
+    # site is not found.
     private def inert_project_helper(sink : AIContextEntry, callee : Callee, endpoint : Endpoint, patterns : Array(PatternDefinition)) : String?
       return unless BODY_JUDGED_SINK_KINDS.includes?(sink.kind)
       return unless pattern = patterns.find { |entry| entry.kind == sink.kind }
       return unless (path = callee.path) && (line = callee.line)
       return unless match = callee.name.match(/\A((?:self|this)\.|\$this->|@)?(\w+)\z/)
       name = match[2]
-      return if imports_name?(path, name)
+      return if imported_names(path).includes?(name)
 
       lines = @reader.lines_for(path)
-      header = definition_header(name)
-      if lines[line - 1]?.try(&.matches?(header))
+      if lines[line - 1]?.try(&.matches?(definition_header(name)))
         candidates = [line]
         caller_line = caller_line_in(endpoint, path)
       else
-        candidates = definition_lines(lines, header)
+        candidates = definition_lines(path, name)
         caller_line = line
       end
       self_call = !match[1]?.nil?
       return unless def_line = candidates.find { |candidate| definition_in_scope?(path, lines, candidate, caller_line, self_call) }
 
-      name unless helper_reaches_kind?(path, def_line, name, pattern, Set{name}, 0)
+      name unless helper_reaches_kind?(path, def_line, name, pattern)
     end
 
     # Whether the body of `name` (defined at `def_line`) reaches a call of
-    # `pattern`'s kind. Unsure answers are `true`.
-    private def helper_reaches_kind?(path : String, def_line : Int32, name : String, pattern : PatternDefinition, seen : Set(String), depth : Int32) : Bool
+    # `pattern`'s kind. Unsure answers are `true`. Memoized per definition
+    # and kind; a definition already being judged further up a call cycle
+    # counts as reaching it (unsure), so recursion keeps the sink.
+    private def helper_reaches_kind?(path : String, def_line : Int32, name : String, pattern : PatternDefinition) : Bool
+      key = {path, def_line, pattern.kind}
+      cached = @helper_verdicts[key]?
+      return cached unless cached.nil?
+
+      @helper_verdicts[key] = true
+      @helper_verdicts[key] = judge_helper_body(path, def_line, name, pattern)
+    end
+
+    private def judge_helper_body(path : String, def_line : Int32, name : String, pattern : PatternDefinition) : Bool
       return true unless body = @reader.route_scope_snippet_for(path, def_line, 40, 4000)
 
       body = body.sub(definition_header(name), "")
       return true if (pattern.source_patterns + pattern.name_patterns).any? { |regex| body.matches?(regex) }
       return true if HELPER_BODY_SINK_CALLS[pattern.kind]?.try { |regex| body.matches?(regex) }
 
+      sinkish = SINKISH_CALL_NAME[pattern.kind]
       lines = @reader.lines_for(path)
       body.scan(HELPER_BODY_CALL) do |call|
-        called = call[1]
-        bare = called.lchop("self.").lchop("this.")
-        next if HELPER_BODY_KEYWORDS.includes?(bare) || !seen.add?(bare)
+        called = call["name"]
+        next if HELPER_BODY_KEYWORDS.includes?(called) || called == name
+        receiver = call["recv"]?
+        self_call = receiver == "self" || receiver == "this"
 
-        found = definition_lines(lines, definition_header(bare)).find do |candidate|
-          definition_in_scope?(path, lines, candidate, def_line, bare != called)
+        if call["op"]?.nil? || self_call
+          found = definition_lines(path, called).find do |candidate|
+            definition_in_scope?(path, lines, candidate, def_line, self_call)
+          end
+          if found
+            return true if helper_reaches_kind?(path, found, called, pattern)
+            next
+          end
         end
-        if found
-          return true if depth >= HELPER_FOLLOW_DEPTH || helper_reaches_kind?(path, found, bare, pattern, seen, depth + 1)
-        elsif bare.matches?(SINKISH_CALL_NAME)
-          return true
-        end
+        next unless called.matches?(sinkish)
+        next if receiver && safe_decode_receiver?(receiver, body)
+        return true
       end
       false
+    end
+
+    private def safe_decode_receiver?(receiver : String, body : String) : Bool
+      return true if receiver.matches?(SAFE_DECODE_RECEIVER)
+
+      !!body.match(/\b#{Regex.escape(receiver)}\s*=\s*([^|\n]+)/).try(&.[1].matches?(SAFE_SERIALIZER_CLASS))
     end
 
     # The handler's line in `path`, when the endpoint's handler or route
@@ -1568,10 +1615,13 @@ module NoirAIContext
       endpoint.details.code_paths.find { |info| info.path == path }.try(&.line)
     end
 
-    private def definition_lines(lines : Array(String), header : Regex) : Array(Int32)
-      result = [] of Int32
-      lines.each_with_index { |text, idx| result << idx + 1 if text.matches?(header) }
-      result
+    private def definition_lines(path : String, name : String) : Array(Int32)
+      @definition_lines[{path, name}] ||= begin
+        header = definition_header(name)
+        result = [] of Int32
+        @reader.lines_for(path).each_with_index { |text, idx| result << idx + 1 if text.includes?(name) && text.matches?(header) }
+        result
+      end
     end
 
     # A self-qualified call (`self.render`) reaches a method of the caller's
@@ -1594,24 +1644,37 @@ module NoirAIContext
     private def enclosing_class_line(lines : Array(String), idx : Int32) : Int32?
       return unless text = lines[idx]?
       indent = text.size - text.lstrip.size
+      return if indent == 0
+
       (idx - 1).downto(0) do |i|
         line = lines[i]
         next if line.strip.empty?
         line_indent = line.size - line.lstrip.size
         next unless line_indent < indent
-        return i if line.matches?(CLASS_HEADER)
-        return if line_indent == 0
         indent = line_indent
+        return i if line.matches?(CLASS_HEADER) && !line.matches?(COMPANION_HEADER)
+        return if line_indent == 0
       end
       nil
     end
 
-    # The file imports `name` from elsewhere (`from django.shortcuts import
-    # render`, `import { render } from`, `use crate::views::render`,
-    # `const { render } = require(...)`): the call is not to a local helper.
-    private def imports_name?(path : String, name : String) : Bool
-      escaped = Regex.escape(name)
-      @reader.lines_for(path).join('\n').matches?(/^[ \t]*from[ \t]+\S+[ \t]+import[ \t]+(?:\([^)]*|[^\n]*)\b#{escaped}\b|^[ \t]*(?:import|use)\b[^\n;]*\b#{escaped}\b|^[^\n]*\b#{escaped}\b[^\n]*\brequire\s*\(/m)
+    # Every identifier on the file's import lines (`from django.shortcuts
+    # import render`, `from flask import render_template as render`,
+    # `use crate::views::render`, `const { render } = require(...)`, a
+    # parenthesized Python import list): a call to one of them is not to a
+    # local helper.
+    private def imported_names(path : String) : Set(String)
+      @imported_names[path] ||= begin
+        names = Set(String).new
+        open_list = false
+        @reader.lines_for(path).each do |line|
+          next unless open_list || line.matches?(IMPORT_LINE)
+          line.scan(/\w+/) { |word| names << word[0] }
+          open_list = line.includes?('(') && !line.includes?(')') if line.matches?(/\A\s*from\s/)
+          open_list = false if open_list && line.includes?(')')
+        end
+        names
+      end
     end
 
     # `def name`, `fun name`, `function name`, `func (r *T) name`, `fn name`,
@@ -1623,14 +1686,24 @@ module NoirAIContext
 
     # `User.select("#{params[:col]}")`, SQLAlchemy `select(text(request.args["c"]))`:
     # a `select` whose argument is built at run time is SQL whatever the
-    # receiver. A fixed column list (`User.select(*attrs)`) stays out.
-    SELECT_BUILT_ARGUMENT = /#\{|\$\{|\bf["']|["']\s*(?:\+|%|\.\s*\$)|\+\s*["']|\btext\s*\(|\bArel\.sql\b|\bSprintf\b|\.format\s*\(/
+    # receiver. A fixed column list (`User.select(*attrs)`) stays out, and so
+    # do a lambda or block argument (LINQ `_items.Select(x => x.Name + "")`,
+    # Ruby `select(&:active?)`, JS `.select((x) => "#" + x)`) and a data
+    # frame's column pick (polars `df.select(f"col_{i}")`).
+    SELECT_BUILT_ARGUMENT  = /#\{|\$\{|\bf["']|["']\s*(?:\+|%|\.\s*\$)|\+\s*["']|\btext\s*\(|\bArel\.sql\b|\bSprintf\b|\.format\s*\(/
+    SELECT_LAMBDA_ARGUMENT = /\A\s*(?:\(?[\w\s,]*\)?\s*=>|&:|\{\s*\||lambda\b|->|fn\b|function\b|\|)/
+    DATA_FRAME_RECEIVER    = /(?:\A|\.)(?:\w*_?df|\w*[fF]rame|pl|pd)\.select\z/i
 
     private def built_select_sink(callee : Callee, snippet : String?) : AIContextEntry?
       return unless callee.name.matches?(/(?:\A|[.:>])select\z/i)
+      return if callee.name.matches?(DATA_FRAME_RECEIVER)
       return unless (path = callee.path) && (line = callee.line)
-      return unless text = @reader.lines_for(path)[line - 1]?
-      return unless argument = text.match(/\bselect\s*\((.*)/i).try(&.[1])
+      return unless text = @reader.lines_for(path)[line - 1, 4]?.try(&.join('\n'))
+      return unless call = text.match(/\bselect\s*\(/i)
+      open_idx = call.end - 1
+      close_idx = Noir::JSLiteralScanner.find_matching_paren(text, open_idx) || text.size
+      argument = text[open_idx + 1...close_idx]
+      return if argument.matches?(SELECT_LAMBDA_ARGUMENT)
       return unless argument.matches?(SELECT_BUILT_ARGUMENT)
 
       AIContextEntry.new(
@@ -1882,7 +1955,9 @@ module NoirAIContext
 
     private def add_source_scan_entries(context : AIContext, endpoint : Endpoint, inert_helpers : Array(String))
       return if endpoint.details.code_paths.empty?
-      inert_call = Regex.union(inert_helpers.map { |name| /(?<![\w.:>$\\])#{Regex.escape(name)}\s*\(/ }) unless inert_helpers.empty?
+      unless inert_helpers.empty?
+        inert_call = @inert_call_patterns[inert_helpers] ||= Regex.union(inert_helpers.map { |name| /(?<![\w.:>$\\])#{Regex.escape(name)}\s*\(/ })
+      end
 
       source_scan_paths(endpoint).each do |path_info|
         route_scope = @reader.route_scope_snippet_for(path_info.path, path_info.line)

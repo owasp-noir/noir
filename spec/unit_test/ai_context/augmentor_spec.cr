@@ -1627,13 +1627,23 @@ describe "NoirAIContext" do
       # Tornado: `self.render` is RequestHandler's, not the sibling UIModule's.
       "tornado" => {".py", "class EntryModule(tornado.web.UIModule):\n    def render(self, entry):\n        return '<li>' + entry + '</li>'\n\n\nclass MainHandler(tornado.web.RequestHandler):\n    def get(self):\n        q = self.get_argument('q')\n        self.render('index.tpl', q=q)\n", "self.render", "self.render(", "template_render"},
       # Django: the analyzer resolved the imported `render` to a method.
-      "django" => {".py", "from django.shortcuts import render\n\n\nclass Badge:\n    def render(self):\n        return '<b>' + self.label + '</b>'\n\n\ndef show(request):\n    q = request.GET.get('q')\n    return render(request, 'show.tpl', {'q': q})\n", "render", "def render", "template_render"},
+      "django"       => {".py", "from django.shortcuts import render\n\n\nclass Badge:\n    def render(self):\n        return '<b>' + self.label + '</b>'\n\n\ndef show(request):\n    q = request.GET.get('q')\n    return render(request, 'show.tpl', {'q': q})\n", "render", "def render", "template_render"},
+      "import alias" => {".py", "from flask import render_template as render\n\n\n@app.route('/p')\ndef p():\n    return render('p.html', q=request.args['q'])\n", "render", "return render", "template_render"},
+      # A receiver-qualified library call whose last segment loads / renders.
+      "cloudpickle" => {".py", "def unserialize(blob):\n    return cloudpickle.loads(blob)\n\n\n@app.route('/m', methods=['POST'])\ndef m():\n    return str(unserialize(request.data))\n", "unserialize", "def unserialize", "deserialization"},
+      "joblib"      => {".py", "def unserialize(path):\n    return joblib.load(path)\n\n\n@app.route('/m', methods=['POST'])\ndef m():\n    return str(unserialize(request.args['p']))\n", "unserialize", "def unserialize", "deserialization"},
+      "torch"       => {".py", "def unserialize(blob):\n    return torch.load(blob)\n\n\n@app.route('/m', methods=['POST'])\ndef m():\n    return str(unserialize(request.files['f']))\n", "unserialize", "def unserialize", "deserialization"},
+      "Oj"          => {".rb", "class StateController < ApplicationController\n  def restore\n    @state = unserialize(params[:blob])\n  end\n\n  private\n\n  def unserialize(blob)\n    Oj.load(blob, mode: :object)\n  end\nend\n", "unserialize", "@state = unserialize", "deserialization"},
+      "erb"         => {".rb", "require 'erb'\n\ndef render(tpl)\n  ERB.new(File.read(tpl)).result(binding)\nend\n\nget '/page' do\n  render(params[:tpl])\nend\n", "render", "  render(params", "template_render"},
+      "freemarker"  => {".java", "@RestController\npublic class PageController {\n    @GetMapping(\"/page\")\n    public String page(@RequestParam String q) {\n        return render(\"page.ftl\", q);\n    }\n\n    private String render(String name, String q) throws Exception {\n        StringWriter out = new StringWriter();\n        cfg.getTemplate(name).process(java.util.Map.of(\"q\", q), out);\n        return out.toString();\n    }\n}\n", "render", "return render(", "template_render"},
+      "smarty"      => {".php", "<?php\nfunction render($tpl, $vars) {\n    global $smarty;\n    $smarty->assign($vars);\n    $smarty->display($tpl);\n}\n\nrender($_GET['t'], ['q' => $_GET['q']]);\n", "render", "render($_GET", "template_render"},
+      "deep chain"  => {".py", "def unserialize(b):\n    return _a(b)\n\n\ndef _a(b):\n    return _b(b)\n\n\ndef _b(b):\n    return _c(b)\n\n\ndef _c(b):\n    return pickle.loads(b)\n\n\n@app.route('/m', methods=['POST'])\ndef m():\n    return str(unserialize(request.data))\n", "unserialize", "def unserialize", "deserialization"},
     }.each do |label, (ext, source, name, anchor, kind)|
       with_temp_ai_context_source(source, ext) do |path|
         lines = source.lines
         endpoint = Endpoint.new("/x", "GET")
         details = endpoint.details
-        handler_line = lines.index!(&.matches?(/@app\.route|@GetMapping|def (?:get|show|restore)\b|func page|^render\(/)) + 1
+        handler_line = lines.index!(&.matches?(/@app\.route|@GetMapping|def (?:get|show|restore)\b|func page|^render\(|^get '/)) + 1
         details.add_path(PathInfo.new(path, handler_line))
         endpoint.details = details
         endpoint.push_callee(Callee.new(name, path, lines.index!(&.includes?(anchor)) + 1))
@@ -1641,6 +1651,59 @@ describe "NoirAIContext" do
         context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
         context.sinks.map(&.kind).should contain(kind), label
       end
+    end
+  end
+
+  it "keeps helpers inert that only build a map or decode signed JSON" do
+    {
+      # A bare call reaches the class's companion object.
+      "companion" => {".kt", "@RestController\nclass ItemController {\n    @GetMapping(\"/items/{id}\")\n    fun get(@PathVariable id: String): Map<String, Any?> = render(id)\n\n    companion object {\n        private fun render(id: String): Map<String, Any?> = mapOf(\"id\" to id)\n    }\n}\n", "render", "= render(id)", "template_render"},
+      "json"      => {".py", "import json, base64\n\n\ndef unserialize(data):\n    return json.loads(base64.b64decode(data))\n\n\n@app.route('/a')\ndef a():\n    return str(unserialize(request.args['t']))\n", "unserialize", "def unserialize", "deserialization"},
+      "signer"    => {".py", "def unserialize(data, secret=None):\n    if secret is None:\n        secret = current_app.config['SECRET_KEY']\n    s = URLSafeTimedSerializer(secret)\n    return s.loads(data, max_age=60)\n\n\n@app.route('/a')\ndef a():\n    return str(unserialize(request.args['t']))\n", "unserialize", "def unserialize", "deserialization"},
+    }.each do |label, (ext, source, name, anchor, kind)|
+      with_temp_ai_context_source(source, ext) do |path|
+        lines = source.lines
+        endpoint = Endpoint.new("/x", "GET")
+        details = endpoint.details
+        details.add_path(PathInfo.new(path, lines.index!(&.matches?(/@app\.route|@GetMapping/)) + 1))
+        endpoint.details = details
+        endpoint.push_callee(Callee.new(name, path, lines.index!(&.includes?(anchor)) + 1))
+
+        context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+        context.sinks.map(&.kind).should_not contain(kind), label
+      end
+    end
+  end
+
+  # 3000 routes in one file calling one helper chain used to re-scan the
+  # file per route and per call level (14.6s against 0.5s on a release build).
+  it "judges a shared helper chain once for many routes" do
+    source = String.build do |io|
+      io << "def fmt(x):\n    return {'x': x, 'a': aa(x)}\n\n"
+      io << "def aa(x):\n    return dd(x)\n\n"
+      io << "def shape(x):\n    return fmt(x)\n\n"
+      io << "def render(x):\n    return shape(x)\n\n"
+      3000.times { |i| io << "@app.route('/r#{i}')\ndef r#{i}():\n    return render(request.args['q#{i}'])\n\n" }
+    end
+
+    with_temp_ai_context_source(source, ".py") do |path|
+      lines = source.lines
+      render_line = lines.index!(&.starts_with?("def render")) + 1
+      endpoints = [] of Endpoint
+      lines.each_with_index do |text, idx|
+        next unless text.starts_with?("@app.route")
+        endpoint = Endpoint.new("/r#{endpoints.size}", "GET")
+        details = endpoint.details
+        details.add_path(PathInfo.new(path, idx + 1))
+        endpoint.details = details
+        endpoint.push_callee(Callee.new("render", path, render_line))
+        endpoints << endpoint
+      end
+
+      result = [] of Endpoint
+      elapsed = Time.measure { result = NoirAIContext.apply(endpoints) }
+      elapsed.should be < 10.seconds
+      result.count { |endpoint| endpoint.ai_context.try(&.sinks.any? { |sink| sink.kind == "template_render" }) }.should eq(0)
     end
   end
 
@@ -1672,15 +1735,23 @@ describe "NoirAIContext" do
   end
 
   it "keeps select with a run-time built argument a sql sink, a fixed column list not" do
-    {
-      %(@users = User.select("\#{params[:col]}").where(active: true)) => true,
-      %(stmt = select(text(request.args["cols"])))                    => true,
-      %(@users = User.select(*attrs).order(karma: :desc))             => false,
-      %(names = _keys.Select(k => k.ToUpperInvariant()).ToList())     => false,
-    }.each do |line, expected|
+    [
+      {line: %(@users = User.select("\#{params[:col]}").where(active: true)), name: "User.select", sql: true},
+      {line: %(stmt = select(text(request.args["cols"]))), name: "select", sql: true},
+      {line: %(@users = User.select(*attrs).order(karma: :desc)), name: "User.select", sql: false},
+      {line: %(names = _keys.Select(k => k.ToUpperInvariant()).ToList()), name: "_keys.Select", sql: false},
+      # Only the argument counts, and a lambda / block argument is not SQL.
+      {line: %(Ok(_items.Select(x => x.Name + " (" + x.Id + ")").ToList())), name: "_items.Select", sql: false},
+      {line: %(Ok(_items.Select(x => $"{x.Name}-{x.Id}").ToList())), name: "_items.Select", sql: false},
+      {line: %(@names = friends.select(&:active?).map { |u| "\#{u.first}" }), name: "friends.select", sql: false},
+      {line: %(const opts = items.map(i => i.id).select((x) => "#" + x);), name: "items.map().select", sql: false},
+      # A data frame's column pick.
+      {line: %(return str(df.select(f"col_{i}"))), name: "df.select", sql: false},
+    ].each do |entry|
+      line, name, expected = entry[:line], entry[:name], entry[:sql]
       with_temp_ai_context_source("#{line}\n", ".rb") do |path|
         endpoint = Endpoint.new("/users", "GET")
-        endpoint.push_callee(Callee.new(line.match!(/([\w.]*(?:select|Select))\(/)[1], path, 1))
+        endpoint.push_callee(Callee.new(name, path, 1))
 
         context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
         context.sinks.map(&.kind).includes?("sql").should eq(expected), line
