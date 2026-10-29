@@ -217,9 +217,7 @@ module Analyzer::Php
     private def function_body(content : String, name : String, klass : Range(Int32, Int32)?,
                               classes : Array(Tuple(Range(Int32, Int32), Hash(String, String)))) : String?
       decl = /\bfunction\s+#{Regex.escape(name)}\s*\([^{;]*\{/m
-      pos = 0
-      while m = content.match(decl, pos)
-        pos = m.end(0)
+      content.scan(decl) do |m|
         inside = klass ? klass.includes?(m.begin(0)) : classes.none?(&.[0].includes?(m.begin(0)))
         next unless inside
         close = find_matching_php_close_brace(content, m.end(0) - 1) || return
