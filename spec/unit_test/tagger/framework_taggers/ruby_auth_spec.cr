@@ -1107,7 +1107,9 @@ describe "RubyAuthTagger (Grape route scope)" do
       class Open < Grape::API
         namespace :open do
           before do
-            authenticate! if params[:private]
+            unless params[:public]
+              authenticate!
+            end
           end
           get :ping do
             'p'
@@ -1125,7 +1127,7 @@ describe "RubyAuthTagger (Grape route scope)" do
         Endpoint.new(url, "GET", [] of Param, details)
       end
       keys = at.call("/keys", 7)
-      ping = at.call("/open/ping", 22)
+      ping = at.call("/open/ping", 24)
       RubyAuthTagger.new(noir_options).perform([keys, ping])
       keys.tags.map(&.description).should eq(["Protected by Grape authenticate!"])
       # A conditional call admits callers when the condition is false.

@@ -60,10 +60,6 @@ class RubyAuthTagger < FrameworkTagger
   GRAPE_AUTH_PATTERNS = [
     {/before\s+do.*authenticate/, "Grape before authenticate"},
     {/before\s*\{\s*authenticate!/, "Grape authenticate!"},
-    # The unconditional call on its own line: the body of a multi-line
-    # `before do` (route_scope reads filter blocks line by line) or the
-    # route's own block.
-    {/^authenticate!\s*$/, "Grape authenticate!"},
     {/before\s*\{\s*require_auth/, "Grape require_auth"},
     {/http_basic\s+do/, "Grape http_basic auth"},
     {/helpers\s+do.*authenticate/, "Grape helpers authenticate"},
@@ -1046,7 +1042,14 @@ class RubyAuthTagger < FrameworkTagger
     idx = index.filter_up[idx] if idx >= 0
     while idx >= 0
       stripped = index.stripped[idx]
-      scope.concat(ruby_block_lines(index, idx)) if filter_covers?(stripped, url)
+      if filter_covers?(stripped, url)
+        block = ruby_block_lines(index, idx)
+        scope.concat(block)
+        # `before do` / `authenticate!` / `end` reads as the one-line
+        # `before { authenticate! }`, but only when that first statement is
+        # an unconditional bare call (not `if x` / `authenticate! if x`).
+        scope << "before { #{block[1]} }" if block.size > 1 && block[0].matches?(/^before\s+do\s*$/) && block[1].matches?(/\A\w+[!?]?\z/)
+      end
       idx = index.prev_level[idx]
       idx = index.filter_up[idx] if idx >= 0
     end

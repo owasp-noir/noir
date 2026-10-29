@@ -418,15 +418,28 @@ describe "Ruby route gaps" do
           end
         end
         RUBY
-      "app/api/concerns/shared.rb" => <<-RUBY,
+      # A same-named Rails concern with no routes must not capture the include.
+      "app/models/concerns/shared.rb" => <<-RUBY,
         module Shared
           extend ActiveSupport::Concern
           included do
-            namespace 'users' do
-              params do
-                optional :ignorecase, type: Boolean
-              end
-              get 'authenticate' do
+            has_many :things
+          end
+        end
+        RUBY
+      "app/api/concerns/shared.rb" => <<-RUBY,
+        module API
+          module Concerns
+            module Shared
+              extend ActiveSupport::Concern
+              included do
+                namespace 'users' do
+                  params do
+                    optional :ignorecase, type: Boolean
+                  end
+                  get 'authenticate' do
+                  end
+                end
               end
             end
           end
@@ -434,8 +447,12 @@ describe "Ruby route gaps" do
         RUBY
       "app/api/pkgs.rb" => <<-RUBY,
         class Pkgs < Grape::API
-          namespace 'pkgs/:id' do
-            include Shared
+          before { authenticate! }
+
+          namespace 'pkgs/:id',
+            # the id may contain dots
+            requirements: { id: /.+/ } do
+            include Concerns::Shared
           end
         end
         RUBY
@@ -450,7 +467,8 @@ describe "Ruby route gaps" do
     find_ep(endpoints, "GET", "/api/v4/{id}/snippets/notes")
     find_ep(endpoints, "GET", "/api/v4/{model}/{id}/{models_path}/discussions")
     users = find_ep(endpoints, "GET", "/api/v4/pkgs/{id}/users/authenticate")
-    users.details.code_paths.first.path.should end_with("concerns/shared.rb")
+    users.details.code_paths.map { |info| File.basename(info.path) }.should eq(["shared.rb", "pkgs.rb"])
+    users.details.code_paths.first.path.should end_with("api/concerns/shared.rb")
     endpoints.any?(&.url.includes?("\#{")).should be_false
     endpoints.none? { |e| e.url == "/users/authenticate" }.should be_true
   end

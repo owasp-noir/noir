@@ -34,10 +34,11 @@ module Analyzer::Ruby
     # `resource source_type.pluralize do` outside a static loop: the name is
     # only known at runtime, so the segment becomes a `{source_type}`
     # placeholder instead of vanishing from the path.
-    GRAPE_PREFIX_EXPR = /^(?:resource|resources|namespace|group|segment)\s+([a-z_]\w*)(?:\.\w+[!?]?)*(?:\s*,[^#]*?)?\s*do\b/
-    GRAPE_INCLUDE     = /^include\s+((?:::)?[A-Z][\w:]*)\s*$/
-    GRAPE_CONCERN_EXT = /^\s*extend\s+(?:::)?ActiveSupport::Concern\b/
-    GRAPE_MODULE_DEF  = /^\s*module\s+([A-Z][\w:]*)/
+    GRAPE_PREFIX_EXPR   = /^(?:resource|resources|namespace|group|segment)\s+([a-z_]\w*)(?:\.\w+[!?]?)*(?:\s*,[^#]*?)?\s*do\b/
+    GRAPE_INCLUDE       = /^include\s+((?:::)?[A-Z][\w:]*)\s*$/
+    GRAPE_CONCERN_EXT   = /^\s*extend\s+(?:::)?ActiveSupport::Concern\b/
+    GRAPE_CONCERN_ROUTE = /^\s*(?:resources?|namespace|group|segment|route_param|#{GRAPE_VERBS.join('|')})\b[^\n]*\bdo\b/m
+    GRAPE_MODULE_DEF    = /^\s*module\s+([A-Z][\w:]*)/
 
     # `%w[a b].each do |x|`, `[:a, :b].each do |x|` and
     # `{ "a" => 1, "b" => 2 }.each do |x, y|` over a literal receiver.
@@ -82,8 +83,13 @@ module Analyzer::Ruby
         process_file(path, content, include_callee, mount_prefix)
       end
 
-      # A concern no Grape file includes keeps the standalone read.
-      concern_paths.each do |path|
+      # A concern no Grape file includes keeps the standalone read. Concerns
+      # another concern includes go last, so the outer one draws them under
+      # its prefix first.
+      nested = concern_paths.flat_map do |path|
+        ruby_source(path).each_line.compact_map { |line| line.strip.match(GRAPE_INCLUDE).try { |m| resolve_grape_concern(m[1]) } }.to_a
+      end.to_set
+      concern_paths.to_a.sort_by! { |path| nested.includes?(path) ? 1 : 0 }.each do |path|
         next if @used_concerns_mutex.synchronize { @used_concerns.includes?(path) }
         content = ruby_source(path)
         next unless grape_api_file?(content, index.classes)
@@ -132,9 +138,9 @@ module Analyzer::Ruby
         # pre-pass to these two markers keeps it off the thousands of
         # unrelated `.rb` files in a large repo.
         next unless content.matches?(GRAPE_OR_MOUNT_MARKER_RE)
-        if content.includes?("ActiveSupport::Concern") && content.includes?("included do")
-          # ponytail: keyed by the module's last name segment, first file
-          # wins; key by the full constant if same-named concerns collide.
+        # Only concerns that draw routes: Rails model/controller concerns
+        # stay out of the index.
+        if content.includes?("ActiveSupport::Concern") && content.includes?("included do") && content.matches?(GRAPE_CONCERN_ROUTE)
           grape_concern_name(content).try { |name| concerns.put_if_absent(name) { path } }
         end
         next unless content.includes?("class ") && content.includes?("<")
@@ -220,18 +226,33 @@ module Analyzer::Ruby
       GrapeIndex.new(grape, inherited, concerns)
     end
 
-    # The module that `extend ActiveSupport::Concern`s: the last `module`
-    # opened before that line.
+    # The full constant of the module that `extend ActiveSupport::Concern`s
+    # (`API::Concerns::Shared`), from the `module` lines enclosing it by
+    # indentation.
     private def grape_concern_name(content : String) : String?
-      name = nil
+      stack = [] of {Int32, String}
       content.each_line do |line|
+        indent = line.size - line.lstrip.size
         if m = line.match(GRAPE_MODULE_DEF)
-          name = grape_simple_class_name(m[1])
+          while (top = stack.last?) && top[0] >= indent
+            stack.pop
+          end
+          stack << {indent, m[1].lchop("::")}
         elsif line.matches?(GRAPE_CONCERN_EXT)
-          return name
+          return stack.empty? ? nil : stack.map(&.[1]).join("::")
         end
       end
       nil
+    end
+
+    # The concern file an `include Name` names: the exact constant, else the
+    # one concern whose constant ends in `::Name` (a relative include).
+    # Nil when ambiguous, so the concern keeps its standalone read.
+    private def resolve_grape_concern(name : String) : String?
+      name = name.lchop("::")
+      return @grape_concerns[name] if @grape_concerns.has_key?(name)
+      found = @grape_concerns.select { |constant, _| constant.ends_with?("::#{name}") }
+      found.size == 1 ? found.first_value : nil
     end
 
     # `Grape::API` is absent from almost every `.rb` file in a large repo,
@@ -284,10 +305,12 @@ module Analyzer::Ruby
     end
 
     # A concern's routes are drawn under the includer's prefix, so an
-    # `include` re-enters here with that context (`seen` stops cycles).
+    # `include` re-enters here with that context. `include_sites` (the
+    # `include` lines that led here) become extra code paths, so the guard
+    # tagger also reads the includer's `before` filters; they stop cycles.
     private def process_file(path : String, content : String, include_callee : Bool, mount_prefix : String = "",
                              class_prefix : String = "", version_prefix : String = "",
-                             outer_segments : Array(String) = [] of String, seen : Set(String) = Set(String).new) : Nil
+                             outer_segments : Array(String) = [] of String, include_sites : Array(PathInfo) = [] of PathInfo) : Nil
       prefix_segments = outer_segments.dup
       block_kinds = [] of Symbol
       pending_params = [] of String
@@ -329,7 +352,8 @@ module Analyzer::Ruby
           last = pos
           while stripped.ends_with?(',') && last + 1 < stmts.size && last - pos < MAX_CONTINUATION
             last += 1
-            stripped = "#{stripped} #{Noir::RubyCalleeExtractor.strip_comment(stmts[last][0], preserve_strings: true).strip}"
+            piece = Noir::RubyCalleeExtractor.strip_comment(stmts[last][0], preserve_strings: true).strip
+            stripped = "#{stripped} #{piece}" unless piece.empty?
           end
           skip_through = last
           do_index = stmts[last][1]
@@ -362,10 +386,11 @@ module Analyzer::Ruby
           next
         end
 
-        if (m = stripped.match(GRAPE_INCLUDE)) && (concern = @grape_concerns[grape_simple_class_name(m[1])]?) &&
-           concern != path && !seen.includes?(concern) && seen.size < 4
+        if (m = stripped.match(GRAPE_INCLUDE)) && (concern = resolve_grape_concern(m[1])) &&
+           concern != path && include_sites.none?(&.path.==(concern)) && include_sites.size < 4
           @used_concerns_mutex.synchronize { @used_concerns << concern }
-          process_file(concern, ruby_source(concern), include_callee, mount_prefix, class_prefix, version_prefix, prefix_segments, seen | Set{path})
+          sites = include_sites + [PathInfo.new(path, index + 1)]
+          process_file(concern, ruby_source(concern), include_callee, mount_prefix, class_prefix, version_prefix, prefix_segments, sites)
           next
         end
 
@@ -391,6 +416,7 @@ module Analyzer::Ruby
             raw_path = grape_literal_or_param_path(raw_match)
             ep_path = build_path(mount_prefix, class_prefix, version_prefix, prefix_segments, raw_path)
             details = Details.new(PathInfo.new(path, index + 1))
+            include_sites.each { |site| details.add_path(site) }
             endpoint = Endpoint.new(ep_path, verb.upcase, details)
 
             extract_path_params(ep_path).each do |param_name|
@@ -414,6 +440,7 @@ module Analyzer::Ruby
           if m = stripped.match(GRAPE_VERB_BARE_DO[verb])
             ep_path = build_path(mount_prefix, class_prefix, version_prefix, prefix_segments, "")
             details = Details.new(PathInfo.new(path, index + 1))
+            include_sites.each { |site| details.add_path(site) }
             endpoint = Endpoint.new(ep_path, verb.upcase, details)
 
             extract_path_params(ep_path).each do |param_name|
