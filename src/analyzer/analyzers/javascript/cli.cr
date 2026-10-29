@@ -36,6 +36,7 @@ module Analyzer::Javascript
     FUNCTION_ARGV_PARAM_RE = /\bfunction\s+([A-Za-z_$][\w$]*)\s*\(\s*([A-Za-z_$][\w$]*)/
     ARROW_ARGV_PARAM_RE    = /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*\(?\s*([A-Za-z_$][\w$]*)\s*\)?\s*=>/
     ARGV_ALIAS_RE          = /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*process\.argv(?:\.slice\s*\(\s*2\s*\))?/
+    SWITCH_FLAG_CASE_RE    = /\bcase\s+['"`]-/
 
     # object-literal schema headers (keys become root flags).
     PARSEARGS_CALL_RE = /\bparseArgs\s*\(/
@@ -197,9 +198,13 @@ module Analyzer::Javascript
                      endpoints : Hash(String, Endpoint), emit_env : Bool,
                      has_parseargs : Bool, has_meow : Bool)
       current_url = root_url
-      argv_names = process_argv_names(lines)
       switch_flags_by_line = Hash(Int32, Array(String)).new { |h, k| h[k] = [] of String }
-      switch_case_flags(lines, argv_names).each { |name, line| switch_flags_by_line[line] << name }
+      # The lexer pass and the per-function argv scan cost a full read of the
+      # file each, so only files with a dash-prefixed `case` label pay for it.
+      if lines.any?(&.matches?(SWITCH_FLAG_CASE_RE))
+        argv_names = process_argv_names(lines)
+        switch_case_flags(lines, argv_names).each { |name, line| switch_flags_by_line[line] << name }
+      end
 
       # citty subcommand context: a stack of (url, brace-depth-at-which-this
       # subcommand's own `defineCommand({` opened). Args attach to the
@@ -426,9 +431,9 @@ module Analyzer::Javascript
     private def switch_argv_array_name(tokens : Array(Noir::JSToken), start : Int32, stop : Int32) : String?
       return if start >= stop
       if tokens[start].value == "process" && tokens[start + 1]?.try(&.type) == :dot && tokens[start + 2]?.try(&.value) == "argv"
-        return "process.argv" if tokens[start + 3]?.try(&.type) == :lbracket && tokens[stop - 1]?.try(&.type) == :rbracket
+        "process.argv" if tokens[start + 3]?.try(&.type) == :lbracket && tokens[stop - 1]?.try(&.type) == :rbracket
       elsif tokens[start].type == :identifier
-        return tokens[start].value if tokens[start + 1]?.try(&.type) == :lbracket && tokens[stop - 1]?.try(&.type) == :rbracket
+        tokens[start].value if tokens[start + 1]?.try(&.type) == :lbracket && tokens[stop - 1]?.try(&.type) == :rbracket
       end
     end
 
