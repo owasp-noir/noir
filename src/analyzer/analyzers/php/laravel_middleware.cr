@@ -134,6 +134,12 @@ module Analyzer::Php
       found = candidates.compact
       guard = found.find { |desc| !lifted?(desc) } || found.first?
       endpoint.add_tag(Tag.new("auth", "Protected by #{guard}", "php_auth")) if guard
+      # `can:` is the `Authorize` middleware: `Gate::authorize` answers 403
+      # when the ability is denied.
+      # ponytail: a `->withoutMiddleware('can:...')` on the route is not subtracted.
+      statement = expand_middleware_vars(statement, arrays, at)
+      ability = (names + firm + (statement.includes?("iddleware") ? middleware_names(statement, imports) : [] of String)).find(&.starts_with?("can:"))
+      endpoint.add_tag(Tag.new("authz", "Protected by Laravel #{ability} middleware", "php_auth")) if ability
     end
 
     # A guard a setting or a condition can lift: it may not stand.

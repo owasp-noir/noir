@@ -17,9 +17,12 @@ module Noir
     # under an `if:` condition (see `conditional?`), and the active callbacks
     # a `skip_before_action ..., if:` / `unless:` lifts on a condition, with
     # that condition's text, and the CanCanCan `authorize_resource` /
-    # `load_and_authorize_resource` statements left active for the action.
+    # `load_and_authorize_resource` statements left active for the action,
+    # and the class macros (`requires_login`) the class's own body calls for
+    # the action, which may set what a callback reads off `self.class`.
     record Resolution, callbacks : Array(String), paths : Array(String), conditional : Set(String),
-      lifted : Hash(String, String) = Hash(String, String).new, cancan : Array(String) = [] of String
+      lifted : Hash(String, String) = Hash(String, String).new, cancan : Array(String) = [] of String,
+      settings : Set(String) = Set(String).new
 
     # Class-body lines that change the callback chain a subclass inherits.
     CALLBACK_LINE = /^(?:include|(?:prepend_|skip_)?before_action|allow_unauthenticated_access|(?:skip_)?(?:load_and_)?authorize_resource)\b/
@@ -74,6 +77,10 @@ module Noir
 
     getter classes = Hash({String, Int32}, Klass).new
     getter defs = Hash(String, Array({String, Int32})).new
+    # `def self.requires_login(arg = {})` bodies: the parameter the call's
+    # arguments bind to, and the callback lines the body registers
+    # (`before_action :ensure_logged_in, arg`).
+    getter macros = Hash(String, {String?, Array(String)}).new
     @by_name = Hash(String, Array(Klass)).new
     @by_path = Hash(String, Array(Klass)).new
 
@@ -145,12 +152,17 @@ module Noir
     def add_file(path : String, lines : Array(String))
       stack = [] of {Klass, Int32}
       def_indent : Int32? = nil
+      macro_body : Array(String)? = nil
       lines.each_with_index do |line, idx|
         stripped = line.strip
         next if stripped.empty? || stripped.starts_with?('#')
         indent = line.size - line.lstrip.size
         if open_def = def_indent
-          def_indent = nil if indent <= open_def && stripped == "end"
+          if indent <= open_def && stripped == "end"
+            def_indent = nil
+          elsif (body = macro_body) && stripped.matches?(CALLBACK_LINE)
+            body << RailsCallbackChain.statement(lines, idx)
+          end
           next
         end
         while (top = stack.last?) && top[1] >= indent
@@ -164,13 +176,38 @@ module Noir
           (@by_name[full] ||= [] of Klass) << klass
           (@by_path[path] ||= [] of Klass) << klass
           stack << {klass, indent}
-        elsif m = stripped.match(/^def\s+(?:self\.)?(\w+[!?]?)/)
-          (@defs[m[1]] ||= [] of {String, Int32}) << {path, idx}
+        elsif m = stripped.match(/^def\s+(self\.)?(\w+[!?]?)/)
+          (@defs[m[2]] ||= [] of {String, Int32}) << {path, idx}
           def_indent = indent unless stripped.matches?(/\bend$|^def\s+[\w.?!]+(?:\([^)]*\))?\s*=[^=]/)
+          macro_body = nil
+          if m[1]? && def_indent
+            macro_body = [] of String
+            @macros[m[2]] = {stripped.match(/\A[^(]*\(\s*\*{0,2}(\w+)/).try(&.[1]), macro_body}
+          end
         elsif (top = stack.last?) && stripped.matches?(CALLBACK_LINE)
+          top[0].callbacks << RailsCallbackChain.statement(lines, idx)
+        elsif (top = stack.last?) && stripped.matches?(MACRO_CALL)
+          # A class macro the app may define (`requires_login`): kept for
+          # `apply_lines`, which expands it once every file is indexed.
           top[0].callbacks << RailsCallbackChain.statement(lines, idx)
         end
       end
+    end
+
+    # A class-body call with no receiver: `requires_login`, `requires_login only: [:x]`.
+    MACRO_CALL = /\A[a-z_]\w*[!?]?(?:\s+[^=\s]|\(|\z)/
+
+    # The `lib/` paths (`lib/external_upload_helpers.rb`) Rails autoloads the
+    # modules indexed classes `include` from, for each one no indexed file
+    # declares: a controller's concern kept outside `app/controllers`.
+    def missing_include_paths : Array(String)
+      @classes.values.flat_map do |klass|
+        klass.callbacks.select(&.starts_with?("include")).flat_map do |line|
+          line.scan(/[A-Z][\w:]*/).compact_map do |m|
+            "lib/#{m[0].lchop("::").underscore.gsub("::", "/")}.rb" unless lookup(m[0], klass.namespace)
+          end
+        end
+      end.uniq!
     end
 
     # The controller class `path` declares.
@@ -239,6 +276,20 @@ module Noir
               apply_callbacks(mod, action, resolution, depth + 1)
             end
           end
+        elsif (macro_name = line[/\A[a-z_]\w*[!?]?/]?) && (class_macro = @macros[macro_name]?) && depth < 16
+          # The macro's lines with its parameter bound to the call's arguments:
+          # `requires_login only: [:x]` registers `before_action :ensure_logged_in, only: [:x]`.
+          param, body = class_macro
+          # ponytail: a class instance variable is the routed class's own, so
+          # only its body (depth 0) sets one; a `class_attribute` a parent
+          # sets reads as unset.
+          resolution.settings << macro_name if depth == 0 && RailsCallbackChain.applies_to_action?(line, action)
+          args = line[macro_name.size..].strip.lchop('(').rchop(')').strip
+          expanded = body.map do |text|
+            next text unless param
+            args.empty? ? text.sub(/\s*,\s*\*{0,2}#{param}\b/, "") : text.gsub(/(?<![\w@:])\*{0,2}#{param}\b/, args)
+          end
+          apply_lines(expanded, namespace, action, resolution, depth + 1)
         elsif line.starts_with?("allow_unauthenticated_access")
           active.delete("require_authentication") if RailsCallbackChain.applies_to_action?(line, action)
         elsif line.matches?(CANCAN_LINE)
