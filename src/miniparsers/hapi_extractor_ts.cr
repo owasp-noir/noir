@@ -91,13 +91,14 @@ module Noir
         emit_routes(node, source, routes, include_callees)
         return
       end
+      # No early return: a plugin exported from `routes/` still registers
+      # its own `server.route(...)` calls below.
       if module_exports && (exported = exported_value(node, source))
         if Noir::TreeSitter.node_type(exported) == "call_expression"
           emit_routes(exported, source, routes, include_callees)
         else
           emit_config(exported, source, routes, include_callees)
         end
-        return
       end
 
       Noir::TreeSitter.each_named_child(node) do |child|

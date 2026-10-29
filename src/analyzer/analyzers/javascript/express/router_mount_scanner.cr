@@ -261,11 +261,11 @@ module Analyzer::Javascript
                      resolve_require_path(file, module_match[1]).try { |t| {ExpressConstants.file_key(t), t} }
                    elsif spec = plugin.match(GLUE_PLUGIN_PATH_RE)
                      # Glue resolves against `relativeTo`, conventionally the
-                     # composing file's `__dirname`; a manifest kept one level
-                     # down (`config/manifest.js`) names paths from there.
+                     # composing file's `__dirname`; a standalone manifest kept
+                     # one level down (`config/manifest.js`) names paths from there.
                      # ponytail: two directories tried, not `relativeTo` read.
                      (resolve_require_path(file, spec[1]) ||
-                       resolve_require_path(File.join(File.dirname(File.dirname(file)), "index.js"), spec[1]))
+                       (content.includes?(".compose(") ? nil : resolve_require_path(File.join(File.dirname(File.dirname(file)), "index.js"), spec[1])))
                        .try { |t| {ExpressConstants.file_key(t), t} }
                    elsif binding = plugin.match(REGISTER_BINDING_RE)
                      imports ||= parse_imports(content, file)
@@ -561,7 +561,7 @@ module Analyzer::Javascript
     # `export default` chain, the module itself ("" falls back to the
     # file's own prefix).
     CHAINED_ROUTER_HEAD_RE = /(?:\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*|\bexport\s+default\s+)(?:new\s+)?(?:express\s*\.\s*)?Router\s*\((?:[^()]|\([^()]*\))*\)(?=\s*\.use\s*\()/
-    CHAINED_USE_RE         = /\A\s*\.use\s*\(/
+    CHAINED_USE_RE         = /\G\s*\.use\s*\(/
 
     private def scan_chained_router_mounts(
       content : String,
@@ -579,14 +579,22 @@ module Analyzer::Javascript
       content.scan(CHAINED_ROUTER_HEAD_RE) do |m|
         caller = m[1]? || ""
         pos = m.byte_end(0)
-        while link = content.byte_slice(pos).match(CHAINED_USE_RE)
-          args_start = pos + link.byte_end(0)
+        while link = CHAINED_USE_RE.match_at_byte_index(content, pos)
+          args_start = link.byte_end(0)
           args = extract_use_call_args(content, args_start)
           first = first_top_level_argument(args)
-          prefix = first.strip.match(/\A['"]([^'"]+)['"]\z/).try(&.[1]) || prefix_constants[first.strip]?
-          if prefix.nil? != with_prefix
-            match_end = prefix ? args_start + first.bytesize + 1 : args_start
-            process_use_call(content, match_end, caller, prefix || "/", main_file, locator,
+          prefixes = if explicit_mount_prefix_args?(args, prefix_constants)
+                       extract_mount_prefixes_from_array(first, prefix_constants)
+                     else
+                       [] of String
+                     end
+          if with_prefix
+            prefixes.each do |prefix|
+              process_use_call(content, args_start + first.bytesize + 1, caller, prefix, main_file, locator,
+                require_map, function_map, var_to_function, var_prefix, global_deferred_mounts)
+            end
+          elsif !explicit_mount_prefix_args?(args, prefix_constants)
+            process_use_call(content, args_start, caller, "/", main_file, locator,
               require_map, function_map, var_to_function, var_prefix, global_deferred_mounts)
           end
           pos = args_start + args.bytesize + 1

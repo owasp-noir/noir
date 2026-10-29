@@ -11,6 +11,10 @@ expected_endpoints = [
     Param.new("name", "", "json"), Param.new("assignee", "", "json"), Param.new("x-tenant", "", "header"),
   ]),
   Endpoint.new("/tasks/:id", "PUT", [Param.new("id", "", "path"), Param.new("title", "", "json")]),
+  # A TypeBox schema bound to a constant.
+  Endpoint.new("/tasks/:id", "PATCH", [Param.new("id", "", "path"), Param.new("done", "", "json")]),
+  # `{ schema, handler }` as the only options argument.
+  Endpoint.new("/tasks/:id", "DELETE", [Param.new("id", "", "path"), Param.new("x-reason", "", "header")]),
 ]
 
 FunctionalTester.new("fixtures/javascript/fastify_plugin_schema/", {

@@ -31,3 +31,12 @@ fastify.route({
   schema: { body: Type.Object({ title: Type.String() }) },
   handler: async (request) => update(request.body)
 })
+
+const Patch = Type.Object({ done: Type.Boolean() })
+
+fastify.patch('/tasks/:id', { schema: { body: Patch } }, async (request) => patch(request.body))
+
+fastify.delete('/tasks/:id', {
+  schema: { headers: { type: 'object', properties: { 'x-reason': { type: 'string' } } } },
+  handler: async (request) => remove(request.params.id)
+})

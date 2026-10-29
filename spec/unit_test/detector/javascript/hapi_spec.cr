@@ -21,6 +21,11 @@ describe "Detect JS Hapi" do
     instance.detect("package.json", %({"dependencies": {"@hapi/joi": "^17.0.0", "hapi-swagger": "^14.0.0"}})).should be_false
   end
 
+  it "ignores hapi as a dev-only dependency" do
+    instance.detect("package.json", %({"dependencies": {"express": "^4"}, "devDependencies": {"@hapi/hapi": "^21"}})).should be_false
+    instance.detect("package.json", %({"name": "x", "dependencies": {)).should be_false
+  end
+
   it "ignores code without a hapi marker" do
     instance.detect("index.js", "const joi = require('@hapi/joi')").should be_false
   end
