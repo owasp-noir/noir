@@ -22,6 +22,11 @@ expected_endpoints = crud.call("dashboard") + crud.call("css_template") + [
   Endpoint.new("/api/v1/dashboard/{pk}/charts", "GET", pk),
   # `include_route_methods` names `related` but not `distinct`.
   Endpoint.new("/api/v1/css_template/related/{column_name}", "GET", column),
+  # Stacked `@expose` on one method: both are served.
+  Endpoint.new("/explore/{id}/", "GET", [Param.new("id", "", "path")]),
+  Endpoint.new("/explore/", "GET"),
+  # `RouteMethod.CRUD_SET` names `list`, not `hidden`.
+  Endpoint.new("/dashboard/list/", "GET"),
 ]
 
 tester = FunctionalTester.new("fixtures/python/flask_appbuilder_inherited/", {
@@ -32,4 +37,8 @@ tester.perform_tests
 
 it "reports nothing under the unregistered base's name", tags: "functional" do
   tester.endpoints.map(&.url).select(&.includes?("baseresourceapi")).should be_empty
+end
+
+it "drops a method include_route_methods leaves out", tags: "functional" do
+  tester.endpoints.map(&.url).should_not contain("/dashboard/hidden/")
 end

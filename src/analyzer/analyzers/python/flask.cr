@@ -1393,10 +1393,15 @@ module Analyzer::Python
     # `RouteMethod.NAME` is the lowercased name.
     FAB_ROUTE_METHOD_SETS = {
       "REST_MODEL_VIEW_CRUD_SET" => %w[delete get get_list post put info],
+      "CRUD_SET"                 => %w[add list edit delete action_post show],
+      "RELATED_VIEW_SET"         => %w[add list edit delete],
+      "API_SET"                  => %w[api_create api_delete api_get api_read api_update],
       "IMPORT"                   => %w[import_],
     }
     FAB_ROUTE_METHODS_ATTR_RE = /^(include_route_methods|exclude_route_methods)\s*(?::[^=]+)?=\s*(.+)$/m
-    FAB_REGISTER_RE           = /\.add_(?:api|view|view_no_menu)\s*\(\s*([A-Za-z_][\w.]*)/
+    # `appbuilder.add_api(X)` / `add_view(X, ...)`, and an Airflow plugin's
+    # `appbuilder_views = [{"view": X()}]`.
+    FAB_REGISTER_RE = /\.add_(?:api|view|view_no_menu)\s*\(\s*([A-Za-z_][\w.]*)|['"]view['"]\s*:\s*([A-Za-z_][\w.]*)/
 
     # `from flask_appbuilder[.x] import A, B as C` / `import flask_appbuilder`.
     # The import graph resolves names to files inside the scanned project, so
@@ -1478,9 +1483,9 @@ module Analyzer::Python
                                                  source : ::String, fab : FabState,
                                                  force : Bool = false) : Nil
       return if fab.collected.includes?(path)
-      if source.includes?(".add_")
+      if source.includes?(".add_") || source.includes?("view")
         source.scan(FAB_REGISTER_RE) do |m|
-          name = m[1].split('.').last
+          name = (m[1]? || m[2]).split('.').last
           fab.registered << name
           fab.registrations << {name, path, base_path}
         end
@@ -1624,12 +1629,13 @@ module Analyzer::Python
 
     # `value` continued over the following lines until its brackets close.
     private def collect_python_value(lines : Array(::String), index : Int32, value : ::String) : ::String
-      text = value
+      text = strip_python_line_comment(value)
       depth = text.count("({[") - text.count(")}]")
       i = index + 1
       while depth > 0 && i < lines.size
-        text += "\n#{lines[i]}"
-        depth += lines[i].count("({[") - lines[i].count(")}]")
+        line = strip_python_line_comment(lines[i])
+        text += "\n#{line}"
+        depth += line.count("({[") - line.count(")}]")
         i += 1
       end
       text
@@ -1637,13 +1643,21 @@ module Analyzer::Python
 
     # `RouteMethod.REST_MODEL_VIEW_CRUD_SET | {RouteMethod.RELATED, "bulk_delete"}`
     # -> the method names it selects.
-    private def fab_route_method_names(expression : ::String) : Array(::String)
+    private def fab_route_method_names(expression : ::String) : Array(::String)?
       names = [] of ::String
       expression.scan(/['"]([A-Za-z_]\w*)['"]|\bRouteMethod\.([A-Z_]+)/) do |m|
         if literal = m[1]?
           names << literal
         elsif constant = m[2]?
-          names.concat(FAB_ROUTE_METHOD_SETS[constant]? || [constant.downcase])
+          if set = FAB_ROUTE_METHOD_SETS[constant]?
+            names.concat(set)
+          elsif constant.ends_with?("_SET")
+            # A set this table does not know: filtering on a guess would
+            # drop real routes, so do not filter at all.
+            return
+          else
+            names << constant.downcase
+          end
         end
       end
       names.uniq
@@ -1764,6 +1778,10 @@ module Analyzer::Python
         end
       end
       chains = fab.decls.to_h { |decl| {decl, flask_appbuilder_chain(decl, fab)} }
+      # A registration is evidence only when it names a class seen here: a
+      # loop variable (`add_api(api)`) or a Flask-Admin `add_view(ModelView(...))`
+      # says nothing. With none, every class counts as served.
+      registered = fab.registered.select { |name| fab.by_name.has_key?(name) }.to_set
       # A class another one subclasses is a base: its `@expose` routes are
       # served under each subclass, not under a URL built from its own
       # name, unless it is registered itself.
@@ -1773,7 +1791,7 @@ module Analyzer::Python
       end
 
       fab.decls.each do |decl|
-        next if bases.includes?(decl) && !fab.registered.includes?(decl.name)
+        next if bases.includes?(decl) && !registered.empty? && !registered.includes?(decl.name)
 
         chain = chains[decl]? || flask_appbuilder_chain(decl, fab)
         kind = nil
@@ -1802,7 +1820,9 @@ module Analyzer::Python
             include_methods ||= link.include_methods
             exclude_methods ||= link.exclude_methods
             link.exposes.each do |expose|
-              next if expose.handler && exposes.any? { |_, seen| seen.handler == expose.handler }
+              # Stacked `@expose` on one method are all served; a nearer
+              # class's method of the same name overrides this one.
+              next if expose.handler && exposes.any? { |owner, seen| owner != link && seen.handler == expose.handler }
               exposes << {link, expose}
             end
           end
@@ -1824,7 +1844,7 @@ module Analyzer::Python
 
         # Only a class the app hands to `add_api` serves them (any class
         # when the scan sees no registration at all).
-        if model_rest && (fab.registered.empty? || fab.registered.includes?(decl.name))
+        if model_rest && (registered.empty? || registered.includes?(decl.name))
           FAB_MODEL_REST_ROUTES.each do |handler, method, suffix|
             next unless fab_route_served?(handler, include_methods, exclude_methods)
             next if exposes.any? { |_, expose| expose.handler == handler }
