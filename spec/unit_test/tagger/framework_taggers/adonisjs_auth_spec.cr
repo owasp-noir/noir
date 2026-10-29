@@ -40,13 +40,16 @@ describe "AdonisjsAuthTagger" do
   it "reads a multibyte call by bytes and stays on its line" do
     tmpdir = File.tempname("adonis_auth_bytes")
     Dir.mkdir_p("#{tmpdir}/start")
-    routes = "#{tmpdir}/start/routes.ts"
-    File.write(routes, "router.get('/café', () => {}).use(middleware.auth())\nrouter\nrouter.group(() => {\n  router.get('/café/notes', () => {})\n}).use(middleware.auth())\nrouter.get('/open', () => {})\n")
+    # `routes` above is the fixture path, shared by every example in this
+    # group. Assigning it here would point the fixture example at a temp
+    # file this example deletes, and a randomized run then sees no tags.
+    byte_routes = "#{tmpdir}/start/routes.ts"
+    File.write(byte_routes, "router.get('/café', () => {}).use(middleware.auth())\nrouter\nrouter.group(() => {\n  router.get('/café/notes', () => {})\n}).use(middleware.auth())\nrouter.get('/open', () => {})\n")
     begin
       noir_options = create_test_options
       noir_options["base"] = YAML::Any.new(tmpdir)
       endpoints = [{1, "/cafe"}, {2, "/blank"}, {4, "/notes"}, {6, "/open"}].map do |line, url|
-        details = Details.new(PathInfo.new(routes, line))
+        details = Details.new(PathInfo.new(byte_routes, line))
         details.technology = "js_adonisjs"
         Endpoint.new(url, "GET", [] of Param, details)
       end
