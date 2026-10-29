@@ -343,13 +343,23 @@ class AspnetAuthTagger < FrameworkTagger
     chain
   end
 
-  # The attributes stacked on the action at `method_line`.
+  # The attributes stacked on the action at `method_line`, however many: the
+  # walk stops at the previous member (a blank line, or one ending a
+  # statement or block). One blank line directly above the method is
+  # spacing, not that member.
+  ACTION_ATTRIBUTE_LINES = 64
+
   private def action_attributes(lines : Array(String), method_line : Int32) : String
     attrs = [] of String
     idx = method_line - 1
-    while idx >= 0 && idx >= method_line - 12
+    while idx >= 0 && idx >= method_line - ACTION_ATTRIBUTE_LINES
       current = lines[idx].strip
-      break if current.empty? || current.ends_with?(';') || current.ends_with?('}') || current.ends_with?('{')
+      if current.empty?
+        break if idx < method_line - 1
+        idx -= 1
+        next
+      end
+      break if current.ends_with?(';') || current.ends_with?('}') || current.ends_with?('{')
       attrs.unshift(current) unless current.starts_with?("//")
       idx -= 1
     end
@@ -705,15 +715,7 @@ class AspnetAuthTagger < FrameworkTagger
 
   private def has_allow_anonymous?(lines : Array(String), method_line : Int32) : Bool
     return true if minimal_api_statement(lines, method_line).try(&.matches?(ALLOW_ANONYMOUS_PATTERN))
-    idx = method_line - 1
-    while idx >= 0 && idx >= method_line - 5
-      current = lines[idx].strip
-      break if current.empty? && idx < method_line - 1
-      break if current.ends_with?(';')
-      return true if current.matches?(ALLOW_ANONYMOUS_PATTERN)
-      idx -= 1
-    end
-    false
+    action_attributes(lines, method_line).matches?(ALLOW_ANONYMOUS_PATTERN)
   end
 
   private def check_method_attributes(lines : Array(String), method_line : Int32) : String?
@@ -723,21 +725,13 @@ class AspnetAuthTagger < FrameworkTagger
       end
     end
 
-    idx = method_line - 1
-    while idx >= 0 && idx >= method_line - 8
-      current = lines[idx].strip
-      break if current.empty? && idx < method_line - 1
-      # The end of the previous statement: what sits above it decorates
-      # something else (`app.MapGet("/a", [Authorize] () => ...);`).
-      break if current.ends_with?(';')
-
-      AUTHORIZE_PATTERNS.each do |pattern, desc|
-        return desc if current.matches?(pattern)
-      end
-
-      idx -= 1
+    # The attribute stack stops at the end of the previous statement: what
+    # sits above it decorates something else (`app.MapGet("/a", [Authorize]
+    # () => ...);`).
+    attrs = action_attributes(lines, method_line)
+    AUTHORIZE_PATTERNS.each do |pattern, desc|
+      return desc if attrs.matches?(pattern)
     end
-
     nil
   end
 
@@ -763,6 +757,7 @@ class AspnetAuthTagger < FrameworkTagger
     receiver = (statement.match(MINIMAL_API_RECEIVER) || statement.match(GROUP_DECLARATION_RECEIVER)).try(&.[1])
     return unless receiver
     chain << receiver
+    return "ASP.NET .RequireAuthorization() (route group)" if group_statement_auth?(lines, route_line, receiver)
     unless receiver == "app"
       declaration = /\b#{Regex.escape(receiver)}\s*=\s*[\w.]*MapGroup\s*\(/
       (0...route_line).reverse_each do |idx|
@@ -772,6 +767,28 @@ class AspnetAuthTagger < FrameworkTagger
     end
     extension_auth(lines, origin, chain)
   end
+
+  # A `group.RequireAuthorization(...)` statement of its own, earlier in the
+  # scope the route at `route_line` is mapped in: a convention added to a
+  # group applies to every endpoint of it. The walk goes back through
+  # enclosing blocks and stops at the enclosing member's declaration.
+  private def group_statement_auth?(lines : Array(String), route_line : Int32, receiver : String) : Bool
+    return false if receiver == "app"
+    statement = /^\s*#{Regex.escape(receiver)}\s*\.\s*RequireAuthorization\s*\(/
+    depth = 0
+    (0...route_line).reverse_each do |idx|
+      line = lines[idx]
+      depth += line.count('}') - line.count('{')
+      return false if depth < 0 && line.matches?(MEMBER_DECLARATION)
+      return true if depth <= 0 && line.matches?(statement)
+    end
+    false
+  end
+
+  # A method or local function, with or without an access modifier.
+  # The name is one identifier, so a call (`group.MapGet(`, `Task.Delay(`)
+  # is not one, and `if (` / `using (` are not either.
+  MEMBER_DECLARATION = /^\s*(?:\[[^\]]*\]\s*)*(?:(?:public|private|protected|internal|static|async|override|virtual|sealed|unsafe|partial|new|extern)\s+)*(?:[\w?<>,\[\]]+\s+)?(?!(?:if|for|foreach|while|switch|catch|using|lock|fixed)\b)[\w]+\s*\(/
 
   # The authorization a route mapped through `chain` (route receiver first,
   # root builder last) inherits from the call sites of the route-builder
@@ -810,14 +827,33 @@ class AspnetAuthTagger < FrameworkTagger
     statement_at(lines, line_idx) if lines[line_idx].matches?(MINIMAL_API_RECEIVER)
   end
 
+  # The statement starting on `line_idx`, through the `;` outside every
+  # bracket: a block-bodied lambda's own `;`s do not end it, so auth
+  # chained after its `})` is part of it. A closing bracket the statement
+  # did not open (the end of the enclosing block) ends it too.
+  STATEMENT_LINES = 80
+
   private def statement_at(lines : Array(String), line_idx : Int32) : String
-    idx = line_idx
-    end_idx = [line_idx + 6, lines.size - 1].min
+    end_idx = [line_idx + STATEMENT_LINES, lines.size - 1].min
+    depth = 0
     String.build do |sb|
-      while idx <= end_idx
-        sb << lines[idx] << ' '
-        break if lines[idx].includes?(";")
-        idx += 1
+      (line_idx..end_idx).each do |idx|
+        line = lines[idx]
+        line.each_char do |char|
+          case char
+          when '(', '{', '[' then depth += 1
+          when ')', '}', ']'
+            depth -= 1
+            return sb.to_s if depth < 0
+          when ';'
+            if depth <= 0
+              sb << char
+              return sb.to_s
+            end
+          end
+          sb << char
+        end
+        sb << ' '
       end
     end
   end

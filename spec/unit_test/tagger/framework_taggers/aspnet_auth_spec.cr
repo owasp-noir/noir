@@ -503,7 +503,8 @@ describe "AspnetAuthTagger" do
       ensure
         CodeLocator.instance.clear_all
       end
-      endpoint.tags.map(&.description).should eq(["Protected by ASP.NET [Authorize(Roles)]"])
+      # The attribute sits on the class: the action's own stack ends at `{`.
+      endpoint.tags.map(&.description).should eq(["Protected by ASP.NET [Authorize(Roles)] (class-level)"])
     end
   end
 end
