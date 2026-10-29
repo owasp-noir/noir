@@ -16,7 +16,11 @@ module Analyzer::Java
     include JavaEngine
 
     REGEX_ROUTER_CODE_BLOCK = /route\(\)?.*?\);/m
-    REGEX_ROUTE_CALL        = /((?:andRoute|route)\s*\(|\.)\s*(?:RequestPredicates\.)?(GET|POST|DELETE|PUT|PATCH|HEAD|OPTIONS)\s*\(/
+    # Where a router statement starts: `route(` / `route()` and the
+    # `RouterFunctions.nest(path(...), route()...)` form, whose prefix sits
+    # before the `route(`.
+    ROUTER_BLOCK_START_RE = /(?<![\w$])(?:route|nest)\s*\(/
+    REGEX_ROUTE_CALL      = /((?:andRoute|route)\s*\(|\.)\s*(?:RequestPredicates\.)?(GET|POST|DELETE|PUT|PATCH|HEAD|OPTIONS)\s*\(/
 
     SPRING_WEB_BIND_PACKAGE      = "org.springframework.web.bind.annotation."
     FEIGN_CLIENT_PACKAGE         = "org.springframework.cloud.openfeign.FeignClient"
@@ -92,12 +96,18 @@ module Analyzer::Java
         @by_fqcn = Hash(PackageScopeKey, SpringRouteMapping).new
       end
 
-      def add(project_root : String, package_name : String, annotation_name : String, mapping : SpringRouteMapping)
-        package_mappings = @by_package[{project_root, package_name}] ||= Hash(String, SpringRouteMapping).new
-        package_mappings[annotation_name] = mapping
+      # Each mapping is filed under its module (`project_root`) and under the
+      # configured scan base (`scope_base`), so a controller can use a
+      # meta-annotation declared in a sibling Maven/Gradle module. The
+      # module's own declaration wins (see `visible_meta_annotation_mappings`).
+      def add(project_root : String, scope_base : String, package_name : String, annotation_name : String, mapping : SpringRouteMapping)
+        {project_root, "base:#{scope_base}"}.each do |scope|
+          package_mappings = @by_package[{scope, package_name}] ||= Hash(String, SpringRouteMapping).new
+          package_mappings[annotation_name] ||= mapping
 
-        unless package_name.empty?
-          @by_fqcn[{project_root, "#{package_name}.#{annotation_name}"}] = mapping
+          unless package_name.empty?
+            @by_fqcn[{scope, "#{package_name}.#{annotation_name}"}] ||= mapping
+          end
         end
       end
     end
@@ -364,8 +374,13 @@ module Analyzer::Java
           # {verb calls, nest prefixes, offset of the block in `content`}.
           # The first two hold positions relative to the block, so the block's
           # own offset is what turns a call position into a file line.
-          route_blocks = [] of Tuple(Array(Tuple(Int32, String, String, String, Int32)), Array(Tuple(Int32, Int32, String)), Int32)
+          route_blocks = [] of Tuple(Array(RouterCall), Array(Tuple(Int32, Int32, String)), Int32)
           reactive_callees = {} of String => Array(Callee)
+          # `{method name => params}` for `this::handler` references, and
+          # `{block offset, call position} => params` for inline lambdas.
+          handler_params = {} of String => Array(Param)
+          lambda_handler_texts = {} of Tuple(Int32, Int32) => String
+          lambda_handler_params = {} of Tuple(Int32, Int32) => Array(Param)
           # The block and verb-call scans are regexes: on the raw source a
           # commented-out `.andRoute(GET(...))` was a route. Offsets and
           # line numbers are kept.
@@ -381,8 +396,7 @@ module Analyzer::Java
             # files are worth seeding (a copy of) the project table into.
             project_constants = content_matches?(content, REGEX_ROUTER_CODE_BLOCK) ? java_project_constants(path) : nil
             constants = Noir::TreeSitterJavaRouteExtractor.extract_string_constants_from(root, content, project_constants)
-            content.scan(REGEX_ROUTER_CODE_BLOCK) do |route_code|
-              method_code = route_code[0]
+            each_router_block(content) do |method_code, block_offset|
               # Pick up `nest(RequestPredicates.path("/prefix"), ...)`
               # / `nest(path("/prefix"), ...)` byte ranges so verb
               # calls inside the nested lambda get the prefix added.
@@ -391,23 +405,30 @@ module Analyzer::Java
               # `route().nest(path("/product"), builder ->
               # builder.GET("/name/{name}", ...))` surfaced as
               # `GET /name/{name}` instead of `GET /product/name/{name}`.
-              route_blocks << {collect_router_route_calls(method_code, constants),
-                               collect_nest_prefixes(method_code, constants),
-                               route_code.begin(0) || 0}
+              calls = collect_router_route_calls(method_code, constants)
+              route_blocks << {calls, collect_nest_prefixes(method_code, constants), block_offset}
+              calls.each do |call|
+                next unless lambda = call[5]
+                lambda_handler_texts[{block_offset, call[0]}] = lambda
+              end
             end
 
+            wanted = Set(String).new
+            route_blocks.each { |calls, _, _| calls.each { |call| wanted << call[3] unless call[3].empty? } }
             # Resolve same-file `this::handler` method bodies to 1-hop
             # callees so reactive endpoints carry handler context too.
-            if include_callee
-              wanted = Set(String).new
-              route_blocks.each { |calls, _, _| calls.each { |call| wanted << call[3] unless call[3].empty? } }
-              reactive_callees = build_reactive_method_callees(root, content, path, wanted)
+            reactive_callees = build_reactive_method_callees(root, content, path, wanted) if include_callee
+            # ...and to the request inputs they read off `ServerRequest`.
+            unless wanted.empty? && lambda_handler_texts.empty?
+              dto_index = dto_builder.build_for_with_root(path, content, root)
+              handler_params = reactive_handler_params(root, content, wanted, dto_index)
+              lambda_handler_texts.each { |key, handler| lambda_handler_params[key] = server_request_params(handler, dto_index) }
             end
           end
 
           route_blocks.each do |calls, nest_prefixes, block_offset|
             calls.each do |call|
-              pos, method, endpoint, handler_ref, verb_pos = call
+              pos, method, endpoint, handler_ref, verb_pos, _ = call
               nest_prefix = ""
               nest_prefixes.each do |start_b, end_b, prefix|
                 if pos >= start_b && pos < end_b
@@ -425,6 +446,11 @@ module Analyzer::Java
                 if handler_callees = reactive_callees[handler_ref]?
                   handler_callees.each { |callee| reactive_endpoint.push_callee(callee) }
                 end
+              end
+
+              request_params = handler_ref.empty? ? lambda_handler_params[{block_offset, pos}]? : handler_params[handler_ref]?
+              if request_params
+                request_params.each { |param| reactive_endpoint.push_param(param) }
               end
 
               @result << reactive_endpoint
@@ -508,7 +534,7 @@ module Analyzer::Java
           if needs_meta
             package_name = Noir::TreeSitterJavaParameterExtractor.extract_package_name_from(root, content)
             Noir::TreeSitterJavaRouteExtractor.extract_meta_mappings_from(root, content, constants).each do |name, mapping|
-              meta_index.add(project_root, package_name, name, mapping)
+              meta_index.add(project_root, configured_base_for(path), package_name, name, mapping)
             end
           end
 
@@ -569,14 +595,17 @@ module Analyzer::Java
                                                  package_name : String,
                                                  index : SpringMetaAnnotationIndex) : Hash(String, SpringRouteMapping)
       mappings = Hash(String, SpringRouteMapping).new
-      project_root = project_root_for(path)
-      merge_meta_package(mappings, index.by_package[{project_root, package_name}]?)
+      imports = java_imports(content)
+      # The module's own declarations first, then the rest of the scan base.
+      {project_root_for(path), "base:#{configured_base_for(path)}"}.each do |scope|
+        merge_meta_package(mappings, index.by_package[{scope, package_name}]?)
 
-      java_imports(content).each do |import_name|
-        if import_name.ends_with?(".*")
-          merge_meta_package(mappings, index.by_package[{project_root, import_name[...-2]}]?)
-        elsif mapping = index.by_fqcn[{project_root, import_name}]?
-          mappings[import_name.split('.').last] = mapping
+        imports.each do |import_name|
+          if import_name.ends_with?(".*")
+            merge_meta_package(mappings, index.by_package[{scope, import_name[...-2]}]?)
+          elsif mapping = index.by_fqcn[{scope, import_name}]?
+            mappings[import_name.split('.').last] ||= mapping
+          end
         end
       end
 
@@ -987,9 +1016,13 @@ module Analyzer::Java
     # `[{start_byte, end_byte, prefix}, ...]`. Inner verb calls
     # whose match position falls inside `[start, end)` should have
     # `prefix` prepended.
+    # {match position, verb, path, handler method name, verb position,
+    #  inline lambda handler text}.
+    alias RouterCall = Tuple(Int32, String, String, String, Int32, String?)
+
     private def collect_router_route_calls(code : String,
-                                           constants : Hash(String, String)) : Array(Tuple(Int32, String, String, String, Int32))
-      calls = [] of Tuple(Int32, String, String, String, Int32)
+                                           constants : Hash(String, String)) : Array(RouterCall)
+      calls = [] of RouterCall
 
       code.scan(REGEX_ROUTE_CALL) do |match|
         open_idx = (match.end || 0) - 1
@@ -1003,7 +1036,9 @@ module Analyzer::Java
         # Builder `.GET(h::list)` / `.POST(req -> …)` has no pattern of its
         # own: it matches the enclosing `path(...)` / `nest(...)` prefix.
         path_less = first_arg.includes?("::") || first_arg.includes?("->")
-        path = path_less ? "" : resolve_router_path(first_arg, constants)
+        # `.GET(path("/x").and(accept(...)), h)` puts the pattern in a
+        # predicate, like `nest(path("/x"), ...)`.
+        path = path_less ? "" : (resolve_router_path(first_arg, constants) || path_predicate_prefix(first_arg, constants))
         next unless path
 
         # The handler is the second argument of `.GET("/x", this::handle)`
@@ -1018,10 +1053,113 @@ module Analyzer::Java
         # call sits in, while the verb is where the route itself is written —
         # `.route(\n  GET("/hello")` declares the route on the `GET` line, not
         # on the `route(` line that opens the statement.
-        calls << {match.begin || 0, match[2], path.gsub(/\n/, ""), handler_ref, match.begin(2) || match.begin || 0}
+        lambda = handler_arg if handler_arg && handler_ref.empty? && handler_arg.includes?("->")
+        calls << {match.begin || 0, match[2], path.gsub(/\n/, ""), handler_ref, match.begin(2) || match.begin || 0, lambda}
       end
 
       calls
+    end
+
+    # Each router statement in `code` with its offset: from a
+    # `ROUTER_BLOCK_START_RE` match to the `;` that ends the statement at
+    # depth 0 (or the `}` closing the enclosing block). A statement inside
+    # a block lambda (`request -> { ...; }`) does not end it.
+    private def each_router_block(code : String, & : String, Int32 ->) : Nil
+      chars = code.chars
+      offset = 0
+      while match = ROUTER_BLOCK_START_RE.match(code, offset)
+        start = match.begin(0)
+        stop = router_statement_end(chars, match.end(0) - 1)
+        yield code[start...stop], start
+        offset = stop
+      end
+    end
+
+    private def router_statement_end(chars : Array(Char), from : Int32) : Int32
+      depth = 0
+      index = from
+      while index < chars.size
+        char = chars[index]
+        case char
+        when '"', '\''
+          index += 1
+          while index < chars.size && chars[index] != char
+            index += 1 if chars[index] == '\\'
+            index += 1
+          end
+        when '(', '[', '{'
+          depth += 1
+        when ')', ']', '}'
+          depth -= 1
+          return index if depth < 0
+        when ';'
+          return index + 1 if depth.zero?
+        end
+        index += 1
+      end
+      chars.size
+    end
+
+    SERVER_REQUEST_PARAM_RE  = /\b(\w+)\s*\.\s*(queryParam|param)\s*\(\s*"([^"]+)"/
+    SERVER_REQUEST_HEADER_RE = /\b(\w+)\s*\.\s*headers\s*\(\s*\)\s*\.\s*(?:firstHeader|header)\s*\(\s*"([^"]+)"/
+    SERVER_REQUEST_BODY_RE   = /\b(\w+)\s*\.\s*(?:bodyToMono|bodyToFlux|body)\s*\(\s*([\w.]+)\s*\.\s*class\b/
+    LAMBDA_RECEIVER_RE       = /\A\(?\s*(?:[\w.<>]+\s+)?(\w+)\s*\)?\s*->/
+
+    # `{method name => params}` for the wanted same-file handler methods:
+    # what each reads off its `ServerRequest` parameter.
+    private def reactive_handler_params(root : LibTreeSitter::TSNode,
+                                        content : String,
+                                        wanted : Set(String),
+                                        dto_index : Noir::TreeSitterJavaDtoIndex::Index) : Hash(String, Array(Param))
+      result = {} of String => Array(Param)
+      walk_reactive_method_declarations(root) do |method|
+        name_node = Noir::TreeSitter.field(method, "name")
+        next unless name_node
+        method_name = Noir::TreeSitter.node_text(name_node, content)
+        next unless wanted.includes?(method_name)
+        next if result.has_key?(method_name)
+
+        receiver = nil
+        if parameters = Noir::TreeSitter.field(method, "parameters")
+          Noir::TreeSitter.each_named_child(parameters) do |param|
+            next unless receiver.nil? && Noir::TreeSitter.node_type(param) == "formal_parameter"
+            type_node = Noir::TreeSitter.field(param, "type")
+            param_name = Noir::TreeSitter.field(param, "name")
+            next unless type_node && param_name
+            next unless Noir::TreeSitter.node_text(type_node, content).ends_with?("ServerRequest")
+            receiver = Noir::TreeSitter.node_text(param_name, content)
+          end
+        end
+        body = Noir::TreeSitter.field(method, "body")
+        next unless receiver && body
+        result[method_name] = server_request_params(Noir::TreeSitter.node_text(body, content), dto_index, receiver)
+      end
+      result
+    end
+
+    # Query, header and JSON body inputs `receiver` reads in `code`
+    # (`r.queryParam("q")`, `r.headers().firstHeader("X")`,
+    # `r.bodyToMono(Dto.class)`). Without a receiver, `code` is an inline
+    # `request -> ...` lambda and its parameter is the receiver.
+    private def server_request_params(code : String,
+                                      dto_index : Noir::TreeSitterJavaDtoIndex::Index,
+                                      receiver : String? = nil) : Array(Param)
+      params = [] of Param
+      receiver ||= code.match(LAMBDA_RECEIVER_RE).try(&.[1])
+      return params unless receiver
+
+      code.scan(SERVER_REQUEST_PARAM_RE) do |match|
+        params << Param.new(match[3], "", "query") if match[1] == receiver
+      end
+      code.scan(SERVER_REQUEST_HEADER_RE) do |match|
+        params << Param.new(match[2], "", "header") if match[1] == receiver
+      end
+      code.scan(SERVER_REQUEST_BODY_RE) do |match|
+        next unless match[1] == receiver
+        next unless fields = dto_index[match[2].split('.').last]?
+        fields.each { |field| params << Param.new(field.json_name, "", "json") unless field.json_ignored? }
+      end
+      params
     end
 
     # Extract the method name from a functional-handler argument when it
