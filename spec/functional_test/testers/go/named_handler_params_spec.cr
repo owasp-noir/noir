@@ -11,8 +11,9 @@ require "../../func_spec.cr"
   end
 
   tester = FunctionalTester.new("fixtures/go/named_handler_#{fw}/", {
-    :techs     => 1,
-    :endpoints => expected_endpoints.size,
+    :techs => 1,
+    # gf registers these with `BindHandler`, which answers every method.
+    :endpoints => expected_endpoints.size * (fw == "gf" ? 7 : 1),
   }, expected_endpoints)
   tester.perform_tests
 

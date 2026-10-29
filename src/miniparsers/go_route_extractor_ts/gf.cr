@@ -13,8 +13,10 @@ module Noir
       getter methods : Array(String)
       getter line : Int32
       getter params : Array(String)
+      # The request struct's type name (`ProfileReq`).
+      getter struct_name : String
 
-      def initialize(@path, @methods, @line, @params)
+      def initialize(@path, @methods, @line, @params, @struct_name = "")
       end
     end
 
@@ -33,15 +35,76 @@ module Noir
       ))
     end
 
+    # Every `group.Bind(ctrl, ...)` site as a `BIND` route: `path` is the
+    # group prefix the controllers are bound under, `handler_args` the
+    # bound expressions (`controller.NewCtrl()`, `&Ctrl{}`).
+    def extract_gf_bind_sites(source : String) : Array(Route)
+      extract_scoped_routes(source, ScopedConfig.new(
+        prefix_method: "Group",
+        middleware_method: "Group",
+        chain_prefix: true,
+        controller_bind_method: "Bind",
+      )).select(&.verb.==("BIND"))
+    end
+
+    # Standard-routing controller methods: `func (c *Ctrl) Profile(ctx
+    # context.Context, req *v1.ProfileReq) (...)` -> `{"Ctrl", "v1",
+    # "ProfileReq"}`, the qualifier empty for a same-package request type.
+    def extract_gf_controller_requests(source : String) : Array(Tuple(String, String, String))
+      results = [] of Tuple(String, String, String)
+      Noir::TreeSitter.parse_go(source) do |root|
+        Noir::TreeSitter.each_named_child(root) do |decl|
+          next unless Noir::TreeSitter.node_type(decl) == "method_declaration"
+          receiver = Noir::TreeSitter.field(decl, "receiver")
+          params = Noir::TreeSitter.field(decl, "parameters")
+          next unless receiver && params && (recv_type = receiver_type_name(receiver, source))
+          types = [] of String
+          Noir::TreeSitter.each_named_child(params) do |param|
+            next unless Noir::TreeSitter.node_type(param) == "parameter_declaration"
+            Noir::TreeSitter.field(param, "type").try { |t| types << Noir::TreeSitter.node_text(t, source) }
+          end
+          next unless types.size == 2 && types[0] == "context.Context"
+          qualifier, _, name = types[1].lchop('*').rpartition('.')
+          results << {recv_type, qualifier, name}
+        end
+      end
+      results
+    end
+
+    # Constructors whose first `return` builds a struct (`func NewV1()
+    # IHelloV1 { return &ControllerV1{} }`): name -> the struct's type name.
+    def extract_gf_constructor_types(source : String) : Hash(String, String)
+      results = Hash(String, String).new
+      Noir::TreeSitter.parse_go(source) do |root|
+        Noir::TreeSitter.each_named_child(root) do |decl|
+          next unless Noir::TreeSitter.node_type(decl) == "function_declaration"
+          name = Noir::TreeSitter.field(decl, "name")
+          body = Noir::TreeSitter.field(decl, "body")
+          next unless name && body
+          each_return_value(body) do |expr|
+            value = expr
+            if Noir::TreeSitter.node_type(value) == "unary_expression"
+              value = Noir::TreeSitter.field(value, "operand") || next
+            end
+            next unless Noir::TreeSitter.node_type(value) == "composite_literal"
+            type_node = Noir::TreeSitter.field(value, "type") || next
+            type_name = final_type_identifier(type_node, source) || next
+            results.put_if_absent(Noir::TreeSitter.node_text(name, source)) { type_name }
+          end
+        end
+      end
+      results
+    end
+
     # GoFrame standardized routing: scan every `type X struct { ... }`
     # for an embedded `g.Meta` field whose tag declares a route
     # (`path:"/x" method:"get"`). Each such struct is one endpoint (or
     # several, when `method` lists more than one verb). The struct's own
     # named fields become request params. This is method-/group-agnostic
-    # on purpose: the tag fully specifies the route, the same way gf's
-    # OpenAPI generator treats it, so we don't need to resolve the
-    # `group.Bind(...)` site (whose prefix is often a runtime config
-    # value we can't see statically).
+    # on purpose: the tag holds the route as declared, the way gf's OpenAPI
+    # generator reads it. The `group.Bind(...)` prefix it is mounted under
+    # is joined by the analyzer when that site resolves (see
+    # `extract_gf_bind_sites`); otherwise the bare tag path stands.
     def extract_gf_meta_routes(source : String) : Array(GfMetaRoute)
       results = [] of GfMetaRoute
       Noir::TreeSitter.parse_go(source) do |root|
@@ -114,7 +177,8 @@ module Noir
           # every canonical verb (rather than guessing a single one).
           methods = ["ALL"] if methods.empty?
 
-          results << GfMetaRoute.new(path, methods, meta_line, params)
+          struct_name = Noir::TreeSitter.field(node, "name").try { |n| Noir::TreeSitter.node_text(n, source) } || ""
+          results << GfMetaRoute.new(path, methods, meta_line, params, struct_name)
         end
       end
       results

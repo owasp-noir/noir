@@ -405,6 +405,11 @@ module Noir
             routes << route
           end
           return
+        when ChiCall::BindController
+          if site = decode_controller_bind_call(node, source, prefix_stack, local_groups)
+            routes << site
+          end
+          return
         end
       end
 
@@ -453,6 +458,10 @@ module Noir
 
       if config.bind_methods.includes?(name)
         return ChiCall::Bind
+      end
+
+      if name == config.controller_bind_method && !chi_first_string_arg(call, source, string_values)
+        return ChiCall::BindController
       end
 
       case name
@@ -702,6 +711,23 @@ module Noir
       base_prefix = local_groups[router_name]? || prefix_stack.join
       resolved = base_prefix.empty? ? path : group_join(base_prefix, path)
       Route.new(router_name, "ANY", resolved, path, handler_text, Noir::TreeSitter.node_start_row(call), handler_args: handler_args)
+    end
+
+    # `group.Bind(ctrl, ...)` as a `BIND` pseudo-route: the path is the
+    # group prefix active at the call, `handler_args` the bound values.
+    private def decode_controller_bind_call(call : LibTreeSitter::TSNode,
+                                            source : String,
+                                            prefix_stack : Array(String),
+                                            local_groups : Hash(String, String)) : Route?
+      operand = Noir::TreeSitter.field(call, "function").try { |fn| Noir::TreeSitter.field(fn, "operand") }
+      router_name = operand.try { |op| chi_router_operand_name(op, source) }
+      args = Noir::TreeSitter.field(call, "arguments")
+      return unless router_name && args
+      bound = [] of String
+      Noir::TreeSitter.each_named_arg(args) { |arg| bound << Noir::TreeSitter.node_text(arg, source) }
+      return if bound.empty?
+      prefix = local_groups[router_name]? || prefix_stack.join
+      Route.new(router_name, "BIND", prefix, "", bound.first, Noir::TreeSitter.node_start_row(call), handler_args: bound)
     end
 
     # Extract `{prefix, body_block, closure_node}` from a Route/Group call.

@@ -71,9 +71,10 @@ module Analyzer::Go
         # literal, so the common case is a no-op here. `handle_method:
         # "Handle"` covers the v3+ method-first shape; the verb shortcuts
         # (`r.GET`, `r.POST`, ...) are recognised unconditionally by the
-        # shared walker.
+        # shared walker. `Router.Group("/v2")` joins its prefix onto the
+        # parent router's the same way.
         ts_routes = Noir::TreeSitterGoRouteExtractor.extract_routes(
-          content, group_method: "Route", handle_method: "Handle")
+          content, group_method: "Route", handle_method: "Handle", extra_group_methods: ["Group"])
         next if ts_routes.empty?
 
         route_rows = Set(Int32).new

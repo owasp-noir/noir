@@ -52,11 +52,15 @@ module Analyzer::Go
       "huma.Options" => "OPTIONS",
     }
 
-    private struct StructField
+    struct StructField
       property name : String
       property tag : String
+      # The field's type as written (`User`, `*Payload`, `struct {...}`).
+      property type_text : String
+      # The fields of an inline `struct {...}` type (`Body struct { Name string }`).
+      property inline_fields : Array(StructField)?
 
-      def initialize(@name, @tag)
+      def initialize(@name, @tag, @type_text = "", @inline_fields = nil)
       end
     end
 
@@ -117,12 +121,16 @@ module Analyzer::Go
                                        structs : Hash(String, Array(StructField))) : Array(Endpoint)
       endpoints = [] of Endpoint
       Noir::TreeSitter.parse_go(source) do |root|
+        groups = collect_huma_groups(root, source)
         walk_calls(root) do |call|
           func = Noir::TreeSitter.field(call, "function")
           next if func.nil?
           func_text = Noir::TreeSitter.node_text(func, source)
           sugar_verb = SUGAR_VERBS[func_text]?
-          next unless func_text == "huma.Register" || sugar_verb
+          # `sse.Register(api, op, eventTypes, handler)` takes the same
+          # Operation literal, with the handler one argument later.
+          sse = func_text == "sse.Register"
+          next unless func_text == "huma.Register" || sse || sugar_verb
 
           args = Noir::TreeSitter.field(call, "arguments")
           next if args.nil?
@@ -132,6 +140,7 @@ module Analyzer::Go
           # branch below, so it needs no initializer.
           route_path = ""
           handler_node : LibTreeSitter::TSNode? = nil
+          api_node : LibTreeSitter::TSNode? = nil
 
           if sugar_verb
             # huma.Get(api, "/path", handler) — path@1, handler@2.
@@ -139,6 +148,7 @@ module Analyzer::Go
             arg_index = 0
             Noir::TreeSitter.each_named_arg(args) do |arg|
               case arg_index
+              when 0 then api_node = arg
               when 1 then route_path = decode_string_value(arg, source) || ""
               when 2 then handler_node = arg
               end
@@ -149,10 +159,12 @@ module Analyzer::Go
             # Operation literal@1, handler@2.
             op_node : LibTreeSitter::TSNode? = nil
             arg_index = 0
+            handler_index = sse ? 3 : 2
             Noir::TreeSitter.each_named_arg(args) do |arg|
               case arg_index
-              when 1 then op_node = arg
-              when 2 then handler_node = arg
+              when 0             then api_node = arg
+              when 1             then op_node = arg
+              when handler_index then handler_node = arg
               end
               arg_index += 1
             end
@@ -162,21 +174,18 @@ module Analyzer::Go
           end
 
           next if method.empty? || route_path.empty?
+          # An operation registered on a `huma.NewGroup(api, "/v1")` group is
+          # served under each of the group's prefixes.
+          prefixes = api_node.try { |api_arg| Noir::TreeSitter.node_type(api_arg) == "identifier" ? groups[Noir::TreeSitter.node_text(api_arg, source)]? : nil }
+          route_paths = prefixes ? prefixes.map { |prefix| "#{prefix.rstrip('/')}#{route_path}" } : [route_path]
 
           row = Noir::TreeSitter.node_start_row(call) + 1
-          details = Details.new(PathInfo.new(path, row))
-          endpoint = Endpoint.new(route_path, method.upcase, details)
-
-          if handler_arg = handler_node
-            input_type = extract_input_struct_name(handler_arg, source)
-            if input_type && (fields = structs[input_type]?)
-              fields.each do |field|
-                push_field_param(endpoint, field)
-              end
-            end
+          fields = handler_node.try { |handler_arg| input_fields(handler_arg, source, structs) }
+          route_paths.each do |url|
+            endpoint = Endpoint.new(url, method.upcase, Details.new(PathInfo.new(path, row)))
+            fields.try &.each { |field| push_field_param(endpoint, field, structs) }
+            endpoints << endpoint
           end
-
-          endpoints << endpoint
         end
       end
       endpoints
@@ -271,6 +280,69 @@ module Analyzer::Go
       "http.MethodQuery"   => "QUERY",
     }
 
+    # `v1 := huma.NewGroup(api, "/v1")` (and groups of groups) -> `{"v1" => ["/v1"]}`.
+    # `NewGroup` takes several prefixes (`huma.NewGroup(api, "/v1", "/api/v1")`).
+    # A name bound to different prefixes in one file (reused in two
+    # functions) is ambiguous and left out, as is a group rebound onto
+    # itself (`api = huma.NewGroup(api, "/v1")`), whose earlier routes have
+    # no prefix.
+    private def collect_huma_groups(root : LibTreeSitter::TSNode, source : String) : Hash(String, Array(String))
+      groups = Hash(String, Array(String)).new
+      ambiguous = Set(String).new
+      walk_node(root) do |node|
+        next unless {"short_var_declaration", "assignment_statement"}.includes?(Noir::TreeSitter.node_type(node))
+        left = Noir::TreeSitter.field(node, "left").try { |l| Noir::TreeSitter.first_named_child(l) }
+        call = Noir::TreeSitter.field(node, "right").try { |r| Noir::TreeSitter.first_named_child(r) }
+        next unless left && call && Noir::TreeSitter.node_type(left) == "identifier" && Noir::TreeSitter.node_type(call) == "call_expression"
+        next unless Noir::TreeSitter.field(call, "function").try { |f| Noir::TreeSitter.node_text(f, source) } == "huma.NewGroup"
+        args = [] of LibTreeSitter::TSNode
+        Noir::TreeSitter.field(call, "arguments").try { |a| Noir::TreeSitter.each_named_arg(a) { |arg| args << arg } }
+        name = Noir::TreeSitter.node_text(left, source)
+        parent_name = args[0]?.try { |arg| Noir::TreeSitter.node_type(arg) == "identifier" ? Noir::TreeSitter.node_text(arg, source) : nil }
+        next if parent_name == name || (parent_name && ambiguous.includes?(parent_name))
+        own = args[1..]?.try(&.compact_map { |arg| decode_string_value(arg, source) }) || [] of String
+        next if own.empty?
+        parents = parent_name.try { |parent_key| groups[parent_key]? } || [""]
+        value = parents.flat_map { |parent| own.map { |prefix| "#{parent.rstrip('/')}#{prefix}" } }
+        if (old = groups[name]?) && old != value
+          ambiguous << name
+        else
+          groups[name] = value
+        end
+      end
+      ambiguous.each { |name| groups.delete(name) }
+      groups
+    end
+
+    # The handler's Input struct fields: an inline `*struct {...}` parameter
+    # read in place, a named one looked up in the package's struct table.
+    private def input_fields(node : LibTreeSitter::TSNode, source : String,
+                             structs : Hash(String, Array(StructField))) : Array(StructField)?
+      if (type_node = input_type_node(node)) && (struct_node = struct_type_of(type_node))
+        return extract_struct_fields(struct_node, source)
+      end
+      extract_input_struct_name(node, source).try { |name| structs[name]? }
+    end
+
+    # The second parameter's type node of a handler func literal.
+    private def input_type_node(node : LibTreeSitter::TSNode) : LibTreeSitter::TSNode?
+      return unless Noir::TreeSitter.node_type(node) == "func_literal"
+      params = Noir::TreeSitter.field(node, "parameters") || return
+      decls = [] of LibTreeSitter::TSNode
+      Noir::TreeSitter.each_named_child(params) do |decl|
+        decls << decl if Noir::TreeSitter.node_type(decl) == "parameter_declaration"
+      end
+      decls[1]?.try { |decl| Noir::TreeSitter.field(decl, "type") }
+    end
+
+    # `struct {...}` or `*struct {...}` -> the `struct_type` node.
+    private def struct_type_of(type_node : LibTreeSitter::TSNode) : LibTreeSitter::TSNode?
+      case Noir::TreeSitter.node_type(type_node)
+      when "struct_type"  then type_node
+      when "pointer_type" then Noir::TreeSitter.first_named_child(type_node).try { |inner| struct_type_of(inner) }
+      end
+    end
+
     # Pulls the Input struct name out of the handler function literal.
     # Huma handlers look like:
     #   func(ctx context.Context, input *FooInput) (*FooOutput, error) { ... }
@@ -354,7 +426,9 @@ module Analyzer::Go
 
         if name_node = Noir::TreeSitter.field(decl, "name")
           field_name = Noir::TreeSitter.node_text(name_node, source)
-          fields << StructField.new(field_name, tag)
+          field_type = Noir::TreeSitter.field(decl, "type")
+          inline = field_type.try { |t| struct_type_of(t) }.try { |st| extract_struct_fields(st, source) }
+          fields << StructField.new(field_name, tag, field_type.try { |t| Noir::TreeSitter.node_text(t, source) } || "", inline)
         elsif type_node = Noir::TreeSitter.field(decl, "type")
           # Embedded field — name comes from the type itself; we don't
           # need to descend into embedded structs for Huma input types
@@ -367,11 +441,18 @@ module Analyzer::Go
       fields
     end
 
-    private def push_field_param(endpoint : Endpoint, field : StructField)
+    private def push_field_param(endpoint : Endpoint, field : StructField, structs : Hash(String, Array(StructField)))
       tag = field.tag
       if field.name == "Body"
-        param = Param.new("body", "", "json")
-        endpoint.params << param unless endpoint.params.includes?(param)
+        # A struct body (inline, or a package struct) is listed by its JSON
+        # field names; anything else (`Body []User`, `Body string`) as `body`.
+        body_fields = field.inline_fields || structs[field.type_text.lchop('*')]?
+        names = body_fields.try &.compact_map { |f| json_name(f) } || [] of String
+        names = ["body"] if names.empty?
+        names.each do |name|
+          param = Param.new(name, "", "json")
+          endpoint.params << param unless endpoint.params.includes?(param)
+        end
         return
       end
 
@@ -386,6 +467,18 @@ module Analyzer::Go
       # Untagged fields on input structs default to "body" in Huma's
       # implicit conventions only when they're the sole field; we err
       # on the side of not emitting them to avoid false positives.
+    end
+
+    # The JSON key encoding/json gives a struct field: its `json` tag name,
+    # else the field name; nil for `json:"-"`, an unexported field, or an
+    # embedded one (recorded with no type; its promoted fields are not read).
+    private def json_name(field : StructField) : String?
+      return if field.type_text.empty? || !field.name[0]?.try(&.uppercase?)
+      if m = field.tag.match(/json:"([^",]*)/)
+        return if m[1] == "-"
+        return m[1] unless m[1].empty?
+      end
+      field.name
     end
 
     # `literal_element` is tree-sitter-go's container for keyed-element

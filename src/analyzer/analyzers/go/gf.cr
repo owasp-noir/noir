@@ -24,13 +24,14 @@ module Analyzer::Go
       file_contents = read_package_file_contents
       package_function_bodies = lazy_package_bodies(file_contents)
       named_scope = named_handler_scope(file_contents)
+      bind_prefixes = meta_bind_prefixes(file_contents, named_scope.import_dirs)
       parallel_analyze(get_files_by_extension(".go")) do |path|
         next if go_test_path?(path)
         next unless File.exists?(path)
         content = read_file_content(path)
         next unless content_matches?(content, IMPORT_MARKER_RE)
         lines = GoEngine.strip_comments(content).lines
-        last_endpoint = Endpoint.new("", "")
+        last_endpoints = [] of Endpoint
 
         # GoFrame standardized routing: request structs embed
         # `g.Meta` with `path:`/`method:` tags that fully
@@ -48,8 +49,11 @@ module Analyzer::Go
             # same way Gin's `r.Any` is, so it isn't dropped by
             # the optimizer's allowed-method filter.
             verbs = mr.methods.flat_map { |m| Noir::TreeSitterGoRouteExtractor.fan_out_verbs(m) }.uniq!
-            verbs.each do |verb|
-              meta_ep = Endpoint.new(mr.path, verb, mr_details)
+            # Mounted under the group that `Bind`s its controller, when
+            # that site resolves; the bare tag path otherwise.
+            urls = bind_prefixes["#{File.dirname(path)}::#{mr.struct_name}"]?.try(&.map { |prefix| "#{prefix.rstrip('/')}#{mr.path}" }) || [mr.path]
+            urls.each_cartesian(verbs) do |url, verb|
+              meta_ep = Endpoint.new(url, verb, mr_details)
               ptype = (verb == "GET" || verb == "HEAD" || verb == "DELETE") ? "query" : "json"
               mr.params.each do |pname|
                 param = Param.new(pname, "", ptype)
@@ -85,25 +89,27 @@ module Analyzer::Go
           details = Details.new(PathInfo.new(path, index + 1))
 
           if ts_hits = routes_by_line[index]?
+            last_endpoints = [] of Endpoint
             ts_hits.each do |route|
-              # BindHandler/BindMiddleware accept any method;
-              # fixtures expect GET, so fold "ALL" down.
-              verb = route.verb == "ALL" ? "GET" : route.verb
-              new_endpoint = Endpoint.new(route.path, verb, details)
-              if entries = callees_by_route[route.line]?
-                entries.each do |entry|
-                  name, callee_path, callee_line = entry
-                  new_endpoint.push_callee(Callee.new(name, path: callee_path, line: callee_line))
+              # `BindHandler("/x", h)` and `group.ALL("/x", h)` answer every
+              # method, like a `g.Meta` `method:"all"` route.
+              Noir::TreeSitterGoRouteExtractor.fan_out_verbs(route.verb).each do |verb|
+                new_endpoint = Endpoint.new(route.path, verb, details)
+                if entries = callees_by_route[route.line]?
+                  entries.each do |entry|
+                    name, callee_path, callee_line = entry
+                    new_endpoint.push_callee(Callee.new(name, path: callee_path, line: callee_line))
+                  end
                 end
+                new_endpoint.handler = named.handler_for(route)
+                result << new_endpoint
+                named.bind(route, new_endpoint)
+                last_endpoints << new_endpoint
               end
-              new_endpoint.handler = named.handler_for(route)
-              result << new_endpoint
-              named.bind(route, new_endpoint)
-              last_endpoint = new_endpoint
             end
           end
 
-          add_gf_param_patterns(line, last_endpoint)
+          last_endpoints.each { |ep| add_gf_param_patterns(line, ep) }
         end
 
         named.each_attribution { |line, ep| add_gf_param_patterns(line, ep) }
@@ -112,6 +118,64 @@ module Analyzer::Go
       resolve_public_dirs(public_dirs)
 
       result
+    end
+
+    # `&Ctrl{}`, `pkg.Ctrl{}`, `new(Ctrl)`: a bound controller value.
+    BOUND_LITERAL = /\A&?\s*(?:new\(\s*)?(?:(\w+)\.)?(\w+)\s*(?:\{|\)\z)/
+    # `pkg.NewCtrl()`: a bound controller constructor.
+    BOUND_CTOR = /\A(?:(\w+)\.)?(\w+)\s*\(\s*\)\z/
+
+    # `{"<dir>::<RequestType>" => group prefixes}`: for each `group.Bind(ctrl)`
+    # whose controller resolves, the request types of the controller's
+    # methods, mounted under the prefix of the group that binds it. Each
+    # file is parsed at most once per table.
+    private def meta_bind_prefixes(file_contents : Hash(String, String), import_dirs : Hash(String, String)) : Hash(String, Set(String))
+      result = Hash(String, Set(String)).new
+      files_by_dir = Hash(String, Array(String)).new
+      file_contents.each_key { |p| (files_by_dir[File.dirname(p)] ||= [] of String) << p }
+      requests = Hash(String, Array(Tuple(String, String, String))).new
+      ctors = Hash(String, Hash(String, String)).new
+      file_contents.each do |path, content|
+        next unless content.includes?(".Bind(") && content_matches?(content, IMPORT_MARKER_RE)
+        Noir::TreeSitterGoRouteExtractor.extract_gf_bind_sites(content).each do |site|
+          site.handler_args.each do |arg|
+            ctrl = bound_controller(arg.strip, path, file_contents, files_by_dir, import_dirs, ctors) || next
+            ctrl_dir, ctrl_type = ctrl
+            files_by_dir[ctrl_dir]?.try &.each do |file|
+              (requests[file] ||= Noir::TreeSitterGoRouteExtractor.extract_gf_controller_requests(file_contents[file])).each do |recv, qualifier, name|
+                next unless recv == ctrl_type
+                req_dir = qualifier.empty? ? ctrl_dir : package_dir(qualifier, file, file_contents, import_dirs)
+                (result["#{req_dir}::#{name}"] ||= Set(String).new) << site.path if req_dir
+              end
+            end
+          end
+        end
+      end
+      result
+    end
+
+    # `{dir, type}` of a bound controller expression written in `path`.
+    private def bound_controller(arg : String, path : String, file_contents : Hash(String, String),
+                                 files_by_dir : Hash(String, Array(String)), import_dirs : Hash(String, String),
+                                 ctors : Hash(String, Hash(String, String))) : Tuple(String, String)?
+      if m = arg.match(BOUND_LITERAL)
+        dir = (qualifier = m[1]?) ? package_dir(qualifier, path, file_contents, import_dirs) : File.dirname(path)
+        return dir ? {dir, m[2]} : nil
+      end
+      m = arg.match(BOUND_CTOR) || return
+      dir = ((qualifier = m[1]?) ? package_dir(qualifier, path, file_contents, import_dirs) : File.dirname(path)) || return
+      files_by_dir[dir]?.try &.each do |file|
+        if type_name = (ctors[file] ||= Noir::TreeSitterGoRouteExtractor.extract_gf_constructor_types(file_contents[file]))[m[2]]?
+          return {dir, type_name}
+        end
+      end
+      nil
+    end
+
+    # The scanned directory a package alias names in `path`.
+    private def package_dir(qualifier : String, path : String, file_contents : Hash(String, String), import_dirs : Hash(String, String)) : String?
+      import_path = Noir::GoCalleeExtractor.extract_import_aliases(file_contents[path]? || "")[qualifier]? || return
+      import_dirs[import_path]?
     end
 
     private def add_gf_param_patterns(line : String, ep : Endpoint)

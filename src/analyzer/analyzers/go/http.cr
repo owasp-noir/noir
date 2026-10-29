@@ -147,13 +147,13 @@ module Analyzer::Go
                   end
                 end
                 if params = params_by_route[route.line]?
-                  params.each { |param| add_param_to_endpoint(param, new_endpoint) }
+                  params.each { |param| add_route_param(param, new_endpoint) }
                 end
                 new_endpoint.handler = named.handler_for(route)
                 # The resolved definition, wherever it is declared (a method
                 # value of another package, a factory's returned method).
                 named.handler_body(route).try do |body|
-                  Noir::GoRequestParamExtractor.params_for_body(body, verb, resolver).each { |param| add_param_to_endpoint(param, new_endpoint) }
+                  Noir::GoRequestParamExtractor.params_for_body(body, verb, resolver).each { |param| add_route_param(param, new_endpoint) }
                 end
                 result << new_endpoint
                 last_endpoint = new_endpoint
@@ -226,6 +226,15 @@ module Analyzer::Go
       else
         "form"
       end
+    end
+
+    # A `PathValue("x")` read (the handler's or a helper's it calls) is a
+    # client-sent path param only when the pattern has an `{x}` / `{x...}`
+    # wildcard; otherwise only server code sets it (`r.SetPathValue`).
+    private def add_route_param(param : Param, endpoint : Endpoint)
+      return if param.param_type == "path" &&
+                !endpoint.url.includes?("{#{param.name}}") && !endpoint.url.includes?("{#{param.name}...}")
+      add_param_to_endpoint(param, endpoint)
     end
   end
 end
