@@ -423,6 +423,28 @@ describe "EndpointOptimizer" do
       end
     end
 
+    it "reads a Go package clause whose 4 KB head ends inside a multibyte character" do
+      optimizer = EndpointOptimizer.new(logger, options)
+      temp_dir = File.join(Dir.tempdir, "noir-optimizer-goutf8-#{Process.pid}-#{Time.utc.to_unix_ms}")
+      single = File.join(temp_dir, "single/main.go")
+      multi = File.join(temp_dir, "multiple/main.go")
+
+      begin
+        {single, multi}.each do |main|
+          Dir.mkdir_p(File.dirname(main))
+          # 17 bytes, then 3-byte characters: byte 4096 falls inside one.
+          File.write(main, "package main\n\n// #{"가" * 1400}\nfunc main() {}\n")
+        end
+        File.write(File.join(temp_dir, "go.mod"), "module example.com/examples\n")
+
+        a = tech_endpoint("/upload", "POST", "go_gin", single, 15)
+        b = tech_endpoint("/upload", "POST", "go_gin", multi, 15)
+        optimizer.optimize_endpoints([a, b]).size.should eq(2)
+      ensure
+        FileUtils.rm_rf(temp_dir)
+      end
+    end
+
     it "keeps one module scope for a single-program Go module" do
       optimizer = EndpointOptimizer.new(logger, options)
       temp_dir = File.join(Dir.tempdir, "noir-optimizer-gosingle-#{Process.pid}-#{Time.utc.to_unix_ms}")
