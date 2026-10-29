@@ -1,4 +1,6 @@
 require "../ext/tree_sitter/tree_sitter"
+require "../utils/c_comments"
+require "./rust_use_imports"
 
 # Which request-guard / extractor types can refuse an anonymous caller,
 # read off their `impl FromRequest for X` (Rocket, actix-web) or
@@ -38,8 +40,11 @@ module Noir::RustRequestGuards
   STATUS_FN_RE   = /\bfn\s+(?:(status_code)|into_response)\b|\bfn\s+\w+\s*\(\s*&?\s*(?:mut\s+)?self\b[^)]*\)\s*->\s*[^{;]*\bStatusCode\b/
   AUTH_STATUS_RE = /\bStatusCode::(?:UNAUTHORIZED|FORBIDDEN)\b/
   # A status or a redirect (any 3xx).
-  ANY_STATUS_RE     = /\bStatusCode::[A-Z]\w*|\bRedirect::\w+\s*\(/
-  LOGIN_REDIRECT_RE = /(?:\bRedirect::\w+\s*\(|\bStatusCode::(?:SEE_OTHER|FOUND|TEMPORARY_REDIRECT)\b|\bLOCATION\b)[^;]*?\b(?:log_?in|sign_?in)/i
+  ANY_STATUS_RE = /\bStatusCode::[A-Z]\w*|\bRedirect::\w+\s*\(/
+  # `Redirect::to("/login")`, `(header::LOCATION, "/signin")`: the target
+  # literal names a login page and carries no `error=` (an OAuth callback
+  # sending a failed login back is not a refusal of the caller).
+  LOGIN_REDIRECT_RE = /(?:\bRedirect::\w+\s*\(\s*|(?:\bLOCATION|"(?i:location)")\s*,\s*)"(?![^"]*\berror=)[^"]*?(?<![A-Za-z])(?i:log_?in|sign_?in)/
   ENUM_DEF_RE       = /\benum\s+([A-Z]\w*)/
   IMPL_KEYWORD_RE   = /\bimpl\b/
   # An enum path in a match pattern: `AppError::NotLoggedIn`, `NotLoggedIn`.
@@ -86,6 +91,8 @@ module Noir::RustRequestGuards
     getter scoped_catch_all = Set(String).new
     # `crate|Enum` => the files of that crate that define `enum Enum`.
     getter enum_files = Hash(String, Set(String)).new
+    # A guard impl file's `use` names (`Error` => `crate::error::Error`).
+    getter imports = Hash(String, Hash(String, String)).new
   end
 
   # Per-file state for walking a guard impl.
@@ -94,11 +101,15 @@ module Noir::RustRequestGuards
   def self.scan(source : String, facts : Facts, path : String = "") : Nil
     crate = crate_dir(path)
     globs = source.includes?("::*") ? source.scan(ENUM_GLOB_RE).map(&.[1]).uniq! : [] of String
-    if source.includes?("enum")
-      source.scan(ENUM_DEF_RE) { |m| (facts.enum_files["#{crate}|#{m[1]}"] ||= Set(String).new) << path }
+    status_fn = source.matches?(STATUS_FN_RE)
+    if status_fn || source.includes?("enum")
+      # `'` also opens a lifetime, so only `"` opens a string here.
+      code = Noir::CComments.strip(source, quotes: %("))
+      code.scan(ENUM_DEF_RE) { |m| (facts.enum_files["#{crate}|#{m[1]}"] ||= Set(String).new) << path }
+      collect_status_arms(code, globs, facts, path, crate) if status_fn
     end
-    collect_status_arms(source, globs, facts, path, crate) if source.matches?(STATUS_FN_RE)
     return unless source.matches?(EVIDENCE_RE)
+    facts.imports[path] = Noir::RustUseImports.parse(source).names
     Noir::TreeSitter.parse_rust(source) do |root|
       collect(root, source, globs, facts, path, crate, 0)
     end
@@ -493,6 +504,8 @@ module Noir::RustRequestGuards
               "f:#{impl.file}"
             elsif defs.nil? || defs.size == 1
               "c:#{impl.crate}"
+            elsif def_file = imported_def(defs, enum_name, impl, facts) || mapped_def(defs, enum_name, facts)
+              "f:#{def_file}"
             end
     if scope && facts.scoped_enums.includes?("#{scope}|#{enum_name}")
       key = "#{scope}|#{name}"
@@ -501,6 +514,25 @@ module Noir::RustRequestGuards
       return false if facts.scoped_catch_all.includes?("#{scope}|#{enum_name}")
     end
     facts.refusing_variants.includes?(name) && !facts.other_variants.includes?(name)
+  end
+
+  # Of the crate files defining `enum_name`, the one the guard's file
+  # `use`s it from (`use crate::error::Error` -> `src/error.rs` or
+  # `src/error/mod.rs`).
+  private def self.imported_def(defs : Set(String), enum_name : String, impl : Impl, facts : Facts) : String?
+    full = facts.imports[impl.file]?.try(&.[enum_name]?) || return
+    return unless full.starts_with?("crate::")
+    sep = File::SEPARATOR
+    src = impl.crate.empty? ? "src" : "#{impl.crate}#{sep}src"
+    mod = full.lchop("crate::").split("::")[0...-1]
+    candidates = mod.empty? ? ["#{src}#{sep}lib.rs", "#{src}#{sep}main.rs"] : ["#{src}#{sep}#{mod.join(sep)}.rs", "#{src}#{sep}#{mod.join(sep)}#{sep}mod.rs"]
+    defs.find { |file| candidates.includes?(file) }
+  end
+
+  # The only one of the crate files defining `enum_name` that also maps it.
+  private def self.mapped_def(defs : Set(String), enum_name : String, facts : Facts) : String?
+    mapped = defs.select { |file| facts.scoped_enums.includes?("f:#{file}|#{enum_name}") }
+    mapped.size == 1 ? mapped.first : nil
   end
 
   private def self.same?(a : LibTreeSitter::TSNode, b : LibTreeSitter::TSNode) : Bool

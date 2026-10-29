@@ -70,6 +70,7 @@ class RustAuthTagger < FrameworkTagger
   # read, not answered.
   COMPARED  = /(?:\w+::)*\w+\s*[=!]=|[=!]=\s*(?:\w+::)*\w+/
   AUTH_NAME = /auth|jwt|bearer/i
+  HANDED_ON = /\blet\s+(?:mut\s+)?\w+\s*(?::[^=;]+)?=\s*next\s*\.\s*run\s*\(/
   CSRF_NAME = /[\w-]*(?:csrf|xsrf)[\w-]*/i
   # What a middleware reads to tell who the caller is (CSRF names cut out).
   CREDENTIAL = /authoriz|bearer|jwt|token|api[-_]?key|claims|session|login/i
@@ -414,6 +415,11 @@ class RustAuthTagger < FrameworkTagger
   private def body_guards?(ref : String, body : String, required_params : Array(String)) : Bool
     return true if required_params.any? { |type| @guard_verdicts[type]? == true }
     code = Noir::CComments.strip(body)
+    # What a body does to the response it got (`let res = next.run(req).await;`
+    # then `if res.status() == 401 { redirect }`) refuses no caller.
+    if handed = code.match(HANDED_ON)
+      code = code[0, handed.begin]
+    end
     if ref.matches?(CSRF_NAME) || code.matches?(CSRF_NAME)
       return false unless code.gsub(CSRF_NAME, "").matches?(CREDENTIAL)
     end

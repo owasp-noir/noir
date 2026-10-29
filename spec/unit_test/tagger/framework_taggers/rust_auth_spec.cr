@@ -674,6 +674,37 @@ describe "RustAuthTagger" do
     axum_guarded_urls(files, ["/rpc"]).should be_empty
   end
 
+  it "does not guard with a middleware that only rewrites or logs the response it got" do
+    src = <<-RUST
+      async fn mw_unauth_to_login(req: Request<Body>, next: Next) -> Response {
+          let res = next.run(req).await;
+          if res.status() == StatusCode::UNAUTHORIZED {
+              return Redirect::to("/login").into_response();
+          }
+          res
+      }
+      async fn mw_forbid_after(req: Request<Body>, next: Next) -> Response {
+          let res: Response = next.run(req).await;
+          if res.headers().contains_key("x-internal") {
+              return StatusCode::FORBIDDEN.into_response();
+          }
+          res
+      }
+      async fn mw_location_log(req: Request<Body>, next: Next) -> Response {
+          let res = next.run(req).await;
+          if let Some(location) = res.headers().get("location") { tracing::info!("redirect {location:?} (login flow)") }
+          res
+      }
+      fn app() -> Router {
+          Router::new()
+              .merge(Router::new().route("/a", post(h)).route_layer(middleware::from_fn(mw_unauth_to_login)))
+              .merge(Router::new().route("/b", post(h)).route_layer(middleware::from_fn(mw_forbid_after)))
+              .merge(Router::new().route("/c", post(h)).route_layer(middleware::from_fn(mw_location_log)))
+      }
+      RUST
+    axum_guarded_urls({"src/main.rs" => src}, ["/a", "/b", "/c"]).should be_empty
+  end
+
   it "guards with a middleware from another crate that redirects to a login page" do
     main = <<-RUST
       use lib_auth::require_auth;

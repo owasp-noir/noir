@@ -293,7 +293,8 @@ describe Noir::RustRequestGuards do
     rust_guard_verdicts_in({File.join("src", "auth.rs") => own})["ContentType"]?.should be_true
   end
 
-  it "does not read a variant through a crate where two files define its enum" do
+  # rust10x/rust-web-app keeps one `enum Error` per module of a crate.
+  it "reads a variant of an enum two crate files define where the guard's file imports it" do
     mapping = <<-RUST
       pub enum Error { NoAuth }
       impl Error {
@@ -304,7 +305,18 @@ describe Noir::RustRequestGuards do
           }
       }
       RUST
+    other = <<-RUST
+      pub enum Error { NoAuth }
+      impl IntoResponse for Error {
+          fn into_response(self) -> Response {
+              match self {
+                  Error::NoAuth => StatusCode::BAD_REQUEST.into_response(),
+              }
+          }
+      }
+      RUST
     guard = <<-RUST
+      use crate::error::{Error, Result};
       impl<S> FromRequestParts<S> for User {
           type Rejection = Error;
           async fn from_request_parts(parts: &mut Parts, _s: &S) -> Result<Self, Error> {
@@ -312,10 +324,50 @@ describe Noir::RustRequestGuards do
           }
       }
       RUST
-    files = {File.join("src", "a.rs") => mapping, File.join("src", "guard.rs") => guard}
-    rust_guard_verdicts_in(files)["User"]?.should be_true
-    files[File.join("src", "b.rs")] = "pub enum Error { NoAuth, Other }"
-    rust_guard_verdicts_in(files)["User"]?.should_not be_true
+    error_rs = File.join("src", "error.rs")
+    guard_rs = File.join("src", "middleware", "guard.rs")
+    rpc_rs = File.join("src", "rpc_error.rs")
+    verdicts = ->(files : Hash(String, String)) { rust_guard_verdicts_in(files)["User"]? }
+
+    # Imported from the 401 mapping, or from the 400 one.
+    verdicts.call({error_rs => mapping, rpc_rs => other, guard_rs => guard}).should be_true
+    verdicts.call({error_rs => other, rpc_rs => mapping, guard_rs => guard}).should_not be_true
+
+    # Not imported: the only defining file that maps the enum decides.
+    unimported = guard.sub("use crate::error::{Error, Result};\n", "")
+    verdicts.call({error_rs => mapping, rpc_rs => "pub enum Error { Rpc(String) }", guard_rs => unimported}).should be_true
+    # Both map it: nothing decides.
+    verdicts.call({error_rs => mapping, rpc_rs => other, guard_rs => unimported}).should_not be_true
+    # An `enum Error` in a comment defines nothing.
+    verdicts.call({error_rs => mapping, rpc_rs => "//! wraps the crate's enum Error for logging", guard_rs => unimported}).should be_true
+  end
+
+  it "does not read a failed-login redirect with an error query as a refusal" do
+    source = <<-RUST
+      impl IntoResponse for AppError {
+          fn into_response(self) -> Response {
+              match self {
+                  AppError::OAuthFailed => (StatusCode::FOUND, [(header::LOCATION, "/login?error=oauth")]).into_response(),
+                  AppError::NoSession => (StatusCode::FOUND, [("Location", "/auth/signin?next=/")]).into_response(),
+              }
+          }
+      }
+      impl<S: Send + Sync> FromRequestParts<S> for CallbackCode {
+          type Rejection = AppError;
+          async fn from_request_parts(parts: &mut Parts, _s: &S) -> Result<Self, Self::Rejection> {
+              parts.uri.query().map(|q| CallbackCode(q.to_string())).ok_or(AppError::OAuthFailed)
+          }
+      }
+      impl<S: Send + Sync> FromRequestParts<S> for Session {
+          type Rejection = AppError;
+          async fn from_request_parts(parts: &mut Parts, _s: &S) -> Result<Self, Self::Rejection> {
+              parts.extensions.get::<Session>().cloned().ok_or(AppError::NoSession)
+          }
+      }
+      RUST
+    verdicts = rust_guard_verdicts(source)
+    verdicts["CallbackCode"]?.should_not be_true
+    verdicts["Session"]?.should be_true
   end
 
   it "reads a redirect to a login page as a refusal, and no other redirect" do
