@@ -85,6 +85,13 @@ class SpringAuthTagger < FrameworkTagger
 
   KOTLIN_FUN_DECLARATION = /(?:^|\s)fun\s/
 
+  # A method-security expression that admits an anonymous caller. Anything
+  # else, including a mixed `permitAll() or hasRole(...)`, stays a guard.
+  PUBLIC_SPEL     = /\A(?:permitAll\s*\(\s*\)|anonymous(?:\s*\(\s*\))?|isAnonymous\s*\(\s*\)|hasRole\s*\(\s*['"](?:ROLE_)?ANONYMOUS['"]\s*\)|hasAuthority\s*\(\s*['"](?:ROLE_)?ANONYMOUS['"]\s*\))\z/
+  ANONYMOUS_ROLES = Set{"IS_AUTHENTICATED_ANONYMOUSLY", "ROLE_ANONYMOUS", "ANONYMOUS"}
+
+  alias SecurityAnnotation = NamedTuple(public_access: Bool, description: String)
+
   # `module` is the build unit (Maven module) whose sources declare the
   # rule, nil when unknown. `config_key` marks a rule whose patterns are a
   # `@ConfigurationProperties` list (`for (String url : props.getUrls())
@@ -1108,14 +1115,13 @@ class SpringAuthTagger < FrameworkTagger
     end || 0
   end
 
-  private def check_annotations(ctx : SourceContext, method : String) : String?
+  private def check_annotations(ctx : SourceContext, method : String) : SecurityAnnotation?
     line = ctx.line
     return unless line
 
     # `@PostAuthorize` is evaluated after the handler returns: it hides a
     # read's result, but a write has already happened when it refuses.
     post_ok = SAFE_HTTP_METHODS.includes?(method.upcase)
-    patterns = post_ok ? ANNOTATION_PATTERNS : ANNOTATION_PATTERNS.reject(&.source.includes?("PostAuthorize"))
     class_names = post_ok ? CLASS_ANNOTATION_NAMES : CLASS_ANNOTATION_NAMES - ["@PostAuthorize"]
     metas = @security_meta_annotations.values
     metas.reject!(&.spring_annotation.==("@PostAuthorize")) unless post_ok
@@ -1124,10 +1130,11 @@ class SpringAuthTagger < FrameworkTagger
     # `line` is 1-indexed (from PathInfo), array is 0-indexed
     lines = ctx.lines
     endpoint_idx = line - 1
+    found = [] of SecurityAnnotation
 
     idx = [endpoint_idx - 1, lines.size - 1].min
     while idx >= 0 && idx >= endpoint_idx - 15
-      current_line = lines[idx].strip
+      current_line = code_line(lines[idx])
       # Skip empty lines but stop at method/class boundaries
       if current_line.empty?
         idx -= 1
@@ -1140,35 +1147,21 @@ class SpringAuthTagger < FrameworkTagger
       # or a bodiless interface method `String admin();`.
       break if current_line.ends_with?(";") || current_line.matches?(KOTLIN_FUN_DECLARATION)
 
-      patterns.each do |pattern|
-        if current_line.matches?(pattern)
-          annotation_name = current_line.split("(").first.strip
-          return "Protected by Spring #{annotation_name}"
-        end
-      end
-
-      metas.each do |meta|
-        if current_line.matches?(/(?:\A|[^@\w])@#{Regex.escape(meta.name)}\b/)
-          return "Protected by Spring #{meta.spring_annotation} (@#{meta.name})"
-        end
+      if item = line_security_annotation(current_line, post_ok, metas, false)
+        found << item
       end
 
       idx -= 1
     end
 
     annotation_lines_below(lines, endpoint_idx, "@").each do |below|
-      patterns.each do |pattern|
-        if below.matches?(pattern)
-          annotation_name = below.split("(").first.strip
-          return "Protected by Spring #{annotation_name}"
-        end
+      if item = line_security_annotation(code_line(below), post_ok, metas, false)
+        found << item
       end
+    end
 
-      metas.each do |meta|
-        if below.matches?(/(?:\A|[^@\w])@#{Regex.escape(meta.name)}\b/)
-          return "Protected by Spring #{meta.spring_annotation} (@#{meta.name})"
-        end
-      end
+    if picked = pick_security_annotation(found)
+      return picked
     end
 
     # A controller-level `@PreAuthorize`/`@Secured`/`@RolesAllowed` applies to
@@ -1176,31 +1169,122 @@ class SpringAuthTagger < FrameworkTagger
     # stops at the `public`/`class` boundary by design, so a handler under an
     # `@PreAuthorize("hasRole('ADMIN')")` controller was reported as
     # unauthenticated. Check the class declaration separately.
+    class_found = [] of SecurityAnnotation
     class_names.each do |annotation_name|
       if class_line = class_level_annotation(ctx.path, lines, annotation_name)
-        return "Protected by Spring #{class_line.split("(").first.strip} on the controller class"
+        if item = line_security_annotation(code_line(class_line), post_ok, metas, true)
+          class_found << item
+        end
       end
     end
 
     metas.each do |meta|
       # The lookup matches by prefix: `@Admin` must not take `@AdminApi`.
-      if class_level_annotation(ctx.path, lines, "@#{meta.name}").try(&.matches?(/\A@#{Regex.escape(meta.name)}\b/))
-        return "Protected by Spring #{meta.spring_annotation} (@#{meta.name}) on the controller class"
+      if class_level_annotation(ctx.path, lines, "@#{meta.name}").try { |raw| code_line(raw).matches?(/\A@#{Regex.escape(meta.name)}\b/) }
+        class_found << {
+          public_access: false,
+          description:   "Protected by Spring #{meta.spring_annotation} (@#{meta.name}) on the controller class",
+        }
       end
     end
 
+    pick_security_annotation(class_found)
+  end
+
+  private def code_line(raw : String) : String
+    Noir::CComments.strip(raw).strip
+  end
+
+  # `public_access` is a whole-expression anonymous rule (`permitAll()`,
+  # `@Secured("IS_AUTHENTICATED_ANONYMOUSLY")`). A restricting annotation on
+  # the same member wins. An argument we cannot read stays a guard.
+  private def line_security_annotation(line : String, post_ok : Bool, metas : Array(MetaAnnotation), on_class : Bool) : SecurityAnnotation?
+    if match = line.match(/@((?:[\w$]+\.)*?(PreAuthorize|PostAuthorize|Secured|RolesAllowed))\b/)
+      simple = match[2]
+      return if simple == "PostAuthorize" && !post_ok
+      suffix = on_class ? " on the controller class" : ""
+      admits = annotation_admits_anonymous?(simple, annotation_argument(line, simple))
+      return {public_access: admits, description: "Protected by Spring @#{match[1]}#{suffix}"}
+    end
+
+    metas.each do |meta|
+      next unless line.matches?(/(?:\A|[^@\w])@#{Regex.escape(meta.name)}\b/)
+      suffix = on_class ? " on the controller class" : ""
+      return {public_access: false, description: "Protected by Spring #{meta.spring_annotation} (@#{meta.name})#{suffix}"}
+    end
     nil
+  end
+
+  private def annotation_argument(line : String, name : String) : String?
+    start = line.index(/@[\w$.]*#{Regex.escape(name)}\b/)
+    return unless start
+    open = line.index('(', start)
+    return unless open
+    depth = 0
+    idx = open
+    while idx < line.size
+      case line[idx]
+      when '('
+        depth += 1
+      when ')'
+        depth -= 1
+        return line[(open + 1)...idx] if depth == 0
+      end
+      idx += 1
+    end
+    nil
+  end
+
+  private def annotation_admits_anonymous?(name : String, arg : String?) : Bool
+    case name
+    when "RolesAllowed"
+      false
+    when "Secured"
+      secured_admits_anonymous?(arg)
+    else
+      return false unless arg
+      expression_of(arg).matches?(PUBLIC_SPEL)
+    end
+  end
+
+  private def expression_of(arg : String) : String
+    if quoted = arg.match(/"((?:[^"\\]|\\.)*)"|'((?:[^'\\]|\\.)*)'/)
+      (quoted[1]? || quoted[2]?).to_s
+    else
+      arg.strip
+    end
+  end
+
+  private def secured_admits_anonymous?(arg : String?) : Bool
+    return false unless arg
+    roles = [] of String
+    arg.scan(/"((?:[^"\\]|\\.)*)"|'((?:[^'\\]|\\.)*)'/) do |match|
+      roles << (match[1]? || match[2]?).to_s
+    end
+    return false if roles.empty?
+    roles.all? { |role| ANONYMOUS_ROLES.includes?(role) }
+  end
+
+  private def pick_security_annotation(found : Array(SecurityAnnotation)) : SecurityAnnotation?
+    found.find { |item| !item[:public_access] } || found.first?
   end
 
   private def check_endpoint(endpoint : Endpoint)
     # The login / logout / OAuth2 filters answer before any authorization rule.
     return if endpoint.tags.includes?(Analyzer::Java::JavaEngine::SECURITY_FILTER_TAG)
 
-    # Phase 2: Check annotations near code_paths
+    # Phase 2: Check annotations near code_paths. A public annotation does
+    # not stop the URL-rule and in-handler checks, and it is recorded as
+    # anonymous so a name-only source scan does not put the guard back.
+    annotation_public = false
     contexts = read_source_context(endpoint)
     contexts.each do |ctx|
-      if description = check_annotations(ctx, endpoint.method)
-        endpoint.add_tag(Tag.new("auth", description, "spring_auth"))
+      decision = check_annotations(ctx, endpoint.method)
+      next unless decision
+      if decision[:public_access]
+        annotation_public = true
+      else
+        endpoint.add_tag(Tag.new("auth", decision[:description], "spring_auth"))
         return
       end
     end
@@ -1209,6 +1293,7 @@ class SpringAuthTagger < FrameworkTagger
     if decision = check_security_config_rules(endpoint)
       description, rule_path, rule_line = decision
       endpoint.add_tag(Tag.new("auth", description, "spring_auth", rule_path, rule_line))
+      note_public_annotation(endpoint) if annotation_public
       return
     end
 
@@ -1216,6 +1301,7 @@ class SpringAuthTagger < FrameworkTagger
     if decision = check_interceptor_rules(endpoint)
       description, rule_path, rule_line = decision
       endpoint.add_tag(Tag.new("auth", description, "spring_auth", rule_path, rule_line))
+      note_public_annotation(endpoint) if annotation_public
       return
     end
 
@@ -1223,9 +1309,16 @@ class SpringAuthTagger < FrameworkTagger
     contexts.each do |ctx|
       if description = anonymous_refusal(ctx)
         endpoint.add_tag(Tag.new("auth", description, "spring_auth"))
+        note_public_annotation(endpoint) if annotation_public
         return
       end
     end
+
+    note_public_annotation(endpoint) if annotation_public
+  end
+
+  private def note_public_annotation(endpoint : Endpoint)
+    endpoint.add_tag(Tag.new("anonymous", "Spring security annotation admits anonymous callers", "spring_auth"))
   end
 
   private def check_interceptor_rules(endpoint : Endpoint) : Tuple(String, String, Int32)?

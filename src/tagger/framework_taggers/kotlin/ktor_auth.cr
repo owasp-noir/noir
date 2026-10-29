@@ -214,6 +214,8 @@ class KtorAuthTagger < FrameworkTagger
     end_idx = [route_line + 15, lines.size - 1].min
     brace_depth = 0
     entered = false
+    saw_session = false
+    handler = [] of String
 
     while idx <= end_idx
       current = lines[idx]
@@ -223,10 +225,14 @@ class KtorAuthTagger < FrameworkTagger
       # braces looked like.
       break if idx > route_line && stripped.matches?(ROUTE_HANDLER)
 
+      visible = Noir::CComments.strip(stripped).strip
+      saw_session = true if visible.matches?(/sessions\.get</)
       ROUTE_AUTH_PATTERNS.each do |pattern, desc|
+        next if desc == "Ktor session check"
         return desc if stripped.matches?(pattern)
       end
 
+      handler << current
       brace_depth += current.count('{') - current.count('}')
       entered = true if current.includes?('{')
       break if entered && brace_depth <= 0
@@ -234,7 +240,127 @@ class KtorAuthTagger < FrameworkTagger
       idx += 1
     end
 
+    return "Ktor session check" if saw_session && session_missing_refuses?(Noir::CComments.strip(handler.join("\n")))
     nil
+  end
+
+  # `sessions.get` guards only when a missing session refuses or redirects.
+  # An optional read that still renders the page does not.
+  SESSION_ELVIS   = /sessions\.get\s*<[^>\n]*>\s*\(\s*\)\s*\?:([^\n]*)/
+  SESSION_BIND    = /(?:val|var)\s+([A-Za-z_]\w*)\s*=\s*[^\n]*sessions\.get\s*</
+  NULL_SESSION    = /if\s*\(\s*[^\n]*sessions\.get\s*<[^>\n]*>\s*\(\s*\)\s*==\s*null\s*\)/
+  SESSION_REFUSAL = /respondRedirect\s*\(|HttpStatusCode\.(?:Unauthorized|Forbidden)|\brespond\s*\(\s*(?:HttpStatusCode\.(?:Unauthorized|Forbidden)|40[13]\b)|\bthrow\s+[^\n]*(?:Unauthorized|Forbidden)/
+
+  private def session_missing_refuses?(text : String) : Bool
+    if tail = text.match(SESSION_ELVIS)
+      return true if session_refusal?(tail[1])
+    end
+
+    if bind = text.match(SESSION_BIND)
+      name = Regex.escape(bind[1])
+      rest = text[bind.end..]
+      if tail = rest.match(Regex.new("\\b#{name}\\b\\s*\\?:([^\\n]*)"))
+        return true if session_refusal?(tail[1])
+      end
+      if cond = rest.match(Regex.new("\\bif\\s*\\(\\s*#{name}\\s*==\\s*null\\s*\\)"))
+        return true if session_refusal?(read_branch(rest[cond.end..])[0])
+      end
+      if cond = rest.match(Regex.new("\\bif\\s*\\(\\s*#{name}\\s*!=\\s*null\\s*\\)"))
+        if other = else_branch(rest[cond.end..])
+          return true if session_refusal?(other)
+        end
+      end
+    end
+
+    if cond = text.match(NULL_SESSION)
+      return true if session_refusal?(read_branch(text[cond.end..])[0])
+    end
+    false
+  end
+
+  private def session_refusal?(text : String) : Bool
+    text.match(SESSION_REFUSAL) != nil
+  end
+
+  # The branch after an `if (...)`, and how many chars it consumed.
+  private def read_branch(text : String) : {String, Int32}
+    chars = text.chars
+    idx = 0
+    while idx < chars.size && chars[idx].whitespace?
+      idx += 1
+    end
+    if idx < chars.size && chars[idx] == '{'
+      depth = 0
+      start = idx + 1
+      while idx < chars.size
+        char = chars[idx]
+        if char == '"'
+          idx = skip_kotlin_string(chars, idx)
+          next
+        end
+        if char == '{'
+          depth += 1
+        elsif char == '}'
+          depth -= 1
+          return {chars[start...idx].join, idx + 1} if depth == 0
+        end
+        idx += 1
+      end
+      return {chars[start..].join, chars.size}
+    end
+
+    start = idx
+    while idx < chars.size
+      char = chars[idx]
+      if char == '"'
+        idx = skip_kotlin_string(chars, idx)
+        next
+      end
+      break if char == '\n' || word_at?(chars, idx, "else")
+      idx += 1
+    end
+    {chars[start...idx].join, idx}
+  end
+
+  private def else_branch(text : String) : String?
+    _, consumed = read_branch(text)
+    rest = text.chars[consumed..]
+    idx = 0
+    while idx < rest.size && rest[idx].whitespace?
+      idx += 1
+    end
+    return unless word_at?(rest, idx, "else")
+    read_branch(rest[(idx + 4)..].join)[0]
+  end
+
+  private def word_at?(chars : Array(Char), idx : Int32, word : String) : Bool
+    return false if idx + word.size > chars.size
+    word.each_char_with_index do |char, offset|
+      return false unless chars[idx + offset] == char
+    end
+    nxt = idx + word.size
+    return false if nxt < chars.size && (chars[nxt].alphanumeric? || chars[nxt] == '_')
+    true
+  end
+
+  private def skip_kotlin_string(chars : Array(Char), idx : Int32) : Int32
+    if idx + 2 < chars.size && chars[idx + 1] == '"' && chars[idx + 2] == '"'
+      idx += 3
+      while idx + 2 < chars.size && !(chars[idx] == '"' && chars[idx + 1] == '"' && chars[idx + 2] == '"')
+        idx += 1
+      end
+      return Math.min(idx + 3, chars.size)
+    end
+    idx += 1
+    while idx < chars.size
+      if chars[idx] == '\\'
+        idx += 2
+        next
+      end
+      return idx + 1 if chars[idx] == '"'
+      idx += 1
+    end
+    chars.size
   end
 
   # An `authenticate {}` block found by the pre-scan guards this endpoint when
