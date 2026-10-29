@@ -79,6 +79,47 @@ describe "GoAuthTagger router handler wrappers" do
     cases.call(33, "/dup2", "GET").should eq(["Protected by Go middleware amw.Wrap (verified from its body: refuses anonymous callers)"])
   end
 
+  it "finds the handler whatever form the path takes, and on a gin router in an Echo file" do
+    mixed = ->(line : Int32, url : String) do
+      guards.call("echo_wrap_auth_mixed", "main.go", line, url, "GET", "go_echo")
+    end
+    mixed.call(18, "/users").should eq(["Protected by Go middleware withAuth (verified from its body: refuses anonymous callers)"])
+    mixed.call(19, "/e/wrapped").should eq(["Protected by Go middleware withAuth (verified from its body: refuses anonymous callers)"])
+    # Attributed to Echo by the file, registered on gin: the handler is last.
+    mixed.call(24, "/g/trailing").should eq(["Protected by Go middleware ginWrap (verified from its body: refuses anonymous callers)"])
+    mixed.call(25, "/g/solo").should eq(["Protected by Go middleware ginWrap (verified from its body: refuses anonymous callers)"])
+  end
+
+  it "keeps a group guard that skips public paths through a switch case" do
+    guards.call("echo_wrap_auth_mixed", "main.go", 17, "/e/grp/inside", "GET", "go_echo").should eq(["Protected by Go middleware authSwitch (verified from its body: refuses anonymous callers)"])
+  end
+
+  it "keeps a guard whose refusal condition also tests a CSRF token" do
+    guards.call("echo_wrap_auth_mixed", "main.go", 26, "/g/csrfsess", "GET", "go_gin").should eq(["Protected by Go middleware ginCSRFSess (verified from its body: refuses anonymous callers)"])
+  end
+
+  it "reads an early skip in any nested block, and a CSRF arm apart from the session arm after it" do
+    order = ->(line : Int32, url : String) do
+      guards.call("http_wrap_order", "main.go", line, url, "GET", "go_http")
+    end
+    guard = ->(name : String) { ["Protected by Go middleware #{name} (verified from its body: refuses anonymous callers)"] }
+    order.call(10, "/armfirst").should eq(guard.call("authArmFirst"))
+    order.call(11, "/switchpublic").should eq(guard.call("authSwitchPublic"))
+    order.call(12, "/multilineif").should eq(guard.call("authMultiLineIf"))
+    order.call(13, "/csrfsess").should eq(guard.call("authSessOrCSRF"))
+    order.call(14, "/csrfchain").should eq(guard.call("authCSRFChain"))
+    order.call(16, "/plain").should eq(guard.call("authPlain"))
+    # A 403 a deferred `recover()` writes runs after the handler.
+    order.call(15, "/deferrecover").should be_empty
+    # The callback is handed the request at the top level, before the 401.
+    order.call(17, "/loginreq").should be_empty
+  end
+
+  it "resolves an import through its module's path, not the directory names" do
+    # Both modules have `internal/mw`; beta-service's `Wrap` only passes on.
+    guards.call("http_wrap_modules", "svc2/cmd/main.go", 11, "/beta", "GET", "go_http").should be_empty
+  end
+
   it "applies the same rules to net/http wrappers" do
     http = ->(line : Int32, url : String) do
       guards.call("http_wrap_lookalikes", "main.go", line, url, "GET", "go_http")
