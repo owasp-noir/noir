@@ -2034,6 +2034,19 @@ describe "NoirAIContext" do
       # A Ruby route block reads to its `end`.
       {"post '/c' do\n  authenticate!\n  'c'\nend\n\nget '/d' do\n  'd'\nend", ".rb", 1, nil, ["authenticate"]},
       {"post '/c' do\n  'c'\nend\n\nget '/d' do\n  authenticate!\nend", ".rb", 1, nil, [] of String},
+      # Comment text and a local variable's name check nothing; a `#` in a
+      # string is not a comment.
+      {"get '/c' do\n  # authenticate later\n  'c'\nend", ".rb", 1, nil, [] of String},
+      {"get \"/a\" do |env|\n  authorize_url = \"https://idp\"\n  env.redirect authorize_url\nend", ".cr", 1, nil, [] of String},
+      {"  get \"/a\" do\n    authorize_url = \"https://idp/oauth\"\n    send_resp(conn, 302, authorize_url)\n  end", ".ex", 1, nil, [] of String},
+      {"get '/g' do\n  log \"id=\#{id}\"; authenticate!\nend", ".rb", 1, nil, ["authenticate"]},
+      {"get '/h' do\n  user = authenticate_user!\nend", ".rb", 1, nil, ["authenticate_user"]},
+      # `can?` picking a presenter refuses nobody; `forbidden! unless can?` does.
+      {"get '/d' do\n  present x, with: can?(:read, x) ? Full : Basic\nend", ".rb", 1, nil, [] of String},
+      {"get '/e' do\n  forbidden! unless can?(:read, x)\nend", ".rb", 1, nil, ["can?(:read, x)"]},
+      # A multi-line Rocket attribute binds `data` too.
+      {"#[post(\n    \"/connect/authorize\",\n    data = \"<data>\"\n)]\nfn authorize(data: Form<AuthorizeData>) -> &'static str { \"a\" }",
+       ".rs", 1, {"authorize", 5}, [] of String},
     ]
 
     mismatches = [] of {String, Array(String)}
@@ -2055,6 +2068,7 @@ describe "NoirAIContext" do
       post ':id/allowlist' do
         ids = params['ids'].split(',') if params['ids'].respond_to?(:split)
         target_id = declared_params(include_missing: false).fetch(:target_id)
+        cursor = params.fetch("cursor")
         present target_id
       end
       CODE
@@ -2065,6 +2079,24 @@ describe "NoirAIContext" do
       context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
       context.sinks.map(&.kind).should_not contain("template_render")
       context.sinks.map(&.kind).should_not contain("outbound_http")
+    end
+
+    # Nor as callees; a bare `fetch(url)` still is.
+    calls = <<-CODE
+      get '/j' do
+        q = params.fetch(:q)
+        home = ENV.fetch("HOME")
+        r = fetch("http://example.com/" + q)
+      end
+      CODE
+    with_temp_ai_context_source(calls, ".rb") do |path|
+      endpoint = Endpoint.new("/j", "GET")
+      endpoint.details = Details.new(PathInfo.new(path, 1))
+      endpoint.push_callee(Callee.new("params.fetch", path, 2))
+      endpoint.push_callee(Callee.new("ENV.fetch", path, 3))
+      endpoint.push_callee(Callee.new("fetch", path, 4))
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+      context.sinks.select(&.kind.==("outbound_http")).map(&.line).should eq([4])
     end
   end
 

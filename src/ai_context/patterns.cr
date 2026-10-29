@@ -134,8 +134,8 @@ module NoirAIContext
       ],
       source_patterns: [
         /requests\.(get|post|put|delete)/i,
-        # Not Ruby `params.fetch(:key)`, a hash lookup.
-        /\bfetch\s*\((?!\s*:)/i,
+        # Not Ruby `params.fetch(:key)` / `ENV.fetch("X")`, a hash lookup.
+        /(?<!\bparams\.|\bENV\.|\boptions\.|\bopts\.|\bconfig\.|\bsettings\.|\bsession\.|\bhash\.)\bfetch\s*\((?!\s*:)/i,
         /\baxios\./i,
         /\bhttp\.(Get|Post|NewRequest)/,
         /\bclient\.(get|post|request)/i,
@@ -564,7 +564,8 @@ module NoirAIContext
         /@Requires?Roles?\b/,
         /@Security\s*\(/,
         /\bPundit\b.*\bauthorize\b/i,
-        /\bcan\?\s*\(/,
+        # Not a ternary that picks a presenter (`can?(:read, x) ? Full : Basic`).
+        /\bcan\?\s*\((?:[^()]|\([^()]*\))*\)(?!\s*\?)/,
         /\b(can|cannot)\s+:[\w_!?]+/,
         /\bability\.\w+/i,
         # Inline ownership check: the loaded record's owner compared with

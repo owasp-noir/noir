@@ -11,6 +11,8 @@ module NoirAIContext
     # compacted or truncated.
     MAX_LABEL_CHARS = 64
 
+    HASH_FETCH_CALLEE = /(?:\A|[.:])(?:params|ENV|options|opts|config|settings|attributes|attrs|args|kwargs|hash|session)\.fetch\z/
+
     extend self
 
     def detect_from_patterns(name : String,
@@ -77,6 +79,9 @@ module NoirAIContext
         return true if snippet.matches?(/\brender\s+(json|plain|xml|body|status):/i)
         return true if snippet.matches?(/\brespond(Text|Bytes|File|Json|Redirect)\b/)
       when "outbound_http"
+        # Ruby `params.fetch(:q)` / `ENV.fetch("X")` read a hash.
+        return true if name.matches?(HASH_FETCH_CALLEE)
+        return true if name.ends_with?(".fetch") && snippet && snippet.includes?("#{name}(:")
         return true if name.starts_with?("request.")
         return true if name == "request"
         return true if name.matches?(/(?:^|\.)(?:client|databaseClient)\.(?:query|insert|select|execute|sql|bind)\b/i)

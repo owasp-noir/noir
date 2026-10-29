@@ -1951,6 +1951,13 @@ module NoirAIContext
     # `@RequestMapping(method = GET, value = X)` is not masked.
     ROUTE_DECL_FIRST_ARG = /\A(\d+: #{ROUTE_DECL_HEAD.source}(?:\s*\(\s*|\s+)(?:(?:value|path)\s*=\s*)?)(?:\[\s*#{ROUTE_ARG_LIST.source}\s*\]|\{\s*#{ROUTE_ARG_LIST.source}\s*\}|arrayOf\s*\(\s*#{ROUTE_ARG_LIST.source}\s*\)|#{ROUTE_ARG.source}(?:\s*(?:=>|,)\s*#{ROUTE_HANDLER_STR.source})?)#{ROUTE_DECL_ARG_TAIL.source}/i
 
+    HASH_COMMENT_EXTENSIONS = {".rb", ".rake", ".ru", ".cr", ".ex", ".exs", ".py", ".pl", ".pm"}
+    # `authorize_url = …` at the start of a line; `a = b` with spaces, so a
+    # keyword argument (`authorize=True`) is not taken for it.
+    LOCAL_ASSIGNMENT_TARGET = /\A(?:(?:my|our)\s+)?[$@]?([a-z_]\w*)(?=\s+=\s)/
+    # A read of such a name; not a call (`authorize!`, `authorize(x)`).
+    LOCAL_NAME = /(?<![\w.:])[a-z_]\w*(?![\w!?(:])/
+
     SCOPE_SEGMENT_LINE   = /\A(\d+): /
     ANNOTATION_SEGMENT   = /\A\d+: (?:@|#\[|\[)/
     QUOTED_LITERAL       = /(["'])[^"'\n]*\1/
@@ -1973,6 +1980,7 @@ module NoirAIContext
       segments = scope.split(" | ")
       decl = route_declaration_flags(segments, path_info.line)
       bound_types = bound_param_types(scope, segments, decl)
+      segments = without_hash_comments(segments) if HASH_COMMENT_EXTENSIONS.includes?(File.extname(path_info.path || ""))
       segments = segments.map_with_index do |seg, idx|
         seg = seg.gsub(TYPE_NAME) { |t| bound_types.includes?(t) ? "" : t } unless bound_types.empty?
         seg = seg.gsub(ROUTE_PATH_LITERAL, "\"\"")
@@ -1996,17 +2004,77 @@ module NoirAIContext
     private def route_declaration_flags(segments : Array(String), decl_line : Int32?) : Array(Bool)
       line_no = nil
       tail_open = true
+      # Brackets a route annotation leaves open: the lines that close a
+      # multi-line `#[post(\n "/x",\n data = "<data>"\n)]` belong to it. A
+      # route call's open handler (`app.get('/x', (req, res) => {`) does not.
+      depth = 0
       segments.map do |seg|
         if m = seg.match(SCOPE_SEGMENT_LINE)
           line_no = m[1].to_i
           if decl_line && line_no > decl_line
-            tail_open &&= seg.matches?(ANNOTATION_SEGMENT)
+            tail_open &&= depth > 0 || seg.matches?(ANNOTATION_SEGMENT)
           end
+        end
+        if decl_line && line_no && line_no >= decl_line && tail_open && (depth > 0 || seg.matches?(ANNOTATION_SEGMENT))
+          code = seg.gsub(QUOTED_LITERAL, "")
+          depth += code.count('(') + code.count('[') - code.count(')') - code.count(']')
         end
         # A segment without a `N: ` prefix is the rest of the previous line
         # (the code itself held ` | `).
         !!(decl_line && line_no && (line_no <= decl_line || tail_open))
       end
+    end
+
+    # What a `#` comment or a local variable's name says checks nothing:
+    # `# authenticate later`, `authorize_url = "https://idp/oauth"` and its
+    # later reads (`redirect authorize_url`). These used to stay out of a
+    # Ruby/Elixir/Crystal route's scope only because the scope stopped at
+    # its `do` line.
+    # ponytail: the quote tracking is per line, so a `#` inside a heredoc or
+    # a multi-line string is read as a comment start.
+    private def without_hash_comments(segments : Array(String)) : Array(String)
+      in_comment = false
+      locals = Set(String).new
+      segments = segments.map do |seg|
+        prefix = seg[SCOPE_SEGMENT_LINE]?
+        if prefix.nil?
+          next "" if in_comment
+          prefix = ""
+        end
+        code = seg[prefix.size..]
+        cut = hash_comment_start(code)
+        in_comment = !cut.nil?
+        code = code[0, cut] if cut
+        if local = code.match(LOCAL_ASSIGNMENT_TARGET)
+          locals << local[1]
+        end
+        prefix + code
+      end
+      return segments if locals.empty?
+      segments.map { |seg| seg.gsub(LOCAL_NAME) { |word| locals.includes?(word) ? "" : word } }
+    end
+
+    private def hash_comment_start(code : String) : Int32?
+      quote = nil
+      escaped = false
+      prev = ' '
+      code.each_char_with_index do |char, idx|
+        if quote
+          if escaped
+            escaped = false
+          elsif char == '\\'
+            escaped = true
+          elsif char == quote
+            quote = nil
+          end
+        elsif char == '"' || char == '\'' || char == '`'
+          quote = char
+        elsif char == '#' && prev != '$' # Perl `$#array`
+          return idx
+        end
+        prev = char
+      end
+      nil
     end
 
     # A Rocket handler parameter the route binds from the request

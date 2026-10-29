@@ -10,6 +10,7 @@ module NoirAIContext
   class SourceReader
     MAX_SNIPPET_CHARS     = 240
     MAX_ROUTE_SCOPE_LINES =  12
+    MAX_WORD_OVERRUN      =  32
     RUBY_DO_BLOCK_OPEN    = /\bdo\s*(?:\|[^|]*\|)?\s*(?:#.*)?\z/
 
     # Maximum number of decorator / annotation lines to capture
@@ -236,9 +237,26 @@ module NoirAIContext
 
       snippet = selected.join(" | ").gsub(/\s+/, " ").strip
       return if snippet.empty?
-      snippet = snippet.size > max_chars ? snippet[0, max_chars] : snippet
+      snippet = clip_at_word_end(snippet, max_chars)
       @route_scope_cache[cache_key] = snippet
       snippet
+    end
+
+    # The budget cut the scope mid-word, and the guard scan took the
+    # fragment for a name (`authorize_read_packa`). Finish the word, a few
+    # characters at most, instead.
+    private def clip_at_word_end(snippet : String, max_chars : Int32) : String
+      return snippet if snippet.size <= max_chars
+      stop = max_chars
+      limit = Math.min(snippet.size, max_chars + MAX_WORD_OVERRUN)
+      while stop < limit && word_char?(snippet[stop])
+        stop += 1
+      end
+      snippet[0, stop]
+    end
+
+    private def word_char?(char : Char) : Bool
+      char.alphanumeric? || char == '_' || char == '!' || char == '?'
     end
 
     private def decorator_lines_before(lines : Array(String), before_idx : Int32) : Array(String)
