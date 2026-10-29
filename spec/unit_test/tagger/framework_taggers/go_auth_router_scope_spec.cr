@@ -631,4 +631,90 @@ describe "GoAuthTagger (framework auth registrations)" do
     guarded?(result["GET /api/profile"]).should be_true
     guarded?(result["POST /login"]).should be_false
   end
+
+  it "inherits an enclosing GoFrame closure's middleware for a nested bind, and reads grouped request types" do
+    main = <<-GO
+      package main
+
+      import "github.com/gogf/gf/v2/net/ghttp"
+
+      type Ctrl struct{}
+
+      func (Ctrl) Profile(ctx context.Context, req *v1.ProfileReq) (*v1.ProfileRes, error) { return nil, nil }
+
+      func Auth(r *ghttp.Request) {
+      \tif r.Header.Get("Authorization") == "" {
+      \t\tr.SetError(gerror.NewCode(gcode.CodeNotAuthorized, "no token"))
+      \t\treturn
+      \t}
+      \tr.Middleware.Next()
+      }
+
+      func Wrap(r *ghttp.Request) {
+      \tr.Middleware.Next()
+      \tif r.GetError() != nil && gerror.Code(r.GetError()) == gcode.CodeNotAuthorized {
+      \t\tr.Response.Write("denied")
+      \t}
+      }
+
+      func main() {
+      \ts.Group("/", func(group *ghttp.RouterGroup) {
+      \t\tgroup.Middleware(Auth)
+      \t\tgroup.Group("/user", func(group *ghttp.RouterGroup) {
+      \t\t\tgroup.Bind(Ctrl{})
+      \t\t})
+      \t})
+      \ts.Group("/open", func(group *ghttp.RouterGroup) {
+      \t\tgroup.Middleware(Wrap)
+      \t\tgroup.ALL("/x", func(r *ghttp.Request) {})
+      \t})
+      }
+      GO
+    api = <<-GO
+      package v1
+
+      type (
+      \tProfileReq struct {
+      \t\tg.Meta `path:"/profile" method:"get"`
+      \t}
+      )
+      GO
+    result = router_scope_scan({"go.mod" => "module f\n", "main.go" => main, "api/v1/user.go" => api},
+      [{"GET", "/user/profile", "api/v1/user.go", %(path:"/profile")}, {"GET", "/open/x", "main.go", %("/x")}], "go_gf")
+    guarded?(result["GET /user/profile"]).should be_true
+    guarded?(result["GET /open/x"]).should be_false
+  end
+
+  it "reads an aliased Kratos transport and a PocketBase .Bind continued on the next line" do
+    kratos = <<-GO
+      package main
+
+      import (
+      \t"github.com/go-kratos/kratos/v2/middleware/auth/jwt"
+      \tkhttp "github.com/go-kratos/kratos/v2/transport/http"
+      )
+
+      func main() {
+      \tsrv := khttp.NewServer(khttp.Middleware(jwt.Server(keyFunc)))
+      \tr := srv.Route("/")
+      \tr.POST("/admin", h)
+      }
+      GO
+    result = router_scope_scan({"go.mod" => "module k\n", "main.go" => kratos}, [{"POST", "/admin", "main.go", %("/admin")}], "go_kratos")
+    guarded?(result["POST /admin"]).should be_true
+
+    pocketbase = <<-GO
+      package apis
+
+      import "github.com/pocketbase/pocketbase/apis"
+
+      func bind(rg *router.RouterGroup[*core.RequestEvent]) {
+      \trg.GET("/settings", H).
+      \t\tBind(apis.RequireSuperuserAuth())
+      }
+      GO
+    result = router_scope_scan({"go.mod" => "module p\n", "apis/settings.go" => pocketbase},
+      [{"GET", "/settings", "apis/settings.go", %("/settings")}], "go_pocketbase")
+    guarded?(result["GET /settings"]).should be_true
+  end
 end

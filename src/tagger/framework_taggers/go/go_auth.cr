@@ -48,9 +48,10 @@ class GoAuthTagger < FrameworkTagger
   # `Group("/seg", mw...)` constructor — so a file with neither anywhere
   # registers nothing, and the pre-scan can skip its per-line group tracking
   # outright.
-  # Also GoFrame's `group.Middleware(`, PocketBase's `.Bind(` and Kratos'
-  # `http.Middleware(` server option.
-  USE_REGISTRATION = /\.\s*(?:Use|Pre|Middleware|Bind)\s*\(|\.\s*(?:Group|Party)\s*\(\s*"[^"]*"\s*,/
+  # Also GoFrame's `group.Middleware(` and Kratos' `http.Middleware(`
+  # server option. (PocketBase's `.Bind(` is gated on the file importing
+  # PocketBase: `c.Bind(&req)` is in every gin / echo handler file.)
+  USE_REGISTRATION = /\.\s*(?:Use|Pre|Middleware)\s*\(|\.\s*(?:Group|Party)\s*\(\s*"[^"]*"\s*,/
 
   # Where the middleware arguments start on a `code_only` line (string
   # literals blanked to `""`): right after `.Use(` / `.Pre(` (GoFrame's
@@ -59,11 +60,15 @@ class GoAuthTagger < FrameworkTagger
   MIDDLEWARE_ARGS_START = /\.\s*(?:Use|Pre|Middleware)\s*\(|\.\s*\w+\s*\(\s*""\s*,/
 
   # Middleware added inside a closure group on its router: `.Use(` /
-  # `.Pre(`, GoFrame's `group.Middleware(`, or `.Bind(` (a PocketBase
-  # middleware, or a GoFrame controller whose routes the closure's
-  # middleware then guards).
+  # `.Pre(`, or, on the closure's own router parameter only, GoFrame's
+  # `group.Middleware(` and `.Bind(` (a PocketBase middleware, or a GoFrame
+  # controller whose routes the closure's middleware then guards);
   # `group.ALLMap(g.Map{"/x": ctrl.Profile})` binds handlers like `.Bind`.
-  CLOSURE_USE = /(\w+)\.(Use|Pre|Middleware|Bind|ALLMap|Map)\s*\(/
+  CLOSURE_USE        = /(\w+)\.(Use|Pre|Middleware|Bind|ALLMap|Map)\s*\(/
+  CLOSURE_PARAM_VERB = %w[Middleware Bind ALLMap Map]
+  # The router parameter of a closure opened at the end of a line:
+  # `s.Group("/api", func(group *ghttp.RouterGroup) {` -> `group`.
+  CLOSURE_PARAM = /\bfunc\s*\(\s*(\w+)\s+[^()]*\)\s*\{\s*\z/
 
   # PocketBase: `sg := rg.Group("/sql").Bind(mw)` / `sg.Bind(mw)`.
   BIND_REGISTRATION = /\A(\w+)\s*(?::?=\s*\w+(?:\s*\.\s*\w+)*\s*\.\s*Group\s*\([^()]*\)\s*)?\.\s*Bind\s*\(/
@@ -71,9 +76,10 @@ class GoAuthTagger < FrameworkTagger
   # PocketBase: `sub.GET("", h).Bind(apis.RequireSuperuserAuth())`.
   ROUTE_BIND = /\)\s*\.\s*Bind\s*\(/
 
-  # Kratos: the `http.Middleware(...)` server option, run for every route
-  # the server serves.
-  SERVER_MIDDLEWARE = /\bhttp\s*\.\s*Middleware\s*\(/
+  # Kratos: the `http.Middleware(...)` server option (under whatever alias
+  # the file imports Kratos' `transport/http` as), run for every route the
+  # server serves.
+  SERVER_MIDDLEWARE = /\b(\w+)\s*\.\s*Middleware\s*\(/
 
   # One middleware argument's head: `AuthMiddleWare()` -> {"", "AuthMiddleWare"},
   # `auth.Required()` -> {"auth", "Required"}, `gin.BasicAuth(gin.Accounts{` ->
@@ -95,9 +101,10 @@ class GoAuthTagger < FrameworkTagger
   # Matched on `code_only` source, so a 401 in a comment or log string does
   # not count, and `== http.StatusUnauthorized` (a comparison, as in a
   # logging middleware) does not either.
-  # PocketBase replies with `e.UnauthorizedError(...)` / `e.ForbiddenError(...)`,
-  # GoFrame with `r.SetError(gerror.NewCode(gcode.CodeNotAuthorized, ...))`.
-  REJECTS_REQUEST = /[(,]\s*(?:\w+\.)?Status(?:Unauthorized|Forbidden)\b|[(,]\s*40[13]\s*[,)]|\b(?:\w+\.)?Err(?:Unauthorized|Forbidden)\b|\.\s*(?:Unauthorized|Forbidden)Error\s*\(|\bgcode\s*\.\s*CodeNotAuthorized\b/
+  # PocketBase replies with `e.UnauthorizedError(...)` / `e.ForbiddenError(...)`
+  # (before 0.23, `apis.NewUnauthorizedError(...)`), GoFrame with
+  # `r.SetError(gerror.NewCode(gcode.CodeNotAuthorized, ...))`.
+  REJECTS_REQUEST = /[(,]\s*(?:\w+\.)?Status(?:Unauthorized|Forbidden)\b|[(,]\s*40[13]\s*[,)]|\b(?:\w+\.)?Err(?:Unauthorized|Forbidden)\b|[.\s(]New(?:Unauthorized|Forbidden)Error\s*\(|\.\s*(?:Unauthorized|Forbidden)Error\s*\(|[(,]\s*gcode\s*\.\s*CodeNotAuthorized\b/
 
   # A redirect to the login page (`ctx.RedirectForLogin(...)`,
   # `c.Redirect(302, "/login")`, `response.HTMLRedirect(w, r, loginURL)`),
@@ -214,6 +221,7 @@ class GoAuthTagger < FrameworkTagger
     @owner_uses = Hash({String, Int32, String, String}, Array(Int32)).new
     @bound_requests = Hash(String, Tag).new
     @server_scopes = [] of {owner: Gate, tag: Tag}
+    @gozero_groups = Hash(String, Array({Range(Int32, Int32), Array(Tag)})).new
   end
 
   def self.target_techs : Array(String)
@@ -264,22 +272,23 @@ class GoAuthTagger < FrameworkTagger
   private def scan_group_middleware(content : String, file : String)
     uses = USE_REGISTRATION.matches?(content, options: Noir::TextFile::MATCH_OPTIONS)
     closures = CLOSURE_REGISTRATION.matches?(content, options: Noir::TextFile::MATCH_OPTIONS)
-    return unless uses || closures
+    pocketbase = content.includes?("pocketbase/") && content.includes?(".Bind(")
+    return unless uses || closures || pocketbase
 
     # Closures handed to a call (`m.Group("/user", func() {`, chi's
     # `r.Group(func(r chi.Router) {`), with the middleware a `.With(...)` on
     # the opening line or a `.Use(...)` inside puts in front of their routes.
     lines = content.lines
-    frames = [] of {line: Int32, depth: Int32, args: Array(String), uses: Array({Int32, Array(String)}), binds: Array({Int32, String})}
+    frames = [] of {line: Int32, depth: Int32, param: String?, args: Array(String), uses: Array({Int32, Array(String)}), binds: Array({Int32, String})}
     depth = 0
     index = 0
     each_group_scoped_line(content) do |stripped, scopes|
       index += 1
       in_closure = false
-      server = uses && stripped.matches?(SERVER_MIDDLEWARE)
+      server = uses && (option = stripped.match(SERVER_MIDDLEWARE)) && kratos_http?(file, option[1])
       if server
         register_server_scopes(file, lines, index)
-      elsif uses && (bind = stripped.match(BIND_REGISTRATION))
+      elsif pocketbase && (bind = stripped.match(BIND_REGISTRATION))
         register_bind_scopes(bind, file, lines, index, scopes)
       end
       if closures
@@ -287,7 +296,8 @@ class GoAuthTagger < FrameworkTagger
         # A `.Use` on the closure's own router guards the routes after it
         # in that closure, not every route under the group's prefix.
         call = server ? nil : code.match(CLOSURE_USE)
-        if (frame = frames.last?) && call && !scopes.groups.has_key?(call[1])
+        if (frame = frames.last?) && call && !scopes.groups.has_key?(call[1]) &&
+           (!CLOSURE_PARAM_VERB.includes?(call[2]) || call[1] == frame[:param])
           statement = statement_text(lines, index)
           args = (start = statement.match(CLOSURE_USE)) ? call_args(statement[start.end..]) : [] of String
           case call[2]
@@ -305,7 +315,8 @@ class GoAuthTagger < FrameworkTagger
           if char == '{'
             if pos == code.size - 1 && code.matches?(CLOSURE_ARG_OPEN)
               args = (with_call = code.match(WITH_CALL)) ? call_args(code[with_call.end..]) : [] of String
-              frames << {line: index, depth: depth, args: args, uses: [] of {Int32, Array(String)}, binds: [] of {Int32, String}}
+              frames << {line: index, depth: depth, param: code.match(CLOSURE_PARAM).try(&.[1]), args: args,
+                         uses: [] of {Int32, Array(String)}, binds: [] of {Int32, String}}
             end
             depth += 1
           elsif char == '}'
@@ -319,9 +330,15 @@ class GoAuthTagger < FrameworkTagger
             top[:uses].each do |(line, args)|
               args.each { |arg| guards << {line, add_closure_scope(file, line, index, arg)} }
             end
-            # GoFrame: `group.Bind(Ctrl{})` after `group.Middleware(Auth)`
-            # puts the controller's routes, declared with their request
-            # types, behind it.
+            # GoFrame: `group.Bind(Ctrl{})` after `group.Middleware(Auth)`,
+            # in this closure or one enclosing it, puts the controller's
+            # routes, declared with their request types, behind it.
+            unless top[:binds].empty?
+              frames.each do |outer|
+                outer[:args].each { |arg| guards << {outer[:line], guard_by_definition(arg, file, authish_name: true)} }
+                outer[:uses].each { |(line, args)| args.each { |arg| guards << {line, guard_by_definition(arg, file, authish_name: true)} } }
+              end
+            end
             top[:binds].each do |(line, arg)|
               tag = guards.find { |(row, guard)| guard && row < line }.try(&.[1]) || next
               bound_request_types(arg, file).each { |type| @bound_requests.put_if_absent(type) { tag } }
@@ -339,7 +356,12 @@ class GoAuthTagger < FrameworkTagger
     tag
   end
 
-  NEW_SERVER = /\b(\w+)\s*:?=\s*http\s*\.\s*NewServer\s*\(/
+  NEW_SERVER = /\b(\w+)\s*:?=\s*(\w+)\s*\.\s*NewServer\s*\(/
+
+  # Whether the import alias `name` is Kratos' HTTP transport in `file`.
+  private def kratos_http?(file : String, name : String) : Bool
+    !!import_paths(file)[name]?.try { |path| path.includes?("go-kratos/kratos") && path.ends_with?("/transport/http") }
+  end
 
   # Kratos: each guard `http.Middleware(...)` hands the server its function
   # builds (`srv := http.NewServer(http.Middleware(jwt.Server(...)))`,
@@ -352,7 +374,9 @@ class GoAuthTagger < FrameworkTagger
     start = statement.match(SERVER_MIDDLEWARE) || return
     head = function_start(lines, index)
     last = head < 0 ? lines.size : enclosing_block_end(lines, head + 2)
-    server = ((head + 1)...Math.min(last, lines.size)).compact_map { |row| code_only(lines[row]).match(NEW_SERVER).try(&.[1]) }.first? || return
+    server = ((head + 1)...Math.min(last, lines.size)).compact_map do |row|
+      code_only(lines[row]).match(NEW_SERVER).try { |m| m[1] if kratos_http?(file, m[2]) }
+    end.first? || return
     owner = {file: file, receiver: server, rows: index..last, parents: {} of String => Array({String, Int32})}
     call_args(statement[start.end..]).each do |arg|
       tag = guard_by_definition(arg, file, authish_name: true) || next
@@ -1243,8 +1267,14 @@ class GoAuthTagger < FrameworkTagger
 
       case endpoint.details.technology
       when "go_pocketbase"
-        # Middleware bound on the route itself.
+        # Middleware bound on the route itself, the chain read on across
+        # lines (`sub.GET("", h).` then `Bind(mw)`).
         statement = statement_text(lines, line_num)
+        last = statement_end(lines, line_num)
+        while last < lines.size && last < line_num + 10 && (code_only(lines[last - 1]).rstrip.ends_with?('.') || lines[last].lstrip.starts_with?('.'))
+          statement += " " + statement_text(lines, last + 1)
+          last = statement_end(lines, last + 1)
+        end
         if bind = statement.match(ROUTE_BIND)
           call_args(statement[bind.end..]).each do |arg|
             guard_by_definition(arg, path_info.path, authish_name: true).try { |guard| endpoint.add_tag(guard) }
@@ -1280,21 +1310,24 @@ class GoAuthTagger < FrameworkTagger
   # `rest.WithJwt(...)` / `rest.WithMiddlewares(...)` options of the
   # `server.AddRoutes(...)` call a generated `routes.go` route sits in.
   private def gozero_guards(path : String, lines : Array(String), idx : Int32) : Array(Tag)
+    if path.ends_with?(".api")
+      service = idx.downto(0).find { |row| lines[row].strip.matches?(GOZERO_SERVICE) } || return [] of Tag
+      head = (service - 1).downto(0).find { |row| (line = lines[row].strip).starts_with?("@server") || line.starts_with?('}') }
+      return [] of Tag unless head && lines[head].strip.starts_with?("@server")
+      return gozero_option_tags((head...service).join(" ") { |row| code_only(lines[row]) })
+    end
+    # Each `AddRoutes(...)` call of the file, read once.
+    groups = @gozero_groups.put_if_absent(path) do
+      lines.each_index.select { |row| lines[row].matches?(GOZERO_ROUTES) }.map do |row|
+        last = statement_end(lines, row + 1)
+        {(row + 1)..last, gozero_option_tags((row + 1..last).join(" ") { |line| code_only(lines[line - 1]) })}
+      end.to_a
+    end
+    groups.find { |(rows, _)| rows.includes?(idx + 1) }.try(&.[1]) || [] of Tag
+  end
+
+  private def gozero_option_tags(text : String) : Array(Tag)
     tags = [] of Tag
-    text = if path.ends_with?(".api")
-             service = idx.downto(0).find { |row| lines[row].strip.matches?(GOZERO_SERVICE) } || return tags
-             head = (service - 1).downto(0).find { |row| (line = lines[row].strip).starts_with?("@server") || line.starts_with?('}') }
-             return tags unless head && lines[head].strip.starts_with?("@server")
-             (head...service).join(" ") { |row| code_only(lines[row]) }
-           else
-             depth = 0
-             start = idx.downto(Math.max(idx - 400, 0)).find do |row|
-               code = code_only(lines[row])
-               depth += code.count(')') - code.count('(') if row < idx
-               depth < 0 && code.matches?(GOZERO_ROUTES)
-             end || return tags
-             (start + 1..statement_end(lines, start + 1)).join(" ") { |row| code_only(lines[row - 1]) }
-           end
     middlewares = [] of String
     text.scan(GOZERO_KEY) do |m|
       if m[1] == "jwt"
@@ -1333,7 +1366,8 @@ class GoAuthTagger < FrameworkTagger
     idx.downto(Math.max(idx - 30, 0)) do |row|
       line = lines[row].strip
       return if row < idx && line.starts_with?('}')
-      if m = line.match(/\Atype\s+(\w+)\s+struct\b/)
+      # Also a struct of a grouped `type ( ... )` block.
+      if m = line.match(/\A(?:type\s+)?(\w+)\s+struct\b/)
         return @bound_requests[m[1]]?
       end
     end
@@ -2104,9 +2138,12 @@ class GoAuthTagger < FrameworkTagger
         at = code.index("#{target}(")
         called = !at.nil? && (at.zero? || !code[at - 1].alphanumeric? && code[at - 1] != '_')
         if called && package_dir && at && (qualifier = code[0, at].match(/(\w+)\s*\.\s*\z/))
-          path = import_paths(owner[:file])[qualifier[1]]?
-          # The last segment, or the one before a `/v2` major suffix.
-          called = path.nil? || path.split('/').last(2).includes?(File.basename(package_dir))
+          if path = import_paths(owner[:file])[qualifier[1]]?
+            # The last segment, or the one before a `/v2` major suffix.
+            segments = path.split('/')
+            segments.pop if segments.size > 1 && segments.last.matches?(/\Av\d+\z/) && segments.last != File.basename(package_dir)
+            called = segments.last == File.basename(package_dir)
+          end
         end
         row + 1 if called || (code.includes?("Mount(") && tokens.includes?(target))
       end
