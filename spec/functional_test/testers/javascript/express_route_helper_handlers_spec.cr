@@ -46,8 +46,9 @@ describe "Express route-helper handlers, guards and params", tags: "functional" 
     # ...and what the handler passes its request to reads `uid` (not the deleted `lang`).
     params_of.call("GET", "/feed/:tid.rss").should eq(["tid:path", "uid:query"])
 
-    # `router.all('/api/v3/*', middleware.markApi)`: a pass-through serves nothing.
-    handler_of.call("GET", "/api/v3/*").should be_nil
+    # `router.all('/api/v3/*', middleware.markApi)`: a pass-through serves nothing,
+    # so it is not seven routes.
+    endpoints.any? { |e| e.url == "/api/v3/*" }.should be_false
 
     # `[...middlewares, …]` where `mustBeMember` returns through a refusing helper.
     guards_of.call("PUT", "/api/v3/posts/:pid/vote").should eq(["express_auth"])
