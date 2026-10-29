@@ -222,6 +222,11 @@ module Analyzer::Javascript
     # Hapi nests the prefix under `routes`, on the options or per plugin item.
     HAPI_ROUTES_PREFIX_RE = /\broutes\s*:\s*\{[^}]*?\bprefix\s*:\s*(?:['"]([^'"]+)['"]|`([^`$]+)`)/
     HAPI_PLUGIN_FIELD_RE  = /\A\s*plugin\s*:\s*(.+)\z/m
+    # A Glue manifest lists its plugins as data, not `.register(` calls:
+    # `registrations: [{ plugin: { register: './api' }, options: { routes } }]`
+    # (Glue 4) or `register: { plugins: [{ plugin: '../lib', routes }] }`.
+    GLUE_PLUGIN_LIST_RE = /\bregistrations\s*:\s*\[|\bregister\s*:\s*\{\s*plugins\s*:\s*\[/
+    GLUE_PLUGIN_PATH_RE = /\A(?:\{\s*register\s*:\s*)?['"](\.{1,2}\/[^'"]*|\.{1,2})['"]/
 
     # Plugin/router mounts whose child lives in another file:
     #   Fastify  `<instance>.register(<plugin>, { prefix: '/p' })`
@@ -238,7 +243,7 @@ module Analyzer::Javascript
       edges = Hash(String, Array(Tuple(String, Noir::LocatorKey(Array(String)), String))).new
       main_files.each do |file|
         content = read_source(file)
-        next unless @framework.in?(:fastify, :hapi) ? content.includes?(".register") : content.includes?(".applyRoutes") || content.includes?(".add")
+        next unless @framework.in?(:fastify, :hapi) ? content.includes?(".register") || (@framework == :hapi && content.matches?(GLUE_PLUGIN_LIST_RE)) : content.includes?(".applyRoutes") || content.includes?(".add")
         # A test app that mounts the router under a prefix of its own is not
         # a production mount.
         next if Noir::JSRouteExtractor.test_file?(file, content)
@@ -254,6 +259,14 @@ module Analyzer::Javascript
           plugin = plugin.strip
           target = if module_match = plugin.match(REGISTER_MODULE_RE)
                      resolve_require_path(file, module_match[1]).try { |t| {ExpressConstants.file_key(t), t} }
+                   elsif spec = plugin.match(GLUE_PLUGIN_PATH_RE)
+                     # Glue resolves against `relativeTo`, conventionally the
+                     # composing file's `__dirname`; a manifest kept one level
+                     # down (`config/manifest.js`) names paths from there.
+                     # ponytail: two directories tried, not `relativeTo` read.
+                     (resolve_require_path(file, spec[1]) ||
+                       resolve_require_path(File.join(File.dirname(File.dirname(file)), "index.js"), spec[1]))
+                       .try { |t| {ExpressConstants.file_key(t), t} }
                    elsif binding = plugin.match(REGISTER_BINDING_RE)
                      imports ||= parse_imports(content, file)
                      local, prop = binding[1], binding[2]?
@@ -296,20 +309,32 @@ module Analyzer::Javascript
           options_prefix = hapi_routes_prefix(args[first.size..])
           first = first.strip
           items = first.starts_with?('[') && first.ends_with?(']') ? split_at_top_level_commas(first[1...-1]) : [first]
-          items.each do |item|
-            item = item.strip
-            if item.starts_with?('{') && item.ends_with?('}')
-              plugin = split_at_top_level_commas(item[1...-1]).find_value { |field| field.match(HAPI_PLUGIN_FIELD_RE).try(&.[1]) }
-              prefix = hapi_routes_prefix(item) || options_prefix
-            else
-              plugin, prefix = item, options_prefix
-            end
-            yield plugin, prefix if plugin && prefix
-          end
+          each_hapi_plugin_item(items, options_prefix) { |plugin, prefix| yield plugin, prefix }
+        end
+        content.scan(GLUE_PLUGIN_LIST_RE) do |m|
+          open = m.end(0) - 1
+          close = Noir::JSLiteralScanner.find_matching_bracket(content, open) || next
+          items = split_at_top_level_commas(content[(open + 1)...close])
+          each_hapi_plugin_item(items, nil) { |plugin, prefix| yield plugin, prefix }
         end
       else
         content.scan(APPLY_ROUTES_RE) { |m| yield m[1], m[2]? || m[3] }
         content.scan(RESTIFY_ADD_RE) { |m| yield m[3], m[1]? || m[2] }
+      end
+    end
+
+    # `{ plugin: <x>, routes: { prefix } }` items (the prefix may also sit
+    # under `options`), or a bare plugin taking the call's own prefix.
+    private def each_hapi_plugin_item(items : Array(String), options_prefix : String?, &)
+      items.each do |item|
+        item = item.strip
+        if item.starts_with?('{') && item.ends_with?('}')
+          plugin = split_at_top_level_commas(item[1...-1]).find_value { |field| field.match(HAPI_PLUGIN_FIELD_RE).try(&.[1]) }
+          prefix = hapi_routes_prefix(item) || options_prefix
+        else
+          plugin, prefix = item, options_prefix
+        end
+        yield plugin, prefix if plugin && prefix
       end
     end
 
@@ -428,6 +453,11 @@ module Analyzer::Javascript
           require_map, function_map, var_to_function, var_prefix, global_deferred_mounts, prefix_constants)
       end
 
+      # Prefixed chain links first, like the literal scans above: a path-less
+      # `api.use(x)` resolves through the prefix they give `api`.
+      scan_chained_router_mounts(content, main_file, locator, require_map, function_map,
+        var_to_function, var_prefix, global_deferred_mounts, prefix_constants, with_prefix: true)
+
       # Scan for .use(router) patterns where prefix is omitted (defaults to '/')
       # The negative lookahead `(?!\s*['"])` prevents matching calls that have a
       # string literal as the first argument, avoiding double processing with the above scan.
@@ -444,6 +474,9 @@ module Analyzer::Javascript
         process_use_call(content, match_end, caller, prefix, main_file, locator,
           require_map, function_map, var_to_function, var_prefix, global_deferred_mounts)
       end
+
+      scan_chained_router_mounts(content, main_file, locator, require_map, function_map,
+        var_to_function, var_prefix, global_deferred_mounts, prefix_constants, with_prefix: false)
 
       # Scan for route-config-array + forEach iteration:
       #   const defaultRoutes = [
@@ -517,6 +550,46 @@ module Analyzer::Javascript
         unless processed
           deferred_key = router_file_direct || router_var || ""
           global_deferred_mounts << {main_file, caller, prefix, deferred_key} unless deferred_key.empty?
+        end
+      end
+    end
+
+    # `const api = Router()\n  .use(items)` and `export default
+    # Router().use('/api', api)`: the `.use(` links of a chain on a fresh
+    # router have no `name.` in front of them for the scans above. The
+    # chain's head names the caller: the bound variable, or, for an
+    # `export default` chain, the module itself ("" falls back to the
+    # file's own prefix).
+    CHAINED_ROUTER_HEAD_RE = /(?:\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*|\bexport\s+default\s+)(?:new\s+)?(?:express\s*\.\s*)?Router\s*\((?:[^()]|\([^()]*\))*\)(?=\s*\.use\s*\()/
+    CHAINED_USE_RE         = /\A\s*\.use\s*\(/
+
+    private def scan_chained_router_mounts(
+      content : String,
+      main_file : String,
+      locator : CodeLocator,
+      require_map : Hash(String, String),
+      function_map : Hash(String, String),
+      var_to_function : Hash(String, String),
+      var_prefix : Hash(String, Array(String)),
+      global_deferred_mounts : Array(Tuple(String, String, String, String)),
+      prefix_constants : Hash(String, String),
+      with_prefix : Bool,
+    )
+      return unless content.includes?("Router(")
+      content.scan(CHAINED_ROUTER_HEAD_RE) do |m|
+        caller = m[1]? || ""
+        pos = m.byte_end(0)
+        while link = content.byte_slice(pos).match(CHAINED_USE_RE)
+          args_start = pos + link.byte_end(0)
+          args = extract_use_call_args(content, args_start)
+          first = first_top_level_argument(args)
+          prefix = first.strip.match(/\A['"]([^'"]+)['"]\z/).try(&.[1]) || prefix_constants[first.strip]?
+          if prefix.nil? != with_prefix
+            match_end = prefix ? args_start + first.bytesize + 1 : args_start
+            process_use_call(content, match_end, caller, prefix || "/", main_file, locator,
+              require_map, function_map, var_to_function, var_prefix, global_deferred_mounts)
+          end
+          pos = args_start + args.bytesize + 1
         end
       end
     end

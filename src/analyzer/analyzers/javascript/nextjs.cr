@@ -179,8 +179,16 @@ module Analyzer::Javascript
       # Comments are blanked in place, so lines and callee positions still
       # match the file.
       default_body_info = extract_default_export_body(sanitized)
-      default_source_line = default_body_info.try(&.[1]) || 1
 
+      catch_all_urls(url, relative).each do |served|
+        emit_pages_router_endpoints(path, served, methods, sanitized, default_body_info, result, mutex, include_callee)
+      end
+    end
+
+    private def emit_pages_router_endpoints(path : String, url : String, methods : Array(String), sanitized : String,
+                                            default_body_info : Tuple(String, Int32)?, result : Array(Endpoint),
+                                            mutex : Mutex, include_callee : Bool)
+      default_source_line = default_body_info.try(&.[1]) || 1
       methods.each do |method|
         endpoint = Endpoint.new(url, method)
         handler = verb_export_handler(sanitized, path, method) || default_export_handler(sanitized, path, method)
@@ -223,7 +231,9 @@ module Analyzer::Javascript
       converted = segments.map { |seg| convert_segment(seg) }
 
       url = "#{base_path_for(path)}/" + converted.join("/")
-      analyze_route_handler_file(path, normalize_url(url), result, mutex, include_callee)
+      catch_all_urls(normalize_url(url), relative).each do |served|
+        analyze_route_handler_file(path, served, result, mutex, include_callee)
+      end
     end
 
     # Verb-exported Web `Request` handlers in one module, served at `url`.
@@ -887,9 +897,17 @@ module Analyzer::Javascript
     end
 
     private def extract_path_params(url : String, endpoint : Endpoint)
-      url.scan(/\{(\w+)\}/) do |m|
+      url.scan(/\{\*?(\w+)\}/) do |m|
         add_param(endpoint, m[1], "path")
       end
+    end
+
+    # `[[...seed]]` also serves the URL without the segment (`/api/og`).
+    private def catch_all_urls(url : String, relative : String) : Array(String)
+      m = url.match(/\/\{\*(\w+)\}\z/) || return [url]
+      return [url] unless relative.includes?("[[...#{m[1]}]]")
+      bare = url[0, url.size - m[0].size]
+      [bare.empty? ? "/" : bare, url]
     end
 
     private def add_param(endpoint : Endpoint, name : String, type : String)
@@ -917,13 +935,11 @@ module Analyzer::Javascript
     end
 
     private def convert_segment(seg : String) : String
-      # Optional catch-all: [[...slug]]
-      if m = seg.match(/^\[\[\.\.\.(\w+)\]\]$/)
-        return "{#{m[1]}}"
-      end
-      # Catch-all: [...slug]
-      if m = seg.match(/^\[\.\.\.(\w+)\]$/)
-        return "{#{m[1]}}"
+      # Catch-all `[...slug]` and optional `[[...slug]]` span one or more
+      # segments: `{*slug}`, the rest-of-path spelling the optimizer and
+      # the OAS builder already read as param `slug`.
+      if m = seg.match(/^\[\[?\.\.\.(\w+)\]\]?$/)
+        return "{*#{m[1]}}"
       end
       # Dynamic: [id]
       if m = seg.match(/^\[(\w+)\]$/)

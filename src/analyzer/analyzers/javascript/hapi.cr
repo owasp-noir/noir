@@ -25,19 +25,29 @@ module Analyzer::Javascript
       # keyed per plugin file in `CodeLocator`.
       RouterMountScanner.new(all_files, @base_paths, base_path, logger, :hapi).scan
       include_callee = callees_needed?
+      files = get_files_by_extensions(JS_EXTENSIONS)
+      # haute-couture registers every module under `routes/` itself, so the
+      # module's exported value is the route config.
+      # ponytail: one scan-wide flag; per-project if mixed monorepos need it.
+      haute_couture = (files + get_files_by_basename("package.json")).any? do |file|
+        read_file_content(file).includes?("haute-couture")
+      rescue IO::Error
+        false
+      end
 
-      per_file = ordered_scan_files(get_files_by_extensions(JS_EXTENSIONS)) do |path|
+      per_file = ordered_scan_files(files) do |path|
         content = read_file_content(path)
         # `server.route(...)` in a lab/mocha suite is driven by `server.inject`,
         # never served. Import-blind: `test_stub_only?` would drop a hapi
         # server that also imports axios.
         next if Noir::JSRouteExtractor.test_file?(path, content)
+        route_module = haute_couture && base_relative_path(path).includes?("/routes/")
         in_project = !project_roots.empty? && path_under_project_roots?(path, project_roots)
-        next unless in_project || content.matches?(HAPI_MARKERS_RE)
+        next unless in_project || route_module || content.matches?(HAPI_MARKERS_RE)
 
         mounts = CodeLocator.instance.all(ExpressConstants.file_key(Noir::PathScope.expand(path)))
         mounts = [""] if mounts.empty?
-        Noir::TreeSitterHapiExtractor.extract_routes(content, include_callee).flat_map do |route|
+        Noir::TreeSitterHapiExtractor.extract_routes(content, include_callee, module_exports: route_module).flat_map do |route|
           mounts.map { |prefix| build_endpoint(route, prefix, path, include_callee) }
         end
       end

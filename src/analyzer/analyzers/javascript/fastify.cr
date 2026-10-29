@@ -1,6 +1,7 @@
 require "../../engines/javascript_engine"
 require "../../../miniparsers/js_callee_extractor"
 require "../../../miniparsers/js_route_extractor"
+require "../../../miniparsers/wasp_extractor"
 require "../../../utils/url_path"
 require "./express/router_mount_scanner"
 
@@ -45,6 +46,7 @@ module Analyzer::Javascript
         # de-duplication (a Set: scanning the whole result per route was
         # quadratic).
         recorded = Set(String).new
+        schema_by_line = parser_endpoints.empty? ? nil : schema_params_by_line(content)
         parser_endpoints.each do |endpoint|
           # The shared JS parser emits `.query(` shorthand for any receiver
           # and without the addHttpMethod('QUERY') gate or plugin prefixes.
@@ -71,6 +73,10 @@ module Analyzer::Javascript
                 endpoint.push_param(param)
               end
             end
+          end
+
+          endpoint.details.code_paths.first?.try(&.line).try { |line| schema_by_line.try(&.[line]?) }.try &.each do |param|
+            endpoint.push_param(param)
           end
 
           result << endpoint
@@ -238,7 +244,7 @@ module Analyzer::Javascript
       # 1. Anonymous plugin functions:
       #    fastify.register(function (instance) { ... }, { prefix: '/x' })
       #    fastify.register((instance) => { ... }, { prefix: '/x' })
-      content.scan(/\b\w+\.register\s*\(\s*(?:async\s+)?(?:function\s*\([^)]*\)|\([^)]*\)\s*=>|\w+\s*=>)\s*\{/) do |m|
+      content.scan(/\b\w+\.register\s*\(\s*(?:async\s+)?(?:function\s*[\w$]*\s*\([^)]*\)|\([^)]*\)\s*=>|\w+\s*=>)\s*\{/) do |m|
         open_brace = content.byte_index('{', m.byte_begin(0))
         next unless open_brace
         close_brace = Noir::JSLiteralScanner.find_matching_brace_at_byte(content, open_brace)
@@ -468,6 +474,7 @@ module Analyzer::Javascript
           p = line_to_param(handler_line)
           body_params << p if !p.name.empty? && !body_params.any? { |bp| bp.name == p.name && bp.param_type == p.param_type }
         end
+        body_params.concat(schema_params(config, content))
         route_callees = include_callee ? route_config_callees(config, path, line_no) : [] of Noir::JSCalleeExtractor::Entry
 
         methods.each do |http_method|
@@ -592,6 +599,61 @@ module Analyzer::Javascript
       end
 
       i
+    end
+
+    # A route's `schema` is its declared input, validated by Fastify itself.
+    SCHEMA_PARAM_TYPES   = {"querystring" => "query", "query" => "query", "body" => "json", "headers" => "header"}
+    SCHEMA_ROUTE_CALL_RE = /\b[A-Za-z_$][\w$]*\.(get|post|put|delete|patch|head|options|all|route)\s*\(/
+    # TypeBox `Type.Object({...})`: its first argument lists the properties.
+    TYPEBOX_OBJECT_RE = /\A(?:[\w$]+\.)?Object\s*\(/
+
+    # Route-call line => params its `schema` declares, for the shorthand
+    # (`app.get(url, { schema }, h)`) and the `app.route({ schema })` forms.
+    private def schema_params_by_line(content : String) : Hash(Int32, Array(Param))
+      by_line = Hash(Int32, Array(Param)).new
+      return by_line unless content.includes?("schema")
+      offsets = Noir::JSRouteExtractor::ByteOffsets.new(content)
+      content.scan(SCHEMA_ROUTE_CALL_RE) do |m|
+        args_text = Noir::JSLiteralScanner.extract_paren_content_at_byte(content, m.byte_end(0)).try(&.content) || next
+        args = Noir::TopLevelSplit.split(args_text, ',', Noir::TopLevelSplit::Rules::JS)
+        options = m[1] == "route" ? args[0]? : (args.size >= 3 ? args[1] : nil)
+        next unless options
+        params = schema_params(options, content)
+        by_line[offsets.line(m.byte_begin(0))] = params unless params.empty?
+      end
+      by_line
+    end
+
+    private def schema_params(options : String, content : String) : Array(Param)
+      params = [] of Param
+      schema = object_entries_of(options, content).try(&.["schema"]?) || return params
+      parts = object_entries_of(schema, content) || return params
+      SCHEMA_PARAM_TYPES.each do |part, type|
+        definition = parts[part]? || next
+        properties = object_entries_of(definition, content) || next
+        # JSON Schema nests the fields under `properties`; TypeBox does not.
+        unless definition.strip.matches?(TYPEBOX_OBJECT_RE)
+          properties = properties["properties"]?.try { |p| object_entries_of(p, content) } || next
+        end
+        properties.each_key { |name| params << Param.new(name, "", type) }
+      end
+      params
+    end
+
+    # Entries of an object literal, a same-file `const X = {...}` named by
+    # `value`, or a TypeBox `Type.Object({...})`.
+    private def object_entries_of(value : String, content : String) : Hash(String, String)?
+      text = value.strip
+      if text.matches?(/\A[A-Za-z_$][\w$]*\z/)
+        decl = content.match(/\b(?:const|let|var)\s+#{Regex.escape(text)}\s*(?::[^=]+)?=\s*(?=\{)/) || return
+        open = decl.end(0)
+        close = Noir::JSLiteralScanner.find_matching_brace(content, open) || return
+        text = content[open..close]
+      elsif text.matches?(TYPEBOX_OBJECT_RE)
+        text = text[(text.index('(') || return) + 1..].lstrip
+      end
+      body = Noir::WaspExtractor.object_body(text) || return
+      Noir::WaspExtractor.object_entries(body)
     end
 
     # Helper method to create an endpoint with details

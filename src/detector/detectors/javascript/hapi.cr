@@ -9,8 +9,14 @@ module Detector::Javascript
       "require('hapi')", "require(\"hapi\")",
       "from 'hapi'", "from \"hapi\"",
     )
+    # A Glue or haute-couture app never imports hapi in code; its
+    # package.json still depends on it.
+    PACKAGE_MARKER = /"(?:@hapi\/hapi|hapi)"\s*:/
 
     def detect(filename : String, file_contents : String) : Bool
+      if File.basename(filename) == "package.json"
+        return content_matches?(file_contents, PACKAGE_MARKER)
+      end
       return false unless filename.ends_with?(".js") ||
                           filename.ends_with?(".mjs") ||
                           filename.ends_with?(".cjs") ||
