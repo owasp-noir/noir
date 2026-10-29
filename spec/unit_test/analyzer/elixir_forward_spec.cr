@@ -101,6 +101,6 @@ describe "Elixir forward mounts" do
     scan_elixir_forward_app(files) { |options| Analyzer::Elixir::Plug.new(options).analyze }
       .should eq(["GET /api/users/list"])
     scan_elixir_forward_app(files) { |options| Analyzer::Elixir::Phoenix.new(options).analyze }
-      .should eq(["FORWARD /mailbox", "GET /api/status"])
+      .should eq(["ANY /mailbox{/*path}", "GET /api/status"])
   end
 end

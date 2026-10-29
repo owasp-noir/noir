@@ -10,5 +10,5 @@ FunctionalTester.new("fixtures/elixir/phoenix_mix_deps/", {
 }, [
   Endpoint.new("/", "GET"),
   Endpoint.new("/dev/dashboard", "GET"),
-  Endpoint.new("/dev/mailbox", "GET"),
+  Endpoint.new("/dev/mailbox{/*path}", "ANY"),
 ]).perform_tests

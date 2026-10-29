@@ -1,4 +1,5 @@
 require "../../../spec_helper"
+require "file_utils"
 require "../../../../src/models/code_locator"
 require "../../../../src/analyzer/analyzers/specification/postman"
 
@@ -362,5 +363,109 @@ describe "Postman Analyzer" do
       JSON
 
     endpoints.map(&.url).should eq(["/v1/pets", "/v1/pets/:id", "/users"])
+  end
+
+  it "resolves apiUrl from a collection variable when no environment file is present" do
+    endpoints = analyze_postman <<-JSON
+      {
+        "info": {"name": "Conduit", "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"},
+        "variable": [{"key": "apiUrl", "value": "https://conduit.productionready.io/api"}],
+        "item": [{"name": "All Articles", "request": {"method": "GET", "url": {"raw": "{{apiUrl}}/articles", "host": ["{{apiUrl}}"], "path": ["articles"]}}}]
+      }
+      JSON
+
+    endpoints.map { |endpoint| "#{endpoint.method} #{endpoint.url}" }.should eq(["GET /api/articles"])
+  end
+end
+
+private def analyze_postman_with_files(files : Hash(String, String)) : Array(Endpoint)
+  dir = File.tempname("postman_env")
+  Dir.mkdir_p(dir)
+  collection = ""
+  CodeLocator.instance.clear_all
+  files.each do |name, content|
+    path = File.join(dir, name)
+    File.write(path, content)
+    CodeLocator.instance.register_file(path, content)
+    collection = path if name.ends_with?(".postman_collection.json") || name == "collection.json"
+  end
+  CodeLocator.instance.push(Noir::LocatorKeys::POSTMAN_JSON, collection)
+  options = create_test_options
+  options["base"] = YAML::Any.new([YAML::Any.new(dir)])
+  Analyzer::Specification::Postman.new(options).analyze
+ensure
+  CodeLocator.instance.clear_all
+  FileUtils.rm_rf(dir) if dir
+end
+
+describe "Postman environment files" do
+  it "applies a sibling environment and lets the collection variable win" do
+    collection = <<-JSON
+      {
+        "info": {"name": "Conduit", "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"},
+        "variable": [{"key": "apiUrl", "value": "https://collection.example/from-collection"}],
+        "item": [{"name": "All Articles", "request": {"method": "GET", "url": {"raw": "{{apiUrl}}/articles", "host": ["{{apiUrl}}"], "path": ["articles"]}}}]
+      }
+      JSON
+    environment = <<-JSON
+      {"name": "Conduit", "values": [{"enabled": true, "key": "apiUrl", "value": "https://conduit.productionready.io/api"}], "_postman_variable_scope": "environment"}
+      JSON
+
+    endpoints = analyze_postman_with_files({
+      "Conduit.postman_collection.json"  => collection,
+      "Conduit.postman_environment.json" => environment,
+    })
+    endpoints.map(&.url).should eq(["/from-collection/articles"])
+  end
+
+  it "ignores a disabled environment value" do
+    collection = <<-JSON
+      {
+        "info": {"name": "Conduit", "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"},
+        "item": [{"name": "All Articles", "request": {"method": "GET", "url": {"raw": "{{apiUrl}}/articles", "host": ["{{apiUrl}}"], "path": ["articles"]}}}]
+      }
+      JSON
+    environment = <<-JSON
+      {"name": "Conduit", "values": [
+        {"enabled": true, "key": "apiUrl", "value": "https://conduit.productionready.io/api"},
+        {"enabled": false, "key": "apiUrl", "value": "https://evil.example/nope"}
+      ], "_postman_variable_scope": "environment"}
+      JSON
+
+    endpoints = analyze_postman_with_files({
+      "Conduit.postman_collection.json"  => collection,
+      "Conduit.postman_environment.json" => environment,
+    })
+    endpoints.map(&.url).should eq(["/api/articles"])
+  end
+
+  it "prefers the environment whose name matches the collection when values disagree" do
+    collection = <<-JSON
+      {
+        "info": {"name": "Conduit", "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"},
+        "item": [{"name": "All Articles", "request": {"method": "GET", "url": {"raw": "{{apiUrl}}/articles", "host": ["{{apiUrl}}"], "path": ["articles"]}}}]
+      }
+      JSON
+
+    endpoints = analyze_postman_with_files({
+      "a.postman_environment.json"      => %({"name": "Other", "values": [{"enabled": true, "key": "apiUrl", "value": "https://a.example/aaa"}]}),
+      "b.postman_environment.json"      => %({"name": "Conduit", "values": [{"enabled": true, "key": "apiUrl", "value": "https://b.example/bbb"}]}),
+      "Conduit.postman_collection.json" => collection,
+    })
+    endpoints.map(&.url).should eq(["/bbb/articles"])
+
+    agreed = analyze_postman_with_files({
+      "a.postman_environment.json"      => %({"name": "Other", "values": [{"enabled": true, "key": "apiUrl", "value": "https://conduit.productionready.io/api"}]}),
+      "b.postman_environment.json"      => %({"name": "Also", "values": [{"enabled": true, "key": "apiUrl", "value": "https://conduit.productionready.io/api"}]}),
+      "Conduit.postman_collection.json" => collection,
+    })
+    agreed.map(&.url).should eq(["/api/articles"])
+
+    unnamed = analyze_postman_with_files({
+      "a.postman_environment.json"      => %({"name": "Foo", "values": [{"enabled": true, "key": "apiUrl", "value": "https://a.example/aaa"}]}),
+      "b.postman_environment.json"      => %({"name": "Bar", "values": [{"enabled": true, "key": "apiUrl", "value": "https://b.example/bbb"}]}),
+      "Conduit.postman_collection.json" => collection,
+    })
+    unnamed.map(&.url).should eq(["/aaa/articles"])
   end
 end

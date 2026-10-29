@@ -1186,10 +1186,23 @@ module Analyzer::Elixir
     end
 
     private def scoped_route_path(scope_prefix : String, route_path : String) : String
-      Noir::URLPath.join(
-        normalize_elixir_interpolation(scope_prefix),
-        normalize_elixir_interpolation(route_path),
-      )
+      scope = normalize_elixir_interpolation(scope_prefix)
+      route = normalize_elixir_interpolation(route_path)
+      # `URLPath.join` keeps a child `/`, so `scope "/api"` + `get "/"` became
+      # `/api/`. Phoenix serves that route at the scope itself. Root stays `/`.
+      if route == "/" && !scope.empty?
+        trimmed = scope.rstrip('/')
+        return trimmed.empty? ? "/" : trimmed
+      end
+      Noir::URLPath.join(scope, route)
+    end
+
+    # `forward` passes every method and every subpath to the plug. `{/*path}`
+    # is the optional group `CLI::Inspect` already matches as the prefix and
+    # everything under it. `ANY /health` stays an exact path.
+    private def forward_mount_url(path : String) : String
+      prefix = path == "/" ? "" : path.rstrip('/')
+      "#{prefix}{/*path}"
     end
 
     # Elixir double-quoted strings interpolate `#{expr}`, and the
@@ -1264,7 +1277,7 @@ module Analyzer::Elixir
       if line.includes?("forward")
         line.scan(/(?:^|[^.\w])forward\s*(?:\(\s*)?['"](.+?)['"](?:\s*,\s*(?:to:\s*)?([A-Z]\w*(?:\.[A-Z]\w*)*))?/) do |match|
           next if (target = match[2]?) && resolve_plug_router(target, scope_module, @plug_routers)
-          endpoints << Endpoint.new(scoped_route_path(scope_prefix, match[1]), "FORWARD")
+          endpoints << Endpoint.new(forward_mount_url(scoped_route_path(scope_prefix, match[1])), "ANY")
         end
       end
 

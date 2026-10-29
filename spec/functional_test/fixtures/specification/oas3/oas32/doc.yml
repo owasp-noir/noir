@@ -1,0 +1,87 @@
+openapi: 3.2.0
+info: {title: t, version: "1"}
+paths:
+  /trips/{id}:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: string}}
+      - {name: verbose, in: query, schema: {type: boolean}}
+    additionalOperations:
+      SUBSCRIBE:
+        operationId: subscribe-trip
+        responses: {"200": {description: ok}}
+      LINK:
+        operationId: link-trip
+        responses: {"200": {description: ok}}
+  /stations:
+    get:
+      responses: {"200": {description: ok}}
+  /document:
+    put:
+      requestBody:
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '#/components/schemas/Doc'
+      responses: {"200": {description: ok}}
+  /pet:
+    put:
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Pet'
+      responses: {"200": {description: ok}}
+  /vehicle:
+    put:
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Vehicle'
+      responses: {"200": {description: ok}}
+components:
+  schemas:
+    Doc:
+      type: object
+      discriminator:
+        propertyName: docType
+        mapping:
+          article: '#/components/schemas/DocArticle'
+      properties:
+        docType: {type: string}
+    DocArticle:
+      allOf:
+        - $ref: '#/components/schemas/Doc'
+        - type: object
+          properties:
+            headline: {type: string}
+    Pet:
+      type: object
+      discriminator: {propertyName: petType}
+      properties:
+        petType: {type: string}
+    PetCat:
+      allOf:
+        - $ref: '#/components/schemas/Pet'
+        - type: object
+          properties:
+            huntingSkill: {type: string}
+    Vehicle:
+      type: object
+      discriminator: {propertyName: vehicleType}
+      oneOf:
+        - $ref: '#/components/schemas/Bike'
+        - $ref: '#/components/schemas/Car'
+      properties:
+        vehicleType: {type: string}
+    Bike:
+      type: object
+      properties:
+        vehicleType: {type: string}
+        gears: {type: integer}
+    Car:
+      type: object
+      properties:
+        vehicleType: {type: string}
+        doors: {type: integer}
