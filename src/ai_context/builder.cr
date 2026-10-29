@@ -1195,15 +1195,19 @@ module NoirAIContext
                       end
         signal_name = is_guard ? guard_name_from_tag(tag) : tag_signal_name(tag)
         confidence = (tag.name == "auth" || tag.name == "authz") ? 86 : 74
+        tag_path = tag.path
+        entry_path = tag_path || anchor.try(&.path)
+        entry_line = tag_path ? tag.line : anchor.try(&.line)
+        entry_snippet = tag_path ? @reader.snippet_for(tag_path, tag.line, ROUTE_SNIPPET_RADIUS) : route_snippet
         entry = AIContextEntry.new(
           signal_kind,
           signal_name,
           source: tag.tagger,
           description: tag_ai_context_description(tag),
-          path: anchor.try(&.path),
-          line: anchor.try(&.line),
+          path: entry_path,
+          line: entry_line,
           confidence: confidence,
-          snippet: route_snippet
+          snippet: entry_snippet
         )
 
         if is_guard
@@ -1220,10 +1224,10 @@ module NoirAIContext
               signal_name,
               source: tag.tagger,
               description: tag.description,
-              path: anchor.try(&.path),
-              line: anchor.try(&.line),
+              path: entry_path,
+              line: entry_line,
               confidence: confidence,
-              snippet: route_snippet
+              snippet: entry_snippet
             ))
           end
         else

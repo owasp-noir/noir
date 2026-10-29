@@ -4284,4 +4284,55 @@ describe "AI context feature dependencies in plain output" do
     signal_context.sinks.map(&.kind).should contain("sql")
     signal_context.validators.map(&.kind).should contain("schema_validation")
   end
+
+  it "uses Tag#path and Tag#line for guard evidence instead of the controller route anchor" do
+    config_source = <<-JAVA
+      @Configuration
+      @EnableWebSecurity
+      public class SecurityConfig {
+          @Bean
+          SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
+              return http
+                  .authorizeHttpRequests(auth -> auth
+                      .requestMatchers("/legacy/**").denyAll()
+                      .anyRequest().authenticated())
+                  .build();
+          }
+      }
+      JAVA
+
+    controller_source = <<-JAVA
+      @RestController
+      public class PageController {
+          @GetMapping("/items")
+          public String items() {
+              return "items";
+          }
+      }
+      JAVA
+
+    with_temp_ai_context_source(config_source, ".java") do |config_path|
+      with_temp_ai_context_source(controller_source, ".java") do |controller_path|
+        details = Details.new(PathInfo.new(controller_path, 3))
+        details.technology = "java_spring"
+        endpoint = Endpoint.new("/items", "GET", [] of Param, details)
+        endpoint.add_tag(Tag.new(
+          "auth",
+          "Protected by Spring Security authenticated via anyRequest()",
+          "spring_auth",
+          config_path,
+          9
+        ))
+
+        endpoints = NoirAIContext.apply([endpoint])
+        ctx = endpoints[0].ai_context.should_not be_nil
+        guard = ctx.guards.find { |g| g.kind == "auth_guard" }.should_not be_nil
+        guard.name.should eq("Spring Security authenticated via anyRequest()")
+        guard.path.should eq(config_path)
+        guard.line.should eq(9)
+        guard.snippet.should_not be_nil
+        guard.snippet.not_nil!.should contain("9: .anyRequest().authenticated())")
+      end
+    end
+  end
 end
