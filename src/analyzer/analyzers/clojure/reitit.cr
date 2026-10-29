@@ -34,6 +34,10 @@ module Analyzer::Clojure
       ":form"   => "form",
     }
 
+    # spec `s/keys` keywords whose map keys are unqualified. `:req` / `:opt`
+    # keep the namespace and are not this form.
+    SPEC_UNQUALIFIED_KEYS = {":req-un", ":opt-un"}
+
     # Whole-file detection gate, evaluated once per candidate file.
     # `String#matches?` (PCRE2 JIT) replaces two naive `String#includes?`
     # char scans with a single pass; `Regex.union` auto-escapes each literal,
@@ -428,6 +432,11 @@ module Analyzer::Clojure
           if map_end > v_start
             extract_param_groups(source, v_start + 1, map_end, endpoint, route_path)
           end
+        elsif key == ":request" && v_start < val_end && source.byte_at(v_start).unsafe_chr == '{'
+          map_end = Noir::ClojureScanner.find_matching_delimiter(source, v_start, '{', '}', val_end)
+          if map_end > v_start
+            extract_request_params(source, v_start + 1, map_end, endpoint)
+          end
         end
 
         i = val_end
@@ -461,27 +470,139 @@ module Analyzer::Clojure
 
     private def add_group_params(source : String, v_start : Int32, v_end : Int32,
                                  endpoint : Endpoint, ptype : String, path_param_set : Set(String))
-      return if v_start >= v_end
-
-      names = case source.byte_at(v_start).unsafe_chr
-              when '{'
-                # Schema / map literal: `{:x int?, (s/optional-key :y) int?}`.
-                map_end = Noir::ClojureScanner.find_matching_delimiter(source, v_start, '{', '}', v_end)
-                return unless map_end > v_start
-                extract_map_keys(source, v_start + 1, map_end)
-              when '['
-                # malli map schema vector: `[:map [:x int?] [:y {…} int?]]`.
-                vec_end = Noir::ClojureScanner.find_matching_delimiter(source, v_start, '[', ']', v_end)
-                return unless vec_end > v_start
-                extract_malli_map_keys(source, v_start + 1, vec_end)
-              else
-                return
-              end
-
-      names.each do |name|
+      names_from_schema(source, v_start, v_end).each do |name|
         next if name.empty?
         next if ptype == "path" && path_param_set.includes?(name)
         endpoint.push_param(Param.new(name, "", ptype))
+      end
+    end
+
+    # A parameter schema is a map literal, a malli `[:map …]` vector, or a
+    # spec `(s/keys :req-un […])` list. Anything else names no params.
+    private def names_from_schema(source : String, v_start : Int32, v_end : Int32) : Array(String)
+      return [] of String if v_start >= v_end
+
+      case source.byte_at(v_start).unsafe_chr
+      when '{'
+        map_end = Noir::ClojureScanner.find_matching_delimiter(source, v_start, '{', '}', v_end)
+        return [] of String unless map_end > v_start
+        extract_map_keys(source, v_start + 1, map_end)
+      when '['
+        vec_end = Noir::ClojureScanner.find_matching_delimiter(source, v_start, '[', ']', v_end)
+        return [] of String unless vec_end > v_start
+        extract_malli_map_keys(source, v_start + 1, vec_end)
+      when '('
+        list_end = Noir::ClojureScanner.find_matching_delimiter(source, v_start, '(', ')', v_end)
+        return [] of String unless list_end > v_start
+        extract_spec_keys(source, v_start, list_end)
+      else
+        [] of String
+      end
+    end
+
+    # `(s/keys :req-un [::x ::y] :opt-un [::z])`. The `::` is the current
+    # namespace; `:req-un` / `:opt-un` publish the unqualified name.
+    private def extract_spec_keys(source : String, start : Int32, limit : Int32) : Array(String)
+      i = Noir::ClojureScanner.skip_ws_and_comments(source, start + 1, limit)
+      return [] of String if i >= limit
+      head, after_head = Noir::ClojureScanner.read_symbol(source, i, limit, commas: false)
+      return [] of String unless head == "keys" || head.ends_with?("/keys")
+
+      names = [] of String
+      j = after_head
+      while j < limit
+        j = Noir::ClojureScanner.skip_ws_and_comments(source, j, limit)
+        break if j >= limit
+        key, after_key = Noir::ClojureScanner.read_symbol(source, j, limit, commas: false)
+        if key.empty?
+          j = end_of_value(source, j, limit)
+          next
+        end
+
+        v_start = Noir::ClojureScanner.skip_ws_and_comments(source, after_key, limit)
+        break if v_start >= limit
+        val_end = end_of_value(source, v_start, limit)
+        if SPEC_UNQUALIFIED_KEYS.includes?(key) && v_start < val_end && source.byte_at(v_start).unsafe_chr == '['
+          vec_end = Noir::ClojureScanner.find_matching_delimiter(source, v_start, '[', ']', val_end)
+          if vec_end > v_start
+            names.concat(keyword_names_in(source, v_start + 1, vec_end))
+          end
+        end
+        j = val_end
+      end
+      names
+    end
+
+    private def keyword_names_in(source : String, start : Int32, limit : Int32) : Array(String)
+      names = [] of String
+      i = start
+      while i < limit
+        i = Noir::ClojureScanner.skip_ws_and_comments(source, i, limit)
+        break if i >= limit
+        if source.byte_at(i).unsafe_chr == ':'
+          sym, after = Noir::ClojureScanner.read_symbol(source, i, limit, commas: false)
+          name = sym.lstrip(':')
+          if slash = name.rindex('/')
+            name = name[(slash + 1)..]
+          end
+          names << name unless name.empty?
+          i = after
+        else
+          i = end_of_value(source, i, limit)
+        end
+      end
+      names
+    end
+
+    # `:request {:content {"application/json" {:schema …}}}`. JSON media
+    # types contribute body params; other content types are left alone.
+    private def extract_request_params(source : String, start : Int32, limit : Int32, endpoint : Endpoint)
+      content = find_value_range(source, start, limit, ":content")
+      return unless content
+      v_start, v_end = content
+      return unless v_start < v_end && source.byte_at(v_start).unsafe_chr == '{'
+      map_end = Noir::ClojureScanner.find_matching_delimiter(source, v_start, '{', '}', v_end)
+      return unless map_end > v_start
+      extract_content_schemas(source, v_start + 1, map_end, endpoint)
+    end
+
+    private def extract_content_schemas(source : String, start : Int32, limit : Int32, endpoint : Endpoint)
+      i = start
+      while i < limit
+        i = Noir::ClojureScanner.skip_ws_and_comments(source, i, limit)
+        break if i >= limit
+        unless source.byte_at(i).unsafe_chr == '"'
+          key_end = end_of_value(source, i, limit)
+          v_start = Noir::ClojureScanner.skip_ws_and_comments(source, key_end, limit)
+          break if v_start >= limit
+          i = end_of_value(source, v_start, limit)
+          next
+        end
+
+        literal_end = Noir::ClojureScanner.skip_string(source, i, limit)
+        media = Noir::ClojureScanner.decode_string_literal(source.byte_slice(i, literal_end - i + 1))
+        v_start = Noir::ClojureScanner.skip_ws_and_comments(source, literal_end + 1, limit)
+        break if v_start >= limit
+        val_end = end_of_value(source, v_start, limit)
+        add_schema_body(source, v_start, val_end, endpoint) if json_media?(media)
+        i = val_end
+      end
+    end
+
+    private def json_media?(media : String) : Bool
+      type = media.split(';').first?.try(&.strip.downcase) || ""
+      type == "application/json" || type.ends_with?("+json")
+    end
+
+    private def add_schema_body(source : String, v_start : Int32, v_end : Int32, endpoint : Endpoint)
+      return unless v_start < v_end && source.byte_at(v_start).unsafe_chr == '{'
+      map_end = Noir::ClojureScanner.find_matching_delimiter(source, v_start, '{', '}', v_end)
+      return unless map_end > v_start
+      schema = find_value_range(source, v_start + 1, map_end, ":schema")
+      return unless schema
+      names_from_schema(source, schema[0], schema[1]).each do |name|
+        next if name.empty?
+        endpoint.push_param(Param.new(name, "", "json"))
       end
     end
 

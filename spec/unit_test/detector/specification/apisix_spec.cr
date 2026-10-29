@@ -90,6 +90,56 @@ describe "Detect APISIX route config" do
     instance.detect("openapi.json", content).should be_false
   end
 
+  it "detects an inline upstream mapping" do
+    content = <<-YAML
+      routes:
+        - uri: /hello
+          methods: [GET]
+          upstream:
+            nodes:
+              "127.0.0.1:1980": 1
+            type: roundrobin
+      YAML
+
+    instance.detect("apisix.yaml", content).should be_true
+  end
+
+  it "detects JSON routes with an inline upstream or a service_id" do
+    upstream = %({"routes":[{"uri":"/hello","upstream":{"type":"roundrobin"}}]})
+    service = %({"routes":[{"uris":["/orders/*"],"service_id":1}]})
+    scalar = %({"routes":[{"uri":"/hello","upstream":"http://example.com"}]})
+
+    instance.detect("routes.json", upstream).should be_true
+    instance.detect("routes.json", service).should be_true
+    instance.detect("routes.json", scalar).should be_false
+  end
+
+  it "detects a route that only names service_id" do
+    content = <<-YAML
+      routes:
+        - uris: [/orders/*]
+          service_id: 1
+      YAML
+
+    instance.detect("apisix.yaml", content).should be_true
+  end
+
+  it "rejects a scalar upstream and a prose mention of the word" do
+    scalar = <<-YAML
+      routes:
+        - uri: /hello
+          upstream: http://example.com
+      YAML
+    prose = <<-YAML
+      routes:
+        - uri: /hello
+          description: the upstream is down
+      YAML
+
+    instance.detect("routes.yaml", scalar).should be_false
+    instance.detect("notes.yaml", prose).should be_false
+  end
+
   it "rejects OpenAPI-ish content whose markers only appear as substrings" do
     # "security" contains "uri" as a bare substring; the word-bounded guard
     # must not let a large spec like this reach the full JSON parse.

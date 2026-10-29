@@ -46,14 +46,18 @@ module Analyzer::Specification
       # Two-pass: first collect every structure's member bindings so an
       # `operation` declared above its input structure still resolves.
       structures = {} of String => Array(InputMember)
-      operations = [] of NamedTuple(name: String, file: String, line: Int32, binding: HttpBinding, input: String?)
+      operations = [] of NamedTuple(name: String, file: String, line: Int32, binding: HttpBinding, input: String?, inline: Array(InputMember))
 
       each_spec_file(Noir::LocatorKeys::SMITHY_SPEC) do |file|
         parse_file(read_file_content(file), file, structures, operations)
       end
 
       operations.each do |op|
-        members = op[:input].try { |name| structures[name]? } || [] of InputMember
+        members = if input_name = op[:input]
+                    structures[input_name]? || [] of InputMember
+                  else
+                    op[:inline]
+                  end
         params = members.map { |m| Param.new(m.name, "", m.param_type) }
 
         details = Details.new(PathInfo.new(op[:file], op[:line]))
@@ -66,7 +70,7 @@ module Analyzer::Specification
 
     private def parse_file(content : String, file : String,
                            structures : Hash(String, Array(InputMember)),
-                           operations : Array(NamedTuple(name: String, file: String, line: Int32, binding: HttpBinding, input: String?)))
+                           operations : Array(NamedTuple(name: String, file: String, line: Int32, binding: HttpBinding, input: String?, inline: Array(InputMember))))
       lines = content.lines
       pending = PendingTraits.new
       i = 0
@@ -102,13 +106,14 @@ module Analyzer::Specification
             case keyword
             when "operation"
               if binding = pending.http
-                input_name = parse_operation_input(body_lines)
+                parsed = parse_operation_input(body_lines)
                 operations << {
                   name:    name,
                   file:    file,
                   line:    shape_start_line,
                   binding: binding,
-                  input:   input_name,
+                  input:   parsed[:name],
+                  inline:  parsed[:members],
                 }
               end
             when "structure", "union"
@@ -255,17 +260,67 @@ module Analyzer::Specification
       {body, lines.size - 1}
     end
 
-    # Pull `input: SomeStruct` (or the inline `input := { ... }` form,
-    # in which case we return nil because there's no named structure to
-    # cross-reference) out of an operation body.
-    private def parse_operation_input(body_lines : Array(String)) : String?
-      body_lines.each do |line|
+    # `input: Name` is resolved on the second pass. `input := { ... }` and
+    # `input := for Resource { @trait $member }` carry their members here.
+    # `$member` names a resource property; the traits in front of it use
+    # the same binding rules as a structure field, so `@httpLabel` stays a
+    # path param instead of a second body field.
+    private def parse_operation_input(body_lines : Array(String)) : NamedTuple(name: String?, members: Array(InputMember))
+      body_lines.each_with_index do |line, idx|
         stripped = line.strip
+        if stripped.matches?(/^input\s*:=/)
+          joined = body_lines[idx..].join("\n").sub(/^\s*input\s*:=/, "")
+          return {name: nil, members: parse_inline_input(joined)}
+        end
         if m = stripped.match(/^input\s*:\s*(\w+)/)
-          return m[1]
+          return {name: m[1], members: [] of InputMember}
         end
       end
-      nil
+      {name: nil, members: [] of InputMember}
+    end
+
+    private def parse_inline_input(text : String) : Array(InputMember)
+      block = take_brace_block(text)
+      return [] of InputMember if block.size < 2
+      inner = block.size > 2 ? block[1..-2] : ""
+      parse_structure_members(normalize_inline_members(inner, text.lstrip.starts_with?("for")).lines)
+    end
+
+    private def take_brace_block(text : String) : String
+      start = text.index('{')
+      return "" unless start
+      depth = 0
+      i = start
+      while i < text.size
+        case text[i]
+        when '{'
+          depth += 1
+        when '}'
+          depth -= 1
+          return text[start..i] if depth == 0
+        end
+        i += 1
+      end
+      ""
+    end
+
+    # Structure members are one declaration per line. An inline target puts
+    # several, plus traits, on one line, so split traits and `$member`
+    # references onto their own lines before the shared member walker.
+    private def normalize_inline_members(inner : String, resource : Bool) : String
+      text = inner.gsub(/@[\w.#]+(?:\([^)]*\))?/, "\n\\0\n")
+      text = text.gsub(/\$(\w+)/, "\n\\1: Member\n") if resource
+      String.build do |io|
+        text.each_line do |line|
+          if line.strip.starts_with?('@')
+            io << line << '\n'
+          else
+            line.split(',').each do |part|
+              io << part << '\n' unless part.strip.empty?
+            end
+          end
+        end
+      end
     end
 
     # Walk a structure body and emit one InputMember per declared field,
