@@ -459,17 +459,33 @@ module Analyzer::Python
     # parse of the (possibly deeply nested) route-list literal.
     private def scan_route_calls(content : ::String) : Array(MasoniteCall)
       calls = [] of MasoniteCall
+      lines = content.lines
+      docstrings = Helper.docstring_line_flags(lines)
 
       content.scan(/\bRoute\.([A-Za-z_][A-Za-z0-9_]*)\s*\(/) do |m|
         verb = m[1]
         next unless ROUTE_CALL_VERBS.includes?(verb)
+
+        match_start = m.begin(0)
+        line = content[0, match_start].count('\n') + 1
+        line_idx = line - 1
+
+        if docstrings[line_idx]? || lines[line_idx]?.try(&.lstrip.starts_with?("\"\"\"")) || lines[line_idx]?.try(&.lstrip.starts_with?("'''"))
+          next
+        end
+
+        if line_text = lines[line_idx]?
+          col = match_start - (content[0, match_start].rindex('\n') || -1) - 1
+          if col > 0 && line_text[0, Math.min(col, line_text.size)].includes?('#')
+            next
+          end
+        end
 
         open_index = m.end(0) - 1
         close_index = matching_close(content, open_index, '(', ')')
         next unless close_index
 
         args_text = content[(open_index + 1)...close_index]
-        line = content[0, m.begin(0)].count('\n') + 1
         calls << MasoniteCall.new(verb, args_text, m.begin(0), close_index, line)
       end
 

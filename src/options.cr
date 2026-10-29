@@ -435,6 +435,7 @@ def run_options_parser
     # (`Noir::OutputFormats`), so a new format shows up in `-h` without this
     # list having to be updated alongside the builder.
     parser.on "-f FMT", "--format json", "Output format:\n#{Noir::OutputFormats.help_text}" do |v|
+      v = "plain" if v == "text"
       noir_options["format"] = YAML::Any.new(v)
     end
     parser.on "-o PATH", "--output out.txt", "Write result to file" do |v|

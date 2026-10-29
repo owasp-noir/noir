@@ -33,6 +33,12 @@ describe Analyzer::Python::PythonEngine do
     Analyzer::Python::PythonEngine.python_test_path?("/tmp/test/myapp/tests/views.py", "/tmp/test/myapp").should be_true
   end
 
+  it "treats benchmark directories as non-production code" do
+    Analyzer::Python::PythonEngine.python_test_path?("/repo/benchmarks/routing_benchmark.py", "/repo").should be_true
+    Analyzer::Python::PythonEngine.python_test_path?("/repo/benchmark/perf.py", "/repo").should be_true
+    Analyzer::Python::PythonEngine.python_test_path?("/repo/app/benchmark.py", "/repo").should be_false
+  end
+
   it "keeps call-site coordinates when a Python callee definition is unreachable" do
     options = create_test_options
     options["include_callee"] = YAML::Any.new(true)

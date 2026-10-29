@@ -26,6 +26,10 @@ describe Noir::OutputFormats do
     Noir::OutputFormats.known?(Noir::OutputFormats::DEFAULT).should be_true
   end
 
+  it "accepts text as an alias for plain" do
+    Noir::OutputFormats.known?("text").should be_true
+  end
+
   it "rejects an unknown format" do
     Noir::OutputFormats.known?("nope").should be_false
   end

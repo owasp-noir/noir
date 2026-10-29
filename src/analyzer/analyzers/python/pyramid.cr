@@ -87,7 +87,11 @@ module Analyzer::Python
           next unless content.includes?("pyramid") || content.includes?(".add_view")
 
           lines = content.lines
+          in_docstring = Helper.docstring_line_flags(lines)
           lines.each_with_index do |line, line_index|
+            next if line.lstrip.starts_with?('#') || in_docstring[line_index]? ||
+                    line.lstrip.starts_with?("\"\"\"") || line.lstrip.starts_with?("'''")
+
             # @view_config(route_name="name", request_method="GET")
             if vc = match_view_config(lines, line_index)
               route_name, methods = vc
@@ -150,7 +154,10 @@ module Analyzer::Python
 
     private def extract_static_views(content : String, path : String)
       lines = content.lines
+      in_docstring = Helper.docstring_line_flags(lines)
       lines.each_with_index do |line, line_index|
+        next if line.lstrip.starts_with?('#') || in_docstring[line_index]? ||
+                line.lstrip.starts_with?("\"\"\"") || line.lstrip.starts_with?("'''")
         next unless line.includes?(".add_static_view")
 
         static_line = if python_paren_delta(line) > 0
@@ -172,7 +179,22 @@ module Analyzer::Python
     # config.add_route("name", "/path") plus keyword variants like
     # name="x", pattern="/y" in either order.
     private def extract_route_declarations(content : String, path : String, route_map : RouteMap, base_path : String)
+      lines = content.lines
+      docstrings = Helper.docstring_line_flags(lines)
+
       content.scan(ADD_ROUTE_RE) do |m|
+        match_start = m.begin(0)
+        line = content[0, match_start].count('\n')
+        if docstrings[line]? || lines[line]?.try(&.lstrip.starts_with?("\"\"\"")) || lines[line]?.try(&.lstrip.starts_with?("'''"))
+          next
+        end
+        if line_text = lines[line]?
+          col = match_start - (content[0, match_start].rindex('\n') || -1) - 1
+          if col > 0 && line_text[0, Math.min(col, line_text.size)].includes?('#')
+            next
+          end
+        end
+
         args = m[1]
         name = nil
         pattern = nil

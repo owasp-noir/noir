@@ -72,7 +72,7 @@ module Noir::OutputFormats
   DEFAULT = "plain"
 
   def self.known?(name : String) : Bool
-    NAMES.includes?(name)
+    name == "text" || NAMES.includes?(name)
   end
 
   # Renders the report in `format`, returning false when no builder claims
@@ -91,6 +91,7 @@ module Noir::OutputFormats
                   endpoints : Array(Endpoint),
                   passive_results : Array(PassiveScanResult),
                   errors : Array(AnalyzerFailure) = [] of AnalyzerFailure) : Bool
+    format = "plain" if format == "text"
     {% begin %}
       case format
       {% for builder in OutputBuilder.all_subclasses.select(&.annotation(Noir::OutputFormat)) %}
