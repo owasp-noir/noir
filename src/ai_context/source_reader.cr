@@ -124,7 +124,9 @@ module NoirAIContext
       # source-scan that already handles method-level annotations, without
       # treating an annotation on a sibling class as route evidence.
       class_lead_lines = class_level_lead_lines(path, lines, line - 1)
-      lead_lines = class_lead_lines + lead_lines unless class_lead_lines.empty?
+      # A Kotlin/Java class indented like Python reaches both lookups; keep
+      # its annotations once.
+      lead_lines = (class_lead_lines + lead_lines).uniq unless class_lead_lines.empty?
 
       start_idx = line - 1
       selected = lead_lines

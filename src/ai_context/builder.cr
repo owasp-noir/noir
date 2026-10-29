@@ -1932,6 +1932,21 @@ module NoirAIContext
 
     ROUTE_PATH_LITERAL = /(["'`])\/[^"'`\n]*\1/
 
+    # The first argument of a route verb or mapping on a scope line: the
+    # route's own path, written as a constant (`@GetMapping(AUTHORIZE_PATH)`)
+    # or as a segment without a leading `/` (Grape `post 'authorize' do`).
+    # Only the first argument: a middleware passed after it
+    # (`router.get('/x', authenticate, h)`) is a guard.
+    # ponytail: first positional (or `value =`/`path =`) argument only;
+    # `@RequestMapping(method = GET, value = X)` and a second path in the
+    # same mapping are not masked.
+    ROUTE_DECL_FIRST_ARG = /((?:\A|\| )\d+: (?:[@#]\[?|\[)?(?:[\w$]+(?:\.|::))*(?:get|post|put|patch|delete|route|path|\w*mapping|http(?:get|post|put|patch|delete))(?:\s*\(\s*|\s+)(?:(?:value|path)\s*=\s*)?(?:\[\s*|arrayOf\s*\(\s*|\{\s*)?)(?:(["'`])[^"'`\n]*\2|:?[A-Za-z_][\w$]*(?:(?:\.|::)[A-Za-z_][\w$]*)*)(?=\s*(?:[,)\]}|]|do\b|\z))/i
+
+    QUOTED_LITERAL       = /(["'])[^"'\n]*\1/
+    ROCKET_PARAM_BINDING = /<(\w+)(?:\.\.)?>/
+    TYPED_PARAM          = /\b(\w+)\s*:\s*((?:&(?:'\w+\s+)?)?(?:\w+::)*\w+(?:<[^()|]*?>)?)/
+    TYPE_NAME            = /\b[A-Z]\w*\b/
+
     # `@PostAuthorize(...)` up to the scope's next line: Spring evaluates it
     # after the handler returns, so on a write it guards nothing.
     POST_AUTHORIZE_ANNOTATION = /@PostAuthorize\b[^|]*/
@@ -1944,7 +1959,9 @@ module NoirAIContext
     # route's own line is masked. Only the guard scan sees the masked scope;
     # sinks and signals still read the route as written.
     private def without_self_names(scope : String, endpoint : Endpoint, path_info : PathInfo) : String
+      scope = without_bound_param_types(scope)
       scope = scope.gsub(ROUTE_PATH_LITERAL, "\"\"")
+      scope = scope.gsub(ROUTE_DECL_FIRST_ARG) { "#{$1}\"\"" }
       handler = endpoint.handler
       return scope unless handler
       line = handler.path == path_info.path ? handler.line : path_info.line
@@ -1954,6 +1971,23 @@ module NoirAIContext
       prefix = "#{line}:"
       self_name = /(?<!\w)#{Regex.escape(name)}(?!\w)/
       scope.split(" | ").map { |seg| seg.starts_with?(prefix) ? seg.sub(self_name, "") : seg }.join(" | ")
+    end
+
+    # A Rocket handler parameter the route binds from the request
+    # (`#[get("/x?<data..>")] fn authorize(data: AuthorizeData)`,
+    # `data = "<data>"`) is form/query/body input, so its type names a
+    # payload, not a guard, here or where the body destructures it
+    # (`let AuthorizeData { .. } = data`). Unbound parameters
+    # (`user: AuthUser`) stay: those are request guards.
+    private def without_bound_param_types(scope : String) : String
+      return scope unless scope.includes?('<')
+      bound = Set(String).new
+      scope.scan(QUOTED_LITERAL) { |lit| lit[0].scan(ROCKET_PARAM_BINDING) { |m| bound << m[1] } }
+      return scope if bound.empty?
+      types = Set(String).new
+      scope.scan(TYPED_PARAM) { |m| m[2].scan(TYPE_NAME) { |t| types << t[0] } if bound.includes?(m[1]) }
+      return scope if types.empty?
+      scope.gsub(TYPE_NAME) { |t| types.includes?(t) ? "" : t }
     end
 
     private def add_source_scan_entries(context : AIContext, endpoint : Endpoint, inert_helpers : Array(String))
@@ -1978,6 +2012,8 @@ module NoirAIContext
           # match in its source must not overrule that.
           next if (kind == "auth_guard" || kind == "authz_guard") && endpoint.tags.any? { |t| t.name == "anonymous" }
           if guard = PatternMatcher.detect_from_patterns("", guard_scope, patterns, path_info.path, path_info.line, "route_source")
+            # Matched on the masked scope, quoted as written.
+            guard.snippet = route_scope
             context.push_guard(guard)
           end
         end

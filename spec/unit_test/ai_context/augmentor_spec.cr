@@ -1931,6 +1931,85 @@ describe "NoirAIContext" do
     end
   end
 
+  it "does not read a route path constant or bare segment as a guard (#3255)" do
+    source = <<-CODE
+      @RestController
+      class LoginController {
+          @GetMapping(AUTHORIZE_PATH)
+          fun authorize(@RequestParam("client_id") clientId: String): String = clientId
+
+          @GetMapping(ADMIN_PATH)
+          @PreAuthorize("hasRole('ADMIN')")
+          fun listAdmins(): String = "ok"
+      }
+      CODE
+
+    with_temp_ai_context_source(source, ".kt") do |path|
+      login = Endpoint.new("/oauth/authorize", "GET")
+      login.details = Details.new(PathInfo.new(path, 3))
+      login.handler = Handler.new("LoginController.authorize", path, 4)
+      admin = Endpoint.new("/admin", "GET")
+      admin.details = Details.new(PathInfo.new(path, 6))
+      admin.handler = Handler.new("LoginController.listAdmins", path, 8)
+
+      contexts = NoirAIContext.apply([login, admin]).map(&.ai_context.should_not(be_nil))
+      contexts[0].guards.should be_empty
+      guard = contexts[1].guards.find!(&.kind.==("authz_guard"))
+      # The snippet quotes the source, not the scope the scan masked, and
+      # the class annotation once.
+      snippet = guard.snippet.should_not be_nil
+      snippet.should contain("fun listAdmins()")
+      snippet.should contain("@GetMapping(ADMIN_PATH)")
+      snippet.scan("1: @RestController").size.should eq(1)
+    end
+
+    grape = <<-CODE
+      post 'authorize' do
+      get 'authenticate' do
+      CODE
+    with_temp_ai_context_source(grape, ".rb") do |path|
+      endpoints = [1, 2].map do |line|
+        Endpoint.new("/state/x", "POST").tap { |e| e.details = Details.new(PathInfo.new(path, line)) }
+      end
+      NoirAIContext.apply(endpoints).each { |e| e.ai_context.should_not(be_nil).guards.should be_empty }
+    end
+
+    # A guard passed as middleware to the route call is still a guard.
+    express = <<-CODE
+      router.get(AUTHORIZE_PATH, authenticate, handler);
+      CODE
+    with_temp_ai_context_source(express, ".js") do |path|
+      endpoint = Endpoint.new("/authorize", "GET")
+      endpoint.details = Details.new(PathInfo.new(path, 1))
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+      context.guards.map(&.kind).should eq(["auth_guard"])
+    end
+  end
+
+  it "does not read a Rocket parameter the route binds as a guard (#3255)" do
+    source = <<-CODE
+      #[get("/connect/authorize?<data..>")]
+      async fn authorize(data: AuthorizeData) -> String { let AuthorizeData { redirect_uri, .. } = data; redirect_uri }
+
+      #[get("/panel?<data..>")]
+      fn panel(data: AuthorizeData, user: AuthorizedUser) -> String { user.name }
+      CODE
+
+    with_temp_ai_context_source(source, ".rs") do |path|
+      open = Endpoint.new("/connect/authorize", "GET")
+      open.details = Details.new(PathInfo.new(path, 1))
+      open.handler = Handler.new("authorize", path, 2)
+      guarded = Endpoint.new("/panel", "GET")
+      guarded.details = Details.new(PathInfo.new(path, 4))
+      guarded.handler = Handler.new("panel", path, 5)
+
+      contexts = NoirAIContext.apply([open, guarded]).map(&.ai_context.should_not(be_nil))
+      contexts[0].guards.should be_empty
+      # An unbound parameter is a request guard.
+      contexts[1].guards.map { |g| {g.kind, g.name} }.should eq([{"authz_guard", "AuthorizedUser"}])
+    end
+  end
+
   it "classifies callees by what they do, not by a word in their name (#3139)" do
     source = <<-CODE
       count = session.exec(count_statement).one()
