@@ -3,7 +3,7 @@ require "../../../src/analyzer/engines/java_engine"
 
 describe "Analyzer::Java::JavaEngine.test_path?" do
   it "flags the Maven/Gradle test source sets" do
-    {"src/test", "src/it", "src/testFixtures", "src/jmh", "src/integrationTest", "src/functionalTest"}.each do |set|
+    {"src/test", "src/it", "src/testFixtures", "src/jmh", "src/integrationTest", "src/integration", "src/functionalTest"}.each do |set|
       Analyzer::Java::JavaEngine.test_path?("/app/#{set}/java/a/FooController.java").should be_true
     end
   end

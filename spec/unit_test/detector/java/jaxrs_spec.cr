@@ -20,6 +20,13 @@ describe "Detect Java JAX-RS" do
     instance.detect("pom.xml", "<artifactId>jakarta.ws.rs-api</artifactId>").should be_false
   end
 
+  # #3319: `io.dropwizard.metrics` is the Metrics library, not Dropwizard.
+  it "a resource that uses Dropwizard Metrics" do
+    instance = Detector::Java::JaxRs.new options
+    instance.detect("/nowhere/R.java", "import jakarta.ws.rs.GET;\nimport io.dropwizard.metrics5.Timer;").should be_true
+    instance.detect("/nowhere/S.java", "import jakarta.ws.rs.GET;\nimport io.dropwizard.core.Application;").should be_false
+  end
+
   it "not a file that names a derivative framework" do
     instance = Detector::Java::JaxRs.new options
     instance.detect("/nowhere/R.kt", "import jakarta.ws.rs.GET\nimport io.quarkus.runtime.Startup").should be_false

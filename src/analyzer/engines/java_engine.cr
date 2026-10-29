@@ -30,13 +30,15 @@ module Analyzer::Java
     # (`src/it/`, integration-test convention used by some Quarkus
     # extensions and Apache projects) which sit alongside `src/test/`,
     # and Gradle's extra test source sets (`testFixtures`, `jmh`,
-    # `integrationTest`, `functionalTest`).
+    # `integrationTest`, `functionalTest`, and `integration` from the
+    # com.coditory.integration-test plugin).
     TEST_SOURCE_SET_RE = Regex.union(
       "/src/test/",
       "/src/it/",
       "/src/testFixtures/",
       "/src/jmh/",
       "/src/integrationTest/",
+      "/src/integration/",
       "/src/functionalTest/",
     )
 
@@ -277,7 +279,9 @@ module Analyzer::Java
       keys.sort_by!(&.[1].size)
       keys.reverse_each do |key|
         base_package = key[1]
-        next unless package_name == base_package || package_name.starts_with?("#{base_package}.")
+        # An empty package is a root-wide mount (a servlet mapping that
+        # names no Application or packages); longer packages win first.
+        next unless base_package.empty? || package_name == base_package || package_name.starts_with?("#{base_package}.")
         return base_paths[key]
       end
       ""
