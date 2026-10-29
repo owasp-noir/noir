@@ -1932,19 +1932,30 @@ module NoirAIContext
 
     ROUTE_PATH_LITERAL = /(["'`])\/[^"'`\n]*\1/
 
-    # The first argument of a route verb or mapping on a scope line: the
-    # route's own path, written as a constant (`@GetMapping(AUTHORIZE_PATH)`)
-    # or as a segment without a leading `/` (Grape `post 'authorize' do`).
-    # Only the first argument: a middleware passed after it
-    # (`router.get('/x', authenticate, h)`) is a guard.
-    # ponytail: first positional (or `value =`/`path =`) argument only;
-    # `@RequestMapping(method = GET, value = X)` and a second path in the
-    # same mapping are not masked.
-    ROUTE_DECL_FIRST_ARG = /((?:\A|\| )\d+: (?:[@#]\[?|\[)?(?:[\w$]+(?:\.|::))*(?:get|post|put|patch|delete|route|path|\w*mapping|http(?:get|post|put|patch|delete))(?:\s*\(\s*|\s+)(?:(?:value|path)\s*=\s*)?(?:\[\s*|arrayOf\s*\(\s*|\{\s*)?)(?:(["'`])[^"'`\n]*\2|:?[A-Za-z_][\w$]*(?:(?:\.|::)[A-Za-z_][\w$]*)*)(?=\s*(?:[,)\]}|]|do\b|\z))/i
+    # A route path written as a constant, a qualified name, a literal or a
+    # symbol; a list of them (`@GetMapping({A, B})`); and a handler string
+    # after it (Rails `get 'authorize' => 'oauth#authorize'`, Laravel
+    # `Route::get('authorize', 'OAuthController@authorize')`).
+    ROUTE_ARG           = /(?:"[^"\n]*"|'[^'\n]*'|`[^`\n]*`|:?[A-Za-z_][\w$]*(?:(?:\.|::)[A-Za-z_][\w$]*)*)/
+    ROUTE_ARG_LIST      = /#{ROUTE_ARG.source}(?:\s*,\s*#{ROUTE_ARG.source})*/
+    ROUTE_HANDLER_STR   = /(?:"[\w\\:\/]+[@#]\w+"|'[\w\\:\/]+[@#]\w+')/
+    ROUTE_DECL_HEAD     = /(?:[@#]\[?|\[)?(?:[\w$]+(?:\.|::))*(?:get|post|put|patch|delete|path|\w*mapping|http(?:get|post|put|patch|delete)|route(?:\s*\(?\s*:\w+\s*,)?)/
+    ROUTE_DECL_ARG_TAIL = /(?=\s*(?:[,)\]}+]|=>|do\b|\z))/
 
+    # The first argument of the route's own verb or mapping call: its path,
+    # written as a constant (`@GetMapping(AUTHORIZE_PATH)`) or as a segment
+    # without a leading `/` (Grape `post 'authorize' do`). Only the first
+    # argument: a middleware passed after it (`router.get('/x', authenticate,
+    # h)`) is a guard.
+    # ponytail: first positional (or `value =`/`path =`) argument only;
+    # `@RequestMapping(method = GET, value = X)` is not masked.
+    ROUTE_DECL_FIRST_ARG = /\A(\d+: #{ROUTE_DECL_HEAD.source}(?:\s*\(\s*|\s+)(?:(?:value|path)\s*=\s*)?)(?:\[\s*#{ROUTE_ARG_LIST.source}\s*\]|\{\s*#{ROUTE_ARG_LIST.source}\s*\}|arrayOf\s*\(\s*#{ROUTE_ARG_LIST.source}\s*\)|#{ROUTE_ARG.source}(?:\s*(?:=>|,)\s*#{ROUTE_HANDLER_STR.source})?)#{ROUTE_DECL_ARG_TAIL.source}/i
+
+    SCOPE_SEGMENT_LINE   = /\A(\d+): /
+    ANNOTATION_SEGMENT   = /\A\d+: (?:@|#\[|\[)/
     QUOTED_LITERAL       = /(["'])[^"'\n]*\1/
     ROCKET_PARAM_BINDING = /<(\w+)(?:\.\.)?>/
-    TYPED_PARAM          = /\b(\w+)\s*:\s*((?:&(?:'\w+\s+)?)?(?:\w+::)*\w+(?:<[^()|]*?>)?)/
+    TYPED_PARAM          = /\b([A-Za-z_]\w*)\s*:\s*((?:&(?:'\w+\s+)?)?(?:\w+::)*\w+(?:<[^()|]*?>)?)/
     TYPE_NAME            = /\b[A-Z]\w*\b/
 
     # `@PostAuthorize(...)` up to the scope's next line: Spring evaluates it
@@ -1959,35 +1970,67 @@ module NoirAIContext
     # route's own line is masked. Only the guard scan sees the masked scope;
     # sinks and signals still read the route as written.
     private def without_self_names(scope : String, endpoint : Endpoint, path_info : PathInfo) : String
-      scope = without_bound_param_types(scope)
-      scope = scope.gsub(ROUTE_PATH_LITERAL, "\"\"")
-      scope = scope.gsub(ROUTE_DECL_FIRST_ARG) { "#{$1}\"\"" }
+      segments = scope.split(" | ")
+      decl = route_declaration_flags(segments, path_info.line)
+      bound_types = bound_param_types(scope, segments, decl)
+      segments = segments.map_with_index do |seg, idx|
+        seg = seg.gsub(TYPE_NAME) { |t| bound_types.includes?(t) ? "" : t } unless bound_types.empty?
+        seg = seg.gsub(ROUTE_PATH_LITERAL, "\"\"")
+        decl[idx] ? seg.sub(ROUTE_DECL_FIRST_ARG) { "#{$1}\"\"" } : seg
+      end
       handler = endpoint.handler
-      return scope unless handler
-      line = handler.path == path_info.path ? handler.line : path_info.line
-      return scope unless line
-      name = handler.name.split(/[.#:]/).last
-      return scope if name.empty?
-      prefix = "#{line}:"
-      self_name = /(?<!\w)#{Regex.escape(name)}(?!\w)/
-      scope.split(" | ").map { |seg| seg.starts_with?(prefix) ? seg.sub(self_name, "") : seg }.join(" | ")
+      line = handler && (handler.path == path_info.path ? handler.line : path_info.line)
+      name = handler.try(&.name.split(/[.#:@]/).last) || ""
+      if line && !name.empty?
+        prefix = "#{line}:"
+        self_name = /(?<!\w)#{Regex.escape(name)}(?!\w)/
+        segments = segments.map { |seg| seg.starts_with?(prefix) ? seg.sub(self_name, "") : seg }
+      end
+      segments.join(" | ")
+    end
+
+    # Which scope segments are the route's own declaration: the lines up to
+    # the route line (the decorators and annotations the scope leads with)
+    # and the annotation/attribute lines right after it. A body line such
+    # as `get(authenticate)` or `route(authorizeRequest)` is not.
+    private def route_declaration_flags(segments : Array(String), decl_line : Int32?) : Array(Bool)
+      line_no = nil
+      tail_open = true
+      segments.map do |seg|
+        if m = seg.match(SCOPE_SEGMENT_LINE)
+          line_no = m[1].to_i
+          if decl_line && line_no > decl_line
+            tail_open &&= seg.matches?(ANNOTATION_SEGMENT)
+          end
+        end
+        # A segment without a `N: ` prefix is the rest of the previous line
+        # (the code itself held ` | `).
+        !!(decl_line && line_no && (line_no <= decl_line || tail_open))
+      end
     end
 
     # A Rocket handler parameter the route binds from the request
     # (`#[get("/x?<data..>")] fn authorize(data: AuthorizeData)`,
     # `data = "<data>"`) is form/query/body input, so its type names a
-    # payload, not a guard, here or where the body destructures it
-    # (`let AuthorizeData { .. } = data`). Unbound parameters
-    # (`user: AuthUser`) stay: those are request guards.
-    private def without_bound_param_types(scope : String) : String
-      return scope unless scope.includes?('<')
-      bound = Set(String).new
-      scope.scan(QUOTED_LITERAL) { |lit| lit[0].scan(ROCKET_PARAM_BINDING) { |m| bound << m[1] } }
-      return scope if bound.empty?
+    # payload, not a guard, there and where the body destructures it
+    # (`let AuthorizeData { .. } = data`). The bindings are read from the
+    # route's own declaration only, and a type that an unbound parameter
+    # also has (`user: AuthUser`, a request guard) stays.
+    private def bound_param_types(scope : String, segments : Array(String), decl : Array(Bool)) : Set(String)
       types = Set(String).new
-      scope.scan(TYPED_PARAM) { |m| m[2].scan(TYPE_NAME) { |t| types << t[0] } if bound.includes?(m[1]) }
-      return scope if types.empty?
-      scope.gsub(TYPE_NAME) { |t| types.includes?(t) ? "" : t }
+      return types unless scope.includes?('<')
+      bound = Set(String).new
+      segments.each_with_index do |seg, idx|
+        next unless decl[idx]
+        seg.scan(QUOTED_LITERAL) { |lit| lit[0].scan(ROCKET_PARAM_BINDING) { |m| bound << m[1] } }
+      end
+      return types if bound.empty?
+      guard_types = Set(String).new
+      scope.scan(TYPED_PARAM) do |m|
+        target = bound.includes?(m[1]) ? types : guard_types
+        m[2].scan(TYPE_NAME) { |t| target << t[0] }
+      end
+      types - guard_types
     end
 
     private def add_source_scan_entries(context : AIContext, endpoint : Endpoint, inert_helpers : Array(String))

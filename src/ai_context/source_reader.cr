@@ -10,6 +10,7 @@ module NoirAIContext
   class SourceReader
     MAX_SNIPPET_CHARS     = 240
     MAX_ROUTE_SCOPE_LINES =  12
+    RUBY_DO_BLOCK_OPEN    = /\bdo\s*(?:\|[^|]*\|)?\s*(?:#.*)?\z/
 
     # Maximum number of decorator / annotation lines to capture
     # *before* path_info.line. Lets negative-protection markers
@@ -190,7 +191,13 @@ module NoirAIContext
         # Lock in a block style on the first line that opens one. Once
         # locked, later lines don't change the kind.
         if block_style.nil?
-          if opens > 0 || sanitized.matches?(/\bdo\b/)
+          # A route block (`post 'x' do`, `get "/" do |env|`) runs to the
+          # `end` at its own indent, like a `def`; read only to the `do`
+          # line, the scope missed the body's `authenticate!`.
+          if opens == 0 && stripped.matches?(RUBY_DO_BLOCK_OPEN)
+            block_style = :ruby
+            def_indent = line_indent
+          elsif opens > 0 || sanitized.matches?(/\bdo\b/)
             block_style = :brace
           elsif !is_decorator && stripped.ends_with?(":")
             block_style = :python

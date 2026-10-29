@@ -2010,6 +2010,64 @@ describe "NoirAIContext" do
     end
   end
 
+  it "masks only the route's own declaration, not guards near it (#3255)" do
+    # {source, ext, route line, {handler name, line}, expected guard names}
+    cases = [
+      # rustfmt puts each parameter on its own line.
+      {"#[get(\"/connect/authorize?<data..>\")]\nasync fn authorize(\n    data: AuthorizeData,\n    conn: DbConn,\n) -> &'static str {\n    \"a\"\n}",
+       ".rs", 1, {"authorize", 2}, [] of String},
+      # `<token>` in a body string binds nothing.
+      {"#[get(\"/me\")]\nfn me(token: AuthorizedToken) -> &'static str {\n    err!(\"Bearer <token>\");\n    \"me\"\n}",
+       ".rs", 1, {"me", 2}, ["AuthorizedToken"]},
+      # A type an unbound parameter also has is a guard type.
+      {"#[get(\"/d/<id>\")]\nfn d(id: AuthorizedId, guard: AuthorizedId) -> &'static str { \"d\" }",
+       ".rs", 1, {"d", 2}, ["AuthorizedId"]},
+      # Body calls whose first argument is a guard.
+      {"get(\"/b\") {\n    get(authorizeAdmin)\n    call.respondText(\"b\")\n}", ".kt", 1, nil, ["authorizeAdmin"]},
+      {"app.get('/i', (req, res) => {\n  route(authorizeRequest)\n  res.send('i')\n});", ".js", 1, nil, ["authorizeRequest"]},
+      # An options object is not a path list.
+      {"fastify.route({ authenticate, method: 'GET', url: '/c', handler: async () => 'c' });", ".js", 1, nil, ["authenticate"]},
+      # Every path of a mapping list, and a handler string on the route line.
+      {"@GetMapping({AUTHORIZE_PATH, AUTHORIZE_ALT})\npublic String c() { return \"c\"; }", ".java", 1, nil, [] of String},
+      {"get 'authorize' => 'oauth#authorize'", ".rb", 1, nil, [] of String},
+      {"Route::get('authorize', 'OAuthController@authorize');", ".php", 1, nil, [] of String},
+      # A Ruby route block reads to its `end`.
+      {"post '/c' do\n  authenticate!\n  'c'\nend\n\nget '/d' do\n  'd'\nend", ".rb", 1, nil, ["authenticate"]},
+      {"post '/c' do\n  'c'\nend\n\nget '/d' do\n  authenticate!\nend", ".rb", 1, nil, [] of String},
+    ]
+
+    mismatches = [] of {String, Array(String)}
+    cases.each do |source, ext, route_line, handler, expected|
+      with_temp_ai_context_source(source, ext) do |path|
+        endpoint = Endpoint.new("/x", "GET")
+        endpoint.details = Details.new(PathInfo.new(path, route_line))
+        endpoint.handler = Handler.new(handler[0], path, handler[1]) if handler
+        context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+        names = context.guards.map(&.name)
+        mismatches << {source, names} unless names == expected
+      end
+    end
+    mismatches.should be_empty
+  end
+
+  it "does not read Ruby respond_to? or Hash#fetch in a route block as sinks (#3255)" do
+    source = <<-CODE
+      post ':id/allowlist' do
+        ids = params['ids'].split(',') if params['ids'].respond_to?(:split)
+        target_id = declared_params(include_missing: false).fetch(:target_id)
+        present target_id
+      end
+      CODE
+
+    with_temp_ai_context_source(source, ".rb") do |path|
+      endpoint = Endpoint.new("/x/{id}/allowlist", "POST")
+      endpoint.details = Details.new(PathInfo.new(path, 1))
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+      context.sinks.map(&.kind).should_not contain("template_render")
+      context.sinks.map(&.kind).should_not contain("outbound_http")
+    end
+  end
+
   it "classifies callees by what they do, not by a word in their name (#3139)" do
     source = <<-CODE
       count = session.exec(count_statement).one()

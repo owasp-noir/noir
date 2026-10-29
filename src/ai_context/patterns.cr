@@ -114,7 +114,8 @@ module NoirAIContext
       62,
       # `html.EscapeString` / `html.escape` sanitize; they are not a render.
       name_patterns: [/\brender\b/i, /\btemplate\b/i, /\bhtml\b(?!\.(?:un)?escape)/i, /\brespond\b/i],
-      source_patterns: [/\brender(_template)?\s*\(/i, /\breturn\s+render\b/i, /\brespond_to\b/i]
+      # Not Ruby `obj.respond_to?(:split)`, a method-existence check.
+      source_patterns: [/\brender(_template)?\s*\(/i, /\breturn\s+render\b/i, /\brespond_to\b(?!\?)/i]
     ),
     PatternDefinition.new(
       "outbound_http",
@@ -133,7 +134,8 @@ module NoirAIContext
       ],
       source_patterns: [
         /requests\.(get|post|put|delete)/i,
-        /\bfetch\s*\(/i,
+        # Not Ruby `params.fetch(:key)`, a hash lookup.
+        /\bfetch\s*\((?!\s*:)/i,
         /\baxios\./i,
         /\bhttp\.(Get|Post|NewRequest)/,
         /\bclient\.(get|post|request)/i,
