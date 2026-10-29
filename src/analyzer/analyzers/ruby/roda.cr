@@ -27,6 +27,11 @@ module Analyzer::Ruby
     # scans per file.
     RODA_EVIDENCE_RE = Regex.union("Roda", "route do")
 
+    # `[Integer, true]`: an array matcher whose `true` alternative matches the
+    # empty remaining path, so the segment is optional.
+    RODA_OPTIONAL_MATCHER = /,?\s*\[[^\]]*\btrue\s*\]/
+    MATCHER_SPLIT         = Noir::TopLevelSplit::Rules.new
+
     alias PrefixEntry = NamedTuple(depth: Int32, segments: Array(String), path_params: Array(String))
 
     def analyze
@@ -119,15 +124,15 @@ module Analyzer::Ruby
 
       HTTP_METHOD_MATCHERS.each do |verb|
         if m = line.match(RODA_VERB_BLOCK[verb])
-          segments, path_params = parse_on_args(m[1], m[2]? || m[3]?)
-          unless segments.empty? && path_params.empty?
-            url = build_url(collect_segments(prefix_stack), nil, segments)
-            ep = build_endpoint(url, verb.upcase, path, index)
-            apply_path_params(ep, prefix_stack)
-            path_params.each { |name| ep.push_param(Param.new(name, "", "path")) }
-            attach_route_callees(ep, lines, index, path) if include_callee
-            @result << ep
-            return @result.size - 1
+          block_args = m[2]? || m[3]?
+          segments, path_params = parse_on_args(m[1], block_args)
+          # `r.get true do` matches only the empty remaining path: the prefix.
+          if !(segments.empty? && path_params.empty?) || m[1].strip == "true"
+            if (bare = m[1].sub(RODA_OPTIONAL_MATCHER, "")) != m[1]
+              bare_segments, bare_params = parse_on_args(bare, block_args)
+              emit_verb_route(verb, bare_segments, bare_params, prefix_stack, path, index, lines, include_callee)
+            end
+            return emit_verb_route(verb, segments, path_params, prefix_stack, path, index, lines, include_callee)
           end
         end
 
@@ -152,6 +157,18 @@ module Analyzer::Ruby
       end
 
       -1
+    end
+
+    private def emit_verb_route(verb : String, segments : Array(String), path_params : Array(String),
+                                prefix_stack : Array(PrefixEntry), path : String, index : Int32,
+                                lines : Array(String), include_callee : Bool) : Int32
+      url = build_url(collect_segments(prefix_stack), nil, segments)
+      ep = build_endpoint(url, verb.upcase, path, index)
+      apply_path_params(ep, prefix_stack)
+      path_params.each { |name| ep.push_param(Param.new(name, "", "path")) }
+      attach_route_callees(ep, lines, index, path) if include_callee
+      @result << ep
+      @result.size - 1
     end
 
     private def attach_route_callees(endpoint : Endpoint, lines : Array(String), index : Int32, path : String)
@@ -311,8 +328,13 @@ module Analyzer::Ruby
       matcher_arg_names = block_args ? block_args.split(",").map(&.strip).reject(&.empty?) : [] of String
       matcher_index = 0
 
-      args.split(",").each do |part|
+      Noir::TopLevelSplit.split(args, ',', MATCHER_SPLIT).each do |part|
         token = part.strip
+        # An array matcher is an alternation; its first element names the
+        # segment (`[Integer, true]` binds one block arg like `Integer`).
+        if token.starts_with?('[') && token.ends_with?(']')
+          token = Noir::TopLevelSplit.split(token[1...-1], ',', MATCHER_SPLIT).first?.to_s.strip
+        end
         next if token.empty?
         if token.starts_with?(':')
           name = token[1..].gsub(/[^\w]/, "")
