@@ -104,7 +104,10 @@ module Analyzer::Javascript
             logger.debug "Error reading #{path}: #{e.message}"
             next
           end
-          configs[path] = File.dirname(Noir::PathScope.expand(path)) if content.includes?(ROUTE_CONFIG_MARKER)
+          # `export default autoRoutes()` imports only `react-router-auto-routes`.
+          if content.includes?(ROUTE_CONFIG_MARKER) || content.includes?("react-router-auto-routes")
+            configs[path] = File.dirname(Noir::PathScope.expand(path))
+          end
         end
       end
 

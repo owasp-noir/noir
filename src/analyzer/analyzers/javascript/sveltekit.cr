@@ -36,6 +36,9 @@ module Analyzer::Javascript
     PAGE_EXTENSIONS = [".svelte", ".svx", ".md"]
     API_EXTENSIONS  = [".ts", ".js", ".mjs"]
     EXTENSIONS      = PAGE_EXTENSIONS + API_EXTENSIONS
+    # `+page.svelte` and the variant forms `+page@desktop.svelte` (same URL).
+    # `+page.server.ts` / `+page.js` are not components.
+    PAGE_COMPONENT_RE = /\A\+page(?:@[^.]+)?\.(?:svelte|svx|md)\z/
 
     CONFIG_BASENAMES = ["svelte.config.js", "svelte.config.ts", "svelte.config.mjs", "svelte.config.cjs"]
 
@@ -53,6 +56,14 @@ module Analyzer::Javascript
       # below a real one (docs tutorial overlays, test fixtures) is not served.
       # Each maps to the root's `kit.paths.base`, which prefixes every route.
       route_dirs = project_roots.to_h { |root| {File.join(root, "src/routes/"), paths_base(root)} }
+      # Directories that already have a page component, from the scanned set
+      # (not `File.exists?`, which misses `+page@*.svelte` and sees files the
+      # scan excluded). A `+page.js` beside one of these is the same GET.
+      page_dirs = Set(String).new
+      get_files_by_extensions(EXTENSIONS).each do |path|
+        next unless File.basename(path).matches?(PAGE_COMPONENT_RE)
+        page_dirs << File.dirname(Noir::PathScope.expand(path))
+      end
 
       parallel_file_scan(EXTENSIONS) do |path|
         expanded = Noir::PathScope.expand(path)
@@ -69,6 +80,9 @@ module Analyzer::Javascript
           analyze_page(path, url_for(relative, base), result, mutex)
         elsif page_server_file?(leaf)
           analyze_page_server(path, url_for(relative, base), result, mutex)
+          analyze_page_module(path, url_for(relative, base), result, mutex, page_dirs)
+        elsif page_load_file?(leaf)
+          analyze_page_module(path, url_for(relative, base), result, mutex, page_dirs)
         elsif server_file?(leaf)
           analyze_api_route(path, url_for(relative, base), result, mutex, include_callee)
         end
@@ -99,8 +113,7 @@ module Analyzer::Javascript
     end
 
     private def page_file?(leaf : String) : Bool
-      return false unless leaf.starts_with?("+page")
-      PAGE_EXTENSIONS.any? { |ext| leaf.ends_with?(ext) }
+      leaf.matches?(PAGE_COMPONENT_RE)
     end
 
     private def server_file?(leaf : String) : Bool
@@ -111,6 +124,19 @@ module Analyzer::Javascript
     private def page_server_file?(leaf : String) : Bool
       return false unless leaf.starts_with?("+page.server")
       API_EXTENSIONS.any? { |ext| leaf.ends_with?(ext) }
+    end
+
+    # `+page.js` / `+page.ts`: the universal `load` of a page.
+    private def page_load_file?(leaf : String) : Bool
+      API_EXTENSIONS.any? { |ext| leaf == "+page#{ext}" }
+    end
+
+    # A page with only a `+page.js` / `+page.server.ts` (usually a `load`
+    # that redirects) still answers GET; with a `+page.svelte` sibling that
+    # sibling reports it.
+    private def analyze_page_module(path : String, url : String, result : Array(Endpoint), mutex : Mutex, page_dirs : Set(String))
+      return if page_dirs.includes?(File.dirname(Noir::PathScope.expand(path)))
+      analyze_page(path, url, result, mutex)
     end
 
     private def analyze_page(path : String, url : String, result : Array(Endpoint), mutex : Mutex)

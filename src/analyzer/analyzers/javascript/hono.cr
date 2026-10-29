@@ -1,6 +1,7 @@
 require "../../engines/javascript_engine"
 require "../../../miniparsers/js_callee_extractor"
 require "../../../miniparsers/js_route_extractor"
+require "../../../miniparsers/ts_contract_extractor"
 require "../../../utils/top_level_split"
 require "./express/router_mount_scanner"
 
@@ -55,6 +56,15 @@ module Analyzer::Javascript
           extract_on_routes(path, content, result, recorded, callees_by_route, include_callee)
         end
 
+        # Same gates as the `app.on()` pass: this walk is its own regex,
+        # so a `*.test.ts` or a minified bundle must not pay it or emit
+        # its routes.
+        if content.includes?("@hono/zod-openapi") &&
+           !Noir::JSRouteExtractor.test_stub_only?(path, content) &&
+           !Noir::JSRouteExtractor.minified_content?(content)
+          extract_openapi_routes(path, content, result, recorded)
+        end
+
         collect_static_paths(path, content, static_dirs, :hono)
         {result, static_dirs}
       rescue e
@@ -70,6 +80,48 @@ module Analyzer::Javascript
       process_js_static_dirs(static_dirs, result)
 
       result
+    end
+
+    # `@hono/zod-openapi`: `createRoute({ method, path, request })` declares a
+    # route (served once handed to `app.openapi(...)`), and `app.doc(path)`
+    # serves the generated spec. Routes are reported where they are declared,
+    # under that file's mount prefixes.
+    # ponytail: a `createRoute` in a `*.routes.ts` takes that file's prefixes,
+    # not those of the router that registers it; follow `.openapi(` imports
+    # if those prefixes turn out to differ in practice.
+    # `db.doc('users/1')` (Firestore and friends) is the same call shape on
+    # a different receiver. Only an app built with `new OpenAPIHono` / `new Hono`.
+    OPENAPI_RECEIVER_RE = /(?<![\w$])(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*new\s+(?:OpenAPIHono|Hono)\b/
+    DOC_ROUTE_RE        = /(?<![\w$])([A-Za-z_$][\w$]*)\s*\.\s*doc(?:31)?\s*\(\s*['"]([^'"]+)['"]/
+    DOC_CHAIN_RE        = /(?<![\w$])new\s+(?:OpenAPIHono|Hono)\s*(?:<[^;\n]*>)?\s*\(\s*\)\s*\.\s*doc(?:31)?\s*\(\s*['"]([^'"]+)['"]/
+
+    private def extract_openapi_routes(path : String, content : String, result : Array(Endpoint), recorded : Set(String))
+      routes = content.includes?("createRoute") ? Noir::TSContractExtractor.hono_openapi(content) : [] of Noir::TSContractExtractor::Route
+      offsets = nil.as(Noir::JSRouteExtractor::ByteOffsets?)
+      receivers = Set(String).new
+      content.scan(OPENAPI_RECEIVER_RE) { |m| receivers << m[1] }
+      content.scan(DOC_ROUTE_RE) do |m|
+        next unless receivers.includes?(m[1])
+        line = (offsets ||= Noir::JSRouteExtractor::ByteOffsets.new(content)).line(m.byte_begin(0))
+        routes << Noir::TSContractExtractor::Route.new("GET", m[2], line)
+      end
+      content.scan(DOC_CHAIN_RE) do |m|
+        line = (offsets ||= Noir::JSRouteExtractor::ByteOffsets.new(content)).line(m.byte_begin(0))
+        routes << Noir::TSContractExtractor::Route.new("GET", m[1], line)
+      end
+      return if routes.empty?
+
+      mounts = CodeLocator.instance.all(ExpressConstants.file_key(Noir::PathScope.expand(path)))
+      (mounts.empty? ? [""] : mounts).each do |mount|
+        routes.each do |route|
+          url = Noir::URLPath.join(mount, route.path)
+          next unless recorded.add?("#{route.method} #{url}")
+          endpoint = Endpoint.new(url, route.method, Details.new(PathInfo.new(path, route.line)))
+          url.scan(/\{(\w+)\}/) { |pm| endpoint.push_param(Param.new(pm[1], "", "path")) }
+          route.params.each { |name, type| endpoint.push_param(Param.new(name, "", type)) }
+          result << endpoint
+        end
+      end
     end
 
     private def on_route_candidate?(content : String) : Bool

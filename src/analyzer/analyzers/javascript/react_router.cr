@@ -41,12 +41,16 @@ module Analyzer::Javascript
 
       # Expanded app directory → whether it opts into the file convention.
       flat_dirs = {} of String => Bool
+      # App directories built by `react-router-auto-routes`' `autoRoutes()`.
+      auto_dirs = Set(String).new
       apps.each do |app_dir, config_paths|
         flat = false
         declared = false
         config_paths.each do |config_path|
           config = begin
-            Noir::TreeSitterReactRouterConfigExtractor.extract(read_file_content(config_path))
+            source = read_file_content(config_path)
+            auto_dirs << app_dir if source.matches?(AUTO_ROUTES_RE)
+            Noir::TreeSitterReactRouterConfigExtractor.extract(source)
           rescue e
             logger.debug "Error reading route config #{config_path}: #{e.message}"
             Noir::SkippedFiles.record(tech, config_path, e.message.presence || e.class.name)
@@ -68,20 +72,41 @@ module Analyzer::Javascript
         end
         # A config that declares nothing we read (a community convention such
         # as `autoRoutes()`) falls back to the file convention.
-        flat_dirs[app_dir] = flat || !declared
+        flat_dirs[app_dir] = flat || (!declared && !auto_dirs.includes?(app_dir))
       end
 
       roots = project_roots
       mutex = Mutex.new
       parallel_file_scan(EXTENSIONS) do |path|
         next unless path_under_project_roots?(path, roots)
-        next unless name = flat_route_name(path, flat_dirs)
+        next unless name = auto_route_name(path, auto_dirs) || flat_route_name(path, flat_dirs)
 
         endpoints = module_endpoints(url_for(name), path, include_callee)
         mutex.synchronize { result.concat(endpoints) } if endpoints
       end
 
       result
+    end
+
+    AUTO_ROUTES_RE = /\bautoRoutes\s*\(/
+    # Index and layout modules sit at their folder's URL; `route` is the
+    # legacy name for the index.
+    AUTO_FOLDER_MODULES = Set{"index", "_index", "route", "_layout"}
+
+    # `react-router-auto-routes`: every module under `<app>/routes/` is a
+    # route; folders are path segments like dots (`blog/$slug.tsx` and
+    # `blog.$slug.tsx` are `/blog/{slug}`), `+`-prefixed entries are
+    # colocated files, and dotfiles are ignored. The flat name it returns
+    # goes through Remix's `url_for`, which owns `$x`, `$`, `_x` and `(x)`.
+    private def auto_route_name(path : String, auto_dirs : Set(String)) : String?
+      return if auto_dirs.empty?
+      expanded = Noir::PathScope.expand(path)
+      app_dir = auto_dirs.find { |dir| expanded.starts_with?("#{dir}/routes/") } || return
+      parts = expanded[(app_dir.size + "/routes/".size)..].split('/')
+      leaf = strip_extension(parts.pop)
+      return if (parts + [leaf]).any? { |part| part.starts_with?('+') || part.starts_with?('.') }
+      parts << leaf unless AUTO_FOLDER_MODULES.includes?(leaf)
+      parts.join('.')
     end
 
     private def project_roots : Array(String)

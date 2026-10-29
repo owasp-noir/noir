@@ -36,8 +36,21 @@ module Noir
         close = JSLiteralScanner.find_matching_brace(code, open) || next
         decls[m[1]] = Decl.new(members(code[(open + 1)...close]), heritage(m[2]))
       end
+      # A zod object schema, the base of a nestjs-zod `createZodDto(X)` DTO.
+      if code.includes?("z.")
+        code.scan(ZOD_OBJECT_DECL) do |m|
+          next if decls.has_key?(m[1])
+          open = m.end(0) - 1
+          close = JSLiteralScanner.find_matching_brace(code, open) || next
+          decls[m[1]] = Decl.new(members(code[(open + 1)...close]), [] of Base)
+        end
+      end
       decls
     end
+
+    ZOD_OBJECT_DECL = /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*(?::[^=\n]+)?=\s*z\s*\.\s*(?:object|strictObject|looseObject)\s*\(\s*\{/
+    # nestjs-zod's `class X extends createZodDto(Schema) {}`.
+    ZOD_DTO = /\AcreateZodDto\s*\(/
 
     # Property names of an inline object type `{ a: string; b?: number }`.
     def self.object_type_fields(type : String) : Array(String)
@@ -80,6 +93,10 @@ module Noir
         return bases.map { |base| Base.new(base.name, keys, base.omit) } if m[1] == "PickType" && keys
         return bases.map { |base| Base.new(base.name, base.pick, base.omit + keys) } if m[1] == "OmitType" && keys
         return bases
+      end
+      if m = text.match(ZOD_DTO)
+        close = JSLiteralScanner.find_matching_paren(text, m.end(0) - 1) || return [] of Base
+        return type_bases(text[m.end(0)...close])
       end
       name = text.match(/\A([A-Za-z_$][\w$.]*)/).try(&.[1]) || return [] of Base
       [Base.new(name.split('.').last)]
