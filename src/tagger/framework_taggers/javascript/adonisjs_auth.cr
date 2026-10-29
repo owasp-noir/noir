@@ -18,9 +18,9 @@ class AdonisjsAuthTagger < FrameworkTagger
   CHAINED_CALL = /\G\s*\.\s*[A-Za-z_$][\w$]*\s*\(/
 
   # A routes file with comments blanked (layout kept, so offsets and lines
-  # are the file's), its chars, each line's offset, and every group call's
+  # are the file's), each line's byte offset, and every group call's
   # `{open paren, close paren, chain after it}`.
-  private record RoutesFile, code : String, chars : Array(Char), offsets : Array(Int32), groups : Array({Int32, Int32, String})
+  private record RoutesFile, code : String, offsets : Array(Int32), groups : Array({Int32, Int32, String})
 
   def self.target_techs : Array(String)
     ["js_adonisjs"]
@@ -42,16 +42,18 @@ class AdonisjsAuthTagger < FrameworkTagger
       file = routes_file(path_info.path) || next
       next unless line >= 1 && line <= file.offsets.size
       at = file.offsets[line - 1]
-      # ponytail: the first call on the route's line; a second route on the
-      # same line reads the first one's chain.
-      if (open = file.code.index('(', at)) && (close = Noir::JSLiteralScanner.find_matching_paren(file.chars, open)) &&
+      line_end = line < file.offsets.size ? file.offsets[line] : file.code.bytesize
+      # The first call on this line only. Offsets are bytes, so a multibyte
+      # argument between the parens still leaves the chained `.use` attached.
+      if (open = file.code.byte_index('('.ord, at)) && open < line_end &&
+         (close = Noir::JSLiteralScanner.find_matching_paren_at_byte(file.code, open)) &&
          chain(file, close + 1).matches?(AUTH_USE)
         endpoint.add_tag(Tag.new("auth", "Protected by AdonisJS middleware.auth()", "adonisjs_auth"))
         return
       end
       if group = file.groups.find { |open_at, close_at, rest| open_at < at && at < close_at && rest.matches?(AUTH_USE) }
         endpoint.add_tag(Tag.new("auth", "Protected by AdonisJS middleware.auth() on its route group", "adonisjs_auth",
-          path_info.path, file.code[0, group[0]].count('\n') + 1))
+          path_info.path, file.code.byte_slice(0, group[0]).count('\n') + 1))
         return
       end
     end
@@ -62,12 +64,16 @@ class AdonisjsAuthTagger < FrameworkTagger
     @files[path] = begin
       if content = read_file(path)
         code = Noir::CComments.strip(content, quotes: %("'`))
-        offsets = [0]
-        code.each_char_with_index { |char, idx| offsets << idx + 1 if char == '\n' }
-        file = RoutesFile.new(code, code.chars, offsets, [] of {Int32, Int32, String})
+        offsets = [] of Int32
+        byte_at = 0
+        code.each_line(chomp: false) do |line|
+          offsets << byte_at
+          byte_at += line.bytesize
+        end
+        file = RoutesFile.new(code, offsets, [] of {Int32, Int32, String})
         code.scan(GROUP_CALL) do |m|
-          open = m.end(0) - 1
-          close = Noir::JSLiteralScanner.find_matching_paren(file.chars, open) || next
+          open = m.byte_end(0) - 1
+          close = Noir::JSLiteralScanner.find_matching_paren_at_byte(code, open) || next
           file.groups << {open, close, chain(file, close + 1)}
         end
         file
@@ -75,12 +81,15 @@ class AdonisjsAuthTagger < FrameworkTagger
     end
   end
 
-  # The calls chained onto the one that ends at `from`.
+  # The calls chained onto the one that ends at byte `from`.
+  # `String#match` takes a character index; the paren walker takes bytes.
   private def chain(file : RoutesFile, from : Int32) : String
     String.build do |io|
       pos = from
-      while (m = file.code.match(CHAINED_CALL, pos)) && (close = Noir::JSLiteralScanner.find_matching_paren(file.chars, m.end(0) - 1))
-        io << file.code[pos..close]
+      while (char_pos = file.code.byte_index_to_char_index(pos)) &&
+            (m = file.code.match(CHAINED_CALL, char_pos)) &&
+            (close = Noir::JSLiteralScanner.find_matching_paren_at_byte(file.code, m.byte_end(0) - 1))
+        io << file.code.byte_slice(pos, close - pos + 1)
         pos = close + 1
       end
     end
