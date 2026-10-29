@@ -90,7 +90,7 @@ class EndpointOptimizer
         # ASP.NET) and hapi's multi-segment `{path*}` / `{parts*2}` are
         # spelling too.
         param = raw.split(":")[0].lstrip('*').rstrip('?').sub(/\*\d*\z/, "")
-        next unless valid_path_param_name?(param)
+        next unless valid_brace_param_name?(param)
         placeholders << PathPlaceholder.new(start, stop, param)
       end
 
@@ -337,6 +337,15 @@ class EndpointOptimizer
   # a glob, a type expression) is not a real parameter name.
   private def valid_path_param_name?(name : String) : Bool
     !name.empty? && !!name.match(/\A[A-Za-z_][A-Za-z0-9_]*\z/)
+  end
+
+  # A `{...}` template variable is delimited by its braces, so JAX-RS,
+  # Spring and gRPC names may also carry `-` and `.` inside
+  # (`{client-uuid}`, `{role.name}`, `{book.id}`). The bare `:name` / `*name`
+  # forms keep the plain-identifier rule: there `-` ends the name
+  # (Express `/:from-:to`).
+  private def valid_brace_param_name?(name : String) : Bool
+    !!name.match(/\A[A-Za-z_](?:[A-Za-z0-9_.\-]*[A-Za-z0-9_])?\z/)
   end
 
   # A URL cannot carry two path params with the same name, so dedup by name

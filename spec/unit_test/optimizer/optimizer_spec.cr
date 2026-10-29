@@ -1537,6 +1537,21 @@ describe "EndpointOptimizer" do
       result[1].params[1].name.should eq("comment_id")
     end
 
+    # #3298: JAX-RS and Spring bind `{client-uuid}` / `{role.name}`; the
+    # braces delimit the name, so `-` and `.` belong to it.
+    it "keeps brace params whose names contain - or ." do
+      optimizer = EndpointOptimizer.new(logger, options)
+      endpoints = [
+        Endpoint.new("/clients/{client-uuid}/roles/{role.name}", "GET"),
+        Endpoint.new("/x/{-bad}/{bad.}/{a b}", "GET"),
+      ]
+
+      result = optimizer.add_path_parameters(endpoints)
+      result[0].params.map(&.name).should eq(["client-uuid", "role.name"])
+      result[0].params.all? { |p| p.param_type == "path" }.should be_true
+      result[1].params.should be_empty
+    end
+
     it "extracts every variable from a comma-packed segment" do
       optimizer = EndpointOptimizer.new(logger, options)
       # Spring's matrix-style mapping packs sibling path variables into one

@@ -367,7 +367,9 @@ module Noir
         method_name = method_name_of(member, source) || ""
         method_path = annotation_string_value(member, "Path", source, local_constants, class_name) || ""
 
-        full_path = Noir::URLPath.join_trimmed(class_path, method_path)
+        # JAX-RS drops a template's trailing `/`, so `@Path("/")` on a
+        # method adds no segment: `/items` + `/` is `/items`, not `/items/`.
+        full_path = Noir::URLPath.join_trimmed(class_path, method_path.rstrip('/'))
         method_consumes = consumes_format(member, source) || class_consumes
 
         unless verb && verb_node
