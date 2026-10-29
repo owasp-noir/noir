@@ -6,6 +6,7 @@ use Drupal\Core\Controller\ControllerBase;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\Routing\Attribute\Route;
 
+#[Route(path: '/demo-prefix', requirements: ['_permission' => 'x'])]
 class DemoController extends ControllerBase {
 
   #[Route(

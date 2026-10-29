@@ -562,17 +562,6 @@ module Analyzer::Php
       params
     end
 
-    # The next class or method declaration at or after `pos`. `class:` named
-    # arguments and `Foo::class` in the attributes between are neither.
-    private def next_declaration(content : String, pos : Int32) : Regex::MatchData?
-      content.match(/(?<!::)\b(class\s+\w|function\b)/m, pos)
-    end
-
-    # Whether the attribute ending at `route_end` sits on a class.
-    private def route_applies_to_class?(content : String, route_end : Int32) : Bool
-      !!next_declaration(content, route_end).try(&.[1].starts_with?("class"))
-    end
-
     private def analyze_yaml_routes(path : String) : Array(Endpoint)
       endpoints = [] of Endpoint
 

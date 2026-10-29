@@ -33,9 +33,12 @@ module Analyzer::Php
 
     TAGGER = "drupal_analyzer"
 
-    # Requirement keys that check the request, not who makes it.
+    # Requirement keys that check the request, not who makes it, or that
+    # let an anonymous caller in (`_access_user_register` while registration
+    # is open; `_access_system_cron` takes a cron key, not a user).
     NON_ACCESS_REQUIREMENTS = Set{"_access", "_format", "_content_type_format", "_method", "_module_dependencies",
-                                  "_csrf_token", "_csrf_request_header_token", "_user_is_logged_in"}
+                                  "_csrf_token", "_csrf_request_header_token", "_access_rest_csrf", "_user_is_logged_in",
+                                  "_entity_bundles", "_access_user_register", "_access_theme", "_access_system_cron"}
 
     # Drupal routing lives in YAML; `#[Route]` controllers are `.php`.
     protected def php_source_files : Array(String)
@@ -49,7 +52,6 @@ module Analyzer::Php
     end
 
     # Controller methods carrying `#[Route(path: ..., methods: ..., requirements: [...])]`.
-    # ponytail: a class-level `#[Route]` prefix is not applied.
     private def analyze_route_attributes(path : String) : Array(Endpoint)
       endpoints = [] of Endpoint
       content = read_file_content(path)
@@ -57,6 +59,8 @@ module Analyzer::Php
       lexer = Noir::PhpLexer.new(content)
       content = lexer.without_comments
       route_attributes(content, lexer).each do |attr|
+        # ponytail: a class-level `#[Route]` (a prefix) is skipped, not applied.
+        next if route_applies_to_class?(content, attr.stop)
         next unless content[attr.start, 2] == "#["
         next unless route_path = extract_symfony_route_path(attr.args).presence
         methods = extract_methods_from_symfony_context(attr.args)
@@ -75,8 +79,11 @@ module Analyzer::Php
       endpoints
     end
 
-    # Tags the guard each access check in `requirements` imposes.
-    private def tag_requirements(endpoint : Endpoint, requirements : Hash(String, String))
+    # Tags the guard each access check in `requirements` imposes. Under
+    # `options: _access_mode: ANY` one passing check is enough, so a route
+    # with any open check (or several) is left untagged.
+    private def tag_requirements(endpoint : Endpoint, requirements : Hash(String, String), any_mode : Bool = false)
+      return if any_mode
       if requirements["_user_is_logged_in"]?.try(&.strip.upcase) == "TRUE"
         endpoint.add_tag(Tag.new("auth", "Protected by Drupal _user_is_logged_in", TAGGER))
       end
@@ -112,13 +119,14 @@ module Analyzer::Php
 
           params = extract_route_params(route_path)
           requirements = {} of String => String
+          any_mode = route_h[YAML::Any.new("options")]?.try(&.as_h?).try(&.[YAML::Any.new("_access_mode")]?).try(&.raw.to_s.upcase) == "ANY"
           route_h[YAML::Any.new("requirements")]?.try(&.as_h?).try &.each do |key, value|
             requirements[key.to_s] = value.raw.to_s if key.as_s?
           end
 
           methods.each do |method|
             endpoint = Endpoint.new(route_path, method.upcase, params.dup, details.dup)
-            tag_requirements(endpoint, requirements)
+            tag_requirements(endpoint, requirements, any_mode)
             endpoints << endpoint
           end
         end

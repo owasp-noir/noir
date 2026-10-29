@@ -28,10 +28,14 @@ describe "WordPress / Drupal routes and guards", tags: "functional" do
     endpoints.map { |e| "#{e.method} #{e.url}" }.sort!.should eq([
       "GET /wp-admin/admin-ajax.php?action=demo_lookup",
       "GET /wp-admin/admin-ajax.php?action=demo_save",
+      "GET /wp-admin/admin-ajax.php?action=demo_split",
+      "GET /wp-json/demo/v1/children",
+      "GET /wp-json/demo/v1/children/feed",
       "GET /wp-json/demo/v1/me",
       "GET /wp-json/wp/v2/settings",
       "POST /wp-admin/admin-ajax.php?action=demo_lookup",
       "POST /wp-admin/admin-ajax.php?action=demo_save",
+      "POST /wp-admin/admin-ajax.php?action=demo_split",
       "POST /wp-json/demo/v1/items",
       "POST /wp-json/wp/v2/settings",
     ])
@@ -41,6 +45,12 @@ describe "WordPress / Drupal routes and guards", tags: "functional" do
     guards.call(endpoints, "GET", "/wp-json/demo/v1/me").should eq(["WordPress permission_callback login check"])
     guards.call(endpoints, "POST", "/wp-admin/admin-ajax.php?action=demo_save").should_not be_empty
     guards.call(endpoints, "POST", "/wp-admin/admin-ajax.php?action=demo_lookup").should be_empty
+    # `nopriv_` registered from another file still makes the action public.
+    guards.call(endpoints, "POST", "/wp-admin/admin-ajax.php?action=demo_split").should be_empty
+    # Another class's same-named method is not this route's callback.
+    guards.call(endpoints, "GET", "/wp-json/demo/v1/children").should be_empty
+    # A capability checked only under a further condition leaves the route open.
+    guards.call(endpoints, "GET", "/wp-json/demo/v1/children/feed").should be_empty
   end
 
   it "reads Drupal #[Route] attributes and requirements" do
@@ -51,5 +61,8 @@ describe "WordPress / Drupal routes and guards", tags: "functional" do
     guards.call(endpoints, "POST", "/demo/login").should be_empty
     guards.call(endpoints, "GET", "/demo/reset/{uid}").should be_empty
     guards.call(endpoints, "GET", "/demo/{node}/edit").should eq(["Drupal _entity_access (node.update)"])
+    guards.call(endpoints, "GET", "/demo/register").should be_empty
+    guards.call(endpoints, "GET", "/demo/either").should be_empty
+    endpoints.none?(&.url.==("/demo-prefix")).should be_true
   end
 end

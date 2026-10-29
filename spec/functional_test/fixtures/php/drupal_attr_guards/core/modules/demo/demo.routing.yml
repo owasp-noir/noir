@@ -18,3 +18,20 @@ demo.open:
     _controller: '\Drupal\demo\Controller\DemoController::open'
   requirements:
     _access: 'TRUE'
+
+demo.register:
+  path: '/demo/register'
+  defaults:
+    _form: '\Drupal\demo\Form\RegisterForm'
+  requirements:
+    _access_user_register: 'TRUE'
+
+demo.either:
+  path: '/demo/either'
+  defaults:
+    _controller: '\Drupal\demo\Controller\DemoController::either'
+  requirements:
+    _access: 'TRUE'
+    _permission: 'access content'
+  options:
+    _access_mode: 'ANY'
