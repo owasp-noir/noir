@@ -158,25 +158,49 @@ module PythonGuardDefinitions
     open = closed = false
     lines.each_with_index do |line, idx|
       next if idx <= sig_end || !line.matches?(VIEW_CALL) || line.matches?(/^\s*(?:async\s+)?def\b/)
-      conditions = view_path_conditions(lines, idx, sig_end)
-      judged = conditions.compact_map do |cond, positive|
-        implies_identity?(cond, positive, file, locals, params)
+      gates = view_path_conditions(lines, idx, sig_end).map do |alternatives|
+        alternatives.flat_map { |alternative| combine_paths(alternative.map { |cond, positive| branch_paths(cond, positive) }) }
       end
-      next if judged.empty?
-      next closed = true if judged.includes?(true)
-      return ViewAccess::Caller if conditions.any? { |cond, _| identity_read?(cond, file, 0, locals) }
-      open = true
+      # Each path that reaches the view is judged on its own: past
+      # `if is_setup() and not is_admin(): abort(403)` one path needs only
+      # the setting off and the other an admin caller.
+      combine_paths(gates).each do |conditions|
+        judged = conditions.compact_map do |cond, positive|
+          implies_identity?(cond, positive, file, locals, params)
+        end
+        next if judged.empty?
+        next closed = true if judged.includes?(true)
+        # An open path on what the caller sends (`request.method == "GET"`)
+        # is the caller's to take, not a setting.
+        return ViewAccess::Caller if conditions.any? { |cond, _| identity_read?(cond, file, 0, locals) || cond.matches?(REQUEST_READ) }
+        open = true
+      end
     end
     return ViewAccess::Closed unless open
     closed ? ViewAccess::Configurable : ViewAccess::Setting
+  rescue TooManyPaths
+    ViewAccess::Caller
   end
 
-  # The conditions line `idx` of a body runs under, each with whether it
-  # is reached on that condition's true branch.
-  private def view_path_conditions(lines : Array(String), idx : Int32, sig_end : Int32) : Array(Tuple(String, Bool))
-    found = [] of Tuple(String, Bool)
+  alias PathCondition = Tuple(String, Bool)
+  REFUSAL_LINE   = /\A(?:return|raise)\b|\babort\s*\(/
+  REQUEST_READ   = /(?<![\w.])request\./
+  MAX_VIEW_PATHS = 32
+
+  # More ways to the view than `MAX_VIEW_PATHS`: the wrapper is not judged.
+  class TooManyPaths < Exception
+  end
+
+  # The gates line `idx` of a body runs under. A gate lists the ways past
+  # it, each a set of conditions that hold together with whether each is
+  # reached on its true branch.
+  private def view_path_conditions(lines : Array(String), idx : Int32, sig_end : Int32) : Array(Array(Array(PathCondition)))
+    found = [] of Array(Array(PathCondition))
     threshold = lines[idx].size - lines[idx].lstrip.size
-    refuses = false
+    block = [] of String
+    # An if/elif/else chain above the view at its own indent, last branch
+    # first, each with its body.
+    chain = [] of Tuple(String?, Array(String))
     j = idx - 1
     while j > sig_end
       line = lines[j]
@@ -185,19 +209,29 @@ module PythonGuardDefinitions
       indent = line.size - line.lstrip.size
       stripped = line.strip
       if indent > threshold
-        refuses ||= stripped.matches?(/\A(?:return|raise)\b|\babort\s*\(/)
+        block << line
         next
       end
       if indent == threshold
-        if refuses && (m = stripped.match(/\A(?:if|elif)\s+(.*?):?\z/))
-          found << {m[1], false}
+        body = block.reverse
+        block.clear
+        if m = stripped.match(/\A(if|elif)\s+(.*?):?\z/)
+          chain << {m[2], body}
+          if m[1] == "if"
+            gate = chain_gate(chain.reverse)
+            found << gate if gate
+            chain.clear
+          end
+        elsif stripped.matches?(/\Aelse\s*:/)
+          chain << {nil, body}
+        else
+          chain.clear
         end
-        refuses = false
         next
       end
       break if stripped.matches?(/\A(?:async\s+)?def\b/)
       if m = stripped.match(/\A(?:if|elif|while)\s+(.*?):?\z/)
-        found << {m[1], true}
+        found << [[{m[1], true}]]
       end
       if stripped.starts_with?("elif") || stripped.starts_with?("else")
         # The earlier branches of the chain did not hold.
@@ -208,14 +242,82 @@ module PythonGuardDefinitions
           next if prior.blank? || prior.size - prior.lstrip.size > indent
           break if prior.size - prior.lstrip.size < indent
           m = prior.strip.match(/\A(if|elif)\s+(.*?):?\z/) || break
-          found << {m[2], false}
+          found << [[{m[2], false}]]
           break if m[1] == "if"
         end
       end
       threshold = indent
-      refuses = false
+      block.clear
+      chain.clear
     end
     found
+  end
+
+  # The ways past an if/elif/else chain one of whose branches refuses:
+  # through each branch that does not (its own test holding, the earlier
+  # ones failing), through a refusing one past checks nested in it, and
+  # past the whole chain when it has no `else`. nil when no branch refuses.
+  private def chain_gate(branches : Array(Tuple(String?, Array(String)))) : Array(Array(PathCondition))?
+    refusing = branches.map { |branch| branch[1].any?(&.strip.matches?(REFUSAL_LINE)) }
+    return unless refusing.includes?(true)
+    gate = [] of Array(PathCondition)
+    priors = [] of PathCondition
+    branches.each_with_index do |branch, i|
+      cond = branch[0]
+      entry = cond ? priors + [{cond, true}] : priors.dup
+      if !refusing[i]
+        gate << entry
+      elsif through = through_paths(branch[1])
+        through.each { |inner| gate << entry + inner }
+      end
+      priors << {cond, false} if cond
+    end
+    gate << priors if branches.last[0]
+    gate
+  end
+
+  # The ways through a refusing `block` without reaching its refusal, when
+  # every refusal sits under an `if` nested in it (`if is_setup():` /
+  # `if not is_admin(): abort(403)`); nil when it refuses outright or in a
+  # shape not judged.
+  private def through_paths(block : Array(String)) : Array(Array(PathCondition))?
+    body_indent = block.min_of { |line| line.size - line.lstrip.size }
+    inner = [] of Array(Array(PathCondition))
+    block.each_with_index do |line, i|
+      next unless line.size - line.lstrip.size == body_indent
+      stripped = line.strip
+      return if stripped.matches?(REFUSAL_LINE)
+      next unless stripped.ends_with?(':')
+      m = stripped.match(/\Aif\s+(.*?):\z/) || return
+      sub = block[(i + 1)..].take_while { |part| part.size - part.lstrip.size > body_indent }
+      next unless sub.any?(&.strip.matches?(REFUSAL_LINE))
+      alternatives = [[{m[1], false}]]
+      through_paths(sub).try &.each { |path| alternatives << [{m[1], true}] + path }
+      inner << alternatives
+    end
+    return if inner.empty?
+    combine_paths(inner)
+  end
+
+  # `a and b` failing, or `a or b` holding, is one path per operand.
+  # Grouping parentheses are not parsed, as in `implies_identity?`.
+  private def branch_paths(cond : String, positive : Bool) : Array(Array(PathCondition))
+    unless cond.matches?(/(?:\A|[^\w\].'"])\s*\(/)
+      disjuncts = cond.split(/\s+or\s+/)
+      return disjuncts.map { |part| [{part, true}] } if positive && disjuncts.size > 1
+      conjuncts = cond.split(/\s+and\s+/)
+      return conjuncts.map { |part| [{part, false}] } if !positive && disjuncts.size == 1 && conjuncts.size > 1
+    end
+    [[{cond, positive}]]
+  end
+
+  # Every way through `gates` in turn, one alternative from each.
+  private def combine_paths(gates : Array(Array(Array(PathCondition)))) : Array(Array(PathCondition))
+    gates.reduce([[] of PathCondition]) do |paths, alternatives|
+      combined = paths.flat_map { |path| alternatives.map { |alternative| path + alternative } }
+      raise TooManyPaths.new if combined.size > MAX_VIEW_PATHS
+      combined
+    end
   end
 
   CONDITION_WORDS = %w[not is None True False in and or]

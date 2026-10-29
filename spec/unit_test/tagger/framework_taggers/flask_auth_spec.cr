@@ -136,4 +136,30 @@ describe "FlaskAuthTagger" do
     endpoint.tags.empty?.should be_false
     endpoint.tags[0].description.should contain("permission_required")
   end
+
+  # flask_setup_gated_guard/app.py: the view is reached when the app is
+  # not set up (a setting) or when the caller is an admin, in the `and`
+  # form and the nested form (#3292). `authed() and not is_admin()` lets
+  # an anonymous caller through, so it is no guard.
+  it "judges each path past a setup-gated refusal on its own" do
+    base = File.expand_path("../../../functional_test/fixtures/python/flask_setup_gated_guard", __DIR__)
+    app = "#{base}/app.py"
+    noir_options = create_test_options
+    noir_options["base"] = YAML::Any.new(base)
+    endpoints = {67 => "/setup/git", 73 => "/setup/nested", 79 => "/admin/thing", 85 => "/anyone", 113 => "/posts", 119 => "/scores"}.map do |line, url|
+      details = Details.new(PathInfo.new(app, line))
+      details.technology = "python_flask"
+      Endpoint.new(url, "DELETE", [] of Param, details)
+    end
+
+    verdicts = FlaskAuthTagger.new(noir_options).perform(endpoints).map { |ep| {ep.url, ep.tags.select(&.name.== "auth").map(&.description)} }.to_h
+    verdicts["/setup/git"].should eq(["Protected by managers_only (a setting can make it public)"])
+    verdicts["/setup/nested"].should eq(["Protected by nested_managers_only (a setting can make it public)"])
+    verdicts["/admin/thing"].should eq(["Protected by admins_only"])
+    verdicts["/anyone"].should be_empty
+    # A GET gets past `request.method == "POST" and ...`: the caller's choice.
+    verdicts["/posts"].should be_empty
+    # The `elif` refuses, but the public branch above it is a way in.
+    verdicts["/scores"].should eq(["Protected by public_or_members (a setting can make it public)"])
+  end
 end

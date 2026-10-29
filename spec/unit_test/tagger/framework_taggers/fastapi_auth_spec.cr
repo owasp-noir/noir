@@ -354,4 +354,33 @@ describe "FastAPIAuthTagger" do
       FileUtils.rm_rf(tmpdir)
     end
   end
+
+  # fastapi_include_router_deps/app: `include_router(..., dependencies=[...])`
+  # one hop and two hops above the route's router (#3292). A router with no
+  # auth dependency on every one of its mounts is open.
+  it "applies include_router dependencies to the included routes" do
+    base = File.expand_path("../../../functional_test/fixtures/python/fastapi_include_router_deps", __DIR__)
+    views = "#{base}/app/views.py"
+    noir_options = create_test_options
+    noir_options["base"] = YAML::Any.new(base)
+    endpoints = {10 => "/items/{item_id}", 15 => "/{organization}/terms/{term_id}", 20 => "/open/status", 25 => "/private/report", 30 => "/members/feed"}.map do |line, url|
+      Endpoint.new(url, "GET", [] of Param, Details.new(PathInfo.new(views, line)))
+    end
+
+    CodeLocator.instance.clear_all
+    Dir.glob("#{base}/**/*.py").each { |path| CodeLocator.instance.register_path(path) }
+    begin
+      endpoints = FastAPIAuthTagger.new(noir_options).perform(endpoints)
+    ensure
+      CodeLocator.instance.clear_all
+    end
+
+    verdicts = endpoints.map { |ep| {ep.url, ep.tags.map(&.description)} }.to_h
+    verdicts["/items/{item_id}"].should eq(["Protected by FastAPI Depends(get_current_user)"])
+    verdicts["/{organization}/terms/{term_id}"].should eq(["Protected by FastAPI Depends(get_current_user)"])
+    verdicts["/open/status"].should be_empty
+    verdicts["/private/report"].should be_empty
+    # Its other mount's dependency (`rate_limit`) is no auth check.
+    verdicts["/members/feed"].should be_empty
+  end
 end
