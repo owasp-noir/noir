@@ -2,6 +2,35 @@ require "file_utils"
 require "../../../spec_helper"
 require "../../../../src/tagger/tagger"
 
+# The URLs `RustAuthTagger` guards when each is mounted from the first file.
+private def axum_guarded_urls(files : Hash(String, String), urls : Array(String)) : Array(String)
+  CodeLocator.instance.clear_all
+  tmpdir = File.tempname("axum_layers")
+  files.each do |rel, src|
+    path = File.join(tmpdir, rel)
+    Dir.mkdir_p(File.dirname(path))
+    File.write(path, src)
+    CodeLocator.instance.register_path(path)
+  end
+  noir_options = create_test_options
+  noir_options["base"] = YAML::Any.new(tmpdir)
+  main = File.join(tmpdir, files.keys.first)
+  endpoints = urls.map { |url| Endpoint.new(url, "GET", [] of Param, Details.new(PathInfo.new(main, 1)).tap(&.technology=("rust_axum"))) }
+  RustAuthTagger.new(noir_options).perform(endpoints)
+  FileUtils.rm_rf(tmpdir)
+  endpoints.reject(&.tags.empty?).map(&.url).sort!
+end
+
+AXUM_REQUIRE_AUTH = <<-RUST
+  async fn require_auth(req: Request, next: Next) -> Result<Response, StatusCode> {
+      if req.headers().get("authorization").is_none() {
+          return Err(StatusCode::UNAUTHORIZED);
+      }
+      Ok(next.run(req).await)
+  }
+
+  RUST
+
 describe "RustAuthTagger" do
   fixture_base = File.expand_path("../../../functional_test/fixtures/rust/actix_auth", __DIR__)
   main_path = "#{fixture_base}/src/main.rs"
@@ -384,6 +413,39 @@ describe "RustAuthTagger" do
     endpoints[0].tags[0].name.should eq("auth")
 
     FileUtils.rm_rf(tmpdir)
+  end
+
+  it "reads a `let` router binding in its own fn and scope, never a later or same-named one" do
+    src = AXUM_REQUIRE_AUTH + <<-RUST
+      fn public_routes() -> Router {
+          let router = Router::new().route("/health", get(h));
+          router
+      }
+      fn private_routes() -> Router {
+          let router = Router::new().route("/admin", get(a));
+          router.route_layer(middleware::from_fn(require_auth))
+      }
+      fn build() -> Router {
+          let app = Router::new().route("/a", get(a));
+          let app = app.route("/b", get(b));
+          let app = app.route_layer(middleware::from_fn(require_auth));
+          app.route("/c", get(c))
+      }
+      RUST
+    axum_guarded_urls({"src/main.rs" => src}, ["/health", "/admin", "/a", "/b", "/c"]).should eq(["/a", "/admin", "/b"])
+  end
+
+  it "does not read a Router parameter as the same-named fn" do
+    src = AXUM_REQUIRE_AUTH + <<-RUST
+      fn app() -> Router {
+          Router::new().route("/open", get(o))
+      }
+      fn with_auth(app: Router) -> Router {
+          let app = app.route_layer(middleware::from_fn(require_auth));
+          app
+      }
+      RUST
+    axum_guarded_urls({"src/main.rs" => src}, ["/open"]).should be_empty
   end
 end
 

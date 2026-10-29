@@ -261,7 +261,6 @@ class RustAuthTagger < FrameworkTagger
 
       begin
         Noir::TreeSitter.parse_rust(content) do |root|
-          let_calls = build_let_call_index(root, content)
           Noir::TreeSitter.walk(root) do |node|
             next unless Noir::TreeSitter.node_type(node) == "call_expression"
 
@@ -274,7 +273,7 @@ class RustAuthTagger < FrameworkTagger
             middleware_name = extract_and_judge_auth_middleware(args[0], content, file)
             next unless middleware_name
 
-            mounts = collect_axum_layer_mounts(node, content, file, let_calls)
+            mounts = collect_axum_layer_mounts(node, content, file)
             mounts.each do |kind, path|
               @middleware_scopes << {
                 prefix:      path,
@@ -291,18 +290,29 @@ class RustAuthTagger < FrameworkTagger
     end
   end
 
-  private def build_let_call_index(root : LibTreeSitter::TSNode, source : String) : Hash(String, LibTreeSitter::TSNode)
-    index = {} of String => LibTreeSitter::TSNode
-    Noir::TreeSitter.walk(root) do |node|
-      next unless Noir::TreeSitter.node_type(node) == "let_declaration"
-      pattern = Noir::TreeSitter.field(node, "pattern")
-      value = Noir::TreeSitter.field(node, "value")
-      next unless pattern && value
-      next unless Noir::TreeSitter.node_type(pattern) == "identifier"
-      name = Noir::TreeSitter.node_text(pattern, source)
-      index[name] = value unless index.has_key?(name)
+  # The value of the last `let name = ...` in a block enclosing `use`, within
+  # its fn, that ends before `use` starts: `let app = app.layer(x)` reads
+  # the earlier `app`, never itself.
+  private def let_value(use : LibTreeSitter::TSNode, name : String, source : String) : LibTreeSitter::TSNode?
+    use_start = LibTreeSitter.ts_node_start_byte(use)
+    node = use
+    while parent = Noir::TreeSitter.parent(node)
+      if Noir::TreeSitter.node_type(parent) == "block"
+        found = nil
+        Noir::TreeSitter.each_named_child(parent) do |stmt|
+          next unless Noir::TreeSitter.node_type(stmt) == "let_declaration"
+          next unless LibTreeSitter.ts_node_end_byte(stmt) <= use_start
+          pattern = Noir::TreeSitter.field(stmt, "pattern")
+          value = Noir::TreeSitter.field(stmt, "value")
+          next unless pattern && value && Noir::TreeSitter.node_text(pattern, source) == name
+          found = value
+        end
+        return found if found
+      end
+      return if Noir::TreeSitter.node_type(parent) == "function_item"
+      node = parent
     end
-    index
+    nil
   end
 
   private def extract_and_judge_auth_middleware(arg_node : LibTreeSitter::TSNode, source : String, file : String) : String?
@@ -411,7 +421,6 @@ class RustAuthTagger < FrameworkTagger
     call : LibTreeSitter::TSNode,
     source : String,
     file_path : String,
-    let_calls : Hash(String, LibTreeSitter::TSNode),
   ) : Array({String, String})
     if route_call = find_enclosing_route_call(call, source)
       route_args = named_call_args(route_call)
@@ -422,7 +431,7 @@ class RustAuthTagger < FrameworkTagger
 
     recv = chain_receiver(call)
     return [] of {String, String} unless recv
-    collect_router_mounts(recv, source, file_path, let_calls)
+    collect_router_mounts(recv, source, file_path)
   end
 
   private def find_enclosing_route_call(call : LibTreeSitter::TSNode, source : String) : LibTreeSitter::TSNode?
@@ -449,7 +458,6 @@ class RustAuthTagger < FrameworkTagger
     node : LibTreeSitter::TSNode,
     source : String,
     file_path : String,
-    let_calls : Hash(String, LibTreeSitter::TSNode),
     prefix : String = "",
     visited_fns : Set(String) = Set(String).new,
   ) : Array({String, String})
@@ -475,7 +483,7 @@ class RustAuthTagger < FrameworkTagger
               full_nest = prefix.empty? ? nest_pfx : nest_join(prefix, nest_pfx)
               mounts << {"nest", full_nest} unless mounts.includes?({"nest", full_nest})
               if args.size >= 2
-                collect_router_mounts(args[1], source, file_path, let_calls, full_nest, visited_fns).each do |m|
+                collect_router_mounts(args[1], source, file_path, full_nest, visited_fns).each do |m|
                   mounts << m unless mounts.includes?(m)
                 end
               end
@@ -484,7 +492,7 @@ class RustAuthTagger < FrameworkTagger
           when "merge"
             args = named_call_args(cur)
             if !args.empty?
-              collect_router_mounts(args[0], source, file_path, let_calls, prefix, visited_fns).each do |m|
+              collect_router_mounts(args[0], source, file_path, prefix, visited_fns).each do |m|
                 mounts << m unless mounts.includes?(m)
               end
             end
@@ -502,16 +510,9 @@ class RustAuthTagger < FrameworkTagger
           resolve_and_collect_fn_mounts(fn_text, file_path, prefix, visited_fns, mounts)
           break
         end
-      when "identifier", "scoped_identifier"
-        ident_text = Noir::TreeSitter.node_text(cur, source).strip
-        if bound = let_calls[ident_text]?
-          cursor = bound
-        elsif ident_text != "Router" && ident_text != "self"
-          resolve_and_collect_fn_mounts(ident_text, file_path, prefix, visited_fns, mounts)
-          break
-        else
-          break
-        end
+      when "identifier"
+        # A parameter or a binding: only a `let` in scope says what it holds.
+        cursor = let_value(cur, Noir::TreeSitter.node_text(cur, source), source)
       else
         break
       end
@@ -543,13 +544,12 @@ class RustAuthTagger < FrameworkTagger
     fn_content = read_file(entry.file_path)
     if fn_content
       Noir::TreeSitter.parse_rust(fn_content) do |root|
-        fn_let_calls = build_let_call_index(root, fn_content)
         Noir::TreeSitter.walk(root) do |n|
           if Noir::TreeSitter.node_type(n) == "function_item"
             if name_node = Noir::TreeSitter.field(n, "name")
               if Noir::TreeSitter.node_text(name_node, fn_content).lchop("r#") == entry.name
                 if body_node = Noir::TreeSitter.field(n, "body")
-                  scan_function_body_for_mounts(body_node, fn_content, entry.file_path, fn_let_calls, visited_fns, fn_mounts)
+                  scan_function_body_for_mounts(body_node, fn_content, entry.file_path, visited_fns, fn_mounts)
                 end
               end
             end
@@ -569,7 +569,6 @@ class RustAuthTagger < FrameworkTagger
     body : LibTreeSitter::TSNode,
     source : String,
     file_path : String,
-    let_calls : Hash(String, LibTreeSitter::TSNode),
     visited_fns : Set(String),
     mounts : Array({String, String}),
   )
@@ -587,7 +586,7 @@ class RustAuthTagger < FrameworkTagger
         if !args.empty? && (nest_pfx = string_literal_content(args[0], source))
           mounts << {"nest", nest_pfx} unless mounts.includes?({"nest", nest_pfx})
           if args.size >= 2
-            collect_router_mounts(args[1], source, file_path, let_calls, nest_pfx, visited_fns).each do |m|
+            collect_router_mounts(args[1], source, file_path, nest_pfx, visited_fns).each do |m|
               mounts << m unless mounts.includes?(m)
             end
           end
@@ -595,7 +594,7 @@ class RustAuthTagger < FrameworkTagger
       when "merge"
         args = named_call_args(n)
         if !args.empty?
-          collect_router_mounts(args[0], source, file_path, let_calls, "", visited_fns).each do |m|
+          collect_router_mounts(args[0], source, file_path, "", visited_fns).each do |m|
             mounts << m unless mounts.includes?(m)
           end
         end
