@@ -1,4 +1,5 @@
 require "../../engines/ruby_engine"
+require "../../../utils/ruby_inflector"
 
 module Analyzer::Ruby
   class Grape < RubyEngine
@@ -10,21 +11,50 @@ module Analyzer::Ruby
     # String#includes? scans over every file's content as a standalone
     # boolean gate. Folded into one precompiled union so it costs a single
     # PCRE2 match instead of up to two naive substring scans per file.
-    GRAPE_OR_MOUNT_MARKER_RE = Regex.union("Grape", "mount ")
+    GRAPE_OR_MOUNT_MARKER_RE = Regex.union("Grape", "mount ", "ActiveSupport::Concern")
 
     # Crystal recompiles an interpolated regex literal (`/^#{verb}.../`)
     # on every evaluation — ~11000x slower than a precompiled one — so
     # matching the verb DSL inside the per-line loop used to recompile
     # 14 regexes for every line of every Grape file. Build the per-verb
     # patterns once at load time instead. `_WITH_PATH` matches
-    # `get '/users' do` (capturing the path literal/symbol); `_BARE_DO`
-    # matches the path-less `get do` form.
+    # `get '/users' do` (capturing the path literal/symbol) and the
+    # path-less `get urgency: :low do` (options only); `_BARE_DO` matches
+    # the path-less `get do` form.
     GRAPE_VERB_WITH_PATH = GRAPE_VERBS.to_h do |verb|
-      {verb, /^#{verb}\b(?:\s+('[^']*'|"[^"]*"|:[^\s,]+))?(?:\s*,[^#]*?)?\s*do\b/}
+      {verb, /^#{verb}\b(?:\s+('[^']*'|"[^"]*"|:[^\s,]+))?(?:\s*,[^#]*?|\s+\w+:\s[^#]*?)?\s*do\b/}
     end
+
+    # A route or prefix statement whose options continue on the next line
+    # (`namespace 'conans/:name',` / `requirements: {...} do`).
+    GRAPE_CONTINUED_DSL = /^(?:resource|resources|namespace|group|segment|route_param|#{GRAPE_VERBS.join('|')})\b/
+    MAX_CONTINUATION    = 8
+
+    GRAPE_PREFIX_LITERAL = /^(?:resource|resources|namespace|group|segment)\s+['":]([\w\/\-:]+)[\'""]?(?:\s*,[^#]*?)?\s*do\b/
+    # `resource source_type.pluralize do` outside a static loop: the name is
+    # only known at runtime, so the segment becomes a `{source_type}`
+    # placeholder instead of vanishing from the path.
+    GRAPE_PREFIX_EXPR   = /^(?:resource|resources|namespace|group|segment)\s+([a-z_]\w*)(?:\.\w+[!?]?)*(?:\s*,[^#]*?)?\s*do\b/
+    GRAPE_INCLUDE       = /^include\s+((?:::)?[A-Z][\w:]*)\s*$/
+    GRAPE_CONCERN_EXT   = /^\s*extend\s+(?:::)?ActiveSupport::Concern\b/
+    GRAPE_CONCERN_ROUTE = /^\s*(?:resources?|namespace|group|segment|route_param|#{GRAPE_VERBS.join('|')})\b[^\n]*\bdo\b/m
+    GRAPE_MODULE_DEF    = /^\s*module\s+([A-Z][\w:]*)/
+
+    # `%w[a b].each do |x|`, `[:a, :b].each do |x|` and
+    # `{ "a" => 1, "b" => 2 }.each do |x, y|` over a literal receiver.
+    GRAPE_LOOP_OPENER = /^\s*(%[wi][\[\(\{][^\]\)\}]*[\]\)\}]|\[[^\]]*\]|\{.*\})\s*\.each(?:_with_index)?\s+do\s*\|\s*([a-z_]\w*)[^|]*\|\s*$/
+    # Unrolling is multiplicative and noir scans untrusted repos, so it is
+    # bounded (real Grape loops are a handful of literals, one level deep).
+    MAX_LOOP_DEPTH     =      2
+    MAX_LOOP_VALUES    =     50
+    MAX_LOOP_OUTPUT    = 20_000
     GRAPE_VERB_BARE_DO = GRAPE_VERBS.to_h do |verb|
       {verb, /^#{verb}\s+do\b/}
     end
+
+    @grape_concerns = {} of String => String
+    @used_concerns = Set(String).new
+    @used_concerns_mutex = Mutex.new
 
     def analyze
       include_callee = callees_needed?
@@ -39,14 +69,31 @@ module Analyzer::Ruby
       # would lack their `/api/v4` mount prefix. Build a cross-file index of
       # Grape classes + the prefix each one inherits through the mount graph.
       index = build_grape_index
+      @grape_concerns = index.concerns
+      concern_paths = index.concerns.values.to_set
 
       parallel_file_scan do |path|
         next unless path.ends_with?(".rb")
         next if ruby_non_production_path?(path)
+        # Concern routes are drawn where they are `include`d; see below.
+        next if concern_paths.includes?(path)
         content = ruby_source(path)
         next unless grape_api_file?(content, index.classes)
         mount_prefix = grape_file_mount_prefix(content, index)
         process_file(path, content, include_callee, mount_prefix)
+      end
+
+      # A concern no Grape file includes keeps the standalone read. Concerns
+      # another concern includes go last, so the outer one draws them under
+      # its prefix first.
+      nested = concern_paths.flat_map do |path|
+        ruby_source(path).each_line.compact_map { |line| line.strip.match(GRAPE_INCLUDE).try { |m| resolve_grape_concern(m[1]) } }.to_a
+      end.to_set
+      concern_paths.to_a.sort_by! { |path| nested.includes?(path) ? 1 : 0 }.each do |path|
+        next if @used_concerns_mutex.synchronize { @used_concerns.includes?(path) }
+        content = ruby_source(path)
+        next unless grape_api_file?(content, index.classes)
+        isolating_file_errors(path) { process_file(path, content, include_callee, grape_file_mount_prefix(content, index)) }
       end
 
       @result
@@ -57,7 +104,8 @@ module Analyzer::Ruby
     # aggregator(s) that `mount` it.
     record GrapeIndex,
       classes : Set(String),
-      inherited : Hash(String, String)
+      inherited : Hash(String, String),
+      concerns : Hash(String, String)
 
     # `class <Child> < <Super>` declaration matcher (single capture: Super).
     GRAPE_CLASS_DEF = /^\s*class\s+[A-Z][\w:]*\s*<\s*([:\w][\w:]*)/
@@ -77,6 +125,7 @@ module Analyzer::Ruby
       own_base = {} of String => String                # class -> its own prefix+version
       mounts = {} of String => Array({String, String}) # mounter class -> {mounted class, mount path}
       mounted = Set(String).new                        # classes mounted by someone
+      concerns = {} of String => String                # concern module -> its file
 
       all_files.each do |path|
         next unless path.ends_with?(".rb")
@@ -89,6 +138,11 @@ module Analyzer::Ruby
         # pre-pass to these two markers keeps it off the thousands of
         # unrelated `.rb` files in a large repo.
         next unless content.matches?(GRAPE_OR_MOUNT_MARKER_RE)
+        # Only concerns that draw routes: Rails model/controller concerns
+        # stay out of the index.
+        if content.includes?("ActiveSupport::Concern") && content.includes?("included do") && content.matches?(GRAPE_CONCERN_ROUTE)
+          grape_concern_name(content).try { |name| concerns.put_if_absent(name) { path } }
+        end
         next unless content.includes?("class ") && content.includes?("<")
 
         # Edges are collected for every `class X < Y`, but the
@@ -169,7 +223,36 @@ module Analyzer::Ruby
         end
       end
 
-      GrapeIndex.new(grape, inherited)
+      GrapeIndex.new(grape, inherited, concerns)
+    end
+
+    # The full constant of the module that `extend ActiveSupport::Concern`s
+    # (`API::Concerns::Shared`), from the `module` lines enclosing it by
+    # indentation.
+    private def grape_concern_name(content : String) : String?
+      stack = [] of {Int32, String}
+      content.each_line do |line|
+        indent = line.size - line.lstrip.size
+        if m = line.match(GRAPE_MODULE_DEF)
+          while (top = stack.last?) && top[0] >= indent
+            stack.pop
+          end
+          stack << {indent, m[1].lchop("::")}
+        elsif line.matches?(GRAPE_CONCERN_EXT)
+          return stack.empty? ? nil : stack.map(&.[1]).join("::")
+        end
+      end
+      nil
+    end
+
+    # The concern file an `include Name` names: the exact constant, else the
+    # one concern whose constant ends in `::Name` (a relative include).
+    # Nil when ambiguous, so the concern keeps its standalone read.
+    private def resolve_grape_concern(name : String) : String?
+      name = name.lchop("::")
+      return @grape_concerns[name] if @grape_concerns.has_key?(name)
+      found = @grape_concerns.select { |constant, _| constant.ends_with?("::#{name}") }
+      found.size == 1 ? found.first_value : nil
     end
 
     # `Grape::API` is absent from almost every `.rb` file in a large repo,
@@ -221,17 +304,25 @@ module Analyzer::Ruby
       parts.join("/")
     end
 
-    private def process_file(path : String, content : String, include_callee : Bool, mount_prefix : String = "") : Nil
-      prefix_segments = [] of String
+    # A concern's routes are drawn under the includer's prefix, so an
+    # `include` re-enters here with that context. `include_sites` (the
+    # `include` lines that led here) become extra code paths, so the guard
+    # tagger also reads the includer's `before` filters; they stop cycles.
+    private def process_file(path : String, content : String, include_callee : Bool, mount_prefix : String = "",
+                             class_prefix : String = "", version_prefix : String = "",
+                             outer_segments : Array(String) = [] of String, include_sites : Array(PathInfo) = [] of PathInfo) : Nil
+      prefix_segments = outer_segments.dup
       block_kinds = [] of Symbol
-      class_prefix = ""
-      version_prefix = ""
       pending_params = [] of String
       params_block_depth = 0
       last_endpoint : Endpoint? = nil
       lines = content.lines
+      # Statements as {text, source line index}; loop unrolling repeats lines.
+      stmts = expand_grape_loops(lines.map_with_index { |text, i| {text, i} })
+      skip_through = -1
 
-      lines.each_with_index do |raw_line, index|
+      stmts.each_with_index do |(raw_line, index), pos|
+        next if pos <= skip_through
         line = Noir::RubyCalleeExtractor.strip_comment(raw_line, preserve_strings: true)
         stripped = line.strip
         next if stripped.empty? || stripped.starts_with?('#')
@@ -242,7 +333,7 @@ module Analyzer::Ruby
           # A plain boolean let the first inner `end` close it early, leaking the
           # remaining `end`(s) to the main parser, which then popped the
           # enclosing namespace/resource prefix frame.
-          if stripped == "end" || stripped.starts_with?("end ") || stripped.starts_with?("end#")
+          if grape_end?(stripped)
             params_block_depth -= 1
             next if params_block_depth <= 0
           else
@@ -252,6 +343,20 @@ module Analyzer::Ruby
             end
           end
           next
+        end
+
+        # Join a statement whose options continue on the following lines;
+        # its `do` (where callees start) is on the last of them.
+        do_index = index
+        if stripped.ends_with?(',') && stripped.matches?(GRAPE_CONTINUED_DSL)
+          last = pos
+          while stripped.ends_with?(',') && last + 1 < stmts.size && last - pos < MAX_CONTINUATION
+            last += 1
+            piece = Noir::RubyCalleeExtractor.strip_comment(stmts[last][0], preserve_strings: true).strip
+            stripped = "#{stripped} #{piece}" unless piece.empty?
+          end
+          skip_through = last
+          do_index = stmts[last][1]
         end
 
         if stripped == "params do" || stripped.starts_with?("params do")
@@ -269,9 +374,23 @@ module Analyzer::Ruby
           next
         end
 
-        if m = stripped.match(/^(?:resource|resources|namespace|group|segment)\s+['":]([\w\/\-:]+)[\'""]?(?:\s*,[^#]*?)?\s*do\b/)
+        if m = stripped.match(GRAPE_PREFIX_LITERAL)
           prefix_segments << m[1].to_s
           block_kinds << :prefix
+          next
+        end
+
+        if m = stripped.match(GRAPE_PREFIX_EXPR)
+          prefix_segments << "{#{m[1]}}"
+          block_kinds << :prefix
+          next
+        end
+
+        if (m = stripped.match(GRAPE_INCLUDE)) && (concern = resolve_grape_concern(m[1])) &&
+           concern != path && include_sites.none?(&.path.==(concern)) && include_sites.size < 4
+          @used_concerns_mutex.synchronize { @used_concerns << concern }
+          sites = include_sites + [PathInfo.new(path, index + 1)]
+          process_file(concern, ruby_source(concern), include_callee, mount_prefix, class_prefix, version_prefix, prefix_segments, sites)
           next
         end
 
@@ -297,6 +416,7 @@ module Analyzer::Ruby
             raw_path = grape_literal_or_param_path(raw_match)
             ep_path = build_path(mount_prefix, class_prefix, version_prefix, prefix_segments, raw_path)
             details = Details.new(PathInfo.new(path, index + 1))
+            include_sites.each { |site| details.add_path(site) }
             endpoint = Endpoint.new(ep_path, verb.upcase, details)
 
             extract_path_params(ep_path).each do |param_name|
@@ -309,7 +429,7 @@ module Analyzer::Ruby
             end
             pending_params.clear
 
-            attach_do_block_callees(endpoint, lines, index, path) if include_callee
+            attach_do_block_callees(endpoint, lines, do_index, path) if include_callee
             @result << endpoint
             last_endpoint = endpoint
             block_kinds << :other unless stripped.match(/\bend\b/)
@@ -320,6 +440,7 @@ module Analyzer::Ruby
           if m = stripped.match(GRAPE_VERB_BARE_DO[verb])
             ep_path = build_path(mount_prefix, class_prefix, version_prefix, prefix_segments, "")
             details = Details.new(PathInfo.new(path, index + 1))
+            include_sites.each { |site| details.add_path(site) }
             endpoint = Endpoint.new(ep_path, verb.upcase, details)
 
             extract_path_params(ep_path).each do |param_name|
@@ -331,7 +452,7 @@ module Analyzer::Ruby
             end
             pending_params.clear
 
-            attach_do_block_callees(endpoint, lines, index, path) if include_callee
+            attach_do_block_callees(endpoint, lines, do_index, path) if include_callee
             @result << endpoint
             last_endpoint = endpoint
             block_kinds << :other unless stripped.match(/\bend\b/)
@@ -365,7 +486,7 @@ module Analyzer::Ruby
           block_kinds << :other
         end
 
-        if stripped == "end" || stripped.starts_with?("end ") || stripped.starts_with?("end#")
+        if grape_end?(stripped)
           popped = block_kinds.pop?
           if popped == :prefix && !prefix_segments.empty?
             prefix_segments.pop
@@ -425,7 +546,86 @@ module Analyzer::Ruby
       end
       joined = parts.reject(&.empty?).join("/")
       path = joined.empty? ? "/" : "/#{joined}"
-      path.gsub(/:([a-zA-Z_][\w]*)/) { "{#{$~[1]}}" }
+      # A `#{var}` no static loop resolved never matches a request as
+      # written; it is a runtime segment, like `:var`.
+      path.gsub(/#\{\s*([a-zA-Z_]\w*)[^}]*\}/) { "{#{$~[1]}}" }.gsub(/:([a-zA-Z_][\w]*)/) { "{#{$~[1]}}" }
+    end
+
+    private def grape_end?(stripped : String) : Bool
+      stripped == "end" || stripped.starts_with?("end ") || stripped.starts_with?("end#")
+    end
+
+    # Unrolls `.each do |var|` over a literal list into one copy of its body
+    # per value, substituting `#{var}` and a bare `resource var` (Rails'
+    # `expand_static_loops` does the same for routes.rb). Copies keep the
+    # source line they came from.
+    private def expand_grape_loops(stmts : Array({String, Int32}), depth : Int32 = 0) : Array({String, Int32})
+      return stmts if depth > MAX_LOOP_DEPTH
+      return stmts unless stmts.any? { |(text, _)| text.includes?(".each") && text.matches?(GRAPE_LOOP_OPENER) }
+
+      result = [] of {String, Int32}
+      pos = 0
+      while pos < stmts.size
+        text = stmts[pos][0]
+        m = text.includes?(".each") ? text.match(GRAPE_LOOP_OPENER) : nil
+        values = m.try { |md| grape_loop_values(md[1]) }
+        if m.nil? || values.nil? || values.size > MAX_LOOP_VALUES || result.size > MAX_LOOP_OUTPUT
+          result << stmts[pos]
+          pos += 1
+          next
+        end
+
+        open = 1
+        cursor = pos + 1
+        body = [] of {String, Int32}
+        while cursor < stmts.size
+          inner = Noir::RubyCalleeExtractor.strip_comment(stmts[cursor][0]).strip
+          if grape_end?(inner)
+            open -= 1
+            break if open == 0
+          else
+            open += ruby_do_block_open_delta(inner)
+          end
+          body << stmts[cursor]
+          cursor += 1
+        end
+
+        expanded = expand_grape_loops(body, depth + 1)
+        var = Regex.escape(m[2])
+        interpolated = Regex.new("\\#\\{\\s*#{var}(?:\\.(pluralize|to_s|to_sym))?\\s*\\}")
+        bare = Regex.new("^(\\s*(?:resource|resources|namespace|group|segment)\\s+)#{var}(?:\\.(pluralize|to_s|to_sym))?\\b")
+        values.each do |value|
+          break if result.size > MAX_LOOP_OUTPUT
+          plural = Noir::RubyInflector.pluralize(value)
+          expanded.each do |(line, origin)|
+            line = line.gsub(interpolated) { |_, md| md[1]? == "pluralize" ? plural : value }
+            line = line.sub(bare) { |_, md| "#{md[1]}'#{md[2]? == "pluralize" ? plural : value}'" }
+            result << {line, origin}
+          end
+        end
+        pos = cursor + 1 # past the loop's `end`
+      end
+      result
+    end
+
+    # The literal values a loop receiver yields to its first block variable:
+    # `%w[a b]`/`%i[a b]` words, a `[:a, "b"]` array of literals, or a hash
+    # literal's keys. Nil when any element is not a literal.
+    private def grape_loop_values(receiver : String) : Array(String)?
+      return receiver[3...-1].split(/\s+/).reject(&.empty?) if receiver.starts_with?('%')
+      if receiver.starts_with?('{')
+        keys = receiver.scan(/(?:\{|,)\s*(?:['"]([\w-]+)['"]\s*=>|:(\w+)\s*=>|(\w+):\s)/).map { |k| (k[1]? || k[2]? || k[3]?).to_s }
+        return keys.empty? ? nil : keys
+      end
+      values = [] of String
+      receiver[1...-1].split(',').each do |item|
+        item = item.strip
+        next if item.empty?
+        md = item.match(/\A(?::(\w+)|'([\w\/-]*)'|"([\w\/-]*)")\z/)
+        return unless md
+        values << (md[1]? || md[2]? || md[3]?).to_s
+      end
+      values.empty? ? nil : values
     end
 
     private def extract_path_params(raw : String) : Array(String)

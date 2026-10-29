@@ -1042,7 +1042,14 @@ class RubyAuthTagger < FrameworkTagger
     idx = index.filter_up[idx] if idx >= 0
     while idx >= 0
       stripped = index.stripped[idx]
-      scope.concat(ruby_block_lines(index, idx)) if filter_covers?(stripped, url)
+      if filter_covers?(stripped, url)
+        block = ruby_block_lines(index, idx)
+        scope.concat(block)
+        # `before do` / `authenticate!` / `end` reads as the one-line
+        # `before { authenticate! }`, but only when that first statement is
+        # an unconditional bare call (not `if x` / `authenticate! if x`).
+        scope << "before { #{block[1]} }" if block.size > 1 && block[0].matches?(/^before\s+do\s*$/) && block[1].matches?(/\A\w+[!?]?\z/)
+      end
       idx = index.prev_level[idx]
       idx = index.filter_up[idx] if idx >= 0
     end

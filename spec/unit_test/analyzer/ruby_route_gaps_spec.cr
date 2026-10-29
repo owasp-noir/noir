@@ -371,6 +371,108 @@ describe "Ruby route gaps" do
     param_names(find_ep(endpoints, "POST", "/api/users"), "json").should eq(%w[name])
   end
 
+  it "reads GitLab's Grape shapes: option-only verbs, continued namespaces, loops and concerns (#3317)" do
+    endpoints = scan_ruby_tree({
+      "Gemfile"        => %(source "https://rubygems.org"\ngem "grape"\n),
+      "app/api/api.rb" => <<-RUBY,
+        class API < Grape::API
+          prefix :api
+          version 'v4', using: :path
+          mount Things
+          mount Pkgs
+        end
+        RUBY
+      "app/api/things.rb" => <<-'RUBY',
+        class Things < Grape::API
+          resource :things do
+            namespace ':id/files' do
+              get urgency: :low do
+                present []
+              end
+              delete urgency: :low do
+                status 204
+              end
+            end
+            namespace 'conans/:package_name',
+              requirements: { package_name: /.+/ } do
+              get 'search' do
+                present []
+              end
+            end
+          end
+          { "group" => :groups, "project" => :projects }.each do |source_type, category|
+            resource source_type.pluralize, requirements: {} do
+              get ":id/members" do
+              end
+            end
+          end
+          [:issues, :snippets].each do |kind|
+            get ":id/#{kind}/notes" do
+            end
+          end
+          [Issue, Snippet].each do |model|
+            resource model.name.underscore do
+              get ":id/#{models_path}/discussions" do
+              end
+            end
+          end
+        end
+        RUBY
+      # A same-named Rails concern with no routes must not capture the include.
+      "app/models/concerns/shared.rb" => <<-RUBY,
+        module Shared
+          extend ActiveSupport::Concern
+          included do
+            has_many :things
+          end
+        end
+        RUBY
+      "app/api/concerns/shared.rb" => <<-RUBY,
+        module API
+          module Concerns
+            module Shared
+              extend ActiveSupport::Concern
+              included do
+                namespace 'users' do
+                  params do
+                    optional :ignorecase, type: Boolean
+                  end
+                  get 'authenticate' do
+                  end
+                end
+              end
+            end
+          end
+        end
+        RUBY
+      "app/api/pkgs.rb" => <<-RUBY,
+        class Pkgs < Grape::API
+          before { authenticate! }
+
+          namespace 'pkgs/:id',
+            # the id may contain dots
+            requirements: { id: /.+/ } do
+            include Concerns::Shared
+          end
+        end
+        RUBY
+    })
+
+    find_ep(endpoints, "GET", "/api/v4/things/{id}/files")
+    find_ep(endpoints, "DELETE", "/api/v4/things/{id}/files")
+    find_ep(endpoints, "GET", "/api/v4/things/conans/{package_name}/search")
+    find_ep(endpoints, "GET", "/api/v4/groups/{id}/members")
+    find_ep(endpoints, "GET", "/api/v4/projects/{id}/members")
+    find_ep(endpoints, "GET", "/api/v4/{id}/issues/notes")
+    find_ep(endpoints, "GET", "/api/v4/{id}/snippets/notes")
+    find_ep(endpoints, "GET", "/api/v4/{model}/{id}/{models_path}/discussions")
+    users = find_ep(endpoints, "GET", "/api/v4/pkgs/{id}/users/authenticate")
+    users.details.code_paths.map { |info| File.basename(info.path) }.should eq(["shared.rb", "pkgs.rb"])
+    users.details.code_paths.first.path.should end_with("api/concerns/shared.rb")
+    endpoints.any?(&.url.includes?("\#{")).should be_false
+    endpoints.none? { |e| e.url == "/users/authenticate" }.should be_true
+  end
+
   it "prefixes modular Sinatra apps with their config.ru mapping" do
     endpoints = scan_ruby_tree({
       "Gemfile"   => %(source "https://rubygems.org"\ngem "sinatra"\n),
