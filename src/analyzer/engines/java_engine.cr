@@ -381,9 +381,15 @@ module Analyzer::Java
         # Built only when the extractor descends into a class of this file.
         scope = nil.as(Proc(Noir::TreeSitterJaxRsExtractor::IndexScope)?)
         if file != path && dto_builder && bean_cache
+          built = nil.as(Noir::TreeSitterJaxRsExtractor::IndexScope?)
           scope = Proc(Noir::TreeSitterJaxRsExtractor::IndexScope).new do
+            if cached = built
+              next cached
+            end
             package = Noir::TreeSitterJavaParameterExtractor.extract_package_name(body)
-            {dto_builder.build_for(file, body), bean_index_for(file, body, package, bean_cache)}
+            value = {dto_builder.build_for(file, body), bean_index_for(file, body, package, bean_cache)}
+            built = value
+            value
           end
         end
         class_names.each do |name|
@@ -967,12 +973,16 @@ module Analyzer::Java
       return index unless strategy = default_json_naming(path)
       index.transform_values do |fields|
         fields.map do |field|
-          field.json_name = Noir::JacksonNaming.translate(field.name, strategy) if field.json_name == field.name
+          field.json_name = Noir::JacksonNaming.translate(field.name, strategy) unless field.json_name_fixed?
           field
         end
       end
     end
 
+    # Annotations Spring itself binds or validates from the request; a
+    # resolver that checks them does not make them server-filled.
+    SPRING_BINDING_ANNOTATIONS = Set{"Valid", "Validated", "ModelAttribute", "RequestBody", "RequestParam",
+                                     "RequestHeader", "RequestPart", "PathVariable", "CookieValue", "MatrixVariable"}
     RESOLVER_SUPPORTS_RE = /\b(?:has|get)ParameterAnnotation\s*\(\s*(?:[\w.]+\.)?(\w+)\s*(?:\.\s*class|::\s*class(?:\s*\.\s*java)?)\b/
 
     # Parameter annotations a custom `HandlerMethodArgumentResolver` binds
@@ -987,9 +997,9 @@ module Analyzer::Java
         (get_files_by_extension(".java") + get_files_by_extension(".kt")).each do |file|
           next if JavaEngine.test_path?(base_relative_path(file))
           content = read_file_content(file)
-          next unless content.includes?("ParameterAnnotation")
+          next unless content.includes?("ParameterAnnotation") && content.includes?("HandlerMethodArgumentResolver")
           names = by_base[configured_base_for(file)] ||= Set(String).new
-          content.scan(RESOLVER_SUPPORTS_RE) { |match| names << match[1] }
+          content.scan(RESOLVER_SUPPORTS_RE) { |match| names << match[1] unless SPRING_BINDING_ANNOTATIONS.includes?(match[1]) }
         end
         by_base
       end

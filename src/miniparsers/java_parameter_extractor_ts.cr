@@ -120,6 +120,9 @@ module Noir
       # Wire name in a JSON body: `@JsonProperty("display_name")`, else
       # `name` (or its `@JsonNaming` translation).
       property json_name : String
+      # The JSON key is settled by `@JsonProperty` or the class `@JsonNaming`;
+      # the module-wide Jackson default leaves it alone.
+      property? json_name_fixed : Bool = false
       # Declared Java type as written (`Pager`, `MultipartFile[]`), "" when unknown.
       getter type_name : String
       # Jackson `@JsonUnwrapped(prefix, suffix)`: the field has no key of its
@@ -135,6 +138,7 @@ module Noir
       def initialize(@name, @access_modifier, @has_setter, @init_value, json_name : String? = nil, @type_name = "",
                      @unwrap = nil, @json_ignored = false)
         @json_name = json_name || @name
+        @json_name_fixed = !json_name.nil?
       end
 
       # Jackson renames apply to JSON bodies only; form/query binding goes
@@ -202,13 +206,13 @@ module Noir
       results
     end
 
-    # Apply a Jackson naming strategy to the fields that have no explicit
-    # `@JsonProperty`. ponytail: "explicit" is `json_name != name`, so a
-    # `@JsonProperty` that repeats the Java name is still translated.
+    # Apply a class-level Jackson naming strategy to the fields that have no
+    # explicit `@JsonProperty`, and mark every field settled either way.
     def apply_json_naming(fields : Array(FieldInfo), strategy : String?) : Array(FieldInfo)
       return fields unless strategy
       fields.map do |field|
-        field.json_name = Noir::JacksonNaming.translate(field.name, strategy) if field.json_name == field.name
+        field.json_name = Noir::JacksonNaming.translate(field.name, strategy) unless field.json_name_fixed?
+        field.json_name_fixed = true
         field
       end
     end

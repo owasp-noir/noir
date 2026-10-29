@@ -19,6 +19,10 @@ describe Noir::JacksonNaming do
     Noir::JacksonNaming.translate("userURL", "snakecase").should eq("user_url")
     Noir::JacksonNaming.translate("userId", "uppersnakecase").should eq("USER_ID")
     Noir::JacksonNaming.translate("userId", "kebabcase").should eq("user-id")
+    # Kebab / lower-dot split an acronym before its last capital; snake does not.
+    Noir::JacksonNaming.translate("userURLValue", "kebabcase").should eq("user-url-value")
+    Noir::JacksonNaming.translate("userURLValue", "lowerdotcase").should eq("user.url.value")
+    Noir::JacksonNaming.translate("userURLValue", "snakecase").should eq("user_urlvalue")
     Noir::JacksonNaming.translate("userId", "lowerdotcase").should eq("user.id")
     Noir::JacksonNaming.translate("userId", "lowercase").should eq("userid")
     Noir::JacksonNaming.translate("userId", "uppercamelcase").should eq("UserId")

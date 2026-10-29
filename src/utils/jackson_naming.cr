@@ -26,8 +26,8 @@ module Noir
 
     def translate(name : String, strategy : String) : String
       case strategy
-      when "snakecase"      then separated(name, '_')
-      when "uppersnakecase" then separated(name, '_').upcase
+      when "snakecase"      then snake(name)
+      when "uppersnakecase" then snake(name).upcase
       when "kebabcase"      then separated(name, '-')
       when "lowerdotcase"   then separated(name, '.')
       when "lowercase"      then name.downcase
@@ -36,15 +36,15 @@ module Noir
       end
     end
 
-    # Jackson's `NamingBase.translateLowerCaseWithSeparator`: a separator
-    # before each run of capitals, then lower case (`userURL` -> `user_url`).
-    private def separated(name : String, separator : Char) : String
+    # Jackson's `SnakeCaseStrategy`: `_` before each run of capitals, then
+    # lower case (`userURLValue` -> `user_urlvalue`).
+    private def snake(name : String) : String
       String.build do |io|
         last = '\0'
         prev_translated = false
         name.each_char do |char|
           if char.uppercase?
-            io << separator if !prev_translated && last != '\0' && last != separator
+            io << '_' if !prev_translated && last != '\0' && last != '_'
             char = char.downcase
             prev_translated = true
           else
@@ -54,6 +54,26 @@ module Noir
           last = char
         end
       end
+    end
+
+    # Jackson's `NamingBase.translateLowerCaseWithSeparator` (kebab, lower
+    # dot): the last capital of an acronym starts the next word
+    # (`userURLValue` -> `user-url-value`).
+    private def separated(name : String, separator : Char) : String
+      chars = [] of Char
+      upper_count = 0
+      name.each_char_with_index do |char, index|
+        lower = char.downcase
+        if lower == char
+          chars.insert(chars.size - 1, separator) if upper_count > 1
+          upper_count = 0
+        else
+          chars << separator if upper_count.zero? && index > 0
+          upper_count += 1
+        end
+        chars << lower
+      end
+      chars.join
     end
   end
 end

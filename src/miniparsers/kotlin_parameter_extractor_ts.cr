@@ -103,6 +103,9 @@ module Noir
       # Wire name in a JSON body: `@JsonProperty("display_name")`, else
       # `name` (or its `@JsonNaming` translation).
       property json_name : String
+      # The JSON key is settled by `@JsonProperty` or the class `@JsonNaming`;
+      # the module-wide Jackson default leaves it alone.
+      property? json_name_fixed : Bool = false
 
       def initialize(@name, @access_modifier, @has_setter, @init_value,
                      @null_validation_groups = [] of String, @server_managed = false,
@@ -110,6 +113,7 @@ module Noir
                      @init_string_literal = false,
                      json_name : String? = nil)
         @json_name = json_name || @name
+        @json_name_fixed = !json_name.nil?
       end
 
       # Jackson renames apply to JSON bodies only.
@@ -174,13 +178,13 @@ module Noir
       results
     end
 
-    # Apply a Jackson naming strategy to the fields that have no explicit
-    # `@JsonProperty`. ponytail: "explicit" is `json_name != name`, so a
-    # `@JsonProperty` that repeats the Java name is still translated.
+    # Apply a class-level Jackson naming strategy to the fields that have no
+    # explicit `@JsonProperty`, and mark every field settled either way.
     def apply_json_naming(fields : Array(FieldInfo), strategy : String?) : Array(FieldInfo)
       return fields unless strategy
       fields.map do |field|
-        field.json_name = Noir::JacksonNaming.translate(field.name, strategy) if field.json_name == field.name
+        field.json_name = Noir::JacksonNaming.translate(field.name, strategy) unless field.json_name_fixed?
+        field.json_name_fixed = true
         field
       end
     end
@@ -190,8 +194,25 @@ module Noir
 
     private def json_naming_of(decl : LibTreeSitter::TSNode, source : String) : String?
       text = Noir::TreeSitter.node_text(decl, source)
-      header = text[0, text.index(CLASS_KEYWORD_RE) || 0]
-      Noir::JacksonNaming.annotation_strategy(header)
+      # `@Schema(description = "request class")` must not end the header.
+      masked = text.gsub(/"(?:[^"\\]|\\.)*"/) { |literal| " " * literal.size }
+      header = text[0, masked.index(CLASS_KEYWORD_RE) || 0]
+      Noir::JacksonNaming.annotation_strategy(header) || Noir::JacksonNaming.annotation_strategy(leading_annotation_lines(decl, source))
+    end
+
+    # tree-sitter-kotlin leaves an annotation on its own line outside the
+    # following `data class` node when another declaration precedes it, so
+    # also read the annotation/comment lines directly above the node.
+    private def leading_annotation_lines(decl : LibTreeSitter::TSNode, source : String) : String
+      before = source.byte_slice(0, LibTreeSitter.ts_node_start_byte(decl).to_i)
+      kept = [] of String
+      before.lines.reverse_each do |line|
+        stripped = line.strip
+        break unless stripped.empty? || stripped.starts_with?('@') || stripped.starts_with?("//") ||
+                     stripped.starts_with?("/*") || stripped.starts_with?('*')
+        kept << stripped
+      end
+      kept.reverse.join('\n')
     end
 
     # Map each class to the simple name of its superCLASS (the supertype
