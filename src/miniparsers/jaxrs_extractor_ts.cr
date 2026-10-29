@@ -98,7 +98,10 @@ module Noir
       "multipartformdatainput", "multipartinput", "formdatamultipart",
     }
 
-    alias SourceEntry = Tuple(String, String) # file_path, source
+    # A file's own DTO and `@BeanParam` indexes, built from its imports.
+    alias IndexScope = Tuple(Hash(String, Array(TreeSitterJavaParameterExtractor::FieldInfo)), Hash(String, Array(Param)))
+    # file_path, source, and (lazily) that file's own `IndexScope`.
+    alias SourceEntry = Tuple(String, String, Proc(IndexScope)?)
 
     struct Route
       getter verb : String
@@ -385,9 +388,17 @@ module Noir
               constants: local_constants, subresource_sources: subresource_sources, current_file: current_file,
               visited: local_visited, custom_verb_annotations: custom_verb_annotations)
           elsif source_entry = subresource_sources[return_type]?
-            subresource_path, subresource_source = source_entry
+            subresource_path, subresource_source, own_scope = source_entry
+            # The sub-resource's DTO and bean types resolve through its own
+            # file's imports, not the parent resource's (#3271).
+            sub_dto_index, sub_bean_index = dto_index, bean_index
+            if own_scope
+              own_dto, own_bean = own_scope.call
+              sub_dto_index = dto_index.merge(own_dto)
+              sub_bean_index = bean_index.merge(own_bean)
+            end
             collect_cross_file_subresource(return_type, subresource_path, subresource_source,
-              full_path, method_consumes, dto_index, bean_index, routes, include_callees,
+              full_path, method_consumes, sub_dto_index, sub_bean_index, routes, include_callees,
               subresource_sources, local_visited, custom_verb_annotations)
           end
           next
@@ -443,7 +454,7 @@ module Noir
             current_file: current_file, visited: visited, method_excludes: method_excludes,
             custom_verb_annotations: custom_verb_annotations, impl: {decl, source, current_file})
         elsif source_entry = subresource_sources[interface_name]?
-          interface_source_path, interface_source = source_entry
+          interface_source_path, interface_source, _ = source_entry
           collect_cross_file_interface(interface_name, interface_source_path, interface_source,
             class_path, class_consumes, dto_index, bean_index, routes, include_callees,
             subresource_sources, visited, method_excludes, custom_verb_annotations, {decl, source, current_file})
@@ -484,7 +495,7 @@ module Noir
           current_file: current_file, visited: visited, method_excludes: method_excludes,
           custom_verb_annotations: custom_verb_annotations, impl: {decl, source, current_file})
       elsif source_entry = subresource_sources[super_name]?
-        super_source_path, super_source = source_entry
+        super_source_path, super_source, _ = source_entry
         collect_cross_file_superclass(super_name, super_source_path, super_source,
           class_path, class_consumes, dto_index, bean_index, routes, include_callees,
           subresource_sources, visited, method_excludes, custom_verb_annotations, {decl, source, current_file})

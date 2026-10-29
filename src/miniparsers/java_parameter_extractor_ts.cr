@@ -6,6 +6,7 @@ require "./import_graph"
 require "./java_route_extractor_ts"
 require "../utils/text_file"
 require "../utils/jvm_literal"
+require "../utils/jackson_naming"
 
 module Noir
   # Tree-sitter-backed parameter extractor for Java/Spring.
@@ -116,8 +117,9 @@ module Noir
       getter access_modifier : String # "public", "private", "protected", ""
       getter? has_setter : Bool
       getter init_value : String # "" when no initializer
-      # Wire name in a JSON body: `@JsonProperty("display_name")`, else `name`.
-      getter json_name : String
+      # Wire name in a JSON body: `@JsonProperty("display_name")`, else
+      # `name` (or its `@JsonNaming` translation).
+      property json_name : String
       # Declared Java type as written (`Pager`, `MultipartFile[]`), "" when unknown.
       getter type_name : String
       # Jackson `@JsonUnwrapped(prefix, suffix)`: the field has no key of its
@@ -179,7 +181,7 @@ module Noir
         body = Noir::TreeSitter.field(decl, "body")
         next unless body
         lombok_setters = lombok_field_binding?(decl, source)
-        fields = collect_class_fields(body, source, lombok_setters)
+        fields = apply_json_naming(collect_class_fields(body, source, lombok_setters), json_naming_of(decl, source))
         results[class_name] = fields unless fields.empty?
       end
       # Java records: the header components ARE the bindable fields (a
@@ -193,11 +195,27 @@ module Noir
           name_node = Noir::TreeSitter.field(decl, "name")
           next unless name_node
           class_name = Noir::TreeSitter.node_text(name_node, source)
-          fields = collect_record_fields(decl, source)
+          fields = apply_json_naming(collect_record_fields(decl, source), json_naming_of(decl, source))
           results[class_name] = fields unless fields.empty? || results.has_key?(class_name)
         end
       end
       results
+    end
+
+    # Apply a Jackson naming strategy to the fields that have no explicit
+    # `@JsonProperty`. ponytail: "explicit" is `json_name != name`, so a
+    # `@JsonProperty` that repeats the Java name is still translated.
+    def apply_json_naming(fields : Array(FieldInfo), strategy : String?) : Array(FieldInfo)
+      return fields unless strategy
+      fields.map do |field|
+        field.json_name = Noir::JacksonNaming.translate(field.name, strategy) if field.json_name == field.name
+        field
+      end
+    end
+
+    private def json_naming_of(decl : LibTreeSitter::TSNode, source : String) : String?
+      return unless ann = annotation_node_on(decl, source, "JsonNaming")
+      Noir::JacksonNaming.annotation_strategy(Noir::TreeSitter.node_text(ann, source))
     end
 
     private def walk_record_declarations(node : LibTreeSitter::TSNode, &block : LibTreeSitter::TSNode ->)
@@ -894,6 +912,16 @@ module Noir
       Noir::TreeSitter.each_named_child(fparams) do |fp|
         next unless Noir::TreeSitter.node_type(fp) == "formal_parameter"
         current_format = emit_param_for(fp, method, source, verb, current_format, parameter_format, class_fields, constants, current_class, params, model_attributes, injected_annotations, converted_types, disallowed_fields)
+      end
+
+      # A JSON body and a form body cannot share one request: a value Spring
+      # binds implicitly next to a JSON `@RequestBody` (`create(type: String,
+      # @RequestBody req: Ev)`) can only arrive on the query string.
+      if params.any? { |param| param.param_type == "json" }
+        params.map! do |param|
+          param.param_type = "query" if param.param_type == "form"
+          param
+        end
       end
 
       # Collapse duplicate `(name, type)` params. A handler binding two

@@ -728,7 +728,7 @@ module Analyzer::Kotlin
           end
         next if routes.empty? && implementations.empty? && stomp_routes.empty? && graphql_routes.empty?
 
-        dto_index = dto_builder.build_for_with_root(path, content, root)
+        dto_index = with_default_json_naming(dto_builder.build_for_with_root(path, content, root), path)
         method_nodes = Noir::TreeSitterKotlinParameterExtractor.index_functions_from(root, content)
         file_callees = Noir::KotlinCalleeExtractor::FileCallees.new(root, content, path)
 
@@ -739,7 +739,8 @@ module Analyzer::Kotlin
           parameters =
             if method
               Noir::TreeSitterKotlinParameterExtractor.extract_method_parameters_from_method(
-                method, content, "POST", "json", dto_index, string_constants, local_string_constants || Hash(String, String).new
+                method, content, "POST", "json", dto_index, string_constants, local_string_constants || Hash(String, String).new,
+                resolver_injected_annotations(path)
               )
             else
               [] of Param
@@ -826,12 +827,13 @@ module Analyzer::Kotlin
           parameters =
             if method
               Noir::TreeSitterKotlinParameterExtractor.extract_method_parameters_from_method(
-                method, content, format_verb, parameter_format, dto_index, string_constants, local_string_constants || Hash(String, String).new
+                method, content, format_verb, parameter_format, dto_index, string_constants, local_string_constants || Hash(String, String).new,
+                resolver_injected_annotations(path)
               )
             else
               Noir::TreeSitterKotlinParameterExtractor.extract_method_parameters_from(
                 root, content, route.class_name, route.method_name, format_verb, parameter_format, dto_index,
-                string_constants, local_string_constants || Hash(String, String).new
+                string_constants, local_string_constants || Hash(String, String).new, resolver_injected_annotations(path)
               )
             end
           if route.handler_reference && method
@@ -923,7 +925,7 @@ module Analyzer::Kotlin
           interface_path = pairs.first[1].path
 
           Noir::TreeSitter.parse_kotlin(interface_source) do |interface_root|
-            interface_dto_index = dto_builder.build_for_with_root(interface_path, interface_source, interface_root)
+            interface_dto_index = with_default_json_naming(dto_builder.build_for_with_root(interface_path, interface_source, interface_root), interface_path)
 
             pairs.each do |implementation, entry|
               entry_route = entry.route
@@ -935,7 +937,7 @@ module Analyzer::Kotlin
               parameters = Noir::TreeSitterKotlinParameterExtractor.extract_method_parameters_from(
                 interface_root, interface_source, entry_route.class_name, entry_route.method_name,
                 entry_route.verb, parameter_format, interface_dto_index,
-                string_constants, local_string_constants || Hash(String, String).new
+                string_constants, local_string_constants || Hash(String, String).new, resolver_injected_annotations(interface_path)
               )
 
               base_path = webflux_base_path
@@ -1053,7 +1055,7 @@ module Analyzer::Kotlin
       endpoint.details.add_path(PathInfo.new(entry.path, entry.line))
 
       Noir::TreeSitter.parse_kotlin(entry.source) do |handler_root|
-        handler_dto_index = dto_builder.build_for_with_root(entry.path, entry.source, handler_root)
+        handler_dto_index = with_default_json_naming(dto_builder.build_for_with_root(entry.path, entry.source, handler_root), entry.path)
         method_nodes = Noir::TreeSitterKotlinParameterExtractor.index_functions_from(handler_root, entry.source)
         if method = method_nodes["#{entry.class_name}##{entry.method_name}"]?
           Noir::TreeSitterKotlinParameterExtractor.extract_server_request_parameters_from_method(
