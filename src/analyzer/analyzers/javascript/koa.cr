@@ -71,10 +71,11 @@ module Analyzer::Javascript
       result
     end
 
-    KOA_USE_CALL_RE   = /(\w+)\.use\s*\(/
-    KOA_PREFIX_ARG_RE = /\A['"]([^'"]+)['"]\z/
-    KOA_ROUTES_ARG_RE = /\A(\w+)\.routes\s*\(\s*\)\z/
-    KOA_BARE_ARG_RE   = /\A(\w+)\z/
+    KOA_USE_CALL_RE     = /(\w+)\.use\s*\(/
+    KOA_PREFIX_ARG_RE   = /\A['"]([^'"]+)['"]\z/
+    KOA_ROUTES_ARG_RE   = /\A(\w+)\.routes\s*\(\s*\)\z/
+    KOA_BARE_ARG_RE     = /\A(\w+)\z/
+    KOA_FACTORY_CALL_RE = /\b(?:const|let|var)\s+(\w+)\s*=\s*(?:await\s+)?(\w+)\s*\(/
     # koa-mount: `app.use(mount('/api', api))`, `app.use(mount(routes))`.
     KOA_MOUNT_ARG_RE = /\A\w*[mM]ount\s*\(\s*(?:['"]([^'"]*)['"]\s*,\s*)?(\w+)\s*\)\z/
     # `const api = new Router({ prefix: '/api' })`
@@ -130,6 +131,15 @@ module Analyzer::Javascript
           (m[1]? || m[2]).split(',').each do |item|
             parts = item.strip.split(/\s*:\s*|\s+as\s+/)
             named_imports[parts.last] = {resolved, parts.first} if parts.all?(&.matches?(/\A[A-Za-z_$][\w$]*\z/))
+          end
+        end
+        # A router returned by an imported factory (`const items =
+        # initItemsRouter()`) is that factory's router.
+        content.scan(KOA_FACTORY_CALL_RE) do |m|
+          if file = imports[m[2]]?
+            imports[m[1]] = file
+          elsif named = named_imports[m[2]]?
+            named_imports[m[1]] = named
           end
         end
 

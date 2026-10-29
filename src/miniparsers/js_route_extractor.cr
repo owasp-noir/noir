@@ -3,6 +3,7 @@ require "../miniparsers/js_callee_extractor"
 require "../miniparsers/js_handler_resolver"
 require "../minilexers/js_lexer"
 require "../miniparsers/js_parser"
+require "../miniparsers/import_graph"
 require "../models/code_locator"
 require "../utils/url_path"
 require "../utils/js_literal_scanner"
@@ -114,7 +115,10 @@ module Noir
         # `this.route('GET', '/p')`), so a comment inside a call would hide
         # the literal. Blanking keeps every line and column.
         content = strip_js_comments(content)
-        parser = JSParser.new(content, this_receiver_ok: content_matches?(content, SERVER_EVIDENCE_MARKER))
+        # `${BASE_URL}/items` or `BASE_URL + '/items'`, `BASE_URL` imported
+        # from `./config`.
+        constants = content.includes?("${") || content.includes?('+') ? file_string_constants(file_path, content) : nil
+        parser = JSParser.new(content, this_receiver_ok: content_matches?(content, SERVER_EVIDENCE_MARKER), constants: constants)
         route_patterns = parser.parse_routes
 
         if debug && parser.hit_max_iterations?
@@ -1750,6 +1754,51 @@ module Noir
         end
       end
       bindings
+    end
+
+    # `const NAME = 'lit'`, and `process.env.X || 'lit'` (`??` too): the
+    # literal is what the app serves when the variable is unset.
+    # The literal must end the expression: `'/api/' + version` is no constant.
+    STRING_CONST_RE = /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*(?::\s*[\w.]+\s*)?=\s*(?:process\.env(?:\.\w+|\[['"][^'"]+['"]\])\s*(?:\|\||\?\?)\s*)?(?:'([^'\n]*)'|"([^"\n]*)"|`([^`$]*)`)(?:\s+as\s+const)?(?=\s*(?:[;,\n]|\z))/
+    # `import { A, B as C } from './x'`, `const { A, B: C } = require('./x')`.
+    NAMED_RELATIVE_IMPORT_RE = /\bimport\s*(?:[\w$]+\s*,\s*)?\{([^}]*)\}\s*from\s*['"](\.[^'"]*)['"]|\b(?:const|let|var)\s*\{([^}]*)\}\s*=\s*require\s*\(\s*['"](\.[^'"]*)['"]\s*\)/
+
+    def self.string_constants(content : String) : Hash(String, String)
+      constants = Hash(String, String).new
+      content.scan(STRING_CONST_RE) { |m| constants[m[1]] = m[2]? || m[3]? || m[4] }
+      constants
+    end
+
+    # The file's own string constants plus those it imports by name from a
+    # relative module (`import { BASE_URL } from './config'`); local wins.
+    def self.file_string_constants(file_path : String, content : String) : Hash(String, String)
+      constants = Hash(String, String).new
+      if content.includes?('{') && (content.includes?("from") || content.includes?("require"))
+        content.scan(NAMED_RELATIVE_IMPORT_RE) do |m|
+          names = m[1]? || m[3]
+          target = Noir::ImportGraph.resolve_relative_import(file_path, m[2]? || m[4]) || next
+          exported = string_constants(stripped_source(target))
+          names.split(',').each do |item|
+            parts = item.strip.split(/\s*:\s*|\s+as\s+/)
+            value = exported[parts.first]? || next
+            constants[parts.last] = value
+          end
+        rescue File::Error | IO::Error
+        end
+      end
+      constants.merge!(string_constants(content))
+    end
+
+    # Substitutes every `${NAME}` that `constants` knows; the rest stay.
+    def self.resolve_template(template : String, constants : Hash(String, String)) : String
+      return template unless template.includes?("${")
+      template.gsub(/\$\{\s*([A-Za-z_$][\w$]*)\s*\}/) { |whole, m| constants[m[1]]? || whole }
+    end
+
+    # A template-literal mount path (`` `/${rootPath}` ``) as a rooted path.
+    def self.resolve_mount_template(template : String, file_path : String, content : String) : String
+      return template unless template.includes?("${")
+      "/#{resolve_template(template, file_string_constants(file_path, content))}".squeeze('/')
     end
 
     # Pushes mount prefixes along `{parent, prefix, child}` edges into

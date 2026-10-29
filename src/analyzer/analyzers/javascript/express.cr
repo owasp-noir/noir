@@ -178,7 +178,7 @@ module Analyzer::Javascript
       callees
     end
 
-    USE_PATH_RE = /\b[A-Za-z_$][\w$]*\.use\s*\(\s*['"]([^'"]+)['"]\s*,/
+    USE_PATH_RE = /\b[A-Za-z_$][\w$]*\.use\s*\(\s*(?:['"]([^'"]+)['"]|`([^`]+)`)\s*,/
 
     # Deliberate exception to "no name lists": package-provided serving
     # factories (`swaggerUi.serve`, `express.static`, `serveIndex`, …) have no
@@ -205,6 +205,7 @@ module Analyzer::Javascript
       prefixes = [""] if prefixes.empty?
 
       content.scan(USE_PATH_RE) do |m|
+        raw_path = m[1]? || Noir::JSRouteExtractor.resolve_mount_template(m[2], path, content)
         call_start = m.begin(0)
         paren_open = content.index('(', call_start) || next
         paren_close = Noir::JSRouteExtractor.find_matching_paren(content, paren_open) || next
@@ -214,7 +215,7 @@ module Analyzer::Javascript
         line = line_number_for_index(content, call_start)
         # `/ftp(?!/quarantine)/:file`: a lookaround only constrains the
         # segment, so `trace "GET /ftp/x"` should land on `/ftp/:file`.
-        mount_path = m[1].gsub(/\(\?[!=<][^)]*\)/, "")
+        mount_path = raw_path.gsub(/\(\?[!=<][^)]*\)/, "")
 
         if methods = package_serving_methods(args[1..])
           prefixes.each do |prefix|
