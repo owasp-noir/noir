@@ -48,8 +48,17 @@ class EndpointOptimizer
     "go.mod",
     "Cargo.toml",
     "pyproject.toml",
+    "requirements.txt",
+    "setup.py",
+    "setup.cfg",
+    "Pipfile",
     "mix.exs",
   }
+
+  # A bare `BUILD` file is not a project. Every Bazel package has one, so
+  # treating the filename as a manifest would split one app per directory.
+  # The directory counts only when the file invokes a `*_binary` or `*_image` rule.
+  BAZEL_DEPLOYABLE_RE = /\b[A-Za-z_]\w*_(?:binary|image)\s*\(/
 
   def initialize(@logger : NoirLogger, @options : Hash(String, YAML::Any))
     @pvalue_rules = initialize_pvalue_rules
@@ -715,7 +724,7 @@ class EndpointOptimizer
       dir = start_dir
 
       while dir && !dir.empty? && dir != "."
-        if PROJECT_MANIFEST_FILES.any? { |manifest| File.exists?(File.join(dir, manifest)) }
+        if PROJECT_MANIFEST_FILES.any? { |manifest| File.exists?(File.join(dir, manifest)) } || bazel_deployable_dir?(dir)
           scope = Noir::PathScope.expand(dir)
           break
         end
@@ -734,6 +743,16 @@ class EndpointOptimizer
       end
 
       scope
+    end
+  end
+
+  private def bazel_deployable_dir?(dir : String) : Bool
+    {"BUILD", "BUILD.bazel"}.any? do |name|
+      path = File.join(dir, name)
+      next false unless File.file?(path)
+      File.read(path).matches?(BAZEL_DEPLOYABLE_RE)
+    rescue IO::Error | InvalidByteSequenceError
+      false
     end
   end
 

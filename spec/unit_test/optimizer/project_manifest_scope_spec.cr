@@ -52,7 +52,6 @@ private def write_file(path : String, body : String) : Nil
   File.write(path, body)
 end
 
-# Crystal 1.22 has no `Dir.mktmpdir`. `File.tempname` only reserves a path.
 private def with_root(prefix : String, &)
   root = File.tempname(prefix)
   Dir.mkdir_p(root)
@@ -153,7 +152,7 @@ describe "EndpointOptimizer project manifests" do
         users_app = File.join(root, "services/users/App.java")
         write_file(File.join(root, "WORKSPACE"), "workspace(name = \"ws\")\n")
         write_file(File.join(root, "MODULE.bazel"), "module(name = \"ws\")\n")
-        write_file(File.join(root, "services/orders/BUILD.bazel"), "go_binary (\n    name = \"orders\",\n)\n")
+        write_file(File.join(root, "services/orders/BUILD.bazel"), "java_binary (\n    name = \"orders\",\n)\n")
         write_file(File.join(root, "services/orders/lib/BUILD"), "java_library(\n    name = \"lib\",\n)\n")
         write_file(File.join(root, "services/users/BUILD.bazel"), "py_binary(\n    name = \"users\",\n)\n")
         write_file(orders_app, "class App {}")
