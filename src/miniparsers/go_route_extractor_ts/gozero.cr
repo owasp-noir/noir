@@ -57,6 +57,8 @@ module Noir
             when "call_expression"
               if p = gozero_with_prefix(arg, source)
                 with_prefix = p
+              elsif wrapped = gozero_with_middlewares_routes(arg, source)
+                route_literal ||= wrapped
               end
             end
           end
@@ -216,6 +218,22 @@ module Noir
       else
         ""
       end
+    end
+
+    # The route list goctl wraps for a `middleware:` group:
+    # `rest.WithMiddlewares([]rest.Middleware{...}, []rest.Route{...}...)`.
+    private def gozero_with_middlewares_routes(call : LibTreeSitter::TSNode, source : String) : LibTreeSitter::TSNode?
+      function = Noir::TreeSitter.field(call, "function")
+      return unless function && Noir::TreeSitter.node_type(function) == "selector_expression"
+      return unless Noir::TreeSitter.field(function, "field").try { |f| Noir::TreeSitter.node_text(f, source) } == "WithMiddlewares"
+      args = Noir::TreeSitter.field(call, "arguments") || return
+      Noir::TreeSitter.each_named_arg(args) do |arg|
+        literal = Noir::TreeSitter.node_type(arg) == "variadic_argument" ? Noir::TreeSitter.first_named_child(arg) : arg
+        next unless literal && Noir::TreeSitter.node_type(literal) == "composite_literal"
+        type_text = Noir::TreeSitter.field(literal, "type").try { |t| Noir::TreeSitter.node_text(t, source) } || ""
+        return literal if type_text.ends_with?("Route")
+      end
+      nil
     end
 
     private def gozero_with_prefix(call : LibTreeSitter::TSNode, source : String) : String?

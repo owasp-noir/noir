@@ -11,7 +11,10 @@ require "../../func_spec.cr"
 # this spec doubles as a regression test that they don't mint phantom
 # routes.
 expected_endpoints = [
-  Endpoint.new("/user/get", "GET", [
+  # `cUser.Get` takes `GetUserReq` and `cUser` is bound in `s.Group("/api", ...)`,
+  # so that route is mounted under `/api`; the other request types have no
+  # bound controller method and keep their tag path.
+  Endpoint.new("/api/user/get", "GET", [
     Param.new("id", "", "query"),
     Param.new("name", "", "query"),
   ]),

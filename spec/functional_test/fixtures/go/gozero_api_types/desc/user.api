@@ -1,0 +1,38 @@
+syntax = "v1"
+
+type (
+	DetailReq {
+		Id     int64  `path:"id"`
+		Fields string `form:"fields,optional"`
+		Token  string `header:"X-Token"`
+	}
+	UpdateReq {
+		Id       int64  `path:"id"`
+		Nickname string `json:"nickname"`
+	}
+	Resp {
+		Ok bool `json:"ok"`
+	}
+)
+
+type SearchReq {
+	Q    string `form:"q"`
+	Page int    `form:"page,optional"`
+}
+
+@server(
+	prefix: /api/v1
+)
+service user-api {
+	@handler detail
+	get /users/:id (DetailReq) returns (Resp)
+
+	@handler update
+	put /users/:id (UpdateReq) returns (Resp)
+
+	@handler search
+	post /search (SearchReq) returns (Resp)
+
+	@handler ping
+	get /ping returns (Resp)
+}

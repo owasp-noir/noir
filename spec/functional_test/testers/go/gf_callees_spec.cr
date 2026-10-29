@@ -42,8 +42,10 @@ expected_endpoints = [
 ]
 
 FunctionalTester.new("fixtures/go/gf_callees/", {
-  :techs     => 1,
-  :endpoints => expected_endpoints.size,
+  :techs => 1,
+  # `/users` and `/healthz` are `BindHandler`/`ALL` registrations, which
+  # answer every method: six more verbs each.
+  :endpoints => expected_endpoints.size + 2 * 6,
 }, expected_endpoints, {
   "include_callee" => YAML::Any.new(true),
 }).perform_tests

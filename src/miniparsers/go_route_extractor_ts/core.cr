@@ -253,7 +253,8 @@ module Noir
                        closure_group_methods : Array(String) = [] of String,
                        mount_methods : Array(String) = [] of String,
                        verb_calls : Bool = true,
-                       string_seed : Hash(String, String)? = nil) : Array(Route)
+                       string_seed : Hash(String, String)? = nil,
+                       extra_group_methods : Array(String) = [] of String) : Array(Route)
       routes = [] of Route
       group_prefixes = external_groups.dup
       all_handle_many = handle_many_methods.dup
@@ -271,7 +272,7 @@ module Noir
 
         Noir::TreeSitter.walk(root) do |node|
           next unless group_assignment_node?(node)
-          collect_group(node, source, group_prefixes, group_method, group_aliases, string_values)
+          collect_group(node, source, group_prefixes, group_method, group_aliases, string_values, extra_group_methods)
         end
 
         # Closure-scoped groups (Iris `Party("/x", func(p){...})` /
@@ -886,13 +887,17 @@ module Noir
       getter bind_methods : Array(String)
       getter bind_method_verb : String
       getter? net_http_methods : Bool
+      # gf's `group.Bind(ctrl)`: reported as a `BIND` pseudo-route whose
+      # path is the active group prefix (see `extract_gf_bind_sites`).
+      getter controller_bind_method : String?
 
       def initialize(@prefix_method = "Route",
                      @middleware_method = "Group",
                      @chain_prefix = false,
                      @bind_methods = [] of String,
                      @bind_method_verb = "ALL",
-                     @net_http_methods = false)
+                     @net_http_methods = false,
+                     @controller_bind_method = nil)
       end
     end
 
@@ -1004,6 +1009,7 @@ module Noir
       HandleAll
       PathGroup
       MatchPath
+      BindController
     end
 
     private def node_key(node : LibTreeSitter::TSNode) : String
@@ -1098,7 +1104,8 @@ module Noir
                               groups : Hash(String, String),
                               group_method : String,
                               group_aliases : Array(String) = [] of String,
-                              string_values : Hash(String, String) = Hash(String, String).new)
+                              string_values : Hash(String, String) = Hash(String, String).new,
+                              extra_group_methods : Array(String) = [] of String)
       left = Noir::TreeSitter.field(decl, "left")
       right = Noir::TreeSitter.field(decl, "right")
       if Noir::TreeSitter.node_type(decl) == "var_spec"
@@ -1154,7 +1161,8 @@ module Noir
         return
       end
 
-      return unless method_name == group_method
+      # Kratos binds prefixes with both `srv.Route("/api")` and `r.Group("/v2")`.
+      return unless method_name == group_method || extra_group_methods.includes?(method_name)
 
       # Mux-style `api := r.PathPrefix("/api/").Subrouter()`: the outer
       # call is `.Subrouter()` with no arguments, and the prefix lives on

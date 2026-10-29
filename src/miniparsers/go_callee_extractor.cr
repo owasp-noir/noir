@@ -288,12 +288,22 @@ module Noir::GoCalleeExtractor
       end
 
       Noir::TreeSitter.walk(root) do |node|
-        next unless Noir::TreeSitter.node_type(node) == "call_expression"
+        handler_args = case Noir::TreeSitter.node_type(node)
+                       when "call_expression" then nil
+                       when "keyed_element"   then struct_handler_value(node, source) || next
+                       else                        next
+                       end
         row = Noir::TreeSitter.node_start_row(node)
+        # A multi-line struct route (goctl's `{\n Method: ...,\n Handler: h,\n}`)
+        # is keyed to the row of its opening `{`, not the `Handler:` line.
+        if handler_args && !route_rows.includes?(row)
+          row = Noir::TreeSitter.parent(node).try { |literal| Noir::TreeSitter.node_start_row(literal) } || row
+        end
         next unless route_rows.includes?(row)
+        handler_args ||= find_handler_args(node, source)
 
         callees = [] of Tuple(String, String, Int32)
-        find_handler_args(node, source).each do |raw_handler_arg|
+        handler_args.each do |raw_handler_arg|
           append_callees_for_handler_arg(
             unwrap_handler_arg(raw_handler_arg, source),
             source,
@@ -525,6 +535,19 @@ module Noir::GoCalleeExtractor
   # carries the path and handler in different calls. When the routed call
   # itself is `Handler` / `HandlerFunc`, every non-string arg is treated
   # as a handler candidate.
+  # A route registered as a struct literal (go-zero's `rest.Route{Method: ...,
+  # Path: ..., Handler: RunHandler()}`): the `Handler:` value, as the one
+  # handler argument; nil for any other keyed element.
+  private def struct_handler_value(element : LibTreeSitter::TSNode, source : String) : Array(LibTreeSitter::TSNode)?
+    parts = [] of LibTreeSitter::TSNode
+    Noir::TreeSitter.each_named_child(element) do |child|
+      child = Noir::TreeSitter.first_named_child(child) || child if Noir::TreeSitter.node_type(child) == "literal_element"
+      parts << child
+    end
+    return unless parts.size == 2 && Noir::TreeSitter.node_text(parts[0], source) == "Handler"
+    [parts[1]]
+  end
+
   private def find_handler_args(call_node : LibTreeSitter::TSNode, source : String) : Array(LibTreeSitter::TSNode)
     found = [] of LibTreeSitter::TSNode
     args = Noir::TreeSitter.field(call_node, "arguments")

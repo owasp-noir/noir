@@ -10,8 +10,10 @@ expected_endpoints = [
     Param.new("id", "", "path"),
     Param.new("session", "", "cookie"),
   ]),
+  # The inline `Body struct {...}` is listed by its JSON field names.
   Endpoint.new("/users", "POST", [
-    Param.new("body", "", "json"),
+    Param.new("name", "", "json"),
+    Param.new("email", "", "json"),
   ]),
   Endpoint.new("/users/{id}", "DELETE", [
     Param.new("id", "", "path"),

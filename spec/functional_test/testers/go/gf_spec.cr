@@ -33,6 +33,8 @@ expected_endpoints = [
 ]
 
 FunctionalTester.new("fixtures/go/gf/", {
-  :techs     => 1,
-  :endpoints => expected_endpoints.size,
+  :techs => 1,
+  # `/upload`, `/ping`, `/admin` and `/api/health` are `BindHandler`/`ALL`
+  # registrations, which answer every method: six more verbs each.
+  :endpoints => expected_endpoints.size + 4 * 6,
 }, expected_endpoints).perform_tests

@@ -7,7 +7,8 @@ expected_endpoints = [
   Endpoint.new("/v1/entries", "GET", [
     Param.new("status", "", "query"),
     Param.new("starred", "", "query"),
-    Param.new("entryID", "", "path"),
+    # The handler's `r.PathValue("entryID")` is not a path param here: the
+    # pattern `GET /v1/entries` has no `{entryID}` wildcard (#3307).
     Param.new("before", "", "query"),
   ]),
   Endpoint.new("/v1/entries", "POST", [

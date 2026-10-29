@@ -1,5 +1,6 @@
 require "../../engines/go_engine"
 require "../../../miniparsers/go_route_extractor_ts"
+require "../../../miniparsers/go_struct_fields"
 
 module Analyzer::Go
   class GoZero < GoEngine
@@ -32,8 +33,12 @@ module Analyzer::Go
       # `read_package_file_contents` already filters to `.go`, so the
       # function-body map naturally skips `.api`.
       file_contents = read_package_file_contents
-      package_function_bodies = lazy_package_bodies(file_contents)
+      package_function_bodies = collect_package_function_bodies(file_contents)
+      # goctl puts handlers in a subpackage of `routes.go` when the `.api`
+      # group sets `group:` (`user.DetailHandler(serverCtx)`).
+      import_path_function_bodies = collect_import_path_function_bodies(package_function_bodies)
       named_scope = named_handler_scope(file_contents)
+      struct_index = Noir::GoStructFields::Index.new(file_contents, named_scope.import_dirs)
       # Both `.go` files and gozero's `.api` DSL files. The per-path
       # `File.extname` re-check the inlined walk carried is redundant:
       # `get_files_by_extensions` resolves the same `File.extname` index,
@@ -64,16 +69,6 @@ module Analyzer::Go
             public_dirs << static_dir_entry(path, sp.url_prefix, sp.disk_path)
           end
 
-          # Resolve 1-hop callees for every verb-style .go
-          # route. (Done before AddRoutes routes are folded in
-          # below: their handlers are cross-package wrapper
-          # refs, so directory-scoped body resolution can't
-          # reach them — they carry no 1-hop callees.)
-          route_rows = Set(Int32).new
-          routes_by_line.each_key { |row| route_rows << row }
-          external_fns = ts_function_bodies_for_directory(package_function_bodies, File.dirname(path))
-          callees_by_route = Noir::GoCalleeExtractor.callees_for_routes_if(callees_needed?, content, path, route_rows, external_fns)
-
           # go-zero's canonical generated `routes.go`:
           # `server.AddRoutes([]rest.Route{ {Method, Path,
           # Handler}, ... }, rest.WithPrefix("/p"))`. These are
@@ -84,6 +79,15 @@ module Analyzer::Go
             routes_by_line[r.line] ||= [] of Noir::TreeSitterGoRouteExtractor::Route
             routes_by_line[r.line] << r
           end
+
+          # Resolve 1-hop callees for every route, `AddRoutes` rows
+          # included: their handler factory lives in this package or, with
+          # a goctl `group:`, in an imported one.
+          route_rows = Set(Int32).new
+          routes_by_line.each_key { |row| route_rows << row }
+          external_fns = ts_function_bodies_for_directory(package_function_bodies, File.dirname(path))
+          callees_by_route = Noir::GoCalleeExtractor.callees_for_routes_if(callees_needed?, content, path, route_rows, external_fns,
+            imported_functions: import_path_function_bodies)
         end
 
         # `.api` route paths are relative to the `@server`
@@ -96,6 +100,7 @@ module Analyzer::Go
         # dedupe instead of producing half-paths.
         api_prefix = ""
         in_server_block = false
+        api_types = File.extname(path) == ".api" ? api_request_types(content) : Hash(String, Array(Noir::GoStructFields::Field)).new
         named = Noir::GoNamedHandler.new(content, path, routes_by_line.values.flatten, named_scope)
 
         lines.each_with_index do |line, index|
@@ -120,7 +125,7 @@ module Analyzer::Go
               in_server_block = false
             end
 
-            if match = line.match(/^\s*(get|post|put|delete|patch|head|options)\s+([^\s\(]+)/)
+            if match = line.match(API_ROUTE_LINE)
               method = match[1].upcase
               route_path = match[2]
               full_path = if api_prefix.empty?
@@ -130,6 +135,8 @@ module Analyzer::Go
                             "#{api_prefix}#{rel}"
                           end
               new_endpoint = Endpoint.new(full_path, method, details)
+              # `get /users/:id (DetailReq)`: the request type's tagged fields.
+              match[3]?.try { |req| api_types[req]?.try { |fields| add_request_fields(fields, new_endpoint) } }
               result << new_endpoint
               last_endpoint = new_endpoint
             end
@@ -159,7 +166,14 @@ module Analyzer::Go
           end
         end
 
-        named.each_attribution { |line, ep| add_gozero_params(line, ep) }
+        # A named handler's body: `httpx.Parse(r, &req)` read as the tagged
+        # fields of `req`'s struct, the generic body marker kept only when
+        # the target does not resolve.
+        named.each_bound_body do |file, body_lines, eps|
+          fields = parsed_fields(body_lines, file, struct_index)
+          body_lines.each { |line| eps.each { |ep| add_gozero_params(line, ep, body_marker: fields.nil?) } }
+          fields.try &.each { |found, tags| eps.each { |ep| add_request_fields(found, ep, tags) } }
+        end
       end
 
       resolve_public_dirs(public_dirs)
@@ -167,7 +181,66 @@ module Analyzer::Go
       result
     end
 
-    private def add_gozero_params(line : String, endpoint : Endpoint)
+    API_ROUTE_LINE = /^\s*(get|post|put|delete|patch|head|options)\s+([^\s\(]+)(?:\s*\(\s*(\w+)\s*\))?/
+    # A `.api` type body: `DetailReq {` ... `}` inside `type (...)`, or `type SearchReq {...}`.
+    API_TYPE = /^\s*(?:type\s+)?([A-Za-z_]\w*)\s*\{([^{}]*)\}/m
+    # `httpx.Parse(r, &req)` and its `ParseJsonBody` / `ParseForm` / `ParsePath` / `ParseHeaders` siblings.
+    PARSE_CALL = /\bhttpx\.Parse(\w*)\(\s*\w+\s*,\s*&\s*([A-Za-z_]\w*)\s*\)/
+    # The tag kinds each `httpx.Parse*` variant fills; `Parse` fills them all.
+    PARSE_TAGS = {
+      ""         => %w[path form header json],
+      "Path"     => %w[path],
+      "Form"     => %w[form],
+      "Headers"  => %w[header],
+      "JsonBody" => %w[json],
+    }
+
+    # The request types a `.api` file declares: name -> tagged fields.
+    private def api_request_types(content : String) : Hash(String, Array(Noir::GoStructFields::Field))
+      types = Hash(String, Array(Noir::GoStructFields::Field)).new
+      content.scan(API_TYPE) do |m|
+        fields = Noir::GoStructFields.literal("struct {#{m[2]}}")
+        types[m[1]] = fields unless fields.empty?
+      end
+      types
+    end
+
+    # `{fields, tag kinds}` the `httpx.Parse*` calls in a handler body fill;
+    # nil when there are none or a target does not resolve to a tagged struct.
+    private def parsed_fields(lines : Array(String), file : String,
+                              index : Noir::GoStructFields::Index) : Array(Tuple(Array(Noir::GoStructFields::Field), Array(String)))?
+      found = nil
+      lines.each do |line|
+        line.scan(PARSE_CALL) do |m|
+          tags = PARSE_TAGS[m[1]]? || return
+          fields = index.target_fields(lines, m[2], file)
+          return unless fields && fields.any? { |f| tags.any? { |key| Noir::GoStructFields.tag_value(f.tag, key) } }
+          (found ||= [] of Tuple(Array(Noir::GoStructFields::Field), Array(String))) << {fields, tags}
+        end
+      end
+      found
+    end
+
+    # go-zero's `httpx.Parse`: `path` tags from the URL, `form` tags from
+    # the query string on a GET/HEAD/DELETE and the form body otherwise,
+    # `header` tags from headers, `json` tags from the body (none on GET/HEAD).
+    private def add_request_fields(fields : Array(Noir::GoStructFields::Field), endpoint : Endpoint,
+                                   tags : Array(String) = PARSE_TAGS[""])
+      bodyless = endpoint.method == "GET" || endpoint.method == "HEAD"
+      fields.each do |field|
+        tags.each do |tag|
+          next if tag == "json" && bodyless
+          name = Noir::GoStructFields.tag_value(field.tag, tag) || next
+          param_type = case tag
+                       when "form" then bodyless || endpoint.method == "DELETE" ? "query" : "form"
+                       else             tag
+                       end
+          add_param_to_endpoint(Param.new(name, "", param_type), endpoint)
+        end
+      end
+    end
+
+    private def add_gozero_params(line : String, endpoint : Endpoint, body_marker : Bool = true)
       ["Query", "PostForm", "GetHeader", "PathParam", "FormValue"].each do |pattern|
         if line.includes?("#{pattern}(")
           add_param_to_endpoint(get_param(line, pattern), endpoint)
@@ -181,8 +254,8 @@ module Analyzer::Go
       # is also common in raw handlers. `httpx.Parse` binds a GET's
       # `form:` fields from the query string, so a GET gets no JSON body.
       bodyless = endpoint.method == "GET" || endpoint.method == "HEAD"
-      if line.includes?("httpx.ParseJsonBody(") || line.matches?(/json\.NewDecoder\(.+\.Body\)/) ||
-         (line.includes?("httpx.Parse(") && !bodyless)
+      if body_marker && (line.includes?("httpx.ParseJsonBody(") || line.matches?(/json\.NewDecoder\(.+\.Body\)/) ||
+         (line.includes?("httpx.Parse(") && !bodyless))
         add_param_to_endpoint(Param.new("body", "", "json"), endpoint)
       end
 
