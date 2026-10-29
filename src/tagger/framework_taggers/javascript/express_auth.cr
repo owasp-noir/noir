@@ -3,6 +3,9 @@ require "../../../models/endpoint"
 require "../../../miniparsers/js_handler_resolver"
 require "../../../utils/js_literal_scanner"
 require "../../../utils/top_level_split"
+require "../../../utils/url_path"
+require "../../../models/code_locator"
+require "../../../analyzer/analyzers/javascript/express_constants"
 require "../prefix_scope"
 
 @[Noir::TaggerFor(key: "express_auth", name: "Express Auth Tagger", desc: "Identifies Express.js authentication patterns (Passport, JWT, auth middleware)", order: 40)]
@@ -56,11 +59,6 @@ class ExpressAuthTagger < FrameworkTagger
   MAX_STATEMENT_LINES  = 60
   MAX_DEFINITION_LINES = 40
 
-  # `app.use('/prefix', authMiddleware)` — the guarded path is spelled out, so
-  # the rule can be matched against endpoint URLs anywhere in the scan (the
-  # routes it guards are usually mounted from another file).
-  MOUNTED_USE = /(?:app|router)\.use\s*\(\s*['"]([^'"]+)['"]/
-
   # `x.use(authMiddleware)` — no path argument. Which routes this guards is a
   # property of the *object* `x`, not of any URL, so the receiver is captured.
   BARE_USE = /\b(\w+)\.use\s*\(/
@@ -75,8 +73,10 @@ class ExpressAuthTagger < FrameworkTagger
 
   def initialize(options : Hash(String, YAML::Any))
     super
-    @mounted_auth_rules = [] of {prefix: String, description: String}
+    @mounted_auth_rules = [] of {prefix: String, description: String, file: String, receiver: String}
     @receiver_auth_rules = [] of {file: String, receiver: String, line: Int32, description: String}
+    # Same-file `parent.use(path, childRouter)` edges, keyed by the file.
+    @router_parents = Hash(String, Hash(String, Array({String, String}))).new
     # The method of the endpoint being judged, for `req.method` tests; nil
     # while mounts are pre-scanned.
     @method = nil.as(String?)
@@ -101,6 +101,7 @@ class ExpressAuthTagger < FrameworkTagger
   private def pre_scan_app_use_auth
     @mounted_auth_rules.clear
     @receiver_auth_rules.clear
+    @router_parents.clear
 
     extensions = [".js", ".ts", ".mjs", ".cjs"]
     extensions.each do |ext|
@@ -108,13 +109,15 @@ class ExpressAuthTagger < FrameworkTagger
       files.each do |file|
         lines = read_file_lines(file)
         next if lines.nil?
+        content = read_file(file) || next
         expanded = Noir::PathScope.expand(file)
 
         lines.each_with_index do |line, idx|
           stripped = line.strip
-          next unless stripped.includes?(".use")
+          next unless stripped.includes?(".use") || stripped.includes?(".all")
           next unless stripped.matches?(ROUTE_DECLARATION)
           statement = Noir::CComments.strip(get_route_statement(lines, idx).join("\n"), quotes: %("'`))
+          record_router_mount(expanded, statement, content) if statement.includes?(".use")
           args = call_args(statement) || [statement]
           # The last argument of `app.use('/ftp/:file', serveFiles())` is the
           # mount's handler when its definition serves the request: it
@@ -127,9 +130,20 @@ class ExpressAuthTagger < FrameworkTagger
           next unless guard
 
           # `app.use(\n  '/private',\n  auth,\n)`: the path is on a later line.
-          if match = statement.match(MOUNTED_USE)
-            prefix = match[1]
-            @mounted_auth_rules << {prefix: prefix, description: "#{guard} via app.use() on #{prefix}"}
+          # `router.all(['/apps', '/apps/*'], guard)` is the same kind of
+          # path scope as `router.use('/apps', guard)`.
+          prefixes = mount_path_prefixes(statement)
+          receiver = statement.match(/\b([A-Za-z_$][\w$]*)\s*\.\s*(?:use|all)\s*\(/).try(&.[1])
+          if receiver && !prefixes.empty?
+            via = statement.matches?(/\.all\s*\(/) ? "#{receiver}.all()" : "app.use()"
+            prefixes.each do |prefix|
+              @mounted_auth_rules << {
+                prefix:      prefix,
+                description: "#{guard} via #{via} on #{prefix}",
+                file:        expanded,
+                receiver:    receiver,
+              }
+            end
           elsif match = stripped.match(BARE_USE)
             # A path-less `use(auth)` guards the routes registered on THIS
             # object, below THIS line — nothing else. Registering it as a
@@ -241,7 +255,14 @@ class ExpressAuthTagger < FrameworkTagger
     end
 
     code = code_only(arg)
-    return "Protected by Express JWT middleware" if JWT_MIDDLEWARE_PATTERNS.any? { |pattern| code.matches?(pattern) }
+    if JWT_MIDDLEWARE_PATTERNS.any? { |pattern| code.matches?(pattern) }
+      # `credentialsRequired: false` is express-jwt's optional mode: the
+      # request continues with no user, so the call is not a guard.
+      return if credentials_optional?(code)
+      return "Protected by Express JWT middleware"
+    end
+    alias_desc, jwt_handled = judge_jwt_alias(arg, file)
+    return alias_desc if jwt_handled
     # `[...middlewares, middleware.assert.post]`: Express flattens an array
     # of handlers into the chain, so each element is a step of its own.
     if elements = array_elements(code)
@@ -1054,11 +1075,207 @@ class ExpressAuthTagger < FrameworkTagger
     url = endpoint.url
 
     @mounted_auth_rules.each do |rule|
-      if prefix_covers?(rule[:prefix], url)
-        return rule[:description]
-      end
+      written = scope_prefix(rule[:prefix])
+      bases = mount_bases(rule[:file], rule[:receiver])
+      candidates = bases.empty? ? [written] : bases.map { |base| Noir::URLPath.join(base, written) }
+      return rule[:description] if candidates.any? { |prefix| prefix_covers?(prefix, url) }
     end
 
+    nil
+  end
+
+  BARE_IDENT           = /\A[A-Za-z_$][\w$]*\z/
+  CREDENTIALS_OPTIONAL = /credentialsRequired\s*:\s*false\b/
+  JWT_FACTORY          = /\Aexpress[jJ]wt\z/
+
+  private def credentials_optional?(text : String) : Bool
+    text.matches?(CREDENTIALS_OPTIONAL)
+  end
+
+  # `router.use('/apps', ...)` and `router.all(['/apps', '/apps/*'], ...)`.
+  # The path is the first argument when it is a string or an array of them.
+  private def mount_path_prefixes(statement : String) : Array(String)
+    first = call_args(statement).try(&.first?).try(&.strip) || return [] of String
+    if literal = first.match(/\A['"`]([^'"`]*)['"`]/)
+      return [literal[1]]
+    end
+    return [] of String unless first.starts_with?('[')
+    first.scan(/['"`]([^'"`]*)['"`]/).map(&.[1])
+  end
+
+  # `/apps/*` and `/apps/(.*)` cover the same routes as `/apps`.
+  private def scope_prefix(raw : String) : String
+    stripped = raw.sub(/\/(?:\(\.\*\)|\*(?:\/.*)?)?\z/, "")
+    stripped.empty? ? raw : stripped
+  end
+
+  # `parent.use(path, child)` where `child` is an `express.Router()` in this file.
+  private def record_router_mount(file : String, statement : String, content : String)
+    parent = statement.match(/\b([A-Za-z_$][\w$]*)\s*\.\s*use\s*\(/).try(&.[1]) || return
+    args = call_args(statement) || return
+    paths = mount_path_prefixes(statement)
+    paths = [""] if paths.empty?
+    args.each do |arg|
+      child = arg.strip
+      next unless child.matches?(BARE_IDENT) && express_router?(content, child)
+      parents = (@router_parents[file] ||= Hash(String, Array({String, String})).new)
+      list = (parents[child] ||= [] of {String, String})
+      paths.each { |path| list << {parent, path} unless list.includes?({parent, path}) }
+    end
+  end
+
+  private def express_router?(content : String, name : String) : Bool
+    content.matches?(/\b(?:const|let|var)\s+#{Regex.escape(name)}\s*=\s*(?:express\s*\.\s*Router|Router)\s*\(/)
+  end
+
+  private def express_app?(content : String, name : String) : Bool
+    content.matches?(/\b(?:const|let|var)\s+#{Regex.escape(name)}\s*=\s*(?:express|require\s*\(\s*['"]express['"]\s*\))\s*\(\s*\)/)
+  end
+
+  # Prefixes to join in front of a path-scoped `use`/`all`. Empty means the
+  # written path is already absolute (`app.use('/admin', guard)` on the
+  # express() instance, or a router whose mount was not found).
+  private def mount_bases(file : String, receiver : String) : Array(String)
+    content = read_file(file) || return [] of String
+    return [] of String if express_app?(content, receiver) && !express_router?(content, receiver)
+    rel, rooted = walk_mounts(content, file, receiver, [] of String)
+    return rel if rooted
+    locs = locator_prefixes(file)
+    return locs if rel.empty?
+    return rel if locs.empty?
+    rel.flat_map { |prefix| locs.map { |loc| Noir::URLPath.join(loc, prefix) } }.uniq!
+  end
+
+  # `{absolute-or-relative prefixes, true when an express() app is the root}`.
+  private def walk_mounts(content : String, file : String, name : String, stack : Array(String)) : {Array(String), Bool}
+    return {[] of String, false} if stack.includes?(name) || stack.size > 8
+    stack = stack + [name]
+    parents = @router_parents[file]?.try(&.[name]?) || [] of {String, String}
+    return express_app?(content, name) ? {[] of String, true} : {[] of String, false} if parents.empty?
+    bases = [] of String
+    rooted = true
+    parents.each do |parent, path|
+      parent_bases, parent_rooted = walk_mounts(content, file, parent, stack)
+      rooted = false unless parent_rooted
+      segs = parent_bases.empty? ? [path] : parent_bases.map { |base| Noir::URLPath.join(base, path) }
+      segs.each { |seg| bases << seg unless bases.includes?(seg) }
+    end
+    {bases, rooted}
+  end
+
+  private def locator_prefixes(file : String) : Array(String)
+    key = Analyzer::Javascript::ExpressConstants.file_key(Noir::PathScope.expand(file))
+    CodeLocator.instance.all(key)
+  end
+
+  # `{description, true}` when `arg` is an express-jwt alias (`import {
+  # expressjwt as jwt }`) or `auth.required` where `required: jwt({...})`.
+  # Optional mode (`credentialsRequired: false`) is handled and not a guard.
+  # `{nil, false}` leaves the literal `expressjwt(` path alone so its
+  # evidence stays `(expressjwt)`.
+  private def judge_jwt_alias(arg : String, file : String) : {String?, Bool}
+    content = read_file(file) || return {nil, false}
+    code = code_only(arg).strip
+    if call = code.match(/\A([A-Za-z_$][\w$]*)\s*\(/)
+      return {nil, false} if call[1].matches?(JWT_FACTORY)
+      return {nil, false} unless jwt_alias?(content, call[1])
+      return {nil, true} if credentials_optional?(code)
+      return {"Protected by Express #{call[1]} (express-jwt) middleware", true}
+    end
+    ref = code.match(Noir::JSHandlerResolver::REFERENCE_RE) || return {nil, false}
+    if ref[2].blank?
+      expr = local_binding_expr(content, ref[1]) || return {nil, false}
+      return jwt_expr_guard(expr, content, ref[1])
+    end
+    members = ref[2].split('.').map(&.strip).reject(&.empty?)
+    return {nil, false} unless members.size == 1
+    handler = Noir::JSHandlerResolver.resolve(ref[1], content, file) || return {nil, false}
+    def_path = handler.path || return {nil, false}
+    source = read_file(def_path) || return {nil, false}
+    object = object_literal_at(source, handler.line) || return {nil, false}
+    expr = object_property(object, members[0]) || return {nil, false}
+    jwt_expr_guard(expr, source, "#{ref[1]}.#{members[0]}")
+  end
+
+  private def jwt_expr_guard(expr : String, content : String, display : String) : {String?, Bool}
+    call = expr.strip.match(/\A([A-Za-z_$][\w$]*)\s*\(/) || return {nil, false}
+    # A literal `expressjwt(` keeps the existing `(expressjwt)` evidence.
+    return {nil, false} if call[1].matches?(JWT_FACTORY)
+    return {nil, false} unless jwt_alias?(content, call[1])
+    return {nil, true} if credentials_optional?(expr)
+    {"Protected by Express #{display} (express-jwt) middleware", true}
+  end
+
+  private def jwt_alias?(content : String, name : String) : Bool
+    jwt_aliases(content).includes?(name)
+  end
+
+  private def jwt_aliases(content : String) : Set(String)
+    names = Set(String).new
+    content.scan(/import\s*(?:type\s*)?\{([^}]*)\}\s*from\s*['"]express-jwt['"]/m) do |m|
+      push_jwt_locals(names, m[1])
+    end
+    content.scan(/(?:const|let|var)\s*\{([^}]*)\}\s*=\s*require\s*\(\s*['"]express-jwt['"]\s*\)/m) do |m|
+      push_jwt_locals(names, m[1])
+    end
+    content.scan(/\bimport\s+([A-Za-z_$][\w$]*)\s+from\s*['"]express-jwt['"]/) do |m|
+      names << m[1]
+    end
+    content.scan(/\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*require\s*\(\s*['"]express-jwt['"]\s*\)/) do |m|
+      names << m[1]
+    end
+    names
+  end
+
+  private def push_jwt_locals(names : Set(String), list : String)
+    list.split(',').each do |entry|
+      parts = entry.split(/\s+as\s+|\s*:\s*/, 2).map(&.strip)
+      exported = parts[0]
+      local = parts[1]? || exported
+      names << local if exported.matches?(JWT_FACTORY) && !local.empty?
+    end
+  end
+
+  private def local_binding_expr(content : String, name : String) : String?
+    decl = content.match(/\b(?:const|let|var)\s+#{Regex.escape(name)}\s*=\s*/) || return
+    rest = content[decl.end(0)..]
+    depth = 0
+    limit = Math.min(rest.size, 800)
+    i = 0
+    while i < limit
+      case rest[i]
+      when '(', '{', '[' then depth += 1
+      when ')', '}', ']' then depth -= 1
+      when ';'           then break if depth <= 0
+      end
+      i += 1
+    end
+    rest[0...i]
+  end
+
+  private def object_literal_at(content : String, line : Int32?) : String?
+    return if line.nil? || line < 1
+    idx = 0
+    (line - 1).times do
+      nl = content.index('\n', idx) || return
+      idx = nl + 1
+    end
+    window = content[idx, 400]
+    brace = window.index('{') || return
+    return if window[0...brace].includes?(';')
+    abs = idx + brace
+    close = Noir::JSLiteralScanner.find_matching_brace(content, abs) || return
+    content[abs..close]
+  end
+
+  private def object_property(object_text : String, prop : String) : String?
+    text = object_text.strip
+    return unless text.starts_with?('{') && text.ends_with?('}')
+    Noir::TopLevelSplit.split(text[1...-1], ',', Noir::TopLevelSplit::Rules::JS_POSITIONAL_ARGS).each do |part|
+      if found = part.match(/\A\s*['"]?#{Regex.escape(prop)}['"]?\s*:\s*(.*)\z/m)
+        return found[1].strip
+      end
+    end
     nil
   end
 end

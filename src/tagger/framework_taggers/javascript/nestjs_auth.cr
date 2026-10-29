@@ -2,6 +2,7 @@ require "../../../models/framework_tagger"
 require "../../../models/endpoint"
 require "../../../utils/c_comments"
 require "../../../utils/js_literal_scanner"
+require "../../../utils/top_level_split"
 require "../../../miniparsers/import_graph"
 
 @[Noir::TaggerFor(key: "nestjs_auth", name: "NestJS Auth Tagger", desc: "Identifies NestJS-style decorator auth (Nest guards, tsoa @Security, routing-controllers @Authorized, Ts.ED @Authenticate)", order: 150)]
@@ -98,6 +99,10 @@ class NestjsAuthTagger < FrameworkTagger
   # value) and whether the test is negated.
   record SkipBranch, prop : Regex?, negated : Bool
   record GuardMetadata, skips : Array(SkipBranch), decorators : Hash(String, MetadataDecorator)
+  # One `forRoutes`/`exclude` argument: `path` is rooted (`items` → `/items`),
+  # `methods` nil means every verb, `prefix` is a controller or a wildcard.
+  record NestSpec, path : String, methods : Array(String)?, prefix : Bool
+  record ForRoutes, names : String, routes : Array(NestSpec), excludes : Array(NestSpec)
 
   # A Passport guard's `handleRequest` override that hands back no user
   # (`return user || null`) where the stock one throws Unauthorized: the
@@ -145,10 +150,14 @@ class NestjsAuthTagger < FrameworkTagger
     @guard_decorators = Hash(String, Array({String, String?, String})).new
     # Guard class name => `:refuses` / `:admits`, read from its definition.
     @guard_classes = Hash(String, Symbol).new
+    @for_routes = [] of ForRoutes
+    @class_bodies = Hash(String, String).new
+    @controller_paths = Hash(String, String).new
   end
 
   def perform(endpoints : Array(Endpoint)) : Array(Endpoint)
     find_global_auth_guards
+    find_middleware_routes
     super
   end
 
@@ -442,6 +451,11 @@ class NestjsAuthTagger < FrameworkTagger
         return
       end
 
+      # `apply(Mw).forRoutes(...)` runs even on a handler with no decorator.
+      if mw = for_routes_guard(endpoint)
+        endpoint.add_tag(Tag.new("auth", "Protected by NestJS #{mw} middleware", "nestjs_auth"))
+      end
+
       # Check if endpoint (or its whole controller) is explicitly public
       if public?(lines, line_idx) || class_decorators.any? { |line| PUBLIC_PATTERNS.any? { |pattern| line.matches?(pattern) } }
         return
@@ -604,4 +618,146 @@ class NestjsAuthTagger < FrameworkTagger
   end
 
   CLASS_DECORATOR_SPAN = 60
+
+  # `consumer.apply(AuthMiddleware).forRoutes({ path, method })` and the
+  # same chain with `.exclude(...)`. A middleware counts only when its
+  # `use` body refuses (HttpException / 401 / UNAUTHORIZED).
+  private def find_middleware_routes
+    @for_routes.clear
+    @class_bodies.clear
+    @controller_paths.clear
+    sources = [] of String
+    {".ts", ".js"}.each do |ext|
+      collect_files_by_extension(ext).each do |path|
+        raw = read_file(path) || next
+        next unless raw.includes?("apply") || raw.includes?("class ") || raw.includes?("@Controller")
+        text = Noir::CComments.strip(raw, quotes: %("'`))
+        index_controllers(text)
+        index_class_bodies(text)
+        sources << text if text.includes?(".apply")
+      end
+    end
+    sources.each { |text| collect_for_routes(text) }
+  end
+
+  private def index_controllers(text : String)
+    text.scan(/@Controller\s*\(\s*(?:['"`]([^'"`]*)['"`]\s*)?\)/) do |m|
+      tail = text[m.end(0), 300]
+      name = tail.match(/\bclass\s+([A-Za-z_$][\w$]*)/).try(&.[1]) || next
+      @controller_paths[name] = nest_path(m[1]? || "")
+    end
+  end
+
+  private def index_class_bodies(text : String)
+    text.scan(/\bclass\s+([A-Za-z_$][\w$]*)\b/) do |m|
+      brace = text.index('{', m.end(0)) || next
+      next if brace - m.end(0) > 500
+      close = Noir::JSLiteralScanner.find_matching_brace(text, brace) || next
+      @class_bodies[m[1]] = text[brace..close]
+    end
+  end
+
+  private def collect_for_routes(text : String)
+    text.scan(/\.apply\s*\(/) do |m|
+      open = m.end(0) - 1
+      close = Noir::JSLiteralScanner.find_matching_paren(text, open) || next
+      names = Noir::TopLevelSplit.split(text[open + 1...close], ',', Noir::TopLevelSplit::Rules::JS_POSITIONAL_ARGS).map(&.strip).select(&.matches?(/\A[A-Za-z_$][\w$]*\z/))
+      refusing = names.select { |name| middleware_refuses?(name) }
+      next if refusing.empty?
+      chain = statement_slice(text, close + 1)
+      routes = call_bodies(chain, "forRoutes").flat_map { |body| parse_route_specs(body) }
+      next if routes.empty?
+      excludes = call_bodies(chain, "exclude").flat_map { |body| parse_route_specs(body) }
+      @for_routes << ForRoutes.new(refusing.join(", "), routes, excludes)
+    end
+  end
+
+  private def middleware_refuses?(name : String) : Bool
+    body = @class_bodies[name]? || return false
+    body.matches?(THROWS_401) || body.matches?(/\bstatus(?:Code)?\s*(?::|\()\s*401\b/) || body.matches?(/\bUNAUTHORIZED\b/)
+  end
+
+  private def statement_slice(text : String, from : Int32) : String
+    depth = 0
+    i = from
+    limit = Math.min(text.size, from + 4000)
+    while i < limit
+      case text[i]
+      when '(', '{', '[' then depth += 1
+      when ')', '}', ']' then depth -= 1
+      when ';'           then break if depth <= 0
+      end
+      i += 1
+    end
+    text[from...i]
+  end
+
+  private def call_bodies(chain : String, name : String) : Array(String)
+    bodies = [] of String
+    chain.scan(/\.#{name}\s*\(/) do |m|
+      open = m.end(0) - 1
+      close = Noir::JSLiteralScanner.find_matching_paren(chain, open) || next
+      bodies << chain[open + 1...close]
+    end
+    bodies
+  end
+
+  private def parse_route_specs(body : String) : Array(NestSpec)
+    specs = [] of NestSpec
+    Noir::TopLevelSplit.split(body, ',', Noir::TopLevelSplit::Rules::JS_POSITIONAL_ARGS).each do |part|
+      text = part.strip
+      next if text.empty?
+      if text.starts_with?('{')
+        path_m = text.match(/path\s*:\s*['"`]([^'"`]+)['"`]/) || next
+        meth = text.match(/RequestMethod\.(\w+)/).try(&.[1].upcase)
+        methods = meth.nil? || meth == "ALL" ? nil : [meth]
+        specs << nest_spec(path_m[1], methods, wildcard?(path_m[1]))
+      elsif lit = text.match(/\A['"`]([^'"`]*)['"`]\z/)
+        specs << nest_spec(lit[1], nil, wildcard?(lit[1]))
+      elsif text.matches?(/\A[A-Za-z_$][\w$]*\z/) && (path = @controller_paths[text]?)
+        specs << NestSpec.new(path, nil, true)
+      end
+    end
+    specs
+  end
+
+  private def wildcard?(raw : String) : Bool
+    raw.includes?('*') || raw.includes?("(.*)")
+  end
+
+  private def nest_spec(raw : String, methods : Array(String)?, prefix : Bool) : NestSpec
+    stripped = raw.sub(/\/?\*.*\z/, "").sub(/\/?\(\.\*\).*\z/, "")
+    NestSpec.new(nest_path(stripped), methods, prefix)
+  end
+
+  private def nest_path(raw : String) : String
+    path = raw.strip
+    path = "/#{path}" unless path.starts_with?('/')
+    path = path.rstrip('/')
+    path.empty? ? "/" : path
+  end
+
+  private def for_routes_guard(endpoint : Endpoint) : String?
+    url = endpoint.url
+    url = url.rstrip('/') unless url == "/"
+    method = endpoint.method.upcase
+    @for_routes.each do |rule|
+      next unless rule.routes.any? { |spec| nest_hit?(spec, url, method) }
+      next if rule.excludes.any? { |spec| nest_hit?(spec, url, method) }
+      return rule.names
+    end
+    nil
+  end
+
+  private def nest_hit?(spec : NestSpec, url : String, method : String) : Bool
+    if methods = spec.methods
+      return false unless methods.includes?(method)
+    end
+    path = spec.path
+    if spec.prefix
+      path == "/" || url == path || url.starts_with?("#{path}/")
+    else
+      url == path
+    end
+  end
 end
