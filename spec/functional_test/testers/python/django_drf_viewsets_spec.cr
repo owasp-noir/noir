@@ -28,7 +28,7 @@ extracted_endpoints = [
   Endpoint.new("/api/ops/run/", "POST"),
   Endpoint.new("/api/open/", "GET"),
   Endpoint.new("/api/token/", "POST"),
-  Endpoint.new("/logo/{filename}/", "GET", [Param.new("filename", "", "path")]),
+  Endpoint.new("/logo/{filename}", "GET", [Param.new("filename", "", "path")]),
   # `@action(serializer_class=...)` is the `self.serializer_class` the
   # action hands `request.data`.
   Endpoint.new("/api/feed/bulk/", "POST", [Param.new("reason", "", "form"), Param.new("ids", "", "form")]),

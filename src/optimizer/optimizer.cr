@@ -209,6 +209,9 @@ class EndpointOptimizer
       # reports the route too (code + spec/collection). Within one analyzer,
       # `/users/{id}` and `/users/{user}` are kept as it reported them.
       dedup_url = unified_url if cross_tech_keys.includes?({tiny_tmp.method, unified_url})
+      # A lone SDL file falls back to `/graphql`; Django mounts the same
+      # schema at `graphql/`. One operation either way.
+      dedup_url = dedup_url.sub("/#", "#") if graphql_endpoint?(tiny_tmp)
 
       key = {tiny_tmp.method, dedup_url, endpoint_source_scope(tiny_tmp, unified_url, cross_tech_keys) + route_condition_key(tiny_tmp)}
 

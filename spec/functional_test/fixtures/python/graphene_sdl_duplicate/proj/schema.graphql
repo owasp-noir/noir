@@ -1,0 +1,4 @@
+# The schema dumped from schema.py; it names no mount path of its own.
+type Query {
+  me: String
+}

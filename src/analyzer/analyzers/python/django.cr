@@ -1188,7 +1188,8 @@ module Analyzer::Python
           route ||= "" if view_expr.matches?(/\binclude\s*\(/)
           next unless route
 
-          route = "{lang}/#{Noir::URLPath.strip_regex_anchors(route)}" if i18n
+          # Only `^` goes: `normalize_django_route` still reads the `$`.
+          route = "{lang}/#{route.lchop('^')}" if i18n
           mappings << {route, view_expr, index}
         end
 
@@ -1204,7 +1205,11 @@ module Analyzer::Python
       # `logo(?:/{filename})?` — an optional non-capturing segment is one of
       # the paths the pattern matches; keep its text like `/?` keeps `/`.
       normalized = normalized.gsub(/\(\?:([^()|]*)\)\??/, "\\1") if normalized.includes?("(?:")
-      strip_django_optional_quantifiers(normalized)
+      normalized = strip_django_optional_quantifiers(normalized)
+      # `^api/tags/?$` matches `/api/tags` and `/api/tags/`; report the
+      # shorter one so it merges with a spec's `/api/tags`. Only a `$`-anchored
+      # (leaf) pattern: an include prefix is concatenated with its children.
+      route.ends_with?("/?$") ? normalized.rchop('/') : normalized
     end
 
     # `re_path(r'^tags/?$')` is the Django idiom for "trailing slash

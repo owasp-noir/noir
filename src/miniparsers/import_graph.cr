@@ -590,9 +590,9 @@ module Noir::ImportGraph::Python
     segments = dotted.empty? ? [] of String : dotted.split(".")
     segments.each_with_index do |segment, index|
       candidate = File.join(dir, segment)
-      if index == segments.size - 1 && File.file?("#{candidate}.py")
+      if index == segments.size - 1 && File.file?("#{candidate}.py") && exact_entry?(dir, "#{segment}.py")
         return "#{candidate}.py"
-      elsif File.directory?(candidate)
+      elsif File.directory?(candidate) && exact_entry?(dir, segment)
         dir = candidate
       else
         return
@@ -600,6 +600,25 @@ module Noir::ImportGraph::Python
     end
     init = File.join(dir, "__init__.py")
     File.file?(init) ? init : nil
+  end
+
+  # Python matches module names case-sensitively; a case-insensitive file
+  # system (macOS, Windows) would otherwise let `from .models import
+  # Order` bind the module `order.py` instead of the re-exported class.
+  @@dir_entries = Hash(String, Set(String)).new
+  @@dir_entries_mutex = Mutex.new
+
+  private def self.exact_entry?(dir : String, name : String) : Bool
+    entries = @@dir_entries_mutex.synchronize { @@dir_entries[dir]? }
+    unless entries
+      entries = begin
+        Dir.children(dir).to_set
+      rescue File::Error
+        Set(String).new
+      end
+      @@dir_entries_mutex.synchronize { @@dir_entries[dir] = entries }
+    end
+    entries.includes?(name)
   end
 
   # Yield every `import` / `from … import …` statement as `{from part,

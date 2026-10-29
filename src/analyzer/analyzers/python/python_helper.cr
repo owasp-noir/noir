@@ -108,9 +108,32 @@ module Analyzer::Python
       flags
     end
 
+    PYTHON_STRING_PIECE_RE = /\A\s*[rf]?(?:'([^']*)'|"([^"]*)")/
+
+    # The leading string literal of `expression`, with Python's implicit
+    # concatenation joined (`r"^a/" r"b/"` is one pattern) and a
+    # parenthesised group of literals unwrapped (`(r"^a/" r"b/")`).
     def extract_python_string(expression : ::String) : ::String?
-      string_match = expression.strip.match(/^[rf]?['"]([^'"]*)['"]/)
-      string_match ? string_match[1] : nil
+      rest = expression.strip
+      parens = 0
+      while rest.starts_with?('(')
+        rest = rest[1..].lstrip
+        parens += 1
+      end
+      value = nil
+      while piece = rest.match(PYTHON_STRING_PIECE_RE)
+        value = "#{value}#{piece[1]? || piece[2]}"
+        rest = rest[piece[0].size..]
+      end
+      return value if value.nil? || parens == 0
+      # Every opened `(` must close right after the literals; anything else
+      # (`("a", b)`, `("a" % x)`) is not a plain string.
+      parens.times do
+        rest = rest.lstrip
+        return unless rest.starts_with?(')')
+        rest = rest[1..]
+      end
+      value
     end
 
     # `alias=` renames a parameter on the wire. Every Pydantic-backed Python

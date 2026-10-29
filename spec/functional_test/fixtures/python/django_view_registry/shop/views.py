@@ -19,3 +19,13 @@ class ItemView(generic.ObjectView):
 @register_model_view(Item, "edit")
 class ItemEditView(generic.ObjectEditView):
     form = forms.ItemForm
+
+
+@register_model_view(Widget, "list", path="", detail=False)
+class WidgetListView(generic.ObjectListView):
+    pass
+
+
+@register_model_view(Order, "list", path="", detail=False)
+class OrderListView(generic.ObjectListView):
+    pass

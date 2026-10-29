@@ -168,9 +168,11 @@ module Analyzer::Python
           definition_base_path = python_base_path_for(path)
           import_modules = find_fastapi_imported_modules(import_base_path, path, source)
           codelines = source.split("\n")
+          # A worked `@app.get(...)` example in a docstring is prose.
+          in_docstring = Helper.docstring_line_flags(codelines)
           router_map.flat_map { |name, registered| registered.mounts.map { |router| {name, router} } }.each do |instance_name, router_class|
             codelines.each_with_index do |line, index|
-              next if line.lstrip.starts_with?("#")
+              next if in_docstring[index] || line.lstrip.starts_with?("#")
 
               # FastAPI route decorators routinely span multiple
               # lines:
