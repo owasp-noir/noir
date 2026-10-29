@@ -85,7 +85,16 @@ class FastAPIAuthTagger < FrameworkTagger
     @def_names = Hash(String, Set(String)).new
     @refusal_verdicts = Hash({String, String}, Bool?).new
     @soft_auth = nil.as(String?)
+    @include_calls = [] of IncludeCall
+    @includes_by_site = nil.as(Hash({String, String}, Array(IncludeCall))?)
+    @include_scopes = Hash({String, String}, Array({String, String})).new
   end
+
+  # `parent.include_router(target, ..., dependencies=[...])` in `file`.
+  private record IncludeCall, file : String, parent : String, target : String, dependencies : String?
+  # `self.app.include_router(...)` is indexed too: its parent never
+  # resolves, so that mount counts as one without a dependency.
+  INCLUDE_ROUTER_CALL = /^\s*([\w.]+?)\s*\.\s*include_router\s*\(/
 
   def perform(endpoints : Array(Endpoint)) : Array(Endpoint)
     @auth_aliases.clear
@@ -95,9 +104,13 @@ class FastAPIAuthTagger < FrameworkTagger
     @authz_defs.clear
     @def_names.clear
     @refusal_verdicts.clear
+    @include_calls.clear
+    @includes_by_site = nil
+    @include_scopes.clear
     collect_files_by_extension(".py").each do |path|
       content = read_file(path)
       next unless content
+      index_include_router_calls(path) if content.includes?("include_router")
       if content.includes?("Annotated")
         content.each_line do |line|
           next unless m = line.match(ANNOTATED_ALIAS)
@@ -152,6 +165,7 @@ class FastAPIAuthTagger < FrameworkTagger
       scopes = [{header, path_info.path}]
       if receiver = header.match(ROUTE_DECORATOR).try(&.[1])
         scopes.concat(router_statement(lines, receiver, path_info.path, line_num - 1))
+        scopes.concat(include_dependencies(path_info.path, receiver))
       end
       scopes.concat(class_dependencies(lines, line_num - 1, path_info.path))
 
@@ -699,6 +713,66 @@ class FastAPIAuthTagger < FrameworkTagger
         break if def_indent && depth <= 0 && line.ends_with?(':')
         idx += 1
       end
+    end
+  end
+
+  private def index_include_router_calls(path : String)
+    lines = read_file_lines(path) || return
+    lines.each_with_index do |line, idx|
+      next unless parent = line.match(INCLUDE_ROUTER_CALL).try(&.[1])
+      statement = String.build do |io|
+        depth = 0
+        lines[idx, 30].each do |part|
+          code = Analyzer::Python::Helper.strip_python_comment(part)
+          io << code << '\n'
+          depth += bracket_delta(code)
+          break if depth <= 0
+        end
+      end
+      args = statement.sub(INCLUDE_ROUTER_CALL, "").rstrip.rchop(')')
+      parts = Noir::TopLevelSplit.split(args, ',', SPLIT_RULES).map(&.strip)
+      target = parts.find { |part| part.starts_with?("router") && part.matches?(/\Arouter\s*=/) }.try(&.sub(/\Arouter\s*=\s*/, "")) ||
+               parts.find { |part| !part.empty? && !part.includes?('=') }
+      next unless target && target.matches?(/\A[\w.]+\z/)
+      dependencies = parts.find(&.matches?(/\Adependencies\s*=/))
+      @include_calls << IncludeCall.new(path, parent, target, dependencies)
+    end
+  end
+
+  # The `dependencies=[...]` of every `include_router(...)` that mounts the
+  # router `receiver` defined in `path`, directly or through the routers
+  # that include it in turn: FastAPI runs them for each included route. A
+  # router mounted more than once counts only when every mount path carries
+  # an auth dependency, since its routes are served under each.
+  private def include_dependencies(path : String, receiver : String) : Array({String, String})
+    key = {path, receiver}
+    if cached = @include_scopes[key]?
+      return cached
+    end
+    @include_scopes[key] = [] of {String, String} # cycle guard
+    by_site = @includes_by_site ||= @include_calls.each_with_object(Hash({String, String}, Array(IncludeCall)).new) do |call, index|
+      if site = include_target_site(call)
+        (index[site] ||= [] of IncludeCall) << call
+      end
+    end
+    chains = (by_site[key]? || [] of IncludeCall).map do |call|
+      chain = include_dependencies(call.file, call.parent).dup
+      call.dependencies.try { |dependencies| chain.unshift({dependencies, call.file}) }
+      chain
+    end
+    soft = @soft_auth
+    guarded = chains.all? { |chain| chain.any? { |text, file| auth_desc(text, file) || authz_desc(text, file) } }
+    @soft_auth = soft
+    @include_scopes[key] = guarded ? chains.flat_map(&.itself) : [] of {String, String}
+  end
+
+  # `{file, name}` of the router an include call's target refers to.
+  private def include_target_site(call : IncludeCall) : {String, String}?
+    module_name, _, name = call.target.rpartition('.')
+    if module_name.empty?
+      python_definition_site(call.file, name)
+    elsif (symbol = python_imported_symbols(call.file)[module_name]?) && symbol[1].empty?
+      python_definition_site(symbol[0], name)
     end
   end
 
