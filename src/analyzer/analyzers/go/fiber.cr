@@ -22,7 +22,7 @@ module Analyzer::Go
       framework_dirs = framework_package_dirs(file_contents, IMPORT_MARKER)
       named_scope = named_handler_scope(file_contents)
       parallel_analyze(get_files_by_extension(".go")) do |path|
-        next if GoEngine.go_test_file?(base_relative_path(path))
+        next if go_test_path?(path)
         next unless File.exists?(path)
         content = file_contents[path]? || read_file_content(path)
         dir = File.dirname(path)

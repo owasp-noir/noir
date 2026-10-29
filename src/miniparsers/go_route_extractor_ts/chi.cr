@@ -342,9 +342,13 @@ module Noir
       if ty == "call_expression"
         kind = classify_chi_call(node, source, config, string_values)
         case kind
-        when ChiCall::Route
+        when ChiCall::Route, ChiCall::PathGroup
           if info = unpack_chi_scope_call(node, source, string_values, expect_prefix: true)
             new_prefix, body, closure = info
+            # gitea's `m.PathGroup("/*", func(g *web.RouterPathGroup) {...})`
+            # hands the wildcard tail to its `g.MatchPath` patterns, which are
+            # written from the group's own path on: `/*` adds no segment.
+            new_prefix = new_prefix.rchop('*').rchop('/') if kind.path_group?
             prefix_stack.push(new_prefix)
             # Register the closure's first router param (e.g. `group` in
             # `.Group("/api", func(group *ghttp.RouterGroup) {...})`) as
@@ -391,8 +395,8 @@ module Noir
             routes << route
           end
           return
-        when ChiCall::MethodFunc
-          if route = decode_chi_methodfunc_call(node, source, prefix_stack, local_groups, string_values)
+        when ChiCall::MethodFunc, ChiCall::MatchPath
+          if route = decode_chi_methodfunc_call(node, source, prefix_stack, local_groups, string_values, gitea_pattern: kind.match_path?)
             routes << route
           end
           return
@@ -467,6 +471,10 @@ module Noir
         # `r.HandleFunc("/x", h)` / `r.Handle("/x", h)` — match every
         # HTTP method (chi fans these over the full method set).
         return ChiCall::HandleAll if name == "HandleFunc" || name == "Handle"
+        # gitea's `modules/web` path groups: `m.PathGroup("/*", func(g) {...})`
+        # with `g.MatchPath("GET, HEAD", "/<ref:*>/status", h)` inside.
+        return ChiCall::PathGroup if name == "PathGroup" && chi_first_string_arg(call, source, string_values) && chi_closure_arg(call)
+        return ChiCall::MatchPath if name == "MatchPath"
       end
 
       ChiCall::None
@@ -610,11 +618,14 @@ module Noir
     # registration whose FIRST string arg is the HTTP method and second
     # is the route path. The method may be a custom verb registered via
     # `chi.RegisterMethod` (LINK/WOOHOO/...), so it is emitted verbatim.
+    # `gitea_pattern` reads the path as a gitea `MatchPath` pattern, whose
+    # `<name>` / `<name:regex>` placeholders become `{name}`.
     private def decode_chi_methodfunc_call(call : LibTreeSitter::TSNode,
                                            source : String,
                                            prefix_stack : Array(String),
                                            local_groups : Hash(String, String),
-                                           string_values : Hash(String, String) = Hash(String, String).new) : Route?
+                                           string_values : Hash(String, String) = Hash(String, String).new,
+                                           gitea_pattern : Bool = false) : Route?
       function = Noir::TreeSitter.field(call, "function")
       return unless function
       operand = Noir::TreeSitter.field(function, "operand")
@@ -647,6 +658,7 @@ module Noir
       return unless (m = method) && (path = raw_path)
       return unless path.starts_with?("/")
       return if handler_text.empty?
+      path = path.gsub(GITEA_PATTERN_PARAM) { |_, match| "{#{match[1]}}" } if gitea_pattern
 
       base_prefix = local_groups[router_name]? || prefix_stack.join
       resolved = base_prefix.empty? ? path : group_join(base_prefix, path)
@@ -866,10 +878,12 @@ module Noir
       # `m.Get("", handler)` inside `m.Group("/secrets", func(){...})`.
       # It is accepted only when a group prefix is active and a handler
       # is present, so a value getter (`r.Get("")`) still cannot mint a
-      # route.
+      # route. The same wrapper appends a suffix to the group path the
+      # same way (`m.Get(".diff", h)`, `m.Get(".{ext}", h)` under
+      # `m.Group("/{index}", ...)`), under the same conditions.
       base_prefix = local_groups[router_name]? || prefix_stack.join
       unless raw_path.starts_with?("/")
-        group_root = raw_path.empty? && path_was_literal &&
+        group_root = (raw_path.empty? || raw_path.starts_with?('.')) && path_was_literal &&
                      base_prefix.size > 0 && handler_text.size > 0
         return unless group_root
       end
@@ -901,6 +915,8 @@ module Noir
         handler_args: handler_args,
       )
     end
+
+    GITEA_PATTERN_PARAM = /<(\w+)(?::[^>]*)?>/
 
     # ---- private helpers --------------------------------------------------
   end

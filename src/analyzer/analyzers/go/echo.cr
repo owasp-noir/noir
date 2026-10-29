@@ -24,8 +24,9 @@ module Analyzer::Go
       framework_dirs = framework_package_dirs(file_contents, IMPORT_MARKER)
       named_scope = named_handler_scope(file_contents)
       struct_index = Noir::GoStructFields::Index.new(file_contents, named_scope.import_dirs)
+      binders = binder_methods(file_contents)
       parallel_analyze(get_files_by_extension(".go")) do |path|
-        next if GoEngine.go_test_file?(base_relative_path(path))
+        next if go_test_path?(path)
         next unless File.exists?(path)
         content = file_contents[path]? || read_file_content(path)
         dir = File.dirname(path)
@@ -120,7 +121,7 @@ module Analyzer::Go
         # `req`'s struct, the generic body marker kept only when a bind
         # target does not resolve.
         named.each_bound_body do |file, body_lines, eps|
-          fields, unresolved = bind_fields(body_lines, file, struct_index)
+          fields, unresolved = bind_fields(body_lines, file, struct_index, binders)
           body_lines.each { |line| eps.each { |ep| add_echo_param_patterns(line, ep, bind_marker: unresolved) } }
           eps.each { |ep| add_bind_params(fields, ep) }
         end
@@ -172,25 +173,73 @@ module Analyzer::Go
     FORM_BODY_METHODS = %w[POST PUT PATCH]
 
     BIND_ANY = /\.Bind(?:Body|JSON|XML|YAML|Headers|Query|Path)?\s*\(/
-    # `c.Bind(&req)`: Echo's DefaultBinder.
-    BIND_CALL = /\.Bind\s*\(\s*&\s*([A-Za-z_]\w*)\s*\)/
+    # `c.Bind(&req)`, or `c.Bind(req)` with `req` already a pointer: Echo's DefaultBinder.
+    BIND_CALL = /\.Bind\s*\(\s*&?\s*([A-Za-z_]\w*)\s*\)/
+    # `func (r *loginRequest) bind(c echo.Context, ...) error {`: a method that may bind its receiver.
+    # `func (r *loginRequest) bind(...)`: the receiver name and type of a method declaration.
+    METHOD_RECEIVER = /\Afunc\s*\(\s*(\w+)\s+\*?(\w+)\s*\)/
+    METHOD_CALL     = /\b([A-Za-z_]\w*)\.([A-Za-z_]\w*)\s*\(/
+
+    # `{method name => receiver types}` of methods whose body binds their
+    # own receiver (`return c.Bind(r)` in `func (r *loginRequest) bind(c
+    # echo.Context)`), so a handler's `req.bind(c)` reads as a bind of `req`
+    # when `req` is one of those types. Bodies come from the shared
+    # tree-sitter method table.
+    private def binder_methods(file_contents : Hash(String, String)) : Hash(String, Set(String))
+      binders = Hash(String, Set(String)).new
+      file_contents.each do |path, content|
+        next unless content.includes?(".Bind(")
+        Noir::GoCalleeExtractor.collect_method_bodies(content, path).each do |name, bodies|
+          bodies.each do |body|
+            next unless m = body.source.match(METHOD_RECEIVER)
+            receiver, type_name = m[1], m[2]
+            if body.source.scan(BIND_CALL).any? { |bind| bind[1] == receiver }
+              (binders[name] ||= Set(String).new) << type_name
+            end
+          end
+        end
+      end
+      binders
+    end
+
+    # The bare type name a body declares `name` with (`req := &loginRequest{}`).
+    private def declared_type_name(lines : Array(String), name : String) : String?
+      lines.each do |line|
+        m = line.match(Noir::GoStructFields::Index::DECLARED_TYPE) || line.match(Noir::GoStructFields::Index::ASSIGNED_TYPE)
+        return m[2].rpartition('.').last if m && m[1] == name
+      end
+      nil
+    end
 
     # The fields the binds in `lines` fill, and whether any bind target did
     # not resolve to a struct.
-    private def bind_fields(lines : Array(String), file : String, index : Noir::GoStructFields::Index) : Tuple(Array(Noir::GoStructFields::Field), Bool)
+    private def bind_fields(lines : Array(String), file : String, index : Noir::GoStructFields::Index,
+                            binders : Hash(String, Set(String)) = Hash(String, Set(String)).new) : Tuple(Array(Noir::GoStructFields::Field), Bool)
       fields = [] of Noir::GoStructFields::Field
       unresolved = false
       lines.each do |line|
-        next unless line.includes?(".Bind")
-        # A bind variant this does not read (`BindHeaders`, `Bind(x)`).
-        unresolved = true if line.matches?(BIND_ANY) && !line.matches?(BIND_CALL)
-        line.scan(BIND_CALL) do |m|
-          found = index.target_fields(lines, m[1], file)
+        # `{target, direct}`: a `.Bind(...)` call, or a call of a binder
+        # method on the target (`req.bind(c)`), which adds no marker when
+        # the target does not resolve.
+        targets = [] of Tuple(String, Bool)
+        unless binders.empty?
+          line.scan(METHOD_CALL) do |m|
+            types = binders[m[2]]?
+            targets << {m[1], false} if types && (type_name = declared_type_name(lines, m[1])) && types.includes?(type_name)
+          end
+        end
+        if line.includes?(".Bind")
+          # A bind variant this does not read (`BindHeaders`, `Bind(x.y)`).
+          unresolved = true if line.matches?(BIND_ANY) && !line.matches?(BIND_CALL)
+          line.scan(BIND_CALL) { |m| targets << {m[1], true} }
+        end
+        targets.each do |target, direct|
+          found = index.target_fields(lines, target, file)
           # A struct with no bindable tag (`struct{ Food string }` binds
           # JSON by field name) keeps the generic marker.
           if found && found.any? { |f| BIND_TAGS.any? { |key| Noir::GoStructFields.tag_value(f.tag, key) } }
             fields.concat(found)
-          else
+          elsif direct
             unresolved = true
           end
         end

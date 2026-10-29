@@ -12,6 +12,7 @@ module Analyzer::Go
     # plane — `HEAD/GET/PUT/POST/DELETE /{object}` and the `_MINIO_*`
     # internal routes — reported zero endpoints.
     IMPORT_MARKER = ["github.com/gorilla/mux", "github.com/minio/mux"]
+    BUILDER_TYPE  = "*mux.Router"
 
     # Registration calls that make a file worth the route parse.
     ROUTE_METHODS = ["Handle", "HandleFunc", "Path", "PathPrefix", "Methods", "Queries"]
@@ -38,6 +39,9 @@ module Analyzer::Go
       # treats "Subrouter" as the grouping method and peeks through the
       # chain to read the PathPrefix argument.
       package_groups, file_contents = collect_package_groups_ts("Subrouter", import_marker: IMPORT_MARKER)
+      # `InitUser(r.PathPrefix("/api/users").Subrouter())` + `func InitUser(users *mux.Router)`:
+      # the prefix lives at the call site (see `resolve_router_builder_prefixes`).
+      builder_prefixes_by_dir = resolve_router_builder_prefixes(file_contents, package_groups, BUILDER_TYPE)
       # Pre-pass for cross-file identifier-handler resolution (see Gin).
       # Mux's HandleFunc/Methods chain stores `route.line` on the
       # HandleFunc call_expression itself, so the row-keyed callee
@@ -56,7 +60,7 @@ module Analyzer::Go
       end
       named_scope = named_handler_scope(file_contents)
       parallel_analyze(get_files_by_extension(".go")) do |path|
-        next if GoEngine.go_test_file?(base_relative_path(path))
+        next if go_test_path?(path)
         next unless File.exists?(path)
         content = file_contents[path]? || read_file_content(path)
         dir = File.dirname(path)
@@ -74,6 +78,8 @@ module Analyzer::Go
         end
 
         named = Noir::GoNamedHandler.new(content, path, ts_routes, named_scope)
+        expand_builders = router_builder_expansions(content, BUILDER_TYPE, builder_prefixes_by_dir[dir]?, ts_groups_for_directory(package_groups, dir))
+        suppress_ranges = expand_builders.map { |_, rb, _| rb.start_row..rb.end_row }
 
         # Resolve 1-hop callees for every route (see Gin).
         route_rows = Set(Int32).new
@@ -88,6 +94,9 @@ module Analyzer::Go
         end
 
         lines.each_with_index do |line, index|
+          # Expanded router-builder bodies are emitted below with their
+          # call-site prefix.
+          next if suppress_ranges.any?(&.includes?(index))
           next if named.claim?(index, line)
 
           details = Details.new(PathInfo.new(path, index + 1))
@@ -116,6 +125,11 @@ module Analyzer::Go
           end
 
           add_mux_param_patterns(line, last_endpoint)
+        end
+
+        expand_router_builders(content, lines, path, expand_builders, callees_by_route, named,
+          group_method: "Subrouter", handlefunc_methods: true) do |line, ep|
+          add_mux_param_patterns(line, ep)
         end
 
         named.each_attribution { |line, ep| add_mux_param_patterns(line, ep) }

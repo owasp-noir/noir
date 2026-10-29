@@ -6,6 +6,7 @@ require "../../engines/go_engine"
 
 module Analyzer::Go
   class Fasthttp < Analyzer
+    include GoTestPath
     analyzer_for "go_fasthttp"
 
     IMPORT_MARKER = "github.com/valyala/fasthttp"
@@ -30,7 +31,7 @@ module Analyzer::Go
         # twins on `GoCalleeExtractor`.
         file_contents = Hash(String, String).new
         go_files.each do |fp|
-          next if GoEngine.go_test_file?(base_relative_path(fp))
+          next if go_test_path?(fp)
           begin
             file_contents[fp] = read_file_content(fp)
           rescue IO::Error
@@ -47,7 +48,7 @@ module Analyzer::Go
         base_paths.each do |current_base_path|
           go_files.each do |path|
             next unless path_under_root?(path, current_base_path)
-            next if GoEngine.go_test_file?(base_relative_path(path))
+            next if go_test_path?(path)
             if File.exists?(path)
               content = read_file_content(path)
               next unless content_matches?(content, IMPORT_MARKER_RE)

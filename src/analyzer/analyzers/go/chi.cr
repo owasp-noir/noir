@@ -1,4 +1,5 @@
 require "../../../models/analyzer"
+require "../../engines/go_engine"
 require "../../../miniparsers/go_callee_extractor"
 require "../../../miniparsers/go_route_extractor_ts"
 require "../../../miniparsers/go_named_handler"
@@ -12,6 +13,7 @@ module Analyzer::Go
   end
 
   class Chi < Analyzer
+    include GoTestPath
     analyzer_for "go_chi"
 
     # Import path -> package directory, from the tree's go.mod files.
@@ -173,7 +175,7 @@ module Analyzer::Go
       @named_scope = named_scope
 
       parallel_analyze(get_files_by_extension(".go")) do |path|
-        next if GoEngine.go_test_file?(base_relative_path(path))
+        next if go_test_path?(path)
         next unless File.exists?(path)
         content = file_contents_cache[path]? || read_file_content(path)
         # A file without the chi import marker takes part only through
@@ -527,7 +529,7 @@ module Analyzer::Go
       index = @router_helper_files[dir] ||= begin
         found = Hash(String, String).new
         package_files[dir]?.try &.each do |path|
-          next if GoEngine.go_test_file?(path)
+          next if go_test_path?(path)
           file_contents_cache[path]?.try &.scan(ROUTER_HELPER_DECL_RE) do |m|
             found[m[1]] ||= path if m[2].matches?(ROUTER_PARAM_RE)
           end

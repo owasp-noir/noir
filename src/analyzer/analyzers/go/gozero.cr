@@ -39,7 +39,7 @@ module Analyzer::Go
       # `get_files_by_extensions` resolves the same `File.extname` index,
       # so every path here already has one of those two extensions.
       parallel_analyze(get_files_by_extensions([".go", ".api"])) do |path|
-        next if GoEngine.go_test_file?(base_relative_path(path))
+        next if go_test_path?(path)
         next unless File.exists?(path)
 
         content = read_file_content(path)

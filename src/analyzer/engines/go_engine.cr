@@ -7,6 +7,38 @@ require "../../utils/worker_threads"
 require "../../utils/c_comments"
 
 module Analyzer::Go
+  # `GoEngine.go_test_file?` judged from the file's own module. Go's `_` and
+  # `testdata` exclusions are relative to the module, and a nested module is
+  # its own root: chi's `_examples/rest/go.mod` builds `_examples/rest` as an
+  # ordinary package, so its routes count whether the scan starts at the repo
+  # or at `_examples`. Included by every Go analyzer, engine or not.
+  module GoTestPath
+    @go_module_roots : Array(String)?
+
+    def go_test_path?(path : String) : Bool
+      relative = base_relative_path(path)
+      return false unless GoEngine.go_test_file?(relative)
+      return true if relative.ends_with?("_test.go")
+      absolute = go_slash_path(Noir::PathScope.expand(path))
+      root = go_module_roots.find { |dir| absolute.starts_with?(dir) }
+      # The module root lies inside the scan base (its go.mod is a scanned
+      # file), so the module-relative path is a suffix of `relative`.
+      root ? GoEngine.go_test_file?(absolute[root.size - 1..]) : true
+    end
+
+    # Expanded directories of the scan's go.mod files, with a trailing `/`,
+    # deepest first.
+    private def go_module_roots : Array(String)
+      @go_module_roots ||= get_files_by_basename("go.mod")
+        .map { |p| go_slash_path(Noir::PathScope.expand(File.dirname(p))).rstrip('/') + "/" }
+        .sort_by! { |dir| -dir.size }
+    end
+
+    private def go_slash_path(path : String) : String
+      File::SEPARATOR == '/' ? path : path.gsub(File::SEPARATOR, '/')
+    end
+  end
+
   abstract class GoEngine < Analyzer
     # `*_test.go` is Go's hard-wired build-tag for test-only source.
     # `go build` excludes these files entirely; only `go test` pulls
@@ -40,6 +72,8 @@ module Analyzer::Go
       return true if relative_path.starts_with?("testdata/") || relative_path.includes?("/testdata/")
       relative_path.starts_with?('_') || relative_path.includes?("/_")
     end
+
+    include GoTestPath
 
     # Blanks out `//` line comments and `/* */` block comments, replacing
     # them with spaces so every real line number stays put for PathInfo
@@ -86,7 +120,7 @@ module Analyzer::Go
       file_contents = Hash(String, String).new
 
       get_files_by_extension(".go").each do |path|
-        next if GoEngine.go_test_file?(base_relative_path(path))
+        next if go_test_path?(path)
         dir = File.dirname(path)
         files_by_dir[dir] ||= [] of String
         files_by_dir[dir] << path
@@ -219,7 +253,7 @@ module Analyzer::Go
     # files define differently is left out. Pass the result as `string_seed`.
     def go_string_seed : Hash(String, String)
       sources = get_files_by_extension(".go").compact_map do |path|
-        next if GoEngine.go_test_file?(base_relative_path(path))
+        next if go_test_path?(path)
         content = read_file_content(path)
         content if content.matches?(Noir::TreeSitterGoRouteExtractor::WRAPPER_SIGNATURE) ||
                    content.matches?(Noir::TreeSitterGoRouteExtractor::EXPORTED_STRING_CONST)
@@ -256,7 +290,9 @@ module Analyzer::Go
     # every helper across the directory's files and (2) resolving each call
     # site `F(arg)` to the prefix `arg` denotes via the caller's directory
     # group map. A call from another package (`routes.F(api)`) counts when
-    # the caller imports the helper's package. A helper called with several
+    # the caller imports the helper's package; a method call (`h.Register(v1)`,
+    # the qualifier not an import alias) resolves to a helper of that name in
+    # the caller's package or one it imports. A helper called with several
     # groups accumulates each prefix; one with any unresolved call site (the
     # root router, a computed value) is left out so the whole-file pass
     # keeps its routes.
@@ -271,11 +307,17 @@ module Analyzer::Go
       builders_by_dir = Hash(String, Set(String)).new
       files_by_dir.each do |dir, paths|
         builders = Set(String).new
+        duplicates = Set(String).new
         paths.each do |p|
           content = file_contents[p]?
           next unless content && content.includes?(builder_type)
-          Noir::TreeSitterGoRouteExtractor.collect_router_group_builders(content, type_name).each_key { |fn| builders << fn }
+          Noir::TreeSitterGoRouteExtractor.collect_router_group_builders(content, type_name).each_key do |fn|
+            # Only methods can share a name across a package's files; such a
+            # name is ambiguous at a `h.Register(g)` call site.
+            duplicates << fn unless builders.add?(fn)
+          end
         end
+        builders.subtract(duplicates)
         builders_by_dir[dir] = builders unless builders.empty?
       end
       return result if builders_by_dir.empty?
@@ -303,12 +345,22 @@ module Analyzer::Go
           next if names.empty?
           aliases = nil
           Noir::TreeSitterGoRouteExtractor.collect_router_builder_callsites(content, names, group_map).each do |fn, arg, qualifier|
+            local = dir if builders_by_dir[dir]?.try(&.includes?(fn))
             target = if qualifier.empty?
-                       dir if builders_by_dir[dir]?.try(&.includes?(fn))
-                     elsif !imported.empty?
+                       local
+                     else
                        aliases ||= Noir::GoCalleeExtractor.extract_import_aliases(content)
-                       d = aliases[qualifier]?.try { |import_path| imported[import_path]? }
-                       d if d && builders_by_dir[d].includes?(fn)
+                       if import_path = aliases[qualifier]?
+                         d = imported[import_path]?
+                         d if d && builders_by_dir[d].includes?(fn)
+                       else
+                         # The receiver's type is unknown: resolve only a name
+                         # exactly one candidate package declares.
+                         candidates = imported.values.select { |d| builders_by_dir[d].includes?(fn) }
+                         candidates << local if local
+                         candidates.uniq!
+                         candidates.first if candidates.size == 1
+                       end
                      end
             next unless target
             prefix = group_map[arg]?
@@ -359,26 +411,31 @@ module Analyzer::Go
                                path : String,
                                expansions : Array(Tuple(String, Noir::TreeSitterGoRouteExtractor::RouterBuilder, Set(String))),
                                callees_by_route : Hash(Int32, Array(Tuple(String, String, Int32))),
-                               named : Noir::GoNamedHandler,
+                               named : Noir::GoNamedHandler?,
                                handle_method : String? = nil,
                                into emitted_to : Array(Endpoint) = result,
                                string_seed : Hash(String, String)? = nil,
+                               group_method : String = "Group",
+                               handlefunc_methods : Bool = false,
                                & : String, Endpoint ->)
       expansions.each do |fn, rb, pset|
         emitted = [] of Endpoint
         pset.each do |prefix|
           Noir::TreeSitterGoRouteExtractor.extract_routes_from_function(
-            content, fn, {rb.param => prefix}, handle_method: handle_method, string_seed: string_seed
+            content, fn, {rb.param => prefix}, handle_method: handle_method, string_seed: string_seed,
+            group_method: group_method, handlefunc_methods: handlefunc_methods
           ).each do |route|
             details = Details.new(PathInfo.new(path, route.line + 1))
             Noir::TreeSitterGoRouteExtractor.fan_out_verbs(route.verb).each do |verb|
               ep = Endpoint.new(route.path, verb, details)
-              ep.handler = named.handler_for(route)
+              # mux's `.Queries("type", "{type}")` declares required query params.
+              route.query_params.each { |qp| ep.params << Param.new(qp, "", "query") }
+              ep.handler = named.handler_for(route) if named
               callees_by_route[route.line]?.try &.each do |name, callee_path, callee_line|
                 ep.push_callee(Callee.new(name, path: callee_path, line: callee_line))
               end
               emitted_to << ep
-              named.bind(route, ep)
+              named.try &.bind(route, ep)
               emitted << ep
             end
           end
@@ -509,7 +566,7 @@ module Analyzer::Go
                                verb_calls : Bool = true,
                                &extract : String, String -> T) : Hash(String, T) forall T
       candidates = get_files_by_extension(".go").select do |path|
-        next false if GoEngine.go_test_file?(base_relative_path(path))
+        next false if go_test_path?(path)
         content = file_contents[path]?
         next false if content.nil?
         framework_route_source_candidate?(content, File.dirname(path), framework_dirs, import_marker, extra_methods, verb_calls)
@@ -725,7 +782,7 @@ module Analyzer::Go
     def read_package_file_contents : Hash(String, String)
       file_contents = Hash(String, String).new
       get_files_by_extension(".go").each do |path|
-        next if GoEngine.go_test_file?(base_relative_path(path))
+        next if go_test_path?(path)
         begin
           file_contents[path] = read_file_content(path)
         rescue IO::Error

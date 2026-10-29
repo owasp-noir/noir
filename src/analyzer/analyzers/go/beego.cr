@@ -43,7 +43,7 @@ module Analyzer::Go
       # Both route parses of every Beego-importing file, on the worker
       # threads; the pass below consumes them (see `prefetch_sources`).
       candidates = file_contents.keys.select do |path|
-        !GoEngine.go_test_file?(base_relative_path(path)) && content_matches?(file_contents[path], IMPORT_MARKER_RE)
+        !go_test_path?(path) && content_matches?(file_contents[path], IMPORT_MARKER_RE)
       end
       prefetched = prefetch_sources(candidates, file_contents) do |path, content|
         {Noir::TreeSitterGoRouteExtractor.extract_beego_routes(content, ts_controller_methods_for_directory(package_controller_methods, File.dirname(path))),
@@ -51,7 +51,7 @@ module Analyzer::Go
       end
       named_scope = named_handler_scope(file_contents)
       parallel_analyze(get_files_by_extension(".go")) do |path|
-        next if GoEngine.go_test_file?(base_relative_path(path))
+        next if go_test_path?(path)
         next unless File.exists?(path)
         content = read_file_content(path)
         next unless content_matches?(content, IMPORT_MARKER_RE)
