@@ -178,7 +178,7 @@ module Analyzer::Javascript
       callees
     end
 
-    USE_PATH_RE = /\b[A-Za-z_$][\w$]*\.use\s*\(\s*['"]([^'"]+)['"]\s*,/
+    USE_PATH_RE = /\b[A-Za-z_$][\w$]*\.use\s*\(\s*(?:['"]([^'"]+)['"]|`([^`]+)`)\s*,/
 
     # Deliberate exception to "no name lists": package-provided serving
     # factories (`swaggerUi.serve`, `express.static`, `serveIndex`, …) have no
@@ -204,7 +204,13 @@ module Analyzer::Javascript
       prefixes = CodeLocator.instance.all(ExpressConstants.file_key(Noir::PathScope.expand(path)))
       prefixes = [""] if prefixes.empty?
 
+      template_constants = nil.as(Hash(String, String)?)
       content.scan(USE_PATH_RE) do |m|
+        raw_path = m[1]? || m[2]
+        if raw_path.includes?("${")
+          template_constants ||= Noir::JSRouteExtractor.file_string_constants(path, content)
+          raw_path = "/#{Noir::JSRouteExtractor.resolve_template(raw_path, template_constants)}".squeeze('/')
+        end
         call_start = m.begin(0)
         paren_open = content.index('(', call_start) || next
         paren_close = Noir::JSRouteExtractor.find_matching_paren(content, paren_open) || next
@@ -214,7 +220,7 @@ module Analyzer::Javascript
         line = line_number_for_index(content, call_start)
         # `/ftp(?!/quarantine)/:file`: a lookaround only constrains the
         # segment, so `trace "GET /ftp/x"` should land on `/ftp/:file`.
-        mount_path = m[1].gsub(/\(\?[!=<][^)]*\)/, "")
+        mount_path = raw_path.gsub(/\(\?[!=<][^)]*\)/, "")
 
         if methods = package_serving_methods(args[1..])
           prefixes.each do |prefix|

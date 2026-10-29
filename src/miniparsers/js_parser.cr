@@ -86,10 +86,13 @@ module Noir
     # unless it passes an inline function or a method reference
     # (`this_handler_arg?`: Unleash's controllers `this.get('/', this.getTags)`
     # import only a local base class).
-    def initialize(source : String, @this_receiver_ok : Bool = true)
+    # `constants` seeds what the file's own declarations cannot give, such as
+    # a constant imported from another module.
+    def initialize(source : String, @this_receiver_ok : Bool = true, constants : Hash(String, String)? = nil)
       lexer = JSLexer.new(source)
       @tokens = lexer.tokenize
       @supports_named_routes = source.includes?("koa-router") || source.includes?("@koa/router")
+      @constants.merge!(constants) if constants
       # Extract constants from the source
       extract_constants
     end

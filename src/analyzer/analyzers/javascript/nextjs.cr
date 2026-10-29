@@ -63,14 +63,18 @@ module Analyzer::Javascript
     FUNCTION_DEFINITION_LINE = /\bfunction\b|=>|=\s*(?:async\s*)?\(/
     DYNAMIC_IMPORT           = /\A(?:await\s+)?import\s*\(\s*['"`]([^'"`]+)['"`]\s*\)\z/
 
+    CONFIG_BASENAMES = ["next.config.js", "next.config.ts", "next.config.mjs", "next.config.cjs"]
+    BASE_PATH_RE     = /\bbasePath\s*:\s*(['"`])(\/[^'"`$]*)\1/
+
+    # Config directory => its `basePath`, which prefixes every route below it.
+    @next_base_paths = {} of String => String
+
     def analyze
       result = [] of Endpoint
       mutex = Mutex.new
       include_callee = callees_needed?
-      project_roots = discover_js_project_roots(
-        ["\"next\""],
-        ["next.config.js", "next.config.ts", "next.config.mjs", "next.config.cjs"]
-      )
+      project_roots = discover_js_project_roots(["\"next\""], CONFIG_BASENAMES)
+      @next_base_paths = collect_base_paths
 
       parallel_file_scan(EXTENSIONS) do |path|
         next unless path_under_project_roots?(path, project_roots)
@@ -86,6 +90,32 @@ module Analyzer::Javascript
       end
 
       result
+    end
+
+    private def collect_base_paths : Hash(String, String)
+      base_paths = {} of String => String
+      all_files.each do |file|
+        next unless CONFIG_BASENAMES.includes?(File.basename(file))
+        content = Noir::JSRouteExtractor.strip_js_comments(read_file_content(file))
+        if match = content.match(BASE_PATH_RE)
+          base_paths[File.dirname(Noir::PathScope.expand(file))] = match[2].rstrip('/')
+        end
+      rescue IO::Error
+        next
+      end
+      base_paths
+    end
+
+    # `basePath` of the closest `next.config.*` above `path`.
+    private def base_path_for(path : String) : String
+      return "" if @next_base_paths.empty?
+      dir = File.dirname(Noir::PathScope.expand(path))
+      loop do
+        return @next_base_paths[dir] if @next_base_paths.has_key?(dir)
+        parent = File.dirname(dir)
+        return "" if parent == dir
+        dir = parent
+      end
     end
 
     private def ignored_next_path?(path : String) : Bool
@@ -131,7 +161,7 @@ module Analyzer::Javascript
       # Skip private folders/files (leading underscore)
       return if relative.split("/").any?(&.starts_with?("_"))
 
-      url = "/api/" + convert_segments(relative)
+      url = "#{base_path_for(path)}/api/" + convert_segments(relative)
       url = normalize_url(url)
 
       begin
@@ -190,7 +220,7 @@ module Analyzer::Javascript
       segments = relative.split("/").reject { |seg| seg.empty? || (seg.starts_with?("(") && seg.ends_with?(")")) }
       converted = segments.map { |seg| convert_segment(seg) }
 
-      url = "/" + converted.join("/")
+      url = "#{base_path_for(path)}/" + converted.join("/")
       analyze_route_handler_file(path, normalize_url(url), result, mutex, include_callee)
     end
 

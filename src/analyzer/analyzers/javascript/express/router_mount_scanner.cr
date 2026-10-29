@@ -31,7 +31,7 @@ module Analyzer::Javascript
       # A JS identifier may hold `$`, a regex anchor.
       c = Regex.escape(name)
       {/(\w+)\.#{c}\s*\(\s*['"]([^'"]+)['"]\s*,\s*/,
-       /(\w+)\.#{c}\s*\(\s*`([^`$]+)`\s*,\s*/,
+       /(\w+)\.#{c}\s*\(\s*`([^`]+)`\s*,\s*/,
        /(\w+)\.#{c}\s*\(\s*(\w+)\s*,\s*/,
        /(\w+)\.#{c}\s*\(\s*\[([^\]]+)\]\s*,\s*/m}
     end
@@ -545,11 +545,19 @@ module Analyzer::Javascript
           require_map, function_map, var_to_function, var_prefix, global_deferred_mounts)
       end
 
+      template_constants = nil.as(Hash(String, String)?)
       content.scan(backtick_re) do |m|
         next unless m.size >= 3
 
         caller = m[1]
         prefix = m[2]
+        # `/${rootPath}`: known constants are substituted; an unknown one
+        # stays a placeholder segment rather than dropping the mount.
+        if prefix.includes?("${")
+          template_constants ||= Noir::JSRouteExtractor.file_string_constants(main_file, content)
+          prefix = "/#{Noir::JSRouteExtractor.resolve_template(prefix, template_constants)}".squeeze('/')
+        end
+        next unless mount_prefix?(prefix)
         match_end = m.byte_end(0)
 
         process_use_call(content, match_end, caller, prefix, main_file, locator,
@@ -877,12 +885,12 @@ module Analyzer::Javascript
         end
       end
 
-      # Pattern: const varName = functionName()
-      content.scan(/(?:const|let|var)\s+(\w+)\s*=\s*(\w+)\s*\(\s*\)/) do |m|
+      # Pattern: const varName = functionName(...)
+      content.scan(/(?:const|let|var)\s+(\w+)\s*=\s*(\w+)\s*\(/) do |m|
         if m.size >= 3
           var_name = m[1]
           func_name = m[2]
-          if function_map.has_key?(func_name)
+          if function_map.has_key?(func_name) || require_map.has_key?(func_name)
             var_to_function[var_name] = func_name
           end
         end
@@ -904,8 +912,8 @@ module Analyzer::Javascript
 
       # If no inline require, check for factory function call or identifiers
       unless router_file_direct
-        # Check for factory function call: createRouter() etc.
-        if args =~ /(\w+)\s*\(\s*\)\s*$/
+        # Check for factory function call: createRouter(), itemsController('/b')
+        if args =~ /(\w+)\s*\((?:[^()]|\([^()]*\))*\)\s*$/
           factory_name = $1
           if function_map[factory_name]? || require_map[factory_name]? || var_to_function[factory_name]?
             router_var = factory_name
@@ -921,7 +929,10 @@ module Analyzer::Javascript
             candidates = [] of String
             args.scan(/(?<![.=])\b(\w+)\b(?!\s*[(\[=>])/) do |id_match|
               candidate = id_match[1]
-              next if ExpressConstants::SKIP_IDENTIFIERS.includes?(candidate)
+              # `err`/`error` name handler arguments, unless the file
+              # imports a router under that name (`import error from './error'`).
+              next if ExpressConstants::SKIP_IDENTIFIERS.includes?(candidate) &&
+                      !require_map.has_key?(candidate) && !function_map.has_key?(candidate)
               candidates << candidate
             end
 
@@ -1105,6 +1116,10 @@ module Analyzer::Javascript
 
       # Check var_to_function (factory variable assignments)
       if func_name = var_to_function[router_var]?
+        # `const c = itemsController('/c')`: a default-exported factory.
+        if router_file = require_map[func_name]?
+          return {key: module_key(router_file), note: " (factory var): #{router_file}", var: router_var}
+        end
         router_file = function_map[func_name]?
         return unless router_file
         return {key:  named_export_key(router_file, exported_name(main_file, func_name)),
