@@ -60,6 +60,10 @@ class RubyAuthTagger < FrameworkTagger
   GRAPE_AUTH_PATTERNS = [
     {/before\s+do.*authenticate/, "Grape before authenticate"},
     {/before\s*\{\s*authenticate!/, "Grape authenticate!"},
+    # The unconditional call on its own line: the body of a multi-line
+    # `before do` (route_scope reads filter blocks line by line) or the
+    # route's own block.
+    {/^authenticate!\s*$/, "Grape authenticate!"},
     {/before\s*\{\s*require_auth/, "Grape require_auth"},
     {/http_basic\s+do/, "Grape http_basic auth"},
     {/helpers\s+do.*authenticate/, "Grape helpers authenticate"},

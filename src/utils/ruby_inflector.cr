@@ -19,5 +19,14 @@ module Noir
       return name.rchop('s') if name.ends_with?('s') && !name.ends_with?("ss") && name.size > 1
       name
     end
+
+    # The regular-English subset of ActiveSupport's `pluralize`
+    # (`project` -> `projects`, `policy` -> `policies`, `box` -> `boxes`).
+    # ponytail: no irregulars; add one when a name comes out wrong.
+    def self.pluralize(name : String) : String
+      return "#{name.rchop('y')}ies" if name.matches?(/(?:[^aeiouy]|qu)y\z/)
+      return "#{name}es" if name.matches?(/(?:s|x|z|ch|sh)\z/)
+      "#{name}s"
+    end
   end
 end
