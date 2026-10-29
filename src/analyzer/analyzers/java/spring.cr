@@ -596,17 +596,21 @@ module Analyzer::Java
                                                  index : SpringMetaAnnotationIndex) : Hash(String, SpringRouteMapping)
       mappings = Hash(String, SpringRouteMapping).new
       imports = java_imports(content)
-      # The module's own declarations first, then the rest of the scan base.
-      {project_root_for(path), "base:#{configured_base_for(path)}"}.each do |scope|
-        merge_meta_package(mappings, index.by_package[{scope, package_name}]?)
-
-        imports.each do |import_name|
-          if import_name.ends_with?(".*")
-            merge_meta_package(mappings, index.by_package[{scope, import_name[...-2]}]?)
-          elsif mapping = index.by_fqcn[{scope, import_name}]?
+      on_demand, single_type = imports.partition(&.ends_with?(".*"))
+      # The module's own declarations before the rest of the scan base; the
+      # first entry for a name wins, so the order below is Java's: a
+      # single-type import, then the same package, then on-demand imports.
+      scopes = {project_root_for(path), "base:#{configured_base_for(path)}"}
+      single_type.each do |import_name|
+        scopes.each do |scope|
+          if mapping = index.by_fqcn[{scope, import_name}]?
             mappings[import_name.split('.').last] ||= mapping
           end
         end
+      end
+      scopes.each { |scope| merge_meta_package(mappings, index.by_package[{scope, package_name}]?) }
+      on_demand.each do |import_name|
+        scopes.each { |scope| merge_meta_package(mappings, index.by_package[{scope, import_name[...-2]}]?) }
       end
 
       mappings
@@ -1048,6 +1052,12 @@ module Analyzer::Java
         # RouterFunction handlers carry the real behaviour worth surfacing
         # for ai-context).
         handler_arg = path_less ? first_arg : arg_list[1]?
+        if handler_arg.nil? && match[1] != "."
+          outer_open = (match.end(1) || 0) - 1
+          if outer_close = find_matching_paren(code, outer_open)
+            handler_arg = top_level_arguments(code[(outer_open + 1)...outer_close])[1]?
+          end
+        end
         handler_ref = handler_arg ? handler_method_reference(handler_arg) : ""
         # Two positions: the match start decides which `nest(...)` range the
         # call sits in, while the verb is where the route itself is written —
@@ -1064,40 +1074,65 @@ module Analyzer::Java
     # `ROUTER_BLOCK_START_RE` match to the `;` that ends the statement at
     # depth 0 (or the `}` closing the enclosing block). A statement inside
     # a block lambda (`request -> { ...; }`) does not end it.
+    #
+    # A statement with no verb call of its own (`Builder b = route();`)
+    # holds a builder the following `b.GET(...)` statements fill, so its
+    # block runs to the end of the enclosing `{ }` instead.
+    #
+    # Works in byte offsets (every delimiter is ASCII, and UTF-8 never
+    # reuses ASCII bytes); the char offset handed to the block is counted
+    # incrementally, so a non-ASCII file is not re-indexed per block.
     private def each_router_block(code : String, & : String, Int32 ->) : Nil
-      chars = code.chars
+      bytes = code.to_slice
       offset = 0
-      while match = ROUTER_BLOCK_START_RE.match(code, offset)
-        start = match.begin(0)
-        stop = router_statement_end(chars, match.end(0) - 1)
-        yield code[start...stop], start
+      char_offset = 0
+      counted_to = 0
+      while match = ROUTER_BLOCK_START_RE.match_at_byte_index(code, offset)
+        start = match.byte_begin(0)
+        open = match.byte_end(0) - 1
+        stop = router_statement_end(bytes, open, true)
+        if !code.byte_slice(start, stop - start).matches?(REGEX_ROUTE_CALL)
+          stop = router_statement_end(bytes, open, false)
+        end
+        char_offset += utf8_char_count(bytes, counted_to, start)
+        counted_to = start
+        yield code.byte_slice(start, stop - start), char_offset
         offset = stop
       end
     end
 
-    private def router_statement_end(chars : Array(Char), from : Int32) : Int32
+    private def utf8_char_count(bytes : Bytes, from : Int32, to : Int32) : Int32
+      count = 0
+      (from...to).each { |index| count += 1 unless bytes[index] & 0xC0 == 0x80 }
+      count
+    end
+
+    # Byte offset just past the statement that opens at `from`: its `;` at
+    # depth 0, or the `}` closing the enclosing block (also where it ends
+    # when `at_semicolon` is false).
+    private def router_statement_end(bytes : Bytes, from : Int32, at_semicolon : Bool) : Int32
       depth = 0
       index = from
-      while index < chars.size
-        char = chars[index]
-        case char
-        when '"', '\''
+      while index < bytes.size
+        byte = bytes[index]
+        case byte
+        when '"'.ord, '\''.ord
           index += 1
-          while index < chars.size && chars[index] != char
-            index += 1 if chars[index] == '\\'
+          while index < bytes.size && bytes[index] != byte
+            index += 1 if bytes[index] == '\\'.ord
             index += 1
           end
-        when '(', '[', '{'
+        when '('.ord, '['.ord, '{'.ord
           depth += 1
-        when ')', ']', '}'
+        when ')'.ord, ']'.ord, '}'.ord
           depth -= 1
           return index if depth < 0
-        when ';'
-          return index + 1 if depth.zero?
+        when ';'.ord
+          return index + 1 if depth.zero? && at_semicolon
         end
         index += 1
       end
-      chars.size
+      bytes.size
     end
 
     SERVER_REQUEST_PARAM_RE  = /\b(\w+)\s*\.\s*(queryParam|param)\s*\(\s*"([^"]+)"/
@@ -1112,12 +1147,18 @@ module Analyzer::Java
                                         wanted : Set(String),
                                         dto_index : Noir::TreeSitterJavaDtoIndex::Index) : Hash(String, Array(Param))
       result = {} of String => Array(Param)
+      # `users::get` / `orders::get` in one file: the bare name cannot say
+      # which `get` a route uses, so neither lends its inputs.
+      ambiguous = Set(String).new
       walk_reactive_method_declarations(root) do |method|
         name_node = Noir::TreeSitter.field(method, "name")
         next unless name_node
         method_name = Noir::TreeSitter.node_text(name_node, content)
         next unless wanted.includes?(method_name)
-        next if result.has_key?(method_name)
+        if result.has_key?(method_name)
+          ambiguous << method_name
+          next
+        end
 
         receiver = nil
         if parameters = Noir::TreeSitter.field(method, "parameters")
@@ -1131,9 +1172,13 @@ module Analyzer::Java
           end
         end
         body = Noir::TreeSitter.field(method, "body")
-        next unless receiver && body
+        unless receiver && body
+          result[method_name] = [] of Param
+          next
+        end
         result[method_name] = server_request_params(Noir::TreeSitter.node_text(body, content), dto_index, receiver)
       end
+      ambiguous.each { |name| result.delete(name) }
       result
     end
 

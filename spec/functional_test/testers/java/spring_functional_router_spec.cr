@@ -18,11 +18,16 @@ expected_endpoints = [
     Param.new("email", "", "json"),
   ]),
   Endpoint.new("/users/{name}", "DELETE", [Param.new("name", "", "path")]),
+  # `route(GET(...), handler)`: the handler is the outer call's argument.
+  Endpoint.new("/legacy/users", "GET", [Param.new("keyword", "", "query")]),
   Endpoint.new("/complete-profile", "GET"),
   Endpoint.new("/complete-profile/send-email-code", "POST"),
   Endpoint.new("/system/setup", "GET"),
   Endpoint.new("/system/status", "GET"),
   Endpoint.new("/system/setup", "POST"),
+  # `Builder b = route(); b.GET(...);` statements fill a builder variable.
+  Endpoint.new("/builder/a", "GET"),
+  Endpoint.new("/builder/b", "POST"),
   Endpoint.new("/auth/login", "POST"),
   Endpoint.new("/auth/info", "GET"),
 ]

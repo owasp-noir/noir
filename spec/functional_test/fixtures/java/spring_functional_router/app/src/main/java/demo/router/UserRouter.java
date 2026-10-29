@@ -4,6 +4,7 @@ import static org.springframework.web.reactive.function.server.RouterFunctions.r
 
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.web.reactive.function.server.RequestPredicates;
 import org.springframework.web.reactive.function.server.RouterFunction;
 import org.springframework.web.reactive.function.server.ServerRequest;
 import org.springframework.web.reactive.function.server.ServerResponse;
@@ -23,6 +24,11 @@ public class UserRouter {
             .POST("/users", this::create, ops -> { ops.operationId("CreateUser"); })
             .DELETE("/users/{name}", this::delete)
             .build();
+    }
+
+    @Bean
+    public RouterFunction<ServerResponse> legacyUsers() {
+        return route(RequestPredicates.GET("/legacy/users"), this::list);
     }
 
     Mono<ServerResponse> get(ServerRequest r) { return ServerResponse.ok().build(); }

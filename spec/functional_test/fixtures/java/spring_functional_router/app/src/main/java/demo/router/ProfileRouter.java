@@ -33,6 +33,14 @@ public class ProfileRouter {
                 .build();
     }
 
+    @Bean
+    RouterFunction<ServerResponse> builderVariable() {
+        RouterFunctions.Builder b = RouterFunctions.route();
+        b.GET("/builder/a", this::page);
+        b.POST("/builder/b", this::send);
+        return b.build();
+    }
+
     Mono<ServerResponse> page(ServerRequest request) { return ServerResponse.ok().build(); }
 
     Mono<ServerResponse> send(ServerRequest request) { return ServerResponse.ok().build(); }
