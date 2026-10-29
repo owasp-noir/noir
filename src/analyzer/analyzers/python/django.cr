@@ -2514,7 +2514,9 @@ module Analyzer::Python
     # What a class-based view method body reads besides its own `request.X`
     # lines: forms it binds to the request, and the `self` methods it hands
     # `request` to (`self.get_return_url(request, obj)`), two calls deep.
-    SELF_REQUEST_CALL_RE = /\b(self|super\(\s*\))\.([A-Za-z_]\w*)\s*\(([^()\n]*)/
+    # Zero-width, so `scan` also sees a call nested in another's arguments
+    # (`self.paginate_queryset(self.get_queryset())`).
+    SELF_REQUEST_CALL_RE = /(?=\b(self|super\(\s*\))\.([A-Za-z_]\w*)\s*\(([^()\n]*))/
 
     @cbv_reads = Hash(Tuple(::String, ::String, ::String), Tuple(Array(Param), Array(Tuple(::String, ::String)), Set(::String))).new
 
@@ -2924,6 +2926,22 @@ module Analyzer::Python
       if allowed = chain.compact_map(&.codeblock.match(DRF_HTTP_METHOD_NAMES_RE)).first?
         verbs = allowed[1].scan(/['"]([A-Za-z]+)['"]/).map(&.[1].upcase)
         actions.select! { |action| verbs.includes?(action.method) }
+      end
+
+      # A standard action left to its mixin, or handed back to it
+      # (`super().list(request)`), runs DRF's own body, which reads the
+      # queryset: `list` through `get_queryset()`, a detail action through
+      # `get_object()`, which calls it in turn.
+      queryset_reads = {} of Bool => Array(Param)
+      actions.each do |action|
+        next unless action.name.in?("list", "retrieve", "update", "partial_update", "destroy")
+        if action.handler
+          _, body_lines, offset = method_sites[action.name]? || next
+          next unless parse_code_block(body_lines[offset..]).try(&.matches?(/\bsuper\(\s*\)\.#{action.name}\s*\(/))
+        end
+        calls = action.detail ? "self.get_object()\nself.get_queryset()" : "self.get_queryset()"
+        reads = queryset_reads[action.detail] ||= cbv_body_params(calls, own.filepath, chain, "GET")
+        action.params.concat reads
       end
 
       actions.each do |action|
