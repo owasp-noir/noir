@@ -503,7 +503,7 @@ module Analyzer::Python
             package_map, import_aliases, route_path)
         end
         extract_route_mappings(urlpatterns_content).each do |route_mapping|
-          route, view, offset = route_mapping
+          route, view, offset, verb = route_mapping
           entry_path = route_entry_path(route_path, list_line, offset)
           route = normalize_django_route(route)
           url = "/#{django_urls.prefix}/#{route}".gsub(/\/+/, "/")
@@ -582,13 +582,13 @@ module Analyzer::Python
             view = extract_wrapped_view_reference(view)
             if view_target = resolve_django_view_target(view, package_map) || imported_view_target(django_urls.filepath, view)
               filepath, function_or_class_name = view_target
-              extract_endpoints_from_file(url, filepath, function_or_class_name).each do |endpoint|
+              with_route_verb(extract_endpoints_from_file(url, filepath, function_or_class_name), verb).each do |endpoint|
                 append_code_path(endpoint.details, entry_path)
                 endpoints << tag_urlconf_auth(endpoint, wrapper)
               end
             else
               # By default, Django allows requests with methods other than GET as well
-              unresolved_view_endpoints(url, view, original_content, entry_path).each do |endpoint|
+              with_route_verb(unresolved_view_endpoints(url, view, original_content, entry_path), verb).each do |endpoint|
                 endpoints << tag_urlconf_auth(endpoint, wrapper)
               end
             end
@@ -712,11 +712,18 @@ module Analyzer::Python
           next
         end
 
+        # `i18n_patterns(*i18n_urls)` serves the list under `{lang}/`.
+        if (star = term.match(/\Ai18n_patterns\s*\(\s*\*\s*([A-Za-z_]\w*)\s*\)\z/)) &&
+           (pattern_content = urlpattern_lists[star[1]]?)
+          contents << "i18n_patterns(#{pattern_content})"
+          next
+        end
+
         identifier_match = term.match(/\A([A-Za-z_][A-Za-z0-9_]*)\z/)
         next unless identifier_match
 
         if pattern_content = urlpattern_lists[identifier_match[1]]?
-          contents << pattern_content
+          contents.concat(pattern_content.split(URL_LIST_JOIN))
         end
       end
     end
@@ -736,12 +743,27 @@ module Analyzer::Python
       text.gsub(/\binclude\s*\(\s*#{Regex.escape(name)}\s*\)/) { "include(#{previous})" }
     end
 
+    # `name = [`, `name: list[...] = [`, `name += [` and `name.extend([`.
+    URL_LIST_LITERAL_RE = /^\s*([A-Za-z_][A-Za-z0-9_]*)\s*(?::[^=\n]+)?(\+?=|\.\s*extend\s*\()\s*\[/
+    # `name = list(other)`, `name: T = other`, `name += other`.
+    # Joins the verbatim pieces of an extended helper list; a comment line, so
+    # route scanning reads through it, and split back so each piece keeps
+    # its source line.
+    URL_LIST_JOIN    = "\n# noir:url-list-join\n"
+    URL_LIST_COPY_RE = /^\s*([A-Za-z_][A-Za-z0-9_]*)\s*(?::[^=\n]+)?(\+?=)\s*(?:list\s*\(\s*)?([A-Za-z_][A-Za-z0-9_]*)\s*\)?\s*$/
+
     private def extract_urlpattern_lists(content : ::String) : Hash(::String, ::String)
       pattern_lists = Hash(::String, ::String).new
       lines = content.split("\n")
 
       lines.each_with_index do |line, index|
-        assignment_match = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*\[/)
+        if copy = line.match(URL_LIST_COPY_RE)
+          next unless other = pattern_lists[copy[3]]?
+          name = copy[1]
+          pattern_lists[name] = copy[2] == "+=" && (held = pattern_lists[name]?) ? "#{held}#{URL_LIST_JOIN}#{other}" : other
+          next
+        end
+        assignment_match = line.match(URL_LIST_LITERAL_RE)
         next unless assignment_match
 
         pieces = [line]
@@ -754,7 +776,13 @@ module Analyzer::Python
         end
 
         name = assignment_match[1]
-        pattern_lists[name] = inline_previous_binding(pieces.join("\n"), name, pattern_lists[name]?)
+        if assignment_match[2] == "="
+          pattern_lists[name] = inline_previous_binding(pieces.join("\n"), name, pattern_lists[name]?)
+        else
+          # An extended helper list keeps what it already held.
+          piece = pieces.join("\n")
+          pattern_lists[name] = (held = pattern_lists[name]?) ? "#{held}#{URL_LIST_JOIN}#{piece}" : piece
+        end
       end
 
       pattern_lists
@@ -976,7 +1004,7 @@ module Analyzer::Python
 
       list_line = list_start_line(read_file_content(current_app_config_path), pattern_content)
       extract_route_mappings(pattern_content).each do |route_mapping|
-        route, view, offset = route_mapping
+        route, view, offset, verb = route_mapping
         entry_path = route_entry_path(route_path, list_line, offset)
         route = normalize_django_route(route)
         nested_prefix = join_url_parts(prefix, route).lchop("/")
@@ -1030,13 +1058,13 @@ module Analyzer::Python
                         imported_view_target(current_app_config_path, view)
           if view_target
             filepath, function_or_class_name = view_target
-            extract_endpoints_from_file(url, filepath, function_or_class_name).each do |endpoint|
+            with_route_verb(extract_endpoints_from_file(url, filepath, function_or_class_name), verb).each do |endpoint|
               append_code_path(endpoint.details, entry_path)
               append_code_path(endpoint.details, parent_route_path)
               endpoints << tag_urlconf_auth(endpoint, wrapper)
             end
           else
-            unresolved_view_endpoints(url, view, read_file_content(current_app_config_path), entry_path).each do |endpoint|
+            with_route_verb(unresolved_view_endpoints(url, view, read_file_content(current_app_config_path), entry_path), verb).each do |endpoint|
               append_code_path(endpoint.details, parent_route_path)
               endpoints << tag_urlconf_auth(endpoint, wrapper)
             end
@@ -1078,18 +1106,34 @@ module Analyzer::Python
     # `include([...])` body) is skipped here and read when that include is
     # expanded. Scans bytes: every delimiter is ASCII, so UTF-8 is safe and
     # each call costs one forward pass.
-    private def route_call_args(text : ::String) : Array(Array(::String))
-      calls = [] of Array(::String)
+    # `url|path|re_path|register(`, or a project wrapper named `*_path(`
+    # (Zulip's `rest_path`); group 1 is set for the wrapper.
+    ROUTE_CALL_RE = /\b(?:url|path|re_path|register|([A-Za-z_]\w*_path))\s*\(/
+    # `rest_path("users/me", GET=get_me, PATCH=update_me)`: the keyword
+    # names the verb, its value the view serving it.
+    VERB_KEYWORD_RE = /\A\s*(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\s*=(?!=)\s*(.+)\z/m
+
+    # `{args, wrapper?}` per top-level route call in `text`.
+    private def route_call_args(text : ::String) : Array(Tuple(Array(::String), Bool))
+      calls = [] of Tuple(Array(::String), Bool)
       bytes = text.to_slice
       pos = 0
-      while call = /\b(?:url|path|re_path|register)\s*\(/.match_at_byte_index(text, pos)
+      while call = ROUTE_CALL_RE.match_at_byte_index(text, pos)
         open = call.byte_end(0) - 1
         close = python_close_paren_byte(bytes, open)
         break unless close
-        calls << split_python_arguments(text.byte_slice(open + 1, close - open - 1))
+        calls << {split_python_arguments(text.byte_slice(open + 1, close - open - 1)), !call[1]?.nil?}
         pos = close + 1
       end
       calls
+    end
+
+    # A wrapper route serves each verb's view for that verb only.
+    private def with_route_verb(endpoints : Array(Endpoint), verb : ::String?) : Array(Endpoint)
+      return endpoints unless verb
+      endpoint = endpoints.find { |candidate| candidate.method == verb } || endpoints.first? || return endpoints
+      endpoint.method = verb
+      [endpoint]
     end
 
     # Byte index of the `)` closing the `(` at `open`, skipping quoted runs.
@@ -1122,8 +1166,8 @@ module Analyzer::Python
     # `{route, view, line offset}` per `path|re_path|url(...)` entry in
     # `content`; the offset is the entry's 0-based line within `content`,
     # for `route_entry_path` to turn into a file line.
-    private def extract_route_mappings(content : ::String) : Array(Tuple(::String, ::String, Int32))
-      mappings = [] of Tuple(::String, ::String, Int32)
+    private def extract_route_mappings(content : ::String) : Array(Tuple(::String, ::String, Int32, ::String?))
+      mappings = [] of Tuple(::String, ::String, Int32, ::String?)
       # Comments go first: a commented-out `path(...)` or a `(` in a
       # trailing comment would otherwise be read as code once lines are
       # joined into one logical call.
@@ -1142,15 +1186,25 @@ module Analyzer::Python
       lines.each_with_index do |line, index|
         next if index <= skip_through
         next if line.lstrip.starts_with?("#")
-        next unless line.matches?(/\b(?:url|path|re_path|register)\s*\(/)
+        next unless line.matches?(ROUTE_CALL_RE)
 
         logical_line, call_end = python_paren_delta(line) > 0 ? python_call_span(lines, index, line) : {line, index}
         mapped_before = mappings.size
 
         # One line can hold several sibling calls (`[path('a', v), path('b', w)]`,
         # or an inline `include([...])` body), so read every top-level call.
-        route_call_args(logical_line).each do |args|
+        route_call_args(logical_line).each do |args, wrapper|
           next if args.size < 2
+
+          if wrapper
+            next unless route = Helper.extract_python_string(args[0])
+            route = "{lang}/#{route.lchop('^')}" if i18n
+            args.each do |arg|
+              next unless keyword = arg.match(VERB_KEYWORD_RE)
+              mappings << {route, keyword[2].strip, index, keyword[1]}
+            end
+            next
+          end
 
           view_expr = extract_python_keyword_expression(args, "view")
           view_expr ||= args[1]?.try do |candidate|
@@ -1190,7 +1244,7 @@ module Analyzer::Python
 
           # Only `^` goes: `normalize_django_route` still reads the `$`.
           route = "{lang}/#{route.lchop('^')}" if i18n
-          mappings << {route, view_expr, index}
+          mappings << {route, view_expr, index, nil}
         end
 
         skip_through = call_end if mappings.size > mapped_before
@@ -1473,7 +1527,7 @@ module Analyzer::Python
           package_map, import_aliases, route_path)
       end
       extract_route_mappings(pattern_content).each do |route_mapping|
-        route, view, offset = route_mapping
+        route, view, offset, verb = route_mapping
         entry_path = route_entry_path(route_path, list_line, offset)
         route = normalize_django_route(route)
         nested_mount = join_url_parts(mount_route, route).lchop("/")
@@ -1559,7 +1613,7 @@ module Analyzer::Python
         if resolved
           filepath, function_or_class_name = resolved
           if /^[a-zA-Z_][a-zA-Z0-9_]*$/.match(function_or_class_name)
-            extract_endpoints_from_file(url, filepath, function_or_class_name).each do |endpoint|
+            with_route_verb(extract_endpoints_from_file(url, filepath, function_or_class_name), verb).each do |endpoint|
               append_code_path(endpoint.details, entry_path)
               endpoints << tag_urlconf_auth(endpoint, wrapper)
             end
@@ -1567,7 +1621,7 @@ module Analyzer::Python
           end
         end
 
-        unresolved_view_endpoints(url, view, read_file_content(django_urls.filepath), entry_path).each do |endpoint|
+        with_route_verb(unresolved_view_endpoints(url, view, read_file_content(django_urls.filepath), entry_path), verb).each do |endpoint|
           endpoints << tag_urlconf_auth(endpoint, wrapper)
         end
       end

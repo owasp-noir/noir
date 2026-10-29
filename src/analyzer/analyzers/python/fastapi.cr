@@ -14,6 +14,12 @@ module Analyzer::Python
     # literal on every evaluation). The `.to_s` expansion of the
     # interpolated constants is byte-identical to the previous inline form.
     FASTAPI_INSTANCE_RE = /(#{PYTHON_VAR_NAME_REGEX})(?::#{DOT_NATION})?=(?:fastapi\.)?FastAPI\(/
+    # `def init_views(app: FastAPI)` (space-stripped): the app built
+    # elsewhere and handed in; its `include_router` / `@app.get` calls in
+    # this file register on it too.
+    FASTAPI_PARAM_RE = /(?:^|[(,])(#{PYTHON_VAR_NAME_REGEX}):(?:fastapi\.)?FastAPI(?:[,)=]|$)/
+    # Library subclasses of `fastapi.APIRouter`, constructed like it.
+    LIBRARY_ROUTER_CLASSES = %w[APIRouter VersionedAPIRouter InferringRouter]
     # `class UserRouter(APIRouter):` — a project router class, constructed
     # like APIRouter itself.
     ROUTER_SUBCLASS_RE = /^class\s+(#{PYTHON_VAR_NAME_REGEX})\s*\(([^)]*)\)\s*:/m
@@ -83,6 +89,7 @@ module Analyzer::Python
               effective_line = original_line.includes?("Router") && original_line.matches?(router_ctor_re) ? join_until_python_call_closes(codelines, index, original_line) : original_line
               line = effective_line.gsub(" ", "")
               match = line.includes?("FastAPI(") ? line.match(FASTAPI_INSTANCE_RE) : nil
+              match ||= line.includes?(":FastAPI") || line.includes?(":fastapi.FastAPI") ? line.match(FASTAPI_PARAM_RE) : nil
               unless match.nil?
                 fastapi_instance_name = match[1]
                 if include_router_map.has_key?(path)
@@ -343,7 +350,7 @@ module Analyzer::Python
           bases[m[1]] = m[2].split(",").map(&.strip.split(".").last)
         end
       end
-      names = ["APIRouter"]
+      names = LIBRARY_ROUTER_CLASSES.dup
       loop do
         added = bases.keys.select { |name| !names.includes?(name) && bases[name].any? { |b| names.includes?(b) } }
         break if added.empty?
@@ -623,6 +630,7 @@ module Analyzer::Python
                                              target_map : Hash(::String, Router)) : ::String
       return local_name if target_map.has_key?(local_name)
 
+      aliased = false
       importing_source.each_line do |raw|
         stripped = raw.lstrip
         next unless stripped.starts_with?("from ") || stripped.starts_with?("import ")
@@ -630,10 +638,14 @@ module Analyzer::Python
         if match = stripped.match(/\b(#{PYTHON_VAR_NAME_REGEX})\s+as\s+#{Regex.escape(local_name)}\b/)
           original = match[1]
           return original if target_map.has_key?(original)
+          aliased = true
         end
       end
 
-      return target_map.first_key if target_map.size == 1
+      # An import under its own name that the file does not register names
+      # something else (a router of a class noir does not know); handing it
+      # the file's one router moved that router's prefix onto it.
+      return target_map.first_key if aliased && target_map.size == 1
 
       local_name
     end
