@@ -74,9 +74,11 @@ module NoirAIContext
       82,
       # `system` is the libc / PHP / Ruby / Perl builtin, or Python's
       # `os.system`: the whole callee or its last segment on one of those
-      # receivers. A namespace head (`System.IO.File.Exists`) or a property
-      # (`platform.system`) runs nothing. .NET spawns through `Process.Start`.
-      name_patterns: [/\bexec\b/i, /\A(?:(?:os|Kernel|std|posix)?(?:\.|::))?system\z/, /\bProcess\.Start\b/, /\bspawn\b/i, /\bpopen\b/i, /\bshell\b/i],
+      # receivers (PHP's namespaced `\system`, Perl's `CORE::system`). A
+      # namespace head (`System.IO.File.Exists`) or a property
+      # (`platform.system`) runs nothing. .NET spawns through `Process.Start`,
+      # Elixir through `System.cmd`.
+      name_patterns: [/\bexec\b/i, /\A(?:(?:os|Kernel|std|posix|CORE)?(?:\.|::)|\\)?system\z/, /\bProcess\.Start\b/, /\bSystem\.cmd\b/, /\bspawn\b/i, /\bpopen\b/i, /\bshell\b/i],
       # `session.exec(` / `cursor.exec(` are queries, see SQL_RECEIVER_CALL.
       source_patterns: [/(?<!session\.|cursor\.|conn\.|pool\.|stmt\.|db\.|tx\.|sql\.)\bexec\s*\(/i, /\bsystem\s*\(/i, /\bProcess\.Start\s*\(/, /\bspawn\s*\(/i, /\bpopen\s*\(/i, /ProcessBuilder/i, /Runtime\.getRuntime/i, /subprocess\./i]
     ),
@@ -94,7 +96,8 @@ module NoirAIContext
       # The source scan needs a file-system call: a bare `upload` /
       # `download` word in the scan window is usually the route's own path
       # literal or name (`"/upload"`), see MOBILE_DOWNLOAD_SINK.
-      name_patterns: [/\b(?:File|IO)\.\w+|\.File\b/, /\bfile\.(?:save|write)/i, FILE_IO_CALL],
+      # `System.IO.File.Exists` reads as its member, `File.Exists`.
+      name_patterns: [/\b(?:File|IO)\.(?!File\b)\w+|\.File\b(?!\.)/, /\bfile\.(?:save|write)/i, FILE_IO_CALL],
       source_patterns: [/\bFile\.(open|read|write)/, /\bread_text\b/i, /\bwrite_text\b/i, FILE_IO_CALL, DIRECTORY_LISTING_CALL]
     ),
     MOBILE_DOWNLOAD_SINK,

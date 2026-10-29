@@ -1483,6 +1483,9 @@ describe "NoirAIContext" do
       "Kernel.system"                 => {"command_exec", true},
       "std::system"                   => {"command_exec", true},
       "Process.Start"                 => {"command_exec", true},
+      "System.cmd"                    => {"command_exec", true},
+      "\\system"                      => {"command_exec", true},
+      "CORE::system"                  => {"command_exec", true},
     }.each do |name, (kind, expected)|
       endpoint = Endpoint.new("/items", "GET")
       endpoint.push_callee(Callee.new(name, "app.cs", 3))
@@ -1602,6 +1605,96 @@ describe "NoirAIContext" do
       context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
       context.sinks.map(&.kind).should contain("deserialization")
     end
+  end
+
+  # Review cases for #3255: wrappers that do render / revive, and callees
+  # whose same-named definition is out of the caller's scope, keep their
+  # sink. Each callee sits where the analyzer reports it: `@def` is the
+  # definition line (resolving analyzers), `@call` the call site.
+  it "keeps the sink of a helper that renders or revives, or whose definition is out of scope" do
+    {
+      # Django `render_to_string`, bare `loads` imported from pickle.
+      "flaskhelp render"  => {".py", "from django.template.loader import render_to_string\n\n\ndef render(name, **ctx):\n    return render_to_string(name, ctx)\n\n\n@app.route('/b')\ndef b():\n    return render('b.txt', q=request.args['q'])\n", "render", "def render", "template_render"},
+      "flaskhelp loads"   => {".py", "from pickle import loads\n\n\ndef unserialize(data):\n    return loads(data)\n\n\n@app.route('/a', methods=['POST'])\ndef a():\n    return str(unserialize(request.data))\n", "unserialize", "def unserialize", "deserialization"},
+      "go_tpl"            => {".go", "package main\n\nfunc render(w http.ResponseWriter, name string, data any) {\n\ttpls.ExecuteTemplate(w, name, data)\n}\n\nfunc page(w http.ResponseWriter, r *http.Request) {\n\trender(w, \"page\", r.URL.Query().Get(\"q\"))\n}\n", "render", "func render", "template_render"},
+      "java_tpl"          => {".java", "@RestController\npublic class PageController {\n    @GetMapping(\"/page\")\n    public String page(@RequestParam String q) {\n        return render(\"page\", q);\n    }\n\n    private String render(String view, String q) {\n        Context c = new Context();\n        return engine.process(view, c);\n    }\n}\n", "render", "private String render", "template_render"},
+      "php_inc"           => {".php", "<?php\nfunction render($view, $vars) {\n    extract($vars);\n    include __DIR__ . \"/views/\" . $view . \".php\";\n}\n\nrender($_GET['page'], ['q' => $_GET['q']]);\n", "render", "render($_GET", "template_render"},
+      "deser2 one deeper" => {".py", "import pickle\n\n\ndef _restore(blob):\n    return pickle.loads(blob)\n\n\ndef unserialize(blob):\n    return _restore(blob)\n\n\n@app.route('/a', methods=['POST'])\ndef a():\n    return str(unserialize(request.data))\n", "unserialize", "def unserialize", "deserialization"},
+      "deser2 unresolved" => {".py", "from .store import _restore\n\n\ndef unserialize(blob):\n    return _restore(blob)\n\n\n@app.route('/a', methods=['POST'])\ndef a():\n    return str(unserialize(request.data))\n", "unserialize", "def unserialize", "deserialization"},
+      "deser3"            => {".py", "def unserialize(blob):\n    return yaml.unsafe_load(blob)\n\n\n@app.route('/b', methods=['POST'])\ndef b():\n    return str(unserialize(request.data))\n", "unserialize", "def unserialize", "deserialization"},
+      "deser4"            => {".py", "def unserialize(blob):\n    return pickle.Unpickler(io.BytesIO(blob)).load()\n\n\n@app.route('/b', methods=['POST'])\ndef b():\n    return str(unserialize(request.data))\n", "unserialize", "def unserialize", "deserialization"},
+      "rbdeser"           => {".rb", "class StateController < ApplicationController\n  def restore\n    @state = unserialize(params[:blob])\n  end\n\n  private\n\n  def unserialize(blob)\n    Marshal.restore(Base64.decode64(blob))\n  end\nend\n", "unserialize", "@state = unserialize", "deserialization"},
+      # Tornado: `self.render` is RequestHandler's, not the sibling UIModule's.
+      "tornado" => {".py", "class EntryModule(tornado.web.UIModule):\n    def render(self, entry):\n        return '<li>' + entry + '</li>'\n\n\nclass MainHandler(tornado.web.RequestHandler):\n    def get(self):\n        q = self.get_argument('q')\n        self.render('index.tpl', q=q)\n", "self.render", "self.render(", "template_render"},
+      # Django: the analyzer resolved the imported `render` to a method.
+      "django" => {".py", "from django.shortcuts import render\n\n\nclass Badge:\n    def render(self):\n        return '<b>' + self.label + '</b>'\n\n\ndef show(request):\n    q = request.GET.get('q')\n    return render(request, 'show.tpl', {'q': q})\n", "render", "def render", "template_render"},
+    }.each do |label, (ext, source, name, anchor, kind)|
+      with_temp_ai_context_source(source, ext) do |path|
+        lines = source.lines
+        endpoint = Endpoint.new("/x", "GET")
+        details = endpoint.details
+        handler_line = lines.index!(&.matches?(/@app\.route|@GetMapping|def (?:get|show|restore)\b|func page|^render\(/)) + 1
+        details.add_path(PathInfo.new(path, handler_line))
+        endpoint.details = details
+        endpoint.push_callee(Callee.new(name, path, lines.index!(&.includes?(anchor)) + 1))
+
+        context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+        context.sinks.map(&.kind).should contain(kind), label
+      end
+    end
+  end
+
+  # A receiver-qualified `.render(` is not the inert helper's call.
+  it "masks only the unqualified call of an inert helper in the route source scan" do
+    source = <<-PY
+      def render(x):
+          return {"x": x}
+
+
+      @app.route("/d")
+      def d():
+          data = render(request.args["x"])
+          return env.get_template("d.tpl").render(data=data)
+      PY
+
+    with_temp_ai_context_source(source, ".py") do |path|
+      endpoint = Endpoint.new("/d", "GET")
+      details = endpoint.details
+      details.add_path(PathInfo.new(path, 5))
+      endpoint.details = details
+      endpoint.push_callee(Callee.new("render", path, 1))
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+      sink = context.sinks.find { |entry| entry.kind == "template_render" }.should_not be_nil
+      sink.source.should eq("route_source")
+      sink.snippet.to_s.should contain("data = render(request.args")
+    end
+  end
+
+  it "keeps select with a run-time built argument a sql sink, a fixed column list not" do
+    {
+      %(@users = User.select("\#{params[:col]}").where(active: true)) => true,
+      %(stmt = select(text(request.args["cols"])))                    => true,
+      %(@users = User.select(*attrs).order(karma: :desc))             => false,
+      %(names = _keys.Select(k => k.ToUpperInvariant()).ToList())     => false,
+    }.each do |line, expected|
+      with_temp_ai_context_source("#{line}\n", ".rb") do |path|
+        endpoint = Endpoint.new("/users", "GET")
+        endpoint.push_callee(Callee.new(line.match!(/([\w.]*(?:select|Select))\(/)[1], path, 1))
+
+        context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+        context.sinks.map(&.kind).includes?("sql").should eq(expected), line
+      end
+    end
+  end
+
+  it "labels a System.IO.File call by its member" do
+    endpoint = Endpoint.new("/exists", "GET")
+    endpoint.push_callee(Callee.new("System.IO.File.Exists", "app.cs", 3))
+
+    context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+    sink = context.sinks.find { |entry| entry.kind == "file_io" }.should_not be_nil
+    sink.name.should eq("File.Exists")
   end
 
   it "does not source-scan a command-object execute as a sql sink" do
