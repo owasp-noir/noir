@@ -63,12 +63,12 @@ module Noir::CLI::Inspect
             n = value.to_i?
             n && n > 0 ? (limit = n) : (errors << "--limit must be a positive integer, got #{value}")
           else
-            format = value
+            format = value == "plain" ? "text" : value
           end
         end
       when .starts_with?("--from=")   then from = arg[7..]
-      when .starts_with?("--format=") then format = arg[9..]
-      when .starts_with?("-f=")       then format = arg[3..]
+      when .starts_with?("--format=") then format = arg[9..] == "plain" ? "text" : arg[9..]
+      when .starts_with?("-f=")       then format = arg[3..] == "plain" ? "text" : arg[3..]
       when .starts_with?("--limit=")
         n = arg[8..].to_i?
         n && n > 0 ? (limit = n) : (errors << "--limit must be a positive integer, got #{arg[8..]}")
@@ -514,7 +514,7 @@ module Noir::CLI::Inspect
   end
 
   private def self.normalize(path : String) : String
-    strip_trailing_slash(request_path(path).split('?', 2)[0])
+    strip_trailing_slash(request_path(path).split('#', 2)[0].split('?', 2)[0])
   end
 
   record Match, endpoint : Endpoint, matched_by : String

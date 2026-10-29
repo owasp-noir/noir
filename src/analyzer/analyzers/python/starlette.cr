@@ -96,8 +96,10 @@ module Analyzer::Python
       # that value the mount has closed and its prefix must be popped.
       mount_stack = [] of Tuple(::String, Int32)
       paren_depth = 0
+      in_docstring = Helper.docstring_line_flags(lines)
 
       lines.each_with_index do |line, line_index|
+        next if in_docstring[line_index] || line.lstrip.starts_with?("#")
         # Route(...) and Mount(...) calls commonly span multiple
         # lines in real Starlette code. The line-level scan above
         # captures only the call header (`Route(`) on the first
@@ -336,6 +338,7 @@ module Analyzer::Python
     private def normalize_route_url(prefix : ::String, route_path : ::String) : ::String
       full_url = "#{prefix}#{route_path}"
       full_url = "/#{full_url}".gsub(/\/+/, "/")
+      full_url = full_url.gsub("{{", "{").gsub("}}", "}")
       full_url.gsub(TYPED_PATH_PARAM_REGEX) { |_| "{#{$~[1]}}" }
     end
 
@@ -622,7 +625,8 @@ module Analyzer::Python
 
     private def extract_path_params(route_path : ::String) : Array(Param)
       params = [] of Param
-      route_path.scan(PATH_PARAM_REGEX) do |match|
+      unescaped = route_path.gsub("{{", "{").gsub("}}", "}")
+      unescaped.scan(PATH_PARAM_REGEX) do |match|
         name = match[1]
         next if params.any? { |p| p.name == name }
         params << Param.new(name, "", "path")

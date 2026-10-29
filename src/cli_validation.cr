@@ -354,6 +354,8 @@ module Noir::CliValidation
 
   def self.validate_output_format!(options : Hash(String, YAML::Any))
     format = options["format"].to_s
+    format = "plain" if format == "text"
+    options["format"] = YAML::Any.new(format)
     return if Noir::OutputFormats.known?(format)
 
     raise Error.new("Invalid output format '#{format}'. Valid formats: #{Noir::OutputFormats::NAMES.join(", ")}")

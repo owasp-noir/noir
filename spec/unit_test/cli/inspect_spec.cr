@@ -41,6 +41,16 @@ describe Noir::CLI::Inspect do
       common.errors.size.should eq(2)
     end
 
+    it "accepts plain as an alias for text" do
+      common = Noir::CLI::Inspect.parse_common(["-f", "plain"])
+      common.format.should eq("text")
+      common.errors.should be_empty
+
+      common_eq = Noir::CLI::Inspect.parse_common(["--format=plain"])
+      common_eq.format.should eq("text")
+      common_eq.errors.should be_empty
+    end
+
     it "allows global flags when a report supplies the endpoints" do
       Noir::CLI::Inspect.report_scan_args(["--no-color", "--no-spinner"]).should be_empty
       Noir::CLI::Inspect.report_scan_args(["--bogus"]).should eq(["--bogus"])
@@ -78,6 +88,16 @@ describe Noir::CLI::Inspect do
       matches = Noir::CLI::Inspect.trace(endpoints, "GET", "/users/")
       matches.map(&.endpoint.url).should eq(["/users"])
       matches.first.matched_by.should eq("exact")
+    end
+
+    it "strips url fragments from the request path" do
+      matches = Noir::CLI::Inspect.trace(endpoints, "GET", "/users#section")
+      matches.map(&.endpoint.url).should eq(["/users"])
+      matches.first.matched_by.should eq("exact")
+
+      matches_slash = Noir::CLI::Inspect.trace(endpoints, "GET", "/users/#step1")
+      matches_slash.map(&.endpoint.url).should eq(["/users"])
+      matches_slash.first.matched_by.should eq("exact")
     end
 
     it "maps a concrete segment onto every placeholder syntax" do

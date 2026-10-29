@@ -53,8 +53,10 @@ module Analyzer::Python
       source_cache = Hash(::String, ::String).new
       source_cache[path] = source
       class_cache = Hash(::String, Hash(::String, Int32)).new
+      in_docstring = Helper.docstring_line_flags(lines)
 
       lines.each_with_index do |line, line_index|
+        next if in_docstring[line_index] || line.lstrip.starts_with?("#")
         # Record class definitions for later responder lookup.
         if class_match = line.match(/^\s*class\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*[\(:]/)
           classes[class_match[1]] = line_index

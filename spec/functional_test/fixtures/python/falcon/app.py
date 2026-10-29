@@ -65,6 +65,11 @@ reports_resource = ThingsResource()
 external_profile_resource = resources.ExternalProfileResource()
 
 app = falcon.App()
+# app.add_route('/commented_out', ThingsResource())
+"""
+Example:
+    app.add_route('/docstring_route', ThingsResource())
+"""
 app.add_route('/things', ThingsResource())
 app.add_route('/reports', reports_resource)
 app.add_route('/things/{thing_id:int}', ThingResource())

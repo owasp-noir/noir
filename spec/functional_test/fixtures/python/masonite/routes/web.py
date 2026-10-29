@@ -44,4 +44,12 @@ ROUTES = [
 
     # Unresolvable controller reference — must still surface a bare endpoint.
     Route.get("/health", "MissingController@ping"),
+
+    # False positive test: commented-out route must be ignored
+    # Route.get("/commented-masonite", "MissingController@ping"),
 ]
+
+"""
+Docstring test: must not be extracted
+Route.get("/docstring-masonite", "MissingController@ping")
+"""

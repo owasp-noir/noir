@@ -102,8 +102,19 @@ def main(global_config, **settings):
         cache_max_age=3600,
     )
     config.add_view(ping_view, route_name="ping", request_method="GET", renderer="json")
+    # config.add_route("commented_route", "/commented-route")
+    # config.add_static_view(name="commented_static", path="commented_static")
     config.scan()
     return config.make_wsgi_app()
+
+"""
+Docstring test: must not be extracted
+config.add_route("docstring_route", "/docstring-route")
+config.add_static_view(name="docstring_static", path="docstring_static")
+@view_config(route_name="docstring_route", request_method="GET")
+def docstring_view(request):
+    return {}
+"""
 
 
 if __name__ == "__main__":

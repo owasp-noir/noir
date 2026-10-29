@@ -126,6 +126,11 @@ account_routes = [
     ]),
 ]
 
+# Route('/commented_out', homepage)
+"""
+Example route that should be ignored:
+    Route('/docstring_route', homepage)
+"""
 internal_app = Starlette(routes=internal_routes)
 programmatic_app = Router()
 programmatic_app.add_route('/audit/{entry_id:int}', audit_entry, methods=['GET'])
