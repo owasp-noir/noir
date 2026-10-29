@@ -342,9 +342,10 @@ module Analyzer::Php
     # the accessor, capture 2 the input name.
     ILLUMINATE_ACCESSORS       = "input|post|get|query|header|cookie|file|hasFile|has|filled|string|integer|boolean|float|date|enum|array"
     ILLUMINATE_REQUEST_READ_RE = /(?:\$request|\brequest\(\s*\))\s*->\s*(#{ILLUMINATE_ACCESSORS})\s*\(\s*['"]([^'"]+)['"]/
-    # `$request->only('a', 'b')` / `->except(['a', 'b'])`: several literal
+    # `$request->only('a', 'b')` / `->only(['a', 'b'])`: several literal
     # input names per call, as arguments or one array. Capture 1 the list.
-    ILLUMINATE_MULTI_READ_RE = /(?:\$request|\brequest\(\s*\))\s*->\s*(?:only|except)\s*\(\s*(\[?\s*['"][^'"]+['"](?:\s*,\s*['"][^'"]+['"])*\s*,?\s*\]?)\s*\)/
+    # (`except` names the inputs the code drops, often `_token`.)
+    ILLUMINATE_MULTI_READ_RE = /(?:\$request|\brequest\(\s*\))\s*->\s*only\s*\(\s*(\[?\s*['"][^'"]+['"](?:\s*,\s*['"][^'"]+['"])*\s*,?\s*\]?)\s*\)/
     ILLUMINATE_READ_TYPES    = {"get" => "query", "query" => "query", "header" => "header", "cookie" => "cookie"}
     # Calls taking a validation rules array: `$request->validate([...])`,
     # `$this->validate($request, [...])`, `Validator::make($data, [...])`.

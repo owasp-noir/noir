@@ -293,7 +293,7 @@ module Analyzer::Php
     # A route's path argument, quotes included (`laravel_path_arg` folds it):
     # a string literal, or literals and simple expressions joined with `.`
     # (`'/a/' . config('x.y')`, `'/c/' . $prefix`). One capture.
-    PATH_ARG = %q((['"][^'"]*['"](?:\s*\.\s*(?:['"][^'"]*['"]|\$\w+(?:->\w+)*|[\w\\]+(?:::\w+)?\s*\((?:[^()'"]|['"][^'"]*['"])*\)))*))
+    PATH_ARG = %q((['"][^'"]*['"](?:\s*\.\s*(?:['"][^'"]*['"]|\$\w+(?:->\w+)*|[\w\\]+(?:::\w+)?\s*\((?:[^()'"]++|['"][^'"]*['"])*+\)))*))
 
     # `Route::get('/x', …)` and friends: the verb is capture 1, the path
     # capture 2.
@@ -654,7 +654,7 @@ module Analyzer::Php
     end
 
     # One piece of a `PATH_ARG`: a literal, a variable or a call.
-    PATH_PIECE_RE = /\G\s*\.?\s*(?:(['"])([^'"]*)\1|\$(?:\w+->)*(\w+)|(?:[\w\\]+::)?(\w+)\s*\((?:[^()'"]|['"][^'"]*['"])*\))/
+    PATH_PIECE_RE = /\G\s*\.?\s*(?:(['"])([^'"]*)\1|\$(?:\w+->)*(\w+)|(?:[\w\\]+::|\\?(?:\w+\\)*)?(\w+)\s*\((?:[^()'"]++|['"][^'"]*['"])*+\))/
 
     # The path a `PATH_ARG` capture stands for: literals concatenated, a
     # `config('x.y')` with a literal default resolved, and any other

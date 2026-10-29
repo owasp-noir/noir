@@ -214,9 +214,9 @@ module Analyzer::CSharp
     # `Conventions.Add(new ApiRoutePrefixConvention("api"))`: its prefix leads
     # every attribute route of the project. The template is the class's own
     # `new RouteAttribute("api")` literal, else the registration's first
-    # argument.
+    # argument (`"api"` or `new RouteAttribute("api")`).
     CONVENTION_CLASS_RE    = /\bclass\s+(\w+)[^{;]*\bIApplicationModelConvention\b/
-    CONVENTION_ADD_RE      = /\bConventions\s*\.\s*(?:Add|Insert)\s*\(\s*(?:\d+\s*,\s*)?new\s+(\w+)\s*\(\s*(?:@?"([^"]*)")?/
+    CONVENTION_ADD_RE      = /\bConventions\s*\.\s*(?:Add|Insert)\s*\(\s*(?:\d+\s*,\s*)?new\s+(\w+)\s*\(\s*(?:new\s+(?:\w+\.)*RouteAttribute\s*\(\s*)?(?:@?"([^"]*)")?/
     ROUTE_ATTRIBUTE_NEW_RE = /\bnew\s+(?:\w+\.)*RouteAttribute\s*\(\s*(?:@?"([^"]*)")?/
 
     private def load_convention_prefixes(project_roots : Array(String)) : Hash(String, String)
@@ -227,9 +227,8 @@ module Analyzer::CSharp
         next unless content.includes?("Conventions") || content.includes?("IApplicationModelConvention")
         next if Common.csharp_test_path?(base_relative_path(file))
         code = Noir::CSharpLexer.new(content).code_source
-        if (decl = code.match(CONVENTION_CLASS_RE)) && code.includes?("CombineAttributeRouteModel") &&
-           (route = code.match(ROUTE_ATTRIBUTE_NEW_RE))
-          classes[decl[1]] = route[1]?
+        if (decl = code.match(CONVENTION_CLASS_RE)) && code.includes?("CombineAttributeRouteModel")
+          classes[decl[1]] = code.match(ROUTE_ATTRIBUTE_NEW_RE).try(&.[1]?)
         end
         code.scan(CONVENTION_ADD_RE) { |m| adds << {route_scope_for(file, project_roots), m[1], m[2]?} }
       rescue e
