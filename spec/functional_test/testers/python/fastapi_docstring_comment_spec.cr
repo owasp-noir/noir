@@ -2,7 +2,8 @@ require "../../func_spec.cr"
 
 # A `#` on a line inside a multi-line triple-quoted string is not a
 # comment. Treating it as one left the decorator's `(` unbalanced, so the
-# decorator joined past its own close and the route was dropped.
+# decorator joined past its own close and the route was dropped. And a
+# worked `@app.get("/teapot/")` example inside a docstring is not a route.
 expected_endpoints = [
   Endpoint.new("/one", "GET", [
     Param.new("q", "", "query"),

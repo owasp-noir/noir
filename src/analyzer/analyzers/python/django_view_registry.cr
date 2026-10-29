@@ -203,7 +203,8 @@ module Analyzer::Python
         end
       end
       parts = file.split('/')
-      return parts[-2]? if parts.last == "models.py"
+      # `shop/models/models.py` is the `models` package of app `shop`.
+      return parts[-2]? if parts.last == "models.py" && parts[-2]? != "models"
       index = parts[0...-1].rindex("models") || return
       index > 0 ? parts[index - 1] : nil
     end

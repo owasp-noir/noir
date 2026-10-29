@@ -16,12 +16,17 @@ require "../../func_spec.cr"
 #   and `data = request.POST if request.method == "POST" else request.GET`
 #   reads the mapping of the verb served;
 # - a helper the view overrides is the one its inherited handler runs, and
-#   of two `import *` binding a name the last wins.
+#   of two `import *` binding a name the last wins;
+# - a model in `shop/models/models.py` still has app label `shop`, and a
+#   model re-exported from a module named like it (`order.py` -> `Order`)
+#   binds the class, not the module, on a case-insensitive file system.
 pk = Param.new("pk", "", "path")
 edit_form = [Param.new("return_url", "", "query"), Param.new("note", "", "form"), Param.new("name", "", "form"), Param.new("price", "", "form")]
 extracted_endpoints = [
   Endpoint.new("/shop/items/", "GET", [Param.new("per_page", "", "query")]),
   Endpoint.new("/shop/items/<int:pk>/", "GET", [pk]),
+  Endpoint.new("/shop/widgets/", "GET", [Param.new("per_page", "", "query")]),
+  Endpoint.new("/shop/orders/", "GET", [Param.new("per_page", "", "query")]),
   Endpoint.new("/shop/items/<int:pk>/edit/", "GET", [pk]),
   Endpoint.new("/shop/items/<int:pk>/edit/", "POST", edit_form + [pk]),
   Endpoint.new("/shop/items/add/", "GET"),
@@ -53,6 +58,13 @@ describe "Django registry-built views", tags: "functional" do
   it "does not read the overridden helper's params" do
     ep = tester.endpoints.find! { |e| e.method == "POST" && e.url == "/override/" }
     ep.params.map(&.name).should_not contain("base_field")
+  end
+
+  it "resolves models declared in models/models.py and order.py" do
+    {"/shop/widgets/", "/shop/orders/"}.each do |url|
+      ep = tester.endpoints.find! { |e| e.method == "GET" && e.url == url }
+      ep.details.code_paths.any?(&.path.ends_with?("shop/views.py")).should be_true
+    end
   end
 
   it "keeps the decorated view class among the endpoint's code" do

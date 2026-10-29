@@ -486,6 +486,19 @@ describe Noir::ImportGraph::Python do
         result["auth"].should eq({File.join(root, "auth", "__init__.py"), "auth"})
       end
     end
+
+    it "matches module names case-sensitively" do
+      with_tmpdir do |root|
+        Dir.mkdir_p(File.join(root, "models"))
+        File.write(File.join(root, "models", "__init__.py"), "from .order import *\n")
+        File.write(File.join(root, "models", "order.py"), "class Order: ...\n")
+        from_file = File.join(root, "views.py")
+
+        # On a case-insensitive file system `models/Order.py` "exists".
+        result = Noir::ImportGraph::Python.find_imported_symbols(root, from_file, "from .models import Order\n")
+        result["Order"].should eq({File.join(root, "models", "__init__.py"), "Order"})
+      end
+    end
   end
 
   describe "#find_imported_package" do

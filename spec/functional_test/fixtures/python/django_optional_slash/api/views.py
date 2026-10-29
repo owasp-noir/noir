@@ -16,3 +16,15 @@ def comments(request, slug):
 
 def feed(request, page=None):
     return HttpResponse()
+
+
+def channel_hook(request, channel_slug, plugin_id):
+    return HttpResponse()
+
+
+def thumbnail(request, instance_id, size, format=None):
+    return HttpResponse()
+
+
+def image(request, instance_id):
+    return HttpResponse()
