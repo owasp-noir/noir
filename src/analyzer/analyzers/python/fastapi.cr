@@ -1386,7 +1386,7 @@ module Analyzer::Python
     SCALAR_TYPE_RE = /\b(?:str|int|float|bool|EmailStr)\b/
     # A bare `dict` keeps reading the keys the handler takes from it.
     BODY_CONTAINER_TYPE_RE = /\A(?:typing\.)?(?:dict\[|(?:Dict|list|List|set|Set|frozenset|FrozenSet|tuple|Tuple|Sequence)(?:\[|\z))/
-    LOCATION_MARKER_RE     = /\b(?:Query|Header|Cookie|Body|Form|File|UploadFile|Path|WebSocket)\b/
+    LOCATION_MARKER_RE     = /\b(?:Query|Header|Cookie|Body|Form|File|UploadFile|Path|WebSocket|Depends|Security)\b/
     STAR_IMPORT_RE         = /^from\s+([\w.]+)\s+import\s+\*/m
     ALIAS_GENERATOR_RE     = /\balias_generator\s*=\s*([\w.]+)/
     DEPENDS_EMPTY_RE       = /\bDepends\s*\(\s*\)/

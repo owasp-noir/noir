@@ -46,6 +46,10 @@ describe "JavaScript param attribution", tags: "functional" do
     rows["GET /api/items"].should eq({["page:query"], 13})
     # The wrapped same-file handler still reads the helper it calls, not GET's `sort`.
     rows["POST /api/checked"][0].should eq(["name:json", "x-api-key:header"])
+    # Only helpers handed the request are read; `norm`'s concise arrow has
+    # no body of its own to borrow DELETE's from.
+    rows["PUT /api/helpers"].should eq({["x-owner-id:header"], 9})
+    rows["DELETE /api/helpers"].should eq({["x-tenant-id:header"], 14})
     rows["POST /updateItem"][0].should eq(["id:body", "name:body"])
     rows["POST /deleteItem"][0].should eq(["id:body"])
     rows["POST /createItem"][0].should eq(["name:body", "price:body"])

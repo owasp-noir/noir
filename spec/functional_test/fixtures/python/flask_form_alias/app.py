@@ -25,3 +25,16 @@ def search():
 def single():
     name = request.form.get("name")
     return name.get("ignored") if name else ""
+
+
+@app.route("/fallback", methods=["POST"])
+def fallback():
+    data = request.form or {}
+    return data.get("title")
+
+
+@app.route("/render", methods=["POST"])
+def render_form():
+    page = render(form=request.form)
+    form = load_form()
+    return page + form.get("not_a_param")

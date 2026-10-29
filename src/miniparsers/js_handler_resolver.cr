@@ -516,8 +516,11 @@ module Noir::JSHandlerResolver
     patterns = patterns[0...-1] if strict
     # A bare local name is never the module's nameless default export: `async
     # (req, res) =>` or an undeclared `check(req)` inside a router factory
-    # resolved to the factory and read every route it registers.
-    patterns = patterns[1...-1] + [patterns[0]] if local && !strict && patterns.size > 2
+    # resolved to the factory and read every route it registers. The export
+    # that names it, `module.exports = function checkAuth(…)`, still is.
+    if local && !strict && patterns.size > 2
+      patterns = patterns[1...-1] + [patterns[0], /^[ \t]*(?:module\.)?exports\s*=\s*(?:async\s+)?function\s*\*?\s*#{escaped}\s*\(/m]
+    end
     patterns.each do |re|
       # Assigned twice (`exports.thing = …` again below): the last one is
       # what the module exports.

@@ -21,6 +21,8 @@ describe "Python param attribution", tags: "functional" do
     rows["POST /items"].should eq(["payload:json", "tags:json"])
     rows["GET /search"].should eq(["ids:query", "labels:query", "q:query"])
     rows["POST /bulk"].should eq(["names:json"])
+    # The dependency's own params, not an `ids` body field.
+    rows["GET /picked"].should eq(["raw:query"])
   end
 
   it "reads Flask fields through a request.form / request.args alias" do
@@ -30,5 +32,8 @@ describe "Python param attribution", tags: "functional" do
     rows["GET /search"].should eq(["page:query", "q:query", "sort:query"])
     # `name = request.form.get("name")` binds a value, not the form.
     rows["POST /single"].should eq(["name:form"])
+    rows["POST /fallback"].should eq(["title:form"])
+    # A `form=request.form` keyword argument binds no local.
+    rows["POST /render"].should be_empty
   end
 end

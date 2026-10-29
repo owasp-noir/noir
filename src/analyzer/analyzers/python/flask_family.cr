@@ -55,10 +55,11 @@ module Analyzer::Python
       }
     end
 
-    # `data = request.form` (or `await request.form`, `.to_dict()`): reads
-    # through `data[...]` / `data.get(...)` are that field's params. Not
-    # `name = request.form.get("name")`, which binds one value.
-    REQUEST_FIELD_ALIAS_RE = /(?<![\w.])([a-zA-Z_]\w*)\s*(?::[^=]+)?=\s*(?:await\s+)?request\.(form|args|values|files|headers|cookies)(?:\.to_dict\(\s*\))?(?!\s*[.\[(\w])/
+    # `data = request.form` (or `await request.form`, `.to_dict()`,
+    # `request.form or {}`): reads through `data[...]` / `data.get(...)` are
+    # that field's params. Not `name = request.form.get("name")`, which binds
+    # one value, nor a `form=request.form` keyword argument.
+    REQUEST_FIELD_ALIAS_RE = /\A\s*([a-zA-Z_]\w*)\s*(?::[^=]+)?=\s*(?:await\s+)?request\.(form|args|values|files|headers|cookies)(?:\.to_dict\([^)]*\))?(?![\w.\[(]|\s+[.\[(])/
 
     # `request.form["a"]` / `request.form.get("b")` reads on `line`, and the
     # same reads through each `{variable, param_type}` alias (a JSON body
@@ -83,7 +84,7 @@ module Analyzer::Python
       aliases = [] of Tuple(::String, ::String)
       codeblock_lines.each do |line|
         next unless line.includes?("request.")
-        line.scan(REQUEST_FIELD_ALIAS_RE) do |m|
+        if m = line.match(REQUEST_FIELD_ALIAS_RE)
           aliases << {m[1], REQUEST_PARAM_FIELDS[m[2]][1]}
         end
       end

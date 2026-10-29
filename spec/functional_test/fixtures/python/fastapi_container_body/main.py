@@ -1,6 +1,6 @@
 from typing import Annotated, Any, List, Optional
 
-from fastapi import FastAPI, Query
+from fastapi import Depends, FastAPI, Query
 
 app = FastAPI()
 
@@ -22,3 +22,12 @@ def search(
 @app.post("/bulk")
 def bulk(names: Optional[List[str]] = None):
     return names
+
+
+def parse_ids(raw: str = Query("")):
+    return [int(x) for x in raw.split(",")]
+
+
+@app.get("/picked")
+def picked(ids: Annotated[list[int], Depends(parse_ids)]):
+    return ids

@@ -222,7 +222,8 @@ module Analyzer::Javascript
         # plus the same-file helpers it calls (`validateRequest(req)` reading
         # `apiKey`); not the whole file, which holds the sibling verbs too.
         param_source ||= wrapped_param_source(sanitized, method, method_body_info.try(&.[0])) || sanitized
-        endpoint.details = Details.new(PathInfo.new(path, method_body_info.try(&.[1]) || handler.try(&.line) || 1))
+        same_file_line = handler.try { |h| h.line if h.path == path }
+        endpoint.details = Details.new(PathInfo.new(path, method_body_info.try(&.[1]) || same_file_line || 1))
         endpoint.handler = handler
 
         extract_path_params(url, endpoint)
@@ -332,8 +333,9 @@ module Analyzer::Javascript
     LOCAL_CALL_RE = /(?<![\w$.])([A-Za-z_$][\w$]*)\s*\(/
 
     # The wrapped function's body, else the wrapper call holding the inline
-    # closure, plus the bodies of the same-file functions it calls (one hop,
-    # never a sibling verb). Nil when the export is not a wrapper call.
+    # closure, plus the bodies of the same-file functions it hands the
+    # request to (`validateRequest(req)`; one hop, never a sibling verb).
+    # Nil when the export is not a wrapper call.
     private def wrapped_param_source(content : String, method : String, wrapped_body : String?) : String?
       source = wrapped_body || begin
         m = content.match(EXPORT_VERB_CONST_RES[method]) || return
@@ -346,7 +348,11 @@ module Analyzer::Javascript
       seen = Set(String).new
       source.scan(LOCAL_CALL_RE) do |local_call|
         name = local_call[1]
-        next if HTTP_METHODS.includes?(name) || !seen.add?(name)
+        next if HTTP_METHODS.includes?(name) || seen.includes?(name)
+        close = Noir::JSRouteExtractor.find_matching_paren(source, local_call.end(0) - 1) || next
+        args = split_top_level_commas(source[local_call.end(0)...close]).map(&.strip)
+        next unless args.any?(&.matches?(Noir::JSRouteExtractor::REQUEST_RECEIVER_NAME))
+        seen << name
         extract_named_function_body(content, name).try { |body| parts << body[0] }
       end
       parts.join("\n")
@@ -470,7 +476,9 @@ module Analyzer::Javascript
         return extract_braced_body(content, match_end) if match_end
       end
 
-      const_match = content.match(cached_regex("nextjs:named_const:#{name}") { /(?:const|let|var)\s+#{Regex.escape(name)}\s*=\s*(?:async\s*)?(?:\([^)]*\)|\w+)(?:\s*:\s*[^=]+?)?\s*=>/ })
+      # Only a braced body: `const norm = (s) => s.trim()` has none, and the
+      # next `{` in the file is some other function's.
+      const_match = content.match(cached_regex("nextjs:named_const:#{name}") { /(?:const|let|var)\s+#{Regex.escape(name)}\s*=\s*(?:async\s*)?(?:\([^)]*\)|\w+)(?:\s*:\s*[^=]+?)?\s*=>(?=\s*\{)/ })
       if const_match
         match_end = const_match.end(0)
         extract_braced_body(content, match_end) if match_end
