@@ -38,6 +38,16 @@ noir scan . -f json --no-log
 }
 ```
 
+모노레포에서는 같은 라우트를 두 앱이 제공할 수 있고, Noir는 이를 두 개의 엔드포인트로 유지합니다. `details.project`는 각 엔드포인트가 속한 앱을 나타냅니다. 첫 번째 소스 파일에서 위쪽으로 찾은 가장 가까운 빌드 매니페스트(`pyproject.toml`, `package.json`, `go.mod`, `pom.xml` 등)의 디렉터리이며, 스캔 기준 경로에 상대적입니다. 이름 붙일 것이 없으면 출력되지 않습니다. 단일 프로젝트 스캔(매니페스트가 기준 경로에 있음)이나 코드가 아닌 명세에서 온 엔드포인트가 그렇습니다. 따라서 기존 리포트는 바뀌지 않습니다. `noir query --project services/orders`로 필터링할 수 있습니다.
+
+```json
+"details": {
+  "code_paths": [{ "path": "mono/services/orders/app.py", "line": 7 }],
+  "technology": "python_flask",
+  "project": "services/orders"
+}
+```
+
 ```json
 {
   "endpoints": [

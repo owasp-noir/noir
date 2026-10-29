@@ -165,11 +165,12 @@ line orders rather than filters. Inheritance and dynamic loading are not
 followed.
 
 `query` filters AND together; a comma list inside one filter is OR:
-`--method`, `--url`, `--path`, `--handler`, `--tech`, `--tag`, `--param`, `--param-type`,
+`--method`, `--url`, `--path`, `--project`, `--handler`, `--tech`, `--tag`, `--param`, `--param-type`,
 `--protocol`, `--guard` / `--no-guard`, `--sink`, `--source`, `--signal`,
 `--validator` (`any` matches a non-empty bucket). A glob (`*`, `?`, `[`) lets
 `*` cross `/` and keeps `{id}` literal; anything else is a substring.
-`--param` and `--param-type` must be satisfied by one parameter. A rate
+`--project` takes a monorepo project directory relative to the scan base (see
+`details.project`) and matches it exactly, or as a glob. `--param` and `--param-type` must be satisfied by one parameter. A rate
 limiter does not count as a guard, on the row or for `--guard`, and a value no
 endpoint carries is reported on stderr with the values the report does have.
 

@@ -298,6 +298,20 @@ struct Details
   @[YAML::Field(ignore_serialize: technologies.size < 2)]
   property technologies : Array(String) = [] of String
 
+  # The project (nearest build manifest: `pyproject.toml`, `package.json`,
+  # `go.mod`, ...) the endpoint's first code path belongs to, relative to the
+  # scan base. It tells apart the same route served by two apps of a
+  # monorepo, which the optimizer already keeps as two endpoints.
+  #
+  # Empty when there is no project to name: no manifest above the source,
+  # the manifest sits at the scan base itself (a single-project scan), or the
+  # endpoint is a declaration (spec, collection). Serialized only when
+  # non-empty, so reports for single-project scans stay byte-identical, and
+  # a consumer reads a missing key as "no project".
+  @[JSON::Field(ignore_serialize: project.empty?)]
+  @[YAML::Field(ignore_serialize: project.empty?)]
+  property project : String = ""
+
   # New details types can be added in the future.
 
   def initialize(code_path : PathInfo? = nil)
@@ -323,6 +337,7 @@ struct Details
       copy.technology = technology
     end
     copy.technologies = @technologies.reject(&.empty?).uniq!.sort!
+    copy.project = @project
     copy
   end
 
@@ -339,6 +354,7 @@ struct Details
   def ==(other : Details) : Bool
     return false if @status_code != other.status_code
     return false if @technology != other.technology
+    return false if @project != other.project
     return false if @code_paths.size != other.code_paths.size
     return false unless @code_paths.all? { |path| other.code_paths.any? { |other_path| path == other_path } }
     true

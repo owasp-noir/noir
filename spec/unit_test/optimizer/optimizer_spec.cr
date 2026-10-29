@@ -314,6 +314,62 @@ describe "EndpointOptimizer" do
       end
     end
 
+    describe "details.project" do
+      it "names each monorepo app relative to the scan base and keeps the same route apart" do
+        optimizer = EndpointOptimizer.new(logger, options)
+        temp_dir = File.join(Dir.tempdir, "noir-optimizer-project-#{Process.pid}-#{Time.utc.to_unix_ms}")
+        orders = File.join(temp_dir, "services/orders")
+        users = File.join(temp_dir, "services/users")
+
+        begin
+          {orders, users}.each do |dir|
+            Dir.mkdir_p(dir)
+            File.write(File.join(dir, "pyproject.toml"), "[project]")
+            File.write(File.join(dir, "app.py"), "")
+          end
+          options["base"] = YAML::Any.new([YAML::Any.new(temp_dir)])
+
+          result = optimizer.optimize([
+            tech_endpoint("/items", "POST", "python_flask", File.join(users, "app.py"), 4),
+            tech_endpoint("/items", "POST", "python_flask", File.join(orders, "app.py"), 4),
+          ])
+
+          result.map(&.details.project).should eq(["services/orders", "services/users"])
+        ensure
+          options.delete("base")
+          FileUtils.rm_rf(temp_dir) if Dir.exists?(temp_dir)
+        end
+      end
+
+      it "leaves it empty for a single project at the scan base, a spec and a manifest-less source" do
+        optimizer = EndpointOptimizer.new(logger, options)
+        temp_dir = File.join(Dir.tempdir, "noir-optimizer-project-base-#{Process.pid}-#{Time.utc.to_unix_ms}")
+        loose = File.join(temp_dir, "loose")
+
+        begin
+          Dir.mkdir_p(loose)
+          File.write(File.join(temp_dir, "pyproject.toml"), "[project]")
+          File.write(File.join(temp_dir, "app.py"), "")
+          File.write(File.join(temp_dir, "openapi.yaml"), "")
+          options["base"] = YAML::Any.new([YAML::Any.new(temp_dir)])
+
+          result = optimizer.optimize([
+            tech_endpoint("/a", "GET", "python_flask", File.join(temp_dir, "app.py")),
+            tech_endpoint("/b", "GET", "oas3", File.join(temp_dir, "openapi.yaml")),
+          ])
+          result.map(&.details.project).should eq(["", ""])
+
+          # A manifest above the base is the directory the user stepped out of,
+          # not a project of this scan.
+          options["base"] = YAML::Any.new([YAML::Any.new(loose)])
+          optimizer.optimize([tech_endpoint("/c", "GET", "python_flask", File.join(temp_dir, "app.py"))]).first.details.project.should eq("")
+        ensure
+          options.delete("base")
+          FileUtils.rm_rf(temp_dir) if Dir.exists?(temp_dir)
+        end
+      end
+    end
+
     it "keeps handlers with different request conditions apart" do
       optimizer = EndpointOptimizer.new(logger, options)
       build = ->(line : Int32, conditions : Array(Param)) do

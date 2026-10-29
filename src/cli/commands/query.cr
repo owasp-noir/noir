@@ -9,7 +9,7 @@ require "../inspect"
 module Noir::CLI::QueryCommand
   # Filter flags and the `Filters` field each one fills. Every one takes a
   # value except the guard switches.
-  VALUE_FLAGS = %w[--method --url --path --handler --tech --tag --param --param-type --protocol --sink --source --signal --validator]
+  VALUE_FLAGS = %w[--method --url --path --project --handler --tech --tag --param --param-type --protocol --sink --source --signal --validator]
 
   record Parsed, filters : Inspect::Filters, rest : Array(String), errors : Array(String)
 
@@ -56,6 +56,7 @@ module Noir::CLI::QueryCommand
       methods: values["--method"].map(&.upcase),
       url: values["--url"].first?,
       path: values["--path"].first?,
+      projects: values["--project"],
       handler: values["--handler"].first?,
       techs: values["--tech"],
       tags: values["--tag"],
@@ -100,6 +101,8 @@ module Noir::CLI::QueryCommand
         --url <glob|substr>    Route URL: a glob when it contains * ? [ (* crosses /, {id} is
                                literal), a substring otherwise
         --path <glob|substr>   Source path as reported (a relative glob also matches from any /)
+        --project <dir,...>    Project (nearest build manifest) of a monorepo, relative to the scan
+                               base: exact, or a glob when it contains * ? [
         --handler <glob|substr> Handler name, or handler file (same glob rules)
         --tech <name,...>      Technology (e.g. go_gin, python_django)
         --tag <name,...>       Tag name (auth, admin, ...)
@@ -119,6 +122,7 @@ module Noir::CLI::QueryCommand
         noir query --no-guard --sink any ./app
         noir query --signal idor_review --method PUT,DELETE --from report.json
         noir query --path 'billing/**' --count ./app
+        noir query --project services/orders --url /items ./mono
 
       #{Noir::CLI.section("OPTIONS:")}
       #{Inspect.common_help}

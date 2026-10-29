@@ -38,6 +38,16 @@ When more than one analyzer finds the same endpoint, for example a Go router and
 }
 ```
 
+A monorepo can serve the same route from two apps, and Noir keeps those as two endpoints. `details.project` names the app each one belongs to: the directory of the nearest build manifest (`pyproject.toml`, `package.json`, `go.mod`, `pom.xml`, ...) above its first source file, relative to the scan base. It is omitted when there is nothing to name, which covers a scan of a single project (its manifest sits at the base itself) and endpoints that come from a specification rather than code, so existing reports are unchanged. `noir query --project services/orders` filters on it.
+
+```json
+"details": {
+  "code_paths": [{ "path": "mono/services/orders/app.py", "line": 7 }],
+  "technology": "python_flask",
+  "project": "services/orders"
+}
+```
+
 ```json
 {
   "endpoints": [

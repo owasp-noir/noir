@@ -269,7 +269,47 @@ class EndpointOptimizer
 
     @logger.verbose_sub "➔ Total duplicated endpoints: #{duplicate_count}"
     merged = merge_concrete_example_endpoints(final_map.values)
-    tag_spec_only_endpoints(prune_collection_graphql_transport_endpoints(merged))
+    assign_projects(tag_spec_only_endpoints(prune_collection_graphql_transport_endpoints(merged)))
+  end
+
+  # Record each code endpoint's project on `details.project`, relative to the
+  # scan base it was found under. The dedup above already keeps one route
+  # served by two apps as two endpoints; this is what lets a report, `query
+  # --project` and the OAS builders tell them apart.
+  #
+  # Left empty (and so omitted from reports) when the project is the scan base
+  # itself, which is every single-project scan, and when the manifest was
+  # found above the base: that is the directory the user pointed Noir away
+  # from, not a project of the scan.
+  private def assign_projects(endpoints : Array(Endpoint)) : Array(Endpoint)
+    bases = scan_bases
+    endpoints.each_with_index do |endpoint, idx|
+      scope = framework_source_scope(endpoint)
+      next if scope.empty?
+
+      project = project_relative_to_base(scope, bases)
+      next if project.empty?
+
+      details = endpoint.details
+      details.project = project
+      endpoint.details = details
+      endpoints[idx] = endpoint
+    end
+    endpoints
+  end
+
+  private def scan_bases : Array(String)
+    bases = @options["base"]?.try(&.as_a?) || [] of YAML::Any
+    bases.map(&.to_s).reject(&.empty?)
+  end
+
+  # `scope` relative to the deepest base that contains it; "" for the base
+  # itself or when no base contains it.
+  private def project_relative_to_base(scope : String, bases : Array(String)) : String
+    return "" unless base = Noir::PathScope.longest_base(scope, bases)
+
+    root = Noir::PathScope.normalize_root(base)
+    scope.size > root.size ? scope[root.size..].lstrip('/') : ""
   end
 
   # A repository can carry an API document because it implements it or
