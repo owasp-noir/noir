@@ -541,4 +541,62 @@ describe "OutputBuilderOas3" do
     names.size.should eq(n)
     names.first(2).should eq(["p0", "p1"])
   end
+
+  describe "monorepo projects behind one operation" do
+    options = {
+      "debug"   => YAML::Any.new(false),
+      "verbose" => YAML::Any.new(false),
+      "color"   => YAML::Any.new(false),
+      "nolog"   => YAML::Any.new(true),
+      "output"  => YAML::Any.new(""),
+      "url"     => YAML::Any.new(""),
+    }
+
+    project_endpoint = ->(project : String, param : String) do
+      details = Details.new(PathInfo.new("mono/#{project}/app.py", 3))
+      details.project = project
+      endpoint = Endpoint.new("/items", "POST", details)
+      endpoint.push_param(Param.new(param, "", "form"))
+      endpoint
+    end
+
+    it "lists every project on the operation two apps declare, instead of dropping one silently" do
+      builder = OutputBuilderOas3.new(options)
+      builder.io = IO::Memory.new
+      builder.print([
+        project_endpoint.call("services/users", "users_name"),
+        project_endpoint.call("services/orders", "orders_name"),
+      ])
+
+      operation = JSON.parse(builder.io.to_s)["paths"]["/items"]["post"]
+      operation["x-noir-projects"].as_a.map(&.as_s).should eq(["services/orders", "services/users"])
+    end
+
+    it "leaves the extension off an operation one project declares, and off a scan with no projects" do
+      builder = OutputBuilderOas3.new(options)
+      builder.io = IO::Memory.new
+      other = Endpoint.new("/health", "GET")
+      same = project_endpoint.call("services/orders", "orders_name")
+      same_again = project_endpoint.call("services/orders", "orders_id")
+      builder.print([same, same_again, other])
+
+      paths = JSON.parse(builder.io.to_s)["paths"]
+      paths["/items"]["post"].as_h.has_key?("x-noir-projects").should be_false
+      paths["/health"]["get"].as_h.has_key?("x-noir-projects").should be_false
+    end
+
+    it "names the projects of a verb the document cannot hold as an operation" do
+      builder = OutputBuilderOas3.new(options)
+      builder.io = IO::Memory.new
+      trace = ->(project : String) do
+        endpoint = project_endpoint.call(project, "x")
+        endpoint.method = "SEND"
+        endpoint
+      end
+      builder.print([trace.call("services/orders"), trace.call("services/users")])
+
+      unsupported = JSON.parse(builder.io.to_s)["paths"]["/items"]["x-noir-unsupported-operations"]["SEND"]
+      unsupported["x-noir-projects"].as_a.map(&.as_s).should eq(["services/orders", "services/users"])
+    end
+  end
 end

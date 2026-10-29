@@ -34,7 +34,7 @@ module OutputBuilderOasCommon
   # first one's value throws the rest away — `servers` would name one of two
   # hosts, `x-noir-operations` one of fifteen GraphQL operations — so these
   # are unioned instead.
-  UNIONED_OPERATION_KEYS = Set{"servers", "x-noir-operations", "x-noir-hosts"}
+  UNIONED_OPERATION_KEYS = Set{"servers", "x-noir-operations", "x-noir-hosts", "x-noir-projects"}
 
   # A native Hash/Array/scalar literal as a fresh `JSON::Any`, for the values
   # that land in the `Hash(String, JSON::Any)` trees the merge helpers below
@@ -452,6 +452,54 @@ module OutputBuilderOasCommon
     return unless name
 
     operation["x-noir-operations"] = json_any([name])
+  end
+
+  # Records the monorepo project the endpoint came from, so the merge above
+  # leaves a trace of every project behind one operation. A path item holds
+  # one operation per verb, so the same route served by two apps (`POST
+  # /items` in both) cannot be two operations in one document; they merge, and
+  # this list is the only record that more than one app is behind it.
+  # `resolve_project_collisions` strips it again from operations only one
+  # project declared, which is every operation of a single-project scan.
+  private def add_noir_project_extension(operation : Hash(String, JSON::Any), endpoint : Endpoint)
+    project = endpoint.details.project
+    return if project.empty?
+
+    operation["x-noir-projects"] = json_any([project])
+  end
+
+  # Keeps `x-noir-projects` (sorted) on the operations two or more projects
+  # declared, with a warning naming them, and drops it from the rest. A
+  # document with one operation per project would need one document or one
+  # path prefix per project, which is not a document Noir can invent; saying
+  # that the parameters were merged is.
+  private def resolve_project_collisions(paths : Hash(String, Hash(String, JSON::Any)))
+    paths.each do |oas_path, path_item|
+      path_item.keys.each do |key|
+        value = path_item[key]
+        next unless operations = value.as_h?
+
+        if key == "x-noir-unsupported-operations"
+          operations.keys.each do |method|
+            next unless operation = operations[method].as_h?
+            operations[method] = resolve_operation_projects(oas_path, method, operation)
+          end
+        elsif operations.has_key?("x-noir-projects")
+          path_item[key] = resolve_operation_projects(oas_path, key, operations)
+        end
+      end
+    end
+  end
+
+  private def resolve_operation_projects(oas_path : String, method : String, operation : Hash(String, JSON::Any)) : JSON::Any
+    resolved = operation.dup
+    projects = resolved.delete("x-noir-projects").try(&.as_a?).try(&.map(&.as_s).uniq!.sort!) || [] of String
+    if projects.size > 1
+      resolved["x-noir-projects"] = json_any(projects)
+      @logger.warning "#{method.upcase} #{oas_path} is declared by #{projects.size} projects (#{projects.join(", ")}); " \
+                      "their parameters are merged into one operation. Scan each project on its own for separate operations."
+    end
+    JSON::Any.new(resolved)
   end
 
   private def union_json_arrays(existing : JSON::Any, incoming : JSON::Any) : JSON::Any

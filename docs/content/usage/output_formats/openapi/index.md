@@ -113,3 +113,4 @@ Headers, cookies, path and query parameters are emitted under `parameters`; bodi
 
 Documents are emitted as OpenAPI `3.0.3`. A scan that discovers an [HTTP QUERY](https://www.rfc-editor.org/rfc/rfc10008.html) route is emitted as `3.2.0` instead, because 3.0.x has no `query` operation.
 
+A path item holds one operation per verb, so when two projects of a monorepo declare the same route (`POST /items` in both `services/orders` and `services/users`), their endpoints share one operation and their parameters are merged. Rather than let that pass unnoticed, Noir lists the projects on the operation as `x-noir-projects` and logs a warning naming them. Operations that only one project declares carry no such key, and neither does a scan without projects. To get a separate operation for each, scan each project on its own (`-b services/orders`). The same applies to `-f oas2`.

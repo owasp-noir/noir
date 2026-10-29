@@ -162,9 +162,12 @@ class OutputBuilderOas2 < OutputBuilder
       add_unmapped_path_params_extension(operation, unmapped_path_params)
       add_noir_callees_extension(operation, endpoint)
       add_noir_ai_context_extension(operation, endpoint)
+      add_noir_project_extension(operation, endpoint)
 
       register_operation(paths, oas_path, path_variant, endpoint.method, operation)
     end
+
+    resolve_project_collisions(paths)
 
     url_parts = swagger_url_parts(@options["url"]?.try(&.to_s) || "")
     oas2_hash = {
