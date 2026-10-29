@@ -37,9 +37,10 @@ class SpringAuthTagger < FrameworkTagger
   # when they decorate the controller *class* instead of a single handler.
   CLASS_ANNOTATION_NAMES = ["@PreAuthorize", "@PostAuthorize", "@Secured", "@RolesAllowed"]
 
-  INTERCEPTOR_REJECTION_RE = /(?:setStatus\s*\(\s*(?:40[13]|(?:HttpServletResponse\.)?SC_(?:UNAUTHORIZED|FORBIDDEN)|HttpStatus\.(?:UNAUTHORIZED|FORBIDDEN))\s*\)|sendError\s*\(\s*(?:40[13]|(?:HttpServletResponse\.)?SC_(?:UNAUTHORIZED|FORBIDDEN)|HttpStatus\.(?:UNAUTHORIZED|FORBIDDEN))\b|\bstatus\s*=\s*(?:40[13]|(?:HttpServletResponse\.)?SC_(?:UNAUTHORIZED|FORBIDDEN)|HttpStatus\.(?:UNAUTHORIZED|FORBIDDEN))\b|throw\s+new\s+(?:\w*(?:Auth|AccessDenied|Unauthorized|Forbidden|Security)\w*|ResponseStatusException\s*\(\s*HttpStatus\.(?:UNAUTHORIZED|FORBIDDEN))\b)/i
-
-  INTERCEPTOR_AUTH_CHECK_RE = /(?:\b(?:getSession\s*\(\s*false\s*\)|getHeader\s*\(\s*["'](?:Authorization|X-Auth-Token|Token|api[-_]?key|X-API-Key|access[-_]?token)["']|getUserPrincipal\b|getRemoteUser\b|isUserInRole\b|\btoken\b|\bauth\b|\bprincipal\b|\bjwt\b|\bbearer\b|\bcredential)\b)/i
+  # What a `preHandle` that turns the caller away does: a 401/403 status or
+  # an auth exception. `return false` alone is not read: a rate limiter or
+  # maintenance switch returns false too.
+  INTERCEPTOR_REJECTION_RE = /(?:setStatus\s*\(\s*(?:40[13]|(?:HttpServletResponse\.)?SC_(?:UNAUTHORIZED|FORBIDDEN)|HttpStatus\.(?:UNAUTHORIZED|FORBIDDEN))\b|sendError\s*\(\s*(?:40[13]|(?:HttpServletResponse\.)?SC_(?:UNAUTHORIZED|FORBIDDEN)|HttpStatus\.(?:UNAUTHORIZED|FORBIDDEN))\b|\bstatus\s*=\s*(?:40[13]|(?:HttpServletResponse\.)?SC_(?:UNAUTHORIZED|FORBIDDEN)|HttpStatus\.(?:UNAUTHORIZED|FORBIDDEN))\b|throw\s+new\s+(?:\w*(?:Auth(?!or)|AccessDenied|Unauthorized|Forbidden|Security)\w*|ResponseStatusException\s*\(\s*HttpStatus\.(?:UNAUTHORIZED|FORBIDDEN))\b)/i
 
   # Security config URL rules. `access { ... }` is a protected rule too;
   # `permitAll()` is intentionally tracked so a more-specific public matcher
@@ -220,7 +221,11 @@ class SpringAuthTagger < FrameworkTagger
 
       next unless class_name
 
-      is_auth = check_pre_handle_auth(clean_content)
+      # The class's own body: a file can declare several interceptors.
+      line_start = clean_content.lines(chomp: false)[0, idx].sum(&.bytesize)
+      next unless open = clean_content.byte_index('{', line_start)
+      close = Noir::JSLiteralScanner.find_matching_brace_at_byte(clean_content, open) || clean_content.bytesize - 1
+      is_auth = check_pre_handle_auth(clean_content.byte_slice(open, close - open + 1))
       @interceptor_defs[class_name] = InterceptorDef.new(
         name: class_name,
         file_path: file,
@@ -239,13 +244,7 @@ class SpringAuthTagger < FrameworkTagger
     close_brace_idx = Noir::JSLiteralScanner.find_matching_brace_at_byte(content, open_brace_idx)
     body = close_brace_idx ? content.byte_slice(open_brace_idx + 1, close_brace_idx - open_brace_idx - 1) : content.byte_slice(open_brace_idx + 1, [content.bytesize - open_brace_idx - 1, 1500].min)
 
-    return true if body.matches?(INTERCEPTOR_REJECTION_RE)
-
-    if body.matches?(INTERCEPTOR_AUTH_CHECK_RE) && body.matches?(/\breturn\s+false\b/)
-      return true
-    end
-
-    false
+    body.matches?(INTERCEPTOR_REJECTION_RE)
   end
 
   private def scan_interceptor_registration(content : String, file : String, module_dir : String?)
@@ -270,8 +269,9 @@ class SpringAuthTagger < FrameworkTagger
       arg = body.byte_slice(call_open_paren + 1, call_close_paren - call_open_paren - 1).strip
 
       remaining = body.byte_slice(call_close_paren + 1, body.bytesize - call_close_paren - 1)
-      semi_idx = remaining.index(';')
-      chain_slice = semi_idx ? remaining[0..semi_idx] : remaining[0..[remaining.size, 500].min]
+      # The statement ends at `;`, or in Kotlin at the next registration.
+      stop = [remaining.index(';'), remaining.index(/\b#{Regex.escape(reg_param)}\s*\./)].compact.min?
+      chain_slice = stop ? remaining[0...stop] : remaining[0, 500]
 
       chain_text = chain_slice
       if var_name
@@ -1204,8 +1204,9 @@ class SpringAuthTagger < FrameworkTagger
     end
 
     # Phase 4: Match endpoint URL against registered HandlerInterceptors
-    if description = check_interceptor_rules(endpoint)
-      endpoint.add_tag(Tag.new("auth", description, "spring_auth"))
+    if decision = check_interceptor_rules(endpoint)
+      description, rule_path, rule_line = decision
+      endpoint.add_tag(Tag.new("auth", description, "spring_auth", rule_path, rule_line))
       return
     end
 
@@ -1218,7 +1219,7 @@ class SpringAuthTagger < FrameworkTagger
     end
   end
 
-  private def check_interceptor_rules(endpoint : Endpoint) : String?
+  private def check_interceptor_rules(endpoint : Endpoint) : Tuple(String, String, Int32)?
     return if @registered_interceptors.empty?
 
     modules = endpoint.details.code_paths.compact_map do |path_info|
@@ -1245,7 +1246,7 @@ class SpringAuthTagger < FrameworkTagger
     nil
   end
 
-  private def interceptor_decision(endpoint : Endpoint, classpath : Set(String)?) : String?
+  private def interceptor_decision(endpoint : Endpoint, classpath : Set(String)?) : Tuple(String, String, Int32)?
     url = endpoint.url
     applies = ->(owner : String?) { owner.nil? || classpath.nil? || classpath.includes?(owner) }
 
@@ -1266,7 +1267,7 @@ class SpringAuthTagger < FrameworkTagger
       matches_exclude = reg.exclude_patterns.any? { |pattern| matches_ant_pattern?(url, pattern) }
       next if matches_exclude
 
-      return "Protected by Spring HandlerInterceptor #{interceptor.name}"
+      return {"Protected by Spring HandlerInterceptor #{interceptor.name}", reg.file_path, reg.line}
     end
     nil
   end

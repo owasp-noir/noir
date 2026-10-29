@@ -1629,6 +1629,140 @@ describe "SpringAuthTagger (HandlerInterceptor)" do
     ])
     endpoints["GET /api/b"].tags.select(&.name.==("auth")).should be_empty
   end
+
+  it "reads a 401/403 status or auth exception as the refusal, not a bare return false" do
+    interceptors = <<-JAVA
+      package com.example.web;
+
+      import org.springframework.web.servlet.HandlerInterceptor;
+
+      public class RateLimitInterceptor implements HandlerInterceptor {
+          @Override
+          public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) {
+              String token = request.getHeader("X-Api-Token");
+              if (!limiter.tryAcquire(token)) {
+                  response.setStatus(429);
+                  return false;
+              }
+              return true;
+          }
+      }
+
+      class SessionInterceptor implements HandlerInterceptor {
+          @Override
+          public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) {
+              if (request.getSession(false) == null) {
+                  response.setStatus(HttpStatus.UNAUTHORIZED.value());
+                  return false;
+              }
+              return true;
+          }
+      }
+      JAVA
+
+    config = <<-JAVA
+      package com.example.web;
+
+      @Configuration
+      public class WebConfig implements WebMvcConfigurer {
+          @Override
+          public void addInterceptors(InterceptorRegistry registry) {
+              registry.addInterceptor(new RateLimitInterceptor()).addPathPatterns("/api/**");
+              registry.addInterceptor(new SessionInterceptor()).addPathPatterns("/account/**");
+          }
+      }
+      JAVA
+
+    controller = <<-JAVA
+      package com.example.web;
+
+      @RestController
+      public class ItemController {
+          @GetMapping("/api/items")
+          public String items() { return "ok"; }
+
+          @GetMapping("/account/me")
+          public String me() { return "ok"; }
+      }
+      JAVA
+
+    endpoints = run_spring_endpoints_map({
+      "src/main/java/com/example/web/Interceptors.java"   => interceptors,
+      "src/main/java/com/example/web/WebConfig.java"      => config,
+      "src/main/java/com/example/web/ItemController.java" => controller,
+    }, {
+      "GET /api/items"  => "src/main/java/com/example/web/ItemController.java:5",
+      "GET /account/me" => "src/main/java/com/example/web/ItemController.java:8",
+    })
+
+    endpoints["GET /api/items"].tags.should be_empty
+    tag = endpoints["GET /account/me"].tags.should_not be_empty
+    tag.map(&.description).should eq(["Protected by Spring HandlerInterceptor SessionInterceptor"])
+    tag[0].path.not_nil!.ends_with?("src/main/java/com/example/web/WebConfig.java").should be_true
+    tag[0].line.should eq(8)
+  end
+
+  it "keeps each Kotlin registration's path patterns to its own interceptor" do
+    interceptors = <<-KT
+      package com.example.web
+
+      class AuthInterceptor : HandlerInterceptor {
+          override fun preHandle(request: HttpServletRequest, response: HttpServletResponse, handler: Any): Boolean {
+              if (request.getSession(false) == null) {
+                  response.status = 401
+                  return false
+              }
+              return true
+          }
+      }
+
+      class LoggingInterceptor : HandlerInterceptor {
+          override fun preHandle(request: HttpServletRequest, response: HttpServletResponse, handler: Any): Boolean {
+              log.info(request.requestURI)
+              return true
+          }
+      }
+      KT
+
+    config = <<-KT
+      package com.example.web
+
+      @Configuration
+      class WebConfig : WebMvcConfigurer {
+          override fun addInterceptors(registry: InterceptorRegistry) {
+              registry.addInterceptor(AuthInterceptor()).addPathPatterns("/kapi/**")
+              registry.addInterceptor(LoggingInterceptor()).addPathPatterns("/kpublic/**")
+          }
+      }
+      KT
+
+    controller = <<-KT
+      package com.example.web
+
+      @RestController
+      class KotlinController {
+          @GetMapping("/kapi/profile")
+          fun profile(): String = "profile"
+
+          @GetMapping("/kpublic/info")
+          fun info(): String = "info"
+      }
+      KT
+
+    endpoints = run_spring_endpoints_map({
+      "src/main/kotlin/com/example/web/Interceptors.kt"     => interceptors,
+      "src/main/kotlin/com/example/web/WebConfig.kt"        => config,
+      "src/main/kotlin/com/example/web/KotlinController.kt" => controller,
+    }, {
+      "GET /kapi/profile" => "src/main/kotlin/com/example/web/KotlinController.kt:5",
+      "GET /kpublic/info" => "src/main/kotlin/com/example/web/KotlinController.kt:8",
+    })
+
+    endpoints["GET /kapi/profile"].tags.map(&.description).should eq([
+      "Protected by Spring HandlerInterceptor AuthInterceptor",
+    ])
+    endpoints["GET /kpublic/info"].tags.should be_empty
+  end
 end
 
 describe "SpringAuthTagger (Meta-annotations)" do
