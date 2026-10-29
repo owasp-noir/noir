@@ -67,6 +67,7 @@ module Analyzer::Python
     def analyze
       include_router_map = Hash(::String, Hash(::String, Router)).new
       fastapi_app_instances = [] of Tuple(::String, ::String)
+      parameter_app_instances = [] of Tuple(::String, ::String)
 
       begin
         # Iterate through all Python files in all base paths. Pulls from
@@ -89,7 +90,11 @@ module Analyzer::Python
               effective_line = original_line.includes?("Router") && original_line.matches?(router_ctor_re) ? join_until_python_call_closes(codelines, index, original_line) : original_line
               line = effective_line.gsub(" ", "")
               match = line.includes?("FastAPI(") ? line.match(FASTAPI_INSTANCE_RE) : nil
-              match ||= line.includes?(":FastAPI") || line.includes?(":fastapi.FastAPI") ? line.match(FASTAPI_PARAM_RE) : nil
+              parameter_app = false
+              if match.nil? && (line.includes?(":FastAPI") || line.includes?(":fastapi.FastAPI"))
+                match = line.match(FASTAPI_PARAM_RE)
+                parameter_app = !match.nil?
+              end
               unless match.nil?
                 fastapi_instance_name = match[1]
                 if include_router_map.has_key?(path)
@@ -112,7 +117,10 @@ module Analyzer::Python
                 # APIRouter detection further down must still run on the
                 # remaining lines.
                 app_key = {path, fastapi_instance_name}
-                fastapi_app_instances << app_key unless fastapi_app_instances.includes?(app_key)
+                # A parameter app (`lifespan(app: FastAPI)` in a top-level
+                # helper) is no project root: it must not anchor imports.
+                instances = parameter_app ? parameter_app_instances : fastapi_app_instances
+                instances << app_key unless instances.includes?(app_key)
               end
 
               # https://fastapi.tiangolo.com/tutorial/bigger-applications/
@@ -163,7 +171,7 @@ module Analyzer::Python
             mounted_apps << target
           end
         end
-        fastapi_app_instances.each do |app_file, app_instance|
+        (fastapi_app_instances + (parameter_app_instances - fastapi_app_instances)).each do |app_file, app_instance|
           next if mounted_apps.includes?({app_file, app_instance})
           app_base_path = fastapi_base_path_for(app_file, fastapi_base_paths)
           configure_router_prefix(app_file, include_router_map, app_base_path, "", app_instance, prefix_visited)
@@ -633,7 +641,8 @@ module Analyzer::Python
       aliased = false
       importing_source.each_line do |raw|
         stripped = raw.lstrip
-        next unless stripped.starts_with?("from ") || stripped.starts_with?("import ")
+        # Any line: a parenthesised import puts `router as users_router,`
+        # on a line of its own.
         next unless stripped.includes?(" as ") && stripped.includes?(local_name)
         if match = stripped.match(/\b(#{PYTHON_VAR_NAME_REGEX})\s+as\s+#{Regex.escape(local_name)}\b/)
           original = match[1]

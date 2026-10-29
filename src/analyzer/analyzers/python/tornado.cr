@@ -24,8 +24,14 @@ module Analyzer::Python
     URL_SPEC_TEXT_RE       = /(?:^|[^a-zA-Z0-9_.])(?:tornado\.web\.)?(?:url|URLSpec)\s*\(\s*([rRfF]{0,2})["']([^"']*)["']\s*(?:%\s*([A-Za-z_][\w.]*|\([^()]*\)))?\s*,\s*([a-zA-Z_][a-zA-Z0-9_.]*)/
     # `_kernel_id_regex = r"(?P<kernel_id>...)"` at module level.
     MODULE_PATTERN_CONST_RE = /^([A-Za-z_]\w*)\s*(?::\s*str\s*)?=\s*[rRuU]?(["'])(.*)\2\s*$/
-    # A named group without nested parens, for the regex-route test.
-    SIMPLE_NAMED_GROUP_RE = /\(\?P<\w+>[^()]*\)/
+    # What a route keeps as a path param for the regex-route test: a named
+    # or unnamed capture group (Tornado hands either to the handler), an
+    # optional non-capturing group around one, and a trailing `/?`. A group
+    # of alternatives (`(robots\.txt|favicon\.ico)`) is left, so it alone
+    # marks the route as a regex.
+    PARAM_GROUP_RE          = /\((?:\?P<\w+>)?(?!\?)[^()|]*\)/
+    OPTIONAL_GROUP_RE       = /\(\?:[^()|]*\)\??/
+    TRAILING_OPTIONAL_SLASH = /\/\?\z/
 
     @file_content_cache = Hash(::String, ::String).new
     @file_lines_cache = Hash(::String, Array(::String)).new
@@ -118,7 +124,7 @@ module Analyzer::Python
           # Tornado routes are regexes; `^` / `$` are anchors, not path text.
           route = Noir::URLPath.strip_regex_anchors(route_path)
           # `/(robots\.txt|favicon\.ico)` is a pattern, not a path anyone requests.
-          regex = Noir::URLPath.regex_route?(route.gsub(SIMPLE_NAMED_GROUP_RE, "{x}"))
+          regex = Noir::URLPath.regex_route?(route.gsub(PARAM_GROUP_RE, "{x}").gsub(OPTIONAL_GROUP_RE, "{x}").sub(TRAILING_OPTIONAL_SLASH, "/"))
           endpoints = extract_endpoints_from_handler(path, route, handler_class)
           endpoints.each do |endpoint|
             details = Details.new(PathInfo.new(path, line_index + 1))

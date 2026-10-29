@@ -628,6 +628,8 @@ module Analyzer::Python
     # 1-based line in `content` where the list body `body` starts, or nil
     # when `body` is not a verbatim slice of it (a rewritten binding).
     private def list_start_line(content : ::String, body : ::String) : Int32?
+      # `i18n_patterns(*name)` wraps a verbatim list body on its first line.
+      body = body.lchop("i18n_patterns(").rchop(')') if body.starts_with?("i18n_patterns(") && !content.index(body)
       start = content.index(body) || return
       content[0, start].count('\n') + 1
     end
@@ -1000,6 +1002,12 @@ module Analyzer::Python
                                                      route_path : PathInfo,
                                                      parent_route_path : PathInfo,
                                                      seen : Array(::String) = [] of ::String) : Array(Endpoint)
+      if pattern_content.includes?(URL_LIST_JOIN)
+        return pattern_content.split(URL_LIST_JOIN).flat_map do |piece|
+          extract_app_config_pattern_endpoints(prefix, piece, current_app_config_path, package_map, urlpattern_lists,
+            app_config_refs, route_path, parent_route_path, seen)
+        end
+      end
       endpoints = [] of Endpoint
 
       list_line = list_start_line(read_file_content(current_app_config_path), pattern_content)
@@ -1196,12 +1204,17 @@ module Analyzer::Python
         route_call_args(logical_line).each do |args, wrapper|
           next if args.size < 2
 
-          if wrapper
+          # A wrapper without verb keywords (`distill_path("about/", view)`)
+          # reads like `path(...)`.
+          verbs = wrapper ? args.compact_map(&.match(VERB_KEYWORD_RE)) : [] of Regex::MatchData
+          unless verbs.empty?
             next unless route = Helper.extract_python_string(args[0])
             route = "{lang}/#{route.lchop('^')}" if i18n
-            args.each do |arg|
-              next unless keyword = arg.match(VERB_KEYWORD_RE)
-              mappings << {route, keyword[2].strip, index, keyword[1]}
+            verbs.each do |keyword|
+              view = keyword[2].strip
+              # Zulip's `POST=(view, {"allow_anonymous_user_web"})`.
+              view = split_python_arguments(view[1...-1]).first?.try(&.strip) || view if view.starts_with?('(') && view.ends_with?(')')
+              mappings << {route, view, index, keyword[1]}
             end
             next
           end
@@ -1519,6 +1532,12 @@ module Analyzer::Python
                                                    import_aliases : Hash(::String, ::String),
                                                    drf_router_registrations : Hash(::String, Array(DjangoDrfRegistration)),
                                                    seen : Array(::String) = [] of ::String) : Array(Endpoint)
+      if pattern_content.includes?(URL_LIST_JOIN)
+        return pattern_content.split(URL_LIST_JOIN).flat_map do |piece|
+          extract_local_urlpattern_endpoints(django_urls, mount_route, piece, package_map, route_path, urlpattern_lists,
+            import_aliases, drf_router_registrations, seen)
+        end
+      end
       endpoints = [] of Endpoint
 
       list_line = list_start_line(urlconf_source(django_urls.filepath), pattern_content)
