@@ -1141,10 +1141,16 @@ module Analyzer::Python
         default_value = return_literal_value(param.default)
         param_type = infer_parameter_type(param.default) unless param.default.empty?
         if param_type.nil? && !param.type.empty?
-          param_type = param.type
-          param_type = param_type.split("Annotated[", 2)[-1].split(",", 2)[-1] if param_type.includes?("Annotated[")
-          param_type = param_type.split("Union[", 2)[-1] if param_type.includes?("Union[")
-          param_type = infer_parameter_type(param_type, true)
+          # `payload: dict[str, Any]` / `tags: list[str]` with no `Query()`
+          # is a body field: only the outer type decides, not its `str`.
+          if fastapi_peeled_type(param.type).try(&.matches?(BODY_CONTAINER_TYPE_RE)) && !param.type.matches?(LOCATION_MARKER_RE)
+            param_type = "json"
+          else
+            param_type = param.type
+            param_type = param_type.split("Annotated[", 2)[-1].split(",", 2)[-1] if param_type.includes?("Annotated[")
+            param_type = param_type.split("Union[", 2)[-1] if param_type.includes?("Union[")
+            param_type = infer_parameter_type(param_type, true)
+          end
         else
           param_type = "query" if param_type.nil?
         end
@@ -1344,6 +1350,12 @@ module Analyzer::Python
     # `Union[X, None]`, `X | None` and `Annotated[X, ...]` are peeled off;
     # nil when what is left is not a bare identifier.
     private def fastapi_model_name(type : ::String) : ::String?
+      fastapi_peeled_type(type).try { |peeled| peeled if VAR_NAME_FULL_RE.matches?(peeled) }
+    end
+
+    # The annotation with `Optional[...]`, `Union[X, None]`, `X | None` and
+    # `Annotated[X, ...]` peeled off; nil for a union of several types.
+    private def fastapi_peeled_type(type : ::String) : ::String?
       type = type.strip
       loop do
         if match = type.match(MODEL_TYPE_WRAPPER_RE)
@@ -1362,7 +1374,7 @@ module Analyzer::Python
           break
         end
       end
-      type if VAR_NAME_FULL_RE.matches?(type)
+      type
     end
 
     private def model_params_for(model : ::String, param_name : ::String, source : ::String,
@@ -1371,12 +1383,15 @@ module Analyzer::Python
       find_base_model_params(site[0], model, param_name, path: site[1], base_path: base_path, location: location)
     end
 
-    SCALAR_TYPE_RE     = /\b(?:str|int|float|bool|EmailStr)\b/
-    STAR_IMPORT_RE     = /^from\s+([\w.]+)\s+import\s+\*/m
-    ALIAS_GENERATOR_RE = /\balias_generator\s*=\s*([\w.]+)/
-    DEPENDS_EMPTY_RE   = /\bDepends\s*\(\s*\)/
-    DEPENDS_CLASS_RE   = /\bDepends\s*\(\s*([A-Z]\w*)\s*\)/
-    INIT_DEF_RE        = /^\s+(?:async\s+)?def\s+__init__\s*\(/
+    SCALAR_TYPE_RE = /\b(?:str|int|float|bool|EmailStr)\b/
+    # A bare `dict` keeps reading the keys the handler takes from it.
+    BODY_CONTAINER_TYPE_RE = /\A(?:typing\.)?(?:dict\[|(?:Dict|list|List|set|Set|frozenset|FrozenSet|tuple|Tuple|Sequence)(?:\[|\z))/
+    LOCATION_MARKER_RE     = /\b(?:Query|Header|Cookie|Body|Form|File|UploadFile|Path|WebSocket)\b/
+    STAR_IMPORT_RE         = /^from\s+([\w.]+)\s+import\s+\*/m
+    ALIAS_GENERATOR_RE     = /\balias_generator\s*=\s*([\w.]+)/
+    DEPENDS_EMPTY_RE       = /\bDepends\s*\(\s*\)/
+    DEPENDS_CLASS_RE       = /\bDepends\s*\(\s*([A-Z]\w*)\s*\)/
+    INIT_DEF_RE            = /^\s+(?:async\s+)?def\s+__init__\s*\(/
 
     # `{source, file}` declaring `class model`, as named from `path`: the
     # same file, else the module it is imported from, following package

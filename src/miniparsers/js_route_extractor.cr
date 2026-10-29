@@ -1520,7 +1520,7 @@ module Noir
     end
 
     REQUEST_CALL_RE       = /(?<![\w$.])((?:[A-Za-z_$][\w$]*\s*\.\s*)*[A-Za-z_$][\w$]*)\s*\(/
-    NOT_A_CALLEE_RE       = /\A(?:if|for|while|switch|catch|function|return|typeof|await|new|next|super)\z|\A(?:res|response)\./
+    NOT_A_CALLEE_RE       = /\A(?:if|for|while|switch|catch|function|async|return|typeof|await|new|next|super)\z|\A(?:res|response)\./
     MAX_REQUEST_CALLEES   = 12
     REQUEST_RECEIVER_NAME = /\A(?:req|request)\z/
 
@@ -1553,10 +1553,7 @@ module Noir
         name = definition_params(text, target_line).try(&.[position]?) || next
         # `fromRemote({ session }, client)`: no name to read through.
         next if name.empty?
-        # `delete req.query.lang` drops an input and `req.body.sort = 'asc'`
-        # sets one; neither reads it.
-        reads = definition_body(text, target_line).gsub(/\bdelete\s+[\w$.?\[\]'"]+/, "")
-          .gsub(/(?<![\w$.])#{Regex.escape(name)}\s*\??\.\s*(?:body|query|headers|cookies|params)\s*\??(?:\.\s*[\w$]+|\[[^\]]+\])\s*=(?![=>])/, "")
+        reads = definition_body(text, target_line)
         reads = reads.gsub(/(?<![\w$.])#{Regex.escape(name)}(?=\s*\??\.)/, "req") unless name.matches?(REQUEST_RECEIVER_NAME)
         extract_body_params(reads, context)
         extract_query_params(reads, context)
@@ -1998,6 +1995,8 @@ module Noir
         end
       end
 
+      extract_multer_params(handler ? args_slice.byte_slice(0, handler[0]) : args_slice, endpoint)
+
       return unless handler
 
       handler_body = args_slice.byte_slice(handler[0], handler[1] - handler[0])
@@ -2325,7 +2324,31 @@ module Noir
       JSLiteralScanner.regex_context?(prev_char, prev_word, last_sig > 0 ? chars[last_sig - 1] : nil)
     end
 
+    # `delete req.query.lang` drops an input and `req.body.sort = 'asc'` or
+    # `req.headers['x-tenant'] = 'default'` sets one; neither reads what the
+    # client sent. `req.query.page ||= '1'` does read it, and is kept.
+    REQUEST_WRITE_RE = /\bdelete\s+[\w$.?\[\]'"]+|(?<![\w$.])(?:req|request|ctx(?:\s*\.\s*request)?)\s*\??\.\s*(?:body|query|headers|cookies|params)\s*\??(?:\.\s*[\w$]+|\[[^\]]+\])\s*=(?![=>])/
+
+    private def self.strip_request_writes(text : String) : String
+      text.gsub(REQUEST_WRITE_RE, "")
+    end
+
+    # multer (and @koa/multer) middleware names the multipart file fields:
+    # `upload.single('avatar')`, `upload.array('photos', 3)`,
+    # `upload.fields([{ name: 'icon' }])`.
+    MULTER_FIELD_RE  = /\.(?:single|array)\s*\(\s*['"`]([^'"`]+)['"`]/
+    MULTER_FIELDS_RE = /\.fields\s*\(\s*\[([^\]]*)\]/
+    MULTER_NAME_RE   = /\bname\s*:\s*['"`]([^'"`]+)['"`]/
+
+    private def self.extract_multer_params(middleware : String, endpoint : Endpoint)
+      middleware.scan(MULTER_FIELD_RE) { |m| endpoint.push_param(Param.new(m[1], "", "file")) }
+      middleware.scan(MULTER_FIELDS_RE) do |m|
+        m[1].scan(MULTER_NAME_RE) { |field| endpoint.push_param(Param.new(field[1], "", "file")) }
+      end
+    end
+
     def self.extract_body_params(handler_body : String, endpoint : Endpoint)
+      handler_body = strip_request_writes(handler_body)
       # Look for req.body.X or const/let/var { X } = req.body
       # First check the destructuring pattern
       handler_body.scan(/(?:const|let|var)\s*\{\s*([^}]+)\s*\}\s*=\s*(?:req|request)\??\.body/) do |match|
@@ -2410,6 +2433,7 @@ module Noir
     end
 
     def self.extract_query_params(handler_body : String, endpoint : Endpoint)
+      handler_body = strip_request_writes(handler_body)
       # Look for destructuring: const/let/var { X } = req.query
       handler_body.scan(/(?:const|let|var)\s*\{\s*([^}]+)\s*\}\s*=\s*(?:req|request)\??\.query/) do |match|
         params = match[1].split(",").map(&.strip)
@@ -2463,6 +2487,7 @@ module Noir
     end
 
     def self.extract_header_params(handler_body : String, endpoint : Endpoint)
+      handler_body = strip_request_writes(handler_body)
       # Destructuring: const/let/var { authorization } = req.headers
       handler_body.scan(/(?:const|let|var)\s*\{\s*([^}]+)\s*\}\s*=\s*(?:req|request|ctx(?:\.request)?)\??\.headers/) do |match|
         match[1].split(",").each do |param|
@@ -2528,6 +2553,7 @@ module Noir
     end
 
     def self.extract_cookie_params(handler_body : String, endpoint : Endpoint)
+      handler_body = strip_request_writes(handler_body)
       # Destructuring: const/let/var { token } = req.cookies
       handler_body.scan(/(?:const|let|var)\s*\{\s*([^}]+)\s*\}\s*=\s*(?:req|request|ctx)\??\.cookies/) do |match|
         match[1].split(",").each do |param|
@@ -2570,6 +2596,7 @@ module Noir
     end
 
     def self.extract_path_params(handler_body : String, endpoint : Endpoint)
+      handler_body = strip_request_writes(handler_body)
       # Destructuring: const/let/var { id } = req.params
       handler_body.scan(/(?:const|let|var)\s*\{\s*([^}]+)\s*\}\s*=\s*(?:req|request|ctx)\??\.params/) do |match|
         match[1].split(",").each do |param|

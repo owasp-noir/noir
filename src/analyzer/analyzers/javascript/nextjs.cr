@@ -215,12 +215,14 @@ module Analyzer::Javascript
         # the alias, and the line fell back to 1.
         handler = verb_export_handler(sanitized, path, method)
         method_body_info = extract_exported_method_body(sanitized, method)
-        # A wrapped handler's own body misses the helpers it calls
-        # (`validateRequest(req)` reading `apiKey`), so params keep reading
-        # the whole file there; the line and callees are the handler's.
-        param_source = method_body_info.try(&.[0]) || sanitized
+        param_source = method_body_info.try(&.[0])
         method_body_info ||= same_file_body(sanitized, path, handler)
-        endpoint.details = Details.new(PathInfo.new(path, method_body_info.try(&.[1]) || 1))
+        # A wrapped handler (`export const PUT = withErrors(async (req) =>
+        # …)`, or `withAuth(getHandler)` declared here) reads its own closure
+        # plus the same-file helpers it calls (`validateRequest(req)` reading
+        # `apiKey`); not the whole file, which holds the sibling verbs too.
+        param_source ||= wrapped_param_source(sanitized, method, method_body_info.try(&.[0])) || sanitized
+        endpoint.details = Details.new(PathInfo.new(path, method_body_info.try(&.[1]) || handler.try(&.line) || 1))
         endpoint.handler = handler
 
         extract_path_params(url, endpoint)
@@ -325,6 +327,29 @@ module Analyzer::Javascript
       if m = content.match(EXPORT_VERB_CONST_RES[method])
         wrapped_handler(content, m.end(0), path, method, line_number_for_index(content, m.begin(0)))
       end
+    end
+
+    LOCAL_CALL_RE = /(?<![\w$.])([A-Za-z_$][\w$]*)\s*\(/
+
+    # The wrapped function's body, else the wrapper call holding the inline
+    # closure, plus the bodies of the same-file functions it calls (one hop,
+    # never a sibling verb). Nil when the export is not a wrapper call.
+    private def wrapped_param_source(content : String, method : String, wrapped_body : String?) : String?
+      source = wrapped_body || begin
+        m = content.match(EXPORT_VERB_CONST_RES[method]) || return
+        rest = content[m.end(0)..]
+        call = rest.match(WRAPPER_CALL) || return
+        close = Noir::JSRouteExtractor.find_matching_paren(rest, call.end(0) - 1) || return
+        rest[0..close]
+      end
+      parts = [source]
+      seen = Set(String).new
+      source.scan(LOCAL_CALL_RE) do |local_call|
+        name = local_call[1]
+        next if HTTP_METHODS.includes?(name) || !seen.add?(name)
+        extract_named_function_body(content, name).try { |body| parts << body[0] }
+      end
+      parts.join("\n")
     end
 
     # `export const GET = withAuth(getHandler)`: the wrapped function's body
@@ -806,6 +831,14 @@ module Analyzer::Javascript
       split_top_level_commas(args).each do |arg|
         arg = arg.strip
         next if arg.empty?
+        # `({ id, name: title = "" }: Input)`: the object's keys are the fields.
+        if arg.starts_with?('{') && (close = Noir::JSRouteExtractor.find_matching_brace(arg, 0))
+          split_top_level_commas(arg[1...close]).each do |prop|
+            key = prop.strip.split(/[:=]/, 2).first.strip
+            add_param(endpoint, key, "body") if key.matches?(/\A\w+\z/)
+          end
+          next
+        end
         # Strip type annotation (everything after `:`)
         name_part = arg.split(":").first.strip
         # Skip destructures, generics, default values, nested calls

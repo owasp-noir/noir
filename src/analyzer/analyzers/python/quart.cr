@@ -444,9 +444,6 @@ module Analyzer::Python
       codeblock_lines = fold_python_continuations(codeblock_lines)
       params = [] of Param
       json_variable_names = [] of ::String
-      # (json-variable regexes are memoized in @json_param_regex_cache —
-      # they interpolate a discovered identifier so they can't be consts.)
-
       codeblock_lines.each do |codeblock_line|
         match = codeblock_line.match /([a-zA-Z_][a-zA-Z0-9_]*).*=\s*(?:await\s+)?json\.loads\((?:await\s+)?request\.data/
         if !match.nil? && match.size == 2 && !json_variable_names.includes?(match[1])
@@ -458,42 +455,8 @@ module Analyzer::Python
         end
       end
 
-      codeblock_lines.each do |codeblock_line|
-        REQUEST_PARAM_FIELD_PATTERNS.each do |field_pattern|
-          noir_param_type, bracket_re, get_re = field_pattern
-          matches = codeblock_line.scan(bracket_re)
-          if matches.empty?
-            matches = codeblock_line.scan(get_re)
-          end
-
-          matches.each do |parameter_match|
-            next if parameter_match.size != 2
-            params << Param.new(parameter_match[1], "", noir_param_type)
-          end
-        end
-
-        # JSON dict access on the variables found above. This used to run
-        # inside the field-pattern loop (once per missed field — i.e.
-        # effectively per field per line), recompiling two interpolated
-        # regexes each time and appending the same matches repeatedly;
-        # `get_filtered_params` deduplicates by (name, param_type), so
-        # scanning once per line is output-identical.
-        json_variable_names.each do |json_variable_name|
-          bracket_json_re, get_json_re = json_param_regexes(json_variable_name)
-          matches = codeblock_line.scan(bracket_json_re)
-          if matches.empty?
-            matches = codeblock_line.scan(get_json_re)
-          end
-          next if matches.empty?
-
-          matches.each do |parameter_match|
-            next if parameter_match.size != 2
-            params << Param.new(parameter_match[1], "", "json")
-          end
-          break
-        end
-      end
-
+      aliases = json_variable_names.map { |name| {name, "json"} } + request_field_aliases(codeblock_lines)
+      codeblock_lines.each { |line| scan_request_reads(line, aliases, params) }
       params
     end
   end

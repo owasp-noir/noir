@@ -514,7 +514,10 @@ module Noir::JSHandlerResolver
     patterns = patterns[0, 1] if name.includes?('.')
     exports_assignment = patterns[0]
     patterns = patterns[0...-1] if strict
-    patterns = patterns[1...-1] + [patterns[0], patterns[-1]] if local && !strict && patterns.size > 2
+    # A bare local name is never the module's nameless default export: `async
+    # (req, res) =>` or an undeclared `check(req)` inside a router factory
+    # resolved to the factory and read every route it registers.
+    patterns = patterns[1...-1] + [patterns[0]] if local && !strict && patterns.size > 2
     patterns.each do |re|
       # Assigned twice (`exports.thing = …` again below): the last one is
       # what the module exports.
