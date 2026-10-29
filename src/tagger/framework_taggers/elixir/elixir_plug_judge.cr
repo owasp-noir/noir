@@ -20,7 +20,10 @@ module Noir
   class ElixirPlugJudge
     record Mod, name : String, path : String, first : Int32, last : Int32
 
-    IDENTITY       = /\bcurrent_(?:user|account|member|resource|scope|identity)\b|get_req_header\([^)]*["'][^"']*(?:auth|token|key|signature)|\bGuardian\.|\bPow\.Plug\b|get_session\([^)]*(?:user|token)/i
+    IDENTITY = /\bcurrent_(?:user|account|member|resource|scope|identity)\b|get_req_header\([^)]*["'][^"']*(?:auth|token|key|signature)|\bGuardian\.|\bPow\.Plug\b|get_session\([^)]*(?:user|token)/i
+    # Minting a token is not a read of the caller. Actions ignore it;
+    # module plugs such as `Guardian.Plug.EnsureAuthenticated` still match IDENTITY.
+    GUARDIAN_MINT  = /\bGuardian\.encode_and_sign!?\b/
     STRONG_REFUSAL = /(?<![\w.])40[13](?![\d.])|:unauthorized\b|:forbidden\b/
     WEAK_REFUSAL   = /(?<![\w.])404(?![\d.])|:not_found\b/
     LOGIN_PATH     = /["'][^"'\n]*\/(?:[\w-]+\/)*(?:log[_-]?in|sign[_-]?in)\b|Routes\.\w*(?:session|login)\w*_path\b/i
@@ -79,7 +82,8 @@ module Noir
     private def verdict(mod : Mod, func : String, depth : Int32, plug : Bool) : Bool?
       return unless text = closure_text(mod, func, depth)
       return true if plug && text.matches?(BASIC_AUTH)
-      return false unless text.matches?(IDENTITY)
+      identity = plug ? text : text.gsub(GUARDIAN_MINT, "")
+      return false unless identity.matches?(IDENTITY)
       return false if plug && !text.matches?(HALT)
       return true if text.matches?(STRONG_REFUSAL)
       return true if text.includes?("redirect") && text.matches?(LOGIN_PATH)

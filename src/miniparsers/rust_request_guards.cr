@@ -7,8 +7,8 @@ require "../ext/tree_sitter/tree_sitter"
 #
 # A type refuses when its impl can answer 401/403 (`Status::Unauthorized`,
 # `StatusCode::FORBIDDEN`, actix `ErrorUnauthorized`, or a `macro_rules!`
-# whose body does, or returns as its error a variant that a
-# `ResponseError::status_code` maps to 401/403: `Err(MyError::IncorrectLogin)`
+# whose body does, or returns as its error a variant that
+# `fn status_code` maps to 401/403: `Err(MyError::IncorrectLogin)`
 # / `.ok_or(MyError::IncorrectLogin)` after
 # `MyError::IncorrectLogin => StatusCode::UNAUTHORIZED`), or forwards the
 # failure of a type that refuses
@@ -32,6 +32,8 @@ module Noir::RustRequestGuards
   VARIANT_PATH_RE = /\A(?:\w+::)*[A-Z]\w*\z/
   ENUM_GLOB_RE    = /\buse\s+(?:[\w:]+::)?([A-Z]\w*)::\*\s*;/
   IMPL_FOR_RE     = /\bimpl\b[^{};]*?\bfor\s+(?:\w+::)*(\w+)/
+  # `impl Type`, `impl crate::Type`, `impl Type<T>`, `impl<T> Type<T>`.
+  INHERENT_IMPL_RE = /\Aimpl(?:\s*<[^;{}]*>)?\s+(?:\w+::)*(\w+)(?:\s*<[^;{}]*>)?\s*\{/
   # Methods whose argument becomes the `Err` of the value they return.
   ERR_ADAPTERS = {"ok_or", "ok_or_else", "map_err"}
   MAX_DEPTH    = 256
@@ -146,7 +148,7 @@ module Noir::RustRequestGuards
       open = source.index('{', m.end) || break
       close = matching_brace(source, open) || break
       offset = close
-      impl_type = source[0, m.begin].scan(IMPL_FOR_RE).last?.try(&.[1])
+      impl_type = status_self_type(source, m.begin)
       body = "fn status_code() #{source[open..close]}"
       Noir::TreeSitter.parse_rust(body) do |root|
         Noir::TreeSitter.walk(root) do |arm|
@@ -160,6 +162,42 @@ module Noir::RustRequestGuards
         end
       end
     end
+  end
+
+  # The impl whose body contains `fn_at`. A later header replaces an earlier one,
+  # so `impl Error` is not overridden by an earlier `impl Trait for Other`.
+  private def self.status_self_type(source : String, fn_at : Int32) : String?
+    chosen : String? = nil
+    offset = 0
+    while header = source.match(/\bimpl\b/, offset)
+      break if header.begin >= fn_at
+      offset = header.end
+      if type_name = impl_type_enclosing(source, header.begin, fn_at)
+        chosen = type_name
+      end
+    end
+    chosen
+  end
+
+  private def self.impl_type_enclosing(source : String, at : Int32, fn_at : Int32) : String?
+    rest = source[at, source.size - at]
+    type_name : String? = nil
+    brace : Int32? = nil
+    if (found = rest.match(IMPL_FOR_RE)) && found.begin == 0
+      if open = rest.index('{', found.end)
+        type_name = found[1]
+        brace = open
+      end
+    end
+    if type_name.nil? && (found = rest.match(INHERENT_IMPL_RE))
+      type_name = found[1]
+      brace = found.end - 1
+    end
+    return unless (name = type_name) && (open = brace)
+    abs = at + open
+    close = matching_brace(source, abs) || return
+    return unless abs < fn_at && fn_at < close
+    name
   end
 
   # Index of the `}` closing the `{` at `open`, skipping string literals.
