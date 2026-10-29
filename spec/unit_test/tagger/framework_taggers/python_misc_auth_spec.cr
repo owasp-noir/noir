@@ -153,4 +153,36 @@ describe "PythonMiscAuthTagger" do
     PythonMiscAuthTagger.target_techs.should contain("python_sanic")
     PythonMiscAuthTagger.target_techs.should contain("python_tornado")
   end
+
+  describe "Litestar guards" do
+    litestar_base = File.expand_path("../../../functional_test/fixtures/python/litestar_guards", __DIR__)
+    litestar_app = "#{litestar_base}/app/main.py"
+
+    # app/main.py: 13 `@get(..., guards=[requires_team_membership])`,
+    # 22 `@get("/stats")` in a Controller with `guards = [...]`,
+    # 28 `@get(..., name="oauth:github:authorize")` with no guard.
+    tag_at = ->(line : Int32) do
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(litestar_base)
+      details = Details.new(PathInfo.new(litestar_app, line))
+      details.technology = "python_litestar"
+      endpoint = Endpoint.new("/x", "GET", [] of Param, details)
+      PythonMiscAuthTagger.new(noir_options).perform([endpoint])
+      endpoint.tags
+    end
+
+    it "reads a handler's guards= argument" do
+      tags = tag_at.call(13)
+      tags.map(&.name).should eq(["auth"])
+      tags[0].description.should contain("requires_team_membership")
+    end
+
+    it "reads a Controller's guards attribute" do
+      tag_at.call(22).map(&.name).should eq(["auth"])
+    end
+
+    it "does not guard a route without guards" do
+      tag_at.call(28).should be_empty
+    end
+  end
 end

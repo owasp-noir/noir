@@ -7,7 +7,7 @@ expected_endpoints = [
   Endpoint.new("/", "GET"),
   Endpoint.new("/", "POST"),
   Endpoint.new("/items", "GET"),
-  Endpoint.new("/items", "POST", [Param.new("data", "", "json")]),
+  Endpoint.new("/items", "POST", [Param.new("name", "", "json")]),
 ]
 
 FunctionalTester.new("fixtures/python/litestar_empty_path/", {

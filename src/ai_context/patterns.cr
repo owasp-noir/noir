@@ -522,8 +522,10 @@ module NoirAIContext
       source_patterns: [
         # Not as a markup element name: Blazor's `<AuthorizeView>` /
         # `<Authorized>` only choose what a page renders, the request is
-        # served either way. Nor as a path segment (`"/oauth/authorize"`).
-        /(?<![<\/])\bauthorize\w*\b/i,
+        # served either way. Nor as a path segment (`"/oauth/authorize"`),
+        # nor as the tail of a route name (Litestar `name="oauth:github:authorize"`;
+        # a Ruby `:authorize` symbol still counts).
+        /(?<![<\/])(?<!\w:)\bauthorize\w*\b/i,
         /\bcheckPermissions?\b/i,
         /\bhasAuthorit(?:y|ies)\b/i,
         /\brequires?Roles?\b/i,

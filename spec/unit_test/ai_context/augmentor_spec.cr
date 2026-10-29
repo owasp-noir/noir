@@ -2244,6 +2244,24 @@ describe "NoirAIContext" do
     end
   end
 
+  it "does NOT treat a route name ending in :authorize as a guard" do
+    source = <<-PYTHON
+      @get("/api/auth/oauth/github", name="oauth:github:authorize")
+      async def github_authorize(self) -> dict:
+          return {}
+      PYTHON
+
+    with_temp_ai_context_source(source, ".py") do |path|
+      endpoint = Endpoint.new("/api/auth/oauth/github", "GET")
+      details = endpoint.details
+      details.add_path(PathInfo.new(path, 1))
+      endpoint.details = details
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context
+      (context.try(&.guards) || [] of AIContextEntry).map(&.kind).should_not contain("authz_guard")
+    end
+  end
+
   it "does NOT treat FastAPI Security dependencies as authorization guards" do
     source = <<-PYTHON
       @app.get("/admin")

@@ -63,6 +63,17 @@ module Analyzer::Python
       }}
     end
 
+    # Names a `dependencies={...}` mapping provides (`"users_service":
+    # Provide(...)`, or a helper's `key="users_service"`): a handler
+    # parameter so named is injected, not read from the request.
+    PROVIDE_KEY_RE       = /['"]([A-Za-z_]\w*)['"]\s*:\s*Provide\s*\(/
+    DEPENDENCIES_LINE_RE = /\bdependencies\s*[:=]/
+    DEPENDENCY_KEY_RE    = /['"]([A-Za-z_]\w*)['"]\s*:|\bkey\s*=\s*['"]([A-Za-z_]\w*)['"]/
+    BODY_MODEL_RE        = /\A\s*([A-Z][A-Za-z0-9_]*)\s*\z/
+    MODEL_FIELD_RE       = /^([A-Za-z_]\w*)\s*:\s*(.+)$/
+    FORM_ENCODING_RE     = /RequestEncodingType\.(?:URL_ENCODED|MULTI_PART)/
+    @dependency_keys = Set(::String).new
+
     def analyze
       external_handler_prefixes = Hash(::String, Hash(::String, ::String)).new do |hash, key|
         hash[key] = Hash(::String, ::String).new
@@ -73,6 +84,7 @@ module Analyzer::Python
         source = read_file_content(path)
         next unless source.includes?("litestar")
 
+        collect_dependency_keys(source)
         import_modules = find_imported_modules(current_base_path, path, source)
         collect_external_handler_prefixes(source, collect_router_prefixes(source), import_modules).each do |handler_path, handler_map|
           handler_map.each do |handler_name, prefix|
@@ -175,7 +187,7 @@ module Analyzer::Python
             full_path = full_path.gsub(TYPED_PATH_PARAM_REGEX) { |_| "{#{$~[1]}}" }
 
             path_params = extract_path_params(full_path)
-            handler_params = handler_line ? extract_handler_params(lines, handler_line, full_path, handler_body) : [] of Param
+            handler_params = handler_line ? extract_handler_params(lines, handler_line, full_path, handler_body, source, path, definition_base_path) : [] of Param
 
             methods.uniq.each do |method|
               params = [] of Param
@@ -410,6 +422,52 @@ module Analyzer::Python
       nil
     end
 
+    private def collect_dependency_keys(source : ::String) : Nil
+      return unless source.includes?("Provide") || source.includes?("dependencies")
+      source.scan(PROVIDE_KEY_RE) { |m| @dependency_keys << m[1] }
+      source.each_line do |line|
+        next unless line.includes?("dependencies") && line.matches?(DEPENDENCIES_LINE_RE)
+        line.scan(DEPENDENCY_KEY_RE) { |m| @dependency_keys << (m[1]? || m[2]) }
+      end
+    end
+
+    # Litestar's `data` argument is the request body: its type's fields are
+    # the params. Nil when the type is not a class found in this file or
+    # one it imports.
+    private def litestar_data_params(type_hint : ::String, source : ::String, path : ::String,
+                                     base_path : ::String) : Array(Param)?
+      location = type_hint.matches?(FORM_ENCODING_RE) ? "form" : "json"
+      hint = type_hint.includes?("Annotated[") ? type_hint.split("Annotated[", 2)[1].split(',', 2)[0] : type_hint
+      model = hint.match(BODY_MODEL_RE).try(&.[1]) || return
+      fields = model_field_names(source, model)
+      if fields.nil?
+        imported = find_imported_modules(base_path, path, source)[model]? || return
+        fields = model_field_names(read_file_content(imported[0]), model) || return
+      end
+      fields.map { |name| Param.new(name, "", location) }
+    end
+
+    # Annotated class-body attributes of `class model` in `source`.
+    private def model_field_names(source : ::String, model : ::String) : Array(::String)?
+      lines = source.split("\n")
+      class_index = lines.index(&.matches?(/^\s*class\s+#{Regex.escape(model)}\b/)) || return
+      class_indent = lines[class_index].size - lines[class_index].lstrip.size
+      body_indent = nil
+      names = [] of ::String
+      ((class_index + 1)...lines.size).each do |i|
+        stripped = lines[i].lstrip
+        next if stripped.empty? || stripped.starts_with?('#')
+        indent = lines[i].size - stripped.size
+        break if indent <= class_indent
+        body_indent ||= indent
+        next unless indent == body_indent
+        next unless field = stripped.match(MODEL_FIELD_RE)
+        next if field[2].lstrip.starts_with?("ClassVar")
+        names << field[1]
+      end
+      names
+    end
+
     private def extract_path_params(route_path : ::String) : Array(Param)
       params = [] of Param
       route_path.scan(PATH_PARAM_REGEX) do |match|
@@ -425,7 +483,8 @@ module Analyzer::Python
     # handler body (caller-side `parse_code_block(lines[def..])`), so
     # the analyze loop can share one parse between this and the
     # `build_callees_from` path instead of re-parsing here.
-    private def extract_handler_params(lines : Array(::String), def_line_index : Int32, route_path : ::String, codeblock : ::String?) : Array(Param)
+    private def extract_handler_params(lines : Array(::String), def_line_index : Int32, route_path : ::String, codeblock : ::String?,
+                                       source : ::String = "", path : ::String = "", base_path : ::String = "") : Array(Param)
       params = [] of Param
 
       function_def = parse_function_def(lines, def_line_index)
@@ -440,9 +499,13 @@ module Analyzer::Python
           next if name.empty? || name == "self" || name == "cls" || name == "*" || name == "request"
           next if name.starts_with?("*")
           next if path_param_names.includes?(name)
-          next if litestar_dependency_param?(fp)
+          next if litestar_dependency_param?(fp) || @dependency_keys.includes?(name)
 
           type_hint = fp.type.strip
+          if name == "data" && (body = litestar_data_params(type_hint, source, path, base_path))
+            body.each { |param| add_unique(params, param) }
+            next
+          end
           if location = type_hint.match(PARAMETER_LOCATION_REGEX) || fp.default.match(PARAMETER_DEFAULT_LOCATION_REGEX)
             add_unique(params, Param.new(location[2], "", location[1]))
             next
