@@ -1175,7 +1175,8 @@ class SpringAuthTagger < FrameworkTagger
     end
 
     @security_meta_annotations.each_value do |meta|
-      if class_level_annotation(ctx.path, lines, "@#{meta.name}")
+      # The lookup matches by prefix: `@Admin` must not take `@AdminApi`.
+      if class_level_annotation(ctx.path, lines, "@#{meta.name}").try(&.matches?(/\A@#{Regex.escape(meta.name)}\b/))
         return "Protected by Spring #{meta.spring_annotation} (@#{meta.name}) on the controller class"
       end
     end

@@ -1766,6 +1766,38 @@ describe "SpringAuthTagger (HandlerInterceptor)" do
 end
 
 describe "SpringAuthTagger (Meta-annotations)" do
+  it "does not read a longer class annotation as a meta-annotation that prefixes it" do
+    meta_annotation = <<-JAVA
+      package com.example.security;
+
+      @Target(ElementType.TYPE)
+      @Retention(RetentionPolicy.RUNTIME)
+      @PreAuthorize("hasRole('ADMIN')")
+      public @interface Admin {
+      }
+      JAVA
+
+    controller = <<-JAVA
+      package com.example.controller;
+
+      @AdminApi
+      @RestController
+      public class DocsController {
+          @GetMapping("/docs")
+          public String docs() { return "docs"; }
+      }
+      JAVA
+
+    endpoints = run_spring_endpoints_map({
+      "src/main/java/com/example/security/Admin.java"            => meta_annotation,
+      "src/main/java/com/example/controller/DocsController.java" => controller,
+    }, {
+      "GET /docs" => "src/main/java/com/example/controller/DocsController.java:6",
+    })
+
+    endpoints["GET /docs"].tags.should be_empty
+  end
+
   it "detects Java method-level meta-annotation with @Secured" do
     meta_annotation = <<-JAVA
       package com.example.security;
