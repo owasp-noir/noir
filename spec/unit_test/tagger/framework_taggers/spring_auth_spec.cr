@@ -3393,4 +3393,27 @@ describe "SpringAuthTagger (servlet filter review cases, round two)" do
     tags["GET /appa/admin/users"].should eq(["Protected by Servlet filter TokenFilter on /* (refuses with 401)"])
     tags["GET /appb/admin/users"].should be_empty
   end
+
+  it "does not map a library filter the app's scan excludes" do
+    {
+      "@ComponentScan(basePackages = {\"appb\", \"lib\"}, excludeFilters = @ComponentScan.Filter(type = FilterType.ASSIGNABLE_TYPE, classes = TokenFilter.class))",
+      "@ComponentScan(basePackages = {\"appb\", \"lib\"})\n@SpringBootApplication(exclude = TokenFilter.class)",
+    }.each do |scan|
+      tags = review_reactor({
+        "lib"   => {[] of String, {"lib/TokenFilter.java" => review_filter("lib", "TokenFilter", "@Component")}},
+        "app-a" => {["lib"], {"appa/Scan.java" => "package appa;\n@Configuration\n@ComponentScan(\"lib\")\npublic class Scan {}\n"}},
+        "app-b" => {["lib"], {"appb/Scan.java" => "package appb;\n#{scan}\npublic class Scan {}\n"}},
+      })
+      tags["GET /appa/admin/users"].should eq(["Protected by Servlet filter TokenFilter on /* (refuses with 401)"])
+      tags["GET /appb/admin/users"].should be_empty
+    end
+  end
+
+  it "emits no guard when a library default stands in for a missing credential" do
+    source = REVIEW_FILTERS2["j12_default_credential"][1]
+      .sub("String token = request.getHeader(\"Authorization\");\n        if (token == null) token = \"guest\";",
+        "String token = StringUtils.defaultIfBlank(request.getHeader(\"Authorization\"), \"guest\");")
+    source.should contain("defaultIfBlank")
+    review_case("j12_default_credential", {"src/main/java/app/KeyFilter.java" => source}).values.flatten.should be_empty
+  end
 end

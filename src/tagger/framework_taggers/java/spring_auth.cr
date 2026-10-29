@@ -160,6 +160,7 @@ class SpringAuthTagger < FrameworkTagger
     @servlet_component_scans = Set(String?).new
     @scan_packages = Hash(String, Array(String)).new
     @scan_imports = Hash(String, Array(String)).new
+    @scan_excludes = Hash(String, Array(String)).new
   end
 
   def self.target_techs : Array(String)
@@ -186,6 +187,7 @@ class SpringAuthTagger < FrameworkTagger
     @servlet_component_scans.clear
     @scan_packages.clear
     @scan_imports.clear
+    @scan_excludes.clear
     @context_paths.clear
 
     # Find Java and Kotlin security config files
@@ -437,7 +439,7 @@ class SpringAuthTagger < FrameworkTagger
   CREDENTIAL_EXPRESSION = /(?:[\w$]+\s*\.\s*)*(?:#{FILTER_CREDENTIAL_READ.source})/i
   # A credential local whose value for a missing credential is not plain:
   # it tests for null or emptiness itself, or falls back with `?:` / a ternary.
-  MURKY_VALUE = /\bnull\b|\?:|\s\?\s|\|\||&&|\b(?:isEmpty|isBlank|isNullOrEmpty|isNullOrBlank|hasText|hasLength|isNotEmpty|isNotBlank|orElse\w*|getOrDefault|ifEmpty)\b/
+  MURKY_VALUE = /\bnull\b|\?:|\s\?\s|\|\||&&|\b(?:isEmpty|isBlank|isNullOrEmpty|isNullOrBlank|hasText|hasLength|isNotEmpty|isNotBlank|orElse\w*|getOrDefault|ifEmpty|default\w*|requireNonNullElse\w*|firstNonNull|Objects\.toString)\b/
   # A field holding configuration: `@Value`-injected, or typed `*Properties` / `*Config`.
   CONFIG_FIELD_TYPE = /(?:Properties|Config|Configuration|Settings)\??\z/
   # Reads of the current request that do not name the request parameter.
@@ -1199,8 +1201,15 @@ class SpringAuthTagger < FrameworkTagger
     end
     clean.scan(/@(?:SpringBootApplication|ComponentScan)\s*\(/) do |found|
       next unless args = paren_inner(clean, found.byte_end(0) - 1)
-      args[0].scan(/"([\w.]+)"/) { |literal| packages << literal[1] }
-      args[0].scan(/\b([A-Z][\w$]*)(?:::|\.)class\b/) { |klass| (@scan_imports[module_dir] ||= [] of String) << klass[1] }
+      # `exclude`, `excludeName` and `excludeFilters` name what is NOT scanned.
+      excluded, kept = Noir::TopLevelSplit.split(args[0], ',', Noir::TopLevelSplit::Rules.new)
+        .partition(&.matches?(/\A\s*exclude\w*\s*=/))
+      excluded.each do |arg|
+        arg.scan(/\b([A-Z][\w$]*)(?:::|\.)class\b/) { |klass| (@scan_excludes[module_dir] ||= [] of String) << klass[1] }
+      end
+      included = kept.join(',')
+      included.scan(/"([\w.]+)"/) { |literal| packages << literal[1] }
+      included.scan(/\b([A-Z][\w$]*)(?:::|\.)class\b/) { |klass| (@scan_imports[module_dir] ||= [] of String) << klass[1] }
     end
     clean.scan(/@Import\s*\(/) do |found|
       next unless args = paren_inner(clean, found.byte_end(0) - 1)
@@ -1284,7 +1293,9 @@ class SpringAuthTagger < FrameworkTagger
   # `@SpringBootApplication` / `scanBasePackages` / `@ComponentScan` names
   # or that it `@Import`s.
   private def scanned_by?(filter : ServletFilterDef, app : String?) : Bool
-    return true if app.nil? || filter.module_dir == app
+    return true if app.nil?
+    return false if @scan_excludes[app]?.try(&.includes?(filter.name))
+    return true if filter.module_dir == app
     return true if @scan_imports[app]?.try(&.includes?(filter.name))
     @scan_packages[app]?.try(&.any? { |package| filter.package_name == package || filter.package_name.starts_with?("#{package}.") }) || false
   end
