@@ -1,5 +1,6 @@
 require "../../engines/specification_engine"
 require "../../../utils/yaml"
+require "../../../utils/http_symbols"
 require "uri"
 
 module Analyzer::Specification
@@ -64,16 +65,12 @@ module Analyzer::Specification
     # Walks an OAS3 schema, emitting one Param per top-level property.
     # Follows `$ref` and flattens `allOf` so referenced/composed schemas
     # surface their members.
-    private def collect_schema_props_json(doc : SpecDoc(JSON::Any), schema : JSON::Any, param_type : String, params : Array(Param), seen : Set(String) = Set(String).new)
+    private def collect_schema_props_json(doc : SpecDoc(JSON::Any), schema : JSON::Any, param_type : String, params : Array(Param), seen : Set(String) = Set(String).new, schema_ref : String? = nil)
       # JSON Schema allows boolean `items` etc.; a scalar node makes the
       # `["..."]?` subscripts below raise "Expected Hash".
       return unless schema.as_h?
       if ref = schema["$ref"]?.try(&.as_s?)
-        return unless seen.add?(ref_key(doc, ref))
-        if resolved = resolve_ref_json(doc, ref)
-          node, ref_doc = resolved
-          collect_schema_props_json(ref_doc, node, param_type, params, seen)
-        end
+        follow_schema_ref_json(doc, ref, param_type, params, seen)
         return
       end
 
@@ -98,19 +95,17 @@ module Analyzer::Specification
       if any_of = schema["anyOf"]?.try(&.as_a?)
         any_of.each { |s| collect_schema_props_json(doc, s, param_type, params, seen) }
       end
+
+      collect_discriminator_subtypes_json(doc, schema, param_type, params, seen, schema_ref)
     end
 
-    private def collect_schema_props_yaml(doc : SpecDoc(YAML::Any), schema : YAML::Any, param_type : String, params : Array(Param), seen : Set(String) = Set(String).new)
+    private def collect_schema_props_yaml(doc : SpecDoc(YAML::Any), schema : YAML::Any, param_type : String, params : Array(Param), seen : Set(String) = Set(String).new, schema_ref : String? = nil)
       # JSON Schema allows boolean `items` etc.; a scalar node makes the
       # `[...]?` subscripts below raise "Expected Hash".
       return unless schema.as_h?
       if ref_node = schema[YAML::Any.new("$ref")]?
         if ref = ref_node.as_s?
-          return unless seen.add?(ref_key(doc, ref))
-          if resolved = resolve_ref_yaml(doc, ref)
-            node, ref_doc = resolved
-            collect_schema_props_yaml(ref_doc, node, param_type, params, seen)
-          end
+          follow_schema_ref_yaml(doc, ref, param_type, params, seen)
         end
         return
       end
@@ -142,6 +137,147 @@ module Analyzer::Specification
       if any_of_node = schema[YAML::Any.new("anyOf")]?
         if any_of = any_of_node.as_a?
           any_of.each { |s| collect_schema_props_yaml(doc, s, param_type, params, seen) }
+        end
+      end
+
+      collect_discriminator_subtypes_yaml(doc, schema, param_type, params, seen, schema_ref)
+    end
+
+    # `seen` is the same set `$ref` walks already use. A mapping target that
+    # `allOf`s back to this schema, or a mapping that names a schema the
+    # implicit scan would also find, stops on the second visit.
+    private def follow_schema_ref_json(doc : SpecDoc(JSON::Any), ref : String, param_type : String, params : Array(Param), seen : Set(String)) : Nil
+      return unless seen.add?(ref_key(doc, ref))
+      return unless resolved = resolve_ref_json(doc, ref)
+      node, ref_doc = resolved
+      collect_schema_props_json(ref_doc, node, param_type, params, seen, ref)
+    end
+
+    private def follow_schema_ref_yaml(doc : SpecDoc(YAML::Any), ref : String, param_type : String, params : Array(Param), seen : Set(String)) : Nil
+      return unless seen.add?(ref_key(doc, ref))
+      return unless resolved = resolve_ref_yaml(doc, ref)
+      node, ref_doc = resolved
+      collect_schema_props_yaml(ref_doc, node, param_type, params, seen, ref)
+    end
+
+    private def collect_discriminator_subtypes_json(doc : SpecDoc(JSON::Any), schema : JSON::Any, param_type : String, params : Array(Param), seen : Set(String), schema_ref : String?) : Nil
+      return unless disc = schema["discriminator"]?.try(&.as_h?)
+      mapped = [] of String
+      if mapping = disc["mapping"]?.try(&.as_h?)
+        mapping.each_value do |target|
+          next unless ref = target.as_s?
+          mapped << ref
+          follow_schema_ref_json(doc, ref, param_type, params, seen)
+        end
+      end
+      return unless base = schema_ref
+      implicit_subtype_refs_json(doc, base, mapped).each do |ref|
+        follow_schema_ref_json(doc, ref, param_type, params, seen)
+      end
+    end
+
+    private def collect_discriminator_subtypes_yaml(doc : SpecDoc(YAML::Any), schema : YAML::Any, param_type : String, params : Array(Param), seen : Set(String), schema_ref : String?) : Nil
+      return unless disc = schema[YAML::Any.new("discriminator")]?.try(&.as_h?)
+      mapped = [] of String
+      if mapping = disc[YAML::Any.new("mapping")]?.try(&.as_h?)
+        mapping.each_value do |target|
+          next unless ref = target.as_s?
+          mapped << ref
+          follow_schema_ref_yaml(doc, ref, param_type, params, seen)
+        end
+      end
+      return unless base = schema_ref
+      implicit_subtype_refs_yaml(doc, base, mapped).each do |ref|
+        follow_schema_ref_yaml(doc, ref, param_type, params, seen)
+      end
+    end
+
+    private def implicit_subtype_refs_json(doc : SpecDoc(JSON::Any), base_ref : String, mapped : Array(String)) : Array(String)
+      refs = [] of String
+      return refs unless schemas = doc.root["components"]?.try(&.["schemas"]?).try(&.as_h?)
+      base = schema_pointer(base_ref)
+      return refs if base.empty?
+      schemas.each do |name, schema|
+        ref = "#/components/schemas/#{name}"
+        next if mapped.any? { |item| schema_pointer(item) == schema_pointer(ref) }
+        next unless json_allof_refs?(schema, base)
+        refs << ref
+      end
+      refs
+    end
+
+    private def implicit_subtype_refs_yaml(doc : SpecDoc(YAML::Any), base_ref : String, mapped : Array(String)) : Array(String)
+      refs = [] of String
+      return refs unless schemas = doc.root[YAML::Any.new("components")]?.try(&.[YAML::Any.new("schemas")]?).try(&.as_h?)
+      base = schema_pointer(base_ref)
+      return refs if base.empty?
+      schemas.each do |name, schema|
+        ref = "#/components/schemas/#{name}"
+        next if mapped.any? { |item| schema_pointer(item) == schema_pointer(ref) }
+        next unless yaml_allof_refs?(schema, base)
+        refs << ref
+      end
+      refs
+    end
+
+    private def json_allof_refs?(schema : JSON::Any, base_pointer : String) : Bool
+      return false unless parts = schema["allOf"]?.try(&.as_a?)
+      parts.any? do |part|
+        next false unless part.as_h?
+        ref = part["$ref"]?.try(&.as_s?)
+        ref ? schema_pointer(ref) == base_pointer : false
+      end
+    end
+
+    private def yaml_allof_refs?(schema : YAML::Any, base_pointer : String) : Bool
+      return false unless parts = schema[YAML::Any.new("allOf")]?.try(&.as_a?)
+      parts.any? do |part|
+        ref = part.as_h?.try(&.[YAML::Any.new("$ref")]?).try(&.as_s?)
+        ref ? schema_pointer(ref) == base_pointer : false
+      end
+    end
+
+    private def schema_pointer(ref : String) : String
+      _, pointer = split_ref(ref)
+      pointer
+    end
+
+    private def oas_additional_method?(name : String) : Bool
+      method = name.upcase
+      ALLOWED_HTTP_METHODS.includes?(method) || SYNTHETIC_ENDPOINT_METHODS.includes?(method)
+    end
+
+    # Standard Path Item operations, plus OAS 3.2 `additionalOperations`.
+    # A name outside the HTTP and synthetic verb lists is skipped: the
+    # optimizer would rewrite it to GET.
+    private def each_path_operation_json(path_item : Hash(String, JSON::Any), &)
+      path_item.each do |method, method_obj|
+        key = method.to_s
+        if key.downcase == "additionaloperations"
+          next unless ops = method_obj.as_h?
+          ops.each do |name, op|
+            op_name = name.to_s
+            next unless oas_additional_method?(op_name)
+            yield op_name, op
+          end
+        elsif HTTP_METHODS.includes?(key.downcase)
+          yield key, method_obj
+        end
+      end
+    end
+
+    private def each_path_operation_yaml(path_item : Hash(YAML::Any, YAML::Any), &)
+      path_item.each do |method, method_obj|
+        key = method.to_s
+        if key.downcase == "additionaloperations"
+          next unless ops = method_obj.as_h?
+          ops.each do |name, op|
+            op_name = name.to_s
+            next unless oas_additional_method?(op_name)
+            yield op_name, op
+          end
+        elsif HTTP_METHODS.includes?(key.downcase)
+          yield key, method_obj
         end
       end
     end
@@ -386,8 +522,7 @@ module Analyzer::Specification
 
         path_base = scoped_base_path(path_item_h["servers"]?, base_path)
 
-        path_item_h.each do |method, method_obj|
-          next unless HTTP_METHODS.includes?(method.to_s.downcase)
+        each_path_operation_json(path_item_h) do |method, method_obj|
           params = path_level_params.dup
           effective_security = global_security
           op_base = scoped_base_path(method_obj.as_h?.try(&.["servers"]?), path_base)
@@ -452,8 +587,7 @@ module Analyzer::Specification
 
         path_base = scoped_base_path(path_item_h[YAML::Any.new("servers")]?, base_path)
 
-        path_item_h.each do |method, method_obj|
-          next unless HTTP_METHODS.includes?(method.to_s.downcase)
+        each_path_operation_yaml(path_item_h) do |method, method_obj|
           params = path_level_params.dup
           effective_security = global_security
           op_base = scoped_base_path(method_obj.as_h?.try(&.[YAML::Any.new("servers")]?), path_base)

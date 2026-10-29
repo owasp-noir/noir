@@ -13,9 +13,12 @@ module Analyzer::Specification
         content = read_file_content(postman_file)
         json_obj = parse_json_lenient(content)
 
-        # Process items (requests) in the collection
+        # Process items (requests) in the collection. Collection variables
+        # override a sibling environment: the collection is the more specific
+        # scope, which is what a collection `variable` already did on its own.
         if json_obj["item"]?
-          process_items(json_obj["item"], postman_file, collect_variables(json_obj["variable"]?), "", json_obj["auth"]?)
+          variables = merge_variables(environment_variables(postman_file, collection_name(json_obj)), json_obj["variable"]?)
+          process_items(json_obj["item"], postman_file, variables, "", json_obj["auth"]?)
         end
       end
 
@@ -420,6 +423,76 @@ module Analyzer::Specification
       end
 
       fields
+    end
+
+    private def collection_name(json_obj : JSON::Any) : String
+      json_obj["info"]?.try(&.as_h?).try(&.["name"]?).try(&.as_s?) || ""
+    end
+
+    # Sibling `*.postman_environment.json` files. The detector does not
+    # register them as collections (`info.schema` / `info._postman_id`).
+    # The scan's file index is the directory listing: `Dir.glob` here would
+    # walk past `--exclude-path`.
+    private def environment_variables(collection_path : String, collection_name : String) : Hash(String, String)
+      dir = File.expand_path(File.dirname(collection_path))
+      files = get_files_by_extension(".json").select do |path|
+        File.basename(path).ends_with?(".postman_environment.json") &&
+          File.expand_path(File.dirname(path)) == dir
+      end
+      files.sort_by! { |path| File.basename(path) }
+
+      chosen = {} of String => String
+      values_for = {} of String => Array(Tuple(String, String, String))
+      files.each do |path|
+        env = read_environment(path)
+        next unless env
+        env_name, env_values = env
+        env_values.each do |key, value|
+          (values_for[key] ||= [] of Tuple(String, String, String)) << {File.basename(path), env_name, value}
+        end
+      end
+
+      values_for.each do |key, entries|
+        distinct = entries.map { |entry| entry[2] }.uniq!
+        if distinct.size == 1
+          chosen[key] = distinct[0]
+        else
+          named = entries.select { |entry| !collection_name.empty? && entry[1] == collection_name }
+          pool = named.empty? ? entries : named
+          chosen[key] = pool.min_by { |entry| entry[0] }[2]
+        end
+      end
+      chosen
+    end
+
+    # Nil when the file is not an environment document, so one bad sibling
+    # does not drop the collection.
+    private def read_environment(path : String) : Tuple(String, Hash(String, String))?
+      json = parse_json_lenient(read_file_content(path))
+      return unless json.as_h?
+      name = json["name"]?.try(&.as_s?) || ""
+      values = {} of String => String
+      if list = json["values"]?.try(&.as_a?)
+        list.each do |entry|
+          next unless entry.as_h?
+          next unless environment_value_enabled?(entry)
+          key = entry["key"]?.try(&.as_s?)
+          next unless key
+          if value = scalar_to_s(entry["value"]?)
+            values[key] = value
+          end
+        end
+      end
+      {name, values}
+    rescue
+      nil
+    end
+
+    private def environment_value_enabled?(entry : JSON::Any) : Bool
+      return false if disabled?(entry)
+      enabled = entry["enabled"]?
+      return true unless enabled
+      enabled.as_bool? != false && enabled.as_s? != "false"
     end
 
     private def collect_variables(node : JSON::Any?) : Hash(String, String)

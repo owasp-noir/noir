@@ -1,0 +1,20 @@
+{
+  "info": {
+    "name": "Conduit",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "All Articles",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{apiUrl}}/articles",
+          "host": ["{{apiUrl}}"],
+          "path": ["articles"]
+        }
+      }
+    }
+  ]
+}

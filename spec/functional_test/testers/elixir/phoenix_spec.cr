@@ -44,7 +44,7 @@ expected_endpoints = [
   # RFC 10008 HTTP QUERY method via `match :query, ...`
   Endpoint.new("/api/hooks", "QUERY", [Param.new("q", "", "query"), Param.new("page", "", "form"), Param.new("limit", "", "form")]),
   Endpoint.new("/dev/dashboard", "GET"),
-  Endpoint.new("/dev/mailbox", "GET"),
+  Endpoint.new("/dev/mailbox{/*path}", "ANY"),
   # Nested resources under a scope: child mounts on the parent's
   # `/:podcast_id` member segment; `only:` behind `as:` still applies.
   Endpoint.new("/admin/podcasts", "GET"),
