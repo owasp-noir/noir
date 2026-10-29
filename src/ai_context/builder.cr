@@ -1500,7 +1500,8 @@ module NoirAIContext
     # Receivers whose `loads` / `decode` revive no objects: the JSON
     # modules, byte codecs, and a name bound in the body to itsdangerous'
     # signed-JSON serializers (CTFd: `s = URLSafeTimedSerializer(secret)`
-    # then `s.loads(...)`).
+    # then `s.loads(...)`). Ruby's `JSON.load` / `JSON.restore` are the
+    # exception: they honour `create_additions` and revive objects.
     SAFE_DECODE_RECEIVER  = /\A(?:json|simplejson|ujson|orjson|JSON|base64|binascii|codecs)\z/
     SAFE_SERIALIZER_CLASS = /\b(?:URLSafe)?(?:Timed)?(?:JSONWebSignature)?Serializer\b|\b(?:Timestamp)?Signer\b|\bJSONDecoder\b/
 
@@ -1594,14 +1595,16 @@ module NoirAIContext
           end
         end
         next unless called.matches?(sinkish)
-        next if receiver && safe_decode_receiver?(receiver, body)
+        next if receiver && safe_decode_receiver?(receiver, called, body)
         return true
       end
       false
     end
 
-    private def safe_decode_receiver?(receiver : String, body : String) : Bool
-      return true if receiver.matches?(SAFE_DECODE_RECEIVER)
+    private def safe_decode_receiver?(receiver : String, called : String, body : String) : Bool
+      if receiver.matches?(SAFE_DECODE_RECEIVER)
+        return !(receiver == "JSON" && (called == "load" || called == "restore"))
+      end
 
       !!body.match(/\b#{Regex.escape(receiver)}\s*=\s*([^|\n]+)/).try(&.[1].matches?(SAFE_SERIALIZER_CLASS))
     end

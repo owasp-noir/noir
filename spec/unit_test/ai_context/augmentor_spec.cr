@@ -1634,6 +1634,7 @@ describe "NoirAIContext" do
       "joblib"      => {".py", "def unserialize(path):\n    return joblib.load(path)\n\n\n@app.route('/m', methods=['POST'])\ndef m():\n    return str(unserialize(request.args['p']))\n", "unserialize", "def unserialize", "deserialization"},
       "torch"       => {".py", "def unserialize(blob):\n    return torch.load(blob)\n\n\n@app.route('/m', methods=['POST'])\ndef m():\n    return str(unserialize(request.files['f']))\n", "unserialize", "def unserialize", "deserialization"},
       "Oj"          => {".rb", "class StateController < ApplicationController\n  def restore\n    @state = unserialize(params[:blob])\n  end\n\n  private\n\n  def unserialize(blob)\n    Oj.load(blob, mode: :object)\n  end\nend\n", "unserialize", "@state = unserialize", "deserialization"},
+      "JSON.load"   => {".rb", "class StateController < ApplicationController\n  def restore\n    @state = unserialize(params[:blob])\n  end\n\n  private\n\n  def unserialize(blob)\n    JSON.load(blob)\n  end\nend\n", "unserialize", "@state = unserialize", "deserialization"},
       "erb"         => {".rb", "require 'erb'\n\ndef render(tpl)\n  ERB.new(File.read(tpl)).result(binding)\nend\n\nget '/page' do\n  render(params[:tpl])\nend\n", "render", "  render(params", "template_render"},
       "freemarker"  => {".java", "@RestController\npublic class PageController {\n    @GetMapping(\"/page\")\n    public String page(@RequestParam String q) {\n        return render(\"page.ftl\", q);\n    }\n\n    private String render(String name, String q) throws Exception {\n        StringWriter out = new StringWriter();\n        cfg.getTemplate(name).process(java.util.Map.of(\"q\", q), out);\n        return out.toString();\n    }\n}\n", "render", "return render(", "template_render"},
       "smarty"      => {".php", "<?php\nfunction render($tpl, $vars) {\n    global $smarty;\n    $smarty->assign($vars);\n    $smarty->display($tpl);\n}\n\nrender($_GET['t'], ['q' => $_GET['q']]);\n", "render", "render($_GET", "template_render"},
@@ -1657,15 +1658,16 @@ describe "NoirAIContext" do
   it "keeps helpers inert that only build a map or decode signed JSON" do
     {
       # A bare call reaches the class's companion object.
-      "companion" => {".kt", "@RestController\nclass ItemController {\n    @GetMapping(\"/items/{id}\")\n    fun get(@PathVariable id: String): Map<String, Any?> = render(id)\n\n    companion object {\n        private fun render(id: String): Map<String, Any?> = mapOf(\"id\" to id)\n    }\n}\n", "render", "= render(id)", "template_render"},
-      "json"      => {".py", "import json, base64\n\n\ndef unserialize(data):\n    return json.loads(base64.b64decode(data))\n\n\n@app.route('/a')\ndef a():\n    return str(unserialize(request.args['t']))\n", "unserialize", "def unserialize", "deserialization"},
-      "signer"    => {".py", "def unserialize(data, secret=None):\n    if secret is None:\n        secret = current_app.config['SECRET_KEY']\n    s = URLSafeTimedSerializer(secret)\n    return s.loads(data, max_age=60)\n\n\n@app.route('/a')\ndef a():\n    return str(unserialize(request.args['t']))\n", "unserialize", "def unserialize", "deserialization"},
+      "companion"  => {".kt", "@RestController\nclass ItemController {\n    @GetMapping(\"/items/{id}\")\n    fun get(@PathVariable id: String): Map<String, Any?> = render(id)\n\n    companion object {\n        private fun render(id: String): Map<String, Any?> = mapOf(\"id\" to id)\n    }\n}\n", "render", "= render(id)", "template_render"},
+      "json"       => {".py", "import json, base64\n\n\ndef unserialize(data):\n    return json.loads(base64.b64decode(data))\n\n\n@app.route('/a')\ndef a():\n    return str(unserialize(request.args['t']))\n", "unserialize", "def unserialize", "deserialization"},
+      "signer"     => {".py", "def unserialize(data, secret=None):\n    if secret is None:\n        secret = current_app.config['SECRET_KEY']\n    s = URLSafeTimedSerializer(secret)\n    return s.loads(data, max_age=60)\n\n\n@app.route('/a')\ndef a():\n    return str(unserialize(request.args['t']))\n", "unserialize", "def unserialize", "deserialization"},
+      "JSON.parse" => {".rb", "class StateController < ApplicationController\n  def restore\n    @state = unserialize(params[:blob])\n  end\n\n  private\n\n  def unserialize(blob)\n    JSON.parse(blob)\n  end\nend\n", "unserialize", "@state = unserialize", "deserialization"},
     }.each do |label, (ext, source, name, anchor, kind)|
       with_temp_ai_context_source(source, ext) do |path|
         lines = source.lines
         endpoint = Endpoint.new("/x", "GET")
         details = endpoint.details
-        details.add_path(PathInfo.new(path, lines.index!(&.matches?(/@app\.route|@GetMapping/)) + 1))
+        details.add_path(PathInfo.new(path, lines.index!(&.matches?(/@app\.route|@GetMapping|def restore\b/)) + 1))
         endpoint.details = details
         endpoint.push_callee(Callee.new(name, path, lines.index!(&.includes?(anchor)) + 1))
 
