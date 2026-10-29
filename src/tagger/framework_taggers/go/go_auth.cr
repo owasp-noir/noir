@@ -48,12 +48,38 @@ class GoAuthTagger < FrameworkTagger
   # `Group("/seg", mw...)` constructor — so a file with neither anywhere
   # registers nothing, and the pre-scan can skip its per-line group tracking
   # outright.
-  USE_REGISTRATION = /\.\s*(?:Use|Pre)\s*\(|\.\s*(?:Group|Party)\s*\(\s*"[^"]*"\s*,/
+  # Also GoFrame's `group.Middleware(` and Kratos' `http.Middleware(`
+  # server option. (PocketBase's `.Bind(` is gated on the file importing
+  # PocketBase: `c.Bind(&req)` is in every gin / echo handler file.)
+  USE_REGISTRATION = /\.\s*(?:Use|Pre|Middleware)\s*\(|\.\s*(?:Group|Party)\s*\(\s*"[^"]*"\s*,/
 
   # Where the middleware arguments start on a `code_only` line (string
-  # literals blanked to `""`): right after `.Use(` / `.Pre(`, or after the
-  # path literal of a `Group("/seg", ...)` constructor or a route call.
-  MIDDLEWARE_ARGS_START = /\.\s*(?:Use|Pre)\s*\(|\.\s*\w+\s*\(\s*""\s*,/
+  # literals blanked to `""`): right after `.Use(` / `.Pre(` (GoFrame's
+  # `.Middleware(`), or after the path literal of a `Group("/seg", ...)`
+  # constructor or a route call.
+  MIDDLEWARE_ARGS_START = /\.\s*(?:Use|Pre|Middleware)\s*\(|\.\s*\w+\s*\(\s*""\s*,/
+
+  # Middleware added inside a closure group on its router: `.Use(` /
+  # `.Pre(`, or, on the closure's own router parameter only, GoFrame's
+  # `group.Middleware(` and `.Bind(` (a PocketBase middleware, or a GoFrame
+  # controller whose routes the closure's middleware then guards);
+  # `group.ALLMap(g.Map{"/x": ctrl.Profile})` binds handlers like `.Bind`.
+  CLOSURE_USE        = /(\w+)\.(Use|Pre|Middleware|Bind|ALLMap|Map)\s*\(/
+  CLOSURE_PARAM_VERB = %w[Middleware Bind ALLMap Map]
+  # The router parameter of a closure opened at the end of a line:
+  # `s.Group("/api", func(group *ghttp.RouterGroup) {` -> `group`.
+  CLOSURE_PARAM = /\bfunc\s*\(\s*(\w+)\s+[^()]*\)\s*\{\s*\z/
+
+  # PocketBase: `sg := rg.Group("/sql").Bind(mw)` / `sg.Bind(mw)`.
+  BIND_REGISTRATION = /\A(\w+)\s*(?::?=\s*\w+(?:\s*\.\s*\w+)*\s*\.\s*Group\s*\([^()]*\)\s*)?\.\s*Bind\s*\(/
+
+  # PocketBase: `sub.GET("", h).Bind(apis.RequireSuperuserAuth())`.
+  ROUTE_BIND = /\)\s*\.\s*Bind\s*\(/
+
+  # Kratos: the `http.Middleware(...)` server option (under whatever alias
+  # the file imports Kratos' `transport/http` as), run for every route the
+  # server serves.
+  SERVER_MIDDLEWARE = /\b(\w+)\s*\.\s*Middleware\s*\(/
 
   # One middleware argument's head: `AuthMiddleWare()` -> {"", "AuthMiddleWare"},
   # `auth.Required()` -> {"auth", "Required"}, `gin.BasicAuth(gin.Accounts{` ->
@@ -75,7 +101,10 @@ class GoAuthTagger < FrameworkTagger
   # Matched on `code_only` source, so a 401 in a comment or log string does
   # not count, and `== http.StatusUnauthorized` (a comparison, as in a
   # logging middleware) does not either.
-  REJECTS_REQUEST = /[(,]\s*(?:\w+\.)?Status(?:Unauthorized|Forbidden)\b|[(,]\s*40[13]\s*[,)]|\b(?:\w+\.)?Err(?:Unauthorized|Forbidden)\b/
+  # PocketBase replies with `e.UnauthorizedError(...)` / `e.ForbiddenError(...)`
+  # (before 0.23, `apis.NewUnauthorizedError(...)`), GoFrame with
+  # `r.SetError(gerror.NewCode(gcode.CodeNotAuthorized, ...))`.
+  REJECTS_REQUEST = /[(,]\s*(?:\w+\.)?Status(?:Unauthorized|Forbidden)\b|[(,]\s*40[13]\s*[,)]|\b(?:\w+\.)?Err(?:Unauthorized|Forbidden)\b|[.\s(]New(?:Unauthorized|Forbidden)Error\s*\(|\.\s*(?:Unauthorized|Forbidden)Error\s*\(|[(,]\s*gcode\s*\.\s*CodeNotAuthorized\b/
 
   # A redirect to the login page (`ctx.RedirectForLogin(...)`,
   # `c.Redirect(302, "/login")`, `response.HTMLRedirect(w, r, loginURL)`),
@@ -184,11 +213,15 @@ class GoAuthTagger < FrameworkTagger
     @guards = Hash({String, String, Bool, String?}, Tag?).new
     @helper_verdicts = Hash({String, Int32, Bool, Int32, String?, Bool, String?}, Guard).new
     @imports = Hash(String, Set(String)).new
+    @import_paths = Hash(String, Hash(String, String)).new
     @bindings = Hash(String, Hash(String, String)).new
     @modules = Hash(String, String).new
     @linked_modules = Hash({String, String}, Bool).new
     @router_chains = Hash({String, Int32, String}, {Array({String, Int32}), Bool}).new
     @owner_uses = Hash({String, Int32, String, String}, Array(Int32)).new
+    @bound_requests = Hash(String, Tag).new
+    @server_scopes = [] of {owner: Gate, tag: Tag}
+    @gozero_groups = Hash(String, Array({Range(Int32, Int32), Array(Tag)})).new
   end
 
   def self.target_techs : Array(String)
@@ -197,6 +230,7 @@ class GoAuthTagger < FrameworkTagger
       "go_beego", "go_mux", "go_fasthttp",
       "go_gozero", "go_goyave",
       "go_hertz", "go_iris", "go_gf", "go_http",
+      "go_pocketbase", "go_kratos",
     ]
   end
 
@@ -209,6 +243,8 @@ class GoAuthTagger < FrameworkTagger
   private def pre_scan_middleware_scopes
     @middleware_scopes.clear
     @closure_scopes.clear
+    @server_scopes.clear
+    @bound_requests.clear
 
     files = collect_files_by_extension(".go")
     contents = Hash(String, String).new
@@ -236,32 +272,51 @@ class GoAuthTagger < FrameworkTagger
   private def scan_group_middleware(content : String, file : String)
     uses = USE_REGISTRATION.matches?(content, options: Noir::TextFile::MATCH_OPTIONS)
     closures = CLOSURE_REGISTRATION.matches?(content, options: Noir::TextFile::MATCH_OPTIONS)
-    return unless uses || closures
+    pocketbase = content.includes?("pocketbase/") && content.includes?(".Bind(")
+    return unless uses || closures || pocketbase
 
     # Closures handed to a call (`m.Group("/user", func() {`, chi's
     # `r.Group(func(r chi.Router) {`), with the middleware a `.With(...)` on
     # the opening line or a `.Use(...)` inside puts in front of their routes.
     lines = content.lines
-    frames = [] of {line: Int32, depth: Int32, args: Array(String), uses: Array({Int32, Array(String)})}
+    frames = [] of {line: Int32, depth: Int32, param: String?, args: Array(String), uses: Array({Int32, Array(String)}), binds: Array({Int32, String})}
     depth = 0
     index = 0
     each_group_scoped_line(content) do |stripped, scopes|
       index += 1
       in_closure = false
+      server = uses && (option = stripped.match(SERVER_MIDDLEWARE)) && kratos_http?(file, option[1])
+      if server
+        register_server_scopes(file, lines, index)
+      elsif pocketbase && (bind = stripped.match(BIND_REGISTRATION))
+        register_bind_scopes(bind, file, lines, index, scopes)
+      end
       if closures
         code = code_only(stripped).rstrip
         # A `.Use` on the closure's own router guards the routes after it
         # in that closure, not every route under the group's prefix.
-        receiver = stripped.match(GoRouteGroupScope::USE_CALL).try &.[1]
-        if (frame = frames.last?) && receiver && !scopes.groups.has_key?(receiver)
-          frame[:uses] << {index, middleware_args(stripped)}
+        call = server ? nil : code.match(CLOSURE_USE)
+        if (frame = frames.last?) && call && !scopes.groups.has_key?(call[1]) &&
+           (!CLOSURE_PARAM_VERB.includes?(call[2]) || call[1] == frame[:param])
+          statement = statement_text(lines, index)
+          args = (start = statement.match(CLOSURE_USE)) ? call_args(statement[start.end..]) : [] of String
+          case call[2]
+          when "ALLMap", "Map"
+            args.each { |arg| arg.scan(/:\s*(\w+(?:\.\w+)?)\s*[,}]/) { |value| frame[:binds] << {index, value[1]} } }
+          when "Bind"
+            frame[:uses] << {index, args}
+            args.each { |arg| frame[:binds] << {index, arg} }
+          else
+            frame[:uses] << {index, args}
+          end
           in_closure = true
         end
         code.each_char_with_index do |char, pos|
           if char == '{'
             if pos == code.size - 1 && code.matches?(CLOSURE_ARG_OPEN)
               args = (with_call = code.match(WITH_CALL)) ? call_args(code[with_call.end..]) : [] of String
-              frames << {line: index, depth: depth, args: args, uses: [] of {Int32, Array(String)}}
+              frames << {line: index, depth: depth, param: code.match(CLOSURE_PARAM).try(&.[1]), args: args,
+                         uses: [] of {Int32, Array(String)}, binds: [] of {Int32, String}}
             end
             depth += 1
           elsif char == '}'
@@ -269,22 +324,142 @@ class GoAuthTagger < FrameworkTagger
             next unless (top = frames.last?) && top[:depth] == depth
             frames.pop
             # `}, reqToken(), reqAdmin())`: middleware after the closure.
-            (top[:args] + trailing_args(code[pos + 1..], lines, index)).each do |arg|
-              add_closure_scope(file, top[:line], index, arg)
+            guards = (top[:args] + trailing_args(code[pos + 1..], lines, index)).map do |arg|
+              {top[:line], add_closure_scope(file, top[:line], index, arg)}
             end
             top[:uses].each do |(line, args)|
-              args.each { |arg| add_closure_scope(file, line, index, arg) }
+              args.each { |arg| guards << {line, add_closure_scope(file, line, index, arg)} }
+            end
+            # GoFrame: `group.Bind(Ctrl{})` after `group.Middleware(Auth)`,
+            # in this closure or one enclosing it, puts the controller's
+            # routes, declared with their request types, behind it.
+            unless top[:binds].empty?
+              frames.each do |outer|
+                outer[:args].each { |arg| guards << {outer[:line], guard_by_definition(arg, file, authish_name: true)} }
+                outer[:uses].each { |(line, args)| args.each { |arg| guards << {line, guard_by_definition(arg, file, authish_name: true)} } }
+              end
+            end
+            top[:binds].each do |(line, arg)|
+              tag = guards.find { |(row, guard)| guard && row < line }.try(&.[1]) || next
+              bound_request_types(arg, file).each { |type| @bound_requests.put_if_absent(type) { tag } }
             end
           end
         end
       end
-      register_auth_scopes(stripped, scopes, file, lines, index) if uses && !in_closure
+      register_auth_scopes(stripped, scopes, file, lines, index) if uses && !in_closure && !server
     end
   end
 
-  private def add_closure_scope(file : String, from : Int32, to : Int32, arg : String)
+  private def add_closure_scope(file : String, from : Int32, to : Int32, arg : String) : Tag?
     tag = guard_by_definition(arg, file, authish_name: true)
     @closure_scopes << {file: file, from: from, to: to, tag: tag} if tag
+    tag
+  end
+
+  NEW_SERVER = /\b(\w+)\s*:?=\s*(\w+)\s*\.\s*NewServer\s*\(/
+
+  # Whether the import alias `name` is Kratos' HTTP transport in `file`.
+  private def kratos_http?(file : String, name : String) : Bool
+    !!import_paths(file)[name]?.try { |path| path.includes?("go-kratos/kratos") && path.ends_with?("/transport/http") }
+  end
+
+  # Kratos: each guard `http.Middleware(...)` hands the server its function
+  # builds (`srv := http.NewServer(http.Middleware(jwt.Server(...)))`,
+  # `opts = append(opts, http.Middleware(...))`) runs for every route of
+  # that server (see `served_by?`).
+  # ponytail: `selector.Server(jwt.Server(...)).Match(whitelist)` is not a
+  # guard: the whitelist is not modelled.
+  private def register_server_scopes(file : String, lines : Array(String), index : Int32)
+    statement = statement_text(lines, index)
+    start = statement.match(SERVER_MIDDLEWARE) || return
+    head = function_start(lines, index)
+    last = head < 0 ? lines.size : enclosing_block_end(lines, head + 2)
+    server = ((head + 1)...Math.min(last, lines.size)).compact_map do |row|
+      code_only(lines[row]).match(NEW_SERVER).try { |m| m[1] if kratos_http?(file, m[2]) }
+    end.first? || return
+    owner = {file: file, receiver: server, rows: index..last, parents: {} of String => Array({String, Int32})}
+    call_args(statement[start.end..]).each do |arg|
+      tag = guard_by_definition(arg, file, authish_name: true) || next
+      @server_scopes << {owner: owner, tag: tag}
+    end
+  end
+
+  # Whether a route of the endpoint is on the owner's server: on it, or a
+  # router it hands out (`r := srv.Route("/")`), in the owner's function,
+  # or in a function the owner's function hands the server to
+  # (`v1.RegisterGreeterHTTPServer(srv, greeter)`).
+  private def served_by?(endpoint : Endpoint, owner : Gate) : Bool
+    owner_lines = read_file_lines(owner[:file]) || return false
+    endpoint.details.code_paths.any? do |path_info|
+      line = path_info.line || next false
+      lines = read_file_lines(path_info.path) || next false
+      next false if line < 1 || line > lines.size
+      name = lines[line - 1].match(ROUTE_RECEIVER).try(&.[1]) || next false
+      start = function_start(lines, line)
+      if path_info.path == owner[:file] && start == function_start(lines, owner[:rows].begin)
+        router_chain(path_info.path, lines, line, name)[0].any? { |(router, _)| router == owner[:receiver] }
+      else
+        helper = start < 0 ? nil : lines[start].match(FUNC_NAME).try(&.[1])
+        !!helper && !owner_uses(owner, owner_lines, helper, File.dirname(path_info.path)).empty?
+      end
+    end
+  end
+
+  # PocketBase: the middleware `sg := rg.Group("/sql").Bind(mw)` /
+  # `sg.Bind(mw)` binds runs for the routes registered on `sg`, or a group
+  # derived from it, below in the block, whatever their prefix.
+  private def register_bind_scopes(bind : Regex::MatchData, file : String, lines : Array(String), index : Int32, scopes : GoRouteGroupScope::Scopes)
+    statement = statement_text(lines, index)
+    start = statement.match(/\.\s*Bind\s*\(/) || return
+    gate = {file: file, receiver: bind[1], rows: index..enclosing_block_end(lines, index), parents: scopes.parents}
+    call_args(statement[start.end..]).each do |arg|
+      tag = guard_by_definition(arg, file, authish_name: true) || next
+      @middleware_scopes << {prefix: "/", tag: tag, root_group: false, gate: gate, owner: nil, module: go_module(file)}
+    end
+  end
+
+  # The request types of the controller methods `group.Bind(arg)` mounts:
+  # `Ctrl{}` / `&user.Controller{}` / `user.NewV1()` (or a local bound to
+  # one) -> the struct, and `func (c *Ctrl) Profile(ctx context.Context,
+  # req *v1.ProfileReq)` -> `ProfileReq`. A method value (`auth.Protected`)
+  # mounts that method alone.
+  # ponytail: by type name; two packages declaring the same request type
+  # name share a verdict.
+  private def bound_request_types(arg : String, file : String) : Array(String)
+    arg = arg.strip
+    method = nil
+    if (m = arg.match(/\A(\w+)\.(\w+)\z/)) && !file_imports(file).includes?(m[1])
+      arg, method = m[1], m[2]
+    end
+    if arg.matches?(/\A\w+\z/)
+      local = arg
+      arg = local_binding(file, local) || (read_file(file) || "").scan(LOCAL_TYPE).find { |t| t[1] == local }.try { |t| "#{t[2]?.try { |pkg| "#{pkg}." }}#{t[3]}{}" } || return [] of String
+    end
+    type = if m = arg.match(/\A&?\s*(?:(\w+)\.)?([A-Z]\w*)\s*\{/)
+             {m[1]?, m[2], File.dirname(file)}
+           elsif m = arg.match(/\A(?:(\w+)\.)?(\w+)\s*\(/)
+             dirs = m[1]? ? (@dirs_by_base[m[1]]? || [] of String) : [File.dirname(file)]
+             dirs.compact_map do |dir|
+               function = @bodies.functions_for(dir)[m[2]]? || next
+               # The struct it returns: gf's generated `NewV1()` declares an
+               # interface result.
+               if built = function.source.match(/\breturn\s+&?\s*(?:(\w+)\.)?([A-Z]\w*)\s*\{/)
+                 next {built[1]?, built[2], dir}
+               end
+               result_type(function.source).try { |(qualifier, name)| {qualifier, name, dir} }
+             end.first?
+           end
+    return [] of String unless type
+    qualifier, name, from = type
+    dirs = qualifier ? (@dirs_by_base[qualifier]? || [] of String) : [from]
+    dirs.flat_map do |dir|
+      methods = @bodies.methods_for(dir)
+      (method ? methods[method]? || [] of Noir::GoCalleeExtractor::FunctionBody : methods.values.flatten).compact_map do |body|
+        next unless body.source.match(METHOD_RECEIVER).try(&.[1]) == name
+        param = body.source.match(FUNC_PARAMS).try(&.[1].split(',')[1]?) || next
+        param.strip.split(/\s+/).last.lstrip('*').rpartition('.')[2]
+      end
+    end.uniq!
   end
 
   # The arguments after a closure's closing brace (`, reqToken())`), read on
@@ -1005,8 +1180,13 @@ class GoAuthTagger < FrameworkTagger
 
   # The package names `path` imports.
   private def file_imports(path : String) : Set(String)
-    @imports.put_if_absent(path) do
-      read_file(path).try { |source| Noir::GoCalleeExtractor.extract_import_aliases(source).keys.to_set } || Set(String).new
+    @imports.put_if_absent(path) { import_paths(path).keys.to_set }
+  end
+
+  # Alias -> import path of each import of `path`.
+  private def import_paths(path : String) : Hash(String, String)
+    @import_paths.put_if_absent(path) do
+      read_file(path).try { |source| Noir::GoCalleeExtractor.extract_import_aliases(source) } || Hash(String, String).new
     end
   end
 
@@ -1085,6 +1265,27 @@ class GoAuthTagger < FrameworkTagger
         guard_by_definition(arg, path_info.path).try { |guard| endpoint.add_tag(guard) }
       end
 
+      case endpoint.details.technology
+      when "go_pocketbase"
+        # Middleware bound on the route itself, the chain read on across
+        # lines (`sub.GET("", h).` then `Bind(mw)`).
+        statement = statement_text(lines, line_num)
+        last = statement_end(lines, line_num)
+        while last < lines.size && last < line_num + 10 && (code_only(lines[last - 1]).rstrip.ends_with?('.') || lines[last].lstrip.starts_with?('.'))
+          statement += " " + statement_text(lines, last + 1)
+          last = statement_end(lines, last + 1)
+        end
+        if bind = statement.match(ROUTE_BIND)
+          call_args(statement[bind.end..]).each do |arg|
+            guard_by_definition(arg, path_info.path, authish_name: true).try { |guard| endpoint.add_tag(guard) }
+          end
+        end
+      when "go_gozero"
+        gozero_guards(path_info.path, lines, line_idx).each { |guard| endpoint.add_tag(guard) }
+      when "go_gf"
+        bound_request_guard(lines, line_idx).try { |guard| endpoint.add_tag(guard) }
+      end
+
       @closure_scopes.each do |scope|
         endpoint.add_tag(scope[:tag]) if scope[:file] == path_info.path && scope[:from] < line_num < scope[:to]
       end
@@ -1094,6 +1295,82 @@ class GoAuthTagger < FrameworkTagger
 
     # Phase 3: Check group-level middleware scope
     check_middleware_scopes(endpoint).try { |tag| endpoint.add_tag(tag) }
+    @server_scopes.each { |scope| endpoint.add_tag(scope[:tag]) if served_by?(endpoint, scope[:owner]) }
+  end
+
+  # --- go-zero / GoFrame ---------------------------------------------------
+
+  GOZERO_SERVICE     = /\Aservice\s+[\w-]+\s*\{/
+  GOZERO_KEY         = /\b(jwt|middleware)\s*:\s*(\w+(?:\s*,\s*\w+)*)/
+  GOZERO_ROUTES      = /\.\s*AddRoutes\s*\(/
+  GOZERO_MIDDLEWARES = /rest\s*\.\s*WithMiddlewares\s*\(\s*\[\]\s*rest\s*\.\s*Middleware\s*\{([^}]*)\}/
+
+  # go-zero: the `jwt:` / `middleware:` keys of the `@server(...)` block
+  # over the route's `service` block in an `.api` file, or the
+  # `rest.WithJwt(...)` / `rest.WithMiddlewares(...)` options of the
+  # `server.AddRoutes(...)` call a generated `routes.go` route sits in.
+  private def gozero_guards(path : String, lines : Array(String), idx : Int32) : Array(Tag)
+    if path.ends_with?(".api")
+      service = idx.downto(0).find { |row| lines[row].strip.matches?(GOZERO_SERVICE) } || return [] of Tag
+      head = (service - 1).downto(0).find { |row| (line = lines[row].strip).starts_with?("@server") || line.starts_with?('}') }
+      return [] of Tag unless head && lines[head].strip.starts_with?("@server")
+      return gozero_option_tags((head...service).join(" ") { |row| code_only(lines[row]) })
+    end
+    # Each `AddRoutes(...)` call of the file, read once.
+    groups = @gozero_groups.put_if_absent(path) do
+      lines.each_index.select { |row| lines[row].matches?(GOZERO_ROUTES) }.map do |row|
+        last = statement_end(lines, row + 1)
+        {(row + 1)..last, gozero_option_tags((row + 1..last).join(" ") { |line| code_only(lines[line - 1]) })}
+      end.to_a
+    end
+    groups.find { |(rows, _)| rows.includes?(idx + 1) }.try(&.[1]) || [] of Tag
+  end
+
+  private def gozero_option_tags(text : String) : Array(Tag)
+    tags = [] of Tag
+    middlewares = [] of String
+    text.scan(GOZERO_KEY) do |m|
+      if m[1] == "jwt"
+        tags << Tag.new("auth", "Protected by go-zero JWT (jwt: #{m[2]})", "go_auth")
+      else
+        middlewares.concat(m[2].split(',').map(&.strip))
+      end
+    end
+    tags << Tag.new("auth", "Protected by go-zero JWT (rest.WithJwt)", "go_auth") if text.includes?("WithJwt(")
+    text.scan(GOZERO_MIDDLEWARES) { |m| middlewares.concat(m[1].split(',').map(&.strip.rpartition('.')[2])) }
+    middlewares.each { |name| gozero_middleware_tag(name).try { |tag| tags << tag } }
+    tags
+  end
+
+  # A go-zero middleware `Name` is the `Handle` method of `NameMiddleware`,
+  # generated under `internal/middleware/`; it guards when its body
+  # refuses the request.
+  private def gozero_middleware_tag(name : String) : Tag?
+    bodies = (@dirs_by_base["middleware"]? || [] of String).flat_map do |dir|
+      (@bodies.methods_for(dir)["Handle"]? || [] of Noir::GoCalleeExtractor::FunctionBody).select do |body|
+        body.source.match(METHOD_RECEIVER).try(&.[1]) == "#{name}Middleware"
+      end
+    end
+    case bodies.max_of? { |body| body_verdict(body, nil) }
+    when Guard::Authn
+      Tag.new("auth", "Protected by go-zero middleware #{name} (verified from its body: refuses anonymous callers)", "go_auth")
+    when Guard::Authz
+      Tag.new("authz", "Protected by go-zero middleware #{name} (verified from its body: permission check replies 403)", "go_auth")
+    end
+  end
+
+  # GoFrame: a `g.Meta` route declared in the request struct of a
+  # controller a guarded group binds (see `bound_request_types`).
+  private def bound_request_guard(lines : Array(String), idx : Int32) : Tag?
+    return if @bound_requests.empty?
+    idx.downto(Math.max(idx - 30, 0)) do |row|
+      line = lines[row].strip
+      return if row < idx && line.starts_with?('}')
+      # Also a struct of a grouped `type ( ... )` block.
+      if m = line.match(/\A(?:type\s+)?(\w+)\s+struct\b/)
+        return @bound_requests[m[1]]?
+      end
+    end
   end
 
   # --- net/http ServeMux ---------------------------------------------------
@@ -1835,7 +2112,7 @@ class GoAuthTagger < FrameworkTagger
       else
         start = function_start(lines, line)
         helper = start < 0 ? nil : lines[start].match(FUNC_NAME).try(&.[1])
-        calls = helper ? owner_uses(owner, owner_lines, helper) : [] of Int32
+        calls = helper ? owner_uses(owner, owner_lines, helper, File.dirname(path_info.path)) : [] of Int32
         calls.empty? ? local && owner_local : ordered && calls.all? { |row| row < use_row }
       end
     end
@@ -1846,8 +2123,11 @@ class GoAuthTagger < FrameworkTagger
   # The 1-based rows of the owner's function that hand the owner's router
   # `target`: a line naming the owner that calls `target(` or mounts
   # `target` (`r.Mount("/s", s)`).
-  private def owner_uses(owner : Gate, owner_lines : Array(String), target : String) : Array(Int32)
-    @owner_uses.put_if_absent({owner[:file], owner[:rows].begin, owner[:receiver], target}) do
+  # A call qualified by an import (`helloworld.RegisterGreeterHTTPServer(`)
+  # counts only when that import is `package_dir`, the helper's package: a
+  # same-named helper of another package is not the one called.
+  private def owner_uses(owner : Gate, owner_lines : Array(String), target : String, package_dir : String? = nil) : Array(Int32)
+    @owner_uses.put_if_absent({owner[:file], owner[:rows].begin, owner[:receiver], "#{target} #{package_dir}"}) do
       start = function_start(owner_lines, owner[:rows].begin)
       last = start < 0 ? owner_lines.size : enclosing_block_end(owner_lines, start + 2)
       ((start + 1)...Math.min(last, owner_lines.size)).compact_map do |row|
@@ -1857,6 +2137,14 @@ class GoAuthTagger < FrameworkTagger
         next unless tokens.includes?(owner[:receiver])
         at = code.index("#{target}(")
         called = !at.nil? && (at.zero? || !code[at - 1].alphanumeric? && code[at - 1] != '_')
+        if called && package_dir && at && (qualifier = code[0, at].match(/(\w+)\s*\.\s*\z/))
+          if path = import_paths(owner[:file])[qualifier[1]]?
+            # The last segment, or the one before a `/v2` major suffix.
+            segments = path.split('/')
+            segments.pop if segments.size > 1 && segments.last.matches?(/\Av\d+\z/) && segments.last != File.basename(package_dir)
+            called = segments.last == File.basename(package_dir)
+          end
+        end
         row + 1 if called || (code.includes?("Mount(") && tokens.includes?(target))
       end
     end
