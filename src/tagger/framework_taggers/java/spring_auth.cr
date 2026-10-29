@@ -9,9 +9,7 @@ require "../../../analyzer/engines/java_engine"
 class SpringAuthTagger < FrameworkTagger
   record MetaAnnotation,
     name : String,
-    spring_annotation : String,
-    expression : String?,
-    has_admin_role : Bool
+    spring_annotation : String
 
   record InterceptorDef,
     name : String,
@@ -27,14 +25,6 @@ class SpringAuthTagger < FrameworkTagger
     add_patterns : Array(String),
     exclude_patterns : Array(String),
     module_dir : String?
-
-  struct AnnotationResult
-    getter description : String
-    getter? has_admin_role : Bool
-
-    def initialize(@description : String, @has_admin_role : Bool = false)
-    end
-  end
 
   ANNOTATION_PATTERNS = [
     /\@PreAuthorize\s*\(/,
@@ -197,15 +187,12 @@ class SpringAuthTagger < FrameworkTagger
       annotations_text << line
 
       full_block = annotations_text.join("\n")
-      if match = full_block.match(/@(PreAuthorize|PostAuthorize|Secured|RolesAllowed)\s*\(([^)]*)\)/m)
-        spring_ann = "@#{match[1]}"
-        expr = match[2].strip
-        has_admin = expr.matches?(/\b(?:ROLE_)?ADMIN\b/i)
-        @security_meta_annotations[name] = MetaAnnotation.new(name, spring_ann, expr, has_admin)
+      if match = full_block.match(/@(PreAuthorize|PostAuthorize|Secured|RolesAllowed)\s*\(/)
+        @security_meta_annotations[name] = MetaAnnotation.new(name, "@#{match[1]}")
       elsif @security_meta_annotations.present?
         @security_meta_annotations.each_value do |meta|
           if full_block.matches?(/(?:\A|[^@\w])@#{Regex.escape(meta.name)}\b/)
-            @security_meta_annotations[name] = MetaAnnotation.new(name, meta.spring_annotation, meta.expression, meta.has_admin_role)
+            @security_meta_annotations[name] = MetaAnnotation.new(name, meta.spring_annotation)
             break
           end
         end
@@ -1121,7 +1108,7 @@ class SpringAuthTagger < FrameworkTagger
     end || 0
   end
 
-  private def check_annotations(ctx : SourceContext) : AnnotationResult?
+  private def check_annotations(ctx : SourceContext) : String?
     line = ctx.line
     return unless line
 
@@ -1148,14 +1135,13 @@ class SpringAuthTagger < FrameworkTagger
       ANNOTATION_PATTERNS.each do |pattern|
         if current_line.matches?(pattern)
           annotation_name = current_line.split("(").first.strip
-          has_admin = current_line.matches?(/\b(?:ROLE_)?ADMIN\b/i)
-          return AnnotationResult.new("Protected by Spring #{annotation_name}", has_admin)
+          return "Protected by Spring #{annotation_name}"
         end
       end
 
       @security_meta_annotations.each_value do |meta|
         if current_line.matches?(/(?:\A|[^@\w])@#{Regex.escape(meta.name)}\b/)
-          return AnnotationResult.new("Protected by Spring #{meta.spring_annotation} (@#{meta.name})", meta.has_admin_role)
+          return "Protected by Spring #{meta.spring_annotation} (@#{meta.name})"
         end
       end
 
@@ -1166,14 +1152,13 @@ class SpringAuthTagger < FrameworkTagger
       ANNOTATION_PATTERNS.each do |pattern|
         if below.matches?(pattern)
           annotation_name = below.split("(").first.strip
-          has_admin = below.matches?(/\b(?:ROLE_)?ADMIN\b/i)
-          return AnnotationResult.new("Protected by Spring #{annotation_name}", has_admin)
+          return "Protected by Spring #{annotation_name}"
         end
       end
 
       @security_meta_annotations.each_value do |meta|
         if below.matches?(/(?:\A|[^@\w])@#{Regex.escape(meta.name)}\b/)
-          return AnnotationResult.new("Protected by Spring #{meta.spring_annotation} (@#{meta.name})", meta.has_admin_role)
+          return "Protected by Spring #{meta.spring_annotation} (@#{meta.name})"
         end
       end
     end
@@ -1185,14 +1170,13 @@ class SpringAuthTagger < FrameworkTagger
     # unauthenticated. Check the class declaration separately.
     CLASS_ANNOTATION_NAMES.each do |annotation_name|
       if class_line = class_level_annotation(ctx.path, lines, annotation_name)
-        has_admin = class_line.matches?(/\b(?:ROLE_)?ADMIN\b/i)
-        return AnnotationResult.new("Protected by Spring #{class_line.split("(").first.strip} on the controller class", has_admin)
+        return "Protected by Spring #{class_line.split("(").first.strip} on the controller class"
       end
     end
 
     @security_meta_annotations.each_value do |meta|
       if class_level_annotation(ctx.path, lines, "@#{meta.name}")
-        return AnnotationResult.new("Protected by Spring #{meta.spring_annotation} (@#{meta.name}) on the controller class", meta.has_admin_role)
+        return "Protected by Spring #{meta.spring_annotation} (@#{meta.name}) on the controller class"
       end
     end
 
@@ -1206,12 +1190,8 @@ class SpringAuthTagger < FrameworkTagger
     # Phase 2: Check annotations near code_paths
     contexts = read_source_context(endpoint)
     contexts.each do |ctx|
-      res = check_annotations(ctx)
-      if res
-        endpoint.add_tag(Tag.new("auth", res.description, "spring_auth"))
-        if res.has_admin_role? && endpoint.tags.none? { |t| t.name == "admin" }
-          endpoint.add_tag(Tag.new("admin", "Administrative endpoint via Spring Security admin role", "spring_auth"))
-        end
+      if description = check_annotations(ctx)
+        endpoint.add_tag(Tag.new("auth", description, "spring_auth"))
         return
       end
     end

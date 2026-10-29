@@ -2071,10 +2071,7 @@ describe "NoirAIContext" do
     endpoint.add_tag(Tag.new("auth", "Protected by Spring @PreAuthorize (@AdminOnly)", "spring_auth"))
 
     context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
-    guard_kinds = context.guards.map(&.kind)
-    guard_kinds.should contain("auth_guard")
-    guard_kinds.should contain("authz_guard")
-    context.guards.find { |g| g.kind == "auth_guard" }.should_not be_nil
+    context.guards.map(&.kind).should eq(["auth_guard", "authz_guard"])
     authz = context.guards.find { |g| g.kind == "authz_guard" }
     authz.should_not be_nil
     authz.not_nil!.name.should eq("Spring @PreAuthorize (@AdminOnly)")

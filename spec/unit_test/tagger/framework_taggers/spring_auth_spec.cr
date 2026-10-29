@@ -1676,10 +1676,9 @@ describe "SpringAuthTagger (Meta-annotations)" do
     endpoints["GET /profile"].tags.select(&.name.==("auth")).map(&.description).should eq([
       "Protected by Spring @Secured (@LoginRequired)",
     ])
-    endpoints["GET /profile"].tags.map(&.name).should_not contain("admin")
   end
 
-  it "detects Java method-level meta-annotation with @PreAuthorize and admin role" do
+  it "detects Java method-level meta-annotation with @PreAuthorize" do
     meta_annotation = <<-JAVA
       package com.example.security;
 
@@ -1720,13 +1719,12 @@ describe "SpringAuthTagger (Meta-annotations)" do
       "POST /admin/reset" => "src/main/java/com/example/controller/AdminController.java:9",
     })
 
-    endpoints["POST /admin/reset"].tags.select(&.name.==("auth")).map(&.description).should eq([
+    endpoints["POST /admin/reset"].tags.map(&.description).should eq([
       "Protected by Spring @PreAuthorize (@AdminOnly)",
     ])
-    endpoints["POST /admin/reset"].tags.map(&.name).should contain("admin")
   end
 
-  it "detects Java class-level meta-annotation with @PreAuthorize and admin role" do
+  it "detects Java class-level meta-annotation with @PreAuthorize" do
     meta_annotation = <<-JAVA
       package com.example.security;
 
@@ -1767,10 +1765,9 @@ describe "SpringAuthTagger (Meta-annotations)" do
       "GET /mgmt/users" => "src/main/java/com/example/controller/AdminMgmtController.java:10",
     })
 
-    endpoints["GET /mgmt/users"].tags.select(&.name.==("auth")).map(&.description).should eq([
+    endpoints["GET /mgmt/users"].tags.map(&.description).should eq([
       "Protected by Spring @PreAuthorize (@AdminControllerAnnotation) on the controller class",
     ])
-    endpoints["GET /mgmt/users"].tags.map(&.name).should contain("admin")
   end
 
   it "detects Kotlin meta-annotations with @Secured and @PreAuthorize" do
@@ -1825,11 +1822,9 @@ describe "SpringAuthTagger (Meta-annotations)" do
     endpoints["GET /member/settings"].tags.select(&.name.==("auth")).map(&.description).should eq([
       "Protected by Spring @Secured (@UserAuth)",
     ])
-    endpoints["GET /member/settings"].tags.map(&.name).should_not contain("admin")
 
-    endpoints["GET /admin/audit"].tags.select(&.name.==("auth")).map(&.description).should eq([
+    endpoints["GET /admin/audit"].tags.map(&.description).should eq([
       "Protected by Spring @PreAuthorize (@AdminService) on the controller class",
     ])
-    endpoints["GET /admin/audit"].tags.map(&.name).should contain("admin")
   end
 end
