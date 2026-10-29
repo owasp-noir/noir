@@ -5,7 +5,9 @@ module Detector::CSharp
     detector_for "cs_aspnet_core_minimal_api", extensions: %w[.cs]
 
     CARTER_MODULE = /\bI?CarterModule\b/
-    MAP_VERB      = /\.\s*Map(?:Get|Post|Put|Delete|Patch|Head|Options|Methods)\s*(?:<[^<>()]*>\s*)?\(/
+    # `Map(...)` and its unfiltered wrappers (`MapHealthChecks`, `MapForwarder`).
+    MAP_ANY  = /\.\s*Map(?:HealthChecks|Forwarder)?\s*\(/
+    MAP_VERB = /\.\s*Map(?:Get|Post|Put|Delete|Patch|Head|Options|Methods)\s*(?:<[^<>()]*>\s*)?\(/
 
     def detect(filename : String, file_contents : String) : Bool
       return false unless Noir::FileExtension.fold(filename).ends_with?(".cs")
@@ -14,7 +16,7 @@ module Detector::CSharp
       return false if content_matches?(file_contents, CARTER_MODULE)
 
       has_http_map = content_matches?(file_contents, MAP_VERB)
-      has_generic_map = content_matches?(file_contents, /\.\s*Map\s*\(/) && minimal_api_context?(file_contents)
+      has_generic_map = content_matches?(file_contents, MAP_ANY) && minimal_api_context?(file_contents)
 
       has_http_map || has_generic_map
     end

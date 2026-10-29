@@ -75,6 +75,7 @@ describe Analyzer::Php::PhpEngine do
       PHP
 
     names = PhpEngineSpecHarness.new(create_test_options).request_params(body).map(&.name)
-    names.should eq(["title", "author", "tags", "slug"])
+    # `ignored` is read by `$request->only(...)`, not taken for a rule key.
+    names.should eq(["ignored", "title", "author", "tags", "slug"])
   end
 end

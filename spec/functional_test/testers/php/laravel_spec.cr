@@ -77,6 +77,8 @@ expected_endpoints = [
 ]
 
 FunctionalTester.new("fixtures/php/laravel/", {
-  :techs     => 2,  # Detection still sees both php_laravel and php_pure
-  :endpoints => 83, # Analysis suppresses redundant php_pure and unprefixed group endpoints
+  :techs => 2, # Detection still sees both php_laravel and php_pure
+  # Analysis suppresses redundant php_pure and unprefixed group endpoints;
+  # `Route::redirect` answers every verb (+6 over GET).
+  :endpoints => 89,
 }, expected_endpoints).perform_tests

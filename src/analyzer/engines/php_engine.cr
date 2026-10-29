@@ -342,7 +342,11 @@ module Analyzer::Php
     # the accessor, capture 2 the input name.
     ILLUMINATE_ACCESSORS       = "input|post|get|query|header|cookie|file|hasFile|has|filled|string|integer|boolean|float|date|enum|array"
     ILLUMINATE_REQUEST_READ_RE = /(?:\$request|\brequest\(\s*\))\s*->\s*(#{ILLUMINATE_ACCESSORS})\s*\(\s*['"]([^'"]+)['"]/
-    ILLUMINATE_READ_TYPES      = {"get" => "query", "query" => "query", "header" => "header", "cookie" => "cookie"}
+    # `$request->only('a', 'b')` / `->only(['a', 'b'])`: several literal
+    # input names per call, as arguments or one array. Capture 1 the list.
+    # (`except` names the inputs the code drops, often `_token`.)
+    ILLUMINATE_MULTI_READ_RE = /(?:\$request|\brequest\(\s*\))\s*->\s*only\s*\(\s*(\[?\s*['"][^'"]+['"](?:\s*,\s*['"][^'"]+['"])*\s*,?\s*\]?)\s*\)/
+    ILLUMINATE_READ_TYPES    = {"get" => "query", "query" => "query", "header" => "header", "cookie" => "cookie"}
     # Calls taking a validation rules array: `$request->validate([...])`,
     # `$this->validate($request, [...])`, `Validator::make($data, [...])`.
     ILLUMINATE_VALIDATE_RE = /(?:->\s*validate(?:WithBag)?|\bValidator::make)\s*\(/
@@ -369,6 +373,9 @@ module Analyzer::Php
       params = [] of Param
       body.scan(ILLUMINATE_REQUEST_READ_RE) do |m|
         params << Param.new(m[2], "", illuminate_read_type(m[1]))
+      end
+      body.scan(ILLUMINATE_MULTI_READ_RE) do |m|
+        m[1].scan(/['"]([^'"]+)['"]/) { |name| params << Param.new(name[1], "", "form") }
       end
       body.scan(ILLUMINATE_DYNAMIC_READ_RE) do |m|
         params << Param.new(m[1], "", "form") unless ILLUMINATE_REQUEST_PROPERTIES.includes?(m[1])

@@ -89,11 +89,13 @@ module Analyzer::CSharp
     @type_namespaces = Hash(Noir::CSharpType, String).new
     @closed_scopes = Set(String).new
     @unread_route = false
+    @convention_prefixes = Hash(String, String).new
 
     def analyze
       include_callee = callees_needed?
       project_roots = Common.project_roots(get_files_by_extension(".csproj"))
       route_patterns_by_scope = load_route_patterns_by_scope(project_roots)
+      @convention_prefixes = load_convention_prefixes(project_roots)
       analyze_controllers(route_patterns_by_scope, project_roots, include_callee)
       route_patterns_by_scope.each_value do |patterns|
         patterns.each { |pattern| emit_standalone_route(pattern) if pattern.standalone? }
@@ -205,6 +207,58 @@ module Analyzer::CSharp
       end
 
       patterns_by_scope
+    end
+
+    # An `IApplicationModelConvention` that combines a constant
+    # `RouteAttribute` with every controller selector, registered with
+    # `Conventions.Add(new ApiRoutePrefixConvention("api"))`: its prefix leads
+    # every attribute route of the project. The template is the class's own
+    # `new RouteAttribute("api")` literal, else the registration's first
+    # argument (`"api"` or `new RouteAttribute("api")`).
+    CONVENTION_CLASS_RE    = /\bclass\s+(\w+)[^{;]*\bIApplicationModelConvention\b/
+    CONVENTION_ADD_RE      = /\bConventions\s*\.\s*(?:Add|Insert)\s*\(\s*(?:\d+\s*,\s*)?new\s+(\w+)\s*\(\s*(?:new\s+(?:\w+\.)*RouteAttribute\s*\(\s*)?(?:@?"([^"]*)")?/
+    ROUTE_ATTRIBUTE_NEW_RE = /\bnew\s+(?:\w+\.)*RouteAttribute\s*\(\s*(?:@?"([^"]*)")?/
+
+    private def load_convention_prefixes(project_roots : Array(String)) : Hash(String, String)
+      classes = Hash(String, String?).new
+      adds = [] of Tuple(String, String, String?)
+      get_files_by_extension(".cs").each do |file|
+        content = read_file_content(file)
+        next unless content.includes?("Conventions") || content.includes?("IApplicationModelConvention")
+        next if Common.csharp_test_path?(base_relative_path(file))
+        code = Noir::CSharpLexer.new(content).code_source
+        if (decl = code.match(CONVENTION_CLASS_RE)) && code.includes?("CombineAttributeRouteModel")
+          classes[decl[1]] = code.match(ROUTE_ATTRIBUTE_NEW_RE).try(&.[1]?)
+        end
+        code.scan(CONVENTION_ADD_RE) { |m| adds << {route_scope_for(file, project_roots), m[1], m[2]?} }
+      rescue e
+        logger.debug "Failed to read #{file}: #{e.message}"
+      end
+
+      prefixes = Hash(String, String).new
+      adds.each do |scope, name, arg|
+        next unless classes.has_key?(name)
+        prefix = (classes[name] || arg).try(&.strip('/')).presence
+        prefixes[scope] = prefix if prefix
+      end
+      prefixes
+    end
+
+    # `CombineAttributeRouteModel(prefix, route)`: an absolute route (`/x`,
+    # `~/x`) stays as it is; `[Route("")]`, kept as `/`, is the prefix itself.
+    # ponytail: only controllers with their own `[Route]` take the prefix; a
+    # convention that also roots route-less controllers is not modelled.
+    private def prefixed_class_routes(routes : Array(String), prefix : String?) : Array(String)
+      return routes unless prefix
+      routes.map do |route|
+        if route == "/"
+          prefix
+        elsif route.starts_with?('/') || route.starts_with?("~/")
+          route
+        else
+          "#{prefix}/#{route}"
+        end
+      end
     end
 
     # The routes that reach an `[Area]` controller: the scope's own, plus
@@ -401,6 +455,7 @@ module Analyzer::CSharp
           next unless CONTROLLER_SUFFIX_RE.matches?(type.name) ||
                       attributes.includes?("Controller") || attributes.includes?("ApiController")
           routes = inherited_class_routes(parts, index, class_routes)
+          routes = {prefixed_class_routes(routes[0], @convention_prefixes[scope]?), routes[1]}
           patterns = @closed_scopes.includes?(scope) ? route_patterns : area_patterns(route_patterns, routes[1])
           selected[file] << {type, patterns, routes}
         end
