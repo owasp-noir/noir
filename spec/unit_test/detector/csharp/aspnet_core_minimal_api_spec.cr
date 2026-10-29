@@ -26,6 +26,17 @@ describe "Detect ASP.NET Core Minimal API" do
     instance.detect("Routes.cs", source).should be_true
   end
 
+  it "detects MapHealthChecks / MapForwarder, which wrap Map" do
+    source = <<-CS
+      var app = WebApplication.CreateBuilder(args).Build();
+      app.MapControllers();
+      app.MapHealthChecks("/health");
+      CS
+
+    instance.detect("Program.cs", source).should be_true
+    instance.detect("Program.cs", source.sub("MapHealthChecks(\"/health\")", "MapForwarder(\"/x\", \"http://y\")")).should be_true
+  end
+
   it "does not detect Carter modules" do
     source = <<-CS
       public sealed class UsersModule : ICarterModule

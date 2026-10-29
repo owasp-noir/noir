@@ -395,20 +395,22 @@ module Analyzer::CSharp::Common
   # in `lines` (the file at `file`) or else in the scanned `.cs` file that
   # shares the most of `file`'s path, followed by the members it inherits
   # from base classes the scan declares. Empty when the scan does not
-  # declare it.
+  # declare it. A qualified name (`Create.Command`, a nested type) is looked
+  # up through its qualifier, so another `Command` does not answer.
   protected def type_member_defs(type_name : String, file : String, lines : Array(String), masked_lines : Array(String)) : Array(String)
-    if decl = member_defs_in(type_name, lines, masked_lines)
-      return with_inherited_members(decl, file, masked_lines)
+    short = type_name.split('.').last
+    if short == type_name && (decl = member_defs_in(type_name, lines, masked_lines))
+      return with_inherited_members(decl, file)
     end
-    candidates = csharp_type_files[type_name]? || return [] of String
+    candidates = csharp_type_files[short]? || return [] of String
     # The declaration the name reaches through namespaces and `using`s; else
     # (an import the scan cannot see, e.g. a project-file `<Using>`) the one
     # sharing the most of the handler's path.
-    path, namespace = resolve_type_file(type_name, file, masked_lines) ||
+    path, namespace = resolve_type_file(type_name, file) ||
                       {candidates.max_by? { |candidate| common_prefix_size(candidate, file) } || return([] of String), nil}
     lexer = Noir::CSharpLexer.new(read_file_content(path))
-    decl = member_defs_in(type_name, lexer.code_lines, lexer.masked_lines, namespace) || return [] of String
-    with_inherited_members(decl, path, lexer.masked_lines)
+    decl = member_defs_in(short, lexer.code_lines, lexer.masked_lines, namespace) || return [] of String
+    with_inherited_members(decl, path)
   end
 
   # Appends the members of each class on `decl`'s base chain. A base is the
@@ -418,7 +420,7 @@ module Analyzer::CSharp::Common
   # declare (a framework base such as `ControllerBase`) and at a cycle. A
   # base member the deriving type redeclares (`override`, `new`) is the
   # deriving type's: its attributes win, even a `[JsonIgnore]`.
-  private def with_inherited_members(decl : TypeMembers, file : String, masked_lines : Array(String)) : Array(String)
+  private def with_inherited_members(decl : TypeMembers, file : String) : Array(String)
     defs = decl.defs.dup
     names = decl.names.dup
     base = decl.base
@@ -426,7 +428,7 @@ module Analyzer::CSharp::Common
     MAX_BASE_DEPTH.times do
       break unless base
       name = base.split('.').last
-      path, namespace = resolve_type_file(base, file, masked_lines) || break
+      path, namespace = resolve_type_file(base, file) || break
       break unless seen.add?("#{path}\0#{base}")
       lexer = Noir::CSharpLexer.new(read_file_content(path))
       inherited = member_defs_in(name, lexer.code_lines, lexer.masked_lines, namespace) || break
@@ -434,7 +436,6 @@ module Analyzer::CSharp::Common
       names.concat(inherited.names)
       base = inherited.base
       file = path
-      masked_lines = lexer.masked_lines
     end
     defs
   end
@@ -450,11 +451,13 @@ module Analyzer::CSharp::Common
   # one outwards, then the global namespace and the `using`s. A qualified
   # name whose qualifier is a type (`Outer.Inner`) resolves to that type's
   # file. The namespace is nil when the declaring file is `file` itself.
-  private def resolve_type_file(base : String, file : String, masked_lines : Array(String)) : Tuple(String, String?)?
+  # The namespaces and `using`s are read from the whole of `file`: a caller
+  # may hold only one class of it (MVC), below a file-scoped `namespace`.
+  private def resolve_type_file(base : String, file : String) : Tuple(String, String?)?
     parts = base.split('.')
     candidates = csharp_type_files[parts.last]? || return
     return {file, nil} if parts.size == 1 && candidates.includes?(file)
-    masked = masked_lines.join('\n')
+    masked = read_file_content(file)
     enclosing = [] of String
     masked.scan(NAMESPACE_DECL_RE) do |m|
       segments = m[1].split('.')
@@ -476,7 +479,7 @@ module Analyzer::CSharp::Common
       in_scope = candidates.select { |path| declared[path].includes?(scope) }
       return {in_scope.max_by { |path| common_prefix_size(path, file) }, scope} unless in_scope.empty?
     end
-    if parts.size > 1 && (outer = resolve_type_file(qualifier, file, masked_lines))
+    if parts.size > 1 && (outer = resolve_type_file(qualifier, file))
       return {outer[0], nil} if candidates.includes?(outer[0])
     end
     nil
@@ -946,7 +949,7 @@ module Analyzer::CSharp::Common
       type = element[1]? || element[2]
     end
     return unless type.matches?(/\A[A-Za-z_][\w.]*\z/)
-    params = type_member_defs(type.split('.').last, file, lines, masked_lines).compact_map do |member|
+    params = type_member_defs(type, file, lines, masked_lines).compact_map do |member|
       body_member_param(member, param_type)
     end
     params.uniq(&.name) unless params.empty?
