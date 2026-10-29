@@ -57,10 +57,14 @@ describe "Nginx Analyzer" do
               proxy_pass http://app;
               return 404;
           }
+          location /legacy {
+              return 410;
+              location /legacy/feed { proxy_pass http://app; }
+          }
       }
       CONF
 
-    endpoints.map(&.url).sort!.should eq(["/health", "/mixed"])
+    endpoints.map(&.url).sort!.should eq(["/health", "/legacy/feed", "/mixed"])
   end
 
   it "marks a regex location as kind regex only while it still reads as a pattern" do

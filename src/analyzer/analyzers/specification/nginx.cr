@@ -28,8 +28,9 @@ module Analyzer::Specification
       getter line : Int32
       getter modifier : String
       getter result_start : Int32?
-      property denial_seen : Bool = false
-      property other_effect : Bool = false
+      property result_end : Int32?
+      property? denial_seen : Bool = false
+      property? other_effect : Bool = false
 
       def initialize(@kind : String, @value : String, @line : Int32, @modifier : String = "", @result_start : Int32? = nil)
       end
@@ -79,8 +80,10 @@ module Analyzer::Specification
           structure = "#{'{' if raw_location.ends_with?('{')}#{balanced[m.end(0)..]}"
           directive_line = structure
           unless location.empty? || internal_location?(raw_location) || internal_location?(location)
-            stack << Frame.new("location", location, idx + 1, modifier, @result.size)
+            frame = Frame.new("location", location, idx + 1, modifier, @result.size)
+            stack << frame
             emit_location(details, location, modifier, METHOD_ANY, server_names, server_tls, idx + 1)
+            frame.result_end = @result.size
           end
         elsif m = METHOD_BLOCK_RE.match(balanced)
           method = m[1].upcase
@@ -110,11 +113,14 @@ module Analyzer::Specification
     private def pop_frame(stack : Array(Frame))
       frame = stack.pop?
       return unless frame
-      return unless frame.kind == "location" && frame.denial_seen && !frame.other_effect
+      return unless frame.kind == "location" && frame.denial_seen?
+      return if frame.other_effect?
 
-      if start = frame.result_start
-        @result.pop(@result.size - start) if @result.size > start
-      end
+      # Only this location's own rows: a nested location matched on its own
+      # does not run the parent's `return`.
+      start = frame.result_start
+      stop = frame.result_end
+      @result.delete_at(start...stop) if start && stop && stop > start
     end
 
     private def track_location_effect(location : Frame, line : String)
