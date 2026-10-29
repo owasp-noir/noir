@@ -15,6 +15,7 @@ public class ImageController : ControllerBase
     [ProducesResponseType(StatusCodes.Status500InternalServerError)]
     [ProducesResponseType(StatusCodes.Status503ServiceUnavailable)]
     [ProducesResponseType(StatusCodes.Status507InsufficientStorage)]
+
     public IActionResult Upload([FromRoute] string userId, [FromRoute] int index) => NoContent();
 }
 

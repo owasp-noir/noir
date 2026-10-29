@@ -345,7 +345,8 @@ class AspnetAuthTagger < FrameworkTagger
 
   # The attributes stacked on the action at `method_line`, however many: the
   # walk stops at the previous member (a blank line, or one ending a
-  # statement or block).
+  # statement or block). One blank line directly above the method is
+  # spacing, not that member.
   ACTION_ATTRIBUTE_LINES = 64
 
   private def action_attributes(lines : Array(String), method_line : Int32) : String
@@ -353,7 +354,12 @@ class AspnetAuthTagger < FrameworkTagger
     idx = method_line - 1
     while idx >= 0 && idx >= method_line - ACTION_ATTRIBUTE_LINES
       current = lines[idx].strip
-      break if current.empty? || current.ends_with?(';') || current.ends_with?('}') || current.ends_with?('{')
+      if current.empty?
+        break if idx < method_line - 1
+        idx -= 1
+        next
+      end
+      break if current.ends_with?(';') || current.ends_with?('}') || current.ends_with?('{')
       attrs.unshift(current) unless current.starts_with?("//")
       idx -= 1
     end
@@ -779,7 +785,10 @@ class AspnetAuthTagger < FrameworkTagger
     false
   end
 
-  MEMBER_DECLARATION = /^\s*(?:\[[^\]]*\]\s*)*(?:(?:public|private|protected|internal|static|async|override|virtual)\s+)+[^=;]*\(/
+  # A method or local function, with or without an access modifier.
+  # The name is one identifier, so a call (`group.MapGet(`, `Task.Delay(`)
+  # is not one, and `if (` / `using (` are not either.
+  MEMBER_DECLARATION = /^\s*(?:\[[^\]]*\]\s*)*(?:(?:public|private|protected|internal|static|async|override|virtual|sealed|unsafe|partial|new|extern)\s+)*(?:[\w?<>,\[\]]+\s+)?(?!(?:if|for|foreach|while|switch|catch|using|lock|fixed)\b)[\w]+\s*\(/
 
   # The authorization a route mapped through `chain` (route receiver first,
   # root builder last) inherits from the call sites of the route-builder

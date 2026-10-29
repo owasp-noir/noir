@@ -33,6 +33,7 @@ describe "ASP.NET Core auth shapes", tags: "functional" do
     guarded.call(endpoints, "GET", "/organizations/{orgId}/access-rules/{id}").should be_true
     guarded.call(endpoints, "DELETE", "/organizations/{orgId}/access-rules/{id}").should be_true
     guarded.call(endpoints, "GET", "/public/status").should be_false
+    guarded.call(endpoints, "GET", "/healthz").should be_false
   end
 
   it "maps empty patterns and reads auth chained after a block lambda" do

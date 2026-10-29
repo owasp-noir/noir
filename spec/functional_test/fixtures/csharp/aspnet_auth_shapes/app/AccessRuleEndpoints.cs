@@ -18,6 +18,13 @@ public static class AccessRuleEndpoints
         return group;
     }
 
+    // No access modifier. The guarded method above must not cover this one.
+    RouteGroupBuilder MapHealthEndpoints(this RouteGroupBuilder group)
+    {
+        group.MapGet("/healthz", () => Results.Ok());
+        return group;
+    }
+
     // Another method's `group` is not the one above: its routes stay open.
     public static RouteGroupBuilder MapPublicEndpoints(this RouteGroupBuilder group)
     {
