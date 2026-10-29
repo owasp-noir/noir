@@ -47,6 +47,7 @@ module Noir::RustRequestGuards
   LOGIN_REDIRECT_RE = /(?:\bRedirect::\w+\s*\(\s*|(?:\bLOCATION|"(?i:location)")\s*,\s*)"(?![^"]*\berror=)[^"]*?(?<![A-Za-z])(?i:log_?in|sign_?in)/
   ENUM_DEF_RE       = /\benum\s+([A-Z]\w*)/
   IMPL_KEYWORD_RE   = /\bimpl\b/
+  CRATE_USE_RE      = /\buse\s+crate::[^;]*;/
   # An enum path in a match pattern: `AppError::NotLoggedIn`, `NotLoggedIn`.
   PATTERN_PATH_RE = /(?<![\w:])((?:[A-Za-z_]\w*::)*[A-Z]\w*)(?![\w:])/
   VARIANT_PATH_RE = /\A(?:\w+::)*[A-Z]\w*\z/
@@ -91,8 +92,10 @@ module Noir::RustRequestGuards
     getter scoped_catch_all = Set(String).new
     # `crate|Enum` => the files of that crate that define `enum Enum`.
     getter enum_files = Hash(String, Set(String)).new
-    # A guard impl file's `use` names (`Error` => `crate::error::Error`).
-    getter imports = Hash(String, Hash(String, String)).new
+    # A guard impl file's `use crate::...;` statements, parsed for their
+    # names (`Error` => `crate::error::Error`) only when an enum is ambiguous.
+    getter crate_uses = Hash(String, String).new
+    getter crate_use_names = Hash(String, Hash(String, String)).new
   end
 
   # Per-file state for walking a guard impl.
@@ -109,7 +112,9 @@ module Noir::RustRequestGuards
       collect_status_arms(code, globs, facts, path, crate) if status_fn
     end
     return unless source.matches?(EVIDENCE_RE)
-    facts.imports[path] = Noir::RustUseImports.parse(source).names
+    if source.includes?("crate::")
+      facts.crate_uses[path] = source.scan(CRATE_USE_RE).join('\n', &.[0])
+    end
     Noir::TreeSitter.parse_rust(source) do |root|
       collect(root, source, globs, facts, path, crate, 0)
     end
@@ -520,7 +525,9 @@ module Noir::RustRequestGuards
   # `use`s it from (`use crate::error::Error` -> `src/error.rs` or
   # `src/error/mod.rs`).
   private def self.imported_def(defs : Set(String), enum_name : String, impl : Impl, facts : Facts) : String?
-    full = facts.imports[impl.file]?.try(&.[enum_name]?) || return
+    uses = facts.crate_uses[impl.file]? || return
+    names = facts.crate_use_names[impl.file] ||= Noir::RustUseImports.parse(uses).names
+    full = names[enum_name]? || return
     return unless full.starts_with?("crate::")
     sep = File::SEPARATOR
     src = impl.crate.empty? ? "src" : "#{impl.crate}#{sep}src"
