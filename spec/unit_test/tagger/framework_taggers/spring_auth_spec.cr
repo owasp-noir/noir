@@ -3632,6 +3632,89 @@ describe "SpringAuthTagger (configurations that must not read as open)" do
     run_spring_security_config({"SecurityConfig.java" => method_ref}, ["GET /items"])["GET /items"].should eq(["Protected by Spring Security, configured by the authorization rules of the chain in SecurityConfig.java, which noir does not read"])
   end
 
+  it "keeps a chain whose rules it cannot read inside its securityMatcher" do
+    config = <<-JAVA
+      public class SecurityConfig {
+          @Bean
+          SecurityFilterChain chain(HttpSecurity http) throws Exception {
+              http.securityMatcher("/api/**").authorizeHttpRequests(this::rules);
+              return http.build();
+          }
+      }
+      JAVA
+    tags = run_spring_security_config({"SecurityConfig.java" => config}, ["GET /api/x", "GET /public"])
+    tags["GET /api/x"].size.should eq(1)
+    tags["GET /public"].should be_empty
+  end
+
+  it "denies a request no authorizeHttpRequests or authorizeExchange rule matches, but not one of legacy authorizeRequests" do
+    chain = ->(dsl : String) do
+      <<-KOTLIN
+        @EnableWebSecurity
+        class SecurityConfig {
+            @Bean
+            fun chain(http: HttpSecurity): SecurityFilterChain {
+                http {
+                    #{dsl} {
+                        authorize("/css/**", permitAll)
+                        authorize("/user/**", hasAuthority("ROLE_USER"))
+                    }
+                }
+                return http.build()
+            }
+        }
+        KOTLIN
+    end
+    routes = ["GET /", "GET /css/a.css", "GET /user/1"]
+    {"authorizeHttpRequests", "authorizeExchange"}.each do |dsl|
+      tags = run_spring_security_config({"SecurityConfig.kt" => chain.call(dsl)}, routes)
+      tags["GET /"].should eq(["Protected by Spring Security: #{dsl} denies a request no rule matches"])
+      tags["GET /css/a.css"].should be_empty
+      tags["GET /user/1"].should eq(["Protected by Spring Security hasAuthority via authorize(\"/user/**\")"])
+    end
+    run_spring_security_config({"SecurityConfig.kt" => chain.call("authorizeRequests")}, routes)["GET /"].should be_empty
+  end
+
+  it "does not let a security configuration outside any build unit or a commented switch reach an app" do
+    xml = %(<beans:beans xmlns="http://www.springframework.org/schema/security"><http><intercept-url pattern="/**" access="authenticated"/></http></beans:beans>\n)
+    tags = run_spring_multi_module({
+      "docs/example-security.xml"                     => xml,
+      "app/pom.xml"                                   => spring_module_pom("app", [] of String),
+      "app/src/main/java/com/example/Controller.java" => SPRING_ITEMS_CONTROLLER,
+      "app/src/main/java/com/example/S.java"          => "// @EnableWebSecurity was dropped\npublic class S {}\n",
+    }, {"GET /items" => "app/src/main/java/com/example/Controller.java:2"})
+    tags["GET /items"].should be_empty
+  end
+
+  it "reads an XML <http> that only permits as an open chain" do
+    xml = %(<beans:beans xmlns="http://www.springframework.org/schema/security"><http pattern="/static/**" security="none"/><http><intercept-url pattern="/**" access="permitAll"/></http></beans:beans>\n)
+    tags = run_spring_multi_module({
+      "app/pom.xml"                                   => spring_module_pom("app", ["spring-boot-starter-security"]),
+      "app/src/main/resources/security.xml"           => xml,
+      "app/src/main/java/com/example/App.java"        => boot_app,
+      "app/src/main/java/com/example/Controller.java" => SPRING_ITEMS_CONTROLLER,
+    }, {"GET /items" => "app/src/main/java/com/example/Controller.java:2"})
+    tags["GET /items"].should be_empty
+  end
+
+  it "takes Spring Security on a whole-build classpath only from the build, its logic or the module itself" do
+    files = {
+      "settings.gradle"                                 => "include 'admin', 'pub', 'lib'\n",
+      "build.gradle"                                    => "project(':admin') { }\n",
+      "admin/build.gradle"                              => "dependencies { implementation 'org.springframework.boot:spring-boot-starter-security' }\n",
+      "admin/src/main/java/com/example/a/App.java"      => boot_app,
+      "admin/src/main/java/com/example/a/C.java"        => "public class C {\n    @GetMapping(\"/admin\")\n    public String a() { return \"\"; }\n}\n",
+      "pub/build.gradle"                                => "#{SPRING_WEB_STARTER}}\n",
+      "pub/src/main/java/com/example/p/App.java"        => boot_app,
+      "pub/src/main/java/com/example/p/Controller.java" => SPRING_ITEMS_CONTROLLER,
+      "lib/build.gradle"                                => "dependencies { implementation 'org.springframework.security:spring-security-config' }\n",
+      "lib/src/main/java/com/example/l/L.java"          => "@EnableWebSecurity\npublic class L {}\n",
+    }
+    tags = run_spring_multi_module(files, {"GET /admin" => "admin/src/main/java/com/example/a/C.java:2", "GET /items" => "pub/src/main/java/com/example/p/Controller.java:2"})
+    tags["GET /admin"].size.should eq(1)
+    tags["GET /items"].should be_empty
+  end
+
   it "guards a non-Boot app that switches Spring Security on without a chain of its own" do
     tags = run_spring_multi_module({
       "app/build.gradle"                                  => "dependencies { implementation 'org.springframework.security:spring-security-web' }\n",

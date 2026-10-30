@@ -110,6 +110,12 @@ class SpringAuthTagger < FrameworkTagger
   # An XML `<http>` element in the Spring Security namespace.
   XML_SECURITY_NAMESPACE = "springframework.org/schema/security"
   XML_HTTP_ELEMENT       = /<(?:[\w-]+:)?http[\s>]/
+  XML_HTTP_TAG           = /<(?:[\w-]+:)?http(?:\s[^>]*)?>/
+  XML_SECURITY_NONE      = /\bsecurity\s*=\s*"none"/
+  XML_ACCESS             = /\baccess\s*=\s*"([^"]*)"/
+  XML_PUBLIC_ACCESS      = /\A(?:permitAll(?:\(\))?|IS_AUTHENTICATED_ANONYMOUSLY|isAnonymous\(\))\z/
+  # An authorization noir does not read off `access` attributes.
+  XML_OTHER_AUTHORIZATION = /<(?:[\w-]+:)?custom-filter\b|\b(?:access-decision-manager|authorization-manager)-ref\s*=/
 
   KOTLIN_FUN_DECLARATION = /(?:^|\s)fun\s/
 
@@ -213,7 +219,7 @@ class SpringAuthTagger < FrameworkTagger
         end
 
         unless test_source?(file)
-          @security_enabled << module_dir if content.matches?(ENABLE_SECURITY)
+          @security_enabled << module_dir if content.matches?(ENABLE_SECURITY) && Noir::CComments.strip(content).matches?(ENABLE_SECURITY)
           scan_servlet_filter_defs(content, file, module_dir) if content.includes?("doFilter")
           scan_filter_registrations(content, file, module_dir) if content.includes?("FilterRegistrationBean")
           scan_bean_types(content, module_dir) if content.includes?("@Bean")
@@ -232,7 +238,14 @@ class SpringAuthTagger < FrameworkTagger
       next unless (content = read_file(file)) && content.includes?(XML_SECURITY_NAMESPACE)
       xml = Noir::XmlComments.strip(content)
       next unless http = xml.match(XML_HTTP_ELEMENT)
-      @unread_configs << {module: build_module(file), what: "the XML <http> configuration", path: file, line: xml[0, http.begin(0)].count('\n') + 1}
+      # An `<http>` is a chain: Boot's default one backs off. Every `<http>`
+      # `security="none"`, or only permitAll rules, guards nothing.
+      module_dir = build_module(file)
+      @chain_modules << module_dir if module_dir
+      accesses = xml.scan(XML_ACCESS).map(&.[1].strip)
+      next if xml.scan(XML_HTTP_TAG).all?(&.[0].matches?(XML_SECURITY_NONE)) ||
+              (!accesses.empty? && accesses.all?(&.matches?(XML_PUBLIC_ACCESS)) && !xml.matches?(XML_OTHER_AUTHORIZATION))
+      @unread_configs << {module: module_dir, what: "the XML <http> configuration", path: file, line: xml[0, http.begin(0)].count('\n') + 1}
     end
   end
 
@@ -1437,8 +1450,18 @@ class SpringAuthTagger < FrameworkTagger
       end
     end
 
-    if rules.empty? && any_request_covered && (dsl = block.match(AUTHORIZATION_DSL))
-      @unread_configs << {module: module_dir, what: "the authorization rules of the chain in #{File.basename(file_path)}", path: file_path, line: block_start_line + block[0, dsl.begin(0)].count('\n')}
+    # What the read rules leave to the chain: rules noir cannot read, or a
+    # request no rule matches, which `authorizeHttpRequests` /
+    # `authorizeExchange` deny (legacy `authorizeRequests` lets it through).
+    # A `Customizer<HttpSecurity>` bean only adds rules to a chain declared
+    # elsewhere, which decides the rest itself.
+    if any_request_covered && (dsl = block.match(AUTHORIZATION_DSL)) && rules.none? { |rule| rule[:pattern] == "/**" && rule[:method].nil? }
+      description = if rules.empty?
+                      "Protected by Spring Security, configured by the authorization rules of the chain in #{File.basename(file_path)}, which noir does not read"
+                    elsif dsl[0] != "authorizeRequests" && block.matches?(CHAIN_DECLARATION)
+                      "Protected by Spring Security: #{dsl[0]} denies a request no rule matches"
+                    end
+      rules << {pattern: "/**", method: nil, description: description, protected_rule: true, module: module_dir, config_key: nil, path: file_path, line: block_start_line + block[0, dsl.begin(0)].count('\n')} if description
     end
     rules.concat(form_rules)
 
@@ -1616,12 +1639,16 @@ class SpringAuthTagger < FrameworkTagger
   private def security_decision(endpoint : Endpoint, config_dir : String?, classpath : Set(String)?) : Tuple(String, String?, Int32?)?
     url = endpoint.url
     applies = ->(owner : String?) { owner.nil? || classpath.nil? || classpath.includes?(owner) }
-    if config_dir && classpath && @chain_modules.none? { |owner| applies.call(owner) } && @unread_configs.none? { |config| applies.call(config[:module]) }
-      # The app declares no chain, yet Spring Security is on: its default
-      # chain authenticates every request.
-      if @security_enabled.any? { |owner| applies.call(owner) }
+    # A security configuration or switch outside any build unit (an example
+    # under `docs/`) reaches only endpoints whose classpath is unknown.
+    reaches = ->(owner : String?) { owner ? applies.call(owner) : classpath.nil? }
+    if config_dir && classpath && @chain_modules.none? { |owner| applies.call(owner) } && @unread_configs.none? { |config| reaches.call(config[:module]) } &&
+       module_classpath(config_dir).try(&.[1])
+      # The app declares no chain, yet Spring Security is on its classpath
+      # and switched on: its default chain authenticates every request.
+      if @security_enabled.any? { |owner| reaches.call(owner) }
         return {"Protected by Spring Security default chain (@EnableWebSecurity, no SecurityFilterChain on the app's classpath)", nil, nil}
-      elsif (@boot_apps.empty? || @boot_apps.includes?(config_dir)) && module_classpath(config_dir).try(&.[1])
+      elsif @boot_apps.empty? || @boot_apps.includes?(config_dir)
         return {"Protected by Spring Boot default security (Spring Security on the app's classpath, no SecurityFilterChain in it)", nil, nil}
       end
     end
@@ -1675,7 +1702,7 @@ class SpringAuthTagger < FrameworkTagger
         return {"#{reasons}, for #{verbs} only#{note}", first_guard.try(&.[:path]) || best.try(&.[:path]), first_guard.try(&.[:line]) || best.try(&.[:line])}
       end
     end
-    if best.nil? && (unread = @unread_configs.find { |config| applies.call(config[:module]) })
+    if best.nil? && (unread = @unread_configs.find { |config| reaches.call(config[:module]) })
       # No rule noir reads decides the request, but a configuration it does
       # not read can.
       return {"Protected by Spring Security, configured by #{unread[:what]}, which noir does not read#{note}", unread[:path], unread[:line]}

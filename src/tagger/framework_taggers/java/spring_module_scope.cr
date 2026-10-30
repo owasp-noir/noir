@@ -68,12 +68,16 @@ module SpringModuleScope
 
   # The modules whose runtime classpath holds `module_dir`: itself and every
   # module depending on it, narrowed to the Boot entry points
-  # when there are any. Nil when `module_dir`'s classpath is unknown.
+  # when there are any. Nil when `module_dir`'s classpath is unknown. A
+  # Boot app is not taken as served by a module whose classpath is only
+  # its whole build (`gradle_build`): that is no evidence it depends on it.
   private def serving_apps(module_dir : String) : Array(String)?
     return @serving_apps[module_dir] if @serving_apps.has_key?(module_dir)
     @serving_apps[module_dir] = if module_classpath(module_dir)
+                                  boot_app = @boot_apps.includes?(module_dir)
                                   hosts = build_modules.select do |dir|
-                                    module_classpath(dir).try(&.[0].includes?(module_dir))
+                                    module_classpath(dir).try(&.[0].includes?(module_dir)) &&
+                                      !(boot_app && dir != module_dir && @whole_build_classpaths.includes?(dir))
                                   end
                                   hosts << module_dir unless hosts.includes?(module_dir)
                                   runnable = hosts.select { |dir| @boot_apps.includes?(dir) }
@@ -250,7 +254,8 @@ module SpringModuleScope
     return if gradle_settings_above_scan?
     roots = gradle_roots(module_dir)
     if opaque = roots.reverse.find { |root| gradle_opaque?(root, module_dir) }
-      return gradle_build(opaque)
+      @whole_build_classpaths << module_dir
+      return gradle_build(opaque, module_dir)
     end
 
     dirs = Set(String).new
@@ -277,6 +282,7 @@ module SpringModuleScope
     {dirs, security}
   end
 
+  @whole_build_classpaths = Set(String).new
   @gradle_roots = Hash(String, Array(String)).new
 
   # The directories holding a `settings.gradle` from `module_dir` up to the
@@ -312,10 +318,13 @@ module SpringModuleScope
     @gradle_settings_above_scan || false
   end
 
-  # Every module of the build rooted at `root`.
-  private def gradle_build(root : String) : {Set(String), Bool}
+  # Every module of the build rooted at `root`, as `module_dir`'s classpath.
+  # Spring Security is on it only when the root build file, the build
+  # logic or the module's own build file names it: another module of the
+  # build is not known to be a dependency.
+  private def gradle_build(root : String, module_dir : String) : {Set(String), Bool}
     dirs = Set.new(build_modules.select { |dir| Noir::PathScope.under_root?(dir, root) })
-    {dirs, gradle_root_security?(root) || dirs.any? { |dir| gradle_build_script(dir).try(&.security) }}
+    {dirs, gradle_root_security?(root) || gradle_build_script(module_dir).try(&.security) || false}
   end
 
   # Whether something besides `module_dir`'s own build file can add a
