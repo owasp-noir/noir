@@ -58,6 +58,55 @@ FunctionalTester.new("fixtures/go/cli_cobra_root/", {
   :endpoints => cobra_root_endpoints.size,
 }, cobra_root_endpoints).perform_tests
 
+# --- cobra: AddCommand parentage -------------------------------------------
+# `users get` and `orders get` are two commands. Mapping every command to
+# `cli://<binary>/<Use>` merged them into one `get` with both flag sets.
+cobra_tree_endpoints = [
+  build.call("cli://shopctl", [] of Param),
+  build.call("cli://shopctl/users", [] of Param),
+  build.call("cli://shopctl/users/get", [Param.new("user-id", "", "flag")]),
+  build.call("cli://shopctl/orders", [] of Param),
+  build.call("cli://shopctl/orders/get", [Param.new("order-id", "", "flag")]),
+]
+
+cobra_tree_tester = FunctionalTester.new("fixtures/go/cli_cobra_tree/", {
+  :techs     => 1,
+  :endpoints => cobra_tree_endpoints.size,
+}, cobra_tree_endpoints)
+cobra_tree_tester.perform_tests
+
+# --- cobra: each binary's tree in its own non-main `command` package -------
+# The library package used to take the module name (`tools`), so both
+# binaries' `serve` merged under `cli://tools`. The executed root's Use names
+# the binary; alpha spreads its tree over two files of one package.
+cobra_package_endpoints = [
+  build.call("cli://alphactl", [Param.new("config", "", "flag"), Param.new("ALPHA_TOKEN", "", "env")]),
+  build.call("cli://alphactl/serve", [Param.new("alpha-port", "", "flag")]),
+  build.call("cli://alphactl/serve/status", [Param.new("json", "", "flag")]),
+  build.call("cli://betactl", [Param.new("config", "", "flag"), Param.new("BETA_TOKEN", "", "env")]),
+  build.call("cli://betactl/serve", [Param.new("beta-port", "", "flag")]),
+]
+
+cobra_package_tester = FunctionalTester.new("fixtures/go/cli_cobra_command_package/", {
+  :techs     => 1,
+  :endpoints => cobra_package_endpoints.size,
+}, cobra_package_endpoints)
+cobra_package_tester.perform_tests
+
+describe "go CLI cobra command tree", tags: "functional" do
+  it "keeps each same-named subcommand's flags on its own command" do
+    get = cobra_tree_tester.endpoints.find! { |ep| ep.url == "cli://shopctl/users/get" }
+    get.params.map(&.name).should eq(["user-id"])
+  end
+
+  it "keeps two binaries' subcommands apart" do
+    serve = cobra_package_tester.endpoints.find! { |ep| ep.url == "cli://alphactl/serve" }
+    serve.params.map(&.name).should eq(["alpha-port"])
+    root = cobra_package_tester.endpoints.find! { |ep| ep.url == "cli://alphactl" }
+    root.params.map(&.name).should_not contain("BETA_TOKEN")
+  end
+end
+
 # --- urfave/cli (app + command + flags + EnvVars) --------------------------
 urfave_endpoints = [
   build.call("cli://urfavedemo", [

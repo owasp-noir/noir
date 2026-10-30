@@ -80,6 +80,12 @@ module Analyzer::Go
     COBRA_CMD_DECL_RE = /(\w+)\s*[:=]\s*&?cobra\.Command\s*\{/
     COBRA_USE_RE      = /\bUse\s*:\s*"([^"\s]+)/
     COBRA_FLAG_RE     = /(\w+)\s*\.\s*(?:Persistent)?Flags\s*\(\s*\)\s*\.\s*[A-Za-z0-9]+\s*\(\s*(?:&?[\w.]+\s*,\s*)?"([^"]+)"/
+    COBRA_IMPORT_RE   = Regex.union("github.com/spf13/cobra")
+    # `parent.AddCommand(a, b)`. Arguments that are calls (`newServeCmd()`)
+    # or other packages' commands (`serve.Cmd`) name no variable here.
+    COBRA_ADD_CMD_RE = /\b(\w+)\s*\.\s*AddCommand\s*\(([^()]*)\)/
+    COBRA_EXECUTE_RE = /\b(\w+)\s*\.\s*Execute(?:C|Context|ContextC)?\s*\(/
+    GO_IDENT_RE      = /\A\w+\z/
 
     # --- pflag (when used without cobra) -------------------------------------
     PFLAG_RE = /\bpflag\.(?:String|Int|Int64|Uint|Bool|Float64|Duration|StringSlice|StringArray)(?:Var)?(?:P)?\s*\(\s*(?:&?[\w.]+\s*,\s*)?"([^"]+)"/
@@ -157,6 +163,7 @@ module Analyzer::Go
       modules = collect_go_modules
       endpoints = {} of String => Endpoint
 
+      sources = [] of Tuple(String, String, Array(String), Array(String))
       get_files_by_extension(".go").each do |path|
         next if go_test_path?(path)
         next unless File.exists?(path)
@@ -171,40 +178,49 @@ module Analyzer::Go
           content = GoEngine.strip_comments(raw)
           next unless cli_evidence?(content)
 
-          binary = go_binary_name(modules, path, content)
-          root_url = "cli://#{binary}"
           lines = content.lines
-          calls = call_lines(lines)
-          framework_cli = content.matches?(FRAMEWORK_IMPORTS_RE)
-          # stdlib flag / os.Args / raw os.Getenv only describe a CLI surface
-          # when this file isn't really an HTTP server using flags for config.
-          # An explicit CLI framework (cobra/urfave/...) overrides that — a
-          # `serve` subcommand legitimately starts a listener.
-          emit_stdlib = framework_cli || !content.matches?(HTTP_LISTEN_RE)
-          has_cli_parse = cli_parse_point?(content)
-
-          # Map cobra command variables to their command URL.
-          cobra_cmd_urls = map_cobra_commands(lines, binary, root_url)
-
-          scan_lines(calls, path, binary, root_url, endpoints, cobra_cmd_urls,
-            emit_stdlib, has_cli_parse)
-          scan_struct_tags(content, path, root_url, endpoints)
-
-          if content_matches?(content, KONG_IMPORT_RE)
-            scan_kong(lines, path, root_url, endpoints, kong_cmd_type_urls(lines, root_url))
-          end
-
-          if content_matches?(content, KINGPIN_IMPORT_RE)
-            scan_kingpin(calls, path, endpoints, kingpin_cmd_urls(calls, root_url))
-          end
-
-          if content_matches?(content, MITCHELLH_IMPORT_RE)
-            scan_mitchellh(lines, calls, path, root_url, endpoints)
-          end
+          sources << {path, content, lines, call_lines(lines)}
         rescue e
           logger.debug "Error analyzing #{path}: #{e}"
           next
         end
+      end
+
+      cobra_packages = collect_cobra_packages(sources)
+
+      sources.each do |path, content, lines, calls|
+        cobra = cobra_packages[File.dirname(path)]? || CobraPackage.new
+        binary = cobra_binary_name(cobra, content) || go_binary_name(modules, path, content)
+        root_url = "cli://#{binary}"
+        framework_cli = content.matches?(FRAMEWORK_IMPORTS_RE)
+        # stdlib flag / os.Args / raw os.Getenv only describe a CLI surface
+        # when this file isn't really an HTTP server using flags for config.
+        # An explicit CLI framework (cobra/urfave/...) overrides that — a
+        # `serve` subcommand legitimately starts a listener.
+        emit_stdlib = framework_cli || !content.matches?(HTTP_LISTEN_RE)
+        has_cli_parse = cli_parse_point?(content)
+
+        # Map cobra command variables to their command URL.
+        cobra_cmd_urls = map_cobra_commands(lines, cobra, binary, root_url)
+
+        scan_lines(calls, path, binary, root_url, endpoints, cobra_cmd_urls,
+          emit_stdlib, has_cli_parse)
+        scan_struct_tags(content, path, root_url, endpoints)
+
+        if content_matches?(content, KONG_IMPORT_RE)
+          scan_kong(lines, path, root_url, endpoints, kong_cmd_type_urls(lines, root_url))
+        end
+
+        if content_matches?(content, KINGPIN_IMPORT_RE)
+          scan_kingpin(calls, path, endpoints, kingpin_cmd_urls(calls, root_url))
+        end
+
+        if content_matches?(content, MITCHELLH_IMPORT_RE)
+          scan_mitchellh(lines, calls, path, root_url, endpoints)
+        end
+      rescue e
+        logger.debug "Error analyzing #{path}: #{e}"
+        next
       end
 
       @result.concat(cli_endpoints(endpoints))
@@ -294,22 +310,85 @@ module Analyzer::Go
       File.basename(Noir::PathScope.expand(base))
     end
 
-    # Builds a `cmdVar => url` map for cobra by pairing each
-    # `var x = &cobra.Command{` with the `Use:` token inside that same struct
-    # literal. A root command (Use token == binary) maps to `cli://<binary>`,
-    # every other command to `cli://<binary>/<token>`. A command with no
-    # `Use:` field (a common root pattern: only Short/Long/Run) is left
-    # unmapped so its flags fall back to the root rather than borrowing a
-    # sibling command's Use token.
-    private def map_cobra_commands(lines : Array(String), binary : String, root_url : String) : Hash(String, String)
-      urls = {} of String => String
+    # The cobra commands of one Go package (directory). A package shares one
+    # namespace across its files, so `rootCmd` declared in `root.go` is the
+    # parent that `serve.go`'s `rootCmd.AddCommand(serveCmd)` refers to.
+    private record CobraPackage,
+      uses = {} of String => String,
+      parents = {} of String => String,
+      executed = Set(String).new
+
+    private def collect_cobra_packages(sources : Array(Tuple(String, String, Array(String), Array(String)))) : Hash(String, CobraPackage)
+      packages = {} of String => CobraPackage
+      sources.each do |path, content, lines, calls|
+        next unless content_matches?(content, COBRA_IMPORT_RE)
+        package = packages[File.dirname(path)] ||= CobraPackage.new
+        package.uses.merge!(cobra_uses(lines))
+        calls.each do |call|
+          call.scan(COBRA_ADD_CMD_RE) do |m|
+            m[2].split(',') do |arg|
+              child = arg.strip
+              package.parents[child] = m[1] if child.matches?(GO_IDENT_RE)
+            end
+          end
+          call.scan(COBRA_EXECUTE_RE) { |m| package.executed << m[1] }
+        end
+      end
+      packages
+    end
+
+    # The root command's `Use` names a binary whose cobra tree lives in a
+    # library package (`cmd/alpha/command`), where the path only gives the
+    # module name and two binaries in one module would merge. The root is
+    # the one executed command that no `AddCommand` adopts. A `package main`
+    # keeps its directory name: that is the binary `go build` produces.
+    private def cobra_binary_name(cobra : CobraPackage, content : String) : String?
+      return if content.matches?(PACKAGE_MAIN_RE)
+      roots = cobra.executed.select { |var| cobra.uses.has_key?(var) && !cobra.parents.has_key?(var) }
+      cobra.uses[roots.first] if roots.size == 1
+    end
+
+    # `cmdVar => Use token` for each `var x = &cobra.Command{` in the file,
+    # paired with the `Use:` inside that same struct literal. A command with
+    # no `Use:` field (a common root pattern: only Short/Long/Run) is left
+    # out so its flags fall back to the root rather than borrowing a sibling
+    # command's Use token.
+    private def cobra_uses(lines : Array(String)) : Hash(String, String)
+      uses = {} of String => String
       lines.each_with_index do |line, index|
         next unless m = line.match(COBRA_CMD_DECL_RE)
-        use_token = find_use_in_struct(lines, index)
-        next unless use_token
-        urls[m[1]] = use_token == binary ? root_url : "#{root_url}/#{use_token}"
+        if use_token = find_use_in_struct(lines, index)
+          uses[m[1]] = use_token
+        end
       end
+      uses
+    end
+
+    # Builds a `cmdVar => url` map for cobra. Each command sits under the
+    # command that `AddCommand`s it, so `users get` and `orders get` stay
+    # two commands. A parentless command is the root (`cli://<binary>`)
+    # when it is executed or its Use token is the binary, and a direct
+    # child of the root otherwise (it may be added from another package).
+    # The file's own declarations win over its package's: function-local
+    # names like `cmd` repeat across files.
+    private def map_cobra_commands(lines : Array(String), cobra : CobraPackage,
+                                   binary : String, root_url : String) : Hash(String, String)
+      uses = cobra.uses.merge(cobra_uses(lines))
+      urls = {} of String => String
+      uses.each_key { |var| urls[var] = cobra_command_url(var, uses, cobra, binary, root_url) }
       urls
+    end
+
+    private def cobra_command_url(var : String, uses : Hash(String, String), cobra : CobraPackage,
+                                  binary : String, root_url : String, chain = [] of String) : String
+      return root_url unless use_token = uses[var]?
+      chain << var
+      parent = cobra.parents[var]?
+      if parent.nil? || chain.includes?(parent)
+        return root_url if use_token == binary || cobra.executed.includes?(var)
+        return "#{root_url}/#{use_token}"
+      end
+      "#{cobra_command_url(parent, uses, cobra, binary, root_url, chain)}/#{use_token}"
     end
 
     # Finds the `Use:` token of the `cobra.Command{...}` struct literal that
