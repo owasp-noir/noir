@@ -62,6 +62,15 @@ module Analyzer::Scala
         process_routes_file(routes_path, controller_methods, routes_by_key, "", Set(String).new)
       end
 
+      # `Router.from { case ... }` built in code (an `ApplicationLoader`'s
+      # components) is served without any routes file naming it.
+      @scala_paths.each do |path|
+        next if @sird_router_paths.includes?(path)
+        content = read_file_content(path)
+        next unless content.includes?("Router.from") && content.includes?("play.api.routing")
+        process_router_from_blocks(path, content)
+      end
+
       Fiber.yield
       @result
     end
@@ -69,6 +78,8 @@ module Analyzer::Scala
     # All `.scala` paths in the scan, used to resolve SIRD/SimpleRouter
     # classes referenced from `->` include lines that are not routes files.
     @scala_paths = [] of String
+    # Files already read as the SIRD router of a routes-file `->` include.
+    @sird_router_paths = Set(String).new
 
     # Decide whether a `.scala` file holds Play controllers. The
     # `controllers` package is conventional, but Play resolves actions
@@ -633,6 +644,7 @@ module Analyzer::Scala
 
     # Emit endpoints for a SIRD router's `routes` PartialFunction.
     private def process_sird_router(router : NamedTuple(path: String, content: String, class_name: String), prefix : String)
+      @sird_router_paths << router[:path]
       source = router[:content]
       structure = blank_non_code(source)
       # Cases are read from a comment-free copy (string literals kept,
@@ -641,11 +653,43 @@ module Analyzer::Scala
       block = extract_router_routes_block(structure, Noir::ScalaLexer.new(source).code.join)
       return unless block
 
-      body = block[:body]
-      body_start = block[:start]
+      emit_sird_cases(block[:body], block[:start], source, router[:path], prefix)
+    end
 
-      # Each case maps an HTTP method + SIRD path pattern to a controller
-      # action, e.g. `case GET(p"/$id") => controller.show(id)`.
+    # `Router.from { case ... }` with an optional trailing
+    # `withPrefix("/p")` (infix or dotted). An interpolated prefix such as
+    # `s"/items/$name"` keeps `$name` as a `:name` path segment.
+    private def process_router_from_blocks(path : String, source : String)
+      structure = blank_non_code(source)
+      code = Noir::ScalaLexer.new(source).code.join
+      chars = structure.chars
+      offset = 0
+      while found = structure.index("Router.from", offset)
+        offset = found + "Router.from".size
+        open_brace = offset
+        while open_brace < chars.size && chars[open_brace].ascii_whitespace?
+          open_brace += 1
+        end
+        next unless chars[open_brace]? == '{'
+        close = matching_brace(chars, open_brace)
+        next unless close
+        offset = close + 1
+
+        prefix = ""
+        prefix_params = [] of String
+        if prefix_match = SIRD_WITH_PREFIX_RE.match(code, close + 1, options: Regex::MatchOptions::ANCHORED)
+          prefix, prefix_params = normalize_sird_path(prefix_match[1])
+        end
+        emit_sird_cases(code[(open_brace + 1)...close], open_brace + 1, source, path, prefix, prefix_params)
+      end
+    end
+
+    SIRD_WITH_PREFIX_RE = /\s*\.?\s*withPrefix\s*\(\s*s?"([^"]*)"\s*\)/
+
+    # Each case maps an HTTP method + SIRD path pattern to a controller
+    # action, e.g. `case GET(p"/$id") => controller.show(id)`.
+    private def emit_sird_cases(body : String, body_start : Int32, source : String, path : String,
+                                prefix : String, prefix_params = [] of String)
       body.scan(/case\s+(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)\s*\(\s*p"([^"]*)"/) do |match|
         method = match[1]
         url_path, params = normalize_sird_path(match[2])
@@ -653,8 +697,8 @@ module Analyzer::Scala
         full_path = "/" if full_path.empty?
 
         line = line_at(source, body_start + (match.begin(0) || 0))
-        endpoint = create_endpoint(full_path, method, router[:path], line)
-        params.each do |param_name|
+        endpoint = create_endpoint(full_path, method, path, line)
+        (prefix_params + params).each do |param_name|
           endpoint.push_param(Param.new(param_name, "", "path"))
         end
         @result << endpoint
