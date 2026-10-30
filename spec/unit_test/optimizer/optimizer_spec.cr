@@ -564,6 +564,71 @@ describe "EndpointOptimizer" do
       end
     end
 
+    it "splits the programs of a `-b module/cmd` scan, whose go.mod is above the base" do
+      optimizer = EndpointOptimizer.new(logger, options)
+      temp_dir = File.join(Dir.tempdir, "noir-optimizer-gocmdbase-#{Process.pid}-#{Time.utc.to_unix_ms}")
+      base = File.join(temp_dir, "cmd")
+
+      begin
+        {"a", "b"}.each do |dir|
+          Dir.mkdir_p(File.join(base, dir))
+          File.write(File.join(base, dir, "main.go"), "package main\n\nfunc main() {}\n")
+        end
+        File.write(File.join(temp_dir, "go.mod"), "module example.com/multi\n")
+        options["base"] = YAML::Any.new([YAML::Any.new(base)])
+
+        a = tech_endpoint("/upload", "POST", "go_gin", File.join(base, "a/main.go"), 8)
+        b = tech_endpoint("/upload", "POST", "go_gin", File.join(base, "b/main.go"), 8)
+        optimizer.optimize_endpoints([a, b]).size.should eq(2)
+      ensure
+        options.delete("base")
+        FileUtils.rm_rf(temp_dir)
+      end
+    end
+
+    it "keeps two scan bases apart when their manifests sit above them" do
+      optimizer = EndpointOptimizer.new(logger, options)
+      temp_dir = File.join(Dir.tempdir, "noir-optimizer-siblingbases-#{Process.pid}-#{Time.utc.to_unix_ms}")
+      bases = ["a", "b"].map { |app| File.join(temp_dir, app, "src") }
+
+      begin
+        bases.each do |base|
+          Dir.mkdir_p(base)
+          File.write(File.join(File.dirname(base), "package.json"), "{}")
+        end
+        options["base"] = YAML::Any.new(bases.map { |base| YAML::Any.new(base) })
+
+        a = tech_endpoint("/login", "POST", "js_express", File.join(bases[0], "app.js"), 3)
+        b = tech_endpoint("/login", "POST", "js_express", File.join(bases[1], "app.js"), 3)
+        optimizer.optimize_endpoints([a, b]).size.should eq(2)
+      ensure
+        options.delete("base")
+        FileUtils.rm_rf(temp_dir)
+      end
+    end
+
+    it "reads a Go package clause past a BOM, a block comment and indentation" do
+      optimizer = EndpointOptimizer.new(logger, options)
+      temp_dir = File.join(Dir.tempdir, "noir-optimizer-goclause-#{Process.pid}-#{Time.utc.to_unix_ms}")
+      blockc = File.join(temp_dir, "blockc/main.go")
+      indent = File.join(temp_dir, "indent/main.go")
+
+      begin
+        Dir.mkdir_p(File.dirname(blockc))
+        Dir.mkdir_p(File.dirname(indent))
+        # The comment's own `package` line is prose, not the clause.
+        File.write(blockc, "﻿/*\npackage docs for foo\n*/\npackage main\n")
+        File.write(indent, "/* a */ /* b\n*/  package main\n")
+        File.write(File.join(temp_dir, "go.mod"), "module example.com/examples\n")
+
+        a = tech_endpoint("/upload", "POST", "go_gin", blockc, 5)
+        b = tech_endpoint("/upload", "POST", "go_gin", indent, 5)
+        optimizer.optimize_endpoints([a, b]).size.should eq(2)
+      ensure
+        FileUtils.rm_rf(temp_dir)
+      end
+    end
+
     it "reads a Bazel BUILD file that is not valid UTF-8" do
       optimizer = EndpointOptimizer.new(logger, options)
       temp_dir = File.join(Dir.tempdir, "noir-optimizer-bazelbytes-#{Process.pid}-#{Time.utc.to_unix_ms}")

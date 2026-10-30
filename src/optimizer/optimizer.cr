@@ -60,6 +60,9 @@ class EndpointOptimizer
   # The directory counts only when the file invokes a `*_binary` or `*_image` rule.
   BAZEL_DEPLOYABLE_RE = /\b[A-Za-z_]\w*_(?:binary|image)\s*\(/
 
+  # How far into a Go file `go_main_package?` looks for the package clause.
+  GO_PACKAGE_PROBE_BYTES = 64 * 1024
+
   def initialize(@logger : NoirLogger, @options : Hash(String, YAML::Any))
     @pvalue_rules = initialize_pvalue_rules
     @source_scope_cache = Hash(String, String).new
@@ -801,7 +804,8 @@ class EndpointOptimizer
     @source_scope_cache[start_dir] ||= begin
       scope = ""
       dir = start_dir
-      floor = Noir::PathScope.longest_base(start_dir, scan_bases).try { |base| Noir::PathScope.normalize_root(base) }
+      bases = scan_bases
+      floor = Noir::PathScope.longest_base(start_dir, bases).try { |base| Noir::PathScope.normalize_root(base) }
 
       loop do
         break if floor && !Noir::PathScope.under_normalized_root?(dir, floor)
@@ -815,11 +819,18 @@ class EndpointOptimizer
         dir = parent
       end
 
+      # No manifest inside the base (`-b app/src`, `-b module/cmd`): with
+      # several bases, each one is its own project, so two of them never
+      # fold into one row. A single base stays unscoped.
+      scope = floor if scope.empty? && floor && bases.size > 1
+
       # One Go module, many programs (gin-gonic/examples, a `cmd/` tree):
       # each `package main` directory is its own deployable, so `POST
       # /upload` in two of them must not merge into one row carrying the
-      # first one's path and the other's handler.
-      if path.ends_with?(".go") && !scope.empty? && go_program_dir?(start_dir, scope)
+      # first one's path and the other's handler. Without a `go.mod` in
+      # the scan, the base stands in for the module.
+      module_root = scope.empty? ? floor : scope
+      if path.ends_with?(".go") && module_root && go_program_dir?(start_dir, module_root)
         scope = start_dir
       end
 
@@ -852,14 +863,32 @@ class EndpointOptimizer
     programs.size > 1 && programs.includes?(dir)
   end
 
-  # The first line that opens with `package` is the package clause, however
-  # long the license header above it runs. Only that line is scrubbed: PCRE
-  # refuses invalid UTF-8, and a header can hold any bytes.
+  # The package clause is the first code in a Go file: skip the BOM, line
+  # comments and `/* */` spans above it, however long the license header
+  # runs, up to a cap. Lines are scrubbed: PCRE refuses invalid UTF-8.
   private def go_main_package?(file : String) : Bool
     File.open(file) do |io|
-      io.each_line do |line|
-        next unless line.starts_with?("package")
-        clause = line.scrub.match(/\Apackage\s+(\w+)/) || next
+      in_block = false
+      read = 0
+      io.each_line do |raw|
+        read += raw.bytesize
+        break if read > GO_PACKAGE_PROBE_BYTES
+        line = raw.scrub.lchop('\uFEFF')
+        if in_block
+          close = line.index("*/") || next
+          line = line[close + 2..]
+          in_block = false
+        end
+        line = line.lstrip
+        while line.starts_with?("/*")
+          unless close = line.index("*/", 2)
+            in_block = true
+            break
+          end
+          line = line[close + 2..].lstrip
+        end
+        next if in_block || !line.starts_with?("package")
+        clause = line.match(/\Apackage\s+(\w+)/) || next
         return clause[1] == "main"
       end
     end
