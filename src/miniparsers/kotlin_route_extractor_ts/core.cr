@@ -81,6 +81,8 @@ module Noir
       # each was declared at, so a constant after a nested `object` keeps
       # its outer prefix and a nested one also registers `Outer.Inner.NAME`.
       type_stack = [] of Tuple(String, Int32)
+      # A type whose header has not reached its `{` yet: name, open parens.
+      pending : Tuple(String, Int32)? = nil
       depth = 0
       # Scrubbed copy (strings/comments blanked, newlines preserved) for brace
       # counting, so a `}` inside a const string value can't close the type early.
@@ -103,12 +105,32 @@ module Noir
         # One line can hold several declarations (`object P { const val
         # A = "/a"; const val B = "/b" }`), so scan it statement by statement.
         each_statement(line, scrubbed_lines[idx]? || line) do |statement, delimiter|
+          # A type is a parent only once its own `{` opens: a body-less
+          # `data class Dto(val id: Long)` encloses nothing after it. The
+          # header may run over several lines (constructor parameters,
+          # `: Super`, `where`), so it stays pending until its `{` or the
+          # next declaration.
+          in_header = false
           if match = statement.match(KOTLIN_TYPE_DECL_RE)
+            pending = {match[1], statement.count('(') - statement.count(')')}
+            in_header = true
+          elsif current = pending
+            parens = current[1] + statement.count('(') - statement.count(')')
+            rest = statement.lstrip
+            if current[1] > 0 || rest.empty? || rest.starts_with?(':') || rest.starts_with?("where")
+              pending = {current[0], parens}
+              in_header = true
+            else
+              pending = nil
+            end
+          end
+          if (current = pending) && delimiter == '{' && current[1] <= 0
             # A body-less sibling type declared at this depth is not a parent.
             while (top = type_stack.last?) && top[1] >= depth
               type_stack.pop
             end
-            type_stack << {match[1], depth}
+            type_stack << {current[0], depth}
+            pending = nil
           end
 
           name = value = nil
@@ -122,8 +144,8 @@ module Noir
             constants[name] ||= value
             if type_stack.empty?
               # A top-level const is imported as `pkg.NAME`; a `val` inside a
-              # top-level function body is not.
-              constants["#{package_name}.#{name}"] ||= value if depth == 0 && !package_name.empty?
+              # top-level function body or a constructor header is not.
+              constants["#{package_name}.#{name}"] ||= value if depth == 0 && !in_header && !package_name.empty?
             else
               qualified = type_stack.join('.', &.[0])
               constants["#{type_stack.last[0]}.#{name}"] ||= value
