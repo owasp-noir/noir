@@ -159,6 +159,19 @@ describe "outbound client calls read as routes" do
       parsed("class Api extends Router { constructor() { super(); this.get('/x', auth, ctrl.list); } }", this_receiver_ok: true).uniq!.should eq(["GET /x"])
     end
 
+    it "drops a this.<verb> call whose only function is a client callback" do
+      {
+        "class C extends RestClient { find(id) { return this.get(`/cb/${id}`, {}, (err, body) => body); } }",
+        "class C extends RestClient { find(id) { return this.get('/cb', { json: true }, function (err, res, body) { return body; }); } }",
+        "class C extends RestClient { stmt(cb) { this.get('/cb', function (err, res) { cb(res); }); } }",
+        "class C extends RestClient { stmt(cb) { this.post('/cb', { body: 1 }, (error, response) => cb(response)); } }",
+      }.each do |code|
+        parsed(code, this_receiver_ok: true).should be_empty
+        parsed(code, this_receiver_ok: false).should be_empty
+      end
+      parsed("class R extends Router { constructor() { super(); this.get('/x', async (ctx) => { ctx.body = 1; }); } }", this_receiver_ok: true).uniq!.should eq(["GET /x"])
+    end
+
     it "drops a call on a member of a client module and any awaited call" do
       {
         "import * as request from './request'; async function up(id, payload) { await request.formData.post(`/form-data/items/${id}/icon`, payload); }",

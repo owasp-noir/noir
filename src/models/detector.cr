@@ -259,17 +259,57 @@ class Detector
   def go_mod_dependency?(filename : String, file_contents : String, marker : String | Regex) : Bool
     return false unless filename.includes?("go.mod")
     file_contents.each_line.any? do |line|
-      next false if line.partition("//")[2].lstrip.starts_with?("indirect")
-      marker.is_a?(String) ? line.includes?(marker) : content_matches?(line, marker)
+      code, _, comment = line.partition("//")
+      # cmd/go's own reading: the comment is `indirect` or `indirect; …`.
+      comment = comment.strip
+      next false if comment == "indirect" || comment.starts_with?("indirect;")
+      marker.is_a?(String) ? code.includes?(marker) : content_matches?(code, marker)
     end
   end
 
-  # `go_mod_dependency?`, or a `.go` file importing `marker`. `go get` marks
-  # a module `// indirect` until `go mod tidy` runs, even one the code
-  # imports, so the import itself also counts.
+  GO_BUILD_IGNORE_RE = /^\/\/go:build\s+ignore\b/m
+
+  # `go_mod_dependency?`, or a `.go` file that imports `marker`. `go get`
+  # marks a module `// indirect` until `go mod tidy` runs, even one the code
+  # imports, so the import itself also counts. Only an import path counts,
+  # not a comment or a code template naming the module, and not a file the
+  # build leaves out (`_test.go`, `testdata/`, `vendor/`, `//go:build ignore`).
   def go_dependency?(filename : String, file_contents : String, marker : Regex) : Bool
-    go_mod_dependency?(filename, file_contents, marker) ||
-      (filename.ends_with?(".go") && content_matches?(file_contents, marker))
+    return go_mod_dependency?(filename, file_contents, marker) unless filename.ends_with?(".go")
+    return false unless content_matches?(file_contents, marker)
+    relative = base_relative_path(filename)
+    return false if relative.ends_with?("_test.go")
+    return false if {"testdata/", "vendor/"}.any? { |dir| relative.starts_with?(dir) || relative.includes?("/#{dir}") }
+    return false if file_contents.matches?(GO_BUILD_IGNORE_RE)
+    go_imports?(file_contents, marker)
+  end
+
+  # Walks the import declarations, which Go puts before every other
+  # top-level declaration, so a template string further down never counts.
+  private def go_imports?(file_contents : String, marker : Regex) : Bool
+    in_block = false
+    in_comment = false
+    file_contents.each_line do |raw|
+      line = raw.strip
+      if in_comment
+        in_comment = !line.includes?("*/")
+        next
+      end
+      unless in_block
+        next if line.empty? || line.starts_with?("//") || line.starts_with?("package ")
+        if line.starts_with?("/*")
+          in_comment = !line.includes?("*/")
+          next
+        end
+        break unless line.starts_with?("import")
+        line = line.lchop("import").lstrip
+        in_block = line.starts_with?('(')
+      end
+      in_block = false if in_block && line.includes?(')')
+      code = line.partition("//")[0]
+      return true if code.includes?('"') && content_matches?(code, marker)
+    end
+    false
   end
 
   # A document that matched this format's content marker but could not be

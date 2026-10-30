@@ -24,10 +24,25 @@ describe "Detect Go Echo" do
     instance.detect("go.mod", "require github.com/labstack/echo/v4 v4.13.3 //indirect\n").should be_false
     instance.detect("go.mod", "require github.com/labstack/echo/v4 v4.13.3 // indirect; used by tools\n").should be_false
     instance.detect("go.mod", "require github.com/labstack/echo/v4 v4.13.3 // pinned, not indirect\n").should be_true
+    # cmd/go reads only `indirect` alone or `indirect; …` as the marker.
+    instance.detect("go.mod", "require github.com/labstack/echo/v4 v4.13.3 // indirectly via plugin\n").should be_true
+    instance.detect("go.mod", "require github.com/labstack/echo/v4 v4.13.3 // indirect foo\n").should be_true
   end
 
   it "detects a .go import when go.mod still marks echo indirect" do
     instance.detect("main.go", %(package main\n\nimport "github.com/labstack/echo/v4"\n)).should be_true
+    instance.detect("main.go", %(/* License */\npackage main\n\nimport (\n\t"net/http"\n\n\tmw "github.com/labstack/echo/v4"\n)\n)).should be_true
+  end
+
+  it "does not read a mention or a file the build leaves out as an import" do
+    import = %(package main\n\nimport "github.com/labstack/echo/v4"\n)
+    instance.detect("doc.go", "// Works with routers such as github.com/labstack/echo.\npackage adapter\n").should be_false
+    instance.detect("gen.go", %(package gen\n\nimport "fmt"\n\nconst t = `package main\n\nimport "github.com/labstack/echo/v4"\n`\n)).should be_false
+    instance.detect("gen.go", %(package gen\n\nimport (\n\t// "github.com/labstack/echo/v4"\n\t"fmt"\n)\n)).should be_false
+    instance.detect("gen.go", "//go:build ignore\n\n#{import}").should be_false
+    instance.detect("lib_test.go", import).should be_false
+    instance.detect("testdata/src/app/main.go", import).should be_false
+    instance.detect("vendor/example.com/x/main.go", import).should be_false
   end
 
   it "detects direct dependencies in go.mod" do
