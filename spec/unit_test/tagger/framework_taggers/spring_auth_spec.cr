@@ -3445,3 +3445,159 @@ describe "SpringAuthTagger (servlet filter review cases, round two)" do
     review_case("j12_default_credential", {"src/main/java/app/KeyFilter.java" => source}).values.flatten.should be_empty
   end
 end
+
+def spring_chain_source(pkg : String, rule : String) : String
+  <<-JAVA
+    package #{pkg};
+
+    public class SecurityConfig {
+        @Bean
+        SecurityFilterChain chain(HttpSecurity http) throws Exception {
+            http.authorizeHttpRequests(c -> c.anyRequest().#{rule});
+            return http.build();
+        }
+    }
+    JAVA
+end
+
+SPRING_ITEMS_CONTROLLER = "public class Controller {\n    @GetMapping(\"/items\")\n    public String items() { return \"\"; }\n}\n"
+SPRING_WEB_STARTER      = "dependencies {\n    implementation 'org.springframework.boot:spring-boot-starter-web'\n"
+
+# A Gradle build where `admin` serves /items and `api` declares a hasRole
+# chain; `admin_build` is admin's build file, `extra` more files.
+def gradle_items_guard(admin_build : String, extra = {} of String => String) : Array(String)
+  files = {
+    "settings.gradle"                                           => "include 'api'\ninclude 'admin'\n",
+    "api/build.gradle"                                          => "#{SPRING_WEB_STARTER}}\n",
+    "api/src/main/java/com/example/api/SecurityConfig.java"     => spring_chain_source("com.example.api", "hasRole(\"USER\")"),
+    "admin/build.gradle"                                        => admin_build,
+    "admin/src/main/java/com/example/admin/ItemController.java" => SPRING_ITEMS_CONTROLLER,
+  }
+  run_spring_multi_module(files.merge(extra), {"GET /items" => "admin/src/main/java/com/example/admin/ItemController.java:2"})["GET /items"]
+end
+
+describe "SpringAuthTagger (Gradle build scoping)" do
+  guarded = ["Protected by Spring Security hasRole via anyRequest()"]
+
+  it "does not apply one Gradle app's chain to a sibling Gradle build" do
+    tags = run_spring_multi_module({
+      "admin-app/build.gradle.kts"                               => "dependencies {\n    implementation(\"org.springframework.boot:spring-boot-starter-security\")\n}\n",
+      "admin-app/src/main/java/com/example/SecurityConfig.java"  => spring_chain_source("com.example", "hasRole(\"USER\")"),
+      "admin-app/src/main/java/com/example/Controller.java"      => SPRING_ITEMS_CONTROLLER,
+      "public-app/build.gradle.kts"                              => "dependencies { implementation(\"org.springframework.boot:spring-boot-starter-web\") }\n",
+      "public-app/src/main/java/com/example/pub/Controller.java" => SPRING_ITEMS_CONTROLLER,
+    }, {
+      "GET /admin" => "admin-app/src/main/java/com/example/Controller.java:2",
+      "GET /items" => "public-app/src/main/java/com/example/pub/Controller.java:2",
+    })
+    tags["GET /admin"].should eq(guarded)
+    tags["GET /items"].should be_empty
+  end
+
+  it "does not apply a Maven app's chain to a Gradle app beside it" do
+    tags = run_spring_multi_module({
+      "admin-app/pom.xml"                                        => spring_module_pom("admin-app", ["spring-boot-starter-security"]),
+      "admin-app/src/main/java/com/example/SecurityConfig.java"  => spring_chain_source("com.example", "hasRole(\"USER\")"),
+      "public-app/build.gradle"                                  => "#{SPRING_WEB_STARTER}}\n",
+      "public-app/src/main/java/com/example/pub/Controller.java" => SPRING_ITEMS_CONTROLLER,
+    }, {"GET /items" => "public-app/src/main/java/com/example/pub/Controller.java:2"})
+    tags["GET /items"].should be_empty
+  end
+
+  it "applies another module's chain only through a project dependency" do
+    gradle_items_guard("#{SPRING_WEB_STARTER}}\n").should be_empty
+    gradle_items_guard("#{SPRING_WEB_STARTER}    implementation project(':api')\n}\n").should eq(guarded)
+    gradle_items_guard("#{SPRING_WEB_STARTER}    implementation(projects.api)\n}\n").should eq(guarded)
+    gradle_items_guard("#{SPRING_WEB_STARTER}    testImplementation project(':api')\n}\n").should be_empty
+  end
+
+  it "decides a module with its own chain by that chain, not an unrelated module's" do
+    own = {"admin/src/main/java/com/example/admin/SecurityConfig.java" => spring_chain_source("com.example.admin", "permitAll()")}
+    gradle_items_guard("#{SPRING_WEB_STARTER}}\n", own).should be_empty
+  end
+
+  it "follows a project dependency through a transitive module in a relocated directory" do
+    gradle_items_guard("#{SPRING_WEB_STARTER}    implementation project(':core')\n}\n", {
+      "settings.gradle"        => "include 'api', 'admin', 'core'\nproject(':core').projectDir = file('libs/core')\n",
+      "libs/core/build.gradle" => "dependencies { api project(':api') }\n",
+    }).should eq(guarded)
+  end
+
+  it "keeps every chain of the build when something else can add a project dependency" do
+    plain = "#{SPRING_WEB_STARTER}}\n"
+    gradle_items_guard(plain, {"build.gradle" => "subprojects {\n    dependencies { implementation project(':api') }\n}\n"}).should eq(guarded)
+    gradle_items_guard(plain, {"buildSrc/src/main/groovy/app.conventions.gradle" => "dependencies { implementation project(':api') }\n"}).should eq(guarded)
+    gradle_items_guard("#{SPRING_WEB_STARTER}    implementation project(':unknown')\n}\n").should eq(guarded)
+    gradle_items_guard("#{SPRING_WEB_STARTER}    implementation(project(mapOf(\"path\" to \":api\")))\n}\n").should eq(guarded)
+    gradle_items_guard(plain, {"build.gradle.kts" => "subprojects {\n    dependencies { implementation(projects.api) }\n}\n"}).should eq(guarded)
+  end
+
+  it "keeps every chain when a project dependency's settings are not in the scan" do
+    tags = run_spring_multi_module({
+      "api/build.gradle"                                          => "#{SPRING_WEB_STARTER}}\n",
+      "api/src/main/java/com/example/api/SecurityConfig.java"     => spring_chain_source("com.example.api", "hasRole(\"USER\")"),
+      "admin/build.gradle"                                        => "#{SPRING_WEB_STARTER}    implementation project(':api')\n}\n",
+      "admin/src/main/java/com/example/admin/ItemController.java" => SPRING_ITEMS_CONTROLLER,
+    }, {"GET /items" => "admin/src/main/java/com/example/admin/ItemController.java:2"})
+    tags["GET /items"].should eq(guarded)
+  end
+
+  it "follows a coordinate dependency on a module of another build" do
+    tags = run_spring_multi_module({
+      "security-lib/pom.xml"                                       => spring_module_pom("security-lib", ["spring-boot-starter-security"]),
+      "security-lib/src/main/java/com/example/SecurityConfig.java" => spring_chain_source("com.example", "hasRole(\"USER\")"),
+      "app/build.gradle"                                           => "#{SPRING_WEB_STARTER}    implementation 'com.example:security-lib:1.0'\n}\n",
+      "app/src/main/java/com/example/app/Controller.java"          => SPRING_ITEMS_CONTROLLER,
+    }, {"GET /items" => "app/src/main/java/com/example/app/Controller.java:2"})
+    tags["GET /items"].should eq(guarded)
+  end
+
+  it "follows a coordinate dependency on an included build by its root project name" do
+    tags = run_spring_multi_module({
+      "shared/settings.gradle"                               => "rootProject.name = 'security-lib'\n",
+      "shared/build.gradle"                                  => "#{SPRING_WEB_STARTER}}\n",
+      "shared/src/main/java/com/example/SecurityConfig.java" => spring_chain_source("com.example", "hasRole(\"USER\")"),
+      "app/settings.gradle"                                  => "includeBuild '../shared'\n",
+      "app/build.gradle"                                     => "#{SPRING_WEB_STARTER}    implementation 'com.example:security-lib:1.0'\n}\n",
+      "app/src/main/java/com/example/app/Controller.java"    => SPRING_ITEMS_CONTROLLER,
+    }, {"GET /items" => "app/src/main/java/com/example/app/Controller.java:2"})
+    tags["GET /items"].should eq(guarded)
+  end
+end
+
+describe "SpringAuthTagger (servlet path matchers)" do
+  it "scopes a chain matched by servletPath(...).pattern(...) to the servlet path" do
+    config = <<-JAVA
+      public class WsSecurity {
+          @Bean
+          public SecurityFilterChain wsChain(HttpSecurity http, HandlerMappingIntrospector introspector) throws Exception {
+              MvcRequestMatcher.Builder mvc = new MvcRequestMatcher.Builder(introspector);
+              http
+                  .securityMatcher(mvc.servletPath("/ws").pattern("/**"))
+                  .authorizeHttpRequests(c -> c.requestMatchers(mvc.servletPath("/ws").pattern("/open")).permitAll()
+                      .anyRequest().hasRole("USER"));
+              return http.build();
+          }
+      }
+      JAVA
+    tags = run_spring_security_config({"WsSecurity.java" => config}, ["GET /items", "GET /ws/items", "GET /ws/open"])
+    tags["GET /items"].should be_empty
+    tags["GET /ws/items"].should eq(["Protected by Spring Security hasRole via anyRequest()"])
+    tags["GET /ws/open"].should be_empty
+  end
+
+  it "treats a chain whose servlet path it cannot read as scoped by an unreadable matcher" do
+    config = <<-JAVA
+      public class WsSecurity {
+          @Bean
+          public SecurityFilterChain wsChain(HttpSecurity http) throws Exception {
+              http
+                  .securityMatcher(mvc.servletPath(Paths.WS).pattern("/**"))
+                  .authorizeHttpRequests(c -> c.anyRequest().hasRole("USER"));
+              return http.build();
+          }
+      }
+      JAVA
+    run_spring_security_config({"WsSecurity.java" => config}, ["GET /items"])["GET /items"].should be_empty
+  end
+end

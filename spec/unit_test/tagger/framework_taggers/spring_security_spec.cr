@@ -1,3 +1,4 @@
+require "file_utils"
 require "../../../spec_helper"
 require "../../../../src/tagger/tagger"
 
@@ -385,5 +386,147 @@ describe "SpringSecurityTagger" do
         Dir.delete(dir) if Dir.exists?(dir)
       end
     end
+  end
+end
+
+# Write `files` (path relative to a temp root => content), register them,
+# and run SpringSecurityTagger over `routes` ("METHOD /path" => "relative
+# controller path:line"). Returns each route's spring_security tag names.
+private def spring_security_tags(files : Hash(String, String), routes : Hash(String, String)) : Hash(String, Array(String))
+  CodeLocator.instance.clear_all
+  root = File.tempname("spring_security_scope")
+  files.each do |relative, source|
+    path = File.join(root, relative)
+    Dir.mkdir_p(File.dirname(path))
+    File.write(path, source)
+    CodeLocator.instance.register_path(path)
+  end
+  options = create_test_options
+  options["base"] = YAML::Any.new(root)
+  endpoints = routes.map do |route, location|
+    method, url = route.split(' ', 2)
+    file, line = location.split(':')
+    build_endpoint(File.join(root, file), line.to_i, url, method)
+  end
+  SpringSecurityTagger.new(options).perform(endpoints)
+  FileUtils.rm_rf(root)
+  routes.keys.zip(endpoints).to_h { |route, endpoint| {route, endpoint.tags.select(&.tagger.==("spring_security")).map(&.name)} }
+end
+
+describe "SpringSecurityTagger (scope of a rule)" do
+  controller = "public class Controller {\n    public String a() { return \"\"; }\n}\n"
+  admin_config = <<-JAVA
+    @Configuration
+    public class SecurityConfig implements WebMvcConfigurer {
+        @Bean
+        SecurityFilterChain chain(HttpSecurity http) throws Exception {
+            http.csrf(c -> c.disable());
+            return http.build();
+        }
+
+        @Override
+        public void addCorsMappings(CorsRegistry registry) {
+            registry.addMapping("/**").allowedOriginPatterns("*").allowCredentials(true);
+        }
+    }
+    JAVA
+  routes = {
+    "POST /admin/users" => "admin-app/src/main/java/Controller.java:2",
+    "POST /items"       => "public-app/src/main/java/Controller.java:2",
+  }
+
+  it "keeps CSRF and CORS settings of one Gradle build off a sibling build" do
+    tags = spring_security_tags({
+      "admin-app/build.gradle.kts"                  => "dependencies { implementation(\"org.springframework.boot:spring-boot-starter-security\") }\n",
+      "admin-app/src/main/java/SecurityConfig.java" => admin_config,
+      "admin-app/src/main/java/Controller.java"     => controller,
+      "public-app/build.gradle.kts"                 => "dependencies { implementation(\"org.springframework.boot:spring-boot-starter-web\") }\n",
+      "public-app/src/main/java/Controller.java"    => controller,
+    }, routes)
+    tags["POST /admin/users"].should eq(["csrf-protection", "cors"])
+    tags["POST /items"].should be_empty
+  end
+
+  it "keeps CSRF and CORS settings of one Maven app off a sibling app" do
+    tags = spring_security_tags({
+      "admin-app/pom.xml"                           => "<project><artifactId>admin-app</artifactId><dependencies><dependency><artifactId>spring-boot-starter-security</artifactId></dependency></dependencies></project>",
+      "admin-app/src/main/java/SecurityConfig.java" => admin_config,
+      "admin-app/src/main/java/Controller.java"     => controller,
+      "public-app/pom.xml"                          => "<project><artifactId>public-app</artifactId></project>",
+      "public-app/src/main/java/Controller.java"    => controller,
+    }, routes)
+    tags["POST /admin/users"].should eq(["csrf-protection", "cors"])
+    tags["POST /items"].should be_empty
+  end
+
+  it "applies them to a module that depends on the declaring one" do
+    tags = spring_security_tags({
+      "settings.gradle"                             => "include 'admin-app', 'public-app'\n",
+      "admin-app/build.gradle"                      => "dependencies { implementation 'org.springframework.boot:spring-boot-starter-security' }\n",
+      "admin-app/src/main/java/SecurityConfig.java" => admin_config,
+      "public-app/build.gradle"                     => "dependencies { implementation project(':admin-app') }\n",
+      "public-app/src/main/java/Controller.java"    => controller,
+    }, {"POST /items" => "public-app/src/main/java/Controller.java:2"})
+    tags["POST /items"].should eq(["csrf-protection", "cors"])
+  end
+
+  it "matches a CSRF or CORS path pattern as a whole path, not a prefix" do
+    files = {
+      "src/main/java/SecurityConfig.java" => <<-JAVA,
+        public class SecurityConfig {
+            @Bean
+            SecurityFilterChain chain(HttpSecurity http) throws Exception {
+                http.csrf(c -> c.ignoringRequestMatchers("/login", "/hooks/**"));
+                return http.build();
+            }
+        }
+        JAVA
+      "src/main/java/StompConfig.java" => <<-JAVA,
+        @Configuration
+        @EnableWebSocketMessageBroker
+        public class StompConfig implements WebSocketMessageBrokerConfigurer {
+            @Override
+            public void registerStompEndpoints(StompEndpointRegistry registry) {
+                registry.addEndpoint("/").setAllowedOriginPatterns("*");
+            }
+        }
+        JAVA
+      "src/main/java/Controller.java" => controller,
+    }
+    tags = spring_security_tags(files, {
+      "POST /login"                => "src/main/java/Controller.java:2",
+      "POST /login-history/delete" => "src/main/java/Controller.java:2",
+      "POST /hooks"                => "src/main/java/Controller.java:2",
+      "POST /hooks/github"         => "src/main/java/Controller.java:2",
+      "GET /"                      => "src/main/java/Controller.java:2",
+      "GET /items"                 => "src/main/java/Controller.java:2",
+    })
+    tags["POST /login"].should eq(["csrf-protection"])
+    tags["POST /login-history/delete"].should be_empty
+    tags["POST /hooks"].should eq(["csrf-protection"])
+    tags["POST /hooks/github"].should eq(["csrf-protection"])
+    tags["GET /"].should eq(["cors"])
+    tags["GET /items"].should be_empty
+  end
+
+  it "scopes a chain matched by servletPath(...).pattern(...) to the servlet path" do
+    config = ->(servlet_path : String) do
+      <<-JAVA
+        public class WsSecurity {
+            @Bean
+            SecurityFilterChain wsChain(HttpSecurity http) throws Exception {
+                http.securityMatcher(mvc.servletPath(#{servlet_path}).pattern("/**"))
+                    .csrf(c -> c.disable());
+                return http.build();
+            }
+        }
+        JAVA
+    end
+    ws_routes = {"POST /items" => "src/main/java/Controller.java:2", "POST /ws/items" => "src/main/java/Controller.java:2"}
+    tags = spring_security_tags({"src/main/java/WsSecurity.java" => config.call("\"/ws\""), "src/main/java/Controller.java" => controller}, ws_routes)
+    tags["POST /items"].should be_empty
+    tags["POST /ws/items"].should eq(["csrf-protection"])
+    unread = spring_security_tags({"src/main/java/WsSecurity.java" => config.call("WS_PATH"), "src/main/java/Controller.java" => controller}, ws_routes)
+    unread.values.flatten.should be_empty
   end
 end

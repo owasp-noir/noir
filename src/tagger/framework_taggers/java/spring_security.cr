@@ -1,5 +1,6 @@
 require "../../../models/framework_tagger"
 require "../../../models/endpoint"
+require "./spring_module_scope"
 
 # Spring-specific security tagger.
 #
@@ -37,6 +38,8 @@ require "../../../models/endpoint"
 # Filter bean, a bespoke CorsConfigurationSource) are out of scope.
 @[Noir::TaggerFor(key: "spring_security", name: "Spring Security Tagger", desc: "Identifies Spring security signals beyond auth (CSRF disabled, CORS policy, security headers, input validation)", order: 30)]
 class SpringSecurityTagger < FrameworkTagger
+  include SpringModuleScope
+
   STATE_CHANGING_METHODS = Set{"POST", "PUT", "PATCH", "DELETE"}
 
   # A SecurityFilterChain bean / WebSecurityConfigurerAdapter.configure body
@@ -72,13 +75,19 @@ class SpringSecurityTagger < FrameworkTagger
   # `authorizeHttpRequests {…}` it scopes an authorization rule, not the
   # chain, and treating those as CSRF scopes would mis-attribute the rule.
   MATCHER_CALL = /\b(?:securityMatcher|antMatcher)\s*\(/
+  # `mvc.servletPath("/ws").pattern("/**")` matches `/ws/**`.
+  SERVLET_PATH_MATCHER = /\.\s*(?:servletPath|basePath)\s*\(\s*"([^"]*)"\s*\)\s*\.\s*(?:pattern|matcher)\s*\(\s*"([^"]*)"\s*\)/
+
+  # Every scope records the build unit declaring it (nil: outside any), so
+  # it applies only to the apps whose classpath holds that unit.
+  alias ScopedPattern = NamedTuple(pattern: String, module: String?)
 
   def initialize(options : Hash(String, YAML::Any))
     super
-    @csrf_disable_scopes = [] of String
-    @csrf_ignored_scopes = [] of String
-    @header_weak_scopes = [] of NamedTuple(pattern: String, kind: Symbol)
-    @cors_config_scopes = [] of NamedTuple(pattern: String, credentials: Bool, source: Symbol, call: String)
+    @csrf_disable_scopes = [] of ScopedPattern
+    @csrf_ignored_scopes = [] of ScopedPattern
+    @header_weak_scopes = [] of NamedTuple(pattern: String, kind: Symbol, module: String?)
+    @cors_config_scopes = [] of NamedTuple(pattern: String, credentials: Bool, source: Symbol, call: String, module: String?)
   end
 
   def self.target_techs : Array(String)
@@ -97,17 +106,20 @@ class SpringSecurityTagger < FrameworkTagger
     @csrf_ignored_scopes.clear
     @header_weak_scopes.clear
     @cors_config_scopes.clear
+    @boot_apps.clear
 
     [".java", ".kt"].each do |ext|
       collect_files_by_extension(ext).each do |file|
         content = read_file(file)
         next if content.nil?
+        note_boot_app(file, content)
+        module_dir = build_module(file)
 
         if content.includes?("HttpSecurity") || content.includes?("SecurityFilterChain") || content.includes?("WebSecurityConfigurerAdapter")
-          scan_security_config(content)
+          scan_security_config(content, module_dir)
         end
-        scan_cors_mappings(content) if content.includes?(".addMapping")
-        scan_websocket_cors_endpoints(content) if content.includes?(".addEndpoint") || content.includes?(".addHandler")
+        scan_cors_mappings(content, module_dir) if content.includes?(".addMapping")
+        scan_websocket_cors_endpoints(content, module_dir) if content.includes?(".addEndpoint") || content.includes?(".addHandler")
       end
     end
 
@@ -117,23 +129,23 @@ class SpringSecurityTagger < FrameworkTagger
     @cors_config_scopes.uniq!
   end
 
-  private def scan_security_config(content : String)
+  private def scan_security_config(content : String, module_dir : String?)
     split_into_chain_blocks(content).each do |block|
       matchers = extract_matchers(block)
 
       # (a) Whole-chain CSRF disable.
-      record_scoped(@csrf_disable_scopes, matchers, block) if block.matches?(CSRF_DISABLE)
+      record_scoped(@csrf_disable_scopes, matchers, block, module_dir) if block.matches?(CSRF_DISABLE)
 
       # (b) CSRF skipped for specific (absolute) paths. Used directly — these
       #     matchers are not relative to the chain's securityMatcher.
-      extract_ignoring_matchers(block).each { |p| @csrf_ignored_scopes << p }
+      extract_ignoring_matchers(block).each { |p| @csrf_ignored_scopes << {pattern: p, module: module_dir} }
 
       # (c) Default security response headers weakened. Whole-writer-off wins
       #     over the frameOptions-only case when both somehow appear.
       if block.matches?(HEADERS_FULLY_DISABLED)
-        record_header_scope(:all, matchers, block)
+        record_header_scope(:all, matchers, block, module_dir)
       elsif block.matches?(FRAME_OPTIONS_DISABLE)
-        record_header_scope(:frame, matchers, block)
+        record_header_scope(:frame, matchers, block, module_dir)
       end
     end
   end
@@ -142,19 +154,19 @@ class SpringSecurityTagger < FrameworkTagger
   # when present; treat a matcher-less chain as global `/**`; skip a chain
   # scoped only by a non-literal matcher (e.g. EndpointRequest) we can't
   # resolve, rather than over-broadening it to global.
-  private def record_scoped(target : Array(String), matchers : Array(String), block : String)
+  private def record_scoped(target : Array(ScopedPattern), matchers : Array(String), block : String, module_dir : String?)
     if !matchers.empty?
-      matchers.each { |m| target << m }
+      matchers.each { |m| target << {pattern: m, module: module_dir} }
     elsif !block.matches?(MATCHER_CALL)
-      target << "/**"
+      target << {pattern: "/**", module: module_dir}
     end
   end
 
-  private def record_header_scope(kind : Symbol, matchers : Array(String), block : String)
+  private def record_header_scope(kind : Symbol, matchers : Array(String), block : String, module_dir : String?)
     if !matchers.empty?
-      matchers.each { |m| @header_weak_scopes << {pattern: m, kind: kind} }
+      matchers.each { |m| @header_weak_scopes << {pattern: m, kind: kind, module: module_dir} }
     elsif !block.matches?(MATCHER_CALL)
-      @header_weak_scopes << {pattern: "/**", kind: kind}
+      @header_weak_scopes << {pattern: "/**", kind: kind, module: module_dir}
     end
   end
 
@@ -178,7 +190,12 @@ class SpringSecurityTagger < FrameworkTagger
     matchers = [] of String
     block.each_line do |raw|
       next unless raw.matches?(MATCHER_CALL)
-      raw.scan(/"([^"]+)"/) { |m| matchers << m[1] }
+      if raw.includes?("servletPath") || raw.includes?("basePath")
+        # A servlet path that is not a literal leaves the chain unread.
+        raw.scan(SERVLET_PATH_MATCHER) { |m| matchers << Noir::URLPath.join_rooted(m[1], m[2]) }
+      else
+        raw.scan(/"([^"]+)"/) { |m| matchers << m[1] }
+      end
     end
     matchers
   end
@@ -194,7 +211,7 @@ class SpringSecurityTagger < FrameworkTagger
   # `addMapping("/x").allowedOrigins("*")...` in a WebMvcConfigurer. Only a
   # wildcard origin is permissive enough to flag: a mapping listing specific
   # origins is the intended, safe use of CORS.
-  private def scan_cors_mappings(content : String)
+  private def scan_cors_mappings(content : String, module_dir : String?)
     fluent_call_statements(content, ".addMapping").each do |stmt|
       m = stmt.match(/\.addMapping\s*\(([^)]*)\)/)
       next unless m
@@ -203,7 +220,7 @@ class SpringSecurityTagger < FrameworkTagger
 
       credentials = stmt.includes?("allowCredentials") && stmt.includes?("true")
       quoted_literals(m[1]).each do |pattern|
-        @cors_config_scopes << {pattern: pattern, credentials: credentials, source: :mvc, call: "addMapping"}
+        @cors_config_scopes << {pattern: pattern, credentials: credentials, source: :mvc, call: "addMapping", module: module_dir}
       end
     end
   end
@@ -212,7 +229,7 @@ class SpringSecurityTagger < FrameworkTagger
   # `addHandler(handler, "/ws").setAllowedOrigins("*")` in a plain WebSocket
   # one, controls the HTTP handshake endpoint. Treat wildcard origins here
   # as the same cross-origin exposure reviewers expect to see on REST routes.
-  private def scan_websocket_cors_endpoints(content : String)
+  private def scan_websocket_cors_endpoints(content : String, module_dir : String?)
     {"addEndpoint", "addHandler"}.each do |call|
       fluent_call_statements(content, ".#{call}").each do |stmt|
         next unless wildcard_origin_call?(stmt, ["setAllowedOrigins", "setAllowedOriginPatterns"])
@@ -222,7 +239,7 @@ class SpringSecurityTagger < FrameworkTagger
         # `addHandler`'s first argument is the handler, never a quoted path.
         call_arguments(stmt, ".#{call}").each do |args|
           quoted_literals(args).each do |pattern|
-            @cors_config_scopes << {pattern: pattern, credentials: false, source: :websocket, call: call}
+            @cors_config_scopes << {pattern: pattern, credentials: false, source: :websocket, call: call, module: module_dir}
           end
         end
       end
@@ -286,11 +303,9 @@ class SpringSecurityTagger < FrameworkTagger
     statements
   end
 
-  # Call-name and ant-pattern regexes interpolate low-cardinality dynamic
-  # strings; memoize them so per-statement / per-URL checks don't
-  # recompile a PCRE2 pattern each time.
+  # Call-name regexes interpolate low-cardinality dynamic strings; memoize
+  # them so per-statement checks don't recompile a PCRE2 pattern each time.
   @origin_call_regexes = Hash(String, Regex).new
-  @ant_pattern_regexes = Hash(String, Regex).new
 
   private def wildcard_origin_call?(stmt : String, call_names : Array(String)) : Bool
     call_names.any? do |call_name|
@@ -312,24 +327,31 @@ class SpringSecurityTagger < FrameworkTagger
 
   # ---- per-endpoint resolution ----------------------------------------
 
-  private def csrf_disabled_description_for(endpoint : Endpoint) : String?
+  # Whether a scope declared in build unit `owner` reaches an app whose
+  # runtime classpath is `classpath` (nil: unknown).
+  private def applies?(owner : String?, classpath : Set(String)?) : Bool
+    owner.nil? || classpath.nil? || classpath.includes?(owner)
+  end
+
+  private def csrf_disabled_description_for(endpoint : Endpoint, classpath : Set(String)?) : String?
     return unless STATE_CHANGING_METHODS.includes?(endpoint.method.upcase)
     url = endpoint.url
 
     # Specific ignored paths first — more precise than a chain-wide disable.
-    if scope = @csrf_ignored_scopes.find { |p| matches_ant_pattern?(url, p) }
-      return "CSRF protection disabled for paths matching \"#{scope}\" (csrf ignoringRequestMatchers) — state-changing requests here are not CSRF-validated."
+    if scope = @csrf_ignored_scopes.find { |p| applies?(p[:module], classpath) && matches_ant_pattern?(url, p[:pattern]) }
+      return "CSRF protection disabled for paths matching \"#{scope[:pattern]}\" (csrf ignoringRequestMatchers) — state-changing requests here are not CSRF-validated."
     end
 
-    if scope = @csrf_disable_scopes.find { |p| matches_ant_pattern?(url, p) }
+    if found = @csrf_disable_scopes.find { |p| applies?(p[:module], classpath) && matches_ant_pattern?(url, p[:pattern]) }
+      scope = found[:pattern]
       return scope == "/**" ? "CSRF protection disabled globally (Spring Security csrf().disable()) — state-changing requests to this endpoint are not CSRF-validated." : "CSRF protection disabled for the \"#{scope}\" filter chain — state-changing requests to this endpoint are not CSRF-validated."
     end
 
     nil
   end
 
-  private def security_headers_description_for(endpoint : Endpoint) : String?
-    rule = @header_weak_scopes.find { |r| matches_ant_pattern?(endpoint.url, r[:pattern]) }
+  private def security_headers_description_for(endpoint : Endpoint, classpath : Set(String)?) : String?
+    rule = @header_weak_scopes.find { |r| applies?(r[:module], classpath) && matches_ant_pattern?(endpoint.url, r[:pattern]) }
     return unless rule
 
     if rule[:kind] == :all
@@ -339,8 +361,8 @@ class SpringSecurityTagger < FrameworkTagger
     end
   end
 
-  private def cors_config_description_for(endpoint : Endpoint) : String?
-    rule = @cors_config_scopes.find { |r| matches_ant_pattern?(endpoint.url, r[:pattern]) }
+  private def cors_config_description_for(endpoint : Endpoint, classpath : Set(String)?) : String?
+    rule = @cors_config_scopes.find { |r| applies?(r[:module], classpath) && matches_ant_pattern?(endpoint.url, r[:pattern]) }
     return unless rule
 
     call_name = rule[:call]
@@ -358,11 +380,11 @@ class SpringSecurityTagger < FrameworkTagger
   private def check_endpoint(endpoint : Endpoint)
     return if endpoint.internal
 
-    if desc = csrf_disabled_description_for(endpoint)
+    if desc = per_serving_classpath(endpoint, false) { |classpath, _| csrf_disabled_description_for(endpoint, classpath) }
       endpoint.add_tag(Tag.new("csrf-protection", desc, "spring_security"))
     end
 
-    if desc = security_headers_description_for(endpoint)
+    if desc = per_serving_classpath(endpoint, false) { |classpath, _| security_headers_description_for(endpoint, classpath) }
       endpoint.add_tag(Tag.new("security-headers", desc, "spring_security"))
     end
 
@@ -385,7 +407,7 @@ class SpringSecurityTagger < FrameworkTagger
     # Config-based CORS is annotation-independent. add_tag dedups by
     # (name, tagger), so an endpoint already tagged from a @CrossOrigin
     # annotation keeps that (more specific) description.
-    if desc = cors_config_description_for(endpoint)
+    if desc = per_serving_classpath(endpoint, false) { |classpath, _| cors_config_description_for(endpoint, classpath) }
       endpoint.add_tag(Tag.new("cors", desc, "spring_security"))
     end
   end
@@ -466,22 +488,5 @@ class SpringSecurityTagger < FrameworkTagger
 
   private def spring_mapping_annotation?(line : String) : Bool
     line.matches?(/@(GetMapping|PostMapping|PutMapping|PatchMapping|DeleteMapping|RequestMapping)\b/)
-  end
-
-  # Ant-style pattern match (`/**` → any depth, itself included; `*` → one
-  # segment), anchored at both ends so `/var` does not match `/varchain`.
-  private def matches_ant_pattern?(url : String, pattern : String) : Bool
-    ant_re = @ant_pattern_regexes[pattern] ||= begin
-      regex_str = pattern.gsub("/**", "SLASH_DOUBLE_STAR")
-        .gsub("**", "DOUBLE_STAR")
-        .gsub("*", "[^/]*")
-        .gsub("SLASH_DOUBLE_STAR", "(?:/.*)?")
-        .gsub("DOUBLE_STAR", ".*")
-      /^#{regex_str}$/
-    end
-    url.matches?(ant_re)
-  rescue ex
-    @logger.debug "SpringSecurityTagger: failed to match ant pattern '#{pattern}': #{ex.message}"
-    false
   end
 end
