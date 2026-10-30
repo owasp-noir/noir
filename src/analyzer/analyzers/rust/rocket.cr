@@ -475,14 +475,16 @@ module Analyzer::Rust
     # `/path/<id>?<q>&<limit>` → `/path/{id}`. Strips the inline
     # query-spec suffix Rocket attributes use to declare query
     # params and converts the `<name>` path bracket form to the
-    # canonical `{name}` placeholder. Trailing `..` segments
-    # (`<page..>`) drop the trailing dots so the placeholder is
-    # the bare identifier.
+    # canonical `{name}` placeholder. A trailing-segments param
+    # (`<path..>`) matches zero or more segments, so it becomes the
+    # rest placeholder `{*path}` that `trace` and the OAS builders
+    # already read as a catch-all, not a one-segment `{path}`.
     private def canonicalize_rocket_path(route : String) : String
       path_part = route.split("?", 2)[0]
       path_part.gsub(/<([^>]+)>/) do |_|
-        name = $1.split("..").first.strip
-        "{#{name}}"
+        inner = $1
+        name = inner.split("..").first.strip
+        inner.strip.ends_with?("..") ? "{*#{name}}" : "{#{name}}"
       end
     end
 

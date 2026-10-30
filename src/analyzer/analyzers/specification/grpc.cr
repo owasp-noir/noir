@@ -335,7 +335,10 @@ module Analyzer::Specification
     # segments stay, its last wildcard takes the variable's name and earlier
     # ones become `{wildcard}`, `{wildcard2}`, ... (the `oas_common`
     # convention). A pattern without a wildcard (`{name=operations}`) is
-    # requested as the literal itself.
+    # requested as the literal itself. A trailing `**` matches one or more
+    # segments, so its variable is the rest placeholder `{*name}`: `trace`
+    # then maps `/v1/projects/p/secrets/s:setIamPolicy` onto
+    # `/v1/{*resource}:setIamPolicy`.
     private def expand_transcoding_template(path : String) : String
       wildcards = 0
       path.gsub(PATH_TEMPLATE_VARIABLE) do |_, match|
@@ -344,7 +347,7 @@ module Analyzer::Specification
 
         segments.map_with_index do |segment, index|
           if index == last
-            "{#{match[1]}}"
+            segment == "**" ? "{*#{match[1]}}" : "{#{match[1]}}"
           elsif segment == "*" || segment == "**"
             wildcards += 1
             wildcards == 1 ? "{wildcard}" : "{wildcard#{wildcards}}"
