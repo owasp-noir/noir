@@ -1,3 +1,4 @@
+require "../models/code_locator"
 require "../models/endpoint"
 require "../models/logger"
 require "../techs/techs"
@@ -66,7 +67,8 @@ class EndpointOptimizer
   def initialize(@logger : NoirLogger, @options : Hash(String, YAML::Any))
     @pvalue_rules = initialize_pvalue_rules
     @source_scope_cache = Hash(String, String).new
-    @go_program_dirs = Hash(String, Set(String)).new
+    @go_program_counts = Hash(String, Int32).new
+    @base_fallback_scopes = Set(String).new
   end
 
   # Main optimization workflow - calls all optimization steps
@@ -688,7 +690,9 @@ class EndpointOptimizer
       (urls_by_key_technology[{method, url, technology}] ||= Set(String).new) << shaped_url
 
       scope = framework_source_scope(endpoint)
-      (framework_scopes_by_key[key] ||= Set(String).new) << scope unless scope.empty?
+      # A base standing in for a missing manifest is no build module: counting
+      # it would let an unrelated `-b` change how this base's rows merge.
+      (framework_scopes_by_key[key] ||= Set(String).new) << scope unless scope.empty? || @base_fallback_scopes.includes?(scope)
     end
 
     keys = Set(Tuple(String, String)).new
@@ -822,7 +826,10 @@ class EndpointOptimizer
       # No manifest inside the base (`-b app/src`, `-b module/cmd`): with
       # several bases, each one is its own project, so two of them never
       # fold into one row. A single base stays unscoped.
-      scope = floor if scope.empty? && floor && bases.size > 1
+      if scope.empty? && floor && bases.size > 1
+        scope = floor
+        @base_fallback_scopes << floor
+      end
 
       # One Go module, many programs (gin-gonic/examples, a `cmd/` tree):
       # each `package main` directory is its own deployable, so `POST
@@ -852,45 +859,60 @@ class EndpointOptimizer
   # holds more than one such directory. A single-binary module keeps the
   # module as its scope, whatever directory its routes are declared in.
   private def go_program_dir?(dir : String, module_root : String) : Bool
-    programs = @go_program_dirs[module_root] ||= begin
+    return false unless go_main_dirs.includes?(dir)
+    count = @go_program_counts[module_root] ||= go_main_dirs.count { |main_dir| Noir::PathScope.under_normalized_root?(main_dir, module_root) }
+    count > 1
+  end
+
+  @go_main_dirs : Set(String)?
+
+  # Expanded directories of every scanned `package main`. Read off the
+  # detector's file index rather than a glob, so `--exclude-path` and the
+  # walk's pruning (`node_modules`, `.git`) hold here too.
+  private def go_main_dirs : Set(String)
+    @go_main_dirs ||= begin
+      locator = CodeLocator.instance
       found = Set(String).new
-      Dir.glob(File.join(module_root, "**", "*.go")) do |file|
+      buffer = Bytes.new(GO_PACKAGE_PROBE_BYTES)
+      locator.files_by_extension(".go").each do |file|
         next if file.ends_with?("_test.go") || file.includes?("/vendor/") || file.includes?("/testdata/")
-        found << File.dirname(file) if go_main_package?(file)
+        dir = File.dirname(locator.expanded_path_for(file))
+        found << dir if !found.includes?(dir) && go_main_package?(file, buffer)
       end
       found
     end
-    programs.size > 1 && programs.includes?(dir)
   end
 
   # The package clause is the first code in a Go file: skip the BOM, line
   # comments and `/* */` spans above it, however long the license header
-  # runs, up to a cap. Lines are scrubbed: PCRE refuses invalid UTF-8.
-  private def go_main_package?(file : String) : Bool
-    File.open(file) do |io|
-      in_block = false
-      read = 0
-      io.each_line do |raw|
-        read += raw.bytesize
-        break if read > GO_PACKAGE_PROBE_BYTES
-        line = raw.scrub.lchop('\uFEFF')
-        if in_block
-          close = line.index("*/") || next
-          line = line[close + 2..]
-          in_block = false
-        end
-        line = line.lstrip
-        while line.starts_with?("/*")
-          unless close = line.index("*/", 2)
-            in_block = true
-            break
-          end
-          line = line[close + 2..].lstrip
-        end
-        next if in_block || !line.starts_with?("package")
-        clause = line.match(/\Apackage\s+(\w+)/) || next
-        return clause[1] == "main"
+  # runs, within the first `GO_PACKAGE_PROBE_BYTES`. Scrubbed: the cut can
+  # split a character, and PCRE refuses invalid UTF-8.
+  private def go_main_package?(file : String, buffer : Bytes) : Bool
+    read = File.open(file) do |io|
+      total = 0
+      while total < buffer.size && (count = io.read(buffer[total..])) > 0
+        total += count
       end
+      total
+    end
+    in_block = false
+    String.new(buffer[0, read]).scrub.lchop('\uFEFF').each_line do |line|
+      if in_block
+        close = line.index("*/") || next
+        line = line[close + 2..]
+        in_block = false
+      end
+      line = line.lstrip
+      while line.starts_with?("/*")
+        unless close = line.index("*/", 2)
+          in_block = true
+          break
+        end
+        line = line[close + 2..].lstrip
+      end
+      next if in_block || !line.starts_with?("package")
+      clause = line.match(/\Apackage\s+(\w+)/) || next
+      return clause[1] == "main"
     end
     false
   rescue IO::Error
