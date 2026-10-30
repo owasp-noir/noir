@@ -508,14 +508,20 @@ module Analyzer::Java
 
       if evidence = spring_build_dependency(project_root, SPRING_ACTUATOR_DEP_RE)
         # A separate management port drops the servlet context path.
-        prefix = values.has_key?("management.server.port") ? normalize_optional_path(values["management.server.base-path"]? || values["management.server.servlet.context-path"]?) : base_path
-        actuator_base = Noir::URLPath.join_rooted(prefix, values["management.endpoints.web.base-path"]? || "/actuator")
+        own_port = values.has_key?("management.server.port")
+        prefix = own_port ? normalize_optional_path(values["management.server.base-path"]? || values["management.server.servlet.context-path"]?) : base_path
+        web_base = values["management.endpoints.web.base-path"]? || "/actuator"
+        actuator_base = Noir::URLPath.join_rooted(prefix, web_base)
+        # Boot drops the discovery page when told to, and when the base path
+        # is `/` on the main port, where it would shadow the app's own root.
+        discovery = values["management.endpoints.web.discovery.enabled"]?.try(&.downcase) != "false" &&
+                    (own_port || !web_base.strip('/').empty?)
         listed = (values["management.endpoints.web.exposure.include"]? || "health").split(',').map(&.strip)
         excluded = (values["management.endpoints.web.exposure.exclude"]? || "").split(',').map(&.strip)
         ids = listed.includes?("*") ? (SPRING_ACTUATOR_CORE + listed).uniq : listed
         ids = ids.reject { |id| id.empty? || id == "*" || excluded.includes?(id) || !spring_actuator_enabled?(values, id) }
         unless ids.empty?
-          endpoints << framework_endpoint(actuator_base, "GET", evidence)
+          endpoints << framework_endpoint(actuator_base, "GET", evidence) if discovery
           ids.each do |id|
             url = Noir::URLPath.join_rooted(actuator_base, values["management.endpoints.web.path-mapping.#{id}"]? || id)
             endpoints << framework_endpoint(url, id == "shutdown" ? "POST" : "GET", evidence)

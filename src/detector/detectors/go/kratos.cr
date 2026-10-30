@@ -12,7 +12,7 @@ module Detector::Go
     IMPORT_MARKER = /go-kratos\/kratos\/v\d+/
 
     def detect(filename : String, file_contents : String) : Bool
-      if filename.includes?("go.mod") && content_matches?(file_contents, IMPORT_MARKER)
+      if go_mod_dependency?(filename, file_contents, IMPORT_MARKER)
         return true
       end
       if filename.ends_with?(".go") && content_matches?(file_contents, IMPORT_MARKER)

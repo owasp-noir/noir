@@ -5,7 +5,7 @@ module Detector::Go
     detector_for "go_goyave", extensions: %w[.go], path_segments: %w[go.mod]
 
     def detect(filename : String, file_contents : String) : Bool
-      (filename.includes? "go.mod") && (file_contents.includes? "goyave.dev/goyave")
+      go_mod_dependency?(filename, file_contents, "goyave.dev/goyave")
     end
   end
 end

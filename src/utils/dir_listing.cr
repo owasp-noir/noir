@@ -20,14 +20,16 @@ module Noir::DirListing
   # recording the directory as unlistable, as it did when it listed inline.
   # Anything other than a `File::Error` is carried here too, so the walk
   # can re-raise it rather than wait on a reply that never comes.
-  record Listing, has_shard : Bool, entries : Array(Entry), error : Exception?
+  record Listing, has_shard : Bool, entries : Array(Entry), error : Exception?, has_cachedir_tag : Bool = false
 
   def self.list(dir : String) : Listing
     has_shard = File.exists?(File.join(dir, "shard.yml"))
+    has_cachedir_tag = false
     entries = [] of Entry
     error = nil
     begin
       Dir.each_child(dir) do |name|
+        has_cachedir_tag = true if name == "CACHEDIR.TAG"
         full_path = File.join(dir, name)
         info = File.info?(full_path, follow_symlinks: false)
         entries << Entry.new(name, info, info ? nil : stat_failure(full_path))
@@ -35,7 +37,7 @@ module Noir::DirListing
     rescue e : File::Error
       error = e
     end
-    Listing.new(has_shard, entries, error)
+    Listing.new(has_shard, entries, error, has_cachedir_tag)
   end
 
   private def self.stat_failure(full_path : String) : String

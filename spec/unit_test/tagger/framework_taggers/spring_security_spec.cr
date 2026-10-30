@@ -80,6 +80,15 @@ describe "SpringSecurityTagger" do
       tag.not_nil!.description.should contain("globally")
     end
 
+    it "skips an outbound @HttpExchange / Feign declaration (internal)" do
+      load_fixture_files(global_base)
+      endpoint = build_endpoint(controller, 12, "/api/posts", "POST")
+      endpoint.internal = true
+      SpringSecurityTagger.new(global_options).perform([endpoint])
+
+      endpoint.tags.should be_empty
+    end
+
     it "flags PUT as well as POST" do
       load_fixture_files(global_base)
       endpoint = build_endpoint(controller, 17, "/api/posts/1", "PUT")

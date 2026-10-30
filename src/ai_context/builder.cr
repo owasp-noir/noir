@@ -815,7 +815,7 @@ module NoirAIContext
         "route_definition",
         "#{endpoint.method} #{endpoint.url}",
         source: "route",
-        description: "Primary route registration or controller entrypoint",
+        description: endpoint.internal ? "Outbound client request declaration" : "Primary route registration or controller entrypoint",
         path: anchor.try(&.path),
         line: anchor.try(&.line),
         confidence: 100,
@@ -939,7 +939,7 @@ module NoirAIContext
         "internal_endpoint",
         "#{endpoint.method} #{endpoint.url}",
         source: "endpoint",
-        description: "Analyzer marked this endpoint as internal-only or non-public",
+        description: "Outbound client declaration; the application sends requests to this endpoint rather than serving it",
         path: anchor.try(&.path),
         line: anchor.try(&.line),
         confidence: 78,
@@ -1154,6 +1154,7 @@ module NoirAIContext
     private def skip_param_signal?(endpoint : Endpoint, param : Param, pattern : PatternDefinition) : Bool
       return true if pattern.kind == "file_input" && param.param_type == "header"
       return false unless pattern.kind == "identifier_input"
+      return true if endpoint.internal
       return !header_identifier_like?(param.name) if param.param_type == "header"
       return true if safe_kotlin_query_identifier_without_lookup?(endpoint, param)
       return false unless BODY_LIKE_PARAM_TYPES.includes?(param.param_type)
@@ -1195,6 +1196,7 @@ module NoirAIContext
 
     private def skip_param_tag_signal?(endpoint : Endpoint, param : Param, tag : Tag) : Bool
       return false unless tag.name == "idor" && tag.tagger == "Hunt"
+      return true if endpoint.internal
       return false unless endpoint.details.technology == "kotlin_spring"
       return false unless endpoint.method == "GET"
       return false unless param.param_type == "query" && identifier_like?(param.name)
@@ -2126,7 +2128,7 @@ module NoirAIContext
         # Explicit CSRF bypass is a negative signal. CSRF only
         # protects state-changing methods, so suppress it on safe
         # endpoints split out from multi-method handlers.
-        unless SAFE_METHODS.includes?(endpoint.method.upcase)
+        unless endpoint.internal || SAFE_METHODS.includes?(endpoint.method.upcase)
           CSRF_EXEMPT_PATTERNS.each do |pattern|
             next if context.signals.any? { |s| s.kind == "csrf_exempt" }
             if entry = PatternMatcher.detect_single_pattern(pattern, "", snippet, path_info.path, path_info.line, "route_source")
@@ -2430,6 +2432,7 @@ module NoirAIContext
     end
 
     private def add_missing_guard_signal(context : AIContext, endpoint : Endpoint, anchor : PathInfo?, route_snippet : String?)
+      return if endpoint.internal
       return unless state_changing_endpoint?(endpoint)
       return if graphql_read_endpoint?(endpoint)
       return if read_only_post_endpoint?(endpoint)

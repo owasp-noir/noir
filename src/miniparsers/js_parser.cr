@@ -924,10 +924,24 @@ module Noir
     # A receiver is a client only when the file never builds a router
     # from that name, so a project that genuinely names its router
     # `request` keeps its routes. `recv_idx` is the receiver token and
-    # `lparen_idx` the call's `(`.
+    # `lparen_idx` the call's `(`. A member chain counts by its root too
+    # (`request.formData.post(…)`), and an awaited call is a client whatever
+    # its receiver: a route registration is never awaited.
     private def http_client_receiver?(router_var : String, recv_idx : Int32, lparen_idx : Int32) : Bool
-      return false if !HTTP_CLIENT_RECEIVERS.includes?(router_var) || @explicit_router_vars.includes?(router_var)
-      !(CONTEXTUAL_CLIENT_RECEIVERS.includes?(router_var) && request_handler_call?(recv_idx, lparen_idx))
+      if HTTP_CLIENT_RECEIVERS.includes?(router_var) && !@explicit_router_vars.includes?(router_var)
+        return true unless CONTEXTUAL_CLIENT_RECEIVERS.includes?(router_var) && request_handler_call?(recv_idx, lparen_idx)
+      end
+
+      root_idx = recv_idx
+      while root_idx >= 2 && @tokens[root_idx - 1].type == :dot && @tokens[root_idx - 2].type.in?(:identifier, :keyword)
+        root_idx -= 2
+      end
+      root = @tokens[root_idx]?.try(&.value) || ""
+      if root_idx != recv_idx && HTTP_CLIENT_RECEIVERS.includes?(root) &&
+         !CONTEXTUAL_CLIENT_RECEIVERS.includes?(root) && !@explicit_router_vars.includes?(root)
+        return true
+      end
+      root_idx > 0 && @tokens[root_idx - 1].value == "await"
     end
 
     APP_FACTORIES = Set{"express", "fastify", "Fastify", "Koa", "Hono", "Application", "Router", "Elysia"}
@@ -1434,7 +1448,11 @@ module Noir
            route_handler_arg?(path_idx)
           router_var = @tokens[idx - 1].type == :identifier ? @tokens[idx - 1].value : ""
           return results if http_client_receiver?(router_var, idx - 1, path_idx)
-          return results if !@this_receiver_ok && @tokens[idx - 1].value == "this" && !this_handler_arg?(idx - 1, path_idx)
+          if @tokens[idx - 1].value == "this"
+            # `return this.get(…)` hands its result on, so it is an API
+            # client's call even in a file that imports a server framework.
+            return results if value_context?(idx - 2) || (!@this_receiver_ok && !this_handler_arg?(idx - 1, path_idx))
+          end
           path_entries = route_path_entries_from_args(path_idx + 1, allow_named_route: named_route_receiver?(router_var), receiver: router_var)
           @position = path_idx + 2 unless path_entries.empty?
 

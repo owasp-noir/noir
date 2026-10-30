@@ -10,8 +10,7 @@ module Detector::Go
     IMPORT_PATHS = %w[github.com/gorilla/mux github.com/minio/mux]
 
     def detect(filename : String, file_contents : String) : Bool
-      return false unless filename.includes? "go.mod"
-      IMPORT_PATHS.any? { |path| file_contents.includes? path }
+      IMPORT_PATHS.any? { |path| go_mod_dependency?(filename, file_contents, path) }
     end
   end
 end

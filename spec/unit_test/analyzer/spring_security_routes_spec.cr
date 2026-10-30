@@ -1,5 +1,6 @@
 require "../../spec_helper"
 require "../../../src/analyzer/engines/java_engine"
+require "../../../src/analyzer/analyzers/java/spring"
 
 # `{verb url params filter-served}` of each route the security chain in
 # `code` yields.
@@ -41,5 +42,35 @@ describe "Analyzer::Java::JavaEngine.spring_security_routes" do
   it "leaves a route outside its chain's securityMatcher unserved" do
     security_routes(chain(%(http.securityMatcher("/admin/**").formLogin(f -> f.loginProcessingUrl("/admin/login")).logout(l -> l.permitAll());)))
       .should eq(["POST /admin/login username,password filter", "POST /logout  -"])
+  end
+end
+
+private def actuator_urls(yaml_content : String) : Array(String)
+  dir = File.tempname("spring_actuator_probe")
+  pom = File.join(dir, "pom.xml")
+  cfg = File.join(dir, "src", "main", "resources", "application.yml")
+  Dir.mkdir_p(File.dirname(cfg))
+  File.write(pom, "<project><dependencies><dependency><artifactId>spring-boot-starter-actuator</artifactId></dependency></dependencies></project>")
+  File.write(cfg, yaml_content)
+  controller = File.join(dir, "src", "main", "java", "x", "C.java")
+  Dir.mkdir_p(File.dirname(controller))
+  File.write(controller, "package x;\n@RestController\npublic class C {\n  @GetMapping(\"/items\")\n  public String items() { return \"\"; }\n}\n")
+  CodeLocator.instance.clear_all
+  {pom, cfg, controller}.each { |file| CodeLocator.instance.register_path(file) }
+  options = create_test_options
+  options["base"] = YAML::Any.new([YAML::Any.new(dir)])
+  Analyzer::Java::Spring.new(options).analyze.map { |ep| "#{ep.method} #{ep.url}" }.reject("GET /items")
+ensure
+  CodeLocator.instance.clear_all
+  FileUtils.rm_rf(dir) if dir && Dir.exists?(dir)
+end
+
+describe "Analyzer::Java::JavaEngine#spring_provided_endpoints" do
+  it "omits the discovery root when management.endpoints.web.base-path is / or discovery.enabled is false" do
+    actuator_urls("management:\n  endpoints:\n    web:\n      base-path: /\n").should eq(["GET /health"])
+    actuator_urls("management:\n  endpoints:\n    web:\n      discovery:\n        enabled: false\n").should eq(["GET /actuator/health"])
+    actuator_urls("management:\n  endpoints:\n    web:\n      base-path: /actuator\n").should eq(["GET /actuator", "GET /actuator/health"])
+    # On its own port the root is not shared with the app, so Boot keeps it.
+    actuator_urls("management:\n  server:\n    port: 9001\n  endpoints:\n    web:\n      base-path: /\n").should eq(["GET /", "GET /health"])
   end
 end

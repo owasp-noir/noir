@@ -188,7 +188,7 @@ module Analyzer::Go
 
           scan_lines(calls, path, binary, root_url, endpoints, cobra_cmd_urls,
             emit_stdlib, has_cli_parse)
-          scan_struct_tags(content, path, root_url, endpoints)
+          scan_struct_tags(content, path, root_url, endpoints, modules)
 
           if content_matches?(content, KONG_IMPORT_RE)
             scan_kong(lines, path, root_url, endpoints, kong_cmd_type_urls(lines, root_url))
@@ -460,8 +460,9 @@ module Analyzer::Go
     # Attribute them to the root command (sub-command structs are a v1
     # follow-up).
     private def scan_struct_tags(content : String, path : String, root_url : String,
-                                 endpoints : Hash(String, Endpoint))
+                                 endpoints : Hash(String, Endpoint), modules : Array(Tuple(String, String)))
       return unless content_matches?(content, STRUCT_TAG_IMPORT_RE)
+      return if library_module?(modules, path)
 
       content.each_line.with_index do |line, index|
         line_no = index + 1
@@ -473,6 +474,21 @@ module Analyzer::Go
         end
         if m = line.match(GOFLAGS_ENV_RE)
           fetch_endpoint(endpoints, root_url, path, line_no).push_param(Param.new(m[1], "", "env"))
+        end
+      end
+    end
+
+    @library_modules = {} of String => Bool
+
+    # A module with no `package main` builds no binary, so its go-flags /
+    # go-arg structs describe a parser its callers feed (`ParseArgs(line)`),
+    # not an argv surface. A file outside every module is not judged.
+    private def library_module?(modules : Array(Tuple(String, String)), path : String) : Bool
+      dir = Noir::PathScope.expand(File.dirname(path))
+      _, module_dir = modules.find { |_, root| dir == root || dir.starts_with?("#{root}/") } || return false
+      @library_modules.fetch(module_dir) do
+        @library_modules[module_dir] = get_files_by_extension(".go").none? do |file|
+          Noir::PathScope.expand(file).starts_with?("#{module_dir}/") && read_file_content(file).matches?(PACKAGE_MAIN_RE)
         end
       end
     end

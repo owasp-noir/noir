@@ -11,9 +11,8 @@ module Detector::Go
     IMPORT_PATTERN = Regex.union("github.com/danielgtaylor/huma")
 
     def detect(filename : String, file_contents : String) : Bool
-      return false unless filename.includes?("go.mod") || filename.ends_with?(".go")
-
-      content_matches?(file_contents, IMPORT_PATTERN)
+      go_mod_dependency?(filename, file_contents, IMPORT_PATTERN) ||
+        (filename.ends_with?(".go") && content_matches?(file_contents, IMPORT_PATTERN))
     end
   end
 end

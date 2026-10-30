@@ -5,7 +5,7 @@ module Detector::Go
     detector_for "go_httprouter", extensions: %w[.go], path_segments: %w[go.mod]
 
     def detect(filename : String, file_contents : String) : Bool
-      (filename.includes? "go.mod") && (file_contents.includes? "github.com/julienschmidt/httprouter")
+      go_mod_dependency?(filename, file_contents, "github.com/julienschmidt/httprouter")
     end
   end
 end

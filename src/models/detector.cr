@@ -253,6 +253,16 @@ class Detector
     end
   end
 
+  # Whether `filename` is a go.mod naming `marker` on a line not marked
+  # `// indirect`: an indirect requirement is pulled in by another module,
+  # and this one never imports it.
+  def go_mod_dependency?(filename : String, file_contents : String, marker : String | Regex) : Bool
+    return false unless filename.includes?("go.mod")
+    file_contents.each_line.any? do |line|
+      !line.includes?("// indirect") && (marker.is_a?(String) ? line.includes?(marker) : content_matches?(line, marker))
+    end
+  end
+
   # A document that matched this format's content marker but could not be
   # parsed at all.
   #

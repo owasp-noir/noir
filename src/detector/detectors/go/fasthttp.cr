@@ -5,8 +5,7 @@ module Detector::Go
     detector_for "go_fasthttp", extensions: %w[.go], path_segments: %w[go.mod]
 
     def detect(filename : String, file_contents : String) : Bool
-      (filename.includes? "go.mod") &&
-        (file_contents.includes? "github.com/valyala/fasthttp") &&
+      go_mod_dependency?(filename, file_contents, "github.com/valyala/fasthttp") &&
         !file_contents.includes?("github.com/gofiber/fiber")
     end
   end

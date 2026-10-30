@@ -591,4 +591,41 @@ describe "detect_techs passive results" do
       FileUtils.rm_rf(temp_dir) if temp_dir
     end
   end
+
+  it "skips .uv-cache and directories containing CACHEDIR.TAG" do
+    temp_dir = File.tempname("noir_detector_cachedir")
+    Dir.mkdir_p(temp_dir)
+
+    begin
+      app_py = File.join(temp_dir, "app.py")
+      uv_cached = File.join(temp_dir, ".uv-cache", "archive-v0", "cli.py")
+      tagged_cached = File.join(temp_dir, "custom_cache", "cached_cli.py")
+      cache_tag = File.join(temp_dir, "custom_cache", "CACHEDIR.TAG")
+
+      Dir.mkdir_p(File.dirname(uv_cached))
+      Dir.mkdir_p(File.dirname(tagged_cached))
+
+      File.write(app_py, "import sys\nprint('hello')\n")
+      File.write(uv_cached, "import argparse\nparser = argparse.ArgumentParser()\n")
+      File.write(cache_tag, "Signature: 8a477f597d28d172789f06886806bc55\n")
+      File.write(tagged_cached, "import argparse\nparser = argparse.ArgumentParser()\n")
+
+      options = create_test_options
+      options["base"] = YAML::Any.new([YAML::Any.new(temp_dir)])
+      logger = NoirLogger.new(false, false, false, true)
+      locator = CodeLocator.instance
+      locator.clear_all
+
+      detect_techs([temp_dir], options, [] of PassiveScan, logger).should_not contain("python_cli")
+      files = locator.all_files
+
+      files.should contain(app_py)
+      files.should_not contain(uv_cached)
+      files.should_not contain(tagged_cached)
+      files.should_not contain(cache_tag)
+    ensure
+      CodeLocator.instance.clear_all
+      FileUtils.rm_rf(temp_dir) if temp_dir
+    end
+  end
 end

@@ -5,7 +5,7 @@ module Detector::Go
     detector_for "go_gin", extensions: %w[.go], path_segments: %w[go.mod]
 
     def detect(filename : String, file_contents : String) : Bool
-      (filename.includes? "go.mod") && (file_contents.includes? "github.com/gin-gonic/gin")
+      go_mod_dependency?(filename, file_contents, "github.com/gin-gonic/gin")
     end
   end
 end

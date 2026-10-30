@@ -5101,3 +5101,26 @@ describe "AI context feature dependencies in plain output" do
     end
   end
 end
+
+describe "AI context for outbound client declarations" do
+  it "describes them as outbound and skips the inbound IDOR, CSRF and authz-absence heuristics" do
+    id_param = Param.new("userId", "", "path")
+    id_param.add_tag(Tag.new("idor", "IDOR candidate", "Hunt"))
+
+    details = Details.new
+    details.technology = "java_spring"
+    get_client = Endpoint.new("/v1/users/{userId}", "GET", [id_param, Param.new("X-Api-Key", "", "header")], details, internal: true)
+    delete_client = Endpoint.new("/v1/users/{userId}", "DELETE", [id_param], details, internal: true)
+    delete_client.add_tag(Tag.new("auth", "Protected by Spring Security hasRole via anyRequest()", "spring_auth"))
+
+    results = NoirAIContext.apply([get_client, delete_client])
+    get_ctx = results[0].ai_context.should_not be_nil
+    del_ctx = results[1].ai_context.should_not be_nil
+
+    get_ctx.signals.find!(&.kind.==("route_definition")).description.to_s.should_not contain("controller entrypoint")
+    get_ctx.signals.find!(&.kind.==("internal_endpoint")).description.to_s.should contain("Outbound client declaration")
+    (get_ctx.signals + del_ctx.signals).map(&.kind).each do |kind|
+      {"idor", "identifier_input", "idor_review", "guard_absence", "authz_absence", "csrf_exempt"}.should_not contain(kind)
+    end
+  end
+end
