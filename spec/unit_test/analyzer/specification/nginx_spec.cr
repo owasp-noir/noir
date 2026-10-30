@@ -300,6 +300,19 @@ describe "Nginx Analyzer" do
       ])
     end
 
+    # A Windows path holds `\`, which `File.match?` reads as an escape.
+    it "matches an include under a directory with either separator" do
+      match = ->(dir : String, pattern : String, file : String) { Analyzer::Specification::Nginx.include_match?(dir, pattern, file) }
+      match.call("C:\\repo\\app[1", "conf.d/*.conf", "C:\\repo\\app[1\\conf.d\\x.conf").should be_true
+      match.call("C:\\repo\\app[1", "conf.d/*.conf", "C:/repo/app[1/conf.d/x.conf").should be_true
+      match.call("C:\\repo\\{{slug}}\\nginx", "snippets/x.conf", "C:\\repo\\{{slug}}\\nginx\\snippets\\x.conf").should be_true
+      match.call("C:\\repo\\app[1", "conf.d/*.conf", "C:\\repo\\app[1\\conf.d\\sub\\x.conf").should be_false
+      match.call("C:\\repo\\app", "conf.d/*.conf", "C:\\repo\\app2\\conf.d\\x.conf").should be_false
+      match.call("/repo/app[1", "conf.d/*.conf", "/repo/app[1/conf.d/x.conf").should be_true
+      match.call(".", "conf.d/*.conf", "conf.d/x.conf").should be_true
+      expect_raises(File::BadPatternError) { match.call("/repo", "conf.d/[x.conf", "/repo/conf.d/x.conf") }
+    end
+
     # The includer's directory is literal text, not a glob; a pattern nginx
     # would reject resolves to nothing and costs only itself.
     it "reads glob characters in the directory literally and survives a bad pattern" do

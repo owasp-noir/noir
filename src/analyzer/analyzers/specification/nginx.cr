@@ -124,10 +124,22 @@ module Analyzer::Specification
     end
 
     private def files_under(dir : String, pattern : String, includer : String) : Array(String)
-      glob = File.join(dir.gsub(GLOB_CHARS) { |c| "\\#{c}" }, pattern)
-      @files.select { |file| file != includer && File.match?(glob, file) }.sort!
+      @files.select { |file| file != includer && Nginx.include_match?(dir, pattern, file) }.sort!
     rescue File::BadPatternError
       [] of String
+    end
+
+    # Whether `file` is what `pattern` (an include glob, `/`-separated)
+    # names under `dir`. The directory is compared as text, so its own
+    # `[`, `{` or `*` are not glob syntax, and only the rest goes through
+    # `File.match?`. Both sides are read with `/` separators: on Windows a
+    # path holds `\`, which `File.match?` takes as an escape.
+    def self.include_match?(dir : String, pattern : String, file : String) : Bool
+      dir = dir.gsub('\\', '/').rstrip('/')
+      prefix = dir == "." ? "" : "#{dir}/"
+      file = file.gsub('\\', '/')
+      file = file.lchop("./") if prefix.empty?
+      file.starts_with?(prefix) && File.match?(pattern, file[prefix.size..])
     end
 
     # The directory standing in for nginx's prefix: the nearest one, from
