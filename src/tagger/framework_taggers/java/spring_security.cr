@@ -78,7 +78,7 @@ class SpringSecurityTagger < FrameworkTagger
     @csrf_disable_scopes = [] of String
     @csrf_ignored_scopes = [] of String
     @header_weak_scopes = [] of NamedTuple(pattern: String, kind: Symbol)
-    @cors_config_scopes = [] of NamedTuple(pattern: String, credentials: Bool, source: Symbol)
+    @cors_config_scopes = [] of NamedTuple(pattern: String, credentials: Bool, source: Symbol, call: String)
   end
 
   def self.target_techs : Array(String)
@@ -107,7 +107,7 @@ class SpringSecurityTagger < FrameworkTagger
           scan_security_config(content)
         end
         scan_cors_mappings(content) if content.includes?(".addMapping")
-        scan_websocket_cors_endpoints(content) if content.includes?(".addEndpoint")
+        scan_websocket_cors_endpoints(content) if content.includes?(".addEndpoint") || content.includes?(".addHandler")
       end
     end
 
@@ -203,23 +203,27 @@ class SpringSecurityTagger < FrameworkTagger
 
       credentials = stmt.includes?("allowCredentials") && stmt.includes?("true")
       quoted_literals(m[1]).each do |pattern|
-        @cors_config_scopes << {pattern: pattern, credentials: credentials, source: :mvc}
+        @cors_config_scopes << {pattern: pattern, credentials: credentials, source: :mvc, call: "addMapping"}
       end
     end
   end
 
-  # `addEndpoint("/ws").setAllowedOrigins("*")...` in a STOMP/WebSocket
-  # config controls the HTTP handshake endpoint. Treat wildcard origins here
+  # `addEndpoint("/ws").setAllowedOrigins("*")...` in a STOMP config, or
+  # `addHandler(handler, "/ws").setAllowedOrigins("*")` in a plain WebSocket
+  # one, controls the HTTP handshake endpoint. Treat wildcard origins here
   # as the same cross-origin exposure reviewers expect to see on REST routes.
   private def scan_websocket_cors_endpoints(content : String)
-    fluent_call_statements(content, ".addEndpoint").each do |stmt|
-      m = stmt.match(/\.addEndpoint\s*\(([^)]*)\)/)
-      next unless m
+    {"addEndpoint" => /\.addEndpoint\s*\(([^)]*)\)/, "addHandler" => /\.addHandler\s*\(([^)]*)\)/}.each do |call, call_re|
+      fluent_call_statements(content, ".#{call}").each do |stmt|
+        m = stmt.match(call_re)
+        next unless m
 
-      next unless wildcard_origin_call?(stmt, ["setAllowedOrigins", "setAllowedOriginPatterns"])
+        next unless wildcard_origin_call?(stmt, ["setAllowedOrigins", "setAllowedOriginPatterns"])
 
-      quoted_literals(m[1]).each do |pattern|
-        @cors_config_scopes << {pattern: pattern, credentials: false, source: :websocket}
+        # `addHandler`'s first argument is the handler, never a quoted path.
+        quoted_literals(m[1]).each do |pattern|
+          @cors_config_scopes << {pattern: pattern, credentials: false, source: :websocket, call: call}
+        end
       end
     end
   end
@@ -307,7 +311,7 @@ class SpringSecurityTagger < FrameworkTagger
     rule = @cors_config_scopes.find { |r| matches_ant_pattern?(endpoint.url, r[:pattern]) }
     return unless rule
 
-    call_name = rule[:source] == :websocket ? "addEndpoint" : "addMapping"
+    call_name = rule[:call]
     source = rule[:source] == :websocket ? "WebSocket/STOMP endpoint config" : "global WebMvc config"
 
     if rule[:credentials]
