@@ -134,3 +134,34 @@ FunctionalTester.new("fixtures/python/cli_argparse_from/", {
   :techs     => 1,
   :endpoints => argparse_from_endpoints.size,
 }, argparse_from_endpoints).perform_tests
+
+# --- argparse subcommand shapes (issue #3274): a reused `p = sub.add_parser`
+# variable, `parents=[common]` templates, and a Black-wrapped `add_parser(`.
+# The exact per-command param sets are pinned in
+# spec/unit_test/analyzer/python_cli_argparse_spec.cr. -------------------------
+argparse_subcommand_endpoints = [
+  build.call("cli://itemctl/list", [Param.new("limit", "", "flag")]),
+  build.call("cli://itemctl/get", [Param.new("item_id", "", "argument")]),
+  build.call("cli://itemctl/delete", [
+    Param.new("item_id", "", "argument"),
+    Param.new("force", "", "flag"),
+  ]),
+  build.call("cli://jobctl/run", [
+    Param.new("region", "", "flag"),
+    Param.new("job_id", "", "argument"),
+  ]),
+  build.call("cli://jobctl/stop", [
+    Param.new("region", "", "flag"),
+    Param.new("job_id", "", "argument"),
+  ]),
+  build.call("cli://userctl/show", [Param.new("user_id", "", "argument")]),
+  build.call("cli://userctl/remove", [
+    Param.new("user_id", "", "argument"),
+    Param.new("yes", "", "flag"),
+  ]),
+]
+
+FunctionalTester.new("fixtures/python/cli_argparse_subcommands/", {
+  :techs     => 1,
+  :endpoints => argparse_subcommand_endpoints.size,
+}, argparse_subcommand_endpoints).perform_tests

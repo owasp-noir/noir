@@ -24,10 +24,11 @@ module Analyzer::Python
     WEB_FRAMEWORK_RE = /(?:^|\n)\s*(?:import|from)\s+(?:flask|django|fastapi|starlette|sanic|aiohttp|bottle|tornado|falcon|pyramid|quart|litestar|robyn)\b/
 
     # argparse
-    ARGPARSE_NEW_RE  = /(\w+)\s*=\s*(?:argparse\.)?ArgumentParser\s*\(/
-    ARGPARSE_PROG_RE = /ArgumentParser\([^)]*\bprog\s*=\s*[rf]?["']([^"']+)["']/
-    ADD_PARSER_RE    = /(\w+)\s*=\s*(\w+)\.add_parser\s*\(\s*[rf]?["']([^"']+)["']/
-    ADD_ARGUMENT_RE  = /(\w+)\s*\.\s*add_argument\s*\(([^)]*)/
+    ARGPARSE_NEW_RE     = /(\w+)\s*=\s*(?:argparse\.)?ArgumentParser\s*\(/
+    ARGPARSE_PROG_RE    = /ArgumentParser\([^)]*\bprog\s*=\s*[rf]?["']([^"']+)["']/
+    ADD_PARSER_RE       = /(\w+)\s*=\s*(\w+)\.add_parser\s*\(\s*[rf]?["']([^"']+)["']/
+    ADD_ARGUMENT_RE     = /(\w+)\s*\.\s*add_argument\s*\(([^)]*)/
+    ARGPARSE_PARENTS_RE = /\bparents\s*=\s*[\[(]([^\])]*)[\])]/
 
     # click / typer decorators
     DECORATOR_CMD_RE  = /^@(\w+)\.(command|group|callback)\s*\(/
@@ -145,65 +146,115 @@ module Analyzer::Python
       stem
     end
 
-    # argparse: map each parser variable to its command URL, then attribute
-    # every add_argument by its receiver variable (robust against ordering).
+    # argparse: walk the parser calls in source order and attribute each
+    # add_argument to the command its receiver was most recently assigned
+    # (`p = sub.add_parser(...)` reused for every subcommand is common). A
+    # receiver used before any assignment (a helper defined above the
+    # builder) falls back to its last assignment in the file. Parsers named
+    # in `parents=[...]` are templates, not commands: their arguments are
+    # copied onto each parser built from them at that point, as argparse
+    # does, instead of landing on the root.
     private def scan_argparse(lines : Array(String), path : String, binary : String,
                               root_url : String, endpoints : Hash(String, Endpoint))
-      var_urls = {} of String => String
-      lines.each do |line|
-        if m = line.match(ARGPARSE_NEW_RE)
-          var_urls[m[1]] = root_url
-        end
-        if m = line.match(ADD_PARSER_RE)
-          var_urls[m[1]] = "#{root_url}/#{m[3]}"
-        end
-      end
-      return if var_urls.empty?
-
+      # Join each multi-line call (the Black/PEP8 shape puts the name of an
+      # `add_argument(` / `add_parser(` on its own following line) so the
+      # name token is visible on one logical line, mirroring the click
+      # decorator handling.
+      calls = [] of Tuple(Int32, String)
       index = 0
       while index < lines.size
         line = lines[index]
-        unless m = line.match(ADD_ARGUMENT_RE)
-          index += 1
-          next
-        end
-        url = var_urls[m[1]]?
-        unless url
+        unless line.includes?("add_argument") || line.includes?("add_parser") || line.includes?("ArgumentParser")
           index += 1
           next
         end
         start = index
-        line_no = start + 1
-
-        # Join a multi-line `add_argument(` call (the Black/PEP8 shape puts
-        # the name on its own following line) so the name token is visible on
-        # one logical line, mirroring the click decorator handling.
         logical = line
         while parens_unbalanced?(logical) && index + 1 < lines.size && index - start < 40
           index += 1
           logical += " " + lines[index]
         end
-        body = logical.match(ADD_ARGUMENT_RE).try(&.[2])
         index += 1
-        next unless body
+        calls << {start + 1, logical}
+      end
+      return if calls.empty?
 
-        ep = fetch_endpoint(endpoints, url, path, line_no)
+      templates = Set(String).new
+      calls.each do |_, call|
+        argparse_parents(call).each { |name| templates << name }
+      end
+
+      last_urls = {} of String => String
+      calls.each do |_, call|
+        if (target = argparse_parser_target(call, root_url)) && !templates.includes?(target[0])
+          last_urls[target[0]] = target[1]
+        end
+      end
+      return if last_urls.empty?
+
+      var_urls = {} of String => String
+      template_params = {} of String => Array(Param)
+      calls.each do |line_no, call|
+        if target = argparse_parser_target(call, root_url)
+          var, url = target
+          inherited = argparse_parents(call).flat_map { |name| template_params[name]? || [] of Param }
+          if templates.includes?(var)
+            (template_params[var] ||= [] of Param).concat(inherited)
+          else
+            var_urls[var] = url
+            unless inherited.empty?
+              ep = fetch_endpoint(endpoints, url, path, line_no)
+              inherited.each { |param| ep.push_param(param) }
+            end
+          end
+        end
+
+        next unless m = call.match(ADD_ARGUMENT_RE)
         # The canonical form declares both names — `add_argument("-v",
         # "--verbose")` — and argparse derives the destination from the long
         # one, so prefer it over the short alias. Cut at the first `=` so
         # keyword-argument values (help=, metavar=, dest=) can't pose as
         # name tokens.
         tokens = [] of String
-        body.split('=').first.scan(/[rf]?["']([^"']+)["']/) { |t| tokens << t[1] }
-        first = tokens.first?
-        next unless first
-        if first.starts_with?("-")
-          long = tokens.find(&.starts_with?("--")) || first
-          ep.push_param(Param.new(long.lstrip('-'), "", "flag"))
-        else
-          ep.push_param(Param.new(first, "", "argument"))
+        m[2].split('=').first.scan(/[rf]?["']([^"']+)["']/) { |t| tokens << t[1] }
+        next unless first = tokens.first?
+        param = if first.starts_with?("-")
+                  Param.new((tokens.find(&.starts_with?("--")) || first).lstrip('-'), "", "flag")
+                else
+                  Param.new(first, "", "argument")
+                end
+
+        receiver = m[1]
+        if templates.includes?(receiver)
+          (template_params[receiver] ||= [] of Param) << param
+        elsif url = var_urls[receiver]? || last_urls[receiver]?
+          fetch_endpoint(endpoints, url, path, line_no).push_param(param)
         end
       end
+    end
+
+    # `{variable, command URL}` for a `x = ArgumentParser(...)` or
+    # `x = sub.add_parser("name", ...)` assignment.
+    private def argparse_parser_target(call : String, root_url : String) : Tuple(String, String)?
+      if m = call.match(ADD_PARSER_RE)
+        {m[1], "#{root_url}/#{m[3]}"}
+      elsif m = call.match(ARGPARSE_NEW_RE)
+        {m[1], root_url}
+      end
+    end
+
+    # Plain variable names in a `parents=[a, b]` keyword; a call or an
+    # attribute (`parents=[tools.argparser]`) is not a local template.
+    private def argparse_parents(call : String) : Array(String)
+      names = [] of String
+      return names unless call.includes?("parents")
+      if m = call.match(ARGPARSE_PARENTS_RE)
+        m[1].split(',') do |item|
+          item = item.strip
+          names << item if item.matches?(/\A\w+\z/)
+        end
+      end
+      names
     end
 
     # click: stacked decorators sit above the handler `def`. Buffer the
