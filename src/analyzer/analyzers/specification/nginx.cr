@@ -38,20 +38,30 @@ module Analyzer::Specification
 
     # A file `include`d by another is read where the directive sits, with
     # the including block's host, TLS and access rules, and not on its own.
+    # Files that only include each other (a cycle no other file reaches) are
+    # still read on their own.
     def analyze
       each_spec_file(Noir::LocatorKeys::NGINX_SPEC) { |path| @files << path }
-      included = Set(String).new
+      edges = {} of String => Array(String)
       @files.each do |path|
         content = read_file_content(path)
         next unless content.includes?("include")
+        targets = [] of String
         content.each_line do |raw|
-          next unless m = INCLUDE_RE.match(strip_comment(raw).strip)
-          included.concat(include_targets(path, m[1]))
+          next unless m = INCLUDE_RE.match(strip_template_actions(strip_comment(raw)).strip)
+          targets.concat(include_targets(path, m[1]))
         end
+        edges[path] = targets unless targets.empty?
+      end
+      included = edges.values.flatten.to_set
+      reached = Set(String).new
+      pending = @files.reject { |path| included.includes?(path) }
+      while file = pending.pop?
+        edges[file]?.try &.each { |target| pending << target if reached.add?(target) }
       end
 
       each_spec_file(Noir::LocatorKeys::NGINX_SPEC) do |path|
-        next if included.includes?(path)
+        next if reached.includes?(path)
         state = State.new(@result.size)
         process_file(path, state)
         resolve_access(state)
@@ -71,28 +81,28 @@ module Analyzer::Specification
       @result
     end
 
+    # Directories nginx configs include from; a file in one of them sits one
+    # level below the configuration prefix.
+    INCLUDE_DIRS = Set{"conf.d", "sites-enabled", "sites-available", "snippets", "http.d", "servers", "vhosts.d"}
+    GLOB_CHARS   = /[\\*?\[\]{}]/
+
     # The scanned nginx files an `include` names. nginx resolves a relative
-    # pattern against its configuration prefix, which is the including
-    # file's directory or one above it (`sites-enabled/app.conf` including
-    # `snippets/x.conf`), so the nearest directory that matches wins. An
-    # absolute pattern (`/etc/nginx/conf.d/*.conf`) is matched by its last
-    # two segments the same way.
+    # pattern against its configuration prefix: the including file's
+    # directory, or its parent when that is an include directory
+    # (`sites-enabled/app.conf` including `snippets/x.conf`). An absolute
+    # pattern (`/etc/nginx/conf.d/*.conf`) is matched by its last two
+    # segments there. Nothing above the prefix is searched, so one app's
+    # `include` does not bind another's `conf.d` in a monorepo. A pattern
+    # that is not a valid glob resolves to nothing.
     private def include_targets(path : String, pattern : String) : Array(String)
       @include_targets[{path, pattern}] ||= begin
         relative = pattern.starts_with?('/') ? pattern.split('/').reject(&.empty?).last(2).join('/') : pattern
-        name = File.basename(relative)
-        candidates = @files.select { |file| file != path && File.match?(name, File.basename(file)) }
-        found = [] of String
         dir = File.dirname(path)
-        unless candidates.empty?
-          loop do
-            found = candidates.select { |file| File.match?(File.join(dir, relative), file) }
-            parent = File.dirname(dir)
-            break if !found.empty? || parent == dir
-            dir = parent
-          end
-        end
-        found.sort
+        dir = File.dirname(dir) if INCLUDE_DIRS.includes?(File.basename(dir))
+        glob = File.join(dir.gsub(GLOB_CHARS) { |c| "\\#{c}" }, relative)
+        @files.select { |file| file != path && File.match?(glob, file) }.sort!
+      rescue File::BadPatternError
+        [] of String
       end
     end
 
@@ -219,7 +229,7 @@ module Analyzer::Specification
         end
 
         if loc = current_location(stack)
-          track_location_effect(loc, directive_line)
+          track_location_effect(loc, directive_line, conditional)
         end
         # A line that opens an `if (...) {` or `limit_except` block holds
         # that block's directives, not the enclosing one's.
@@ -296,6 +306,9 @@ module Analyzer::Specification
     # `satisfy any` one is enough, so an access list that admits every
     # address (`allow all`) opens the location whatever auth it also has.
     # That is the usual way to open a sub-location of an `auth_basic` server.
+    # ponytail: an included file that holds only directives (`auth_basic` in
+    # a `snippets/auth.conf` with no `location`) is not an nginx file to the
+    # detector, so its guard is not seen.
     private def access_tag(location : Frame) : Tag?
       guards = [] of Setting
       {"auth_basic", "auth_request", "auth_jwt"}.each do |name|
@@ -360,7 +373,9 @@ module Analyzer::Specification
       end
     end
 
-    private def track_location_effect(location : Frame, line : String)
+    # `conditional`: a template decides whether the line is there, so an
+    # `internal` on it may not be.
+    private def track_location_effect(location : Frame, line : String, conditional : Bool)
       line = line.gsub(/\{\{.*?\}\}/, "").gsub(/[{}]/, " ")
       line.split(';').each do |statement|
         directive = statement.strip
@@ -369,7 +384,7 @@ module Analyzer::Specification
         if directive.matches?(/\Areturn\s+4\d\d(?:\s|$)/i) || directive.matches?(/\Adeny\s+all\z/i)
           location.denial_seen = true
         elsif directive == "internal"
-          location.internal = true
+          location.internal = true unless conditional
         else
           # Conditional returns and other directives may still serve content.
           location.other_effect = true

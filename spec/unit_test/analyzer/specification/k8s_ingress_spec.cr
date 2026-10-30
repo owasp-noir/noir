@@ -119,6 +119,36 @@ describe "Kubernetes Ingress Analyzer" do
     endpoints.size.should eq(4)
   end
 
+  it "gives a server-snippet the line of its own Ingress document" do
+    endpoints = analyze_ingress <<-YAML
+      # nginx.ingress.kubernetes.io/server-snippet: in a comment
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: cm
+        annotations:
+          nginx.ingress.kubernetes.io/server-snippet: |
+            location /cm { proxy_pass http://x; }
+      ---
+      apiVersion: networking.k8s.io/v1
+      kind: Ingress
+      metadata:
+        name: demo
+        annotations:
+          nginx.ingress.kubernetes.io/server-snippet: |
+            location /export { proxy_pass http://backend; }
+      spec:
+        rules:
+        - host: api.example.com
+          http:
+            paths:
+            - path: /
+              pathType: Prefix
+      YAML
+
+    endpoints.sort_by(&.url).map { |e| {e.url, e.details.code_paths.first.line} }.should eq([{"/", 22}, {"/export", 16}])
+  end
+
   it "reads an Ingress inside a Helm named template" do
     endpoints = analyze_ingress <<-YAML
       {{- define "demo.ingress" }}

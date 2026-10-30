@@ -196,6 +196,25 @@ describe "Nginx Analyzer" do
     ])
   end
 
+  it "keeps a location whose internal a template decides" do
+    endpoints = analyze_nginx <<-CONF
+      server {
+          location /d {
+              {{ if .Values.private }}internal;{{ end }}
+              proxy_pass http://x;
+          }
+          location /e {
+              {{ if .Values.private }}
+              internal;
+              {{ end }}
+              proxy_pass http://x;
+          }
+      }
+      CONF
+
+    endpoints.map(&.url).sort!.should eq(["/d", "/e"])
+  end
+
   it "does not read the catch-all server_name as a host" do
     endpoints = analyze_nginx <<-CONF
       server {
@@ -276,6 +295,39 @@ describe "Nginx Analyzer" do
         {"/users/", "http", ["www.example.com"], [{"locations/users.conf", 1}], none},
         {"/users/", "https", ["api.example.com"], [{"locations/users.conf", 1}],
          [{"Protected by nginx auth_basic \"staff\"", "nginx.conf", 5}]},
+      ])
+    end
+
+    # The includer's directory is literal text, not a glob; a pattern nginx
+    # would reject resolves to nothing and costs only itself.
+    it "reads glob characters in the directory literally and survives a bad pattern" do
+      {"app[1", "{{cookiecutter.slug}}", "a{b,c}"}.each do |dir|
+        endpoints, _ = analyze_nginx_files({
+          "#{dir}/nginx.conf"    => "server {\n    listen 443 ssl;\n    include conf.d/*.conf;\n    include conf.d/[x.conf;\n}\n",
+          "#{dir}/conf.d/x.conf" => "location /x { proxy_pass http://x; }\n",
+        })
+        endpoints.map { |e| {e.url, e.protocol} }.should eq([{"/x", "https"}]), dir
+      end
+    end
+
+    it "reads files that only include each other on their own" do
+      endpoints, _ = analyze_nginx_files({
+        "a.conf" => "server {\n    server_name a.com;\n    include b.conf;\n    location /a { proxy_pass http://x; }\n}\n",
+        "b.conf" => "location /b { proxy_pass http://x; }\ninclude a.conf;\n",
+      })
+      endpoints.map(&.url).uniq!.sort!.should eq(["/a", "/b"])
+    end
+
+    # nginx looks no further than its prefix, so one app's include does not
+    # bind another directory's `conf.d` (and its auth and TLS with it).
+    it "does not search above the configuration prefix" do
+      endpoints, _ = analyze_nginx_files({
+        "app1/nginx.conf"    => "server {\n    listen 443 ssl;\n    auth_basic \"app1\";\n    include /etc/nginx/conf.d/*.conf;\n    location /app1 { proxy_pass http://x; }\n}\n",
+        "conf.d/public.conf" => "location /public { proxy_pass http://x; }\n",
+      })
+      endpoints.map { |e| {e.url, e.protocol, e.tags.count(&.name.==("auth"))} }.sort!.should eq([
+        {"/app1", "https", 1},
+        {"/public", "http", 0},
       ])
     end
 

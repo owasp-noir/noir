@@ -94,15 +94,26 @@ module Analyzer::Specification
       end
     end
 
-    # The line each `server-snippet` value starts on, in document order: the
-    # next line for a block scalar (`|`), else the key's own line.
+    # The line each `server-snippet` value starts on, in the order the Ingress
+    # documents give them: the next line for a block scalar (`|`), else the
+    # key's own line. Comments and other kinds' documents are skipped.
     private def snippet_lines(content : String) : Array(Int32)
       lines = [] of Int32
+      doc = [] of Int32
+      ingress = false
       content.each_line.with_index(1) do |line, number|
-        next unless line.includes?(SNIPPET_ANNOTATION)
-        value = line.split(SNIPPET_ANNOTATION, 2)[1].lchop('"').lchop('\'').lchop(':').strip
-        lines << (value.starts_with?('|') || value.starts_with?('>') ? number + 1 : number)
+        if line.starts_with?("---")
+          lines.concat(doc) if ingress
+          doc.clear
+          ingress = false
+        elsif line.matches?(KIND_LINE)
+          ingress = true
+        elsif line.includes?(SNIPPET_ANNOTATION) && !line.lstrip.starts_with?('#')
+          value = line.split(SNIPPET_ANNOTATION, 2)[1].lchop('"').lchop('\'').lchop(':').strip
+          doc << (value.starts_with?('|') || value.starts_with?('>') ? number + 1 : number)
+        end
       end
+      lines.concat(doc) if ingress
       lines
     end
 

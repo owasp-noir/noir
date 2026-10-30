@@ -66,6 +66,34 @@ describe "EndpointOptimizer" do
         auth_tags.call(result[0]).size.should eq(1)
       end
 
+      # An Ingress rule and an nginx location are both `ANY`; merged, the
+      # Ingress guard and TLS would cover the open http nginx route.
+      it "keeps an ANY Ingress row apart from another technology's ANY row" do
+        optimizer = EndpointOptimizer.new(logger, options)
+        build = ->(guard : Bool) do
+          ingress = guard ? guarded.call("/only-ingress", "k8s/ingress.yaml", 17) : tech_endpoint("/only-ingress", "ANY", "k8s_ingress", "k8s/ingress.yaml", 17)
+          ingress.method = "ANY"
+          ingress.protocol = "https"
+          nginx = tech_endpoint("/only-ingress", "ANY", "nginx", "nginx/nginx.conf", 4)
+          optimizer.optimize_endpoints([ingress, nginx]).map { |e| {e.details.technology.to_s, e.protocol, auth_tags.call(e).size} }.sort!
+        end
+        build.call(true).should eq([{"k8s_ingress", "https", 1}, {"nginx", "http", 0}])
+        build.call(false).should eq([{"k8s_ingress", "https", 0}, {"nginx", "http", 0}])
+      end
+
+      it "drops an Ingress guard on a code route an open Envoy route also reaches" do
+        optimizer = EndpointOptimizer.new(logger, options)
+        ingress = guarded.call("/api", "deploy/ingress.yaml", 3)
+        ingress.method = "ANY"
+        envoy = tech_endpoint("/api", "ANY", "envoy", "envoy.yaml", 5)
+        code = tech_endpoint("/api", "GET", "go_gin", "main.go", 7)
+        result = optimizer.optimize_endpoints([ingress, code])
+        auth_tags.call(result[0]).size.should eq(1)
+        result = optimizer.optimize_endpoints([ingress, envoy, code])
+        result.size.should eq(1)
+        auth_tags.call(result[0]).should be_empty
+      end
+
       # An Ingress rule or Envoy route is `ANY`: it folds into every method
       # the code serves at its path, with its host, TLS and guard, and stays
       # `ANY` where no code serves the path.
@@ -76,6 +104,7 @@ describe "EndpointOptimizer" do
         ingress.protocol = "https"
         ingress.add_tag(Tag.new("ingress-host", "api.example.com", "k8s_ingress_analyzer"))
         envoy = tech_endpoint("/users/{id}", "ANY", "envoy", "envoy.yaml", 5)
+        envoy.add_tag(Tag.new("auth", "Protected by Envoy jwt_authn", Tag.declared_access_tagger("envoy")))
         lonely = tech_endpoint("/metrics", "ANY", "k8s_ingress", "deploy/ingress.yaml", 9)
         nginx = tech_endpoint("/users/:id", "ANY", "nginx", "nginx.conf", 4)
         code = [tech_endpoint("/users/:id", "GET", "go_gin", "main.go", 7), tech_endpoint("/users/:id", "DELETE", "go_gin", "main.go", 8)]
@@ -89,7 +118,7 @@ describe "EndpointOptimizer" do
           {"GET", "/users/:id", "go_gin", "https"},
         ])
         result.select(&.method.in?("GET", "DELETE")).each do |e|
-          auth_tags.call(e).size.should eq(1)
+          auth_tags.call(e).map(&.tagger).sort!.should eq([Tag.declared_access_tagger("envoy"), Tag.declared_access_tagger("k8s_ingress")])
           e.tags.select(&.name.==("ingress-host")).map(&.description).should eq(["api.example.com"])
           e.details.technologies.should contain("envoy")
           e.details.code_paths.map(&.path).sort!.should eq(["deploy/ingress.yaml", "envoy.yaml", "main.go"])
@@ -112,12 +141,16 @@ describe "EndpointOptimizer" do
     end
 
     # `/` before `(^/a$)|(^/b$)` is a regex nothing matches.
-    it "does not root a regex location" do
+    # An `.htaccess` RewriteRule `^api/(.*)$` is still the path `/api/(.*)`.
+    it "does not root a regex alternation but roots other regexes" do
       optimizer = EndpointOptimizer.new(logger, options)
-      regex = tech_endpoint("(^/a$)|(^/b$)", "ANY", "nginx", "nginx.conf", 3)
-      regex.kind = "regex"
-      plain = tech_endpoint("items", "GET", "nginx", "nginx.conf", 4)
-      optimizer.optimize_endpoints([regex, plain]).map(&.url).should eq(["(^/a$)|(^/b$)", "/items"])
+      rows = {"(^/a$)|(^/b$)", "(?:a|b)$", "api/(.*)", "users/([0-9]+)", "a|b"}.map_with_index do |url, i|
+        endpoint = tech_endpoint(url, "ANY", "apache_httpd", ".htaccess", i + 1)
+        endpoint.kind = "regex"
+        endpoint
+      end
+      plain = tech_endpoint("items", "GET", "nginx", "nginx.conf", 9)
+      optimizer.optimize_endpoints(rows.to_a + [plain]).map(&.url).should eq(["(^/a$)|(^/b$)", "(?:a|b)$", "/api/(.*)", "/users/([0-9]+)", "a|b", "/items"])
     end
 
     it "folds an AI endpoint into the static route under a different param spelling" do

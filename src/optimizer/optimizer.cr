@@ -212,9 +212,11 @@ class EndpointOptimizer
       # even to already-rooted URLs (the double-slash collapse below
       # papered over it). Mobile deep links are exempt: an unresolved
       # `@string/...://` or `${...}://` scheme isn't a relative path, so
-      # rooting it (`/@string/...`) would corrupt the URL. Neither is a
-      # regex: `/` before nginx `~ (^/a$)|(^/b$)` makes it match nothing.
-      if !absolute_url && tiny_tmp.url[0] != '/' && !tiny_tmp.non_http? && tiny_tmp.kind != "regex"
+      # rooting it (`/@string/...`) would corrupt the URL. Nor is a regex
+      # that opens with a group or splits on a top-level `|`: `/` before
+      # nginx `~ (^/a$)|(^/b$)` makes it match nothing.
+      unrooted_regex = tiny_tmp.kind == "regex" && (tiny_tmp.url.starts_with?('(') || Noir::URLPath.top_level_alternation?(tiny_tmp.url))
+      if !absolute_url && tiny_tmp.url[0] != '/' && !tiny_tmp.non_http? && !unrooted_regex
         tiny_tmp.url = "/#{tiny_tmp.url}"
       end
 
@@ -235,7 +237,7 @@ class EndpointOptimizer
       # schema at `graphql/`. One operation either way.
       dedup_url = dedup_url.sub("/#", "#") if graphql_endpoint?(tiny_tmp)
 
-      key = {tiny_tmp.method, dedup_url, endpoint_source_scope(tiny_tmp, unified_url, cross_tech_keys) + route_condition_key(tiny_tmp)}
+      key = {tiny_tmp.method, dedup_url, endpoint_source_scope(tiny_tmp, unified_url, cross_tech_keys) + route_condition_key(tiny_tmp) + proxy_route_key(tiny_tmp)}
 
       # Folded into the code routes at its path once they are all merged.
       if proxy_route?(tiny_tmp) && code_paths.includes?(unified_url)
@@ -555,6 +557,13 @@ class EndpointOptimizer
     endpoint.method == "ANY" && PROXY_ROUTE_TECHNOLOGIES.includes?(endpoint.details.technology || "")
   end
 
+  # An `ANY` Ingress or Envoy row stays apart from another technology's `ANY`
+  # row (an nginx location) at its path: a guard only one of them states
+  # would cover the other's open route, and its TLS the other's http one.
+  private def proxy_route_key(endpoint : Endpoint) : String
+    proxy_route?(endpoint) ? "|proxy:#{endpoint.details.technology}" : ""
+  end
+
   # Dedup-key URLs (placeholders unified) a code analyzer reports.
   private def code_route_paths(endpoints : Array(Endpoint)) : Set(String)
     paths = Set(String).new
@@ -570,6 +579,7 @@ class EndpointOptimizer
   private def fold_proxy_routes(final_map : Hash(Tuple(String, String, String), Endpoint), held : Array(Tuple(Tuple(String, String, String), Endpoint))) : Nil
     return if held.empty?
 
+    opened = Set(Tuple(String, String, String)).new
     code = Hash(String, Array(Tuple(String, String, String))).new
     final_map.each do |key, endpoint|
       next if endpoint.non_http? || !code_technology_contributed?(endpoint)
@@ -582,7 +592,9 @@ class EndpointOptimizer
       targets = (code[unify_path_placeholders(key[1])]? || [] of Tuple(String, String, String))
         .group_by(&.[0]).values.compact_map { |rows| rows.size == 1 ? rows[0] : rows.find(&.[2].empty?) }
       targets = [key] if targets.empty?
+      open = proxy.tags.none? { |tag| tag.name == "auth" && tag.tagger == Tag.declared_access_tagger(proxy.details.technology || "") }
       targets.each do |target|
+        opened << target if open
         # Each merge takes the row's arrays, so every route gets its own copy.
         copy = proxy
         copy.tags = proxy.tags.dup
@@ -594,6 +606,15 @@ class EndpointOptimizer
         copy.details = details
         final_map[target] = (existing = final_map[target]?) ? merge_duplicate(existing, copy) : copy
       end
+    end
+
+    # `merge_declared_access` lifts a guard only for an open declaration of
+    # the same technology; an open Envoy route in front of the route an
+    # Ingress guards is a way in all the same.
+    taggers = PROXY_ROUTE_TECHNOLOGIES.map { |technology| Tag.declared_access_tagger(technology) }
+    opened.each do |target|
+      next unless endpoint = final_map[target]?
+      endpoint.tags.reject! { |tag| tag.name == "auth" && taggers.includes?(tag.tagger) }
     end
   end
 

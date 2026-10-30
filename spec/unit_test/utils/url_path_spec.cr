@@ -249,6 +249,13 @@ describe "Noir::URLPath.strip_regex_anchors" do
     Noir::URLPath.strip_regex_anchors("/a/[^/]+").should eq("/a/[^/]+")
   end
 
+  it "tells a top-level alternation from one inside a group" do
+    Noir::URLPath.top_level_alternation?("(^/a$)|(^/b$)").should be_true
+    Noir::URLPath.top_level_alternation?("a|b").should be_true
+    Noir::URLPath.top_level_alternation?("(?:a|b)$").should be_false
+    Noir::URLPath.top_level_alternation?("api/\\|x").should be_false
+  end
+
   it "reads an anchored regex wrapped in one group without the group" do
     Noir::URLPath.strip_regex_anchors("(^/items/(.+)/files$)").should eq("/items/(.+)/files")
     Noir::URLPath.strip_regex_anchors("(^/a/\\))").should eq("/a/\\)")

@@ -198,6 +198,25 @@ module Noir
       pattern.lchop('^').sub(/(?:\$|\\Z)\z/, "").gsub("\\.", ".")
     end
 
+    # True when a `|` outside any group splits the whole pattern.
+    def self.top_level_alternation?(pattern : String) : Bool
+      depth = 0
+      escaped = false
+      pattern.each_char do |ch|
+        if escaped
+          escaped = false
+          next
+        end
+        case ch
+        when '\\' then escaped = true
+        when '('  then depth += 1
+        when ')'  then depth -= 1
+        when '|'  then return true if depth == 0
+        end
+      end
+      false
+    end
+
     private def self.whole_group?(pattern : String) : Bool
       depth = 0
       escaped = false
