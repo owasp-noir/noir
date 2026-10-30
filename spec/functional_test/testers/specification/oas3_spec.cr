@@ -226,3 +226,36 @@ FunctionalTester.new("fixtures/specification/oas3/query_method/", {
     Param.new("q", "", "form"),
   ]),
 ]).perform_tests
+
+# `readOnly: true` marks a property as response-only (OAS 3.x), so it is not
+# a request param: not in JSON or form bodies, not inline or behind a `$ref`,
+# not in YAML or JSON documents. `readOnly: false`, a non-boolean `readOnly`
+# and `writeOnly` keep the property.
+read_only_endpoints = [] of Endpoint
+{"yaml", "json"}.each do |fmt|
+  read_only_endpoints << Endpoint.new("/#{fmt}/pets", "POST", [
+    Param.new("status", "", "json"),
+    Param.new("password", "", "json"),
+    Param.new("name", "", "json"),
+    Param.new("note", "", "json"),
+  ])
+  read_only_endpoints << Endpoint.new("/#{fmt}/pets/form", "POST", [Param.new("nickname", "", "form")])
+  read_only_endpoints << Endpoint.new("/#{fmt}/pets/ref", "PUT", [Param.new("breed", "", "json")])
+end
+
+read_only_tester = FunctionalTester.new("fixtures/specification/oas3/read_only/", {
+  :techs     => 1,
+  :endpoints => read_only_endpoints.size,
+}, read_only_endpoints)
+read_only_tester.perform_tests
+
+describe "OAS3 readOnly request properties", tags: "functional" do
+  it "drops properties marked readOnly: true" do
+    names = ->(url : String) { read_only_tester.endpoints.find!(&.url.==(url)).params.map(&.name) }
+    {"yaml", "json"}.each do |fmt|
+      names.call("/#{fmt}/pets").should_not contain "id"
+      names.call("/#{fmt}/pets/form").should_not contain "created_at"
+      names.call("/#{fmt}/pets/ref").should_not contain "uid"
+    end
+  end
+end
