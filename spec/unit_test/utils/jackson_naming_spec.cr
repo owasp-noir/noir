@@ -28,4 +28,16 @@ describe Noir::JacksonNaming do
     Noir::JacksonNaming.translate("userId", "uppercamelcase").should eq("UserId")
     Noir::JacksonNaming.translate("userId", "lowercamelcase").should eq("userId")
   end
+
+  it "reads @JsonRootName and UNWRAP_ROOT_VALUE (#3271)" do
+    Noir::JacksonNaming.annotation_root_name(%(@JsonRootName("user"))).should eq("user")
+    Noir::JacksonNaming.annotation_root_name(%(@com.fasterxml.jackson.annotation.JsonRootName(value = "user"))).should eq("user")
+    Noir::JacksonNaming.annotation_root_name(%(@JsonRootName(""))).should be_nil
+    Noir::JacksonNaming.annotation_root_name(%(@JsonRootName(namespace = "ns", value = "user"))).should eq("user")
+    Noir::JacksonNaming.annotation_root_name(%(@JsonRootName(value = "user", namespace = "ns"))).should eq("user")
+    Noir::JacksonNaming.unwrap_root_value?({"spring.jackson.deserialization.UNWRAP_ROOT_VALUE" => "true"}).should be_true
+    Noir::JacksonNaming.unwrap_root_value?({"spring.jackson.deserialization.unwrap-root-value" => " TRUE "}).should be_true
+    Noir::JacksonNaming.unwrap_root_value?({"spring.jackson.deserialization.UNWRAP_ROOT_VALUE" => "false"}).should be_false
+    Noir::JacksonNaming.unwrap_root_value?({"spring.jackson.serialization.WRAP_ROOT_VALUE" => "true"}).should be_false
+  end
 end

@@ -123,6 +123,9 @@ module Noir
       # The JSON key is settled by `@JsonProperty` or the class `@JsonNaming`;
       # the module-wide Jackson default leaves it alone.
       property? json_name_fixed : Bool = false
+      # The declaring class's `@JsonRootName`: the key the body is wrapped
+      # in under `UNWRAP_ROOT_VALUE`.
+      property json_root : String? = nil
       # Declared Java type as written (`Pager`, `MultipartFile[]`), "" when unknown.
       getter type_name : String
       # Jackson `@JsonUnwrapped(prefix, suffix)`: the field has no key of its
@@ -185,7 +188,7 @@ module Noir
         body = Noir::TreeSitter.field(decl, "body")
         next unless body
         lombok_setters = lombok_field_binding?(decl, source)
-        fields = apply_json_naming(collect_class_fields(body, source, lombok_setters), json_naming_of(decl, source))
+        fields = apply_json_naming(collect_class_fields(body, source, lombok_setters), json_naming_of(decl, source), json_root_of(decl, source))
         results[class_name] = fields unless fields.empty?
       end
       # Java records: the header components ARE the bindable fields (a
@@ -199,7 +202,7 @@ module Noir
           name_node = Noir::TreeSitter.field(decl, "name")
           next unless name_node
           class_name = Noir::TreeSitter.node_text(name_node, source)
-          fields = apply_json_naming(collect_record_fields(decl, source), json_naming_of(decl, source))
+          fields = apply_json_naming(collect_record_fields(decl, source), json_naming_of(decl, source), json_root_of(decl, source))
           results[class_name] = fields unless fields.empty? || results.has_key?(class_name)
         end
       end
@@ -208,11 +211,15 @@ module Noir
 
     # Apply a class-level Jackson naming strategy to the fields that have no
     # explicit `@JsonProperty`, and mark every field settled either way.
-    def apply_json_naming(fields : Array(FieldInfo), strategy : String?) : Array(FieldInfo)
-      return fields unless strategy
+    # `root` is the class's `@JsonRootName`.
+    def apply_json_naming(fields : Array(FieldInfo), strategy : String?, root : String? = nil) : Array(FieldInfo)
+      return fields unless strategy || root
       fields.map do |field|
-        field.json_name = Noir::JacksonNaming.translate(field.name, strategy) unless field.json_name_fixed?
-        field.json_name_fixed = true
+        if strategy
+          field.json_name = Noir::JacksonNaming.translate(field.name, strategy) unless field.json_name_fixed?
+          field.json_name_fixed = true
+        end
+        field.json_root = root
         field
       end
     end
@@ -220,6 +227,11 @@ module Noir
     private def json_naming_of(decl : LibTreeSitter::TSNode, source : String) : String?
       return unless ann = annotation_node_on(decl, source, "JsonNaming")
       Noir::JacksonNaming.annotation_strategy(Noir::TreeSitter.node_text(ann, source))
+    end
+
+    private def json_root_of(decl : LibTreeSitter::TSNode, source : String) : String?
+      return unless ann = annotation_node_on(decl, source, "JsonRootName")
+      Noir::JacksonNaming.annotation_root_name(Noir::TreeSitter.node_text(ann, source))
     end
 
     private def walk_record_declarations(node : LibTreeSitter::TSNode, &block : LibTreeSitter::TSNode ->)
@@ -1584,8 +1596,11 @@ module Noir
         target_file = type_file_for(file, target, scopes) || next
         inner_fields = unwrapped_fields(target_file, target, scopes, path) || next
         inner_fields.each do |inner|
-          flat << TreeSitterJavaParameterExtractor::FieldInfo.new("#{field.name}.#{inner.name}", inner.access_modifier,
+          inlined = TreeSitterJavaParameterExtractor::FieldInfo.new("#{field.name}.#{inner.name}", inner.access_modifier,
             inner.has_setter?, inner.init_value, "#{prefix}#{inner.json_name}#{suffix}", inner.type_name, json_ignored: inner.json_ignored?)
+          # Inlined into this class, so under this class's root.
+          inlined.json_root = field.json_root
+          flat << inlined
         end
       end
       path.pop
@@ -1609,9 +1624,8 @@ module Noir
       package_name, imports = scopes[file] ||= file_package_imports(file)
       basename = "#{simple}.java"
       if single = imports.find { |imp| !imp.wildcard? && imp.path.rpartition('.').last == simple }
-        suffix = "/#{single.path.gsub('.', '/')}.java"
         found = nil
-        Noir::ImportGraph.related_files(file, package_name, [single], "java") { |f| found ||= f if f.ends_with?(suffix) }
+        Noir::ImportGraph.related_files(file, package_name, [single], "java") { |f| found ||= f if Noir::ImportGraph.fqn_file?(f, single.path, "java") }
         return found
       end
 

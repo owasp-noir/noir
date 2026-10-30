@@ -24,6 +24,25 @@ module Noir
       text.match(ANNOTATION_RE).try { |match| strategy(match[1]) }
     end
 
+    # `@JsonRootName("user")`: the key a body is wrapped in when
+    # `UNWRAP_ROOT_VALUE` is on. Nil when absent or empty.
+    ROOT_NAME_RE  = /@(?:\w+\.)*JsonRootName\s*\(([^)]*)\)/
+    ROOT_VALUE_RE = /(?:\A|,)\s*(?:value\s*=\s*)?"([^"\\]*)"/
+
+    # `@JsonRootName("user")`, `@JsonRootName(namespace = "ns", value = "user")`.
+    def annotation_root_name(text : String) : String?
+      args = text.match(ROOT_NAME_RE).try(&.[1]) || return
+      args.match(ROOT_VALUE_RE).try(&.[1].presence)
+    end
+
+    # `spring.jackson.deserialization.UNWRAP_ROOT_VALUE=true`, in any of
+    # Spring's relaxed spellings (`unwrap-root-value`).
+    def unwrap_root_value?(config : Hash(String, String)) : Bool
+      config.any? do |key, value|
+        key.downcase.delete("-_") == "spring.jackson.deserialization.unwraprootvalue" && value.strip.downcase == "true"
+      end
+    end
+
     def translate(name : String, strategy : String) : String
       case strategy
       when "snakecase"      then snake(name)

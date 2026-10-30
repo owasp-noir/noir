@@ -41,6 +41,23 @@ describe Noir::ImportGraph do
     it "returns nil when the directory is shorter than the package" do
       Noir::ImportGraph.source_root_for("Bar.java", "com.foo").should be_nil
     end
+
+    it "accepts package folders spelled with dots (#3271)" do
+      Noir::ImportGraph.source_root_for("/p/src/main/java/com.example/web/A.java", "com.example.web").should eq("/p/src/main/java")
+      Noir::ImportGraph.source_root_for("/p/src/main/java/com.example.web/A.java", "com.example.web").should eq("/p/src/main/java")
+      # A folder that only partly matches the package does not count.
+      Noir::ImportGraph.source_root_for("/p/src/main/java/org.example/web/A.java", "com.example.web").should be_nil
+      Noir::ImportGraph.source_root_for("/p/src/main/java/x.com/web/A.java", "com.web").should be_nil
+    end
+  end
+
+  describe "#fqn_file?" do
+    it "matches slash and dotted package folders on segment boundaries (#3271)" do
+      Noir::ImportGraph.fqn_file?("/p/src/main/java/com/example/model/X.java", "com.example.model.X", "java").should be_true
+      Noir::ImportGraph.fqn_file?("/p/src/main/java/com.example/model/X.java", "com.example.model.X", "java").should be_true
+      Noir::ImportGraph.fqn_file?("/p/src/main/java/xcom/example/model/X.java", "com.example.model.X", "java").should be_false
+      Noir::ImportGraph.fqn_file?("/p/src/main/java/com/example/other/X.java", "com.example.model.X", "java").should be_false
+    end
   end
 
   describe "#related_files" do
@@ -136,6 +153,69 @@ describe Noir::ImportGraph do
         visited = collect(controller, "io.pivotal.cities.web", imports, "kt")
         visited.should contain(controller)
         visited.should contain(dto)
+      end
+    end
+
+    it "resolves imports into dotted package folders before a wider root's same package (#3271)" do
+      with_tmpdir do |root|
+        app_root = File.join(root, "app", "src", "main", "kotlin")
+        wider_root = File.join(root, "libs", "shared", "src", "main", "kotlin")
+        Dir.mkdir_p(File.join(app_root, "com.example", "web"))
+        Dir.mkdir_p(File.join(app_root, "com.example", "model"))
+        Dir.mkdir_p(File.join(app_root, "com.example.dto"))
+        Dir.mkdir_p(File.join(wider_root, "com", "example", "model"))
+
+        controller = File.join(app_root, "com.example", "web", "ItemController.kt")
+        dto = File.join(app_root, "com.example", "model", "Requests.kt")
+        wildcard_dto = File.join(app_root, "com.example.dto", "CreateItem.kt")
+        unrelated = File.join(wider_root, "com", "example", "model", "Other.kt")
+        [controller, dto, wildcard_dto, unrelated].each do |file|
+          File.write(file, "")
+          CodeLocator.instance.register_file(file, "")
+        end
+        CodeLocator.instance.scan_base_paths = [root]
+        Noir::ExtractionResultCache.clear_all
+
+        imports = [
+          Noir::ImportGraph::ImportRef.new("com.example.model.PublicItemRequest", false),
+          Noir::ImportGraph::ImportRef.new("com.example.dto", true),
+        ]
+        visited = collect(controller, "com.example.web", imports, "kt")
+        visited.should contain(dto)
+        visited.should contain(wildcard_dto)
+        visited.should_not contain(unrelated)
+      ensure
+        CodeLocator.instance.scan_base_paths = [] of String
+        CodeLocator.instance.clear_all
+        Noir::ExtractionResultCache.clear_all
+      end
+    end
+
+    it "prefers the module's own dotted package folder over a sibling module's package (#3271)" do
+      {"java" => "Dto.java", "kt" => "Requests.kt"}.each do |ext, own_name|
+        with_tmpdir do |root|
+          lang = ext == "kt" ? "kotlin" : "java"
+          api_root = File.join(root, "api", "src", "main", lang)
+          sibling_root = File.join(root, "other", "src", "main", lang)
+          Dir.mkdir_p(File.join(api_root, "com.example", "web"))
+          Dir.mkdir_p(File.join(api_root, "com.example", "model"))
+          Dir.mkdir_p(File.join(sibling_root, "com", "example", "model"))
+
+          controller = File.join(api_root, "com.example", "web", "C.#{ext}")
+          own = File.join(api_root, "com.example", "model", own_name)
+          # Java: the sibling's same-named class; Kotlin: any file in the
+          # same-named package, which the package fallback would take.
+          sibling = File.join(sibling_root, "com", "example", "model", ext == "kt" ? "Other.kt" : "Dto.java")
+          [controller, own, sibling].each { |file| File.write(file, "") }
+          Noir::ExtractionResultCache.clear_all
+
+          imports = [Noir::ImportGraph::ImportRef.new("com.example.model.Dto", false)]
+          visited = collect(controller, "com.example.web", imports, ext)
+          visited.should contain(own)
+          visited.should_not contain(sibling)
+        ensure
+          Noir::ExtractionResultCache.clear_all
+        end
       end
     end
   end

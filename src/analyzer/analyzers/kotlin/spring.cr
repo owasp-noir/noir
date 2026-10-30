@@ -728,7 +728,7 @@ module Analyzer::Kotlin
           end
         next if routes.empty? && implementations.empty? && stomp_routes.empty? && graphql_routes.empty?
 
-        dto_index = with_default_json_naming(dto_builder.build_for_with_root(path, content, root), path)
+        dto_index = with_jackson_defaults(dto_builder.build_for_with_root(path, content, root), path)
         method_nodes = Noir::TreeSitterKotlinParameterExtractor.index_functions_from(root, content)
         file_callees = Noir::KotlinCalleeExtractor::FileCallees.new(root, content, path)
 
@@ -925,7 +925,7 @@ module Analyzer::Kotlin
           interface_path = pairs.first[1].path
 
           Noir::TreeSitter.parse_kotlin(interface_source) do |interface_root|
-            interface_dto_index = with_default_json_naming(dto_builder.build_for_with_root(interface_path, interface_source, interface_root), interface_path)
+            interface_dto_index = with_jackson_defaults(dto_builder.build_for_with_root(interface_path, interface_source, interface_root), interface_path)
 
             pairs.each do |implementation, entry|
               entry_route = entry.route
@@ -1055,7 +1055,7 @@ module Analyzer::Kotlin
       endpoint.details.add_path(PathInfo.new(entry.path, entry.line))
 
       Noir::TreeSitter.parse_kotlin(entry.source) do |handler_root|
-        handler_dto_index = with_default_json_naming(dto_builder.build_for_with_root(entry.path, entry.source, handler_root), entry.path)
+        handler_dto_index = with_jackson_defaults(dto_builder.build_for_with_root(entry.path, entry.source, handler_root), entry.path)
         method_nodes = Noir::TreeSitterKotlinParameterExtractor.index_functions_from(handler_root, entry.source)
         if method = method_nodes["#{entry.class_name}##{entry.method_name}"]?
           Noir::TreeSitterKotlinParameterExtractor.extract_server_request_parameters_from_method(

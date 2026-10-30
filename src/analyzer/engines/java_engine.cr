@@ -198,9 +198,8 @@ module Analyzer::Java
         else
           type
         end
-      stem = "/#{fqn.gsub('.', '/')}"
-      {".java", ".kt"}.each do |ext|
-        if file = CodeLocator.instance.files_by_basename("#{type}#{ext}").find(&.ends_with?("#{stem}#{ext}"))
+      {"java", "kt"}.each do |ext|
+        if file = CodeLocator.instance.files_by_basename("#{type}.#{ext}").find { |path| Noir::ImportGraph.fqn_file?(path, fqn, ext) }
           return file
         end
       end
@@ -956,26 +955,37 @@ module Analyzer::Java
 
     @java_project_constants : Hash(String, Hash(String, String))? = nil
     @resolver_injected_annotations : Hash(String, Set(String))? = nil
-    @json_naming_defaults = Hash(String, String?).new
+    @jackson_defaults = Hash(String, {String?, Bool}).new
 
-    # The module's `spring.jackson.property-naming-strategy`, normalised.
-    private def default_json_naming(path : String) : String?
+    # The module's `spring.jackson.property-naming-strategy` (normalised) and
+    # `spring.jackson.deserialization.UNWRAP_ROOT_VALUE`.
+    private def jackson_defaults(path : String) : {String?, Bool}
       root = project_root_for(path)
-      return @json_naming_defaults[root] if @json_naming_defaults.has_key?(root)
-      value = spring_config_values_for(root)["spring.jackson.property-naming-strategy"]?
-      @json_naming_defaults[root] = value.try { |raw| Noir::JacksonNaming.strategy(raw) }
+      @jackson_defaults[root] ||= begin
+        values = spring_config_values_for(root)
+        {values["spring.jackson.property-naming-strategy"]?.try { |raw| Noir::JacksonNaming.strategy(raw) },
+         Noir::JacksonNaming.unwrap_root_value?(values)}
+      end
     end
 
-    # `index` with the module's Jackson default applied to every field that
-    # neither `@JsonProperty` nor a class `@JsonNaming` renamed. Returns a
-    # copy: the DTO index is shared across files.
-    private def with_default_json_naming(index : Hash(String, Array(F)), path : String) : Hash(String, Array(F)) forall F
-      return index unless strategy = default_json_naming(path)
-      index.transform_values do |fields|
-        fields.map do |field|
-          field.json_name = Noir::JacksonNaming.translate(field.name, strategy) unless field.json_name_fixed?
+    # `index` with the module's Jackson defaults applied: the naming strategy
+    # renames every field that neither `@JsonProperty` nor a class
+    # `@JsonNaming` renamed, and `UNWRAP_ROOT_VALUE` nests each class's keys
+    # under its `@JsonRootName` (else its simple name, as Jackson does).
+    # Returns a copy: the DTO index is shared across files.
+    private def with_jackson_defaults(index : Hash(String, Array(F)), path : String) : Hash(String, Array(F)) forall F
+      strategy, unwrap = jackson_defaults(path)
+      return index unless strategy || unwrap
+      index.to_h do |cls, fields|
+        # Own fields come first; a subclass without its own root inherits
+        # its parent's, as Jackson reads class annotations up the hierarchy.
+        root = fields.compact_map(&.json_root).first? || cls
+        renamed = fields.map do |field|
+          field.json_name = Noir::JacksonNaming.translate(field.name, strategy) if strategy && !field.json_name_fixed?
+          field.json_name = "#{root}.#{field.json_name}" if unwrap
           field
         end
+        {cls, renamed}
       end
     end
 
