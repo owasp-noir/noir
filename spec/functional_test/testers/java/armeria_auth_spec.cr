@@ -38,5 +38,15 @@ describe "Armeria builder routes and auth decorators", tags: "functional" do
     %w[/welcome /other /c1/public /c2/login /c3/open /c4/open /b/open /b/scoped/public /kt/docs /kt/public].each do |url|
       auth.call(url).should be_empty
     end
+
+    # V.java: virtual-host blocks, path-pattern forms (a bare path is
+    # exact; `prefix:`, `glob:` and `*` are not), a variable decorator, a
+    # string that spells a decorator, and `.<T>service(` in the chain.
+    %w[/v3/vh/admin /v3/vh/routeopen /v3/vh/inner /v3/admin /v3/p/x /v3/g/a/b /v3/x/y /v3/e /v3/gen/b].each do |url|
+      auth.call(url).should eq(guarded)
+    end
+    %w[/v3/vh/pub /v3/vh/other /v3/vh/other2 /v3/vh/pub2 /v3/admin/open /v3/pp /v3/var/r /v3/str/r /v3/str/r2].each do |url|
+      auth.call(url).should be_empty
+    end
   end
 end

@@ -90,6 +90,7 @@ module Analyzer::Java
         # Comments blanked, offsets kept: the chain is parsed as text, so a
         # comment inside `.service(...)` would otherwise read as an argument.
         code = nil.as(String?)
+        strings_blanked = nil.as(String?)
         content.scan(REGEX_SERVER_BUILDER) do |builder_match|
           start = builder_match.begin(0)
           next unless start
@@ -105,7 +106,8 @@ module Analyzer::Java
 
           resolved_constants = constants ||= (path.ends_with?(".java") ? Noir::TreeSitterJavaRouteExtractor.extract_string_constants(content) : Hash(String, String).new)
           line_index = offsets ||= Noir::CharOffsets.new(content)
-          guards = ArmeriaChainGuards.new(server_codeblock, after_builder - start)
+          code_only = (strings_blanked ||= blank_masked(code.as(String), mask))[start..finish]
+          guards = ArmeriaChainGuards.new(server_codeblock, code_only, after_builder - start)
           endpoint_at = ->(url : String, method : String, block_offset : Int32) do
             endpoint = Endpoint.new(url, method, Details.new(PathInfo.new(path, line_index.line(start + block_offset))))
             endpoint.add_tag(Tag.new("auth", "Protected by Armeria AuthService decorator", "java_armeria")) if guards.guarded?(block_offset, url)
@@ -449,10 +451,12 @@ module Analyzer::Java
           constants = path.ends_with?(".java") ? Noir::TreeSitterJavaRouteExtractor.extract_string_constants(content) : Hash(String, String).new
           base = configured_base_for(path)
           code = JavaEngine.strip_comments(content)
+          chars = nil.as(Array(Char)?)
           call_argument_expressions(code, ".annotatedService").each do |(expr, found)|
             prefix, service_class =
               if expr.strip.empty?
-                annotated_service_binding_registration(code, found, constants)
+                file_chars = chars ||= code.chars
+                annotated_service_binding_registration(file_chars, found, constants)
               else
                 annotated_service_registration(expr, constants)
               end
@@ -570,11 +574,11 @@ module Analyzer::Java
 
     # The binding-builder form: `.annotatedService().pathPrefix("/p")
     # .decorator(...).build(Svc())`.
-    private def annotated_service_binding_registration(code : String,
+    private def annotated_service_binding_registration(chars : Array(Char),
                                                        found : Int32,
                                                        constants : Hash(String, String)) : Tuple(String, String)
       prefix = ""
-      ArmeriaChainGuards.chain_calls(code, found).skip(1).each do |call|
+      ArmeriaChainGuards.chain_calls(chars, found).skip(1).each do |call|
         case call.name
         when "pathPrefix"
           prefix = first_builder_path_arg(call.args, constants) || prefix
@@ -676,6 +680,16 @@ module Analyzer::Java
     # a Java text block / Kotlin raw string showing example code. Handles
     # `//` line comments, `/* */` block comments, triple-quoted strings,
     # double-quoted strings and char literals (with `\` escapes).
+    # `code` with every masked char (string literal or comment) blanked,
+    # newlines and offsets kept.
+    private def blank_masked(code : String, mask : Array(Bool)) : String
+      String.build(code.bytesize) do |io|
+        code.each_char_with_index do |ch, i|
+          io << (i < mask.size && mask[i] && ch != '\n' ? ' ' : ch)
+        end
+      end
+    end
+
     private def build_non_code_mask(content : String) : Array(Bool)
       chars = content.chars
       n = chars.size
@@ -1194,8 +1208,9 @@ module Analyzer::Java
     # decorator covers, read from the chain's own top-level calls:
     #
     #   - `.decorator(AuthService...)` on the server covers every route of
-    #     this chain; `.decorator("/p/*", ...)` and `.decoratorUnder("/p",
-    #     ...)` the routes under that path.
+    #     this chain; `.decorator("/p", ...)` the route its path pattern
+    #     names (exact, or `prefix:`/`glob:`/`*` forms), and
+    #     `.decoratorUnder("/p", ...)` the routes under `/p`.
     #   - a decorator inside `.route()...build(svc)`, `.annotatedService()
     #     ...build(svc)` or `.virtualHost(...)...and()` covers that block
     #     only, and one passed in a registration's arguments
@@ -1204,10 +1219,13 @@ module Analyzer::Java
     #
     # The chain ends at the server's own `.build()`, so a second
     # `Server.builder()` in the same statement or file is not covered.
-    # `code` has comments blanked, so a commented-out decorator is not read.
+    # Decorators are looked for in `code_only` (comments and string
+    # literals blanked), so neither a commented-out decorator nor a string
+    # that spells one counts; path patterns are read from `code`.
     #
     # ponytail: a decorator held in a variable (`.decorator(authDecorator)`)
-    # is not resolved; neither are separate `sb.decorator(...)` statements.
+    # is not resolved; neither are separate `sb.decorator(...)` statements
+    # nor `regex:` path patterns.
     class ArmeriaChainGuards
       AUTH_DECORATOR    = /\b(?:Http)?AuthService\s*\.\s*(?:newDecorator\w*|builder)\s*\(/
       SUB_CHAIN_CLOSERS = {"route" => "build", "annotatedService" => "build",
@@ -1215,22 +1233,23 @@ module Analyzer::Java
 
       record Call, name : String, args : String, start : Int32, finish : Int32
 
-      # `{first offset, last offset, path prefix or nil for all}`
-      @scopes = [] of Tuple(Int32, Int32, String?)
+      # `{first offset, last offset, url matcher or nil for every route}`
+      @scopes = [] of Tuple(Int32, Int32, Regex?)
       @chain_end = 0
 
-      def initialize(code : String, from : Int32)
-        calls = self.class.chain_calls(code, from)
+      def initialize(code : String, code_only : String, from : Int32)
+        calls = self.class.chain_calls(code.chars, from)
         return if calls.empty?
+        only = code_only.chars
         @chain_end = calls.last.finish
-        # Open sub-chains: `{closer, start, prefixes of its auth decorators}`.
-        open = [] of Tuple(String, Int32, Array(String?))
+        # Open sub-chains: `{closer, start, matchers of its auth decorators}`.
+        open = [] of Tuple(String, Int32, Array(Regex?))
         calls.each do |call|
-          auth = call.args.matches?(AUTH_DECORATOR)
+          auth = only[call.start..call.finish].join.matches?(AUTH_DECORATOR)
           if (top = open.last?) && call.name == top[0]
             open.pop
             top[2] << nil if auth # `.build(svc.decorate(AuthService...))`
-            top[2].each { |prefix| @scopes << {top[1], call.finish, prefix} }
+            top[2].each { |matcher| @scopes << {top[1], call.finish, matcher} }
             next
           end
           if open.empty? && call.name == "build"
@@ -1238,17 +1257,17 @@ module Analyzer::Java
             break
           end
           if closer = sub_chain_closer(call)
-            open << {closer, call.start, [] of String?}
+            open << {closer, call.start, [] of Regex?}
             next
           end
           next unless auth
           if call.name == "decorator" || call.name == "decoratorUnder"
-            readable, prefix = decorator_scope(call)
+            readable, matcher = decorator_scope(call)
             next unless readable
             if top = open.last?
-              top[2] << prefix
+              top[2] << matcher
             else
-              @scopes << {0, Int32::MAX, prefix}
+              @scopes << {0, Int32::MAX, matcher}
             end
           else
             @scopes << {call.start, call.finish, nil}
@@ -1258,8 +1277,8 @@ module Analyzer::Java
 
       def guarded?(offset : Int32, url : String) : Bool
         return false if offset > @chain_end
-        @scopes.any? do |(first, last, prefix)|
-          first <= offset <= last && (prefix.nil? || covers?(prefix, url))
+        @scopes.any? do |(first, last, matcher)|
+          first <= offset <= last && (matcher.nil? || url.matches?(matcher))
         end
       end
 
@@ -1272,56 +1291,91 @@ module Analyzer::Java
         closer if call.args.strip.empty?
       end
 
-      # `{readable, path}`: the path a decorator call is limited to (nil
+      # `{readable, matcher}`: the URLs a decorator call is limited to (nil
       # for every route), or not readable when it is limited by a `Route`
-      # object or a non-literal prefix.
-      private def decorator_scope(call : Call) : Tuple(Bool, String?)
+      # object, a non-literal path or a `regex:` pattern.
+      private def decorator_scope(call : Call) : Tuple(Bool, Regex?)
         args = Noir::TopLevelSplit.split(call.args, ',', Noir::TopLevelSplit::Rules::JAVA)
         return {true, nil} if call.name == "decorator" && args.size < 2
         literal = args.first?.try(&.strip) || ""
         return {false, nil} unless literal.size >= 2 && literal.starts_with?('"') && literal.ends_with?('"')
-        {true, literal[1...-1].lchop("prefix:").rchop('*')}
+        pattern = literal[1...-1]
+        matcher = call.name == "decoratorUnder" ? prefix_matcher(pattern) : path_pattern_matcher(pattern)
+        matcher == false ? {false, nil} : {true, matcher.as(Regex?)}
       end
 
-      # Segment-boundary prefix match: `/admin` covers `/admin/x`, not
-      # `/administration`.
-      private def covers?(prefix : String, url : String) : Bool
+      # Armeria path patterns: a plain path is exact, `prefix:` covers the
+      # subtree, `glob:` and any `*` are globs. false when unreadable.
+      private def path_pattern_matcher(pattern : String) : Regex? | Bool
+        if rest = pattern.lchop?("prefix:")
+          prefix_matcher(rest)
+        elsif rest = pattern.lchop?("exact:")
+          Regex.new("^#{Regex.escape(rest)}$")
+        elsif rest = pattern.lchop?("glob:")
+          glob_matcher(rest)
+        elsif pattern.starts_with?("regex:")
+          false
+        elsif pattern.includes?('*')
+          glob_matcher(pattern)
+        else
+          Regex.new("^#{Regex.escape(pattern)}$")
+        end
+      end
+
+      # Segment-boundary prefix: `/admin` covers `/admin/x`, not
+      # `/administration`; the root covers everything.
+      private def prefix_matcher(prefix : String) : Regex?
         normalized = prefix.rstrip('/')
-        normalized.empty? || url == normalized || url.starts_with?("#{normalized}/")
+        return if normalized.empty?
+        Regex.new("^#{Regex.escape(normalized)}(?:/.*)?$")
+      end
+
+      # `**` spans segments (`/g/**` includes `/g`), `*` stays inside one;
+      # a relative glob matches at any depth, as in Armeria.
+      private def glob_matcher(glob : String) : Regex
+        body = Regex.escape(glob).gsub("/\\*\\*", "(?:/.*)?").gsub("\\*\\*", ".*").gsub("\\*", "[^/]*")
+        body = "(?:.*/)?#{body}" unless glob.starts_with?('/')
+        Regex.new("^#{body}$")
       end
 
       # The top-level `.name(args)` calls of a fluent chain, from `from`
       # until the first text that does not continue it. A Kotlin trailing
-      # lambda belongs to the call before it.
-      def self.chain_calls(code : String, from : Int32) : Array(Call)
-        chars = code.chars
+      # lambda belongs to the call before it; Java's explicit type
+      # arguments (`.<T>service(`) are skipped. Works on `chars` so a
+      # caller with many chains in one file splits it into chars once.
+      def self.chain_calls(chars : Array(Char), from : Int32) : Array(Call)
         calls = [] of Call
         i = skip_space(chars, from)
         while i < chars.size && chars[i] == '.'
           start = i
-          name_start = i = skip_space(chars, i + 1)
+          i = skip_space(chars, i + 1)
+          if chars[i]? == '<'
+            close = matching(chars, i, '<', '>') || break
+            i = skip_space(chars, close + 1)
+          end
+          name_start = i
           while i < chars.size && (chars[i].ascii_alphanumeric? || chars[i] == '_')
             i += 1
           end
           break if i == name_start
-          name = code[name_start...i]
+          name = chars[name_start...i].join
           i = skip_space(chars, i)
           args_start = i
-          if i < chars.size && chars[i] == '('
-            close = JavaEngine.find_matching_delimiter(code, i, '(', ')') || break
+          if chars[i]? == '('
+            close = matching(chars, i, '(', ')') || break
             i = close + 1
             lambda_at = skip_space(chars, i)
-            if lambda_at < chars.size && chars[lambda_at] == '{'
-              close = JavaEngine.find_matching_delimiter(code, lambda_at, '{', '}') || break
+            if chars[lambda_at]? == '{'
+              close = matching(chars, lambda_at, '{', '}') || break
               i = close + 1
             end
-          elsif i < chars.size && chars[i] == '{'
-            close = JavaEngine.find_matching_delimiter(code, i, '{', '}') || break
+          elsif chars[i]? == '{'
+            close = matching(chars, i, '{', '}') || break
             i = close + 1
           else
             break
           end
-          args = code[args_start...i]
+          args = chars[args_start...i].join
           args = args[1...-1] if args.starts_with?('(') && args.ends_with?(')')
           calls << Call.new(name, args, start, i - 1)
           i = skip_space(chars, i)
@@ -1334,6 +1388,36 @@ module Analyzer::Java
           i += 1
         end
         i
+      end
+
+      # Index of the delimiter closing the one at `open_idx`, skipping
+      # quoted literals (same rules as `JavaEngine.find_matching_delimiter`).
+      private def self.matching(chars : Array(Char), open_idx : Int32, open_char : Char, close_char : Char) : Int32?
+        depth = 0
+        quote = nil.as(Char?)
+        escape = false
+        i = open_idx
+        while i < chars.size
+          ch = chars[i]
+          if q = quote
+            if escape
+              escape = false
+            elsif ch == '\\'
+              escape = true
+            elsif ch == q
+              quote = nil
+            end
+          elsif ch == '"' || ch == '\''
+            quote = ch
+          elsif ch == open_char
+            depth += 1
+          elsif ch == close_char
+            depth -= 1
+            return i if depth == 0
+          end
+          i += 1
+        end
+        nil
       end
     end
   end
