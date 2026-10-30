@@ -1,11 +1,17 @@
 require "../../../models/framework_tagger"
 require "../../../utils/c_comments"
+require "../../../utils/js_literal_scanner"
+require "../../../utils/top_level_split"
+require "../../../utils/url_path"
+require "../../../miniparsers/java_route_extractor_ts"
+require "../../../analyzer/engines/java_engine"
 
 # Which build units' Spring beans serve an endpoint. A `SecurityFilterChain`,
 # a `csrf` setting or a CORS mapping lives in one Maven / Gradle module and
 # applies only to the apps whose runtime classpath holds that module, so
 # `spring_auth` and `spring_security` judge an endpoint once per app that
-# serves it (`per_serving_classpath`).
+# serves it (`per_serving_classpath`). Both read a chain's request matchers
+# the same way (`chain_scope`, `matcher_patterns`).
 module SpringModuleScope
   BUILD_FILE       = /\A(?:pom\.xml|build\.gradle(?:\.kts)?)\z/
   BOOT_APP_MARKERS = {"@SpringBootApplication", "@SpringBootConfiguration", "SpringApplication.run", "runApplication<"}
@@ -101,19 +107,24 @@ module SpringModuleScope
   SPRING_SECURITY_ARTIFACT = /\A(?:spring-boot-starter-security|spring-security-(?!test\z)[\w.-]+|spring-boot-starter-oauth2-[\w.-]+)\z/
 
   # `{module directories on module_dir's runtime classpath (itself
-  # included), whether Spring Security is on it}`; nil when unknown.
+  # included), whether Spring Security is on it}`; nil when unknown (a
+  # dependency cycle between Maven and Gradle builds included).
   private def module_classpath(module_dir : String) : {Set(String), Bool}?
     return @module_classpaths[module_dir] if @module_classpaths.has_key?(module_dir)
-    @module_classpaths[module_dir] = if File.exists?(File.join(module_dir, "pom.xml"))
-                                       maven_classpath(module_dir)
-                                     else
-                                       gradle_classpath(module_dir)
-                                     end
+    return unless @classpaths_pending.add?(module_dir)
+    begin
+      @module_classpaths[module_dir] = File.exists?(File.join(module_dir, "pom.xml")) ? maven_classpath(module_dir) : gradle_classpath(module_dir)
+    ensure
+      @classpaths_pending.delete(module_dir)
+    end
   end
+
+  @classpaths_pending = Set(String).new
 
   # By Maven's rules: a parent's dependencies are the module's own; a
   # dependency's own dependencies come along unless `optional`; `test`
-  # scope never reaches the runtime.
+  # scope never reaches the runtime. A dependency on a Gradle module of the
+  # scan brings that module's classpath.
   private def maven_classpath(module_dir : String) : {Set(String), Bool}?
     dirs = Set(String).new
     security = false
@@ -128,7 +139,16 @@ module SpringModuleScope
       pom[:dependencies].each do |dependency|
         next if dependency[:scope] == "test" || (dependency[:optional] && !direct)
         security ||= dependency[:artifact].matches?(SPRING_SECURITY_ARTIFACT)
-        maven_modules[dependency[:artifact]]?.try(&.each { |dependency_dir| queue << {dependency_dir, false} })
+        if maven_dirs = maven_modules[dependency[:artifact]]?
+          maven_dirs.each { |dependency_dir| queue << {dependency_dir, false} }
+        else
+          gradle_artifacts[dependency[:artifact]]?.try &.each do |gradle_dir|
+            next if dirs.includes?(gradle_dir)
+            return unless found = module_classpath(gradle_dir)
+            dirs.concat(found[0])
+            security ||= found[1]
+          end
+        end
       end
     end
     {dirs, security}
@@ -171,123 +191,190 @@ module SpringModuleScope
   # A coordinate `"group:name[:version]"`: a module of another build in the
   # scan when `name` is that module's directory or Maven artifactId.
   GRADLE_COORDINATE = /["'][\w.-]+:([\w.-]+)(?::[^"'\s]*)?["']/
+  # Spring Security named by a coordinate or a version-catalog accessor
+  # (`libs.spring.boot.starter.security`), not its test kit or BOM.
+  GRADLE_SPRING_SECURITY = /spring[-._]?(?:boot[-._]?starter[-._]?(?:security|oauth2)|security(?![-._]?(?:test|bom)\b))/i
+  # A line that adds a dependency, not a version constraint (`force`,
+  # `includeVersion`) or a plugin classpath.
+  GRADLE_DEPENDENCY_LINE = /\b(?:implementation|api|compile|runtime|runtimeOnly|developmentOnly|add)\b/
   # `project(":x").projectDir = file("libs/x")` (or `File(rootDir, "libs/x")`).
   GRADLE_PROJECT_DIR       = /\bproject\s*\(\s*["']([^"']+)["']\s*\)\s*\.\s*projectDir\s*=\s*(?:file\s*\(|(?:new\s+)?File\s*\(\s*\w+\s*,)\s*["']([^"']+)["']/
   GRADLE_ROOT_PROJECT_NAME = /\brootProject\.name\s*=\s*["']([^"']+)["']/
   GRADLE_CONFIGURATION     = /\A\s*([A-Za-z_]\w*)/
   GRADLE_SCRIPT_EXTENSION  = /\.gradle(?:\.kts)?\z/
+  # Precompiled convention plugins.
+  GRADLE_BUILD_LOGIC_DIR = /\/(?:buildSrc|build-logic)\//
 
-  @gradle_projects = Hash(String, Hash(String, String)?).new
+  # What one Gradle script says outside test configurations: its
+  # `{project path or coordinate name, is project}` dependencies, whether it
+  # names Spring Security, and whether it names a project at all.
+  record GradleScript, refs : Array({String, Bool}), security : Bool, mentions_project : Bool
+
+  @gradle_scripts = Hash(String, GradleScript?).new
+
+  private def gradle_script(path : String) : GradleScript?
+    return @gradle_scripts[path] if @gradle_scripts.has_key?(path)
+    @gradle_scripts[path] = if content = existing_file(path)
+                              code = Noir::CComments.strip(content)
+                              refs = [] of {String, Bool}
+                              security = false
+                              mentions = false
+                              code.each_line do |line|
+                                next if line.match(GRADLE_CONFIGURATION).try(&.[1].downcase.includes?("test"))
+                                security ||= line.matches?(GRADLE_DEPENDENCY_LINE) && line.matches?(GRADLE_SPRING_SECURITY)
+                                mentions ||= line.matches?(GRADLE_PROJECT_MENTION)
+                                read = refs.size
+                                line.scan(GRADLE_PROJECT_REF) { |match| refs << {normalize_gradle_path(match[1]), true} }
+                                line.scan(GRADLE_PROJECT_ACCESSOR) { |match| refs << {normalize_gradle_path(match[1].tr(".", ":")), true} }
+                                # A project dependency noir cannot read resolves to nothing.
+                                refs << {"?", true} if refs.size == read && line.matches?(GRADLE_PROJECT_MENTION)
+                                line.scan(GRADLE_COORDINATE) { |match| refs << {match[1], false} }
+                              end
+                              GradleScript.new(refs, security, mentions)
+                            end
+  end
+
+  private def gradle_build_script(dir : String) : GradleScript?
+    gradle_script(File.join(dir, "build.gradle")) || gradle_script(File.join(dir, "build.gradle.kts"))
+  end
 
   # By Gradle's rules: the module and, transitively, the `project(...)`
   # dependencies of its build file outside test configurations. Separate
   # builds (no shared `settings.gradle`) share nothing but coordinate
-  # dependencies on each other. Every module of the build when something
-  # else can add a project dependency (a root build file naming
-  # `project(...)`, as `subprojects {}` does, or a script or convention
-  # plugin naming one) or a reference does not resolve; nil when that
-  # build's root is outside the scan.
-  #
-  # ponytail: Spring Security on a Gradle classpath is not read, so Boot's
-  # default chain is never assumed for a Gradle app; read the
-  # `spring-boot-starter-security` coordinates when that matters.
+  # dependencies on each other. When noir cannot tell the classpath is
+  # complete it does not narrow it: every module of the build when a root
+  # build file or a script or convention plugin names a project (as
+  # `subprojects {}` does), and nil (unknown) when a project reference does
+  # not resolve or a settings file sits above the scan.
   private def gradle_classpath(module_dir : String) : {Set(String), Bool}?
-    root = gradle_root(module_dir)
-    projects = root ? gradle_projects(root) : nil
-    return gradle_build(module_dir) if root && projects.nil?
+    return if gradle_settings_above_scan?
+    roots = gradle_roots(module_dir)
+    if opaque = roots.reverse.find { |root| gradle_opaque?(root, module_dir) }
+      return gradle_build(opaque)
+    end
 
     dirs = Set(String).new
+    security = roots.any? { |root| gradle_root_security?(root) }
     queue = [module_dir]
     while dir = queue.shift?
       next unless dirs.add?(dir)
-      next unless refs = gradle_dependencies(dir)
-      refs.each do |ref, project|
+      next unless script = gradle_build_script(dir)
+      security ||= script.security
+      script.refs.each do |ref, project|
         if project
-          return gradle_build(module_dir) unless target = projects.try &.[ref]?
+          return unless target = roots.compact_map { |root| gradle_projects(root)[ref]? }.first?
           queue << target
         else
-          # Another build's module: its whole build (or Maven classpath)
-          # comes along, read no further.
           gradle_artifacts[ref]?.try &.each do |target|
-            return unless found = File.exists?(File.join(target, "pom.xml")) ? maven_classpath(target) : gradle_build(target)
+            next if dirs.includes?(target)
+            return unless found = module_classpath(target)
             dirs.concat(found[0])
+            security ||= found[1]
           end
         end
       end
     end
-    {dirs, false}
+    {dirs, security}
   end
 
-  private def gradle_root(module_dir : String) : String?
-    nearest_project_root(File.join(module_dir, "build.gradle"), GRADLE_SETTINGS)
-  end
+  @gradle_roots = Hash(String, Array(String)).new
 
-  # Every module of the Gradle build holding `module_dir`; nil when that
-  # build's root (its `settings.gradle`) is outside the scan.
-  private def gradle_build(module_dir : String) : {Set(String), Bool}?
-    return unless root = gradle_root(module_dir)
-    {Set.new(build_modules.select { |dir| Noir::PathScope.under_root?(dir, root) }), false}
-  end
-
-  # Normalized project path (`a:b`) => directory, for the build rooted at
-  # `root`; nil when something besides its modules' own build files can add
-  # project dependencies.
-  private def gradle_projects(root : String) : Hash(String, String)?
-    return @gradle_projects[root] if @gradle_projects.has_key?(root)
-    @gradle_projects[root] = begin
-      opaque = {"build.gradle", "build.gradle.kts"}.any? { |name| read_gradle_script(File.join(root, name)).try(&.matches?(GRADLE_PROJECT_MENTION)) } ||
-               gradle_injecting_scripts.any?(&.starts_with?("#{root}/"))
-      unless opaque
-        index = {"" => root}
-        build_modules.each do |dir|
-          next unless dir.starts_with?("#{root}/")
-          index[normalize_gradle_path(dir[(root.size + 1)..].tr("/", ":"))] = dir
-        end
-        {"settings.gradle", "settings.gradle.kts"}.each do |name|
-          read_gradle_script(File.join(root, name)).try &.scan(GRADLE_PROJECT_DIR) { |match| index[normalize_gradle_path(match[1])] = File.expand_path(match[2], root) }
-        end
-        index
+  # The directories holding a `settings.gradle` from `module_dir` up to the
+  # scan base, nearest first: a sample's own settings file can sit inside
+  # the build that includes it.
+  private def gradle_roots(module_dir : String) : Array(String)
+    @gradle_roots[module_dir] ||= begin
+      bases = @base_paths.map { |base| Noir::PathScope.normalize_root(base) }
+      roots = [] of String
+      dir = module_dir
+      while root = nearest_project_root(File.join(dir, "build.gradle"), GRADLE_SETTINGS)
+        roots << root
+        parent = File.dirname(root)
+        break if bases.includes?(root) || parent == root
+        dir = parent
       end
+      roots
     end
   end
 
-  @gradle_injecting_scripts : Array(String)? = nil
+  @gradle_settings_above_scan : Bool? = nil
+
+  # A settings file above a scan base: the scan holds part of a build whose
+  # root build file it cannot read.
+  private def gradle_settings_above_scan? : Bool
+    @gradle_settings_above_scan = begin
+      @base_paths.reject(&.empty?).any? do |base|
+        Path[Noir::PathScope.normalize_root(base)].parents.any? do |dir|
+          File.exists?(dir.join("settings.gradle")) || File.exists?(dir.join("settings.gradle.kts"))
+        end
+      end
+    end if @gradle_settings_above_scan.nil?
+    @gradle_settings_above_scan || false
+  end
+
+  # Every module of the build rooted at `root`.
+  private def gradle_build(root : String) : {Set(String), Bool}
+    dirs = Set.new(build_modules.select { |dir| Noir::PathScope.under_root?(dir, root) })
+    {dirs, gradle_root_security?(root) || dirs.any? { |dir| gradle_build_script(dir).try(&.security) }}
+  end
+
+  # Whether something besides `module_dir`'s own build file can add a
+  # project dependency to it in the build rooted at `root`: the root build
+  # file (unless it is the module's own) or the build logic.
+  private def gradle_opaque?(root : String, module_dir : String) : Bool
+    (root != module_dir && gradle_build_script(root).try(&.mentions_project)) ||
+      gradle_build_logic.any? { |path, script| script.mentions_project && path.starts_with?("#{root}/") }
+  end
+
+  # Whether the root build file or the build logic of `root` names Spring
+  # Security (a `subprojects {}` dependency, a convention plugin).
+  private def gradle_root_security?(root : String) : Bool
+    gradle_build_script(root).try(&.security) || gradle_build_logic.any? { |path, script| script.security && path.starts_with?("#{root}/") }
+  end
+
+  @gradle_build_logic : Array({String, GradleScript})? = nil
 
   # Gradle scripts that are neither a build nor a settings file (`apply
-  # from:` scripts, `buildSrc` / `build-logic` convention plugins) and name
-  # a `project(...)`.
-  private def gradle_injecting_scripts : Array(String)
-    @gradle_injecting_scripts ||= {".gradle", ".kts"}.flat_map do |ext|
+  # from:` scripts, precompiled script plugins) and the sources of
+  # `buildSrc` / `build-logic` convention plugins.
+  private def gradle_build_logic : Array({String, GradleScript})
+    @gradle_build_logic ||= {".gradle", ".kts", ".kt", ".groovy", ".java"}.flat_map do |ext|
       collect_files_by_extension(ext).compact_map do |file|
-        base = File.basename(file)
-        next if !base.matches?(GRADLE_SCRIPT_EXTENSION) || base.matches?(BUILD_FILE) || base.matches?(GRADLE_SETTINGS)
         path = Noir::PathScope.expand(file)
-        path if read_gradle_script(path).try(&.matches?(GRADLE_PROJECT_MENTION))
+        base = File.basename(path)
+        next if base.matches?(BUILD_FILE) || base.matches?(GRADLE_SETTINGS)
+        build_logic = base.matches?(GRADLE_SCRIPT_EXTENSION) || (path.matches?(GRADLE_BUILD_LOGIC_DIR) && !path.includes?("/src/test/"))
+        next unless build_logic
+        gradle_script(path).try { |script| {path, script} }
       end
     end
   end
 
-  @gradle_dependencies = Hash(String, Array({String, Bool})?).new
+  @gradle_projects = Hash(String, Hash(String, String)).new
 
-  # The `{project path or coordinate name, is project}` dependencies of the
-  # module's build file; nil when it has none.
-  private def gradle_dependencies(dir : String) : Array({String, Bool})?
-    return @gradle_dependencies[dir] if @gradle_dependencies.has_key?(dir)
-    @gradle_dependencies[dir] = begin
-      content = read_gradle_script(File.join(dir, "build.gradle")) || read_gradle_script(File.join(dir, "build.gradle.kts"))
-      content.try do |code|
-        refs = [] of {String, Bool}
-        code.each_line do |line|
-          next if line.match(GRADLE_CONFIGURATION).try(&.[1].downcase.includes?("test"))
-          read = refs.size
-          line.scan(GRADLE_PROJECT_REF) { |match| refs << {normalize_gradle_path(match[1]), true} }
-          line.scan(GRADLE_PROJECT_ACCESSOR) { |match| refs << {normalize_gradle_path(match[1].tr(".", ":")), true} }
-          # A project dependency noir cannot read resolves to nothing.
-          refs << {"?", true} if refs.size == read && line.matches?(GRADLE_PROJECT_MENTION)
-          line.scan(GRADLE_COORDINATE) { |match| refs << {match[1], false} }
-        end
-        refs
+  # Normalized project path (`a:b`) => directory, for the build rooted at
+  # `root`. A `projectDir` remap noir cannot place (`"$rootDir/x"`, a
+  # directory without a build file) is left out, so a reference to it does
+  # not resolve.
+  private def gradle_projects(root : String) : Hash(String, String)
+    @gradle_projects[root] ||= begin
+      index = {"" => root}
+      build_modules.each do |dir|
+        index[normalize_gradle_path(dir[(root.size + 1)..].tr("/", ":"))] = dir if dir.starts_with?("#{root}/")
       end
+      {"settings.gradle", "settings.gradle.kts"}.each do |name|
+        next unless content = existing_file(File.join(root, name))
+        Noir::CComments.strip(content).scan(GRADLE_PROJECT_DIR) do |match|
+          dir = File.expand_path(match[2], root)
+          key = normalize_gradle_path(match[1])
+          if match[2].includes?('$') || !build_modules.includes?(dir)
+            index.delete(key)
+          else
+            index[key] = dir
+          end
+        end
+      end
+      index
     end
   end
 
@@ -302,23 +389,200 @@ module SpringModuleScope
       build_modules.each do |dir|
         (index[File.basename(dir)] ||= [] of String) << dir
         {"settings.gradle", "settings.gradle.kts"}.each do |name|
-          read_gradle_script(File.join(dir, name)).try(&.match(GRADLE_ROOT_PROJECT_NAME)).try { |match| (index[match[1]] ||= [] of String) << dir }
+          existing_file(File.join(dir, name)).try(&.match(GRADLE_ROOT_PROJECT_NAME)).try { |match| (index[match[1]] ||= [] of String) << dir }
         end
       end
       maven_modules.each { |artifact, dirs| (index[artifact] ||= [] of String).concat(dirs) }
+      index.each_value(&.uniq!)
       index
     end
   end
 
-  private def read_gradle_script(path : String) : String?
-    return unless File.exists?(path) && (content = read_file(path))
-    Noir::CComments.strip(content)
+  private def existing_file(path : String) : String?
+    read_file(path) if File.exists?(path)
   end
 
   # `:common-security:api` and the accessor `commonSecurity.api` both
   # normalize to `commonsecurity:api`.
   private def normalize_gradle_path(path : String) : String
     path.split(':').reject(&.empty?).map(&.downcase.delete("-_")).join(':')
+  end
+
+  # ---- request matchers ---------------------------------------------------
+
+  # Authorization rule matchers: servlet `requestMatchers(...)` and the
+  # WebFlux `pathMatchers(...)`.
+  MATCHERS_CALL = /\.\s*(antMatchers|requestMatchers|mvcMatchers|pathMatchers)\s*\(/
+
+  # A chain is "scoped" when restricted by `securityMatcher(...)`,
+  # `securityMatchers(m -> m.requestMatchers(...))` or Spring 5's
+  # `http.antMatcher(...)`. The plural `antMatchers(...)` / `requestMatchers(...)`
+  # forms are authorization *rules*, and `antMatcher(...)` as a static
+  # factory (`requestMatchers(antMatcher("/h2/**"))`,
+  # `AntPathRequestMatcher.antMatcher(X)`) builds a rule's matcher — only the
+  # HttpSecurity method (`.antMatcher(` on anything but the factory class)
+  # scopes the chain.
+  SCOPE_MATCHER_CALL = /\b(securityMatchers?)\s*\(|(?<!AntPathRequestMatcher)\.\s*(antMatcher)\s*\(/
+
+  # Calls that build a request matcher from their (pattern) arguments, so
+  # `requestMatchers(antMatcher(X))` reads X. Regex matchers are not ant
+  # patterns and are deliberately absent.
+  MATCHER_FACTORY_CALL = /\A(?:new\s+)?(?:[\w$]+\s*(?:\([^()]*\))?\s*\.\s*)*(?:antMatcher|AntPathRequestMatcher|MvcRequestMatcher|matcher|pattern)\s*\((.*)\)\z/m
+  # The servlet path (`MvcRequestMatcher.Builder`) or base path
+  # (`PathPatternRequestMatcher.Builder`) in a factory's receiver chain, and
+  # a builder variable that carries one
+  # (`Builder mvc = new MvcRequestMatcher.Builder(i).servletPath("/ws")`).
+  SERVLET_PATH_CALL    = /\.\s*(?:servletPath|basePath)\s*\(([^()]*)\)/
+  SERVLET_PATH_BUILDER = /\b([A-Za-z_$][\w$]*)\s*=\s*[^;=]*?\.\s*(?:servletPath|basePath)\s*\(([^()]*)\)/
+  RECEIVER_VARIABLE    = /\A\s*([A-Za-z_$][\w$]*)\s*\./
+  NO_BUILDERS          = Hash(String, String?).new
+  INLINE_STRING_ARRAY  = /\A(?:new\s+String\s*\[\s*\]\s*)?\{(.*)\}\z/m
+  JAVA_STRING_LITERAL  = /\A"((?:[^"\\]|\\.)*)"\z/
+  CONSTANT_REFERENCE   = /\A[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*\z/
+  QUALIFIED_CONSTANT   = /\b([A-Z][\w$]*)\.[A-Z_][A-Z0-9_$]*\b/
+
+  CONFIG_LIST_GETTER       = /\A(?:this\s*\.\s*)?([a-z_$][\w$]*)\s*\.\s*(?:get([A-Z][\w$]*)|([a-z][\w$]*))\s*\(\s*\)(?:\s*\.\s*stream\s*\(\s*\))?(?:\s*\.\s*toArray\s*\([^()]*\))?\z/
+  CONFIGURATION_PROPERTIES = /@ConfigurationProperties\s*\(\s*(?:(?:prefix|value)\s*=\s*)?"([^"]*)"/
+
+  # String and `String[]` constants the config can name: its own, plus the
+  # ones of every project class it references as `Cls.NAME` or imports
+  # statically, read from that class's `Cls.java`.
+  private def security_constants(content : String) : {Hash(String, String), Hash(String, Array(String))}
+    project = Noir::TreeSitterJavaRouteExtractor::ProjectConstants.new
+    project_arrays = Hash(String, Array(String)).new
+    referenced = Set(String).new
+    content.scan(QUALIFIED_CONSTANT) { |match| referenced << match[1] }
+    content.scan(Noir::TreeSitterJavaRouteExtractor::STATIC_IMPORT_NAME_RE) { |match| referenced << match[1].split('.').last }
+    referenced.each do |class_name|
+      CodeLocator.instance.files_by_basename("#{class_name}.java").each do |file|
+        next unless other = read_file(file)
+        next unless other.includes?("static") || other.includes?("interface")
+        other_strings, other_arrays = Noir::TreeSitterJavaRouteExtractor.extract_string_and_array_constants(other)
+        other_strings.each { |name, value| project[name] ||= value if name.includes?('.') }
+        other_arrays.each { |name, value| project_arrays[name] ||= value if name.includes?('.') }
+      end
+    end
+
+    strings, arrays = Noir::TreeSitterJavaRouteExtractor.extract_string_and_array_constants(content, project.empty? ? nil : project)
+    project_arrays.each { |name, value| arrays[name] ||= value }
+    content.scan(Noir::TreeSitterJavaRouteExtractor::STATIC_IMPORT_NAME_RE) do |match|
+      owner, name = match[1], match[2]
+      if name == "*"
+        project_arrays.each do |key, value|
+          next unless key.starts_with?("#{owner}.")
+          bare = key[(owner.size + 1)..]
+          arrays[bare] ||= value unless bare.includes?('.')
+        end
+      elsif value = project_arrays["#{owner}.#{name}"]?
+        arrays[name] ||= value
+      end
+    end
+    {strings, arrays}
+  end
+
+  # nil for a chain that serves every request; the scope's ant patterns
+  # otherwise, empty when the chain is scoped by a matcher noir cannot read.
+  private def chain_scope(block : String, strings : Hash(String, String), arrays : Hash(String, Array(String))) : Array(String)?
+    scope : Array(String)? = nil
+    builders = servlet_path_builders(block, strings, arrays)
+    block.scan(SCOPE_MATCHER_CALL) do |match|
+      scope ||= [] of String
+      open = match.byte_end(0) - 1
+      next unless close = Noir::JSLiteralScanner.find_matching_paren_at_byte(block, open)
+      args = block.byte_slice(open + 1, close - open - 1)
+      if match[1]? == "securityMatchers"
+        # `securityMatchers(m -> m.requestMatchers("/a/**", "/b/**"))`.
+        args.scan(MATCHERS_CALL) do |inner|
+          inner_open = inner.byte_end(0) - 1
+          next unless inner_close = Noir::JSLiteralScanner.find_matching_paren_at_byte(args, inner_open)
+          scope.concat(matcher_patterns(args.byte_slice(inner_open + 1, inner_close - inner_open - 1), strings, arrays, builders: builders))
+        end
+      else
+        scope.concat(matcher_patterns(args, strings, arrays, builders: builders))
+      end
+    end
+    scope.try &.uniq
+  end
+
+  # Matcher builder variables of `block` => the servlet path they carry
+  # (nil: one noir cannot read).
+  private def servlet_path_builders(block : String, strings : Hash(String, String), arrays : Hash(String, Array(String))) : Hash(String, String?)
+    builders = Hash(String, String?).new
+    block.scan(SERVLET_PATH_BUILDER) { |match| builders[match[1]] = matcher_patterns(match[2], strings, arrays).first? }
+    builders
+  end
+
+  # Ant patterns a matcher argument list names: string literals, String /
+  # `String[]` constants, inline `new String[]{...}` arrays, and matcher
+  # factories over those (`antMatcher(X)`, `new AntPathRequestMatcher(X)`).
+  # Anything else (`EndpointRequest.toAnyEndpoint()`, a computed list) names
+  # nothing noir can read and is skipped.
+  #
+  # With `java_source`, a loop variable (`for (String url : X)`,
+  # `X.forEach(url -> ...)`) reads its iterable `X`, and an iterable that is
+  # a `@ConfigurationProperties` list getter (`props.getUrls()`,
+  # `props.getUrls().toArray(new String[0])`) adds that property's key to
+  # `config_keys` instead of a pattern. `builders` are the block's
+  # `servlet_path_builders`.
+  private def matcher_patterns(args : String, strings : Hash(String, String), arrays : Hash(String, Array(String)), depth : Int32 = 0,
+                               loops : Hash(String, String)? = nil, config_keys : Array(String)? = nil, java_source : String? = nil,
+                               builders : Hash(String, String?) = NO_BUILDERS) : Array(String)
+    patterns = [] of String
+    return patterns if depth > 4
+
+    Noir::TopLevelSplit.split(args, ',', Noir::TopLevelSplit::Rules.new).each do |part|
+      if literal = part.match(JAVA_STRING_LITERAL)
+        patterns << literal[1]
+      elsif part.matches?(CONSTANT_REFERENCE)
+        next if part.starts_with?("HttpMethod.")
+        if values = arrays[part]?
+          patterns.concat(values)
+        elsif value = strings[part]?
+          patterns << value
+        elsif iterable = loops.try &.[part]?
+          if values = arrays[iterable]?
+            patterns.concat(values)
+          elsif config_keys && java_source && (key = config_list_key(iterable, java_source))
+            config_keys << key
+          end
+        end
+      elsif config_keys && java_source && (key = config_list_key(part, java_source))
+        config_keys << key
+      elsif inner = part.match(INLINE_STRING_ARRAY)
+        patterns.concat(matcher_patterns(inner[1], strings, arrays, depth + 1, builders: builders))
+      elsif inner = part.match(MATCHER_FACTORY_CALL)
+        found = matcher_patterns(inner[1], strings, arrays, depth + 1, builders: builders)
+        # `mvc.servletPath("/ws").pattern("/**")` matches `/ws/**`; a
+        # servlet path noir cannot read names nothing.
+        receiver = part[0, inner.begin(1)]
+        if call = receiver.match(SERVLET_PATH_CALL)
+          next unless servlet_path = matcher_patterns(call[1], strings, arrays, depth + 1).first?
+          patterns.concat(found.map { |pattern| Noir::URLPath.join_rooted(servlet_path, pattern) })
+        elsif (variable = receiver.match(RECEIVER_VARIABLE)) && builders.has_key?(variable[1])
+          next unless built = builders[variable[1]]
+          patterns.concat(found.map { |pattern| Noir::URLPath.join_rooted(built, pattern) })
+        else
+          patterns.concat(found)
+        end
+      end
+    end
+    patterns
+  end
+
+  # `prefix.property` of the `@ConfigurationProperties` list that `expr`
+  # (`ignoreUrls.getUrls()`) reads in `source`: the variable's declared type
+  # is resolved through the file's import or package, and that class must
+  # bind a prefix and declare the property as a String collection or array.
+  private def config_list_key(expr : String, source : String) : String?
+    return unless match = expr.match(CONFIG_LIST_GETTER)
+    variable = match[1]
+    property = match[2]?.try { |getter| getter[0].downcase + getter[1..] } || match[3]
+    return unless declared = source.match(/\b([A-Z][\w$]*)(?:<[^<>]*>)?\s+#{Regex.escape(variable)}\s*[;=,)]/)
+    return unless file = Analyzer::Java::JavaEngine.java_type_file(declared[1], source)
+    return unless (props = read_file(file)) && (bound = props.match(CONFIGURATION_PROPERTIES))
+    return unless props.matches?(/\b(?:List|Set|Collection|Iterable)\s*<\s*String\s*>\s+#{Regex.escape(property)}\b|\bString\s*\[\s*\]\s+#{Regex.escape(property)}\b/)
+    prefix = bound[1].strip
+    prefix.empty? ? property : "#{prefix}.#{property}"
   end
 
   # Spring's ant match of a request path: `*` one segment, `**` any depth,

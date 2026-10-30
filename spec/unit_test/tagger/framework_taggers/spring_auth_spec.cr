@@ -792,17 +792,17 @@ end
 # Write `files` (path relative to a temp root => content), register them,
 # and run SpringAuthTagger over `routes` ("METHOD /path" => "relative
 # controller path:line"). Returns each route's auth tag descriptions.
-def run_spring_multi_module(files : Hash(String, String), routes : Hash(String, String)) : Hash(String, Array(String))
+def run_spring_multi_module(files : Hash(String, String), routes : Hash(String, String), scan : String = "") : Hash(String, Array(String))
   CodeLocator.instance.clear_all
   root = File.tempname("spring_multi_module")
   files.each do |relative, source|
     path = File.join(root, relative)
     Dir.mkdir_p(File.dirname(path))
     File.write(path, source)
-    CodeLocator.instance.register_path(path)
+    CodeLocator.instance.register_path(path) if relative.starts_with?(scan)
   end
   noir_options = create_test_options
-  noir_options["base"] = YAML::Any.new(root)
+  noir_options["base"] = YAML::Any.new(File.join(root, scan))
   endpoints = routes.map do |route, location|
     method, url = route.split(' ', 2)
     file, line = location.split(':')
@@ -3565,7 +3565,138 @@ describe "SpringAuthTagger (Gradle build scoping)" do
   end
 end
 
+describe "SpringAuthTagger (configurations that must not read as open)" do
+  guarded = ["Protected by Spring Security hasRole via anyRequest()"]
+  boot_default = ["Protected by Spring Boot default security (Spring Security on the app's classpath, no SecurityFilterChain in it)"]
+  boot_app = "@SpringBootApplication\npublic class App { public static void main(String[] a) { SpringApplication.run(App.class, a); } }\n"
+  boot_app_files = ->(build_file : String, build : String) do
+    {
+      "app/#{build_file}"                                 => build,
+      "app/src/main/java/com/example/App.java"            => boot_app,
+      "app/src/main/java/com/example/Controller.java"     => SPRING_ITEMS_CONTROLLER,
+      "other/build.gradle"                                => "#{SPRING_WEB_STARTER}}\n",
+      "other/src/main/java/com/example/o/App.java"        => boot_app,
+      "other/src/main/java/com/example/o/Controller.java" => SPRING_ITEMS_CONTROLLER,
+    }
+  end
+  boot_default_of = ->(build_file : String, build : String) do
+    run_spring_multi_module(boot_app_files.call(build_file, build), {"GET /items" => "app/src/main/java/com/example/Controller.java:2"})["GET /items"]
+  end
+
+  it "reads Spring Security on a Gradle Boot app's classpath, for Boot's default chain" do
+    boot_default_of.call("build.gradle", "#{SPRING_WEB_STARTER}    implementation 'org.springframework.boot:spring-boot-starter-security'\n}\n").should eq(boot_default)
+    boot_default_of.call("build.gradle.kts", "dependencies {\n    implementation(libs.spring.boot.starter.security)\n}\n").should eq(boot_default)
+    # A BOM import, a version pin or the test kit puts nothing on the classpath.
+    boot_default_of.call("build.gradle", "dependencyManagement { imports { mavenBom libs.org.springframework.security.spring.security.bom.get().toString() } }\n#{SPRING_WEB_STARTER}    testImplementation 'org.springframework.security:spring-security-test'\n}\n").should be_empty
+    files = boot_app_files.call("build.gradle", "#{SPRING_WEB_STARTER}}\n").merge({"ci.gradle" => "configurations.all { resolutionStrategy { force \"org.springframework.security:spring-security-core:6.0\" } }\n"})
+    run_spring_multi_module(files, {"GET /items" => "app/src/main/java/com/example/Controller.java:2"})["GET /items"].should be_empty
+  end
+
+  it "reads a WebFlux chain's pathMatchers and anyExchange rules" do
+    config = <<-JAVA
+      @EnableWebFluxSecurity
+      public class SecurityConfig {
+          @Bean
+          SecurityWebFilterChain chain(ServerHttpSecurity http) {
+              http.authorizeExchange(e -> e.pathMatchers("/public/**").permitAll().anyExchange().authenticated());
+              return http.build();
+          }
+      }
+      JAVA
+    tags = run_spring_security_config({"SecurityConfig.java" => config}, ["GET /public/x", "GET /items"])
+    tags["GET /public/x"].should be_empty
+    tags["GET /items"].should eq(["Protected by Spring Security authenticated via anyExchange()"])
+  end
+
+  it "guards an app whose security configuration it does not read" do
+    xml = %(<beans:beans xmlns="http://www.springframework.org/schema/security" xmlns:beans="http://www.springframework.org/schema/beans">\n  <http>\n    <intercept-url pattern="/**" access="authenticated"/>\n  </http>\n</beans:beans>\n)
+    tags = run_spring_multi_module({
+      "app/pom.xml"                                     => spring_module_pom("app", ["spring-security-config"]),
+      "app/src/main/webapp/WEB-INF/security.xml"        => xml,
+      "app/src/main/java/com/example/Controller.java"   => SPRING_ITEMS_CONTROLLER,
+      "other/pom.xml"                                   => spring_module_pom("other", [] of String),
+      "other/src/main/java/com/example/Controller.java" => SPRING_ITEMS_CONTROLLER,
+    }, {"GET /items" => "app/src/main/java/com/example/Controller.java:2", "GET /other" => "other/src/main/java/com/example/Controller.java:2"})
+    tags["GET /items"].should eq(["Protected by Spring Security, configured by the XML <http> configuration, which noir does not read"])
+    tags["GET /other"].should be_empty
+
+    method_ref = <<-JAVA
+      public class SecurityConfig {
+          @Bean
+          SecurityFilterChain chain(HttpSecurity http) throws Exception {
+              http.authorizeHttpRequests(this::rules);
+              return http.build();
+          }
+      }
+      JAVA
+    run_spring_security_config({"SecurityConfig.java" => method_ref}, ["GET /items"])["GET /items"].should eq(["Protected by Spring Security, configured by the authorization rules of the chain in SecurityConfig.java, which noir does not read"])
+  end
+
+  it "guards a non-Boot app that switches Spring Security on without a chain of its own" do
+    tags = run_spring_multi_module({
+      "app/build.gradle"                                  => "dependencies { implementation 'org.springframework.security:spring-security-web' }\n",
+      "app/src/main/java/com/example/SecurityConfig.java" => "@EnableWebSecurity\npublic class SecurityConfig {}\n",
+      "app/src/main/java/com/example/Controller.java"     => SPRING_ITEMS_CONTROLLER,
+      "boot/build.gradle"                                 => "#{SPRING_WEB_STARTER}}\n",
+      "boot/src/main/java/com/example/b/App.java"         => boot_app,
+    }, {"GET /items" => "app/src/main/java/com/example/Controller.java:2"})
+    tags["GET /items"].should eq(["Protected by Spring Security default chain (@EnableWebSecurity, no SecurityFilterChain on the app's classpath)"])
+  end
+
+  it "keeps every chain when a project dependency resolves only against an outer settings file" do
+    gradle_items_guard("#{SPRING_WEB_STARTER}    implementation project(':api')\n}\n", {"admin/settings.gradle" => "rootProject.name = 'admin'\n"}).should eq(guarded)
+  end
+
+  it "does not follow a projectDir remap it cannot place" do
+    gradle_items_guard("#{SPRING_WEB_STARTER}    implementation project(':api')\n}\n", {
+      "settings.gradle" => "include 'api', 'admin'\nproject(':api').projectDir = file(\"$rootDir/libs/api\")\n",
+    }).should eq(guarded)
+  end
+
+  it "keeps every chain when a binary convention plugin or a build outside the scan can add a dependency" do
+    plugin = {"buildSrc/src/main/kotlin/AppConventions.kt" => "class AppConventions : Plugin<Project> {\n    override fun apply(target: Project) { target.dependencies.add(\"implementation\", target.project(\":api\")) }\n}\n"}
+    gradle_items_guard("#{SPRING_WEB_STARTER}}\n", plugin).should eq(guarded)
+
+    tags = run_spring_multi_module({
+      "settings.gradle"                                                    => "include 'services:api', 'services:admin'\n",
+      "build.gradle"                                                       => "subprojects { dependencies { implementation project(':services:api') } }\n",
+      "services/api/build.gradle"                                          => "#{SPRING_WEB_STARTER}}\n",
+      "services/api/src/main/java/com/example/api/SecurityConfig.java"     => spring_chain_source("com.example.api", "hasRole(\"USER\")"),
+      "services/admin/build.gradle"                                        => "#{SPRING_WEB_STARTER}}\n",
+      "services/admin/src/main/java/com/example/admin/ItemController.java" => SPRING_ITEMS_CONTROLLER,
+    }, {"GET /items" => "services/admin/src/main/java/com/example/admin/ItemController.java:2"}, scan: "services")
+    tags["GET /items"].should eq(guarded)
+  end
+
+  it "follows a Maven dependency on a Gradle module" do
+    tags = run_spring_multi_module({
+      "app/pom.xml"                                       => spring_module_pom("app", ["web", "spring-boot-starter-security"]),
+      "app/src/main/java/com/example/SecurityConfig.java" => spring_chain_source("com.example", "hasRole(\"USER\")"),
+      "app/src/main/java/com/example/App.java"            => boot_app,
+      "web/build.gradle"                                  => "\n",
+      "web/src/main/java/com/example/web/Controller.java" => SPRING_ITEMS_CONTROLLER,
+    }, {"GET /items" => "web/src/main/java/com/example/web/Controller.java:2"})
+    tags["GET /items"].should eq(guarded)
+  end
+end
+
 describe "SpringAuthTagger (servlet path matchers)" do
+  it "reads the servlet path of a matcher builder variable" do
+    config = <<-JAVA
+      public class WsSecurity {
+          @Bean
+          public SecurityFilterChain wsChain(HttpSecurity http, HandlerMappingIntrospector introspector) throws Exception {
+              MvcRequestMatcher.Builder mvc = new MvcRequestMatcher.Builder(introspector).servletPath("/ws");
+              http.securityMatcher(mvc.pattern("/**")).authorizeHttpRequests(c -> c.anyRequest().hasRole("USER"));
+              return http.build();
+          }
+      }
+      JAVA
+    tags = run_spring_security_config({"WsSecurity.java" => config}, ["GET /items", "GET /ws/items"])
+    tags["GET /items"].should be_empty
+    tags["GET /ws/items"].should eq(["Protected by Spring Security hasRole via anyRequest()"])
+  end
+
   it "scopes a chain matched by servletPath(...).pattern(...) to the servlet path" do
     config = <<-JAVA
       public class WsSecurity {

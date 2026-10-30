@@ -529,4 +529,46 @@ describe "SpringSecurityTagger (scope of a rule)" do
     unread = spring_security_tags({"src/main/java/WsSecurity.java" => config.call("WS_PATH"), "src/main/java/Controller.java" => controller}, ws_routes)
     unread.values.flatten.should be_empty
   end
+
+  it "reads a servlet path from a constant, a builder variable or across lines, as spring_auth does" do
+    chain = ->(matcher : String) do
+      <<-JAVA
+        public class WsSecurity {
+            static final String WS = "/ws";
+            @Bean
+            SecurityFilterChain wsChain(HttpSecurity http, HandlerMappingIntrospector introspector) throws Exception {
+                MvcRequestMatcher.Builder mvc = new MvcRequestMatcher.Builder(introspector);
+                MvcRequestMatcher.Builder ws = new MvcRequestMatcher.Builder(introspector).servletPath(WS);
+                http.securityMatcher(#{matcher})
+                    .csrf(c -> c.disable());
+                return http.build();
+            }
+        }
+        JAVA
+    end
+    ws_routes = {"POST /items" => "src/main/java/Controller.java:2", "POST /ws/items" => "src/main/java/Controller.java:2"}
+    ["mvc.servletPath(WS).pattern(\"/**\")", "ws.pattern(\"/**\")", "mvc.servletPath(\"/ws\")\n                .pattern(\"/**\")"].each do |matcher|
+      tags = spring_security_tags({"src/main/java/WsSecurity.java" => chain.call(matcher), "src/main/java/Controller.java" => controller}, ws_routes)
+      tags["POST /items"].should be_empty
+      tags["POST /ws/items"].should eq(["csrf-protection"])
+    end
+  end
+
+  it "matches a RegexRequestMatcher CSRF exemption as a regex" do
+    config = <<-JAVA
+      public class SecurityConfig {
+          @Bean
+          SecurityFilterChain chain(HttpSecurity http) throws Exception {
+              http.csrf(c -> c.ignoringRequestMatchers(new RegexRequestMatcher("/rx/.*", null)));
+              return http.build();
+          }
+      }
+      JAVA
+    tags = spring_security_tags({"src/main/java/SecurityConfig.java" => config, "src/main/java/Controller.java" => controller}, {
+      "POST /rx/q"  => "src/main/java/Controller.java:2",
+      "POST /other" => "src/main/java/Controller.java:2",
+    })
+    tags["POST /rx/q"].should eq(["csrf-protection"])
+    tags["POST /other"].should be_empty
+  end
 end

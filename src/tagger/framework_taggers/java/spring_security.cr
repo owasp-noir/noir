@@ -45,7 +45,7 @@ class SpringSecurityTagger < FrameworkTagger
   # A SecurityFilterChain bean / WebSecurityConfigurerAdapter.configure body
   # delimits one HttpSecurity scope. A CSRF-disable and any chain-level
   # securityMatcher are associated within the same scope/block.
-  SCOPE_BOUNDARY = /SecurityFilterChain\b|configure\s*\(\s*(?:final\s+)?HttpSecurity/
+  SCOPE_BOUNDARY = /Security(?:Web)?FilterChain\b|configure\s*\(\s*(?:final\s+)?HttpSecurity/
 
   # `csrf().disable()` (fluent), `csrf(csrf -> csrf.disable())` /
   # `csrf(AbstractHttpConfigurer::disable)` (lambda/method-ref), and Kotlin
@@ -56,8 +56,10 @@ class SpringSecurityTagger < FrameworkTagger
   # for the chain but skipped for these (absolute) path patterns. Captured
   # across line breaks: the arg group stops at the statement's `;`, never
   # crossing into the next statement. The inner quote scan pulls the path
-  # literal even when wrapped (e.g. `new AntPathRequestMatcher("/api")`).
+  # literal even when wrapped (e.g. `new AntPathRequestMatcher("/api")`); a
+  # `RegexRequestMatcher` / `regexMatcher` literal is a regex.
   IGNORING_ARGS = /(?:ignoringRequestMatchers|ignoringAntMatchers)\s*\(([^;]*?)\)/
+  REGEX_MATCHER = /\bregex(?:Matchers?|RequestMatcher)\b/i
 
   # Clickjacking protection off: `frameOptions().disable()`,
   # `frameOptions(f -> f.disable())`, Kotlin `frameOptions { disable() }`.
@@ -70,22 +72,16 @@ class SpringSecurityTagger < FrameworkTagger
   # for an all-headers-off (that one is caught by FRAME_OPTIONS_DISABLE).
   HEADERS_FULLY_DISABLED = /headers\s*(?:\(\s*\)\s*\.\s*disable\b|\([^)]*::\s*disable)/
 
-  # Chain-level request matchers that scope a SecurityFilterChain to a URL
-  # subset. `requestMatchers(...)` is deliberately excluded: inside
-  # `authorizeHttpRequests {…}` it scopes an authorization rule, not the
-  # chain, and treating those as CSRF scopes would mis-attribute the rule.
-  MATCHER_CALL = /\b(?:securityMatcher|antMatcher)\s*\(/
-  # `mvc.servletPath("/ws").pattern("/**")` matches `/ws/**`.
-  SERVLET_PATH_MATCHER = /\.\s*(?:servletPath|basePath)\s*\(\s*"([^"]*)"\s*\)\s*\.\s*(?:pattern|matcher)\s*\(\s*"([^"]*)"\s*\)/
-
   # Every scope records the build unit declaring it (nil: outside any), so
-  # it applies only to the apps whose classpath holds that unit.
+  # it applies only to the apps whose classpath holds that unit. The chain's
+  # own scope is read by `chain_scope`, as spring_auth reads it.
   alias ScopedPattern = NamedTuple(pattern: String, module: String?)
+  alias IgnoredPattern = NamedTuple(pattern: String, module: String?, regex: Bool)
 
   def initialize(options : Hash(String, YAML::Any))
     super
     @csrf_disable_scopes = [] of ScopedPattern
-    @csrf_ignored_scopes = [] of ScopedPattern
+    @csrf_ignored_scopes = [] of IgnoredPattern
     @header_weak_scopes = [] of NamedTuple(pattern: String, kind: Symbol, module: String?)
     @cors_config_scopes = [] of NamedTuple(pattern: String, credentials: Bool, source: Symbol, call: String, module: String?)
   end
@@ -116,7 +112,7 @@ class SpringSecurityTagger < FrameworkTagger
         module_dir = build_module(file)
 
         if content.includes?("HttpSecurity") || content.includes?("SecurityFilterChain") || content.includes?("WebSecurityConfigurerAdapter")
-          scan_security_config(content, module_dir)
+          scan_security_config(content, module_dir, file.ends_with?(".java"))
         end
         scan_cors_mappings(content, module_dir) if content.includes?(".addMapping")
         scan_websocket_cors_endpoints(content, module_dir) if content.includes?(".addEndpoint") || content.includes?(".addHandler")
@@ -129,45 +125,35 @@ class SpringSecurityTagger < FrameworkTagger
     @cors_config_scopes.uniq!
   end
 
-  private def scan_security_config(content : String, module_dir : String?)
-    split_into_chain_blocks(content).each do |block|
-      matchers = extract_matchers(block)
+  private def scan_security_config(content : String, module_dir : String?, java : Bool)
+    strings, arrays = java ? security_constants(content) : {Hash(String, String).new, Hash(String, Array(String)).new}
+    split_into_chain_blocks(Noir::CComments.strip(content)).each do |block|
+      scope = chain_scope(block, strings, arrays)
 
       # (a) Whole-chain CSRF disable.
-      record_scoped(@csrf_disable_scopes, matchers, block, module_dir) if block.matches?(CSRF_DISABLE)
+      record_scoped(scope).each { |pattern| @csrf_disable_scopes << {pattern: pattern, module: module_dir} } if block.matches?(CSRF_DISABLE)
 
       # (b) CSRF skipped for specific (absolute) paths. Used directly — these
       #     matchers are not relative to the chain's securityMatcher.
-      extract_ignoring_matchers(block).each { |p| @csrf_ignored_scopes << {pattern: p, module: module_dir} }
+      extract_ignoring_matchers(block).each { |pattern, regex| @csrf_ignored_scopes << {pattern: pattern, module: module_dir, regex: regex} }
 
       # (c) Default security response headers weakened. Whole-writer-off wins
       #     over the frameOptions-only case when both somehow appear.
-      if block.matches?(HEADERS_FULLY_DISABLED)
-        record_header_scope(:all, matchers, block, module_dir)
-      elsif block.matches?(FRAME_OPTIONS_DISABLE)
-        record_header_scope(:frame, matchers, block, module_dir)
-      end
+      kind = if block.matches?(HEADERS_FULLY_DISABLED)
+               :all
+             elsif block.matches?(FRAME_OPTIONS_DISABLE)
+               :frame
+             end
+      record_scoped(scope).each { |pattern| @header_weak_scopes << {pattern: pattern, kind: kind, module: module_dir} } if kind
     end
   end
 
-  # Record a chain-scoped rule: scope to the chain's securityMatcher pattern(s)
-  # when present; treat a matcher-less chain as global `/**`; skip a chain
-  # scoped only by a non-literal matcher (e.g. EndpointRequest) we can't
-  # resolve, rather than over-broadening it to global.
-  private def record_scoped(target : Array(ScopedPattern), matchers : Array(String), block : String, module_dir : String?)
-    if !matchers.empty?
-      matchers.each { |m| target << {pattern: m, module: module_dir} }
-    elsif !block.matches?(MATCHER_CALL)
-      target << {pattern: "/**", module: module_dir}
-    end
-  end
-
-  private def record_header_scope(kind : Symbol, matchers : Array(String), block : String, module_dir : String?)
-    if !matchers.empty?
-      matchers.each { |m| @header_weak_scopes << {pattern: m, kind: kind, module: module_dir} }
-    elsif !block.matches?(MATCHER_CALL)
-      @header_weak_scopes << {pattern: "/**", kind: kind, module: module_dir}
-    end
+  # The patterns a chain-scoped rule covers: the chain's securityMatcher
+  # pattern(s) when present; `/**` for a matcher-less chain; none for a
+  # chain scoped only by a matcher we can't resolve (e.g. EndpointRequest),
+  # rather than over-broadening it to global.
+  private def record_scoped(scope : Array(String)?) : Array(String)
+    scope || ["/**"]
   end
 
   # Split a config file into one block per HttpSecurity scope so a
@@ -186,24 +172,12 @@ class SpringSecurityTagger < FrameworkTagger
     blocks
   end
 
-  private def extract_matchers(block : String) : Array(String)
-    matchers = [] of String
-    block.each_line do |raw|
-      next unless raw.matches?(MATCHER_CALL)
-      if raw.includes?("servletPath") || raw.includes?("basePath")
-        # A servlet path that is not a literal leaves the chain unread.
-        raw.scan(SERVLET_PATH_MATCHER) { |m| matchers << Noir::URLPath.join_rooted(m[1], m[2]) }
-      else
-        raw.scan(/"([^"]+)"/) { |m| matchers << m[1] }
-      end
-    end
-    matchers
-  end
-
-  private def extract_ignoring_matchers(block : String) : Array(String)
-    result = [] of String
+  # `{pattern, is a regex}` of each path CSRF is ignored for.
+  private def extract_ignoring_matchers(block : String) : Array({String, Bool})
+    result = [] of {String, Bool}
     block.scan(IGNORING_ARGS) do |m|
-      m[1].scan(/"([^"]+)"/) { |q| result << q[1] }
+      regex = m[1].matches?(REGEX_MATCHER)
+      m[1].scan(/"([^"]+)"/) { |q| result << {q[1], regex} }
     end
     result
   end
@@ -327,6 +301,18 @@ class SpringSecurityTagger < FrameworkTagger
 
   # ---- per-endpoint resolution ----------------------------------------
 
+  @path_regexes = Hash(String, Regex?).new
+
+  # A `RegexRequestMatcher` matches the whole path.
+  private def matches_regex?(url : String, pattern : String) : Bool
+    regex = @path_regexes.put_if_absent(pattern) do
+      /\A(?:#{pattern})\z/
+    rescue ArgumentError
+      nil
+    end
+    regex ? url.matches?(regex) : false
+  end
+
   # Whether a scope declared in build unit `owner` reaches an app whose
   # runtime classpath is `classpath` (nil: unknown).
   private def applies?(owner : String?, classpath : Set(String)?) : Bool
@@ -338,7 +324,7 @@ class SpringSecurityTagger < FrameworkTagger
     url = endpoint.url
 
     # Specific ignored paths first — more precise than a chain-wide disable.
-    if scope = @csrf_ignored_scopes.find { |p| applies?(p[:module], classpath) && matches_ant_pattern?(url, p[:pattern]) }
+    if scope = @csrf_ignored_scopes.find { |p| applies?(p[:module], classpath) && (p[:regex] ? matches_regex?(url, p[:pattern]) : matches_ant_pattern?(url, p[:pattern])) }
       return "CSRF protection disabled for paths matching \"#{scope[:pattern]}\" (csrf ignoringRequestMatchers) — state-changing requests here are not CSRF-validated."
     end
 
