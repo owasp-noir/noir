@@ -17,5 +17,9 @@ public class WebSocketConfig implements WebSocketConfigurer {
         registry.addHandler(chatHandler, "/chat").setAllowedOrigins("*");
         registry.addHandler(new TickerHandler(), TICKER_PATH, "/ticker/legacy").withSockJS();
         // registry.addHandler(oldHandler, "/old");
+        registry.addHandler(quotesHandler(), "/quotes-live").setAllowedOrigins("*");
+        registry.addHandler(new BulletinHandler(), "/bulletin")
+            .setAllowedOriginPatterns("*");
+        registry.addHandler(new BulletinHandler(), "/bulletinboard");
     }
 }

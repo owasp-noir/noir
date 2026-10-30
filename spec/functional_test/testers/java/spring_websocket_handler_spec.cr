@@ -10,6 +10,11 @@ ticker_legacy_endpoint = Endpoint.new("/ticker/legacy", "GET")
 ticker_legacy_endpoint.protocol = "ws"
 
 expected_endpoints = [Endpoint.new("/health", "GET"), chat_endpoint, ticker_endpoint, ticker_legacy_endpoint]
+%w[/quotes-live /bulletin /bulletinboard].each do |url|
+  endpoint = Endpoint.new(url, "GET")
+  endpoint.protocol = "ws"
+  expected_endpoints << endpoint
+end
 
 # The commented-out `addHandler(oldHandler, "/old")` is not a route.
 FunctionalTester.new("fixtures/java/spring_websocket_handler/", {
@@ -35,5 +40,10 @@ describe "Spring addHandler CORS", tags: "functional" do
     cors = ->(url : String) { app.endpoints.find!(&.url.==(url)).tags.select { |tag| tag.name == "cors" }.map(&.description) }
     cors.call("/chat").should eq(["Permissive CORS (WebSocket/STOMP endpoint config) — addHandler(\"/chat\") allows all origins (*)."])
     cors.call("/ticker").should be_empty
+    # A handler built by a call, and an origin policy on the next line.
+    cors.call("/quotes-live").should eq(["Permissive CORS (WebSocket/STOMP endpoint config) — addHandler(\"/quotes-live\") allows all origins (*)."])
+    cors.call("/bulletin").should eq(["Permissive CORS (WebSocket/STOMP endpoint config) — addHandler(\"/bulletin\") allows all origins (*)."])
+    # `/bulletin` is a whole path, not a prefix of `/bulletinboard`.
+    cors.call("/bulletinboard").should be_empty
   end
 end

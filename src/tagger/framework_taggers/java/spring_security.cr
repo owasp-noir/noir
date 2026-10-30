@@ -213,19 +213,51 @@ class SpringSecurityTagger < FrameworkTagger
   # one, controls the HTTP handshake endpoint. Treat wildcard origins here
   # as the same cross-origin exposure reviewers expect to see on REST routes.
   private def scan_websocket_cors_endpoints(content : String)
-    {"addEndpoint" => /\.addEndpoint\s*\(([^)]*)\)/, "addHandler" => /\.addHandler\s*\(([^)]*)\)/}.each do |call, call_re|
+    {"addEndpoint", "addHandler"}.each do |call|
       fluent_call_statements(content, ".#{call}").each do |stmt|
-        m = stmt.match(call_re)
-        next unless m
-
         next unless wildcard_origin_call?(stmt, ["setAllowedOrigins", "setAllowedOriginPatterns"])
 
+        # Every registration of the statement: a chained `.addHandler(b,
+        # "/y")` joins the same registration and its origin policy.
         # `addHandler`'s first argument is the handler, never a quoted path.
-        quoted_literals(m[1]).each do |pattern|
-          @cors_config_scopes << {pattern: pattern, credentials: false, source: :websocket, call: call}
+        call_arguments(stmt, ".#{call}").each do |args|
+          quoted_literals(args).each do |pattern|
+            @cors_config_scopes << {pattern: pattern, credentials: false, source: :websocket, call: call}
+          end
         end
       end
     end
+  end
+
+  # The argument text of each `marker(...)` call in `stmt`, bounded by the
+  # matching paren so `addHandler(myHandler(), "/x")` keeps its path.
+  private def call_arguments(stmt : String, marker : String) : Array(String)
+    result = [] of String
+    offset = 0
+    while at = stmt.index(marker, offset)
+      offset = at + marker.size
+      open_idx = stmt.index('(', offset)
+      break unless open_idx
+      next unless stmt[offset...open_idx].blank?
+      depth = 0
+      in_string = false
+      stmt.each_char.with_index.skip(open_idx).each do |(ch, i)|
+        if in_string
+          in_string = false if ch == '"' && stmt[i - 1] != '\\'
+        elsif ch == '"'
+          in_string = true
+        elsif ch == '('
+          depth += 1
+        elsif ch == ')'
+          depth -= 1
+          if depth.zero?
+            result << stmt[(open_idx + 1)...i]
+            break
+          end
+        end
+      end
+    end
+    result
   end
 
   private def fluent_call_statements(content : String, call_name : String) : Array(String)
@@ -434,14 +466,16 @@ class SpringSecurityTagger < FrameworkTagger
     line.matches?(/@(GetMapping|PostMapping|PutMapping|PatchMapping|DeleteMapping|RequestMapping)\b/)
   end
 
-  # Ant-style pattern match (`/**` → any depth, `*` → one segment), prefix
-  # anchored like spring_auth so `/api/**` matches `/api/posts/1`.
+  # Ant-style pattern match (`/**` → any depth, itself included; `*` → one
+  # segment), anchored at both ends so `/var` does not match `/varchain`.
   private def matches_ant_pattern?(url : String, pattern : String) : Bool
     ant_re = @ant_pattern_regexes[pattern] ||= begin
-      regex_str = pattern.gsub("**", "DOUBLE_STAR")
+      regex_str = pattern.gsub("/**", "SLASH_DOUBLE_STAR")
+        .gsub("**", "DOUBLE_STAR")
         .gsub("*", "[^/]*")
+        .gsub("SLASH_DOUBLE_STAR", "(?:/.*)?")
         .gsub("DOUBLE_STAR", ".*")
-      /^#{regex_str}/
+      /^#{regex_str}$/
     end
     url.matches?(ant_re)
   rescue ex
