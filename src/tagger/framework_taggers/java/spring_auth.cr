@@ -5,9 +5,13 @@ require "../../../utils/js_literal_scanner"
 require "../../../utils/top_level_split"
 require "../../../analyzer/engines/java_engine"
 require "../../../analyzer/engines/kotlin_engine"
+require "../../../utils/xml_comments"
+require "./spring_module_scope"
 
 @[Noir::TaggerFor(key: "spring_auth", name: "Spring Auth Tagger", desc: "Identifies Spring Security patterns (annotations, security config)", order: 20)]
 class SpringAuthTagger < FrameworkTagger
+  include SpringModuleScope
+
   record MetaAnnotation,
     name : String,
     spring_annotation : String
@@ -82,41 +86,36 @@ class SpringAuthTagger < FrameworkTagger
   # can suppress a broader protected one. The matcher's argument list is
   # found by paren matching (it nests `antMatcher(X)` calls and spans lines),
   # so only the call opener is a regex.
-  MATCHERS_CALL    = /\.\s*(antMatchers|requestMatchers|mvcMatchers)\s*\(/
   RULE_AFTER_CALL  = /\A\s*\.\s*(permitAll|anonymous|denyAll|authenticated|fullyAuthenticated|hasRole|hasAnyRole|hasAuthority|hasAnyAuthority|access)\s*(?:\(|\{)/
-  ANY_REQUEST_AUTH = /\.\s*anyRequest\s*\(\s*\)\s*\.\s*(permitAll|anonymous|denyAll|authenticated|fullyAuthenticated|hasRole|hasAnyRole|hasAuthority|hasAnyAuthority|access)\s*(?:\(|\{)/
+  ANY_REQUEST_AUTH = /\.\s*any(?:Request|Exchange)\s*\(\s*\)\s*\.\s*(permitAll|anonymous|denyAll|authenticated|fullyAuthenticated|hasRole|hasAnyRole|hasAuthority|hasAnyAuthority|access)\s*(?:\(|\{)/
 
   # The Kotlin DSL Spring Security documents for Kotlin apps:
   # `authorizeHttpRequests { authorize("/public/**", permitAll);
-  # authorize(anyRequest, authenticated) }`.
-  KOTLIN_AUTHORIZE_RULE = /\bauthorize\s*\(\s*(?:HttpMethod\.(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\s*,\s*)?(?:"([^"]+)"|(anyRequest))\s*,\s*(permitAll|anonymous|denyAll|authenticated|fullyAuthenticated|hasRole|hasAnyRole|hasAuthority|hasAnyAuthority|access)\b/
+  # authorize(anyRequest, authenticated) }` (`anyExchange` in WebFlux).
+  KOTLIN_AUTHORIZE_RULE = /\bauthorize\s*\(\s*(?:HttpMethod\.(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\s*,\s*)?(?:"([^"]+)"|(any(?:Request|Exchange)))\s*,\s*(permitAll|anonymous|denyAll|authenticated|fullyAuthenticated|hasRole|hasAnyRole|hasAuthority|hasAnyAuthority|access)\b/
 
   FORM_LOGIN_DSL     = /(?:\.\s*formLogin\s*\(|\bformLogin\s*\(|\bformLogin\s*\{)/
   FORM_LOGIN_SETTER  = /\b(loginPage|loginProcessingUrl|failureUrl)\s*(?:\(\s*|=\s*)/
   PERMIT_ALL_PATTERN = /\bpermitAll\s*\(\s*(?:true\s*)?\)/
 
-  # A chain is "scoped" when restricted by `securityMatcher(...)`,
-  # `securityMatchers(m -> m.requestMatchers(...))` or Spring 5's
-  # `http.antMatcher(...)`. The plural `antMatchers(...)` / `requestMatchers(...)`
-  # forms are authorization *rules*, and `antMatcher(...)` as a static
-  # factory (`requestMatchers(antMatcher("/h2/**"))`,
-  # `AntPathRequestMatcher.antMatcher(X)`) builds a rule's matcher — only the
-  # HttpSecurity method (`.antMatcher(` on anything but the factory class)
-  # scopes the chain.
-  SCOPE_MATCHER_CALL = /\b(securityMatchers?)\s*\(|(?<!AntPathRequestMatcher)\.\s*(antMatcher)\s*\(/
-
-  # Calls that build a request matcher from their (pattern) arguments, so
-  # `requestMatchers(antMatcher(X))` reads X. Regex matchers are not ant
-  # patterns and are deliberately absent.
-  MATCHER_FACTORY_CALL = /\A(?:new\s+)?(?:[\w$]+\s*(?:\([^()]*\))?\s*\.\s*)*(?:antMatcher|AntPathRequestMatcher|MvcRequestMatcher|matcher|pattern)\s*\((.*)\)\z/m
-  INLINE_STRING_ARRAY  = /\A(?:new\s+String\s*\[\s*\]\s*)?\{(.*)\}\z/m
-  JAVA_STRING_LITERAL  = /\A"((?:[^"\\]|\\.)*)"\z/
-  CONSTANT_REFERENCE   = /\A[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*\z/
-  QUALIFIED_CONSTANT   = /\b([A-Z][\w$]*)\.[A-Z_][A-Z0-9_$]*\b/
-  ORDER_ANNOTATION     = /@Order\s*\(\s*(?:value\s*=\s*)?(-?\d+|Ordered\.HIGHEST_PRECEDENCE|Ordered\.LOWEST_PRECEDENCE)\s*\)/
-  CHAIN_BOUNDARY       = /SecurityFilterChain\b|configure\s*\(\s*(?:final\s+)?HttpSecurity/
-  BOOT_APP_MARKERS     = {"@SpringBootApplication", "@SpringBootConfiguration", "SpringApplication.run", "runApplication<"}
-  CHAIN_DECLARATION    = /\b(?:SecurityFilterChain|SecurityWebFilterChain|WebSecurityConfigurerAdapter)\b|configure\s*\(\s*(?:final\s+)?(?:Server)?HttpSecurity/
+  ORDER_ANNOTATION  = /@Order\s*\(\s*(?:value\s*=\s*)?(-?\d+|Ordered\.HIGHEST_PRECEDENCE|Ordered\.LOWEST_PRECEDENCE)\s*\)/
+  CHAIN_BOUNDARY    = /Security(?:Web)?FilterChain\b|configure\s*\(\s*(?:final\s+)?HttpSecurity/
+  CHAIN_DECLARATION = /\b(?:SecurityFilterChain|SecurityWebFilterChain|WebSecurityConfigurerAdapter)\b|configure\s*\(\s*(?:final\s+)?(?:Server)?HttpSecurity/
+  # A chain's authorization DSL: a chain that has one yet yields no rule
+  # noir can read is a configuration it does not read.
+  AUTHORIZATION_DSL = /\b(?:authorizeHttpRequests|authorizeRequests|authorizeExchange)\b/
+  # Spring Security switched on without a chain of the app's own: its
+  # default chain authenticates every request.
+  ENABLE_SECURITY = /@Enable(?:Web|WebFlux|RSocket)Security\b/
+  # An XML `<http>` element in the Spring Security namespace.
+  XML_SECURITY_NAMESPACE = "springframework.org/schema/security"
+  XML_HTTP_ELEMENT       = /<(?:[\w-]+:)?http[\s>]/
+  XML_HTTP_TAG           = /<(?:[\w-]+:)?http(?:\s[^>]*)?>/
+  XML_SECURITY_NONE      = /\bsecurity\s*=\s*"none"/
+  XML_ACCESS             = /\baccess\s*=\s*"([^"]*)"/
+  XML_PUBLIC_ACCESS      = /\A(?:permitAll(?:\(\))?|IS_AUTHENTICATED_ANONYMOUSLY|isAnonymous\(\))\z/
+  # An authorization noir does not read off `access` attributes.
+  XML_OTHER_AUTHORIZATION = /<(?:[\w-]+:)?custom-filter\b|\b(?:access-decision-manager|authorization-manager)-ref\s*=/
 
   KOTLIN_FUN_DECLARATION = /(?:^|\s)fun\s/
 
@@ -138,6 +137,8 @@ class SpringAuthTagger < FrameworkTagger
   # matches are served by this chain alone (Spring hands a request to the
   # first chain whose matcher matches, and the catch-all chain must come
   # last), so its rules decide them and no other chain's do.
+  alias UnreadConfig = NamedTuple(module: String?, what: String, path: String, line: Int32)
+
   alias ScopedChain = NamedTuple(scope: Array(String), order: Int32, rules: Array(SecurityRule), module: String?)
 
   def initialize(options : Hash(String, YAML::Any))
@@ -146,10 +147,13 @@ class SpringAuthTagger < FrameworkTagger
     # a matcher noir cannot read, which keep the old global treatment).
     @security_rules = [] of SecurityRule
     @scoped_chains = [] of ScopedChain
-    # Build units that declare a security chain (nil: a file outside any),
-    # and the ones holding a Boot entry point (`@SpringBootApplication`, `SpringApplication.run`).
+    # Build units that declare a security chain (nil: a file outside any).
     @chain_modules = Set(String?).new
-    @boot_apps = Set(String).new
+    # Build units that switch Spring Security on (`@EnableWebSecurity`), and
+    # security configurations noir does not read (an XML `<http>`, a chain
+    # whose authorization rules it cannot read).
+    @security_enabled = Set(String?).new
+    @unread_configs = [] of UnreadConfig
     @security_meta_annotations = Hash(String, MetaAnnotation).new
     @interceptor_defs = Hash(String, InterceptorDef).new
     @registered_interceptors = [] of RegisteredInterceptor
@@ -177,6 +181,8 @@ class SpringAuthTagger < FrameworkTagger
     @security_rules.clear
     @scoped_chains.clear
     @chain_modules.clear
+    @security_enabled.clear
+    @unread_configs.clear
     @boot_apps.clear
     @security_meta_annotations.clear
     @interceptor_defs.clear
@@ -197,10 +203,7 @@ class SpringAuthTagger < FrameworkTagger
       files.each do |file|
         content = read_file(file)
         next if content.nil?
-        if !file.includes?("/src/test/") && BOOT_APP_MARKERS.any? { |marker| content.includes?(marker) } && (app = build_module(file))
-          @boot_apps << app
-        end
-
+        note_boot_app(file, content)
         module_dir = build_module(file)
 
         if content.includes?("@interface") || content.includes?("annotation class")
@@ -216,6 +219,7 @@ class SpringAuthTagger < FrameworkTagger
         end
 
         unless test_source?(file)
+          @security_enabled << module_dir if content.matches?(ENABLE_SECURITY) && Noir::CComments.strip(content).matches?(ENABLE_SECURITY)
           scan_servlet_filter_defs(content, file, module_dir) if content.includes?("doFilter")
           scan_filter_registrations(content, file, module_dir) if content.includes?("FilterRegistrationBean")
           scan_bean_types(content, module_dir) if content.includes?("@Bean")
@@ -227,6 +231,21 @@ class SpringAuthTagger < FrameworkTagger
 
         scan_security_config(content, file.ends_with?(".java"), module_dir, file)
       end
+    end
+
+    collect_files_by_extension(".xml").each do |file|
+      next if test_source?(file)
+      next unless (content = read_file(file)) && content.includes?(XML_SECURITY_NAMESPACE)
+      xml = Noir::XmlComments.strip(content)
+      next unless http = xml.match(XML_HTTP_ELEMENT)
+      # An `<http>` is a chain: Boot's default one backs off. Every `<http>`
+      # `security="none"`, or only permitAll rules, guards nothing.
+      module_dir = build_module(file)
+      @chain_modules << module_dir if module_dir
+      accesses = xml.scan(XML_ACCESS).map(&.[1].strip)
+      next if xml.scan(XML_HTTP_TAG).all?(&.[0].matches?(XML_SECURITY_NONE)) ||
+              (!accesses.empty? && accesses.all?(&.matches?(XML_PUBLIC_ACCESS)) && !xml.matches?(XML_OTHER_AUTHORIZATION))
+      @unread_configs << {module: module_dir, what: "the XML <http> configuration", path: file, line: xml[0, http.begin(0)].count('\n') + 1}
     end
   end
 
@@ -1335,45 +1354,13 @@ class SpringAuthTagger < FrameworkTagger
     end
   end
 
-  # String and `String[]` constants the config can name: its own, plus the
-  # ones of every project class it references as `Cls.NAME` or imports
-  # statically, read from that class's `Cls.java`.
-  private def security_constants(content : String) : {Hash(String, String), Hash(String, Array(String))}
-    project = Noir::TreeSitterJavaRouteExtractor::ProjectConstants.new
-    project_arrays = Hash(String, Array(String)).new
-    referenced = Set(String).new
-    content.scan(QUALIFIED_CONSTANT) { |match| referenced << match[1] }
-    content.scan(Noir::TreeSitterJavaRouteExtractor::STATIC_IMPORT_NAME_RE) { |match| referenced << match[1].split('.').last }
-    referenced.each do |class_name|
-      CodeLocator.instance.files_by_basename("#{class_name}.java").each do |file|
-        next unless other = read_file(file)
-        next unless other.includes?("static") || other.includes?("interface")
-        other_strings, other_arrays = Noir::TreeSitterJavaRouteExtractor.extract_string_and_array_constants(other)
-        other_strings.each { |name, value| project[name] ||= value if name.includes?('.') }
-        other_arrays.each { |name, value| project_arrays[name] ||= value if name.includes?('.') }
-      end
-    end
-
-    strings, arrays = Noir::TreeSitterJavaRouteExtractor.extract_string_and_array_constants(content, project.empty? ? nil : project)
-    project_arrays.each { |name, value| arrays[name] ||= value }
-    content.scan(Noir::TreeSitterJavaRouteExtractor::STATIC_IMPORT_NAME_RE) do |match|
-      owner, name = match[1], match[2]
-      if name == "*"
-        project_arrays.each do |key, value|
-          next unless key.starts_with?("#{owner}.")
-          bare = key[(owner.size + 1)..]
-          arrays[bare] ||= value unless bare.includes?('.')
-        end
-      elsif value = project_arrays["#{owner}.#{name}"]?
-        arrays[name] ||= value
-      end
-    end
-    {strings, arrays}
-  end
-
   private def scan_security_chain(block : String, strings : Hash(String, String), arrays : Hash(String, Array(String)), module_dir : String?, java_source : String?, file_path : String, block_start_line : Int32)
     scope = chain_scope(block, strings, arrays)
+    builders = servlet_path_builders(block, strings, arrays)
     rules = [] of SecurityRule
+    # A rule whose matcher noir cannot read (`EndpointRequest.toAnyEndpoint()`)
+    # may be the one that decides a request no read rule matches.
+    unread_matcher = false
     loops = java_source ? loop_bindings(block) : [] of LoopBinding
 
     block.scan(MATCHERS_CALL) do |match|
@@ -1392,7 +1379,9 @@ class SpringAuthTagger < FrameworkTagger
       config_keys = [] of String
       in_scope = loops_enclosing(loops, open)
       rule_line = block_start_line + block[0, match.begin(1)].count('\n')
-      matcher_patterns(args, strings, arrays, loops: in_scope, config_keys: config_keys, java_source: java_source).uniq.each do |url_pattern|
+      patterns = matcher_patterns(args, strings, arrays, loops: in_scope, config_keys: config_keys, java_source: java_source, builders: builders).uniq
+      unread_matcher ||= patterns.empty? && config_keys.empty?
+      patterns.each do |url_pattern|
         description =
           if protected_rule
             "Protected by Spring Security #{auth_type} via #{match[1]}(\"#{url_pattern}\")"
@@ -1408,9 +1397,7 @@ class SpringAuthTagger < FrameworkTagger
       end
     end
 
-    scan_form_login_rules(block, strings, file_path, block_start_line, module_dir).each do |rule|
-      rules << rule
-    end
+    form_rules = scan_form_login_rules(block, strings, file_path, block_start_line, module_dir)
 
     # A scoped chain's `anyRequest()` covers its scope; an unscoped chain's
     # covers everything. A chain scoped by a matcher noir cannot read drops
@@ -1440,7 +1427,7 @@ class SpringAuthTagger < FrameworkTagger
             else
               "Public by Spring Security permitAll"
             end
-          rules << {pattern: "/**", method: nil, description: "#{verb} via authorize(anyRequest)", protected_rule: protected_rule, module: module_dir, config_key: nil, path: file_path, line: line_num}
+          rules << {pattern: "/**", method: nil, description: "#{verb} via authorize(#{match[3]})", protected_rule: protected_rule, module: module_dir, config_key: nil, path: file_path, line: line_num}
         end
       end
     end
@@ -1451,21 +1438,37 @@ class SpringAuthTagger < FrameworkTagger
         len = Math.min(120, block.bytesize - match.byte_begin(0))
         slice = block.byte_slice(match.byte_begin(0), len)
         is_anonymous = auth_type == "anonymous" ||
-                       (auth_type == "hasRole" && slice.matches?(/\.\s*anyRequest\s*\(\s*\)\s*\.\s*hasRole\s*\(\s*["'](?:ROLE_)?ANONYMOUS["']\s*\)/)) ||
-                       (auth_type == "hasAuthority" && slice.matches?(/\.\s*anyRequest\s*\(\s*\)\s*\.\s*hasAuthority\s*\(\s*["'](?:ROLE_)?ANONYMOUS["']\s*\)/))
+                       (auth_type == "hasRole" && slice.matches?(/\.\s*any(?:Request|Exchange)\s*\(\s*\)\s*\.\s*hasRole\s*\(\s*["'](?:ROLE_)?ANONYMOUS["']\s*\)/)) ||
+                       (auth_type == "hasAuthority" && slice.matches?(/\.\s*any(?:Request|Exchange)\s*\(\s*\)\s*\.\s*hasAuthority\s*\(\s*["'](?:ROLE_)?ANONYMOUS["']\s*\)/))
         protected_rule = auth_type != "permitAll" && !is_anonymous
         rule_line = block_start_line + block[0, match.begin(1)].count('\n')
+        any_call = slice.includes?("anyExchange") ? "anyExchange()" : "anyRequest()"
         description =
           if protected_rule
-            "Protected by Spring Security #{auth_type} via anyRequest()"
+            "Protected by Spring Security #{auth_type} via #{any_call}"
           elsif is_anonymous
-            "Public by Spring Security anonymous via anyRequest()"
+            "Public by Spring Security anonymous via #{any_call}"
           else
-            "Public by Spring Security permitAll via anyRequest()"
+            "Public by Spring Security permitAll via #{any_call}"
           end
         rules << {pattern: "/**", method: nil, description: description, protected_rule: protected_rule, module: module_dir, config_key: nil, path: file_path, line: rule_line}
       end
     end
+
+    # What the read rules leave to the chain: rules noir cannot read, or a
+    # request no rule matches, which `authorizeHttpRequests` /
+    # `authorizeExchange` deny (legacy `authorizeRequests` lets it through).
+    # A `Customizer<HttpSecurity>` bean only adds rules to a chain declared
+    # elsewhere, which decides the rest itself.
+    if any_request_covered && !unread_matcher && (dsl = block.match(AUTHORIZATION_DSL)) && rules.none? { |rule| rule[:pattern] == "/**" && rule[:method].nil? }
+      description = if rules.empty?
+                      "Protected by Spring Security, configured by the authorization rules of the chain in #{File.basename(file_path)}, which noir does not read"
+                    elsif dsl[0] != "authorizeRequests" && block.matches?(CHAIN_DECLARATION)
+                      "Protected by Spring Security: #{dsl[0]} denies a request no rule matches"
+                    end
+      rules << {pattern: "/**", method: nil, description: description, protected_rule: true, module: module_dir, config_key: nil, path: file_path, line: block_start_line + block[0, dsl.begin(0)].count('\n')} if description
+    end
+    rules.concat(form_rules)
 
     if scope && !scope.empty?
       @scoped_chains << {scope: scope, order: chain_order(block), rules: rules, module: module_dir}
@@ -1537,29 +1540,6 @@ class SpringAuthTagger < FrameworkTagger
     form_rules
   end
 
-  # nil for a chain that serves every request; the scope's ant patterns
-  # otherwise, empty when the chain is scoped by a matcher noir cannot read.
-  private def chain_scope(block : String, strings : Hash(String, String), arrays : Hash(String, Array(String))) : Array(String)?
-    scope : Array(String)? = nil
-    block.scan(SCOPE_MATCHER_CALL) do |match|
-      scope ||= [] of String
-      open = match.byte_end(0) - 1
-      next unless close = Noir::JSLiteralScanner.find_matching_paren_at_byte(block, open)
-      args = block.byte_slice(open + 1, close - open - 1)
-      if match[1]? == "securityMatchers"
-        # `securityMatchers(m -> m.requestMatchers("/a/**", "/b/**"))`.
-        args.scan(MATCHERS_CALL) do |inner|
-          inner_open = inner.byte_end(0) - 1
-          next unless inner_close = Noir::JSLiteralScanner.find_matching_paren_at_byte(args, inner_open)
-          scope.concat(matcher_patterns(args.byte_slice(inner_open + 1, inner_close - inner_open - 1), strings, arrays))
-        end
-      else
-        scope.concat(matcher_patterns(args, strings, arrays))
-      end
-    end
-    scope.try &.uniq
-  end
-
   # The `@Order` on the chain's bean method; unordered beans sort last.
   private def chain_order(block : String) : Int32
     boundary = (block =~ CHAIN_BOUNDARY) || 0
@@ -1572,51 +1552,8 @@ class SpringAuthTagger < FrameworkTagger
     end
   end
 
-  # Ant patterns a matcher argument list names: string literals, String /
-  # `String[]` constants, inline `new String[]{...}` arrays, and matcher
-  # factories over those (`antMatcher(X)`, `new AntPathRequestMatcher(X)`).
-  # Anything else (`EndpointRequest.toAnyEndpoint()`, a computed list) names
-  # nothing noir can read and is skipped.
-  #
-  # With `java_source`, a loop variable (`for (String url : X)`,
-  # `X.forEach(url -> ...)`) reads its iterable `X`, and an iterable that is
-  # a `@ConfigurationProperties` list getter (`props.getUrls()`,
-  # `props.getUrls().toArray(new String[0])`) adds that property's key to
-  # `config_keys` instead of a pattern.
-  private def matcher_patterns(args : String, strings : Hash(String, String), arrays : Hash(String, Array(String)), depth : Int32 = 0,
-                               loops : Hash(String, String)? = nil, config_keys : Array(String)? = nil, java_source : String? = nil) : Array(String)
-    patterns = [] of String
-    return patterns if depth > 4
-
-    Noir::TopLevelSplit.split(args, ',', Noir::TopLevelSplit::Rules.new).each do |part|
-      if literal = part.match(JAVA_STRING_LITERAL)
-        patterns << literal[1]
-      elsif part.matches?(CONSTANT_REFERENCE)
-        next if part.starts_with?("HttpMethod.")
-        if values = arrays[part]?
-          patterns.concat(values)
-        elsif value = strings[part]?
-          patterns << value
-        elsif iterable = loops.try &.[part]?
-          if values = arrays[iterable]?
-            patterns.concat(values)
-          elsif config_keys && java_source && (key = config_list_key(iterable, java_source))
-            config_keys << key
-          end
-        end
-      elsif config_keys && java_source && (key = config_list_key(part, java_source))
-        config_keys << key
-      elsif inner = part.match(INLINE_STRING_ARRAY) || part.match(MATCHER_FACTORY_CALL)
-        patterns.concat(matcher_patterns(inner[1], strings, arrays, depth + 1))
-      end
-    end
-    patterns
-  end
-
-  LOOP_HEADER              = /\A\s*(?:final\s+)?[\w$.<>\[\]]+\s+([a-z_$][\w$]*)\s*:\s*(.+?)\s*\z/m
-  FOR_EACH_BINDING         = /([\w$.]+\s*\(\s*\)(?:\s*\.\s*[\w$]+\s*\(\s*\))*)\s*\.\s*forEach\s*(\()\s*\(?\s*(?:[\w$]+\s+)?([a-z_$][\w$]*)\s*\)?\s*->/
-  CONFIG_LIST_GETTER       = /\A(?:this\s*\.\s*)?([a-z_$][\w$]*)\s*\.\s*(?:get([A-Z][\w$]*)|([a-z][\w$]*))\s*\(\s*\)(?:\s*\.\s*stream\s*\(\s*\))?(?:\s*\.\s*toArray\s*\([^()]*\))?\z/
-  CONFIGURATION_PROPERTIES = /@ConfigurationProperties\s*\(\s*(?:(?:prefix|value)\s*=\s*)?"([^"]*)"/
+  LOOP_HEADER      = /\A\s*(?:final\s+)?[\w$.<>\[\]]+\s+([a-z_$][\w$]*)\s*:\s*(.+?)\s*\z/m
+  FOR_EACH_BINDING = /([\w$.]+\s*\(\s*\)(?:\s*\.\s*[\w$]+\s*\(\s*\))*)\s*\.\s*forEach\s*(\()\s*\(?\s*(?:[\w$]+\s+)?([a-z_$][\w$]*)\s*\)?\s*->/
 
   # A loop variable, its iterable expression, and the byte range of the
   # loop body where it is bound.
@@ -1656,22 +1593,6 @@ class SpringAuthTagger < FrameworkTagger
       .sort_by! { |binding| -(binding[:to] - binding[:from]) }
       .each { |binding| bound[binding[:variable]] = binding[:iterable] }
     bound
-  end
-
-  # `prefix.property` of the `@ConfigurationProperties` list that `expr`
-  # (`ignoreUrls.getUrls()`) reads in `source`: the variable's declared type
-  # is resolved through the file's import or package, and that class must
-  # bind a prefix and declare the property as a String collection or array.
-  private def config_list_key(expr : String, source : String) : String?
-    return unless match = expr.match(CONFIG_LIST_GETTER)
-    variable = match[1]
-    property = match[2]?.try { |getter| getter[0].downcase + getter[1..] } || match[3]
-    return unless declared = source.match(/\b([A-Z][\w$]*)(?:<[^<>]*>)?\s+#{Regex.escape(variable)}\s*[;=,)]/)
-    return unless file = Analyzer::Java::JavaEngine.java_type_file(declared[1], source)
-    return unless (props = read_file(file)) && (bound = props.match(CONFIGURATION_PROPERTIES))
-    return unless props.matches?(/\b(?:List|Set|Collection|Iterable)\s*<\s*String\s*>\s+#{Regex.escape(property)}\b|\bString\s*\[\s*\]\s+#{Regex.escape(property)}\b/)
-    prefix = bound[1].strip
-    prefix.empty? ? property : "#{prefix}.#{property}"
   end
 
   # One block per SecurityFilterChain / `configure(HttpSecurity)` and its 1-based start line.
@@ -1714,27 +1635,8 @@ class SpringAuthTagger < FrameworkTagger
   # `serving_apps`): only the chains on that app's classpath apply, and a
   # configuration-bound list is read from that app's configuration. The
   # endpoint is guarded when any app (or any module serving it) guards it.
-  # A build file is no evidence of the serving module: a framework-provided
-  # route (`/actuator`) points at the parent pom that declares the
-  # dependency every child app inherits.
   private def check_security_config_rules(endpoint : Endpoint) : Tuple(String, String?, Int32?)?
-    modules = endpoint.details.code_paths.compact_map do |path_info|
-      path = path_info.path
-      build_module(path) unless MediaFilter.spec_document?(path) || File.basename(path).matches?(BUILD_FILE)
-    end.uniq!
-    return security_decision(endpoint, nil, nil) if modules.empty?
-    modules.each do |module_dir|
-      if apps = serving_apps(module_dir)
-        apps.each do |app|
-          if decision = security_decision(endpoint, app, module_classpath(app).try(&.[0]))
-            return decision
-          end
-        end
-      elsif decision = security_decision(endpoint, module_dir, nil)
-        return decision
-      end
-    end
-    nil
+    per_serving_classpath(endpoint, false) { |classpath, app| security_decision(endpoint, app, classpath) }
   end
 
   # `config_dir` holds the configuration lists are read from; `classpath`
@@ -1742,11 +1644,18 @@ class SpringAuthTagger < FrameworkTagger
   private def security_decision(endpoint : Endpoint, config_dir : String?, classpath : Set(String)?) : Tuple(String, String?, Int32?)?
     url = endpoint.url
     applies = ->(owner : String?) { owner.nil? || classpath.nil? || classpath.includes?(owner) }
-    if config_dir && classpath && @chain_modules.none? { |owner| applies.call(owner) } &&
-       (@boot_apps.empty? || @boot_apps.includes?(config_dir)) && module_classpath(config_dir).try(&.[1])
-      # The app declares no chain, yet Spring Security is on its classpath:
-      # Boot's default chain authenticates every request.
-      return {"Protected by Spring Boot default security (Spring Security on the app's classpath, no SecurityFilterChain in it)", nil, nil}
+    # A security configuration or switch outside any build unit (an example
+    # under `docs/`) reaches only endpoints whose classpath is unknown.
+    reaches = ->(owner : String?) { owner ? applies.call(owner) : classpath.nil? }
+    if config_dir && classpath && @chain_modules.none? { |owner| applies.call(owner) } && @unread_configs.none? { |config| reaches.call(config[:module]) } &&
+       module_classpath(config_dir).try(&.[1])
+      # The app declares no chain, yet Spring Security is on its classpath
+      # and switched on: its default chain authenticates every request.
+      if @security_enabled.any? { |owner| reaches.call(owner) }
+        return {"Protected by Spring Security default chain (@EnableWebSecurity, no SecurityFilterChain on the app's classpath)", nil, nil}
+      elsif @boot_apps.empty? || @boot_apps.includes?(config_dir)
+        return {"Protected by Spring Boot default security (Spring Security on the app's classpath, no SecurityFilterChain in it)", nil, nil}
+      end
     end
     scoped = @scoped_chains.select { |chain| applies.call(chain[:module]) && chain[:scope].any? { |pattern| matches_ant_pattern?(url, pattern) } }
     rules =
@@ -1798,110 +1707,14 @@ class SpringAuthTagger < FrameworkTagger
         return {"#{reasons}, for #{verbs} only#{note}", first_guard.try(&.[:path]) || best.try(&.[:path]), first_guard.try(&.[:line]) || best.try(&.[:line])}
       end
     end
+    if best.nil? && (unread = @unread_configs.find { |config| reaches.call(config[:module]) })
+      # No rule noir reads decides the request, but a configuration it does
+      # not read can.
+      return {"Protected by Spring Security, configured by #{unread[:what]}, which noir does not read#{note}", unread[:path], unread[:line]}
+    end
     return unless best && best[:protected_rule]
 
     {"#{best[:description]}#{note}", best[:path], best[:line]}
-  end
-
-  BUILD_FILE = /\A(?:pom\.xml|build\.gradle(?:\.kts)?)\z/
-
-  # The build unit (directory of the nearest `pom.xml` / `build.gradle`)
-  # holding `path`; nil when there is none.
-  private def build_module(path : String) : String?
-    nearest_project_root(path, BUILD_FILE)
-  end
-
-  @serving_apps = Hash(String, Array(String)?).new
-
-  # The modules whose runtime classpath holds `module_dir`: itself and every
-  # module depending on it, narrowed to the Boot entry points
-  # when there are any. Nil when `module_dir` is not a Maven module.
-  private def serving_apps(module_dir : String) : Array(String)?
-    return @serving_apps[module_dir] if @serving_apps.has_key?(module_dir)
-    @serving_apps[module_dir] = if module_classpath(module_dir)
-                                  hosts = maven_modules.values.flatten.uniq!.select do |dir|
-                                    module_classpath(dir).try(&.[0].includes?(module_dir))
-                                  end
-                                  hosts << module_dir unless hosts.includes?(module_dir)
-                                  runnable = hosts.select { |dir| @boot_apps.includes?(dir) }
-                                  runnable.empty? ? hosts : runnable
-                                end
-  end
-
-  alias MavenDependency = NamedTuple(artifact: String, scope: String?, optional: Bool)
-  alias MavenPom = NamedTuple(parent: String?, dependencies: Array(MavenDependency))
-
-  @maven_modules : Hash(String, Array(String))? = nil
-  @maven_poms = Hash(String, MavenPom?).new
-  @module_classpaths = Hash(String, {Set(String), Bool}?).new
-
-  # Comments, version pins (`dependencyManagement`), plugin dependencies
-  # (`build`) and exclusions name no dependency of the module.
-  MAVEN_NOISE       = /<!--.*?-->|<dependencyManagement>.*?<\/dependencyManagement>|<build>.*?<\/build>|<exclusions>.*?<\/exclusions>/m
-  MAVEN_ARTIFACT_ID = /<artifactId>\s*([^<\s]+)\s*<\/artifactId>/
-  MAVEN_DEPENDENCY  = /<dependency>(.*?)<\/dependency>/m
-  MAVEN_PARENT      = /<parent>(.*?)<\/parent>/m
-
-  SPRING_SECURITY_ARTIFACT = /\A(?:spring-boot-starter-security|spring-security-(?!test\z)[\w.-]+|spring-boot-starter-oauth2-[\w.-]+)\z/
-
-  # `{module directories on module_dir's runtime classpath (itself
-  # included), whether Spring Security is on it}`, by Maven's rules: a
-  # parent's dependencies are the module's own; a dependency's own
-  # dependencies come along unless `optional`; `test` scope never reaches
-  # the runtime. Nil for a module that is not Maven.
-  #
-  # ponytail: Gradle modules are not followed (convention plugins and
-  # `subprojects {}` can add dependencies), so they keep every chain.
-  private def module_classpath(module_dir : String) : {Set(String), Bool}?
-    return @module_classpaths[module_dir] if @module_classpaths.has_key?(module_dir)
-    @module_classpaths[module_dir] = maven_classpath(module_dir)
-  end
-
-  private def maven_classpath(module_dir : String) : {Set(String), Bool}?
-    dirs = Set(String).new
-    security = false
-    seen = Set({String, Bool}).new
-    queue = [{module_dir, true}]
-    while item = queue.shift?
-      next unless seen.add?(item)
-      dir, direct = item
-      return unless pom = maven_pom(dir)
-      dirs << dir
-      pom[:parent].try { |parent| maven_modules[parent]?.try(&.each { |parent_dir| queue << {parent_dir, direct} }) }
-      pom[:dependencies].each do |dependency|
-        next if dependency[:scope] == "test" || (dependency[:optional] && !direct)
-        security ||= dependency[:artifact].matches?(SPRING_SECURITY_ARTIFACT)
-        maven_modules[dependency[:artifact]]?.try(&.each { |dependency_dir| queue << {dependency_dir, false} })
-      end
-    end
-    {dirs, security}
-  end
-
-  private def maven_pom(dir : String) : MavenPom?
-    return @maven_poms[dir] if @maven_poms.has_key?(dir)
-    path = File.join(dir, "pom.xml")
-    @maven_poms[dir] = if File.exists?(path) && (content = read_file(path))
-                         code = content.gsub(MAVEN_NOISE, "")
-                         parent = code.match(MAVEN_PARENT).try { |block| block[1].match(MAVEN_ARTIFACT_ID).try(&.[1]) }
-                         dependencies = code.scan(MAVEN_DEPENDENCY).compact_map do |block|
-                           next unless artifact = block[1].match(MAVEN_ARTIFACT_ID)
-                           {artifact: artifact[1], scope: block[1].match(/<scope>\s*([^<\s]+)/).try(&.[1]), optional: block[1].matches?(/<optional>\s*true\s*</)}
-                         end
-                         {parent: parent, dependencies: dependencies}
-                       end
-  end
-
-  # artifactId => directories of the project modules declaring it.
-  private def maven_modules : Hash(String, Array(String))
-    @maven_modules ||= begin
-      index = Hash(String, Array(String)).new
-      CodeLocator.instance.files_by_basename("pom.xml").each do |pom|
-        next unless content = read_file(pom)
-        own = content.gsub(MAVEN_NOISE, "").gsub(MAVEN_PARENT, "").match(MAVEN_ARTIFACT_ID)
-        (index[own[1]] ||= [] of String) << File.dirname(Noir::PathScope.expand(pom)) if own
-      end
-      index
-    end
   end
 
   CONFIG_DIRS           = {"src/main/resources", "src/main/resources/config"}
@@ -2027,47 +1840,6 @@ class SpringAuthTagger < FrameworkTagger
 
   private def relaxed_property(name : String) : String
     name.downcase.delete("-_")
-  end
-
-  private def matches_ant_pattern?(url : String, pattern : String) : Bool
-    # Handle comma-separated patterns
-    patterns = pattern.split(",").map(&.strip)
-    normalized_url = normalize_security_path(url)
-
-    patterns.any? do |p|
-      p = normalize_security_path(p)
-      next false if p.empty?
-
-      normalized_url.matches?(ant_pattern_regex(p))
-    end
-  rescue ex
-    @logger.debug "SpringAuthTagger: Failed to match ant pattern '#{pattern}': #{ex.message}"
-    false
-  end
-
-  private def normalize_security_path(path : String) : String
-    value = path.strip
-    return value if value.empty?
-    value.starts_with?("/") ? value : "/#{value}"
-  end
-
-  # Every endpoint is matched against every recorded security rule, so this is
-  # called O(endpoints x rules) times over a small set of distinct patterns.
-  # Memoize (as `spring_security` already does) so the same PCRE2 pattern isn't
-  # recompiled thousands of times.
-  @ant_pattern_regexes = Hash(String, Regex).new
-
-  private def ant_pattern_regex(pattern : String) : Regex
-    @ant_pattern_regexes[pattern] ||= begin
-      # A trailing `/**` also matches the bare prefix (`/assets/**` serves
-      # `/assets`), as Spring's ant and path-pattern matchers do.
-      escaped = Regex.escape(pattern)
-        .sub(/\/\\\*\\\*\z/, "(?:/.*)?")
-        .gsub("\\*\\*", ".*")
-        .gsub("\\*", "[^/]*")
-
-      /^#{escaped}\/?$/
-    end
   end
 
   private def pattern_specificity(pattern : String) : Int32
@@ -2295,37 +2067,12 @@ class SpringAuthTagger < FrameworkTagger
 
   private def check_interceptor_rules(endpoint : Endpoint) : Tuple(String, String, Int32)?
     return if @registered_interceptors.empty?
-    per_serving_classpath(endpoint) { |classpath, _| interceptor_decision(endpoint, classpath) }
+    per_serving_classpath(endpoint, true) { |classpath, _| interceptor_decision(endpoint, classpath) }
   end
 
   private def check_servlet_filter_rules(endpoint : Endpoint) : Tuple(String, String, Int32)?
     return if @servlet_filters.none?(&.refusal)
-    per_serving_classpath(endpoint) { |classpath, app| servlet_filter_decision(endpoint, classpath, app) }
-  end
-
-  # The first decision of the block for the runtime classpath of each app
-  # serving `endpoint` (nil: unknown, everything applies) and that app's
-  # module directory (nil when unknown).
-  private def per_serving_classpath(endpoint : Endpoint, & : Set(String)?, String? -> Tuple(String, String, Int32)?) : Tuple(String, String, Int32)?
-    modules = endpoint.details.code_paths.compact_map do |path_info|
-      path = path_info.path
-      build_module(path) unless MediaFilter.spec_document?(path) || File.basename(path).matches?(BUILD_FILE)
-    end.uniq!
-
-    return yield nil, nil if modules.empty?
-
-    modules.each do |module_dir|
-      if apps = serving_apps(module_dir)
-        apps.each do |app|
-          if desc = yield module_classpath(app).try(&.[0]), app
-            return desc
-          end
-        end
-      elsif desc = yield Set{module_dir}, module_dir
-        return desc
-      end
-    end
-    nil
+    per_serving_classpath(endpoint, true) { |classpath, app| servlet_filter_decision(endpoint, classpath, app) }
   end
 
   private def interceptor_decision(endpoint : Endpoint, classpath : Set(String)?) : Tuple(String, String, Int32)?
