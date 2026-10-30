@@ -1,0 +1,68 @@
+swagger: "2.0"
+info:
+  title: readOnly properties (YAML)
+  version: 1.0.0
+paths:
+  /yaml/pets:
+    post:
+      consumes:
+        - application/json
+      parameters:
+        - in: body
+          name: body
+          schema:
+            type: object
+            properties:
+              id:
+                type: integer
+                readOnly: true
+              status:
+                type: string
+                readOnly: false
+              name:
+                type: string
+              note:
+                type: string
+                readOnly: "true"
+      responses:
+        "200":
+          description: ok
+  /yaml/pets/form:
+    post:
+      consumes:
+        - application/x-www-form-urlencoded
+      parameters:
+        - in: body
+          name: body
+          schema:
+            type: object
+            properties:
+              created_at:
+                type: string
+                readOnly: true
+              nickname:
+                type: string
+      responses:
+        "200":
+          description: ok
+  /yaml/pets/ref:
+    put:
+      consumes:
+        - application/json
+      parameters:
+        - in: body
+          name: body
+          schema:
+            $ref: "#/definitions/Pet"
+      responses:
+        "200":
+          description: ok
+definitions:
+  Pet:
+    type: object
+    properties:
+      uid:
+        type: string
+        readOnly: true
+      breed:
+        type: string

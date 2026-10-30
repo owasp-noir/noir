@@ -25,7 +25,8 @@ module Analyzer::Specification
       end
 
       if props = schema["properties"]?.try(&.as_h?)
-        props.each do |name, _|
+        props.each do |name, prop|
+          next if read_only_property?(prop)
           add_param(params, name.to_s, param_type)
         end
       end
@@ -62,7 +63,8 @@ module Analyzer::Specification
 
       if props_node = schema[YAML::Any.new("properties")]?
         if props = props_node.as_h?
-          props.each do |name, _|
+          props.each do |name, prop|
+            next if read_only_property?(prop)
             add_param(params, name.to_s, param_type)
           end
         end

@@ -961,5 +961,20 @@ module Analyzer::Specification
       param = Param.new(name, "", param_type)
       params << param unless params.includes?(param)
     end
+
+    # True when a schema property is marked `readOnly: true`. OAS 2 and 3
+    # both define such a property as response-only, so it is not part of
+    # the request input surface. Only a literal boolean `true` counts:
+    # `readOnly: false`, a missing key, a non-boolean value and `writeOnly`
+    # all leave the property in. The node itself is never modified.
+    protected def read_only_property?(prop : JSON::Any) : Bool
+      return false unless h = prop.as_h?
+      h["readOnly"]?.try(&.as_bool?) == true
+    end
+
+    protected def read_only_property?(prop : YAML::Any) : Bool
+      return false unless h = prop.as_h?
+      h[YAML::Any.new("readOnly")]?.try(&.as_bool?) == true
+    end
   end
 end

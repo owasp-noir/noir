@@ -1,0 +1,65 @@
+{
+  "openapi": "3.0.3",
+  "info": {"title": "readOnly properties (JSON)", "version": "1.0.0"},
+  "paths": {
+    "/json/pets": {
+      "post": {
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "id": {"type": "integer", "readOnly": true},
+                  "status": {"type": "string", "readOnly": false},
+                  "password": {"type": "string", "writeOnly": true},
+                  "name": {"type": "string"},
+                  "note": {"type": "string", "readOnly": "true"}
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/json/pets/form": {
+      "post": {
+        "requestBody": {
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "created_at": {"type": "string", "readOnly": true},
+                  "nickname": {"type": "string"}
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/json/pets/ref": {
+      "put": {
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {"$ref": "#/components/schemas/Pet"}
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Pet": {
+        "type": "object",
+        "properties": {
+          "uid": {"type": "string", "readOnly": true},
+          "breed": {"type": "string"}
+        }
+      }
+    }
+  }
+}
