@@ -15,8 +15,9 @@ module Analyzer::Rust
   # args — a line-scan can't reliably track its method-chain/paren scoping.
   # Tuple subcommand variants that reference a separate `#[derive(Args)]`
   # struct (`Serve(ServeArgs)`) surface that struct's flags on the root
-  # rather than the subcommand, since the variant→struct link isn't resolved
-  # here; inline-field variants (`Serve { ... }`) attribute correctly.
+  # rather than the subcommand; only the struct's `#[command(subcommand)]`
+  # field is followed, so the commands nested under it keep their path.
+  # Inline-field variants (`Serve { ... }`) attribute correctly.
   #
   # Line-scan analyzer (Go/Python CLI house style) with a cross-file
   # URL-merge, instead of the tree-sitter analyze_file path the HTTP Rust
@@ -33,13 +34,19 @@ module Analyzer::Rust
     CLAP_ATTR_RE = /#\[\s*(?:arg|structopt|clap)(?:\s*\((.*)\))?\s*\]\s*$/m
     ARGH_ATTR_RE = /#\[\s*argh(?:\s*\((.*)\))?\s*\]\s*$/m
     FIELD_RE     = /^\s*(?:pub\s+)?(\w+)\s*:/
-    VARIANT_RE   = /^\s*(?:#\[\s*command\s*\([^\]]*\bname\s*=\s*"([^"]+)"[^\]]*\)\s*\]\s*)?([A-Z]\w*)(?:\s*\(\s*([A-Za-z0-9_:]+)\s*\))?/
+    # `#[command(subcommand)]` (clap 4) / `#[clap(subcommand)]` / `#[structopt(subcommand)]`.
+    SUBCOMMAND_ATTR_RE = /#\[\s*(?:command|clap|structopt)\s*\([^\]]*\bsubcommand\b/
+    QUOTED_RE          = /"(?:\\.|[^"\\])*"/
+    # `method: UsersMethod` / `method: Option<UsersMethod>` / `pub cmd: sub::Cmd`.
+    SUBCOMMAND_FIELD_RE = /^(?:pub(?:\([^)]*\))?\s+)?\w+\s*:\s*(?:Option\s*<\s*)?([A-Za-z0-9_:]+)/
+    VARIANT_RE          = /^\s*(?:#\[\s*command\s*\([^\]]*\bname\s*=\s*"([^"]+)"[^\]]*\)\s*\]\s*)?([A-Z]\w*)(?:\s*\(\s*([A-Za-z0-9_:]+)\s*\))?/
 
     # Shared helper that buffers multi-line attributes with bracket depth tracking
     # outside strings, strips comments quote-aware, and parses derives, command names, and arg attributes.
     private class AttributeScanner
       getter pending_derive : String?
       getter pending_command_name : String?
+      getter? pending_subcommand = false
       getter pending_attrs : Array(Tuple(Symbol, String))
 
       @in_block_comment = false
@@ -150,6 +157,15 @@ module Analyzer::Rust
         if cm = attr.match(/#\[\s*command\s*\(.*?\bname\s*=\s*"([^"]+)"/m)
           @pending_command_name = cm[1]
         end
+        if attr.matches?(SUBCOMMAND_ATTR_RE) && attr.gsub(QUOTED_RE, "").matches?(SUBCOMMAND_ATTR_RE)
+          @pending_subcommand = true
+        end
+      end
+
+      def consume_subcommand : Bool
+        val = @pending_subcommand
+        @pending_subcommand = false
+        val
       end
 
       def consume_derive : String?
@@ -171,6 +187,7 @@ module Analyzer::Rust
       def reset_for_new_item
         @pending_attrs.clear
         @pending_command_name = nil
+        @pending_subcommand = false
       end
     end
 
@@ -214,13 +231,13 @@ module Analyzer::Rust
         end
       end
 
-      subcommand_enums, subcommand_base_for = collect_subcommand_hierarchy(rs_sources, cargo)
+      subcommand_enums, subcommand_base_for, struct_subcommand = collect_subcommand_hierarchy(rs_sources, cargo)
 
       rs_sources.each do |path, content, lines|
         binary = rust_binary_name(cargo, path)
         root_url = "cli://#{binary}"
         emit_env = !content.matches?(WEB_CRATE_RE)
-        scan(lines, path, binary, root_url, endpoints, emit_env, subcommand_enums, subcommand_base_for)
+        scan(lines, path, binary, root_url, endpoints, emit_env, subcommand_enums, subcommand_base_for, struct_subcommand)
       rescue e
         logger.debug "Error analyzing #{path}: #{e}"
         next
@@ -246,15 +263,20 @@ module Analyzer::Rust
     end
 
     private def collect_subcommand_hierarchy(rs_sources : Array(Tuple(String, String, Array(String))),
-                                             cargo : Array(Tuple(String, String))) : Tuple(Set(String), Hash(String, String))
+                                             cargo : Array(Tuple(String, String))) : Tuple(Set(String), Hash(String, String), Hash(String, String))
       subcommand_enums = Set(String).new
       child_links = {} of String => Tuple(String, String) # child_enum => {parent_enum, cmd_name}
       enum_binary = {} of String => String
+      # `struct UsersArgs { #[command(subcommand)] method: UsersMethod }`:
+      # args struct => the subcommand enum its field holds.
+      struct_subcommand = {} of String => String
 
-      # Pass 1: find all enum names deriving Subcommand
+      # Pass 1: find all enum names deriving Subcommand, and every struct's
+      # `#[command(subcommand)]` field type.
       rs_sources.each do |path, _content, lines|
         binary = rust_binary_name(cargo, path)
         scanner = AttributeScanner.new
+        current_struct : String? = nil
 
         lines.each do |line|
           code = scanner.process_line(line)
@@ -266,8 +288,12 @@ module Analyzer::Rust
               enum_binary[m[1]] = binary
             end
             scanner.consume_derive
-          elsif code.match(ITEM_RE)
+            current_struct = nil
+          elsif m = code.match(ITEM_RE)
             scanner.consume_derive
+            current_struct = code.matches?(/\bstruct\s/) ? m[1] : nil
+          elsif scanner.consume_subcommand && current_struct && (fm = code.match(SUBCOMMAND_FIELD_RE))
+            struct_subcommand[current_struct] = fm[1].split("::").last
           end
         end
       end
@@ -285,6 +311,9 @@ module Analyzer::Rust
 
           if !code.empty?
             if current_enum.nil?
+              # An item's own `#[command(name = ...)]` (the Parser struct's
+              # binary name) must not carry over to the next enum's first variant.
+              scanner.consume_command_name if code.matches?(ITEM_RE)
               if m = code.match(/\benum\s+([A-Za-z_]\w*)/)
                 if subcommand_enums.includes?(m[1])
                   current_enum = m[1]
@@ -296,9 +325,8 @@ module Analyzer::Rust
               if m = code.match(VARIANT_RE)
                 v_name = m[2]
                 c_name = m[1]? || scanner.consume_command_name || camel_to_kebab(v_name)
-                payload = m[3]?
-                if payload && (clean_payload = payload.split("::").last) && subcommand_enums.includes?(clean_payload)
-                  child_links[clean_payload] = {current_enum, c_name}
+                if child = nested_subcommand(m[3]?, subcommand_enums, struct_subcommand)
+                  child_links[child] = {current_enum, c_name}
                 end
               elsif code.matches?(/^[A-Z]\w*/)
                 scanner.consume_command_name
@@ -347,12 +375,25 @@ module Analyzer::Rust
         resolve_base.call(e)
       end
 
-      {subcommand_enums, base_for}
+      {subcommand_enums, base_for, struct_subcommand}
+    end
+
+    # The subcommand enum a variant's payload nests: the payload itself
+    # (`#[command(subcommand)] Users(UsersMethod)`) or the enum held by an
+    # args struct's `#[command(subcommand)]` field (`Users(UsersArgs)`).
+    private def nested_subcommand(payload : String?, subcommand_enums : Set(String),
+                                  struct_subcommand : Hash(String, String)) : String?
+      return unless payload
+      name = payload.split("::").last
+      return name if subcommand_enums.includes?(name)
+      child = struct_subcommand[name]?
+      child if child && subcommand_enums.includes?(child)
     end
 
     private def scan(lines : Array(String), path : String, binary : String,
                      root_url : String, endpoints : Hash(String, Endpoint), emit_env : Bool,
-                     subcommand_enums : Set(String), subcommand_base_for : Hash(String, String))
+                     subcommand_enums : Set(String), subcommand_base_for : Hash(String, String),
+                     struct_subcommand : Hash(String, String))
       depth = 0
       item_kind : Symbol? = nil # :parser | :subcommand | :args
       current_enum_name : String? = nil
@@ -408,10 +449,9 @@ module Analyzer::Rust
               # `#[command(name = "...")]` wins.
               v_name = vm[2]
               name = vm[1]? || scanner.consume_command_name || camel_to_kebab(v_name)
-              payload = vm[3]?
-              if payload && (clean_payload = payload.split("::").last) && subcommand_enums.includes?(clean_payload)
+              if child = nested_subcommand(vm[3]?, subcommand_enums, struct_subcommand)
                 # Nested subcommand container variant: record link and skip leaf endpoint
-                subcommand_base_for[clean_payload] ||= "#{current_enum_base}/#{name}"
+                subcommand_base_for[child] ||= "#{current_enum_base}/#{name}"
               else
                 current_cmd = "#{current_enum_base}/#{name}"
                 fetch_endpoint(endpoints, current_cmd, path, line_no)

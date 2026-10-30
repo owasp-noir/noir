@@ -48,6 +48,23 @@ FunctionalTester.new("fixtures/rust/cli_clap_nested/", {
   :endpoints => clap_nested_endpoints.size,
 }, clap_nested_endpoints).perform_tests
 
+# --- clap: variant wrapping an Args struct with a nested subcommand -------
+# `Users(UsersArgs)` with `#[command(subcommand)] method: UsersMethod` inside
+# the struct used to flatten `users get` onto `cli://tool/get`. The Parser
+# struct's `#[command(name = "tool")]` used to rename `Orders`, the first
+# variant after it, to `tool`.
+clap_args_nested_endpoints = [
+  build.call("cli://tool/users/get", [Param.new("user-id", "", "flag")]),
+  build.call("cli://tool/users/delete", [] of Param),
+  build.call("cli://tool/orders/get", [Param.new("order-id", "", "flag")]),
+  build.call("cli://tool/orders/cancel", [] of Param),
+]
+
+FunctionalTester.new("fixtures/rust/cli_clap_args_nested/", {
+  :techs     => 1,
+  :endpoints => clap_args_nested_endpoints.size,
+}, clap_args_nested_endpoints).perform_tests
+
 # --- getopts (flat builder API: optopt/optflag/reqopt + env) ---------------
 getopts_endpoints = [
   build.call("cli://getoptsdemo", [
