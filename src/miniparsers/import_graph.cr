@@ -46,6 +46,9 @@ module Noir
     @@directory_cache = Hash(String, Bool).new
     @@directory_mutex = Mutex.new
 
+    @@dotted_dirs_cache = Hash(String, Array(String)).new
+    @@dotted_dirs_mutex = Mutex.new
+
     # Filesystem-derived memos must not survive into a second scan of a
     # different tree in the same process (`--diff`, library use).
     Noir::ExtractionResultCache.register_clearer do
@@ -54,6 +57,7 @@ module Noir
       @@import_resolution_mutex.synchronize { @@import_resolution_cache.clear }
       @@package_siblings_mutex.synchronize { @@package_siblings_cache.clear }
       @@directory_mutex.synchronize { @@directory_cache.clear }
+      @@dotted_dirs_mutex.synchronize { @@dotted_dirs_cache.clear }
     end
 
     # An import declaration extracted from a source file.
@@ -136,13 +140,71 @@ module Noir
       end
 
       sibling_roots = sibling_source_roots(source_root)
-      last_sep = relative.rindex('/')
-      relative_dir = last_sep ? relative[0, last_sep] : ""
       local_roots = [source_root] + sibling_roots
       resolved = [] of String
-      if imp.wildcard?
+      # Roots holding dotted package folders (`com.example/model` for
+      # `com.example.model`) try every local spelling before any wider root,
+      # whose same-named package would otherwise win.
+      dotted = dotted_spellings(source_root, local_roots, imp.path)
+      unless dotted.empty?
+        ([relative] + dotted).each do |spelling|
+          resolved = resolve_spelling(source_root, sibling_roots, local_roots, spelling, imp.wildcard?, extension, wide: false)
+          break unless resolved.empty?
+        end
+      end
+      resolved = resolve_spelling(source_root, sibling_roots, local_roots, relative, imp.wildcard?, extension) if resolved.empty?
+
+      @@import_resolution_mutex.synchronize do
+        Noir::ExtractionResultCache.store_capped(@@import_resolution_cache, cache_key, resolved, IMPORT_RESOLUTION_MAX_ENTRIES)
+      end
+    end
+
+    # `dotted_path` spelled under each dotted folder directly below
+    # `local_roots` that is a prefix of it.
+    private def self.dotted_spellings(source_root : String, local_roots : Array(String), dotted_path : String) : Array(String)
+      dotted_package_dirs(source_root, local_roots).compact_map do |folder|
+        if dotted_path == folder
+          folder
+        elsif dotted_path.starts_with?(folder) && dotted_path[folder.size]? == '.'
+          "#{folder}/#{dotted_path[(folder.size + 1)..].tr(".", "/")}"
+        end
+      end
+    end
+
+    # Names of the directories with a dot directly below `local_roots`.
+    # Almost always none; one memoised glob per root, and the union kept
+    # per source root so an import does not revisit every sibling root.
+    private def self.dotted_package_dirs(source_root : String, local_roots : Array(String)) : Array(String)
+      key = "\0#{source_root}" # never a path, so never a `dotted_dirs_below` key
+      @@dotted_dirs_mutex.synchronize do
+        if cached = @@dotted_dirs_cache[key]?
+          return cached
+        end
+      end
+      dirs = local_roots.flat_map { |root| dotted_dirs_below(root) }.uniq!
+      @@dotted_dirs_mutex.synchronize { @@dotted_dirs_cache[key] = dirs }
+    end
+
+    private def self.dotted_dirs_below(root : String) : Array(String)
+      @@dotted_dirs_mutex.synchronize do
+        if cached = @@dotted_dirs_cache[root]?
+          return cached
+        end
+      end
+      dirs = [] of String
+      safe_glob(root, "*.*") { |entry| dirs << File.basename(entry) if directory?(entry) }
+      @@dotted_dirs_mutex.synchronize { @@dotted_dirs_cache[root] = dirs }
+    end
+
+    private def self.resolve_spelling(source_root : String, sibling_roots : Array(String), local_roots : Array(String),
+                                      relative : String, wildcard : Bool, extension : String,
+                                      wide : Bool = true) : Array(String)
+      last_sep = relative.rindex('/')
+      relative_dir = last_sep ? relative[0, last_sep] : ""
+      resolved = [] of String
+      if wildcard
         local_roots.each { |root| resolved.concat(files_in(root, relative, extension)) }
-        if resolved.empty?
+        if resolved.empty? && wide
           registered_package_roots(source_root, relative).each { |root| resolved.concat(files_in(root, relative, extension)) }
         end
       else
@@ -155,7 +217,7 @@ module Noir
         resolved = class_files_in([source_root], relative, relative_dir, extension)
         resolved = class_files_in(sibling_roots, relative, relative_dir, extension) if resolved.empty?
         wider_roots = [] of String
-        if resolved.empty?
+        if resolved.empty? && wide
           wider_roots = registered_package_roots(source_root, relative_dir)
           resolved = class_files_in(wider_roots, relative, relative_dir, extension)
         end
@@ -169,10 +231,7 @@ module Noir
           end
         end
       end
-
-      @@import_resolution_mutex.synchronize do
-        Noir::ExtractionResultCache.store_capped(@@import_resolution_cache, cache_key, resolved, IMPORT_RESOLUTION_MAX_ENTRIES)
-      end
+      resolved
     end
 
     private def self.class_files_in(roots : Array(String), relative : String,
@@ -233,16 +292,30 @@ module Noir
     # `com.foo` returns `src/main/java`. Returns nil when the package
     # path doesn't actually trail the file's directory (the source
     # tree is laid out differently and we can't safely resolve
-    # imports).
+    # imports). javac also accepts a folder that spells several package
+    # segments with dots (`src/main/java/com.example/web` for
+    # `com.example.web`), so a folder may consume more than one segment.
     def self.source_root_for(file_path : String, package_name : String) : String?
       package_segments = package_name.split('.')
-      dir = File.dirname(file_path)
-      dir_segments = dir.split('/')
-      return if dir_segments.size < package_segments.size
-      tail = dir_segments[(dir_segments.size - package_segments.size)..]
-      return unless tail == package_segments
-      root = dir_segments[0, dir_segments.size - package_segments.size].join('/')
+      dir_segments = File.dirname(file_path).split('/')
+      remaining = package_segments.size
+      idx = dir_segments.size
+      while remaining > 0 && idx > 0
+        parts = dir_segments[idx - 1].split('.')
+        break if parts.empty? || parts.size > remaining
+        break unless package_segments[remaining - parts.size, parts.size] == parts
+        remaining -= parts.size
+        idx -= 1
+      end
+      return unless remaining == 0
+      root = dir_segments[0, idx].join('/')
       root.empty? ? "." : root
+    end
+
+    # Whether `file` is where the type `fqn` lives: `com/foo/Bar.java`, or
+    # with package folders spelled with dots (`com.foo/Bar.java`).
+    def self.fqn_file?(file : String, fqn : String, extension : String) : Bool
+      "/#{file}".tr("/", ".").ends_with?(".#{fqn}.#{extension}")
     end
 
     # Gradle/Maven multi-module JVM repos often keep controllers in one

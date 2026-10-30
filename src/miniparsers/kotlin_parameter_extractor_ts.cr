@@ -106,6 +106,9 @@ module Noir
       # The JSON key is settled by `@JsonProperty` or the class `@JsonNaming`;
       # the module-wide Jackson default leaves it alone.
       property? json_name_fixed : Bool = false
+      # The declaring class's `@JsonRootName`: the key the body is wrapped
+      # in under `UNWRAP_ROOT_VALUE`.
+      property json_root : String? = nil
 
       def initialize(@name, @access_modifier, @has_setter, @init_value,
                      @null_validation_groups = [] of String, @server_managed = false,
@@ -172,7 +175,8 @@ module Noir
       walk_class_containers(root) do |decl|
         name = type_identifier_text(decl, source)
         next if name.empty?
-        fields = apply_json_naming(collect_class_fields(decl, source), json_naming_of(decl, source))
+        strategy, root_name = jackson_class_annotations(decl, source)
+        fields = apply_json_naming(collect_class_fields(decl, source), strategy, root_name)
         results[name] = fields unless fields.empty?
       end
       results
@@ -180,11 +184,15 @@ module Noir
 
     # Apply a class-level Jackson naming strategy to the fields that have no
     # explicit `@JsonProperty`, and mark every field settled either way.
-    def apply_json_naming(fields : Array(FieldInfo), strategy : String?) : Array(FieldInfo)
-      return fields unless strategy
+    # `root` is the class's `@JsonRootName`.
+    def apply_json_naming(fields : Array(FieldInfo), strategy : String?, root : String? = nil) : Array(FieldInfo)
+      return fields unless strategy || root
       fields.map do |field|
-        field.json_name = Noir::JacksonNaming.translate(field.name, strategy) unless field.json_name_fixed?
-        field.json_name_fixed = true
+        if strategy
+          field.json_name = Noir::JacksonNaming.translate(field.name, strategy) unless field.json_name_fixed?
+          field.json_name_fixed = true
+        end
+        field.json_root = root
         field
       end
     end
@@ -192,12 +200,21 @@ module Noir
     # Not the `::class` inside the header's own annotations.
     CLASS_KEYWORD_RE = /(?<!::)(?<!\.)\b(?:class|object|interface)\b/
 
-    private def json_naming_of(decl : LibTreeSitter::TSNode, source : String) : String?
+    # `{@JsonNaming strategy, @JsonRootName}` of a class, from its own
+    # annotations or the lines directly above it.
+    private def jackson_class_annotations(decl : LibTreeSitter::TSNode, source : String) : {String?, String?}
       text = Noir::TreeSitter.node_text(decl, source)
       # `@Schema(description = "request class")` must not end the header.
       masked = text.gsub(/"(?:[^"\\]|\\.)*"/) { |literal| " " * literal.size }
       header = text[0, masked.index(CLASS_KEYWORD_RE) || 0]
-      Noir::JacksonNaming.annotation_strategy(header) || Noir::JacksonNaming.annotation_strategy(leading_annotation_lines(decl, source))
+      strategy = Noir::JacksonNaming.annotation_strategy(header)
+      root = Noir::JacksonNaming.annotation_root_name(header)
+      unless strategy && root
+        leading = leading_annotation_lines(decl, source)
+        strategy ||= Noir::JacksonNaming.annotation_strategy(leading)
+        root ||= Noir::JacksonNaming.annotation_root_name(leading)
+      end
+      {strategy, root}
     end
 
     # tree-sitter-kotlin leaves an annotation on its own line outside the

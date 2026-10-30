@@ -197,7 +197,7 @@ module Analyzer::Java
             package_name = Noir::TreeSitterJavaParameterExtractor.extract_package_name_from(root, content)
             next if package_name.empty?
 
-            dto_index = with_default_json_naming(dto_builder.build_for_with_root(path, content, root), path)
+            dto_index = with_jackson_defaults(dto_builder.build_for_with_root(path, content, root), path)
             feign_clients = Noir::TreeSitterJavaParameterExtractor.extract_feign_client_classes_from(root, content)
             http_exchange_clients = Noir::TreeSitterJavaParameterExtractor.extract_http_exchange_client_classes_from(root, content)
             visible_meta_mappings = visible_meta_annotation_mappings(path, content, package_name, meta_annotation_index)
@@ -655,7 +655,7 @@ module Analyzer::Java
       indexes_by_path.each do |entry_path, indexes|
         source = entries[indexes.first].source
         Noir::TreeSitter.parse_java(source) do |interface_root|
-          dto_index = with_default_json_naming(dto_builder.build_for_with_root(entry_path, source, interface_root), entry_path)
+          dto_index = with_jackson_defaults(dto_builder.build_for_with_root(entry_path, source, interface_root), entry_path)
           param_index = Noir::TreeSitterJavaParameterExtractor.build_file_index(interface_root, source)
           constants = Noir::TreeSitterJavaRouteExtractor.extract_string_constants_from(interface_root, source)
           indexes.each do |i|
