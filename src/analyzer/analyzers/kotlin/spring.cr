@@ -173,6 +173,7 @@ module Analyzer::Kotlin
         functional_router_seen ||= kotlin_functional_router_file?(content)
         constants = Noir::TreeSitterKotlinRouteExtractor.extract_string_constants(content)
         local_string_constants[path] = constants
+        content.scan(COMPANION_NAME_RE) { |match| @companion_names << match[1] } if content.includes?("companion")
         base_constants = string_constants_by_base[configured_base_for(path)]
         constants.each do |name, value|
           base_constants[name] ||= value
@@ -256,50 +257,64 @@ module Analyzer::Kotlin
     # explicit imports (`import com.ex.BaseService.GROUP`, a Java
     # `static final` or a Kotlin `const val`), the file's package, then star
     # imports (`import com.ex.Paths.*`). Binding each name to its owner beats
-    # whichever file happened to declare a `GROUP` first.
+    # whichever file happened to declare a `GROUP` first. A package or star
+    # scope can hold thousands of constants, so only the names this file
+    # spells are copied.
     private def seed_imported_constants(content : String,
                                         project_constants : Hash(String, String),
-                                        owners : Hash(String, Array({String, String})),
+                                        owners : Hash(String, Hash(String, String)),
                                         constants : Hash(String, String)) : Nil
-      scopes = [] of String
+      scopes = [] of Hash(String, String)
       content.scan(KOTLIN_IMPORT_RE) do |match|
         qualified = match[1]
         if match[2]?
-          scopes << qualified.rchop('.')
+          owners[qualified.rchop('.')]?.try { |scope| scopes << scope }
         elsif (dot = qualified.rindex('.')) && (value = imported_constant(qualified, project_constants))
           constants[match[3]? || qualified[(dot + 1)..]] ||= value
         end
       end
-      if package = content.match(KOTLIN_PACKAGE_RE).try(&.[1])
-        scopes.unshift(package)
+      if scope = content.match(KOTLIN_PACKAGE_RE).try { |match| owners[match[1]]? }
+        scopes.unshift(scope)
       end
-      scopes.each do |owner|
-        owners[owner]?.try &.each do |name, value|
-          constants[name] ||= value
+      return if scopes.empty?
+
+      spelled = Set(String).new
+      content.scan(KOTLIN_IDENTIFIER_RE) { |match| spelled << match[0] }
+      spelled.each do |name|
+        next if constants.has_key?(name)
+        scopes.each do |candidates|
+          if value = candidates[name]?
+            constants[name] = value
+            break
+          end
         end
       end
     end
 
+    KOTLIN_IDENTIFIER_RE = /\b[A-Za-z_][A-Za-z0-9_]*/
+
     # A companion's constants are indexed under its class, so
-    # `Holder.Companion.NAME` / `Holder.Named.NAME` falls back to
-    # `Holder.NAME` when the segment before the name sits inside a type.
+    # `Holder.Companion.NAME` / `Holder.Named.NAME` (declared
+    # `companion object Named`) falls back to `Holder.NAME`.
     private def imported_constant(qualified : String, table : Hash(String, String)) : String?
       if value = table[qualified]?
         return value
       end
-      return unless (last = qualified.rindex('.')) && last > 0 && (prev = qualified.rindex('.', last - 1)) && prev > 0
-      outer = (qualified.rindex('.', prev - 1) || -1) + 1
-      return unless qualified[prev + 1].uppercase? && qualified[outer].uppercase?
+      return unless (last = qualified.rindex('.')) && last > 0 && (prev = qualified.rindex('.', last - 1))
+      return unless @companion_names.includes?(qualified[(prev + 1)...last])
       table["#{qualified[0...prev]}#{qualified[last..]}"]?
     end
 
-    # `{name, value}` pairs by the owner that declares them: `com.ex.Paths`
-    # for `com.ex.Paths.BASE`, `com.ex` for a top-level `com.ex.TOP`.
-    private def constants_by_owner(constants : Hash(String, String)) : Hash(String, Array({String, String}))
-      owners = Hash(String, Array({String, String})).new
+    COMPANION_NAME_RE = /\bcompanion[ \t]+object[ \t]+([A-Za-z_][A-Za-z0-9_]*)/
+    @companion_names = Set{"Companion"}
+
+    # The constants each owner declares: `com.ex.Paths` for
+    # `com.ex.Paths.BASE`, `com.ex` for a top-level `com.ex.TOP`.
+    private def constants_by_owner(constants : Hash(String, String)) : Hash(String, Hash(String, String))
+      owners = Hash(String, Hash(String, String)).new
       constants.each do |key, value|
         next unless dot = key.rindex('.')
-        (owners[key[0...dot]] ||= [] of {String, String}) << {key[(dot + 1)..], value}
+        (owners[key[0...dot]] ||= Hash(String, String).new)[key[(dot + 1)..]] ||= value
       end
       owners
     end

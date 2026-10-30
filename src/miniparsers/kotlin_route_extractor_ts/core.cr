@@ -69,6 +69,11 @@ module Noir
       routes
     end
 
+    # `class`/`object`/`interface` after any modifiers (`internal object`,
+    # `data object`, `enum class`). A `companion object` is not a type of
+    # its own: its constants are read through the enclosing class.
+    KOTLIN_TYPE_DECL_RE = /^\s*(?:(?:public|private|protected|internal|data|enum|sealed|abstract|open|inner|annotation|value|inline|fun|expect|actual|final)\s+)*(?:class|object|interface)\s+([A-Za-z_][A-Za-z0-9_]*)/
+
     def extract_string_constants(source : String) : Hash(String, String)
       constants = Hash(String, String).new
       package_name = ""
@@ -98,7 +103,7 @@ module Noir
         # One line can hold several declarations (`object P { const val
         # A = "/a"; const val B = "/b" }`), so scan it statement by statement.
         each_statement(line, scrubbed_lines[idx]? || line) do |statement, delimiter|
-          if match = statement.match(/^\s*(?:class|object|interface)\s+([A-Za-z_][A-Za-z0-9_]*)/)
+          if match = statement.match(KOTLIN_TYPE_DECL_RE)
             # A body-less sibling type declared at this depth is not a parent.
             while (top = type_stack.last?) && top[1] >= depth
               type_stack.pop
@@ -116,8 +121,9 @@ module Noir
           if name && value
             constants[name] ||= value
             if type_stack.empty?
-              # A top-level const is imported as `pkg.NAME`.
-              constants["#{package_name}.#{name}"] ||= value unless package_name.empty?
+              # A top-level const is imported as `pkg.NAME`; a `val` inside a
+              # top-level function body is not.
+              constants["#{package_name}.#{name}"] ||= value if depth == 0 && !package_name.empty?
             else
               qualified = type_stack.join('.', &.[0])
               constants["#{type_stack.last[0]}.#{name}"] ||= value

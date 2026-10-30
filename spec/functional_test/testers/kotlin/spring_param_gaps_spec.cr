@@ -62,6 +62,8 @@ expected_endpoints = [
   Endpoint.new("/zoo-wild/c", "GET"),
   Endpoint.new("/zoo-named/d", "GET"),
   Endpoint.new("/zoo-top-web/e", "GET"),
+  Endpoint.new("/zoo-nest-admin/f", "GET"),
+  Endpoint.new("/zoo-star/g", "GET"),
 ]
 
 FunctionalTester.new("fixtures/kotlin/spring_param_gaps/", {

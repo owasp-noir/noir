@@ -224,6 +224,40 @@ describe Noir::TreeSitterKotlinRouteExtractor do
     constants["com.acme.A"]?.should be_nil
   end
 
+  it "does not register a function-local val under the package" do
+    source = <<-KT
+      package com.acme
+
+      fun helper(): String {
+          val API = "/local-junk"
+          return API
+      }
+      KT
+
+    Noir::TreeSitterKotlinRouteExtractor.extract_string_constants(source)["com.acme.API"]?.should be_nil
+  end
+
+  it "nests constants under modifier-prefixed types" do
+    source = <<-KT
+      package com.acme
+
+      object Paths {
+          const val ROOT = "/paths-root"
+          internal object Admin {
+              const val ROOT = "/admin-root"
+          }
+          data object Ops {
+              const val ROOT = "/ops-root"
+          }
+      }
+      KT
+
+    constants = Noir::TreeSitterKotlinRouteExtractor.extract_string_constants(source)
+    constants["Paths.ROOT"]?.should eq("/paths-root")
+    constants["com.acme.Paths.Admin.ROOT"]?.should eq("/admin-root")
+    constants["com.acme.Paths.Ops.ROOT"]?.should eq("/ops-root")
+  end
+
   it "does not resolve simple mapping constants from the global index" do
     source = <<-KT
       package com.example
