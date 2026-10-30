@@ -215,6 +215,44 @@ describe "ScalaAuthTagger" do
     endpoints[1].tags[0].description.should contain("isAuthenticated")
   end
 
+  it "reads a Play routes row's guard from its controller action" do
+    noir_options = create_test_options
+    tmpdir = File.tempname("scala_play_handler_guard")
+    Dir.mkdir_p(tmpdir)
+    routes = File.join(tmpdir, "routes")
+    File.write(routes, [
+      "DELETE /inbox/:username controllers.Msg.convoDelete(username: String)",
+      "GET    /inbox           controllers.Msg.list",
+      "GET    /about           controllers.Msg.about",
+    ].join("\n"))
+    ctrl = File.join(tmpdir, "Msg.scala")
+    File.write(ctrl, [
+      "class Msg @Inject() (silhouette: Silhouette[DefaultEnv]) {",        # 1
+      "  def convoDelete(username: String) = silhouette.SecuredAction {",  # 2
+      "    implicit request => Ok(username)",                              # 3
+      "  }",                                                               # 4
+      "  def list =",                                                      # 5
+      "    silhouette.SecuredAction { implicit request => Ok(\"list\") }", # 6
+      "  def about = Action { Ok(\"about\") }",                            # 7
+      "}",                                                                 # 8
+    ].join("\n"))
+    noir_options["base"] = YAML::Any.new(tmpdir)
+
+    endpoints = [{1, "Msg.convoDelete", 2}, {2, "Msg.list", 5}, {3, "Msg.about", 7}].map do |routes_line, name, def_line|
+      details = Details.new(PathInfo.new(routes, routes_line))
+      details.technology = "scala_play"
+      endpoint = Endpoint.new("/", "GET", [] of Param, details)
+      endpoint.handler = Handler.new(name, ctrl, def_line)
+      endpoint
+    end
+    ScalaAuthTagger.new(noir_options).perform(endpoints)
+    FileUtils.rm_rf(tmpdir)
+
+    endpoints.map(&.tags.size).should eq([1, 1, 0])
+    endpoints[0].tags[0].description.should eq("Protected by Play Silhouette SecuredAction")
+    endpoints[1].tags[0].description.should eq("Protected by Play Silhouette SecuredAction")
+  end
+
   it "returns correct target_techs" do
     ScalaAuthTagger.target_techs.should contain("scala_play")
     ScalaAuthTagger.target_techs.should contain("scala_akka")
