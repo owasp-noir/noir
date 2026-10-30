@@ -214,11 +214,13 @@ class EndpointOptimizer
 
       # Mobile deep-link URLs are kept verbatim: a `${...}` there is an
       # unresolved gradle manifest placeholder, not a JS template literal
-      # for the shape-normalizer to rewrite.
+      # for the shape-normalizer to rewrite. Nor is a regex route (`kind:
+      # "regex"`): `(?<id>\d+)` there is a pattern, not a placeholder.
+      verbatim = tiny_tmp.non_http? || tiny_tmp.kind == "regex"
       keep_constraints = regex_placeholders?(tiny_tmp)
-      tiny_tmp.url = normalize_url_shape(tiny_tmp.url, keep_constraints: keep_constraints) unless tiny_tmp.non_http?
-      dedup_url = tiny_tmp.non_http? ? tiny_tmp.url : normalize_url_shape(tiny_tmp.url, collection_endpoint?(tiny_tmp), keep_constraints)
-      unified_url = tiny_tmp.non_http? ? dedup_url : unify_path_placeholders(dedup_url)
+      tiny_tmp.url = normalize_url_shape(tiny_tmp.url, keep_constraints: keep_constraints) unless verbatim
+      dedup_url = verbatim ? tiny_tmp.url : normalize_url_shape(tiny_tmp.url, collection_endpoint?(tiny_tmp), keep_constraints)
+      unified_url = verbatim ? dedup_url : unify_path_placeholders(dedup_url)
       # Placeholder spellings are unified only where another technology
       # reports the route too (code + spec/collection). Within one analyzer,
       # `/users/{id}` and `/users/{user}` are kept as it reported them.

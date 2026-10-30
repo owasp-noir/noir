@@ -415,6 +415,7 @@ module Noir
               all_methods = ["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"]
               all_methods.each do |method|
                 endpoint = Endpoint.new(path_with_prefix, method, route_details)
+                endpoint.kind = "regex" if pattern.regex?
 
                 # Add path parameters detected in the URL
                 pattern.params.each do |param|
@@ -431,6 +432,7 @@ module Noir
               end
             else
               endpoint = Endpoint.new(path_with_prefix, normalized_method, route_details)
+              endpoint.kind = "regex" if pattern.regex?
 
               # Add path parameters detected in the URL
               pattern.params.each do |param|

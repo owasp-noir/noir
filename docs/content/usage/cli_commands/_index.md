@@ -152,7 +152,8 @@ noir query --no-guard --sink any --from report.json    # unauthenticated routes 
 `trace` maps a concrete request path onto the declared route: `/api/users/42`
 matches `/api/users/{id}`, `:id`, `<int:pk>`, `[id]` and `*`, and a HEAD
 request traces to the GET route. Every matching route is printed, most
-specific first, with `matched_by` (exact, pattern, wildcard). It prints the
+specific first, with `matched_by` (exact, pattern, wildcard, or prefix for an
+nginx/Ingress prefix location or a Go ServeMux `/x/` subtree). It prints the
 full endpoint record; on a miss it prints the nearest routes as `candidates`
 and exits 1.
 

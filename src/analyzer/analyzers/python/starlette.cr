@@ -339,7 +339,8 @@ module Analyzer::Python
       full_url = "#{prefix}#{route_path}"
       full_url = "/#{full_url}".gsub(/\/+/, "/")
       full_url = full_url.gsub("{{", "{").gsub("}}", "}")
-      full_url.gsub(TYPED_PATH_PARAM_REGEX) { |_| "{#{$~[1]}}" }
+      # `{p:path}` stays: it spans `/`, so it is not `{p}`.
+      full_url.gsub(TYPED_PATH_PARAM_REGEX) { |typed| typed.ends_with?(":path}") ? typed : "{#{$~[1]}}" }
     end
 
     private def parse_staticfiles_mount_path(line : ::String) : ::String?

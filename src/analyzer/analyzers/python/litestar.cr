@@ -198,7 +198,8 @@ module Analyzer::Python
             full_path = "#{prefix}#{route_path}"
             full_path = "/#{full_path}" unless full_path.starts_with?("/")
             full_path = full_path.gsub(/\/+/, "/")
-            full_path = full_path.gsub(TYPED_PATH_PARAM_REGEX) { |_| "{#{$~[1]}}" }
+            # `{p:path}` stays: it spans `/`, so it is not `{p}`.
+            full_path = full_path.gsub(TYPED_PATH_PARAM_REGEX) { |typed| typed.ends_with?(":path}") ? typed : "{#{$~[1]}}" }
 
             path_params = extract_path_params(full_path)
             handler_params = handler_line ? extract_handler_params(lines, handler_line, full_path, handler_body, source, path, definition_base_path) : [] of Param

@@ -138,8 +138,12 @@ module Analyzer::Go
                       else
                         [route.verb]
                       end
+              # A ServeMux pattern ending in `/` serves every path under it;
+              # `/x/{$}` (written `/x/`) serves only `/x/`.
+              subtree = route.path.ends_with?('/') && !route.raw_path.ends_with?("{$}")
               verbs.each do |verb|
                 new_endpoint = Endpoint.new(route.path, verb, details)
+                new_endpoint.add_tag(Tag.new("go-http-path-type", "subtree", "go_http_analyzer")) if subtree
                 if entries = callees_by_route[route.line]?
                   entries.each do |entry|
                     name, callee_path, callee_line = entry

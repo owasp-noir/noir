@@ -33,8 +33,8 @@ expected_endpoints = [
     Param.new("filter", "", "query"),
   ]),
 
-  # Regex routes (NOW WORKING)
-  Endpoint.new("/^\\/regex-(\\d+)$/", "GET"),
+  # Regex routes: the RegExp literal's pattern, delimiters and anchors gone
+  Endpoint.new("/regex-(\\d+)", "GET"),
 
   # Array of paths (NOW WORKING)
   Endpoint.new("/array-a", "GET"),

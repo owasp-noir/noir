@@ -14,6 +14,9 @@ module Noir
     # each verb reports its own line and handler.
     getter start_pos : Int32
     getter params : Array(Param)
+    # A RegExp literal route (`router.get(/^\/item\/(\d+)$/, ...)`); its
+    # path is the pattern, which the extractor marks `kind: "regex"`.
+    property? regex : Bool = false
 
     def initialize(@method : String, @path : String, raw_path : String? = nil, @start_pos : Int32 = -1)
       @raw_path = raw_path || @path
@@ -50,6 +53,9 @@ module Noir
     # router the file exports.
     @router_parents = {} of String => Array(String)
     @supports_named_routes : Bool = false
+    # Paths `format_regex_path` made from a RegExp literal that is still a
+    # pattern, so `parse_routes` can mark the routes built on them.
+    @regex_paths = Set(String).new
 
     private struct PathEntry
       getter path : String
@@ -270,7 +276,9 @@ module Noir
       # "/Object" and sneak past `valid_route_path?`'s "/" check.
       # An empty literal path survives only where `route_path_entries_from_args`
       # accepted it for a routing receiver (it is the mount point itself).
-      routes.select! { |r| valid_route_path?(r.path) || r.raw_path.empty? || @bare_route_paths.includes?(r.raw_path) }
+      # A RegExp route is a route whatever it looks like (`/.*fly$/`).
+      routes.each { |r| r.regex = true if @regex_paths.includes?(r.raw_path) } unless @regex_paths.empty?
+      routes.select! { |r| r.regex? || valid_route_path?(r.path) || r.raw_path.empty? || @bare_route_paths.includes?(r.raw_path) }
 
       # Strip Express param regex constraints (`:id(\d+)`, `:pk(${UUID_REGEX})`)
       # down to the bare param, then ensure a leading slash. The constraint
@@ -280,7 +288,7 @@ module Noir
       # plus a phantom `UUID_REGEX` path param. Done once here so every
       # emission path (fast_scan, express, chained, array) is covered.
       routes.each do |route_item|
-        stripped = strip_param_regex_constraints(route_item.path)
+        stripped = route_item.regex? ? route_item.path : strip_param_regex_constraints(route_item.path)
         if stripped != route_item.path
           route_item.path = stripped
           # Drop path params that only existed inside the removed constraint.
@@ -488,15 +496,15 @@ module Noir
       end
     end
 
-    # Format a regex token value into a path string.
-    # The token value uses \x00 as delimiter between pattern and flags.
+    # A RegExp literal route as the path it matches: the token value is
+    # `pattern\x00flags`; delimiters and flags go, `\/` is unescaped and
+    # the anchors are stripped (`/^\/item\/(\d+)$/i` -> `/item/(\d+)`), as
+    # the infra analyzers write a regex location. One that is a plain path
+    # then (`/^\/health$/`) is just that path.
     private def format_regex_path(value : String) : String
-      parts = value.split("\x00", 2)
-      pattern = parts[0]
-      flags = parts.size > 1 ? parts[1] : ""
-
-      return "/#{pattern}/#{flags}" unless flags.empty?
-      "/#{pattern}/"
+      path = URLPath.strip_regex_anchors(value.split("\x00", 2)[0].gsub("\\/", "/"))
+      @regex_paths << path if URLPath.regex_route?(path)
+      path
     end
 
     # Extract array paths from array syntax: ['/path1', '/path2', /regex/]
@@ -569,7 +577,7 @@ module Noir
       # Fastify, Hono), but `cache.get('', cb)` / `client.post('', body)`
       # are not routes, so the empty path is kept only on a routing receiver.
       empty_ok = receiver ? routing_receiver?(receiver) : false
-      paths = path_entries_from_token(first_arg_idx).select { |path| valid_route_path?(path.path) || (empty_ok && path.path.empty?) }
+      paths = path_entries_from_token(first_arg_idx).select { |path| path.is_regex? || valid_route_path?(path.path) || (empty_ok && path.path.empty?) }
       return paths unless paths.empty? && allow_named_route
 
       # Koa/@koa-router supports named routes:
