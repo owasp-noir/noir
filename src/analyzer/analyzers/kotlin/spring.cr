@@ -179,6 +179,19 @@ module Analyzer::Kotlin
         end
       end
 
+      # Kotlin reads Java `static final String`s too (`BaseService.GROUP`,
+      # or `GROUP` through an import). Those keys are always qualified, so
+      # they only fill names no Kotlin file declared.
+      seen_bases = Set(String).new
+      file_list.each do |path|
+        base = configured_base_for(path)
+        next unless seen_bases.add?(base)
+        base_constants = string_constants_by_base[base]
+        java_project_constants(path).each do |name, value|
+          base_constants[name] ||= value
+        end
+      end
+
       # Resolve `$OTHER_CONST` interpolations now that every file's
       # constants are collected, so a shared `Paths.kt` chain like
       # `const val STATIC_URL = "$PUBLIC_URL/static"` yields `/public/static`.
@@ -191,9 +204,10 @@ module Analyzer::Kotlin
       # values too: `const val ITEM = "$BASE/item"` with `BASE` declared in
       # another file is still `$BASE/item` there.
       local_string_constants = local_string_constants.to_h do |path, constants|
-        {path, Noir::TreeSitterKotlinRouteExtractor.expand_constant_interpolations(
-          constants, string_constants_by_base[configured_base_for(path)]
-        )}
+        base_constants = string_constants_by_base[configured_base_for(path)]
+        expanded = Noir::TreeSitterKotlinRouteExtractor.expand_constant_interpolations(constants, base_constants)
+        seed_imported_constants(read_file_content(path), base_constants, expanded)
+        {path, expanded}
       end
 
       # Cross-module indexes (interface inheritance, STOMP destinations)
@@ -234,6 +248,26 @@ module Analyzer::Kotlin
         end
       end
       merged
+    end
+
+    KOTLIN_IMPORT_RE = /^[ \t]*import[ \t]+([\w.]+)(?:[ \t]+as[ \t]+(\w+))?/m
+
+    # `import com.ex.BaseService.GROUP` (a Java `static final` or a Kotlin
+    # `const val`) puts `GROUP` in scope unqualified, so bind it to that
+    # owner's value rather than whichever file declared a `GROUP` first. A
+    # companion's constant is indexed without the `Companion` segment.
+    # This file's own declarations still win.
+    private def seed_imported_constants(content : String,
+                                        project_constants : Hash(String, String),
+                                        constants : Hash(String, String)) : Nil
+      content.scan(KOTLIN_IMPORT_RE) do |match|
+        qualified = match[1]
+        next unless dot = qualified.rindex('.')
+        value = project_constants[qualified]?
+        value ||= project_constants[qualified.sub(".Companion.", ".")]? if qualified.includes?(".Companion.")
+        next unless value
+        constants[match[2]? || qualified[(dot + 1)..]] ||= value
+      end
     end
 
     private def spring_kotlin_files(files : Array(String)) : Array(String)

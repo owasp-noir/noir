@@ -47,6 +47,13 @@ expected_endpoints = [
     Param.new("token", "", "form"),
     Param.new("token_type_hint", "", "form"),
   ]),
+  # #3267: positional bare constant from another file's companion; Java
+  # constants read from Kotlin, imported (a Kotlin `Decoy.GROUP_MAPPING`
+  # shares the simple name) and qualified.
+  Endpoint.new("/admin/items/list", "GET"),
+  Endpoint.new("/admin/items/{id}/notice", "POST"),
+  Endpoint.new("/groups/{id}/members", "GET"),
+  Endpoint.new("/squads/{id}", "GET"),
 ]
 
 FunctionalTester.new("fixtures/kotlin/spring_param_gaps/", {
