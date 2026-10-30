@@ -10,6 +10,7 @@ module Analyzer::Crystal
     PATH_THEN_METHOD_RE = /context\.request\.path\s*(?:==|===)\s*["']([^"']+?)["']\s*&&\s*.*context\.request\.method\s*(?:==|===)\s*["'](GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)["']/
     PATH_COMPARE_RE     = /context\.request\.path\s*(?:==|===|\.starts_with\?|\.includes\?)\s*\(?\s*["']([^"']+?)["']/
     WHEN_RE             = /(?:^|[^.\w])when\s+["']([^"']+?)["']/
+    PATH_CASE_RE        = /(?:^\s*|[=(]\s*|\breturn\s+)(case)\b.*\brequest\.path\b/
 
     def analyze_file(path : String) : Array(Endpoint)
       endpoints = [] of Endpoint
@@ -23,7 +24,7 @@ module Analyzer::Crystal
       # This prevents false positives from unrelated `case` statements (e.g. on enums,
       # strings, or other values) that happen to contain path-like literals.
       # Pattern mirrors the namespace/scope indent stacks used in kemal/grip/lucky/etc.
-      path_case_stack = [] of Int32
+      path_case_stack = [] of NamedTuple(indent: Int32, column: Int32)
       param_lines = crystal_param_lines(lines)
 
       lines.each_with_index do |line, index|
@@ -32,16 +33,25 @@ module Analyzer::Crystal
         content_for_scan = stripped
         indent = raw.size - raw.lstrip.size
 
-        # Enter a request.path case (common spellings)
-        if stripped.lstrip =~ /^case\b.*\brequest\.path\b/ || stripped.lstrip =~ /^case\s+context\.request\.path\b/
-          path_case_stack << indent
+        # Enter a request.path case, as a statement or as a value
+        # (`body = case ctx.request.path`, `return case ...`, `print(case ...`).
+        # Its `end` sits under `case` (formatter layout) or at the line's
+        # indent, so the scope keeps both columns. A case that also ends on
+        # this line closes once the line is scanned.
+        one_line_case = false
+        if stripped.includes?("case") && (case_match = stripped.match(PATH_CASE_RE))
+          case_column = case_match.begin(1)
+          path_case_stack << {indent: indent, column: case_column}
+          one_line_case = stripped[case_column..].matches?(END_WORD_RE)
         end
 
-        # Pop scopes on `end` that dedents to or past the opening case indent.
+        # Pop scopes on an `end` under their `case`, or dedented to or past
+        # the line that opened them.
         unless path_case_stack.empty?
           if end_match = stripped.match(/^(\s*)end\b/)
             end_indent = end_match[1].size
-            while !path_case_stack.empty? && end_indent <= path_case_stack.last
+            while (open_case = path_case_stack.last?) &&
+                  (end_indent == open_case[:column] || end_indent <= open_case[:indent])
               path_case_stack.pop
             end
           end
@@ -50,6 +60,7 @@ module Analyzer::Crystal
         in_path_case = !path_case_stack.empty?
 
         endpoint = line_to_endpoint(content_for_scan, in_path_case)
+        path_case_stack.pop if one_line_case
         if !endpoint.method.empty? && valid_crystal_route_path?(endpoint.url)
           details = Details.new(PathInfo.new(path, index + 1))
           endpoint.details = details
