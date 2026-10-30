@@ -204,9 +204,7 @@ module Noir
     # annotations or the lines directly above it.
     private def jackson_class_annotations(decl : LibTreeSitter::TSNode, source : String) : {String?, String?}
       text = Noir::TreeSitter.node_text(decl, source)
-      # `@Schema(description = "request class")` must not end the header.
-      masked = text.gsub(/"(?:[^"\\]|\\.)*"/) { |literal| " " * literal.size }
-      header = text[0, masked.index(CLASS_KEYWORD_RE) || 0]
+      header = text[0, mask_strings(text).index(CLASS_KEYWORD_RE) || 0]
       strategy = Noir::JacksonNaming.annotation_strategy(header)
       root = Noir::JacksonNaming.annotation_root_name(header)
       unless strategy && root
@@ -219,17 +217,24 @@ module Noir
 
     # tree-sitter-kotlin leaves an annotation on its own line outside the
     # following `data class` node when another declaration precedes it, so
-    # also read the annotation/comment lines directly above the node.
+    # also read the annotation lines directly above the node. Comment lines
+    # are stepped over, not read, and a line that declares a class of its own
+    # (`@JsonRootName("a") data class A(...)`) ends the run.
     private def leading_annotation_lines(decl : LibTreeSitter::TSNode, source : String) : String
       before = source.byte_slice(0, LibTreeSitter.ts_node_start_byte(decl).to_i)
       kept = [] of String
       before.lines.reverse_each do |line|
         stripped = line.strip
-        break unless stripped.empty? || stripped.starts_with?('@') || stripped.starts_with?("//") ||
-                     stripped.starts_with?("/*") || stripped.starts_with?('*')
+        next if stripped.empty? || stripped.starts_with?("//") || stripped.starts_with?("/*") || stripped.starts_with?('*')
+        break if !stripped.starts_with?('@') || mask_strings(stripped).matches?(CLASS_KEYWORD_RE)
         kept << stripped
       end
       kept.reverse.join('\n')
+    end
+
+    # `@Schema(description = "request class")` must not read as a `class`.
+    private def mask_strings(text : String) : String
+      text.gsub(/"(?:[^"\\]|\\.)*"/) { |literal| " " * literal.size }
     end
 
     # Map each class to the simple name of its superCLASS (the supertype

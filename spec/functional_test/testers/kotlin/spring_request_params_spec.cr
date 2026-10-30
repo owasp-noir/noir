@@ -12,10 +12,12 @@ require "../../func_spec.cr"
 # - header: `@RequestHeader headers: HttpHeaders` / `Map` names no header.
 # - dotted_folder: a DTO under `src/main/kotlin/com.example/model` resolves.
 # - root_name: `unwrap-root-value: true` nests the body under the class's
-#   `@JsonRootName`, else its simple name.
+#   `@JsonRootName`, else its simple name. A one-line annotated class above
+#   another class, or an annotation in a comment, does not annotate it
+#   (`@JsonRootName` and `@JsonNaming` alike).
 tester = FunctionalTester.new("fixtures/kotlin/spring_request_params/", {
   :techs     => 1,
-  :endpoints => 11,
+  :endpoints => 15,
 }, [] of Endpoint)
 tester.perform_tests
 
@@ -27,11 +29,15 @@ it "reports the wire names and locations Spring binds", tags: "functional" do
     {"GET /logs", [] of String},
     {"GET /posts/{postId}", ["postId:path"]},
     {"POST /articles", ["NewArticleParam.title:json"]},
+    {"POST /block-commented", ["BlockCommented.w:json"]},
+    {"POST /camel", ["Camel.mName:json"]},
     {"POST /events/{id}", ["id:path", "type:query", "userId:json"]},
+    {"POST /line-commented", ["LineCommented.z:json"]},
     {"POST /logs", ["message:json"]},
     {"POST /messages", ["NOTE:json", "first_name:json", "order_id:json"]},
     {"POST /messages/camel", ["firstName:json"]},
     {"POST /messages/global", ["first_name:json", "order_id:json"]},
+    {"POST /plain", ["Plain.yName:json"]},
     {"POST /posts", ["title:json"]},
     {"POST /users/login", ["user.email:json", "user.password:json"]},
     {"PUT /items", ["count:json", "title:json"]},

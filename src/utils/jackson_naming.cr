@@ -26,10 +26,13 @@ module Noir
 
     # `@JsonRootName("user")`: the key a body is wrapped in when
     # `UNWRAP_ROOT_VALUE` is on. Nil when absent or empty.
-    ROOT_NAME_RE = /@(?:\w+\.)*JsonRootName\s*\(\s*(?:value\s*=\s*)?"([^"\\]*)"/
+    ROOT_NAME_RE  = /@(?:\w+\.)*JsonRootName\s*\(([^)]*)\)/
+    ROOT_VALUE_RE = /(?:\A|,)\s*(?:value\s*=\s*)?"([^"\\]*)"/
 
+    # `@JsonRootName("user")`, `@JsonRootName(namespace = "ns", value = "user")`.
     def annotation_root_name(text : String) : String?
-      text.match(ROOT_NAME_RE).try(&.[1].presence)
+      args = text.match(ROOT_NAME_RE).try(&.[1]) || return
+      args.match(ROOT_VALUE_RE).try(&.[1].presence)
     end
 
     # `spring.jackson.deserialization.UNWRAP_ROOT_VALUE=true`, in any of

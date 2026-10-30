@@ -11,10 +11,12 @@ require "../../func_spec.cr"
 # - dotted_folder: DTOs under package folders spelled with dots
 #   (`src/main/java/com.example/model`, `com.example.dto`) resolve.
 # - root_name: `UNWRAP_ROOT_VALUE=true` nests the body under the class's
-#   `@JsonRootName`, else its simple name; root_name_off has no setting.
+#   `@JsonRootName` (also after `namespace =`), else its simple name; an
+#   `@JsonUnwrapped` field inlines under the outer class's root;
+#   root_name_off has no setting.
 tester = FunctionalTester.new("fixtures/java/spring_request_params/", {
   :techs     => 1,
-  :endpoints => 8,
+  :endpoints => 10,
 }, [] of Endpoint)
 tester.perform_tests
 
@@ -27,9 +29,11 @@ it "reports the wire names and locations Spring binds", tags: "functional" do
     {"POST /articles", ["NewArticleParam.title:json"]},
     {"POST /events/{id}", ["id:path", "type:query", "userId:json"]},
     {"POST /items", ["name:json", "price:json"]},
+    {"POST /namespaced", ["named.a:json"]},
     {"POST /orders", ["shipping_address:json", "user_id:json"]},
     {"POST /sessions", ["email:json"]},
     {"POST /users/login", ["user.email:json", "user.password:json"]},
+    {"POST /wrapped", ["outer.p_innerField:json"]},
     {"PUT /items", ["count:json", "title:json"]},
   ])
 end

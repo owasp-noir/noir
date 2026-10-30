@@ -1596,8 +1596,11 @@ module Noir
         target_file = type_file_for(file, target, scopes) || next
         inner_fields = unwrapped_fields(target_file, target, scopes, path) || next
         inner_fields.each do |inner|
-          flat << TreeSitterJavaParameterExtractor::FieldInfo.new("#{field.name}.#{inner.name}", inner.access_modifier,
+          inlined = TreeSitterJavaParameterExtractor::FieldInfo.new("#{field.name}.#{inner.name}", inner.access_modifier,
             inner.has_setter?, inner.init_value, "#{prefix}#{inner.json_name}#{suffix}", inner.type_name, json_ignored: inner.json_ignored?)
+          # Inlined into this class, so under this class's root.
+          inlined.json_root = field.json_root
+          flat << inlined
         end
       end
       path.pop

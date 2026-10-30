@@ -143,12 +143,18 @@ module Noir
       local_roots = [source_root] + sibling_roots
       resolved = [] of String
       # Roots holding dotted package folders (`com.example/model` for
-      # `com.example.model`) try every local spelling before any wider root,
-      # whose same-named package would otherwise win.
+      # `com.example.model`) try every spelling under the importing module's
+      # own root, then under its siblings, before any wider root: the nearer
+      # module's package wins whichever way the other one spells it.
       dotted = dotted_spellings(source_root, local_roots, imp.path)
       unless dotted.empty?
-        ([relative] + dotted).each do |spelling|
-          resolved = resolve_spelling(source_root, sibling_roots, local_roots, spelling, imp.wildcard?, extension, wide: false)
+        spellings = [relative] + dotted
+        [[source_root], sibling_roots].each do |roots|
+          next if roots.empty?
+          spellings.each do |spelling|
+            resolved = resolve_spelling(roots.first, roots[1..], roots, spelling, imp.wildcard?, extension, wide: false)
+            break unless resolved.empty?
+          end
           break unless resolved.empty?
         end
       end
