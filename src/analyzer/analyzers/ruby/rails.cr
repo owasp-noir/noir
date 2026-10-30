@@ -2596,6 +2596,8 @@ module Analyzer::Ruby
 
       segments = static_route_segments(path)
       return if segments.empty?
+      # Rails reads `get "with-dash"` as the `with_dash` action.
+      segments.map!(&.tr("-", "_")) if path.includes?('-')
 
       if scoped_controller
         action = segments.last

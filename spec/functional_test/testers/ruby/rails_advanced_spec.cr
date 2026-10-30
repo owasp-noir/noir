@@ -65,6 +65,8 @@ expected_endpoints = [
   # #3267: bare one-segment routes bind to the namespace's own controller.
   Endpoint.new("/admin/dashboard", "GET", [Param.new("page", "", "query")]),
   Endpoint.new("/admin/rebuild", "POST", [Param.new("target", "", "form")]),
+  # Rails reads the dash as an underscore: admin#with_dash.
+  Endpoint.new("/admin/with-dash", "GET", [Param.new("dash_mode", "", "query")]),
 
   # Parenthesized namespace with path override keeps the controller namespace
   # while changing the URL prefix.
@@ -280,7 +282,7 @@ total_endpoints = 1 +  # root
                   4 +  # admin/refunds member (change_status, purge, update_metadata) + collection (new_list)
                   1 +  # admin/monitor/heartbeat (namespaced `to:`)
                   2 +  # admin debug/echo (inside if-block) + after_conditional (keeps /admin)
-                  2 +  # admin dashboard/rebuild -> AdminController
+                  3 +  # admin dashboard/rebuild/with-dash -> AdminController
                   2 +  # namespace path override reports
                   2 +  # scope module/path explicit routes
                   1 +  # controller block route

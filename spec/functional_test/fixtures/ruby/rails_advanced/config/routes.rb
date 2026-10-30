@@ -43,6 +43,7 @@ Rails.application.routes.draw do
     # namespace module: `admin#dashboard` in AdminController.
     get "dashboard"
     post "rebuild"
+    get "with-dash"
   end
 
   namespace :admin, path: "sekret" do
