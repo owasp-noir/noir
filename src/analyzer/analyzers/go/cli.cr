@@ -91,7 +91,10 @@ module Analyzer::Go
     GO_REF_RE       = /\A(?:(\w+)\s*\.\s*)?(\w+)\z/
     GO_CALL_REF_RE  = /\A(?:(\w+)\s*\.\s*)?(\w+)\s*\(/
     GO_QUALIFIER_RE = /(\w+)\s*\.\s*\z/
-    GO_FUNC_RE      = /^func\s+(?:\([^)]*\)\s*)?(\w+)\s*[\[(]/
+    # `func name(` / `func (r *Recv) name(`: receiver type in 1, name in 2.
+    GO_FUNC_RE = /^func\s+(?:\(\s*(?:\w+\s+)?\*?\s*(\w+)[^)]*\)\s*)?(\w+)\s*[\[(]/
+    # `ul := &usersList{}` / `var ul = usersList{`: a variable's struct type.
+    GO_VAR_TYPE_RE = /\b(\w+)\s*:?=\s*&?(\w+)\s*\{/
     # A constructor's result: `return &cobra.Command{...}` or `return cmd`.
     COBRA_RETURN_CMD_RE = /\breturn\s+&?cobra\.Command\s*\{/
     RETURN_REF_RE       = /\breturn\s+(\w+)\s*(?:,|$)/
@@ -325,17 +328,19 @@ module Analyzer::Go
     # constructor (`func newLsCmd() *cobra.Command`) stands for the command
     # it returns, so `cmd.AddCommand(newLsCmd())` links too.
     private class CobraTree
-      getter uses = {} of String => String                       # id => Use token
-      getter parents = {} of String => String                    # child id => parent id
-      getter executed = Set(String).new                          # ids whose Execute*() is called
-      getter dirs = {} of String => String                       # id => package directory
-      getter package_vars = {} of String => Hash(String, String) # dir => package-level var => id
-      getter constructors = {} of String => Hash(String, String) # dir => func name => returned id
-      getter decl_lines = {} of String => Hash(Int32, String)    # path => line index => declared id
-      getter flag_lines = {} of String => Hash(Int32, String)    # path => line index => flag receiver id
-      getter packages = {} of String => Tuple(String, String)    # dir => {a path, its content}
-      getter binaries = {} of String => String                   # dir => binary name
-      getter urls = {} of String => String                       # id => url
+      getter uses = {} of String => String                                 # id => Use token
+      getter parents = {} of String => String                              # child id => parent id
+      getter executed = Set(String).new                                    # ids whose Execute*() is called
+      getter dirs = {} of String => String                                 # id => package directory
+      getter package_vars = {} of String => Hash(String, String)           # dir => package-level var => id
+      getter constructors = {} of String => Hash(String, String)           # dir => `name` / `Recv.name` => returned id
+      getter parents_by_dir = {} of String => Array(Tuple(String, String)) # child's dir => {child, parent}
+      getter executed_by_dir = {} of String => Array(String)
+      getter decl_lines = {} of String => Hash(Int32, String) # path => line index => declared id
+      getter flag_lines = {} of String => Hash(Int32, String) # path => line index => flag receiver id
+      getter packages = {} of String => Tuple(String, String) # dir => {a path, its content}
+      getter binaries = {} of String => String                # dir => binary name
+      getter urls = {} of String => String                    # id => url
       getter modules : Array(Tuple(String, String))
 
       def initialize(@modules)
@@ -362,7 +367,7 @@ module Analyzer::Go
         func_name : String? = nil
         lines.each_with_index do |line, index|
           if depths[index] == 0 && (fm = line.match(GO_FUNC_RE))
-            func_name = fm[1]
+            func_name = constructor_key(fm[1]?, fm[2])
           end
           m = line.match(COBRA_CMD_DECL_RE)
           returned = !m && line.matches?(COBRA_RETURN_CMD_RE)
@@ -390,18 +395,56 @@ module Analyzer::Go
         link_cobra_file(tree, path, content, lines, calls, depths, pending)
       end
       pending.each do |parent, dir, name|
-        child = tree.constructors[dir]?.try(&.[name]?)
+        child = find_constructor(tree.constructors[dir]?, name)
         tree.parents[child] = parent if child && child != parent
       end
+      tree.parents.each { |child, parent| (tree.parents_by_dir[tree.dirs[child]] ||= [] of Tuple(String, String)) << {child, parent} }
+      tree.executed.each { |id| (tree.executed_by_dir[tree.dirs[id]] ||= [] of String) << id }
       tree
     end
 
-    # Brace depth at the start of each line.
+    # A method constructor is keyed by its receiver type (`usersList.Command`):
+    # two types' `Command()` methods are two constructors.
+    private def constructor_key(receiver : String?, name : String) : String
+      receiver ? "#{receiver}.#{name}" : name
+    end
+
+    # `.name` is a method call on a receiver of unknown type: it links only
+    # when one type in the package has that method.
+    private def find_constructor(constructors : Hash(String, String)?, key : String) : String?
+      return unless constructors
+      return constructors[key]? unless key.starts_with?('.')
+      matches = constructors.select { |name, _id| name.ends_with?(key) }
+      matches.first_value if matches.size == 1
+    end
+
+    # Brace depth at the start of each line, skipping braces inside
+    # strings and runes (`r == '{'`, a raw-string `Long:` example). The
+    # content is comment-stripped already. Only a raw string spans lines.
     private def brace_depths(lines : Array(String)) : Array(Int32)
       depth = 0
+      quote : Char? = nil
       lines.map do |line|
         start = depth
-        depth += line.count('{') - line.count('}')
+        escaped = false
+        line.each_char do |char|
+          if open = quote
+            if escaped
+              escaped = false
+            elsif char == '\\' && open != '`'
+              escaped = true
+            elsif char == open
+              quote = nil
+            end
+          elsif char == '"' || char == '\'' || char == '`'
+            quote = char
+          elsif char == '{'
+            depth += 1
+          elsif char == '}'
+            depth -= 1
+          end
+        end
+        quote = nil unless quote == '`'
         start
       end
     end
@@ -417,6 +460,7 @@ module Analyzer::Go
       decls = tree.decl_lines[path]
       flags = tree.flag_lines[path] = {} of Int32 => String
       locals = {} of String => Array(Tuple(String, Int32)) # var => [{id, scope depth}], innermost last
+      var_types = {} of String => String                   # var => struct type, for method constructors
       aliases = [] of Hash(String, String)                 # parsed on the first `pkg.Var` reference
 
       import_of = ->(qualifier : String?) : String? {
@@ -437,7 +481,10 @@ module Analyzer::Go
       lines.each_index do |index|
         depth = depths[index]
         if depth == 0 && (fm = lines[index].match(GO_FUNC_RE))
-          func_name = fm[1]
+          func_name = constructor_key(fm[1]?, fm[2])
+        end
+        if tm = lines[index].match(GO_VAR_TYPE_RE)
+          var_types[tm[1]] = tm[2]
         end
         # A block closed: its locals go out of scope.
         locals.each_value { |stack| stack.reject! { |(_id, scope)| scope > depth } } if depth < previous_depth
@@ -459,10 +506,17 @@ module Analyzer::Go
               tree.parents[child] = parent if child && child != parent
             elsif ref = arg.match(GO_CALL_REF_RE)
               # `newLsCmd(...)` / `configcmd.NewCommand(...)`; a method call
-              # (`o.newCmd()`) is looked up in this package.
-              import_path = import_of.call(ref[1]?)
-              target = import_path ? go_import_dir(import_path, tree.modules) : dir
-              pending << {parent, target, ref[2]} if target
+              # (`ul.Command()`) is looked up in this package by the
+              # receiver's type when it is known.
+              qualifier = ref[1]?
+              if import_path = import_of.call(qualifier)
+                target = go_import_dir(import_path, tree.modules)
+                pending << {parent, target, ref[2]} if target
+              elsif qualifier
+                pending << {parent, dir, "#{var_types[qualifier]?}.#{ref[2]}"}
+              else
+                pending << {parent, dir, ref[2]}
+              end
             end
           end
         end
@@ -517,11 +571,10 @@ module Analyzer::Go
       path, content = tree.packages[dir]
       binary = nil
       if seen.add?(dir) && !content.matches?(PACKAGE_MAIN_RE)
-        roots = tree.executed.select { |id| tree.dirs[id] == dir && tree.uses.has_key?(id) && !tree.parents.has_key?(id) }
+        roots = (tree.executed_by_dir[dir]? || [] of String).select { |id| tree.uses.has_key?(id) && !tree.parents.has_key?(id) }
         binary = tree.uses[roots.first] if roots.size == 1
         unless binary
-          tree.parents.each do |child, parent|
-            next unless tree.dirs[child] == dir
+          (tree.parents_by_dir[dir]? || [] of Tuple(String, String)).each do |(_child, parent)|
             top_dir = tree.dirs[cobra_chain(tree, parent).last]
             next if top_dir == dir
             binary = cobra_package_binary(tree, top_dir, seen)

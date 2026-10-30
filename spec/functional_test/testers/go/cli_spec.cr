@@ -1,3 +1,4 @@
+require "file_utils"
 require "../../func_spec.cr"
 
 # CLI endpoints carry the synthetic "CLI" method; the real surface lives in
@@ -97,10 +98,16 @@ cobra_package_tester.perform_tests
 # users.go and orders.go each declare a function-local `get`; three
 # constructors in orders.go each name their command `cmd` and are linked
 # through what they return (`return cmd`, `return &cobra.Command{...}`).
+# Two receiver types' `Command()` methods stay two constructors, and braces
+# inside strings and runes keep `usersLsCmd` / `usersExportCmd` package-level.
 cobra_scopes_endpoints = [
   build.call("cli://shopscope", [] of Param),
   build.call("cli://shopscope/users", [] of Param),
   build.call("cli://shopscope/users/get", [Param.new("user-id", "", "flag")]),
+  build.call("cli://shopscope/users/ls", [Param.new("limit", "", "flag")]),
+  build.call("cli://shopscope/users/export", [Param.new("format", "", "flag")]),
+  build.call("cli://shopscope/users/archive", [Param.new("user-filter", "", "flag")]),
+  build.call("cli://shopscope/orders/archive", [Param.new("order-filter", "", "flag")]),
   build.call("cli://shopscope/orders", [] of Param),
   build.call("cli://shopscope/orders/get", [Param.new("order-id", "", "flag")]),
   build.call("cli://shopscope/orders/list", [Param.new("limit", "", "flag")]),
@@ -136,6 +143,50 @@ describe "go CLI cobra command tree", tags: "functional" do
     get.params.map(&.name).should eq(["user-id"])
     root = cobra_scopes_tester.endpoints.find! { |ep| ep.url == "cli://shopscope" }
     root.params.should be_empty
+    archive = cobra_scopes_tester.endpoints.find! { |ep| ep.url == "cli://shopscope/users/archive" }
+    archive.params.map(&.name).should eq(["user-filter"])
+  end
+
+  it "resolves a many-package cobra tree in linear time" do
+    dir = File.tempname("noir_cobra_wide")
+    packages = 2000
+    begin
+      Dir.mkdir_p(File.join(dir, "root"))
+      File.write(File.join(dir, "go.mod"), "module example.com/wide\n\nrequire github.com/spf13/cobra v1.8.0\n")
+      File.write(File.join(dir, "root", "root.go"), String.build do |io|
+        io << "package root\n\nimport (\n\t\"github.com/spf13/cobra\"\n"
+        packages.times { |i| io << "\tp" << i << " \"example.com/wide/pkg/p" << i << "\"\n" }
+        io << ")\n\nvar rootCmd = &cobra.Command{Use: \"wide\"}\n\nfunc Execute() {\n"
+        packages.times { |i| io << "\trootCmd.AddCommand(p" << i << ".Cmd)\n" }
+        io << "\t_ = rootCmd.Execute()\n}\n"
+      end)
+      packages.times do |i|
+        Dir.mkdir_p(File.join(dir, "pkg", "p#{i}"))
+        File.write(File.join(dir, "pkg", "p#{i}", "cmds.go"), String.build do |io|
+          io << "package p" << i << "\n\nimport \"github.com/spf13/cobra\"\n\n"
+          io << "var Cmd = &cobra.Command{Use: \"p" << i << "\"}\n"
+          5.times { |j| io << "var c" << j << " = &cobra.Command{Use: \"c" << j << "\"}\n" }
+          io << "\nfunc init() {\n\tCmd.AddCommand(c0)\n"
+          (1..4).each { |j| io << "\tc" << j - 1 << ".AddCommand(c" << j << ")\n\tc" << j << ".Flags().String(\"f" << j << "\", \"\", \"\")\n" }
+          io << "}\n"
+        end)
+      end
+
+      options = ConfigInitializer.new.default_options
+      options["base"] = YAML::Any.new([YAML::Any.new(dir)])
+      options["nolog"] = YAML::Any.new(true)
+      options["only_techs"] = YAML::Any.new("go_cli")
+      app = NoirRunner.new(options)
+      app.detect
+
+      elapsed = Time.measure { app.analyze }
+      app.endpoints.size.should eq(packages * 6 + 1)
+      app.endpoints.map(&.url).should contain("cli://wide/p7/c0/c1/c2/c3/c4")
+      # Scanning every parent link once per package took ~8s here; linear is well under 2s.
+      elapsed.should be < 5.seconds
+    ensure
+      FileUtils.rm_rf(dir)
+    end
   end
 
   it "keeps each same-named subcommand's flags on its own command" do

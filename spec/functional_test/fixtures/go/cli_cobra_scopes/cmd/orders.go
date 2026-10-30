@@ -9,6 +9,8 @@ func newOrdersCmd() *cobra.Command {
 	get := &cobra.Command{Use: "get [id]"}
 	get.Flags().String("order-id", "", "")
 	cmd.AddCommand(get, newOrdersListCmd(), newOrdersCancelCmd())
+	oa := &ordersArchive{}
+	cmd.AddCommand(oa.Command())
 	return cmd
 }
 
