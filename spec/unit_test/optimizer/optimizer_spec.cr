@@ -496,6 +496,94 @@ describe "EndpointOptimizer" do
       end
     end
 
+    it "finds a Go package clause below a license header longer than 4 KB" do
+      optimizer = EndpointOptimizer.new(logger, options)
+      temp_dir = File.join(Dir.tempdir, "noir-optimizer-golonghead-#{Process.pid}-#{Time.utc.to_unix_ms}")
+      single = File.join(temp_dir, "single/main.go")
+      multi = File.join(temp_dir, "multiple/main.go")
+
+      begin
+        {single, multi}.each do |main|
+          Dir.mkdir_p(File.dirname(main))
+          # 4203-byte header: byte 4096 falls inside a `€`, and the clause after it.
+          File.write(main, "// #{"€" * 1400}\npackage main\n\nfunc main() {}\n")
+        end
+        File.write(File.join(temp_dir, "go.mod"), "module example.com/examples\n")
+
+        a = tech_endpoint("/upload", "POST", "go_gin", single, 15)
+        b = tech_endpoint("/upload", "POST", "go_gin", multi, 15)
+        optimizer.optimize_endpoints([a, b]).size.should eq(2)
+      ensure
+        FileUtils.rm_rf(temp_dir)
+      end
+    end
+
+    it "finds the root manifest of a `-b .` scan, whose paths start with ./" do
+      optimizer = EndpointOptimizer.new(logger, options)
+      temp_dir = File.join(Dir.tempdir, "noir-optimizer-godot-#{Process.pid}-#{Time.utc.to_unix_ms}")
+
+      begin
+        {"cmd/a", "cmd/b"}.each do |dir|
+          Dir.mkdir_p(File.join(temp_dir, dir))
+          File.write(File.join(temp_dir, dir, "main.go"), "package main\n\nfunc main() {}\n")
+        end
+        File.write(File.join(temp_dir, "go.mod"), "module example.com/multi\n")
+
+        Dir.cd(temp_dir) do
+          a = tech_endpoint("/upload", "POST", "go_gin", "./cmd/a/main.go", 8)
+          b = tech_endpoint("/upload", "POST", "go_gin", "./cmd/b/main.go", 8)
+          optimizer.optimize_endpoints([a, b]).size.should eq(2)
+        end
+      ensure
+        FileUtils.rm_rf(temp_dir)
+      end
+    end
+
+    it "does not scope a source by a manifest above the scan base" do
+      optimizer = EndpointOptimizer.new(logger, options)
+      temp_dir = File.join(Dir.tempdir, "noir-optimizer-abovebase-#{Process.pid}-#{Time.utc.to_unix_ms}")
+      base = File.join(temp_dir, "fixtures")
+
+      begin
+        Dir.mkdir_p(File.join(base, "kemal/src"))
+        Dir.mkdir_p(File.join(base, "sinatra"))
+        File.write(File.join(temp_dir, "shard.yml"), "name: checkout\n")
+        File.write(File.join(base, "kemal/shard.yml"), "name: app\n")
+        options["base"] = YAML::Any.new([YAML::Any.new(base)])
+
+        # The Sinatra app has no manifest of its own; the checkout's
+        # `shard.yml` above the base must not make it a second project.
+        result = optimizer.optimize_endpoints([
+          tech_endpoint("/", "GET", "crystal_kemal", File.join(base, "kemal/src/app.cr")),
+          tech_endpoint("/", "GET", "ruby_sinatra", File.join(base, "sinatra/app.rb")),
+        ])
+        result.size.should eq(1)
+      ensure
+        options.delete("base")
+        FileUtils.rm_rf(temp_dir)
+      end
+    end
+
+    it "reads a Bazel BUILD file that is not valid UTF-8" do
+      optimizer = EndpointOptimizer.new(logger, options)
+      temp_dir = File.join(Dir.tempdir, "noir-optimizer-bazelbytes-#{Process.pid}-#{Time.utc.to_unix_ms}")
+
+      begin
+        {"svc/a", "svc/b"}.each do |dir|
+          Dir.mkdir_p(File.join(temp_dir, dir))
+          # A Latin-1 comment (0xE9) ahead of the rule.
+          File.write(File.join(temp_dir, dir, "BUILD"), Bytes[0x23, 0x20, 0x63, 0x61, 0x66, 0xe9, 0x0a] + "go_binary(name = \"x\")\n".to_slice)
+          File.write(File.join(temp_dir, dir, "main.go"), "package main\n")
+        end
+
+        a = tech_endpoint("/health", "GET", "go_gin", File.join(temp_dir, "svc/a/main.go"))
+        b = tech_endpoint("/health", "GET", "go_gin", File.join(temp_dir, "svc/b/main.go"))
+        optimizer.optimize_endpoints([a, b]).size.should eq(2)
+      ensure
+        FileUtils.rm_rf(temp_dir)
+      end
+    end
+
     it "keeps one module scope for a single-program Go module" do
       optimizer = EndpointOptimizer.new(logger, options)
       temp_dir = File.join(Dir.tempdir, "noir-optimizer-gosingle-#{Process.pid}-#{Time.utc.to_unix_ms}")

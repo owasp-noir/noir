@@ -790,16 +790,23 @@ class EndpointOptimizer
 
   private def source_project_scope(path : String) : String
     return "" if path.empty?
-    start_dir = File.directory?(path) ? path : File.dirname(path)
+    # Walked expanded, from the file up to the scan base that owns it. A
+    # relative walk ended at `.` (its own dirname) without looking at the
+    # root manifest of a `-b .` scan, and an absolute one ran on past the
+    # base into whatever holds the checkout, so the scope hung on how the
+    # base was spelled and where it sits.
+    start_dir = Noir::PathScope.expand(File.directory?(path) ? path : File.dirname(path))
     # Keyed by directory: every code endpoint is scoped now, and its files
     # share far fewer directories than paths.
     @source_scope_cache[start_dir] ||= begin
       scope = ""
       dir = start_dir
+      floor = Noir::PathScope.longest_base(start_dir, scan_bases).try { |base| Noir::PathScope.normalize_root(base) }
 
-      while dir && !dir.empty? && dir != "."
+      loop do
+        break if floor && !Noir::PathScope.under_normalized_root?(dir, floor)
         if PROJECT_MANIFEST_FILES.any? { |manifest| File.exists?(File.join(dir, manifest)) } || bazel_deployable_dir?(dir)
-          scope = Noir::PathScope.expand(dir)
+          scope = dir
           break
         end
 
@@ -813,7 +820,7 @@ class EndpointOptimizer
       # /upload` in two of them must not merge into one row carrying the
       # first one's path and the other's handler.
       if path.ends_with?(".go") && !scope.empty? && go_program_dir?(start_dir, scope)
-        scope = Noir::PathScope.expand(start_dir)
+        scope = start_dir
       end
 
       scope
@@ -824,7 +831,7 @@ class EndpointOptimizer
     {"BUILD", "BUILD.bazel"}.any? do |name|
       path = File.join(dir, name)
       next false unless File.file?(path)
-      File.read(path).matches?(BAZEL_DEPLOYABLE_RE)
+      File.read(path).scrub.matches?(BAZEL_DEPLOYABLE_RE)
     rescue IO::Error | InvalidByteSequenceError
       false
     end
@@ -842,17 +849,21 @@ class EndpointOptimizer
       end
       found
     end
-    programs.size > 1 && programs.includes?(Noir::PathScope.expand(dir))
+    programs.size > 1 && programs.includes?(dir)
   end
 
+  # The first line that opens with `package` is the package clause, however
+  # long the license header above it runs. Only that line is scrubbed: PCRE
+  # refuses invalid UTF-8, and a header can hold any bytes.
   private def go_main_package?(file : String) : Bool
     File.open(file) do |io|
-      # The package clause follows the license header; 4 KB covers one.
-      buffer = Bytes.new(4096)
-      read = io.read(buffer)
-      # Scrubbed: the cut can split a multibyte character, which PCRE refuses.
-      String.new(buffer[0, read]).scrub.matches?(/^package\s+main\b/m)
+      io.each_line do |line|
+        next unless line.starts_with?("package")
+        clause = line.scrub.match(/\Apackage\s+(\w+)/) || next
+        return clause[1] == "main"
+      end
     end
+    false
   rescue IO::Error
     false
   end
