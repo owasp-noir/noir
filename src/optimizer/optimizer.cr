@@ -23,6 +23,9 @@ class EndpointOptimizer
   # GraphQL, WSDL and AsyncAPI are left out: no code analyzer emits their
   # operations in a comparable form, so the tag would be on every one of them.
   SPEC_ONLY_TECHNOLOGIES = Set{"oas2", "oas3", "openrpc", "raml", "smithy", "typespec"}
+  # Proxy configs whose `ANY` route is folded into the code routes at its
+  # path (`expand_proxy_routes`).
+  PROXY_ROUTE_TECHNOLOGIES = Set{"k8s_ingress", "envoy"}
 
   # `:id`, `:id?`, `:id(\d+)`, `*`, `*path`, `{id}`, `<int:id>`, `[id]`.
   AI_FOLD_PLACEHOLDER_RE = /\A(?::\w.*|\*\w*|\{[^}]*\}|<[^>]*>|\[[^\]]*\])\z/
@@ -112,6 +115,8 @@ class EndpointOptimizer
     allowed_methods = get_allowed_methods
     endpoints = fold_ai_into_static(endpoints)
     cross_tech_keys = cross_technology_duplicate_keys(endpoints, allowed_methods)
+    code_paths = code_route_paths(endpoints)
+    held = [] of Tuple(Tuple(String, String, String), Endpoint)
 
     # `parallel_analyze` does not preserve input order: files go to N
     # workers through a bounded channel, so collection order depends on
@@ -207,8 +212,12 @@ class EndpointOptimizer
       # even to already-rooted URLs (the double-slash collapse below
       # papered over it). Mobile deep links are exempt: an unresolved
       # `@string/...://` or `${...}://` scheme isn't a relative path, so
-      # rooting it (`/@string/...`) would corrupt the URL.
-      if !absolute_url && tiny_tmp.url[0] != '/' && !tiny_tmp.non_http?
+      # rooting it (`/@string/...`) would corrupt the URL. Nor is a regex
+      # that splits on a top-level `|` or opens with an anchored group: `/`
+      # before nginx `~ (^/a$)|(^/b$)` makes it match nothing. `.htaccess`
+      # `^(api|v1)/(.*)$` is still the path `/(api|v1)/(.*)`.
+      unrooted_regex = tiny_tmp.kind == "regex" && (tiny_tmp.url.starts_with?("(^") || Noir::URLPath.top_level_alternation?(tiny_tmp.url))
+      if !absolute_url && tiny_tmp.url[0] != '/' && !tiny_tmp.non_http? && !unrooted_regex
         tiny_tmp.url = "/#{tiny_tmp.url}"
       end
 
@@ -229,7 +238,13 @@ class EndpointOptimizer
       # schema at `graphql/`. One operation either way.
       dedup_url = dedup_url.sub("/#", "#") if graphql_endpoint?(tiny_tmp)
 
-      key = {tiny_tmp.method, dedup_url, endpoint_source_scope(tiny_tmp, unified_url, cross_tech_keys) + route_condition_key(tiny_tmp)}
+      key = {tiny_tmp.method, dedup_url, endpoint_source_scope(tiny_tmp, unified_url, cross_tech_keys) + route_condition_key(tiny_tmp) + proxy_route_key(tiny_tmp)}
+
+      # Folded into the code routes at its path once they are all merged.
+      if proxy_route?(tiny_tmp) && code_paths.includes?(unified_url)
+        held << {key, tiny_tmp}
+        next
+      end
 
       if final_map.has_key?(key)
         dup = final_map[key]
@@ -246,34 +261,12 @@ class EndpointOptimizer
           final_map[key] = absorb_technologies(served, client)
           next
         end
-        if graphql_endpoint?(dup) || graphql_endpoint?(tiny_tmp)
-          dup = merge_graphql_params(dup, tiny_tmp)
-        else
-          # The key unifies placeholder spellings, so the duplicate may name
-          # its slots differently (`/items/{item_id}` vs `/items/:itemId`).
-          # The winner's URL is the one reported; the loser's path params
-          # would name slots that URL does not have.
-          merge_params(dup, tiny_tmp, source_collection_pair?(dup, tiny_tmp), skip_path: dup.url != tiny_tmp.url)
-        end
-        merge_declared_access(dup, tiny_tmp)
-        tiny_tmp.tags.each { |tag| merge_tag(dup, tag) }
-        tiny_tmp.callees.each do |callee|
-          dup.push_callee(callee)
-        end
-        # Decided before the paths merge: once the handler's path is in
-        # `code_paths`, the "every path is a document" check no longer holds.
-        dup = promote_source_context(dup, tiny_tmp)
-        tiny_tmp.details.code_paths.each do |path_info|
-          dup.details.add_path(path_info) unless dup.details.code_paths.any? { |existing| existing == path_info }
-        end
-        dup = promote_scalar_context(dup, tiny_tmp)
-        dup = absorb_technologies(dup, tiny_tmp)
-        dup.handler ||= tiny_tmp.handler
-        final_map[key] = dup
+        final_map[key] = merge_duplicate(dup, tiny_tmp)
       else
         final_map[key] = tiny_tmp
       end
     end
+    fold_proxy_routes(final_map, held)
 
     @logger.verbose_sub "➔ Total duplicated endpoints: #{duplicate_count}"
     merged = merge_concrete_example_endpoints(final_map.values)
@@ -525,6 +518,105 @@ class EndpointOptimizer
     return true if segment.matches?(/\A[0-9a-fA-F]{24}\z/)
     return true if segment.matches?(/\A[^\/{}]*:[A-Za-z_][A-Za-z0-9_]*[^\/{}]*\z/)
     segment.matches?(/\A[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\z/)
+  end
+
+  private def merge_duplicate(dup : Endpoint, tiny_tmp : Endpoint) : Endpoint
+    if graphql_endpoint?(dup) || graphql_endpoint?(tiny_tmp)
+      dup = merge_graphql_params(dup, tiny_tmp)
+    else
+      # The key unifies placeholder spellings, so the duplicate may name
+      # its slots differently (`/items/{item_id}` vs `/items/:itemId`).
+      # The winner's URL is the one reported; the loser's path params
+      # would name slots that URL does not have.
+      merge_params(dup, tiny_tmp, source_collection_pair?(dup, tiny_tmp), skip_path: dup.url != tiny_tmp.url)
+    end
+    merge_declared_access(dup, tiny_tmp)
+    tiny_tmp.tags.each { |tag| merge_tag(dup, tag) }
+    tiny_tmp.callees.each do |callee|
+      dup.push_callee(callee)
+    end
+    # Decided before the paths merge: once the handler's path is in
+    # `code_paths`, the "every path is a document" check no longer holds.
+    dup = promote_source_context(dup, tiny_tmp)
+    tiny_tmp.details.code_paths.each do |path_info|
+      dup.details.add_path(path_info) unless dup.details.code_paths.any? { |existing| existing == path_info }
+    end
+    dup = promote_scalar_context(dup, tiny_tmp)
+    dup = absorb_technologies(dup, tiny_tmp)
+    dup.handler ||= tiny_tmp.handler
+    dup
+  end
+
+  # An Ingress rule or an Envoy route without a `:method` matcher sends every
+  # method to its backend, so it is `ANY`; the code behind it says which
+  # methods exist. Where code serves its path, the row is merged into each
+  # of those routes, as it was while these analyzers reported `GET` (#3081):
+  # its host, TLS and guard hold in front of that code. It is held out of
+  # the dedup until then, so it does not first merge into another `ANY`
+  # declaration (nginx) at the path. Elsewhere it stays `ANY`.
+  private def proxy_route?(endpoint : Endpoint) : Bool
+    endpoint.method == "ANY" && PROXY_ROUTE_TECHNOLOGIES.includes?(endpoint.details.technology || "")
+  end
+
+  # An `ANY` Ingress or Envoy row stays apart from another technology's `ANY`
+  # row (an nginx location) at its path: a guard only one of them states
+  # would cover the other's open route, and its TLS the other's http one.
+  private def proxy_route_key(endpoint : Endpoint) : String
+    proxy_route?(endpoint) ? "|proxy:#{endpoint.details.technology}" : ""
+  end
+
+  # Dedup-key URLs (placeholders unified) a code analyzer reports.
+  private def code_route_paths(endpoints : Array(Endpoint)) : Set(String)
+    paths = Set(String).new
+    return paths unless endpoints.any? { |endpoint| proxy_route?(endpoint) }
+    endpoints.each do |endpoint|
+      technology = endpoint.details.technology
+      next if endpoint.non_http? || technology.nil? || NoirTechs::DECLARATION_TECHS.includes?(technology)
+      paths << unify_path_placeholders(normalized_dedup_url(endpoint))
+    end
+    paths
+  end
+
+  private def fold_proxy_routes(final_map : Hash(Tuple(String, String, String), Endpoint), held : Array(Tuple(Tuple(String, String, String), Endpoint))) : Nil
+    return if held.empty?
+
+    opened = Set(Tuple(String, String, String)).new
+    code = Hash(String, Array(Tuple(String, String, String))).new
+    final_map.each do |key, endpoint|
+      next if endpoint.non_http? || !code_technology_contributed?(endpoint)
+      (code[unify_path_placeholders(key[1])] ||= [] of Tuple(String, String, String)) << key
+    end
+    held.each do |key, proxy|
+      # Like the dedup's cross-technology rule: where several projects serve
+      # a method at the path, only their merged (unscoped) row takes it; a
+      # project-scoped one says nothing about which project the proxy fronts.
+      targets = (code[unify_path_placeholders(key[1])]? || [] of Tuple(String, String, String))
+        .group_by(&.[0]).values.compact_map { |rows| rows.size == 1 ? rows[0] : rows.find(&.[2].empty?) }
+      targets = [key] if targets.empty?
+      open = proxy.tags.none? { |tag| tag.name == "auth" && tag.tagger == Tag.declared_access_tagger(proxy.details.technology || "") }
+      targets.each do |target|
+        opened << target if open
+        # Each merge takes the row's arrays, so every route gets its own copy.
+        copy = proxy
+        copy.tags = proxy.tags.dup
+        copy.params = proxy.params.dup
+        copy.callees = proxy.callees.dup
+        details = copy.details
+        details.code_paths = details.code_paths.dup
+        details.technologies = details.technologies.dup
+        copy.details = details
+        final_map[target] = (existing = final_map[target]?) ? merge_duplicate(existing, copy) : copy
+      end
+    end
+
+    # `merge_declared_access` lifts a guard only for an open declaration of
+    # the same technology; an open Envoy route in front of the route an
+    # Ingress guards is a way in all the same.
+    taggers = PROXY_ROUTE_TECHNOLOGIES.map { |technology| Tag.declared_access_tagger(technology) }
+    opened.each do |target|
+      next unless endpoint = final_map[target]?
+      endpoint.tags.reject! { |tag| tag.name == "auth" && taggers.includes?(tag.tagger) }
+    end
   end
 
   private def merge_endpoint_context(target : Endpoint, source : Endpoint) : Endpoint

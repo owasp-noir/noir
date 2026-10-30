@@ -11,14 +11,18 @@ module Detector::Specification
     detector_for "nginx", idempotent: false, extensions: %w[.conf .tmpl .template]
 
     LOCATION_RE = /^\s*location\s+(?:(?:=|~\*|~|\^~)\s+)?\S+/
+    # A `server` block whose locations all sit in `include`d files.
+    SERVER_RE  = /^\s*server\s*(?:\{|$)/
+    INCLUDE_RE = /^\s*include\s+\S+\s*;/
     # Whole-content necessary-condition guard for `nginx_shape?`: a line can
     # only match LOCATION_RE if "location" appears in the raw content — or
     # if a template action is spliced out of the middle of the word
     # (`loc{{x}}ation`), which the `\{\{` disjunct keeps on the slow path.
     # Comment stripping only truncates lines, so it can never assemble the
-    # keyword. Skips the per-line walk for the vast majority of `.conf` /
-    # `.tmpl` files that carry no location block.
-    SHAPE_GUARD = /location|\{\{/
+    # keyword (nor `include`, for INCLUDE_RE). Skips the per-line walk for
+    # the vast majority of `.conf` / `.tmpl` files that carry no location
+    # block.
+    SHAPE_GUARD = /location|include|\{\{/
 
     def detect(filename : String, file_contents : String) : Bool
       return false unless applicable?(filename)
@@ -33,11 +37,14 @@ module Detector::Specification
 
       # Include fragments often contain only `location` blocks, so scan
       # executable directives instead of requiring a top-level server/http block.
+      server = includes = false
       content.each_line do |raw|
         line = strip_template_actions(strip_comment(raw))
         return true if line.matches?(LOCATION_RE)
+        server ||= line.matches?(SERVER_RE)
+        includes ||= line.matches?(INCLUDE_RE)
       end
-      false
+      server && includes
     end
 
     private def strip_comment(line : String) : String

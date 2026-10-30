@@ -41,9 +41,137 @@ describe "Kubernetes Ingress Analyzer" do
     endpoints.map(&.url).sort!.should eq ["/v1/users", "/v1/users/.*"]
     endpoints.sort_by(&.url).map(&.details.code_paths.first.line).should eq [10, 12]
     endpoints.each do |e|
-      e.method.should eq "GET"
+      e.method.should eq "ANY"
       tag_descriptions(e, "ingress-host").should eq ["api.example.com"]
     end
+  end
+
+  # The line was looked up by the source text, which still had the escapes.
+  it "finds the line of a double-quoted path with escapes" do
+    endpoints = analyze_ingress <<-'YAML'
+      apiVersion: networking.k8s.io/v1
+      kind: Ingress
+      metadata:
+        name: demo
+      spec:
+        rules:
+        - host: api.example.com
+          http:
+            paths:
+            - path: "/files/(\\w+)\\.json"
+              pathType: ImplementationSpecific
+            - path: '/it''s'
+              pathType: Exact
+      YAML
+
+    endpoints.map { |e| {e.url, e.details.code_paths.first.line} }.should eq([
+      {"/files/(\\w+).json", 10},
+      {"/it's", 12},
+    ])
+  end
+
+  # ingress-nginx pastes the snippet into each host's `server` block.
+  it "reads the locations of a server-snippet on every host of the Ingress" do
+    endpoints = analyze_ingress <<-YAML
+      apiVersion: networking.k8s.io/v1
+      kind: Ingress
+      metadata:
+        name: demo
+        annotations:
+          nginx.ingress.kubernetes.io/auth-url: https://auth.example.com/check
+          nginx.ingress.kubernetes.io/server-snippet: |
+            location = /internal/export {
+              auth_basic "ops";
+              proxy_pass http://backend;
+            }
+            location ~ ^/internal/ {
+              deny all;
+            }
+            location /_probe { internal; }
+      spec:
+        tls:
+        - hosts: [api.example.com]
+        rules:
+        - host: api.example.com
+          http:
+            paths:
+            - path: /
+              pathType: Prefix
+        - host: www.example.com
+          http:
+            paths:
+            - path: /
+              pathType: Prefix
+      YAML
+
+    snippet = endpoints.select { |e| tag_descriptions(e, "ingress-source") == ["server-snippet"] }
+    snippet.map { |e| {e.url, e.method, e.protocol, tag_descriptions(e, "ingress-host"), e.details.code_paths.first.line} }.should eq([
+      {"/internal/export", "ANY", "https", ["api.example.com"], 8},
+      {"/internal/export", "ANY", "http", ["www.example.com"], 8},
+    ])
+    # The snippet's own rule guards it, under the Ingress's tagger; the
+    # Ingress's auth-url guards only the locations ingress-nginx generates.
+    snippet.each do |e|
+      e.tags.select(&.name.==("auth")).map { |t| {t.description, t.tagger, t.line} }.should eq([
+        {"Protected by nginx auth_basic \"ops\"", Tag.declared_access_tagger("k8s_ingress"), 9},
+      ])
+    end
+    endpoints.size.should eq(4)
+  end
+
+  it "gives a server-snippet the line of its own Ingress document" do
+    endpoints = analyze_ingress <<-YAML
+      # nginx.ingress.kubernetes.io/server-snippet: in a comment
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: cm
+        annotations:
+          nginx.ingress.kubernetes.io/server-snippet: |
+            location /cm { proxy_pass http://x; }
+      ---
+      apiVersion: networking.k8s.io/v1
+      kind: Ingress
+      metadata:
+        name: demo
+        annotations:
+          nginx.ingress.kubernetes.io/server-snippet: |
+            location /export { proxy_pass http://backend; }
+      spec:
+        rules:
+        - host: api.example.com
+          http:
+            paths:
+            - path: /
+              pathType: Prefix
+      YAML
+
+    endpoints.sort_by(&.url).map { |e| {e.url, e.details.code_paths.first.line} }.should eq([{"/", 22}, {"/export", 16}])
+  end
+
+  it "reads an Ingress inside a Helm named template" do
+    endpoints = analyze_ingress <<-YAML
+      {{- define "demo.ingress" }}
+      apiVersion: networking.k8s.io/v1
+      kind: Ingress
+      metadata:
+        name: {{ .Release.Name }}-ingress
+      spec:
+        rules:
+        - host: {{ .Values.domain }}
+          http:
+            paths:
+            - path: /items
+              pathType: Prefix
+            - path: /metrics
+              pathType: Exact
+      {{- end }}
+      YAML
+
+    endpoints.map { |e| {e.url, e.method, e.details.code_paths.first.line} }.should eq([
+      {"/items", "ANY", 11},
+      {"/metrics", "ANY", 13},
+    ])
   end
 
   it "marks endpoints with TLS hosts as https" do
@@ -131,7 +259,7 @@ describe "Kubernetes Ingress Analyzer" do
       YAML
 
     endpoints.map(&.url).sort!.should eq ["/", "/"]
-    endpoints.map(&.method).should eq ["GET", "GET"]
+    endpoints.map(&.method).should eq ["ANY", "ANY"]
     tag_descriptions(endpoints[0], "ingress-source").should eq ["default-backend"]
     tag_descriptions(endpoints[1], "ingress-source").should eq ["rule"]
   end

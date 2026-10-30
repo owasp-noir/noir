@@ -1,11 +1,14 @@
 require "../../engines/specification_engine"
+require "./nginx"
 
 module Analyzer::Specification
   class K8sIngress < SpecificationEngine
     analyzer_for "k8s_ingress"
 
-    DEFAULT_METHOD         = "GET"
+    # A rule routes every method to its backend.
+    METHOD_ANY             = "ANY"
     REWRITE_ANNOTATION     = "nginx.ingress.kubernetes.io/rewrite-target"
+    SNIPPET_ANNOTATION     = "nginx.ingress.kubernetes.io/server-snippet"
     AUTH_ANNOTATION_PREFIX = "nginx.ingress.kubernetes.io/"
     DEFAULT_PATH_TYPE      = "ImplementationSpecific"
     API_VERSION_LINE       = /(?m)^[ \t-]*apiVersion:\s*["']?(?:networking\.k8s\.io\/[^"'\s#]+|extensions\/v1beta1)["']?\s*(?:#.*)?$/
@@ -19,7 +22,8 @@ module Analyzer::Specification
         content = read_file_content(path)
         begin
           path_lines = path_lines(content)
-          YAML.parse_all(content).each { |doc| process_doc(doc, details, path_lines) }
+          snippet_lines = snippet_lines(content)
+          YAML.parse_all(content).each { |doc| process_doc(doc, details, path_lines, snippet_lines) }
         rescue e
           # Kept as an explicit rescue rather than delegating to the engine:
           # a Helm chart's `templates/ingress.yaml` is a Go template, so
@@ -36,14 +40,14 @@ module Analyzer::Specification
       @result
     end
 
-    private def process_doc(doc : YAML::Any, details : Details, path_lines : Hash(String, Int32))
+    private def process_doc(doc : YAML::Any, details : Details, path_lines : Hash(String, Int32), snippet_lines : Array(Int32))
       root = doc.as_h?
       return unless root
 
       kind = root[YAML::Any.new("kind")]?.try(&.as_s?)
       if kind == "List"
         items = root[YAML::Any.new("items")]?.try(&.as_a?) || [] of YAML::Any
-        items.each { |item| process_doc(item, details, path_lines) }
+        items.each { |item| process_doc(item, details, path_lines, snippet_lines) }
         return
       end
 
@@ -65,6 +69,52 @@ module Analyzer::Specification
 
       rules = spec[YAML::Any.new("rules")]?.try(&.as_a?) || [] of YAML::Any
       rules.each { |rule| process_rule(rule, tls_hosts, rewrite_target, details, path_lines, access) }
+
+      if snippet = annotations[YAML::Any.new(SNIPPET_ANNOTATION)]?.try(&.as_s?)
+        hosts = rules.compact_map { |rule| rule.as_h?.try(&.[YAML::Any.new("host")]?).try(&.as_s?) }.uniq!
+        process_server_snippet(snippet, hosts, tls_hosts, details, snippet_lines.shift? || 1)
+      end
+    end
+
+    # ingress-nginx pastes a `server-snippet` into the `server` block of each
+    # of the Ingress's hosts, so its locations are served there as nginx
+    # reads them; the Ingress's own auth annotations guard only the
+    # locations it generates.
+    private def process_server_snippet(snippet : String, hosts : Array(String), tls_hosts : Set(String), details : Details, first_line : Int32)
+      file = details.code_paths.first.path
+      nginx_access = Tag.declared_access_tagger("nginx")
+      (hosts.empty? ? [""] : hosts).each do |host|
+        Nginx.new(@raw_options).snippet_endpoints(snippet, file, first_line).each do |endpoint|
+          endpoint.tags.map! { |tag| tag.tagger == nginx_access ? declared_access_tag(tag.description, tag.path, tag.line) : tag }
+          endpoint.add_tag(Tag.new("ingress-host", host, "k8s_ingress_analyzer")) unless host.empty?
+          endpoint.add_tag(Tag.new("ingress-source", "server-snippet", "k8s_ingress_analyzer"))
+          endpoint.protocol = "https" if !host.empty? && tls_hosts.includes?(host)
+          @result << endpoint
+        end
+      end
+    end
+
+    # The line each `server-snippet` value starts on, in the order the Ingress
+    # documents give them: the next line for a block scalar (`|`), else the
+    # key's own line. Comments and other kinds' documents are skipped.
+    private def snippet_lines(content : String) : Array(Int32)
+      lines = [] of Int32
+      doc = [] of Int32
+      ingress = false
+      content.each_line.with_index(1) do |line, number|
+        if line.starts_with?("---")
+          lines.concat(doc) if ingress
+          doc.clear
+          ingress = false
+        elsif line.matches?(KIND_LINE)
+          ingress = true
+        elsif line.includes?(SNIPPET_ANNOTATION) && !line.lstrip.starts_with?('#')
+          value = line.split(SNIPPET_ANNOTATION, 2)[1].lchop('"').lchop('\'').lchop(':').strip
+          doc << (value.starts_with?('|') || value.starts_with?('>') ? number + 1 : number)
+        end
+      end
+      lines.concat(doc) if ingress
+      lines
     end
 
     # ingress-nginx enforces these on every location the Ingress generates:
@@ -169,7 +219,7 @@ module Analyzer::Specification
       # GCE / ALB spell a prefix as `/static/*` under the same path type.
       regex = path_type == "ImplementationSpecific" && Noir::URLPath.regex_route?(path.ends_with?("/*") ? path.rchop('*') : path)
       path = Noir::URLPath.strip_regex_anchors(path) if path_type == "ImplementationSpecific"
-      endpoint = Endpoint.new(path, DEFAULT_METHOD, details)
+      endpoint = Endpoint.new(path, METHOD_ANY, details)
       endpoint.kind = "regex" if regex
       endpoint.add_tag(Tag.new("ingress-path-type", path_type.downcase, "k8s_ingress_analyzer"))
       endpoint.add_tag(Tag.new("ingress-host", host, "k8s_ingress_analyzer")) unless host.empty?
@@ -273,7 +323,8 @@ module Analyzer::Specification
       scalar = strip_yaml_comment(value).strip
       return "/" if scalar.empty?
 
-      scalar = strip_quotes(scalar)
+      # The value as YAML reads it: `"/files/(\\w+)"` is `/files/(\w+)`.
+      scalar = (YAML.parse(scalar).as_s? rescue nil) || strip_quotes(scalar) if scalar.starts_with?('"') || scalar.starts_with?('\'')
       return scalar if scalar.starts_with?("/")
 
       if quoted_path = scalar.match(/["'](\/[^"']*)["']/)

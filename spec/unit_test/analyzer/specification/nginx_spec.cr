@@ -1,3 +1,4 @@
+require "file_utils"
 require "../../../spec_helper"
 require "../../../../src/models/code_locator"
 require "../../../../src/analyzer/analyzers/specification/nginx"
@@ -14,6 +15,26 @@ private def analyze_nginx(content : String)
   analyzer.analyze
 ensure
   File.delete(path) if path && File.exists?(path)
+end
+
+# `files`: relative path => content, written under one temp directory and all
+# registered, as the detector registers every nginx file it sees. Returns the
+# endpoints and that directory.
+private def analyze_nginx_files(files : Hash(String, String))
+  dir = File.tempname("nginx_tree")
+  locator = CodeLocator.instance
+  locator.clear Noir::LocatorKeys::NGINX_SPEC
+  files.each do |name, content|
+    path = File.join(dir, name)
+    Dir.mkdir_p(File.dirname(path))
+    File.write(path, content)
+    locator.push Noir::LocatorKeys::NGINX_SPEC, path
+  end
+  options = create_test_options
+  options["base"] = YAML::Any.new([YAML::Any.new(dir)])
+  {Analyzer::Specification::Nginx.new(options).analyze, dir + "/"}
+ensure
+  FileUtils.rm_rf(dir) if dir
 end
 
 private def tag_descriptions(endpoint : Endpoint, name : String) : Array(String)
@@ -128,6 +149,244 @@ describe "Nginx Analyzer" do
       CONF
 
     endpoints.map(&.url).should eq(["/public"])
+  end
+
+  # nginx reads `location =/x` like `location = /x`.
+  it "reads a modifier glued to the URI" do
+    endpoints = analyze_nginx <<-'CONF'
+      server {
+          location =/items { return 301 /catalog/items; }
+          location ~^/users/(\d+)$ { proxy_pass http://backend; }
+          location ~*^/Files/ { proxy_pass http://backend; }
+          location ^~/static/ { root /var/www; }
+      }
+      CONF
+
+    endpoints.map { |e| {e.url, e.kind, tag_descriptions(e, "nginx-path-type").first} }.sort!.should eq([
+      {"/Files/", "", "regex-i"},
+      {"/items", "", "exact"},
+      {"/static/", "", "prefix-stop"},
+      {"/users/(\\d+)", "regex", "regex"},
+    ])
+  end
+
+  # A client request for an `internal` location gets a 404; only nginx's own
+  # redirects reach it.
+  it "drops internal locations and their method rows but not a nested location" do
+    endpoints = analyze_nginx <<-CONF
+      server {
+          location = /_auth {
+              internal;
+              proxy_pass http://auth/check;
+          }
+          location /protected/ {
+              internal;
+              if ($request_method = POST) { return 200; }
+              location /protected/open/ { proxy_pass http://open; }
+              alias /var/files/;
+          }
+          location /items {
+              # internal;
+              proxy_pass http://backend;
+          }
+      }
+      CONF
+
+    endpoints.map { |e| {e.url, e.method} }.sort!.should eq([
+      {"/items", "ANY"},
+      {"/protected/open/", "ANY"},
+    ])
+  end
+
+  it "keeps a location whose internal a template decides" do
+    endpoints = analyze_nginx <<-CONF
+      server {
+          location /d {
+              {{ if .Values.private }}internal;{{ end }}
+              proxy_pass http://x;
+          }
+          location /e {
+              {{ if .Values.private }}
+              internal;
+              {{ end }}
+              proxy_pass http://x;
+          }
+      }
+      CONF
+
+    endpoints.map(&.url).sort!.should eq(["/d", "/e"])
+  end
+
+  it "does not read the catch-all server_name as a host" do
+    endpoints = analyze_nginx <<-CONF
+      server {
+          listen 80 default_server;
+          server_name _ "" api.example.com;
+          location /health { return 200 ok; }
+      }
+      server {
+          server_name _;
+          location /other { return 200 ok; }
+      }
+      CONF
+
+    endpoints.map { |e| {e.url, tag_descriptions(e, "nginx-host")} }.sort!.should eq([
+      {"/health", ["api.example.com"]},
+      {"/other", [] of String},
+    ])
+  end
+
+  # `(^/a$)` is the path `/a`; an alternation stays a pattern.
+  it "reads a regex wrapped in one group like the bare regex" do
+    endpoints = analyze_nginx <<-CONF
+      server {
+          location ~ (^/items/(.+)/files$) { proxy_pass http://backend; }
+          location ~ (^/users/(.+)/avatar$)|(^/users/(.+)/banner$) { proxy_pass http://backend; }
+      }
+      CONF
+
+    endpoints.map(&.url).sort!.should eq([
+      "(^/users/(.+)/avatar$)|(^/users/(.+)/banner$)",
+      "/items/(.+)/files",
+    ])
+  end
+
+  # Locations split into `include`d files are the usual layout (`conf.d`,
+  # `snippets`, `sites-enabled`). They were read on their own, without the
+  # server's host, TLS or access rules.
+  describe "include" do
+    it "reads an included file inside the server block that includes it" do
+      endpoints, dir = analyze_nginx_files({
+        "nginx.conf" => <<-CONF,
+          http {
+              server {
+                  listen 443 ssl;
+                  server_name api.example.com;
+                  auth_basic "staff";
+                  include locations/*.conf;
+              }
+              server {
+                  listen 80;
+                  server_name www.example.com;
+                  include /etc/nginx/locations/users.conf;
+              }
+          }
+          CONF
+        "locations/users.conf" => <<-CONF,
+          location /users/ {
+              proxy_pass http://backend;
+          }
+          CONF
+        "locations/items.conf" => <<-CONF,
+          location /items { allow all; satisfy any; proxy_pass http://backend; }
+          CONF
+        "unrelated/users.conf" => <<-CONF,
+          location /elsewhere { proxy_pass http://backend; }
+          CONF
+      })
+
+      rows = endpoints.map do |e|
+        {e.url, e.protocol, tag_descriptions(e, "nginx-host"),
+         e.details.code_paths.map { |info| {info.path.lchop(dir), info.line} },
+         e.tags.select(&.name.==("auth")).map { |t| {t.description, t.path.try(&.lchop(dir)), t.line} }}
+      end
+      none = [] of Tuple(String, String?, Int32?)
+      rows.sort_by! { |row| {row[0], row[1]} }.should eq([
+        {"/elsewhere", "http", [] of String, [{"unrelated/users.conf", 1}], none},
+        {"/items", "https", ["api.example.com"], [{"locations/items.conf", 1}], none},
+        {"/users/", "http", ["www.example.com"], [{"locations/users.conf", 1}], none},
+        {"/users/", "https", ["api.example.com"], [{"locations/users.conf", 1}],
+         [{"Protected by nginx auth_basic \"staff\"", "nginx.conf", 5}]},
+      ])
+    end
+
+    # A Windows path holds `\`, which `File.match?` reads as an escape.
+    it "matches an include under a directory with either separator" do
+      match = ->(dir : String, pattern : String, file : String) { Analyzer::Specification::Nginx.include_match?(dir, pattern, file) }
+      match.call("C:\\repo\\app[1", "conf.d/*.conf", "C:\\repo\\app[1\\conf.d\\x.conf").should be_true
+      match.call("C:\\repo\\app[1", "conf.d/*.conf", "C:/repo/app[1/conf.d/x.conf").should be_true
+      match.call("C:\\repo\\{{slug}}\\nginx", "snippets/x.conf", "C:\\repo\\{{slug}}\\nginx\\snippets\\x.conf").should be_true
+      match.call("C:\\repo\\app[1", "conf.d/*.conf", "C:\\repo\\app[1\\conf.d\\sub\\x.conf").should be_false
+      match.call("C:\\repo\\app", "conf.d/*.conf", "C:\\repo\\app2\\conf.d\\x.conf").should be_false
+      match.call("/repo/app[1", "conf.d/*.conf", "/repo/app[1/conf.d/x.conf").should be_true
+      match.call(".", "conf.d/*.conf", "conf.d/x.conf").should be_true
+      expect_raises(File::BadPatternError) { match.call("/repo", "conf.d/[x.conf", "/repo/conf.d/x.conf") }
+    end
+
+    # The includer's directory is literal text, not a glob; a pattern nginx
+    # would reject resolves to nothing and costs only itself.
+    it "reads glob characters in the directory literally and survives a bad pattern" do
+      {"app[1", "{{cookiecutter.slug}}", "a{b,c}"}.each do |dir|
+        endpoints, _ = analyze_nginx_files({
+          "#{dir}/nginx.conf"    => "server {\n    listen 443 ssl;\n    include conf.d/*.conf;\n    include conf.d/[x.conf;\n}\n",
+          "#{dir}/conf.d/x.conf" => "location /x { proxy_pass http://x; }\n",
+        })
+        endpoints.map { |e| {e.url, e.protocol} }.should eq([{"/x", "https"}]), dir
+      end
+    end
+
+    it "reads files that only include each other on their own" do
+      endpoints, _ = analyze_nginx_files({
+        "a.conf" => "server {\n    server_name a.com;\n    include b.conf;\n    location /a { proxy_pass http://x; }\n}\n",
+        "b.conf" => "location /b { proxy_pass http://x; }\ninclude a.conf;\n",
+      })
+      endpoints.map(&.url).uniq!.sort!.should eq(["/a", "/b"])
+    end
+
+    # nginx looks no further than its prefix, so one app's include does not
+    # bind another directory's `conf.d` (and its auth and TLS with it).
+    it "does not search above the configuration prefix" do
+      endpoints, _ = analyze_nginx_files({
+        "app1/nginx.conf"    => "server {\n    listen 443 ssl;\n    auth_basic \"app1\";\n    include /etc/nginx/conf.d/*.conf;\n    location /app1 { proxy_pass http://x; }\n}\n",
+        "conf.d/public.conf" => "location /public { proxy_pass http://x; }\n",
+      })
+      endpoints.map { |e| {e.url, e.protocol, e.tags.count(&.name.==("auth"))} }.sort!.should eq([
+        {"/app1", "https", 1},
+        {"/public", "http", 0},
+      ])
+    end
+
+    # The config root stands in for `/etc/nginx`: the nearest directory with
+    # an `nginx.conf` or named `nginx`, else the includer's and its parent.
+    it "resolves includes against the config root of common repository layouts" do
+      server = ->(host : String, target : String) { "server {\n    listen 443 ssl;\n    server_name #{host};\n    include #{target};\n}\n" }
+      location = ->(path : String) { "location #{path} { proxy_pass http://x; }\n" }
+      http = ->(target : String) { "http {\n    include #{target};\n}\n" }
+      {
+        "L1"  => {"nginx/nginx.conf" => http.call("/etc/nginx/conf.d/*.conf"), "nginx/conf.d/default.conf" => server.call("l1.com", "/etc/nginx/snippets/app.conf"), "nginx/snippets/app.conf" => location.call("/l1")},
+        "L2"  => {"nginx/nginx.conf" => http.call("/etc/nginx/conf.d/*.conf"), "conf.d/default.conf" => server.call("l2.com", "snippets/app.conf"), "snippets/app.conf" => location.call("/l2")},
+        "L3"  => {"deploy/nginx/sites-enabled/app.conf" => server.call("l3.com", "snippets/x.conf"), "deploy/nginx/snippets/x.conf" => location.call("/l3")},
+        "L4"  => {"nginx/sites/app.conf" => server.call("l4.com", "snippets/x.conf"), "nginx/snippets/x.conf" => location.call("/l4")},
+        "L5"  => {"nginx/templates/default.conf.template" => server.call("l5.com", "/etc/nginx/snippets/x.conf"), "nginx/snippets/x.conf" => location.call("/l5")},
+        "L6"  => {"nginx/conf.d/default.conf" => server.call("l6.com", "/etc/nginx/conf.d/locations/*.conf"), "nginx/conf.d/locations/a.conf" => location.call("/l6")},
+        "L7"  => {"nginx/conf.d/default.conf" => server.call("l7.com", "conf.d/locations/*.conf"), "nginx/conf.d/locations/a.conf" => location.call("/l7")},
+        "L8"  => {"services/web/nginx/site.conf" => server.call("l8.com", "snippets/x.conf"), "services/web/nginx/snippets/x.conf" => location.call("/l8")},
+        "L9"  => {"nginx/nginx.conf" => http.call("/etc/nginx/sites-enabled/*.conf"), "nginx/sites-enabled/app.conf" => server.call("l9.com", "snippets/x.conf"), "nginx/snippets/x.conf" => location.call("/l9")},
+        "L10" => {"nginx/conf.d/default.conf" => server.call("l10.com", "/etc/nginx/locations.conf"), "nginx/locations.conf" => location.call("/l10")},
+        "L11" => {"nginx/default.conf" => server.call("l11.com", "/etc/nginx/conf.d/locations/*.conf"), "nginx/locations/a.conf" => location.call("/l11")},
+        "L12" => {"nginx.conf" => http.call("/etc/nginx/conf.d/*.conf"), "services/a/conf.d/a.conf" => server.call("l12.com", "snippets/x.conf"), "services/a/snippets/x.conf" => location.call("/l12")},
+      }.each do |name, files|
+        endpoints, _ = analyze_nginx_files(files)
+        endpoints.map { |e| {e.url, e.protocol, tag_descriptions(e, "nginx-host")} }.should eq([{"/#{name.downcase}", "https", ["#{name.downcase}.com"]}]), name
+      end
+    end
+
+    it "resolves a relative include from the configuration prefix, not the file itself" do
+      endpoints, _ = analyze_nginx_files({
+        "nginx/sites-enabled/app.conf" => <<-CONF,
+          server {
+              server_name app.example.com;
+              include snippets/api.conf;
+          }
+          CONF
+        "nginx/snippets/api.conf" => <<-CONF,
+          location /api { proxy_pass http://backend; }
+          include snippets/api.conf;
+          CONF
+      })
+
+      endpoints.map { |e| {e.url, tag_descriptions(e, "nginx-host")} }.should eq([{"/api", ["app.example.com"]}])
+    end
   end
 
   it "tracks multiple server blocks independently" do

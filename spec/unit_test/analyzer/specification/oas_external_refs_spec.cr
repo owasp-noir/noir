@@ -339,6 +339,55 @@ describe "OpenAPI external $ref resolution" do
     end
   end
 
+  # Not standard OAS (`$ref` belongs on the Path Item), but split specs
+  # write it and JSON Reference resolvers inline it.
+  it "reads an operation out of the file the operation itself refs" do
+    with_temp_dir("noir_oas_op_ref") do |dir|
+      Dir.mkdir_p(File.join(dir, "ops"))
+      File.write(File.join(dir, "ops", "list_items.yaml"), <<-YAML)
+        summary: List items
+        parameters:
+          - $ref: '../shared.yaml#/page'
+          - name: X-Request-Id
+            in: header
+            schema: {type: string}
+        YAML
+      File.write(File.join(dir, "shared.yaml"), <<-YAML)
+        page:
+          name: page
+          in: query
+          type: integer
+        YAML
+      entry = File.join(dir, "openapi.yaml")
+      File.write(entry, <<-YAML)
+        openapi: 3.0.3
+        info: {title: Items API, version: 1.0.0}
+        paths:
+          /items:
+            get:
+              $ref: './ops/list_items.yaml'
+        YAML
+
+      endpoints = analyze_oas3(dir, entry)
+      endpoints.map { |e| {e.method, e.url} }.should eq([{"GET", "/items"}])
+      endpoints[0].params.map { |p| {p.name, p.param_type} }.sort!.should eq([{"X-Request-Id", "header"}, {"page", "query"}])
+
+      swagger = File.join(dir, "swagger.yaml")
+      File.write(swagger, <<-YAML)
+        swagger: '2.0'
+        info: {title: Items API, version: '1'}
+        paths:
+          /items:
+            get:
+              $ref: './ops/list_items.yaml'
+        YAML
+
+      endpoints = analyze_oas2(dir, swagger)
+      endpoints.map { |e| {e.method, e.url} }.should eq([{"GET", "/items"}])
+      endpoints[0].params.map(&.name).sort!.should eq(["X-Request-Id", "page"])
+    end
+  end
+
   it "records a ref whose file name decodes to a NUL byte and keeps later paths" do
     with_temp_dir("noir_oas_nul") do |dir|
       entry = File.join(dir, "openapi.yaml")

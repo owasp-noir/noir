@@ -191,8 +191,50 @@ module Noir
     # trailing `$` or `\Z`, and unescape `\.`. Analyzers call this only on
     # routes they know are regexes (Django `re_path`, nginx `location ~`,
     # Traefik `PathRegexp`, ...). A string route keeps a literal `^` or `$`.
+    # A group around the whole anchored pattern (nginx `~ (^/a/(.+)$)`) is
+    # read without it; one around an alternation is not.
     def self.strip_regex_anchors(pattern : String) : String
+      pattern = pattern[1..-2] if pattern.starts_with?("(^") && whole_group?(pattern)
       pattern.lchop('^').sub(/(?:\$|\\Z)\z/, "").gsub("\\.", ".")
+    end
+
+    # True when a `|` outside any group splits the whole pattern.
+    def self.top_level_alternation?(pattern : String) : Bool
+      depth = 0
+      escaped = false
+      pattern.each_char do |ch|
+        if escaped
+          escaped = false
+          next
+        end
+        case ch
+        when '\\' then escaped = true
+        when '('  then depth += 1
+        when ')'  then depth -= 1
+        when '|'  then return true if depth == 0
+        end
+      end
+      false
+    end
+
+    private def self.whole_group?(pattern : String) : Bool
+      depth = 0
+      escaped = false
+      pattern.each_char_with_index do |ch, i|
+        if escaped
+          escaped = false
+          next
+        end
+        case ch
+        when '\\' then escaped = true
+        when '('  then depth += 1
+        when '|'  then return false if depth == 1
+        when ')'
+          depth -= 1
+          return i == pattern.size - 1 if depth == 0
+        end
+      end
+      false
     end
 
     # True when a regex route is not a path anyone can request: pattern

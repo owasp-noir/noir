@@ -117,6 +117,18 @@ describe Noir::CLI::Inspect do
       end
     end
 
+    # Without a group around it, `\A` and `\z` held only the outer branches.
+    it "anchors every branch of a regex alternation" do
+      routes = [endpoint("ANY", "(^/users/(.+)/avatar$)|(^/users/(.+)/banner$)", kind: "regex"), endpoint("ANY", "/a|/b", kind: "regex")]
+      trace = ->(path : String) { Noir::CLI::Inspect.trace(routes, "GET", path).map(&.endpoint.url) }
+      trace.call("/users/a/avatar").should eq([routes[0].url])
+      trace.call("/users/a/banner").should eq([routes[0].url])
+      trace.call("/users/a/other").should be_empty
+      trace.call("/a").should eq(["/a|/b"])
+      trace.call("/a/x").should be_empty
+      trace.call("/x/b").should be_empty
+    end
+
     it "strips the scheme and authority from an absolute request URL" do
       Noir::CLI::Inspect.trace(endpoints, "GET", "http://localhost:8080/users/42?expand=1").map(&.endpoint.url).should eq(["/users/{id}"])
     end
@@ -639,6 +651,26 @@ describe "trace and query route matching (#3277)" do
     trace.call(routes, "GET", "/ordersx").should be_empty
     miss = Noir::CLI::Inspect.trace(routes, "GET", "/api/itemz/1")
     Noir::CLI::Inspect.wildcard_only_candidates(routes, miss, "/api/itemz/1").map(&.url).should contain("/api/items/:id")
+  end
+
+  # The Ingress `Prefix` rule folded into the code routes at `/api/users`
+  # keeps its tag, but the handlers serve only their own routes.
+  it "does not give a code route the prefix of a proxy rule merged into it" do
+    folded = ->(method : String) do
+      ep = endpoint(method, "/api/users", tech: "js_express")
+      ep.add_tag(Tag.new("ingress-path-type", "prefix", "k8s_ingress_analyzer"))
+      details = ep.details
+      details.technologies = ["js_express", "k8s_ingress"]
+      ep.details = details
+      ep
+    end
+    ingress = endpoint("ANY", "/orders", tech: "k8s_ingress")
+    ingress.add_tag(Tag.new("ingress-path-type", "prefix", "k8s_ingress_analyzer"))
+    routes = [folded.call("GET"), folded.call("POST"), ingress]
+    trace.call(routes, "GET", "/api/users/5").should be_empty
+    trace.call(routes, "POST", "/api/users/5").should be_empty
+    trace.call(routes, "POST", "/api/users").should eq([{"/api/users", "exact"}])
+    trace.call(routes, "POST", "/orders/7").should eq([{"/orders", "prefix"}])
   end
 
   it "serves a Go ServeMux subtree, but not an exact {$} pattern or a gin route that ends in /" do

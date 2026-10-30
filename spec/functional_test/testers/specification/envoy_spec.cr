@@ -3,36 +3,36 @@ require "../../func_spec.cr"
 # Both YAML and JSON Envoy config files live in the same fixture directory.
 # The expected endpoints below cover:
 #   YAML (route_config.virtual_hosts):
-#     - prefix match                  → /v1/users   GET
+#     - prefix match (no :method)     → /v1/users   ANY
 #     - path match with :method header → /admin      GET
-#     - safe_regex match              → /api/v[0-9]+ GET
+#     - safe_regex match              → /api/v[0-9]+ ANY
 #       (optimizer strips the leading `^` anchor via normalize_url_shapes)
-#     - prefix_rewrite                → /            GET  (extra endpoint)
-#     - wildcard domain               → /health      GET
+#     - prefix_rewrite                → /            ANY  (extra endpoint)
+#     - wildcard domain               → /health      ANY
 #   JSON (virtual_hosts at top level):
-#     - prefix match                  → /api         GET
-#     - path match with :method header → /health      GET
+#     - prefix match                  → /api         ANY
+#     - path match with :method header → /status      GET
 #   YAML (bootstrap: static_resources.listeners[].filter_chains[].filters[].
 #         typed_config.route_config.virtual_hosts):
-#     - prefix match                  → /bootstrap   GET
-#     - path_separated_prefix match   → /separated   GET
+#     - prefix match                  → /bootstrap   ANY
+#     - path_separated_prefix match   → /separated   ANY
 
 expected_endpoints = [
   # ── YAML ──────────────────────────────────────────────────────────────────
-  Endpoint.new("/v1/users", "GET"),
+  Endpoint.new("/v1/users", "ANY"),
   Endpoint.new("/admin", "GET"),
   # safe_regex: optimizer strips leading `^` from `/^/api/v[0-9]+`
-  Endpoint.new("/api/v[0-9]+", "GET"),
+  Endpoint.new("/api/v[0-9]+", "ANY"),
   # prefix_rewrite emits an extra endpoint with the rewritten path
-  Endpoint.new("/", "GET"),
+  Endpoint.new("/", "ANY"),
   # wildcard domain ("*") → path only
-  Endpoint.new("/health", "GET"),
+  Endpoint.new("/health", "ANY"),
   # ── JSON ──────────────────────────────────────────────────────────────────
-  Endpoint.new("/api", "GET"),
+  Endpoint.new("/api", "ANY"),
   Endpoint.new("/status", "GET"),
   # ── YAML bootstrap ────────────────────────────────────────────────────────
-  Endpoint.new("/bootstrap", "GET"),
-  Endpoint.new("/separated", "GET"),
+  Endpoint.new("/bootstrap", "ANY"),
+  Endpoint.new("/separated", "ANY"),
 ]
 
 FunctionalTester.new("fixtures/specification/envoy/", {

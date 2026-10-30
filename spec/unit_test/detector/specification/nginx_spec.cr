@@ -50,6 +50,13 @@ describe "Detect Nginx config" do
     instance.detect("config.conf", "key = value\nfoo = bar\n").should be_false
   end
 
+  # Its locations come from the included files, which need its host.
+  it "detects a server block that only includes its locations" do
+    instance.detect("nginx.conf", "server {\n    server_name a.example.com;\n    include conf.d/*.conf;\n}\n").should be_true
+    instance.detect("ld.so.conf", "include /etc/ld.so.conf.d/*.conf\n").should be_false
+    instance.detect("http.conf", "http {\n    include mime.types;\n}\n").should be_false
+  end
+
   it "detects location assembled by template-action removal" do
     # `strip_template_actions` splices `loc{{ … }}ation` back together, so
     # the SHAPE_GUARD fast path must not reject template files on the raw

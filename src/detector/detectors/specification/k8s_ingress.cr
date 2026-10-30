@@ -4,12 +4,13 @@ require "../../../models/code_locator"
 
 module Detector::Specification
   class K8sIngress < Detector
-    # Registers each ingress manifest path in `CodeLocator`.
-    detector_for "k8s_ingress", extensions: %w[.yaml .yml], idempotent: false
+    # Registers each ingress manifest path in `CodeLocator`. `.tpl`: a Helm
+    # named template (`templates/_ingress.tpl`) holding the manifest.
+    detector_for "k8s_ingress", extensions: %w[.yaml .yml .tpl], idempotent: false
 
     INGRESS_API_VERSION_PREFIXES = ["networking.k8s.io/", "extensions/v1beta1"]
 
-    # Every `.yml`/`.yaml` in the tree reaches this gate.
+    # Every `.yml`/`.yaml`/`.tpl` in the tree reaches this gate.
     INGRESS_API_VERSION_MARKER = Regex.union(INGRESS_API_VERSION_PREFIXES)
 
     def detect(filename : String, file_contents : String) : Bool

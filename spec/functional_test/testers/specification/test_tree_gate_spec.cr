@@ -9,7 +9,7 @@ require "../../func_spec.cr"
 expected_endpoints = [
   Endpoint.new("/pets", "GET"),
   Endpoint.new("/health", "GET"),
-  Endpoint.new("/test-env", "GET"),
+  Endpoint.new("/test-env", "ANY"),
 ]
 
 FunctionalTester.new("fixtures/specification/test_tree_gate/", {
