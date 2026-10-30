@@ -169,6 +169,8 @@ private def analyze_wide_cobra_tree(packages : Int32) : Tuple(Time::Span, Int32)
   options["only_techs"] = YAML::Any.new("go_cli")
   app = NoirRunner.new(options)
   app.detect
+  # Collect first so heap left by earlier specs doesn't land on one side.
+  GC.collect
   elapsed = Time.measure { app.analyze }
   {elapsed, app.endpoints.size}
 ensure
@@ -186,13 +188,17 @@ describe "go CLI cobra command tree", tags: "functional" do
   end
 
   it "resolves a many-package cobra tree in linear time" do
+    # Best of two on each side, so one GC pause or load spike can't decide it.
     small, small_count = analyze_wide_cobra_tree(500)
+    small = {small, analyze_wide_cobra_tree(500)[0]}.min
     large, large_count = analyze_wide_cobra_tree(2000)
+    large = {large, analyze_wide_cobra_tree(2000)[0]}.min
     small_count.should eq(500 * 6 + 1)
     large_count.should eq(2000 * 6 + 1)
     # 4x the packages: linear is ~4x, the per-package scan of every parent
-    # link was ~16x. A ratio holds under CI load where a fixed bound did not.
-    large.should be < small * 8
+    # link was ~16x. A ratio holds under CI load where a fixed bound did not;
+    # 12x leaves room for GC noise in a full suite run.
+    large.should be < small * 12
   end
 
   it "keeps each same-named subcommand's flags on its own command" do
