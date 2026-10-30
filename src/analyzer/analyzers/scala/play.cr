@@ -192,7 +192,7 @@ module Analyzer::Scala
               end
             end
 
-            if method_body.includes?("ueryString")
+            if method_body.includes?("queryString") || method_body.includes?("QueryString")
               # Query params read in the action body: `request.getQueryString("q")`,
               # `request.queryString.get("q")` and `request.queryString("q")`,
               # whatever the request value is called.
