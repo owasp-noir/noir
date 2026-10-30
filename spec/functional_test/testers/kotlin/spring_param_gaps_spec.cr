@@ -54,6 +54,14 @@ expected_endpoints = [
   Endpoint.new("/admin/items/{id}/notice", "POST"),
   Endpoint.new("/groups/{id}/members", "GET"),
   Endpoint.new("/squads/{id}", "GET"),
+  # Simple names in scope without qualification: a same-package top-level
+  # const, an imported top-level const (two packages declare `TOP_A`), a
+  # star import and a named companion's const.
+  Endpoint.new("/zoo-samepkg/a", "GET"),
+  Endpoint.new("/zoo-top-other/b", "GET"),
+  Endpoint.new("/zoo-wild/c", "GET"),
+  Endpoint.new("/zoo-named/d", "GET"),
+  Endpoint.new("/zoo-top-web/e", "GET"),
 ]
 
 FunctionalTester.new("fixtures/kotlin/spring_param_gaps/", {

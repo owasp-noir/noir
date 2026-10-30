@@ -182,13 +182,10 @@ module Analyzer::Kotlin
       # Kotlin reads Java `static final String`s too (`BaseService.GROUP`,
       # or `GROUP` through an import). Those keys are always qualified, so
       # they only fill names no Kotlin file declared.
-      seen_bases = Set(String).new
-      file_list.each do |path|
-        base = configured_base_for(path)
-        next unless seen_bases.add?(base)
-        base_constants = string_constants_by_base[base]
-        java_project_constants(path).each do |name, value|
-          base_constants[name] ||= value
+      referenced_java_constants(file_list).each do |path, constants|
+        next unless base_constants = string_constants_by_base[configured_base_for(path)]?
+        constants.each do |name, value|
+          base_constants[name] ||= value if name.includes?('.')
         end
       end
 
@@ -200,13 +197,14 @@ module Analyzer::Kotlin
       string_constants_by_base.each do |base, constants|
         string_constants_by_base[base] = Noir::TreeSitterKotlinRouteExtractor.expand_constant_interpolations(constants)
       end
+      owners_by_base = string_constants_by_base.transform_values { |constants| constants_by_owner(constants) }
       # Each file's own map is consulted first, so it needs the cross-file
       # values too: `const val ITEM = "$BASE/item"` with `BASE` declared in
       # another file is still `$BASE/item` there.
       local_string_constants = local_string_constants.to_h do |path, constants|
         base_constants = string_constants_by_base[configured_base_for(path)]
         expanded = Noir::TreeSitterKotlinRouteExtractor.expand_constant_interpolations(constants, base_constants)
-        seed_imported_constants(read_file_content(path), base_constants, expanded)
+        seed_imported_constants(read_file_content(path), base_constants, owners_by_base[configured_base_for(path)], expanded)
         {path, expanded}
       end
 
@@ -250,25 +248,89 @@ module Analyzer::Kotlin
       merged
     end
 
-    KOTLIN_IMPORT_RE = /^[ \t]*import[ \t]+([\w.]+)(?:[ \t]+as[ \t]+(\w+))?/m
+    KOTLIN_IMPORT_RE  = /^[ \t]*import[ \t]+([\w.]+)(\*)?(?:[ \t]+as[ \t]+(\w+))?/m
+    KOTLIN_PACKAGE_RE = /^[ \t]*package[ \t]+([\w.]+)/m
 
-    # `import com.ex.BaseService.GROUP` (a Java `static final` or a Kotlin
-    # `const val`) puts `GROUP` in scope unqualified, so bind it to that
-    # owner's value rather than whichever file declared a `GROUP` first. A
-    # companion's constant is indexed without the `Companion` segment.
-    # This file's own declarations still win.
+    # Puts the constants the file can read unqualified into its own map,
+    # ranked the way Kotlin resolves a simple name: the file's declarations,
+    # explicit imports (`import com.ex.BaseService.GROUP`, a Java
+    # `static final` or a Kotlin `const val`), the file's package, then star
+    # imports (`import com.ex.Paths.*`). Binding each name to its owner beats
+    # whichever file happened to declare a `GROUP` first.
     private def seed_imported_constants(content : String,
                                         project_constants : Hash(String, String),
+                                        owners : Hash(String, Array({String, String})),
                                         constants : Hash(String, String)) : Nil
+      scopes = [] of String
       content.scan(KOTLIN_IMPORT_RE) do |match|
         qualified = match[1]
-        next unless dot = qualified.rindex('.')
-        value = project_constants[qualified]?
-        value ||= project_constants[qualified.sub(".Companion.", ".")]? if qualified.includes?(".Companion.")
-        next unless value
-        constants[match[2]? || qualified[(dot + 1)..]] ||= value
+        if match[2]?
+          scopes << qualified.rchop('.')
+        elsif (dot = qualified.rindex('.')) && (value = imported_constant(qualified, project_constants))
+          constants[match[3]? || qualified[(dot + 1)..]] ||= value
+        end
+      end
+      if package = content.match(KOTLIN_PACKAGE_RE).try(&.[1])
+        scopes.unshift(package)
+      end
+      scopes.each do |owner|
+        owners[owner]?.try &.each do |name, value|
+          constants[name] ||= value
+        end
       end
     end
+
+    # A companion's constants are indexed under its class, so
+    # `Holder.Companion.NAME` / `Holder.Named.NAME` falls back to
+    # `Holder.NAME` when the segment before the name sits inside a type.
+    private def imported_constant(qualified : String, table : Hash(String, String)) : String?
+      if value = table[qualified]?
+        return value
+      end
+      return unless (last = qualified.rindex('.')) && last > 0 && (prev = qualified.rindex('.', last - 1)) && prev > 0
+      outer = (qualified.rindex('.', prev - 1) || -1) + 1
+      return unless qualified[prev + 1].uppercase? && qualified[outer].uppercase?
+      table["#{qualified[0...prev]}#{qualified[last..]}"]?
+    end
+
+    # `{name, value}` pairs by the owner that declares them: `com.ex.Paths`
+    # for `com.ex.Paths.BASE`, `com.ex` for a top-level `com.ex.TOP`.
+    private def constants_by_owner(constants : Hash(String, String)) : Hash(String, Array({String, String}))
+      owners = Hash(String, Array({String, String})).new
+      constants.each do |key, value|
+        next unless dot = key.rindex('.')
+        (owners[key[0...dot]] ||= [] of {String, String}) << {key[(dot + 1)..], value}
+      end
+      owners
+    end
+
+    # Constants of the Java classes some Kotlin file names (an import
+    # segment or a `Type.` reference), by Java file. Only those are parsed:
+    # a Kotlin module beside thousands of Java files names few of them.
+    private def referenced_java_constants(kotlin_files : Array(String)) : Hash(String, Hash(String, String))
+      result = Hash(String, Hash(String, String)).new
+      java_by_name = Hash(String, Array(String)).new
+      get_files_by_extension(".java").each do |file|
+        next if Analyzer::Java::JavaEngine.test_path?(base_relative_path(file))
+        (java_by_name[File.basename(file, ".java")] ||= [] of String) << file
+      end
+      return result if java_by_name.empty?
+
+      wanted = Set(String).new
+      kotlin_files.each do |path|
+        read_file_content(path).scan(KOTLIN_TYPE_REFERENCE_RE) do |match|
+          java_by_name[match[1]]?.try { |files| wanted.concat(files) }
+        end
+      end
+      wanted.each do |file|
+        content = read_file_content(file)
+        next unless content_matches?(content, JAVA_STRING_CONSTANT_RE)
+        result[file] = Noir::TreeSitterJavaRouteExtractor.extract_string_constants(content)
+      end
+      result
+    end
+
+    KOTLIN_TYPE_REFERENCE_RE = /\b([A-Z][A-Za-z0-9_]*)\./
 
     private def spring_kotlin_files(files : Array(String)) : Array(String)
       files.select do |path|

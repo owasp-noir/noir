@@ -115,7 +115,10 @@ module Noir
 
           if name && value
             constants[name] ||= value
-            unless type_stack.empty?
+            if type_stack.empty?
+              # A top-level const is imported as `pkg.NAME`.
+              constants["#{package_name}.#{name}"] ||= value unless package_name.empty?
+            else
               qualified = type_stack.join('.', &.[0])
               constants["#{type_stack.last[0]}.#{name}"] ||= value
               constants["#{qualified}.#{name}"] ||= value

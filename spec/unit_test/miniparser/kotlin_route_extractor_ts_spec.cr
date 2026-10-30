@@ -211,6 +211,19 @@ describe Noir::TreeSitterKotlinRouteExtractor do
     constants["Paths.B"]?.should eq("/b")
   end
 
+  it "registers a top-level constant under its package" do
+    source = <<-KT
+      package com.acme
+
+      const val TOP = "/top"
+      object Paths { const val A = "/a" }
+      KT
+
+    constants = Noir::TreeSitterKotlinRouteExtractor.extract_string_constants(source)
+    constants["com.acme.TOP"]?.should eq("/top")
+    constants["com.acme.A"]?.should be_nil
+  end
+
   it "does not resolve simple mapping constants from the global index" do
     source = <<-KT
       package com.example
