@@ -368,6 +368,68 @@ describe "kemal router-instance routes" do
     FileUtils.rm_rf(temp_dir) if temp_dir
   end
 
+  it "drops a mount cycle and serves a twice-mounted router under both paths" do
+    temp_dir = File.tempname("kemal_router_mounts")
+    Dir.mkdir_p(temp_dir)
+    temp_file = File.join(temp_dir, "app.cr")
+    File.write(temp_file, <<-CRYSTAL)
+      ca = Kemal::Router.new
+      cb = Kemal::Router.new
+      ca.mount "/x", cb
+      cb.mount "/y", ca
+      ca.get "/cyc" do |env|
+      end
+
+      twice = Kemal::Router.new
+      twice.get "/t" do |env|
+        env.params.query["q"]
+      end
+      mount "/one", twice
+      mount "/two", twice
+      CRYSTAL
+
+    endpoints = Analyzer::Crystal::Kemal.new(create_test_options).analyze_file(temp_file)
+    endpoints.map(&.url).should eq(["/cyc", "/one/t", "/two/t"])
+    endpoints[1].params.map(&.name).should eq(["q"])
+    endpoints[2].params.map(&.name).should eq(["q"])
+    endpoints[2].details.code_paths[0].line.should eq(9)
+    # Each copy owns its params, so tagging or merging one leaves the other alone.
+    endpoints[1].params.same?(endpoints[2].params).should be_false
+  ensure
+    FileUtils.rm_rf(temp_dir) if temp_dir
+  end
+
+  it "binds `||=` routers and keeps a binding across `||=` and def parameter defaults" do
+    temp_dir = File.tempname("kemal_router_memo")
+    Dir.mkdir_p(temp_dir)
+    temp_file = File.join(temp_dir, "app.cr")
+    File.write(temp_file, <<-CRYSTAL)
+      class App
+        def build
+          @r ||= Kemal::Router.new
+          @r.get "/memo" do |env|
+          end
+          @@shared ||= Kemal::Router.new
+          @@shared.get "/class-var" do |env|
+          end
+        end
+      end
+
+      cmp = Kemal::Router.new
+      cmp ||= other
+      def helper(cmp = nil)
+      end
+      cmp.get "/kept" do |env|
+      end
+      CRYSTAL
+
+    Analyzer::Crystal::Kemal.new(create_test_options).analyze_file(temp_file).map(&.url).should eq([
+      "/memo", "/class-var", "/kept",
+    ])
+  ensure
+    FileUtils.rm_rf(temp_dir) if temp_dir
+  end
+
   it "unbinds a router name reassigned to something else" do
     temp_dir = File.tempname("kemal_router_reassign")
     Dir.mkdir_p(temp_dir)

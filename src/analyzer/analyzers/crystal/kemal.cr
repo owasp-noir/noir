@@ -14,21 +14,26 @@ module Analyzer::Crystal
     end
 
     NAMESPACE_PATTERN = /^(\s*)(?:(\w+)\.)?namespace\s+["'](.+?)["']/
-    MOUNT_PATTERN     = /^\s*mount\s+["'](.+?)["']\s*,\s*(@?\w+)/
-    # `router = Kemal::Router.new` / `typed : Kemal::Router = Kemal::Router.new("/pre")`:
-    # group 1 = name, 2 = the router's own prefix. These names are the only
-    # receivers whose `router.get "/x"` is a route: `client.get "/x"` on an
-    # `HTTP::Client` (or a spec helper) has the same shape.
-    ROUTER_NEW_PATTERN = /(?:^|[^.\w@:])(@?\w+)\s*(?::\s*[\w:]+\s*)?=\s*Kemal::Router\.new\b(?:\s*\(?\s*["']([^"']*)["'])?/
-    # Any other `name = …`, which unbinds a router name reassigned to
-    # something else (`router = HTTP::Client.new` in a later method).
-    ASSIGN_PATTERN = /(?:^|[^.\w@:])(@?[a-z_]\w*)\s*(?::\s*[\w:]+\s*)?=(?![=~>])/
+    MOUNT_PATTERN     = /^\s*mount\s+["'](.+?)["']\s*,\s*(@{0,2}\w+)/
+    # `router = Kemal::Router.new` / `typed : Kemal::Router = Kemal::Router.new("/pre")`
+    # / `@@router ||= Kemal::Router.new`: group 1 = name, 2 = the router's
+    # own prefix. These names are the only receivers whose `router.get "/x"`
+    # is a route: `client.get "/x"` on an `HTTP::Client` (or a spec helper)
+    # has the same shape.
+    ROUTER_NEW_PATTERN = /(?:^|[^.\w@:])(@{0,2}\w+)\s*(?::\s*[\w:]+\s*)?(?:\|\|)?=\s*Kemal::Router\.new\b(?:\s*\(?\s*["']([^"']*)["'])?/
+    # Any other plain `name = …`, which unbinds a router name reassigned to
+    # something else (`router = HTTP::Client.new` in a later method). `||=`
+    # keeps an existing binding, so it is not one.
+    ASSIGN_PATTERN = /(?:^|[^.\w@:])(@{0,2}[a-z_]\w*)\s*(?::\s*[\w:]+\s*)?=(?![=~>])/
+    # A `def`/`macro` line or a lambda literal: its `name = …` are parameter
+    # defaults, not assignments.
+    PARAM_DEFAULTS_LINE = /^\s*(?:(?:private|protected|abstract)\s+)?(?:def|macro)\b|->\s*\(/
     # `api.mount "/users", users` / `api.mount users`: group 1 = parent,
     # 2 = path, 3 = child. The bare DSL `mount` is `MOUNT_PATTERN`.
-    ROUTER_MOUNT_PATTERN = /(?:^|[^.\w@])(@?\w+)\.mount\s*\(?\s*(?:["']([^"']*)["']\s*,\s*)?(@?\w+)/
+    ROUTER_MOUNT_PATTERN = /(?:^|[^.\w@])(@{0,2}\w+)\.mount\s*\(?\s*(?:["']([^"']*)["']\s*,\s*)?(@{0,2}\w+)/
     # `router.get "/x"`: group 1 = receiver, 2 = verb, 3 = path. The receiver
     # is checked against the file's `Kemal::Router` names by the caller.
-    ROUTER_ROUTE_PATTERN = /(?:^|[^.\w@])(@?\w+)\.(get|post|put|delete|patch|head|options|ws|sse|query)\s*(?:\(\s*)?['"](.+?)['"]/
+    ROUTER_ROUTE_PATTERN = /(?:^|[^.\w@])(@{0,2}\w+)\.(get|post|put|delete|patch|head|options|ws|sse|query)\s*(?:\(\s*)?['"](.+?)['"]/
     # Compile-time macro var assignment, e.g. `{{namespace = Routes::API::V1}}`.
     # invidious sets it once, then registers 50+ routes as
     # `get "/…", {{namespace}}::Videos, :videos` — substituting it back lets
@@ -44,11 +49,11 @@ module Analyzer::Crystal
     @public_folders : Array(Tuple(String, String)) = [] of Tuple(String, String)
     @action_index : ActionIndex = ActionIndex.new
     # How a router is wired into the app, by router name: its DSL `mount`
-    # path, the `parent.mount "/p", child` it hangs under, and its own
-    # `Kemal::Router.new("/pre")` prefix.
+    # paths, the `parent.mount "/p", child` calls it hangs under, and its
+    # own `Kemal::Router.new("/pre")` prefix.
     record Wiring,
-      mounts = {} of String => String,
-      parents = {} of String => Tuple(String, String),
+      mounts = {} of String => Array(String),
+      parents = {} of String => Array(Tuple(String, String)),
       prefixes = {} of String => String
 
     # Router constants' wiring per Kemal project (see `project_key_for`).
@@ -96,9 +101,9 @@ module Analyzer::Crystal
     private def read_router_wiring(line : String, wiring : Wiring, constants_only : Bool = false) : Nil
       if line.includes?("mount")
         if match = line.match(MOUNT_PATTERN)
-          wiring.mounts[match[2]] = match[1] if !constants_only || constant_name?(match[2])
+          (wiring.mounts[match[2]] ||= [] of String) << match[1] if !constants_only || constant_name?(match[2])
         elsif (match = line.match(ROUTER_MOUNT_PATTERN)) && (!constants_only || constant_name?(match[3]))
-          wiring.parents[match[3]] = {match[1], match[2]? || ""}
+          (wiring.parents[match[3]] ||= [] of Tuple(String, String)) << {match[1], match[2]? || ""}
         end
       end
       if line.includes?("Kemal::Router") && (match = line.match(ROUTER_NEW_PATTERN))
@@ -110,20 +115,38 @@ module Analyzer::Crystal
       name[0].uppercase?
     end
 
-    # Full prefix of a router's routes: the chain of mounts above it, then
-    # its own constructor prefix, the order `Router#register_routes` joins
-    # them in. The file's own wiring wins over the project's.
-    private def router_prefix(name : String, local : Wiring, project : Wiring?, depth : Int32 = 0) : String
-      own = local.prefixes[name]? || project.try(&.prefixes[name]?) || ""
-      return own if depth > 8 # a mount cycle
-      if mount = local.mounts[name]? || project.try(&.mounts[name]?)
-        Noir::URLPath.join(mount, own)
-      elsif parent = local.parents[name]? || project.try(&.parents[name]?)
-        parent_name, sub_path = parent
-        Noir::URLPath.join(Noir::URLPath.join(router_prefix(parent_name, local, project, depth + 1), sub_path), own)
-      else
-        own
+    # Every full prefix a router's routes are served under: each chain of
+    # mounts above it, then its own constructor prefix, the order
+    # `Router#register_routes` joins them in. The file's own wiring wins over
+    # the project's. A chain that loops back on itself is dropped, and a
+    # router whose every chain loops keeps just its own prefix.
+    private def router_prefixes(name : String, local : Wiring, project : Wiring?) : Array(String)
+      mounted_prefixes(name, local, project, [] of String) || [own_router_prefix(name, local, project)]
+    end
+
+    private def own_router_prefix(name : String, local : Wiring, project : Wiring?) : String
+      local.prefixes[name]? || project.try(&.prefixes[name]?) || ""
+    end
+
+    # nil when every chain above `name` is a cycle. `chain` is the path walked
+    # so far, which also caps the depth (and the fan-out of a router mounted
+    # under several parents at every level).
+    private def mounted_prefixes(name : String, local : Wiring, project : Wiring?, chain : Array(String)) : Array(String)?
+      return if chain.includes?(name) || chain.size > 8
+      own = own_router_prefix(name, local, project)
+      mounts = local.mounts[name]? || project.try(&.mounts[name]?)
+      parents = local.parents[name]? || project.try(&.parents[name]?)
+      return [own] unless mounts || parents
+
+      chain += [name]
+      result = [] of String
+      mounts.try &.each { |mount| result << Noir::URLPath.join(mount, own) }
+      parents.try &.each do |parent_name, sub_path|
+        mounted_prefixes(parent_name, local, project, chain).try &.each do |prefix|
+          result << Noir::URLPath.join(Noir::URLPath.join(prefix, sub_path), own)
+        end
       end
+      result.empty? ? nil : result.uniq!
     end
 
     def analyze_file(path : String) : Array(Endpoint)
@@ -160,6 +183,8 @@ module Analyzer::Crystal
 
       # Main scan with namespace stack
       namespace_stack = [] of NamedTuple(prefix: String, indent: Int32, router_var: String)
+      # {endpoint index, route path, further prefixes, line}
+      extra_mounts = [] of Tuple(Int32, String, Array(String), Int32)
       last_endpoint : Endpoint? = nil
       param_lines = crystal_param_lines(lines)
 
@@ -233,18 +258,19 @@ module Analyzer::Crystal
           end
 
           # Router prefix: the `router.get` receiver's, else that of the
-          # router whose namespace block encloses a bare `get`.
+          # router whose namespace block encloses a bare `get`. A router
+          # mounted at several paths serves the route under each of them.
           router_var = receiver.presence || namespace_stack.first?.try(&.[:router_var]) || ""
-          unless router_var.empty?
-            full_path = Noir::URLPath.join(router_prefix(router_var, wiring, project_wiring), full_path)
-          end
-
-          endpoint.url = full_path
+          prefixes = router_var.empty? ? [""] : router_prefixes(router_var, wiring, project_wiring)
+          endpoint.url = Noir::URLPath.join(prefixes.first, full_path)
           details = Details.new(PathInfo.new(path, index + 1))
           endpoint.details = details
           attach_route_callees(endpoint, lines, index, path, macro_vars) if include_callee
           endpoints << endpoint
           last_endpoint = endpoint
+          if prefixes.size > 1
+            extra_mounts << {endpoints.size - 1, full_path, prefixes[1..], index + 1}
+          end
         end
 
         # Parse params
@@ -255,6 +281,21 @@ module Analyzer::Crystal
               le.push_param(param)
             end
           end
+        end
+      end
+
+      # Copies for a router's other mounts, made after the scan so each
+      # carries the params read below its route, in arrays of its own.
+      extra_mounts.each do |endpoint_index, route_path, prefixes, line|
+        original = endpoints[endpoint_index]
+        prefixes.each do |prefix|
+          copy = original
+          copy.url = Noir::URLPath.join(prefix, route_path)
+          copy.params = original.params.dup
+          copy.callees = original.callees.dup
+          copy.tags = original.tags.dup
+          copy.details = Details.new(PathInfo.new(path, line))
+          endpoints << copy
         end
       end
 
@@ -347,7 +388,8 @@ module Analyzer::Crystal
       return unless line.includes?('=')
       if line.includes?("Kemal::Router") && (match = line.match(ROUTER_NEW_PATTERN))
         routers << match[1]
-      elsif !routers.empty? && (match = line.match(ASSIGN_PATTERN))
+      elsif !routers.empty? && !line.matches?(PARAM_DEFAULTS_LINE) &&
+            (match = Noir::CrystalCalleeExtractor.strip_comment(line).match(ASSIGN_PATTERN))
         routers.delete(match[1])
       end
     end
