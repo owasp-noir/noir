@@ -38,4 +38,37 @@ describe "crystal_http case request.path" do
   ensure
     FileUtils.rm_rf(temp_dir) if temp_dir
   end
+
+  it "closes an assigned or one-line case at its own end" do
+    temp_dir = File.tempname("crystal_http_case_close")
+    Dir.mkdir_p(temp_dir)
+    temp_file = File.join(temp_dir, "server.cr")
+    File.write(temp_file, <<-CRYSTAL)
+      server = HTTP::Server.new do |ctx|
+        body = case ctx.request.path
+               when "/hello"
+                 "Hello"
+               end
+        asset = case File.extname(name)
+                when "/static-not-route"
+                  "x"
+                end
+        x = case ctx.request.path when "/oneline" then "a" else "b" end
+        y = case kind when "/after-oneline" then 1 end
+        ctx.response.print(case ctx.request.path
+                           when "/arg"
+                             "a"
+                           end)
+        z = case kind
+            when "/after-arg"
+              1
+            end
+      end
+      CRYSTAL
+
+    endpoints = Analyzer::Crystal::Http.new(create_test_options).analyze_file(temp_file)
+    endpoints.map(&.url).should eq(["/hello", "/oneline", "/arg"])
+  ensure
+    FileUtils.rm_rf(temp_dir) if temp_dir
+  end
 end

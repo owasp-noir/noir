@@ -15,13 +15,20 @@ module Analyzer::Crystal
 
     NAMESPACE_PATTERN = /^(\s*)(?:(\w+)\.)?namespace\s+["'](.+?)["']/
     MOUNT_PATTERN     = /^\s*mount\s+["'](.+?)["']\s*,\s*(@?\w+)/
-    # `router = Kemal::Router.new` — the names whose `router.get "/x"` calls
-    # are route declarations. Only these receivers count: `client.get "/x"`
-    # on an `HTTP::Client` (or a spec helper) has the same shape.
-    ROUTER_NEW_PATTERN = /(?:^|[^.\w@])(@?\w+)\s*=\s*Kemal::Router\.new\b/
+    # `router = Kemal::Router.new` / `typed : Kemal::Router = Kemal::Router.new("/pre")`:
+    # group 1 = name, 2 = the router's own prefix. These names are the only
+    # receivers whose `router.get "/x"` is a route: `client.get "/x"` on an
+    # `HTTP::Client` (or a spec helper) has the same shape.
+    ROUTER_NEW_PATTERN = /(?:^|[^.\w@:])(@?\w+)\s*(?::\s*[\w:]+\s*)?=\s*Kemal::Router\.new\b(?:\s*\(?\s*["']([^"']*)["'])?/
+    # Any other `name = …`, which unbinds a router name reassigned to
+    # something else (`router = HTTP::Client.new` in a later method).
+    ASSIGN_PATTERN = /(?:^|[^.\w@:])(@?[a-z_]\w*)\s*(?::\s*[\w:]+\s*)?=(?![=~>])/
+    # `api.mount "/users", users` / `api.mount users`: group 1 = parent,
+    # 2 = path, 3 = child. The bare DSL `mount` is `MOUNT_PATTERN`.
+    ROUTER_MOUNT_PATTERN = /(?:^|[^.\w@])(@?\w+)\.mount\s*\(?\s*(?:["']([^"']*)["']\s*,\s*)?(@?\w+)/
     # `router.get "/x"`: group 1 = receiver, 2 = verb, 3 = path. The receiver
     # is checked against the file's `Kemal::Router` names by the caller.
-    ROUTER_ROUTE_PATTERN = /(?:^|[^.\w@])(@?\w+)\.(get|post|put|delete|patch|head|options|ws|query)\s*(?:\(\s*)?['"](.+?)['"]/
+    ROUTER_ROUTE_PATTERN = /(?:^|[^.\w@])(@?\w+)\.(get|post|put|delete|patch|head|options|ws|sse|query)\s*(?:\(\s*)?['"](.+?)['"]/
     # Compile-time macro var assignment, e.g. `{{namespace = Routes::API::V1}}`.
     # invidious sets it once, then registers 50+ routes as
     # `get "/…", {{namespace}}::Videos, :videos` — substituting it back lets
@@ -36,12 +43,18 @@ module Analyzer::Crystal
     @static_disabled_bases : Set(String) = Set(String).new
     @public_folders : Array(Tuple(String, String)) = [] of Tuple(String, String)
     @action_index : ActionIndex = ActionIndex.new
-    # {scan base, router variable} => mount path, over every Kemal file.
-    @project_mounts = {} of Tuple(String, String) => String
-    # {scan base, router constant} for every `ROUTER = Kemal::Router.new`.
+    # How a router is wired into the app, by router name: its DSL `mount`
+    # path, the `parent.mount "/p", child` it hangs under, and its own
+    # `Kemal::Router.new("/pre")` prefix.
+    record Wiring,
+      mounts = {} of String => String,
+      parents = {} of String => Tuple(String, String),
+      prefixes = {} of String => String
+
+    # Router constants' wiring per Kemal project (see `project_key_for`).
     # Only constants: a local or instance variable's name means nothing in
     # another file.
-    @project_routers = Set(Tuple(String, String)).new
+    @project_wiring = {} of String => Wiring
 
     def analyze
       # Apps like invidious register routes as `get "/", Routes::Misc, :home`
@@ -64,15 +77,52 @@ module Analyzer::Crystal
         next unless scan_accepts?(path)
         content = read_file_content(path) rescue next
         next unless content.includes?("mount") || content.includes?("Kemal::Router")
-        base = configured_base_for(path)
+        wiring = @project_wiring[project_key_for(path)] ||= Wiring.new
         mask_crystal_heredocs(content.lines).each do |line|
-          if line.includes?("mount") && (match = line.match(MOUNT_PATTERN))
-            @project_mounts[{base, match[2]}] = match[1]
-          end
-          if line.includes?("Kemal::Router") && (match = line.match(ROUTER_NEW_PATTERN)) && match[1][0].uppercase?
-            @project_routers << {base, match[1]}
-          end
+          read_router_wiring(line, wiring, constants_only: true)
         end
+      end
+    end
+
+    # The Kemal project a file belongs to: its nearest enclosing kemal
+    # `shard.yml`, else its scan base. Two apps under one `-b` both name
+    # their router `API`; keying on the base let each read the other's mounts.
+    private def project_key_for(path : String) : String
+      expanded = Noir::PathScope.expand(path)
+      shard_roots.select { |root| Noir::PathScope.under_normalized_root?(expanded, root) }.max_by?(&.size) ||
+        configured_base_for(path)
+    end
+
+    private def read_router_wiring(line : String, wiring : Wiring, constants_only : Bool = false) : Nil
+      if line.includes?("mount")
+        if match = line.match(MOUNT_PATTERN)
+          wiring.mounts[match[2]] = match[1] if !constants_only || constant_name?(match[2])
+        elsif (match = line.match(ROUTER_MOUNT_PATTERN)) && (!constants_only || constant_name?(match[3]))
+          wiring.parents[match[3]] = {match[1], match[2]? || ""}
+        end
+      end
+      if line.includes?("Kemal::Router") && (match = line.match(ROUTER_NEW_PATTERN))
+        wiring.prefixes[match[1]] = match[2]? || "" if !constants_only || constant_name?(match[1])
+      end
+    end
+
+    private def constant_name?(name : String) : Bool
+      name[0].uppercase?
+    end
+
+    # Full prefix of a router's routes: the chain of mounts above it, then
+    # its own constructor prefix, the order `Router#register_routes` joins
+    # them in. The file's own wiring wins over the project's.
+    private def router_prefix(name : String, local : Wiring, project : Wiring?, depth : Int32 = 0) : String
+      own = local.prefixes[name]? || project.try(&.prefixes[name]?) || ""
+      return own if depth > 8 # a mount cycle
+      if mount = local.mounts[name]? || project.try(&.mounts[name]?)
+        Noir::URLPath.join(mount, own)
+      elsif parent = local.parents[name]? || project.try(&.parents[name]?)
+        parent_name, sub_path = parent
+        Noir::URLPath.join(Noir::URLPath.join(router_prefix(parent_name, local, project, depth + 1), sub_path), own)
+      else
+        own
       end
     end
 
@@ -86,24 +136,23 @@ module Analyzer::Crystal
       file_base = configured_base_for(path)
       include_callee = callees_needed?
 
-      # Pre-scan: build mount_map (variable_name => mount_path) and resolve
-      # compile-time macro variables used in controller references.
-      # Cheap substring gates skip the PCRE2 scan on the vast majority of
-      # lines that can't be mounts/macro-vars. The file's own mounts win
-      # over `@project_mounts`, so two files that each name a local router
-      # `api` keep their own prefixes.
-      mount_map = {} of String => String
+      # Pre-scan: build the file's router wiring (mounts, sub-mounts,
+      # constructor prefixes) and resolve compile-time macro variables used
+      # in controller references. Cheap substring gates skip the PCRE2 scan
+      # on the vast majority of lines. The file's own wiring wins over the
+      # project's, so two files that each name a local router `api` keep
+      # their own prefixes.
+      wiring = Wiring.new
+      project_wiring = @project_wiring[project_key_for(path)]?
       macro_vars = {} of String => String
+      # Router names bound so far. Constants come from the whole project;
+      # locals and instance variables bind at their `Kemal::Router.new`
+      # line and unbind when reassigned to anything else.
       routers = Set(String).new
-      @project_routers.each { |base, name| routers << name if base == file_base }
+      project_wiring.try &.prefixes.each_key { |name| routers << name }
 
       lines.each do |line|
-        if line.includes?("mount") && (match = line.match(MOUNT_PATTERN))
-          mount_map[match[2]] = match[1]
-        end
-        if line.includes?("Kemal::Router") && (match = line.match(ROUTER_NEW_PATTERN))
-          routers << match[1]
-        end
+        read_router_wiring(line, wiring)
         if include_callee && line.includes?("{{") && (match = line.match(MACRO_VAR_PATTERN))
           macro_vars[match[1]] = match[2]
         end
@@ -115,6 +164,8 @@ module Analyzer::Crystal
       param_lines = crystal_param_lines(lines)
 
       lines.each_with_index do |line, index|
+        bind_router_name(line, routers)
+
         # Collect public folder / serve_static info (used by post-pass)
         if line.matches?(SERVE_STATIC_DISABLED_RE)
           @static_disabled_bases << file_base
@@ -181,11 +232,11 @@ module Analyzer::Crystal
             full_path = Noir::URLPath.join(ns_prefix, route_path)
           end
 
-          # Mount lookup: the `router.get` receiver, else the router whose
-          # namespace block encloses a bare `get`.
+          # Router prefix: the `router.get` receiver's, else that of the
+          # router whose namespace block encloses a bare `get`.
           router_var = receiver.presence || namespace_stack.first?.try(&.[:router_var]) || ""
-          if !router_var.empty? && (mount = mount_map[router_var]? || @project_mounts[{file_base, router_var}]?)
-            full_path = Noir::URLPath.join(mount, full_path)
+          unless router_var.empty?
+            full_path = Noir::URLPath.join(router_prefix(router_var, wiring, project_wiring), full_path)
           end
 
           endpoint.url = full_path
@@ -292,16 +343,28 @@ module Analyzer::Crystal
     QUERY_ROUTE_PATTERN = /(?:^|[^.\w])query\s*(?:\(\s*)?['"](.+?)['"]/
     KEMAL_EXTRA_ROUTES  = [{"QUERY", QUERY_ROUTE_PATTERN}] of Tuple(String, Regex)
 
-    # `router.get "/x"` where `router` is one of `routers`. Returns the
-    # endpoint (empty when nothing matches) and the receiver.
+    private def bind_router_name(line : String, routers : Set(String)) : Nil
+      return unless line.includes?('=')
+      if line.includes?("Kemal::Router") && (match = line.match(ROUTER_NEW_PATTERN))
+        routers << match[1]
+      elsif !routers.empty? && (match = line.match(ASSIGN_PATTERN))
+        routers.delete(match[1])
+      end
+    end
+
+    # `router.get "/x"` where `router` is one of `routers`, trying every
+    # `x.verb "..."` on the line. Returns the endpoint (empty when nothing
+    # matches) and the receiver. Kemal registers `sse` as a GET route.
     def router_line_to_endpoint(content : String, routers : Set(String)) : Tuple(Endpoint, String)
       content = Noir::CrystalCalleeExtractor.strip_comment(content)
-      if content.includes?('.') && (match = content.match(ROUTER_ROUTE_PATTERN)) && routers.includes?(match[1])
-        path = normalize_crystal_interpolation(match[3])
-        verb = match[2]
-        endpoint = Endpoint.new(path, verb == "ws" ? "GET" : verb.upcase)
-        endpoint.protocol = "ws" if verb == "ws"
-        return {endpoint, match[1]}
+      if content.includes?('.')
+        content.scan(ROUTER_ROUTE_PATTERN) do |match|
+          next unless routers.includes?(match[1])
+          verb = match[2]
+          endpoint = Endpoint.new(normalize_crystal_interpolation(match[3]), verb.in?("ws", "sse") ? "GET" : verb.upcase)
+          endpoint.protocol = "ws" if verb == "ws"
+          return {endpoint, match[1]}
+        end
       end
       {Endpoint.new("", ""), ""}
     end

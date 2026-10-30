@@ -327,4 +327,99 @@ describe "kemal router-instance routes" do
     CodeLocator.instance.clear_all
     FileUtils.rm_rf(temp_dir) if temp_dir
   end
+
+  it "follows constructor prefixes, nested router mounts, typed declarations and sse" do
+    temp_dir = File.tempname("kemal_router_api")
+    Dir.mkdir_p(temp_dir)
+    temp_file = File.join(temp_dir, "app.cr")
+    File.write(temp_file, <<-CRYSTAL)
+      prefixed = Kemal::Router.new("/pre")
+      prefixed.get "/a" do |env|
+      end
+
+      users = Kemal::Router.new
+      users.get "/list" do |env|
+      end
+      api = Kemal::Router.new
+      api.mount "/users", users
+      mount "/api", api
+
+      typed : Kemal::Router = Kemal::Router.new
+      typed.get "/typed" do |env|
+      end
+
+      events = Kemal::Router.new
+      events.sse "/events" do |stream, env|
+      end
+
+      cache.get "k"; api.get "/second-on-line" do |env|
+      end
+      CRYSTAL
+
+    endpoints = Analyzer::Crystal::Kemal.new(create_test_options).analyze_file(temp_file)
+    endpoints.map { |ep| {ep.method, ep.url} }.should eq([
+      {"GET", "/pre/a"},
+      {"GET", "/api/users/list"},
+      {"GET", "/typed"},
+      {"GET", "/events"},
+      {"GET", "/api/second-on-line"},
+    ])
+  ensure
+    FileUtils.rm_rf(temp_dir) if temp_dir
+  end
+
+  it "unbinds a router name reassigned to something else" do
+    temp_dir = File.tempname("kemal_router_reassign")
+    Dir.mkdir_p(temp_dir)
+    temp_file = File.join(temp_dir, "app.cr")
+    File.write(temp_file, <<-CRYSTAL)
+      def a
+        router = Kemal::Router.new
+        router.get "/real" do |env|
+        end
+        mount router
+      end
+
+      def b
+        router = HTTP::Client.new("h")
+        router.get "/upstream"
+      end
+      CRYSTAL
+
+    Analyzer::Crystal::Kemal.new(create_test_options).analyze_file(temp_file).map(&.url).should eq(["/real"])
+  ensure
+    FileUtils.rm_rf(temp_dir) if temp_dir
+  end
+
+  it "keeps two Kemal projects under one scan base apart" do
+    temp_dir = File.tempname("kemal_router_mono")
+    shard = <<-YAML
+      name: app
+      dependencies:
+        kemal:
+          github: kemalcr/kemal
+      YAML
+    files = {} of String => String
+    {"a", "b"}.each do |name|
+      files["#{name}/shard.yml"] = shard
+      files["#{name}/src/app.cr"] = "API = Kemal::Router.new\nmount \"/#{name}\", API\n"
+      files["#{name}/src/routes.cr"] = "API.get \"/from-#{name}\" do |env|\nend\nAPI.namespace \"/n\" do\n  get \"/ns-#{name}\" do |env|\n  end\nend\n"
+    end
+    CodeLocator.instance.clear_all
+    files.each do |relative, content|
+      path = File.join(temp_dir, relative)
+      Dir.mkdir_p(File.dirname(path))
+      File.write(path, content)
+      CodeLocator.instance.register_file(path, content)
+    end
+    options = create_test_options
+    options["base"] = YAML::Any.new([YAML::Any.new(temp_dir)])
+
+    Analyzer::Crystal::Kemal.new(options).analyze.map(&.url).sort!.should eq([
+      "/a/from-a", "/a/n/ns-a", "/b/from-b", "/b/n/ns-b",
+    ])
+  ensure
+    CodeLocator.instance.clear_all
+    FileUtils.rm_rf(temp_dir) if temp_dir
+  end
 end
