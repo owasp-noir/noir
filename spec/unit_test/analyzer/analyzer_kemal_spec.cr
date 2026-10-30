@@ -249,3 +249,82 @@ describe "kemal cross-file mounts" do
     FileUtils.rm_rf(temp_dir) if temp_dir
   end
 end
+
+describe "kemal router-instance routes" do
+  it "reads verbs called on a Kemal::Router variable, joined with its mount" do
+    temp_dir = File.tempname("kemal_router_instance")
+    Dir.mkdir_p(temp_dir)
+    temp_file = File.join(temp_dir, "app.cr")
+    File.write(temp_file, <<-CRYSTAL)
+      module App
+        def self.run
+          router = Kemal::Router.new
+          client = HTTP::Client.new("example.com")
+
+          router.get "/items" do |env|
+            env.params.query["page"]?
+          end
+
+          router.post("/items/:id") do |env|
+            env.params.url["id"]
+          end
+
+          router.ws "/live" do |socket|
+          end
+
+          # Not routes: an HTTP client call, a filter, an unknown receiver.
+          client.get "/upstream"
+          router.before_get "/items" do |env|
+          end
+          other.get "/elsewhere"
+
+          mount "/api", router
+          Kemal.run
+        end
+      end
+      CRYSTAL
+
+    endpoints = Analyzer::Crystal::Kemal.new(create_test_options).analyze_file(temp_file)
+    endpoints.map { |ep| {ep.method, ep.url, ep.protocol} }.should eq([
+      {"GET", "/api/items", "http"},
+      {"POST", "/api/items/:id", "http"},
+      {"GET", "/api/live", "ws"},
+    ])
+    endpoints[0].params.map(&.name).should eq(["page"])
+  ensure
+    FileUtils.rm_rf(temp_dir) if temp_dir
+  end
+
+  it "reads a Kemal::Router constant declared in another file, but not a local" do
+    temp_dir = File.tempname("kemal_router_const")
+    files = {
+      "src/app.cr" => <<-CRYSTAL,
+        require "kemal"
+        API = Kemal::Router.new
+        local = Kemal::Router.new
+        mount "/v1", API
+        Kemal.run
+        CRYSTAL
+      "src/routes/items.cr" => <<-CRYSTAL,
+        API.get "/items" do |env|
+        end
+        local.get "/not-this-files-router" do |env|
+        end
+        CRYSTAL
+    }
+    CodeLocator.instance.clear_all
+    files.each do |relative, content|
+      path = File.join(temp_dir, relative)
+      Dir.mkdir_p(File.dirname(path))
+      File.write(path, content)
+      CodeLocator.instance.register_file(path, content)
+    end
+    options = create_test_options
+    options["base"] = YAML::Any.new([YAML::Any.new(temp_dir)])
+
+    Analyzer::Crystal::Kemal.new(options).analyze.map(&.url).should eq(["/v1/items"])
+  ensure
+    CodeLocator.instance.clear_all
+    FileUtils.rm_rf(temp_dir) if temp_dir
+  end
+end

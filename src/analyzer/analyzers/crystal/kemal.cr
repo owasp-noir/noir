@@ -14,7 +14,14 @@ module Analyzer::Crystal
     end
 
     NAMESPACE_PATTERN = /^(\s*)(?:(\w+)\.)?namespace\s+["'](.+?)["']/
-    MOUNT_PATTERN     = /^\s*mount\s+["'](.+?)["']\s*,\s*(\w+)/
+    MOUNT_PATTERN     = /^\s*mount\s+["'](.+?)["']\s*,\s*(@?\w+)/
+    # `router = Kemal::Router.new` — the names whose `router.get "/x"` calls
+    # are route declarations. Only these receivers count: `client.get "/x"`
+    # on an `HTTP::Client` (or a spec helper) has the same shape.
+    ROUTER_NEW_PATTERN = /(?:^|[^.\w@])(@?\w+)\s*=\s*Kemal::Router\.new\b/
+    # `router.get "/x"`: group 1 = receiver, 2 = verb, 3 = path. The receiver
+    # is checked against the file's `Kemal::Router` names by the caller.
+    ROUTER_ROUTE_PATTERN = /(?:^|[^.\w@])(@?\w+)\.(get|post|put|delete|patch|head|options|ws|query)\s*(?:\(\s*)?['"](.+?)['"]/
     # Compile-time macro var assignment, e.g. `{{namespace = Routes::API::V1}}`.
     # invidious sets it once, then registers 50+ routes as
     # `get "/…", {{namespace}}::Videos, :videos` — substituting it back lets
@@ -31,6 +38,10 @@ module Analyzer::Crystal
     @action_index : ActionIndex = ActionIndex.new
     # {scan base, router variable} => mount path, over every Kemal file.
     @project_mounts = {} of Tuple(String, String) => String
+    # {scan base, router constant} for every `ROUTER = Kemal::Router.new`.
+    # Only constants: a local or instance variable's name means nothing in
+    # another file.
+    @project_routers = Set(Tuple(String, String)).new
 
     def analyze
       # Apps like invidious register routes as `get "/", Routes::Misc, :home`
@@ -52,11 +63,14 @@ module Analyzer::Crystal
       scan_target_files.each do |path|
         next unless scan_accepts?(path)
         content = read_file_content(path) rescue next
-        next unless content.includes?("mount")
+        next unless content.includes?("mount") || content.includes?("Kemal::Router")
         base = configured_base_for(path)
         mask_crystal_heredocs(content.lines).each do |line|
           if line.includes?("mount") && (match = line.match(MOUNT_PATTERN))
             @project_mounts[{base, match[2]}] = match[1]
+          end
+          if line.includes?("Kemal::Router") && (match = line.match(ROUTER_NEW_PATTERN)) && match[1][0].uppercase?
+            @project_routers << {base, match[1]}
           end
         end
       end
@@ -80,10 +94,15 @@ module Analyzer::Crystal
       # `api` keep their own prefixes.
       mount_map = {} of String => String
       macro_vars = {} of String => String
+      routers = Set(String).new
+      @project_routers.each { |base, name| routers << name if base == file_base }
 
       lines.each do |line|
         if line.includes?("mount") && (match = line.match(MOUNT_PATTERN))
           mount_map[match[2]] = match[1]
+        end
+        if line.includes?("Kemal::Router") && (match = line.match(ROUTER_NEW_PATTERN))
+          routers << match[1]
         end
         if include_callee && line.includes?("{{") && (match = line.match(MACRO_VAR_PATTERN))
           macro_vars[match[1]] = match[2]
@@ -144,6 +163,10 @@ module Analyzer::Crystal
 
         # Parse endpoint
         endpoint = line_to_endpoint(line)
+        receiver = ""
+        if endpoint.method.empty? && !routers.empty?
+          endpoint, receiver = router_line_to_endpoint(line, routers)
+        end
         if !endpoint.method.empty? && valid_crystal_route_path?(endpoint.url)
           # Build full path with namespace prefixes and mount path
           route_path = endpoint.url
@@ -156,12 +179,13 @@ module Analyzer::Crystal
               ns_prefix = Noir::URLPath.join(ns_prefix, ns[:prefix])
             end
             full_path = Noir::URLPath.join(ns_prefix, route_path)
+          end
 
-            # Determine router variable for mount lookup
-            router_var = namespace_stack.first[:router_var]
-            if !router_var.empty? && (mount = mount_map[router_var]? || @project_mounts[{file_base, router_var}]?)
-              full_path = Noir::URLPath.join(mount, full_path)
-            end
+          # Mount lookup: the `router.get` receiver, else the router whose
+          # namespace block encloses a bare `get`.
+          router_var = receiver.presence || namespace_stack.first?.try(&.[:router_var]) || ""
+          if !router_var.empty? && (mount = mount_map[router_var]? || @project_mounts[{file_base, router_var}]?)
+            full_path = Noir::URLPath.join(mount, full_path)
           end
 
           endpoint.url = full_path
@@ -267,6 +291,20 @@ module Analyzer::Crystal
     # endpoints.
     QUERY_ROUTE_PATTERN = /(?:^|[^.\w])query\s*(?:\(\s*)?['"](.+?)['"]/
     KEMAL_EXTRA_ROUTES  = [{"QUERY", QUERY_ROUTE_PATTERN}] of Tuple(String, Regex)
+
+    # `router.get "/x"` where `router` is one of `routers`. Returns the
+    # endpoint (empty when nothing matches) and the receiver.
+    def router_line_to_endpoint(content : String, routers : Set(String)) : Tuple(Endpoint, String)
+      content = Noir::CrystalCalleeExtractor.strip_comment(content)
+      if content.includes?('.') && (match = content.match(ROUTER_ROUTE_PATTERN)) && routers.includes?(match[1])
+        path = normalize_crystal_interpolation(match[3])
+        verb = match[2]
+        endpoint = Endpoint.new(path, verb == "ws" ? "GET" : verb.upcase)
+        endpoint.protocol = "ws" if verb == "ws"
+        return {endpoint, match[1]}
+      end
+      {Endpoint.new("", ""), ""}
+    end
 
     def line_to_endpoint(content : String) : Endpoint
       # Shared engine helper: precompiled per-verb patterns + includes?

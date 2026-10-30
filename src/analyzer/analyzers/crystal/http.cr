@@ -10,6 +10,7 @@ module Analyzer::Crystal
     PATH_THEN_METHOD_RE = /context\.request\.path\s*(?:==|===)\s*["']([^"']+?)["']\s*&&\s*.*context\.request\.method\s*(?:==|===)\s*["'](GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)["']/
     PATH_COMPARE_RE     = /context\.request\.path\s*(?:==|===|\.starts_with\?|\.includes\?)\s*\(?\s*["']([^"']+?)["']/
     WHEN_RE             = /(?:^|[^.\w])when\s+["']([^"']+?)["']/
+    PATH_CASE_RE        = /(?:^\s*|=\s*|\breturn\s+)case\b.*\brequest\.path\b/
 
     def analyze_file(path : String) : Array(Endpoint)
       endpoints = [] of Endpoint
@@ -32,8 +33,12 @@ module Analyzer::Crystal
         content_for_scan = stripped
         indent = raw.size - raw.lstrip.size
 
-        # Enter a request.path case (common spellings)
-        if stripped.lstrip =~ /^case\b.*\brequest\.path\b/ || stripped.lstrip =~ /^case\s+context\.request\.path\b/
+        # Enter a request.path case, as a statement or as the value of an
+        # assignment / `return` (`body = case ctx.request.path`). The scope is
+        # keyed on the line's indent, not the `case` column: an `end` aligned
+        # under `body` sits left of `case`, so keying on `case` would let a
+        # nested `if ... end` inside a `when` close it early.
+        if stripped.includes?("case") && stripped.matches?(PATH_CASE_RE)
           path_case_stack << indent
         end
 
