@@ -1,3 +1,7 @@
+"""Click tool.
+
+@cli.command(  (
+"""
 import click
 
 

@@ -33,6 +33,9 @@ module Analyzer::Python
     # A parser that is run or carries subcommands is a command even when it
     # is also another parser's parent.
     ARGPARSE_COMMAND_USE_RE = /(\w+)\s*\.\s*(?:add_subparsers|parse_\w*args)\s*\(/
+    # `p.add_argument_group("x").add_argument(...)`: receiver and arguments.
+    ARGPARSE_INLINE_GROUP_RE = /(\w+)\s*\.\s*add_(?:argument|mutually_exclusive)_group\s*\([^)]*\)\s*\.\s*add_argument\s*\(([^)]*)/
+    PY_STRING_LITERAL_RE     = /"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'/
 
     # click / typer decorators
     DECORATOR_CMD_RE  = /^@(\w+)\.(command|group|callback)\s*\(/
@@ -99,11 +102,12 @@ module Analyzer::Python
             binary = python_binary_name(content, path)
             root_url = "cli://#{binary}"
             lines = content.lines
+            in_string = lines_inside_string(lines)
 
-            scan_argparse(lines, path, binary, root_url, endpoints)
-            scan_click(lines, path, root_url, endpoints)
+            scan_argparse(lines, in_string, path, binary, root_url, endpoints)
+            scan_click(lines, in_string, path, root_url, endpoints)
             scan_typer(lines, path, root_url, endpoints)
-            scan_absl(lines, path, root_url, endpoints)
+            scan_absl(lines, in_string, path, root_url, endpoints)
             scan_cleo(lines, path, root_url, endpoints)
             scan_stdlib(content, lines, path, root_url, endpoints)
           rescue e
@@ -160,8 +164,8 @@ module Analyzer::Python
     # run, no `prog=`, no subcommands of its own) gets no row of its own,
     # unless no recognised parser consumes it: then its arguments stay on
     # the root rather than vanish.
-    private def scan_argparse(lines : Array(String), path : String, binary : String,
-                              root_url : String, endpoints : Hash(String, Endpoint))
+    private def scan_argparse(lines : Array(String), in_string : Array(Bool), path : String,
+                              binary : String, root_url : String, endpoints : Hash(String, Endpoint))
       # Join each multi-line call (the Black/PEP8 shape puts the name of an
       # `add_argument(` / `add_parser(` on its own following line) so the
       # name token is visible on one logical line. The join is string- and
@@ -172,8 +176,14 @@ module Analyzer::Python
       index = 0
       while index < lines.size
         line = lines[index]
+        if in_string[index]
+          index += 1
+          next
+        end
         if line.includes?("pars")
-          line.scan(ARGPARSE_COMMAND_USE_RE) { |m| commands << m[1] }
+          _, _, comment = python_call_line_scan(line, nil)
+          code = line.byte_slice(0, comment).gsub(PY_STRING_LITERAL_RE, "\"\"")
+          code.scan(ARGPARSE_COMMAND_USE_RE) { |m| commands << m[1] }
         end
         if line.lstrip.starts_with?('#') ||
            !(line.includes?("add_argument") || line.includes?("add_parser") ||
@@ -205,29 +215,31 @@ module Analyzer::Python
       end
       return if last_urls.empty?
 
-      var_urls = {} of String => String
-      var_params = {} of String => Array(Param)
-      group_owner = {} of String => String
+      # Each assignment builds a new parser: {command URL (nil for a
+      # template), its arguments so far}. Variables and argument groups point
+      # at the parser they held when assigned, so reusing a variable for the
+      # next subcommand leaves an earlier group on the earlier one.
+      parsers = [] of Tuple(String?, Array(Param))
+      var_parser = {} of String => Int32
       calls.each do |line_no, call|
         if target = argparse_parser_target(call, root_url)
           var, url = target
-          inherited = argparse_parents(call).flat_map { |name| var_params[name]? || [] of Param }
-          var_params[var] = inherited.dup
-          group_owner.delete(var)
-          unless templates.includes?(var)
-            var_urls[var] = url
-            unless inherited.empty?
-              ep = fetch_endpoint(endpoints, url, path, line_no)
-              inherited.each { |param| ep.push_param(param) }
-            end
+          inherited = argparse_parents(call).flat_map { |name| var_parser[name]?.try { |id| parsers[id][1] } || [] of Param }
+          url = nil if templates.includes?(var)
+          var_parser[var] = parsers.size
+          parsers << {url, inherited.dup}
+          if url && !inherited.empty?
+            ep = fetch_endpoint(endpoints, url, path, line_no)
+            inherited.each { |param| ep.push_param(param) }
           end
         elsif m = call.match(ARGPARSE_GROUP_RE)
           # An argument group adds to the parser it was made from.
-          group_owner[m[1]] = group_owner[m[2]]? || m[2]
+          owner = m[2]
+          var_parser[m[1]] = var_parser[owner]? || (parsers << {templates.includes?(owner) ? nil : last_urls[owner]?, [] of Param}).size - 1
           next
         end
 
-        next unless m = call.match(ADD_ARGUMENT_RE)
+        next unless m = call.match(ADD_ARGUMENT_RE) || call.match(ARGPARSE_INLINE_GROUP_RE)
         # The canonical form declares both names — `add_argument("-v",
         # "--verbose")` — and argparse derives the destination from the long
         # one, so prefer it over the short alias. Cut at the first `=` so
@@ -242,12 +254,14 @@ module Analyzer::Python
                   Param.new(first, "", "argument")
                 end
 
-        receiver = group_owner[m[1]]? || m[1]
-        (var_params[receiver] ||= [] of Param) << param
-        next if templates.includes?(receiver)
-        if url = var_urls[receiver]? || last_urls[receiver]?
-          fetch_endpoint(endpoints, url, path, line_no).push_param(param)
+        receiver = m[1]
+        if id = var_parser[receiver]?
+          url, params = parsers[id]
+          params << param
+        else
+          url = templates.includes?(receiver) ? nil : last_urls[receiver]?
         end
+        fetch_endpoint(endpoints, url, path, line_no).push_param(param) if url
       end
     end
 
@@ -278,8 +292,8 @@ module Analyzer::Python
     # click: stacked decorators sit above the handler `def`. Buffer the
     # @option/@argument decorators, then flush them onto the command endpoint
     # when the def is reached. A top-level @click.group() is the binary root.
-    private def scan_click(lines : Array(String), path : String, root_url : String,
-                           endpoints : Hash(String, Endpoint))
+    private def scan_click(lines : Array(String), in_string : Array(Bool), path : String,
+                           root_url : String, endpoints : Hash(String, Endpoint))
       pending_params = [] of Param
       pending_cmd : NamedTuple(receiver: String, kind: String, name: String?)? = nil
       pending_line = 0
@@ -287,6 +301,12 @@ module Analyzer::Python
       index = 0
       while index < lines.size
         stripped = lines[index].strip
+
+        # A docstring line is text, not a decorator or def.
+        if in_string[index]
+          index += 1
+          next
+        end
 
         # Blank lines and comments don't break a decorator stack (Black often
         # leaves a comment between the decorators and the def).
@@ -340,6 +360,17 @@ module Analyzer::Python
         end
 
         index += 1
+      end
+    end
+
+    # Whether each line starts inside a triple-quoted string (a docstring
+    # body), where a `(` is text and must not start a call join.
+    private def lines_inside_string(lines : Array(String)) : Array(Bool)
+      triple : Char? = nil
+      lines.map do |line|
+        inside = !triple.nil?
+        _, triple, _ = python_call_line_scan(line, triple)
+        inside
       end
     end
 
@@ -423,12 +454,12 @@ module Analyzer::Python
     # program — so every match simply attaches to the binary's root URL.
     # Joins a multi-line call (the name may land on its own continuation
     # line) the same way scan_argparse joins add_argument.
-    private def scan_absl(lines : Array(String), path : String, root_url : String,
-                          endpoints : Hash(String, Endpoint))
+    private def scan_absl(lines : Array(String), in_string : Array(Bool), path : String,
+                          root_url : String, endpoints : Hash(String, Endpoint))
       index = 0
       while index < lines.size
         line = lines[index]
-        unless line.matches?(ABSL_DEFINE_CALL_RE)
+        if in_string[index] || !line.matches?(ABSL_DEFINE_CALL_RE)
           index += 1
           next
         end

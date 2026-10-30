@@ -55,4 +55,19 @@ describe "Analyzer::Python::Cli argparse subcommands" do
   it "leaves a parent's arguments on the root when no recognised parser consumes it" do
     commands["cli://loopctl"]?.should eq(["region:flag"])
   end
+
+  it "starts no join from a docstring line, in argparse or click" do
+    commands["cli://docctl/alpha"]?.should eq(["aa:flag"])
+    commands["cli://clickparenctl/serve"]?.should eq(["port:flag"])
+  end
+
+  it "binds a group to the parser its owner held, and reads a chained group" do
+    commands["cli://docctl/beta"]?.should eq(["bb:flag", "late-beta:flag"])
+    commands["cli://docctl/gamma"]?.should eq(["inline:flag"])
+  end
+
+  it "does not read parse_args() in a string or comment as running a template" do
+    commands.has_key?("cli://docctl").should be_false
+    commands["cli://docctl/run"]?.should eq(["job:argument", "region:flag"])
+  end
 end

@@ -179,6 +179,18 @@ argparse_subcommand_endpoints = [
     Param.new("job", "", "argument"),
   ]),
   build.call("cli://loopctl", [Param.new("region", "", "flag")]),
+  # Docstring lines start no join; a group stays on the parser its owner
+  # held; parse_args() in a string does not make `common` a command.
+  build.call("cli://docctl/alpha", [Param.new("aa", "", "flag")]),
+  build.call("cli://docctl/beta", [
+    Param.new("bb", "", "flag"),
+    Param.new("late-beta", "", "flag"),
+  ]),
+  build.call("cli://docctl/gamma", [Param.new("inline", "", "flag")]),
+  build.call("cli://docctl/run", [
+    Param.new("region", "", "flag"),
+    Param.new("job", "", "argument"),
+  ]),
 ]
 
 FunctionalTester.new("fixtures/python/cli_argparse_subcommands/", {
