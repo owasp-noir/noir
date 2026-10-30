@@ -50,7 +50,7 @@ module Noir::Detection
     # Source control / IDE / agent state
     ".git", ".idea", ".vscode", ".claude",
     # Language-specific dependency / build caches
-    "node_modules", "__pycache__", ".venv", "venv",
+    "node_modules", "__pycache__", ".venv", "venv", ".uv-cache",
     ".pytest_cache", ".tox", ".gradle", ".bundle", ".dart_tool",
     ".cargo", ".terraform",
     # Yarn Berry: the committed yarn binary (`releases/yarn-4.x.cjs`, a
@@ -742,6 +742,12 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
         listing = pending_listings.delete(dir).try(&.receive) || Noir::DirListing.list(dir)
         if (listing_error = listing.error) && !listing_error.is_a?(File::Error)
           raise listing_error
+        end
+        # A `CACHEDIR.TAG` marks a tool's cache (uv, Cargo's `target/`,
+        # pytest, ruff), whatever the directory is called.
+        if listing.has_cachedir_tag && !base_paths.includes?(dir)
+          skipped_ignored_dirs += 1
+          next
         end
         # Crystal's vendor convention is `lib/` next to `shard.yml`
         # (same shape as Node's node_modules / Ruby's vendor/bundle).

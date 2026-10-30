@@ -8,10 +8,10 @@ module Detector::Go
     # `//encore:api` directive.
     SIGNAL = Regex.union(/\bencore\.dev\s+v\d/, /"encore\.dev\//, /^\/\/encore:api\b/m)
 
+    # Not `go_dependency?`: a `//encore:api` annotation needs no import.
     def detect(filename : String, file_contents : String) : Bool
-      return false unless filename.includes?("go.mod") || filename.ends_with?(".go")
-
-      content_matches?(file_contents, SIGNAL)
+      go_mod_dependency?(filename, file_contents, SIGNAL) ||
+        (filename.ends_with?(".go") && content_matches?(file_contents, SIGNAL))
     end
   end
 end

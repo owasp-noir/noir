@@ -248,6 +248,50 @@ describe "kemal cross-file mounts" do
     CodeLocator.instance.clear_all
     FileUtils.rm_rf(temp_dir) if temp_dir
   end
+
+  it "ignores spec-kemal client calls outside spec/ and keeps a handler on the next line" do
+    temp_dir = File.tempname("kemal_spec_client")
+    script = File.join(temp_dir, "scripts", "smoke.cr")
+    content = <<-CRYSTAL
+      require "spec-kemal"
+      require "../src/app"
+
+      r = get("/items/7")
+      puts delete("/items/7").status_code
+      puts get("/search?tags[]=a&tags[]=b").body
+      post("/items",
+        headers: HTTP::Headers{"A" => "b"})
+
+      get "/k/multiline",
+        do |env|
+        "x"
+      end
+      CRYSTAL
+    CodeLocator.instance.clear_all
+    Dir.mkdir_p(File.dirname(script))
+    File.write(script, content)
+    CodeLocator.instance.register_file(script, content)
+
+    options = create_test_options
+    options["base"] = YAML::Any.new([YAML::Any.new(temp_dir)])
+    analyzer = Analyzer::Crystal::Kemal.new(options)
+    analyzer.analyze.map { |ep| "#{ep.method} #{ep.url}" }.should eq(["GET /k/multiline"])
+    analyzer.line_to_endpoint(%(r = get("/items/7"))).method.should eq("")
+    analyzer.line_to_endpoint(%(puts delete("/items/7").status_code)).method.should eq("")
+    analyzer.line_to_endpoint(%(post "/users", headers: HTTP::Headers{"A" => "b"}, body: "x")).method.should eq("")
+    {
+      %(get "/items/:id" do |env|),
+      %(get("/items/:id") { |env| env }),
+      %(get "/items/:id", &handler),
+      %(get "/items/:id", Routes::Items, :show),
+      %(get "/items/:id", {{ namespace }}::Items, :show),
+    }.each do |line|
+      analyzer.line_to_endpoint(line).url.should eq("/items/:id")
+    end
+  ensure
+    CodeLocator.instance.clear_all
+    FileUtils.rm_rf(temp_dir) if temp_dir
+  end
 end
 
 describe "kemal router-instance routes" do

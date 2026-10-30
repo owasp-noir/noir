@@ -44,11 +44,10 @@ module Detector::Go
 
     def detect(filename : String, file_contents : String) : Bool
       return false unless filename.ends_with?(".go") || File.basename(filename) == "go.mod"
+      # go.mod has no flag/argv usage of its own; only a direct library
+      # requirement qualifies it.
+      return go_mod_dependency?(filename, file_contents, CLI_LIBRARY_MARKER) unless filename.ends_with?(".go")
       return true if content_matches?(file_contents, CLI_LIBRARY_MARKER)
-
-      # go.mod has no flag/argv usage of its own; only the library markers
-      # above qualify it.
-      return false unless filename.ends_with?(".go")
       return false if content_matches?(file_contents, HTTP_LISTEN)
       return true if content_matches?(file_contents, FLAG_IMPORT) && content_matches?(file_contents, BUILTIN_FLAG_USE)
       return true if content_matches?(file_contents, ARGV_INDEX)

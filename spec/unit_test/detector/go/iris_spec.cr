@@ -11,7 +11,7 @@ describe "Detect Go Iris" do
 
   # A `.go` file importing Iris detects too (sub-directory scans).
   it "go file importing iris" do
-    instance.detect("main.go", "github.com/kataras/iris/v12").should be_true
+    instance.detect("main.go", %(package main\n\nimport "github.com/kataras/iris/v12"\n)).should be_true
   end
 
   it "go file without iris import" do

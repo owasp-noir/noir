@@ -900,6 +900,34 @@ describe "SpringAuthTagger (multi-module projects)" do
     tags["GET /open/x"][0].should contain("application-dev.yml")
   end
 
+  it "skips outbound @HttpExchange and @FeignClient declarations marked internal" do
+    config = <<-JAVA
+      public class SecurityConfig {
+          @Bean
+          SecurityFilterChain api(HttpSecurity http) throws Exception {
+              http.authorizeHttpRequests(c -> c.anyRequest().hasRole("USER"));
+              return http.build();
+          }
+      }
+      JAVA
+    CodeLocator.instance.clear_all
+    root = File.tempname("spring_auth_internal")
+    path = File.join(root, "SecurityConfig.java")
+    Dir.mkdir_p(root)
+    File.write(path, config)
+    CodeLocator.instance.register_path(path)
+    noir_options = create_test_options
+    noir_options["base"] = YAML::Any.new(root)
+
+    client_ep = Endpoint.new("/v1/users/{userId}", "GET", [Param.new("userId", "", "path")], Details.new(PathInfo.new(path, 1)))
+    client_ep.internal = true
+    endpoints = [client_ep]
+    SpringAuthTagger.new(noir_options).perform(endpoints)
+    FileUtils.rm_rf(root)
+
+    endpoints[0].tags.should be_empty
+  end
+
   it "applies a chain only to modules that depend on the module declaring it" do
     tags = run_spring_multi_module(files, {
       "GET /search" => "search/src/main/java/com/example/search/Controller.java:2",

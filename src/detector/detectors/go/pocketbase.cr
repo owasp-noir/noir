@@ -9,7 +9,7 @@ module Detector::Go
     # itself self-references via the same path so the marker
     # works whether you're scanning a user app or the upstream.
     def detect(filename : String, file_contents : String) : Bool
-      (filename.includes?("go.mod") && file_contents.includes?("github.com/pocketbase/pocketbase")) ||
+      go_mod_dependency?(filename, file_contents, "github.com/pocketbase/pocketbase") ||
         (filename.ends_with?(".go") && file_contents.includes?("pocketbase/tools/router"))
     end
   end

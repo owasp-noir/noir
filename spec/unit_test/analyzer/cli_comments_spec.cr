@@ -30,4 +30,51 @@ describe "CLI analyzers and non-code" do
   it "php: reads neither //, # nor /* */ comments, nor $_ENV writes" do
     cli_params("php/cli_comments").should eq(["AFTER_STRING:env", "READ_ME:env", "real:flag", "v:flag"])
   end
+
+  it "go: does not report go-flags struct tags in a library package that parses a caller string" do
+    dir = File.tempname("go_flags_lib")
+    lib_dir = File.join(dir, "lib")
+    Dir.mkdir_p(File.join(lib_dir, "pkg", "cmdline"))
+    File.write(File.join(lib_dir, "go.mod"), "module example.com/lib\n\ngo 1.21\n\nrequire github.com/jessevdk/go-flags v1.5.0\n")
+    File.write(File.join(lib_dir, "pkg", "cmdline", "parse.go"), <<-GO)
+      package cmdline
+
+      import (
+        "strings"
+        "github.com/jessevdk/go-flags"
+      )
+
+      type Options struct {
+        Data    string `short:"d" long:"data"`
+        Request string `short:"X" long:"request"`
+      }
+
+      func Parse(line string) (*Options, error) {
+        var opts Options
+        _, err := flags.NewParser(&opts, flags.Default).ParseArgs(strings.Fields(line))
+        return &opts, err
+      }
+      GO
+
+    options = create_test_options
+    options["base"] = YAML::Any.new([YAML::Any.new(dir)])
+    runner = NoirRunner.new(options)
+    runner.detect
+    runner.analyze
+    runner.endpoints.select(&.method.==("CLI")).should be_empty
+
+    # A `main` in a sibling module of the workspace (go.work) parses it.
+    Dir.mkdir_p(File.join(dir, "app"))
+    File.write(File.join(dir, "go.work"), "go 1.22\n\nuse (\n\t./app\n\t./lib\n)\n")
+    File.write(File.join(dir, "app", "go.mod"), "module example.com/tool\n\ngo 1.22\n\nrequire example.com/lib v0.0.0\n")
+    File.write(File.join(dir, "app", "main.go"), %(package main\n\nimport "example.com/lib/pkg/cmdline"\n\nfunc main() { cmdline.Parse("") }\n))
+    CodeLocator.instance.reset_files
+    runner = NoirRunner.new(options)
+    runner.detect
+    runner.analyze
+    runner.endpoints.select(&.method.==("CLI")).flat_map(&.params.map(&.name)).sort!.should eq(["data", "request"])
+  ensure
+    CodeLocator.instance.reset_files
+    FileUtils.rm_rf(dir) if dir && Dir.exists?(dir)
+  end
 end

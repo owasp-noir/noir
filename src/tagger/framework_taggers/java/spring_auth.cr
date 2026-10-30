@@ -2233,6 +2233,7 @@ class SpringAuthTagger < FrameworkTagger
   end
 
   private def check_endpoint(endpoint : Endpoint)
+    return if endpoint.internal
     # The login / logout / OAuth2 filters answer before any authorization rule.
     return if endpoint.tags.includes?(Analyzer::Java::JavaEngine::SECURITY_FILTER_TAG)
 

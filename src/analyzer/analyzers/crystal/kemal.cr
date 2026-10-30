@@ -238,7 +238,8 @@ module Analyzer::Crystal
         end
 
         # Parse endpoint
-        endpoint = line_to_endpoint(line)
+        # `get "/x",` + `do |env|` puts the handler on the next line.
+        endpoint = line_to_endpoint(line.rstrip.ends_with?(',') ? "#{line} #{lines[index + 1]?}" : line)
         receiver = ""
         if endpoint.method.empty? && !routers.empty?
           endpoint, receiver = router_line_to_endpoint(line, routers)
@@ -411,13 +412,18 @@ module Analyzer::Crystal
       {Endpoint.new("", ""), ""}
     end
 
+    # A Kemal route hands its path a handler: a block (`do |env|`, `{ … }`,
+    # `&handler`) or a controller action (`Routes::Misc, :home`, also via
+    # `{{ namespace }}`). spec-kemal's client helpers share the verb names
+    # but take none: `get("/items/7")`, `post "/x", headers: h, body: b`.
+    ROUTE_HANDLER_RE = /['"]\s*\)?\s*(?:do\b|\{|,\s*(?:do\b|&|\{\{|[A-Z]\w*(?:::\w+)*\s*,\s*:\w))/
+
     def line_to_endpoint(content : String) : Endpoint
+      content = Noir::CrystalCalleeExtractor.strip_comment(content)
+      return Endpoint.new("", "") unless content.matches?(ROUTE_HANDLER_RE)
       # Shared engine helper: precompiled per-verb patterns + includes?
       # gates. Replaces 8 sequential unguarded .scan calls per source line.
-      match_crystal_simple_route(
-        Noir::CrystalCalleeExtractor.strip_comment(content),
-        extra: KEMAL_EXTRA_ROUTES
-      )
+      match_crystal_simple_route(content, extra: KEMAL_EXTRA_ROUTES)
     end
   end
 end

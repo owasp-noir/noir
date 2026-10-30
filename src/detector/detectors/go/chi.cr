@@ -4,8 +4,10 @@ module Detector::Go
   class Chi < Detector
     detector_for "go_chi", extensions: %w[.go], path_segments: %w[go.mod]
 
+    IMPORT_PATTERN = Regex.union("github.com/go-chi/chi")
+
     def detect(filename : String, file_contents : String) : Bool
-      (filename.includes? "go.mod") && (file_contents.includes? "github.com/go-chi/chi")
+      go_dependency?(filename, file_contents, IMPORT_PATTERN)
     end
   end
 end

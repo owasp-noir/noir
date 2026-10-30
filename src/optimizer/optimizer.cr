@@ -373,8 +373,10 @@ class EndpointOptimizer
   end
 
   private def merge_params(target : Endpoint, source : Endpoint, drop_collection_noise : Bool = false, skip_path : Bool = false) : Nil
+    drop_sample_body = drop_collection_noise && collection_endpoint?(source) && declares_inputs?(target)
     source.params.each do |param|
       next if drop_collection_noise && collection_noise_param?(source, param)
+      next if drop_sample_body && collection_body_param?(param)
       next if skip_path && param.param_type == "path"
 
       existing_param = target.params.find { |target_param| target_param.name == param.name && target_param.request_type == param.request_type }
@@ -469,6 +471,20 @@ class EndpointOptimizer
     return false unless collection_endpoint?(endpoint)
 
     collection_noise_header_param?(param)
+  end
+
+  # A collection request's body is sample data, and a test may send fields
+  # the handler never reads to check that they are ignored. Once the code
+  # names its own inputs, only those describe the endpoint; a handler the
+  # analyzer read no inputs from keeps the sample as its only hint. Path,
+  # header and cookie params say nothing about the body (`db.insert(req.body)`
+  # beside one `req.headers[...]` read).
+  private def collection_body_param?(param : Param) : Bool
+    {"json", "form"}.includes?(param.request_type)
+  end
+
+  private def declares_inputs?(endpoint : Endpoint) : Bool
+    endpoint.params.any? { |param| !{"path", "header", "cookie"}.includes?(param.param_type) }
   end
 
   private def collection_noise_header_param?(param : Param) : Bool
@@ -609,6 +625,8 @@ class EndpointOptimizer
     return target unless source_document_endpoint?(target)
     return target if source_document_endpoint?(source)
 
+    # Read before `technology` below turns into the code's.
+    drop_sample_body = collection_endpoint?(target) && declares_inputs?(source)
     details = target.details
     details.technology = source.details.technology if source.details.technology
     # The document's path params name the document's slots; once the URL is
@@ -630,10 +648,11 @@ class EndpointOptimizer
     end
     details.code_paths = promoted
     target.details = details
-    # Strip the collection's boilerplate headers, but not one the handler
-    # itself reads (`req.headers['origin']`): that one is real input.
+    # Strip the collection's boilerplate headers and sample body fields, but
+    # not one the handler itself reads (`req.headers['origin']`): that one
+    # is real input.
     target.params.reject! do |param|
-      collection_noise_header_param?(param) &&
+      (collection_noise_header_param?(param) || (drop_sample_body && collection_body_param?(param))) &&
         source.params.none? { |own| own.name == param.name && own.request_type == param.request_type }
     end
     target

@@ -356,6 +356,8 @@ class SpringSecurityTagger < FrameworkTagger
   # ---- per-endpoint ----------------------------------------------------
 
   private def check_endpoint(endpoint : Endpoint)
+    return if endpoint.internal
+
     if desc = csrf_disabled_description_for(endpoint)
       endpoint.add_tag(Tag.new("csrf-protection", desc, "spring_security"))
     end

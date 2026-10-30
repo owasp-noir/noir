@@ -752,18 +752,27 @@ module Noir
       !prev.nil? && prev.type != :string && VALUE_CONTEXT_TOKENS.includes?(prev.value)
     end
 
-    # A `this.<verb>(path, …)` call in a file with no server import is a route
-    # only when it is a statement that hands over a handler: an inline
-    # function or a method reference, `this.get('/', this.getTags)`.
-    # `return this.post('/orders', body)`, `this.post('/files', file, {
-    # onProgress })` and `return this.get('/x', this.defaults)` are the
-    # outbound calls of an API client class. `this_idx` is the receiver.
-    private def this_handler_arg?(this_idx : Int32, lparen_idx : Int32) : Bool
-      trailing_arg_starts(lparen_idx).any? do |idx|
-        next true if inline_function_first_param(idx)
+    # Whether a `this.<verb>(path, …)` call hands over a handler: an inline
+    # function whose first parameter names the request (`(req, res)`,
+    # `async (ctx)`) or a statement's method reference, `this.get('/',
+    # this.getTags)`. A client names the error or the response first
+    # (`(err, body) =>`), so a call passing only such callbacks gives
+    # `false`; one passing no function at all gives `nil`, and the call's
+    # context decides (`return this.post('/orders', body)` is a client's,
+    # `return this.get('/x', this.defaults)` too). `this_idx` is the receiver.
+    private def this_handler_arg?(this_idx : Int32, lparen_idx : Int32) : Bool?
+      verdict = nil
+      trailing_arg_starts(lparen_idx).each do |idx|
+        if param = inline_function_first_param(idx)
+          next if param.empty?
+          return true if param.matches?(REQUEST_PARAM_RE)
+          verdict = false
+          next
+        end
         chain_end = member_chain_end(idx)
-        @tokens[idx]?.try(&.value) == "this" && chain_end > idx + 1 && arg_end?(chain_end) && !value_context?(this_idx - 1)
+        return true if @tokens[idx]?.try(&.value) == "this" && chain_end > idx + 1 && arg_end?(chain_end) && !value_context?(this_idx - 1)
       end
+      verdict
     end
 
     # First parameter names of a request handler: `(req, res)`, `(request,
@@ -924,10 +933,26 @@ module Noir
     # A receiver is a client only when the file never builds a router
     # from that name, so a project that genuinely names its router
     # `request` keeps its routes. `recv_idx` is the receiver token and
-    # `lparen_idx` the call's `(`.
+    # `lparen_idx` the call's `(`. A member chain counts by its root too
+    # (`request.formData.post(…)`), and an awaited call is a client whatever
+    # its receiver: a route registration is never awaited.
     private def http_client_receiver?(router_var : String, recv_idx : Int32, lparen_idx : Int32) : Bool
-      return false if !HTTP_CLIENT_RECEIVERS.includes?(router_var) || @explicit_router_vars.includes?(router_var)
-      !(CONTEXTUAL_CLIENT_RECEIVERS.includes?(router_var) && request_handler_call?(recv_idx, lparen_idx))
+      if HTTP_CLIENT_RECEIVERS.includes?(router_var) && !@explicit_router_vars.includes?(router_var)
+        return true unless CONTEXTUAL_CLIENT_RECEIVERS.includes?(router_var) && request_handler_call?(recv_idx, lparen_idx)
+      end
+
+      root_idx = recv_idx
+      while root_idx >= 2 && @tokens[root_idx - 1].type == :dot && @tokens[root_idx - 2].type.in?(:identifier, :keyword)
+        root_idx -= 2
+      end
+      root = @tokens[root_idx]?.try(&.value) || ""
+      # A request-handler argument still marks a router kept on such an
+      # object (`request.api.get('/x', async (ctx) => …)`).
+      if root_idx != recv_idx && HTTP_CLIENT_RECEIVERS.includes?(root) &&
+         !CONTEXTUAL_CLIENT_RECEIVERS.includes?(root) && !@explicit_router_vars.includes?(root)
+        return true unless trailing_arg_starts(lparen_idx).any? { |idx| inline_function_first_param(idx).try(&.matches?(REQUEST_PARAM_RE)) }
+      end
+      root_idx > 0 && @tokens[root_idx - 1].type == :keyword && @tokens[root_idx - 1].value == "await"
     end
 
     APP_FACTORIES = Set{"express", "fastify", "Fastify", "Koa", "Hono", "Application", "Router", "Elysia"}
@@ -1434,7 +1459,13 @@ module Noir
            route_handler_arg?(path_idx)
           router_var = @tokens[idx - 1].type == :identifier ? @tokens[idx - 1].value : ""
           return results if http_client_receiver?(router_var, idx - 1, path_idx)
-          return results if !@this_receiver_ok && @tokens[idx - 1].value == "this" && !this_handler_arg?(idx - 1, path_idx)
+          if @tokens[idx - 1].value == "this"
+            # `return this.get(url, {}, headers(ctx))` hands its result on
+            # and passes no handler, so it is an API client's call even in a
+            # file that imports a server framework.
+            handler = this_handler_arg?(idx - 1, path_idx)
+            return results if handler == false || (handler.nil? && (!@this_receiver_ok || value_context?(idx - 2)))
+          end
           path_entries = route_path_entries_from_args(path_idx + 1, allow_named_route: named_route_receiver?(router_var), receiver: router_var)
           @position = path_idx + 2 unless path_entries.empty?
 

@@ -148,6 +148,57 @@ describe "outbound client calls read as routes" do
         file.delete
       end
     end
+
+    it "drops a returned this.<verb> call in a file that imports a server framework" do
+      {
+        "import { Context } from 'koa'; class ItemClient extends RestClient { async find(ctx: Context, id) { return await this.get(`/internal/api/items/${id}`, {}, headers(ctx)); } }",
+        "import { Context } from 'koa'; class ItemClient extends RestClient { find(ctx: Context, id) { return this.get(`/internal/api/items/${id}`, {}, headers(ctx)); } }",
+      }.each do |code|
+        parsed(code, this_receiver_ok: true).should be_empty
+      end
+      parsed("class Api extends Router { constructor() { super(); this.get('/x', auth, ctrl.list); } }", this_receiver_ok: true).uniq!.should eq(["GET /x"])
+    end
+
+    it "drops a this.<verb> call whose only function is a client callback" do
+      {
+        "class C extends RestClient { find(id) { return this.get(`/cb/${id}`, {}, (err, body) => body); } }",
+        "class C extends RestClient { find(id) { return this.get('/cb', { json: true }, function (err, res, body) { return body; }); } }",
+        "class C extends RestClient { stmt(cb) { this.get('/cb', function (err, res) { cb(res); }); } }",
+        "class C extends RestClient { stmt(cb) { this.post('/cb', { body: 1 }, (error, response) => cb(response)); } }",
+      }.each do |code|
+        parsed(code, this_receiver_ok: true).should be_empty
+        parsed(code, this_receiver_ok: false).should be_empty
+      end
+      parsed("class R extends Router { constructor() { super(); this.get('/x', async (ctx) => { ctx.body = 1; }); } }", this_receiver_ok: true).uniq!.should eq(["GET /x"])
+    end
+
+    it "drops a call on a member of a client module and any awaited call" do
+      {
+        "import * as request from './request'; async function up(id, payload) { await request.formData.post(`/form-data/items/${id}/icon`, payload); }",
+        "import * as request from './request'; function up(id, payload) { request.formData.post(`/form-data/items/${id}/icon`, payload); }",
+        "async function up(payload) { await api.post('/upload', payload); }",
+      }.each do |code|
+        parsed(code).should be_empty
+      end
+    end
+
+    it "keeps router objects and route values that are not client calls" do
+      {
+        "const client = express.Router(); client.get('/x', ctrl.list);",
+        "const api = express.Router(); api.post('/x', auth, ctrl.create);",
+        "const route = app.get('/x', (c) => c.json({}));",
+        "export default app.post('/x', (c) => c.text('ok'));",
+        "class R { init() { this.router.get('/x', (req, res) => {}); } }",
+        "class R extends Router { constructor() { super(); const items = this.get('/x', async (ctx) => {}); } }",
+        "class R extends Router { constructor() { super(); [1].forEach(() => this.get('/x', async (ctx) => {})); } }",
+        "class R extends Router { sub() { return this.get('/x', async (ctx) => {}); } }",
+        "const request = { api: new Router() }; request.api.get('/x', async (ctx) => {});",
+      }.each do |code|
+        parsed(code).uniq!.size.should eq(1)
+      end
+      # A string that reads `await` is not the keyword (no-semicolon style).
+      parsed("const app = new Hono()\nconst mode = 'await'\napp.get('/x', (c) => c.text('a'))").uniq!.should eq(["GET /x"])
+    end
   end
 
   describe "JSRouteExtractor.test_stub_only? client-side stores" do

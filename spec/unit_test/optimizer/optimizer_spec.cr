@@ -2412,4 +2412,77 @@ describe "EndpointOptimizer source-document merges" do
     ])
     result.size.should eq(1)
   end
+
+  it "does not copy extra body params from an http_file into a merged code endpoint" do
+    optimizer = EndpointOptimizer.new(logger, create_test_options)
+
+    code_ep = Endpoint.new("/api/v2/echo", "POST", [Param.new("message", "", "json")])
+    code_ep.details = tech_details("src/echo.cr", 14, "crystal_kemal")
+
+    http_ep = Endpoint.new("/api/v2/echo", "POST", [
+      Param.new("message", "hello", "json"),
+      Param.new("timestamp", "2025-01-01T00:00:00Z", "json"),
+      Param.new("debug", "true", "json"),
+    ])
+    http_ep.details = tech_details("requests/api.http", 22, "http_file")
+
+    merged = optimizer.optimize_endpoints([code_ep, http_ep])
+    merged.size.should eq(1)
+    merged[0].params.map(&.name).should eq(["message"])
+    merged[0].params.first.value.should eq("hello")
+  end
+
+  it "keeps a test request's form fields off a handler that reads its own params" do
+    optimizer = EndpointOptimizer.new(logger, create_test_options)
+
+    code_ep = Endpoint.new("/password/reset", "POST", [Param.new("token", "", "query"), Param.new("password", "", "query")])
+    code_ep.details = tech_details("src/main/java/x/C.java", 5, "java_spring")
+
+    http_ep = Endpoint.new("/password/reset", "POST", [
+      Param.new("userId", "42", "form"),
+      Param.new("password", "example-pass", "form"),
+      Param.new("passwordConfirm", "example-pass", "form"),
+    ])
+    http_ep.details = tech_details("src/test/http/probe.http", 2, "http_file")
+
+    {[code_ep, http_ep], [http_ep, code_ep]}.each do |order|
+      merged = optimizer.optimize_endpoints(order)
+      merged.size.should eq(1)
+      merged[0].params.map { |p| "#{p.param_type}:#{p.name}" }.sort!.should eq(["query:password", "query:token"])
+    end
+  end
+
+  it "keeps a test request's body for a handler that reads only a header" do
+    optimizer = EndpointOptimizer.new(logger, create_test_options)
+
+    code_ep = Endpoint.new("/whole", "POST", [Param.new("x-api-key", "", "header")])
+    code_ep.details = tech_details("app.js", 4, "js_express")
+
+    http_ep = Endpoint.new("/whole", "POST", [Param.new("title", "t", "json")])
+    http_ep.details = tech_details("requests.http", 8, "http_file")
+
+    merged = optimizer.optimize_endpoints([code_ep, http_ep])
+    merged.size.should eq(1)
+    merged[0].params.map(&.name).sort!.should eq(["title", "x-api-key"])
+  end
+
+  it "keeps a test request's body as the hint for a handler with no params of its own" do
+    optimizer = EndpointOptimizer.new(logger, create_test_options)
+
+    code_ep = Endpoint.new("/items/{id}", "PUT", [Param.new("id", "", "path")])
+    code_ep.details = tech_details("src/items.js", 3, "js_express")
+
+    http_ep = Endpoint.new("/items/7", "PUT", [Param.new("name", "lamp", "json")])
+    http_ep.details = tech_details("requests/api.http", 4, "http_file")
+
+    merged = optimizer.optimize_endpoints([code_ep, http_ep])
+    merged.size.should eq(1)
+    merged[0].params.map(&.name).sort!.should eq(["id", "name"])
+  end
+end
+
+private def tech_details(path : String, line : Int32, technology : String) : Details
+  details = Details.new(PathInfo.new(path, line))
+  details.technology = technology
+  details
 end

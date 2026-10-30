@@ -4,8 +4,10 @@ module Detector::Go
   class Beego < Detector
     detector_for "go_beego", extensions: %w[.go], path_segments: %w[go.mod]
 
+    IMPORT_PATTERN = Regex.union("github.com/beego/beego")
+
     def detect(filename : String, file_contents : String) : Bool
-      (filename.includes? "go.mod") && (file_contents.includes? "github.com/beego/beego")
+      go_dependency?(filename, file_contents, IMPORT_PATTERN)
     end
   end
 end

@@ -17,7 +17,7 @@ describe "Detect Go go-zero" do
   # sub-directory (whose go.mod lives at the monorepo root) is still
   # recognized when scanned on its own.
   it "go file importing go-zero" do
-    instance.detect("internal/handler/routes.go", "github.com/zeromicro/go-zero/rest").should be_true
+    instance.detect("internal/handler/routes.go", %(package handler\n\nimport "github.com/zeromicro/go-zero/rest"\n)).should be_true
   end
 
   it "go file without go-zero import" do

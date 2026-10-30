@@ -15,9 +15,7 @@ module Detector::Go
     # is still recognized when scanned on its own. The analyzer re-gates
     # every file on the same marker, so this can't over-extract.
     def detect(filename : String, file_contents : String) : Bool
-      return true if (filename.includes? "go.mod") && content_matches?(file_contents, IMPORT_PATTERN)
-      return true if filename.ends_with?(".go") && content_matches?(file_contents, IMPORT_PATTERN)
-      false
+      go_dependency?(filename, file_contents, IMPORT_PATTERN)
     end
   end
 end

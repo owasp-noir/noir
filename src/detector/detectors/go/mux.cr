@@ -7,11 +7,10 @@ module Detector::Go
     # `github.com/minio/mux` is a maintained hard fork of gorilla/mux and
     # exposes the same routing API, so a project that depends only on the
     # fork is still a mux project.
-    IMPORT_PATHS = %w[github.com/gorilla/mux github.com/minio/mux]
+    IMPORT_PATTERN = Regex.union(%w[github.com/gorilla/mux github.com/minio/mux])
 
     def detect(filename : String, file_contents : String) : Bool
-      return false unless filename.includes? "go.mod"
-      IMPORT_PATHS.any? { |path| file_contents.includes? path }
+      go_dependency?(filename, file_contents, IMPORT_PATTERN)
     end
   end
 end

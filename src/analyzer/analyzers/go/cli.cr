@@ -768,6 +768,7 @@ module Analyzer::Go
     private def scan_struct_tags(content : String, path : String, root_url : String,
                                  endpoints : Hash(String, Endpoint))
       return unless content_matches?(content, STRUCT_TAG_IMPORT_RE)
+      return unless main_package_scanned?
 
       content.each_line.with_index do |line, index|
         line_no = index + 1
@@ -781,6 +782,18 @@ module Analyzer::Go
           fetch_endpoint(endpoints, root_url, path, line_no).push_param(Param.new(m[1], "", "env"))
         end
       end
+    end
+
+    @main_package_scanned : Bool? = nil
+
+    # A scan with no `package main` builds no binary, so its go-flags /
+    # go-arg structs describe a parser its callers feed (`ParseArgs(line)`),
+    # not an argv surface. The whole scan is judged: with go.work or a
+    # monorepo, a `main` in one module parses another module's options.
+    private def main_package_scanned? : Bool
+      scanned = @main_package_scanned
+      return scanned unless scanned.nil?
+      @main_package_scanned = get_files_by_extension(".go").any? { |file| read_file_content(file).matches?(PACKAGE_MAIN_RE) }
     end
 
     # Parses a go-arg tag body like `--foo,env:FOO` / `-f` / `positional`.
