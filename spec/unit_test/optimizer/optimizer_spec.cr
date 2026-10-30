@@ -141,16 +141,17 @@ describe "EndpointOptimizer" do
     end
 
     # `/` before `(^/a$)|(^/b$)` is a regex nothing matches.
-    # An `.htaccess` RewriteRule `^api/(.*)$` is still the path `/api/(.*)`.
+    # An `.htaccess` RewriteRule `^api/(.*)$` or `^(api|v1)/(.*)$` is still a
+    # rooted path.
     it "does not root a regex alternation but roots other regexes" do
       optimizer = EndpointOptimizer.new(logger, options)
-      rows = {"(^/a$)|(^/b$)", "(?:a|b)$", "api/(.*)", "users/([0-9]+)", "a|b"}.map_with_index do |url, i|
+      rows = {"(^/a$)|(^/b$)", "(^/a/(.+)/x$)", "(api|v1)/(.*)", "(admin)/users", "api/(.*)", "a|b"}.map_with_index do |url, i|
         endpoint = tech_endpoint(url, "ANY", "apache_httpd", ".htaccess", i + 1)
         endpoint.kind = "regex"
         endpoint
       end
       plain = tech_endpoint("items", "GET", "nginx", "nginx.conf", 9)
-      optimizer.optimize_endpoints(rows.to_a + [plain]).map(&.url).should eq(["(^/a$)|(^/b$)", "(?:a|b)$", "/api/(.*)", "/users/([0-9]+)", "a|b", "/items"])
+      optimizer.optimize_endpoints(rows.to_a + [plain]).map(&.url).should eq(["(^/a$)|(^/b$)", "(^/a/(.+)/x$)", "/(api|v1)/(.*)", "/(admin)/users", "/api/(.*)", "a|b", "/items"])
     end
 
     it "folds an AI endpoint into the static route under a different param spelling" do

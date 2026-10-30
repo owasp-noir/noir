@@ -30,7 +30,9 @@ private def analyze_nginx_files(files : Hash(String, String))
     File.write(path, content)
     locator.push Noir::LocatorKeys::NGINX_SPEC, path
   end
-  {Analyzer::Specification::Nginx.new(create_test_options).analyze, dir + "/"}
+  options = create_test_options
+  options["base"] = YAML::Any.new([YAML::Any.new(dir)])
+  {Analyzer::Specification::Nginx.new(options).analyze, dir + "/"}
 ensure
   FileUtils.rm_rf(dir) if dir
 end
@@ -329,6 +331,30 @@ describe "Nginx Analyzer" do
         {"/app1", "https", 1},
         {"/public", "http", 0},
       ])
+    end
+
+    # The config root stands in for `/etc/nginx`: the nearest directory with
+    # an `nginx.conf` or named `nginx`, else the includer's and its parent.
+    it "resolves includes against the config root of common repository layouts" do
+      server = ->(host : String, target : String) { "server {\n    listen 443 ssl;\n    server_name #{host};\n    include #{target};\n}\n" }
+      location = ->(path : String) { "location #{path} { proxy_pass http://x; }\n" }
+      http = ->(target : String) { "http {\n    include #{target};\n}\n" }
+      {
+        "L1"  => {"nginx/nginx.conf" => http.call("/etc/nginx/conf.d/*.conf"), "nginx/conf.d/default.conf" => server.call("l1.com", "/etc/nginx/snippets/app.conf"), "nginx/snippets/app.conf" => location.call("/l1")},
+        "L2"  => {"nginx/nginx.conf" => http.call("/etc/nginx/conf.d/*.conf"), "conf.d/default.conf" => server.call("l2.com", "snippets/app.conf"), "snippets/app.conf" => location.call("/l2")},
+        "L3"  => {"deploy/nginx/sites-enabled/app.conf" => server.call("l3.com", "snippets/x.conf"), "deploy/nginx/snippets/x.conf" => location.call("/l3")},
+        "L4"  => {"nginx/sites/app.conf" => server.call("l4.com", "snippets/x.conf"), "nginx/snippets/x.conf" => location.call("/l4")},
+        "L5"  => {"nginx/templates/default.conf.template" => server.call("l5.com", "/etc/nginx/snippets/x.conf"), "nginx/snippets/x.conf" => location.call("/l5")},
+        "L6"  => {"nginx/conf.d/default.conf" => server.call("l6.com", "/etc/nginx/conf.d/locations/*.conf"), "nginx/conf.d/locations/a.conf" => location.call("/l6")},
+        "L7"  => {"nginx/conf.d/default.conf" => server.call("l7.com", "conf.d/locations/*.conf"), "nginx/conf.d/locations/a.conf" => location.call("/l7")},
+        "L8"  => {"services/web/nginx/site.conf" => server.call("l8.com", "snippets/x.conf"), "services/web/nginx/snippets/x.conf" => location.call("/l8")},
+        "L9"  => {"nginx/nginx.conf" => http.call("/etc/nginx/sites-enabled/*.conf"), "nginx/sites-enabled/app.conf" => server.call("l9.com", "snippets/x.conf"), "nginx/snippets/x.conf" => location.call("/l9")},
+        "L10" => {"nginx/conf.d/default.conf" => server.call("l10.com", "/etc/nginx/locations.conf"), "nginx/locations.conf" => location.call("/l10")},
+        "L11" => {"nginx/default.conf" => server.call("l11.com", "/etc/nginx/conf.d/locations/*.conf"), "nginx/locations/a.conf" => location.call("/l11")},
+      }.each do |name, files|
+        endpoints, _ = analyze_nginx_files(files)
+        endpoints.map { |e| {e.url, e.protocol, tag_descriptions(e, "nginx-host")} }.should eq([{"/#{name.downcase}", "https", ["#{name.downcase}.com"]}]), name
+      end
     end
 
     it "resolves a relative include from the configuration prefix, not the file itself" do

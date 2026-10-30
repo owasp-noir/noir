@@ -35,6 +35,7 @@ module Analyzer::Specification
 
     @files = [] of String
     @include_targets = {} of Tuple(String, String) => Array(String)
+    @config_roots = {} of String => Array(String)
 
     # A file `include`d by another is read where the directive sits, with
     # the including block's host, TLS and access rules, and not on its own.
@@ -81,28 +82,74 @@ module Analyzer::Specification
       @result
     end
 
-    # Directories nginx configs include from; a file in one of them sits one
-    # level below the configuration prefix.
-    INCLUDE_DIRS = Set{"conf.d", "sites-enabled", "sites-available", "snippets", "http.d", "servers", "vhosts.d"}
-    GLOB_CHARS   = /[\\*?\[\]{}]/
+    GLOB_CHARS = /[\\*?\[\]{}]/
 
     # The scanned nginx files an `include` names. nginx resolves a relative
-    # pattern against its configuration prefix: the including file's
-    # directory, or its parent when that is an include directory
-    # (`sites-enabled/app.conf` including `snippets/x.conf`). An absolute
-    # pattern (`/etc/nginx/conf.d/*.conf`) is matched by its last two
-    # segments there. Nothing above the prefix is searched, so one app's
-    # `include` does not bind another's `conf.d` in a monorepo. A pattern
-    # that is not a valid glob resolves to nothing.
+    # pattern against its configuration prefix (`/etc/nginx`), which in a
+    # repository is the config root (`config_roots`); the including file's
+    # own directory is tried first. An absolute pattern
+    # (`/etc/nginx/conf.d/locations/*.conf`) is matched under the config root
+    # by its path suffixes, longest first: `conf.d/locations/*.conf`, then
+    # `locations/*.conf`; a lone last segment only when it is no glob
+    # (`/etc/nginx/locations.conf`). A pattern that is not a valid glob
+    # resolves to nothing.
     private def include_targets(path : String, pattern : String) : Array(String)
       @include_targets[{path, pattern}] ||= begin
-        relative = pattern.starts_with?('/') ? pattern.split('/').reject(&.empty?).last(2).join('/') : pattern
         dir = File.dirname(path)
-        dir = File.dirname(dir) if INCLUDE_DIRS.includes?(File.basename(dir))
-        glob = File.join(dir.gsub(GLOB_CHARS) { |c| "\\#{c}" }, relative)
-        @files.select { |file| file != path && File.match?(glob, file) }.sort!
-      rescue File::BadPatternError
-        [] of String
+        roots = config_roots(dir)
+        found = [] of String
+        if pattern.starts_with?('/')
+          parts = pattern.split('/').reject(&.empty?)
+          parts.each_index do |i|
+            suffix = parts[i..].join('/')
+            break if i == parts.size - 1 && suffix.matches?(GLOB_CHARS)
+            roots.each do |root|
+              found = files_under(root, suffix, path)
+              break unless found.empty?
+            end
+            break unless found.empty?
+          end
+        else
+          ([dir] + roots).uniq.each do |root|
+            found = files_under(root, pattern, path)
+            break unless found.empty?
+          end
+        end
+        found
+      end
+    end
+
+    private def files_under(dir : String, pattern : String, includer : String) : Array(String)
+      glob = File.join(dir.gsub(GLOB_CHARS) { |c| "\\#{c}" }, pattern)
+      @files.select { |file| file != includer && File.match?(glob, file) }.sort!
+    rescue File::BadPatternError
+      [] of String
+    end
+
+    # The directory standing in for nginx's prefix: the nearest one, from
+    # the including file's up to the scan base, that holds an `nginx.conf`
+    # or is named `nginx` (`deploy/nginx/`, `etc/nginx/`). Without one, the
+    # including file's directory and its parent. One app's `app1/nginx.conf`
+    # therefore does not bind a `conf.d/` at the repository root.
+    private def config_roots(dir : String) : Array(String)
+      @config_roots[dir] ||= begin
+        current = dir
+        found = nil
+        while within_scan_base?(current)
+          if File.basename(current) == "nginx" || File.exists?(File.join(current, "nginx.conf"))
+            found = current
+            break
+          end
+          parent = File.dirname(current)
+          break if parent == current
+          current = parent
+        end
+        if found
+          [found]
+        else
+          parent = File.dirname(dir)
+          parent != dir && within_scan_base?(parent) ? [dir, parent] : [dir]
+        end
       end
     end
 

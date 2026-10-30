@@ -213,9 +213,10 @@ class EndpointOptimizer
       # papered over it). Mobile deep links are exempt: an unresolved
       # `@string/...://` or `${...}://` scheme isn't a relative path, so
       # rooting it (`/@string/...`) would corrupt the URL. Nor is a regex
-      # that opens with a group or splits on a top-level `|`: `/` before
-      # nginx `~ (^/a$)|(^/b$)` makes it match nothing.
-      unrooted_regex = tiny_tmp.kind == "regex" && (tiny_tmp.url.starts_with?('(') || Noir::URLPath.top_level_alternation?(tiny_tmp.url))
+      # that splits on a top-level `|` or opens with an anchored group: `/`
+      # before nginx `~ (^/a$)|(^/b$)` makes it match nothing. `.htaccess`
+      # `^(api|v1)/(.*)$` is still the path `/(api|v1)/(.*)`.
+      unrooted_regex = tiny_tmp.kind == "regex" && (tiny_tmp.url.starts_with?("(^") || Noir::URLPath.top_level_alternation?(tiny_tmp.url))
       if !absolute_url && tiny_tmp.url[0] != '/' && !tiny_tmp.non_http? && !unrooted_regex
         tiny_tmp.url = "/#{tiny_tmp.url}"
       end
