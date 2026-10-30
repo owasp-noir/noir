@@ -476,7 +476,7 @@ describe "SpringSecurityTagger (scope of a rule)" do
         public class SecurityConfig {
             @Bean
             SecurityFilterChain chain(HttpSecurity http) throws Exception {
-                http.csrf(c -> c.ignoringRequestMatchers("/login", "/hooks/**"));
+                http.csrf(c -> c.ignoringRequestMatchers("/login", "/hooks/**", "/**/hook"));
                 return http.build();
             }
         }
@@ -498,6 +498,7 @@ describe "SpringSecurityTagger (scope of a rule)" do
       "POST /login-history/delete" => "src/main/java/Controller.java:2",
       "POST /hooks"                => "src/main/java/Controller.java:2",
       "POST /hooks/github"         => "src/main/java/Controller.java:2",
+      "POST /hook"                 => "src/main/java/Controller.java:2",
       "GET /"                      => "src/main/java/Controller.java:2",
       "GET /items"                 => "src/main/java/Controller.java:2",
     })
@@ -505,6 +506,7 @@ describe "SpringSecurityTagger (scope of a rule)" do
     tags["POST /login-history/delete"].should be_empty
     tags["POST /hooks"].should eq(["csrf-protection"])
     tags["POST /hooks/github"].should eq(["csrf-protection"])
+    tags["POST /hook"].should eq(["csrf-protection"])
     tags["GET /"].should eq(["cors"])
     tags["GET /items"].should be_empty
   end

@@ -595,7 +595,7 @@ module SpringModuleScope
   end
 
   # Spring's ant match of a request path: `*` one segment, `**` any depth,
-  # and a trailing `/**` also matches the bare prefix (`/assets/**` serves
+  # none included (`/**/hook` matches `/hook`, `/assets/**` serves
   # `/assets`). A comma-separated pattern matches when any part does.
   private def matches_ant_pattern?(url : String, pattern : String) : Bool
     patterns = pattern.split(",").map(&.strip)
@@ -626,6 +626,7 @@ module SpringModuleScope
   private def ant_pattern_regex(pattern : String) : Regex
     @ant_pattern_regexes[pattern] ||= begin
       escaped = Regex.escape(pattern)
+        .gsub("/\\*\\*/", "(?:/.*)?/")
         .sub(/\/\\\*\\\*\z/, "(?:/.*)?")
         .gsub("\\*\\*", ".*")
         .gsub("\\*", "[^/]*")
