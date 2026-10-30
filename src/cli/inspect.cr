@@ -390,9 +390,12 @@ module Noir::CLI::Inspect
   # (Express's bare `*` is a catch-all, not one segment).
   REST_PLACEHOLDER = /\A(?:<path:[^>]*>|\*\*|\{\*[^}]*\}|\{[^}]*\*\}|\{\.\.\.[^}]*\}|\{[^}]*\.\.\.\}|\[\[\.\.\.[^\]]*\]\]|\[\.\.\.[^\]]*\]|\*[A-Za-z_]\w*|:[A-Za-z_]\w*[*+]|\*)/
   # The rest placeholders that also take zero segments, so `/files/:path*`
-  # serves `/files` too. Next.js `[...slug]` (written `{*slug}`) needs one,
-  # but its optional `[[...slug]]` form is written as a second, bare route.
+  # serves `/files` too.
   ZERO_OR_MORE = /\A(?:\*\*|\{\*[^}]*\}|\{[^}]*(?:\*|\.\.\.)\}|:\w+\*|\[\[)/
+  # Where `{*name}` needs at least one segment: Next.js `[...slug]` (its
+  # optional `[[...slug]]` is written as a second, bare route) and axum.
+  # Spring, ASP.NET, Armeria and salvo's `{*name}` / `{**name}` take zero.
+  ONE_OR_MORE_STAR_TECHS = Set{"js_nextjs", "rust_axum"}
   # path-to-regexp v8 (Express 5) optional group: `/posts{/:id}`.
   OPTIONAL_GROUP = /\A\{(\/[^{}]*)\}/
   # `:id(\d+)` (Express 4 / Koa / Fastify) and `:id{[0-9]+}` (Hono) carry a
@@ -410,21 +413,22 @@ module Noir::CLI::Inspect
     if endpoint.regex_path?
       return Regex.new("\\A#{URLPath.strip_regex_anchors(route).rchop('/')}/?\\z") rescue nil
     end
-    Regex.new("\\A#{route_pattern(route)}/?\\z") rescue nil
+    star_needs_one = ONE_OR_MORE_STAR_TECHS.includes?(endpoint.details.technology || "")
+    Regex.new("\\A#{route_pattern(route, star_needs_one)}/?\\z") rescue nil
   end
 
-  private def self.route_pattern(route : String) : String
+  private def self.route_pattern(route : String, star_needs_one : Bool = false) : String
     parts = [] of String
     scan_placeholders(route) do |kind, text|
       case kind
       when :rest
-        if text.matches?(ZERO_OR_MORE) && parts.last? == "/"
+        if text.matches?(ZERO_OR_MORE) && parts.last? == "/" && !(star_needs_one && text.starts_with?("{*"))
           parts.pop
           parts << "(?:/.*)?"
         else
           parts << ".*"
         end
-      when :optional then parts << "(?:#{route_pattern(text)})?"
+      when :optional then parts << "(?:#{route_pattern(text, star_needs_one)})?"
       when :one
         if (text.starts_with?(':') && text.ends_with?('?')) || (text.starts_with?('{') && text.ends_with?("?}"))
           # Express 4 `:id?` and ASP.NET `{id?}` make the slash before them
@@ -554,18 +558,20 @@ module Noir::CLI::Inspect
   # Proxy rules that serve every path under their own, by the path-type tag
   # the analyzer sets: nginx `location /api/`, haproxy `path_beg` and Istio
   # `prefix` compare strings (`/api` serves `/apis`); Ingress and Gateway
-  # API `Prefix` compare whole segments.
-  STRING_PREFIX_TAGS  = {"nginx-path-type" => {"prefix", "prefix-stop"}, "haproxy-path-type" => {"prefix"}, "virtualservice-path-type" => {"prefix"}}
+  # API `Prefix` compare whole segments. A Go ServeMux pattern ending in `/`
+  # serves its subtree (gin's or Echo's `/x/` is one route, and `/x/{$}`
+  # only `/x/`).
+  STRING_PREFIX_TAGS = {
+    "nginx-path-type" => {"prefix", "prefix-stop"}, "haproxy-path-type" => {"prefix"},
+    "virtualservice-path-type" => {"prefix"}, "go-http-path-type" => {"subtree"},
+  }
   SEGMENT_PREFIX_TAGS = {"ingress-path-type" => {"prefix"}, "gateway-path-type" => {"pathprefix"}}
 
   # Whether `endpoint` serves `path` (query and fragment already dropped)
-  # as a prefix: a proxy prefix rule, or a Go ServeMux pattern ending in
-  # `/`, which serves its subtree (gin's or Echo's `/x/` is one route).
+  # under one of those prefix rules.
   private def self.prefix_serves?(endpoint : Endpoint, path : String) : Bool
     route = request_path(endpoint.url)
-    string = endpoint.tags.any? { |t| STRING_PREFIX_TAGS[t.name]?.try(&.includes?(t.description)) }
-    string ||= route.ends_with?('/') && (endpoint.details.technology == "go_http" || endpoint.details.technologies.includes?("go_http"))
-    return path.starts_with?(route) if string
+    return path.starts_with?(route) if endpoint.tags.any? { |t| STRING_PREFIX_TAGS[t.name]?.try(&.includes?(t.description)) }
     return false unless endpoint.tags.any? { |t| SEGMENT_PREFIX_TAGS[t.name]?.try(&.includes?(t.description)) }
     route = strip_trailing_slash(route)
     route == "/" || path.starts_with?("#{route}/")

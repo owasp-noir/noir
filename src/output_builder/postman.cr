@@ -41,8 +41,9 @@ class OutputBuilderPostman < OutputBuilder
         elsif part.starts_with?("{") && part.ends_with?("}")
           # Handle {name} / {name:constraint} - convert to Postman's :name so the
           # `variable` entry actually links to the URL placeholder. Same hyphen
-          # class as OAS (`{item-id}` / `{order-id:uuid}`).
-          match = part.match(/\A\{([A-Za-z_][A-Za-z0-9_-]*)(?::[^}]+)?\}\z/)
+          # class as OAS (`{item-id}` / `{order-id:uuid}`). A catch-all's stars
+          # (`{*slug}`, `{**path}`) only say how much of the path it takes.
+          match = part.match(/\A\{\*{0,2}([A-Za-z_][A-Za-z0-9_-]*)(?::[^}]+)?\}\z/)
           match ? ":#{match[1]}" : part
         elsif part.starts_with?("[") && part.ends_with?("]")
           # Bracket-style path params (`.NET` / Rails-ish `/users/[user-id]`),

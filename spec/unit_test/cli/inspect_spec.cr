@@ -641,11 +641,26 @@ describe "trace and query route matching (#3277)" do
     Noir::CLI::Inspect.wildcard_only_candidates(routes, miss, "/api/itemz/1").map(&.url).should contain("/api/items/:id")
   end
 
-  it "serves a Go ServeMux subtree, but not a gin route that ends in /" do
+  it "serves a Go ServeMux subtree, but not an exact {$} pattern or a gin route that ends in /" do
     mux = endpoint("GET", "/static/", tech: "go_http")
+    mux.add_tag(Tag.new("go-http-path-type", "subtree", "go_http_analyzer"))
+    exact = endpoint("GET", "/exact/", tech: "go_http") # `/exact/{$}`
     gin = endpoint("GET", "/assets/", tech: "go_gin")
-    trace.call([mux, gin], "GET", "/static/js/app.js").should eq([{"/static/", "prefix"}])
-    trace.call([mux, gin], "GET", "/assets/app.js").should be_empty
+    trace.call([mux, exact, gin], "GET", "/static/js/app.js").should eq([{"/static/", "prefix"}])
+    trace.call([mux, exact, gin], "GET", "/exact/x").should be_empty
+    trace.call([mux, exact, gin], "GET", "/assets/app.js").should be_empty
+  end
+
+  it "holds Next.js and axum {*name} to one segment or more, Spring's to zero or more" do
+    next_route = endpoint("GET", "/api/auth/{*nextauth}", tech: "js_nextjs")
+    axum = endpoint("GET", "/ax/{*key}", tech: "rust_axum")
+    spring = endpoint("GET", "/sp/{*rest}", tech: "java_spring")
+    routes = [next_route, axum, spring]
+    trace.call(routes, "GET", "/api/auth").should be_empty
+    trace.call(routes, "GET", "/api/auth/callback/github").should eq([{"/api/auth/{*nextauth}", "wildcard"}])
+    trace.call(routes, "GET", "/ax").should be_empty
+    trace.call(routes, "GET", "/ax/a").should eq([{"/ax/{*key}", "wildcard"}])
+    trace.call(routes, "GET", "/sp").should eq([{"/sp/{*rest}", "wildcard"}])
   end
 
   it "reads every catch-all spelling as the rest of the path" do

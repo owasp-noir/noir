@@ -229,6 +229,20 @@ describe "OutputBuilderPostman URLs" do
     items[3]["request"]["url"]["raw"].as_s.should eq("{{baseUrl}}/users/:user-id")
   end
 
+  it "binds a catch-all {*name} / {**name} placeholder as :name" do
+    builder = OutputBuilderPostman.new(options)
+    builder.io = IO::Memory.new
+
+    star = Endpoint.new("/files/{*file_path}", "GET")
+    star.push_param(Param.new("file_path", "", "path"))
+    builder.print([star, Endpoint.new("/static/{**path}", "GET")])
+    items = JSON.parse(builder.io.to_s)["item"].as_a
+
+    items[0]["request"]["url"]["raw"].as_s.should eq("{{baseUrl}}/files/:file_path")
+    items[0]["request"]["url"]["variable"][0]["key"].as_s.should eq("file_path")
+    items[1]["request"]["url"]["raw"].as_s.should eq("{{baseUrl}}/static/:path")
+  end
+
   it "still routes a relative endpoint through {{baseUrl}}" do
     builder = OutputBuilderPostman.new(options)
     builder.io = IO::Memory.new

@@ -92,8 +92,10 @@ PATCH /items/:id  src/handlers.go:18  go_gin  handler=updateItem@src/items.go:40
   recorded at all. Callee paths are the call site, so `reach` on a file that
   only *defines* called functions is empty, and stderr says so.
 - `trace` prints `matched_by` (in text too): `exact`, `pattern` (one
-  placeholder per segment: `{id}`, `:id`, `<int:pk>`, `[id]`, `$id`, `*`) or
-  `wildcard` (`**`, `*path`, `{path*}`, `[...slug]`). Every matching route is
+  placeholder per segment: `{id}`, `:id`, `<int:pk>`, `[id]`, `$id`, `*`),
+  `wildcard` (`**`, `*path`, `{path*}`, `{*path}`, `{path...}`, `[...slug]`)
+  or `prefix` (an nginx/Ingress prefix location, a Go ServeMux `/x/`
+  subtree). A `cli://` row is traced by its own URL. Every matching route is
   printed, most specific first; which one the framework dispatches to is its
   rule, so take the first. A HEAD request traces to the GET route. On a miss
   it prints `candidates` (the closest routes by shared segments, case and
@@ -118,7 +120,8 @@ A glob is one when it contains `*`, `?` or `[`: `*` crosses `/` (`'*users*'`
 finds `/accounts/users/`), `{id}` is literal (`'/owners/{ownerId}/*'` works as
 written), and a relative `--path` glob matches from any `/`. Without glob
 characters the value is a substring. `--param` with `--param-type` must be
-satisfied by the same parameter.
+satisfied by the same parameter. `--method POST` also lists `ANY` rows, which
+serve every method; `--method ANY` lists only those.
 
 A value that no endpoint in the report carries (a method, tech, tag, param,
 type, protocol or kind) is reported on stderr together with the values the
