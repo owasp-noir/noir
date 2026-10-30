@@ -9,8 +9,7 @@ module Detector::Go
     SIGNAL = Regex.union(/\bencore\.dev\s+v\d/, /"encore\.dev\//, /^\/\/encore:api\b/m)
 
     def detect(filename : String, file_contents : String) : Bool
-      go_mod_dependency?(filename, file_contents, SIGNAL) ||
-        (filename.ends_with?(".go") && content_matches?(file_contents, SIGNAL))
+      go_dependency?(filename, file_contents, SIGNAL)
     end
   end
 end

@@ -238,7 +238,8 @@ module Analyzer::Crystal
         end
 
         # Parse endpoint
-        endpoint = line_to_endpoint(line)
+        # `get "/x",` + `do |env|` puts the handler on the next line.
+        endpoint = line_to_endpoint(line.rstrip.ends_with?(',') ? "#{line} #{lines[index + 1]?}" : line)
         receiver = ""
         if endpoint.method.empty? && !routers.empty?
           endpoint, receiver = router_line_to_endpoint(line, routers)
@@ -415,7 +416,7 @@ module Analyzer::Crystal
     # `&handler`) or a controller action (`Routes::Misc, :home`, also via
     # `{{ namespace }}`). spec-kemal's client helpers share the verb names
     # but take none: `get("/items/7")`, `post "/x", headers: h, body: b`.
-    ROUTE_HANDLER_RE = /['"]\s*\)?\s*(?:do\b|\{|,\s*(?:&|\{\{|[A-Z]\w*(?:::\w+)*\s*,\s*:\w))/
+    ROUTE_HANDLER_RE = /['"]\s*\)?\s*(?:do\b|\{|,\s*(?:do\b|&|\{\{|[A-Z]\w*(?:::\w+)*\s*,\s*:\w))/
 
     def line_to_endpoint(content : String) : Endpoint
       content = Noir::CrystalCalleeExtractor.strip_comment(content)

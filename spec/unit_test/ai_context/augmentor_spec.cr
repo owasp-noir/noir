@@ -5120,7 +5120,7 @@ describe "AI context for outbound client declarations" do
     get_ctx.signals.find!(&.kind.==("route_definition")).description.to_s.should_not contain("controller entrypoint")
     get_ctx.signals.find!(&.kind.==("internal_endpoint")).description.to_s.should contain("Outbound client declaration")
     (get_ctx.signals + del_ctx.signals).map(&.kind).each do |kind|
-      {"idor", "identifier_input", "idor_review", "guard_absence", "authz_absence", "csrf_exempt"}.should_not contain(kind)
+      {"idor", "identifier_input", "idor_review", "guard_absence", "authz_absence", "csrf_exempt", "state_change"}.should_not contain(kind)
     end
   end
 end

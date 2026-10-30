@@ -4,8 +4,10 @@ module Detector::Go
   class Httprouter < Detector
     detector_for "go_httprouter", extensions: %w[.go], path_segments: %w[go.mod]
 
+    IMPORT_PATTERN = Regex.union("github.com/julienschmidt/httprouter")
+
     def detect(filename : String, file_contents : String) : Bool
-      go_mod_dependency?(filename, file_contents, "github.com/julienschmidt/httprouter")
+      go_dependency?(filename, file_contents, IMPORT_PATTERN)
     end
   end
 end

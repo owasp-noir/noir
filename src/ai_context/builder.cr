@@ -859,6 +859,8 @@ module NoirAIContext
     end
 
     private def add_method_signal(context : AIContext, endpoint : Endpoint, anchor : PathInfo?, route_snippet : String?)
+      # A client stub's verb changes the other service's state, not this one's.
+      return if endpoint.internal
       return unless state_changing_endpoint?(endpoint)
       return if graphql_read_endpoint?(endpoint)
       return if read_only_post_endpoint?(endpoint)

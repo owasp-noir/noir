@@ -11,13 +11,7 @@ module Detector::Go
     IMPORT_PATTERN = Regex.union(IMPORT_MARKER)
 
     def detect(filename : String, file_contents : String) : Bool
-      if go_mod_dependency?(filename, file_contents, IMPORT_PATTERN)
-        return true
-      end
-      if filename.ends_with?(".go") && content_matches?(file_contents, IMPORT_PATTERN)
-        return true
-      end
-      false
+      go_dependency?(filename, file_contents, IMPORT_PATTERN)
     end
   end
 end

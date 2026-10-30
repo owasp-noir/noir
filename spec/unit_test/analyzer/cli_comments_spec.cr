@@ -33,9 +33,10 @@ describe "CLI analyzers and non-code" do
 
   it "go: does not report go-flags struct tags in a library package that parses a caller string" do
     dir = File.tempname("go_flags_lib")
-    Dir.mkdir_p(File.join(dir, "pkg", "cmdline"))
-    File.write(File.join(dir, "go.mod"), "module example.com/lib\n\ngo 1.21\n\nrequire github.com/jessevdk/go-flags v1.5.0\n")
-    File.write(File.join(dir, "pkg", "cmdline", "parse.go"), <<-GO)
+    lib_dir = File.join(dir, "lib")
+    Dir.mkdir_p(File.join(lib_dir, "pkg", "cmdline"))
+    File.write(File.join(lib_dir, "go.mod"), "module example.com/lib\n\ngo 1.21\n\nrequire github.com/jessevdk/go-flags v1.5.0\n")
+    File.write(File.join(lib_dir, "pkg", "cmdline", "parse.go"), <<-GO)
       package cmdline
 
       import (
@@ -62,9 +63,11 @@ describe "CLI analyzers and non-code" do
     runner.analyze
     runner.endpoints.select(&.method.==("CLI")).should be_empty
 
-    # The same struct in a module that builds a binary is that binary's argv.
-    Dir.mkdir_p(File.join(dir, "cmd", "lib"))
-    File.write(File.join(dir, "cmd", "lib", "main.go"), "package main\n\nfunc main() {}\n")
+    # A `main` in a sibling module of the workspace (go.work) parses it.
+    Dir.mkdir_p(File.join(dir, "app"))
+    File.write(File.join(dir, "go.work"), "go 1.22\n\nuse (\n\t./app\n\t./lib\n)\n")
+    File.write(File.join(dir, "app", "go.mod"), "module example.com/tool\n\ngo 1.22\n\nrequire example.com/lib v0.0.0\n")
+    File.write(File.join(dir, "app", "main.go"), %(package main\n\nimport "example.com/lib/pkg/cmdline"\n\nfunc main() { cmdline.Parse("") }\n))
     CodeLocator.instance.reset_files
     runner = NoirRunner.new(options)
     runner.detect

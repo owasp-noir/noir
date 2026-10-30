@@ -259,8 +259,17 @@ class Detector
   def go_mod_dependency?(filename : String, file_contents : String, marker : String | Regex) : Bool
     return false unless filename.includes?("go.mod")
     file_contents.each_line.any? do |line|
-      !line.includes?("// indirect") && (marker.is_a?(String) ? line.includes?(marker) : content_matches?(line, marker))
+      next false if line.partition("//")[2].lstrip.starts_with?("indirect")
+      marker.is_a?(String) ? line.includes?(marker) : content_matches?(line, marker)
     end
+  end
+
+  # `go_mod_dependency?`, or a `.go` file importing `marker`. `go get` marks
+  # a module `// indirect` until `go mod tidy` runs, even one the code
+  # imports, so the import itself also counts.
+  def go_dependency?(filename : String, file_contents : String, marker : Regex) : Bool
+    go_mod_dependency?(filename, file_contents, marker) ||
+      (filename.ends_with?(".go") && content_matches?(file_contents, marker))
   end
 
   # A document that matched this format's content marker but could not be

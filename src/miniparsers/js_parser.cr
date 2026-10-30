@@ -937,11 +937,13 @@ module Noir
         root_idx -= 2
       end
       root = @tokens[root_idx]?.try(&.value) || ""
+      # A request-handler argument still marks a router kept on such an
+      # object (`request.api.get('/x', async (ctx) => …)`).
       if root_idx != recv_idx && HTTP_CLIENT_RECEIVERS.includes?(root) &&
          !CONTEXTUAL_CLIENT_RECEIVERS.includes?(root) && !@explicit_router_vars.includes?(root)
-        return true
+        return true unless trailing_arg_starts(lparen_idx).any? { |idx| inline_function_first_param(idx).try(&.matches?(REQUEST_PARAM_RE)) }
       end
-      root_idx > 0 && @tokens[root_idx - 1].value == "await"
+      root_idx > 0 && @tokens[root_idx - 1].type == :keyword && @tokens[root_idx - 1].value == "await"
     end
 
     APP_FACTORIES = Set{"express", "fastify", "Fastify", "Koa", "Hono", "Application", "Router", "Elysia"}
@@ -1449,9 +1451,10 @@ module Noir
           router_var = @tokens[idx - 1].type == :identifier ? @tokens[idx - 1].value : ""
           return results if http_client_receiver?(router_var, idx - 1, path_idx)
           if @tokens[idx - 1].value == "this"
-            # `return this.get(…)` hands its result on, so it is an API
-            # client's call even in a file that imports a server framework.
-            return results if value_context?(idx - 2) || (!@this_receiver_ok && !this_handler_arg?(idx - 1, path_idx))
+            # `return this.get(url, {}, headers(ctx))` hands its result on
+            # and passes no handler, so it is an API client's call even in a
+            # file that imports a server framework.
+            return results if !this_handler_arg?(idx - 1, path_idx) && (!@this_receiver_ok || value_context?(idx - 2))
           end
           path_entries = route_path_entries_from_args(path_idx + 1, allow_named_route: named_route_receiver?(router_var), receiver: router_var)
           @position = path_idx + 2 unless path_entries.empty?

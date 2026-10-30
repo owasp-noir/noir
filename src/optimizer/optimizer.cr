@@ -476,13 +476,15 @@ class EndpointOptimizer
   # A collection request's body is sample data, and a test may send fields
   # the handler never reads to check that they are ignored. Once the code
   # names its own inputs, only those describe the endpoint; a handler the
-  # analyzer read no inputs from keeps the sample as its only hint.
+  # analyzer read no inputs from keeps the sample as its only hint. Path,
+  # header and cookie params say nothing about the body (`db.insert(req.body)`
+  # beside one `req.headers[...]` read).
   private def collection_body_param?(param : Param) : Bool
     {"json", "form"}.includes?(param.request_type)
   end
 
   private def declares_inputs?(endpoint : Endpoint) : Bool
-    endpoint.params.any? { |param| param.param_type != "path" }
+    endpoint.params.any? { |param| !{"path", "header", "cookie"}.includes?(param.param_type) }
   end
 
   private def collection_noise_header_param?(param : Param) : Bool

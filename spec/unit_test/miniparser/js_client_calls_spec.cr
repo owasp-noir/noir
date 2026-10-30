@@ -176,9 +176,15 @@ describe "outbound client calls read as routes" do
         "const route = app.get('/x', (c) => c.json({}));",
         "export default app.post('/x', (c) => c.text('ok'));",
         "class R { init() { this.router.get('/x', (req, res) => {}); } }",
+        "class R extends Router { constructor() { super(); const items = this.get('/x', async (ctx) => {}); } }",
+        "class R extends Router { constructor() { super(); [1].forEach(() => this.get('/x', async (ctx) => {})); } }",
+        "class R extends Router { sub() { return this.get('/x', async (ctx) => {}); } }",
+        "const request = { api: new Router() }; request.api.get('/x', async (ctx) => {});",
       }.each do |code|
         parsed(code).uniq!.size.should eq(1)
       end
+      # A string that reads `await` is not the keyword (no-semicolon style).
+      parsed("const app = new Hono()\nconst mode = 'await'\napp.get('/x', (c) => c.text('a'))").uniq!.should eq(["GET /x"])
     end
   end
 

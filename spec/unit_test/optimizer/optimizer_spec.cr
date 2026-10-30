@@ -2452,6 +2452,20 @@ describe "EndpointOptimizer source-document merges" do
     end
   end
 
+  it "keeps a test request's body for a handler that reads only a header" do
+    optimizer = EndpointOptimizer.new(logger, create_test_options)
+
+    code_ep = Endpoint.new("/whole", "POST", [Param.new("x-api-key", "", "header")])
+    code_ep.details = tech_details("app.js", 4, "js_express")
+
+    http_ep = Endpoint.new("/whole", "POST", [Param.new("title", "t", "json")])
+    http_ep.details = tech_details("requests.http", 8, "http_file")
+
+    merged = optimizer.optimize_endpoints([code_ep, http_ep])
+    merged.size.should eq(1)
+    merged[0].params.map(&.name).sort!.should eq(["title", "x-api-key"])
+  end
+
   it "keeps a test request's body as the hint for a handler with no params of its own" do
     optimizer = EndpointOptimizer.new(logger, create_test_options)
 

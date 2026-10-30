@@ -20,6 +20,16 @@ describe "Detect Go Echo" do
     instance.detect("go.mod", content).should be_false
   end
 
+  it "ignores //indirect with no space or with a trailing note" do
+    instance.detect("go.mod", "require github.com/labstack/echo/v4 v4.13.3 //indirect\n").should be_false
+    instance.detect("go.mod", "require github.com/labstack/echo/v4 v4.13.3 // indirect; used by tools\n").should be_false
+    instance.detect("go.mod", "require github.com/labstack/echo/v4 v4.13.3 // pinned, not indirect\n").should be_true
+  end
+
+  it "detects a .go import when go.mod still marks echo indirect" do
+    instance.detect("main.go", %(package main\n\nimport "github.com/labstack/echo/v4"\n)).should be_true
+  end
+
   it "detects direct dependencies in go.mod" do
     content = <<-MOD
       module example.com/myapp
