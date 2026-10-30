@@ -3675,6 +3675,28 @@ describe "SpringAuthTagger (configurations that must not read as open)" do
     run_spring_security_config({"SecurityConfig.kt" => chain.call("authorizeRequests")}, routes)["GET /"].should be_empty
   end
 
+  it "does not deny by default when a rule's matcher is one it cannot read" do
+    chain = ->(endpoint_rule : String) do
+      <<-JAVA
+        public class SecurityConfig {
+            @Bean
+            SecurityFilterChain chain(HttpSecurity http) throws Exception {
+                http.authorizeHttpRequests(a -> a.requestMatchers(EndpointRequest.toAnyEndpoint()).#{endpoint_rule}
+                    .requestMatchers("/api/**").authenticated().requestMatchers("/pub").permitAll());
+                return http.build();
+            }
+        }
+        JAVA
+    end
+    routes = ["GET /actuator/health", "GET /api/x", "GET /pub"]
+    {"permitAll()", "authenticated()"}.each do |endpoint_rule|
+      tags = run_spring_security_config({"SecurityConfig.java" => chain.call(endpoint_rule)}, routes)
+      tags["GET /actuator/health"].should be_empty
+      tags["GET /api/x"].should eq(["Protected by Spring Security authenticated via requestMatchers(\"/api/**\")"])
+      tags["GET /pub"].should be_empty
+    end
+  end
+
   it "does not let a security configuration outside any build unit or a commented switch reach an app" do
     xml = %(<beans:beans xmlns="http://www.springframework.org/schema/security"><http><intercept-url pattern="/**" access="authenticated"/></http></beans:beans>\n)
     tags = run_spring_multi_module({

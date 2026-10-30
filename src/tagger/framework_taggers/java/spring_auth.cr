@@ -1358,6 +1358,9 @@ class SpringAuthTagger < FrameworkTagger
     scope = chain_scope(block, strings, arrays)
     builders = servlet_path_builders(block, strings, arrays)
     rules = [] of SecurityRule
+    # A rule whose matcher noir cannot read (`EndpointRequest.toAnyEndpoint()`)
+    # may be the one that decides a request no read rule matches.
+    unread_matcher = false
     loops = java_source ? loop_bindings(block) : [] of LoopBinding
 
     block.scan(MATCHERS_CALL) do |match|
@@ -1376,7 +1379,9 @@ class SpringAuthTagger < FrameworkTagger
       config_keys = [] of String
       in_scope = loops_enclosing(loops, open)
       rule_line = block_start_line + block[0, match.begin(1)].count('\n')
-      matcher_patterns(args, strings, arrays, loops: in_scope, config_keys: config_keys, java_source: java_source, builders: builders).uniq.each do |url_pattern|
+      patterns = matcher_patterns(args, strings, arrays, loops: in_scope, config_keys: config_keys, java_source: java_source, builders: builders).uniq
+      unread_matcher ||= patterns.empty? && config_keys.empty?
+      patterns.each do |url_pattern|
         description =
           if protected_rule
             "Protected by Spring Security #{auth_type} via #{match[1]}(\"#{url_pattern}\")"
@@ -1455,7 +1460,7 @@ class SpringAuthTagger < FrameworkTagger
     # `authorizeExchange` deny (legacy `authorizeRequests` lets it through).
     # A `Customizer<HttpSecurity>` bean only adds rules to a chain declared
     # elsewhere, which decides the rest itself.
-    if any_request_covered && (dsl = block.match(AUTHORIZATION_DSL)) && rules.none? { |rule| rule[:pattern] == "/**" && rule[:method].nil? }
+    if any_request_covered && !unread_matcher && (dsl = block.match(AUTHORIZATION_DSL)) && rules.none? { |rule| rule[:pattern] == "/**" && rule[:method].nil? }
       description = if rules.empty?
                       "Protected by Spring Security, configured by the authorization rules of the chain in #{File.basename(file_path)}, which noir does not read"
                     elsif dsl[0] != "authorizeRequests" && block.matches?(CHAIN_DECLARATION)
