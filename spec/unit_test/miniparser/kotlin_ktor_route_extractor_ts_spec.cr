@@ -295,6 +295,32 @@ describe Noir::TreeSitterKotlinKtorRouteExtractor do
       route.form_params.should eq(["email", "phone"])
     end
 
+    it "treats call.receive<Parameters>() as a form body, like call.receiveParameters()" do
+      source = <<-KT
+        routing {
+            post("/login") {
+                val post = call.receive<Parameters>()
+                val userId = post["userId"] ?: return@post call.respondRedirect("/login")
+                val password = post.get("password")
+                call.respondText("$userId $password")
+            }
+            post("/json") {
+                val user = call.receive<User>()
+            }
+        }
+        KT
+
+      routes = Noir::TreeSitterKotlinKtorRouteExtractor.extract_routes(source)
+      login = routes.find! { |r| r.path == "/login" }
+      login.receive_type.should be_nil
+      login.has_body?.should be_false
+      login.form_params.should eq(["userId", "password"])
+
+      json = routes.find! { |r| r.path == "/json" }
+      json.receive_type.should eq("User")
+      json.has_body?.should be_true
+    end
+
     it "ignores params on sibling routes" do
       source = <<-KT
         routing {
