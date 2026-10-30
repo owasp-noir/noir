@@ -562,20 +562,32 @@ module Noir::CLI::Inspect
   # API `Prefix` compare whole segments. A Go ServeMux pattern ending in `/`
   # serves its subtree (gin's or Echo's `/x/` is one route, and `/x/{$}`
   # only `/x/`).
+  #
+  # A proxy rule merged into a code route (an Ingress `Prefix` folded into
+  # `POST /api/users`) keeps its tag, but the code serves only its own
+  # route, so the proxy tags count only on a row no code analyzer reported.
   STRING_PREFIX_TAGS = {
     "nginx-path-type" => {"prefix", "prefix-stop"}, "haproxy-path-type" => {"prefix"},
     "virtualservice-path-type" => {"prefix"}, "go-http-path-type" => {"subtree"},
   }
   SEGMENT_PREFIX_TAGS = {"ingress-path-type" => {"prefix"}, "gateway-path-type" => {"pathprefix"}}
+  CODE_PREFIX_TAGS    = Set{"go-http-path-type"}
 
   # Whether `endpoint` serves `path` (query and fragment already dropped)
   # under one of those prefix rules.
   private def self.prefix_serves?(endpoint : Endpoint, path : String) : Bool
+    technologies = endpoint.details.technologies.empty? ? [endpoint.details.technology || ""] : endpoint.details.technologies
+    proxy_only = technologies.all? { |technology| NoirTechs::DECLARATION_TECHS.includes?(technology) }
     route = request_path(endpoint.url)
-    return path.starts_with?(route) if endpoint.tags.any? { |t| STRING_PREFIX_TAGS[t.name]?.try(&.includes?(t.description)) }
-    return false unless endpoint.tags.any? { |t| SEGMENT_PREFIX_TAGS[t.name]?.try(&.includes?(t.description)) }
+    return path.starts_with?(route) if endpoint.tags.any? { |t| prefix_tag?(t, STRING_PREFIX_TAGS, proxy_only) }
+    return false unless endpoint.tags.any? { |t| prefix_tag?(t, SEGMENT_PREFIX_TAGS, proxy_only) }
     route = strip_trailing_slash(route)
     route == "/" || path.starts_with?("#{route}/")
+  end
+
+  private def self.prefix_tag?(tag : Tag, table, proxy_only : Bool) : Bool
+    return false unless table[tag.name]?.try(&.includes?(tag.description))
+    proxy_only || CODE_PREFIX_TAGS.includes?(tag.name)
   end
 
   # Whether a route declared for `declared` serves a `wanted` request method.

@@ -87,7 +87,9 @@ module Analyzer::Specification
     # The scanned nginx files an `include` names. nginx resolves a relative
     # pattern against its configuration prefix (`/etc/nginx`), which in a
     # repository is the config root (`config_roots`); the including file's
-    # own directory is tried first. An absolute pattern
+    # own directory and then its parent are tried first
+    # (`services/a/conf.d/a.conf` including `snippets/x.conf`). An absolute
+    # pattern
     # (`/etc/nginx/conf.d/locations/*.conf`) is matched under the config root
     # by its path suffixes, longest first: `conf.d/locations/*.conf`, then
     # `locations/*.conf`; a lone last segment only when it is no glob
@@ -110,7 +112,9 @@ module Analyzer::Specification
             break unless found.empty?
           end
         else
-          ([dir] + roots).uniq.each do |root|
+          parent = File.dirname(dir)
+          near = parent != dir && within_scan_base?(parent) ? [dir, parent] : [dir]
+          (near + roots).uniq.each do |root|
             found = files_under(root, pattern, path)
             break unless found.empty?
           end

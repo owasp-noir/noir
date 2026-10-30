@@ -351,6 +351,7 @@ describe "Nginx Analyzer" do
         "L9"  => {"nginx/nginx.conf" => http.call("/etc/nginx/sites-enabled/*.conf"), "nginx/sites-enabled/app.conf" => server.call("l9.com", "snippets/x.conf"), "nginx/snippets/x.conf" => location.call("/l9")},
         "L10" => {"nginx/conf.d/default.conf" => server.call("l10.com", "/etc/nginx/locations.conf"), "nginx/locations.conf" => location.call("/l10")},
         "L11" => {"nginx/default.conf" => server.call("l11.com", "/etc/nginx/conf.d/locations/*.conf"), "nginx/locations/a.conf" => location.call("/l11")},
+        "L12" => {"nginx.conf" => http.call("/etc/nginx/conf.d/*.conf"), "services/a/conf.d/a.conf" => server.call("l12.com", "snippets/x.conf"), "services/a/snippets/x.conf" => location.call("/l12")},
       }.each do |name, files|
         endpoints, _ = analyze_nginx_files(files)
         endpoints.map { |e| {e.url, e.protocol, tag_descriptions(e, "nginx-host")} }.should eq([{"/#{name.downcase}", "https", ["#{name.downcase}.com"]}]), name

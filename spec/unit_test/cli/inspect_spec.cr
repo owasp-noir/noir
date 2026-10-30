@@ -653,6 +653,26 @@ describe "trace and query route matching (#3277)" do
     Noir::CLI::Inspect.wildcard_only_candidates(routes, miss, "/api/itemz/1").map(&.url).should contain("/api/items/:id")
   end
 
+  # The Ingress `Prefix` rule folded into the code routes at `/api/users`
+  # keeps its tag, but the handlers serve only their own routes.
+  it "does not give a code route the prefix of a proxy rule merged into it" do
+    folded = ->(method : String) do
+      ep = endpoint(method, "/api/users", tech: "js_express")
+      ep.add_tag(Tag.new("ingress-path-type", "prefix", "k8s_ingress_analyzer"))
+      details = ep.details
+      details.technologies = ["js_express", "k8s_ingress"]
+      ep.details = details
+      ep
+    end
+    ingress = endpoint("ANY", "/orders", tech: "k8s_ingress")
+    ingress.add_tag(Tag.new("ingress-path-type", "prefix", "k8s_ingress_analyzer"))
+    routes = [folded.call("GET"), folded.call("POST"), ingress]
+    trace.call(routes, "GET", "/api/users/5").should be_empty
+    trace.call(routes, "POST", "/api/users/5").should be_empty
+    trace.call(routes, "POST", "/api/users").should eq([{"/api/users", "exact"}])
+    trace.call(routes, "POST", "/orders/7").should eq([{"/orders", "prefix"}])
+  end
+
   it "serves a Go ServeMux subtree, but not an exact {$} pattern or a gin route that ends in /" do
     mux = endpoint("GET", "/static/", tech: "go_http")
     mux.add_tag(Tag.new("go-http-path-type", "subtree", "go_http_analyzer"))
