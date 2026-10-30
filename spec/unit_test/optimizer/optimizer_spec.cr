@@ -58,9 +58,42 @@ describe "EndpointOptimizer" do
       it "keeps an Ingress guard on the code route it merges into" do
         optimizer = EndpointOptimizer.new(logger, options)
         code = tech_endpoint("/", "GET", "js_express", "app.js", 2)
-        result = optimizer.optimize_endpoints([code, guarded.call("/", "a.yaml", 3)])
+        ingress = guarded.call("/", "a.yaml", 3)
+        ingress.method = "ANY"
+        result = optimizer.optimize_endpoints([code, ingress])
         result.size.should eq(1)
+        result[0].method.should eq("GET")
         auth_tags.call(result[0]).size.should eq(1)
+      end
+
+      # An Ingress rule or Envoy route is `ANY`: it folds into every method
+      # the code serves at its path, with its host, TLS and guard, and stays
+      # `ANY` where no code serves the path.
+      it "folds an ANY Ingress or Envoy route into each code method at its path" do
+        optimizer = EndpointOptimizer.new(logger, options)
+        ingress = guarded.call("/users/{id}", "deploy/ingress.yaml", 3)
+        ingress.method = "ANY"
+        ingress.protocol = "https"
+        ingress.add_tag(Tag.new("ingress-host", "api.example.com", "k8s_ingress_analyzer"))
+        envoy = tech_endpoint("/users/{id}", "ANY", "envoy", "envoy.yaml", 5)
+        lonely = tech_endpoint("/metrics", "ANY", "k8s_ingress", "deploy/ingress.yaml", 9)
+        nginx = tech_endpoint("/users/:id", "ANY", "nginx", "nginx.conf", 4)
+        code = [tech_endpoint("/users/:id", "GET", "go_gin", "main.go", 7), tech_endpoint("/users/:id", "DELETE", "go_gin", "main.go", 8)]
+
+        result = optimizer.optimize_endpoints([ingress, envoy, lonely, nginx] + code)
+        rows = result.map { |e| {e.method, e.url, e.details.technology.to_s, e.protocol} }.sort!
+        rows.should eq([
+          {"ANY", "/metrics", "k8s_ingress", "http"},
+          {"ANY", "/users/:id", "nginx", "http"},
+          {"DELETE", "/users/:id", "go_gin", "https"},
+          {"GET", "/users/:id", "go_gin", "https"},
+        ])
+        result.select(&.method.in?("GET", "DELETE")).each do |e|
+          auth_tags.call(e).size.should eq(1)
+          e.tags.select(&.name.==("ingress-host")).map(&.description).should eq(["api.example.com"])
+          e.details.technologies.should contain("envoy")
+          e.details.code_paths.map(&.path).sort!.should eq(["deploy/ingress.yaml", "envoy.yaml", "main.go"])
+        end
       end
 
       # A generator's global `security` also covers the login route the code
