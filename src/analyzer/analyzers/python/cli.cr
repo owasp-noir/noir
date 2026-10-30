@@ -29,6 +29,10 @@ module Analyzer::Python
     ADD_PARSER_RE       = /(\w+)\s*=\s*(\w+)\.add_parser\s*\(\s*[rf]?["']([^"']+)["']/
     ADD_ARGUMENT_RE     = /(\w+)\s*\.\s*add_argument\s*\(([^)]*)/
     ARGPARSE_PARENTS_RE = /\bparents\s*=\s*[\[(]([^\])]*)[\])]/
+    ARGPARSE_GROUP_RE   = /(\w+)\s*=\s*(\w+)\s*\.\s*add_(?:argument|mutually_exclusive)_group\s*\(/
+    # A parser that is run or carries subcommands is a command even when it
+    # is also another parser's parent.
+    ARGPARSE_COMMAND_USE_RE = /(\w+)\s*\.\s*(?:add_subparsers|parse_\w*args)\s*\(/
 
     # click / typer decorators
     DECORATOR_CMD_RE  = /^@(\w+)\.(command|group|callback)\s*\(/
@@ -150,38 +154,47 @@ module Analyzer::Python
     # add_argument to the command its receiver was most recently assigned
     # (`p = sub.add_parser(...)` reused for every subcommand is common). A
     # receiver used before any assignment (a helper defined above the
-    # builder) falls back to its last assignment in the file. Parsers named
-    # in `parents=[...]` are templates, not commands: their arguments are
-    # copied onto each parser built from them at that point, as argparse
-    # does, instead of landing on the root.
+    # builder) falls back to its last assignment in the file. Arguments
+    # named in `parents=[...]` are copied onto the parser built from them at
+    # that point, as argparse does. A parent that is only a template (never
+    # run, no `prog=`, no subcommands of its own) gets no row of its own,
+    # unless no recognised parser consumes it: then its arguments stay on
+    # the root rather than vanish.
     private def scan_argparse(lines : Array(String), path : String, binary : String,
                               root_url : String, endpoints : Hash(String, Endpoint))
       # Join each multi-line call (the Black/PEP8 shape puts the name of an
       # `add_argument(` / `add_parser(` on its own following line) so the
-      # name token is visible on one logical line, mirroring the click
-      # decorator handling.
+      # name token is visible on one logical line. The join is string- and
+      # comment-aware, so a `(` in a help text doesn't swallow the lines
+      # after it.
       calls = [] of Tuple(Int32, String)
+      commands = Set(String).new
       index = 0
       while index < lines.size
         line = lines[index]
-        unless line.includes?("add_argument") || line.includes?("add_parser") || line.includes?("ArgumentParser")
+        if line.includes?("pars")
+          line.scan(ARGPARSE_COMMAND_USE_RE) { |m| commands << m[1] }
+        end
+        if line.lstrip.starts_with?('#') ||
+           !(line.includes?("add_argument") || line.includes?("add_parser") ||
+           line.includes?("ArgumentParser") || line.includes?("_group"))
           index += 1
           next
         end
-        start = index
-        logical = line
-        while parens_unbalanced?(logical) && index + 1 < lines.size && index - start < 40
-          index += 1
-          logical += " " + lines[index]
-        end
-        index += 1
-        calls << {start + 1, logical}
+        logical, last = python_call_span(lines, index, line)
+        calls << {index + 1, logical}
+        index = last + 1
       end
       return if calls.empty?
 
       templates = Set(String).new
       calls.each do |_, call|
-        argparse_parents(call).each { |name| templates << name }
+        next unless m = call.match(ARGPARSE_NEW_RE)
+        commands << m[1] if call.matches?(ARGPARSE_PROG_RE)
+      end
+      calls.each do |_, call|
+        next unless argparse_parser_target(call, root_url)
+        argparse_parents(call).each { |name| templates << name unless commands.includes?(name) }
       end
 
       last_urls = {} of String => String
@@ -193,20 +206,25 @@ module Analyzer::Python
       return if last_urls.empty?
 
       var_urls = {} of String => String
-      template_params = {} of String => Array(Param)
+      var_params = {} of String => Array(Param)
+      group_owner = {} of String => String
       calls.each do |line_no, call|
         if target = argparse_parser_target(call, root_url)
           var, url = target
-          inherited = argparse_parents(call).flat_map { |name| template_params[name]? || [] of Param }
-          if templates.includes?(var)
-            (template_params[var] ||= [] of Param).concat(inherited)
-          else
+          inherited = argparse_parents(call).flat_map { |name| var_params[name]? || [] of Param }
+          var_params[var] = inherited.dup
+          group_owner.delete(var)
+          unless templates.includes?(var)
             var_urls[var] = url
             unless inherited.empty?
               ep = fetch_endpoint(endpoints, url, path, line_no)
               inherited.each { |param| ep.push_param(param) }
             end
           end
+        elsif m = call.match(ARGPARSE_GROUP_RE)
+          # An argument group adds to the parser it was made from.
+          group_owner[m[1]] = group_owner[m[2]]? || m[2]
+          next
         end
 
         next unless m = call.match(ADD_ARGUMENT_RE)
@@ -224,10 +242,10 @@ module Analyzer::Python
                   Param.new(first, "", "argument")
                 end
 
-        receiver = m[1]
-        if templates.includes?(receiver)
-          (template_params[receiver] ||= [] of Param) << param
-        elsif url = var_urls[receiver]? || last_urls[receiver]?
+        receiver = group_owner[m[1]]? || m[1]
+        (var_params[receiver] ||= [] of Param) << param
+        next if templates.includes?(receiver)
+        if url = var_urls[receiver]? || last_urls[receiver]?
           fetch_endpoint(endpoints, url, path, line_no).push_param(param)
         end
       end
@@ -284,10 +302,7 @@ module Analyzer::Python
         start_line = index
         logical = stripped
         if stripped.starts_with?("@") || stripped.starts_with?("def ")
-          while parens_unbalanced?(logical) && index + 1 < lines.size
-            index += 1
-            logical += " " + lines[index].strip
-          end
+          logical, index = python_call_span(lines, index, stripped)
         end
 
         if m = logical.match(DECORATOR_CMD_RE)
@@ -326,17 +341,6 @@ module Analyzer::Python
 
         index += 1
       end
-    end
-
-    # Whether `text` has more `(` than `)` — used to detect a decorator/def
-    # whose argument list continues on the next physical line.
-    private def parens_unbalanced?(text : String) : Bool
-      depth = 0
-      text.each_char do |ch|
-        depth += 1 if ch == '('
-        depth -= 1 if ch == ')'
-      end
-      depth > 0
     end
 
     # Picks the long option (`--name`) when present, else the short one.
@@ -429,11 +433,7 @@ module Analyzer::Python
           next
         end
         start = index
-        logical = line
-        while parens_unbalanced?(logical) && index + 1 < lines.size && index - start < 10
-          index += 1
-          logical += " " + lines[index]
-        end
+        logical, index = python_call_span(lines, index, line)
         if m = logical.match(ABSL_DEFINE_NAME_RE)
           fetch_endpoint(endpoints, root_url, path, start + 1).push_param(Param.new(m[1], "", "flag"))
         end

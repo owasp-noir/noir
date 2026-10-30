@@ -159,6 +159,26 @@ argparse_subcommand_endpoints = [
     Param.new("user_id", "", "argument"),
     Param.new("yes", "", "flag"),
   ]),
+  # A stray `(` in a help text or comment must not swallow later calls;
+  # argument groups add to their parser. clickparenctl is the click side.
+  build.call("cli://strayctl/alpha", [Param.new("aa", "", "flag")]),
+  build.call("cli://strayctl/beta", [
+    Param.new("bb", "", "flag"),
+    Param.new("json", "", "flag"),
+    Param.new("quiet", "", "flag"),
+  ]),
+  build.call("cli://strayctl/gamma", [Param.new("cc", "", "flag")]),
+  build.call("cli://clickparenctl", [] of Param),
+  build.call("cli://clickparenctl/serve", [Param.new("port", "", "flag")]),
+  build.call("cli://clickparenctl/stop", [Param.new("force", "", "flag")]),
+  # A parser that is run keeps its row even when it is also a parent; a
+  # parent no recognised parser consumes keeps its flags on the root.
+  build.call("cli://selfparentctl", [Param.new("config", "", "flag")]),
+  build.call("cli://selfparentctl/run", [
+    Param.new("config", "", "flag"),
+    Param.new("job", "", "argument"),
+  ]),
+  build.call("cli://loopctl", [Param.new("region", "", "flag")]),
 ]
 
 FunctionalTester.new("fixtures/python/cli_argparse_subcommands/", {

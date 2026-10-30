@@ -35,4 +35,24 @@ describe "Analyzer::Python::Cli argparse subcommands" do
     commands["cli://userctl/show"]?.should eq(["user_id:argument"])
     commands["cli://userctl/remove"]?.should eq(["user_id:argument", "yes:flag"])
   end
+
+  it "joins calls string- and comment-aware, so a stray ( keeps later subcommands" do
+    commands["cli://strayctl/alpha"]?.should eq(["aa:flag"])
+    commands["cli://strayctl/gamma"]?.should eq(["cc:flag"])
+    commands["cli://clickparenctl/serve"]?.should eq(["port:flag"])
+    commands["cli://clickparenctl/stop"]?.should eq(["force:flag"])
+  end
+
+  it "attributes argument-group arguments to the parser the group came from" do
+    commands["cli://strayctl/beta"]?.should eq(["bb:flag", "json:flag", "quiet:flag"])
+  end
+
+  it "keeps the row of a parser that is run, even when it is also a parent" do
+    commands["cli://selfparentctl"]?.should eq(["config:flag"])
+    commands["cli://selfparentctl/run"]?.should eq(["config:flag", "job:argument"])
+  end
+
+  it "leaves a parent's arguments on the root when no recognised parser consumes it" do
+    commands["cli://loopctl"]?.should eq(["region:flag"])
+  end
 end
