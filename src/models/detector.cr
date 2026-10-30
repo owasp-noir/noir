@@ -305,9 +305,11 @@ class Detector
         line = line.lchop("import").lstrip
         in_block = line.starts_with?('(')
       end
-      in_block = false if in_block && line.includes?(')')
+      # Only the code closes the block: `"net/http" // stdlib (HTTP)` and a
+      # `// helpers (internal)` line do not.
       code = line.partition("//")[0]
       return true if code.includes?('"') && content_matches?(code, marker)
+      in_block = false if in_block && code.includes?(')')
     end
     false
   end

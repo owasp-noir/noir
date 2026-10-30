@@ -32,6 +32,9 @@ describe "Detect Go Echo" do
   it "detects a .go import when go.mod still marks echo indirect" do
     instance.detect("main.go", %(package main\n\nimport "github.com/labstack/echo/v4"\n)).should be_true
     instance.detect("main.go", %(/* License */\npackage main\n\nimport (\n\t"net/http"\n\n\tmw "github.com/labstack/echo/v4"\n)\n)).should be_true
+    # A `)` in a comment does not close the import block.
+    instance.detect("main.go", %(package main\n\nimport (\n\t"net/http" // stdlib (HTTP)\n\t"github.com/labstack/echo/v4"\n)\n)).should be_true
+    instance.detect("main.go", %(package main\n\nimport (\n\t// helpers (internal)\n\tweb "github.com/labstack/echo/v4"\n)\n)).should be_true
   end
 
   it "does not read a mention or a file the build leaves out as an import" do
