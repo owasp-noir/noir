@@ -43,6 +43,12 @@ class JavaMiscAuthTagger < FrameworkTagger
   # route).
   VERTX_ROUTE = /\b\w+\s*\.\s*(?:route|get|post|put|delete|patch|head|options|trace|connect)\s*\(\s*(?:"([^"]*)"\s*)?\)\s*(?:\.\s*(?:handler|blockingHandler|respond|failureHandler|produces|consumes|order|subRouter)\b|$)/
 
+  # One registration in an Armeria `Server.builder()` chain. The analyzer
+  # reads that chain's decorators itself (`ArmeriaChainGuards`); the lines
+  # around a registration are other routes' and other servers' calls, so
+  # this tagger leaves those routes alone.
+  ARMERIA_BUILDER_ROUTE = /\.\s*(?:service|serviceUnder|serviceIf|route|withRoute)\s*\(/
+
   def self.target_techs : Array(String)
     ["java_vertx", "java_armeria", "java_jsp"]
   end
@@ -57,6 +63,8 @@ class JavaMiscAuthTagger < FrameworkTagger
       # read would crash the lines[idx] walks below with IndexError.
       next if line_num < 1 || line_num > lines.size
       line_idx = line_num - 1
+
+      next if endpoint.details.technology == "java_armeria" && lines[line_idx].matches?(ARMERIA_BUILDER_ROUTE)
 
       # Check route context for auth patterns
       vertx = endpoint.details.technology == "java_vertx"

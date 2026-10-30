@@ -62,7 +62,7 @@ module Analyzer::Kotlin
     SPRING_MAPPING_ANNOTATION_RE = Regex.union(
       "@RequestMapping", "@GetMapping", "@PostMapping", "@PutMapping", "@DeleteMapping", "@PatchMapping"
     )
-    STOMP_ROUTE_MARKER_RE       = Regex.union("addEndpoint", "@MessageMapping", "@SubscribeMapping")
+    STOMP_ROUTE_MARKER_RE       = Regex.union("addEndpoint", "addHandler", "@MessageMapping", "@SubscribeMapping")
     GRAPHQL_ROUTE_MARKER_RE     = Regex.union("@QueryMapping", "@MutationMapping", "@SubscriptionMapping", "@SchemaMapping")
     FUNCTIONAL_ROUTER_MARKER_RE = Regex.union("coRouter", "router {")
     CONTROLLER_ANNOTATION_RE    = Regex.union("RestController", "Controller")
@@ -875,7 +875,7 @@ module Analyzer::Kotlin
             end
           end
           if include_callee && route.verb == "GET" && route.class_name.empty? && route.method_name.empty?
-            push_spring_callee(endpoint, "StompEndpointRegistry.addEndpoint", path, line)
+            push_spring_callee(endpoint, route.handler_reference || "StompEndpointRegistry.addEndpoint", path, line)
           end
 
           @result << endpoint

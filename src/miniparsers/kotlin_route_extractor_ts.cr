@@ -3,7 +3,7 @@
 # Noir::TreeSitterKotlinRouteExtractor with one concern (STOMP,
 # GraphQL, Spring Cloud Gateway, WebFlux functional DSL, shared
 # decoding helpers, and the Kotlin side of the Java-first JAX-RS,
-# Micronaut and Javalin walkers). Requiring this file pulls in the
+# Micronaut, Javalin and Armeria walkers). Requiring this file pulls in the
 # whole extractor, exactly as before the split.
 require "../utils/url_path"
 require "./jaxrs_extractor_ts"
@@ -12,6 +12,7 @@ require "./jvm_lambda_dsl_extractor_ts"
 require "./kotlin_parameter_extractor_ts"
 require "./kotlin_callee_extractor"
 require "./kotlin_route_extractor_ts/core"
+require "./kotlin_route_extractor_ts/armeria"
 require "./kotlin_route_extractor_ts/gateway"
 require "./kotlin_route_extractor_ts/graphql"
 require "./kotlin_route_extractor_ts/helpers"

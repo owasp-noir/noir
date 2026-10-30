@@ -39,6 +39,18 @@ module Noir
           end
         end
       end
+
+      # Plain WebSocket: `WebSocketHandlerRegistry.addHandler(handler, "/chat")`.
+      # The name is common, so only a file that uses Spring's WebSocket
+      # config package is read for it.
+      return unless source.includes?("org.springframework.web.socket.config.annotation")
+      each_method_call_arguments(source, "addHandler") do |args, line|
+        top_level_arguments(args).skip(1).each do |arg|
+          resolve_route_expressions(arg, string_constants, local_string_constants).each do |endpoint_path|
+            routes << Route.new("GET", endpoint_path, "", "", line - 1, handler_reference: "WebSocketHandlerRegistry.addHandler")
+          end
+        end
+      end
     end
 
     private def walk_message_mapping_routes(node : LibTreeSitter::TSNode,

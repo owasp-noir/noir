@@ -334,7 +334,7 @@ module Analyzer::Java
 
             if has_websocket_bindings
               constants = file_constants
-              collect_stomp_endpoints(content, constants).each do |entry|
+              collect_stomp_endpoints(JavaEngine.strip_comments(content), constants).each do |entry|
                 endpoint_path, line = entry
                 endpoint = Endpoint.new(
                   resolve_endpoint_path(Noir::URLPath.join_rooted(configured_base_path, endpoint_path), spring_properties),
@@ -700,25 +700,31 @@ module Analyzer::Java
       imports
     end
 
+    # WebSocket handshake paths: STOMP's `addEndpoint(String...)` and plain
+    # `WebSocketHandlerRegistry.addHandler(handler, String...)`, whose first
+    # argument is the handler. `content` comes with comments blanked, so a
+    # commented-out registration is not read.
     private def collect_stomp_endpoints(content : String,
                                         constants : Hash(String, String)) : Array(Tuple(String, Int32))
       endpoints = [] of Tuple(String, Int32)
-      offset = 0
+      {"addEndpoint", "addHandler"}.each do |name|
+        offset = 0
+        while marker = content.index(name, offset)
+          offset = marker + name.size
+          next unless method_call_name?(content, marker, name.size)
 
-      while marker = content.index("addEndpoint", offset)
-        offset = marker + 11
-        next unless add_endpoint_call_name?(content, marker)
+          open_idx = content.index('(', marker)
+          next unless open_idx
+          close_idx = find_matching_paren(content, open_idx)
+          next unless close_idx
 
-        open_idx = content.index('(', marker)
-        next unless open_idx
-        close_idx = find_matching_paren(content, open_idx)
-        next unless close_idx
-
-        args = content[(open_idx + 1)...close_idx]
-        line = line_number_for_index(content, marker)
-        top_level_arguments(args).each do |arg|
-          if endpoint_path = resolve_router_path(arg, constants)
-            endpoints << {endpoint_path, line}
+          args = top_level_arguments(content[(open_idx + 1)...close_idx])
+          args = args[1..]? || [] of String if name == "addHandler"
+          line = line_number_for_index(content, marker)
+          args.each do |arg|
+            if endpoint_path = resolve_router_path(arg, constants)
+              endpoints << {endpoint_path, line}
+            end
           end
         end
       end
@@ -849,10 +855,6 @@ module Analyzer::Java
         paths.concat(annotation_string_values(args_node, content, constants))
       end
       paths
-    end
-
-    private def add_endpoint_call_name?(code : String, marker : Int32) : Bool
-      method_call_name?(code, marker, 11)
     end
 
     private def method_call_name?(code : String, marker : Int32, name_size : Int32) : Bool
