@@ -3,6 +3,7 @@ require "../../spec_helper"
 require "../../../src/models/code_locator"
 require "../../../src/analyzer/analyzers/java/spring"
 require "../../../src/analyzer/analyzers/groovy/grails"
+require "../../../src/analyzer/analyzers/kotlin/spring"
 
 # Large controllers used to cost quadratic time: Spring re-walked the whole
 # tree per route to find its handler (and re-parsed an inherited `*Api`
@@ -88,6 +89,37 @@ describe "JVM large-controller scaling" do
     endpoints.size.should eq(4000)
     endpoints.last.url.should eq("/big/a3999")
     endpoints.last.details.code_paths.first.line.should eq(4005)
+    elapsed.should be < 10.seconds
+  end
+
+  # #3267: the constants a Kotlin file reads unqualified from its package
+  # are copied into its own map. Copying the whole package into every file
+  # was files x constants: 2000 files of 20 took 33s and 4.7GB.
+  it "seeds a Kotlin package's constants per file without copying the package" do
+    files = {} of String => String
+    1500.times do |i|
+      files["src/main/kotlin/com/k/F#{i}.kt"] = String.build do |io|
+        io << "package com.k\n\n"
+        20.times { |j| io << "const val K#{i}_#{j} = \"/k#{i}/#{j}\"\n" }
+      end
+    end
+    files["src/main/kotlin/com/k/C.kt"] = <<-KT
+      package com.k
+
+      import org.springframework.web.bind.annotation.*
+
+      @RestController
+      @RequestMapping(K1499_7)
+      class C { @GetMapping("/x") fun x() = "" }
+      KT
+
+    endpoints, elapsed = scan_tree(files) do |base|
+      options = create_test_options
+      options["base"] = base
+      Analyzer::Kotlin::Spring.new(options).analyze
+    end
+
+    endpoints.map(&.url).should eq(["/k1499/7/x"])
     elapsed.should be < 10.seconds
   end
 end

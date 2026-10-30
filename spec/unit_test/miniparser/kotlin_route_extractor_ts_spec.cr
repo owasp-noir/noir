@@ -211,6 +211,84 @@ describe Noir::TreeSitterKotlinRouteExtractor do
     constants["Paths.B"]?.should eq("/b")
   end
 
+  it "registers a top-level constant under its package" do
+    source = <<-KT
+      package com.acme
+
+      const val TOP = "/top"
+      object Paths { const val A = "/a" }
+      KT
+
+    constants = Noir::TreeSitterKotlinRouteExtractor.extract_string_constants(source)
+    constants["com.acme.TOP"]?.should eq("/top")
+    constants["com.acme.A"]?.should be_nil
+  end
+
+  it "does not register a function-local val under the package" do
+    source = <<-KT
+      package com.acme
+
+      fun helper(): String {
+          val API = "/local-junk"
+          return API
+      }
+      KT
+
+    Noir::TreeSitterKotlinRouteExtractor.extract_string_constants(source)["com.acme.API"]?.should be_nil
+  end
+
+  it "does not nest constants under a body-less type" do
+    source = <<-KT
+      package com.acme
+
+      data class Dto(val id: Long, val name: String = "n")
+      const val AFTER_DATA = "/after-data"
+      class Plain(val id: Long)
+      const val AFTER_PLAIN = "/after-plain"
+      annotation class Marker(val value: String = "/marker-default")
+      private val anon = object : Runnable { override fun run() {} }
+      enum class Kind { A, B; companion object { const val KIND = "/kind" } }
+      class Multi(
+          val label: String = "/ctor-default",
+      ) : Base() {
+          val INNER = "/inner"
+      }
+      const val AFTER_MIX = "/after-mix"
+      KT
+
+    constants = Noir::TreeSitterKotlinRouteExtractor.extract_string_constants(source)
+    constants["com.acme.AFTER_DATA"]?.should eq("/after-data")
+    constants["com.acme.AFTER_PLAIN"]?.should eq("/after-plain")
+    constants["com.acme.AFTER_MIX"]?.should eq("/after-mix")
+    constants["Dto.AFTER_DATA"]?.should be_nil
+    constants["com.acme.Kind.KIND"]?.should eq("/kind")
+    constants["com.acme.Multi.INNER"]?.should eq("/inner")
+    # Constructor defaults are not package members.
+    constants["com.acme.name"]?.should be_nil
+    constants["com.acme.label"]?.should be_nil
+  end
+
+  it "nests constants under modifier-prefixed types" do
+    source = <<-KT
+      package com.acme
+
+      object Paths {
+          const val ROOT = "/paths-root"
+          internal object Admin {
+              const val ROOT = "/admin-root"
+          }
+          data object Ops {
+              const val ROOT = "/ops-root"
+          }
+      }
+      KT
+
+    constants = Noir::TreeSitterKotlinRouteExtractor.extract_string_constants(source)
+    constants["Paths.ROOT"]?.should eq("/paths-root")
+    constants["com.acme.Paths.Admin.ROOT"]?.should eq("/admin-root")
+    constants["com.acme.Paths.Ops.ROOT"]?.should eq("/ops-root")
+  end
+
   it "does not resolve simple mapping constants from the global index" do
     source = <<-KT
       package com.example

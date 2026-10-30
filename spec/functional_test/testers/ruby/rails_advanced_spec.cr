@@ -62,6 +62,12 @@ expected_endpoints = [
   Endpoint.new("/admin/debug/echo", "GET"),
   Endpoint.new("/admin/after_conditional", "GET"),
 
+  # #3267: bare one-segment routes bind to the namespace's own controller.
+  Endpoint.new("/admin/dashboard", "GET", [Param.new("page", "", "query")]),
+  Endpoint.new("/admin/rebuild", "POST", [Param.new("target", "", "form")]),
+  # Rails reads the dash as an underscore: admin#with_dash.
+  Endpoint.new("/admin/with-dash", "GET", [Param.new("dash_mode", "", "query")]),
+
   # Parenthesized namespace with path override keeps the controller namespace
   # while changing the URL prefix.
   Endpoint.new("/sekret/reports", "GET"),
@@ -276,6 +282,7 @@ total_endpoints = 1 +  # root
                   4 +  # admin/refunds member (change_status, purge, update_metadata) + collection (new_list)
                   1 +  # admin/monitor/heartbeat (namespaced `to:`)
                   2 +  # admin debug/echo (inside if-block) + after_conditional (keeps /admin)
+                  3 +  # admin dashboard/rebuild/with-dash -> AdminController
                   2 +  # namespace path override reports
                   2 +  # scope module/path explicit routes
                   1 +  # controller block route
@@ -309,6 +316,13 @@ tester.perform_tests
 
 it "expands adjacent optional groups in order only", tags: "functional" do
   tester.app.endpoints.map(&.url).should_not contain("/archive/:month")
+end
+
+it "binds a namespace's bare one-segment route to the namespace controller", tags: "functional" do
+  dashboard = tester.app.endpoints.find! { |e| e.url == "/admin/dashboard" && e.method == "GET" }
+  handler = dashboard.handler.not_nil!
+  handler.name.should eq("admin#dashboard")
+  handler.path.to_s.should end_with("app/controllers/admin_controller.rb")
 end
 
 it "points an inherited action's handler at the parent's def", tags: "functional" do
