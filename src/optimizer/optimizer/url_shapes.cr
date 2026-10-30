@@ -35,7 +35,7 @@ class EndpointOptimizer
       # Mobile deep-link URLs are not HTTP route templates: a `${...}`
       # there is an unresolved gradle manifest placeholder (kept verbatim
       # and tagged by the Android analyzer), not a JS template literal.
-      next if endpoint.non_http?
+      next if endpoint.non_http? || endpoint.kind == "regex"
       endpoint.url = normalize_url_shape(endpoint.url, keep_constraints: regex_placeholders?(endpoint))
       endpoints[idx] = endpoint
     end
@@ -106,8 +106,10 @@ class EndpointOptimizer
     result = String.build do |io|
       each_brace_group(url) do |start, stop, inner|
         next unless match = inner.match(BRACE_CONSTRAINT_RE)
+        # Starlette's `{p:path}` spans `/`: the rest-of-path `{*p}`, not `{p}`.
+        rest = inner.size == match[1].size + 5 && inner.ends_with?(":path")
         # ASP.NET's `{id:int?}` is optional: the `?` outlives the constraint.
-        io << url.byte_slice(cursor, start - cursor) << '{' << match[1] << (inner.ends_with?('?') ? "?}" : "}")
+        io << url.byte_slice(cursor, start - cursor) << (rest ? "{*" : "{") << match[1] << (inner.ends_with?('?') ? "?}" : "}")
         cursor = stop
       end
       io << url.byte_slice(cursor, url.bytesize - cursor)

@@ -49,10 +49,11 @@ expected_endpoints = [
 
   # 6. GET /exports/{file_path:path} — programmatic route registration
   #    with a FastAPI typed path converter. The converter should not
-  #    make `file_path` appear as both query and path, and the handler
-  #    reference should seed callee/AI-context output even before its
-  #    body callees are resolved.
-  Endpoint.new("/exports/{file_path}", "GET").tap do |ep|
+  #    make `file_path` appear as both query and path (it spans `/`, so
+  #    the URL keeps it as the rest-of-path `{*file_path}`), and the
+  #    handler reference should seed callee/AI-context output even before
+  #    its body callees are resolved.
+  Endpoint.new("/exports/{*file_path}", "GET").tap do |ep|
     ep.push_param(Param.new("file_path", "", "path"))
     ep.push_callee(Callee.new("export_file", main_path, 31))
     ep.push_callee(Callee.new("audit_log", db_path, 5))
@@ -94,7 +95,7 @@ describe "FastAPI programmatic route callees", tags: "functional" do
     app.detect
     app.analyze
 
-    endpoint = app.endpoints.find! { |ep| ep.method == "GET" && ep.url == "/exports/{file_path}" }
+    endpoint = app.endpoints.find! { |ep| ep.method == "GET" && ep.url == "/exports/{*file_path}" }
     endpoint.callees.should be_empty
     endpoint.params.select { |param| param.name == "file_path" }.map(&.param_type).should eq(["path"])
   end

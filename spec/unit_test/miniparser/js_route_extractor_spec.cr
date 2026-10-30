@@ -436,6 +436,25 @@ describe Noir::JSRouteExtractor do
         file.delete
       end
     end
+
+    it "writes a RegExp literal route as its pattern, kind regex, and a plain one as its path" do
+      content = <<-'JS'
+        const express = require("express");
+        const app = express();
+        const router = express.Router();
+        router.get(/^\/(?:(_\w+))\/(?:(\d+))$/i, (req, res) => res.json({}));
+        router.get(/.*fly$/, (req, res) => res.json({}));
+        router.get(/^\/health$/, (req, res) => res.json({}));
+        app.use("/api", router);
+        JS
+      file = File.tempfile("app", ".js", &.print(content))
+      begin
+        routes = Noir::JSRouteExtractor.extract_routes(file.path, content)
+        routes.map { |r| {r.url, r.kind} }.sort!.should eq([{"/api/(?:(_\\w+))/(?:(\\d+))", "regex"}, {"/api/.*fly", "regex"}, {"/api/health", ""}])
+      ensure
+        file.delete
+      end
+    end
   end
 
   describe "test_stub_only?" do

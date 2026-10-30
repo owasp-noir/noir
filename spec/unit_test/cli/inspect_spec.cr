@@ -609,3 +609,101 @@ describe "query --project" do
     JSON.parse(Noir::CLI::Inspect::Row.compact(loose).to_json).as_h.has_key?("project").should be_false
   end
 end
+
+describe "trace and query route matching (#3277)" do
+  trace = ->(routes : Array(Endpoint), method : String?, path : String) { Noir::CLI::Inspect.trace(routes, method, path).map { |m| {m.endpoint.url, m.matched_by} } }
+
+  it "lists ANY rows for an HTTP --method, and only ANY rows for --method ANY" do
+    routes = [endpoint("ANY", "/api/", tech: "nginx"), endpoint("GET", "/x"), endpoint("CLI", "cli://tool/x", tech: "go_cli")]
+    post = Noir::CLI::QueryCommand.parse_filters(["--method", "POST"]).filters
+    Noir::CLI::Inspect.query(routes, post, false).map(&.url).should eq(["/api/"])
+    Noir::CLI::Inspect.filter_warnings(routes, post).should be_empty
+    any = Noir::CLI::QueryCommand.parse_filters(["--method", "ANY"]).filters
+    Noir::CLI::Inspect.query(routes, any, false).map(&.url).should eq(["/api/"])
+    cli = Noir::CLI::QueryCommand.parse_filters(["--method", "CLI"]).filters
+    Noir::CLI::Inspect.query(routes, cli, false).map(&.url).should eq(["cli://tool/x"])
+  end
+
+  it "serves a path under a proxy prefix rule, by string for nginx and by segment for Ingress" do
+    nginx = endpoint("ANY", "/api/", tech: "nginx")
+    nginx.add_tag(Tag.new("nginx-path-type", "prefix", "nginx_analyzer"))
+    exact = endpoint("ANY", "/exact", tech: "nginx")
+    exact.add_tag(Tag.new("nginx-path-type", "exact", "nginx_analyzer"))
+    ingress = endpoint("GET", "/orders", tech: "k8s_ingress")
+    ingress.add_tag(Tag.new("ingress-path-type", "prefix", "k8s_ingress_analyzer"))
+    code = endpoint("GET", "/api/items/:id", tech: "js_express")
+    routes = [nginx, exact, ingress, code]
+    trace.call(routes, "GET", "/api/items/1").should eq([{"/api/items/:id", "pattern"}, {"/api/", "prefix"}])
+    trace.call(routes, "GET", "/exact/x").should be_empty
+    trace.call(routes, "GET", "/orders/7?x=1").should eq([{"/orders", "prefix"}])
+    trace.call(routes, "GET", "/ordersx").should be_empty
+    miss = Noir::CLI::Inspect.trace(routes, "GET", "/api/itemz/1")
+    Noir::CLI::Inspect.wildcard_only_candidates(routes, miss, "/api/itemz/1").map(&.url).should contain("/api/items/:id")
+  end
+
+  it "serves a Go ServeMux subtree, but not a gin route that ends in /" do
+    mux = endpoint("GET", "/static/", tech: "go_http")
+    gin = endpoint("GET", "/assets/", tech: "go_gin")
+    trace.call([mux, gin], "GET", "/static/js/app.js").should eq([{"/static/", "prefix"}])
+    trace.call([mux, gin], "GET", "/assets/app.js").should be_empty
+  end
+
+  it "reads every catch-all spelling as the rest of the path" do
+    routes = [
+      endpoint("GET", "/plugins/{name}/assets/{*resource}"),
+      endpoint("GET", "/kt/{path...}"),
+      endpoint("GET", "/koa/:path*"),
+      endpoint("GET", "/py/{*file_path}"),
+    ]
+    trace.call(routes, "GET", "/plugins/foo/assets/a/b/c.js").should eq([{"/plugins/{name}/assets/{*resource}", "wildcard"}])
+    trace.call(routes, "GET", "/kt/a/b/c.txt").should eq([{"/kt/{path...}", "wildcard"}])
+    trace.call(routes, "GET", "/py/a/b.txt").should eq([{"/py/{*file_path}", "wildcard"}])
+    # `:name*` takes zero segments too.
+    trace.call(routes, "GET", "/koa").should eq([{"/koa/:path*", "wildcard"}])
+    trace.call(routes, "GET", "/koa/").should eq([{"/koa/:path*", "wildcard"}])
+    trace.call(routes, "GET", "/koax").should be_empty
+    trace.call([endpoint("GET", "/tree/:path+")], "GET", "/tree").should be_empty
+  end
+
+  it "ranks a catch-all with a literal prefix above a bare one" do
+    routes = [endpoint("ANY", "/*unmatched_route", tech: "ruby_rails"), endpoint("GET", "/media_proxy/:id/*any", tech: "ruby_rails")]
+    trace.call(routes, "GET", "/media_proxy/1/original").map(&.[0]).should eq(["/media_proxy/:id/*any", "/*unmatched_route"])
+  end
+
+  it "reads a gRPC custom-method suffix as literal text" do
+    routes = [
+      endpoint("POST", "/v1/projects/{wildcard}/secrets/{parent}:addVersion"),
+      endpoint("POST", "/v1/projects/{wildcard}/secrets/{parent}:destroy"),
+      endpoint("GET", "/v1/projects/{wildcard}/versions/{name}"),
+      endpoint("GET", "/v1/projects/{wildcard}/versions/{name}:access"),
+      endpoint("GET", "/flights/:from-:to"),
+    ]
+    trace.call(routes, "POST", "/v1/projects/p/secrets/s:destroy").map(&.[0]).should eq(["/v1/projects/{wildcard}/secrets/{parent}:destroy"])
+    trace.call(routes, "POST", "/v1/projects/p/secrets/s:anything").should be_empty
+    trace.call(routes, "GET", "/v1/projects/p/versions/3:access").map(&.[0]).should eq(["/v1/projects/{wildcard}/versions/{name}:access", "/v1/projects/{wildcard}/versions/{name}"])
+    trace.call(routes, "GET", "/flights/icn-sfo").map(&.[0]).should eq(["/flights/:from-:to"])
+  end
+
+  it "holds a Play $id<regex> segment to its regex" do
+    routes = [
+      endpoint("GET", "/api/swiss/$id<\\w{8}>", tech: "scala_play"),
+      endpoint("GET", "/assets/_$v<\\w{6}>/*file", tech: "scala_play"),
+      endpoint("GET", "/*path", tech: "scala_play"),
+    ]
+    trace.call(routes, "GET", "/api/swiss/abc").map(&.[0]).should eq(["/*path"])
+    trace.call(routes, "GET", "/api/swiss/abcd1234").map(&.[0]).should eq(["/api/swiss/$id<\\w{8}>", "/*path"])
+    trace.call(routes, "GET", "/assets/_abc123/js/app.js").map(&.[0]).should eq(["/assets/_$v<\\w{6}>/*file", "/*path"])
+  end
+
+  it "addresses a cli:// endpoint by its own URL and keeps it out of HTTP paths" do
+    routes = [endpoint("CLI", "cli://shopctl/users", tech: "go_cli"), endpoint("CLI", "cli://other/users", tech: "go_cli")]
+    trace.call(routes, nil, "cli://shopctl/users").should eq([{"cli://shopctl/users", "exact"}])
+    trace.call(routes, "CLI", "cli://shopctl/users").should eq([{"cli://shopctl/users", "exact"}])
+    trace.call(routes, nil, "/users").should be_empty
+  end
+
+  it "matches an Express RegExp route written as its pattern" do
+    route = endpoint("GET", "/(?:(_\\w+))/(?:(\\d+))", kind: "regex", tech: "js_express")
+    trace.call([route], "GET", "/_item/12").should eq([{"/(?:(_\\w+))/(?:(\\d+))", "pattern"}])
+  end
+end

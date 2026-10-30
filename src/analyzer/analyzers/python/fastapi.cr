@@ -1235,8 +1235,10 @@ module Analyzer::Python
       names
     end
 
+    # `{id:int}` → `{id}`. `{p:path}` stays: it spans `/`, so the route
+    # serves more than `{p}` does; the optimizer writes it `{*p}`.
     private def normalize_fastapi_path_params(route_path : ::String) : ::String
-      route_path.gsub(TYPED_PATH_PARAM_REGEX) { |_| "{#{$~[1]}}" }
+      route_path.gsub(TYPED_PATH_PARAM_REGEX) { |typed| typed.ends_with?(":path}") ? typed : "{#{$~[1]}}" }
     end
 
     private def fastapi_dependency_param?(param : FunctionParameter) : Bool

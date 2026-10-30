@@ -1469,6 +1469,24 @@ describe "EndpointOptimizer" do
       result[3].url.should eq("/archive/\\d{4}/")
     end
 
+    it "writes Starlette's {p:path} converter as the rest-of-path {*p}" do
+      optimizer = EndpointOptimizer.new(logger, options)
+      endpoints = [Endpoint.new("/files/{file_path:path}", "GET"), Endpoint.new("/x/{p:paths}", "GET")]
+
+      result = optimizer.normalize_url_shapes(endpoints)
+      result.map(&.url).should eq(["/files/{*file_path}", "/x/{p}"])
+      optimizer.add_path_parameters(result)[0].params.map(&.name).should eq(["file_path"])
+    end
+
+    it "leaves a regex route's pattern alone" do
+      optimizer = EndpointOptimizer.new(logger, options)
+      regex = Endpoint.new("/user/(?<id>\\d+)", "GET")
+      regex.kind = "regex"
+
+      optimizer.normalize_url_shapes([regex])[0].url.should eq("/user/(?<id>\\d+)")
+      optimizer.optimize_endpoints([regex])[0].url.should eq("/user/(?<id>\\d+)")
+    end
+
     it "keeps a chi / gorilla regex constraint, which picks the route" do
       optimizer = EndpointOptimizer.new(logger, options)
       chi = Details.new(PathInfo.new("routers/web/web.go", 1))

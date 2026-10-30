@@ -97,7 +97,7 @@ module Noir::CLI::QueryCommand
       Filters AND together; a comma list inside one filter is OR.
 
       #{Noir::CLI.section("FILTERS:")}
-        --method GET,POST      HTTP method
+        --method GET,POST      HTTP method (an ANY route matches every HTTP method)
         --url <glob|substr>    Route URL: a glob when it contains * ? [ (* crosses /, {id} is
                                literal), a substring otherwise
         --path <glob|substr>   Source path as reported (a relative glob also matches from any /)

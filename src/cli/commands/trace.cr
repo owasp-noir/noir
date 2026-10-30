@@ -96,7 +96,8 @@ module Noir::CLI::TraceCommand
       matches `/api/users/{id}`, `:id`, `<int:pk>`, `[id]`, `*`. Prints the full
       endpoint record (handler, params, guards, sinks, callees, ...). On a miss,
       prints the nearest routes as candidates and exits 1. Pattern matches are
-      ordered most-specific first (`matched_by`: exact, pattern, wildcard); a
+      ordered most-specific first (`matched_by`: exact, pattern, wildcard, or
+      prefix for a proxy prefix location or a Go ServeMux `/x/` subtree); a
       HEAD request also traces to the GET route. Every match is printed, since
       which one a router picks is the framework's rule; the first is the best.
 

@@ -385,13 +385,20 @@ module Noir::CLI::Inspect
 
   # `{id}` `:id` `<int:pk>` `[id]` `$id` `${id}` match one segment; `*`
   # `**` `{path*}` `{...rest}` `[...slug]` `[[...slug]]` `*path` `:rest*` `<path:p>`
-  # match the rest (Express's bare `*` is a catch-all, not one segment).
-  REST_PLACEHOLDER = /\A(?:<path:[^>]*>|\*\*|\{[^}]*\*\}|\{\.\.\.[^}]*\}|\[\[\.\.\.[^\]]*\]\]|\[\.\.\.[^\]]*\]|\*[A-Za-z_]\w*|:[A-Za-z_]\w*[*+]|\*)/
+  # `{*path}` (Spring, ASP.NET, Next.js and Starlette's `{p:path}` as the
+  # optimizer writes them) and `{path...}` (Ktor, Go) match the rest
+  # (Express's bare `*` is a catch-all, not one segment).
+  REST_PLACEHOLDER = /\A(?:<path:[^>]*>|\*\*|\{\*[^}]*\}|\{[^}]*\*\}|\{\.\.\.[^}]*\}|\{[^}]*\.\.\.\}|\[\[\.\.\.[^\]]*\]\]|\[\.\.\.[^\]]*\]|\*[A-Za-z_]\w*|:[A-Za-z_]\w*[*+]|\*)/
+  # The rest placeholders that also take zero segments, so `/files/:path*`
+  # serves `/files` too. Next.js `[...slug]` (written `{*slug}`) needs one,
+  # but its optional `[[...slug]]` form is written as a second, bare route.
+  ZERO_OR_MORE = /\A(?:\*\*|\{\*[^}]*\}|\{[^}]*(?:\*|\.\.\.)\}|:\w+\*|\[\[)/
   # path-to-regexp v8 (Express 5) optional group: `/posts{/:id}`.
   OPTIONAL_GROUP = /\A\{(\/[^{}]*)\}/
   # `:id(\d+)` (Express 4 / Koa / Fastify) and `:id{[0-9]+}` (Hono) carry a
   # regex constraint; a trailing `?` makes the segment optional.
-  ONE_PLACEHOLDER  = /\A(?:\$\{[^}]*\}|\{(?:[^{}]|\{[^{}]*\})*\}|<[^>]*>|\[[^\]]*\]|:[A-Za-z_]\w*(?:\((?:[^()]|\([^()]*\))*\)|\{(?:[^{}]|\{[^{}]*\})*\})?\??|\$[A-Za-z_]\w*)/
+  # Play's `$id<\w{8}>` is one placeholder with its regex.
+  ONE_PLACEHOLDER  = /\A(?:\$\{[^}]*\}|\{(?:[^{}]|\{[^{}]*\})*\}|<[^>]*>|\[[^\]]*\]|:[A-Za-z_]\w*(?:\((?:[^()]|\([^()]*\))*\)|\{(?:[^{}]|\{[^{}]*\})*\})?\??|\$[A-Za-z_]\w*(?:<[^>]*>)?)/
   PLACEHOLDER_CHAR = /[{:<\[$*]/
 
   # The regex a declared route matches request paths against, or nil for a
@@ -410,7 +417,13 @@ module Noir::CLI::Inspect
     parts = [] of String
     scan_placeholders(route) do |kind, text|
       case kind
-      when :rest     then parts << ".*"
+      when :rest
+        if text.matches?(ZERO_OR_MORE) && parts.last? == "/"
+          parts.pop
+          parts << "(?:/.*)?"
+        else
+          parts << ".*"
+        end
       when :optional then parts << "(?:#{route_pattern(text)})?"
       when :one
         if (text.starts_with?(':') && text.ends_with?('?')) || (text.starts_with?('{') && text.ends_with?("?}"))
@@ -440,6 +453,7 @@ module Noir::CLI::Inspect
     when /\A<uuid:|\A\{\w+:guid\}\z/        then "[0-9a-fA-F]{8}-?(?:[0-9a-fA-F]{4}-?){3}[0-9a-fA-F]{12}"
     when /\A\{\w+:([^\/]+)\}\z/             then constraint_segment($1)
     when /\A:\w+[({](.+)[)}]\z/             then constraint_segment($1)
+    when /\A\$\w+<(.+)>\z/                  then constraint_segment($1)
     else                                         "[^/]+"
     end
   end
@@ -459,28 +473,37 @@ module Noir::CLI::Inspect
   end
 
   # Walks a route, yielding `:rest` / `:one` placeholders and `:literal`
-  # characters in order.
+  # characters in order. A `:verb` right after a `}` is a gRPC-transcoding
+  # custom method (`/v1/{name}:cancel`), literal text rather than a param.
   private def self.scan_placeholders(route : String, &)
     scanner = route
+    taken = ""
     until scanner.empty?
-      if m = scanner.match(REST_PLACEHOLDER)
-        yield :rest, m[0]
-        scanner = scanner[m[0].size..]
+      if taken.ends_with?('}') && scanner.starts_with?(':')
+        taken = ":"
+        yield :literal, taken
+      elsif m = scanner.match(REST_PLACEHOLDER)
+        taken = m[0]
+        yield :rest, taken
       elsif m = scanner.match(OPTIONAL_GROUP)
         yield :optional, m[1]
-        scanner = scanner[m[0].size..]
+        taken = m[0]
       elsif m = scanner.match(ONE_PLACEHOLDER)
-        yield :one, m[0]
-        scanner = scanner[m[0].size..]
+        taken = m[0]
+        yield :one, taken
       else
-        yield :literal, scanner[0].to_s
-        scanner = scanner[1..]
+        taken = scanner[0].to_s
+        yield :literal, taken
       end
+      scanner = scanner[taken.size..]
     end
   end
 
   # How specific a route is: fewer catch-all segments, then fewer placeholders,
   # then more literal text. `/u/:id` outranks `/*proxyPath` for `/u/5`.
+  # Among routes with a catch-all the literal text comes first:
+  # `/media/:id/*any` is more specific than `/*unmatched_route`, though it
+  # has one more param.
   def self.specificity(url : String) : {Int32, Int32, Int32}
     rest = 0
     one = 0
@@ -492,7 +515,7 @@ module Noir::CLI::Inspect
       else                      literal += text.size
       end
     end
-    {rest, one, -literal}
+    rest > 0 ? {rest, -literal, one} : {rest, one, -literal}
   end
 
   private def self.strip_trailing_slash(path : String) : String
@@ -502,11 +525,11 @@ module Noir::CLI::Inspect
     path
   end
 
-  # The path part of an endpoint URL: `-u` prefixes a scheme+host, a
-  # realtime surface keeps its `ws://` form as-is.
+  # The path part of an endpoint URL: `-u` prefixes a scheme+host. Any
+  # other scheme (`ws://`, `cli://shopctl/users`, a deep link) names the
+  # surface, so it stays: `/users` is not the CLI's `users` command.
   def self.request_path(url : String) : String
-    return url if url.starts_with?("ws://") || url.starts_with?("wss://")
-    if url =~ %r{\A[a-z][a-z0-9+.-]*://[^/]*(/.*)?\z}i
+    if url =~ %r{\Ahttps?://[^/]*(/.*)?\z}i
       path = $~[1]? || "/"
       return path
     end
@@ -517,7 +540,36 @@ module Noir::CLI::Inspect
     strip_trailing_slash(request_path(path).split('#', 2)[0].split('?', 2)[0])
   end
 
+  # Whether `query --method` lists a route declared for `declared`. An
+  # `ANY` row (nginx, Apache, `router.all`) serves every HTTP verb, so
+  # `--method POST` lists it, as `trace` does; `--method ANY` lists only
+  # the `ANY` rows.
+  def self.method_listed?(methods : Array(String), declared : String) : Bool
+    declared = declared.upcase
+    methods.includes?(declared) || (::synthetic_any_method?(declared) && methods.any? { |m| ::ALLOWED_HTTP_METHODS.includes?(m) })
+  end
+
   record Match, endpoint : Endpoint, matched_by : String
+
+  # Proxy rules that serve every path under their own, by the path-type tag
+  # the analyzer sets: nginx `location /api/`, haproxy `path_beg` and Istio
+  # `prefix` compare strings (`/api` serves `/apis`); Ingress and Gateway
+  # API `Prefix` compare whole segments.
+  STRING_PREFIX_TAGS  = {"nginx-path-type" => {"prefix", "prefix-stop"}, "haproxy-path-type" => {"prefix"}, "virtualservice-path-type" => {"prefix"}}
+  SEGMENT_PREFIX_TAGS = {"ingress-path-type" => {"prefix"}, "gateway-path-type" => {"pathprefix"}}
+
+  # Whether `endpoint` serves `path` (query and fragment already dropped)
+  # as a prefix: a proxy prefix rule, or a Go ServeMux pattern ending in
+  # `/`, which serves its subtree (gin's or Echo's `/x/` is one route).
+  private def self.prefix_serves?(endpoint : Endpoint, path : String) : Bool
+    route = request_path(endpoint.url)
+    string = endpoint.tags.any? { |t| STRING_PREFIX_TAGS[t.name]?.try(&.includes?(t.description)) }
+    string ||= route.ends_with?('/') && (endpoint.details.technology == "go_http" || endpoint.details.technologies.includes?("go_http"))
+    return path.starts_with?(route) if string
+    return false unless endpoint.tags.any? { |t| SEGMENT_PREFIX_TAGS[t.name]?.try(&.includes?(t.description)) }
+    route = strip_trailing_slash(route)
+    route == "/" || path.starts_with?("#{route}/")
+  end
 
   # Whether a route declared for `declared` serves a `wanted` request method.
   # Frameworks answer HEAD from the GET route, so a HEAD request traces to it.
@@ -548,8 +600,9 @@ module Noir::CLI::Inspect
 
   private def self.trace_path(endpoints : Array(Endpoint), method : String?, path : String) : Array(Match)
     wanted = normalize(path)
+    unslashed = request_path(path).split('#', 2)[0].split('?', 2)[0]
     exact = [] of Match
-    pattern = [] of Match
+    pattern = [] of {Match, {Int32, Int32, Int32}}
     endpoints.each do |endpoint|
       next unless method_serves?(endpoint.method, method)
       route = normalize(request_path(endpoint.url))
@@ -557,15 +610,18 @@ module Noir::CLI::Inspect
         exact << Match.new(endpoint, "exact")
       elsif (regex = route_regex(endpoint)) && regex.matches?(wanted)
         spec = specificity(endpoint.url)
-        pattern << Match.new(endpoint, spec[0] > 0 ? "wildcard" : "pattern")
+        pattern << {Match.new(endpoint, spec[0] > 0 ? "wildcard" : "pattern"), spec}
+      elsif prefix_serves?(endpoint, unslashed)
+        # Ranked as the catch-all it is: `/api/` reads as `/api/**`.
+        pattern << {Match.new(endpoint, "prefix"), specificity("#{route.rchop('/')}/**")}
       end
     end
     # Most specific first, so `--limit 1` is the route a router would pick.
-    pattern.sort_by! { |m| specificity(m.endpoint.url) }
+    pattern.sort_by!(&.[1])
     # A route declared for the request's own method before an any-method
     # one at the same path (a proxy redirect rule beside the app's view).
     declared, any = exact.partition { |m| !method || !::synthetic_any_method?(m.endpoint.method.upcase) }
-    declared + any + pattern
+    declared + any + pattern.map(&.[0])
   end
 
   # Nearest declared routes for a miss: most shared leading segments
@@ -602,7 +658,7 @@ module Noir::CLI::Inspect
   # the request may be a typo of a real route: the nearest declared routes,
   # wildcard routes left out. Empty when any match is exact or a pattern.
   def self.wildcard_only_candidates(endpoints : Array(Endpoint), matches : Array(Match), path : String) : Array(Row)
-    return [] of Row if matches.empty? || matches.any? { |m| m.matched_by != "wildcard" }
+    return [] of Row if matches.empty? || matches.any? { |m| m.matched_by != "wildcard" && m.matched_by != "prefix" }
     wildcard_urls = matches.map(&.endpoint.url).to_set
     candidates(endpoints, path).reject { |row| wildcard_urls.includes?(row.url) }
   end
@@ -701,7 +757,7 @@ module Noir::CLI::Inspect
     signals : Array(String) = [] of String,
     validators : Array(String) = [] of String do
     def matches?(endpoint : Endpoint) : Bool
-      return false unless methods.empty? || methods.includes?(endpoint.method.upcase)
+      return false unless methods.empty? || Inspect.method_listed?(methods, endpoint.method)
       return false unless (u = url).nil? || Inspect.glob_or_substring?(u, endpoint.url)
       return false unless (p = path).nil? || endpoint.details.code_paths.any? { |cp| Inspect.path_glob?(p, cp.path) }
       return false unless projects.empty? || projects.any? { |wanted| Inspect.project_matches?(wanted, endpoint.details.project) }
@@ -820,6 +876,7 @@ module Noir::CLI::Inspect
       seen = seen.uniq.sort!
       unknown = wanted.reject do |k|
         k == "any" || seen.includes?(k) ||
+          (label == "method" && method_listed?([k], "ANY") && seen.any? { |m| ::synthetic_any_method?(m) }) ||
           (label == "param" && endpoints.any? do |e|
             e.params.any? { |p| p.param_type == "header" && p.name.compare(k, case_insensitive: true) == 0 }
           end)

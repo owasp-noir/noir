@@ -151,7 +151,8 @@ noir query --no-guard --sink any --from report.json    # 인증 없이 SQL 싱�
 `trace`는 실제 요청 경로를 선언된 라우트에 대응시킵니다. `/api/users/42`는
 `/api/users/{id}`, `:id`, `<int:pk>`, `[id]`, `*`에 매칭되고, HEAD 요청은 GET
 라우트에 대응됩니다. 매칭되는 라우트를 구체적인 순서로 전부 출력하며 `matched_by`
-(exact, pattern, wildcard)를 함께 표시합니다. 전체 엔드포인트 레코드를 출력하고,
+(exact, pattern, wildcard, 그리고 nginx/Ingress prefix location이나 Go ServeMux의
+`/x/` 하위 트리에는 prefix)를 함께 표시합니다. 전체 엔드포인트 레코드를 출력하고,
 매칭이 없으면 가장 가까운 라우트를 `candidates`로 출력한 뒤 종료 코드 1을
 반환합니다.
 

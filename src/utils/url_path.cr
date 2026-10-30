@@ -157,8 +157,8 @@ module Noir
     # handlers, and Laravel's `->where()` (written into the URL by its
     # analyzer) does the same; so the optimizer keeps the constraint for them
     # instead of collapsing both to `/{type}`. Elsewhere `{name:x}` is
-    # usually a type converter (Iris `uint64`, Starlette `path`, ASP.NET
-    # `int`) and is stripped as before.
+    # usually a type converter (Iris `uint64`, ASP.NET `int`) and is
+    # stripped as before; Starlette's `path` becomes the rest-of-path `{*p}`.
     REGEX_PLACEHOLDER_TECHS = Set{"go_chi", "go_mux", "php_laravel"}
 
     # Such a `{name:regex}` placeholder, the regex allowed one level of its
