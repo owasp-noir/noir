@@ -76,8 +76,13 @@ module Noir
             bound = annotation_values(args, source, constants, constants, {"value", "name"}).first?
             params << Param.new(bound.presence || param_name, default_value, name == "Param" ? "query" : "header")
           when "RequestObject"
-            type_name = resource_type_name(type_node, source)
-            params.concat(dto_body_params(type_name, dto_index, "json") || [Param.new(param_name, "", "json")])
+            # Like the Java walk: only fields a client can set.
+            fields = dto_index[resource_type_name(type_node, source)]?.try(&.reject { |field| field.server_managed? || {"private", "protected"}.includes?(field.access_modifier) })
+            if fields && !fields.empty?
+              fields.each { |field| params << Param.new(field.json_name, field.literal_default, "json") }
+            else
+              params << Param.new(param_name, "", "json")
+            end
           end
         end
       end

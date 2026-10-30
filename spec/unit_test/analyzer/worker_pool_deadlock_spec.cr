@@ -125,8 +125,9 @@ describe "analyzer worker-pool resilience" do
 
     begin
       # A `.kt` poison: the routes-index pre-phase walks `.java` only and
-      # the registration-prefix one isolates a failing file, so the scan
-      # still reaches the worker pool.
+      # the registration-prefix one logs a failing file and moves on
+      # without recording it, so the scan still reaches the worker pool,
+      # and only the worker pool records it.
       poison = File.join(dir, "#{WorkerPoolProbe::POISON_MARKER}.kt")
       File.write(poison, "package com.example\n")
 
@@ -156,7 +157,8 @@ describe "analyzer worker-pool resilience" do
 
       finished.should be_true
       endpoints.map(&.url).sort!.should eq((0...WorkerPoolProbe::GOOD_FILE_COUNT).map { |i| "/svc#{i}" }.sort!)
-      Noir::SkippedFiles.failures.map(&.tech).should contain("java_armeria")
+      armeria_failures = Noir::SkippedFiles.failures.select(&.tech.==("java_armeria"))
+      armeria_failures.map(&.message).should eq(["skipped 1 file: #{poison}; first error: synthetic non-IO worker failure"])
     ensure
       FileUtils.rm_rf(dir)
     end

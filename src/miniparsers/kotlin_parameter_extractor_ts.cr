@@ -745,6 +745,19 @@ module Noir
 
     # ---- DTO field collection ----------------------------------------
 
+    # `private` / `protected` / `internal` from a property's modifiers;
+    # Kotlin's default is public. `has_setter` stays true for every field,
+    # so binders that accept "public or settable" are unaffected.
+    private def field_visibility(node : LibTreeSitter::TSNode, source : String) : String
+      Noir::TreeSitter.each_named_child(node) do |child|
+        next unless Noir::TreeSitter.node_type(child) == "modifiers"
+        Noir::TreeSitter.each_named_child(child) do |modifier|
+          return Noir::TreeSitter.node_text(modifier, source) if Noir::TreeSitter.node_type(modifier) == "visibility_modifier"
+        end
+      end
+      "public"
+    end
+
     private def collect_class_fields(decl : LibTreeSitter::TSNode, source : String) : Array(FieldInfo)
       fields = [] of FieldInfo
       class_name = type_identifier_text(decl, source)
@@ -778,7 +791,7 @@ module Noir
           end
           next if name.empty?
           fields << FieldInfo.new(
-            name, "public", true, init, null_validation_groups(param, source),
+            name, field_visibility(param, source), true, init, null_validation_groups(param, source),
             server_managed_field?(param, source, name, init, class_name, class_text), validation_annotations(param, source),
             init_string, json_property_name(param, source)
           )
@@ -828,7 +841,7 @@ module Noir
             end
             next if name.empty?
             fields << FieldInfo.new(
-              name, "public", true, init, null_validation_groups(member, source),
+              name, field_visibility(member, source), true, init, null_validation_groups(member, source),
               server_managed_field?(member, source, name, init, class_name, class_text), validation_annotations(member, source),
               init_string, json_property_name(member, source)
             )

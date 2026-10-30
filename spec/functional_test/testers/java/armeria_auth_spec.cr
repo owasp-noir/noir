@@ -1,9 +1,11 @@
 require "../../func_spec.cr"
 
-# Armeria `Server.builder()` routes carry the line of their own registration,
-# so `java_misc_auth` can read the decorators around them (#3268). A
-# decorator guards the route it is passed to, or the routes under its
-# `decoratorUnder` prefix, not the neighbouring registrations.
+# Armeria `Server.builder()` routes carry the line of their own registration
+# and an `auth` tag when an `AuthService` decorator in the same chain covers
+# them (#3268): a server-level `.decorator`/`.decoratorUnder` (prefix-scoped),
+# or one passed to the route's own registration or `.route()...build()`.
+# A neighbouring route's or annotated service's decorator, a commented-out
+# one, another server's, or a class merely named `AuthServiceImpl` does not.
 describe "Armeria builder routes and auth decorators", tags: "functional" do
   before_each do
     CodeLocator.instance.clear_all
@@ -24,10 +26,17 @@ describe "Armeria builder routes and auth decorators", tags: "functional" do
       by_url[url].details.code_paths.first.line.should eq(line)
     end
 
-    auth = ->(url : String) { by_url[url].tags.select { |tag| tag.name == "auth" }.map(&.description) }
-    auth.call("/welcome").should be_empty
-    auth.call("/other").should be_empty
-    auth.call("/inline").should eq(["Protected by Armeria AuthService decorator"])
-    auth.call("/admin/users").should eq(["Protected by Armeria AuthService decorator"])
+    auth = ->(url : String) do
+      endpoint = by_url[url]? || fail("missing #{url}; have #{by_url.keys}")
+      endpoint.tags.select { |tag| tag.name == "auth" }.map(&.description)
+    end
+    guarded = ["Protected by Armeria AuthService decorator"]
+
+    %w[/inline /admin/users /c3/admin /b/guarded /b/scoped/admin].each do |url|
+      auth.call(url).should eq(guarded)
+    end
+    %w[/welcome /other /c1/public /c2/login /c3/open /c4/open /b/open /b/scoped/public /kt/docs /kt/public].each do |url|
+      auth.call(url).should be_empty
+    end
   end
 end

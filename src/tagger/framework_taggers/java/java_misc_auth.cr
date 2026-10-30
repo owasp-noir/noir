@@ -43,12 +43,11 @@ class JavaMiscAuthTagger < FrameworkTagger
   # route).
   VERTX_ROUTE = /\b\w+\s*\.\s*(?:route|get|post|put|delete|patch|head|options|trace|connect)\s*\(\s*(?:"([^"]*)"\s*)?\)\s*(?:\.\s*(?:handler|blockingHandler|respond|failureHandler|produces|consumes|order|subRouter)\b|$)/
 
-  # One registration in an Armeria `Server.builder()` chain.
+  # One registration in an Armeria `Server.builder()` chain. The analyzer
+  # reads that chain's decorators itself (`ArmeriaChainGuards`); the lines
+  # around a registration are other routes' and other servers' calls, so
+  # this tagger leaves those routes alone.
   ARMERIA_BUILDER_ROUTE = /\.\s*(?:service|serviceUnder|serviceIf|route|withRoute)\s*\(/
-  # `.decorator(...)` guards every route of the server and
-  # `.decoratorUnder("/admin", ...)` the routes under its prefix, wherever
-  # in the chain they sit.
-  ARMERIA_DECORATOR = /\.\s*decorator(Under)?\s*\(\s*(?:"([^"]*)")?/
 
   def self.target_techs : Array(String)
     ["java_vertx", "java_armeria", "java_jsp"]
@@ -65,13 +64,7 @@ class JavaMiscAuthTagger < FrameworkTagger
       next if line_num < 1 || line_num > lines.size
       line_idx = line_num - 1
 
-      if endpoint.details.technology == "java_armeria" && lines[line_idx].matches?(ARMERIA_BUILDER_ROUTE)
-        if description = check_armeria_builder_route(lines, line_idx, endpoint.url)
-          endpoint.add_tag(Tag.new("auth", "Protected by #{description}", "java_misc_auth"))
-          return
-        end
-        next
-      end
+      next if endpoint.details.technology == "java_armeria" && lines[line_idx].matches?(ARMERIA_BUILDER_ROUTE)
 
       # Check route context for auth patterns
       vertx = endpoint.details.technology == "java_vertx"
@@ -127,32 +120,6 @@ class JavaMiscAuthTagger < FrameworkTagger
       idx += 1
     end
 
-    nil
-  end
-
-  # A builder route is guarded by a decorator passed on its own line
-  # (`.service("/x", svc.decorate(AuthService...))`) or by a server-level
-  # decorator call near it. Other routes' lines and an `Authorizer` variable
-  # declaration guard nothing.
-  private def check_armeria_builder_route(lines : Array(String), line_idx : Int32, url : String) : String?
-    start_idx = [line_idx - 10, 0].max
-    end_idx = [line_idx + 15, lines.size - 1].min
-    (start_idx..end_idx).each do |idx|
-      current = lines[idx]
-      unless idx == line_idx
-        decorator = current.match(ARMERIA_DECORATOR)
-        next unless decorator
-        if scope = decorator[2]?
-          # `decorator("prefix:/admin", ...)` / `decorator("/admin/*", ...)`
-          next unless prefix_covers?(scope.lchop("prefix:").rchop('*'), url)
-        elsif decorator[1]?
-          next # a `decoratorUnder` prefix that is not a literal
-        end
-      end
-      ARMERIA_AUTH_PATTERNS.each do |pattern, desc|
-        return desc if current.matches?(pattern)
-      end
-    end
     nil
   end
 

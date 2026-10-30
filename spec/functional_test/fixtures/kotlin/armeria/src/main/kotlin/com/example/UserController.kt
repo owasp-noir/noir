@@ -7,7 +7,9 @@ import com.linecorp.armeria.server.annotation.PathPrefix
 import com.linecorp.armeria.server.annotation.Put
 import com.linecorp.armeria.server.annotation.RequestObject
 
-data class UserUpdate(val name: String, val email: String)
+data class UserUpdate(val name: String, val email: String) {
+    private val auditNote: String = ""
+}
 
 @PathPrefix("/users")
 class UserController {

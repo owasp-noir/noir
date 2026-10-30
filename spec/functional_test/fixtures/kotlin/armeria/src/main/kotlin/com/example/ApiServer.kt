@@ -9,6 +9,9 @@ fun main() {
         .annotatedService("/api/items", ItemController())
         .annotatedService(UserController::class.java.getDeclaredConstructor().newInstance())
         .service("/health") { _, _ -> HttpResponse.of("ok") }
+        .annotatedService()
+        .pathPrefix("/admin")
+        .build(AdminController())
         .build()
     server.start().join()
 }
