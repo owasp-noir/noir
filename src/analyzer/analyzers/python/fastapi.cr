@@ -1188,7 +1188,7 @@ module Analyzer::Python
           param_type = "query" if param_type.nil?
         end
 
-        model = fastapi_model_name(param.type)
+        model = fastapi_model_name(param.type, qualified: true)
 
         # A lone `Body()` model is the request body itself; `embed=True`
         # nests it under the parameter name instead.
@@ -1201,8 +1201,9 @@ module Analyzer::Python
         end
 
         # `q: Annotated[FilterModel, Query()]` (likewise `Header()` /
-        # `Cookie()`): a parameter model, whose fields each arrive there.
-        if model && (location = param_type) && location.in?(%w[query header cookie]) && !fastapi_param_declaration(param).empty?
+        # `Cookie()` / `Form()`): a parameter model, whose fields each
+        # arrive there.
+        if model && (location = param_type) && location.in?(%w[query header cookie form]) && !fastapi_param_declaration(param).empty?
           fields = model_params_for(model, param.name, source, path, base_path, location)
           unless fields.empty?
             params.concat(fields)
@@ -1383,9 +1384,12 @@ module Analyzer::Python
 
     # The class a parameter annotation names once `Optional[...]`,
     # `Union[X, None]`, `X | None` and `Annotated[X, ...]` are peeled off;
-    # nil when what is left is not a bare identifier.
-    private def fastapi_model_name(type : ::String) : ::String?
-      fastapi_peeled_type(type).try { |peeled| peeled if VAR_NAME_FULL_RE.matches?(peeled) }
+    # nil when what is left is not a bare identifier (with `qualified`,
+    # nor a module-qualified one such as `schemas.Item`).
+    private def fastapi_model_name(type : ::String, qualified : Bool = false) : ::String?
+      fastapi_peeled_type(type).try do |peeled|
+        peeled if VAR_NAME_FULL_RE.matches?(peeled) || (qualified && QUALIFIED_NAME_RE.matches?(peeled))
+      end
     end
 
     # The annotation with `Optional[...]`, `Union[X, None]`, `X | None` and
@@ -1414,8 +1418,41 @@ module Analyzer::Python
 
     private def model_params_for(model : ::String, param_name : ::String, source : ::String,
                                  path : ::String, base_path : ::String, location : ::String = "json") : Array(Param)
-      return [] of Param unless site = model_site(model, source, path, base_path)
-      find_base_model_params(site[0], model, param_name, path: site[1], base_path: base_path, location: location)
+      return [] of Param unless resolved = resolve_model_reference(model, source, path, base_path)
+      class_name, class_source, class_path = resolved
+      find_base_model_params(class_source, class_name, param_name, path: class_path, base_path: base_path, location: location)
+    end
+
+    QUALIFIED_NAME_RE = /^#{PYTHON_VAR_NAME_REGEX}(?:\.#{PYTHON_VAR_NAME_REGEX})+$/
+
+    # `{class name, source, file}` for a model as `path` names it: a bare
+    # name, an import alias (`from .base import Item as BaseItem`), or a
+    # module-qualified name (`schemas.Item`, `import app.schemas as s` then
+    # `s.Item`). A generic subscript (`Page[Item]`) is dropped.
+    private def resolve_model_reference(reference : ::String, source : ::String, path : ::String,
+                                        base_path : ::String) : Tuple(::String, ::String, ::String)?
+      name = reference.strip.sub(/\[.*\]\z/m, "").strip
+      if VAR_NAME_FULL_RE.matches?(name)
+        if site = model_site(name, source, path, base_path)
+          return {name, site[0], site[1]}
+        end
+      elsif !QUALIFIED_NAME_RE.matches?(name)
+        return
+      end
+
+      receiver, _, attribute = name.rpartition('.')
+      [base_path, File.dirname(path)].uniq!.each do |root|
+        symbol = Noir::ImportGraph::Python.find_imported_symbols(root, path, source)[receiver.empty? ? name : receiver]?
+        next if symbol.nil? || symbol[0].empty? || symbol[0] == path
+        # A bare name must be an alias of another class; a qualified one
+        # must start at a module.
+        class_name = receiver.empty? ? symbol[1] : (symbol[1].empty? ? attribute : nil)
+        next if class_name.nil? || class_name.empty? || (receiver.empty? && class_name == name)
+        if site = model_site(class_name, read_file_content(symbol[0]), symbol[0], base_path)
+          return {class_name, site[0], site[1]}
+        end
+      end
+      nil
     end
 
     SCALAR_TYPE_RE = /\b(?:str|int|float|bool|EmailStr)\b/
@@ -1647,7 +1684,7 @@ module Analyzer::Python
     private def collect_model_fields(source : ::String, class_name : ::String, param_name : ::String,
                                      visited : Set(::String), path : ::String?, base_path : ::String?,
                                      fields : Array(Tuple(::String, Bool, ::String))) : Bool? | Array(Param)
-      return unless visited.add?(class_name)
+      return unless visited.add?("#{path}\u{0}#{class_name}")
       class_codeblock = parse_code_block(source, /\s*class\s*#{class_name}\s*\(/)
       return if class_codeblock.nil?
 
@@ -1658,13 +1695,14 @@ module Analyzer::Python
       end
       camel = nil.as(Bool?)
       split_python_top_level(bases, ',').each do |base|
-        base = base.strip
-        next if base == "BaseModel" || !VAR_NAME_FULL_RE.matches?(base)
+        # `Page[T]` inherits `Page`'s fields; `metaclass=...` is no base.
+        base = base.strip.sub(/\[.*\]\z/m, "").strip
+        next if base.in?("BaseModel", "pydantic.BaseModel") || base.includes?('=')
         base_source = source
         base_file = path
-        unless source.matches?(/^\s*class\s+#{Regex.escape(base)}\s*\(/m)
-          next unless path && base_path && (site = model_site(base, source, path, base_path))
-          base_source, base_file = site
+        unless VAR_NAME_FULL_RE.matches?(base) && source.matches?(/^\s*class\s+#{Regex.escape(base)}\s*\(/m)
+          next unless path && base_path && (resolved = resolve_model_reference(base, source, path, base_path))
+          base, base_source, base_file = resolved
         end
         inherited = collect_model_fields(base_source, base, param_name, visited, base_file, base_path, fields)
         camel = inherited if inherited.is_a?(Bool)
