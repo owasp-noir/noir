@@ -38,6 +38,11 @@ Rails.application.routes.draw do
     end
 
     get "after_conditional", to: "monitor#heartbeat"
+
+    # #3267: a one-segment route names no controller, so Rails uses the
+    # namespace module: `admin#dashboard` in AdminController.
+    get "dashboard"
+    post "rebuild"
   end
 
   namespace :admin, path: "sekret" do

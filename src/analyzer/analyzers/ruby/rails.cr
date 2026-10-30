@@ -1038,7 +1038,7 @@ module Analyzer::Ruby
           ctrl_path = find_controller_file(scan.framework_root, ctrl_name, stack)
           action_name = action
           action_params = params_for_action(ctrl_path, action, verb)
-        elsif inferred = infer_implicit_controller_action(path, rest, current_controller_scope(stack))
+        elsif inferred = infer_implicit_controller_action(path, rest, current_controller_scope(stack), implicit_module_path(stack))
           ctrl_name, action = inferred
           ctrl_path = find_controller_file(scan.framework_root, ctrl_name, stack)
           action_name = action
@@ -1083,7 +1083,7 @@ module Analyzer::Ruby
           ctrl_name, action = ctrl_action
           ctrl_path = find_controller_file(scan.framework_root, ctrl_name, stack)
           action_name = action
-        elsif inferred = infer_implicit_controller_action(path, rest, current_controller_scope(stack))
+        elsif inferred = infer_implicit_controller_action(path, rest, current_controller_scope(stack), implicit_module_path(stack))
           ctrl_name, action = inferred
           ctrl_path = find_controller_file(scan.framework_root, ctrl_name, stack)
           action_name = action
@@ -2585,8 +2585,13 @@ module Analyzer::Ruby
     # Rails allows compact declarations such as `post "stories/preview"`
     # which route to `StoriesController#preview`. These still need controller
     # resolution so params/callees/AI context attach to the emitted endpoint.
+    # A one-segment `get "dashboard"` names no controller, so Rails falls
+    # back to the scope module: under `namespace :admin` it is
+    # `admin#dashboard` (`AdminController`). `module_path` is that module,
+    # empty inside `resources`, whose own controller takes the action.
     private def infer_implicit_controller_action(path : String, rest : String,
-                                                 scoped_controller : String? = nil) : Tuple(String, String)?
+                                                 scoped_controller : String? = nil,
+                                                 module_path : String = "") : Tuple(String, String)?
       return if explicit_route_destination?(rest)
 
       segments = static_route_segments(path)
@@ -2598,11 +2603,21 @@ module Analyzer::Ruby
         return {scoped_controller, action}
       end
 
+      if segments.size == 1 && !module_path.empty?
+        action = segments[0]
+        # Absolute: the module is the whole controller, not a prefix of it.
+        return valid_action_name?(action) ? {"/#{module_path}", action} : nil
+      end
+
       return if segments.size < 2
       action = segments.last
       return unless valid_action_name?(action)
 
       {segments[0, segments.size - 1].join("/"), action}
+    end
+
+    private def implicit_module_path(stack : Array(Frame)) : String
+      parent_resources_frame(stack) ? "" : current_controller_subdir(stack)
     end
 
     private def explicit_route_destination?(rest : String) : Bool
