@@ -137,6 +137,44 @@ FunctionalTester.new("fixtures/go/cli_cobra_cross_package/", {
   :endpoints => cobra_cross_package_endpoints.size,
 }, cobra_cross_package_endpoints).perform_tests
 
+# A cobra tree of `packages` library packages, each adding a 5-deep chain
+# under a root that adds every package's `Cmd`. Returns the analyze time and
+# the endpoint count.
+private def analyze_wide_cobra_tree(packages : Int32) : Tuple(Time::Span, Int32)
+  dir = File.tempname("noir_cobra_wide")
+  Dir.mkdir_p(File.join(dir, "root"))
+  File.write(File.join(dir, "go.mod"), "module example.com/wide\n\nrequire github.com/spf13/cobra v1.8.0\n")
+  File.write(File.join(dir, "root", "root.go"), String.build do |io|
+    io << "package root\n\nimport (\n\t\"github.com/spf13/cobra\"\n"
+    packages.times { |i| io << "\tp" << i << " \"example.com/wide/pkg/p" << i << "\"\n" }
+    io << ")\n\nvar rootCmd = &cobra.Command{Use: \"wide\"}\n\nfunc Execute() {\n"
+    packages.times { |i| io << "\trootCmd.AddCommand(p" << i << ".Cmd)\n" }
+    io << "\t_ = rootCmd.Execute()\n}\n"
+  end)
+  packages.times do |i|
+    Dir.mkdir_p(File.join(dir, "pkg", "p#{i}"))
+    File.write(File.join(dir, "pkg", "p#{i}", "cmds.go"), String.build do |io|
+      io << "package p" << i << "\n\nimport \"github.com/spf13/cobra\"\n\n"
+      io << "var Cmd = &cobra.Command{Use: \"p" << i << "\"}\n"
+      5.times { |j| io << "var c" << j << " = &cobra.Command{Use: \"c" << j << "\"}\n" }
+      io << "\nfunc init() {\n\tCmd.AddCommand(c0)\n"
+      (1..4).each { |j| io << "\tc" << j - 1 << ".AddCommand(c" << j << ")\n\tc" << j << ".Flags().String(\"f" << j << "\", \"\", \"\")\n" }
+      io << "}\n"
+    end)
+  end
+
+  options = ConfigInitializer.new.default_options
+  options["base"] = YAML::Any.new([YAML::Any.new(dir)])
+  options["nolog"] = YAML::Any.new(true)
+  options["only_techs"] = YAML::Any.new("go_cli")
+  app = NoirRunner.new(options)
+  app.detect
+  elapsed = Time.measure { app.analyze }
+  {elapsed, app.endpoints.size}
+ensure
+  FileUtils.rm_rf(dir) if dir
+end
+
 describe "go CLI cobra command tree", tags: "functional" do
   it "keeps two files' function-local commands of one name apart" do
     get = cobra_scopes_tester.endpoints.find! { |ep| ep.url == "cli://shopscope/users/get" }
@@ -148,45 +186,13 @@ describe "go CLI cobra command tree", tags: "functional" do
   end
 
   it "resolves a many-package cobra tree in linear time" do
-    dir = File.tempname("noir_cobra_wide")
-    packages = 2000
-    begin
-      Dir.mkdir_p(File.join(dir, "root"))
-      File.write(File.join(dir, "go.mod"), "module example.com/wide\n\nrequire github.com/spf13/cobra v1.8.0\n")
-      File.write(File.join(dir, "root", "root.go"), String.build do |io|
-        io << "package root\n\nimport (\n\t\"github.com/spf13/cobra\"\n"
-        packages.times { |i| io << "\tp" << i << " \"example.com/wide/pkg/p" << i << "\"\n" }
-        io << ")\n\nvar rootCmd = &cobra.Command{Use: \"wide\"}\n\nfunc Execute() {\n"
-        packages.times { |i| io << "\trootCmd.AddCommand(p" << i << ".Cmd)\n" }
-        io << "\t_ = rootCmd.Execute()\n}\n"
-      end)
-      packages.times do |i|
-        Dir.mkdir_p(File.join(dir, "pkg", "p#{i}"))
-        File.write(File.join(dir, "pkg", "p#{i}", "cmds.go"), String.build do |io|
-          io << "package p" << i << "\n\nimport \"github.com/spf13/cobra\"\n\n"
-          io << "var Cmd = &cobra.Command{Use: \"p" << i << "\"}\n"
-          5.times { |j| io << "var c" << j << " = &cobra.Command{Use: \"c" << j << "\"}\n" }
-          io << "\nfunc init() {\n\tCmd.AddCommand(c0)\n"
-          (1..4).each { |j| io << "\tc" << j - 1 << ".AddCommand(c" << j << ")\n\tc" << j << ".Flags().String(\"f" << j << "\", \"\", \"\")\n" }
-          io << "}\n"
-        end)
-      end
-
-      options = ConfigInitializer.new.default_options
-      options["base"] = YAML::Any.new([YAML::Any.new(dir)])
-      options["nolog"] = YAML::Any.new(true)
-      options["only_techs"] = YAML::Any.new("go_cli")
-      app = NoirRunner.new(options)
-      app.detect
-
-      elapsed = Time.measure { app.analyze }
-      app.endpoints.size.should eq(packages * 6 + 1)
-      app.endpoints.map(&.url).should contain("cli://wide/p7/c0/c1/c2/c3/c4")
-      # Scanning every parent link once per package took ~8s here; linear is well under 2s.
-      elapsed.should be < 5.seconds
-    ensure
-      FileUtils.rm_rf(dir)
-    end
+    small, small_count = analyze_wide_cobra_tree(500)
+    large, large_count = analyze_wide_cobra_tree(2000)
+    small_count.should eq(500 * 6 + 1)
+    large_count.should eq(2000 * 6 + 1)
+    # 4x the packages: linear is ~4x, the per-package scan of every parent
+    # link was ~16x. A ratio holds under CI load where a fixed bound did not.
+    large.should be < small * 8
   end
 
   it "keeps each same-named subcommand's flags on its own command" do
