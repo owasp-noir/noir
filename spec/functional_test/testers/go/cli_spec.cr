@@ -1,3 +1,4 @@
+require "file_utils"
 require "../../func_spec.cr"
 
 # CLI endpoints carry the synthetic "CLI" method; the real surface lives in
@@ -57,6 +58,161 @@ FunctionalTester.new("fixtures/go/cli_cobra_root/", {
   :techs     => 1,
   :endpoints => cobra_root_endpoints.size,
 }, cobra_root_endpoints).perform_tests
+
+# --- cobra: AddCommand parentage -------------------------------------------
+# `users get` and `orders get` are two commands. Mapping every command to
+# `cli://<binary>/<Use>` merged them into one `get` with both flag sets.
+cobra_tree_endpoints = [
+  build.call("cli://shopctl", [] of Param),
+  build.call("cli://shopctl/users", [] of Param),
+  build.call("cli://shopctl/users/get", [Param.new("user-id", "", "flag")]),
+  build.call("cli://shopctl/orders", [] of Param),
+  build.call("cli://shopctl/orders/get", [Param.new("order-id", "", "flag")]),
+]
+
+cobra_tree_tester = FunctionalTester.new("fixtures/go/cli_cobra_tree/", {
+  :techs     => 1,
+  :endpoints => cobra_tree_endpoints.size,
+}, cobra_tree_endpoints)
+cobra_tree_tester.perform_tests
+
+# --- cobra: each binary's tree in its own non-main `command` package -------
+# The library package used to take the module name (`tools`), so both
+# binaries' `serve` merged under `cli://tools`. The executed root's Use names
+# the binary; alpha spreads its tree over two files of one package.
+cobra_package_endpoints = [
+  build.call("cli://alphactl", [Param.new("config", "", "flag"), Param.new("ALPHA_TOKEN", "", "env")]),
+  build.call("cli://alphactl/serve", [Param.new("alpha-port", "", "flag")]),
+  build.call("cli://alphactl/serve/status", [Param.new("json", "", "flag")]),
+  build.call("cli://betactl", [Param.new("config", "", "flag"), Param.new("BETA_TOKEN", "", "env")]),
+  build.call("cli://betactl/serve", [Param.new("beta-port", "", "flag")]),
+]
+
+cobra_package_tester = FunctionalTester.new("fixtures/go/cli_cobra_command_package/", {
+  :techs     => 1,
+  :endpoints => cobra_package_endpoints.size,
+}, cobra_package_endpoints)
+cobra_package_tester.perform_tests
+
+# --- cobra: Go scoping, constructors ---------------------------------------
+# users.go and orders.go each declare a function-local `get`; three
+# constructors in orders.go each name their command `cmd` and are linked
+# through what they return (`return cmd`, `return &cobra.Command{...}`).
+# Two receiver types' `Command()` methods stay two constructors, and braces
+# inside strings and runes keep `usersLsCmd` / `usersExportCmd` package-level.
+cobra_scopes_endpoints = [
+  build.call("cli://shopscope", [] of Param),
+  build.call("cli://shopscope/users", [] of Param),
+  build.call("cli://shopscope/users/get", [Param.new("user-id", "", "flag")]),
+  build.call("cli://shopscope/users/ls", [Param.new("limit", "", "flag")]),
+  build.call("cli://shopscope/users/export", [Param.new("format", "", "flag")]),
+  build.call("cli://shopscope/users/archive", [Param.new("user-filter", "", "flag")]),
+  build.call("cli://shopscope/orders/archive", [Param.new("order-filter", "", "flag")]),
+  build.call("cli://shopscope/orders", [] of Param),
+  build.call("cli://shopscope/orders/get", [Param.new("order-id", "", "flag")]),
+  build.call("cli://shopscope/orders/list", [Param.new("limit", "", "flag")]),
+  build.call("cli://shopscope/orders/cancel", [] of Param),
+]
+
+cobra_scopes_tester = FunctionalTester.new("fixtures/go/cli_cobra_scopes/", {
+  :techs     => 1,
+  :endpoints => cobra_scopes_endpoints.size,
+}, cobra_scopes_endpoints)
+cobra_scopes_tester.perform_tests
+
+# --- cobra: a tree spanning packages ----------------------------------------
+# `users.Cmd` is added from another package and must land under the root's
+# binary (`shop`), not the module's (`shop-tools`). `AddCommand(ordersGet,
+# newHelp())` still links `ordersGet`.
+cobra_cross_package_endpoints = [
+  build.call("cli://shop", [] of Param),
+  build.call("cli://shop/orders", [] of Param),
+  build.call("cli://shop/orders/get", [Param.new("order-id", "", "flag")]),
+  build.call("cli://shop/users", [] of Param),
+  build.call("cli://shop/users/get", [Param.new("user-id", "", "flag")]),
+]
+
+FunctionalTester.new("fixtures/go/cli_cobra_cross_package/", {
+  :techs     => 1,
+  :endpoints => cobra_cross_package_endpoints.size,
+}, cobra_cross_package_endpoints).perform_tests
+
+# A cobra tree of `packages` library packages, each adding a 5-deep chain
+# under a root that adds every package's `Cmd`. Returns the analyze time and
+# the endpoint count.
+private def analyze_wide_cobra_tree(packages : Int32) : Tuple(Time::Span, Int32)
+  dir = File.tempname("noir_cobra_wide")
+  Dir.mkdir_p(File.join(dir, "root"))
+  File.write(File.join(dir, "go.mod"), "module example.com/wide\n\nrequire github.com/spf13/cobra v1.8.0\n")
+  File.write(File.join(dir, "root", "root.go"), String.build do |io|
+    io << "package root\n\nimport (\n\t\"github.com/spf13/cobra\"\n"
+    packages.times { |i| io << "\tp" << i << " \"example.com/wide/pkg/p" << i << "\"\n" }
+    io << ")\n\nvar rootCmd = &cobra.Command{Use: \"wide\"}\n\nfunc Execute() {\n"
+    packages.times { |i| io << "\trootCmd.AddCommand(p" << i << ".Cmd)\n" }
+    io << "\t_ = rootCmd.Execute()\n}\n"
+  end)
+  packages.times do |i|
+    Dir.mkdir_p(File.join(dir, "pkg", "p#{i}"))
+    File.write(File.join(dir, "pkg", "p#{i}", "cmds.go"), String.build do |io|
+      io << "package p" << i << "\n\nimport \"github.com/spf13/cobra\"\n\n"
+      io << "var Cmd = &cobra.Command{Use: \"p" << i << "\"}\n"
+      5.times { |j| io << "var c" << j << " = &cobra.Command{Use: \"c" << j << "\"}\n" }
+      io << "\nfunc init() {\n\tCmd.AddCommand(c0)\n"
+      (1..4).each { |j| io << "\tc" << j - 1 << ".AddCommand(c" << j << ")\n\tc" << j << ".Flags().String(\"f" << j << "\", \"\", \"\")\n" }
+      io << "}\n"
+    end)
+  end
+
+  options = ConfigInitializer.new.default_options
+  options["base"] = YAML::Any.new([YAML::Any.new(dir)])
+  options["nolog"] = YAML::Any.new(true)
+  options["only_techs"] = YAML::Any.new("go_cli")
+  app = NoirRunner.new(options)
+  app.detect
+  # Collect first so heap left by earlier specs doesn't land on one side.
+  GC.collect
+  elapsed = Time.measure { app.analyze }
+  {elapsed, app.endpoints.size}
+ensure
+  FileUtils.rm_rf(dir) if dir
+end
+
+describe "go CLI cobra command tree", tags: "functional" do
+  it "keeps two files' function-local commands of one name apart" do
+    get = cobra_scopes_tester.endpoints.find! { |ep| ep.url == "cli://shopscope/users/get" }
+    get.params.map(&.name).should eq(["user-id"])
+    root = cobra_scopes_tester.endpoints.find! { |ep| ep.url == "cli://shopscope" }
+    root.params.should be_empty
+    archive = cobra_scopes_tester.endpoints.find! { |ep| ep.url == "cli://shopscope/users/archive" }
+    archive.params.map(&.name).should eq(["user-filter"])
+  end
+
+  it "resolves a many-package cobra tree in linear time" do
+    # Best of two on each side, so one GC pause or load spike can't decide it.
+    small, small_count = analyze_wide_cobra_tree(500)
+    small = {small, analyze_wide_cobra_tree(500)[0]}.min
+    large, large_count = analyze_wide_cobra_tree(2000)
+    large = {large, analyze_wide_cobra_tree(2000)[0]}.min
+    small_count.should eq(500 * 6 + 1)
+    large_count.should eq(2000 * 6 + 1)
+    # 4x the packages: linear is ~4x, the per-package scan of every parent
+    # link was ~16x. A ratio holds under CI load where a fixed bound did not;
+    # 12x leaves room for GC noise in a full suite run.
+    large.should be < small * 12
+  end
+
+  it "keeps each same-named subcommand's flags on its own command" do
+    get = cobra_tree_tester.endpoints.find! { |ep| ep.url == "cli://shopctl/users/get" }
+    get.params.map(&.name).should eq(["user-id"])
+  end
+
+  it "keeps two binaries' subcommands apart" do
+    serve = cobra_package_tester.endpoints.find! { |ep| ep.url == "cli://alphactl/serve" }
+    serve.params.map(&.name).should eq(["alpha-port"])
+    root = cobra_package_tester.endpoints.find! { |ep| ep.url == "cli://alphactl" }
+    root.params.map(&.name).should_not contain("BETA_TOKEN")
+  end
+end
 
 # --- urfave/cli (app + command + flags + EnvVars) --------------------------
 urfave_endpoints = [
