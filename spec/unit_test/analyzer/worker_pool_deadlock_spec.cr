@@ -124,8 +124,9 @@ describe "analyzer worker-pool resilience" do
     Dir.mkdir_p(dir)
 
     begin
-      # A `.kt` poison: Armeria's two synchronous pre-phases walk `.java`
-      # only, so this isolates the failure to the worker pool.
+      # A `.kt` poison: the routes-index pre-phase walks `.java` only and
+      # the registration-prefix one isolates a failing file, so the scan
+      # still reaches the worker pool.
       poison = File.join(dir, "#{WorkerPoolProbe::POISON_MARKER}.kt")
       File.write(poison, "package com.example\n")
 

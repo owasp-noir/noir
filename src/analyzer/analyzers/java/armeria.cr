@@ -4,6 +4,7 @@ require "../../../ext/tree_sitter/tree_sitter"
 require "../../../miniparsers/java_callee_extractor"
 require "../../../miniparsers/java_parameter_extractor_ts"
 require "../../../miniparsers/java_route_extractor_ts"
+require "../../../miniparsers/kotlin_route_extractor_ts"
 require "../../../utils/url_path"
 require "../../../utils/top_level_split"
 
@@ -30,6 +31,7 @@ module Analyzer::Java
     def analyze
       annotated_service_prefixes = collect_annotated_service_prefixes
       service_with_routes_index = collect_service_with_routes_index
+      kotlin_dto_builder = Noir::TreeSitterKotlinDtoIndex.new
 
       # Source Analysis — driven by the shared pool on `Analyzer`, not by a
       # local copy of it. The inlined pool this replaces closed the channel
@@ -47,17 +49,22 @@ module Analyzer::Java
         content = read_file_content(path)
         base = configured_base_for(path)
 
-        # Annotation-based services (`@Get("/x")` etc.) —
-        # Kotlin files reach here too, but tree-sitter-java
-        # doesn't parse Kotlin cleanly, so skip non-Java.
-        if content.includes?("com.linecorp.armeria.server.annotation.") && path.ends_with?(".java")
-          analyze_annotated_service(path, content, base, annotated_service_prefixes)
+        # Annotation-based services (`@Get("/x")` etc.), each language
+        # through its own tree-sitter grammar.
+        if content.includes?("com.linecorp.armeria.server.annotation.")
+          if path.ends_with?(".kt")
+            analyze_kotlin_annotated_service(path, content, base, annotated_service_prefixes, kotlin_dto_builder)
+          else
+            analyze_annotated_service(path, content, base, annotated_service_prefixes)
+          end
         end
 
         # Server.builder()-style routes (regex-anchored, then
         # depth-scanned — the builder chain isn't worth a
-        # dedicated TS walk yet).
-        details = Details.new(PathInfo.new(path))
+        # dedicated TS walk yet). Each route carries the line of its own
+        # registration call: the auth tagger reads the code around that
+        # line and skips a code path that has none.
+        offsets = nil.as(Noir::CharOffsets?)
         # Both the string-constant table (a full tree-sitter
         # parse) and the non-code mask (a char walk) are only
         # needed once a `Server.builder()` anchor is present.
@@ -91,8 +98,10 @@ module Analyzer::Java
           server_codeblock = (code ||= JavaEngine.strip_comments(content))[start..finish]
 
           resolved_constants = constants ||= (path.ends_with?(".java") ? Noir::TreeSitterJavaRouteExtractor.extract_string_constants(content) : Hash(String, String).new)
-          collect_service_routes(server_codeblock, resolved_constants, details, service_with_routes_index, base, mask, start)
-          collect_builder_routes(server_codeblock, resolved_constants, details, mask, start)
+          line_index = offsets ||= Noir::CharOffsets.new(content)
+          details_at = ->(block_offset : Int32) { Details.new(PathInfo.new(path, line_index.line(start + block_offset))) }
+          collect_service_routes(server_codeblock, resolved_constants, details_at, service_with_routes_index, base, mask, start)
+          collect_builder_routes(server_codeblock, resolved_constants, details_at, mask, start)
         end
       end
 
@@ -119,17 +128,17 @@ module Analyzer::Java
 
     private def collect_builder_routes(server_codeblock : String,
                                        constants : Hash(String, String),
-                                       details : Details,
+                                       details_at : Proc(Int32, Details),
                                        non_code_mask : Array(Bool)? = nil,
                                        block_start : Int32 = 0)
       emitted = Set(Tuple(String, String)).new
 
-      route_chain_expressions(server_codeblock, non_code_mask, block_start).each do |expr|
-        collect_route_expression(expr, constants, details, emitted)
+      route_chain_expressions(server_codeblock, non_code_mask, block_start).each do |(expr, found)|
+        collect_route_expression(expr, constants, details_at.call(found), emitted)
       end
 
-      call_argument_expressions(server_codeblock, ".withRoute", non_code_mask, block_start).each do |expr|
-        collect_route_expression(expr, constants, details, emitted)
+      call_argument_expressions(server_codeblock, ".withRoute", non_code_mask, block_start).each do |(expr, found)|
+        collect_route_expression(expr, constants, details_at.call(found), emitted)
       end
     end
 
@@ -188,8 +197,8 @@ module Analyzer::Java
 
     private def route_chain_expressions(code : String,
                                         non_code_mask : Array(Bool)? = nil,
-                                        base_offset : Int32 = 0) : Array(String)
-      expressions = [] of String
+                                        base_offset : Int32 = 0) : Array(Tuple(String, Int32))
+      expressions = [] of Tuple(String, Int32)
       offset = 0
 
       while found = code.index(".route()", offset)
@@ -202,7 +211,7 @@ module Analyzer::Java
           break unless open_idx
           close_idx = JavaEngine.find_matching_delimiter(code, open_idx, '(', ')')
           if close_idx
-            expressions << code[found..close_idx]
+            expressions << {code[found..close_idx], found}
             offset = close_idx + 1
           else
             offset = open_idx + 1
@@ -213,11 +222,12 @@ module Analyzer::Java
       expressions
     end
 
+    # Each call's argument text with the offset of `marker` in `code`.
     private def call_argument_expressions(code : String,
                                           marker : String,
                                           non_code_mask : Array(Bool)? = nil,
-                                          base_offset : Int32 = 0) : Array(String)
-      expressions = [] of String
+                                          base_offset : Int32 = 0) : Array(Tuple(String, Int32))
+      expressions = [] of Tuple(String, Int32)
       offset = 0
 
       while found = code.index(marker, offset)
@@ -228,7 +238,7 @@ module Analyzer::Java
           break unless open_idx
           close_idx = JavaEngine.find_matching_delimiter(code, open_idx, '(', ')')
           if close_idx
-            expressions << code[(open_idx + 1)...close_idx]
+            expressions << {code[(open_idx + 1)...close_idx], found}
             offset = close_idx + 1
           else
             offset = open_idx + 1
@@ -264,7 +274,7 @@ module Analyzer::Java
 
     private def collect_service_routes(server_codeblock : String,
                                        constants : Hash(String, String),
-                                       details : Details,
+                                       details_at : Proc(Int32, Details),
                                        service_with_routes_index : Hash(ScopedClassKey, Array(RouteEntry)),
                                        base : String,
                                        non_code_mask : Array(Bool)? = nil,
@@ -288,6 +298,7 @@ module Analyzer::Java
             next
           end
         endpoint_param_index = method_name == "serviceIf" ? 1 : 0
+        details = details_at.call(found)
 
         open_idx = server_codeblock.index('(', found)
         next unless open_idx
@@ -413,22 +424,23 @@ module Analyzer::Java
     private def collect_annotated_service_prefixes : Hash(ScopedClassKey, Array(String))
       registrations = Hash(ScopedClassKey, Array(String)).new { |hash, key| hash[key] = [] of String }
 
-      get_files_by_extension(".java").each do |path|
+      (get_files_by_extension(".java") + get_files_by_extension(".kt")).each do |path|
         next if JavaEngine.test_path?(base_relative_path(path))
 
-        content = read_file_content(path)
-        next unless content.includes?(".annotatedService")
+        # One unreadable file costs only itself, as in the worker pool.
+        isolating_file_errors(path) do
+          content = read_file_content(path)
+          next unless content.includes?(".annotatedService")
 
-        constants = Noir::TreeSitterJavaRouteExtractor.extract_string_constants(content)
-        base = configured_base_for(path)
-        call_argument_expressions(JavaEngine.strip_comments(content), ".annotatedService").each do |expr|
-          prefix, service_class = annotated_service_registration(expr, constants)
-          next if service_class.empty?
+          constants = path.ends_with?(".java") ? Noir::TreeSitterJavaRouteExtractor.extract_string_constants(content) : Hash(String, String).new
+          base = configured_base_for(path)
+          call_argument_expressions(JavaEngine.strip_comments(content), ".annotatedService").each do |(expr, _)|
+            prefix, service_class = annotated_service_registration(expr, constants)
+            next if service_class.empty?
 
-          registrations[{base, service_class}] << prefix
+            registrations[{base, service_class}] << prefix
+          end
         end
-      rescue e : IO::Error
-        logger.debug "Skipping #{path}: #{e.message}"
       end
 
       registrations.each_value(&.uniq!)
@@ -539,7 +551,13 @@ module Analyzer::Java
         return simple_class_name(match[1])
       end
 
-      if match = expr.match(/\b([A-Za-z_][A-Za-z0-9_.$]*)\s*\.class\b/)
+      if match = expr.match(/\b([A-Za-z_][A-Za-z0-9_.$]*)\s*(?:\.class|::class)\b/)
+        return simple_class_name(match[1])
+      end
+
+      # Kotlin has no `new`: `ItemController()`. Only a capitalised name, so
+      # a factory call like `services.create()` is not read as a class.
+      if match = expr.match(/\A\s*((?:[a-z_][A-Za-z0-9_]*\.)*[A-Z][A-Za-z0-9_]*)\s*\(/)
         return simple_class_name(match[1])
       end
 
@@ -714,6 +732,29 @@ module Analyzer::Java
           Noir::TreeSitter.each_named_child(cls_body) do |member|
             next unless Noir::TreeSitter.node_type(member) == "method_declaration"
             handle_method(member, content, path, prefixes, constants, class_name, dto_index)
+          end
+        end
+      end
+    end
+
+    private def analyze_kotlin_annotated_service(path : String,
+                                                 content : String,
+                                                 base : String,
+                                                 annotated_service_prefixes : Hash(ScopedClassKey, Array(String)),
+                                                 dto_builder : Noir::TreeSitterKotlinDtoIndex)
+      Noir::TreeSitter.parse_kotlin(content) do |root|
+        dto_index = dto_builder.build_for_with_root(path, content, root)
+        routes = Noir::TreeSitterKotlinRouteExtractor.extract_armeria_routes_from(root, content, dto_index, include_callees: callees_needed?)
+        routes.each do |route|
+          details = Details.new(PathInfo.new(path, route.line + 1))
+          annotated_service_route_prefixes(route.class_name, base, [] of String, annotated_service_prefixes).each do |prefix|
+            url_path = Noir::URLPath.join_trimmed(prefix, route.path)
+            path_vars = url_path.scan(/\{\*?(\w+)\}/).map(&.[1])
+            params = route.params.reject { |param| param.param_type == "query" && path_vars.includes?(param.name) }
+            endpoint = Endpoint.new(url_path, route.verb, params, details)
+            route.callees.each { |(name, line)| endpoint.push_callee(Callee.new(name, path: path, line: line)) }
+            extract_path_parameters(url_path, endpoint)
+            @result << endpoint
           end
         end
       end
