@@ -107,6 +107,20 @@ FunctionalTester.new("fixtures/rust/cli_clap_modules/", {
   :endpoints => clap_modules_endpoints.size,
 }, clap_modules_endpoints).perform_tests
 
+# --- clap: a cycle back to the top-level enum ------------------------------
+# `As(AsArgs)` holds `Commands` again, so every enum is nested by some
+# variant; the Parser's subcommand field still anchors the tree.
+clap_cycle_endpoints = [
+  build.call("cli://cycletool/users/get", [Param.new("user-id", "", "flag")]),
+  build.call("cli://cycletool/admin/purge", [Param.new("all", "", "flag")]),
+  build.call("cli://cycletool/admin/as", [Param.new("user", "", "flag")]),
+]
+
+FunctionalTester.new("fixtures/rust/cli_clap_cycle/", {
+  :techs     => 1,
+  :endpoints => clap_cycle_endpoints.size,
+}, clap_cycle_endpoints).perform_tests
+
 describe "rust CLI clap command tree", tags: "functional" do
   it "keeps an inline-nested subcommand's flags off the same-named top-level command" do
     verify = clap_shared_tester.endpoints.find! { |ep| ep.url == "cli://sharedtool/verify" }

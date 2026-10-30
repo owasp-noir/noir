@@ -282,12 +282,14 @@ module Analyzer::Rust
                                   cargo : Array(Tuple(String, String))) : ClapTree
       tree = ClapTree.new
 
-      # Pass 1: Subcommand enums, Args structs and the Args structs'
-      # `#[command(subcommand)]` field types.
+      # Pass 1: Subcommand enums, Args structs and the Args and Parser
+      # structs' `#[command(subcommand)]` field types.
+      parser_fields = [] of Tuple(String, String) # {field type, path}
       rs_sources.each do |path, _content, lines|
         tree.binaries[path] = rust_binary_name(cargo, path)
         scanner = AttributeScanner.new
         current_args : String? = nil
+        in_parser = false
 
         lines.each do |line|
           code = scanner.process_line(line)
@@ -299,6 +301,7 @@ module Analyzer::Rust
             kind = derive && classify_derive(derive)
             key = "#{path}::#{m[1]}"
             current_args = nil
+            in_parser = kind == :parser && code.matches?(/\bstruct\s/)
             if kind == :subcommand && code.matches?(/\benum\s/)
               tree.enums[key] = tree.binaries[path]
               (tree.enum_index[m[1]] ||= [] of String) << path
@@ -306,8 +309,12 @@ module Analyzer::Rust
               (tree.args_index[m[1]] ||= [] of String) << path
               current_args = key
             end
-          elsif subcommand_field && current_args && (fm = code.match(SUBCOMMAND_FIELD_RE))
-            tree.args_subcommand[current_args] = fm[1]
+          elsif subcommand_field && (fm = code.match(SUBCOMMAND_FIELD_RE))
+            if args = current_args
+              tree.args_subcommand[args] = fm[1]
+            elsif in_parser
+              parser_fields << {fm[1], path}
+            end
           end
         end
       end
@@ -378,14 +385,17 @@ module Analyzer::Rust
         end
       end
 
-      # Pass 3: walk down from the root enums (the ones no variant nests),
-      # one base per distinct path. An enum only reachable through a cycle
-      # sits at its binary's root.
+      # Pass 3: walk down from the root enums, one base per distinct path.
+      # The roots are the enums a Parser's subcommand field names and those
+      # no variant nests. A cycle back to the root (`As(AsArgs)` holding the
+      # top-level enum again) adopts every enum, so the Parser's field is
+      # what anchors it. An enum only reachable through a cycle nothing else
+      # enters seeds a walk of its own.
+      roots = parser_fields.compact_map { |type, path| resolve_clap_item(tree, tree.enum_index, type, path) }
+      roots.concat(tree.enums.keys.reject { |key| adopted.includes?(key) })
+      roots.each { |key| walk_clap_tree(tree, children, key, "cli://#{tree.enums[key]}", [key]) }
       tree.enums.each do |key, binary|
-        walk_clap_tree(tree, children, key, "cli://#{binary}", [key]) unless adopted.includes?(key)
-      end
-      tree.enums.each do |key, binary|
-        tree.enum_bases[key] = ["cli://#{binary}"] unless tree.enum_bases.has_key?(key)
+        walk_clap_tree(tree, children, key, "cli://#{binary}", [key]) unless tree.enum_bases.has_key?(key)
       end
       args_links.each do |args, parent, name|
         urls = tree.args_urls[args] ||= [] of String
@@ -401,7 +411,7 @@ module Analyzer::Rust
       bases = tree.enum_bases[key] ||= [] of String
       return if bases.size >= MAX_COMMAND_BASES || bases.includes?(base)
       bases << base
-      children[key]?.try &.each do |(child, name)|
+      (children[key]? || [] of Tuple(String, String)).each do |(child, name)|
         walk_clap_tree(tree, children, child, "#{base}/#{name}", stack + [child]) unless stack.includes?(child)
       end
     end
