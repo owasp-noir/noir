@@ -1,6 +1,8 @@
 require "../../../models/analyzer"
 require "../../engines/go_engine"
 require "../../engines/cli_endpoint_support"
+require "../../../utils/top_level_split"
+require "../../../utils/js_literal_scanner"
 
 module Analyzer::Go
   # Surfaces the command-line attack surface of Go programs as `cli://`
@@ -77,15 +79,23 @@ module Analyzer::Go
     VIPER_BINDENV_RE = /\bviper\.BindEnv\s*\(\s*"([^"]+)"(?:\s*,\s*"([^"]+)")?/
 
     # --- cobra ---------------------------------------------------------------
-    COBRA_CMD_DECL_RE = /(\w+)\s*[:=]\s*&?cobra\.Command\s*\{/
+    # `var x = &cobra.Command{` / `x := ...` / `x = ...` / a `Cmd: ...` field.
+    COBRA_CMD_DECL_RE = /(?:\b(var)\s+)?\b(\w+)\s*(:=|=|:)\s*&?cobra\.Command\s*\{/
     COBRA_USE_RE      = /\bUse\s*:\s*"([^"\s]+)/
     COBRA_FLAG_RE     = /(\w+)\s*\.\s*(?:Persistent)?Flags\s*\(\s*\)\s*\.\s*[A-Za-z0-9]+\s*\(\s*(?:&?[\w.]+\s*,\s*)?"([^"]+)"/
     COBRA_IMPORT_RE   = Regex.union("github.com/spf13/cobra")
-    # `parent.AddCommand(a, b)`. Arguments that are calls (`newServeCmd()`)
-    # or other packages' commands (`serve.Cmd`) name no variable here.
-    COBRA_ADD_CMD_RE = /\b(\w+)\s*\.\s*AddCommand\s*\(([^()]*)\)/
-    COBRA_EXECUTE_RE = /\b(\w+)\s*\.\s*Execute(?:C|Context|ContextC)?\s*\(/
-    GO_IDENT_RE      = /\A\w+\z/
+    COBRA_ADD_CMD_RE  = /\b(\w+)\s*\.\s*AddCommand\s*\(/
+    COBRA_EXECUTE_RE  = /\b(\w+)\s*\.\s*Execute(?:C|Context|ContextC)?\s*\(/
+    # An `AddCommand` argument naming a command: `serveCmd` or `serve.Cmd`.
+    # A call (`newServeCmd()`) names none.
+    GO_REF_RE       = /\A(?:(\w+)\s*\.\s*)?(\w+)\z/
+    GO_CALL_REF_RE  = /\A(?:(\w+)\s*\.\s*)?(\w+)\s*\(/
+    GO_QUALIFIER_RE = /(\w+)\s*\.\s*\z/
+    GO_FUNC_RE      = /^func\s+(?:\([^)]*\)\s*)?(\w+)\s*[\[(]/
+    # A constructor's result: `return &cobra.Command{...}` or `return cmd`.
+    COBRA_RETURN_CMD_RE = /\breturn\s+&?cobra\.Command\s*\{/
+    RETURN_REF_RE       = /\breturn\s+(\w+)\s*(?:,|$)/
+    CALL_ARG_RULES      = Noir::TopLevelSplit::Rules.new(empties: Noir::TopLevelSplit::Empties::DropAll)
 
     # --- pflag (when used without cobra) -------------------------------------
     PFLAG_RE = /\bpflag\.(?:String|Int|Int64|Uint|Bool|Float64|Duration|StringSlice|StringArray)(?:Var)?(?:P)?\s*\(\s*(?:&?[\w.]+\s*,\s*)?"([^"]+)"/
@@ -186,11 +196,10 @@ module Analyzer::Go
         end
       end
 
-      cobra_packages = collect_cobra_packages(sources)
+      cobra = build_cobra_tree(sources, modules)
 
       sources.each do |path, content, lines, calls|
-        cobra = cobra_packages[File.dirname(path)]? || CobraPackage.new
-        binary = cobra_binary_name(cobra, content) || go_binary_name(modules, path, content)
+        binary = cobra_package_binary(cobra, go_package_dir(path))
         root_url = "cli://#{binary}"
         framework_cli = content.matches?(FRAMEWORK_IMPORTS_RE)
         # stdlib flag / os.Args / raw os.Getenv only describe a CLI surface
@@ -200,10 +209,7 @@ module Analyzer::Go
         emit_stdlib = framework_cli || !content.matches?(HTTP_LISTEN_RE)
         has_cli_parse = cli_parse_point?(content)
 
-        # Map cobra command variables to their command URL.
-        cobra_cmd_urls = map_cobra_commands(lines, cobra, binary, root_url)
-
-        scan_lines(calls, path, binary, root_url, endpoints, cobra_cmd_urls,
+        scan_lines(calls, path, binary, root_url, endpoints, cobra,
           emit_stdlib, has_cli_parse)
         scan_struct_tags(content, path, root_url, endpoints)
 
@@ -310,85 +316,252 @@ module Analyzer::Go
       File.basename(Noir::PathScope.expand(base))
     end
 
-    # The cobra commands of one Go package (directory). A package shares one
-    # namespace across its files, so `rootCmd` declared in `root.go` is the
-    # parent that `serve.go`'s `rootCmd.AddCommand(serveCmd)` refers to.
-    private record CobraPackage,
-      uses = {} of String => String,
-      parents = {} of String => String,
-      executed = Set(String).new
+    # The cobra command trees of a scan. A command is identified by where it
+    # is declared (`path:line`), not by its variable name: two constructors
+    # that each say `get := &cobra.Command{...}` declare two commands, and a
+    # reference resolves the way Go scoping does — the innermost local in
+    # the file, then the package-level variable of its package (shared by all
+    # the package's files), or `pkg.Var` through the file's imports. A
+    # constructor (`func newLsCmd() *cobra.Command`) stands for the command
+    # it returns, so `cmd.AddCommand(newLsCmd())` links too.
+    private class CobraTree
+      getter uses = {} of String => String                       # id => Use token
+      getter parents = {} of String => String                    # child id => parent id
+      getter executed = Set(String).new                          # ids whose Execute*() is called
+      getter dirs = {} of String => String                       # id => package directory
+      getter package_vars = {} of String => Hash(String, String) # dir => package-level var => id
+      getter constructors = {} of String => Hash(String, String) # dir => func name => returned id
+      getter decl_lines = {} of String => Hash(Int32, String)    # path => line index => declared id
+      getter flag_lines = {} of String => Hash(Int32, String)    # path => line index => flag receiver id
+      getter packages = {} of String => Tuple(String, String)    # dir => {a path, its content}
+      getter binaries = {} of String => String                   # dir => binary name
+      getter urls = {} of String => String                       # id => url
+      getter modules : Array(Tuple(String, String))
 
-    private def collect_cobra_packages(sources : Array(Tuple(String, String, Array(String), Array(String)))) : Hash(String, CobraPackage)
-      packages = {} of String => CobraPackage
+      def initialize(@modules)
+      end
+    end
+
+    private def build_cobra_tree(sources : Array(Tuple(String, String, Array(String), Array(String))),
+                                 modules : Array(Tuple(String, String))) : CobraTree
+      tree = CobraTree.new(modules)
+      cobra_sources = [] of Tuple(String, String, Array(String), Array(String), Array(Int32))
+
+      # Declarations first, so a package-level command declared in `root.go`
+      # is known when `serve.go` adds a child to it.
       sources.each do |path, content, lines, calls|
+        dir = go_package_dir(path)
+        tree.packages[dir] ||= {path, content}
         next unless content_matches?(content, COBRA_IMPORT_RE)
-        package = packages[File.dirname(path)] ||= CobraPackage.new
-        package.uses.merge!(cobra_uses(lines))
-        calls.each do |call|
-          call.scan(COBRA_ADD_CMD_RE) do |m|
-            m[2].split(',') do |arg|
-              child = arg.strip
-              package.parents[child] = m[1] if child.matches?(GO_IDENT_RE)
+
+        depths = brace_depths(lines)
+        cobra_sources << {path, content, lines, calls, depths}
+        decls = tree.decl_lines[path] = {} of Int32 => String
+        vars = tree.package_vars[dir] ||= {} of String => String
+        constructors = tree.constructors[dir] ||= {} of String => String
+        func_name : String? = nil
+        lines.each_with_index do |line, index|
+          if depths[index] == 0 && (fm = line.match(GO_FUNC_RE))
+            func_name = fm[1]
+          end
+          m = line.match(COBRA_CMD_DECL_RE)
+          returned = !m && line.matches?(COBRA_RETURN_CMD_RE)
+          next unless m || returned
+          id = "#{path}:#{index}"
+          decls[index] = id
+          tree.dirs[id] = dir
+          if use_token = find_use_in_struct(lines, index)
+            tree.uses[id] = use_token
+          end
+          if m
+            # Top level, or a bare `x = &cobra.Command{` in a function body
+            # assigning the package variable (`var rootCmd *cobra.Command`
+            # filled in by `init`).
+            vars[m[2]] = id if depths[index] == 0 || (m[3] == "=" && !m[1]? && !vars.has_key?(m[2]))
+          elsif name = func_name
+            constructors[name] ||= id
+          end
+        end
+      end
+
+      # Constructor calls resolve once every file has said what it returns.
+      pending = [] of Tuple(String, String, String) # {parent id, constructor dir, func name}
+      cobra_sources.each do |path, content, lines, calls, depths|
+        link_cobra_file(tree, path, content, lines, calls, depths, pending)
+      end
+      pending.each do |parent, dir, name|
+        child = tree.constructors[dir]?.try(&.[name]?)
+        tree.parents[child] = parent if child && child != parent
+      end
+      tree
+    end
+
+    # Brace depth at the start of each line.
+    private def brace_depths(lines : Array(String)) : Array(Int32)
+      depth = 0
+      lines.map do |line|
+        start = depth
+        depth += line.count('{') - line.count('}')
+        start
+      end
+    end
+
+    # One forward pass over a cobra file that resolves every command
+    # reference (flag receiver, `AddCommand` parent and children, `Execute`
+    # receiver) to the declaration it names at that point.
+    private def link_cobra_file(tree : CobraTree, path : String, content : String, lines : Array(String),
+                                calls : Array(String), depths : Array(Int32),
+                                pending : Array(Tuple(String, String, String)))
+      dir = go_package_dir(path)
+      constructors = tree.constructors[dir]
+      decls = tree.decl_lines[path]
+      flags = tree.flag_lines[path] = {} of Int32 => String
+      locals = {} of String => Array(Tuple(String, Int32)) # var => [{id, scope depth}], innermost last
+      aliases = [] of Hash(String, String)                 # parsed on the first `pkg.Var` reference
+
+      import_of = ->(qualifier : String?) : String? {
+        return unless qualifier
+        aliases << Noir::GoCalleeExtractor.extract_import_aliases(content) if aliases.empty?
+        aliases.first[qualifier]?
+      }
+      resolve = ->(qualifier : String?, var : String) : String? {
+        if import_path = import_of.call(qualifier)
+          target = go_import_dir(import_path, tree.modules)
+          return target ? tree.package_vars[target]?.try(&.[var]?) : nil
+        end
+        locals[var]?.try(&.last?).try(&.[0]) || tree.package_vars[dir]?.try(&.[var]?)
+      }
+
+      previous_depth = 0
+      func_name : String? = nil
+      lines.each_index do |index|
+        depth = depths[index]
+        if depth == 0 && (fm = lines[index].match(GO_FUNC_RE))
+          func_name = fm[1]
+        end
+        # A block closed: its locals go out of scope.
+        locals.each_value { |stack| stack.reject! { |(_id, scope)| scope > depth } } if depth < previous_depth
+        previous_depth = depth
+
+        if (id = decls[index]?) && depth > 0 && (m = lines[index].match(COBRA_CMD_DECL_RE))
+          (locals[m[2]] ||= [] of Tuple(String, Int32)) << {id, depth} if m[3] != "=" || m[1]?
+        end
+
+        call = calls[index]
+        if (m = call.match(COBRA_FLAG_RE)) && (id = resolve.call(go_qualifier(call, m.byte_begin(1)), m[1]))
+          flags[index] = id
+        end
+        call.scan(COBRA_ADD_CMD_RE) do |am|
+          next unless parent = resolve.call(go_qualifier(call, am.byte_begin(1)), am[1])
+          cobra_call_args(call, am.byte_end(0) - 1).each do |arg|
+            if ref = arg.match(GO_REF_RE)
+              child = resolve.call(ref[1]?, ref[2])
+              tree.parents[child] = parent if child && child != parent
+            elsif ref = arg.match(GO_CALL_REF_RE)
+              # `newLsCmd(...)` / `configcmd.NewCommand(...)`; a method call
+              # (`o.newCmd()`) is looked up in this package.
+              import_path = import_of.call(ref[1]?)
+              target = import_path ? go_import_dir(import_path, tree.modules) : dir
+              pending << {parent, target, ref[2]} if target
             end
           end
-          call.scan(COBRA_EXECUTE_RE) { |m| package.executed << m[1] }
+        end
+        if (name = func_name) && (rm = lines[index].match(RETURN_REF_RE)) && (id = resolve.call(nil, rm[1]))
+          constructors[name] ||= id
+        end
+        call.scan(COBRA_EXECUTE_RE) do |em|
+          if id = resolve.call(go_qualifier(call, em.byte_begin(1)), em[1])
+            tree.executed << id
+          end
         end
       end
-      packages
     end
 
-    # The root command's `Use` names a binary whose cobra tree lives in a
-    # library package (`cmd/alpha/command`), where the path only gives the
-    # module name and two binaries in one module would merge. The root is
-    # the one executed command that no `AddCommand` adopts. A `package main`
-    # keeps its directory name: that is the binary `go build` produces.
-    private def cobra_binary_name(cobra : CobraPackage, content : String) : String?
-      return if content.matches?(PACKAGE_MAIN_RE)
-      roots = cobra.executed.select { |var| cobra.uses.has_key?(var) && !cobra.parents.has_key?(var) }
-      cobra.uses[roots.first] if roots.size == 1
+    # The `pkg` of `pkg.name` when `name` starts at byte `name_start`.
+    private def go_qualifier(call : String, name_start : Int32) : String?
+      return if name_start == 0
+      call.byte_slice(0, name_start).match(GO_QUALIFIER_RE).try(&.[1])
     end
 
-    # `cmdVar => Use token` for each `var x = &cobra.Command{` in the file,
-    # paired with the `Use:` inside that same struct literal. A command with
-    # no `Use:` field (a common root pattern: only Short/Long/Run) is left
-    # out so its flags fall back to the root rather than borrowing a sibling
-    # command's Use token.
-    private def cobra_uses(lines : Array(String)) : Hash(String, String)
-      uses = {} of String => String
-      lines.each_with_index do |line, index|
-        next unless m = line.match(COBRA_CMD_DECL_RE)
-        if use_token = find_use_in_struct(lines, index)
-          uses[m[1]] = use_token
+    # The top-level arguments of the call whose `(` is at byte `open_paren`.
+    private def cobra_call_args(call : String, open_paren : Int32) : Array(String)
+      close = Noir::JSLiteralScanner.find_matching_paren_at_byte(call, open_paren) || call.bytesize
+      Noir::TopLevelSplit.split(call.byte_slice(open_paren + 1, close - open_paren - 1), ',', CALL_ARG_RULES)
+    end
+
+    private def go_package_dir(path : String) : String
+      Noir::PathScope.expand(File.dirname(path))
+    end
+
+    # The directory of an import path inside one of the scanned modules.
+    private def go_import_dir(import_path : String, modules : Array(Tuple(String, String))) : String?
+      modules.each do |module_path, module_dir|
+        return module_dir if import_path == module_path
+        return "#{module_dir}#{import_path[module_path.size..]}" if import_path.starts_with?("#{module_path}/")
+      end
+      nil
+    end
+
+    # The binary a package's commands belong to.
+    #
+    # A `package main` is the binary `go build` produces, named after its
+    # directory. A library package (`cmd/alpha/command`) has no binary name
+    # of its own — the path gives only the module name, which merged two
+    # binaries of one module — so it takes the `Use` of its root: the one
+    # executed command that no `AddCommand` adopts. A package whose commands
+    # are adopted by another package's tree takes that tree's binary.
+    private def cobra_package_binary(tree : CobraTree, dir : String, seen = Set(String).new) : String
+      if binary = tree.binaries[dir]?
+        return binary
+      end
+      path, content = tree.packages[dir]
+      binary = nil
+      if seen.add?(dir) && !content.matches?(PACKAGE_MAIN_RE)
+        roots = tree.executed.select { |id| tree.dirs[id] == dir && tree.uses.has_key?(id) && !tree.parents.has_key?(id) }
+        binary = tree.uses[roots.first] if roots.size == 1
+        unless binary
+          tree.parents.each do |child, parent|
+            next unless tree.dirs[child] == dir
+            top_dir = tree.dirs[cobra_chain(tree, parent).last]
+            next if top_dir == dir
+            binary = cobra_package_binary(tree, top_dir, seen)
+            break
+          end
         end
       end
-      uses
+      tree.binaries[dir] = binary || go_binary_name(tree.modules, path, content)
     end
 
-    # Builds a `cmdVar => url` map for cobra. Each command sits under the
-    # command that `AddCommand`s it, so `users get` and `orders get` stay
-    # two commands. A parentless command is the root (`cli://<binary>`)
-    # when it is executed or its Use token is the binary, and a direct
-    # child of the root otherwise (it may be added from another package).
-    # The file's own declarations win over its package's: function-local
-    # names like `cmd` repeat across files.
-    private def map_cobra_commands(lines : Array(String), cobra : CobraPackage,
-                                   binary : String, root_url : String) : Hash(String, String)
-      uses = cobra.uses.merge(cobra_uses(lines))
-      urls = {} of String => String
-      uses.each_key { |var| urls[var] = cobra_command_url(var, uses, cobra, binary, root_url) }
-      urls
-    end
-
-    private def cobra_command_url(var : String, uses : Hash(String, String), cobra : CobraPackage,
-                                  binary : String, root_url : String, chain = [] of String) : String
-      return root_url unless use_token = uses[var]?
-      chain << var
-      parent = cobra.parents[var]?
-      if parent.nil? || chain.includes?(parent)
-        return root_url if use_token == binary || cobra.executed.includes?(var)
-        return "#{root_url}/#{use_token}"
+    # `id` and its ancestors, nearest first, stopping before a cycle repeats.
+    private def cobra_chain(tree : CobraTree, id : String) : Array(String)
+      chain = [id]
+      while (parent = tree.parents[chain.last]?) && !chain.includes?(parent)
+        chain << parent
       end
-      "#{cobra_command_url(parent, uses, cobra, binary, root_url, chain)}/#{use_token}"
+      chain
+    end
+
+    # A command's URL is its ancestors' Use tokens under its binary. A
+    # parentless command is the root (`cli://<binary>`) when it is executed
+    # or its Use token is the binary, and a direct child of the root
+    # otherwise (it may be added from code this scan can't link). A Use-less
+    # command (a common root: only Short/Run) adds no segment.
+    private def cobra_url(tree : CobraTree, id : String) : String
+      tree.urls[id] ||= begin
+        chain = cobra_chain(tree, id)
+        top = chain.last
+        binary = cobra_package_binary(tree, tree.dirs[top])
+        url = "cli://#{binary}"
+        if (use_token = tree.uses[top]?) && use_token != binary && !tree.executed.includes?(top)
+          url += "/#{use_token}"
+        end
+        chain.reverse_each.skip(1).each do |ancestor|
+          if use_token = tree.uses[ancestor]?
+            url += "/#{use_token}"
+          end
+        end
+        url
+      end
     end
 
     # Finds the `Use:` token of the `cobra.Command{...}` struct literal that
@@ -419,13 +592,15 @@ module Analyzer::Go
     end
 
     # Single forward pass that attributes flags/args/env to the right
-    # command, using an inline cursor for urfave literals and the precomputed
-    # variable map for cobra.
+    # command, using an inline cursor for urfave literals and the resolved
+    # cobra tree for cobra.
     private def scan_lines(lines : Array(String), path : String, binary : String,
                            root_url : String, endpoints : Hash(String, Endpoint),
-                           cobra_cmd_urls : Hash(String, String),
+                           cobra : CobraTree,
                            emit_stdlib : Bool, has_cli_parse : Bool)
       urfave_cmd_url = root_url
+      cobra_decls = cobra.decl_lines[path]?
+      cobra_flags = cobra.flag_lines[path]?
       urfave_pending : Symbol? = nil
 
       lines.each_with_index do |line, index|
@@ -433,15 +608,14 @@ module Analyzer::Go
 
         # cobra command declarations create their endpoint up front so a
         # command with no flags still surfaces.
-        if m = line.match(COBRA_CMD_DECL_RE)
-          if url = cobra_cmd_urls[m[1]]?
-            fetch_endpoint(endpoints, url, path, line_no)
-          end
+        if (id = cobra_decls.try(&.[index]?)) && cobra.uses.has_key?(id)
+          fetch_endpoint(endpoints, cobra_url(cobra, id), path, line_no)
         end
 
-        # cobra flags: receiver var -> mapped command url (fallback root).
+        # cobra flags: receiver -> its command's url (fallback root).
         if m = line.match(COBRA_FLAG_RE)
-          url = cobra_cmd_urls[m[1]]? || root_url
+          id = cobra_flags.try(&.[index]?)
+          url = id ? cobra_url(cobra, id) : root_url
           ep = fetch_endpoint(endpoints, url, path, line_no)
           ep.push_param(Param.new(m[2], "", "flag"))
         end

@@ -93,7 +93,51 @@ cobra_package_tester = FunctionalTester.new("fixtures/go/cli_cobra_command_packa
 }, cobra_package_endpoints)
 cobra_package_tester.perform_tests
 
+# --- cobra: Go scoping, constructors ---------------------------------------
+# users.go and orders.go each declare a function-local `get`; three
+# constructors in orders.go each name their command `cmd` and are linked
+# through what they return (`return cmd`, `return &cobra.Command{...}`).
+cobra_scopes_endpoints = [
+  build.call("cli://shopscope", [] of Param),
+  build.call("cli://shopscope/users", [] of Param),
+  build.call("cli://shopscope/users/get", [Param.new("user-id", "", "flag")]),
+  build.call("cli://shopscope/orders", [] of Param),
+  build.call("cli://shopscope/orders/get", [Param.new("order-id", "", "flag")]),
+  build.call("cli://shopscope/orders/list", [Param.new("limit", "", "flag")]),
+  build.call("cli://shopscope/orders/cancel", [] of Param),
+]
+
+cobra_scopes_tester = FunctionalTester.new("fixtures/go/cli_cobra_scopes/", {
+  :techs     => 1,
+  :endpoints => cobra_scopes_endpoints.size,
+}, cobra_scopes_endpoints)
+cobra_scopes_tester.perform_tests
+
+# --- cobra: a tree spanning packages ----------------------------------------
+# `users.Cmd` is added from another package and must land under the root's
+# binary (`shop`), not the module's (`shop-tools`). `AddCommand(ordersGet,
+# newHelp())` still links `ordersGet`.
+cobra_cross_package_endpoints = [
+  build.call("cli://shop", [] of Param),
+  build.call("cli://shop/orders", [] of Param),
+  build.call("cli://shop/orders/get", [Param.new("order-id", "", "flag")]),
+  build.call("cli://shop/users", [] of Param),
+  build.call("cli://shop/users/get", [Param.new("user-id", "", "flag")]),
+]
+
+FunctionalTester.new("fixtures/go/cli_cobra_cross_package/", {
+  :techs     => 1,
+  :endpoints => cobra_cross_package_endpoints.size,
+}, cobra_cross_package_endpoints).perform_tests
+
 describe "go CLI cobra command tree", tags: "functional" do
+  it "keeps two files' function-local commands of one name apart" do
+    get = cobra_scopes_tester.endpoints.find! { |ep| ep.url == "cli://shopscope/users/get" }
+    get.params.map(&.name).should eq(["user-id"])
+    root = cobra_scopes_tester.endpoints.find! { |ep| ep.url == "cli://shopscope" }
+    root.params.should be_empty
+  end
+
   it "keeps each same-named subcommand's flags on its own command" do
     get = cobra_tree_tester.endpoints.find! { |ep| ep.url == "cli://shopctl/users/get" }
     get.params.map(&.name).should eq(["user-id"])
