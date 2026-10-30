@@ -13,11 +13,8 @@ module Analyzer::Rust
   # Scope notes (follow-ups): the clap *builder* API (`Command::new(...)
   # .arg(Arg::new(...))`) is only recognized as a CLI signal, not parsed into
   # args — a line-scan can't reliably track its method-chain/paren scoping.
-  # Tuple subcommand variants that reference a separate `#[derive(Args)]`
-  # struct (`Serve(ServeArgs)`) surface that struct's flags on the root
-  # rather than the subcommand; only the struct's `#[command(subcommand)]`
-  # field is followed, so the commands nested under it keep their path.
-  # Inline-field variants (`Serve { ... }`) attribute correctly.
+  # A `#[command(flatten)]` struct's flags surface on the root rather than
+  # on the command that flattens it.
   #
   # Line-scan analyzer (Go/Python CLI house style) with a cross-file
   # URL-merge, instead of the tree-sitter analyze_file path the HTTP Rust
@@ -231,13 +228,13 @@ module Analyzer::Rust
         end
       end
 
-      subcommand_enums, subcommand_base_for, struct_subcommand = collect_subcommand_hierarchy(rs_sources, cargo)
+      tree = collect_clap_tree(rs_sources, cargo)
 
       rs_sources.each do |path, content, lines|
         binary = rust_binary_name(cargo, path)
         root_url = "cli://#{binary}"
         emit_env = !content.matches?(WEB_CRATE_RE)
-        scan(lines, path, binary, root_url, endpoints, emit_env, subcommand_enums, subcommand_base_for, struct_subcommand)
+        scan(lines, path, binary, root_url, endpoints, emit_env, tree)
       rescue e
         logger.debug "Error analyzing #{path}: #{e}"
         next
@@ -262,45 +259,74 @@ module Analyzer::Rust
       File.basename(path, ".rs")
     end
 
-    private def collect_subcommand_hierarchy(rs_sources : Array(Tuple(String, String, Array(String))),
-                                             cargo : Array(Tuple(String, String))) : Tuple(Set(String), Hash(String, String), Hash(String, String))
-      subcommand_enums = Set(String).new
-      child_links = {} of String => Tuple(String, String) # child_enum => {parent_enum, cmd_name}
-      enum_binary = {} of String => String
-      # `struct UsersArgs { #[command(subcommand)] method: UsersMethod }`:
-      # args struct => the subcommand enum its field holds.
-      struct_subcommand = {} of String => String
+    # The clap command tree of a scan. Items are keyed by file and name
+    # (`src/run.rs::Args`): a crate commonly has a Parser named `Args` and
+    # per-command `run::Args` / `build::Args`, so a bare name is ambiguous.
+    private class ClapTree
+      getter enums = {} of String => String             # Subcommand enum key => binary
+      getter enum_index = {} of String => Array(String) # enum name => paths
+      getter args_index = {} of String => Array(String) # Args struct name => paths
+      getter args_subcommand = {} of String => String   # Args struct key => its `#[command(subcommand)]` field type
+      getter binaries = {} of String => String          # path => binary
+      # Every command path an enum's variants sit under: an enum shared by
+      # `users` and `orders` has both.
+      getter enum_bases = {} of String => Array(String)
+      # The commands an Args struct holds the flags of (`Users(UsersArgs)`).
+      getter args_urls = {} of String => Array(String)
+    end
 
-      # Pass 1: find all enum names deriving Subcommand, and every struct's
-      # `#[command(subcommand)]` field type.
+    # A diamond of shared enums multiplies paths; real CLIs stay far below this.
+    MAX_COMMAND_BASES = 32
+
+    private def collect_clap_tree(rs_sources : Array(Tuple(String, String, Array(String))),
+                                  cargo : Array(Tuple(String, String))) : ClapTree
+      tree = ClapTree.new
+
+      # Pass 1: Subcommand enums, Args structs and the Args structs'
+      # `#[command(subcommand)]` field types.
       rs_sources.each do |path, _content, lines|
-        binary = rust_binary_name(cargo, path)
+        tree.binaries[path] = rust_binary_name(cargo, path)
         scanner = AttributeScanner.new
-        current_struct : String? = nil
+        current_args : String? = nil
 
         lines.each do |line|
           code = scanner.process_line(line)
           next if code.empty?
+          subcommand_field = scanner.consume_subcommand
 
-          if (d = scanner.pending_derive) && (m = code.match(/\benum\s+([A-Za-z_]\w*)/))
-            if d.includes?("Subcommand")
-              subcommand_enums << m[1]
-              enum_binary[m[1]] = binary
+          if m = code.match(ITEM_RE)
+            derive = scanner.consume_derive
+            kind = derive && classify_derive(derive)
+            key = "#{path}::#{m[1]}"
+            current_args = nil
+            if kind == :subcommand && code.matches?(/\benum\s/)
+              tree.enums[key] = tree.binaries[path]
+              (tree.enum_index[m[1]] ||= [] of String) << path
+            elsif kind == :args && code.matches?(/\bstruct\s/)
+              (tree.args_index[m[1]] ||= [] of String) << path
+              current_args = key
             end
-            scanner.consume_derive
-            current_struct = nil
-          elsif m = code.match(ITEM_RE)
-            scanner.consume_derive
-            current_struct = code.matches?(/\bstruct\s/) ? m[1] : nil
-          elsif scanner.consume_subcommand && current_struct && (fm = code.match(SUBCOMMAND_FIELD_RE))
-            struct_subcommand[current_struct] = fm[1].split("::").last
+          elsif subcommand_field && current_args && (fm = code.match(SUBCOMMAND_FIELD_RE))
+            tree.args_subcommand[current_args] = fm[1]
           end
         end
       end
 
-      # Pass 2: find ParentEnum -> variant(ChildEnum) links
-      rs_sources.each do |_path, _content, lines|
+      # Pass 2: parent enum => {child enum, command name} links, and the
+      # variants that wrap an Args struct.
+      children = {} of String => Array(Tuple(String, String))
+      adopted = Set(String).new
+      args_links = [] of Tuple(String, String, String) # {struct key, parent enum key, command name}
+      link = ->(child : String?, parent : String, name : String) {
+        if child && child != parent
+          (children[parent] ||= [] of Tuple(String, String)) << {child, name}
+          adopted << child
+        end
+      }
+
+      rs_sources.each do |path, _content, lines|
         current_enum : String? = nil
+        variant : String? = nil
         depth = 0
         enum_depth = -1
         scanner = AttributeScanner.new
@@ -310,27 +336,37 @@ module Analyzer::Rust
           code = scanner.process_line(line)
 
           if !code.empty?
+            subcommand_field = scanner.consume_subcommand
             if current_enum.nil?
               # An item's own `#[command(name = ...)]` (the Parser struct's
               # binary name) must not carry over to the next enum's first variant.
               scanner.consume_command_name if code.matches?(ITEM_RE)
-              if m = code.match(/\benum\s+([A-Za-z_]\w*)/)
-                if subcommand_enums.includes?(m[1])
-                  current_enum = m[1]
-                  opened = code.count('{')
-                  enum_depth = opened > 0 ? entry_depth + opened : entry_depth + 1
-                end
+              if (m = code.match(/\benum\s+([A-Za-z_]\w*)/)) && tree.enums.has_key?("#{path}::#{m[1]}")
+                current_enum = "#{path}::#{m[1]}"
+                variant = nil
+                opened = code.count('{')
+                enum_depth = opened > 0 ? entry_depth + opened : entry_depth + 1
               end
             elsif entry_depth == enum_depth
               if m = code.match(VARIANT_RE)
-                v_name = m[2]
-                c_name = m[1]? || scanner.consume_command_name || camel_to_kebab(v_name)
-                if child = nested_subcommand(m[3]?, subcommand_enums, struct_subcommand)
-                  child_links[child] = {current_enum, c_name}
+                variant = name = m[1]? || scanner.consume_command_name || camel_to_kebab(m[2])
+                if payload = m[3]?
+                  if child = resolve_clap_item(tree, tree.enum_index, payload, path)
+                    link.call(child, current_enum, name)
+                  elsif args = resolve_clap_item(tree, tree.args_index, payload, path)
+                    args_links << {args, current_enum, name}
+                    if field_type = tree.args_subcommand[args]?
+                      link.call(resolve_clap_item(tree, tree.enum_index, field_type, args[0, args.rindex!("::")]), current_enum, name)
+                    end
+                  end
                 end
               elsif code.matches?(/^[A-Z]\w*/)
                 scanner.consume_command_name
               end
+            elsif entry_depth == enum_depth + 1 && subcommand_field && (name = variant) &&
+                  (fm = code.match(SUBCOMMAND_FIELD_RE))
+              # Inline variant: `Jwks { #[command(subcommand)] action: JwksAction }`.
+              link.call(resolve_clap_item(tree, tree.enum_index, fm[1], path), current_enum, name)
             end
           end
 
@@ -342,65 +378,65 @@ module Analyzer::Rust
         end
       end
 
-      # Pass 3: resolve base URL for each subcommand enum
-      base_for = {} of String => String
-      visiting = Set(String).new
-      resolve_base = uninitialized (String) -> String
-      resolve_base = ->(enum_name : String) : String {
-        if b = base_for[enum_name]?
-          return b
-        end
-        if visiting.includes?(enum_name)
-          bin = enum_binary[enum_name]? || "app"
-          base = "cli://#{bin}"
-          base_for[enum_name] = base
-          return base
-        end
-
-        visiting << enum_name
-        base = if link = child_links[enum_name]?
-                 parent_enum, cmd_name = link
-                 parent_base = resolve_base.call(parent_enum)
-                 "#{parent_base}/#{cmd_name}"
-               else
-                 bin = enum_binary[enum_name]? || "app"
-                 "cli://#{bin}"
-               end
-        visiting.delete(enum_name)
-        base_for[enum_name] = base
-        base
-      }
-
-      subcommand_enums.each do |e|
-        resolve_base.call(e)
+      # Pass 3: walk down from the root enums (the ones no variant nests),
+      # one base per distinct path. An enum only reachable through a cycle
+      # sits at its binary's root.
+      tree.enums.each do |key, binary|
+        walk_clap_tree(tree, children, key, "cli://#{binary}", [key]) unless adopted.includes?(key)
+      end
+      tree.enums.each do |key, binary|
+        tree.enum_bases[key] = ["cli://#{binary}"] unless tree.enum_bases.has_key?(key)
+      end
+      args_links.each do |args, parent, name|
+        urls = tree.args_urls[args] ||= [] of String
+        tree.enum_bases[parent].each { |base| urls << "#{base}/#{name}" }
+        urls.uniq!
       end
 
-      {subcommand_enums, base_for, struct_subcommand}
+      tree
     end
 
-    # The subcommand enum a variant's payload nests: the payload itself
-    # (`#[command(subcommand)] Users(UsersMethod)`) or the enum held by an
-    # args struct's `#[command(subcommand)]` field (`Users(UsersArgs)`).
-    private def nested_subcommand(payload : String?, subcommand_enums : Set(String),
-                                  struct_subcommand : Hash(String, String)) : String?
-      return unless payload
-      name = payload.split("::").last
-      return name if subcommand_enums.includes?(name)
-      child = struct_subcommand[name]?
-      child if child && subcommand_enums.includes?(child)
+    private def walk_clap_tree(tree : ClapTree, children : Hash(String, Array(Tuple(String, String))),
+                               key : String, base : String, stack : Array(String))
+      bases = tree.enum_bases[key] ||= [] of String
+      return if bases.size >= MAX_COMMAND_BASES || bases.includes?(base)
+      bases << base
+      children[key]?.try &.each do |(child, name)|
+        walk_clap_tree(tree, children, child, "#{base}/#{name}", stack + [child]) unless stack.includes?(child)
+      end
+    end
+
+    # The key of the item a type path names, seen from `from_path`. A
+    # module-qualified path (`run::Args`, `crate::cmd::Run`) must match the
+    # item's file (`src/run.rs`, `src/cmd/mod.rs`); a bare name prefers the
+    # same file, then the same crate. Ambiguity resolves to nothing.
+    private def resolve_clap_item(tree : ClapTree, index : Hash(String, Array(String)),
+                                  type_path : String, from_path : String) : String?
+      segments = type_path.split("::").reject { |segment| segment.empty? || segment.in?("crate", "self", "super") }
+      return unless (name = segments.pop?) && (paths = index[name]?)
+
+      candidates = if segments.empty?
+                     paths.includes?(from_path) ? [from_path] : paths
+                   else
+                     suffix = "/#{segments.join('/')}"
+                     paths.select { |path| path.rchop(".rs").rchop("/mod").ends_with?(suffix) }
+                   end
+      if candidates.size > 1
+        candidates = candidates.select { |path| tree.binaries[path]? == tree.binaries[from_path]? }
+      end
+      "#{candidates.first}::#{name}" if candidates.size == 1
     end
 
     private def scan(lines : Array(String), path : String, binary : String,
                      root_url : String, endpoints : Hash(String, Endpoint), emit_env : Bool,
-                     subcommand_enums : Set(String), subcommand_base_for : Hash(String, String),
-                     struct_subcommand : Hash(String, String))
+                     tree : ClapTree)
       depth = 0
       item_kind : Symbol? = nil # :parser | :subcommand | :args
-      current_enum_name : String? = nil
-      current_enum_base : String = root_url
+      current_enum : String? = nil
+      current_enum_bases = [root_url]
       item_body_depth = -1
       item_entered = false
-      current_cmd = root_url
+      current_cmds = [root_url]
       scanner = AttributeScanner.new
 
       # getopts has no subcommand concept: a receiver-variable map (not a
@@ -419,12 +455,15 @@ module Analyzer::Rust
           if (derive = scanner.pending_derive) && (im = code.match(ITEM_RE))
             if kind = classify_derive(derive)
               item_kind = kind
+              key = "#{path}::#{im[1]}"
               if kind == :subcommand
-                current_enum_name = im[1]?
-                current_enum_base = (current_enum_name && subcommand_base_for[current_enum_name]?) || root_url
-                current_cmd = current_enum_base
+                current_enum = key
+                current_enum_bases = tree.enum_bases[key]? || [root_url]
+                current_cmds = current_enum_bases
+              elsif kind == :args
+                current_cmds = tree.args_urls[key]? || [root_url]
               else
-                current_cmd = root_url
+                current_cmds = [root_url]
               end
               opened = code.count('{')
               # The body may open on this line (`struct X {`) or the next
@@ -447,14 +486,15 @@ module Analyzer::Rust
               # clap renames CamelCase variants to kebab-case by default
               # (`BuildProject` -> `build-project`); an explicit
               # `#[command(name = "...")]` wins.
-              v_name = vm[2]
-              name = vm[1]? || scanner.consume_command_name || camel_to_kebab(v_name)
-              if child = nested_subcommand(vm[3]?, subcommand_enums, struct_subcommand)
-                # Nested subcommand container variant: record link and skip leaf endpoint
-                subcommand_base_for[child] ||= "#{current_enum_base}/#{name}"
-              else
-                current_cmd = "#{current_enum_base}/#{name}"
-                fetch_endpoint(endpoints, current_cmd, path, line_no)
+              name = vm[1]? || scanner.consume_command_name || camel_to_kebab(vm[2])
+              payload = vm[3]?
+              nested = payload && resolve_clap_item(tree, tree.enum_index, payload, path)
+              # A variant whose payload is itself the nested enum is only a
+              # path segment; one wrapping an Args struct or inline fields is
+              # a command of its own (its flags, and with `Option<_>` it runs).
+              unless nested && nested != current_enum
+                current_cmds = current_enum_bases.map { |base| "#{base}/#{name}" }
+                current_cmds.each { |url| fetch_endpoint(endpoints, url, path, line_no) }
               end
             elsif code.matches?(/^[A-Z]\w*/)
               scanner.consume_command_name
@@ -463,7 +503,7 @@ module Analyzer::Rust
 
           if (fm = code.match(FIELD_RE)) && !scanner.pending_attrs.empty?
             scanner.pending_attrs.each do |attr|
-              apply_field(attr, fm[1], current_cmd, path, line_no, endpoints)
+              current_cmds.each { |url| apply_field(attr, fm[1], url, path, line_no, endpoints) }
             end
             scanner.clear_attrs
           end
@@ -497,10 +537,10 @@ module Analyzer::Rust
         if item_kind && item_entered && depth < item_body_depth
           item_kind = nil
           item_entered = false
-          current_cmd = root_url
+          current_cmds = [root_url]
           scanner.reset_for_new_item
         elsif item_kind == :subcommand && depth == item_body_depth
-          current_cmd = current_enum_base
+          current_cmds = current_enum_bases
         end
       end
     end

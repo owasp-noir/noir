@@ -40,7 +40,9 @@ clap_nested_endpoints = [
     Param.new("target", "", "flag"),
   ]),
   build.call("cli://zoo/__internal", [] of Param),
-  build.call("cli://zoo/b/leaf", [] of Param),
+  # `Loop(CycleA)` -> `B(CycleB)` -> `Leaf`; the cycle back through
+  # `CycleB::A` adds no second path.
+  build.call("cli://zoo/loop/b/leaf", [] of Param),
 ]
 
 FunctionalTester.new("fixtures/rust/cli_clap_nested/", {
@@ -52,8 +54,10 @@ FunctionalTester.new("fixtures/rust/cli_clap_nested/", {
 # `Users(UsersArgs)` with `#[command(subcommand)] method: UsersMethod` inside
 # the struct used to flatten `users get` onto `cli://tool/get`. The Parser
 # struct's `#[command(name = "tool")]` used to rename `Orders`, the first
-# variant after it, to `tool`.
+# variant after it, to `tool`. `users` keeps its own row (it wraps an Args
+# struct); `orders` nests its enum directly and is only a path segment.
 clap_args_nested_endpoints = [
+  build.call("cli://tool/users", [] of Param),
   build.call("cli://tool/users/get", [Param.new("user-id", "", "flag")]),
   build.call("cli://tool/users/delete", [] of Param),
   build.call("cli://tool/orders/get", [Param.new("order-id", "", "flag")]),
@@ -64,6 +68,53 @@ FunctionalTester.new("fixtures/rust/cli_clap_args_nested/", {
   :techs     => 1,
   :endpoints => clap_args_nested_endpoints.size,
 }, clap_args_nested_endpoints).perform_tests
+
+# --- clap: shared subcommand enum, Option subcommand, inline nesting -------
+# `Crud` sits under both `users` and `orders`; `jobs` (an `Option<_>`
+# subcommand) still runs alone; `keys { #[command(subcommand)] action }`
+# nests `keys verify` instead of merging it into top-level `verify`. An Args
+# struct's flags belong to the command that wraps it.
+clap_shared_endpoints = [
+  build.call("cli://sharedtool", [Param.new("verbose", "", "flag")]),
+  build.call("cli://sharedtool/users", [Param.new("tenant", "", "flag")]),
+  build.call("cli://sharedtool/users/get", [Param.new("id", "", "flag")]),
+  build.call("cli://sharedtool/users/delete", [] of Param),
+  build.call("cli://sharedtool/orders", [] of Param),
+  build.call("cli://sharedtool/orders/get", [Param.new("id", "", "flag")]),
+  build.call("cli://sharedtool/orders/delete", [] of Param),
+  build.call("cli://sharedtool/jobs", [Param.new("all", "", "flag")]),
+  build.call("cli://sharedtool/jobs/run", [] of Param),
+  build.call("cli://sharedtool/keys", [Param.new("store", "", "flag")]),
+  build.call("cli://sharedtool/keys/verify", [Param.new("keys-file", "", "flag")]),
+  build.call("cli://sharedtool/verify", [Param.new("secret", "", "flag")]),
+]
+
+clap_shared_tester = FunctionalTester.new("fixtures/rust/cli_clap_shared/", {
+  :techs     => 1,
+  :endpoints => clap_shared_endpoints.size,
+}, clap_shared_endpoints)
+clap_shared_tester.perform_tests
+
+# --- clap: per-module `Args` payloads next to a Parser named `Args` --------
+clap_modules_endpoints = [
+  build.call("cli://modtool/run", [Param.new("fast", "", "flag")]),
+  build.call("cli://modtool/build", [Param.new("release", "", "flag")]),
+  build.call("cli://modtool/status", [Param.new("json", "", "flag")]),
+]
+
+FunctionalTester.new("fixtures/rust/cli_clap_modules/", {
+  :techs     => 1,
+  :endpoints => clap_modules_endpoints.size,
+}, clap_modules_endpoints).perform_tests
+
+describe "rust CLI clap command tree", tags: "functional" do
+  it "keeps an inline-nested subcommand's flags off the same-named top-level command" do
+    verify = clap_shared_tester.endpoints.find! { |ep| ep.url == "cli://sharedtool/verify" }
+    verify.params.map(&.name).should eq(["secret"])
+    root = clap_shared_tester.endpoints.find! { |ep| ep.url == "cli://sharedtool" }
+    root.params.map(&.name).should eq(["verbose"])
+  end
+end
 
 # --- getopts (flat builder API: optopt/optflag/reqopt + env) ---------------
 getopts_endpoints = [
