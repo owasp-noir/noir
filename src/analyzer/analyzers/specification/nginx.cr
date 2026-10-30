@@ -60,6 +60,17 @@ module Analyzer::Specification
       @result
     end
 
+    # Locations of an ingress-nginx `server-snippet`, read as if written in
+    # the `server` block the controller generates. `first_line`: the line of
+    # `path` the snippet starts on.
+    def snippet_endpoints(content : String, path : String, first_line : Int32) : Array(Endpoint)
+      state = State.new(@result.size)
+      state.stack << Frame.new("server", "", first_line)
+      process_content(content, path, state, first_line - 1)
+      resolve_access(state)
+      @result
+    end
+
     # The scanned nginx files an `include` names. nginx resolves a relative
     # pattern against its configuration prefix, which is the including
     # file's directory or one above it (`sites-enabled/app.conf` including
@@ -137,14 +148,14 @@ module Analyzer::Specification
       state.reading.pop
     end
 
-    private def process_content(content : String, path : String, state : State)
+    private def process_content(content : String, path : String, state : State, line_offset : Int32 = 0)
       stack = state.stack
       owners = state.owners
       base = state.base
       owed = 0
       template_depth = 0
 
-      content.each_line.with_index do |raw, idx|
+      content.each_line.with_index(line_offset) do |raw, idx|
         uncommented = strip_comment(raw)
         templated = uncommented.includes?("{{")
         conditional = template_depth > 0 || templated

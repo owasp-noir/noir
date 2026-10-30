@@ -524,6 +524,8 @@ module Analyzer::Specification
         path_base = scoped_base_path(path_item_h["servers"]?, base_path)
 
         each_path_operation_json(path_item_h) do |method, method_obj|
+          # The operation's own params live in the file a `$ref` names.
+          method_obj, op_doc = resolve_path_item_json(item_doc, method_obj)
           params = path_level_params.dup
           effective_security = global_security
           op_base = scoped_base_path(method_obj.as_h?.try(&.["servers"]?), path_base)
@@ -532,12 +534,12 @@ module Analyzer::Specification
             if method_obj_h = method_obj.as_h?
               if method_params = method_obj_h["parameters"]?.try(&.as_a?)
                 method_params.each do |param_obj|
-                  extract_param_json(item_doc, param_obj, params)
+                  extract_param_json(op_doc, param_obj, params)
                 end
               end
 
               if request_body = method_obj_h["requestBody"]?
-                extract_request_body_json(item_doc, request_body, params)
+                extract_request_body_json(op_doc, request_body, params)
               end
 
               effective_security = method_obj_h["security"] if method_obj_h.has_key?("security")
@@ -587,6 +589,8 @@ module Analyzer::Specification
         path_base = scoped_base_path(path_item_h[YAML::Any.new("servers")]?, base_path)
 
         each_path_operation_yaml(path_item_h) do |method, method_obj|
+          # The operation's own params live in the file a `$ref` names.
+          method_obj, op_doc = resolve_path_item_yaml(item_doc, method_obj)
           params = path_level_params.dup
           effective_security = global_security
           op_base = scoped_base_path(method_obj.as_h?.try(&.[YAML::Any.new("servers")]?), path_base)
@@ -596,13 +600,13 @@ module Analyzer::Specification
               if method_params_node = method_obj_h[YAML::Any.new("parameters")]?
                 if method_params = method_params_node.as_a?
                   method_params.each do |param_obj|
-                    extract_param_yaml(item_doc, param_obj, params)
+                    extract_param_yaml(op_doc, param_obj, params)
                   end
                 end
               end
 
               if request_body = method_obj_h[YAML::Any.new("requestBody")]?
-                extract_request_body_yaml(item_doc, request_body, params)
+                extract_request_body_yaml(op_doc, request_body, params)
               end
 
               effective_security = method_obj_h[YAML::Any.new("security")] if method_obj_h.has_key?(YAML::Any.new("security"))

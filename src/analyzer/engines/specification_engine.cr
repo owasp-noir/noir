@@ -850,6 +850,10 @@ module Analyzer::Specification
     # reports which document the result came from: with the operations in
     # `./paths/activity/activities.yaml`, every ref inside them resolves from
     # that file, not from the entry document that named it.
+    #
+    # Operations go through it too: OAS allows `$ref` only on a Path Item,
+    # but split specs write `get: {$ref: ./ops/list.yaml}` and JSON
+    # Reference resolvers inline it.
     protected def resolve_path_item_json(doc : SpecDoc(JSON::Any), path_obj : JSON::Any, seen : Set(String) = Set(String).new) : Tuple(JSON::Any, SpecDoc(JSON::Any))
       return {path_obj, doc} unless path_obj_h = path_obj.as_h?
       return {path_obj, doc} unless ref = path_obj_h["$ref"]?.try(&.as_s?)

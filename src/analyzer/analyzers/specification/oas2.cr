@@ -298,6 +298,8 @@ module Analyzer::Specification
 
           path_item_h.each do |method, method_obj|
             next unless HTTP_METHODS.includes?(method.to_s.downcase)
+            # The operation's own params live in the file a `$ref` names.
+            method_obj, op_doc = resolve_path_item_json(item_doc, method_obj)
             # `get: null` declares no operation; it was always dropped, and
             # recording it as a skip would fail `--strict` for nothing.
             next unless method_obj.as_h?
@@ -309,7 +311,7 @@ module Analyzer::Specification
 
             if method_params = method_obj["parameters"]?.try(&.as_a?)
               method_params.each do |param_obj|
-                extract_param_json(item_doc, param_obj, consumes, params)
+                extract_param_json(op_doc, param_obj, consumes, params)
               end
             end
 
@@ -373,6 +375,8 @@ module Analyzer::Specification
 
           path_item_h.each do |method, method_obj|
             next unless HTTP_METHODS.includes?(method.to_s.downcase)
+            # The operation's own params live in the file a `$ref` names.
+            method_obj, op_doc = resolve_path_item_yaml(item_doc, method_obj)
             # `get: null` declares no operation; it was always dropped, and
             # recording it as a skip would fail `--strict` for nothing.
             next unless method_obj.as_h?
@@ -385,7 +389,7 @@ module Analyzer::Specification
             if method_params_node = method_obj[YAML::Any.new("parameters")]?
               if method_params = method_params_node.as_a?
                 method_params.each do |param_obj|
-                  extract_param_yaml(item_doc, param_obj, consumes, params)
+                  extract_param_yaml(op_doc, param_obj, consumes, params)
                 end
               end
             end

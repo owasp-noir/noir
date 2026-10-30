@@ -28,6 +28,12 @@ describe "Detect Kubernetes Ingress manifests" do
     locator.all(Noir::LocatorKeys::K8S_INGRESS_SPEC).should eq ["manifests/ingress.yaml"]
   end
 
+  it "detects an Ingress in a Helm named template" do
+    src = "{{- define \"demo.ingress\" }}\n#{ingress}\n{{- end }}\n"
+    instance.detect("chart/templates/_ingress.tpl", src).should be_true
+    instance.detect("chart/templates/_helpers.tpl", "{{- define \"demo.name\" }}demo{{- end }}\n").should be_false
+  end
+
   it "rejects non-Ingress YAML" do
     src = <<-YAML
       apiVersion: networking.k8s.io/v1

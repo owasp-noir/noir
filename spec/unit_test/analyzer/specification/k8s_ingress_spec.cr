@@ -70,6 +70,80 @@ describe "Kubernetes Ingress Analyzer" do
     ])
   end
 
+  # ingress-nginx pastes the snippet into each host's `server` block.
+  it "reads the locations of a server-snippet on every host of the Ingress" do
+    endpoints = analyze_ingress <<-YAML
+      apiVersion: networking.k8s.io/v1
+      kind: Ingress
+      metadata:
+        name: demo
+        annotations:
+          nginx.ingress.kubernetes.io/auth-url: https://auth.example.com/check
+          nginx.ingress.kubernetes.io/server-snippet: |
+            location = /internal/export {
+              auth_basic "ops";
+              proxy_pass http://backend;
+            }
+            location ~ ^/internal/ {
+              deny all;
+            }
+            location /_probe { internal; }
+      spec:
+        tls:
+        - hosts: [api.example.com]
+        rules:
+        - host: api.example.com
+          http:
+            paths:
+            - path: /
+              pathType: Prefix
+        - host: www.example.com
+          http:
+            paths:
+            - path: /
+              pathType: Prefix
+      YAML
+
+    snippet = endpoints.select { |e| tag_descriptions(e, "ingress-source") == ["server-snippet"] }
+    snippet.map { |e| {e.url, e.method, e.protocol, tag_descriptions(e, "ingress-host"), e.details.code_paths.first.line} }.should eq([
+      {"/internal/export", "ANY", "https", ["api.example.com"], 8},
+      {"/internal/export", "ANY", "http", ["www.example.com"], 8},
+    ])
+    # The snippet's own rule guards it, under the Ingress's tagger; the
+    # Ingress's auth-url guards only the locations ingress-nginx generates.
+    snippet.each do |e|
+      e.tags.select(&.name.==("auth")).map { |t| {t.description, t.tagger, t.line} }.should eq([
+        {"Protected by nginx auth_basic \"ops\"", Tag.declared_access_tagger("k8s_ingress"), 9},
+      ])
+    end
+    endpoints.size.should eq(4)
+  end
+
+  it "reads an Ingress inside a Helm named template" do
+    endpoints = analyze_ingress <<-YAML
+      {{- define "demo.ingress" }}
+      apiVersion: networking.k8s.io/v1
+      kind: Ingress
+      metadata:
+        name: {{ .Release.Name }}-ingress
+      spec:
+        rules:
+        - host: {{ .Values.domain }}
+          http:
+            paths:
+            - path: /items
+              pathType: Prefix
+            - path: /metrics
+              pathType: Exact
+      {{- end }}
+      YAML
+
+    endpoints.map { |e| {e.url, e.method, e.details.code_paths.first.line} }.should eq([
+      {"/items", "ANY", 11},
+      {"/metrics", "ANY", 13},
+    ])
+  end
+
   it "marks endpoints with TLS hosts as https" do
     endpoints = analyze_ingress <<-YAML
       apiVersion: networking.k8s.io/v1
