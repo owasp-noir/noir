@@ -10,6 +10,11 @@ private def tech_endpoint(url : String, method : String, technology : String, pa
   Endpoint.new(url, method, [] of Param, details)
 end
 
+# Go programs are counted off the detector's file index, as in a scan.
+private def register_files(root : String)
+  Dir.glob(File.join(root, "**", "*")) { |file| CodeLocator.instance.register_path(file) if File.file?(file) }
+end
+
 describe "EndpointOptimizer" do
   options = create_test_options
   logger = NoirLogger.new(false, false, false, false)
@@ -459,6 +464,7 @@ describe "EndpointOptimizer" do
         end
         File.write(helper, "package main\n\nfunc routes() {}\n")
         File.write(File.join(temp_dir, "go.mod"), "module example.com/examples\n")
+        register_files(temp_dir)
 
         a = tech_endpoint("/upload", "POST", "go_gin", upload_single, 15)
         b = tech_endpoint("/upload", "POST", "go_gin", upload_multi, 15)
@@ -470,6 +476,7 @@ describe "EndpointOptimizer" do
         paths.should contain([upload_single])
         paths.should contain([upload_multi, helper].sort!)
       ensure
+        CodeLocator.instance.reset_files
         FileUtils.rm_rf(temp_dir)
       end
     end
@@ -487,9 +494,224 @@ describe "EndpointOptimizer" do
           File.write(main, "package main\n\n// #{"가" * 1400}\nfunc main() {}\n")
         end
         File.write(File.join(temp_dir, "go.mod"), "module example.com/examples\n")
+        register_files(temp_dir)
 
         a = tech_endpoint("/upload", "POST", "go_gin", single, 15)
         b = tech_endpoint("/upload", "POST", "go_gin", multi, 15)
+        optimizer.optimize_endpoints([a, b]).size.should eq(2)
+      ensure
+        CodeLocator.instance.reset_files
+        FileUtils.rm_rf(temp_dir)
+      end
+    end
+
+    it "finds a Go package clause below a license header longer than 4 KB" do
+      optimizer = EndpointOptimizer.new(logger, options)
+      temp_dir = File.join(Dir.tempdir, "noir-optimizer-golonghead-#{Process.pid}-#{Time.utc.to_unix_ms}")
+      single = File.join(temp_dir, "single/main.go")
+      multi = File.join(temp_dir, "multiple/main.go")
+
+      begin
+        {single, multi}.each do |main|
+          Dir.mkdir_p(File.dirname(main))
+          # 4203-byte header: byte 4096 falls inside a `€`, and the clause after it.
+          File.write(main, "// #{"€" * 1400}\npackage main\n\nfunc main() {}\n")
+        end
+        File.write(File.join(temp_dir, "go.mod"), "module example.com/examples\n")
+        register_files(temp_dir)
+
+        a = tech_endpoint("/upload", "POST", "go_gin", single, 15)
+        b = tech_endpoint("/upload", "POST", "go_gin", multi, 15)
+        optimizer.optimize_endpoints([a, b]).size.should eq(2)
+      ensure
+        CodeLocator.instance.reset_files
+        FileUtils.rm_rf(temp_dir)
+      end
+    end
+
+    it "finds the root manifest of a `-b .` scan, whose paths start with ./" do
+      optimizer = EndpointOptimizer.new(logger, options)
+      temp_dir = File.join(Dir.tempdir, "noir-optimizer-godot-#{Process.pid}-#{Time.utc.to_unix_ms}")
+
+      begin
+        {"cmd/a", "cmd/b"}.each do |dir|
+          Dir.mkdir_p(File.join(temp_dir, dir))
+          File.write(File.join(temp_dir, dir, "main.go"), "package main\n\nfunc main() {}\n")
+        end
+        File.write(File.join(temp_dir, "go.mod"), "module example.com/multi\n")
+
+        Dir.cd(temp_dir) do
+          register_files(".")
+          a = tech_endpoint("/upload", "POST", "go_gin", "./cmd/a/main.go", 8)
+          b = tech_endpoint("/upload", "POST", "go_gin", "./cmd/b/main.go", 8)
+          optimizer.optimize_endpoints([a, b]).size.should eq(2)
+        end
+      ensure
+        CodeLocator.instance.reset_files
+        FileUtils.rm_rf(temp_dir)
+      end
+    end
+
+    it "does not scope a source by a manifest above the scan base" do
+      optimizer = EndpointOptimizer.new(logger, options)
+      temp_dir = File.join(Dir.tempdir, "noir-optimizer-abovebase-#{Process.pid}-#{Time.utc.to_unix_ms}")
+      base = File.join(temp_dir, "fixtures")
+
+      begin
+        Dir.mkdir_p(File.join(base, "kemal/src"))
+        Dir.mkdir_p(File.join(base, "sinatra"))
+        File.write(File.join(temp_dir, "shard.yml"), "name: checkout\n")
+        File.write(File.join(base, "kemal/shard.yml"), "name: app\n")
+        options["base"] = YAML::Any.new([YAML::Any.new(base)])
+
+        # The Sinatra app has no manifest of its own; the checkout's
+        # `shard.yml` above the base must not make it a second project.
+        result = optimizer.optimize_endpoints([
+          tech_endpoint("/", "GET", "crystal_kemal", File.join(base, "kemal/src/app.cr")),
+          tech_endpoint("/", "GET", "ruby_sinatra", File.join(base, "sinatra/app.rb")),
+        ])
+        result.size.should eq(1)
+      ensure
+        options.delete("base")
+        FileUtils.rm_rf(temp_dir)
+      end
+    end
+
+    it "splits the programs of a `-b module/cmd` scan, whose go.mod is above the base" do
+      optimizer = EndpointOptimizer.new(logger, options)
+      temp_dir = File.join(Dir.tempdir, "noir-optimizer-gocmdbase-#{Process.pid}-#{Time.utc.to_unix_ms}")
+      base = File.join(temp_dir, "cmd")
+
+      begin
+        {"a", "b"}.each do |dir|
+          Dir.mkdir_p(File.join(base, dir))
+          File.write(File.join(base, dir, "main.go"), "package main\n\nfunc main() {}\n")
+        end
+        File.write(File.join(temp_dir, "go.mod"), "module example.com/multi\n")
+        register_files(temp_dir)
+        options["base"] = YAML::Any.new([YAML::Any.new(base)])
+
+        a = tech_endpoint("/upload", "POST", "go_gin", File.join(base, "a/main.go"), 8)
+        b = tech_endpoint("/upload", "POST", "go_gin", File.join(base, "b/main.go"), 8)
+        optimizer.optimize_endpoints([a, b]).size.should eq(2)
+      ensure
+        options.delete("base")
+        CodeLocator.instance.reset_files
+        FileUtils.rm_rf(temp_dir)
+      end
+    end
+
+    it "keeps two scan bases apart when their manifests sit above them" do
+      optimizer = EndpointOptimizer.new(logger, options)
+      temp_dir = File.join(Dir.tempdir, "noir-optimizer-siblingbases-#{Process.pid}-#{Time.utc.to_unix_ms}")
+      bases = ["a", "b"].map { |app| File.join(temp_dir, app, "src") }
+
+      begin
+        bases.each do |base|
+          Dir.mkdir_p(base)
+          File.write(File.join(File.dirname(base), "package.json"), "{}")
+        end
+        options["base"] = YAML::Any.new(bases.map { |base| YAML::Any.new(base) })
+
+        a = tech_endpoint("/login", "POST", "js_express", File.join(bases[0], "app.js"), 3)
+        b = tech_endpoint("/login", "POST", "js_express", File.join(bases[1], "app.js"), 3)
+        optimizer.optimize_endpoints([a, b]).size.should eq(2)
+      ensure
+        options.delete("base")
+        FileUtils.rm_rf(temp_dir)
+      end
+    end
+
+    it "merges a base's own rows the same way whichever other bases are scanned" do
+      temp_dir = File.join(Dir.tempdir, "noir-optimizer-otherbase-#{Process.pid}-#{Time.utc.to_unix_ms}")
+      nb = File.join(temp_dir, "nb")
+      other = File.join(temp_dir, "other")
+
+      begin
+        Dir.mkdir_p(File.join(nb, "web"))
+        Dir.mkdir_p(File.join(nb, "sub"))
+        Dir.mkdir_p(other)
+        File.write(File.join(nb, "web/package.json"), "{}")
+        File.write(File.join(other, "package.json"), "{}")
+
+        counts = [[nb], [nb, other], [nb, File.join(nb, "sub")]].map do |bases|
+          options["base"] = YAML::Any.new(bases.map { |base| YAML::Any.new(base) })
+          EndpointOptimizer.new(logger, options).optimize_endpoints([
+            tech_endpoint("/x", "GET", "js_express", File.join(nb, "server.js"), 2),
+            tech_endpoint("/x", "GET", "js_express", File.join(nb, "web/server.js"), 2),
+            tech_endpoint("/x", "GET", "js_express", File.join(nb, "sub/server.js"), 2),
+            tech_endpoint("/x", "GET", "oas3", File.join(nb, "openapi.yaml"), 4),
+          ]).size
+        end
+        counts.should eq([1, 1, 1])
+      ensure
+        options.delete("base")
+        FileUtils.rm_rf(temp_dir)
+      end
+    end
+
+    it "does not count a Go program the scan excluded" do
+      optimizer = EndpointOptimizer.new(logger, options)
+      temp_dir = File.join(Dir.tempdir, "noir-optimizer-goexcluded-#{Process.pid}-#{Time.utc.to_unix_ms}")
+      tool = File.join(temp_dir, "tool/main.go")
+
+      begin
+        {"tool", "vendored"}.each do |dir|
+          Dir.mkdir_p(File.join(temp_dir, dir))
+          File.write(File.join(temp_dir, dir, "main.go"), "package main\n\nfunc main() {}\n")
+        end
+        File.write(File.join(temp_dir, "go.mod"), "module example.com/tool\n")
+        options["base"] = YAML::Any.new([YAML::Any.new(temp_dir)])
+        # `--exclude-path vendored`: the walk never registers that program.
+        CodeLocator.instance.register_path(tool)
+
+        result = optimizer.optimize([tech_endpoint("/run", "GET", "go_gin", tool, 5)])
+        result.first.details.project.should eq("")
+      ensure
+        options.delete("base")
+        CodeLocator.instance.reset_files
+        FileUtils.rm_rf(temp_dir)
+      end
+    end
+
+    it "reads a Go package clause past a BOM, a block comment and indentation" do
+      optimizer = EndpointOptimizer.new(logger, options)
+      temp_dir = File.join(Dir.tempdir, "noir-optimizer-goclause-#{Process.pid}-#{Time.utc.to_unix_ms}")
+      blockc = File.join(temp_dir, "blockc/main.go")
+      indent = File.join(temp_dir, "indent/main.go")
+
+      begin
+        Dir.mkdir_p(File.dirname(blockc))
+        Dir.mkdir_p(File.dirname(indent))
+        # The comment's own `package` line is prose, not the clause.
+        File.write(blockc, "﻿/*\npackage docs for foo\n*/\npackage main\n")
+        File.write(indent, "/* a */ /* b\n*/  package main\n")
+        File.write(File.join(temp_dir, "go.mod"), "module example.com/examples\n")
+        register_files(temp_dir)
+
+        a = tech_endpoint("/upload", "POST", "go_gin", blockc, 5)
+        b = tech_endpoint("/upload", "POST", "go_gin", indent, 5)
+        optimizer.optimize_endpoints([a, b]).size.should eq(2)
+      ensure
+        CodeLocator.instance.reset_files
+        FileUtils.rm_rf(temp_dir)
+      end
+    end
+
+    it "reads a Bazel BUILD file that is not valid UTF-8" do
+      optimizer = EndpointOptimizer.new(logger, options)
+      temp_dir = File.join(Dir.tempdir, "noir-optimizer-bazelbytes-#{Process.pid}-#{Time.utc.to_unix_ms}")
+
+      begin
+        {"svc/a", "svc/b"}.each do |dir|
+          Dir.mkdir_p(File.join(temp_dir, dir))
+          # A Latin-1 comment (0xE9) ahead of the rule.
+          File.write(File.join(temp_dir, dir, "BUILD"), Bytes[0x23, 0x20, 0x63, 0x61, 0x66, 0xe9, 0x0a] + "go_binary(name = \"x\")\n".to_slice)
+          File.write(File.join(temp_dir, dir, "main.go"), "package main\n")
+        end
+
+        a = tech_endpoint("/health", "GET", "go_gin", File.join(temp_dir, "svc/a/main.go"))
+        b = tech_endpoint("/health", "GET", "go_gin", File.join(temp_dir, "svc/b/main.go"))
         optimizer.optimize_endpoints([a, b]).size.should eq(2)
       ensure
         FileUtils.rm_rf(temp_dir)

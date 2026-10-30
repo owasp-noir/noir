@@ -1,3 +1,4 @@
+require "../models/code_locator"
 require "../models/endpoint"
 require "../models/logger"
 require "../techs/techs"
@@ -60,10 +61,14 @@ class EndpointOptimizer
   # The directory counts only when the file invokes a `*_binary` or `*_image` rule.
   BAZEL_DEPLOYABLE_RE = /\b[A-Za-z_]\w*_(?:binary|image)\s*\(/
 
+  # How far into a Go file `go_main_package?` looks for the package clause.
+  GO_PACKAGE_PROBE_BYTES = 64 * 1024
+
   def initialize(@logger : NoirLogger, @options : Hash(String, YAML::Any))
     @pvalue_rules = initialize_pvalue_rules
     @source_scope_cache = Hash(String, String).new
-    @go_program_dirs = Hash(String, Set(String)).new
+    @go_program_counts = Hash(String, Int32).new
+    @base_fallback_scopes = Set(String).new
   end
 
   # Main optimization workflow - calls all optimization steps
@@ -685,7 +690,9 @@ class EndpointOptimizer
       (urls_by_key_technology[{method, url, technology}] ||= Set(String).new) << shaped_url
 
       scope = framework_source_scope(endpoint)
-      (framework_scopes_by_key[key] ||= Set(String).new) << scope unless scope.empty?
+      # A base standing in for a missing manifest is no build module: counting
+      # it would let an unrelated `-b` change how this base's rows merge.
+      (framework_scopes_by_key[key] ||= Set(String).new) << scope unless scope.empty? || @base_fallback_scopes.includes?(scope)
     end
 
     keys = Set(Tuple(String, String)).new
@@ -790,16 +797,24 @@ class EndpointOptimizer
 
   private def source_project_scope(path : String) : String
     return "" if path.empty?
-    start_dir = File.directory?(path) ? path : File.dirname(path)
+    # Walked expanded, from the file up to the scan base that owns it. A
+    # relative walk ended at `.` (its own dirname) without looking at the
+    # root manifest of a `-b .` scan, and an absolute one ran on past the
+    # base into whatever holds the checkout, so the scope hung on how the
+    # base was spelled and where it sits.
+    start_dir = Noir::PathScope.expand(File.directory?(path) ? path : File.dirname(path))
     # Keyed by directory: every code endpoint is scoped now, and its files
     # share far fewer directories than paths.
     @source_scope_cache[start_dir] ||= begin
       scope = ""
       dir = start_dir
+      bases = scan_bases
+      floor = Noir::PathScope.longest_base(start_dir, bases).try { |base| Noir::PathScope.normalize_root(base) }
 
-      while dir && !dir.empty? && dir != "."
+      loop do
+        break if floor && !Noir::PathScope.under_normalized_root?(dir, floor)
         if PROJECT_MANIFEST_FILES.any? { |manifest| File.exists?(File.join(dir, manifest)) } || bazel_deployable_dir?(dir)
-          scope = Noir::PathScope.expand(dir)
+          scope = dir
           break
         end
 
@@ -808,12 +823,22 @@ class EndpointOptimizer
         dir = parent
       end
 
+      # No manifest inside the base (`-b app/src`, `-b module/cmd`): with
+      # several bases, each one is its own project, so two of them never
+      # fold into one row. A single base stays unscoped.
+      if scope.empty? && floor && bases.size > 1
+        scope = floor
+        @base_fallback_scopes << floor
+      end
+
       # One Go module, many programs (gin-gonic/examples, a `cmd/` tree):
       # each `package main` directory is its own deployable, so `POST
       # /upload` in two of them must not merge into one row carrying the
-      # first one's path and the other's handler.
-      if path.ends_with?(".go") && !scope.empty? && go_program_dir?(start_dir, scope)
-        scope = Noir::PathScope.expand(start_dir)
+      # first one's path and the other's handler. Without a `go.mod` in
+      # the scan, the base stands in for the module.
+      module_root = scope.empty? ? floor : scope
+      if path.ends_with?(".go") && module_root && go_program_dir?(start_dir, module_root)
+        scope = start_dir
       end
 
       scope
@@ -824,7 +849,7 @@ class EndpointOptimizer
     {"BUILD", "BUILD.bazel"}.any? do |name|
       path = File.join(dir, name)
       next false unless File.file?(path)
-      File.read(path).matches?(BAZEL_DEPLOYABLE_RE)
+      File.read(path).scrub.matches?(BAZEL_DEPLOYABLE_RE)
     rescue IO::Error | InvalidByteSequenceError
       false
     end
@@ -834,25 +859,62 @@ class EndpointOptimizer
   # holds more than one such directory. A single-binary module keeps the
   # module as its scope, whatever directory its routes are declared in.
   private def go_program_dir?(dir : String, module_root : String) : Bool
-    programs = @go_program_dirs[module_root] ||= begin
+    return false unless go_main_dirs.includes?(dir)
+    count = @go_program_counts[module_root] ||= go_main_dirs.count { |main_dir| Noir::PathScope.under_normalized_root?(main_dir, module_root) }
+    count > 1
+  end
+
+  @go_main_dirs : Set(String)?
+
+  # Expanded directories of every scanned `package main`. Read off the
+  # detector's file index rather than a glob, so `--exclude-path` and the
+  # walk's pruning (`node_modules`, `.git`) hold here too.
+  private def go_main_dirs : Set(String)
+    @go_main_dirs ||= begin
+      locator = CodeLocator.instance
       found = Set(String).new
-      Dir.glob(File.join(module_root, "**", "*.go")) do |file|
+      buffer = Bytes.new(GO_PACKAGE_PROBE_BYTES)
+      locator.files_by_extension(".go").each do |file|
         next if file.ends_with?("_test.go") || file.includes?("/vendor/") || file.includes?("/testdata/")
-        found << File.dirname(file) if go_main_package?(file)
+        dir = File.dirname(locator.expanded_path_for(file))
+        found << dir if !found.includes?(dir) && go_main_package?(file, buffer)
       end
       found
     end
-    programs.size > 1 && programs.includes?(Noir::PathScope.expand(dir))
   end
 
-  private def go_main_package?(file : String) : Bool
-    File.open(file) do |io|
-      # The package clause follows the license header; 4 KB covers one.
-      buffer = Bytes.new(4096)
-      read = io.read(buffer)
-      # Scrubbed: the cut can split a multibyte character, which PCRE refuses.
-      String.new(buffer[0, read]).scrub.matches?(/^package\s+main\b/m)
+  # The package clause is the first code in a Go file: skip the BOM, line
+  # comments and `/* */` spans above it, however long the license header
+  # runs, within the first `GO_PACKAGE_PROBE_BYTES`. Scrubbed: the cut can
+  # split a character, and PCRE refuses invalid UTF-8.
+  private def go_main_package?(file : String, buffer : Bytes) : Bool
+    read = File.open(file) do |io|
+      total = 0
+      while total < buffer.size && (count = io.read(buffer[total..])) > 0
+        total += count
+      end
+      total
     end
+    in_block = false
+    String.new(buffer[0, read]).scrub.lchop('\uFEFF').each_line do |line|
+      if in_block
+        close = line.index("*/") || next
+        line = line[close + 2..]
+        in_block = false
+      end
+      line = line.lstrip
+      while line.starts_with?("/*")
+        unless close = line.index("*/", 2)
+          in_block = true
+          break
+        end
+        line = line[close + 2..].lstrip
+      end
+      next if in_block || !line.starts_with?("package")
+      clause = line.match(/\Apackage\s+(\w+)/) || next
+      return clause[1] == "main"
+    end
+    false
   rescue IO::Error
     false
   end
