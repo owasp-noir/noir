@@ -7,7 +7,10 @@ module Analyzer::Specification
 
     METHOD_ANY = "ANY"
 
-    LOCATION_RE     = /^location\s+(?:(=|~\*|~|\^~)\s+)?(\S+)/
+    # nginx also reads a modifier glued to the URI (`location =/x`,
+    # `location ~^/x`).
+    LOCATION_RE     = /^location\s+(?:(=|~\*|~|\^~)\s*)?(\S+)/
+    INCLUDE_RE      = /^include\s+["']?([^"';\s]+)["']?\s*;/
     SERVER_NAME_RE  = /^server_name\s+([^;]+);?/
     LISTEN_TLS_RE   = /\bssl\b|\bhttp2\b/
     LISTEN_RE       = /^listen\b/
@@ -27,16 +30,74 @@ module Analyzer::Specification
     # A directive as written in one block. `conditional`: a template action
     # or a variable decides its value, or a template `if` around it decides
     # whether it is there at all.
-    record Setting, value : String, line : Int32, conditional : Bool
-    record Rule, verb : String, address : String, line : Int32, conditional : Bool
+    record Setting, value : String, path : String, line : Int32, conditional : Bool
+    record Rule, verb : String, address : String, path : String, line : Int32, conditional : Bool
 
+    @files = [] of String
+    @include_targets = {} of Tuple(String, String) => Array(String)
+
+    # A file `include`d by another is read where the directive sits, with
+    # the including block's host, TLS and access rules, and not on its own.
     def analyze
-      each_spec_file_with_details(Noir::LocatorKeys::NGINX_SPEC) do |path, details|
+      each_spec_file(Noir::LocatorKeys::NGINX_SPEC) { |path| @files << path }
+      included = Set(String).new
+      @files.each do |path|
         content = read_file_content(path)
-        process_content(content, details)
+        next unless content.includes?("include")
+        content.each_line do |raw|
+          next unless m = INCLUDE_RE.match(strip_comment(raw).strip)
+          included.concat(include_targets(path, m[1]))
+        end
+      end
+
+      each_spec_file(Noir::LocatorKeys::NGINX_SPEC) do |path|
+        next if included.includes?(path)
+        state = State.new(@result.size)
+        process_file(path, state)
+        resolve_access(state)
       end
 
       @result
+    end
+
+    # The scanned nginx files an `include` names. nginx resolves a relative
+    # pattern against its configuration prefix, which is the including
+    # file's directory or one above it (`sites-enabled/app.conf` including
+    # `snippets/x.conf`), so the nearest directory that matches wins. An
+    # absolute pattern (`/etc/nginx/conf.d/*.conf`) is matched by its last
+    # two segments the same way.
+    private def include_targets(path : String, pattern : String) : Array(String)
+      @include_targets[{path, pattern}] ||= begin
+        relative = pattern.starts_with?('/') ? pattern.split('/').reject(&.empty?).last(2).join('/') : pattern
+        name = File.basename(relative)
+        candidates = @files.select { |file| file != path && File.match?(name, File.basename(file)) }
+        found = [] of String
+        dir = File.dirname(path)
+        unless candidates.empty?
+          loop do
+            found = candidates.select { |file| File.match?(File.join(dir, relative), file) }
+            parent = File.dirname(dir)
+            break if !found.empty? || parent == dir
+            dir = parent
+          end
+        end
+        found.sort
+      end
+    end
+
+    # What a file shares with the files it includes: the open blocks and the
+    # server's host and TLS. `owners`: the location each row was emitted
+    # from, by its index from `base`.
+    private class State
+      getter stack = [] of Frame
+      property server_names = [] of String
+      property? server_tls = false
+      getter owners = [] of Frame
+      getter base : Int32
+      getter reading = [] of String
+
+      def initialize(@base : Int32)
+      end
     end
 
     private class Frame
@@ -47,6 +108,7 @@ module Analyzer::Specification
       getter result_start : Int32?
       property result_end : Int32?
       property? denial_seen : Bool = false
+      property? internal : Bool = false
       property? other_effect : Bool = false
       getter parent : Frame?
       # `auth_basic` / `auth_request` / `auth_jwt` / `satisfy` set in this
@@ -68,17 +130,18 @@ module Analyzer::Specification
       end
     end
 
-    private def process_content(content : String, details : Details)
-      stack = [] of Frame
-      server_names = [] of String
-      server_tls = false
+    private def process_file(path : String, state : State)
+      return if state.reading.includes?(path)
+      state.reading << path
+      process_content(read_file_content(path), path, state)
+      state.reading.pop
+    end
+
+    private def process_content(content : String, path : String, state : State)
+      stack = state.stack
+      owners = state.owners
+      base = state.base
       owed = 0
-      # The location each row of this file was emitted from, by its index
-      # from `base`. Access rules are resolved only after the whole file is
-      # read: a server-level `auth_basic` written below its locations still
-      # guards them.
-      base = @result.size
-      owners = [] of Frame
       template_depth = 0
 
       content.each_line.with_index do |raw, idx|
@@ -97,8 +160,8 @@ module Analyzer::Specification
         while balanced.starts_with?("}")
           pop_frame(stack, owners, base)
           if stack.empty?
-            server_names = [] of String
-            server_tls = false
+            state.server_names = [] of String
+            state.server_tls = false
           end
           balanced = balanced[1..].strip
           break if balanced.empty?
@@ -110,12 +173,15 @@ module Analyzer::Specification
         directive_line = balanced
         if balanced.matches?(/^server\s*(?:\{|\z)/)
           stack << Frame.new("server", "", idx + 1, parent: stack.last?)
-          server_names = [] of String
-          server_tls = false
+          state.server_names = [] of String
+          state.server_tls = false
         elsif m = SERVER_NAME_RE.match(balanced)
-          m[1].split(/\s+/).reject(&.empty?).each { |n| server_names << n }
+          # `_` and `""` are the conventional catch-all names, not hosts.
+          m[1].split(/\s+/).each { |n| state.server_names << n unless n.in?("", "_", %(""), "''") }
         elsif balanced.matches?(LISTEN_RE)
-          server_tls = true if balanced.matches?(LISTEN_TLS_RE)
+          state.server_tls = true if balanced.matches?(LISTEN_TLS_RE)
+        elsif m = INCLUDE_RE.match(balanced)
+          include_targets(path, m[1]).each { |target| process_file(target, state) }
         elsif balanced.matches?(/^http\s*(?:\{|\z)/)
           stack << Frame.new("block", "http", idx + 1, parent: stack.last?)
         elsif m = LOCATION_RE.match(balanced)
@@ -129,14 +195,14 @@ module Analyzer::Specification
           unless location.empty? || internal_location?(raw_location) || internal_location?(location)
             frame = Frame.new("location", location, idx + 1, modifier, @result.size, stack.last?)
             stack << frame
-            emit_location(details, location, modifier, METHOD_ANY, server_names, server_tls, idx + 1)
+            emit_location(path, location, modifier, METHOD_ANY, state.server_names, state.server_tls?, idx + 1)
             frame.result_end = @result.size
             (@result.size - base - owners.size).times { owners << frame }
           end
         elsif m = METHOD_BLOCK_RE.match(balanced)
           method = m[1].upcase
           if loc = current_location(stack)
-            emit_location(details, loc.value, loc.modifier, method, server_names, server_tls, idx + 1)
+            emit_location(path, loc.value, loc.modifier, method, state.server_names, state.server_tls?, idx + 1)
             (@result.size - base - owners.size).times { owners << loc }
           end
         end
@@ -148,7 +214,7 @@ module Analyzer::Specification
         # that block's directives, not the enclosing one's.
         opens_block = stack.size == depth_before && structure.gsub(ENVSUBST_RE, "").count('{') > owed
         if (scope = stack.last?) && scope.access_scope? && !opens_block
-          track_access(scope, directive_line, idx + 1, conditional, templated)
+          track_access(scope, directive_line, path, idx + 1, conditional, templated)
         end
 
         # Every `{` opens a frame and every `}` closes one. The handlers above
@@ -163,28 +229,32 @@ module Analyzer::Specification
         net.times { stack << Frame.new("block", "", idx + 1, parent: stack.last?) }
         structure.count('}').times { pop_frame(stack, owners, base) }
       end
+    end
 
-      owners.each_with_index do |frame, i|
-        next unless tag = access_tag(frame, details)
-        endpoint = @result[base + i]
+    # Access rules are resolved only after the whole file is read: a
+    # server-level `auth_basic` written below its locations still guards them.
+    private def resolve_access(state : State)
+      state.owners.each_with_index do |frame, i|
+        next unless tag = access_tag(frame)
+        endpoint = @result[state.base + i]
         endpoint.add_tag(tag)
-        @result[base + i] = endpoint
+        @result[state.base + i] = endpoint
       end
     end
 
     # `templated`: a template action sat on this line, so the value left
     # after stripping it is not what nginx reads and is not shown; a literal
     # `off` is still an `off`.
-    private def track_access(frame : Frame, line : String, number : Int32, conditional : Bool, templated : Bool)
+    private def track_access(frame : Frame, line : String, path : String, number : Int32, conditional : Bool, templated : Bool)
       line.gsub(BRACE_RE) { |token| token.size > 1 ? token : " " }.split(';').each do |statement|
         directive = statement.strip
         if m = AUTH_RE.match(directive)
           value = m[2].strip
           value = "" if templated && !off?(value)
           # A variable's value is configuration: a `map` can make it `off`.
-          frame.settings[m[1]] = Setting.new(value, number, conditional || value.includes?('$'))
+          frame.settings[m[1]] = Setting.new(value, path, number, conditional || value.includes?('$'))
         elsif m = ACCESS_RE.match(directive)
-          frame.access << Rule.new(m[1], m[2], number, conditional)
+          frame.access << Rule.new(m[1], m[2], path, number, conditional)
         end
       end
     end
@@ -215,9 +285,7 @@ module Analyzer::Specification
     # `satisfy any` one is enough, so an access list that admits every
     # address (`allow all`) opens the location whatever auth it also has.
     # That is the usual way to open a sub-location of an `auth_basic` server.
-    # ponytail: one file at a time; a directive pulled in by `include` from
-    # another file is not seen.
-    private def access_tag(location : Frame, details : Details) : Tag?
+    private def access_tag(location : Frame) : Tag?
       guards = [] of Setting
       {"auth_basic", "auth_request", "auth_jwt"}.each do |name|
         next unless setting = effective_setting(location, name)
@@ -239,7 +307,7 @@ module Analyzer::Specification
           return if any
         elsif cut && cut > 0
           used = rules[0..cut]
-          guards << Setting.new(used.join("; ") { |rule| "#{rule.verb} #{rule.address}" }, used[0].line, used.any?(&.conditional))
+          guards << Setting.new(used.join("; ") { |rule| "#{rule.verb} #{rule.address}" }, used[0].path, used[0].line, used.any?(&.conditional))
         end
       end
       return if guards.empty?
@@ -248,13 +316,15 @@ module Analyzer::Specification
       # decides opens the location; under `all` every one has to be lifted.
       conditional = any ? guards.any?(&.conditional) : guards.all?(&.conditional)
       description = "Protected by nginx #{guards.join(any ? " or " : ", ", &.value)}#{SETTING_NOTE if conditional}"
-      declared_access_tag(description, details.code_paths.first.path, guards.first.line)
+      declared_access_tag(description, guards.first.path, guards.first.line)
     end
 
     private def pop_frame(stack : Array(Frame), owners : Array(Frame), base : Int32)
       frame = stack.pop?
       return unless frame
-      return unless frame.kind == "location" && frame.denial_seen?
+      return unless frame.kind == "location"
+      return drop_rows(frame, owners, base) if frame.internal?
+      return unless frame.denial_seen?
       return if frame.other_effect?
 
       # Only this location's own rows: a nested location matched on its own
@@ -266,6 +336,19 @@ module Analyzer::Specification
       owners.delete_at((start - base)...(stop - base))
     end
 
+    # An `internal` location answers only nginx's own redirects
+    # (`auth_request`, `X-Accel-Redirect`, `error_page`); a client request
+    # gets a 404. Its `$request_method` rows go with it, a nested location's
+    # do not.
+    private def drop_rows(frame : Frame, owners : Array(Frame), base : Int32)
+      return unless start = frame.result_start
+      (owners.size - 1).downto(start - base) do |i|
+        next unless owners[i].same?(frame)
+        owners.delete_at(i)
+        @result.delete_at(base + i)
+      end
+    end
+
     private def track_location_effect(location : Frame, line : String)
       line = line.gsub(/\{\{.*?\}\}/, "").gsub(/[{}]/, " ")
       line.split(';').each do |statement|
@@ -274,6 +357,8 @@ module Analyzer::Specification
 
         if directive.matches?(/\Areturn\s+4\d\d(?:\s|$)/i) || directive.matches?(/\Adeny\s+all\z/i)
           location.denial_seen = true
+        elsif directive == "internal"
+          location.internal = true
         else
           # Conditional returns and other directives may still serve content.
           location.other_effect = true
@@ -313,7 +398,7 @@ module Analyzer::Specification
       path.starts_with?("@") || path.includes?("{{") || path.includes?("}}")
     end
 
-    private def emit_location(details : Details, path : String, modifier : String, method : String, hosts : Array(String), tls : Bool, line : Int32)
+    private def emit_location(file : String, path : String, modifier : String, method : String, hosts : Array(String), tls : Bool, line : Int32)
       return if path.empty?
 
       path_type = case modifier
@@ -326,7 +411,7 @@ module Analyzer::Specification
 
       regex = path_type.starts_with?("regex") && Noir::URLPath.regex_route?(path)
       path = Noir::URLPath.strip_regex_anchors(path) if path_type.starts_with?("regex")
-      detail = Details.new(PathInfo.new(details.code_paths.first.path, line))
+      detail = Details.new(PathInfo.new(file, line))
       hosts = [""] if hosts.empty?
       hosts.each do |host|
         endpoint = Endpoint.new(path, method, detail)

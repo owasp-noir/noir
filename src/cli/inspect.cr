@@ -411,7 +411,8 @@ module Noir::CLI::Inspect
     # its own first: Django's `x/<int:pk>/` must match `/x/5`.
     route = strip_trailing_slash(request_path(endpoint.url))
     if endpoint.regex_path?
-      return Regex.new("\\A#{URLPath.strip_regex_anchors(route).rchop('/')}/?\\z") rescue nil
+      # Grouped, so each branch of an alternation is anchored.
+      return Regex.new("\\A(?:#{URLPath.strip_regex_anchors(route).rchop('/')})/?\\z") rescue nil
     end
     star_needs_one = ONE_OR_MORE_STAR_TECHS.includes?(endpoint.details.technology || "")
     Regex.new("\\A#{route_pattern(route, star_needs_one)}/?\\z") rescue nil

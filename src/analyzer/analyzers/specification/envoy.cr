@@ -33,6 +33,9 @@ module Analyzer::Specification
     MATCH_KEY         = YAML::Any.new("match")
     ROUTE_KEY         = YAML::Any.new("route")
 
+    # A route without a `:method` header matcher serves every method.
+    METHOD_ANY = "ANY"
+
     def analyze
       each_spec_file_with_details(Noir::LocatorKeys::ENVOY_YAML) do |path, details|
         content = read_file_content(path)
@@ -84,7 +87,7 @@ module Analyzer::Specification
       path = extract_path(match)
       return if path.nil? || path.empty?
 
-      method = extract_method(match) || "GET"
+      method = extract_method(match) || METHOD_ANY
       emit(path, method, domains, details, regex: !!(match["safe_regex"]? || match["regex"]?))
 
       if (route_action = route_h[ROUTE_KEY]?) && route_action.as_h?
@@ -131,7 +134,7 @@ module Analyzer::Specification
       path = extract_path(match)
       return if path.nil? || path.empty?
 
-      method = extract_method(match) || "GET"
+      method = extract_method(match) || METHOD_ANY
       emit(path, method, domains, details, regex: !!(match["safe_regex"]? || match["regex"]?))
 
       if (route_action = route_h["route"]?) && route_action.as_h?

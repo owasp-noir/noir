@@ -41,9 +41,33 @@ describe "Kubernetes Ingress Analyzer" do
     endpoints.map(&.url).sort!.should eq ["/v1/users", "/v1/users/.*"]
     endpoints.sort_by(&.url).map(&.details.code_paths.first.line).should eq [10, 12]
     endpoints.each do |e|
-      e.method.should eq "GET"
+      e.method.should eq "ANY"
       tag_descriptions(e, "ingress-host").should eq ["api.example.com"]
     end
+  end
+
+  # The line was looked up by the source text, which still had the escapes.
+  it "finds the line of a double-quoted path with escapes" do
+    endpoints = analyze_ingress <<-'YAML'
+      apiVersion: networking.k8s.io/v1
+      kind: Ingress
+      metadata:
+        name: demo
+      spec:
+        rules:
+        - host: api.example.com
+          http:
+            paths:
+            - path: "/files/(\\w+)\\.json"
+              pathType: ImplementationSpecific
+            - path: '/it''s'
+              pathType: Exact
+      YAML
+
+    endpoints.map { |e| {e.url, e.details.code_paths.first.line} }.should eq([
+      {"/files/(\\w+).json", 10},
+      {"/it's", 12},
+    ])
   end
 
   it "marks endpoints with TLS hosts as https" do
@@ -131,7 +155,7 @@ describe "Kubernetes Ingress Analyzer" do
       YAML
 
     endpoints.map(&.url).sort!.should eq ["/", "/"]
-    endpoints.map(&.method).should eq ["GET", "GET"]
+    endpoints.map(&.method).should eq ["ANY", "ANY"]
     tag_descriptions(endpoints[0], "ingress-source").should eq ["default-backend"]
     tag_descriptions(endpoints[1], "ingress-source").should eq ["rule"]
   end

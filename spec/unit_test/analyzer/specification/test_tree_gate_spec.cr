@@ -21,7 +21,7 @@ private FIXTURE = "spec/functional_test/fixtures/specification/test_tree_gate"
 
 describe "SpecificationEngine test-tree gate" do
   it "drops spec documents under test trees and keeps the rest" do
-    scan_endpoints(FIXTURE).should eq(["GET /health", "GET /pets", "GET /test-env"])
+    scan_endpoints(FIXTURE).should eq(["ANY /test-env", "GET /health", "GET /pets"])
   end
 
   ["tests", "src/test", "testdata", "fixtures", "Billing.UnitTests", "Service References"].each do |segment|

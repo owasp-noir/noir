@@ -4,7 +4,8 @@ module Analyzer::Specification
   class K8sIngress < SpecificationEngine
     analyzer_for "k8s_ingress"
 
-    DEFAULT_METHOD         = "GET"
+    # A rule routes every method to its backend.
+    METHOD_ANY             = "ANY"
     REWRITE_ANNOTATION     = "nginx.ingress.kubernetes.io/rewrite-target"
     AUTH_ANNOTATION_PREFIX = "nginx.ingress.kubernetes.io/"
     DEFAULT_PATH_TYPE      = "ImplementationSpecific"
@@ -169,7 +170,7 @@ module Analyzer::Specification
       # GCE / ALB spell a prefix as `/static/*` under the same path type.
       regex = path_type == "ImplementationSpecific" && Noir::URLPath.regex_route?(path.ends_with?("/*") ? path.rchop('*') : path)
       path = Noir::URLPath.strip_regex_anchors(path) if path_type == "ImplementationSpecific"
-      endpoint = Endpoint.new(path, DEFAULT_METHOD, details)
+      endpoint = Endpoint.new(path, METHOD_ANY, details)
       endpoint.kind = "regex" if regex
       endpoint.add_tag(Tag.new("ingress-path-type", path_type.downcase, "k8s_ingress_analyzer"))
       endpoint.add_tag(Tag.new("ingress-host", host, "k8s_ingress_analyzer")) unless host.empty?
@@ -273,7 +274,8 @@ module Analyzer::Specification
       scalar = strip_yaml_comment(value).strip
       return "/" if scalar.empty?
 
-      scalar = strip_quotes(scalar)
+      # The value as YAML reads it: `"/files/(\\w+)"` is `/files/(\w+)`.
+      scalar = (YAML.parse(scalar).as_s? rescue nil) || strip_quotes(scalar) if scalar.starts_with?('"') || scalar.starts_with?('\'')
       return scalar if scalar.starts_with?("/")
 
       if quoted_path = scalar.match(/["'](\/[^"']*)["']/)

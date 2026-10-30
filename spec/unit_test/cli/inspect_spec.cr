@@ -117,6 +117,18 @@ describe Noir::CLI::Inspect do
       end
     end
 
+    # Without a group around it, `\A` and `\z` held only the outer branches.
+    it "anchors every branch of a regex alternation" do
+      routes = [endpoint("ANY", "(^/users/(.+)/avatar$)|(^/users/(.+)/banner$)", kind: "regex"), endpoint("ANY", "/a|/b", kind: "regex")]
+      trace = ->(path : String) { Noir::CLI::Inspect.trace(routes, "GET", path).map(&.endpoint.url) }
+      trace.call("/users/a/avatar").should eq([routes[0].url])
+      trace.call("/users/a/banner").should eq([routes[0].url])
+      trace.call("/users/a/other").should be_empty
+      trace.call("/a").should eq(["/a|/b"])
+      trace.call("/a/x").should be_empty
+      trace.call("/x/b").should be_empty
+    end
+
     it "strips the scheme and authority from an absolute request URL" do
       Noir::CLI::Inspect.trace(endpoints, "GET", "http://localhost:8080/users/42?expand=1").map(&.endpoint.url).should eq(["/users/{id}"])
     end

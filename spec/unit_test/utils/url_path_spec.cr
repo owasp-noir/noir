@@ -248,4 +248,13 @@ describe "Noir::URLPath.strip_regex_anchors" do
     Noir::URLPath.strip_regex_anchors("/keep$mid").should eq("/keep$mid")
     Noir::URLPath.strip_regex_anchors("/a/[^/]+").should eq("/a/[^/]+")
   end
+
+  it "reads an anchored regex wrapped in one group without the group" do
+    Noir::URLPath.strip_regex_anchors("(^/items/(.+)/files$)").should eq("/items/(.+)/files")
+    Noir::URLPath.strip_regex_anchors("(^/a/\\))").should eq("/a/\\)")
+    # Alternations and partial groups keep their parentheses.
+    Noir::URLPath.strip_regex_anchors("(^/a$)|(^/b$)").should eq("(^/a$)|(^/b$)")
+    Noir::URLPath.strip_regex_anchors("(^/a$|^/b$)").should eq("(^/a$|^/b$)")
+    Noir::URLPath.strip_regex_anchors("(^/a)/b$").should eq("(^/a)/b")
+  end
 end

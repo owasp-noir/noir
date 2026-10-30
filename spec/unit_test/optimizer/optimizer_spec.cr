@@ -78,6 +78,15 @@ describe "EndpointOptimizer" do
       end
     end
 
+    # `/` before `(^/a$)|(^/b$)` is a regex nothing matches.
+    it "does not root a regex location" do
+      optimizer = EndpointOptimizer.new(logger, options)
+      regex = tech_endpoint("(^/a$)|(^/b$)", "ANY", "nginx", "nginx.conf", 3)
+      regex.kind = "regex"
+      plain = tech_endpoint("items", "GET", "nginx", "nginx.conf", 4)
+      optimizer.optimize_endpoints([regex, plain]).map(&.url).should eq(["(^/a$)|(^/b$)", "/items"])
+    end
+
     it "folds an AI endpoint into the static route under a different param spelling" do
       optimizer = EndpointOptimizer.new(logger, options)
       static = tech_endpoint("/users/:id", "GET", "js_express", "server.js", 4)

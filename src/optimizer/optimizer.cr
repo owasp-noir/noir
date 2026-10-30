@@ -207,8 +207,9 @@ class EndpointOptimizer
       # even to already-rooted URLs (the double-slash collapse below
       # papered over it). Mobile deep links are exempt: an unresolved
       # `@string/...://` or `${...}://` scheme isn't a relative path, so
-      # rooting it (`/@string/...`) would corrupt the URL.
-      if !absolute_url && tiny_tmp.url[0] != '/' && !tiny_tmp.non_http?
+      # rooting it (`/@string/...`) would corrupt the URL. Neither is a
+      # regex: `/` before nginx `~ (^/a$)|(^/b$)` makes it match nothing.
+      if !absolute_url && tiny_tmp.url[0] != '/' && !tiny_tmp.non_http? && tiny_tmp.kind != "regex"
         tiny_tmp.url = "/#{tiny_tmp.url}"
       end
 
