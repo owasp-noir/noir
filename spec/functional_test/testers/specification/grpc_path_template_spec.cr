@@ -3,7 +3,8 @@ require "../../func_spec.cr"
 # `{var=pattern}` path templates are transcoding syntax. The URL is spelled the
 # way a client can request it: literals stay, the last wildcard takes the
 # variable's name, earlier wildcards become `{wildcard}`, `{wildcard2}`, ...
-# The variable is still the one declared path param.
+# The variable is still the one declared path param. A trailing `**` matches
+# one or more segments, so its variable is the rest placeholder `{*name}`.
 expected_endpoints = [
   Endpoint.new("/api/attachments/{name}", "GET", [
     Param.new("name", "", "path"),
@@ -18,10 +19,10 @@ expected_endpoints = [
     Param.new("book.name", "", "path"),
     Param.new("book", "", "json"),
   ]),
-  Endpoint.new("/v1/{resource}:testIamPermissions", "POST", [
+  Endpoint.new("/v1/{*resource}:testIamPermissions", "POST", [
     Param.new("resource", "", "path"),
   ]),
-  Endpoint.new("/v1/repeat/a/{first}/b/{second}", "GET", [
+  Endpoint.new("/v1/repeat/a/{first}/b/{*second}", "GET", [
     Param.new("first", "", "path"),
     Param.new("second", "", "path"),
   ]),

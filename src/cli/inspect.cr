@@ -393,9 +393,10 @@ module Noir::CLI::Inspect
   # serves `/files` too.
   ZERO_OR_MORE = /\A(?:\*\*|\{\*[^}]*\}|\{[^}]*(?:\*|\.\.\.)\}|:\w+\*|\[\[)/
   # Where `{*name}` needs at least one segment: Next.js `[...slug]` (its
-  # optional `[[...slug]]` is written as a second, bare route) and axum.
-  # Spring, ASP.NET, Armeria and salvo's `{*name}` / `{**name}` take zero.
-  ONE_OR_MORE_STAR_TECHS = Set{"js_nextjs", "rust_axum"}
+  # optional `[[...slug]]` is written as a second, bare route), axum and a
+  # gRPC-transcoding `{name=**}`. Spring, ASP.NET, Armeria, salvo's
+  # `{*name}` / `{**name}` and Rocket's `<name..>` take zero.
+  ONE_OR_MORE_STAR_TECHS = Set{"js_nextjs", "rust_axum", "grpc"}
   # path-to-regexp v8 (Express 5) optional group: `/posts{/:id}`.
   OPTIONAL_GROUP = /\A\{(\/[^{}]*)\}/
   # `:id(\d+)` (Express 4 / Koa / Fastify) and `:id{[0-9]+}` (Hono) carry a

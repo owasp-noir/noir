@@ -731,6 +731,29 @@ describe "trace and query route matching (#3277)" do
     trace.call(routes, "GET", "/flights/icn-sfo").map(&.[0]).should eq(["/flights/:from-:to"])
   end
 
+  it "maps a multi-segment request onto a gRPC {name=**} binding" do
+    routes = [
+      endpoint("POST", "/v1/{*resource}:setIamPolicy", tech: "grpc"),
+      endpoint("POST", "/v1/{*resource}:getIamPolicy", tech: "grpc"),
+    ]
+    trace.call(routes, "POST", "/v1/projects/p/secrets/s:setIamPolicy").map(&.[0]).should eq(["/v1/{*resource}:setIamPolicy"])
+    trace.call(routes, "POST", "/v1/projects/p:getIamPolicy").map(&.[0]).should eq(["/v1/{*resource}:getIamPolicy"])
+    # The custom verb is still literal text.
+    trace.call(routes, "POST", "/v1/projects/p/secrets/s:anything").should be_empty
+    # `**` takes one segment or more.
+    trace.call(routes, "POST", "/v1:setIamPolicy").should be_empty
+  end
+
+  it "reads Rocket's <name..> as zero or more segments" do
+    routes = [
+      endpoint("GET", "/static/{*file}", tech: "rust_rocket"),
+      endpoint("GET", "/{*p}", tech: "rust_rocket"),
+    ]
+    trace.call(routes, "GET", "/static/css/app.css").map(&.[0]).should eq(["/static/{*file}", "/{*p}"])
+    trace.call(routes, "GET", "/web-vault/app/main.js").map(&.[0]).should eq(["/{*p}"])
+    trace.call(routes, "GET", "/static").map(&.[0]).should eq(["/static/{*file}", "/{*p}"])
+  end
+
   it "holds a Play $id<regex> segment to its regex" do
     routes = [
       endpoint("GET", "/api/swiss/$id<\\w{8}>", tech: "scala_play"),
