@@ -85,6 +85,8 @@ class FastAPIAuthTagger < FrameworkTagger
     @authz_defs = Hash(String, Set(String)).new
     @def_names = Hash(String, Set(String)).new
     @refusal_verdicts = Hash({String, String}, Bool?).new
+    @instance_verdicts = Hash({String, String}, Bool?).new
+    @class_sites = Hash({String, String}, {String, Int32}?).new
     @soft_auth = nil.as(String?)
     @include_calls = [] of IncludeCall
     @includes_by_site = nil.as(Hash({String, String}, Array(IncludeCall))?)
@@ -106,6 +108,8 @@ class FastAPIAuthTagger < FrameworkTagger
     @authz_defs.clear
     @def_names.clear
     @refusal_verdicts.clear
+    @instance_verdicts.clear
+    @class_sites.clear
     @include_calls.clear
     @includes_by_site = nil
     @include_scopes.clear
@@ -281,6 +285,13 @@ class FastAPIAuthTagger < FrameworkTagger
   # ponytail: only that membership test, passed as a keyword, is read.
   private def instance_refuses?(statement : String, file : String, depth : Int32) : Bool?
     return if depth > 4
+    key = {file, statement}
+    return @instance_verdicts[key] if @instance_verdicts.has_key?(key)
+    @instance_verdicts[key] = nil # cycle guard
+    @instance_verdicts[key] = judge_instance(statement, file, depth)
+  end
+
+  private def judge_instance(statement : String, file : String, depth : Int32) : Bool?
     callee = statement.match(INSTANCE_CALL).try(&.[1]) || return
     klass = class_site(file, callee) || factory_class(file, callee)
     # A factory returning a nested dependency (`WebUserAuthorizer(scopes)`)
@@ -458,6 +469,12 @@ class FastAPIAuthTagger < FrameworkTagger
   # `{file, line index}` of the class definition `name` (`X` or `mod.X`)
   # refers to from `file`.
   private def class_site(file : String, name : String) : {String, Int32}?
+    key = {file, name}
+    return @class_sites[key] if @class_sites.has_key?(key)
+    @class_sites[key] = find_class_site(file, name)
+  end
+
+  private def find_class_site(file : String, name : String) : {String, Int32}?
     module_name, _, class_name = name.rpartition('.')
     site = if module_name.empty?
              python_definition_site(file, class_name)
