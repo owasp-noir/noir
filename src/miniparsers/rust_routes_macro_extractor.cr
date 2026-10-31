@@ -1,0 +1,107 @@
+require "../utils/top_level_split"
+
+# Route tables declared through a project-local `#[routes::routes(...)]`
+# attribute (Meilisearch's actix-web DSL):
+#
+#   #[routes::routes(routes(
+#       "" => [get(list), post(create)],
+#       "/{uid}/documents" => sub(documents::DocumentsApi),
+#   ))]
+#   pub struct IndexesApi;
+#
+# A `"path" => verb(handler)` entry is a route; `"path" => sub(Type)` mounts
+# the table declared on `Type` under `path`. No file I/O: `extract` takes
+# source text, the analyzer resolves `sub` across files.
+module Noir::RustRoutesMacro
+  record Entry, path : String, verb : String?, handler : String?, sub : String?, line : Int32
+  record Table, owner : String, entries : Array(Entry)
+
+  ATTR_RE   = /#\[\s*(?:\w+::)*routes\s*::\s*routes\s*\(/
+  ROUTES_RE = /(?<![\w])routes\s*\(/
+  OWNER_RE  = /\G\s*\]\s*(?:#\[[^\]]*\]\s*)*(?:pub(?:\([^)]*\))?\s+)?struct\s+(\w+)/
+  MAX_ATTR  = 20_000
+  VERBS     = %w[get post put patch delete head options]
+  RULES     = Noir::TopLevelSplit::Rules.new(quotes: "\"")
+  ENTRY_RE  = /\A"([^"]*)"\s*=>\s*(.+)\z/m
+  CALL_RE   = /\A(\w+)\s*\(\s*([\w:]+)\s*\)\z/
+
+  def self.extract(source : String) : Array(Table)
+    tables = [] of Table
+    pos = 0
+    while m = ATTR_RE.match(source, pos)
+      attr_open = m.end(0) - 1
+      # ponytail: an attribute longer than MAX_ATTR chars is skipped (bounds
+      # the non-ASCII O(n) char indexing of `String#[]`).
+      tail = source[attr_open, MAX_ATTR]
+      close_rel = matching_paren(tail, 0)
+      attr_close = attr_open + (close_rel || 1)
+      pos = attr_close
+      next unless close_rel
+      args = tail[1...close_rel]
+      r = ROUTES_RE.match(args) || next
+      r_open = (r.end(0) - 1)
+      r_close = matching_paren(args, r_open) || next
+      owner = OWNER_RE.match(source, attr_close + 1).try(&.[1]) || next
+      base_line = source[0, attr_open + 1 + r_open + 1].count('\n') + 1
+      body = args[(r_open + 1)...r_close]
+      entries = [] of Entry
+      Noir::TopLevelSplit.split_spans(body, ',', RULES).each do |part, off|
+        line = base_line + body[0, off.clamp(0, body.size)].count('\n')
+        parse_entry(strip_comments(part).strip, line, entries)
+      end
+      tables << Table.new(owner, entries)
+    end
+    tables
+  end
+
+  private def self.parse_entry(text : String, line : Int32, entries : Array(Entry))
+    em = ENTRY_RE.match(text) || return
+    path = em[1]
+    rhs = em[2].strip
+    items = rhs.starts_with?('[') && rhs.ends_with?(']') ? Noir::TopLevelSplit.split(rhs[1...-1], ',', RULES) : [rhs]
+    items.each do |item|
+      cm = CALL_RE.match(strip_comments(item).strip) || next
+      verb = cm[1]
+      arg = cm[2]
+      next if arg.includes?('$') # macro_rules! fragment, not a real name
+      if verb == "sub"
+        entries << Entry.new(path, nil, nil, arg, line)
+      elsif VERBS.includes?(verb)
+        entries << Entry.new(path, verb.upcase, arg, nil, line)
+      end
+    end
+  end
+
+  private def self.strip_comments(text : String) : String
+    text.gsub(%r{//[^\n]*}, "")
+  end
+
+  # Index of the `)` closing the `(` at `open`; skips string literals and
+  # `//` comments.
+  private def self.matching_paren(text : String, open : Int32) : Int32?
+    depth = 0
+    in_str = false
+    i = open
+    size = text.size
+    while i < size
+      c = text[i]
+      if in_str
+        i += 1 if c == '\\'
+        in_str = false if c == '"'
+      elsif c == '"'
+        in_str = true
+      elsif c == '/' && i + 1 < size && text[i + 1] == '/'
+        while i < size && text[i] != '\n'
+          i += 1
+        end
+      elsif c == '('
+        depth += 1
+      elsif c == ')'
+        depth -= 1
+        return i if depth == 0
+      end
+      i += 1
+    end
+    nil
+  end
+end
