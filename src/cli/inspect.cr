@@ -186,11 +186,14 @@ module Noir::CLI::Inspect
     Noir::CLI.die("--from #{path}: #{ex.message}", EXIT_USAGE)
   end
 
-  # Guards that gate *who* may call the route. Rate limiting is a guard the
-  # augmentor records, but "no auth" is what `--no-guard` asks.
+  # Guards that gate *who* may call the route. Rate limiting and CSRF checks
+  # are guards the augmentor records, but neither stops an anonymous caller,
+  # and "no auth" is what `--no-guard` asks.
+  NON_AUTH_GUARD_KINDS = {"rate_limit_guard", "csrf_guard"}
+
   def self.auth_guards(context : AIContext?) : Array(AIContextEntry)
     return [] of AIContextEntry unless context
-    context.guards.reject { |g| g.kind == "rate_limit_guard" }
+    context.guards.reject { |g| NON_AUTH_GUARD_KINDS.includes?(g.kind) }
   end
 
   # Signals worth filtering on: the route/detector/method ones restate
@@ -546,6 +549,21 @@ module Noir::CLI::Inspect
     strip_trailing_slash(request_path(path).split('#', 2)[0].split('?', 2)[0])
   end
 
+  # The path a client sent, as a router sees it: no query or fragment, a
+  # leading `/`, `//` collapsed, each segment percent-decoded (`%2F` stays
+  # one segment, since a router splits before it decodes). A declared route
+  # is written decoded, so `/caf%C3%A9` has to be read as `/café`.
+  def self.request_target(path : String) : String
+    path = request_path(path).split('#', 2)[0].split('?', 2)[0]
+    return path if path.includes?("://")
+    path = "/#{path}" unless path.starts_with?('/')
+    path.gsub(%r{/{2,}}, "/").split('/', remove_empty: false).map do |segment|
+      segment.includes?('%') ? URI.decode(segment).gsub('/', "%2F") : segment
+    rescue URI::Error
+      segment
+    end.join('/')
+  end
+
   # Whether `query --method` lists a route declared for `declared`. An
   # `ANY` row (nginx, Apache, `router.all`) serves every HTTP verb, so
   # `--method POST` lists it, as `trace` does; `--method ANY` lists only
@@ -607,7 +625,7 @@ module Noir::CLI::Inspect
   def self.trace(endpoints : Array(Endpoint), method : String?, path : String) : Array(Match)
     matches = trace_path(endpoints, method, path)
     return matches unless matches.empty?
-    wanted = normalize(path)
+    wanted = strip_trailing_slash(request_target(path))
     alias_path = if wanted.starts_with?("/index.php/")
                    wanted.lchop("/index.php")
                  elsif wanted.starts_with?("/ocs/v1.php/")
@@ -619,8 +637,8 @@ module Noir::CLI::Inspect
   end
 
   private def self.trace_path(endpoints : Array(Endpoint), method : String?, path : String) : Array(Match)
-    wanted = normalize(path)
-    unslashed = request_path(path).split('#', 2)[0].split('?', 2)[0]
+    unslashed = request_target(path)
+    wanted = strip_trailing_slash(unslashed)
     exact = [] of Match
     pattern = [] of {Match, {Int32, Int32, Int32}}
     endpoints.each do |endpoint|
@@ -650,7 +668,7 @@ module Noir::CLI::Inspect
   # the closest length. Any method: the row names it, and "that path exists,
   # but as PATCH" is the answer a miss most often needs.
   def self.candidates(endpoints : Array(Endpoint), path : String, limit = 5) : Array(Row)
-    wanted = normalize(path).split('/').reject(&.empty?)
+    wanted = strip_trailing_slash(request_target(path)).split('/').reject(&.empty?)
     scored = endpoints.compact_map do |endpoint|
       segments = normalize(request_path(endpoint.url)).split('/').reject(&.empty?)
       shared = 0

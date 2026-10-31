@@ -14,11 +14,13 @@ module Noir::CLI::TraceCommand
   # `"POST /x"`, `POST /x`, or `/x` (every method). Returns the target and
   # the positionals left over, which are scan paths.
   def self.parse_target(positionals : Array(String)) : {Target?, Array(String)}
-    first = positionals.first?
+    first = positionals.first?.try(&.strip)
     return {nil, positionals} unless first
     if first.includes?(' ')
-      method, path = first.split(' ', 2, remove_empty: true)
-      return {Target.new(method.upcase, path.strip), positionals[1..]}
+      method, path = first.split(' ', 2).map(&.strip)
+      # `FOO /x` names no method; a bare `GET ` has no path.
+      return {nil, positionals} if path.empty? || !::endpoint_method_token?(method)
+      return {Target.new(method.upcase, path), positionals[1..]}
     end
     if ::endpoint_method_token?(first)
       path = positionals[1]?

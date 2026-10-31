@@ -110,7 +110,7 @@ module Noir::CLI::QueryCommand
         --param-type <t,...>   Parameter type (query, json, form, header, cookie, path);
                                with --param, one parameter must satisfy both
         --protocol <p,...>     http, ws, cli, ...
-        --guard / --no-guard   Has / lacks an auth guard (ai_context.guards; rate limiting does not count)
+        --guard / --no-guard   Has / lacks an auth guard (ai_context.guards; rate limiting and CSRF checks do not count)
         --sink <kind,...|any>  Reaches a sink of this kind (sql, command, file_io, outbound_http,
                                template_render, redirect, mass_assignment, ...)
         --source <kind|any>    Reads a source of this kind
