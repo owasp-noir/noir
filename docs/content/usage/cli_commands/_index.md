@@ -1,14 +1,14 @@
 +++
 title = "CLI Commands"
-description = "Subcommands available in Noir v1: scan, list, cache, config, rules, completion, version, help."
+description = "Subcommands available in Noir v1: scan, trace, reach, query, list, cache, config, rules, completion, version, help."
 weight = 1
 sort_by = "weight"
 
 +++
 
 Starting with v1.0, Noir's CLI uses a verb-based layout. `scan` is the
-main command. A few namespaces (`list`, `cache`, `config`, `rules`)
-group the rest.
+main command, accompanied by query verbs (`trace`, `reach`, `query`)
+and namespaces (`list`, `cache`, `config`, `rules`).
 
 ```
 noir <command> [arguments] [flags]
@@ -146,51 +146,135 @@ noir scan ./app -f json --ai-context --include callee -o report.json   # once
 
 noir trace "POST /api/users/42" --from report.json     # request → route, guards, params, sinks, callees
 noir reach src/handlers/users.go:57 --from report.json # file → endpoints declared in or calling into it
-noir query --no-guard --sink any --from report.json    # unauthenticated routes that reach a SQL sink
+noir query --no-guard --sink any --from report.json    # unauthenticated routes that reach any sink
+```
+
+### Trace
+
+```bash
+noir trace "<METHOD> <URL>" [paths...] [flags]
+noir trace <URL> [paths...] [flags]              # every method at that path
 ```
 
 `trace` maps a concrete request path onto the declared route: `/api/users/42`
 matches `/api/users/{id}`, `:id`, `<int:pk>`, `[id]` and `*`, and a HEAD
-request traces to the GET route. Every matching route is printed, most
-specific first, with `matched_by` (exact, pattern, wildcard, or prefix for an
-nginx/Ingress prefix location or a Go ServeMux `/x/` subtree). It prints the
-full endpoint record; on a miss it prints the nearest routes as `candidates`
-and exits 1.
+request traces to the GET route. When no method is given, it lists matching
+routes for any method at that path. Live scan paths can be passed directly,
+such as `noir trace "POST /api/users/42" ./app`.
 
-`reach` matches `FILE` as a path suffix against every location Noir recorded
-(route declarations, the handler's definition, callees, guards, sources, sinks,
-validators) and lists the evidence in `via`; an entry outside the row's own
-file carries its path. `:LINE` orders the evidence by distance and sets
-`nearest_line`; Noir records declaration lines, not function spans, so the
-line orders rather than filters. Inheritance and dynamic loading are not
-followed.
+Every matching route is printed, most specific first, with `matched_by`
+(`exact`, `pattern`, `wildcard`, or `prefix` for a proxy prefix location or
+a Go ServeMux `/x/` subtree). In `jsonl` (default) and `json`, `trace` prints
+the full endpoint record under `endpoint`. In `text` format (`-f text`), it
+prints a compact one-line summary.
 
-`query` filters AND together; a comma list inside one filter is OR:
-`--method`, `--url`, `--path`, `--project`, `--handler`, `--tech`, `--tag`, `--param`, `--param-type`,
-`--protocol`, `--guard` / `--no-guard`, `--sink`, `--source`, `--signal`,
-`--validator` (`any` matches a non-empty bucket). A glob (`*`, `?`, `[`) lets
-`*` cross `/` and keeps `{id}` literal; anything else is a substring.
-`--project` takes a monorepo project directory relative to the scan base (see
-`details.project`) and matches it exactly, or as a glob. `--param` and `--param-type` must be satisfied by one parameter. A rate
-limiter does not count as a guard, on the row or for `--guard`, and a value no
-endpoint carries is reported on stderr with the values the report does have.
+On a miss, it prints the nearest routes as `candidates` (scored by shared
+leading segments, edit distance on differing segments, and path length) and
+exits with code 1. In `jsonl` and `json`, a miss emits
+`{"query": "<label>", "match": false, "candidates": [...]}`; in `text`, it
+prints `no match: <label>` followed by each candidate. When only a wildcard
+or prefix route matched (such as `/*unmatched_route`), candidate routes are
+also printed after the match in case the request path was a typo.
 
-Shared flags: `--from <report>`, `-f jsonl|json|text` (jsonl default),
-`--full` (the unchanged endpoint record instead of the compact row),
-`--limit <n>`, `--count`. Exit codes follow grep: `0` matched, `1` nothing
-matched, `2` usage error. A scan path or flag next to `--from` is an error, since
-nothing is scanned.
+### Reach
 
-The compact row is a projection of the endpoint record, empty buckets omitted.
-`path:line` is where the route is *declared* (the first file outside a copy directory
-when copies were merged, with `declarations` counting them); `handler` is where its body
-*lives*, when the analyzer could resolve the definition:
+```bash
+noir reach <FILE[:LINE]> [paths...] [flags]
+```
+
+`reach` matches `FILE` as a path suffix against every location Noir recorded:
+route declarations, the handler definition, callees, guards, sources, sinks,
+and validators. It lists the evidence in `via` (`kind:name@line` or
+`kind@line`), and an entry outside the row's own file carries its path.
+When `:LINE` is given, evidence and rows are ordered by distance to that line
+and `nearest_line` is set; Noir records declaration lines, not function
+spans, so the line orders rather than filters. Inheritance and dynamic loading
+are not followed.
+
+If no recorded location matches `FILE`, `reach` prints an explanatory hint on
+stderr and exits with code 1. If `:LINE` is given but no line was recorded for
+the evidence in that file, a notice is printed on stderr.
+
+### Query
+
+```bash
+noir query [filters] [paths...] [flags]
+```
+
+`query` filters AND together.
+
+Filters that accept a comma-separated list match with OR:
+- `--method GET,POST`: HTTP method (`--method POST` also matches routes declared as `ANY`, while `--method ANY` matches only `ANY` routes)
+- `--project <dir,...>`: project directory of a monorepo relative to the scan base (exact, or glob when containing `*`, `?`, `[`)
+- `--tech <name,...>`: technology name (e.g. `go_gin`, `python_django`)
+- `--tag <name,...>`: tag name (`auth`, `admin`, ...)
+- `--param <name,...>`: parameter name (case-insensitive for header parameters)
+- `--param-type <type,...>`: parameter type (`query`, `json`, `form`, `header`, `cookie`, `path`)
+- `--protocol <proto,...>`: protocol (`http`, `ws`, `cli`, ...)
+- `--sink <kind,...|any>`: reaches a sink of this kind (`sql`, `command`, `file_io`, `outbound_http`, `template_render`, `redirect`, `mass_assignment`, ...)
+- `--source <kind,...|any>`: reads a source of this kind
+- `--signal <kind,...|any>`: carries a derived signal (`idor_review`, `ssrf`, `open_redirect`, ...)
+- `--validator <kind,...|any>`: carries a validator of this kind
+
+Single-value pattern filters (`<glob|substr>`):
+- `--url <glob|substr>`: route URL
+- `--path <glob|substr>`: source file path as reported (a relative glob matches from any `/`)
+- `--handler <glob|substr>`: handler function name, or handler source file path
+
+Boolean switches (mutually exclusive):
+- `--guard` / `--no-guard`: endpoint has or lacks an auth guard (`ai_context.guards`; rate limiting does not count as a guard)
+
+Pattern matching rules:
+- Glob characters (`*`, `?`, `[`): `*` crosses `/` and `{id}` is treated literally. Without glob characters, the pattern is matched as a substring.
+- `--param` with `--param-type`: both conditions must be satisfied by the same parameter.
+- `any` keyword: for `--sink`, `--source`, `--signal`, and `--validator`, `any` matches any non-empty bucket.
+- Warnings on stderr: if a filter value is not present anywhere in the report, Noir prints a warning on stderr with the values that do exist in the report. If context filters (`--guard`, `--sink`, etc.) are used on a report scanned without `--ai-context`, stderr warns that no endpoint carries AI context.
+
+### Shared Flags and Exit Codes
+
+Every query verb accepts these options:
+
+| Flag | Description |
+|------|-------------|
+| `--from <report>` | Read endpoints from a `noir scan -f json` or `-f jsonl` report instead of scanning |
+| `-f, --format <fmt>` | Output format: `jsonl` (default), `json`, or `text` (`plain` is accepted as an alias for `text`) |
+| `--full` | In `jsonl` and `json`, populate `endpoint` with the full endpoint record alongside `matched_by`, `via`, and `nearest_line`. In `text`, output remains a single compact line |
+| `--limit <n>` | Print at most n rows (must be a positive integer; also limits candidates) |
+| `--count` | Print only the number of matches |
+| Scan flags | Any `noir scan` flag (`-b`, `--exclude-path`, `--only-techs`, `-t`, `-u`, `--config-file`, ...) is accepted when scanning live without `--from` |
+
+When `--from` is used, passing scan paths or scan flags is a usage error (exit code 2), because nothing is scanned. Global flags (`--no-color`, `-d`, `--verbose`) remain valid with `--from`.
+
+Exit codes follow grep conventions:
+- `0`: one or more endpoints matched.
+- `1`: nothing matched (trace miss, reach finding no touched endpoints, or query matching zero endpoints).
+- `2`: usage error (invalid flag, missing required argument, mutually exclusive flags, non-positive limit, scan arguments passed with `--from`, or unreadable report).
+
+### Output Row Format
+
+The default compact row (`-f jsonl`) is a projection of the endpoint record, omitting empty buckets:
 
 ```json
 {"method":"POST","url":"/api/users/{id}","path":"src/routes.go","line":42,"tech":"go_gin",
  "handler":{"name":"updateUser","path":"src/users.go","line":80},
  "params":["id:path","name:json"],"guards":["RequireAuth"],"sinks":["sql"],
  "signals":["idor_review"],"callees":["db.Exec","render"]}
+```
+
+- `path:line`: where the route is declared (the first file outside a copy directory when copies were merged; `declarations` counts merged copies when greater than 1).
+- `project`: monorepo project directory relative to the scan base (omitted when empty).
+- `handler`: where the handler body lives (`name`, `path`, `line`), present when the analyzer resolved the definition.
+- `params`: parameters in `name:type` format.
+- `guards`: authentication and authorization guards (rate limiting excluded).
+- `sinks`, `signals`: framework-aware sink kinds and derived security review signals.
+- `matched_by`: added by `trace` (`exact`, `pattern`, `wildcard`, `prefix`).
+- `via`: added by `reach` as a list of evidence items (`route`, `handler`, `callee`, `guard`, `source`, `sink`, `validator`).
+- `nearest_line`: added by `reach` when `:LINE` is given.
+
+In text format (`-f text`), each endpoint is printed as a single space-delimited line:
+
+```text
+POST /api/users/{id}  src/routes.go:42  go_gin  handler=updateUser@src/users.go:80  guards=RequireAuth  sinks=sql  signals=idor_review
 ```
 
 An agent skill that teaches these verbs, the scan-once loop and the caveats

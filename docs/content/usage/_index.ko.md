@@ -14,7 +14,7 @@ Noir를 실행하고 개별 기능을 설정하는 데 필요한 레퍼런스입
 
 ## 구성
 
-*   **[CLI 명령어](cli_commands/)**: v1 서브커맨드(`scan`, `list`, `cache`, `config`, `rules`, `completion`, `version`, `help`) 레퍼런스. v0 호환 메모 포함.
+*   **[CLI 명령어](cli_commands/)**: v1 서브커맨드(`scan`, `trace`, `reach`, `query`, `list`, `cache`, `config`, `rules`, `completion`, `version`, `help`) 레퍼런스. v0 호환 메모 포함.
 *   **[지원 기술](supported/)**: Noir가 분석할 수 있는 프로그래밍 언어, 프레임워크, 명세.
 *   **[설정](configurations/)**: 설정 파일과 셸 자동완성.
 *   **[출력 형식](output_formats/)**: JSON, YAML, OpenAPI 등 Noir가 내보낼 수 있는 형식.

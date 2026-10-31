@@ -200,7 +200,7 @@ noir scan . --ai-context guards,sinks
 
 시작하기는 여기까지입니다. 다음으로 볼 만한 문서:
 
-- **[CLI 명령어](@/usage/cli_commands/_index.ko.md)**: v1 서브커맨드(scan, list, cache, config, rules 등) 전체 레퍼런스
+- **[CLI 명령어](@/usage/cli_commands/_index.ko.md)**: v1 서브커맨드(scan, trace, reach, query, list, cache, config, rules 등) 전체 레퍼런스
 - **[설정](@/usage/configurations/configuration_file/index.ko.md)**: 매번 플래그를 반복하지 않도록 기본 옵션 설정
 - **[출력 형식](@/usage/output_formats/_index.ko.md)**: 모든 출력 형식 자세히 보기
 - **[Diff 모드](@/usage/more_features/diff/index.ko.md)**: 경로나 git 리비전과 공격 표면을 비교하고 `--fail-on`으로 CI 실패 조건 지정

@@ -1,14 +1,14 @@
 +++
 title = "CLI 명령어"
-description = "Noir v1 서브커맨드(scan, list, cache, config, rules, completion, version, help) 레퍼런스."
+description = "Noir v1 서브커맨드(scan, trace, reach, query, list, cache, config, rules, completion, version, help) 레퍼런스."
 weight = 1
 sort_by = "weight"
 
 +++
 
 v1.0부터 Noir CLI는 동사 기반 구조를 씁니다. 핵심 명령은 `scan`이고,
-나머지는 몇 개의 네임스페이스(`list`, `cache`, `config`, `rules`)로
-묶여 있습니다.
+질의 명령(`trace`, `reach`, `query`)과 몇 개의 네임스페이스(`list`, `cache`, `config`, `rules`)가
+나머지를 묶습니다.
 
 ```
 noir <command> [arguments] [flags]
@@ -145,46 +145,132 @@ noir scan ./app -f json --ai-context --include callee -o report.json   # 한 번
 
 noir trace "POST /api/users/42" --from report.json     # 요청 → 라우트, 가드, 파라미터, 싱크, callee
 noir reach src/handlers/users.go:57 --from report.json # 파일 → 그 파일에 선언되거나 호출하는 엔드포인트
-noir query --no-guard --sink any --from report.json    # 인증 없이 SQL 싱크에 닿는 라우트
+noir query --no-guard --sink any --from report.json    # 인증 없이 임의의 싱크에 닿는 라우트
+```
+
+### Trace
+
+```bash
+noir trace "<METHOD> <URL>" [paths...] [flags]
+noir trace <URL> [paths...] [flags]              # 해당 경로의 모든 HTTP 메서드
 ```
 
 `trace`는 실제 요청 경로를 선언된 라우트에 대응시킵니다. `/api/users/42`는
 `/api/users/{id}`, `:id`, `<int:pk>`, `[id]`, `*`에 매칭되고, HEAD 요청은 GET
-라우트에 대응됩니다. 매칭되는 라우트를 구체적인 순서로 전부 출력하며 `matched_by`
-(exact, pattern, wildcard, 그리고 nginx/Ingress prefix location이나 Go ServeMux의
-`/x/` 하위 트리에는 prefix)를 함께 표시합니다. 전체 엔드포인트 레코드를 출력하고,
-매칭이 없으면 가장 가까운 라우트를 `candidates`로 출력한 뒤 종료 코드 1을
-반환합니다.
+라우트에 대응됩니다. 메서드를 생략하면 해당 경로의 모든 메서드에 대해 매칭되는
+라우트를 찾습니다. `noir trace "POST /api/users/42" ./app`처럼 스캔 대상 경로를
+직접 전달할 수도 있습니다.
 
-`reach`는 `FILE`을 경로 접미사로 보고 Noir가 기록한 모든 위치(라우트 선언, 핸들러 정의,
-callee, 가드, 소스, 싱크, 검증기)와 비교해 근거를 `via`에 나열합니다. 행의 파일이 아닌
-곳의 근거에는 경로가 붙습니다. `:LINE`을 주면 근거를 거리순으로 정렬하고
-`nearest_line`을 채웁니다. Noir는 함수 범위가 아니라 선언 줄만 기록하므로, 줄
-번호는 필터가 아니라 정렬 기준입니다. 상속과 동적 로딩은 따라가지 않습니다.
+매칭되는 라우트를 구체적인 순서로 전부 출력하며 `matched_by`(`exact`, `pattern`,
+`wildcard`, 그리고 프록시 접두사 규칙이나 Go ServeMux의 `/x/` 하위 트리의 경우
+`prefix`)를 함께 표시합니다. 기본 형식인 `jsonl`과 `json`에서는 `endpoint` 아래에
+전체 엔드포인트 레코드를 출력하며, 텍스트 형식(`-f text`)에서는 한 줄 요약으로
+출력합니다.
 
-`query`의 필터는 AND로 결합되고, 한 필터 안의 쉼표 목록은 OR입니다:
-`--method`, `--url`, `--path`, `--project`, `--handler`, `--tech`, `--tag`, `--param`, `--param-type`,
-`--protocol`, `--guard` / `--no-guard`, `--sink`, `--source`, `--signal`,
-`--validator` (`any`는 비어 있지 않은 버킷에 매칭). 글롭(`*`, `?`, `[`)에서 `*`는
-`/`를 넘어 매칭되고 `{id}`는 글자 그대로이며, 글롭 문자가 없으면 부분 문자열입니다.
-`--project`는 스캔 기준 경로에 상대적인 모노레포 프로젝트 디렉터리(`details.project` 참고)를 받아 정확히, 또는 글롭으로 매칭합니다. `--param`과 `--param-type`은 같은 파라미터가 둘 다 만족해야 합니다. rate limiter는
-행에서도 `--guard`에서도 가드로 치지 않으며, 어떤 엔드포인트도 갖지 않은 값을 주면
-stderr에 리포트에 있는 값 목록과 함께 알려줍니다.
+매칭이 없으면 가장 가까운 라우트를 `candidates`(공통 접두사 세그먼트 수, 다른
+세그먼트 간의 편집 거리, 경로 길이 차이 기준 정렬)로 출력한 뒤 종료 코드 1을
+반환합니다. `jsonl`과 `json`에서는 `{"query": "<label>", "match": false, "candidates": [...]}`
+형태로 출력되며, `text`에서는 `no match: <label>` 뒤에 후보 목록이 출력됩니다.
+와일드카드나 접두사 라우트(`/*unmatched_route` 등)만 매칭된 경우에도 요청 경로의
+오타 가능성을 고려하여 매칭 결과 뒤에 후보 목록이 함께 출력됩니다.
 
-공통 플래그: `--from <report>`, `-f jsonl|json|text` (기본 jsonl), `--full`(압축
-행 대신 엔드포인트 레코드 전체), `--limit <n>`, `--count`. 종료 코드는 grep과
-같습니다: `0` 매칭, `1` 매칭 없음, `2` 사용법 오류. `--from`과 함께 스캔 경로나 플래그를
-주면 오류입니다(아무것도 스캔하지 않으므로).
+### Reach
 
-압축 행은 엔드포인트 레코드의 투영이며 빈 버킷은 생략됩니다. `path:line`은 라우트가
-*선언된* 곳(복사본이 병합된 경우 복사본 디렉터리 밖의 첫 파일이며 `declarations`가 개수를 알려줌),
-`handler`는 그 본문이 *있는* 곳(분석기가 정의 위치를 해석한 경우)입니다:
+```bash
+noir reach <FILE[:LINE]> [paths...] [flags]
+```
+
+`reach`는 `FILE`을 경로 접미사로 보고 Noir가 기록한 모든 위치(라우트 선언, 핸들러
+정의, callee, 가드, 소스, 싱크, 검증기)와 비교해 근거를 `via`(`kind:name@line` 또는
+`kind@line`)에 나열합니다. 행의 파일이 아닌 곳의 근거에는 경로(`@path:line`)가
+붙습니다. `:LINE`을 주면 근거와 행을 거리순으로 정렬하고 `nearest_line`을 채웁니다.
+Noir는 함수 범위가 아니라 선언 줄만 기록하므로, 줄 번호는 필터가 아니라 정렬
+기준입니다. 상속과 동적 로딩은 따라가지 않습니다.
+
+기록된 위치 중 `FILE`과 매칭되는 곳이 없으면 stderr에 설명 힌트를 출력하고 종료
+코드 1을 반환합니다. `:LINE`을 지정했으나 해당 파일의 근거에 줄 번호가 기록되어
+있지 않은 경우 stderr에 안내 메시지를 출력합니다.
+
+### Query
+
+```bash
+noir query [filters] [paths...] [flags]
+```
+
+`query`의 필터는 AND로 결합됩니다.
+
+쉼표 목록으로 여러 값을 주면 OR 조건으로 매칭되는 필터:
+- `--method GET,POST`: HTTP 메서드 (`--method POST`는 `ANY`로 선언된 라우트도 매칭하며, `--method ANY`는 `ANY` 라우트만 매칭)
+- `--project <dir,...>`: 스캔 기준 경로에 상대적인 모노레포 프로젝트 디렉터리 (정확히 일치하거나, `*`, `?`, `[` 포함 시 글롭 매칭)
+- `--tech <name,...>`: 기술 이름 (예: `go_gin`, `python_django`)
+- `--tag <name,...>`: 태그 이름 (`auth`, `admin` 등)
+- `--param <name,...>`: 파라미터 이름 (헤더 파라미터는 대소문자 구분 없음)
+- `--param-type <type,...>`: 파라미터 위치/유형 (`query`, `json`, `form`, `header`, `cookie`, `path`)
+- `--protocol <proto,...>`: 프로토콜 (`http`, `ws`, `cli` 등)
+- `--sink <kind,...|any>`: 해당 유형의 싱크에 도달 (`sql`, `command`, `file_io`, `outbound_http`, `template_render`, `redirect`, `mass_assignment` 등)
+- `--source <kind,...|any>`: 해당 유형의 소스를 읽음
+- `--signal <kind,...|any>`: 파생 보안 리뷰 신호 포함 (`idor_review`, `ssrf`, `open_redirect` 등)
+- `--validator <kind,...|any>`: 해당 유형의 검증기 포함
+
+단일 패턴을 받는 필터 (`<glob|substr>`):
+- `--url <glob|substr>`: 라우트 URL
+- `--path <glob|substr>`: 보고된 소스 파일 경로 (상대 글롭은 임의의 `/` 뒤에서도 매칭)
+- `--handler <glob|substr>`: 핸들러 함수 이름 또는 핸들러 소스 파일 경로
+
+불리언 스위치 (상호 배타적):
+- `--guard` / `--no-guard`: 인증 가드(`ai_context.guards`) 존재 여부 (rate limiter는 가드로 치지 않음)
+
+패턴 매칭 규칙:
+- 글롭 문자(`*`, `?`, `[`): `*`는 `/`를 넘어 매칭되고 `{id}`는 글자 그대로 비교됩니다. 글롭 문자가 없으면 부분 문자열로 매칭됩니다.
+- `--param`과 `--param-type`: 같은 하나의 파라미터가 두 조건을 모두 만족해야 합니다.
+- `any` 키워드: `--sink`, `--source`, `--signal`, `--validator`에서 `any`는 해당 버킷이 비어 있지 않으면 매칭됩니다.
+- stderr 경고: 리포트에 없는 값을 필터에 지정하면 stderr에 리포트에 실제 존재하는 값 목록과 함께 경고를 출력합니다. `--ai-context` 없이 스캔된 리포트에 `--guard`나 `--sink` 같은 컨텍스트 필터를 적용하면 AI 컨텍스트가 없다는 경고를 출력합니다.
+
+### 공통 플래그 및 종료 코드
+
+세 질의 명령 모두 다음 옵션을 지원합니다:
+
+| 플래그 | 설명 |
+|--------|------|
+| `--from <report>` | 스캔을 실행하는 대신 `noir scan -f json` 또는 `-f jsonl` 리포트 파일 읽기 |
+| `-f, --format <fmt>` | 출력 형식: `jsonl` (기본값), `json`, `text` (`plain`은 `text`의 별칭) |
+| `--full` | `jsonl` 및 `json`에서 `matched_by`, `via`, `nearest_line`과 함께 `endpoint`에 전체 엔드포인트 레코드 포함. `text`에서는 항상 한 줄 요약 유지 |
+| `--limit <n>` | 최대 n개 행 출력 (양의 정수여야 하며, candidates 개수도 제한) |
+| `--count` | 매칭된 엔드포인트 개수만 출력 |
+| 스캔 플래그 | `--from` 없이 직접 스캔할 때 모든 `noir scan` 플래그(`-b`, `--exclude-path`, `--only-techs`, `-t`, `-u`, `--config-file` 등) 사용 가능 |
+
+`--from`을 지정하면 아무것도 스캔하지 않으므로 스캔 경로나 스캔 플래그를 함께 전달하면 사용법 오류(종료 코드 2)가 발생합니다. 전역 플래그(`--no-color`, `-d`, `--verbose`)는 `--from`과 함께 사용할 수 있습니다.
+
+종료 코드는 grep 규칙을 따릅니다:
+- `0`: 하나 이상의 엔드포인트가 매칭됨.
+- `1`: 매칭된 결과 없음 (trace 미스, reach에서 해당 파일에 닿는 엔드포인트 없음, query 매칭 결과 0건).
+- `2`: 사용법 오류 (잘못된 플래그, 필수 인자 누락, 상호 배타적 플래그 동시 사용, 양의 정수가 아닌 `--limit`, `--from`과 함께 스캔 인자 전달, 리포트 읽기 실패).
+
+### 출력 행 형식
+
+기본 압축 행(`-f jsonl`)은 엔드포인트 레코드의 투영이며 빈 버킷은 생략됩니다:
 
 ```json
 {"method":"POST","url":"/api/users/{id}","path":"src/routes.go","line":42,"tech":"go_gin",
  "handler":{"name":"updateUser","path":"src/users.go","line":80},
  "params":["id:path","name:json"],"guards":["RequireAuth"],"sinks":["sql"],
  "signals":["idor_review"],"callees":["db.Exec","render"]}
+```
+
+- `path:line`: 라우트가 선언된 곳 (복사본이 병합된 경우 복사 디렉터리 밖의 첫 파일이며, 병합된 복사본이 둘 이상이면 `declarations`에 개수 표시).
+- `project`: 스캔 기준 경로에 상대적인 모노레포 프로젝트 디렉터리 (없으면 생략).
+- `handler`: 핸들러 본문 위치 (`name`, `path`, `line`, 분석기가 정의 위치를 찾은 경우).
+- `params`: `name:type` 형식의 파라미터 목록.
+- `guards`: 인증 및 인가 가드 (rate limiter 제외).
+- `sinks`, `signals`: 프레임워크 인식 싱크 종류 및 파생 보안 리뷰 신호.
+- `matched_by`: `trace`에서 추가 (`exact`, `pattern`, `wildcard`, `prefix`).
+- `via`: `reach`에서 추가 (`route`, `handler`, `callee`, `guard`, `source`, `sink`, `validator` 근거 목록).
+- `nearest_line`: `reach`에 `:LINE`을 지정했을 때 추가.
+
+텍스트 형식(`-f text`)에서는 각 엔드포인트를 공백으로 구분된 한 줄로 출력합니다:
+
+```text
+POST /api/users/{id}  src/routes.go:42  go_gin  handler=updateUser@src/users.go:80  guards=RequireAuth  sinks=sql  signals=idor_review
 ```
 
 이 명령들과 스캔 한 번 후 `--from`으로 질의하는 루프, 에이전트가 알아야 할 주의점을

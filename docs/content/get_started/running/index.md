@@ -196,7 +196,7 @@ For build details (Crystal / LLVM / target), run `noir version --verbose`. Run `
 
 That's the end of Getting Started. Where to go next:
 
-- **[CLI Commands](@/usage/cli_commands/_index.md)**: The full v1 subcommand reference (scan, list, cache, config, rules, and so on)
+- **[CLI Commands](@/usage/cli_commands/_index.md)**: The full v1 subcommand reference (scan, trace, reach, query, list, cache, config, rules, and so on)
 - **[Configurations](@/usage/configurations/configuration_file/index.md)**: Set default options so you don't repeat flags every time
 - **[Output Formats](@/usage/output_formats/_index.md)**: Every output format in detail
 - **[Diff Mode](@/usage/more_features/diff/index.md)**: Compare the attack surface against a path or git revision, and gate CI with `--fail-on`
