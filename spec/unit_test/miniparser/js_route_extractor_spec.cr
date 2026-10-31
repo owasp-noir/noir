@@ -5,6 +5,20 @@ require "../../../src/models/endpoint"
 require "../../../src/miniparsers/js_route_extractor"
 
 describe Noir::JSRouteExtractor do
+  describe "definition_body" do
+    it "reads past a plain return type to the body" do
+      src = "export function f(socket: Socket): void {\n  socket.on(\"a\", () => {});\n}\n"
+      Noir::JSRouteExtractor.definition_body(src, 1).should contain("socket.on(\"a\"")
+      src = "function g(x): string[] {\n  return [x];\n}\n"
+      Noir::JSRouteExtractor.definition_body(src, 1).strip.should eq("return [x];")
+    end
+
+    it "still skips the braces of an object return type" do
+      src = "function v(ctx): Promise<{ a: A }> {\n  return run(ctx);\n}\n"
+      Noir::JSRouteExtractor.definition_body(src, 1).strip.should eq("return run(ctx);")
+    end
+  end
+
   describe "propagate_mount_prefixes" do
     it "expands a self-mount and an a -> b -> a cycle at most once" do
       edges = [

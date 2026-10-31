@@ -1653,7 +1653,8 @@ module Noir
           while prev >= from && bytes[prev].unsafe_chr.ascii_whitespace?
             prev -= 1
           end
-          if type_depth == 0 && prev >= from - 1 && (bytes[prev] == ')'.ord || bytes[prev] == '>'.ord)
+          if type_depth == 0 && prev >= from - 1 &&
+             (bytes[prev] == ')'.ord || bytes[prev] == '>'.ord || plain_return_type?(content.byte_slice(from, pos - from)))
             close = JSLiteralScanner.find_matching_brace_at_byte(content, pos) || break
             return content.byte_slice(pos + 1, close - pos - 1)
           end
@@ -1662,6 +1663,14 @@ module Noir
         pos += 1
       end
       own_line
+    end
+
+    # `): void {`, `): Response {`, `): string[] {`: a return type with no
+    # brackets of its own, so the next `{` opens the body.
+    PLAIN_RETURN_TYPE = /\A\s*:\s*[A-Za-z_$][\w$.]*(?:\[\])*\s*\z/
+
+    private def self.plain_return_type?(between : String) : Bool
+      between.matches?(PLAIN_RETURN_TYPE)
     end
 
     private def self.empty_handler_facts : HandlerFacts
