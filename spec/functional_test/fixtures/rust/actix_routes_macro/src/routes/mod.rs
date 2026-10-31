@@ -1,5 +1,6 @@
 pub mod items;
 pub mod other;
+pub mod settings;
 
 use actix_web::HttpResponse;
 
@@ -9,6 +10,7 @@ use actix_web::HttpResponse;
         // The rest is mounted per module: "/commented" => get(nope),
         "/items" => sub(items::ItemsApi),
         "/other" => sub(other::ItemsApi),
+        "/settings" => sub(settings::SettingsApi),
     ),
     tag = "Root",
 )]
