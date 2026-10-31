@@ -201,9 +201,12 @@ module Noir
       defs
     end
 
+    # The `lifted` text of a callback whose `except:` splats something this
+    # reader cannot expand: the guard stays, with a note.
+    MAYBE_EXCEPTED = "except: with a splat it cannot read"
+
     # An `except:` that splats a method this reader cannot expand
-    # (`*show_methods`) may well list the action: the callback is not taken
-    # to run for it.
+    # (`*show_methods`) may well list the action.
     def self.maybe_excepted?(line : String, action : String?) : Bool
       return false unless (m = line.match(EXCEPT_OPTION)) && line[m.end..].matches?(/\*\w/)
       !(action && (callback_option(line, EXCEPT_OPTION) || [] of String).includes?(action))
@@ -410,7 +413,10 @@ module Noir
           # ponytail: a class instance variable is the routed class's own, so
           # only its body (depth 0) sets one; a `class_attribute` a parent
           # sets reads as unset.
-          resolution.settings << macro_name if depth == 0 && RailsCallbackChain.applies_to_action?(line, action) && !RailsCallbackChain.maybe_excepted?(line, action)
+          if depth == 0 && RailsCallbackChain.applies_to_action?(line, action)
+            resolution.settings << macro_name
+            resolution.lifted["macro:#{macro_name}"] = MAYBE_EXCEPTED if RailsCallbackChain.maybe_excepted?(line, action)
+          end
           args = line[macro_name.size..].strip.lchop('(').rchop(')').strip
           expanded = class_macro.body.map do |text|
             if args.empty?
@@ -423,12 +429,13 @@ module Noir
         elsif RailsCallbackChain.applies_to_action?(line, action)
           RailsCallbackChain.before_action_callbacks(line).each do |callback|
             # Registering a callback again replaces its options.
-            if RailsCallbackChain.conditional?(line) || RailsCallbackChain.maybe_excepted?(line, action)
+            if RailsCallbackChain.conditional?(line)
               resolution.conditional << callback
             else
               resolution.conditional.delete(callback)
             end
             resolution.lifted.delete(callback)
+            resolution.lifted[callback] = MAYBE_EXCEPTED if RailsCallbackChain.maybe_excepted?(line, action)
             active << callback unless active.includes?(callback)
           end
         end

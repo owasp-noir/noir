@@ -370,14 +370,26 @@ class RubyAuthTagger < FrameworkTagger
       # sends lifts it at will; anything else is the app's to decide.
       if lift = resolved.lifted[callback]?
         next if lift.matches?(/\b(?:request|params)\b/)
-        note = "; `skip_before_action #{lift}` decides; #{SETTING_LIFTED}"
+        note = lift == Noir::RailsCallbackChain::MAYBE_EXCEPTED ? unreadable_except_note : "; `skip_before_action #{lift}` decides; #{SETTING_LIFTED}"
         guard = guard.try { |desc| "#{desc}#{note}" }
         gate = gate.try { |desc| "#{desc}#{note}" }
+      elsif resolved.lifted.any? { |key, value| key.starts_with?("macro:") && value == Noir::RailsCallbackChain::MAYBE_EXCEPTED } && callback_reads_class_setting?(callback)
+        # `requires_login except: [*unreadable]`: the callback reads that macro's list.
+        guard = guard.try { |desc| "#{desc}#{unreadable_except_note}" }
       end
       authn = stronger(authn, guard)
       authz ||= gate
     end
     {authn: authn, authz: authz}
+  end
+
+  private def unreadable_except_note : String
+    "; the `except:` list has a splat that cannot be read, so the action may be excepted; #{SETTING_LIFTED}"
+  end
+
+  # Whether the app's `callback` decides on a `self.class.<setting>` a class macro sets.
+  private def callback_reads_class_setting?(callback : String) : Bool
+    def_bodies(callback).any?(&.any? { |_, text| text.includes?("self.class.") })
   end
 
   # Whether `callback` returns before refusing anyone for `leaf`'s
@@ -970,7 +982,7 @@ class RubyAuthTagger < FrameworkTagger
         return {authz: desc, anonymous: nil} if current.matches?(pattern)
       end
       # `load_and_authorize(:group)`: an app helper whose body calls `authorize!`.
-      if body_indent && line_indent(lines[idx]) == body_indent && !current.matches?(CONDITION_MODIFIER) && !current.matches?(/\boptional:\s*true/)
+      if body_indent && line_indent(lines[idx]) == body_indent && !current.matches?(CONDITION_MODIFIER) && !current.matches?(/\boptional:\s*(?!false\b)\S/)
         if helper = called_names(current, locals).find { |name| authorizing_helper?(name, paths) }
           return {authz: "CanCanCan authorize! (via #{helper})", anonymous: nil}
         end
@@ -1016,7 +1028,7 @@ class RubyAuthTagger < FrameworkTagger
         off = body[0][1].scan(/(\w+):\s*false\b/).map(&.[1])
         body[1..].each do |indent, text|
           next if indent != body[1][0]
-          next if text.matches?(/\Areturn\b.*\s(?:if|unless)\s+(\w+)\s*&&/) && off.includes?(text.match(/\s(?:if|unless)\s+(\w+)\s*&&/).try(&.[1]))
+          next if off.includes?(text.match(/\Areturn\b.*\sif\s+(\w+)\s*&&/).try(&.[1]))
           break false if text.matches?(/\Areturn\b/)
           break true if !text.matches?(CONDITION_MODIFIER) && code_only(text).matches?(/\bauthorize!/)
         end == true

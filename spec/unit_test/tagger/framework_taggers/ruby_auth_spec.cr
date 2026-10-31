@@ -2094,7 +2094,7 @@ describe "RubyAuthTagger (routed controller chain)" do
       # Named by the expanded splat: only the setting can require a login.
       show_latest.tags.find! { |t| t.name == "auth" }.description.should contain("a setting can make it public")
       secret.tags.find! { |t| t.name == "auth" }.description.should contain("block_if_requires_login")
-      # A splat that cannot be read may list the action: no hard guard.
+      # A splat that cannot be read may list the action: the guard stays, with a note.
       other.tags.find! { |t| t.name == "auth" }.description.should contain("a setting can make it public")
     ensure
       FileUtils.rm_rf(tmpdir)
