@@ -36,6 +36,8 @@ module Noir
       complete = true
       extension = Regex.new("#{Regex.escape(receiver.lchop("::"))}\\s*(?:\\.(?:push|append|unshift|concat)\\(?|<<)\\s*([^\\n]*)")
       files.each do |file|
+        # ponytail: additions are looked for where apps register them (a plugin.rb, config/, initializers), not in every file.
+        next unless File.basename(file) == "plugin.rb" || file.includes?("/config/") || file.includes?("/initializers/")
         next if file.matches?(%r{/(?:spec|test)s?/})
         next unless (content = yield(file)) && content.includes?(receiver.lchop("::"))
         content.scan(extension) do |m|
