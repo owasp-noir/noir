@@ -14,6 +14,8 @@ expected_endpoints = [
   Endpoint.new("/v1/checkouts/custom/client/{client_secret}", "GET", [Param.new("client_secret", "", "path")]),
   # A router nothing includes keeps its own prefix.
   Endpoint.new("/standalone/ping", "GET"),
+  # A dead router including `items` adds no `/legacy/items/...`.
+  Endpoint.new("/legacy/ping", "GET"),
 ]
 
 FunctionalTester.new("fixtures/python/fastapi_unmounted_router_root/", {

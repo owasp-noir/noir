@@ -87,6 +87,9 @@ class FastAPIAuthTagger < FrameworkTagger
     @refusal_verdicts = Hash({String, String}, Bool?).new
     @instance_verdicts = Hash({String, String}, Bool?).new
     @alias_verdicts = Hash({String, String}, Bool).new
+    @configurable_keys = Set(String).new
+    @configurable = false
+    @import_names = Hash(String, Set(String)).new
     @class_sites = Hash({String, String}, {String, Int32}?).new
     @soft_auth = nil.as(String?)
     @include_calls = [] of IncludeCall
@@ -111,6 +114,8 @@ class FastAPIAuthTagger < FrameworkTagger
     @refusal_verdicts.clear
     @instance_verdicts.clear
     @alias_verdicts.clear
+    @configurable_keys.clear
+    @import_names.clear
     @class_sites.clear
     @include_calls.clear
     @includes_by_site = nil
@@ -214,7 +219,10 @@ class FastAPIAuthTagger < FrameworkTagger
   # and has a `return None`. nil: no definition, or nothing decisive.
   private def dependency_refuses?(callable : String, path : String, depth : Int32 = 0) : Bool?
     key = {callable, path}
-    return @refusal_verdicts[key] if @refusal_verdicts.has_key?(key)
+    if @refusal_verdicts.has_key?(key)
+      @configurable ||= @configurable_keys.includes?("dep\0#{callable}\0#{path}")
+      return @refusal_verdicts[key]
+    end
     return if depth > 4
     @refusal_verdicts[key] = nil # cycle guard
     module_name, _, name = callable.rpartition('.')
@@ -233,7 +241,7 @@ class FastAPIAuthTagger < FrameworkTagger
     end
     verdict = nil
     if site && start && (body = definition_block(site[0], start))
-      if body_refuses?(body, site[0], depth)
+      if body_refuses?(body, site[0], depth, def_env(body, site[0], nil, Env.new, path))
         verdict = true
       elsif !body.matches?(/^\s*raise\b/m) && body.matches?(/^\s*return\s+None\s*$/m) &&
             body.match(RETURN_ANNOTATION).try(&.[1].matches?(/\bNone\b|\bOptional\b/))
@@ -242,80 +250,486 @@ class FastAPIAuthTagger < FrameworkTagger
     elsif site && (statement = definition_block(site[0], /^#{Regex.escape(site[1])}\s*(?::[^=\n]+)?=\s*[\w.]+\s*\(/))
       verdict = instance_refuses?(statement, site[0], depth)
     end
+    @configurable_keys << "dep\0#{callable}\0#{path}" if @configurable
     @refusal_verdicts[key] = verdict
   end
 
-  # Whether a `def` (or `__call__`) body refuses the caller: a 401/403
-  # raise of its own, or a dependency it declares that refuses, through
-  # `Depends(...)` (a module-level dependency, or an instance built in the
-  # body: Polar's `OrgPolicyGuard` factory assigns `_authenticator =
-  # Authenticator(...)` and depends on it) or through the `Annotated`
-  # aliases its parameters, or a nested dependency's, are typed with.
-  private def body_refuses?(body : String, file : String, depth : Int32) : Bool
-    return true if refusing_raise?(body, file)
-    body.scan(DEPENDENCY_CALL).any? { |m| dependency_refuses?(m[2], file, depth + 1) == true || local_instance_refuses?(body, m[2], file, depth + 1) } ||
-      body.scan(ALIAS_ANNOTATION).any? { |m| alias_refuses?(m[1], file, depth + 1) }
+  # Whether a `def` body refuses the caller: a 401/403 raise of its own,
+  # or a dependency it declares that refuses (`dependency_refuses_in?`).
+  private def body_refuses?(body : String, file : String, depth : Int32, env : Env = Env.new) : Bool
+    refusing_raise?(body, file) || dependency_refuses_in?(body, file, depth, env)
   end
 
-  private def local_instance_refuses?(body : String, name : String, file : String, depth : Int32) : Bool
+  # Whether a dependency `body` declares refuses: a `Depends(...)` of a
+  # module-level dependency, of a call (`Depends(Authenticator(...))`,
+  # judged as the instance it builds), of an instance assigned in the body
+  # (Polar's `OrgPolicyGuard` factory depends on `_authenticator =
+  # Authenticator(...)`), or the `Annotated` aliases its parameters, or a
+  # nested dependency's, are typed with. `env` holds what the names in the
+  # body are bound to.
+  private def dependency_refuses_in?(body : String, file : String, depth : Int32, env : Env) : Bool
+    body.scan(DEPENDENCY_CALL).any? do |m|
+      call = m.post_match
+      if call.starts_with?('(')
+        instance_refuses?("_ = #{m[2]}#{call}", file, depth + 1, env) == true
+      else
+        local_instance_refuses?(body, m[2], file, depth + 1, env) || dependency_refuses?(m[2], file, depth + 1) == true
+      end
+    end || body.scan(ALIAS_ANNOTATION).any? { |m| alias_refuses?(m[1], file, depth + 1) }
+  end
+
+  private def local_instance_refuses?(body : String, name : String, file : String, depth : Int32, env : Env) : Bool
     return false if name.includes?('.') || !body.includes?(name)
     lines = body.lines
     idx = lines.index(&.matches?(/^\s+#{Regex.escape(name)}\s*=\s*[\w.]+\s*\(/)) || return false
-    instance_refuses?(joined_statement(lines, idx), file, depth) == true
+    instance_refuses?(joined_statement(lines, idx), file, depth, env) == true
   end
 
   private def alias_refuses?(name : String, path : String, depth : Int32) : Bool
     # Only a top-level verdict is kept: one cut short by `depth` is not.
     return judge_alias(name, path, depth) unless depth == 0
     key = {path, name}
-    return @alias_verdicts[key] if @alias_verdicts.has_key?(key)
+    if @alias_verdicts.has_key?(key)
+      @configurable ||= @configurable_keys.includes?("alias\0#{path}\0#{name}")
+      return @alias_verdicts[key]
+    end
     @alias_verdicts[key] = false # cycle guard
-    @alias_verdicts[key] = judge_alias(name, path, depth)
+    saved, @configurable = @configurable, false
+    verdict = @alias_verdicts[key] = judge_alias(name, path, depth)
+    @configurable_keys << "alias\0#{path}\0#{name}" if @configurable
+    @configurable ||= saved
+    verdict
   end
 
   private def judge_alias(name : String, path : String, depth : Int32) : Bool
     alias_path, callable = resolve_alias(name, path)
     return false unless callable
-    return true if dependency_refuses?(callable, alias_path, depth) == true
-    instance = @alias_instances[{alias_path, name.split('.').last}]?
-    !!instance && instance_refuses?(instance, alias_path, depth) == true
+    # `Depends(OrgGuard(allowed_subjects={Anonymous, User}))`: the call's
+    # arguments decide, not the factory at its defaults.
+    if instance = @alias_instances[{alias_path, name.split('.').last}]?
+      return instance_refuses?(instance, alias_path, depth) == true
+    end
+    dependency_refuses?(callable, alias_path, depth) == true
   end
 
   ALIAS_ANNOTATION = /:\s*([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)?)\s*(?=[,)=]|$)/m
   INSTANCE_CALL    = /=\s*([A-Za-z_][\w.]*)\s*\(/
-  # `if Anonymous in self.allowed_subjects:` heading a block that returns,
-  # or `if Anonymous not in self.allowed_subjects:` heading one that raises.
-  MEMBERSHIP_GATE = /^\s*(?:el)?if\s+([A-Za-z_]\w*)\s+(not\s+)?in\s+self\.([A-Za-z_]\w*)\s*:\s*\n\s*(return|raise)\b/m
+
+  # What the names a dependency body reads are bound to: a parameter to the
+  # value its call site passed (or its default), a local to the expression
+  # assigned to it. `UNBOUND` marks a value nothing here decides.
+  alias Env = Hash(String, String)
+  UNBOUND = "\u0000"
 
   # A dependency that is an instance (`_BenefitsRead = Authenticator(...)`),
-  # judged by its class's `__call__`, reached through a factory function's
-  # return annotation (`def Authenticator(...) -> _Authenticator`). It
-  # refuses when `__call__` raises a 401/403, unless the instance is built
-  # to let the caller in: Polar's `__call__` returns early `if Anonymous in
-  # self.allowed_subjects`, so `allowed_subjects={Anonymous, User}` is open.
-  # ponytail: only that membership test, passed as a keyword, is read.
-  private def instance_refuses?(statement : String, file : String, depth : Int32) : Bool?
+  # judged by its class's `__call__`, reached directly or through a factory
+  # function's return annotation (`def Authenticator(...) -> _Authenticator`),
+  # with the instance's arguments bound to the constructor's parameters. A
+  # factory that returns a nested dependency instead (`OrgPolicyGuard(...)`)
+  # is judged by its body under the call's arguments.
+  #
+  # true: it refuses an unidentified caller. The refusal must turn on the
+  # caller (a credential or subject that is absent: `if not token`,
+  # `if value is None`, `isinstance(subject, Anonymous)`, a failed decode),
+  # and every instance setting on its path must hold for this instance:
+  # `SubjectResolver(required=False)` never reaches `if self.required:
+  # raise`, and `Authenticator({Anonymous, User})` returns before Polar's
+  # `raise Unauthorized()`. A setting this scan cannot read (a constructor
+  # flag from config) still reports the guard, noted as one a setting can
+  # lift (`@configurable`). false: the class was read and refuses no
+  # unidentified caller (a rate limit's or maintenance switch's 403 refuses
+  # for another reason). nil: nothing decisive.
+  private def instance_refuses?(statement : String, file : String, depth : Int32, env : Env = Env.new) : Bool?
     return if depth > 4
-    key = {file, statement}
-    return @instance_verdicts[key] if @instance_verdicts.has_key?(key)
+    key = {file, env.empty? ? statement : "#{statement}\u0000#{env.to_a.sort.join('\u0001')}"}
+    flag = "inst\u0000#{key[0]}\u0000#{key[1]}"
+    if @instance_verdicts.has_key?(key)
+      @configurable ||= @configurable_keys.includes?(flag)
+      return @instance_verdicts[key]
+    end
     @instance_verdicts[key] = nil # cycle guard
-    @instance_verdicts[key] = judge_instance(statement, file, depth)
+    saved, @configurable = @configurable, false
+    verdict = @instance_verdicts[key] = judge_instance(statement, file, depth, env)
+    @configurable_keys << flag if @configurable
+    @configurable ||= saved
+    verdict
   end
 
-  private def judge_instance(statement : String, file : String, depth : Int32) : Bool?
-    callee = statement.match(INSTANCE_CALL).try(&.[1]) || return
-    klass = class_site(file, callee) || factory_class(file, callee)
+  private def judge_instance(statement : String, file : String, depth : Int32, env : Env) : Bool?
+    m = statement.match(INSTANCE_CALL) || return
+    callee = m[1]
+    args = call_arguments("(#{m.post_match}")
+    if klass = class_site(file, callee)
+      return judge_class(klass, bind_arguments(init_signature(klass), args, env, file, klass[0]), depth)
+    end
+    site = callable_site(file, callee) || return
+    block = definition_block(site[0], /^(?:async\s+)?def\s+#{Regex.escape(site[1])}\b/) || return
+    bound = bind_arguments(def_params(block), args, env, file, site[0])
+    if klass = factory_class(file, callee)
+      # The factory hands its parameters to the class by name.
+      return judge_class(klass, bound, depth)
+    end
     # A factory returning a nested dependency (`WebUserAuthorizer(scopes)`)
     # is judged by its body, which holds that dependency.
-    return dependency_refuses?(callee, file, depth + 1) unless klass
-    body = call_method(klass, 0) || return
-    return unless body_refuses?(body, klass[0], depth)
-    args = statement[(statement.index('(') || 0)..]
-    body.scan(MEMBERSHIP_GATE) do |m|
-      next unless m[2]?.nil? == (m[4] == "return")
-      return false if args.matches?(/\b#{Regex.escape(m[3])}\s*=\s*[\[{(][^\]})]*\b#{Regex.escape(m[1])}\b/)
+    return true if refusing_raise?(block, site[0])
+    dependency_refuses_in?(block, site[0], depth + 1, def_env(block, site[0], bound, env, file)) ? true : nil
+  end
+
+  # The value each parameter of a `def` holds: `bound` (a call's arguments)
+  # or its default, and each local the body assigns once.
+  private def def_env(block : String, file : String, bound : Env?, caller_env : Env, caller_file : String) : Env
+    env = bound || bind_arguments(def_params(block), [] of String, caller_env, caller_file, file)
+    block.each_line do |line|
+      if (assign = line.match(/^\s+([A-Za-z_]\w*)\s*(?::[^=\n]+)?=(?!=)\s*(.+)$/)) && !env.has_key?(assign[1])
+        env[assign[1]] = assign[2].strip
+      end
     end
-    true
+    env
+  end
+
+  private def callable_site(file : String, name : String) : {String, String}?
+    module_name, _, short = name.rpartition('.')
+    if module_name.empty?
+      python_definition_site(file, short)
+    elsif (symbol = python_imported_symbols(file)[module_name]?) && symbol[1].empty?
+      python_definition_site(symbol[0], short)
+    end
+  end
+
+  # The argument texts inside the parentheses `text` opens with.
+  private def call_arguments(text : String) : Array(String)
+    return [] of String unless text.starts_with?('(')
+    depth = 0
+    close = nil
+    text.each_char_with_index do |char, idx|
+      depth += 1 if char.in?('(', '[', '{')
+      depth -= 1 if char.in?(')', ']', '}')
+      if depth == 0
+        close = idx
+        break
+      end
+    end
+    inner = text[1...(close || text.size)]
+    Noir::TopLevelSplit.split(inner, ',', SPLIT_RULES).map(&.strip).reject(&.empty?)
+  end
+
+  # `{name, default}` for each parameter of the `def` that opens `block`,
+  # `self` and `*`/`**` markers dropped.
+  private def def_params(block : String) : Array({String, String?})
+    header = block[0, block.index(/\)\s*(?:->[^\n:]*)?:\s*$/m) || block.size]
+    args = call_arguments(header[(header.index('(') || 0)..] + ")")
+    args.compact_map do |arg|
+      next if arg == "*" || arg == "/" || arg.starts_with?("**")
+      name = arg.lstrip('*').match(/\A[A-Za-z_]\w*/).try(&.[0]) || next
+      next if name == "self" || name == "cls"
+      default = arg.match(/=(?!=)\s*(.+)\z/m).try(&.[1].strip)
+      {name, default}
+    end
+  end
+
+  private def init_signature(klass : {String, Int32}) : Array({String, String?})
+    method_body(klass, "__init__", 0).try { |body| def_params(body) } || [] of {String, String?}
+  end
+
+  # Each parameter bound to the value the call passes (evaluated where the
+  # call is written) or to its default (evaluated where it is declared).
+  private def bind_arguments(params : Array({String, String?}), args : Array(String), env : Env, file : String, callee_file : String) : Env
+    bound = Env.new
+    positional = 0
+    args.each do |arg|
+      next if arg.starts_with?('*')
+      if kw = arg.match(/\A([A-Za-z_]\w*)\s*=(?!=)\s*(.+)\z/m)
+        bound[kw[1]] = eval_expr(kw[2], env, file, 0) || UNBOUND
+      else
+        if param = params[positional]?
+          bound[param[0]] = eval_expr(arg, env, file, 0) || UNBOUND
+        end
+        positional += 1
+      end
+    end
+    params.each do |name, default|
+      next if bound.has_key?(name)
+      bound[name] = default.try { |text| eval_expr(text, Env.new, callee_file, 0) } || UNBOUND
+    end
+    bound
+  end
+
+  LITERAL = /\A(?:True|False|None|-?\d[\d_.]*|[rbuf]?(?:"[^"]*"|'[^']*'))\z/
+
+  # `expr` as a literal, when the scan can tell: a literal itself, a
+  # `set(...)` / `frozenset(...)` of one, `a or b`, a name bound in `env`, or
+  # a module-level constant (`PUBLIC = {Anonymous, User}`). nil otherwise.
+  private def eval_expr(expr : String, env : Env, file : String, depth : Int32) : String?
+    expr = expr.strip
+    return if depth > 8 || expr.empty? || expr == UNBOUND
+    if (parts = top_level_or(expr)).size > 1
+      value = nil
+      parts.each do |part|
+        value = eval_expr(part, env, file, depth + 1) || return
+        return value unless falsy?(value)
+      end
+      return value
+    end
+    if wrapped = expr.match(/\A(?:frozenset|set|tuple|list)\((.*)\)\z/m)
+      return wrapped[1].strip.empty? ? "()" : eval_expr(wrapped[1], env, file, depth + 1)
+    end
+    return expr if expr.matches?(LITERAL) || expr[0].in?('{', '[', '(')
+    return unless expr.matches?(/\A[A-Za-z_]\w*\z/)
+    if value = env[expr]?
+      return eval_expr(value, env, file, depth + 1)
+    end
+    site = python_definition_site(file, expr) || return
+    statement = definition_block(site[0], /^#{Regex.escape(site[1])}\s*(?::[^=\n]+)?=(?!=)/) || return
+    rhs = statement.partition(/(?<![=!<>])=(?!=)/)[2]
+    eval_expr(rhs, Env.new, site[0], depth + 1)
+  end
+
+  private def top_level_or(expr : String) : Array(String)
+    parts = [] of String
+    depth = 0
+    last = 0
+    i = 0
+    while i < expr.size
+      char = expr[i]
+      depth += 1 if char.in?('(', '[', '{')
+      depth -= 1 if char.in?(')', ']', '}')
+      if depth == 0 && expr[i, 4]? == " or "
+        parts << expr[last...i]
+        last = i + 4
+        i += 4
+        next
+      end
+      i += 1
+    end
+    parts << expr[last..]
+  end
+
+  private def falsy?(value : String) : Bool
+    value.in?("False", "None", "0", "\"\"", "''", "()", "[]", "{}")
+  end
+
+  # `__call__` judged for one instance, `bound` holding its constructor's
+  # arguments. See `instance_refuses?`.
+  private def judge_class(klass : {String, Int32}, bound : Env, depth : Int32) : Bool?
+    body = call_method(klass, 0) || return
+    attrs = instance_attrs(klass, bound)
+    lines = body.lines
+    caller_params = def_params(body).map(&.[0]).to_set
+    locals = Hash(String, String).new
+    lines.each { |line| line.match(/^\s+([A-Za-z_]\w*)\s*(?::[^=\n]+)?=(?!=)\s*(.+)$/).try { |a| locals[a[1]] ||= a[2] } }
+    marker = body.matches?(AUTHZ_FIELD) ? UNAUTHENTICATED_MARKER : REFUSAL_MARKER
+    judged = false
+    unread = false
+    refusal_sites(lines, klass[0], marker).each do |idx, inline|
+      judged = true
+      conds = governing_conditions(lines, idx)
+      conds << {inline, true} if inline
+      caller = conds.empty?
+      dead = false
+      unknown = false
+      conds.flat_map { |cond, positive| positive ? cond.split(/\s+and\s+/).map { |part| {part, true} } : [{cond, false}] }.each do |cond, positive|
+        if cond.matches?(SETTING_REF)
+          case setting_holds?(cond, positive, attrs)
+          when false then dead = true
+          when nil   then unknown = true
+          end
+        elsif caller_condition?(cond, caller_params, locals)
+          caller ||= !presence?(cond, positive)
+        else
+          unknown = true
+        end
+      end
+      next if dead || !caller
+      return true unless unknown
+      unread = true
+    end
+    if dependency_refuses_in?(body, klass[0], depth + 1, Env.new)
+      return true
+    end
+    if unread
+      @configurable = true
+      return true
+    end
+    judged ? false : nil
+  end
+
+  # `self.x = expr` assignments of the class's `__init__` (or a base's),
+  # evaluated for this instance.
+  private def instance_attrs(klass : {String, Int32}, bound : Env) : Hash(String, String?)
+    attrs = Hash(String, String?).new
+    if init = method_body(klass, "__init__", 0)
+      init.each_line { |line| line.match(/^\s+self\.([A-Za-z_]\w*)\s*(?::[^=\n]+)?=(?!=)\s*(.+)$/).try { |m| attrs[m[1]] ||= eval_expr(m[2], bound, klass[0], 0) } }
+    end
+    attrs
+  end
+
+  # `{line index, inline condition}` for each `raise` in a `__call__` body
+  # that refuses (see `refusing_raise?`); an `if cond: raise ...` on one
+  # line carries its condition.
+  private def refusal_sites(lines : Array(String), file : String, marker : Regex) : Array({Int32, String?})
+    sites = [] of {Int32, String?}
+    lines.each_with_index do |line, idx|
+      code = Analyzer::Python::Helper.strip_python_comment(line)
+      inline = code.match(/^\s*(?:el)?if\s+(.+?):\s*(raise\b.*)$/)
+      next unless inline || code.matches?(/^\s*raise\b/)
+      statement = inline ? inline[2] : code
+      cursor = idx
+      depth = bracket_delta(statement)
+      while depth > 0 && (cursor += 1) < lines.size
+        part = Analyzer::Python::Helper.strip_python_comment(lines[cursor])
+        depth += bracket_delta(part)
+        statement = "#{statement} #{part.strip}"
+      end
+      sites << {idx, inline.try(&.[1])} if refusal_statement?(statement, file, marker)
+    end
+    sites
+  end
+
+  private def refusal_statement?(code : String, file : String, marker : Regex) : Bool
+    return true if code.matches?(marker)
+    name = code.match(/^\s*raise\s+(\w+)\s*(?:from\b.*)?$/).try(&.[1]) || return false
+    site = python_definition_site(file, name) || return false
+    statement = definition_block(site[0], /^#{Regex.escape(site[1])}\s*(?::[^=\n]+)?=/) || return false
+    statement.matches?(marker)
+  end
+
+  # The conditions under which line `idx` of a body runs, each with the
+  # branch taken: the enclosing `if`/`elif` (true) or `else` (its chain's
+  # tests false), an enclosing `except` (`{"except", true}`), and earlier
+  # sibling `if`s whose block returns (false: the line is reached past them).
+  private def governing_conditions(lines : Array(String), idx : Int32) : Array({String, Bool})
+    conds = [] of {String, Bool}
+    threshold = lines[idx].size - lines[idx].lstrip.size
+    j = idx - 1
+    while j > 0
+      line = Analyzer::Python::Helper.strip_python_comment(lines[j]).rstrip
+      indent = line.size - line.lstrip.size
+      stripped = line.strip
+      if stripped.empty? || indent > threshold
+        j -= 1
+        next
+      end
+      break if stripped.matches?(/\A(?:async\s+)?def\b/)
+      if indent == threshold
+        if (sibling = stripped.match(/\A(?:if|elif)\s+(.+):\z/)) && block_returns?(lines, j, indent)
+          conds << {sibling[1], false}
+        end
+      else
+        if header = stripped.match(/\A(?:if|elif)\s+(.+):\z/)
+          conds << {header[1], true}
+        elsif stripped.starts_with?("else")
+          chain_tests(lines, j, indent).each { |test| conds << {test, false} }
+        elsif stripped.starts_with?("except")
+          conds << {"except", true}
+        end
+        threshold = indent
+      end
+      j -= 1
+    end
+    conds
+  end
+
+  private def block_returns?(lines : Array(String), header : Int32, indent : Int32) : Bool
+    ((header + 1)...lines.size).each do |k|
+      line = lines[k]
+      next if line.blank?
+      return false if line.size - line.lstrip.size <= indent
+      return true if line.lstrip.starts_with?("return")
+    end
+    false
+  end
+
+  # The `if`/`elif` tests of the chain an `else` at line `j` closes.
+  private def chain_tests(lines : Array(String), j : Int32, indent : Int32) : Array(String)
+    tests = [] of String
+    k = j - 1
+    while k > 0
+      line = lines[k]
+      k -= 1
+      next if line.blank? || line.size - line.lstrip.size > indent
+      break if line.size - line.lstrip.size < indent
+      header = line.strip.match(/\A(if|elif)\s+(.+):\z/) || break
+      tests << header[2]
+      break if header[1] == "if"
+    end
+    tests
+  end
+
+  SETTING_REF  = /\bself\.[A-Za-z_]\w*\b(?!\s*\()/
+  CALLER_TERMS = /\brequest\b|\b(?:token|credentials?|authorization|subject|principal|user|anonymous|session|api_?key|headers?|cookies?)\b|is_anonymous|Anonymous/i
+
+  # Whether `cond` reads the caller: a term naming a credential or subject,
+  # a `__call__` parameter (FastAPI injects each from the request), or a
+  # local assigned from one of those.
+  private def caller_condition?(cond : String, params : Set(String), locals : Hash(String, String)) : Bool
+    return true if cond == "except" || cond.matches?(CALLER_TERMS)
+    cond.scan(/(?<![\w.])[A-Za-z_]\w*/).any? do |word|
+      name = word[0]
+      params.includes?(name) || locals[name]?.try { |expr| expr.matches?(CALLER_TERMS) || expr.scan(/(?<![\w.])[A-Za-z_]\w*/).any? { |w| params.includes?(w[0]) } } || false
+    end
+  end
+
+  # Whether taking the `positive` branch of `cond` means the caller's
+  # credential or subject is there: `if token:` / `if user.is_banned:`
+  # holding, `is not None`, or a failed `not token` / `is None` test. A
+  # refusal there turns away someone who did identify (`403 if
+  # user.unavailable`), not an anonymous caller. A mismatch (`x_key !=
+  # KEY`), an `isinstance(subject, Anonymous)` or a failed decode is not.
+  private def presence?(cond : String, positive : Bool) : Bool
+    return false if cond == "except"
+    present = cond.matches?(/\bis\s+not\s+None\b|!=\s*None\b/) || cond.strip.matches?(/\A[A-Za-z_][\w.]*\z/)
+    absent = !present && cond.matches?(/\A\s*not\b|\bis\s+None\b|==\s*None\b|\bnot\s+in\b|is_anonymous|\bAnonymous\b/)
+    positive ? present : absent
+  end
+
+  # Whether the `positive` branch of `cond`, a test of instance settings, is
+  # taken for these attribute values: `X in self.attr`, `X not in
+  # self.attr`, `self.attr`, `not self.attr`. nil when not decidable.
+  private def setting_holds?(cond : String, positive : Bool, attrs : Hash(String, String?)) : Bool?
+    truth = if m = cond.match(/\A\s*([A-Za-z_]\w*)\s+(not\s+)?in\s+self\.([A-Za-z_]\w*)\s*\z/)
+              value = attrs[m[3]]? || return
+              value.scan(/(?<![\w.])[A-Za-z_]\w*/).any?(&.[0].==(m[1])) != !m[2]?.nil?
+            elsif m = cond.match(/\A\s*(not\s+)?self\.([A-Za-z_]\w*)\s*\z/)
+              value = attrs[m[2]]? || return
+              falsy?(value) == !m[1]?.nil?
+            else
+              return
+            end
+    truth == positive
+  end
+
+  private def setting_note(desc : String) : String
+    @configurable ? "#{desc} (a setting can make it public)" : desc
+  end
+
+  # The body of method `name` in the class at `site`, or of the nearest base
+  # defining one.
+  private def method_body(site : {String, Int32}, name : String, depth : Int32) : String?
+    return if depth > 4
+    lines = read_file_lines(site[0]) || return
+    header = lines[site[1]].match(CLASS_DEF) || return
+    class_indent = header[1].size
+    ((site[1] + 1)...lines.size).each do |idx|
+      line = lines[idx]
+      stripped = line.lstrip
+      next if stripped.empty? || stripped.starts_with?('#')
+      indent = line.size - stripped.size
+      break if indent <= class_indent
+      next unless stripped.matches?(/^(?:async\s+)?def\s+#{name}\b/)
+      body = [line]
+      lines[(idx + 1)..].each do |next_line|
+        break if !next_line.blank? && next_line.size - next_line.lstrip.size <= indent && !next_line.lstrip.starts_with?(')')
+        body << next_line
+      end
+      return body.join('\n')
+    end
+    class_bases(header[3]?).each do |base|
+      next unless base_site = class_site(site[0], base)
+      if found = method_body(base_site, name, depth + 1)
+        return found
+      end
+    end
+    nil
   end
 
   # The class a factory function `name` returns, by its return annotation.
@@ -335,31 +749,7 @@ class FastAPIAuthTagger < FrameworkTagger
   # The `__call__` body of the class at `site`, or of the nearest base
   # defining one.
   private def call_method(site : {String, Int32}, depth : Int32) : String?
-    return if depth > 4
-    lines = read_file_lines(site[0]) || return
-    header = lines[site[1]].match(CLASS_DEF) || return
-    class_indent = header[1].size
-    ((site[1] + 1)...lines.size).each do |idx|
-      line = lines[idx]
-      stripped = line.lstrip
-      next if stripped.empty? || stripped.starts_with?('#')
-      indent = line.size - stripped.size
-      break if indent <= class_indent
-      next unless stripped.matches?(/^(?:async\s+)?def\s+__call__\b/)
-      body = [line]
-      lines[(idx + 1)..].each do |next_line|
-        break if !next_line.blank? && next_line.size - next_line.lstrip.size <= indent && !next_line.lstrip.starts_with?(')')
-        body << next_line
-      end
-      return body.join('\n')
-    end
-    class_bases(header[3]?).each do |base|
-      next unless base_site = class_site(site[0], base)
-      if found = call_method(base_site, depth + 1)
-        return found
-      end
-    end
-    nil
+    method_body(site, "__call__", depth)
   end
 
   # The statement starting at `lines[idx]`, continued until its brackets close.
@@ -540,8 +930,24 @@ class FastAPIAuthTagger < FrameworkTagger
     if (target = python_imported_symbols(path)[name]?) && (callable = @file_aliases[target[0]]?.try(&.[target[1]]?))
       return {target[0], callable}
     end
+    # `from vendor_sdk.types import Caller` is not the project's `Caller`.
+    return {path, nil} if foreign_import?(path, name)
     {path, @dependency_aliases[name]?}
   end
+
+  # Whether `path` imports `name` from somewhere (a module the scan may not
+  # hold): then no same-named alias of another file is the one it uses.
+  private def foreign_import?(path : String, name : String) : Bool
+    return true if python_imported_symbols(path).has_key?(name)
+    imports = @import_names[path] ||= begin
+      names = Set(String).new
+      (read_file(path) || "").scan(IMPORT_FROM) { |m| m[1].gsub(/[()]/, " ").split(',').each { |part| names << part.strip.split(/\s+as\s+/).last.strip } }
+      names
+    end
+    imports.includes?(name)
+  end
+
+  IMPORT_FROM = /^\s*from\s+[\w.]+\s+import\s+(\([^)]*\)|[^\n]+)/m
 
   # `callable` (`x` or `deps.x`) resolved from `path`: the same file's
   # `def x`, else the module the file imports it from. When neither finds a
@@ -757,25 +1163,25 @@ class FastAPIAuthTagger < FrameworkTagger
     # whatever its name; one that admits anonymous callers is not, whatever
     # its name (`try_get_current_user` returning None).
     text.scan(DEPENDENCY_CALL) do |m|
-      case dependency_refuses?(m[2], path)
+      call = m.post_match
+      @configurable = false
+      # `Depends(Authenticator(allowed_subjects={User}))`: the instance the
+      # call builds, judged with its arguments.
+      verdict = call.starts_with?('(') ? instance_refuses?("_ = #{m[2]}#{call}", path, 0) : dependency_refuses?(m[2], path)
+      case verdict
       when true
-        return "FastAPI #{m[1]}(#{m[2]})"
+        return setting_note("FastAPI #{m[1]}(#{m[2]}#{"(...)" if call.starts_with?('(')})")
       when false
         @soft_auth ||= m[2] if auth_callable?(m[2])
         text = text.gsub(/#{Regex.escape(m[0])}\b/, "")
-      else
-        # `Depends(Authenticator(allowed_subjects={User}))`: the instance.
-        call = m.post_match
-        if call.starts_with?('(') && instance_refuses?("_ = #{m[2]}#{call}", path, 0) == true
-          return "FastAPI #{m[1]}(#{m[2]}(...))"
-        end
       end
     end
     # `auth_subject: auth.BenefitsRead`: an `Annotated` alias judged by its
     # dependency's definition.
     text.scan(ALIAS_ANNOTATION) do |m|
+      @configurable = false
       if alias_refuses?(m[1], path, 0)
-        return "FastAPI Depends(#{resolve_alias(m[1], path)[1]}) (#{m[1].split('.').last})"
+        return setting_note("FastAPI Depends(#{resolve_alias(m[1], path)[1]}) (#{m[1].split('.').last})")
       end
     end
     if factory = factory_dependency_desc(text, path)
@@ -790,6 +1196,7 @@ class FastAPIAuthTagger < FrameworkTagger
       return desc
     end
     text.scan(/:\s*(\w+)\b/) do |m|
+      next if foreign_import?(path, m[1])
       if desc = @auth_aliases[m[1]]?
         return "#{desc} (#{m[1]})"
       end
