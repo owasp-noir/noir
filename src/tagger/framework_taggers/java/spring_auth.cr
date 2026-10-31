@@ -103,7 +103,11 @@ class SpringAuthTagger < FrameworkTagger
   CHAIN_DECLARATION = /\b(?:SecurityFilterChain|SecurityWebFilterChain|WebSecurityConfigurerAdapter)\b|configure\s*\(\s*(?:final\s+)?(?:Server)?HttpSecurity/
   # A chain's authorization DSL: a chain that has one yet yields no rule
   # noir can read is a configuration it does not read.
-  AUTHORIZATION_DSL = /\b(?:authorizeHttpRequests|authorizeRequests|authorizeExchange)\b/
+  # A `SecurityConfigurer` bean (`http -> http.authorizeExchange(..)`): a
+  # chain assembled from configurers, with no chain method of its own.
+  SECURITY_CONFIGURER_LAMBDA = /\bhttp\s*->\s*http\s*\.\s*(?:authorizeExchange|authorizeHttpRequests|authorizeRequests)\b/
+  ACCESS_NOTE                = "; a custom authorization manager decides, and the roles or permissions it reads can admit anonymous callers"
+  AUTHORIZATION_DSL          = /\b(?:authorizeHttpRequests|authorizeRequests|authorizeExchange)\b/
   # Spring Security switched on without a chain of the app's own: its
   # default chain authenticates every request.
   ENABLE_SECURITY = /@Enable(?:Web|WebFlux|RSocket)Security\b/
@@ -227,7 +231,7 @@ class SpringAuthTagger < FrameworkTagger
           scan_component_packages(content, module_dir) if module_dir && (content.includes?("@SpringBootApplication") || content.includes?("@ComponentScan") || content.includes?("@Import"))
         end
 
-        next unless content.includes?("SecurityFilterChain") || content.includes?("HttpSecurity") || content.includes?("WebSecurityConfigurerAdapter")
+        next unless content.includes?("SecurityFilterChain") || content.includes?("HttpSecurity") || content.includes?("WebSecurityConfigurerAdapter") || content.matches?(SECURITY_CONFIGURER_LAMBDA)
         # A test class builds its own throwaway chain; it secures no served endpoint.
         next if test_source?(file)
 
@@ -1390,7 +1394,7 @@ class SpringAuthTagger < FrameworkTagger
       patterns.each do |url_pattern|
         description =
           if protected_rule
-            "Protected by Spring Security #{auth_type} via #{match[1]}(\"#{url_pattern}\")"
+            "Protected by Spring Security #{auth_type} via #{match[1]}(\"#{url_pattern}\")#{ACCESS_NOTE if auth_type == "access"}"
           elsif is_anonymous
             "Public by Spring Security anonymous via #{match[1]}(\"#{url_pattern}\")"
           else

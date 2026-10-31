@@ -3928,6 +3928,57 @@ describe "SpringAuthTagger (profile-bound and test chains)" do
     tags["GET /x"][0].should contain("admin run on its own has no such chain, only assembly, which bundles it")
   end
 
+  configurers = <<-JAVA
+    @Component
+    class AuthorizationExchangeConfigurers {
+        @Bean
+        @Order(0)
+        SecurityConfigurer api(RoleService roleService) {
+            return http -> http.authorizeExchange(spec -> spec.pathMatchers("/api/**", "/apis/**")
+                    .access(new RequestInfoAuthorizationManager(roleService)));
+        }
+
+        @Bean
+        @Order(200)
+        SecurityConfigurer pre() {
+            return http -> http.authorizeExchange(spec -> spec.pathMatchers("/apis/public/**")
+                    .permitAll()
+                    .pathMatchers("/console/**").authenticated());
+        }
+
+        @Bean
+        @Order
+        SecurityConfigurer rest() {
+            return http -> http.authorizeExchange(spec -> spec.anyExchange().permitAll());
+        }
+    }
+    JAVA
+
+  it "guards routes a SecurityConfigurer lambda sends to a custom authorization manager" do
+    tags = run_spring_security_config({"Configurers.java" => configurers}, ["GET /apis/g/v1/posts", "GET /apis/public/x", "GET /console/home", "GET /other"])
+    tags["GET /apis/g/v1/posts"].size.should eq(1)
+    tags["GET /apis/g/v1/posts"][0].should contain("Protected by Spring Security access via pathMatchers(\"/apis/**\")")
+    tags["GET /apis/g/v1/posts"][0].should contain("custom authorization manager decides")
+    tags["GET /apis/public/x"].should be_empty
+    tags["GET /console/home"].size.should eq(1)
+    tags["GET /other"].should be_empty
+  end
+
+  it "does not read a SecurityConfigurer declared in a test directory" do
+    root = File.tempname("spring_test_configurer")
+    path = File.join(root, "app/src/test/java/com/example/Configurers.java")
+    Dir.mkdir_p(File.dirname(path))
+    File.write(path, configurers)
+    CodeLocator.instance.clear_all
+    CodeLocator.instance.register_path(path)
+    options = create_test_options
+    options["base"] = YAML::Any.new(root)
+    endpoint = Endpoint.new("/apis/g/v1/posts", "GET")
+    SpringAuthTagger.new(options).perform([endpoint])
+    FileUtils.rm_rf(root)
+    endpoint.tags.select(&.name.==("auth")).should be_empty
+  end
+
   it "ignores a SecurityFilterChain built by a test class" do
     root = File.tempname("spring_test_chain")
     path = File.join(root, "app/src/test/java/com/example/ScenarioTest.java")
