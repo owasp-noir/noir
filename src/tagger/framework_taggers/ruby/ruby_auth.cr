@@ -1012,8 +1012,11 @@ class RubyAuthTagger < FrameworkTagger
       # An unconditional statement of the helper's own body.
       # Reached by every call: no `return` at or above that statement.
       def_bodies(name, defs).any? do |body|
+        # `optional: false` makes `return if optional && ...` a path callers opt into.
+        off = body[0][1].scan(/(\w+):\s*false\b/).map(&.[1])
         body[1..].each do |indent, text|
           next if indent != body[1][0]
+          next if text.matches?(/\Areturn\b.*\s(?:if|unless)\s+(\w+)\s*&&/) && off.includes?(text.match(/\s(?:if|unless)\s+(\w+)\s*&&/).try(&.[1]))
           break false if text.matches?(/\Areturn\b/)
           break true if !text.matches?(CONDITION_MODIFIER) && code_only(text).matches?(/\bauthorize!/)
         end == true

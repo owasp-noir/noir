@@ -1733,6 +1733,7 @@ describe "RubyAuthTagger (routed controller chain)" do
       "app/helpers/load_and_authorize.rb" => <<-RB,
         module LoadAndAuthorize
           def load_and_authorize(name, action = :show, optional: false)
+            return if optional && !params[:id]
             resource = ModelLocator.new(name, params).locate!
             current_user.ability.authorize! action, resource
             resource
