@@ -16,9 +16,13 @@ expected_endpoints = [
   Endpoint.new("/api/bare-items", "GET"),
   # modern: `withRouting(health: '/up')`
   Endpoint.new("/up", "GET"),
+  # aliased: a provider outside `*Provider.php`, `Facade::prefix('{tenant_id}')`,
+  # `config('api.prefix')` read from config/api.php.
+  Endpoint.new("/{tenant_id}/invoices", "GET", [Param.new("tenant_id", "", "path")]),
+  Endpoint.new("/v1/ping", "GET"),
 ]
 
 FunctionalTester.new("fixtures/php/laravel_route_wiring/", {
   :techs     => 2,
-  :endpoints => 8,
+  :endpoints => 10,
 }, expected_endpoints).perform_tests
