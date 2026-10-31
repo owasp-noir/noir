@@ -163,8 +163,14 @@ class RubyAuthTagger < FrameworkTagger
   # walked; its controller's callbacks still apply.
   private def guard_locations(endpoint : Endpoint) : Array({String, Int32})
     locations = [] of {String, Int32}
-    if (handler = endpoint.handler) && (path = handler.path) && (line = handler.line)
-      locations << {path, line}
+    if (handler = endpoint.handler) && (path = handler.path)
+      if line = handler.line
+        locations << {path, line}
+      elsif endpoint.details.technology == "ruby_rails" && path.ends_with?(".rb") && handler.name.includes?('#')
+        # An action with no `def` (`define_method` in a loop): the class
+        # body's callbacks still run for it. Line 0 marks "the whole class".
+        locations << {path, 0}
+      end
     end
     endpoint.details.code_paths.each do |path_info|
       if line = path_info.line
@@ -180,8 +186,8 @@ class RubyAuthTagger < FrameworkTagger
       next if lines.nil?
       # Skip stale/out-of-range line refs: a line beyond the content we
       # read would crash the lines[idx] walks below with IndexError.
-      next if line_num < 1 || line_num > lines.size
-      line_idx = line_num - 1
+      next if line_num < 0 || line_num > lines.size || lines.empty?
+      line_idx = line_num == 0 ? lines.size - 1 : line_num - 1
 
       authn_desc : String? = nil
 
@@ -192,7 +198,7 @@ class RubyAuthTagger < FrameworkTagger
       # The walk below starts over from every action, so it hops from flag
       # to flag rather than stepping past each unflagged line to the class.
       jumps = nearest_match_above(@flagged_line_jumps, path, flags) { |flag| flag != 0 }
-      action = extract_action_name(lines, line_idx)
+      action = line_num == 0 ? endpoint.handler.try(&.name.split('#', 2).last) : extract_action_name(lines, line_idx)
       # An action a concern or parent class defines runs with the routed
       # controller's chain alone: the defining file's own callbacks and
       # skips count only as far as that chain carries them.

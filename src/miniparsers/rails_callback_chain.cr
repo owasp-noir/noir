@@ -1,3 +1,5 @@
+require "./ruby_constant_list"
+
 module Noir
   # The `before_action` chain a Rails action runs. A controller's own class
   # body is only half of it: `before_action :authenticate_user!` usually sits
@@ -95,7 +97,7 @@ module Noir
     def self.statement(lines : Array(String), idx : Int32) : String
       text = uncomment(lines[idx])
       j = idx + 1
-      while (text.ends_with?(',') || open_brackets?(text)) && j < lines.size && j - idx <= 10
+      while (text.ends_with?(',') || open_brackets?(text)) && j < lines.size && j - idx <= 80
         text = "#{text} #{uncomment(lines[j])}"
         j += 1
       end
@@ -151,6 +153,29 @@ module Noir
     # callback lines. Lines inside a `def` are not class-body: the
     # `Authentication` concern's own `def allow_unauthenticated_access` wraps
     # a `skip_before_action` that runs only when a controller calls it.
+    # Resolves `Const.method` to the literal list the app defines it as
+    # (`Discourse.filters`); set by `build` over the files it was given.
+    property list_resolver : Proc(String, Noir::RubyConstantList::Result?)? = nil
+
+    LIST_TERM = /((?:::)?[A-Z]\w*(?:::[A-Z]\w*)*\.[a-z_]\w*)(?:\.map\s*\{\s*\|(\w+)\|\s*:?"([^"]*)"\s*\})?/
+
+    # Names in an `only:` / `except:` list that a constant spells out
+    # (`except: [:top, Discourse.anonymous_filters, Discourse.filters.map {
+    # |f| "#{f}_feed" }]`) written as the symbols they stand for, so the
+    # list can be read as a list. A term that does not resolve stays as is.
+    private def expand_lists(text : String) : String
+      return text unless (resolver = @list_resolver) && (text.includes?("only:") || text.includes?("except:"))
+      text.gsub(LIST_TERM) do |term, match|
+        next term unless list = resolver.call(match[1])
+        names = if template = match[3]?
+                  list.values.map { |value| template.gsub(/\#\{\s*#{Regex.escape(match[2])}\s*\}/, value) }
+                else
+                  list.values
+                end
+        names.join(", ") { |name| ":#{name}" }
+      end
+    end
+
     def add_file(path : String, lines : Array(String))
       stack = [] of {Klass, Int32}
       def_indent : Int32? = nil
@@ -163,7 +188,7 @@ module Noir
           if indent <= open_def && stripped == "end"
             def_indent = nil
           elsif (body = macro_body) && stripped.matches?(CALLBACK_LINE)
-            body << RailsCallbackChain.statement(lines, idx)
+            body << expand_lists(RailsCallbackChain.statement(lines, idx))
           end
           next
         end
@@ -189,11 +214,11 @@ module Noir
               param.try { |name| /(?<![\w@:])\*{0,2}#{name}\b/ }, macro_body)
           end
         elsif (top = stack.last?) && stripped.matches?(CALLBACK_LINE)
-          top[0].callbacks << RailsCallbackChain.statement(lines, idx)
+          top[0].callbacks << expand_lists(RailsCallbackChain.statement(lines, idx))
         elsif (top = stack.last?) && stripped.matches?(MACRO_CALL)
           # A class macro the app may define (`requires_login`): kept for
           # `apply_lines`, which expands it once every file is indexed.
-          top[0].callbacks << RailsCallbackChain.statement(lines, idx)
+          top[0].callbacks << expand_lists(RailsCallbackChain.statement(lines, idx))
         end
       end
     end
@@ -204,9 +229,16 @@ module Noir
     # A chain over the `controllers` files, plus the `lib/` modules they (and
     # the modules those pull in) include: a controller's concern kept outside
     # `app/controllers`. `others` are the rest of the scan's Ruby files.
-    def self.build(controllers : Enumerable(String), others : Enumerable(String), & : String -> Array(String)?) : RailsCallbackChain
+    def self.build(controllers : Enumerable(String), others : Enumerable(String), &block : String -> Array(String)?) : RailsCallbackChain
       chain = new
-      controllers.each { |path| yield(path).try { |lines| chain.add_file(path, lines) } }
+      cache = Hash(String, Noir::RubyConstantList::Result?).new
+      all_files = controllers.to_a + others.to_a
+      chain.list_resolver = ->(receiver : String) do
+        cache.put_if_absent(receiver) do
+          Noir::RubyConstantList.resolve(receiver, all_files) { |file| block.call(file).try(&.join("\n")) }
+        end
+      end
+      controllers.each { |path| block.call(path).try { |lines| chain.add_file(path, lines) } }
       added = Set(String).new
       4.times do
         suffixes = chain.missing_include_paths.map { |lib_path| "/#{lib_path}" }
@@ -216,7 +248,7 @@ module Noir
         break if found.empty?
         found.each do |path|
           added << path
-          yield(path).try { |lines| chain.add_file(path, lines) }
+          block.call(path).try { |lines| chain.add_file(path, lines) }
         end
       end
       chain

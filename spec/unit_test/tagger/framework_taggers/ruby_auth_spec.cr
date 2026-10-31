@@ -1893,4 +1893,77 @@ describe "RubyAuthTagger (routed controller chain)" do
       FileUtils.rm_rf(tmpdir)
     end
   end
+
+  # Discourse's ListController: its actions are `define_method`s in a loop
+  # (no `def`, so no line) and its `except:` list is spelled through a
+  # constant and runs past ten lines.
+  it "applies a class's callbacks to an action with no def, reading except lists spelled through a constant" do
+    CodeLocator.instance.clear_all
+    tmpdir = File.tempname("ruby_define_method_actions")
+    padding = (1..12).map { |i| "                  :pad_#{i}," }.join("\n")
+    files = {
+      "app/controllers/application_controller.rb" => <<-RB,
+        class ApplicationController < ActionController::Base
+          before_action :redirect_to_login_if_required
+
+          def redirect_to_login_if_required
+            if !current_user && SiteSetting.login_required?
+              ensure_logged_in
+            end
+          end
+
+          def ensure_logged_in
+            raise Discourse::NotLoggedIn.new if current_user.blank?
+          end
+        end
+        RB
+      "lib/discourse.rb" => <<-RB,
+        module Discourse
+          def self.anonymous_filters
+            @anonymous_filters ||= %i[latest hot]
+          end
+        end
+        RB
+      "app/controllers/list_controller.rb" => <<-RB,
+        class ListController < ApplicationController
+          before_action :ensure_logged_in,
+                        except: [
+        #{padding}
+                          :topics_by,
+                          Discourse.anonymous_filters,
+                          Discourse.anonymous_filters.map { |f| "\#{f}_feed" },
+                        ].flatten
+        end
+        RB
+    }
+    files.each do |name, body|
+      path = File.join(tmpdir, name)
+      Dir.mkdir_p(File.dirname(path))
+      File.write(path, body)
+      CodeLocator.instance.register_path(path)
+    end
+
+    begin
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(tmpdir)
+      controller = File.join(tmpdir, "app/controllers/list_controller.rb")
+      at = ->(action : String) do
+        endpoint = Endpoint.new("/#{action}", "GET", [] of Param, Details.new(PathInfo.new(File.join(tmpdir, "config/routes.rb"), 1)))
+        endpoint.details.technology = "ruby_rails"
+        endpoint.handler = Handler.new("list##{action}", controller)
+        endpoint
+      end
+      unread, latest, latest_feed, padded = at.call("unread"), at.call("latest"), at.call("latest_feed"), at.call("pad_12")
+      RubyAuthTagger.new(noir_options).perform([unread, latest, latest_feed, padded])
+
+      unread.tags.find! { |t| t.name == "auth" }.description.should contain("ensure_logged_in (app-defined, refuses callers without a credential)")
+      unread.tags.find! { |t| t.name == "auth" }.description.should_not contain("a setting can make it public")
+      # Named by the constant's list: only the site setting can require a login.
+      [latest, latest_feed, padded].each do |endpoint|
+        endpoint.tags.find! { |t| t.name == "auth" }.description.should contain("a setting can make it public")
+      end
+    ensure
+      FileUtils.rm_rf(tmpdir)
+    end
+  end
 end
