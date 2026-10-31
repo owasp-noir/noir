@@ -86,6 +86,7 @@ class FastAPIAuthTagger < FrameworkTagger
     @def_names = Hash(String, Set(String)).new
     @refusal_verdicts = Hash({String, String}, Bool?).new
     @instance_verdicts = Hash({String, String}, Bool?).new
+    @alias_verdicts = Hash({String, String}, Bool).new
     @class_sites = Hash({String, String}, {String, Int32}?).new
     @soft_auth = nil.as(String?)
     @include_calls = [] of IncludeCall
@@ -109,6 +110,7 @@ class FastAPIAuthTagger < FrameworkTagger
     @def_names.clear
     @refusal_verdicts.clear
     @instance_verdicts.clear
+    @alias_verdicts.clear
     @class_sites.clear
     @include_calls.clear
     @includes_by_site = nil
@@ -263,6 +265,15 @@ class FastAPIAuthTagger < FrameworkTagger
   end
 
   private def alias_refuses?(name : String, path : String, depth : Int32) : Bool
+    # Only a top-level verdict is kept: one cut short by `depth` is not.
+    return judge_alias(name, path, depth) unless depth == 0
+    key = {path, name}
+    return @alias_verdicts[key] if @alias_verdicts.has_key?(key)
+    @alias_verdicts[key] = false # cycle guard
+    @alias_verdicts[key] = judge_alias(name, path, depth)
+  end
+
+  private def judge_alias(name : String, path : String, depth : Int32) : Bool
     alias_path, callable = resolve_alias(name, path)
     return false unless callable
     return true if dependency_refuses?(callable, alias_path, depth) == true
