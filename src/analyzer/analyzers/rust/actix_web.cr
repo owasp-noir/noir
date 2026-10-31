@@ -243,7 +243,7 @@ module Analyzer::Rust
               attach_rust_callees(endpoint, context[:callees]) if include_callee
               endpoint.handler = context[:handler]
             else
-              endpoint.handler = macro_generated_handler(handler, path, source)
+              endpoint.handler = macro_generated_handler(handler, path, source) if entry.generated
             end
             result << endpoint
           end

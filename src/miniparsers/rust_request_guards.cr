@@ -248,7 +248,7 @@ module Noir::RustRequestGuards
     # (same width) and padded to its row so lines stay absolute.
     macros.each do |row, text|
       next unless text.includes?("fn ") && (arrow = text.index("=>"))
-      padded = "\n" * (row + text[0, arrow].count('\n')) + text[arrow + 2..].gsub('$', '_').sub(/\A\s*\{/, " ")
+      padded = "\n" * (row + text[0, arrow].count('\n')) + text[arrow + 2..].gsub('$', '_').sub(/\A(\s*)\{/) { |_, md| md[1] + " " }
       Noir::TreeSitter.parse_rust(padded) do |root|
         Noir::TreeSitter.walk(root) do |node|
           collect_param_types(node, padded, result) if Noir::TreeSitter.node_type(node) == "function_item"

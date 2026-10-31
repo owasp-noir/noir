@@ -44,4 +44,9 @@ describe Noir::RustRequestGuards do
     types = Noir::RustRequestGuards.handler_param_types(source)
     types[4]?.should eq ["GuardedData", "Path"]
   end
+
+  it "keeps lines absolute when the transcriber's brace is on its own line" do
+    source = "macro_rules! make {\n    ($attr:ident) =>\n    {\n        pub mod $attr {\n            pub async fn get(auth: GuardedData<P, D>) {}\n        }\n    };\n}\n"
+    Noir::RustRequestGuards.handler_param_types(source)[5]?.should eq ["GuardedData"]
+  end
 end
