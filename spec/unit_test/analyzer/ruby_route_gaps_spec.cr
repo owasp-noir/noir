@@ -687,15 +687,15 @@ describe "Ruby route gaps" do
           end
         end
         RUBY
-      "config/routes.rb" => <<-RUBY,
+      "config/routes.rb" => <<-'RUBY',
         Rails.application.routes.draw do
-          Discourse.filters.each { |filter| get "\#{filter}" => "list#\#{filter}" }
+          Discourse.filters.each { |filter| get "#{filter}" => "list##{filter}" }
           scope "/c" do
             Discourse.filters.each do |filter|
-              get "/l/\#{filter}" => "list#\#{filter}"
+              get "/l/#{filter}" => "list##{filter}"
             end
           end
-          Discourse.computed.each { |kind| get "k/\#{kind}" => "list#latest" }
+          Discourse.computed.each { |kind| get "k/#{kind}" => "list#latest" }
         end
         RUBY
     })
@@ -705,10 +705,16 @@ describe "Ruby route gaps" do
     find_ep(endpoints, "GET", "/c/l/top")
     # A computed list stays unresolved: the route is kept with its placeholder.
     endpoints.map(&.url).should contain("/k/{kind}")
-    endpoints.none? { |e| e.url.includes?("filter") }.should be_true
+    endpoints.none?(&.url.includes?("filter")).should be_true
   end
 
   it "unrolls only the list the named constant defines, and adds what plugins push onto it" do
+    routes = <<-'RUBY'
+      Rails.application.routes.draw do
+        Discourse.filters.each { |f| get "g/#{f}" => "list#show" }
+        Admin::Discourse.filters.each { |f| get "adm/#{f}" => "list#show" }
+      end
+      RUBY
     base = {
       "Gemfile"                                   => RAILS_GEMFILE,
       "app/controllers/application_controller.rb" => "class ApplicationController < ActionController::API\nend\n",
@@ -716,12 +722,7 @@ describe "Ruby route gaps" do
       "lib/discourse.rb"                          => "module Discourse\n  def self.filters\n    @filters ||= %i[latest top]\n  end\nend\n",
       # Another constant's method of the same name, and a lookalike class.
       "app/services/legacy/discourse.rb" => "class FakeDiscourse\n  def self.filters\n    %i[fake]\n  end\nend\n",
-      "config/routes.rb"                 => <<-RUBY,
-      Rails.application.routes.draw do
-        Discourse.filters.each { |f| get "g/\#{f}" => "list#show" }
-        Admin::Discourse.filters.each { |f| get "adm/\#{f}" => "list#show" }
-      end
-      RUBY
+      "config/routes.rb"                 => routes,
     }
     endpoints = scan_ruby_tree(base.merge({"plugins/voting/plugin.rb" => "Discourse.filters.push(:votes)\n"}))
     urls = endpoints.map(&.url)
