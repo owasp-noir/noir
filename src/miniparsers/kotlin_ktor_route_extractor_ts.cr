@@ -1104,7 +1104,22 @@ module Noir
       return false unless first
       return false unless Noir::TreeSitter.node_type(first) == "navigation_expression"
       chain = navigation_chain(first, source)
-      chain == ["call", "receive"] || chain == ["call", "receiveNullable"]
+      return false unless chain == ["call", "receive"] || chain == ["call", "receiveNullable"]
+      # `call.receive<Parameters>()` reads a form body, like
+      # `call.receiveParameters()`; it is not a typed JSON body.
+      !call_receives_parameters?(call, source)
+    end
+
+    # True for `call.receiveParameters()` and its long form
+    # `call.receive<Parameters>()`. Both read a form-encoded body.
+    private def call_receives_parameters?(call : LibTreeSitter::TSNode, source : String) : Bool
+      first = Noir::TreeSitter.first_named_child(call)
+      return false unless first
+      return false unless Noir::TreeSitter.node_type(first) == "navigation_expression"
+      chain = navigation_chain(first, source)
+      return true if chain == ["call", "receiveParameters"]
+      return false unless chain == ["call", "receive"] || chain == ["call", "receiveNullable"]
+      call_receive_type_argument(call, source) == "Parameters"
     end
 
     private def call_reads_request_body?(call : LibTreeSitter::TSNode, source : String) : Bool
@@ -1135,10 +1150,7 @@ module Noir
     private def receive_parameters_assignment?(node : LibTreeSitter::TSNode, source : String) : Bool
       Noir::TreeSitter.each_named_child(node) do |child|
         next unless Noir::TreeSitter.node_type(child) == "call_expression"
-        first = Noir::TreeSitter.first_named_child(child)
-        next unless first
-        next unless Noir::TreeSitter.node_type(first) == "navigation_expression"
-        return true if navigation_chain(first, source) == ["call", "receiveParameters"]
+        return true if call_receives_parameters?(child, source)
       end
       false
     end
