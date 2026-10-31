@@ -156,6 +156,7 @@ module Noir
     # Resolves `Const.method` to the literal list the app defines it as
     # (`Discourse.filters`); set by `build` over the files it was given.
     property list_resolver : Proc(String, Noir::RubyConstantList::Result?)? = nil
+    @splat_defs = Hash(String, String).new
 
     LIST_TERM = /((?:::)?[A-Z]\w*(?:::[A-Z]\w*)*\.[a-z_]\w*)(?:\.map\s*\{\s*\|(\w+)\|\s*:?"([^"]*)"\s*\})?/
 
@@ -165,18 +166,51 @@ module Noir
     # list can be read as a list. A term that does not resolve stays as is.
     private def expand_lists(text : String) : String
       return text unless (resolver = @list_resolver) && (text.includes?("only:") || text.includes?("except:"))
-      text.gsub(LIST_TERM) do |term, match|
-        next term unless list = resolver.call(match[1])
-        names = if template = match[3]?
-                  list.values.map { |value| template.gsub(/\#\{\s*#{Regex.escape(match[2])}\s*\}/, value) }
-                else
-                  list.values
-                end
-        names.join(", ") { |name| ":#{name}" }
+      expand = ->(source : String) do
+        source.gsub(LIST_TERM) do |term, match|
+          next term unless list = resolver.call(match[1])
+          names = if template = match[3]?
+                    list.values.map { |value| template.gsub(/\#\{\s*#{Regex.escape(match[2])}\s*\}/, value) }
+                  else
+                    list.values
+                  end
+          names.join(", ") { |name| ":#{name}" }
+        end
       end
+      # `*show_methods`: a class method of this file that answers such a list.
+      text = text.gsub(/\*(\w+)/) do |splat, match|
+        next splat unless body = @splat_defs[match[1]]?
+        expanded = expand.call(body)
+        expanded.matches?(LIST_TERM) ? splat : expanded
+      end
+      expand.call(text)
+    end
+
+    # The one-expression bodies of this file's `def self.name` methods.
+    private def splat_defs_of(lines : Array(String)) : Hash(String, String)
+      defs = Hash(String, String).new
+      lines.each_with_index do |line, idx|
+        next unless m = line.match(/^(\s*)def\s+self\.(\w+)\b/)
+        body = [] of String
+        ((idx + 1)...lines.size).each do |j|
+          break if lines[j].strip.empty? ? false : (lines[j].size - lines[j].lstrip.size) <= m[1].size
+          body << lines[j].strip unless lines[j].strip.empty?
+        end
+        defs[m[2]] = body.join(" ")
+      end
+      defs
+    end
+
+    # An `except:` that splats a method this reader cannot expand
+    # (`*show_methods`) may well list the action: the callback is not taken
+    # to run for it.
+    def self.maybe_excepted?(line : String, action : String?) : Bool
+      return false unless (m = line.match(EXCEPT_OPTION)) && line[m.end..].matches?(/\*\w/)
+      !(action && (callback_option(line, EXCEPT_OPTION) || [] of String).includes?(action))
     end
 
     def add_file(path : String, lines : Array(String))
+      @splat_defs = splat_defs_of(lines)
       stack = [] of {Klass, Int32}
       def_indent : Int32? = nil
       macro_body : Array(String)? = nil
@@ -376,7 +410,7 @@ module Noir
           # ponytail: a class instance variable is the routed class's own, so
           # only its body (depth 0) sets one; a `class_attribute` a parent
           # sets reads as unset.
-          resolution.settings << macro_name if depth == 0 && RailsCallbackChain.applies_to_action?(line, action)
+          resolution.settings << macro_name if depth == 0 && RailsCallbackChain.applies_to_action?(line, action) && !RailsCallbackChain.maybe_excepted?(line, action)
           args = line[macro_name.size..].strip.lchop('(').rchop(')').strip
           expanded = class_macro.body.map do |text|
             if args.empty?
@@ -389,7 +423,7 @@ module Noir
         elsif RailsCallbackChain.applies_to_action?(line, action)
           RailsCallbackChain.before_action_callbacks(line).each do |callback|
             # Registering a callback again replaces its options.
-            if RailsCallbackChain.conditional?(line)
+            if RailsCallbackChain.conditional?(line) || RailsCallbackChain.maybe_excepted?(line, action)
               resolution.conditional << callback
             else
               resolution.conditional.delete(callback)

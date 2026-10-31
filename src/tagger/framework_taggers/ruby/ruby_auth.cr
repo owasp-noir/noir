@@ -180,6 +180,22 @@ class RubyAuthTagger < FrameworkTagger
     locations.uniq!
   end
 
+  # The last line inside the controller class the handler (`multi#show`)
+  # names; the end of the file when the file does not declare it.
+  private def class_body_end(path : String, lines : Array(String), handler : String?) : Int32
+    fallback = lines.size - 1
+    return fallback unless handler
+    expected = "#{handler.split('#', 2).first.split('/').join("::", &.camelcase)}Controller"
+    rails_chain.classes.each do |(klass_path, idx), klass|
+      next unless klass_path == path && (klass.name == expected || klass.name.ends_with?("::#{expected}"))
+      indent = line_indent(lines[idx])
+      ((idx + 1)...lines.size).each do |j|
+        return j - 1 if line_indent(lines[j]) == indent && lines[j].strip.starts_with?("end")
+      end
+    end
+    fallback
+  end
+
   private def check_endpoint(endpoint : Endpoint)
     guard_locations(endpoint).each do |path, line_num|
       lines = read_file_lines(path)
@@ -187,7 +203,7 @@ class RubyAuthTagger < FrameworkTagger
       # Skip stale/out-of-range line refs: a line beyond the content we
       # read would crash the lines[idx] walks below with IndexError.
       next if line_num < 0 || line_num > lines.size || lines.empty?
-      line_idx = line_num == 0 ? lines.size - 1 : line_num - 1
+      line_idx = line_num == 0 ? class_body_end(path, lines, endpoint.handler.try(&.name)) : line_num - 1
 
       authn_desc : String? = nil
 
@@ -745,7 +761,7 @@ class RubyAuthTagger < FrameworkTagger
   # a call does not shadow it).
   private def called_names(text : String, locals : Set(String) = Set(String).new) : Array(String)
     names = code_only(text).gsub(/\bself&?\./, "").scan(BARE_CALL).map(&.[0]).reject { |name| locals.includes?(name) }
-    text.scan(/\b(?:public_|__)?send\s*\(?\s*[:"']([a-z_]\w*[!?]?)/) { |m| names << m[1] }
+    text.gsub(/\bself&?\./, "").scan(/(?<![.\w])(?:public_|__)?send\s*\(?\s*[:"']([a-z_]\w*[!?]?)/) { |m| names << m[1] }
     names
   end
 
@@ -994,7 +1010,14 @@ class RubyAuthTagger < FrameworkTagger
     return false if defs.empty?
     @authorizing_helpers.put_if_absent("#{name}|#{defs.join(',')}") do
       # An unconditional statement of the helper's own body.
-      def_bodies(name, defs).any? { |body| body[1..].any? { |indent, text| indent == body[1][0] && !text.matches?(CONDITION_MODIFIER) && code_only(text).matches?(/\bauthorize!/) } }
+      # Reached by every call: no `return` at or above that statement.
+      def_bodies(name, defs).any? do |body|
+        body[1..].each do |indent, text|
+          next if indent != body[1][0]
+          break false if text.matches?(/\Areturn\b/)
+          break true if !text.matches?(CONDITION_MODIFIER) && code_only(text).matches?(/\bauthorize!/)
+        end == true
+      end
     end
   end
 
