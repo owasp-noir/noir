@@ -326,14 +326,23 @@ describe Noir::CLI::Inspect do
       Noir::CLI::Inspect.query(endpoints, f, false).should be_empty
     end
 
-    it "tells guarded from unguarded, counting a missing context or a rate limiter as unguarded" do
+    it "keeps a comma inside --url, --path and --handler instead of splitting it" do
+      f = Noir::CLI::QueryCommand.parse_filters(["--url", "/a;x=1,2/b", "--path=src/a,b.go", "--handler", "h,i"]).filters
+      {f.url, f.path, f.handler}.should eq({"/a;x=1,2/b", "src/a,b.go", "h,i"})
+    end
+
+    it "tells guarded from unguarded, counting a missing context, a rate limiter or a CSRF check as unguarded" do
       limited = endpoint("POST", "/2fa", "src/2fa.go", 1)
       ctx = AIContext.new
       ctx.push_guard(AIContextEntry.new("rate_limit_guard", "rateLimit"))
       limited.ai_context = ctx
-      all = endpoints + [limited]
+      csrf = endpoint("POST", "/form", "src/form.go", 1)
+      ctx = AIContext.new
+      ctx.push_guard(AIContextEntry.new("csrf_guard", "csrf_token"))
+      csrf.ai_context = ctx
+      all = endpoints + [limited, csrf]
       f = Noir::CLI::QueryCommand.parse_filters(["--no-guard"]).filters
-      Noir::CLI::Inspect.query(all, f, false).map(&.url).should eq(["/api/v1/items", "/health", "/2fa"])
+      Noir::CLI::Inspect.query(all, f, false).map(&.url).should eq(["/api/v1/items", "/health", "/2fa", "/form"])
       f = Noir::CLI::QueryCommand.parse_filters(["--guard"]).filters
       Noir::CLI::Inspect.query(all, f, false).map(&.url).should eq(["/admin/users"])
       Noir::CLI::QueryCommand.parse_filters(["--guard", "--no-guard"]).errors.should eq(["--guard and --no-guard are exclusive"])
@@ -451,6 +460,23 @@ describe Noir::CLI::TraceCommand do
 
     Noir::CLI::TraceCommand.parse_target(["./app"])[0].should be_nil
     Noir::CLI::TraceCommand.parse_target(["GET"])[0].should be_nil
+  end
+
+  it "is a usage error, not a crash, for a method with no path or an unknown method" do
+    Noir::CLI::TraceCommand.parse_target(["GET "])[0].should be_nil
+    Noir::CLI::TraceCommand.parse_target(["FOO /x"])[0].should be_nil
+    target = Noir::CLI::TraceCommand.parse_target(["  get   /x "])[0].not_nil!
+    {target.method, target.path}.should eq({"GET", "/x"})
+  end
+
+  it "reads the request the way a router does" do
+    eps = [endpoint("GET", "/été/{id}"), endpoint("GET", "/a/b/{id}")]
+    trace = ->(req : String) { Noir::CLI::Inspect.trace(eps, "GET", req).map(&.endpoint.url) }
+    trace.call("/%C3%A9t%C3%A9/7").should eq(["/été/{id}"])
+    trace.call("a//b/7?x=1#f").should eq(["/a/b/{id}"])
+    Noir::CLI::Inspect.request_target("/a%2Fb/%7Euser").should eq("/a%2Fb/~user")
+    Noir::CLI::Inspect.request_target("cli://tool/run").should eq("cli://tool/run")
+    Noir::CLI::Inspect.request_target("/bad%zz").should eq("/bad%zz")
   end
 end
 
