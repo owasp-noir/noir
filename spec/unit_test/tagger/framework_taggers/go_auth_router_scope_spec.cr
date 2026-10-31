@@ -253,6 +253,43 @@ describe "GoAuthTagger (router identity of .Use guards)" do
 
   # `secure(a)` guards group `a`; `pub` is handed a group that is, or may
   # be, that one.
+  # Fiber runs a group's middleware for every route under its path: the
+  # `/api` group's auth also covers the separately built `/api/public`.
+  it "does not separate sibling groups by identity on fiber" do
+    src = <<-GO
+      package main
+
+      import "github.com/gofiber/fiber/v2"
+
+      func auth(c *fiber.Ctx) error {
+      \tif c.Get("Authorization") == "" {
+      \t\treturn c.SendStatus(fiber.StatusUnauthorized)
+      \t}
+      \treturn c.Next()
+      }
+
+      func main() {
+      \tapp := fiber.New()
+      \ta := app.Group("/api")
+      \tsecure(a)
+      \tb := app.Group("/api/public")
+      \tpub(b)
+      }
+
+      func secure(a fiber.Router) {
+      \ta.Use(auth)
+      \ta.Get("/me", h)
+      }
+
+      func pub(a fiber.Router) {
+      \ta.Get("/items", h)
+      }
+      GO
+    result = router_scope_scan({"go.mod" => "module f\n", "main.go" => src},
+      [{"GET", "/api/public/items", "main.go", %("/items")}], "go_fiber")
+    guarded?(result["GET /api/public/items"]).should be_true
+  end
+
   it "keeps a sibling helper guarded unless its group is provably another one" do
     helpers = echo_helpers.split("func RegisterRoutes").first + <<-GO
       func secure(a *echo.Group) {
@@ -278,6 +315,9 @@ describe "GoAuthTagger (router identity of .Use guards)" do
     # A second caller in another file of the package.
     other = "package routes\n\nfunc Admin(e *echo.Echo) {\n\tg := e.Group(\"/admin\")\n\tsecure(g)\n\tpub(g)\n}\n"
     scan.call("func R(e *echo.Echo) {\n\ta := e.Group(\"/api\")\n\tsecure(a)\n\tp := e.Group(\"/open\")\n\tpub(p)\n}\n", {"admin.go" => other}).should be_true
+    # A second caller on one line, and the helper handed on as a value.
+    scan.call("func R(e *echo.Echo) {\n\ta := e.Group(\"/api\")\n\tsecure(a)\n\tp := e.Group(\"/open\")\n\tpub(p)\n\textra(a)\n}\n\nfunc extra(g *echo.Group) { pub(g) }\n", {} of String => String).should be_true
+    scan.call("func R(e *echo.Echo) {\n\ta := e.Group(\"/api\")\n\tsecure(a)\n\tp := e.Group(\"/open\")\n\tpub(p)\n\tapply(a, pub)\n}\n", {} of String => String).should be_true
     # Two groups the one caller built side by side: provably different.
     scan.call("func R(e *echo.Echo) {\n\ta := e.Group(\"/api\")\n\tsecure(a)\n\tp := e.Group(\"/open\")\n\tpub(p)\n}\n", {} of String => String).should be_false
   end

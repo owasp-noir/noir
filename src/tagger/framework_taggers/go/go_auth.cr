@@ -2411,7 +2411,11 @@ class GoAuthTagger < FrameworkTagger
         start = function_start(lines, line)
         helper = start < 0 ? nil : lines[start].match(FUNC_NAME).try(&.[1])
         calls = helper ? owner_uses(owner, owner_lines, helper, File.dirname(path_info.path)) : [] of Int32
-        next true if calls.empty? && sibling_parameters?(owner, owner_lines, owner_chain, path_info.path, lines, start, chain)
+        # Fiber matches group middleware by path prefix on the app's stack
+        # (`app.Group("/api").Use(mw)` also runs for a sibling
+        # `app.Group("/api/public")`), so group identity says nothing there.
+        next true if calls.empty? && !PREFIX_MATCHED_MIDDLEWARE.includes?(endpoint.details.technology) &&
+                     sibling_parameters?(owner, owner_lines, owner_chain, path_info.path, lines, start, chain)
         calls.empty? ? local && owner_local : ordered && calls.all? { |row| row < use_row }
       end
     end
@@ -2421,6 +2425,10 @@ class GoAuthTagger < FrameworkTagger
   # A one-line signature: the function name and its parameter list.
   FUNC_SIGNATURE = /\Afunc\s*(?:\([^)]*\)\s*)?(\w+)\s*\(([^)]*)\)/
   IDENTIFIER     = /\A\w+\z/
+
+  # Routers whose group middleware runs for every route under the group's
+  # path, whatever group registered it.
+  PREFIX_MATCHED_MIDDLEWARE = {"go_fiber"}
 
   # Whether the owner's router and the route's router are parameters of two
   # different helpers that every caller hands two independent groups:
@@ -2489,23 +2497,34 @@ class GoAuthTagger < FrameworkTagger
   end
 
   # `{file, caller's func row, argument, 1-based call row}` for each plain
-  # call `fn(...)` in `file`; nil when one of them passes something other
-  # than an identifier at `index`.
+  # call `fn(...)` in `file`, a one-line `func extra(g) { fn(g) }` included;
+  # nil when one passes something other than an identifier at `index`, or
+  # `fn` is used other than called or declared (`apply(a, fn)` hands the
+  # helper on as a value, to be called with who knows what).
   private def call_arguments(file : String, fn : String, index : Int32) : Array({String, Int32, String, Int32})?
     @call_arguments.put_if_absent({file, fn, index}) do
       lines = read_file_lines(file) || next [] of {String, Int32, String, Int32}
-      call = /(?<![\w.])#{Regex.escape(fn)}\s*\(/
+      mention = /(?<![\w.])#{Regex.escape(fn)}\b/
       calls = [] of {String, Int32, String, Int32}
       unresolved = false
       lines.each_with_index do |line, row|
-        next if line.starts_with?("func") || !line.includes?(fn)
+        next unless line.includes?(fn)
         code = code_only(line)
-        m = code.match(call) || next
-        arg = call_args(code[m.end..])[index]?.try(&.strip)
-        if arg && arg.matches?(IDENTIFIER)
-          calls << {file, function_start(lines, row + 1), arg, row + 1}
-        else
-          unresolved = true
+        code.scan(mention) do |m|
+          head = code[0, m.begin(0)]
+          rest = code[m.end(0)..]
+          # The declaration itself: `func fn(` or `func (r *T) fn(`.
+          next if head.matches?(/(?:\A|\s)func\s+(?:\([^)]*\)\s*)?\z/)
+          unless call = rest.match(/\A\s*(?:\[[^\]]*\]\s*)?\(/)
+            unresolved = true
+            next
+          end
+          arg = call_args(rest[call.end(0)..])[index]?.try(&.strip)
+          if arg && arg.matches?(IDENTIFIER)
+            calls << {file, function_start(lines, row + 1), arg, row + 1}
+          else
+            unresolved = true
+          end
         end
       end
       unresolved ? nil : calls
