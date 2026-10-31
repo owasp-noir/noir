@@ -514,7 +514,10 @@ class RubyAuthTagger < FrameworkTagger
         parts = deny_parts(conditions)
         next if parts.any? { |c, when_true| credential_present?(c, when_true, Hash(String, String).new, [] of String) }
         parts.each do |c, when_true|
-          return c[ROLE_CHECK].lchop('.') if c.matches?(ROLE_CHECK) && c.matches?(NEGATED) == when_true
+          next unless c.matches?(ROLE_CHECK) && c.matches?(NEGATED) == when_true
+          # A deny that also waits on an app setting is one the setting can switch off.
+          gated = parts.any? { |other, _| other.split(/\|\||&&/).any? { |term| app_setting?(term.strip.lstrip('(').strip) } }
+          return "#{c[ROLE_CHECK].lchop('.')}#{gated ? "; an app setting decides; #{SETTING_LIFTED}" : ""}"
         end
       end
     end
@@ -550,7 +553,7 @@ class RubyAuthTagger < FrameworkTagger
     @rejecting_defs[name] = def_bodies(name).any? do |body|
       body.each_with_index.any? do |(_, text), i|
         rejects = text.matches?(CALLBACK_REJECTS) || (top && text.matches?(/\bsuper\b/) && library_guard_rejects?(name)) ||
-                  code_only(text).scan(BARE_CALL).any? { |m| rails_chain.defs.has_key?(m[0]) && body_rejects?(m[0], visited) }
+                  called_names(text).any? { |m| rails_chain.defs.has_key?(m) && body_rejects?(m, visited) }
         # `return nil if request.headers["Api-Key"].blank?` above a `raise`
         # lets a caller who sent no credential through: the raise refuses a
         # bad one, not an anonymous caller.
@@ -618,18 +621,21 @@ class RubyAuthTagger < FrameworkTagger
         # Calls only: a word in a string (`"one_time_password"`), after a
         # receiver (`Set.new`) or a local this body assigns (`client =
         # Client.find_by(...)`) is not a call of an app method of that name.
-        calls = code_only(text).scan(BARE_CALL).reject { |m| assigns.has_key?(m[0]) }
-        strict = text.matches?(DENY_RESPONSE) || calls.any? { |m| always_denies?(m[0]) } ||
-                 calls.any? { |m| m[0] != name && rails_chain.defs.has_key?(m[0]) && denies_anonymous?(m[0], ivars, paths, settings, visited) }
+        locals = Set(String).new
+        body[0..i].each { |_, earlier| (m = earlier.match(/^(@?\w+)\s*\|{0,2}=(?!=)/)) && locals << m[1] }
+        calls = called_names(text, locals)
+        strict = text.matches?(DENY_RESPONSE) || calls.any? { |m| always_denies?(m) } ||
+                 calls.any? { |m| m != name && rails_chain.defs.has_key?(m) && denies_anonymous?(m, ivars, paths, settings, visited) }
         next unless strict || text.matches?(SOFT_DENY)
         next if credential_gated?(body, i) || text.matches?(CREDENTIAL_PRESENT_MODIFIER)
         next unless conditions = deny_conditions(body, i)
-        next unless parts = class_settings(deny_parts(conditions), settings)
+        raw_parts = deny_parts(conditions)
+        next unless parts = class_settings(raw_parts, settings)
         # `check = if arg[:except] ... !except.include?(action_name.to_sym)
         # ... end` / `ensure_logged_in if check`: a macro's own only/except
         # answer for this action, which the chain already settled when it
         # reported the macro in `settings`.
-        parts = parts.reject { |c, _| action_gate_local?(body, c) } unless settings.empty?
+        parts = parts.reject { |c, _| action_gate_local?(body, c) } if !settings.empty? && raw_parts.any?(&.[0].matches?(CLASS_SETTING))
         next if parts.any? { |c, when_true| credential_present?(c, when_true, assigns, ivars) }
         next unless (strict && parts.empty?) || parts.any? { |c, when_true| credential_absent?(c, when_true, assigns, ivars) }
         chosen = parts.select { |c, _| c.matches?(PARAMS_READ) && !credential_condition?(c, assigns, ivars) }
@@ -725,7 +731,18 @@ class RubyAuthTagger < FrameworkTagger
   end
 
   # A call with no receiver: `require_login`, not `cookies.delete`.
-  BARE_CALL = /(?<![.:@\w])[a-z_]\w*[!?]?/
+  BARE_CALL = /(?<![.:@\w])[a-z_]\w*[!?]?(?![\w!?]|:(?!:))/
+
+  # The app methods `text` calls: receiver-less calls (`self.x` and `self&.x`
+  # are receiver-less too) and the name `send` / `public_send` is handed,
+  # minus `locals`, the names assigned before this line (an assignment after
+  # a call does not shadow it).
+  private def called_names(text : String, locals : Set(String) = Set(String).new) : Array(String)
+    names = code_only(text).gsub(/\bself&?\./, "").scan(BARE_CALL).map(&.[0]).reject { |name| locals.includes?(name) }
+    text.scan(/\b(?:public_|__)?send\s*\(?\s*[:"']([a-z_]\w*[!?]?)/) { |m| names << m[1] }
+    names
+  end
+
   # A redirect, a `raise` (an app's `rescue_from` answers it, Discourse's
   # `raise Discourse::NotLoggedIn`), or a 4xx answer other than 401/403,
   # from a callback.
@@ -895,8 +912,23 @@ class RubyAuthTagger < FrameworkTagger
     end_idx = [action_line + 20, lines.size - 1].min
     anonymous : String? = nil
 
+    # The action's own statements sit at the indent of its first body line;
+    # a helper call under an `if` or a block does not always run.
+    body_indent : Int32? = nil
+    ((action_line + 1)..end_idx).each do |k|
+      next if lines[k].strip.empty? || lines[k].strip.starts_with?('#')
+      body_indent = line_indent(lines[k])
+      break
+    end
+    locals = Set(String).new
+    open_quote : Char? = nil # a string literal continuing onto the next line
+
     while idx <= end_idx
-      current = code_only(lines[idx].strip)
+      raw = lines[idx].strip
+      in_string = !open_quote.nil?
+      open_quote = string_open_at_end(raw, open_quote)
+      current = in_string ? "" : code_only(raw)
+      (m = current.match(/^(@?\w+)\s*\|{0,2}=(?!=)/)) && locals << m[1]
       # Stop at next method definition
       break if current.starts_with?("def ") && idx > action_line
 
@@ -916,9 +948,9 @@ class RubyAuthTagger < FrameworkTagger
         return {authz: desc, anonymous: nil} if current.matches?(pattern)
       end
       # `load_and_authorize(:group)`: an app helper whose body calls `authorize!`.
-      unless current.matches?(CONDITION_MODIFIER) || current.matches?(/\boptional:\s*true/)
-        if helper = current.scan(BARE_CALL).find { |m| authorizing_helper?(m[0], paths) }
-          return {authz: "CanCanCan authorize! (via #{helper[0]})", anonymous: nil}
+      if body_indent && line_indent(lines[idx]) == body_indent && !current.matches?(CONDITION_MODIFIER) && !current.matches?(/\boptional:\s*true/)
+        if helper = called_names(current, locals).find { |name| authorizing_helper?(name, paths) }
+          return {authz: "CanCanCan authorize! (via #{helper})", anonymous: nil}
         end
       end
 
@@ -928,6 +960,26 @@ class RubyAuthTagger < FrameworkTagger
     {authz: nil, anonymous: anonymous}
   end
 
+  # The quote still open after `line` (a string literal that runs onto the
+  # next line), given the one open before it.
+  private def string_open_at_end(line : String, open : Char?) : Char?
+    escaped = false
+    line.each_char do |c|
+      if escaped
+        escaped = false
+      elsif c == '\\'
+        escaped = true
+      elsif open
+        open = nil if c == open
+      elsif c == '"' || c == '\''
+        open = c
+      elsif c == '#'
+        break
+      end
+    end
+    open
+  end
+
   # Whether the app method `name`, as the routed controller's ancestry
   # (`paths`) defines it, calls CanCan's `authorize!` in its own body.
   private def authorizing_helper?(name : String, paths : Array(String)) : Bool
@@ -935,7 +987,8 @@ class RubyAuthTagger < FrameworkTagger
     defs = rails_chain.defs[name].select { |path, _| paths.includes?(path) }
     return false if defs.empty?
     @authorizing_helpers.put_if_absent("#{name}|#{defs.join(',')}") do
-      def_bodies(name, defs).any?(&.any? { |_, text| code_only(text).matches?(/\bauthorize!/) })
+      # An unconditional statement of the helper's own body.
+      def_bodies(name, defs).any? { |body| body[1..].any? { |indent, text| indent == body[1][0] && !text.matches?(CONDITION_MODIFIER) && code_only(text).matches?(/\bauthorize!/) } }
     end
   end
 
