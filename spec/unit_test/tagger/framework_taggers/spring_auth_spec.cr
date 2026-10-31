@@ -3986,13 +3986,15 @@ describe "SpringAuthTagger (profile-bound and test chains)" do
                           .map(TwoFactorAuthentication.class::isInstance)
                           .map(AuthorizationDecision::new)
                           .switchIfEmpty(Mono.fromSupplier(() -> new AuthorizationDecision(false))));
+                  spec.pathMatchers("/deny1/**").access((auth, ctx) -> auth.filter(a -> !a.isAuthenticated()).map(a -> new AuthorizationDecision(false)));
+                  spec.pathMatchers("/deny2/**").access((auth, ctx) -> auth.map(a -> new AuthorizationDecision(a.isAuthenticated() && !trust.isAuthenticated(other))));
                   spec.pathMatchers("/admin/**").access(new Manager());
                   spec.pathMatchers("/guest/**").access((authentication, context) -> authentication.map(a -> resolver.isAnonymous(a)).map(AuthorizationDecision::new));
               });
           }
       }
       JAVA
-    tags = run_spring_security_config({"C.java" => source}, ["GET /login", "GET /signup", "GET /logout", "GET /challenges/totp", "GET /admin/x", "GET /guest/x"])
+    tags = run_spring_security_config({"C.java" => source}, ["GET /login", "GET /signup", "GET /logout", "GET /challenges/totp", "GET /admin/x", "GET /guest/x", "GET /deny1/x", "GET /deny2/x"])
     tags["GET /login"].should be_empty
     tags["GET /signup"].should be_empty
     tags["GET /guest/x"].should be_empty
@@ -4000,6 +4002,8 @@ describe "SpringAuthTagger (profile-bound and test chains)" do
     tags["GET /logout"][0].should_not contain("custom authorization manager")
     tags["GET /challenges/totp"].size.should eq(1)
     tags["GET /admin/x"][0].should contain("custom authorization manager decides")
+    tags["GET /deny1/x"].size.should eq(1)
+    tags["GET /deny2/x"].size.should eq(1)
   end
 
   it "does not read a SecurityConfigurer declared in a test directory" do

@@ -109,6 +109,7 @@ class SpringAuthTagger < FrameworkTagger
   ACCESS_NEG_AUTH            = /!\s*[\w$.]*\b(?:isAuthenticated|isFullyAuthenticated)\s*\(/
   ACCESS_NEG_ANON            = /!\s*[\w$.]*\bisAnonymous\s*\(/
   ACCESS_ANON                = /\bisAnonymous\s*\(/
+  ACCESS_DECISION_TEST       = /\.map\(\s*\(?\w+\)?\s*->\s*!?\s*[\w$.]*\b\w+\s*\(\s*\w+\s*\)\s*\)|new\s+AuthorizationDecision\s*\(\s*!?\s*[\w$.]*\b\w+\s*\(/
   ACCESS_AUTH                = /\b(?:isAuthenticated|isFullyAuthenticated)\b/
   ACCESS_TYPE_TEST           = /\bisInstance\b|\binstanceof\b/
   ACCESS_NOTE                = "; a custom authorization manager decides, and the roles or permissions it reads can admit anonymous callers"
@@ -929,9 +930,13 @@ class SpringAuthTagger < FrameworkTagger
   # test refusing on empty), nil when it is not a lambda or not readable.
   private def access_lambda(arg : String) : Symbol?
     return unless arg.matches?(/\A\s*(?:\([^()]*\)|[\w$]+)\s*->/)
-    return :open if arg.matches?(ACCESS_NEG_AUTH)
+    if arg.matches?(ACCESS_NEG_AUTH) || (arg.matches?(ACCESS_ANON) && !arg.matches?(ACCESS_NEG_ANON))
+      # Public only when that test IS the decision; a filter, a conjunction
+      # or a constant `false` decision makes it a deny shape: unreadable.
+      return unless arg.matches?(ACCESS_DECISION_TEST) && !arg.matches?(/\bfilter\s*\(|&&|\|\||AuthorizationDecision\s*\(\s*false/)
+      return :open
+    end
     return :guard if arg.matches?(ACCESS_NEG_ANON)
-    return :open if arg.matches?(ACCESS_ANON)
     return :guard if arg.matches?(ACCESS_AUTH)
     :guard if arg.matches?(ACCESS_TYPE_TEST) && arg.matches?(/switchIfEmpty[^;]*false/m)
   end
