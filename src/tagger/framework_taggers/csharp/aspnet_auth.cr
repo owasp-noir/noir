@@ -54,7 +54,7 @@ class AspnetAuthTagger < FrameworkTagger
   ]
 
   def self.target_techs : Array(String)
-    ["cs_aspnet_mvc", "cs_aspnet_core_mvc", "cs_aspnet_core_minimal_api", "cs_carter", "cs_wolverine"]
+    ["cs_aspnet_mvc", "cs_aspnet_core_mvc", "cs_aspnet_core_minimal_api", "cs_carter", "cs_wolverine", "cs_signalr"]
   end
 
   def initialize(options : Hash(String, YAML::Any))
@@ -154,7 +154,12 @@ class AspnetAuthTagger < FrameworkTagger
       # `[AllowAnonymous]` lifts `[Authorize]` and app-wide policies, not a
       # filter that does not read it, nor a refusal the action makes itself.
       if has_allow_anonymous?(lines, line_idx) || class_attrs.any?(&.matches?(ALLOW_ANONYMOUS_PATTERN)) ||
-         chain.any? { |decl| decl.attributes.matches?(ALLOW_ANONYMOUS_PATTERN) }
+         chain.any? { |decl| decl.attributes.matches?(ALLOW_ANONYMOUS_PATTERN) } ||
+         derived_attribute(lines, line_idx, chain, :anonymous)
+        if tag = permission_filter_guard(lines, line_idx, chain)
+          endpoint.add_tag(tag)
+          return
+        end
         if tag = filter_attribute_guard(lines, line_idx, chain, anonymous: true)
           endpoint.add_tag(tag)
           return unless tag.name == "authz"
@@ -194,6 +199,13 @@ class AspnetAuthTagger < FrameworkTagger
           endpoint.add_tag(Tag.new("auth", "Protected by #{description} (#{level == 0 ? "class-level" : "inherited from #{decl.name}"})", "aspnet_auth"))
           return
         end
+      end
+
+      # A custom attribute that derives `AuthorizeAttribute`
+      # (`class ApiPermissionAttribute : AuthorizeAttribute`) is one.
+      if derived = derived_attribute(lines, line_idx, chain, :authorize)
+        endpoint.add_tag(Tag.new("auth", "Protected by [#{derived[0]}] (derives AuthorizeAttribute)", "aspnet_auth"))
+        return
       end
 
       # A filter attribute the scan declares, judged by its definition.
@@ -390,6 +402,70 @@ class AspnetAuthTagger < FrameworkTagger
       end
     end
     nil
+  end
+
+  ATTRIBUTE_BASE_ROOTS = {"AuthorizeAttribute" => :authorize, "IAllowAnonymous" => :anonymous, "AllowAnonymousAttribute" => :anonymous}
+
+  # The first attribute on the action, its class or a base class that is (or
+  # derives from, through scanned attributes) ASP.NET's `AuthorizeAttribute`
+  # (`:authorize`) or implements `IAllowAnonymous` / derives
+  # `AllowAnonymousAttribute` (`:anonymous`): `{name, its arguments}`.
+  private def derived_attribute(lines : Array(String), method_line : Int32, chain : Array(ClassDecl), kind : Symbol) : Tuple(String, String?)?
+    ([action_attributes(lines, method_line)] + chain.map(&.attributes)).each do |list|
+      list.scan(ATTRIBUTE_ENTRY_RE) do |m|
+        name = m[1].rchop("Attribute")
+        return {name, m[2]?} if attribute_ancestors(name, 0).any? { |ancestor| ATTRIBUTE_BASE_ROOTS[ancestor]? == kind }
+      end
+    end
+    nil
+  end
+
+  # `[ApiPermissionOrAnonymous(Ids.Read)]`: authorization lets anonymous
+  # callers in, but the attribute is also a filter whose definition (or a
+  # base's) refuses with 401/403 when the caller lacks the named permission,
+  # and which permissions an anonymous caller holds is configuration.
+  # ponytail: the refusal's condition is only gated on the body speaking of
+  # permissions, not parsed; a header-conditioned 403 in such a body would pass.
+  private def permission_filter_guard(lines : Array(String), method_line : Int32, chain : Array(ClassDecl)) : Tag?
+    ([action_attributes(lines, method_line)] + chain.map(&.attributes)).each do |list|
+      list.scan(ATTRIBUTE_ENTRY_RE) do |m|
+        name = m[1].rchop("Attribute")
+        args = m[2]?
+        next if args.nil? || args.blank?
+        ancestors = attribute_ancestors(name, 0)
+        next unless ancestors.any? { |ancestor| ATTRIBUTE_BASE_ROOTS[ancestor]? == :authorize }
+        refuses = ancestors.any? do |ancestor|
+          decl = attribute_decl(ancestor) || next
+          body = class_body(decl[0], decl[1]) || ""
+          body.matches?(FILTER_REFUSAL_RE) && body.matches?(/[Pp]ermission/)
+        end
+        next unless refuses
+        return Tag.new("authz", "Protected by [#{name}] (refuses callers without the named permission; a setting can grant anonymous callers it)", "aspnet_auth")
+      end
+    end
+    nil
+  end
+
+  @attribute_ancestors = Hash(String, Array(String)).new
+
+  # The attribute class and every base-list entry reachable from it through
+  # scanned classes (a base the scan does not declare ends the walk).
+  private def attribute_ancestors(name : String, depth : Int32) : Array(String)
+    return @attribute_ancestors[name] if @attribute_ancestors.has_key?(name)
+    found = [name]
+    @attribute_ancestors[name] = found # a cycle reads what is collected so far
+    if depth < 8 && (decl = attribute_decl(name)) && (lexer = lexer_for(decl[1]))
+      head = lexer.masked_source.match(/\bclass\s+#{Regex.escape(decl[0])}\b([^{};]*)\{/).try(&.[1])
+      head.try(&.sub(/\A\s*(?:<[^{};]*?>)?\s*(?:\((?:[^()]|\([^()]*\))*\))?\s*:/, "")).try do |bases|
+        bases.split(',').each do |entry|
+          base = entry.sub(/\(.*\z/m, "").strip.split('.').last
+          next if base.empty? || found.includes?(base)
+          found << base
+          attribute_ancestors(base, depth + 1).each { |ancestor| found << ancestor unless found.includes?(ancestor) }
+        end
+      end
+    end
+    found
   end
 
   # Whether `args` turns the filter off: a `true` bound to a `bool`

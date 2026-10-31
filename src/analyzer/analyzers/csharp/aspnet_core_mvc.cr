@@ -437,9 +437,15 @@ module Analyzer::CSharp
       selected = Hash(String, Array(Tuple(Noir::CSharpType, Array(ConventionalRoute), ClassRoutes))).new do |hash, key|
         hash[key] = [] of Tuple(Noir::CSharpType, Array(ConventionalRoute), ClassRoutes)
       end
+      # A base class may live in another project of the solution
+      # (`Squidex.Web`'s `ApiController`): names the scope does not declare
+      # fall back to the solution-wide declarations.
+      everywhere = Hash(String, Array(Noir::CSharpType)).new
+      all_types.each { |type| (everywhere[type.name] ||= [] of Noir::CSharpType) << type }
       types_by_scope.each do |scope, entries|
-        index = Hash(String, Array(Noir::CSharpType)).new
-        entries.each { |_, type| (index[type.name] ||= [] of Noir::CSharpType) << type }
+        local = Hash(String, Array(Noir::CSharpType)).new
+        entries.each { |_, type| (local[type.name] ||= [] of Noir::CSharpType) << type }
+        index = everywhere.merge(local)
         route_patterns = route_patterns_by_scope[scope]? || DEFAULT_PATTERNS
         entries.each do |file, type|
           # A `partial` controller splits its modifiers, base list and
@@ -573,7 +579,7 @@ module Analyzer::CSharp
     # The `[Route]` templates and `[Area]` name a controller class declares.
     alias ClassRoutes = Tuple(Array(String), String?)
 
-    CLASS_ROUTE_RE = /(?:\[|,)\s*(?:global::)?(?:\w+\.)*Route(?:Attribute)?\s*\(\s*(?:template\s*:\s*)?@?"([^"]*)"/
+    CLASS_ROUTE_RE = /(?:\[|,)\s*(?:global::)?(?:\w+\.)*Route(?:Attribute)?\s*\(\s*(?:template\s*:\s*)?(?:@?"([^"]*)"|([A-Za-z_][\w.]*)\s*[,)])/
     # `[Area("Admin")]`, or a constant: `[Area(AreaNames.Admin)]`.
     CLASS_AREA_RE = /(?:\[|,)\s*(?:global::)?(?:\w+\.)*Area(?:Attribute)?\s*\(\s*(?:areaName\s*:\s*)?([^()\]]+)\)/
 
@@ -585,7 +591,12 @@ module Analyzer::CSharp
       # `[Route("")]` is a real template: it roots the actions at `/` and,
       # being the class's own, replaces an inherited `[Route("[controller]")]`.
       # Kept as `/` so it is not mistaken for "no route" downstream.
-      routes = header.scan(CLASS_ROUTE_RE).map { |match| match[1].empty? ? "/" : match[1] }
+      # `[Route(Constants.PrefixApi)]`: a constant the scan declares is read;
+      # one it cannot read contributes no route, as before.
+      routes = header.scan(CLASS_ROUTE_RE).compact_map do |match|
+        template = match[1]? || csharp_string_value(match[2], file)
+        template.try { |value| value.empty? ? "/" : value }
+      end
       area = CLASS_AREA_RE.match(header).try { |match| csharp_string_value(match[1], file) }
       {routes, area.presence}
     end
