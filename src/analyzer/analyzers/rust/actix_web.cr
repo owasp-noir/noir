@@ -242,12 +242,32 @@ module Analyzer::Rust
               context[:params].each { |param| endpoint.push_param(param) }
               attach_rust_callees(endpoint, context[:callees]) if include_callee
               endpoint.handler = context[:handler]
+            else
+              endpoint.handler = macro_generated_handler(handler, path, source)
             end
             result << endpoint
           end
         end
       end
       result
+    end
+
+    # `attr::get` where `pub mod $attr { pub async fn get(..) }` lives in a
+    # `macro_rules!` transcriber of this file: the handler is that fn.
+    private def macro_generated_handler(ref : String, path : String, source : String) : Handler?
+      parts = ref.split("::")
+      return unless parts.size == 2 && source.includes?("macro_rules!")
+      fn_re = Regex.new("\\bfn\\s+#{Regex.escape(parts[1])}\\b")
+      source.scan(/macro_rules!\s+\w+/) do |m|
+        rest = source.byte_slice(m.byte_begin)
+        stop = rest.index("macro_rules!", 1) || rest.size
+        body = rest[0, stop]
+        if (fm = fn_re.match(body)) && body.includes?("mod $")
+          line = source.byte_slice(0, m.byte_begin).count('\n') + body[0, fm.begin].count('\n') + 1
+          return Handler.new(parts[1], path, line)
+        end
+      end
+      nil
     end
 
     private def build_attribute_endpoint(route_path : String,

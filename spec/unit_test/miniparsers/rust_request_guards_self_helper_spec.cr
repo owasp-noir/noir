@@ -30,4 +30,18 @@ describe Noir::RustRequestGuards do
     verdicts["Guarded"]?.should be_true
     verdicts["Open"]?.should be_false
   end
+
+  it "reads handler parameter types out of a macro_rules! transcriber at absolute lines" do
+    source = <<-RUST
+      macro_rules! make {
+          ($attr:ident) => {
+              pub mod $attr {
+                  pub async fn get(auth: GuardedData<P, D>, id: web::Path<String>) {}
+              }
+          };
+      }
+      RUST
+    types = Noir::RustRequestGuards.handler_param_types(source)
+    types[4]?.should eq ["GuardedData", "Path"]
+  end
 end

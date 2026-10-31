@@ -91,6 +91,9 @@ class RustAuthTagger < FrameworkTagger
     @file_fn_index = Hash(String, Hash(String, RustFnEntry)).new
     @file_imports = Hash(String, Noir::RustUseImports::Imports).new
     @fn_mounts_cache = Hash(String, Array({String, String})).new
+    @fn_files_by_name = Hash(String, Array(String)).new
+    @fn_file_order = Hash(String, Int32).new
+    @fn_indexed_files = Set(String).new
   end
 
   def self.target_techs : Array(String)
@@ -142,6 +145,9 @@ class RustAuthTagger < FrameworkTagger
     @file_fn_index.clear
     @file_imports.clear
     @fn_mounts_cache.clear
+    @fn_files_by_name.clear
+    @fn_file_order.clear
+    @fn_indexed_files.clear
 
     files = collect_files_by_extension(".rs")
     build_function_index(files)
@@ -149,20 +155,42 @@ class RustAuthTagger < FrameworkTagger
     scan_actix_scope_middleware(files)
   end
 
-  private def build_function_index(files : Array(String))
-    files.each do |file|
-      content = read_file(file) || next
-      file_mod_parts = file_module_parts(file)
-      inline_mod_stack = [] of String
+  FN_NAME_RE = /\bfn\s+(?:r#)?([A-Za-z_]\w*)/
 
-      begin
-        Noir::TreeSitter.parse_rust(content) do |root|
-          collect_functions_in_node(root, content, file, file_mod_parts, inline_mod_stack)
-        end
-      rescue e
-        @logger.debug "rust function index error in #{file}: #{e}"
-      end
+  # Only records which files declare which fn names (a regex, no parse). A
+  # file is parsed into the fn index when a lookup needs it
+  # (`ensure_fn_indexed`): the whole-project parse used to cost more than
+  # every other pass of this tagger on a big workspace.
+  private def build_function_index(files : Array(String))
+    files.each_with_index do |file, order|
+      content = read_file(file) || next
+      @fn_file_order[file] = order
+      names = Set(String).new
+      content.scan(FN_NAME_RE) { |m| names << m[1] }
+      names.each { |name| (@fn_files_by_name[name] ||= [] of String) << file }
     end
+  end
+
+  private def ensure_fn_indexed(file : String) : Nil
+    return unless @fn_indexed_files.add?(file)
+    content = read_file(file) || return
+    begin
+      Noir::TreeSitter.parse_rust(content) do |root|
+        collect_functions_in_node(root, content, file, file_module_parts(file), [] of String)
+      end
+    rescue e
+      @logger.debug "rust function index error in #{file}: #{e}"
+    end
+  end
+
+  # Every file declaring a fn named like the last segment of `ref`.
+  private def ensure_fn_ref_indexed(ref : String) : Nil
+    @fn_files_by_name[ref.rpartition("::")[2]]?.try &.each { |file| ensure_fn_indexed(file) }
+  end
+
+  # Entries in scan order, as the eager index registered them.
+  private def in_scan_order(entries : Array(RustFnEntry)) : Array(RustFnEntry)
+    entries.each_with_index.to_a.sort_by { |(entry, idx)| {@fn_file_order[entry.file_path]? || 0, idx} }.map(&.[0])
   end
 
   private def file_module_parts(file_path : String) : Array(String)
@@ -273,6 +301,8 @@ class RustAuthTagger < FrameworkTagger
   private def lookup_function(fn_ref : String, from_file : String) : RustFnEntry?
     cleaned = fn_ref.lchop("::").lchop("crate::").lchop("self::")
     parts = cleaned.split("::")
+    ensure_fn_indexed(from_file)
+    ensure_fn_ref_indexed(cleaned)
 
     if parts.size == 1
       if same_file_entry = @file_fn_index[from_file]?.try(&.[cleaned]?)
@@ -289,14 +319,15 @@ class RustAuthTagger < FrameworkTagger
       cleaned = (first_imported.split("::") + parts[1..]).join("::").lchop("::").lchop("crate::")
     end
 
+    ensure_fn_ref_indexed(cleaned)
     if matches = @fn_index[cleaned]?
       if same_file = matches.find { |e| e.file_path == from_file }
         return same_file
       end
-      return matches.first
+      return in_scan_order(matches).first
     end
 
-    @crate_fn_index[cleaned]?.try { |crate_matches| nearest_crate_entry(crate_matches, from_file) }
+    @crate_fn_index[cleaned]?.try { |crate_matches| nearest_crate_entry(in_scan_order(crate_matches), from_file) }
   end
 
   # The crate-keyed fn sharing the longest path prefix with `from_file`, so

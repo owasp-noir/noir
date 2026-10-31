@@ -232,22 +232,43 @@ module Noir::RustRequestGuards
   # never refuse the request, so they are left out.
   def self.handler_param_types(source : String) : Hash(Int32, Array(String))
     result = {} of Int32 => Array(String)
+    macros = [] of Tuple(Int32, String)
     Noir::TreeSitter.parse_rust(source) do |root|
       Noir::TreeSitter.walk(root) do |node|
-        next unless Noir::TreeSitter.node_type(node) == "function_item"
-        name = Noir::TreeSitter.field(node, "name") || next
-        params = Noir::TreeSitter.field(node, "parameters") || next
-        types = [] of String
-        Noir::TreeSitter.each_named_child(params) do |param|
-          next unless Noir::TreeSitter.node_type(param) == "parameter"
-          type = Noir::TreeSitter.field(param, "type") || next
-          leaf = type_leaf(Noir::TreeSitter.node_text(type, source)) || next
-          types << leaf unless leaf == "Option" || leaf == "Result"
+        case Noir::TreeSitter.node_type(node)
+        when "function_item"
+          collect_param_types(node, source, result)
+        when "macro_definition"
+          macros << {Noir::TreeSitter.node_start_row(node), Noir::TreeSitter.node_text(node, source)}
         end
-        result[Noir::TreeSitter.node_start_row(name) + 1] = types
+      end
+    end
+    # Handlers a `macro_rules!` transcriber generates are token trees to the
+    # outer parse. Read each transcriber as items on its own, `$x` as `_x`
+    # (same width) and padded to its row so lines stay absolute.
+    macros.each do |row, text|
+      next unless text.includes?("fn ") && (arrow = text.index("=>"))
+      padded = "\n" * (row + text[0, arrow].count('\n')) + text[arrow + 2..].gsub('$', '_').sub(/\A\s*\{/, " ")
+      Noir::TreeSitter.parse_rust(padded) do |root|
+        Noir::TreeSitter.walk(root) do |node|
+          collect_param_types(node, padded, result) if Noir::TreeSitter.node_type(node) == "function_item"
+        end
       end
     end
     result
+  end
+
+  private def self.collect_param_types(node : LibTreeSitter::TSNode, source : String, result : Hash(Int32, Array(String))) : Nil
+    name = Noir::TreeSitter.field(node, "name") || return
+    params = Noir::TreeSitter.field(node, "parameters") || return
+    types = [] of String
+    Noir::TreeSitter.each_named_child(params) do |param|
+      next unless Noir::TreeSitter.node_type(param) == "parameter"
+      type = Noir::TreeSitter.field(param, "type") || next
+      leaf = type_leaf(Noir::TreeSitter.node_text(type, source)) || next
+      types << leaf unless leaf == "Option" || leaf == "Result"
+    end
+    result[Noir::TreeSitter.node_start_row(name) + 1] = types
   end
 
   def self.type_leaf(text : String) : String?
