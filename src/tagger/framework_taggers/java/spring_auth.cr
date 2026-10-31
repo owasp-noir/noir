@@ -933,7 +933,7 @@ class SpringAuthTagger < FrameworkTagger
     if arg.matches?(ACCESS_NEG_AUTH) || (arg.matches?(ACCESS_ANON) && !arg.matches?(ACCESS_NEG_ANON))
       # Public only when that test IS the decision; a filter, a conjunction
       # or a constant `false` decision makes it a deny shape: unreadable.
-      return unless arg.matches?(ACCESS_DECISION_TEST) && !arg.matches?(/\bfilter\s*\(|&&|\|\||AuthorizationDecision\s*\(\s*false/)
+      return if !arg.matches?(ACCESS_DECISION_TEST) || arg.matches?(/\bfilter\s*\(|&&|\|\||AuthorizationDecision\s*\(\s*false/)
       return :open
     end
     return :guard if arg.matches?(ACCESS_NEG_ANON)
