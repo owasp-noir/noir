@@ -43,7 +43,12 @@ class ExpressAuthTagger < FrameworkTagger
   # deliberately absent — a function that verifies a token and then calls
   # `next()` unconditionally (juice-shop's `updateAuthenticatedUsers`) is
   # not a guard, and it is `app.use()`d over every route.
-  REFUSING_DEFINITION = /\bexpress[jJ]wt\s*\(|\bpassport\.authenticate\s*\(|(?:\b\w+\.)?(?:status|sendStatus|send)\s*\(\s*40[13]\s*\)?|\bnext\s*\(\s*(?:new\s+)?(?:[\w$]+\.)*\w*(?:Unauthori[sz]ed|Forbidden|NoPermission|PermissionDenied)\w*|\bcreateError\s*\(\s*40[13]\b|\bnext\s*\(\s*\{[^}]*\b40[13]\b/
+  #
+  # `expressBasicAuth({ … })` is the express-basic-auth factory: the
+  # middleware it builds answers 401 to a request without valid
+  # credentials. `sendError(res, 401, …)` hands the response and a refusing
+  # status to a reply helper.
+  REFUSING_DEFINITION = /\bexpress[jJ]wt\s*\(|\bpassport\.authenticate\s*\(|\b(?:express)?[bB]asicAuth\s*\((?=\s*\{)|\b[A-Za-z_$][\w$]*\s*\(\s*(?:res|response)\s*,\s*40[13]\b|(?:\b\w+\.)?(?:status|sendStatus|send)\s*\(\s*40[13]\s*\)?|\bnext\s*\(\s*(?:new\s+)?(?:[\w$]+\.)*\w*(?:Unauthori[sz]ed|Forbidden|NoPermission|PermissionDenied)\w*|\bcreateError\s*\(\s*40[13]\b|\bnext\s*\(\s*\{[^}]*\b40[13]\b/
 
   # `(err, req, res, next)`: an error handler answers 401 *for* a guard;
   # it is not one.
@@ -540,7 +545,8 @@ class ExpressAuthTagger < FrameworkTagger
   SETTING_NOTE = " — a setting can lift it"
   METHOD_TEST  = /\A\(*\s*(?:req|request)\s*\.\s*method\s*(!==?|===?)\s*['"]([A-Za-z]+)['"]\s*\)*\z/
   IF_HEAD      = /(?<![\w$.])if\s*\(/
-  JS_WORDS     = /\A(?:true|false|null|undefined|typeof|instanceof|in|new|void|this)\z/
+  # `await` too: `if (!(await Settings.get("disableAuth")))` reads a setting.
+  JS_WORDS = /\A(?:true|false|null|undefined|typeof|instanceof|in|new|void|this|await)\z/
 
   # Whether a refusal at `at` in `code` reaches an anonymous caller of the
   # route's method (`@method`), by the `if`s enclosing it: `:always`;
