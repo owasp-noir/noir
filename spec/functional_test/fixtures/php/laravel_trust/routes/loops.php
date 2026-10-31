@@ -2,7 +2,7 @@
 
 use App\Http\Controllers\ItemController;
 use App\Http\Controllers\PingController;
-use App\Http\Middleware\CorsGate;
+use App\Http\Middleware\{ConfigAuthGate, CorsGate, InstalledRedirect, ReadOnlyGate};
 use App\Http\Middleware\LocalGate;
 use App\Http\Middleware\ProdGate;
 use App\Http\Middleware\TokenGate;
@@ -56,6 +56,9 @@ Route::get('mw/token', PingController::class)->middleware(TokenGate::class);
 Route::get('mw/local', PingController::class)->middleware(LocalGate::class);
 Route::get('mw/prod', PingController::class)->middleware(ProdGate::class);
 Route::get('mw/cors', PingController::class)->middleware(CorsGate::class);
+Route::get('mw/readonly', PingController::class)->middleware(ReadOnlyGate::class);
+Route::get('mw/installed', PingController::class)->middleware(InstalledRedirect::class);
+Route::get('mw/cfgauth', PingController::class)->middleware(ConfigAuthGate::class);
 
 // 30 x 30 entries is past the per-file expansion budget: left as written.
 $grid = ['a0', 'a1', 'a2', 'a3', 'a4', 'a5', 'a6', 'a7', 'a8', 'a9', 'a10', 'a11', 'a12', 'a13', 'a14', 'a15', 'a16', 'a17', 'a18', 'a19', 'a20', 'a21', 'a22', 'a23', 'a24', 'a25', 'a26', 'a27', 'a28', 'a29'];
