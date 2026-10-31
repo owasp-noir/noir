@@ -25,6 +25,11 @@ module SpringModuleScope
     build_module(file).try { |app| @boot_apps << app }
   end
 
+  private def test_source?(file : String) : Bool
+    relative = base_relative_path(file)
+    Analyzer::Java::JavaEngine.test_path?(relative) || Analyzer::Kotlin::KotlinEngine.test_path?(relative)
+  end
+
   # The build unit (directory of the nearest `pom.xml` / `build.gradle`)
   # holding `path`; nil when there is none.
   private def build_module(path : String) : String?
