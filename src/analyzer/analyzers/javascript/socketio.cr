@@ -1,5 +1,7 @@
 require "../../engines/javascript_engine"
 require "../../../miniparsers/js_route_extractor"
+require "../../../miniparsers/js_handler_resolver"
+require "../../../detector/detectors/javascript/socketio"
 
 module Analyzer::Javascript
   # Surfaces Socket.IO real-time attack surface as `ws://` endpoints. A
@@ -34,8 +36,12 @@ module Analyzer::Javascript
     # events.
     SOCKET_PARAM = /\.on\(\s*["'](?:connection|connect)["']\s*,\s*(?:async\s+)?(?:function\s*)?\(?\s*(\w+)/
 
-    # Any `<recv>.on("event", ...)` handler.
-    EVENT_HANDLER = /\b(\w+)\.on\(\s*["']([^"']+)["']/
+    # Any `<recv>.on("event", ...)` handler, or `<recv>.on(prefix + "event"`
+    # with the prefix a string constant of the file (group 2).
+    EVENT_HANDLER = /\b(\w+)\.on\(\s*(?:([A-Za-z_$][\w$]*)\s*\+\s*)?["']([^"']+)["']/
+
+    # `const prefix = "cloudflared_";`
+    STRING_CONST = /^\s*(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*["']([^"'\\]*)["']\s*;?\s*$/m
 
     # Socket.IO / EventEmitter reserved events that are lifecycle signals,
     # not client-invocable application messages.
@@ -46,7 +52,21 @@ module Analyzer::Javascript
       "reconnect_failed", "reconnecting",
     }
 
+    # `registerChatHandlers(socket)` / `generalSocketHandler(socket, server)`
+    # inside a connection callback: the socket handed to a function whose
+    # definition (often in another module) registers the events. Group 1 is
+    # the callee as written, group 2 its first argument.
+    DELEGATION = /(?<![\w$.])([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)\s*\(\s*([A-Za-z_$][\w$]*)\s*[,)]/
+
+    # How many hand-offs to follow (`connection` → `registerAll(socket)` →
+    # `registerChat(socket)`).
+    MAX_DELEGATION_DEPTH = 3
+
+    # {caller file, callee as written, namespace of the connection block}
+    alias Delegation = Tuple(String, String, String)
+
     def analyze
+      delegations = [] of Delegation
       parallel_file_scan do |path|
         content = read_file_content(path)
         next unless socketio_evidence?(content)
@@ -55,17 +75,96 @@ module Analyzer::Javascript
         # (axios/node-fetch) for "not a server" and would drop a standalone
         # Socket.IO service that has no http-server import of its own.
         next if Noir::JSRouteExtractor.test_file?(path, content)
-        scan_file(Noir::JSRouteExtractor.strip_js_comments(content), path)
+        scan_file(Noir::JSRouteExtractor.strip_js_comments(content), path, delegations)
       end
+      follow_delegations(delegations)
       @result
     end
 
+    # A file that imports the server package, or one that runs a connection
+    # callback and speaks Socket.IO's own API (`socket.emit(`,
+    # `io.to(room).emit(`, `.of("/ns")`). The server is often built in one
+    # module and its `io` handed to another (`const io = server.io`), which
+    # then imports nothing from `socket.io`. A `ws` server's connection
+    # callback writes with `.send(` and has none of that API.
     private def socketio_evidence?(content : String) : Bool
-      content.matches?(/from\s+['"]socket\.io['"]|require\(\s*['"]socket\.io['"]\s*\)/) ||
-        (content.includes?("new Server(") && content.includes?(".on("))
+      return true if content.matches?(/from\s+['"]socket\.io['"]|require\(\s*['"]socket\.io['"]\s*\)/)
+      return false unless content.includes?(".on(")
+      return true if content.includes?("new Server(")
+      content.matches?(CONNECTION_HANDLER) && content.matches?(Detector::Javascript::SocketIO::SOCKET_IO_API)
     end
 
-    private def scan_file(content : String, path : String)
+    # The events a connection callback registers through a function it hands
+    # the socket to: resolve that function (same file, or the module it was
+    # imported from), bind its first parameter as the socket and read its
+    # body the way a connection callback is read. Followed a few hops deep,
+    # each definition once per namespace.
+    private def follow_delegations(delegations : Array(Delegation))
+      visited = Set(Tuple(String, Int32, String)).new
+      seen = Set(String).new
+      MAX_DELEGATION_DEPTH.times do
+        break if delegations.empty?
+        next_round = [] of Delegation
+        delegations.uniq.each do |caller_path, callee, namespace|
+          isolating_file_errors(caller_path) do
+            handler = Noir::JSHandlerResolver.resolve(callee, read_file_content(caller_path), caller_path) || next
+            def_path = handler.path || next
+            def_line = handler.line || next
+            next unless visited.add?({def_path, def_line, namespace})
+            scan_delegate(def_path, def_line, namespace, seen, next_round)
+          end
+        end
+        delegations = next_round
+      end
+    end
+
+    private def scan_delegate(path : String, line : Int32, namespace : String, seen : Set(String), delegations : Array(Delegation))
+      content = Noir::JSRouteExtractor.strip_js_comments(read_file_content(path))
+      socket = Noir::JSRouteExtractor.definition_params(content, line).try(&.first?).presence || return
+      body = Noir::JSRouteExtractor.definition_body(content, line)
+      return unless body.includes?(socket)
+      line_start = 0
+      (line - 1).times { line_start = (content.byte_index('\n', line_start) || return) + 1 }
+      # The body is a slice of the definition: find it from there to number
+      # its lines.
+      offset = content.byte_index(body, line_start) || return
+      first_line = content.byte_slice(0, offset).count('\n') + 1
+      body.each_line.with_index do |text, index|
+        each_event(text, content) do |recv, event|
+          next unless recv == socket
+          url = build_url(namespace, event)
+          next unless seen.add?("#{path}\0#{url}")
+          @result << build_endpoint(url, path, first_line + index)
+        end
+        collect_delegations(text, Set{socket}, path, namespace, delegations)
+      end
+    end
+
+    # Each non-reserved `{receiver, event}` registered on `line`. A prefixed
+    # name whose prefix is not a string constant of `content` is skipped
+    # rather than guessed.
+    private def each_event(line : String, content : String, &)
+      line.scan(EVENT_HANDLER) do |em|
+        event = em[3]
+        if prefix = em[2]?
+          value = nil
+          content.scan(STRING_CONST) { |cm| value = cm[2] if cm[1] == prefix }
+          next unless value
+          event = value + event
+        end
+        next if RESERVED_EVENTS.includes?(event)
+        yield em[1], event
+      end
+    end
+
+    private def collect_delegations(line : String, socket_vars : Set(String), path : String, namespace : String, delegations : Array(Delegation))
+      return if socket_vars.empty?
+      line.scan(DELEGATION) do |dm|
+        delegations << {path, dm[1], namespace} if socket_vars.includes?(dm[2])
+      end
+    end
+
+    private def scan_file(content : String, path : String, delegations : Array(Delegation))
       current_ns = "/" # default namespace
       ns_vars = {} of String => String
       socket_vars = Set(String).new # params bound by connection callbacks
@@ -96,15 +195,13 @@ module Analyzer::Javascript
         # A `<socket>.on("event")` on a bound socket variable is an inbound
         # client message handler. Receivers that were never bound as a
         # connection socket (`process`, `httpServer`, `io`, …) are ignored.
-        line.scan(EVENT_HANDLER) do |em|
-          recv = em[1]
-          event = em[2]
+        each_event(line, content) do |recv, event|
           next unless socket_vars.includes?(recv)
-          next if RESERVED_EVENTS.includes?(event)
           url = build_url(current_ns, event)
           next unless seen.add?(url)
           @result << build_endpoint(url, path, line_no)
         end
+        collect_delegations(line, socket_vars, path, current_ns, delegations)
       end
     end
 
