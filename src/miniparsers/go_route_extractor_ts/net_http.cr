@@ -79,7 +79,15 @@ module Noir
     # first keeps the tree-sitter parse for the files that can actually
     # match.
     NET_HTTP_HANDLE_MARKER_RE = Regex.union("Handle")
-    NET_HTTP_HOST_RE          = /\A[A-Za-z0-9](?:[A-Za-z0-9.\-]*[A-Za-z0-9])?(?::\d+)?\z/
+    # A function that serves its mux with `httptest.NewServer` builds a
+    # mock for a test (gitea's `models/unittest/mock_http.go`, outside any
+    # `_test.go` file): its registrations are never routes of the program.
+    # `httptest.NewRecorder` is not a server; production code may use it.
+    # ponytail: function-scoped; a mux returned to another function that
+    # serves it with httptest is still reported.
+    HTTPTEST_SERVER = /\bhttptest\s*\.\s*New(?:Unstarted|TLS)?Server\s*\(/
+
+    NET_HTTP_HOST_RE = /\A[A-Za-z0-9](?:[A-Za-z0-9.\-]*[A-Za-z0-9])?(?::\d+)?\z/
 
     # Necessary condition for `extract_net_http_routes` to return
     # anything. Exposed so callers can skip the per-directory pre-passes
@@ -106,6 +114,8 @@ module Noir
 
         local_functions = Hash(String, LibTreeSitter::TSNode).new
         local_methods = Hash(String, LibTreeSitter::TSNode).new
+        mock_rows = [] of Range(Int32, Int32)
+        check_mocks = source.includes?("httptest")
         Noir::TreeSitter.each_named_child(root) do |child|
           case Noir::TreeSitter.node_type(child)
           when "function_declaration"
@@ -116,6 +126,12 @@ module Noir
             if name_node = Noir::TreeSitter.field(child, "name")
               local_methods[Noir::TreeSitter.node_text(name_node, source)] = child
             end
+          else
+            next
+          end
+          if check_mocks && (text = Noir::TreeSitter.node_text(child, source)).matches?(HTTPTEST_SERVER) &&
+             Noir::CComments.strip(text, raw_quotes: "`").matches?(HTTPTEST_SERVER)
+            mock_rows << (Noir::TreeSitter.node_start_row(child)..Noir::TreeSitter.node_end_row(child))
           end
         end
 
@@ -131,6 +147,7 @@ module Noir
           end
         end
         routes = apply_serve_mux_mounts(routes, mounts) unless mounts.empty?
+        routes.reject! { |r| mock_rows.any?(&.includes?(r.line)) } unless mock_rows.empty?
       end
       routes
     end

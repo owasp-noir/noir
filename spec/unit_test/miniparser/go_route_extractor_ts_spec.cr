@@ -1068,6 +1068,45 @@ describe Noir::TreeSitterGoRouteExtractor do
     ].sort)
   end
 
+  it "skips net/http registrations of a function that serves them with httptest" do
+    source = <<-GO
+      package unittest
+      import (
+          "net/http"
+          "net/http/httptest"
+          "testing"
+      )
+      func main() {
+          mux := http.NewServeMux()
+          mux.HandleFunc("/api/items", items)
+          http.ListenAndServe(":8080", mux)
+      }
+      // A test helper outside a _test.go file: its mux only serves httptest.
+      func NewMockServer(t testing.TB) *httptest.Server {
+          mux := http.NewServeMux()
+          mux.HandleFunc("/mock/ping", ping)
+          mux.Handle("/", http.NotFoundHandler())
+          server := httptest.NewServer(mux)
+          t.Cleanup(server.Close)
+          return server
+      }
+      // Recording a response is not serving one.
+      func render() {
+          mux := http.NewServeMux()
+          mux.HandleFunc("/internal/render", render)
+          rec := httptest.NewRecorder()
+          mux.ServeHTTP(rec, nil)
+      }
+      func admin() {
+          // A comment is not a call: httptest.NewServer(mux)
+          http.HandleFunc("/admin", admin)
+      }
+      GO
+
+    routes = Noir::TreeSitterGoRouteExtractor.extract_net_http_routes(source)
+    routes.map(&.path).sort!.should eq ["/admin", "/api/items", "/internal/render"]
+  end
+
   it "extracts request params from resolved net/http handler and helper bodies" do
     route_source = <<-GO
       package api
