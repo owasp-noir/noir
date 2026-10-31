@@ -81,6 +81,7 @@ class FastAPIAuthTagger < FrameworkTagger
     @dependency_aliases = Hash(String, String).new
     @authz_dependencies = Set(String).new
     @file_aliases = Hash(String, Hash(String, String)).new
+    @alias_instances = Hash({String, String}, String).new
     @authz_defs = Hash(String, Set(String)).new
     @def_names = Hash(String, Set(String)).new
     @refusal_verdicts = Hash({String, String}, Bool?).new
@@ -101,6 +102,7 @@ class FastAPIAuthTagger < FrameworkTagger
     @dependency_aliases.clear
     @authz_dependencies.clear
     @file_aliases.clear
+    @alias_instances.clear
     @authz_defs.clear
     @def_names.clear
     @refusal_verdicts.clear
@@ -112,7 +114,11 @@ class FastAPIAuthTagger < FrameworkTagger
       next unless content
       index_include_router_calls(path) if content.includes?("include_router")
       if content.includes?("Annotated")
-        content.each_line do |line|
+        lines = content.lines
+        lines.each_with_index do |line, idx|
+          next unless line.includes?("Annotated")
+          # `X = Annotated[\n    Subject, Depends(dep)\n]` read as one line.
+          line = joined_statement(lines, idx) if line.count('[') > line.count(']')
           next unless m = line.match(ANNOTATED_ALIAS)
           if desc = dependency_desc(m[2])
             @auth_aliases[m[1]] = desc
@@ -120,6 +126,10 @@ class FastAPIAuthTagger < FrameworkTagger
           if dep = line.match(ANNOTATED_ALIAS_DEPENDENCY)
             @dependency_aliases[m[1]] = dep[2]
             (@file_aliases[path] ||= Hash(String, String).new)[m[1]] = dep[2]
+            # `Depends(Authenticator(...))`: the instance the call builds.
+            if call = line.match(/\bDepends\s*\(\s*(#{Regex.escape(dep[2])}\s*\(.*)/)
+              @alias_instances[{path, m[1]}] = "_ = #{call[1]}"
+            end
           end
         end
       end
@@ -217,14 +227,130 @@ class FastAPIAuthTagger < FrameworkTagger
     end
     verdict = nil
     if site && start && (body = definition_block(site[0], start))
-      if refusing_raise?(body, site[0]) || body.scan(DEPENDENCY_CALL).any? { |m| dependency_refuses?(m[2], site[0], depth + 1) == true }
+      if body_refuses?(body, site[0], depth)
         verdict = true
       elsif !body.matches?(/^\s*raise\b/m) && body.matches?(/^\s*return\s+None\s*$/m) &&
             body.match(RETURN_ANNOTATION).try(&.[1].matches?(/\bNone\b|\bOptional\b/))
         verdict = false
       end
+    elsif site && (statement = definition_block(site[0], /^#{Regex.escape(site[1])}\s*(?::[^=\n]+)?=\s*[\w.]+\s*\(/))
+      verdict = instance_refuses?(statement, site[0], depth)
     end
     @refusal_verdicts[key] = verdict
+  end
+
+  # Whether a `def` (or `__call__`) body refuses the caller: a 401/403
+  # raise of its own, or a dependency it declares that refuses, through
+  # `Depends(...)` (a module-level dependency, or an instance built in the
+  # body: Polar's `OrgPolicyGuard` factory assigns `_authenticator =
+  # Authenticator(...)` and depends on it) or through the `Annotated`
+  # aliases its parameters, or a nested dependency's, are typed with.
+  private def body_refuses?(body : String, file : String, depth : Int32) : Bool
+    return true if refusing_raise?(body, file)
+    body.scan(DEPENDENCY_CALL).any? { |m| dependency_refuses?(m[2], file, depth + 1) == true || local_instance_refuses?(body, m[2], file, depth + 1) } ||
+      body.scan(ALIAS_ANNOTATION).any? { |m| alias_refuses?(m[1], file, depth + 1) }
+  end
+
+  private def local_instance_refuses?(body : String, name : String, file : String, depth : Int32) : Bool
+    return false if name.includes?('.') || !body.includes?(name)
+    lines = body.lines
+    idx = lines.index(&.matches?(/^\s+#{Regex.escape(name)}\s*=\s*[\w.]+\s*\(/)) || return false
+    instance_refuses?(joined_statement(lines, idx), file, depth) == true
+  end
+
+  private def alias_refuses?(name : String, path : String, depth : Int32) : Bool
+    alias_path, callable = resolve_alias(name, path)
+    return false unless callable
+    return true if dependency_refuses?(callable, alias_path, depth) == true
+    instance = @alias_instances[{alias_path, name.split('.').last}]?
+    !!instance && instance_refuses?(instance, alias_path, depth) == true
+  end
+
+  ALIAS_ANNOTATION = /:\s*([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)?)\s*(?=[,)=]|$)/m
+  INSTANCE_CALL    = /=\s*([A-Za-z_][\w.]*)\s*\(/
+  # `if Anonymous in self.allowed_subjects:` heading a block that returns,
+  # or `if Anonymous not in self.allowed_subjects:` heading one that raises.
+  MEMBERSHIP_GATE = /^\s*(?:el)?if\s+([A-Za-z_]\w*)\s+(not\s+)?in\s+self\.([A-Za-z_]\w*)\s*:\s*\n\s*(return|raise)\b/m
+
+  # A dependency that is an instance (`_BenefitsRead = Authenticator(...)`),
+  # judged by its class's `__call__`, reached through a factory function's
+  # return annotation (`def Authenticator(...) -> _Authenticator`). It
+  # refuses when `__call__` raises a 401/403, unless the instance is built
+  # to let the caller in: Polar's `__call__` returns early `if Anonymous in
+  # self.allowed_subjects`, so `allowed_subjects={Anonymous, User}` is open.
+  # ponytail: only that membership test, passed as a keyword, is read.
+  private def instance_refuses?(statement : String, file : String, depth : Int32) : Bool?
+    return if depth > 4
+    callee = statement.match(INSTANCE_CALL).try(&.[1]) || return
+    klass = class_site(file, callee) || factory_class(file, callee)
+    # A factory returning a nested dependency (`WebUserAuthorizer(scopes)`)
+    # is judged by its body, which holds that dependency.
+    return dependency_refuses?(callee, file, depth + 1) unless klass
+    body = call_method(klass, 0) || return
+    return unless body_refuses?(body, klass[0], depth)
+    args = statement[(statement.index('(') || 0)..]
+    body.scan(MEMBERSHIP_GATE) do |m|
+      next unless m[2]?.nil? == (m[4] == "return")
+      return false if args.matches?(/\b#{Regex.escape(m[3])}\s*=\s*[\[{(][^\]})]*\b#{Regex.escape(m[1])}\b/)
+    end
+    true
+  end
+
+  # The class a factory function `name` returns, by its return annotation.
+  private def factory_class(file : String, name : String) : {String, Int32}?
+    module_name, _, short = name.rpartition('.')
+    site = if module_name.empty?
+             python_definition_site(file, short)
+           elsif (symbol = python_imported_symbols(file)[module_name]?) && symbol[1].empty?
+             python_definition_site(symbol[0], short)
+           end
+    return unless site
+    block = definition_block(site[0], /^(?:async\s+)?def\s+#{Regex.escape(site[1])}\b/) || return
+    returned = block.match(RETURN_ANNOTATION).try(&.[1].match(/[A-Za-z_][\w.]*/).try(&.[0])) || return
+    class_site(site[0], returned)
+  end
+
+  # The `__call__` body of the class at `site`, or of the nearest base
+  # defining one.
+  private def call_method(site : {String, Int32}, depth : Int32) : String?
+    return if depth > 4
+    lines = read_file_lines(site[0]) || return
+    header = lines[site[1]].match(CLASS_DEF) || return
+    class_indent = header[1].size
+    ((site[1] + 1)...lines.size).each do |idx|
+      line = lines[idx]
+      stripped = line.lstrip
+      next if stripped.empty? || stripped.starts_with?('#')
+      indent = line.size - stripped.size
+      break if indent <= class_indent
+      next unless stripped.matches?(/^(?:async\s+)?def\s+__call__\b/)
+      body = [line]
+      lines[(idx + 1)..].each do |next_line|
+        break if !next_line.blank? && next_line.size - next_line.lstrip.size <= indent && !next_line.lstrip.starts_with?(')')
+        body << next_line
+      end
+      return body.join('\n')
+    end
+    class_bases(header[3]?).each do |base|
+      next unless base_site = class_site(site[0], base)
+      if found = call_method(base_site, depth + 1)
+        return found
+      end
+    end
+    nil
+  end
+
+  # The statement starting at `lines[idx]`, continued until its brackets close.
+  private def joined_statement(lines : Array(String), idx : Int32) : String
+    text = lines[idx]
+    depth = bracket_delta(text)
+    cursor = idx
+    while depth > 0 && (cursor += 1) < lines.size && cursor < idx + 40
+      part = Analyzer::Python::Helper.strip_python_comment(lines[cursor])
+      depth += bracket_delta(part)
+      text = "#{text} #{part.strip}"
+    end
+    text
   end
 
   # A `raise` in `body` that answers 401/403: the status is on the raise
@@ -374,6 +500,12 @@ class FastAPIAuthTagger < FrameworkTagger
   # declares it: the same file, else the module it is imported from, else
   # any file declaring that alias name.
   private def resolve_alias(name : String, path : String) : Tuple(String, String?)
+    module_name, _, leaf = name.rpartition('.')
+    unless module_name.empty?
+      symbol = python_imported_symbols(path)[module_name]?
+      return {path, nil} unless symbol && symbol[1].empty?
+      return {symbol[0], @file_aliases[symbol[0]]?.try(&.[leaf]?)}
+    end
     if callable = @file_aliases[path]?.try(&.[name]?)
       return {path, callable}
     end
@@ -603,6 +735,19 @@ class FastAPIAuthTagger < FrameworkTagger
       when false
         @soft_auth ||= m[2] if auth_callable?(m[2])
         text = text.gsub(/#{Regex.escape(m[0])}\b/, "")
+      else
+        # `Depends(Authenticator(allowed_subjects={User}))`: the instance.
+        call = m.post_match
+        if call.starts_with?('(') && instance_refuses?("_ = #{m[2]}#{call}", path, 0) == true
+          return "FastAPI #{m[1]}(#{m[2]}(...))"
+        end
+      end
+    end
+    # `auth_subject: auth.BenefitsRead`: an `Annotated` alias judged by its
+    # dependency's definition.
+    text.scan(ALIAS_ANNOTATION) do |m|
+      if alias_refuses?(m[1], path, 0)
+        return "FastAPI Depends(#{resolve_alias(m[1], path)[1]}) (#{m[1].split('.').last})"
       end
     end
     if factory = factory_dependency_desc(text, path)
