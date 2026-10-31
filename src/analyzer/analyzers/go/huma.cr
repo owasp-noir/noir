@@ -64,6 +64,90 @@ module Analyzer::Go
       end
     end
 
+    # `[]map[string][]string{{"JWTKeyAuth": {}}, {"APITokenAuth": {}}}`: an
+    # OpenAPI security requirement list, three brace levels deep at most.
+    SECURITY_VAR = /(?<![.\w])(\w+)\s*=\s*(\[\]map\[string\]\[\]string\s*\{(?:[^{}]|\{(?:[^{}]|\{[^{}]*\})*\})*\})/
+    # `oapi.Security = …` / `config.Security = …`: the API's default.
+    DEFAULT_SECURITY = /\.\s*Security\s*=\s*(\[\]map\[string\]\[\]string\s*\{(?:[^{}]|\{(?:[^{}]|\{[^{}]*\})*\})*\})/
+    # `huma.Server{URL: GroupPrefix}`, `[]*huma.Server{{URL: "/api/v2"}}`.
+    SERVER_URL = /huma\.Server\s*\{\s*\{?\s*URL\s*:\s*(?:"([^"]*)"|(\w+))\s*[,}]/
+    # `func labelsList(ctx context.Context, in *labelsListInput) (…)`.
+    HANDLER_FUNC = /^func\s+(\w+)\s*\(\s*\w+\s+context\.Context\s*,\s*\w+\s+\*?(?:\w+\.)?(\w+)/m
+
+    # What the operations of one package share: the security requirement
+    # variables and default security its API declares, the base path of its
+    # OpenAPI server, and its named handlers.
+    class PackageInfo
+      getter security_vars = Hash(String, String).new
+      getter default_security : String? = nil
+      getter base_path : String? = nil
+      getter? auto_patch = false
+      # Handler name -> {file, line, input struct name}.
+      getter handlers = Hash(String, {String, Int32, String}).new
+      @server : {String?, String?}? = nil
+
+      def read(path : String, content : String) : Nil
+        content.scan(SECURITY_VAR) { |m| @security_vars[m[1]] ||= m[2] }
+        @default_security ||= content.match(DEFAULT_SECURITY).try(&.[1])
+        @server ||= content.match(SERVER_URL).try { |m| {m[1]?, m[2]?} }
+        @auto_patch ||= content.includes?("autopatch.AutoPatch(")
+        line = 1
+        counted = 0
+        content.scan(HANDLER_FUNC) do |m|
+          at = m.byte_begin(0)
+          line += content.byte_slice(counted, at - counted).count('\n')
+          counted = at
+          @handlers[m[1]] ||= {path, line, m[2]}
+        end
+      end
+
+      # The path of the package's first `huma.Server` URL, a literal or a
+      # string constant of the package. Per OpenAPI, operation paths are
+      # relative to it; vikunja mounts its Huma API on the Echo group at
+      # that same `GroupPrefix`. Only a relative path counts: an absolute
+      # URL usually names a proxy in front of the app.
+      # ponytail: the first server of the package; per-API servers are not told apart.
+      def resolve_base_path(contents : Array(String)) : Nil
+        literal, name = @server || return
+        if name
+          const = /\b#{Regex.escape(name)}\s*=\s*"([^"]*)"/
+          contents.each do |content|
+            next unless m = content.match(const)
+            literal = m[1]
+            break
+          end
+        end
+        @base_path = literal if literal && literal.starts_with?('/') && literal.size > 1
+      end
+
+      # The declared-access tag of an operation from its `Security` field
+      # (a literal, or a package variable holding one) or the API's default:
+      # anonymous when the list is empty or has an empty alternative, else
+      # the schemes it requires. Nil when nothing is declared.
+      def access_tag(security : String?) : Tag?
+        inherited = security.nil?
+        literal = security ? (@security_vars[security]? || security) : @default_security
+        return unless literal && literal.matches?(/\A\[\]map\[string\]\[\]string\s*\{/)
+        open_at = literal.index!('{')
+        alternatives = [] of Array(String)
+        depth = 0
+        start = 0
+        literal[open_at + 1...literal.rindex!('}')].each_char_with_index do |char, idx|
+          if char == '{'
+            start = idx if depth == 0
+            depth += 1
+          elsif char == '}'
+            depth -= 1
+            alternatives << literal[open_at + 1 + start, idx - start + 1].scan(/"([^"]+)"\s*:/).map(&.[1]) if depth == 0
+          end
+        end
+        tagger = Tag.declared_access_tagger("go_huma")
+        return Tag.new("anonymous", "Huma operation security admits anonymous callers", tagger) if alternatives.empty? || alternatives.any?(&.empty?)
+        origin = inherited ? " (inherited from the API's default security)" : ""
+        Tag.new("auth", "Protected by Huma operation security #{alternatives.map(&.join(" + ")).join(" or ")}#{origin}", tagger)
+      end
+    end
+
     def analyze
       result = [] of Endpoint
 
@@ -92,6 +176,15 @@ module Analyzer::Go
         end
       end
 
+      packages = Hash(String, PackageInfo).new
+      file_contents_cache.each do |path, content|
+        next unless content_matches?(content, IMPORT_MARKER_RE)
+        (packages[File.dirname(path)] ||= PackageInfo.new).read(path, content)
+      end
+      packages.each do |dir, info|
+        info.resolve_base_path(package_files[dir].compact_map { |file| file_contents_cache[file]? })
+      end
+
       mutex = Mutex.new
       parallel_analyze(get_files_by_extension(".go")) do |path|
         next if go_test_path?(path)
@@ -103,7 +196,7 @@ module Analyzer::Go
         dir = File.dirname(path)
         structs = package_structs[dir]? || Hash(String, Array(StructField)).new
 
-        endpoints = extract_huma_endpoints(content, path, structs)
+        endpoints = extract_huma_endpoints(content, path, structs, packages[dir]? || PackageInfo.new)
         next if endpoints.empty?
 
         mutex.synchronize do
@@ -111,14 +204,36 @@ module Analyzer::Go
         end
       end
 
-      result
+      result.concat(auto_patches(result, packages))
+    end
+
+    # `autopatch.AutoPatch(api)` adds a PATCH (a GET, then the PUT with the
+    # merged body) to every path of the API that has both and no PATCH of its
+    # own. vikunja calls it after registering its whole v2 API.
+    # ponytail: the operations of the package that calls it, not of every
+    # package registering on that API.
+    private def auto_patches(endpoints : Array(Endpoint), packages : Hash(String, PackageInfo)) : Array(Endpoint)
+      patches = [] of Endpoint
+      endpoints.group_by { |ep| ep.details.code_paths.first?.try { |cp| File.dirname(cp.path) } || "" }.each do |dir, eps|
+        next unless packages[dir]?.try(&.auto_patch?)
+        eps.group_by(&.url).each_value do |same|
+          next unless same.any?(&.method.==("GET")) && same.none?(&.method.==("PATCH"))
+          put = same.find(&.method.==("PUT")) || next
+          patch = Endpoint.new(put.url, "PATCH", put.params.dup, put.details)
+          put.handler.try { |handler| patch.handler = handler }
+          put.tags.each { |tag| patch.add_tag(tag) }
+          patches << patch
+        end
+      end
+      patches
     end
 
     # Walks the Go AST for every `huma.Register(...)` call, decoding
     # method/path from the Operation composite literal and resolving
     # the handler's Input struct fields for param classification.
     private def extract_huma_endpoints(source : String, path : String,
-                                       structs : Hash(String, Array(StructField))) : Array(Endpoint)
+                                       structs : Hash(String, Array(StructField)),
+                                       package : PackageInfo) : Array(Endpoint)
       endpoints = [] of Endpoint
       Noir::TreeSitter.parse_go(source) do |root|
         groups = collect_huma_groups(root, source)
@@ -130,15 +245,19 @@ module Analyzer::Go
           # `sse.Register(api, op, eventTypes, handler)` takes the same
           # Operation literal, with the handler one argument later.
           sse = func_text == "sse.Register"
-          next unless func_text == "huma.Register" || sse || sugar_verb
 
           args = Noir::TreeSitter.field(call, "arguments")
           next if args.nil?
+          # A project's own wrapper around `huma.Register` (vikunja's generic
+          # `Register(api, huma.Operation{...}, handler)`) takes the same
+          # arguments; the Operation literal in second place is the mark.
+          next unless func_text == "huma.Register" || sse || sugar_verb || operation_literal?(args, source)
 
           # `route_path` keeps an empty-string default (a sugar call with
           # too few args leaves it unset); `method` is assigned on every
           # branch below, so it needs no initializer.
           route_path = ""
+          security = nil.as(String?)
           handler_node : LibTreeSitter::TSNode? = nil
           api_node : LibTreeSitter::TSNode? = nil
 
@@ -170,20 +289,30 @@ module Analyzer::Go
             end
             operation_arg = op_node
             next if operation_arg.nil?
-            method, route_path = decode_operation(operation_arg, source)
+            method, route_path, security = decode_operation(operation_arg, source)
           end
 
           next if method.empty? || route_path.empty?
           # An operation registered on a `huma.NewGroup(api, "/v1")` group is
           # served under each of the group's prefixes.
           prefixes = api_node.try { |api_arg| Noir::TreeSitter.node_type(api_arg) == "identifier" ? groups[Noir::TreeSitter.node_text(api_arg, source)]? : nil }
+          prefixes ||= package.base_path.try { |base| [base] }
           route_paths = prefixes ? prefixes.map { |prefix| "#{prefix.rstrip('/')}#{route_path}" } : [route_path]
 
           row = Noir::TreeSitter.node_start_row(call) + 1
           fields = handler_node.try { |handler_arg| input_fields(handler_arg, source, structs) }
+          # A named handler: its declaration, and its input struct when the
+          # literal gave none.
+          named = handler_node.try { |handler_arg| Noir::TreeSitter.node_type(handler_arg) == "identifier" ? package.handlers[Noir::TreeSitter.node_text(handler_arg, source)]? : nil }
+          fields ||= named.try(&.[2]).try { |input| structs[input]? }
+          access = package.access_tag(security)
           route_paths.each do |url|
             endpoint = Endpoint.new(url, method.upcase, Details.new(PathInfo.new(path, row)))
             fields.try &.each { |field| push_field_param(endpoint, field, structs) }
+            if handler_arg = handler_node
+              endpoint.handler = Handler.new(Noir::TreeSitter.node_text(handler_arg, source), named.try(&.[0]), named.try(&.[1])) if named
+            end
+            endpoint.add_tag(access) if access
             endpoints << endpoint
           end
         end
@@ -195,16 +324,17 @@ module Analyzer::Go
     # and returns `{method, path}` decoded from the keyed elements.
     # `Method` accepts either a string literal or a selector like
     # `http.MethodGet`; `Path` is always a string literal.
-    private def decode_operation(node : LibTreeSitter::TSNode, source : String) : Tuple(String, String)
+    private def decode_operation(node : LibTreeSitter::TSNode, source : String) : Tuple(String, String, String?)
       method = ""
       path = ""
+      security = nil.as(String?)
 
       type_node = Noir::TreeSitter.field(node, "type")
       type_text = type_node ? Noir::TreeSitter.node_text(type_node, source) : ""
-      return {method, path} unless type_text.includes?("Operation")
+      return {method, path, security} unless type_text.includes?("Operation")
 
       body = Noir::TreeSitter.field(node, "body")
-      return {method, path} if body.nil?
+      return {method, path, security} if body.nil?
 
       Noir::TreeSitter.each_named_child(body) do |child|
         next unless Noir::TreeSitter.node_type(child) == "keyed_element"
@@ -238,10 +368,25 @@ module Analyzer::Go
         when "Path"
           decoded = decode_string_value(value, source)
           path = decoded if decoded
+        when "Security"
+          security = Noir::TreeSitter.node_text(value, source)
         end
       end
 
-      {method, path}
+      {method, path, security}
+    end
+
+    # Whether the call's second argument is a `huma.Operation{...}` literal.
+    private def operation_literal?(args : LibTreeSitter::TSNode, source : String) : Bool
+      index = 0
+      found = false
+      Noir::TreeSitter.each_named_arg(args) do |arg|
+        if index == 1 && Noir::TreeSitter.node_type(arg) == "composite_literal"
+          found = Noir::TreeSitter.field(arg, "type").try { |type| Noir::TreeSitter.node_text(type, source) } == "huma.Operation"
+        end
+        index += 1
+      end
+      found
     end
 
     # `Method` can be:
