@@ -178,7 +178,9 @@ module Analyzer::Php
       prefixes = {} of String => String
       php_source_files.each do |path|
         bootstrap = path.ends_with?("/bootstrap/app.php")
-        next unless bootstrap || path.ends_with?("Provider.php")
+        # A provider need not be named `*Provider.php` (akaunting's is
+        # `app/Providers/Route.php`).
+        next unless bootstrap || path.ends_with?("Provider.php") || path.includes?("/Providers/")
         next if PhpEngine.test_path?(base_relative_path(path))
         begin
           content = read_file_content(path)
@@ -193,6 +195,10 @@ module Analyzer::Php
     end
 
     private def collect_route_wiring(content : String, source_path : String, base : String, prefixes : Hash(String, String), middleware : Hash(String, Array(String))) : Nil
+      # `use Illuminate\Support\Facades\Route as Facade;` -> read `Facade::` as `Route::`.
+      if aliased = content.match(/\buse\s+\\?Illuminate\\Support\\Facades\\Route\s+as\s+(\w+)\s*;/)
+        content = content.gsub(/\b#{aliased[1]}::/, "Route::")
+      end
       lexer = Noir::PhpLexer.new(content)
       # {open paren, close paren, prefix} of every `Route::…->group(` call,
       # outermost first. A `Route::group([...], …)` carries its prefix in the
@@ -210,7 +216,7 @@ module Analyzer::Php
           options_end = lexer.matching_delimiter(options.end(0) - 1)
           prelude += content[options.begin(0)..options_end] if options_end
         end
-        groups << {open, close, extract_group_prefix(prelude, source_path), middleware_names(prelude, imports)}
+        groups << {open, close, extract_group_prefix(prelude, source_path), middleware_names(prelude.includes?("config") ? resolve_config_calls(prelude, source_path) : prelude, imports)}
       end
 
       api_spans = content.scan(WITH_ROUTING_API_RE).map { |m| m.begin(0)...m.end(0) }
@@ -1277,7 +1283,9 @@ module Analyzer::Php
     CONFIG_CALL_RE = /\bconfig\s*\(\s*['"]([\w-]+(?:\.[\w-]+)+)['"]\s*(?:,\s*(['"])([^'"]*)\2\s*)?\)/
     # A config value the scan can read: a literal, or `env('X', 'literal')`
     # (what the app serves when the variable is unset).
-    CONFIG_VALUE_RE = /\G\s*(?:(['"])([^'"\\$]*)\1|env\s*\(\s*['"][\w.-]+['"]\s*,\s*(['"])([^'"\\$]*)\3\s*\))\s*[,\]]/
+    # `explode(',', env('X', 'api'))` (a one-name list's default) reads as that name.
+    # ponytail: a comma-separated default stays unread (middleware names such as `throttle:60,1` hold commas).
+    CONFIG_VALUE_RE = /\G\s*(?:(['"])([^'"\\$]*)\1|env\s*\(\s*['"][\w.-]+['"]\s*,\s*(['"])([^'"\\$]*)\3\s*\)|explode\s*\(\s*['"],['"]\s*,\s*env\s*\(\s*['"][\w.-]+['"]\s*,\s*(['"])([^'"\\$,]*)\5\s*\)\s*\))\s*[,\]]/
 
     # `text` with each `config('file.key')` call replaced by the string the
     # app's `config/file.php` gives it by default, where that is a literal.
@@ -1326,7 +1334,7 @@ module Analyzer::Php
         end
         last = m.begin(0)
         next unless depth == 1 && lexer.in_code?(m.end(0) - 1)
-        return array.match(CONFIG_VALUE_RE, m.end(0)).try { |v| v[2]? || v[4]? }
+        return array.match(CONFIG_VALUE_RE, m.end(0)).try { |v| v[2]? || v[4]? || v[6]? }
       end
       fallback
     end
