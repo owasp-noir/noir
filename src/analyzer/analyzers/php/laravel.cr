@@ -767,10 +767,17 @@ module Analyzer::Php
 
       signature.scan(FORM_REQUEST_HINT_RE) do |m|
         short = m[1].split('\\').last
-        next if short == "Request" || !short[0].uppercase?
+        next unless short[0].uppercase?
+        # `use App\Http\Requests\Common\Item as Request;` names an app
+        # FormRequest `Request`; only the framework's own `Request` is skipped.
+        aliased = short == "Request"
+        if aliased
+          imported = source.imports["Request"]?
+          next if imported.nil? || imported.lstrip('\\').starts_with?("Illuminate\\") || imported.lstrip('\\').starts_with?("Symfony\\")
+        end
         request_path = resolve_controller_path(m[1], routes_file_path, source.imports)
         next unless request_path && File.exists?(request_path)
-        next unless short.ends_with?("Request") || form_request_class?(request_path, routes_file_path)
+        next if (aliased || !short.ends_with?("Request")) && !form_request_class?(request_path, routes_file_path)
         params.concat(form_request_params(request_path, routes_file_path))
       end
       dedup_params(params)
