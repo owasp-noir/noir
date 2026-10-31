@@ -87,6 +87,7 @@ module Analyzer::CSharp
     end
     @param_name_strip_regexes = Hash(String, Regex).new
     @type_namespaces = Hash(Noir::CSharpType, String).new
+    @type_files = Hash(Noir::CSharpType, String).new
     @closed_scopes = Set(String).new
     @unread_route = false
     @convention_prefixes = Hash(String, String).new
@@ -419,6 +420,7 @@ module Analyzer::CSharp
           namespace = lexer.masked_source.match(NAMESPACE_DECL_RE).try(&.[1]) || ""
           Noir::CSharpTypeExtractor.extract(lexer).each do |type|
             @type_namespaces[type] = namespace
+            @type_files[type] = file
             types_by_scope[scope] << {file, type}
             all_types << type
             class_routes[type] = class_header_routes(lexer, type, file)
@@ -546,6 +548,24 @@ module Analyzer::CSharp
       parts.empty? ? [type] : parts
     end
 
+    USING_DIRECTIVE_RE = /^\s*using\s+([\w.]+)\s*;/m
+
+    # Several projects may declare the same base name: keep the declarations
+    # C# name lookup reaches first from the deriving type's file (its
+    # namespace and parents, then its `using` directives). Still ambiguous:
+    # all of them, which `one_declaration?` refuses, so no prefix is inherited.
+    private def pick_base(candidates : Array(Noir::CSharpType), part : Noir::CSharpType) : Array(Noir::CSharpType)
+      return candidates if one_declaration?(candidates)
+      segments = (@type_namespaces[part]? || "").split('.')
+      scopes = (1..segments.size).map { |n| segments[0, segments.size - n + 1].join('.') }
+      @type_files[part]?.try { |file| read_file_content(file).scan(USING_DIRECTIVE_RE) { |m| scopes << m[1] } }
+      scopes.each do |scope|
+        found = candidates.select { |candidate| @type_namespaces[candidate]? == scope }
+        return found if !found.empty? && one_declaration?(found)
+      end
+      candidates
+    end
+
     # Several local declarations of one simple name are one type only when
     # they are the parts of one `partial` declaration.
     private def one_declaration?(candidates : Array(Noir::CSharpType)) : Bool
@@ -562,7 +582,7 @@ module Analyzer::CSharp
 
       parts.each do |part|
         next unless base = part.base_name
-        candidates = index[base]?
+        candidates = index[base]?.try { |found| pick_base(found, part) }
         if candidates.nil? || candidates.empty?
           attributes << "Controller" if FRAMEWORK_CONTROLLER_BASES.includes?(base)
           next
@@ -614,7 +634,7 @@ module Analyzer::CSharp
 
       parts.each do |part|
         next unless base = part.base_name
-        candidates = index[base]?
+        candidates = index[base]?.try { |found| pick_base(found, part) }
         next if candidates.nil? || candidates.empty?
         next unless one_declaration?(candidates)
         base_routes, base_area = inherited_class_routes(candidates, index, class_routes, visited)
@@ -705,7 +725,9 @@ module Analyzer::CSharp
 
               # No `[Http*]` attribute → convention-based (verb GET, route from
               # any `[Route]` base or the controller convention).
-              emit_pairs = verb_routes.empty? ? [{"GET", route_attr}] : verb_routes
+              # An action with a `[Route]` of its own and no verb attribute
+              # accepts every method.
+              emit_pairs = verb_routes.empty? ? [{route_attr.empty? ? "GET" : "ANY", route_attr}] : verb_routes
               emit_pairs.each do |emit_verb, emit_route|
                 # A bare `[HttpGet]` whose `[Route("x")]` base arrived on a
                 # later line collected an empty route — fall back to the base
