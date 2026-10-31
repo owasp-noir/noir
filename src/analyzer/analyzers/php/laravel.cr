@@ -777,7 +777,7 @@ module Analyzer::Php
         end
         request_path = resolve_controller_path(m[1], routes_file_path, source.imports)
         next unless request_path && File.exists?(request_path)
-        next unless (!aliased && short.ends_with?("Request")) || form_request_class?(request_path, routes_file_path)
+        next if (aliased || !short.ends_with?("Request")) && !form_request_class?(request_path, routes_file_path)
         params.concat(form_request_params(request_path, routes_file_path))
       end
       dedup_params(params)
