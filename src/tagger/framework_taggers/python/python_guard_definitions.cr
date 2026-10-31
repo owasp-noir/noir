@@ -18,11 +18,11 @@ module PythonGuardDefinitions
   # caller and denies with 403. A 403 alone is not enough: Dify's
   # `email_password_login_enabled` aborts 403 on a feature flag, which says
   # nothing about the caller.
-  UNAUTHENTICATED    = /\braise\s+(?:\w+\.)*\w*(?:Unauthori[sz]ed|Unauthenticated|NotAuthenticated|AuthenticationFailed)(?:Error|Exception)?\b|\babort\s*\(\s*(?:401\b|(?:\w+\.)*UNAUTHORIZED\b)|\.unauthorized\s*\(|\breturn\b.*,\s*401\b|\bstatus(?:_code)?\s*=\s*401\b|\bHTTP_401_UNAUTHORIZED\b/
+  UNAUTHENTICATED    = /\braise\s+(?:\w+\.)*\w*(?:Unauthori[sz]ed|Unauthenticated|NotAuthenticated|AuthenticationFailed)(?:Error|Exception)?\b|\babort\s*\(\s*(?:401\b|(?:\w+\.)*UNAUTHORIZED\b)|\.unauthorized\s*\(|\.response_401\s*\(|\bverify_jwt_in_request\s*\((?=\s*(?:\)|[A-Za-z_]\w*\s*=))(?![^)]*\boptional\s*=\s*(?!False\b))|\breturn\b.*,\s*401\b|\bstatus(?:_code)?\s*=\s*401\b|\bHTTP_401_UNAUTHORIZED\b/
   REQUEST_CREDENTIAL = /\brequest\.(?:authorization\b|(?:headers|cookies|args)(?:\.get\s*\(|\[)\s*["'][\w-]*(?:key|token|auth|secret|signature|password|session)[\w-]*["'])/i
   REJECTION          = /\braise\s+[A-Za-z_]|\babort\s*\(|\breturn\b.*,\s*4\d\d\b/
   CALLER_IDENTITY    = /\bcurrent_user\b|\bis_authenticated\b|\bg\.user\b/
-  FORBIDDEN          = /\braise\s+(?:\w+\.)*\w*(?:Forbidden|PermissionDenied|AccessDenied)\w*\b|\babort\s*\(\s*(?:403\b|(?:\w+\.)*FORBIDDEN\b)|\breturn\b.*,\s*403\b/
+  FORBIDDEN          = /\braise\s+(?:\w+\.)*\w*(?:Forbidden|PermissionDenied|AccessDenied)\w*\b|\babort\s*\(\s*(?:403\b|(?:\w+\.)*FORBIDDEN\b)|\breturn\b.*,\s*403\b|\.response_403\s*\(/
 
   # Sending the caller to the login page is how a browser view refuses
   # an anonymous one.
@@ -32,6 +32,8 @@ module PythonGuardDefinitions
   SESSION_READ = /(?<![\w.])session\s*(?:\.get\s*\(|\[)/
   # A wrapper calling the view it decorates.
   VIEW_CALL = /(?<![\w.])\w+\s*\(\s*\*\w+\s*,\s*\*\*\w+\s*\)/
+  # The view called from a function wrapper or a method one (`f(self, *args, **kwargs)`).
+  ANY_VIEW_CALL = /(?<![\w.])\w+\s*\(\s*(?:\w+\s*,\s*)?\*\w+\s*,\s*\*\*\w+\s*\)/
   # A condition that holds when its subject is absent or does not match.
   NEGATED_TEST = /\A\s*not\b|\bis\s+None\b|==\s*None\b|\bis\s+False\b|==\s*False\b|\bnot\s+in\b|!=/
 
@@ -46,7 +48,7 @@ module PythonGuardDefinitions
   private def decorator_guard(line : String, file : String) : String?
     name = line.match(DECORATOR_NAME).try(&.[1]) || return
     target = resolve_def(file, name)
-    return decorator_description(line) unless target
+    return decorator_description(line, file) unless target
     verdict = @verdicts[target]?
     verdict = @verdicts[target] = guard_definition?(target[0], target[1], 0) if verdict.nil?
     return unless verdict
@@ -75,7 +77,7 @@ module PythonGuardDefinitions
   # (`view_access`), or when it answers 401 / checks a request credential
   # regardless.
   private def guard_definition?(file : String, name : String, hops : Int32) : Bool
-    body = python_defs(file)[name]
+    body = without_view_error_handlers(python_defs(file)[name])
     if body.matches?(VIEW_CALL) && (body.matches?(FORBIDDEN) || body.matches?(LOGIN_REDIRECT)) &&
        identity_read?(body, file, 0)
       access = view_access(file, name)
@@ -90,6 +92,40 @@ module PythonGuardDefinitions
       target = resolve_def(file, callee)
       !!target && guard_definition?(target[0], target[1], hops + 1)
     end
+  end
+
+  # `body` without the `except` clauses of a `try:` that calls the view:
+  # Superset's `@api` answers 401 there for a `NoAuthorizationError` the
+  # view raised, which translates a refusal made elsewhere rather than
+  # making one.
+  private def without_view_error_handlers(body : String) : String
+    return body unless body.includes?("except") && body.matches?(ANY_VIEW_CALL)
+    lines = body.lines
+    kept = [] of String
+    idx = 0
+    while idx < lines.size
+      line = lines[idx]
+      kept << line
+      idx += 1
+      next unless line.strip == "try:"
+      indent = line.size - line.lstrip.size
+      block_end = block_end(lines, idx, indent)
+      kept.concat(lines[idx...block_end])
+      calls_view = lines[idx...block_end].any?(&.matches?(ANY_VIEW_CALL))
+      idx = block_end
+      while calls_view && idx < lines.size && lines[idx].size - lines[idx].lstrip.size == indent && lines[idx].lstrip.starts_with?("except")
+        idx = block_end(lines, idx + 1, indent)
+      end
+    end
+    kept.join('\n')
+  end
+
+  # The index past the block that starts at `idx`, under a header at `indent`.
+  private def block_end(lines : Array(String), idx : Int32, indent : Int32) : Int32
+    while idx < lines.size && (lines[idx].blank? || lines[idx].size - lines[idx].lstrip.size > indent)
+      idx += 1
+    end
+    idx
   end
 
   # Whether `text` reads who the caller is: `current_user` / `g.user`, the

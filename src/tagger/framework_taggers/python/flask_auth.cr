@@ -25,6 +25,11 @@ class FlaskAuthTagger < FrameworkTagger
     {/\@auth\.verify_password/, "flask-httpauth verify_password"},
     {/\@token_auth\.login_required/, "flask-httpauth token_auth"},
     {/\@multi_auth\.login_required/, "flask-httpauth multi_auth"},
+    # Flask-AppBuilder's permission checks: each refuses a caller without
+    # the view's permission, unless the Public role (AUTH_ROLE_PUBLIC) holds it.
+    {/\@protect\s*\(/, "flask-appbuilder protect (a setting can make it public)"},
+    {/\@has_access\b/, "flask-appbuilder has_access (a setting can make it public)"},
+    {/\@has_access_api\b/, "flask-appbuilder has_access_api (a setting can make it public)"},
     {/\@requires_auth/, "requires_auth"},
     {/\@authenticated/, "authenticated"},
   ]
@@ -56,8 +61,86 @@ class FlaskAuthTagger < FrameworkTagger
   private def check_endpoint(endpoint : Endpoint)
     auth, authz = handler_guards(endpoint)
     auth ||= code_path_guard(endpoint)
+    auth ||= body_guard(endpoint)
     endpoint.add_tag(Tag.new("auth", "Protected by #{auth}", "flask_auth")) if auth
     endpoint.add_tag(Tag.new("authz", "Protected by #{authz}", "flask_auth")) if authz
+  end
+
+  # A handler that turns away a caller who is not logged in itself, before
+  # any path that answers the request method: Superset's `welcome` opens
+  # with `if not g.user or not get_user_id(): return redirect_to_login()`.
+  # The `if` must hold only for an unidentified caller (`implies_identity?`
+  # on its false branch) and its block must refuse: a login redirect, a 401,
+  # or a 403. Top-level statements are read in order, and the walk stops at
+  # the first one that may answer first: a `return`, or a block holding a
+  # `return` that is not a refusal (`if request.method == "GET": return
+  # page()` leaves GET open, but not POST). A test on `request.method` is
+  # decided for this endpoint's method. `if not is_feature_enabled(...):
+  # abort(404)` reads no caller and answers nobody, so the walk goes on.
+  private def body_guard(endpoint : Endpoint) : String?
+    handler = endpoint.handler || return
+    file = handler.path || return
+    lines = read_file_lines(file) || return
+    def_idx = (handler.line || return) - 1
+    return unless 0 <= def_idx < lines.size
+    def_indent = lines[def_idx].size - lines[def_idx].lstrip.size
+    idx = def_idx + 1
+    # Past the signature, which may wrap.
+    while idx < lines.size && !Analyzer::Python::Helper.strip_python_comment(lines[idx - 1]).rstrip.ends_with?(':')
+      idx += 1
+    end
+    body = [] of {Int32, String}
+    lines[idx..].each do |raw|
+      line = Analyzer::Python::Helper.strip_python_comment(raw).rstrip
+      next if line.blank?
+      indent = line.size - line.lstrip.size
+      break if indent <= def_indent
+      body << {indent, line.strip}
+    end
+    level = body.first?.try(&.[0]) || return
+    method = endpoint.method.upcase
+    body.each_with_index do |(indent, code), k|
+      next unless indent == level
+      return if code.starts_with?("return")
+      block = body[(k + 1)..].take_while { |entry| entry[0] > level }.map(&.[1])
+      if if_match = code.match(/\A(?:if|elif)\s+(.+?):\s*(.*)\z/)
+        inline = if_match[2]
+        block.unshift(inline) unless inline.empty?
+        cond = method_condition(if_match[1], method)
+        next if cond == false # never taken for this method
+        if cond.is_a?(String) && !block.empty? && block.first.matches?(BODY_REFUSAL) &&
+           implies_identity?(cond, false, file, Hash(String, String).new, [] of String)
+          return "handler refusing a caller who is not logged in"
+        end
+        return if cond == true && block.any?(&.starts_with?("return"))
+      end
+      # Any other way this statement may answer first.
+      return if block.any? { |statement| statement.starts_with?("return") && !statement.matches?(BODY_REFUSAL) }
+    end
+    nil
+  end
+
+  BODY_REFUSAL = /\A(?:return|raise|abort)\b.*(?:#{LOGIN_REDIRECT.source}|\bredirect_to_(?:log_?in|sign_?in)\b|\b40[13]\b|Unauthori[sz]ed|Forbidden|\.response_40[13]\s*\()/i
+  METHOD_TEST  = /\Arequest\.method\s*(==|!=|in|not\s+in)\s*(.+)\z/
+  METHOD_VERBS = /['"]([A-Za-z]+)['"]/
+
+  # `cond` for an endpoint answering `method`: `true` / `false` when it is
+  # only a `request.method` test, otherwise the condition left once its
+  # `and`-joined method tests are decided (`false` when one fails).
+  private def method_condition(cond : String, method : String) : String | Bool
+    parts = cond.split(/\s+and\s+/)
+    kept = [] of String
+    parts.each do |part|
+      if (test = part.strip.match(METHOD_TEST)) && !cond.matches?(/\sor\s/)
+        verbs = test[2].scan(METHOD_VERBS).map(&.[1].upcase)
+        holds = verbs.includes?(method)
+        holds = !holds if test[1] == "!=" || test[1].starts_with?("not")
+        return false unless holds
+      else
+        kept << part
+      end
+    end
+    kept.empty? ? true : kept.join(" and ")
   end
 
   # The auth decorator at the route's declaration line, for a route whose
@@ -157,7 +240,9 @@ class FlaskAuthTagger < FrameworkTagger
     while idx >= 0
       line = Analyzer::Python::Helper.strip_python_comment(lines[idx]).strip
       idx -= 1
-      next if line.empty? && depth > 0
+      # A comment line inside the stack (`# pylint: disable=...` above the
+      # `def`) is no end of it.
+      next if line.empty?
       # Walking up, a multi-line decorator's closing bracket comes first.
       depth += line.count(")]}") - line.count("([{")
       if depth > 0
@@ -349,9 +434,13 @@ class FlaskAuthTagger < FrameworkTagger
     end
   end
 
-  private def decorator_description(line : String) : String?
+  private def decorator_description(line : String, file : String) : String?
     DECORATOR_PATTERNS.each do |pattern, desc|
-      return desc if line.matches?(pattern)
+      next unless line.matches?(pattern)
+      # A FAB name means FAB's decorator only where the file imports it:
+      # `from internal_lib.perm import has_access` is something else.
+      next if desc.starts_with?("flask-appbuilder") && !read_file(file).try(&.includes?("flask_appbuilder"))
+      return desc
     end
     nil
   end

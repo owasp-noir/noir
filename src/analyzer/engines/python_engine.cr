@@ -821,7 +821,8 @@ module Analyzer::Python
         line = lines[i]
         i -= 1
         stripped = line.lstrip
-        next if stripped.empty? || stripped.starts_with?('#') || stripped.starts_with?('@') || line.size - stripped.size >= indent
+        # `):` closes a wrapped `class X(\n    Base,\n):` header.
+        next if stripped.empty? || stripped.starts_with?('#') || stripped.starts_with?('@') || stripped.starts_with?(')') || line.size - stripped.size >= indent
         name = "#{$1}.#{name}" if stripped =~ /\Aclass\s+([A-Za-z_]\w*)/
         break
       end
