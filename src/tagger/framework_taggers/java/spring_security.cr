@@ -111,6 +111,8 @@ class SpringSecurityTagger < FrameworkTagger
         note_boot_app(file, content)
         module_dir = build_module(file)
 
+        next if test_source?(file)
+
         if content.includes?("HttpSecurity") || content.includes?("SecurityFilterChain") || content.includes?("WebSecurityConfigurerAdapter")
           scan_security_config(content, module_dir, file.ends_with?(".java"))
         end

@@ -2922,6 +2922,11 @@ describe "SpringAuthTagger (servlet filter review cases)" do
     end
   end
 
+  it "reads a pass-through on a server-set request attribute as not taken by a caller without a credential" do
+    review_case("m01_attribute_marked_pass")["GET /items"].should eq(["Protected by Servlet filter ConsumerFilter on /* (refuses with 401)"])
+    review_case("m02_attribute_absent_pass").values.flatten.should be_empty
+  end
+
   it "guards a filter that refuses a missing credential, matching below the context path" do
     review_case("k02_when_missing_refused").values.should eq([["Protected by Servlet filter ApiKeyFilter on /* (refuses with 401)"]] * 3)
     issue = review_case("k06_issue_repro")
@@ -2983,6 +2988,50 @@ end
 # still reaches the handler (lambdas, a refusal without `return`, murky
 # credential locals, no-argument predicates), plus the context path.
 REVIEW_FILTERS2 = {
+  # An earlier filter marks the request authenticated through server-side attributes.
+  "m01_attribute_marked_pass" => {"src/main/java/app/Filter.java", <<-JAVA},
+    package app;
+    @Component
+    public class ConsumerFilter extends OncePerRequestFilter {
+        @Override
+        protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain) throws ServletException, IOException {
+            if (Boolean.TRUE.equals(request.getAttribute("AUTHENTICATED"))) {
+                chain.doFilter(request, response);
+                return;
+            }
+            if (request.getAttribute("USER_TOKEN") != null) {
+                chain.doFilter(request, response);
+                return;
+            }
+            String token = request.getHeader("Authorization");
+            if (token == null) {
+                response.sendError(401);
+                return;
+            }
+            chain.doFilter(request, response);
+        }
+    }
+    JAVA
+  # The attribute test is true for a caller without it: the filter lets them through.
+  "m02_attribute_absent_pass" => {"src/main/java/app/Filter.java", <<-JAVA},
+    package app;
+    @Component
+    public class ConsumerFilter extends OncePerRequestFilter {
+        @Override
+        protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain) throws ServletException, IOException {
+            if (request.getAttribute("AUTHENTICATED") == null) {
+                chain.doFilter(request, response);
+                return;
+            }
+            String token = request.getHeader("Authorization");
+            if (token == null) {
+                response.sendError(401);
+                return;
+            }
+            chain.doFilter(request, response);
+        }
+    }
+    JAVA
   "j01_noarg_predicate_threadlocal" => {"src/main/java/app/KeyFilter.java", <<-JAVA},
     package app;
     @Component
@@ -3835,5 +3884,62 @@ describe "SpringAuthTagger (servlet path matchers)" do
       }
       JAVA
     run_spring_security_config({"WsSecurity.java" => config}, ["GET /items"])["GET /items"].should be_empty
+  end
+end
+
+describe "SpringAuthTagger (profile-bound and test chains)" do
+  chain = <<-JAVA
+    @Configuration
+    @Profile("auth")
+    class Conf {
+        @Bean
+        SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
+            return http.authorizeHttpRequests(a -> a.anyRequest().authenticated()).build();
+        }
+    }
+    JAVA
+
+  it "says a chain declared under @Profile guards only while the profile is active" do
+    tags = run_spring_security_config({"Conf.java" => chain}, ["GET /x"])
+    tags["GET /x"].size.should eq(1)
+    tags["GET /x"][0].should contain("; a setting can lift it: it is registered only under `@Profile(\"auth\")`")
+  end
+
+  it "does not carry a sibling class's profile onto an unconditional chain" do
+    plain = chain.sub("@Profile(\"auth\")", "").sub("class Conf", "class Other")
+    tags = run_spring_security_config({"Conf.java" => plain + "\n" + chain}, ["GET /x"])
+    tags["GET /x"].none?(&.includes?("a setting can lift it")).should be_true
+  end
+
+  it "says a module's guard comes from the assembly bundling it when the module alone has no chain" do
+    boot = "@SpringBootApplication\npublic class App { }\n"
+    files = {
+      "pom.xml"                                             => "<project><artifactId>root</artifactId></project>",
+      "admin/pom.xml"                                       => spring_module_pom("admin", ["spring-boot-starter-web"]),
+      "admin/src/main/java/com/example/AdminApp.java"       => boot,
+      "admin/src/main/java/com/example/Controller.java"     => "public class Controller {\n    @GetMapping(\"/x\")\n    public String x() { return \"x\"; }\n}\n",
+      "portal/pom.xml"                                      => spring_module_pom("portal", ["spring-boot-starter-security"]),
+      "portal/src/main/java/com/example/Conf.java"          => chain.sub("@Profile(\"auth\")", ""),
+      "assembly/pom.xml"                                    => spring_module_pom("assembly", ["admin", "portal"]),
+      "assembly/src/main/java/com/example/AssemblyApp.java" => boot,
+    }
+    tags = run_spring_multi_module(files, {"GET /x" => "admin/src/main/java/com/example/Controller.java:2"})
+    tags["GET /x"].size.should eq(1)
+    tags["GET /x"][0].should contain("admin run on its own has no such chain, only assembly, which bundles it")
+  end
+
+  it "ignores a SecurityFilterChain built by a test class" do
+    root = File.tempname("spring_test_chain")
+    path = File.join(root, "app/src/test/java/com/example/ScenarioTest.java")
+    Dir.mkdir_p(File.dirname(path))
+    File.write(path, chain.sub("class Conf", "class ScenarioTest").sub("@Profile(\"auth\")", ""))
+    CodeLocator.instance.clear_all
+    CodeLocator.instance.register_path(path)
+    options = create_test_options
+    options["base"] = YAML::Any.new(root)
+    endpoint = Endpoint.new("/x", "GET")
+    SpringAuthTagger.new(options).perform([endpoint])
+    FileUtils.rm_rf(root)
+    endpoint.tags.select(&.name.==("auth")).should be_empty
   end
 end

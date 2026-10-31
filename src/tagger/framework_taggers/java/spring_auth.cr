@@ -228,6 +228,8 @@ class SpringAuthTagger < FrameworkTagger
         end
 
         next unless content.includes?("SecurityFilterChain") || content.includes?("HttpSecurity") || content.includes?("WebSecurityConfigurerAdapter")
+        # A test class builds its own throwaway chain; it secures no served endpoint.
+        next if test_source?(file)
 
         scan_security_config(content, file.ends_with?(".java"), module_dir, file)
       end
@@ -504,11 +506,6 @@ class SpringAuthTagger < FrameworkTagger
 
     def initialize(@tainted, @credential, @murky, @body, @helpers, @declared)
     end
-  end
-
-  private def test_source?(file : String) : Bool
-    relative = base_relative_path(file)
-    Analyzer::Java::JavaEngine.test_path?(relative) || Analyzer::Kotlin::KotlinEngine.test_path?(relative)
   end
 
   private def scan_servlet_filter_defs(content : String, file : String, module_dir : String?)
@@ -917,7 +914,16 @@ class SpringAuthTagger < FrameworkTagger
     value == :true ? :false : :true
   end
 
+  # A request attribute is set on the server side (an earlier filter marking
+  # the request authenticated), never by the caller: unset for a caller
+  # without a credential.
+  ATTRIBUTE_EQUALS = /\A[\w$.]+\s*\.\s*equals\s*\(\s*([\w$]+)\s*\.\s*getAttribute\s*\([^()]*\)\s*\)\z/
+  ATTRIBUTE_NULL   = /\A([\w$]+)\s*\.\s*getAttribute\s*\([^()]*\)\s*(!=|==)\s*null\z/
+
   private def credential_test(atom : String, reading : FilterReading) : Symbol
+    if (found = atom.match(ATTRIBUTE_EQUALS) || atom.match(ATTRIBUTE_NULL)) && reading.tainted.includes?(found[1])
+      return found[2]? == "==" ? :true : :false
+    end
     return :unknown unless atom.matches?(CREDENTIAL_EXPRESSION) || identifiers(atom).any? { |ident| reading.credential.includes?(ident) }
     return :unknown if identifiers(atom).any? { |ident| reading.murky.includes?(ident) }
     rest = atom.gsub(CREDENTIAL_EXPRESSION, " ")
@@ -1470,11 +1476,52 @@ class SpringAuthTagger < FrameworkTagger
     end
     rules.concat(form_rules)
 
+    # A chain declared under `@Profile("auth")` / `@ConditionalOn…` guards
+    # only while that holds: say so instead of reporting an unconditional guard.
+    unless (conditions = chain_conditions(block, java_source, block_start_line)).empty?
+      note = "; a setting can lift it: #{conditions.join("; ")}"
+      rules = rules.map do |rule|
+        next rule unless rule[:protected_rule]
+        {pattern: rule[:pattern], method: rule[:method], description: rule[:description] + note, protected_rule: true, module: rule[:module], config_key: rule[:config_key], path: rule[:path], line: rule[:line]}
+      end
+    end
+
     if scope && !scope.empty?
       @scoped_chains << {scope: scope, order: chain_order(block), rules: rules, module: module_dir}
     else
       @security_rules.concat(rules)
     end
+  end
+
+  CLASS_DECLARATION = /\b(?:class|object)\s+[A-Za-z_$][\w$]*[^{;=]*\{/
+  DECLARATION_START = /[;}][ \t]*\r?\n/
+
+  # The `@Profile` / `@ConditionalOn…` conditions the chain `block` is
+  # registered under: the annotations leading its own declaration and those
+  # of every class enclosing it (`java_source` is the whole file; nil, Kotlin,
+  # reads the first only).
+  private def chain_conditions(block : String, java_source : String?, block_start_line : Int32) : Array(String)
+    leads = [] of String
+    if boundary = block.match(CHAIN_BOUNDARY)
+      leads << declaration_lead(block.byte_slice(0, boundary.byte_begin(0)))
+    end
+    if (code = java_source) && (code.includes?("@Profile") || code.includes?("@ConditionalOn"))
+      start = 0
+      (block_start_line - 1).times { start = (code.byte_index('\n'.ord.to_u8, start) || break) + 1 }
+      code.scan(CLASS_DECLARATION) do |decl|
+        break if decl.byte_begin(0) >= start
+        next unless (close = Noir::JSLiteralScanner.find_matching_brace_at_byte(code, decl.byte_end(0) - 1)) && close >= start
+        leads << declaration_lead(code.byte_slice(0, decl.byte_begin(0)))
+      end
+    end
+    leads.flat_map(&.scan(CONDITIONAL_REGISTRATION).map { |found| "it is registered only under `#{found[0]}`" }).uniq!
+  end
+
+  # The annotations and modifiers right before a declaration: what follows
+  # the previous statement or block end in `before`.
+  private def declaration_lead(before : String) : String
+    tail = before.size > 600 ? before[-600..] : before
+    tail[((tail.rindex(DECLARATION_START).try { |idx| idx + 1 }) || 0)..]
   end
 
   private def scan_form_login_rules(block : String, strings : Hash(String, String), file_path : String, block_start_line : Int32, module_dir : String?) : Array(SecurityRule)
@@ -1636,7 +1683,19 @@ class SpringAuthTagger < FrameworkTagger
   # configuration-bound list is read from that app's configuration. The
   # endpoint is guarded when any app (or any module serving it) guards it.
   private def check_security_config_rules(endpoint : Endpoint) : Tuple(String, String?, Int32?)?
-    per_serving_classpath(endpoint, false) { |classpath, app| security_decision(endpoint, app, classpath) }
+    serving : String? = nil
+    decision = per_serving_classpath(endpoint, false) do |classpath, app|
+      security_decision(endpoint, app, classpath).tap { |found| serving = app if found }
+    end
+    return unless decision
+    # A Boot app that bundles other modules (an assembly) is not what runs
+    # the module on its own: when the module's own app declares no chain,
+    # the guard holds only inside the bundling app.
+    own = endpoint_modules(endpoint).first?
+    if (app = serving) && own && own != app && @boot_apps.includes?(own) && module_classpath(own) && security_decision(endpoint, own, module_classpath(own).try(&.[0])).nil?
+      decision = {"#{decision[0]}; #{File.basename(own)} run on its own has no such chain, only #{File.basename(app)}, which bundles it", decision[1], decision[2]}
+    end
+    decision
   end
 
   # `config_dir` holds the configuration lists are read from; `classpath`
