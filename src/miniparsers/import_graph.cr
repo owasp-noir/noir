@@ -774,9 +774,11 @@ module Noir::ImportGraph::Python
                                       from_import : String,
                                       imports : String) : Nil
     package_path = app_base_path
-    # `..` resolves to file's parent dir; `.` to file's dir.
+    # `..` resolves to file's parent dir; `.` to file's dir. The parent is
+    # taken lexically, not as `dir/..`: the resolved path is compared with
+    # the scanned file paths, which never spell `..`.
     if from_import.starts_with?("..")
-      package_path = File.join(file_base_path, "..")
+      package_path = File.dirname(file_base_path)
       from_import = from_import[2..]
     elsif from_import.starts_with?(".")
       package_path = file_base_path
@@ -786,7 +788,7 @@ module Noir::ImportGraph::Python
     imports.split(",").each do |import|
       import = import.strip
       if import.starts_with?("..")
-        package_path = File.join(file_base_path, "..")
+        package_path = File.dirname(file_base_path)
       elsif import.starts_with?(".")
         package_path = file_base_path
       end

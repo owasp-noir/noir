@@ -176,6 +176,8 @@ module Analyzer::Python
           app_base_path = fastapi_base_path_for(app_file, fastapi_base_paths)
           configure_router_prefix(app_file, include_router_map, app_base_path, "", app_instance, prefix_visited)
         end
+        seed_unmounted_router_roots(include_router_map, fastapi_base_paths,
+          (fastapi_app_instances + parameter_app_instances).to_set, prefix_visited)
 
         include_router_map.each do |path, router_map|
           source = read_file_content(path)
@@ -406,8 +408,11 @@ module Analyzer::Python
       # routes/__init__.py — with an empty path, which cut every prefix
       # chain that runs through a package `__init__.py`. Fill those from
       # the symbol resolver, which names the package's `__init__.py`.
-      if import_modules.any? { |_, info| info[0].empty? }
-        Noir::ImportGraph::Python.find_imported_symbols(app_base_path, file_path, source).each do |name, symbol|
+      # Both roots, as for modules: `from portal import router` beside the
+      # importing file names `portal/__init__.py` only from its directory.
+      (local_base_path == app_base_path ? {app_base_path} : {app_base_path, local_base_path}).each do |root|
+        break unless import_modules.any? { |_, info| info[0].empty? }
+        Noir::ImportGraph::Python.find_imported_symbols(root, file_path, source).each do |name, symbol|
           existing = import_modules[name]?
           next unless existing && existing[0].empty?
           import_modules[name] = {symbol[0], existing[1]}
@@ -504,6 +509,43 @@ module Analyzer::Python
           end
         end
         visited.delete(visit_key)
+      end
+    end
+
+    # A router no app is seen to include is still served under its own
+    # prefix (each unconfigured router already is), so the routers it
+    # includes are served under it too. Polar builds `APIRouter(prefix="/v1")`
+    # and hands it to a helper (`add_versioned_routers(app, router, ...)`)
+    # whose `app.include_router(api_router)` names a parameter: every router
+    # it includes lost `/v1`, and `/customer-portal` in turn. Only routers
+    # nothing includes are seeded, so an included one is reached through
+    # its parent rather than also mounted bare.
+    private def seed_unmounted_router_roots(include_router_map : Hash(::String, Hash(::String, Router)),
+                                            project_roots : Array(::String),
+                                            apps : Set(Tuple(::String, ::String)),
+                                            visited : Set(::String)) : Nil
+      included = Set(Tuple(::String, ::String)).new
+      include_router_map.each do |file, routers|
+        source = read_file_content(file)
+        next unless source.includes?("include_router")
+        import_modules = find_fastapi_imported_modules(fastapi_base_path_for(file, project_roots), file, source)
+        routers.each_key do |name|
+          extract_include_router_calls(source, name).each do |args|
+            target_name = extract_include_router_target(args)
+            next if target_name.empty?
+            if target = resolve_router_reference(file, source, import_modules, include_router_map, target_name)
+              included << target
+            end
+          end
+        end
+      end
+      include_router_map.each do |file, routers|
+        routers.each do |name, router|
+          key = {file, name}
+          next unless router.mounted_prefixes.empty?
+          next if apps.includes?(key) || included.includes?(key)
+          configure_router_prefix(file, include_router_map, fastapi_base_path_for(file, project_roots), "", name, visited)
+        end
       end
     end
 
