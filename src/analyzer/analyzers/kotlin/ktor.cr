@@ -41,9 +41,9 @@ module Analyzer::Kotlin
         end
       end
 
-      resource_paths_by_base = Hash(String, Hash(String, String)).new
+      resource_paths_by_base = Hash(String, Hash(String, Noir::TreeSitterKotlinKtorRouteExtractor::ResolvedResource)).new
       raw_resources_by_base.each do |base, raw_resources|
-        resource_paths_by_base[base] = Noir::TreeSitterKotlinKtorRouteExtractor.compose_resource_paths(raw_resources)
+        resource_paths_by_base[base] = Noir::TreeSitterKotlinKtorRouteExtractor.compose_resources(raw_resources)
       end
 
       kotlin_files.each do |path|
@@ -52,7 +52,7 @@ module Analyzer::Kotlin
 
         base = configured_base_for(path)
         string_constants = string_constants_by_base[base]? || Hash(String, String).new
-        resource_paths = resource_paths_by_base[base]? || Hash(String, String).new
+        resource_paths = resource_paths_by_base[base]? || Hash(String, Noir::TreeSitterKotlinKtorRouteExtractor::ResolvedResource).new
         Noir::TreeSitterKotlinKtorRouteExtractor.extract_routes(content, string_constants, resource_paths, include_callees: include_callee).each do |route|
           @result << build_endpoint(route, path)
         end
