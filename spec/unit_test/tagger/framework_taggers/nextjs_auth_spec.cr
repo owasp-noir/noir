@@ -57,6 +57,49 @@ describe "NextjsAuthTagger" do
     tag.call("app/api/public/route.ts", 8).should be_empty
   end
 
+  it "tags a 403 for a key that is in none of the accepted env secrets" do
+    tags = tag.call("app/api/cron-key/route.ts", 3)
+    tags.map(&.name).should eq(["auth"])
+    tags[0].description.should contain("replies 403")
+  end
+
+  it "leaves a refusal of the caller who has the key untagged" do
+    tag.call("app/api/cron-key/route.ts", 11).should be_empty
+  end
+
+  it "tags a handler whose first statements call a same-file helper that throws 401" do
+    tags = tag.call("app/api/helper/route.ts", 13)
+    tags.map(&.name).should eq(["auth"])
+    tags[0].description.should contain("authMiddleware()")
+  end
+
+  it "tags a handler calling an imported helper that refuses a wrong cron key" do
+    tag.call("app/api/helper/route.ts", 25).map(&.name).should eq(["auth"])
+  end
+
+  it "leaves a helper called under a branch, or one refusing a signed-in caller, untagged" do
+    tag.call("app/api/helper/route.ts", 18).should be_empty
+    tag.call("app/api/helper/route.ts", 30).should be_empty
+  end
+
+  it "leaves a check after a write, and a dropped returned 401, untagged" do
+    tag.call("app/api/order/route.ts", 5).should be_empty
+    tag.call("app/api/order/route.ts", 12).should be_empty
+  end
+
+  it "tags a returned 401 the handler hands on" do
+    tag.call("app/api/order/route.ts", 19).map(&.name).should eq(["auth"])
+  end
+
+  it "leaves a list with a public value, and a NEXT_PUBLIC_ key, untagged" do
+    tag.call("app/api/order/route.ts", 26).should be_empty
+    tag.call("app/api/order/route.ts", 35).should be_empty
+  end
+
+  it "leaves a pages-router helper called after a verb branch untagged" do
+    tag.call("pages/api/branchy.ts", 11).should be_empty
+  end
+
   it "reads the resolved handler, not the export line" do
     noir_options = create_test_options
     noir_options["base"] = YAML::Any.new(fixture_base)
