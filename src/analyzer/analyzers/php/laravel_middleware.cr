@@ -489,6 +489,8 @@ module Analyzer::Php
     SETTING_NOTE            = "an environment or config check decides; a setting can make it public"
     ENV_CONDITION_RE        = /\b(?:app\s*\(\s*\)\s*->|App::|\$this->app\s*->)\s*(?:environment|isLocal|isProduction|runningUnitTests|runningInConsole|isDownForMaintenance)\s*\(|\bconfig\s*\(|\bConfig::get\s*\(|\benv\s*\(/
     CREDENTIAL_CONDITION_RE = /\buser\s*\(|\bauth(?:::|\s*\()|->\s*(?:check|guest|tokenCan|can|cannot|hasValid\w*Signature)\s*\(|token|password|api_?key|signature|credential/i
+    # A refusal that is about the caller's identity by its own words.
+    IDENTITY_REFUSAL_RE = /authenticat|\bguest\s*\(|\bAuth\w*Exception|Unauthori[sz]edHttpException/i
     # A request-shape check (CORS origin, preflight method, host), not a
     # check on who the caller is.
     ORIGIN_CONDITION_RE = /['"](?:origin|referer|host)['"]|->\s*(?:isMethod|getMethod|method|getHost)\s*\(/i
@@ -552,13 +554,20 @@ module Analyzer::Php
       end
       return if points.empty?
       verdict = nil
+      body_checks_caller = body.matches?(CREDENTIAL_CONDITION_RE)
       points.each do |(at, text, note)|
+        identity_evidence = body_checks_caller || text.matches?(IDENTITY_REFUSAL_RE)
         around = conditions.select(&.[1].includes?(at)).map(&.[0]).push(text).join(' ')
         # `if (app()->isLocal()) { return $next($request); }` before the refusal.
         skipped = conditions.any? { |(cond, block)| block.end <= at && cond.matches?(ENV_CONDITION_RE) && body[block].includes?("$next(") }
         if around.matches?(ENV_CONDITION_RE)
           verdict = SETTING_NOTE if around.matches?(CREDENTIAL_CONDITION_RE)
         elsif around.matches?(ORIGIN_CONDITION_RE) && !around.matches?(CREDENTIAL_CONDITION_RE)
+          next
+        elsif skipped && note.empty? && !identity_evidence
+          # `if (!config('x.enabled')) return $next($request);` then a refusal
+          # that never looks at who the caller is: it refuses everyone (or no
+          # one) by app state, so it is no auth guard.
           next
         elsif skipped || !note.empty?
           verdict = SETTING_NOTE

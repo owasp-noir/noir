@@ -82,6 +82,12 @@ describe "Laravel handler / middleware-group auth / rules params", tags: "functi
     guards.call(find.call("GET", "/mw/token")).should eq(["Laravel TokenGate middleware"])
     guards.call(find.call("GET", "/mw/local")).should be_empty
     guards.call(find.call("GET", "/mw/cors")).should be_empty
+    # An early return on app config then a refusal that never asks who the
+    # caller is (401 JSON, redirect to login) refuses by app state: no guard.
+    guards.call(find.call("GET", "/mw/readonly")).should be_empty
+    guards.call(find.call("GET", "/mw/installed")).should be_empty
+    # The same early return before a real user check stays a guard, with the note.
+    guards.call(find.call("GET", "/mw/cfgauth")).should eq(["Laravel ConfigAuthGate middleware (an environment or config check decides; a setting can make it public)"])
     guards.call(find.call("GET", "/mw/prod")).should eq(["Laravel ProdGate middleware (an environment or config check decides; a setting can make it public)"])
 
     # `->middleware($middleware)` names the literal list the variable holds,
