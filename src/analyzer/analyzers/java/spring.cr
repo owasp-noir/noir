@@ -393,11 +393,13 @@ module Analyzer::Java
           # read from this one `root`, so the file isn't parsed twice
           # when callees are requested (and constants are resolved once,
           # not once-per-block).
+          mount_constants = {} of String => String
           Noir::TreeSitter.parse_java(content) do |root|
             # Every non-annotation `.java` file lands here; only router
             # files are worth seeding (a copy of) the project table into.
             project_constants = content_matches?(content, REGEX_ROUTER_CODE_BLOCK) ? java_project_constants(path) : nil
             constants = Noir::TreeSitterJavaRouteExtractor.extract_string_constants_from(root, content, project_constants)
+            mount_constants = constants
             each_router_block(content) do |method_code, block_offset|
               # Pick up `nest(RequestPredicates.path("/prefix"), ...)`
               # / `nest(path("/prefix"), ...)` byte ranges so verb
@@ -428,7 +430,9 @@ module Analyzer::Java
             end
           end
 
+          mounts = custom_endpoint_mounts(content, mount_constants)
           route_blocks.each do |calls, nest_prefixes, block_offset|
+            mount = mounts.find { |from, to, _| block_offset >= from && block_offset < to }.try(&.[2])
             calls.each do |call|
               pos, method, endpoint, handler_ref, verb_pos, _ = call
               nest_prefix = ""
@@ -438,6 +442,7 @@ module Analyzer::Java
                 end
               end
               composed = nest_prefix.empty? ? endpoint : Noir::URLPath.join_rooted(nest_prefix, endpoint)
+              composed = Noir::URLPath.join_rooted(mount, composed) if mount
               details = Details.new(PathInfo.new(path, line_number_for_index(content, block_offset + verb_pos)))
               reactive_endpoint = Endpoint.new(
                 resolve_endpoint_path(Noir::URLPath.join_rooted(configured_base_path, composed), spring_properties),
@@ -1074,6 +1079,42 @@ module Analyzer::Java
       calls
     end
 
+    # Halo mounts what a `CustomEndpoint` bean's `endpoint()` returns under
+    # `/apis/<group>/<version>`, the pair its `groupVersion()` names (the
+    # interface's default when the class does not override it).
+    CUSTOM_ENDPOINT_RE      = /\bclass\s+\w+[^{;]*\bimplements\s+[^{;]*\bCustomEndpoint\b[^{;]*\{/
+    CUSTOM_GROUP_VERSION_RE = /\bgroupVersion\s*\(\s*\)\s*\{[^}]*?(parseAPIVersion|new\s+GroupVersion)\s*\(/m
+    CUSTOM_ENDPOINT_DEFAULT = "api.console.halo.run/v1alpha1"
+
+    # `{start, end, mount}` char ranges of the `CustomEndpoint` classes of
+    # `code`. A `groupVersion()` whose arguments do not resolve to strings
+    # leaves its class unmounted rather than mounted wrong.
+    private def custom_endpoint_mounts(code : String, constants : Hash(String, String)) : Array({Int32, Int32, String})
+      mounts = [] of {Int32, Int32, String}
+      return mounts unless code.includes?("CustomEndpoint")
+      code.scan(CUSTOM_ENDPOINT_RE) do |decl|
+        open = decl.byte_end(0) - 1
+        next unless close = Noir::JSLiteralScanner.find_matching_brace_at_byte(code, open)
+        body = code.byte_slice(open, close - open)
+        group_version = CUSTOM_ENDPOINT_DEFAULT
+        if found = body.match(CUSTOM_GROUP_VERSION_RE)
+          paren = found.end(0) - 1
+          next unless stop = find_matching_paren(body, paren)
+          args = body[(paren + 1)...stop]
+          group_version = if found[1] == "parseAPIVersion"
+                            resolve_router_path(args, constants)
+                          else
+                            parts = Noir::TopLevelSplit.split(args, ',', Noir::TopLevelSplit::Rules::JAVA)
+                            group, version = parts[0]?, parts[1]?
+                            group && version && (g = resolve_router_path(group, constants)) && (v = resolve_router_path(version, constants)) ? "#{g}/#{v}" : nil
+                          end
+          next unless group_version
+        end
+        mounts << {decl.begin(0), code.byte_slice(0, close).size, "/apis/#{group_version}"}
+      end
+      mounts
+    end
+
     # Each router statement in `code` with its offset: from a
     # `ROUTER_BLOCK_START_RE` match to the `;` that ends the statement at
     # depth 0 (or the `}` closing the enclosing block). A statement inside
@@ -1086,6 +1127,7 @@ module Analyzer::Java
     # Works in byte offsets (every delimiter is ASCII, and UTF-8 never
     # reuses ASCII bytes); the char offset handed to the block is counted
     # incrementally, so a non-ASCII file is not re-indexed per block.
+
     private def each_router_block(code : String, & : String, Int32 ->) : Nil
       bytes = code.to_slice
       offset = 0
@@ -1406,7 +1448,8 @@ module Analyzer::Java
       expr = strip_wrapping_parentheses(expression.strip)
       return if expr.empty?
 
-      if expr.starts_with?('"') && expr.ends_with?('"')
+      # One literal, not `"a" + X + "b"`, which also starts and ends in a quote.
+      if expr.matches?(/\A"(?:[^"\\]|\\.)*"\z/)
         return decode_router_string(expr)
       end
 

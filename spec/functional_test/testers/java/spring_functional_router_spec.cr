@@ -30,6 +30,11 @@ expected_endpoints = [
   Endpoint.new("/builder/b", "POST"),
   Endpoint.new("/auth/login", "POST"),
   Endpoint.new("/auth/info", "GET"),
+  # `CustomEndpoint` beans mount under /apis/<group>/<version> (default or groupVersion()).
+  Endpoint.new("/apis/uc.api.demo.run/v1alpha1/widgets/{name}", "GET", [Param.new("name", "", "path")]),
+  Endpoint.new("/apis/uc.api.demo.run/v1alpha1/widgets/{name}/enable", "PUT", [Param.new("name", "", "path")]),
+  Endpoint.new("/apis/console.api.demo.run/v2/gadgets/{id}", "GET", [Param.new("id", "", "path")]),
+  Endpoint.new("/plain", "GET"),
 ]
 
 FunctionalTester.new("fixtures/java/spring_functional_router/", {
