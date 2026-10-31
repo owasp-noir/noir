@@ -410,16 +410,29 @@ module Noir::CLI::Inspect
 
   # The regex a declared route matches request paths against, or nil for a
   # pattern Noir cannot turn into one.
-  def self.route_regex(endpoint : Endpoint) : Regex?
+  def self.route_regex(endpoint : Endpoint, ignore_case : Bool = false) : Regex?
+    options = ignore_case ? Regex::Options::IGNORE_CASE : Regex::Options::None
     # The request is compared without its trailing slash, so the route loses
     # its own first: Django's `x/<int:pk>/` must match `/x/5`.
     route = strip_trailing_slash(request_path(endpoint.url))
     if endpoint.regex_path?
       # Grouped, so each branch of an alternation is anchored.
-      return Regex.new("\\A(?:#{URLPath.strip_regex_anchors(route).rchop('/')})/?\\z") rescue nil
+      return Regex.new("\\A(?:#{URLPath.strip_regex_anchors(route).rchop('/')})/?\\z", options) rescue nil
     end
     star_needs_one = ONE_OR_MORE_STAR_TECHS.includes?(endpoint.details.technology || "")
-    Regex.new("\\A#{route_pattern(route, star_needs_one)}/?\\z") rescue nil
+    Regex.new("\\A#{route_pattern(route, star_needs_one)}/?\\z", options) rescue nil
+  end
+
+  # Routers that match literal path text without regard to case by default:
+  # ASP.NET (MVC, Web API, Razor Pages, minimal APIs, ...) and Express/Koa
+  # (`caseSensitive` / `sensitive` default false). Rails, Django, Flask,
+  # Spring, Laravel, Go routers and Fastify are case-sensitive.
+  # ponytail: tech-name list; a router configured the other way round is not modelled.
+  CASE_INSENSITIVE_ROUTER_TECHS = Set{"js_express", "js_koa", "vb_aspnet_mvc"}
+
+  def self.case_insensitive_router?(endpoint : Endpoint) : Bool
+    technology = endpoint.details.technology || ""
+    CASE_INSENSITIVE_ROUTER_TECHS.includes?(technology) || technology.starts_with?("cs_aspnet")
   end
 
   private def self.route_pattern(route : String, star_needs_one : Bool = false) : String
@@ -641,6 +654,7 @@ module Noir::CLI::Inspect
     wanted = strip_trailing_slash(unslashed)
     exact = [] of Match
     pattern = [] of {Match, {Int32, Int32, Int32}}
+    folded = [] of {Match, {Int32, Int32, Int32}}
     endpoints.each do |endpoint|
       next unless method_serves?(endpoint.method, method)
       route = normalize(request_path(endpoint.url))
@@ -649,6 +663,11 @@ module Noir::CLI::Inspect
       elsif (regex = route_regex(endpoint)) && regex.matches?(wanted)
         spec = specificity(endpoint.url)
         pattern << {Match.new(endpoint, spec[0] > 0 ? "wildcard" : "pattern"), spec}
+      elsif case_insensitive_router?(endpoint) && (route.compare(wanted, case_insensitive: true) == 0 || ((regex = route_regex(endpoint, true)) && regex.matches?(wanted)))
+        # A case-folded hit ranks below every case-exact pattern match.
+        spec = specificity(endpoint.url)
+        kind = route.compare(wanted, case_insensitive: true) == 0 ? "exact_ci" : (spec[0] > 0 ? "wildcard_ci" : "pattern_ci")
+        folded << {Match.new(endpoint, kind), spec}
       elsif prefix_serves?(endpoint, unslashed)
         # Ranked as the catch-all it is: `/api/` reads as `/api/**`.
         pattern << {Match.new(endpoint, "prefix"), specificity("#{route.rchop('/')}/**")}
@@ -656,10 +675,11 @@ module Noir::CLI::Inspect
     end
     # Most specific first, so `--limit 1` is the route a router would pick.
     pattern.sort_by!(&.[1])
+    folded.sort_by! { |m, spec| {m.matched_by == "exact_ci" ? 0 : 1, spec} }
     # A route declared for the request's own method before an any-method
     # one at the same path (a proxy redirect rule beside the app's view).
     declared, any = exact.partition { |m| !method || !::synthetic_any_method?(m.endpoint.method.upcase) }
-    declared + any + pattern.map(&.[0])
+    declared + any + pattern.map(&.[0]) + folded.map(&.[0])
   end
 
   # Nearest declared routes for a miss: most shared leading segments
@@ -696,7 +716,7 @@ module Noir::CLI::Inspect
   # the request may be a typo of a real route: the nearest declared routes,
   # wildcard routes left out. Empty when any match is exact or a pattern.
   def self.wildcard_only_candidates(endpoints : Array(Endpoint), matches : Array(Match), path : String) : Array(Row)
-    return [] of Row if matches.empty? || matches.any? { |m| m.matched_by != "wildcard" && m.matched_by != "prefix" }
+    return [] of Row if matches.empty? || matches.any? { |m| !{"wildcard", "prefix", "wildcard_ci"}.includes?(m.matched_by) }
     wildcard_urls = matches.map(&.endpoint.url).to_set
     candidates(endpoints, path).reject { |row| wildcard_urls.includes?(row.url) }
   end

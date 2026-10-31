@@ -99,7 +99,9 @@ module Noir::CLI::TraceCommand
       endpoint record (handler, params, guards, sinks, callees, ...). On a miss,
       prints the nearest routes as candidates and exits 1. Pattern matches are
       ordered most-specific first (`matched_by`: exact, pattern, wildcard, or
-      prefix for a proxy prefix location or a Go ServeMux `/x/` subtree); a
+      prefix for a proxy prefix location or a Go ServeMux `/x/` subtree; `exact_ci`,
+      `pattern_ci`, `wildcard_ci` for a match that differs only in letter case, listed
+      last and only for routers that ignore case: ASP.NET, Express, Koa); a
       HEAD request also traces to the GET route. Every match is printed, since
       which one a router picks is the framework's rule; the first is the best.
 

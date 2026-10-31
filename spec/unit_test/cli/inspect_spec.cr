@@ -469,6 +469,18 @@ describe Noir::CLI::TraceCommand do
     {target.method, target.path}.should eq({"GET", "/x"})
   end
 
+  it "falls back to a case-insensitive match only for routers that fold case, ranked last" do
+    asp = endpoint("GET", "/api/Series/{id}", tech: "cs_aspnet_core_mvc")
+    asp_exact = endpoint("GET", "/api/series/{id}", tech: "cs_aspnet_core_mvc")
+    asp_lit = endpoint("GET", "/Api/Health", tech: "cs_aspnet_core_mvc")
+    rails = endpoint("GET", "/api/Series/{id}", tech: "ruby_rails")
+    eps = [asp, rails, asp_exact, asp_lit]
+    got = Noir::CLI::Inspect.trace(eps, "GET", "/api/series/42").map { |m| {m.endpoint.url, m.endpoint.details.technology, m.matched_by} }
+    got.should eq([{"/api/series/{id}", "cs_aspnet_core_mvc", "pattern"}, {"/api/Series/{id}", "cs_aspnet_core_mvc", "pattern_ci"}])
+    Noir::CLI::Inspect.trace(eps, "GET", "/api/health").map(&.matched_by).should eq(["exact_ci"])
+    Noir::CLI::Inspect.trace([rails], "GET", "/api/series/42").should be_empty
+  end
+
   it "reads the request the way a router does" do
     eps = [endpoint("GET", "/été/{id}"), endpoint("GET", "/a/b/{id}")]
     trace = ->(req : String) { Noir::CLI::Inspect.trace(eps, "GET", req).map(&.endpoint.url) }

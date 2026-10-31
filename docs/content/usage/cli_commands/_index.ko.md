@@ -263,7 +263,7 @@ noir query [filters] [paths...] [flags]
 - `params`: `name:type` 형식의 파라미터 목록.
 - `guards`: 인증 및 인가 가드 (rate limiter, CSRF 제외).
 - `sinks`, `signals`: 프레임워크 인식 싱크 종류 및 파생 보안 리뷰 신호.
-- `matched_by`: `trace`에서 추가 (`exact`, `pattern`, `wildcard`, `prefix`).
+- `matched_by`: `trace`에서 추가 (`exact`, `pattern`, `wildcard`, `prefix`; 대소문자만 다른 경우 `exact_ci`, `pattern_ci`, `wildcard_ci` — ASP.NET/Express/Koa 한정, 마지막에 나열).
 - `via`: `reach`에서 추가 (`route`, `handler`, `callee`, `guard`, `source`, `sink`, `validator` 근거 목록).
 - `nearest_line`: `reach`에 `:LINE`을 지정했을 때 추가.
 
