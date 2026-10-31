@@ -1,3 +1,4 @@
+require "file_utils"
 require "../../spec_helper"
 require "../../../src/models/code_locator"
 require "../../../src/analyzer/analyzers/scala/play"
@@ -151,6 +152,101 @@ describe "scala play analyzer" do
     Dir.delete(app_dir) if app_dir && Dir.exists?(app_dir)
     Dir.delete(conf_dir) if conf_dir && Dir.exists?(conf_dir)
     Dir.delete(temp_dir) if temp_dir && Dir.exists?(temp_dir)
+  end
+
+  it "names the controller action as the handler and reads its query string reads" do
+    options = create_test_options
+
+    temp_dir = File.tempname("scala_play_handler_test")
+    conf_dir = File.join(temp_dir, "conf")
+    controller_dir = File.join(temp_dir, "app", "controllers")
+    Dir.mkdir_p(conf_dir)
+    Dir.mkdir_p(controller_dir)
+
+    routes_path = File.join(conf_dir, "routes")
+    routes_content = <<-ROUTES
+      DELETE /inbox/:username        controllers.Msg.convoDelete(username: String)
+      POST   /admin/users/:id/close  controllers.Mod.close(id: String)
+      GET    /search                 controllers.Mod.search(q: String)
+      ROUTES
+    File.write(routes_path, routes_content)
+
+    msg_path = File.join(controller_dir, "Msg.scala")
+    msg_content = <<-SCALA
+      package controllers
+
+      import play.api.mvc._
+
+      class Msg @Inject() (silhouette: Silhouette[DefaultEnv], cc: ControllerComponents) extends AbstractController(cc) {
+        def convoDelete(username: String) = silhouette.SecuredAction { implicit request =>
+          Ok(username)
+        }
+      }
+      SCALA
+    File.write(msg_path, msg_content)
+
+    mod_path = File.join(controller_dir, "Mod.scala")
+    mod_content = <<-SCALA
+      package controllers
+
+      import play.api.mvc._
+
+      class Mod @Inject() (cc: ControllerComponents) extends AbstractController(cc) {
+        def close(id: String) = Action { request =>
+          val reason = request.getQueryString("reason").getOrElse("")
+          val notify = request.queryString.get("notify")
+          Ok(id + reason)
+        }
+
+        def search(q: String) = Action { req =>
+          val page = req.queryString("page")
+          Ok(req.getQueryString("q").getOrElse(q) + page)
+        }
+      }
+      SCALA
+    File.write(mod_path, mod_content)
+
+    CodeLocator.instance.clear_all
+    CodeLocator.instance.register_file(routes_path, routes_content)
+    CodeLocator.instance.register_file(msg_path, msg_content)
+    CodeLocator.instance.register_file(mod_path, mod_content)
+
+    options["base"] = YAML::Any.new([YAML::Any.new(temp_dir)])
+    endpoints = Analyzer::Scala::Play.new(options).analyze
+
+    convo = endpoints.find { |e| e.method == "DELETE" && e.url == "/inbox/:username" }
+    convo.should_not be_nil
+    if convo
+      handler = convo.handler
+      handler.should_not be_nil
+      if handler
+        handler.name.should eq("Msg.convoDelete")
+        handler.path.should eq(msg_path)
+        handler.line.should eq(6)
+      end
+      # The routes line stays the declaration site.
+      convo.details.code_paths.map(&.path).should eq([routes_path])
+    end
+
+    close = endpoints.find { |e| e.method == "POST" && e.url == "/admin/users/:id/close" }
+    close.should_not be_nil
+    if close
+      close.handler.try(&.name).should eq("Mod.close")
+      close.handler.try(&.line).should eq(6)
+      close.params.map { |p| {p.name, p.param_type} }.should eq([{"id", "path"}, {"reason", "query"}, {"notify", "query"}])
+    end
+
+    search = endpoints.find { |e| e.method == "GET" && e.url == "/search" }
+    search.should_not be_nil
+    if search
+      search.handler.try(&.name).should eq("Mod.search")
+      search.handler.try(&.line).should eq(12)
+      # `q` is already bound by the route signature; it is not reported twice.
+      search.params.map { |p| {p.name, p.param_type} }.should eq([{"q", "query"}, {"page", "query"}])
+    end
+  ensure
+    CodeLocator.instance.clear_all
+    FileUtils.rm_rf(temp_dir) if temp_dir
   end
 
   it "resolves included routes relative to the including routes file" do

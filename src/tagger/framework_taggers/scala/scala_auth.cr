@@ -63,6 +63,45 @@ class ScalaAuthTagger < FrameworkTagger
         return
       end
     end
+
+    check_handler(endpoint)
+  end
+
+  # A Play `conf/routes` row points at a controller action. The guard is the
+  # action builder that action is written with (`def x = silhouette.SecuredAction
+  # { ... }`), so read the action's own definition, not the routes line.
+  private def check_handler(endpoint : Endpoint)
+    handler = endpoint.handler || return
+    path = handler.path || return
+    line_num = handler.line || return
+    lines = read_file_lines(path)
+    return if lines.nil?
+    return if line_num < 1 || line_num > lines.size
+
+    if description = check_action_definition(lines, line_num - 1)
+      endpoint.add_tag(Tag.new("auth", "Protected by #{description}", "scala_auth"))
+    end
+  end
+
+  # The `def` line and its body, down to the brace that closes the body or
+  # the next `def`, whichever comes first. Never the lines above: they
+  # belong to the previous action.
+  private def check_action_definition(lines : Array(String), def_idx : Int32) : String?
+    end_idx = [def_idx + 10, lines.size - 1].min
+    depth = 0
+    opened = false
+    (def_idx..end_idx).each do |i|
+      current = lines[i]
+      break if i > def_idx && current.matches?(/^\s*(?:(?:override|private|protected|final|inline)\s+)*def\s/)
+      PLAY_AUTH_PATTERNS.each do |pattern, desc|
+        return desc if current.matches?(pattern)
+      end
+      depth += current.count('{') - current.count('}')
+      opened ||= current.includes?('{')
+      break if opened && depth <= 0
+    end
+
+    nil
   end
 
   # The route's own block plus the few lines above it (annotations, a

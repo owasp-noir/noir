@@ -11,7 +11,7 @@ module Analyzer::Scala
     include PlayRouteSupport
 
     # Stores parsed controller methods with their parameters
-    alias ControllerMethod = NamedTuple(headers: Array(String), cookies: Array(String), body_type: String?, callees: Array(Noir::ScalaCalleeExtractor::Entry))
+    alias ControllerMethod = NamedTuple(headers: Array(String), cookies: Array(String), query: Array(String), body_type: String?, callees: Array(Noir::ScalaCalleeExtractor::Entry), handler: Handler)
     alias ScopedKey = Tuple(String, String)
     alias MethodRegion = NamedTuple(signature: String, body: String, body_start: Int32)
 
@@ -151,6 +151,7 @@ module Analyzer::Scala
           class_struct.scan(/\bdef\s+(\w+)/) do |match|
             method_name = match[1]
             next unless seen_methods.add?(method_name)
+            def_offset = match.begin(0) || 0
 
             # Delimit the method body by indentation + bracket balance so that
             # both brace blocks (`= Action { ... }`) and Scala 3 colon blocks
@@ -164,6 +165,7 @@ module Analyzer::Scala
 
             headers = [] of String
             cookies = [] of String
+            query = [] of String
             body_type : String? = nil
 
             if method_body.includes?("headers")
@@ -187,6 +189,15 @@ module Analyzer::Scala
               # Also match: cookies.get("cookie-name")
               method_body.scan(/cookies\s*\.\s*get\s*\(\s*["']([^"']+)["']\s*\)/) do |cookie_match|
                 cookies << cookie_match[1] unless cookies.includes?(cookie_match[1])
+              end
+            end
+
+            if method_body.includes?("queryString") || method_body.includes?("QueryString")
+              # Query params read in the action body: `request.getQueryString("q")`,
+              # `request.queryString.get("q")` and `request.queryString("q")`,
+              # whatever the request value is called.
+              method_body.scan(/\b(?:getQueryString|queryString(?:\s*\.\s*get)?)\s*\(\s*["']([^"']+)["']\s*\)/) do |query_match|
+                query << query_match[1] unless query.includes?(query_match[1])
               end
             end
 
@@ -217,7 +228,11 @@ module Analyzer::Scala
                       else
                         [] of Noir::ScalaCalleeExtractor::Entry
                       end
-            controller_methods[{base_path, full_method_name}] = {headers: headers, cookies: cookies, body_type: body_type, callees: callees}
+            # The action itself: where an agent opens the route's code, and
+            # where the auth tagger finds `silhouette.SecuredAction { ... }`
+            # and other action wrappers (the routes line names none of them).
+            handler = Handler.new("#{class_name}.#{method_name}", path, line_at(content, class_start + def_offset))
+            controller_methods[{base_path, full_method_name}] = {headers: headers, cookies: cookies, query: query, body_type: body_type, callees: callees, handler: handler}
           end
         end
       end
@@ -500,8 +515,12 @@ module Analyzer::Scala
           # Extract query parameters from action signature
           extract_params_from_action(endpoint, action)
 
-          # Extract controller method name and add header/cookie/body params
-          extract_controller_params(endpoint, action, controller_methods, path)
+          # Extract controller method name and add header/cookie/body params.
+          # `Endpoint` is a struct, so the action's handler comes back here
+          # rather than being assigned on the callee's copy.
+          if handler = extract_controller_params(endpoint, action, controller_methods, path)
+            endpoint.handler ||= handler
+          end
 
           @result << endpoint
         end
@@ -590,11 +609,12 @@ module Analyzer::Scala
         normalized.ends_with?(".Request") || normalized.ends_with?(".RequestHeader") || normalized.ends_with?(".MessagesRequest")
     end
 
-    # Extract header, cookie, and body parameters from controller method
+    # Extract header, cookie, query and body parameters from controller
+    # method, and return the action as the route's handler.
     private def extract_controller_params(endpoint : Endpoint,
                                           action : String,
                                           controller_methods : Hash(ScopedKey, ControllerMethod),
-                                          routes_path : String)
+                                          routes_path : String) : Handler?
       # Extract controller method name from action
       # Example: controllers.Users.show(id: Long) -> controllers.Users.show
       method_name = action.split("(").first.strip.lchop("@")
@@ -611,6 +631,13 @@ module Analyzer::Scala
           endpoint.push_param(Param.new(cookie, "", "cookie"))
         end
 
+        # Add query parameters the action reads that the route signature
+        # does not already bind.
+        method_info[:query].each do |name|
+          next if endpoint.params.any? { |p| p.name == name && (p.param_type == "query" || p.param_type == "path") }
+          endpoint.push_param(Param.new(name, "", "query"))
+        end
+
         # Add body parameter if body type detected
         if body_type = method_info[:body_type]
           unless endpoint.params.any? { |p| p.name == "body" }
@@ -621,6 +648,10 @@ module Analyzer::Scala
         method_info[:callees].each do |name, path, line|
           endpoint.push_callee(Callee.new(name, path: path, line: line))
         end
+
+        # A fresh copy per route: several routes can name one action.
+        handler = method_info[:handler]
+        Handler.new(handler.name, handler.path, handler.line)
       end
     end
 
