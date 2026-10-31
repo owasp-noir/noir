@@ -219,6 +219,7 @@ class GoAuthTagger < FrameworkTagger
     @linked_modules = Hash({String, String}, Bool).new
     @router_chains = Hash({String, Int32, String}, {Array({String, Int32}), Bool}).new
     @owner_uses = Hash({String, Int32, String, String}, Array(Int32)).new
+    @call_arguments = Hash({String, String, Int32}, Array({String, Int32, String})).new
     @bound_requests = Hash(String, Tag).new
     @server_scopes = [] of {owner: Gate, tag: Tag}
     @gozero_groups = Hash(String, Array({Range(Int32, Int32), Array(Tag)})).new
@@ -2087,14 +2088,23 @@ class GoAuthTagger < FrameworkTagger
     depth = 0
     opened = false
     idx = start
+    credentials = Hash(String, String).new
     while idx < lines.size
       code = idx == start ? head[func_at..] : code_only(lines[idx])
       stripped = code.strip
+      # Read on the raw line: `code_only` empties the key's string literal.
+      if opened && depth == 1 && (read = lines[idx].strip.match(HANDLER_CREDENTIAL_READ)) && CREDENTIAL_KEYS.includes?(read[2].downcase.delete("-_"))
+        credentials[read[1]] = read[2]
+      end
       if opened && depth == 1 && (m = stripped.match(GUARD_IF)) &&
          lines[idx + 1]?.try(&.strip) == "return" && lines[idx + 2]?.try(&.strip) == "}"
         if tag = guard_call_tag(m[2].strip, m[1]?, lines, start, idx, path, dir)
           return tag
         end
+      end
+      if opened && depth == 1 && !credentials.empty? && (m = stripped.match(GUARD_IF)) && m[1]?.nil? &&
+         (tag = credential_check_tag(m[2].strip, credentials, lines[idx + 1]?))
+        return tag
       end
       code.each_char do |char|
         if char == '{'
@@ -2107,6 +2117,31 @@ class GoAuthTagger < FrameworkTagger
       break if opened && depth <= 0
       idx += 1
     end
+  end
+
+  # `token := c.Request().Header.Get("Authorization")`, `c.GetHeader(…)`,
+  # `c.QueryParam(…)`: a request value a handler binds to a local.
+  HANDLER_CREDENTIAL_READ = /\A(\w+)\s*:?=\s*\w+(?:\s*\.\s*Request\s*\(\s*\))?\s*\.\s*(?:Header\s*\.\s*Get|GetHeader|FormValue|PostFormValue|QueryParam|Query)\s*\(\s*"([^"]+)"\s*\)\z/
+  # `token != secret`: the credential compared against an expected value.
+  CREDENTIAL_MISMATCH = /\A(\w+)\s*!=\s*(.+)\z/
+
+  # A handler that refuses the request when the credential it read is
+  # missing or does not equal the expected value (vikunja's testing
+  # endpoints: `if token != config.ServiceTestingtoken.GetString() { return
+  # echo.ErrForbidden }`). Only an absence test or a `!=` comparison of the
+  # credential itself, refused on the next line: `if token != ""` refuses
+  # the callers that send one, and a `==` match refuses the right one.
+  private def credential_check_tag(condition : String, credentials : Hash(String, String), next_line : String?) : Tag?
+    return unless next_line && (refusal = code_only(next_line).strip).starts_with?("return") && refusal.matches?(REJECTS_REQUEST)
+    return if condition.includes?("&&") || condition.includes?("||")
+    name = if absent = condition.match(ABSENCE_TEST)
+             absent[1]? || absent[2]? || absent[3]?
+           elsif (mismatch = condition.match(CREDENTIAL_MISMATCH)) && mismatch[2].strip != %("")
+             mismatch[1]
+           end
+    key = credentials[name]? if name
+    return unless key
+    Tag.new("auth", "Protected by Go guard clause #{condition} (verified from its body: refuses a request whose #{key} credential is missing or wrong)", "go_auth")
   end
 
   private def guard_call_tag(condition : String, init : String?, lines : Array(String), start : Int32, idx : Int32,
@@ -2358,12 +2393,65 @@ class GoAuthTagger < FrameworkTagger
         start = function_start(lines, line)
         helper = start < 0 ? nil : lines[start].match(FUNC_NAME).try(&.[1])
         calls = helper ? owner_uses(owner, owner_lines, helper, File.dirname(path_info.path)) : [] of Int32
+        next true if calls.empty? && sibling_parameters?(owner, owner_lines, owner_chain, path_info.path, lines, start, chain)
         calls.empty? ? local && owner_local : ordered && calls.all? { |row| row < use_row }
       end
     end
   end
 
   FUNC_NAME = /\Afunc\s*(?:\([^)]*\)\s*)?(\w+)/
+  # A one-line signature: the function name and its parameter list.
+  FUNC_SIGNATURE = /\Afunc\s*(?:\([^)]*\)\s*)?(\w+)\s*\(([^)]*)\)/
+  IDENTIFIER     = /\A\w+\z/
+
+  # Whether the owner's router and the route's router are parameters of two
+  # different functions that one caller hands two different arguments:
+  # `registerAPIRoutes(a, …)` and `registerAPIRoutesV2(e, a2, …)` side by side
+  # in vikunja's `RegisterRoutes`. Each parameter is the group its caller
+  # passed, so a `.Use` on one does not reach the other's routes, whatever
+  # the two parameters are named (both are `a` there). Only call sites in the
+  # two files are read, and every one must sit in the same caller; a helper
+  # called from anywhere else may be handed the same group, so stays reached.
+  private def sibling_parameters?(owner : Gate, owner_lines : Array(String), owner_chain : Array({String, Int32}),
+                                  path : String, lines : Array(String), start : Int32, chain : Array({String, Int32})) : Bool
+    owner_start = function_start(owner_lines, owner[:rows].begin)
+    return false if owner_start < 0 || start < 0
+    mine = parameter_slot(owner_lines[owner_start], owner_chain.last[0]) || return false
+    theirs = parameter_slot(lines[start], chain.last[0]) || return false
+    return false if mine[0] == theirs[0]
+    files = {owner[:file] => owner_lines, path => lines}
+    own_calls = files.flat_map { |file, file_lines| call_arguments(file, file_lines, mine[0], mine[1]) }
+    their_calls = files.flat_map { |file, file_lines| call_arguments(file, file_lines, theirs[0], theirs[1]) }
+    return false if own_calls.empty? || their_calls.empty?
+    return false unless (own_calls + their_calls).map { |(file, caller, _)| {file, caller} }.uniq!.size == 1
+    (own_calls.map(&.[2]) & their_calls.map(&.[2])).empty?
+  end
+
+  # The function a `func` line declares and the position of parameter `name`
+  # in it (`func f(e *echo.Echo, a, b *echo.Group)`: `b` is 2).
+  private def parameter_slot(header : String, name : String) : {String, Int32}?
+    m = header.match(FUNC_SIGNATURE) || return
+    names = m[2].split(',').map { |param| param.strip.split(/\s+/).first? || "" }
+    index = names.index(name) || return
+    {m[1], index}
+  end
+
+  # `{file, caller's func row, argument}` for each plain call `fn(...)` in
+  # `lines` whose argument at `index` is an identifier.
+  private def call_arguments(file : String, lines : Array(String), fn : String, index : Int32) : Array({String, Int32, String})
+    @call_arguments.put_if_absent({file, fn, index}) do
+      call = /(?<![\w.])#{Regex.escape(fn)}\s*\(/
+      calls = [] of {String, Int32, String}
+      lines.each_with_index do |line, row|
+        next if line.starts_with?("func") || !line.includes?(fn)
+        code = code_only(line)
+        m = code.match(call) || next
+        arg = call_args(code[m.end..])[index]?.try(&.strip) || next
+        calls << {file, function_start(lines, row + 1), arg} if arg.matches?(IDENTIFIER)
+      end
+      calls
+    end
+  end
 
   # The 1-based rows of the owner's function that hand the owner's router
   # `target`: a line naming the owner that calls `target(` or mounts

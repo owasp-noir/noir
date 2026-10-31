@@ -187,6 +187,138 @@ describe "GoAuthTagger (router identity of .Use guards)" do
     guarded?(result["GET /api/items"]).should be_true
   end
 
+  # vikunja: `registerAPIRoutes(a)` and `registerAPIRoutesV2(e, a2)`, both
+  # helpers naming their group parameter `a`.
+  echo_helpers = <<-GO
+    package routes
+
+    import (
+    \t"net/http"
+
+    \t"github.com/labstack/echo/v4"
+    )
+
+    func auth() echo.MiddlewareFunc {
+    \treturn func(next echo.HandlerFunc) echo.HandlerFunc {
+    \t\treturn func(c echo.Context) error {
+    \t\t\tif c.Request().Header.Get("Authorization") == "" {
+    \t\t\t\treturn c.JSON(http.StatusUnauthorized, nil)
+    \t\t\t}
+    \t\t\treturn next(c)
+    \t\t}
+    \t}
+    }
+
+    func RegisterRoutes(e *echo.Echo) {
+    \ta := e.Group("/api/v1")
+    \tregisterV1(a)
+    \ta2 := e.Group("/api/v2")
+    \tregisterV2(e, a2)
+    }
+
+    func registerV2(e *echo.Echo, a *echo.Group) {
+    \ta.Use(auth())
+    \ta.GET("/v2-only", h)
+    }
+
+    func registerV1(a *echo.Group) {
+    \tn := a.Group("")
+    \tn.POST("/login", h)
+    \ta.Use(auth())
+    \ta.GET("/me", h)
+    }
+    GO
+
+  it "keeps a .Use on one helper's group parameter off a sibling helper's routes (echo)" do
+    result = router_scope_scan({"go.mod" => "module e\n", "routes.go" => echo_helpers},
+      [{"POST", "/api/v1/login", "routes.go", %("/login")}, {"GET", "/api/v1/me", "routes.go", %("/me")},
+       {"GET", "/api/v2/v2-only", "routes.go", %("/v2-only")}], "go_echo")
+    guarded?(result["POST /api/v1/login"]).should be_false
+    guarded?(result["GET /api/v1/me"]).should be_true
+    guarded?(result["GET /api/v2/v2-only"]).should be_true
+  end
+
+  it "still guards a sibling helper handed the same group, or called from elsewhere" do
+    # Handed the same group first, so `n` is created after its `.Use`.
+    same = echo_helpers.sub("\tregisterV1(a)\n", "").sub("registerV2(e, a2)", "registerV2(e, a)\n\tregisterV1(a)")
+    result = router_scope_scan({"go.mod" => "module e\n", "routes.go" => same},
+      [{"POST", "/api/v1/login", "routes.go", %("/login")}], "go_echo")
+    guarded?(result["POST /api/v1/login"]).should be_true
+
+    elsewhere = echo_helpers + "\nfunc Other(g *echo.Group) {\n\tregisterV1(g)\n}\n"
+    result = router_scope_scan({"go.mod" => "module e\n", "routes.go" => elsewhere},
+      [{"POST", "/api/v1/login", "routes.go", %("/login")}], "go_echo")
+    guarded?(result["POST /api/v1/login"]).should be_true
+  end
+
+  it "reads a handler that refuses a missing or wrong credential header" do
+    src = <<-GO
+      package main
+
+      import "github.com/labstack/echo/v4"
+
+      func main() {
+      \te := echo.New()
+      \te.PATCH("/test/:table", HandleTesting)
+      \te.POST("/present", Present)
+      \te.POST("/matches", Matches)
+      }
+
+      func HandleTesting(c echo.Context) error {
+      \ttoken := c.Request().Header.Get("Authorization")
+      \tif token != config.TestingToken() {
+      \t\treturn echo.ErrForbidden
+      \t}
+      \treturn nil
+      }
+
+      func Present(c echo.Context) error {
+      \ttoken := c.Request().Header.Get("Authorization")
+      \tif token != "" {
+      \t\treturn echo.ErrForbidden
+      \t}
+      \treturn nil
+      }
+
+      func Matches(c echo.Context) error {
+      \ttoken := c.QueryParam("token")
+      \tif token == secret {
+      \t\treturn echo.ErrForbidden
+      \t}
+      \treturn nil
+      }
+      GO
+    CodeLocator.instance.clear_all
+    tmpdir = File.tempname("go_handler_credential")
+    Dir.mkdir_p(tmpdir)
+    file = File.join(tmpdir, "main.go")
+    File.write(file, src)
+    CodeLocator.instance.register_path(file)
+    options = create_test_options
+    options["base"] = YAML::Any.new(tmpdir)
+    lines = src.lines
+    endpoints = {"PATCH" => {"/test/:table", "HandleTesting"}, "POST" => {"/present", "Present"}}.map do |method, (url, fn)|
+      details = Details.new(PathInfo.new(file, lines.index!(&.includes?(%("#{url}"))) + 1))
+      details.technology = "go_echo"
+      endpoint = Endpoint.new(url, method, [] of Param, details)
+      endpoint.handler = Handler.new(fn, file, lines.index!(&.starts_with?("func #{fn}(")) + 1)
+      endpoint
+    end
+    matches = Details.new(PathInfo.new(file, lines.index!(&.includes?(%("/matches"))) + 1))
+    matches.technology = "go_echo"
+    endpoint = Endpoint.new("/matches", "POST", [] of Param, matches)
+    endpoint.handler = Handler.new("Matches", file, lines.index!(&.starts_with?("func Matches(")) + 1)
+    endpoints << endpoint
+    tagged = GoAuthTagger.new(options).perform(endpoints)
+    FileUtils.rm_rf(tmpdir)
+    guarded?(tagged[0]).should be_true
+    tagged[0].tags[0].description.should contain("Authorization")
+    # Refusing the callers that send a credential, or the one that matches, is
+    # not authentication.
+    guarded?(tagged[1]).should be_false
+    guarded?(tagged[2]).should be_false
+  end
+
   it "guards a fiber route registered after app.Use on a group created before it" do
     src = <<-GO
       package main
