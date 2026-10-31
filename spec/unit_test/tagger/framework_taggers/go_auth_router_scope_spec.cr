@@ -187,6 +187,245 @@ describe "GoAuthTagger (router identity of .Use guards)" do
     guarded?(result["GET /api/items"]).should be_true
   end
 
+  # vikunja: `registerAPIRoutes(a)` and `registerAPIRoutesV2(e, a2)`, both
+  # helpers naming their group parameter `a`.
+  echo_helpers = <<-GO
+    package routes
+
+    import (
+    \t"net/http"
+
+    \t"github.com/labstack/echo/v4"
+    )
+
+    func auth() echo.MiddlewareFunc {
+    \treturn func(next echo.HandlerFunc) echo.HandlerFunc {
+    \t\treturn func(c echo.Context) error {
+    \t\t\tif c.Request().Header.Get("Authorization") == "" {
+    \t\t\t\treturn c.JSON(http.StatusUnauthorized, nil)
+    \t\t\t}
+    \t\t\treturn next(c)
+    \t\t}
+    \t}
+    }
+
+    func RegisterRoutes(e *echo.Echo) {
+    \ta := e.Group("/api/v1")
+    \tregisterV1(a)
+    \ta2 := e.Group("/api/v2")
+    \tregisterV2(e, a2)
+    }
+
+    func registerV2(e *echo.Echo, a *echo.Group) {
+    \ta.Use(auth())
+    \ta.GET("/v2-only", h)
+    }
+
+    func registerV1(a *echo.Group) {
+    \tn := a.Group("")
+    \tn.POST("/login", h)
+    \ta.Use(auth())
+    \ta.GET("/me", h)
+    }
+    GO
+
+  it "keeps a .Use on one helper's group parameter off a sibling helper's routes (echo)" do
+    result = router_scope_scan({"go.mod" => "module e\n", "routes.go" => echo_helpers},
+      [{"POST", "/api/v1/login", "routes.go", %("/login")}, {"GET", "/api/v1/me", "routes.go", %("/me")},
+       {"GET", "/api/v2/v2-only", "routes.go", %("/v2-only")}], "go_echo")
+    guarded?(result["POST /api/v1/login"]).should be_false
+    guarded?(result["GET /api/v1/me"]).should be_true
+    guarded?(result["GET /api/v2/v2-only"]).should be_true
+  end
+
+  it "still guards a sibling helper handed the same group, or called from elsewhere" do
+    # Handed the same group first, so `n` is created after its `.Use`.
+    same = echo_helpers.sub("\tregisterV1(a)\n", "").sub("registerV2(e, a2)", "registerV2(e, a)\n\tregisterV1(a)")
+    result = router_scope_scan({"go.mod" => "module e\n", "routes.go" => same},
+      [{"POST", "/api/v1/login", "routes.go", %("/login")}], "go_echo")
+    guarded?(result["POST /api/v1/login"]).should be_true
+
+    elsewhere = echo_helpers + "\nfunc Other(g *echo.Group) {\n\tregisterV1(g)\n}\n"
+    result = router_scope_scan({"go.mod" => "module e\n", "routes.go" => elsewhere},
+      [{"POST", "/api/v1/login", "routes.go", %("/login")}], "go_echo")
+    guarded?(result["POST /api/v1/login"]).should be_true
+  end
+
+  # `secure(a)` guards group `a`; `pub` is handed a group that is, or may
+  # be, that one.
+  # Fiber runs a group's middleware for every route under its path: the
+  # `/api` group's auth also covers the separately built `/api/public`.
+  it "does not separate sibling groups by identity on fiber" do
+    src = <<-GO
+      package main
+
+      import "github.com/gofiber/fiber/v2"
+
+      func auth(c *fiber.Ctx) error {
+      \tif c.Get("Authorization") == "" {
+      \t\treturn c.SendStatus(fiber.StatusUnauthorized)
+      \t}
+      \treturn c.Next()
+      }
+
+      func main() {
+      \tapp := fiber.New()
+      \ta := app.Group("/api")
+      \tsecure(a)
+      \tb := app.Group("/api/public")
+      \tpub(b)
+      }
+
+      func secure(a fiber.Router) {
+      \ta.Use(auth)
+      \ta.Get("/me", h)
+      }
+
+      func pub(a fiber.Router) {
+      \ta.Get("/items", h)
+      }
+      GO
+    result = router_scope_scan({"go.mod" => "module f\n", "main.go" => src},
+      [{"GET", "/api/public/items", "main.go", %("/items")}], "go_fiber")
+    guarded?(result["GET /api/public/items"]).should be_true
+  end
+
+  it "keeps a sibling helper guarded unless its group is provably another one" do
+    helpers = echo_helpers.split("func RegisterRoutes").first + <<-GO
+      func secure(a *echo.Group) {
+      \ta.Use(auth())
+      \ta.GET("/me", h)
+      }
+
+      func pub(a *echo.Group) {
+      \ta.GET("/items", h)
+      }
+      GO
+    scan = ->(caller : String, extra : Hash(String, String)) do
+      files = {"go.mod" => "module e\n", "routes.go" => helpers + caller}.merge(extra)
+      guarded?(router_scope_scan(files, [{"GET", "/items", "routes.go", %("/items")}], "go_echo")["GET /items"])
+    end
+    # An alias, and a group derived from the guarded one after its `.Use`.
+    scan.call("func R(e *echo.Echo) {\n\ta := e.Group(\"/api\")\n\tsecure(a)\n\tb := a\n\tpub(b)\n}\n", {} of String => String).should be_true
+    scan.call("func R(e *echo.Echo) {\n\ta := e.Group(\"/api\")\n\tsecure(a)\n\tv := a.Group(\"/v\")\n\tpub(v)\n}\n", {} of String => String).should be_true
+    # An argument that is not a plain identifier.
+    scan.call("func R(e *echo.Echo) {\n\ta := e.Group(\"/api\")\n\tsecure(a)\n\to := e.Group(\"/o\")\n\tpub(o)\n\tpub(a.Group(\"/w\"))\n}\n", {} of String => String).should be_true
+    # Both the caller's own parameters.
+    scan.call("func setup(authed, public *echo.Group) {\n\tsecure(authed)\n\tpub(public)\n}\n", {} of String => String).should be_true
+    # A second caller in another file of the package.
+    other = "package routes\n\nfunc Admin(e *echo.Echo) {\n\tg := e.Group(\"/admin\")\n\tsecure(g)\n\tpub(g)\n}\n"
+    scan.call("func R(e *echo.Echo) {\n\ta := e.Group(\"/api\")\n\tsecure(a)\n\tp := e.Group(\"/open\")\n\tpub(p)\n}\n", {"admin.go" => other}).should be_true
+    # A second caller on one line, and the helper handed on as a value.
+    scan.call("func R(e *echo.Echo) {\n\ta := e.Group(\"/api\")\n\tsecure(a)\n\tp := e.Group(\"/open\")\n\tpub(p)\n\textra(a)\n}\n\nfunc extra(g *echo.Group) { pub(g) }\n", {} of String => String).should be_true
+    scan.call("func R(e *echo.Echo) {\n\ta := e.Group(\"/api\")\n\tsecure(a)\n\tp := e.Group(\"/open\")\n\tpub(p)\n\tapply(a, pub)\n}\n", {} of String => String).should be_true
+    # Two groups the one caller built side by side: provably different.
+    scan.call("func R(e *echo.Echo) {\n\ta := e.Group(\"/api\")\n\tsecure(a)\n\tp := e.Group(\"/open\")\n\tpub(p)\n}\n", {} of String => String).should be_false
+  end
+
+  it "reads a handler that refuses a missing or wrong credential header" do
+    src = <<-GO
+      package main
+
+      import "github.com/labstack/echo/v4"
+
+      func main() {
+      \te := echo.New()
+      \te.PATCH("/test/:table", HandleTesting)
+      \te.POST("/present", Present)
+      \te.POST("/matches", Matches)
+      \te.POST("/rebound", Rebound)
+      \te.POST("/later", Later)
+      }
+
+      func HandleTesting(c echo.Context) error {
+      \ttoken := c.Request().Header.Get("Authorization")
+      \tif token != config.TestingToken() {
+      \t\treturn echo.ErrForbidden
+      \t}
+      \treturn nil
+      }
+
+      func Present(c echo.Context) error {
+      \ttoken := c.Request().Header.Get("Authorization")
+      \tif token != "" {
+      \t\treturn echo.ErrForbidden
+      \t}
+      \treturn nil
+      }
+
+      func Rebound(c echo.Context) error {
+      \ttoken := c.Request().Header.Get("Authorization")
+      \ttoken = strings.TrimPrefix(token, "Bearer ")
+      \tif token != config.TestingToken() {
+      \t\treturn echo.ErrForbidden
+      \t}
+      \treturn nil
+      }
+
+      func Later(c echo.Context) error {
+      \ttruncateTables()
+      \ttoken := c.Request().Header.Get("Authorization")
+      \tif token != config.TestingToken() {
+      \t\treturn echo.ErrForbidden
+      \t}
+      \treturn nil
+      }
+
+      func Matches(c echo.Context) error {
+      \ttoken := c.QueryParam("token")
+      \tif token == secret {
+      \t\treturn echo.ErrForbidden
+      \t}
+      \treturn nil
+      }
+      GO
+    CodeLocator.instance.clear_all
+    tmpdir = File.tempname("go_handler_credential")
+    Dir.mkdir_p(tmpdir)
+    file = File.join(tmpdir, "main.go")
+    File.write(file, src)
+    CodeLocator.instance.register_path(file)
+    options = create_test_options
+    options["base"] = YAML::Any.new(tmpdir)
+    lines = src.lines
+    endpoints = {"PATCH" => {"/test/:table", "HandleTesting"}, "POST" => {"/present", "Present"}}.map do |method, (url, fn)|
+      details = Details.new(PathInfo.new(file, lines.index!(&.includes?(%("#{url}"))) + 1))
+      details.technology = "go_echo"
+      endpoint = Endpoint.new(url, method, [] of Param, details)
+      endpoint.handler = Handler.new(fn, file, lines.index!(&.starts_with?("func #{fn}(")) + 1)
+      endpoint
+    end
+    matches = Details.new(PathInfo.new(file, lines.index!(&.includes?(%("/matches"))) + 1))
+    matches.technology = "go_echo"
+    endpoint = Endpoint.new("/matches", "POST", [] of Param, matches)
+    endpoint.handler = Handler.new("Matches", file, lines.index!(&.starts_with?("func Matches(")) + 1)
+    endpoints << endpoint
+    rebound = Details.new(PathInfo.new(file, lines.index!(&.includes?(%("/rebound"))) + 1))
+    rebound.technology = "go_echo"
+    endpoint = Endpoint.new("/rebound", "POST", [] of Param, rebound)
+    endpoint.handler = Handler.new("Rebound", file, lines.index!(&.starts_with?("func Rebound(")) + 1)
+    endpoints << endpoint
+    later = Details.new(PathInfo.new(file, lines.index!(&.includes?(%("/later"))) + 1))
+    later.technology = "go_echo"
+    endpoint = Endpoint.new("/later", "POST", [] of Param, later)
+    endpoint.handler = Handler.new("Later", file, lines.index!(&.starts_with?("func Later(")) + 1)
+    endpoints << endpoint
+    tagged = GoAuthTagger.new(options).perform(endpoints)
+    FileUtils.rm_rf(tmpdir)
+    guarded?(tagged[0]).should be_true
+    tagged[0].tags[0].description.should contain("Authorization")
+    # The expected value is a setting: empty, it admits a request without the header.
+    tagged[0].tags[0].description.should contain("expected value comes from config.TestingToken()")
+    # Refusing the callers that send a credential, or the one that matches, is
+    # not authentication.
+    guarded?(tagged[1]).should be_false
+    guarded?(tagged[2]).should be_false
+    # The local no longer holds the header when it is checked.
+    guarded?(tagged[3]).should be_false
+    # The handler did its work before it checked.
+    guarded?(tagged[4]).should be_false
+  end
+
   it "guards a fiber route registered after app.Use on a group created before it" do
     src = <<-GO
       package main

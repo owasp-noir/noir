@@ -219,6 +219,8 @@ class GoAuthTagger < FrameworkTagger
     @linked_modules = Hash({String, String}, Bool).new
     @router_chains = Hash({String, Int32, String}, {Array({String, Int32}), Bool}).new
     @owner_uses = Hash({String, Int32, String, String}, Array(Int32)).new
+    @call_arguments = Hash({String, String, Int32}, Array({String, Int32, String, Int32})?).new
+    @go_files = nil.as(Array(String)?)
     @bound_requests = Hash(String, Tag).new
     @server_scopes = [] of {owner: Gate, tag: Tag}
     @gozero_groups = Hash(String, Array({Range(Int32, Int32), Array(Tag)})).new
@@ -2087,15 +2089,32 @@ class GoAuthTagger < FrameworkTagger
     depth = 0
     opened = false
     idx = start
+    credentials = Hash(String, String).new
+    # Whether a statement other than a credential read ran first: a check
+    # after work the handler has already done does not guard that work.
+    worked = false
     while idx < lines.size
       code = idx == start ? head[func_at..] : code_only(lines[idx])
       stripped = code.strip
+      # Read on the raw line: `code_only` empties the key's string literal.
+      credential_read = opened && depth == 1 && (read = lines[idx].strip.match(HANDLER_CREDENTIAL_READ)) && CREDENTIAL_KEYS.includes?(read[2].downcase.delete("-_"))
+      if credential_read && read
+        credentials[read[1]] = read[2]
+      elsif opened && !credentials.empty? && (assigned = stripped.match(LOCAL_ASSIGNMENT))
+        # Rebound before the check: the check no longer tests the header.
+        credentials.delete(assigned[1])
+      end
       if opened && depth == 1 && (m = stripped.match(GUARD_IF)) &&
          lines[idx + 1]?.try(&.strip) == "return" && lines[idx + 2]?.try(&.strip) == "}"
         if tag = guard_call_tag(m[2].strip, m[1]?, lines, start, idx, path, dir)
           return tag
         end
       end
+      if opened && depth == 1 && !worked && !credentials.empty? && (m = stripped.match(GUARD_IF)) && m[1]?.nil? &&
+         (tag = credential_check_tag(m[2].strip, credentials, lines[idx + 1]?))
+        return tag
+      end
+      worked ||= opened && depth == 1 && !credential_read && !stripped.empty? && !stripped.starts_with?("if ")
       code.each_char do |char|
         if char == '{'
           depth += 1
@@ -2107,6 +2126,40 @@ class GoAuthTagger < FrameworkTagger
       break if opened && depth <= 0
       idx += 1
     end
+  end
+
+  # `token := c.Request().Header.Get("Authorization")`, `c.GetHeader(…)`:
+  # a request header a handler binds to a local. Headers only: a `token`
+  # query or form value is as often a one-time reset/confirm token the
+  # handler checks as the caller's credential.
+  HANDLER_CREDENTIAL_READ = /\A(\w+)\s*:?=\s*\w+(?:\s*\.\s*Request\s*\(\s*\))?\s*\.\s*(?:Header\s*\.\s*Get|GetHeader)\s*\(\s*"([^"]+)"\s*\)\z/
+  # `name =` / `name :=`: a local (re)bound.
+  LOCAL_ASSIGNMENT = /\A(\w+)\s*:?=(?!=)/
+  # `token != secret`: the credential compared against an expected value.
+  CREDENTIAL_MISMATCH = /\A(\w+)\s*!=\s*(.+)\z/
+
+  # A handler that refuses the request when the credential it read is
+  # missing or does not equal the expected value (vikunja's testing
+  # endpoints: `if token != config.ServiceTestingtoken.GetString() { return
+  # echo.ErrForbidden }`). Only an absence test or a `!=` comparison of the
+  # credential itself, refused on the next line: `if token != ""` refuses
+  # the callers that send one, and a `==` match refuses the right one.
+  private def credential_check_tag(condition : String, credentials : Hash(String, String), next_line : String?) : Tag?
+    return unless next_line && (refusal = code_only(next_line).strip).starts_with?("return") && refusal.matches?(REJECTS_REQUEST)
+    return if condition.includes?("&&") || condition.includes?("||")
+    expected = nil
+    name = if absent = condition.match(ABSENCE_TEST)
+             absent[1]? || absent[2]? || absent[3]?
+           elsif (mismatch = condition.match(CREDENTIAL_MISMATCH)) && mismatch[2].strip != %("")
+             expected = mismatch[2].strip
+             mismatch[1]
+           end
+    key = credentials[name]? if name
+    return unless key
+    # Compared against a value the code reads rather than writes, the check
+    # is only as strict as that value: empty, it equals a missing header.
+    setting = expected ? "; the expected value comes from #{expected}, and when that is empty a request without the header passes" : ""
+    Tag.new("auth", "Protected by Go guard clause #{condition} (verified from its body: refuses a request whose #{key} header is missing or wrong#{setting})", "go_auth")
   end
 
   private def guard_call_tag(condition : String, init : String?, lines : Array(String), start : Int32, idx : Int32,
@@ -2358,12 +2411,125 @@ class GoAuthTagger < FrameworkTagger
         start = function_start(lines, line)
         helper = start < 0 ? nil : lines[start].match(FUNC_NAME).try(&.[1])
         calls = helper ? owner_uses(owner, owner_lines, helper, File.dirname(path_info.path)) : [] of Int32
+        # Fiber matches group middleware by path prefix on the app's stack
+        # (`app.Group("/api").Use(mw)` also runs for a sibling
+        # `app.Group("/api/public")`), so group identity says nothing there.
+        next true if calls.empty? && !PREFIX_MATCHED_MIDDLEWARE.includes?(endpoint.details.technology) &&
+                     sibling_parameters?(owner, owner_lines, owner_chain, path_info.path, lines, start, chain)
         calls.empty? ? local && owner_local : ordered && calls.all? { |row| row < use_row }
       end
     end
   end
 
   FUNC_NAME = /\Afunc\s*(?:\([^)]*\)\s*)?(\w+)/
+  # A one-line signature: the function name and its parameter list.
+  FUNC_SIGNATURE = /\Afunc\s*(?:\([^)]*\)\s*)?(\w+)\s*\(([^)]*)\)/
+  IDENTIFIER     = /\A\w+\z/
+
+  # Routers whose group middleware runs for every route under the group's
+  # path, whatever group registered it.
+  PREFIX_MATCHED_MIDDLEWARE = {"go_fiber"}
+
+  # Whether the owner's router and the route's router are parameters of two
+  # different helpers that every caller hands two independent groups:
+  # vikunja's `RegisterRoutes` calls `registerAPIRoutes(a, …)` and
+  # `registerAPIRoutesV2(e, a2, …)`, with `a := e.Group("/api/v1")` and
+  # `a2 := e.Group(apiv2.GroupPrefix)`. Each parameter is the group its
+  # caller passed, so a `.Use` on one does not reach the other's routes,
+  # whatever the two parameters are named (both are `a` there).
+  #
+  # Anything less certain keeps the route reached: an exported helper (it
+  # may be called from another package), a call in any other function of
+  # the package, an argument that is not a plain identifier
+  # (`pub(a.Group("/w"))`), or two arguments one of which is the other or
+  # derived from it (`b := a`, `v := a.Group("/v")`; a group copies its
+  # parent's middleware when it is created), or that the caller did not
+  # build itself (both its own parameters, `setup(a, a)`).
+  private def sibling_parameters?(owner : Gate, owner_lines : Array(String), owner_chain : Array({String, Int32}),
+                                  path : String, lines : Array(String), start : Int32, chain : Array({String, Int32})) : Bool
+    owner_start = function_start(owner_lines, owner[:rows].begin)
+    return false if owner_start < 0 || start < 0
+    mine = parameter_slot(owner_lines[owner_start], owner_chain.last[0]) || return false
+    theirs = parameter_slot(lines[start], chain.last[0]) || return false
+    return false if mine[0] == theirs[0]
+    return false if mine[0][0].uppercase? || theirs[0][0].uppercase?
+    package = (package_files(owner[:file]) + package_files(path)).uniq
+    own_calls = [] of {String, Int32, String, Int32}
+    their_calls = [] of {String, Int32, String, Int32}
+    package.each do |file|
+      own_calls.concat(call_arguments(file, mine[0], mine[1]) || return false)
+      their_calls.concat(call_arguments(file, theirs[0], theirs[1]) || return false)
+    end
+    return false if own_calls.empty? || their_calls.empty?
+    callers = (own_calls + their_calls).map { |(file, caller, _, _)| {file, caller} }.uniq!
+    return false unless callers.size == 1
+    caller_lines = read_file_lines(callers[0][0]) || return false
+    own_calls.all? do |(file, _, mine_arg, mine_row)|
+      their_calls.all? do |(_, _, their_arg, their_row)|
+        independent_groups?(file, caller_lines, mine_arg, mine_row, their_arg, their_row)
+      end
+    end
+  end
+
+  # Two groups the caller built itself (`a := e.Group(...)`), neither an
+  # alias of the other nor derived from it, read up from each call's row.
+  private def independent_groups?(file : String, lines : Array(String), x : String, x_row : Int32, y : String, y_row : Int32) : Bool
+    return false if x == y
+    x_chain, x_local = router_chain(file, lines, x_row, x)
+    y_chain, y_local = router_chain(file, lines, y_row, y)
+    return false unless (x_chain.size > 1 || x_local) && (y_chain.size > 1 || y_local)
+    x_chain.none? { |(name, _)| name == y } && y_chain.none? { |(name, _)| name == x }
+  end
+
+  # The function a `func` line declares and the position of parameter `name`
+  # in it (`func f(e *echo.Echo, a, b *echo.Group)`: `b` is 2).
+  private def parameter_slot(header : String, name : String) : {String, Int32}?
+    m = header.match(FUNC_SIGNATURE) || return
+    names = m[2].split(',').map { |param| param.strip.split(/\s+/).first? || "" }
+    index = names.index(name) || return
+    {m[1], index}
+  end
+
+  # The scanned non-test `.go` files of `file`'s package (its directory).
+  private def package_files(file : String) : Array(String)
+    dir = File.dirname(file)
+    (@go_files ||= collect_files_by_extension(".go")).select { |other| File.dirname(other) == dir && !other.ends_with?("_test.go") }
+  end
+
+  # `{file, caller's func row, argument, 1-based call row}` for each plain
+  # call `fn(...)` in `file`, a one-line `func extra(g) { fn(g) }` included;
+  # nil when one passes something other than an identifier at `index`, or
+  # `fn` is used other than called or declared (`apply(a, fn)` hands the
+  # helper on as a value, to be called with who knows what).
+  private def call_arguments(file : String, fn : String, index : Int32) : Array({String, Int32, String, Int32})?
+    @call_arguments.put_if_absent({file, fn, index}) do
+      lines = read_file_lines(file) || next [] of {String, Int32, String, Int32}
+      mention = /(?<![\w.])#{Regex.escape(fn)}\b/
+      calls = [] of {String, Int32, String, Int32}
+      unresolved = false
+      lines.each_with_index do |line, row|
+        next unless line.includes?(fn)
+        code = code_only(line)
+        code.scan(mention) do |m|
+          head = code[0, m.begin(0)]
+          rest = code[m.end(0)..]
+          # The declaration itself: `func fn(` or `func (r *T) fn(`.
+          next if head.matches?(/(?:\A|\s)func\s+(?:\([^)]*\)\s*)?\z/)
+          unless call = rest.match(/\A\s*(?:\[[^\]]*\]\s*)?\(/)
+            unresolved = true
+            next
+          end
+          arg = call_args(rest[call.end(0)..])[index]?.try(&.strip)
+          if arg && arg.matches?(IDENTIFIER)
+            calls << {file, function_start(lines, row + 1), arg, row + 1}
+          else
+            unresolved = true
+          end
+        end
+      end
+      unresolved ? nil : calls
+    end
+  end
 
   # The 1-based rows of the owner's function that hand the owner's router
   # `target`: a line naming the owner that calls `target(` or mounts
