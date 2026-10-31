@@ -305,13 +305,14 @@ module Analyzer::Go
       file_contents.each_key { |p| (files_by_dir[File.dirname(p)] ||= [] of String) << p }
 
       builders_by_dir = Hash(String, Set(String)).new
+      file_builders = Hash(String, Hash(String, Noir::TreeSitterGoRouteExtractor::RouterBuilder)).new
       files_by_dir.each do |dir, paths|
         builders = Set(String).new
         duplicates = Set(String).new
         paths.each do |p|
           content = file_contents[p]?
           next unless content && content.includes?(builder_type)
-          Noir::TreeSitterGoRouteExtractor.collect_router_group_builders(content, type_name).each_key do |fn|
+          (file_builders[p] = Noir::TreeSitterGoRouteExtractor.collect_router_group_builders(content, type_name)).each_key do |fn|
             # Only methods can share a name across a package's files; such a
             # name is ambiguous at a `h.Register(g)` call site.
             duplicates << fn unless builders.add?(fn)
@@ -333,6 +334,12 @@ module Analyzer::Go
 
       prefixes_by_dir = Hash(String, Hash(String, Set(String))).new
       unresolved_by_dir = Hash(String, Set(String)).new
+      # A call made inside another builder that hands on its own parameter
+      # (vikunja's `registerAPIRoutesV2(e, a)` calling `m.Register(a)`): the
+      # argument is whatever that builder was handed, not a package group
+      # of the same name. {target dir, fn, caller's dir, caller builder,
+      # the by-name prefix used when the caller never resolves}.
+      handed = [] of {String, String, String, String, String?}
       files_by_dir.each do |dir, paths|
         group_map = package_groups[dir]? || Hash(String, String).new
         paths.each do |p|
@@ -344,7 +351,8 @@ module Analyzer::Go
           imported.each_value { |d| names.concat(builders_by_dir[d]) }
           next if names.empty?
           aliases = nil
-          Noir::TreeSitterGoRouteExtractor.collect_router_builder_callsites(content, names, group_map).each do |fn, arg, qualifier|
+          own_builders = file_builders[p]?
+          Noir::TreeSitterGoRouteExtractor.collect_router_builder_callsites(content, names, group_map).each do |fn, arg, qualifier, row|
             local = dir if builders_by_dir[dir]?.try(&.includes?(fn))
             target = if qualifier.empty?
                        local
@@ -363,6 +371,11 @@ module Analyzer::Go
                        end
                      end
             next unless target
+            if (enclosing = own_builders.try &.find { |_, rb| rb.param == arg && rb.start_row <= row <= rb.end_row }) &&
+               builders_by_dir[dir]?.try(&.includes?(enclosing[0]))
+              handed << {target, fn, dir, enclosing[0], group_map[arg]?}
+              next
+            end
             prefix = group_map[arg]?
             prefix = arg if prefix.nil? && arg.starts_with?("/")
             if prefix
@@ -371,6 +384,34 @@ module Analyzer::Go
               (unresolved_by_dir[target] ||= Set(String).new) << fn
             end
           end
+        end
+      end
+
+      # Through chains of builders: a caller settles once every call handing
+      # it a group has. One whose call sites never resolve falls back to the
+      # argument's name, as a call outside any builder does.
+      settled = Set({String, String, String, String, String?}).new
+      (handed.size + 1).times do
+        progressed = false
+        handed.each do |dep|
+          next if settled.includes?(dep)
+          target, fn, from_dir, from_fn, _ = dep
+          next if unresolved_by_dir[from_dir]?.try(&.includes?(from_fn))
+          next if handed.any? { |other| !settled.includes?(other) && other[0] == from_dir && other[1] == from_fn }
+          from = prefixes_by_dir[from_dir]?.try(&.[from_fn]?) || next
+          ((prefixes_by_dir[target] ||= Hash(String, Set(String)).new)[fn] ||= Set(String).new).concat(from)
+          settled << dep
+          progressed = true
+        end
+        break unless progressed
+      end
+      handed.each do |dep|
+        next if settled.includes?(dep)
+        target, fn, _, _, by_name = dep
+        if by_name
+          ((prefixes_by_dir[target] ||= Hash(String, Set(String)).new)[fn] ||= Set(String).new) << by_name
+        else
+          (unresolved_by_dir[target] ||= Set(String).new) << fn
         end
       end
 
@@ -384,8 +425,12 @@ module Analyzer::Go
 
     # The router-builder helpers defined in `content` to expand, with their
     # resolved call-site prefixes. A helper whose group parameter name is
-    # already a package-level group (both named `v1`) is resolved by the
-    # whole-file pass and is left alone.
+    # also a package-level group (both named `v1`) is resolved by the
+    # whole-file pass by that name, so it is left alone only when its call
+    # sites hand it that same prefix. vikunja's `registerAPIRoutesV2(e, a2)`
+    # names its parameter `a` too, but is handed `/api/v2`, not the `/api/v1`
+    # of `RegisterRoutes`' `a`: the name is the parameter's, scoped to the
+    # helper.
     def router_builder_expansions(content : String,
                                   builder_type : String,
                                   dir_prefixes : Hash(String, Set(String))?,
@@ -395,7 +440,7 @@ module Analyzer::Go
       Noir::TreeSitterGoRouteExtractor.collect_router_group_builders(content, builder_type.split('.').last).each do |fn, rb|
         pset = dir_prefixes[fn]?
         next if pset.nil? || pset.empty?
-        next if cross_file_groups.has_key?(rb.param)
+        next if (shadowed = cross_file_groups[rb.param]?) && pset == Set{shadowed}
         expansions << {fn, rb, pset}
       end
       expansions

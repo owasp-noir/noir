@@ -426,6 +426,62 @@ describe "GoAuthTagger (router identity of .Use guards)" do
     guarded?(tagged[4]).should be_false
   end
 
+  # vikunja: the v2 helper's group parameter is named `a`, like the
+  # `/api/v1` group of its caller, so the prefix scope of `a.Use(...)` reads
+  # `/api/v1`. The routes it really guards are found through the group.
+  it "guards the routes registered on a handed-in group after its .Use, wherever they are (echo)" do
+    routes = <<-GO
+      package routes
+
+      import (
+      \t"net/http"
+
+      \t"example.com/e/mcp"
+      \t"github.com/labstack/echo/v4"
+      )
+
+      func auth() echo.MiddlewareFunc {
+      \treturn func(next echo.HandlerFunc) echo.HandlerFunc {
+      \t\treturn func(c echo.Context) error {
+      \t\t\tif c.Request().Header.Get("Authorization") == "" {
+      \t\t\t\treturn c.JSON(http.StatusUnauthorized, nil)
+      \t\t\t}
+      \t\t\treturn next(c)
+      \t\t}
+      \t}
+      }
+
+      func RegisterRoutes(e *echo.Echo) {
+      \ta := e.Group("/api/v1")
+      \ta.GET("/v1-open", h)
+      \tregisterV2(e, e.Group("/api/v2"))
+      }
+
+      func registerV2(e *echo.Echo, a *echo.Group) {
+      \ta.GET("/early", h)
+      \ta.Use(auth())
+      \ta.GET("/docs", h)
+      \tm := &mcp.Module{}
+      \tm.Register(a)
+      }
+      GO
+    mcp = <<-GO
+      package mcp
+
+      import "github.com/labstack/echo/v4"
+
+      func (m *Module) Register(g *echo.Group) {
+      \tg.POST("/mcp", m.handle)
+      }
+      GO
+    result = router_scope_scan({"go.mod" => "module example.com/e\n", "routes/routes.go" => routes, "mcp/mcp.go" => mcp},
+      [{"GET", "/api/v2/docs", "routes/routes.go", %("/docs")}, {"POST", "/api/v2/mcp", "mcp/mcp.go", %("/mcp")},
+       {"GET", "/api/v2/early", "routes/routes.go", %("/early")}], "go_echo")
+    guarded?(result["GET /api/v2/docs"]).should be_true
+    guarded?(result["POST /api/v2/mcp"]).should be_true
+    guarded?(result["GET /api/v2/early"]).should be_false
+  end
+
   it "guards a fiber route registered after app.Use on a group created before it" do
     src = <<-GO
       package main
