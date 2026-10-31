@@ -147,6 +147,13 @@ describe Noir::CLI::Inspect do
       Noir::CLI::Inspect.trace(go, "GET", "/index.php/apps/x").should be_empty
     end
 
+    it "traces a Rails request with a .format suffix to the route when only a catch-all matched" do
+      rails = [endpoint("GET", "/admin/ai-llms", tech: "ruby_rails"), endpoint("GET", "/*url", tech: "ruby_rails"), endpoint("GET", "/files/:id.json", tech: "ruby_rails")]
+      Noir::CLI::Inspect.trace(rails, "GET", "/admin/ai-llms.json").map(&.endpoint.url).should eq(["/admin/ai-llms", "/*url"])
+      other = [endpoint("GET", "/admin/ai-llms", tech: "python_flask"), endpoint("GET", "/*url", tech: "python_flask")]
+      Noir::CLI::Inspect.trace(other, "GET", "/admin/ai-llms.json").map(&.endpoint.url).should eq(["/*url"])
+    end
+
     it "puts a route declared for the method before an ANY one at the same path" do
       routes = [endpoint("ANY", "/login"), endpoint("POST", "/login")]
       Noir::CLI::Inspect.trace(routes, "POST", "/login").map(&.endpoint.method).should eq(["POST", "ANY"])
