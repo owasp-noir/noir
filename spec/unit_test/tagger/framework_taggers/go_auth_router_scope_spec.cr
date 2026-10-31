@@ -429,6 +429,54 @@ describe "GoAuthTagger (router identity of .Use guards)" do
   # vikunja: the v2 helper's group parameter is named `a`, like the
   # `/api/v1` group of its caller, so the prefix scope of `a.Use(...)` reads
   # `/api/v1`. The routes it really guards are found through the group.
+  # `secure(g); pub(g)` in one caller, `secure(a); pub(p)` in another: the
+  # helper `pub` registers one line for both groups, and only the one handed
+  # the guarded group after `secure` is guarded.
+  it "follows a guarded helper parameter to each caller's group" do
+    helpers = <<-GO
+      package routes
+
+      import (
+      \t"net/http"
+
+      \t"github.com/labstack/echo/v4"
+      )
+
+      func auth() echo.MiddlewareFunc {
+      \treturn func(next echo.HandlerFunc) echo.HandlerFunc {
+      \t\treturn func(c echo.Context) error {
+      \t\t\tif c.Request().Header.Get("Authorization") == "" {
+      \t\t\t\treturn c.JSON(http.StatusUnauthorized, nil)
+      \t\t\t}
+      \t\t\treturn next(c)
+      \t\t}
+      \t}
+      }
+
+      func RegisterRoutes(e *echo.Echo) {
+      \ta := e.Group("/api")
+      \tsecure(a)
+      \tp := e.Group("/open")
+      \tpub(p)
+      \tRegisterAdmin(e)
+      }
+
+      func secure(a *echo.Group) {
+      \ta.Use(auth())
+      \ta.GET("/me", h)
+      }
+
+      func pub(a *echo.Group) {
+      \ta.GET("/items", h)
+      }
+      GO
+    admin = "package routes\n\nimport \"github.com/labstack/echo/v4\"\n\nfunc RegisterAdmin(e *echo.Echo) {\n\tg := e.Group(\"/admin\")\n\tsecure(g)\n\tpub(g)\n}\n"
+    result = router_scope_scan({"go.mod" => "module e\n", "routes.go" => helpers, "admin.go" => admin},
+      [{"GET", "/admin/items", "routes.go", %("/items")}, {"GET", "/open/items", "routes.go", %("/items")}], "go_echo")
+    guarded?(result["GET /admin/items"]).should be_true
+    guarded?(result["GET /open/items"]).should be_false
+  end
+
   it "guards the routes registered on a handed-in group after its .Use, wherever they are (echo)" do
     routes = <<-GO
       package routes
