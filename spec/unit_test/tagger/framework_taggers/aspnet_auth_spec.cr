@@ -507,4 +507,86 @@ describe "AspnetAuthTagger" do
       endpoint.tags.map(&.description).should eq(["Protected by ASP.NET [Authorize(Roles)] (class-level)"])
     end
   end
+
+  it "reads [Authorize] on a SignalR hub" do
+    tmpdir = File.tempname("aspnet_hub")
+    Dir.mkdir_p(tmpdir)
+    hub = File.join(tmpdir, "SecureHub.cs")
+    File.write(hub, <<-CS)
+      [Authorize]
+      public class SecureHub : Hub
+      {
+          public Task Send(string m) => Task.CompletedTask;
+      }
+      public class OpenHub : Hub
+      {
+          public Task Send(string m) => Task.CompletedTask;
+      }
+      CS
+    begin
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(tmpdir)
+      at = ->(line : Int32) do
+        details = Details.new(PathInfo.new(hub, line))
+        details.technology = "cs_signalr"
+        Endpoint.new("ws://x", "SEND", [] of Param, details)
+      end
+      secure = at.call(3)
+      open_hub = at.call(8)
+      AspnetAuthTagger.new(noir_options).perform([secure, open_hub])
+      secure.tags.map(&.name).should eq(["auth"])
+      open_hub.tags.should be_empty
+    ensure
+      FileUtils.rm_rf(tmpdir)
+    end
+  end
+
+  describe "attributes deriving AuthorizeAttribute / IAllowAnonymous" do
+    base = File.expand_path("../../../functional_test/fixtures/csharp/aspnet_core_mvc_const_prefix", __DIR__)
+    auth = "#{base}/Controllers/Auth.cs"
+    source = File.read_lines(auth)
+    tags_for = ->(signature : String) do
+      details = Details.new(PathInfo.new(auth, source.index!(&.includes?(signature)) + 1))
+      details.technology = "cs_aspnet_core_mvc"
+      endpoint = Endpoint.new("/x", "GET", [] of Param, details)
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(base)
+      CodeLocator.instance.clear_all
+      Dir.glob("#{base}/**/*.cs").each { |path| CodeLocator.instance.register_path(path) }
+      begin
+        AspnetAuthTagger.new(noir_options).perform([endpoint])
+      ensure
+        CodeLocator.instance.clear_all
+      end
+      endpoint.tags
+    end
+
+    it "guards an action carrying a custom attribute that derives AuthorizeAttribute" do
+      tags = tags_for.call("IActionResult Guarded()")
+      tags.map(&.name).should eq(["auth"])
+      tags[0].description.should contain("[ApiPermission]")
+    end
+
+    it "guards through a class-level derived attribute" do
+      tags_for.call("IActionResult Inside()").map(&.name).should eq(["auth"])
+    end
+
+    it "keeps the permission check of an IAllowAnonymous attribute as a setting-dependent guard" do
+      tags = tags_for.call("IActionResult Open()")
+      tags.map(&.name).should eq(["authz"])
+      tags[0].description.should contain("[ApiPermissionOrAnonymous]")
+    end
+
+    it "lets IAllowAnonymous win over the inherited Authorize when no permission is named" do
+      tags_for.call("IActionResult Lifted()").should be_empty
+    end
+
+    it "does not take a header-conditioned refusal of an anonymous attribute as a guard" do
+      tags_for.call("IActionResult Header()").should be_empty
+    end
+
+    it "ignores an attribute that derives neither" do
+      tags_for.call("IActionResult Plain()").should be_empty
+    end
+  end
 end
