@@ -574,10 +574,10 @@ describe "ExpressAuthTagger" do
     end
 
     endpoints.map { |ep| ep.tags.map(&.description) }.should eq([
-      ["Protected by Express mw.privateApi > auth.authorize.authorizeApi (next(new errors.NoPermissionError) middleware"],
+      ["Protected by Express mw.privateApi > auth.authorize.authorizeApi (next(new errors.NoPermissionError)) middleware"],
       [] of String, # the key check lets a caller without a key through; tokenCheck only screens keys
       [] of String, # refuses only a member who is present
-      ["Protected by Express mw.rejectAnonymous (next(new errors.UnauthorizedError) middleware"],
+      ["Protected by Express mw.rejectAnonymous (next(new errors.UnauthorizedError)) middleware"],
     ])
   end
 
@@ -610,5 +610,46 @@ describe "ExpressAuthTagger" do
     me.tags.map(&.description).should eq(["Protected by Express requireAuth middleware"])
 
     FileUtils.rm_rf(tmpdir)
+  end
+
+  describe "basic auth and reply helpers in a middleware definition" do
+    base = File.expand_path("../../../functional_test/fixtures/javascript/express_basic_auth", __DIR__)
+    server = "#{base}/server.js"
+
+    it "counts a basic-auth middleware where it runs and a helper replying 401, nothing built-only or local" do
+      endpoints = (6..13).map do |line|
+        details = Details.new(PathInfo.new(server, line))
+        details.technology = "js_express"
+        Endpoint.new("/x", "GET", [] of Param, details)
+      end
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(base)
+      locator = CodeLocator.instance
+      Dir.glob("#{base}/**/*").each { |file| locator.register_path(file) unless File.directory?(file) }
+      previous_bases = locator.scan_base_paths
+      locator.scan_base_paths = [base]
+      Noir::JSHandlerResolver.reset
+      begin
+        ExpressAuthTagger.new(noir_options).perform(endpoints)
+      ensure
+        locator.scan_base_paths = previous_bases
+      end
+
+      endpoints.map { |ep| ep.tags.map(&.description) }.should eq([
+        ["Protected by Express apiAuth (expressBasicAuth — a setting can lift it) middleware"],
+        ["Protected by Express docsAccess (sendText(res,401)) middleware"],
+        [] of String,
+        # Built and never run.
+        [] of String,
+        # Run under `if (!disabledAuth)`, a local holding a setting read.
+        ["Protected by Express runGated (expressBasicAuth — a setting can lift it) middleware"],
+        # A local `basicAuth({ user, pass })` building an outbound header.
+        [] of String,
+        # A helper's 403 about the payload.
+        [] of String,
+        # `await currentUser()` is the caller, not a setting.
+        ["Protected by Express callerCheck (res.status(401)) middleware"],
+      ])
+    end
   end
 end
