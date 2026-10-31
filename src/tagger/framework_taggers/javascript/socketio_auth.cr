@@ -44,8 +44,9 @@ class SocketIOAuthTagger < FrameworkTagger
     in_try = false
     Noir::JSRouteExtractor.definition_body(content, line).each_line do |text|
       if depth == 0 || (depth == 1 && in_try)
-        if (m = text.match(CHECK_CALL)) && m[2] == socket && refusing?(m[1], raw, path, 0)
-          endpoint.add_tag(Tag.new("auth", "Protected by Socket.IO check `#{m[1]}(#{socket})` (throws without a session)", "socketio_auth"))
+        if (m = text.match(CHECK_CALL)) && m[2] == socket && (site = refusing(m[1], raw, path, 0))
+          # The check's definition, so `noir reach` on it lists the event.
+          endpoint.add_tag(Tag.new("auth", "Protected by Socket.IO check `#{m[1]}(#{socket})` (throws without a session)", "socketio_auth", site[0], site[1]))
           return
         end
       end
@@ -56,18 +57,19 @@ class SocketIOAuthTagger < FrameworkTagger
     end
   end
 
-  # Whether `callee`, as named in `path`, throws when the socket it is
-  # handed lacks a property.
-  private def refusing?(callee : String, raw : String, path : String, hops : Int32) : Bool
-    return false if hops >= MAX_DEPTH
-    handler = Noir::JSHandlerResolver.resolve(callee, raw, path) || return false
-    def_path = handler.path || return false
-    def_line = handler.line || return false
+  # The definition site of `callee`, as named in `path`, when it throws on
+  # a socket that lacks a property; nil otherwise.
+  private def refusing(callee : String, raw : String, path : String, hops : Int32) : Tuple(String, Int32)?
+    return if hops >= MAX_DEPTH
+    handler = Noir::JSHandlerResolver.resolve(callee, raw, path) || return
+    def_path = handler.path || return
+    def_line = handler.line || return
     key = {def_path, def_line}
-    cached = @refusals[key]?
-    return cached unless cached.nil?
-    @refusals[key] = false # a helper that reaches itself
-    @refusals[key] = definition_refuses?(def_path, def_line, hops)
+    unless @refusals.has_key?(key)
+      @refusals[key] = false # a helper that reaches itself
+      @refusals[key] = definition_refuses?(def_path, def_line, hops)
+    end
+    key if @refusals[key]
   end
 
   private def definition_refuses?(path : String, line : Int32, hops : Int32) : Bool
@@ -79,7 +81,7 @@ class SocketIOAuthTagger < FrameworkTagger
     escaped = Regex.escape(param)
     return true if body.matches?(/\bif\s*\(\s*!\s*#{escaped}\s*(?:\??\.\s*[A-Za-z_$][\w$]*\s*)+\)\s*\{?\s*throw\b/)
     body.each_line.any? do |text|
-      (m = text.match(CHECK_CALL)) && m[2] == param && refusing?(m[1], raw, path, hops + 1)
+      !!((m = text.match(CHECK_CALL)) && m[2] == param && refusing(m[1], raw, path, hops + 1))
     end
   end
 

@@ -23,6 +23,8 @@ describe "SocketIOAuthTagger" do
     tags = tag.call("handlers/chat.js", 9)
     tags.map(&.name).should eq(["auth"])
     tags[0].description.should contain("checkLogin(socket)")
+    tags[0].path.should eq("#{fixture_base}/auth.js")
+    tags[0].line.should eq(1)
   end
 
   it "follows a check that hands the socket on to the real one" do
