@@ -1,5 +1,6 @@
 require "../../../../models/code_locator"
 require "../../../../utils/path_scope"
+require "../../../../utils/char_offsets"
 require "../../../../utils/top_level_split"
 require "../../../../utils/url_path"
 require "../../../../utils/text_file"
@@ -262,15 +263,24 @@ module Analyzer::Javascript
       direct = raw.scan(MODULE_REQUIRE_CALL).any?(&.[1].starts_with?('.'))
       bound = false
       raw.scan(MODULE_REQUIRE_BIND) { |m| bound ||= m[2].starts_with?('.') && called.includes?(m[1]) }
-      bound ||= raw.scan(MODULE_REQUIRE_OBJ).any? { |m| called.any?(&.starts_with?("#{m[1]}.")) }
+      unless bound
+        # `obj.key(` callees by `obj`: a set lookup per object literal, not a
+        # scan of every callee (quadratic on a bundle).
+        called_objects = Set(String).new
+        called.each { |name| (dot = name.index('.')) && called_objects << name[0, dot] }
+        bound = raw.scan(MODULE_REQUIRE_OBJ).any? { |m| called_objects.includes?(m[1]) }
+      end
       return unless direct || bound
 
       content = Noir::JSRouteExtractor.strip_js_comments(raw)
+      # Char positions over `CharOffsets`, as in `index_file`: a bundled
+      # non-ASCII file can carry thousands of `require` objects and calls.
+      src = Noir::CharOffsets.new(content)
       root = Noir::PathScope.longest_base(file, @base_paths) || @base_path
       calls = [] of Tuple(String, Int32) # {target, open paren}
       content.scan(MODULE_REQUIRE_CALL) do |m|
         target = JsModuleResolver.resolve(file, m[1], root) || next
-        calls << {target, m.end(0) - 1}
+        calls << {target, src.end(m) - 1}
       end
       callees = Hash(String, String).new
       content.scan(MODULE_REQUIRE_BIND) do |m|
@@ -279,9 +289,9 @@ module Analyzer::Javascript
         callees[m[1]] = target
       end
       content.scan(MODULE_REQUIRE_OBJ) do |m|
-        open = m.end(0) - 1
-        close = Noir::JSRouteExtractor.find_matching_brace(content, open) || next
-        content[open..close].scan(MODULE_OBJ_MEMBER) do |mm|
+        open = src.end(m) - 1
+        close = Noir::JSLiteralScanner.find_matching_brace(src, open) || next
+        src.slice(open, close + 1).scan(MODULE_OBJ_MEMBER) do |mm|
           callee = "#{m[1]}.#{mm[1]? || mm[2]}"
           next unless called.includes?(callee)
           target = JsModuleResolver.resolve(file, mm[3], root) || next
@@ -295,20 +305,20 @@ module Analyzer::Javascript
              else
                /(?<![\w$.])#{Regex.escape(base)}\s*(?:\.\s*#{Regex.escape(key)}|\[\s*['"]#{Regex.escape(key)}['"]\s*\])\s*\(/
              end
-        content.scan(re) { |m| calls << {target, m.end(0) - 1} }
+        content.scan(re) { |m| calls << {target, src.end(m) - 1} }
       end
       return if calls.empty?
 
       imports = Noir::JSHandlerResolver.imports_of(content, file)
-      functions = function_defs(content)
+      functions = function_defs(src)
       calls.each do |target, open|
-        close = Noir::JSRouteExtractor.find_matching_paren(content, open) || next
-        args = Noir::TopLevelSplit.split(content[open + 1...close], ',', Noir::TopLevelSplit::Rules::JS_POSITIONAL_ARGS).map(&.strip)
+        close = Noir::JSLiteralScanner.find_matching_paren(src, open) || next
+        args = Noir::TopLevelSplit.split(src.slice(open + 1, close), ',', Noir::TopLevelSplit::Rules::JS_POSITIONAL_ARGS).map(&.strip)
         args.each_with_index do |arg, idx|
           passed = nil.as(String?)
           if arg.matches?(IDENTIFIER) && (spec = imports[arg]?) && spec[1].nil?
             shadowed = functions.any? do |func|
-              func.body_start < open && open < func.body_end && parameter_positions(content, func).has_key?(arg)
+              func.body_start < open && open < func.body_end && parameter_positions(src, func).has_key?(arg)
             end
             passed = JsModuleResolver.resolve(file, spec[0], root) unless shadowed
           end
@@ -341,11 +351,12 @@ module Analyzer::Javascript
         # Another function in the file taking a parameter of the same name
         # (`function mountAdmin(router, controllers)`) rebinds it there, and
         # a lookup does not know which scope a reference sits in.
-        others = function_defs(content).reject { |func| func.params_open == open }
+        src = Noir::CharOffsets.new(content)
+        others = function_defs(src).reject { |func| func.params_open == open }
         positions.each do |idx, passed|
           name = params[idx]?.try(&.match(/\A([A-Za-z_$][\w$]*)\s*(?:=|\z)/).try(&.[1])) || next
           next if imports.has_key?(name)
-          next if others.any? { |func| parameter_positions(content, func).has_key?(name) }
+          next if others.any? { |func| parameter_positions(src, func).has_key?(name) }
           next if content.matches?(/\b(?:const|let|var)\s+#{Regex.escape(name)}\b/)
           Noir::JSHandlerResolver.bind_parameter(target, name, passed)
           @logger.debug "Bound #{target}:#{name} to #{passed}"
@@ -449,10 +460,16 @@ module Analyzer::Javascript
     private def index_file(file : String, content : String) : Hash(String, HelperSpec)
       specs = Hash(String, HelperSpec).new
 
-      matches = forward_matches(content)
+      # Every position here is a char index, and on a non-ASCII file each
+      # `String`-level char lookup (`MatchData#begin`, `index`, `[]`, the
+      # matchers' `chars`) is O(offset): per function and per forward that
+      # was quadratic, and vikunja's vendored 3.5 MB `scalar.standalone.js`
+      # held the whole scan for 12 s. `CharOffsets` keeps them O(1)/O(log n).
+      src = Noir::CharOffsets.new(content)
+      matches = forward_matches(src)
       return specs if matches.empty?
 
-      functions = function_defs(content)
+      functions = function_defs(src)
       return specs if functions.empty?
       # Attribution below is O(functions x matches). Both are small in real
       # source (NodeBB's helpers.js: 5 x 5), but a generated file could push
@@ -485,12 +502,12 @@ module Analyzer::Javascript
 
       by_function.each do |func_idx, func_matches|
         func = functions[func_idx]
-        param_index = parameter_positions(content, func)
+        param_index = parameter_positions(src, func)
         next if param_index.empty?
 
         forwards = [] of Forward
         func_matches.each do |match|
-          forward = build_forward(file, content, match, param_index, lines)
+          forward = build_forward(file, src, match, param_index, lines)
           next unless forward
           next if forwards.any? { |f| same_forward?(f, forward) }
           forwards << forward
@@ -520,18 +537,22 @@ module Analyzer::Javascript
         a.path_before == b.path_before && a.path_after == b.path_after
     end
 
-    private def forward_matches(content : String) : Array(ForwardMatch)
+    private def forward_matches(src : Noir::CharOffsets) : Array(ForwardMatch)
       matches = [] of ForwardMatch
-      content.scan(FORWARD_CALL_RE) do |m|
-        pos = m.begin(0)
-        next unless pos
-        open_paren = m.begin(4).try { |path_at| content.rindex('(', path_at) } || next
-        matches << ForwardMatch.new(pos, open_paren, m[1], m[2]?, m[3]?, m[4])
+      bytes = src.content.to_slice
+      src.content.scan(FORWARD_CALL_RE) do |m|
+        # The pattern puts only `\s*` between the call's `(` and group 4.
+        open_byte = m.byte_begin(4) - 1
+        while open_byte > 0 && bytes[open_byte].unsafe_chr.ascii_whitespace?
+          open_byte -= 1
+        end
+        next unless bytes[open_byte] == '('.ord.to_u8
+        matches << ForwardMatch.new(src.begin(m), src.char(open_byte), m[1], m[2]?, m[3]?, m[4])
       end
       matches
     end
 
-    private def build_forward(file : String, content : String, match : ForwardMatch,
+    private def build_forward(file : String, src : Noir::CharOffsets, match : ForwardMatch,
                               param_index : Hash(String, Int32), lines : LineIndex) : Forward?
       return unless param_index.has_key?(match.receiver)
 
@@ -552,7 +573,7 @@ module Analyzer::Javascript
       return unless path_arg && path_arg >= 0
 
       Forward.new(match.receiver, verb, verb_arg, path_arg, before, after, lines.line_at(match.pos),
-        forwarded_handler(file, content, match, param_index))
+        forwarded_handler(file, src, match, param_index))
     end
 
     # The helper parameter the forwarded registration serves the request
@@ -560,11 +581,12 @@ module Analyzer::Javascript
     # applies (`helpers.tryRoute(controller, onError)`), when that is a
     # parameter of the helper. Negative positions count from the end of the
     # call (`const controller = args[args.length - 1]`).
-    private def forwarded_handler(file : String, content : String, match : ForwardMatch,
+    private def forwarded_handler(file : String, src : Noir::CharOffsets, match : ForwardMatch,
                                   param_index : Hash(String, Int32)) : Int32?
-      close = Noir::JSRouteExtractor.find_matching_paren(content, match.open_paren) || return
-      spans = Noir::TopLevelSplit.split_spans(content, ',',
-        Noir::TopLevelSplit::Rules::JS_POSITIONAL_ARGS, match.open_paren + 1, close).reject(&.[0].blank?)
+      content = src.content
+      close = Noir::JSLiteralScanner.find_matching_paren(src, match.open_paren) || return
+      spans = Noir::TopLevelSplit.split_spans(src.slice(match.open_paren + 1, close), ',',
+        Noir::TopLevelSplit::Rules::JS_POSITIONAL_ARGS).reject(&.[0].blank?)
       return if spans.size < 2
       text = spans.last[0].strip
       3.times do
@@ -595,26 +617,24 @@ module Analyzer::Javascript
       {idx, "", ""}
     end
 
-    private def function_defs(content : String) : Array(FunctionDef)
+    private def function_defs(src : Noir::CharOffsets) : Array(FunctionDef)
       defs = [] of FunctionDef
       seen = Set(Int32).new
 
       FUNCTION_DEF_RES.each do |pattern|
-        content.scan(pattern) do |m|
-          match_end = m.end(0)
-          next unless match_end
-          params_open = match_end - 1
+        src.content.scan(pattern) do |m|
+          params_open = src.end(m) - 1
           next unless seen.add?(params_open)
 
-          params_close = Noir::JSRouteExtractor.find_matching_paren(content, params_open)
+          params_close = Noir::JSLiteralScanner.find_matching_paren(src, params_open)
           next unless params_close
 
-          body_start = content.index('{', params_close + 1)
+          body_start = src.index('{', params_close + 1)
           next unless body_start
           next if body_start - params_close > FUNCTION_GLUE_MAX
-          next unless content[(params_close + 1)...body_start].matches?(FUNCTION_GLUE_RE)
+          next unless src.slice(params_close + 1, body_start).matches?(FUNCTION_GLUE_RE)
 
-          body_end = Noir::JSRouteExtractor.find_matching_brace(content, body_start)
+          body_end = Noir::JSLiteralScanner.find_matching_brace(src, body_start)
           next unless body_end
 
           defs << FunctionDef.new(m[1], params_open, params_close, body_start, body_end)
@@ -626,10 +646,10 @@ module Analyzer::Javascript
 
     # Parameter name → positional index. A rest parameter contributes the
     # positions its positional destructuring assigns inside the body.
-    private def parameter_positions(content : String, func : FunctionDef) : Hash(String, Int32)
+    private def parameter_positions(src : Noir::CharOffsets, func : FunctionDef) : Hash(String, Int32)
       positions = Hash(String, Int32).new
-      params = Noir::TopLevelSplit.split_spans(content, ',',
-        Noir::TopLevelSplit::Rules::JS_POSITIONAL_ARGS, func.params_open + 1, func.params_close)
+      params = Noir::TopLevelSplit.split_spans(src.slice(func.params_open + 1, func.params_close), ',',
+        Noir::TopLevelSplit::Rules::JS_POSITIONAL_ARGS)
 
       rest_name : String? = nil
       params.each_with_index do |entry, idx|
@@ -647,10 +667,11 @@ module Analyzer::Javascript
 
       if rest = rest_name
         # `const controller = args[args.length - 1]`: a position from the end.
-        content[func.body_start..func.body_end].scan(/(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*#{Regex.escape(rest)}\s*\[\s*#{Regex.escape(rest)}\s*\.\s*length\s*-\s*([1-9])\s*\]\s*[;\n]/) do |m|
+        body = src.slice(func.body_start, func.body_end + 1)
+        body.scan(/(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*#{Regex.escape(rest)}\s*\[\s*#{Regex.escape(rest)}\s*\.\s*length\s*-\s*([1-9])\s*\]\s*[;\n]/) do |m|
           positions[m[1]] = -m[2].to_i unless positions.has_key?(m[1])
         end
-        content[func.body_start..func.body_end].scan(REST_DESTRUCTURE_RE) do |m|
+        body.scan(REST_DESTRUCTURE_RE) do |m|
           next unless m[2] == rest
           m[1].split(',').each_with_index do |part, idx|
             name = part.strip
