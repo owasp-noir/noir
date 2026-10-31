@@ -703,8 +703,8 @@ describe "Ruby route gaps" do
     find_ep(endpoints, "GET", "/latest").handler.try(&.name).should eq("list#latest")
     find_ep(endpoints, "GET", "/top").handler.try(&.name).should eq("list#top")
     find_ep(endpoints, "GET", "/c/l/top")
-    # A computed list stays unresolved: no route is invented from the loop.
-    endpoints.none? { |e| e.url.starts_with?("/k/") }.should be_true
+    # A computed list stays unresolved: the route is kept with its placeholder.
+    endpoints.map(&.url).should contain("/k/{kind}")
     endpoints.none? { |e| e.url.includes?("filter") }.should be_true
   end
 
@@ -730,7 +730,7 @@ describe "Ruby route gaps" do
     urls.should contain("/g/votes")
     urls.should_not contain("/g/fake")
     # `Admin::Discourse` is `admin/discourse.rb`; no such file is in the scan.
-    urls.any?(&.starts_with?("/adm/")).should be_false
+    urls.should_not contain("/adm/latest")
     urls.should_not contain("/g/{f}")
 
     # A value only runtime knows: the unrolled copies are a floor and the

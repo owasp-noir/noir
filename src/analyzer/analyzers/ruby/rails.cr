@@ -1234,7 +1234,6 @@ module Analyzer::Ruby
     # unrolls, when `RECV` is a list it can resolve.
     private def one_line_loop(line : RouteLine) : Array(RouteLine)
       return [line] unless line.text.includes?(".each") && (m = line.text.match(LOOP_ONE_LINER))
-      return [line] unless m[1].starts_with?('%') || constant_list(m[1])
       [line.with_text("#{m[1]}.each do |#{m[2]}|"), line.with_text(m[3]), line.with_text("end")]
     end
 
