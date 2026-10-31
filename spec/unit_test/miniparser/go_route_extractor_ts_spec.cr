@@ -858,7 +858,7 @@ describe Noir::TreeSitterGoRouteExtractor do
     builders["addUserRoutes"].param.should eq("rg")
 
     calls = Noir::TreeSitterGoRouteExtractor.collect_router_builder_callsites(source, builders.keys.to_set)
-    calls.map(&.[0..2]).sort.should eq([{"addPingRoutes", "v1", ""}, {"addPingRoutes", "v2", ""}, {"addUserRoutes", "v1", ""}])
+    calls.map(&.[0..2]).sort!.should eq([{"addPingRoutes", "v1", ""}, {"addPingRoutes", "v2", ""}, {"addUserRoutes", "v1", ""}])
 
     routes = Noir::TreeSitterGoRouteExtractor.extract_routes_from_function(source, "addUserRoutes", {"rg" => "/v1"})
     routes.map { |r| {r.verb, r.path} }.should eq([{"GET", "/v1/users/"}])
