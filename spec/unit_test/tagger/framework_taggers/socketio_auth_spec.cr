@@ -38,6 +38,30 @@ describe "SocketIOAuthTagger" do
   end
 
   it "leaves an event with no check untagged" do
-    tag.call("server.ts", 9).should be_empty
+    tag.call("server.ts", 10).should be_empty
+  end
+
+  it "leaves a check after a write, after a branch that answers, or under an unbraced if untagged" do
+    tag.call("edge.js", 21).should be_empty
+    tag.call("edge.js", 26).should be_empty
+    tag.call("edge.js", 33).should be_empty
+    tag.call("edge.js", 57).should be_empty
+  end
+
+  it "leaves a nested check, and a check of a non-session property, untagged" do
+    tag.call("edge.js", 38).should be_empty
+    tag.call("edge.js", 46).should be_empty
+  end
+
+  it "notes a setting early return before the check" do
+    tags = tag.call("edge.js", 42)
+    tags.map(&.name).should eq(["auth"])
+    tags[0].description.should end_with("— a setting can lift it")
+  end
+
+  it "reads function callbacks, one-line try blocks and argument shuffles" do
+    tag.call("edge.js", 50).map(&.name).should eq(["auth"])
+    tag.call("edge.js", 54).map(&.name).should eq(["auth"])
+    tag.call("edge.js", 60).map(&.name).should eq(["auth"])
   end
 end

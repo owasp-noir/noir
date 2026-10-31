@@ -37,11 +37,15 @@ module Analyzer::Javascript
     SOCKET_PARAM = /\.on\(\s*["'](?:connection|connect)["']\s*,\s*(?:async\s+)?(?:function\s*)?\(?\s*(\w+)/
 
     # Any `<recv>.on("event", ...)` handler, or `<recv>.on(prefix + "event"`
-    # with the prefix a string constant of the file (group 2).
+    # (the prefix variable is group 2).
     EVENT_HANDLER = /\b(\w+)\.on\(\s*(?:([A-Za-z_$][\w$]*)\s*\+\s*)?["']([^"']+)["']/
 
-    # `const prefix = "cloudflared_";`
-    STRING_CONST = /^\s*(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*["']([^"'\\]*)["']\s*;?\s*$/m
+    # `const prefix = "cloudflared_";` (group 1 the keyword).
+    STRING_CONST = /^\s*(?:export\s+)?(const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*["']([^"'\\]*)["']\s*;?\s*$/m
+
+    # A Node `net` / `tls` / `dgram` server: its connection callback's socket
+    # emits `data` and `end`, not Socket.IO events.
+    NODE_SOCKET_SERVER = /(?:require\(\s*|\bfrom\s+)['"](?:node:)?(?:net|tls|dgram)['"]/
 
     # Socket.IO / EventEmitter reserved events that are lifecycle signals,
     # not client-invocable application messages.
@@ -91,7 +95,8 @@ module Analyzer::Javascript
       return true if content.matches?(/from\s+['"]socket\.io['"]|require\(\s*['"]socket\.io['"]\s*\)/)
       return false unless content.includes?(".on(")
       return true if content.includes?("new Server(")
-      content.matches?(CONNECTION_HANDLER) && content.matches?(Detector::Javascript::SocketIO::SOCKET_IO_API)
+      content.matches?(CONNECTION_HANDLER) && content.matches?(Detector::Javascript::SocketIO::SOCKET_IO_API) &&
+        !content.matches?(NODE_SOCKET_SERVER)
     end
 
     # The events a connection callback registers through a function it hands
@@ -102,6 +107,7 @@ module Analyzer::Javascript
     private def follow_delegations(delegations : Array(Delegation))
       visited = Set(Tuple(String, Int32, String)).new
       seen = Set(String).new
+      consts = Hash(String, FileConsts).new
       MAX_DELEGATION_DEPTH.times do
         break if delegations.empty?
         next_round = [] of Delegation
@@ -111,14 +117,14 @@ module Analyzer::Javascript
             def_path = handler.path || next
             def_line = handler.line || next
             next unless visited.add?({def_path, def_line, namespace})
-            scan_delegate(def_path, def_line, namespace, seen, next_round)
+            scan_delegate(def_path, def_line, namespace, seen, next_round, consts)
           end
         end
         delegations = next_round
       end
     end
 
-    private def scan_delegate(path : String, line : Int32, namespace : String, seen : Set(String), delegations : Array(Delegation))
+    private def scan_delegate(path : String, line : Int32, namespace : String, seen : Set(String), delegations : Array(Delegation), consts : Hash(String, FileConsts))
       content = Noir::JSRouteExtractor.strip_js_comments(read_file_content(path))
       socket = Noir::JSRouteExtractor.definition_params(content, line).try(&.first?).presence || return
       body = Noir::JSRouteExtractor.definition_body(content, line)
@@ -129,28 +135,30 @@ module Analyzer::Javascript
       # its lines.
       offset = content.byte_index(body, line_start) || return
       first_line = content.byte_slice(0, offset).count('\n') + 1
-      body.each_line.with_index do |text, index|
-        each_event(text, content) do |recv, event|
+      at = offset
+      body.each_line(chomp: false).with_index do |text, index|
+        each_event(text, at, -> { consts[path] ||= FileConsts.new(content) }) do |recv, event|
           next unless recv == socket
           url = build_url(namespace, event)
           next unless seen.add?("#{path}\0#{url}")
           @result << build_endpoint(url, path, first_line + index)
         end
         collect_delegations(text, Set{socket}, path, namespace, delegations)
+        at += text.bytesize
       end
     end
 
-    # Each non-reserved `{receiver, event}` registered on `line`. A prefixed
-    # name whose prefix is not a string constant of `content` is skipped
-    # rather than guessed.
-    private def each_event(line : String, content : String, &)
+    # Each non-reserved `{receiver, event}` registered on `line`, which
+    # starts at byte `at` of its file. A prefixed name takes the value of
+    # the string constant the prefix names at that point; when it names
+    # none, or a variable assigned again, the event is kept with the prefix
+    # as a `{placeholder}` rather than given a guessed name.
+    private def each_event(line : String, at : Int32, consts : -> FileConsts, &)
       line.scan(EVENT_HANDLER) do |em|
         event = em[3]
         if prefix = em[2]?
-          value = nil
-          content.scan(STRING_CONST) { |cm| value = cm[2] if cm[1] == prefix }
-          next unless value
-          event = value + event
+          value = consts.call.value(prefix, at + em.byte_begin(2))
+          event = (value || "{#{prefix}}") + event
         end
         next if RESERVED_EVENTS.includes?(event)
         yield em[1], event
@@ -170,9 +178,14 @@ module Analyzer::Javascript
       socket_vars = Set(String).new # params bound by connection callbacks
       # Dedup so a handler registered on two sockets doesn't duplicate.
       seen = Set(String).new
+      consts = nil.as(FileConsts?)
+      file_consts = -> { consts ||= FileConsts.new(content); consts.as(FileConsts) }
+      at = 0
 
-      content.each_line.with_index do |line, index|
+      content.each_line(chomp: false).with_index do |line, index|
         line_no = index + 1
+        line_at = at
+        at += line.bytesize
 
         if m = line.match(NS_ASSIGN)
           ns_vars[m[1]] = m[2]
@@ -195,13 +208,101 @@ module Analyzer::Javascript
         # A `<socket>.on("event")` on a bound socket variable is an inbound
         # client message handler. Receivers that were never bound as a
         # connection socket (`process`, `httpServer`, `io`, …) are ignored.
-        each_event(line, content) do |recv, event|
+        each_event(line, line_at, file_consts) do |recv, event|
           next unless socket_vars.includes?(recv)
           url = build_url(current_ns, event)
           next unless seen.add?(url)
           @result << build_endpoint(url, path, line_no)
         end
         collect_delegations(line, socket_vars, path, current_ns, delegations)
+      end
+    end
+
+    # The string constants of one file and the block each is declared in.
+    # A use sees the innermost declaration whose block holds it; a `let` or
+    # `var` assigned again anywhere in the file is not a constant. Built once
+    # per file, in one pass.
+    class FileConsts
+      record Decl, value : String, open : Int32, close : Int32, fixed : Bool
+
+      @decls = Hash(String, Array(Decl)).new
+
+      def initialize(content : String)
+        found = [] of Tuple(Int32, String, String, String)
+        content.scan(STRING_CONST) { |m| found << {m.byte_begin(0), m[1], m[2], m[3]} }
+        return if found.empty?
+        opens = block_opens(content, found.map(&.[0]))
+        closes = block_closes(content)
+        found.each_with_index do |(_, keyword, name, value), i|
+          open = opens[i]
+          close = open < 0 ? content.bytesize : (closes[open]? || content.bytesize)
+          fixed = keyword == "const" || content.scan(/(?<![\w$.])#{Regex.escape(name)}\s*[-+]?=(?![=>])/).size <= 1
+          (@decls[name] ||= [] of Decl) << Decl.new(value, open, close, fixed)
+        end
+      end
+
+      # The value `name` has at byte `at`, or nil when no constant there.
+      def value(name : String, at : Int32) : String?
+        visible = (@decls[name]? || return).select { |d| d.open < at && at < d.close }
+        return if visible.empty?
+        innermost = visible.max_by(&.open)
+        return if visible.count { |d| d.open == innermost.open } > 1
+        innermost.value if innermost.fixed
+      end
+
+      # For each offset (ascending), the byte of the `{` whose block holds it,
+      # or -1 at the top level.
+      private def block_opens(content : String, offsets : Array(Int32)) : Array(Int32)
+        result = Array(Int32).new(offsets.size, -1)
+        stack = [] of Int32
+        next_index = 0
+        each_brace(content) do |byte, pos|
+          while next_index < offsets.size && offsets[next_index] < pos
+            result[next_index] = stack.last? || -1
+            next_index += 1
+          end
+          byte == '{'.ord ? stack << pos : stack.pop?
+        end
+        while next_index < offsets.size
+          result[next_index] = stack.last? || -1
+          next_index += 1
+        end
+        result
+      end
+
+      private def block_closes(content : String) : Hash(Int32, Int32)
+        closes = Hash(Int32, Int32).new
+        stack = [] of Int32
+        each_brace(content) do |byte, pos|
+          if byte == '{'.ord
+            stack << pos
+          elsif open = stack.pop?
+            closes[open] = pos
+          end
+        end
+        closes
+      end
+
+      # Each `{` / `}` outside a string literal.
+      private def each_brace(content : String, &)
+        bytes = content.to_slice
+        quote = 0_u8
+        i = 0
+        while i < bytes.size
+          b = bytes[i]
+          if quote != 0
+            if b == '\\'.ord
+              i += 1
+            elsif b == quote
+              quote = 0_u8
+            end
+          elsif b == '"'.ord || b == '\''.ord || b == '`'.ord
+            quote = b
+          elsif b == '{'.ord || b == '}'.ord
+            yield b, i
+          end
+          i += 1
+        end
       end
     end
 
