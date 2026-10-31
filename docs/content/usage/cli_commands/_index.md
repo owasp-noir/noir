@@ -222,7 +222,7 @@ Single-value pattern filters (`<glob|substr>`):
 - `--handler <glob|substr>`: handler function name, or handler source file path
 
 Boolean switches (mutually exclusive):
-- `--guard` / `--no-guard`: endpoint has or lacks an auth guard (`ai_context.guards`; rate limiting does not count as a guard)
+- `--guard` / `--no-guard`: endpoint has or lacks an auth guard (`ai_context.guards`; rate limiting and CSRF checks do not count as a guard)
 
 Pattern matching rules:
 - Glob characters (`*`, `?`, `[`): `*` crosses `/` and `{id}` is treated literally. Without glob characters, the pattern is matched as a substring.
@@ -265,7 +265,7 @@ The default compact row (`-f jsonl`) is a projection of the endpoint record, omi
 - `project`: monorepo project directory relative to the scan base (omitted when empty).
 - `handler`: where the handler body lives (`name`, `path`, `line`), present when the analyzer resolved the definition.
 - `params`: parameters in `name:type` format.
-- `guards`: authentication and authorization guards (rate limiting excluded).
+- `guards`: authentication and authorization guards (rate limiting and CSRF excluded).
 - `sinks`, `signals`: framework-aware sink kinds and derived security review signals.
 - `matched_by`: added by `trace` (`exact`, `pattern`, `wildcard`, `prefix`).
 - `via`: added by `reach` as a list of evidence items (`route`, `handler`, `callee`, `guard`, `source`, `sink`, `validator`).

@@ -11,6 +11,10 @@ module Noir::CLI::QueryCommand
   # value except the guard switches.
   VALUE_FLAGS = %w[--method --url --path --project --handler --tech --tag --param --param-type --protocol --sink --source --signal --validator]
 
+  # One pattern each: a URL or path can hold a comma (matrix params, Rails
+  # formats), so the value is not split into an OR list.
+  SINGLE_PATTERN_FLAGS = %w[--url --path --handler]
+
   record Parsed, filters : Inspect::Filters, rest : Array(String), errors : Array(String)
 
   def self.parse_filters(args : Array(String)) : Parsed
@@ -36,7 +40,11 @@ module Noir::CLI::QueryCommand
           i += 1
           value = args[i]?
         end
-        items = value.try(&.split(',').map(&.strip).reject(&.empty?)) || [] of String
+        items = if value && SINGLE_PATTERN_FLAGS.includes?(name)
+                  value.blank? ? [] of String : [value]
+                else
+                  value.try(&.split(',').map(&.strip).reject(&.empty?)) || [] of String
+                end
         # `--sink ''` would otherwise be no filter at all, silently.
         if items.empty?
           errors << "#{name} requires a value"
@@ -113,9 +121,9 @@ module Noir::CLI::QueryCommand
         --guard / --no-guard   Has / lacks an auth guard (ai_context.guards; rate limiting and CSRF checks do not count)
         --sink <kind,...|any>  Reaches a sink of this kind (sql, command, file_io, outbound_http,
                                template_render, redirect, mass_assignment, ...)
-        --source <kind|any>    Reads a source of this kind
-        --signal <kind|any>    Carries a derived signal (idor_review, ssrf, open_redirect, ...)
-        --validator <kind|any> Carries a validator of this kind
+        --source <kind,...|any> Reads a source of this kind
+        --signal <kind,...|any> Carries a derived signal (idor_review, ssrf, open_redirect, ...)
+        --validator <kind,...|any> Carries a validator of this kind
                                A value no endpoint carries is reported on stderr with the values seen.
 
       #{Noir::CLI.section("EXAMPLES:")}

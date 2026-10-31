@@ -552,7 +552,7 @@ module Noir::CLI::Inspect
   # The path a client sent, as a router sees it: no query or fragment, a
   # leading `/`, `//` collapsed, each segment percent-decoded (`%2F` stays
   # one segment, since a router splits before it decodes). A declared route
-  # is written decoded, so `/caf%C3%A9` has to be read as `/café`.
+  # is written decoded, so `/%C3%A9t%C3%A9` has to be read as `/été`.
   def self.request_target(path : String) : String
     path = request_path(path).split('#', 2)[0].split('?', 2)[0]
     return path if path.includes?("://")

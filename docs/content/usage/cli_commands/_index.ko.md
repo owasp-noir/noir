@@ -218,7 +218,7 @@ noir query [filters] [paths...] [flags]
 - `--handler <glob|substr>`: 핸들러 함수 이름 또는 핸들러 소스 파일 경로
 
 불리언 스위치 (상호 배타적):
-- `--guard` / `--no-guard`: 인증 가드(`ai_context.guards`) 존재 여부 (rate limiter는 가드로 치지 않음)
+- `--guard` / `--no-guard`: 인증 가드(`ai_context.guards`) 존재 여부 (rate limiter와 CSRF 검사는 가드로 치지 않음)
 
 패턴 매칭 규칙:
 - 글롭 문자(`*`, `?`, `[`): `*`는 `/`를 넘어 매칭되고 `{id}`는 글자 그대로 비교됩니다. 글롭 문자가 없으면 부분 문자열로 매칭됩니다.
@@ -261,7 +261,7 @@ noir query [filters] [paths...] [flags]
 - `project`: 스캔 기준 경로에 상대적인 모노레포 프로젝트 디렉터리 (없으면 생략).
 - `handler`: 핸들러 본문 위치 (`name`, `path`, `line`, 분석기가 정의 위치를 찾은 경우).
 - `params`: `name:type` 형식의 파라미터 목록.
-- `guards`: 인증 및 인가 가드 (rate limiter 제외).
+- `guards`: 인증 및 인가 가드 (rate limiter, CSRF 제외).
 - `sinks`, `signals`: 프레임워크 인식 싱크 종류 및 파생 보안 리뷰 신호.
 - `matched_by`: `trace`에서 추가 (`exact`, `pattern`, `wildcard`, `prefix`).
 - `via`: `reach`에서 추가 (`route`, `handler`, `callee`, `guard`, `source`, `sink`, `validator` 근거 목록).

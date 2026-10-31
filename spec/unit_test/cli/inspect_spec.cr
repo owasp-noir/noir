@@ -326,6 +326,11 @@ describe Noir::CLI::Inspect do
       Noir::CLI::Inspect.query(endpoints, f, false).should be_empty
     end
 
+    it "keeps a comma inside --url, --path and --handler instead of splitting it" do
+      f = Noir::CLI::QueryCommand.parse_filters(["--url", "/a;x=1,2/b", "--path=src/a,b.go", "--handler", "h,i"]).filters
+      {f.url, f.path, f.handler}.should eq({"/a;x=1,2/b", "src/a,b.go", "h,i"})
+    end
+
     it "tells guarded from unguarded, counting a missing context, a rate limiter or a CSRF check as unguarded" do
       limited = endpoint("POST", "/2fa", "src/2fa.go", 1)
       ctx = AIContext.new
@@ -465,9 +470,9 @@ describe Noir::CLI::TraceCommand do
   end
 
   it "reads the request the way a router does" do
-    eps = [endpoint("GET", "/café/{id}"), endpoint("GET", "/a/b/{id}")]
+    eps = [endpoint("GET", "/été/{id}"), endpoint("GET", "/a/b/{id}")]
     trace = ->(req : String) { Noir::CLI::Inspect.trace(eps, "GET", req).map(&.endpoint.url) }
-    trace.call("/caf%C3%A9/7").should eq(["/café/{id}"])
+    trace.call("/%C3%A9t%C3%A9/7").should eq(["/été/{id}"])
     trace.call("a//b/7?x=1#f").should eq(["/a/b/{id}"])
     Noir::CLI::Inspect.request_target("/a%2Fb/%7Euser").should eq("/a%2Fb/~user")
     Noir::CLI::Inspect.request_target("cli://tool/run").should eq("cli://tool/run")
