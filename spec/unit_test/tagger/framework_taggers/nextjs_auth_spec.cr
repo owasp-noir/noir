@@ -82,6 +82,20 @@ describe "NextjsAuthTagger" do
     tag.call("app/api/helper/route.ts", 30).should be_empty
   end
 
+  it "leaves a check after a write, and a dropped returned 401, untagged" do
+    tag.call("app/api/order/route.ts", 5).should be_empty
+    tag.call("app/api/order/route.ts", 12).should be_empty
+  end
+
+  it "tags a returned 401 the handler hands on" do
+    tag.call("app/api/order/route.ts", 19).map(&.name).should eq(["auth"])
+  end
+
+  it "leaves a list with a public value, and a NEXT_PUBLIC_ key, untagged" do
+    tag.call("app/api/order/route.ts", 26).should be_empty
+    tag.call("app/api/order/route.ts", 35).should be_empty
+  end
+
   it "leaves a pages-router helper called after a verb branch untagged" do
     tag.call("pages/api/branchy.ts", 11).should be_empty
   end
