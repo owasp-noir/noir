@@ -45,9 +45,15 @@ module Noir::RustRequestGuards
   # literal names a login page and carries no `error=` (an OAuth callback
   # sending a failed login back is not a refusal of the caller).
   LOGIN_REDIRECT_RE = /(?:\bRedirect::\w+\s*\(\s*|(?:\bLOCATION|"(?i:location)")\s*,\s*)"(?![^"]*\berror=)[^"]*?(?<![A-Za-z])(?i:log_?in|sign_?in)/
-  ENUM_DEF_RE       = /\benum\s+([A-Z]\w*)/
-  IMPL_KEYWORD_RE   = /\bimpl\b/
-  CRATE_USE_RE      = /\buse\s+crate::[^;]*;/
+  # `Self::auth_token(...)`: a call to an inherent method of the guard type.
+  SELF_CALL_RE = /\bSelf\s*::\s*(\w+)\s*(?:::\s*<[^<>]*>\s*)?\(/
+  # ponytail: fallback when no status mapping in reach decides a variant
+  # (e.g. a `Code` table behind a macro): the variant's own name says it
+  # refuses the credential. Add real mapping reads when a repo needs more.
+  AUTH_VARIANT_RE = /\A(?:Missing|Invalid|Expired|Bad|No)\w*(?:Authori[sz]ation|Credential|ApiKey|AuthToken|BearerToken)\w*\z|\A(?:Unauthori[sz]ed|Unauthenticated|Forbidden)\w*\z/
+  ENUM_DEF_RE     = /\benum\s+([A-Z]\w*)/
+  IMPL_KEYWORD_RE = /\bimpl\b/
+  CRATE_USE_RE    = /\buse\s+crate::[^;]*;/
   # A raw string (`r#"say "hi""#`) or a char literal (`'"'`, `'\''`,
   # `'\u{1F600}'`), neither of which the C-style stripper can read; not a
   # lifetime (`'a`).
@@ -120,8 +126,49 @@ module Noir::RustRequestGuards
       facts.crate_uses[path] = source.scan(CRATE_USE_RE).join('\n', &.[0])
     end
     Noir::TreeSitter.parse_rust(source) do |root|
-      collect(root, source, globs, facts, path, crate, 0)
+      methods = {} of String => LibTreeSitter::TSNode
+      index_inherent_methods(root, source, methods, 0) if source.includes?("Self::")
+      collect(root, source, globs, facts, path, crate, 0, methods)
     end
+  end
+
+  # `Type::method` => body of every fn in an inherent `impl Type` block.
+  private def self.index_inherent_methods(node : LibTreeSitter::TSNode, source : String,
+                                          methods : Hash(String, LibTreeSitter::TSNode), depth : Int32)
+    return if depth > MAX_DEPTH
+    if Noir::TreeSitter.node_type(node) == "impl_item" && Noir::TreeSitter.field(node, "trait").nil?
+      type = Noir::TreeSitter.field(node, "type")
+      body = Noir::TreeSitter.field(node, "body")
+      leaf = type ? type_leaf(Noir::TreeSitter.node_text(type, source)) : nil
+      if leaf && body
+        Noir::TreeSitter.each_named_child(body) do |item|
+          next unless Noir::TreeSitter.node_type(item) == "function_item"
+          name = Noir::TreeSitter.field(item, "name") || next
+          fn_body = Noir::TreeSitter.field(item, "body") || next
+          methods["#{leaf}::#{Noir::TreeSitter.node_text(name, source)}"] ||= fn_body
+        end
+      end
+    end
+    Noir::TreeSitter.each_named_child(node) { |child| index_inherent_methods(child, source, methods, depth + 1) }
+  end
+
+  # The sites of `body`, plus those of the inherent methods it calls as
+  # `Self::name(...)` (transitively, each once).
+  private def self.guard_sites(body : LibTreeSitter::TSNode, type : String, source : String, globs : Array(String),
+                               methods : Hash(String, LibTreeSitter::TSNode)) : Array(Site)
+    sites = [] of Site
+    seen = Set(String).new
+    queue = [body]
+    while node = queue.shift?
+      sites_in(node, Walk.new(source, sites, globs), nil, false, false, 0)
+      next if methods.empty?
+      Noir::TreeSitter.node_text(node, source).scan(SELF_CALL_RE) do |m|
+        key = "#{type}::#{m[1]}"
+        next unless seen.add?(key)
+        methods[key]?.try { |fn_body| queue << fn_body }
+      end
+    end
+    sites
   end
 
   # `source` with its raw strings as `""` and its char literals as `' '`.
@@ -369,7 +416,8 @@ module Noir::RustRequestGuards
   end
 
   private def self.collect(node : LibTreeSitter::TSNode, source : String, globs : Array(String), facts : Facts,
-                           file : String, crate : String, depth : Int32)
+                           file : String, crate : String, depth : Int32,
+                           methods : Hash(String, LibTreeSitter::TSNode))
     return if depth > MAX_DEPTH
     case Noir::TreeSitter.node_type(node)
     when "macro_definition"
@@ -383,14 +431,12 @@ module Noir::RustRequestGuards
       body = Noir::TreeSitter.field(node, "body")
       if trait && type && body && Noir::TreeSitter.node_text(trait, source).matches?(TRAIT_RE)
         if leaf = type_leaf(Noir::TreeSitter.node_text(type, source))
-          sites = [] of Site
-          sites_in(body, Walk.new(source, sites, globs), nil, false, false, 0)
-          facts.impls << Impl.new(leaf, sites, file, crate)
+          facts.impls << Impl.new(leaf, guard_sites(body, leaf, source, globs, methods), file, crate)
         end
         return
       end
     end
-    Noir::TreeSitter.each_named_child(node) { |child| collect(child, source, globs, facts, file, crate, depth + 1) }
+    Noir::TreeSitter.each_named_child(node) { |child| collect(child, source, globs, facts, file, crate, depth + 1, methods) }
   end
 
   private def self.guard_called(text : String) : String?
@@ -538,7 +584,9 @@ module Noir::RustRequestGuards
       return true if facts.scoped_refusing.includes?(key)
       return false if facts.scoped_catch_all.includes?("#{scope}|#{enum_name}")
     end
-    facts.refusing_variants.includes?(name) && !facts.other_variants.includes?(name)
+    return true if facts.refusing_variants.includes?(name) && !facts.other_variants.includes?(name)
+    # Undecided by any mapping in reach: judge by the variant's own name.
+    !facts.other_variants.includes?(name) && name.rpartition("::")[2].matches?(AUTH_VARIANT_RE)
   end
 
   # Of the crate files defining `enum_name`, the one the guard's file

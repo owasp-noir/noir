@@ -1,7 +1,8 @@
 require "../ext/tree_sitter/tree_sitter"
 
 # Wire names of a Rust source's named-field structs, the way serde and
-# Rocket's `FromForm` read them: a container `#[serde(rename_all = "…")]`
+# Rocket's `FromForm` read them (deserr's `#[deserr(rename_all = camelCase)]`
+# is read like serde's): a container `#[serde(rename_all = "…")]`
 # recases every field, a field's `#[serde(rename = "…")]` or Rocket
 # `#[field(name = "…")]` replaces its name, and `skip` / `skip_deserializing`
 # fields are left out. A `flatten` field's own name is never on the wire:
@@ -14,11 +15,11 @@ require "../ext/tree_sitter/tree_sitter"
 module Noir::RustStructFields
   record Shape, fields : Array(String), flattened : Array(String)
 
-  RENAME_ALL_RE = /\bserde\s*\((?:[^()]|\([^()]*\))*\brename_all\s*=\s*"([^"]+)"/
-  RENAME_RE     = /\bserde\s*\((?:[^()]|\([^()]*\))*\brename\s*=\s*"([^"]+)"/
+  RENAME_ALL_RE = /\b(?:serde|deserr)\s*\((?:[^()]|\([^()]*\))*\brename_all\s*=\s*"?([^",)\s]+)"?/
+  RENAME_RE     = /\b(?:serde|deserr)\s*\((?:[^()]|\([^()]*\))*\brename\s*=\s*"([^"]+)"/
   FORM_NAME_RE  = /\bfield\s*\((?:[^()]|\([^()]*\))*\bname\s*=\s*(?:uncased\s*\(\s*)?"([^"]+)"/
-  OMIT_RE       = /\bserde\s*\((?:[^()]|\([^()]*\))*\b(?:skip|skip_deserializing)\b(?!\s*=)/
-  FLATTEN_RE    = /\bserde\s*\((?:[^()]|\([^()]*\))*\bflatten\b(?!\s*=)/
+  OMIT_RE       = /\b(?:serde|deserr)\s*\((?:[^()]|\([^()]*\))*\b(?:skip|skip_deserializing)\b(?!\s*=)/
+  FLATTEN_RE    = /\b(?:serde|deserr)\s*\((?:[^()]|\([^()]*\))*\bflatten\b(?!\s*=)/
 
   # `{struct_name => Shape}` of the top-level structs; first definition wins.
   def self.parse(source : String) : Hash(String, Shape)

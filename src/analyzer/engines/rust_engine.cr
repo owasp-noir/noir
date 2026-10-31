@@ -699,10 +699,11 @@ module Analyzer::Rust
 
     # The type an extractor decodes into, when it is a plain (possibly
     # module-qualified, possibly generic) name: `Json<CreatePost>`,
-    # `web::Query<api::Params>`, `Json<Record<Data>>`. `Json<Vec<T>>` is a
+    # `web::Query<api::Params>`, `Json<Record<Data>>`, deserr's
+    # `AwebJson<T, E>` / `AwebQueryParameter<T, E>`. `Json<Vec<T>>` is a
     # JSON array of `T`, so its params are `T`'s fields.
     EXTRACTOR_TARGET_RES = EXTRACTOR_KINDS.keys.to_h do |kind|
-      {kind, /(?<!\w)#{kind}\s*<\s*(?:(?:(?:std::)?vec::)?Vec\s*<\s*)?((?:[A-Za-z_]\w*::)*[A-Za-z_]\w*)\s*[<>]/}
+      {kind, /(?<!\w)(?:Aweb)?#{kind}(?:Parameter)?\s*<\s*(?:(?:(?:std::)?vec::)?Vec\s*<\s*)?((?:[A-Za-z_]\w*::)*[A-Za-z_]\w*)\s*[<>,]/}
     end
 
     # Push the params a `kind` extractor parameter (its source `text`)

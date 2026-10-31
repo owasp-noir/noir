@@ -1,6 +1,7 @@
 require "../../engines/rust_engine"
 require "../../../ext/tree_sitter/tree_sitter"
 require "../../../miniparsers/rust_callee_extractor_ts"
+require "../../../miniparsers/rust_routes_macro_extractor"
 
 module Analyzer::Rust
   # actix-web analyzer (tree-sitter port). actix-web wires routes via
@@ -52,7 +53,12 @@ module Analyzer::Rust
     @global_function_index : Array(GlobalFunctionEntry)? = nil
     @project_import_aliases : Hash(String, String)? = nil
 
+    # `#[routes::routes(...)]` tables (Meilisearch): table owner => the full
+    # prefixes it is mounted at, composed through `sub(Owner)` entries.
+    @routes_macro_prefixes : Hash(String, Array(String))? = nil
+
     def analyze
+      @routes_macro_prefixes = build_routes_macro_prefixes
       @cross_file_scope_regs = build_cross_file_scope_registrations
       @configure_fn_prefix = build_configure_fn_prefix
       @global_function_index = nil
@@ -166,7 +172,82 @@ module Analyzer::Rust
         end
       end
 
+      endpoints.concat(routes_macro_endpoints(path, source, include_callee))
       endpoints
+    end
+
+    # Every `#[routes::routes]` table in the project, keyed "file\0Owner", mapped
+    # to the prefixes it is mounted at. A `sub(mod::Owner)` ref picks the table
+    # named `Owner` (narrowed by `mod` when several files declare that name); a
+    # table nobody mounts is a root.
+    private def build_routes_macro_prefixes : Hash(String, Array(String))
+      tables = [] of Tuple(String, Noir::RustRoutesMacro::Table)
+      by_owner = Hash(String, Array(Tuple(String, Noir::RustRoutesMacro::Table))).new { |h, k| h[k] = [] of Tuple(String, Noir::RustRoutesMacro::Table) }
+      scan_target_files.each do |file|
+        next unless scan_accepts?(file)
+        src = read_file_content(file)
+        next unless src.matches?(Noir::RustRoutesMacro::ATTR_RE)
+        Noir::RustRoutesMacro.extract(src).each do |t|
+          tables << {file, t}
+          by_owner[t.owner] << {file, t}
+        end
+      end
+      prefixes = Hash(String, Array(String)).new { |h, k| h[k] = [] of String }
+      return prefixes if tables.empty?
+
+      resolve = ->(ref : String) do
+        found = by_owner[ref.split("::").last]? || ([] of Tuple(String, Noir::RustRoutesMacro::Table))
+        if found.size > 1
+          narrowed = found.select { |(f, _)| ref_matches_file?(ref, f) }
+          found = narrowed unless narrowed.empty?
+        end
+        found
+      end
+
+      mounted = Set(String).new
+      tables.each do |(_, t)|
+        t.entries.each { |e| e.sub.try { |ref| resolve.call(ref).each { |(f, c)| mounted << "#{f}\0#{c.owner}" } } }
+      end
+      # ponytail: depth cap instead of cycle detection; a sub-cycle just stops.
+      mount = uninitialized Proc(String, Noir::RustRoutesMacro::Table, String, Int32, Nil)
+      mount = ->(file : String, table : Noir::RustRoutesMacro::Table, prefix : String, depth : Int32) do
+        key = "#{file}\0#{table.owner}"
+        return if depth > 8 || prefixes[key].size >= 16 || prefixes[key].includes?(prefix)
+        prefixes[key] << prefix
+        table.entries.each do |e|
+          e.sub.try { |ref| resolve.call(ref).each { |(f, c)| mount.call(f, c, prefix + e.path, depth + 1) } }
+        end
+        nil
+      end
+      tables.each { |(f, t)| mount.call(f, t, "", 0) unless mounted.includes?("#{f}\0#{t.owner}") }
+      prefixes
+    end
+
+    private def routes_macro_endpoints(path : String, source : String, include_callee : Bool) : Array(Endpoint)
+      result = [] of Endpoint
+      prefixes = @routes_macro_prefixes
+      return result if prefixes.nil? || prefixes.empty? || !source.matches?(Noir::RustRoutesMacro::ATTR_RE)
+      Noir::RustRoutesMacro.extract(source).each do |table|
+        owner_prefixes = prefixes["#{path}\0#{table.owner}"]?
+        next unless owner_prefixes
+        table.entries.each do |entry|
+          verb = entry.verb || next
+          handler = entry.handler || next
+          owner_prefixes.each do |prefix|
+            route = prefix + entry.path
+            route = "/" if route.empty?
+            endpoint = Endpoint.new(canonicalize_actix_path(route), verb, Details.new(PathInfo.new(path, entry.line)))
+            extract_path_params(route, endpoint)
+            if context = resolved_handler_context(handler, path, include_callee)
+              context[:params].each { |param| endpoint.push_param(param) }
+              attach_rust_callees(endpoint, context[:callees]) if include_callee
+              endpoint.handler = context[:handler]
+            end
+            result << endpoint
+          end
+        end
+      end
+      result
     end
 
     private def build_attribute_endpoint(route_path : String,
@@ -1290,7 +1371,7 @@ module Analyzer::Rust
     end
 
     ACTIX_EXTRACTOR_RES = EXTRACTOR_KINDS.keys.to_h do |kind|
-      {kind, /(?<![\w:])(?:(?:actix_web::)?web::)?#{kind}\s*</}
+      {kind, /(?<![\w:])(?:(?:actix_web::)?web::)?(?:Aweb)?#{kind}(?:Parameter)?\s*</}
     end
 
     # Whether a handler parameter's text uses the `kind` extractor
