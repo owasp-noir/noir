@@ -417,13 +417,14 @@ module Analyzer::Go
                                string_seed : Hash(String, String)? = nil,
                                group_method : String = "Group",
                                handlefunc_methods : Bool = false,
+                               literal_join : Bool = false,
                                & : String, Endpoint ->)
       expansions.each do |fn, rb, pset|
         emitted = [] of Endpoint
         pset.each do |prefix|
           Noir::TreeSitterGoRouteExtractor.extract_routes_from_function(
             content, fn, {rb.param => prefix}, handle_method: handle_method, string_seed: string_seed,
-            group_method: group_method, handlefunc_methods: handlefunc_methods
+            group_method: group_method, handlefunc_methods: handlefunc_methods, literal_join: literal_join
           ).each do |route|
             details = Details.new(PathInfo.new(path, route.line + 1))
             Noir::TreeSitterGoRouteExtractor.fan_out_verbs(route.verb).each do |verb|

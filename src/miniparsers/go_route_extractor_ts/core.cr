@@ -254,7 +254,8 @@ module Noir
                        mount_methods : Array(String) = [] of String,
                        verb_calls : Bool = true,
                        string_seed : Hash(String, String)? = nil,
-                       extra_group_methods : Array(String) = [] of String) : Array(Route)
+                       extra_group_methods : Array(String) = [] of String,
+                       literal_join : Bool = false) : Array(Route)
       routes = [] of Route
       group_prefixes = external_groups.dup
       all_handle_many = handle_many_methods.dup
@@ -296,7 +297,7 @@ module Noir
 
         Noir::TreeSitter.walk(root) do |node|
           next unless Noir::TreeSitter.node_type(node) == "call_expression"
-          if verb_calls && (route = decode_verb_call(node, source, group_prefixes, extra_verbs, group_method, group_aliases, string_values, closure_groups))
+          if verb_calls && (route = decode_verb_call(node, source, group_prefixes, extra_verbs, group_method, group_aliases, string_values, closure_groups, literal_join))
             routes << route
           elsif handle_method && (route = decode_handle_call(node, source, group_prefixes, handle_method, group_method, group_aliases, string_values))
             routes << route
@@ -676,7 +677,8 @@ module Noir
                                      handle_method : String? = nil,
                                      string_seed : Hash(String, String)? = nil,
                                      group_method : String = "Group",
-                                     handlefunc_methods : Bool = false) : Array(Route)
+                                     handlefunc_methods : Bool = false,
+                                     literal_join : Bool = false) : Array(Route)
       routes = [] of Route
       Noir::TreeSitter.parse_go(source) do |root|
         string_values = collect_string_values(root, source, string_seed)
@@ -698,7 +700,7 @@ module Noir
             next unless Noir::TreeSitter.node_type(node) == "call_expression"
             if handlefunc_methods
               decode_handlefunc_methods_call(node, source, group_prefixes).each { |r| routes << r } unless chained.includes?(node_key(node))
-            elsif route = decode_verb_call(node, source, group_prefixes, [] of String, "Group", [] of String, string_values)
+            elsif route = decode_verb_call(node, source, group_prefixes, [] of String, "Group", [] of String, string_values, literal_join: literal_join)
               routes << route
             elsif handle_method && (route = decode_handle_call(node, source, group_prefixes, handle_method))
               routes << route
@@ -1248,7 +1250,8 @@ module Noir
                                  group_method : String = "Group",
                                  group_aliases : Array(String) = [] of String,
                                  string_values : Hash(String, String) = Hash(String, String).new,
-                                 closure_groups : Array(ClosureGroup) = [] of ClosureGroup) : Route?
+                                 closure_groups : Array(ClosureGroup) = [] of ClosureGroup,
+                                 literal_join : Bool = false) : Route?
       function = Noir::TreeSitter.field(call, "function")
       return unless function
       return unless Noir::TreeSitter.node_type(function) == "selector_expression"
@@ -1327,7 +1330,15 @@ module Noir
       base_prefix = closure_prefix_for(closure_groups, LibTreeSitter.ts_node_start_byte(call), router_name) ||
                     groups[router_name]? || ""
       base_prefix = group_join(base_prefix, chain_prefix) unless chain_prefix.empty?
-      resolved = base_prefix.empty? ? (raw_path.empty? ? "/" : raw_path) : group_join(base_prefix, raw_path)
+      resolved = if base_prefix.empty?
+                   raw_path.empty? ? "/" : raw_path
+                 elsif literal_join && !raw_path.empty? && !raw_path.starts_with?('/') && !base_prefix.ends_with?('/')
+                   # Echo registers `g.prefix + path` as written: `u.GET("s")`
+                   # on the `/api/v1/user` group serves `/api/v1/users`.
+                   base_prefix + raw_path
+                 else
+                   group_join(base_prefix, raw_path)
+                 end
 
       # Fiber's `app.All(...)` is the same "match any method" intent
       # as Gin's `r.Any(...)` and Echo's `e.Any(...)`. Normalize so

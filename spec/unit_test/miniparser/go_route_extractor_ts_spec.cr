@@ -867,6 +867,28 @@ describe Noir::TreeSitterGoRouteExtractor do
     ping_v2.map { |r| {r.verb, r.path} }.should eq([{"GET", "/v2/ping"}])
   end
 
+  it "joins a group prefix and a relative path as written when asked (Echo)" do
+    source = <<-GO
+      package main
+      func main() {
+          e := echo.New()
+          u := e.Group("/api/v1/user")
+          u.GET("s", h)
+          u.GET("", h)
+          u.GET("/settings", h)
+          root := e.Group("/admin/")
+          root.GET("stats", h)
+          e.GET("health", h)
+      }
+      GO
+
+    echo = Noir::TreeSitterGoRouteExtractor.extract_routes(source, literal_join: true)
+    echo.map(&.path).sort!.should eq ["/admin/stats", "/api/v1/user", "/api/v1/user/settings", "/api/v1/users", "health"]
+    # Every other router joins with a `/`.
+    joined = Noir::TreeSitterGoRouteExtractor.extract_routes(source)
+    joined.map(&.path).sort!.should eq ["/admin/stats", "/api/v1/user", "/api/v1/user/s", "/api/v1/user/settings", "health"]
+  end
+
   it "collects inline Group call-site as direct prefix for router builders" do
     source = <<-GO
       package routes
