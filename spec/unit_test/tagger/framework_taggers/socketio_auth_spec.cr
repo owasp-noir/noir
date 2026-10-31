@@ -59,6 +59,31 @@ describe "SocketIOAuthTagger" do
     tags[0].description.should end_with("— a setting can lift it")
   end
 
+  it "lets a log line, an awaited read and a wrapped declaration come before the check" do
+    tag.call("lead.js", 29).map(&.name).should eq(["auth"])
+    tag.call("lead.js", 34).map(&.name).should eq(["auth"])
+    tag.call("lead.js", 44).map(&.name).should eq(["auth"])
+  end
+
+  it "leaves an awaited write, or a shuffle whose condition calls something, before the check untagged" do
+    tag.call("lead.js", 39).should be_empty
+    tag.call("lead.js", 51).should be_empty
+  end
+
+  it "reads a check that logs first, rethrows from a try, or tests `logged`" do
+    tag.call("lead.js", 57).map(&.name).should eq(["auth"])
+    tag.call("lead.js", 61).map(&.name).should eq(["auth"])
+    tag.call("lead.js", 65).map(&.name).should eq(["auth"])
+  end
+
+  it "leaves a write dressed as a declaration or a log line before the check untagged" do
+    [74, 78, 82, 86, 90, 94].each { |line| tag.call("lead.js", line).should be_empty }
+  end
+
+  it "reads a file that uses net without serving it" do
+    tag.call("lead.js", 69).map(&.name).should eq(["auth"])
+  end
+
   it "reads function callbacks, one-line try blocks and argument shuffles" do
     tag.call("edge.js", 50).map(&.name).should eq(["auth"])
     tag.call("edge.js", 54).map(&.name).should eq(["auth"])

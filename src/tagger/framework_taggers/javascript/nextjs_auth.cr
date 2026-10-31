@@ -3,6 +3,7 @@ require "../../../models/endpoint"
 require "../../../miniparsers/js_handler_resolver"
 require "../../../miniparsers/js_route_extractor"
 require "../../../utils/top_level_split"
+require "./js_read_shape"
 
 @[Noir::TaggerFor(key: "nextjs_auth", name: "Next.js Auth Tagger", desc: "Identifies Next.js route handlers that reply 401 without a session or shared secret", order: 270)]
 class NextjsAuthTagger < FrameworkTagger
@@ -23,17 +24,18 @@ class NextjsAuthTagger < FrameworkTagger
   # .includes(apiKey))`: the key is none of the accepted secrets. Read on
   # the line as written, since the template literal holds a secret.
   NEGATED_LIST = /\bif\s*\(.*!\s*\[/
-  SECRET_LIST  = /!\s*\[([^\]]*)\]\s*\.\s*includes\s*\(/
+  # `` if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) ``: also read
+  # as written, the secret being inside a template literal.
+  SECRET_TEMPLATE = /!==?\s*`[^`]*\$\{\s*#{ENV_SECRET}\s*\}[^`]*`|`[^`]*\$\{\s*#{ENV_SECRET}\s*\}[^`]*`\s*!==?/
+  # `export const GET = defaultResponderForAppDir(handler)`: group 1 the
+  # handler the wrapper is handed.
+  WRAPPED_HANDLER = /\b(?:GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\s*=\s*[A-Za-z_$][\w$]*\s*\(\s*([A-Za-z_$][\w$]*)\s*\)/
+  SECRET_LIST     = /!\s*\[([^\]]*)\]\s*\.\s*includes\s*\(/
   # A statement of the handler that starts with a call:
   # `const user = await authMiddleware();`, `validateRequest(request);`,
   # `return await handler(request);`. Group 1 is the callee.
   HELPER_STATEMENT = /^\s*(?:return\s+|(?:const|let|var)\s+[^=]+=\s*)?(?:await\s+)?([A-Za-z_$][\w$]*)\s*\(/
   CONTROL_WORDS    = Set{"if", "for", "while", "switch", "catch", "function"}
-  # A leading statement that only reads: a declaration of a value with no
-  # `await`, or one awaiting the request itself (`await request.json()`,
-  # `await headers()`). Anything else before the check (a write, a branch,
-  # a log line) runs for a caller the check would refuse.
-  READ_DECLARATION = /^\s*(?:const|let|var)\s+[^=]+=\s*(?:(?!.*\bawait\b)|await\s+(?:req|request)\s*\.|await\s+(?:headers|cookies|params)\s*\()/
   # `const denied = await checkAuth(); if (denied) return denied;`
   RESULT_NAME = /^\s*(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=/
   # How many helper hops to follow (`GET` → `handler` → `checkCronKey`).
@@ -71,7 +73,7 @@ class NextjsAuthTagger < FrameworkTagger
       endpoint.add_tag(Tag.new("auth", "Protected by Next.js handler check `#{refusal.condition}` (replies #{refusal.status})", "nextjs_auth"))
       return
     end
-    if found = helper_refusal(code, path, 0)
+    if found = helper_refusal(code, raw, path, 0)
       endpoint.add_tag(Tag.new("auth", "Protected by Next.js helper `#{found[0]}()` (#{found[1]})", "nextjs_auth"))
       return
     end
@@ -80,6 +82,29 @@ class NextjsAuthTagger < FrameworkTagger
     if wrapper && (kind = wrapper_refusal(path, wrapper))
       detail = kind == :throw ? "throws unauthorized" : "replies 401"
       endpoint.add_tag(Tag.new("auth", "Protected by Next.js #{wrapper} wrapper (#{detail})", "nextjs_auth"))
+      return
+    end
+
+    # The handler the wrapper is handed, defined elsewhere (calcom's
+    # `import { GET as handler } from "@calcom/features/tasker/api/cron"`).
+    if (inner = code_only(lines[line - 1]).match(WRAPPED_HANDLER).try(&.[1])) && (found = wrapped_refusal(path, inner))
+      endpoint.add_tag(Tag.new("auth", "Protected by Next.js handler `#{inner}` (#{found})", "nextjs_auth"))
+    end
+  end
+
+  # How the handler `name`, as named in `path`, refuses an anonymous caller.
+  private def wrapped_refusal(path : String, name : String) : String?
+    content = read_file(path) || return
+    handler = Noir::JSHandlerResolver.resolve(name, content, path) || return
+    def_path = handler.path || return
+    def_line = handler.line || return
+    lines = read_file_lines(def_path) || return
+    return unless def_line <= lines.size
+    body = function_body(lines, def_line - 1)
+    if refusal = session_refusal(body, lines[def_line - 1, body.size], UNAUTHORIZED)
+      "replies #{refusal.status}"
+    elsif found = helper_refusal(body, lines[def_line - 1, body.size], def_path, 0)
+      "through `#{found[0]}()`, #{found[1]}"
     end
   end
 
@@ -92,7 +117,8 @@ class NextjsAuthTagger < FrameworkTagger
       i.downto({i - CONDITION_LOOKBACK, 0}.max) do |j|
         # A block closed between the `if` and the refusal is not the refusal's.
         break if j < i && code[j].strip == "}"
-        next unless code[j].matches?(SESSION_DENIED) || secret_list_denied?(code[j], raw[j]? || "")
+        next unless code[j].matches?(SESSION_DENIED) || secret_list_denied?(code[j], raw[j]? || "") ||
+                    (code[j].matches?(/\bif\s*\(/) && (raw[j]? || "").matches?(SECRET_TEMPLATE))
         throws = code[j..i].any?(&.matches?(/\bthrow\b/))
         return Refusal.new(code[j].strip.rchop('{').strip, hit[1]? || "401", throws)
       end
@@ -118,7 +144,7 @@ class NextjsAuthTagger < FrameworkTagger
   # helper that returns its refusal guards only when the handler hands the
   # result on (`return await f()`, `if (denied) return denied`); one that
   # throws stops the handler wherever its result goes. Returns {name, how}.
-  private def helper_refusal(code : Array(String), path : String, depth : Int32) : Tuple(String, String, Bool)?
+  private def helper_refusal(code : Array(String), raw : Array(String), path : String, depth : Int32) : Tuple(String, String, Bool)?
     return if depth >= MAX_HELPER_DEPTH
     content = read_file(path) || return
     level = 0
@@ -131,11 +157,19 @@ class NextjsAuthTagger < FrameworkTagger
         if m && !CONTROL_WORDS.includes?(m[1]) && (found = helper_definition_refusal(m[1], content, path, depth))
           return {m[1], found[0], found[1]} if found[1] || propagated?(code, i)
         end
-        break unless text.matches?(READ_DECLARATION)
+        # Judged as written: `code` has its template literals blanked, and
+        # `` sql`DELETE …` `` is a call.
+        break unless lead_read?(Noir::CComments.strip(raw[i]? || text, quotes: %("'`)))
       end
       level += text.count('{') - text.count('}')
     end
     nil
+  end
+
+  # A leading statement that only reads or logs (`Noir::JSReadShape`):
+  # anything else before the check runs for a caller it would refuse.
+  private def lead_read?(text : String) : Bool
+    Noir::JSReadShape.read_only?(text)
   end
 
   # Whether the handler hands on what the call at `i` returns.
@@ -168,7 +202,7 @@ class NextjsAuthTagger < FrameworkTagger
                               {"replies #{refusal.status}", refusal.throws}
                             elsif thrown_unauthorized?(raw, body)
                               {"throws unauthorized", true}
-                            elsif found = helper_refusal(body, def_path, depth + 1)
+                            elsif found = helper_refusal(body, raw, def_path, depth + 1)
                               {"through `#{found[0]}()`, #{found[1]}", found[2]}
                             end
   end

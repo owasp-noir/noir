@@ -617,7 +617,7 @@ describe "ExpressAuthTagger" do
     server = "#{base}/server.js"
 
     it "counts a basic-auth middleware where it runs and a helper replying 401, nothing built-only or local" do
-      endpoints = (6..13).map do |line|
+      endpoints = (11..23).map do |line|
         details = Details.new(PathInfo.new(server, line))
         details.technology = "js_express"
         Endpoint.new("/x", "GET", [] of Param, details)
@@ -649,6 +649,14 @@ describe "ExpressAuthTagger" do
         [] of String,
         # `await currentUser()` is the caller, not a setting.
         ["Protected by Express callerCheck (res.status(401)) middleware"],
+        # Mounted as built: inline, a variable, a module's export.
+        ["Protected by Express basicAuth (express-basic-auth) middleware"],
+        ["Protected by Express auth (basicAuth) middleware"],
+        ["Protected by Express exportedAuth (basicAuth) middleware"],
+        # A helper's 403 for a missing session.
+        ["Protected by Express needsSession (sendError(res,403)) middleware"],
+        # A helper's 403 for a session without a cart.
+        [] of String,
       ])
     end
   end

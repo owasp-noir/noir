@@ -43,9 +43,11 @@ module Analyzer::Javascript
     # `const prefix = "cloudflared_";` (group 1 the keyword).
     STRING_CONST = /^\s*(?:export\s+)?(const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*["']([^"'\\]*)["']\s*;?\s*$/m
 
-    # A Node `net` / `tls` / `dgram` server: its connection callback's socket
-    # emits `data` and `end`, not Socket.IO events.
-    NODE_SOCKET_SERVER = /(?:require\(\s*|\bfrom\s+)['"](?:node:)?(?:net|tls|dgram)['"]/
+    # `const server = net.createServer()`, `tls.createServer(opts)`,
+    # `dgram.createSocket("udp4")`, `http.createServer(app)`: a raw Node
+    # server, whose `connection` sockets emit `data` and `end`, not
+    # Socket.IO events. Group 1 is the variable.
+    RAW_SOCKET_SERVER = /\b([A-Za-z_$][\w$]*)\s*=\s*(?:[A-Za-z_$][\w$]*\s*\.\s*)?(?:createServer|createSocket)\s*\(/
 
     # Socket.IO / EventEmitter reserved events that are lifecycle signals,
     # not client-invocable application messages.
@@ -95,8 +97,7 @@ module Analyzer::Javascript
       return true if content.matches?(/from\s+['"]socket\.io['"]|require\(\s*['"]socket\.io['"]\s*\)/)
       return false unless content.includes?(".on(")
       return true if content.includes?("new Server(")
-      content.matches?(CONNECTION_HANDLER) && content.matches?(Detector::Javascript::SocketIO::SOCKET_IO_API) &&
-        !content.matches?(NODE_SOCKET_SERVER)
+      content.matches?(CONNECTION_HANDLER) && content.matches?(Detector::Javascript::SocketIO::SOCKET_IO_API)
     end
 
     # The events a connection callback registers through a function it hands
@@ -179,6 +180,7 @@ module Analyzer::Javascript
       # Dedup so a handler registered on two sockets doesn't duplicate.
       seen = Set(String).new
       consts = nil.as(FileConsts?)
+      raw_servers = nil.as(Set(String)?)
       file_consts = -> { consts ||= FileConsts.new(content); consts.as(FileConsts) }
       at = 0
 
@@ -199,7 +201,11 @@ module Analyzer::Javascript
           elsif m = line.match(CONNECTION_HANDLER)
             current_ns = ns_vars[m[1]]? || "/"
           end
-          if pm = line.match(SOCKET_PARAM)
+          # The socket of a raw Node server's connection is no Socket.IO
+          # socket; the file may still serve Socket.IO on its `io`.
+          raw_servers ||= content.includes?("create") ? content.scan(RAW_SOCKET_SERVER).map(&.[1]).to_set : Set(String).new
+          raw = line.includes?("createServer(") || ((cm = line.match(CONNECTION_HANDLER)) && raw_servers.includes?(cm[1]))
+          if !raw && (pm = line.match(SOCKET_PARAM))
             socket_vars << pm[1]
           end
           next

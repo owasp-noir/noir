@@ -25,7 +25,10 @@ delegated_endpoints = [
   build.call("ws://inner_evt"),
   build.call("ws://{shifting}first"),
 ] + %w[after_write public_branch unbraced_if nested_check setting_check not_a_session
-  function_style one_line_try write_in_try shuffled_args].map { |name| build.call("ws://#{name}") }
+  function_style one_line_try write_in_try shuffled_args
+  log_first awaited_read_first awaited_write_first chained_declaration call_in_shuffle
+  helper_logs helper_rethrows helper_logged probe_port
+  fetch_post raw_query builder_delete sync_write log_with_write decrement].map { |name| build.call("ws://#{name}") }
 
 delegated_tester = FunctionalTester.new("fixtures/javascript/socketio_delegated/", {
   :techs     => 1,

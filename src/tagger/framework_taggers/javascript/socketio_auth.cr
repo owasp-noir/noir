@@ -4,6 +4,7 @@ require "../../../miniparsers/js_handler_resolver"
 require "../../../miniparsers/js_route_extractor"
 require "../../../utils/js_literal_scanner"
 require "../../../utils/top_level_split"
+require "./js_read_shape"
 
 @[Noir::TaggerFor(key: "socketio_auth", name: "Socket.IO Auth Tagger", desc: "Identifies Socket.IO event handlers that first call a check refusing a socket without a session", order: 300)]
 class SocketIOAuthTagger < FrameworkTagger
@@ -25,8 +26,8 @@ class SocketIOAuthTagger < FrameworkTagger
   # A statement that hands a variable to a function as its first argument:
   # `checkLogin(socket)`, `await requireAdmin(socket, id)`.
   CHECK_CALL = /\A(?:await\s+)?([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)\s*\(\s*([A-Za-z_$][\w$]*)\s*[,)]/
-  # A declaration with no `await`: reads, does nothing the caller can see.
-  READ_DECLARATION = /\A(?:const|let|var)\s+[^=]+=(?!.*\bawait\b)/
+  # A line continuing the statement above (`.map(…)`, `?.x`, `&& y`).
+  CONTINUATION = /\A(?:\??\.|&&|\|\||\?\?|[-+](?![-+])|[*\/?:])/
   # `callback = deleteChildren`: a plain reassignment, no call.
   PLAIN_ASSIGN = /\A[A-Za-z_$][\w$]*\s*=(?!=)[^()]*\z/
   # `if (…)` / `for (…)` / `while (…)` / `else` whose body is the next statement.
@@ -35,7 +36,7 @@ class SocketIOAuthTagger < FrameworkTagger
   SETTING_RETURN = /\Aif\s*\((.*)\)\s*\{?\s*return\b[^;{}]*;?\s*\}?\z/
   SETTING_READ   = /\bprocess\.env\b|\b(?:settings?|config|Settings|Config)\s*\.|\bgetSetting\s*\(|\bsetting\s*\(/
   # A property that says who the caller is: the one a missing login lacks.
-  SESSION_PROPERTY = /\A(?:user\w*|session\w*|auth\w*|token\w*|account\w*|login\w*|loggedIn|isLoggedIn|isAuthenticated|authenticated|identity|principal|member\w*|uid|jwt|decoded\w*)\z/i
+  SESSION_PROPERTY = /\A(?:user\w*|session\w*|auth\w*|token\w*|account\w*|login\w*|logged\w*|isLoggedIn|isAuthenticated|identity|principal|member\w*|uid|jwt|decoded\w*)\z/i
   SETTING_NOTE     = " — a setting can lift it"
   # How many helper hops to follow (`checkLogin` → `betterAuthCheckLogin`).
   MAX_DEPTH = 3
@@ -118,7 +119,7 @@ class SocketIOAuthTagger < FrameworkTagger
         return {check, m[1], setting}
       elsif (s = statement.match(SETTING_RETURN)) && s[1].matches?(SETTING_READ) && !s[1].includes?(socket)
         setting = true
-      elsif !statement.matches?(READ_DECLARATION) && !argument_shuffle?(statement)
+      elsif !lead_read?(statement) && !argument_shuffle?(statement)
         return
       end
     end
@@ -131,7 +132,8 @@ class SocketIOAuthTagger < FrameworkTagger
   private def argument_shuffle?(statement : String) : Bool
     head = statement.match(/\Aif\s*\(/) || return false
     close = Noir::JSLiteralScanner.find_matching_paren(statement, head.end(0) - 1) || return false
-    return false if statement[0..close].includes?("await")
+    # A call in the condition (`if (db.removeAllSync(d))`) does something.
+    return false if statement[head.end(0)...close].includes?('(') || statement[0..close].includes?("await")
     rest = statement[(close + 1)..].strip
     return false unless rest.starts_with?('{') && Noir::JSLiteralScanner.find_matching_brace(rest, 0) == rest.size - 1
     inner = statements(rest[1...-1])
@@ -147,12 +149,36 @@ class SocketIOAuthTagger < FrameworkTagger
     statement[(close + 1)..].strip.empty?
   end
 
-  # The top-level statements of a block, split on `;` and line ends.
+  # A statement that only reads or logs, so may run before the check.
+  private def lead_read?(statement : String) : Bool
+    Noir::JSReadShape.read_only?(statement)
+  end
+
+  # The top-level statements of a block, split on `;` and line ends; a line
+  # that continues the one above (`.filter(Boolean)`) joins it.
   private def statements(body : String) : Array(String)
     rules = Noir::TopLevelSplit::Rules::JS_POSITIONAL_ARGS
-    Noir::TopLevelSplit.split(body, ';', rules).flat_map do |part|
-      Noir::TopLevelSplit.split(part, '\n', rules)
-    end.map(&.strip).reject(&.empty?)
+    result = [] of String
+    Noir::TopLevelSplit.split(body, ';', rules).each do |part|
+      Noir::TopLevelSplit.split(part, '\n', rules).each do |line|
+        line = line.strip
+        next if line.empty?
+        if (last = result.last?) && (line.matches?(CONTINUATION) || last.matches?(/(?:[=(,+\-*\/?:]|&&|\|\|)\z/))
+          result[-1] = "#{last}\n#{line}"
+        else
+          result << line
+        end
+      end
+    end
+    result
+  end
+
+  # `try { … } catch (e) { throw e; }`: the try block's statements, since
+  # the catch hands every throw on.
+  private def rethrown_try(statement : String) : String?
+    block = try_block(statement) || return
+    rest = statement[(statement.index!('{') + block.size + 2)..]
+    block if rest.matches?(/\A\s*catch\s*\(\s*([A-Za-z_$][\w$]*)\s*\)\s*\{\s*throw\s+\1\s*;?\s*\}\s*\z/)
   end
 
   # The inside of the `try { … }` that `statement` opens with.
@@ -191,7 +217,7 @@ class SocketIOAuthTagger < FrameworkTagger
     refusal = /\Aif\s*\(\s*!\s*#{Regex.escape(param)}\s*((?:\??\.\s*[A-Za-z_$][\w$]*\s*)+)\)\s*\{?\s*throw\b/
     setting = false
     conditional = false
-    statements(body).each do |statement|
+    statements(body).flat_map { |st| rethrown_try(st).try { |b| statements(b) } || [st] }.each do |statement|
       if conditional
         return
       elsif r = statement.match(refusal)
@@ -205,7 +231,7 @@ class SocketIOAuthTagger < FrameworkTagger
         return Check.new(path, line, setting || inner.setting)
       elsif (s = statement.match(SETTING_RETURN)) && s[1].matches?(SETTING_READ) && !s[1].includes?(param)
         setting = true
-      elsif !statement.matches?(READ_DECLARATION)
+      elsif !lead_read?(statement)
         return
       end
     end
