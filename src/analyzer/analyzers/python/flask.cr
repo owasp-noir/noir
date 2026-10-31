@@ -1849,8 +1849,13 @@ module Analyzer::Python
             next unless fab_route_served?(handler, include_methods, exclude_methods)
             next if exposes.any? { |_, expose| expose.handler == handler }
             normalized_path, path_params = normalize_flask_path_params(Helper.normalized_join(base, suffix))
-            result << Endpoint.new(normalized_path, method, path_params,
+            endpoint = Endpoint.new(normalized_path, method, path_params,
               Details.new(PathInfo.new(decl.path, decl.line_index + 1)))
+            # Flask-AppBuilder stacks `@protect()` on each of these: a
+            # permission check that admits anonymous callers only when the
+            # Public role holds the permission.
+            endpoint.add_tag(Tag.new("auth", "Protected by flask-appbuilder ModelRestApi protect (a setting can make it public)", "flask_auth"))
+            result << endpoint
           end
         end
 
@@ -1862,16 +1867,23 @@ module Analyzer::Python
           # `route_base = "/api/v1/chart"` is `/api/v1/chart/`, WITH the
           # trailing slash (Superset's own OpenAPI spells it that way).
           normalized_path, path_params = normalize_flask_path_params(Helper.normalized_join(base, expose.route_path))
+          def_line = find_def_line(lines, expose.line_index)
+          codeblock = def_line.try { |index| parse_code_block(lines[index..]) }
           expose.methods.each do |method|
             params = path_params.dup
-            if def_line = find_def_line(lines, expose.line_index)
-              if codeblock = parse_code_block(lines[def_line..])
-                params.concat(get_filtered_params(method, extract_request_params(codeblock.split("\n"))))
+            params.concat(get_filtered_params(method, extract_request_params(codeblock.split("\n")))) if codeblock
+
+            endpoint = Endpoint.new(normalized_path, method, params,
+              Details.new(PathInfo.new(owner.path, expose.line_index + 1)))
+            if def_line
+              endpoint.handler = handler_at(lines, def_line, owner.path)
+              if codeblock
+                push_callees_from(endpoint, codeblock, def_line, owner.path,
+                  definition_base_path: python_base_path_for(owner.path),
+                  source: fetch_file_content(owner.path))
               end
             end
-
-            result << Endpoint.new(normalized_path, method, params,
-              Details.new(PathInfo.new(owner.path, expose.line_index + 1)))
+            result << endpoint
           end
         end
       end

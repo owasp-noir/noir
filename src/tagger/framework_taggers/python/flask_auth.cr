@@ -25,6 +25,11 @@ class FlaskAuthTagger < FrameworkTagger
     {/\@auth\.verify_password/, "flask-httpauth verify_password"},
     {/\@token_auth\.login_required/, "flask-httpauth token_auth"},
     {/\@multi_auth\.login_required/, "flask-httpauth multi_auth"},
+    # Flask-AppBuilder's permission checks: each refuses a caller without
+    # the view's permission, unless the Public role (AUTH_ROLE_PUBLIC) holds it.
+    {/\@protect\s*\(/, "flask-appbuilder protect (a setting can make it public)"},
+    {/\@has_access\b/, "flask-appbuilder has_access (a setting can make it public)"},
+    {/\@has_access_api\b/, "flask-appbuilder has_access_api (a setting can make it public)"},
     {/\@requires_auth/, "requires_auth"},
     {/\@authenticated/, "authenticated"},
   ]
@@ -157,7 +162,9 @@ class FlaskAuthTagger < FrameworkTagger
     while idx >= 0
       line = Analyzer::Python::Helper.strip_python_comment(lines[idx]).strip
       idx -= 1
-      next if line.empty? && depth > 0
+      # A comment line inside the stack (`# pylint: disable=...` above the
+      # `def`) is no end of it.
+      next if line.empty?
       # Walking up, a multi-line decorator's closing bracket comes first.
       depth += line.count(")]}") - line.count("([{")
       if depth > 0
