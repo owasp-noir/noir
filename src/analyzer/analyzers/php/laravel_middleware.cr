@@ -490,7 +490,7 @@ module Analyzer::Php
     ENV_CONDITION_RE        = /\b(?:app\s*\(\s*\)\s*->|App::|\$this->app\s*->)\s*(?:environment|isLocal|isProduction|runningUnitTests|runningInConsole|isDownForMaintenance)\s*\(|\bconfig\s*\(|\bConfig::get\s*\(|\benv\s*\(/
     CREDENTIAL_CONDITION_RE = /\buser\s*\(|\bauth(?:::|\s*\()|->\s*(?:check|guest|tokenCan|can|cannot|hasValid\w*Signature)\s*\(|token|password|api_?key|signature|credential/i
     # A refusal that is about the caller's identity by its own words.
-    IDENTITY_REFUSAL_RE = /authenticat|\bguest\s*\(|\bAuth\w*Exception|Unauthori[sz]edHttpException/i
+    IDENTITY_REFUSAL_RE = /authenticate|authenticates|authentication|authenticated|authenticating|authenticator|\bguest\s*\(|\bAuth\w*Exception|Unauthori[sz]edHttpException/i
     # A request-shape check (CORS origin, preflight method, host), not a
     # check on who the caller is.
     ORIGIN_CONDITION_RE = /['"](?:origin|referer|host)['"]|->\s*(?:isMethod|getMethod|method|getHost)\s*\(/i
