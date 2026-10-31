@@ -268,6 +268,11 @@ class ExpressAuthTagger < FrameworkTagger
     end
     alias_desc, jwt_handled = judge_jwt_alias(arg, file)
     return alias_desc if jwt_handled
+    # `app.get("/x", basicAuth({ users }), h)`: the express-basic-auth
+    # middleware mounted as built.
+    if (factory = code.match(/\A\s*([A-Za-z_$][\w$]*)\s*\(/)) && basic_auth_factories(read_file(file) || "").includes?(factory[1])
+      return "Protected by Express #{factory[1]} (express-basic-auth) middleware"
+    end
     # `[...middlewares, middleware.assert.post]`: Express flattens an array
     # of handlers into the chain, so each element is a step of its own.
     if elements = array_elements(code)
@@ -380,6 +385,12 @@ class ExpressAuthTagger < FrameworkTagger
     path, line = handler.path, handler.line
     return if path.nil? || line.nil?
     lines = read_file_lines(path) || return
+    # `const auth = basicAuth({…})`, `module.exports = basicAuth({…})`: the
+    # name is the express-basic-auth middleware itself.
+    if (built = code_only(lines[line - 1]).match(/(?:=|\bexport\s+default)\s*([A-Za-z_$][\w$]*)\s*\(/)) &&
+       basic_auth_factories(read_file(path) || "").includes?(built[1])
+      return {handler.name.gsub(/\s+/, ""), built[1]}
+    end
     if elements = middleware_array(lines, line - 1)
       return if depth >= MAX_ARRAY_DEPTH
       # `open.splice(0, 1)`: what the array holds at the route is not its literal.
@@ -532,6 +543,13 @@ class ExpressAuthTagger < FrameworkTagger
       hits << {m.begin(0), label}
     end
     hits.concat(basic_auth_runs(code, source)) if source
+    # `if (!req.session.userId) return sendError(res, 403, …)`: a helper's
+    # 403 counts when the branch it is in is about a missing caller.
+    code.scan(HELPER_FORBIDDEN) do |m|
+      if enclosing_conditions(code, m.begin(0)).any?(&.matches?(MISSING_CALLER))
+        hits << {m.begin(0), "#{m[0]})"}
+      end
+    end
     hits.sort_by!(&.[0]).each do |at, label|
       return by_setting if code[0...at].matches?(ANONYMOUS_PASS_THROUGH)
       next if presence_gated?(code, at)
@@ -553,11 +571,18 @@ class ExpressAuthTagger < FrameworkTagger
   # caller without credentials, under the conditions around the *run*:
   # one built and never run, or a local `basicAuth({ user, pass })` that
   # builds an outbound header, refuses nothing.
+  HELPER_FORBIDDEN = /\b[A-Za-z_$][\w$]*\s*\(\s*(?:res|response)\s*,\s*403\b/
+  MISSING_CALLER   = /!\s*(?:req|request)\s*\.\s*(?:session|user|auth|isAuthenticated|loggedIn)\b/
+
+  # The names `source` binds the express-basic-auth factory to.
+  private def basic_auth_factories(source : String) : Array(String)
+    return [] of String unless source.includes?("express-basic-auth")
+    source.scan(BASIC_AUTH_IMPORT).compact_map { |im| im[1]? || im[2]? }
+  end
+
   private def basic_auth_runs(code : String, source : String) : Array(Tuple(Int32, String))
     runs = [] of Tuple(Int32, String)
-    return runs unless source.includes?("express-basic-auth")
-    source.scan(BASIC_AUTH_IMPORT) do |im|
-      factory = im[1]? || im[2]? || next
+    basic_auth_factories(source).each do |factory|
       name = Regex.escape(factory)
       code.scan(/(?<![\w$.])#{name}\s*\(/) do |call|
         open = call.end(0) - 1

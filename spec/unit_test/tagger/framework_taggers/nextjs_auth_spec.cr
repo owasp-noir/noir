@@ -96,6 +96,26 @@ describe "NextjsAuthTagger" do
     tag.call("app/api/order/route.ts", 35).should be_empty
   end
 
+  it "lets an awaited read and a log line come before the helper, not an awaited write" do
+    tag.call("app/api/lead/route.ts", 7).map(&.name).should eq(["auth"])
+    tag.call("app/api/lead/route.ts", 15).should be_empty
+  end
+
+  it "reads the handler a wrapper is handed, and a secret inside a template literal" do
+    tags = tag.call("app/api/lead/route.ts", 22)
+    tags.map(&.name).should eq(["auth"])
+    tags[0].description.should contain("cronHandler")
+    tag.call("lib/cron.ts", 11).map(&.name).should eq(["auth"])
+  end
+
+  it "leaves a template holding a public value untagged" do
+    tag.call("lib/cron.ts", 16).should be_empty
+  end
+
+  it "tags a handler that returns the helper's response" do
+    tag.call("app/api/lead/route.ts", 24).map(&.name).should eq(["auth"])
+  end
+
   it "leaves a pages-router helper called after a verb branch untagged" do
     tag.call("pages/api/branchy.ts", 11).should be_empty
   end
