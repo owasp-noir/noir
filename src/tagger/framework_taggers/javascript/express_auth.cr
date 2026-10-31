@@ -572,7 +572,9 @@ class ExpressAuthTagger < FrameworkTagger
   # one built and never run, or a local `basicAuth({ user, pass })` that
   # builds an outbound header, refuses nothing.
   HELPER_FORBIDDEN = /\b[A-Za-z_$][\w$]*\s*\(\s*(?:res|response)\s*,\s*403\b/
-  MISSING_CALLER   = /!\s*(?:req|request)\s*\.\s*(?:session|user|auth|isAuthenticated|loggedIn)\b/
+  # `!req.user`, `!req.session.userId`, `!req.session`: no caller. Not
+  # `!req.session.cart`, a session without a cart.
+  MISSING_CALLER = /!\s*(?:req|request)\s*\.\s*(?:(?:session\s*\??\.\s*)?(?:user\w*|uid|account\w*|auth\w*|token\w*|logged\w*|isAuthenticated|passport|identity|principal)\b|session\s*(?:\)|\|\||&&))/
 
   # The names `source` binds the express-basic-auth factory to.
   private def basic_auth_factories(source : String) : Array(String)

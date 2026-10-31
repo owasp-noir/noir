@@ -4,6 +4,7 @@ require "../../../miniparsers/js_handler_resolver"
 require "../../../miniparsers/js_route_extractor"
 require "../../../utils/js_literal_scanner"
 require "../../../utils/top_level_split"
+require "./js_read_shape"
 
 @[Noir::TaggerFor(key: "socketio_auth", name: "Socket.IO Auth Tagger", desc: "Identifies Socket.IO event handlers that first call a check refusing a socket without a session", order: 300)]
 class SocketIOAuthTagger < FrameworkTagger
@@ -25,16 +26,8 @@ class SocketIOAuthTagger < FrameworkTagger
   # A statement that hands a variable to a function as its first argument:
   # `checkLogin(socket)`, `await requireAdmin(socket, id)`.
   CHECK_CALL = /\A(?:await\s+)?([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)\s*\(\s*([A-Za-z_$][\w$]*)\s*[,)]/
-  # A declaration with no `await`: reads, does nothing the caller can see.
-  READ_DECLARATION = /\A(?:const|let|var)\s+[^=]+=(?!.*\bawait\b)/
-  # `const id = await StatusPage.slugToID(slug)`: an awaited call (group 1
-  # its name) whose name is no write.
-  AWAIT_DECLARATION = /\A(?:const|let|var)\s+[^=]+=\s*await\s+(?:[A-Za-z_$][\w$]*\s*\.\s*)*([A-Za-z_$][\w$]*)\s*\(/
-  WRITE_NAME        = /\A(?:insert|create|update|delete|remove|destroy|save|store|write|set|put|post|send|emit|purge|drop|exec|run|add|push|patch|upsert|apply|commit|clear|reset|kill|start|stop|restart|register|grant|revoke|transfer|pay|charge|import|upload|move|rename|copy|mark|toggle|enable|disable|increment|decrement)/i
-  # `log.info("socket", …)`, `console.log(…)`: a log line.
-  LOG_CALL = /\A(?:console|log|logger|this\s*\.\s*(?:log|logger))\s*\.\s*(?:log|info|debug|warn|trace|verbose|error|silly)\s*\(/
   # A line continuing the statement above (`.map(…)`, `?.x`, `&& y`).
-  CONTINUATION = /\A(?:\??\.|&&|\|\||\?\?|[-+*\/?:])/
+  CONTINUATION = /\A(?:\??\.|&&|\|\||\?\?|[-+](?![-+])|[*\/?:])/
   # `callback = deleteChildren`: a plain reassignment, no call.
   PLAIN_ASSIGN = /\A[A-Za-z_$][\w$]*\s*=(?!=)[^()]*\z/
   # `if (…)` / `for (…)` / `while (…)` / `else` whose body is the next statement.
@@ -158,9 +151,7 @@ class SocketIOAuthTagger < FrameworkTagger
 
   # A statement that only reads or logs, so may run before the check.
   private def lead_read?(statement : String) : Bool
-    return true if statement.matches?(READ_DECLARATION) || statement.matches?(LOG_CALL)
-    awaited = statement.match(AWAIT_DECLARATION) || return false
-    !awaited[1].matches?(WRITE_NAME) && statement.scan(/\bawait\b/).size == 1
+    Noir::JSReadShape.read_only?(statement)
   end
 
   # The top-level statements of a block, split on `;` and line ends; a line

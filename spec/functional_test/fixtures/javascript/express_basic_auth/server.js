@@ -4,7 +4,7 @@ const { builtOnly, runGated, outbound, sizeLimit, callerCheck } = require("./lib
 
 const basicAuth = require("express-basic-auth");
 const exportedAuth = require("./lib/mount");
-const { needsSession } = require("./lib/mount");
+const { needsSession, needsCart } = require("./lib/mount");
 
 const app = express();
 const auth = basicAuth({ users: { admin: "x" }, challenge: true });
@@ -20,5 +20,6 @@ app.get("/inline-mount", basicAuth({ users: { admin: "x" } }), (req, res) => res
 app.get("/var-mount", auth, (req, res) => res.send("7"));
 app.get("/exported-mount", exportedAuth, (req, res) => res.send("8"));
 app.get("/session-403", needsSession, (req, res) => res.send("9"));
+app.get("/cart-403", needsCart, (req, res) => res.send("10"));
 
 app.listen(3000);

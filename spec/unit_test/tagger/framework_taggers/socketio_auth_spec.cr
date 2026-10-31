@@ -76,6 +76,10 @@ describe "SocketIOAuthTagger" do
     tag.call("lead.js", 65).map(&.name).should eq(["auth"])
   end
 
+  it "leaves a write dressed as a declaration or a log line before the check untagged" do
+    [74, 78, 82, 86, 90, 94].each { |line| tag.call("lead.js", line).should be_empty }
+  end
+
   it "reads a file that uses net without serving it" do
     tag.call("lead.js", 69).map(&.name).should eq(["auth"])
   end

@@ -70,6 +70,32 @@ io.on("connection", (socket) => {
         checkLogin(socket);
         net.connect(port);
     });
+    // Writes dressed as declarations or log lines: none is a read.
+    socket.on("fetch_post", async (d, cb) => {
+        const r = await fetch(d.url, { method: "POST" });
+        checkLogin(socket);
+    });
+    socket.on("raw_query", async (d, cb) => {
+        const rows = await db.query("DELETE FROM t WHERE id = ?", [d.id]);
+        checkLogin(socket);
+    });
+    socket.on("builder_delete", async (d, cb) => {
+        const n = await knex("t").where({ id: d.id }).del();
+        checkLogin(socket);
+    });
+    socket.on("sync_write", async (d, cb) => {
+        const info = db.prepare("DELETE FROM t WHERE id = ?").run(d.id);
+        checkLogin(socket);
+    });
+    socket.on("log_with_write", async (d, cb) => {
+        log.info("x", await db.remove(d.id));
+        checkLogin(socket);
+    });
+    socket.on("decrement", async (d, cb) => {
+        const a = d.id
+        --quota[a]
+        checkLogin(socket);
+    });
 });
 
 function checkLogin(socket) {

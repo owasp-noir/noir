@@ -116,6 +116,12 @@ describe "NextjsAuthTagger" do
     tag.call("app/api/lead/route.ts", 24).map(&.name).should eq(["auth"])
   end
 
+  it "leaves a fetch POST, a tagged-template write or an awaiting log line before the helper untagged" do
+    tag.call("app/api/effects/route.ts", 5).should be_empty
+    tag.call("app/api/effects/route.ts", 11).should be_empty
+    tag.call("app/api/effects/route.ts", 17).should be_empty
+  end
+
   it "leaves a pages-router helper called after a verb branch untagged" do
     tag.call("pages/api/branchy.ts", 11).should be_empty
   end

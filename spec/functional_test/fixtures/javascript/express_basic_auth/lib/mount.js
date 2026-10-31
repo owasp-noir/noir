@@ -12,5 +12,14 @@ function needsSession(req, res, next) {
     next();
 }
 
+// A 403 for a session without a cart: not about the caller.
+function needsCart(req, res, next) {
+    if (!req.session.cart) {
+        return sendError(res, 403, "cart is empty");
+    }
+    next();
+}
+
 module.exports = basicAuth({ users: { admin: "x" }, challenge: true });
 module.exports.needsSession = needsSession;
+module.exports.needsCart = needsCart;
