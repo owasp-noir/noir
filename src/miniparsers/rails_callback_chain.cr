@@ -1,3 +1,5 @@
+require "./ruby_constant_list"
+
 module Noir
   # The `before_action` chain a Rails action runs. A controller's own class
   # body is only half of it: `before_action :authenticate_user!` usually sits
@@ -95,7 +97,7 @@ module Noir
     def self.statement(lines : Array(String), idx : Int32) : String
       text = uncomment(lines[idx])
       j = idx + 1
-      while (text.ends_with?(',') || open_brackets?(text)) && j < lines.size && j - idx <= 10
+      while (text.ends_with?(',') || open_brackets?(text)) && j < lines.size && j - idx <= 80
         text = "#{text} #{uncomment(lines[j])}"
         j += 1
       end
@@ -151,7 +153,67 @@ module Noir
     # callback lines. Lines inside a `def` are not class-body: the
     # `Authentication` concern's own `def allow_unauthenticated_access` wraps
     # a `skip_before_action` that runs only when a controller calls it.
+    # Resolves `Const.method` to the literal list the app defines it as
+    # (`Discourse.filters`); set by `build` over the files it was given.
+    property list_resolver : Proc(String, Noir::RubyConstantList::Result?)? = nil
+    @splat_defs = Hash(String, String).new
+
+    LIST_TERM = /((?:::)?[A-Z]\w*(?:::[A-Z]\w*)*\.[a-z_]\w*)(?:\.map\s*\{\s*\|(\w+)\|\s*:?"([^"]*)"\s*\})?/
+
+    # Names in an `only:` / `except:` list that a constant spells out
+    # (`except: [:top, Discourse.anonymous_filters, Discourse.filters.map {
+    # |f| "#{f}_feed" }]`) written as the symbols they stand for, so the
+    # list can be read as a list. A term that does not resolve stays as is.
+    private def expand_lists(text : String) : String
+      return text unless (resolver = @list_resolver) && (text.includes?("only:") || text.includes?("except:"))
+      expand = ->(source : String) do
+        source.gsub(LIST_TERM) do |term, match|
+          next term unless list = resolver.call(match[1])
+          names = if template = match[3]?
+                    list.values.map { |value| template.gsub(/\#\{\s*#{Regex.escape(match[2])}\s*\}/, value) }
+                  else
+                    list.values
+                  end
+          names.join(", ") { |name| ":#{name}" }
+        end
+      end
+      # `*show_methods`: a class method of this file that answers such a list.
+      text = text.gsub(/\*(\w+)/) do |splat, match|
+        next splat unless body = @splat_defs[match[1]]?
+        expanded = expand.call(body)
+        expanded.matches?(LIST_TERM) ? splat : expanded
+      end
+      expand.call(text)
+    end
+
+    # The one-expression bodies of this file's `def self.name` methods.
+    private def splat_defs_of(lines : Array(String)) : Hash(String, String)
+      defs = Hash(String, String).new
+      lines.each_with_index do |line, idx|
+        next unless m = line.match(/^(\s*)def\s+self\.(\w+)\b/)
+        body = [] of String
+        ((idx + 1)...lines.size).each do |j|
+          break if lines[j].strip.empty? ? false : (lines[j].size - lines[j].lstrip.size) <= m[1].size
+          body << lines[j].strip unless lines[j].strip.empty?
+        end
+        defs[m[2]] = body.join(" ")
+      end
+      defs
+    end
+
+    # The `lifted` text of a callback whose `except:` splats something this
+    # reader cannot expand: the guard stays, with a note.
+    MAYBE_EXCEPTED = "except: with a splat it cannot read"
+
+    # An `except:` that splats a method this reader cannot expand
+    # (`*show_methods`) may well list the action.
+    def self.maybe_excepted?(line : String, action : String?) : Bool
+      return false unless (m = line.match(EXCEPT_OPTION)) && line[m.end..].matches?(/\*\w/)
+      !(action && (callback_option(line, EXCEPT_OPTION) || [] of String).includes?(action))
+    end
+
     def add_file(path : String, lines : Array(String))
+      @splat_defs = splat_defs_of(lines)
       stack = [] of {Klass, Int32}
       def_indent : Int32? = nil
       macro_body : Array(String)? = nil
@@ -163,7 +225,7 @@ module Noir
           if indent <= open_def && stripped == "end"
             def_indent = nil
           elsif (body = macro_body) && stripped.matches?(CALLBACK_LINE)
-            body << RailsCallbackChain.statement(lines, idx)
+            body << expand_lists(RailsCallbackChain.statement(lines, idx))
           end
           next
         end
@@ -189,11 +251,11 @@ module Noir
               param.try { |name| /(?<![\w@:])\*{0,2}#{name}\b/ }, macro_body)
           end
         elsif (top = stack.last?) && stripped.matches?(CALLBACK_LINE)
-          top[0].callbacks << RailsCallbackChain.statement(lines, idx)
+          top[0].callbacks << expand_lists(RailsCallbackChain.statement(lines, idx))
         elsif (top = stack.last?) && stripped.matches?(MACRO_CALL)
           # A class macro the app may define (`requires_login`): kept for
           # `apply_lines`, which expands it once every file is indexed.
-          top[0].callbacks << RailsCallbackChain.statement(lines, idx)
+          top[0].callbacks << expand_lists(RailsCallbackChain.statement(lines, idx))
         end
       end
     end
@@ -204,24 +266,36 @@ module Noir
     # A chain over the `controllers` files, plus the `lib/` modules they (and
     # the modules those pull in) include: a controller's concern kept outside
     # `app/controllers`. `others` are the rest of the scan's Ruby files.
-    def self.build(controllers : Enumerable(String), others : Enumerable(String), & : String -> Array(String)?) : RailsCallbackChain
+    def self.build(controllers : Enumerable(String), others : Enumerable(String), &block : String -> Array(String)?) : RailsCallbackChain
       chain = new
-      controllers.each { |path| yield(path).try { |lines| chain.add_file(path, lines) } }
+      cache = Hash(String, Noir::RubyConstantList::Result?).new
+      all_files = controllers.to_a + others.to_a
+      chain.list_resolver = ->(receiver : String) do
+        cache.put_if_absent(receiver) do
+          Noir::RubyConstantList.resolve(receiver, all_files) { |file| block.call(file).try(&.join("\n")) }
+        end
+      end
+      controllers.each { |path| block.call(path).try { |lines| chain.add_file(path, lines) } }
       added = Set(String).new
       4.times do
         suffixes = chain.missing_include_paths.map { |lib_path| "/#{lib_path}" }
         break if suffixes.empty?
-        found = others.select { |path| !added.includes?(path) && suffixes.any? { |suffix| path.ends_with?(suffix) } }
+        by_base = suffixes.group_by { |suffix| File.basename(suffix) }
+        found = others.select { |path| !added.includes?(path) && by_base[File.basename(path)]?.try(&.any? { |suffix| path.ends_with?(suffix) }) }
         break if found.empty?
         found.each do |path|
           added << path
-          yield(path).try { |lines| chain.add_file(path, lines) }
+          block.call(path).try { |lines| chain.add_file(path, lines) }
         end
       end
       chain
     end
 
-    # The `lib/` paths Rails autoloads the modules indexed classes `include`
+    # The roots outside `app/controllers` that Rails autoloads the modules a
+    # controller `include`s from (`lib/`, `app/helpers/`, ...).
+    INCLUDE_ROOTS = %w[lib app/helpers app/models/concerns]
+
+    # The paths Rails autoloads the modules indexed classes `include`
     # from, for each one no indexed file declares: `include UploadHelpers` in
     # `Admin::UploadsController` is `lib/admin/upload_helpers.rb` or
     # `lib/upload_helpers.rb`, nearest namespace first, as Zeitwerk looks.
@@ -232,8 +306,8 @@ module Noir
           line.scan(/[A-Z][\w:]*/).flat_map do |m|
             next [] of String if lookup(m[0], klass.namespace)
             name = m[0].lchop("::")
-            (m[0].starts_with?("::") ? 0 : scopes.size).downto(0).map do |n|
-              "lib/#{(scopes[0, n] + [name]).join("::").underscore.gsub("::", "/")}.rb"
+            (m[0].starts_with?("::") ? 0 : scopes.size).downto(0).flat_map do |n|
+              INCLUDE_ROOTS.map { |root| "#{root}/#{(scopes[0, n] + [name]).join("::").underscore.gsub("::", "/")}.rb" }
             end
           end
         end
@@ -339,7 +413,10 @@ module Noir
           # ponytail: a class instance variable is the routed class's own, so
           # only its body (depth 0) sets one; a `class_attribute` a parent
           # sets reads as unset.
-          resolution.settings << macro_name if depth == 0 && RailsCallbackChain.applies_to_action?(line, action)
+          if depth == 0 && RailsCallbackChain.applies_to_action?(line, action)
+            resolution.settings << macro_name
+            resolution.lifted["macro:#{macro_name}"] = MAYBE_EXCEPTED if RailsCallbackChain.maybe_excepted?(line, action)
+          end
           args = line[macro_name.size..].strip.lchop('(').rchop(')').strip
           expanded = class_macro.body.map do |text|
             if args.empty?
@@ -358,6 +435,7 @@ module Noir
               resolution.conditional.delete(callback)
             end
             resolution.lifted.delete(callback)
+            resolution.lifted[callback] = MAYBE_EXCEPTED if RailsCallbackChain.maybe_excepted?(line, action)
             active << callback unless active.includes?(callback)
           end
         end
