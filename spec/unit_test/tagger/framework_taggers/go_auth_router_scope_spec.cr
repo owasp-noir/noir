@@ -251,6 +251,37 @@ describe "GoAuthTagger (router identity of .Use guards)" do
     guarded?(result["POST /api/v1/login"]).should be_true
   end
 
+  # `secure(a)` guards group `a`; `pub` is handed a group that is, or may
+  # be, that one.
+  it "keeps a sibling helper guarded unless its group is provably another one" do
+    helpers = echo_helpers.split("func RegisterRoutes").first + <<-GO
+      func secure(a *echo.Group) {
+      \ta.Use(auth())
+      \ta.GET("/me", h)
+      }
+
+      func pub(a *echo.Group) {
+      \ta.GET("/items", h)
+      }
+      GO
+    scan = ->(caller : String, extra : Hash(String, String)) do
+      files = {"go.mod" => "module e\n", "routes.go" => helpers + caller}.merge(extra)
+      guarded?(router_scope_scan(files, [{"GET", "/items", "routes.go", %("/items")}], "go_echo")["GET /items"])
+    end
+    # An alias, and a group derived from the guarded one after its `.Use`.
+    scan.call("func R(e *echo.Echo) {\n\ta := e.Group(\"/api\")\n\tsecure(a)\n\tb := a\n\tpub(b)\n}\n", {} of String => String).should be_true
+    scan.call("func R(e *echo.Echo) {\n\ta := e.Group(\"/api\")\n\tsecure(a)\n\tv := a.Group(\"/v\")\n\tpub(v)\n}\n", {} of String => String).should be_true
+    # An argument that is not a plain identifier.
+    scan.call("func R(e *echo.Echo) {\n\ta := e.Group(\"/api\")\n\tsecure(a)\n\to := e.Group(\"/o\")\n\tpub(o)\n\tpub(a.Group(\"/w\"))\n}\n", {} of String => String).should be_true
+    # Both the caller's own parameters.
+    scan.call("func setup(authed, public *echo.Group) {\n\tsecure(authed)\n\tpub(public)\n}\n", {} of String => String).should be_true
+    # A second caller in another file of the package.
+    other = "package routes\n\nfunc Admin(e *echo.Echo) {\n\tg := e.Group(\"/admin\")\n\tsecure(g)\n\tpub(g)\n}\n"
+    scan.call("func R(e *echo.Echo) {\n\ta := e.Group(\"/api\")\n\tsecure(a)\n\tp := e.Group(\"/open\")\n\tpub(p)\n}\n", {"admin.go" => other}).should be_true
+    # Two groups the one caller built side by side: provably different.
+    scan.call("func R(e *echo.Echo) {\n\ta := e.Group(\"/api\")\n\tsecure(a)\n\tp := e.Group(\"/open\")\n\tpub(p)\n}\n", {} of String => String).should be_false
+  end
+
   it "reads a handler that refuses a missing or wrong credential header" do
     src = <<-GO
       package main
@@ -262,6 +293,8 @@ describe "GoAuthTagger (router identity of .Use guards)" do
       \te.PATCH("/test/:table", HandleTesting)
       \te.POST("/present", Present)
       \te.POST("/matches", Matches)
+      \te.POST("/rebound", Rebound)
+      \te.POST("/later", Later)
       }
 
       func HandleTesting(c echo.Context) error {
@@ -275,6 +308,24 @@ describe "GoAuthTagger (router identity of .Use guards)" do
       func Present(c echo.Context) error {
       \ttoken := c.Request().Header.Get("Authorization")
       \tif token != "" {
+      \t\treturn echo.ErrForbidden
+      \t}
+      \treturn nil
+      }
+
+      func Rebound(c echo.Context) error {
+      \ttoken := c.Request().Header.Get("Authorization")
+      \ttoken = strings.TrimPrefix(token, "Bearer ")
+      \tif token != config.TestingToken() {
+      \t\treturn echo.ErrForbidden
+      \t}
+      \treturn nil
+      }
+
+      func Later(c echo.Context) error {
+      \ttruncateTables()
+      \ttoken := c.Request().Header.Get("Authorization")
+      \tif token != config.TestingToken() {
       \t\treturn echo.ErrForbidden
       \t}
       \treturn nil
@@ -309,14 +360,30 @@ describe "GoAuthTagger (router identity of .Use guards)" do
     endpoint = Endpoint.new("/matches", "POST", [] of Param, matches)
     endpoint.handler = Handler.new("Matches", file, lines.index!(&.starts_with?("func Matches(")) + 1)
     endpoints << endpoint
+    rebound = Details.new(PathInfo.new(file, lines.index!(&.includes?(%("/rebound"))) + 1))
+    rebound.technology = "go_echo"
+    endpoint = Endpoint.new("/rebound", "POST", [] of Param, rebound)
+    endpoint.handler = Handler.new("Rebound", file, lines.index!(&.starts_with?("func Rebound(")) + 1)
+    endpoints << endpoint
+    later = Details.new(PathInfo.new(file, lines.index!(&.includes?(%("/later"))) + 1))
+    later.technology = "go_echo"
+    endpoint = Endpoint.new("/later", "POST", [] of Param, later)
+    endpoint.handler = Handler.new("Later", file, lines.index!(&.starts_with?("func Later(")) + 1)
+    endpoints << endpoint
     tagged = GoAuthTagger.new(options).perform(endpoints)
     FileUtils.rm_rf(tmpdir)
     guarded?(tagged[0]).should be_true
     tagged[0].tags[0].description.should contain("Authorization")
+    # The expected value is a setting: empty, it admits a request without the header.
+    tagged[0].tags[0].description.should contain("expected value comes from config.TestingToken()")
     # Refusing the callers that send a credential, or the one that matches, is
     # not authentication.
     guarded?(tagged[1]).should be_false
     guarded?(tagged[2]).should be_false
+    # The local no longer holds the header when it is checked.
+    guarded?(tagged[3]).should be_false
+    # The handler did its work before it checked.
+    guarded?(tagged[4]).should be_false
   end
 
   it "guards a fiber route registered after app.Use on a group created before it" do
