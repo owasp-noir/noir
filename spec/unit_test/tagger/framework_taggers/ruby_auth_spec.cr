@@ -1658,7 +1658,7 @@ describe "RubyAuthTagger (routed controller chain)" do
     CodeLocator.instance.clear_all
     tmpdir = File.tempname("ruby_guard_call_words")
     files = {
-      "app/controllers/application_controller.rb" => <<-RB,
+      "app/controllers/application_controller.rb" => <<-'RB',
         class ApplicationController < ActionController::Base
           before_action :redirect_to_login_if_required
 
@@ -1670,7 +1670,7 @@ describe "RubyAuthTagger (routed controller chain)" do
             if !current_user && params.has_key?(:auth_redirect)
               client = Client.find_by(key: params[:key])
               if Set.new(["otp"]).superset?(scopes)
-                redirect_to("\#{params[:auth_redirect]}?otp=true")
+                redirect_to("#{params[:auth_redirect]}?otp=true")
                 return
               end
               render plain: client.name
@@ -2044,12 +2044,12 @@ describe "RubyAuthTagger (routed controller chain)" do
         end
         RB
       "lib/discourse.rb"                   => "module Discourse\n  def self.anonymous_filters\n    %i[latest hot]\n  end\nend\n",
-      "app/controllers/tags_controller.rb" => <<-RB,
+      "app/controllers/tags_controller.rb" => <<-'RB',
         class TagsController < ApplicationController
           requires_login except: [:index, *show_methods]
 
           def self.show_methods
-            Discourse.anonymous_filters.map { |f| :"show_\#{f}" }
+            Discourse.anonymous_filters.map { |f| :"show_#{f}" }
           end
 
           def index
@@ -2081,7 +2081,6 @@ describe "RubyAuthTagger (routed controller chain)" do
     begin
       noir_options = create_test_options
       noir_options["base"] = YAML::Any.new(tmpdir)
-      controller = File.join(tmpdir, "app/controllers/tags_controller.rb")
       at = ->(file : String, action : String) do
         endpoint = Endpoint.new("/#{file}/#{action}", "GET", [] of Param, Details.new(PathInfo.new(File.join(tmpdir, "config/routes.rb"), 1)))
         endpoint.details.technology = "ruby_rails"
