@@ -1,8 +1,9 @@
+from flask import abort, g
 from flask_appbuilder import BaseView, ModelRestApi, expose
 from flask_appbuilder.api import safe
 from flask_appbuilder.security.decorators import has_access, has_access_api, protect
 
-from decorators import api_errors, maybe_user, read_gate
+from decorators import api_errors, get_user_id, is_feature_enabled, maybe_user, read_gate, redirect_to_login
 
 
 class ChartRestApi(
@@ -41,6 +42,27 @@ class PageView(BaseView):
     @expose("/open/")
     def open(self):
         return self.render_template("open.html")
+
+    @expose("/welcome/")
+    def welcome(self):
+        if not is_feature_enabled("WELCOME"):
+            abort(404)
+        if not g.user or not get_user_id():
+            return redirect_to_login()
+        return self.render_template("welcome.html")
+
+    @expose("/flagged/")
+    def flagged(self):
+        if not is_feature_enabled("FLAGGED"):
+            abort(404)
+        return self.render_template("flagged.html")
+
+    @expose("/guest-only/")
+    def guest_only(self):
+        # Sends a logged-in caller away; anyone else gets the page.
+        if g.user:
+            return redirect_to_login()
+        return self.render_template("guest.html")
 
 
 class Api(BaseView):

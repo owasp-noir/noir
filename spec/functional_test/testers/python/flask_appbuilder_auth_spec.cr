@@ -38,5 +38,10 @@ describe "--ai-context on Flask-AppBuilder views", tags: "functional" do
     guards["GET /x/v1/ping/"].should be_empty
     guards["GET /api/v1/chart/public_info/"].should be_empty
     guards["GET /page/open/"].should be_empty
+    # A handler that refuses an unidentified caller itself, past a feature
+    # flag; a flag alone, or sending a logged-in caller away, is no guard.
+    guards["GET /page/welcome/"].should eq(["handler refusing a caller who is not logged in"])
+    guards["GET /page/flagged/"].should be_empty
+    guards["GET /page/guest-only/"].should be_empty
   end
 end

@@ -61,9 +61,50 @@ class FlaskAuthTagger < FrameworkTagger
   private def check_endpoint(endpoint : Endpoint)
     auth, authz = handler_guards(endpoint)
     auth ||= code_path_guard(endpoint)
+    auth ||= body_guard(endpoint)
     endpoint.add_tag(Tag.new("auth", "Protected by #{auth}", "flask_auth")) if auth
     endpoint.add_tag(Tag.new("authz", "Protected by #{authz}", "flask_auth")) if authz
   end
+
+  # A handler that turns away a caller who is not logged in itself, before
+  # its first `return`: Superset's `welcome` opens with `if not g.user or
+  # not get_user_id(): return redirect_to_login()`. The `if` must hold only
+  # for an unidentified caller (`implies_identity?` on its false branch) and
+  # its block must refuse: a login redirect, a 401, or a 403 raise / abort.
+  # `if not is_feature_enabled(...): abort(404)` reads no caller and counts
+  # for nothing.
+  private def body_guard(endpoint : Endpoint) : String?
+    handler = endpoint.handler || return
+    file = handler.path || return
+    lines = read_file_lines(file) || return
+    def_idx = (handler.line || return) - 1
+    return unless 0 <= def_idx < lines.size
+    def_indent = lines[def_idx].size - lines[def_idx].lstrip.size
+    body_indent = nil
+    idx = def_idx + 1
+    # Past the signature, which may wrap.
+    while idx < lines.size && !Analyzer::Python::Helper.strip_python_comment(lines[idx - 1]).rstrip.ends_with?(':')
+      idx += 1
+    end
+    while idx < lines.size
+      line = Analyzer::Python::Helper.strip_python_comment(lines[idx])
+      idx += 1
+      next if line.blank?
+      indent = line.size - line.lstrip.size
+      break if indent <= def_indent
+      body_indent ||= indent
+      next if indent > body_indent
+      stripped = line.strip
+      break if stripped.starts_with?("return") || stripped.starts_with?("raise")
+      next unless cond = stripped.match(/\Aif\s+(.+):\z/).try(&.[1])
+      refusal = lines[idx..].find { |next_line| !next_line.blank? }.try(&.strip) || next
+      next unless refusal.matches?(BODY_REFUSAL)
+      return "handler refusing a caller who is not logged in" if implies_identity?(cond, false, file, Hash(String, String).new, [] of String)
+    end
+    nil
+  end
+
+  BODY_REFUSAL = /\A(?:return|raise|abort)\b.*(?:#{LOGIN_REDIRECT.source}|\bredirect_to_(?:log_?in|sign_?in)\b|\b40[13]\b|Unauthori[sz]ed|Forbidden|\.response_40[13]\s*\()/i
 
   # The auth decorator at the route's declaration line, for a route whose
   # handler the analyzer did not resolve.

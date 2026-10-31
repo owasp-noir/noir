@@ -41,3 +41,15 @@ def maybe_user(function):
 
 def json_error_response(message, status=500):
     return {"message": message}, status
+
+
+def is_feature_enabled(name):
+    return True
+
+
+def get_user_id():
+    return getattr(current_user, "id", None)
+
+
+def redirect_to_login():
+    return {"redirect": "/login/"}, 302
