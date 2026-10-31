@@ -20,6 +20,10 @@ expected_endpoints = [
   Endpoint.new("/api/v2/health", "GET"),
   # Registered through a wrapper of the wrapper.
   Endpoint.new("/api/v2/gated", "GET", [Param.new("id", "", "path")]),
+  Endpoint.new("/api/v2/signup", "POST", [Param.new("id", "", "path")]),
+  Endpoint.new("/api/v2/filled/own", "GET", [Param.new("id", "", "path")]),
+  Endpoint.new("/api/v2/filled/unset", "GET", [Param.new("id", "", "path")]),
+  Endpoint.new("/api/v2/open/sub/x", "GET", [Param.new("id", "", "path")]),
   # A group's prefix is added under the server base path.
   Endpoint.new("/api/v2/admin/users/{id}", "DELETE", [Param.new("id", "", "path")]),
   Endpoint.new("/api/v2/items/{id}", "GET", [Param.new("id", "", "path")]),
@@ -57,4 +61,10 @@ it "names the handler and reads the declared operation security", tags: "functio
   access.call("GET /api/v2/health").should eq ["anonymous"]
   by_key["DELETE /api/v2/admin/users/{id}"].tags.find!(&.name.==("auth")).description.should contain("AdminKey")
   access.call("GET /api/v2/items/{id}").should eq ["auth"]
+  # A wrapper's own `op.Security = …`; a modifier filling in only a missing
+  # one; a parent group's modifier reaching a child group's operations.
+  access.call("POST /api/v2/signup").should eq ["anonymous"]
+  access.call("GET /api/v2/filled/own").should eq ["anonymous"]
+  by_key["GET /api/v2/filled/unset"].tags.find!(&.name.==("auth")).description.should contain("AdminKey")
+  access.call("GET /api/v2/open/sub/x").should eq ["anonymous"]
 end

@@ -28,6 +28,12 @@ func itemUpdate(ctx context.Context, in *struct {
 
 func describe(name string, op huma.Operation) {}
 
+// A wrapper that opts the operations it registers out of the default.
+func registerPublic[I, O any](api huma.API, op huma.Operation, handler func(context.Context, *I) (*O, error)) {
+	op.Security = []map[string][]string{}
+	huma.Register(api, op, handler)
+}
+
 // A wrapper of the wrapper: it hands the operation on to `Register`.
 func registerGated[I, O any](api huma.API, op huma.Operation, handler func(context.Context, *I) (*O, error)) {
 	Register(api, op, handler)
@@ -38,6 +44,27 @@ func RegisterExtraRoutes(api huma.API) {
 	describe("x", huma.Operation{Method: http.MethodGet, Path: "/not-a-route"})
 
 	registerGated(api, huma.Operation{Method: http.MethodGet, Path: "/gated"}, item)
+
+	registerPublic(api, huma.Operation{Method: http.MethodPost, Path: "/signup"}, item)
+
+	// A modifier that only fills in a missing security, and a group made
+	// from a group whose modifier makes it public.
+	filled := huma.NewGroup(api, "/filled")
+	filled.UseModifier(func(op *huma.Operation, next func(*huma.Operation)) {
+		if op.Security == nil {
+			op.Security = []map[string][]string{{"AdminKey": {}}}
+		}
+		next(op)
+	})
+	huma.Register(filled, huma.Operation{Method: http.MethodGet, Path: "/own", Security: []map[string][]string{}}, item)
+	huma.Register(filled, huma.Operation{Method: http.MethodGet, Path: "/unset"}, item)
+	open := huma.NewGroup(api, "/open")
+	open.UseModifier(func(op *huma.Operation, next func(*huma.Operation)) {
+		op.Security = []map[string][]string{}
+		next(op)
+	})
+	sub := huma.NewGroup(open, "/sub")
+	huma.Register(sub, huma.Operation{Method: http.MethodGet, Path: "/x"}, item)
 
 	// A sugar call whose operation modifier opts it out of the default.
 	huma.Get(api, "/health", info, func(o *huma.Operation) {

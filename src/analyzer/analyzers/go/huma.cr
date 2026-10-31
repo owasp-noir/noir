@@ -315,12 +315,13 @@ module Analyzer::Go
     private def extract_huma_endpoints(source : String, path : String,
                                        structs : Hash(String, Array(StructField)),
                                        package : PackageInfo,
-                                       wrappers : Set(String)) : {Array(Endpoint), Array({String, String})}
+                                       wrappers : Hash(String, {String, Bool}?)) : {Array(Endpoint), Array({String, String})}
       endpoints = [] of Endpoint
       unpatchable = [] of {String, String}
       Noir::TreeSitter.parse_go(source) do |root|
         groups = collect_huma_groups(root, source)
         group_security = collect_group_security(root, source)
+        group_parents = collect_group_parents(root, source)
         walk_calls(root) do |call|
           func = Noir::TreeSitter.field(call, "function")
           next if func.nil?
@@ -336,7 +337,8 @@ module Analyzer::Go
           # `Register(api, huma.Operation{...}, handler)`): a function whose
           # body hands its `huma.Operation` parameter to `huma.Register`,
           # called with an Operation literal.
-          wrapper = wrappers.includes?(func_text.split('.').last) && operation_literal?(args, source)
+          wrapper_name = func_text.split('.').last
+          wrapper = wrappers.has_key?(wrapper_name) && operation_literal?(args, source)
           next unless func_text == "huma.Register" || sse || sugar_verb || wrapper
 
           # `route_path` keeps an empty-string default (a sugar call with
@@ -360,7 +362,7 @@ module Analyzer::Go
               else
                 # `func(o *huma.Operation) { o.Security = … }`: an operation
                 # modifier, applied before registration.
-                modifier_security(arg, source).try { |value| security = value }
+                security = apply_security(security, modifier_security(arg, source))
               end
               arg_index += 1
             end
@@ -381,6 +383,8 @@ module Analyzer::Go
             operation_arg = op_node
             next if operation_arg.nil?
             method, route_path, security, no_autopatch = decode_operation(operation_arg, source)
+            # What the wrapper sets on the operation before registering it.
+            security = apply_security(security, wrappers[wrapper_name]?) if wrapper
           end
 
           next if method.empty? || route_path.empty?
@@ -392,8 +396,14 @@ module Analyzer::Go
           base = package.base_path.try(&.rstrip('/')) || ""
           route_paths = prefixes.map { |prefix| "#{base}#{prefix.rstrip('/')}#{route_path}" }
           # A group modifier (`admin.UseModifier(func(op *huma.Operation, …)
-          # { op.Security = … })`) runs on each operation registered on it.
-          api_name.try { |name| group_security[name]? }.try { |value| security = value }
+          # { op.Security = … })`) runs on each operation registered on it,
+          # then those of the groups it was made from, outermost last.
+          group = api_name
+          8.times do
+            current = group || break
+            group_security[current]?.try &.each { |change| security = apply_security(security, change) }
+            group = group_parents[current]?
+          end
 
           row = Noir::TreeSitter.node_start_row(call) + 1
           fields = handler_node.try { |handler_arg| input_fields(handler_arg, source, structs) }
@@ -422,25 +432,55 @@ module Analyzer::Go
 
     # The functions that hand their `huma.Operation` parameter on, as the
     # operation, to `huma.Register` or to another such function (vikunja's
-    # `registerGated` calls `Register`, which calls `huma.Register`).
-    private def huma_wrappers(packages : Hash(String, PackageInfo)) : Set(String)
+    # `registerGated` calls `Register`, which calls `huma.Register`), with the
+    # security each sets on it before handing it on (`op.Security = …`), its
+    # own or the one of the wrapper it calls.
+    private def huma_wrappers(packages : Hash(String, PackageInfo)) : Hash(String, {String, Bool}?)
       candidates = Hash(String, {String, String}).new
       packages.each_value { |info| info.forwarders.each { |name, value| candidates[name] ||= value } }
-      wrappers = Set(String).new
-      callees = ["huma"]
+      wrappers = Hash(String, {String, Bool}?).new
       loop do
-        callee = /(?<![\w.])(?:#{callees.map { |name| Regex.escape(name) }.join('|')})\s*\.\s*Register\s*\(|(?<![\w])(?:\w+\s*\.\s*)?(?:#{wrappers.empty? ? "(?!)" : wrappers.map { |name| Regex.escape(name) }.join('|')})\s*(?:\[[^\]]*\]\s*)?\(/
-        added = candidates.select do |name, (op, body)|
-          next false if wrappers.includes?(name)
-          body.scan(callee).any? do |call|
+        names = wrappers.keys
+        callee = /(?<![\w.])huma\s*\.\s*(Register)\s*\(|(?<![\w])(?:\w+\s*\.\s*)?(#{names.empty? ? "(?!)" : names.map { |name| Regex.escape(name) }.join('|')})\s*(?:\[[^\]]*\]\s*)?\(/
+        added = 0
+        candidates.each do |name, (op, body)|
+          next if wrappers.has_key?(name)
+          via = nil.as(String?)
+          body.scan(callee) do |call|
             rest = body.byte_slice(call.byte_end(0), body.bytesize - call.byte_end(0))
-            !!rest.match(/\A\s*\w+\s*,\s*#{Regex.escape(op)}\s*,/)
+            next unless rest.matches?(/\A\s*\w+\s*,\s*#{Regex.escape(op)}\s*,/)
+            via = call[2]? || "huma"
+            break
           end
+          next unless forwarded = via
+          wrappers[name] = security_assignment(body, op) || (forwarded == "huma" ? nil : wrappers[forwarded]?)
+          added += 1
         end
-        break if added.empty?
-        added.each_key { |name| wrappers << name }
+        break if added.zero?
       end
       wrappers
+    end
+
+    # The security `param.Security = …` in a function's `text` sets:
+    # `{value, false}` when it runs unconditionally, `{value, true}` when only
+    # for an operation declaring none (`if op.Security == nil { … }`), nil
+    # when there is none or it runs under another condition.
+    private def security_assignment(text : String, param : String) : {String, Bool}?
+      assign = text.match(/\b#{Regex.escape(param)}\s*\.\s*Security\s*=(?!=)\s*(#{SECURITY_LITERAL.source}|[A-Za-z_]\w*)/) || return
+      before = text.byte_slice(0, assign.byte_begin(0))
+      body_start = before.byte_index('{'.ord.to_u8) || return
+      depth = before.byte_slice(body_start).count('{') - before.byte_slice(body_start).count('}')
+      return {assign[1], false} if depth == 1
+      return unless depth == 2
+      condition = before.scan(/\bif\s+([^{]*)\{/).last?.try(&.[1]) || return
+      condition.matches?(/\A\s*#{Regex.escape(param)}\s*\.\s*Security\s*==\s*nil\s*\z/) ? {assign[1], true} : nil
+    end
+
+    # `security` after a modifier that sets `change` (see
+    # `security_assignment`).
+    private def apply_security(security : String?, change : {String, Bool}?) : String?
+      return security unless change
+      change[1] ? (security || change[0]) : change[0]
     end
 
     SCALAR_BODY_TYPES = {"string", "bool", "int", "int64", "int32", "float64", "any", "interface{}"}
@@ -458,16 +498,16 @@ module Analyzer::Go
 
     # The security an operation modifier `func(o *huma.Operation, …) {…}`
     # assigns (`o.Security = …`), as written.
-    private def modifier_security(node : LibTreeSitter::TSNode, source : String) : String?
+    private def modifier_security(node : LibTreeSitter::TSNode, source : String) : {String, Bool}?
       return unless Noir::TreeSitter.node_type(node) == "func_literal"
       text = GoEngine.strip_comments(Noir::TreeSitter.node_text(node, source))
       param = text.match(MODIFIER_PARAM).try(&.[1]) || return
-      text.match(/\b#{Regex.escape(param)}\s*\.\s*Security\s*=\s*(#{SECURITY_LITERAL.source}|[A-Za-z_]\w*)/).try(&.[1])
+      security_assignment(text, param)
     end
 
-    # Group name -> the security its `UseModifier` modifier assigns.
-    private def collect_group_security(root : LibTreeSitter::TSNode, source : String) : Hash(String, String)
-      result = Hash(String, String).new
+    # Group name -> the security each of its `UseModifier` modifiers sets.
+    private def collect_group_security(root : LibTreeSitter::TSNode, source : String) : Hash(String, Array({String, Bool}))
+      result = Hash(String, Array({String, Bool})).new
       walk_calls(root) do |call|
         func = Noir::TreeSitter.field(call, "function") || next
         next unless Noir::TreeSitter.node_type(func) == "selector_expression"
@@ -476,11 +516,30 @@ module Analyzer::Go
         next unless Noir::TreeSitter.node_type(operand) == "identifier"
         args = Noir::TreeSitter.field(call, "arguments") || next
         Noir::TreeSitter.each_named_arg(args) do |arg|
-          modifier_security(arg, source).try { |value| result[Noir::TreeSitter.node_text(operand, source)] = value }
+          modifier_security(arg, source).try { |value| (result[Noir::TreeSitter.node_text(operand, source)] ||= [] of {String, Bool}) << value }
           break
         end
       end
       result
+    end
+
+    # Group name -> the API or group it was made from
+    # (`sub := huma.NewGroup(pub, "/sub")`).
+    private def collect_group_parents(root : LibTreeSitter::TSNode, source : String) : Hash(String, String)
+      parents = Hash(String, String).new
+      walk_node(root) do |node|
+        next unless {"short_var_declaration", "assignment_statement"}.includes?(Noir::TreeSitter.node_type(node))
+        left = Noir::TreeSitter.field(node, "left").try { |l| Noir::TreeSitter.first_named_child(l) }
+        call = Noir::TreeSitter.field(node, "right").try { |r| Noir::TreeSitter.first_named_child(r) }
+        next unless left && call && Noir::TreeSitter.node_type(call) == "call_expression"
+        next unless Noir::TreeSitter.field(call, "function").try { |f| Noir::TreeSitter.node_text(f, source) } == "huma.NewGroup"
+        parent = Noir::TreeSitter.field(call, "arguments").try { |a| Noir::TreeSitter.first_named_child(a) } || next
+        next unless Noir::TreeSitter.node_type(parent) == "identifier"
+        name = Noir::TreeSitter.node_text(left, source)
+        parent_name = Noir::TreeSitter.node_text(parent, source)
+        parents[name] = parent_name unless name == parent_name
+      end
+      parents
     end
 
     # Walks `composite_literal` (the `huma.Operation{...}` expression)
