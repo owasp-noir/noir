@@ -211,7 +211,8 @@ module Noir
       4.times do
         suffixes = chain.missing_include_paths.map { |lib_path| "/#{lib_path}" }
         break if suffixes.empty?
-        found = others.select { |path| !added.includes?(path) && suffixes.any? { |suffix| path.ends_with?(suffix) } }
+        by_base = suffixes.group_by { |suffix| File.basename(suffix) }
+        found = others.select { |path| !added.includes?(path) && by_base[File.basename(path)]?.try(&.any? { |suffix| path.ends_with?(suffix) }) }
         break if found.empty?
         found.each do |path|
           added << path
@@ -221,7 +222,11 @@ module Noir
       chain
     end
 
-    # The `lib/` paths Rails autoloads the modules indexed classes `include`
+    # The roots outside `app/controllers` that Rails autoloads the modules a
+    # controller `include`s from (`lib/`, `app/helpers/`, ...).
+    INCLUDE_ROOTS = %w[lib app/helpers app/models/concerns]
+
+    # The paths Rails autoloads the modules indexed classes `include`
     # from, for each one no indexed file declares: `include UploadHelpers` in
     # `Admin::UploadsController` is `lib/admin/upload_helpers.rb` or
     # `lib/upload_helpers.rb`, nearest namespace first, as Zeitwerk looks.
@@ -232,8 +237,8 @@ module Noir
           line.scan(/[A-Z][\w:]*/).flat_map do |m|
             next [] of String if lookup(m[0], klass.namespace)
             name = m[0].lchop("::")
-            (m[0].starts_with?("::") ? 0 : scopes.size).downto(0).map do |n|
-              "lib/#{(scopes[0, n] + [name]).join("::").underscore.gsub("::", "/")}.rb"
+            (m[0].starts_with?("::") ? 0 : scopes.size).downto(0).flat_map do |n|
+              INCLUDE_ROOTS.map { |root| "#{root}/#{(scopes[0, n] + [name]).join("::").underscore.gsub("::", "/")}.rb" }
             end
           end
         end

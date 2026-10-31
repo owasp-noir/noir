@@ -1649,4 +1649,248 @@ describe "RubyAuthTagger (routed controller chain)" do
     # A subject no rule names (`:all` aside) may be misread: unknown.
     Noir::CanCanAbility.new("class A\n  include CanCan::Ability\n\n  def initialize(user)\n    can :read, Note\n  end\nend\n".lines).verdict("show", "Medium").maybe?.should be_true
   end
+
+  # Names in the guard callback that are not calls: a word inside a string
+  # or after a receiver, and a local the body assigns. Another controller
+  # defines `new`, `otp` and `client`; reading those as calls to it made a
+  # deny out of every one and dropped the "setting decides" note.
+  it "keeps the setting note when words in the callback only look like calls to app methods" do
+    CodeLocator.instance.clear_all
+    tmpdir = File.tempname("ruby_guard_call_words")
+    files = {
+      "app/controllers/application_controller.rb" => <<-RB,
+        class ApplicationController < ActionController::Base
+          before_action :redirect_to_login_if_required
+
+          def ensure_logged_in
+            raise Discourse::NotLoggedIn.new if current_user.blank?
+          end
+
+          def redirect_to_login_if_required
+            if !current_user && params.has_key?(:auth_redirect)
+              client = Client.find_by(key: params[:key])
+              if Set.new(["otp"]).superset?(scopes)
+                redirect_to("\#{params[:auth_redirect]}?otp=true")
+                return
+              end
+              render plain: client.name
+            end
+
+            if !current_user && SiteSetting.login_required?
+              ensure_logged_in
+              return
+            end
+          end
+        end
+        RB
+      "app/controllers/notes_controller.rb" => <<-RB,
+        class NotesController < ApplicationController
+          def index
+          end
+        end
+        RB
+      "app/controllers/other_controller.rb" => <<-RB,
+        class OtherController < ApplicationController
+          def new
+            raise Discourse::InvalidAccess unless current_user
+          end
+
+          def otp
+            raise Discourse::InvalidAccess unless current_user
+          end
+
+          def client
+            raise Discourse::InvalidAccess unless current_user
+          end
+        end
+        RB
+    }
+    files.each do |name, body|
+      path = File.join(tmpdir, name)
+      Dir.mkdir_p(File.dirname(path))
+      File.write(path, body)
+      CodeLocator.instance.register_path(path)
+    end
+
+    begin
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(tmpdir)
+      endpoint = Endpoint.new("/notes", "GET", [] of Param,
+        Details.new(PathInfo.new(File.join(tmpdir, "app/controllers/notes_controller.rb"), 3)))
+      RubyAuthTagger.new(noir_options).perform([endpoint])
+      endpoint.tags.find! { |t| t.name == "auth" }.description.should contain("a setting can make it public")
+    ensure
+      FileUtils.rm_rf(tmpdir)
+    end
+  end
+
+  # Loomio's `load_and_authorize(:group, :invite_people)` locates the record
+  # and calls CanCan's `authorize!`; the action only names the helper.
+  it "reads an app helper that calls authorize! as the action's authorization" do
+    CodeLocator.instance.clear_all
+    tmpdir = File.tempname("ruby_authorize_helper")
+    files = {
+      "app/helpers/load_and_authorize.rb" => <<-RB,
+        module LoadAndAuthorize
+          def load_and_authorize(name, action = :show, optional: false)
+            resource = ModelLocator.new(name, params).locate!
+            current_user.ability.authorize! action, resource
+            resource
+          end
+
+          def log_visit(name)
+            Rails.logger.info(name)
+          end
+        end
+        RB
+      "app/controllers/groups_controller.rb" => <<-RB,
+        class GroupsController < ApplicationController
+          include LoadAndAuthorize
+
+          def token
+            self.resource = load_and_authorize(:group, :invite_people)
+          end
+
+          def maybe
+            load_and_authorize(:group, optional: true)
+          end
+
+          def visit
+            log_visit(:group)
+          end
+
+          def later
+            load_and_authorize(:group) if params[:id]
+          end
+
+          def scoped
+            scope_check
+          end
+
+          def scope_check
+            current_user.ability.authorize!(:show, group)
+          end
+        end
+        RB
+      "app/controllers/reports_controller.rb" => <<-RB,
+        class ReportsController < ApplicationController
+          def pick
+            scope_check
+          end
+
+          def scope_check
+            nil
+          end
+        end
+        RB
+    }
+    files.each do |name, body|
+      path = File.join(tmpdir, name)
+      Dir.mkdir_p(File.dirname(path))
+      File.write(path, body)
+      CodeLocator.instance.register_path(path)
+    end
+
+    begin
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(tmpdir)
+      at = ->(line : Int32) { Endpoint.new("/groups/#{line}", "GET", [] of Param, Details.new(PathInfo.new(File.join(tmpdir, "app/controllers/groups_controller.rb"), line))) }
+      token, maybe, visit, later, scoped = at.call(4), at.call(8), at.call(12), at.call(16), at.call(20)
+      pick = Endpoint.new("/reports", "GET", [] of Param, Details.new(PathInfo.new(File.join(tmpdir, "app/controllers/reports_controller.rb"), 2)))
+      RubyAuthTagger.new(noir_options).perform([token, maybe, visit, later, scoped, pick])
+
+      token.tags.find! { |t| t.name == "authz" }.description.should contain("via load_and_authorize")
+      scoped.tags.find! { |t| t.name == "authz" }.description.should contain("via scope_check")
+      # A same-named method another controller defines is not this one's.
+      [maybe, visit, later, pick].each(&.tags.none? { |t| t.name == "authz" }.should(be_true))
+    ensure
+      FileUtils.rm_rf(tmpdir)
+    end
+  end
+
+  # Discourse's guard: `requires_login only: [...]` stores its arguments and
+  # a `before_action` applies them to the running action.
+  it "reads a requires_login class macro with multi-line only: and except: lists" do
+    CodeLocator.instance.clear_all
+    tmpdir = File.tempname("ruby_requires_login_macro")
+    files = {
+      "app/controllers/application_controller.rb" => <<-RB,
+        class ApplicationController < ActionController::Base
+          before_action :block_if_requires_login
+
+          def self.requires_login(arg = {})
+            @requires_login_arg = arg
+          end
+
+          def self.requires_login_arg
+            @requires_login_arg
+          end
+
+          def block_if_requires_login
+            if arg = self.class.requires_login_arg
+              check =
+                if except = arg[:except]
+                  !except.include?(action_name.to_sym)
+                elsif only = arg[:only]
+                  only.include?(action_name.to_sym)
+                else
+                  true
+                end
+              ensure_logged_in if check
+            end
+          end
+
+          def ensure_logged_in
+            raise Discourse::NotLoggedIn.new if current_user.blank?
+          end
+        end
+        RB
+      "app/controllers/invites_controller.rb" => <<-RB,
+        class InvitesController < ApplicationController
+          requires_login only: %i[
+                           create
+                           destroy
+                         ]
+
+          def show
+          end
+
+          def create
+          end
+        end
+        RB
+      "app/controllers/notes_controller.rb" => <<-RB,
+        class NotesController < ApplicationController
+          requires_login except: [:index]
+
+          def index
+          end
+
+          def update
+          end
+        end
+        RB
+    }
+    files.each do |name, body|
+      path = File.join(tmpdir, name)
+      Dir.mkdir_p(File.dirname(path))
+      File.write(path, body)
+      CodeLocator.instance.register_path(path)
+    end
+
+    begin
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(tmpdir)
+      at = ->(file : String, line : Int32) { Endpoint.new("/#{file}/#{line}", "GET", [] of Param, Details.new(PathInfo.new(File.join(tmpdir, "app/controllers/#{file}_controller.rb"), line))) }
+      show, create, index, update = at.call("invites", 7), at.call("invites", 10), at.call("notes", 4), at.call("notes", 7)
+      RubyAuthTagger.new(noir_options).perform([show, create, index, update])
+
+      show.tags.none? { |t| t.name == "auth" }.should be_true
+      index.tags.none? { |t| t.name == "auth" }.should be_true
+      create.tags.find! { |t| t.name == "auth" }.description.should contain("block_if_requires_login")
+      update.tags.find! { |t| t.name == "auth" }.description.should contain("block_if_requires_login")
+    ensure
+      FileUtils.rm_rf(tmpdir)
+    end
+  end
 end

@@ -123,6 +123,7 @@ class RubyAuthTagger < FrameworkTagger
     @callback_exits = Hash({String, String}, Bool).new
     @rejecting_defs = Hash(String, Bool).new
     @denying_helpers = Hash(String, Bool).new
+    @authorizing_helpers = Hash(String, Bool).new
     @denies_anonymous = Hash(String, Bool).new
     @deny_settings = Hash(String, String).new
     @caller_ivars = Hash(String, Array(String)).new
@@ -222,7 +223,8 @@ class RubyAuthTagger < FrameworkTagger
       end
 
       # Action-body authorization (Pundit/CanCanCan) stacks with controller authn.
-      body = check_action_body_auth(lines, line_idx, action)
+      routed_leaf = dispatch || rails_chain.controller_in(path)
+      body = check_action_body_auth(lines, line_idx, action, routed_leaf.try { |klass| rails_chain.resolve(klass, action).paths } || [] of String)
       authz_desc ||= body[:authz]
       authz_desc ||= (dispatch || rails_chain.controller_in(path)).try { |cancan_leaf| cancan_refuses(cancan_leaf, action, endpoint.url.scan(/:(\w+)/).map(&.[1])) }
 
@@ -548,7 +550,7 @@ class RubyAuthTagger < FrameworkTagger
     @rejecting_defs[name] = def_bodies(name).any? do |body|
       body.each_with_index.any? do |(_, text), i|
         rejects = text.matches?(CALLBACK_REJECTS) || (top && text.matches?(/\bsuper\b/) && library_guard_rejects?(name)) ||
-                  text.scan(/\b[a-z_]\w*[!?]?/).any? { |m| rails_chain.defs.has_key?(m[0]) && body_rejects?(m[0], visited) }
+                  code_only(text).scan(BARE_CALL).any? { |m| rails_chain.defs.has_key?(m[0]) && body_rejects?(m[0], visited) }
         # `return nil if request.headers["Api-Key"].blank?` above a `raise`
         # lets a caller who sent no credential through: the raise refuses a
         # bad one, not an anonymous caller.
@@ -613,12 +615,21 @@ class RubyAuthTagger < FrameworkTagger
       assigns = Hash(String, String).new
       body.each { |_, text| (m = text.match(/^(@?\w+)\s*\|{0,2}=(?!=)\s*(.+)/)) && (assigns[m[1]] = m[2]) }
       body.each_with_index do |(_, text), i|
-        strict = text.matches?(DENY_RESPONSE) || text.scan(/\b[a-z_]\w*[!?]?/).any? { |m| always_denies?(m[0]) } ||
-                 text.scan(BARE_CALL).any? { |m| m[0] != name && rails_chain.defs.has_key?(m[0]) && denies_anonymous?(m[0], ivars, paths, settings, visited) }
+        # Calls only: a word in a string (`"one_time_password"`), after a
+        # receiver (`Set.new`) or a local this body assigns (`client =
+        # Client.find_by(...)`) is not a call of an app method of that name.
+        calls = code_only(text).scan(BARE_CALL).reject { |m| assigns.has_key?(m[0]) }
+        strict = text.matches?(DENY_RESPONSE) || calls.any? { |m| always_denies?(m[0]) } ||
+                 calls.any? { |m| m[0] != name && rails_chain.defs.has_key?(m[0]) && denies_anonymous?(m[0], ivars, paths, settings, visited) }
         next unless strict || text.matches?(SOFT_DENY)
         next if credential_gated?(body, i) || text.matches?(CREDENTIAL_PRESENT_MODIFIER)
         next unless conditions = deny_conditions(body, i)
         next unless parts = class_settings(deny_parts(conditions), settings)
+        # `check = if arg[:except] ... !except.include?(action_name.to_sym)
+        # ... end` / `ensure_logged_in if check`: a macro's own only/except
+        # answer for this action, which the chain already settled when it
+        # reported the macro in `settings`.
+        parts = parts.reject { |c, _| action_gate_local?(body, c) } unless settings.empty?
         next if parts.any? { |c, when_true| credential_present?(c, when_true, assigns, ivars) }
         next unless (strict && parts.empty?) || parts.any? { |c, when_true| credential_absent?(c, when_true, assigns, ivars) }
         chosen = parts.select { |c, _| c.matches?(PARAMS_READ) && !credential_condition?(c, assigns, ivars) }
@@ -729,6 +740,20 @@ class RubyAuthTagger < FrameworkTagger
         body[1..].any? { |indent, text| indent == body[1][0] && text.matches?(DENY_RESPONSE) && !text.matches?(CONDITION_MODIFIER) }
       end
     end
+  end
+
+  # Whether `name` is a local this body sets from the action being run
+  # (`check =` followed by an expression on `action_name`).
+  private def action_gate_local?(body : Array({Int32, String}), name : String) : Bool
+    return false unless name.matches?(/\A\w+\z/)
+    body.each_with_index do |(indent, text), i|
+      next unless text.starts_with?(name) && text[name.size..].strip == "="
+      ((i + 1)...body.size).each do |j|
+        return false if body[j][0] <= indent
+        return true if body[j][1].includes?("action_name")
+      end
+    end
+    false
   end
 
   # The conditions the deny at `body[i]` sits under, each with whether the
@@ -864,7 +889,7 @@ class RubyAuthTagger < FrameworkTagger
     false
   end
 
-  private def check_action_body_auth(lines : Array(String), action_line : Int32, action : String?) : NamedTuple(authz: String?, anonymous: String?)
+  private def check_action_body_auth(lines : Array(String), action_line : Int32, action : String?, paths : Array(String)) : NamedTuple(authz: String?, anonymous: String?)
     # Scan forward from the action definition for auth calls
     idx = action_line + 1
     end_idx = [action_line + 20, lines.size - 1].min
@@ -890,11 +915,28 @@ class RubyAuthTagger < FrameworkTagger
       ACTION_AUTH_PATTERNS.each do |pattern, desc|
         return {authz: desc, anonymous: nil} if current.matches?(pattern)
       end
+      # `load_and_authorize(:group)`: an app helper whose body calls `authorize!`.
+      unless current.matches?(CONDITION_MODIFIER) || current.matches?(/\boptional:\s*true/)
+        if helper = current.scan(BARE_CALL).find { |m| authorizing_helper?(m[0], paths) }
+          return {authz: "CanCanCan authorize! (via #{helper[0]})", anonymous: nil}
+        end
+      end
 
       idx += 1
     end
 
     {authz: nil, anonymous: anonymous}
+  end
+
+  # Whether the app method `name`, as the routed controller's ancestry
+  # (`paths`) defines it, calls CanCan's `authorize!` in its own body.
+  private def authorizing_helper?(name : String, paths : Array(String)) : Bool
+    return false if paths.empty? || !rails_chain.defs.has_key?(name)
+    defs = rails_chain.defs[name].select { |path, _| paths.includes?(path) }
+    return false if defs.empty?
+    @authorizing_helpers.put_if_absent("#{name}|#{defs.join(',')}") do
+      def_bodies(name, defs).any?(&.any? { |_, text| code_only(text).matches?(/\bauthorize!/) })
+    end
   end
 
   # `text` with its string literals emptied and a trailing comment dropped:
