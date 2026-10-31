@@ -41,7 +41,8 @@ module Analyzer::Go
           content,
           cross_file_groups,
           handle_method: "Add",
-          handle_many_methods: ["Match"]
+          handle_many_methods: ["Match"],
+          literal_join: true
         )
         routes_by_line = Hash(Int32, Array(Noir::TreeSitterGoRouteExtractor::Route)).new
         ts_routes.each do |r|
@@ -113,7 +114,7 @@ module Analyzer::Go
           last_endpoints.each { |ep| add_echo_param_patterns(line, ep) }
         end
 
-        expand_router_builders(content, lines, path, expand_builders, callees_by_route, named, "Add") do |line, ep|
+        expand_router_builders(content, lines, path, expand_builders, callees_by_route, named, "Add", literal_join: true) do |line, ep|
           add_echo_param_patterns(line, ep)
         end
 
