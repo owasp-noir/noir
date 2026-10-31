@@ -2,6 +2,7 @@ require "../../engines/ruby_engine"
 require "../../../utils/top_level_split"
 require "../../../utils/call_fold"
 require "../../../miniparsers/rails_callback_chain"
+require "../../../miniparsers/ruby_constant_list"
 require "../../../utils/ruby_inflector"
 
 module Analyzer::Ruby
@@ -225,6 +226,7 @@ module Analyzer::Ruby
     # lives in a different file (a plugin.rb, the host app's routes), so we
     # resolve it cross-file once up front.
     @engine_mount_prefixes = Hash(EngineMountKey, String).new
+    @constant_lists = Hash(String, Noir::RubyConstantList::Result?).new
     @known_files = Set(String).new
     @gemfile_public_roots : Array(Tuple(String, String))? = nil
     @public_file_candidates : Array(PublicFileCandidate)? = nil
@@ -251,6 +253,7 @@ module Analyzer::Ruby
       @callback_chain = nil
       @gemfile_public_roots = nil
       @public_file_candidates = nil
+      @constant_lists.clear
       @engine_mount_prefixes = build_engine_mount_map(files)
 
       framework_roots = discover_framework_roots(files, "config/routes.rb")
@@ -1144,7 +1147,14 @@ module Analyzer::Ruby
     # Only literal `%w`/`%i` receivers are expanded: a dynamic
     # `Model.scopes.each do |s|` cannot be resolved to values at parse time,
     # so it is left for the normal parser (its block opens a neutral frame).
-    LOOP_OPENER = /^%([wi])[\[\(\{]([^\]\)\}]*)[\]\)\}]\s*\.each(?:_with_index)?\s+do\s*\|\s*([a-z_]\w*)[^|]*\|\s*$/
+    #
+    # A `Const.list` receiver (`Discourse.filters.each do |filter|`) unrolls
+    # too when the app defines it as a literal list (see `constant_list`).
+    # The brace form `RECV.each { |x| get "#{x}" }` is the same block on one
+    # line.
+    LOOP_RECEIVER  = /(?:%[wi][\[\(\{][^\]\)\}]*[\]\)\}]|(?:::)?[A-Z]\w*(?:::[A-Z]\w*)*\.[a-z_]\w*)/
+    LOOP_OPENER    = /^(?:%[wi][\[\(\{]([^\]\)\}]*)[\]\)\}]|((?:::)?[A-Z]\w*(?:::[A-Z]\w*)*\.[a-z_]\w*))\s*\.each(?:_with_index)?\s+do\s*\|\s*([a-z_]\w*)[^|]*\|\s*$/
+    LOOP_ONE_LINER = /^(#{LOOP_RECEIVER})\s*\.each(?:_with_index)?\s*\{\s*\|\s*([a-z_]\w*)[^|]*\|\s*(.+?)\s*\}\s*$/
 
     # noir scans arbitrary untrusted repos, so loop unrolling must not be a DoS
     # vector — expansion is multiplicative (elements ^ nesting). A crafted
@@ -1162,15 +1172,18 @@ module Analyzer::Ruby
     # on that one line, whichever value the copy carries.
     private def expand_static_loops(lines : Array(RouteLine), depth : Int32 = 0) : Array(RouteLine)
       return lines if depth > MAX_LOOP_DEPTH
-      return lines unless lines.any?(&.text.matches?(LOOP_OPENER))
+      return lines unless lines.any? { |l| l.text.includes?(".each") && (l.text.matches?(LOOP_OPENER) || l.text.matches?(LOOP_ONE_LINER)) }
 
+      lines = lines.flat_map { |l| one_line_loop(l) }
       result = [] of RouteLine
       index = 0
       while index < lines.size
         line = lines[index]
-        if m = line.text.match(LOOP_OPENER)
+        if (m = line.text.match(LOOP_OPENER)) && (values = m[1]? ? m[1].split(/\s+/).reject(&.empty?) : constant_list(m[2]).try(&.values))
           var = m[3]
-          values = m[2].split(/\s+/).reject(&.empty?)
+          # Something extends the list with a value only runtime knows: the
+          # unrolled copies are a floor, so the block also stays as written.
+          open_ended = m[2]? && constant_list(m[2]).try { |list| !list.complete }
 
           # Walk to the `end` that closes this `.each do`, mirroring the main
           # parser's one-block-open-per-line / `end`-pops-one model.
@@ -1203,6 +1216,10 @@ module Analyzer::Ruby
               expanded_body.each { |unrolled| result << unrolled.with_text(unrolled.text.gsub(pattern, value)) }
             end
           end
+          if open_ended
+            expanded_open = expand_static_loops(body, depth + 1)
+            expanded_open.each { |kept| result << kept }
+          end
           index = cursor + 1 # skip the closing `end`
         else
           result << line
@@ -1211,6 +1228,21 @@ module Analyzer::Ruby
       end
 
       result
+    end
+
+    # `RECV.each { |x| stmt }` as the `do` / `end` block `expand_static_loops`
+    # unrolls, when `RECV` is a list it can resolve.
+    private def one_line_loop(line : RouteLine) : Array(RouteLine)
+      return [line] unless line.text.includes?(".each") && (m = line.text.match(LOOP_ONE_LINER))
+      [line.with_text("#{m[1]}.each do |#{m[2]}|"), line.with_text(m[3]), line.with_text("end")]
+    end
+
+    # The elements of `Const.name` when the app defines it as a literal list
+    # (see `Noir::RubyConstantList`), with plugin `push` / `<<` additions.
+    private def constant_list(receiver : String) : Noir::RubyConstantList::Result?
+      @constant_lists.put_if_absent(receiver) do
+        Noir::RubyConstantList.resolve(receiver, @known_files) { |file| ruby_source(file) }
+      end
     end
 
     # Rails commonly writes compact inline route scopes:
@@ -1327,7 +1359,8 @@ module Analyzer::Ruby
         brace_depth += delta[2]
 
         next if paren_depth > 0 || bracket_depth > 0 || brace_depth > 0
-        next if stripped.ends_with?(",")
+        # `put "x" =>\n  "ctrl#act"`: the hash-rocket value is on the next line.
+        next if stripped.ends_with?(",") || stripped.ends_with?("=>")
 
         lines << RouteLine.new(buffer, buffer_line)
         buffer = ""
@@ -1414,7 +1447,8 @@ module Analyzer::Ruby
 
     private def infer_action_from_path(path : String) : String?
       normalized = path.lchop("/")
-      return normalized if normalized.matches?(/\A[A-Za-z_]\w*\z/)
+      # Rails reads `post "reset-bounce-score"` as the `reset_bounce_score` action.
+      return normalized.tr("-", "_") if normalized.matches?(/\A[A-Za-z_][\w-]*\z/)
       nil
     end
 
