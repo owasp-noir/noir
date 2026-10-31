@@ -707,4 +707,36 @@ describe "Ruby route gaps" do
     endpoints.none? { |e| e.url.starts_with?("/k/") }.should be_true
     endpoints.none? { |e| e.url.includes?("filter") }.should be_true
   end
+
+  it "unrolls only the list the named constant defines, and adds what plugins push onto it" do
+    base = {
+      "Gemfile"                                   => RAILS_GEMFILE,
+      "app/controllers/application_controller.rb" => "class ApplicationController < ActionController::API\nend\n",
+      "app/controllers/list_controller.rb"        => "class ListController < ApplicationController\n  def show; end\nend\n",
+      "lib/discourse.rb"                          => "module Discourse\n  def self.filters\n    @filters ||= %i[latest top]\n  end\nend\n",
+      # Another constant's method of the same name, and a lookalike class.
+      "app/services/legacy/discourse.rb" => "class FakeDiscourse\n  def self.filters\n    %i[fake]\n  end\nend\n",
+      "config/routes.rb"                 => <<-RUBY,
+      Rails.application.routes.draw do
+        Discourse.filters.each { |f| get "g/\#{f}" => "list#show" }
+        Admin::Discourse.filters.each { |f| get "adm/\#{f}" => "list#show" }
+      end
+      RUBY
+    }
+    endpoints = scan_ruby_tree(base.merge({"plugins/voting/plugin.rb" => "Discourse.filters.push(:votes)\n"}))
+    urls = endpoints.map(&.url)
+    urls.should contain("/g/latest")
+    urls.should contain("/g/top")
+    urls.should contain("/g/votes")
+    urls.should_not contain("/g/fake")
+    # `Admin::Discourse` is `admin/discourse.rb`; no such file is in the scan.
+    urls.any?(&.starts_with?("/adm/")).should be_false
+    urls.should_not contain("/g/{f}")
+
+    # A value only runtime knows: the unrolled copies are a floor and the
+    # placeholder route stays.
+    open_ended = scan_ruby_tree(base.merge({"plugins/x/plugin.rb" => "Discourse.filters.concat(Registry.names)\n"})).map(&.url)
+    open_ended.should contain("/g/latest")
+    open_ended.should contain("/g/{f}")
+  end
 end

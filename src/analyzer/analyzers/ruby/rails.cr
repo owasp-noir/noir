@@ -2,6 +2,7 @@ require "../../engines/ruby_engine"
 require "../../../utils/top_level_split"
 require "../../../utils/call_fold"
 require "../../../miniparsers/rails_callback_chain"
+require "../../../miniparsers/ruby_constant_list"
 require "../../../utils/ruby_inflector"
 
 module Analyzer::Ruby
@@ -225,7 +226,7 @@ module Analyzer::Ruby
     # lives in a different file (a plugin.rb, the host app's routes), so we
     # resolve it cross-file once up front.
     @engine_mount_prefixes = Hash(EngineMountKey, String).new
-    @constant_lists = Hash(String, Array(String)?).new
+    @constant_lists = Hash(String, Noir::RubyConstantList::Result?).new
     @known_files = Set(String).new
     @gemfile_public_roots : Array(Tuple(String, String))? = nil
     @public_file_candidates : Array(PublicFileCandidate)? = nil
@@ -1178,8 +1179,11 @@ module Analyzer::Ruby
       index = 0
       while index < lines.size
         line = lines[index]
-        if (m = line.text.match(LOOP_OPENER)) && (values = m[1]? ? m[1].split(/\s+/).reject(&.empty?) : constant_list(m[2]))
+        if (m = line.text.match(LOOP_OPENER)) && (values = m[1]? ? m[1].split(/\s+/).reject(&.empty?) : constant_list(m[2]).try(&.values))
           var = m[3]
+          # Something extends the list with a value only runtime knows: the
+          # unrolled copies are a floor, so the block also stays as written.
+          open_ended = m[2]? && constant_list(m[2]).try { |list| !list.complete }
 
           # Walk to the `end` that closes this `.each do`, mirroring the main
           # parser's one-block-open-per-line / `end`-pops-one model.
@@ -1212,6 +1216,10 @@ module Analyzer::Ruby
               expanded_body.each { |unrolled| result << unrolled.with_text(unrolled.text.gsub(pattern, value)) }
             end
           end
+          if open_ended
+            expanded_open = expand_static_loops(body, depth + 1)
+            expanded_open.each { |kept| result << kept }
+          end
           index = cursor + 1 # skip the closing `end`
         else
           result << line
@@ -1230,26 +1238,12 @@ module Analyzer::Ruby
       [line.with_text("#{m[1]}.each do |#{m[2]}|"), line.with_text(m[3]), line.with_text("end")]
     end
 
-    # The elements of `Const.name` when the app defines it as a literal list:
-    # `def self.filters` answering `@filters ||= %i[latest unread new]` (or a
-    # `[:a, :b]` / `%w[...]` literal) in the file named for the constant
-    # (`lib/discourse.rb`). nil for anything computed.
-    private def constant_list(receiver : String) : Array(String)?
-      @constant_lists.put_if_absent(receiver) { resolve_constant_list(receiver) }
-    end
-
-    private def resolve_constant_list(receiver : String) : Array(String)?
-      const, _, name = receiver.lchop("::").rpartition('.')
-      base = "#{const.split("::").last.underscore}.rb"
-      @known_files.each do |file|
-        next unless File.basename(file) == base
-        body = ruby_source(file).match(Regex.new("^\\s*def\\s+self\\.#{Regex.escape(name)}\\b[^\\n]*\\n(?:\\s*#[^\\n]*\\n)*\\s*(?:@\\w+\\s*\\|\\|=\\s*)?(?:%[wi][\\[\\(\\{]([^\\]\\)\\}]*)[\\]\\)\\}]|\\[([^\\]\\[]*)\\])(?:\\.freeze)?[ \\t]*\\n", Regex::Options::MULTILINE))
-        next unless body
-        items = body[1]? ? body[1].split(/\s+/) : body[2].split(',').map(&.strip.lchop(":").strip("\"").strip("'"))
-        items = items.reject(&.empty?)
-        return items if !items.empty? && items.all?(&.matches?(/\A\w+\z/))
+    # The elements of `Const.name` when the app defines it as a literal list
+    # (see `Noir::RubyConstantList`), with plugin `push` / `<<` additions.
+    private def constant_list(receiver : String) : Noir::RubyConstantList::Result?
+      @constant_lists.put_if_absent(receiver) do
+        Noir::RubyConstantList.resolve(receiver, @known_files) { |file| ruby_source(file) }
       end
-      nil
     end
 
     # Rails commonly writes compact inline route scopes:
