@@ -43,5 +43,15 @@ describe "--ai-context on Flask-AppBuilder views", tags: "functional" do
     guards["GET /page/welcome/"].should eq(["handler refusing a caller who is not logged in"])
     guards["GET /page/flagged/"].should be_empty
     guards["GET /page/guest-only/"].should be_empty
+    # A GET answered before the login check is open; the POST behind it is
+    # not. A check only for POST leaves the GET-only route open.
+    guards["GET /page/mixed/"].should be_empty
+    guards["POST /page/mixed/"].should eq(["handler refusing a caller who is not logged in"])
+    guards["GET /page/post-only-check/"].should be_empty
+    # `verify_jwt_in_request(True)` is the optional form.
+    guards["GET /page/jwt-positional/"].should be_empty
+    # FAB's name means FAB's decorator only where the file imports
+    # flask_appbuilder.
+    guards["GET /plain/has-access"].should be_empty
   end
 end

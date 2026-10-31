@@ -18,7 +18,7 @@ module PythonGuardDefinitions
   # caller and denies with 403. A 403 alone is not enough: Dify's
   # `email_password_login_enabled` aborts 403 on a feature flag, which says
   # nothing about the caller.
-  UNAUTHENTICATED    = /\braise\s+(?:\w+\.)*\w*(?:Unauthori[sz]ed|Unauthenticated|NotAuthenticated|AuthenticationFailed)(?:Error|Exception)?\b|\babort\s*\(\s*(?:401\b|(?:\w+\.)*UNAUTHORIZED\b)|\.unauthorized\s*\(|\.response_401\s*\(|\bverify_jwt_in_request\s*\((?![^)]*\boptional\s*=\s*True)|\breturn\b.*,\s*401\b|\bstatus(?:_code)?\s*=\s*401\b|\bHTTP_401_UNAUTHORIZED\b/
+  UNAUTHENTICATED    = /\braise\s+(?:\w+\.)*\w*(?:Unauthori[sz]ed|Unauthenticated|NotAuthenticated|AuthenticationFailed)(?:Error|Exception)?\b|\babort\s*\(\s*(?:401\b|(?:\w+\.)*UNAUTHORIZED\b)|\.unauthorized\s*\(|\.response_401\s*\(|\bverify_jwt_in_request\s*\((?=\s*(?:\)|[A-Za-z_]\w*\s*=))(?![^)]*\boptional\s*=\s*(?!False\b))|\breturn\b.*,\s*401\b|\bstatus(?:_code)?\s*=\s*401\b|\bHTTP_401_UNAUTHORIZED\b/
   REQUEST_CREDENTIAL = /\brequest\.(?:authorization\b|(?:headers|cookies|args)(?:\.get\s*\(|\[)\s*["'][\w-]*(?:key|token|auth|secret|signature|password|session)[\w-]*["'])/i
   REJECTION          = /\braise\s+[A-Za-z_]|\babort\s*\(|\breturn\b.*,\s*4\d\d\b/
   CALLER_IDENTITY    = /\bcurrent_user\b|\bis_authenticated\b|\bg\.user\b/
@@ -48,7 +48,7 @@ module PythonGuardDefinitions
   private def decorator_guard(line : String, file : String) : String?
     name = line.match(DECORATOR_NAME).try(&.[1]) || return
     target = resolve_def(file, name)
-    return decorator_description(line) unless target
+    return decorator_description(line, file) unless target
     verdict = @verdicts[target]?
     verdict = @verdicts[target] = guard_definition?(target[0], target[1], 0) if verdict.nil?
     return unless verdict

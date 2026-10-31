@@ -309,7 +309,7 @@ class DjangoAuthTagger < FrameworkTagger
 
   # Library decorators are judged by `DECORATOR_PATTERNS` before this is
   # asked; an unresolved name says nothing.
-  private def decorator_description(line : String) : String?
+  private def decorator_description(line : String, file : String) : String?
     nil
   end
 

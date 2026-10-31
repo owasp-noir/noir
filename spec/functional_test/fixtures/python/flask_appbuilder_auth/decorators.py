@@ -53,3 +53,12 @@ def get_user_id():
 
 def redirect_to_login():
     return {"redirect": "/login/"}, 302
+
+
+def jwt_positional(function):
+    @functools.wraps(function)
+    def wrapped(*args, **kwargs):
+        verify_jwt_in_request(True)
+        return function(*args, **kwargs)
+
+    return wrapped

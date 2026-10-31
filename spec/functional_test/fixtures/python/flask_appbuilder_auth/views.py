@@ -1,9 +1,9 @@
-from flask import abort, g
+from flask import abort, g, request
 from flask_appbuilder import BaseView, ModelRestApi, expose
 from flask_appbuilder.api import safe
 from flask_appbuilder.security.decorators import has_access, has_access_api, protect
 
-from decorators import api_errors, get_user_id, is_feature_enabled, maybe_user, read_gate, redirect_to_login
+from decorators import api_errors, get_user_id, is_feature_enabled, jwt_positional, maybe_user, read_gate, redirect_to_login
 
 
 class ChartRestApi(
@@ -56,6 +56,25 @@ class PageView(BaseView):
         if not is_feature_enabled("FLAGGED"):
             abort(404)
         return self.render_template("flagged.html")
+
+    @expose("/mixed/", methods=["GET", "POST"])
+    def mixed(self):
+        if request.method == "GET":
+            return "public page"
+        if not g.user or g.user.is_anonymous:
+            return redirect_to_login()
+        return "saved"
+
+    @expose("/post-only-check/")
+    def post_only_check(self):
+        if not g.user and request.method == "POST":
+            return redirect_to_login()
+        return "x"
+
+    @expose("/jwt-positional/")
+    @jwt_positional
+    def jwt_pos(self):
+        return "x"
 
     @expose("/guest-only/")
     def guest_only(self):
