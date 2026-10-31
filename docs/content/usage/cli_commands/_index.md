@@ -267,7 +267,7 @@ The default compact row (`-f jsonl`) is a projection of the endpoint record, omi
 - `params`: parameters in `name:type` format.
 - `guards`: authentication and authorization guards (rate limiting and CSRF excluded).
 - `sinks`, `signals`: framework-aware sink kinds and derived security review signals.
-- `matched_by`: added by `trace` (`exact`, `pattern`, `wildcard`, `prefix`).
+- `matched_by`: added by `trace` (`exact`, `pattern`, `wildcard`, `prefix`; `exact_ci`, `pattern_ci`, `wildcard_ci` when only letter case differs, ASP.NET/Express/Koa only, listed last).
 - `via`: added by `reach` as a list of evidence items (`route`, `handler`, `callee`, `guard`, `source`, `sink`, `validator`).
 - `nearest_line`: added by `reach` when `:LINE` is given.
 

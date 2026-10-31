@@ -95,7 +95,9 @@ PATCH /items/:id  src/handlers.go:18  go_gin  handler=updateItem@src/items.go:40
   placeholder per segment: `{id}`, `:id`, `<int:pk>`, `[id]`, `$id`, `*`),
   `wildcard` (`**`, `*path`, `{path*}`, `{*path}`, `{path...}`, `[...slug]`)
   or `prefix` (an nginx/Ingress prefix location, a Go ServeMux `/x/`
-  subtree). A `cli://` row is traced by its own URL. Every matching route is
+  subtree). `exact_ci` / `pattern_ci` / `wildcard_ci` differ from the route
+  only in letter case (routers that ignore case: ASP.NET, Express, Koa) and are
+  ranked after case-exact matches. A `cli://` row is traced by its own URL. Every matching route is
   printed, most specific first; which one the framework dispatches to is its
   rule, so take the first. A HEAD request traces to the GET route. On a miss
   it prints `candidates` (the closest routes by shared segments, case and
