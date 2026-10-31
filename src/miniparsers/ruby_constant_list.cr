@@ -66,8 +66,8 @@ module Noir
       return unless text
       items = (comma_list ? text.split(',') : text.split(/[\s,]+/)).map(&.strip).reject(&.empty?)
       return if items.empty?
-      names = items.map { |item| item.match(LITERAL_ITEM).try(&.[1]) }
-      names.all? ? names.map(&.not_nil!) : nil
+      names = items.compact_map { |item| item.match(LITERAL_ITEM).try(&.[1]) }
+      names.size == items.size ? names : nil
     end
   end
 end
