@@ -630,15 +630,25 @@ module Noir::CLI::Inspect
     declared == wanted || ::synthetic_any_method?(declared) || (wanted == "HEAD" && declared == "GET")
   end
 
+  RAILS_FORMAT_SUFFIX = /\.[A-Za-z0-9]+\z/
+
   # Routes matching a concrete request, exact matches first. A PHP front
   # controller also answers its routes under another spelling: `/index.php/x`
   # is `/x` (PATH_INFO routing, Nextcloud without pretty URLs), and Nextcloud
   # serves `/ocs/v2.php/...` as `/ocs/v1.php/...` too. Those are tried
   # against the PHP routes when the request itself matches nothing.
+  #
+  # A Rails route also answers with an optional `.format` suffix
+  # (`/ai-llms.json` is `/ai-llms`), so when only a catch-all matched, the
+  # suffix-less path is tried against the Rails routes and its matches lead.
   def self.trace(endpoints : Array(Endpoint), method : String?, path : String) : Array(Match)
     matches = trace_path(endpoints, method, path)
-    return matches unless matches.empty?
     wanted = strip_trailing_slash(request_target(path))
+    if matches.none?(&.matched_by.in?("exact", "pattern", "exact_ci", "pattern_ci")) && (bare = wanted.sub(RAILS_FORMAT_SUFFIX, "")) != wanted && !bare.empty?
+      rails = endpoints.select { |endpoint| endpoint.details.technology == "ruby_rails" }
+      matches = trace_path(rails, method, bare).select(&.matched_by.in?("exact", "pattern", "exact_ci", "pattern_ci")) + matches unless rails.empty?
+    end
+    return matches unless matches.empty?
     alias_path = if wanted.starts_with?("/index.php/")
                    wanted.lchop("/index.php")
                  elsif wanted.starts_with?("/ocs/v1.php/")
