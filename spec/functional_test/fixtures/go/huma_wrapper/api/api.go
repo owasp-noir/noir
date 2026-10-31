@@ -55,7 +55,7 @@ func RegisterLabelRoutes(api huma.API) {
 	Register(api, huma.Operation{
 		Method: http.MethodPut,
 		Path:   "/labels/{id}",
-	}, labelsRead)
+	}, itemUpdate)
 
 	Register(api, huma.Operation{
 		Method:   http.MethodPost,
