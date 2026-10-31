@@ -44,11 +44,11 @@ class ExpressAuthTagger < FrameworkTagger
   # `next()` unconditionally (juice-shop's `updateAuthenticatedUsers`) is
   # not a guard, and it is `app.use()`d over every route.
   #
-  # `expressBasicAuth({ … })` is the express-basic-auth factory: the
-  # middleware it builds answers 401 to a request without valid
-  # credentials. `sendError(res, 401, …)` hands the response and a refusing
-  # status to a reply helper.
-  REFUSING_DEFINITION = /\bexpress[jJ]wt\s*\(|\bpassport\.authenticate\s*\(|\b(?:express)?[bB]asicAuth\s*\((?=\s*\{)|\b[A-Za-z_$][\w$]*\s*\(\s*(?:res|response)\s*,\s*40[13]\b|(?:\b\w+\.)?(?:status|sendStatus|send)\s*\(\s*40[13]\s*\)?|\bnext\s*\(\s*(?:new\s+)?(?:[\w$]+\.)*\w*(?:Unauthori[sz]ed|Forbidden|NoPermission|PermissionDenied)\w*|\bcreateError\s*\(\s*40[13]\b|\bnext\s*\(\s*\{[^}]*\b40[13]\b/
+  # `sendError(res, 401, …)` hands the response and a 401 to a reply helper
+  # (a helper's 403 is as often about the payload as the caller). An
+  # express-basic-auth middleware refuses where it is run,
+  # not where it is built: see `basic_auth_runs`.
+  REFUSING_DEFINITION = /\bexpress[jJ]wt\s*\(|\bpassport\.authenticate\s*\(|\b[A-Za-z_$][\w$]*\s*\(\s*(?:res|response)\s*,\s*401\b|(?:\b\w+\.)?(?:status|sendStatus|send)\s*\(\s*40[13]\s*\)?|\bnext\s*\(\s*(?:new\s+)?(?:[\w$]+\.)*\w*(?:Unauthori[sz]ed|Forbidden|NoPermission|PermissionDenied)\w*|\bcreateError\s*\(\s*40[13]\b|\bnext\s*\(\s*\{[^}]*\b40[13]\b/
 
   # `(err, req, res, next)`: an error handler answers 401 *for* a guard;
   # it is not one.
@@ -524,16 +524,57 @@ class ExpressAuthTagger < FrameworkTagger
   # request check (`refusal_reach`).
   private def anonymous_refusal(code : String, source : String? = nil) : String?
     by_setting = nil.as(String?)
+    hits = [] of Tuple(Int32, String)
     code.scan(REFUSING_DEFINITION) do |m|
-      at = m.begin(0)
+      label = m[0]
+      # `sendTextMessage(response, 401`: close the call it names.
+      label += ")" * (label.count('(') - label.count(')')) if label.count('(') > label.count(')') && !label.ends_with?('(')
+      hits << {m.begin(0), label}
+    end
+    hits.concat(basic_auth_runs(code, source)) if source
+    hits.sort_by!(&.[0]).each do |at, label|
       return by_setting if code[0...at].matches?(ANONYMOUS_PASS_THROUGH)
       next if presence_gated?(code, at)
       case refusal_reach(code, at, source)
-      when :always  then return m[0]
-      when :setting then by_setting ||= "#{m[0]}#{SETTING_NOTE}"
+      when :always  then return label
+      when :setting then by_setting ||= "#{label}#{SETTING_NOTE}"
       end
     end
     by_setting
+  end
+
+  # The name an express-basic-auth import is bound to in a file.
+  BASIC_AUTH_IMPORT = /(?:\bimport\s+([A-Za-z_$][\w$]*)\s+from|\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*require\s*\()\s*['"]express-basic-auth['"]/
+
+  # Where `code` runs an express-basic-auth middleware: the factory (as the
+  # file imports it) called and the result called on the request
+  # (`basicAuth({…})(req, res, next)`) or returned, or the variable it is
+  # assigned to called on the request or returned. Each is a 401 for a
+  # caller without credentials, under the conditions around the *run*:
+  # one built and never run, or a local `basicAuth({ user, pass })` that
+  # builds an outbound header, refuses nothing.
+  private def basic_auth_runs(code : String, source : String) : Array(Tuple(Int32, String))
+    runs = [] of Tuple(Int32, String)
+    return runs unless source.includes?("express-basic-auth")
+    source.scan(BASIC_AUTH_IMPORT) do |im|
+      factory = im[1]? || im[2]? || next
+      name = Regex.escape(factory)
+      code.scan(/(?<![\w$.])#{name}\s*\(/) do |call|
+        open = call.end(0) - 1
+        close = Noir::JSLiteralScanner.find_matching_paren(code, open) || next
+        before = code[0...call.begin(0)]
+        after = code[(close + 1)..]
+        if after.matches?(/\A\s*\(\s*(?:req|request)\b/) || before.matches?(/\breturn\s*\z/)
+          runs << {call.begin(0), factory}
+        elsif bound = before.match(/(?<![\w$.])([A-Za-z_$][\w$]*)\s*=\s*\z/)
+          variable = Regex.escape(bound[1])
+          code.scan(/(?<![\w$.])#{variable}\s*\(\s*(?:req|request)\b|\breturn\s+#{variable}\b/) do |run|
+            runs << {run.begin(0), factory} if run.begin(0) > close
+          end
+        end
+      end
+    end
+    runs.uniq!
   end
 
   # `code_only`, keeping word literals (`req.method !== 'GET'`) a
@@ -545,8 +586,10 @@ class ExpressAuthTagger < FrameworkTagger
   SETTING_NOTE = " — a setting can lift it"
   METHOD_TEST  = /\A\(*\s*(?:req|request)\s*\.\s*method\s*(!==?|===?)\s*['"]([A-Za-z]+)['"]\s*\)*\z/
   IF_HEAD      = /(?<![\w$.])if\s*\(/
-  # `await` too: `if (!(await Settings.get("disableAuth")))` reads a setting.
-  JS_WORDS = /\A(?:true|false|null|undefined|typeof|instanceof|in|new|void|this|await)\z/
+  JS_WORDS     = /\A(?:true|false|null|undefined|typeof|instanceof|in|new|void|this)\z/
+  # A read of configuration: `Settings.get("disableAuth")`, `config.x`,
+  # `getSetting("y")`, `process.env.Z`.
+  SETTING_READ = /\A(?:[\w$]+\s*\.\s*)*\w*(?:[sS]ettings?|[cC]onfig)\w*\s*[.(]|\Aprocess\s*\.\s*env\b/
 
   # Whether a refusal at `at` in `code` reaches an anonymous caller of the
   # route's method (`@method`), by the `if`s enclosing it: `:always`;
@@ -591,14 +634,29 @@ class ExpressAuthTagger < FrameworkTagger
   # A condition whose every root is module-level in `source` (an import or a
   # top-level `const`) or `process`: configuration, not the request.
   private def module_state?(condition : String, source : String) : Bool
-    roots = condition.gsub(/(['"`])(?:(?!\1)[^\\]|\\.)*\1/, "").scan(/(?<![\w$.])([A-Za-z_$][\w$]*)/).map(&.[1]).reject(&.matches?(JS_WORDS)).uniq!
+    text = condition.gsub(/(['"`])(?:(?!\1)[^\\]|\\.)*\1/, "")
+    # `await Settings.get("x")` waits on a setting; `await currentUser()`
+    # on the request's caller, which keeps its `await` root and so is no
+    # setting.
+    text = text.gsub(/\bawait\s+(?=[\w$.\s]*?(?:[sS]ettings?|[cC]onfig)\w*\s*[.(])/, "")
+    roots = text.scan(/(?<![\w$.])([A-Za-z_$][\w$]*)/).map(&.[1]).reject(&.matches?(JS_WORDS)).uniq!
     return false if roots.empty?
     roots.all? do |root|
       # A `let`/`var` is state only when it is a `require`: `let hits = 0`
       # is a counter the app changes, not a setting.
       name = Regex.escape(root)
-      root == "process" || source.matches?(/^(?:const\s+(?:#{name}\b|\{[^}]*\b#{name}\b[^}]*\})|(?:let|var)\s+(?:#{name}|\{[^}]*\b#{name}\b[^}]*\})\s*=\s*require\s*\()|^import\b[^\n]*\b#{name}\b/m)
+      root == "process" || source.matches?(/^(?:const\s+(?:#{name}\b|\{[^}]*\b#{name}\b[^}]*\})|(?:let|var)\s+(?:#{name}|\{[^}]*\b#{name}\b[^}]*\})\s*=\s*require\s*\()|^import\b[^\n]*\b#{name}\b/m) ||
+        setting_local?(name, source)
     end
+  end
+
+  # `const disabledAuth = await Settings.get("disableAuth")`: a local
+  # holding a setting read.
+  private def setting_local?(name : String, source : String) : Bool
+    source.scan(/\b(?:const|let|var)\s+#{name}\s*=\s*(?:await\s+)?([^;\n]+)/) do |m|
+      return true if m[1].strip.matches?(SETTING_READ)
+    end
+    false
   end
 
   private def presence_gated?(code : String, at : Int32) : Bool
