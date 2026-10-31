@@ -594,8 +594,8 @@ module Noir
     # `addX(r.PathPrefix("/posts").Subrouter())`) comes back as the composed
     # prefix when `groups` knows `api` (`/api/v1/posts`), else as the literal.
     def collect_router_builder_callsites(source : String, builders : Set(String),
-                                         groups : Hash(String, String) = Hash(String, String).new) : Array(Tuple(String, String, String))
-      calls = [] of Tuple(String, String, String)
+                                         groups : Hash(String, String) = Hash(String, String).new) : Array(Tuple(String, String, String, Int32))
+      calls = [] of Tuple(String, String, String, Int32)
       return calls if builders.empty?
       Noir::TreeSitter.parse_go(source) do |root|
         Noir::TreeSitter.walk(root) do |node|
@@ -623,13 +623,14 @@ module Noir
           end
           next unless first_seen
           arg_text ||= first_text
+          row = Noir::TreeSitter.node_start_row(node)
           if arg_text
-            calls << {name, arg_text, qualifier}
+            calls << {name, arg_text, qualifier, row}
           else
             # Non-identifier, non-inline-Group arg (e.g. expr, func result,
             # root router, etc.) — record so caller can apply "all sites must
             # resolve" guard and fall back to whole-file pass.
-            calls << {name, "__unresolved__", qualifier}
+            calls << {name, "__unresolved__", qualifier, row}
           end
         end
       end

@@ -223,6 +223,7 @@ class GoAuthTagger < FrameworkTagger
     @go_files = nil.as(Array(String)?)
     @bound_requests = Hash(String, Tag).new
     @server_scopes = [] of {owner: Gate, tag: Tag}
+    @parameter_scopes = [] of {owner: Gate, tag: Tag, prefix: String?}
     @gozero_groups = Hash(String, Array({Range(Int32, Int32), Array(Tag)})).new
   end
 
@@ -246,6 +247,7 @@ class GoAuthTagger < FrameworkTagger
     @middleware_scopes.clear
     @closure_scopes.clear
     @server_scopes.clear
+    @parameter_scopes.clear
     @bound_requests.clear
 
     files = collect_files_by_extension(".go")
@@ -386,6 +388,104 @@ class GoAuthTagger < FrameworkTagger
     end
   end
 
+  # `a.Use(mw)` on a group the function was handed (vikunja's
+  # `func registerAPIRoutesV2(e *echo.Echo, a *echo.Group)`). The group's
+  # prefix scope resolves `a` by name, which can be another function's group
+  # (`RegisterRoutes`' `/api/v1` one), so the routes the middleware does reach
+  # are also recorded by lineage: those registered on `a` (or a group derived
+  # from it) below the `.Use`, here or in a helper handed `a` below it
+  # (`m.Register(a)`), whatever their URL.
+  FUNC_PARAMETERS = /\Afunc\s*(?:\([^)]*\)\s*)?\w+\s*(?:\[[^\]]*\]\s*)?\(([^)]*)\)/
+
+  #
+  # The helper's callers get the same, from the call on: `secure(g); pub(g)`
+  # in each function that calls `secure` hands `pub` the guarded group, and
+  # `secure(a); pub(p)` does not. A caller's own group carries its prefix
+  # (`g := e.Group("/admin")`), so routes a shared helper registers for
+  # another caller's group are not claimed.
+  private def register_parameter_scope(file : String, lines : Array(String), index : Int32, receiver : String, tag : Tag, depth : Int32 = 0)
+    head = function_start(lines, index)
+    return if head < 0
+    params = lines[head].match(FUNC_PARAMETERS).try(&.[1]) || return
+    names = params.split(',').map { |param| param.strip.split(/\s+/).first? || "" }
+    slot = names.index(receiver) || return
+    last = enclosing_block_end(lines, head + 2)
+    @parameter_scopes << {owner: {file: file, receiver: receiver, rows: index..last, parents: {} of String => Array({String, Int32})}, tag: tag, prefix: nil}
+    return if depth >= 3
+    fn = lines[head].match(FUNC_NAME).try(&.[1]) || return
+    call = /(?<![\w.])#{Regex.escape(fn)}\s*\(/
+    (@go_files ||= collect_files_by_extension(".go")).each do |caller_file|
+      next if File.dirname(caller_file) != File.dirname(file) || caller_file.ends_with?("_test.go")
+      caller_lines = read_file_lines(caller_file) || next
+      caller_lines.each_with_index do |line, row|
+        next unless line.includes?(fn)
+        code = code_only(line)
+        m = code.match(call) || next
+        next if code[0, m.begin(0)].matches?(/(?:\A|\s)func\s+(?:\([^)]*\)\s*)?\z/)
+        arg = call_args(code[m.end(0)..])[slot]?.try(&.strip) || next
+        next unless arg.matches?(/\A\w+\z/)
+        caller_start = function_start(caller_lines, row + 1)
+        next if caller_start < 0
+        prefix = local_group_prefix(caller_lines, caller_start, row, arg)
+        if prefix
+          caller_last = enclosing_block_end(caller_lines, caller_start + 2)
+          @parameter_scopes << {owner: {file: caller_file, receiver: arg, rows: (row + 1)..caller_last, parents: {} of String => Array({String, Int32})}, tag: tag, prefix: prefix}
+        else
+          register_parameter_scope(caller_file, caller_lines, row + 1, arg, tag, depth + 1)
+        end
+      end
+    end
+  end
+
+  # The URL prefix of a group the caller builds from its engine
+  # (`g := e.Group("/admin")`, with `e *echo.Echo`), read up from `row`;
+  # nil for anything else, a group handed in included.
+  ROOT_ROUTER_PARAM = /\*\s*(?:echo\.Echo|gin\.Engine|fiber\.App)\b/
+
+  private def local_group_prefix(lines : Array(String), start : Int32, row : Int32, name : String, depth : Int32 = 0) : String?
+    return if depth > 4
+    assign = /\A\s*#{Regex.escape(name)}\s*:?=\s*(\w+)\s*\.\s*(?:Group|Route|Party)\s*\(\s*"([^"]*)"/
+    (row - 1).downto(start + 1) do |idx|
+      code = lines[idx]
+      next unless code.includes?(name)
+      if m = code.match(assign)
+        parent = m[1]
+        params = lines[start].match(FUNC_PARAMETERS).try(&.[1]) || ""
+        root = params.split(',').find { |param| param.strip.split(/\s+/).first? == parent }
+        base = if root && root.matches?(ROOT_ROUTER_PARAM)
+                 ""
+               else
+                 local_group_prefix(lines, start, idx, parent, depth + 1) || return
+               end
+        return GoRouteGroupScope.join_prefix(base, m[2])
+      end
+      return if code.matches?(/\A\s*#{Regex.escape(name)}\s*:?=(?!=)/)
+    end
+    nil
+  end
+
+  # `served_by?` in registration order: the route (or the group it is
+  # registered on) comes after the `.Use`, or the helper registering it is
+  # handed the group after it.
+  private def handed_after?(endpoint : Endpoint, owner : Gate) : Bool
+    owner_lines = read_file_lines(owner[:file]) || return false
+    use_row = owner[:rows].begin
+    endpoint.details.code_paths.any? do |path_info|
+      line = path_info.line || next false
+      lines = read_file_lines(path_info.path) || next false
+      next false if line < 1 || line > lines.size
+      name = lines[line - 1].match(ROUTE_RECEIVER).try(&.[1]) || next false
+      start = function_start(lines, line)
+      if path_info.path == owner[:file] && start == function_start(lines, use_row)
+        hop = router_chain(path_info.path, lines, line, name)[0].find { |(router, _)| router == owner[:receiver] }
+        !!hop && hop[1] > use_row && owner[:rows].includes?(line)
+      else
+        helper = start < 0 ? nil : lines[start].match(FUNC_NAME).try(&.[1])
+        !!helper && owner_uses(owner, owner_lines, helper, File.dirname(path_info.path)).any?(&.> use_row)
+      end
+    end
+  end
+
   # Whether a route of the endpoint is on the owner's server: on it, or a
   # router it hands out (`r := srv.Route("/")`), in the owner's function,
   # or in a function the owner's function hands the server to
@@ -520,7 +620,9 @@ class GoAuthTagger < FrameworkTagger
       if statement.matches?(pattern) && stripped.includes?(".Use") && args.none?(&.matches?(SKIPPER_FIELD))
         jwt_match = statement.match(pattern)
         jwt_name = jwt_match ? jwt_match[0] : "JWT"
-        add_middleware_scope(scope, file, Tag.new("auth", "Protected by Go JWT middleware (#{jwt_name})", "go_auth"))
+        jwt_tag = Tag.new("auth", "Protected by Go JWT middleware (#{jwt_name})", "go_auth")
+        add_middleware_scope(scope, file, jwt_tag)
+        register_parameter_scope(file, lines, index, receiver, jwt_tag) if receiver
       end
     end
     return unless before == @middleware_scopes.size
@@ -529,7 +631,9 @@ class GoAuthTagger < FrameworkTagger
     # the definition is not in the scan.
     args.each do |arg|
       tag = guard_by_definition(arg, file, authish_name: true)
-      add_middleware_scope(scope, file, tag) if tag
+      next unless tag
+      add_middleware_scope(scope, file, tag)
+      register_parameter_scope(file, lines, index, receiver, tag) if receiver
     end
   end
 
@@ -1450,6 +1554,10 @@ class GoAuthTagger < FrameworkTagger
     # Phase 3: Check group-level middleware scope
     check_middleware_scopes(endpoint).try { |tag| endpoint.add_tag(tag) }
     @server_scopes.each { |scope| endpoint.add_tag(scope[:tag]) if served_by?(endpoint, scope[:owner]) }
+    @parameter_scopes.each do |scope|
+      next if (prefix = scope[:prefix]) && !prefix_covers?(prefix, endpoint.url)
+      endpoint.add_tag(scope[:tag]) if handed_after?(endpoint, scope[:owner])
+    end
   end
 
   # The registrars of a router that takes a bare handler (gorilla's

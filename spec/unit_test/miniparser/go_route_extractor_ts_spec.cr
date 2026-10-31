@@ -858,7 +858,7 @@ describe Noir::TreeSitterGoRouteExtractor do
     builders["addUserRoutes"].param.should eq("rg")
 
     calls = Noir::TreeSitterGoRouteExtractor.collect_router_builder_callsites(source, builders.keys.to_set)
-    calls.sort.should eq([{"addPingRoutes", "v1", ""}, {"addPingRoutes", "v2", ""}, {"addUserRoutes", "v1", ""}])
+    calls.map(&.[0..2]).sort!.should eq([{"addPingRoutes", "v1", ""}, {"addPingRoutes", "v2", ""}, {"addUserRoutes", "v1", ""}])
 
     routes = Noir::TreeSitterGoRouteExtractor.extract_routes_from_function(source, "addUserRoutes", {"rg" => "/v1"})
     routes.map { |r| {r.verb, r.path} }.should eq([{"GET", "/v1/users/"}])
@@ -902,7 +902,7 @@ describe Noir::TreeSitterGoRouteExtractor do
 
     builders = Noir::TreeSitterGoRouteExtractor.collect_router_group_builders(source)
     calls = Noir::TreeSitterGoRouteExtractor.collect_router_builder_callsites(source, builders.keys.to_set)
-    calls.should eq([{"addUserRoutes", "/v1", ""}])
+    calls.map(&.[0..2]).should eq([{"addUserRoutes", "/v1", ""}])
   end
 
   it "composes an inline sub-group call-site with its receiver's prefix" do
@@ -914,7 +914,7 @@ describe Noir::TreeSitterGoRouteExtractor do
       GO
 
     calls = Noir::TreeSitterGoRouteExtractor.collect_router_builder_callsites(source, Set{"AddPosts"}, {"api" => "/api/v1"})
-    calls.should eq([{"AddPosts", "/api/v1/posts", "routes"}])
+    calls.map(&.[0..2]).should eq([{"AddPosts", "/api/v1/posts", "routes"}])
   end
 
   it "composes path-scoped Group closures that reuse the outer router (gitea web wrapper)" do

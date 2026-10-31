@@ -11,7 +11,9 @@ module Analyzer::Go
     def analyze
       # Source Analysis
       public_dirs = [] of (Hash(String, String))
-      package_groups, file_contents = collect_package_groups_ts(import_marker: IMPORT_MARKER)
+      # Other packages' exported string constants (`e.Group(apiv2.GroupPrefix)`).
+      string_seed = go_string_seed
+      package_groups, file_contents = collect_package_groups_ts(import_marker: IMPORT_MARKER, string_seed: string_seed)
       # Pre-pass for cross-file identifier-handler resolution. Built
       # once per analyze() so each per-file callee pass only does an
       # O(1) lookup into `package_function_bodies` rather than re-
@@ -42,6 +44,7 @@ module Analyzer::Go
           cross_file_groups,
           handle_method: "Add",
           handle_many_methods: ["Match"],
+          string_seed: string_seed,
           literal_join: true
         )
         routes_by_line = Hash(Int32, Array(Noir::TreeSitterGoRouteExtractor::Route)).new
@@ -114,7 +117,7 @@ module Analyzer::Go
           last_endpoints.each { |ep| add_echo_param_patterns(line, ep) }
         end
 
-        expand_router_builders(content, lines, path, expand_builders, callees_by_route, named, "Add", literal_join: true) do |line, ep|
+        expand_router_builders(content, lines, path, expand_builders, callees_by_route, named, "Add", string_seed: string_seed, literal_join: true) do |line, ep|
           add_echo_param_patterns(line, ep)
         end
 
