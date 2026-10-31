@@ -106,6 +106,11 @@ class SpringAuthTagger < FrameworkTagger
   # A `SecurityConfigurer` bean (`http -> http.authorizeExchange(..)`): a
   # chain assembled from configurers, with no chain method of its own.
   SECURITY_CONFIGURER_LAMBDA = /\bhttp\s*->\s*http\s*\.\s*(?:authorizeExchange|authorizeHttpRequests|authorizeRequests)\b/
+  ACCESS_NEG_AUTH            = /!\s*[\w$.]*\b(?:isAuthenticated|isFullyAuthenticated)\s*\(/
+  ACCESS_NEG_ANON            = /!\s*[\w$.]*\bisAnonymous\s*\(/
+  ACCESS_ANON                = /\bisAnonymous\s*\(/
+  ACCESS_AUTH                = /\b(?:isAuthenticated|isFullyAuthenticated)\b/
+  ACCESS_TYPE_TEST           = /\bisInstance\b|\binstanceof\b/
   ACCESS_NOTE                = "; a custom authorization manager decides, and the roles or permissions it reads can admit anonymous callers"
   AUTHORIZATION_DSL          = /\b(?:authorizeHttpRequests|authorizeRequests|authorizeExchange)\b/
   # Spring Security switched on without a chain of the app's own: its
@@ -918,6 +923,19 @@ class SpringAuthTagger < FrameworkTagger
     value == :true ? :false : :true
   end
 
+  # What an inline `access(<lambda>)` decides for a signed-out caller:
+  # `:open` (admits only anonymous callers: `!isAuthenticated`, `isAnonymous`),
+  # `:guard` (needs a signed-in one: `isAuthenticated`, `!isAnonymous`, a type
+  # test refusing on empty), nil when it is not a lambda or not readable.
+  private def access_lambda(arg : String) : Symbol?
+    return unless arg.matches?(/\A\s*(?:\([^()]*\)|[\w$]+)\s*->/)
+    return :open if arg.matches?(ACCESS_NEG_AUTH)
+    return :guard if arg.matches?(ACCESS_NEG_ANON)
+    return :open if arg.matches?(ACCESS_ANON)
+    return :guard if arg.matches?(ACCESS_AUTH)
+    :guard if arg.matches?(ACCESS_TYPE_TEST) && arg.matches?(/switchIfEmpty[^;]*false/m)
+  end
+
   # A request attribute is set on the server side (an earlier filter marking
   # the request authenticated), never by the caller: unset for a caller
   # without a credential.
@@ -1385,6 +1403,18 @@ class SpringAuthTagger < FrameworkTagger
                      (auth_type == "hasRole" && block.byte_slice(close + 1, slice_len).matches?(/\A\s*\.\s*hasRole\s*\(\s*["'](?:ROLE_)?ANONYMOUS["']\s*\)/)) ||
                      (auth_type == "hasAuthority" && block.byte_slice(close + 1, slice_len).matches?(/\A\s*\.\s*hasAuthority\s*\(\s*["'](?:ROLE_)?ANONYMOUS["']\s*\)/))
       protected_rule = auth_type != "permitAll" && !is_anonymous
+      # An inline `access((authentication, context) -> ..)` that admits only
+      # signed-out callers (`!isAuthenticated`) is a public page, not a guard.
+      access_verdict = nil
+      if auth_type == "access" && (paren = close + rule.byte_end(0)) < block.bytesize && block.to_unsafe[paren] == '('.ord
+        if access_close = Noir::JSLiteralScanner.find_matching_paren_at_byte(block, paren)
+          access_verdict = access_lambda(block.byte_slice(paren + 1, access_close - paren - 1))
+        end
+      end
+      if access_verdict == :open
+        protected_rule = false
+        is_anonymous = true
+      end
       matcher_method = request_matcher_method(args)
       config_keys = [] of String
       in_scope = loops_enclosing(loops, open)
@@ -1394,7 +1424,7 @@ class SpringAuthTagger < FrameworkTagger
       patterns.each do |url_pattern|
         description =
           if protected_rule
-            "Protected by Spring Security #{auth_type} via #{match[1]}(\"#{url_pattern}\")#{ACCESS_NOTE if auth_type == "access"}"
+            "Protected by Spring Security #{auth_type} via #{match[1]}(\"#{url_pattern}\")#{ACCESS_NOTE if auth_type == "access" && access_verdict.nil?}"
           elsif is_anonymous
             "Public by Spring Security anonymous via #{match[1]}(\"#{url_pattern}\")"
           else

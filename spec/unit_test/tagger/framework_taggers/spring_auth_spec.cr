@@ -3964,6 +3964,44 @@ describe "SpringAuthTagger (profile-bound and test chains)" do
     tags["GET /other"].should be_empty
   end
 
+  it "reads an inline access() lambda by who it admits" do
+    source = <<-JAVA
+      @Component
+      class Configurers {
+          @Bean
+          SecurityConfigurer a() {
+              return http -> http.authorizeExchange(spec -> {
+                  spec.pathMatchers(HttpMethod.GET, "/login", "/signup")
+                      .access((authentication, context) -> authentication
+                          .map(a -> !resolver.isAuthenticated(a))
+                          .defaultIfEmpty(true)
+                          .map(AuthorizationDecision::new));
+                  spec.pathMatchers("/logout")
+                      .access((authentication, context) -> authentication
+                          .map(a -> !resolver.isAnonymous(a))
+                          .map(AuthorizationDecision::new)
+                          .switchIfEmpty(Mono.fromSupplier(() -> new AuthorizationDecision(false))));
+                  spec.pathMatchers("/challenges/**")
+                      .access((authentication, context) -> authentication
+                          .map(TwoFactorAuthentication.class::isInstance)
+                          .map(AuthorizationDecision::new)
+                          .switchIfEmpty(Mono.fromSupplier(() -> new AuthorizationDecision(false))));
+                  spec.pathMatchers("/admin/**").access(new Manager());
+                  spec.pathMatchers("/guest/**").access((authentication, context) -> authentication.map(a -> resolver.isAnonymous(a)).map(AuthorizationDecision::new));
+              });
+          }
+      }
+      JAVA
+    tags = run_spring_security_config({"C.java" => source}, ["GET /login", "GET /signup", "GET /logout", "GET /challenges/totp", "GET /admin/x", "GET /guest/x"])
+    tags["GET /login"].should be_empty
+    tags["GET /signup"].should be_empty
+    tags["GET /guest/x"].should be_empty
+    tags["GET /logout"].size.should eq(1)
+    tags["GET /logout"][0].should_not contain("custom authorization manager")
+    tags["GET /challenges/totp"].size.should eq(1)
+    tags["GET /admin/x"][0].should contain("custom authorization manager decides")
+  end
+
   it "does not read a SecurityConfigurer declared in a test directory" do
     root = File.tempname("spring_test_configurer")
     path = File.join(root, "app/src/test/java/com/example/Configurers.java")
