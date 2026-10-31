@@ -176,6 +176,8 @@ module Analyzer::Python
           app_base_path = fastapi_base_path_for(app_file, fastapi_base_paths)
           configure_router_prefix(app_file, include_router_map, app_base_path, "", app_instance, prefix_visited)
         end
+        seed_unmounted_router_roots(include_router_map, fastapi_base_paths,
+          (fastapi_app_instances + parameter_app_instances).to_set, prefix_visited)
 
         include_router_map.each do |path, router_map|
           source = read_file_content(path)
@@ -406,8 +408,11 @@ module Analyzer::Python
       # routes/__init__.py — with an empty path, which cut every prefix
       # chain that runs through a package `__init__.py`. Fill those from
       # the symbol resolver, which names the package's `__init__.py`.
-      if import_modules.any? { |_, info| info[0].empty? }
-        Noir::ImportGraph::Python.find_imported_symbols(app_base_path, file_path, source).each do |name, symbol|
+      # Both roots, as for modules: `from portal import router` beside the
+      # importing file names `portal/__init__.py` only from its directory.
+      (local_base_path == app_base_path ? {app_base_path} : {app_base_path, local_base_path}).each do |root|
+        break unless import_modules.any? { |_, info| info[0].empty? }
+        Noir::ImportGraph::Python.find_imported_symbols(root, file_path, source).each do |name, symbol|
           existing = import_modules[name]?
           next unless existing && existing[0].empty?
           import_modules[name] = {symbol[0], existing[1]}
@@ -505,6 +510,109 @@ module Analyzer::Python
         end
         visited.delete(visit_key)
       end
+    end
+
+    # A router handed to a helper that includes its parameter into an app is
+    # served under its own prefix, and the routers it includes under it.
+    # Polar builds `APIRouter(prefix="/v1")` and passes it to
+    # `add_versioned_routers(app, router, ...)`, whose
+    # `app.include_router(api_router)` names a parameter: every router below
+    # lost `/v1`, and `/customer-portal` in turn. Only such a router is
+    # seeded, and only when nothing includes it: a router never mounted (dead
+    # code) or mounted only from a test keeps its bare own-prefix routes, as
+    # before, rather than lending its prefix to a whole subtree.
+    private def seed_unmounted_router_roots(include_router_map : Hash(::String, Hash(::String, Router)),
+                                            project_roots : Array(::String),
+                                            apps : Set(Tuple(::String, ::String)),
+                                            visited : Set(::String)) : Nil
+      included = Set(Tuple(::String, ::String)).new
+      include_router_map.each do |file, routers|
+        source = read_file_content(file)
+        next unless source.includes?("include_router")
+        import_modules = find_fastapi_imported_modules(fastapi_base_path_for(file, project_roots), file, source)
+        routers.each_key do |name|
+          extract_include_router_calls(source, name).each do |args|
+            target_name = extract_include_router_target(args)
+            next if target_name.empty?
+            if target = resolve_router_reference(file, source, import_modules, include_router_map, target_name)
+              included << target
+            end
+          end
+        end
+      end
+      handed = routers_handed_to_include_helpers(include_router_map, project_roots)
+      return if handed.empty?
+      include_router_map.each do |file, routers|
+        routers.each do |name, router|
+          key = {file, name}
+          next unless router.mounted_prefixes.empty? && handed.includes?(key)
+          next if apps.includes?(key) || included.includes?(key)
+          configure_router_prefix(file, include_router_map, fastapi_base_path_for(file, project_roots), "", name, visited)
+        end
+      end
+    end
+
+    HELPER_DEF    = /^(\s*)(?:async\s+)?def\s+([A-Za-z_]\w*)\s*\(/
+    INCLUDE_PARAM = /\.\s*include_router\s*\(\s*([A-Za-z_]\w*)\s*[,)]/
+
+    # The routers passed, as an argument a function includes into an app or
+    # router (`def add_routers(app, api_router): app.include_router(api_router)`),
+    # at one of that function's call sites.
+    private def routers_handed_to_include_helpers(include_router_map : Hash(::String, Hash(::String, Router)),
+                                                  project_roots : Array(::String)) : Set(Tuple(::String, ::String))
+      handed = Set(Tuple(::String, ::String)).new
+      helpers = Hash(::String, Array(Tuple(Int32, ::String))).new
+      sources = python_source_files.map { |path| {path, read_file_content(path)} }
+      sources.each do |_, source|
+        next unless source.includes?("include_router")
+        lines = source.split("\n")
+        lines.each_with_index do |line, idx|
+          next unless m = line.match(HELPER_DEF)
+          header = join_until_python_call_closes(lines, idx, line)
+          params = split_python_arguments(header.partition('(')[2].rpartition(')')[0]).compact_map do |arg|
+            arg.strip.lstrip('*').match(/\A[A-Za-z_]\w*/).try(&.[0])
+          end
+          indent = m[1].size
+          # The body starts past the signature, whose `) -> None:` may sit
+          # back at the `def`'s indent.
+          body_start = idx
+          while body_start < lines.size && !strip_python_comment(lines[body_start]).rstrip.ends_with?(':')
+            body_start += 1
+          end
+          lines[(body_start + 1)..].each do |body_line|
+            next if body_line.blank?
+            break if body_line.size - body_line.lstrip.size <= indent
+            if (included = body_line.match(INCLUDE_PARAM)) && (position = params.index(included[1]))
+              (helpers[m[2]] ||= [] of Tuple(Int32, ::String)) << {position, included[1]}
+            end
+          end
+        end
+      end
+      return handed if helpers.empty?
+      call_re = /(?<![\w.])(?:[A-Za-z_]\w*\.)?(#{helpers.keys.map { |name| Regex.escape(name) }.join('|')})\s*\(/
+      sources.each do |path, source|
+        next unless source.matches?(call_re)
+        import_modules : Hash(::String, Tuple(::String, Int32))? = nil
+        lines = source.split("\n")
+        lines.each_with_index do |line, idx|
+          next if line.lstrip.starts_with?("def ") || line.lstrip.starts_with?("async def ")
+          next unless call = line.match(call_re)
+          text = join_until_python_call_closes(lines, idx, line)
+          tail = text[(text.index(call[0]) || 0) + call[0].size..]
+          args = split_python_arguments(tail.rpartition(')')[0])
+          helpers[call[1]].each do |position, param|
+            arg = args.find(&.strip.starts_with?("#{param}=")).try(&.partition('=')[2]) ||
+                  (args[position]?.try { |positional| positional.includes?('=') ? nil : positional })
+            name = arg.try(&.strip) || next
+            next unless name.matches?(/\A[A-Za-z_]\w*\z/)
+            import_modules ||= find_fastapi_imported_modules(fastapi_base_path_for(path, project_roots), path, source)
+            if target = resolve_router_reference(path, source, import_modules, include_router_map, name)
+              handed << target
+            end
+          end
+        end
+      end
+      handed
     end
 
     private def fastapi_project_roots(app_instances : Array(Tuple(::String, ::String))) : Array(::String)
