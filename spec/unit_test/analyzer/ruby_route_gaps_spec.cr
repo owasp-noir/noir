@@ -642,4 +642,69 @@ describe "Ruby route gaps" do
     find_ep(endpoints, "POST", "/users/confirmation").params.map { |p| "#{p.name}:#{p.param_type}" }.should eq(%w[email:json])
     find_ep(endpoints, "POST", "/users/unlock").params.map { |p| "#{p.name}:#{p.param_type}" }.should eq(%w[email:json])
   end
+
+  it "joins a hash-rocket route whose controller#action sits on the next line, and maps a dashed member path to its underscored action" do
+    endpoints = scan_ruby_tree({
+      "Gemfile"                                   => RAILS_GEMFILE,
+      "app/controllers/application_controller.rb" => "class ApplicationController < ActionController::API\nend\n",
+      "app/controllers/users_controller.rb"       => <<-RUBY,
+        class UsersController < ApplicationController
+          def reset_bounce_score; end
+          def update_section; end
+        end
+        RUBY
+      "config/routes.rb" => <<-RUBY,
+        Rails.application.routes.draw do
+          resources :users, only: [] do
+            member do
+              post "reset-bounce-score"
+            end
+          end
+          put "dash/:id/section" =>
+                "users#update_section",
+              :constraints => { id: /d+/ }
+        end
+        RUBY
+    })
+
+    find_ep(endpoints, "POST", "/users/:id/reset-bounce-score").handler.try(&.name).should eq("users#reset_bounce_score")
+    find_ep(endpoints, "PUT", "/dash/:id/section").handler.try(&.name).should eq("users#update_section")
+  end
+
+  it "unrolls an each loop over a list the app defines as a literal, in block and brace form" do
+    endpoints = scan_ruby_tree({
+      "Gemfile"                                   => RAILS_GEMFILE,
+      "app/controllers/application_controller.rb" => "class ApplicationController < ActionController::API\nend\n",
+      "app/controllers/list_controller.rb"        => "class ListController < ApplicationController\n  def latest; end\n  def top; end\nend\n",
+      "lib/discourse.rb"                          => <<-RUBY,
+        module Discourse
+          def self.filters
+            @filters ||= %i[latest top]
+          end
+
+          def self.computed
+            @computed ||= filters.map(&:to_s)
+          end
+        end
+        RUBY
+      "config/routes.rb" => <<-RUBY,
+        Rails.application.routes.draw do
+          Discourse.filters.each { |filter| get "\#{filter}" => "list#\#{filter}" }
+          scope "/c" do
+            Discourse.filters.each do |filter|
+              get "/l/\#{filter}" => "list#\#{filter}"
+            end
+          end
+          Discourse.computed.each { |kind| get "k/\#{kind}" => "list#latest" }
+        end
+        RUBY
+    })
+
+    find_ep(endpoints, "GET", "/latest").handler.try(&.name).should eq("list#latest")
+    find_ep(endpoints, "GET", "/top").handler.try(&.name).should eq("list#top")
+    find_ep(endpoints, "GET", "/c/l/top")
+    # A computed list stays unresolved: no route is invented from the loop.
+    endpoints.none? { |e| e.url.starts_with?("/k/") }.should be_true
+    endpoints.none? { |e| e.url.includes?("filter") }.should be_true
+  end
 end
