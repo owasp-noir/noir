@@ -26,5 +26,10 @@ describe "Ktor optional session reads", tags: "functional" do
 
     guards.call("/login").should be_empty
     guards.call("/secret").should eq(["Protected by Ktor session check"])
+
+    login = endpoints.find { |item| item.method == "GET" && item.url == "/login" }
+    login.should_not be_nil
+    login.not_nil!.params.map(&.name).should eq(["userId", "error"])
+    login.not_nil!.params.map(&.param_type).should eq(["query", "query"])
   end
 end

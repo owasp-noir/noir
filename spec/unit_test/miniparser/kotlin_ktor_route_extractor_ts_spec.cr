@@ -583,10 +583,73 @@ describe Noir::TreeSitterKotlinKtorRouteExtractor do
       resources = Noir::TreeSitterKotlinKtorRouteExtractor.extract_resource_classes(source)
       paths = Noir::TreeSitterKotlinKtorRouteExtractor.compose_resource_paths(resources)
       routes = Noir::TreeSitterKotlinKtorRouteExtractor.extract_routes(source, resource_paths: paths)
-      routes.map { |r| {r.verb, r.path} }.sort!.should eq([
-        {"GET", "/login"},
-        {"POST", "/login"},
+      routes.map { |r| {r.verb, r.path, r.query_params} }.sort_by!(&.first).should eq([
+        {"GET", "/login", ["userName"]},
+        {"POST", "/login", ["userName"]},
       ])
+    end
+
+    it "extracts query parameters from @Resource constructor properties not in path template" do
+      source = <<-KT
+        data class UserSession(val userId: String)
+
+        @Resource("/login")
+        data class Login(val userId: String = "", val error: String = "")
+
+        fun Application.module() {
+            routing {
+                get<Login> {
+                    val user = call.sessions.get<UserSession>()
+                    if (user != null) call.respondRedirect("/") else call.respondText("login form ${it.userId} ${it.error}")
+                }
+                post<Login> {
+                    val post = call.receive<Parameters>()
+                    val userId = post["userId"] ?: return@post call.respondRedirect("/login")
+                    val password = post["password"] ?: return@post call.respondRedirect("/login")
+                    call.respondText("$userId $password")
+                }
+            }
+        }
+        KT
+
+      routes = Noir::TreeSitterKotlinKtorRouteExtractor.extract_routes(source)
+      get_login = routes.find! { |r| r.verb == "GET" && r.path == "/login" }
+      get_login.query_params.should eq(["userId", "error"])
+      get_login.form_params.should be_empty
+      get_login.has_body?.should be_false
+
+      post_login = routes.find! { |r| r.verb == "POST" && r.path == "/login" }
+      post_login.query_params.should eq(["userId", "error"])
+      post_login.form_params.should eq(["userId", "password"])
+      post_login.has_body?.should be_false
+    end
+
+    it "composes nested @Resource query params excluding path placeholders" do
+      source = <<-KT
+        @Resource("/articles")
+        data class Articles(val sort: String? = "new") {
+            @Resource("{id}")
+            data class Id(
+                val parent: Articles = Articles(),
+                val id: Long,
+                val includeComments: Boolean = false
+            )
+        }
+
+        fun Application.module() {
+            routing {
+                get<Articles> { }
+                get<Articles.Id> { }
+            }
+        }
+        KT
+
+      routes = Noir::TreeSitterKotlinKtorRouteExtractor.extract_routes(source)
+      articles = routes.find! { |r| r.path == "/articles" }
+      articles.query_params.should eq(["sort"])
+
+      id_route = routes.find! { |r| r.path == "/articles/{id}" }
+      id_route.query_params.should eq(["sort", "includeComments"])
     end
   end
 
