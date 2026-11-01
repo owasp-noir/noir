@@ -64,6 +64,10 @@ describe "C# declaration shapes", tags: "functional" do
     guarded.call(endpoints, "GET", "/api/outer/after-nested").should be_true
     guarded.call(endpoints, "GET", "/api/items/{id}").should be_true
     guarded.call(endpoints, "GET", "/api/split/one").should be_false
+    # `#if`/`#else` each opening the method's brace keep the rest of the file.
+    guarded.call(endpoints, "GET", "/api/pp/one").should be_true
+    guarded.call(endpoints, "GET", "/api/pp/two").should be_true
+    guarded.call(endpoints, "GET", "/api/pp-open/o").should be_false
   end
 
   it "reads minimal API auth on masked statements only" do
@@ -73,6 +77,13 @@ describe "C# declaration shapes", tags: "functional" do
     # The one-line `[Authorize]` method around the route is not its handler.
     endpoints.find! { |e| e.url == "/m6" }.tags.map(&.name).should_not contain("auth")
     find.call(endpoints, "POST", "/ghost").should be_nil
+    # The declaring class's `[AllowAnonymous]` / `[Authorize]` is not the
+    # route's: ASP.NET reads only the handler's and the route's conventions.
+    auth_tag = ->(url : String) { endpoints.find! { |e| e.url == url }.tags.any? { |t| t.name == "auth" } }
+    auth_tag.call("/admin/users").should be_true
+    auth_tag.call("/admin/users/{id}").should be_true
+    auth_tag.call("/admin/g/wipe").should be_true
+    auth_tag.call("/users").should be_false
   end
 
   it "reads Wolverine, classic MVC, Carter and FastEndpoints declarations" do

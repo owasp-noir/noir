@@ -196,14 +196,17 @@ class AspnetAuthTagger < FrameworkTagger
 
       # Check for [AllowAnonymous] on this action or its controller:
       # anonymous access wins over any [Authorize] in ASP.NET Core.
-      class_attrs = class_attributes(path_info.path, line_idx)
-      # A minimal API route sits in a statement; the member around it (a
-      # one-line `[Authorize] void Map(...) { app.MapGet(...); }`) is not
-      # its handler.
-      action_attrs = ROUTE_STATEMENT_TECHS.includes?(endpoint.details.technology) ? [] of Attr : member_attributes(path_info.path, line_idx)
+      # A minimal API route sits in a statement: ASP.NET reads no attribute
+      # of the member or class declaring it (a one-line `[Authorize] void
+      # Map(...) { app.MapGet(...); }`, an `[AllowAnonymous] static class
+      # AdminEndpoints`), only the handler's and the route's conventions.
+      statement_route = ROUTE_STATEMENT_TECHS.includes?(endpoint.details.technology)
+      class_attrs = statement_route ? [] of Attr : class_attributes(path_info.path, line_idx)
+      action_attrs = statement_route ? [] of Attr : member_attributes(path_info.path, line_idx)
       # `[Authorize]`/`[AllowAnonymous]` are inherited: a controller takes
       # them from its base classes too.
       chain, project_file = owner_chain(endpoint, class_chain(path_info.path, line_idx), path_info.path)
+      chain = [] of ClassDecl if statement_route
       lists = [action_attrs] + chain.map(&.attributes)
       # `[AllowAnonymous]` lifts `[Authorize]` and app-wide policies, not a
       # filter that does not read it, nor a refusal the action makes itself.
@@ -232,7 +235,7 @@ class AspnetAuthTagger < FrameworkTagger
       end
 
       # Check Minimal API fluent .RequireAuthorization() on the route statement
-      description = check_minimal_api_fluent(lines, line_idx)
+      description = check_minimal_api_fluent(path_info.path, lines, line_idx)
       return if description == ""
       if description
         endpoint.add_tag(Tag.new("auth", "Protected by #{description}", "aspnet_auth"))
@@ -892,7 +895,7 @@ class AspnetAuthTagger < FrameworkTagger
   # Inside a route-builder extension method, the chain reaching the builder
   # the method returns, or its `this` builder, inherits the authorization
   # its call sites chain on (`orders.MapOrdersApi().RequireAuthorization()`).
-  private def check_minimal_api_fluent(lines : Array(String), route_line : Int32, depth : Int32 = 0,
+  private def check_minimal_api_fluent(path : String, lines : Array(String), route_line : Int32, depth : Int32 = 0,
                                        chain : Array(String) = [] of String, origin : Int32 = route_line) : String?
     statement = statement_at(lines, route_line)
 
@@ -903,32 +906,71 @@ class AspnetAuthTagger < FrameworkTagger
     receiver = (statement.match(MINIMAL_API_RECEIVER) || statement.match(GROUP_DECLARATION_RECEIVER)).try(&.[1])
     return unless receiver
     chain << receiver
-    return "ASP.NET .RequireAuthorization() (route group)" if group_statement_auth?(lines, route_line, receiver)
+    index = fluent_index(path, lines)
+    return "ASP.NET .RequireAuthorization() (route group)" if group_statement_auth?(index, route_line, receiver)
     unless receiver == "app"
-      declaration = /\b#{Regex.escape(receiver)}\s*=\s*[\w.]*MapGroup\s*\(/
-      (0...route_line).reverse_each do |idx|
-        next unless lines[idx].matches?(declaration)
-        return check_minimal_api_fluent(lines, idx, depth + 1, chain, origin)
+      if idx = nearest_before(index.groups[receiver]?, route_line)
+        return check_minimal_api_fluent(path, lines, idx, depth + 1, chain, origin)
       end
     end
     extension_auth(lines, origin, chain)
   end
 
+  # Per file: the brace depth before each line, the member declarations,
+  # and the lines holding each receiver's `x.RequireAuthorization(...)`
+  # statement and `x = ….MapGroup(` declaration. Built once, so a file
+  # mapping thousands of routes on one group stays linear.
+  record FluentIndex, depth : Array(Int32), members : Array(Int32),
+    statements : Hash(String, Array(Int32)), groups : Hash(String, Array(Int32))
+
+  GROUP_STATEMENT_RE   = /^\s*(\w+)\s*\.\s*RequireAuthorization\s*\(/
+  GROUP_DECLARATION_RE = /\b(\w+)\s*=\s*[\w.]*MapGroup\s*\(/
+
+  @fluent_indexes = Hash(String, FluentIndex).new
+
+  private def fluent_index(path : String, lines : Array(String)) : FluentIndex
+    @fluent_indexes[path] ||= begin
+      depth = [] of Int32
+      members = [] of Int32
+      statements = Hash(String, Array(Int32)).new
+      groups = Hash(String, Array(Int32)).new
+      level = 0
+      lines.each_with_index do |line, idx|
+        depth << level
+        level += line.count('{') - line.count('}')
+        members << idx if line.matches?(MEMBER_DECLARATION)
+        line.match(GROUP_STATEMENT_RE).try { |m| (statements[m[1]] ||= [] of Int32) << idx }
+        line.scan(GROUP_DECLARATION_RE) { |m| (groups[m[1]] ||= [] of Int32) << idx }
+      end
+      depth << level
+      FluentIndex.new(depth, members, statements, groups)
+    end
+  end
+
+  private def nearest_before(lines : Array(Int32)?, route_line : Int32, & : Int32 -> Bool) : Int32?
+    return unless lines
+    lines.reverse_each do |idx|
+      return idx if idx < route_line && yield idx
+    end
+    nil
+  end
+
+  private def nearest_before(lines : Array(Int32)?, route_line : Int32) : Int32?
+    nearest_before(lines, route_line) { true }
+  end
+
   # A `group.RequireAuthorization(...)` statement of its own, earlier in the
   # scope the route at `route_line` is mapped in: a convention added to a
-  # group applies to every endpoint of it. The walk goes back through
-  # enclosing blocks and stops at the enclosing member's declaration.
-  private def group_statement_auth?(lines : Array(String), route_line : Int32, receiver : String) : Bool
+  # group applies to every endpoint of it. The scope runs back through
+  # enclosing blocks and stops at the enclosing member's declaration: the
+  # nearest statement at or above the route's depth must come after the
+  # nearest member declaration enclosing it.
+  private def group_statement_auth?(index : FluentIndex, route_line : Int32, receiver : String) : Bool
     return false if receiver == "app"
-    statement = /^\s*#{Regex.escape(receiver)}\s*\.\s*RequireAuthorization\s*\(/
-    depth = 0
-    (0...route_line).reverse_each do |idx|
-      line = lines[idx]
-      depth += line.count('}') - line.count('{')
-      return false if depth < 0 && line.matches?(MEMBER_DECLARATION)
-      return true if depth <= 0 && line.matches?(statement)
-    end
-    false
+    at = index.depth[route_line]
+    statement = nearest_before(index.statements[receiver]?, route_line) { |idx| index.depth[idx] <= at } || return false
+    member = nearest_before(index.members, route_line) { |idx| index.depth[idx] < at }
+    member.nil? || statement > member
   end
 
   # A method or local function, with or without an access modifier.

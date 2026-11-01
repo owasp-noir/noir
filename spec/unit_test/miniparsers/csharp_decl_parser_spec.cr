@@ -128,6 +128,32 @@ describe Noir::CSharpDeclParser do
     unit.member_at(6).try(&.name).should eq "N"
   end
 
+  it "reads past #if/#else branches that each open the same brace" do
+    unit = parse(<<-CS)
+      class A
+      {
+      #if DEBUG
+          public void One(int a) {
+      #elif TRACE
+          public void One(long a) {
+      #else
+          public void One() {
+      #endif
+          }
+      #if DEBUG
+          [HttpGet("dbg")]
+      #else
+          [HttpGet("rel")]
+      #endif
+          public void Two() { }
+      }
+      class B { void C() { } }
+      CS
+    unit.types.map(&.name).should eq ["A", "B"]
+    unit.types.first.methods.map(&.name).should eq ["One", "Two"]
+    method(unit, "Two").attributes.compact_map(&.positional.first?.try(&.literal)).should eq ["dbg", "rel"]
+  end
+
   it "skips top-level statements without inventing members" do
     unit = parse(<<-CS)
       var app = WebApplication.CreateBuilder(args).Build();

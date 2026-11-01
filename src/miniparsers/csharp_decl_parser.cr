@@ -228,12 +228,13 @@ module Noir
     @size : Int32
     @line_starts : Array(Int32)
 
-    def initialize(@lexer : CSharpLexer)
-      @m = lexer.masked
+    def initialize(lexer : CSharpLexer)
+      @m = lexer.masked.dup
       @code = lexer.code_source.chars
       @size = @m.size
       @line_starts = [0]
       @m.each_with_index { |char, i| @line_starts << i + 1 if char == '\n' }
+      blank_unbalanced_branches
       @types = [] of TypeDecl
       @top_types = [] of TypeDecl
     end
@@ -285,9 +286,59 @@ module Noir
       {masked_text(start, j), j}
     end
 
+    # `#if A … {` / `#else … {` / `#endif` opens one brace in source but
+    # two in text: the braces of a later branch whose own braces do not
+    # balance are blanked, so the first branch alone shapes the structure.
+    # A balanced later branch (attributes, a whole member) is kept.
+    private def blank_unbalanced_branches : Nil
+      groups = [] of Array(Tuple(Int32, Int32))
+      starts = [] of Int32
+      @line_starts.each_with_index do |line_start, index|
+        next_line = @line_starts[index + 1]? || @size
+        i = skip_ws(line_start, next_line)
+        next unless i < next_line && @m[i] == '#'
+        directive = read_ident(skip_ws(i + 1, next_line), next_line).try(&.[0]) || next
+        case directive
+        when "if"
+          groups << [] of Tuple(Int32, Int32)
+          starts << next_line
+        when "elif", "else"
+          next if groups.empty?
+          groups.last << {starts.last, line_start}
+          starts[-1] = next_line
+        when "endif"
+          next if groups.empty?
+          branches = groups.pop
+          branches << {starts.pop, line_start}
+          branches[1..].each do |(from, to)|
+            next if (from...to).sum { |k| @m[k] == '{' ? 1 : (@m[k] == '}' ? -1 : 0) } == 0
+            (from...to).each { |k| @m[k] = ' ' if @m[k] == '{' || @m[k] == '}' }
+          end
+        end
+      end
+    end
+
+    # Index of the delimiter closing the `(`/`[`/`{` at `open`, before `stop`.
     private def matching(open : Int32, stop : Int32) : Int32?
-      close = @lexer.matching_delimiter(open)
-      close if close && close < stop
+      close = case @m[open]?
+              when '(' then ')'
+              when '[' then ']'
+              when '{' then '}'
+              else          return
+              end
+      opener = @m[open]
+      depth = 0
+      i = open
+      while i < stop
+        char = @m[i]
+        if char == opener
+          depth += 1
+        elsif char == close
+          depth -= 1
+          return i if depth == 0
+        end
+        i += 1
+      end
     end
 
     # Index of the `>` closing the `<` at `open`, or nil.
@@ -306,8 +357,18 @@ module Noir
       end
     end
 
+    # Index just after the `;` at or after `i` outside every bracket.
     private def statement_end(i : Int32, stop : Int32) : Int32
-      Math.min(@lexer.statement_end(i), stop)
+      depth = 0
+      while i < stop
+        case @m[i]
+        when '(', '[', '{' then depth += 1
+        when ')', ']', '}' then depth -= 1 if depth > 0
+        when ';'           then return i + 1 if depth == 0
+        end
+        i += 1
+      end
+      stop
     end
 
     # Start of the line holding `i` when only whitespace precedes it there.
