@@ -245,6 +245,29 @@ describe "SpringAuthTagger annotation-collected permitAll" do
     end
   end
 
+  it "requires the guarded add to fill the collection the method returns" do
+    me = <<-JAVA
+      class M {
+          @AnonymousAccess
+          @GetMapping("/me")
+          public String me() { return "x"; }
+      }
+      JAVA
+    loop_head = "for (Map.Entry<RequestMappingInfo, HandlerMethod> e : mapping.getHandlerMethods().entrySet())"
+    collectors = {
+      "else branch adds"      => "static Set<String> urls(Ctx c) {\n Set<String> urls = new HashSet<>(); Set<String> secured = new HashSet<>();\n #{loop_head} {\n if (e.getValue().getMethodAnnotation(AnonymousAccess.class) != null) { secured.add(\"x\"); } else { urls.add(\"x\"); }\n }\n return urls;\n }",
+      "all minus secured"     => "static Set<String> urls(Ctx c) {\n Set<String> all = new HashSet<>(); Set<String> secured = new HashSet<>();\n #{loop_head} {\n all.add(\"x\");\n if (e.getValue().getMethodAnnotation(AnonymousAccess.class) != null) { secured.add(\"x\"); }\n }\n all.removeAll(secured);\n return all;\n }",
+      "add outside the guard" => "static Set<String> urls(Ctx c) {\n Set<String> urls = new HashSet<>();\n urls.add(\"/seed\");\n #{loop_head} {\n if (e.getValue().getMethodAnnotation(AnonymousAccess.class) != null) { urls.add(\"x\"); }\n }\n return urls;\n }",
+    }
+    collectors.each do |label, method|
+      files = marker_files.merge({"#{MARKER_DIR}AnonUtils.java" => "class AnonUtils {\n #{method}\n}\n", "#{MARKER_DIR}M.java" => me})
+      run_spring_markers(files, {"GET /me" => "#{MARKER_DIR}M.java:3"})["GET /me"].should eq([ANY_REQUEST]), label
+    end
+    wired = "static Map<String, Set<String>> urls(Ctx c) {\n Map<String, Set<String>> out = new HashMap<>(); Set<String> get = new HashSet<>();\n #{loop_head} {\n if (e.getValue().getMethodAnnotation(AnonymousAccess.class) != null) { get.addAll(patterns(e)); }\n }\n out.put(\"GET\", get);\n return out;\n }"
+    files = marker_files.merge({"#{MARKER_DIR}AnonUtils.java" => "class AnonUtils {\n #{wired}\n}\n", "#{MARKER_DIR}M.java" => me})
+    run_spring_markers(files, {"GET /me" => "#{MARKER_DIR}M.java:3"})["GET /me"].should be_empty
+  end
+
   it "reads a bare positive has-test and a variable tested with != null" do
     me = <<-JAVA
       class M {

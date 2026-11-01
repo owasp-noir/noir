@@ -2368,43 +2368,75 @@ class SpringAuthTagger < FrameworkTagger
     end
   end
 
-  # The `if` whose condition is `condition_range` guards a body that adds a
-  # URL and does not leave the loop (`continue` / `return`).
-  private def adds_in_body?(text : String, after_paren : Int32) : Bool
+  ADD_CALL      = /\b(?:add|addAll|put|putAll)\s*\(/
+  RECEIVER_CALL = /([\w$]+)\s*\.\s*(add|addAll|put|putAll|remove|removeAll|removeIf|retainAll|clear)\s*\(/
+
+  # The body an `if` (its condition closing at `after_paren`) guards, as a
+  # range of `text`, when it adds a URL, does not leave the loop
+  # (`continue` / `return`) and has no `else` branch.
+  private def adds_in_body(text : String, after_paren : Int32) : Range(Int32, Int32)?
     rest = text[after_paren + 1..]
     stripped = rest.lstrip
-    inner =
-      if stripped.starts_with?('{')
-        brace_body(stripped, 1)
-      else
-        stripped[0, (stripped.index(';') || stripped.size) + 1]
-      end
-    inner.matches?(ADDS_URL) && !inner.matches?(LEAVES_LOOP)
+    first = after_paren + 1 + (rest.size - stripped.size)
+    if stripped.starts_with?('{')
+      inner = brace_body(stripped, 1)
+      from = first + 1
+    else
+      inner = stripped[0, (stripped.index(';') || stripped.size) + 1]
+      from = first
+    end
+    to = from + inner.size
+    return if !inner.matches?(ADDS_URL) || inner.matches?(LEAVES_LOOP)
+    return if text[to..].lstrip.starts_with?("else")
+    from...to
+  end
+
+  # The method hands back the one collection (or map) the guarded bodies add
+  # to: every add in them targets it, or a set put into it; nothing else adds
+  # to it, removes from it, or fills a set outside those bodies; no `else`.
+  private def collects_into_returned?(body : String, ranges : Array(Range(Int32, Int32))) : Bool
+    returned = body.scan(/\breturn\s+([\w$]+)\s*;/).map(&.[1]).uniq!
+    return false unless returned.size == 1 && body.scan(/\breturn\b/).size == body.scan(/\breturn\s+[\w$]+\s*;/).size
+    target = returned.first
+    derived = Set{target}
+    body.scan(/\b#{Regex.escape(target)}\s*\.\s*(?:put|putAll)\s*\(([^;]*)\)\s*;/) { |put| put[1].scan(/\b[a-z_$][\w$]*/) { |word| derived << word[0] } }
+    blanked = body.dup
+    ranges.each do |range|
+      inside = body[range]
+      receivers = inside.scan(RECEIVER_CALL)
+      return false unless receivers.size == inside.scan(ADD_CALL).size && receivers.all? { |call| derived.includes?(call[1]) }
+      blanked = blanked[0, range.begin] + " " * range.size + blanked[range.end..]
+    end
+    blanked.scan(RECEIVER_CALL) do |call|
+      next unless derived.includes?(call[1])
+      return false unless call[1] == target && {"put", "putAll"}.includes?(call[2])
+    end
+    true
   end
 
   # `read` (a MatchData of a lookup in `body`) is a positive presence test
   # (`!= null`, or a bare boolean `has…`/`isAnnot…`), directly in an `if`, or
   # through a variable the `if` then tests, whose body adds a URL.
-  private def positive_add_guard?(body : String, read : Regex::MatchData) : Bool
-    call_end = (body.index(')', read.end(0)) || return false) + 1
+  private def positive_add_guard?(body : String, read : Regex::MatchData) : Range(Int32, Int32)?
+    call_end = (body.index(')', read.end(0)) || return) + 1
     call_start = receiver_start(body, read.begin(0))
     call = body[call_start...call_end]
     boolean_read = call.matches?(/\b(?:has|isAnnot)\w*\s*\(/)
     before = body[0, call_start].rstrip
     if before.ends_with?('=') && !before.ends_with?("==") && !before.ends_with?("!=")
-      return false unless variable = before[0...-1].rstrip.match(/([\w$]+)\z/)
-      return false unless test = body[call_end..].match(/\bif\s*\(/)
+      return unless variable = before[0...-1].rstrip.match(/([\w$]+)\z/)
+      return unless test = body[call_end..].match(/\bif\s*\(/)
       open = call_end + test.end(0) - 1
-      return false unless close = paren_close(body, open)
-      return false unless body[open + 1...close].strip.matches?(/\A(?:#{Regex.escape(variable[1])}\s*!=\s*null|null\s*!=\s*#{Regex.escape(variable[1])})\z/)
-      return adds_in_body?(body, close)
+      return unless close = paren_close(body, open)
+      return unless body[open + 1...close].strip.matches?(/\A(?:#{Regex.escape(variable[1])}\s*!=\s*null|null\s*!=\s*#{Regex.escape(variable[1])})\z/)
+      return adds_in_body(body, close)
     end
-    return false unless open = body.rindex(/\bif\s*\(/, call_start).try { |at| body.index('(', at) }
-    return false unless (close = paren_close(body, open)) && close >= call_end
+    return unless open = body.rindex(/\bif\s*\(/, call_start).try { |at| body.index('(', at) }
+    return unless (close = paren_close(body, open)) && close >= call_end
     condition = body[open + 1...close].sub(call.strip, "R")
-    return false unless condition.matches?(POSITIVE_TEST)
-    return false if condition.strip == "R" && !boolean_read
-    adds_in_body?(body, close)
+    return unless condition.matches?(POSITIVE_TEST)
+    return if condition.strip == "R" && !boolean_read
+    adds_in_body(body, close)
   end
 
   private def brace_body(masked : String, start : Int32) : String
@@ -2441,7 +2473,8 @@ class SpringAuthTagger < FrameworkTagger
           # Whitelist-by-default collectors (`== null` adds, `continue`, `!`)
           # make the protected handlers public: every read must be a positive
           # test guarding an add, or the method is no marker source at all.
-          next unless reads.all? { |read, _| positive_add_guard?(body, read) }
+          ranges = reads.compact_map { |read, _| positive_add_guard?(body, read) }
+          next unless ranges.size == reads.size && collects_into_returned?(body, ranges)
           merged = reads.select(&.[1]).map(&.[0][1])
           names = reads.map(&.[0][1])
           key = "#{MARKER_KEY}#{file}##{name}"
