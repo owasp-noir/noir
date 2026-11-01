@@ -248,7 +248,7 @@ module Analyzer::Typescript
 
     TRPC_ROOT_MARKER_RE  = Regex.union("initTRPC", "createTRPCRouter")
     TRPC_MENTION_RE      = /trpc/i
-    V9_ROUTER_MARKER_RE  = Regex.union("createRouter", "trpc.router")
+    V9_ROUTER_MARKER_RE  = Regex.union("createRouter", "trpc.router", ".router")
     PROCEDURE_BUILDER_RE = Regex.union("Procedure", ".procedure")
 
     private def trpc_candidate?(content : String) : Bool
@@ -629,6 +629,8 @@ module Analyzer::Typescript
       {"query", "mutation", "subscription"}.includes?(prop_name)
     end
 
+    private V9_CHAIN_METHODS = {"query", "mutation", "subscription", "merge", "middleware"}
+
     private def v9_chain_router?(node : LibTreeSitter::TSNode, source : String) : Bool
       curr = node
       has_chain_methods = false
@@ -639,21 +641,34 @@ module Analyzer::Typescript
         if Noir::TreeSitter.node_type(fn_u) == "member_expression"
           prop = Noir::TreeSitter.field(fn_u, "property")
           prop_name = property_key_name(prop, source)
-          if {"query", "mutation", "subscription", "merge"}.includes?(prop_name)
+          if V9_CHAIN_METHODS.includes?(prop_name)
             has_chain_methods = true
+            if obj = Noir::TreeSitter.field(fn_u, "object")
+              curr = Noir::TreeSitter.unwrap_expression(obj)
+              next
+            end
           end
-          if obj = Noir::TreeSitter.field(fn_u, "object")
-            curr = Noir::TreeSitter.unwrap_expression(obj)
-          else
-            break
-          end
-        else
-          break
         end
+        break
       end
       return false unless has_chain_methods
-      root_text = Noir::TreeSitter.node_text(curr, source)
-      root_text.includes?("createRouter") || root_text.includes?("trpc.router")
+      v9_router_root?(curr, source)
+    end
+
+    private def v9_router_root?(node : LibTreeSitter::TSNode, source : String) : Bool
+      return false unless Noir::TreeSitter.node_type(node) == "call_expression"
+      fn = Noir::TreeSitter.field(node, "function") || return false
+      fn_u = Noir::TreeSitter.unwrap_expression(fn)
+      case Noir::TreeSitter.node_type(fn_u)
+      when "identifier"
+        Noir::TreeSitter.node_text(fn_u, source) == "createRouter"
+      when "member_expression"
+        prop = Noir::TreeSitter.field(fn_u, "property") || return false
+        prop_name = property_key_name(prop, source)
+        prop_name == "createRouter" || prop_name == "router"
+      else
+        false
+      end
     end
 
     private def extract_v9_chain_entries(node : LibTreeSitter::TSNode, source : String,
@@ -779,19 +794,40 @@ module Analyzer::Typescript
 
       params = [] of Param
       param_type = method == "POST" ? "body" : "query"
-      if obj_node = find_zod_object_node_in_chain(call_node, source)
-        Noir::TreeSitter.each_named_child(obj_node) do |child|
-          case Noir::TreeSitter.node_type(child)
-          when "pair"
-            k = Noir::TreeSitter.field(child, "key")
-            pname = property_key_name(k, source)
-            params << Param.new(pname, "", param_type) unless pname.empty? || pname == "z"
-          when "shorthand_property_identifier"
-            pname = Noir::TreeSitter.node_text(child, source)
-            params << Param.new(pname, "", param_type) unless pname.empty? || pname == "z"
+      seen = Set(String).new
+      had_input = false
+
+      input_nodes = [] of LibTreeSitter::TSNode
+      curr = call_node
+      while Noir::TreeSitter.node_type(curr) == "call_expression"
+        fn = Noir::TreeSitter.field(curr, "function")
+        break unless fn
+        fn_u = Noir::TreeSitter.unwrap_expression(fn)
+        if Noir::TreeSitter.node_type(fn_u) == "member_expression"
+          prop = Noir::TreeSitter.field(fn_u, "property")
+          if property_key_name(prop, source) == "input"
+            had_input = true
+            if args_node = Noir::TreeSitter.field(curr, "arguments")
+              if arg0 = Noir::TreeSitter.first_named_arg(args_node)
+                input_nodes << Noir::TreeSitter.unwrap_expression(arg0)
+              end
+            end
           end
+          if obj = Noir::TreeSitter.field(fn_u, "object")
+            curr = Noir::TreeSitter.unwrap_expression(obj)
+          else
+            break
+          end
+        else
+          break
         end
-      elsif has_input_call_in_chain?(call_node, source)
+      end
+
+      input_nodes.reverse_each do |inp|
+        extract_zod_params_into(inp, param_type, source, params, seen)
+      end
+
+      if params.empty? && had_input
         params << Param.new("input", "", param_type)
       end
 
@@ -801,112 +837,96 @@ module Analyzer::Typescript
       TRPCProcedureData.new(method, line, path, chain_text, params, callees, handler, nil)
     end
 
-    private def find_zod_object_node_in_chain(node : LibTreeSitter::TSNode, source : String) : LibTreeSitter::TSNode?
-      curr = node
-      while Noir::TreeSitter.node_type(curr) == "call_expression"
-        fn = Noir::TreeSitter.field(curr, "function")
-        break unless fn
-        fn_u = Noir::TreeSitter.unwrap_expression(fn)
-        if Noir::TreeSitter.node_type(fn_u) == "member_expression"
-          prop = Noir::TreeSitter.field(fn_u, "property")
-          if property_key_name(prop, source) == "input"
-            if args_node = Noir::TreeSitter.field(curr, "arguments")
-              if arg0 = Noir::TreeSitter.first_named_arg(args_node)
-                found_obj = nil.as(LibTreeSitter::TSNode?)
-                Noir::TreeSitter.walk(arg0) do |child|
-                  if Noir::TreeSitter.node_type(child) == "call_expression"
-                    c_fn = Noir::TreeSitter.field(child, "function")
-                    if c_fn && (property_key_name(c_fn, source) == "object" || Noir::TreeSitter.node_text(c_fn, source).ends_with?(".object"))
-                      if c_args = Noir::TreeSitter.field(child, "arguments")
-                        if c_arg0 = Noir::TreeSitter.first_named_arg(c_args)
-                          c_arg0_u = Noir::TreeSitter.unwrap_expression(c_arg0)
-                          if Noir::TreeSitter.node_type(c_arg0_u) == "object"
-                            found_obj = c_arg0_u
-                          end
-                        end
-                      end
-                    end
-                  end
-                end
-                return found_obj if found_obj
-              end
-            end
-          end
-          if obj = Noir::TreeSitter.field(fn_u, "object")
-            curr = Noir::TreeSitter.unwrap_expression(obj)
-          else
-            break
-          end
-        else
-          break
-        end
-      end
-      nil
-    end
-
-    private def has_input_call_in_chain?(node : LibTreeSitter::TSNode, source : String) : Bool
-      curr = node
-      while Noir::TreeSitter.node_type(curr) == "call_expression"
-        fn = Noir::TreeSitter.field(curr, "function")
-        break unless fn
-        fn_u = Noir::TreeSitter.unwrap_expression(fn)
-        if Noir::TreeSitter.node_type(fn_u) == "member_expression"
-          prop = Noir::TreeSitter.field(fn_u, "property")
-          return true if property_key_name(prop, source) == "input"
-          if obj = Noir::TreeSitter.field(fn_u, "object")
-            curr = Noir::TreeSitter.unwrap_expression(obj)
-          else
-            break
-          end
-        else
-          break
-        end
-      end
-      false
-    end
-
     private def extract_zod_params_from_node(node : LibTreeSitter::TSNode, param_type : String, source : String) : Array(Param)
       params = [] of Param
-      found_obj = nil.as(LibTreeSitter::TSNode?)
-
-      Noir::TreeSitter.walk(node) do |child|
-        if Noir::TreeSitter.node_type(child) == "call_expression"
-          if fn = Noir::TreeSitter.field(child, "function")
-            fn_u = Noir::TreeSitter.unwrap_expression(fn)
-            name = property_key_name(fn_u, source)
-            if name == "object" || Noir::TreeSitter.node_text(fn_u, source).ends_with?(".object")
-              if args_node = Noir::TreeSitter.field(child, "arguments")
-                if arg0 = Noir::TreeSitter.first_named_arg(args_node)
-                  arg0_u = Noir::TreeSitter.unwrap_expression(arg0)
-                  if Noir::TreeSitter.node_type(arg0_u) == "object"
-                    found_obj = arg0_u
-                  end
-                end
-              end
-            end
-          end
-        end
+      seen = Set(String).new
+      extract_zod_params_into(node, param_type, source, params, seen)
+      if params.empty?
+        params << Param.new("input", "", param_type)
       end
+      params
+    end
 
-      if obj = found_obj
+    private def extract_zod_params_into(node : LibTreeSitter::TSNode, param_type : String, source : String,
+                                        params : Array(Param), seen : Set(String)) : Nil
+      found_objs = [] of LibTreeSitter::TSNode
+      collect_zod_schema_objects(node, found_objs, source)
+
+      found_objs.each do |obj|
         Noir::TreeSitter.each_named_child(obj) do |child|
           case Noir::TreeSitter.node_type(child)
           when "pair"
             k = Noir::TreeSitter.field(child, "key")
             pname = property_key_name(k, source)
-            params << Param.new(pname, "", param_type) unless pname.empty? || pname == "z"
+            if !pname.empty? && pname != "z" && seen.add?(pname)
+              params << Param.new(pname, "", param_type)
+            end
           when "shorthand_property_identifier"
             pname = Noir::TreeSitter.node_text(child, source)
-            params << Param.new(pname, "", param_type) unless pname.empty? || pname == "z"
+            if !pname.empty? && pname != "z" && seen.add?(pname)
+              params << Param.new(pname, "", param_type)
+            end
           end
         end
       end
+    end
 
-      if params.empty?
-        params << Param.new("input", "", param_type)
+    private def collect_zod_schema_objects(node : LibTreeSitter::TSNode, found_objs : Array(LibTreeSitter::TSNode), source : String) : Nil
+      node_u = Noir::TreeSitter.unwrap_expression(node)
+      case Noir::TreeSitter.node_type(node_u)
+      when "object"
+        found_objs << node_u
+      when "array"
+        Noir::TreeSitter.each_named_arg(node_u) do |elem|
+          collect_zod_schema_objects(elem, found_objs, source)
+        end
+      when "call_expression"
+        fn = Noir::TreeSitter.field(node_u, "function") || return
+        fn_u = Noir::TreeSitter.unwrap_expression(fn)
+        name = if Noir::TreeSitter.node_type(fn_u) == "member_expression"
+                 prop = Noir::TreeSitter.field(fn_u, "property")
+                 property_key_name(prop, source)
+               else
+                 property_key_name(fn_u, source)
+               end
+        fn_text = Noir::TreeSitter.node_text(fn_u, source)
+
+        if name == "object" || fn_text.ends_with?(".object")
+          if args_node = Noir::TreeSitter.field(node_u, "arguments")
+            if arg0 = Noir::TreeSitter.first_named_arg(args_node)
+              arg0_u = Noir::TreeSitter.unwrap_expression(arg0)
+              if Noir::TreeSitter.node_type(arg0_u) == "object"
+                found_objs << arg0_u
+              end
+            end
+          end
+        elsif {"merge", "extend", "and", "intersection"}.includes?(name) ||
+              fn_text.ends_with?(".merge") || fn_text.ends_with?(".extend") || fn_text.ends_with?(".and") || fn_text.ends_with?(".intersection")
+          if Noir::TreeSitter.node_type(fn_u) == "member_expression"
+            if obj = Noir::TreeSitter.field(fn_u, "object")
+              collect_zod_schema_objects(obj, found_objs, source)
+            end
+          end
+          if args_node = Noir::TreeSitter.field(node_u, "arguments")
+            Noir::TreeSitter.each_named_arg(args_node) do |arg|
+              collect_zod_schema_objects(arg, found_objs, source)
+            end
+          end
+        elsif {"union", "discriminatedUnion"}.includes?(name) ||
+              fn_text.ends_with?(".union") || fn_text.ends_with?(".discriminatedUnion")
+          if args_node = Noir::TreeSitter.field(node_u, "arguments")
+            Noir::TreeSitter.each_named_arg(args_node) do |arg|
+              collect_zod_schema_objects(arg, found_objs, source)
+            end
+          end
+        else
+          if Noir::TreeSitter.node_type(fn_u) == "member_expression"
+            if obj = Noir::TreeSitter.field(fn_u, "object")
+              collect_zod_schema_objects(obj, found_objs, source)
+            end
+          end
+        end
       end
-
-      params
     end
 
     private def property_key_name(node : LibTreeSitter::TSNode?, source : String) : String
@@ -946,13 +966,17 @@ module Analyzer::Typescript
 
     private def decode_string(node : LibTreeSitter::TSNode, source : String) : String?
       node = Noir::TreeSitter.unwrap_expression(node)
-      raw = Noir::TreeSitter.node_text(node, source).strip
-      return if raw.size < 2
-      first = raw[0]
-      last = raw[-1]
-      return unless (first == '\'' || first == '"' || first == '`') && first == last
-      return if first == '`' && raw.includes?("${")
-      raw[1..-2]
+      case Noir::TreeSitter.node_type(node)
+      when "string"
+        raw = Noir::TreeSitter.node_text(node, source).strip
+        return if raw.size < 2
+        raw[1..-2]
+      when "template_string"
+        raw = Noir::TreeSitter.node_text(node, source).strip
+        return if raw.size < 2
+        return if raw.includes?("${")
+        raw[1..-2]
+      end
     end
   end
 end

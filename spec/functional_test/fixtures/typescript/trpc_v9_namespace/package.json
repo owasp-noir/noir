@@ -1,0 +1,8 @@
+{
+  "name": "trpc-v9-namespace",
+  "version": "1.0.0",
+  "dependencies": {
+    "@trpc/server": "^9.27.4",
+    "zod": "^3.20.0"
+  }
+}

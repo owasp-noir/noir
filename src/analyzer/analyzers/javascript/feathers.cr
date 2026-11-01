@@ -750,13 +750,17 @@ module Analyzer::Javascript
 
     private def decode_string(node : LibTreeSitter::TSNode, source : String) : String?
       node = Noir::TreeSitter.unwrap_expression(node)
-      raw = Noir::TreeSitter.node_text(node, source).strip
-      return if raw.size < 2
-      first = raw[0]
-      last = raw[-1]
-      return unless (first == '\'' || first == '"' || first == '`') && first == last
-      return if first == '`' && raw.includes?("${")
-      raw[1..-2]
+      case Noir::TreeSitter.node_type(node)
+      when "string"
+        raw = Noir::TreeSitter.node_text(node, source).strip
+        return if raw.size < 2
+        raw[1..-2]
+      when "template_string"
+        raw = Noir::TreeSitter.node_text(node, source).strip
+        return if raw.size < 2
+        return if raw.includes?("${")
+        raw[1..-2]
+      end
     end
 
     private def extract_method_params(body : String) : Array(Param)

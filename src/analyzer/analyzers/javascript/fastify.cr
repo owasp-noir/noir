@@ -310,7 +310,7 @@ module Analyzer::Javascript
 
                 url = ""
                 if u_val = extract_prop_value(config_node, "url", source) || extract_prop_value(config_node, "path", source)
-                  url = decode_string(Noir::TreeSitter.unwrap_expression(u_val), source) || ""
+                  url = decode_fastify_route_url(u_val, source) || ""
                 end
 
                 unless methods.empty? || url.empty?
@@ -665,13 +665,38 @@ module Analyzer::Javascript
 
     private def decode_string(node : LibTreeSitter::TSNode, source : String) : String?
       node = Noir::TreeSitter.unwrap_expression(node)
-      raw = Noir::TreeSitter.node_text(node, source).strip
-      return if raw.size < 2
-      first = raw[0]
-      last = raw[-1]
-      return unless (first == '\'' || first == '"' || first == '`') && first == last
-      return if first == '`' && raw.includes?("${")
-      raw[1..-2]
+      case Noir::TreeSitter.node_type(node)
+      when "string"
+        raw = Noir::TreeSitter.node_text(node, source).strip
+        return if raw.size < 2
+        raw[1..-2]
+      when "template_string"
+        raw = Noir::TreeSitter.node_text(node, source).strip
+        return if raw.size < 2
+        return if raw.includes?("${")
+        raw[1..-2]
+      end
+    end
+
+    private def decode_fastify_route_url(node : LibTreeSitter::TSNode, source : String) : String?
+      unwrapped = Noir::TreeSitter.unwrap_expression(node)
+      if str = decode_string(unwrapped, source)
+        return str
+      end
+
+      # For non-literal expressions (e.g. `'/' + 'x'`), match main's behavior:
+      # main regex-scanned `/(?:url|path)\s*:\s*['"]([^'"]+)['"]/` on the config text,
+      # which extracted the leading string literal if the value started with one,
+      # and skipped the route if it did not.
+      curr = unwrapped
+      while Noir::TreeSitter.node_type(curr) == "binary_expression"
+        if left = Noir::TreeSitter.field(curr, "left")
+          curr = Noir::TreeSitter.unwrap_expression(left)
+        else
+          break
+        end
+      end
+      decode_string(curr, source)
     end
 
     private def extract_schema_params_from_node(node : LibTreeSitter::TSNode, declarations : Hash(String, LibTreeSitter::TSNode), source : String) : Array(Param)

@@ -20,6 +20,7 @@ expected_endpoints = [
   Endpoint.new("/complex", "POST", [
     Param.new("title", "", "json"),
   ]),
+  Endpoint.new("/", "GET"),
 ]
 
 FunctionalTester.new("fixtures/javascript/fastify_route_config/", {

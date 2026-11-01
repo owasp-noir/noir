@@ -45,4 +45,11 @@ fastify.route({
   }
 })
 
+// Non-literal URL expression: matches main by emitting the leading string literal
+fastify.route({
+  method: 'GET',
+  url: '/' + 'x',
+  handler: async () => ({ ok: true })
+})
+
 module.exports = fastify
