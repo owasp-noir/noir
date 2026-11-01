@@ -1,6 +1,12 @@
 from flask import Flask
 from flask.views import MethodView
-from flask_allows import ForRequest, Not, requires
+import flask_allows as fa
+from flask_allows import (
+    ForRequest,
+    Not,
+    requires,
+)
+from flask_allows import requires as perm_req
 
 from board.extensions import allows
 from other.perms import allows as buckets
@@ -10,6 +16,10 @@ app = Flask(__name__)
 
 def is_admin(user):
     return user.is_admin
+
+
+def is_banned(user):
+    return user.banned
 
 
 class Settings(MethodView):
@@ -68,3 +78,21 @@ def guests_only():
 @buckets.requires("search")
 def bucketed():
     return "results"
+
+
+@app.route("/not-banned-admin")
+@allows.requires(Not(is_banned), is_admin)
+def not_banned_admin():
+    return "admin, not banned"
+
+
+@app.route("/aliased")
+@perm_req(is_admin)
+def aliased():
+    return "aliased"
+
+
+@app.route("/module")
+@fa.requires(is_admin)
+def module():
+    return "module"

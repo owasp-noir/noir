@@ -32,6 +32,14 @@ describe "--ai-context on flask-allows requirements", tags: "functional" do
     # A class without decorators, a requirement that only negates, and a
     # project's own `allows = Allows()` (its module merely mentions
     # flask_allows in a docstring) guard nothing.
+    # Bound by the imports: a parenthesised multi-line import, an alias
+    # (`requires as perm_req`, `Allows as Perms`), the module itself
+    # (`import flask_allows as fa`); `Not` negates only its own argument.
+    %w[/aliased /module /perms /both /not-banned-admin].each do |url|
+      guards["GET #{url}"].should eq(["authz_guard:flask-allows requires"])
+    end
+    # A project's own `requires` imported over the name checks nothing.
+    guards["GET /scoped"].should be_empty
     guards["GET /overview"].should be_empty
     guards["GET /guests-only"].should be_empty
     guards["GET /bucketed"].should be_empty
