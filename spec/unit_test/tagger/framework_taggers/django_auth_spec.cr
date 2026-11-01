@@ -373,6 +373,259 @@ describe "DjangoAuthTagger" do
     end
   end
 
+  it "reads API-key and read-only permission classes, with the polarity of their checks" do
+    CodeLocator.instance.clear_all
+    tmpdir = File.tempname("django_drf_key_perms")
+    Dir.mkdir_p(tmpdir)
+    perms = File.join(tmpdir, "permissions.py")
+    views = File.join(tmpdir, "views.py")
+    local_key = File.join(tmpdir, "local_key.py")
+    aliased = File.join(tmpdir, "aliased.py")
+    File.write(perms, <<-PY)
+      from rest_framework_api_key.permissions import BaseHasAPIKey, HasAPIKey
+
+      class HasBuildAPIKey(BaseHasAPIKey):
+          def has_permission(self, request, view):
+              request.build_api_key = None
+              key = self.get_key(request)
+              if not key:
+                  return False
+              return True
+
+      class ReadOnlyPermission(permissions.BasePermission):
+          def has_permission(self, request, view):
+              return request.method in permissions.SAFE_METHODS
+
+      class KeyOptional(BasePermission):
+          def has_permission(self, request, view):
+              token = request.headers.get("X-Token")
+              if not token:
+                  return True
+              return token == "x"
+
+      class DebugFlag(BasePermission):
+          def has_permission(self, request, view):
+              debug = request.GET.get("debug")
+              if not debug:
+                  return False
+              return True
+
+      class AllowFirst(BasePermission):
+          def has_permission(self, request, view):
+              if view.public:
+                  return True
+              api_key = request.META.get("HTTP_X_API_KEY")
+              if api_key is None:
+                  raise NotAuthenticated()
+              return True
+
+      class LibraryKey(HasAPIKey):
+          pass
+
+      class ReadOrPerm(BasePermission):
+          def has_permission(self, request, view):
+              return request.method in SAFE_METHODS or request.user.has_perm("a.b")
+
+      class PostOnlyKey(BasePermission):
+          def has_permission(self, request, view):
+              key = request.headers.get("X-Api-Key")
+              if request.method == "POST":
+                  if not key:
+                      return False
+              return True
+
+      class QueryToken(BasePermission):
+          def has_permission(self, request, view):
+              token = request.query_params.get("token")
+              if not token:
+                  return False
+              return token == settings.TOKEN
+
+      class AjaxOnly(BasePermission):
+          def has_permission(self, request, view):
+              return request.headers.get("X-Requested-With") == "XMLHttpRequest"
+
+      class FormatJson(BasePermission):
+          def has_permission(self, request, view):
+              return request.GET.get("format") == "json"
+
+      class PublicOrRead(BasePermission):
+          def has_permission(self, request, view):
+              if getattr(view, "public", False) or request.method in SAFE_METHODS:
+                  return True
+              key = request.headers.get("X-Api-Key")
+              if not key:
+                  return False
+              return True
+
+      class ReadsBySuper(BasePermission):
+          def has_permission(self, request, view):
+              if request.method in SAFE_METHODS:
+                  return super().has_permission(request, view)
+              key = request.headers.get("X-Api-Key")
+              if not key:
+                  return False
+              return True
+
+      class OpenFlagFirst(BasePermission):
+          def has_permission(self, request, view):
+              if view.open_to_all:
+                  return view.open_to_all
+              key = request.headers.get("X-Api-Key")
+              if not key:
+                  return False
+              return True
+      PY
+    File.write(local_key, <<-PY)
+      from django.conf import settings
+
+      class HasAPIKey(BasePermission):
+          def has_permission(self, request, view):
+              if not settings.API_KEY:
+                  return True
+              return request.headers.get("X-Api-Key") == settings.API_KEY
+      PY
+    File.write(aliased, <<-PY)
+      from rest_framework_api_key.permissions import HasAPIKey as LibHasAPIKey
+
+      class LibSub(LibHasAPIKey):
+          pass
+      PY
+    File.write(views, <<-PY)
+      class BuildView(APIView):
+          permission_classes = [HasBuildAPIKey | ReadOnlyPermission]
+          def get(self, request):
+              pass
+          def put(self, request):
+              pass
+
+      class OptionalView(APIView):
+          permission_classes = [KeyOptional]
+          def post(self, request):
+              pass
+
+      class DebugView(APIView):
+          permission_classes = [DebugFlag]
+          def post(self, request):
+              pass
+
+      class EarlyView(APIView):
+          permission_classes = [AllowFirst]
+          def post(self, request):
+              pass
+
+      class LibView(APIView):
+          permission_classes = [LibraryKey]
+          def get(self, request):
+              pass
+
+      class PermView(APIView):
+          permission_classes = [ReadOrPerm]
+          def post(self, request):
+              pass
+
+      class PostKeyView(APIView):
+          permission_classes = [PostOnlyKey]
+          def get(self, request):
+              pass
+
+      class TokenView(APIView):
+          permission_classes = [QueryToken]
+          def get(self, request):
+              pass
+
+      class LocalKeyView(APIView):
+          permission_classes = [HasAPIKey]
+          def get(self, request):
+              pass
+
+      class AliasView(APIView):
+          permission_classes = [LibSub]
+          def get(self, request):
+              pass
+
+      class AjaxView(APIView):
+          permission_classes = [AjaxOnly]
+          def get(self, request):
+              pass
+
+      class FormatView(APIView):
+          permission_classes = [FormatJson]
+          def get(self, request):
+              pass
+
+      class PublicView(APIView):
+          permission_classes = [PublicOrRead]
+          def post(self, request):
+              pass
+
+      class SuperView(APIView):
+          permission_classes = [ReadsBySuper]
+          def post(self, request):
+              pass
+
+      class FlagView(APIView):
+          permission_classes = [OpenFlagFirst]
+          def post(self, request):
+              pass
+      PY
+    [perms, views, local_key, aliased].each { |file| CodeLocator.instance.register_path(file) }
+
+    begin
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(tmpdir)
+      at = ->(method : String, line : Int32) { Endpoint.new("/#{line}", method, [] of Param, Details.new(PathInfo.new(views, line))) }
+      read = at.call("GET", 3)
+      write = at.call("PUT", 5)
+      optional = at.call("POST", 10)
+      debug = at.call("POST", 15)
+      early = at.call("POST", 20)
+      library = at.call("GET", 25)
+      perm = at.call("POST", 30)
+      post_key = at.call("GET", 35)
+      token = at.call("GET", 40)
+      local = at.call("GET", 45)
+      alias_sub = at.call("GET", 50)
+      ajax = at.call("GET", 55)
+      format = at.call("GET", 60)
+      public = at.call("POST", 65)
+      by_super = at.call("POST", 70)
+      flag = at.call("POST", 75)
+
+      DjangoAuthTagger.new(noir_options).perform([read, write, optional, debug, early, library, perm, post_key, token, local, alias_sub, ajax, format, public, by_super, flag])
+
+      read.tags.should be_empty
+      write.tags.map(&.description).should eq(["Protected by DRF permission_classes"])
+      optional.tags.should be_empty
+      debug.tags.should be_empty
+      early.tags.should be_empty
+      library.tags.map(&.description).should eq(["Protected by DRF permission_classes"])
+      # Undecided past the verb: the `has_perm` check still refuses.
+      perm.tags.map(&.description).should eq(["Protected by DRF permission_classes"])
+      # A refusal only under a verb branch adds no guard for GET.
+      post_key.tags.should be_empty
+      # A key compared to a setting is the check, not a setting that opens it.
+      token.tags.map(&.description).should eq(["Protected by DRF permission_classes"])
+      # A project class named like the library one is read by its body: a
+      # setting can open it.
+      local.tags.map(&.description).should eq(["Protected by DRF permission_classes (settings.API_KEY decides; a setting can make it public)"])
+      # A subclass of the library class imported under an alias.
+      alias_sub.tags.map(&.description).should eq(["Protected by DRF permission_classes"])
+      # A header or parameter anyone can send, compared to a literal.
+      ajax.tags.should be_empty
+      format.tags.should be_empty
+      # A verb test `or`-ed with another admit lets POST through first.
+      public.tags.should be_empty
+      # A read-only branch handing reads to `super()` is no allow for POST;
+      # any other truthy return before the key check is.
+      by_super.tags.map(&.description).should eq(["Protected by DRF permission_classes"])
+      flag.tags.should be_empty
+    ensure
+      FileUtils.rm_rf(tmpdir)
+      CodeLocator.instance.clear_all
+    end
+  end
+
   it "judges project decorators, view-body checks and dispatchers by definition" do
     CodeLocator.instance.clear_all
     tmpdir = File.tempname("django_function_view_guards")

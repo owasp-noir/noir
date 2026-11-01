@@ -31,7 +31,11 @@ class DjangoAuthTagger < FrameworkTagger
 
   # DRF permissions that demand an authenticated caller for every method,
   # and the `...OrReadOnly` ones that only do for unsafe methods.
-  DRF_AUTH_PERMISSION_NAME       = /\A(?:IsAuthenticated|IsAdminUser|DjangoModelPermissions|DjangoObjectPermissions)\z/
+  DRF_AUTH_PERMISSION_NAME = /\A(?:IsAuthenticated|IsAdminUser|DjangoModelPermissions|DjangoObjectPermissions)\z/
+  # djangorestframework-api-key's `HasAPIKey` / `BaseHasAPIKey` refuse a
+  # request without a valid key. A project class of the same name is
+  # judged by its own definition instead.
+  DRF_API_KEY_PERMISSION_NAME    = /\A(?:HasAPIKey|BaseHasAPIKey)\z/
   DRF_WRITE_ONLY_PERMISSION_NAME = /\A(?:IsAuthenticatedOrReadOnly|DjangoModelPermissionsOrAnonReadOnly)\z/
   SAFE_METHODS                   = %w[GET HEAD OPTIONS]
 
@@ -124,7 +128,7 @@ class DjangoAuthTagger < FrameworkTagger
   private def scan_permission_classes
     collect_files_by_extension(".py").each do |path|
       content = read_file(path)
-      next unless content && (content.includes?("Permission") || content.includes?("has_permission"))
+      next unless content && (content.includes?("Permission") || content.includes?("has_permission") || content.includes?("APIKey"))
       next if base_relative_path(path).matches?(TEST_OR_DOCS_PATH)
       lines = read_file_lines(path) || next
       lines.each_with_index do |line, idx|
@@ -133,8 +137,8 @@ class DjangoAuthTagger < FrameworkTagger
         open = header.index('(') || next
         bases_text = header[(open + 1)..].sub(/\)\s*:[\s\S]*\z/, "")
         has_permission = method_body(lines, idx, "has_permission")
-        next unless bases_text.includes?("Permission") || has_permission
         bases = bases_text.split(',').map(&.strip.split('.').last.strip).reject(&.empty?)
+        next unless bases_text.includes?("Permission") || has_permission || bases_text.includes?("APIKey")
         flag = class_body(lines, idx).match(/\b(?:self\.)?authenticated_users_only\s*=(?!=)\s*([^\n]+)/).try(&.[1].strip)
         (@permission_classes[name] ||= [] of PermissionClass) << PermissionClass.new(path, bases, has_permission, flag)
       end
@@ -949,6 +953,7 @@ class DjangoAuthTagger < FrameworkTagger
 
   private def permission_refusal(name : String, method : String, depth = 0) : String?
     return "" if name.matches?(DRF_AUTH_PERMISSION_NAME)
+    return "" if name.matches?(DRF_API_KEY_PERMISSION_NAME) && !@permission_classes.has_key?(name)
     if name.matches?(DRF_WRITE_ONLY_PERMISSION_NAME)
       return SAFE_METHODS.includes?(method.upcase) ? nil : ""
     end
@@ -976,6 +981,12 @@ class DjangoAuthTagger < FrameworkTagger
         return if body.includes?("SAFE_METHODS") && SAFE_METHODS.includes?(method.upcase)
         return setting || body.match(SETTING_READ).try(&.[1]) || ""
       end
+      # A key compared to a setting (`token == settings.TOKEN`) is the check
+      # itself: only an allow gated by a setting makes it conditional.
+      if refuses_missing_credential?(body)
+        return if body.includes?("SAFE_METHODS") && SAFE_METHODS.includes?(method.upcase)
+        return setting || ""
+      end
       return unless body.matches?(/\bsuper\s*\(\s*\)\s*\.has_permission\b/)
     end
     # DjangoModelPermissions refuses anonymous callers only while
@@ -985,11 +996,66 @@ class DjangoAuthTagger < FrameworkTagger
       setting ||= flag.match(SETTING_READ).try(&.[1])
     end
     klass.bases.each do |base|
+      return setting || "" if library_api_key_base?(base, klass.path)
       if verdict = permission_refusal(base, method, depth + 1)
         return setting || verdict
       end
     end
     nil
+  end
+
+  # A base bound to djangorestframework-api-key's class in `path`: by its
+  # own name in a module that uses the library, or by an import alias
+  # (`HasAPIKey as LibHasAPIKey`).
+  private def library_api_key_base?(base : String, path : String) : Bool
+    source = read_file(path) || return false
+    return false unless source.includes?("rest_framework_api_key")
+    return true if base.matches?(DRF_API_KEY_PERMISSION_NAME)
+    source.matches?(/\bimport\b[^\n]*\b(?:HasAPIKey|BaseHasAPIKey)\s+as\s+#{Regex.escape(base)}\b/)
+  end
+
+  # `key = self.get_key(request)` (or `request.headers.get(...)`), then
+  # `if not key: return False` at the same level (not under a verb or other
+  # branch), or a top-level `return request.headers.get("X-Api-Key") ==
+  # settings.KEY`, with no truthy `return` before it but one under a plain
+  # `SAFE_METHODS` test (only reached for safe verbs) or a `return True` a
+  # setting gates (the caller notes the setting): the class turns away a
+  # caller who brings no credential (Read the Docs' `HasBuildAPIKey`). The
+  # variable or compared field must name a credential, or the value it is
+  # compared to be a setting or the environment: anyone can send
+  # `X-Requested-With: XMLHttpRequest`, and a `debug =
+  # request.GET.get("debug")` flag decides nothing.
+  CREDENTIAL_READ    = /^([ \t]*)(\w*(?:key|token|secret|signature|credential|password)\w*)[ \t]*=(?!=)[^\n]*\brequest\b/im
+  MISSING_REFUSAL    = /^([ \t]*)if[ \t]+(?:not[ \t]+(\w+)|(\w+)[ \t]+is[ \t]+None)[ \t]*:[ \t]*(?:\n[ \t]*)?(?:return[ \t]+False\b|raise\b)/m
+  ALLOW_RETURN       = /\breturn[ \t]+(?!False\b|None\b|0\b)\S/
+  SAFE_METHODS_ALLOW = /^[ \t]*if[ \t]+([^\n]*)\bin[ \t]+(?:\w+\.)?SAFE_METHODS[ \t]*:[ \t]*(?:\n[ \t]*)?return[ \t]+(?!False\b|None\b)\S/m
+  REQUEST_COMPARE    = /^([ \t]*)return[ \t]+request\.(?:headers|META|GET|POST|query_params|data)\b([^\n=]*)==[ \t]*([^\n]+)/m
+  CREDENTIAL_NAME    = /key|token|secret|signature|credential|password|authorization/i
+  SECRET_VALUE       = /\A(?:settings\.|(?:os\.)?(?:environ|getenv)\b|\w*(?:key|token|secret)\w*\b)/i
+
+  private def refuses_missing_credential?(body : String) : Bool
+    return false unless body.matches?(CREDENTIAL_READ) || body.matches?(REQUEST_COMPARE)
+    # The first allow a caller without a credential could reach.
+    # A verb test `or`-ed with another admit (`view.public or request.method
+    # in SAFE_METHODS`) lets unsafe verbs through too: not excused.
+    excused = body.scan(SAFE_METHODS_ALLOW).reject(&.[1].matches?(/\bor\b|\bnot\s*\z/)).map { |m| m.begin(0)...m.end(0) }
+    body.scan(EARLY_ALLOW) { |m| excused << (m.begin(0)...m.end(0)) if m[1].matches?(SETTING_READ) }
+    first_allow = body.scan(ALLOW_RETURN).find { |m| excused.none?(&.includes?(m.begin(0))) }.try(&.begin(0)) || body.size
+    top = body.each_line.reject(&.blank?).min_of? { |line| line.size - line.lstrip.size } || 0
+    compared = body.scan(REQUEST_COMPARE).any? do |m|
+      next false unless m[1].size == top && m.begin(0) + m[1].size <= first_allow
+      value = m[3].strip
+      next false if value.starts_with?("None")
+      m[2].matches?(CREDENTIAL_NAME) || value.matches?(SECRET_VALUE)
+    end
+    return true if compared
+    refusals = body.scan(MISSING_REFUSAL)
+    body.scan(CREDENTIAL_READ).any? do |read|
+      read[1].size == top && refusals.any? do |refusal|
+        (refusal[2]? || refusal[3]?) == read[2] && refusal[1] == read[1] &&
+          refusal.begin(0) > read.end(0) && refusal.begin(0) < first_allow
+      end
+    end
   end
 
   # A helper that turns an anonymous caller away before anything lets it
@@ -1017,8 +1083,14 @@ class DjangoAuthTagger < FrameworkTagger
     # Only plain assignments may come before it.
     return unless code[0...-1].all?(&.matches?(/\A\w+\s*=(?!=)/))
     calls = returned.scan(/(?<![\w.])([A-Za-z_]\w*)\s*\(/).map(&.[1])
-    return unless calls.any? { |name| resolve_def(klass.path, name) }
-    perm_bool(returned, klass, method, depth)
+    # `return request.method in permissions.SAFE_METHODS` (a read-only
+    # permission) is decided by the verb alone.
+    verb_only = calls.empty? && returned.includes?("request.method")
+    return unless verb_only || calls.any? { |name| resolve_def(klass.path, name) }
+    verdict = perm_bool(returned, klass, method, depth)
+    # Undecided past the verb (`or request.user.has_perm(...)`): the
+    # readers below judge the body, as they did before verbs were read.
+    verdict unless verb_only && verdict.unknown?
   end
 
   private def perm_bool(expr : String, klass : PermissionClass, method : String, depth : Int32) : MwTri
@@ -1035,7 +1107,7 @@ class DjangoAuthTagger < FrameworkTagger
     end
     return mw_not(perm_bool(expr[4..], klass, method, depth)) if masked.matches?(/\Anot\s/)
     if verb = expr.match(/\Arequest\.method(?:\.upper\(\))?\s*(==|!=|not\s+in|in)\s*(.+)\z/)
-      verbs = verb[2].strip == "SAFE_METHODS" ? SAFE_METHODS : mw_literals(verb[2]).map(&.upcase)
+      verbs = verb[2].strip.split('.').last == "SAFE_METHODS" ? SAFE_METHODS : mw_literals(verb[2]).map(&.upcase)
       hit = verbs.includes?(method.upcase)
       return (verb[1] == "==" || verb[1] == "in") == hit ? MwTri::T : MwTri::F
     end
