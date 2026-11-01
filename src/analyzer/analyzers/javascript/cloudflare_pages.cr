@@ -61,10 +61,10 @@ module Analyzer::Javascript
     private def endpoints_for(path : String, content : String, url : String, include_callee : Bool) : Array(Endpoint)
       endpoints = [] of Endpoint
       VERB_EXPORTS.each do |export_name, verb|
-        handler = Noir::JSServerlessFunctionExtractor.exported_handler(content, export_name) || next
+        handler = Noir::JSServerlessFunctionExtractor.exported_handler(content, path, export_name, include_callee) || next
         endpoints << serverless_endpoint(url, verb, path, handler, :context, include_callee)
       end
-      if handler = Noir::JSServerlessFunctionExtractor.exported_handler(content, CATCH_ALL_EXPORT)
+      if handler = Noir::JSServerlessFunctionExtractor.exported_handler(content, path, CATCH_ALL_EXPORT, include_callee)
         # `onRequest` alongside verb exports serves only the other methods;
         # ANY covers that, while a body that branches on the method narrows it.
         catch_all_methods(handler).each do |verb|

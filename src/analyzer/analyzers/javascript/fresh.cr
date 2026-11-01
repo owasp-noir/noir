@@ -1,4 +1,5 @@
 require "../../engines/javascript_engine"
+require "../../../miniparsers/js_handler_table"
 require "../../../miniparsers/js_callee_extractor"
 require "../../../miniparsers/js_route_extractor"
 
@@ -53,13 +54,6 @@ module Analyzer::Javascript
     EXTENSIONS      = PAGE_EXTENSIONS + API_EXTENSIONS
 
     FALLBACK_HANDLER_METHODS = ["GET", "POST", "PUT", "DELETE", "PATCH"]
-
-    # Compiled once per verb — interpolated regex literals would otherwise
-    # be rebuilt (full PCRE2 compile) on every evaluation.
-    HANDLER_METHOD_BODY_RES = HTTP_METHODS.map { |v| {v, /(?:^|[\{,\s])(?:async\s+)?#{v}\s*\([^)]*\)\s*\{(.*?)^\s*\}/m} }.to_h
-    HANDLER_PROPERTY_RES    = HTTP_METHODS.map { |v| {v, /(?:^|[\{,\s])#{v}\s*:\s*(?:async\s*)?(?:\([^)]*\)|[A-Za-z_$][\w$]*)\s*=>/} }.to_h
-    VERB_KEY_SHORTHAND_RES  = HTTP_METHODS.map { |v| {v, /(^|[\{,\s])(?:async\s+)?#{v}\s*\(/} }.to_h
-    VERB_KEY_PROPERTY_RES   = HTTP_METHODS.map { |v| {v, /(^|[\{,\s])#{v}\s*:/} }.to_h
 
     # Directories holding a Fresh project manifest. A bare `deno.json` is not
     # enough — a plain Deno project has one too — so it only counts when it
@@ -150,13 +144,14 @@ module Analyzer::Javascript
         end
 
         is_page = PAGE_EXTENSIONS.any? { |ext| path.ends_with?(ext) }
-        verbs = detect_verbs(content, is_page)
+        table = Noir::JSHandlerTable.for(content, path, callees_needed?)
+        verbs = detect_verbs(content, table, is_page)
         next if verbs.empty?
 
         mutex.synchronize do
           verbs.each do |verb|
             endpoint = file_route_endpoint(url, verb, path)
-            attach_handler_callees(endpoint, content, path, verb) if callees_needed?
+            attach_handler_callees(endpoint, table, verb) if callees_needed?
             result << endpoint
           end
         end
@@ -176,85 +171,11 @@ module Analyzer::Javascript
       end
     end
 
-    private def attach_handler_callees(endpoint : Endpoint, content : String, path : String, verb : String)
-      callees = Noir::JSCalleeExtractor.callees_for_exported_function(content, path, verb)
-      callees = callees_for_handler_object_method(content, path, verb) if callees.empty?
-      callees = Noir::JSCalleeExtractor.callees_for_exported_function(content, path, "handler") if callees.empty?
+    private def attach_handler_callees(endpoint : Endpoint, table : Noir::JSHandlerTable::Table, verb : String)
+      callees = [table.exports[verb]?, table.objects["handler"]?.try(&.[verb]?), table.exports["handler"]?]
+        .compact_map(&.try(&.callees)).find { |entries| !entries.empty? } || return
       callees.each do |name, callee_path, line|
         endpoint.push_callee(Callee.new(name, path: callee_path, line: line))
-      end
-    end
-
-    private def callees_for_handler_object_method(content : String, path : String, verb : String) : Array(Noir::JSCalleeExtractor::Entry)
-      handler_block = extract_handler_object(content)
-      return [] of Noir::JSCalleeExtractor::Entry unless handler_block
-
-      if method = handler_block.match(HANDLER_METHOD_BODY_RES[verb])
-        start_line = content[0, content.index(method[0]) || 0].count('\n') + 1
-        return Noir::JSCalleeExtractor.callees_for_function_body(method[1], path, start_line)
-      end
-
-      if property = handler_block.match(HANDLER_PROPERTY_RES[verb])
-        body_start = property.end(0) || 0
-        body = handler_block[body_start..]? || ""
-        # NOTE(perf): `extract_handler_object` knows the block's origin offset,
-        # but `String#index` deliberately stays: it returns the FIRST occurrence
-        # of the block text, which for a byte-identical object literal appearing
-        # earlier in the file differs from the origin — passing the origin down
-        # would change the emitted callee lines in that (reachable) case.
-        block_start = content.index(handler_block) || 0
-        absolute_body_start = block_start + body_start
-        start_line = content[0, absolute_body_start].count('\n') + 1
-        body, start_line = extract_arrow_handler_body(body, start_line)
-        return Noir::JSCalleeExtractor.callees_for_function_body(body, path, start_line)
-      end
-
-      [] of Noir::JSCalleeExtractor::Entry
-    end
-
-    private def extract_arrow_handler_body(body : String, start_line : Int32) : Tuple(String, Int32)
-      offset = 0
-      while offset < body.size && body[offset].whitespace?
-        offset += 1
-      end
-
-      body_start_line = start_line + body[0, offset].count('\n')
-      stripped = body[offset..]? || ""
-
-      if stripped.starts_with?("{")
-        if close = Noir::JSRouteExtractor.find_matching_brace(stripped, 0)
-          return {stripped[1...close], body_start_line}
-        end
-      end
-
-      end_pos = top_level_comma(stripped) || stripped.size
-      {stripped[0...end_pos], body_start_line > 1 ? body_start_line - 1 : 1}
-    end
-
-    private def top_level_comma(source : String) : Int32?
-      # Integer `String#[](Int)` is O(n) on non-ASCII source (one multi-byte
-      # char defeats the single-byte optimization), so this walk — and the
-      # inner quote skip — would be O(n²); materialize once and index the
-      # array instead.
-      chars = source.chars
-      depth = 0
-      i = 0
-      while i < chars.size
-        case chars[i]
-        when '\'', '"', '`'
-          quote = chars[i]
-          i += 1
-          while i < chars.size && chars[i] != quote
-            i += chars[i] == '\\' ? 2 : 1
-          end
-        when '(', '[', '{'
-          depth += 1
-        when ')', ']', '}'
-          depth -= 1
-        when ','
-          return i if depth == 0
-        end
-        i += 1
       end
     end
 
@@ -289,7 +210,7 @@ module Analyzer::Javascript
       seg
     end
 
-    private def detect_verbs(content : String, is_page : Bool) : Array(String)
+    private def detect_verbs(content : String, table : Noir::JSHandlerTable::Table, is_page : Bool) : Array(String)
       verbs = [] of String
 
       # Component-driven page → GET. The `export default` form is
@@ -303,10 +224,9 @@ module Analyzer::Javascript
       # Handler-driven verbs. Look for `export const handler` (with
       # optional type annotation) and pull verb-shaped keys out of
       # the trailing object literal.
-      if handler_block = extract_handler_object(content)
-        keys = extract_verb_keys(handler_block)
-        verbs.concat(keys) unless keys.empty?
-      elsif handler_function?(content)
+      if members = table.objects["handler"]?
+        verbs.concat(HTTP_METHODS.select { |verb| members.has_key?(verb) })
+      elsif table.exports["handler"]?.try(&.direct)
         # `export const handler = (req, ctx) => ...` or
         # `export function handler(req)` — a single function
         # answers every method.
@@ -318,68 +238,6 @@ module Analyzer::Javascript
 
     private def has_default_export?(content : String) : Bool
       content.matches?(/export\s+default\b/)
-    end
-
-    # Fresh 2 wraps the object: `export const handler = define.handlers({`.
-    HANDLER_OBJECT_RE = /export\s+(?:const|let|var)\s+handler\b\s*(?::[^=]+)?=\s*(?:define\.handlers\s*(?:<[^>]*>)?\s*\(\s*)?(\{)/
-
-    # Carve the `{...}` object literal out of `export const handler =
-    # { ... }` (or `: Handlers = {...}`). Returns nil when the
-    # handler is a function, a callable reference, or absent.
-    private def extract_handler_object(content : String) : String?
-      m = content.match(HANDLER_OBJECT_RE)
-      return unless m
-      after_match = m.byte_end(0)
-      return unless after_match
-      open_idx = after_match - 1
-      close_idx = match_braces(content, open_idx)
-      return unless close_idx
-      content.byte_slice(open_idx, close_idx - open_idx + 1)
-    end
-
-    private def handler_function?(content : String) : Bool
-      content.matches?(/export\s+(?:async\s+)?function\s+handler\b/) ||
-        content.matches?(/export\s+(?:const|let|var)\s+handler\b\s*(?::[^=]+)?=\s*(?:async\s*)?(?:function\b|\()/)
-    end
-
-    # Extract the verb names appearing as object keys inside the
-    # handler block. Two shapes:
-    #
-    #   GET(req, ctx) { ... }              (method shorthand)
-    #   GET: (req, ctx) => { ... }         (property assignment)
-    #
-    # `async` prefix is allowed on the shorthand; the trailing
-    # value can be a function expression, arrow function, or
-    # callable reference.
-    private def extract_verb_keys(block : String) : Array(String)
-      verbs = [] of String
-      HTTP_METHODS.each do |m|
-        if block.match(VERB_KEY_SHORTHAND_RES[m]) ||
-           block.match(VERB_KEY_PROPERTY_RES[m])
-          verbs << m
-        end
-      end
-      verbs
-    end
-
-    # Walk `content` from the opening `{` at `start` and return the
-    # index of the matching `}`. Tolerates nested braces; returns
-    # nil when the file is unbalanced.
-    private def match_braces(content : String, start : Int32) : Int32?
-      depth = 0
-      i = start
-      bytes = content.to_slice
-      while i < bytes.size
-        case bytes[i]
-        when '{'.ord
-          depth += 1
-        when '}'.ord
-          depth -= 1
-          return i if depth == 0
-        end
-        i += 1
-      end
-      nil
     end
   end
 end

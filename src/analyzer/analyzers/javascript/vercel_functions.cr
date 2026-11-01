@@ -56,12 +56,12 @@ module Analyzer::Javascript
     private def endpoints_for(path : String, content : String, url : String, include_callee : Bool) : Array(Endpoint)
       endpoints = [] of Endpoint
       FILE_ROUTE_METHODS.each do |verb|
-        handler = Noir::JSServerlessFunctionExtractor.exported_handler(content, verb) || next
+        handler = Noir::JSServerlessFunctionExtractor.exported_handler(content, path, verb, include_callee) || next
         endpoints << serverless_endpoint(url, verb, path, handler, :request, include_callee, path_params_in_query: true)
       end
       return endpoints unless endpoints.empty?
 
-      handler = Noir::JSServerlessFunctionExtractor.default_handler(content) || return endpoints
+      handler = Noir::JSServerlessFunctionExtractor.default_handler(content, path, include_callee) || return endpoints
       catch_all_methods(handler).map do |verb|
         serverless_endpoint(url, verb, path, handler, :request, include_callee, path_params_in_query: true)
       end

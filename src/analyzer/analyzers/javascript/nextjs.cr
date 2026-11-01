@@ -1,5 +1,6 @@
 require "../../engines/javascript_engine"
 require "../../../miniparsers/js_callee_extractor"
+require "../../../miniparsers/js_handler_table"
 require "../../../miniparsers/js_route_extractor"
 require "../../../miniparsers/import_graph"
 require "../../../miniparsers/js_handler_resolver"
@@ -20,9 +21,8 @@ module Analyzer::Javascript
     # `export const { POST } = serve<Input>(...)` — handler(s) destructured
     # from a factory call (e.g. @upstash/workflow/nextjs). The plain brace
     # regex misses it because `const` sits between `export` and `{`.
-    EXPORT_VERB_CONST_BRACE_RES  = HTTP_METHODS.map { |m| {m, /export\s+const\s+\{[^}]*\b#{m}\b[^}]*\}\s*=/} }.to_h
-    EXPORT_VERB_FUNCTION_SIG_RES = HTTP_METHODS.map { |m| {m, /export\s+(?:async\s+)?function\s+#{m}\b\s*\([^)]*\)/} }.to_h
-    EXPORT_VERB_CONST_ARROW_RES  = HTTP_METHODS.map { |m| {m, /export\s+const\s+#{m}\s*=\s*(?:async\s*)?(?:\([^)]*\)|\w+)(?:\s*:\s*[^=]+?)?\s*=>/} }.to_h
+    EXPORT_VERB_CONST_BRACE_RES = HTTP_METHODS.map { |m| {m, /export\s+const\s+\{[^}]*\b#{m}\b[^}]*\}\s*=/} }.to_h
+    EXPORT_VERB_CONST_ARROW_RES = HTTP_METHODS.map { |m| {m, /export\s+const\s+#{m}\s*=\s*(?:async\s*)?(?:\([^)]*\)|\w+)(?:\s*:\s*[^=]+?)?\s*=>/} }.to_h
 
     # Pages Router method checks. The receiver is `req.method` /
     # `request.method`, or a bare `method` once the file binds it from the
@@ -178,28 +178,30 @@ module Analyzer::Javascript
       methods = detect_pages_router_methods(sanitized)
       # Comments are blanked in place, so lines and callee positions still
       # match the file.
-      default_body_info = extract_default_export_body(sanitized)
+      table = Noir::JSHandlerTable.for(sanitized, path, include_callee)
+      default_body_info = table.default.try { |fn| fn if fn.direct }
 
       catch_all_urls(url, relative).each do |served|
-        emit_pages_router_endpoints(path, served, methods, sanitized, default_body_info, result, mutex, include_callee)
+        emit_pages_router_endpoints(path, served, methods, sanitized, table, default_body_info, result, mutex, include_callee)
       end
     end
 
     private def emit_pages_router_endpoints(path : String, url : String, methods : Array(String), sanitized : String,
-                                            default_body_info : Tuple(String, Int32)?, result : Array(Endpoint),
+                                            table : Noir::JSHandlerTable::Table,
+                                            default_body_info : Noir::JSHandlerTable::Fn?, result : Array(Endpoint),
                                             mutex : Mutex, include_callee : Bool)
-      default_source_line = default_body_info.try(&.[1]) || 1
+      default_source_line = default_body_info.try(&.body_line) || 1
       methods.each do |method|
         endpoint = Endpoint.new(url, method)
         handler = verb_export_handler(sanitized, path, method) || default_export_handler(sanitized, path, method)
-        body_info = extract_exported_method_body(sanitized, method) || default_body_info || same_file_body(sanitized, path, handler)
-        endpoint.details = Details.new(PathInfo.new(path, body_info.try(&.[1]) || default_source_line))
+        body_info = exported_method_fn(table, method) || default_body_info || same_file_fn(table, path, handler)
+        endpoint.details = Details.new(PathInfo.new(path, body_info.try(&.body_line) || default_source_line))
         endpoint.handler = handler
 
         extract_path_params(url, endpoint)
         extract_pages_router_params(sanitized, endpoint)
         if include_callee
-          attach_callees(endpoint, path, body_info) if body_info
+          attach_js_callees(endpoint, body_info.callees) if body_info
         end
 
         mutex.synchronize { result << endpoint }
@@ -251,27 +253,28 @@ module Analyzer::Javascript
       methods = methods_from_reexport(path, sanitized) if methods.empty?
       return if methods.empty?
 
+      table = Noir::JSHandlerTable.for(sanitized, path, include_callee)
       methods.each do |method|
         endpoint = Endpoint.new(url, method)
         # Read from the blanked text: `export {\n  list as GET, // x\n}` hid
         # the alias, and the line fell back to 1.
         handler = verb_export_handler(sanitized, path, method)
-        method_body_info = extract_exported_method_body(sanitized, method)
-        param_source = method_body_info.try(&.[0])
-        method_body_info ||= same_file_body(sanitized, path, handler)
+        method_body_info = exported_method_fn(table, method)
+        param_source = method_body_info.try(&.body)
+        method_body_info ||= same_file_fn(table, path, handler)
         # A wrapped handler (`export const PUT = withErrors(async (req) =>
         # …)`, or `withAuth(getHandler)` declared here) reads its own closure
         # plus the same-file helpers it calls (`validateRequest(req)` reading
         # `apiKey`); not the whole file, which holds the sibling verbs too.
-        param_source ||= wrapped_param_source(sanitized, method, method_body_info.try(&.[0])) || sanitized
+        param_source ||= wrapped_param_source(sanitized, table, method, method_body_info.try(&.body)) || sanitized
         same_file_line = handler.try { |h| h.line if h.path == path }
-        endpoint.details = Details.new(PathInfo.new(path, method_body_info.try(&.[1]) || same_file_line || 1))
+        endpoint.details = Details.new(PathInfo.new(path, method_body_info.try(&.body_line) || same_file_line || 1))
         endpoint.handler = handler
 
         extract_path_params(url, endpoint)
         extract_app_router_params(param_source, endpoint)
         if include_callee
-          attach_callees(endpoint, path, method_body_info) if method_body_info
+          attach_js_callees(endpoint, method_body_info.callees) if method_body_info
         end
 
         mutex.synchronize { result << endpoint }
@@ -291,19 +294,20 @@ module Analyzer::Javascript
       sanitized = Noir::JSRouteExtractor.strip_js_comments(content)
 
       seen = Set(String).new
+      table = Noir::JSHandlerTable.for(sanitized, path, include_callee)
 
       # export async function NAME(args) { ... }
       sanitized.scan(/export\s+async\s+function\s+(\w+)\s*\(([^)]*)\)/) do |match|
         action_name = match[1]
         next unless seen.add?(action_name)
-        register_server_action(path, action_name, match[2], sanitized, match, result, mutex, include_callee)
+        register_server_action(path, action_name, match[2], sanitized, table, match, result, mutex, include_callee)
       end
 
       # export const NAME = async (args) => { ... }
       sanitized.scan(/export\s+const\s+(\w+)\s*=\s*async\s*\(([^)]*)\)/) do |match|
         action_name = match[1]
         next unless seen.add?(action_name)
-        register_server_action(path, action_name, match[2], sanitized, match, result, mutex, include_callee)
+        register_server_action(path, action_name, match[2], sanitized, table, match, result, mutex, include_callee)
       end
 
       # Note: `export default` actions are unaddressable by name, and
@@ -311,48 +315,23 @@ module Analyzer::Javascript
     end
 
     private def register_server_action(path : String, action_name : String, args : String,
-                                       sanitized : String, match : Regex::MatchData,
-                                       result : Array(Endpoint), mutex : Mutex, include_callee : Bool)
-      param_body_info = extract_action_body(sanitized, match)
-      body = param_body_info.try(&.[0]) || ""
+                                       sanitized : String, table : Noir::JSHandlerTable::Table,
+                                       match : Regex::MatchData, result : Array(Endpoint), mutex : Mutex, include_callee : Bool)
+      param_body_info = table.exports[action_name]?.try { |fn| fn if fn.direct && fn.block }
+      body = param_body_info.try(&.body) || ""
 
       url = "/" + action_name
       endpoint = Endpoint.new(url, "POST")
       endpoint.kind = "server-action"
-      endpoint.details = Details.new(PathInfo.new(path, param_body_info.try(&.[1]) || line_number_for_index(sanitized, match.begin(0) || 0)))
+      endpoint.details = Details.new(PathInfo.new(path, param_body_info.try(&.body_line) || line_number_for_index(sanitized, match.begin(0) || 0)))
       endpoint.handler = Handler.new(action_name, path, line_number_for_index(sanitized, match.begin(0) || 0))
 
       extract_server_action_params(args, body, endpoint)
       # The blanked body: a commented-out declaration of the same name no
       # longer lends its callees.
-      attach_callees(endpoint, path, param_body_info) if include_callee && param_body_info
+      attach_js_callees(endpoint, param_body_info.callees) if include_callee && param_body_info
 
       mutex.synchronize { result << endpoint }
-    end
-
-    # Return the text and opening line for the braced function body that starts
-    # after the match's args list.
-    private def extract_action_body(content : String, match : Regex::MatchData) : Tuple(String, Int32)?
-      match_end = match.end(0)
-      return if match_end.nil?
-      extract_braced_body(content, match_end)
-    end
-
-    private def extract_default_export_body(content : String) : Tuple(String, Int32)?
-      match = content.match(/export\s+default\s+(?:async\s+)?function(?:\s+\w+)?\s*\([^)]*\)/)
-      if match
-        match_end = match.end(0)
-        return extract_braced_body(content, match_end) if match_end
-      end
-
-      arrow_match = content.match(/export\s+default\s+(?:async\s*)?(?:\([^)]*\)|\w+)(?:\s*:\s*[^=]+?)?\s*=>/)
-      if arrow_match
-        match_end = arrow_match.end(0)
-        return extract_braced_body(content, match_end) if match_end
-      end
-
-      alias_match = content.match(/export\s+default\s+([A-Za-z_$][\w$]*)\s*;?/)
-      extract_named_function_body(content, alias_match[1]) if alias_match
     end
 
     # The function serving `method` when the module exports the verb: the
@@ -378,7 +357,7 @@ module Analyzer::Javascript
     # closure, plus the bodies of the same-file functions it hands the
     # request to (`validateRequest(req)`; one hop, never a sibling verb).
     # Nil when the export is not a wrapper call.
-    private def wrapped_param_source(content : String, method : String, wrapped_body : String?) : String?
+    private def wrapped_param_source(content : String, table : Noir::JSHandlerTable::Table, method : String, wrapped_body : String?) : String?
       source = wrapped_body || begin
         m = content.match(EXPORT_VERB_CONST_RES[method]) || return
         rest = content[m.end(0)..]
@@ -395,15 +374,28 @@ module Analyzer::Javascript
         args = split_top_level_commas(source[local_call.end(0)...close]).map(&.strip)
         next unless args.any?(&.matches?(Noir::JSRouteExtractor::REQUEST_RECEIVER_NAME))
         seen << name
-        extract_named_function_body(content, name).try { |body| parts << body[0] }
+        local_block_fn(table, name).try { |fn| parts << fn.body }
       end
       parts.join("\n")
     end
 
     # `export const GET = withAuth(getHandler)`: the wrapped function's body
     # when it is declared in this file, for the line, params and callees.
-    private def same_file_body(content : String, path : String, handler : Handler?) : Tuple(String, Int32)?
-      extract_named_function_body(content, handler.name) if handler && handler.path == path
+    private def same_file_fn(table : Noir::JSHandlerTable::Table, path : String, handler : Handler?) : Noir::JSHandlerTable::Fn?
+      local_block_fn(table, handler.name) if handler && handler.path == path
+    end
+
+    # The function the module exports as `method`, written in place or
+    # aliased to a local (`export { list as GET }`); not one reached through
+    # a wrapper call.
+    private def exported_method_fn(table : Noir::JSHandlerTable::Table, method : String) : Noir::JSHandlerTable::Fn?
+      table.exports[method]?.try { |fn| fn if fn.direct }
+    end
+
+    # A top-level function with a braced body: `const norm = (s) => s.trim()`
+    # has none to read.
+    private def local_block_fn(table : Noir::JSHandlerTable::Table, name : String) : Noir::JSHandlerTable::Fn?
+      table.locals[name]?.try { |fn| fn if fn.direct && fn.block }
     end
 
     # The pages-router default export: a function declared in place, or the
@@ -485,48 +477,6 @@ module Analyzer::Javascript
       nil
     end
 
-    private def extract_exported_method_body(content : String, method : String) : Tuple(String, Int32)?
-      if body_info = extract_direct_exported_method_body(content, method)
-        return body_info
-      end
-
-      if local_name = exported_alias_for_method(content, method)
-        extract_named_function_body(content, local_name)
-      end
-    end
-
-    private def extract_direct_exported_method_body(content : String, method : String) : Tuple(String, Int32)?
-      # `method` is always one of HTTP_METHODS here, so the per-verb
-      # precompiled tables apply.
-      function_match = content.match(EXPORT_VERB_FUNCTION_SIG_RES[method])
-      if function_match
-        match_end = function_match.end(0)
-        return extract_braced_body(content, match_end) if match_end
-      end
-
-      const_match = content.match(EXPORT_VERB_CONST_ARROW_RES[method])
-      if const_match
-        match_end = const_match.end(0)
-        extract_braced_body(content, match_end) if match_end
-      end
-    end
-
-    private def extract_named_function_body(content : String, name : String) : Tuple(String, Int32)?
-      function_match = content.match(cached_regex("nextjs:named_fn:#{name}") { /(?:^|[^\w$])(?:async\s+)?function\s+#{Regex.escape(name)}\b\s*\([^)]*\)/ })
-      if function_match
-        match_end = function_match.end(0)
-        return extract_braced_body(content, match_end) if match_end
-      end
-
-      # Only a braced body: `const norm = (s) => s.trim()` has none, and the
-      # next `{` in the file is some other function's.
-      const_match = content.match(cached_regex("nextjs:named_const:#{name}") { /(?:const|let|var)\s+#{Regex.escape(name)}\s*=\s*(?:async\s*)?(?:\([^)]*\)|\w+)(?:\s*:\s*[^=]+?)?\s*=>(?=\s*\{)/ })
-      if const_match
-        match_end = const_match.end(0)
-        extract_braced_body(content, match_end) if match_end
-      end
-    end
-
     private def exported_alias_for_method(content : String, method : String) : String?
       content.scan(/export\s+\{([^}]+)\}/) do |match|
         split_top_level_commas(match[1]).each do |part|
@@ -544,39 +494,6 @@ module Analyzer::Javascript
         end
       end
       nil
-    end
-
-    private def extract_braced_body(content : String, start_pos : Int32) : Tuple(String, Int32)?
-      open_pos = content.index('{', start_pos)
-      return if open_pos.nil?
-      depth = 1
-      i = open_pos + 1
-      # `content[i]` re-decodes UTF-8 from byte 0 on every call once the
-      # string isn't single_byte_optimizable? (any non-ASCII char), making
-      # this depth-scan O(n^2) on a large non-ASCII handler body. Index a
-      # pre-materialized Char array instead — same char-by-char semantics,
-      # O(1) per lookup.
-      chars = content.chars
-      while i < chars.size && depth > 0
-        case chars[i]
-        when '{'
-          depth += 1
-        when '}'
-          depth -= 1
-          break if depth == 0
-        end
-        i += 1
-      end
-      return if depth > 0
-
-      {content[(open_pos + 1)...i], line_number_for_index(content, open_pos)}
-    end
-
-    private def attach_callees(endpoint : Endpoint, path : String, body_info : Tuple(String, Int32))
-      body, open_brace_line = body_info
-      Noir::JSCalleeExtractor.callees_for_function_body(body, path, open_brace_line).each do |name, callee_path, line|
-        endpoint.push_callee(Callee.new(name, path: callee_path, line: line))
-      end
     end
 
     private def detect_pages_router_methods(content : String) : Array(String)
