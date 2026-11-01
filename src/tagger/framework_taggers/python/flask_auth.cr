@@ -261,6 +261,7 @@ class FlaskAuthTagger < FrameworkTagger
   # counts only where this line passes one of those parameters a value.
   private def decorator_authz(line : String, file : String) : String?
     match = line.match(DECORATOR_NAME) || return
+    return flask_allows_desc(line) if flask_allows_requires?(match[1], line, file)
     target = resolve_def(file, match[1]) || return
     # Not where the caller's own branch reaches the view unchecked
     # (`if in_window() or current_user.is_admin:`). A setting that skips
@@ -269,6 +270,107 @@ class FlaskAuthTagger < FrameworkTagger
     gates = authz_params(target[0], target[1], 0) || return
     args = match.post_match
     match[1] if gates.empty? || gates.any? { |gate| args.matches?(/\b#{gate}\s*=\s*(?!None\b|False\b|\(\s*\)|\[\s*\]|\{\s*\})\S/) }
+  end
+
+  # flask-allows: `@allows.requires(IsAdmin, ...)` on an `allows =
+  # Allows(...)` instance, `@fa.requires(...)` on the module, or a bare
+  # `@requires(...)` bound to flask_allows' (or its flask_allows2 fork,
+  # FlaskBB's) by this file's imports, aliases included, refuses (403, or
+  # the `on_fail` handler) a caller whose identity fails the
+  # requirements: an authorization check. A project's own `requires`
+  # decides nothing here, nor do requirements that only negate
+  # (`requires(Not(...))`); `Not` negates only its own argument.
+  ALLOWS_INSTANCE    = /^([A-Za-z_]\w*)[ \t]*(?::[^=\n]+)?=[ \t]*([A-Za-z_][\w.]*)[ \t]*\(/m
+  ALLOWS_MODULE      = /\Aflask_allows2?(?:\.|\z)/
+  IMPORT_PARENS      = /(\bimport[ \t]*)\(([^)]*)\)/
+  FROM_IMPORT_LINE   = /^[ \t]*from[ \t]+([\w.]+)[ \t]+import[ \t]+([^\n]+)/m
+  PLAIN_IMPORT_LINE  = /^[ \t]*import[ \t]+([^\n]+)/m
+  TOP_LEVEL_REQUIRES = /^(?:async[ \t]+)?def[ \t]+requires\b/m
+
+  @allows_bindings = Hash(String, Hash(String, String)).new
+
+  # What each name `path` binds means in flask_allows: "requires",
+  # "Allows" or "module"; "" for a name a later import or def took over.
+  private def allows_bindings(path : String) : Hash(String, String)
+    @allows_bindings[path] ||= begin
+      bindings = Hash(String, String).new
+      source = (read_file(path) || "").gsub(IMPORT_PARENS) { "#{$1}#{$2.gsub(/#[^\n]*/, "").gsub(/\s+/, " ")}" }
+      if source.includes?("flask_allows")
+        statements = [] of Tuple(Int32, String, String?)
+        source.scan(FROM_IMPORT_LINE) { |m| statements << {m.begin(0), m[2], m[1]} }
+        source.scan(PLAIN_IMPORT_LINE) { |m| statements << {m.begin(0), m[1], nil} }
+        statements.sort_by!(&.[0]).each do |_, items, from|
+          items.sub(/#.*/, "").split(',').each do |item|
+            name, _, bound = item.strip.partition(/\s+as\s+/)
+            bound = name if bound.empty?
+            next if name.empty?
+            if from
+              bindings[bound] = from.matches?(ALLOWS_MODULE) && name.in?("requires", "Allows") ? name : ""
+            elsif name.matches?(ALLOWS_MODULE)
+              bindings[bound] = "module"
+            end
+          end
+        end
+        bindings["requires"] = "" if source.matches?(TOP_LEVEL_REQUIRES)
+      end
+      bindings
+    end
+  end
+
+  private def flask_allows_requires?(name : String, line : String, file : String) : Bool
+    receiver, _, leaf = name.rpartition('.')
+    if receiver.empty?
+      return false unless allows_bindings(file)[name]? == "requires"
+    else
+      return false unless leaf == "requires"
+    end
+    return false if only_negations?(line)
+    return true if receiver.empty? || allows_bindings(file)[receiver]? == "module"
+    !!resolve(file, receiver) do |path, instance|
+      bindings = allows_bindings(path)
+      read_file(path).try(&.scan(ALLOWS_INSTANCE).any? do |m|
+        next false unless m[1] == instance
+        mod, _, ctor = m[2].rpartition('.')
+        mod.empty? ? bindings[ctor]? == "Allows" : ctor == "Allows" && (bindings[mod]? == "module" || mod.matches?(ALLOWS_MODULE))
+      end) || false
+    end
+  end
+
+  # `requires(Not(is_banned))` / `requires(~x)`: every requirement only
+  # negates, so it never asks who the caller is. `requires(Not(x), is_admin)`
+  # still demands is_admin.
+  private def only_negations?(line : String) : Bool
+    args = line.partition(/\brequires\s*\(/)[2]
+    return false if args.empty?
+    depth = 1
+    stop = args.size
+    args.each_char_with_index do |char, i|
+      depth += 1 if char.in?('(', '[', '{')
+      depth -= 1 if char.in?(')', ']', '}')
+      if depth == 0
+        stop = i
+        break
+      end
+    end
+    requirements = Noir::TopLevelSplit.split(args[0, stop], ',', Noir::TopLevelSplit::Rules.new)
+      .map(&.strip).reject { |part| part.empty? || part.matches?(/\A\w+\s*=(?!=)/) }
+    !requirements.empty? && requirements.all?(&.matches?(/\A(?:Not\s*\(|~)/))
+  end
+
+  # A requirement built from the request (`ForRequest(can_access_forum,
+  # request_forum)`, `can_post_reply(topic)`) is decided by the requested
+  # resource's settings, which can let a guest through; a fixed one
+  # (`IsAdmin`, `IsAtLeast(GroupRole.MODERATOR)`) is not.
+  # ponytail: a lowercase call or `ForRequest(` marks the per-request kind;
+  # evaluate the requirement definitions if a project mixes the styles.
+  private def flask_allows_desc(line : String) : String
+    args = line.partition('(')[2]
+    requirements = args.sub(/,?\s*\b(?:on_fail|throws|identity)\s*=[\s\S]*\z/, "")
+    if requirements.matches?(/\bForRequest\s*\(|(?<![\w.])[a-z_][\w]*\s*\(/)
+      "flask-allows requires (a per-request requirement: the resource's settings can admit a guest)"
+    else
+      "flask-allows requires"
+    end
   end
 
   # Whether `def name` in `file` denies with 403 on a role, permission or
@@ -418,7 +520,12 @@ class FlaskAuthTagger < FrameworkTagger
 
   # The decorators a list expression names, as `{declaring file, name}`.
   private def decorator_entries(text : String, file : String, depth : Int32) : Array(Tuple(String, String))
-    names = text.gsub(PY_STRING, "").scan(/(?:^\s*[\[({]?|[\[,{:+])\s*([A-Za-z_][\w.]*)/).map(&.[1])
+    code = text.gsub(PY_STRING, "")
+    names = code.scan(/(?:^\s*[\[({]?|[\[,{:+])\s*([A-Za-z_][\w.]*)/).map do |m|
+      # A flask-allows `requires(...)` entry keeps its requirements: what
+      # they test decides how the guard is described.
+      m[1].ends_with?("requires") && (args = call_arguments_after(code, m.end(1))) ? "#{m[1]}#{args}" : m[1]
+    end
     names.flat_map do |entry|
       if (ref = entry.match(/^(.+)\.(method_decorators|decorators)$/)) && (target = resolve_class(file, ref[1]))
         class_attr(target[0], target[1], ref[2], depth + 1) || [] of Tuple(String, String)
@@ -426,6 +533,21 @@ class FlaskAuthTagger < FrameworkTagger
         [{file, entry}]
       end
     end
+  end
+
+  # The `(...)` call text starting at char `index` of `code`, if one does.
+  private def call_arguments_after(code : String, index : Int32) : String?
+    return unless code[index]? == '('
+    depth = 0
+    (index...code.size).each do |i|
+      case code[i]
+      when '(' then depth += 1
+      when ')'
+        depth -= 1
+        return code[index..i] if depth == 0
+      end
+    end
+    nil
   end
 
   private def resolve_class(file : String, name : String) : Tuple(String, String)?
