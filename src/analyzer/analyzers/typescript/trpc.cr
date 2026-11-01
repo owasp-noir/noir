@@ -4,6 +4,8 @@ require "../../../miniparsers/js_route_extractor"
 require "../../../miniparsers/js_handler_resolver"
 require "../../../utils/top_level_split"
 require "../../../utils/char_offsets"
+require "../../../ext/tree_sitter/tree_sitter"
+require "../../../miniparsers/extraction_result_cache"
 
 module Analyzer::Typescript
   class TRPC < Analyzer::Javascript::JavascriptEngine
@@ -12,23 +14,57 @@ module Analyzer::Typescript
     DEFAULT_PREFIX = "/api/trpc"
     alias RouterKey = Tuple(String, String)
 
-    private record Router, base_path : String, name : String, body : String, file : String, line : Int32
+    record TRPCProcedureData,
+      method : String,
+      line : Int32,
+      file : String,
+      chain_text : String,
+      params : Array(Param),
+      callees : Array(Noir::JSCalleeExtractor::Entry),
+      handler : Handler,
+      auth_tag : Tag?
+
+    record TRPCRouterEntry,
+      key : String,
+      line : Int32,
+      kind : Symbol, # :identifier, :nested_router, :procedure
+      ident : String,
+      nested_entries : Array(TRPCRouterEntry),
+      proc : TRPCProcedureData?
+
+    record Router,
+      base_path : String,
+      name : String,
+      entries : Array(TRPCRouterEntry),
+      file : String,
+      line : Int32
 
     # A procedure exported as a standalone `const` and referenced by name
-    # inside a router map — the modular layout large tRPC apps use
-    # (documenso: `export const createDocumentRoute = authenticatedProcedure
-    # .input(...).mutation(...)` per file, then `router({ createDocument:
-    # createDocumentRoute })`). `value` is the chain up to (and including)
-    # the terminal `.query/.mutation/.subscription(` so input params and
-    # callees resolve.
-    private record Procedure, base_path : String, name : String, method : String, value : String, file : String, line : Int32
+    # inside a router map.
+    record Procedure,
+      base_path : String,
+      name : String,
+      proc : TRPCProcedureData
 
     # A Next.js pages-router mount (`pages/api/trpc/slots/[trpc].ts` handing
     # `slotsRouter` to `createNextApiHandler`): the router's procedure paths
     # are served under the mount's directory, `/api/trpc/slots/getSchedule`.
     # `specifier` is where the router was imported from, which tells two
     # same-named routers apart.
-    private record Mount, base_path : String, prefix : String, router : String, specifier : String?, file : String, line : Int32
+    record Mount,
+      base_path : String,
+      prefix : String,
+      router : String,
+      specifier : String?,
+      file : String,
+      line : Int32
+
+    record TRPCFileFacts,
+      routers : Array(Router),
+      procedures : Array(Procedure),
+      mount : Mount?,
+      url_prefix : String?,
+      builder_defs : Hash(String, String)
 
     TAGGER = "trpc_auth"
 
@@ -38,6 +74,20 @@ module Analyzer::Typescript
     @builder_defs = Hash(String, String).new
     @named_procedures = Hash(String, Array(Procedure)).new
 
+    @@memo = Hash(UInt64, TRPCFileFacts).new
+    @@memo_mutex = Mutex.new
+
+    Noir::ExtractionResultCache.register_clearer do
+      @@memo_mutex.synchronize { @@memo.clear }
+    end
+
+    private def trpc_file_facts(path : String, content : String, base_path : String, include_callees : Bool) : TRPCFileFacts
+      key = Noir::ExtractionResultCache.key(content, "trpc_facts", path, base_path, include_callees ? "1" : "0")
+      Noir::ExtractionResultCache.fetch(@@memo, key, @@memo_mutex) do
+        extract_trpc_facts(path, content, base_path, include_callees)
+      end
+    end
+
     def analyze
       result = [] of Endpoint
       routers = Hash(RouterKey, Router).new
@@ -46,6 +96,7 @@ module Analyzer::Typescript
       procedures_by_name = Hash(String, Procedure).new
       url_prefixes = Hash(String, String).new
       mounts = [] of Mount
+      include_callee = callees_needed?
 
       # Merged in file order, not worker-completion order: two apps that name
       # the same router or procedure leave the later file's in place, so the
@@ -56,27 +107,22 @@ module Analyzer::Typescript
         raw = read_file_content(path)
         base_path = configured_base_for(path)
         mount = next_mount(path, raw, base_path)
-        defs = builder_definitions(raw)
+        content = Noir::JSRouteExtractor.strip_js_comments(raw)
+        defs = extract_builder_defs(content, path)
         none = {[] of Router, [] of Procedure, base_path, nil.as(String?), mount, defs}
         next none unless trpc_candidate?(raw)
-        # tRPC router modules may import `react` (RSC/client helpers); the
-        # `createTRPCRouter`/procedure shape already gates detection, so
-        # don't let the client-side-framework markers skip them.
         next none if Noir::JSRouteExtractor.test_stub_only?(path, raw, include_client_frameworks: false)
-
-        content = Noir::JSRouteExtractor.strip_js_comments(raw)
         next none unless trpc_candidate?(content)
 
-        # BYTE-indexed, so every probe below passes `byte_begin`.
-        literal_mask = string_literal_mask(content)
-        offsets = Noir::CharOffsets.new(content)
-        collected = collect_routers(offsets, path, base_path, literal_mask)
-        collected_procs = collect_procedures(offsets, path, base_path, literal_mask)
-        {collected, collected_procs, base_path, extract_prefix(content, literal_mask), mount, defs}
+        facts = trpc_file_facts(path, content, base_path, include_callee)
+        all_defs = defs.dup
+        all_defs.merge!(facts.builder_defs)
+        {facts.routers, facts.procedures, base_path, facts.url_prefix, mount || facts.mount, all_defs}
       rescue e
         logger.debug "Error analyzing tRPC file #{path}: #{e.message}"
         nil
       end
+
       per_file.each do |collected, collected_procs, base_path, found, mount, defs|
         collected.each { |r| routers[router_key(r)] = r }
         all_routers.concat(collected)
@@ -113,11 +159,11 @@ module Analyzer::Typescript
 
       used_as_child = Set(RouterKey).new
       routers.each_value do |router|
-        each_top_level_kv(router.body) do |_key, value, _value_line|
-          ident = extract_identifier(value)
-          next unless ident
-          child_key = router_key(router.base_path, ident)
-          used_as_child.add(child_key) if routers.has_key?(child_key)
+        router.entries.each do |entry|
+          if entry.kind == :identifier
+            child_key = router_key(router.base_path, entry.ident)
+            used_as_child.add(child_key) if routers.has_key?(child_key)
+          end
         end
       end
 
@@ -141,7 +187,6 @@ module Analyzer::Typescript
       m = content.match(NEXT_MOUNT_ROUTER_RE) || return
       scoped = Noir::PathScope.base_relative(path, base_path)
       pages = scoped.index("/pages/") || return
-      # An explicit `endpoint:` in the mount wins over its directory.
       prefix = extract_prefix(content, string_literal_mask(content)) ||
                scoped[(pages + "/pages".size)...(scoped.rindex('/') || scoped.size)]
       local = m[1]
@@ -163,7 +208,7 @@ module Analyzer::Typescript
     private def imported_procedure(ident : String, router_file : String, base_path : String) : Procedure?
       specifier, exported = Noir::JSHandlerResolver.imports_of(read_file_content(router_file), router_file)[ident]? || return
       @named_procedures[exported || ident]?.try &.select { |p| p.base_path == base_path }
-        .max_by? { |p| specifier_score(specifier, router_file, p.file) }
+        .max_by? { |p| specifier_score(specifier, router_file, p.proc.file) }
     end
 
     # Trailing path segments `specifier` (as imported by `importer`) shares
@@ -184,9 +229,6 @@ module Analyzer::Typescript
       ".subscription(",
       ".subscription (",
     ]
-    # One precompiled `Regex.union` (PCRE2 JIT) scan replaces the six-item
-    # `.any? { includes? }` check below — this gate is evaluated on every
-    # candidate file, from both v9_router_candidate? and trpc_candidate?.
     PROCEDURE_HINTS_RE = Regex.union(PROCEDURE_HINTS)
 
     PREFIX_HINTS = [
@@ -204,54 +246,29 @@ module Analyzer::Typescript
     ]
     V9_MERGE_HINTS_RE = Regex.union(V9_MERGE_HINTS)
 
-    # `initTRPC`/`createTRPCRouter` are OR-ed as a standalone boolean gate
-    # in trpc_candidate? below; union them into one scan like the hint
-    # lists above instead of two sequential String#includes? calls.
-    TRPC_ROOT_MARKER_RE = Regex.union("initTRPC", "createTRPCRouter")
-
-    # Every tRPC handler imports from a `@trpc/*` or `trpc-*` package.
-    TRPC_MENTION_RE = /trpc/i
-
-    # `createRouter`/`trpc.router` gate the v9 chain-router shape.
-    V9_ROUTER_MARKER_RE = Regex.union("createRouter", "trpc.router")
-
-    # `Procedure`/`.procedure` identify a procedure-builder reference.
+    TRPC_ROOT_MARKER_RE  = Regex.union("initTRPC", "createTRPCRouter")
+    TRPC_MENTION_RE      = /trpc/i
+    V9_ROUTER_MARKER_RE  = Regex.union("createRouter", "trpc.router")
     PROCEDURE_BUILDER_RE = Regex.union("Procedure", ".procedure")
 
     private def trpc_candidate?(content : String) : Bool
       content.matches?(/endpoint\s*:/) ||
         content.matches?(PREFIX_HINTS_RE) ||
         content.matches?(TRPC_ROOT_MARKER_RE) ||
-        # A pure ROOT/sub-router composition file (`export const appRouter =
-        # router({ document: documentRouter, ... })`) has no inline
-        # procedure hint, so the old `router( && .query(` gate skipped it —
-        # and with the root uncollected every sub-router was flattened
-        # standalone, losing its dotted prefix. `router(` imported from a
-        # *trpc* module disambiguates it from express/react-router.
         (content.includes?("router(") && trpc_router_import?(content)) ||
-        # tRPC v9 used chain-style routers:
-        # `createRouter().query("name", { input, resolve }).merge("x.", child)`.
-        # OSS apps still use this shape, and it has no `Procedure` builder.
         v9_router_candidate?(content) ||
-        # A standalone procedure-definition file (no `router(...)`).
         (procedure_builder?(content) && content.matches?(PROCEDURE_HINTS_RE))
     end
 
     private def v9_router_candidate?(content : String) : Bool
       return false unless content.matches?(V9_ROUTER_MARKER_RE)
-
       content.matches?(V9_MERGE_HINTS_RE) || content.matches?(PROCEDURE_HINTS_RE)
     end
 
-    # tRPC builders are conventionally named `*Procedure` (publicProcedure,
-    # protectedProcedure, authenticatedProcedure) or accessed as
-    # `t.procedure`.
     private def procedure_builder?(content : String) : Bool
       content.matches?(PROCEDURE_BUILDER_RE)
     end
 
-    # `import { router } from '.../trpc'` — tRPC's `router` factory, as
-    # opposed to express's `Router()` or react-router's `router`.
     private def trpc_router_import?(content : String) : Bool
       content.matches?(/import\b[^;]*\brouter\b[^;]*from\s*['"][^'"]*trpc[^'"]*['"]/)
     end
@@ -265,8 +282,6 @@ module Analyzer::Typescript
       "/test-files/",
     ]
 
-    # Scan-base-relative, never absolute: a `test/` directory ABOVE the
-    # scan base is not this project's test tree.
     private def trpc_test_fixture_path?(path : String) : Bool
       relative = base_relative_path(path)
       TEST_FIXTURE_PATH_MARKERS.any? { |marker| relative.includes?(marker) } ||
@@ -282,380 +297,21 @@ module Analyzer::Typescript
       {base_path, name}
     end
 
-    private def collect_routers(offsets : Noir::CharOffsets, path : String, base_path : String, literal_mask : Array(Bool)) : Array(Router)
-      content = offsets.content
-      collected = [] of Router
-      # Capture `(export )? (const|let|var) NAME = <prefix>?(router|createTRPCRouter)({...})`.
-      # Prefix tolerates `t.router(`, `initTRPC.create().router(`, `_.router(` etc.
-      pattern = /\b(?:export\s+)?(?:const|let|var)\s+(\w+)(?:\s*:[^=]+)?\s*=\s*(?:[\w$]+\s*(?:\(\s*\))?\s*\.\s*)?(?:router|createTRPCRouter)\s*\(\s*\{/
-
-      content.scan(pattern) do |match|
-        next if literal_position?(literal_mask, match.byte_begin(0))
-
-        match_end = offsets.end(match)
-        next if match_end == 0
-
-        brace_open = match_end - 1
-        next unless offsets.char_at(brace_open) == '{'
-
-        brace_close = Noir::JSLiteralScanner.find_matching_brace(offsets, brace_open)
-        next unless brace_close
-
-        body = offsets.slice(brace_open + 1, brace_close)
-        line = offsets.line(offsets.begin(match))
-        collected << Router.new(base_path, match[1], body, path, line)
-      end
-
-      identifier_arg_pattern = /\b(?:export\s+)?(?:const|let|var)\s+(\w+)(?:\s*:[^=]+)?\s*=\s*(?:[\w$]+\s*(?:\(\s*\))?\s*\.\s*)?(?:router|createTRPCRouter)\s*\(\s*([A-Za-z_$][\w$]*)\s*\)/
-
-      content.scan(identifier_arg_pattern) do |match|
-        next if literal_position?(literal_mask, match.byte_begin(0))
-
-        body_info = extract_object_assignment_body(offsets, match[2], literal_mask)
-        next unless body_info
-
-        body, object_line = body_info
-        line = object_line > 0 ? object_line : offsets.line(offsets.begin(match))
-        collected << Router.new(base_path, match[1], body, path, line)
-      end
-
-      collected.concat collect_v9_chain_routers(offsets, path, base_path, literal_mask)
-
-      collected
-    end
-
-    private def collect_v9_chain_routers(offsets : Noir::CharOffsets, path : String, base_path : String, literal_mask : Array(Bool)) : Array(Router)
-      collected = [] of Router
-      assignment_pattern = /\b(?:export\s+)?(?:const|let|var)\s+(\w+)(?:\s*:[^=]+)?\s*=\s*/
-      # `find_statement_end`/`skip_whitespace` index by char; materializing
-      # `chars` once per file (instead of once per assignment match) keeps
-      # a non-ASCII file with many top-level declarations from re-walking
-      # `content` from byte 0 on every char access (Crystal has no
-      # char-index cache), which is O(n) per char -> O(n^2) per match.
-      chars = offsets.chars
-
-      offsets.content.scan(assignment_pattern) do |match|
-        next if literal_position?(literal_mask, match.byte_begin(0))
-
-        value_start = skip_whitespace(chars, offsets.end(match))
-        statement_end = find_statement_end(chars, value_start)
-        expression = offsets.slice(value_start, statement_end)
-        next unless v9_router_chain_expression?(expression)
-
-        line = offsets.line(offsets.begin(match))
-        body = v9_router_chain_body(expression, offsets, value_start, line)
-        next if body.empty?
-
-        collected << Router.new(base_path, match[1], body, path, line)
-      end
-
-      collected
-    end
-
-    private def v9_router_chain_expression?(expression : String) : Bool
-      return false unless expression.includes?("createRouter") || expression.includes?("trpc.router")
-
-      expression.includes?(".merge") ||
-        expression.includes?(".query") ||
-        expression.includes?(".mutation") ||
-        expression.includes?(".subscription")
-    end
-
-    private def find_statement_end(chars : Array(Char), start : Int32) : Int32
-      depth = 0
-      quote : Char? = nil
-      escaped = false
-      i = start
-      n = chars.size
-
-      while i < n
-        char = chars[i]
-
-        if quote
-          if escaped
-            escaped = false
-          elsif char == '\\'
-            escaped = true
-          elsif char == quote
-            quote = nil
-          end
-          i += 1
-          next
-        end
-
-        case char
-        when '\'', '"', '`'
-          quote = char
-        when '(', '[', '{'
-          depth += 1
-        when ')', ']', '}'
-          depth -= 1 if depth > 0
-        when '\n'
-          if depth == 0
-            next_pos = i + 1
-            while next_pos < n && (chars[next_pos] == ' ' || chars[next_pos] == '\t')
-              next_pos += 1
-            end
-            return i unless chars[next_pos]? == '.'
-          end
-        when ';'
-          return i if depth == 0
-        end
-
-        i += 1
-      end
-
-      n
-    end
-
-    private def skip_whitespace(chars : Array(Char), pos : Int32) : Int32
-      i = pos
-      n = chars.size
-      while i < n && chars[i].whitespace?
-        i += 1
-      end
-      i
-    end
-
-    private def v9_router_chain_body(expression : String, offsets : Noir::CharOffsets, expression_start : Int32, assignment_line : Int32) : String
-      entries = [] of Tuple(Int32, Int32, String, String)
-
-      # Precompute newline offsets once so per-entry line lookups stay O(log n)
-      # instead of re-slicing `content[0, ...].count('\n')` for every chained
-      # `.query`/`.merge` (which is O(n²) on long single-expression chains).
-      base_newlines = offsets.line(expression_start) - 1
-      expr_newlines = [] of Int32
-      expression.each_char_with_index { |char, index| expr_newlines << index if char == '\n' }
-
-      expression.scan(/\.\s*(query|mutation|subscription)\s*\(\s*(['"`])([^'"`]+)\2\s*,/m) do |match|
-        match_start = match.begin(0) || 0
-        open_paren = expression.index('(', match_start)
-        next unless open_paren
-
-        close_paren = Noir::JSRouteExtractor.find_matching_paren(expression, open_paren)
-        next unless close_paren
-
-        line = base_newlines + newline_count_before(expr_newlines, match_start) + 1
-        entries << {line, match_start, match[3], expression[match_start..close_paren]}
-      end
-
-      expression.scan(/\.\s*merge\s*\(/m) do |match|
-        match_start = match.begin(0) || 0
-        open_paren = expression.index('(', match_start)
-        next unless open_paren
-
-        close_paren = Noir::JSRouteExtractor.find_matching_paren(expression, open_paren)
-        next unless close_paren
-
-        args = split_top_level(expression[(open_paren + 1)...close_paren], ',')
-        next if args.empty?
-
-        prefix : String?
-        child : String?
-        if args.size >= 2
-          prefix = string_literal_value(args[0])
-          child = extract_identifier(args[1])
-        else
-          prefix = nil
-          child = extract_identifier(args[0])
-        end
-        next unless child
-
-        key = normalize_v9_merge_prefix(prefix, child)
-        next if key.empty?
-
-        line = base_newlines + newline_count_before(expr_newlines, match_start) + 1
-        entries << {line, match_start, key, child}
-      end
-
-      return "" if entries.empty?
-
-      builder = String::Builder.new
-      current_line = 1
-      entries.sort_by { |line, pos, _key, _value| {line, pos} }.each do |line, _pos, key, value|
-        target_line = line - assignment_line + 1
-        current_line = append_router_body_entry(builder, current_line, target_line, key, value)
-      end
-
-      builder.to_s
-    end
-
-    # Count newlines occurring strictly before `pos` using the precomputed,
-    # ascending list of newline offsets (binary search keeps it O(log n)).
-    private def newline_count_before(newline_positions : Array(Int32), pos : Int32) : Int32
-      newline_positions.bsearch_index { |offset| offset >= pos } || newline_positions.size
-    end
-
-    private def append_router_body_entry(builder : String::Builder, current_line : Int32, target_line : Int32, key : String, value : String) : Int32
-      line = current_line
-      while line < target_line
-        builder << '\n'
-        line += 1
-      end
-
-      builder << quoted_router_key(key)
-      builder << ": "
-      builder << value
-      builder << ",\n"
-      line + value.count('\n') + 1
-    end
-
-    private def quoted_router_key(key : String) : String
-      escaped = key.gsub("\\", "\\\\").gsub("\"", "\\\"")
-      "\"#{escaped}\""
-    end
-
-    private def string_literal_value(expression : String) : String?
-      stripped = expression.strip
-      if match = stripped.match(/\A(['"`])([^'"`]*)\1\z/)
-        match[2]
-      end
-    end
-
-    private def normalize_v9_merge_prefix(prefix : String?, child : String) : String
-      raw = prefix || child
-      raw.strip.gsub(/\A\.+|\.+\z/, "")
-    end
-
-    PROCEDURE_VERBS = {"query" => "GET", "mutation" => "POST", "subscription" => "SUBSCRIBE"}
-
-    # Collect standalone `export const NAME = <builder>.input(...).<verb>(...)`
-    # procedure definitions so a router that references NAME resolves it.
-    private def collect_procedures(offsets : Noir::CharOffsets, path : String, base_path : String, literal_mask : Array(Bool)) : Array(Procedure)
-      collected = [] of Procedure
-      # `procedure_terminal`/`verb_call_at?` index by char within an
-      # up-to-8000-char window; materializing `chars` once per file
-      # (instead of once per declaration) keeps a non-ASCII file with many
-      # top-level declarations from re-walking `content` from byte 0 on
-      # every char access (Crystal has no char-index cache) — otherwise a
-      # single call already costs up to O(8000 * start).
-      chars = offsets.chars
-      offsets.content.scan(/\b(?:export\s+)?(?:const|let|var)\s+(\w+)(?:\s*:[^=]+)?\s*=\s*/) do |match|
-        next if literal_position?(literal_mask, match.byte_begin(0))
-
-        value_start = offsets.end(match)
-        first = chars[value_start]?
-        next unless first && (first.ascii_letter? || first == '_' || first == '$')
-
-        info = procedure_terminal(chars, value_start)
-        next unless info
-        method, dot = info
-        # Through the terminal call, so the resolver's handler and callees
-        # resolve as they do for an inline procedure.
-        open = chars.index('(', dot)
-        close = open && Noir::JSLiteralScanner.find_matching_paren(chars, open)
-        line = offsets.line(offsets.begin(match))
-        collected << Procedure.new(base_path, match[1], method, offsets.slice(value_start, close ? close + 1 : dot), path, line)
-      end
-      collected
-    end
-
-    # Walk the call chain from `start` (a procedure-builder identifier) and
-    # return {http_method, index of the terminal's `.`} once a TOP-LEVEL
-    # `.query/.mutation/.subscription(` terminal is found. Nested parens —
-    # the `.input(z.object({...}))` schema, refinement arrows, the resolver
-    # — sit at depth > 0, so only the procedure's own terminal verb matches.
-    private def procedure_terminal(chars : Array(Char), start : Int32) : Tuple(String, Int32)?
-      i = start
-      depth = 0
-      n = chars.size
-      limit = Math.min(n, start + 8000)
-      while i < limit
-        case chars[i]
-        when '(', '[', '{'
-          depth += 1
-        when ')', ']', '}'
-          depth -= 1
-          return if depth < 0
-        when ';'
-          return if depth == 0
-        when '.'
-          if depth == 0
-            PROCEDURE_VERBS.each do |verb, method|
-              return {method, i} if verb_call_at?(chars, i + 1, verb)
-            end
-          end
-        else
-          # not interesting
-        end
-        i += 1
-      end
-      nil
-    end
-
-    private def verb_call_at?(chars : Array(Char), pos : Int32, verb : String) : Bool
-      n = chars.size
-      return false if pos + verb.size > n
-      verb.each_char_with_index do |ch, k|
-        return false unless chars[pos + k] == ch
-      end
-      after = pos + verb.size
-      if nxt = chars[after]?
-        return false if nxt.ascii_alphanumeric? || nxt == '_'
-      end
-      j = after
-      while j < n && chars[j].whitespace?
-        j += 1
-      end
-      chars[j]? == '('
-    end
-
-    private def extract_object_assignment_body(offsets : Noir::CharOffsets, identifier : String, literal_mask : Array(Bool)) : Tuple(String, Int32)?
-      pattern = cached_regex("trpc:object_assign:#{identifier}") do
-        /\b(?:export\s+)?(?:const|let|var)\s+#{Regex.escape(identifier)}(?:\s*:[^=]+)?\s*=\s*\{/
-      end
-
-      offsets.content.scan(pattern) do |match|
-        next if literal_position?(literal_mask, match.byte_begin(0))
-
-        match_end = offsets.end(match)
-        next if match_end == 0
-
-        brace_open = match_end - 1
-        next unless offsets.char_at(brace_open) == '{'
-
-        brace_close = Noir::JSLiteralScanner.find_matching_brace(offsets, brace_open)
-        next unless brace_close
-
-        body = offsets.slice(brace_open + 1, brace_close)
-        line = offsets.line(offsets.begin(match))
-        return {body, line}
-      end
-
-      nil
-    end
-
     private def extract_prefix(content : String, literal_mask : Array(Bool)) : String?
-      # Explicit endpoint option in fetch/openapi handlers. `url_prefixes` is
-      # last-file-wins per base, so a path-shaped `endpoint:` in a module that
-      # is not a tRPC handler (a SCIM resource-type table) would replace every
-      # router's prefix. The mention gate is per file, not per match: inside
-      # the loop a catalog of `endpoint: '/x'` rows re-scans the file N times.
       if content_matches?(content, TRPC_MENTION_RE)
         content.scan(/endpoint\s*:\s*['"`]([^'"`]+)['"`]/) do |m|
           next if literal_position?(literal_mask, m.byte_begin(0))
-          # Skip TS *type* annotations like `endpoint: `/${string}`` — a
-          # template literal carrying an interpolation is a type/computed
-          # value, not the concrete mount path (documenso's
-          # openapi-fetch-handler types `endpoint` this way; the real prefix
-          # `'/api/trpc'` lives in another file).
           next if m[1].includes?("${")
-          # Adapters compare `endpoint` to the request pathname, so a mount
-          # path starts with `/`. This drops the S3/OAuth `endpoint:
-          # 'https://…'` options, `'GET /api/…'` labels and bare names that
-          # stories, seeders and non-tRPC modules carry.
           next unless m[1].starts_with?('/')
           return m[1]
         end
       end
 
-      # Express/Koa-style mounting: `app.use('/api/trpc', trpcExpress.createExpressMiddleware(...))`.
       content.scan(/\.\s*use\s*\(\s*['"`]([^'"`]+)['"`]\s*,\s*[^)]*?(?:trpcExpress\.createExpressMiddleware|createExpressMiddleware|createKoaMiddleware)/m) do |m|
         next if literal_position?(literal_mask, m.byte_begin(0))
         return m[1]
       end
 
-      # Fastify plugin: `fastify.register(fastifyTRPCPlugin, { prefix: '/api/trpc' })`.
       content.scan(/(?:fastifyTRPCPlugin|fastifyTRPC)\b[^)]*?prefix\s*:\s*['"`]([^'"`]+)['"`]/m) do |m|
         next if literal_position?(literal_mask, m.byte_begin(0))
         return m[1]
@@ -664,273 +320,83 @@ module Analyzer::Typescript
       nil
     end
 
-    private def each_top_level_kv(body : String, &)
-      # `body[i]` walks a non-ASCII String from byte 0 on every access
-      # (Crystal has no char-index cache), turning this per-char state
-      # machine — which scans an entire router/procedure map body — O(n)
-      # per char -> O(n^2). Materialize `chars` once and thread it through
-      # to `find_matching_bracket`/`skip_top_level_to_comma` so the
-      # conversion isn't repeated per key/value pair. Slices and line
-      # numbers go through `offsets` too: `body[0, i].count('\n')` per pair
-      # re-read the body from the top, quadratic in the router's size.
-      offsets = Noir::CharOffsets.new(body)
-      chars = offsets.chars
-      i = 0
-      n = chars.size
-      while i < n
-        while i < n && (chars[i].whitespace? || chars[i] == ',' || chars[i] == ';')
-          i += 1
-        end
-        break if i >= n
+    PROCEDURE_VERBS = {"query" => "GET", "mutation" => "POST", "subscription" => "SUBSCRIBE"}
 
-        key = case chars[i]
-              when '\'', '"', '`'
-                quote = chars[i]
-                j = i + 1
-                while j < n && chars[j] != quote
-                  j += chars[j] == '\\' ? 2 : 1
-                end
-                literal = offsets.slice(i + 1, j)
-                i = j < n ? j + 1 : j
-                literal
-              when '['
-                # Computed key like ['foo']: ... — skip the bracket span.
-                if close = find_matching_bracket(chars, i)
-                  literal = offsets.slice(i + 1, close).strip.gsub(/^['"`]|['"`]$/, "")
-                  i = close + 1
-                  literal
-                else
-                  i = skip_value(chars, i)
-                  ""
-                end
-              else
-                c = chars[i]
-                if c.ascii_letter? || c == '_' || c == '$'
-                  j = i
-                  while j < n && (chars[j].ascii_alphanumeric? || chars[j] == '_' || chars[j] == '$')
-                    j += 1
-                  end
-                  literal = offsets.slice(i, j)
-                  i = j
-                  literal
-                else
-                  i = skip_value(chars, i)
-                  ""
-                end
-              end
-
-        if key.empty?
-          next
-        end
-
-        while i < n && chars[i].whitespace?
-          i += 1
-        end
-
-        if i >= n || chars[i] == ','
-          # Shorthand: `userRouter,` — value is the same identifier.
-          value_line = offsets.line(i)
-          yield key, key, value_line unless key.empty?
-          i += 1 if i < n && chars[i] == ','
-          next
-        end
-
-        unless chars[i] == ':'
-          # Spread, method shorthand, or other construct we don't handle.
-          i = skip_value(chars, i)
-          next
-        end
-
-        i += 1
-        value_start = i
-        value_end = skip_top_level_to_comma(chars, i)
-        value = offsets.slice(value_start, value_end)
-        value_line = offsets.line(value_start)
-        yield key, value, value_line unless key.empty?
-        i = value_end
-      end
-    end
-
-    private def find_matching_bracket(chars : Array(Char), open : Int32) : Int32?
-      depth = 0
-      i = open
-      n = chars.size
-      while i < n
-        c = chars[i]
-        if c == '['
-          depth += 1
-        elsif c == ']'
-          depth -= 1
-          return i if depth == 0
-        end
-        i += 1
-      end
-      nil
-    end
-
-    # `Rules::JS` except that one depth counter is shared by `()`, `[]` and
-    # `{}` instead of one per kind — this file's copy tracked a single `depth`
-    # where nestjs.cr and loopback.cr tracked three. Only observable on the
-    # unbalanced fragments these actually receive: on `"[a)b, c"` the shared
-    # counter reads `)` as closing the `[` and splits, where `Rules::JS`
-    # stays at bracket depth 1 and returns one part.
-    SPLIT_TOP_LEVEL_RULES = Noir::TopLevelSplit::Rules.new(
-      nest: Noir::TopLevelSplit::Nest::Paren | Noir::TopLevelSplit::Nest::Bracket |
-            Noir::TopLevelSplit::Nest::Brace,
-      quotes: "\"'`",
-      escape: Noir::TopLevelSplit::Escape::InQuotes,
-      strip: true,
-      empties: Noir::TopLevelSplit::Empties::DropAll,
-      per_kind: false,
-      clamp: true,
-    )
-
-    private def split_top_level(text : String, delimiter : Char) : Array(String)
-      Noir::TopLevelSplit.split(text, delimiter, SPLIT_TOP_LEVEL_RULES)
-    end
-
-    # `skip_top_level_to_comma` that is guaranteed to move.
-    #
-    # The helper stops *on* the character that ended the value: a top-level
-    # comma, or an unmatched closing bracket (`depth < 0`). When `start`
-    # already sits on such a closer it returns `start`, and the
-    # `while i < n` loop in `each_top_level_kv` — which assigns the result
-    # straight back to `i` and `next`s — spins on that one character
-    # forever.
-    #
-    # Reaching it takes nothing exotic: `createRouter().mutation('add', {
-    # input: x},});` — a 55-byte file with one brace too many, the shape a
-    # half-saved editor buffer or a truncated generated file has — hung the
-    # scan indefinitely, no output, no timeout, no exit code. A malformed
-    # source file must cost the file, not the run.
-    private def skip_value(chars : Array(Char), start : Int32) : Int32
-      stop = skip_top_level_to_comma(chars, start)
-      stop > start ? stop : start + 1
-    end
-
-    private def skip_top_level_to_comma(chars : Array(Char), start : Int32) : Int32
-      depth = 0
-      i = start
-      n = chars.size
-      while i < n
-        c = chars[i]
-        case c
-        when '\'', '"', '`'
-          quote = c
-          i += 1
-          while i < n && chars[i] != quote
-            i += chars[i] == '\\' ? 2 : 1
-          end
-          i += 1
-          next
-        when '(', '[', '{'
-          depth += 1
-        when ')', ']', '}'
-          depth -= 1
-          return i if depth < 0
-        when ','
-          return i if depth == 0
-        else
-          # nothing
-        end
-        i += 1
-      end
-      i
-    end
-
-    private def extract_identifier(value : String) : String?
-      v = value.strip
-      return if v.empty?
-      if m = v.match(/\A([A-Za-z_$][\w$]*)\z/)
-        return m[1]
-      end
-      nil
-    end
-
-    private def flatten_router(router : Router, prefix_dotted : String, routers : Hash(RouterKey, Router), procedures : Hash(RouterKey, Procedure), procedures_by_name : Hash(String, Procedure), url_prefix : String, result : Array(Endpoint), visited : Set(RouterKey))
+    private def flatten_router(router : Router, prefix_dotted : String,
+                               routers : Hash(RouterKey, Router),
+                               procedures : Hash(RouterKey, Procedure),
+                               procedures_by_name : Hash(String, Procedure),
+                               url_prefix : String,
+                               result : Array(Endpoint),
+                               visited : Set(RouterKey))
       current_key = router_key(router)
       return if visited.includes?(current_key)
       visited.add(current_key)
 
-      flatten_body(router.body, prefix_dotted, router.base_path, router.file, router.line,
+      flatten_entries(router.entries, prefix_dotted, router.base_path, router.file, router.line,
         routers, procedures, procedures_by_name, url_prefix, result, visited)
 
       visited.delete(current_key)
     end
 
-    # Walk one router-map body (the `{ ... }` content). Each value is a child
-    # router (named, inline `router({...})`, or a plain `{ ... }` nested map
-    # — tRPC v11), a named procedure, or an inline procedure.
-    private def flatten_body(body : String, prefix_dotted : String, base_path : String, file : String, base_line : Int32, routers : Hash(RouterKey, Router), procedures : Hash(RouterKey, Procedure), procedures_by_name : Hash(String, Procedure), url_prefix : String, result : Array(Endpoint), visited : Set(RouterKey))
+    private def flatten_entries(entries : Array(TRPCRouterEntry), prefix_dotted : String,
+                                base_path : String, file : String, base_line : Int32,
+                                routers : Hash(RouterKey, Router),
+                                procedures : Hash(RouterKey, Procedure),
+                                procedures_by_name : Hash(String, Procedure),
+                                url_prefix : String,
+                                result : Array(Endpoint),
+                                visited : Set(RouterKey))
       base = url_prefix.empty? ? "/" : url_prefix.chomp('/')
 
-      each_top_level_kv(body) do |key, value, value_line|
-        next if key.empty?
-        child_prefix = prefix_dotted.empty? ? key : "#{prefix_dotted}.#{key}"
-        line = base_line + value_line - 1
+      entries.each do |entry|
+        child_prefix = prefix_dotted.empty? ? entry.key : "#{prefix_dotted}.#{entry.key}"
 
-        if ident = extract_identifier(value)
+        case entry.kind
+        when :identifier
+          ident = entry.ident
           if child = routers[router_key(base_path, ident)]?
             flatten_router(child, child_prefix, routers, procedures, procedures_by_name, url_prefix, result, visited)
             next
           end
 
-          # Procedure referenced by name (modular layout: `createDocument:
-          # createDocumentRoute`). Resolve to its cross-file definition.
           if proc = imported_procedure(ident, file, base_path) || procedures[router_key(base_path, ident)]? || procedures_by_name[ident]?
-            emit_procedure(proc.value, proc.method, "#{base}/#{child_prefix}", proc.file, proc.line, result)
+            emit_procedure_data(proc.proc, "#{base}/#{child_prefix}", result)
             next
           end
-        end
-
-        # Inline nested router: `key: router({...})` / `t.router({...})`.
-        if inner = inline_router_body(value)
-          flatten_body(inner, child_prefix, base_path, file, line,
+        when :nested_router
+          flatten_entries(entry.nested_entries, child_prefix, base_path, file, entry.line,
             routers, procedures, procedures_by_name, url_prefix, result, visited)
-          next
+        when :procedure
+          if pdata = entry.proc
+            emit_procedure_data(pdata, "#{base}/#{child_prefix}", result)
+          end
         end
-
-        # Plain-object nested router (tRPC v11): `key: { sub: proc, ... }`.
-        if value.lstrip.starts_with?("{") && (inner = brace_inner(value))
-          flatten_body(inner, child_prefix, base_path, file, line,
-            routers, procedures, procedures_by_name, url_prefix, result, visited)
-          next
-        end
-
-        # Inline procedure.
-        method = procedure_method(value)
-        next unless method
-        emit_procedure(value, method, "#{base}/#{child_prefix}", file, line, result)
       end
     end
 
-    private def emit_procedure(value : String, method : String, url : String, file : String, line : Int32, result : Array(Endpoint))
-      endpoint = Endpoint.new(url, method)
-      endpoint.details = Details.new(PathInfo.new(file, line))
-      attach_input_params(value, method, endpoint)
-      attach_procedure_callees(value, file, line, endpoint) if callees_needed?
-      endpoint.handler = procedure_handler(value, file, line, url.split('/').last)
-      if tag = procedure_auth_tag(value)
+    private def emit_procedure_data(proc : TRPCProcedureData, url : String, result : Array(Endpoint))
+      endpoint = Endpoint.new(url, proc.method)
+      endpoint.details = Details.new(PathInfo.new(proc.file, proc.line))
+      proc.params.each { |p| endpoint.push_param(p) }
+      attach_js_callees(endpoint, proc.callees)
+      endpoint.handler = proc.handler.name.empty? ? Handler.new(url.split('/').last, proc.file, proc.line) : proc.handler
+      if tag = proc.auth_tag || procedure_auth_tag(proc.chain_text)
         endpoint.add_tag(tag)
       end
       result << endpoint
     end
 
-    DYNAMIC_IMPORT_RE = /\bimport\s*\(\s*['"`]([^'"`]+)['"`]\s*\)/
-    # `const { xHandler } = await import(...)`, `(await import(...)).xHandler`,
-    # `import(...).then((mod) => mod.xHandler)`: the export a lazy resolver runs.
+    DYNAMIC_IMPORT_RE   = /\bimport\s*\(\s*['"`]([^'"`]+)['"`]\s*\)/
     IMPORTED_EXPORT_RES = [
       /\{\s*([\w$]+)(?:\s*:\s*[\w$]+)?\s*\}\s*=\s*await\s+import\s*\(/,
       /\(\s*await\s+import\s*\([^()]*\)\s*\)\s*\.\s*([\w$]+)/,
       /import\s*\([^()]*\)\s*\.\s*then\s*\(\s*\(?\s*([\w$]+)\s*\)?\s*=>\s*\1\s*\.\s*([\w$]+)/,
     ]
-    # The call a resolver returns: `getHandler({ ctx, input })`.
     RESOLVER_CALL_RE = /(?:\A\s*|\breturn\s+)(?:await\s+)?([A-Za-z_$][\w$]*)\s*\(/
 
-    # The procedure's resolver as the function it hands off to, when that is
-    # an export of one imported module (lazily or not); else the procedure.
-    private def procedure_handler(value : String, file : String, line : Int32, name : String) : Handler
-      if body = procedure_resolver_body(value).try(&.[0])
+    private def procedure_handler(body : String, file : String, line : Int32, name : String) : Handler
+      unless body.empty?
         specs = body.scan(DYNAMIC_IMPORT_RE).map(&.[1]).uniq!
         handler = if specs.size == 1
                     export = IMPORTED_EXPORT_RES.compact_map { |re| body.match(re).try { |m| m[m.size - 1] } }.first?
@@ -946,17 +412,11 @@ module Analyzer::Typescript
     end
 
     AUTH_ERROR_RE     = /\bTRPCError\s*\(\s*\{[^{}]*?\bcode\s*:\s*['"`](?:UNAUTHORIZED|FORBIDDEN)['"`]/
-    BUILDER_REF_RE    = /(?<![\w$.])[A-Za-z_$][\w$]*/
+    BUILDER_REF_RE    = /(?<![\w$.])[A-Za-z_$][\w$]*\b/
     USE_REF_RE        = /\.\s*(?:use|unstable_pipe|pipe|concat)\s*\(\s*([A-Za-z_$][\w$]*)\s*\)/
     BASE_PROCEDURE_RE = /\.\s*procedure\b/
 
-    # Auth as the procedure's builder chain defines it: guarded when a
-    # builder or middleware it stacks rejects with UNAUTHORIZED/FORBIDDEN;
-    # anonymous only when every middleware was read, none rejects, and the
-    # chain bottoms out at tRPC's base `.procedure`. Unknown otherwise.
-    private def procedure_auth_tag(value : String) : Tag?
-      dot = procedure_terminal(value.chars, 0).try(&.[1]) || return
-      chain = value[0, dot]
+    private def procedure_auth_tag(chain : String) : Tag?
       head = chain[/\A\s*([A-Za-z_$][\w$]*)/, 1]? || return
       read = [] of String
       guard = chain.matches?(AUTH_ERROR_RE) ? "inline middleware" : builder_guard(chain, read, Set(String).new)
@@ -968,8 +428,6 @@ module Analyzer::Typescript
       end
     end
 
-    # The first definition `text` references, directly or through others,
-    # that rejects the caller. Every definition read lands in `read`.
     private def builder_guard(text : String, read : Array(String), seen : Set(String)) : String?
       read << text
       text.scan(BUILDER_REF_RE) do |m|
@@ -984,238 +442,517 @@ module Analyzer::Typescript
     end
 
     BUILDER_DEF_HINT_RE = /\.\s*(?:use|unstable_pipe|procedure)\b|\bmiddleware\s*\(|\bTRPCError\b/
-    DEFINITION_RE       = /\b(?:(?:const|let|var)\s+([A-Za-z_$][\w$]*)(?:\s*:[^=]+)?\s*=|function\s+([A-Za-z_$][\w$]*)\s*[(<])/
 
-    # `name -> definition text` for each declaration in a tRPC module that
-    # builds procedures or middleware. Comments are stripped first: a
-    # commented-out guard does not guard.
-    # ponytail: keyed by name across the scan, so an aliased import or two
-    # same-named builders read the last one; key by file + import to fix.
-    private def builder_definitions(raw : String) : Hash(String, String)
+    private def extract_builder_defs(source : String, path : String) : Hash(String, String)
       defs = Hash(String, String).new
-      return defs unless content_matches?(raw, TRPC_MENTION_RE) && raw.matches?(BUILDER_DEF_HINT_RE)
-      content = Noir::JSRouteExtractor.strip_js_comments(raw)
-      literal_mask = string_literal_mask(content)
-      offsets = Noir::CharOffsets.new(content)
-      chars = offsets.chars
-      content.scan(DEFINITION_RE) do |m|
-        next if literal_position?(literal_mask, m.byte_begin(0))
-        # A function's statement starts at its `(`: a newline in the
-        # parameter list must not end it.
-        start = m[2]? ? offsets.end(m) - 1 : offsets.end(m)
-        text = offsets.slice(start, find_statement_end(chars, start))
-        defs[m[1]? || m[2]] = text if text.matches?(BUILDER_DEF_HINT_RE)
+      return defs unless content_matches?(source, TRPC_MENTION_RE) && source.matches?(BUILDER_DEF_HINT_RE)
+
+      Noir::TreeSitter.parse_js_family(source, path) do |root|
+        Noir::TreeSitter.walk(root) do |node|
+          case Noir::TreeSitter.node_type(node)
+          when "variable_declarator"
+            vd_name = Noir::TreeSitter.field(node, "name")
+            vd_val = Noir::TreeSitter.field(node, "value")
+            if vd_name && vd_val && Noir::TreeSitter.node_type(vd_name) == "identifier"
+              val_u = Noir::TreeSitter.unwrap_expression(vd_val)
+              val_text = Noir::TreeSitter.node_text(val_u, source)
+              if val_text.matches?(BUILDER_DEF_HINT_RE)
+                name = Noir::TreeSitter.node_text(vd_name, source)
+                defs[name] = val_text
+              end
+            end
+          when "function_declaration"
+            if fn_name = Noir::TreeSitter.field(node, "name")
+              fn_text = Noir::TreeSitter.node_text(node, source)
+              if fn_text.matches?(BUILDER_DEF_HINT_RE)
+                name = Noir::TreeSitter.node_text(fn_name, source)
+                defs[name] = fn_text
+              end
+            end
+          end
+        end
       end
       defs
     end
 
-    # `key: router({...})` / `key: t.router({...})` / `createTRPCRouter({...})`
-    # — return the inner map body, or nil when the value isn't an inline
-    # router call (anchored so a `router(` buried in a resolver body of an
-    # inline procedure never matches).
-    private def inline_router_body(value : String) : String?
-      stripped = value.lstrip
-      m = stripped.match(/\A(?:[\w$]+\s*\.\s*)?(?:router|createTRPCRouter)\s*\(\s*\{/)
-      return unless m
-      brace_open = (m.end(0) || 0) - 1
-      close = Noir::JSRouteExtractor.find_matching_brace(stripped, brace_open)
-      return unless close
-      stripped[(brace_open + 1)...close]
+    private def normalize_v9_merge_prefix(prefix : String?, child : String) : String
+      raw = prefix || child
+      raw.strip.gsub(/\A\.+|\.+\z/, "")
     end
 
-    private def brace_inner(value : String) : String?
-      stripped = value.lstrip
-      open = stripped.index('{')
-      return unless open
-      close = Noir::JSRouteExtractor.find_matching_brace(stripped, open)
-      return unless close
-      stripped[(open + 1)...close]
-    end
+    private def extract_trpc_facts(path : String, source : String, base_path : String, include_callees : Bool) : TRPCFileFacts
+      routers = [] of Router
+      procedures = [] of Procedure
+      builder_defs = Hash(String, String).new
+      mount = next_mount(path, source, base_path)
+      literal_mask = string_literal_mask(source)
+      url_prefix = extract_prefix(source, literal_mask)
 
-    private def procedure_method(value : String) : String?
-      # tRPC subscriptions ride the WebSocket link; map them to the
-      # AsyncAPI `SUBSCRIBE` verb the optimizer allow-lists, since
-      # plain `WS` would be normalized down to `GET`.
-      return "SUBSCRIBE" if value.match(/\.\s*subscription\s*\(/)
-      return "POST" if value.match(/\.\s*mutation\s*\(/)
-      return "GET" if value.match(/\.\s*query\s*\(/)
-      nil
-    end
+      Noir::TreeSitter.parse_js_family(source, path) do |root|
+        object_decls = Hash(String, Tuple(LibTreeSitter::TSNode, Int32)).new
+        pending_router_args = [] of Tuple(String, String, Int32)
 
-    private def attach_procedure_callees(value : String, file_path : String, procedure_line : Int32, endpoint : Endpoint)
-      resolver = procedure_resolver_body(value)
-      return unless resolver
+        Noir::TreeSitter.walk(root) do |node|
+          case Noir::TreeSitter.node_type(node)
+          when "variable_declarator"
+            vd_name = Noir::TreeSitter.field(node, "name")
+            vd_val = Noir::TreeSitter.field(node, "value")
+            if vd_name && vd_val && Noir::TreeSitter.node_type(vd_name) == "identifier"
+              name = Noir::TreeSitter.node_text(vd_name, source)
+              val_u = Noir::TreeSitter.unwrap_expression(vd_val)
+              line = Noir::TreeSitter.node_start_row(node) + 1
 
-      body, relative_line = resolver
-      Noir::JSCalleeExtractor.callees_for_function_body(
-        body,
-        file_path,
-        procedure_line + relative_line - 1
-      ).each do |name, callee_path, line|
-        endpoint.push_callee(Callee.new(name, path: callee_path, line: line))
-      end
-    end
+              val_text = Noir::TreeSitter.node_text(val_u, source)
+              if val_text.matches?(BUILDER_DEF_HINT_RE)
+                builder_defs[name] = val_text
+              end
 
-    private def procedure_resolver_body(value : String) : Tuple(String, Int32)?
-      if resolver_match = value.match(/\.\s*(?:query|mutation|subscription)\s*\(/)
-        open_paren = (resolver_match.end(0) || 0) - 1
-        close_paren = Noir::JSRouteExtractor.find_matching_paren(value, open_paren)
-        return unless close_paren
+              if Noir::TreeSitter.node_type(val_u) == "object"
+                object_decls[name] = {val_u, line}
+              end
 
-        resolver_source = value[(open_paren + 1)...close_paren]
-        line = value[0, open_paren + 1].count('\n') + 1
-        arrow_function_body(resolver_source, line) || function_expression_body(resolver_source, line)
-      end
-    end
-
-    private def arrow_function_body(source : String, start_line : Int32) : Tuple(String, Int32)?
-      arrow = source.index("=>")
-      return unless arrow
-
-      after_arrow = source[(arrow + 2)..].strip
-      line = start_line + source[0, arrow + 2].count('\n')
-      if after_arrow.starts_with?("{")
-        if close = Noir::JSRouteExtractor.find_matching_brace(after_arrow, 0)
-          return {after_arrow[1...close], line}
-        end
-      end
-
-      {after_arrow, line}
-    end
-
-    private def function_expression_body(source : String, start_line : Int32) : Tuple(String, Int32)?
-      if match = source.match(/\bfunction\b[^{]*\{/)
-        open_brace = (match.end(0) || 0) - 1
-        if close = Noir::JSRouteExtractor.find_matching_brace(source, open_brace)
-          line = start_line + source[0, open_brace + 1].count('\n')
-          return {source[(open_brace + 1)...close], line}
-        end
-      end
-    end
-
-    private def attach_input_params(value : String, method : String, endpoint : Endpoint)
-      param_type = method == "POST" ? "body" : "query"
-
-      input_body = procedure_input_body(value)
-      return unless input_body
-
-      # Shallow z.object({...}) — pull top-level field names. Deeper schemas
-      # are intentionally skipped; the issue calls deep parsing out as the
-      # hardest piece and we only need leaf field names for the common case.
-      if obj_match = input_body.match(/z\.object\s*\(\s*\{/)
-        brace_end = obj_match.end(0) || 0
-        if brace_end > 0
-          brace_open = brace_end - 1
-          if close_brace = Noir::JSRouteExtractor.find_matching_brace(input_body, brace_open)
-            schema = input_body[(brace_open + 1)...close_brace]
-            extract_schema_fields(schema).each do |name|
-              next if name.empty? || name == "z"
-              endpoint.push_param(Param.new(name, "", param_type))
+              if router_call_node?(val_u, source)
+                if args_node = Noir::TreeSitter.field(val_u, "arguments")
+                  if arg0 = Noir::TreeSitter.first_named_arg(args_node)
+                    arg0_u = Noir::TreeSitter.unwrap_expression(arg0)
+                    case Noir::TreeSitter.node_type(arg0_u)
+                    when "object"
+                      entries = extract_router_entries(arg0_u, source, path, base_path, include_callees)
+                      routers << Router.new(base_path, name, entries, path, line)
+                    when "identifier"
+                      target_ident = Noir::TreeSitter.node_text(arg0_u, source)
+                      pending_router_args << {name, target_ident, line}
+                    end
+                  end
+                end
+              elsif v9_chain_router?(val_u, source)
+                entries = extract_v9_chain_entries(val_u, source, path, base_path, include_callees)
+                routers << Router.new(base_path, name, entries, path, line)
+              elsif procedure_chain?(val_u, source)
+                proc_data = extract_procedure_data(val_u, source, path, include_callees)
+                procedures << Procedure.new(base_path, name, proc_data)
+              end
             end
-            return
+          when "function_declaration"
+            if fn_name = Noir::TreeSitter.field(node, "name")
+              fn_text = Noir::TreeSitter.node_text(node, source)
+              if fn_text.matches?(BUILDER_DEF_HINT_RE)
+                name = Noir::TreeSitter.node_text(fn_name, source)
+                builder_defs[name] = fn_text
+              end
+            end
+          end
+        end
+
+        pending_router_args.each do |r_name, target_ident, r_line|
+          if obj_info = object_decls[target_ident]?
+            entries = extract_router_entries(obj_info[0], source, path, base_path, include_callees)
+            line = obj_info[1] > 0 ? obj_info[1] : r_line
+            routers << Router.new(base_path, r_name, entries, path, line)
           end
         end
       end
 
-      # Fallback: opaque schema, still expose the input slot.
-      endpoint.push_param(Param.new("input", "", param_type))
+      TRPCFileFacts.new(routers, procedures, mount, url_prefix, builder_defs)
     end
 
-    private def procedure_input_body(value : String) : String?
-      if input_match = value.match(/\.\s*input\s*\(/)
-        open_paren_end = input_match.end(0) || 0
-        return if open_paren_end == 0
-        open_paren = open_paren_end - 1
-        close_paren = Noir::JSRouteExtractor.find_matching_paren(value, open_paren)
-        return unless close_paren
+    private def extract_router_entries(obj_node : LibTreeSitter::TSNode, source : String,
+                                       path : String, base_path : String,
+                                       include_callees : Bool) : Array(TRPCRouterEntry)
+      entries = [] of TRPCRouterEntry
 
-        return value[(open_paren + 1)...close_paren]
-      end
+      Noir::TreeSitter.each_named_child(obj_node) do |child|
+        case Noir::TreeSitter.node_type(child)
+        when "pair"
+          key_node = Noir::TreeSitter.field(child, "key")
+          key = property_key_name(key_node, source)
+          val_node = Noir::TreeSitter.field(child, "value")
+          next unless val_node
+          val_u = Noir::TreeSitter.unwrap_expression(val_node)
+          line = Noir::TreeSitter.node_start_row(child) + 1
 
-      v9_procedure_input_body(value)
-    end
-
-    private def v9_procedure_input_body(value : String) : String?
-      if call_match = value.match(/\.\s*(?:query|mutation|subscription)\s*\(/)
-        open_paren = (call_match.end(0) || 0) - 1
-        close_paren = Noir::JSRouteExtractor.find_matching_paren(value, open_paren)
-        return unless close_paren
-
-        args = split_top_level(value[(open_paren + 1)...close_paren], ',')
-        return unless args.size >= 2
-
-        options = args[1].strip
-        return unless options.starts_with?("{")
-
-        close_brace = Noir::JSRouteExtractor.find_matching_brace(options, 0)
-        return unless close_brace
-
-        input_property_value(options[1...close_brace])
-      end
-    end
-
-    private def input_property_value(options_body : String) : String?
-      options_body.scan(/(?:\A|,)\s*input\s*:/m) do |match|
-        value_start = match.end(0) || 0
-        value_end = skip_top_level_to_comma(options_body.chars, value_start)
-        return options_body[value_start...value_end].strip
-      end
-
-      nil
-    end
-
-    private def extract_schema_fields(schema : String) : Array(String)
-      fields = [] of String
-      depth = 0
-      i = 0
-      # `schema[i]` walks a non-ASCII String from byte 0 on every access
-      # (Crystal has no char-index cache); materializing `chars` once
-      # makes this whole-schema-body scan O(n) instead of O(n^2). Field
-      # names are still sliced from the original `schema` String.
-      chars = schema.chars
-      n = chars.size
-      key_start = -1
-
-      while i < n
-        c = chars[i]
-        case c
-        when '\'', '"', '`'
-          quote = c
-          i += 1
-          while i < n && chars[i] != quote
-            i += chars[i] == '\\' ? 2 : 1
-          end
-          i += 1
-          next
-        when '(', '[', '{'
-          depth += 1
-        when ')', ']', '}'
-          depth -= 1
-        end
-
-        if depth == 0
-          if key_start < 0 && (c.ascii_letter? || c == '_' || c == '$')
-            key_start = i
-          elsif key_start >= 0 && !(c.ascii_alphanumeric? || c == '_' || c == '$')
-            name = schema[key_start...i]
-            # Only emit when followed (after whitespace) by `:` — that's how
-            # we distinguish a property key from any other identifier left
-            # at depth 0 by oddly formatted schemas.
-            j = i
-            while j < n && chars[j].whitespace?
-              j += 1
+          case Noir::TreeSitter.node_type(val_u)
+          when "identifier"
+            ident = Noir::TreeSitter.node_text(val_u, source)
+            entries << TRPCRouterEntry.new(key, line, :identifier, ident, [] of TRPCRouterEntry, nil)
+          when "call_expression"
+            if router_call_node?(val_u, source)
+              if args_node = Noir::TreeSitter.field(val_u, "arguments")
+                if arg0 = Noir::TreeSitter.first_named_arg(args_node)
+                  arg0_u = Noir::TreeSitter.unwrap_expression(arg0)
+                  if Noir::TreeSitter.node_type(arg0_u) == "object"
+                    sub_entries = extract_router_entries(arg0_u, source, path, base_path, include_callees)
+                    entries << TRPCRouterEntry.new(key, line, :nested_router, "", sub_entries, nil)
+                  end
+                end
+              end
+            elsif procedure_chain?(val_u, source)
+              proc_data = extract_procedure_data(val_u, source, path, include_callees)
+              entries << TRPCRouterEntry.new(key, line, :procedure, "", [] of TRPCRouterEntry, proc_data)
             end
-            fields << name if j < n && chars[j] == ':'
-            key_start = -1
+          when "object"
+            sub_entries = extract_router_entries(val_u, source, path, base_path, include_callees)
+            entries << TRPCRouterEntry.new(key, line, :nested_router, "", sub_entries, nil)
+          end
+        when "shorthand_property_identifier"
+          name = Noir::TreeSitter.node_text(child, source)
+          line = Noir::TreeSitter.node_start_row(child) + 1
+          entries << TRPCRouterEntry.new(name, line, :identifier, name, [] of TRPCRouterEntry, nil)
+        end
+      end
+
+      entries
+    end
+
+    private def router_call_node?(node : LibTreeSitter::TSNode, source : String) : Bool
+      return false unless Noir::TreeSitter.node_type(node) == "call_expression"
+      fn = Noir::TreeSitter.field(node, "function") || return false
+      fn_u = Noir::TreeSitter.unwrap_expression(fn)
+      fn_text = Noir::TreeSitter.node_text(fn_u, source)
+      router_call?(fn_text)
+    end
+
+    private def router_call?(fn_name : String) : Bool
+      fn_name == "router" ||
+        fn_name.ends_with?(".router") ||
+        fn_name == "createTRPCRouter" ||
+        fn_name.ends_with?(".createTRPCRouter")
+    end
+
+    private def procedure_chain?(node : LibTreeSitter::TSNode, source : String) : Bool
+      return false unless Noir::TreeSitter.node_type(node) == "call_expression"
+      fn = Noir::TreeSitter.field(node, "function") || return false
+      fn_u = Noir::TreeSitter.unwrap_expression(fn)
+      return false unless Noir::TreeSitter.node_type(fn_u) == "member_expression"
+      prop = Noir::TreeSitter.field(fn_u, "property") || return false
+      prop_name = property_key_name(prop, source)
+      {"query", "mutation", "subscription"}.includes?(prop_name)
+    end
+
+    private def v9_chain_router?(node : LibTreeSitter::TSNode, source : String) : Bool
+      curr = node
+      has_chain_methods = false
+      while Noir::TreeSitter.node_type(curr) == "call_expression"
+        fn = Noir::TreeSitter.field(curr, "function")
+        break unless fn
+        fn_u = Noir::TreeSitter.unwrap_expression(fn)
+        if Noir::TreeSitter.node_type(fn_u) == "member_expression"
+          prop = Noir::TreeSitter.field(fn_u, "property")
+          prop_name = property_key_name(prop, source)
+          if {"query", "mutation", "subscription", "merge"}.includes?(prop_name)
+            has_chain_methods = true
+          end
+          if obj = Noir::TreeSitter.field(fn_u, "object")
+            curr = Noir::TreeSitter.unwrap_expression(obj)
+          else
+            break
           end
         else
-          key_start = -1
+          break
+        end
+      end
+      return false unless has_chain_methods
+      root_text = Noir::TreeSitter.node_text(curr, source)
+      root_text.includes?("createRouter") || root_text.includes?("trpc.router")
+    end
+
+    private def extract_v9_chain_entries(node : LibTreeSitter::TSNode, source : String,
+                                         path : String, base_path : String,
+                                         include_callees : Bool) : Array(TRPCRouterEntry)
+      entries = [] of TRPCRouterEntry
+      curr = node
+      while Noir::TreeSitter.node_type(curr) == "call_expression"
+        fn = Noir::TreeSitter.field(curr, "function")
+        break unless fn
+        fn_u = Noir::TreeSitter.unwrap_expression(fn)
+        break unless Noir::TreeSitter.node_type(fn_u) == "member_expression"
+        prop = Noir::TreeSitter.field(fn_u, "property")
+        prop_name = property_key_name(prop, source)
+        line = prop ? Noir::TreeSitter.node_start_row(prop) + 1 : Noir::TreeSitter.node_start_row(curr) + 1
+
+        args_node = Noir::TreeSitter.field(curr, "arguments")
+        args = [] of LibTreeSitter::TSNode
+        if args_node
+          Noir::TreeSitter.each_named_arg(args_node) { |a| args << a }
         end
 
-        i += 1
+        case prop_name
+        when "query", "mutation", "subscription"
+          if args.size >= 1
+            route_name = decode_string(Noir::TreeSitter.unwrap_expression(args[0]), source) || ""
+            unless route_name.empty?
+              method = PROCEDURE_VERBS[prop_name]? || "GET"
+              params = [] of Param
+              param_type = method == "POST" ? "body" : "query"
+              handler_node = nil.as(LibTreeSitter::TSNode?)
+
+              if args.size >= 2
+                opt_node = Noir::TreeSitter.unwrap_expression(args[1])
+                if Noir::TreeSitter.node_type(opt_node) == "object"
+                  if input_val = extract_prop_value(opt_node, "input", source)
+                    params = extract_zod_params_from_node(input_val, param_type, source)
+                  end
+                  if res_val = extract_prop_value(opt_node, "resolve", source)
+                    handler_node = Noir::TreeSitter.unwrap_expression(res_val)
+                  end
+                end
+              end
+
+              callees = (include_callees && handler_node) ? Noir::JSCalleeExtractor.callees_for_handler_node(handler_node, source, path) : [] of Noir::JSCalleeExtractor::Entry
+              body_text = ""
+              if hn = handler_node
+                body_node = Noir::TreeSitter.field(hn, "body") || hn
+                body_text = Noir::TreeSitter.node_text(body_node, source)
+              end
+              handler = procedure_handler(body_text, path, line, "")
+
+              proc_data = TRPCProcedureData.new(method, line, path, "", params, callees, handler, nil)
+              entries << TRPCRouterEntry.new(route_name, line, :procedure, "", [] of TRPCRouterEntry, proc_data)
+            end
+          end
+        when "merge"
+          if args.size >= 1
+            prefix : String? = nil
+            child = if args.size >= 2
+                      prefix = decode_string(Noir::TreeSitter.unwrap_expression(args[0]), source)
+                      Noir::TreeSitter.node_text(Noir::TreeSitter.unwrap_expression(args[1]), source)
+                    else
+                      Noir::TreeSitter.node_text(Noir::TreeSitter.unwrap_expression(args[0]), source)
+                    end
+
+            unless child.empty?
+              key = normalize_v9_merge_prefix(prefix, child)
+              unless key.empty?
+                entries << TRPCRouterEntry.new(key, line, :identifier, child, [] of TRPCRouterEntry, nil)
+              end
+            end
+          end
+        end
+
+        if obj = Noir::TreeSitter.field(fn_u, "object")
+          curr = Noir::TreeSitter.unwrap_expression(obj)
+        else
+          break
+        end
       end
 
-      fields
+      entries.reverse!
+    end
+
+    private def extract_procedure_data(call_node : LibTreeSitter::TSNode, source : String,
+                                       path : String, include_callees : Bool) : TRPCProcedureData
+      fallback_line = Noir::TreeSitter.node_start_row(call_node) + 1
+      fn = Noir::TreeSitter.field(call_node, "function") || return TRPCProcedureData.new(
+        "GET",
+        fallback_line,
+        path,
+        "",
+        [] of Param,
+        [] of Noir::JSCalleeExtractor::Entry,
+        Handler.new("", path, fallback_line),
+        nil
+      )
+      fn_u = Noir::TreeSitter.unwrap_expression(fn)
+      prop = Noir::TreeSitter.field(fn_u, "property")
+      verb = prop ? property_key_name(prop, source) : ""
+      method = PROCEDURE_VERBS[verb]? || "GET"
+      line = fallback_line
+
+      handler_node = nil.as(LibTreeSitter::TSNode?)
+      if args_node = Noir::TreeSitter.field(call_node, "arguments")
+        if arg0 = Noir::TreeSitter.first_named_arg(args_node)
+          arg0_u = Noir::TreeSitter.unwrap_expression(arg0)
+          if {"arrow_function", "function_expression", "function_declaration"}.includes?(Noir::TreeSitter.node_type(arg0_u))
+            handler_node = arg0_u
+          end
+        end
+      end
+
+      callees = (include_callees && handler_node) ? Noir::JSCalleeExtractor.callees_for_handler_node(handler_node, source, path) : [] of Noir::JSCalleeExtractor::Entry
+
+      handler = Handler.new("", path, line)
+      if hn = handler_node
+        body_node = Noir::TreeSitter.field(hn, "body") || hn
+        body_text = Noir::TreeSitter.node_text(body_node, source)
+        handler = procedure_handler(body_text, path, line, "")
+      end
+
+      params = [] of Param
+      param_type = method == "POST" ? "body" : "query"
+      if obj_node = find_zod_object_node_in_chain(call_node, source)
+        Noir::TreeSitter.each_named_child(obj_node) do |child|
+          case Noir::TreeSitter.node_type(child)
+          when "pair"
+            k = Noir::TreeSitter.field(child, "key")
+            pname = property_key_name(k, source)
+            params << Param.new(pname, "", param_type) unless pname.empty? || pname == "z"
+          when "shorthand_property_identifier"
+            pname = Noir::TreeSitter.node_text(child, source)
+            params << Param.new(pname, "", param_type) unless pname.empty? || pname == "z"
+          end
+        end
+      elsif has_input_call_in_chain?(call_node, source)
+        params << Param.new("input", "", param_type)
+      end
+
+      obj_expr = Noir::TreeSitter.field(fn_u, "object")
+      chain_text = obj_expr ? Noir::TreeSitter.node_text(obj_expr, source) : ""
+
+      TRPCProcedureData.new(method, line, path, chain_text, params, callees, handler, nil)
+    end
+
+    private def find_zod_object_node_in_chain(node : LibTreeSitter::TSNode, source : String) : LibTreeSitter::TSNode?
+      curr = node
+      while Noir::TreeSitter.node_type(curr) == "call_expression"
+        fn = Noir::TreeSitter.field(curr, "function")
+        break unless fn
+        fn_u = Noir::TreeSitter.unwrap_expression(fn)
+        if Noir::TreeSitter.node_type(fn_u) == "member_expression"
+          prop = Noir::TreeSitter.field(fn_u, "property")
+          if property_key_name(prop, source) == "input"
+            if args_node = Noir::TreeSitter.field(curr, "arguments")
+              if arg0 = Noir::TreeSitter.first_named_arg(args_node)
+                found_obj = nil.as(LibTreeSitter::TSNode?)
+                Noir::TreeSitter.walk(arg0) do |child|
+                  if Noir::TreeSitter.node_type(child) == "call_expression"
+                    c_fn = Noir::TreeSitter.field(child, "function")
+                    if c_fn && (property_key_name(c_fn, source) == "object" || Noir::TreeSitter.node_text(c_fn, source).ends_with?(".object"))
+                      if c_args = Noir::TreeSitter.field(child, "arguments")
+                        if c_arg0 = Noir::TreeSitter.first_named_arg(c_args)
+                          c_arg0_u = Noir::TreeSitter.unwrap_expression(c_arg0)
+                          if Noir::TreeSitter.node_type(c_arg0_u) == "object"
+                            found_obj = c_arg0_u
+                          end
+                        end
+                      end
+                    end
+                  end
+                end
+                return found_obj if found_obj
+              end
+            end
+          end
+          if obj = Noir::TreeSitter.field(fn_u, "object")
+            curr = Noir::TreeSitter.unwrap_expression(obj)
+          else
+            break
+          end
+        else
+          break
+        end
+      end
+      nil
+    end
+
+    private def has_input_call_in_chain?(node : LibTreeSitter::TSNode, source : String) : Bool
+      curr = node
+      while Noir::TreeSitter.node_type(curr) == "call_expression"
+        fn = Noir::TreeSitter.field(curr, "function")
+        break unless fn
+        fn_u = Noir::TreeSitter.unwrap_expression(fn)
+        if Noir::TreeSitter.node_type(fn_u) == "member_expression"
+          prop = Noir::TreeSitter.field(fn_u, "property")
+          return true if property_key_name(prop, source) == "input"
+          if obj = Noir::TreeSitter.field(fn_u, "object")
+            curr = Noir::TreeSitter.unwrap_expression(obj)
+          else
+            break
+          end
+        else
+          break
+        end
+      end
+      false
+    end
+
+    private def extract_zod_params_from_node(node : LibTreeSitter::TSNode, param_type : String, source : String) : Array(Param)
+      params = [] of Param
+      found_obj = nil.as(LibTreeSitter::TSNode?)
+
+      Noir::TreeSitter.walk(node) do |child|
+        if Noir::TreeSitter.node_type(child) == "call_expression"
+          if fn = Noir::TreeSitter.field(child, "function")
+            fn_u = Noir::TreeSitter.unwrap_expression(fn)
+            name = property_key_name(fn_u, source)
+            if name == "object" || Noir::TreeSitter.node_text(fn_u, source).ends_with?(".object")
+              if args_node = Noir::TreeSitter.field(child, "arguments")
+                if arg0 = Noir::TreeSitter.first_named_arg(args_node)
+                  arg0_u = Noir::TreeSitter.unwrap_expression(arg0)
+                  if Noir::TreeSitter.node_type(arg0_u) == "object"
+                    found_obj = arg0_u
+                  end
+                end
+              end
+            end
+          end
+        end
+      end
+
+      if obj = found_obj
+        Noir::TreeSitter.each_named_child(obj) do |child|
+          case Noir::TreeSitter.node_type(child)
+          when "pair"
+            k = Noir::TreeSitter.field(child, "key")
+            pname = property_key_name(k, source)
+            params << Param.new(pname, "", param_type) unless pname.empty? || pname == "z"
+          when "shorthand_property_identifier"
+            pname = Noir::TreeSitter.node_text(child, source)
+            params << Param.new(pname, "", param_type) unless pname.empty? || pname == "z"
+          end
+        end
+      end
+
+      if params.empty?
+        params << Param.new("input", "", param_type)
+      end
+
+      params
+    end
+
+    private def property_key_name(node : LibTreeSitter::TSNode?, source : String) : String
+      return "" unless node
+      unwrapped = Noir::TreeSitter.unwrap_expression(node)
+      case Noir::TreeSitter.node_type(unwrapped)
+      when "identifier", "property_identifier"
+        Noir::TreeSitter.node_text(unwrapped, source)
+      when "string", "template_string"
+        decode_string(unwrapped, source) || ""
+      when "computed_property_name"
+        if inner = Noir::TreeSitter.first_named_child(unwrapped)
+          property_key_name(inner, source)
+        else
+          ""
+        end
+      else
+        ""
+      end
+    end
+
+    private def extract_prop_value(obj_node : LibTreeSitter::TSNode, name : String, source : String) : LibTreeSitter::TSNode?
+      obj_node = Noir::TreeSitter.unwrap_expression(obj_node)
+      return unless Noir::TreeSitter.node_type(obj_node) == "object"
+      Noir::TreeSitter.each_named_child(obj_node) do |child|
+        case Noir::TreeSitter.node_type(child)
+        when "pair"
+          if key_node = Noir::TreeSitter.field(child, "key")
+            return Noir::TreeSitter.field(child, "value") if property_key_name(key_node, source) == name
+          end
+        when "shorthand_property_identifier"
+          return child if Noir::TreeSitter.node_text(child, source) == name
+        end
+      end
+      nil
+    end
+
+    private def decode_string(node : LibTreeSitter::TSNode, source : String) : String?
+      node = Noir::TreeSitter.unwrap_expression(node)
+      raw = Noir::TreeSitter.node_text(node, source).strip
+      return if raw.size < 2
+      first = raw[0]
+      last = raw[-1]
+      return unless (first == '\'' || first == '"' || first == '`') && first == last
+      return if first == '`' && raw.includes?("${")
+      raw[1..-2]
     end
   end
 end

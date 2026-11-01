@@ -32,4 +32,17 @@ fastify.route({
 // Verify single-line short form still works (regression).
 fastify.get('/regression', async () => ({ ok: true }))
 
+// Complex handler body with template literals, regex with braces, string with paren
+fastify.route({
+  method: 'POST',
+  url: '/complex',
+  handler: async (req, reply) => {
+    const tmpl = `val: ${ { a: 1 } }`
+    const re = /{[0-9]}/
+    const s = "nested)paren"
+    const title = req.body.title
+    return reply.send({ ok: true, title })
+  }
+})
+
 module.exports = fastify

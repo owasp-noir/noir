@@ -9,4 +9,13 @@ export const postRouter = router({
   liveFeed: publicProcedure.subscription(() => {
     return FeedService.live()
   }),
+  bySlug: publicProcedure
+    .input(
+      z
+        .object({
+          slug: z.string(),
+        })
+        .strict()
+    )
+    .query(({ input }) => PostService.findBySlug(input.slug)),
 })

@@ -1,9 +1,10 @@
 require "../../engines/javascript_engine"
 require "../../../miniparsers/js_callee_extractor"
 require "../../../miniparsers/js_route_extractor"
-require "../../../miniparsers/wasp_extractor"
 require "../../../utils/url_path"
 require "./express/router_mount_scanner"
+require "../../../ext/tree_sitter/tree_sitter"
+require "../../../miniparsers/extraction_result_cache"
 
 module Analyzer::Javascript
   class Fastify < JavascriptEngine
@@ -39,6 +40,7 @@ module Analyzer::Javascript
         # text with their own regexes; blanking comments keeps lines.
         content = Noir::JSRouteExtractor.strip_js_comments(read_file_content(path))
         next if Noir::JSRouteExtractor.other_shared_extractor_framework?(content, :fastify)
+        facts = fastify_file_facts(path, content, include_callee)
         autoload_prefix = autoload_prefix_for(path, autoload_roots, content)
         parser_endpoints = Noir::JSRouteExtractor.extract_routes(path, content, @is_debug,
           include_callees: include_callee)
@@ -46,7 +48,7 @@ module Analyzer::Javascript
         # de-duplication (a Set: scanning the whole result per route was
         # quadratic).
         recorded = Set(String).new
-        schema_by_line = parser_endpoints.empty? ? nil : schema_params_by_line(content)
+        schema_by_line = facts.schema_params_by_line
         parser_endpoints.each do |endpoint|
           # The shared JS parser emits `.query(` shorthand for any receiver
           # and without the addHttpMethod('QUERY') gate or plugin prefixes.
@@ -96,9 +98,9 @@ module Analyzer::Javascript
           mounts = CodeLocator.instance.all(ExpressConstants.file_key(Noir::PathScope.expand(path)))
           (mounts.empty? ? [""] : mounts).each do |mount|
             prefix = Noir::URLPath.join(autoload_prefix, mount)
-            extract_route_configs(path, content, result, recorded, include_callee, prefix)
+            extract_route_configs(path, content, result, recorded, include_callee, prefix, facts)
             if has_query_method
-              extract_query_shorthand_routes(path, content, result, recorded, include_callee, prefix)
+              extract_query_shorthand_routes(path, content, result, recorded, include_callee, prefix, facts)
             end
           end
         end
@@ -131,20 +133,298 @@ module Analyzer::Javascript
     # provides the prefix instead).
     record AutoloadRoot, path : String, dir_prefix : Bool
 
-    # `export const autoPrefix = '/x'` (or CJS `module.exports.autoPrefix
-    # = '/x'`) lets a route file declare its own autoload prefix. The
-    # `\bautoPrefix\s*=\s*<string>` shape matches the assignment but not a
-    # read like `reply.redirect(autoPrefix)`.
     AUTO_PREFIX_RE = /\bautoPrefix\s*=\s*['"]([^'"]+)['"]/
 
-    # Discover the directory roots that `@fastify/autoload` registers.
-    # Each `register(autoload, { dir: <expr>, dirNameRoutePrefix?: bool })`
-    # names a tree whose subdirectories become route prefixes (unless
-    # `dirNameRoutePrefix: false`). `dir` is conventionally
-    # `path.join(import.meta.dirname, 'routes')` / `join(__dirname, 'a',
-    # 'b')`, so the directory is the config file's own directory plus the
-    # string-literal segments of the `dir` expression. Returns the longest
-    # roots first so `autoload_prefix_for` can match the most specific.
+    record FastifyRouteConfig,
+      methods : Array(String),
+      url : String,
+      line : Int32,
+      call_start : Int32,
+      body_params : Array(Param),
+      callees : Array(Noir::JSCalleeExtractor::Entry)
+
+    record FastifyQueryCall,
+      receiver : String,
+      raw_url : String,
+      call_start : Int32,
+      line : Int32,
+      body_params : Array(Param),
+      callees : Array(Noir::JSCalleeExtractor::Entry)
+
+    record FastifyFileFacts,
+      autoload_roots : Array(AutoloadRoot),
+      plugin_ranges : Array(Tuple(Int32, Int32, String)),
+      route_configs : Array(FastifyRouteConfig),
+      query_calls : Array(FastifyQueryCall),
+      schema_params_by_line : Hash(Int32, Array(Param))
+
+    @@memo = Hash(UInt64, FastifyFileFacts).new
+    @@memo_mutex = Mutex.new
+
+    Noir::ExtractionResultCache.register_clearer do
+      @@memo_mutex.synchronize { @@memo.clear }
+    end
+
+    private def fastify_file_facts(path : String, content : String, include_callee : Bool) : FastifyFileFacts
+      key = Noir::ExtractionResultCache.key(content, "fastify_facts", path, include_callee ? "1" : "0")
+      Noir::ExtractionResultCache.fetch(@@memo, key, @@memo_mutex) do
+        extract_fastify_facts(path, content, include_callee)
+      end
+    end
+
+    private def extract_fastify_facts(path : String, source : String, include_callees : Bool) : FastifyFileFacts
+      autoload_roots = [] of AutoloadRoot
+      plugin_ranges = [] of Tuple(Int32, Int32, String)
+      route_configs = [] of FastifyRouteConfig
+      query_calls = [] of FastifyQueryCall
+      schema_params_by_line = Hash(Int32, Array(Param)).new
+
+      Noir::TreeSitter.parse_js_family(source, path) do |root|
+        declarations = Hash(String, LibTreeSitter::TSNode).new
+        collect_top_level_declarations(root, source, declarations)
+
+        Noir::TreeSitter.walk(root) do |node|
+          next unless Noir::TreeSitter.node_type(node) == "call_expression"
+
+          callee = Noir::TreeSitter.field(node, "function") || next
+          callee = Noir::TreeSitter.unwrap_expression(callee)
+
+          method_name = ""
+          recv_name = ""
+          if Noir::TreeSitter.node_type(callee) == "member_expression"
+            if prop = Noir::TreeSitter.field(callee, "property")
+              method_name = Noir::TreeSitter.node_text(prop, source)
+            end
+            if obj = Noir::TreeSitter.field(callee, "object")
+              recv_name = Noir::TreeSitter.node_text(Noir::TreeSitter.unwrap_expression(obj), source)
+            end
+          elsif Noir::TreeSitter.node_type(callee) == "identifier"
+            method_name = Noir::TreeSitter.node_text(callee, source)
+          end
+
+          args_node = Noir::TreeSitter.field(node, "arguments")
+          args = [] of LibTreeSitter::TSNode
+          if args_node
+            Noir::TreeSitter.each_named_arg(args_node) { |a| args << a }
+          end
+
+          case method_name
+          when "register"
+            # 1. Autoload roots check: { dir: <expr>, dirNameRoutePrefix?: bool }
+            args.each do |arg|
+              arg_unwrapped = Noir::TreeSitter.unwrap_expression(arg)
+              if Noir::TreeSitter.node_type(arg_unwrapped) == "object"
+                if dir_prop = extract_prop_value(arg_unwrapped, "dir", source)
+                  segments = [] of String
+                  Noir::TreeSitter.walk(dir_prop) do |child|
+                    case Noir::TreeSitter.node_type(child)
+                    when "string", "template_string"
+                      if s = decode_string(child, source)
+                        segments << s unless s.empty?
+                      end
+                    end
+                  end
+                  unless segments.empty?
+                    base_dir = File.dirname(Noir::PathScope.expand(path))
+                    root_path = Noir::PathScope.expand(File.join([base_dir] + segments))
+                    dir_prefix = true
+                    if dp = extract_prop_value(arg_unwrapped, "dirNameRoutePrefix", source)
+                      dir_prefix = false if Noir::TreeSitter.node_text(dp, source).strip == "false"
+                    end
+                    autoload_roots << AutoloadRoot.new(root_path, dir_prefix) unless autoload_roots.any? { |r| r.path == root_path }
+                  end
+                end
+              end
+            end
+
+            # 2. Plugin ranges: fastify.register(fn, { prefix: '/x' })
+            fn_node = nil.as(LibTreeSitter::TSNode?)
+            prefix_val = nil.as(String?)
+            args.each do |arg|
+              unwrapped = Noir::TreeSitter.unwrap_expression(arg)
+              case Noir::TreeSitter.node_type(unwrapped)
+              when "arrow_function", "function_expression"
+                fn_node = unwrapped
+              when "identifier"
+                ident = Noir::TreeSitter.node_text(unwrapped, source)
+                if decl = declarations[ident]?
+                  decl_unwrapped = Noir::TreeSitter.unwrap_expression(decl)
+                  if {"arrow_function", "function_expression", "function_declaration"}.includes?(Noir::TreeSitter.node_type(decl_unwrapped))
+                    fn_node = decl_unwrapped
+                  end
+                end
+              when "object"
+                if p = extract_prop_value(unwrapped, "prefix", source)
+                  prefix_val = decode_string(Noir::TreeSitter.unwrap_expression(p), source)
+                end
+              end
+            end
+
+            if fn_node && prefix_val
+              body_node = Noir::TreeSitter.field(fn_node, "body") || fn_node
+              open_byte = LibTreeSitter.ts_node_start_byte(body_node).to_i
+              close_byte = LibTreeSitter.ts_node_end_byte(body_node).to_i
+              plugin_ranges << {open_byte, close_byte, prefix_val}
+            end
+          when "route"
+            config_node = args.first?.try { |a| Noir::TreeSitter.unwrap_expression(a) }
+            if config_node && Noir::TreeSitter.node_type(config_node) == "object"
+              has_handler_key = false
+              Noir::TreeSitter.each_named_child(config_node) do |child|
+                t = Noir::TreeSitter.node_type(child)
+                if t == "spread_element"
+                  has_handler_key = true
+                elsif t == "method_definition"
+                  name = Noir::TreeSitter.field(child, "name").try { |n| property_key_name(n, source) }
+                  has_handler_key = true if name == "handler" || name == "wsHandler"
+                elsif t == "pair"
+                  key = Noir::TreeSitter.field(child, "key").try { |k| property_key_name(k, source) }
+                  has_handler_key = true if key == "handler" || key == "wsHandler"
+                end
+              end
+
+              if recv_name.matches?(FASTIFY_INSTANCE_NAME) || has_handler_key
+                methods = [] of String
+                if m_val = extract_prop_value(config_node, "method", source)
+                  m_unwrapped = Noir::TreeSitter.unwrap_expression(m_val)
+                  if s = decode_string(m_unwrapped, source)
+                    methods << s.downcase if HTTP_METHODS.includes?(s.downcase)
+                  elsif Noir::TreeSitter.node_type(m_unwrapped) == "array"
+                    Noir::TreeSitter.each_named_arg(m_unwrapped) do |elem|
+                      if s = decode_string(Noir::TreeSitter.unwrap_expression(elem), source)
+                        methods << s.downcase if HTTP_METHODS.includes?(s.downcase) && !methods.includes?(s.downcase)
+                      end
+                    end
+                  end
+                end
+                if m_val = extract_prop_value(config_node, "methods", source)
+                  m_unwrapped = Noir::TreeSitter.unwrap_expression(m_val)
+                  if Noir::TreeSitter.node_type(m_unwrapped) == "array"
+                    Noir::TreeSitter.each_named_arg(m_unwrapped) do |elem|
+                      if s = decode_string(Noir::TreeSitter.unwrap_expression(elem), source)
+                        methods << s.downcase if HTTP_METHODS.includes?(s.downcase) && !methods.includes?(s.downcase)
+                      end
+                    end
+                  end
+                end
+
+                url = ""
+                if u_val = extract_prop_value(config_node, "url", source) || extract_prop_value(config_node, "path", source)
+                  url = decode_string(Noir::TreeSitter.unwrap_expression(u_val), source) || ""
+                end
+
+                unless methods.empty? || url.empty?
+                  call_start = LibTreeSitter.ts_node_start_byte(node).to_i
+                  line = Noir::TreeSitter.node_start_row(node) + 1
+
+                  handler_node = nil.as(LibTreeSitter::TSNode?)
+                  if h_val = extract_prop_child(config_node, "handler", source) || extract_prop_child(config_node, "wsHandler", source)
+                    if Noir::TreeSitter.node_type(h_val) == "method_definition"
+                      handler_node = h_val
+                    elsif Noir::TreeSitter.node_type(h_val) == "pair"
+                      if v_node = Noir::TreeSitter.field(h_val, "value")
+                        val = Noir::TreeSitter.unwrap_expression(v_node)
+                        if {"arrow_function", "function_expression"}.includes?(Noir::TreeSitter.node_type(val))
+                          handler_node = val
+                        elsif Noir::TreeSitter.node_type(val) == "identifier"
+                          ident = Noir::TreeSitter.node_text(val, source)
+                          if decl = declarations[ident]?
+                            decl_unwrapped = Noir::TreeSitter.unwrap_expression(decl)
+                            if {"arrow_function", "function_expression", "function_declaration"}.includes?(Noir::TreeSitter.node_type(decl_unwrapped))
+                              handler_node = decl_unwrapped
+                            end
+                          end
+                        end
+                      end
+                    end
+                  end
+
+                  body_params = [] of Param
+                  config_text = Noir::TreeSitter.node_text(config_node, source)
+                  config_text.each_line do |handler_line|
+                    p = line_to_param(handler_line)
+                    body_params << p if !p.name.empty? && !body_params.any? { |bp| bp.name == p.name && bp.param_type == p.param_type }
+                  end
+
+                  if s_val = extract_prop_value(config_node, "schema", source)
+                    s_params = extract_schema_params_from_node(s_val, declarations, source)
+                    body_params.concat(s_params)
+                    schema_params_by_line[line] = s_params unless s_params.empty?
+                  end
+
+                  callees = [] of Noir::JSCalleeExtractor::Entry
+                  if include_callees && handler_node
+                    callees = Noir::JSCalleeExtractor.callees_for_handler_node(handler_node, source, path)
+                  end
+
+                  route_configs << FastifyRouteConfig.new(methods, url, line, call_start, body_params, callees)
+                end
+              end
+            end
+          when "query"
+            if args.size >= 2
+              first_arg = Noir::TreeSitter.unwrap_expression(args[0])
+              if raw_url = decode_string(first_arg, source)
+                if raw_url.starts_with?('/') || raw_url == "*"
+                  unless raw_url.includes?(" ")
+                    call_start = LibTreeSitter.ts_node_start_byte(node).to_i
+                    line = Noir::TreeSitter.node_start_row(node) + 1
+
+                    body_params = [] of Param
+                    args_text = args_node ? Noir::TreeSitter.node_text(args_node, source) : ""
+                    args_text.each_line do |handler_line|
+                      p = line_to_param(handler_line)
+                      body_params << p if !p.name.empty?
+                    end
+
+                    callees = [] of Noir::JSCalleeExtractor::Entry
+                    if include_callees
+                      handler_node = nil.as(LibTreeSitter::TSNode?)
+                      args[1..].each do |arg|
+                        unwrapped = Noir::TreeSitter.unwrap_expression(arg)
+                        if {"arrow_function", "function_expression"}.includes?(Noir::TreeSitter.node_type(unwrapped))
+                          handler_node = unwrapped
+                          break
+                        end
+                      end
+                      if handler_node
+                        callees = Noir::JSCalleeExtractor.callees_for_handler_node(handler_node, source, path)
+                      else
+                        callees = Noir::JSCalleeExtractor.callees_for_function_body(args_text, path, line)
+                      end
+                    end
+
+                    query_calls << FastifyQueryCall.new(recv_name, raw_url, call_start, line, body_params, callees)
+                  end
+                end
+              end
+            end
+          else
+            if HTTP_METHODS.includes?(method_name) || method_name == "all"
+              options_node = nil.as(LibTreeSitter::TSNode?)
+              if args.size >= 3
+                options_node = Noir::TreeSitter.unwrap_expression(args[1])
+              elsif args.size >= 2
+                cand = Noir::TreeSitter.unwrap_expression(args[1])
+                options_node = cand if Noir::TreeSitter.node_type(cand) == "object"
+              end
+
+              if options_node
+                if s_val = extract_prop_value(options_node, "schema", source)
+                  s_params = extract_schema_params_from_node(s_val, declarations, source)
+                  line = Noir::TreeSitter.node_start_row(node) + 1
+                  schema_params_by_line[line] = s_params unless s_params.empty?
+                end
+              end
+            end
+          end
+        end
+      end
+
+      autoload_roots.sort_by! { |r| -r.path.size }
+      FastifyFileFacts.new(autoload_roots, plugin_ranges, route_configs, query_calls, schema_params_by_line)
+    end
+
     private def collect_autoload_roots : Array(AutoloadRoot)
       roots = [] of AutoloadRoot
       all_files.each do |path|
@@ -154,29 +434,9 @@ module Analyzer::Javascript
         next unless content.includes?("dir")
         content = Noir::JSRouteExtractor.strip_js_comments(content)
 
-        base_dir = File.dirname(Noir::PathScope.expand(path))
-        # Scan each `register(...)` call's argument list as a unit so the
-        # `dirNameRoutePrefix` flag is associated with the right `dir:`
-        # (a file may register several autoload trees).
-        content.scan(/\bregister\s*\(/) do |m|
-          paren_open = content.index("(", m.begin(0) || 0)
-          next unless paren_open
-          paren_close = Noir::JSRouteExtractor.find_matching_paren(content, paren_open)
-          next unless paren_close && paren_close > paren_open
-          args = content[(paren_open + 1)...paren_close]
-
-          dir_match = args.match(/\bdir\s*:\s*/)
-          next unless dir_match
-          value_start = dir_match.end(0) || 0
-          value_end = route_config_value_end(args, value_start)
-          value = args[value_start...value_end]
-          segments = [] of String
-          value.scan(/['"]([^'"]+)['"]/) { |sm| segments << sm[1] }
-          next if segments.empty?
-
-          root = Noir::PathScope.expand(File.join([base_dir] + segments))
-          dir_prefix = !args.matches?(/dirNameRoutePrefix\s*:\s*false/)
-          roots << AutoloadRoot.new(root, dir_prefix) unless roots.any? { |r| r.path == root }
+        facts = fastify_file_facts(path, content, false)
+        facts.autoload_roots.each do |r|
+          roots << r unless roots.any? { |existing| existing.path == r.path }
         end
       rescue
         next
@@ -234,45 +494,6 @@ module Analyzer::Javascript
       end
     end
 
-    # Body ranges of prefixed plugins, as {open_brace, close_brace, prefix}
-    # BYTE offsets, in the order `plugin_prefix_at` consults them. Built
-    # once per file: re-scanning the whole file for every route made a large
-    # route file quadratic.
-    private def plugin_ranges(content : String) : Array(Tuple(Int32, Int32, String))
-      ranges = [] of Tuple(Int32, Int32, String)
-
-      # 1. Anonymous plugin functions:
-      #    fastify.register(function (instance) { ... }, { prefix: '/x' })
-      #    fastify.register((instance) => { ... }, { prefix: '/x' })
-      content.scan(/\b\w+\.register\s*\(\s*(?:async\s+)?(?:function\s*[\w$]*\s*\([^)]*\)|\([^)]*\)\s*=>|\w+\s*=>)\s*\{/) do |m|
-        open_brace = content.byte_index('{', m.byte_begin(0))
-        next unless open_brace
-        close_brace = Noir::JSLiteralScanner.find_matching_brace_at_byte(content, open_brace)
-        next unless close_brace
-
-        if prefix_match = content.byte_slice(close_brace).match(/^[^)]*prefix\s*:\s*['"]([^'"]+)['"]/)
-          ranges << {open_brace, close_brace, prefix_match[1]}
-        end
-      end
-
-      # 2. Named plugin functions:
-      #    const myRoutes = async (fastify) => { ... }; fastify.register(myRoutes, { prefix: '/x' })
-      content.scan(/\b\w+\.register\s*\(\s*(\w+)\s*,\s*\{[^}]*prefix\s*:\s*['"]([^'"]+)['"]/) do |m|
-        next unless m.size >= 3
-        fn_name = m[1]
-        prefix = m[2]
-
-        pattern = /(?:const|let|var)\s+#{Regex.escape(fn_name)}\s*=\s*(?:async\s*)?(?:\([^)]*\)|\w+)\s*=>\s*\{|(?:function\s+#{Regex.escape(fn_name)}\s*\([^)]*\)|(?:const|let|var)\s+#{Regex.escape(fn_name)}\s*=\s*(?:async\s+)?function\b[^{]*)\s*\{/
-        if (fn_match = content.match(pattern)) &&
-           (open_brace = content.byte_index('{', fn_match.byte_begin(0))) &&
-           (close_brace = Noir::JSLiteralScanner.find_matching_brace_at_byte(content, open_brace))
-          ranges << {open_brace, close_brace, prefix}
-        end
-      end
-
-      ranges
-    end
-
     # Every prefixed plugin body around `offset`, joined outermost first:
     # `register(async (i) => { i.register(async (v2) => { … }, { prefix: '/v2' }) }, { prefix: '/internal' })`
     # serves the inner routes under `/internal/v2`. A body seen twice (a named
@@ -283,18 +504,6 @@ module Analyzer::Javascript
         .sort_by! { |open_brace, close_brace, _| open_brace - close_brace }
         .reduce("") { |joined, range| Noir::URLPath.join(joined, range[2]) }
     end
-
-    # `<instance>.route({` / `<instance>.query('/…'` on any receiver: a
-    # plugin's instance is whatever its function names it (`api`, `f`,
-    # `child`). The argument shape is the gate, and it is in the pattern so
-    # the per-call work below never runs for `db.query(sql)` or Express's
-    # `router.route('/x')`.
-    ROUTE_CONFIG_CALL_RE = /(?<![\w$])([A-Za-z_$][\w$]*)\s*\.\s*route\s*\(\s*\{/
-    # A `handler` key: `handler: fn`, `handler(req) {…}` or shorthand `{ handler }`.
-    # A `handler` (or `wsHandler`) key (`handler: fn`, `handler(req) {…}`, shorthand
-    # `{ handler }`) or a spread that may carry one (`...routeOpts`).
-    ROUTE_CONFIG_HANDLER_KEY = /(?<![\w$.])(?:handler|wsHandler)\s*(?:[:(,}]|$)|\.\.\./m
-    QUERY_CALL_RE            = /(?<![\w$])([A-Za-z_$][\w$]*)\s*\.\s*query\s*\(\s*[`'"][\/*]/
 
     # `.query(` is every database and search client's method, so unlike
     # `route({ …, handler })` the call shape cannot vouch for the receiver.
@@ -332,51 +541,24 @@ module Analyzer::Javascript
     # Scans for `fastify.query('/url', ...)` route shorthand calls.
     # Fastify only provides this method when registered via
     # `fastify.addHttpMethod('QUERY')` or the `fastify-http-query` plugin.
-    private def extract_query_shorthand_routes(path : String, content : String, result : Array(Endpoint), recorded : Set(String), include_callee : Bool, autoload_prefix : String = "")
-      ranges = nil
-      offsets = nil
+    private def extract_query_shorthand_routes(path : String, content : String, result : Array(Endpoint), recorded : Set(String), include_callee : Bool, autoload_prefix : String = "", facts : FastifyFileFacts? = nil)
+      ffacts = facts || fastify_file_facts(path, content, include_callee)
+      prefix_ranges = ffacts.plugin_ranges
       instances = nil
-      content.scan(QUERY_CALL_RE) do |m|
-        receiver = m[1]
-        unless receiver.matches?(FASTIFY_INSTANCE_NAME)
-          next unless (instances ||= fastify_instance_names(content)).includes?(receiver)
+
+      ffacts.query_calls.each do |qc|
+        unless qc.receiver.matches?(FASTIFY_INSTANCE_NAME)
+          next unless (instances ||= fastify_instance_names(content)).includes?(qc.receiver)
         end
-        # Byte offsets throughout: a char offset costs O(offset) per call.
-        call_start = m.byte_begin(0)
 
-        paren_open = content.byte_index('(', call_start)
-        next unless paren_open
-
-        paren_close = Noir::JSLiteralScanner.find_matching_paren_at_byte(content, paren_open)
-        next unless paren_close && paren_close > paren_open
-
-        args = content.byte_slice(paren_open + 1, paren_close - paren_open - 1)
-        first_arg = args.lstrip
-
-        # Match string or template literal URL
-        url_match = first_arg.match(/^[`'"]([^`'"]+)[`'"]/)
-        next unless url_match
-
-        raw_url = url_match[1]
-        # Fastify paths start with `/` (or are `*`); anything else is a
-        # client or database call such as `db.query('users', cb)`.
-        next unless raw_url.starts_with?('/') || raw_url == "*"
-        next if raw_url.includes?(" ")
-        # A route takes a handler after the path; `helper.query('/x')` is a
-        # plain call.
-        next unless first_arg[url_match.end(0)..].lstrip.starts_with?(',')
-
-        prefix_ranges = (ranges ||= plugin_ranges(content))
-        plugin_prefix = plugin_prefix_at(prefix_ranges, call_start)
-        url = plugin_prefix.empty? ? raw_url : Noir::URLPath.join(plugin_prefix, raw_url)
+        plugin_prefix = plugin_prefix_at(prefix_ranges, qc.call_start)
+        url = plugin_prefix.empty? ? qc.raw_url : Noir::URLPath.join(plugin_prefix, qc.raw_url)
         url = Noir::URLPath.join(autoload_prefix, url) unless autoload_prefix.empty?
 
         next unless recorded.add?("QUERY #{url}")
 
-        line_no = (offsets ||= Noir::JSRouteExtractor::ByteOffsets.new(content)).line(call_start)
-
         endpoint = Endpoint.new(url, "QUERY")
-        endpoint.details = Details.new(PathInfo.new(path, line_no))
+        endpoint.details = Details.new(PathInfo.new(path, qc.line))
 
         # Extract path parameters from URL
         url.scan(/:(\w+)/) do |pm|
@@ -385,16 +567,10 @@ module Analyzer::Javascript
           endpoint.push_param(param)
         end
 
-        # Extract handler params
-        args.each_line do |handler_line|
-          p = line_to_param(handler_line)
-          endpoint.push_param(p) if !p.name.empty?
+        qc.body_params.each do |p|
+          endpoint.push_param(p)
         end
-
-        if include_callee
-          route_callees = Noir::JSCalleeExtractor.callees_for_function_body(args, path, line_no)
-          attach_js_callees(endpoint, route_callees)
-        end
+        attach_js_callees(endpoint, qc.callees)
 
         result << endpoint
       end
@@ -404,87 +580,21 @@ module Analyzer::Javascript
     # shared parser misses: the config object may span multiple lines,
     # and `methods` may be an array. For each block, decode the method
     # (or methods) and the url/path and emit one endpoint per method.
-    private def extract_route_configs(path : String, content : String, result : Array(Endpoint), recorded : Set(String), include_callee : Bool, autoload_prefix : String = "")
-      http_methods = HTTP_METHODS
+    private def extract_route_configs(path : String, content : String, result : Array(Endpoint), recorded : Set(String), include_callee : Bool, autoload_prefix : String = "", facts : FastifyFileFacts? = nil)
+      ffacts = facts || fastify_file_facts(path, content, include_callee)
+      prefix_ranges = ffacts.plugin_ranges
 
-      # Match the call site `instance.route(` and walk the balanced
-      # parens to capture the whole config object — line-by-line regex
-      # would clip multi-line objects.
-      ranges = nil
-      offsets = nil
-      decls = nil
-      content.scan(ROUTE_CONFIG_CALL_RE) do |m|
-        # Byte offsets throughout: a char offset costs O(offset) per call.
-        call_start = m.byte_begin(0)
-
-        paren_open = content.byte_index('(', call_start)
-        next unless paren_open
-
-        paren_close = Noir::JSLiteralScanner.find_matching_paren_at_byte(content, paren_open)
-        next unless paren_close && paren_close > paren_open
-
-        config = content.byte_slice(paren_open + 1, paren_close - paren_open - 1)
-        # Only treat this as an object-literal route() call. Bare
-        # references like `route(handler)` aren't config objects and
-        # would just produce noise.
-        next unless config.lstrip.starts_with?("{")
-        # Fastify requires a handler; `nock.route({ method, url, reply })` or
-        # Cypress's `cy.route({ method, url, response })` has none.
-        # Off a conventionally named instance any config counts, as before
-        # (`{ websocket: true, wsHandler }` has no `handler`).
-        next unless m[1].matches?(FASTIFY_INSTANCE_NAME) || config.matches?(ROUTE_CONFIG_HANDLER_KEY)
-
-        methods = [] of String
-        url = ""
-
-        # Single-method form: `method: 'GET'`
-        if mm = config.match(/method\s*:\s*['"](\w+)['"]/)
-          method = mm[1].downcase
-          methods << method if http_methods.includes?(method)
-        end
-
-        # Array form: `method: ['GET', 'POST']` or `methods: [...]`.
-        # Fastify accepts both keys depending on version, so cover both.
-        if am = config.match(/methods?\s*:\s*\[([^\]]+)\]/)
-          am[1].scan(/['"](\w+)['"]/) do |entry|
-            method = entry[1].downcase
-            methods << method if http_methods.includes?(method) && !methods.includes?(method)
-          end
-        end
-
-        if um = config.match(/(?:url|path)\s*:\s*['"]([^'"]+)['"]/)
-          url = um[1]
-        end
-
-        next if methods.empty? || url.empty?
-
-        prefix_ranges = (ranges ||= plugin_ranges(content))
-        plugin_prefix = plugin_prefix_at(prefix_ranges, call_start)
-        url = plugin_prefix.empty? ? url : Noir::URLPath.join(plugin_prefix, url)
+      ffacts.route_configs.each do |rc|
+        plugin_prefix = plugin_prefix_at(prefix_ranges, rc.call_start)
+        url = plugin_prefix.empty? ? rc.url : Noir::URLPath.join(plugin_prefix, rc.url)
         url = Noir::URLPath.join(autoload_prefix, url) unless autoload_prefix.empty?
 
-        # Compute line number from the call site offset.
-        line_no = (offsets ||= Noir::JSRouteExtractor::ByteOffsets.new(content)).line(call_start)
-
-        # Pre-scan the config body for handler params (request.body.x,
-        # request.query.x, ...). The shorthand `.get(url, handler)`
-        # path uses the same `line_to_param` helper, so reusing it
-        # here keeps param coverage at parity.
-        body_params = [] of Param
-        config.each_line do |handler_line|
-          p = line_to_param(handler_line)
-          body_params << p if !p.name.empty? && !body_params.any? { |bp| bp.name == p.name && bp.param_type == p.param_type }
-        end
-        decls ||= schema_decls(content)
-        body_params.concat(schema_params(config, decls))
-        route_callees = include_callee ? route_config_callees(config, path, line_no) : [] of Noir::JSCalleeExtractor::Entry
-
-        methods.each do |http_method|
+        rc.methods.each do |http_method|
           method_up = http_method.upcase
           next unless recorded.add?("#{method_up} #{url}")
 
           endpoint = Endpoint.new(url, method_up)
-          endpoint.details = Details.new(PathInfo.new(path, line_no))
+          endpoint.details = Details.new(PathInfo.new(path, rc.line))
 
           url.scan(/:(\w+)/) do |pm|
             next unless pm.size > 0
@@ -492,183 +602,178 @@ module Analyzer::Javascript
             endpoint.push_param(param)
           end
 
-          body_params.each do |bp|
+          rc.body_params.each do |bp|
             endpoint.push_param(bp)
           end
-          attach_js_callees(endpoint, route_callees)
+          attach_js_callees(endpoint, rc.callees)
 
           result << endpoint
         end
       end
     end
 
-    private def route_config_callees(config : String, path : String, start_line : Int32) : Array(Noir::JSCalleeExtractor::Entry)
-      if handler = route_config_handler_body(config, start_line)
-        body, body_line = handler
-        Noir::JSCalleeExtractor.callees_for_function_body(body, path, body_line)
-      else
-        [] of Noir::JSCalleeExtractor::Entry
-      end
-    end
-
-    private def route_config_handler_body(config : String, start_line : Int32) : Tuple(String, Int32)?
-      if match = config.match(/(?:^|[,{]\s*)handler\s*:/m)
-        value_start = skip_whitespace(config, match.end(0) || 0)
-        arrow_idx = config.index("=>", value_start)
-        function_idx = config.index(/\bfunction\b/, value_start)
-
-        if function_idx && (!arrow_idx || function_idx < arrow_idx)
-          if open_brace = config.index("{", function_idx)
-            return block_body(config, open_brace, start_line)
-          end
-        elsif arrow_idx
-          body_start = skip_whitespace(config, arrow_idx + 2)
-          if config[body_start]? == '{'
-            return block_body(config, body_start, start_line)
-          end
-
-          body_end = route_config_value_end(config, body_start)
-          body = config[body_start...body_end].strip
-          return {body, start_line + config[0...body_start].count('\n')} unless body.empty?
-        end
-      end
-
-      if match = config.match(/(?:^|[,{]\s*)handler\s*\(/m)
-        open_paren = config.index("(", match.begin(0) || 0)
-        return unless open_paren
-
-        close_paren = Noir::JSRouteExtractor.find_matching_paren(config, open_paren)
-        return unless close_paren
-
-        open_brace = skip_whitespace(config, close_paren + 1)
-        return unless config[open_brace]? == '{'
-
-        block_body(config, open_brace, start_line)
-      end
-    end
-
-    private def block_body(config : String, open_brace : Int32, start_line : Int32) : Tuple(String, Int32)?
-      close_brace = Noir::JSRouteExtractor.find_matching_brace(config, open_brace)
-      return unless close_brace
-
-      body = config[(open_brace + 1)...close_brace]
-      # `open_brace` is a CHAR index; convert for an allocation-free,
-      # non-ASCII-correct newline count over the byte prefix.
-      open_brace_byte = if config.bytesize == config.size
-                          open_brace
-                        else
-                          config.char_index_to_byte_index(open_brace) || config.bytesize
-                        end
-      {body, start_line + config.to_slice[0, open_brace_byte].count('\n'.ord.to_u8)}
-    end
-
-    private def route_config_value_end(config : String, start : Int32) : Int32
-      depth = 0
-      quote : Char? = nil
-      escaped = false
-      i = start
-
-      while i < config.size
-        char = config[i]
-
-        if quote
-          if escaped
-            escaped = false
-          elsif char == '\\'
-            escaped = true
-          elsif char == quote
-            quote = nil
-          end
-          i += 1
-          next
-        end
-
-        case char
-        when '\'', '"', '`'
-          quote = char
-        when '(', '[', '{'
-          depth += 1
-        when ')', ']'
-          depth -= 1 if depth > 0
-        when '}'
-          return i if depth == 0
-          depth -= 1
-        when ','
-          return i if depth == 0
-        end
-
-        i += 1
-      end
-
-      i
-    end
-
     # A route's `schema` is its declared input, validated by Fastify itself.
-    SCHEMA_PARAM_TYPES   = {"querystring" => "query", "query" => "query", "body" => "json", "headers" => "header"}
-    SCHEMA_ROUTE_CALL_RE = /\b[A-Za-z_$][\w$]*\.(get|post|put|delete|patch|head|options|all|route)\s*\(/
-    # TypeBox `Type.Object({...})`: its first argument lists the properties.
-    TYPEBOX_OBJECT_RE = /\A(?:[\w$]+\.)?Object\s*\(/
+    SCHEMA_PARAM_TYPES = {"querystring" => "query", "query" => "query", "body" => "json", "headers" => "header"}
 
-    # `const X = {...}` / `const X = Type.Object({...})`: a schema named by
-    # a route instead of written inline.
-    SCHEMA_DECL_RE = /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*(?::[^=\n]+)?=\s*(?=\{|(?:[\w$]+\.)?Object\s*\()/
-    IDENTIFIER_RE  = /\A[A-Za-z_$][\w$]*\z/
-
-    # Route-call line => params its `schema` declares, for the shorthand
-    # (`app.get(url, { schema }, h)`, or `{ schema, handler }` alone) and
-    # the `app.route({ schema })` forms.
-    private def schema_params_by_line(content : String) : Hash(Int32, Array(Param))
-      by_line = Hash(Int32, Array(Param)).new
-      return by_line unless content.includes?("schema")
-      decls = schema_decls(content)
-      offsets = Noir::JSRouteExtractor::ByteOffsets.new(content)
-      content.scan(SCHEMA_ROUTE_CALL_RE) do |m|
-        args_text = Noir::JSLiteralScanner.extract_paren_content_at_byte(content, m.byte_end(0)).try(&.content) || next
-        args = Noir::TopLevelSplit.split(args_text, ',', Noir::TopLevelSplit::Rules::JS)
-        options = m[1] == "route" ? args[0]? : args[1]?
-        next unless options && (m[1] == "route" || args.size >= 3 || options.lstrip.starts_with?('{'))
-        params = schema_params(options, decls)
-        by_line[offsets.line(m.byte_begin(0))] = params unless params.empty?
+    private def property_key_name(node : LibTreeSitter::TSNode, source : String) : String
+      node = Noir::TreeSitter.unwrap_expression(node)
+      case Noir::TreeSitter.node_type(node)
+      when "identifier", "property_identifier"
+        Noir::TreeSitter.node_text(node, source)
+      when "string", "template_string"
+        decode_string(node, source) || ""
+      else
+        ""
       end
-      by_line
     end
 
-    private def schema_decls(content : String) : Hash(String, String)
-      decls = Hash(String, String).new
-      return decls unless content.includes?("schema")
-      content.scan(SCHEMA_DECL_RE) do |m|
-        open = content.index('{', m.end(0)) || next
-        close = Noir::JSLiteralScanner.find_matching_brace(content, open) || next
-        decls[m[1]] = content[m.end(0)..close]
-      end
-      decls
-    end
-
-    private def schema_params(options : String, decls : Hash(String, String)) : Array(Param)
-      params = [] of Param
-      schema = object_entries_of(options, decls).try(&.["schema"]?) || return params
-      parts = object_entries_of(schema, decls) || return params
-      SCHEMA_PARAM_TYPES.each do |part, type|
-        definition = parts[part]? || next
-        definition = decls[definition.strip]? || definition
-        properties = object_entries_of(definition, decls) || next
-        # JSON Schema nests the fields under `properties`; TypeBox does not.
-        unless definition.strip.matches?(TYPEBOX_OBJECT_RE)
-          properties = properties["properties"]?.try { |p| object_entries_of(p, decls) } || next
+    private def extract_prop_value(obj_node : LibTreeSitter::TSNode, name : String, source : String) : LibTreeSitter::TSNode?
+      obj_node = Noir::TreeSitter.unwrap_expression(obj_node)
+      return unless Noir::TreeSitter.node_type(obj_node) == "object"
+      Noir::TreeSitter.each_named_child(obj_node) do |child|
+        case Noir::TreeSitter.node_type(child)
+        when "pair"
+          if key_node = Noir::TreeSitter.field(child, "key")
+            return Noir::TreeSitter.field(child, "value") if property_key_name(key_node, source) == name
+          end
+        when "shorthand_property_identifier"
+          return child if Noir::TreeSitter.node_text(child, source) == name
         end
-        properties.each_key { |name| params << Param.new(name, "", type) }
       end
+      nil
+    end
+
+    private def extract_prop_child(obj_node : LibTreeSitter::TSNode, name : String, source : String) : LibTreeSitter::TSNode?
+      obj_node = Noir::TreeSitter.unwrap_expression(obj_node)
+      return unless Noir::TreeSitter.node_type(obj_node) == "object"
+      Noir::TreeSitter.each_named_child(obj_node) do |child|
+        case Noir::TreeSitter.node_type(child)
+        when "pair"
+          if key_node = Noir::TreeSitter.field(child, "key")
+            return child if property_key_name(key_node, source) == name
+          end
+        when "method_definition"
+          if name_node = Noir::TreeSitter.field(child, "name")
+            return child if property_key_name(name_node, source) == name
+          end
+        when "shorthand_property_identifier"
+          return child if Noir::TreeSitter.node_text(child, source) == name
+        end
+      end
+      nil
+    end
+
+    private def decode_string(node : LibTreeSitter::TSNode, source : String) : String?
+      node = Noir::TreeSitter.unwrap_expression(node)
+      raw = Noir::TreeSitter.node_text(node, source).strip
+      return if raw.size < 2
+      first = raw[0]
+      last = raw[-1]
+      return unless (first == '\'' || first == '"' || first == '`') && first == last
+      return if first == '`' && raw.includes?("${")
+      raw[1..-2]
+    end
+
+    private def extract_schema_params_from_node(node : LibTreeSitter::TSNode, declarations : Hash(String, LibTreeSitter::TSNode), source : String) : Array(Param)
+      params = [] of Param
+      node = resolve_decl_or_expr(node, declarations, source)
+      if typebox_call?(node, source)
+        args_node = Noir::TreeSitter.field(node, "arguments")
+        node = args_node.try { |a| Noir::TreeSitter.first_named_arg(a) } || return params
+        node = resolve_decl_or_expr(node, declarations, source)
+      end
+      return params unless Noir::TreeSitter.node_type(node) == "object"
+
+      SCHEMA_PARAM_TYPES.each do |part, type|
+        part_node = extract_prop_value(node, part, source) || next
+        part_node = resolve_decl_or_expr(part_node, declarations, source)
+        if typebox_call?(part_node, source)
+          if args_node = Noir::TreeSitter.field(part_node, "arguments")
+            if arg = Noir::TreeSitter.first_named_arg(args_node)
+              arg = resolve_decl_or_expr(arg, declarations, source)
+              if Noir::TreeSitter.node_type(arg) == "object"
+                collect_object_property_names(arg, source).each do |pname|
+                  params << Param.new(pname, "", type)
+                end
+              end
+            end
+          end
+        elsif Noir::TreeSitter.node_type(part_node) == "object"
+          if props = extract_prop_value(part_node, "properties", source)
+            props = resolve_decl_or_expr(props, declarations, source)
+            if Noir::TreeSitter.node_type(props) == "object"
+              collect_object_property_names(props, source).each do |pname|
+                params << Param.new(pname, "", type)
+              end
+            end
+          end
+        end
+      end
+
       params
     end
 
-    # Entries of an object literal, a TypeBox `Type.Object({...})`, or a
-    # same-file declaration of either that `value` names.
-    private def object_entries_of(value : String, decls : Hash(String, String)) : Hash(String, String)?
-      text = value.strip
-      text = (decls[text]? || return).strip if text.matches?(IDENTIFIER_RE)
-      text = text[(text.index('(') || return) + 1..].lstrip if text.matches?(TYPEBOX_OBJECT_RE)
-      body = Noir::WaspExtractor.object_body(text) || return
-      Noir::WaspExtractor.object_entries(body)
+    private def resolve_decl_or_expr(node : LibTreeSitter::TSNode, declarations : Hash(String, LibTreeSitter::TSNode), source : String) : LibTreeSitter::TSNode
+      node = Noir::TreeSitter.unwrap_expression(node)
+      if Noir::TreeSitter.node_type(node) == "identifier"
+        name = Noir::TreeSitter.node_text(node, source)
+        if decl = declarations[name]?
+          return resolve_decl_or_expr(decl, declarations, source)
+        end
+      end
+      node
+    end
+
+    private def typebox_call?(node : LibTreeSitter::TSNode, source : String) : Bool
+      return false unless Noir::TreeSitter.node_type(node) == "call_expression"
+      fn = Noir::TreeSitter.field(node, "function") || return false
+      fn_text = Noir::TreeSitter.node_text(fn, source)
+      fn_text.ends_with?("Object")
+    end
+
+    private def collect_object_property_names(obj_node : LibTreeSitter::TSNode, source : String) : Array(String)
+      names = [] of String
+      Noir::TreeSitter.each_named_child(obj_node) do |child|
+        case Noir::TreeSitter.node_type(child)
+        when "pair"
+          if k = Noir::TreeSitter.field(child, "key")
+            name = property_key_name(k, source)
+            names << name unless name.empty?
+          end
+        when "shorthand_property_identifier"
+          names << Noir::TreeSitter.node_text(child, source)
+        end
+      end
+      names
+    end
+
+    private def collect_top_level_declarations(root : LibTreeSitter::TSNode, source : String, declarations : Hash(String, LibTreeSitter::TSNode))
+      Noir::TreeSitter.each_named_child(root) do |child|
+        node = child
+        if Noir::TreeSitter.node_type(node) == "export_statement"
+          if decl = Noir::TreeSitter.field(node, "declaration")
+            node = decl
+          end
+        end
+
+        case Noir::TreeSitter.node_type(node)
+        when "lexical_declaration", "variable_declaration"
+          Noir::TreeSitter.each_named_child(node) do |vdecl|
+            next unless Noir::TreeSitter.node_type(vdecl) == "variable_declarator"
+            name_node = Noir::TreeSitter.field(vdecl, "name")
+            val_node = Noir::TreeSitter.field(vdecl, "value")
+            if name_node && val_node && Noir::TreeSitter.node_type(name_node) == "identifier"
+              name = Noir::TreeSitter.node_text(name_node, source)
+              declarations[name] = val_node
+            end
+          end
+        when "function_declaration"
+          if name_node = Noir::TreeSitter.field(node, "name")
+            name = Noir::TreeSitter.node_text(name_node, source)
+            declarations[name] = node
+          end
+        end
+      end
     end
 
     # Helper method to create an endpoint with details
