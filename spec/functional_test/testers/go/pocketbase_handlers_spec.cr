@@ -15,6 +15,11 @@ expected_endpoints = [
   ]),
   Endpoint.new("/api/files/token", "POST"),
   Endpoint.new("/hello", "GET", [Param.new("name", "", "query")]),
+  Endpoint.new("/braces", "GET", [Param.new("open", "", "query")]),
+  Endpoint.new("/next", "GET", [Param.new("after", "", "query")]),
+  Endpoint.new("/one", "GET", [Param.new("q", "", "query")]),
+  Endpoint.new("/outer", "GET", [Param.new("shallow", "", "query")]),
+  Endpoint.new("/inner", "GET", [Param.new("deep", "", "query")]),
 ]
 
 tester = FunctionalTester.new("fixtures/go/pocketbase_handlers/", {
@@ -32,4 +37,8 @@ it "names each route's handler and keeps a helper's read off every route", tags:
   tester.app.endpoints.flat_map(&.params).map(&.name).should_not contain("unrelated")
   token = tester.app.endpoints.find! { |ep| ep.url == "/api/files/token" }
   token.params.should be_empty
+  # Each closure keeps its own reads.
+  {"/braces" => %w[open], "/next" => %w[after], "/outer" => %w[shallow], "/inner" => %w[deep]}.each do |url, names|
+    tester.app.endpoints.find! { |ep| ep.url == url }.params.map(&.name).should eq(names)
+  end
 end

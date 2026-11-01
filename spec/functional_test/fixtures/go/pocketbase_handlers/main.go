@@ -18,6 +18,22 @@ func main() {
 			name := e.Request.URL.Query().Get("name")
 			return e.String(200, "hello "+name)
 		})
+		// A brace inside a string must not keep this closure open.
+		se.Router.GET("/braces", func(e *core.RequestEvent) error {
+			msg := fmt.Sprintf("{%s", e.Request.URL.Query().Get("open"))
+			return e.String(200, msg)
+		})
+		se.Router.GET("/next", func(e *core.RequestEvent) error {
+			return e.String(200, e.Request.URL.Query().Get("after"))
+		})
+		se.Router.GET("/one", func(e *core.RequestEvent) error { return e.String(200, e.Request.URL.Query().Get("q")) })
+		// A route registered inside another route's closure.
+		se.Router.GET("/outer", func(e *core.RequestEvent) error {
+			se.Router.GET("/inner", func(e *core.RequestEvent) error {
+				return e.String(200, e.Request.URL.Query().Get("deep"))
+			})
+			return e.String(200, e.Request.URL.Query().Get("shallow"))
+		})
 		return se.Next()
 	})
 	if err := app.Start(); err != nil {
