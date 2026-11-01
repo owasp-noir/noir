@@ -254,6 +254,7 @@ module Analyzer::Ruby
       @gemfile_public_roots = nil
       @public_file_candidates = nil
       @constant_lists.clear
+      @app_config_values.clear
       @engine_mount_prefixes = build_engine_mount_map(files)
 
       framework_roots = discover_framework_roots(files, "config/routes.rb")
@@ -436,7 +437,7 @@ module Analyzer::Ruby
         line = route_line.text.strip
         next if line.empty?
         scan.current_line = route_line.line
-        line = resolve_local_string_vars(line, local_string_vars)
+        line = resolve_local_string_vars(line, local_string_vars, scan.framework_root)
 
         if name = current_concern_definition(scan.stack)
           record_concern_line(name, line, scan)
@@ -508,6 +509,8 @@ module Analyzer::Ruby
         # head token alone decides which handler runs — no two of the names
         # below can ever claim the same line (see `route_directive`). Anything
         # else is not routing DSL and only matters if it opens a block.
+        load_globbed_route_files(line, scan) if line.includes?("Dir")
+
         directive, args = route_directive(line)
         case directive
         when "draw"           then handle_draw(args, scan)
@@ -599,15 +602,66 @@ module Analyzer::Ruby
     # through unchanged. Likewise only names we've actually seen are
     # substituted — unresolved `#{...}` survives, which is better than
     # producing an empty `/` placeholder.
-    private def resolve_local_string_vars(line : String, local_string_vars : Hash(String, String)) : String
+    private def resolve_local_string_vars(line : String, local_string_vars : Hash(String, String),
+                                          framework_root : String = "") : String
+      line = resolve_app_config_refs(line, framework_root) if line.includes?("config")
+      unless local_string_vars.empty?
+        line = line.gsub(/\#\{([a-z_][a-z0-9_]*)\}/) do |match|
+          name = $~[1]
+          local_string_vars[name]? || match
+        end
+        # `scope api_path do` (zammad): a known string var as a directive's
+        # first argument is that literal.
+        if (bare = line.match(BARE_VAR_ARG)) && (value = local_string_vars[bare[2]]?)
+          line = "#{bare[1]}'#{value}'#{line[bare.end(0)..]}"
+        end
+        # `match api_path + '/tickets', ...` (zammad): fold a known string var
+        # concatenated onto a literal into one literal.
+        if line.includes?('+')
+          line = line.gsub(/(?<![\w.@:$])([a-z_][a-z0-9_]*)\s*\+\s*(["'])/) do |match|
+            value = local_string_vars[$~[1]]?
+            value ? "#{$~[2]}#{value}" : match
+          end
+        end
+      end
       if assign = line.match(/^([a-z_][a-z0-9_]*)\s*=\s*["']([^"']+)["']\s*$/)
         local_string_vars[assign[1]] = assign[2]
       end
-      return line if local_string_vars.empty?
+      line
+    end
 
-      line.gsub(/\#\{([a-z_][a-z0-9_]*)\}/) do |match|
-        name = $~[1]
-        local_string_vars[name]? || match
+    # `Rails.configuration.api_path` / `Rails.application.config.api_path` /
+    # `Zammad::Application.config.api_path` in a routes file, replaced by the
+    # string literal `config/application.rb` assigns (`config.api_path =
+    # '/api/v1'`). Unknown keys stay as written.
+    private def resolve_app_config_refs(line : String, framework_root : String) : String
+      return line unless line.matches?(APP_CONFIG_REF)
+      values = app_config_values(framework_root)
+      return line if values.empty?
+      line.gsub(APP_CONFIG_REF) do |match|
+        value = values[$~[1]]?
+        value ? "'#{value}'" : match
+      end
+    end
+
+    BARE_VAR_ARG = /\A((?:scope|namespace|get|post|put|patch|delete|options|head|match|resources?)\s*\(?\s*)([a-z_][a-z0-9_]*)(?=\s*(?:,|\)|\bdo\b|\z))/
+
+    APP_CONFIG_REF =/\b(?:Rails\.configuration|Rails\.application\.config|[A-Z][A-Za-z0-9_]*::Application\.config)\.([a-z_][a-z0-9_]*)\b(?![\w(\[.=])/
+
+    @app_config_values = Hash(String, Hash(String, String)).new
+
+    private def app_config_values(framework_root : String) : Hash(String, String)
+      @app_config_values[framework_root] ||= begin
+        values = Hash(String, String).new
+        path = File.join(framework_root, "config", "application.rb")
+        if known_file?(path)
+          ruby_source(path).each_line do |raw|
+            if m = raw.match(/^\s*config\.([a-z_][a-z0-9_]*)\s*=\s*["']([^"'#]*)["']\s*(?:#.*)?$/)
+              values[m[1]] = m[2]
+            end
+          end
+        end
+        values
       end
     end
 
@@ -631,6 +685,23 @@ module Analyzer::Ruby
         parse_symbol_list(line["skip_controllers".size..]).each { |group| scan.doorkeeper_skip << group }
       elsif line.starts_with?("controllers")
         parse_options(line).each { |group, ctrl| scan.doorkeeper_controllers[group] = ctrl }
+      end
+    end
+
+    # `Dir.glob("#{__dir__}/routes/*.rb").each { |f| load f }` (zammad) or
+    # `Dir[Rails.root.join("config/routes/**/*.rb")]`: a routes file that
+    # globs config/routes/ to load every file in it. Each file usually opens
+    # its own `routes.draw`; parse them in glob (sorted) order.
+    ROUTES_GLOB = /\bDir(?:\.glob\b|\s*\[).*?routes["']?\s*(?:,\s*["']|\/)(\*\*\/|["']\*\*["']\s*,\s*["'])?\*\.rb/
+
+    private def load_globbed_route_files(line : String, scan : RouteFileState)
+      return unless m = line.match(ROUTES_GLOB)
+      recursive = !m[1]?.nil?
+      dir = File.join(scan.framework_root, "config", "routes") + "/"
+      @known_files.select do |file|
+        file.starts_with?(dir) && file.ends_with?(".rb") && (recursive || !file.index('/', dir.size))
+      end.sort!.each do |file|
+        parse_routes_file(file, scan.framework_root, scan.parsed_route_files, scan.stack, scan.concerns)
       end
     end
 
@@ -720,6 +791,10 @@ module Analyzer::Ruby
       prefix = current_path_prefix(stack)
       url = prefix.empty? ? "/" : "/#{prefix}"
       ctrl_action = parse_controller_action(rest, current_controller_scope(stack))
+      # `root "pages#dashboard"`: the positional argument is the `to:`.
+      if ctrl_action.nil? && (m = rest.match(/\A\s*['"]([^'"#]+)#(\w+[?!]?)['"]/))
+        ctrl_action = {m[1], m[2]}
+      end
       ctrl_path = nil.as(String?)
       action_name = nil.as(String?)
       if ctrl_action
@@ -1073,7 +1148,10 @@ module Analyzer::Ruby
           action_name = action
           action_params = params_for_action(ctrl_path, action, verb)
         elsif parent = parent_resources_frame(stack)
-          if action = infer_action_from_path(path)
+          # `post 'group/:id', action: :group` / `to: 'group'` (no `#`):
+          # an action on the enclosing resource's controller.
+          named_action = options["action"]? || options["to"]?.try { |to| to unless to.includes?('#') }
+          if action = named_action.try(&.lchop(':').presence) || infer_action_from_path(path)
             ctrl_path = parent.controller_path
             action_name = action
             action_params = params_for_action(ctrl_path, action, verb)
@@ -1094,6 +1172,12 @@ module Analyzer::Ruby
     # same path/controller#action.
     private def handle_match(rest : String, scan : RouteFileState)
       stack = scan.stack
+      # `match :search, via: %i[get post]` inside a collection/member: the
+      # symbol form of each listed verb route.
+      if rest.matches?(/^\s*:\w/)
+        parse_match_verbs(rest).each { |verb| handle_verb_route(verb, rest, scan) }
+        return
+      end
       return unless sm = rest.match(/^\s*['"]([^'"]*)['"]/)
 
       optional_route_variants(sm[1]).each do |raw_path|
