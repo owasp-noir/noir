@@ -2,11 +2,23 @@ require "file_utils"
 require "../../../spec_helper"
 require "../../../../src/tagger/tagger"
 
-# The endpoints `RustAuthTagger` tags when each URL is registered by the actix
-# app built in the first file (the tmp dir is removed; tags keep their text).
-private def actix_tagged(files : Hash(String, String), urls : Array(String)) : Array(Endpoint)
+# `{url => handler}` of the routes the fixtures register.
+URLS = {
+  "/"                   => "index",
+  "/healthz"            => "healthz",
+  "/readyz"             => "readyz",
+  "/readyz/x"           => "readyz_x",
+  "/collections"        => "collections",
+  "/collections/{name}" => "collection",
+  "/metrics"            => "metrics",
+}
+
+# The endpoints `RustAuthTagger` tags when the first file builds the actix app
+# (the tmp dir is removed; tags keep their text). `method` is every route's.
+private def actix_tagged(files : Hash(String, String), method = "GET") : Array(Endpoint)
   CodeLocator.instance.clear_all
   tmpdir = File.tempname("actix_app_wrap")
+  files["Cargo.toml"] = "[package]\nname = \"t\"\n" unless files.has_key?("Cargo.toml")
   files.each do |rel, src|
     path = File.join(tmpdir, rel)
     Dir.mkdir_p(File.dirname(path))
@@ -16,15 +28,19 @@ private def actix_tagged(files : Hash(String, String), urls : Array(String)) : A
   noir_options = create_test_options
   noir_options["base"] = YAML::Any.new(tmpdir)
   main = File.join(tmpdir, files.keys.first)
-  endpoints = urls.map { |url| Endpoint.new(url, "GET", [] of Param, Details.new(PathInfo.new(main, 1)).tap(&.technology=("rust_actix_web"))) }
+  endpoints = URLS.map do |url, name|
+    endpoint = Endpoint.new(url, method, [] of Param, Details.new(PathInfo.new(main, 1)).tap(&.technology=("rust_actix_web")))
+    endpoint.handler = Handler.new(name, main, 1)
+    endpoint
+  end
   RustAuthTagger.new(noir_options).perform(endpoints)
   FileUtils.rm_rf(tmpdir)
   endpoints.reject(&.tags.empty?)
 end
 
 # `{url => auth description}` of the guarded endpoints.
-private def actix_guards(files : Hash(String, String), urls : Array(String)) : Hash(String, String)
-  actix_tagged(files, urls).to_h { |endpoint| {endpoint.url, endpoint.tags.first.description} }
+private def actix_guards(files : Hash(String, String), method = "GET") : Hash(String, String)
+  actix_tagged(files, method).to_h { |endpoint| {endpoint.url, endpoint.tags.first.description} }
 end
 
 APP_WRAP_MIDDLEWARE = <<-RUST
@@ -32,9 +48,16 @@ APP_WRAP_MIDDLEWARE = <<-RUST
       keys: Keys,
   }
 
+  impl<S> Transform<S, ServiceRequest> for AuthTransform {
+      type Transform = AuthMiddleware<S>;
+      fn new_transform(&self, service: S) -> Self::Future {
+          ready(Ok(AuthMiddleware { service }))
+      }
+  }
+
   impl Service<ServiceRequest> for AuthMiddleware {
       fn call(&self, req: ServiceRequest) -> Self::Future {
-          if bad(&req) {
+          if bad_token(&req) {
               return Box::pin(async move { Ok(req.into_response(HttpResponse::Unauthorized().body("no"))) });
           }
           self.service.call(req)
@@ -43,6 +66,10 @@ APP_WRAP_MIDDLEWARE = <<-RUST
   RUST
 
 APP_WRAP_SERVER = <<-RUST
+  fn config(cfg: &mut web::ServiceConfig) {
+      cfg.service(healthz).service(readyz).service(readyz_x).service(collections).service(collection);
+  }
+
   fn serve(keys: Option<Keys>) {
       let mut open = vec![WhitelistItem::exact("/"), WhitelistItem::prefix("/readyz")];
       open.push(WhitelistItem::exact("/healthz"));
@@ -53,41 +80,91 @@ APP_WRAP_SERVER = <<-RUST
               )))
               .wrap(Logger::default())
               .service(index)
+              .configure(config)
       })
   }
   RUST
 
 describe "RustAuthTagger app-wide actix .wrap" do
-  urls = ["/", "/healthz", "/readyz", "/readyz/x", "/collections", "/collections/{name}"]
-
-  it "guards every route but the middleware's own whitelist, and says a setting can open it" do
-    guards = actix_guards({"src/main.rs" => APP_WRAP_SERVER, "src/auth.rs" => APP_WRAP_MIDDLEWARE}, urls)
+  it "guards the App's routes but the middleware's own whitelist, and says a setting can open it" do
+    guards = actix_guards({"src/main.rs" => APP_WRAP_SERVER, "src/auth.rs" => APP_WRAP_MIDDLEWARE})
     guards.keys.sort!.should eq ["/collections", "/collections/{name}"]
     guards["/collections"].should contain("AuthTransform")
     guards["/collections"].should contain("only when auth keys are configured")
   end
 
   it "points the guard at the .wrap line" do
-    tag = actix_tagged({"src/main.rs" => APP_WRAP_SERVER, "src/auth.rs" => APP_WRAP_MIDDLEWARE}, urls).first.tags.first
+    tag = actix_tagged({"src/main.rs" => APP_WRAP_SERVER, "src/auth.rs" => APP_WRAP_MIDDLEWARE}).first.tags.first
     tag.path.try(&.ends_with?("src/main.rs")).should be_true
-    tag.line.should eq 6
+    tag.line.should eq 10
+  end
+
+  it "does not guard a route the App does not register, even in the same crate" do
+    # `/metrics` belongs to nobody's chain here.
+    guards = actix_guards({"src/main.rs" => APP_WRAP_SERVER, "src/auth.rs" => APP_WRAP_MIDDLEWARE})
+    guards.has_key?("/metrics").should be_false
+  end
+
+  it "keeps two Apps of one file apart, and says when a handler is also served open" do
+    second = APP_WRAP_SERVER + "\nfn metrics_server() {\n    HttpServer::new(|| App::new().wrap(Compress::default()).service(metrics).service(collection))\n}\n"
+    guards = actix_guards({"src/main.rs" => second, "src/auth.rs" => APP_WRAP_MIDDLEWARE})
+    guards.has_key?("/metrics").should be_false
+    guards["/collections/{name}"].should contain("also served without it by another App")
+    guards["/collections"].should_not contain("also served")
   end
 
   it "does not guard on a middleware whose definition never refuses" do
     logging_only = APP_WRAP_MIDDLEWARE.gsub("HttpResponse::Unauthorized()", "HttpResponse::Ok()")
-    actix_guards({"src/main.rs" => APP_WRAP_SERVER, "src/auth.rs" => logging_only}, urls).should be_empty
+    actix_guards({"src/main.rs" => APP_WRAP_SERVER, "src/auth.rs" => logging_only}).should be_empty
   end
 
-  it "does not guard on a wrap that is not an auth type" do
-    plain = APP_WRAP_SERVER.gsub("AuthTransform", "Compress")
-    actix_guards({"src/main.rs" => plain, "src/auth.rs" => APP_WRAP_MIDDLEWARE}, urls).should be_empty
+  it "judges the wrapped type's own call, not the file" do
+    shared = APP_WRAP_MIDDLEWARE.gsub("fn call", "fn other") + "\nimpl Service<ServiceRequest> for RequireAdmin {\n    fn call(&self, req: ServiceRequest) -> Self::Future {\n        if no_token(&req) { return Box::pin(async { Ok(HttpResponse::Unauthorized().finish()) }); }\n        self.service.call(req)\n    }\n}\n"
+    actix_guards({"src/main.rs" => APP_WRAP_SERVER, "src/auth.rs" => shared}).should be_empty
+  end
+
+  it "does not guard on a logger that only reads the 401 the inner service answered" do
+    logger = <<-RUST
+      pub struct AuthTransform { }
+      impl<S> Transform<S, ServiceRequest> for AuthTransform {
+          type Transform = AuthMiddleware<S>;
+      }
+      impl Service<ServiceRequest> for AuthMiddleware {
+          fn call(&self, req: ServiceRequest) -> Self::Future {
+              let fut = self.service.call(req);
+              Box::pin(async move {
+                  let res = fut.await?;
+                  match res.status() {
+                      StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => log::warn!("token rejected"),
+                      _ => {}
+                  }
+                  Ok(res)
+              })
+          }
+      }
+      RUST
+    actix_guards({"src/main.rs" => APP_WRAP_SERVER, "src/auth.rs" => logger}).should be_empty
+  end
+
+  it "treats a method-conditional refusal as limited to the other verbs" do
+    conditional = APP_WRAP_MIDDLEWARE.gsub("if bad_token(&req)", "if req.method() != Method::GET && bad_token(&req)")
+    files = {"src/main.rs" => APP_WRAP_SERVER, "src/auth.rs" => conditional}
+    actix_guards(files.dup, "GET").should be_empty
+    actix_guards(files.dup, "POST").keys.sort!.should eq ["/collections", "/collections/{name}"]
+  end
+
+  it "does not guard on a wrap that is not an auth type, or only says 'Auth' in a string" do
+    plain = APP_WRAP_SERVER.gsub("AuthTransform::new(keys.clone(), open.clone())", "Compress::default()")
+    actix_guards({"src/main.rs" => plain, "src/auth.rs" => APP_WRAP_MIDDLEWARE}).should be_empty
+    stringy = APP_WRAP_SERVER.gsub(/\.wrap\(ConditionEx.*?\)\)\)/m, ".wrap(Logger::new(\"%a %{Authorization}i\")).wrap(DefaultHeaders::new().add((\"X-Auth-Version\", \"2\")))")
+    actix_guards({"src/main.rs" => stringy, "src/auth.rs" => APP_WRAP_MIDDLEWARE}).should be_empty
   end
 
   it "does not let a test app's wrap guard the real routes" do
-    actix_guards({"src/main.rs" => "fn serve() { App::new().service(index) }", "tests/api.rs" => APP_WRAP_SERVER, "src/auth.rs" => APP_WRAP_MIDDLEWARE}, urls).should be_empty
+    actix_guards({"src/main.rs" => "fn serve() { App::new().service(collections) }", "tests/api.rs" => APP_WRAP_SERVER, "src/auth.rs" => APP_WRAP_MIDDLEWARE}).should be_empty
 
-    in_test_module = "fn serve() { App::new().service(index) }\n#[cfg(test)]\nmod tests {\n#{APP_WRAP_SERVER}\n}\n"
-    actix_guards({"src/main.rs" => in_test_module, "src/auth.rs" => APP_WRAP_MIDDLEWARE}, urls).should be_empty
+    in_test_module = "fn serve() { App::new().service(collections) }\n#[cfg(test)]\nmod tests {\n#{APP_WRAP_SERVER}\n}\n"
+    actix_guards({"src/main.rs" => in_test_module, "src/auth.rs" => APP_WRAP_MIDDLEWARE}).should be_empty
   end
 
   it "keeps a scope's wrap on that scope" do
@@ -95,16 +172,27 @@ describe "RustAuthTagger app-wide actix .wrap" do
       fn serve() {
           App::new()
               .service(web::scope("/admin").wrap(AuthTransform::new(keys)).service(users))
-              .service(index)
+              .service(collections)
       }
       RUST
-    guards = actix_guards({"src/main.rs" => scoped, "src/auth.rs" => APP_WRAP_MIDDLEWARE}, ["/admin/users", "/collections"])
-    guards.keys.should eq ["/admin/users"]
+    actix_guards({"src/main.rs" => scoped, "src/auth.rs" => APP_WRAP_MIDDLEWARE}).should be_empty
   end
 
-  it "says so when the whitelist could not be read, rather than guard silently" do
-    unread = APP_WRAP_SERVER.gsub(/let mut open = .*\n.*\n/, "")
-    guards = actix_guards({"src/main.rs" => unread.gsub("open", "whitelist"), "src/auth.rs" => APP_WRAP_MIDDLEWARE}, urls)
-    guards["/healthz"].should contain("whitelisted paths could not be read")
+  it "reads only the whitelist the wrap uses: no comments, no other fn" do
+    commented = APP_WRAP_SERVER.gsub("let mut open = vec![", "// WhitelistItem::prefix(\"/collections\")\n    let mut open = vec![")
+    actix_guards({"src/main.rs" => commented, "src/auth.rs" => APP_WRAP_MIDDLEWARE}).has_key?("/collections").should be_true
+
+    other_fn = APP_WRAP_SERVER + "\nfn unrelated() {\n    let mut open = vec![WhitelistItem::prefix(\"/collections\")];\n}\n"
+    actix_guards({"src/main.rs" => other_fn, "src/auth.rs" => APP_WRAP_MIDDLEWARE}).has_key?("/collections").should be_true
+  end
+
+  it "reads inline literal exclusions, and says so when the whitelist cannot be read" do
+    inline = APP_WRAP_SERVER.gsub("AuthTransform::new(keys.clone(), open.clone())", "AuthTransform::new(keys.clone()).skip_paths(vec![\"/collections\"])")
+    guards = actix_guards({"src/main.rs" => inline, "src/auth.rs" => APP_WRAP_MIDDLEWARE})
+    guards.has_key?("/collections").should be_false
+    guards.has_key?("/collections/{name}").should be_true
+
+    unread = APP_WRAP_SERVER.gsub(/let mut open = .*\n.*\n/, "").gsub("open", "whitelist")
+    actix_guards({"src/main.rs" => unread, "src/auth.rs" => APP_WRAP_MIDDLEWARE})["/healthz"].should contain("whitelisted paths could not be read")
   end
 end
