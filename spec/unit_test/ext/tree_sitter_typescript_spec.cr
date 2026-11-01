@@ -93,15 +93,20 @@ describe "Noir::TreeSitter.parse_js_family" do
   end
 end
 
-describe "Noir::TreeSitter.unwrap_ts_expression" do
-  it "peels as / satisfies / non-null wrappers" do
+describe "Noir::TreeSitter.unwrap_expression" do
+  it "peels parens, as / satisfies / non-null and <T> assertions" do
     source = "x = (y as any)! satisfies T as const;"
     Noir::TreeSitter.parse_js_family(source, "a.ts") do |root|
       assignment = Noir::TreeSitter.first_named_child(Noir::TreeSitter.first_named_child(root).not_nil!).not_nil!
       right = Noir::TreeSitter.field(assignment, "right").not_nil!
-      inner = Noir::TreeSitter.unwrap_ts_expression(right)
-      Noir::TreeSitter.node_type(inner).should eq("parenthesized_expression")
-      Noir::TreeSitter.node_text(inner, source).should eq("(y as any)")
+      inner = Noir::TreeSitter.unwrap_expression(right)
+      Noir::TreeSitter.node_type(inner).should eq("identifier")
+      Noir::TreeSitter.node_text(inner, source).should eq("y")
+    end
+    Noir::TreeSitter.parse_js_family("x = <T>(/* c */ y);", "a.ts") do |root|
+      assignment = Noir::TreeSitter.first_named_child(Noir::TreeSitter.first_named_child(root).not_nil!).not_nil!
+      inner = Noir::TreeSitter.unwrap_expression(Noir::TreeSitter.field(assignment, "right").not_nil!)
+      Noir::TreeSitter.node_text(inner, "x = <T>(/* c */ y);").should eq("y")
     end
   end
 end

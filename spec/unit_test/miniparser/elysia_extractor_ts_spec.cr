@@ -191,4 +191,19 @@ describe Noir::TreeSitterElysiaExtractor do
     routes.first.has_body?.should be_true
     routes.first.query_params.should eq(["tag"])
   end
+
+  it "looks through as / satisfies / parens on prefixes, paths and options" do
+    source = <<-TS
+      export default new Elysia({ prefix: '/pa' as const })
+        .get('/a' as const, () => 1)
+        .group(('/g') satisfies string, (app) => app.get('/in', () => 2))
+        .post('/b', () => 3, { detail: {} } satisfies object)
+      export const plugin = new Elysia({ prefix: '/pb' satisfies string } as const).get('/x', () => 1)
+      TS
+
+    routes = Noir::TreeSitterElysiaExtractor.extract_routes(source, path: "src/index.ts")
+    routes.map { |r| {r.verb, r.path} }.sort!.should eq([
+      {"GET", "/pa/a"}, {"GET", "/pa/g/in"}, {"POST", "/pa/b"}, {"GET", "/pb/x"},
+    ].sort)
+  end
 end

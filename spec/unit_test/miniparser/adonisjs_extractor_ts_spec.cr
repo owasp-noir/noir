@@ -193,4 +193,25 @@ describe Noir::TreeSitterAdonisJsExtractor do
     routes = Noir::TreeSitterAdonisJsExtractor.extract_routes(source, path: "start/routes.ts")
     routes.map { |r| {r.path, r.line} }.should eq([{"/a", 1}, {"/b", 3}])
   end
+
+  it "looks through as / satisfies on prefixes, paths, handlers and action lists" do
+    source = <<-TS
+      router.group(() => { router.get('/u', async () => 1) }).prefix('/p1' as const)
+      router.get('/lit' as const, async () => 2)
+      router.group(() => { router.get('/v', () => 3) }).prefix('/p2' satisfies string)
+      router.get('/c1', [UsersController, 'index'] as const)
+      router.get('/c3', 'UsersController.show' as string)
+      router.resource('ph', C).apiOnly().only(['index'] as const);
+      (router as any).get('/cast', () => 4)
+      TS
+
+    routes = Noir::TreeSitterAdonisJsExtractor.extract_routes(source, include_callees: true, path: "start/routes.ts")
+    routes.map { |r| {r.verb, r.path} }.sort!.should eq([
+      {"GET", "/p1/u"}, {"GET", "/lit"}, {"GET", "/p2/v"}, {"GET", "/c1"},
+      {"GET", "/c3"}, {"GET", "/ph"}, {"GET", "/cast"},
+    ].sort)
+    routes.find! { |r| r.path == "/c1" }.controller.should eq({"UsersController", "index"})
+    routes.find! { |r| r.path == "/c3" }.controller.should eq({"UsersController", "show"})
+    routes.find! { |r| r.path == "/c3" }.callees.map(&.[0]).should eq(["UsersController.show"])
+  end
 end

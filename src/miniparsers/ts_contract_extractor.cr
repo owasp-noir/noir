@@ -399,7 +399,7 @@ module Noir
             name = TreeSitter.field(declarator, "name")
             value = TreeSitter.field(declarator, "value")
             next unless name && value
-            yield (TreeSitter.node_type(name) == "identifier" ? text(name, ctx) : nil), TreeSitter.unwrap_ts_expression(value)
+            yield (TreeSitter.node_type(name) == "identifier" ? text(name, ctx) : nil), TreeSitter.unwrap_expression(value)
           end
         when "class_declaration", "abstract_class_declaration"
           yield TreeSitter.field(stmt, "name").try { |n| text(n, ctx) }, stmt
@@ -463,11 +463,11 @@ module Noir
           value = TreeSitter.field(pair, "value")
           next unless key && value
           name = TreeSitter.node_type(key) == "string" ? string_value(key, ctx) : text(key, ctx)
-          yield name, TreeSitter.unwrap_ts_expression(value) if name
+          yield name, TreeSitter.unwrap_expression(value) if name
         when "shorthand_property_identifier"
           yield text(pair, ctx), pair
         when "spread_element"
-          TreeSitter.first_named_child(pair).try { |expr| yield SPREAD, expr }
+          TreeSitter.first_named_child(pair).try { |expr| yield SPREAD, TreeSitter.unwrap_expression(expr) }
         end
       end
     end
@@ -513,7 +513,7 @@ module Noir
 
     # `a.b(...)` → `a`.
     private def receiver(call : LibTreeSitter::TSNode) : LibTreeSitter::TSNode?
-      TreeSitter.field(call, "function").try { |function| TreeSitter.field(function, "object") }
+      TreeSitter.field(call, "function").try { |function| TreeSitter.field(function, "object") }.try { |object| TreeSitter.unwrap_expression(object) }
     end
 
     private def first_arg(call : LibTreeSitter::TSNode) : LibTreeSitter::TSNode?
@@ -528,7 +528,7 @@ module Noir
       return unless TreeSitter.node_type(args) == "arguments"
       i = 0
       TreeSitter.each_named_arg(args) do |arg|
-        return TreeSitter.unwrap_ts_expression(arg) if i == n
+        return TreeSitter.unwrap_expression(arg) if i == n
         i += 1
       end
       nil
@@ -537,7 +537,7 @@ module Noir
     private def each_arg(call : LibTreeSitter::TSNode, &)
       args = TreeSitter.field(call, "arguments")
       return unless args && TreeSitter.node_type(args) == "arguments"
-      TreeSitter.each_named_arg(args) { |arg| yield arg }
+      TreeSitter.each_named_arg(args) { |arg| yield TreeSitter.unwrap_expression(arg) }
     end
 
     private def descend(node : LibTreeSitter::TSNode, & : LibTreeSitter::TSNode -> Array(Route)) : Array(Route)

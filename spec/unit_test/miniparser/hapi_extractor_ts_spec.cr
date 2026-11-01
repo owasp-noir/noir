@@ -147,4 +147,10 @@ describe Noir::TreeSitterHapiExtractor do
     routes.map { |r| {r.verb, r.path} }.should eq([{"GET", "/a"}, {"POST", "/b"}])
     routes.first.query_params.should eq(["q"])
   end
+
+  it "reads `as const` entries of a method array" do
+    source = "server.route({ method: ['GET' as const, ('POST')], path: '/m', handler: h })"
+    routes = Noir::TreeSitterHapiExtractor.extract_routes(source, path: "routes.ts")
+    routes.map(&.verb).sort!.should eq(["GET", "POST"])
+  end
 end

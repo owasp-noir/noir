@@ -312,12 +312,21 @@ module Noir::TreeSitter
     end
   end
 
-  TS_EXPRESSION_WRAPPERS = {"as_expression", "satisfies_expression", "non_null_expression"}
-
-  # Peels `x as T`, `x satisfies T` and `x!` down to `x`, so a reader of
-  # values sees the node the JavaScript grammar gives for plain `x`.
-  def self.unwrap_ts_expression(node : LibTreeSitter::TSNode) : LibTreeSitter::TSNode
-    while TS_EXPRESSION_WRAPPERS.includes?(node_type(node)) && (inner = first_named_child(node))
+  # `(x)`, `x as T`, `x satisfies T`, `x!` and `<T>x` all evaluate to `x`.
+  # Readers of literals, arrays, objects and handlers look through them, so
+  # `'/a' as const` reads as `'/a'` and `(async () => {}) satisfies H` as the
+  # arrow. Bounded: pathological `((((x))))` nesting stops at 32 layers.
+  def self.unwrap_expression(node : LibTreeSitter::TSNode) : LibTreeSitter::TSNode
+    32.times do
+      inner = case node_type(node)
+              when "parenthesized_expression", "as_expression", "satisfies_expression", "non_null_expression"
+                first_named_arg(node)
+              when "type_assertion" # `<T>x`: the type comes first
+                last = nil.as(LibTreeSitter::TSNode?)
+                each_named_arg(node) { |child| last = child }
+                last
+              end
+      break unless inner
       node = inner
     end
     node

@@ -165,7 +165,7 @@ module Noir
     private def decode_value(node : LibTreeSitter::TSNode, source : String, depth : Int32) : ConfigValue
       return if depth > MAX_VALUE_DEPTH
 
-      node = Noir::TreeSitter.unwrap_ts_expression(node)
+      node = Noir::TreeSitter.unwrap_expression(node)
       case Noir::TreeSitter.node_type(node)
       when "string", "template_string"
         decode_string(node, source)

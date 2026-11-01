@@ -85,7 +85,9 @@ for g in $GRAMMARS; do
     [ -f "$SRC" ] || continue
     if [ ! -f "$OBJ" ] \
       || [ "$SRC" -nt "$OBJ" ] \
-      || [ "$GD/tree_sitter/parser.h" -nt "$OBJ" ]; then
+      || [ "$GD/tree_sitter/parser.h" -nt "$OBJ" ] \
+      || { [ "$src" = scanner ] && [ "$D/grammars/ts_common/scanner.h" -nt "$OBJ" ] \
+        && { [ "$g" = typescript ] || [ "$g" = tsx ]; }; }; then
       echo "[noir/tree-sitter] building $g/$src.o" 1>&2
       # Grammars only need the runtime's public api.h, not the private
       # headers, so we pass just the include dir (not the src dir).

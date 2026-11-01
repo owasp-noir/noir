@@ -114,7 +114,7 @@ module Noir
       private def emit(call : LibTreeSitter::TSNode, parent : String, absorb : Bool) : Nil
         args = [] of LibTreeSitter::TSNode
         if arguments = Noir::TreeSitter.field(call, "arguments")
-          Noir::TreeSitter.each_named_arg(arguments) { |arg| args << arg }
+          Noir::TreeSitter.each_named_arg(arguments) { |arg| args << Noir::TreeSitter.unwrap_expression(arg) }
         end
         line = Noir::TreeSitter.node_start_row(call) + 1
 
@@ -142,7 +142,7 @@ module Noir
 
         # Children: the trailing array of route/layout/prefix, a binding to
         # one, or a `defineRoutes`-style callback (Remix's routes adapter).
-        return unless children = args.last?.try { |arg| Noir::TreeSitter.unwrap_ts_expression(arg) }
+        return unless children = args.last?
         case Noir::TreeSitter.node_type(children)
         when "array", "identifier", "arrow_function", "function_expression"
           walk(children, child_parent, child_absorb)

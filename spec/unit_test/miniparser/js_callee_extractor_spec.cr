@@ -263,4 +263,29 @@ describe Noir::JSCalleeExtractor do
     callees = Noir::JSCalleeExtractor.callees_for_function_body(body, "page.tsx", 1)
     callees.map(&.[0]).should eq(["track", "render"])
   end
+
+  it "names calls chained on constructed, awaited and asserted receivers" do
+    body = <<-TS
+
+        const u = new URL(req.url).searchParams.get('q')
+        const r = new Foo().bar()
+        const s = (await getThing())!.method()
+        const w = (<Foo>x).run()
+        const n = new Response(u)
+      TS
+
+    callees = Noir::JSCalleeExtractor.callees_for_function_body(body, "route.ts", 1)
+    callees.map(&.[0]).should eq(["searchParams.get", "bar", "getThing().method", "x.run"])
+  end
+
+  it "keeps calls made inside the arguments of a named receiver chain" do
+    body = <<-TS
+
+        const rows = (await Promise.all(ids.map((id) => canView(id)))).filter(Boolean)
+        a(b()).c(d())
+      TS
+
+    callees = Noir::JSCalleeExtractor.callees_for_function_body(body, "route.ts", 1)
+    callees.map(&.[0]).should eq(["Promise.all().filter", "ids.map", "canView", "a().c", "b", "d"])
+  end
 end

@@ -162,7 +162,7 @@ module Noir
       callee = Noir::TreeSitter.first_named_child(call)
       return unless callee
       return unless Noir::TreeSitter.node_type(callee) == "member_expression"
-      inner = Noir::TreeSitter.first_named_child(callee)
+      inner = Noir::TreeSitter.first_named_child(callee).try { |n| Noir::TreeSitter.unwrap_expression(n) }
       return unless inner
       walk(inner, source, prefix, routes, depth + 1, include_callees, chained: true) if Noir::TreeSitter.node_type(inner) == "call_expression"
     end
@@ -180,17 +180,17 @@ module Noir
       while Noir::TreeSitter.node_type(node) == "call_expression"
         callee = Noir::TreeSitter.first_named_child(node)
         return unless callee && Noir::TreeSitter.node_type(callee) == "member_expression"
-        node = Noir::TreeSitter.first_named_child(callee) || return
+        node = Noir::TreeSitter.first_named_child(callee).try { |n| Noir::TreeSitter.unwrap_expression(n) } || return
       end
       return unless Noir::TreeSitter.node_type(node) == "new_expression"
       ctor = Noir::TreeSitter.field(node, "constructor")
       return unless ctor && Noir::TreeSitter.node_text(ctor, source) == "Elysia"
-      options = Noir::TreeSitter.field(node, "arguments").try { |args| Noir::TreeSitter.first_named_arg(args) }
+      options = Noir::TreeSitter.field(node, "arguments").try { |args| Noir::TreeSitter.first_named_arg(args) }.try { |arg| Noir::TreeSitter.unwrap_expression(arg) }
       return unless options && Noir::TreeSitter.node_type(options) == "object"
       Noir::TreeSitter.each_named_child(options) do |pair|
         next unless Noir::TreeSitter.node_type(pair) == "pair"
         key = Noir::TreeSitter.field(pair, "key")
-        value = Noir::TreeSitter.field(pair, "value")
+        value = Noir::TreeSitter.field(pair, "value").try { |v| Noir::TreeSitter.unwrap_expression(v) }
         next unless key && value && decode_string(key, source) == "prefix"
         return decode_string(value, source) if {"string", "template_string"}.includes?(Noir::TreeSitter.node_type(value))
       end
@@ -203,7 +203,8 @@ module Noir
 
       group_path : String? = nil
       group_body : LibTreeSitter::TSNode? = nil
-      Noir::TreeSitter.each_named_child(args) do |arg|
+      Noir::TreeSitter.each_named_arg(args) do |arg|
+        arg = Noir::TreeSitter.unwrap_expression(arg)
         case Noir::TreeSitter.node_type(arg)
         when "string", "template_string"
           group_path ||= decode_string(arg, source)
@@ -220,7 +221,8 @@ module Noir
     private def handle_transparent(call : LibTreeSitter::TSNode, source : String, prefix : String, routes : Array(Route), depth : Int32, include_callees : Bool)
       args = arguments_node(call)
       return unless args
-      Noir::TreeSitter.each_named_child(args) do |arg|
+      Noir::TreeSitter.each_named_arg(args) do |arg|
+        arg = Noir::TreeSitter.unwrap_expression(arg)
         case Noir::TreeSitter.node_type(arg)
         when "arrow_function"
           if body = arrow_body(arg)
@@ -240,7 +242,8 @@ module Noir
 
       path : String? = nil
       handler : LibTreeSitter::TSNode? = nil
-      Noir::TreeSitter.each_named_child(args) do |arg|
+      Noir::TreeSitter.each_named_arg(args) do |arg|
+        arg = Noir::TreeSitter.unwrap_expression(arg)
         case Noir::TreeSitter.node_type(arg)
         when "string", "template_string"
           path ||= decode_string(arg, source)
@@ -413,6 +416,7 @@ module Noir
           seen_target = true
           next
         end
+        child = Noir::TreeSitter.unwrap_expression(child)
         if Noir::TreeSitter.node_type(child) == "string"
           return decode_string(child, source)
         end

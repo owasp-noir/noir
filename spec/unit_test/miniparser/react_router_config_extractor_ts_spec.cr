@@ -130,4 +130,15 @@ describe Noir::TreeSitterReactRouterConfigExtractor do
 
     rr_routes(source).should be_empty
   end
+
+  it "looks through as / satisfies on helper arguments" do
+    source = <<-TS
+      export default [
+        route("/a" as const, "routes/a.tsx" satisfies string),
+        ...prefix("api" as const, [index("routes/api.tsx")] as RouteConfig),
+      ] satisfies RouteConfig;
+      TS
+
+    rr_routes(source).map(&.[0]).should eq(["/a", "/api"])
+  end
 end
