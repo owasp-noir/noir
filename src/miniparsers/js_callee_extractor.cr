@@ -26,6 +26,7 @@ module Noir::JSCalleeExtractor
     "defineCachedEventHandler",
     "cachedEventHandler",
   }
+  SCHEMA_BUILDER_CALLEE_PATTERN = /\A(?:(?:z|zod|yup|Joi|joi|v)\b|t\.(?:Object|String)\b|Type\.)/
 
   alias Definitions = Hash(String, Int32?)
 
@@ -68,7 +69,7 @@ module Noir::JSCalleeExtractor
       walk_first_function_body(root, wrapper, file_path, sink, 0)
     end
 
-    sink.map do |name, path, line|
+    partition_schema_callees(sink).map do |name, path, line|
       {name, path, open_brace_line + line - 1}
     end
   rescue
@@ -80,7 +81,7 @@ module Noir::JSCalleeExtractor
                                file_path : String) : Array(Entry)
     sink = [] of Entry
     walk_callees(handler_body(handler), source, file_path, sink, 0)
-    sink.uniq
+    partition_schema_callees(sink.uniq)
   rescue
     [] of Entry
   end
@@ -96,7 +97,7 @@ module Noir::JSCalleeExtractor
       end
     end
 
-    sink.uniq
+    partition_schema_callees(sink.uniq)
   rescue
     [] of Entry
   end
@@ -126,7 +127,7 @@ module Noir::JSCalleeExtractor
       end
     end
 
-    sink.uniq
+    partition_schema_callees(sink.uniq)
   rescue
     [] of Entry
   end
@@ -267,7 +268,23 @@ module Noir::JSCalleeExtractor
                                  definitions : Definitions) : Array(Entry)
     sink = [] of Entry
     walk_callees(handler_body(handler), source, file_path, sink, 0, definitions)
-    sink
+    partition_schema_callees(sink)
+  end
+
+  private def partition_schema_callees(entries : Array(Entry)) : Array(Entry)
+    return entries if entries.size <= 1
+    return entries unless entries.any? { |name, _, _| name.matches?(SCHEMA_BUILDER_CALLEE_PATTERN) }
+
+    work = [] of Entry
+    schema = [] of Entry
+    entries.each do |entry|
+      if entry[0].matches?(SCHEMA_BUILDER_CALLEE_PATTERN)
+        schema << entry
+      else
+        work << entry
+      end
+    end
+    work.concat(schema)
   end
 
   private def exported_handler(root : LibTreeSitter::TSNode,
