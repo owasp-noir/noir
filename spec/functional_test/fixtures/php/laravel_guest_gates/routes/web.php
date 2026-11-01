@@ -1,0 +1,85 @@
+<?php
+use Illuminate\Support\Facades\Route;
+use App\Http\Controllers\PCtl;
+use App\Http\Controllers\ItemController;
+
+Route::get('mw/nested', [PCtl::class, 'commentFirst'])->middleware(\App\Http\Middleware\NestedPass::class);
+Route::get('mw/config', [PCtl::class, 'commentFirst'])->middleware(\App\Http\Middleware\ConfigGuestPass::class);
+Route::get('mw/apionly', [PCtl::class, 'commentFirst'])->middleware(\App\Http\Middleware\ApiOnlyPass::class);
+Route::get('mw/comment', [PCtl::class, 'commentFirst'])->middleware(\App\Http\Middleware\CommentNext::class);
+Route::get('mw/andelse', [PCtl::class, 'commentFirst'])->middleware(\App\Http\Middleware\AndThenElse::class);
+Route::get('mw/uservar', [PCtl::class, 'commentFirst'])->middleware(\App\Http\Middleware\UserVarThenAbort::class);
+Route::get('mw/nobraces', [PCtl::class, 'commentFirst'])->middleware(\App\Http\Middleware\NoBraces::class);
+Route::get('mw/guestfirst', [PCtl::class, 'commentFirst'])->middleware(\App\Http\Middleware\SingleIfGuestFirst::class);
+Route::get('mw/ternary', [PCtl::class, 'commentFirst'])->middleware(\App\Http\Middleware\TernaryAnd::class);
+Route::get('mw/adminelse', [PCtl::class, 'commentFirst'])->middleware(\App\Http\Middleware\AdminElse::class);
+Route::get('mw/passafter', [PCtl::class, 'commentFirst'])->middleware(\App\Http\Middleware\PassAfterOther::class);
+Route::get('mw/alias', [PCtl::class, 'commentFirst'])->middleware(['api.ip', 'auth:sanctum']);
+
+Route::post('p/store/{id}', [PCtl::class, 'storeThen']);
+Route::post('p/service/{id}', [PCtl::class, 'serviceThen']);
+Route::post('p/insert', [PCtl::class, 'insertThen']);
+Route::get('p/multi/{id}', [PCtl::class, 'multiLine']);
+Route::get('p/interp/{id}', [PCtl::class, 'interp']);
+Route::get('p/comment/{id}', [PCtl::class, 'commentFirst']);
+Route::get('p/guestafter/{id}', [PCtl::class, 'guestCheckAfterLookup']);
+Route::post('p/mail/{id}', [PCtl::class, 'mailThen']);
+
+Route::resource('sizes', ItemController::class, ['only' => ['show']]);
+Route::resource('prizes', ItemController::class, ['only' => ['show']]);
+Route::resource('quizzes', ItemController::class, ['only' => ['show']]);
+Route::resource('boxes', ItemController::class, ['only' => ['show']]);
+Route::resource('caches', ItemController::class, ['only' => ['show']]);
+Route::resource('branches', ItemController::class, ['only' => ['show']]);
+Route::resource('buses', ItemController::class, ['only' => ['show']]);
+Route::resource('houses', ItemController::class, ['only' => ['show']]);
+Route::resource('analyses', ItemController::class, ['only' => ['show']]);
+Route::resource('responses', ItemController::class, ['only' => ['show']]);
+Route::resource('crises', ItemController::class, ['only' => ['show']]);
+Route::resource('enterprises', ItemController::class, ['only' => ['show']]);
+Route::resource('bases', ItemController::class, ['only' => ['show']]);
+Route::resource('heroes', ItemController::class, ['only' => ['show']]);
+Route::resource('campuses', ItemController::class, ['only' => ['show']]);
+Route::resource('canvases', ItemController::class, ['only' => ['show']]);
+Route::resource('licenses', ItemController::class, ['only' => ['show']]);
+Route::resource('users', ItemController::class, ['only' => ['show'], 'parameters' => ['users' => 'admin_user']]);
+Route::resource('photos', ItemController::class, [
+    // 'parameters' => ['photos' => 'pic'],
+    'only' => ['show'],
+]);
+Route::apiResources(['posts' => ItemController::class, 'tags' => ItemController::class], ['parameters' => ['posts' => 'post_id']]);
+Route::get('mw2/SwitchPass', [PCtl::class, 'commentFirst'])->middleware(\App\Http\Middleware\SwitchPass::class);
+Route::get('mw2/MatchPass', [PCtl::class, 'commentFirst'])->middleware(\App\Http\Middleware\MatchPass::class);
+Route::get('mw2/ForeachPass', [PCtl::class, 'commentFirst'])->middleware(\App\Http\Middleware\ForeachPass::class);
+Route::get('mw2/CatchPass', [PCtl::class, 'commentFirst'])->middleware(\App\Http\Middleware\CatchPass::class);
+Route::get('mw2/TryPass', [PCtl::class, 'commentFirst'])->middleware(\App\Http\Middleware\TryPass::class);
+Route::get('mw2/ElsePass', [PCtl::class, 'commentFirst'])->middleware(\App\Http\Middleware\ElsePass::class);
+Route::get('mw2/ElseIfPass', [PCtl::class, 'commentFirst'])->middleware(\App\Http\Middleware\ElseIfPass::class);
+Route::get('mw2/ElseIfSpaced', [PCtl::class, 'commentFirst'])->middleware(\App\Http\Middleware\ElseIfSpaced::class);
+Route::get('mw2/ClosurePass', [PCtl::class, 'commentFirst'])->middleware(\App\Http\Middleware\ClosurePass::class);
+Route::get('mw2/WhilePass', [PCtl::class, 'commentFirst'])->middleware(\App\Http\Middleware\WhilePass::class);
+Route::get('mw2/NoBraceNested', [PCtl::class, 'commentFirst'])->middleware(\App\Http\Middleware\NoBraceNested::class);
+Route::get('mw2/SameCondTwice', [PCtl::class, 'commentFirst'])->middleware(\App\Http\Middleware\SameCondTwice::class);
+Route::get('mw2/TopPass', [PCtl::class, 'commentFirst'])->middleware(\App\Http\Middleware\TopPass::class);
+Route::post('p2/firstOrCreate/{id}', [PCtl::class, 'firstOrCreate']);
+Route::post('p2/getOrCreate/{id}', [PCtl::class, 'getOrCreate']);
+Route::post('p2/resolveCharge/{id}', [PCtl::class, 'resolveCharge']);
+Route::post('p2/loadMark/{id}', [PCtl::class, 'loadMark']);
+Route::post('p2/findOrNewSave/{id}', [PCtl::class, 'findOrNewSave']);
+Route::post('p2/withoutEvents/{id}', [PCtl::class, 'withoutEvents']);
+Route::post('p2/nsFunc/{id}', [PCtl::class, 'nsFunc']);
+Route::post('p2/ucFunc/{id}', [PCtl::class, 'ucFunc']);
+Route::post('p2/varFunc/{id}', [PCtl::class, 'varFunc']);
+Route::post('p2/varCall/{id}', [PCtl::class, 'varCall']);
+Route::post('p2/whereUpdate/{id}', [PCtl::class, 'whereUpdate']);
+Route::post('p2/getThenPut/{id}', [PCtl::class, 'getThenPut']);
+Route::post('p2/readOk/{id}', [PCtl::class, 'readOk']);
+Route::post('p2/pluckOk/{id}', [PCtl::class, 'pluckOk']);
+Route::resource('wishes', ItemController::class, ['only' => ['show']]);
+Route::resource('matches', ItemController::class, ['only' => ['show']]);
+Route::resource('indexes', ItemController::class, ['only' => ['show']]);
+Route::resource('taxes', ItemController::class, ['only' => ['show']]);
+Route::resource('addresses', ItemController::class, ['only' => ['show']]);
+Route::get('p3/getterRead/{t}/{id}', [PCtl::class, 'getterRead']);
+Route::post('p3/getterOrCreate/{id}', [PCtl::class, 'getterOrCreate']);
+Route::post('p3/getterWithArgs/{id}', [PCtl::class, 'getterWithArgs']);

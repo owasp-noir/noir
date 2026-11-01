@@ -67,3 +67,7 @@ foreach ($grid as $x) {
         Route::get("g/{$x}/{$y}", PingController::class);
     }
 }
+
+Route::get('mw/suspended', PingController::class)->middleware(\App\Http\Middleware\SuspendedGate::class);
+Route::get('mw/guestpass', PingController::class)->middleware(\App\Http\Middleware\GuestPassGate::class);
+Route::get('mw/guestfirst', PingController::class)->middleware(\App\Http\Middleware\GuestRefusedFirstGate::class);

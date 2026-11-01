@@ -79,7 +79,10 @@ module Analyzer::Php
       root = composer_project_root(path)
       guards = @middleware_guards[root]?
       lifted = nil
-      names.each do |name|
+      # A named `auth` alias identifies the caller; an app middleware listed
+      # before it (an IP allowlist, say) must not shadow it.
+      auth, other = names.partition(&.matches?(AUTH_ALIAS_RE))
+      (auth + other).each do |name|
         desc = if name.matches?(AUTH_ALIAS_RE)
                  "Laravel #{name} middleware"
                elsif found = guards.try(&.[name]?)
@@ -287,12 +290,13 @@ module Analyzer::Php
     # `abort_unless(auth()->check(), 404)`, or `if (!Auth::check()) {
     # abort(403); }` (also on a `$user = $request->user()` it read first),
     # before it does anything else.
-    USER_CHECK_RE  = /\G(?:abort_(if|unless)|if)\s*\(/
-    GUARD_ARG      = /(?:['"]\w+['"]|\$\w+)?/.source
-    USER_SOURCE    = /(?:\$request\s*->\s*user\s*\(\s*#{GUARD_ARG}\s*\)|(?:auth\s*\(\s*#{GUARD_ARG}\s*\)|Auth::guard\s*\(\s*#{GUARD_ARG}\s*\)|auth\s*\(\s*\)\s*->\s*guard\s*\(\s*#{GUARD_ARG}\s*\))\s*->\s*(?:user|check)\s*\(\s*\)|Auth::(?:user|check)\s*\(\s*\))/.source
-    USER_SOURCE_RE = /\A#{USER_SOURCE}\z/
-    USER_GUEST_RE  = /\A(?:auth\s*\(\s*\)\s*->\s*guest|Auth::guest)\s*\(\s*\)\z/
-    USER_ASSIGN_RE = /\G\$(\w+)\s*=\s*#{USER_SOURCE}\s*;/
+    USER_CHECK_RE      = /\G(?:abort_(if|unless)|if)\s*\(/
+    GUARD_ARG          = /(?:['"]\w+['"]|\$\w+)?/.source
+    USER_SOURCE        = /(?:\$request\s*->\s*user\s*\(\s*#{GUARD_ARG}\s*\)|(?:auth\s*\(\s*#{GUARD_ARG}\s*\)|Auth::guard\s*\(\s*#{GUARD_ARG}\s*\)|auth\s*\(\s*\)\s*->\s*guard\s*\(\s*#{GUARD_ARG}\s*\))\s*->\s*(?:user|check)\s*\(\s*\)|Auth::(?:user|check)\s*\(\s*\))/.source
+    USER_SOURCE_RE     = /\A#{USER_SOURCE}\z/
+    USER_GUEST_RE      = /\A(?:auth\s*\(\s*\)\s*->\s*guest|Auth::guest)\s*\(\s*\)\z/
+    USER_ASSIGN_RE     = /\G\$(\w+)\s*=\s*#{USER_SOURCE}\s*;/
+    USER_ASSIGN_ANY_RE = /\$(\w+)\s*=\s*#{USER_SOURCE}\s*;/
     # What an `if (!user)` block does to refuse: abort, throw, redirect, or
     # answer 401/403.
     BLOCK_REFUSAL_RE = /\A(?:abort\s*\(|throw\b|return\s+(?:redirect\b|Redirect::)|return\s+response\s*\([^;]*?\b40[13]\b|return\s+response\s*\(\s*\)\s*->\s*json\s*\([^;]*?\b40[13]\b)/
@@ -319,14 +323,49 @@ module Analyzer::Php
       false
     end
 
+    # `$this->authorize('view', $post)` / `Gate::authorize(...)`: the gate
+    # answers 403 for a signed-out caller unless the policy takes a nullable
+    # user, so it stands in front of the handler like a user check, but a
+    # policy can open it.
+    POLICY_CHECK_RE = /\G(?:\$this\s*->\s*authorize|Gate::authorize)\s*\(/
+    POLICY_NOTE     = "the policy decides whether a guest passes; a condition decides whether it applies"
+    # A lookup before the check (`$post = Post::find($id);`) answers nothing.
+    # Only calls known to read count: anything else may have side effects.
+    LOOKUP_ASSIGN_RE = /\A\$\w+\s*=(?!=)/
+    CHAIN_CALL_RE    = /(?:->|::)\s*(\w+)\s*\(/
+    GETTER_CALL_RE   = /(?:\$this->|parent::|self::|static::)(?!\w*(?:Or|And)[A-Z])get[A-Z]\w*\(\s*\)/
+    ANY_CALL_RE      = /([\\\w$]*)\s*\(/
+    READ_CALL_RE     = /\A(?:find|findOrFail|findMany|first|firstOrFail|firstWhere|get|getKey|load|loadMissing|loadCount|where|whereKey|whereIn|whereNull|whereNotNull|with|withCount|withTrashed|onlyTrashed|query|all|latest|oldest|orderBy|pluck|count|input|route|string|integer|boolean|only|header|has|filled|user|exists|value)\z/
+    READ_BARE_CALLS  = Set{"array", "isset", "empty", "collect", "intval", "trim", "auth", "request", "route"}
+
     # Validating the input first refuses rather than serves (422).
     VALIDATE_STATEMENT_RE = /\G(?:\$\w+\s*=\s*)?(?:\$this|\$request)\s*->\s*validate(?:WithBag)?\s*\(/
 
     # Only the handler's leading statements count: reading the user,
     # validating input, then checks. Anything else first (work, a return, a condition that is not
     # about the user) and a later check no longer stands in front of it.
+    private def read_only_assignment?(stmt : String) : Bool
+      return false if !stmt.matches?(LOOKUP_ASSIGN_RE) || stmt.includes?('{') || stmt.includes?("new ")
+      # A zero-argument `getFoo()` on the class itself (`parent::getMap()[$t]::
+      # withTrashed()->find($id)`) is a getter, but only in front of a read
+      # that ends the chain; `getOrCreate()` / `getAndMark()` are not.
+      # ponytail: a getter that writes and then chains into a read still counts
+      # as a lookup; only the name and arity are checked, not the getter body.
+      getter = false
+      stmt = stmt.gsub(GETTER_CALL_RE) do
+        getter = true
+        "$_getter"
+      end
+      return false if getter && stmt.scan(CHAIN_CALL_RE).empty?
+      return false unless stmt.scan(CHAIN_CALL_RE).all?(&.[1].matches?(READ_CALL_RE))
+      # What is left after the chain calls: grouping parens, or a function
+      # call that must be one of the plain safe ones (never namespaced or a
+      # variable function; PHP function names are case-insensitive).
+      stmt.gsub(CHAIN_CALL_RE, ";(").scan(ANY_CALL_RE).all? { |m| m[1].empty? || READ_BARE_CALLS.includes?(m[1].downcase) }
+    end
+
     private def handler_user_check(body : String) : String?
-      return unless body.includes?("abort") || body.includes?("if")
+      return unless body.includes?("abort") || body.includes?("if") || body.includes?("authorize")
       lexer = Noir::PhpLexer.new(body, php_mode: true)
       users = [] of String
       pos = 0
@@ -342,6 +381,15 @@ module Analyzer::Php
         end
         if body.match(VALIDATE_STATEMENT_RE, pos)
           pos = lexer.statement_end(pos)
+          next
+        end
+        if policy = body.match(POLICY_CHECK_RE, pos)
+          close = lexer.matching_delimiter(policy.end(0) - 1) || return
+          return "Laravel handler policy check (#{body[policy.begin(0)..close].gsub(/\s+/, " ")}; #{POLICY_NOTE})"
+        end
+        stmt = body[pos...lexer.statement_end(pos)]
+        if read_only_assignment?(stmt)
+          pos = Math.max(lexer.statement_end(pos), pos + 1)
           next
         end
         return unless m = body.match(USER_CHECK_RE, pos)
@@ -555,11 +603,29 @@ module Analyzer::Php
       return if points.empty?
       verdict = nil
       body_checks_caller = body.matches?(CREDENTIAL_CONDITION_RE)
+      users = body.scan(USER_ASSIGN_ANY_RE).map(&.[1])
+      top_ok = top_level_or_try_map(body, lexer)
+      pass_blocks = [] of Range(Int32, Int32)
+      env_skips = [] of Range(Int32, Int32)
+      conditions.each do |(cond, block)|
+        next unless body[block].includes?("$next(")
+        pass_blocks << block if user_missing?(cond, users) && unconditional_block?(body, top_ok, conditions, cond, block)
+        env_skips << block if cond.matches?(ENV_CONDITION_RE)
+      end
       points.each do |(at, text, note)|
+        # `if (! $user || ...) { return $next($request); }` before the
+        # refusal: a guest is let through, so the refusal only ever reaches
+        # signed-in callers and is no authentication guard.
+        # Only an unconditional pass-through counts: not one nested in another
+        # condition or chained as an `elseif`.
+        next if pass_blocks.any? { |block| block.end <= at }
+        # `if ($request->user() && ! $user->isActivated()) { abort(401); }`:
+        # the refusal needs a signed-in caller, so a guest is never refused.
+        next if conditions.any? { |(cond, block)| block.includes?(at) && split_condition(cond, "&&").any? { |part| user_source?(part, users) } }
         identity_evidence = body_checks_caller || text.matches?(IDENTITY_REFUSAL_RE)
         around = conditions.select(&.[1].includes?(at)).map(&.[0]).push(text).join(' ')
         # `if (app()->isLocal()) { return $next($request); }` before the refusal.
-        skipped = conditions.any? { |(cond, block)| block.end <= at && cond.matches?(ENV_CONDITION_RE) && body[block].includes?("$next(") }
+        skipped = env_skips.any? { |block| block.end <= at }
         if around.matches?(ENV_CONDITION_RE)
           verdict = SETTING_NOTE if around.matches?(CREDENTIAL_CONDITION_RE)
         elsif around.matches?(ORIGIN_CONDITION_RE) && !around.matches?(CREDENTIAL_CONDITION_RE)
@@ -576,6 +642,56 @@ module Analyzer::Php
         end
       end
       verdict
+    end
+
+    # Per offset: whether it sits at the top level of the method body, or inside
+    # nothing but `try { ... }` bodies (not a catch, loop, switch case or
+    # closure). One pass, so each lookup is O(1).
+    private def top_level_or_try_map(body : String, lexer : Noir::PhpLexer) : Array(Bool)
+      opens = [] of Bool # true when that `{` opens a `try` body
+      bad = 0
+      Array(Bool).new(body.size + 1) do |i|
+        flag = bad == 0
+        if i < body.size
+          case lexer.masked[i]
+          when '{'
+            is_try = ends_with_word?(body, i, "try")
+            opens << is_try
+            bad += 1 unless is_try
+          when '}'
+            bad -= 1 if opens.pop? == false
+          end
+        end
+        flag
+      end
+    end
+
+    # Whether the text before `stop`, ignoring trailing whitespace, ends in the
+    # whole word `word`.
+    private def ends_with_word?(body : String, stop : Int32, word : String) : Bool
+      while stop > 0 && body[stop - 1].whitespace?
+        stop -= 1
+      end
+      from = stop - word.size
+      return false if from < 0 || body[from, word.size] != word
+      from == 0 || !(body[from - 1].alphanumeric? || body[from - 1] == '_')
+    end
+
+    private def unconditional_block?(body : String, top_ok : Array(Bool), conditions : Array(Tuple(String, Range(Int32, Int32))), cond : String, block : Range(Int32, Int32)) : Bool
+      return false if conditions.any? { |(_, other)| other != block && other.begin < block.begin && other.end > block.begin }
+      return false unless top_ok[block.begin]
+      stop = block.begin
+      while stop > 0 && body[stop - 1].whitespace?
+        stop -= 1
+      end
+      return true unless stop > 0 && body[stop - 1] == ')'
+      stop -= 1
+      return true unless stop >= cond.size && body[stop - cond.size, cond.size] == cond
+      stop -= cond.size
+      while stop > 0 && body[stop - 1].whitespace?
+        stop -= 1
+      end
+      !(stop > 0 && body[stop - 1] == '(' && body[0...(stop - 1)].rstrip.matches?(/\belse\s*if\z|\belseif\z/))
     end
 
     # {condition, block it guards} for every `if` / `elseif` in `body`; an

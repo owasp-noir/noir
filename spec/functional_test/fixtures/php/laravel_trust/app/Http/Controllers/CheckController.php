@@ -83,4 +83,28 @@ class CheckController extends Controller
         }
         return Item::query()->paginate(10, ['*'], 'page', $id);
     }
+
+    public function lookupThenAuthorize(Request $request, $id)
+    {
+        $item = Item::withTrashed()->find($id);
+        $this->authorize('view', $item);
+
+        return $item;
+    }
+
+    public function writeThenAuthorize(Request $request, $id)
+    {
+        $item = Item::create($request->all());
+        $this->authorize('view', $item);
+
+        return $item;
+    }
+
+    public function workThenAuthorize(Request $request, $id)
+    {
+        if ($request->has('preview')) {
+            return 'public';
+        }
+        $this->authorize('view', Item::find($id));
+    }
 }

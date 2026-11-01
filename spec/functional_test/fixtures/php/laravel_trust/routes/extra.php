@@ -63,3 +63,11 @@ function adminRoutes(array $middleware)
         Route::get('/vars/shadowed', [ItemController::class, 'file']);
     });
 }
+
+Route::get('/policy/lookup/{id}', [CheckController::class, 'lookupThenAuthorize']);
+Route::post('/policy/write/{id}', [CheckController::class, 'writeThenAuthorize']);
+Route::get('/policy/late/{id}', [CheckController::class, 'workThenAuthorize']);
+
+Route::resource('licenses', ItemController::class, ['parameters' => ['licenses' => 'license_id'], 'only' => ['show']]);
+Route::resource('statuses', ItemController::class, ['only' => ['show']]);
+Route::resource('licenses.seats', ItemController::class, ['only' => ['show']]);

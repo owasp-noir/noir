@@ -224,9 +224,14 @@ module Analyzer::Php
 
     # Naive English singular of a resource name (`photos` -> `photo`,
     # `categories` -> `category`), for nested-resource parameter names.
+    ES_PLURAL_RE = /(?:alias|[^aou]us|t[lm]as|gas|ris|ss|x)es\z/i
+
     protected def singularize_resource_segment(segment : String) : String
       return segment[0...-3] + "y" if segment.ends_with?("ies") && segment.size > 3
-      return segment[0...-2] if segment.ends_with?("ses") && segment.size > 3
+      # `statuses` -> `status` but `licenses` -> `license`: only the stems
+      # that take `-es` lose it (Doctrine's rule list, which Laravel's
+      # `Str::singular` follows).
+      return segment[0...-2] if segment.matches?(ES_PLURAL_RE)
       return segment[0...-1] if segment.ends_with?("s") && segment.size > 1
       segment
     end

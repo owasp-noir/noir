@@ -1608,9 +1608,13 @@ module Analyzer::Php
       actions.empty? ? nil : actions
     end
 
+    PARAMETERS_RE = /(?:->\s*parameters\s*\(\s*|['"]parameters['"]\s*=>\s*)\[([^\]]+)\]/mi
+
     private def resource_parameter_overrides_for_statement(statement : String) : Hash(String, String)
       overrides = {} of String => String
-      if match = statement.match(/->\s*parameters\s*\(\s*\[([^\]]+)\]\s*\)/mi)
+      # `->parameters([...])`, or the `['parameters' => [...]]` options argument
+      # the plural forms share.
+      if match = statement.match(PARAMETERS_RE)
         match[1].scan(/['"]([^'"]+)['"]\s*=>\s*['"]([^'"]+)['"]/).each do |param_match|
           overrides[param_match[1]] = param_match[2]
         end

@@ -165,5 +165,25 @@ describe "Laravel handler / middleware-group auth / rules params", tags: "functi
     inner = find.call("GET", "/check/inner/{id}")
     guards.call(inner).should be_empty
     inner.params.map(&.name).should eq(["id"])
+
+    # A refusal that needs a signed-in caller (`$request->user() && ...`), or
+    # that a guest skips by an early `return $next` (`! $user || ...`), never
+    # stops an anonymous request: no guard. A guest refused first still is one.
+    guards.call(find.call("GET", "/mw/suspended")).should be_empty
+    guards.call(find.call("GET", "/mw/guestpass")).should be_empty
+    guards.call(find.call("GET", "/mw/guestfirst")).should eq(["Laravel GuestRefusedFirstGate middleware"])
+
+    # A leading `$this->authorize(...)` (after read-only lookups) is a policy
+    # guard a policy can open; one after a write or other work is not.
+    policy = "the policy decides whether a guest passes; a condition decides whether it applies"
+    guards.call(find.call("GET", "/policy/lookup/{id}")).should eq(["Laravel handler policy check ($this->authorize('view', $item); #{policy})"])
+    guards.call(find.call("POST", "/policy/write/{id}")).should be_empty
+    guards.call(find.call("GET", "/policy/late/{id}")).should be_empty
+
+    # A resource's `['parameters' => [...]]` option is keyed by the resource
+    # name; `licenses` singularizes to `license`, `statuses` to `status`.
+    find.call("GET", "/licenses/{license_id}")
+    find.call("GET", "/statuses/{status}")
+    find.call("GET", "/licenses/{license}/seats/{seat}")
   end
 end
