@@ -109,7 +109,10 @@ describe "RustAuthTagger app-wide actix .wrap" do
     second = APP_WRAP_SERVER + "\nfn metrics_server() {\n    HttpServer::new(|| App::new().wrap(Compress::default()).service(metrics).service(collection))\n}\n"
     guards = actix_guards({"src/main.rs" => second, "src/auth.rs" => APP_WRAP_MIDDLEWARE})
     guards.has_key?("/metrics").should be_false
-    guards["/collections/{name}"].should contain("also served without it by another App")
+    # Served open by the second App too: a note, not a guard.
+    tagged = actix_tagged({"src/main.rs" => second, "src/auth.rs" => APP_WRAP_MIDDLEWARE}).find! { |endpoint| endpoint.url == "/collections/{name}" }
+    tagged.tags.map(&.name).should eq ["auth_partial"]
+    tagged.tags.first.description.should contain("also served without it by another App")
     guards["/collections"].should_not contain("also served")
   end
 

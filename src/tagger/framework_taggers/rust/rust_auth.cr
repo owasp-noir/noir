@@ -1070,7 +1070,13 @@ class RustAuthTagger < FrameworkTagger
     notes << "its whitelisted paths could not be read" if guarded.whitelist_unread?
     notes << "the App's routes could not be resolved; applies to its whole crate" if guarded.handlers.nil?
     others = serving.reject(&.guards?(endpoint.url, endpoint.method))
-    notes << "also served without it by another App (#{base_relative_path(others.first.file).lchop('/')}:#{others.first.line})" unless others.empty?
+    # Served by an App without the wrap too (qdrant's metrics port): that is
+    # open attack surface, so it is no guard; only a note says the main App
+    # wraps it.
+    unless others.empty?
+      where = "#{base_relative_path(others.first.file).lchop('/')}:#{others.first.line}"
+      return Tag.new("auth_partial", "Wrapped by Rust #{guarded.auth} middleware on one App, but also served without it by another App (#{where})", "rust_app_scope", guarded.file, guarded.line)
+    end
     notes << "refuses only some verbs" if (v = guarded.verdict) && (!v.only_methods.empty? || !v.except_methods.empty?)
     Tag.new("auth", "Protected by Rust #{guarded.auth} middleware on its App" + (notes.empty? ? "" : " (#{notes.join("; ")})"), "rust_auth", guarded.file, guarded.line)
   end
