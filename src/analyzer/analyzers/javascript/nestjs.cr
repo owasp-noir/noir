@@ -946,7 +946,9 @@ module Analyzer::Javascript
         # Once per method: every version × path × verb endpoint shares them.
         callees = nil
         dto_fields = dto_params(method.params, file_path)
-        handler = Handler.new("#{klass.name}.#{method.name}", file_path, method.row + 1)
+        # `export default class { ... }` has no name to qualify the method with.
+        handler_name = klass.name.empty? ? method.name : "#{klass.name}.#{method.name}"
+        handler = Handler.new(handler_name, file_path, method.row + 1)
 
         routes.each do |route|
           route_paths = literal_paths_from_expression(route.args.first? || "", literal_values) || next

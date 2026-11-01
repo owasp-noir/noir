@@ -39,12 +39,13 @@ module Noir::TsDecoratorExtractor
 
   CLASS_TYPES = {"class_declaration", "abstract_class_declaration", "class"}
 
-  # Every decorated class in `source`, outer classes first. `.js`/`.jsx`
-  # go through the TypeScript/TSX grammar too: the JavaScript grammar has no
-  # parameter decorators, which Babel-compiled Nest code uses.
+  # Every decorated class in `source`, outer classes first. JavaScript goes
+  # through the TSX grammar: the JavaScript grammar has no parameter
+  # decorators, which Babel-compiled Nest code uses, and JSX in a `.js`
+  # handler needs TSX, a safe superset where no `<T>x` cast can appear.
   def self.extract(source : String, path : String) : Array(ClassDecl)
     classes = [] of ClassDecl
-    language = path.ends_with?(".tsx") || path.ends_with?(".jsx") ? LibTreeSitter.tree_sitter_tsx : LibTreeSitter.tree_sitter_typescript
+    language = path.ends_with?(".ts") || path.ends_with?(".mts") || path.ends_with?(".cts") ? LibTreeSitter.tree_sitter_typescript : LibTreeSitter.tree_sitter_tsx
     Noir::TreeSitter.parse(source, language) do |root|
       Noir::TreeSitter.walk(root) do |node|
         next unless CLASS_TYPES.includes?(Noir::TreeSitter.node_type(node))
