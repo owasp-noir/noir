@@ -60,10 +60,27 @@ describe Noir::CSharpAttributeRoutes do
 
   it "leaves out an attribute that only has a Template property, and an argument it cannot read" do
     table.resolve("Label", [] of String).should be_nil
-    table.class_level_names.should eq ["V3ApiController"]
-    table.method_level_names.sort!.should eq ["RestGetById", "RestPostById", "RestPutById"]
+    table.route_names.sort!.should eq ["RestGetById", "RestPostById", "RestPutById", "V3ApiController", "VersionedApiController"]
     # `Prefix.Value` is a constant of another class: no template rather than a wrong one.
     table.resolve("V3ApiController", ["Prefix.Value"]).try(&.template).should be_nil
+  end
+
+  it "takes a name two projects define from the usage's own project, and refuses when that does not settle it" do
+    source = ->(prefix : String) { "public class ApiRouteAttribute : Attribute, IRouteTemplateProvider\n{\n public ApiRouteAttribute(string r) { Template = $\"#{prefix}/{r}\"; }\n public string Template { get; }\n}\n" }
+    scoped = Noir::CSharpAttributeRoutes.new
+    {"a" => "alpha", "b" => "beta"}.each do |scope, prefix|
+      lexer = Noir::CSharpLexer.new(source.call(prefix))
+      Noir::CSharpTypeExtractor.extract(lexer).each { |type| scoped.add(lexer, type, scope) }
+    end
+    scoped.resolve("ApiRoute", ["\"x\""], "a").try(&.template).should eq "alpha/x"
+    scoped.resolve("ApiRoute", ["\"x\""], "b").try(&.template).should eq "beta/x"
+    scoped.resolve("ApiRoute", ["\"x\""], "c").should be_nil
+  end
+
+  it "ignores property assignments and a filter that merely has a Template" do
+    other = table_for("public class RestGetAttribute : HttpGetAttribute { public RestGetAttribute(string t) : base(t) { } }\npublic class ViewTemplateAttribute : ResultFilterAttribute { public string Template => \"x\"; }")
+    other.resolve("RestGet", ["\"ord\"", "Order = 2", "Name = \"n\""]).should eq Noir::CSharpAttributeRoutes::Result.new("GET", "ord")
+    other.resolve("ViewTemplate", [] of String).should be_nil
   end
 
   it "splits usage arguments at top-level commas only" do

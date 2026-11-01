@@ -22,6 +22,11 @@ expected_endpoints = [
   Endpoint.new("/api/v3/ping", "GET"),
   Endpoint.new("/label", "GET"),
   Endpoint.new("/other", "GET"),
+  Endpoint.new("/shared", "GET"),
+  Endpoint.new("/refusing/{id}", "GET", [Param.new("id", "", "path")]),
+  Endpoint.new("/refusing", "PUT", [Param.new("resource", "", "json")]),
+  Endpoint.new("/refusing", "POST", [Param.new("resource", "", "json")]),
+  Endpoint.new("/refusing/me", "GET"),
   Endpoint.new("/api/v3/adv/{id}", "GET", [Param.new("id", "", "path")]),
   Endpoint.new("/api/v3/adv/plain", "GET"),
   Endpoint.new("/api/v3/adv/after-string", "GET"),
@@ -80,5 +85,14 @@ describe "ASP.NET Core FallbackPolicy across referenced projects", tags: "functi
     guarded.call(endpoints, "GET", "/api/v3/public/{id}").should be_false
     guarded.call(endpoints, "POST", "/api/v3/public").should be_false
     guarded.call(endpoints, "GET", "/api/v3/tag/{id}").should be_true
+    # The controller's body refusal is its own action's; the inherited ones are open.
+    guarded.call(endpoints, "GET", "/refusing/me").should be_true
+    guarded.call(endpoints, "GET", "/refusing/{id}").should be_false
+    guarded.call(endpoints, "POST", "/refusing").should be_false
+  end
+
+  it "leaves a library open when a second host serves it without the policy" do
+    endpoints = scan.call("aspnet_core_mvc_custom_attributes")
+    guarded.call(endpoints, "GET", "/shared").should be_false
   end
 end

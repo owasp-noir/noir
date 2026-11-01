@@ -28,6 +28,21 @@ namespace Fx.Other
     {
     }
 
+    // The controller's own in-body refusal guards its own action only.
+    [Route("refusing")]
+    public class RefusingController : RestController<Dummy>
+    {
+        [HttpGet("me")]
+        public IActionResult Me()
+        {
+            if (!User.Identity.IsAuthenticated)
+            {
+                return Unauthorized();
+            }
+            return Ok();
+        }
+    }
+
     public class Dummy
     {
     }

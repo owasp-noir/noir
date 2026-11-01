@@ -98,7 +98,7 @@ module Analyzer::CSharp
       project_roots = Common.project_roots(get_files_by_extension(".csproj"))
       route_patterns_by_scope = load_route_patterns_by_scope(project_roots)
       @convention_prefixes = load_convention_prefixes(project_roots)
-      load_attribute_routes
+      load_attribute_routes(project_roots)
       analyze_controllers(route_patterns_by_scope, project_roots, include_callee)
       route_patterns_by_scope.each_value do |patterns|
         patterns.each { |pattern| emit_standalone_route(pattern) if pattern.standalone? }
@@ -652,17 +652,20 @@ module Analyzer::CSharp
 
     ATTRIBUTE_CLASS_RE = /\bclass\s+\w+Attribute\b/
 
-    private def load_attribute_routes
+    private def load_attribute_routes(project_roots : Array(String))
+      @project_roots = project_roots
       get_files_by_extension(".cs").each do |file|
         next if Common.csharp_test_path?(base_relative_path(file))
         next unless file_source(file).matches?(ATTRIBUTE_CLASS_RE)
         lexer = file_lexer(file) || next
-        Noir::CSharpTypeExtractor.extract(lexer).each { |type| @attribute_routes.add(lexer, type) }
+        scope = route_scope_for(file, project_roots)
+        Noir::CSharpTypeExtractor.extract(lexer).each { |type| @attribute_routes.add(lexer, type, scope) }
       end
       return if @attribute_routes.empty?
-      @class_attribute_re = attribute_use_re(@attribute_routes.class_level_names)
-      @verb_attribute_re = attribute_use_re(@attribute_routes.method_level_names)
+      @verb_attribute_re = @class_attribute_re = attribute_use_re(@attribute_routes.route_names)
     end
+
+    @project_roots = [] of String
 
     # `[Name]`, `[Name(args)]` or `, Name(args)` inside one attribute list.
     private def attribute_use_re(names : Array(String)) : Regex?
@@ -671,36 +674,94 @@ module Analyzer::CSharp
       Regex.new("([\\[,]\\s*)(?:global::)?(?:\\w+\\.)*(#{alternation})(?:Attribute)?\\b(?:\\s*\\(((?:[^()\"]|\"(?:[^\"\\\\]|\\\\.)*\")*)\\))?")
     end
 
+    # Character ranges of the attribute lists in `masked`: a `[` that opens a
+    # member or type (start of text, or after `]`, `;`, `{`, `}`), not an
+    # array type or indexer, through its closing `]`. A `, Name` elsewhere
+    # on the line (a parameter or base list) is not an attribute.
+    private def attribute_list_spans(masked : String) : Array(Range(Int32, Int32))
+      spans = [] of Range(Int32, Int32)
+      chars = masked.chars
+      previous = nil
+      index = 0
+      while index < chars.size
+        char = chars[index]
+        if char == '[' && (previous.nil? || "];{}".includes?(previous))
+          depth = 0
+          close = index
+          while close < chars.size
+            depth += 1 if chars[close] == '['
+            depth -= 1 if chars[close] == ']'
+            break if depth == 0
+            close += 1
+          end
+          spans << (index..Math.min(close, chars.size - 1))
+          previous = ']'
+          index = close + 1
+          next
+        end
+        previous = char unless char.whitespace?
+        index += 1
+      end
+      spans
+    end
+
+    # Runs `regex` over the attribute lists of `text` only (spans come from
+    # the masked twin), replacing each match with the block's value.
+    private def gsub_in_attribute_lists(text : String, masked : String, regex : Regex, & : Regex::MatchData, String -> String) : String
+      return text unless text.size == masked.size
+      spans = attribute_list_spans(masked)
+      return text if spans.empty?
+      chars = text.chars
+      spans.reverse_each do |span|
+        segment = chars[span].join
+        replaced = segment.gsub(regex) { |matched, match| yield match, matched }
+        chars[span] = replaced.chars
+      end
+      chars.join
+    end
+
     # Templates of the custom class-level attributes on a controller header.
-    private def custom_class_templates(header : String) : Array(String)
+    private def custom_class_templates(header : String, masked : String, scope : String) : Array(String)
       templates = [] of String
       regex = @class_attribute_re || return templates
-      header.scan(regex) do |match|
+      gsub_in_attribute_lists(header, masked, regex) do |match, matched|
         args = match[3]?.try { |text| Noir::CSharpAttributeRoutes.split_args(text) } || [] of String
-        found = @attribute_routes.resolve(match[2], args)
-        next unless found && found.verb.nil?
-        template = found.template || next
-        templates << (template.empty? ? "/" : template)
+        found = @attribute_routes.resolve(match[2], args, scope)
+        if found && found.verb.nil? && (template = found.template)
+          templates << (template.empty? ? "/" : template)
+        end
+        matched
       end
       templates
     end
 
     # Rewrites a custom verb attribute into the `[Http<Verb>("template")]` it
-    # stands for, so the one attribute reader below sees a built-in.
-    private def expand_custom_verb_attributes(line : String, masked : String) : String
+    # stands for, so the one attribute reader below sees a built-in. A route
+    # argument it cannot read stays as written, so the action keeps the
+    # `unresolved-route` tag a built-in `[HttpGet(Routes.Item)]` gets.
+    private def expand_custom_verb_attributes(line : String, masked : String, scope : String) : String
       regex = @verb_attribute_re || return line
       # The masked line has no string or comment text, so a name inside a
       # literal is not mistaken for an attribute.
       return line unless masked.includes?('[') && masked.matches?(regex)
-      line.gsub(regex) do |text, match|
+      gsub_in_attribute_lists(line, masked, regex) do |match, matched|
         args = match[3]?.try { |value| Noir::CSharpAttributeRoutes.split_args(value) } || [] of String
-        found = @attribute_routes.resolve(match[2], args)
-        verb = found.try(&.verb) || next text
+        found = @attribute_routes.resolve(match[2], args, scope)
+        verb = found.try(&.verb) || next matched
         template = found.try(&.template)
+        first = args.first?
+        unread = template.nil? && first && !first.matches?(/\A\w+\s*(?:=(?!=)|:(?!:))/) ? first : nil
         # Mid-list (`[Produces("x"), RestGetById]`) it opens a list of its own:
         # the verb reader looks for `[Http<Verb>`.
         opener = match[1].starts_with?(',') ? "] [" : match[1]
-        "#{opener}Http#{verb.capitalize}#{template && !template.includes?('"') ? "(@\"#{template}\")" : ""}"
+        argument = if template && !template.includes?('"')
+                     "(@\"#{template}\")"
+                   elsif unread
+                     "(#{unread})"
+                   else
+                     ""
+                   end
+        "#{opener}Http#{verb.capitalize}#{argument}"
       end
     end
 
@@ -718,7 +779,8 @@ module Analyzer::CSharp
         template = match[1]? || csharp_string_value(match[2], file)
         template.try { |value| value.empty? ? "/" : value }
       end
-      routes.concat(custom_class_templates(header))
+      masked_header = lexer.masked_lines[type.start_line..header_end].join('\n')
+      routes.concat(custom_class_templates(header, masked_header, route_scope_for(file, @project_roots)))
       area = CLASS_AREA_RE.match(header).try { |match| csharp_string_value(match[1], file) }
       {routes, area.presence}
     end
@@ -756,7 +818,8 @@ module Analyzer::CSharp
       line_offset = type.start_line
       lines = lexer.code_lines[type.start_line..type.end_line]
       masked_lines = lexer.masked_lines[type.start_line..type.end_line]
-      lines = lines.map_with_index { |text, index| expand_custom_verb_attributes(text, masked_lines[index]) } if @verb_attribute_re
+      attribute_scope = route_scope_for(file, @project_roots)
+      lines = lines.map_with_index { |text, index| expand_custom_verb_attributes(text, masked_lines[index], attribute_scope) } if @verb_attribute_re
       # One route per controller `[Route]`; none falls back to conventional routing.
       controller_routes, area = class_routes
       controller_routes = [""] if controller_routes.empty?

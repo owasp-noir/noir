@@ -23,16 +23,19 @@ module Noir
 
     record Result, verb : String?, template : String?
     record Ctor, params : Array(Tuple(String, String?)), base_args : Array(String)?
-    record Decl, base : String?, ctors : Array(Ctor), template : String?, verb : String?, consts : Hash(String, String)
+    record Decl, base : String?, ctors : Array(Ctor), template : String?, verb : String?, consts : Hash(String, String), scope : String, provider : Bool
 
     TEMPLATE_ARROW_RE  = /\bTemplate\s*=>\s*([^;]+);/
     TEMPLATE_ASSIGN_RE = /\bTemplate\s*=(?![=>])\s*([^;]+);/
     HTTP_METHODS_RE    = /\bHttpMethods\s*=>\s*new\s*(?:string)?\s*\[\s*\]\s*\{\s*"(\w+)"/
     CONST_RE           = /\bconst\s+(?:string|int)\s+(\w+)\s*=\s*([^;]+);/
     NAMED_ARG_RE       = /\A(\w+)\s*:(?!:)\s*(.+)\z/m
+    # `Order = 2`, `Name = "n"`: a property of the attribute, not an argument.
+    PROPERTY_ARG_RE = /\A\w+\s*=(?![=>])/
+    PROVIDER_RE     = /IRouteTemplateProvider|IActionHttpMethodProvider/
 
     def initialize
-      @decls = Hash(String, Decl).new
+      @decls = Hash(String, Array(Decl)).new
     end
 
     def empty? : Bool
@@ -40,7 +43,7 @@ module Noir
     end
 
     # Records `type` when it is an attribute class (`FooAttribute`).
-    def add(lexer : CSharpLexer, type : CSharpType) : Nil
+    def add(lexer : CSharpLexer, type : CSharpType, scope : String = "") : Nil
       return unless type.name.ends_with?("Attribute")
       # A route-bearing attribute implements the provider interface or derives
       # another attribute class; a plain `: Attribute` with a `Template`
@@ -49,35 +52,36 @@ module Noir
       name = type.name.rchop("Attribute")
       last = Math.min(type.end_line, lexer.code_lines.size - 1)
       body = lexer.code_lines[type.start_line..last].join('\n')
-      @decls[name] = Decl.new(
+      (@decls[name] ||= [] of Decl) << Decl.new(
         type.base_name.try(&.rchop("Attribute")), constructors(body, type.name),
         (body.match(TEMPLATE_ARROW_RE) || body.match(TEMPLATE_ASSIGN_RE)).try(&.[1].strip),
-        body.match(HTTP_METHODS_RE).try(&.[1].upcase), constants(body)
+        body.match(HTTP_METHODS_RE).try(&.[1].upcase), constants(body), scope, type.header.matches?(PROVIDER_RE)
       )
     end
 
-    # Names of the recorded attributes that carry a route (any usage with no
-    # arguments), split into those naming a verb and those naming a prefix.
-    def method_level_names : Array(String)
-      @decls.keys.select { |name| resolve(name, [] of String).try { |found| !found.verb.nil? } }
-    end
-
-    def class_level_names : Array(String)
-      @decls.keys.select { |name| resolve(name, [] of String).try { |found| found.verb.nil? && !found.template.nil? } }
+    # Names of the recorded attributes whose definition reaches a route or
+    # verb provider; what one means at a usage (a prefix, a verb, nothing
+    # readable) is up to `resolve`.
+    def route_names : Array(String)
+      @decls.keys.select { |name| @decls[name].any? { |decl| provider?(decl) } }
     end
 
     # What the usage `[name(args)]` means. `args` is the raw argument text.
-    def resolve(name : String, args : Array(String)) : Result?
+    # `scope` is the project of the file using it: a name two projects both
+    # define resolves to the one in the usage's own project, and to nothing
+    # when that does not settle it.
+    def resolve(name : String, args : Array(String), scope : String = "") : Result?
       positional = [] of String?
       named = Hash(String, String?).new
       args.each do |arg|
+        next if arg.matches?(PROPERTY_ARG_RE)
         if pair = arg.match(NAMED_ARG_RE)
           named[pair[1]] = string_value(pair[2], {} of String => String?, nil)
         else
           positional << string_value(arg, {} of String => String?, nil)
         end
       end
-      resolve_values(name, positional, named, 0)
+      resolve_values(name, positional, named, 0, scope)
     end
 
     # Splits the argument list text of a usage (`"a", b: "c"`).
@@ -116,15 +120,36 @@ module Noir
       args
     end
 
-    private def resolve_values(name : String, args : Array(String?), named : Hash(String, String?), depth : Int32) : Result?
+    private def resolve_values(name : String, args : Array(String?), named : Hash(String, String?), depth : Int32, scope : String) : Result?
       key = name.rchop("Attribute")
       if verb = BUILTIN_VERBS[key]?
         return Result.new(verb, args.first?)
       end
       return Result.new(nil, args.first?) if key == "Route"
       return if depth > MAX_DEPTH
-      decl = @decls[key]? || return
+      decl = lookup(key, scope) || return
+      resolve_decl(decl, args, named, depth)
+    end
 
+    private def lookup(key : String, scope : String) : Decl?
+      found = @decls[key]? || return
+      return found.first if found.size == 1
+      same = found.select { |decl| decl.scope == scope }
+      same.first if same.size == 1
+    end
+
+    # Whether the chain of `decl` reaches a route/verb provider: a header
+    # naming the provider interface, or a built-in `Http<Verb>`/`Route` base.
+    private def provider?(decl : Decl, depth = 0) : Bool
+      return true if decl.provider
+      base = decl.base || return false
+      return true if BUILTIN_VERBS.has_key?(base) || base == "Route"
+      return false if depth > MAX_DEPTH
+      lookup(base, decl.scope).try { |parent| provider?(parent, depth + 1) } || false
+    end
+
+    private def resolve_decl(decl : Decl, args : Array(String?), named : Hash(String, String?), depth : Int32) : Result?
+      return if depth > MAX_DEPTH || !provider?(decl)
       ctor = decl.ctors.find { |candidate| candidate.params.size >= args.size } || decl.ctors.first?
       env = Hash(String, String?).new
       if ctor
@@ -147,13 +172,14 @@ module Noir
         positional = [] of String?
         base_named = Hash(String, String?).new
         base_args.each do |arg|
+          next if arg.matches?(PROPERTY_ARG_RE)
           if pair = arg.match(NAMED_ARG_RE)
             base_named[pair[1]] = string_value(pair[2], env, decl)
           else
             positional << string_value(arg, env, decl)
           end
         end
-        inherited = resolve_values(base, positional, base_named, depth + 1)
+        inherited = resolve_values(base, positional, base_named, depth + 1, decl.scope)
       end
 
       own = decl.template
