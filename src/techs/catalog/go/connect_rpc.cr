@@ -20,6 +20,8 @@ module NoirTechs::Catalog::Go
         :static_path => false,
         :websocket   => false,
       },
+      # Guards: the Go interceptor's procedure allow-list (`go_auth`).
+      :context => {:guards => true},
     },
   }
 end
