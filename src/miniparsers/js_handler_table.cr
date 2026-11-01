@@ -495,15 +495,17 @@ module Noir
         (compares + includes + switches).map(&.upcase).select { |verb| KNOWN_METHODS.includes?(verb) }.uniq!
       end
 
+      # `x.method` on any receiver (`ctx.request.method`, `this.req.method`,
+      # `req?.method`).
       private def method_member?(node : Node) : Bool
+        node = Noir::TreeSitter.unwrap_expression(node)
         return false unless type(node) == "member_expression"
         property = Noir::TreeSitter.field(node, "property")
-        object = Noir::TreeSitter.field(node, "object")
-        !!(property && object && type(object) == "identifier" && METHOD_PROPERTIES.includes?(text(property)))
+        !!(property && METHOD_PROPERTIES.includes?(text(property)))
       end
 
       private def method_ref?(node : Node, aliases : Set(String)) : Bool
-        method_member?(node) || (type(node) == "identifier" && aliases.includes?(text(node)))
+        method_member?(node) || (type(Noir::TreeSitter.unwrap_expression(node)) == "identifier" && aliases.includes?(text(node)))
       end
 
       # Text between a block's or object's braces.

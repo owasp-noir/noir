@@ -81,6 +81,8 @@ describe Noir::JSServerlessFunctionExtractor do
     inferred.call(%(const { method } = req;\nif (method === "PUT") {}\nswitch (method) { case "DELETE": break; })).should eq ["PUT", "DELETE"]
     inferred.call(%(const verb = req.method;\nif ("POST" == verb) {})).should eq ["POST"]
     inferred.call(%(const s = 'req.method === "POST"'; const t = `switch (req.method) { case "PUT": }`; // req.method === "GET"\nfoo.method === "PATCH";)).should eq ["PATCH"]
+    inferred.call(%(if (ctx.request.method === 'POST') {})).should eq ["POST"]
+    inferred.call(%(switch (event.request.method) { case "PUT": break; case "GET": break; }\nif (this.req?.method !== "DELETE") {})).should eq ["DELETE", "PUT", "GET"]
     inferred.call(%(if (other === "POST") {} switch (req.method) { default: x = { a: "GET" }; })).should be_empty
   end
 
