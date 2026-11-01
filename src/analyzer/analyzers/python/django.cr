@@ -751,13 +751,17 @@ module Analyzer::Python
     # The members a list of url lists collects: its `name = [a, b]` literal
     # plus every `name.append(x)`, `name.insert(i, x)`, `name += [x]` and
     # `name.extend([x])`, conditional ones included (a setting can mount them).
+    # A module-level `name = [...]` rebinds the group, dropping what came
+    # before. Either branch of a ternary member can be mounted.
     private def url_group_members(lines : Array(::String), name : ::String) : Array(::String)
       members = [] of ::String
       head_re = /^\s*#{Regex.escape(name)}\s*(?::[^=\n]+)?(=|\+=|\.\s*(?:append|insert|extend)\s*\()\s*(.*)$/m
       lines.each_with_index do |line, index|
         next unless line.includes?(name)
-        next unless head = collect_python_expression(lines, index, line).match(head_re)
+        expression = collect_python_expression(lines, index, line).split('\n').map { |piece| strip_python_comment(piece) }.join('\n')
+        next unless head = expression.match(head_re)
         op, rest = head[1], head[2].strip
+        members.clear if op == "=" && !line[0]?.try(&.ascii_whitespace?)
         if op.ends_with?('(')
           rest = rest.rchop(')').strip
           rest = split_python_arguments(rest)[1]?.try(&.strip) || "" if op.includes?("insert")
@@ -769,7 +773,9 @@ module Analyzer::Python
         next unless rest.starts_with?('[') && rest.ends_with?(']')
         split_python_arguments(rest[1...-1]).each { |part| members << part.strip unless part.strip.empty? }
       end
-      members
+      members.flat_map do |member|
+        (ternary = member.match(/\A(.+?)\s+if\s+.+?\s+else\s+(.+)\z/m)) ? [ternary[1].strip, ternary[2].strip] : [member]
+      end
     end
 
     # Same rules as `split_python_arguments`, splitting on `+` instead of `,`
@@ -3320,10 +3326,20 @@ module Analyzer::Python
     end
 
     # The class attribute, not `self.lookup_field = "slug"` set inside one
-    # action (Taiga's `retrieve` for `by_slug`): the router reads the class.
+    # action (Taiga's `retrieve` for `by_slug`), nor a method-local
+    # `lookup_field = ...`: the router reads the class body's own line.
     private def drf_lookup_param(class_codeblock : ::String) : ::String?
-      class_codeblock.match(/(?<![\w.])lookup_url_kwarg\s*=\s*[rf]?['"]([^'"]+)['"]/).try(&.[1]) ||
-        class_codeblock.match(/(?<![\w.])lookup_field\s*=\s*[rf]?['"]([^'"]+)['"]/).try(&.[1])
+      body_line = class_codeblock.each_line.skip(1).find { |line| !line.blank? } || return
+      indent = body_line[0, body_line.size - body_line.lstrip.size]
+      %w[lookup_url_kwarg lookup_field].each do |attr|
+        class_codeblock.each_line do |line|
+          next if !line.starts_with?(indent) || line[indent.size]?.try(&.ascii_whitespace?)
+          if value = line.match(/\A\s*#{attr}\s*=\s*[rf]?['"]([^'"]+)['"]/)
+            return value[1]
+          end
+        end
+      end
+      nil
     end
 
     private def drf_action_path(route_base : ::String, lookup_param : ::String, action : DjangoDrfAction,

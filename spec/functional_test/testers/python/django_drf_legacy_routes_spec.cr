@@ -5,7 +5,7 @@ require "../../func_spec.cr"
 # too; no `methods=` means GET and `url_path=` names the segment.
 # `request.QUERY_PARAMS` / `request.DATA` are DRF 2.x's `query_params` /
 # `data`. A commented-out decorator routes nothing, and a `self.lookup_field`
-# set inside an action does not rename the detail route's `{pk}`.
+# set inside an action (or a method-local `lookup_field`) does not rename the detail route's `{pk}`.
 FunctionalTester.new("fixtures/python/django_drf_legacy_routes/", {
   :techs     => 1,
   :endpoints => 12,

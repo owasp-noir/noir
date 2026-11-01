@@ -7,6 +7,7 @@ from tracker.mixins import VotedResourceMixin
 
 class IssueViewSet(VotedResourceMixin, viewsets.ModelViewSet):
     def retrieve(self, request, *args, **kwargs):
+        lookup_field = "zzz"  # a local, not the class attribute
         if self.action == "by_ref":
             self.lookup_field = "ref"
         return super().retrieve(request, *args, **kwargs)
