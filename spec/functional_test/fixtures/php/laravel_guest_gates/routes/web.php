@@ -80,3 +80,6 @@ Route::resource('matches', ItemController::class, ['only' => ['show']]);
 Route::resource('indexes', ItemController::class, ['only' => ['show']]);
 Route::resource('taxes', ItemController::class, ['only' => ['show']]);
 Route::resource('addresses', ItemController::class, ['only' => ['show']]);
+Route::get('p3/getterRead/{t}/{id}', [PCtl::class, 'getterRead']);
+Route::post('p3/getterOrCreate/{id}', [PCtl::class, 'getterOrCreate']);
+Route::post('p3/getterWithArgs/{id}', [PCtl::class, 'getterWithArgs']);

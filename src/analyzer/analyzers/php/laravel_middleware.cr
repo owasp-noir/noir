@@ -333,6 +333,7 @@ module Analyzer::Php
     # Only calls known to read count: anything else may have side effects.
     LOOKUP_ASSIGN_RE = /\A\$\w+\s*=(?!=)/
     CHAIN_CALL_RE    = /(?:->|::)\s*(\w+)\s*\(/
+    GETTER_CALL_RE   = /(?:\$this->|parent::|self::|static::)(?!\w*(?:Or|And)[A-Z])get[A-Z]\w*\(\s*\)/
     ANY_CALL_RE      = /([\\\w$]*)\s*\(/
     READ_CALL_RE     = /\A(?:find|findOrFail|findMany|first|firstOrFail|firstWhere|get|getKey|load|loadMissing|loadCount|where|whereKey|whereIn|whereNull|whereNotNull|with|withCount|withTrashed|onlyTrashed|query|all|latest|oldest|orderBy|pluck|count|input|route|string|integer|boolean|only|header|has|filled|user|exists|value)\z/
     READ_BARE_CALLS  = Set{"array", "isset", "empty", "collect", "intval", "trim", "auth", "request", "route"}
@@ -345,6 +346,15 @@ module Analyzer::Php
     # about the user) and a later check no longer stands in front of it.
     private def read_only_assignment?(stmt : String) : Bool
       return false if !stmt.matches?(LOOKUP_ASSIGN_RE) || stmt.includes?('{') || stmt.includes?("new ")
+      # A zero-argument `getFoo()` on the class itself (`parent::getMap()[$t]::
+      # withTrashed()->find($id)`) is a getter, but only in front of a read
+      # that ends the chain; `getOrCreate()` / `getAndMark()` are not.
+      getter = false
+      stmt = stmt.gsub(GETTER_CALL_RE) do
+        getter = true
+        "$_getter"
+      end
+      return false if getter && stmt.scan(CHAIN_CALL_RE).empty?
       return false unless stmt.scan(CHAIN_CALL_RE).all?(&.[1].matches?(READ_CALL_RE))
       # What is left after the chain calls: grouping parens, or a function
       # call that must be one of the plain safe ones (never namespaced or a

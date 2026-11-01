@@ -54,6 +54,13 @@ describe "Laravel guest gates, policy lookups and plural parameters", tags: "fun
       guards.call("/p2/#{name}/{id}").select(&.includes?("policy")).should be_empty
     end
     guards.call("/p2/readOk/{id}").any?(&.includes?("policy")).should be_true
+
+    # A zero-argument getter in front of a read that ends the chain is a
+    # lookup (snipeit's `parent::getMapObjectType()[$t]::withTrashed()->find`);
+    # `getOrCreate()` or a getter with arguments is not.
+    guards.call("/p3/getterRead/{t}/{id}").any?(&.includes?("policy")).should be_true
+    guards.call("/p3/getterOrCreate/{id}").select(&.includes?("policy")).should be_empty
+    guards.call("/p3/getterWithArgs/{id}").select(&.includes?("policy")).should be_empty
   end
 
   it "singularizes -es plurals like Laravel" do

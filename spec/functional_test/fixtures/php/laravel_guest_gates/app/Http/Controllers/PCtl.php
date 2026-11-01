@@ -138,6 +138,24 @@ class PCtl extends Controller
         $this->authorize('view', Item::find($id));
         return 1;
     }
+    public function getterRead($request, $t, $id)
+    {
+        $x = parent::getMapObjectType()[$t]::withTrashed()->find($id);
+        $this->authorize('view', $x);
+        return 1;
+    }
+    public function getterOrCreate($request, $id)
+    {
+        $x = $this->getOrCreate();
+        $this->authorize('view', $x);
+        return 1;
+    }
+    public function getterWithArgs($request, $id)
+    {
+        $x = $this->getThing($request->all());
+        $this->authorize('view', $x);
+        return 1;
+    }
     public function pluckOk($request, $id)
     {
         $ids = $request->user()->teams()->pluck('id');
