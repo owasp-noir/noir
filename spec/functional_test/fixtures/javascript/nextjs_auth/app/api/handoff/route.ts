@@ -1,5 +1,5 @@
 import { parseRequest } from '../../../lib/request';
-import { authenticateUser, parseSplit } from '../../../lib/options';
+import { authenticateUser, createSession, getAuthenticatedUser, parseSplit } from '../../../lib/options';
 import { checkAuth } from '../../../lib/session';
 import { json, unauthorized } from '../../../lib/response';
 
@@ -61,5 +61,23 @@ export async function HEAD(request: Request) {
 export async function OPTIONS(request: Request) {
   const { error: denied } = await parseRequest(request);
   if (denied) return denied();
+  return json(1);
+}
+
+// A login helper that starts a session.
+export async function first(request: Request) {
+  const created = await createSession(request);
+  if (!created) {
+    return unauthorized();
+  }
+  return json(1);
+}
+
+// A check of a middleware-set header.
+export async function second() {
+  const user = await getAuthenticatedUser();
+  if (!user) {
+    return unauthorized();
+  }
   return json(1);
 }

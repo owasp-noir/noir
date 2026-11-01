@@ -90,11 +90,11 @@ class NextjsAuthTagger < FrameworkTagger
   # group 1 the value, group 2 the callee. Whether the callee checks the
   # caller is judged by its definition (`caller_check_callee?`).
   CALLER_CHECK = /\b([A-Za-z_$][\w$]*)\s*=\s*(?:await\s+)?([\w$.]*(?:[Aa]uth|[Ss]ession)\w*)\s*\(\s*(?:\)|req(?:uest)?\b|headers\(\)|cookies\(\))/
-  # What a check of the caller reads: a header, a cookie, a session, a token.
-  CALLER_READ = /authorization|bearer|cookie|session|token|jwt|api[_-]?key/i
   # A read of the submitted body. With a password in it, the helper is a login.
   BODY_READ  = /\.\s*(?:json|formData|text)\s*\(|\breq(?:uest)?\s*\.\s*body\b/
   CREDENTIAL = /password|credential/i
+  # Starting a session (`cookies().set(...)`, a `Set-Cookie` header) is a login too.
+  COOKIE_WRITE = /\bcookies\s*\(\s*\)\s*\.\s*set\s*\(|\.\s*cookies\s*\.\s*set\s*\(|set-cookie/i
 
   # `if (process.env.CLOUD_MODE) {` / `if (process.env.X !== '1') return notFound();`:
   # a deployment switch. One that refuses everyone may come before the
@@ -210,11 +210,12 @@ class NextjsAuthTagger < FrameworkTagger
 
   @caller_checks = Hash(Tuple(String, String), Bool).new
 
-  # Whether `callee` checks the caller: its definition reads a header,
-  # cookie, session or token, and is not a login reading a password from
-  # the body (`authenticateUser(request)`). A callee defined outside the
-  # scan (`getServerSession`, `auth.api.getSession`) is a library's, judged
-  # by its name.
+  # Whether `callee`, named like a caller check, is one: its definition is
+  # not a login, reading a password from the body (`authenticateUser(request)`)
+  # or starting a session (`createSession(request)`). What a check reads
+  # varies (polar's reads a header its middleware sets), so it is not
+  # required to name a cookie or token. A callee defined outside the scan
+  # (`getServerSession`, `auth.api.getSession`) is a library's.
   private def caller_check_callee?(callee : String, path : String?) : Bool
     return true if path.nil? || callee.includes?('.')
     key = {path, callee}
@@ -227,8 +228,7 @@ class NextjsAuthTagger < FrameworkTagger
     lines = read_file_lines(def_path) || return true
     return true unless def_line <= lines.size
     body = lines[def_line - 1, function_body(lines, def_line - 1).size].join('\n')
-    login = body.matches?(BODY_READ) && body.matches?(CREDENTIAL)
-    @caller_checks[key] = !login && body.matches?(CALLER_READ)
+    @caller_checks[key] = !((body.matches?(BODY_READ) && body.matches?(CREDENTIAL)) || body.matches?(COOKIE_WRITE))
   end
 
   # The `if` lines still open at line `j`.

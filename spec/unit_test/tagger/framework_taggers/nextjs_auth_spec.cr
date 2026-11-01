@@ -205,8 +205,11 @@ describe "NextjsAuthTagger" do
       tag.call("app/api/handoff/route.ts", 16).should be_empty
     end
 
-    it "judges a caller check by its definition: a login reading a password is not one" do
+    it "judges a caller check by its definition: a login reading a password or starting a session is not one" do
       tag.call("app/api/handoff/route.ts", 23).should be_empty
+      tag.call("app/api/handoff/route.ts", 68).should be_empty
+      # Whatever it reads (polar's: a header its middleware sets).
+      tag.call("app/api/handoff/route.ts", 77).map(&.name).should eq(["auth"])
     end
 
     it "does not read a 401 in an else-if as the absence check's" do

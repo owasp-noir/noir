@@ -70,3 +70,17 @@ export async function authenticateUser(request: Request) {
   const { email, password } = await request.json();
   return lookup(email, password);
 }
+
+// A login: starts the session it is named after.
+export async function createSession(request: Request) {
+  const token = await issueToken(request);
+  cookies().set('session', token);
+  return token;
+}
+
+// A check of a header the app's middleware sets, memoized.
+const _getAuthenticatedUser = async () => {
+  const userData = (await headers()).get('x-app-user');
+  return userData ? JSON.parse(userData) : undefined;
+};
+export const getAuthenticatedUser = cache(_getAuthenticatedUser);
