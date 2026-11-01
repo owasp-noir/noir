@@ -55,13 +55,12 @@ module Analyzer::Php
     private def analyze_route_attributes(path : String) : Array(Endpoint)
       endpoints = [] of Endpoint
       content = read_file_content(path)
-      return endpoints unless content.includes?("#[Route")
-      lexer = Noir::PhpLexer.new(content)
-      content = lexer.without_comments
-      route_attributes(content, lexer).each do |attr|
+      return endpoints unless content.includes?("#[")
+      parser = Noir::PhpBlockParser.new(content)
+      content = parser.lexer.without_comments
+      route_attributes(content, parser).each do |attr|
         # ponytail: a class-level `#[Route]` (a prefix) is skipped, not applied.
-        next if route_applies_to_class?(content, attr.stop)
-        next unless content[attr.start, 2] == "#["
+        next unless attr.on_class == false
         next unless route_path = extract_symfony_route_path(attr.args).presence
         methods = extract_methods_from_symfony_context(attr.args)
         methods = ["GET"] if methods.empty?

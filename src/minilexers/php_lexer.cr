@@ -312,16 +312,26 @@ module Noir
       after == 0 || pos >= @spans[after - 1][2]
     end
 
+    # Whether `pos` is inside a string literal or a heredoc/nowdoc body —
+    # blank in `masked` like a comment, but a value, not whitespace.
+    def literal?(pos : Int32) : Bool
+      after = @spans.bsearch_index { |(_, s, _)| s > pos } || @spans.size
+      return false if after == 0
+      kind, _, stop = @spans[after - 1]
+      pos < stop && (kind == :string || kind == :heredoc)
+    end
+
     # The source with its comments blanked to spaces and everything else —
     # string literals, heredocs, inline HTML — left as written. Same length and
     # line breaks as the source, so offsets and line numbers computed on it
     # hold for the original. This is what lets a regex-driven adapter skip
     # `// $app->get('/old')` without losing the route text inside strings.
     #
-    # Docblocks (`/** … */`) are kept: Doctrine-style `@Route` annotations
-    # live in them, and PHP only reads annotations from that form.
-    def without_comments : String
-      comments = @spans.select { |(kind, s, _)| kind == :comment && !docblock?(s) }
+    # Docblocks (`/** … */`) are kept unless `keep_docblocks` is false:
+    # Doctrine-style `@Route` annotations live in them, and PHP only reads
+    # annotations from that form.
+    def without_comments(keep_docblocks : Bool = true) : String
+      comments = @spans.select { |(kind, s, _)| kind == :comment && !(keep_docblocks && docblock?(s)) }
       return @chars.join if comments.empty?
 
       chars = @chars.dup

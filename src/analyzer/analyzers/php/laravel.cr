@@ -163,13 +163,7 @@ module Analyzer::Php
     # `->withRouting(api: __DIR__.'/../routes/api.php', apiPrefix: 'v2')` in
     # `bootstrap/app.php` (Laravel 11+, `apiPrefix` defaulting to `api`),
     # whose `then:` closure registers further groups the same way.
-    # `Route::…->group(` behind any fluent chain. A call's arguments may
-    # nest one level of parentheses (`domain(config('app.domain'))`); the
-    # possessive `[^;()]` runs keep every repetition unambiguous, so a long
-    # chain that never reaches `group(` cannot backtrack exponentially.
-    GROUP_CALL_RE       = /Route::(?:\w+\s*\((?:[^;()]++|\([^;()]*+\))*+\)\s*->\s*)*group\s*\(/i
     ROUTE_FILE_REF_RE   = /(['"])([^'"\n]*routes\/[^'"\n]*\.php)\1/
-    WIRING_GROUP_RE     = GROUP_CALL_RE
     WITH_ROUTING_API_RE = /\bapi\s*:\s*(?:\[[^\]]*\]|[^,)]*)/
     WITH_ROUTING_WEB_RE = /\bweb\s*:\s*(?:\[[^\]]*\]|[^,)]*)/
     API_PREFIX_RE       = /\bapiPrefix\s*:\s*['"]([^'"]*)['"]/
@@ -199,24 +193,21 @@ module Analyzer::Php
       if aliased = content.match(/\buse\s+\\?Illuminate\\Support\\Facades\\Route\s+as\s+(\w+)\s*;/)
         content = content.gsub(/\b#{aliased[1]}::/, "Route::")
       end
-      lexer = Noir::PhpLexer.new(content)
+      parser = Noir::PhpBlockParser.new(content)
+      lexer = parser.lexer
       # {open paren, close paren, prefix} of every `Route::…->group(` call,
       # outermost first. A `Route::group([...], …)` carries its prefix in the
       # leading options array rather than the chain.
       groups = [] of Tuple(Int32, Int32, String, Array(String))
       imports = parse_use_imports(content)
-      pos = 0
-      while group_match = content.match(WIRING_GROUP_RE, pos)
-        open = group_match.end(0) - 1
-        pos = group_match.end(0)
-        next unless lexer.in_code?(group_match.begin(0))
-        next unless close = lexer.matching_delimiter(open)
-        prelude = group_match[0]
+      each_group_call(parser) do |start, open, close|
+        prelude = lexer.source(start..open)
         if options = content.match(/\G\s*(?:\[|array\s*\()/i, open + 1)
-          options_end = lexer.matching_delimiter(options.end(0) - 1)
-          prelude += content[options.begin(0)..options_end] if options_end
+          options_end = parser.close_of(options.end(0) - 1)
+          prelude += lexer.source(options.begin(0)..options_end) if options_end
         end
         groups << {open, close, extract_group_prefix(prelude, source_path), middleware_names(prelude.includes?("config") ? resolve_config_calls(prelude, source_path) : prelude, imports)}
+        open + 1
       end
 
       api_spans = content.scan(WITH_ROUTING_API_RE).map { |m| m.begin(0)...m.end(0) }
@@ -354,14 +345,15 @@ module Analyzer::Php
       # the same lexer instead of re-scanning the raw text per route. A whole
       # file starts outside `<?php`; a group body handed back by the recursive
       # pass below was already carved out of a PHP region.
-      lexer = Noir::PhpLexer.new(content, php_mode: php_mode)
+      parser = Noir::PhpBlockParser.new(content, php_mode: php_mode)
+      lexer = parser.lexer
       offsets = Noir::CharOffsets.new(content)
       # The constant literal arrays the file assigns, read once from the whole
       # file: a group closure iterates one it captured with `use ($map)`.
       arrays ||= literal_array_assignments(content, lexer)
       # Function bodies in this content: a file-scope variable is not seen there.
       scopes = arrays.empty? ? [] of Range(Int32, Int32) : function_scopes(content, lexer)
-      route_groups = extract_route_groups(content, lexer, imports, arrays, file_path, scopes)
+      route_groups = extract_route_groups(content, parser, imports, arrays, file_path, scopes)
       # `foreach` loops over a constant literal array register one route per
       # entry: their bodies are scanned once per entry instead of once as
       # written, which would emit `{$name}` as a placeholder and no handler.
@@ -1221,56 +1213,79 @@ module Analyzer::Php
     # `Route::namespace('X')` in a group's chain, or the `'namespace' => 'X'` attribute.
     GROUP_NAMESPACE_RE = /(?:(?:->|::)namespace\s*\(\s*|['"]namespace['"]\s*=>\s*)['"]([\w\\]+)['"]/i
 
-    private def extract_route_groups(content : String, lexer : Noir::PhpLexer, imports : Hash(String, String), arrays : Hash(String, LiteralArray), file_path : String, scopes : Array(Range(Int32, Int32))) : Array(RouteGroup)
+    private def extract_route_groups(content : String, parser : Noir::PhpBlockParser, imports : Hash(String, String), arrays : Hash(String, LiteralArray), file_path : String, scopes : Array(Range(Int32, Int32))) : Array(RouteGroup)
       groups = [] of RouteGroup
-      pos = 0
-
-      while group_match = content.match(GROUP_CALL_RE, pos)
-        group_start = group_match.begin(0)
-        # Only treat a `Route::group(` as real when it is code — one inside a
-        # string/comment/heredoc would otherwise register a bogus group range
-        # that swallows or mis-prefixes the real routes around it.
-        body_info = lexer.in_code?(group_start) ? extract_group_closure_body_after(content, group_match.end(0), lexer) : nil
-        if body_info
-          body, body_start, body_end = body_info
-          prelude = content[group_start...body_start]
-          controller = prelude.match(GROUP_CONTROLLER_RE).try(&.[1])
-          namespace = prelude.match(GROUP_NAMESPACE_RE).try(&.[1])
-          uses = prelude.scan(CLOSURE_USE_RE).last?.try { |m| m[1].scan(/\$(\w+)/).map(&.[1]) } || [] of String
-          groups << RouteGroup.new(extract_group_prefix(prelude, file_path), body, body_start, body_end, controller, namespace, middleware_names(expand_middleware_vars(prelude, scoped_arrays(arrays, scopes, group_start), group_start), imports), uses)
-          pos = body_end + 1
-        else
-          pos = group_match.end(0)
-        end
+      lexer = parser.lexer
+      each_group_call(parser) do |group_start, open, close|
+        # The group's routes: the closure (or arrow function) it is handed.
+        holder = parser.path(open).last? || parser.root
+        # The last one: an arrow function in a leading options array is not it.
+        closure = holder.children.reverse_each.find { |node| (node.kind.closure? || node.kind.arrow_fn?) && open < node.start && node.start < close }
+        next open + 1 unless closure && (closure.braced? || closure.kind.arrow_fn?)
+        body_start, body_end = closure.body.begin, closure.body.end
+        prelude = lexer.source(group_start...body_start)
+        controller = prelude.match(GROUP_CONTROLLER_RE).try(&.[1])
+        namespace = prelude.match(GROUP_NAMESPACE_RE).try(&.[1])
+        uses = closure.uses.try { |list| lexer.source(list).scan(/\$(\w+)/).map(&.[1]) } || [] of String
+        groups << RouteGroup.new(extract_group_prefix(prelude, file_path), lexer.source(closure.body), body_start, body_end, controller, namespace, middleware_names(expand_middleware_vars(prelude, scoped_arrays(arrays, scopes, group_start), group_start), imports), uses)
+        body_end + 1
       end
-
       groups
     end
 
-    CLOSURE_USE_RE = /\bfunction\s*\([^)]*\)\s*use\s*\(([^)]*)\)/
+    # Every `Route::a(...)->b(...)->group(...)` call in code: yields the
+    # chain's start and the `group(`'s parentheses, and resumes the scan
+    # where the block says. The chain is walked call by call over matched
+    # delimiters, so a `;` or a parenthesis inside an argument
+    # (`->name('a;b.')`, `prefix(config('x', env('Y')))`) cannot cut it.
+    # Reads the masked characters directly: a char-offset regex match per
+    # `Route::` would cost O(file) each on multi-byte content.
+    private def each_group_call(parser : Noir::PhpBlockParser, & : Int32, Int32, Int32 -> Int32) : Nil
+      masked = parser.lexer.masked
+      pos = 0
+      while start = facade_call_at(masked, pos)
+        pos = start + 7
+        p = pos
+        loop do
+          while p < masked.size && masked[p].whitespace?
+            p += 1
+          end
+          name_end = p
+          while name_end < masked.size && (masked[name_end].alphanumeric? || masked[name_end] == '_')
+            name_end += 1
+          end
+          break if name_end == p
+          open = name_end
+          while open < masked.size && masked[open].whitespace?
+            open += 1
+          end
+          break unless masked[open]? == '(' && (close = parser.close_of(open))
+          if masked[p...name_end].join.compare("group", case_insensitive: true) == 0
+            pos = Math.max(pos, yield(start, open, close))
+            break
+          end
+          p = close + 1
+          while p < masked.size && masked[p].whitespace?
+            p += 1
+          end
+          break unless masked[p]? == '-' && masked[p + 1]? == '>'
+          p += 2
+        end
+      end
+    end
 
-    private def extract_group_closure_body_after(content : String, pos : Int32, lexer : Noir::PhpLexer) : Tuple(String, Int32, Int32)?
-      return unless pos < content.size
-
-      context = content[pos..]
-      # Match the group closure, allowing `static`, a `use (...)` capture,
-      # and a return type (`: void`) between the parameter list and the
-      # body — koel and other modern Laravel apps write
-      # `->group(static function (): void { ... })`, which the previous
-      # `function (...) {` pattern missed, dropping the group prefix from
-      # every nested route.
-      function_match = context.match(/(?:static\s+)?function\s*\([^)]*\)\s*(?:use\s*\([^)]*\)\s*)?(?::\s*[^{;=]+)?\{/mi)
-      return unless function_match
-
-      function_start = function_match.begin(0)
-      pre_function = context[0...function_start]
-      return if pre_function.includes?(";")
-
-      brace_pos = pos + function_match.end(0) - 1
-      body_end = lexer.matching_delimiter(brace_pos)
-      return unless body_end
-
-      {content[(brace_pos + 1)...body_end], brace_pos + 1, body_end}
+    # Index of the next `Route::` (any case, not part of a longer name) at or
+    # after `pos` in the masked text, or nil.
+    private def facade_call_at(masked : Array(Char), pos : Int32) : Int32?
+      while pos + 7 <= masked.size
+        if masked[pos].downcase == 'r' && masked[pos + 5] == ':' && masked[pos + 6] == ':' &&
+           masked[pos + 1].downcase == 'o' && masked[pos + 2].downcase == 'u' && masked[pos + 3].downcase == 't' && masked[pos + 4].downcase == 'e' &&
+           (pos == 0 || !(masked[pos - 1].alphanumeric? || masked[pos - 1] == '_'))
+          return pos
+        end
+        pos += 1
+      end
+      nil
     end
 
     private def extract_group_prefix(prelude : String, path : String) : String
@@ -1312,36 +1327,21 @@ module Analyzer::Php
       config = File.join(root, "config", "#{file}.php")
       return fallback unless File.exists?(config)
       content = php_code(read_file_content(config))
-      # The file's own `return [`, not one inside a closure it defines.
-      file_lexer = Noir::PhpLexer.new(content)
-      depth = 0
-      last = 0
+      # The file's own `return [`, not one inside a closure or block it defines.
+      parser = Noir::PhpBlockParser.new(content)
       ret = nil
       content.scan(/\breturn\s*\[/) do |m|
-        (last...m.begin(0)).each do |i|
-          case file_lexer.masked[i]
-          when '{' then depth += 1
-          when '}' then depth -= 1
-          end
-        end
-        last = m.begin(0)
-        ret = m if depth == 0 && file_lexer.in_code?(m.begin(0))
+        ret = m if parser.lexer.in_code?(m.begin(0)) && parser.path(m.begin(0)).empty?
       end
-      return unless ret && (array = literal_array_at(content, ret.end(0) - 1))
-      keys[0...-1].each { |name| return unless array = array_entry(array, name) }
-      lexer = Noir::PhpLexer.new(array, php_mode: true)
-      depth = 0
-      last = 0
-      array.scan(/['"]#{Regex.escape(keys.last)}['"]\s*=>/) do |m|
-        (last...m.begin(0)).each do |i|
-          case lexer.masked[i]
-          when '[', '(' then depth += 1
-          when ']', ')' then depth -= 1
-          end
-        end
-        last = m.begin(0)
-        next unless depth == 1 && lexer.in_code?(m.end(0) - 1)
-        return array.match(CONFIG_VALUE_RE, m.end(0)).try { |v| v[2]? || v[4]? || v[6]? }
+      return unless ret
+      open = ret.end(0) - 1
+      keys[0...-1].each do |name|
+        found = keyed_array_value(parser, open, name) || return
+        open = found[0]
+      end
+      parser.array_entries(open).try &.each do |entry|
+        next unless (k = entry.key) && php_string_key(parser, k) == keys.last
+        return content.match(CONFIG_VALUE_RE, entry.value.begin).try { |v| v[2]? || v[4]? || v[6]? }
       end
       fallback
     end

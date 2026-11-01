@@ -249,10 +249,9 @@ module Analyzer::Php
     end
 
     private def each_method(content : String, &)
-      lexer = Noir::PhpLexer.new(content)
-      masked = lexer.masked.join
-      Noir::PhpClassMembers.class_bodies(lexer, masked).each do |open, close|
-        Noir::PhpClassMembers.each(lexer, masked, open, close) do |member|
+      parser = Noir::PhpBlockParser.new(content)
+      parser.declarations.each do |klass|
+        Noir::PhpClassMembers.each(parser, klass) do |member|
           yield member if member.method && !member.static
         end
       end

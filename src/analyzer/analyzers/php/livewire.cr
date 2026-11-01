@@ -59,11 +59,11 @@ module Analyzer::Php
       ordered_file_scan do |path|
         content = read_file_content(path)
         next if path.ends_with?(".blade.php") || !content.matches?(IMPORT_RE)
-        lexer = Noir::PhpLexer.new(content)
-        masked = lexer.masked.join
+        parser = Noir::PhpBlockParser.new(content)
+        masked = parser.lexer.masked.join
         namespace = NAMESPACE_RE.match(masked).try { |m| "#{m[1]}\\" } || ""
         found = [] of Tuple(String, Members)
-        masked.scan(CLASS_RE) { |m| members(lexer, masked, m).try { |members| found << {namespace + m[2], members} } }
+        masked.scan(CLASS_RE) { |m| members(parser, m).try { |members| found << {namespace + m[2], members} } }
         found
       end.each { |found| found.each { |name, members| @bases[name] = members } }
       unless @bases.empty?
@@ -94,11 +94,11 @@ module Analyzer::Php
       subclass_re = @subclass_re.try { |re| re if content.matches?(re) }
       return endpoints unless imports || subclass_re
 
-      lexer = Noir::PhpLexer.new(content)
-      masked = lexer.masked.join
+      parser = Noir::PhpBlockParser.new(content)
+      masked = parser.lexer.masked.join
       if path.ends_with?(".blade.php")
         if imports && (m = VOLT_RE.match(masked)) && (name = volt_name(path))
-          emit(endpoints, lexer, masked, m, name, path)
+          emit(endpoints, parser, masked, m, name, path)
         end
       else
         prefix = component_prefix(masked)
@@ -110,7 +110,7 @@ module Analyzer::Php
             # A same-named class from another namespace is not the base.
             inherited = decl[3]?.try { |base| @bases[qualified_name(masked, base)]? }
             next if decl[3]? && inherited.nil?
-            emit(endpoints, lexer, masked, decl, prefix + kebab(decl[2]), path, inherited)
+            emit(endpoints, parser, masked, decl, prefix + kebab(decl[2]), path, inherited)
           end
         end
       end
@@ -121,14 +121,10 @@ module Analyzer::Php
       [] of Endpoint
     end
 
-    private def members(lexer : Noir::PhpLexer, masked : String, decl : Regex::MatchData) : Members?
-      open = decl.end(0) - 1
-      close = lexer.matching_delimiter(open)
-      return unless close
-
+    private def members(parser : Noir::PhpBlockParser, decl : Regex::MatchData) : Members?
       props = [] of Param
       actions = [] of Noir::PhpClassMembers::Member
-      Noir::PhpClassMembers.each(lexer, masked, open, close) do |member|
+      Noir::PhpClassMembers.each(parser, decl.end(0) - 1) do |member|
         next if member.static
         if member.method
           actions << member unless member.name.matches?(LIFECYCLE_RE) || member.prelude.matches?(COMPUTED_RE)
@@ -139,9 +135,9 @@ module Analyzer::Php
       {props, actions}
     end
 
-    private def emit(endpoints : Array(Endpoint), lexer : Noir::PhpLexer, masked : String,
+    private def emit(endpoints : Array(Endpoint), parser : Noir::PhpBlockParser, masked : String,
                      decl : Regex::MatchData, name : String, path : String, inherited : Members? = nil)
-      props, actions = members(lexer, masked, decl) || return
+      props, actions = members(parser, decl) || return
       own_actions = actions.size
       if inherited
         inherited[0].each { |prop| props << prop unless props.any? { |p| p.name == prop.name } }

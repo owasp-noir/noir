@@ -1,6 +1,7 @@
 require "../../models/analyzer"
 require "../../utils/char_offsets"
 require "../../miniparsers/php_callee_extractor"
+require "../../miniparsers/php_block_parser"
 require "../../minilexers/php_lexer"
 require "../../utils/utils.cr"
 
@@ -556,23 +557,24 @@ module Analyzer::Php
 
     # The array value of `key` at the top level of an array literal.
     private def array_entry(array : String, key : String) : String?
-      lexer = Noir::PhpLexer.new(array, php_mode: true)
-      depth = 0
-      last = 0
-      array.scan(/['"]#{Regex.escape(key)}['"]\s*=>\s*(?=\[)/) do |m|
-        (last...m.begin(0)).each do |i|
-          case lexer.masked[i]
-          when '[', '(' then depth += 1
-          when ']', ')' then depth -= 1
-          end
-        end
-        last = m.begin(0)
-        next unless depth == 1 && lexer.in_code?(m.end(0))
-        if close = lexer.matching_delimiter(m.end(0))
-          return array[m.end(0)..close]
-        end
+      parser = Noir::PhpBlockParser.new(array, php_mode: true)
+      keyed_array_value(parser, 0, key).try { |(open, close)| parser.lexer.source(open..close) }
+    end
+
+    # `{open, close}` of the array literal `key` maps to at the top level of
+    # the array literal opening at `open`.
+    protected def keyed_array_value(parser : Noir::PhpBlockParser, open : Int32, key : String) : Tuple(Int32, Int32)?
+      parser.array_entries(open).try &.each do |entry|
+        next unless (k = entry.key) && php_string_key(parser, k) == key && parser.lexer.masked[entry.value.begin]? == '['
+        close = parser.close_of(entry.value.begin)
+        return {entry.value.begin, close} if close
       end
       nil
+    end
+
+    # The text of a quoted array key (`'prefix'`), or nil for any other key.
+    protected def php_string_key(parser : Noir::PhpBlockParser, range : Range(Int32, Int32)) : String?
+      parser.lexer.source(range).match(/\A(['"])([^'"]*)\1\z/).try(&.[2])
     end
 
     # `'password' => 'required|confirmed'`: Laravel's `confirmed` rule reads
