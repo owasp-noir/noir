@@ -1,6 +1,7 @@
 require "./ruby_constant_list"
 require "./extraction_result_cache"
 require "../ext/tree_sitter/tree_sitter"
+require "./rails_callback_line_reader"
 
 module Noir
   # The `before_action` chain a Rails action runs. A controller's own class
@@ -52,15 +53,34 @@ module Noir
     # `before_action :a, :b` — the symbol callbacks it registers.
     SYMBOL_CALLBACKS = /(?<!skip_)before_action\s*\(?\s*((?::\w+[!?]?\s*,?\s*)+)/
 
-    # The methods a `before_action` statement runs. The AST reader writes a
-    # block callback as the one method it runs (see `Reader#block_callback`),
-    # so the statement only ever names symbols.
+    # `before_action -> { doorkeeper_authorize! :read }` (also `->(c) {`,
+    # `lambda {`, `proc {`, a bare `{ ... }` block): the block body. Only
+    # `LineReader` text holds one; `Reader` writes a block callback as the
+    # one method it runs (see `Reader#block_callback`).
+    BLOCK_CALLBACK = /(?<!skip_)before_action\s*\(?\s*(?:->\s*(?:\([^)]*\))?|lambda\s*|proc\s*)?\{(?:\s*\|[^|]*\|)?([^{}]*)\}/
+
+    # The methods a `before_action` statement runs: its symbol callbacks, or
+    # the one method its block calls. The left operand of `&&` / `||` always
+    # runs; a block under `if` / `unless` runs nothing unconditionally.
     def self.before_action_callbacks(line : String) : Array(String)
       if m = line.match(SYMBOL_CALLBACKS)
         m[1].scan(/:(\w+[!?]?)/).map(&.[1])
+      elsif (m = line.match(BLOCK_CALLBACK)) && !m[1].matches?(/\b(?:if|unless)\b/) &&
+            (call = m[1].split(/&&|\|\|/, 2).first.match(/\A\s*([a-z_]\w*[!?]?)(?:[\s(][^;]*)?\z/))
+        [call[1]]
       else
         [] of String
       end
+    end
+
+    # The `if:` / `unless:` a skip carries (`skip_before_action :x, if: -> {
+    # preview? }`, or `:if =>`), through to the end of the statement.
+    LIFT_OPTION = /(?:\b(?:if|unless):|:(?:if|unless)\s*=>)\s*(.+)\z/
+
+    # Whether a skip runs only on a condition, so the callback it names stays
+    # registered and that condition decides whether it runs.
+    def self.lifting?(line : String) : Bool
+      line.matches?(LIFT_OPTION)
     end
 
     # `before_action :x, if: :cond?` runs `x` only when the condition holds,
@@ -159,25 +179,52 @@ module Noir
       !(action && (callback_option(line, EXCEPT_OPTION) || [] of String).includes?(action))
     end
 
-    # What the AST reader takes from one file: its classes and modules (by
-    # the row they open on), its `def`s, its class macros, the canonical
-    # text of each class-body statement by its first row, and the rows that
-    # open a `class`. Shared by every chain built over the same source.
+    # What a reader takes from one file: its classes and modules (by the row
+    # they open on), its `def`s, its class macros, the canonical text of each
+    # class-body statement by its first row, the rows that open a `class`,
+    # the class or module row that owns each statement, the (first, last)
+    # rows of each class and module, and whether the AST read it (`ast`)
+    # rather than `LineReader`. Shared by every chain built over one source.
     record Facts, classes : Array({Int32, Klass}), defs : Array({String, Int32}),
-      macros : Array({String, ClassMacro}), statements : Hash(Int32, String), class_rows : Set(Int32)
+      macros : Array({String, ClassMacro}), statements : Hash(Int32, String), class_rows : Set(Int32),
+      owners : Hash(Int32, Int32), spans : Array({Int32, Int32}), ast : Bool do
+      # The row of the innermost class or module around `row`.
+      def home(row : Int32) : Int32?
+        spans.select { |first, last| first <= row && row <= last }.max_by?(&.[0]).try(&.[0])
+      end
+    end
 
     @@facts = Hash(UInt64, Facts?).new
     @@facts_mutex = Mutex.new
     Noir::ExtractionResultCache.register_clearer { @@facts_mutex.synchronize { @@facts.clear } }
 
-    # The file's `Facts`, read once per source; nil when it does not parse.
+    # The file's `Facts`, read once per source: off the AST, or by
+    # `LineReader` when tree-sitter cannot place its classes.
     def facts_for(path : String, source : String) : Facts?
       key = Noir::ExtractionResultCache.key(source, "rails_callback_chain", path)
       Noir::ExtractionResultCache.fetch(@@facts, key, @@facts_mutex) do
-        Noir::TreeSitter.parse_ruby(source) { |root| Reader.new(path, source, @list_resolver).read(root) }
-      rescue
-        nil
+        facts = begin
+          Noir::TreeSitter.parse_ruby(source) do |root|
+            Reader.new(path, source, @list_resolver).read(root) unless broken_class?(root)
+          end
+        rescue
+          nil
+        end
+        facts || LineReader.new(path, @list_resolver).read(source.lines)
       end
+    end
+
+    # Whether a `class` / `module` keyword landed in an ERROR node: the class
+    # it opens has no node, and its callbacks would be lost with it.
+    private def broken_class?(node : LibTreeSitter::TSNode) : Bool
+      return false unless LibTreeSitter.ts_node_has_error(node)
+      error = Noir::TreeSitter.node_type(node) == "ERROR"
+      LibTreeSitter.ts_node_child_count(node).times do |i|
+        child = LibTreeSitter.ts_node_child(node, i)
+        return true if error && !LibTreeSitter.ts_node_is_named(child) && Noir::TreeSitter.node_type(child).in?("class", "module")
+        return true if Noir::TreeSitter.descend { broken_class?(child) }
+      end
+      false
     end
 
     # Indexes every class and module `source` declares, with its class-body
@@ -301,6 +348,9 @@ module Noir
       resolution.paths << klass.path
     end
 
+    # The ` if cond` / ` unless cond` modifier `Reader` keeps on a macro call.
+    MACRO_MODIFIER = /\s+(if|unless)\s+(.+)\z/
+
     private def apply_lines(lines : Array(String), namespace : String, action : String?, resolution : Resolution, depth : Int32, own_path : String? = nil)
       active = resolution.callbacks
       lines.each do |line|
@@ -311,7 +361,12 @@ module Noir
             end
           end
         elsif line.starts_with?("allow_unauthenticated_access")
-          active.delete("require_authentication") if RailsCallbackChain.applies_to_action?(line, action)
+          next unless RailsCallbackChain.applies_to_action?(line, action)
+          if lift = line.match(LIFT_OPTION).try(&.[0])
+            resolution.lifted["require_authentication"] = lift
+          else
+            active.delete("require_authentication")
+          end
         elsif line.matches?(CANCAN_LINE)
           next unless RailsCallbackChain.applies_to_action?(line, action)
           # ponytail: a skip drops every macro, not only the named resource's.
@@ -326,7 +381,7 @@ module Noir
           next unless m = line.match(/^skip_before_action\s+((?::\w+[!?]?\s*,?\s*)+)/)
           # A skip on a condition leaves the callback registered: whether it
           # runs is that condition's to decide.
-          lift = line.match(/(?:\b(?:if|unless):|:(?:if|unless)\s*=>)\s*(.+)\z/).try(&.[0])
+          lift = line.match(LIFT_OPTION).try(&.[0])
           m[1].scan(/:(\w+[!?]?)/) do |name|
             if lift
               resolution.lifted[name[1]] = lift
@@ -348,13 +403,22 @@ module Noir
             resolution.settings << macro_name
             resolution.lifted["macro:#{macro_name}"] = MAYBE_EXCEPTED if RailsCallbackChain.maybe_excepted?(line, action)
           end
-          args = line[macro_name.size..].strip.lchop('(').rchop(')').strip
+          args = line[macro_name.size..].strip
+          # `public_pages only: [:show] if Rails.env.development?`: the
+          # skips the macro registers run on that condition.
+          condition = nil
+          if (m = args.match(MACRO_MODIFIER)) && m.pre_match.count('{') == m.pre_match.count('}')
+            args = args[0, m.begin(0)].strip
+            condition = "#{m[1]}: -> { #{m[2]} }"
+          end
+          args = args.lchop('(').rchop(')').strip
           expanded = class_macro.body.map do |text|
-            if args.empty?
-              class_macro.drop.try { |drop| text.sub(drop, "") } || text
-            else
-              class_macro.bind.try { |bind| text.gsub(bind, args) } || text
-            end
+            text = if args.empty?
+                     class_macro.drop.try { |drop| text.sub(drop, "") } || text
+                   else
+                     class_macro.bind.try { |bind| text.gsub(bind, args) } || text
+                   end
+            condition && text.matches?(/\A(?:skip_|allow_unauthenticated_access\b)/) ? "#{text}, #{condition}" : text
           end
           apply_lines(expanded, namespace, action, resolution, depth + 1, own_path)
         elsif RailsCallbackChain.applies_to_action?(line, action)
@@ -395,7 +459,7 @@ module Noir
       # Constructs a class body runs straight through, as statements of the class.
       PASS_THROUGH = Set{"body_statement", "block_body", "do_block", "block", "then", "else", "elsif",
                          "if", "unless", "case", "when", "in_clause", "begin", "ensure", "rescue",
-                         "parenthesized_statements", "argument_list"}
+                         "parenthesized_statements", "argument_list", "ERROR"}
       SPACES      = /\s+/
       ACTION_WORD = /\A[A-Za-z_]\w*[?!]?\z/
       PARENT_NAME = /\A(?:::)?[A-Z][\w:]*/
@@ -405,18 +469,28 @@ module Noir
       @macros = [] of {String, ClassMacro}
       @statements = Hash(Int32, String).new
       @class_rows = Set(Int32).new
-      # `NAME = value` in a class or module body, by `Scope::NAME`.
-      @constants = Hash(String, Node).new
-      # The one-expression body of each `def self.name` of the file.
+      @owners = Hash(Int32, Int32).new
+      @spans = [] of {Int32, Int32}
+      # The rows of the classes and modules being read, innermost last.
+      @open_rows = [] of Int32
+      # `NAME = value` in a class or module body, by `Scope::NAME`; nil for
+      # one assigned twice or under a condition, whose value cannot be read.
+      @constants = Hash(String, Node?).new
+      # The one-expression body of each `def self.name`, by `Scope.name`.
       @class_methods = Hash(String, Node).new
+      # The `with_options` blocks open around a statement: their options and
+      # the block parameter that stands for the class (`|admin|`).
+      @with_options = [] of {String, String?}
+      # The `if` / `unless` modifier on the class-body statement being read.
+      @modifier : {String, String}? = nil
 
       def initialize(@path : String, @source : String, @resolver : Proc(String, Noir::RubyConstantList::Result?)?)
       end
 
       def read(root : Node) : Facts
-        index(root, "")
+        index(root, "", false)
         body(root, nil, "", false)
-        Facts.new(@classes, @defs, @macros, @statements, @class_rows)
+        Facts.new(@classes, @defs, @macros, @statements, @class_rows, @owners, @spans, true)
       end
 
       private def type(node : Node) : String
@@ -442,27 +516,33 @@ module Noir
       end
 
       # The constants and `def self.x` bodies the statements may name.
-      private def index(node : Node, scope : String)
+      private def index(node : Node, scope : String, conditional : Bool)
         Noir::TreeSitter.each_named_child(node) do |child|
           case type(child)
           when "class", "module"
             name = field(child, "name").try { |n| text(n) } || next
             inner = scope.empty? ? name : "#{scope}::#{name}"
-            field(child, "body").try { |b| index(b, inner) }
+            field(child, "body").try { |b| index(b, inner, false) }
           when "assignment"
             left = field(child, "left")
             right = field(child, "right")
-            @constants["#{scope}::#{text(left)}"] = right if left && right && type(left) == "constant"
+            next unless left && right && type(left) == "constant"
+            key = "#{scope}::#{text(left)}"
+            @constants[key] = conditional || @constants.has_key?(key) ? nil : right
           when "singleton_method"
-            if (name = field(child, "name")) && (only = single_statement(child))
-              @class_methods[text(name)] = only
+            if (name = field(child, "name")) && field(child, "object").try { |o| type(o) == "self" } && (only = single_statement(child))
+              @class_methods["#{scope}.#{text(name)}"] = only
             end
           when "method", "lambda"
           else
-            index(child, scope)
+            index(child, scope, conditional || CONDITIONALS.includes?(type(child)))
           end
         end
       end
+
+      # Constructs whose statements may not run.
+      CONDITIONALS = Set{"if", "unless", "case", "if_modifier", "unless_modifier", "conditional",
+                         "while", "until", "while_modifier", "until_modifier", "rescue_modifier", "block", "do_block"}
 
       # A `def`'s only statement, through `@x ||= ...`.
       private def single_statement(method : Node) : Node?
@@ -490,9 +570,14 @@ module Noir
             class_call(child, klass, namespace, singleton)
           when "identifier"
             add_statement(child, flat(child), klass) if klass && !singleton
-          when "if_modifier", "unless_modifier", "rescue_modifier", "while_modifier", "until_modifier"
-            # Read as the class body has always been read: a modifier does not
-            # make a class-body callback conditional.
+          when "if_modifier", "unless_modifier"
+            # A skip or a macro call under it runs on its condition; a
+            # `before_action` stays read as unconditional, as it always was.
+            outer = @modifier
+            @modifier = field(child, "condition").try { |c| {type(child).rchop("_modifier"), flat(c)} }
+            field(child, "body").try { |b| body_one(b, klass, namespace, singleton) }
+            @modifier = outer
+          when "rescue_modifier", "while_modifier", "until_modifier"
             field(child, "body").try { |b| body_one(b, klass, namespace, singleton) }
           else
             body(child, klass, namespace, singleton) if PASS_THROUGH.includes?(type(child))
@@ -517,7 +602,13 @@ module Noir
         klass = Klass.new(full, namespace, parent, @path)
         @classes << {row, klass}
         @class_rows << row if type(node) == "class"
+        @spans << {row, Noir::TreeSitter.node_end_row(node)}
+        @open_rows << row
+        outer = @with_options
+        @with_options = [] of {String, String?}
         field(node, "body").try { |b| body(b, klass, full, false) }
+        @with_options = outer
+        @open_rows.pop
       end
 
       private def add_def(node : Node, klass : Klass?, class_macro : Bool)
@@ -579,13 +670,23 @@ module Noir
           body(block, klass, namespace, true)
           return
         end
+        # `with_options only: [:show] do ... end`: the options join every
+        # statement in the block, called bare or on its parameter.
+        if (receiver.nil? || class_alias?(receiver)) && method == "with_options" && (block = field(node, "block")) && klass && !singleton
+          options = field(node, "arguments").try { |list| children(list).join(", ") { |arg| argument(arg, klass) } } || ""
+          param = field(block, "parameters").try { |p| children(p).first? }.try { |p| type(p) == "identifier" ? text(p) : nil }
+          @with_options << {options, param}
+          body(block, klass, namespace, singleton)
+          @with_options.pop
+          return
+        end
         # `private def x`, `helper_method def y`: the `def` is the argument.
         defs = field(node, "arguments").try { |list| children(list).select { |arg| type(arg).in?("method", "singleton_method") } }
         if defs && !defs.empty?
           defs.each { |m| add_def(m, klass, singleton || (type(m) == "singleton_method" && field(m, "object").try { |o| type(o) == "self" } || false)) }
           return
         end
-        if klass && !singleton && (receiver.nil? || type(receiver) == "self") && (statement = callback_statement(node, klass))
+        if klass && !singleton && (receiver.nil? || type(receiver) == "self" || class_alias?(receiver)) && (statement = callback_statement(node, klass))
           add_statement(node, statement, klass)
           return unless method && method.in?("included", "prepended", "concerning", "with_options", "class_eval", "instance_eval")
         end
@@ -594,8 +695,24 @@ module Noir
       end
 
       private def add_statement(node : Node, statement : String, klass : Klass)
-        @statements[Noir::TreeSitter.node_start_row(node)] = statement
+        @with_options.reverse_each { |options, _| statement = "#{statement}, #{options}" unless options.empty? }
+        if modifier = @modifier
+          keyword, condition = modifier
+          if statement.matches?(/\A(?:skip_|allow_unauthenticated_access\b)/)
+            statement = "#{statement}, #{keyword}: -> { #{condition} }"
+          elsif !statement.matches?(CALLBACK_LINE)
+            statement = "#{statement} #{keyword} #{condition}"
+          end
+        end
+        row = Noir::TreeSitter.node_start_row(node)
+        @statements[row] = statement
+        @open_rows.last?.try { |owner| @owners[row] = owner }
         klass.callbacks << statement
+      end
+
+      # The parameter of an open `with_options` block: `admin.skip_before_action`.
+      private def class_alias?(receiver : Node) : Bool
+        type(receiver) == "identifier" && @with_options.any? { |_, param| param == text(receiver) }
       end
 
       # `name args` for a receiver-less class-body call, in the canonical
@@ -732,7 +849,7 @@ module Noir
         when "constant"
           constant(text(node), klass).try { |value| names_of(value, klass, depth + 1) }
         when "identifier"
-          @class_methods[text(node)]?.try { |value| names_of(value, klass, depth + 1) }
+          klass.try { |k| @class_methods["#{k.name}.#{text(node)}"]? }.try { |value| names_of(value, klass, depth + 1) }
         when "call"
           call_names(node, klass, depth)
         end
@@ -783,9 +900,8 @@ module Noir
       private def constant(name : String, klass : Klass?) : Node?
         scopes = (klass.try(&.name) || "").split("::", remove_empty: true)
         scopes.size.downto(0) do |n|
-          if value = @constants["#{scopes[0, n].join("::")}::#{name}"]?
-            return value
-          end
+          key = "#{scopes[0, n].join("::")}::#{name}"
+          return @constants[key] if @constants.has_key?(key)
         end
         nil
       end

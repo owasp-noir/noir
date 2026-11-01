@@ -224,5 +224,69 @@ describe Noir::RailsCallbackChain do
       %w[about latest_feed hot_feed].each { |action| chain.resolve(list, action).callbacks.should be_empty }
       chain.resolve(list, "latest").callbacks.should eq(["ensure_logged_in"])
     end
+
+    it "resolves `only: class_method` by the class's own `def self.x`, never another class's" do
+      files = {
+        "/app/controllers/posts_controller.rb" => <<-RB,
+          class Base2 < ApplicationController
+            def self.public_actions
+              %i[index show edit]
+            end
+          end
+          class PostsController < ApplicationController
+            before_action :authenticate!
+            skip_before_action :authenticate!, only: public_actions
+            def self.public_actions = [:show]
+          end
+          class OtherController < ApplicationController
+            before_action :authenticate!
+            skip_before_action :authenticate!, only: public_actions
+          end
+          RB
+      }
+      chain = build_chain(files, files.keys)
+      posts = chain.classes.values.find!(&.name.==("PostsController"))
+      other = chain.classes.values.find!(&.name.==("OtherController"))
+      chain.resolve(posts, "show").callbacks.should be_empty
+      chain.resolve(posts, "index").callbacks.should eq(["authenticate!"])
+      # Unreadable: the skip applies to no action.
+      chain.resolve(other, "show").callbacks.should eq(["authenticate!"])
+    end
+
+    it "reads a constant assigned twice or under a condition as unreadable" do
+      ["PUBLIC = %i[show]\nPUBLIC = %i[index show] if Rails.env.test?", "if ENV[\"X\"]\n  PUBLIC = %i[index]\nend"].each do |assign|
+        resolved = callbacks.call("before_action :authenticate!\n#{assign}\nskip_before_action :authenticate!, only: PUBLIC", "index")
+        resolved.callbacks.should eq(["authenticate!"])
+      end
+    end
+
+    it "adds `with_options` options to the statements in its block" do
+      body = "before_action :authenticate!\nwith_options only: [:show] do |c|\n  c.skip_before_action :authenticate!\nend\nwith_options except: :index do\n  before_action :audit\nend"
+      callbacks.call(body, "show").callbacks.should eq(["audit"])
+      callbacks.call(body, "index").callbacks.should eq(["authenticate!"])
+      callbacks.call(body, "edit").callbacks.should eq(["authenticate!", "audit"])
+    end
+
+    it "lifts rather than removes a callback a skip or a macro call skips on a condition" do
+      callbacks.call("before_action :a\nskip_before_action :a, only: [:show] if Rails.env.test?", "show").lifted.keys.should eq(["a"])
+      callbacks.call("before_action :require_authentication\nallow_unauthenticated_access if: :preview?", "show").lifted.keys.should eq(["require_authentication"])
+      # A `before_action` under a modifier is read as it always was: unconditional.
+      callbacks.call("before_action :a if Rails.env.production?", "show").conditional.should be_empty
+      files = {
+        "/app/controllers/concerns/public_pages.rb" => "module PublicPages\n  extend ActiveSupport::Concern\n  class_methods do\n    def public_pages(opts = {})\n      skip_before_action :authenticate!, opts\n    end\n  end\nend\n",
+        "/app/controllers/posts_controller.rb"      => "class PostsController < ActionController::Base\n  include PublicPages\n  before_action :authenticate!\n  public_pages only: [:show] if Rails.env.development?\nend\n",
+      }
+      chain = build_chain(files, files.keys)
+      resolved = chain.resolve(chain.controller_in("/app/controllers/posts_controller.rb").not_nil!, "show")
+      resolved.callbacks.should eq(["authenticate!"])
+      resolved.lifted["authenticate!"].should contain("Rails.env.development?")
+    end
+
+    it "falls back to the line reader for a class tree-sitter puts in an ERROR node" do
+      source = "class ApplicationController < ActionController::Base\n  before_action :authenticate_user!\n\n  def foo\n    x = [1, 2\n  end\nend\n"
+      chain = build_chain({"/app/controllers/application_controller.rb" => source}, ["/app/controllers/application_controller.rb"])
+      app = chain.controller_in("/app/controllers/application_controller.rb").should_not be_nil
+      chain.resolve(app, "index").callbacks.should eq(["authenticate_user!"])
+    end
   end
 end

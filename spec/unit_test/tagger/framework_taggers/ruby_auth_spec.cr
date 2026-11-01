@@ -982,6 +982,52 @@ describe "RubyAuthTagger" do
     end
   end
 
+  it "keeps the guard, with the condition's note, for a skip on `if:` / `unless:`" do
+    CodeLocator.instance.clear_all
+    tmpdir = File.tempname("ruby_conditional_skip")
+    controllers = File.join(tmpdir, "app", "controllers")
+    Dir.mkdir_p(controllers)
+    skips = {
+      "paren"  => "skip_before_action(\n    :authenticate_user!,\n    only: %i[show],\n    if: -> { feature? },\n  )",
+      "send"   => "send(:skip_before_action, :authenticate_user!, only: [:show], if: :preview?)",
+      "rocket" => "skip_before_action :authenticate_user!, :only => [:show], :if => lambda { feature? }",
+      "unless" => "skip_before_action :authenticate_user!, only: [:show], unless: :signed_in_required?",
+      "plain"  => "skip_before_action :authenticate_user!, only: [:show]",
+    }
+    File.write(File.join(controllers, "application_controller.rb"), "class ApplicationController < ActionController::Base\n  before_action :authenticate_user!\nend\n")
+    skips.each do |name, skip|
+      File.write(File.join(controllers, "#{name}_controller.rb"), "class #{name.camelcase}Controller < ApplicationController\n  #{skip}\n  def show\n  end\nend\n")
+    end
+    # A nested class's skip is that class's, not the controller's.
+    File.write(File.join(controllers, "nested_controller.rb"), "class NestedController < ApplicationController\n  class Helper < Base\n    skip_before_action :authenticate_user!\n  end\n\n  def show\n  end\nend\n")
+    Dir.glob(File.join(controllers, "*.rb")).each { |path| CodeLocator.instance.register_path(path) }
+
+    begin
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(tmpdir)
+      show = ->(name : String) do
+        path = File.join(controllers, "#{name}_controller.rb")
+        row = File.read_lines(path).index!(&.includes?("def show")) + 1
+        details = Details.new(PathInfo.new(path, row))
+        details.technology = "ruby_rails"
+        Endpoint.new("/#{name}", "GET", [] of Param, details)
+      end
+      endpoints = (skips.keys + ["nested"]).to_h { |name| {name, show.call(name)} }
+      RubyAuthTagger.new(noir_options).perform(endpoints.values)
+
+      %w[paren send rocket unless].each do |name|
+        auth = endpoints[name].tags.find { |t| t.name == "auth" }
+        auth.should_not be_nil
+        auth.not_nil!.description.should contain("a setting can make it public")
+      end
+      endpoints["plain"].tags.any?(&.name.==("auth")).should be_false
+      endpoints["nested"].tags.any?(&.name.==("auth")).should be_true
+    ensure
+      FileUtils.rm_rf(tmpdir)
+      CodeLocator.instance.clear_all
+    end
+  end
+
   it "lists the methods a before_action statement runs" do
     callbacks = ->(statement : String) do
       chain = Noir::RailsCallbackChain.build(["/c.rb"], [] of String) { |_| "class C < Base\n  #{statement}\nend\n" }

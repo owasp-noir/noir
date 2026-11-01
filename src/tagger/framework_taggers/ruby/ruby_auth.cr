@@ -100,6 +100,7 @@ class RubyAuthTagger < FrameworkTagger
     sources = [] of Regex | String
     SKIP_PATTERNS.each { |pattern| sources << pattern }
     sources << SKIP_CALLBACKS
+    sources << Noir::RailsCallbackChain::BLOCK_CALLBACK
     BEFORE_ACTION_PATTERNS.each { |pattern, _| sources << pattern }
     HANAMI_AUTH_PATTERNS.each { |pattern, _| sources << pattern }
     Regex.union(sources)
@@ -168,7 +169,8 @@ class RubyAuthTagger < FrameworkTagger
 
   private def file_facts(path : String) : Noir::RailsCallbackChain::Facts?
     return @file_facts[path] if @file_facts.has_key?(path)
-    @file_facts[path] = read_file(path).try { |source| rails_chain.facts_for(path, source) }
+    # `LineReader` facts carry no owners: such a file is walked raw.
+    @file_facts[path] = read_file(path).try { |source| rails_chain.facts_for(path, source) }.try { |facts| facts.ast ? facts : nil }
   end
 
   private def raw_line_flags(lines : Array(String)) : Array(UInt8)
@@ -255,7 +257,7 @@ class RubyAuthTagger < FrameworkTagger
       else
         own = rails_chain.controller_in(path)
         chain = own.try { |leaf| rails_chain.resolve(leaf, action) }
-        controller = check_controller_auth(lines, line_idx, action, flags, jumps, chain, own, file_facts(path).try(&.statements))
+        controller = check_controller_auth(lines, line_idx, action, flags, jumps, chain, own, file_facts(path))
         authz_desc = controller[:authz]
         skipped = controller[:skipped]
         opted_out = controller[:opted_out]
@@ -324,38 +326,57 @@ class RubyAuthTagger < FrameworkTagger
   # `action_name` is the routed action: for one with no `def` the walk
   # starts at the class's last line, where the nearest `def` above is
   # another method.
-  private def check_controller_auth(lines : Array(String), action_line : Int32, action_name : String?, flags : Array(UInt8), jumps : Array(Int32), chain : Noir::RailsCallbackChain::Resolution?, leaf : Noir::RailsCallbackChain::Klass?, statements : Hash(Int32, String)?) : NamedTuple(authn: String?, authz: String?, skipped: Bool, opted_out: Bool, class_idx: Int32?)
+  #
+  # With `facts` the walk reads only the statements of the class or module
+  # around the action and stops at its row: a nested `class Helper` above
+  # the action, and its skips, are not the controller's.
+  private def check_controller_auth(lines : Array(String), action_line : Int32, action_name : String?, flags : Array(UInt8), jumps : Array(Int32), chain : Noir::RailsCallbackChain::Resolution?, leaf : Noir::RailsCallbackChain::Klass?, facts : Noir::RailsCallbackChain::Facts?) : NamedTuple(authn: String?, authz: String?, skipped: Bool, opted_out: Bool, class_idx: Int32?)
     # Walk backwards to find the controller class and before_action declarations
     idx = action_line
     authn_desc : String? = nil
     authz_desc : String? = nil
     skipped = false
     skipped_callbacks = Set(String).new
+    # Skipped on a condition: left to `chain_guards`, which notes the lift.
+    lifted_callbacks = Set(String).new
     class_idx : Int32? = nil
+    home = facts.try(&.home(action_line))
 
     while idx >= 0
       idx = jumps[idx]
       break if idx < 0
-      if flags[idx] == CLASS_LINE
+      if facts && home
+        break if idx < home
+        if idx == home
+          class_idx = idx if flags[idx] == CLASS_LINE
+          break
+        end
+        unless facts.owners[idx]? == home
+          idx -= 1
+          next
+        end
+      elsif flags[idx] == CLASS_LINE
         class_idx = idx
         break
       end
 
-      current = statements.try(&.[idx]?) || Noir::RailsCallbackChain.statement(lines, idx)
+      current = facts.try(&.statements[idx]?) || Noir::RailsCallbackChain.statement(lines, idx)
 
-      # Check for skip_before_action that applies to this action.
+      # Check for skip_before_action that applies to this action. A skip on
+      # an `if:` / `unless:` leaves the guard to its condition.
       # Skip only clears authentication — keep walking for authorize callbacks.
+      lifting = Noir::RailsCallbackChain.lifting?(current)
       SKIP_PATTERNS.each do |pattern|
-        skipped = true if current.matches?(pattern) && applies_to_action?(current, action_name)
+        skipped = true if !lifting && current.matches?(pattern) && applies_to_action?(current, action_name)
       end
       # The walk runs bottom-up, so a skip is seen before the `before_action`
       # it opts this action out of.
       if (m = current.match(SKIP_CALLBACKS)) && applies_to_action?(current, action_name)
-        m[1].scan(/:(\w+[!?]?)/) { |name| skipped_callbacks << name[1] }
+        m[1].scan(/:(\w+[!?]?)/) { |name| (lifting ? lifted_callbacks : skipped_callbacks) << name[1] }
       end
       if applies_to_action?(current, action_name) && !Noir::RailsCallbackChain.conditional?(current)
         Noir::RailsCallbackChain.before_action_callbacks(current).each do |callback|
-          next if skipped_callbacks.includes?(callback) || exits_for?(callback, leaf)
+          next if skipped_callbacks.includes?(callback) || lifted_callbacks.includes?(callback) || exits_for?(callback, leaf)
           authn_desc = stronger(authn_desc, callback_guard(callback, chain)) unless skipped
           authz_desc ||= callback_authz(callback, action_name, chain.try(&.paths) || [] of String)
         end
