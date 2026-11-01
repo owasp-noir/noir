@@ -459,6 +459,24 @@ module Analyzer::Ruby
 
         opens_block = opens_do_block?(line) || opens_keyword_block?(line)
 
+        # `if Rails.env.test?` / `unless Rails.env.production?` blocks and
+        # `get "x" if Rails.env.development?` lines draw nothing in
+        # production. Blocks opened inside still push a frame so their
+        # `end`s balance; an `else` at the top turns the frame back on.
+        if scan.stack.any? { |frame| frame.kind == :non_production }
+          if scan.stack.last.kind == :non_production && line.matches?(/\A(?:else|elsif)\b/)
+            scan.stack[-1] = Frame.new(:neutral)
+          elsif opens_block
+            scan.stack << Frame.new(:neutral)
+          end
+          next
+        end
+        if opens_block && line.matches?(NON_PRODUCTION_BLOCK)
+          scan.stack << Frame.new(:non_production)
+          next
+        end
+        next if line.matches?(NON_PRODUCTION_MODIFIER)
+
         # Outermost: Rails.application.routes.draw do ... end
         if line.starts_with?("Rails.application.routes.draw")
           @disabled_route_verbs.clear # a new mapper
@@ -529,6 +547,14 @@ module Analyzer::Ruby
         end
       end
     end
+
+    # A condition only a non-production Rails env satisfies: `Rails.env.test?`
+    # (`development?`, `local?`, an `||` of them, or one `&&` anything),
+    # `!Rails.env.production?`, or `unless Rails.env.production?`.
+    NON_PRODUCTION_ENV  = /Rails\.env\.(?:test|development|local)\?(?:(?:\s*(?:\|\||\bor\b)\s*Rails\.env\.(?:test|development|local)\?)*|\s*(?:&&|\band\b)(?:(?!\|\||\bor\b).)*)|!\s*Rails\.env\.production\?/
+    NON_PRODUCTION_COND = /(?:if\s+(?:#{NON_PRODUCTION_ENV.source})|unless\s+Rails\.env\.production\?)\s*\z/
+    NON_PRODUCTION_BLOCK    = /\A#{NON_PRODUCTION_COND.source}/
+    NON_PRODUCTION_MODIFIER = /\s#{NON_PRODUCTION_COND.source}/
 
     # Splits a routes.rb line into its leading directive name and the rest of
     # the line: `namespace :admin do` -> {"namespace", ":admin do"} and

@@ -57,7 +57,7 @@ expected_endpoints = [
     Param.new("id", "", "query"),
   ]),
 
-  # Keyword-block guard: route inside `if Rails.env.test?` and the route
+  # Keyword-block guard: route inside `if ENV["DEBUG_ROUTES"]` and the route
   # after the `end` both stay under `/admin`.
   Endpoint.new("/admin/debug/echo", "GET"),
   Endpoint.new("/admin/after_conditional", "GET"),
