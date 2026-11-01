@@ -2622,7 +2622,8 @@ class SpringAuthTagger < FrameworkTagger
   private def anonymous_refusal(ctx : SourceContext) : String?
     return unless (line = ctx.line) && line >= 1
     return unless ctx.path.ends_with?(".java") || ctx.path.ends_with?(".kt")
-    raw = Noir::CComments.strip(ctx.lines[(line - 1), 80].join("\n"))
+    return unless window = ctx.lines[(line - 1), 80]?
+    raw = Noir::CComments.strip(window.join("\n"))
     code = raw.gsub(STRING_LITERAL) { |literal| "#{literal[0]}#{" " * (literal.size - 2)}#{literal[-1]}" }
     return unless open = method_body_open(code)
     head = code[0, open]

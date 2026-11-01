@@ -602,9 +602,9 @@ describe "SpringAuthTagger argument-resolver principal" do
         "#{MARKER_DIR}W.java"            => "class W {\n    private OrderService orderService;\n#{handlers}}\n",
         "#{MARKER_DIR}OrderService.java" => "@Service\npublic class OrderService {\n#{methods}}\n",
       })
-      routes = (0...count).to_h { |i| {"GET /h#{i}", "#{MARKER_DIR}W.java:#{3 + i * 5}"} }
+      perf_routes = (0...count).to_h { |i| {"GET /h#{i}", "#{MARKER_DIR}W.java:#{3 + i * 5}"} }
       started = Time.instant
-      tags = run_spring_markers(files, routes)
+      tags = run_spring_markers(files, perf_routes)
       tags["GET /h#{count - 1}"].size.should eq(1)
       (Time.instant - started).total_seconds
     end
