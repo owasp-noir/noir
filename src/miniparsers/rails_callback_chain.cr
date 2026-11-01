@@ -54,14 +54,15 @@ module Noir
     BLOCK_CALLBACK = /(?<!skip_)before_action\s*\(?\s*(?:->\s*(?:\([^)]*\))?|lambda\s*|proc\s*)?\{(?:\s*\|[^|]*\|)?([^{}]*)\}/
 
     # The methods a `before_action` line runs: its symbol callbacks, or the
-    # one method its block calls. A block body that is anything but a single
-    # call (`-> { a! if b? }`, `-> { x? && y }`) runs nothing unconditionally
-    # and yields none.
+    # one method its block calls. The left operand of `&&` / `||` always
+    # runs (`{ authentication_check(basic_auth_prompt: true) && authorize! }`
+    # runs `authentication_check`); a block under `if` / `unless` (`-> { a!
+    # if b? }`) runs nothing unconditionally and yields none.
     def self.before_action_callbacks(line : String) : Array(String)
       if m = line.match(SYMBOL_CALLBACKS)
         m[1].scan(/:(\w+[!?]?)/).map(&.[1])
-      elsif (m = line.match(BLOCK_CALLBACK)) && (call = m[1].match(/\A\s*([a-z_]\w*[!?]?)(?:[\s(][^;]*)?\z/)) &&
-            !m[1].matches?(/\b(?:if|unless)\b|&&|\|\|/)
+      elsif (m = line.match(BLOCK_CALLBACK)) && !m[1].matches?(/\b(?:if|unless)\b/) &&
+            (call = m[1].split(/&&|\|\|/, 2).first.match(/\A\s*([a-z_]\w*[!?]?)(?:[\s(][^;]*)?\z/))
         [call[1]]
       else
         [] of String
@@ -217,6 +218,12 @@ module Noir
       stack = [] of {Klass, Int32}
       def_indent : Int32? = nil
       macro_body : Array(String)? = nil
+      # A concern's `class_methods do` (or `class << self`) block: the
+      # `def`s in it are class macros, as `def self.x` is.
+      class_methods_indent : Int32? = nil
+      # The `if` / `unless` blocks open around a macro body line, as the
+      # `if:` / `unless:` option the line then carries.
+      macro_conditions = [] of {Int32, String}
       lines.each_with_index do |line, idx|
         stripped = line.strip
         next if stripped.empty? || stripped.starts_with?('#')
@@ -224,9 +231,24 @@ module Noir
         if open_def = def_indent
           if indent <= open_def && stripped == "end"
             def_indent = nil
-          elsif (body = macro_body) && stripped.matches?(CALLBACK_LINE)
-            body << expand_lists(RailsCallbackChain.statement(lines, idx))
+          elsif body = macro_body
+            while (open = macro_conditions.last?) && (indent < open[0] || (indent == open[0] && !stripped.matches?(/\A(?:else|elsif|when)\b/)))
+              macro_conditions.pop
+            end
+            if m = stripped.match(/\A(if|unless|case)\s+(.+)/)
+              macro_conditions << {indent, m[1] == "unless" ? "unless: -> { #{m[2]} }" : "if: -> { #{m[2]} }"}
+            elsif stripped.matches?(CALLBACK_LINE)
+              body << conditional_macro_line(expand_lists(RailsCallbackChain.statement(lines, idx)), macro_conditions.last?.try(&.[1]))
+            end
           end
+          next
+        end
+        if (open_block = class_methods_indent) && indent <= open_block
+          class_methods_indent = nil
+          next if stripped == "end"
+        end
+        if stripped.matches?(/\A(?:class_methods\s+do|class\s*<<\s*self)\b/)
+          class_methods_indent = indent
           next
         end
         while (top = stack.last?) && top[1] >= indent
@@ -244,7 +266,8 @@ module Noir
           (@defs[m[2]] ||= [] of {String, Int32}) << {path, idx}
           def_indent = indent unless stripped.matches?(/\bend$|^def\s+[\w.?!]+(?:\([^)]*\))?\s*=[^=]/)
           macro_body = nil
-          if m[1]? && def_indent
+          macro_conditions.clear
+          if (m[1]? || class_methods_indent) && def_indent
             macro_body = [] of String
             param = stripped.match(/\A[^(]*\(\s*\*{0,2}(\w+)/).try(&.[1])
             (@macros[m[2]] ||= [] of ClassMacro) << ClassMacro.new(path, param.try { |name| /\s*,\s*\*{0,2}#{name}\b/ },
@@ -258,6 +281,18 @@ module Noir
           top[0].callbacks << expand_lists(RailsCallbackChain.statement(lines, idx))
         end
       end
+    end
+
+    # A macro body line that runs on a condition (`skip_before_action :x,
+    # **options if Rails.env.test?`, or under an `if Rails.configuration.x`
+    # block) carries it as the option Rails reads the same way, so a skip
+    # there lifts the callback instead of removing it.
+    private def conditional_macro_line(text : String, block : String?) : String
+      if m = text.match(/\s+(if|unless)\s+(.+)\z/)
+        text = text[0, m.begin(0)]
+        block ||= "#{m[1]}: -> { #{m[2]} }"
+      end
+      block ? "#{text}, #{block}" : text
     end
 
     # A class-body call with no receiver: `requires_login`, `requires_login only: [:x]`.
@@ -390,7 +425,8 @@ module Noir
           elsif !RailsCallbackChain.conditional?(line) && !line.matches?(/(?:\bunless:|:unless\s*=>)/)
             resolution.cancan << line
           end
-        elsif line.starts_with?("skip_")
+        elsif line.starts_with?("skip_before_action")
+          # `skip_authentication only: [...]` is an app macro, read below.
           next unless RailsCallbackChain.applies_to_action?(line, action)
           next unless m = line.match(/^skip_before_action\s+((?::\w+[!?]?\s*,?\s*)+)/)
           # A skip on a condition leaves the callback registered: whether it
