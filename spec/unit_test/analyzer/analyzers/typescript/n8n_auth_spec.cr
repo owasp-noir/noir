@@ -101,6 +101,8 @@ describe "n8n decorator controller auth, options read as code" do
   it "takes only an auth-shaped middleware name as the route's guard" do
     auth_of(endpoints, "GET", "/rest/a/oauth-cb").should be_nil
     auth_of(endpoints, "POST", "/rest/a/own-auth").not_nil!.should contain("getAuthMiddleware")
+    # n8n's app sign-in: a const list holding only a cookie parser.
+    auth_of(endpoints, "GET", "/rest/a/sign-in").should be_nil
   end
 
   it "keeps a literal false and a non-literal value guarded" do

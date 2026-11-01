@@ -9,6 +9,7 @@ const localCommented = {
 const spreadBase = { skipAuth: true };
 const isDev = process.env.DEV === '1';
 const SCOPE = 'user:list';
+const middlewares = [cookieParser()];
 
 @RestController('/a')
 export class AController {
@@ -67,4 +68,7 @@ export class AController {
 
 	@Post('/own-auth', { skipAuth: true, middlewares: [logRequests, getAuthMiddleware()] })
 	own() {}
+
+	@Get('/sign-in', { skipAuth: true, middlewares })
+	signIn() {}
 }

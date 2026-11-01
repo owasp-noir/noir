@@ -122,6 +122,10 @@ module Analyzer::Typescript
         return
       end
       middlewares = entries["middlewares"]?
+      # `const middlewares = [cookieParser()];` handed on by name.
+      if middlewares && middlewares.matches?(IDENTIFIER) && (file = endpoint.details.code_paths.first?.try(&.path))
+        middlewares = const_array(middlewares, file) || middlewares
+      end
       if middlewares && (guard = middleware_guard(middlewares))
         # `skipAuth: true` hands auth to the route's own middleware (SCIM's
         # bearer token).
@@ -216,6 +220,25 @@ module Analyzer::Typescript
           return unless imp[2].starts_with?('.')
           target = Noir::ImportGraph.resolve_relative_import(file, imp[2], boundary: import_boundary_for(file)) || return
           return const_object(declared, target, depth + 1)
+        end
+      end
+      nil
+    rescue
+      nil
+    end
+
+    # The array literal bound to `const name = [...]` in `file`.
+    private def const_array(name : String, file : String) : String?
+      content = Noir::JSRouteExtractor.strip_js_comments(read_file_content(file))
+      m = content.match(/\b(?:const|let|var)\s+#{Regex.escape(name)}\b[^=;]*=\s*\[/) || return
+      rest = content[(m.end(0) - 1)..]
+      depth = 0
+      rest.each_char_with_index do |char, idx|
+        case char
+        when '[' then depth += 1
+        when ']'
+          depth -= 1
+          return rest[0..idx] if depth == 0
         end
       end
       nil
