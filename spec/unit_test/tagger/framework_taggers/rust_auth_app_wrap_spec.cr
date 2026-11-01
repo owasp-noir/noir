@@ -66,6 +66,7 @@ APP_WRAP_MIDDLEWARE = <<-RUST
   RUST
 
 APP_WRAP_SERVER = <<-RUST
+  fn index() {} fn healthz() {} fn readyz() {} fn readyz_x() {} fn collections() {} fn collection() {} fn metrics() {}
   fn config(cfg: &mut web::ServiceConfig) {
       cfg.service(healthz).service(readyz).service(readyz_x).service(collections).service(collection);
   }
@@ -85,6 +86,30 @@ APP_WRAP_SERVER = <<-RUST
   }
   RUST
 
+# Builds a crate from `files`, tags `{url => {handler fn file, line}}` and returns `{url => tag names}`.
+private def module_tags(files : Hash(String, String), routes : Hash(String, Tuple(String, Int32))) : Hash(String, Array(String))
+  CodeLocator.instance.clear_all
+  tmpdir = File.tempname("actix_app_modules")
+  files["Cargo.toml"] = "[package]\nname = \"t\"\n"
+  files.each do |rel, src|
+    path = File.join(tmpdir, rel)
+    Dir.mkdir_p(File.dirname(path))
+    File.write(path, src)
+    CodeLocator.instance.register_path(path)
+  end
+  noir_options = create_test_options
+  noir_options["base"] = YAML::Any.new(tmpdir)
+  endpoints = routes.map do |url, (rel, line)|
+    file = File.join(tmpdir, rel)
+    endpoint = Endpoint.new(url, "GET", [] of Param, Details.new(PathInfo.new(file, line)).tap(&.technology=("rust_actix_web")))
+    endpoint.handler = Handler.new("index", file, line)
+    endpoint
+  end
+  RustAuthTagger.new(noir_options).perform(endpoints)
+  FileUtils.rm_rf(tmpdir)
+  endpoints.to_h { |endpoint| {endpoint.url, endpoint.tags.map(&.name)} }
+end
+
 describe "RustAuthTagger app-wide actix .wrap" do
   it "guards the App's routes but the middleware's own whitelist, and says a setting can open it" do
     guards = actix_guards({"src/main.rs" => APP_WRAP_SERVER, "src/auth.rs" => APP_WRAP_MIDDLEWARE})
@@ -96,7 +121,7 @@ describe "RustAuthTagger app-wide actix .wrap" do
   it "points the guard at the .wrap line" do
     tag = actix_tagged({"src/main.rs" => APP_WRAP_SERVER, "src/auth.rs" => APP_WRAP_MIDDLEWARE}).first.tags.first
     tag.path.try(&.ends_with?("src/main.rs")).should be_true
-    tag.line.should eq 10
+    tag.line.should eq 11
   end
 
   it "does not guard a route the App does not register, even in the same crate" do
@@ -149,47 +174,69 @@ describe "RustAuthTagger app-wide actix .wrap" do
     actix_guards({"src/main.rs" => APP_WRAP_SERVER, "src/auth.rs" => logger}).should be_empty
   end
 
-  it "reads a method test by what its branch does: a pass-through exempts the verb, a refusal limits to it" do
-    passes = ->(verb : String) { APP_WRAP_MIDDLEWARE.gsub("if bad_token(&req) {", "if req.method() == Method::#{verb} {\n return Box::pin(self.service.call(req));\n }\n if bad_token(&req) {") }
-    actix_guards({"src/main.rs" => APP_WRAP_SERVER, "src/auth.rs" => passes.call("GET")}, "GET").should be_empty
-    actix_guards({"src/main.rs" => APP_WRAP_SERVER, "src/auth.rs" => passes.call("GET")}, "POST").keys.sort!.should eq ["/collections", "/collections/{name}"]
-    # A CORS preflight skip leaves GET and POST guarded.
-    actix_guards({"src/main.rs" => APP_WRAP_SERVER, "src/auth.rs" => passes.call("OPTIONS")}, "GET").keys.sort!.should eq ["/collections", "/collections/{name}"]
-    actix_guards({"src/main.rs" => APP_WRAP_SERVER, "src/auth.rs" => passes.call("OPTIONS")}, "OPTIONS").should be_empty
-
-    only_post = APP_WRAP_MIDDLEWARE.gsub("if bad_token(&req)", "if req.method() == Method::POST && bad_token(&req)")
-    actix_guards({"src/main.rs" => APP_WRAP_SERVER, "src/auth.rs" => only_post}, "GET").should be_empty
-    actix_guards({"src/main.rs" => APP_WRAP_SERVER, "src/auth.rs" => only_post}, "POST").should_not be_empty
+  it "never opens a route because of a method test: every verb stays guarded, the description says so" do
+    all_verbs = ["/collections", "/collections/{name}"]
+    note = "may exempt some HTTP methods"
+    variants = {
+      "pass-through GET"   => APP_WRAP_MIDDLEWARE.gsub("if bad_token(&req) {", "if req.method() == Method::GET {\n return Box::pin(self.service.call(req));\n }\n if bad_token(&req) {"),
+      "OPTIONS preflight"  => APP_WRAP_MIDDLEWARE.gsub("if bad_token(&req) {", "if req.method() == Method::OPTIONS {\n return Box::pin(self.service.call(req));\n }\n if bad_token(&req) {"),
+      "!= GET refusal"     => APP_WRAP_MIDDLEWARE.gsub("if bad_token(&req)", "if req.method() != Method::GET && bad_token(&req)"),
+      "== GET and a path"  => APP_WRAP_MIDDLEWARE.gsub("if bad_token(&req)", "if req.method() == Method::GET && req.path() == \"/health\" && bad_token(&req)"),
+      "negated method"     => APP_WRAP_MIDDLEWARE.gsub("if bad_token(&req)", "if !(req.method() == Method::GET) && bad_token(&req)"),
+      "bound read-only"    => APP_WRAP_MIDDLEWARE.gsub("if bad_token(&req) {", "let read_only = req.method() == Method::GET;\n if !read_only && bad_token(&req) {"),
+      "matches! on method" => APP_WRAP_MIDDLEWARE.gsub("if bad_token(&req)", "if !matches!(req.method(), &Method::GET | &Method::HEAD) && bad_token(&req)"),
+    }
+    variants.each do |label, middleware|
+      ["GET", "POST", "OPTIONS"].each do |verb|
+        guards = actix_guards({"src/main.rs" => APP_WRAP_SERVER, "src/auth.rs" => middleware}, verb)
+        guards.keys.sort!.should eq(all_verbs), "#{label} #{verb}"
+        guards["/collections"].should contain(note)
+      end
+    end
+    plain = actix_guards({"src/main.rs" => APP_WRAP_SERVER, "src/auth.rs" => APP_WRAP_MIDDLEWARE})
+    plain["/collections"].should_not contain("HTTP methods")
   end
 
-  it "keeps same-named handlers of different modules apart" do
-    CodeLocator.instance.clear_all
-    tmpdir = File.tempname("actix_app_modules")
-    files = {
-      "Cargo.toml"    => "[package]\nname = \"t\"\n",
+  it "keeps same-named handlers of different files apart" do
+    tags = module_tags({
       "src/main.rs"   => "mod admin;\nmod public;\nfn serve() {\n    App::new().wrap(AuthTransform::new(keys)).service(admin::index)\n}\nfn open() {\n    App::new().service(public::index)\n}\n",
       "src/admin.rs"  => "pub fn index() {}\n",
       "src/public.rs" => "pub fn index() {}\n",
       "src/auth.rs"   => APP_WRAP_MIDDLEWARE,
-    }
-    files.each do |rel, src|
-      path = File.join(tmpdir, rel)
-      Dir.mkdir_p(File.dirname(path))
-      File.write(path, src)
-      CodeLocator.instance.register_path(path)
-    end
-    noir_options = create_test_options
-    noir_options["base"] = YAML::Any.new(tmpdir)
-    endpoints = {"/admin" => "src/admin.rs", "/" => "src/public.rs"}.map do |url, rel|
-      file = File.join(tmpdir, rel)
-      endpoint = Endpoint.new(url, "GET", [] of Param, Details.new(PathInfo.new(file, 1)).tap(&.technology=("rust_actix_web")))
-      endpoint.handler = Handler.new("index", file, 1)
-      endpoint
-    end
-    RustAuthTagger.new(noir_options).perform(endpoints)
-    FileUtils.rm_rf(tmpdir)
-    endpoints.find! { |e| e.url == "/admin" }.tags.map(&.name).should eq ["auth"]
-    endpoints.find! { |e| e.url == "/" }.tags.should be_empty
+    }, {"/admin" => {"src/admin.rs", 1}, "/" => {"src/public.rs", 1}})
+    tags["/admin"].should eq ["auth"]
+    tags["/"].should be_empty
+  end
+
+  it "keeps same-named handlers of inline modules of one file apart" do
+    tags = module_tags({
+      "src/main.rs" => "mod admin { pub fn index() {} }\nmod public { pub fn index() {} }\nfn serve() {\n    App::new().wrap(AuthTransform::new(keys)).service(admin::index)\n}\nfn open() {\n    App::new().service(public::index)\n}\n",
+      "src/auth.rs" => APP_WRAP_MIDDLEWARE,
+    }, {"/admin" => {"src/main.rs", 1}, "/" => {"src/main.rs", 2}})
+    tags["/admin"].should eq ["auth"]
+    tags["/"].should be_empty
+  end
+
+  it "resolves a bare name through the file's use items, glob imports included" do
+    tags = module_tags({
+      "src/main.rs"       => "mod admin;\nmod public;\nmod admin_srv;\nmod public_srv;\n",
+      "src/admin.rs"      => "pub fn index() {}\n",
+      "src/public.rs"     => "pub fn index() {}\n",
+      "src/admin_srv.rs"  => "use crate::admin::*;\npub fn run() { App::new().wrap(AuthTransform::new(keys)).service(index); }\n",
+      "src/public_srv.rs" => "use crate::public::*;\npub fn run() { App::new().service(index); }\n",
+      "src/auth.rs"       => APP_WRAP_MIDDLEWARE,
+    }, {"/admin" => {"src/admin.rs", 1}, "/" => {"src/public.rs", 1}})
+    tags["/admin"].should eq ["auth"]
+    tags["/"].should be_empty
+  end
+
+  it "does not lend a guard or a note to a same-named fn when the registered name stays ambiguous" do
+    tags = module_tags({
+      "src/main.rs"   => "mod auth;\nmod public;\nmacro_rules! handler { ($n:ident) => { async fn $n() {} } }\nhandler!(index);\nfn serve() {\n    App::new().wrap(AuthTransform::new(keys)).route(\"/admin\", web::get().to(index));\n}\nfn open() {\n    App::new().configure(public::routes!());\n}\n",
+      "src/public.rs" => "pub fn index() {}\n",
+      "src/auth.rs"   => APP_WRAP_MIDDLEWARE,
+    }, {"/admin" => {"src/main.rs", 4}, "/public" => {"src/public.rs", 1}})
+    tags["/public"].should be_empty
   end
 
   it "sees a unit-struct wrap, and ignores a refusal that only remaps the inner service's error" do
@@ -198,13 +245,6 @@ describe "RustAuthTagger app-wide actix .wrap" do
 
     remap = APP_WRAP_MIDDLEWARE[0, APP_WRAP_MIDDLEWARE.index!("impl Service")] + "impl Service<ServiceRequest> for AuthMiddleware {\n    fn call(&self, req: ServiceRequest) -> Self::Future {\n        let token = read_token(&req);\n        let fut = self.service.call(req);\n        Box::pin(async move { match fut.await { Ok(r) => Ok(r), Err(e) => Err(ErrorUnauthorized(e)) } })\n    }\n}\n"
     actix_guards({"src/main.rs" => APP_WRAP_SERVER, "src/auth.rs" => remap}).should be_empty
-  end
-
-  it "treats a method-conditional refusal as limited to the other verbs" do
-    conditional = APP_WRAP_MIDDLEWARE.gsub("if bad_token(&req)", "if req.method() != Method::GET && bad_token(&req)")
-    files = {"src/main.rs" => APP_WRAP_SERVER, "src/auth.rs" => conditional}
-    actix_guards(files.dup, "GET").should be_empty
-    actix_guards(files.dup, "POST").keys.sort!.should eq ["/collections", "/collections/{name}"]
   end
 
   it "does not guard on a wrap that is not an auth type, or only says 'Auth' in a string" do

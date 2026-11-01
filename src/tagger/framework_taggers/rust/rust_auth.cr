@@ -16,8 +16,15 @@ class RustAuthTagger < FrameworkTagger
     getter body_text : String
     # Leaf types of the parameters that must extract for the fn to run.
     getter required_params : Array(String)
+    # 1-based line of the `fn`.
+    getter line : Int32
 
-    def initialize(@file_path : String, @name : String, @module_path : Array(String), @body_text : String, @required_params : Array(String))
+    def initialize(@file_path : String, @name : String, @module_path : Array(String), @body_text : String, @required_params : Array(String), @line : Int32 = 0)
+    end
+
+    # Which fn this is, across files, modules and inline `mod`s.
+    def identity : String
+      "#{@file_path}\0#{@module_path.join("::")}\0#{@name}"
     end
 
     def full_path : String
@@ -243,7 +250,7 @@ class RustAuthTagger < FrameworkTagger
           body_text = body_node ? Noir::TreeSitter.node_text(body_node, source) : ""
           full_mod = file_mod_parts + inline_mod_stack
 
-          entry = RustFnEntry.new(file_path, fn_name, full_mod, body_text, required_param_types(child, body_text, source))
+          entry = RustFnEntry.new(file_path, fn_name, full_mod, body_text, required_param_types(child, body_text, source), Noir::TreeSitter.node_start_row(child) + 1)
           register_function(entry)
         end
       else
@@ -770,14 +777,14 @@ class RustAuthTagger < FrameworkTagger
   CALL_FN        = /\bfn\s+call\b[^{;]*\{/
   # The inner service's answer bound to a name (`let res = fut.await?;`,
   # `let res = self.service.call(req).await;`).
-  AWAITED_LET = /\blet\s+(?:mut\s+)?\w+\s*(?::[^=;]+)?=\s*(?:fut|future|(?:self\.)?service\.call\([^;]*?\)|next\.run\([^;]*?\))\s*\.await\s*\??\s*;|\b(?:match|if\s+let\s+[^=]+=)\s*(?:fut|future|(?:self\.)?service\.call\([^;{]*?\)|next\.run\([^;{]*?\))\s*\.await\s*\??\s*\{/
-  METHOD_TEST = /\bmethod\s*\(\s*\)\s*(!=|==)\s*(?:\w+::)*(\w+)/
+  AWAITED_LET    = /\blet\s+(?:mut\s+)?\w+\s*(?::[^=;]+)?=\s*(?:fut|future|(?:self\.)?service\.call\([^;]*?\)|next\.run\([^;]*?\))\s*\.await\s*\??\s*;|\b(?:match|if\s+let\s+[^=]+=)\s*(?:fut|future|(?:self\.)?service\.call\([^;{]*?\)|next\.run\([^;{]*?\))\s*\.await\s*\??\s*\{/
+  METHOD_MENTION = /\bmethod\b|\bMethod::/
   # What a refusing middleware reads from the request to decide.
   CALL_CREDENTIAL = /authoriz|bearer|jwt|token|api[-_]?key|claims|session|login|credential|valid|auth_keys|\bauth\b/i
 
   # What an auth middleware's own `call` does: the verbs it refuses only some
   # of (`if req.method() != Method::GET && !has_token`).
-  record AuthVerdict, only_methods : Array(String), except_methods : Array(String)
+  record AuthVerdict, method_tests : Bool
 
   # One `App::new()...` chain: the handlers it registers (nil when they could
   # not be read, then every handler of its crates), the auth middleware it
@@ -796,11 +803,15 @@ class RustAuthTagger < FrameworkTagger
     def initialize(@handlers, @crates, @file, @line, @auth, @verdict, @conditional, @exempt, @whitelist_unread)
     end
 
-    # `key` is the handler's `file\0name`; a registration the scan could not
-    # resolve to a fn is keyed `\0name` and matches any file.
-    def serves?(key : String, name : String, crate : String?) : Bool
-      return false unless crate && @crates.includes?(crate)
-      (names = @handlers).nil? || names.includes?(key) || names.includes?("\0#{name}")
+    # How the chain registers a handler: `:exact` by its fn identity, `:named`
+    # when the registration could not be resolved to a fn and only its name in
+    # that file is known, nil when it does not register it. A chain whose
+    # routes could not be read at all serves every handler of its crates.
+    def serves(identity : String, named : String, crate : String?) : Symbol?
+      return unless crate && @crates.includes?(crate)
+      names = @handlers || return :exact
+      return :exact if names.includes?(identity)
+      :named if names.includes?(named)
     end
 
     # Whether the middleware refuses this request: not on a path or verb it
@@ -808,10 +819,6 @@ class RustAuthTagger < FrameworkTagger
     def guards?(url : String, method : String) : Bool
       return false unless @auth
       return false if @exempt.any? { |(path, by_prefix)| by_prefix ? url.starts_with?(path) : url == path }
-      if verdict = @verdict
-        return false if verdict.except_methods.includes?(method)
-        return false unless verdict.only_methods.empty? || verdict.only_methods.includes?(method)
-      end
       true
     end
   end
@@ -908,11 +915,32 @@ class RustAuthTagger < FrameworkTagger
     end
   end
 
-  # A registered handler is the fn its path resolves to (`admin::index` is not
-  # `public::index`); one the scan cannot resolve is known by name only.
+  # A registered handler is the fn it resolves to: a path through `lookup_function`;
+  # a bare name through the file's own module, then its `use` items, then its
+  # glob imports. A name none of them settles is known only by name and file
+  # (`~file\0name`): it may be macro-generated, and it must not lend its
+  # guard to a same-named fn elsewhere.
   private def add_handler(ref : String, file : String, handlers : Set(String))
-    entry = lookup_function(ref, file)
-    handlers << (entry ? "#{entry.file_path}\0#{entry.name}" : "\0#{ref.split("::").last}")
+    entry = resolve_registered_fn(ref, file)
+    handlers << (entry ? entry.identity : "~#{file}\0#{ref.split("::").last}")
+  end
+
+  private def resolve_registered_fn(ref : String, file : String) : RustFnEntry?
+    return lookup_function(ref, file) if ref.includes?("::")
+    ensure_fn_indexed(file)
+    top = file_module_parts(file)
+    if same = @fn_index[ref]?.try(&.find { |e| e.file_path == file && e.module_path == top })
+      return same
+    end
+    imports = file_imports_for(file)
+    if full = imports.names[ref]?
+      return lookup_function(full, file)
+    end
+    imports.globs.each do |glob|
+      found = lookup_function("#{glob}::#{ref}", file)
+      return found if found && found.name == ref
+    end
+    nil
   end
 
   # Byte offset of the `wrap` in `chain.wrap(..)`, so a multi-line chain
@@ -1015,7 +1043,7 @@ class RustAuthTagger < FrameworkTagger
 
   private def judge_auth_type(type : String) : Tuple(AuthVerdict)?
     structs, impls = rust_type_index
-    return {AuthVerdict.new([] of String, [] of String)} unless structs.includes?(type) || impls.has_key?(type)
+    return {AuthVerdict.new(false)} unless structs.includes?(type) || impls.has_key?(type)
 
     blocks = (impls[type]? || [] of String).dup
     blocks.dup.each do |block|
@@ -1037,19 +1065,9 @@ class RustAuthTagger < FrameworkTagger
     # (`let res = fut.await; if res.status() == ..`) refuses no caller.
     code = body.match(AWAITED_LET).try { |awaited| body[0, awaited.begin] } || body
     return unless code.gsub(COMPARED, "").matches?(MIDDLEWARE_REFUSAL) && code.matches?(CALL_CREDENTIAL)
-    only = [] of String
-    except = [] of String
-    # What a `method() == X` / `!= X` test means depends on its branch: one that
-    # refuses is the verbs the refusal applies to (`!=`: all but X, so X is
-    # exempt); one that hands the request on exempts (`==`) or limits (`!=`).
-    code.scan(METHOD_TEST) do |m|
-      verb = m[2].upcase
-      open = code.byte_index('{', m.byte_end(0))
-      close = open ? matching_brace(code, open) : nil
-      refuses = open && close ? code.byte_slice(open, close - open + 1).gsub(COMPARED, "").matches?(MIDDLEWARE_REFUSAL) : true
-      ((m[1] == "!=") == refuses ? except : only) << verb
-    end
-    AuthVerdict.new(only.uniq!, except.uniq!)
+    # A method test may exempt some verbs; which, and whether, is not read:
+    # no route becomes open because of one, the description says so.
+    AuthVerdict.new(code.matches?(METHOD_MENTION))
   end
 
   # Paths the wrapped middleware lets through: the `exact("/x")` / `prefix("/x")`
@@ -1081,24 +1099,48 @@ class RustAuthTagger < FrameworkTagger
     path = handler.path || return
     name = handler.name.split(/::|\./).last
     crate = nearest_project_root(path, CARGO_TOML)
-    key = "#{path}\0#{name}"
-    serving = @app_chains.select(&.serves?(key, name, crate))
-    guarded = serving.find(&.guards?(endpoint.url, endpoint.method))
+    identity = endpoint_fn_identity(path, name, handler.line) || "?#{path}\0#{name}"
+    named = "~#{path}\0#{name}"
+    exact = [] of AppChain
+    ambiguous = [] of AppChain
+    @app_chains.each do |chain|
+      case chain.serves(identity, named, crate)
+      when :exact then exact << chain
+      when :named then ambiguous << chain
+      end
+    end
+    guarded = exact.find(&.guards?(endpoint.url, endpoint.method))
+    from_name = false
+    if guarded.nil?
+      guarded = ambiguous.find(&.guards?(endpoint.url, endpoint.method))
+      from_name = !guarded.nil?
+    end
     return unless guarded
     notes = [] of String
     notes << "registered only when auth keys are configured; unauthenticated when none are" if guarded.conditional?
     notes << "its whitelisted paths could not be read" if guarded.whitelist_unread?
     notes << "the App's routes could not be resolved; applies to its whole crate" if guarded.handlers.nil?
-    others = serving.reject(&.guards?(endpoint.url, endpoint.method))
+    notes << "handler name ambiguous: registered there by name only" if from_name
+    notes << "the middleware may exempt some HTTP methods (e.g. GET/OPTIONS)" if guarded.verdict.try(&.method_tests)
     # Served by an App without the wrap too (qdrant's metrics port): that is
     # open attack surface, so it is no guard; only a note says the main App
-    # wraps it.
+    # wraps it. Only an App that registers this very fn counts.
+    others = from_name ? [] of AppChain : exact.reject(&.guards?(endpoint.url, endpoint.method))
     unless others.empty?
       where = "#{base_relative_path(others.first.file).lchop('/')}:#{others.first.line}"
       return Tag.new("auth_partial", "Wrapped by Rust #{guarded.auth} middleware on one App, but also served without it by another App (#{where})", "rust_app_scope", guarded.file, guarded.line)
     end
-    notes << "refuses only some verbs" if (v = guarded.verdict) && (!v.only_methods.empty? || !v.except_methods.empty?)
     Tag.new("auth", "Protected by Rust #{guarded.auth} middleware on its App" + (notes.empty? ? "" : " (#{notes.join("; ")})"), "rust_auth", guarded.file, guarded.line)
+  end
+
+  # The fn an endpoint's handler is: the one of that name in its file nearest
+  # the handler's line.
+  private def endpoint_fn_identity(path : String, name : String, line : Int32?) : String?
+    ensure_fn_indexed(path)
+    candidates = (@fn_index[name]? || [] of RustFnEntry).select { |entry| entry.file_path == path }
+    return if candidates.empty?
+    return candidates.first.identity if candidates.size == 1 || line.nil?
+    candidates.min_by { |entry| (entry.line - line).abs }.identity
   end
 
   private def find_scope_for_line(lines : Array(String), line_idx : Int32, current_scope : String?) : String?
