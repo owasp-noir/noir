@@ -32,6 +32,9 @@ class SpringAuthTagger < FrameworkTagger
     module_dir : String?
 
   alias PathTest = NamedTuple(path: String, exact: Bool)
+  alias ShiroEntry = NamedTuple(pattern: String, value: String, path: String, line: Int32)
+  alias ShiroChain = NamedTuple(module: String?, entries: Array(ShiroEntry))
+  alias CodeIndex = NamedTuple(code: String, masked: String, methods: Hash(String, Array({String, Int32})))
 
   # A servlet filter class (`OncePerRequestFilter`, `GenericFilterBean`,
   # `Filter`). `refusal` ("401", "403", an exception name) is nil when its
@@ -74,7 +77,7 @@ class SpringAuthTagger < FrameworkTagger
 
   # The same authorization annotations, as the bare names they are matched by
   # when they decorate the controller *class* instead of a single handler.
-  CLASS_ANNOTATION_NAMES = ["@PreAuthorize", "@PostAuthorize", "@Secured", "@RolesAllowed"]
+  CLASS_ANNOTATION_NAMES = ["@PreAuthorize", "@PostAuthorize", "@Secured", "@RolesAllowed", "@RequiresAuthentication", "@RequiresUser", "@RequiresPermissions", "@RequiresRoles", "@RequiresGuest"]
 
   # What a `preHandle` that turns the caller away does: a 401/403 status or
   # an auth exception. `return false` alone is not read: a rate limiter or
@@ -165,6 +168,18 @@ class SpringAuthTagger < FrameworkTagger
     @security_enabled = Set(String?).new
     @unread_configs = [] of UnreadConfig
     @security_meta_annotations = Hash(String, MetaAnnotation).new
+    @annotation_aliases = Hash(String, Set(String)).new
+    @method_readers = Hash(String, {Set(String), Bool}).new
+    @permit_markers = Hash(String, Set(String)).new
+    @permit_marker_names = Set(String).new
+    @principal_resolvers = [] of {String, String, String}
+    @resolver_registrations = Set({String?, String}).new
+    @principal_param_re = nil.as(Regex?)
+    @shiro_chains = [] of ShiroChain
+    @stripped_lines = Hash(String, Array(String)).new
+    @field_types = Hash(String, Hash(String, String)).new
+    @type_files = Hash({String, String}, String?).new
+    @code_index = Hash(String, CodeIndex?).new
     @interceptor_defs = Hash(String, InterceptorDef).new
     @registered_interceptors = [] of RegisteredInterceptor
     # Filter state is per build unit: classes of one simple name may live in two apps.
@@ -195,6 +210,17 @@ class SpringAuthTagger < FrameworkTagger
     @unread_configs.clear
     @boot_apps.clear
     @security_meta_annotations.clear
+    @annotation_aliases.clear
+    @method_readers.clear
+    @permit_markers.clear
+    @permit_marker_names.clear
+    @principal_resolvers.clear
+    @resolver_registrations.clear
+    @shiro_chains.clear
+    @stripped_lines.clear
+    @field_types.clear
+    @type_files.clear
+    @code_index.clear
     @interceptor_defs.clear
     @registered_interceptors.clear
     @servlet_filters.clear
@@ -220,6 +246,9 @@ class SpringAuthTagger < FrameworkTagger
           scan_meta_annotations(content, file, module_dir)
         end
 
+        scan_annotation_readers(content, file, module_dir) if (content.includes?("Annotation") || content.includes?("addArgumentResolvers")) && !test_source?(file)
+        scan_shiro_chain(content, module_dir, file) if content.includes?("ShiroFilterFactoryBean") && !test_source?(file)
+
         if content.includes?("HandlerInterceptor") || content.includes?("HandlerInterceptorAdapter")
           scan_interceptor_def(content, file, module_dir)
         end
@@ -244,6 +273,8 @@ class SpringAuthTagger < FrameworkTagger
         scan_security_config(content, file.ends_with?(".java"), module_dir, file)
       end
     end
+
+    resolve_permit_markers
 
     collect_files_by_extension(".xml").each do |file|
       next if test_source?(file)
@@ -285,6 +316,8 @@ class SpringAuthTagger < FrameworkTagger
       annotations_text << line
 
       full_block = annotations_text.join("\n")
+      applied = full_block.scan(/(?:\A|[^@\w$.])@([A-Z][\w$]*)/).map(&.[1]).reject!(&.==(name))
+      @annotation_aliases[name] = applied.to_set unless applied.empty?
       if match = full_block.match(/@(PreAuthorize|PostAuthorize|Secured|RolesAllowed)\s*\(/)
         @security_meta_annotations[name] = MetaAnnotation.new(name, "@#{match[1]}")
       elsif @security_meta_annotations.present?
@@ -1426,6 +1459,13 @@ class SpringAuthTagger < FrameworkTagger
       rule_line = block_start_line + block[0, match.begin(1)].count('\n')
       patterns = matcher_patterns(args, strings, arrays, loops: in_scope, config_keys: config_keys, java_source: java_source, builders: builders).uniq
       unread_matcher ||= patterns.empty? && config_keys.empty?
+      if patterns.empty? && config_keys.empty? && !protected_rule && java_source
+        # A matcher fed by a method that collects URLs from annotated
+        # handlers: a rule keyed to that method, resolved per endpoint.
+        permit_source_methods(args, block, java_source).each do |key|
+          rules << {pattern: "", method: matcher_method, description: auth_type, protected_rule: false, module: module_dir, config_key: key, path: file_path, line: rule_line}
+        end
+      end
       patterns.each do |url_pattern|
         description =
           if protected_rule
@@ -1721,17 +1761,17 @@ class SpringAuthTagger < FrameworkTagger
   # `serving_apps`): only the chains on that app's classpath apply, and a
   # configuration-bound list is read from that app's configuration. The
   # endpoint is guarded when any app (or any module serving it) guards it.
-  private def check_security_config_rules(endpoint : Endpoint) : Tuple(String, String?, Int32?)?
+  private def check_security_config_rules(endpoint : Endpoint, marker : String? = nil) : Tuple(String, String?, Int32?)?
     serving : String? = nil
     decision = per_serving_classpath(endpoint, false) do |classpath, app|
-      security_decision(endpoint, app, classpath).tap { |found| serving = app if found }
+      security_decision(endpoint, app, classpath, marker).tap { |found| serving = app if found }
     end
     return unless decision
     # A Boot app that bundles other modules (an assembly) is not what runs
     # the module on its own: when the module's own app declares no chain,
     # the guard holds only inside the bundling app.
     own = endpoint_modules(endpoint).first?
-    if (app = serving) && own && own != app && @boot_apps.includes?(own) && module_classpath(own) && security_decision(endpoint, own, module_classpath(own).try(&.[0])).nil?
+    if (app = serving) && own && own != app && @boot_apps.includes?(own) && module_classpath(own) && security_decision(endpoint, own, module_classpath(own).try(&.[0]), marker).nil?
       decision = {"#{decision[0]}; #{File.basename(own)} run on its own has no such chain, only #{File.basename(app)}, which bundles it", decision[1], decision[2]}
     end
     decision
@@ -1739,7 +1779,7 @@ class SpringAuthTagger < FrameworkTagger
 
   # `config_dir` holds the configuration lists are read from; `classpath`
   # (nil: unknown, every chain applies) the modules whose chains apply.
-  private def security_decision(endpoint : Endpoint, config_dir : String?, classpath : Set(String)?) : Tuple(String, String?, Int32?)?
+  private def security_decision(endpoint : Endpoint, config_dir : String?, classpath : Set(String)?, marker : String? = nil) : Tuple(String, String?, Int32?)?
     url = endpoint.url
     applies = ->(owner : String?) { owner.nil? || classpath.nil? || classpath.includes?(owner) }
     # A security configuration or switch outside any build unit (an example
@@ -1763,9 +1803,23 @@ class SpringAuthTagger < FrameworkTagger
         @security_rules.select { |rule| applies.call(rule[:module]) }
       end
 
+    # Shiro takes the first matching entry of its chain map.
+    @shiro_chains.each do |shiro|
+      next unless applies.call(shiro[:module])
+      next unless entry = shiro[:entries].find { |candidate| matches_ant_pattern?(url, candidate[:pattern]) }
+      rules = rules + [shiro_rule(entry, shiro[:module])]
+    end
+
     unresolved = [] of String
     rules = rules.flat_map do |rule|
       next [rule] unless key = rule[:config_key]
+      if key.starts_with?(MARKER_KEY)
+        # The permitAll matcher is built from the handlers carrying an
+        # annotation: it admits this one (for the verbs it names). Its place
+        # in the chain's rule order is kept, so an earlier catch-all wins ties.
+        next [] of SecurityRule unless marker && @permit_markers[key]?.try(&.includes?(marker))
+        next [{pattern: "/**", method: rule[:method], description: "Public by Spring Security permitAll via @#{marker} (handlers carrying it are collected into the permitAll matcher)", protected_rule: false, module: rule[:module], config_key: nil, path: rule[:path], line: rule[:line]}]
+      end
       values, note = config_dir ? module_config_list(config_dir, key) : {nil, nil}
       unless values
         unresolved << (note || key) unless rule[:protected_rule]
@@ -1961,7 +2015,7 @@ class SpringAuthTagger < FrameworkTagger
 
     # Walk backwards from endpoint line to find annotations
     # `line` is 1-indexed (from PathInfo), array is 0-indexed
-    lines = ctx.lines
+    lines = (@stripped_lines[ctx.path] ||= Noir::CComments.strip(ctx.full_content).lines)
     endpoint_idx = line - 1
     found = [] of SecurityAnnotation
 
@@ -1991,6 +2045,10 @@ class SpringAuthTagger < FrameworkTagger
       if item = line_security_annotation(code_line(below), post_ok, metas, false)
         found << item
       end
+    end
+
+    if (route = lines[endpoint_idx]?) && (item = permit_marker_annotation(code_line(route)))
+      found << item
     end
 
     if picked = pick_security_annotation(found)
@@ -2032,18 +2090,29 @@ class SpringAuthTagger < FrameworkTagger
   # `@Secured("IS_AUTHENTICATED_ANONYMOUSLY")`). A restricting annotation on
   # the same member wins. An argument we cannot read stays a guard.
   private def line_security_annotation(line : String, post_ok : Bool, metas : Array(MetaAnnotation), on_class : Bool) : SecurityAnnotation?
-    if match = line.match(/@((?:[\w$]+\.)*?(PreAuthorize|PostAuthorize|Secured|RolesAllowed))\b/)
+    if match = line.match(/@((?:[\w$]+\.)*?(PreAuthorize|PostAuthorize|Secured|RolesAllowed|RequiresAuthentication|RequiresUser|RequiresPermissions|RequiresRoles|RequiresGuest))\b/)
       simple = match[2]
       return if simple == "PostAuthorize" && !post_ok
       suffix = on_class ? " on the controller class" : ""
       admits = annotation_admits_anonymous?(simple, annotation_argument(line, simple))
-      return {public_access: admits, description: "Protected by Spring @#{match[1]}#{suffix}"}
+      framework = simple.starts_with?("Requires") ? "Shiro" : "Spring"
+      return {public_access: admits, description: "Protected by #{framework} @#{match[1]}#{suffix}"}
     end
 
     metas.each do |meta|
       next unless line.matches?(/(?:\A|[^@\w])@#{Regex.escape(meta.name)}\b/)
       suffix = on_class ? " on the controller class" : ""
       return {public_access: false, description: "Protected by Spring #{meta.spring_annotation} (@#{meta.name})#{suffix}"}
+    end
+    on_class ? nil : permit_marker_annotation(line)
+  end
+
+  # A handler annotation the permitAll matcher is collected from (the route
+  # annotation itself can be one: `@AnonymousGetMapping`).
+  private def permit_marker_annotation(line : String) : SecurityAnnotation?
+    return if @permit_marker_names.empty?
+    line.gsub(STRING_LITERAL, "\"\"").scan(/(?:\A|[^@\w$.])@([A-Z][\w$]*)\b/) do |found|
+      return {public_access: true, description: "#{PERMIT_MARKER_PREFIX}#{found[1]}"} if @permit_marker_names.includes?(found[1])
     end
     nil
   end
@@ -2070,8 +2139,10 @@ class SpringAuthTagger < FrameworkTagger
 
   private def annotation_admits_anonymous?(name : String, arg : String?) : Bool
     case name
-    when "RolesAllowed"
+    when "RolesAllowed", "RequiresAuthentication", "RequiresUser", "RequiresPermissions", "RequiresRoles"
       false
+    when "RequiresGuest"
+      true
     when "Secured"
       secured_admits_anonymous?(arg)
     else
@@ -2111,12 +2182,14 @@ class SpringAuthTagger < FrameworkTagger
     # not stop the URL-rule and in-handler checks, and it is recorded as
     # anonymous so a name-only source scan does not put the guard back.
     annotation_public = false
+    marker : String? = nil
     contexts = read_source_context(endpoint)
     contexts.each do |ctx|
       decision = check_annotations(ctx, endpoint.method)
       next unless decision
       if decision[:public_access]
         annotation_public = true
+        marker ||= decision[:description].match(PERMIT_MARKER_DESCRIPTION).try(&.[1])
       else
         endpoint.add_tag(Tag.new("auth", decision[:description], "spring_auth"))
         return
@@ -2124,7 +2197,7 @@ class SpringAuthTagger < FrameworkTagger
     end
 
     # Phase 3: Match endpoint URL against security config rules
-    if decision = check_security_config_rules(endpoint)
+    if decision = check_security_config_rules(endpoint, marker)
       description, rule_path, rule_line = decision
       endpoint.add_tag(Tag.new("auth", description, "spring_auth", rule_path, rule_line))
       note_public_annotation(endpoint) if annotation_public
@@ -2199,10 +2272,345 @@ class SpringAuthTagger < FrameworkTagger
     nil
   end
 
+  MARKER_KEY                = "marker:"
+  PERMIT_MARKER_PREFIX      = "Public by permitAll marker @"
+  PERMIT_MARKER_DESCRIPTION = /\A#{PERMIT_MARKER_PREFIX}(\w+)/
+  # Lookups that see meta-annotations (`@AnonymousGetMapping` carrying
+  # `@AnonymousAccess`), against plain reflection that does not.
+  MERGED_ANNOTATION_READ    = /\b(?:getMethodAnnotation|hasMethodAnnotation|findMergedAnnotation|getMergedAnnotation|findAnnotation|hasAnnotation|isAnnotated)\s*\((?:[^()]*?,\s*)?([A-Z][\w$]*)(?:\.class|::class)/
+  PLAIN_ANNOTATION_READ     = /\b(?:isAnnotationPresent|getAnnotation|getDeclaredAnnotation)\s*\((?:[^()]*?,\s*)?([A-Z][\w$]*)(?:\.class|::class)/
+  PARAMETER_ANNOTATION_READ = /(?:hasParameterAnnotation|getParameterAnnotation)\s*\(\s*([A-Z][\w$]*)(?:\.class|::class)/
+  METHOD_DECLARATION        = /\b([a-zA-Z_$][\w$]*)\s*\(((?:[^()]|\([^()]*\))*)\)\s*(?:throws\s+[\w.,\s]+)?\{/
+  NON_METHOD_WORDS          = Set{"if", "for", "while", "switch", "catch", "synchronized", "try", "else", "return", "new"}
+  FIELD_DECLARATION         = /\b([A-Z][\w$]*)(?:<[^<>]*>)?\s+([a-z_$][\w$]*)\s*[;=]/
+  # How much of a method's start is read for its opening refusal.
+  REFUSAL_WINDOW = 600
+
+  private def mask_strings(code : String) : String
+    code.gsub(STRING_LITERAL) { |literal| "#{literal[0]}#{" " * (literal.size - 2)}#{literal[-1]}" }
+  end
+
+  # `path`'s source with comments stripped and string literals blanked,
+  # and its method declarations by name (parameter text, body offset),
+  # built once per file.
+  private def code_index(path : String) : CodeIndex?
+    @code_index.fetch(path) do
+      @code_index[path] = begin
+        if content = read_file(path)
+          code = Noir::CComments.strip(content)
+          masked = mask_strings(code)
+          methods = Hash(String, Array({String, Int32})).new
+          masked.scan(METHOD_DECLARATION) do |match|
+            next if NON_METHOD_WORDS.includes?(match[1])
+            (methods[match[1]] ||= [] of {String, Int32}) << {match[2], match.end(0)}
+          end
+          {code: code, masked: masked, methods: methods}
+        end
+      end
+    end
+  end
+
+  private def type_file(type : String, source : String, path : String) : String?
+    @type_files.fetch({type, path}) do
+      @type_files[{type, path}] = Analyzer::Java::JavaEngine.java_type_file(type, source)
+    end
+  end
+
+  # The method(s) a permitAll matcher argument is built from:
+  # `anonymousUrls.get(..)` where `anonymousUrls = AnonTagUtils.getUrls(ctx)`,
+  # (declared in the chain's own method) or a direct `Utils.urls(..)` call, as marker keys of the file declaring
+  # the class (resolved by import or package, not by bare name).
+  private def permit_source_methods(args : String, block : String, source : String) : Array(String)
+    pairs = [] of {String, String}
+    args.scan(/\b([A-Z][\w$]*)\s*\.\s*([a-z]\w*)\s*\(/) { |match| pairs << {match[1], match[2]} }
+    args.scan(/\b([a-z_$][\w$]*)\s*\./) do |match|
+      block.match(/\b#{Regex.escape(match[1])}\s*=\s*([A-Z][\w$]*)\s*\.\s*([a-z]\w*)\s*\(/).try { |init| pairs << {init[1], init[2]} }
+    end
+    pairs.uniq!.compact_map do |type, method|
+      Analyzer::Java::JavaEngine.java_type_file(type, source).try { |file| "#{MARKER_KEY}#{file}##{method}" }
+    end
+  end
+
+  POSITIVE_TEST     = /\A\s*(?:R\s*!=\s*null|null\s*!=\s*R|R)\s*\z/
+  BOOLEAN_READ_NAME = /\A(?:has|isAnnot)/
+  ADDS_URL          = /\b(?:add|addAll|put|putAll)\s*\(/
+  LEAVES_LOOP       = /\b(?:continue|return)\b/
+
+  # Index of the receiver chain (`e.getValue().`) a call at `at` hangs off.
+  private def receiver_start(text : String, at : Int32) : Int32
+    index = at
+    depth = 0
+    while index > 0
+      char = text[index - 1]
+      if char == ')'
+        depth += 1
+      elsif char == '('
+        break if depth == 0
+        depth -= 1
+      elsif depth == 0 && !(char.alphanumeric? || char == '_' || char == '$' || char == '.')
+        break
+      end
+      index -= 1
+    end
+    index
+  end
+
+  private def paren_close(text : String, open : Int32) : Int32?
+    depth = 0
+    index = open
+    while index < text.size
+      depth += 1 if text[index] == '('
+      if text[index] == ')'
+        depth -= 1
+        return index if depth == 0
+      end
+      index += 1
+    end
+  end
+
+  ADD_CALL      = /\b(?:add|addAll|put|putAll)\s*\(/
+  RECEIVER_CALL = /([\w$]+)\s*\.\s*(add|addAll|put|putAll|remove|removeAll|removeIf|retainAll|clear)\s*\(/
+
+  # The body an `if` (its condition closing at `after_paren`) guards, as a
+  # range of `text`, when it adds a URL, does not leave the loop
+  # (`continue` / `return`) and has no `else` branch.
+  private def adds_in_body(text : String, after_paren : Int32) : Range(Int32, Int32)?
+    rest = text[after_paren + 1..]
+    stripped = rest.lstrip
+    first = after_paren + 1 + (rest.size - stripped.size)
+    if stripped.starts_with?('{')
+      inner = brace_body(stripped, 1)
+      from = first + 1
+    else
+      inner = stripped[0, (stripped.index(';') || stripped.size) + 1]
+      from = first
+    end
+    to = from + inner.size
+    return if !inner.matches?(ADDS_URL) || inner.matches?(LEAVES_LOOP)
+    return if text[to..].lstrip.starts_with?("else")
+    from...to
+  end
+
+  private def only_declared_and_called?(text : String, name : String) : Bool
+    text.scan(/(?<![\w$.])#{Regex.escape(name)}(?![\w$])/) do |use|
+      before = text[0, use.begin(0)].rstrip
+      after = text[use.end(0)..].lstrip
+      next if after.starts_with?('.') || after.starts_with?('(')
+      next if before.matches?(/\breturn\z/) && after.starts_with?(';')
+      next if after.matches?(/\A=(?!=)/) && before.matches?(/[\w$>\]]\z/) && !before.matches?(/\b(?:return|else)\z/)
+      return false
+    end
+    true
+  end
+
+  # The method hands back the one collection (or map) the guarded bodies add
+  # to: every add in them targets it, or a set put into it; nothing else adds
+  # to it, removes from it, or fills a set outside those bodies; no `else`.
+  private def collects_into_returned?(body : String, ranges : Array(Range(Int32, Int32))) : Bool
+    returned = body.scan(/\breturn\s+([\w$]+)\s*;/).map(&.[1]).uniq!
+    return false unless returned.size == 1 && body.scan(/\breturn\b/).size == body.scan(/\breturn\s+[\w$]+\s*;/).size
+    target = returned.first
+    derived = Set{target}
+    body.scan(/\b#{Regex.escape(target)}\s*\.\s*(?:put|putAll)\s*\(([^;]*)\)\s*;/) { |put| put[1].scan(/\b[a-z_$][\w$]*/) { |word| derived << word[0] } }
+    # Only `name.method(..)` uses, its one declaration and the final return:
+    # a reassignment or an alias (`s = urls; s.addAll(all)`) hides what fills it.
+    plain = body.gsub(/\b#{Regex.escape(target)}\s*\.\s*(?:put|putAll)\s*\([^;]*\)\s*;/, " ")
+    return false unless derived.all? { |name| only_declared_and_called?(plain, name) }
+    blanked = body.dup
+    ranges.each do |range|
+      inside = body[range]
+      receivers = inside.scan(RECEIVER_CALL)
+      return false unless receivers.size == inside.scan(ADD_CALL).size && receivers.all? { |call| derived.includes?(call[1]) }
+      blanked = blanked[0, range.begin] + " " * range.size + blanked[range.end..]
+    end
+    blanked.scan(RECEIVER_CALL) do |call|
+      next unless derived.includes?(call[1])
+      return false unless call[1] == target && {"put", "putAll"}.includes?(call[2])
+    end
+    true
+  end
+
+  # `read` (a MatchData of a lookup in `body`) is a positive presence test
+  # (`!= null`, or a bare boolean `has…`/`isAnnot…`), directly in an `if`, or
+  # through a variable the `if` then tests, whose body adds a URL.
+  private def positive_add_guard?(body : String, read : Regex::MatchData) : Range(Int32, Int32)?
+    call_end = (body.index(')', read.end(0)) || return) + 1
+    call_start = receiver_start(body, read.begin(0))
+    call = body[call_start...call_end]
+    boolean_read = call.matches?(/\b(?:has|isAnnot)\w*\s*\(/)
+    before = body[0, call_start].rstrip
+    if before.ends_with?('=') && !before.ends_with?("==") && !before.ends_with?("!=")
+      return unless variable = before[0...-1].rstrip.match(/([\w$]+)\z/)
+      return unless test = body[call_end..].match(/\bif\s*\(/)
+      open = call_end + test.end(0) - 1
+      return unless close = paren_close(body, open)
+      return unless body[open + 1...close].strip.matches?(/\A(?:#{Regex.escape(variable[1])}\s*!=\s*null|null\s*!=\s*#{Regex.escape(variable[1])})\z/)
+      return adds_in_body(body, close)
+    end
+    return unless open = body.rindex(/\bif\s*\(/, call_start).try { |at| body.index('(', at) }
+    return unless (close = paren_close(body, open)) && close >= call_end
+    condition = body[open + 1...close].sub(call.strip, "R")
+    return unless condition.matches?(POSITIVE_TEST)
+    return if condition.strip == "R" && !boolean_read
+    adds_in_body(body, close)
+  end
+
+  private def brace_body(masked : String, start : Int32) : String
+    depth = 1
+    stop = start
+    while stop < masked.size && depth > 0
+      depth += 1 if masked[stop] == '{'
+      depth -= 1 if masked[stop] == '}'
+      stop += 1
+    end
+    masked[start...stop]
+  end
+
+  # Spring Security matchers built at startup from annotated handlers
+  # (`getMethodAnnotation(AnonymousAccess.class)` in the method the chain
+  # feeds into `.antMatchers(anonymousUrls...).permitAll()`): record, per
+  # method that walks the handler mappings, the one annotation it reads, so
+  # the annotation (and every annotation meta-annotated with it, for lookups
+  # that see meta-annotations) is read off the definition, not a name list.
+  # Also: a `HandlerMethodArgumentResolver` for `@X` that hands back null
+  # when the credential is missing, and the configurations registering
+  # resolvers; the `@X Type name` parameter is the caller only when its
+  # resolver is registered in the handler's module.
+  private def scan_annotation_readers(content : String, file : String, module_dir : String?)
+    code = Noir::CComments.strip(content)
+    code.scan(/\b[A-Z][\w$]*/) { |match| @resolver_registrations << {module_dir, match[0]} } if code.includes?("addArgumentResolvers")
+    if code.includes?("getHandlerMethods") && (index = code_index(file))
+      index[:methods].each do |name, declarations|
+        declarations.each do |_, start|
+          body = brace_body(index[:masked], start)
+          next unless body.includes?("getHandlerMethods")
+          reads = body.scan(MERGED_ANNOTATION_READ).map { |read| {read, true} } + body.scan(PLAIN_ANNOTATION_READ).map { |read| {read, false} }
+          next if reads.empty?
+          # Whitelist-by-default collectors (`== null` adds, `continue`, `!`)
+          # make the protected handlers public: every read must be a positive
+          # test guarding an add, or the method is no marker source at all.
+          ranges = reads.compact_map { |read, _| positive_add_guard?(body, read) }
+          next unless ranges.size == reads.size && collects_into_returned?(body, ranges)
+          merged = reads.select(&.[1]).map(&.[0][1])
+          names = reads.map(&.[0][1])
+          key = "#{MARKER_KEY}#{file}##{name}"
+          known = @method_readers[key]?
+          @method_readers[key] = {(known ? known[0] : Set(String).new).concat(names), (known ? known[1] : true) && !merged.empty?}
+        end
+      end
+    end
+    return unless code.includes?("HandlerMethodArgumentResolver") && (resolve = code.index("resolveArgument"))
+    return unless code[resolve..].matches?(/\breturn\s+null\s*;/)
+    cls = File.basename(file, File.extname(file))
+    code.scan(PARAMETER_ANNOTATION_READ) do |match|
+      type_file(match[1], code, file).try { |annotation_file| @principal_resolvers << {cls, annotation_file, match[1]} }
+    end
+  end
+
+  private def resolve_permit_markers
+    @permit_markers.clear
+    @permit_marker_names.clear
+    @method_readers.each do |key, reading|
+      names, merged = reading
+      # A method reading several annotations feeds matchers of unknown polarity.
+      next unless names.size == 1
+      closure = names.dup
+      while merged
+        grown = @annotation_aliases.select { |name, applied| !closure.includes?(name) && applied.any? { |inner| closure.includes?(inner) } }
+        break if grown.empty?
+        closure.concat(grown.keys)
+      end
+      @permit_markers[key] = closure
+      @permit_marker_names.concat(closure)
+    end
+    @principal_param_re = @principal_resolvers.empty? ? nil : /@(#{@principal_resolvers.map { |_, _, name| Regex.escape(name) }.uniq!.join('|')})\b(?:\([^)]*\))?\s+(?:final\s+)?[\w$.<>?]+\s+([a-z_$][\w$]*)\s*[,)]/
+  end
+
+  SHIRO_CHAIN_ENTRY = /(?:\b([\w$]+)\s*\.\s*put|\.\s*addPathDefinition)\s*\(\s*"(\/[^"\s]*)"\s*,\s*"([^"]+)"\s*\)/
+  SHIRO_CHAIN_MAP   = /setFilterChainDefinitionMap\s*\(\s*([\w$]+)\s*\)/
+  SHIRO_GUARDING    = /\A(?:authc\w*|user|perms|roles|rest)\z/
+  SHIRO_NON_AUTH    = /\A(?:anon|logout|ssl|port|noSessionCreation|invalidRequest)\z/
+
+  # Apache Shiro's `ShiroFilterFactoryBean` chain map: `"/admin/**" ->
+  # "authc"`, in insertion order (a repeated key keeps its first position
+  # and takes the later value, as the `LinkedHashMap` does).
+  private def scan_shiro_chain(content : String, module_dir : String?, file : String)
+    code = Noir::CComments.strip(content)
+    chain_map = code.match(SHIRO_CHAIN_MAP).try(&.[1])
+    entries = [] of ShiroEntry
+    code.scan(SHIRO_CHAIN_ENTRY) do |match|
+      # a `put` on some other map is not the chain
+      next if match[1]? && match[1] != chain_map
+      entry = {pattern: match[2], value: match[3], path: file, line: code[0, match.begin(0)].count('\n') + 1}
+      if at = entries.index { |known| known[:pattern] == entry[:pattern] }
+        entries[at] = entry
+      else
+        entries << entry
+      end
+    end
+    @shiro_chains << {module: module_dir, entries: entries} unless entries.empty?
+  end
+
+  # What the first matching chain entry decides. A filter noir does not
+  # know (a custom `setFilters` entry) may guard or not: it is reported as a
+  # guard for the entry's own pattern, naming the filter.
+  private def shiro_rule(entry : ShiroEntry, module_dir : String?) : SecurityRule
+    tokens = entry[:value].split(',').map(&.strip.sub(/\[.*\z/m, ""))
+    via = "filterChainDefinitionMap(\"#{entry[:pattern]}\")"
+    description, guarded =
+      if tokens.any?(&.matches?(SHIRO_GUARDING))
+        {"Protected by Shiro #{entry[:value]} via #{via}", true}
+      elsif tokens.all?(&.matches?(SHIRO_NON_AUTH))
+        {"Public by Shiro #{entry[:value]} via #{via}", false}
+      else
+        {"Protected by Shiro filter \"#{entry[:value]}\" via #{via}, a custom filter noir does not read", true}
+      end
+    {pattern: entry[:pattern], method: nil, description: description, protected_rule: guarded, module: module_dir, config_key: nil, path: entry[:path], line: entry[:line]}
+  end
+
+  # The `@LoginUser Integer userId` style parameter of the handler head,
+  # when its annotation (resolved by import or package) has a null-returning
+  # resolver that the handler's module registers.
+  private def principal_annotation_var(head : String, ctx : SourceContext) : String?
+    return unless pattern = @principal_param_re
+    return unless found = head.match(pattern)
+    return unless annotation_file = type_file(found[1], ctx.full_content, ctx.path)
+    module_dir = build_module(ctx.path)
+    return unless @principal_resolvers.any? { |cls, file, _| file == annotation_file && @resolver_registrations.includes?({module_dir, cls}) }
+    found[2]
+  end
+
+  # A handler that is `return service.method(.., name, ..);` and service
+  # method(s) of that name and arity whose own body opens with the refusal
+  # for that parameter. Overloads must all refuse; an unknown field type or
+  # method is not followed.
+  private def delegated_refusal?(body : String, name : String, ctx : SourceContext) : Bool
+    return false unless call = body.match(/\A\s*return\s+([a-z_$][\w$]*)\s*\.\s*([a-z_$][\w$]*)\s*\(/)
+    depth = 1
+    stop = call.end(0)
+    while stop < body.size && depth > 0
+      depth += 1 if body[stop] == '('
+      depth -= 1 if body[stop] == ')'
+      stop += 1
+    end
+    return false unless depth == 0
+    args = Noir::TopLevelSplit.split(body[call.end(0)...(stop - 1)], ',', Noir::TopLevelSplit::Rules.new).map(&.strip)
+    return false unless position = args.index(name)
+    fields = (@field_types[ctx.path] ||= ctx.full_content.scan(FIELD_DECLARATION).to_h { |field| {field[2], field[1]} })
+    return false unless type = fields[call[1]]?
+    return false unless (file = type_file(type, ctx.full_content, ctx.path)) && (index = code_index(file))
+    candidates = index[:methods][call[2]]?.try(&.select { |params, _| Noir::TopLevelSplit.split(params, ',', Noir::TopLevelSplit::Rules.new).size == args.size })
+    return false if candidates.nil? || candidates.empty?
+    candidates.all? do |params, start|
+      next false unless param = Noir::TopLevelSplit.split(params, ',', Noir::TopLevelSplit::Rules.new)[position].strip.match(/([a-z_$][\w$]*)\z/)
+      refuses_null?(index[:masked][start, REFUSAL_WINDOW], index[:code][start, REFUSAL_WINDOW], param[1])
+    end
+  end
+
   HANDLER_PRINCIPAL_PARAM = /(?:\b(?:java\.security\.)?(?:Principal|Authentication)\s+([a-z_$][\w$]*)\s*[,)]|@AuthenticationPrincipal\s+(?:final\s+)?[\w$.<>?]+\s+([a-z_$][\w$]*)\s*[,)]|\b([a-z_][\w]*)\s*:\s*(?:java\.security\.)?(?:Principal|Authentication)\?)/
   # A refusal written as code: an unauthorized/forbidden factory or status,
   # a 401/403 literal, an access-denied exception.
-  REFUSING_RETURN = /\b(?:unauthori[sz]ed|forbidden|denied|40[13])\b/i
+  REFUSING_RETURN = /\b(?:unauthori[sz]ed|forbidden|denied|40[13])\b|\b(?:un_?log_?in|not_?(?:log(?:ged)?_?in|authenticated)|need_?log_?in)\b/i
   REDIRECT_LOGIN  = /"redirect:[^"]*\blogin\b/i
 
   # "Protected by ..." when the handler at `ctx` takes the caller's
@@ -2214,19 +2622,29 @@ class SpringAuthTagger < FrameworkTagger
   private def anonymous_refusal(ctx : SourceContext) : String?
     return unless (line = ctx.line) && line >= 1
     return unless ctx.path.ends_with?(".java") || ctx.path.ends_with?(".kt")
-    raw = Noir::CComments.strip(ctx.lines[(line - 1), 80].join("\n"))
+    return unless window = ctx.lines[(line - 1), 80]?
+    raw = Noir::CComments.strip(window.join("\n"))
     code = raw.gsub(STRING_LITERAL) { |literal| "#{literal[0]}#{" " * (literal.size - 2)}#{literal[-1]}" }
     return unless open = method_body_open(code)
-    return unless param = code[0, open].match(HANDLER_PRINCIPAL_PARAM)
-    name = param[1]? || param[2]? || param[3]
-    escaped = Regex.escape(name)
-    return unless check = code[(open + 1)..].match(/\A\s*if\s*\(\s*(?:#{escaped}\s*==\s*null|null\s*==\s*#{escaped})\s*\)\s*\{?\s*(return|throw)\b/)
-    if check[1] == "return"
-      start = open + 1 + check.end(0)
-      return unless stop = code.index(';', start)
-      return unless code[start...stop].matches?(REFUSING_RETURN) || raw[start...stop].matches?(REDIRECT_LOGIN)
+    head = code[0, open]
+    name = head.match(HANDLER_PRINCIPAL_PARAM).try { |param| param[1]? || param[2]? || param[3]? }
+    name ||= principal_annotation_var(head, ctx)
+    return unless name
+    body = code[(open + 1)..]
+    unless refuses_null?(body, raw[(open + 1)..], name)
+      return unless delegated_refusal?(body, name, ctx)
     end
     "Protected by in-handler check: refuses an anonymous caller (#{name} == null)"
+  end
+
+  # `body` opens with `if (name == null) return <refusal>` / `throw`.
+  private def refuses_null?(body : String, raw_body : String, name : String) : Bool
+    escaped = Regex.escape(name)
+    return false unless check = body.match(/\A\s*if\s*\(\s*(?:#{escaped}\s*==\s*null|null\s*==\s*#{escaped})\s*\)\s*\{?\s*(return|throw)\b/)
+    return true if check[1] == "throw"
+    start = check.end(0)
+    return false unless stop = body.index(';', start)
+    body[start...stop].matches?(REFUSING_RETURN) || raw_body[start...stop].matches?(REDIRECT_LOGIN)
   end
 
   # Index of the `{` opening the method body in `text` (annotations, then
