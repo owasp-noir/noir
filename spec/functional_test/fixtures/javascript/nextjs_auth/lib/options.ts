@@ -55,6 +55,29 @@ export async function parseSplit(request: Request, schema: any) {
   return { auth, error, authError };
 }
 
+// An opt-out in an `||`: another operand can still run the refusal.
+export async function parseForced(request: Request, schema?: any, options?: { skipAuth?: boolean; forceAuth?: boolean }) {
+  let error;
+  if (!options?.skipAuth || options?.forceAuth) {
+    const auth = await checkAuth(request);
+    if (!auth) {
+      error = () => unauthorized();
+    }
+  }
+  return { error };
+}
+
+export async function parseSchemaGated(request: Request, schema?: any, options?: { skipAuth?: boolean }) {
+  let error;
+  if (!options?.skipAuth || !isPublicSchema(schema)) {
+    const auth = await checkAuth(request);
+    if (!auth) {
+      error = () => unauthorized();
+    }
+  }
+  return { error };
+}
+
 // Throws its refusal, unless `skipAuth`.
 export async function requireCaller(request: Request, options?: { skipAuth: boolean }) {
   if (!options?.skipAuth) {

@@ -1,5 +1,5 @@
 import { parseRequest } from '../../../lib/request';
-import { parseCompared, parseDestructured, parseOptIn, requireCaller } from '../../../lib/options';
+import { parseCompared, parseDestructured, parseForced, parseOptIn, parseSchemaGated, requireCaller } from '../../../lib/options';
 import { json } from '../../../lib/response';
 
 // an option set from a variable may make it public.
@@ -85,6 +85,19 @@ export async function fourth(request: Request) {
 // the value is an env read.
 export async function fifth(request: Request) {
   const { error } = await parseRequest(request, null, { skipAuth: !process.env.PRIVATE });
+  if (error) return error();
+  return json(1);
+}
+
+// An opt-out in an `||`: kept guarded, with the note.
+export async function sixth(request: Request) {
+  const { error } = await parseForced(request, null, { skipAuth: true, forceAuth: true });
+  if (error) return error();
+  return json(1);
+}
+
+export async function seventh(request: Request) {
+  const { error } = await parseSchemaGated(request, schema, { skipAuth: true });
   if (error) return error();
   return json(1);
 }

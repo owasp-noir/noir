@@ -180,6 +180,12 @@ describe "NextjsAuthTagger" do
       end
     end
 
+    it "does not let an opt-out in an `||` open the route by itself" do
+      {93, 99}.each do |line|
+        note.call("app/api/options/route.ts", line).not_nil!.should contain("an option can make it public")
+      end
+    end
+
     it "opens a call whose option is literally true: through a const, across lines, destructured" do
       {22, 30, 39, 60, 73}.each { |line| tag.call("app/api/options/route.ts", line).should be_empty }
     end

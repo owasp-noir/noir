@@ -14,8 +14,9 @@ module Noir::JSOptionGate
   # `index` is the parameter's position, `key` the option key read off it
   # (nil for a bare positional parameter), `absent` the value it has when the
   # call leaves it out (`{ skipAuth = false } = {}`: false), `unknown` a
-  # comparison with something other than `true`/`false`.
-  record Gate, index : Int32, key : String?, runs_when : Bool, absent : Bool, unknown : Bool
+  # comparison with something other than `true`/`false`, `either` that it
+  # sits in an `||`, where another operand can still run the refusal.
+  record Gate, index : Int32, key : String?, runs_when : Bool, absent : Bool, unknown : Bool, either : Bool
 
   # A parameter: a name, or the keys of a destructured object, each mapped
   # local name => {key passed, value when absent}.
@@ -50,16 +51,17 @@ module Noir::JSOptionGate
   def gates(conditions : Array(String), params : Array(Param)) : Array(Gate)
     gates = [] of Gate
     conditions.each do |cond|
+      either = cond.includes?("||")
       params.each do |param|
         if name = param.name
           next if name.matches?(REQUEST_PARAM)
           cond.scan(/(!\s*)?(?<![\w$.])#{Regex.escape(name)}\b(?:\s*\??\.\s*([A-Za-z_$][\w$]*))?(\s*[!=]==?\s*[^\s&|)]+)?/) do |m|
-            gates << gate(param.index, m[2]?, m[1]?, m[3]?, m[2]? ? false : param.absent)
+            gates << gate(param.index, m[2]?, m[1]?, m[3]?, m[2]? ? false : param.absent, either)
           end
         else
           param.keys.each do |local, (key, absent)|
             cond.scan(/(!\s*)?(?<![\w$.])#{Regex.escape(local)}\b(?!\s*\??\.)(\s*[!=]==?\s*[^\s&|)]+)?/) do |m|
-              gates << gate(param.index, key, m[1]?, m[2]?, absent)
+              gates << gate(param.index, key, m[1]?, m[2]?, absent, either)
             end
           end
         end
@@ -71,8 +73,10 @@ module Noir::JSOptionGate
   # `:skipped` when the call's `args` turn the refusal off, `:unknown` when a
   # value it depends on is not a literal (`{ skipAuth: isPublic }`), `:runs`
   # otherwise. `lookup` gives a `const`'s initializer in the caller.
-  # ponytail: the conditions are read as one conjunction; an `||` between
-  # an option and something else is judged as if it were `&&`.
+  # An option in an `||` cannot turn the refusal off by itself
+  # (`!options?.skipAuth || !isPublicSchema(schema)`): that is `:unknown`.
+  # ponytail: an `||` is not evaluated, so `!skipAuth || forceAuth` called
+  # with both literal is still `:unknown`; evaluate it if a route needs that.
   def outcome(gates : Array(Gate), args : Array(String), lookup : Proc(String, String?)) : Symbol
     unknown = false
     gates.each do |gate|
@@ -80,13 +84,14 @@ module Noir::JSOptionGate
       if value.nil?
         unknown = true
       elsif value != gate.runs_when
-        return :skipped
+        return :skipped unless gate.either
+        unknown = true
       end
     end
     unknown ? :unknown : :runs
   end
 
-  private def gate(index : Int32, key : String?, negated : String?, compare : String?, absent : Bool) : Gate
+  private def gate(index : Int32, key : String?, negated : String?, compare : String?, absent : Bool, either : Bool) : Gate
     runs_when = negated.nil?
     unknown = false
     if compare && (m = compare.match(/([!=])==?\s*(\S+)/))
@@ -96,7 +101,7 @@ module Noir::JSOptionGate
       else              unknown = true
       end
     end
-    Gate.new(index, key, runs_when, absent, unknown)
+    Gate.new(index, key, runs_when, absent, unknown, either)
   end
 
   private def value_of(arg : String?, key : String?, absent : Bool, lookup : Proc(String, String?)) : Bool?
