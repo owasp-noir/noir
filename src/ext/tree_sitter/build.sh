@@ -75,7 +75,7 @@ fi
 # Local patches to re-apply when re-vendoring (grep "noir local patch"):
 #   kotlin/scanner.c              stack_push fails the token instead of abort().
 #   typescript,tsx/scanner.c      point #include at ts_common/scanner.h.
-GRAMMARS="python go java kotlin javascript rust typescript tsx"
+GRAMMARS="python go java kotlin javascript rust typescript tsx ruby"
 OBJS="$RUNTIME_OBJ"
 for g in $GRAMMARS; do
   GD="$D/grammars/$g"

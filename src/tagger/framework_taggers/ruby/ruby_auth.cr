@@ -144,8 +144,37 @@ class RubyAuthTagger < FrameworkTagger
   CONTROLLER_AUTH_LINE = 1_u8
   CLASS_LINE           = 2_u8
 
+  # A file that parses is flagged off its AST (`RailsCallbackChain::Facts`):
+  # its `class` rows and the class-body statements `CONTROLLER_AUTH_ANY`
+  # matches in their canonical text, so a `before_action` in a heredoc, a
+  # comment or a `def` body is no statement of the class, and a statement
+  # spread over lines is read whole. Raw lines are the fallback.
   private def controller_line_flags(path : String, lines : Array(String)) : Array(UInt8)
-    @controller_line_flags[path] ||= lines.map do |line|
+    @controller_line_flags[path] ||= if facts = file_facts(path)
+                                       Array(UInt8).new(lines.size) do |row|
+                                         if facts.class_rows.includes?(row)
+                                           CLASS_LINE
+                                         elsif facts.statements[row]?.try(&.matches?(CONTROLLER_AUTH_ANY))
+                                           CONTROLLER_AUTH_LINE
+                                         else
+                                           0_u8
+                                         end
+                                       end
+                                     else
+                                       raw_line_flags(lines)
+                                     end
+  end
+
+  @file_facts = Hash(String, Noir::RailsCallbackChain::Facts?).new
+
+  private def file_facts(path : String) : Noir::RailsCallbackChain::Facts?
+    return @file_facts[path] if @file_facts.has_key?(path)
+    # `LineReader` facts carry no owners: such a file is walked raw.
+    @file_facts[path] = read_file(path).try { |source| rails_chain.facts_for(path, source) }.try { |facts| facts.ast ? facts : nil }
+  end
+
+  private def raw_line_flags(lines : Array(String)) : Array(UInt8)
+    lines.map do |line|
       if line.matches?(CONTROLLER_AUTH_ANY)
         CONTROLLER_AUTH_LINE
       elsif line.lstrip.starts_with?("class ")
@@ -228,7 +257,7 @@ class RubyAuthTagger < FrameworkTagger
       else
         own = rails_chain.controller_in(path)
         chain = own.try { |leaf| rails_chain.resolve(leaf, action) }
-        controller = check_controller_auth(lines, line_idx, flags, jumps, chain, own)
+        controller = check_controller_auth(lines, line_idx, action, flags, jumps, chain, own, file_facts(path))
         authz_desc = controller[:authz]
         skipped = controller[:skipped]
         opted_out = controller[:opted_out]
@@ -294,39 +323,60 @@ class RubyAuthTagger < FrameworkTagger
     Noir::RailsCallbackChain.applies_to_action?(current, action_name)
   end
 
-  private def check_controller_auth(lines : Array(String), action_line : Int32, flags : Array(UInt8), jumps : Array(Int32), chain : Noir::RailsCallbackChain::Resolution?, leaf : Noir::RailsCallbackChain::Klass?) : NamedTuple(authn: String?, authz: String?, skipped: Bool, opted_out: Bool, class_idx: Int32?)
+  # `action_name` is the routed action: for one with no `def` the walk
+  # starts at the class's last line, where the nearest `def` above is
+  # another method.
+  #
+  # With `facts` the walk reads only the statements of the class or module
+  # around the action and stops at its row: a nested `class Helper` above
+  # the action, and its skips, are not the controller's.
+  private def check_controller_auth(lines : Array(String), action_line : Int32, action_name : String?, flags : Array(UInt8), jumps : Array(Int32), chain : Noir::RailsCallbackChain::Resolution?, leaf : Noir::RailsCallbackChain::Klass?, facts : Noir::RailsCallbackChain::Facts?) : NamedTuple(authn: String?, authz: String?, skipped: Bool, opted_out: Bool, class_idx: Int32?)
     # Walk backwards to find the controller class and before_action declarations
     idx = action_line
-    action_name = extract_action_name(lines, action_line)
     authn_desc : String? = nil
     authz_desc : String? = nil
     skipped = false
     skipped_callbacks = Set(String).new
+    # Skipped on a condition: left to `chain_guards`, which notes the lift.
+    lifted_callbacks = Set(String).new
     class_idx : Int32? = nil
+    home = facts.try(&.home(action_line))
 
     while idx >= 0
       idx = jumps[idx]
       break if idx < 0
-      if flags[idx] == CLASS_LINE
+      if facts && home
+        break if idx < home
+        if idx == home
+          class_idx = idx if flags[idx] == CLASS_LINE
+          break
+        end
+        unless facts.owners[idx]? == home
+          idx -= 1
+          next
+        end
+      elsif flags[idx] == CLASS_LINE
         class_idx = idx
         break
       end
 
-      current = Noir::RailsCallbackChain.statement(lines, idx)
+      current = facts.try(&.statements[idx]?) || Noir::RailsCallbackChain.statement(lines, idx)
 
-      # Check for skip_before_action that applies to this action.
+      # Check for skip_before_action that applies to this action. A skip on
+      # an `if:` / `unless:` leaves the guard to its condition.
       # Skip only clears authentication — keep walking for authorize callbacks.
+      lifting = Noir::RailsCallbackChain.lifting?(current)
       SKIP_PATTERNS.each do |pattern|
-        skipped = true if current.matches?(pattern) && applies_to_action?(current, action_name)
+        skipped = true if !lifting && current.matches?(pattern) && applies_to_action?(current, action_name)
       end
       # The walk runs bottom-up, so a skip is seen before the `before_action`
       # it opts this action out of.
       if (m = current.match(SKIP_CALLBACKS)) && applies_to_action?(current, action_name)
-        m[1].scan(/:(\w+[!?]?)/) { |name| skipped_callbacks << name[1] }
+        m[1].scan(/:(\w+[!?]?)/) { |name| (lifting ? lifted_callbacks : skipped_callbacks) << name[1] }
       end
       if applies_to_action?(current, action_name) && !Noir::RailsCallbackChain.conditional?(current)
         Noir::RailsCallbackChain.before_action_callbacks(current).each do |callback|
-          next if skipped_callbacks.includes?(callback) || exits_for?(callback, leaf)
+          next if skipped_callbacks.includes?(callback) || lifted_callbacks.includes?(callback) || exits_for?(callback, leaf)
           authn_desc = stronger(authn_desc, callback_guard(callback, chain)) unless skipped
           authz_desc ||= callback_authz(callback, action_name, chain.try(&.paths) || [] of String)
         end
@@ -464,7 +514,7 @@ class RubyAuthTagger < FrameworkTagger
   private def rails_chain : Noir::RailsCallbackChain
     @rails_chain ||= begin
       controllers, others = collect_files_by_extension(".rb").partition { |path| base_relative_path(path).includes?("controllers") }
-      Noir::RailsCallbackChain.build(controllers, others) { |path| read_file_lines(path) }
+      Noir::RailsCallbackChain.build(controllers, others) { |path| read_file(path) }
     end
   end
 
