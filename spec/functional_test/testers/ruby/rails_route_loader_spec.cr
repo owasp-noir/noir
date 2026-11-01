@@ -14,6 +14,13 @@ expected_endpoints = [
   Endpoint.new("/api/v1/ticket_stats", "GET"),
   Endpoint.new("/ticket_overview", "GET"),
   Endpoint.new("/*a", "GET"),
+  # overrides.rb: production.rb wins, development.rb alone does not, a
+  # conditional assignment and a rebound local resolve to nothing.
+  Endpoint.new("/prodbase/a", "GET"),
+  Endpoint.new("/devonly/b", "GET"),
+  Endpoint.new("/api/v1/scoped", "GET"),
+  # The rebound local stays an unresolved interpolation, not `/api/v1/...`.
+  Endpoint.new("/{api_path}/stale_interp", "GET"),
 ]
 
 tester = FunctionalTester.new("fixtures/ruby/rails_route_loader/", {
