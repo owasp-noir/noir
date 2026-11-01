@@ -137,8 +137,9 @@ describe Noir::ScalaLexer do
       lex = Noir::ScalaLexer.new(src)
 
       masked = lex.masked.join
-      masked.count('(').should eq(1)
-      masked.count(')').should eq(1)
+      masked.count('(').should eq(2)
+      masked.count(')').should eq(2)
+      lex.matching_delimiter(src.index!('(')).should eq(src.rindex!(')'))
     end
 
     it "does not treat `${` inside a plain (non-interpolated) string as a hole" do
@@ -163,9 +164,10 @@ describe Noir::ScalaLexer do
       lex = Noir::ScalaLexer.new(src)
 
       lex.code_lines[0].includes?("b").should be_false # inside the triple quote
+      lex.code_lines[0].should contain("f(")           # code inside hole kept
       lex.code_lines[1].should eq("path(\"real\")")
-      lex.masked.join.count('(').should eq(1) # only `path(`
-      lex.masked.join.count(')').should eq(1)
+      lex.masked.join.count('(').should eq(2) # f( and path(
+      lex.masked.join.count(')').should eq(2)
     end
 
     it "leaves the short `$ident` form as plain string content" do
@@ -181,7 +183,7 @@ describe Noir::ScalaLexer do
       lex = Noir::ScalaLexer.new(src)
 
       lex.skip_ranges.should eq([src.index!('"')..src.index!(" b\"") + 2, src.rindex!("\"c\"")..src.size - 1])
-      lex.masked.join.count('+').should eq(1)
+      lex.masked.join.count('+').should eq(2)
 
       line_comment_src = %(val s = s"a ${ // }\n 1 } b" + "c")
       lex2 = Noir::ScalaLexer.new(line_comment_src)
@@ -205,7 +207,7 @@ describe Noir::ScalaLexer do
       lex = Noir::ScalaLexer.new(src)
 
       lex.skip_ranges.should eq([src.index!('"')..src.index!(" outer\"") + 6, src.rindex!("\"c\"")..src.size - 1])
-      lex.masked.join.count('+').should eq(1)
+      lex.masked.join.count('+').should eq(2)
     end
 
     it "handles f and raw interpolators with holes" do
@@ -215,6 +217,54 @@ describe Noir::ScalaLexer do
       lex.skip_ranges.size.should eq(2)
       lex.code_lines[0].should contain("1.0")
       lex.code_lines[0].should contain("foo")
+    end
+
+    it "keeps code visible inside interpolation holes while keeping braces balanced" do
+      src = <<-SCALA
+        val content = s"${avatar(u)} <b>@${StringUtil.escapeHtml(
+          StringUtil.cutTail(name, 10))}</b>"
+        val single = s"v ${svc.lookup(x)}"
+        SCALA
+
+      lex = Noir::ScalaLexer.new(src)
+      lex.masked_lines[0].should contain("{avatar(u)}")
+      lex.masked_lines[0].should contain("StringUtil.escapeHtml(")
+      lex.masked_lines[1].should contain("StringUtil.cutTail(name, 10))}")
+      lex.masked_lines[2].should contain("{svc.lookup(x)}")
+      lex.code_lines[0].should contain("s\"${avatar(u)} <b>@${StringUtil.escapeHtml(")
+      lex.code_lines[2].should contain("s\"v ${svc.lookup(x)}\"")
+
+      # Net brace delta across the lines is 0
+      brace_delta = lex.masked.count('{') - lex.masked.count('}')
+      brace_delta.should eq(0)
+    end
+
+    it "bails out of an unclosed hole when reaching column 0 declarations or braces" do
+      src = <<-SCALA
+        class MyServlet extends ScalatraServlet {
+          val bad = s"oops ${ foo(
+        def route1 = get("/recovered1") { "ok" }
+          val bad2 = s"oops2 ${ bar(
+
+        def route2 = get("/recovered2") { "ok" }
+          val bad3 = s"oops3 ${ baz(
+        }
+        SCALA
+
+      lex = Noir::ScalaLexer.new(src)
+      lex.code_lines[2].should contain("def route1 = get(\"/recovered1\")")
+      lex.code_lines[5].should contain("def route2 = get(\"/recovered2\")")
+      lex.masked_lines[2].should contain("def route1 = get")
+      lex.masked_lines[5].should contain("def route2 = get")
+      lex.masked_lines[7].strip.should eq("}")
+
+      # The unclosed delimiters inside the bad lines are cleaned from structural view
+      lex.masked_lines[1].should_not contain('{')
+      lex.masked_lines[1].should_not contain('(')
+      lex.masked_lines[3].should_not contain('{')
+      lex.masked_lines[3].should_not contain('(')
+      lex.masked_lines[6].should_not contain('{')
+      lex.masked_lines[6].should_not contain('(')
     end
   end
 end

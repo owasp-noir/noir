@@ -35,4 +35,11 @@ class MyServlet extends ScalatraServlet with JacksonJsonSupport {
   }
 
   get("/compact") { json(HealthService.check()) }
+
+  get("/interpolation") {
+    val content = s"${avatar(u)} <b>@${StringUtil.escapeHtml(
+      StringUtil.cutTail(name, 10))}</b>"
+    val single = s"v ${svc.lookup(x)}"
+    json(content)
+  }
 }
