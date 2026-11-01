@@ -4,12 +4,12 @@ require "file_utils"
 
 # A beego filter that authorizes every request against a Casbin policy
 # (see `GoBeegoCasbinFilter`).
-private def beego_guards(base : String, url : String, method : String = "GET") : Array(String)
+private def beego_guards(base : String, url : String, method : String = "GET", file : String = "routers/router.go") : Array(String)
   CodeLocator.instance.clear_all
   Dir.glob("#{base}/**/*.go").each { |f| CodeLocator.instance.register_path(f) }
   options = create_test_options
   options["base"] = YAML::Any.new(base)
-  details = Details.new(PathInfo.new("#{base}/routers/router.go", 5))
+  details = Details.new(PathInfo.new("#{base}/#{file}", 5))
   details.technology = "go_beego"
   endpoint = Endpoint.new(url, method, [] of Param, details)
   GoAuthTagger.new(options).perform([endpoint]).first.tags.select(&.name.in?("auth", "authz")).map(&.name)
@@ -84,10 +84,17 @@ private def casbin_filter_go(deny_branch : String, pattern : String = "*") : Str
     )
 
     func ApiFilter(ctx *context.Context) {
-        allowed := authz.IsAllowed(getSubject(ctx), "", ctx.Request.Method, ctx.Request.URL.Path, "", "")
+        allowed := authz.IsAllowed(getSubject(ctx), "", ctx.Request.Method, foldPath(ctx.Request.URL.Path), "", "")
         if !allowed {
             #{deny_branch}
         }
+    }
+
+    func foldPath(p string) string {
+        if strings.HasPrefix(p, "/api/login/oauth") {
+            return "/api/login/oauth"
+        }
+        return p
     }
 
     func denyRequest(ctx *context.Context) {
@@ -118,12 +125,14 @@ describe "GoAuthTagger (beego Casbin filter)" do
     end
   end
 
-  it "matches the policy's method, `:name` segments and the sub-paths of a granted path" do
+  it "matches the policy's method, `:name` segments and the paths the filter folds" do
     with_beego_tree(casbin_tree) do |dir|
       # GET only is granted.
       beego_guards(dir, "/api/get-account", "POST").should eq(["auth"])
       beego_guards(dir, "/.well-known/:application/jwks").should be_empty
       beego_guards(dir, "/api/login/oauth/access_token", "POST").should be_empty
+      # Only the folds the filter applies: `/api/get-account/x` is not `/api/get-account`.
+      beego_guards(dir, "/api/get-account/export").should eq(["auth"])
       beego_guards(dir, "/api/feed").should be_empty
       beego_guards(dir, "/api/feed", "POST").should eq(["auth"])
     end
