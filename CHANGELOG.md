@@ -2,7 +2,38 @@
 
 All notable changes to [Noir](https://github.com/owasp-noir/noir) will be documented in this file.
 
-## v1.4.0
+## v1.5.0
+
+Noir v1.5.0 adds query verbs for agents, native Windows and npm installs, and 69 new technologies. TypeScript and Ruby are now parsed with tree-sitter, and auth-guard accuracy was reworked against 36 real applications.
+
+### Added
+- **Query verbs**: `noir trace` matches a request to its route, `noir reach FILE[:LINE]` lists the routes that reach a file, and `noir query` filters by guard, sink, param, path or handler. They read a saved report (`--from`) or scan live. Ships with the noir agent skill and `just agent-bench` (#3136, #3138, #3182).
+- **Windows**: native build, static `.exe` release, and Windows CI (#2829-#2840).
+- **npm**: `@owasp-noir/noir` package (#2244, #3210).
+- **AI**: native Anthropic provider, Gemini preset, `--ai-stream`, `--ai-key-file`, `--ai-temperature`, an `ai_context` JSON Schema, and explicit provider errors (#3019, #3022, #3026).
+- **69 new technologies**, including:
+  - JS/TS: React Router v7, SolidStart, Qwik City, Bun and Deno `serve`, Egg.js, Midway, Encore, Expo Router, HonoX, Convex, Moleculer, Medusa, Wasp, n8n
+  - JS/TS contract and decorator routers: ts-rest, oRPC, Effect HttpApi, tsoa, routing-controllers, Ts.ED, inversify
+  - Serverless: Cloudflare Pages, Vercel, Netlify and Firebase functions
+  - Python: Odoo, Frappe, FastHTML, AWS Chalice, Lambda Powertools, Graphene and Strawberry
+  - PHP: Laravel Livewire, Folio, API Platform, Nextcloud
+  - .NET: Razor Pages and Blazor, WCF, Wolverine, ABP, HotChocolate, VB.NET MVC
+  - JVM: Spring Data REST, Vaadin, Apache Camel, Finatra
+  - Others: Revel, Leptos, Dioxus, ntex, Absinthe, Salesforce Apex, and C servers (Mongoose, CivetWeb, libmicrohttpd)
+  - Specs: Apache Thrift, API gateways (Ocelot, YARP, Spring Cloud Gateway, KrakenD, Tyk, Apigee, HAProxy), and Hurl, Hoppscotch and Thunder Client collections
+
+### Changed
+- TypeScript, TSX and Ruby use their own tree-sitter grammars. NestJS-family decorators, file-routed handlers, Fastify, Feathers, tRPC, LoopBack, and Rails callbacks and callees now read the AST (#3457-#3463, #3468).
+- New shared parsers: a C# declaration parser, a PHP block parser, and a Swift lexer; every Scala analyzer now uses the Scala lexer (#3464-#3467).
+
+### Performance
+- Large repositories scan faster. GitLab went from 13s to 4.3s, vikunja from 15.6s to 2.0s and qdrant from 4.2s to 1.8s. n8n peak memory went from 669MB to 410MB (#3124-#3134, #3413, #3439, #3447).
+
+### Fixed
+- Auth guards were checked against 36 OSS applications across Rails, Django, FastAPI, Flask, Laravel, Spring, ASP.NET, NestJS, Express, Next.js, Go and Rust. The work found missed guards, removed false ones, and marks guards a setting can open (#3373-#3456).
+- Recovered route surfaces that were mostly missing, for example meilisearch, zammad, n8n, sonarr, readthedocs, taiga and flaskbb (#3404-#3456).
+- Bug hunts fixed more than 300 verified defects across analyzers, output, CLI and AI, including a Windows sandbox escape through `File.realpath` (#2837, #2936-#2965, #3025, #3070, #3102-#3108).
+
 
 Noir v1.4.0 adds a PR attack-surface diff mode for CI, and makes scans faster and deterministic.
 
