@@ -675,17 +675,17 @@ module Analyzer::Python
             name = assignment_match[1]
             expression = inline_previous_binding(assignment_match[2], name, bindings[name]?)
             bindings[name] = expression if expression.lstrip.starts_with?('[')
-            add_urlpattern_expression_contents(contents, expression, urlpattern_lists)
+            add_urlpattern_expression_contents(contents, expression, urlpattern_lists, lines)
           end
         elsif line.matches?(append_check_re)
           logical_line = collect_python_expression(lines, index, line)
           if append_match = logical_line.match(append_capture_re)
-            add_urlpattern_expression_contents(contents, append_match[1], urlpattern_lists)
+            add_urlpattern_expression_contents(contents, append_match[1], urlpattern_lists, lines)
           end
         elsif line.matches?(extend_check_re)
           logical_line = collect_python_expression(lines, index, line)
           if extend_match = logical_line.match(extend_capture_re)
-            add_urlpattern_expression_contents(contents, extend_match[1], urlpattern_lists)
+            add_urlpattern_expression_contents(contents, extend_match[1], urlpattern_lists, lines)
           end
         end
       end
@@ -708,10 +708,22 @@ module Analyzer::Python
 
     private def add_urlpattern_expression_contents(contents : Array(::String),
                                                    expression : ::String,
-                                                   urlpattern_lists : Hash(::String, ::String)) : Nil
+                                                   urlpattern_lists : Hash(::String, ::String),
+                                                   lines : Array(::String)) : Nil
       split_python_expression_terms(expression).each do |term|
         term = term.strip
         next if term.empty? || term == "urlpatterns"
+
+        # `reduce(add, groups)` / `sum(groups, [])` concatenates a list of
+        # url lists (Read the Docs' root URLconf): each member is a list
+        # name or an inline `[path(...)]`.
+        if group = term.match(URL_GROUP_FLATTEN_RE)
+          group_name = group[1]? || group[2]
+          url_group_members(lines, group_name).each do |member|
+            add_urlpattern_expression_contents(contents, member, urlpattern_lists, lines) unless member == group_name
+          end
+          next
+        end
 
         if term.matches?(/\b(?:url|path|re_path)\s*\(/)
           contents << term
@@ -731,6 +743,38 @@ module Analyzer::Python
         if pattern_content = urlpattern_lists[identifier_match[1]]?
           contents.concat(pattern_content.split(URL_LIST_JOIN))
         end
+      end
+    end
+
+    URL_GROUP_FLATTEN_RE = /\A(?:(?:functools\.)?reduce\s*\(\s*(?:operator\.)?(?:add|iadd|concat)\s*,\s*([A-Za-z_]\w*)\s*\)|sum\s*\(\s*([A-Za-z_]\w*)\s*,\s*\[\s*\]\s*\))\z/
+
+    # The members a list of url lists collects: its `name = [a, b]` literal
+    # plus every `name.append(x)`, `name.insert(i, x)`, `name += [x]` and
+    # `name.extend([x])`, conditional ones included (a setting can mount them).
+    # A module-level `name = [...]` rebinds the group, dropping what came
+    # before. Either branch of a ternary member can be mounted.
+    private def url_group_members(lines : Array(::String), name : ::String) : Array(::String)
+      members = [] of ::String
+      head_re = /^\s*#{Regex.escape(name)}\s*(?::[^=\n]+)?(=|\+=|\.\s*(?:append|insert|extend)\s*\()\s*(.*)$/m
+      lines.each_with_index do |line, index|
+        next unless line.includes?(name)
+        expression = collect_python_expression(lines, index, line).split('\n').map { |piece| strip_python_comment(piece) }.join('\n')
+        next unless head = expression.match(head_re)
+        op, rest = head[1], head[2].strip
+        members.clear if op == "=" && !line[0]?.try(&.ascii_whitespace?)
+        if op.ends_with?('(')
+          rest = rest.rchop(')').strip
+          rest = split_python_arguments(rest)[1]?.try(&.strip) || "" if op.includes?("insert")
+          unless op.includes?("extend")
+            members << rest
+            next
+          end
+        end
+        next unless rest.starts_with?('[') && rest.ends_with?(']')
+        split_python_arguments(rest[1...-1]).each { |part| members << part.strip unless part.strip.empty? }
+      end
+      members.flat_map do |member|
+        (ternary = member.match(/\A(.+?)\s+if\s+.+?\s+else\s+(.+)\z/m)) ? [ternary[1].strip, ternary[2].strip] : [member]
       end
     end
 
@@ -3319,10 +3363,20 @@ module Analyzer::Python
     end
 
     # The class attribute, not `self.lookup_field = "slug"` set inside one
-    # action (Taiga's `retrieve` for `by_slug`): the router reads the class.
+    # action (Taiga's `retrieve` for `by_slug`), nor a method-local
+    # `lookup_field = ...`: the router reads the class body's own line.
     private def drf_lookup_param(class_codeblock : ::String) : ::String?
-      class_codeblock.match(/(?<![\w.])lookup_url_kwarg\s*=\s*[rf]?['"]([^'"]+)['"]/).try(&.[1]) ||
-        class_codeblock.match(/(?<![\w.])lookup_field\s*=\s*[rf]?['"]([^'"]+)['"]/).try(&.[1])
+      body_line = class_codeblock.each_line.skip(1).find { |line| !line.blank? } || return
+      indent = body_line[0, body_line.size - body_line.lstrip.size]
+      %w[lookup_url_kwarg lookup_field].each do |attr|
+        class_codeblock.each_line do |line|
+          next if !line.starts_with?(indent) || line[indent.size]?.try(&.ascii_whitespace?)
+          if value = line.match(/\A\s*#{attr}\s*=\s*[rf]?['"]([^'"]+)['"]/)
+            return value[1]
+          end
+        end
+      end
+      nil
     end
 
     private def drf_action_path(route_base : ::String, lookup_param : ::String, action : DjangoDrfAction,
