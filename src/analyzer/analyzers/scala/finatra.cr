@@ -24,6 +24,7 @@ module Analyzer::Scala
       lexer = scala_lexer(content)
       lines = scala_code_text(lexer).split('\n')
       code = lexer.code_lines
+      masked = lexer.masked_lines
       # Open `prefix` blocks as {segment, last line}; routes only count inside
       # a controller class body.
       prefixes = [] of Tuple(String, Int32)
@@ -35,7 +36,7 @@ module Analyzer::Scala
           # scalafmt / Allman wraps put the body `{` a line or two below
           # `extends Controller`.
           controller_end = (index...Math.min(index + 4, lines.size)).each do |j|
-            if block = extract_scala_brace_block_with_end(lines, j)
+            if block = extract_scala_brace_block_with_end(code, masked, j)
               break block[2]
             end
           end || -1
@@ -44,7 +45,7 @@ module Analyzer::Scala
         next if index > controller_end
 
         if m = line.match(PREFIX_RE)
-          if block = extract_scala_brace_block_with_end(lines, index)
+          if block = extract_scala_brace_block_with_end(code, masked, index)
             prefixes << {m[1], block[2]}
           end
         elsif m = line.match(ROUTE_RE)
@@ -52,7 +53,7 @@ module Analyzer::Scala
           url = Noir::URLPath.join(url, m[2])
           endpoint = Endpoint.new(url, m[1].upcase, Details.new(PathInfo.new(path, index + 1)))
           url.scan(/:(\w+|\*)/) { |pm| endpoint.push_param(Param.new(pm[1], "", "path")) }
-          if block = extract_scala_brace_block(lines, index)
+          if block = extract_scala_brace_block(code, masked, index)
             block[0].scan(PARAM_READ_RE) do |pm|
               next if endpoint.params.any? { |p| p.name == pm[1] }
               endpoint.push_param(Param.new(pm[1], "", "query"))

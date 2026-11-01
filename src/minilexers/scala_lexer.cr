@@ -13,9 +13,10 @@ module Noir
   # newlines preserved:
   #   * `masked` (structural): strings, comments, triple-quotes and char
   #     literals are all blanked — used for brace/paren matching.
-  #   * `code`: comments, triple-quoted bodies and char literals are blanked,
-  #     but regular `"…"` string literals are PRESERVED, because Scala routes
-  #     are string arguments (`path("users")`) that the analyzers read back.
+  #   * `code`: comments and triple-quoted bodies are blanked, but regular
+  #     `"…"` string literals and char literals are PRESERVED, because Scala
+  #     routes and CLI options are literals (`path("users")`, `opt('p', ...)`)
+  #     that the analyzers read back.
   #
   # Scala specifics handled: nested block comments (`/* /* */ */`), triple-quoted
   # raw strings spanning lines, regular strings with `\` escapes, and `'x'` /
@@ -215,10 +216,44 @@ module Noir
       depth = 0
       while i < @size
         c = @chars[i]
-        if c == '"'
+        nxt = i + 1 < @size ? @chars[i + 1] : '\0'
+
+        if c == '/' && nxt == '/'
+          while i < @size && @chars[i] != '\n'
+            emit(i, ' ', ' ')
+            i += 1
+          end
+        elsif c == '/' && nxt == '*'
+          comment_depth = 0
+          while i < @size
+            cc = @chars[i]
+            nn = i + 1 < @size ? @chars[i + 1] : '\0'
+            if cc == '/' && nn == '*'
+              comment_depth += 1
+              emit(i, ' ', ' ')
+              emit(i + 1, ' ', ' ')
+              i += 2
+            elsif cc == '*' && nn == '/'
+              comment_depth -= 1
+              emit(i, ' ', ' ')
+              emit(i + 1, ' ', ' ')
+              i += 2
+              break if comment_depth == 0
+            else
+              emit(i, (cc == '\n' ? '\n' : ' '), (cc == '\n' ? '\n' : ' '))
+              i += 1
+            end
+          end
+        elsif c == '"'
           # A literal inside the hole: consume it whole so its quotes and
           # braces cannot be mistaken for the hole's terminator.
           i = skip_nested_literal(i, keep_code)
+        elsif c == '\'' && char_literal?(i)
+          len = @chars[i + 1] == '\\' ? 4 : 3
+          len.times do
+            emit(i, ' ', ' ')
+            i += 1
+          end
         else
           depth += 1 if c == '{'
           depth -= 1 if c == '}'
@@ -235,37 +270,61 @@ module Noir
     private def skip_nested_literal(start : Int32, keep_code : Bool) : Int32
       i = start
       if start + 2 < @size && @chars[start + 1] == '"' && @chars[start + 2] == '"'
+        interpolated = interpolated_string?(start)
         3.times do
-          emit_content(i, keep_code)
+          emit_content(i, false)
           i += 1
         end
         while i < @size
           if @chars[i] == '"' && i + 2 < @size && @chars[i + 1] == '"' && @chars[i + 2] == '"'
             3.times do
-              emit_content(i, keep_code)
+              emit_content(i, false)
               i += 1
             end
             return i
           end
-          emit_content(i, keep_code)
-          i += 1
+          if interpolated && escaped_dollar?(i)
+            emit_content(i, false)
+            emit_content(i + 1, false)
+            i += 2
+          elsif interpolated && interpolation_hole?(i)
+            i = skip_interpolation(i, false)
+          else
+            emit_content(i, false)
+            i += 1
+          end
         end
         return i
       end
 
+      interpolated = interpolated_string?(start)
       emit_content(i, keep_code)
       i += 1
       escaped = false
       while i < @size
         c = @chars[i]
-        emit_content(i, keep_code)
-        i += 1
-        if escaped
-          escaped = false
-        elsif c == '\\'
-          escaped = true
-        elsif c == '"' || c == '\n'
+        if c == '\n'
+          emit(i, '\n', '\n')
+          i += 1
           break
+        end
+
+        if interpolated && !escaped && escaped_dollar?(i)
+          emit(i, ' ', keep_code ? c : ' ')
+          emit(i + 1, ' ', keep_code ? '$' : ' ')
+          i += 2
+        elsif interpolated && !escaped && interpolation_hole?(i)
+          i = skip_interpolation(i, keep_code)
+        else
+          emit_content(i, keep_code)
+          i += 1
+          if escaped
+            escaped = false
+          elsif c == '\\'
+            escaped = true
+          elsif c == '"'
+            break
+          end
         end
       end
       i
@@ -294,7 +353,7 @@ module Noir
 
     private def mask_char_literal(start : Int32) : Int32
       len = @chars[start + 1] == '\\' ? 4 : 3
-      len.times { |k| emit(start + k, ' ', ' ') }
+      len.times { |k| emit(start + k, ' ', @chars[start + k]) }
       @spans << {:string, start, start + len}
       start + len
     end
@@ -309,8 +368,8 @@ module Noir
       @masked_lines ||= @masked.join.lines
     end
 
-    # Code masked source split into lines (1:1 with `String#lines`). Comments,
-    # triple-quote bodies and char literals are blanked; regular strings kept.
+    # Code masked source split into lines (1:1 with `String#lines`). Comments
+    # and triple-quote bodies are blanked; regular strings and chars kept.
     def code_lines : Array(String)
       @code_lines ||= @code.join.lines
     end

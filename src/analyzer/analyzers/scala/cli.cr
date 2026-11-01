@@ -1,5 +1,6 @@
 require "../../../models/analyzer"
 require "../../engines/cli_endpoint_support"
+require "../../../minilexers/scala_lexer"
 
 module Analyzer::Scala
   # Surfaces the command-line attack surface of Scala programs as `cli://`
@@ -78,12 +79,17 @@ module Analyzer::Scala
           root_url = "cli://#{cli_binary_name(path)}"
           emit_env = !content.matches?(WEB_RE)
 
+          lexer = Noir::ScalaLexer.new(content)
+          code_lines = lexer.code_lines
+          masked_lines = lexer.masked_lines
+          code_text = lexer.code.join
+
           # Decide, once per file, which library families are actually
           # present so their (textually overlapping) regexes never run
           # against a file that uses a different library.
-          has_scopt_decline = content.matches?(SCOPT_DECLINE_MARKER)
-          has_scallop = content.matches?(SCALLOP_MARKER)
-          has_twitter = content.matches?(TWITTER_MARKER)
+          has_scopt_decline = code_text.matches?(SCOPT_DECLINE_MARKER)
+          has_scallop = code_text.matches?(SCALLOP_MARKER)
+          has_twitter = code_text.matches?(TWITTER_MARKER)
 
           pending_cmd_url = root_url
           in_children = false
@@ -93,7 +99,8 @@ module Analyzer::Scala
           in_subcommand = false
           subcommand_depth = 0
 
-          content.each_line.with_index do |line, index|
+          code_lines.each_with_index do |line, index|
+            masked_line = masked_lines[index]? || ""
             line_no = index + 1
 
             if has_scopt_decline
@@ -113,7 +120,7 @@ module Analyzer::Scala
                 fetch_endpoint(endpoints, target, path, line_no).push_param(Param.new(m[1], "", "argument"))
               end
               if in_children
-                children_depth += line.count('(') - line.count(')')
+                children_depth += masked_line.count('(') - masked_line.count(')')
                 if children_depth <= 0
                   in_children = false
                   children_depth = 0
@@ -146,7 +153,7 @@ module Analyzer::Scala
                 fetch_endpoint(endpoints, starget, path, line_no).push_param(Param.new(m[1], "", "argument"))
               end
               if in_subcommand
-                subcommand_depth += line.count('{') - line.count('}')
+                subcommand_depth += masked_line.count('{') - masked_line.count('}')
                 if subcommand_depth <= 0
                   in_subcommand = false
                   subcommand_depth = 0

@@ -45,9 +45,10 @@ describe Noir::ScalaLexer do
       lex.masked_lines[0].should eq("path(       )") # blanked for brace matching
     end
 
-    it "blanks a char literal but leaves a `'symbol` as code" do
+    it "blanks a char literal structurally but preserves it in code view and leaves a `'symbol` as code" do
       lex = Noir::ScalaLexer.new("val c = '}'; val s = 'sym")
       lex.masked_lines[0].count('}').should eq(0) # char literal masked
+      lex.code_lines[0].should contain("val c = '}'")
       lex.in_code?("val c = '}'; val s = 'sym".index!("sym")).should be_true
     end
   end
@@ -173,6 +174,47 @@ describe Noir::ScalaLexer do
 
       lex.code_lines[0].should eq("val u = s\"/api/$version/users\"")
       lex.skip_ranges.should eq([src.index!('"')..src.size - 1])
+    end
+
+    it "handles comments containing braces inside interpolation holes" do
+      src = %(val s = s"a ${ /* } */ 1 + 2 } b" + "c")
+      lex = Noir::ScalaLexer.new(src)
+
+      lex.skip_ranges.should eq([src.index!('"')..src.index!(" b\"") + 2, src.rindex!("\"c\"")..src.size - 1])
+      lex.masked.join.count('+').should eq(1)
+
+      line_comment_src = %(val s = s"a ${ // }\n 1 } b" + "c")
+      lex2 = Noir::ScalaLexer.new(line_comment_src)
+      lex2.skip_ranges.should eq([line_comment_src.index!('"')..line_comment_src.index!(" b\"") + 2, line_comment_src.rindex!("\"c\"")..line_comment_src.size - 1])
+    end
+
+    it "handles char literals containing braces inside interpolation holes" do
+      src = %(val s = s"a ${ '{' } b" + "c")
+      lex = Noir::ScalaLexer.new(src)
+
+      lex.skip_ranges.should eq([src.index!('"')..src.index!(" b\"") + 2, src.rindex!("\"c\"")..src.size - 1])
+      lex.masked.join.count('+').should eq(1)
+
+      src2 = %(val s = s"a ${ '}' } b" + "c")
+      lex2 = Noir::ScalaLexer.new(src2)
+      lex2.skip_ranges.should eq([src2.index!('"')..src2.index!(" b\"") + 2, src2.rindex!("\"c\"")..src2.size - 1])
+    end
+
+    it "handles nested string interpolators inside interpolation holes" do
+      src = %(val s = s"outer ${ s"inner ${1 + 1}" } outer" + "c")
+      lex = Noir::ScalaLexer.new(src)
+
+      lex.skip_ranges.should eq([src.index!('"')..src.index!(" outer\"") + 6, src.rindex!("\"c\"")..src.size - 1])
+      lex.masked.join.count('+').should eq(1)
+    end
+
+    it "handles f and raw interpolators with holes" do
+      src = %(val a = f"val ${1.0}%.2f"; val b = raw"raw ${foo}")
+      lex = Noir::ScalaLexer.new(src)
+
+      lex.skip_ranges.size.should eq(2)
+      lex.code_lines[0].should contain("1.0")
+      lex.code_lines[0].should contain("foo")
     end
   end
 end

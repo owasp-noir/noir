@@ -33,36 +33,57 @@ module Analyzer::Scala
     end
 
     protected def extract_scala_brace_block(lines : Array(String), start_index : Int32) : Tuple(String, Int32)?
-      block = extract_scala_brace_block_with_end(lines, start_index)
+      lexer = Noir::ScalaLexer.new(lines.join('\n'))
+      extract_scala_brace_block(lexer.code_lines, lexer.masked_lines, start_index)
+    end
+
+    protected def extract_scala_brace_block(code_lines : Array(String),
+                                            structural_lines : Array(String),
+                                            start_index : Int32) : Tuple(String, Int32)?
+      block = extract_scala_brace_block_with_end(code_lines, structural_lines, start_index)
       return unless block
 
       {block[0], block[1]}
     end
 
     protected def extract_scala_brace_block_with_end(lines : Array(String), start_index : Int32) : Tuple(String, Int32, Int32)?
-      return if start_index >= lines.size
+      lexer = Noir::ScalaLexer.new(lines.join('\n'))
+      extract_scala_brace_block_with_end(lexer.code_lines, lexer.masked_lines, start_index)
+    end
 
-      opening_brace = scala_structural_opening_brace(lines[start_index])
+    protected def extract_scala_brace_block_with_end(code_lines : Array(String),
+                                                     structural_lines : Array(String),
+                                                     start_index : Int32) : Tuple(String, Int32, Int32)?
+      return if start_index >= structural_lines.size
+
+      opening_brace = structural_lines[start_index].index('{')
       return unless opening_brace
 
-      extract_scala_brace_block_with_end_at(lines, start_index, opening_brace)
+      extract_scala_brace_block_with_end_at(code_lines, structural_lines, start_index, opening_brace)
     end
 
     protected def extract_scala_brace_block_with_end_at(lines : Array(String),
                                                         start_index : Int32,
                                                         opening_brace : Int32) : Tuple(String, Int32, Int32)?
-      return if start_index >= lines.size
+      lexer = Noir::ScalaLexer.new(lines.join('\n'))
+      extract_scala_brace_block_with_end_at(lexer.code_lines, lexer.masked_lines, start_index, opening_brace)
+    end
 
-      body_after_scala_opening_brace(lines, start_index, opening_brace)
+    protected def extract_scala_brace_block_with_end_at(code_lines : Array(String),
+                                                        structural_lines : Array(String),
+                                                        start_index : Int32,
+                                                        opening_brace : Int32) : Tuple(String, Int32, Int32)?
+      return if start_index >= structural_lines.size
+
+      body_after_scala_opening_brace(code_lines, structural_lines, start_index, opening_brace)
     end
 
     protected def scala_structural_line(line : String) : String
-      stripped, _, _ = Noir::ScalaCalleeExtractor.strip_non_code_with_state(line, 0, false)
-      stripped
+      Noir::ScalaLexer.new(line).masked_lines.first? || ""
     end
 
     protected def scala_code_line(line : String) : String
-      Noir::ScalaCalleeExtractor.strip_comment_preserving_strings(line)
+      Noir::ScalaLexer.new(line).code_lines.first? || ""
     end
 
     # Whole-file masked views (via `Noir::ScalaLexer`). Unlike the per-line
@@ -99,17 +120,19 @@ module Analyzer::Scala
       scala_structural_line(line).index('{')
     end
 
-    private def body_after_scala_opening_brace(lines : Array(String),
+    private def body_after_scala_opening_brace(code_lines : Array(String),
+                                               structural_lines : Array(String),
                                                opening_index : Int32,
                                                opening_brace : Int32) : Tuple(String, Int32, Int32)
-      opening_line = lines[opening_index]
-      first_fragment = opening_line[(opening_brace + 1)..]? || ""
-      clean_fragment, block_comment_depth, in_multiline_string = Noir::ScalaCalleeExtractor.strip_non_code_with_state(first_fragment, 0, false)
+      struct_opening = structural_lines[opening_index]
+      code_opening = code_lines[opening_index]? || struct_opening
+      first_fragment = code_opening[(opening_brace + 1)..]? || ""
+      first_struct = struct_opening[(opening_brace + 1)..]? || ""
       body_lines = [] of String
-      brace_count = 1 + clean_fragment.count('{') - clean_fragment.count('}')
+      brace_count = 1 + first_struct.count('{') - first_struct.count('}')
 
       if brace_count <= 0
-        closing_brace = clean_fragment.rindex('}')
+        closing_brace = first_struct.rindex('}')
         first_fragment = first_fragment[0...closing_brace] if closing_brace
         return {first_fragment, opening_index + 1, opening_index}
       end
@@ -117,24 +140,20 @@ module Analyzer::Scala
       body_lines << first_fragment
       index = opening_index + 1
 
-      while index < lines.size && brace_count > 0
-        line = lines[index]
-        stripped, block_comment_depth, in_multiline_string = Noir::ScalaCalleeExtractor.strip_non_code_with_state(
-          line,
-          block_comment_depth,
-          in_multiline_string
-        )
-        next_brace_count = brace_count + stripped.count('{') - stripped.count('}')
+      while index < structural_lines.size && brace_count > 0
+        s_line = structural_lines[index]
+        c_line = code_lines[index]? || s_line
+        next_brace_count = brace_count + s_line.count('{') - s_line.count('}')
 
         if next_brace_count <= 0
-          if line.strip != "}"
-            closing_brace = stripped.rindex('}')
-            body_lines << (closing_brace ? line[0...closing_brace] : line)
+          if s_line.strip != "}"
+            closing_brace = s_line.rindex('}')
+            body_lines << (closing_brace ? c_line[0...closing_brace] : c_line)
           end
           return {body_lines.join("\n"), opening_index + 1, index}
         end
 
-        body_lines << line
+        body_lines << c_line
         brace_count = next_brace_count
         index += 1
       end

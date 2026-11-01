@@ -291,39 +291,21 @@ module Analyzer::Scala
     private def extract_in_blocks(chain : String) : Array(String)
       blocks = [] of String
       i = 0
-      while i < chain.size
-        slice = chain[i..]
+      lexer = Noir::ScalaLexer.new(chain)
+      masked = lexer.masked.join
+      while i < masked.size
+        slice = masked[i..]
         if slice.starts_with?(".in(") || slice.starts_with?(".securityIn(")
-          open_paren = chain.index('(', i)
-          if open_paren && (result = balanced_paren_content(chain, open_paren))
-            blocks << result[0]
-            i = result[1] + 1
+          open_paren = masked.index('(', i)
+          if open_paren && (close = lexer.matching_delimiter(open_paren))
+            blocks << chain[(open_paren + 1)...close]
+            i = close + 1
             next
           end
         end
         i += 1
       end
       blocks
-    end
-
-    private def balanced_paren_content(s : String, open_idx : Int32) : Tuple(String, Int32)?
-      # Same non-ASCII O(n^2) risk as `call_paren_depths` above -- index a
-      # materialized char array instead of re-slicing `s` at each position.
-      chars = s.chars
-      depth = 0
-      i = open_idx
-      content_start = open_idx + 1
-      while i < chars.size
-        c = chars[i]
-        if c == '('
-          depth += 1
-        elsif c == ')'
-          depth -= 1
-          return {chars[content_start...i].join, i} if depth == 0
-        end
-        i += 1
-      end
-      nil
     end
 
     private def process_in_args(args : String, params : Array(Param), segments : Array(String), consts : Hash(String, String))

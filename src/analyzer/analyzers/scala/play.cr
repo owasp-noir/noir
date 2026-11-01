@@ -118,14 +118,16 @@ module Analyzer::Scala
       scala_files.each do |path|
         # Comments blanked (strings kept, offsets kept) so the param regexes
         # read `request.headers.get(/* x */ "X-H")` too.
-        content = Noir::ScalaLexer.new(read_file_content(path)).code.join
+        raw_content = read_file_content(path)
+        lexer = Noir::ScalaLexer.new(raw_content)
+        content = lexer.code.join
         base_path = configured_base_for(path)
         # Length-preserving copy with strings/comments blanked out. Braces,
         # colons and `def` keywords that live inside literals or comments are
         # turned into spaces, so the structural scan below never trips on
         # them. Indices computed on `structure` map 1:1 onto `content`, so the
         # body text handed to the callee extractor is always real source.
-        structure = blank_non_code(content)
+        structure = lexer.masked.join
 
         # Extract package name
         package_name = ""
@@ -238,29 +240,6 @@ module Analyzer::Scala
       end
 
       controller_methods
-    end
-
-    # Blank out strings and comments while preserving the byte length and line
-    # structure of the source, so structural offsets stay aligned.
-    private def blank_non_code(content : String) : String
-      block_depth = 0
-      in_multiline_string = false
-      builder = String::Builder.new(content.bytesize)
-      first = true
-      # Split on '\n' (not each_line, which chomps a trailing '\r'): a CRLF
-      # source must keep its '\r' bytes so `structure` stays byte-aligned 1:1
-      # with `content` — every downstream `content[start...end]` slice relies
-      # on that invariant.
-      content.split('\n').each do |line|
-        if first
-          first = false
-        else
-          builder << '\n'
-        end
-        stripped, block_depth, in_multiline_string = Noir::ScalaCalleeExtractor.strip_non_code_with_state(line, block_depth, in_multiline_string)
-        builder << stripped
-      end
-      builder.to_s
     end
 
     # Locate class/object/trait declarations (Scala 2 brace style and Scala 3
@@ -693,11 +672,13 @@ module Analyzer::Scala
     private def process_sird_router(router : NamedTuple(path: String, content: String, class_name: String), prefix : String)
       @sird_router_paths << router[:path]
       source = router[:content]
-      structure = blank_non_code(source)
+      lexer = Noir::ScalaLexer.new(source)
+      structure = lexer.masked.join
+      code = lexer.code.join
       # Cases are read from a comment-free copy (string literals kept,
       # offsets aligned with `source`), so `// case GET(p"/old")` is not
       # a route.
-      block = extract_router_routes_block(structure, Noir::ScalaLexer.new(source).code.join)
+      block = extract_router_routes_block(structure, code)
       return unless block
 
       emit_sird_cases(block[:body], block[:start], source, router[:path], prefix)
@@ -710,8 +691,9 @@ module Analyzer::Scala
     # keeps `$name` as a `:name` path segment and a variable prefix
     # (`withPrefix(prefix)`) becomes a `:prefix` segment.
     private def process_router_from_blocks(path : String, source : String)
-      structure = blank_non_code(source)
-      code = Noir::ScalaLexer.new(source).code.join
+      lexer = Noir::ScalaLexer.new(source)
+      structure = lexer.masked.join
+      code = lexer.code.join
       chars = structure.chars
       offset = 0
       while found = structure.index("Router.from", offset)

@@ -74,6 +74,7 @@ module Analyzer::Scala
       lexer = scala_lexer(content)
       lines = scala_code_text(lexer).split('\n')
       code_lines = lexer.code_lines
+      masked_lines = lexer.masked_lines
       mount_prefix = single_mount_prefix(code_lines)
 
       lines.each_with_index do |_line, index|
@@ -96,7 +97,7 @@ module Analyzer::Scala
             extract_path_params(endpoint, route_path)
 
             # Extract parameters from the route block
-            block = extract_block_from_index(lines, index)
+            block = extract_block_from_index(code_lines, masked_lines, index)
             block_content = block ? block[0] : ""
             extract_params_from_block(endpoint, block_content)
             attach_route_callees(endpoint, block_content, path, block[1]) if include_callee && block
@@ -125,8 +126,8 @@ module Analyzer::Scala
     end
 
     # Extract block content starting from a given index
-    private def extract_block_from_index(lines : Array(String), start_index : Int32) : Tuple(String, Int32)?
-      extract_scala_brace_block(lines, start_index)
+    private def extract_block_from_index(code_lines : Array(String), structural_lines : Array(String), start_index : Int32) : Tuple(String, Int32)?
+      extract_scala_brace_block(code_lines, structural_lines, start_index)
     end
 
     private def attach_route_callees(endpoint : Endpoint, body : String, path : String, start_line : Int32)
