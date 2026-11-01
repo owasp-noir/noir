@@ -137,4 +137,36 @@ describe "NextjsAuthTagger" do
     NextjsAuthTagger.new(noir_options).perform([endpoint])
     endpoint.tags.map(&.name).should eq(["auth"])
   end
+
+  # umami's `parseRequest`: the helper refuses a request its own auth check
+  # found no caller for, through a reply helper (`unauthorized()`), and hands
+  # the refusal back in a destructured result the handler returns.
+  it "reads a parse helper's refusal through a reply helper and a destructured result" do
+    tags = tag.call("app/api/parsed/route.ts", 5)
+    tags.map(&.name).should eq(["auth"])
+    tags[0].description.should contain("parseRequest")
+    # At the helper's definition, where `noir reach lib/request.ts` looks.
+    tags[0].path.not_nil!.should end_with("lib/request.ts")
+  end
+
+  it "leaves the helper untagged when the call opts out of its check" do
+    tag.call("app/api/parsed/route.ts", 19).should be_empty
+  end
+
+  it "leaves a login helper refusing unknown credentials untagged" do
+    tag.call("app/api/parsed/route.ts", 29).should be_empty
+  end
+
+  it "leaves a dropped returned refusal untagged" do
+    tag.call("app/api/parsed/route.ts", 36).should be_empty
+  end
+
+  it "reads a reply helper in the handler itself" do
+    tag.call("app/api/parsed/route.ts", 41).map(&.name).should eq(["auth"])
+  end
+
+  it "lets a deployment switch and a validator factory come before the helper, not a factory that writes" do
+    tag.call("app/api/parsed-factory/route.ts", 5).map(&.name).should eq(["auth"])
+    tag.call("app/api/parsed-factory/route.ts", 21).should be_empty
+  end
 end

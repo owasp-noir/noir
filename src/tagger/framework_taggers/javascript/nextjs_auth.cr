@@ -38,12 +38,14 @@ class NextjsAuthTagger < FrameworkTagger
   CONTROL_WORDS    = Set{"if", "for", "while", "switch", "catch", "function"}
   # `const denied = await checkAuth(); if (denied) return denied;`
   RESULT_NAME = /^\s*(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=/
+  # `const { auth, error } = await parseRequest(request);`
+  DESTRUCTURED_RESULT = /^\s*(?:const|let|var)\s+\{([^}]*)\}\s*=/
   # How many helper hops to follow (`GET` → `handler` → `checkCronKey`).
   MAX_HELPER_DEPTH = 2
   # A pages-router handler serves every verb from one body; a 401 after a
   # `req.method` branch guards only some of them. A branch that just
   # refuses other verbs with 405 leaves one verb, so it does not count.
-  METHOD_BRANCH = /\breq(?:uest)?\.method\b/
+  METHOD_BRANCH = /\b(?:if|switch)\s*\(.*\breq(?:uest)?\.method\b/
   # How far above the 401 its `if` may sit (a Prettier-wrapped reply).
   CONDITION_LOOKBACK = 6
   # `export const GET = withSession(async ...)`. The wrapper is the guard.
@@ -56,7 +58,21 @@ class NextjsAuthTagger < FrameworkTagger
   # A refusal found in a body: the `if` it sits under, the status, and
   # whether it throws (stopping its caller too) or returns a response (which
   # its caller must hand on).
-  record Refusal, condition : String, status : String, throws : Bool
+  # `opt_outs` are the option keys whose truthy value skips it: the refusal
+  # sits under `if (!options?.skipAuth)`.
+  record Refusal, condition : String, status : String, throws : Bool, opt_outs : Array(String)
+
+  # `return unauthorized()`, `error = () => forbidden()`: a call whose own
+  # definition replies 401/403 is that reply. Group 1 the callee.
+  REPLY_CALL = /(?:\breturn\s+|=>\s*)(?:await\s+)?([A-Za-z_$][\w$]*)\s*\(/
+  # `if (!auth)`: group 1 the value whose absence is refused.
+  NEGATED_VALUE = /\bif\s*\(\s*!\s*([A-Za-z_$][\w$]*)(?:\s*\??\.\s*[A-Za-z_$][\w$]*)*\s*\)/
+  # The value of a check of the request itself: `auth = await checkAuth(request)`,
+  # `const session = await getSession()`. A lookup of submitted credentials
+  # (`await authenticate(email, password)`) is a login, not this.
+  CALLER_CHECK = /\s*=\s*(?:await\s+)?[\w$.]*(?:[Aa]uth|[Ss]ession)\w*\s*\(\s*(?:\)|req(?:uest)?\b|headers\(\)|cookies\(\))/
+  # `!options?.skipAuth`: a negated member test of an option.
+  OPT_OUT_TEST = /!\s*[A-Za-z_$][\w$]*\s*\??\.\s*([A-Za-z_$][\w$]*)/
 
   def self.target_techs : Array(String)
     ["js_nextjs"]
@@ -69,12 +85,13 @@ class NextjsAuthTagger < FrameworkTagger
 
     code = function_body(lines, line - 1)
     raw = lines[line - 1, code.size]
-    if refusal = session_refusal(code, raw, UNAUTHORIZED)
+    if refusal = session_refusal(code, raw, UNAUTHORIZED, path)
       endpoint.add_tag(Tag.new("auth", "Protected by Next.js handler check `#{refusal.condition}` (replies #{refusal.status})", "nextjs_auth"))
       return
     end
     if found = helper_refusal(code, raw, path, 0)
-      endpoint.add_tag(Tag.new("auth", "Protected by Next.js helper `#{found[0]}()` (#{found[1]})", "nextjs_auth"))
+      # Located at the helper's definition, so `noir reach` on its file finds the route.
+      endpoint.add_tag(Tag.new("auth", "Protected by Next.js helper `#{found[0]}()` (#{found[1]})", "nextjs_auth", found[3], found[4]))
       return
     end
 
@@ -101,7 +118,7 @@ class NextjsAuthTagger < FrameworkTagger
     lines = read_file_lines(def_path) || return
     return unless def_line <= lines.size
     body = function_body(lines, def_line - 1)
-    if refusal = session_refusal(body, lines[def_line - 1, body.size], UNAUTHORIZED)
+    if refusal = session_refusal(body, lines[def_line - 1, body.size], UNAUTHORIZED, def_path)
       "replies #{refusal.status}"
     elsif found = helper_refusal(body, lines[def_line - 1, body.size], def_path, 0)
       "through `#{found[0]}()`, #{found[1]}"
@@ -110,20 +127,63 @@ class NextjsAuthTagger < FrameworkTagger
 
   # The session denial sitting above a `mark` hit, or nil. `raw` is `code`
   # as written, line for line.
-  private def session_refusal(code : Array(String), raw : Array(String), mark : Regex) : Refusal?
+  private def session_refusal(code : Array(String), raw : Array(String), mark : Regex, path : String? = nil) : Refusal?
     code.each_with_index do |text, i|
       break if text.matches?(METHOD_BRANCH) && code[i, 3].none?(&.includes?("405"))
-      next unless hit = text.match(mark)
+      status = text.match(mark).try { |hit| hit[1]? || "401" } || reply_helper_status(text, path) || next
       i.downto({i - CONDITION_LOOKBACK, 0}.max) do |j|
         # A block closed between the `if` and the refusal is not the refusal's.
         break if j < i && code[j].strip == "}"
         next unless code[j].matches?(SESSION_DENIED) || secret_list_denied?(code[j], raw[j]? || "") ||
-                    (code[j].matches?(/\bif\s*\(/) && (raw[j]? || "").matches?(SECRET_TEMPLATE))
+                    (code[j].matches?(/\bif\s*\(/) && (raw[j]? || "").matches?(SECRET_TEMPLATE)) ||
+                    caller_check_absent?(code, j)
         throws = code[j..i].any?(&.matches?(/\bthrow\b/))
-        return Refusal.new(code[j].strip.rchop('{').strip, hit[1]? || "401", throws)
+        return Refusal.new(code[j].strip.rchop('{').strip, status, throws, opt_out_keys(code, j))
       end
     end
     nil
+  end
+
+  # `if (!auth)` where `auth` was set, above it, from a check of the request.
+  private def caller_check_absent?(code : Array(String), j : Int32) : Bool
+    name = code[j].match(NEGATED_VALUE).try(&.[1]) || return false
+    assigned = /\b#{Regex.escape(name)}#{CALLER_CHECK.source}/
+    code[0...j].any?(&.matches?(assigned))
+  end
+
+  # The option keys of the negated member tests (`!options?.skipAuth`) in the
+  # `if`s still open at line `j`.
+  private def opt_out_keys(code : Array(String), j : Int32) : Array(String)
+    open = [] of {String, Int32}
+    depth = 0
+    code[0...j].each do |text|
+      opens = text.count('{')
+      closes = text.count('}')
+      open << {text, depth} if opens > closes && text.matches?(/\bif\s*\(/)
+      depth += opens - closes
+      open.reject! { |entry| entry[1] >= depth }
+    end
+    open.flat_map { |entry| entry[0].scan(OPT_OUT_TEST).map(&.[1]) }.uniq!
+  end
+
+  @reply_helpers = Hash(Tuple(String, String), String?).new
+
+  # The status a reply helper called on `text` answers (`return
+  # unauthorized()` over `return Response.json(.., { status: 401 })`).
+  private def reply_helper_status(text : String, path : String?) : String?
+    return unless path && (name = text.match(REPLY_CALL).try(&.[1]))
+    key = {path, name}
+    return @reply_helpers[key] if @reply_helpers.has_key?(key)
+    @reply_helpers[key] = nil
+    content = read_file(path) || return
+    handler = Noir::JSHandlerResolver.resolve(name, content, path) || return
+    def_path = handler.path || return
+    def_line = handler.line || return
+    lines = read_file_lines(def_path) || return
+    return unless def_line <= lines.size
+    # A helper that answers whatever it is handed (`json(data, status)`)
+    # names no status of its own.
+    @reply_helpers[key] = function_body(lines, def_line - 1).join('\n').match(UNAUTHORIZED).try(&.[1])
   end
 
   # `![a, b].includes(x)` where every element is a server-side secret: a
@@ -144,7 +204,7 @@ class NextjsAuthTagger < FrameworkTagger
   # helper that returns its refusal guards only when the handler hands the
   # result on (`return await f()`, `if (denied) return denied`); one that
   # throws stops the handler wherever its result goes. Returns {name, how}.
-  private def helper_refusal(code : Array(String), raw : Array(String), path : String, depth : Int32) : Tuple(String, String, Bool)?
+  private def helper_refusal(code : Array(String), raw : Array(String), path : String, depth : Int32) : Tuple(String, String, Bool, String, Int32)?
     return if depth >= MAX_HELPER_DEPTH
     content = read_file(path) || return
     level = 0
@@ -155,11 +215,13 @@ class NextjsAuthTagger < FrameworkTagger
       if i > 0 && level == 1 && !statement.empty? && !statement.matches?(/\A[)}\]]/)
         m = text.match(HELPER_STATEMENT)
         if m && !CONTROL_WORDS.includes?(m[1]) && (found = helper_definition_refusal(m[1], content, path, depth))
-          return {m[1], found[0], found[1]} if found[1] || propagated?(code, i)
+          # `parseRequest(request, null, { skipAuth: true })` turns it off.
+          opted_out = found[2].any? { |key| text.matches?(/\b#{Regex.escape(key)}\s*:\s*true\b/) }
+          return {m[1], found[0], found[1], found[3], found[4]} if !opted_out && (found[1] || propagated?(code, i))
         end
         # Judged as written: `code` has its template literals blanked, and
         # `` sql`DELETE …` `` is a call.
-        break unless lead_read?(Noir::CComments.strip(raw[i]? || text, quotes: %("'`)))
+        break unless lead_read?(Noir::CComments.strip(raw[i]? || text, quotes: %("'`)), content, path)
       end
       level += text.count('{') - text.count('}')
     end
@@ -168,26 +230,58 @@ class NextjsAuthTagger < FrameworkTagger
 
   # A leading statement that only reads or logs (`Noir::JSReadShape`):
   # anything else before the check runs for a caller it would refuse.
-  private def lead_read?(text : String) : Bool
-    Noir::JSReadShape.read_only?(text)
+  private def lead_read?(text : String, content : String, path : String) : Bool
+    return true if Noir::JSReadShape.read_only?(text) || text.strip.matches?(ENV_GATE)
+    # `const schema = withDateRange({`: a project helper that only builds a
+    # validator.
+    factory = text.match(SCHEMA_FACTORY_CALL).try(&.[1]) || return false
+    schema_factory?(factory, content, path)
+  end
+
+  # `if (process.env.CLOUD_MODE) {` / `if (process.env.X !== '1') return notFound();`:
+  # a deployment switch that turns the route off for everyone.
+  ENV_GATE            = /\Aif\s*\(\s*!?\s*process\.env\.\w+(?:\s*[!=]==?\s*['"`][^'"`]*['"`])?\s*\)\s*(?:\{\z|return\b)/
+  SCHEMA_FACTORY_CALL = /\A\s*(?:const|let|var)\s+[A-Za-z_$][\w$]*\s*=\s*([A-Za-z_$][\w$]*)\s*\(/
+  SCHEMA_RETURN       = /\breturn\s+(?:z|yup|Joi)\b/
+
+  @schema_factories = Hash(Tuple(String, String), Bool).new
+
+  private def schema_factory?(name : String, content : String, path : String) : Bool
+    key = {path, name}
+    return @schema_factories[key] if @schema_factories.has_key?(key)
+    @schema_factories[key] = false
+    handler = Noir::JSHandlerResolver.resolve(name, content, path) || return false
+    def_path = handler.path || return false
+    def_line = handler.line || return false
+    lines = read_file_lines(def_path) || return false
+    return false unless def_line <= lines.size
+    body = function_body(lines, def_line - 1).join('\n')
+    @schema_factories[key] = body.matches?(SCHEMA_RETURN) && !body.includes?("await")
   end
 
   # Whether the handler hands on what the call at `i` returns.
   private def propagated?(code : Array(String), i : Int32) : Bool
     return true if code[i].matches?(/^\s*return\b/)
-    name = code[i].match(RESULT_NAME).try(&.[1]) || return false
-    following = code[(i + 1)..].find { |text| !text.strip.empty? } || return false
-    escaped = Regex.escape(name)
-    following.matches?(/^\s*if\s*\(\s*!?\s*\(?\s*#{escaped}\b[^)]*\)+\s*\{?\s*return\b/)
+    names = code[i].match(RESULT_NAME).try { |m| [m[1]] } ||
+            code[i].match(DESTRUCTURED_RESULT).try { |m| m[1].split(',').compact_map(&.split(':').last.strip.presence) } ||
+            return false
+    rest = code[(i + 1)..].reject(&.strip.empty?)
+    following = rest.first? || return false
+    # `if (error) {` with `return error();` on the next line.
+    following = "#{following} #{rest[1]? || ""}" if following.rstrip.ends_with?('{')
+    names.any? do |name|
+      escaped = Regex.escape(name)
+      following.matches?(/^\s*if\s*\(\s*!?\s*\(?\s*#{escaped}\b[^)]*\)+\s*\{?\s*return\b/)
+    end
   end
 
-  @helper_refusals = Hash(Tuple(String, String, Int32), Tuple(String, Bool)?).new
+  @helper_refusals = Hash(Tuple(String, String, Int32), Tuple(String, Bool, Array(String), String, Int32)?).new
 
   # How the function `name`, as called in `path`, refuses ("replies 401",
   # "throws unauthorized", or through a helper of its own) and whether the
   # refusal throws. Nil when it does not, or its definition is not in the
   # scan. Keyed by hop: a deeper hop has less depth left to look.
-  private def helper_definition_refusal(name : String, content : String, path : String, depth : Int32) : Tuple(String, Bool)?
+  private def helper_definition_refusal(name : String, content : String, path : String, depth : Int32) : Tuple(String, Bool, Array(String), String, Int32)?
     key = {path, name, depth}
     return @helper_refusals[key] if @helper_refusals.has_key?(key)
     @helper_refusals[key] = nil # a helper that reaches itself
@@ -198,12 +292,12 @@ class NextjsAuthTagger < FrameworkTagger
     return unless def_line <= lines.size
     body = function_body(lines, def_line - 1)
     raw = lines[def_line - 1, body.size]
-    @helper_refusals[key] = if refusal = session_refusal(body, raw, UNAUTHORIZED)
-                              {"replies #{refusal.status}", refusal.throws}
+    @helper_refusals[key] = if refusal = session_refusal(body, raw, UNAUTHORIZED, def_path)
+                              {"replies #{refusal.status}", refusal.throws, refusal.opt_outs, def_path, def_line}
                             elsif thrown_unauthorized?(raw, body)
-                              {"throws unauthorized", true}
+                              {"throws unauthorized", true, [] of String, def_path, def_line}
                             elsif found = helper_refusal(body, raw, def_path, depth + 1)
-                              {"through `#{found[0]}()`, #{found[1]}", found[2]}
+                              {"through `#{found[0]}()`, #{found[1]}", found[2], [] of String, def_path, def_line}
                             end
   end
 
@@ -219,7 +313,7 @@ class NextjsAuthTagger < FrameworkTagger
     stripped = Noir::JSRouteExtractor.strip_js_comments(source)
     raw = Noir::JSRouteExtractor.definition_body(stripped, def_line).lines
     code = raw.map { |line| code_only(line) }
-    return :status if session_refusal(code, raw, UNAUTHORIZED)
+    return :status if session_refusal(code, raw, UNAUTHORIZED, def_path)
     :throw if thrown_unauthorized?(raw, code)
   end
 
@@ -242,12 +336,30 @@ class NextjsAuthTagger < FrameworkTagger
   private def function_body(lines : Array(String), start : Int32) : Array(String)
     body = [] of String
     depth = 0
+    parens = 0
     opened = false
+    previous = ' '
     lines[start..].each do |raw|
       text = code_only(raw)
       body << text
-      depth += text.count('{') - text.count('}')
-      opened ||= text.includes?('{')
+      # Until the body opens, a brace inside the parameter list is a type
+      # or a default (`options?: { skipAuth: boolean },` on its own line);
+      # one after `=>` opens an arrow body even inside a wrapper's call.
+      text.each_char_with_index do |char, idx|
+        case char
+        when '(' then parens += 1
+        when ')' then parens -= 1 if parens > 0
+        when '{'
+          arrow = previous == '>' && text[0, idx].rstrip.ends_with?("=>")
+          if opened || parens == 0 || arrow
+            depth += 1
+            opened = true
+          end
+        when '}'
+          depth -= 1 if opened || parens == 0
+        end
+        previous = char unless char.whitespace?
+      end
       break if opened ? depth <= 0 : text.rstrip.ends_with?(';')
     end
     body
