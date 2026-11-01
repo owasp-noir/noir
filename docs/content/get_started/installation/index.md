@@ -132,7 +132,7 @@ No package manager? Grab a prebuilt binary from [GitHub Releases](https://github
 
 To install or update:
 
-1. Download the binary for your platform (e.g., `noir-v1.4.0-linux-x86_64` on Linux, `noir-v1.4.0-osx-arm64.tar.gz` on macOS, or `noir-vX.Y.Z-windows-x86_64.exe` on Windows).
+1. Download the binary for your platform (e.g., `noir-v1.5.0-linux-x86_64` on Linux, `noir-v1.5.0-osx-arm64.tar.gz` on macOS, or `noir-vX.Y.Z-windows-x86_64.exe` on Windows).
 2. **Linux**: make it executable and move it into your `PATH`:
 
     ```bash

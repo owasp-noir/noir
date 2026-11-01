@@ -55,7 +55,7 @@ sort_by = "weight"
 
     ```bash
     brew bump-formula-pr --strict --version <VERSION> noir
-    # 예: brew bump-formula-pr --strict --version 1.4.0 noir
+    # 예: brew bump-formula-pr --strict --version 1.5.0 noir
     ```
 
 3.  **스타일 확인** (선택):

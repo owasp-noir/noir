@@ -55,7 +55,7 @@ Submit a PR to `homebrew-core`:
 
     ```bash
     brew bump-formula-pr --strict --version <VERSION> noir
-    # Example: brew bump-formula-pr --strict --version 1.4.0 noir
+    # Example: brew bump-formula-pr --strict --version 1.5.0 noir
     ```
 
 3.  **Style Check** (Optional):

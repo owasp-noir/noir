@@ -35,7 +35,7 @@ A SARIF file has a `runs` array. Each run describes the tool (`driver` with name
       "tool": {
         "driver": {
           "name": "OWASP Noir",
-          "version": "1.4.0",
+          "version": "1.5.0",
           "informationUri": "https://github.com/owasp-noir/noir",
           "rules": [
             {
