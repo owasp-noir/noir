@@ -708,4 +708,78 @@ describe "NestjsAuthTagger" do
       FileUtils.rm_rf(tmpdir)
     end
   end
+
+  # A Passport guard that runs only a login strategy starts the sign-in; the
+  # route it sits on is the anonymous entry point, whatever the guard is
+  # called. Any non-login strategy in the list still refuses.
+  it "does not call a Passport login-strategy guard a guard" do
+    CodeLocator.instance.clear_all
+    tmpdir = File.tempname("nest_passport_login")
+    files = {
+      "package.json"            => "{}",
+      "src/google-sso.guard.ts" => <<-TS,
+        export class GoogleSSOGuard extends AuthGuard('google') implements CanActivate {
+          canActivate(context: ExecutionContext) {
+            if (!enabled) throwHTTPErr({ statusCode: 404 });
+            return super.canActivate(context);
+          }
+        }
+        export class GithubAuthGuard extends AuthGuard("github") {}
+        export class JwtAuthGuard extends AuthGuard('jwt') {}
+        TS
+      "src/auth.controller.ts" => <<-TS,
+        @Controller('auth')
+        export class AuthController {
+          @Get('google')
+          @UseGuards(GoogleSSOGuard)
+          google() {}
+
+          @Get('github')
+          @UseGuards(GithubAuthGuard)
+          github() {}
+
+          @Post('login')
+          @UseGuards(AuthGuard('local'))
+          login() {}
+
+          @Get('me')
+          @UseGuards(JwtAuthGuard)
+          me() {}
+
+          @Get('either')
+          @UseGuards(AuthGuard(['google', 'jwt']))
+          either() {}
+        }
+        TS
+    }
+    files.each do |rel, body|
+      path = File.join(tmpdir, rel)
+      Dir.mkdir_p(File.dirname(path))
+      File.write(path, body)
+      CodeLocator.instance.register_path(path)
+    end
+
+    begin
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(tmpdir)
+      controller = File.join(tmpdir, "src/auth.controller.ts")
+      endpoints = {"google" => 5, "github" => 9, "login" => 13, "me" => 17, "either" => 21}.transform_values do |line|
+        details = Details.new(PathInfo.new(controller, line))
+        details.technology = "ts_nestjs"
+        Endpoint.new("/x", "GET", [] of Param, details)
+      end
+
+      NestjsAuthTagger.new(noir_options).perform(endpoints.values)
+      auth = endpoints.transform_values(&.tags.any? { |tag| tag.name == "auth" })
+
+      auth["google"].should be_false
+      auth["github"].should be_false
+      auth["login"].should be_false
+      auth["me"].should be_true
+      auth["either"].should be_true
+    ensure
+      FileUtils.rm_rf(tmpdir)
+      CodeLocator.instance.clear_all
+    end
+  end
 end

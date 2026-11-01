@@ -4,6 +4,7 @@ require "../../../utils/c_comments"
 require "../../../utils/js_literal_scanner"
 require "../../../utils/top_level_split"
 require "../../../miniparsers/import_graph"
+require "./express_auth"
 
 @[Noir::TaggerFor(key: "nestjs_auth", name: "NestJS Auth Tagger", desc: "Identifies NestJS-style decorator auth (Nest guards, tsoa @Security, routing-controllers @Authorized, Ts.ED @Authenticate)", order: 150)]
 class NestjsAuthTagger < FrameworkTagger
@@ -123,6 +124,8 @@ class NestjsAuthTagger < FrameworkTagger
   # Passport's `AuthGuard(...)` (called inline, or extended) refuses a
   # caller its strategy cannot authenticate with 401.
   PASSPORT_GUARD = /\AAuthGuard\s*\(|\bextends\s+AuthGuard\s*\(/
+  # Its strategy list: `AuthGuard('google')`, `AuthGuard(['jwt', 'api-key'])`.
+  PASSPORT_STRATEGIES = /\bAuthGuard\s*\(\s*([^)]*)/
   # What a `canActivate` does with a caller: throws 401 outright; throws 403
   # or returns false (Nest answers 403) on what it read from the request;
   # or only ever returns true.
@@ -246,7 +249,7 @@ class NestjsAuthTagger < FrameworkTagger
   # throws nothing; nil otherwise, including a `canActivate` that consults
   # route metadata through the Reflector.
   private def guard_verdict(header : String, body : String) : Symbol?
-    return :refuses if header.matches?(PASSPORT_GUARD)
+    return (passport_login_only?(header) ? :admits : :refuses) if header.matches?(PASSPORT_GUARD)
     return unless method = body.match(CAN_ACTIVATE)
     return unless params_close = Noir::JSLiteralScanner.find_matching_paren(body, method.end(0) - 1)
     return unless open = body.index('{', params_close)
@@ -281,15 +284,24 @@ class NestjsAuthTagger < FrameworkTagger
     end
   end
 
+  # A Passport guard whose every strategy is a login flow (`local`, an
+  # OAuth/OIDC/SAML provider): `GoogleSSOGuard extends AuthGuard('google')`
+  # on `GET /auth/google` starts the sign-in, it does not protect a resource.
+  private def passport_login_only?(text : String) : Bool
+    list = text.match(PASSPORT_STRATEGIES).try(&.[1]) || return false
+    strategies = list.scan(/['"`]([^'"`]+)['"`]/).map(&.[1])
+    !strategies.empty? && strategies.all?(&.matches?(ExpressAuthTagger::PASSPORT_LOGIN_STRATEGY))
+  end
+
   # The guards in a `UseGuards(...)` argument list that refuse anonymous
   # callers: Passport's `AuthGuard(...)`, or a class whose definition does
   # (`guard_verdict`). One whose definition says nothing definite falls back
   # to its name; an optional Passport guard never counts.
   private def authenticating_guards(args : String) : Array(String)
-    args.split(',').map(&.strip).select do |guard|
+    Noir::TopLevelSplit.split(args, ',', Noir::TopLevelSplit::Rules::JS_POSITIONAL_ARGS).map(&.strip).select do |guard|
       name = guard.match(/\A\w+/).try(&.[0]) || next false
       next false if @optional_guards.includes?(name)
-      next true if guard.matches?(PASSPORT_GUARD)
+      next !passport_login_only?(guard) if guard.matches?(PASSPORT_GUARD)
       verdict = @guard_classes[name]?
       verdict ? verdict == :refuses : name.matches?(AUTH_GUARD_REF)
     end
