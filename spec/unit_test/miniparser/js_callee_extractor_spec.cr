@@ -288,4 +288,81 @@ describe Noir::JSCalleeExtractor do
     callees = Noir::JSCalleeExtractor.callees_for_function_body(body, "route.ts", 1)
     callees.map(&.[0]).should eq(["Promise.all().filter", "ids.map", "canView", "a().c", "b", "d"])
   end
+
+  it "orders schema-builder chains after work calls so real calls survive the endpoint cap" do
+    lines = (1..25).map { |i| "const field#{i} = z.string#{i}().min(1)" }
+    lines << "await verifyBackupCode(x)"
+    lines << "await streamText(y)"
+    body = lines.join("\n")
+
+    callees = Noir::JSCalleeExtractor.callees_for_function_body(body, "route.ts", 1)
+
+    endpoint = Endpoint.new("/api/test", "POST")
+    callees.each do |name, path, line|
+      endpoint.push_callee(Callee.new(name, path: path, line: line))
+    end
+
+    endpoint.callees.size.should eq(Callee::MAX_PER_ENDPOINT)
+    names = endpoint.callees.map(&.name)
+    names.should contain("verifyBackupCode")
+    names.should contain("streamText")
+
+    verify_idx = names.index!("verifyBackupCode")
+    stream_idx = names.index!("streamText")
+    verify_idx.should be < stream_idx
+
+    z_entries = names.select(&.starts_with?("z."))
+    z_entries.should_not be_empty
+    names.index!(z_entries.first).should be > stream_idx
+  end
+
+  it "partitions other schema builder libraries (yup, joi, valibot, typebox) after work calls" do
+    body = <<-TS
+
+        const a = z.string()
+        const b = zod.string()
+        const c = yup.string()
+        const d = Joi.string()
+        const e = joi.string()
+        const f = v.string()
+        const g = t.Object()
+        const h = t.String()
+        const i = Type.String()
+        workOne()
+        workTwo()
+      TS
+
+    callees = Noir::JSCalleeExtractor.callees_for_function_body(body, "route.ts", 1)
+    names = callees.map(&.[0])
+    names[0..1].should eq(["workOne", "workTwo"])
+    names[2..-1].should eq([
+      "z.string",
+      "zod.string",
+      "yup.string",
+      "Joi.string",
+      "joi.string",
+      "v.string",
+      "t.Object",
+      "t.String",
+      "Type.String",
+    ])
+  end
+
+  it "does not treat plain functions like join, view, zone, or t.other as schema builders" do
+    body = <<-TS
+
+        zone.run()
+        join(a, b)
+        view()
+        t.translate("key")
+      TS
+
+    callees = Noir::JSCalleeExtractor.callees_for_function_body(body, "route.ts", 1)
+    callees.map(&.[0]).should eq([
+      "zone.run",
+      "join",
+      "view",
+      "t.translate",
+    ])
+  end
 end
