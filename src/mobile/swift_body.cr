@@ -1,4 +1,5 @@
 require "../miniparsers/swift_callee_extractor"
+require "../minilexers/swift_lexer"
 
 module Noir
   # Brace-matched Swift body extraction shared by the iOS config analyzer
@@ -21,18 +22,19 @@ module Noir
 
     # Brace-matched body text starting just after lines[opening_index][col],
     # handling both a compact single-line body (`{ case a, b, c }`) and a
-    # multi-line one. Depth is tracked on `strip_non_code_with_state`'s
-    # output (comments AND string contents blanked) so a raw value or
+    # multi-line one. Depth is tracked on `SwiftLexer`'s masked output
+    # (comments AND string contents blanked) so a raw value or
     # comment that contains `//` or unbalanced braces can't be mistaken for
     # real source structure and corrupt where the body actually ends.
     def body_after_opening_brace(lines : Array(String), opening_index : Int32, col : Int32) : Tuple(String, Int32)
       first = lines[opening_index][(col + 1)..]? || ""
-      clean, depth, in_string = Noir::SwiftCalleeExtractor.strip_non_code_with_state(first, 0, false)
-      brace = 1 + clean.count('{') - clean.count('}')
+      masked_lines = Noir::SwiftLexer.new(lines.join('\n')).masked_lines
+      first_clean = masked_lines[opening_index][(col + 1)..]? || ""
+      brace = 1 + first_clean.count('{') - first_clean.count('}')
       if brace <= 0
         # Single-line body: trim the closing `}` and anything after it so a
         # trailing `.padding()` etc. doesn't leak into the body.
-        closing = clean.rindex('}')
+        closing = first_clean.rindex('}')
         return {closing ? first[0...closing] : first, opening_index + 1}
       end
 
@@ -40,7 +42,7 @@ module Noir
       idx = opening_index + 1
       while idx < lines.size && brace > 0
         line = lines[idx]
-        stripped, depth, in_string = Noir::SwiftCalleeExtractor.strip_non_code_with_state(line, depth, in_string)
+        stripped = masked_lines[idx]
         nxt = brace + stripped.count('{') - stripped.count('}')
         if nxt <= 0
           closing = stripped.rindex('}')

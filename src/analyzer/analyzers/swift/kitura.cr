@@ -29,18 +29,17 @@ module Analyzer::Swift
 
     def analyze_file(path : String) : Array(Endpoint)
       endpoints = [] of Endpoint
-      lines = read_file_content(path).lines
+      content = read_file_content(path)
+      lines = content.lines
+      lexer = Noir::SwiftLexer.new(content)
+      masked_lines = lexer.masked_lines
       include_callee = callees_needed?
-      handler_bodies = named_handler_bodies(lines)
-      # Comments (including multi-line `/* */`) and `"""` bodies blanked;
-      # string literals kept so route paths are still readable.
-      code_lines = strip_code_lines(lines, keep_strings: true)
-      stripped_lines = nil.as(Array(String)?)
-      router_receivers = collect_router_receivers(code_lines)
+      handler_bodies = named_handler_bodies(lines, masked_lines)
+      router_receivers = collect_router_receivers(masked_lines)
 
-      code_lines.each_with_index do |line, index|
-        next unless route_definition_line?(line)
-        match = line.match(ROUTE_PATTERN)
+      masked_lines.each_with_index do |masked_line, index|
+        next unless route_definition_line?(masked_line)
+        match = masked_line.match(ROUTE_PATTERN)
         next unless match
         next unless router_receivers.includes?(match[1])
 
@@ -48,7 +47,7 @@ module Analyzer::Swift
           # Note: 'all' matches all HTTP methods, defaulting to GET for representation
           method_str = match[2]
           method = method_str == "all" ? "GET" : method_str.upcase
-          route_args = match[3]
+          route_args = lines[index][(match.begin(3) || 0)...(match.end(3) || 0)]
           route_path = parse_route_path(route_args)
 
           details = Details.new(PathInfo.new(path, index + 1))
@@ -57,11 +56,10 @@ module Analyzer::Swift
           extract_path_params(route_path, endpoint)
           # A `handler:` route's params come from that function's body;
           # scanning the lines after the route would read unrelated code.
-          unless extract_named_handler_params(lines[index], handler_bodies, endpoint)
-            stripped_lines ||= strip_code_lines(lines)
-            extract_function_params(lines, stripped_lines, index, endpoint)
+          unless extract_named_handler_params(masked_line, lines[index], handler_bodies, endpoint)
+            extract_function_params(lines, masked_lines, index, endpoint)
           end
-          attach_route_callees(lines, index, path, endpoint, handler_bodies) if include_callee
+          attach_route_callees(lines, masked_lines, index, path, endpoint, handler_bodies) if include_callee
 
           endpoints << endpoint
         rescue e
@@ -118,14 +116,15 @@ module Analyzer::Swift
     end
 
     private def attach_route_callees(lines : Array(String),
+                                     masked_lines : Array(String),
                                      route_index : Int32,
                                      path : String,
                                      endpoint : Endpoint,
                                      handler_bodies : Hash(String, Tuple(String, Int32)))
-      body, start_line = route_body(lines, route_index)
+      body, start_line = route_body(lines, masked_lines, route_index)
 
       if body.empty?
-        body, start_line = named_handler_body(lines, route_index, handler_bodies)
+        body, start_line = named_handler_body(masked_lines, lines, route_index, handler_bodies)
       end
 
       return if body.empty?
@@ -134,14 +133,14 @@ module Analyzer::Swift
       Noir::SwiftCalleeExtractor.attach_to(endpoint, callees)
     end
 
-    private def route_body(lines : Array(String), route_index : Int32) : Tuple(String, Int32)
+    private def route_body(lines : Array(String), masked_lines : Array(String), route_index : Int32) : Tuple(String, Int32)
       opening_index = route_index
-      opening_brace = structural_opening_brace(lines[opening_index])
+      opening_brace = masked_lines[opening_index].index('{')
       unless opening_brace
         ((route_index + 1)...[route_index + ROUTE_BODY_LOOKAHEAD_LIMIT, lines.size].min).each do |index|
-          break if route_definition_line?(lines[index])
+          break if route_definition_line?(masked_lines[index])
 
-          if brace_index = structural_opening_brace(lines[index])
+          if brace_index = masked_lines[index].index('{')
             opening_index = index
             opening_brace = brace_index
             break
@@ -150,32 +149,33 @@ module Analyzer::Swift
       end
       return {"", route_index + 2} unless opening_brace
 
-      body_after_opening_brace(lines, opening_index, opening_brace)
+      body_after_opening_brace(lines, masked_lines, opening_index, opening_brace)
     end
 
-    private def named_handler_body(lines : Array(String),
+    private def named_handler_body(masked_lines : Array(String),
+                                   lines : Array(String),
                                    route_index : Int32,
                                    handler_bodies : Hash(String, Tuple(String, Int32))) : Tuple(String, Int32)
-      handler_name = route_handler_name(lines[route_index])
+      handler_name = route_handler_name(masked_lines[route_index])
       return {"", route_index + 2} unless handler_name
 
       handler_bodies[handler_name]? || {"", route_index + 2}
     end
 
-    private def route_handler_name(route_line : String) : String?
-      stripped, _, _ = Noir::SwiftCalleeExtractor.strip_non_code_with_state(route_line, 0, false)
+    private def route_handler_name(masked_route_line : String) : String?
       # `self.create` / `TodoController.index` name the method `create` / `index`.
-      if match = stripped.match(/\bhandler:\s*(?:self\.)?([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)/)
+      if match = masked_route_line.match(/\bhandler:\s*(?:self\.)?([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)/)
         return match[1].split('.').last
       end
 
       nil
     end
 
-    private def extract_named_handler_params(route_line : String,
+    private def extract_named_handler_params(masked_route_line : String,
+                                             route_line : String,
                                              handler_bodies : Hash(String, Tuple(String, Int32)),
                                              endpoint : Endpoint) : Bool
-      handler_name = route_handler_name(route_line)
+      handler_name = route_handler_name(masked_route_line)
       return false unless handler_name
 
       body = handler_bodies[handler_name]?

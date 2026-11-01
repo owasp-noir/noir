@@ -56,17 +56,19 @@ module Analyzer::Swift
 
     def analyze_file(path : String) : Array(Endpoint)
       endpoints = [] of Endpoint
-      lines = swift_code_lines(read_file_content(path))
-      stripped_lines = strip_code_lines(lines)
+      content = read_file_content(path)
+      lines = swift_code_lines(content)
+      lexer = Noir::SwiftLexer.new(content)
+      masked_lines = lexer.masked_lines
       include_callee = callees_needed?
-      handler_bodies = named_handler_bodies(lines)
+      handler_bodies = named_handler_bodies(lines, masked_lines)
       base = configured_base_for(path)
 
-      hits = collect_route_hits(stripped_lines, lines, base)
+      hits = collect_route_hits(masked_lines, lines, base)
       # `HummingbirdRouter`'s declarative result-builder DSL (`RouterBuilder`,
       # `RouteGroup`, capitalized `Get`/`Post`/... primitives) is invisible to
       # the receiver-based chain scanner, so discover it in a second pass.
-      hits.concat(collect_dsl_route_hits(stripped_lines, lines))
+      hits.concat(collect_dsl_route_hits(masked_lines, lines))
       hits_per_line = hits.tally_by(&.line_index)
 
       hits.each do |hit|
@@ -81,8 +83,8 @@ module Analyzer::Swift
           # Routes sharing a line can't be told apart line-wise (and re-reading
           # a long shared line per route is quadratic): start below it.
           start = hits_per_line[hit.line_index] > 1 ? hit.line_index + 1 : hit.line_index
-          extract_function_params(lines, stripped_lines, start, endpoint)
-          attach_route_callees(lines, hit.line_index, path, endpoint, handler_bodies) if include_callee
+          extract_function_params(lines, masked_lines, start, endpoint)
+          attach_route_callees(lines, masked_lines, hit.line_index, path, endpoint, handler_bodies) if include_callee
         end
 
         endpoints << endpoint
@@ -966,14 +968,27 @@ module Analyzer::Swift
       Noir::SwiftCalleeExtractor.attach_to(endpoint, callees)
     end
 
-    private def route_body(lines : Array(String), route_index : Int32) : Tuple(String, Int32)
+    private def attach_route_callees(lines : Array(String),
+                                     masked_lines : Array(String),
+                                     route_index : Int32,
+                                     path : String,
+                                     endpoint : Endpoint,
+                                     handler_bodies : Hash(String, Tuple(String, Int32)))
+      body, start_line = route_body(lines, masked_lines, route_index)
+      return if body.empty?
+
+      callees = Noir::SwiftCalleeExtractor.callees_for_body(body, path, start_line)
+      Noir::SwiftCalleeExtractor.attach_to(endpoint, callees)
+    end
+
+    private def route_body(lines : Array(String), masked_lines : Array(String), route_index : Int32) : Tuple(String, Int32)
       opening_index = route_index
-      opening_brace = structural_opening_brace(lines[opening_index])
+      opening_brace = masked_lines[opening_index].index('{')
       unless opening_brace
         ((route_index + 1)...[route_index + ROUTE_BODY_LOOKAHEAD_LIMIT, lines.size].min).each do |index|
-          break if route_definition?(strip_code_line(lines[index]))
+          break if route_definition?(masked_lines[index])
 
-          if brace_index = structural_opening_brace(lines[index])
+          if brace_index = masked_lines[index].index('{')
             opening_index = index
             opening_brace = brace_index
             break
@@ -982,7 +997,7 @@ module Analyzer::Swift
       end
       return {"", route_index + 2} unless opening_brace
 
-      body_after_opening_brace(lines, opening_index, opening_brace)
+      body_after_opening_brace(lines, masked_lines, opening_index, opening_brace)
     end
 
     private def strip_code_line(line : String) : String
