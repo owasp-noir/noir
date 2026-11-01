@@ -5,6 +5,7 @@ require "../../../miniparsers/rust_request_guards"
 require "../../../miniparsers/rust_use_imports"
 require "../../../ext/tree_sitter/tree_sitter"
 require "../../../utils/c_comments"
+require "../../../analyzer/engines/rust_engine"
 
 @[Noir::TaggerFor(key: "rust_auth", name: "Rust Auth Tagger", desc: "Identifies Rust authentication patterns (guards, extractors, middleware)", order: 70)]
 class RustAuthTagger < FrameworkTagger
@@ -15,8 +16,15 @@ class RustAuthTagger < FrameworkTagger
     getter body_text : String
     # Leaf types of the parameters that must extract for the fn to run.
     getter required_params : Array(String)
+    # 1-based line of the `fn`.
+    getter line : Int32
 
-    def initialize(@file_path : String, @name : String, @module_path : Array(String), @body_text : String, @required_params : Array(String))
+    def initialize(@file_path : String, @name : String, @module_path : Array(String), @body_text : String, @required_params : Array(String), @line : Int32 = 0)
+    end
+
+    # Which fn this is, across files, modules and inline `mod`s.
+    def identity : String
+      "#{@file_path}\0#{@module_path.join("::")}\0#{@name}"
     end
 
     def full_path : String
@@ -83,7 +91,7 @@ class RustAuthTagger < FrameworkTagger
 
   def initialize(options : Hash(String, YAML::Any))
     super
-    @middleware_scopes = [] of {prefix: String, exact: Bool, local: Bool, description: String}
+    @middleware_scopes = [] of {prefix: String, exact: Bool, local: Bool, description: String, except: Array({String, Bool}), at: {String, Int32}?}
     @guard_verdicts = {} of String => Bool
     @handler_param_types = {} of String => Hash(Int32, Array(String))
     @fn_index = Hash(String, Array(RustFnEntry)).new
@@ -94,6 +102,7 @@ class RustAuthTagger < FrameworkTagger
     @fn_files_by_name = Hash(String, Array(String)).new
     @fn_file_order = Hash(String, Int32).new
     @fn_indexed_files = Set(String).new
+    @app_chains = [] of AppChain
   end
 
   def self.target_techs : Array(String)
@@ -148,11 +157,15 @@ class RustAuthTagger < FrameworkTagger
     @fn_files_by_name.clear
     @fn_file_order.clear
     @fn_indexed_files.clear
+    @app_chains.clear
+    @rust_type_index = nil
+    @auth_verdicts.clear
 
     files = collect_files_by_extension(".rs")
     build_function_index(files)
     scan_axum_layers(files)
     scan_actix_scope_middleware(files)
+    scan_actix_apps(files)
   end
 
   FN_NAME_RE = /\bfn\s+(?:r#)?([A-Za-z_]\w*)/
@@ -237,7 +250,7 @@ class RustAuthTagger < FrameworkTagger
           body_text = body_node ? Noir::TreeSitter.node_text(body_node, source) : ""
           full_mod = file_mod_parts + inline_mod_stack
 
-          entry = RustFnEntry.new(file_path, fn_name, full_mod, body_text, required_param_types(child, body_text, source))
+          entry = RustFnEntry.new(file_path, fn_name, full_mod, body_text, required_param_types(child, body_text, source), Noir::TreeSitter.node_start_row(child) + 1)
           register_function(entry)
         end
       else
@@ -371,6 +384,8 @@ class RustAuthTagger < FrameworkTagger
                 exact:       kind == "route",
                 local:       true,
                 description: "Protected by Rust #{middleware_name} middleware on #{path}",
+                except:      [] of {String, Bool},
+                at:          nil,
               }
             end
           end
@@ -729,6 +744,8 @@ class RustAuthTagger < FrameworkTagger
               exact:       false,
               local:       false,
               description: "Protected by Rust #{middleware_name} middleware on #{prefix}",
+              except:      [] of {String, Bool},
+              at:          nil,
             }
           end
         end
@@ -739,6 +756,391 @@ class RustAuthTagger < FrameworkTagger
         end
       end
     end
+  end
+
+  # `Condition::new(flag, mw)` / `ConditionEx::from_option(opt)` register the
+  # middleware only when something was configured.
+  CONDITIONAL_WRAP = /\bCondition\w*\s*::\s*(?:new|from_option)\b/
+  # A variable naming the paths a middleware lets through unchecked.
+  EXEMPT_VAR = /\b(\w*(?:white|allow|skip|public|exempt|bypass)\w*)\b/i
+  # A call that hands the middleware literal paths to pass:
+  # `.skip_paths(vec!["/login"])`.
+  EXEMPT_CALL    = /\.\w*(?:skip|exclude|allow|ignore|public|whitelist|except)\w*\s*\(((?:[^()]|\((?:[^()]|\([^()]*\))*\))*)\)/i
+  CARGO_TOML     = /\ACargo\.toml\z/
+  SERVICE_ARG    = /\.service\s*\(\s*((?:\w+::)*\w+)\s*\)/
+  SERVICE_TUPLE  = /\.service\s*\(\s*\(([^()]*)\)\s*\)/
+  TO_ARG         = /\.to\s*\(\s*((?:\w+::)*\w+)\s*\)/
+  CONFIGURE_ARG  = /\.configure\s*\(\s*((?:\w+::)*\w+)\s*\)/
+  IMPL_FOR       = /\bimpl\b[^{;]*?\bfor\s+(\w+)[^{;]*\{/
+  STRUCT_DECL    = /\bstruct\s+(\w+)/
+  TRANSFORM_TYPE = /\btype\s+Transform\s*=\s*(\w+)/
+  CALL_FN        = /\bfn\s+call\b[^{;]*\{/
+  # The inner service's answer bound to a name (`let res = fut.await?;`,
+  # `let res = self.service.call(req).await;`).
+  AWAITED_LET    = /\blet\s+(?:mut\s+)?\w+\s*(?::[^=;]+)?=\s*(?:fut|future|(?:self\.)?service\.call\([^;]*?\)|next\.run\([^;]*?\))\s*\.await\s*\??\s*;|\b(?:match|if\s+let\s+[^=]+=)\s*(?:fut|future|(?:self\.)?service\.call\([^;{]*?\)|next\.run\([^;{]*?\))\s*\.await\s*\??\s*\{/
+  METHOD_MENTION = /\bmethod\b|\bMethod::/
+  # What a refusing middleware reads from the request to decide.
+  CALL_CREDENTIAL = /authoriz|bearer|jwt|token|api[-_]?key|claims|session|login|credential|valid|auth_keys|\bauth\b/i
+
+  # What an auth middleware's own `call` does: the verbs it refuses only some
+  # of (`if req.method() != Method::GET && !has_token`).
+  record AuthVerdict, method_tests : Bool
+
+  # One `App::new()...` chain: the handlers it registers (nil when they could
+  # not be read, then every handler of its crates), the auth middleware it
+  # wraps, if any, and where.
+  class AppChain
+    getter handlers : Set(String)?
+    getter crates : Set(String)
+    getter file : String
+    getter line : Int32
+    getter auth : String?
+    getter verdict : AuthVerdict?
+    getter? conditional : Bool
+    getter exempt : Array({String, Bool})
+    getter? whitelist_unread : Bool
+
+    def initialize(@handlers, @crates, @file, @line, @auth, @verdict, @conditional, @exempt, @whitelist_unread)
+    end
+
+    # How the chain registers a handler: `:exact` by its fn identity, `:named`
+    # when the registration could not be resolved to a fn and only its name in
+    # that file is known, nil when it does not register it. A chain whose
+    # routes could not be read at all serves every handler of its crates.
+    def serves(identity : String, named : String, crate : String?) : Symbol?
+      return unless crate && @crates.includes?(crate)
+      names = @handlers || return :exact
+      return :exact if names.includes?(identity)
+      :named if names.includes?(named)
+    end
+
+    # Whether the middleware refuses this request: not on a path or verb it
+    # lets through.
+    def guards?(url : String, method : String) : Bool
+      return false unless @auth
+      return false if @exempt.any? { |(path, by_prefix)| by_prefix ? url.starts_with?(path) : url == path }
+      true
+    end
+  end
+
+  # `App::new().wrap(AuthTransform::new(keys, whitelist))` puts the routes
+  # registered on that App behind the middleware, bar the paths it lets
+  # through. Each chain is its own scope: a second App of the same crate
+  # (qdrant's metrics server) does not inherit the wrap.
+  private def scan_actix_apps(files : Array(String))
+    files.each do |file|
+      relative = base_relative_path(file)
+      next if Analyzer::Rust::RustEngine.test_path?(relative) || relative.includes?("/examples/")
+      content = read_file(file) || next
+      next unless content.includes?("App::new")
+
+      begin
+        test_regions = Analyzer::Rust::RustEngine.collect_cfg_test_regions(content)
+        crate = nearest_project_root(file, CARGO_TOML)
+        Noir::TreeSitter.parse_rust(content) do |root|
+          Noir::TreeSitter.walk(root) do |node|
+            next unless Noir::TreeSitter.node_type(node) == "call_expression"
+            next unless call_func_full_text(node, content).ends_with?("App::new")
+            start = LibTreeSitter.ts_node_start_byte(node).to_i
+            next if test_regions.any? { |(from, to)| start >= from && start < to }
+            record_app_chain(node, content, file, crate)
+          end
+        end
+      rescue e
+        @logger.debug "actix app scan error in #{file}: #{e}"
+      end
+    end
+  end
+
+  private def record_app_chain(root_call : LibTreeSitter::TSNode, content : String, file : String, crate : String?)
+    top = root_call
+    while (field = Noir::TreeSitter.parent(top)) && Noir::TreeSitter.node_type(field) == "field_expression"
+      outer = Noir::TreeSitter.parent(field) || break
+      break unless Noir::TreeSitter.node_type(outer) == "call_expression"
+      function = Noir::TreeSitter.field(outer, "function") || break
+      break unless LibTreeSitter.ts_node_start_byte(function) == LibTreeSitter.ts_node_start_byte(field) &&
+                   LibTreeSitter.ts_node_end_byte(function) == LibTreeSitter.ts_node_end_byte(field)
+      top = outer
+    end
+
+    chain_text = Noir::CComments.strip(Noir::TreeSitter.node_text(top, content))
+    crates = Set(String).new
+    crates << crate if crate
+    handlers = Set(String).new
+    collect_registered_handlers(chain_text, file, handlers, crates, 0)
+
+    auth = nil
+    verdict = nil
+    conditional = false
+    exempt = [] of {String, Bool}
+    unread = false
+    line = content.byte_slice(0, LibTreeSitter.ts_node_start_byte(top).to_i).count('\n') + 1
+    Noir::TreeSitter.walk(top) do |node|
+      next if auth
+      next unless Noir::TreeSitter.node_type(node) == "call_expression" && field_call_name(node, content) == "wrap"
+      next unless wrap_on_chain?(node, content, root_call)
+      arg = named_call_args(node)[0]? || next
+      type = wrapped_type_names(arg, content).find { |name| name.matches?(/Auth/) && !name.matches?(CSRF_NAME) }
+      type || next
+      found = auth_middleware_verdict(type)
+      next unless found
+      auth = type
+      verdict = found[0]
+      text = Noir::CComments.strip(Noir::TreeSitter.node_text(arg, content))
+      conditional = text.matches?(CONDITIONAL_WRAP)
+      exempt = exempt_paths(text, enclosing_fn_text(node, content))
+      inline = [] of {String, Bool}
+      text.scan(EXEMPT_CALL) { |call| call[1].scan(/"(\/[^"]*)"/) { |literal| inline << {literal[1], false} } }
+      exempt.concat(inline)
+      unread = exempt.empty? && text.matches?(EXEMPT_VAR)
+      line = content.byte_slice(0, wrap_byte(node)).count('\n') + 1
+    end
+
+    return if auth.nil? && handlers.empty?
+    @app_chains << AppChain.new(handlers.empty? ? nil : handlers, crates, file, line, auth, verdict, conditional, exempt, unread)
+  end
+
+  # The handler fns a chain registers: `.service(f)`, `.route("/p", .. .to(f))`
+  # and, through `.configure(g)`, whatever `g` registers on its `cfg`.
+  private def collect_registered_handlers(text : String, file : String, handlers : Set(String), crates : Set(String), depth : Int32)
+    text.scan(SERVICE_ARG) { |m| add_handler(m[1], file, handlers) }
+    text.scan(SERVICE_TUPLE) { |m| m[1].split(',').each { |name| add_handler(name.strip, file, handlers) unless name.strip.empty? } }
+    text.scan(TO_ARG) { |m| add_handler(m[1], file, handlers) }
+    return if depth > 4
+    text.scan(CONFIGURE_ARG) do |m|
+      entry = lookup_function(m[1], file) || next
+      crate = nearest_project_root(entry.file_path, CARGO_TOML)
+      crates << crate if crate
+      collect_registered_handlers(Noir::CComments.strip(entry.body_text), entry.file_path, handlers, crates, depth + 1)
+    end
+  end
+
+  # A registered handler is the fn it resolves to: a path through `lookup_function`;
+  # a bare name through the file's own module, then its `use` items, then its
+  # glob imports. A name none of them settles is known only by name and file
+  # (`~file\0name`): it may be macro-generated, and it must not lend its
+  # guard to a same-named fn elsewhere.
+  private def add_handler(ref : String, file : String, handlers : Set(String))
+    entry = resolve_registered_fn(ref, file)
+    handlers << (entry ? entry.identity : "~#{file}\0#{ref.split("::").last}")
+  end
+
+  private def resolve_registered_fn(ref : String, file : String) : RustFnEntry?
+    return lookup_function(ref, file) if ref.includes?("::")
+    ensure_fn_indexed(file)
+    top = file_module_parts(file)
+    if same = @fn_index[ref]?.try(&.find { |e| e.file_path == file && e.module_path == top })
+      return same
+    end
+    imports = file_imports_for(file)
+    if full = imports.names[ref]?
+      return lookup_function(full, file)
+    end
+    imports.globs.each do |glob|
+      found = lookup_function("#{glob}::#{ref}", file)
+      return found if found && found.name == ref
+    end
+    nil
+  end
+
+  # Byte offset of the `wrap` in `chain.wrap(..)`, so a multi-line chain
+  # reports the line of the registration, not the line the chain starts on.
+  private def wrap_byte(call : LibTreeSitter::TSNode) : Int32
+    field = Noir::TreeSitter.field(call, "function").try { |fn| Noir::TreeSitter.field(fn, "field") }
+    LibTreeSitter.ts_node_start_byte(field || call).to_i
+  end
+
+  # Whether `.wrap` sits on the chain that starts at `root_call`.
+  private def wrap_on_chain?(call : LibTreeSitter::TSNode, source : String, root_call : LibTreeSitter::TSNode) : Bool
+    node = call
+    while recv = chain_receiver(node)
+      return false unless Noir::TreeSitter.node_type(recv) == "call_expression"
+      node = recv
+    end
+    LibTreeSitter.ts_node_start_byte(node) == LibTreeSitter.ts_node_start_byte(root_call)
+  end
+
+  # The types a wrapped expression constructs: the `Type` of `Type::new(..)`
+  # and of `Type { .. }`, found in the syntax tree, so a string literal or a
+  # header name that merely says "Auth" is never one.
+  private def wrapped_type_names(arg : LibTreeSitter::TSNode, source : String) : Array(String)
+    names = [] of String
+    Noir::TreeSitter.walk(arg) do |node|
+      case Noir::TreeSitter.node_type(node)
+      when "call_expression"
+        segments = call_func_full_text(node, source).split("::")
+        names << (segments.size >= 2 ? segments[-2] : segments.last).split('<').first.strip
+      when "struct_expression"
+        name = Noir::TreeSitter.field(node, "name").try { |n| Noir::TreeSitter.node_text(n, source) }
+        names << name.split("::").last if name
+      end
+    end
+    # `.wrap(auth::ApiKeyAuth)`: a unit struct is a bare path.
+    if {"identifier", "scoped_identifier"}.includes?(Noir::TreeSitter.node_type(arg))
+      names << Noir::TreeSitter.node_text(arg, source).split("::").last
+    end
+    names.select(&.matches?(/\A[A-Z]\w*\z/))
+  end
+
+  private def enclosing_fn_text(node : LibTreeSitter::TSNode, source : String) : String
+    current = node
+    while parent = Noir::TreeSitter.parent(current)
+      return Noir::CComments.strip(Noir::TreeSitter.node_text(parent, source)) if Noir::TreeSitter.node_type(parent) == "function_item"
+      current = parent
+    end
+    Noir::CComments.strip(source)
+  end
+
+  # `{struct names, impl blocks by implementing type}` of the non-test sources,
+  # read once.
+  private def rust_type_index : Tuple(Set(String), Hash(String, Array(String)))
+    @rust_type_index ||= begin
+      structs = Set(String).new
+      impls = Hash(String, Array(String)).new
+      collect_files_by_extension(".rs").each do |file|
+        next if Analyzer::Rust::RustEngine.test_path?(base_relative_path(file))
+        content = read_file(file) || next
+        next unless content.includes?("struct ") || content.includes?("impl")
+        code = Noir::CComments.strip(content)
+        code.scan(STRUCT_DECL) { |m| structs << m[1] }
+        code.scan(IMPL_FOR) do |m|
+          open = m.byte_end(0) - 1
+          close = matching_brace(code, open) || next
+          (impls[m[1]] ||= [] of String) << code.byte_slice(open, close - open + 1)
+        end
+      end
+      {structs, impls}
+    end
+  end
+
+  @rust_type_index : Tuple(Set(String), Hash(String, Array(String)))?
+  @auth_verdicts = Hash(String, Tuple(AuthVerdict)?).new
+
+  # Byte index of the `}` closing the `{` at `open`.
+  private def matching_brace(code : String, open : Int) : Int32?
+    depth = 0
+    bytes = code.to_slice
+    index = open
+    while index < bytes.size
+      case bytes[index]
+      when '{'.ord then depth += 1
+      when '}'.ord
+        depth -= 1
+        return index if depth == 0
+      end
+      index += 1
+    end
+  end
+
+  # Whether `type` is an auth middleware, judged by its own `call` (and that of
+  # the service its `Transform` builds): it must answer 401/403 for a request
+  # without credentials, before the inner service has answered. A type the
+  # scan does not declare is trusted by its name. Cached per type.
+  private def auth_middleware_verdict(type : String) : Tuple(AuthVerdict)?
+    return @auth_verdicts[type] if @auth_verdicts.has_key?(type)
+    @auth_verdicts[type] = judge_auth_type(type)
+  end
+
+  private def judge_auth_type(type : String) : Tuple(AuthVerdict)?
+    structs, impls = rust_type_index
+    return {AuthVerdict.new(false)} unless structs.includes?(type) || impls.has_key?(type)
+
+    blocks = (impls[type]? || [] of String).dup
+    blocks.dup.each do |block|
+      block.match(TRANSFORM_TYPE).try { |m| blocks.concat(impls[m[1]]? || [] of String) }
+    end
+    blocks.each do |block|
+      block.scan(CALL_FN) do |m|
+        open = m.byte_end(0) - 1
+        close = matching_brace(block, open) || next
+        verdict = judge_call_body(block.byte_slice(open, close - open + 1))
+        return {verdict} if verdict
+      end
+    end
+    nil
+  end
+
+  private def judge_call_body(body : String) : AuthVerdict?
+    # A refusal read off the response the inner service already gave
+    # (`let res = fut.await; if res.status() == ..`) refuses no caller.
+    code = body.match(AWAITED_LET).try { |awaited| body[0, awaited.begin] } || body
+    return unless code.gsub(COMPARED, "").matches?(MIDDLEWARE_REFUSAL) && code.matches?(CALL_CREDENTIAL)
+    # A method test may exempt some verbs; which, and whether, is not read:
+    # no route becomes open because of one, the description says so.
+    AuthVerdict.new(code.matches?(METHOD_MENTION))
+  end
+
+  # Paths the wrapped middleware lets through: the `exact("/x")` / `prefix("/x")`
+  # entries (or plain `"/x"` literals of a whitelist-named variable) of a
+  # variable handed to it, read from where that variable is built in the same
+  # fn (`let mut w = vec![..]`, `w.push(..)`).
+  private def exempt_paths(wrap_text : String, scope_text : String) : Array({String, Bool})
+    paths = [] of {String, Bool}
+    wrap_text.scan(/\b[a-z_]\w*\b/) do |var|
+      name = Regex.escape(var[0])
+      listed = var[0].matches?(EXEMPT_VAR)
+      scope_text.scan(/\blet\s+(?:mut\s+)?#{name}\b[^;]*;|\b#{name}\s*\.\s*(?:push|extend)\s*\([^;]*;/m) do |stmt|
+        stmt[0].scan(/(\w*)\s*\(\s*"(\/[^"]*)"\s*\)/) do |entry|
+          by_prefix = entry[1].downcase.includes?("prefix")
+          paths << {entry[2], by_prefix} if by_prefix || entry[1].downcase.includes?("exact")
+        end
+        stmt[0].scan(/(?<![\w(])"(\/[^"]*)"/) { |entry| paths << {entry[1], false} } if listed
+      end
+    end
+    paths.uniq!
+  end
+
+  # The tag an endpoint gets from the App chains that serve it: guarded when
+  # one of them wraps an auth middleware that refuses it; the description says
+  # when another chain serves the same handler without it, or when the
+  # middleware is only registered under a setting.
+  private def app_chain_tag(endpoint : Endpoint) : Tag?
+    handler = endpoint.handler || return
+    path = handler.path || return
+    name = handler.name.split(/::|\./).last
+    crate = nearest_project_root(path, CARGO_TOML)
+    identity = endpoint_fn_identity(path, name, handler.line) || "?#{path}\0#{name}"
+    named = "~#{path}\0#{name}"
+    exact = [] of AppChain
+    ambiguous = [] of AppChain
+    @app_chains.each do |chain|
+      case chain.serves(identity, named, crate)
+      when :exact then exact << chain
+      when :named then ambiguous << chain
+      end
+    end
+    guarded = exact.find(&.guards?(endpoint.url, endpoint.method))
+    from_name = false
+    if guarded.nil?
+      guarded = ambiguous.find(&.guards?(endpoint.url, endpoint.method))
+      from_name = !guarded.nil?
+    end
+    return unless guarded
+    notes = [] of String
+    notes << "registered only when auth keys are configured; unauthenticated when none are" if guarded.conditional?
+    notes << "its whitelisted paths could not be read" if guarded.whitelist_unread?
+    notes << "the App's routes could not be resolved; applies to its whole crate" if guarded.handlers.nil?
+    notes << "handler name ambiguous: registered there by name only" if from_name
+    notes << "the middleware may exempt some HTTP methods (e.g. GET/OPTIONS)" if guarded.verdict.try(&.method_tests)
+    # Served by an App without the wrap too (qdrant's metrics port): that is
+    # open attack surface, so it is no guard; only a note says the main App
+    # wraps it. Only an App that registers this very fn counts.
+    others = from_name ? [] of AppChain : exact.reject(&.guards?(endpoint.url, endpoint.method))
+    unless others.empty?
+      where = "#{base_relative_path(others.first.file).lchop('/')}:#{others.first.line}"
+      return Tag.new("auth_partial", "Wrapped by Rust #{guarded.auth} middleware on one App, but also served without it by another App (#{where})", "rust_app_scope", guarded.file, guarded.line)
+    end
+    Tag.new("auth", "Protected by Rust #{guarded.auth} middleware on its App" + (notes.empty? ? "" : " (#{notes.join("; ")})"), "rust_auth", guarded.file, guarded.line)
+  end
+
+  # The fn an endpoint's handler is: the one of that name in its file nearest
+  # the handler's line.
+  private def endpoint_fn_identity(path : String, name : String, line : Int32?) : String?
+    ensure_fn_indexed(path)
+    candidates = (@fn_index[name]? || [] of RustFnEntry).select { |entry| entry.file_path == path }
+    return if candidates.empty?
+    return candidates.first.identity if candidates.size == 1 || line.nil?
+    candidates.min_by { |entry| (entry.line - line).abs }.identity
   end
 
   private def find_scope_for_line(lines : Array(String), line_idx : Int32, current_scope : String?) : String?
@@ -800,9 +1202,13 @@ class RustAuthTagger < FrameworkTagger
     end
 
     # Check scope-level middleware
-    description = check_middleware_scopes(endpoint)
-    if description
-      endpoint.add_tag(Tag.new("auth", description, "rust_auth"))
+    if scope = middleware_scope_for(endpoint)
+      at = scope[:at]
+      endpoint.add_tag(Tag.new("auth", scope[:description], "rust_auth", at.try(&.[0]), at.try(&.[1])))
+    end
+
+    if tag = app_chain_tag(endpoint)
+      endpoint.add_tag(tag)
     end
   end
 
@@ -914,18 +1320,19 @@ class RustAuthTagger < FrameworkTagger
     nil
   end
 
-  private def check_middleware_scopes(endpoint : Endpoint) : String?
+  private def middleware_scope_for(endpoint : Endpoint)
     url = endpoint.url
 
     @middleware_scopes.each do |scope|
       prefix = scope[:prefix]
+      next if scope[:except].any? { |(path, by_prefix)| by_prefix ? url.starts_with?(path) : url == path }
       covered = scope[:exact] ? url == prefix : PrefixScope.prefix_covers?(prefix, url)
       # An Axum layer names router-local paths; that router may itself be
       # `.nest`ed, so `/users` also covers `/api/users`.
       if !covered && scope[:local] && prefix.starts_with?('/') && prefix.size > 1
         covered = url.ends_with?(prefix) || (!scope[:exact] && url.includes?("#{prefix}/"))
       end
-      return scope[:description] if covered
+      return scope if covered
     end
 
     nil
