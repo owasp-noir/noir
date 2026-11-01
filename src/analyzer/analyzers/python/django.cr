@@ -3281,9 +3281,11 @@ module Analyzer::Python
       url_path_match ? url_path_match[1] : nil
     end
 
+    # The class attribute, not `self.lookup_field = "slug"` set inside one
+    # action (Taiga's `retrieve` for `by_slug`): the router reads the class.
     private def drf_lookup_param(class_codeblock : ::String) : ::String?
-      class_codeblock.match(/\blookup_url_kwarg\s*=\s*[rf]?['"]([^'"]+)['"]/).try(&.[1]) ||
-        class_codeblock.match(/\blookup_field\s*=\s*[rf]?['"]([^'"]+)['"]/).try(&.[1])
+      class_codeblock.match(/(?<![\w.])lookup_url_kwarg\s*=\s*[rf]?['"]([^'"]+)['"]/).try(&.[1]) ||
+        class_codeblock.match(/(?<![\w.])lookup_field\s*=\s*[rf]?['"]([^'"]+)['"]/).try(&.[1])
     end
 
     private def drf_action_path(route_base : ::String, lookup_param : ::String, action : DjangoDrfAction,
