@@ -1016,26 +1016,39 @@ class DjangoAuthTagger < FrameworkTagger
 
   # `key = self.get_key(request)` (or `request.headers.get(...)`), then
   # `if not key: return False` at the same level (not under a verb or other
-  # branch), or a top-level `return request.headers.get(...) == expected`,
-  # with no `return True` before it but a `SAFE_METHODS` allow (only
-  # reached for unsafe verbs) or one a setting gates (the caller notes the
-  # setting): the class turns away a caller who brings no credential (Read
-  # the Docs' `HasBuildAPIKey`). The variable must name a credential, so a
-  # `debug = request.GET.get("debug")` flag decides nothing.
+  # branch), or a top-level `return request.headers.get("X-Api-Key") ==
+  # settings.KEY`, with no truthy `return` before it but one under a plain
+  # `SAFE_METHODS` test (only reached for safe verbs) or a `return True` a
+  # setting gates (the caller notes the setting): the class turns away a
+  # caller who brings no credential (Read the Docs' `HasBuildAPIKey`). The
+  # variable or compared field must name a credential, or the value it is
+  # compared to be a setting or the environment: anyone can send
+  # `X-Requested-With: XMLHttpRequest`, and a `debug =
+  # request.GET.get("debug")` flag decides nothing.
   CREDENTIAL_READ    = /^([ \t]*)(\w*(?:key|token|secret|signature|credential|password)\w*)[ \t]*=(?!=)[^\n]*\brequest\b/im
   MISSING_REFUSAL    = /^([ \t]*)if[ \t]+(?:not[ \t]+(\w+)|(\w+)[ \t]+is[ \t]+None)[ \t]*:[ \t]*(?:\n[ \t]*)?(?:return[ \t]+False\b|raise\b)/m
-  RETURN_TRUE        = /\breturn\s+True\b/
-  SAFE_METHODS_ALLOW = /^[ \t]*if[ \t]+[^\n]*\bin[ \t]+(?:\w+\.)?SAFE_METHODS[ \t]*:[ \t]*(?:\n[ \t]*)?return[ \t]+True\b/m
-  REQUEST_COMPARE    = /^([ \t]*)return[ \t]+request\.(?:headers|META|GET|POST|query_params|data)\b[^\n]*==(?![ \t]*None\b)/m
+  ALLOW_RETURN       = /\breturn[ \t]+(?!False\b|None\b|0\b)\S/
+  SAFE_METHODS_ALLOW = /^[ \t]*if[ \t]+([^\n]*)\bin[ \t]+(?:\w+\.)?SAFE_METHODS[ \t]*:[ \t]*(?:\n[ \t]*)?return[ \t]+(?!False\b|None\b)\S/m
+  REQUEST_COMPARE    = /^([ \t]*)return[ \t]+request\.(?:headers|META|GET|POST|query_params|data)\b([^\n=]*)==[ \t]*([^\n]+)/m
+  CREDENTIAL_NAME    = /key|token|secret|signature|credential|password|authorization/i
+  SECRET_VALUE       = /\A(?:settings\.|(?:os\.)?(?:environ|getenv)\b|\w*(?:key|token|secret)\w*\b)/i
 
   private def refuses_missing_credential?(body : String) : Bool
     return false unless body.matches?(CREDENTIAL_READ) || body.matches?(REQUEST_COMPARE)
     # The first allow a caller without a credential could reach.
-    excused = body.scan(SAFE_METHODS_ALLOW).reject(&.[0].includes?("not in")).map { |m| m.begin(0)...m.end(0) }
+    # A verb test `or`-ed with another admit (`view.public or request.method
+    # in SAFE_METHODS`) lets unsafe verbs through too: not excused.
+    excused = body.scan(SAFE_METHODS_ALLOW).reject(&.[1].matches?(/\bor\b|\bnot\s*\z/)).map { |m| m.begin(0)...m.end(0) }
     body.scan(EARLY_ALLOW) { |m| excused << (m.begin(0)...m.end(0)) if m[1].matches?(SETTING_READ) }
-    first_allow = body.scan(RETURN_TRUE).find { |m| excused.none?(&.includes?(m.begin(0))) }.try(&.begin(0)) || body.size
+    first_allow = body.scan(ALLOW_RETURN).find { |m| excused.none?(&.includes?(m.begin(0))) }.try(&.begin(0)) || body.size
     top = body.each_line.reject(&.blank?).min_of? { |line| line.size - line.lstrip.size } || 0
-    return true if body.scan(REQUEST_COMPARE).any? { |m| m[1].size == top && m.begin(0) < first_allow }
+    compared = body.scan(REQUEST_COMPARE).any? do |m|
+      next false unless m[1].size == top && m.begin(0) + m[1].size <= first_allow
+      value = m[3].strip
+      next false if value.starts_with?("None")
+      m[2].matches?(CREDENTIAL_NAME) || value.matches?(SECRET_VALUE)
+    end
+    return true if compared
     refusals = body.scan(MISSING_REFUSAL)
     body.scan(CREDENTIAL_READ).any? do |read|
       read[1].size == top && refusals.any? do |refusal|

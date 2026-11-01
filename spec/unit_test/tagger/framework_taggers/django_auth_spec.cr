@@ -440,6 +440,41 @@ describe "DjangoAuthTagger" do
               if not token:
                   return False
               return token == settings.TOKEN
+
+      class AjaxOnly(BasePermission):
+          def has_permission(self, request, view):
+              return request.headers.get("X-Requested-With") == "XMLHttpRequest"
+
+      class FormatJson(BasePermission):
+          def has_permission(self, request, view):
+              return request.GET.get("format") == "json"
+
+      class PublicOrRead(BasePermission):
+          def has_permission(self, request, view):
+              if getattr(view, "public", False) or request.method in SAFE_METHODS:
+                  return True
+              key = request.headers.get("X-Api-Key")
+              if not key:
+                  return False
+              return True
+
+      class ReadsBySuper(BasePermission):
+          def has_permission(self, request, view):
+              if request.method in SAFE_METHODS:
+                  return super().has_permission(request, view)
+              key = request.headers.get("X-Api-Key")
+              if not key:
+                  return False
+              return True
+
+      class OpenFlagFirst(BasePermission):
+          def has_permission(self, request, view):
+              if view.open_to_all:
+                  return view.open_to_all
+              key = request.headers.get("X-Api-Key")
+              if not key:
+                  return False
+              return True
       PY
     File.write(local_key, <<-PY)
       from django.conf import settings
@@ -508,6 +543,31 @@ describe "DjangoAuthTagger" do
           permission_classes = [LibSub]
           def get(self, request):
               pass
+
+      class AjaxView(APIView):
+          permission_classes = [AjaxOnly]
+          def get(self, request):
+              pass
+
+      class FormatView(APIView):
+          permission_classes = [FormatJson]
+          def get(self, request):
+              pass
+
+      class PublicView(APIView):
+          permission_classes = [PublicOrRead]
+          def post(self, request):
+              pass
+
+      class SuperView(APIView):
+          permission_classes = [ReadsBySuper]
+          def post(self, request):
+              pass
+
+      class FlagView(APIView):
+          permission_classes = [OpenFlagFirst]
+          def post(self, request):
+              pass
       PY
     [perms, views, local_key, aliased].each { |file| CodeLocator.instance.register_path(file) }
 
@@ -526,8 +586,13 @@ describe "DjangoAuthTagger" do
       token = at.call("GET", 40)
       local = at.call("GET", 45)
       alias_sub = at.call("GET", 50)
+      ajax = at.call("GET", 55)
+      format = at.call("GET", 60)
+      public = at.call("POST", 65)
+      by_super = at.call("POST", 70)
+      flag = at.call("POST", 75)
 
-      DjangoAuthTagger.new(noir_options).perform([read, write, optional, debug, early, library, perm, post_key, token, local, alias_sub])
+      DjangoAuthTagger.new(noir_options).perform([read, write, optional, debug, early, library, perm, post_key, token, local, alias_sub, ajax, format, public, by_super, flag])
 
       read.tags.should be_empty
       write.tags.map(&.description).should eq(["Protected by DRF permission_classes"])
@@ -546,6 +611,15 @@ describe "DjangoAuthTagger" do
       local.tags.map(&.description).should eq(["Protected by DRF permission_classes (settings.API_KEY decides; a setting can make it public)"])
       # A subclass of the library class imported under an alias.
       alias_sub.tags.map(&.description).should eq(["Protected by DRF permission_classes"])
+      # A header or parameter anyone can send, compared to a literal.
+      ajax.tags.should be_empty
+      format.tags.should be_empty
+      # A verb test `or`-ed with another admit lets POST through first.
+      public.tags.should be_empty
+      # A read-only branch handing reads to `super()` is no allow for POST;
+      # any other truthy return before the key check is.
+      by_super.tags.map(&.description).should eq(["Protected by DRF permission_classes"])
+      flag.tags.should be_empty
     ensure
       FileUtils.rm_rf(tmpdir)
       CodeLocator.instance.clear_all
