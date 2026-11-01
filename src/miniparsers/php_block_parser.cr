@@ -144,15 +144,16 @@ module Noir
       end
     end
 
-    # Top-level `class` / `trait` / `interface` / `enum` declarations and
-    # the ones in a `namespace { }` block, not those nested in code.
+    # `class` / `trait` / `interface` / `enum` declarations outside any
+    # function: at the top level, in a `namespace { }` block, or declared
+    # under a condition (`if (! class_exists(X::class)) { class X ... }`).
     def declarations : Array(Node)
       found = [] of Node
       stack = @root.children.reverse
       while node = stack.pop?
         if node.kind.class?
           found << node
-        elsif node.kind.block?
+        elsif !node.code_unit?
           node.children.reverse_each { |child| stack << child }
         end
       end
@@ -253,6 +254,19 @@ module Noir
       when "switch"  then parse_switch(pos, to, parent)
       when "try"     then parse_try(pos, to, parent)
       when "do"      then parse_do(pos, to, parent)
+      when "namespace"
+        # `namespace App\X { ... }` (or a global `namespace { ... }`) holds
+        # its declarations in a block.
+        p = skip_ws(pos + 9, to)
+        while p < to && (ident_char?(@m[p]) || @m[p] == '\\')
+          p += 1
+        end
+        p = skip_ws(p, to)
+        if @m[p]? == '{'
+          parse_braced(Node.new(Kind::Block, p, parent), p, to)
+        else
+          parse_expression(pos, to, parent, :statement)
+        end
       when "function"
         after = skip_ws(pos + 8, to)
         after = skip_ws(after + 1, to) if @m[after]? == '&'
@@ -272,25 +286,38 @@ module Noir
     end
 
     private def parse_if(start : Int32, after_kw : Int32, to : Int32, parent : Node, kind : Kind) : Int32
+      alt = alt_body_at?(after_kw, to, headed: true)
       node = parse_headed(Node.new(kind, start, parent), after_kw, to)
       loop do
         q = skip_ws(node.stop, to)
-        if kw?(q, "elseif")
+        r = skip_ws(q + 4, to)
+        # A branch continues the chain only in the chain's own syntax: after a
+        # braced `if` nested in an `if (): ... endif;` body, the `elseif ():`
+        # that follows is the outer one's.
+        if kw?(q, "elseif") && alt_body_at?(q + 6, to, headed: true) == alt
           link = parse_headed(Node.new(Kind::Elseif, q, parent), q + 6, to)
-        elsif kw?(q, "else")
-          r = skip_ws(q + 4, to)
-          if kw?(r, "if")
-            link = parse_headed(Node.new(Kind::Elseif, q, parent), r + 2, to)
-          else
-            link = Node.new(Kind::Else, q, parent)
-            link.stop = parse_body(q + 4, to, link)
-          end
+        elsif kw?(q, "else") && kw?(r, "if") && alt_body_at?(r + 2, to, headed: true) == alt
+          link = parse_headed(Node.new(Kind::Elseif, q, parent), r + 2, to)
+        elsif kw?(q, "else") && !kw?(r, "if") && alt_body_at?(q + 4, to, headed: false) == alt
+          link = Node.new(Kind::Else, q, parent)
+          link.stop = parse_body(q + 4, to, link)
         else
           return node.stop
         end
         link.prev = node
         node = link
       end
+    end
+
+    # Whether the branch whose keyword ends at `after_kw` (and has a `(...)`
+    # head when `headed`) opens an alternative-syntax `:` body.
+    private def alt_body_at?(after_kw : Int32, to : Int32, headed : Bool) : Bool
+      p = skip_ws(after_kw, to)
+      if headed
+        return false unless @m[p]? == '(' && (close = close_of(p))
+        p = skip_ws(close + 1, to)
+      end
+      @m[p]? == ':'
     end
 
     # `kw (head) body`: the head's span, then the body.
@@ -312,13 +339,44 @@ module Noir
       p = skip_ws(p, to)
       return p if p >= to
       return parse_braced(node, p, to) if @m[p] == '{'
-      # ponytail: an alternative-syntax body (`if (x): ... endif;`) is read as
-      # its first statement; the rest follow as siblings.
+      return parse_alt_body(p, to, node) if @m[p] == ':' && ALT_STOPS.has_key?(node.kind)
       p = skip_ws(p + 1, to) if @m[p] == ':'
       return p if p >= to
       stop = parse_statement(p, to, node)
       node.body = p...stop
       stop
+    end
+
+    # The words that end an alternative-syntax body (`if (x): ... endif;`).
+    ALT_STOPS = {
+      Kind::If      => {"elseif", "else", "endif"},
+      Kind::Elseif  => {"elseif", "else", "endif"},
+      Kind::Else    => {"endif"},
+      Kind::Foreach => {"endforeach"},
+      Kind::For     => {"endfor"},
+      Kind::While   => {"endwhile"},
+      Kind::Switch  => {"endswitch"},
+    }
+
+    # `: statements end<kw>;` — the statements up to the word that ends this
+    # branch. An `end<kw>` (and its `;`) is consumed; an `else:` / `elseif`
+    # is left for the chain.
+    private def parse_alt_body(colon : Int32, to : Int32, node : Node) : Int32
+      stops = ALT_STOPS[node.kind]
+      start = skip_ws(colon + 1, to)
+      pos = start
+      word = nil
+      while (q = skip_ws(pos, to)) < to
+        word = read_word(q)
+        break if word && stops.includes?(word) && keyword_boundary?(q)
+        word = nil
+        pos = Math.max(parse_statement(q, to, node), q + 1)
+      end
+      node.body = start...pos
+      q = skip_ws(pos, to)
+      return q unless word && word.starts_with?("end")
+      q = skip_ws(q + word.size, to)
+      @m[q]? == ';' ? q + 1 : q
     end
 
     private def parse_braced(node : Node, open : Int32, to : Int32, members : Bool = false) : Int32

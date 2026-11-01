@@ -37,3 +37,8 @@ Route::get('/mw/else-after-elseif', [ShapeController::class, 'index'])->middlewa
 Route::get('/mw/else-of-refusal', [ShapeController::class, 'index'])->middleware(\App\Http\Middleware\ElseOfRefusal::class);
 Route::get('/mw/finally-in-catch', [ShapeController::class, 'index'])->middleware(\App\Http\Middleware\FinallyInCatch::class);
 Route::get('/mw/else-in-loop', [ShapeController::class, 'index'])->middleware(\App\Http\Middleware\ElseInLoop::class);
+Route::get('/mw/braced-ns', [ShapeController::class, 'index'])->middleware(\App\Http\Middleware\BracedNs::class);
+Route::get('/mw/if-class-exists', [ShapeController::class, 'index'])->middleware(\App\Http\Middleware\IfClassExists::class);
+Route::get('/mw/alt-nested', [ShapeController::class, 'index'])->middleware(\App\Http\Middleware\AltNested::class);
+Route::get('/mw/alt-refuse', [ShapeController::class, 'index'])->middleware(\App\Http\Middleware\AltRefuse::class);
+Route::get('/mw/alt-else', [ShapeController::class, 'index'])->middleware(\App\Http\Middleware\AltElsePass::class);

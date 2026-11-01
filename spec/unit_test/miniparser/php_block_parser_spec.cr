@@ -63,6 +63,31 @@ describe Noir::PhpBlockParser do
     parser.attributes.map(&.name).should eq(%w[Route IsGranted Route CurrentUser])
   end
 
+  it "reads alternative-syntax bodies to their end word and braced namespaces as blocks" do
+    src = <<-PHP
+      <?php
+      namespace AppX {
+          if ($a):
+              foo();
+              if (! $u) { bar(); }
+          elseif ($b):
+              baz();
+          else:
+              foreach ($xs as $x): qux(); endforeach;
+          endif;
+          if (! class_exists(C::class)) { class C { public function m() {} } }
+          class D {}
+      }
+      PHP
+    parser = Noir::PhpBlockParser.new(src)
+    block = parser.root.children.first
+    block.kind.should eq(Noir::PhpBlockParser::Kind::Block)
+    block.children.map(&.kind.to_s).should eq(%w[If Elseif Else If Class])
+    block.children[0].children.map(&.kind.to_s).should eq(%w[If])
+    block.children[2].children.map(&.kind.to_s).should eq(%w[Foreach])
+    parser.declarations.map(&.name).should eq(%w[C D])
+  end
+
   it "splits array literals into key/value entries" do
     src = %(<?php\n$a = ['prefix' => 'x', /* 'c' => 1, */ 'mw' => ['auth', 'v'], fn () => 1, 'k' => fn ($a) => [$a, 2]];\n)
     parser = Noir::PhpBlockParser.new(src)

@@ -46,6 +46,14 @@ describe "PHP block-structure shapes", tags: "functional" do
     auth_tags(endpoints, "GET", "/mw/else-of-refusal").should eq(["Protected by Laravel ElseOfRefusal middleware"])
     auth_tags(endpoints, "GET", "/mw/finally-in-catch").should eq(["Protected by Laravel FinallyInCatch middleware"])
     auth_tags(endpoints, "GET", "/mw/else-in-loop").should eq(["Protected by Laravel ElseInLoop middleware"])
+    # A middleware declared in a braced namespace or under `if (! class_exists(...))`.
+    auth_tags(endpoints, "GET", "/mw/braced-ns").should eq(["Protected by Laravel BracedNs middleware"])
+    auth_tags(endpoints, "GET", "/mw/if-class-exists").should eq(["Protected by Laravel IfClassExists middleware"])
+    # Alternative syntax: the body runs to `endif`, so a guest pass nested in
+    # it is not top-level; the `else:` of a lone `if ($user):` passes a guest.
+    auth_tags(endpoints, "GET", "/mw/alt-nested").should eq(["Protected by Laravel AltNested middleware"])
+    auth_tags(endpoints, "GET", "/mw/alt-refuse").should eq(["Protected by Laravel AltRefuse middleware"])
+    auth_tags(endpoints, "GET", "/mw/alt-else").should be_empty
 
     index = endpoints.find! { |ep| ep.url == "/semi/one" }
     names = index.callees.map(&.name)
@@ -61,6 +69,7 @@ describe "PHP block-structure shapes", tags: "functional" do
     urls = endpoints.map { |ep| "#{ep.method} #{ep.url}" }.sort!
     urls.should eq([
       "DELETE /shape/fqcn",
+      "GET /ns/x",
       "GET /shape/after-heredoc",
       "GET /shape/doc",
       "GET /shape/me",
@@ -68,6 +77,8 @@ describe "PHP block-structure shapes", tags: "functional" do
       "PUT /shape/grouped",
     ])
     auth_tags(endpoints, "PUT", "/shape/grouped").should eq(["Protected by Symfony #[IsGranted('ROLE_ADMIN')]"])
+    # A class in a braced `namespace X { }` keeps its prefix and guard.
+    auth_tags(endpoints, "GET", "/ns/x").should eq(["Protected by Symfony #[IsGranted('ROLE_ADMIN')]"])
     auth_tags(endpoints, "GET", "/shape/me").should eq(["Protected by Symfony #[IsGranted('ROLE_USER')]"])
   end
 end
