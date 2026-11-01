@@ -1411,6 +1411,12 @@ module Analyzer::Python
       slashless = Set(::String).new
       content.scan(DRF_SLASHLESS_ROUTER_RE) { |match| slashless << match[1] }
       lines = content.split("\n")
+      # drf-extensions' NestedRouterMixin: `projects = router.register(...)`
+      # returns an item whose `.register(prefix, ..., parents_query_lookups=
+      # [...])` routes under the parent, on the root router:
+      # `projects/(?P<parent_lookup_project__slug>[^/.]+)/versions`.
+      # Item name -> {root router, own prefix, parent item}.
+      nested_items = Hash(::String, Tuple(::String, ::String, ::String?)).new
 
       lines.each_with_index do |line, index|
         next if line.lstrip.starts_with?("#")
@@ -1431,12 +1437,43 @@ module Analyzer::Python
         view_ref = clean_python_reference(view_ref)
         next if view_ref.empty?
 
-        registration = DjangoDrfRegistration.new(prefix, view_ref, !slashless.includes?(register_match[1]))
-        registration.extra_routes = drf_router_extra_routes(content, file, register_match[1])
-        registrations[register_match[1]] << registration
+        receiver = register_match[1]
+        router = receiver
+        route_prefix = prefix
+        if item = nested_items[receiver]?
+          router = item[0]
+          lookups = (extract_python_keyword_expression(args, "parents_query_lookups") || "").scan(/[rf]?['"]([^'"]+)['"]/).map(&.[1])
+          route_prefix = nested_drf_prefix(nested_items, receiver, lookups, prefix)
+        end
+        if (assigned = logical_line.match(DRF_REGISTER_ASSIGN_RE)) && assigned[2] == receiver
+          nested_items[assigned[1]] = {router, prefix, nested_items.has_key?(receiver) ? receiver : nil}
+        end
+
+        registration = DjangoDrfRegistration.new(route_prefix, view_ref, !slashless.includes?(router))
+        registration.extra_routes = drf_router_extra_routes(content, file, router)
+        registrations[router] << registration
       end
 
       registrations
+    end
+
+    DRF_REGISTER_ASSIGN_RE = /\A\s*([A-Za-z_]\w*)\s*=\s*([A-Za-z_]\w*)\s*\.\s*register\s*\(/
+
+    # NestedRegistryItem.get_prefix: each item up the chain contributes
+    # `<its prefix>/(?P<parent_lookup_<lookup>>[^/.]+)/`, the innermost
+    # lookup for the nearest parent.
+    private def nested_drf_prefix(items : Hash(::String, Tuple(::String, ::String, ::String?)),
+                                  item_name : ::String, lookups : Array(::String), prefix : ::String) : ::String
+      parent_prefix = ""
+      current = item_name
+      i = lookups.size - 1
+      while current && (item = items[current]?)
+        lookup = lookups[i]? || "pk"
+        parent_prefix = "#{item[1]}/(?P<parent_lookup_#{lookup}>[^/.]+)/#{parent_prefix}"
+        i -= 1
+        current = item[2]
+      end
+      "#{parent_prefix}#{prefix}".strip('/')
     end
 
     # Verbs a project router class adds to DRF's own route table, as
