@@ -21,11 +21,19 @@ compact_endpoint = Endpoint.new("/compact", "GET")
 compact_endpoint.push_callee(Callee.new("json", line: 37))
 compact_endpoint.push_callee(Callee.new("HealthService.check", line: 37))
 
+interp_endpoint = Endpoint.new("/interpolation", "GET")
+interp_endpoint.push_callee(Callee.new("avatar", line: 40))
+interp_endpoint.push_callee(Callee.new("StringUtil.escapeHtml", line: 40))
+interp_endpoint.push_callee(Callee.new("StringUtil.cutTail", line: 41))
+interp_endpoint.push_callee(Callee.new("svc.lookup", line: 42))
+interp_endpoint.push_callee(Callee.new("json", line: 43))
+
 expected_endpoints = [
   show_endpoint,
   create_endpoint,
   braces_endpoint,
   compact_endpoint,
+  interp_endpoint,
 ]
 
 FunctionalTester.new("fixtures/scala/scalatra_callees/", {

@@ -71,4 +71,21 @@ describe Noir::ScalaCalleeExtractor do
     stripped.count('}').should eq 0
     stripped.should contain("'sym")
   end
+
+  it "extracts callees inside string interpolation holes" do
+    body = <<-SCALA
+      val content = s"${avatar(u)} <b>@${StringUtil.escapeHtml(
+        StringUtil.cutTail(name, 10))}</b>"
+      val single = s"v ${svc.lookup(x)}"
+      val literal = "IgnoredService.run()"
+      SCALA
+
+    callees = Noir::ScalaCalleeExtractor.callees_for_body(body, "Routes.scala", 10)
+    callees.map { |name, _, line| {name, line} }.should eq([
+      {"avatar", 10},
+      {"StringUtil.escapeHtml", 10},
+      {"StringUtil.cutTail", 11},
+      {"svc.lookup", 12},
+    ])
+  end
 end

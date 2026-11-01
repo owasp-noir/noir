@@ -43,8 +43,10 @@ module Analyzer::Scala
 
     private def extract_routes_from_content(path : String, content : String, include_callee : Bool) : Array(Endpoint)
       endpoints = [] of Endpoint
+      lexer = scala_lexer(content)
       lines = content.split('\n')
-      code_lines = scala_code_lines(content)
+      code_lines = lexer.code_lines
+      masked_lines = lexer.masked_lines
       # This file's own declarations win over the project-wide index.
       matcher_keys = (@query_matcher_keys[configured_base_for(path)]? || Hash(String, String).new)
         .merge(content.includes?("QueryParam") ? query_matcher_keys(content) : Hash(String, String).new)
@@ -76,7 +78,7 @@ module Analyzer::Scala
           if data = parse_case_header(header, matcher_keys)
             methods, segments, path_params, query_params, binding_name = data
             full_path = build_full_path(segments, current_routes_name, mount_prefixes)
-            body_text = extract_case_body(lines, code_lines, end_index)
+            body_text = extract_case_body(lines, code_lines, masked_lines, end_index)
             body_type : String? = nil
             if binding_name
               body_as_regex = @body_as_regexes[binding_name] ||= /#{Regex.escape(binding_name)}\s*\.\s*as\s*\[\s*([^\]\s]+)\s*\]/
@@ -271,7 +273,7 @@ module Analyzer::Scala
 
     # Pull case body text from the line after the `=>` until the next `case ` at the same level
     # or the close of the enclosing brace. Used for body-type and callee extraction.
-    private def extract_case_body(lines : Array(String), code_lines : Array(String), header_end_index : Int32) : String
+    private def extract_case_body(lines : Array(String), code_lines : Array(String), masked_lines : Array(String), header_end_index : Int32) : String
       body_lines = [] of String
       brace_depth = 0
 
@@ -279,22 +281,22 @@ module Analyzer::Scala
       if arrow = tail.index("=>")
         inline = tail[(arrow + 2)..]
         body_lines << inline
-        inline_code = scala_code_line(inline)
-        brace_depth += inline_code.count('{') - inline_code.count('}')
+        inline_struct = (masked_lines[header_end_index]? || "")[(arrow + 2)..]? || ""
+        brace_depth += inline_struct.count('{') - inline_struct.count('}')
       end
 
       idx = header_end_index + 1
       while idx < lines.size
         line = lines[idx]
-        stripped = code_lines[idx]? || ""
-        trimmed = stripped.strip
+        masked = masked_lines[idx]? || ""
+        trimmed_masked = masked.strip
 
-        if brace_depth <= 0 && (trimmed.starts_with?("case ") || trimmed == "}")
+        if brace_depth <= 0 && (trimmed_masked.starts_with?("case ") || trimmed_masked == "}")
           break
         end
 
         body_lines << line
-        brace_depth += stripped.count('{') - stripped.count('}')
+        brace_depth += masked.count('{') - masked.count('}')
         break if brace_depth < 0
         idx += 1
       end

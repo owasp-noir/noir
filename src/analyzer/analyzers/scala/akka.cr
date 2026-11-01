@@ -67,7 +67,7 @@ module Analyzer::Scala
           full_path = pathmatcher_stack_join(prefix_stack, route_path)
 
           # Find HTTP methods in the following lines within the same block
-          block = extract_block_from_index(lines, index)
+          block = extract_block_from_index(lines, structural_lines, index)
           next unless block
 
           block_content = block[0]
@@ -98,7 +98,7 @@ module Analyzer::Scala
           # inside) a `path(...)` line that path already carries the full route,
           # so emitting at the bare prefix would be a wrong, prefix-only FP.
           full_path = prefix_stack.empty? ? "/" : prefix_stack.join("")
-          block = extract_block_from_index(lines, index)
+          block = extract_block_from_index(lines, structural_lines, index)
           next unless block
 
           block_content = block[0]
@@ -126,7 +126,7 @@ module Analyzer::Scala
            !line_has_path_directive?(stripped_line) &&
            !within_range?(route_ranges, index)
           full_path = prefix_stack.join("")
-          block = extract_block_from_index(lines, index)
+          block = extract_block_from_index(lines, structural_lines, index)
           if block
             block_content = block[0]
             block_end = block[2]
@@ -164,8 +164,8 @@ module Analyzer::Scala
     end
 
     # Extract block content starting from a given index
-    private def extract_block_from_index(lines : Array(String), start_index : Int32) : Tuple(String, Int32, Int32)?
-      extract_scala_brace_block_with_end(lines, start_index)
+    private def extract_block_from_index(lines : Array(String), structural_lines : Array(String), start_index : Int32) : Tuple(String, Int32, Int32)?
+      extract_scala_brace_block_with_end(lines, structural_lines, start_index)
     end
 
     private def attach_method_callees(endpoint : Endpoint,
@@ -199,7 +199,7 @@ module Analyzer::Scala
         end
 
         opening_brace = (match.end(0) || 1) - 1
-        if block = extract_scala_brace_block_with_end_at(lines, index, opening_brace)
+        if block = extract_scala_brace_block_with_end_at(lines, structural_lines, index, opening_brace)
           blocks << {block[0], block[1]}
           index = block[2] + 1
           next
@@ -295,38 +295,34 @@ module Analyzer::Scala
       scopes = [] of String
       regex = METHOD_SCOPE_PATTERNS[method]? || /(?<![.\w])#{Regex.escape(method)}(?![\w])/
       search_from = 0
-      # Crystal's `String#[](i)` walks the string from byte 0 on every call
-      # once it holds any multi-byte UTF-8 char (no cached char->byte index),
-      # so the position-tracking scans below (which reindex `content` at
-      # arbitrary offsets, not sequentially) are O(n) per char -- O(n^2)
-      # overall on non-ASCII route blocks. Materialize once and index the
-      # array instead -- same char offsets, O(1) access.
-      chars = content.chars
+      lexer = Noir::ScalaLexer.new(content)
+      chars = lexer.masked
+      masked = chars.join
 
-      while match = content.match(regex, search_from)
+      while match = masked.match(regex, search_from)
         method_start = match.begin || search_from
         method_end = match.end || method_start
-        next_index = skip_whitespace(chars, method_end)
+        next_index = chars.index(method_end) { |c| !c.whitespace? } || chars.size
 
         if next_index < chars.size
           case chars[next_index]
           when '{'
-            if block = balanced_slice(chars, next_index, '{', '}')
-              scopes << block
+            if close = lexer.matching_delimiter(next_index)
+              scopes << content[next_index..close]
             end
           when '('
-            if args = balanced_slice(chars, next_index, '(', ')')
-              scope = args
-              after_args = skip_whitespace(chars, next_index + args.size)
+            if close_paren = lexer.matching_delimiter(next_index)
+              scope = content[next_index..close_paren]
+              after_args = chars.index(close_paren + 1) { |c| !c.whitespace? } || chars.size
               if after_args < chars.size && chars[after_args] == '{'
-                if block = balanced_slice(chars, after_args, '{', '}')
-                  scope = "#{scope}\n#{block}"
+                if close_brace = lexer.matching_delimiter(after_args)
+                  scope = "#{scope}\n#{content[after_args..close_brace]}"
                 end
               end
               scopes << scope
             end
           else
-            if chain_block = chained_directive_scope(chars, method_start)
+            if chain_block = chained_directive_scope(content, masked, lexer, method_start)
               scopes << chain_block
             end
           end
@@ -340,89 +336,16 @@ module Analyzer::Scala
       scopes
     end
 
-    private def chained_directive_scope(chars : Array(Char), method_start : Int32) : String?
-      opening_brace = next_unquoted_char(chars, '{', method_start)
+    private def chained_directive_scope(content : String, masked : String, lexer : Noir::ScalaLexer, method_start : Int32) : String?
+      opening_brace = masked.index('{', method_start)
       return unless opening_brace
 
-      header = chars[method_start...opening_brace].join
+      header = content[method_start...opening_brace]
       return unless header.includes?("&")
-      block = balanced_slice(chars, opening_brace, '{', '}') || chars[opening_brace..].join
+      close = lexer.matching_delimiter(opening_brace)
+      block = close ? content[opening_brace..close] : content[opening_brace..]
 
       "#{header}\n#{block}"
-    end
-
-    private def skip_whitespace(chars : Array(Char), index : Int32) : Int32
-      chars.index(index) { |c| !c.whitespace? } || chars.size
-    end
-
-    private def next_unquoted_char(chars : Array(Char), needle : Char, start : Int32) : Int32?
-      in_string = false
-      quote = '\0'
-      escape = false
-      i = start
-
-      while i < chars.size
-        char = chars[i]
-        if in_string
-          if escape
-            escape = false
-          elsif char == '\\'
-            escape = true
-          elsif char == quote
-            in_string = false
-          end
-        else
-          case char
-          when '"', '\''
-            in_string = true
-            quote = char
-          else
-            return i if char == needle
-            return if char == '~' || char == ','
-          end
-        end
-        i += 1
-      end
-
-      nil
-    end
-
-    private def balanced_slice(chars : Array(Char), start : Int32, open_char : Char, close_char : Char) : String?
-      return unless start < chars.size && chars[start] == open_char
-
-      depth = 0
-      in_string = false
-      quote = '\0'
-      escape = false
-      i = start
-
-      while i < chars.size
-        char = chars[i]
-        if in_string
-          if escape
-            escape = false
-          elsif char == '\\'
-            escape = true
-          elsif char == quote
-            in_string = false
-          end
-        else
-          case char
-          when '"', '\''
-            in_string = true
-            quote = char
-          else
-            depth += 1 if char == open_char
-            if char == close_char
-              depth -= 1
-              return chars[start..i].join if depth == 0
-            end
-          end
-        end
-        i += 1
-      end
-
-      nil
     end
 
     private def akka_path_from_args(args : String, param_names : Array(String)) : String

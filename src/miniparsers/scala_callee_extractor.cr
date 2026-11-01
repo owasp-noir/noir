@@ -1,5 +1,6 @@
 require "../models/endpoint"
 require "./callee_extractor_base"
+require "../minilexers/scala_lexer"
 
 module Noir::ScalaCalleeExtractor
   extend self
@@ -20,23 +21,17 @@ module Noir::ScalaCalleeExtractor
 
   def callees_for_body(body : String, file_path : String, start_line : Int32) : Array(Entry)
     entries = [] of Tuple(Int32, Entry)
-    block_comment_depth = 0
-    in_multiline_string = false
+    lexer = Noir::ScalaLexer.new(body)
+    masked_lines = lexer.masked_lines
     code = String::Builder.new
     line_offsets = [] of Int32
     offset = 0
-    body_lines = body.lines
 
-    body_lines.each_with_index do |line, index|
-      stripped, block_comment_depth, in_multiline_string = strip_non_code_with_state(
-        line,
-        block_comment_depth,
-        in_multiline_string
-      )
+    masked_lines.each_with_index do |stripped, index|
       line_offsets << offset
       code << stripped
 
-      unless index == body_lines.size - 1
+      unless index == masked_lines.size - 1
         code << '\n'
         offset += stripped.size + 1
       end
@@ -47,113 +42,16 @@ module Noir::ScalaCalleeExtractor
   end
 
   def strip_comment_preserving_strings(line : String) : String
-    stripped, _, _ = strip_non_code_with_state(line, 0, false, preserve_strings: true)
-    stripped
+    Noir::ScalaLexer.new(line).code_lines.first? || ""
   end
 
   def strip_non_code_with_state(line : String,
                                 block_comment_depth : Int32,
                                 in_multiline_string : Bool,
                                 preserve_strings : Bool = false) : Tuple(String, Int32, Bool)
-    in_string = false
-    escaped = false
-    index = 0
-    chars = line.chars
-    size = chars.size
-    stripped = String::Builder.new(size)
-
-    while index < size
-      char = chars[index]
-      next_char = chars[index + 1]?
-      third_char = chars[index + 2]?
-
-      if block_comment_depth > 0
-        if char == '/' && next_char == '*'
-          block_comment_depth += 1
-          append_spaces(stripped, 2)
-          index += 2
-          next
-        elsif char == '*' && next_char == '/'
-          block_comment_depth -= 1
-          append_spaces(stripped, 2)
-          index += 2
-          next
-        end
-        stripped.write_byte(' '.ord.to_u8)
-      elsif in_multiline_string
-        if char == '"' && next_char == '"' && third_char == '"'
-          in_multiline_string = false
-          append_spaces(stripped, 3)
-          index += 3
-          next
-        end
-        stripped.write_byte(' '.ord.to_u8)
-      elsif in_string
-        if escaped
-          escaped = false
-        elsif char == '\\'
-          escaped = true
-        elsif char == '"'
-          in_string = false
-        end
-        if preserve_strings
-          stripped << char
-        else
-          stripped.write_byte(' '.ord.to_u8)
-        end
-      elsif char == '"'
-        if next_char == '"' && third_char == '"'
-          in_multiline_string = true
-          append_spaces(stripped, 3)
-          index += 3
-          next
-        else
-          in_string = true
-        end
-        if preserve_strings
-          stripped << char
-        else
-          stripped.write_byte(' '.ord.to_u8)
-        end
-      elsif char == '\'' && (length = char_literal_length(chars, index))
-        # `'{'` / `'\''`, as `ScalaLexer` reads them: a brace in a char
-        # literal must not count toward block nesting.
-        if preserve_strings
-          length.times { |k| stripped << chars[index + k] }
-        else
-          append_spaces(stripped, length)
-        end
-        index += length
-        next
-      elsif char == '/' && next_char == '/'
-        append_spaces(stripped, size - index)
-        return {stripped.to_s, block_comment_depth, in_multiline_string}
-      elsif char == '/' && next_char == '*'
-        block_comment_depth += 1
-        append_spaces(stripped, 2)
-        index += 2
-        next
-      else
-        stripped << char
-      end
-      index += 1
-    end
-
-    {stripped.to_s, block_comment_depth, in_multiline_string}
-  end
-
-  # Length of the char literal (`'x'` or `'\x'`) opening at `index`, nil
-  # for a `'symbol` literal.
-  private def char_literal_length(chars : Array(Char), index : Int32) : Int32?
-    if chars[index + 1]? == '\\'
-      4 if chars[index + 3]? == '\''
-    elsif chars[index + 1]? != '\''
-      3 if chars[index + 2]? == '\''
-    end
-  end
-
-  private def append_spaces(stripped : String::Builder, count : Int32)
-    count.times { stripped.write_byte(' '.ord.to_u8) }
+    lexer = Noir::ScalaLexer.new(line)
+    result = preserve_strings ? (lexer.code_lines.first? || "") : (lexer.masked_lines.first? || "")
+    {result, 0, false}
   end
 
   private def scan_code(code : String,

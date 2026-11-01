@@ -19,6 +19,7 @@ module Analyzer::Scala
       lexer = scala_lexer(content)
       lines = scala_code_text(lexer).split('\n')
       code_lines = lexer.code_lines
+      masked_lines = lexer.masked_lines
 
       lines.each_with_index do |_line, index|
         stripped = code_lines[index]? || ""
@@ -43,7 +44,7 @@ module Analyzer::Scala
           end
 
           if arrow_idx
-            block_info = extract_handler_block(lines, index)
+            block_info = extract_handler_block(lines, masked_lines, index)
             if block_info
               block_content, block_start = block_info
               extract_params_from_block(endpoint, block_content)
@@ -181,12 +182,12 @@ module Analyzer::Scala
     # ZIO HTTP writes `-> handler { ... }` or `-> handler(...)` on the same line as
     # the route. To avoid bleeding state from neighbouring routes we only inspect
     # the route line itself (a one-line `handler(...)` has no body to look into).
-    private def extract_handler_block(lines : Array(String), start_index : Int32) : Tuple(String, Int32)?
-      structural = scala_structural_line(lines[start_index])
+    private def extract_handler_block(lines : Array(String), structural_lines : Array(String), start_index : Int32) : Tuple(String, Int32)?
+      structural = structural_lines[start_index]? || ""
       opening_match = structural.match(/(?<![.\w])handler\s*\{/) || structural.match(/->\s*\{/)
       return unless opening_match
       opening_brace_in_structural = (opening_match.end(0) || 1) - 1
-      block = extract_scala_brace_block_with_end_at(lines, start_index, opening_brace_in_structural)
+      block = extract_scala_brace_block_with_end_at(lines, structural_lines, start_index, opening_brace_in_structural)
       return unless block
       {block[0], block[1]}
     end

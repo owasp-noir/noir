@@ -1,0 +1,2 @@
+GET     /users/:id          controllers.HomeController.getUser(id: Long)
+POST    /items              controllers.HomeController.createItem()
