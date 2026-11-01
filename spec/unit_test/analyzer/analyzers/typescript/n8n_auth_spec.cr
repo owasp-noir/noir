@@ -6,8 +6,8 @@ require "../../../../../src/analyzer/analyzers/typescript/n8n"
 # is behind the auth cookie unless its options say `skipAuth: true` or
 # `allowUnauthenticated: true`; a public API route always authenticates; a
 # scope decorator refuses an anonymous caller by itself.
-private def n8n_endpoints : Array(Endpoint)
-  base = File.expand_path("../../../../functional_test/fixtures/typescript/n8n", __DIR__)
+private def n8n_endpoints(fixture = "n8n") : Array(Endpoint)
+  base = File.expand_path("../../../../functional_test/fixtures/typescript/#{fixture}", __DIR__)
   locator = CodeLocator.instance
   locator.clear_all
   Dir.glob(File.join(base, "**", "*.ts")).each { |path| locator.register_file(path, File.read(path)) }
@@ -60,5 +60,53 @@ describe "n8n decorator controller auth" do
     auth_of(endpoints, "PUT", "/scim/v2/Users/:id").not_nil!.should contain("scimAuth")
     # A feature gate or a logger in the list is not a caller check.
     auth_of(endpoints, "GET", "/scim/v2/ServiceProviderConfig").should be_nil
+  end
+end
+
+# Review cases: options read as code (comments stripped, top-level keys
+# only, per decorator), consts through a barrel and a spread, non-literal
+# scopes and middleware lists.
+describe "n8n decorator controller auth, options read as code" do
+  endpoints = n8n_endpoints("n8n_auth")
+  cookie = "Protected by n8n auth cookie (ControllerRegistry auth middleware)"
+
+  it "ignores a commented skipAuth in an options const or its declaration" do
+    {"/rest/a/imported-commented", "/rest/a/local-commented", "/rest/c/legacy", "/rest/c/line-commented"}.each do |url|
+      auth_of(endpoints, "GET", url).should eq(cookie)
+    end
+  end
+
+  it "reads only the options' own top-level keys, of the decorator that declared the route" do
+    auth_of(endpoints, "GET", "/rest/a/nested").should eq(cookie)
+    auth_of(endpoints, "GET", "/rest/a/imported-str").should eq(cookie)
+    auth_of(endpoints, "GET", "/rest/d/public").should be_nil
+    auth_of(endpoints, "GET", "/rest/d/private").should eq(cookie)
+  end
+
+  it "opens on a literal true through a spread, a barrel, an import or across lines" do
+    {"/rest/a/spread", "/rest/a/barrel-open", "/rest/a/direct-open", "/rest/a/multiline"}.each do |url|
+      auth_of(endpoints, "GET", url).should be_nil
+    end
+  end
+
+  it "counts a scope decorator with a const argument as a guard" do
+    auth_of(endpoints, "GET", "/rest/a/scope-const").not_nil!.should contain("GlobalScope SCOPE")
+  end
+
+  it "notes a preview-mode skip and a middleware list built elsewhere" do
+    auth_of(endpoints, "GET", "/rest/a/preview").not_nil!.should contain("N8N_PREVIEW_MODE")
+    auth_of(endpoints, "POST", "/rest/a/dynamic").not_nil!.should contain("getDynamicCredentialMiddlewares()")
+  end
+
+  it "takes only an auth-shaped middleware name as the route's guard" do
+    auth_of(endpoints, "GET", "/rest/a/oauth-cb").should be_nil
+    auth_of(endpoints, "POST", "/rest/a/own-auth").not_nil!.should contain("getAuthMiddleware")
+  end
+
+  it "keeps a literal false and a non-literal value guarded" do
+    auth_of(endpoints, "GET", "/rest/a/false").should eq(cookie)
+    auth_of(endpoints, "POST", "/rest/a/allow-false").should eq(cookie)
+    auth_of(endpoints, "GET", "/rest/a/isdev").not_nil!.should contain("a setting can open it")
+    auth_of(endpoints, "GET", "/rest/a/neg").not_nil!.should contain("a setting can open it")
   end
 end

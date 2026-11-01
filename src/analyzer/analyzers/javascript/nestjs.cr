@@ -1118,7 +1118,7 @@ module Analyzer::Javascript
               extract_path_parameters(full_path, endpoint)
               extract_decorator_parameters(signature[:params], endpoint, dto_fields)
               extract_interceptor_parameters(decorator_block, endpoint)
-              route_decorated(endpoint, decorator_block, controller_decorator)
+              route_decorated(endpoint, decorator_block, controller_decorator, route_path)
               extract_request_object_params(class_content, signature, endpoint)
               callees.try &.each do |name, callee_path, line|
                 endpoint.push_callee(Callee.new(name, path: callee_path, line: line))
@@ -1457,9 +1457,10 @@ module Analyzer::Javascript
 
     # Per-endpoint hook for a decorator-controller framework that reads
     # more off the method's decorators (`decorator_block`, every decorator
-    # stacked on it) and the class decorator that opened its controller.
+    # stacked on it), the class decorator that opened its controller, and
+    # the path of the route decorator this endpoint came from.
     # `Endpoint` is a struct: only its arrays (params, tags) are shared.
-    protected def route_decorated(endpoint : Endpoint, decorator_block : String, controller_decorator : String) : Nil
+    protected def route_decorated(endpoint : Endpoint, decorator_block : String, controller_decorator : String, route_path : String) : Nil
     end
 
     private def extract_interceptor_parameters(decorator_block : String, endpoint : Endpoint)
