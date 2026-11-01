@@ -23,8 +23,8 @@ module Analyzer::Typescript
       content.includes?(".route(") || content.matches?(MARKER)
     end
 
-    def routes(content : String) : Array(Noir::TSContractExtractor::Route)
-      Noir::TSContractExtractor.orpc(content)
+    def routes(content : String, path : String) : Array(Noir::TSContractExtractor::Route)
+      Noir::TSContractExtractor.orpc(content, path)
     end
   end
 end

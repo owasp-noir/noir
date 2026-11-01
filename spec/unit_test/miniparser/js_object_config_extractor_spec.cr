@@ -38,19 +38,25 @@ describe Noir::JSObjectConfigExtractor do
     context "declaration shapes" do
       it "reads a TypeScript type-annotated declaration" do
         source = "export const Posts: CollectionConfig = { slug: 'posts', fields: [] }"
-        Noir::JSObjectConfigExtractor.extract(source, ["slug", "fields"])[0]
+        Noir::JSObjectConfigExtractor.extract(source, ["slug", "fields"], "collections/posts.ts")[0]
           .string("slug").should eq("posts")
       end
 
       it "reads a `satisfies` assertion" do
         source = "export const Posts = { slug: 'posts', fields: [] } satisfies CollectionConfig"
-        Noir::JSObjectConfigExtractor.extract(source, ["slug", "fields"])[0]
+        Noir::JSObjectConfigExtractor.extract(source, ["slug", "fields"], "collections/posts.ts")[0]
           .string("slug").should eq("posts")
+      end
+
+      it "reads `as const` values" do
+        source = "export const r = { method: 'GET' as const, handler: h } satisfies Route"
+        Noir::JSObjectConfigExtractor.extract(source, ["method", "handler"], "convex/http.ts")[0]
+          .string("method").should eq("GET")
       end
 
       it "reads a generic `satisfies` assertion" do
         source = "export const Posts = { slug: 'posts', fields: [] } satisfies Config<Post>"
-        Noir::JSObjectConfigExtractor.extract(source, ["slug", "fields"])[0]
+        Noir::JSObjectConfigExtractor.extract(source, ["slug", "fields"], "collections/posts.ts")[0]
           .string("slug").should eq("posts")
       end
 
@@ -72,9 +78,7 @@ describe Noir::JSObjectConfigExtractor do
           .map(&.string("slug")).should eq(["posts", "pages"])
       end
 
-      # The type-annotation strip is line-preserving so reported lines
-      # still line up with the original source.
-      it "keeps line numbers correct after stripping a type annotation" do
+      it "reports the line of a type-annotated declaration" do
         source = <<-TS
           import type { CollectionConfig } from 'payload'
 
@@ -84,7 +88,7 @@ describe Noir::JSObjectConfigExtractor do
           }
           TS
 
-        Noir::JSObjectConfigExtractor.extract(source, ["slug", "fields"])[0].line.should eq(3)
+        Noir::JSObjectConfigExtractor.extract(source, ["slug", "fields"], "collections/posts.ts")[0].line.should eq(3)
       end
     end
 
@@ -305,7 +309,7 @@ describe Noir::JSObjectConfigExtractor do
           }),
         });
         TS
-      configs = Noir::JSObjectConfigExtractor.extract(source, ["method", "handler"])
+      configs = Noir::JSObjectConfigExtractor.extract(source, ["method", "handler"], "collections/posts.ts")
       configs.map(&.string("path")).should eq(["/clerk-users-webhook"])
       configs[0].line.should eq(1)
     end

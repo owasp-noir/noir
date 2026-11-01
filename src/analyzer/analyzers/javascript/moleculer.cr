@@ -40,7 +40,7 @@ module Analyzer::Javascript
         # The gateway mixin is what serves `settings.routes`; a look-alike
         # object elsewhere is not routed.
         gateway = content.matches?(GATEWAY_IMPORT)
-        Noir::JSObjectConfigExtractor.extract(content, ["name"]).map { |schema| Service.new(path, schema, gateway) }
+        Noir::JSObjectConfigExtractor.extract(content, ["name"], path).map { |schema| Service.new(path, schema, gateway) }
       end.flatten
 
       actions = {} of String => Action

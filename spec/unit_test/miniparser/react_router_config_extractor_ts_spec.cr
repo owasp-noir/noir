@@ -2,7 +2,7 @@ require "spec"
 require "../../../src/miniparsers/react_router_config_extractor_ts"
 
 private def rr_routes(source : String) : Array(Tuple(String, String, Int32))
-  Noir::TreeSitterReactRouterConfigExtractor.extract(source).routes.map { |r| {r.path, r.file, r.line} }
+  Noir::TreeSitterReactRouterConfigExtractor.extract(source, "app/routes.ts").routes.map { |r| {r.path, r.file, r.line} }
 end
 
 describe Noir::TreeSitterReactRouterConfigExtractor do
@@ -64,7 +64,7 @@ describe Noir::TreeSitterReactRouterConfigExtractor do
       export default [index("routes/home.tsx"), ...prefix("api", api)] satisfies RouteConfig;
       TS
 
-    config = Noir::TreeSitterReactRouterConfigExtractor.extract(source)
+    config = Noir::TreeSitterReactRouterConfigExtractor.extract(source, "app/routes.ts")
     config.routes.map(&.path).should eq(["/", "/api/users"])
     config.flat_routes?.should be_false
   end
@@ -107,7 +107,7 @@ describe Noir::TreeSitterReactRouterConfigExtractor do
       ] satisfies RouteConfig;
       TS
 
-    config = Noir::TreeSitterReactRouterConfigExtractor.extract(source)
+    config = Noir::TreeSitterReactRouterConfigExtractor.extract(source, "app/routes.ts")
     config.flat_routes?.should be_true
     config.routes.map(&.path).should eq(["/legacy"])
   end
@@ -120,7 +120,7 @@ describe Noir::TreeSitterReactRouterConfigExtractor do
       JS
 
     rr_routes(source).should eq([{"/users/:id", "routes/user.jsx", 2}])
-    Noir::TreeSitterReactRouterConfigExtractor.extract(source).flat_routes?.should be_false
+    Noir::TreeSitterReactRouterConfigExtractor.extract(source, "app/routes.ts").flat_routes?.should be_false
   end
 
   it "skips calls whose path or file is not a string literal" do
@@ -129,5 +129,16 @@ describe Noir::TreeSitterReactRouterConfigExtractor do
       TS
 
     rr_routes(source).should be_empty
+  end
+
+  it "looks through as / satisfies on helper arguments" do
+    source = <<-TS
+      export default [
+        route("/a" as const, "routes/a.tsx" satisfies string),
+        ...prefix("api" as const, [index("routes/api.tsx")] as RouteConfig),
+      ] satisfies RouteConfig;
+      TS
+
+    rr_routes(source).map(&.[0]).should eq(["/a", "/api"])
   end
 end

@@ -121,9 +121,9 @@ module Noir
       end
     end
 
-    def extract_routes(source : String, include_callees : Bool = false) : Array(Route)
+    def extract_routes(source : String, include_callees : Bool = false, path : String = "") : Array(Route)
       routes = [] of Route
-      Noir::TreeSitter.parse_javascript(source) do |root|
+      Noir::TreeSitter.parse_js_family(source, path) do |root|
         walk(root, source, "", routes, 0, include_callees)
       end
       routes
@@ -244,7 +244,8 @@ module Noir
     private def walk_group(call : LibTreeSitter::TSNode, source : String, prefix : String, routes : Array(Route), depth : Int32, include_callees : Bool)
       args = arguments_node(call)
       return unless args
-      Noir::TreeSitter.each_named_child(args) do |arg|
+      Noir::TreeSitter.each_named_arg(args) do |arg|
+        arg = Noir::TreeSitter.unwrap_expression(arg)
         next unless Noir::TreeSitter.node_type(arg) == "arrow_function" ||
                     Noir::TreeSitter.node_type(arg) == "function_expression" ||
                     Noir::TreeSitter.node_type(arg) == "function"
@@ -276,8 +277,8 @@ module Noir
       arg = argument_at(call, 1) || return
       return unless Noir::TreeSitter.node_type(arg) == "array"
       parts = [] of String
-      Noir::TreeSitter.each_named_child(arg) do |elem|
-        parts << array_element_text(elem, source)
+      Noir::TreeSitter.each_named_arg(arg) do |elem|
+        parts << array_element_text(Noir::TreeSitter.unwrap_expression(elem), source)
       end
       # `[NotesController]` alone calls `handle`.
       parts.size >= 1 ? {parts[0], parts[1]? || "handle"} : nil
@@ -377,7 +378,7 @@ module Noir
       callee = Noir::TreeSitter.first_named_child(call)
       return unless callee
       return unless Noir::TreeSitter.node_type(callee) == "member_expression"
-      Noir::TreeSitter.first_named_child(callee)
+      Noir::TreeSitter.first_named_child(callee).try { |receiver| Noir::TreeSitter.unwrap_expression(receiver) }
     end
 
     # True for a trailing method name the walker knows how to handle.
@@ -408,6 +409,7 @@ module Noir
     private def chain_root_identifier(node : LibTreeSitter::TSNode) : LibTreeSitter::TSNode?
       current = node
       64.times do
+        current = Noir::TreeSitter.unwrap_expression(current)
         case Noir::TreeSitter.node_type(current)
         when "identifier"
           return current
@@ -452,7 +454,7 @@ module Noir
       index = 0
       Noir::TreeSitter.each_named_child(args) do |arg|
         next if Noir::TreeSitter.node_type(arg) == "comment"
-        return arg if index == target_index
+        return Noir::TreeSitter.unwrap_expression(arg) if index == target_index
         index += 1
       end
       nil
@@ -558,7 +560,8 @@ module Noir
     private def function_argument(call : LibTreeSitter::TSNode) : LibTreeSitter::TSNode?
       args = arguments_node(call)
       return unless args
-      Noir::TreeSitter.each_named_child(args) do |arg|
+      Noir::TreeSitter.each_named_arg(args) do |arg|
+        arg = Noir::TreeSitter.unwrap_expression(arg)
         type = Noir::TreeSitter.node_type(arg)
         return arg if type == "arrow_function" || type == "function_expression" || type == "function"
       end
@@ -569,9 +572,11 @@ module Noir
       result = [] of String
       args = arguments_node(call)
       return result unless args
-      Noir::TreeSitter.each_named_child(args) do |arg|
+      Noir::TreeSitter.each_named_arg(args) do |arg|
+        arg = Noir::TreeSitter.unwrap_expression(arg)
         next unless Noir::TreeSitter.node_type(arg) == "array"
-        Noir::TreeSitter.each_named_child(arg) do |elem|
+        Noir::TreeSitter.each_named_arg(arg) do |elem|
+          elem = Noir::TreeSitter.unwrap_expression(elem)
           if Noir::TreeSitter.node_type(elem) == "string"
             result << decode_string(elem, source)
           end
@@ -580,17 +585,10 @@ module Noir
       result
     end
 
+    # `field("body")`: TypeScript puts a `return_type` between the
+    # parameters and the body.
     private def function_body(fn : LibTreeSitter::TSNode) : LibTreeSitter::TSNode?
-      seen_params = false
-      Noir::TreeSitter.each_named_child(fn) do |child|
-        ty = Noir::TreeSitter.node_type(child)
-        if !seen_params && (ty == "formal_parameters" || ty == "identifier")
-          seen_params = true
-          next
-        end
-        return child if seen_params
-      end
-      nil
+      Noir::TreeSitter.field(fn, "body")
     end
 
     private def decode_string(node : LibTreeSitter::TSNode, source : String) : String

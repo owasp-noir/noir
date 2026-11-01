@@ -47,7 +47,7 @@ module Analyzer::Javascript
 
         mounts = CodeLocator.instance.all(ExpressConstants.file_key(Noir::PathScope.expand(path)))
         mounts = [""] if mounts.empty?
-        Noir::TreeSitterHapiExtractor.extract_routes(content, include_callee, module_exports: route_module).flat_map do |route|
+        Noir::TreeSitterHapiExtractor.extract_routes(content, include_callee, module_exports: route_module, path: path).flat_map do |route|
           mounts.map { |prefix| build_endpoint(route, prefix, path, include_callee) }
         end
       end

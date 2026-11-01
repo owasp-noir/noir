@@ -46,14 +46,9 @@ module Noir
       end
     end
 
-    def extract(source : String) : Config
-      # The JS grammar has neither `satisfies` nor `const x: T =`; both strips
-      # are same-line, so rows hold.
-      normalized = source
-        .gsub(JSObjectConfigExtractor::DECLARATION_ANNOTATION, "\\1 =")
-        .gsub(JSObjectConfigExtractor::SATISFIES_ASSERTION, "")
-      walker = Walker.new(normalized)
-      Noir::TreeSitter.parse_javascript(normalized) { |root| walker.run(root) }
+    def extract(source : String, path : String = "") : Config
+      walker = Walker.new(source)
+      Noir::TreeSitter.parse_js_family(source, path) { |root| walker.run(root) }
       Config.new(walker.routes, walker.flat_routes?)
     end
 
@@ -119,7 +114,7 @@ module Noir
       private def emit(call : LibTreeSitter::TSNode, parent : String, absorb : Bool) : Nil
         args = [] of LibTreeSitter::TSNode
         if arguments = Noir::TreeSitter.field(call, "arguments")
-          Noir::TreeSitter.each_named_arg(arguments) { |arg| args << arg }
+          Noir::TreeSitter.each_named_arg(arguments) { |arg| args << Noir::TreeSitter.unwrap_expression(arg) }
         end
         line = Noir::TreeSitter.node_start_row(call) + 1
 

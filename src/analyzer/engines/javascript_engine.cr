@@ -61,10 +61,6 @@ module Analyzer::Javascript
       end
     end
 
-    protected def javascript_source_language(path : String) : Symbol
-      path.ends_with?(".ts") || path.ends_with?(".mts") || path.ends_with?(".cts") || path.ends_with?(".tsx") ? :typescript : :javascript
-    end
-
     # Endpoint for a file-routed framework (Astro, Fresh, Remix, SvelteKit):
     # every `{name}` placeholder in the URL becomes a path param.
     protected def file_route_endpoint(url : String, verb : String, path : String, line : Int32 = 1) : Endpoint
@@ -158,7 +154,7 @@ module Analyzer::Javascript
       "/" + mapped.join('/')
     end
 
-    protected def api_method_line(content : String, verb : String) : Int32?
+    protected def api_method_line(content : String, path : String, verb : String) : Int32?
       if match = content.match(EXPORT_FUNCTION_RES[verb])
         return line_for_match(content, match)
       end
@@ -168,7 +164,7 @@ module Analyzer::Javascript
       end
 
       if content.includes?("export {") && content.includes?(verb)
-        Noir::JSCalleeExtractor.exported_function_line(content, verb)
+        Noir::JSCalleeExtractor.exported_function_line(content, path, verb)
       end
     end
 
@@ -428,7 +424,7 @@ module Analyzer::Javascript
         body = content[body_start...(handler_start + handler_source.size)].strip
         return [] of Noir::JSCalleeExtractor::Entry if body.empty?
 
-        return Noir::JSCalleeExtractor.callees_for_function_body(body, path, line_number_for_index(content, body_start), language: javascript_source_language(path))
+        return Noir::JSCalleeExtractor.callees_for_function_body(body, path, line_number_for_index(content, body_start))
       end
 
       function_idx = handler_source.index(/\bfunction\b/)
@@ -445,7 +441,7 @@ module Analyzer::Javascript
       return [] of Noir::JSCalleeExtractor::Entry unless close_brace
 
       body = content[(open_brace + 1)...close_brace]
-      Noir::JSCalleeExtractor.callees_for_function_body(body, path, line_number_for_index(content, open_brace), language: javascript_source_language(path))
+      Noir::JSCalleeExtractor.callees_for_function_body(body, path, line_number_for_index(content, open_brace))
     end
 
     protected def split_top_level_args(content : String, start_pos : Int32, end_pos : Int32) : Array(Tuple(String, Int32))

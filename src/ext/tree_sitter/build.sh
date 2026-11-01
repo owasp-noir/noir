@@ -73,8 +73,9 @@ fi
 # `scanner.c` (hand-written custom lexer for context-sensitive tokens) —
 # Go does not, so we compile scanner.c only when the file exists.
 # Local patches to re-apply when re-vendoring (grep "noir local patch"):
-#   kotlin/scanner.c  stack_push fails the token instead of abort().
-GRAMMARS="python go java kotlin javascript rust"
+#   kotlin/scanner.c              stack_push fails the token instead of abort().
+#   typescript,tsx/scanner.c      point #include at ts_common/scanner.h.
+GRAMMARS="python go java kotlin javascript rust typescript tsx"
 OBJS="$RUNTIME_OBJ"
 for g in $GRAMMARS; do
   GD="$D/grammars/$g"
@@ -84,7 +85,9 @@ for g in $GRAMMARS; do
     [ -f "$SRC" ] || continue
     if [ ! -f "$OBJ" ] \
       || [ "$SRC" -nt "$OBJ" ] \
-      || [ "$GD/tree_sitter/parser.h" -nt "$OBJ" ]; then
+      || [ "$GD/tree_sitter/parser.h" -nt "$OBJ" ] \
+      || { [ "$src" = scanner ] && [ "$D/grammars/ts_common/scanner.h" -nt "$OBJ" ] \
+        && { [ "$g" = typescript ] || [ "$g" = tsx ]; }; }; then
       echo "[noir/tree-sitter] building $g/$src.o" 1>&2
       # Grammars only need the runtime's public api.h, not the private
       # headers, so we pass just the include dir (not the src dir).

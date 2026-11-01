@@ -74,9 +74,9 @@ module Noir
     # (`module.exports = {...}`, `= [...]`, `= Helpers.withDefaults({...})`,
     # `export default {...}`), as in a haute-couture `routes/` module, which
     # haute-couture hands to `server.route()` itself.
-    def extract_routes(source : String, include_callees : Bool = false, module_exports : Bool = false) : Array(Route)
+    def extract_routes(source : String, include_callees : Bool = false, module_exports : Bool = false, path : String = "") : Array(Route)
       routes = [] of Route
-      Noir::TreeSitter.parse_javascript(source) do |root|
+      Noir::TreeSitter.parse_js_family(source, path) do |root|
         walk(root, source, routes, 0, include_callees, module_exports)
       end
       routes
@@ -118,7 +118,7 @@ module Noir
       end
       value = nil.as(LibTreeSitter::TSNode?)
       Noir::TreeSitter.each_named_child(node) { |child| value = child }
-      value
+      value.try { |v| Noir::TreeSitter.unwrap_expression(v) }
     end
 
     private def route_call?(call : LibTreeSitter::TSNode, source : String) : Bool
@@ -145,11 +145,13 @@ module Noir
 
     # One route config object, or an array of them.
     private def emit_config(node : LibTreeSitter::TSNode, source : String, routes : Array(Route), include_callees : Bool)
+      node = Noir::TreeSitter.unwrap_expression(node)
       case Noir::TreeSitter.node_type(node)
       when "object"
         emit_route_object(node, source, routes, include_callees)
       when "array"
         Noir::TreeSitter.each_named_child(node) do |elem|
+          elem = Noir::TreeSitter.unwrap_expression(elem)
           emit_route_object(elem, source, routes, include_callees) if Noir::TreeSitter.node_type(elem) == "object"
         end
       end
@@ -230,7 +232,7 @@ module Noir
             value = child
           end
         else
-          value = child if value.nil?
+          value = Noir::TreeSitter.unwrap_expression(child) if value.nil?
         end
       end
       {key, value}
@@ -246,7 +248,8 @@ module Noir
           sink << text
         end
       when "array"
-        Noir::TreeSitter.each_named_child(value) do |elem|
+        Noir::TreeSitter.each_named_arg(value) do |elem|
+          elem = Noir::TreeSitter.unwrap_expression(elem)
           if Noir::TreeSitter.node_type(elem) == "string"
             text = decode_string(elem, source).upcase
             sink << text if HTTP_VERBS.includes?(text)
@@ -343,6 +346,7 @@ module Noir
           seen_target = true
           next
         end
+        child = Noir::TreeSitter.unwrap_expression(child)
         if Noir::TreeSitter.node_type(child) == "string"
           return decode_string(child, source)
         end

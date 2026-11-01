@@ -18,8 +18,8 @@ module Analyzer::Typescript
       content.matches?(MARKER)
     end
 
-    def routes(content : String) : Array(Noir::TSContractExtractor::Route)
-      Noir::TSContractExtractor.ts_rest(content)
+    def routes(content : String, path : String) : Array(Noir::TSContractExtractor::Route)
+      Noir::TSContractExtractor.ts_rest(content, path)
     end
   end
 end

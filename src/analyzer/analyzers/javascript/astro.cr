@@ -101,7 +101,7 @@ module Analyzer::Javascript
       methods = detect_api_methods(content)
       mutex.synchronize do
         methods.each do |verb|
-          endpoint = file_route_endpoint(url, verb, path, api_method_line(content, verb) || 1)
+          endpoint = file_route_endpoint(url, verb, path, api_method_line(content, path, verb) || 1)
           attach_exported_callees(endpoint, content, path, verb) if callees_needed?
           result << endpoint
         end

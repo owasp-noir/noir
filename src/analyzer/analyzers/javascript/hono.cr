@@ -96,7 +96,7 @@ module Analyzer::Javascript
     DOC_CHAIN_RE        = /(?<![\w$])new\s+(?:OpenAPIHono|Hono)\s*(?:<[^;\n]*>)?\s*\(\s*\)\s*\.\s*doc(?:31)?\s*\(\s*['"]([^'"]+)['"]/
 
     private def extract_openapi_routes(path : String, content : String, result : Array(Endpoint), recorded : Set(String))
-      routes = content.includes?("createRoute") ? Noir::TSContractExtractor.hono_openapi(content) : [] of Noir::TSContractExtractor::Route
+      routes = content.includes?("createRoute") ? Noir::TSContractExtractor.hono_openapi(content, path) : [] of Noir::TSContractExtractor::Route
       offsets = nil.as(Noir::JSRouteExtractor::ByteOffsets?)
       receivers = Set(String).new
       content.scan(OPENAPI_RECEIVER_RE) { |m| receivers << m[1] }

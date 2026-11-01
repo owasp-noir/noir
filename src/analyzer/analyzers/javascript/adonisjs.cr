@@ -29,7 +29,7 @@ module Analyzer::Javascript
 
         include_callee = callees_needed?
         imports = controller_imports(content)
-        Noir::TreeSitterAdonisJsExtractor.extract_routes(content, include_callee).each do |route|
+        Noir::TreeSitterAdonisJsExtractor.extract_routes(content, include_callee, path).each do |route|
           endpoint = build_endpoint(route, path, include_callee)
           handler = route.handler_source || route.controller.try do |controller, action|
             action_body(path, controller, action, imports)

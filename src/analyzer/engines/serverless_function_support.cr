@@ -34,8 +34,7 @@ module Analyzer::Javascript
         endpoint.params.reject! { |param| param.param_type == "query" && path_names.includes?(param.name) }
       end
       if include_callee && !handler.body.empty?
-        callees = Noir::JSCalleeExtractor.callees_for_function_body(handler.body, path, handler.body_line,
-          language: javascript_source_language(path))
+        callees = Noir::JSCalleeExtractor.callees_for_function_body(handler.body, path, handler.body_line)
         attach_js_callees(endpoint, callees)
       end
       endpoint

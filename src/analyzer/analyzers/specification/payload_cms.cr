@@ -69,7 +69,7 @@ module Analyzer::Specification
         next unless File.exists?(path)
         begin
           content = read_file_content(path)
-          Noir::JSObjectConfigExtractor.extract(content, ["routes"]).each do |config|
+          Noir::JSObjectConfigExtractor.extract(content, ["routes"], path).each do |config|
             routes = config.hash("routes")
             next unless routes
             api = routes["api"]?
@@ -85,7 +85,7 @@ module Analyzer::Specification
     end
 
     private def parse_collections(content : String, source : String, api_prefix : String)
-      Noir::JSObjectConfigExtractor.extract(content, ["slug", "fields"]).each do |config|
+      Noir::JSObjectConfigExtractor.extract(content, ["slug", "fields"], source).each do |config|
         slug = config.string("slug")
         next if slug.nil? || slug.empty?
 
@@ -159,7 +159,7 @@ module Analyzer::Specification
     end
 
     private def parse_globals(content : String, source : String, api_prefix : String)
-      Noir::JSObjectConfigExtractor.extract(content, ["slug", "fields"]).each do |config|
+      Noir::JSObjectConfigExtractor.extract(content, ["slug", "fields"], source).each do |config|
         slug = config.string("slug")
         next if slug.nil? || slug.empty?
 

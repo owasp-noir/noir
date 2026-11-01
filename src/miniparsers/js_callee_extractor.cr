@@ -20,21 +20,6 @@ module Noir::JSCalleeExtractor
     "connect" => "CONNECT",
     "all"     => "ALL",
   }
-  FALLBACK_RESERVED_CALLEES = Set{
-    "async", # `beforeLoad: async () => {` is a keyword before a paren, not a call
-    "await",
-    "catch",
-    "do",
-    "else",
-    "for",
-    "function",
-    "if",
-    "new",
-    "return",
-    "switch",
-    "typeof",
-    "while",
-  }
   EVENT_HANDLER_CALLS = Set{
     "defineEventHandler",
     "eventHandler",
@@ -64,7 +49,7 @@ module Noir::JSCalleeExtractor
 
   private def parse_callees_for_routes(source : String, file_path : String) : Hash(String, Array(Entry))
     by_route = {} of String => Array(Entry)
-    Noir::TreeSitter.parse_javascript(source) do |root|
+    Noir::TreeSitter.parse_js_family(source, file_path) do |root|
       definitions = top_level_definitions(root, source)
       walk_routes(root, source, file_path, by_route, 0, definitions)
     end
@@ -75,25 +60,19 @@ module Noir::JSCalleeExtractor
 
   def callees_for_function_body(body : String,
                                 file_path : String,
-                                open_brace_line : Int32,
-                                *,
-                                language : Symbol = :javascript) : Array(Entry)
+                                open_brace_line : Int32) : Array(Entry)
     wrapper = "function __noir_handler__() {#{body}\n}"
     sink = [] of Entry
 
-    Noir::TreeSitter.parse_javascript(wrapper) do |root|
+    Noir::TreeSitter.parse_js_family(wrapper, file_path) do |root|
       walk_first_function_body(root, wrapper, file_path, sink, 0)
-    end
-
-    if sink.empty? && language == :typescript
-      return fallback_callees_for_function_body(body, file_path, open_brace_line)
     end
 
     sink.map do |name, path, line|
       {name, path, open_brace_line + line - 1}
     end
   rescue
-    language == :typescript ? fallback_callees_for_function_body(body, file_path, open_brace_line) : [] of Entry
+    [] of Entry
   end
 
   def callees_for_handler_node(handler : LibTreeSitter::TSNode,
@@ -109,12 +88,11 @@ module Noir::JSCalleeExtractor
   def callees_for_exported_function(source : String,
                                     file_path : String,
                                     export_name : String) : Array(Entry)
-    source_for_ast = normalize_handler_source(source)
     sink = [] of Entry
-    Noir::TreeSitter.parse_javascript(source_for_ast) do |root|
-      definitions = top_level_definitions(root, source_for_ast)
-      if handler = exported_handler(root, root, source_for_ast, export_name, 0)
-        walk_callees(handler_body(handler), source_for_ast, file_path, sink, 0, definitions)
+    Noir::TreeSitter.parse_js_family(source, file_path) do |root|
+      definitions = top_level_definitions(root, source)
+      if handler = exported_handler(root, root, source, export_name, 0)
+        walk_callees(handler_body(handler), source, file_path, sink, 0, definitions)
       end
     end
 
@@ -124,11 +102,11 @@ module Noir::JSCalleeExtractor
   end
 
   def exported_function_line(source : String,
+                             file_path : String,
                              export_name : String) : Int32?
-    source_for_ast = normalize_handler_source(source)
     line : Int32? = nil
-    Noir::TreeSitter.parse_javascript(source_for_ast) do |root|
-      if handler = exported_handler(root, root, source_for_ast, export_name, 0)
+    Noir::TreeSitter.parse_js_family(source, file_path) do |root|
+      if handler = exported_handler(root, root, source, export_name, 0)
         line = Noir::TreeSitter.node_start_row(handler) + 1
       end
     end
@@ -138,17 +116,13 @@ module Noir::JSCalleeExtractor
     nil
   end
 
-  def callees_for_default_event_handler(source : String,
-                                        file_path : String,
-                                        *,
-                                        language : Symbol = :javascript) : Array(Entry)
-    source_for_ast = normalize_handler_source(source)
-    event_handler_calls = event_handler_call_names(source_for_ast)
+  def callees_for_default_event_handler(source : String, file_path : String) : Array(Entry)
+    event_handler_calls = event_handler_call_names(source)
     sink = [] of Entry
-    Noir::TreeSitter.parse_javascript(source_for_ast) do |root|
-      definitions = top_level_definitions(root, source_for_ast)
-      if handler = exported_event_handler(root, root, source_for_ast, event_handler_calls, 0)
-        walk_callees(handler_body(handler), source_for_ast, file_path, sink, 0, definitions)
+    Noir::TreeSitter.parse_js_family(source, file_path) do |root|
+      definitions = top_level_definitions(root, source)
+      if handler = exported_event_handler(root, root, source, event_handler_calls, 0)
+        walk_callees(handler_body(handler), source, file_path, sink, 0, definitions)
       end
     end
 
@@ -253,6 +227,7 @@ module Noir::JSCalleeExtractor
     path : String? = nil
     handler : LibTreeSitter::TSNode? = nil
     Noir::TreeSitter.each_named_child(args) do |arg|
+      arg = Noir::TreeSitter.unwrap_expression(arg)
       case Noir::TreeSitter.node_type(arg)
       when "string", "template_string"
         path ||= decode_string(arg, source)
@@ -270,6 +245,7 @@ module Noir::JSCalleeExtractor
     handler : LibTreeSitter::TSNode? = nil
 
     Noir::TreeSitter.each_named_child(args) do |arg|
+      arg = Noir::TreeSitter.unwrap_expression(arg)
       case Noir::TreeSitter.node_type(arg)
       when "string", "template_string"
         strings << decode_string(arg, source)
@@ -292,18 +268,6 @@ module Noir::JSCalleeExtractor
     sink = [] of Entry
     walk_callees(handler_body(handler), source, file_path, sink, 0, definitions)
     sink
-  end
-
-  private def normalize_handler_source(source : String) : String
-    # The vendored JavaScript grammar still exposes useful nodes for many
-    # TypeScript files, but `const GET: RequestHandler = ...` makes the
-    # variable name parse as the type. Strip same-line annotations while
-    # preserving line numbers so AST row-based callee locations stay valid.
-    source
-      .gsub(/(\b(?:export\s+)?(?:const|let|var)\s+[A-Za-z_$][\w$]*)\s*:\s*[^=\n]+=/, "\\1 =")
-      .gsub(/([,(]\s*[A-Za-z_$][\w$]*)\s*:\s*(?:\{[^}\n]*\}|[^,\)=]+)(?=[,\)])/, "\\1")
-      .gsub(/\)\s*:\s*(?:\{[^}\n]*\}|[^=\n]+)=>/, ") =>")
-      .gsub(/\)\s*:\s*(?:\{[^}\n]*\}|[^{\n]+){/, ") {")
   end
 
   private def exported_handler(root : LibTreeSitter::TSNode,
@@ -372,7 +336,7 @@ module Noir::JSCalleeExtractor
     if Noir::TreeSitter.node_type(node) == "variable_declarator"
       node_name = Noir::TreeSitter.field(node, "name")
       if node_name && Noir::TreeSitter.node_text(node_name, source) == name
-        value = Noir::TreeSitter.field(node, "value")
+        value = Noir::TreeSitter.field(node, "value").try { |v| Noir::TreeSitter.unwrap_expression(v) }
         return value if value && handler_node?(value)
       end
     end
@@ -491,7 +455,7 @@ module Noir::JSCalleeExtractor
         args = arguments_node(node)
         if args
           Noir::TreeSitter.each_named_child(args) do |arg|
-            if handler = event_handler_from_arg(root, arg, source, event_handler_calls, depth + 1)
+            if handler = event_handler_from_arg(root, Noir::TreeSitter.unwrap_expression(arg), source, event_handler_calls, depth + 1)
               return handler
             end
           end
@@ -547,7 +511,7 @@ module Noir::JSCalleeExtractor
     if Noir::TreeSitter.node_type(node) == "variable_declarator"
       node_name = Noir::TreeSitter.field(node, "name")
       if node_name && Noir::TreeSitter.node_text(node_name, source) == name
-        value = Noir::TreeSitter.field(node, "value")
+        value = Noir::TreeSitter.field(node, "value").try { |v| Noir::TreeSitter.unwrap_expression(v) }
         return value if value && handler_node?(value)
       end
     end
@@ -631,23 +595,6 @@ module Noir::JSCalleeExtractor
     false
   end
 
-  private def fallback_callees_for_function_body(body : String, file_path : String, open_brace_line : Int32) : Array(Entry)
-    entries = [] of Entry
-
-    body.each_line.with_index do |line, index|
-      line.scan(/((?:this|super|[A-Za-z_$][\w$]*)(?:\s*\(\s*\))?(?:\.[A-Za-z_$][\w$]*(?:\s*\(\s*\))?)*)\s*\(/) do |match|
-        next unless match.size > 1
-
-        name = match[1].gsub(/\s+/, "")
-        next if name.empty? || FALLBACK_RESERVED_CALLEES.includes?(name)
-
-        entries << {name, file_path, open_brace_line + index}
-      end
-    end
-
-    entries.uniq
-  end
-
   private def walk_callees(node : LibTreeSitter::TSNode,
                            source : String,
                            file_path : String,
@@ -673,9 +620,45 @@ module Noir::JSCalleeExtractor
     end
 
     Noir::TreeSitter.each_named_child(node) do |child|
-      next if skip_function_child && same_node?(child, skip_function_child)
+      if skip_function_child && same_node?(child, skip_function_child)
+        walk_receiver_arguments(child, source, file_path, sink, depth + 1, definitions)
+      else
+        walk_callees(child, source, file_path, sink, depth + 1, definitions)
+      end
+    end
+  end
 
-      walk_callees(child, source, file_path, sink, depth + 1, definitions)
+  # The receiver chain of a named call is already in its name
+  # (`(await load(id)).items().filter`), so its links are not recorded
+  # again, but the calls in their arguments are: `canView(id)` inside
+  # `(await Promise.all(ids.map((id) => canView(id)))).filter(...)`.
+  private def walk_receiver_arguments(node : LibTreeSitter::TSNode,
+                                      source : String,
+                                      file_path : String,
+                                      sink : Array(Entry),
+                                      depth : Int32,
+                                      definitions : Definitions)
+    while depth <= Noir::TreeSitter::MAX_AST_DEPTH
+      node = Noir::TreeSitter.unwrap_expression(node)
+      case Noir::TreeSitter.node_type(node)
+      when "member_expression"
+        node = Noir::TreeSitter.field(node, "object") || return
+      when "await_expression"
+        node = Noir::TreeSitter.first_named_child(node) || return
+      when "call_expression"
+        if args = Noir::TreeSitter.field(node, "arguments")
+          walk_callees(args, source, file_path, sink, depth + 1, definitions)
+        end
+        node = Noir::TreeSitter.field(node, "function") || return
+      when "identifier", "property_identifier", "this", "super"
+        return
+      else
+        # `new URL(req.url)`, a subscript, a literal: nothing in it is
+        # part of the name, so it is walked as usual.
+        walk_callees(node, source, file_path, sink, depth + 1, definitions)
+        return
+      end
+      depth += 1
     end
   end
 
@@ -696,14 +679,20 @@ module Noir::JSCalleeExtractor
         property = Noir::TreeSitter.field(node, "property")
         return "" unless object && property
 
-        receiver = receiver_text(object, source)
-        return "" if receiver.empty?
-
         property_name = expression_text(property, source)
-        property_name.empty? ? "" : "#{receiver}.#{property_name}"
-      when "parenthesized_expression"
-        inner = Noir::TreeSitter.first_named_child(node)
-        inner ? expression_text(inner, source) : ""
+        return "" if property_name.empty?
+
+        receiver = receiver_text(object, source)
+        # `new URL(req.url).searchParams.get(...)`: a constructed object has
+        # no name to put in front, so the call is named from the member on.
+        if receiver.empty?
+          anonymous = Noir::TreeSitter.node_type(Noir::TreeSitter.unwrap_expression(object)) == "new_expression"
+          return anonymous ? property_name : ""
+        end
+        "#{receiver}.#{property_name}"
+      when "parenthesized_expression", "non_null_expression", "as_expression", "satisfies_expression", "type_assertion"
+        inner = Noir::TreeSitter.unwrap_expression(node)
+        same_node?(inner, node) ? "" : expression_text(inner, source)
       when "sequence_expression"
         last = last_named_child(node)
         last ? expression_text(last, source) : ""
@@ -723,7 +712,11 @@ module Noir::JSCalleeExtractor
       when "call_expression"
         name = callee_text(node, source)
         name.empty? ? "" : "#{name}()"
-      when "parenthesized_expression"
+      when "parenthesized_expression", "non_null_expression", "as_expression", "satisfies_expression", "type_assertion"
+        inner = Noir::TreeSitter.unwrap_expression(node)
+        same_node?(inner, node) ? "" : receiver_text(inner, source)
+      when "await_expression"
+        # `(await load()).items()` names the awaited call: `load().items`.
         inner = Noir::TreeSitter.first_named_child(node)
         inner ? receiver_text(inner, source) : ""
       else

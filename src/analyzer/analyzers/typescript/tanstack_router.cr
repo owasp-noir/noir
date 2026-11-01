@@ -368,7 +368,7 @@ module Analyzer::Typescript
             body = body[1...close]
           end
         end
-        Noir::JSCalleeExtractor.callees_for_function_body(body, path, line, language: javascript_source_language(path)).each do |name, callee_path, callee_line|
+        Noir::JSCalleeExtractor.callees_for_function_body(body, path, line).each do |name, callee_path, callee_line|
           endpoint.push_callee(Callee.new(name, path: callee_path, line: callee_line))
         end
       end

@@ -21,43 +21,11 @@ module Noir
   # module.exports = { slug: 'posts', fields: [] }
   # ```
   #
-  # TypeScript is parsed with the vendored JavaScript grammar (no
-  # TypeScript grammar is vendored — see `tree_sitter.cr`) after two
-  # narrow annotation strips, below.
+  # TypeScript is parsed with its own grammar (`parse_js_family`), so
+  # `as` / `satisfies` wrappers are peeled off values, not stripped from
+  # the source.
   module JSObjectConfigExtractor
     extend self
-
-    # `export const Posts: CollectionConfig = {` would otherwise parse
-    # with the *type* as the variable name. Line-preserving so the
-    # reported line still matches the original source.
-    DECLARATION_ANNOTATION = /(\b(?:export\s+)?(?:const|let|var)\s+[A-Za-z_$][\w$]*)\s*:\s*[^=\n]+=/
-
-    # `} satisfies CollectionConfig` is Payload's modern idiom and the JS
-    # grammar has no `satisfies` operator.
-    SATISFIES_ASSERTION = /\bsatisfies\s+[A-Za-z_$][\w$.]*(?:<[^>\n]*>)?/
-
-    # Typed handlers inside the config (`handler(this: T, ctx: Context<P>):
-    # string {`, `httpAction(async (ctx, req): Promise<Response> => …)`)
-    # break the JS parse badly enough to lose the enclosing object. Only a
-    # single-line `(...)` followed by an optional return type and `{` / `=>`
-    # is a signature, and only one free of strings, braces, `=`, brackets
-    # (other than `[]`) and `?` (other than `?:`). A condition
-    # (`if (k === "a:b") {`), a destructuring or default parameter, or a
-    # ternary branch (group 1) is left alone.
-    TS_SIGNATURE  = /(\?\s*)?\(((?:[^()\n?'"`{}\[\]=]|\?:|\[\])*)\)(\s*:\s*[A-Za-z_$][\w$.<>\[\]|, ]*?)?(?=\s*(?:\{|=>))/
-    TS_THIS_PARAM = /\bthis\s*:\s*(?:[^,<>]|<[^<>\n]*>)+(?:,\s*)?/
-    TS_PARAM_TYPE = /(?<=[\w$}\]])\??\s*:\s*(?:[^,<>=]|<[^<>\n]*>)+/
-
-    # Deliberately NOT reusing `JSCalleeExtractor`'s normalizer: its
-    # function-parameter rules cannot tell a signature from an object
-    # literal, so `{ path: '/x', handler: 'y' }` is rewritten to
-    # `{ path, handler }` and every value is lost. Only the strips above
-    # are safe on declarative config; all keep line numbers.
-    private def normalize(source : String) : String
-      source.gsub(DECLARATION_ANNOTATION, "\\1 =").gsub(SATISFIES_ASSERTION, "").gsub(TS_SIGNATURE) do |match|
-        $~[1]? ? match : "(#{$~[2].gsub(TS_THIS_PARAM, "").gsub(TS_PARAM_TYPE, "")})"
-      end
-    end
 
     alias ConfigValue = String | Float64 | Bool | Array(ConfigValue) | Hash(String, ConfigValue)?
 
@@ -109,13 +77,12 @@ module Noir
     # Returns every object literal in `source` carrying all of
     # `required_keys`. Once an object matches, its own subtree is not
     # searched again — otherwise a nested config would surface twice.
-    def extract(source : String, required_keys : Array(String)) : Array(ConfigObject)
+    def extract(source : String, required_keys : Array(String), path : String = "") : Array(ConfigObject)
       found = [] of ConfigObject
       return found if source.empty? || required_keys.empty?
 
-      normalized = normalize(source)
-      Noir::TreeSitter.parse_javascript(normalized) do |root|
-        walk(root, normalized, required_keys, found, 0)
+      Noir::TreeSitter.parse_js_family(source, path) do |root|
+        walk(root, source, required_keys, found, 0)
       end
       found
     end
@@ -198,6 +165,7 @@ module Noir
     private def decode_value(node : LibTreeSitter::TSNode, source : String, depth : Int32) : ConfigValue
       return if depth > MAX_VALUE_DEPTH
 
+      node = Noir::TreeSitter.unwrap_expression(node)
       case Noir::TreeSitter.node_type(node)
       when "string", "template_string"
         decode_string(node, source)

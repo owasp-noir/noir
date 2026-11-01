@@ -574,14 +574,9 @@ module Analyzer::Javascript
 
     private def attach_callees(endpoint : Endpoint, path : String, body_info : Tuple(String, Int32))
       body, open_brace_line = body_info
-      language = typescript_source?(path) ? :typescript : :javascript
-      Noir::JSCalleeExtractor.callees_for_function_body(body, path, open_brace_line, language: language).each do |name, callee_path, line|
+      Noir::JSCalleeExtractor.callees_for_function_body(body, path, open_brace_line).each do |name, callee_path, line|
         endpoint.push_callee(Callee.new(name, path: callee_path, line: line))
       end
-    end
-
-    private def typescript_source?(path : String) : Bool
-      path.ends_with?(".ts") || path.ends_with?(".tsx")
     end
 
     private def detect_pages_router_methods(content : String) : Array(String)

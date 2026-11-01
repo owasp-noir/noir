@@ -207,8 +207,7 @@ module Analyzer::Typescript
 
       body, open_brace_idx = body_info
       open_brace_line = 1 + content[0...open_brace_idx].count('\n')
-      language = file_path.ends_with?(".ts") || file_path.ends_with?(".tsx") ? :typescript : :javascript
-      Noir::JSCalleeExtractor.callees_for_function_body(body, file_path, open_brace_line, language: language).each do |name, callee_path, line|
+      Noir::JSCalleeExtractor.callees_for_function_body(body, file_path, open_brace_line).each do |name, callee_path, line|
         endpoint.push_callee(Callee.new(name, path: callee_path, line: line))
       end
     end

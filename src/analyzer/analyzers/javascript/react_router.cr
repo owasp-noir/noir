@@ -50,7 +50,7 @@ module Analyzer::Javascript
           config = begin
             source = read_file_content(config_path)
             auto_dirs << app_dir if source.matches?(AUTO_ROUTES_RE)
-            Noir::TreeSitterReactRouterConfigExtractor.extract(source)
+            Noir::TreeSitterReactRouterConfigExtractor.extract(source, config_path)
           rescue e
             logger.debug "Error reading route config #{config_path}: #{e.message}"
             Noir::SkippedFiles.record(tech, config_path, e.message.presence || e.class.name)

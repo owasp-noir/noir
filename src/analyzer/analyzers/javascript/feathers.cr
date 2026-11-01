@@ -659,7 +659,7 @@ module Analyzer::Javascript
     end
 
     private def attach_method_callees(endpoint : Endpoint, body : String, path : String, line : Int32)
-      callees = Noir::JSCalleeExtractor.callees_for_function_body(body, path, line, language: javascript_source_language(path))
+      callees = Noir::JSCalleeExtractor.callees_for_function_body(body, path, line)
       callees.each do |name, callee_path, callee_line|
         endpoint.push_callee(Callee.new(name, path: callee_path, line: callee_line))
       end

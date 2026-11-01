@@ -1,7 +1,8 @@
 require "../../func_spec.cr"
 
+# `GET(req) { return new Response("[]") }` makes no call: a constructor is
+# not a callee, the same in a .ts handler as in a .js one.
 list = Endpoint.new("/api/users", "GET")
-list.push_callee(Callee.new("Response"))
 
 create = Endpoint.new("/api/users", "POST")
 create.push_callee(Callee.new("req.json"))

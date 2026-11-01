@@ -9,7 +9,9 @@
 # sibling project `hwaro/src/ext/stb_bindings.cr`.
 #
 # Upstream versions currently vendored:
-#   tree-sitter-python  v0.23.6
+#   tree-sitter-python      v0.23.6
+#   tree-sitter-typescript  v0.23.2
+#   tree-sitter-tsx         v0.23.2
 
 require "../../miniparsers/extraction_result_cache"
 
@@ -63,6 +65,7 @@ lib LibTreeSitter
   fun ts_node_is_null(node : TSNode) : Bool
   fun ts_node_parent(node : TSNode) : TSNode
   fun ts_node_is_named(node : TSNode) : Bool
+  fun ts_node_has_error(node : TSNode) : Bool
 
   # ----- Tree cursor -----
   # Visits children in O(1) amortised per step (goto_next_sibling),
@@ -88,6 +91,8 @@ lib LibTreeSitter
   fun tree_sitter_kotlin : TSLanguage
   fun tree_sitter_javascript : TSLanguage
   fun tree_sitter_rust : TSLanguage
+  fun tree_sitter_typescript : TSLanguage
+  fun tree_sitter_tsx : TSLanguage
 end
 
 # Thin high-level facade. Keeps tree lifetime tied to an object so callers
@@ -279,8 +284,8 @@ module Noir::TreeSitter
 
   # Parses `source` with the JavaScript grammar and yields the
   # root node. Covers `.js` / `.mjs` / `.cjs` files; the JSX
-  # superset is recognised too — JSX-bearing TypeScript needs
-  # `parse_typescript` (not yet vendored).
+  # superset is recognised too. Extractors that may see TypeScript
+  # call `parse_js_family`, which picks the grammar by extension.
   def self.parse_javascript(source : String, &)
     parse(source, LibTreeSitter.tree_sitter_javascript) { |root| yield root }
   end
@@ -292,11 +297,50 @@ module Noir::TreeSitter
     parse(source, LibTreeSitter.tree_sitter_rust) { |root| yield root }
   end
 
+  # Parses JS-family `source` with the grammar `path`'s extension calls
+  # for: TypeScript for `.ts` / `.mts` / `.cts`, TSX for `.tsx`, and
+  # JavaScript (JSX included) for everything else, `""` among it.
+  def self.parse_js_family(source : String, path : String, &)
+    parse(source, js_family_language(path)) { |root| yield root }
+  end
+
+  def self.js_family_language(path : String) : LibTreeSitter::TSLanguage
+    case File.extname(path).downcase
+    when ".ts", ".mts", ".cts" then LibTreeSitter.tree_sitter_typescript
+    when ".tsx"                then LibTreeSitter.tree_sitter_tsx
+    else                            LibTreeSitter.tree_sitter_javascript
+    end
+  end
+
+  # `(x)`, `x as T`, `x satisfies T`, `x!` and `<T>x` all evaluate to `x`.
+  # Readers of literals, arrays, objects and handlers look through them, so
+  # `'/a' as const` reads as `'/a'` and `(async () => {}) satisfies H` as the
+  # arrow. Bounded: pathological `((((x))))` nesting stops at 32 layers.
+  def self.unwrap_expression(node : LibTreeSitter::TSNode) : LibTreeSitter::TSNode
+    32.times do
+      inner = case node_type(node)
+              when "parenthesized_expression", "as_expression", "satisfies_expression", "non_null_expression"
+                first_named_arg(node)
+              when "type_assertion" # `<T>x`: the type comes first
+                last = nil.as(LibTreeSitter::TSNode?)
+                each_named_arg(node) { |child| last = child }
+                last
+              end
+      break unless inner
+      node = inner
+    end
+    node
+  end
+
   # --- Small helpers used by extractors. Kept here so callers don't
   # have to touch LibTreeSitter directly. ---
 
   def self.node_type(node : LibTreeSitter::TSNode) : String
     String.new(LibTreeSitter.ts_node_type(node))
+  end
+
+  def self.node_has_error?(node : LibTreeSitter::TSNode) : Bool
+    LibTreeSitter.ts_node_has_error(node)
   end
 
   def self.node_text(node : LibTreeSitter::TSNode, source : String) : String

@@ -52,7 +52,7 @@ module Analyzer::Javascript
 
         url = url_for(relative)
         endpoints = verbs.map do |verb|
-          endpoint = file_route_endpoint(url, verb, path, api_method_line(content, verb) || 1)
+          endpoint = file_route_endpoint(url, verb, path, api_method_line(content, path, verb) || 1)
           attach_js_callees(endpoint, Noir::JSCalleeExtractor.callees_for_exported_function(content, path, verb)) if include_callee
           endpoint
         end

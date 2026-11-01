@@ -28,7 +28,7 @@ module Analyzer::Javascript
         next if Noir::JSRouteExtractor.test_file?(path, content)
 
         include_callee = callees_needed?
-        Noir::TreeSitterElysiaExtractor.extract_routes(content, include_callee).each do |route|
+        Noir::TreeSitterElysiaExtractor.extract_routes(content, include_callee, path).each do |route|
           @result << build_endpoint(route, path, include_callee)
         end
       end

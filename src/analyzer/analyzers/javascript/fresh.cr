@@ -191,7 +191,7 @@ module Analyzer::Javascript
 
       if method = handler_block.match(HANDLER_METHOD_BODY_RES[verb])
         start_line = content[0, content.index(method[0]) || 0].count('\n') + 1
-        return Noir::JSCalleeExtractor.callees_for_function_body(method[1], path, start_line, language: javascript_source_language(path))
+        return Noir::JSCalleeExtractor.callees_for_function_body(method[1], path, start_line)
       end
 
       if property = handler_block.match(HANDLER_PROPERTY_RES[verb])
@@ -206,7 +206,7 @@ module Analyzer::Javascript
         absolute_body_start = block_start + body_start
         start_line = content[0, absolute_body_start].count('\n') + 1
         body, start_line = extract_arrow_handler_body(body, start_line)
-        return Noir::JSCalleeExtractor.callees_for_function_body(body, path, start_line, language: javascript_source_language(path))
+        return Noir::JSCalleeExtractor.callees_for_function_body(body, path, start_line)
       end
 
       [] of Noir::JSCalleeExtractor::Entry
