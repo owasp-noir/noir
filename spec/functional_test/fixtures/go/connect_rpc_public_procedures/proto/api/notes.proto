@@ -1,0 +1,44 @@
+syntax = "proto3";
+
+package notes.api;
+
+import "google/api/annotations.proto";
+
+service AuthService {
+  // SignIn is public.
+  rpc SignIn(SignInRequest) returns (Session) {
+    option (google.api.http) = {
+      post: "/api/auth/signin"
+      body: "*"
+    };
+  }
+
+  rpc GetCurrentUser(Empty) returns (Session) {
+    option (google.api.http) = {get: "/api/auth/me"};
+  }
+}
+
+service NoteService {
+  rpc ListNotes(Empty) returns (Session) {
+    option (google.api.http) = {get: "/api/notes"};
+  }
+
+  rpc DeleteNote(DeleteNoteRequest) returns (Empty) {
+    option (google.api.http) = {delete: "/api/{name=notes/*}"};
+  }
+}
+
+message Empty {}
+
+message SignInRequest {
+  string username = 1;
+  string password = 2;
+}
+
+message Session {
+  string user = 1;
+}
+
+message DeleteNoteRequest {
+  string name = 1;
+}

@@ -2,6 +2,7 @@ require "../../../models/framework_tagger"
 require "../../../models/endpoint"
 require "./group_scope"
 require "./beego_casbin_filter"
+require "./rpc_procedure_gate"
 require "../../../miniparsers/go_callee_extractor"
 require "../../../utils/top_level_split"
 
@@ -9,6 +10,7 @@ require "../../../utils/top_level_split"
 class GoAuthTagger < FrameworkTagger
   include GoRouteGroupScope
   include GoBeegoCasbinFilter
+  include GoRpcProcedureGate
 
   # JWT library patterns
   JWT_PATTERNS = [
@@ -236,12 +238,13 @@ class GoAuthTagger < FrameworkTagger
       "go_gozero", "go_goyave",
       "go_hertz", "go_iris", "go_gf", "go_http",
       "go_pocketbase", "go_kratos",
-    ]
+    ] + RPC_TECHS
   end
 
   def perform(endpoints : Array(Endpoint)) : Array(Endpoint)
-    # Phase 1: Pre-scan for group-level middleware
-    pre_scan_middleware_scopes
+    # Phase 1: Pre-scan for group-level middleware (RPC endpoints read
+    # their interceptor's procedure list instead).
+    pre_scan_middleware_scopes unless endpoints.all? { |endpoint| RPC_TECHS.includes?(endpoint.details.technology) }
     super
   end
 
@@ -1449,6 +1452,12 @@ class GoAuthTagger < FrameworkTagger
   end
 
   private def check_endpoint(endpoint : Endpoint)
+    # gRPC / Connect: the interceptor's procedure allow-list.
+    if RPC_TECHS.includes?(endpoint.details.technology)
+      rpc_procedure_guard(endpoint).try { |tag| endpoint.add_tag(tag) }
+      return
+    end
+
     # net/http registers no middleware by name or by group: only what wraps
     # the route's handler or mux, and the handler's own guard clauses.
     if endpoint.details.technology == "go_http"

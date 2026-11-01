@@ -17,6 +17,8 @@ module NoirTechs::Catalog::Specification
           :cookie => false,
         },
       },
+      # Guards: the Go interceptor's procedure allow-list (`go_auth`).
+      :context => {:guards => true},
     },
   }
 end
