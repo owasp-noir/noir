@@ -28,12 +28,12 @@ Rails.application.routes.draw do
 
     get "monitor/heartbeat", to: "monitor#heartbeat"
 
-    # Regression guard: an `if Rails.env.test? ... end` conditional (a
-    # common dev/test-only routing idiom) must not pop the surrounding
+    # Regression guard: an `if ENV["DEBUG_ROUTES"] ... end` conditional (a
+    # common opt-in routing idiom) must not pop the surrounding
     # `namespace :admin`. Without crediting the keyword block, the `end`
     # below stripped `/admin` from every route that followed —
     # `after_conditional` leaked out as `/after_conditional`.
-    if Rails.env.test?
+    if ENV["DEBUG_ROUTES"]
       get "debug/echo", to: "monitor#heartbeat"
     end
 
