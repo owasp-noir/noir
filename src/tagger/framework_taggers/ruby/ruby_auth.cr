@@ -876,15 +876,19 @@ class RubyAuthTagger < FrameworkTagger
   # `authenticate_with_http_basic do`): a caller who sent no credential
   # leaves it empty and takes the exit, so what follows is not a login gate.
   EMPTY_LOCAL_TEST = /\A(\w+)\.(blank|empty|nil|present|any)\?\z/
+  EMPTY_LOCAL_INIT = /\A\s*=\s*(?:\[\]|\{\}|nil|false|""|Array\.new|Hash\.new)\z/
+  LOCAL_WRITE      = /\A\s*(?:<<|\.(?:push|append|concat|<<|merge!|store)\b|\[[^\]]*\]\s*=(?!=)|\|?\|?=(?!=))/
 
   private def exits_without_credential?(body : Array({Int32, String}), condition : String, if_form : Bool) : Bool
     return false unless m = condition.strip.match(EMPTY_LOCAL_TEST)
     return false unless if_form == {"blank", "empty", "nil"}.includes?(m[2])
     local = m[1]
-    init = /\A#{Regex.escape(local)}\s*=\s*(?:\[\]|\{\}|nil|false|""|Array\.new|Hash\.new)\z/
-    write = /\A#{Regex.escape(local)}\s*(?:<<|\.(?:push|append|concat|<<|merge!|store)\b|\[[^\]]*\]\s*=(?!=)|\|?\|?=(?!=))/
-    writes = body.each_index.select { |k| !body[k][1].matches?(init) && body[k][1].matches?(write) }.to_a
-    initialised = body.any? { |_, text| text.matches?(init) }
+    # The text after `local` on a line that starts with it (`errors = []`
+    # gives ` = []`); nil when the line is about another name.
+    tail = ->(text : String) { text[local.size..] if text.starts_with?(local) && !text[local.size]?.try { |c| c.alphanumeric? || c == '_' } }
+    inits = body.map { |_, text| tail.call(text).try(&.matches?(EMPTY_LOCAL_INIT)) || false }
+    writes = body.each_index.select { |k| !inits[k] && tail.call(body[k][1]).try(&.matches?(LOCAL_WRITE)) }.to_a
+    initialised = inits.includes?(true)
     initialised && !writes.empty? && writes.all? { |k| credential_gated?(body, k) }
   end
 
