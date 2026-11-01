@@ -373,6 +373,107 @@ describe "DjangoAuthTagger" do
     end
   end
 
+  it "reads API-key and read-only permission classes, with the polarity of their checks" do
+    CodeLocator.instance.clear_all
+    tmpdir = File.tempname("django_drf_key_perms")
+    Dir.mkdir_p(tmpdir)
+    perms = File.join(tmpdir, "permissions.py")
+    views = File.join(tmpdir, "views.py")
+    File.write(perms, <<-PY)
+      class HasBuildAPIKey(BaseHasAPIKey):
+          def has_permission(self, request, view):
+              request.build_api_key = None
+              key = self.get_key(request)
+              if not key:
+                  return False
+              return True
+
+      class ReadOnlyPermission(permissions.BasePermission):
+          def has_permission(self, request, view):
+              return request.method in permissions.SAFE_METHODS
+
+      class KeyOptional(BasePermission):
+          def has_permission(self, request, view):
+              token = request.headers.get("X-Token")
+              if not token:
+                  return True
+              return token == "x"
+
+      class DebugFlag(BasePermission):
+          def has_permission(self, request, view):
+              debug = request.GET.get("debug")
+              if not debug:
+                  return False
+              return True
+
+      class AllowFirst(BasePermission):
+          def has_permission(self, request, view):
+              if view.public:
+                  return True
+              api_key = request.META.get("HTTP_X_API_KEY")
+              if api_key is None:
+                  raise NotAuthenticated()
+              return True
+
+      class LibraryKey(HasAPIKey):
+          pass
+      PY
+    File.write(views, <<-PY)
+      class BuildView(APIView):
+          permission_classes = [HasBuildAPIKey | ReadOnlyPermission]
+          def get(self, request):
+              pass
+          def put(self, request):
+              pass
+
+      class OptionalView(APIView):
+          permission_classes = [KeyOptional]
+          def post(self, request):
+              pass
+
+      class DebugView(APIView):
+          permission_classes = [DebugFlag]
+          def post(self, request):
+              pass
+
+      class EarlyView(APIView):
+          permission_classes = [AllowFirst]
+          def post(self, request):
+              pass
+
+      class LibView(APIView):
+          permission_classes = [LibraryKey]
+          def get(self, request):
+              pass
+      PY
+    CodeLocator.instance.register_path(perms)
+    CodeLocator.instance.register_path(views)
+
+    begin
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(tmpdir)
+      at = ->(method : String, line : Int32) { Endpoint.new("/#{line}", method, [] of Param, Details.new(PathInfo.new(views, line))) }
+      read = at.call("GET", 3)
+      write = at.call("PUT", 5)
+      optional = at.call("POST", 10)
+      debug = at.call("POST", 15)
+      early = at.call("POST", 20)
+      library = at.call("GET", 25)
+
+      DjangoAuthTagger.new(noir_options).perform([read, write, optional, debug, early, library])
+
+      read.tags.should be_empty
+      write.tags.map(&.description).should eq(["Protected by DRF permission_classes"])
+      optional.tags.should be_empty
+      debug.tags.should be_empty
+      early.tags.should be_empty
+      library.tags.map(&.description).should eq(["Protected by DRF permission_classes"])
+    ensure
+      FileUtils.rm_rf(tmpdir)
+      CodeLocator.instance.clear_all
+    end
+  end
+
   it "judges project decorators, view-body checks and dispatchers by definition" do
     CodeLocator.instance.clear_all
     tmpdir = File.tempname("django_function_view_guards")
