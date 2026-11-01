@@ -38,9 +38,18 @@ module Noir::JSReadShape
     return false if value.matches?(WRITE_METHOD)
     code = blank_strings(value)
     return false if code.matches?(MUTATION) || code.includes?("function")
-    return true if code.matches?(SCHEMA_BUILDER)
+    return true if pure_schema?(code)
     code.scan(CALL).all? { |call| KEYWORDS.includes?(call[1]) || call[1].matches?(READ_NAME) }
   end
+
+  # A builder chain alone: every call a member of the chain, nothing awaited
+  # (`z.object({ a: z.string() })`, not `z.object(…).parse(await save(req))`).
+  private def pure_schema?(code : String) : Bool
+    code.matches?(SCHEMA_BUILDER) && !code.includes?("await") &&
+      code.scan(BARE_CALL).all? { |call| KEYWORDS.includes?(call[1]) }
+  end
+
+  BARE_CALL = /(?<![\w$.])([A-Za-z_$][\w$]*)\s*[(`]/
 
   # String literals emptied; a template keeps its backticks so a tagged
   # template (`` sql`DELETE …` ``) still reads as a call.
