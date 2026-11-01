@@ -1,6 +1,6 @@
 require "../../engines/javascript_engine"
 require "../../../miniparsers/js_callee_extractor"
-require "../../../miniparsers/js_route_extractor"
+require "../../../miniparsers/ts_decorator_extractor"
 require "../../../utils/top_level_split"
 
 module Analyzer::Typescript
@@ -26,6 +26,8 @@ module Analyzer::Typescript
 
     # Request-body param types accepted by `@param.array('name', 'query'|'path'|'header', ...)`.
     ARRAY_PARAM_LOCATIONS = {"query", "path", "header"}
+    HTTP_VERBS            = {"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS", "QUERY"}
+    STRING_ARG            = /\A(['"`])([^'"`]*)\1\z/
 
     def analyze
       result = [] of Endpoint
@@ -78,78 +80,83 @@ module Analyzer::Typescript
       content = read_file_content(path)
       return unless loopback_source?(content)
 
-      # Strip JS/TS comments so commented-out decorators
-      # (e.g. `// @get('/old')`) don't generate phantom routes.
-      sanitized = Noir::JSRouteExtractor.strip_js_comments(content)
-      literal_values = extract_literal_values(sanitized)
+      literal_values = extract_literal_values(content)
+      classes = Noir::TsDecoratorExtractor.extract(content, path)
 
-      process_http_methods(sanitized, path, result, include_callee, literal_values)
+      process_classes(classes, content, path, result, include_callee, literal_values)
     rescue e : Exception
       logger.debug "Error analyzing LoopBack file #{path}: #{e.message}"
     end
 
-    private def process_http_methods(content : String, file_path : String, result : Array(Endpoint), include_callee : Bool, literal_values : Hash(String, Array(String)))
-      content.scan(/@(get|post|put|patch|del|operation)\s*\(/) do |match|
-        decorator_start = match.begin(0)
-        next unless decorator_start
+    private def process_classes(classes : Array(Noir::TsDecoratorExtractor::ClassDecl), content : String,
+                                file_path : String, result : Array(Endpoint), include_callee : Bool,
+                                literal_values : Hash(String, Array(String)))
+      classes.each do |klass|
+        klass.methods.each do |method|
+          routes = method.decorators.select do |decorator|
+            decorator.called && (METHOD_MAP.has_key?(decorator.name) || decorator.name == "operation")
+          end
+          next if routes.empty?
 
-        decorator_name = match[1]
+          body = method_body(content, method)
+          callees = nil
 
-        open_paren = content.index("(", decorator_start)
-        next unless open_paren
+          routes.each do |route|
+            route_verb_and_path = resolve_verb_and_path(route)
+            next unless route_verb_and_path
+            verb, path_expr = route_verb_and_path
 
-        close_paren = Noir::JSRouteExtractor.find_matching_paren(content, open_paren)
-        next unless close_paren
+            route_paths = literal_paths_from_expression(path_expr, literal_values)
+            next unless route_paths
 
-        args = split_top_level(content[(open_paren + 1)...close_paren], ',')
-        next if args.empty?
+            decorator_line = route.row + 1
 
-        route_verb_and_path = resolve_verb_and_path(decorator_name, args)
-        next unless route_verb_and_path
-        method, path_expr = route_verb_and_path
+            if include_callee && body && callees.nil?
+              callees = Noir::JSCalleeExtractor.callees_for_function_body(body, file_path, method.body_row + 1)
+            end
 
-        route_paths = literal_paths_from_expression(path_expr, literal_values)
-        next unless route_paths
+            route_paths.each do |route_path|
+              next if route_path.empty?
+              url = route_path.starts_with?("/") ? route_path : "/#{route_path}"
 
-        signature = method_signature_after_decorators(content, close_paren + 1, dotted_decorator_names: true)
-        next unless signature
+              endpoint = Endpoint.new(url, verb)
+              endpoint.details = Details.new(PathInfo.new(file_path, decorator_line))
 
-        decorator_line = 1 + content[0...decorator_start].count('\n')
+              extract_path_parameters(url, endpoint)
+              extract_decorator_parameters(method, endpoint)
+              callees.try &.each do |name, callee_path, line|
+                endpoint.push_callee(Callee.new(name, path: callee_path, line: line))
+              end
 
-        route_paths.each do |route_path|
-          next if route_path.empty?
-          url = route_path.starts_with?("/") ? route_path : "/#{route_path}"
-
-          endpoint = Endpoint.new(url, method)
-          endpoint.details = Details.new(PathInfo.new(file_path, decorator_line))
-
-          extract_path_parameters(url, endpoint)
-          extract_decorator_parameters(signature[:params], endpoint)
-          attach_method_callees_from_signature(content, signature, file_path, endpoint) if include_callee
-
-          result << endpoint
+              result << endpoint
+            end
+          end
         end
       end
+    end
+
+    private def method_body(content : String, method : Noir::TsDecoratorExtractor::Method) : String?
+      start = method.body_start || return
+      stop = method.body_end || return
+      content.byte_slice(start, stop - start) if stop >= start
     end
 
     # `@get`/`@post`/`@put`/`@patch`/`@del` carry the path as their only
     # (first) argument. `@operation(verb, path, spec?)` is the generic
     # escape hatch — the HTTP verb is a string literal first argument.
-    private def resolve_verb_and_path(decorator_name : String, args : Array(String)) : Tuple(String, String)?
-      if decorator_name == "operation"
-        return unless args.size >= 2
-        verb = extract_http_verb(args[0])
+    private def resolve_verb_and_path(decorator : Noir::TsDecoratorExtractor::Decorator) : Tuple(String, String)?
+      if decorator.name == "operation"
+        return unless decorator.args.size >= 2
+        verb = extract_http_verb(decorator.args[0])
         return unless verb
-        {verb, args[1]}
+        {verb, decorator.args[1]}
       else
-        method = METHOD_MAP[decorator_name]?
+        method = METHOD_MAP[decorator.name]?
         return unless method
-        return if args.empty?
-        {method, args[0]}
+        return if decorator.args.empty?
+        {method, decorator.args[0]}
       end
     end
-
-    HTTP_VERBS = {"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS", "QUERY"}
 
     private def extract_http_verb(expr : String) : String?
       match = expr.strip.match(/^['"`](\w+)['"`]$/)
@@ -169,47 +176,43 @@ module Analyzer::Typescript
       end
     end
 
-    private def extract_decorator_parameters(method_params : String, endpoint : Endpoint)
-      # `@param.path.string('id')`, `@param.path.number('id')`, ...
-      method_params.scan(/@param\.path\.\w+\s*\(\s*['"`]([^'"`]+)['"`]/) do |m|
-        endpoint.push_param(Param.new(m[1], "", "path"))
+    private def extract_decorator_parameters(method : Noir::TsDecoratorExtractor::Method, endpoint : Endpoint)
+      method.params.each do |param|
+        param.decorators.each do |decorator|
+          name = decorator.name
+
+          if name.starts_with?("param.path.")
+            if param_name = string_arg(decorator.args.first?)
+              endpoint.push_param(Param.new(param_name, "", "path"))
+            end
+          elsif name.starts_with?("param.query.")
+            if param_name = string_arg(decorator.args.first?)
+              endpoint.push_param(Param.new(param_name, "", "query"))
+            end
+          elsif name.starts_with?("param.header.")
+            if param_name = string_arg(decorator.args.first?)
+              endpoint.push_param(Param.new(param_name, "", "header"))
+            end
+          elsif name == "param.array"
+            if (param_name = string_arg(decorator.args.first?)) &&
+               (location = string_arg(decorator.args[1]?)) &&
+               ARRAY_PARAM_LOCATIONS.includes?(location)
+              endpoint.push_param(Param.new(param_name, "", location))
+            end
+          elsif name == "requestBody" || name.starts_with?("requestBody.")
+            endpoint.push_param(Param.new("body", "", "body"))
+          end
+        end
       end
 
-      # `@param.query.string('name')`, `@param.query.object('filter', ...)`, ...
-      method_params.scan(/@param\.query\.\w+\s*\(\s*['"`]([^'"`]+)['"`]/) do |m|
-        endpoint.push_param(Param.new(m[1], "", "query"))
-      end
-
-      # `@param.header.string('x-token')`, ...
-      method_params.scan(/@param\.header\.\w+\s*\(\s*['"`]([^'"`]+)['"`]/) do |m|
-        endpoint.push_param(Param.new(m[1], "", "header"))
-      end
-
-      # `@param.array('names', 'query', {type: 'string'})` — explicit location as 2nd arg.
-      method_params.scan(/@param\.array\s*\(\s*['"`]([^'"`]+)['"`]\s*,\s*['"`](\w+)['"`]/) do |m|
-        location = m[2]
-        endpoint.push_param(Param.new(m[1], "", location)) if ARRAY_PARAM_LOCATIONS.includes?(location)
-      end
-
-      # `@requestBody()`, `@requestBody({...})`, `@requestBody.array()`,
-      # `@requestBody.file()` — LB4 always binds the whole request body to
-      # a single method parameter (never a per-field name), so this maps
-      # to one generic `body` param, matching the NestJS `@Body()` (no
-      # field name) convention.
-      if method_params =~ /@requestBody\b/
+      if method.decorators.any? { |d| d.name == "requestBody" || d.name.starts_with?("requestBody.") }
         endpoint.push_param(Param.new("body", "", "body"))
       end
     end
 
-    private def attach_method_callees_from_signature(content : String, signature, file_path : String, endpoint : Endpoint)
-      body_info = body_from_signature(content, signature)
-      return unless body_info
-
-      body, open_brace_idx = body_info
-      open_brace_line = 1 + content[0...open_brace_idx].count('\n')
-      Noir::JSCalleeExtractor.callees_for_function_body(body, file_path, open_brace_line).each do |name, callee_path, line|
-        endpoint.push_callee(Callee.new(name, path: callee_path, line: line))
-      end
+    private def string_arg(arg : String?) : String?
+      val = arg.try(&.strip.match(STRING_ARG)).try(&.[2])
+      val && !val.empty? ? val : nil
     end
 
     private def extract_literal_values(content : String) : Hash(String, Array(String))

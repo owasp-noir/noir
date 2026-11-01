@@ -40,6 +40,13 @@ expected_endpoints = [
   ]),
   # Generic `@operation('get', '/path', spec)` escape hatch.
   Endpoint.new("/products/count", "GET", [] of Param),
+  # Multiline route decorator in a second controller in the same file.
+  Endpoint.new("/categories", "GET", [] of Param),
+  # Multiline route decorator with `@param.path.string('id')` holding `)` in an option string.
+  Endpoint.new("/categories/{id}", "GET", [
+    Param.new("id", "", "path"),
+    Param.new("filter", "", "query"),
+  ]),
 ]
 
 FunctionalTester.new("fixtures/typescript/loopback/", {

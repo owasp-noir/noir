@@ -77,3 +77,31 @@ export class ProductController {
     return {};
   }
 }
+
+// Two controllers in one file; exercises a multiline route decorator,
+// a commented-out decorator, and `)` inside a param option string.
+export class CategoryController {
+  // @get('/categories/archived')
+  @get(
+    '/categories',
+  )
+  async list(): Promise<object[]> {
+    return [];
+  }
+
+  @get(
+    '/categories/{id}',
+    {
+      responses: {
+        '200': {description: 'category instance'},
+      },
+    },
+  )
+  async getCategory(
+    @param.path.string('id', {description: 'category id (UUID: 123))'}) id: string,
+    @param.query.string('filter') filter?: string,
+  ): Promise<object> {
+    return {};
+  }
+}
+
