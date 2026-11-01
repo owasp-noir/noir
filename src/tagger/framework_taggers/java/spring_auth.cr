@@ -2391,6 +2391,18 @@ class SpringAuthTagger < FrameworkTagger
     from...to
   end
 
+  private def only_declared_and_called?(text : String, name : String) : Bool
+    text.scan(/(?<![\w$.])#{Regex.escape(name)}(?![\w$])/) do |use|
+      before = text[0, use.begin(0)].rstrip
+      after = text[use.end(0)..].lstrip
+      next if after.starts_with?('.') || after.starts_with?('(')
+      next if before.matches?(/\breturn\z/) && after.starts_with?(';')
+      next if after.matches?(/\A=(?!=)/) && before.matches?(/[\w$>\]]\z/) && !before.matches?(/\b(?:return|else)\z/)
+      return false
+    end
+    true
+  end
+
   # The method hands back the one collection (or map) the guarded bodies add
   # to: every add in them targets it, or a set put into it; nothing else adds
   # to it, removes from it, or fills a set outside those bodies; no `else`.
@@ -2400,6 +2412,10 @@ class SpringAuthTagger < FrameworkTagger
     target = returned.first
     derived = Set{target}
     body.scan(/\b#{Regex.escape(target)}\s*\.\s*(?:put|putAll)\s*\(([^;]*)\)\s*;/) { |put| put[1].scan(/\b[a-z_$][\w$]*/) { |word| derived << word[0] } }
+    # Only `name.method(..)` uses, its one declaration and the final return:
+    # a reassignment or an alias (`s = urls; s.addAll(all)`) hides what fills it.
+    plain = body.gsub(/\b#{Regex.escape(target)}\s*\.\s*(?:put|putAll)\s*\([^;]*\)\s*;/, " ")
+    return false unless derived.all? { |name| only_declared_and_called?(plain, name) }
     blanked = body.dup
     ranges.each do |range|
       inside = body[range]

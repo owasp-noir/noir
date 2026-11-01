@@ -255,9 +255,11 @@ describe "SpringAuthTagger annotation-collected permitAll" do
       JAVA
     loop_head = "for (Map.Entry<RequestMappingInfo, HandlerMethod> e : mapping.getHandlerMethods().entrySet())"
     collectors = {
-      "else branch adds"      => "static Set<String> urls(Ctx c) {\n Set<String> urls = new HashSet<>(); Set<String> secured = new HashSet<>();\n #{loop_head} {\n if (e.getValue().getMethodAnnotation(AnonymousAccess.class) != null) { secured.add(\"x\"); } else { urls.add(\"x\"); }\n }\n return urls;\n }",
-      "all minus secured"     => "static Set<String> urls(Ctx c) {\n Set<String> all = new HashSet<>(); Set<String> secured = new HashSet<>();\n #{loop_head} {\n all.add(\"x\");\n if (e.getValue().getMethodAnnotation(AnonymousAccess.class) != null) { secured.add(\"x\"); }\n }\n all.removeAll(secured);\n return all;\n }",
-      "add outside the guard" => "static Set<String> urls(Ctx c) {\n Set<String> urls = new HashSet<>();\n urls.add(\"/seed\");\n #{loop_head} {\n if (e.getValue().getMethodAnnotation(AnonymousAccess.class) != null) { urls.add(\"x\"); }\n }\n return urls;\n }",
+      "else branch adds"           => "static Set<String> urls(Ctx c) {\n Set<String> urls = new HashSet<>(); Set<String> secured = new HashSet<>();\n #{loop_head} {\n if (e.getValue().getMethodAnnotation(AnonymousAccess.class) != null) { secured.add(\"x\"); } else { urls.add(\"x\"); }\n }\n return urls;\n }",
+      "all minus secured"          => "static Set<String> urls(Ctx c) {\n Set<String> all = new HashSet<>(); Set<String> secured = new HashSet<>();\n #{loop_head} {\n all.add(\"x\");\n if (e.getValue().getMethodAnnotation(AnonymousAccess.class) != null) { secured.add(\"x\"); }\n }\n all.removeAll(secured);\n return all;\n }",
+      "reassigned to a difference" => "static Set<String> urls(Ctx c) {\n Set<String> urls = new HashSet<>(); Set<String> all = allPaths(c);\n #{loop_head} {\n if (e.getValue().getMethodAnnotation(AnonymousAccess.class) != null) { urls.add(\"x\"); }\n }\n Set<String> secured = urls;\n urls = Sets.difference(all, secured);\n return urls;\n }",
+      "alias gets the rest"        => "static Set<String> urls(Ctx c) {\n Set<String> urls = new HashSet<>(); Set<String> all = allPaths(c);\n #{loop_head} {\n if (e.getValue().getMethodAnnotation(AnonymousAccess.class) != null) { urls.add(\"x\"); }\n }\n Set<String> s = urls;\n s.addAll(all);\n return urls;\n }",
+      "add outside the guard"      => "static Set<String> urls(Ctx c) {\n Set<String> urls = new HashSet<>();\n urls.add(\"/seed\");\n #{loop_head} {\n if (e.getValue().getMethodAnnotation(AnonymousAccess.class) != null) { urls.add(\"x\"); }\n }\n return urls;\n }",
     }
     collectors.each do |label, method|
       files = marker_files.merge({"#{MARKER_DIR}AnonUtils.java" => "class AnonUtils {\n #{method}\n}\n", "#{MARKER_DIR}M.java" => me})
