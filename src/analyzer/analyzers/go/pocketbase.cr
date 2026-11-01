@@ -24,6 +24,7 @@ module Analyzer::Go
       # `apis.BindBackupApi(app, api)` with `api := se.Router.Group("/api")`:
       # the prefix lives at the call site (see `resolve_router_builder_prefixes`).
       builder_prefixes_by_dir = resolve_router_builder_prefixes(file_contents, package_groups, BUILDER_TYPE)
+      named_scope = named_handler_scope(file_contents)
       parallel_analyze(get_files_by_extension(".go")) do |path|
         next if go_test_path?(path)
         next unless File.exists?(path)
@@ -45,13 +46,25 @@ module Analyzer::Go
         callees_by_route = Noir::GoCalleeExtractor.callees_for_routes_if(callees_needed?, content, path, route_rows, external_fns)
 
         expand_builders = router_builder_expansions(content, BUILDER_TYPE, builder_prefixes_by_dir[dir]?, cross_file_groups)
+        # `sub.GET("/{key}", backupDownload)`: the handler's name, and the
+        # request reads of its body (wherever it is declared).
+        named = Noir::GoNamedHandler.new(content, path, ts_routes, named_scope)
         suppress_ranges = expand_builders.map { |_, rb, _| rb.start_row..rb.end_row }
 
         lines = GoEngine.strip_comments(content).lines
-        lines.each_with_index do |_line, index|
+        # Routes' inline closures still open, innermost last: their
+        # endpoints and the brace depth they close at. Braces are counted
+        # with string and rune literals blanked (`fmt.Sprintf("{%s", x)`).
+        closures = [] of {Array(Endpoint), Int32}
+        depth = 0
+        lines.each_with_index do |line, index|
           # Expanded router-builder bodies are emitted below with their call-site prefix.
           next if suppress_ranges.any?(&.includes?(index))
+          next if named.claim?(index, line)
+          code = line.gsub(LITERAL, %(""))
+          delta = code.count('{') - code.count('}')
           details = Details.new(PathInfo.new(path, index + 1))
+          route_eps = [] of Endpoint
           if ts_hits = routes_by_line[index]?
             ts_hits.each do |route|
               Noir::TreeSitterGoRouteExtractor.fan_out_verbs(route.verb).each do |verb|
@@ -62,18 +75,43 @@ module Analyzer::Go
                     endpoint.push_callee(Callee.new(name, path: callee_path, line: callee_line))
                   end
                 end
+                endpoint.handler = named.handler_for(route)
                 result << endpoint
+                named.bind(route, endpoint)
+                route_eps << endpoint
               end
             end
           end
+          if !route_eps.empty? && code.matches?(/\bfunc\s*\(/)
+            # A closure on the route line: its reads there are the route's,
+            # and it stays open while its braces do.
+            route_eps.each { |ep| add_request_reads(line, ep) }
+            closures << {route_eps, depth} if delta > 0
+          elsif route_eps.empty?
+            closures.last?.try { |(eps, _)| eps.each { |ep| add_request_reads(line, ep) } }
+          end
+          depth += delta
+          while (top = closures.last?) && depth <= top[1]
+            closures.pop
+          end
         end
 
-        expand_router_builders(content, lines, path, expand_builders, callees_by_route, nil) { }
+        expand_router_builders(content, lines, path, expand_builders, callees_by_route, named) { |line, ep| add_request_reads(line, ep) }
+        named.each_attribution { |line, ep| add_request_reads(line, ep) }
       end
 
       resolve_public_dirs(public_dirs)
 
       result
+    end
+
+    # A Go string or rune literal on one line.
+    LITERAL = /"(?:[^"\\]|\\.)*"|`[^`]*`|'(?:[^'\\]|\\.)*'/
+
+    # `e.Request.URL.Query().Get("token")`, `e.Request.Header.Get("X-Key")`.
+    private def add_request_reads(line : String, endpoint : Endpoint)
+      Noir::GoRequestParamExtractor.query_params(line).each { |param| add_param_to_endpoint(param, endpoint) }
+      Noir::GoRequestParamExtractor.header_params(line).each { |param| add_param_to_endpoint(param, endpoint) }
     end
   end
 end
