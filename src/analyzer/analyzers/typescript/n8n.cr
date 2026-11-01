@@ -27,10 +27,6 @@ module Analyzer::Typescript
       "Query" => {"query", "query"},
       "Body"  => {"body", "body"},
     } of String => Tuple(String, String?)
-    PARAM_RE = param_decorator_re(PARAMS.keys)
-
-    # `@Body payload: Dto` — the bare form, applied as a decorator itself.
-    BARE_ARG = /@(Body|Query|Param)(?!\s*\()(?=\s)/
 
     protected def controller_decorators : Array(String)
       CONTROLLERS
@@ -45,39 +41,27 @@ module Analyzer::Typescript
       false
     end
 
-    private def parse_controller_decorator(text : String, literal_values : Hash(String, Array(String)), name : String) : Array(String)?
-      paths = super || return
+    private def controller_base_paths(arg : String, literal_values : Hash(String, Array(String)), name : String) : Array(String)
+      paths = super
       prefix = PREFIXES[name]? || return paths
       paths.map { |path| combine_paths(prefix, path) }
     end
 
-    private def dto_params(method_params : String, file_path : String) : Hash(String, Array(String))
-      super(called_args(method_params), file_path)
+    # A resolved `@Body() payload: Dto` is the DTO's fields.
+    protected def reads_dto? : Bool
+      true
     end
 
-    private def extract_decorator_parameters(method_params : String, endpoint : Endpoint,
-                                             dto_fields : Hash(String, Array(String)) = {} of String => Array(String))
-      dto_fields.each do |param_type, names|
-        names.each { |name| endpoint.push_param(Param.new(name, "", param_type)) }
-      end
-      called_args(method_params).scan(PARAM_RE) do |match|
-        type, fallback = PARAMS[match[1]]
-        # A resolved DTO already named its fields.
-        next if fallback && dto_fields.has_key?(type)
-        name = match[3]? || fallback || match[4]?
-        endpoint.push_param(Param.new(name, "", type)) if name
-      end
-    end
-
-    private def called_args(method_params : String) : String
-      method_params.includes?('@') ? method_params.gsub(BARE_ARG, "@\\1()") : method_params
+    # `@Body payload: Dto`: n8n's argument decorators work bare too.
+    private def param_decorator?(decorator : Noir::TsDecoratorExtractor::Decorator) : Bool
+      true
     end
 
     # The keys whose truthy value turns the registry's auth middleware off.
     OPEN_KEYS = ["skipAuth", "allowUnauthenticated"]
     # `@GlobalScope('workflow:list')`, `@GlobalScope(SCOPE)`.
-    SCOPE = /@(GlobalScope|ProjectScope|ApiKeyScope)\s*\(([^)]*)\)/
-    ENTRY = /\A['"]?([A-Za-z_$][\w$]*)['"]?\s*:\s*([\s\S]+)\z/
+    SCOPES = {"GlobalScope", "ProjectScope", "ApiKeyScope"}
+    ENTRY  = /\A['"]?([A-Za-z_$][\w$]*)['"]?\s*:\s*([\s\S]+)\z/
 
     IDENTIFIER = /\A[A-Za-z_$][\w$]*\z/
     # `export { openOpts } from './route-opts'`: a barrel's re-export.
@@ -90,10 +74,12 @@ module Analyzer::Typescript
     # `validateBody`, `isScimEnabledMiddleware`), whatever else its name holds.
     MIDDLEWARE_AUTH_NAME = /\A(?:authenticate|require(?:Auth|ApiKey)|isAuthenticated|ensureAuth|verify(?:Token|Signature|ApiKey|Auth|Jwt|\w*Signature)|validate(?:ApiKey|Token|Signature)|check(?:Auth|Token|ApiKey|Signature))|(?:\A|[a-z0-9])Auth(?:Middleware|Guard|Check)?\z|\Aauth(?:Middleware)?\z|[a-z0-9](?:Token|Signature|ApiKey)(?:Auth|Check|Middleware|Guard)\z|\Ajwt|Jwt/
     FEATURE_GATE_NAME    = /enabled|licensed|logger|\Alog|valid(?:ate(?!ApiKey|Token|Signature)|ating|ation|ator)/i
-    VERBS                = {"Del" => "DELETE", "QueryMethod" => "QUERY"}
 
-    protected def route_decorated(endpoint : Endpoint, decorator_block : String, controller_decorator : String, route_path : String) : Nil
-      scopes = decorator_block.scan(SCOPE).map { |m| "#{m[1]} #{m[2].strip.delete("'\"`")}" }
+    protected def route_decorated(endpoint : Endpoint, method : Noir::TsDecoratorExtractor::Method,
+                                  route : Noir::TsDecoratorExtractor::Decorator, controller_decorator : String) : Nil
+      scopes = method.decorators.compact_map do |decorator|
+        "#{decorator.name} #{decorator.args.join(", ").strip.delete("'\"`")}" if decorator.called && SCOPES.includes?(decorator.name)
+      end
       scoped = scopes.empty? ? "" : " (#{scopes.join(", ")})"
       if controller_decorator == "PublicApiController"
         endpoint.add_tag(Tag.new("auth", "Protected by n8n public API authentication (API key or OAuth token)#{scoped}", TAGGER))
@@ -105,7 +91,7 @@ module Analyzer::Typescript
         return
       end
 
-      entries, unread = route_options(decorator_block, endpoint.details.code_paths.first?.try(&.path), endpoint.method, route_path)
+      entries, unread = route_options(route, endpoint.details.code_paths.first?.try(&.path))
       opened = nil
       OPEN_KEYS.each do |key|
         value = entries[key]? || next
@@ -140,41 +126,20 @@ module Analyzer::Typescript
       end
     end
 
-    # The top-level keys of the options argument of the route decorator in
-    # `block` that declared this route (`@Get('/public', { skipAuth: true })
-    # @Get('/private')` gives `/private` none), inline or bound to a const in
-    # this file or one it imports (`@Put('/Users/:id', scimRoute)`), and the
-    # options it could not read (an unresolved const or spread), if any.
-    private def route_options(block : String, file : String?, method : String, route_path : String) : Tuple(Hash(String, String), String?)
-      decorators = [] of {String, Array(String)}
-      block.scan(ROUTE_DECORATOR_RE) do |m|
-        open = m.byte_end(0) - 1
-        close = Noir::JSLiteralScanner.find_matching_paren_at_byte(block, open) || next
-        args = Noir::TopLevelSplit.split(block.byte_slice(open + 1, close - open - 1), ',', Noir::TopLevelSplit::Rules::JS_POSITIONAL_ARGS)
-        decorators << {m[1], args}
-      end
-      own = decorators.select do |verb, args|
-        (verb == "All" || (VERBS[verb]? || verb.upcase) == method) &&
-          args[0]?.try(&.strip.strip("'\"`").strip('/')) == route_path.strip('/')
-      end
-      own = decorators if own.empty?
-
+    # The top-level keys of the options argument of the route decorator that
+    # declared this route (`@Get('/public', { skipAuth: true }) @Get('/private')`
+    # gives `/private` none), inline or bound to a const in this file or one
+    # it imports (`@Put('/Users/:id', scimRoute)`), and the options it could
+    # not read (an unresolved const or spread), if any.
+    private def route_options(route : Noir::TsDecoratorExtractor::Decorator, file : String?) : Tuple(Hash(String, String), String?)
       entries = {} of String => String
-      unread = nil
-      own.each do |_, args|
-        option = args[1]?.try(&.strip) || next
-        object = if option.starts_with?('{')
-                   Noir::JSRouteExtractor.strip_js_comments(option)
-                 elsif file && option.matches?(IDENTIFIER)
-                   const_object(option, file)
-                 end
-        if object
-          unread ||= read_entries(object, file, entries, spread: true)
-        else
-          unread ||= option
-        end
-      end
-      {entries, unread}
+      option = route.args[1]?.try(&.strip) || return {entries, nil}
+      object = if option.starts_with?('{')
+                 Noir::JSRouteExtractor.strip_js_comments(option)
+               elsif file && option.matches?(IDENTIFIER)
+                 const_object(option, file)
+               end
+      {entries, object ? read_entries(object, file, entries, spread: true) : option}
     end
 
     # Adds the top-level `key: value` pairs of `object` to `entries`; a

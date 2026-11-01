@@ -3,6 +3,7 @@ require "../../../miniparsers/import_graph"
 require "../../../miniparsers/js_callee_extractor"
 require "../../../miniparsers/js_route_extractor"
 require "../../../miniparsers/ts_class_fields"
+require "../../../miniparsers/ts_decorator_extractor"
 require "../../../utils/top_level_split"
 
 module Analyzer::Javascript
@@ -541,16 +542,10 @@ module Analyzer::Javascript
       "Sse" => ["GET"],
       "All" => ["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"],
     }
-    ROUTE_DECORATOR_RE = /@(Get|Post|Put|Delete|Del|Patch|Options|Head|QueryMethod|Sse|All)\s*\(/
 
-    # Method decorator name => verbs, and the regex that finds them (group 1
-    # is the name). Overridden together.
+    # Method decorator name => verbs.
     protected def route_decorator_methods : Hash(String, Array(String))
       ROUTE_DECORATOR_METHODS
-    end
-
-    protected def route_decorator_re : Regex
-      ROUTE_DECORATOR_RE
     end
 
     private def analyze_nestjs_file(path : String, result : Array(Endpoint), static_dirs : Array(Hash(String, String)), include_callee : Bool, global_prefix_holder : Array(Tuple(String, GlobalPrefixConfig)), global_prefix_mutex : Mutex)
@@ -746,15 +741,20 @@ module Analyzer::Javascript
       nil
     end
 
+    # Any of the framework's class decorators in the file: the cheap gate
+    # before it is parsed.
+    private def controller_source?(content : String) : Bool
+      controller_decorators.any? { |name| content.includes?("@#{name}") }
+    end
+
     private def analyze_nestjs_controllers(content : String, path : String, result : Array(Endpoint), include_callee : Bool)
-      # Split content by controllers and process each separately
+      return unless controller_source?(content)
       literal_values = extract_literal_values(content)
       # Back-fill cross-file enum/object constants (per-file definitions
       # already in `literal_values` win — they are the more specific source).
       if global = @nest_global_literals
         global.each { |key, value| literal_values[key] = value unless literal_values.has_key?(key) }
       end
-      controllers = extract_controllers(content, literal_values)
       # URI versioning (Nest's default, and the reading when no
       # `enableVersioning` is in the scan) prepends `v<n>`:
       # `@Controller({ path: 'cats', version: '1' })` serves `/v1/cats`.
@@ -762,8 +762,11 @@ module Analyzer::Javascript
       versioning = versioning_for(path)
       uri_versioning = versioning.try(&.uri) != false
 
-      controllers.each do |controller_info|
-        process_http_methods(controller_info[:content], controller_info[:base_paths], controller_info[:versions], uri_versioning, versioning, path, result, include_callee, controller_info[:start_line], literal_values, controller_info[:class_name], controller_info[:decorator])
+      Noir::TsDecoratorExtractor.extract(content, path).each do |klass|
+        controller = klass.decorators.find { |decorator| decorator.called && controller_decorators.includes?(decorator.name) } || next
+        base_paths = controller_base_paths(controller.args.first? || "", literal_values, controller.name)
+        versions = controller.name == "Controller" ? controller_versions(controller.args.first?) : [] of String
+        process_http_methods(content, klass, base_paths, versions, uri_versioning, versioning, path, result, include_callee, literal_values, controller.name)
       end
     end
 
@@ -788,92 +791,14 @@ module Analyzer::Javascript
       expanded.uniq
     end
 
-    private def extract_controllers(content : String, literal_values : Hash(String, Array(String)))
-      controllers = [] of NamedTuple(base_paths: Array(String), versions: Array(String), content: String, start_line: Int32, class_name: String, decorator: String)
-
-      # Find all @Controller decorators and their associated class content
-      lines = content.split("\n")
-      current_base_paths : Array(String)? = nil
-      current_versions : Array(String) = [] of String
-      current_content = [] of String
-      controller_start_line = 1
-      class_name = ""
-      controller_decorator = ""
-      brace_count = 0
-      in_class = false
-      skip_until = -1
-
-      markers = controller_decorators.map { |name| {name, "@#{name}"} }
-
-      lines.each_with_index do |line, index|
-        next if index <= skip_until
-
-        # Detect any of NestJS's `@Controller` shapes. The
-        # decorator header can span multiple lines (e.g.
-        # `@Controller({\n  path: '...',\n  version: ...\n})`),
-        # so coalesce continuation lines until the parens close
-        # before parsing.
-        if decorator = markers.find { |(_, marker)| line.includes?(marker) }
-          joined = join_decorator_header(lines, index)
-          base_paths = parse_controller_decorator(joined[:text], literal_values, decorator[0])
-          unless base_paths.nil?
-            current_base_paths = base_paths
-            controller_decorator = decorator[0]
-            current_versions = parse_controller_versions(joined[:text])
-            current_content.clear
-            controller_start_line = 1
-            skip_until = joined[:last_line]
-            next if joined[:last_line] > index
-          end
-        end
-
-        # Check for class start after @Controller
-        if current_base_paths && (class_match = line.match(/(?:export\s+)?(?:default\s+)?(?:abstract\s+)?class\s+(\w+)/))
-          class_name = class_match[1]
-          in_class = true
-          brace_count = 0
-          controller_start_line = index + 1
-        end
-
-        # Count braces to find class end
-        if in_class && current_base_paths
-          brace_count += line.count('{')
-          brace_count -= line.count('}')
-
-          current_content << line
-
-          # End of class
-          if brace_count == 0 && line.includes?('}')
-            controllers << {
-              base_paths: current_base_paths,
-              versions:   current_versions,
-              content:    current_content.join("\n") + "\n",
-              start_line: controller_start_line,
-              class_name: class_name,
-              decorator:  controller_decorator,
-            }
-            current_base_paths = nil
-            current_versions = [] of String
-            current_content.clear
-            in_class = false
-          end
-        end
-      end
-
-      controllers
-    end
-
-    # Pull versions out of a `@Controller({ ..., version: ... })`
-    # decorator. Recognized shapes:
+    # The versions in `@Controller({ ..., version: ... })`'s options:
     #   version: '1'                 -> ["1"]
     #   version: 1                   -> ["1"]
     #   version: ['1', '2']          -> ["1", "2"]
     #   version: VERSION_NEUTRAL     -> ["VERSION_NEUTRAL"]
-    # When no `version:` key is present, returns an empty array
-    # (meaning: leave the route URL untouched).
-    private def parse_controller_versions(text : String) : Array(String)
-      inner = decorator_inner(text, "Controller")
-      return [] of String unless inner
+    # None (no `version:` key) leaves the route URL untouched.
+    private def controller_versions(arg : String?) : Array(String)
+      inner = arg.try(&.strip) || return [] of String
       return [] of String unless inner.starts_with?("{")
 
       versions = [] of String
@@ -901,24 +826,8 @@ module Analyzer::Javascript
       versions
     end
 
-    # Coalesce a multi-line decorator header into a single string.
-    # Starts at `start_idx`, advances until the running open-paren
-    # count returns to zero. Returns the joined text plus the
-    # index of the last consumed line.
-    private def join_decorator_header(lines : Array(String), start_idx : Int32) : NamedTuple(text: String, last_line: Int32)
-      text = lines[start_idx]
-      depth = text.count('(') - text.count(')')
-      idx = start_idx
-      while depth > 0 && idx + 1 < lines.size
-        idx += 1
-        text += "\n" + lines[idx]
-        depth += lines[idx].count('(') - lines[idx].count(')')
-      end
-      {text: text, last_line: idx}
-    end
-
-    # Parse `@Controller(...)` and return the base paths for the
-    # routes it scopes. Recognized shapes:
+    # The base paths a class decorator's first argument scopes its routes
+    # under. Recognized shapes:
     #
     #   @Controller()                              -> [""]
     #   @Controller('users')                       -> ["users"]
@@ -929,33 +838,11 @@ module Analyzer::Javascript
     #     fallback: register the controller without a prefix rather
     #     than miss every route inside it.)
     #
-    # Returns nil when `text` isn't a `@Controller(...)` decorator.
-    private def parse_controller_decorator(text : String, literal_values : Hash(String, Array(String)), name : String) : Array(String)?
-      # Allow `(...)` to span newlines; the caller (`extract_controllers`)
-      # already joined the multi-line header for us.
-      inner = decorator_inner(text, name)
-      return unless inner
-      literal_paths_from_expression(first_decorator_arg(inner), literal_values) || [""]
-    end
-
     # Midway takes an options object after the path —
-    # `@Controller('/api', { middleware })`, `@Get('/', { summary })` —
-    # so only the first argument is the path. Nest decorators have one.
-    private def first_decorator_arg(inner : String) : String
-      split_top_level(inner, ',').first? || ""
-    end
-
-    private def decorator_inner(text : String, name : String) : String?
-      decorator_idx = text.index("@#{name}")
-      return unless decorator_idx
-
-      open_paren = text.index("(", decorator_idx)
-      return unless open_paren
-
-      close_paren = Noir::JSRouteExtractor.find_matching_paren(text, open_paren)
-      return unless close_paren
-
-      text[(open_paren + 1)...close_paren].strip
+    # `@Controller('/api', { middleware })` — so only the first argument is
+    # the path.
+    private def controller_base_paths(arg : String, literal_values : Hash(String, Array(String)), name : String) : Array(String)
+      literal_paths_from_expression(arg, literal_values) || [""]
     end
 
     private def extract_literal_values(content : String) : Hash(String, Array(String))
@@ -1037,94 +924,61 @@ module Analyzer::Javascript
       Noir::TopLevelSplit.split(text, delimiter, Noir::TopLevelSplit::Rules::JS)
     end
 
-    private def process_http_methods(class_content : String, base_paths : Array(String), controller_versions : Array(String), uri_versioning : Bool, versioning : VersioningConfig?, file_path : String, result : Array(Endpoint), include_callee : Bool, controller_start_line : Int32, literal_values : Hash(String, Array(String)), class_name : String, controller_decorator : String)
+    private def process_http_methods(content : String, klass : Noir::TsDecoratorExtractor::ClassDecl, base_paths : Array(String), controller_versions : Array(String), uri_versioning : Bool, versioning : VersioningConfig?, file_path : String, result : Array(Endpoint), include_callee : Bool, literal_values : Hash(String, Array(String)), controller_decorator : String)
       method_map = route_decorator_methods
 
-      # Materialised once per class: the back-walk and line count below index
-      # it per route decorator, which `class_content[i]` would make O(n) each
-      # on non-ASCII source.
-      chars = class_content.chars
-      previous_body_end = 0
-      previous_signature_start = -1
-      decorator_block_start = 0
-      line_pos = 0
-      line_count = 0
-      # `MatchData#begin` re-counts chars from the start of the class on
-      # non-ASCII source; matches arrive in order, so count from the last.
-      cursor_byte = 0
-      cursor_char = 0
-      class_content.scan(route_decorator_re) do |match|
-        cursor_char += class_content.byte_slice(cursor_byte, match.byte_begin(0) - cursor_byte).size
-        cursor_byte = match.byte_begin(0)
-        decorator_start = cursor_char
+      klass.methods.each do |method|
+        routes = method.decorators.select { |decorator| decorator.called && method_map.has_key?(decorator.name) }
+        next if routes.empty?
 
-        method_name = match[1]
-        methods = method_map[method_name]? || [] of String
-        next if methods.empty?
-
-        open_paren = decorator_start + match[0].size - 1
-
-        close_paren = Noir::JSLiteralScanner.find_matching_paren(chars, open_paren)
-        next unless close_paren
-
-        route_paths = literal_paths_from_expression(first_decorator_arg(chars[(open_paren + 1)...close_paren].join), literal_values)
-        next unless route_paths
-        signature = method_signature_after_decorators(class_content, close_paren + 1, chars: chars)
-        next unless signature
-
-        # Route decorators stacked on one method share its decorator block.
-        # Walking back again from a later one would start with no floor (the
-        # body end just recorded lies past it), leaking an earlier one-line
-        # member's `@Version`, and rescans the stack per decorator.
-        if signature[:start_pos] != previous_signature_start
-          floor = previous_body_end < decorator_start ? previous_body_end : 0
-          decorator_block_start = method_decorator_block_start(chars, decorator_start, floor)
-          previous_signature_start = signature[:start_pos]
-        end
-        signature[:close_brace].try { |close_brace| previous_body_end = close_brace + 1 }
-        decorator_block = chars[decorator_block_start...signature[:start_pos]].join
+        decorator_block = method.decorators.join("\n", &.text)
         # A member's `@Version` overrides, rather than stacks on, the
         # controller's.
-        versions = parse_method_versions(decorator_block)
+        versions = method_versions(method.decorators)
         versions = controller_versions if versions.empty?
         # Under URI versioning a route with no version of its own serves
         # `defaultVersion` (`/v1/auth/login` for `@Controller('auth')`).
         effective_versions = versions.empty? && uri_versioning && versioning ? versioning.defaults : versions
         version_prefix = versioning.try(&.prefix) || "v"
         effective_base_paths = uri_versioning && !effective_versions.empty? ? expand_versions(base_paths, effective_versions, literal_values, version_prefix) : base_paths
-        record_version_segments(file_path, effective_versions, literal_values, version_prefix) if uri_versioning
 
-        # Resolve the decorator's line number inside the original
-        # file: count newlines from the previous decorator (they arrive in
-        # order) up to the `class_content` offset where this one matched.
-        while line_pos < decorator_start
-          line_count += 1 if chars.unsafe_fetch(line_pos) == '\n'
-          line_pos += 1
-        end
-        decorator_line = controller_start_line + line_count
-        callees = include_callee ? method_callees(class_content, signature, file_path, controller_start_line, chars, line_pos, line_count) : nil
-        dto_fields = dto_params(signature[:params], file_path)
-        handler = Handler.new("#{class_name}.#{signature[:name]}", file_path, method_declaration_line(chars, signature[:start_pos], line_pos, decorator_line))
+        body = method_body(content, method)
+        # Once per method: every version × path × verb endpoint shares them.
+        callees = nil
+        dto_fields = dto_params(method.params, file_path)
+        # `export default class { ... }` has no name to qualify the method with.
+        handler_name = klass.name.empty? ? method.name : "#{klass.name}.#{method.name}"
+        handler = Handler.new(handler_name, file_path, method.row + 1)
 
-        effective_base_paths.each do |base_path|
-          route_paths.each do |route_path|
-            full_path = combine_paths(base_path, route_path)
-            methods.each do |method|
-              endpoint = Endpoint.new(full_path, method)
-              endpoint.details = Details.new(PathInfo.new(file_path, decorator_line))
-              endpoint.handler = handler
-              endpoint.route_conditions = [Param.new(VERSION_CONDITION, versions.join(","), "header")] unless uri_versioning || versions.empty?
+        routes.each do |route|
+          route_paths = literal_paths_from_expression(route.args.first? || "", literal_values) || next
+          record_version_segments(file_path, effective_versions, literal_values, version_prefix) if uri_versioning
+          if include_callee && body && callees.nil?
+            callees = Noir::JSCalleeExtractor.callees_for_function_body(body, file_path, method.body_row + 1)
+          end
+          decorator_line = route.row + 1
+          methods = method_map[route.name]
 
-              extract_path_parameters(full_path, endpoint)
-              extract_decorator_parameters(signature[:params], endpoint, dto_fields)
-              extract_interceptor_parameters(decorator_block, endpoint)
-              route_decorated(endpoint, decorator_block, controller_decorator, route_path)
-              extract_request_object_params(class_content, signature, endpoint)
-              callees.try &.each do |name, callee_path, line|
-                endpoint.push_callee(Callee.new(name, path: callee_path, line: line))
+          effective_base_paths.each do |base_path|
+            route_paths.each do |route_path|
+              full_path = combine_paths(base_path, route_path)
+              methods.each do |verb|
+                endpoint = Endpoint.new(full_path, verb)
+                endpoint.details = Details.new(PathInfo.new(file_path, decorator_line))
+                endpoint.handler = handler
+                endpoint.route_conditions = [Param.new(VERSION_CONDITION, versions.join(","), "header")] unless uri_versioning || versions.empty?
+
+                extract_path_parameters(full_path, endpoint)
+                extract_decorator_parameters(method.params, endpoint, dto_fields)
+                extract_interceptor_parameters(decorator_block, endpoint)
+                route_decorated(endpoint, method, route, controller_decorator)
+                extract_request_object_params(body, method.params, endpoint)
+                callees.try &.each do |name, callee_path, line|
+                  endpoint.push_callee(Callee.new(name, path: callee_path, line: line))
+                end
+
+                result << endpoint
               end
-
-              result << endpoint
             end
           end
         end
@@ -1142,62 +996,12 @@ module Analyzer::Javascript
       end
     end
 
-    # Line of the method declaration itself (its first modifier or its name),
-    # not of the decorator above it: `signature_start` sits right after the
-    # last decorator, so skip the whitespace and count the newlines from
-    # `from`, a point at or before it that lies on `from_line`.
-    private def method_declaration_line(chars : Array(Char), signature_start : Int32, from : Int32, from_line : Int32) : Int32
-      pos = signature_start
-      while pos < chars.size && chars.unsafe_fetch(pos).whitespace?
-        pos += 1
-      end
-      line = from_line
-      (from...pos).each { |idx| line += 1 if chars.unsafe_fetch(idx) == '\n' }
-      line
-    end
-
-    # Start of the decorator block above a route decorator: walk back line
-    # by line until a blank line, a `}` / `;` line, or `floor` — the end of
-    # the previous route method's body. Without the floor, compact one-line
-    # members (`@Version('2') @Get('a') a() { return 1 }`) never present a
-    # bare `}` line, so the walk ran into earlier methods and leaked their
-    # `@Version`. `chars` is the class content materialised once per class:
-    # `content[i]` / `content.chars` per step made this cubic on non-ASCII.
-    private def method_decorator_block_start(chars : Array(Char), route_decorator_start : Int32, floor : Int32) : Int32
-      idx = line_start_for_index(chars, route_decorator_start)
-      block_start = idx
-
-      while idx > floor
-        previous_end = idx - 1
-        while previous_end >= 0 && chars[previous_end] == '\n'
-          previous_end -= 1
-        end
-        break if previous_end < 0
-
-        previous_start = line_start_for_index(chars, previous_end)
-        break if previous_start < floor
-        line = chars[previous_start..previous_end].join.strip
-        break if line.empty? || line == "}" || line.ends_with?(";")
-
-        block_start = previous_start
-        idx = previous_start
-      end
-
-      Math.max(block_start, floor)
-    end
-
-    private def line_start_for_index(chars : Array(Char), index : Int32) : Int32
-      pos = index
-      while pos > 0 && chars[pos - 1] != '\n'
-        pos -= 1
-      end
-      pos
-    end
-
-    private def parse_method_versions(text : String) : Array(String)
+    # `@Version('2')`, `@Version(['1', '2'])`, `@Version(V2)`.
+    private def method_versions(decorators : Array(Noir::TsDecoratorExtractor::Decorator)) : Array(String)
       versions = [] of String
-      text.scan(/@Version\s*\(([\s\S]*?)\)/m) do |match|
-        expr = match[1].strip
+      decorators.each do |decorator|
+        next unless decorator.called && decorator.name == "Version"
+        expr = decorator.args.first?.try(&.strip) || next
         if expr.starts_with?("[") && expr.ends_with?("]")
           expr.scan(/['"]([^'"]+)['"]|([A-Za-z_][\w.]*|\d+)/) do |m|
             version = m[1]? || m[2]
@@ -1212,34 +1016,44 @@ module Analyzer::Javascript
       versions
     end
 
-    private def extract_method_body(content : String, start_pos : Int32) : Tuple(String, Int32)?
-      signature = method_signature_after_decorators(content, start_pos)
-      return unless signature
-      body_from_signature(content, signature)
+    # The text inside a method's braces.
+    private def method_body(content : String, method : Noir::TsDecoratorExtractor::Method) : String?
+      start = method.body_start || return
+      stop = method.body_end || return
+      content.byte_slice(start, stop - start) if stop >= start
     end
 
-    # The handler's 1-hop callees, once per signature: every version × path ×
-    # verb endpoint it produces shares them. `newlines` is the count of
-    # newlines in `chars` before `from`, a point at or before the body (the
-    # caller's running decorator line count), so only the signature is
-    # counted here rather than the class up to every route.
-    private def method_callees(content : String, signature, file_path : String, controller_start_line : Int32,
-                               chars : Array(Char), from : Int32, newlines : Int32) : Array(Noir::JSCalleeExtractor::Entry)
-      body_info = body_from_signature(content, signature)
-      return [] of Noir::JSCalleeExtractor::Entry unless body_info
+    STRING_ARG = /\A(['"`])([^'"`]+)\1\z/
 
-      body, open_brace_idx = body_info
-      (from...open_brace_idx).each { |idx| newlines += 1 if chars.unsafe_fetch(idx) == '\n' }
-      open_brace_line = controller_start_line + newlines
-      Noir::JSCalleeExtractor.callees_for_function_body(body, file_path, open_brace_line)
+    # The value of a decorator argument that is one plain string literal.
+    private def string_arg(arg : String?) : String?
+      arg.try(&.strip.match(STRING_ARG)).try(&.[2])
     end
 
-    private def extract_method_parameters(content : String, start_pos : Int32, endpoint : Endpoint)
-      signature = method_signature_after_decorators(content, start_pos)
-      extract_decorator_parameters(signature[:params], endpoint) if signature
+    # Whether an argument decorator counts: NestJS's are factories, so only
+    # a called one (`@Body()`, never a bare `@Body`).
+    private def param_decorator?(decorator : Noir::TsDecoratorExtractor::Decorator) : Bool
+      decorator.called
     end
 
-    private def extract_decorator_parameters(method_params : String, endpoint : Endpoint,
+    # NestJS's argument decorators in the order their params are added: the
+    # decorator, the param type, and the param one without a string argument
+    # stands for (nil: none). `@Query('q')` is the query param `q`;
+    # `@Query()` / `@Query(pipe)` the whole query.
+    NEST_PARAM_DECORATORS = [
+      {"Query", "query", "query"},
+      {"Param", "path", nil},
+      {"Body", "body", "body"},
+      {"Headers", "header", "headers"},
+      # `@HostParam('account')` — subdomain capture when the controller
+      # uses `@Controller({ host: ':account.example.com' })`.
+      {"HostParam", "path", nil},
+      # `@UploadedFile('field')` / `@UploadedFiles()` — multer integration.
+      {"UploadedFile", "body", "file"},
+      {"UploadedFiles", "body", "files"},
+    ] of Tuple(String, String, String?)
+
+    private def extract_decorator_parameters(params : Array(Noir::TsDecoratorExtractor::Parameter), endpoint : Endpoint,
                                              dto_fields : Hash(String, Array(String)) = {} of String => Array(String))
       # A whole-object `@Query()` / `@Body()` typed with a DTO is the DTO's
       # fields; one whose type does not resolve stays a single generic param.
@@ -1247,86 +1061,51 @@ module Analyzer::Javascript
         names.each { |name| endpoint.push_param(Param.new(name, "", param_type)) }
       end
 
-      # Extract @Query parameters
-      method_params.scan(/@Query\s*\(\s*['"`]([^'"`]+)['"`][\s\S]*?\)/) do |param_match|
-        param_name = param_match[1]
-        endpoint.push_param(Param.new(param_name, "", "query"))
-      end
-      if !dto_fields.has_key?("query") && method_params =~ /@Query\s*\(\s*+(?:\)|[^'"`][\s\S]*?\))/
-        endpoint.push_param(Param.new("query", "", "query"))
-      end
-
-      # Extract @Param parameters (path parameters)
-      method_params.scan(/@Param\s*\(\s*['"`]([^'"`]+)['"`][\s\S]*?\)/) do |param_match|
-        param_name = param_match[1]
-        endpoint.push_param(Param.new(param_name, "", "path"))
-      end
-
-      # Extract @Body('field') and @Body() / @Body(pipe)
-      method_params.scan(/@Body\s*\(\s*['"`]([^'"`]+)['"`][\s\S]*?\)/) do |body_match|
-        endpoint.push_param(Param.new(body_match[1], "", "body"))
-      end
-
-      if !dto_fields.has_key?("body") && method_params =~ /@Body\s*\(\s*+(?:\)|[^'"`][\s\S]*?\))/
-        endpoint.push_param(Param.new("body", "", "body"))
-      end
-
-      # Extract @Headers parameters
-      method_params.scan(/@Headers\s*\(\s*['"`]([^'"`]+)['"`][\s\S]*?\)/) do |param_match|
-        param_name = param_match[1]
-        endpoint.push_param(Param.new(param_name, "", "header"))
-      end
-      if method_params =~ /@Headers\s*\(\s*+(?:\)|[^'"`][\s\S]*?\))/
-        endpoint.push_param(Param.new("headers", "", "header"))
-      end
-
-      # `@HostParam('account')` — subdomain capture when the controller
-      # uses `@Controller({ host: ':account.example.com' })`.
-      method_params.scan(/@HostParam\s*\(\s*['"`]([^'"`]+)['"`][\s\S]*?\)/) do |param_match|
-        endpoint.push_param(Param.new(param_match[1], "", "path"))
-      end
-
-      # `@UploadedFile('field')` / `@UploadedFiles('field')` — multer
-      # integration. Unnamed forms get a generic 'file' / 'files' body
-      # param so consumers still see the upload surface.
-      method_params.scan(/@UploadedFile\s*\(\s*['"`]([^'"`]+)['"`][\s\S]*?\)/) do |param_match|
-        endpoint.push_param(Param.new(param_match[1], "", "body"))
-      end
-      if method_params =~ /@UploadedFile\s*\(\s*\)/
-        endpoint.push_param(Param.new("file", "", "body"))
-      end
-
-      method_params.scan(/@UploadedFiles\s*\(\s*['"`]([^'"`]+)['"`][\s\S]*?\)/) do |param_match|
-        endpoint.push_param(Param.new(param_match[1], "", "body"))
-      end
-      if method_params =~ /@UploadedFiles\s*\(\s*\)/
-        endpoint.push_param(Param.new("files", "", "body"))
+      NEST_PARAM_DECORATORS.each do |decorator_name, param_type, whole_name|
+        whole = false
+        params.each do |param|
+          param.decorators.each do |decorator|
+            next unless decorator.called && decorator.name == decorator_name
+            if name = string_arg(decorator.args.first?)
+              endpoint.push_param(Param.new(name, "", param_type))
+            else
+              whole = true
+            end
+          end
+        end
+        next unless whole && whole_name
+        next if DTO_PARAM_TYPES.has_key?(decorator_name) && dto_fields.has_key?(param_type)
+        endpoint.push_param(Param.new(whole_name, "", param_type))
       end
     end
 
     DTO_PARAM_TYPES = {"Body" => "body", "Query" => "query"}
-    DTO_PARAM_HEAD  = /@(Body|Query)\s*\(/
-    DTO_PARAM_TAIL  = /\A\s*(?:@[\w$.]+\s*(?:\([^)]*\))?\s*)*(?:readonly\s+)?[A-Za-z_$][\w$]*\s*[?!]?\s*:\s*([\s\S]+?)\s*\z/
     DTO_TYPE_NAME   = /\A([A-Za-z_$][\w$]*)(?:\.[A-Za-z_$][\w$]*)*\s*(?:<[\s\S]*>)?\z/
     DTO_DECL_NAME   = /\b(?:class|interface)\s+([A-Za-z_$][\w$]*)/
     DTO_DEPTH_LIMIT = 6
+
+    # Whether a whole-object `@Body()` / `@Query()` is read as its DTO's
+    # fields. The other decorator-controller frameworks name their own
+    # whole-object decorators (`@QueryParams`, `@BodyParams`).
+    protected def reads_dto? : Bool
+      true
+    end
 
     # Param type => field names, for every whole-object `@Body()` /
     # `@Query()` whose declared type resolves to fields: an inline object
     # type, or a class/interface declared in the scan, with the fields it
     # inherits (`extends Base`, `PickType(Base, [...])`, ...).
-    private def dto_params(method_params : String, file_path : String) : Hash(String, Array(String))
+    private def dto_params(params : Array(Noir::TsDecoratorExtractor::Parameter), file_path : String) : Hash(String, Array(String))
       result = {} of String => Array(String)
-      return result unless method_params.matches?(DTO_PARAM_HEAD)
-      split_top_level(method_params, ',').each do |param|
-        head = param.match(DTO_PARAM_HEAD) || next
-        close = Noir::JSRouteExtractor.find_matching_paren(param, head.end(0) - 1) || next
+      return result unless reads_dto?
+      params.each do |param|
+        decorator = param.decorators.find { |d| DTO_PARAM_TYPES.has_key?(d.name) && param_decorator?(d) } || next
         # `@Body('field')` names one field; it is read elsewhere.
-        next if param[head.end(0)...close].strip.matches?(/\A['"`]/)
-        type = param[(close + 1)..].match(DTO_PARAM_TAIL).try(&.[1]) || next
+        next if decorator.args.first?.try(&.matches?(/\A['"`]/))
+        type = param.type_text || next
         fields = type_fields(type, file_path, 0)
         next if fields.empty?
-        names = result[DTO_PARAM_TYPES[head[1]]] ||= [] of String
+        names = result[DTO_PARAM_TYPES[decorator.name]] ||= [] of String
         fields.each { |name| names << name unless names.includes?(name) }
       end
       result
@@ -1455,11 +1234,11 @@ module Analyzer::Javascript
     end
 
     # Per-endpoint hook for a decorator-controller framework that reads
-    # more off the method's decorators (`decorator_block`, every decorator
-    # stacked on it), the class decorator that opened its controller, and
-    # the path of the route decorator this endpoint came from.
+    # more off the method's decorators, the route decorator this endpoint
+    # came from, and the class decorator that opened its controller.
     # `Endpoint` is a struct: only its arrays (params, tags) are shared.
-    protected def route_decorated(endpoint : Endpoint, decorator_block : String, controller_decorator : String, route_path : String) : Nil
+    protected def route_decorated(endpoint : Endpoint, method : Noir::TsDecoratorExtractor::Method,
+                                  route : Noir::TsDecoratorExtractor::Decorator, controller_decorator : String) : Nil
     end
 
     private def extract_interceptor_parameters(decorator_block : String, endpoint : Endpoint)
@@ -1474,14 +1253,15 @@ module Analyzer::Javascript
       end
     end
 
-    private def extract_request_object_params(content : String, signature, endpoint : Endpoint)
-      body_info = body_from_signature(content, signature)
-      return unless body_info
+    REQUEST_DECORATORS = {"Req", "Request"}
 
-      body, _ = body_info
+    private def extract_request_object_params(body : String?, params : Array(Noir::TsDecoratorExtractor::Parameter), endpoint : Endpoint)
+      return unless body
       request_names = [] of String
-      signature[:params].scan(/@(Req|Request)\s*\(\s*\)\s*([A-Za-z_$][\w$]*)/) do |match|
-        request_names << match[2] unless request_names.includes?(match[2])
+      params.each do |param|
+        name = param.name || next
+        next unless param.decorators.any? { |d| d.called && d.args.empty? && REQUEST_DECORATORS.includes?(d.name) }
+        request_names << name unless request_names.includes?(name)
       end
       request_names << "req" if request_names.empty?
 

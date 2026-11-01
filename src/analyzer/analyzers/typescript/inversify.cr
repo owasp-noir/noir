@@ -21,15 +21,13 @@ module Analyzer::Typescript
       "httpOptions" => ["OPTIONS"],
       "all"         => ["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"],
     }
-    ROUTE_RE = /@(httpGet|httpPost|httpPut|httpPatch|httpDelete|httpHead|httpOptions|all)\s*\(/
-    PARAMS   = {
+    PARAMS = {
       "requestParam"   => {"path", nil},
       "queryParam"     => {"query", nil},
       "requestBody"    => {"body", "body"},
       "requestHeaders" => {"header", nil},
       "cookies"        => {"cookie", nil},
     } of String => Tuple(String, String?)
-    PARAM_RE = param_decorator_re(PARAMS.keys)
 
     BOOTSTRAP_RE = /\bnew\s+InversifyExpressServer\s*\(/
     ROOT_PATH_RE = /\brootPath\s*:\s*(['"`])([^'"`]+)\1/
@@ -40,10 +38,6 @@ module Analyzer::Typescript
 
     protected def route_decorator_methods : Hash(String, Array(String))
       ROUTES
-    end
-
-    protected def route_decorator_re : Regex
-      ROUTE_RE
     end
 
     protected def app_root_markers : Array(String)
