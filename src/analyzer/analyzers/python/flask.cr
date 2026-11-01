@@ -389,12 +389,19 @@ module Analyzer::Python
       match = call.match(VIEW_REGISTRATION_CALL_RE) || return
       helper, router_name = match[1], match[2]
       return unless state.blueprint_prefixes.has_key?({fs.base_path, router_name}) || fs.api_instances.has_key?(router_name)
-      return unless registration_helper?(fs, helper)
+      kind = registration_helper(fs, helper)
+      return if kind.nil?
 
       args = split_python_arguments(match[3])
+      # Taken at its call shape, an unread helper must at least be handed
+      # the view it registers.
+      return if kind == :unresolved && args.none?(&.strip.starts_with?("view_func"))
       routes_arg = args.find(&.strip.starts_with?("routes")) || return
       routes_list = routes_arg.strip.lchop("routes").lstrip.lchop("=").strip
       return unless routes_list.starts_with?('[') || routes_list.starts_with?('(')
+      # Only a list of plain literals: a comprehension, `%` / `.format`,
+      # an f-string or a concatenation builds URLs this does not evaluate.
+      return unless routes_list.gsub(PLAIN_ROUTE_LITERAL_RE, "").matches?(/\A[\[\]()\s,]*\z/)
       rest = args.reject { |arg| arg.same?(routes_arg) || arg.strip.empty? }.join(",").gsub(" ", "")
       routes_list.scan(/[rf]?['"]([^'"]*)['"]/) do |route_match|
         route_path = route_match[1]
@@ -414,26 +421,63 @@ module Analyzer::Python
     # handed first, and the argument list.
     VIEW_REGISTRATION_CALL_RE = /(?:^|[^\w.])(#{DOT_NATION})\s*\(\s*(#{PYTHON_VAR_NAME_REGEX})\s*,(.*\broutes\s*=.*)\)/m
 
-    @registration_helper_cache = Hash(::String, Bool).new
+    PLAIN_ROUTE_LITERAL_RE = /(?<![\w%])[rR]?(['"])[^'"\\]*\1(?!\s*(?:%|\.|\+|\[))/
 
-    # Whether `helper`'s definition, where it can be found, registers a URL
-    # rule. An unresolved helper is taken at its call shape.
-    private def registration_helper?(fs : SourceScan, helper : ::String) : Bool
+    @registration_helper_cache = Hash(::String, Symbol?).new
+
+    # `:exact` when `helper`'s definition registers each of its `routes`
+    # unchanged, `:unresolved` when the definition cannot be found (taken
+    # at its call shape), nil when it is found and does anything else: a
+    # helper that rewrites the rule (`"/v2" + route`) or registers under a
+    # condition would put the call-site path on the wrong URL.
+    private def registration_helper(fs : SourceScan, helper : ::String) : Symbol?
       name = helper.split('.').last
       if def_index = find_function_def(fs.lines, name)
-        return (parse_code_block(fs.lines[def_index..]) || "").includes?(".add_url_rule(")
+        return registers_each_route?(fs.lines, def_index) ? :exact : nil
       end
       import_map = (fs.import_map_cache ||= find_imported_modules(fs.base_path, fs.path, fs.source))
-      resolved = resolve_external_handler(helper, fs.path, import_map) || return true
+      resolved = resolve_external_handler(helper, fs.path, import_map) || return :unresolved
       def_path, def_name = resolved
-      @registration_helper_cache["#{def_path}\0#{def_name}"] ||= begin
-        lines = File.exists?(def_path) ? fetch_file_lines(def_path) : [] of ::String
-        if index = find_function_def(lines, def_name)
-          (parse_code_block(lines[index..]) || "").includes?(".add_url_rule(")
-        else
-          true
-        end
+      cache_key = "#{def_path}\0#{def_name}"
+      return @registration_helper_cache[cache_key] if @registration_helper_cache.has_key?(cache_key)
+      lines = File.exists?(def_path) ? fetch_file_lines(def_path) : [] of ::String
+      @registration_helper_cache[cache_key] = if index = find_function_def(lines, def_name)
+                                                registers_each_route?(lines, index) ? :exact : nil
+                                              else
+                                                :unresolved
+                                              end
+    end
+
+    # The def at `lines[def_index]` runs `for r in routes:` at its body's
+    # top level, and that loop's first statement is `<x>.add_url_rule(r, ...)`.
+    private def registers_each_route?(lines : Array(::String), def_index : Int32) : Bool
+      body = def_index
+      depth = python_paren_delta(lines[def_index])
+      while depth > 0 && body + 1 < lines.size
+        body += 1
+        depth += python_paren_delta(lines[body])
       end
+      def_indent = indent_of(lines[def_index])
+      body_indent = nil
+      i = body + 1
+      while i < lines.size
+        line = lines[i]
+        i += 1
+        next if line.blank? || line.lstrip.starts_with?('#')
+        indent = indent_of(line)
+        break if indent <= def_indent
+        body_indent ||= indent
+        next unless indent == body_indent
+        loop_match = line.match(/\A\s*for\s+(#{PYTHON_VAR_NAME_REGEX})\s+in\s+routes\s*:\s*(?:#.*)?\z/) || next
+        nxt = lines[i...].find { |l| !l.blank? && !l.lstrip.starts_with?('#') } || return false
+        return indent_of(nxt) > indent &&
+          nxt.matches?(/\A\s*#{DOT_NATION}\.add_url_rule\(\s*#{loop_match[1]}\s*[,)]/)
+      end
+      false
+    end
+
+    private def indent_of(line : ::String) : Int32
+      line.size - line.lstrip.size
     end
 
     # Identify Blueprint registration
@@ -444,17 +488,20 @@ module Analyzer::Python
         parent_name = register_blueprint_match[1]
         blueprint_name = register_blueprint_match[2]
         url_prefix_match = original_line.match /url_prefix\s*=\s*[rf]?['"]([^'"]*)['"]/
-        blueprint_mount_prefix = url_prefix_match ? url_prefix_match[1] : config_url_prefix(original_line, fs.base_path)
+        mount_prefixes = url_prefix_match ? [url_prefix_match[1]] : config_url_prefixes(original_line, fs.base_path)
         state.blueprint_mounts[fs.path] ||= [] of Tuple(::String, ::String, ::String?)
-        state.blueprint_mounts[fs.path] << {parent_name, blueprint_name, blueprint_mount_prefix}
-
-        if blueprint_mount_prefix
+        if mount_prefixes.empty?
+          state.blueprint_mounts[fs.path] << {parent_name, blueprint_name, nil}
+        else
           # A blueprint built inside the function that registers it
           # (`def load_blueprints(app): bp = Blueprint(...)`) is no
           # module global, so it is declared where it is registered.
           declaration = blueprint_declaration(fs.path, blueprint_name)
           declaration ||= {fs.path, blueprint_name} if fs.api_instances.has_key?(blueprint_name)
-          add_registered_prefix(state.register_blueprint, declaration[0], declaration[1], blueprint_mount_prefix) if declaration
+          mount_prefixes.each do |blueprint_mount_prefix|
+            state.blueprint_mounts[fs.path] << {parent_name, blueprint_name, blueprint_mount_prefix}
+            add_registered_prefix(state.register_blueprint, declaration[0], declaration[1], blueprint_mount_prefix) if declaration
+          end
         end
       end
 
@@ -467,34 +514,96 @@ module Analyzer::Python
       end
     end
 
-    # `url_prefix=app.config["X"]` / `app.config.get("X", "/d")`: the string
-    # a config module assigns `X` (`class DefaultConfig: X = "/user"`),
-    # else the `.get` default.
+    # `url_prefix=app.config["X"]` / `app.config.get("X", "/d")`: the
+    # strings the project's config modules assign `X`, else the `.get`
+    # default. Which config class is live is read, not guessed from file
+    # order: the class `config.from_object(...)` names (or the base it
+    # inherits `X` from), else module-level settings and the base/default
+    # classes (`Config`, `BaseConfig`, `DefaultConfig`, one others inherit
+    # from). Values still in conflict each give a row.
     CONFIG_URL_PREFIX_RE = /url_prefix\s*=\s*#{DOT_NATION}\.config\s*(?:\[\s*['"](\w+)['"]\s*\]|\.get\s*\(\s*['"](\w+)['"]\s*(?:,\s*[rf]?['"]([^'"]*)['"])?)/
+    CONFIG_CLASS_RE      = /\Aclass\s+(\w+)\s*(?:\(([^)]*)\))?\s*:/
+    FROM_OBJECT_RE       = /\.from_object\(\s*(?:['"]([\w.]+)['"]|([\w.]+)\s*\))/
 
-    @config_string_values = Hash(::String, ::String?).new
+    @config_string_values = Hash(::String, Array(::String)).new
+    @config_from_object_classes = Hash(::String, Array(::String)).new
 
-    private def config_url_prefix(line : ::String, base_path : ::String) : ::String?
-      match = line.match(CONFIG_URL_PREFIX_RE) || return
+    private def config_url_prefixes(line : ::String, base_path : ::String) : Array(::String)
+      match = line.match(CONFIG_URL_PREFIX_RE) || return [] of ::String
       key = match[1]? || match[2]
-      config_string_value(key, base_path) || match[3]?
+      values = config_string_values(key, base_path)
+      values.empty? && (default = match[3]?) ? [default] : values
     end
 
     # Only the project's own config modules: a monorepo neighbour's
     # same-named setting configures a different app.
-    private def config_string_value(key : ::String, base_path : ::String) : ::String?
-      cache_key = "#{base_path}\0#{key}"
-      return @config_string_values[cache_key] if @config_string_values.has_key?(cache_key)
-      assign_re = /^[ \t]*#{key}[ \t]*(?::[^=\n]+)?=[ \t]*[rf]?['"]([^'"\n]*)['"][ \t]*(?:#.*)?$/m
-      @config_string_values[cache_key] = python_source_files.each do |path|
-        next unless path_under_root?(path, base_path)
-        stem = File.basename(path).downcase
-        next unless stem.includes?("config") || stem.includes?("setting") || path.includes?("/config")
-        source = fetch_file_content(path)
-        next unless source.includes?(key)
-        if assigned = source.match(assign_re)
-          break assigned[1]
+    private def config_string_values(key : ::String, base_path : ::String) : Array(::String)
+      @config_string_values["#{base_path}\0#{key}"] ||= begin
+        value_re = /\A[ \t]*#{key}[ \t]*(?::[^=\n]+)?=[ \t]*(?:[rR]?['"]([^'"\n]*)['"]|(?:os\.)?(?:environ\.get|getenv)\(\s*['"]\w+['"]\s*,\s*[rR]?['"]([^'"\n]*)['"]\s*\))[ \t]*(?:#.*)?\z/
+        module_values = [] of ::String
+        class_values = Hash(::String, ::String).new
+        class_bases = Hash(::String, Array(::String)).new
+        python_source_files.each do |path|
+          next unless path_under_root?(path, base_path)
+          stem = File.basename(path).downcase
+          next unless stem.includes?("config") || stem.includes?("setting") || path.includes?("/config")
+          source = fetch_file_content(path)
+          next unless source.includes?(key) || source.includes?("class ")
+          current = nil
+          fetch_file_lines(path).each do |l|
+            next if l.blank?
+            unless l[0].ascii_whitespace?
+              current = nil
+              if c = l.match(CONFIG_CLASS_RE)
+                current = c[1]
+                class_bases[current] = c[2]?.to_s.split(',').map(&.strip.split('.').last).reject(&.empty?)
+              end
+            end
+            next unless l.includes?(key)
+            v = l.match(value_re) || next
+            value = v[1]? || v[2]
+            if cls = current
+              class_values[cls] ||= value
+            elsif !l[0].ascii_whitespace?
+              module_values << value
+            end
+          end
         end
+        chosen = from_object_classes(base_path).compact_map { |cls| config_class_value(cls, class_values, class_bases, 0) }
+        if chosen.empty?
+          inherited = class_bases.values.flatten.to_set
+          base_classes = class_values.keys.select { |cls| cls.matches?(/\A(?:Base|Default)?Config\z|\A(?:Base|Default)/) || inherited.includes?(cls) }
+          chosen = module_values + base_classes.map { |cls| class_values[cls] }
+        end
+        chosen = class_values.values if chosen.empty?
+        chosen.uniq
+      end
+    end
+
+    # `cls`'s own value, else the first one up its bases.
+    private def config_class_value(cls : ::String, values : Hash(::String, ::String),
+                                   bases : Hash(::String, Array(::String)), depth : Int32) : ::String?
+      return values[cls] if values.has_key?(cls)
+      return if depth > 8
+      bases[cls]?.try &.each do |base|
+        found = config_class_value(base, values, bases, depth + 1)
+        return found if found
+      end
+      nil
+    end
+
+    # Class names handed to `<x>.config.from_object(...)` anywhere in the
+    # project, as a dotted string or a name.
+    private def from_object_classes(base_path : ::String) : Array(::String)
+      @config_from_object_classes[base_path] ||= begin
+        names = [] of ::String
+        python_source_files.each do |path|
+          next unless path_under_root?(path, base_path)
+          source = fetch_file_content(path)
+          next unless source.includes?("from_object")
+          source.scan(FROM_OBJECT_RE) { |m| names << (m[1]? || m[2]).split('.').last }
+        end
+        names.uniq
       end
     end
 
@@ -621,7 +730,8 @@ module Analyzer::Python
       if rule_match
         route_path = rule_match[1]
       else
-        first_str_match = original_args.match /^\s*[rf]?['"]([^'"]*)['"]/
+        # Not a literal the call builds on (`"/v2" + rule`, `"/%s" % x`).
+        first_str_match = original_args.match /^\s*[rf]?['"]([^'"]*)['"](?!\s*(?:\+|%|\.\w))/
         route_path = first_str_match[1] if first_str_match
       end
       route_path
