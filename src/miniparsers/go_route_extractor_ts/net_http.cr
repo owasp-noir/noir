@@ -111,6 +111,7 @@ module Noir
         external_string_values.each { |k, v| string_values[k] ||= v }
 
         serve_mux_vars = collect_serve_mux_vars(root, source, http_aliases)
+        serve_mux_params = collect_serve_mux_params(root, source, http_aliases)
 
         local_functions = Hash(String, LibTreeSitter::TSNode).new
         local_methods = Hash(String, LibTreeSitter::TSNode).new
@@ -140,7 +141,7 @@ module Noir
           next unless Noir::TreeSitter.node_type(node) == "call_expression"
           collect_serve_mux_mount(node, source, http_aliases, serve_mux_vars, string_values, mounts)
           decode_net_http_registration(
-            node, source, http_aliases, serve_mux_vars, string_values,
+            node, source, http_aliases, serve_mux_vars, serve_mux_params, string_values,
             local_functions, local_methods, external_functions, external_methods
           ) do |route|
             routes << route
@@ -235,6 +236,26 @@ module Noir
       vars
     end
 
+    # `func (s *S) RegisterRoutes(mux *http.ServeMux)`: the caller's mux,
+    # tracked only inside the function that declares the parameter.
+    private def collect_serve_mux_params(root : LibTreeSitter::TSNode,
+                                         source : String,
+                                         http_aliases : Set(String)) : Hash(String, Array(Range(Int32, Int32)))
+      params = Hash(String, Array(Range(Int32, Int32))).new
+      Noir::TreeSitter.walk(root) do |node|
+        next unless Noir::TreeSitter.node_type(node) == "parameter_declaration"
+        next unless type = Noir::TreeSitter.field(node, "type")
+        next unless http_aliases.includes?(Noir::TreeSitter.node_text(type, source).lchop('*').strip.rchop(".ServeMux"))
+        next unless (list = Noir::TreeSitter.parent(node)) && (fn = Noir::TreeSitter.parent(list))
+        rows = Noir::TreeSitter.node_start_row(fn)..Noir::TreeSitter.node_end_row(fn)
+        Noir::TreeSitter.each_named_child(node) do |c|
+          next unless Noir::TreeSitter.node_type(c) == "identifier"
+          (params[Noir::TreeSitter.node_text(c, source)] ||= [] of Range(Int32, Int32)) << rows
+        end
+      end
+      params
+    end
+
     private def collect_serve_mux_assignment(node : LibTreeSitter::TSNode,
                                              source : String,
                                              http_aliases : Set(String),
@@ -307,6 +328,7 @@ module Noir
                                              source : String,
                                              http_aliases : Set(String),
                                              serve_mux_vars : Set(String),
+                                             serve_mux_params : Hash(String, Array(Range(Int32, Int32))),
                                              string_values : Hash(String, String),
                                              local_functions : Hash(String, LibTreeSitter::TSNode),
                                              local_methods : Hash(String, LibTreeSitter::TSNode),
@@ -330,7 +352,8 @@ module Noir
         name = Noir::TreeSitter.node_text(operand, source)
         if http_aliases.includes?(name)
           router_name = name
-        elsif serve_mux_vars.includes?(name)
+        elsif serve_mux_vars.includes?(name) ||
+              serve_mux_params[name]?.try(&.any?(&.includes?(Noir::TreeSitter.node_start_row(call))))
           router_name = name
         else
           return
@@ -403,6 +426,10 @@ module Noir
       path = "/#{path}" unless path.starts_with?("/")
       path = normalize_net_http_pattern_path(path)
 
+      # `mux.Handle("/x", httphandler.GET(h, nil))`: a wrapper named for one
+      # verb serves only that verb (see `verb_wrapper`).
+      verb = verb_wrapper(handler_node, source) || verb if verb == "ANY"
+
       if verb != "ANY"
         yield Route.new(router_name, verb, path, raw_path, handler_text, row)
         return
@@ -448,6 +475,35 @@ module Noir
           yield Route.new(router_name, discovered_verb, path, raw_path, handler_text, row)
         end
       end
+    end
+
+    # A handler wrapper of an HTTP helper package (or this one) named for
+    # one verb, whose first argument is a handler and whose fallback, if
+    # any, is `nil`: `httphandler.GET(httphandler.Func(h), nil)`. With a
+    # fallback the other verbs reach that handler, and `cache.GET(key)` or
+    # `metrics.POST("x")` is not a handler at all, so those stay ANY.
+    # ponytail: read off the wrapper's name, not its body.
+    VERB_WRAPPER_PACKAGE = /http|handler|route|web|server|api|mux/i
+    HANDLER_ARG_TYPES    = Set{"identifier", "selector_expression", "func_literal", "call_expression"}
+
+    private def verb_wrapper(handler_node : LibTreeSitter::TSNode?, source : String) : String?
+      call = handler_node || return
+      return unless Noir::TreeSitter.node_type(call) == "call_expression"
+      fn = Noir::TreeSitter.field(call, "function") || return
+      leaf = fn
+      if Noir::TreeSitter.node_type(fn) == "selector_expression"
+        qualifier = Noir::TreeSitter.field(fn, "operand").try { |operand| Noir::TreeSitter.node_text(operand, source) } || ""
+        return unless qualifier.matches?(VERB_WRAPPER_PACKAGE)
+        leaf = Noir::TreeSitter.field(fn, "field") || return
+      end
+      name = Noir::TreeSitter.node_text(leaf, source)
+      return unless ANY_FAN_OUT_VERBS.includes?(name) || name == "QUERY"
+      args = [] of LibTreeSitter::TSNode
+      Noir::TreeSitter.field(call, "arguments").try { |list| Noir::TreeSitter.each_named_arg(list) { |arg| args << arg } }
+      return if args.empty? || args.size > 2
+      return unless HANDLER_ARG_TYPES.includes?(Noir::TreeSitter.node_type(args[0]))
+      return if (fallback = args[1]?) && Noir::TreeSitter.node_text(fallback, source) != "nil"
+      name
     end
 
     private def find_handler_body_node(handler_node : LibTreeSitter::TSNode,
