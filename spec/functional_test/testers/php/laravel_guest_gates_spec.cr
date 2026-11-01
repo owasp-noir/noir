@@ -37,6 +37,23 @@ describe "Laravel guest gates, policy lookups and plural parameters", tags: "fun
       guards.call(url).select(&.includes?("policy")).should be_empty
     end
     guards.call("/p/multi/{id}").any?(&.includes?("policy")).should be_true
+
+    # A guest pass-through inside a switch, loop, catch, closure or else
+    # branch is not unconditional: the later refusal still guards. Only a
+    # top-level one (or in a `try` body) cancels it.
+    %w[SwitchPass ForeachPass WhilePass CatchPass ClosurePass ElsePass ElseIfPass ElseIfSpaced NoBraceNested].each do |name|
+      guards.call("/mw2/#{name}").should eq(["Laravel #{name} middleware"])
+    end
+    %w[TopPass TryPass MatchPass SameCondTwice].each do |name|
+      guards.call("/mw2/#{name}").should be_empty
+    end
+
+    # Reads by exact name only: `*OrCreate`, `getOr*`, `load*And*`, namespaced,
+    # upper-case or variable function calls stop the lookup walk.
+    %w[firstOrCreate getOrCreate resolveCharge loadMark findOrNewSave withoutEvents nsFunc ucFunc varCall whereUpdate getThenPut].each do |name|
+      guards.call("/p2/#{name}/{id}").select(&.includes?("policy")).should be_empty
+    end
+    guards.call("/p2/readOk/{id}").any?(&.includes?("policy")).should be_true
   end
 
   it "singularizes -es plurals like Laravel" do

@@ -333,8 +333,8 @@ module Analyzer::Php
     # Only calls known to read count: anything else may have side effects.
     LOOKUP_ASSIGN_RE = /\A\$\w+\s*=(?!=)/
     CHAIN_CALL_RE    = /(?:->|::)\s*(\w+)\s*\(/
-    BARE_CALL_RE     = /(?<![\w>:$\\])([a-z_]\w*)\s*\(/
-    READ_CALL_RE     = /\A(?:find\w*|first\w*|where\w*|query|with\w*|onlyTrashed|all|get\w*|latest|oldest|orderBy\w*|pluck|count|input|route|string|integer|boolean|only|header|load\w*|resolve\w*|has|filled|user|exists|value)\z/
+    ANY_CALL_RE      = /([\\\w$]*)\s*\(/
+    READ_CALL_RE     = /\A(?:find|findOrFail|findMany|first|firstOrFail|firstWhere|get|getKey|load|loadMissing|loadCount|where|whereKey|whereIn|whereNull|whereNotNull|with|withCount|withTrashed|onlyTrashed|query|all|latest|oldest|orderBy|pluck|count|input|route|string|integer|boolean|only|header|has|filled|user|exists|value)\z/
     READ_BARE_CALLS  = Set{"array", "isset", "empty", "collect", "intval", "trim", "auth", "request", "route"}
 
     # Validating the input first refuses rather than serves (422).
@@ -345,8 +345,11 @@ module Analyzer::Php
     # about the user) and a later check no longer stands in front of it.
     private def read_only_assignment?(stmt : String) : Bool
       return false if !stmt.matches?(LOOKUP_ASSIGN_RE) || stmt.includes?('{') || stmt.includes?("new ")
-      stmt.scan(CHAIN_CALL_RE).all?(&.[1].matches?(READ_CALL_RE)) &&
-        stmt.scan(BARE_CALL_RE).all? { |m| READ_BARE_CALLS.includes?(m[1]) }
+      return false unless stmt.scan(CHAIN_CALL_RE).all?(&.[1].matches?(READ_CALL_RE))
+      # What is left after the chain calls: grouping parens, or a function
+      # call that must be one of the plain safe ones (never namespaced or a
+      # variable function; PHP function names are case-insensitive).
+      stmt.gsub(CHAIN_CALL_RE, ";(").scan(ANY_CALL_RE).all? { |m| m[1].empty? || READ_BARE_CALLS.includes?(m[1].downcase) }
     end
 
     private def handler_user_check(body : String) : String?
@@ -595,7 +598,7 @@ module Analyzer::Php
         # signed-in callers and is no authentication guard.
         # Only an unconditional pass-through counts: not one nested in another
         # condition or chained as an `elseif`.
-        next if conditions.any? { |(cond, block)| block.end <= at && body[block].includes?("$next(") && user_missing?(cond, users) && unconditional_block?(body, conditions, cond, block) }
+        next if conditions.any? { |(cond, block)| block.end <= at && body[block].includes?("$next(") && user_missing?(cond, users) && unconditional_block?(body, lexer, conditions, cond, block) }
         # `if ($request->user() && ! $user->isActivated()) { abort(401); }`:
         # the refusal needs a signed-in caller, so a guest is never refused.
         next if conditions.any? { |(cond, block)| block.includes?(at) && split_condition(cond, "&&").any? { |part| user_source?(part, users) } }
@@ -621,8 +624,22 @@ module Analyzer::Php
       verdict
     end
 
-    private def unconditional_block?(body : String, conditions : Array(Tuple(String, Range(Int32, Int32))), cond : String, block : Range(Int32, Int32)) : Bool
+    # Whether `pos` sits at the top level of the method body, or inside nothing
+    # but `try { ... }` bodies (not a catch, loop, switch case or closure).
+    private def top_level_or_try?(body : String, lexer : Noir::PhpLexer, pos : Int32) : Bool
+      opens = [] of Int32
+      (0...pos).each do |i|
+        case lexer.masked[i]
+        when '{' then opens << i
+        when '}' then opens.pop?
+        end
+      end
+      opens.all? { |at| body[0...at].rstrip.matches?(/\btry\z/) }
+    end
+
+    private def unconditional_block?(body : String, lexer : Noir::PhpLexer, conditions : Array(Tuple(String, Range(Int32, Int32))), cond : String, block : Range(Int32, Int32)) : Bool
       return false if conditions.any? { |(_, other)| other != block && other.begin < block.begin && other.end > block.begin }
+      return false unless top_level_or_try?(body, lexer, block.begin)
       head = body[0...block.begin].rstrip
       return true unless head.ends_with?(')') && (head = head[0...-1]).ends_with?(cond)
       head = head[0...-cond.size].rstrip
