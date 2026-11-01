@@ -167,8 +167,8 @@ class SpringAuthTagger < FrameworkTagger
     @security_meta_annotations = Hash(String, MetaAnnotation).new
     @annotation_aliases = Hash(String, Set(String)).new
     @marker_readers = Hash(String, Set(String)).new
-    @permit_marker_sources = [] of {String?, String}
-    @permit_markers = Hash(String, Set(String?)).new
+    @permit_marker_sources = [] of {String?, String, String?}
+    @permit_markers = Hash(String, Set({String?, String?})).new
     @principal_annotations = Set(String).new
     @principal_param_re = nil.as(Regex?)
     @interceptor_defs = Hash(String, InterceptorDef).new
@@ -1445,7 +1445,7 @@ class SpringAuthTagger < FrameworkTagger
       patterns = matcher_patterns(args, strings, arrays, loops: in_scope, config_keys: config_keys, java_source: java_source, builders: builders).uniq
       unread_matcher ||= patterns.empty? && config_keys.empty?
       if patterns.empty? && config_keys.empty? && !protected_rule && java_source
-        permit_source_classes(args, java_source).each { |cls| @permit_marker_sources << {module_dir, cls} }
+        permit_source_classes(args, java_source).each { |cls| @permit_marker_sources << {module_dir, cls, matcher_method} }
       end
       patterns.each do |url_pattern|
         description =
@@ -1784,10 +1784,15 @@ class SpringAuthTagger < FrameworkTagger
         @security_rules.select { |rule| applies.call(rule[:module]) }
       end
 
-    if marker && @permit_markers[marker]?.try(&.any? { |owner| applies.call(owner) })
+    if marker && (entries = @permit_markers[marker]?)
       # The permitAll matcher is built from the handlers carrying this
-      # annotation, so it admits this one; a narrower protected rule still wins.
-      rules = [{pattern: "/**", method: nil, description: "Public by Spring Security permitAll via @#{marker} (handlers carrying it are collected into the permitAll matcher)", protected_rule: false, module: nil, config_key: nil, path: nil, line: nil}] + rules
+      # annotation, so it admits this one (for the verbs the matcher names);
+      # a narrower protected rule still wins.
+      admitted = entries.compact_map do |owner, verb|
+        next unless applies.call(owner)
+        {pattern: "/**", method: verb, description: "Public by Spring Security permitAll via @#{marker} (handlers carrying it are collected into the permitAll matcher)", protected_rule: false, module: nil, config_key: nil, path: nil, line: nil}
+      end
+      rules = admitted + rules
     end
 
     unresolved = [] of String
@@ -2280,15 +2285,17 @@ class SpringAuthTagger < FrameworkTagger
 
   private def resolve_permit_markers
     @permit_markers.clear
-    @permit_marker_sources.each do |owner, cls|
-      @marker_readers[cls]?.try &.each { |name| (@permit_markers[name] ||= Set(String?).new) << owner }
+    @permit_marker_sources.each do |owner, cls, verb|
+      # A class reading several annotations feeds matchers of unknown polarity.
+      next unless (names = @marker_readers[cls]?) && names.size == 1
+      names.each { |name| (@permit_markers[name] ||= Set({String?, String?}).new) << {owner, verb} }
     end
     loop do
       changed = false
       @annotation_aliases.each do |name, applied|
         applied.each do |inner|
           next unless owners = @permit_markers[inner]?
-          mine = (@permit_markers[name] ||= Set(String?).new)
+          mine = (@permit_markers[name] ||= Set({String?, String?}).new)
           before = mine.size
           mine.concat(owners)
           changed = true if mine.size != before
@@ -2322,7 +2329,7 @@ class SpringAuthTagger < FrameworkTagger
       line = code[0, match.begin(0)].count('\n') + 1
       next if seen.any? { |earlier| earlier == pattern || (earlier.ends_with?("/**") && matches_ant_pattern?(pattern, earlier)) }
       seen << pattern
-      tokens = value.split(',').map { |token| token.strip.sub(/\[.*\z/m, "") }
+      tokens = value.split(',').map(&.strip.sub(/\[.*\z/m, ""))
       if tokens.any?(&.matches?(SHIRO_GUARDING))
         @security_rules << {pattern: pattern, method: nil, description: "Protected by Shiro #{value} via filterChainDefinitionMap(\"#{pattern}\")", protected_rule: true, module: module_dir, config_key: nil, path: file, line: line}
       elsif tokens.includes?("anon") && tokens.all? { |token| token == "anon" || token.matches?(SHIRO_NON_AUTH) }

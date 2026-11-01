@@ -28,23 +28,24 @@ end
 MARKER_DIR = "src/main/java/com/example/"
 
 def marker_files(rule : String = "permitAll()", reader : String = "getMethodAnnotation(AnonymousAccess.class)", feed : String = "AnonUtils.urls(ctx)") : Hash(String, String)
+  config = <<-JAVA
+    @EnableWebSecurity
+    class SecurityConfig {
+        SecurityFilterChain chain(HttpSecurity http) throws Exception {
+            Set<String> anonymousUrls = #{feed};
+            http.authorizeRequests()
+                .antMatchers(HttpMethod.GET, anonymousUrls.toArray(new String[0])).#{rule}
+                .anyRequest().authenticated();
+            return http.build();
+        }
+    }
+    JAVA
   {
     "#{MARKER_DIR}AnonymousAccess.java"     => "public @interface AnonymousAccess {}\n",
     "#{MARKER_DIR}AnonymousGetMapping.java" => "@AnonymousAccess\n@RequestMapping(method = RequestMethod.GET)\npublic @interface AnonymousGetMapping {}\n",
     "#{MARKER_DIR}Unrelated.java"           => "@RequestMapping(method = RequestMethod.GET)\npublic @interface UnrelatedGetMapping {}\n",
     "#{MARKER_DIR}AnonUtils.java"           => "class AnonUtils {\n  static Set<String> urls(Ctx ctx) {\n    return h.#{reader};\n  }\n}\n",
-    "#{MARKER_DIR}SecurityConfig.java"      => <<-JAVA,
-     @EnableWebSecurity
-     class SecurityConfig {
-         SecurityFilterChain chain(HttpSecurity http) throws Exception {
-             Set<String> anonymousUrls = #{feed};
-             http.authorizeRequests()
-                 .antMatchers(HttpMethod.GET, anonymousUrls.toArray(new String[0])).#{rule}
-                 .anyRequest().authenticated();
-             return http.build();
-         }
-     }
-     JAVA
+    "#{MARKER_DIR}SecurityConfig.java"      => config,
   }
 end
 
@@ -88,6 +89,24 @@ describe "SpringAuthTagger annotation-collected permitAll" do
 
   it "keeps the guard when the collected matcher is not a permitAll" do
     tags = run_spring_markers(marker_files(rule: "authenticated()").merge({"#{MARKER_DIR}C.java" => controller}), routes)
+    tags["GET /open"].should eq(["Protected by Spring Security authenticated via anyRequest()"])
+  end
+
+  it "keeps the guard for a verb the collected matcher does not name" do
+    post = <<-JAVA
+      class P {
+          @AnonymousAccess
+          @PostMapping("/p")
+          public String p() { return "x"; }
+      }
+      JAVA
+    tags = run_spring_markers(marker_files.merge({"#{MARKER_DIR}P.java" => post}), {"POST /p" => "#{MARKER_DIR}P.java:3"})
+    tags["POST /p"].should eq(["Protected by Spring Security authenticated via anyRequest()"])
+  end
+
+  it "keeps the guard when the feeding class reads more than one annotation" do
+    reader = "getMethodAnnotation(AnonymousAccess.class);\n    h.getMethodAnnotation(AdminOnly.class)"
+    tags = run_spring_markers(marker_files(reader: reader).merge({"#{MARKER_DIR}C.java" => controller}), routes)
     tags["GET /open"].should eq(["Protected by Spring Security authenticated via anyRequest()"])
   end
 
