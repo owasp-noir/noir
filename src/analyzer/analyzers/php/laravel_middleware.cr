@@ -79,7 +79,10 @@ module Analyzer::Php
       root = composer_project_root(path)
       guards = @middleware_guards[root]?
       lifted = nil
-      names.each do |name|
+      # A named `auth` alias identifies the caller; an app middleware listed
+      # before it (an IP allowlist, say) must not shadow it.
+      auth, other = names.partition(&.matches?(AUTH_ALIAS_RE))
+      (auth + other).each do |name|
         desc = if name.matches?(AUTH_ALIAS_RE)
                  "Laravel #{name} middleware"
                elsif found = guards.try(&.[name]?)
@@ -287,12 +290,13 @@ module Analyzer::Php
     # `abort_unless(auth()->check(), 404)`, or `if (!Auth::check()) {
     # abort(403); }` (also on a `$user = $request->user()` it read first),
     # before it does anything else.
-    USER_CHECK_RE  = /\G(?:abort_(if|unless)|if)\s*\(/
-    GUARD_ARG      = /(?:['"]\w+['"]|\$\w+)?/.source
-    USER_SOURCE    = /(?:\$request\s*->\s*user\s*\(\s*#{GUARD_ARG}\s*\)|(?:auth\s*\(\s*#{GUARD_ARG}\s*\)|Auth::guard\s*\(\s*#{GUARD_ARG}\s*\)|auth\s*\(\s*\)\s*->\s*guard\s*\(\s*#{GUARD_ARG}\s*\))\s*->\s*(?:user|check)\s*\(\s*\)|Auth::(?:user|check)\s*\(\s*\))/.source
-    USER_SOURCE_RE = /\A#{USER_SOURCE}\z/
-    USER_GUEST_RE  = /\A(?:auth\s*\(\s*\)\s*->\s*guest|Auth::guest)\s*\(\s*\)\z/
-    USER_ASSIGN_RE = /\G\$(\w+)\s*=\s*#{USER_SOURCE}\s*;/
+    USER_CHECK_RE      = /\G(?:abort_(if|unless)|if)\s*\(/
+    GUARD_ARG          = /(?:['"]\w+['"]|\$\w+)?/.source
+    USER_SOURCE        = /(?:\$request\s*->\s*user\s*\(\s*#{GUARD_ARG}\s*\)|(?:auth\s*\(\s*#{GUARD_ARG}\s*\)|Auth::guard\s*\(\s*#{GUARD_ARG}\s*\)|auth\s*\(\s*\)\s*->\s*guard\s*\(\s*#{GUARD_ARG}\s*\))\s*->\s*(?:user|check)\s*\(\s*\)|Auth::(?:user|check)\s*\(\s*\))/.source
+    USER_SOURCE_RE     = /\A#{USER_SOURCE}\z/
+    USER_GUEST_RE      = /\A(?:auth\s*\(\s*\)\s*->\s*guest|Auth::guest)\s*\(\s*\)\z/
+    USER_ASSIGN_RE     = /\G\$(\w+)\s*=\s*#{USER_SOURCE}\s*;/
+    USER_ASSIGN_ANY_RE = /\$(\w+)\s*=\s*#{USER_SOURCE}\s*;/
     # What an `if (!user)` block does to refuse: abort, throw, redirect, or
     # answer 401/403.
     BLOCK_REFUSAL_RE = /\A(?:abort\s*\(|throw\b|return\s+(?:redirect\b|Redirect::)|return\s+response\s*\([^;]*?\b40[13]\b|return\s+response\s*\(\s*\)\s*->\s*json\s*\([^;]*?\b40[13]\b)/
@@ -319,6 +323,17 @@ module Analyzer::Php
       false
     end
 
+    # `$this->authorize('view', $post)` / `Gate::authorize(...)`: the gate
+    # answers 403 for a signed-out caller unless the policy takes a nullable
+    # user, so it stands in front of the handler like a user check, but a
+    # policy can open it.
+    POLICY_CHECK_RE = /\G(?:\$this\s*->\s*authorize|Gate::authorize)\s*\(/
+    POLICY_NOTE     = "the policy decides whether a guest passes; a condition decides whether it applies"
+    # A lookup before the check (`$post = Post::find($id);`) answers nothing,
+    # unless it writes.
+    LOOKUP_ASSIGN_RE = /\A\$\w+\s*=(?!=)/
+    WRITE_CALL_RE    = /(?:->|::)\s*(?:create|save|update|delete|destroy|insert|upsert|dispatch|forceDelete|firstOrCreate|updateOrCreate|send|put|increment|decrement)\s*\(/
+
     # Validating the input first refuses rather than serves (422).
     VALIDATE_STATEMENT_RE = /\G(?:\$\w+\s*=\s*)?(?:\$this|\$request)\s*->\s*validate(?:WithBag)?\s*\(/
 
@@ -326,7 +341,7 @@ module Analyzer::Php
     # validating input, then checks. Anything else first (work, a return, a condition that is not
     # about the user) and a later check no longer stands in front of it.
     private def handler_user_check(body : String) : String?
-      return unless body.includes?("abort") || body.includes?("if")
+      return unless body.includes?("abort") || body.includes?("if") || body.includes?("authorize")
       lexer = Noir::PhpLexer.new(body, php_mode: true)
       users = [] of String
       pos = 0
@@ -342,6 +357,15 @@ module Analyzer::Php
         end
         if body.match(VALIDATE_STATEMENT_RE, pos)
           pos = lexer.statement_end(pos)
+          next
+        end
+        if policy = body.match(POLICY_CHECK_RE, pos)
+          close = lexer.matching_delimiter(policy.end(0) - 1) || return
+          return "Laravel handler policy check (#{body[policy.begin(0)..close].gsub(/\s+/, " ")}; #{POLICY_NOTE})"
+        end
+        stmt = body[pos...lexer.statement_end(pos)]
+        if stmt.matches?(LOOKUP_ASSIGN_RE) && !stmt.matches?(WRITE_CALL_RE) && !stmt.includes?('{')
+          pos = Math.max(lexer.statement_end(pos), pos + 1)
           next
         end
         return unless m = body.match(USER_CHECK_RE, pos)
@@ -555,7 +579,15 @@ module Analyzer::Php
       return if points.empty?
       verdict = nil
       body_checks_caller = body.matches?(CREDENTIAL_CONDITION_RE)
+      users = body.scan(USER_ASSIGN_ANY_RE).map(&.[1])
       points.each do |(at, text, note)|
+        # `if (! $user || ...) { return $next($request); }` before the
+        # refusal: a guest is let through, so the refusal only ever reaches
+        # signed-in callers and is no authentication guard.
+        next if conditions.any? { |(cond, block)| block.end <= at && body[block].includes?("$next(") && user_missing?(cond, users) }
+        # `if ($request->user() && ! $user->isActivated()) { abort(401); }`:
+        # the refusal needs a signed-in caller, so a guest is never refused.
+        next if conditions.any? { |(cond, block)| block.includes?(at) && split_condition(cond, "&&").any? { |part| user_source?(part, users) } }
         identity_evidence = body_checks_caller || text.matches?(IDENTITY_REFUSAL_RE)
         around = conditions.select(&.[1].includes?(at)).map(&.[0]).push(text).join(' ')
         # `if (app()->isLocal()) { return $next($request); }` before the refusal.
