@@ -41,7 +41,7 @@ module Analyzer::Python
     # `view_func=` extractors for the add_url_rule scan below — same
     # constant-only interpolation, hoisted so they aren't rebuilt on every
     # `add_url_rule(...)` match found in a file.
-    VIEW_FUNC_AS_VIEW_RE = /view_func=(#{PYTHON_VAR_NAME_REGEX})\.as_view\([rf]?['"]([^'"]*)['"]\)/
+    VIEW_FUNC_AS_VIEW_RE = /view_func=(#{PYTHON_VAR_NAME_REGEX})\.as_view\([rf]?['"]([^'"]*)['"][,)]/
     VIEW_FUNC_VAR_RE     = /view_func=(#{PYTHON_VAR_NAME_REGEX})[,\)]/
 
     # flask_restful / flask-restx register class-based `Resource`s with
@@ -57,6 +57,7 @@ module Analyzer::Python
 
     @routes = Hash(::String, Array(Tuple(Int32, ::String, ::String, ::String))).new
     @class_views = Hash(::String, Array(Tuple(Int32, ::String, ::String, ::String, ::String, Array(::String)))).new
+    @function_views = [] of Tuple(Endpoint, ::String, ::String)
 
     # `Api(...)`/`add_namespace(...)`/`routes=` registration matchers
     # interpolate a discovered instance/blueprint name, so they can't be
@@ -66,8 +67,6 @@ module Analyzer::Python
     # instead (mirrors FastAPI's `instance_regexes` cache).
     @api_from_instance_regex_cache = Hash(::String, Regex).new
     @add_namespace_call_regex_cache = Hash(::String, Regex).new
-    @view_registration_regex_cache = Hash(::String, Regex).new
-    @view_registration_original_regex_cache = Hash(::String, Regex).new
 
     # `\w*Api` also takes in-repo subclasses (`class ExternalApi(Api)`),
     # whose constructor keeps the Api's app/blueprint argument.
@@ -79,16 +78,6 @@ module Analyzer::Python
     private def add_namespace_call_regex(api_instance_name : ::String) : Regex
       @add_namespace_call_regex_cache[api_instance_name] ||=
         /(#{api_instance_name})\.add_namespace\((#{PYTHON_VAR_NAME_REGEX})/
-    end
-
-    private def view_registration_regex(blueprint_name : ::String) : Regex
-      @view_registration_regex_cache[blueprint_name] ||=
-        /#{blueprint_name},routes=(.*)\)/
-    end
-
-    private def view_registration_original_regex(blueprint_name : ::String) : Regex
-      @view_registration_original_regex_cache[blueprint_name] ||=
-        /#{blueprint_name}\s*,\s*routes\s*=\s*(.*)\)/
     end
 
     # The cross-file state the phases of `analyze` share. Flask's maps
@@ -151,6 +140,7 @@ module Analyzer::Python
       emit_flask_appbuilder_endpoints(fab)
       emit_route_endpoints(state)
       emit_class_view_endpoints(state)
+      emit_function_view_endpoints(state)
 
       Fiber.yield
       result
@@ -173,9 +163,13 @@ module Analyzer::Python
       # Maps view_var -> ClassName (per-file scope)
       getter view_assignments = Hash(::String, ::String).new
       property import_map_cache : Hash(::String, Tuple(::String, Int32))? = nil
+      # Whether a `routes=` keyword can occur anywhere in the file.
+      getter? routes_keyword : Bool
+      getter docstring_flags : Array(Bool) { Helper.docstring_line_flags(@lines) }
 
       def initialize(@path, @base_path, @source, @lines, @api_instances,
                      @decorations_by_line, @add_resource_re, @registrar_substrings)
+        @routes_keyword = @source.includes?("routes")
       end
     end
 
@@ -379,32 +373,65 @@ module Analyzer::Python
       end
     end
 
-    # Temporary Addition: register_view
-    # The `blueprint,routes=[...]` matcher interpolates the
-    # blueprint name; skip the per-blueprint regex builds unless
-    # this line actually carries a `routes=` registration.
+    # A registration helper called as `helper(bp, routes=[...],
+    # view_func=View.as_view("name"), **kwargs)` (FlaskBB's `register_view`):
+    # its body runs `bp.add_url_rule(route, view_func=view_func, **kwargs)`
+    # for each route, so each route is an `add_url_rule` on `bp` with the
+    # call's other arguments. A helper whose definition is found and never
+    # calls `add_url_rule` registers nothing.
     private def emit_view_registration_routes(fs : SourceScan, state : ScanState, line_index : Int32,
                                               original_line : ::String, line : ::String) : Nil
-      if line.includes?("routes=")
-        state.blueprint_prefixes.each do |key, blueprint_prefix|
-          next unless key[0] == fs.base_path
-          blueprint_name = key[1]
-          view_registration_match = line.match view_registration_regex(blueprint_name)
-          if view_registration_match
-            # Re-extract route paths from original line to preserve spaces in paths
-            original_registration_match = original_line.match view_registration_original_regex(blueprint_name)
-            route_paths = original_registration_match ? original_registration_match[1] : view_registration_match[1]
-            route_paths.scan /['"]([^'"]*)['"]/ do |path_str_match|
-              if !path_str_match.nil? && path_str_match.size == 2
-                route_path = path_str_match[1]
-                # Parse methods from reference views (TODO)
-                route_url = "#{blueprint_prefix}#{route_path}"
-                route_url = "/#{route_url}" unless route_url.starts_with?("/")
-                details = Details.new(PathInfo.new(fs.path, line_index + 1))
-                result << Endpoint.new(route_url, "GET", details)
-              end
-            end
-          end
+      return unless fs.routes_keyword?
+      return unless line.matches?(VIEW_REGISTRATION_HEAD_RE)
+      return if fs.docstring_flags[line_index]?
+      call = python_paren_delta(original_line) > 0 ? join_until_python_call_closes(fs.lines, line_index, original_line) : original_line
+      return unless call.includes?("routes")
+      match = call.match(VIEW_REGISTRATION_CALL_RE) || return
+      helper, router_name = match[1], match[2]
+      return unless state.blueprint_prefixes.has_key?({fs.base_path, router_name}) || fs.api_instances.has_key?(router_name)
+      return unless registration_helper?(fs, helper)
+
+      args = split_python_arguments(match[3])
+      routes_arg = args.find(&.strip.starts_with?("routes")) || return
+      routes_list = routes_arg.strip.lchop("routes").lstrip.lchop("=").strip
+      return unless routes_list.starts_with?('[') || routes_list.starts_with?('(')
+      rest = args.reject { |arg| arg.same?(routes_arg) || arg.strip.empty? }.join(",").gsub(" ", "")
+      routes_list.scan(/[rf]?['"]([^'"]*)['"]/) do |route_match|
+        route_path = route_match[1]
+        class_name, view_name = resolve_add_url_rule_view(fs, rest)
+        if class_name.empty?
+          emit_add_url_rule_function_view(fs, state, line_index, router_name, route_path, rest)
+        else
+          record_add_url_rule_class_view(fs, line_index, router_name, route_path, class_name, view_name, rest)
+        end
+      end
+    end
+
+    # A statement that opens a call handing a name first: `helper(bp, ...`
+    # or `helper(` with the arguments on the next lines (space-stripped).
+    VIEW_REGISTRATION_HEAD_RE = /\A#{DOT_NATION}\((?:#{PYTHON_VAR_NAME_REGEX},|\z)/
+    # `helper(bp, ..., routes=[...], ...)`: the helper, the router it is
+    # handed first, and the argument list.
+    VIEW_REGISTRATION_CALL_RE = /(?:^|[^\w.])(#{DOT_NATION})\s*\(\s*(#{PYTHON_VAR_NAME_REGEX})\s*,(.*\broutes\s*=.*)\)/m
+
+    @registration_helper_cache = Hash(::String, Bool).new
+
+    # Whether `helper`'s definition, where it can be found, registers a URL
+    # rule. An unresolved helper is taken at its call shape.
+    private def registration_helper?(fs : SourceScan, helper : ::String) : Bool
+      name = helper.split('.').last
+      if def_index = find_function_def(fs.lines, name)
+        return (parse_code_block(fs.lines[def_index..]) || "").includes?(".add_url_rule(")
+      end
+      import_map = (fs.import_map_cache ||= find_imported_modules(fs.base_path, fs.path, fs.source))
+      resolved = resolve_external_handler(helper, fs.path, import_map) || return true
+      def_path, def_name = resolved
+      @registration_helper_cache["#{def_path}\0#{def_name}"] ||= begin
+        lines = File.exists?(def_path) ? fetch_file_lines(def_path) : [] of ::String
+        if index = find_function_def(lines, def_name)
+          (parse_code_block(lines[index..]) || "").includes?(".add_url_rule(")
+        else
+          true
         end
       end
     end
@@ -417,12 +444,17 @@ module Analyzer::Python
         parent_name = register_blueprint_match[1]
         blueprint_name = register_blueprint_match[2]
         url_prefix_match = original_line.match /url_prefix\s*=\s*[rf]?['"]([^'"]*)['"]/
-        blueprint_mount_prefix = url_prefix_match ? url_prefix_match[1] : nil
+        blueprint_mount_prefix = url_prefix_match ? url_prefix_match[1] : config_url_prefix(original_line, fs.base_path)
         state.blueprint_mounts[fs.path] ||= [] of Tuple(::String, ::String, ::String?)
         state.blueprint_mounts[fs.path] << {parent_name, blueprint_name, blueprint_mount_prefix}
 
-        if url_prefix_match && (declaration = blueprint_declaration(fs.path, blueprint_name))
-          add_registered_prefix(state.register_blueprint, declaration[0], declaration[1], url_prefix_match[1])
+        if blueprint_mount_prefix
+          # A blueprint built inside the function that registers it
+          # (`def load_blueprints(app): bp = Blueprint(...)`) is no
+          # module global, so it is declared where it is registered.
+          declaration = blueprint_declaration(fs.path, blueprint_name)
+          declaration ||= {fs.path, blueprint_name} if fs.api_instances.has_key?(blueprint_name)
+          add_registered_prefix(state.register_blueprint, declaration[0], declaration[1], blueprint_mount_prefix) if declaration
         end
       end
 
@@ -431,6 +463,37 @@ module Analyzer::Python
         prefix_match = original_line.match /\bprefix\s*=\s*[rf]?['"]([^'"]*)['"]/
         if prefix_match && (declaration = blueprint_declaration(fs.path, include_router_match[1]))
           add_registered_prefix(state.register_blueprint, declaration[0], declaration[1], prefix_match[1])
+        end
+      end
+    end
+
+    # `url_prefix=app.config["X"]` / `app.config.get("X", "/d")`: the string
+    # a config module assigns `X` (`class DefaultConfig: X = "/user"`),
+    # else the `.get` default.
+    CONFIG_URL_PREFIX_RE = /url_prefix\s*=\s*#{DOT_NATION}\.config\s*(?:\[\s*['"](\w+)['"]\s*\]|\.get\s*\(\s*['"](\w+)['"]\s*(?:,\s*[rf]?['"]([^'"]*)['"])?)/
+
+    @config_string_values = Hash(::String, ::String?).new
+
+    private def config_url_prefix(line : ::String, base_path : ::String) : ::String?
+      match = line.match(CONFIG_URL_PREFIX_RE) || return
+      key = match[1]? || match[2]
+      config_string_value(key, base_path) || match[3]?
+    end
+
+    # Only the project's own config modules: a monorepo neighbour's
+    # same-named setting configures a different app.
+    private def config_string_value(key : ::String, base_path : ::String) : ::String?
+      cache_key = "#{base_path}\0#{key}"
+      return @config_string_values[cache_key] if @config_string_values.has_key?(cache_key)
+      assign_re = /^[ \t]*#{key}[ \t]*(?::[^=\n]+)?=[ \t]*[rf]?['"]([^'"\n]*)['"][ \t]*(?:#.*)?$/m
+      @config_string_values[cache_key] = python_source_files.each do |path|
+        next unless path_under_root?(path, base_path)
+        stem = File.basename(path).downcase
+        next unless stem.includes?("config") || stem.includes?("setting") || path.includes?("/config")
+        source = fetch_file_content(path)
+        next unless source.includes?(key)
+        if assigned = source.match(assign_re)
+          break assigned[1]
         end
       end
     end
@@ -605,7 +668,7 @@ module Analyzer::Python
                    end
 
         unless view_arg.empty?
-          as_view_match = view_arg.match /(#{PYTHON_VAR_NAME_REGEX})\.as_view\([rf]?['"]([^'"]*)['"]\)/
+          as_view_match = view_arg.match /(#{PYTHON_VAR_NAME_REGEX})\.as_view\([rf]?['"]([^'"]*)['"][,)]/
           if as_view_match
             class_name = as_view_match[1]
             view_name = as_view_match[2]
@@ -707,15 +770,10 @@ module Analyzer::Python
       end
       fn_methods << "GET" if fn_methods.empty?
 
-      api_instances_for_fn = state.path_api_instances[fs.path]?
-      fn_prefix = (api_instances_for_fn && api_instances_for_fn.has_key?(router_name)) ? api_instances_for_fn[router_name] : ""
-      fn_full_path = "#{fn_prefix}#{route_path}"
-      fn_full_path = "/#{fn_full_path}" unless fn_full_path.starts_with?("/")
-
       fn_methods.each do |m|
         fn_details = Details.new(PathInfo.new(fs.path, line_index + 1))
         fn_params = fn_codeblock_lines.empty? ? [] of Param : get_filtered_params(m, extract_request_params(fn_codeblock_lines))
-        endpoint = Endpoint.new(fn_full_path, m, fn_params)
+        endpoint = Endpoint.new(route_path, m, fn_params)
         endpoint.details = fn_details
         endpoint.handler = handler_at(fn_lines, fn_def_index, fn_path) if fn_def_index
 
@@ -730,7 +788,23 @@ module Analyzer::Python
           )
         end
 
-        result << endpoint
+        @function_views << {endpoint, router_name, fs.path}
+      end
+    end
+
+    # Function views registered with `add_url_rule`, served under their
+    # router's prefixes once every `register_blueprint(url_prefix=...)` (which
+    # can follow the rule, or sit in another file) has been read.
+    private def emit_function_view_endpoints(state : ScanState) : Nil
+      @function_views.each do |endpoint, router_name, path|
+        router_prefixes(state.path_api_instances, state.register_blueprint, path, router_name).each do |prefix|
+          full_path = "#{prefix}#{endpoint.url}"
+          full_path = "/#{full_path}" unless full_path.starts_with?("/")
+          served = endpoint
+          served.url = full_path
+          served.params = endpoint.params.dup
+          result << served
+        end
       end
     end
 
