@@ -391,10 +391,10 @@ module Noir::CLI::Inspect
   # `{*path}` (Spring, ASP.NET, Next.js and Starlette's `{p:path}` as the
   # optimizer writes them) and `{path...}` (Ktor, Go) match the rest
   # (Express's bare `*` is a catch-all, not one segment).
-  REST_PLACEHOLDER = /\A(?:<path:[^>]*>|\*\*|\{\*[^}]*\}|\{[^}]*\*\}|\{\.\.\.[^}]*\}|\{[^}]*\.\.\.\}|\[\[\.\.\.[^\]]*\]\]|\[\.\.\.[^\]]*\]|\*[A-Za-z_]\w*|:[A-Za-z_]\w*[*+]|\*)/
+  REST_PLACEHOLDER = /\A(?:<path:[^>]*>|\*\*|\{\*(?:[^{}]|\{[^{}]*\})*\}|\{[^}]*\*\}|\{\.\.\.[^}]*\}|\{[^}]*\.\.\.\}|\[\[\.\.\.[^\]]*\]\]|\[\.\.\.[^\]]*\]|\*[A-Za-z_]\w*|:[A-Za-z_]\w*[*+]|\*)/
   # The rest placeholders that also take zero segments, so `/files/:path*`
   # serves `/files` too.
-  ZERO_OR_MORE = /\A(?:\*\*|\{\*[^}]*\}|\{[^}]*(?:\*|\.\.\.)\}|:\w+\*|\[\[)/
+  ZERO_OR_MORE = /\A(?:\*\*|\{\*(?:[^{}]|\{[^{}]*\})*\}|\{[^}]*(?:\*|\.\.\.)\}|:\w+\*|\[\[)/
   # Where `{*name}` needs at least one segment: Next.js `[...slug]` (its
   # optional `[[...slug]]` is written as a second, bare route), axum and a
   # gRPC-transcoding `{name=**}`. Spring, ASP.NET, Armeria, salvo's
@@ -442,10 +442,13 @@ module Noir::CLI::Inspect
       when :rest
         # ASP.NET `{**path:regex(^(?!api/).*)}`: the rest must satisfy the
         # constraint, so `/api/x` is not served by the SPA fallback it excludes.
-        guard = rest_constraint(text).try { |body| "(?=(?:#{body})\\z)" } || ""
+        constraint = rest_constraint(text)
+        guard = constraint ? "(?=(?:#{constraint})\\z)" : ""
         if text.matches?(ZERO_OR_MORE) && parts.last? == "/" && !(star_needs_one && text.starts_with?("{*"))
           parts.pop
-          parts << "(?:/#{guard}.*)?"
+          # With a constraint the empty rest must satisfy it too.
+          empty_ok = constraint.nil? || Regex.new("\\A(?:#{constraint})\\z").matches?("")
+          parts << "(?:/#{guard}.*)#{empty_ok ? "?" : ""}"
         else
           parts << "#{guard}.*"
         end
@@ -470,12 +473,57 @@ module Noir::CLI::Inspect
   # anchors stripped, or nil when it has none or does not compile.
   private def self.rest_constraint(text : String) : String?
     body = text.match(/\A\{\*{1,2}\w+:regex\((.*)\)\}\z/m).try(&.[1]) || return
-    body = body.lchop('^')
-    body = body.rchop('$') unless body.ends_with?("\\$")
+    # .NET character-class subtraction (`[a-z-[aeiou]]`) has no PCRE form: no
+    # constraint rather than a wrong one.
+    return if body.includes?("-[")
+    # ASP.NET wraps the constraint as `^(...)$`, so an anchor belongs to its
+    # own alternative, not to the whole text.
+    body = split_alternatives(body).map { |alternative| strip_anchors(alternative) }.join('|')
     Regex.new(body)
     body
   rescue ArgumentError
     nil
+  end
+
+  private def self.strip_anchors(alternative : String) : String
+    alternative = alternative.lchop('^')
+    alternative.ends_with?("\\$") ? alternative : alternative.rchop('$')
+  end
+
+  # Splits at the `|` outside groups, classes and escapes.
+  private def self.split_alternatives(body : String) : Array(String)
+    parts = [] of String
+    depth = 0
+    in_class = false
+    current = String::Builder.new
+    chars = body.chars
+    index = 0
+    while index < chars.size
+      char = chars[index]
+      if char == '\\' && index + 1 < chars.size
+        current << char << chars[index + 1]
+        index += 2
+        next
+      end
+      if in_class
+        in_class = false if char == ']'
+      elsif char == '['
+        in_class = true
+      elsif char == '('
+        depth += 1
+      elsif char == ')'
+        depth -= 1
+      elsif char == '|' && depth == 0
+        parts << current.to_s
+        current = String::Builder.new
+        index += 1
+        next
+      end
+      current << char
+      index += 1
+    end
+    parts << current.to_s
+    parts
   end
 
   # A typed placeholder only takes what the router would route to it:
