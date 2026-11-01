@@ -1,5 +1,6 @@
 require "../../../models/framework_tagger"
 require "../../../models/endpoint"
+require "../../../minilexers/swift_lexer"
 
 @[Noir::TaggerFor(key: "swift_auth", name: "Swift Auth Tagger", desc: "Identifies Vapor/Kitura/Hummingbird authentication patterns", order: 220)]
 class SwiftAuthTagger < FrameworkTagger
@@ -52,8 +53,9 @@ class SwiftAuthTagger < FrameworkTagger
 
   private def check_endpoint(endpoint : Endpoint)
     endpoint.details.code_paths.each do |path_info|
-      lines = read_file_lines(path_info.path)
-      next if lines.nil?
+      content = read_file(path_info.path)
+      next if content.nil?
+      lines = content.lines
       line_num = path_info.line
       next if line_num.nil?
       # Skip stale/out-of-range line refs: a line beyond the content we
@@ -62,15 +64,18 @@ class SwiftAuthTagger < FrameworkTagger
       next if line_num < 1 || line_num > lines.size
       line_idx = line_num - 1
 
+      lexer = Noir::SwiftLexer.for(content)
+      masked_lines = lexer.masked_lines
+
       # Check for auth middleware group wrapping this route
-      description = check_middleware_group(lines, line_idx)
+      description = check_middleware_group(lines, masked_lines, line_idx)
       if description
         endpoint.add_tag(Tag.new("auth", "Protected by #{description}", "swift_auth"))
         return
       end
 
       # Check route handler body for auth requirements
-      description = check_handler_auth(lines, line_idx)
+      description = check_handler_auth(lines, masked_lines, line_idx)
       if description
         endpoint.add_tag(Tag.new("auth", "Protected by #{description}", "swift_auth"))
         return
@@ -78,11 +83,11 @@ class SwiftAuthTagger < FrameworkTagger
     end
   end
 
-  private def check_middleware_group(lines : Array(String), route_line : Int32) : String?
+  private def check_middleware_group(lines : Array(String), masked_lines : Array(String), route_line : Int32) : String?
     return if route_line < 0 || route_line >= lines.size
 
     # Extract the receiver variable from the route line (e.g., "protected" from "protected.get(...)")
-    receiver_match = lines[route_line].strip.match(/^(\w+)\.(?:get|post|put|delete|patch|on|group)\b/)
+    receiver_match = masked_lines[route_line].strip.match(/^(\w+)\.(?:get|post|put|delete|patch|on|group)\b/)
     return unless receiver_match
     receiver = receiver_match[1]
 
@@ -91,11 +96,11 @@ class SwiftAuthTagger < FrameworkTagger
     # receiver in the previous function is not this route's guard.
     idx = route_line - 1
     while idx >= 0
-      stripped = lines[idx].strip
-      break if function_boundary?(stripped)
+      masked_stripped = masked_lines[idx].strip
+      break if function_boundary?(masked_stripped)
 
-      if binds_receiver?(stripped, receiver)
-        return middleware_description(stripped)
+      if binds_receiver?(masked_stripped, receiver)
+        return middleware_description(lines[idx])
       end
 
       idx -= 1
@@ -126,21 +131,22 @@ class SwiftAuthTagger < FrameworkTagger
     nil
   end
 
-  private def check_handler_auth(lines : Array(String), route_line : Int32) : String?
+  private def check_handler_auth(lines : Array(String), masked_lines : Array(String), route_line : Int32) : String?
     end_idx = [route_line + 15, lines.size - 1].min
     brace_depth = 0
 
     (route_line..end_idx).each do |idx|
-      current = lines[idx]
+      current_masked = masked_lines[idx]
 
       HANDLER_AUTH_PATTERNS.each do |pattern, desc|
-        return desc if current.matches?(pattern)
+        return desc if current_masked.matches?(pattern)
       end
 
-      # Track braces from the route line itself, so a closure that opens and
+      # Track braces from the route line itself on masked lines, so a closure that opens and
       # closes there (`app.get("hello") { req in "Hello" }`) ends the walk
-      # instead of reading the next route's body as this one's.
-      brace_depth += current.count('{') - current.count('}')
+      # instead of reading the next route's body as this one's, and strings with braces
+      # do not terminate early.
+      brace_depth += current_masked.count('{') - current_masked.count('}')
       break if brace_depth <= 0
     end
 

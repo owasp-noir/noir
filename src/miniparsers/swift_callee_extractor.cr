@@ -1,5 +1,6 @@
 require "../models/endpoint"
 require "./callee_extractor_base"
+require "../minilexers/swift_lexer"
 
 module Noir::SwiftCalleeExtractor
   extend self
@@ -22,16 +23,10 @@ module Noir::SwiftCalleeExtractor
 
   def callees_for_body(body : String, file_path : String, start_line : Int32) : Array(Entry)
     entries = [] of Entry
-    block_comment_depth = 0
-    in_multiline_string = false
+    lexer = Noir::SwiftLexer.for(body)
 
-    body.lines.each_with_index do |line, index|
-      stripped, block_comment_depth, in_multiline_string = strip_non_code_with_state(
-        line,
-        block_comment_depth,
-        in_multiline_string
-      )
-      scan_line(stripped, file_path, start_line + index, entries)
+    lexer.masked_lines.each_with_index do |line, index|
+      scan_line(line, file_path, start_line + index, entries)
     end
 
     entries.uniq

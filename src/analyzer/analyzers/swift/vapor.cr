@@ -65,28 +65,31 @@ module Analyzer::Swift
 
     def analyze_file(path : String) : Array(Endpoint)
       endpoints = [] of Endpoint
-      lines = read_file_content(path).lines
+      content = read_file_content(path)
+      lines = content.lines
+      lexer = Noir::SwiftLexer.for(content)
+      masked_lines = lexer.masked_lines
+      code_lines = lexer.code_lines
+
       include_callee = callees_needed?
-      handler_bodies = named_handler_bodies(lines)
-      # Comments (including multi-line `/* */`) and `"""` bodies blanked;
-      # string literals kept so route paths are still readable.
-      code_lines = strip_code_lines(lines, keep_strings: true)
-      stripped_lines = nil.as(Array(String)?)
+      handler_bodies = named_handler_bodies(lines, masked_lines)
       prefix_by_receiver = {} of String => String
       # variable, depth at which it was bound, prefix it shadowed (nil if new)
       group_prefix_stack = [] of Tuple(String, Int32, String?)
       brace_depth = 0
 
       # Seed the router-receiver set so route detection is receiver-aware.
-      register_router_params(code_lines, prefix_by_receiver)
+      register_router_params(masked_lines, prefix_by_receiver)
 
-      code_lines.each_with_index do |stripped_line, index|
-        register_group_assignment(stripped_line, prefix_by_receiver)
-        register_group_closure(stripped_line, prefix_by_receiver, group_prefix_stack, brace_depth)
+      masked_lines.each_with_index do |masked_line, index|
+        line = lines[index]
+        code_line = code_lines[index]
+        register_group_assignment(masked_line, code_line, prefix_by_receiver)
+        register_group_closure(masked_line, code_line, prefix_by_receiver, group_prefix_stack, brace_depth)
 
-        route = route_parts(code_lines, index, prefix_by_receiver)
+        route = route_parts(masked_lines, code_lines, index, prefix_by_receiver)
         unless route
-          brace_depth = update_group_depth(stripped_line, brace_depth, group_prefix_stack, prefix_by_receiver)
+          brace_depth = update_group_depth(masked_line, brace_depth, group_prefix_stack, prefix_by_receiver)
           next
         end
 
@@ -101,17 +104,16 @@ module Analyzer::Swift
           extract_path_params(route_path, endpoint)
           # A `use:` handler's params come from its own body; scanning the
           # lines after the route would read unrelated functions.
-          unless extract_named_handler_params(lines[index], handler_bodies, endpoint)
-            stripped_lines ||= strip_code_lines(lines)
-            extract_function_params(lines, stripped_lines, index, endpoint)
+          unless extract_named_handler_params(masked_line, line, handler_bodies, endpoint)
+            extract_function_params(lines, masked_lines, index, endpoint)
           end
-          attach_route_callees(lines, index, path, endpoint, handler_bodies) if include_callee
+          attach_route_callees(lines, masked_lines, index, path, endpoint, handler_bodies) if include_callee
 
           endpoints << endpoint
         rescue e
           logger.debug "Error processing endpoint: #{e.message}"
         ensure
-          brace_depth = update_group_depth(stripped_line, brace_depth, group_prefix_stack, prefix_by_receiver)
+          brace_depth = update_group_depth(masked_line, brace_depth, group_prefix_stack, prefix_by_receiver)
         end
       end
 
@@ -175,13 +177,14 @@ module Analyzer::Swift
     end
 
     private def attach_route_callees(lines : Array(String),
+                                     masked_lines : Array(String),
                                      route_index : Int32,
                                      path : String,
                                      endpoint : Endpoint,
                                      handler_bodies : Hash(String, Tuple(String, Int32)))
-      body, start_line = route_body(lines, route_index)
+      body, start_line = route_body(lines, masked_lines, route_index)
       if body.empty?
-        body, start_line = named_handler_body(lines[route_index], handler_bodies, route_index)
+        body, start_line = named_handler_body(masked_lines[route_index], lines[route_index], handler_bodies, route_index)
       end
       return if body.empty?
 
@@ -189,18 +192,20 @@ module Analyzer::Swift
       Noir::SwiftCalleeExtractor.attach_to(endpoint, callees)
     end
 
-    private def route_body(lines : Array(String), route_index : Int32) : Tuple(String, Int32)
-      route_line = lines[route_index]
-      opening_brace = route_line.index('{')
+    private def route_body(lines : Array(String), masked_lines : Array(String), route_index : Int32) : Tuple(String, Int32)
+      masked_route_line = masked_lines[route_index]
+      opening_brace = masked_route_line.index('{')
       return {"", route_index + 2} unless opening_brace
 
+      route_line = lines[route_index]
       first_fragment = route_line[(opening_brace + 1)..]? || ""
-      clean_fragment, block_comment_depth, in_multiline_string = Noir::SwiftCalleeExtractor.strip_non_code_with_state(first_fragment, 0, false)
+      first_masked = masked_route_line[(opening_brace + 1)..]? || ""
+
       body_lines = [] of String
-      brace_count = 1 + clean_fragment.count('{') - clean_fragment.count('}')
+      brace_count = 1 + first_masked.count('{') - first_masked.count('}')
 
       if brace_count <= 0
-        closing_brace = clean_fragment.rindex('}')
+        closing_brace = first_masked.rindex('}')
         first_fragment = first_fragment[0...closing_brace] if closing_brace
         return {first_fragment, route_index + 1}
       end
@@ -210,18 +215,15 @@ module Analyzer::Swift
 
       while index < lines.size && brace_count > 0
         line = lines[index]
-        stripped, block_comment_depth, in_multiline_string = Noir::SwiftCalleeExtractor.strip_non_code_with_state(
-          line,
-          block_comment_depth,
-          in_multiline_string
-        )
+        stripped = masked_lines[index]
         opens = stripped.count('{')
         closes = stripped.count('}')
         next_brace_count = brace_count + opens - closes
 
         if next_brace_count <= 0
-          if line.strip != "}"
-            body_lines << line
+          if stripped.strip != "}"
+            closing = stripped.rindex('}')
+            body_lines << (closing ? line[0...closing] : line)
           end
           break
         end
@@ -237,28 +239,31 @@ module Analyzer::Swift
 
     # The last element is the prefix of a group expression the verb was called
     # on directly (`app.grouped("a").get("b")`), "" otherwise.
-    private def route_parts(lines : Array(String), index : Int32, prefix_by_receiver : Hash(String, String)) : Tuple(String, String, String, String)?
-      line = lines[index]?
-      return unless line
-      return unless route_definition_line?(line)
-      line = joined_route_call(lines, index)
+    private def route_parts(masked_lines : Array(String), code_lines : Array(String), index : Int32, prefix_by_receiver : Hash(String, String)) : Tuple(String, String, String, String)?
+      masked_line = masked_lines[index]?
+      return unless masked_line
+      return unless route_definition_line?(masked_line)
+
+      masked_line, code_line = joined_route_call(masked_lines, code_lines, index)
 
       inline_prefix = ""
-      if group = line.match(INLINE_GROUP_PATTERN)
-        if chain = chain_prefix(line, "", group.end(0) || 0)
-          rest = line[(chain[1] + 1)..]? || ""
-          if rest.matches?(INLINE_VERB_PATTERN)
+      if group = masked_line.match(INLINE_GROUP_PATTERN)
+        if chain = chain_prefix(masked_line, code_line, "", group.end(0) || 0)
+          rest_masked = masked_line[(chain[1] + 1)..]? || ""
+          if rest_masked.matches?(INLINE_VERB_PATTERN)
+            rest_code = code_line[(chain[1] + 1)..]? || ""
             # Re-read the line as if the verb were called on the base receiver.
-            line = "#{line[0...(group.begin(0) || 0)]}#{group[1]}#{rest.lstrip}"
+            masked_line = "#{masked_line[0...(group.begin(0) || 0)]}#{group[1]}#{rest_masked.lstrip}"
+            code_line = "#{code_line[0...(group.begin(0) || 0)]}#{group[1]}#{rest_code.lstrip}"
             inline_prefix = chain[0]
           end
         end
       end
 
-      if match = line.match(ON_ROUTE_PATTERN)
+      if match = masked_line.match(ON_ROUTE_PATTERN)
         return unless router_like?(match[1], prefix_by_receiver)
 
-        args = call_arguments(line, match.end(0) || 0)
+        args = call_arguments(code_line, match.end(0) || 0, masked_line)
         return unless args
 
         route_args = args[0]
@@ -268,12 +273,12 @@ module Analyzer::Swift
         return {match[1], method_match[1], method_match[2], inline_prefix}
       end
 
-      if match = line.match(ROUTE_PATTERN)
+      if match = masked_line.match(ROUTE_PATTERN)
         return unless router_like?(match[1], prefix_by_receiver)
         # `users.get { req in ... }` takes no path arguments.
         return {match[1], match[2].upcase, "", inline_prefix} if match[3] == "{"
 
-        args = call_arguments(line, match.end(0) || 0)
+        args = call_arguments(code_line, match.end(0) || 0, masked_line)
         return unless args
 
         return {match[1], match[2].upcase, args[0], inline_prefix}
@@ -285,25 +290,29 @@ module Analyzer::Swift
     # `.on(` / `.get(` may close on a later line. `call_arguments` reads one
     # string, so fold following lines until the paren balances. The cap keeps
     # an unclosed `(` from swallowing the rest of the file.
-    private def joined_route_call(lines : Array(String), index : Int32) : String
-      line = lines[index]
-      match = line.match(ROUTE_CALL_RE)
-      return line unless match
+    private def joined_route_call(masked_lines : Array(String), code_lines : Array(String), index : Int32) : Tuple(String, String)
+      masked_line = masked_lines[index]
+      code_line = code_lines[index]
+      match = masked_line.match(ROUTE_CALL_RE)
+      return {masked_line, code_line} unless match
 
       open_at = match.end(0) || 0
-      return line unless open_at > 0 && line[open_at - 1] == '('
-      return line if call_arguments(line, open_at)
+      return {masked_line, code_line} unless open_at > 0 && masked_line[open_at - 1] == '('
+      return {masked_line, code_line} if call_arguments(code_line, open_at, masked_line)
 
-      parts = [line]
+      parts_m = [masked_line]
+      parts_c = [code_line]
       next_index = index + 1
-      while next_index < lines.size && next_index - index < 40
-        parts << lines[next_index]
-        joined = parts.join('\n')
-        return joined if call_arguments(joined, open_at)
+      while next_index < masked_lines.size && next_index - index < 40
+        parts_m << masked_lines[next_index]
+        parts_c << code_lines[next_index]
+        joined_m = parts_m.join('\n')
+        joined_c = parts_c.join('\n')
+        return {joined_m, joined_c} if call_arguments(joined_c, open_at, joined_m)
         next_index += 1
       end
 
-      line
+      {masked_line, code_line}
     end
 
     # A `.get`/`.post`/... call counts as a route only when its receiver is a
@@ -341,15 +350,15 @@ module Analyzer::Swift
       end
     end
 
-    private def register_group_assignment(line : String, prefix_by_receiver : Hash(String, String))
-      match = line.match(GROUP_ASSIGN_PATTERN)
+    private def register_group_assignment(masked_line : String, code_line : String, prefix_by_receiver : Hash(String, String))
+      match = masked_line.match(GROUP_ASSIGN_PATTERN)
       return unless match
 
       variable = match[1]
       # `base` is absent for an implicit-`self` `grouped(...)` (a RoutesBuilder
       # extension): the new group then inherits the empty root prefix.
       base_prefix = (base = match[2]?) ? prefix_for_receiver(base, prefix_by_receiver) : ""
-      chain = chain_prefix(line, base_prefix, match.end(0) || 0)
+      chain = chain_prefix(masked_line, code_line, base_prefix, match.end(0) || 0)
       return unless chain
 
       prefix_by_receiver[variable] = chain[0]
@@ -358,14 +367,14 @@ module Analyzer::Swift
     # Accumulates the prefix of a `.grouped(...)`/`.group(...)` call and every
     # group call chained onto it. `args_start` is just past the first call's
     # `(`. Returns the joined prefix and the index of the last call's `)`.
-    private def chain_prefix(line : String, base_prefix : String, args_start : Int32) : Tuple(String, Int32)?
-      args = call_arguments(line, args_start)
+    private def chain_prefix(masked_line : String, code_line : String, base_prefix : String, args_start : Int32) : Tuple(String, Int32)?
+      args = call_arguments(code_line, args_start, masked_line)
       return unless args
 
       prefix = normalized_route_join(base_prefix, parse_route_path(args[0]))
       close = args[1]
-      while (rest = line[(close + 1)..]?) && (next_call = rest.match(CHAINED_GROUP_PATTERN))
-        more = call_arguments(line, close + 1 + (next_call.end(0) || 0))
+      while (rest_masked = masked_line[(close + 1)..]?) && (next_call = rest_masked.match(CHAINED_GROUP_PATTERN))
+        more = call_arguments(code_line, close + 1 + (next_call.end(0) || 0), masked_line)
         break unless more
 
         prefix = normalized_route_join(prefix, parse_route_path(more[0]))
@@ -375,18 +384,19 @@ module Analyzer::Swift
       {prefix, close}
     end
 
-    private def register_group_closure(line : String,
+    private def register_group_closure(masked_line : String,
+                                       code_line : String,
                                        prefix_by_receiver : Hash(String, String),
                                        group_prefix_stack : Array(Tuple(String, Int32, String?)),
                                        brace_depth : Int32)
-      match = line.match(GROUP_CLOSURE_PATTERN)
+      match = masked_line.match(GROUP_CLOSURE_PATTERN)
       return unless match
 
       base = match[1]
-      chain = chain_prefix(line, prefix_for_receiver(base, prefix_by_receiver), match.end(0) || 0)
+      chain = chain_prefix(masked_line, code_line, prefix_for_receiver(base, prefix_by_receiver), match.end(0) || 0)
       return unless chain
 
-      after_call = line[(chain[1] + 1)..]? || ""
+      after_call = masked_line[(chain[1] + 1)..]? || ""
       variable = if named = after_call.match(/^\s*\{\s*([A-Za-z_]\w*)\s+in\b/)
                    named[1]
                  elsif after_call.matches?(/^\s*\{/)
@@ -401,12 +411,11 @@ module Analyzer::Swift
       group_prefix_stack << {variable, brace_depth + 1, previous}
     end
 
-    private def update_group_depth(line : String,
+    private def update_group_depth(masked_line : String,
                                    brace_depth : Int32,
                                    group_prefix_stack : Array(Tuple(String, Int32, String?)),
                                    prefix_by_receiver : Hash(String, String)) : Int32
-      structural, _, _ = Noir::SwiftCalleeExtractor.strip_non_code_with_state(line, 0, false)
-      depth = brace_depth + structural.count('{') - structural.count('}')
+      depth = brace_depth + masked_line.count('{') - masked_line.count('}')
 
       while !group_prefix_stack.empty? && depth < group_prefix_stack.last[1]
         variable, _, previous = group_prefix_stack.pop
@@ -420,10 +429,11 @@ module Analyzer::Swift
       depth
     end
 
-    private def extract_named_handler_params(route_line : String,
+    private def extract_named_handler_params(masked_route_line : String,
+                                             route_line : String,
                                              handler_bodies : Hash(String, Tuple(String, Int32)),
                                              endpoint : Endpoint) : Bool
-      handler_name = route_handler_name(route_line)
+      handler_name = route_handler_name(masked_route_line)
       return false unless handler_name
 
       body = handler_bodies[handler_name]?
@@ -487,19 +497,19 @@ module Analyzer::Swift
       end
     end
 
-    private def named_handler_body(route_line : String,
+    private def named_handler_body(masked_route_line : String,
+                                   route_line : String,
                                    handler_bodies : Hash(String, Tuple(String, Int32)),
                                    route_index : Int32) : Tuple(String, Int32)
-      handler_name = route_handler_name(route_line)
+      handler_name = route_handler_name(masked_route_line)
       return {"", route_index + 2} unless handler_name
 
       handler_bodies[handler_name]? || {"", route_index + 2}
     end
 
-    private def route_handler_name(route_line : String) : String?
-      stripped, _, _ = Noir::SwiftCalleeExtractor.strip_non_code_with_state(route_line, 0, false)
+    private def route_handler_name(masked_route_line : String) : String?
       # `self.create` / `TodoController.index` name the method `create` / `index`.
-      if match = stripped.match(/\buse:\s*(?:self\.)?([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)/)
+      if match = masked_route_line.match(/\buse:\s*(?:self\.)?([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)/)
         return match[1].split('.').last
       end
 

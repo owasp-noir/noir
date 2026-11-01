@@ -147,4 +147,25 @@ describe "swift hummingbird analyzer" do
     File.delete(temp_file) if temp_file && File.exists?(temp_file)
     Dir.delete(temp_dir) if temp_dir && Dir.exists?(temp_dir)
   end
+
+  it "keeps comments with quotes out of route arguments" do
+    instance = Analyzer::Swift::Hummingbird.new(create_test_options)
+
+    temp_dir = File.tempname("swift_hummingbird_comment_quotes_test")
+    Dir.mkdir_p(temp_dir)
+    temp_file = File.join(temp_dir, "routes.swift")
+
+    File.write(temp_file, <<-SWIFT)
+      import Hummingbird
+
+      func routes(_ router: Router<BasicRequestContext>) {
+          router.get(/* "fake" */ "real") { _, _ in .ok }
+      }
+      SWIFT
+
+    instance.analyze_file(temp_file).map { |e| "#{e.method} #{e.url}" }.should eq(["GET /real"])
+  ensure
+    File.delete(temp_file) if temp_file && File.exists?(temp_file)
+    Dir.delete(temp_dir) if temp_dir && Dir.exists?(temp_dir)
+  end
 end

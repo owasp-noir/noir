@@ -2,6 +2,7 @@ require "../../models/analyzer"
 
 require "./file_scan_engine"
 require "../../miniparsers/swift_callee_extractor"
+require "../../minilexers/swift_lexer"
 require "../../utils/c_comments"
 
 module Analyzer::Swift
@@ -69,7 +70,7 @@ module Analyzer::Swift
     # with the raw lines. Read argument text from these: a comment inside
     # `router.group(/* x */ "api")` must not swallow the literal.
     protected def swift_code_lines(content : String) : Array(String)
-      Noir::CComments.strip(content, quotes: "\"").lines
+      Noir::SwiftLexer.for(content).code_lines
     end
 
     # Route-path composition shared by the Vapor and Hummingbird
@@ -143,13 +144,14 @@ module Analyzer::Swift
       end
     end
 
-    private def call_arguments(line : String, args_start : Int32) : Tuple(String, Int32)?
+    private def call_arguments(line : String, args_start : Int32, masked_line : String? = nil) : Tuple(String, Int32)?
       # `chars` avoids per-index `String#[]`: on non-ASCII lines each direct
       # `line[index]` re-walks from byte 0 to locate the char offset, making
       # this scan O(n^2). Materializing the char array once keeps indexed
       # access O(1) and the whole scan O(n); the single closing slice below
       # (`line[args_start...index]`) is unchanged and still O(n) once.
-      chars = line.chars
+      subject = masked_line || line
+      chars = subject.chars
       depth = 1
       in_string = false
       escaped = false
@@ -195,17 +197,12 @@ module Analyzer::Swift
       ""
     end
 
-    private def named_handler_bodies(lines : Array(String)) : Hash(String, Tuple(String, Int32))
+    private def named_handler_bodies(lines : Array(String), masked_lines : Array(String)? = nil) : Hash(String, Tuple(String, Int32))
       bodies = {} of String => Tuple(String, Int32)
-      block_comment_depth = 0
-      in_multiline_string = false
+      mlines = masked_lines || strip_code_lines(lines, keep_strings: false)
 
-      lines.each_with_index do |line, index|
-        stripped, block_comment_depth, in_multiline_string = Noir::SwiftCalleeExtractor.strip_non_code_with_state(
-          line,
-          block_comment_depth,
-          in_multiline_string
-        )
+      lines.each_with_index do |_, index|
+        stripped = mlines[index]
         match = stripped.match(FUNCTION_SIGNATURE_PATTERN)
         next unless match
 
@@ -214,13 +211,13 @@ module Analyzer::Swift
 
         opening = stripped.index('{')
         if opening
-          bodies[handler_name] = body_after_opening_brace(lines, index, opening)
+          bodies[handler_name] = body_after_opening_brace(lines, mlines, index, opening)
           next
         end
 
-        if location = next_opening_brace(lines, index + 1, block_comment_depth, in_multiline_string)
+        if location = next_opening_brace(lines, mlines, index + 1)
           opening_index, opening_brace = location
-          bodies[handler_name] = body_after_opening_brace(lines, opening_index, opening_brace)
+          bodies[handler_name] = body_after_opening_brace(lines, mlines, opening_index, opening_brace)
         end
       end
 
@@ -228,15 +225,10 @@ module Analyzer::Swift
     end
 
     private def next_opening_brace(lines : Array(String),
-                                   start_index : Int32,
-                                   block_comment_depth : Int32,
-                                   in_multiline_string : Bool) : Tuple(Int32, Int32)?
+                                   mlines : Array(String),
+                                   start_index : Int32) : Tuple(Int32, Int32)?
       (start_index...[start_index + LOOKAHEAD_LIMIT, lines.size].min).each do |index|
-        stripped, block_comment_depth, in_multiline_string = Noir::SwiftCalleeExtractor.strip_non_code_with_state(
-          lines[index],
-          block_comment_depth,
-          in_multiline_string
-        )
+        stripped = mlines[index]
         if opening = stripped.index('{')
           return {index, opening}
         end
@@ -248,14 +240,19 @@ module Analyzer::Swift
     end
 
     private def body_after_opening_brace(lines : Array(String), opening_index : Int32, opening_brace : Int32) : Tuple(String, Int32)
+      mlines = strip_code_lines(lines, keep_strings: false)
+      body_after_opening_brace(lines, mlines, opening_index, opening_brace)
+    end
+
+    private def body_after_opening_brace(lines : Array(String), mlines : Array(String), opening_index : Int32, opening_brace : Int32) : Tuple(String, Int32)
       route_line = lines[opening_index]
       first_fragment = route_line[(opening_brace + 1)..]? || ""
-      clean_fragment, block_comment_depth, in_multiline_string = Noir::SwiftCalleeExtractor.strip_non_code_with_state(first_fragment, 0, false)
+      first_masked = mlines[opening_index][(opening_brace + 1)..]? || ""
       body_lines = [] of String
-      brace_count = 1 + clean_fragment.count('{') - clean_fragment.count('}')
+      brace_count = 1 + first_masked.count('{') - first_masked.count('}')
 
       if brace_count <= 0
-        closing_brace = clean_fragment.rindex('}')
+        closing_brace = first_masked.rindex('}')
         first_fragment = first_fragment[0...closing_brace] if closing_brace
         return {first_fragment, opening_index + 1}
       end
@@ -265,15 +262,11 @@ module Analyzer::Swift
 
       while index < lines.size && brace_count > 0
         line = lines[index]
-        stripped, block_comment_depth, in_multiline_string = Noir::SwiftCalleeExtractor.strip_non_code_with_state(
-          line,
-          block_comment_depth,
-          in_multiline_string
-        )
+        stripped = mlines[index]
         next_brace_count = brace_count + stripped.count('{') - stripped.count('}')
 
         if next_brace_count <= 0
-          if line.strip != "}"
+          if stripped.strip != "}"
             closing_brace = stripped.rindex('}')
             body_lines << (closing_brace ? line[0...closing_brace] : line)
           end
@@ -288,26 +281,20 @@ module Analyzer::Swift
       {body_lines.join("\n"), opening_index + 1}
     end
 
-    # `lines` with comments and `"""` bodies blanked, block-comment state
-    # carried across lines. `keep_strings` keeps `"..."` literals so a
-    # route's path can still be read from the stripped line.
+    # `lines` with comments and string contents masked via SwiftLexer.
+    # `keep_strings` keeps string literals intact via `SwiftLexer#code_lines`.
     protected def strip_code_lines(lines : Array(String), keep_strings : Bool = false) : Array(String)
-      block_comment_depth = 0
-      in_multiline_string = false
-      lines.map do |line|
-        stripped, block_comment_depth, in_multiline_string = Noir::SwiftCalleeExtractor.strip_non_code_with_state(
-          line,
-          block_comment_depth,
-          in_multiline_string,
-          keep_strings
-        )
-        stripped
-      end
+      strip_code_lines(lines.join('\n'), keep_strings)
+    end
+
+    protected def strip_code_lines(content : String, keep_strings : Bool = false) : Array(String)
+      lexer = Noir::SwiftLexer.for(content)
+      keep_strings ? lexer.code_lines : lexer.masked_lines
     end
 
     private def structural_opening_brace(line : String) : Int32?
-      stripped, _, _ = Noir::SwiftCalleeExtractor.strip_non_code_with_state(line, 0, false)
-      stripped.index('{')
+      lexer = Noir::SwiftLexer.for(line)
+      lexer.masked_source.index('{')
     end
   end
 end
