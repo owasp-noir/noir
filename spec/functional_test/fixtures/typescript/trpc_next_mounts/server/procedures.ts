@@ -10,3 +10,9 @@ export const publicProcedure = procedure.use(perfMiddleware);
 export const authedProcedure = publicProcedure.use(isAuthed);
 // Its middleware lives outside the scan: neither guarded nor anonymous.
 export const limitedProcedure = procedure.use(rateLimit);
+// A factory: the guard sits in the function body, the router calls it.
+export const createPermProcedure = (permission: string) =>
+  authedProcedure.use(async ({ next }) => {
+    if (!permission) throw new TRPCError({ code: "FORBIDDEN" });
+    return next();
+  });
