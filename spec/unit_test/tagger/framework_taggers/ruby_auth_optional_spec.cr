@@ -104,10 +104,10 @@ PREVENTS_CSRF = <<-RB
 describe "RubyAuthTagger (optional credential readers)" do
   it "reads an optional credential reader as open and the check that refuses its nil result as a guard" do
     tags = tag_actions({
-      "app/controllers/application_controller.rb"                => APP_CONTROLLER,
-      "app/controllers/application_controller/authenticates.rb"  => AUTHENTICATES,
-      "app/controllers/application_controller/prevents_csrf.rb"  => PREVENTS_CSRF,
-      "app/controllers/signups_controller.rb"                    => <<-RB,
+      "app/controllers/application_controller.rb"               => APP_CONTROLLER,
+      "app/controllers/application_controller/authenticates.rb" => AUTHENTICATES,
+      "app/controllers/application_controller/prevents_csrf.rb" => PREVENTS_CSRF,
+      "app/controllers/signups_controller.rb"                   => <<-RB,
         class SignupsController < ApplicationController
           prepend_before_action :authentication_check_only
 

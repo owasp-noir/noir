@@ -939,7 +939,7 @@ class RubyAuthTagger < FrameworkTagger
   end
 
   # Where a request carries its credential.
-  CREDENTIAL_SOURCE =/\b(?:session|cookies|request\.headers)\b|token|bearer|jwt|authoriz|api_?key/i
+  CREDENTIAL_SOURCE = /\b(?:session|cookies|request\.headers)\b|token|bearer|jwt|authoriz|api_?key/i
 
   # The instance variables the callbacks that run before `callback` in
   # `chain` leave holding the caller: `@user = user` under `if session[:u]
