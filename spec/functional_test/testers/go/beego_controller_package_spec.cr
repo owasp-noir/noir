@@ -16,8 +16,12 @@ expected_endpoints = [
     Param.new("owner", "", "path"),
     Param.new("payment", "", "path"),
   ]),
+  Endpoint.new("/api/notify-payment/:owner", "POST", [Param.new("owner", "", "path")]),
+  Endpoint.new("/api/notify-payment", "POST"),
   Endpoint.new("/api/missing", "GET"),
   Endpoint.new("/ping", "GET", [Param.new("echo", "", "query")]),
+  Endpoint.new("/users/ping", "GET"),
+  Endpoint.new("/users/health", "GET", [Param.new("probe", "", "query")]),
 ]
 
 tester = FunctionalTester.new("fixtures/go/beego_controller_package/", {
@@ -36,4 +40,11 @@ it "names the routed controller's method as the handler, and nothing for a missi
   admin.params.map(&.name).should_not contain("owner")
   tester.app.endpoints.find! { |ep| ep.url == "/api/missing" }.handler.should be_nil
   tester.app.endpoints.find! { |ep| ep.url == "/ping" }.handler.try(&.name).should eq("LocalController.Ping")
+  # A wrapped registration reads its controller off the whole call; a
+  # method the type does not have is no other type's.
+  ping = tester.app.endpoints.find! { |ep| ep.url == "/users/ping" }
+  ping.handler.should be_nil
+  ping.params.map(&.name).should_not contain("statusOnly")
+  health = tester.app.endpoints.find! { |ep| ep.url == "/users/health" }
+  health.handler.should eq(Handler.new("BaseController.Health", "./spec/functional_test/fixtures/go/beego_controller_package/controllers/base.go", 10))
 end

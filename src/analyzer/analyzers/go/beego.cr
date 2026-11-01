@@ -105,10 +105,10 @@ module Analyzer::Go
           if ts_hits = routes_by_line[index]?
             ts_hits.each do |route|
               controller_body = beego_router_lines.includes?(route.line) ? controller_method(import_aliases, path, content, raw_lines, route, named_scope) : nil
-              Noir::TreeSitterGoRouteExtractor.fan_out_verbs(route.verb).each do |verb|
-                # `/api/notify-payment/?:owner/?:payment`: `?:` is an optional
-                # segment, not a query string.
-                new_endpoint = Endpoint.new(route.path.gsub("/?:", "/:"), verb, details)
+              # `?:owner` is an optional segment, not a query string.
+              verbs = Noir::TreeSitterGoRouteExtractor.fan_out_verbs(route.verb)
+              optional_variants(route.path).flat_map { |variant| verbs.map { |verb| {variant, verb} } }.each do |(route_path, verb)|
+                new_endpoint = Endpoint.new(route_path, verb, details)
                 if entries = callees_by_route[route.line]?
                   entries.each do |entry|
                     name, callee_path, callee_line = entry
@@ -156,25 +156,90 @@ module Analyzer::Go
                                   route : Noir::TreeSitterGoRouteExtractor::Route,
                                   scope : Noir::GoNamedHandler::Scope) : Noir::GoCalleeExtractor::FunctionBody?
       return if route.handler.empty?
-      text = raw_lines[route.line]? || return
-      text += raw_lines[route.line + 1]? || "" unless text.matches?(CONTROLLER_LITERAL) || text.matches?(CONTROLLER_ARG)
+      text = call_span(raw_lines, route.line)
       # `web.Router("/users", ctrl, ...)` with `ctrl := &UserController{}`
       # earlier in the file.
       literal = text.match(CONTROLLER_LITERAL) ||
                 text.match(CONTROLLER_ARG).try { |arg| content.match(Regex.new("\\b#{Regex.escape(arg[1])}\\s*:?=\\s*#{CONTROLLER_LITERAL.source}")) }
-      unless literal
-        # Type unknown: the one method of that name in this package, if one.
-        local = scope.bodies.methods_for(File.dirname(path))[route.handler]?
-        return local.try { |bodies| bodies.first if bodies.size == 1 }
-      end
+      # A controller whose type does not resolve names no method: matching
+      # the name alone picks another controller's.
+      return unless literal
       dir = if qualifier = literal[1]?
               import_aliases[qualifier]?.try { |import| scope.import_dirs[import]? } || return
             else
               File.dirname(path)
             end
-      bodies = scope.bodies.methods_for(dir)[route.handler]? || return
-      matches = bodies.select { |body| body.source.match(METHOD_RECEIVER).try(&.[1]) == literal[2] }
-      matches.first if matches.size == 1
+      receiver_method(scope, dir, literal[2], route.handler)
+    end
+
+    # The registration call starting on `row`, through its closing paren.
+    private def call_span(raw_lines : Array(String), row : Int32) : String
+      text = String::Builder.new
+      depth = 0
+      (row...Math.min(raw_lines.size, row + 12)).each do |i|
+        line = raw_lines[i]
+        text << line << '\n'
+        depth += line.count('(') - line.count(')')
+        break if depth <= 0
+      end
+      text.to_s
+    end
+
+    # Type `type`'s method `name` in package `dir`, or, when it declares
+    # none, the method of a type it embeds (one level: `UserController{
+    # BaseController }`, `struct{ base.Controller }`).
+    private def receiver_method(scope : Noir::GoNamedHandler::Scope, dir : String, type : String, name : String,
+                                depth : Int32 = 0) : Noir::GoCalleeExtractor::FunctionBody?
+      bodies = scope.bodies.methods_for(dir)[name]? || [] of Noir::GoCalleeExtractor::FunctionBody
+      matches = bodies.select { |body| body.source.match(METHOD_RECEIVER).try(&.[1]) == type }
+      return matches.first if matches.size == 1
+      return if depth > 0 || !matches.empty?
+      embedded_types(scope, dir, type).each do |(embedded_dir, embedded)|
+        found = receiver_method(scope, embedded_dir, embedded, name, depth + 1)
+        return found if found
+      end
+      nil
+    end
+
+    # `type T struct {`, and a field that is a bare (embedded) type.
+    STRUCT_HEAD    = /^type\s+(\w+)\s+struct\s*\{/
+    EMBEDDED_FIELD = /\A\*?(?:(\w+)\s*\.\s*)?([A-Z]\w*)\s*(?:\/\/.*)?\z/
+
+    # The `{dir, type}` of each type `type` embeds, resolved through the
+    # declaring file's imports.
+    private def embedded_types(scope : Noir::GoNamedHandler::Scope, dir : String, type : String) : Array({String, String})
+      found = [] of {String, String}
+      get_files_by_extension(".go").each do |file|
+        next if File.dirname(file) != dir || go_test_path?(file)
+        content = read_file_content(file)
+        next unless content.includes?("type #{type} struct")
+        lines = content.lines
+        start = lines.index { |line| (m = line.match(STRUCT_HEAD)) && m[1] == type } || next
+        aliases = Noir::GoCalleeExtractor.extract_import_aliases(content)
+        lines[(start + 1)..].each do |line|
+          break if line.starts_with?('}')
+          field = line.strip.match(EMBEDDED_FIELD) || next
+          target = field[1]?.try { |qualifier| aliases[qualifier]?.try { |import| scope.import_dirs[import]? } } || (field[1]? ? nil : dir)
+          found << {target, field[2]} if target
+        end
+      end
+      found
+    end
+
+    # `/api/notify-payment/?:owner/?:payment` serves the path with each
+    # trailing optional segment present or not: `/api/notify-payment`,
+    # `/api/notify-payment/:owner`, `/api/notify-payment/:owner/:payment`.
+    # An optional segment anywhere else is read as a required one.
+    private def optional_variants(path : String) : Array(String)
+      return [path] unless path.includes?("?:")
+      segments = path.split('/')
+      required = segments.map(&.sub(/\A\?:/, ":"))
+      first = segments.index(&.starts_with?("?:")) || return [path]
+      return [required.join('/')] unless segments[first..].all?(&.starts_with?("?:"))
+      (first..segments.size).map do |count|
+        variant = required[0, count].join('/')
+        variant.empty? ? "/" : variant
+      end
     end
 
     private def add_beego_params(line : String, endpoint : Endpoint)
