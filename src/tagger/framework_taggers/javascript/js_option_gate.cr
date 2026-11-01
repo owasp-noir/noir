@@ -102,21 +102,21 @@ module Noir::JSOptionGate
   private def value_of(arg : String?, key : String?, absent : Bool, lookup : Proc(String, String?)) : Bool?
     text = arg.try(&.strip) || ""
     return absent if text.empty? || text == "{}" || text == "undefined" || text == "null"
-    text = (lookup.call(text) || return nil).strip if text.matches?(IDENT) && text != "true" && text != "false"
+    text = (lookup.call(text) || return).strip if text.matches?(IDENT) && text != "true" && text != "false"
     unless key
       return true if text == "true"
       return false if FALSY.includes?(text)
-      return nil
+      return
     end
-    return nil unless text.starts_with?('{')
+    return unless text.starts_with?('{')
     if m = text.match(/(?<![\w$.])#{Regex.escape(key)}\s*:\s*([^,}\n]+)/)
       value = m[1].strip
       return true if value == "true"
       return false if FALSY.includes?(value)
-      return nil
+      return
     end
     # `{ skipAuth }`, `{ ...opts }`: set, to something not written here.
-    return nil if text.includes?("...") || text.matches?(/(?<![\w$.])#{Regex.escape(key)}\b/)
+    return if text.includes?("...") || text.matches?(/(?<![\w$.])#{Regex.escape(key)}\b/)
     absent
   end
 
