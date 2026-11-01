@@ -872,13 +872,128 @@ describe "RubyAuthTagger" do
     end
   end
 
-  it "lists the methods a before_action line runs" do
-    callbacks = ->(line : String) { Noir::RailsCallbackChain.before_action_callbacks(line) }
-    callbacks.call("before_action :a!, :b?, only: :show").should eq(["a!", "b?"])
+  it "reads a controller's callback statements off the AST, not its heredocs or line shapes" do
+    CodeLocator.instance.clear_all
+    tmpdir = File.tempname("ruby_ast_callbacks")
+    controllers = File.join(tmpdir, "app", "controllers")
+    Dir.mkdir_p(controllers)
+    files = {
+      "application_controller.rb" => "class ApplicationController < ActionController::Base\n  before_action :authenticate_user!\nend\n",
+      # A heredoc's text is no callback, and a `def` after it is still read.
+      "open_controller.rb" => <<-RB,
+        class OpenController < ActionController::Base
+          HELP = <<~TXT
+            end
+            before_action :authenticate_user!
+          TXT
+
+          def show
+          end
+        end
+        RB
+      # A skip spread over lines, in parentheses.
+      "assets_controller.rb" => <<-RB,
+        class AssetsController < ApplicationController
+          skip_before_action(
+            :authenticate_user!,
+            only: %i[show],
+          )
+
+          def show
+          end
+
+          def edit
+          end
+        end
+        RB
+      # Rails 4 spelling, hash-rocket options.
+      "legacy_controller.rb" => <<-RB,
+        class LegacyController < ActionController::Base
+          before_filter :authenticate_user!, :except => [:index]
+
+          def index
+          end
+
+          def show
+          end
+        end
+        RB
+      # A constant the class assigns names the public actions.
+      "constant_controller.rb" => <<-RB,
+        class ConstantController < ActionController::Base
+          PUBLIC = %i[index].freeze
+          before_action :authenticate_user!, except: PUBLIC
+
+          def index
+          end
+
+          def show
+          end
+        end
+        RB
+      # `class << self` is no class of its own: the action below it keeps
+      # the inherited chain.
+      "macro_controller.rb" => <<-RB,
+        class MacroController < ApplicationController
+          class << self
+            def public_page
+            end
+          end
+
+          def show
+          end
+        end
+        RB
+    }
+    files.each do |name, body|
+      path = File.join(controllers, name)
+      File.write(path, body)
+      CodeLocator.instance.register_path(path)
+    end
+
+    begin
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(tmpdir)
+      at = ->(name : String, line : Int32) do
+        details = Details.new(PathInfo.new(File.join(controllers, name), line))
+        details.technology = "ruby_rails"
+        Endpoint.new("/#{name}/#{line}", "GET", [] of Param, details)
+      end
+      open_show = at.call("open_controller.rb", 7)
+      assets_show, assets_edit = at.call("assets_controller.rb", 7), at.call("assets_controller.rb", 10)
+      legacy_index, legacy_show = at.call("legacy_controller.rb", 4), at.call("legacy_controller.rb", 7)
+      constant_index, constant_show = at.call("constant_controller.rb", 5), at.call("constant_controller.rb", 8)
+      macro_show = at.call("macro_controller.rb", 7)
+      all = [open_show, assets_show, assets_edit, legacy_index, legacy_show, constant_index, constant_show, macro_show]
+      RubyAuthTagger.new(noir_options).perform(all)
+
+      guarded = ->(endpoint : Endpoint) { endpoint.tags.any?(&.name.==("auth")) }
+      guarded.call(open_show).should be_false
+      guarded.call(assets_show).should be_false
+      guarded.call(assets_edit).should be_true
+      guarded.call(legacy_index).should be_false
+      guarded.call(legacy_show).should be_true
+      guarded.call(constant_index).should be_false
+      guarded.call(constant_show).should be_true
+      guarded.call(macro_show).should be_true
+    ensure
+      FileUtils.rm_rf(tmpdir)
+      CodeLocator.instance.clear_all
+    end
+  end
+
+  it "lists the methods a before_action statement runs" do
+    callbacks = ->(statement : String) do
+      chain = Noir::RailsCallbackChain.build(["/c.rb"], [] of String) { |_| "class C < Base\n  #{statement}\nend\n" }
+      chain.resolve(chain.classes.values.first, "index").callbacks
+    end
+    callbacks.call("before_action :a!, :b?, only: :index").should eq(["a!", "b?"])
     callbacks.call("before_action -> { doorkeeper_authorize! :read, :'read:statuses' }, except: :create").should eq(["doorkeeper_authorize!"])
     callbacks.call("before_action ->(c) { c.authenticate_user! }").should eq([] of String)
     callbacks.call("before_action { authenticate_user! }").should eq(["authenticate_user!"])
+    callbacks.call("before_action do\n    authenticate_user! && audit\n  end").should eq(["authenticate_user!"])
     callbacks.call("before_action -> { authenticate_user! if limited? }").should eq([] of String)
+    callbacks.call("before_action lambda { a!; b! }").should eq([] of String)
     callbacks.call("skip_before_action :authenticate_user!").should eq([] of String)
   end
 end

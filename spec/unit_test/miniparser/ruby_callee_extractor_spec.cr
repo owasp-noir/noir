@@ -84,4 +84,66 @@ describe Noir::RubyCalleeExtractor do
       {"@story.valid?", 59},
     ])
   end
+
+  it "reads safe navigation, chains split over lines and calls inside interpolation" do
+    body = <<-'RUBY'
+      @invitation&.update!(accepted_at: now)
+      Current.family
+        .entries
+        .where(id: ids)
+      @title = "#{I18n.t("about.title")} - #{site.name}"
+      User.find(id).posts.create(post_params)
+      RUBY
+
+    callees = Noir::RubyCalleeExtractor.callees_for_body(body, "c.rb", 1)
+    callees.map { |name, _, line| {name, line} }.should eq([
+      {"@invitation.update!", 1},
+      {"Current.family.entries.where", 4},
+      {"I18n.t", 5},
+      {"User.find", 6},
+      {"posts.create", 6},
+    ])
+  end
+
+  it "takes no callee from word arrays, heredocs, string text or local variables" do
+    body = <<-RUBY
+      %w[test development].include?(env)
+      sql = <<~SQL
+        select render(x) from t where a.b(1)
+      SQL
+      notice = "redirect_to admin_path(x)"
+      ex = error
+      raise ex if ex
+      helper_call if ready?
+      RUBY
+
+    callees = Noir::RubyCalleeExtractor.callees_for_body(body, "c.rb", 1)
+    callees.map(&.[0]).should eq(["raise", "helper_call"])
+  end
+
+  it "reads a body whose heredocs were blanked out by the non-code mask" do
+    body = "sql = <<~SQL\n\n\nrender json: rows\n"
+    Noir::RubyCalleeExtractor.callees_for_body(body, "c.rb", 1).map(&.[0]).should eq(["render"])
+  end
+
+  it "ends each method at its own `end`, whatever its body holds" do
+    source = <<-RUBY
+      class PostsController < ApplicationController
+        def index
+          sql = <<~SQL
+            end
+          SQL
+          Post.where(sql)
+        end
+
+        private def helper
+          AuditLog.write(1) if x.y.z
+        end
+      end
+      RUBY
+
+    by_method = Noir::RubyCalleeExtractor.callees_by_method(source, "posts_controller.rb")
+    by_method["index"].map { |name, _, line| {name, line} }.should eq([{"Post.where", 6}])
+    by_method["helper"].map(&.[0]).should eq(["AuditLog.write", "x.y.z"])
+  end
 end
