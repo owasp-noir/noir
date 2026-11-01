@@ -5,6 +5,7 @@ require "../../../miniparsers/rust_request_guards"
 require "../../../miniparsers/rust_use_imports"
 require "../../../ext/tree_sitter/tree_sitter"
 require "../../../utils/c_comments"
+require "../../../analyzer/engines/rust_engine"
 
 @[Noir::TaggerFor(key: "rust_auth", name: "Rust Auth Tagger", desc: "Identifies Rust authentication patterns (guards, extractors, middleware)", order: 70)]
 class RustAuthTagger < FrameworkTagger
@@ -83,7 +84,7 @@ class RustAuthTagger < FrameworkTagger
 
   def initialize(options : Hash(String, YAML::Any))
     super
-    @middleware_scopes = [] of {prefix: String, exact: Bool, local: Bool, description: String}
+    @middleware_scopes = [] of {prefix: String, exact: Bool, local: Bool, description: String, except: Array({String, Bool}), at: {String, Int32}?}
     @guard_verdicts = {} of String => Bool
     @handler_param_types = {} of String => Hash(Int32, Array(String))
     @fn_index = Hash(String, Array(RustFnEntry)).new
@@ -153,6 +154,7 @@ class RustAuthTagger < FrameworkTagger
     build_function_index(files)
     scan_axum_layers(files)
     scan_actix_scope_middleware(files)
+    scan_actix_app_wraps(files)
   end
 
   FN_NAME_RE = /\bfn\s+(?:r#)?([A-Za-z_]\w*)/
@@ -371,6 +373,8 @@ class RustAuthTagger < FrameworkTagger
                 exact:       kind == "route",
                 local:       true,
                 description: "Protected by Rust #{middleware_name} middleware on #{path}",
+                except:      [] of {String, Bool},
+                at:          nil,
               }
             end
           end
@@ -729,6 +733,8 @@ class RustAuthTagger < FrameworkTagger
               exact:       false,
               local:       false,
               description: "Protected by Rust #{middleware_name} middleware on #{prefix}",
+              except:      [] of {String, Bool},
+              at:          nil,
             }
           end
         end
@@ -739,6 +745,111 @@ class RustAuthTagger < FrameworkTagger
         end
       end
     end
+  end
+
+  # An auth type named inside a `.wrap(..)` argument: `AuthTransform::new(..)`,
+  # `Condition::new(on, AuthLayer)`, `ConditionEx::from_option(keys.map(|k|
+  # AuthTransform::new(k)))`. Capitalised, so a local called `auth_keys` is not one.
+  WRAPPED_AUTH_TYPE = /\b(?=\w*Auth)[A-Z]\w*\b/
+  # `Condition::new(flag, mw)` / `ConditionEx::from_option(opt)` register the
+  # middleware only when something was configured.
+  CONDITIONAL_WRAP = /\bCondition\w*\s*::\s*(?:new|from_option)\b/
+  # A variable naming the paths a middleware lets through unchecked.
+  EXEMPT_VAR = /\b(\w*(?:white|allow|skip|public|exempt|bypass)\w*)\b/i
+
+  # `App::new().wrap(AuthTransform::new(keys, whitelist))` puts every route of
+  # the app behind the middleware, bar the paths it lets through. Judged by
+  # the middleware's definition when it is in the scan (it must answer 401/403
+  # itself), by its name when it comes from a library.
+  private def scan_actix_app_wraps(files : Array(String))
+    files.each do |file|
+      next if Analyzer::Rust::RustEngine.test_path?(base_relative_path(file)) || base_relative_path(file).includes?("/examples/")
+      content = read_file(file) || next
+      next unless content.includes?(".wrap(") && content.includes?("App::new")
+
+      begin
+        test_regions = Analyzer::Rust::RustEngine.collect_cfg_test_regions(content)
+        Noir::TreeSitter.parse_rust(content) do |root|
+          Noir::TreeSitter.walk(root) do |node|
+            next unless Noir::TreeSitter.node_type(node) == "call_expression"
+            next unless field_call_name(node, content) == "wrap"
+            start = LibTreeSitter.ts_node_start_byte(node).to_i
+            next if test_regions.any? { |(from, to)| start >= from && start < to }
+            next unless app_chain_root?(node, content)
+
+            arg = named_call_args(node)[0]? || next
+            text = Noir::TreeSitter.node_text(arg, content)
+            name = text.scan(WRAPPED_AUTH_TYPE).map(&.[0]).find { |type| wrapped_auth_type?(type) } || next
+            conditional = text.matches?(CONDITIONAL_WRAP)
+            exempt = exempt_paths(text, content)
+            notes = [] of String
+            notes << "registered only when auth keys are configured; unauthenticated when none are" if conditional
+            notes << "its whitelisted paths could not be read" if exempt.empty? && text.matches?(EXEMPT_VAR)
+            @middleware_scopes << {
+              prefix:      "/",
+              exact:       false,
+              local:       false,
+              description: "Protected by Rust #{name} middleware on every route of the app" + (notes.empty? ? "" : " (#{notes.join("; ")})"),
+              except:      exempt,
+              at:          {file, content.byte_slice(0, wrap_byte(node)).count('\n') + 1},
+            }
+          end
+        end
+      rescue e
+        @logger.debug "actix app wrap scan error in #{file}: #{e}"
+      end
+    end
+  end
+
+  # Byte offset of the `wrap` in `chain.wrap(..)`, so a multi-line chain
+  # reports the line of the registration, not the line the chain starts on.
+  private def wrap_byte(call : LibTreeSitter::TSNode) : Int32
+    field = Noir::TreeSitter.field(call, "function").try { |fn| Noir::TreeSitter.field(fn, "field") }
+    LibTreeSitter.ts_node_start_byte(field || call).to_i
+  end
+
+  # Whether `.wrap` sits on a chain that starts at `App::new()`, as opposed to
+  # a `web::scope(..)` the line scan above already prices.
+  private def app_chain_root?(call : LibTreeSitter::TSNode, source : String) : Bool
+    node = call
+    while recv = chain_receiver(node)
+      return false unless Noir::TreeSitter.node_type(recv) == "call_expression"
+      node = recv
+    end
+    call_func_full_text(node, source).ends_with?("App::new")
+  end
+
+  # A type that guards: its definition (when in the scan) answers 401/403 and
+  # is not a CSRF check; a library type is trusted by its name.
+  private def wrapped_auth_type?(type : String) : Bool
+    return false if type.matches?(CSRF_NAME)
+    definition = collect_files_by_extension(".rs").find do |file|
+      !Analyzer::Rust::RustEngine.test_path?(base_relative_path(file)) &&
+        (read_file(file).try(&.matches?(/\bstruct\s+#{type}\b/)) || false)
+    end
+    return true unless definition
+    code = Noir::CComments.strip(read_file(definition) || "")
+    code.gsub(COMPARED, "").matches?(MIDDLEWARE_REFUSAL)
+  end
+
+  # Paths the wrapped middleware lets through: the `exact("/x")` / `prefix("/x")`
+  # entries (or plain `"/x"` literals of a whitelist-named variable) of a
+  # variable handed to it, read from where that variable is built
+  # (`let mut w = vec![..]`, `w.push(..)`).
+  private def exempt_paths(wrap_text : String, source : String) : Array({String, Bool})
+    paths = [] of {String, Bool}
+    wrap_text.scan(/\b[a-z_]\w*\b/) do |var|
+      name = Regex.escape(var[0])
+      listed = var[0].matches?(EXEMPT_VAR)
+      source.scan(/\blet\s+(?:mut\s+)?#{name}\b[^;]*;|\b#{name}\s*\.\s*(?:push|extend)\s*\([^;]*;/m) do |stmt|
+        stmt[0].scan(/(\w*)\s*\(\s*"(\/[^"]*)"\s*\)/) do |entry|
+          by_prefix = entry[1].downcase.includes?("prefix")
+          paths << {entry[2], by_prefix} if by_prefix || entry[1].downcase.includes?("exact")
+        end
+        stmt[0].scan(/(?<![\w(])"(\/[^"]*)"/) { |entry| paths << {entry[1], false} } if listed
+      end
+    end
+    paths.uniq!
   end
 
   private def find_scope_for_line(lines : Array(String), line_idx : Int32, current_scope : String?) : String?
@@ -800,9 +911,9 @@ class RustAuthTagger < FrameworkTagger
     end
 
     # Check scope-level middleware
-    description = check_middleware_scopes(endpoint)
-    if description
-      endpoint.add_tag(Tag.new("auth", description, "rust_auth"))
+    if scope = middleware_scope_for(endpoint)
+      at = scope[:at]
+      endpoint.add_tag(Tag.new("auth", scope[:description], "rust_auth", at.try(&.[0]), at.try(&.[1])))
     end
   end
 
@@ -914,18 +1025,19 @@ class RustAuthTagger < FrameworkTagger
     nil
   end
 
-  private def check_middleware_scopes(endpoint : Endpoint) : String?
+  private def middleware_scope_for(endpoint : Endpoint)
     url = endpoint.url
 
     @middleware_scopes.each do |scope|
       prefix = scope[:prefix]
+      next if scope[:except].any? { |(path, by_prefix)| by_prefix ? url.starts_with?(path) : url == path }
       covered = scope[:exact] ? url == prefix : PrefixScope.prefix_covers?(prefix, url)
       # An Axum layer names router-local paths; that router may itself be
       # `.nest`ed, so `/users` also covers `/api/users`.
       if !covered && scope[:local] && prefix.starts_with?('/') && prefix.size > 1
         covered = url.ends_with?(prefix) || (!scope[:exact] && url.includes?("#{prefix}/"))
       end
-      return scope[:description] if covered
+      return scope if covered
     end
 
     nil
