@@ -83,8 +83,33 @@ class AspnetAuthTagger < FrameworkTagger
       @fallback_roots << root if fallback && code.matches?(FALLBACK_POLICY)
       @controllers_global_roots << root if controllers && code.matches?(CONTROLLERS_GLOBAL)
     end
+    expand_fallback_roots
     collect_extension_auth
     super
+  end
+
+  PROJECT_REFERENCE_RE = /<ProjectReference\s[^>]*?Include\s*=\s*"([^"]+)"/i
+
+  # A `FallbackPolicy` is the host's: the controllers of every project it
+  # references (`<ProjectReference Include="..\Api\Api.csproj" />`, followed
+  # transitively) are served by it. Sonarr sets the policy in `NzbDrone.Host`
+  # while its API controllers sit in `Sonarr.Api.V3`.
+  private def expand_fallback_roots : Nil
+    return if @fallback_roots.empty?
+    references = Hash(String, Array(String)).new
+    collect_files_by_extension(".csproj").each do |csproj|
+      next if base_relative_path(csproj).matches?(TEST_PATH)
+      content = read_file(csproj) || next
+      dir = Noir::PathScope.expand(File.dirname(csproj))
+      content.scan(PROJECT_REFERENCE_RE) do |match|
+        target = Noir::PathScope.expand(File.expand_path(File.dirname(match[1].tr("\\", "/")), dir))
+        (references[dir] ||= [] of String) << target
+      end
+    end
+    queue = @fallback_roots.to_a.compact
+    until queue.empty?
+      references[queue.shift]?.try &.each { |target| queue << target if @fallback_roots.add?(target) }
+    end
   end
 
   # For every route-builder extension method, whether all of its call sites
@@ -150,7 +175,7 @@ class AspnetAuthTagger < FrameworkTagger
       class_attrs = class_attribute_lines(path_info.path, lines, line_idx)
       # `[Authorize]`/`[AllowAnonymous]` are inherited: a controller takes
       # them from its base classes too.
-      chain = class_chain(path_info.path, lines, line_idx)
+      chain, project_file = owner_chain(endpoint, class_chain(path_info.path, lines, line_idx), path_info.path)
       # `[AllowAnonymous]` lifts `[Authorize]` and app-wide policies, not a
       # filter that does not read it, nor a refusal the action makes itself.
       if has_allow_anonymous?(lines, line_idx) || class_attrs.any?(&.matches?(ALLOW_ANONYMOUS_PATTERN)) ||
@@ -216,7 +241,7 @@ class AspnetAuthTagger < FrameworkTagger
         return unless tag.name == "authz"
       end
 
-      root = nearest_project_root(path_info.path, CSPROJ)
+      root = nearest_project_root(project_file, CSPROJ)
       if @fallback_roots.includes?(root)
         endpoint.add_tag(Tag.new("auth", "Protected by ASP.NET FallbackPolicy (RequireAuthenticatedUser)", "aspnet_auth"))
         return
@@ -322,6 +347,23 @@ class AspnetAuthTagger < FrameworkTagger
       entries = scope ? by_namespace[scope] : [] of Tuple(ClassDecl, Bool, Int32, Int32)
       entries.size == 1 || (entries.size > 1 && entries.all?(&.[1])) ? entries.map(&.[0]) : [] of ClassDecl
     end
+  end
+
+  # An action a controller inherits is declared in its base class's file; the
+  # controller's own attributes govern it too, so its class (and bases) lead
+  # the chain, and its project decides the app-wide policy. The analyzer records
+  # the controller's declaration as a further code path of the endpoint.
+  private def owner_chain(endpoint : Endpoint, chain : Array(ClassDecl), file : String) : Tuple(Array(ClassDecl), String)
+    owner = endpoint.handler.try(&.name.partition('.')[0])
+    return {chain, file} if owner.nil? || chain.empty? || chain.first.name == owner
+    endpoint.details.code_paths.each do |info|
+      line = info.line || next
+      lines = read_file_lines(info.path) || next
+      next if line < 1 || line > lines.size
+      owner_chain = class_chain(info.path, lines, line - 1)
+      return {owner_chain + chain, info.path} if owner_chain.first?.try(&.name) == owner
+    end
+    {chain, file}
   end
 
   # A type declaration line, including a primary-constructor header whose
