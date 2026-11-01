@@ -23,6 +23,9 @@ module Noir::JSReadShape
   MUTATION = /\+\+|--|(?<![=!<>])=(?![=>])/
   # A request option other than GET: `{ method: "POST" }`.
   WRITE_METHOD = /\bmethod\s*:\s*(?:["'`](?!GET["'`])|[A-Za-z_$])/i
+  # `const schema = z.object({`: a validator built from a schema library's
+  # builders, which touch nothing of the app's.
+  SCHEMA_BUILDER = /\A(?:z|yup|Joi)\s*\.\s*[A-Za-z_$][\w$]*\s*\(/
 
   def read_only?(statement : String) : Bool
     text = statement.strip
@@ -35,8 +38,18 @@ module Noir::JSReadShape
     return false if value.matches?(WRITE_METHOD)
     code = blank_strings(value)
     return false if code.matches?(MUTATION) || code.includes?("function")
+    return true if pure_schema?(code)
     code.scan(CALL).all? { |call| KEYWORDS.includes?(call[1]) || call[1].matches?(READ_NAME) }
   end
+
+  # A builder chain alone: every call a member of the chain, nothing awaited
+  # (`z.object({ a: z.string() })`, not `z.object(…).parse(await save(req))`).
+  private def pure_schema?(code : String) : Bool
+    code.matches?(SCHEMA_BUILDER) && !code.includes?("await") &&
+      code.scan(BARE_CALL).all? { |call| KEYWORDS.includes?(call[1]) }
+  end
+
+  BARE_CALL = /(?<![\w$.])([A-Za-z_$][\w$]*)\s*[(`]/
 
   # String literals emptied; a template keeps its backticks so a tagged
   # template (`` sql`DELETE …` ``) still reads as a call.
