@@ -646,7 +646,7 @@ module Analyzer::Ruby
 
     BARE_VAR_ARG = /\A((?:scope|namespace|get|post|put|patch|delete|options|head|match|resources?)\s*\(?\s*)([a-z_][a-z0-9_]*)(?=\s*(?:,|=>|\)|\bdo\b|\z))/
 
-    APP_CONFIG_REF =/\b(?:Rails\.configuration|Rails\.application\.config|[A-Z][A-Za-z0-9_]*::Application\.config)\.([a-z_][a-z0-9_]*)\b(?![\w(\[.=])/
+    APP_CONFIG_REF = /\b(?:Rails\.configuration|Rails\.application\.config|[A-Z][A-Za-z0-9_]*::Application\.config)\.([a-z_][a-z0-9_]*)\b(?![\w(\[.=])/
 
     @app_config_values = Hash(String, Hash(String, String)).new
 
