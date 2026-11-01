@@ -1,9 +1,9 @@
 require "../../engines/javascript_engine"
-require "../../../miniparsers/js_route_extractor"
 require "../../../miniparsers/js_callee_extractor"
 require "../../../miniparsers/import_graph"
 require "../../../utils/url_path"
-require "../../../utils/top_level_split"
+require "../../../ext/tree_sitter/tree_sitter"
+require "../../../miniparsers/extraction_result_cache"
 
 module Analyzer::Javascript
   # Feathers.js (https://feathersjs.com) is service-based rather than
@@ -32,54 +32,6 @@ module Analyzer::Javascript
   # messageMethods = ['find', 'get', ...] as const`) rather than
   # inline literals — both are resolved the same one-`import`-hop way
   # as the service class itself.
-  #
-  # ## False-positive risk
-  #
-  # `app.use('/path', someExpression)` is also the generic Express
-  # middleware/router-mount idiom, and Express coexists with Feathers
-  # in the same JS/Node ecosystem noir already supports. To avoid
-  # stealing routes from a plain Express app (or a sibling Express
-  # app in a monorepo), a `.use()` call is only treated as a Feathers
-  # service registration when the second argument is structurally
-  # service-shaped:
-  #
-  #   * `new SomeClass(...)`             — Express never mounts a
-  #     freshly-constructed instance this way; routers/middleware are
-  #     always factory calls (`express.Router()`, `cors()`, ...)
-  #     without `new`.
-  #   * an inline object literal `{ ... }`.
-  #   * a bare identifier that resolves (same-file or one `require`/
-  #     `import` hop, via `Noir::ImportGraph`) to a class or object
-  #     literal — but NOT to `express.Router()`/`Router()`.
-  #   * a bare identifier that cannot be resolved at all, but the same
-  #     file also calls `app.service(<same path>)` — an API Express
-  #     apps never have, since `.service()` doesn't exist on a plain
-  #     Express `app`.
-  #
-  # A `identifier(...)` / `member.expr(...)` call (the shape of
-  # `express.Router()`, `cors()`, `express.static(...)`, ...) is never
-  # accepted, so ordinary Express middleware mounting is left alone.
-  #
-  # When the service expression resolves to a real class/object body,
-  # only the CRUD methods that body actually defines are emitted — a
-  # service that only implements `find`/`get` does not get `create`/
-  # `update`/`patch`/`remove` fabricated for it. The one exception is
-  # a class that `extends` one of the well-known Feathers database
-  # adapters (`KnexService`, `MongoDBService`, `MemoryService`, ...) —
-  # those always implement the full CRUD set themselves regardless of
-  # which methods the subclass overrides, which is how the official
-  # CLI generator's default `<name>.class.ts` looks
-  # (`export class MessageService extends KnexService<...> {}`, no
-  # method bodies at all).
-  #
-  # When the expression can't be resolved to a body at all (external
-  # package, dynamic value, ...) but the structural evidence above is
-  # still strong enough to be confident this IS a Feathers
-  # registration, the full 6-verb CRUD set is emitted as a documented,
-  # deliberately conservative fallback — never for a body we DID
-  # inspect, found to extend nothing adapter-like, and found zero
-  # CRUD-shaped methods in, which is treated as a real negative
-  # (nothing emitted) rather than a fallback trigger.
   class Feathers < JavascriptEngine
     analyzer_for "js_feathers"
 
@@ -111,27 +63,56 @@ module Analyzer::Javascript
       "RethinkDBService", "MongooseService", "FeathersSequelize",
     }
 
-    # Crystal recompiles an interpolated regex literal on every
-    # evaluation; these are keyed by the (small, fixed) CRUD method
-    # name set, so build them once at load time rather than per call.
-    # `m` makes `^` match at each line start within a multi-line body,
-    # not just the start of the whole string.
-    METHOD_PAREN_RE = CRUD_METHODS.to_h { |m| {m, /^[ \t]*(?:public\s+|private\s+|protected\s+|static\s+|async\s+)*#{m}\s*\(/m} }
-    METHOD_COLON_RE = CRUD_METHODS.to_h { |m| {m, /^[ \t]*#{m}\s*:/m} }
-
     USE_CALL_RE = /\.use\s*\(/
 
     QUERY_PARAM_RE       = /\bparams\.query\.(\w+)|\bparams\.query\[\s*['"](\w+)['"]\s*\]/
     QUERY_DESTRUCTURE_RE = /(?:const|let|var)\s*\{\s*([^}]+)\}\s*=\s*params\.query\b/
     HEADER_PARAM_RE      = /\bparams\.headers\.(\w+)|\bparams\.headers\[\s*['"]([\w-]+)['"]\s*\]/
 
-    # A resolved service body: `content`/`path` are the file the body
-    # actually lives in (which may differ from the `.use()` call's own
-    # file after a cross-file `require`/`import` hop), `open_brace`/
-    # `close_brace` bound the body, and `adapter_backed` records
-    # whether the body is a class `extends`-ing a well-known Feathers
-    # database adapter (see `KNOWN_ADAPTER_BASE_CLASSES`).
-    private record ServiceBody, content : String, path : String, open_brace : Int32, close_brace : Int32, adapter_backed : Bool = false
+    record FeathersMethodInfo,
+      params : Array(Param),
+      callees : Array(Noir::JSCalleeExtractor::Entry)
+
+    record FeathersServiceDef,
+      adapter_backed : Bool,
+      methods : Hash(String, FeathersMethodInfo)
+
+    record FeathersUseCall,
+      path_arg : String,
+      path_is_literal : Bool,
+      service_node_type : Symbol, # :new_class, :object, :identifier
+      service_name : String,      # class_name or identifier name or ""
+      inline_service : FeathersServiceDef?,
+      methods_option : Set(String)?,
+      methods_option_ident : String?,
+      line : Int32
+
+    record FeathersFileFacts,
+      classes : Hash(String, FeathersServiceDef),
+      named_objects : Hash(String, FeathersServiceDef),
+      default_export_object : FeathersServiceDef?,
+      sole_class : FeathersServiceDef?,
+      string_constants : Hash(String, String),
+      array_constants : Hash(String, Set(String)),
+      local_instances : Hash(String, String),
+      router_factories : Set(String),
+      service_calls : Set(String),
+      imports : Hash(String, Tuple(String, String)),
+      use_calls : Array(FeathersUseCall)
+
+    @@memo = Hash(UInt64, FeathersFileFacts).new
+    @@memo_mutex = Mutex.new
+
+    Noir::ExtractionResultCache.register_clearer do
+      @@memo_mutex.synchronize { @@memo.clear }
+    end
+
+    private def feathers_file_facts(path : String, content : String, include_callee : Bool) : FeathersFileFacts
+      key = Noir::ExtractionResultCache.key(content, "feathers_facts", path, include_callee ? "1" : "0")
+      Noir::ExtractionResultCache.fetch(@@memo, key, @@memo_mutex) do
+        extract_feathers_facts(path, content, include_callee)
+      end
+    end
 
     def analyze
       result = [] of Endpoint
@@ -141,439 +122,189 @@ module Analyzer::Javascript
         content = read_file_content(path)
         next unless content.matches?(USE_CALL_RE)
 
-        # The `use(...)` walk reads arguments as text; comments blanked
-        # in place keep every offset and line.
-        scan_file(path, Noir::JSRouteExtractor.strip_js_comments(content), result, include_callee)
+        facts = feathers_file_facts(path, content, include_callee)
+        next if facts.use_calls.empty?
+
+        facts.use_calls.each do |call|
+          process_use_call(path, call, facts, result, include_callee)
+        end
       end
 
       result
     end
 
-    # ---------------------------------------------------------------
-    # Per-file scan: find every `<recv>.use(<path>, <service>[,
-    # <options>])` call and, when it structurally looks like a
-    # Feathers service registration, emit its CRUD endpoints.
-    # ---------------------------------------------------------------
-    private def scan_file(path : String, content : String, result : Array(Endpoint), include_callee : Bool)
-      content.scan(/\w+\s*\.\s*use\s*\(/) do |m|
-        call_start = m.begin(0)
-        next unless call_start
-        open_paren = call_start + m[0].size - 1
-        close_paren = Noir::JSRouteExtractor.find_matching_paren(content, open_paren)
-        next unless close_paren
+    private def process_use_call(path : String, call : FeathersUseCall, facts : FeathersFileFacts,
+                                 result : Array(Endpoint), include_callee : Bool)
+      service_path =
+        if call.path_is_literal
+          call.path_arg
+        else
+          resolve_path_literal(path, call.path_arg, facts, include_callee)
+        end
+      return unless service_path
 
-        args = split_top_level_args(content, open_paren + 1, close_paren)
-        next if args.size < 2
+      methods, service_def = resolve_service_methods(path, call, facts, service_path, include_callee)
+      return if methods.nil? || methods.empty?
 
-        service_path = resolve_path_literal(content, path, args[0][0])
-        next unless service_path
+      if opts_methods = call.methods_option
+        methods = methods & opts_methods
+      elsif opt_ident = call.methods_option_ident
+        if resolved_opts = resolve_methods_option(path, opt_ident, facts, include_callee)
+          methods = methods & resolved_opts
+        end
+      end
+      return if methods.empty?
 
-        service_text, service_start = args[1]
+      emit_service_endpoints(result, path, service_path, methods, service_def, call.line)
+    end
 
-        methods, region = resolve_service_methods(content, path, service_text, service_start, service_path, args[0][0])
-        next unless methods
-        next if methods.empty?
+    private def resolve_service_methods(path : String, call : FeathersUseCall, facts : FeathersFileFacts,
+                                        service_path : String, include_callee : Bool) : Tuple(Set(String)?, FeathersServiceDef?)
+      case call.service_node_type
+      when :new_class
+        class_name = call.service_name
+        if service = resolve_class_definition(path, class_name, facts, include_callee)
+          methods = service.adapter_backed ? Set(String).new(CRUD_METHODS) : service.methods.keys.to_set
+          return {methods, service}
+        end
+        {Set(String).new(CRUD_METHODS), nil}
+      when :object
+        if service = call.inline_service
+          methods = service.methods.keys.to_set
+          return {methods, service}
+        end
+        {nil, nil}
+      when :identifier
+        name = call.service_name
+        return {nil, nil} if facts.router_factories.includes?(name)
 
-        if args.size >= 3
-          if opts_methods = parse_methods_option(content, path, args[2][0])
-            methods = methods & opts_methods
-            next if methods.empty?
+        if class_name = facts.local_instances[name]?
+          if service = resolve_class_definition(path, class_name, facts, include_callee)
+            methods = service.adapter_backed ? Set(String).new(CRUD_METHODS) : service.methods.keys.to_set
+            return {methods, service}
           end
-        end
-
-        line = line_number_for_index(content, call_start)
-        emit_service_endpoints(result, path, service_path, methods, region, line, include_callee)
-      end
-    end
-
-    # Classifies the service expression and returns {methods, region}
-    # where `region` is a `ServiceBody` when a real body was located
-    # (nil for the documented full-CRUD fallback). Returns {nil, nil}
-    # when the call should not be treated as a Feathers registration
-    # at all.
-    private def resolve_service_methods(content : String, path : String, service_text : String, service_start : Int32,
-                                        service_path : String, raw_path_arg : String) : Tuple(Set(String)?, ServiceBody?)
-      text = service_text.strip
-
-      if m = text.match(/\Anew\s+([A-Za-z_$][\w$]*)\s*\(/)
-        class_name = m[1]
-        region = find_class_body(content, path, class_name)
-        if region
-          return {methods_for_region(region), region}
-        end
-        # `new X(...)` alone is strong-enough structural evidence to
-        # trust even without locating X's body (e.g. X comes from an
-        # external npm package) — the documented fallback.
-        return {Set(String).new(CRUD_METHODS), nil}
-      end
-
-      if text.starts_with?("{")
-        open_brace = service_start + (service_text.index("{") || 0)
-        close_brace = Noir::JSRouteExtractor.find_matching_brace(content, open_brace)
-        return {nil, nil} unless close_brace
-        region = ServiceBody.new(content, path, open_brace, close_brace)
-        return {methods_for_region(region), region}
-      end
-
-      if text.matches?(/\A[A-Za-z_$][\w$]*\z/)
-        name = text
-        return {nil, nil} if identifier_is_router_factory?(content, name)
-
-        # `const authentication = new AuthenticationService(app); ...;
-        # app.use('authentication', authentication)` — a locally
-        # instantiated service assigned to a variable before being
-        # passed to `.use()`, rather than inlined as `new X(...)`
-        # directly. Resolve the SAME way as the inline `new X(...)`
-        # case, including its external-package fallback.
-        if class_name = local_new_instance_class(content, name)
-          region = find_class_body(content, path, class_name)
-          return {methods_for_region(region), region} if region
           return {Set(String).new(CRUD_METHODS), nil}
         end
 
-        region = find_object_literal_same_file(content, path, name) ||
-                 find_class_or_object_cross_file(content, path, name)
-        if region
-          return {methods_for_region(region), region}
+        if service = resolve_service_definition(path, name, facts, include_callee)
+          methods = service.adapter_backed ? Set(String).new(CRUD_METHODS) : service.methods.keys.to_set
+          return {methods, service}
         end
 
-        if service_call_co_occurs?(content, service_path, raw_path_arg)
+        if service_call_co_occurs?(facts, service_path, call.path_arg)
           return {Set(String).new(CRUD_METHODS), nil}
         end
 
-        return {nil, nil}
-      end
-
-      # `identifier(...)`, `a.b(...)`, ternaries, etc. — the shape of
-      # generic Express middleware/router mounting. Never treated as a
-      # Feathers registration.
-      {nil, nil}
-    end
-
-    # A `ServiceBody` that extends a known adapter always exposes the
-    # full CRUD set (overriding a method customises it, it doesn't
-    # remove the ones the adapter base already implements). Otherwise
-    # only the explicitly-detected methods count — never fabricated.
-    private def methods_for_region(region : ServiceBody) : Set(String)
-      return Set(String).new(CRUD_METHODS) if region.adapter_backed
-      detect_methods(region.content[region.open_brace...region.close_brace])
-    end
-
-    private def detect_methods(body : String) : Set(String)
-      found = Set(String).new
-      CRUD_METHODS.each do |m|
-        if body.matches?(METHOD_PAREN_RE[m]) || body.matches?(METHOD_COLON_RE[m])
-          found << m
-        end
-      end
-      found
-    end
-
-    # ---------------------------------------------------------------
-    # Body resolution helpers
-    # ---------------------------------------------------------------
-
-    private def find_class_body(content : String, path : String, class_name : String) : ServiceBody?
-      if region = named_class_region(content, class_name)
-        return ServiceBody.new(content, path, region[0], region[1], region[2])
-      end
-
-      if resolved = resolve_identifier_via_import(content, path, class_name)
-        resolved_content, resolved_path, exported_name = resolved
-        if region = named_class_region(resolved_content, exported_name)
-          return ServiceBody.new(resolved_content, resolved_path, region[0], region[1], region[2])
-        end
-        if region = sole_class_region(resolved_content)
-          return ServiceBody.new(resolved_content, resolved_path, region[0], region[1], region[2])
-        end
-        if region = default_export_object_region(resolved_content)
-          return ServiceBody.new(resolved_content, resolved_path, region[0], region[1])
-        end
-      end
-
-      nil
-    end
-
-    private def find_object_literal_same_file(content : String, path : String, name : String) : ServiceBody?
-      esc = Regex.escape(name)
-      m = content.match(/(?:const|let|var)\s+#{esc}\s*=\s*\{/)
-      return unless m
-      match_end = m.end(0)
-      return unless match_end
-      open_brace = match_end - 1
-      close_brace = Noir::JSRouteExtractor.find_matching_brace(content, open_brace)
-      return unless close_brace
-      ServiceBody.new(content, path, open_brace, close_brace)
-    end
-
-    private def find_class_or_object_cross_file(content : String, path : String, name : String) : ServiceBody?
-      resolved = resolve_identifier_via_import(content, path, name)
-      return unless resolved
-      resolved_content, resolved_path, exported_name = resolved
-
-      if region = named_class_region(resolved_content, exported_name)
-        return ServiceBody.new(resolved_content, resolved_path, region[0], region[1], region[2])
-      end
-      if region = sole_class_region(resolved_content)
-        return ServiceBody.new(resolved_content, resolved_path, region[0], region[1], region[2])
-      end
-      if region = default_export_object_region(resolved_content)
-        return ServiceBody.new(resolved_content, resolved_path, region[0], region[1])
-      end
-      nil
-    end
-
-    # {open_brace, close_brace, adapter_backed}
-    private def named_class_region(content : String, class_name : String) : Tuple(Int32, Int32, Bool)?
-      esc = Regex.escape(class_name)
-      m = content.match(/\bclass\s+#{esc}\b[^{]*\{/)
-      return unless m
-      match_end = m.end(0)
-      return unless match_end
-      open_brace = match_end - 1
-      close_brace = Noir::JSRouteExtractor.find_matching_brace(content, open_brace)
-      return unless close_brace
-      {open_brace, close_brace, adapter_backed_header?(m[0])}
-    end
-
-    SOLE_CLASS_RE = /\bclass\s+([A-Za-z_$][\w$]*)\b[^{]*\{/
-
-    # Best-effort: a required file that defines exactly one class is
-    # almost always the service class file (the generator's
-    # `<name>.class.js` convention), even when the local import alias
-    # doesn't match the exported name.
-    private def sole_class_region(content : String) : Tuple(Int32, Int32, Bool)?
-      matches = content.scan(SOLE_CLASS_RE)
-      return unless matches.size == 1
-      m = matches[0]
-      match_end = m.end(0)
-      return unless match_end
-      open_brace = match_end - 1
-      close_brace = Noir::JSRouteExtractor.find_matching_brace(content, open_brace)
-      return unless close_brace
-      {open_brace, close_brace, adapter_backed_header?(m[0])}
-    end
-
-    private def default_export_object_region(content : String) : Tuple(Int32, Int32)?
-      m = content.match(/module\.exports\s*=\s*\{/)
-      return unless m
-      match_end = m.end(0)
-      return unless match_end
-      open_brace = match_end - 1
-      close_brace = Noir::JSRouteExtractor.find_matching_brace(content, open_brace)
-      return unless close_brace
-      {open_brace, close_brace}
-    end
-
-    # `header` is the full class declaration text, from `class Name`
-    # through the opening `{`. A TypeScript generic bound
-    # (`<T extends Params>`) can itself contain the word `extends`, so
-    # the REAL base class — if any — is the LAST `extends X` in the
-    # header (the generic parameter list, if present, always closes
-    # before the real `extends` clause).
-    private def adapter_backed_header?(header : String) : Bool
-      matches = header.scan(/\bextends\s+([A-Za-z_$][\w$]*)/)
-      return false if matches.empty?
-      base_name = matches.last[1]?
-      !base_name.nil? && KNOWN_ADAPTER_BASE_CLASSES.includes?(base_name)
-    end
-
-    # Resolves `name` to {target_content, target_path, exported_name}
-    # by following exactly one `require`/`import` hop from `content`
-    # (mirrors the one-level-deep philosophy of `Noir::ImportGraph`).
-    # Only relative specifiers (`./...`, `../...`) are followed —
-    # external npm packages have no source to inspect.
-    private def resolve_identifier_via_import(content : String, path : String, name : String) : Tuple(String, String, String)?
-      esc = Regex.escape(name)
-
-      spec = nil
-      exported_name = name
-
-      if m = content.match(/(?:const|let|var)\s+#{esc}\s*=\s*require\(\s*['"]([^'"]+)['"]\s*\)/)
-        spec = m[1]
-      elsif m = content.match(/import\s+#{esc}\s+from\s+['"]([^'"]+)['"]/)
-        spec = m[1]
+        {nil, nil}
       else
-        # A real source file typically carries several destructured
-        # `require`/named `import` statements, and the target name may
-        # be in any of them (not necessarily the first) — e.g. a
-        # generated Feathers service file imports `authenticate` from
-        # `@feathersjs/authentication` before it imports the service
-        # class itself from `./x.class`. `String#match` only ever
-        # inspects the FIRST occurrence, so scan every occurrence of
-        # each destructuring shape until one actually contains `name`.
-        content.scan(/(?:const|let|var)\s*\{\s*([^}]*)\}\s*=\s*require\(\s*['"]([^'"]+)['"]\s*\)/) do |dm|
-          next unless dm.size >= 3
-          list = dm[1]
-          next unless list.split(",").any? { |entry| destructure_local_name(entry) == name }
-          spec = dm[2]
-          exported_name = destructure_exported_name(list, name)
-        end
+        {nil, nil}
+      end
+    end
 
-        if spec.nil?
-          content.scan(/import\s*\{\s*([^}]*)\}\s*from\s*['"]([^'"]+)['"]/) do |dm|
-            next unless dm.size >= 3
-            list = dm[1]
-            next unless list.split(",").any? { |entry| destructure_local_name(entry) == name }
-            spec = dm[2]
-            exported_name = destructure_exported_name(list, name)
+    private def resolve_class_definition(path : String, class_name : String, facts : FeathersFileFacts, include_callee : Bool) : FeathersServiceDef?
+      if cls = facts.classes[class_name]?
+        return cls
+      end
+
+      if imp = facts.imports[class_name]?
+        spec, exported_name = imp
+        resolved_path = Noir::ImportGraph.resolve_relative_import(path, spec, boundary: import_boundary_for(path))
+        if resolved_path
+          begin
+            resolved_content = read_file_content(resolved_path)
+            target_facts = feathers_file_facts(resolved_path, resolved_content, include_callee)
+            return target_facts.classes[exported_name]? || target_facts.sole_class || target_facts.default_export_object
+          rescue
           end
         end
       end
 
-      return unless spec
-      return unless spec.starts_with?("./") || spec.starts_with?("../")
+      nil
+    end
 
-      resolved_path = Noir::ImportGraph.resolve_relative_import(path, spec, boundary: import_boundary_for(path))
-      return unless resolved_path
-
-      begin
-        resolved_content = read_file_content(resolved_path)
-      rescue
-        return
+    private def resolve_service_definition(path : String, name : String, facts : FeathersFileFacts, include_callee : Bool) : FeathersServiceDef?
+      if service = facts.classes[name]?
+        return service
+      end
+      if service = facts.named_objects[name]?
+        return service
       end
 
-      {resolved_content, resolved_path, exported_name}
-    end
-
-    private def destructure_local_name(entry : String) : String
-      entry = entry.strip
-      return "" if entry.empty?
-      entry.includes?(":") ? entry.split(":").last.strip : entry
-    end
-
-    private def destructure_exported_name(list : String, local_name : String) : String
-      list.split(",").each do |entry|
-        entry = entry.strip
-        next if entry.empty?
-        if entry.includes?(":")
-          parts = entry.split(":").map(&.strip)
-          exported = parts[0]? || local_name
-          local = parts[1]? || exported
-          return exported if local == local_name
-        elsif entry == local_name
-          return entry
+      if imp = facts.imports[name]?
+        spec, exported_name = imp
+        resolved_path = Noir::ImportGraph.resolve_relative_import(path, spec, boundary: import_boundary_for(path))
+        if resolved_path
+          begin
+            resolved_content = read_file_content(resolved_path)
+            target_facts = feathers_file_facts(resolved_path, resolved_content, include_callee)
+            return target_facts.classes[exported_name]? ||
+              target_facts.sole_class ||
+              target_facts.named_objects[exported_name]? ||
+              target_facts.default_export_object
+          rescue
+          end
         end
       end
-      local_name
+
+      nil
     end
 
-    private def identifier_is_router_factory?(content : String, name : String) : Bool
-      esc = Regex.escape(name)
-      content.matches?(/(?:const|let|var)\s+#{esc}\s*=\s*(?:express\.Router\s*\(\s*\)|Router\s*\(\s*\))/)
+    private def resolve_path_literal(path : String, name : String, facts : FeathersFileFacts, include_callee : Bool) : String?
+      if s = facts.string_constants[name]?
+        return s
+      end
+
+      if imp = facts.imports[name]?
+        spec, exported_name = imp
+        resolved_path = Noir::ImportGraph.resolve_relative_import(path, spec, boundary: import_boundary_for(path))
+        if resolved_path
+          begin
+            resolved_content = read_file_content(resolved_path)
+            target_facts = feathers_file_facts(resolved_path, resolved_content, include_callee)
+            return target_facts.string_constants[exported_name]?
+          rescue
+          end
+        end
+      end
+
+      nil
     end
 
-    # `const <name> = new ClassName(...)` — the class name a local
-    # variable was directly instantiated from, if any.
-    private def local_new_instance_class(content : String, name : String) : String?
-      esc = Regex.escape(name)
-      m = content.match(/(?:const|let|var)\s+#{esc}\s*=\s*new\s+([A-Za-z_$][\w$]*)\s*\(/)
-      m ? m[1] : nil
+    private def resolve_methods_option(path : String, name : String, facts : FeathersFileFacts, include_callee : Bool) : Set(String)?
+      if mset = facts.array_constants[name]?
+        return mset
+      end
+
+      if imp = facts.imports[name]?
+        spec, exported_name = imp
+        resolved_path = Noir::ImportGraph.resolve_relative_import(path, spec, boundary: import_boundary_for(path))
+        if resolved_path
+          begin
+            resolved_content = read_file_content(resolved_path)
+            target_facts = feathers_file_facts(resolved_path, resolved_content, include_callee)
+            return target_facts.array_constants[exported_name]?
+          rescue
+          end
+        end
+      end
+
+      nil
     end
 
-    # `raw_path_arg` is the ORIGINAL (unresolved) text of `.use()`'s
-    # first argument — either a quoted literal or the bare identifier
-    # it came from — so a co-located `app.service(messagePath)` call
-    # (v5/"Dove" style, the path itself is a shared constant) is
-    # recognised alongside the classic `app.service('messages')` form.
-    private def service_call_co_occurs?(content : String, service_path : String, raw_path_arg : String) : Bool
+    private def service_call_co_occurs?(facts : FeathersFileFacts, service_path : String, raw_path_arg : String) : Bool
       normalized = service_path.lstrip('/')
-      literal_candidates = Set{service_path, normalized, "/#{normalized}"}
-      return true if literal_candidates.any? do |candidate|
-                       content.matches?(/\.service\(\s*['"]#{Regex.escape(candidate)}['"]\s*\)/)
-                     end
+      candidates = Set{service_path, normalized, "/#{normalized}"}
+      return true if candidates.any? { |c| facts.service_calls.includes?(c) }
 
       raw = raw_path_arg.strip
-      return false unless raw.matches?(/\A[A-Za-z_$][\w$]*\z/)
-      content.matches?(/\.service\(\s*#{Regex.escape(raw)}\s*\)/)
+      return false if raw.empty?
+      facts.service_calls.includes?(raw)
     end
-
-    # `.use()`'s first argument: a quoted string literal, or a bare
-    # identifier resolved (same-file, or one `require`/`import` hop)
-    # to one — the v5/"Dove" CLI generator centralises each service's
-    # path in a sibling `<name>.shared.ts`'s `export const xPath =
-    # 'x'`, referenced by identifier at the call site.
-    private def resolve_path_literal(content : String, path : String, arg_text : String) : String?
-      if literal = quoted_literal(arg_text)
-        return literal
-      end
-
-      name = arg_text.strip
-      return unless name.matches?(/\A[A-Za-z_$][\w$]*\z/)
-
-      if literal = same_file_string_const(content, name)
-        return literal
-      end
-
-      if resolved = resolve_identifier_via_import(content, path, name)
-        resolved_content, _, exported_name = resolved
-        return same_file_string_const(resolved_content, exported_name)
-      end
-
-      nil
-    end
-
-    private def same_file_string_const(content : String, name : String) : String?
-      esc = Regex.escape(name)
-      m = content.match(/(?:export\s+)?(?:const|let|var)\s+#{esc}\s*(?::\s*[^=]+)?=\s*['"]([^'"]+)['"]/)
-      m ? m[1] : nil
-    end
-
-    # `{ methods: ['find', 'get'] }` — the v5 `app.use` options
-    # argument. The array itself may also be a bare identifier
-    # resolved the same one-hop way as the path
-    # (`export const xMethods = ['find', ...] as const`). Returns nil
-    # when the argument isn't (or doesn't contain, or can't resolve) a
-    # `methods:` value, so callers can distinguish "no options given"
-    # from "options given with an empty list".
-    private def parse_methods_option(content : String, path : String, options_text : String) : Set(String)?
-      m = options_text.match(/\bmethods\s*:\s*(\[[^\]]*\]|[A-Za-z_$][\w$]*)/)
-      return unless m
-      raw = m[1]
-
-      list_text =
-        if raw.starts_with?("[")
-          raw[1..-2]
-        else
-          resolve_identifier_array_text(content, path, raw)
-        end
-      return unless list_text
-
-      found = Set(String).new
-      list_text.scan(/['"](\w+)['"]/) do |lm|
-        found << lm[1].downcase if lm.size > 1 && CRUD_METHODS.includes?(lm[1].downcase)
-      end
-      found
-    end
-
-    private def resolve_identifier_array_text(content : String, path : String, name : String) : String?
-      if text = same_file_array_const(content, name)
-        return text
-      end
-
-      if resolved = resolve_identifier_via_import(content, path, name)
-        resolved_content, _, exported_name = resolved
-        return same_file_array_const(resolved_content, exported_name)
-      end
-
-      nil
-    end
-
-    private def same_file_array_const(content : String, name : String) : String?
-      esc = Regex.escape(name)
-      m = content.match(/(?:export\s+)?(?:const|let|var)\s+#{esc}\s*(?::\s*[^=]+)?=\s*\[([^\]]*)\]/)
-      m ? m[1] : nil
-    end
-
-    # ---------------------------------------------------------------
-    # Endpoint construction
-    # ---------------------------------------------------------------
 
     private def emit_service_endpoints(result : Array(Endpoint), path : String, service_path : String,
-                                       methods : Set(String), region : ServiceBody?,
-                                       line : Int32, include_callee : Bool)
+                                       methods : Set(String), service : FeathersServiceDef?,
+                                       line : Int32)
       base_url = normalize_service_path(service_path)
-      method_regions = region ? collect_method_regions(region.content, region.open_brace, region.close_brace) : {} of String => Tuple(Int32, Int32)
 
       CRUD_METHODS.each do |crud_method|
         next unless methods.includes?(crud_method)
@@ -587,14 +318,11 @@ module Analyzer::Javascript
         end
         endpoint.push_param(Param.new("body", "", "json")) if BODY_METHODS.includes?(crud_method)
 
-        if region && (mr = method_regions[crud_method]?)
-          bc = region.content
-          method_body = bc[(mr[0] + 1)...mr[1]]
-          extract_method_params(endpoint, method_body)
-          if include_callee
-            method_line = line_number_for_index(bc, mr[0])
-            attach_method_callees(endpoint, method_body, region.path, method_line)
+        if service && (method_info = service.methods[crud_method]?)
+          method_info.params.each do |p|
+            endpoint.push_param(p)
           end
+          attach_js_callees(endpoint, method_info.callees)
         end
 
         result << endpoint
@@ -607,73 +335,452 @@ module Analyzer::Javascript
       trimmed.starts_with?("/") ? trimmed : "/#{trimmed}"
     end
 
-    # Locates each implemented CRUD method's own function body inside
-    # [region_start, region_end) — paren-form definitions only
-    # (`method(...) { ... }`), so an arrow-function-with-colon-value
-    # definition (`find: (params) => expr`, no guaranteed braces) is
-    # counted as "implemented" by `detect_methods` but simply has no
-    # per-method param/callee extraction here.
-    private def collect_method_regions(content : String, region_start : Int32, region_end : Int32) : Hash(String, Tuple(Int32, Int32))
-      region = content[region_start...region_end]
-      found = {} of String => Tuple(Int32, Int32)
+    private def extract_feathers_facts(path : String, source : String, include_callees : Bool) : FeathersFileFacts
+      classes = Hash(String, FeathersServiceDef).new
+      named_objects = Hash(String, FeathersServiceDef).new
+      default_export_object = nil.as(FeathersServiceDef?)
+      string_constants = Hash(String, String).new
+      array_constants = Hash(String, Set(String)).new
+      local_instances = Hash(String, String).new
+      router_factories = Set(String).new
+      service_calls = Set(String).new
+      imports = Hash(String, Tuple(String, String)).new
+      use_calls = [] of FeathersUseCall
+      default_export_name = nil.as(String?)
 
-      CRUD_METHODS.each do |m|
-        match = region.match(METHOD_PAREN_RE[m])
-        next unless match
-        rel_start = match.begin(0)
-        next unless rel_start
-        abs_start = region_start + rel_start
+      Noir::TreeSitter.parse_js_family(source, path) do |root|
+        Noir::TreeSitter.walk(root) do |node|
+          case Noir::TreeSitter.node_type(node)
+          when "class_declaration"
+            if cd_name = Noir::TreeSitter.field(node, "name")
+              name = Noir::TreeSitter.node_text(cd_name, source)
+              classes[name] = extract_service_def_from_class(node, source, path, include_callees)
+            end
+          when "export_statement"
+            if decl = Noir::TreeSitter.field(node, "declaration")
+              decl_unwrapped = Noir::TreeSitter.unwrap_expression(decl)
+              if Noir::TreeSitter.node_type(decl_unwrapped) == "class_declaration"
+                cls = extract_service_def_from_class(decl_unwrapped, source, path, include_callees)
+                if exp_cd_name = Noir::TreeSitter.field(decl_unwrapped, "name")
+                  classes[Noir::TreeSitter.node_text(exp_cd_name, source)] = cls
+                end
+              end
+            elsif val = Noir::TreeSitter.field(node, "value")
+              val_unwrapped = Noir::TreeSitter.unwrap_expression(val)
+              case Noir::TreeSitter.node_type(val_unwrapped)
+              when "object"
+                default_export_object = extract_service_def_from_object(val_unwrapped, source, path, include_callees)
+              when "class"
+                cls = extract_service_def_from_class(val_unwrapped, source, path, include_callees)
+                classes["default"] = cls
+                if val_cd_name = Noir::TreeSitter.field(val_unwrapped, "name")
+                  classes[Noir::TreeSitter.node_text(val_cd_name, source)] = cls
+                end
+              when "identifier"
+                default_export_name = Noir::TreeSitter.node_text(val_unwrapped, source)
+              end
+            end
+          when "variable_declarator"
+            vd_name = Noir::TreeSitter.field(node, "name")
+            vd_val = Noir::TreeSitter.field(node, "value")
+            if vd_name && vd_val
+              if Noir::TreeSitter.node_type(vd_name) == "identifier"
+                name = Noir::TreeSitter.node_text(vd_name, source)
+                val = Noir::TreeSitter.unwrap_expression(vd_val)
+                case Noir::TreeSitter.node_type(val)
+                when "class"
+                  classes[name] = extract_service_def_from_class(val, source, path, include_callees)
+                when "object"
+                  named_objects[name] = extract_service_def_from_object(val, source, path, include_callees)
+                when "new_expression"
+                  if ctor = Noir::TreeSitter.field(val, "constructor")
+                    ctor_unwrapped = Noir::TreeSitter.unwrap_expression(ctor)
+                    if Noir::TreeSitter.node_type(ctor_unwrapped) == "identifier"
+                      local_instances[name] = Noir::TreeSitter.node_text(ctor_unwrapped, source)
+                    end
+                  end
+                when "string", "template_string"
+                  if s = decode_string(val, source)
+                    string_constants[name] = s
+                  end
+                when "array"
+                  mset = Set(String).new
+                  Noir::TreeSitter.each_named_arg(val) do |elem|
+                    if s = decode_string(Noir::TreeSitter.unwrap_expression(elem), source)
+                      mset << s.downcase if CRUD_METHODS.includes?(s.downcase)
+                    end
+                  end
+                  array_constants[name] = mset
+                when "call_expression"
+                  if fn = Noir::TreeSitter.field(val, "function")
+                    fn_unwrapped = Noir::TreeSitter.unwrap_expression(fn)
+                    fn_text = Noir::TreeSitter.node_text(fn_unwrapped, source)
+                    if fn_text == "express.Router" || fn_text == "Router"
+                      router_factories << name
+                    elsif fn_text == "require"
+                      if args_node = Noir::TreeSitter.field(val, "arguments")
+                        if arg0 = Noir::TreeSitter.first_named_arg(args_node)
+                          if spec = decode_string(arg0, source)
+                            imports[name] = {spec, "default"}
+                          end
+                        end
+                      end
+                    end
+                  end
+                end
+              elsif Noir::TreeSitter.node_type(vd_name) == "object_pattern"
+                val = Noir::TreeSitter.unwrap_expression(vd_val)
+                if Noir::TreeSitter.node_type(val) == "call_expression"
+                  if fn = Noir::TreeSitter.field(val, "function")
+                    if Noir::TreeSitter.node_text(Noir::TreeSitter.unwrap_expression(fn), source) == "require"
+                      if args_node = Noir::TreeSitter.field(val, "arguments")
+                        if arg0 = Noir::TreeSitter.first_named_arg(args_node)
+                          if spec = decode_string(arg0, source)
+                            Noir::TreeSitter.each_named_child(vd_name) do |prop|
+                              case Noir::TreeSitter.node_type(prop)
+                              when "shorthand_property_identifier_pattern"
+                                loc_name = Noir::TreeSitter.node_text(prop, source)
+                                imports[loc_name] = {spec, loc_name}
+                              when "pair_pattern"
+                                pat_k = Noir::TreeSitter.field(prop, "key")
+                                pat_v = Noir::TreeSitter.field(prop, "value")
+                                if pat_k && pat_v
+                                  exp_name = Noir::TreeSitter.node_text(pat_k, source)
+                                  loc_name = Noir::TreeSitter.node_text(pat_v, source)
+                                  imports[loc_name] = {spec, exp_name}
+                                end
+                              end
+                            end
+                          end
+                        end
+                      end
+                    end
+                  end
+                end
+              end
+            end
+          when "assignment_expression"
+            left = Noir::TreeSitter.field(node, "left")
+            right = Noir::TreeSitter.field(node, "right")
+            if left && right
+              left_text = Noir::TreeSitter.node_text(Noir::TreeSitter.unwrap_expression(left), source)
+              right_unwrapped = Noir::TreeSitter.unwrap_expression(right)
+              if left_text == "module.exports"
+                case Noir::TreeSitter.node_type(right_unwrapped)
+                when "object"
+                  default_export_object = extract_service_def_from_object(right_unwrapped, source, path, include_callees)
+                when "class"
+                  cls = extract_service_def_from_class(right_unwrapped, source, path, include_callees)
+                  classes["default"] = cls
+                  if asgn_cd_name = Noir::TreeSitter.field(right_unwrapped, "name")
+                    classes[Noir::TreeSitter.node_text(asgn_cd_name, source)] = cls
+                  end
+                when "identifier"
+                  default_export_name = Noir::TreeSitter.node_text(right_unwrapped, source)
+                end
+              elsif left_text.starts_with?("exports.")
+                exp_name = left_text[8..]
+                case Noir::TreeSitter.node_type(right_unwrapped)
+                when "class"
+                  cls = extract_service_def_from_class(right_unwrapped, source, path, include_callees)
+                  classes[exp_name] = cls
+                when "object"
+                  named_objects[exp_name] = extract_service_def_from_object(right_unwrapped, source, path, include_callees)
+                end
+              end
+            end
+          when "import_statement"
+            if src_node = Noir::TreeSitter.field(node, "source")
+              if spec = decode_string(src_node, source)
+                Noir::TreeSitter.walk(node) do |child|
+                  case Noir::TreeSitter.node_type(child)
+                  when "import_specifier"
+                    imp_name = Noir::TreeSitter.field(child, "name")
+                    imp_alias = Noir::TreeSitter.field(child, "alias")
+                    if imp_name
+                      exp_name = Noir::TreeSitter.node_text(imp_name, source)
+                      loc_name = imp_alias ? Noir::TreeSitter.node_text(imp_alias, source) : exp_name
+                      imports[loc_name] = {spec, exp_name}
+                    end
+                  when "import_clause"
+                    Noir::TreeSitter.each_named_child(child) do |c|
+                      if Noir::TreeSitter.node_type(c) == "identifier"
+                        loc_name = Noir::TreeSitter.node_text(c, source)
+                        imports[loc_name] = {spec, "default"}
+                      end
+                    end
+                  end
+                end
+              end
+            end
+          when "call_expression"
+            callee = Noir::TreeSitter.field(node, "function")
+            if callee
+              callee_unwrapped = Noir::TreeSitter.unwrap_expression(callee)
+              if Noir::TreeSitter.node_type(callee_unwrapped) == "member_expression"
+                prop = Noir::TreeSitter.field(callee_unwrapped, "property")
+                prop_name = property_key_name(prop, source)
 
-        open_paren = content.index('(', abs_start)
-        next unless open_paren
-        close_paren = Noir::JSRouteExtractor.find_matching_paren(content, open_paren)
-        next unless close_paren
+                if prop_name == "service"
+                  if args_node = Noir::TreeSitter.field(node, "arguments")
+                    if arg0 = Noir::TreeSitter.first_named_arg(args_node)
+                      arg0_unwrapped = Noir::TreeSitter.unwrap_expression(arg0)
+                      case Noir::TreeSitter.node_type(arg0_unwrapped)
+                      when "string", "template_string"
+                        if s = decode_string(arg0_unwrapped, source)
+                          service_calls << s
+                          service_calls << s.lstrip('/')
+                          service_calls << "/#{s.lstrip('/')}"
+                        end
+                      when "identifier"
+                        service_calls << Noir::TreeSitter.node_text(arg0_unwrapped, source)
+                      end
+                    end
+                  end
+                elsif prop_name == "use"
+                  if args_node = Noir::TreeSitter.field(node, "arguments")
+                    args = [] of LibTreeSitter::TSNode
+                    Noir::TreeSitter.each_named_arg(args_node) { |a| args << a }
+                    if args.size >= 2
+                      arg0 = Noir::TreeSitter.unwrap_expression(args[0])
+                      path_str = decode_string(arg0, source)
+                      path_arg = ""
+                      path_is_literal = false
+                      if path_str
+                        path_arg = path_str
+                        path_is_literal = true
+                      elsif Noir::TreeSitter.node_type(arg0) == "identifier"
+                        path_arg = Noir::TreeSitter.node_text(arg0, source)
+                        path_is_literal = false
+                      end
 
-        open_brace = content.index('{', close_paren)
-        next unless open_brace
-        close_brace = Noir::JSRouteExtractor.find_matching_brace(content, open_brace)
-        next unless close_brace
+                      unless path_arg.empty?
+                        arg1 = Noir::TreeSitter.unwrap_expression(args[1])
+                        service_type = :unknown
+                        service_name = ""
+                        inline_service = nil.as(FeathersServiceDef?)
 
-        found[m] = {open_brace, close_brace}
+                        case Noir::TreeSitter.node_type(arg1)
+                        when "new_expression"
+                          service_type = :new_class
+                          if ctor = Noir::TreeSitter.field(arg1, "constructor")
+                            ctor_unwrapped = Noir::TreeSitter.unwrap_expression(ctor)
+                            if Noir::TreeSitter.node_type(ctor_unwrapped) == "identifier"
+                              service_name = Noir::TreeSitter.node_text(ctor_unwrapped, source)
+                            end
+                          end
+                        when "object"
+                          service_type = :object
+                          inline_service = extract_service_def_from_object(arg1, source, path, include_callees)
+                        when "identifier"
+                          service_type = :identifier
+                          service_name = Noir::TreeSitter.node_text(arg1, source)
+                        end
+
+                        unless service_type == :unknown
+                          methods_option = nil.as(Set(String)?)
+                          methods_option_ident = nil.as(String?)
+
+                          if args.size >= 3
+                            arg2 = Noir::TreeSitter.unwrap_expression(args[2])
+                            if Noir::TreeSitter.node_type(arg2) == "object"
+                              if methods_val = extract_prop_value(arg2, "methods", source)
+                                val_unwrapped = Noir::TreeSitter.unwrap_expression(methods_val)
+                                if Noir::TreeSitter.node_type(val_unwrapped) == "array"
+                                  mset = Set(String).new
+                                  Noir::TreeSitter.each_named_arg(val_unwrapped) do |elem|
+                                    if s = decode_string(Noir::TreeSitter.unwrap_expression(elem), source)
+                                      mset << s.downcase if CRUD_METHODS.includes?(s.downcase)
+                                    end
+                                  end
+                                  methods_option = mset
+                                elsif Noir::TreeSitter.node_type(val_unwrapped) == "identifier"
+                                  methods_option_ident = Noir::TreeSitter.node_text(val_unwrapped, source)
+                                end
+                              end
+                            end
+                          end
+
+                          line = Noir::TreeSitter.node_start_row(node) + 1
+                          use_calls << FeathersUseCall.new(
+                            path_arg, path_is_literal, service_type, service_name,
+                            inline_service, methods_option, methods_option_ident, line
+                          )
+                        end
+                      end
+                    end
+                  end
+                end
+              end
+            end
+          end
+        end
       end
 
+      if def_name = default_export_name
+        if cls = classes[def_name]?
+          classes["default"] = cls
+        end
+      end
+
+      sole_class = classes.size == 1 ? classes.values.first : nil
+
+      FeathersFileFacts.new(
+        classes, named_objects, default_export_object, sole_class,
+        string_constants, array_constants, local_instances,
+        router_factories, service_calls, imports, use_calls
+      )
+    end
+
+    private def extract_service_def_from_class(node : LibTreeSitter::TSNode, source : String,
+                                               path : String, include_callees : Bool) : FeathersServiceDef
+      adapter_backed = adapter_backed_class?(node, source)
+      methods = Hash(String, FeathersMethodInfo).new
+
+      if body_node = Noir::TreeSitter.field(node, "body")
+        Noir::TreeSitter.each_named_child(body_node) do |child|
+          if Noir::TreeSitter.node_type(child) == "method_definition"
+            name_node = Noir::TreeSitter.field(child, "name")
+            method_name = property_key_name(name_node, source)
+            if CRUD_METHODS.includes?(method_name)
+              m_body = Noir::TreeSitter.field(child, "body")
+              body_text = m_body ? Noir::TreeSitter.node_text(m_body, source) : ""
+              params = extract_method_params(body_text)
+              callees = include_callees ? Noir::JSCalleeExtractor.callees_for_handler_node(child, source, path) : [] of Noir::JSCalleeExtractor::Entry
+              methods[method_name] = FeathersMethodInfo.new(params, callees)
+            end
+          end
+        end
+      end
+
+      FeathersServiceDef.new(adapter_backed, methods)
+    end
+
+    private def extract_service_def_from_object(node : LibTreeSitter::TSNode, source : String,
+                                                path : String, include_callees : Bool) : FeathersServiceDef
+      methods = Hash(String, FeathersMethodInfo).new
+
+      Noir::TreeSitter.each_named_child(node) do |child|
+        case Noir::TreeSitter.node_type(child)
+        when "method_definition"
+          name_node = Noir::TreeSitter.field(child, "name")
+          method_name = property_key_name(name_node, source)
+          if CRUD_METHODS.includes?(method_name)
+            m_body = Noir::TreeSitter.field(child, "body")
+            body_text = m_body ? Noir::TreeSitter.node_text(m_body, source) : ""
+            params = extract_method_params(body_text)
+            callees = include_callees ? Noir::JSCalleeExtractor.callees_for_handler_node(child, source, path) : [] of Noir::JSCalleeExtractor::Entry
+            methods[method_name] = FeathersMethodInfo.new(params, callees)
+          end
+        when "pair"
+          key_node = Noir::TreeSitter.field(child, "key")
+          method_name = property_key_name(key_node, source)
+          if CRUD_METHODS.includes?(method_name)
+            if val_node = Noir::TreeSitter.field(child, "value")
+              unwrapped = Noir::TreeSitter.unwrap_expression(val_node)
+              case Noir::TreeSitter.node_type(unwrapped)
+              when "arrow_function", "function_expression"
+                m_body = Noir::TreeSitter.field(unwrapped, "body") || unwrapped
+                body_text = Noir::TreeSitter.node_text(m_body, source)
+                params = extract_method_params(body_text)
+                callees = include_callees ? Noir::JSCalleeExtractor.callees_for_handler_node(unwrapped, source, path) : [] of Noir::JSCalleeExtractor::Entry
+                methods[method_name] = FeathersMethodInfo.new(params, callees)
+              else
+                methods[method_name] = FeathersMethodInfo.new([] of Param, [] of Noir::JSCalleeExtractor::Entry)
+              end
+            end
+          end
+        end
+      end
+
+      FeathersServiceDef.new(false, methods)
+    end
+
+    private def adapter_backed_class?(node : LibTreeSitter::TSNode, source : String) : Bool
+      heritage = nil.as(LibTreeSitter::TSNode?)
+      Noir::TreeSitter.each_named_child(node) do |child|
+        if Noir::TreeSitter.node_type(child) == "class_heritage"
+          heritage = child
+          break
+        end
+      end
+      return false unless heritage
+
+      found = false
+      Noir::TreeSitter.walk(heritage) do |child|
+        case Noir::TreeSitter.node_type(child)
+        when "identifier", "type_identifier"
+          name = Noir::TreeSitter.node_text(child, source)
+          if KNOWN_ADAPTER_BASE_CLASSES.includes?(name)
+            found = true
+          end
+        end
+      end
       found
     end
 
-    private def extract_method_params(endpoint : Endpoint, body : String)
+    private def property_key_name(node : LibTreeSitter::TSNode?, source : String) : String
+      return "" unless node
+      unwrapped = Noir::TreeSitter.unwrap_expression(node)
+      case Noir::TreeSitter.node_type(unwrapped)
+      when "identifier", "property_identifier"
+        Noir::TreeSitter.node_text(unwrapped, source)
+      when "string", "template_string"
+        decode_string(unwrapped, source) || ""
+      else
+        ""
+      end
+    end
+
+    private def extract_prop_value(obj_node : LibTreeSitter::TSNode, name : String, source : String) : LibTreeSitter::TSNode?
+      obj_node = Noir::TreeSitter.unwrap_expression(obj_node)
+      return unless Noir::TreeSitter.node_type(obj_node) == "object"
+      Noir::TreeSitter.each_named_child(obj_node) do |child|
+        case Noir::TreeSitter.node_type(child)
+        when "pair"
+          if key_node = Noir::TreeSitter.field(child, "key")
+            return Noir::TreeSitter.field(child, "value") if property_key_name(key_node, source) == name
+          end
+        when "shorthand_property_identifier"
+          return child if Noir::TreeSitter.node_text(child, source) == name
+        end
+      end
+      nil
+    end
+
+    private def decode_string(node : LibTreeSitter::TSNode, source : String) : String?
+      node = Noir::TreeSitter.unwrap_expression(node)
+      case Noir::TreeSitter.node_type(node)
+      when "string"
+        raw = Noir::TreeSitter.node_text(node, source).strip
+        return if raw.size < 2
+        raw[1..-2]
+      when "template_string"
+        raw = Noir::TreeSitter.node_text(node, source).strip
+        return if raw.size < 2
+        return if raw.includes?("${")
+        raw[1..-2]
+      end
+    end
+
+    private def extract_method_params(body : String) : Array(Param)
+      params = [] of Param
       body.scan(QUERY_PARAM_RE) do |m|
         name = (m[1]? || m[2]?).to_s
-        endpoint.push_param(Param.new(name, "", "query")) unless name.empty?
+        params << Param.new(name, "", "query") unless name.empty?
       end
       body.scan(QUERY_DESTRUCTURE_RE) do |m|
         next unless m.size > 0
         (m[1]? || "").split(",").each do |raw|
           name = raw.split("=").first.strip.split(":").first.strip
-          endpoint.push_param(Param.new(name, "", "query")) unless name.empty?
+          params << Param.new(name, "", "query") unless name.empty?
         end
       end
       body.scan(HEADER_PARAM_RE) do |m|
         name = (m[1]? || m[2]?).to_s
-        endpoint.push_param(Param.new(name, "", "header")) unless name.empty?
+        params << Param.new(name, "", "header") unless name.empty?
       end
-    end
-
-    private def attach_method_callees(endpoint : Endpoint, body : String, path : String, line : Int32)
-      callees = Noir::JSCalleeExtractor.callees_for_function_body(body, path, line)
-      callees.each do |name, callee_path, callee_line|
-        endpoint.push_callee(Callee.new(name, path: callee_path, line: callee_line))
-      end
-    end
-
-    private def quoted_literal(text : String) : String?
-      trimmed = text.strip
-      return if trimmed.size < 2
-      first = trimmed[0]
-      last = trimmed[-1]
-      return unless (first == '\'' || first == '"' || first == '`') && first == last
-      inner = trimmed[1..-2]
-      return if inner.includes?('$') && first == '`' # template literal interpolation — not a static literal
-      inner
+      params
     end
   end
 end

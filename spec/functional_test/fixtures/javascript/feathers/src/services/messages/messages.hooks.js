@@ -1,7 +1,9 @@
 module.exports = {
   before: {
-    all: [],
-    find: [],
+    all: [
+      [authenticate('jwt'), [authorize('admin')]],
+    ],
+    find: [filterQuery([['nested']])],
     get: [],
     create: [],
     update: [],
@@ -9,6 +11,8 @@ module.exports = {
     remove: [],
   },
   after: {
-    all: [],
+    all: [
+      [cleanup(), [auditLog()]],
+    ],
   },
 };
