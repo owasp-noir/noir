@@ -103,6 +103,14 @@ describe "n8n decorator controller auth, options read as code" do
     auth_of(endpoints, "POST", "/rest/a/own-auth").not_nil!.should contain("getAuthMiddleware")
     # n8n's app sign-in: a const list holding only a cookie parser.
     auth_of(endpoints, "GET", "/rest/a/sign-in").should be_nil
+    {"requireApiKey", "validateApiKey", "verifyWebhookSignature", "jwtMiddleware"}.zip({"/rest/a/api-key", "/rest/a/validate-key", "/rest/a/webhook", "/rest/a/jwt"}) do |name, url|
+      auth_of(endpoints, "POST", url).not_nil!.should contain(name)
+    end
+    auth_of(endpoints, "POST", "/rest/a/validated").should be_nil
+  end
+
+  it "does not read a spread in a middleware list as an empty one" do
+    auth_of(endpoints, "POST", "/rest/a/spread-mw").not_nil!.should contain("not read")
   end
 
   it "keeps a literal false and a non-literal value guarded" do

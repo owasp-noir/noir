@@ -84,11 +84,12 @@ module Analyzer::Typescript
     NAMED_REEXPORT = /\bexport\s+(?:type\s+)?\{([^}]*)\}\s*from\s*['"]([^'"]+)['"]/
 
     # A route middleware named as a check of the caller: `scimAuth()`,
-    # `getAuthMiddleware()`, `requireAuth`, `verifyToken`. Not a logger, a
-    # validator or a feature gate (`oauthCallbackLogger`,
-    # `isScimEnabledMiddleware`), whatever else its name holds.
-    MIDDLEWARE_AUTH_NAME = /\A(?:authenticate|requireAuth|isAuthenticated|ensureAuth|verify(?:Token|Signature|ApiKey|Auth|Jwt)|check(?:Auth|Token|ApiKey|Signature))|(?:\A|[a-z0-9])Auth(?:Middleware|Guard|Check)?\z|\Aauth(?:Middleware)?\z|[a-z0-9](?:Token|Signature|ApiKey)(?:Auth|Check|Middleware|Guard)\z/
-    FEATURE_GATE_NAME    = /enabled|licensed|logger|\Alog|validat/i
+    # `getAuthMiddleware()`, `requireAuth`, `requireApiKey`, `verifyToken`,
+    # `verifyWebhookSignature`, `validateApiKey`, `jwtMiddleware`. Not a
+    # logger, another validator or a feature gate (`oauthCallbackLogger`,
+    # `validateBody`, `isScimEnabledMiddleware`), whatever else its name holds.
+    MIDDLEWARE_AUTH_NAME = /\A(?:authenticate|require(?:Auth|ApiKey)|isAuthenticated|ensureAuth|verify(?:Token|Signature|ApiKey|Auth|Jwt|\w*Signature)|validate(?:ApiKey|Token|Signature)|check(?:Auth|Token|ApiKey|Signature))|(?:\A|[a-z0-9])Auth(?:Middleware|Guard|Check)?\z|\Aauth(?:Middleware)?\z|[a-z0-9](?:Token|Signature|ApiKey)(?:Auth|Check|Middleware|Guard)\z|\Ajwt|Jwt/
+    FEATURE_GATE_NAME    = /enabled|licensed|logger|\Alog|validat(?!e(?:ApiKey|Token|Signature))/i
     VERBS                = {"Del" => "DELETE", "QueryMethod" => "QUERY"}
 
     protected def route_decorated(endpoint : Endpoint, decorator_block : String, controller_decorator : String, route_path : String) : Nil
@@ -130,9 +131,9 @@ module Analyzer::Typescript
         # `skipAuth: true` hands auth to the route's own middleware (SCIM's
         # bearer token).
         endpoint.add_tag(Tag.new("auth", "Protected by n8n route middleware #{guard} (#{opened})", TAGGER))
-      elsif middlewares && !middlewares.starts_with?('[')
-        # `middlewares: getDynamicCredentialMiddlewares()`: a list built
-        # elsewhere, not read here.
+      elsif middlewares && (!middlewares.starts_with?('[') || middlewares.matches?(/[\[,]\s*\.\.\./))
+        # `middlewares: getDynamicCredentialMiddlewares()`, `[...extra()]`:
+        # a list built elsewhere, not read here.
         endpoint.add_tag(Tag.new("auth", "Protected by n8n route middlewares `#{middlewares}` (#{opened}; not read, they can admit anyone)", TAGGER))
       elsif opened.includes?(':')
         endpoint.add_tag(Tag.new("auth", "Protected by n8n auth cookie unless `#{opened}` is truthy (a setting can open it)", TAGGER))

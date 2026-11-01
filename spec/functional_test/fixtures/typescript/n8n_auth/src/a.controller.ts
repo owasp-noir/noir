@@ -71,4 +71,22 @@ export class AController {
 
 	@Get('/sign-in', { skipAuth: true, middlewares })
 	signIn() {}
+
+	@Post('/spread-mw', { skipAuth: true, middlewares: [...getDynamicMiddlewares()] })
+	spreadMw() {}
+
+	@Post('/api-key', { skipAuth: true, middlewares: [requireApiKey] })
+	apiKey() {}
+
+	@Post('/validate-key', { skipAuth: true, middlewares: [validateApiKey()] })
+	validateKey() {}
+
+	@Post('/webhook', { skipAuth: true, middlewares: [verifyWebhookSignature] })
+	webhook() {}
+
+	@Post('/jwt', { skipAuth: true, middlewares: [jwtMiddleware] })
+	jwt() {}
+
+	@Post('/validated', { skipAuth: true, middlewares: [validateBody(schema)] })
+	validated() {}
 }
