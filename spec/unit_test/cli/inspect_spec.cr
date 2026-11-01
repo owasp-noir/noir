@@ -179,6 +179,44 @@ describe Noir::CLI::Inspect do
       trace.call("/n/7").should eq(["/n/{id:int?}"])
     end
 
+    it "holds an ASP.NET catch-all to its regex constraint" do
+      spa = "/{**path:regex(^(?!(api|feed)/).*)}"
+      routes = [endpoint("GET", spa), endpoint("GET", "/api/v3/series"), endpoint("GET", "/content/{**path}")]
+      trace = ->(path : String) { Noir::CLI::Inspect.trace(routes, "GET", path).map(&.endpoint.url) }
+      trace.call("/api/v3/series").should eq(["/api/v3/series"])
+      trace.call("/api/v3/other").should be_empty
+      trace.call("/feed/x").should be_empty
+      trace.call("/series/42/overview").should eq([spa])
+      trace.call("/").should eq([spa])
+      # A catch-all without a constraint still takes everything.
+      trace.call("/content/api/x").should eq(["/content/{**path}", spa])
+    end
+
+    it "anchors each alternative of a catch-all constraint, brace-balances it, and holds the empty rest to it" do
+      alt = [endpoint("GET", "/{**path:regex(^x.*|^y.*)}")]
+      trace = ->(routes : Array(Endpoint), path : String) { Noir::CLI::Inspect.trace(routes, "GET", path).size }
+      trace.call(alt, "/xa").should eq(1)
+      trace.call(alt, "/ya").should eq(1)
+      trace.call(alt, "/za").should eq(0)
+
+      empty_or = [endpoint("GET", "/{**path:regex(^$|^x.*)}")]
+      trace.call(empty_or, "/xyz").should eq(1)
+      trace.call(empty_or, "/").should eq(1)
+      trace.call(empty_or, "/q").should eq(0)
+
+      braces = [endpoint("GET", "/f/{**path:regex(^\\d{3}$)}")]
+      trace.call(braces, "/f/123").should eq(1)
+      trace.call(braces, "/f/12").should eq(0)
+
+      nonempty = [endpoint("GET", "/{**path:regex(.+)}")]
+      trace.call(nonempty, "/").should eq(0)
+      trace.call(nonempty, "/a").should eq(1)
+
+      # No PCRE form for class subtraction: unconstrained rather than wrong.
+      subtraction = [endpoint("GET", "/s/{**path:regex([a-z-[aeiou]]+)}")]
+      trace.call(subtraction, "/s/anything").should eq(1)
+    end
+
     it "reads path-to-regexp optional segments and regex constraints" do
       routes = [
         endpoint("GET", "/posts/:id?"),
