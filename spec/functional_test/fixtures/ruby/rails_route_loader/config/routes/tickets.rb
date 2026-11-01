@@ -17,4 +17,9 @@ Sample::Application.routes.draw do
   scope Rails.configuration.api_path do
     get '/ticket_stats', to: 'tickets#stats'
   end
+
+  overview_route = '/ticket_overview'
+  get overview_route => 'tickets#stats'
+  # An unknown local stays opaque instead of becoming a route.
+  get unknown_route => 'tickets#stats'
 end

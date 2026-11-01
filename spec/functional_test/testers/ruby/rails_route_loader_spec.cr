@@ -12,6 +12,7 @@ expected_endpoints = [
   Endpoint.new("/api/v1/tickets/search", "GET", [Param.new("query", "", "query")]),
   Endpoint.new("/api/v1/tickets/search", "POST"),
   Endpoint.new("/api/v1/ticket_stats", "GET"),
+  Endpoint.new("/ticket_overview", "GET"),
   Endpoint.new("/*a", "GET"),
 ]
 
