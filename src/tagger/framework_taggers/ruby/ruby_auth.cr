@@ -555,10 +555,11 @@ class RubyAuthTagger < FrameworkTagger
   # ponytail: the callback's own body only, not the helpers it calls.
   private def role_denied(name : String, paths : Array(String)) : String?
     def_bodies(name, own_defs(name, paths)).each do |body|
+      memo = EmptyLocalMemo.new
       body.each_with_index do |(_, text), i|
         next unless text.matches?(DENY_RESPONSE) || text.matches?(SOFT_DENY)
         next if credential_gated?(body, i)
-        next unless conditions = deny_conditions(body, i)
+        next unless conditions = deny_conditions(body, i, memo)
         parts = deny_parts(conditions)
         next if parts.any? { |c, when_true| credential_present?(c, when_true, Hash(String, String).new, [] of String) }
         parts.each do |c, when_true|
@@ -599,13 +600,14 @@ class RubyAuthTagger < FrameworkTagger
     top = visited.empty?
     return false unless visited.add?(name)
     @rejecting_defs[name] = def_bodies(name).any? do |body|
+      memo = EmptyLocalMemo.new
       body.each_with_index.any? do |(_, text), i|
         rejects = text.matches?(CALLBACK_REJECTS) || (top && text.matches?(/\bsuper\b/) && library_guard_rejects?(name)) ||
                   called_names(text).any? { |m| rails_chain.defs.has_key?(m) && body_rejects?(m, visited) }
         # `return nil if request.headers["Api-Key"].blank?` above a `raise`
         # lets a caller who sent no credential through: the raise refuses a
         # bad one, not an anonymous caller.
-        rejects && !credential_gated?(body, i) && !text.matches?(CREDENTIAL_PRESENT_MODIFIER) && !deny_conditions(body, i).nil?
+        rejects && !credential_gated?(body, i) && !text.matches?(CREDENTIAL_PRESENT_MODIFIER) && !deny_conditions(body, i, memo).nil?
       end
     end
   end
@@ -663,6 +665,7 @@ class RubyAuthTagger < FrameworkTagger
     # on (nil when none decides) and the request-value conditions it needs.
     denies = [] of {String?, Array({String, Bool})}
     def_bodies(name, own_defs(name, paths)).each do |body|
+      memo = EmptyLocalMemo.new
       assigns = Hash(String, String).new
       body.each { |_, text| (m = text.match(/^(@?\w+)\s*\|{0,2}=(?!=)\s*(.+)/)) && (assigns[m[1]] = m[2]) }
       body.each_with_index do |(_, text), i|
@@ -676,8 +679,8 @@ class RubyAuthTagger < FrameworkTagger
                  calls.any? { |m| m != name && rails_chain.defs.has_key?(m) && denies_anonymous?(m, ivars, paths, settings, visited) }
         next unless strict || text.matches?(SOFT_DENY)
         next if credential_gated?(body, i) || text.matches?(CREDENTIAL_PRESENT_MODIFIER)
-        next unless conditions = deny_conditions(body, i)
-        next if forgery_refusal?(text, conditions)
+        next unless conditions = deny_conditions(body, i, memo)
+        next if forgery_refusal?(body, text, conditions)
         raw_parts = deny_parts(conditions)
         next unless parts = class_settings(raw_parts, settings)
         # `check = if arg[:except] ... !except.include?(action_name.to_sym)
@@ -711,15 +714,23 @@ class RubyAuthTagger < FrameworkTagger
   # valid_authenticity_token?(session, params[:authenticity_token])`
   # (zammad's `verify_csrf_token`). Every visitor, anonymous or not, is
   # handed that token, so refusing a request without it is not a login gate.
-  # A deny that also waits on a real credential (`head :unauthorized unless
-  # current_user` below a forgery exit) still is one.
+  # A deny whose own condition, or a block around it, also waits on a real
+  # credential (`head :unauthorized unless current_user` below a forgery
+  # exit, `redirect_to x(csrf_failed: true) unless current_user`) still is
+  # one; a credential word in an exit above (`return if
+  # %w[token_auth].include?(@_auth_type)`) lets callers out, so it is not.
   FORGERY_CHECK = /authenticity_token|csrf|forgery/i
 
-  private def forgery_refusal?(text : String, conditions : Array({String, Bool})) : Bool
-    return true if code_only(text).sub(CONDITION_MODIFIER, "").matches?(FORGERY_CHECK)
-    terms = conditions.flat_map { |condition, _| condition.split(/&&|\|\||\band\b|\bor\b/) }
-    terms.any?(&.matches?(FORGERY_CHECK)) &&
-      terms.none? { |term| term.matches?(CREDENTIAL_WORD) && !term.matches?(FORGERY_CHECK) }
+  private def forgery_refusal?(body : Array({Int32, String}), text : String, conditions : Array({String, Bool})) : Bool
+    exits = body.compact_map { |_, line| line.match(ANONYMOUS_EXIT).try(&.[2]) }.to_set
+    own = conditions.reject { |condition, _| exits.includes?(condition) }
+    return false if own.any? { |condition, _| caller_term?(condition) }
+    code_only(text).sub(CONDITION_MODIFIER, "").matches?(FORGERY_CHECK) || conditions.any?(&.[0].matches?(FORGERY_CHECK))
+  end
+
+  # A term of `condition` that reads a credential other than the forgery token.
+  private def caller_term?(condition : String) : Bool
+    condition.split(/&&|\|\||\band\b|\bor\b/).any? { |term| term.matches?(CREDENTIAL_WORD) && !term.matches?(FORGERY_CHECK) }
   end
 
   # The definitions of `name` Ruby finds for a controller whose ancestry
@@ -842,7 +853,7 @@ class RubyAuthTagger < FrameworkTagger
   # around it (an `else` branch runs when its `if` is false), and the
   # `return if ...` exits above it. nil when one of those exits lets a
   # caller with no credential out.
-  private def deny_conditions(body : Array({Int32, String}), i : Int32) : Array({String, Bool})?
+  private def deny_conditions(body : Array({Int32, String}), i : Int32, memo : EmptyLocalMemo = EmptyLocalMemo.new) : Array({String, Bool})?
     conditions = [] of {String, Bool}
     if m = body[i][1].match(CONDITION_MODIFIER)
       conditions << {m[2], m[1] == "if"}
@@ -853,9 +864,16 @@ class RubyAuthTagger < FrameworkTagger
       indent_j, text = body[j]
       # `return head :unauthorized unless ...` above is a deny of its own.
       if (m = text.match(ANONYMOUS_EXIT)) && !text.matches?(DENY_RESPONSE)
+        # `if current_user; return if valid_csrf?; end`: an exit only a
+        # caller with the credential reaches lets no anonymous one out, so
+        # for one the deny waits only on that credential being absent.
+        if indent_j > indent && (block = credential_block_around(body, j, indent))
+          conditions << block unless conditions.includes?(block)
+          next
+        end
         negated = m[2].matches?(NEGATED)
         return if m[2].matches?(CREDENTIAL_WORD) && (m[1] == "if" ? negated : !negated)
-        return if exits_without_credential?(body, m[2], m[1] == "if")
+        return if exits_without_credential?(body, j, m[2], m[1] == "if", memo)
         conditions << {m[2], m[1] != "if"}
       elsif indent_j < indent || indent_j == branch_at
         from_branch = indent_j == branch_at
@@ -871,25 +889,58 @@ class RubyAuthTagger < FrameworkTagger
     conditions
   end
 
-  # `return false if errors.blank?` where `errors = []` is only appended to
+  # The block, opened deeper than `outer`, around `body[j]` that runs only
+  # for a caller with the credential (`if current_user`, `unless
+  # session[:user_id].nil?`), as the deny condition "credential absent";
+  # nil when there is none.
+  private def credential_block_around(body : Array({Int32, String}), j : Int32, outer : Int32) : {String, Bool}?
+    indent = body[j][0]
+    (j - 1).downto(1) do |k|
+      next unless body[k][0] < indent
+      indent = body[k][0]
+      break if indent < outer
+      next unless block = body[k][1].match(BLOCK_CONDITION)
+      cond = block[2]
+      return {cond, block[1] == "unless"} if cond.matches?(CREDENTIAL_WORD) && cond.matches?(NEGATED) == (block[1] == "unless")
+    end
+  end
+
+  # `return false if errors.blank?` where `errors = []` is touched only
   # under credential-present branches (`if session[:user_id]`,
   # `authenticate_with_http_basic do`): a caller who sent no credential
   # leaves it empty and takes the exit, so what follows is not a login gate.
+  # Any other use of the local above the exit (`errors += [..] unless x`,
+  # `require_credential(errors)`) may fill it for an anonymous caller.
   EMPTY_LOCAL_TEST = /\A(\w+)\.(blank|empty|nil|present|any)\?\z/
   EMPTY_LOCAL_INIT = /\A\s*=\s*(?:\[\]|\{\}|nil|false|""|Array\.new|Hash\.new)\z/
-  LOCAL_WRITE      = /\A\s*(?:<<|\.(?:push|append|concat|<<|merge!|store)\b|\[[^\]]*\]\s*=(?!=)|\|?\|?=(?!=))/
 
-  private def exits_without_credential?(body : Array({Int32, String}), condition : String, if_form : Bool) : Bool
+  # Per body: each local's init line (or nil) and the lines that use it,
+  # with whether each is credential-gated.
+  alias EmptyLocalMemo = Hash(String, {Int32?, Array({Int32, Bool})})
+
+  private def exits_without_credential?(body : Array({Int32, String}), exit_at : Int32, condition : String, if_form : Bool, memo : EmptyLocalMemo) : Bool
     return false unless m = condition.strip.match(EMPTY_LOCAL_TEST)
     return false unless if_form == {"blank", "empty", "nil"}.includes?(m[2])
-    local = m[1]
-    # The text after `local` on a line that starts with it (`errors = []`
-    # gives ` = []`); nil when the line is about another name.
-    tail = ->(text : String) { text[local.size..] if text.starts_with?(local) && !text[local.size]?.try { |c| c.alphanumeric? || c == '_' } }
-    inits = body.map { |_, text| tail.call(text).try(&.matches?(EMPTY_LOCAL_INIT)) || false }
-    writes = body.each_index.select { |k| !inits[k] && tail.call(body[k][1]).try(&.matches?(LOCAL_WRITE)) }.to_a
-    initialised = inits.includes?(true)
-    initialised && !writes.empty? && writes.all? { |k| credential_gated?(body, k) }
+    init, uses = memo.put_if_absent(m[1]) { empty_local_uses(body, m[1]) }
+    return false unless init && init < exit_at
+    before = uses.select { |k, _| init < k && k < exit_at }
+    !before.empty? && before.all?(&.[1])
+  end
+
+  private def empty_local_uses(body : Array({Int32, String}), local : String) : {Int32?, Array({Int32, Bool})}
+    word = /(?<![\w@.:])#{Regex.escape(local)}(?![\w?!:])/
+    init : Int32? = nil
+    uses = [] of {Int32, Bool}
+    body.each_with_index do |(_, text), k|
+      next unless text.matches?(word)
+      if init.nil? && text.starts_with?(local) && text[local.size..].matches?(EMPTY_LOCAL_INIT)
+        init = k
+      elsif text.match(ANONYMOUS_EXIT).try(&.[2].strip.match(EMPTY_LOCAL_TEST)).try(&.[1]) != local
+        # Every line but the `return if errors.blank?` tests themselves.
+        uses << {k, credential_gated?(body, k)}
+      end
+    end
+    {init, uses}
   end
 
   # Whether the deny fires for a caller without the credential: the
@@ -931,14 +982,21 @@ class RubyAuthTagger < FrameworkTagger
   end
 
   # `user = authentication_check_only`: a bare call of an app method whose
-  # own body reads where a request carries its credential (session,
-  # cookies, an Authorization header), so the local holds the caller.
+  # own body looks up the caller from where a request carries its
+  # credential (`User.lookup(id: session[:user_id])`, warden, HTTP auth),
+  # so the local holds the caller. `current_cart` reading
+  # `Cart.find_by(id: session[:cart_id])` holds a cart, not the caller.
+  CALLER_LOOKUP = /\b(?:User|Account|Member|Admin|Customer|Person|Identity|Principal|Session)\w*\s*\.\s*(?:find\w*|lookup|where|authenticate\w*|from_\w+)\b|\bwarden\b|\bcurrent_(?:user|account|member|admin)\b|\bauthenticate_with_http_\w+/
+
   private def credential_reader_call?(value : String) : Bool
     return false unless m = value.strip.match(/\A([a-z_]\w*[!?]?)(?:\(.*\))?\z/)
     name = m[1]
     return false unless rails_chain.defs.has_key?(name)
     @credential_readers.put_if_absent(name) do
-      def_bodies(name).any?(&.any? { |_, text| code_only(text).matches?(CREDENTIAL_SOURCE) })
+      def_bodies(name).any? do |body|
+        code = body.map { |_, text| code_only(text) }
+        code.any?(&.matches?(CREDENTIAL_SOURCE)) && code.any?(&.matches?(CALLER_LOOKUP))
+      end
     end
   end
 

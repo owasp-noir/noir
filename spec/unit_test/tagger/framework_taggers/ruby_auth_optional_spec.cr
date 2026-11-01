@@ -304,4 +304,121 @@ describe "RubyAuthTagger (optional credential readers)" do
     # Not in the skip's `only:` list.
     tags["/sessions/1"].size.should eq(1)
   end
+
+  it "keeps a guard whose forgery check or empty-errors exit only a signed-in caller reaches" do
+    callbacks = {
+      # The CSRF exit sits under `if current_user`: anonymous gets the 401.
+      "csrf_nested"       => "if current_user\n  return if valid_authenticity_token?(session, request.headers['X-CSRF-Token'])\nend\nhead :unauthorized",
+      "csrf_nested_raise" => "if current_user\n  return if valid_authenticity_token?(session, params[:authenticity_token])\nend\nraise Exceptions::NotAuthorized",
+      # A forgery word in the deny itself, but it waits on `current_user`.
+      "csrf_word_redirect" => "redirect_to new_session_path(csrf_failed: true) unless current_user",
+      "csrf_word_raise"    => "raise Exceptions::InvalidCSRFToken unless current_user",
+      # A forgery exit above, but the deny's own condition is the caller.
+      "csrf_exit_then_user" => "return if request.get?\nreturn if valid_authenticity_token?(session, params[:authenticity_token])\nraise Exceptions::NotAuthorized unless current_user",
+      # `errors` filled for an anonymous caller outside any credential branch.
+      "errors_plus"    => "errors = []\nif session[:user_id]\n  return true if User.find_by(id: session[:user_id])\n  errors.push('no user')\nend\nerrors += ['authentication required'] unless session[:user_id]\nreturn false if errors.blank?\nraise Exceptions::NotAuthorized, errors.join(', ')",
+      "errors_helper"  => "errors = []\nif session[:user_id]\n  return true if User.find_by(id: session[:user_id])\n  errors.push('no user')\nend\nrequire_credential(errors)\nreturn false if errors.blank?\nraise Exceptions::NotAuthorized, errors.join(', ')",
+      "errors_unshift" => "errors = []\nif session[:user_id]\n  return true if User.find_by(id: session[:user_id])\n  errors.push('no user')\nend\nerrors.unshift('authentication required') unless session[:user_id]\nreturn false if errors.blank?\nraise Exceptions::NotAuthorized",
+    }
+    files = {
+      "app/controllers/application_controller.rb" => <<-RB,
+        class ApplicationController < ActionController::Base
+          def require_credential(errors)
+            errors << 'authentication required' if session[:user_id].nil?
+          end
+        end
+        RB
+    }
+    routes = [] of {String, String, Int32}
+    callbacks.each do |name, body|
+      indented = body.lines.map { |line| "    #{line}" }.join("\n")
+      files["app/controllers/#{name}_controller.rb"] = "class #{name.camelcase}Controller < ApplicationController\n  before_action :check\n\n  def create\n    render json: {}\n  end\n\n  private\n\n  def check\n#{indented}\n  end\nend\n"
+      routes << {"/#{name}", "app/controllers/#{name}_controller.rb", 4}
+    end
+    tags = tag_actions(files, routes)
+    callbacks.each_key { |name| {name, tags["/#{name}"].size}.should eq({name, 1}) }
+  end
+
+  it "reads a reader that looks up something other than the caller as no credential" do
+    tags = tag_actions({
+      "app/controllers/application_controller.rb" => "class ApplicationController < ActionController::Base\nend\n",
+      "app/controllers/carts_controller.rb"       => <<-RB,
+        class CartsController < ApplicationController
+          before_action :load_cart
+
+          def create
+            render json: {}
+          end
+
+          private
+
+          def load_cart
+            cart = current_cart
+            redirect_to root_path, alert: 'Your cart is empty' unless cart
+          end
+
+          def current_cart
+            Cart.find_by(id: session[:cart_id])
+          end
+        end
+        RB
+    }, [{"/carts", "app/controllers/carts_controller.rb", 4}])
+    tags["/carts"].should be_empty
+  end
+
+  it "keeps a guard a skip macro lifts only on a condition" do
+    concern_with = ->(body : String) do
+      <<-RB
+        module Authentication
+          extend ActiveSupport::Concern
+
+          included do
+            before_action :authenticate_user!
+          end
+
+          class_methods do
+            def skip_authentication(**options)
+        #{body}
+            end
+          end
+
+          private
+
+          def authenticate_user!
+            redirect_to new_session_path unless session[:user_id]
+          end
+        end
+        RB
+    end
+    {
+      "test_only" => "      skip_before_action :authenticate_user!, **options if Rails.env.test?",
+      "setting"   => "      if Rails.configuration.x.public_signup\n        skip_before_action :authenticate_user!, **options\n      end",
+    }.each do |label, body|
+      tags = tag_actions({
+        "app/controllers/concerns/authentication.rb" => concern_with.call(body),
+        "app/controllers/application_controller.rb"  => "class ApplicationController < ActionController::Base\n  include Authentication\nend\n",
+        "app/controllers/things_controller.rb"       => "class ThingsController < ApplicationController\n  skip_authentication only: [:create]\n\n  def create\n    render json: {}\n  end\nend\n",
+      }, [{"/things", "app/controllers/things_controller.rb", 4}])
+      {label, tags["/things"].size}.should eq({label, 1})
+    end
+  end
+
+  it "reads a long run of empty-errors exits in near-linear time" do
+    time_for = ->(n : Int32) do
+      body = String.build do |io|
+        io << "    errors = []\n    errors << 'x'\n"
+        n.times { |k| io << "    return if errors.blank?\n    raise Forbidden unless session[:u#{k}]\n" }
+      end
+      files = {
+        "app/controllers/application_controller.rb" => "class ApplicationController < ActionController::Base\nend\n",
+        "app/controllers/things_controller.rb"      => "class ThingsController < ApplicationController\n  before_action :check\n\n  def create\n    render json: {}\n  end\n\n  private\n\n  def check\n#{body}  end\nend\n",
+      }
+      Time.measure { tag_actions(files, [{"/things", "app/controllers/things_controller.rb", 4}]) }
+    end
+    time_for.call(50)
+    small = time_for.call(150)
+    large = time_for.call(600)
+    # 4x the lines; a cubic walk takes ~64x, so allow well under that.
+    (large / small).should be < 32
+  end
 end
