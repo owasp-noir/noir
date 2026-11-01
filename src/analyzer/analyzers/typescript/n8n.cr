@@ -89,7 +89,7 @@ module Analyzer::Typescript
     # logger, another validator or a feature gate (`oauthCallbackLogger`,
     # `validateBody`, `isScimEnabledMiddleware`), whatever else its name holds.
     MIDDLEWARE_AUTH_NAME = /\A(?:authenticate|require(?:Auth|ApiKey)|isAuthenticated|ensureAuth|verify(?:Token|Signature|ApiKey|Auth|Jwt|\w*Signature)|validate(?:ApiKey|Token|Signature)|check(?:Auth|Token|ApiKey|Signature))|(?:\A|[a-z0-9])Auth(?:Middleware|Guard|Check)?\z|\Aauth(?:Middleware)?\z|[a-z0-9](?:Token|Signature|ApiKey)(?:Auth|Check|Middleware|Guard)\z|\Ajwt|Jwt/
-    FEATURE_GATE_NAME    = /enabled|licensed|logger|\Alog|validat(?!e(?:ApiKey|Token|Signature))/i
+    FEATURE_GATE_NAME    = /enabled|licensed|logger|\Alog|valid(?:ate(?!ApiKey|Token|Signature)|ating|ation|ator)/i
     VERBS                = {"Del" => "DELETE", "QueryMethod" => "QUERY"}
 
     protected def route_decorated(endpoint : Endpoint, decorator_block : String, controller_decorator : String, route_path : String) : Nil
