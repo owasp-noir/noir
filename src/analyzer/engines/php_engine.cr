@@ -224,7 +224,7 @@ module Analyzer::Php
 
     # Naive English singular of a resource name (`photos` -> `photo`,
     # `categories` -> `category`), for nested-resource parameter names.
-    ES_PLURAL_RE = /(?:alias|[^aou]us|t[lm]as|gas|ris|ss|x|z|ch|sh)es\z/i
+    ES_PLURAL_RE = /(?:alias|[^aou]us|t[lm]as|gas|ris|ss|x)es\z/i
 
     protected def singularize_resource_segment(segment : String) : String
       return segment[0...-3] + "y" if segment.ends_with?("ies") && segment.size > 3

@@ -329,10 +329,13 @@ module Analyzer::Php
     # policy can open it.
     POLICY_CHECK_RE = /\G(?:\$this\s*->\s*authorize|Gate::authorize)\s*\(/
     POLICY_NOTE     = "the policy decides whether a guest passes; a condition decides whether it applies"
-    # A lookup before the check (`$post = Post::find($id);`) answers nothing,
-    # unless it writes.
+    # A lookup before the check (`$post = Post::find($id);`) answers nothing.
+    # Only calls known to read count: anything else may have side effects.
     LOOKUP_ASSIGN_RE = /\A\$\w+\s*=(?!=)/
-    WRITE_CALL_RE    = /(?:->|::)\s*(?:create|save|update|delete|destroy|insert|upsert|dispatch|forceDelete|firstOrCreate|updateOrCreate|send|put|increment|decrement)\s*\(/
+    CHAIN_CALL_RE    = /(?:->|::)\s*(\w+)\s*\(/
+    BARE_CALL_RE     = /(?<![\w>:$\\])([a-z_]\w*)\s*\(/
+    READ_CALL_RE     = /\A(?:find\w*|first\w*|where\w*|query|with\w*|onlyTrashed|all|get\w*|latest|oldest|orderBy\w*|pluck|count|input|route|string|integer|boolean|only|header|load\w*|resolve\w*|has|filled|user|exists|value)\z/
+    READ_BARE_CALLS  = Set{"array", "isset", "empty", "collect", "intval", "trim", "auth", "request", "route"}
 
     # Validating the input first refuses rather than serves (422).
     VALIDATE_STATEMENT_RE = /\G(?:\$\w+\s*=\s*)?(?:\$this|\$request)\s*->\s*validate(?:WithBag)?\s*\(/
@@ -340,6 +343,12 @@ module Analyzer::Php
     # Only the handler's leading statements count: reading the user,
     # validating input, then checks. Anything else first (work, a return, a condition that is not
     # about the user) and a later check no longer stands in front of it.
+    private def read_only_assignment?(stmt : String) : Bool
+      return false if !stmt.matches?(LOOKUP_ASSIGN_RE) || stmt.includes?('{') || stmt.includes?("new ")
+      stmt.scan(CHAIN_CALL_RE).all?(&.[1].matches?(READ_CALL_RE)) &&
+        stmt.scan(BARE_CALL_RE).all? { |m| READ_BARE_CALLS.includes?(m[1]) }
+    end
+
     private def handler_user_check(body : String) : String?
       return unless body.includes?("abort") || body.includes?("if") || body.includes?("authorize")
       lexer = Noir::PhpLexer.new(body, php_mode: true)
@@ -364,7 +373,7 @@ module Analyzer::Php
           return "Laravel handler policy check (#{body[policy.begin(0)..close].gsub(/\s+/, " ")}; #{POLICY_NOTE})"
         end
         stmt = body[pos...lexer.statement_end(pos)]
-        if stmt.matches?(LOOKUP_ASSIGN_RE) && !stmt.matches?(WRITE_CALL_RE) && !stmt.includes?('{')
+        if read_only_assignment?(stmt)
           pos = Math.max(lexer.statement_end(pos), pos + 1)
           next
         end
@@ -584,7 +593,9 @@ module Analyzer::Php
         # `if (! $user || ...) { return $next($request); }` before the
         # refusal: a guest is let through, so the refusal only ever reaches
         # signed-in callers and is no authentication guard.
-        next if conditions.any? { |(cond, block)| block.end <= at && body[block].includes?("$next(") && user_missing?(cond, users) }
+        # Only an unconditional pass-through counts: not one nested in another
+        # condition or chained as an `elseif`.
+        next if conditions.any? { |(cond, block)| block.end <= at && body[block].includes?("$next(") && user_missing?(cond, users) && unconditional_block?(body, conditions, cond, block) }
         # `if ($request->user() && ! $user->isActivated()) { abort(401); }`:
         # the refusal needs a signed-in caller, so a guest is never refused.
         next if conditions.any? { |(cond, block)| block.includes?(at) && split_condition(cond, "&&").any? { |part| user_source?(part, users) } }
@@ -608,6 +619,14 @@ module Analyzer::Php
         end
       end
       verdict
+    end
+
+    private def unconditional_block?(body : String, conditions : Array(Tuple(String, Range(Int32, Int32))), cond : String, block : Range(Int32, Int32)) : Bool
+      return false if conditions.any? { |(_, other)| other != block && other.begin < block.begin && other.end > block.begin }
+      head = body[0...block.begin].rstrip
+      return true unless head.ends_with?(')') && (head = head[0...-1]).ends_with?(cond)
+      head = head[0...-cond.size].rstrip
+      !(head.ends_with?('(') && head[0...-1].rstrip.matches?(/\belse\s*if\z|\belseif\z/))
     end
 
     # {condition, block it guards} for every `if` / `elseif` in `body`; an

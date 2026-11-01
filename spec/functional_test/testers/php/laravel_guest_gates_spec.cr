@@ -1,0 +1,55 @@
+require "../../func_spec.cr"
+
+# A refusal is an auth guard only if a guest reaches it. Nested / conditional
+# guest pass-throughs must not cancel a later guest refusal; read-only lookups
+# (not stores, services or inserts) may precede a policy check; `-es` plurals.
+describe "Laravel guest gates, policy lookups and plural parameters", tags: "functional" do
+  before_each do
+    CodeLocator.instance.clear_all
+  end
+
+  scan = ->(fixture : String) do
+    options = ConfigInitializer.new.default_options
+    options["base"] = YAML::Any.new([YAML::Any.new(fixture)])
+    options["ai_context"] = YAML::Any.new(true)
+    options["nolog"] = YAML::Any.new(true)
+    app = NoirRunner.new(options)
+    app.detect
+    app.analyze
+    app.endpoints
+  end
+
+  it "keeps guards behind a conditional guest pass-through" do
+    endpoints = scan.call("./spec/functional_test/fixtures/php/laravel_guest_gates/")
+    guards = ->(url : String) do
+      ep = endpoints.find! { |e| e.url == url }
+      ep.ai_context.try(&.guards.map(&.name)) || [] of String
+    end
+
+    guards.call("/mw/nested").should eq(["Laravel NestedPass middleware"])
+    guards.call("/mw/apionly").should eq(["Laravel ApiOnlyPass middleware"])
+    guards.call("/mw/config").should eq(["Laravel ConfigGuestPass middleware (an environment or config check decides; a setting can make it public)"])
+    # `['api.ip', 'auth:sanctum']`: the named auth alias is the guard.
+    guards.call("/mw/alias").should eq(["Laravel auth:sanctum middleware"])
+
+    # Side effects before `authorize` are not lookups.
+    %w[/p/store/{id} /p/service/{id} /p/insert /p/mail/{id}].each do |url|
+      guards.call(url).select(&.includes?("policy")).should be_empty
+    end
+    guards.call("/p/multi/{id}").any?(&.includes?("policy")).should be_true
+  end
+
+  it "singularizes -es plurals like Laravel" do
+    urls = scan.call("./spec/functional_test/fixtures/php/laravel_guest_gates/").map(&.url)
+    ["/sizes/{size}", "/prizes/{prize}", "/caches/{cache}", "/buses/{bus}", "/houses/{house}", "/licenses/{license}", "/boxes/{box}"].each do |url|
+      urls.should contain(url)
+    end
+  end
+
+  it "keeps CakePHP nested resource ids" do
+    urls = scan.call("./spec/functional_test/fixtures/php/cakephp_es_singulars/").map(&.url)
+    urls.should contain("/sizes/{size_id}/stocks")
+    urls.should contain("/caches/{cache_id}/keys")
+    urls.should contain("/licenses/{license_id}/seats")
+  end
+end
