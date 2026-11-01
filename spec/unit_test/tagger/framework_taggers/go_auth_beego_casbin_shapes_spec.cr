@@ -239,6 +239,78 @@ describe "GoAuthTagger (beego Casbin filter shapes)" do
     end
   end
 
+  it "counts only a write on the request, not a log line or a builder's WriteString" do
+    report = <<-GO
+      package routers
+
+      import (
+        "strings"
+
+        "github.com/beego/beego/v2/core/logs"
+        "github.com/beego/beego/v2/server/web/context"
+      )
+
+      func report(ctx *context.Context) {
+        audit(ctx.Request.URL.Path)
+      }
+
+      func audit(path string) {
+        var sb strings.Builder
+        sb.WriteString("refused ")
+        sb.WriteString(path)
+        logs.Warning(sb.String())
+      }
+      GO
+    tree = casbin_shape(body: deny_body("report(ctx)"))
+    tree["routers/log.go"] = report
+    with_casbin_shape(tree) { |dir| casbin_shape_guards(dir, "/api/secret").should be_empty }
+    with_casbin_shape(casbin_shape(body: deny_body(%(logs.Warning("authz refused %s", ctx.Request.URL.Path, 403))))) do |dir|
+      casbin_shape_guards(dir, "/api/secret").should be_empty
+    end
+    # Handed the context two hops down, the write still counts.
+    deny = "func deny(ctx *context.Context) {\n  respond(ctx)\n}\n\nfunc respond(c *context.Context) {\n  c.Output.SetStatus(403)\n}\n"
+    tree = casbin_shape(body: deny_body("deny(ctx)"))
+    tree["routers/deny.go"] = "package routers\n\nimport \"github.com/beego/beego/v2/server/web/context\"\n\n#{deny}"
+    with_casbin_shape(tree) { |dir| casbin_shape_guards(dir, "/api/secret").should eq(["auth"]) }
+  end
+
+  it "follows a role chain, and not one that starts at another subject" do
+    with_casbin_shape(casbin_shape(rules: "p, reader, /api/public, GET\ng, anonymous, viewer\ng, viewer, reader")) do |dir|
+      casbin_shape_guards(dir, "/api/public").should be_empty
+    end
+    with_casbin_shape(casbin_shape(rules: "p, reader, /api/public, GET\ng, alice, viewer\ng, viewer, reader")) do |dir|
+      casbin_shape_guards(dir, "/api/public").should eq(["auth"])
+    end
+  end
+
+  it "guards a program only if it runs the registration" do
+    tree = casbin_shape("routers.InitFilters()")
+    tree["routers/init.go"] = "package routers\n\nimport \"github.com/beego/beego/v2/server/web\"\n\nfunc InitFilters() {\n  web.InsertFilter(\"*\", web.BeforeRouter, ApiFilter)\n}\n"
+    tree["cmd/admin/main.go"] = <<-GO
+      package main
+
+      import (
+        "github.com/beego/beego/v2/server/web"
+        _ "example.com/app/routers"
+      )
+
+      func main() {
+        web.Router("/internal/stats", &StatsController{}, "get:Get")
+        web.Run(":9090")
+      }
+      GO
+    with_casbin_shape(tree) do |dir|
+      casbin_shape_guards(dir, "/api/secret").should eq(["auth"])
+      casbin_shape_guards(dir, "/internal/stats", "cmd/admin/main.go").should be_empty
+    end
+    # An `init()` registration runs in every program that imports it.
+    tree["routers/init.go"] = tree["routers/init.go"].sub("func InitFilters()", "func init()")
+    tree["main.go"] = tree["main.go"].sub("routers.InitFilters()", "")
+    with_casbin_shape(tree) do |dir|
+      casbin_shape_guards(dir, "/internal/stats", "cmd/admin/main.go").should eq(["auth"])
+    end
+  end
+
   it "reads thousands of registrations in linear time" do
     lines = (1..3000).map { |i| %(web.InsertFilter("/r#{i}/*", web.BeforeRouter, routers.ApiFilter)) }.join("\n  ")
     with_casbin_shape(casbin_shape(lines)) do |dir|

@@ -51,7 +51,17 @@ module GoBeegoCasbinFilter
   # A request with no credential: `!ok`, `token == ""`, `u == nil`, `len(t) == 0`.
   ABSENT_VALUE = /\A(?:!\s*\w+|\w+\s*==\s*(?:""|nil)|len\(\s*\w+\s*\)\s*==\s*0)\z/
   # A response written: beego's `ctx.Output` / `ResponseWriter`, an abort.
-  RESPONSE_WRITE = /\.\s*(?:Output\s*\.\s*(?:SetStatus|JSON|JSONP|XML|YAML|Body|Download)|ResponseWriter\s*\.\s*(?:WriteHeader|Write)|Abort|CustomAbort|WriteString|Redirect|ServeJSON)\s*\(/
+  # A response written on the request: a call on the request context or
+  # writer (`ctx.Output.JSON(...)`, `ctx.Abort(403, "")`, `w.WriteHeader(403)`),
+  # the receiver captured so it can be checked against the function's own
+  # context / writer parameters.
+  RESPONSE_CALL = /\b(\w+)\s*\.\s*(?:Output\s*\.\s*(?:SetStatus|JSON|JSONP|XML|YAML|Body|Download)|ResponseWriter\s*\.\s*(?:WriteHeader|Write)|Abort|CustomAbort|WriteString|Redirect|ServeJSON|WriteHeader|Write)\s*\(/
+  # A function head's parameter list, and a beego `*context.Context` or an
+  # `http.ResponseWriter` parameter in it.
+  HEAD_PARAMS   = /\A\s*func\s*(?:\([^)]*\)\s*)?\w+\s*\(([^)]*)\)/
+  REQUEST_PARAM = /(\w+)\s+(?:\*\s*(?:\w+\.)?Context|(?:\w+\.)?ResponseWriter)\b/
+  # A log, print or audit line names a refusal without making one.
+  LOG_LINE       = /\b(?:logs?|logger|slog|fmt|audit\w*)\s*\.\s*\w+\s*\(|\bprint(?:ln|f)?\s*\(/i
   PASS_ON        = /\A(?:return\b|[\w.]+\.Next\(\))/
   HAS_PREFIX     = /strings\s*\.\s*HasPrefix\s*\(\s*\w+\s*,\s*"([^"]+)"\s*\)/
   FOLD_TARGET    = /(?:return|\w+\s*=)\s*"([^"]+)"/
@@ -103,10 +113,12 @@ module GoBeegoCasbinFilter
         next unless content.includes?("InsertFilter")
         # Comments blanked, strings kept: each live registration with its
         # own pattern.
-        Noir::CComments.strip(content, quotes: %("'), raw_quotes: "`").scan(INSERT_FILTER) do |m|
+        stripped = Noir::CComments.strip(content, quotes: %("'), raw_quotes: "`")
+        stripped.scan(INSERT_FILTER) do |m|
           next unless GUARD_POSITIONS.includes?(m[2].rpartition('.')[2])
+          registrar = enclosing_function(stripped, m.begin(0))
           filter = read.put_if_absent({m[3], file}) { casbin_filter("", m[3], file, go_sources) }
-          filters << filter.merge(pattern: m[1]) if filter
+          filters << filter.merge(pattern: m[1], dirs: program_dirs(file, registrar, go_sources)) if filter
         end
       end
       filters
@@ -123,7 +135,16 @@ module GoBeegoCasbinFilter
     rows, where = policy
     folds = path_folds([body] + helpers)
     tag = Tag.new("auth", "Protected by beego filter #{reference}: its Casbin policy (#{where}) lets anonymous callers reach only the paths it grants them; a policy loaded at runtime (a database adapter) can grant more", "go_auth")
-    {dirs: program_dirs(file, go_sources), pattern: pattern, public: rows, folds: folds, tag: tag}
+    {dirs: Set(String).new, pattern: pattern, public: rows, folds: folds, tag: tag}
+  end
+
+  FUNC_NAME = /^func\s+(?:\([^)]*\)\s*)?(\w+)/m
+
+  # The name of the top-level function around `offset` in `source`.
+  private def enclosing_function(source : String, offset : Int32) : String?
+    name = nil
+    source[0, offset].scan(FUNC_NAME) { |m| name = m[1] }
+    name
   end
 
   # `body` calls a Casbin `Enforce`, itself or through the functions it
@@ -171,10 +192,10 @@ module GoBeegoCasbinFilter
       code = code_only(raw).strip
       if (head = code.match(IF_HEAD)) && head[1].split("||").any?(&.strip.matches?(ABSENT_VALUE)) && !code.matches?(NEGATED_IF)
         block = if_block_lines(lines, idx)
-        return false if block.any? { |line| code_only(line).strip.matches?(PASS_ON) } && !writes_response?(block, body, 2)
+        return false if block.any? { |line| code_only(line).strip.matches?(PASS_ON) } && !writes_response?(block, body, request_params(body), 2)
       end
       next unless code.matches?(NEGATED_IF)
-      return true if writes_response?(if_block_lines(lines, idx), body, 2)
+      return true if writes_response?(if_block_lines(lines, idx), body, request_params(body), 2)
     end
     false
   end
@@ -192,16 +213,31 @@ module GoBeegoCasbinFilter
     block
   end
 
-  # A response write in `block`, or in a same-package function it calls
-  # (`hops` deep).
-  private def writes_response?(block : Array(String), owner : Noir::GoCalleeExtractor::FunctionBody, hops : Int32) : Bool
+  # The names of `body`'s request context / writer parameters.
+  private def request_params(body : Noir::GoCalleeExtractor::FunctionBody) : Set(String)
+    params = body.source.lines.first?.try(&.match(HEAD_PARAMS)).try(&.[1]) || return Set(String).new
+    params.scan(REQUEST_PARAM).map(&.[1]).to_set
+  end
+
+  # A response written on one of `requests` (the function's context or
+  # writer) in `block`, or by a same-package function the block hands one
+  # of them to (`denyRequest(ctx)`, `hops` deep). Log and print lines do
+  # not count.
+  private def writes_response?(block : Array(String), owner : Noir::GoCalleeExtractor::FunctionBody,
+                               requests : Set(String), hops : Int32) : Bool
+    return false if requests.empty?
     package = @bodies.functions_for(File.dirname(owner.file_path))
     block.any? do |line|
       code = code_only(line)
-      next true if code.matches?(RESPONSE_WRITE) || code.matches?(GoAuthTagger::REJECTS_REQUEST)
+      next false if code.matches?(LOG_LINE)
+      next true if code.scan(RESPONSE_CALL).any? { |m| requests.includes?(m[1]) }
       hops > 0 && code.scan(PLAIN_CALL).any? do |call|
         callee = package[call[1]]?
-        !callee.nil? && callee != owner && writes_response?(callee.source.lines.skip(1), callee, hops - 1)
+        next false if callee.nil? || callee == owner
+        # Only when the call passes the request on.
+        args = code[(code.index("#{call[1]}(") || 0)..]
+        next false unless requests.any? { |name| args.matches?(/\(\s*(?:[^()]*,\s*)?#{Regex.escape(name)}\s*[,)]/) }
+        writes_response?(callee.source.lines.skip(1), callee, request_params(callee), hops - 1)
       end
     end
   end
@@ -243,10 +279,18 @@ module GoBeegoCasbinFilter
   end
 
   # The package directories of every program that runs a filter registered
-  # in `file`: a `main` package that is (or imports, transitively, within
-  # the scan) the registering package. With no `main` package in the scan,
-  # the registering file's Go module.
-  private def program_dirs(file : String, go_sources : Array(String)) : Set(String)
+  # in `file` by function `registrar`: a `main` package that is the
+  # registering package, or imports it (transitively, within the scan) and
+  # runs the registration — it is an `init()`, or the `main` package calls
+  # `registrar` itself (one level). With no `main` package in the scan, the
+  # registering file's Go module.
+  @program_dirs = Hash({String, String?}, Set(String)).new
+
+  private def program_dirs(file : String, registrar : String?, go_sources : Array(String)) : Set(String)
+    @program_dirs.put_if_absent({file, registrar}) { program_dirs_uncached(file, registrar, go_sources) }
+  end
+
+  private def program_dirs_uncached(file : String, registrar : String?, go_sources : Array(String)) : Set(String)
     by_dir = go_sources.group_by { |source| File.dirname(source) }
     dir_of_import = Hash(String, String).new
     by_dir.each_key { |dir| dir_import_path(dir).try { |import| dir_of_import[import] = dir } }
@@ -267,12 +311,18 @@ module GoBeegoCasbinFilter
     end
     registering = File.dirname(file)
     dirs = Set(String).new
+    imported = false
     by_dir.each do |dir, sources|
       next unless sources.any? { |source| read_file(source).try(&.matches?(PACKAGE_MAIN)) }
       reach = closure.call(dir)
-      dirs.concat(reach) if reach.includes?(registering)
+      next unless reach.includes?(registering)
+      imported = true
+      runs = dir == registering || registrar == "init" ||
+             (registrar && sources.any? { |source| read_file(source).try(&.matches?(/\b#{Regex.escape(registrar)}\s*\(/)) })
+      dirs.concat(reach) if runs
     end
-    return dirs unless dirs.empty?
+    # Programs import the package but none runs the registration.
+    return dirs if imported
     mod = go_module(file)
     by_dir.keys.select { |dir| go_module(File.join(dir, "_.go")) == mod }.to_set
   end
