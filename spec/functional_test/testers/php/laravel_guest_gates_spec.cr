@@ -1,3 +1,4 @@
+require "file_utils"
 require "../../func_spec.cr"
 
 # A refusal is an auth guard only if a guest reaches it. Nested / conditional
@@ -61,6 +62,36 @@ describe "Laravel guest gates, policy lookups and plural parameters", tags: "fun
     guards.call("/p3/getterRead/{t}/{id}").any?(&.includes?("policy")).should be_true
     guards.call("/p3/getterOrCreate/{id}").select(&.includes?("policy")).should be_empty
     guards.call("/p3/getterWithArgs/{id}").select(&.includes?("policy")).should be_empty
+  end
+
+  it "analyzes a middleware with many pass-through blocks and refusals in linear time" do
+    # n guest pass-throughs inside loops, then n refusals: every refusal used to
+    # rescan the body for every earlier pass-through (cubic overall).
+    time_for = ->(n : Int32) do
+      dir = File.tempname("laravel_mw_scaling")
+      Dir.mkdir_p(File.join(dir, "app/Http/Middleware"))
+      Dir.mkdir_p(File.join(dir, "routes"))
+      File.write(File.join(dir, "composer.json"), %({"require":{"laravel/framework":"^10.0"},"autoload":{"psr-4":{"App\\\\":"app/"}}}))
+      File.write(File.join(dir, "artisan"), "")
+      File.write(File.join(dir, "routes/web.php"), "<?php\nuse Illuminate\\Support\\Facades\\Route;\nRoute::get('big', fn() => 1)->middleware(\\App\\Http\\Middleware\\Big::class);\n")
+      File.write(File.join(dir, "app/Http/Middleware/Big.php"), String.build do |io|
+        io << "<?php\nnamespace App\\Http\\Middleware;\nuse Closure;\nclass Big\n{\n    public function handle($request, Closure $next)\n    {\n"
+        n.times { io << "        foreach ($a as $b) { if (! $request->user()) { return $next($request); } }\n" }
+        n.times { |i| io << "        if ($request->user() && $request->user()->f#{i}) { abort(403); }\n" }
+        io << "        return $next($request);\n    }\n}\n"
+      end)
+      begin
+        CodeLocator.instance.clear_all
+        Time.measure { scan.call(dir) }
+      ensure
+        FileUtils.rm_rf(dir)
+      end
+    end
+    time_for.call(20) # warm up
+    small = time_for.call(200).total_seconds
+    large = time_for.call(800).total_seconds
+    # Linear is ~4x; the cubic walk was ~50x. Generous bound against noise.
+    (large / Math.max(small, 0.01)).should be < 8
   end
 
   it "singularizes -es plurals like Laravel" do

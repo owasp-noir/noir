@@ -349,6 +349,8 @@ module Analyzer::Php
       # A zero-argument `getFoo()` on the class itself (`parent::getMap()[$t]::
       # withTrashed()->find($id)`) is a getter, but only in front of a read
       # that ends the chain; `getOrCreate()` / `getAndMark()` are not.
+      # ponytail: a getter that writes and then chains into a read still counts
+      # as a lookup; only the name and arity are checked, not the getter body.
       getter = false
       stmt = stmt.gsub(GETTER_CALL_RE) do
         getter = true
@@ -602,20 +604,28 @@ module Analyzer::Php
       verdict = nil
       body_checks_caller = body.matches?(CREDENTIAL_CONDITION_RE)
       users = body.scan(USER_ASSIGN_ANY_RE).map(&.[1])
+      top_ok = top_level_or_try_map(body, lexer)
+      pass_blocks = [] of Range(Int32, Int32)
+      env_skips = [] of Range(Int32, Int32)
+      conditions.each do |(cond, block)|
+        next unless body[block].includes?("$next(")
+        pass_blocks << block if user_missing?(cond, users) && unconditional_block?(body, top_ok, conditions, cond, block)
+        env_skips << block if cond.matches?(ENV_CONDITION_RE)
+      end
       points.each do |(at, text, note)|
         # `if (! $user || ...) { return $next($request); }` before the
         # refusal: a guest is let through, so the refusal only ever reaches
         # signed-in callers and is no authentication guard.
         # Only an unconditional pass-through counts: not one nested in another
         # condition or chained as an `elseif`.
-        next if conditions.any? { |(cond, block)| block.end <= at && body[block].includes?("$next(") && user_missing?(cond, users) && unconditional_block?(body, lexer, conditions, cond, block) }
+        next if pass_blocks.any? { |block| block.end <= at }
         # `if ($request->user() && ! $user->isActivated()) { abort(401); }`:
         # the refusal needs a signed-in caller, so a guest is never refused.
         next if conditions.any? { |(cond, block)| block.includes?(at) && split_condition(cond, "&&").any? { |part| user_source?(part, users) } }
         identity_evidence = body_checks_caller || text.matches?(IDENTITY_REFUSAL_RE)
         around = conditions.select(&.[1].includes?(at)).map(&.[0]).push(text).join(' ')
         # `if (app()->isLocal()) { return $next($request); }` before the refusal.
-        skipped = conditions.any? { |(cond, block)| block.end <= at && cond.matches?(ENV_CONDITION_RE) && body[block].includes?("$next(") }
+        skipped = env_skips.any? { |block| block.end <= at }
         if around.matches?(ENV_CONDITION_RE)
           verdict = SETTING_NOTE if around.matches?(CREDENTIAL_CONDITION_RE)
         elsif around.matches?(ORIGIN_CONDITION_RE) && !around.matches?(CREDENTIAL_CONDITION_RE)
@@ -634,26 +644,54 @@ module Analyzer::Php
       verdict
     end
 
-    # Whether `pos` sits at the top level of the method body, or inside nothing
-    # but `try { ... }` bodies (not a catch, loop, switch case or closure).
-    private def top_level_or_try?(body : String, lexer : Noir::PhpLexer, pos : Int32) : Bool
-      opens = [] of Int32
-      (0...pos).each do |i|
-        case lexer.masked[i]
-        when '{' then opens << i
-        when '}' then opens.pop?
+    # Per offset: whether it sits at the top level of the method body, or inside
+    # nothing but `try { ... }` bodies (not a catch, loop, switch case or
+    # closure). One pass, so each lookup is O(1).
+    private def top_level_or_try_map(body : String, lexer : Noir::PhpLexer) : Array(Bool)
+      opens = [] of Bool # true when that `{` opens a `try` body
+      bad = 0
+      Array(Bool).new(body.size + 1) do |i|
+        flag = bad == 0
+        if i < body.size
+          case lexer.masked[i]
+          when '{'
+            is_try = ends_with_word?(body, i, "try")
+            opens << is_try
+            bad += 1 unless is_try
+          when '}'
+            bad -= 1 if opens.pop? == false
+          end
         end
+        flag
       end
-      opens.all? { |at| body[0...at].rstrip.matches?(/\btry\z/) }
     end
 
-    private def unconditional_block?(body : String, lexer : Noir::PhpLexer, conditions : Array(Tuple(String, Range(Int32, Int32))), cond : String, block : Range(Int32, Int32)) : Bool
+    # Whether the text before `stop`, ignoring trailing whitespace, ends in the
+    # whole word `word`.
+    private def ends_with_word?(body : String, stop : Int32, word : String) : Bool
+      while stop > 0 && body[stop - 1].whitespace?
+        stop -= 1
+      end
+      from = stop - word.size
+      return false if from < 0 || body[from, word.size] != word
+      from == 0 || !(body[from - 1].alphanumeric? || body[from - 1] == '_')
+    end
+
+    private def unconditional_block?(body : String, top_ok : Array(Bool), conditions : Array(Tuple(String, Range(Int32, Int32))), cond : String, block : Range(Int32, Int32)) : Bool
       return false if conditions.any? { |(_, other)| other != block && other.begin < block.begin && other.end > block.begin }
-      return false unless top_level_or_try?(body, lexer, block.begin)
-      head = body[0...block.begin].rstrip
-      return true unless head.ends_with?(')') && (head = head[0...-1]).ends_with?(cond)
-      head = head[0...-cond.size].rstrip
-      !(head.ends_with?('(') && head[0...-1].rstrip.matches?(/\belse\s*if\z|\belseif\z/))
+      return false unless top_ok[block.begin]
+      stop = block.begin
+      while stop > 0 && body[stop - 1].whitespace?
+        stop -= 1
+      end
+      return true unless stop > 0 && body[stop - 1] == ')'
+      stop -= 1
+      return true unless stop >= cond.size && body[stop - cond.size, cond.size] == cond
+      stop -= cond.size
+      while stop > 0 && body[stop - 1].whitespace?
+        stop -= 1
+      end
+      !(stop > 0 && body[stop - 1] == '(' && body[0...(stop - 1)].rstrip.matches?(/\belse\s*if\z|\belseif\z/))
     end
 
     # {condition, block it guards} for every `if` / `elseif` in `body`; an
