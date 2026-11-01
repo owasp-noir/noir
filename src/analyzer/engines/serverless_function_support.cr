@@ -33,17 +33,14 @@ module Analyzer::Javascript
         path_names = endpoint.params.select(&.param_type.==("path")).map(&.name)
         endpoint.params.reject! { |param| param.param_type == "query" && path_names.includes?(param.name) }
       end
-      if include_callee && !handler.body.empty?
-        callees = Noir::JSCalleeExtractor.callees_for_function_body(handler.body, path, handler.body_line)
-        attach_js_callees(endpoint, callees)
-      end
+      attach_js_callees(endpoint, handler.callees) if include_callee
       endpoint
     end
 
     # Methods a catch-all handler serves: the ones its body branches on
     # (`req.method === "POST"`), otherwise every method.
     protected def catch_all_methods(handler : Noir::JSServerlessFunctionExtractor::Handler?) : Array(String)
-      inferred = handler ? Noir::JSServerlessFunctionExtractor.inferred_methods(handler.body) : [] of String
+      inferred = handler ? handler.methods : [] of String
       inferred.empty? ? [ANY_METHOD] : inferred
     end
   end

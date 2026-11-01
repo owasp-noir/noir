@@ -83,14 +83,14 @@ module Analyzer::Javascript
 
     private def endpoints_for(path : String, content : String, kind : String, name : String, include_callee : Bool) : Array(Endpoint)
       extractor = Noir::JSServerlessFunctionExtractor
-      config = extractor.config_object(content) || ""
+      config = extractor.config_object(content, path) || Noir::JSServerlessFunctionExtractor::Config.new
       paths = extractor.config_strings(config, "path")
       return [] of Endpoint if paths.empty? && extractor.config_key?(config, "schedule")
 
-      handler = extractor.default_handler(content)
+      handler = extractor.default_handler(content, path, include_callee)
       style = :request
       unless handler
-        handler = extractor.exported_handler(content, "handler") || return [] of Endpoint
+        handler = extractor.exported_handler(content, path, "handler", include_callee) || return [] of Endpoint
         return [] of Endpoint if content.matches?(SCHEDULE_WRAPPER_RE)
         style = :lambda
       end
