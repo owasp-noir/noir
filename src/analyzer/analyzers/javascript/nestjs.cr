@@ -510,6 +510,13 @@ module Analyzer::Javascript
       true
     end
 
+    # Whether a file this analyzer does not own may still set the prefix
+    # (`extract_global_prefix_config`); a framework whose prefix is fixed
+    # skips every unowned file before stripping its comments.
+    protected def prefix_outside_owned_sources? : Bool
+      true
+    end
+
     # Class decorators that open a controller and carry its path prefix.
     # The other decorator-controller frameworks
     # (`Analyzer::Typescript::DecoratorController`) name their own.
@@ -548,6 +555,8 @@ module Analyzer::Javascript
 
     private def analyze_nestjs_file(path : String, result : Array(Endpoint), static_dirs : Array(Hash(String, String)), include_callee : Bool, global_prefix_holder : Array(Tuple(String, GlobalPrefixConfig)), global_prefix_mutex : Mutex)
       content = read_file_content(path)
+      owned = owns_source?(content)
+      return unless owned || prefix_outside_owned_sources?
 
       # Strip JS/TS comments so commented-out decorators
       # (e.g. `// @Get('/old')`) don't generate phantom routes.
@@ -564,7 +573,7 @@ module Analyzer::Javascript
         end
       end
 
-      return unless owns_source?(content)
+      return unless owned
 
       collect_static_paths(path, content, static_dirs, :nestjs)
       collect_static_paths(path, content, static_dirs, :express) if nestjs_bootstrap_source?(content)
@@ -754,7 +763,7 @@ module Analyzer::Javascript
       uri_versioning = versioning.try(&.uri) != false
 
       controllers.each do |controller_info|
-        process_http_methods(controller_info[:content], controller_info[:base_paths], controller_info[:versions], uri_versioning, versioning, path, result, include_callee, controller_info[:start_line], literal_values, controller_info[:class_name])
+        process_http_methods(controller_info[:content], controller_info[:base_paths], controller_info[:versions], uri_versioning, versioning, path, result, include_callee, controller_info[:start_line], literal_values, controller_info[:class_name], controller_info[:decorator])
       end
     end
 
@@ -780,7 +789,7 @@ module Analyzer::Javascript
     end
 
     private def extract_controllers(content : String, literal_values : Hash(String, Array(String)))
-      controllers = [] of NamedTuple(base_paths: Array(String), versions: Array(String), content: String, start_line: Int32, class_name: String)
+      controllers = [] of NamedTuple(base_paths: Array(String), versions: Array(String), content: String, start_line: Int32, class_name: String, decorator: String)
 
       # Find all @Controller decorators and their associated class content
       lines = content.split("\n")
@@ -789,6 +798,7 @@ module Analyzer::Javascript
       current_content = [] of String
       controller_start_line = 1
       class_name = ""
+      controller_decorator = ""
       brace_count = 0
       in_class = false
       skip_until = -1
@@ -808,6 +818,7 @@ module Analyzer::Javascript
           base_paths = parse_controller_decorator(joined[:text], literal_values, decorator[0])
           unless base_paths.nil?
             current_base_paths = base_paths
+            controller_decorator = decorator[0]
             current_versions = parse_controller_versions(joined[:text])
             current_content.clear
             controller_start_line = 1
@@ -839,6 +850,7 @@ module Analyzer::Javascript
               content:    current_content.join("\n") + "\n",
               start_line: controller_start_line,
               class_name: class_name,
+              decorator:  controller_decorator,
             }
             current_base_paths = nil
             current_versions = [] of String
@@ -1025,7 +1037,7 @@ module Analyzer::Javascript
       Noir::TopLevelSplit.split(text, delimiter, Noir::TopLevelSplit::Rules::JS)
     end
 
-    private def process_http_methods(class_content : String, base_paths : Array(String), controller_versions : Array(String), uri_versioning : Bool, versioning : VersioningConfig?, file_path : String, result : Array(Endpoint), include_callee : Bool, controller_start_line : Int32, literal_values : Hash(String, Array(String)), class_name : String)
+    private def process_http_methods(class_content : String, base_paths : Array(String), controller_versions : Array(String), uri_versioning : Bool, versioning : VersioningConfig?, file_path : String, result : Array(Endpoint), include_callee : Bool, controller_start_line : Int32, literal_values : Hash(String, Array(String)), class_name : String, controller_decorator : String)
       method_map = route_decorator_methods
 
       # Materialised once per class: the back-walk and line count below index
@@ -1106,6 +1118,7 @@ module Analyzer::Javascript
               extract_path_parameters(full_path, endpoint)
               extract_decorator_parameters(signature[:params], endpoint, dto_fields)
               extract_interceptor_parameters(decorator_block, endpoint)
+              route_decorated(endpoint, decorator_block, controller_decorator, route_path)
               extract_request_object_params(class_content, signature, endpoint)
               callees.try &.each do |name, callee_path, line|
                 endpoint.push_callee(Callee.new(name, path: callee_path, line: line))
@@ -1440,6 +1453,14 @@ module Analyzer::Javascript
           index
         end
       end
+    end
+
+    # Per-endpoint hook for a decorator-controller framework that reads
+    # more off the method's decorators (`decorator_block`, every decorator
+    # stacked on it), the class decorator that opened its controller, and
+    # the path of the route decorator this endpoint came from.
+    # `Endpoint` is a struct: only its arrays (params, tags) are shared.
+    protected def route_decorated(endpoint : Endpoint, decorator_block : String, controller_decorator : String, route_path : String) : Nil
     end
 
     private def extract_interceptor_parameters(decorator_block : String, endpoint : Endpoint)

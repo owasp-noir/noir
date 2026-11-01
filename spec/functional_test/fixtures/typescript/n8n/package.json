@@ -1,0 +1,6 @@
+{
+  "name": "n8n-fixture",
+  "dependencies": {
+    "@n8n/decorators": "workspace:*"
+  }
+}
