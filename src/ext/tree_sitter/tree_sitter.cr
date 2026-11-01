@@ -12,6 +12,7 @@
 #   tree-sitter-python      v0.23.6
 #   tree-sitter-typescript  v0.23.2
 #   tree-sitter-tsx         v0.23.2
+#   tree-sitter-ruby        v0.23.1
 
 require "../../miniparsers/extraction_result_cache"
 
@@ -93,6 +94,7 @@ lib LibTreeSitter
   fun tree_sitter_rust : TSLanguage
   fun tree_sitter_typescript : TSLanguage
   fun tree_sitter_tsx : TSLanguage
+  fun tree_sitter_ruby : TSLanguage
 end
 
 # Thin high-level facade. Keeps tree lifetime tied to an object so callers
@@ -295,6 +297,12 @@ module Noir::TreeSitter
   # (axum, actix-web, rocket, …) and the Rust callee extractor.
   def self.parse_rust(source : String, &)
     parse(source, LibTreeSitter.tree_sitter_rust) { |root| yield root }
+  end
+
+  # Parses `source` with the Ruby grammar and yields the root node.
+  # Covers `.rb` files.
+  def self.parse_ruby(source : String, &)
+    parse(source, LibTreeSitter.tree_sitter_ruby) { |root| yield root }
   end
 
   # Parses JS-family `source` with the grammar `path`'s extension calls
