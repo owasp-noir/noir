@@ -30,12 +30,12 @@ ANY_REQUEST = "Protected by Spring Security authenticated via anyRequest()"
 
 # The utility class a permitAll matcher is fed from: `urls` walks the
 # handler mappings and reads `reader`; `extra` adds a method of its own.
-def marker_utils(reader : String, extra : String = "") : String
+def marker_utils(reader : String, extra : String = "", cond : String? = nil, add : String = "out.add(\"x\");") : String
   <<-JAVA
     class AnonUtils {
         static Set<String> urls(Ctx ctx) {
             for (Map.Entry<RequestMappingInfo, HandlerMethod> e : mapping.getHandlerMethods().entrySet()) {
-                if (e.getValue().#{reader} != null) { out.add("x"); }
+                if (#{cond || "e.getValue().#{reader} != null"}) { #{add} }
             }
             return out;
         }
@@ -60,12 +60,12 @@ def marker_chain(rule : String = "permitAll()", feed : String = "AnonUtils.urls(
     JAVA
 end
 
-def marker_files(reader : String = "getMethodAnnotation(AnonymousAccess.class)", chain : String = marker_chain, extra : String = "") : Hash(String, String)
+def marker_files(reader : String = "getMethodAnnotation(AnonymousAccess.class)", chain : String = marker_chain, extra : String = "", cond : String? = nil, add : String = "out.add(\"x\");") : Hash(String, String)
   {
     "#{MARKER_DIR}AnonymousAccess.java"     => "public @interface AnonymousAccess {}\n",
     "#{MARKER_DIR}AnonymousGetMapping.java" => "@AnonymousAccess\n@RequestMapping(method = RequestMethod.GET)\npublic @interface AnonymousGetMapping {}\n",
     "#{MARKER_DIR}Unrelated.java"           => "@RequestMapping(method = RequestMethod.GET)\npublic @interface UnrelatedGetMapping {}\n",
-    "#{MARKER_DIR}AnonUtils.java"           => marker_utils(reader, extra),
+    "#{MARKER_DIR}AnonUtils.java"           => marker_utils(reader, extra, cond, add),
     "#{MARKER_DIR}SecurityConfig.java"      => chain,
   }
 end
@@ -221,6 +221,81 @@ describe "SpringAuthTagger annotation-collected permitAll" do
       }
       JAVA
     tags = run_spring_markers(marker_files(chain: two_chains).merge({"#{MARKER_DIR}W.java" => source}), {"GET /api/open" => "#{MARKER_DIR}W.java:3", "GET /web/x" => "#{MARKER_DIR}W.java:7"})
+    tags["GET /api/open"].should be_empty
+    tags["GET /web/x"].should eq([ANY_REQUEST])
+  end
+
+  it "reads only a positive test guarding an add, never a whitelist-by-default collector" do
+    me = <<-JAVA
+      class M {
+          @AnonymousAccess
+          @GetMapping("/me")
+          public String me() { return "x"; }
+      }
+      JAVA
+    {
+      "== null add"      => {"e.getValue().getMethodAnnotation(AnonymousAccess.class) == null", "out.add(\"x\");"},
+      "negated has"      => {"!e.getValue().hasMethodAnnotation(AnonymousAccess.class)", "out.add(\"x\");"},
+      "!= null continue" => {"e.getValue().getMethodAnnotation(AnonymousAccess.class) != null", "continue;"},
+      "has continue"     => {"e.getValue().hasMethodAnnotation(AnonymousAccess.class)", "continue;"},
+      "and-ed test"      => {"e.getValue().getMethodAnnotation(AnonymousAccess.class) != null || other()", "out.add(\"x\");"},
+    }.each do |label, (cond, add)|
+      files = marker_files(cond: cond, add: add).merge({"#{MARKER_DIR}M.java" => me})
+      run_spring_markers(files, {"GET /me" => "#{MARKER_DIR}M.java:3"})["GET /me"].should eq([ANY_REQUEST]), label
+    end
+  end
+
+  it "reads a bare positive has-test and a variable tested with != null" do
+    me = <<-JAVA
+      class M {
+          @AnonymousAccess
+          @GetMapping("/me")
+          public String me() { return "x"; }
+      }
+      JAVA
+    has = marker_files(cond: "e.getValue().hasMethodAnnotation(AnonymousAccess.class)").merge({"#{MARKER_DIR}M.java" => me})
+    run_spring_markers(has, {"GET /me" => "#{MARKER_DIR}M.java:3"})["GET /me"].should be_empty
+    variable = marker_utils("x").sub("if (e.getValue().x != null) { out.add(\"x\"); }", "AnonymousAccess a = e.getValue().getMethodAnnotation(AnonymousAccess.class);\n if (null != a) { out.add(\"x\"); }")
+    files = marker_files.merge({"#{MARKER_DIR}AnonUtils.java" => variable, "#{MARKER_DIR}M.java" => me})
+    run_spring_markers(files, {"GET /me" => "#{MARKER_DIR}M.java:3"})["GET /me"].should be_empty
+  end
+
+  it "resolves the matcher variable inside its own chain only" do
+    chains = <<-JAVA
+      @EnableWebSecurity
+      class SecurityConfig {
+          @Bean
+          @Order(1)
+          SecurityFilterChain api(HttpSecurity http) throws Exception {
+              Set<String> urls = AnonUtils.urls(ctx);
+              http.antMatcher("/api/**").authorizeRequests()
+                  .antMatchers(urls.toArray(new String[0])).permitAll()
+                  .anyRequest().authenticated();
+              return http.build();
+          }
+          @Bean
+          @Order(2)
+          SecurityFilterChain web(HttpSecurity http) throws Exception {
+              Set<String> urls = props.getWhitelist();
+              http.authorizeRequests()
+                  .antMatchers(urls.toArray(new String[0])).permitAll()
+                  .anyRequest().authenticated();
+              return http.build();
+          }
+      }
+      JAVA
+    source = <<-JAVA
+      class W {
+          @AnonymousAccess
+          @GetMapping("/api/open")
+          public String apiOpen() { return "x"; }
+
+          @AnonymousAccess
+          @GetMapping("/web/x")
+          public String webX() { return "x"; }
+      }
+      JAVA
+    tags = run_spring_markers(marker_files(chain: chains).merge({"#{MARKER_DIR}W.java" => source}), {"GET /api/open" => "#{MARKER_DIR}W.java:3", "GET /web/x" => "#{MARKER_DIR}W.java:7"})
     tags["GET /api/open"].should be_empty
     tags["GET /web/x"].should eq([ANY_REQUEST])
   end
@@ -509,8 +584,8 @@ describe "SpringAuthTagger argument-resolver principal" do
       (Time.instant - started).total_seconds
     end
     build.call(50) # warm up
-    small = build.call(400)
-    large = build.call(1600)
+    small = (0...3).min_of { build.call(500) }
+    large = (0...3).min_of { build.call(2000) }
     # 4x the handlers: linear is ~4x, quadratic ~16x
     (large / small).should be < 10.0
   end

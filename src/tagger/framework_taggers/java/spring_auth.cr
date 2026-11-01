@@ -1462,7 +1462,7 @@ class SpringAuthTagger < FrameworkTagger
       if patterns.empty? && config_keys.empty? && !protected_rule && java_source
         # A matcher fed by a method that collects URLs from annotated
         # handlers: a rule keyed to that method, resolved per endpoint.
-        permit_source_methods(args, java_source).each do |key|
+        permit_source_methods(args, block, java_source).each do |key|
           rules << {pattern: "", method: matcher_method, description: auth_type, protected_rule: false, module: module_dir, config_key: key, path: file_path, line: rule_line}
         end
       end
@@ -2318,17 +2318,93 @@ class SpringAuthTagger < FrameworkTagger
 
   # The method(s) a permitAll matcher argument is built from:
   # `anonymousUrls.get(..)` where `anonymousUrls = AnonTagUtils.getUrls(ctx)`,
-  # or a direct `Utils.urls(..)` call, as marker keys of the file declaring
+  # (declared in the chain's own method) or a direct `Utils.urls(..)` call, as marker keys of the file declaring
   # the class (resolved by import or package, not by bare name).
-  private def permit_source_methods(args : String, source : String) : Array(String)
+  private def permit_source_methods(args : String, block : String, source : String) : Array(String)
     pairs = [] of {String, String}
     args.scan(/\b([A-Z][\w$]*)\s*\.\s*([a-z]\w*)\s*\(/) { |match| pairs << {match[1], match[2]} }
     args.scan(/\b([a-z_$][\w$]*)\s*\./) do |match|
-      source.match(/\b#{Regex.escape(match[1])}\s*=\s*([A-Z][\w$]*)\s*\.\s*([a-z]\w*)\s*\(/).try { |init| pairs << {init[1], init[2]} }
+      block.match(/\b#{Regex.escape(match[1])}\s*=\s*([A-Z][\w$]*)\s*\.\s*([a-z]\w*)\s*\(/).try { |init| pairs << {init[1], init[2]} }
     end
     pairs.uniq!.compact_map do |type, method|
       Analyzer::Java::JavaEngine.java_type_file(type, source).try { |file| "#{MARKER_KEY}#{file}##{method}" }
     end
+  end
+
+  POSITIVE_TEST     = /\A\s*(?:R\s*!=\s*null|null\s*!=\s*R|R)\s*\z/
+  BOOLEAN_READ_NAME = /\A(?:has|isAnnot)/
+  ADDS_URL          = /\b(?:add|addAll|put|putAll)\s*\(/
+  LEAVES_LOOP       = /\b(?:continue|return)\b/
+
+  # Index of the receiver chain (`e.getValue().`) a call at `at` hangs off.
+  private def receiver_start(text : String, at : Int32) : Int32
+    index = at
+    depth = 0
+    while index > 0
+      char = text[index - 1]
+      if char == ')'
+        depth += 1
+      elsif char == '('
+        break if depth == 0
+        depth -= 1
+      elsif depth == 0 && !(char.alphanumeric? || char == '_' || char == '$' || char == '.')
+        break
+      end
+      index -= 1
+    end
+    index
+  end
+
+  private def paren_close(text : String, open : Int32) : Int32?
+    depth = 0
+    index = open
+    while index < text.size
+      depth += 1 if text[index] == '('
+      if text[index] == ')'
+        depth -= 1
+        return index if depth == 0
+      end
+      index += 1
+    end
+  end
+
+  # The `if` whose condition is `condition_range` guards a body that adds a
+  # URL and does not leave the loop (`continue` / `return`).
+  private def adds_in_body?(text : String, after_paren : Int32) : Bool
+    rest = text[after_paren + 1..]
+    stripped = rest.lstrip
+    inner =
+      if stripped.starts_with?('{')
+        brace_body(stripped, 1)
+      else
+        stripped[0, (stripped.index(';') || stripped.size) + 1]
+      end
+    inner.matches?(ADDS_URL) && !inner.matches?(LEAVES_LOOP)
+  end
+
+  # `read` (a MatchData of a lookup in `body`) is a positive presence test
+  # (`!= null`, or a bare boolean `has…`/`isAnnot…`), directly in an `if`, or
+  # through a variable the `if` then tests, whose body adds a URL.
+  private def positive_add_guard?(body : String, read : Regex::MatchData) : Bool
+    call_end = (body.index(')', read.end(0)) || return false) + 1
+    call_start = receiver_start(body, read.begin(0))
+    call = body[call_start...call_end]
+    boolean_read = call.matches?(/\b(?:has|isAnnot)\w*\s*\(/)
+    before = body[0, call_start].rstrip
+    if before.ends_with?('=') && !before.ends_with?("==") && !before.ends_with?("!=")
+      return false unless variable = before[0...-1].rstrip.match(/([\w$]+)\z/)
+      return false unless test = body[call_end..].match(/\bif\s*\(/)
+      open = call_end + test.end(0) - 1
+      return false unless close = paren_close(body, open)
+      return false unless body[open + 1...close].strip.matches?(/\A(?:#{Regex.escape(variable[1])}\s*!=\s*null|null\s*!=\s*#{Regex.escape(variable[1])})\z/)
+      return adds_in_body?(body, close)
+    end
+    return false unless open = body.rindex(/\bif\s*\(/, call_start).try { |at| body.index('(', at) }
+    return false unless (close = paren_close(body, open)) && close >= call_end
+    condition = body[open + 1...close].sub(call.strip, "R")
+    return false unless condition.matches?(POSITIVE_TEST)
+    return false if condition.strip == "R" && !boolean_read
+    adds_in_body?(body, close)
   end
 
   private def brace_body(masked : String, start : Int32) : String
@@ -2360,9 +2436,14 @@ class SpringAuthTagger < FrameworkTagger
         declarations.each do |_, start|
           body = brace_body(index[:masked], start)
           next unless body.includes?("getHandlerMethods")
-          merged = body.scan(MERGED_ANNOTATION_READ).map(&.[1])
-          names = merged + body.scan(PLAIN_ANNOTATION_READ).map(&.[1])
-          next if names.empty?
+          reads = body.scan(MERGED_ANNOTATION_READ).map { |read| {read, true} } + body.scan(PLAIN_ANNOTATION_READ).map { |read| {read, false} }
+          next if reads.empty?
+          # Whitelist-by-default collectors (`== null` adds, `continue`, `!`)
+          # make the protected handlers public: every read must be a positive
+          # test guarding an add, or the method is no marker source at all.
+          next unless reads.all? { |read, _| positive_add_guard?(body, read) }
+          merged = reads.select(&.[1]).map(&.[0][1])
+          names = reads.map(&.[0][1])
           key = "#{MARKER_KEY}#{file}##{name}"
           known = @method_readers[key]?
           @method_readers[key] = {(known ? known[0] : Set(String).new).concat(names), (known ? known[1] : true) && !merged.empty?}
