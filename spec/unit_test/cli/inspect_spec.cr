@@ -179,6 +179,19 @@ describe Noir::CLI::Inspect do
       trace.call("/n/7").should eq(["/n/{id:int?}"])
     end
 
+    it "holds an ASP.NET catch-all to its regex constraint" do
+      spa = "/{**path:regex(^(?!(api|feed)/).*)}"
+      routes = [endpoint("GET", spa), endpoint("GET", "/api/v3/series"), endpoint("GET", "/content/{**path}")]
+      trace = ->(path : String) { Noir::CLI::Inspect.trace(routes, "GET", path).map(&.endpoint.url) }
+      trace.call("/api/v3/series").should eq(["/api/v3/series"])
+      trace.call("/api/v3/other").should be_empty
+      trace.call("/feed/x").should be_empty
+      trace.call("/series/42/overview").should eq([spa])
+      trace.call("/").should eq([spa])
+      # A catch-all without a constraint still takes everything.
+      trace.call("/content/api/x").should eq(["/content/{**path}", spa])
+    end
+
     it "reads path-to-regexp optional segments and regex constraints" do
       routes = [
         endpoint("GET", "/posts/:id?"),

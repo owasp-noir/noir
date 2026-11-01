@@ -440,11 +440,14 @@ module Noir::CLI::Inspect
     scan_placeholders(route) do |kind, text|
       case kind
       when :rest
+        # ASP.NET `{**path:regex(^(?!api/).*)}`: the rest must satisfy the
+        # constraint, so `/api/x` is not served by the SPA fallback it excludes.
+        guard = rest_constraint(text).try { |body| "(?=(?:#{body})\\z)" } || ""
         if text.matches?(ZERO_OR_MORE) && parts.last? == "/" && !(star_needs_one && text.starts_with?("{*"))
           parts.pop
-          parts << "(?:/.*)?"
+          parts << "(?:/#{guard}.*)?"
         else
-          parts << ".*"
+          parts << "#{guard}.*"
         end
       when :optional then parts << "(?:#{route_pattern(text, star_needs_one)})?"
       when :one
@@ -461,6 +464,18 @@ module Noir::CLI::Inspect
       end
     end
     parts.join
+  end
+
+  # The regex of a `{*name:regex(..)}` / `{**name:regex(..)}` catch-all,
+  # anchors stripped, or nil when it has none or does not compile.
+  private def self.rest_constraint(text : String) : String?
+    body = text.match(/\A\{\*{1,2}\w+:regex\((.*)\)\}\z/m).try(&.[1]) || return
+    body = body.lchop('^')
+    body = body.rchop('$') unless body.ends_with?("\\$")
+    Regex.new(body)
+    body
+  rescue ArgumentError
+    nil
   end
 
   # A typed placeholder only takes what the router would route to it:
