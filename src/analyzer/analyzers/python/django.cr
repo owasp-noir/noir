@@ -675,17 +675,17 @@ module Analyzer::Python
             name = assignment_match[1]
             expression = inline_previous_binding(assignment_match[2], name, bindings[name]?)
             bindings[name] = expression if expression.lstrip.starts_with?('[')
-            add_urlpattern_expression_contents(contents, expression, urlpattern_lists)
+            add_urlpattern_expression_contents(contents, expression, urlpattern_lists, lines)
           end
         elsif line.matches?(append_check_re)
           logical_line = collect_python_expression(lines, index, line)
           if append_match = logical_line.match(append_capture_re)
-            add_urlpattern_expression_contents(contents, append_match[1], urlpattern_lists)
+            add_urlpattern_expression_contents(contents, append_match[1], urlpattern_lists, lines)
           end
         elsif line.matches?(extend_check_re)
           logical_line = collect_python_expression(lines, index, line)
           if extend_match = logical_line.match(extend_capture_re)
-            add_urlpattern_expression_contents(contents, extend_match[1], urlpattern_lists)
+            add_urlpattern_expression_contents(contents, extend_match[1], urlpattern_lists, lines)
           end
         end
       end
@@ -708,10 +708,22 @@ module Analyzer::Python
 
     private def add_urlpattern_expression_contents(contents : Array(::String),
                                                    expression : ::String,
-                                                   urlpattern_lists : Hash(::String, ::String)) : Nil
+                                                   urlpattern_lists : Hash(::String, ::String),
+                                                   lines : Array(::String)) : Nil
       split_python_expression_terms(expression).each do |term|
         term = term.strip
         next if term.empty? || term == "urlpatterns"
+
+        # `reduce(add, groups)` / `sum(groups, [])` concatenates a list of
+        # url lists (Read the Docs' root URLconf): each member is a list
+        # name or an inline `[path(...)]`.
+        if group = term.match(URL_GROUP_FLATTEN_RE)
+          group_name = group[1]? || group[2]
+          url_group_members(lines, group_name).each do |member|
+            add_urlpattern_expression_contents(contents, member, urlpattern_lists, lines) unless member == group_name
+          end
+          next
+        end
 
         if term.matches?(/\b(?:url|path|re_path)\s*\(/)
           contents << term
@@ -732,6 +744,32 @@ module Analyzer::Python
           contents.concat(pattern_content.split(URL_LIST_JOIN))
         end
       end
+    end
+
+    URL_GROUP_FLATTEN_RE = /\A(?:(?:functools\.)?reduce\s*\(\s*(?:operator\.)?(?:add|iadd|concat)\s*,\s*([A-Za-z_]\w*)\s*\)|sum\s*\(\s*([A-Za-z_]\w*)\s*,\s*\[\s*\]\s*\))\z/
+
+    # The members a list of url lists collects: its `name = [a, b]` literal
+    # plus every `name.append(x)`, `name.insert(i, x)`, `name += [x]` and
+    # `name.extend([x])`, conditional ones included (a setting can mount them).
+    private def url_group_members(lines : Array(::String), name : ::String) : Array(::String)
+      members = [] of ::String
+      head_re = /^\s*#{Regex.escape(name)}\s*(?::[^=\n]+)?(=|\+=|\.\s*(?:append|insert|extend)\s*\()\s*(.*)$/m
+      lines.each_with_index do |line, index|
+        next unless line.includes?(name)
+        next unless head = collect_python_expression(lines, index, line).match(head_re)
+        op, rest = head[1], head[2].strip
+        if op.ends_with?('(')
+          rest = rest.rchop(')').strip
+          rest = split_python_arguments(rest)[1]?.try(&.strip) || "" if op.includes?("insert")
+          unless op.includes?("extend")
+            members << rest
+            next
+          end
+        end
+        next unless rest.starts_with?('[') && rest.ends_with?(']')
+        split_python_arguments(rest[1...-1]).each { |part| members << part.strip unless part.strip.empty? }
+      end
+      members
     end
 
     # Same rules as `split_python_arguments`, splitting on `+` instead of `,`
