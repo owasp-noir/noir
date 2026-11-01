@@ -379,7 +379,11 @@ describe "DjangoAuthTagger" do
     Dir.mkdir_p(tmpdir)
     perms = File.join(tmpdir, "permissions.py")
     views = File.join(tmpdir, "views.py")
+    local_key = File.join(tmpdir, "local_key.py")
+    aliased = File.join(tmpdir, "aliased.py")
     File.write(perms, <<-PY)
+      from rest_framework_api_key.permissions import BaseHasAPIKey, HasAPIKey
+
       class HasBuildAPIKey(BaseHasAPIKey):
           def has_permission(self, request, view):
               request.build_api_key = None
@@ -417,6 +421,40 @@ describe "DjangoAuthTagger" do
 
       class LibraryKey(HasAPIKey):
           pass
+
+      class ReadOrPerm(BasePermission):
+          def has_permission(self, request, view):
+              return request.method in SAFE_METHODS or request.user.has_perm("a.b")
+
+      class PostOnlyKey(BasePermission):
+          def has_permission(self, request, view):
+              key = request.headers.get("X-Api-Key")
+              if request.method == "POST":
+                  if not key:
+                      return False
+              return True
+
+      class QueryToken(BasePermission):
+          def has_permission(self, request, view):
+              token = request.query_params.get("token")
+              if not token:
+                  return False
+              return token == settings.TOKEN
+      PY
+    File.write(local_key, <<-PY)
+      from django.conf import settings
+
+      class HasAPIKey(BasePermission):
+          def has_permission(self, request, view):
+              if not settings.API_KEY:
+                  return True
+              return request.headers.get("X-Api-Key") == settings.API_KEY
+      PY
+    File.write(aliased, <<-PY)
+      from rest_framework_api_key.permissions import HasAPIKey as LibHasAPIKey
+
+      class LibSub(LibHasAPIKey):
+          pass
       PY
     File.write(views, <<-PY)
       class BuildView(APIView):
@@ -445,9 +483,33 @@ describe "DjangoAuthTagger" do
           permission_classes = [LibraryKey]
           def get(self, request):
               pass
+
+      class PermView(APIView):
+          permission_classes = [ReadOrPerm]
+          def post(self, request):
+              pass
+
+      class PostKeyView(APIView):
+          permission_classes = [PostOnlyKey]
+          def get(self, request):
+              pass
+
+      class TokenView(APIView):
+          permission_classes = [QueryToken]
+          def get(self, request):
+              pass
+
+      class LocalKeyView(APIView):
+          permission_classes = [HasAPIKey]
+          def get(self, request):
+              pass
+
+      class AliasView(APIView):
+          permission_classes = [LibSub]
+          def get(self, request):
+              pass
       PY
-    CodeLocator.instance.register_path(perms)
-    CodeLocator.instance.register_path(views)
+    [perms, views, local_key, aliased].each { |file| CodeLocator.instance.register_path(file) }
 
     begin
       noir_options = create_test_options
@@ -459,8 +521,13 @@ describe "DjangoAuthTagger" do
       debug = at.call("POST", 15)
       early = at.call("POST", 20)
       library = at.call("GET", 25)
+      perm = at.call("POST", 30)
+      post_key = at.call("GET", 35)
+      token = at.call("GET", 40)
+      local = at.call("GET", 45)
+      alias_sub = at.call("GET", 50)
 
-      DjangoAuthTagger.new(noir_options).perform([read, write, optional, debug, early, library])
+      DjangoAuthTagger.new(noir_options).perform([read, write, optional, debug, early, library, perm, post_key, token, local, alias_sub])
 
       read.tags.should be_empty
       write.tags.map(&.description).should eq(["Protected by DRF permission_classes"])
@@ -468,6 +535,17 @@ describe "DjangoAuthTagger" do
       debug.tags.should be_empty
       early.tags.should be_empty
       library.tags.map(&.description).should eq(["Protected by DRF permission_classes"])
+      # Undecided past the verb: the `has_perm` check still refuses.
+      perm.tags.map(&.description).should eq(["Protected by DRF permission_classes"])
+      # A refusal only under a verb branch adds no guard for GET.
+      post_key.tags.should be_empty
+      # A key compared to a setting is the check, not a setting that opens it.
+      token.tags.map(&.description).should eq(["Protected by DRF permission_classes"])
+      # A project class named like the library one is read by its body: a
+      # setting can open it.
+      local.tags.map(&.description).should eq(["Protected by DRF permission_classes (settings.API_KEY decides; a setting can make it public)"])
+      # A subclass of the library class imported under an alias.
+      alias_sub.tags.map(&.description).should eq(["Protected by DRF permission_classes"])
     ensure
       FileUtils.rm_rf(tmpdir)
       CodeLocator.instance.clear_all
