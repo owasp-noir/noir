@@ -1,4 +1,5 @@
 require "../../../models/detector"
+require "../../../miniparsers/cargo_dependency"
 
 module Detector::Rust
   class ActixWeb < Detector
@@ -7,10 +8,7 @@ module Detector::Rust
     def detect(filename : String, file_contents : String) : Bool
       return false unless filename.includes?("Cargo.toml")
 
-      check = file_contents.includes?("actix-web")
-      check = check && file_contents.includes?("dependencies")
-
-      check
+      file_contents.includes?("dependencies") && Noir::CargoDependency.declares?(file_contents, "actix-web")
     end
   end
 end

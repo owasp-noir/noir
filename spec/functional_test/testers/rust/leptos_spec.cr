@@ -32,8 +32,9 @@ expected_endpoints = [
   Endpoint.new("/api/empty_ep", "POST"),
 ]
 
-# `leptos_axum` in the manifest is also axum evidence; axum finds no routes.
+# `leptos_axum` is a companion crate, not an `axum` dependency key: axum is not
+# detected (it would have found no routes and parsed every `.rs` file).
 FunctionalTester.new("fixtures/rust/leptos/", {
-  :techs     => 2,
+  :techs     => 1,
   :endpoints => expected_endpoints.size,
 }, expected_endpoints).perform_tests
