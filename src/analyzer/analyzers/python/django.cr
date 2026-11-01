@@ -96,6 +96,10 @@ module Analyzer::Python
       "FILES"        => {["POST"], "form"},
       "data"         => {["POST", "PUT", "PATCH"], "form"},
       "query_params" => {nil, "query"},
+      # DRF 2.x spelled `query_params` / `data` in capitals; projects that
+      # vendor it (Taiga) still do.
+      "QUERY_PARAMS" => {nil, "query"},
+      "DATA"         => {["POST", "PUT", "PATCH"], "form"},
       # Not a Django attribute: what `with_request_aliases` spells a local
       # holding `json.loads(request.body)` as, so its keys read as JSON.
       "json_body" => {["POST"], "json"},
@@ -2902,12 +2906,22 @@ module Analyzer::Python
       end
     end
 
+    # `@action(...)`, and the `@list_route(...)` / `@detail_route(...)` it
+    # replaced in DRF 3.8 (still the API of projects that vendor DRF, like
+    # Taiga): a list route is `detail=False`, a detail route `detail=True`.
+    DRF_ACTION_DECORATOR_RE = /@(?:[A-Za-z_][A-Za-z0-9_]*\.)?(action|list_route|detail_route)\s*\(/
+
     # The argument text of an `@action(...)` decorator in `decorators`.
     private def drf_action_decorator_args(decorators : ::String) : ::String?
-      call = decorators.match(/@(?:[A-Za-z_][A-Za-z0-9_]*\.)?action\s*\(/) || return
+      drf_action_decorator(decorators).try(&.[1])
+    end
+
+    # The extra-action decorator in `decorators`, as {kind, argument text}.
+    private def drf_action_decorator(decorators : ::String) : Tuple(::String, ::String)?
+      call = decorators.match(DRF_ACTION_DECORATOR_RE) || return
       open = call.byte_end(0) - 1
       close = python_close_paren_byte(decorators.to_slice, open) || return
-      decorators.byte_slice(open + 1, close - open - 1)
+      {call[1], decorators.byte_slice(open + 1, close - open - 1)}
     end
 
     private def extract_drf_viewset_endpoints(route_base : ::String, filepath : ::String, class_name : ::String,
@@ -2936,8 +2950,9 @@ module Analyzer::Python
           method_sites[method_name] = {klass, body_lines, offset}
 
           method_actions = [] of DjangoDrfAction
-          if args = drf_action_decorator_args(decorators)
-            detail = args.matches?(/\bdetail\s*=\s*True\b/)
+          if decorator = drf_action_decorator(decorators)
+            kind, args = decorator
+            detail = kind == "action" ? args.matches?(/\bdetail\s*=\s*True\b/) : kind == "detail_route"
             # DRF: `url_path` defaults to the method name itself; only
             # `url_name` (the reverse() name) swaps `_` for `-`.
             url_path = normalize_django_route(extract_drf_action_url_path(args) || method_name)
