@@ -40,7 +40,7 @@ module Analyzer::Javascript
     # Methods a catch-all handler serves: the ones its body branches on
     # (`req.method === "POST"`), otherwise every method.
     protected def catch_all_methods(handler : Noir::JSServerlessFunctionExtractor::Handler?) : Array(String)
-      inferred = handler ? Noir::JSServerlessFunctionExtractor.inferred_methods(handler.body) : [] of String
+      inferred = handler ? handler.methods : [] of String
       inferred.empty? ? [ANY_METHOD] : inferred
     end
   end

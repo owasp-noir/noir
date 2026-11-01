@@ -63,10 +63,25 @@ describe Noir::JSServerlessFunctionExtractor do
     extractor.config_object(%(export default async () => client({ config: { path: "/x" } });), "f.ts").should be_nil
   end
 
+  it "reads config values off the object, not the text around it" do
+    content = %(export const config = {\n  "path": ['/a', `/b`, dynamic, "/c"],\n  runtime: "edge",\n  method: METHOD,\n  nested: { path: "/no" },\n};)
+    config = extractor.config_object(content, "f.ts").not_nil!
+    extractor.config_strings(config, "path").should eq ["/a", "/b", "/c"]
+    extractor.config_strings(config, "runtime").should eq ["edge"]
+    extractor.config_strings(config, "method").should be_empty
+    extractor.config_key?(config, "method").should be_true
+    extractor.config_key?(config, "schedule").should be_false
+  end
+
   it "infers the methods a handler branches on" do
-    body = %(if (req.method === "POST") {}\nswitch (request.method) { case "PUT": break; case 'delete': break; }\nif (["GET", "HEAD"].includes(req.method)) {}\nif (event.httpMethod !== "PATCH") {})
-    extractor.inferred_methods(body).should eq ["POST", "PATCH", "GET", "HEAD", "PUT", "DELETE"]
-    extractor.inferred_methods("return new Response();").should be_empty
+    inferred = ->(body : String) { extractor.default_handler("export default async (req, event) => {\n#{body}\n};", "f.ts").not_nil!.methods }
+    inferred.call(%(if (req.method === "POST") {}\nswitch (request.method) { case "PUT": break; case 'delete': break; }\nif (["GET", "HEAD"].includes(req.method)) {}\nif (event.httpMethod !== "PATCH") {})).should eq ["POST", "PATCH", "GET", "HEAD", "PUT", "DELETE"]
+    inferred.call("return new Response();").should be_empty
+    # aliases of the request method, and literals that only look like checks
+    inferred.call(%(const { method } = req;\nif (method === "PUT") {}\nswitch (method) { case "DELETE": break; })).should eq ["PUT", "DELETE"]
+    inferred.call(%(const verb = req.method;\nif ("POST" == verb) {})).should eq ["POST"]
+    inferred.call(%(const s = 'req.method === "POST"'; const t = `switch (req.method) { case "PUT": }`; // req.method === "GET"\nfoo.method === "PATCH";)).should eq ["PATCH"]
+    inferred.call(%(if (other === "POST") {} switch (req.method) { default: x = { a: "GET" }; })).should be_empty
   end
 
   it "extracts request params for each handler style" do

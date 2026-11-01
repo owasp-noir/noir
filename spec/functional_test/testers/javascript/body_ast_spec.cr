@@ -28,7 +28,7 @@ FunctionalTester.new("fixtures/javascript/vercel_body_ast/", {
 # Next.js app router, pages router and server actions.
 FunctionalTester.new("fixtures/javascript/nextjs_body_ast/", {
   :techs     => 1,
-  :endpoints => 15,
+  :endpoints => 18,
 }, [
   callee_endpoint("/api/typed", "GET", [Param.new("page", "", "query")], [{"loadTyped", 6}]),
   callee_endpoint("/api/typed", "POST", [Param.new("title", "", "json")], [{"loadTyped", 11}]),
@@ -39,6 +39,11 @@ FunctionalTester.new("fixtures/javascript/nextjs_body_ast/", {
   callee_endpoint("/api/wrap", "GET", [Param.new("limit", "", "query")], [{"listWrapped", 7}]),
   callee_endpoint("/api/paged", "GET", [Param.new("page", "", "query")], [{"loadTyped", 9}]),
   # `currentId` is expression-bodied: the `{` after it is `login`'s.
+  # a parse error in one export must not lend GET's params to POST
+  callee_endpoint("/api/broken", "GET", [Param.new("page", "", "query")], [{"listBroken", 5}]),
+  callee_endpoint("/api/broken", "POST", [Param.new("title", "", "json")], [] of Tuple(String, Int32)),
+  # verbs named in strings are not exports (no phantom DELETE / PUT)
+  callee_endpoint("/api/phantom", "GET", [Param.new("q", "", "query")], [] of Tuple(String, Int32)),
   callee_endpoint("/currentId", "POST", [] of Param, [] of Tuple(String, Int32)),
   callee_endpoint("/login", "POST", [Param.new("email", "", "form")], [{"createUser", 13}]),
 ], {
@@ -61,8 +66,10 @@ FunctionalTester.new("fixtures/javascript/fresh_body_ast/", {
 # is not mistaken for a component reference.
 FunctionalTester.new("fixtures/typescript/tanstack_body_ast/", {
   :techs     => 1,
-  :endpoints => 1,
+  :endpoints => 3,
 }, [
+  callee_endpoint("/tricky", "GET", [] of Param, [{"Tricky", 6}, {"load", 5}]),
+  callee_endpoint("/code", "GET", [] of Param, [{"load", 12}]),
   callee_endpoint("/posts", "GET", [] of Param, [{"PostsPage", 5}, {"fetchPosts", 8}]),
 ], {
   "include_callee" => YAML::Any.new(true),

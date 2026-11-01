@@ -249,7 +249,7 @@ module Analyzer::Javascript
       end
       sanitized = Noir::JSRouteExtractor.strip_js_comments(content)
 
-      methods = extract_app_router_methods(sanitized)
+      methods = extract_app_router_methods(sanitized, path, include_callee)
       methods = methods_from_reexport(path, sanitized) if methods.empty?
       return if methods.empty?
 
@@ -266,7 +266,7 @@ module Analyzer::Javascript
         # …)`, or `withAuth(getHandler)` declared here) reads its own closure
         # plus the same-file helpers it calls (`validateRequest(req)` reading
         # `apiKey`); not the whole file, which holds the sibling verbs too.
-        param_source ||= wrapped_param_source(sanitized, table, method, method_body_info.try(&.body)) || sanitized
+        param_source ||= wrapped_param_source(sanitized, table, method, method_body_info.try(&.body)) || verb_export_slice(sanitized, method)
         same_file_line = handler.try { |h| h.line if h.path == path }
         endpoint.details = Details.new(PathInfo.new(path, method_body_info.try(&.body_line) || same_file_line || 1))
         endpoint.handler = handler
@@ -614,17 +614,29 @@ module Analyzer::Javascript
       methods
     end
 
-    private def extract_app_router_methods(content : String) : Array(String)
-      methods = [] of String
-      HTTP_METHODS.each do |m|
-        if content.match(EXPORT_VERB_FUNCTION_RES[m]) ||
-           content.match(EXPORT_VERB_CONST_RES[m]) ||
-           content.match(EXPORT_VERB_BRACE_RES[m]) ||
-           content.match(EXPORT_VERB_CONST_BRACE_RES[m])
-          methods << m
-        end
+    # The verbs the module exports, in any form the table sees (a verb named
+    # only inside a string or template is not one). A file that does not
+    # parse cleanly falls back to the export-shaped text.
+    private def extract_app_router_methods(content : String, path : String, include_callee : Bool = false) : Array(String)
+      table = Noir::JSHandlerTable.for(content, path, include_callee)
+      return HTTP_METHODS.select { |m| table.export_names.includes?(m) } unless table.parse_error?
+
+      HTTP_METHODS.select do |m|
+        content.matches?(EXPORT_VERB_FUNCTION_RES[m]) ||
+          content.matches?(EXPORT_VERB_CONST_RES[m]) ||
+          content.matches?(EXPORT_VERB_BRACE_RES[m]) ||
+          content.matches?(EXPORT_VERB_CONST_BRACE_RES[m])
       end
-      methods
+    end
+
+    # Param source for a verb whose function the table could not open: its
+    # own export up to the next one, never the whole file (which holds the
+    # sibling verbs too). A file with no verb token at all (wholesale
+    # `export * from`) is its own source.
+    private def verb_export_slice(content : String, method : String) : String
+      start = [EXPORT_VERB_FUNCTION_RES, EXPORT_VERB_CONST_RES, EXPORT_VERB_BRACE_RES, EXPORT_VERB_CONST_BRACE_RES]
+        .compact_map { |patterns| content.index(patterns[method]) }.min? || return content
+      content[start...(content.index(/\bexport\s/, start + 6) || content.size)]
     end
 
     # An app-router `route.ts` may re-export its verb handlers wholesale
@@ -648,7 +660,7 @@ module Analyzer::Javascript
         rescue
           next
         end
-        found = extract_app_router_methods(target_content)
+        found = extract_app_router_methods(target_content, target)
         found = methods_from_reexport(target, target_content, depth + 1) if found.empty?
         methods.concat(found)
       end

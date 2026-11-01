@@ -21,19 +21,11 @@ module Noir
     # its body (block contents or expression), the 1-based line of the
     # export, the line the body starts on, and (when asked for) its callees.
     record Handler, name : String, params : String, body : String, line : Int32, body_line : Int32,
-      callees : Array(JSCalleeExtractor::Entry)
+      callees : Array(JSCalleeExtractor::Entry), methods : Array(String)
 
     IDENT_RE = /\A[A-Za-z_$][\w$]*\z/
 
-    STRING_LITERAL_RE = /"((?:[^"\\]|\\.)*)"|'((?:[^'\\]|\\.)*)'|`([^`$]*)`/
-
-    # Inferred-from-body method checks on the request:
-    # `req.method === "POST"`, `case "PUT":` under `switch (req.method)`,
-    # `["GET", "HEAD"].includes(req.method)`, `event.httpMethod !== "POST"`.
-    METHOD_COMPARE_RE  = /\b[A-Za-z_$][\w$]*\s*\.\s*(?:method|httpMethod)\s*[!=]==?\s*['"]([A-Za-z]+)['"]|['"]([A-Za-z]+)['"]\s*[!=]==?\s*[A-Za-z_$][\w$]*\s*\.\s*(?:method|httpMethod)\b/
-    METHOD_SWITCH_RE   = /switch\s*\(\s*[A-Za-z_$][\w$]*\s*\.\s*(?:method|httpMethod)\s*\)\s*\{/
-    METHOD_INCLUDES_RE = /\[\s*([^\]]+)\]\s*\.\s*includes\s*\(\s*[A-Za-z_$][\w$]*\s*\.\s*(?:method|httpMethod)\s*\)/
-    KNOWN_METHODS      = Set{"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"}
+    KNOWN_METHODS = JSHandlerTable::KNOWN_METHODS
 
     # The handler a module exports under `name`: `export [async] function
     # name(...)`, `export const name = <fn>`, CommonJS `exports.name = <fn>`,
@@ -51,54 +43,26 @@ module Noir
     end
 
     private def handler(name : String, fn : JSHandlerTable::Fn) : Handler
-      Handler.new(name, fn.params, fn.body, fn.line, fn.body_line, fn.callees)
+      Handler.new(name, fn.params, fn.body, fn.line, fn.body_line, fn.callees, fn.methods)
     end
 
-    # Text of the module's inline `config` object (between the braces), or
-    # nil: `export const config = {...}` (optionally typed or `satisfies`),
-    # or the `config` property of the default-exported object.
-    def config_object(content : String, path : String) : String?
+    alias Config = Hash(String, Array(String))
+
+    # The module's inline `config` object as string values by key, or nil:
+    # `export const config = {...}` (optionally typed or `satisfies`), or the
+    # `config` property of the default-exported object.
+    def config_object(content : String, path : String) : Config?
       JSHandlerTable.for(content, path).config
     end
 
     # String values of `key` in a config object: `path: "/a"` or
     # `path: ["/a", "/b"]` (also quoted keys). Non-literal values are ignored.
-    def config_strings(config : String, key : String) : Array(String)
-      match = config.match(/(?:^|[{,\s])['"]?#{Regex.escape(key)}['"]?\s*:\s*/m)
-      return [] of String unless match
-      start = match.end(0)
-      rest = config[start..]
-      if rest.starts_with?('[')
-        close = rest.index(']') || return [] of String
-        string_literals(rest[1...close])
-      else
-        first = rest.match(/\A#{STRING_LITERAL_RE.source}/)
-        first ? string_literals(first[0]) : [] of String
-      end
+    def config_strings(config : Config, key : String) : Array(String)
+      config[key]? || [] of String
     end
 
-    def config_key?(config : String, key : String) : Bool
-      config.matches?(/(?:^|[{,\s])['"]?#{Regex.escape(key)}['"]?\s*:/m)
-    end
-
-    # Methods a catch-all handler actually branches on. Empty when the body
-    # does not check the request method.
-    def inferred_methods(body : String) : Array(String)
-      methods = [] of String
-      body.scan(METHOD_COMPARE_RE) do |m|
-        add_method(methods, m[1]? || m[2]?)
-      end
-      body.scan(METHOD_INCLUDES_RE) do |m|
-        string_literals(m[1]).each { |verb| add_method(methods, verb) }
-      end
-      body.scan(METHOD_SWITCH_RE) do |m|
-        open = m.end(0) - 1
-        close = JSLiteralScanner.find_matching_brace(body, open) || next
-        body[(open + 1)...close].scan(/\bcase\s+['"]([A-Za-z]+)['"]\s*:/) do |c|
-          add_method(methods, c[1])
-        end
-      end
-      methods
+    def config_key?(config : Config, key : String) : Bool
+      config.has_key?(key)
     end
 
     # Request params a handler reads. `style` picks how the first parameter
@@ -193,20 +157,6 @@ module Noir
       if m = params.match(/\A\s*([A-Za-z_$][\w$]*)/)
         m[1]
       end
-    end
-
-    private def add_method(methods : Array(String), raw : String?) : Nil
-      return unless raw
-      verb = raw.upcase
-      methods << verb if KNOWN_METHODS.includes?(verb) && !methods.includes?(verb)
-    end
-
-    private def string_literals(text : String) : Array(String)
-      values = [] of String
-      text.scan(STRING_LITERAL_RE) do |m|
-        values << (m[1]? || m[2]? || m[3]? || "")
-      end
-      values
     end
   end
 end

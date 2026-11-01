@@ -83,7 +83,7 @@ module Analyzer::Javascript
 
     private def endpoints_for(path : String, content : String, kind : String, name : String, include_callee : Bool) : Array(Endpoint)
       extractor = Noir::JSServerlessFunctionExtractor
-      config = extractor.config_object(content, path) || ""
+      config = extractor.config_object(content, path) || Noir::JSServerlessFunctionExtractor::Config.new
       paths = extractor.config_strings(config, "path")
       return [] of Endpoint if paths.empty? && extractor.config_key?(config, "schedule")
 

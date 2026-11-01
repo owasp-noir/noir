@@ -61,13 +61,13 @@ describe Noir::JSHandlerTable do
   it "reads default exports, fetchable objects, CommonJS and config" do
     t = table.call("export default { async fetch(req) { return go(req); }, config: { path: \"/f\" } };", "r.ts")
     t.default.not_nil!.body.should contain "go(req)"
-    t.config.not_nil!.should contain "/f"
+    t.config.should eq({"path" => ["/f"]})
 
     t = table.call("exports.handler = async (event) => { return 1; };\nmodule.exports = function (a, b) { return 2; };", "r.js")
     t.exports["handler"].params.should eq "event"
     t.default.not_nil!.params.should eq "a, b"
 
-    table.call("export const config: Config = { path: \"/x\" } satisfies C;\nexport default async () => {};", "r.ts").config.not_nil!.should contain "/x"
+    table.call("export const config: Config = { path: \"/x\" } satisfies C;\nexport default async () => {};", "r.ts").config.should eq({"path" => ["/x"]})
   end
 
   it "reads handler objects by member" do

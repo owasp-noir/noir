@@ -151,7 +151,7 @@ module Analyzer::Typescript
     end
 
     private def analyze_create_routes(content : String, path : String, result : Array(Endpoint), literal_mask : Array(Bool))
-      routes = extract_code_routes(content, literal_mask)
+      routes = extract_code_routes(content, path)
       unless routes.empty?
         route_map = Hash(String, CodeRoute).new
         routes.each { |route| route_map[route.name] = route }
@@ -186,28 +186,31 @@ module Analyzer::Typescript
       end
     end
 
-    private def extract_code_routes(content : String, literal_mask : Array(Bool)) : Array(CodeRoute)
+    # `const name = createRoute({...})` declarations; the block is the
+    # call's argument text.
+    private def extract_code_routes(content : String, path : String) : Array(CodeRoute)
       routes = [] of CodeRoute
-      assignment_pattern = /\b(?:export\s+)?(?:const|let|var)\s+(\w+)\s*=\s*createRoute\s*\(/
+      Noir::TreeSitter.parse_js_family(content, path) do |root|
+        Noir::TreeSitter.walk(root) do |node|
+          next unless Noir::TreeSitter.node_type(node) == "variable_declarator"
+          name = Noir::TreeSitter.field(node, "name")
+          call = Noir::TreeSitter.field(node, "value").try { |value| Noir::TreeSitter.unwrap_expression(value) }
+          next unless name && call && Noir::TreeSitter.node_type(name) == "identifier" && Noir::TreeSitter.node_type(call) == "call_expression"
+          function = Noir::TreeSitter.field(call, "function")
+          next unless function && Noir::TreeSitter.node_text(function, content) == "createRoute"
+          args = Noir::TreeSitter.field(call, "arguments") || next
 
-      content.scan(assignment_pattern) do |match|
-        start_pos = match.begin(0)
-        next if literal_position?(literal_mask, match.byte_begin(0))
+          block = Noir::TreeSitter.node_text(args, content)
+          block = block[1...-1] if block.starts_with?('(') && block.ends_with?(')')
+          route_path = extract_string_property(block, "path") || next
 
-        open_paren = match.end(0).try { |idx| content.rindex('(', idx - 1) }
-        next unless start_pos && open_paren
-
-        close_paren = Noir::JSRouteExtractor.find_matching_paren(content, open_paren)
-        next unless close_paren
-
-        block = content[(open_paren + 1)...close_paren]
-        route_path = extract_string_property(block, "path")
-        next unless route_path
-
-        parent = extract_parent_route(block)
-        routes << CodeRoute.new(match[1], route_path, parent, block, start_pos, match.byte_begin(0))
+          # The statement (`export const ...`) is where the route starts.
+          statement = Noir::TreeSitter.parent(node)
+          statement = Noir::TreeSitter.parent(statement) if statement && Noir::TreeSitter.parent(statement).try { |outer| Noir::TreeSitter.node_type(outer) == "export_statement" }
+          byte_start = LibTreeSitter.ts_node_start_byte(statement || node).to_i
+          routes << CodeRoute.new(Noir::TreeSitter.node_text(name, content), route_path, extract_parent_route(block), block, content.byte_slice(0, byte_start).size, byte_start)
+        end
       end
-
       routes
     end
 
@@ -307,77 +310,66 @@ module Analyzer::Typescript
       endpoint
     end
 
+    # `createFileRoute("/x")({...})` starting at `start_pos`: the config
+    # object is the argument of the call that call returns.
     private def attach_file_route_callees(content : String, path : String, start_pos : Int32, endpoint : Endpoint)
-      call_open = content.index('(', start_pos)
-      return unless call_open
-      call_close = Noir::JSRouteExtractor.find_matching_paren(content, call_open)
-      return unless call_close
-
-      second_call_open = skip_whitespace(content, call_close + 1)
-      return unless content[second_call_open]? == '('
-
-      config_open = skip_whitespace(content, second_call_open + 1)
-      return unless content[config_open]? == '{'
-
-      second_call_close = Noir::JSRouteExtractor.find_matching_paren(content, second_call_open)
-      return unless second_call_close
-
-      config_close = Noir::JSRouteExtractor.find_matching_brace(content, config_open)
-      return unless config_close
-      return if config_close > second_call_close
-
-      block = content[(config_open + 1)...config_close]
-      attach_route_block_callees(block, path, line_number_for_index(content, config_open), endpoint, contents: true)
-    end
-
-    # Integer `String#[](Int)` re-seeks from byte 0 on non-ASCII content, so
-    # indexing whole-file offsets here would be O(n) per char (O(n²) across a
-    # scan). Walk with a `Char::Reader` from the equivalent byte offset
-    # instead; `pos` and the return value stay CHAR indices.
-    private def skip_whitespace(content : String, pos : Int32) : Int32
-      return pos if pos >= content.size
-      byte_pos = content.bytesize == content.size ? pos : (content.char_index_to_byte_index(pos) || content.bytesize)
-      reader = Char::Reader.new(content, byte_pos)
-      i = pos
-      while i < content.size && reader.current_char.whitespace?
-        i += 1
-        reader.next_char
+      line = line_number_for_index(content, start_pos)
+      references = [] of Callee
+      bodies = [] of Callee
+      Noir::TreeSitter.parse_js_family(content, path) do |root|
+        Noir::TreeSitter.walk(root) do |node|
+          next unless references.empty? && bodies.empty? && Noir::TreeSitter.node_type(node) == "call_expression"
+          factory = Noir::TreeSitter.field(node, "function").try { |f| Noir::TreeSitter.unwrap_expression(f) }
+          next unless factory && Noir::TreeSitter.node_type(factory) == "call_expression"
+          name = Noir::TreeSitter.field(factory, "function")
+          next unless name && Noir::TreeSitter.node_start_row(name) + 1 == line
+          next unless FILE_ROUTE_FACTORIES.includes?(Noir::TreeSitter.node_text(name, content))
+          args = Noir::TreeSitter.field(node, "arguments") || next
+          config = Noir::TreeSitter.first_named_arg(args).try { |arg| Noir::TreeSitter.unwrap_expression(arg) }
+          collect_route_slots(config, content, path, 1, references, bodies) if config
+        end
       end
-      i
+      (references + bodies).each { |callee| endpoint.push_callee(callee) }
     end
 
     ROUTE_REFERENCE_SLOTS = Set{"component", "loader", "beforeLoad", "pendingComponent", "errorComponent"}
     ROUTE_FUNCTION_SLOTS  = Set{"loader", "beforeLoad"}
 
-    # The route's config object: `block` is either its text between the
-    # braces (`contents`, starting on `start_line`) or the call holding it
-    # (`createRoute({...})`). A slot naming a function (`component: Page`)
-    # is a callee, and the body of an inline `loader` / `beforeLoad` is
-    # walked for its own.
-    private def attach_route_block_callees(block : String, path : String, start_line : Int32, endpoint : Endpoint, contents : Bool = false)
-      source = contents ? "const __noir_route__ = {#{block}\n}" : block
+    FILE_ROUTE_FACTORIES = Set{"createFileRoute", "createLazyFileRoute"}
+
+    # The first object in `block`, a call such as `createRoute({...})`, is the
+    # route's config; `start_line` is the line the block starts on.
+    private def attach_route_block_callees(block : String, path : String, start_line : Int32, endpoint : Endpoint)
       references = [] of Callee
       bodies = [] of Callee
-      Noir::TreeSitter.parse_js_family(source, path) do |root|
-        object = first_object(root) || next
-        Noir::TreeSitter.each_named_child(object) do |member|
-          next unless Noir::TreeSitter.node_type(member) == "pair"
-          key = Noir::TreeSitter.field(member, "key").try { |node| Noir::TreeSitter.node_text(node, source).strip("'\"") }
-          value = Noir::TreeSitter.field(member, "value").try { |node| Noir::TreeSitter.unwrap_expression(node) }
-          next unless key && value && ROUTE_REFERENCE_SLOTS.includes?(key)
+      Noir::TreeSitter.parse_js_family(block, path) do |root|
+        first_object(root).try { |object| collect_route_slots(object, block, path, start_line, references, bodies) }
+      end
+      (references + bodies).each { |callee| endpoint.push_callee(callee) }
+    end
 
-          case Noir::TreeSitter.node_type(value)
-          when "identifier"
-            references << Callee.new(Noir::TreeSitter.node_text(value, source), path: path, line: start_line + Noir::TreeSitter.node_start_row(value))
-          when "arrow_function", "function_expression"
-            next unless ROUTE_FUNCTION_SLOTS.includes?(key)
-            Noir::JSCalleeExtractor.callees_for_handler_node(value, source, path).each do |name, callee_path, line|
-              bodies << Callee.new(name, path: callee_path, line: start_line + line - 1)
-            end
+    # A slot naming a function (`component: Page`) is a callee, and the body
+    # of an inline `loader` / `beforeLoad` is walked for its own. `start_line`
+    # is the line of `source`'s first row.
+    private def collect_route_slots(object : LibTreeSitter::TSNode, source : String, path : String, start_line : Int32,
+                                    references : Array(Callee), bodies : Array(Callee))
+      return unless Noir::TreeSitter.node_type(object) == "object"
+      Noir::TreeSitter.each_named_child(object) do |member|
+        next unless Noir::TreeSitter.node_type(member) == "pair"
+        key = Noir::TreeSitter.field(member, "key").try { |node| Noir::TreeSitter.node_text(node, source).strip("'\"") }
+        value = Noir::TreeSitter.field(member, "value").try { |node| Noir::TreeSitter.unwrap_expression(node) }
+        next unless key && value && ROUTE_REFERENCE_SLOTS.includes?(key)
+
+        case Noir::TreeSitter.node_type(value)
+        when "identifier"
+          references << Callee.new(Noir::TreeSitter.node_text(value, source), path: path, line: start_line + Noir::TreeSitter.node_start_row(value))
+        when "arrow_function", "function_expression"
+          next unless ROUTE_FUNCTION_SLOTS.includes?(key)
+          Noir::JSCalleeExtractor.callees_for_handler_node(value, source, path).each do |name, callee_path, line|
+            bodies << Callee.new(name, path: callee_path, line: start_line + line - 1)
           end
         end
       end
-      (references + bodies).each { |callee| endpoint.push_callee(callee) }
     end
 
     private def first_object(root : LibTreeSitter::TSNode) : LibTreeSitter::TSNode?
