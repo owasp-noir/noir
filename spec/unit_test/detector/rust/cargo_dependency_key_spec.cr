@@ -25,6 +25,13 @@ describe "Rust detectors read the Cargo dependency key" do
       instance.detect("Cargo.toml", "[dependencies.#{crate}]\nversion = \"1\"").should be_true
     end
 
+    it "#{crate}: renamed, quoted-key and target-table forms count (detect loose, gate strict)" do
+      instance.detect("Cargo.toml", "[dependencies]\nweb = { package = \"#{crate}\", version = \"1\" }").should be_true
+      instance.detect("Cargo.toml", "[dependencies]\n\"#{crate}\" = \"1\"").should be_true
+      instance.detect("Cargo.toml", "[target.'cfg(unix)'.dependencies.#{crate}]\nversion = \"1\"").should be_true
+      instance.detect("Cargo.toml", "[dependencies]\n# web = { package = \"#{crate}\" }").should be_false
+    end
+
     it "#{crate}: comment, string and sibling crate do not count" do
       instance.detect("Cargo.toml", "[dependencies]\n# trimmed with #{crate} off\nserde = \"1\"").should be_false
       instance.detect("Cargo.toml", "[dependencies]\ndescription = \"uses #{crate}\"").should be_false

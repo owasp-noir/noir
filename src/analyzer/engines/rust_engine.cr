@@ -4,6 +4,7 @@ require "../../miniparsers/rust_callee_extractor"
 require "../../miniparsers/rust_callee_extractor_ts"
 require "../../miniparsers/rust_struct_fields"
 require "../../miniparsers/rust_use_imports"
+require "../../miniparsers/cargo_dependency"
 require "../../ext/tree_sitter/tree_sitter"
 
 module Analyzer::Rust
@@ -60,7 +61,7 @@ module Analyzer::Rust
       dependencies = crate_dependencies
       return [] of String if dependencies.empty?
 
-      patterns = dependencies.map { |name| cargo_dependency_re(name) }
+      patterns = dependencies.map { |name| Noir::CargoDependency.pattern(name) }
       roots = [] of String
       all_files.each do |file|
         next unless File.basename(file) == "Cargo.toml"
@@ -74,14 +75,6 @@ module Analyzer::Rust
         roots << root unless roots.includes?(root)
       end
       roots
-    end
-
-    # `axum = "0.7"`, `axum = { path = "…" }`, `axum.workspace = true` and
-    # `[dependencies.axum]` all declare the dependency. Anchored on the key so
-    # `actix-web` does not match the `actix-web-lab` line above it.
-    private def cargo_dependency_re(name : String) : Regex
-      escaped = Regex.escape(name)
-      Regex.new("^\\s*(?:#{escaped}\\s*[=.]|\\[(?:[\\w.-]+\\.)?dependencies\\.#{escaped}\\])", Regex::Options::MULTILINE)
     end
 
     # The key that scopes a project-wide mount / prefix index for `path`: its
@@ -125,6 +118,24 @@ module Analyzer::Rust
 
     @cargo_manifest_dirs : Hash(String, Bool)?
 
+    # Directories of the manifests that declare a `[package]`: a virtual
+    # `[workspace]`-only manifest is not a crate, so it never owns a file.
+    private def cargo_package_dirs : Set(String)
+      @cargo_package_dirs ||= begin
+        dirs = Set(String).new
+        all_files.each do |file|
+          next unless File.basename(file) == "Cargo.toml"
+          content = read_file_content(file) rescue ""
+          dirs << Noir::PathScope.normalize_root(File.dirname(file)) if content.matches?(CARGO_PACKAGE_RE)
+        end
+        dirs
+      end
+    end
+
+    @cargo_package_dirs : Set(String)?
+
+    CARGO_PACKAGE_RE = /(?m)^\s*\[package\]/
+
     CARGO_WORKSPACE_RE = /(?m)^\s*\[workspace\]/
 
     # A file belongs to the crate of its nearest `Cargo.toml`, so it is shown
@@ -148,10 +159,10 @@ module Analyzer::Rust
     # The closest ancestor (or `dir` itself) holding a scanned `Cargo.toml`;
     # empty when there is none.
     private def nearest_manifest_dir(dir : String) : String
-      manifests = cargo_manifest_dirs
+      manifests = cargo_package_dirs
       current = dir
       loop do
-        return current if manifests.has_key?(current)
+        return current if manifests.includes?(current)
         parent = File.dirname(current)
         return "" if parent == current
         current = parent

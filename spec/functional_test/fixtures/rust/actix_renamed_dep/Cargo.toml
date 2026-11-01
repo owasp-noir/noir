@@ -1,0 +1,8 @@
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2021"
+
+[target.'cfg(unix)'.dependencies.web]
+package = "actix-web"
+version = "4"

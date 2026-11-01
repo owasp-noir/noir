@@ -7,7 +7,7 @@ module Detector::Rust
     # `ntex = "2"`, `ntex = { workspace = true }`, `ntex.workspace = true` and
     # `[dependencies.ntex]`. Anchored on the key so the sibling crates
     # (`ntex-mqtt`, `ntex-bytes`, `ntex-files`) don't count on their own.
-    # Same key shape as `RustEngine#cargo_dependency_re`, which the analyzer
+    # Same key shape as `Noir::CargoDependency`, which the analyzer
     # uses to gate files to ntex crates.
     CARGO_DEP_RE = /^\s*(?:ntex\s*[=.]|\[(?:[\w.-]+\.)?dependencies\.ntex\])/m
 
