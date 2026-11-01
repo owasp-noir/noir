@@ -122,6 +122,10 @@ describe "GoAuthTagger (RPC procedure allow-lists)" do
             }
             return handler(ctx, req)
         }
+
+        func main() {
+            grpc.NewServer(grpc.ChainUnaryInterceptor(adminUnary))
+        }
         GO
     }) do |dir|
       rpc_guards(dir, "/svc.v1.AccountService/Purge").should eq(["authz"])
