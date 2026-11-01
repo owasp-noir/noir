@@ -71,6 +71,7 @@ module Analyzer::Go
         dir = File.dirname(path)
         Noir::TreeSitterGoRouteExtractor.extract_net_http_routes(
           content,
+          external_string_values: resolver.constants(dir),
           external_functions: ts_function_bodies_for_directory(package_function_bodies, dir),
           external_methods: ts_controller_method_bodies_for_directory(package_method_bodies, dir)
         )
@@ -86,6 +87,7 @@ module Analyzer::Go
         external_methods = ts_controller_method_bodies_for_directory(package_method_bodies, dir)
         ts_routes = prefetched[path]? || Noir::TreeSitterGoRouteExtractor.extract_net_http_routes(
           content,
+          external_string_values: resolver.constants(dir),
           external_functions: external_fns,
           external_methods: external_methods
         )

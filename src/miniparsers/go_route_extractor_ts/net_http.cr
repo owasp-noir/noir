@@ -111,6 +111,7 @@ module Noir
         external_string_values.each { |k, v| string_values[k] ||= v }
 
         serve_mux_vars = collect_serve_mux_vars(root, source, http_aliases)
+        serve_mux_params = collect_serve_mux_params(root, source, http_aliases)
 
         local_functions = Hash(String, LibTreeSitter::TSNode).new
         local_methods = Hash(String, LibTreeSitter::TSNode).new
@@ -140,7 +141,7 @@ module Noir
           next unless Noir::TreeSitter.node_type(node) == "call_expression"
           collect_serve_mux_mount(node, source, http_aliases, serve_mux_vars, string_values, mounts)
           decode_net_http_registration(
-            node, source, http_aliases, serve_mux_vars, string_values,
+            node, source, http_aliases, serve_mux_vars, serve_mux_params, string_values,
             local_functions, local_methods, external_functions, external_methods
           ) do |route|
             routes << route
@@ -235,6 +236,26 @@ module Noir
       vars
     end
 
+    # `func (s *S) RegisterRoutes(mux *http.ServeMux)`: the caller's mux,
+    # tracked only inside the function that declares the parameter.
+    private def collect_serve_mux_params(root : LibTreeSitter::TSNode,
+                                         source : String,
+                                         http_aliases : Set(String)) : Hash(String, Array(Range(Int32, Int32)))
+      params = Hash(String, Array(Range(Int32, Int32))).new
+      Noir::TreeSitter.walk(root) do |node|
+        next unless Noir::TreeSitter.node_type(node) == "parameter_declaration"
+        next unless type = Noir::TreeSitter.field(node, "type")
+        next unless http_aliases.includes?(Noir::TreeSitter.node_text(type, source).lchop('*').strip.rchop(".ServeMux"))
+        next unless (list = Noir::TreeSitter.parent(node)) && (fn = Noir::TreeSitter.parent(list))
+        rows = Noir::TreeSitter.node_start_row(fn)..Noir::TreeSitter.node_end_row(fn)
+        Noir::TreeSitter.each_named_child(node) do |c|
+          next unless Noir::TreeSitter.node_type(c) == "identifier"
+          (params[Noir::TreeSitter.node_text(c, source)] ||= [] of Range(Int32, Int32)) << rows
+        end
+      end
+      params
+    end
+
     private def collect_serve_mux_assignment(node : LibTreeSitter::TSNode,
                                              source : String,
                                              http_aliases : Set(String),
@@ -307,6 +328,7 @@ module Noir
                                              source : String,
                                              http_aliases : Set(String),
                                              serve_mux_vars : Set(String),
+                                             serve_mux_params : Hash(String, Array(Range(Int32, Int32))),
                                              string_values : Hash(String, String),
                                              local_functions : Hash(String, LibTreeSitter::TSNode),
                                              local_methods : Hash(String, LibTreeSitter::TSNode),
@@ -330,7 +352,8 @@ module Noir
         name = Noir::TreeSitter.node_text(operand, source)
         if http_aliases.includes?(name)
           router_name = name
-        elsif serve_mux_vars.includes?(name)
+        elsif serve_mux_vars.includes?(name) ||
+              serve_mux_params[name]?.try(&.any?(&.includes?(Noir::TreeSitter.node_start_row(call))))
           router_name = name
         else
           return
@@ -402,6 +425,16 @@ module Noir
       return unless path.starts_with?("/") || path.starts_with?("{$}")
       path = "/#{path}" unless path.starts_with?("/")
       path = normalize_net_http_pattern_path(path)
+
+      # `mux.Handle("/x", httphandler.GET(h, fallback))`: a wrapper named
+      # for one verb serves only that verb.
+      # ponytail: read off the wrapper's name, not its body.
+      if verb == "ANY" && (h_node = handler_node) && Noir::TreeSitter.node_type(h_node) == "call_expression" &&
+         (fn = Noir::TreeSitter.field(h_node, "function"))
+        leaf = Noir::TreeSitter.node_type(fn) == "selector_expression" ? Noir::TreeSitter.field(fn, "field") : fn
+        leaf_name = leaf ? Noir::TreeSitter.node_text(leaf, source) : ""
+        verb = leaf_name if ANY_FAN_OUT_VERBS.includes?(leaf_name) || leaf_name == "QUERY"
+      end
 
       if verb != "ANY"
         yield Route.new(router_name, verb, path, raw_path, handler_text, row)

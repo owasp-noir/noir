@@ -1186,6 +1186,71 @@ describe Noir::TreeSitterGoRouteExtractor do
     ].sort)
   end
 
+  it "reads registrations on a *http.ServeMux parameter, only inside its function" do
+    source = <<-GO
+      package fileserver
+
+      import (
+          "net/http"
+          "github.com/go-chi/chi/v5"
+      )
+
+      func (s *S) RegisterRoutes(mux *http.ServeMux, other http.Handler) {
+          mux.HandleFunc("/file/{uid}", s.serve)
+          other.Handle("/not-a-mux", h)
+      }
+
+      func chiRoutes() {
+          mux := chi.NewRouter()
+          mux.HandleFunc("/chi-only", h)
+      }
+      GO
+
+    routes = Noir::TreeSitterGoRouteExtractor.extract_net_http_routes(source)
+    routes.map { |r| {r.verb, r.path} }.should eq([{"ANY", "/file/{uid}"}])
+  end
+
+  it "takes the verb from a handler wrapper named for one HTTP verb" do
+    source = <<-GO
+      package server
+
+      import (
+          "net/http"
+          "example.com/app/internal/httphandler"
+      )
+
+      func New(mux *http.ServeMux) {
+          mux.Handle("/healthz", httphandler.GET(httphandler.Func(health), nil))
+          mux.Handle("/hook", POST(hook))
+          mux.Handle("/any", httphandler.Get(h))
+          mux.Handle("/wrapped", middleware(httphandler.GET(h, nil)))
+      }
+      GO
+
+    routes = Noir::TreeSitterGoRouteExtractor.extract_net_http_routes(source)
+    routes.map { |r| {r.verb, r.path} }.sort!.should eq([
+      {"ANY", "/any"},
+      {"ANY", "/wrapped"},
+      {"GET", "/healthz"},
+      {"POST", "/hook"},
+    ])
+  end
+
+  it "resolves a route pattern built from a package constant" do
+    source = <<-GO
+      package fileserver
+
+      import "net/http"
+
+      func Register(mux *http.ServeMux) {
+          mux.Handle("GET "+exportRoute, h)
+      }
+      GO
+
+    routes = Noir::TreeSitterGoRouteExtractor.extract_net_http_routes(source, external_string_values: {"exportRoute" => "/file/users/{id}/export"})
+    routes.map { |r| {r.verb, r.path} }.should eq([{"GET", "/file/users/{id}/export"}])
+  end
+
   it "ignores HandleFunc on non-http / non-tracked receivers (e.g. chi router in same file)" do
     source = <<-GO
       package main
