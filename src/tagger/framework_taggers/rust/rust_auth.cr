@@ -770,7 +770,7 @@ class RustAuthTagger < FrameworkTagger
   CALL_FN        = /\bfn\s+call\b[^{;]*\{/
   # The inner service's answer bound to a name (`let res = fut.await?;`,
   # `let res = self.service.call(req).await;`).
-  AWAITED_LET = /\blet\s+(?:mut\s+)?\w+\s*(?::[^=;]+)?=\s*(?:fut|future|(?:self\.)?service\.call\([^;]*?\)|next\.run\([^;]*?\))\s*\.await\s*\??\s*;/
+  AWAITED_LET = /\blet\s+(?:mut\s+)?\w+\s*(?::[^=;]+)?=\s*(?:fut|future|(?:self\.)?service\.call\([^;]*?\)|next\.run\([^;]*?\))\s*\.await\s*\??\s*;|\b(?:match|if\s+let\s+[^=]+=)\s*(?:fut|future|(?:self\.)?service\.call\([^;{]*?\)|next\.run\([^;{]*?\))\s*\.await\s*\??\s*\{/
   METHOD_TEST = /\bmethod\s*\(\s*\)\s*(!=|==)\s*(?:\w+::)*(\w+)/
   # What a refusing middleware reads from the request to decide.
   CALL_CREDENTIAL = /authoriz|bearer|jwt|token|api[-_]?key|claims|session|login|credential|valid|auth_keys|\bauth\b/i
@@ -796,9 +796,11 @@ class RustAuthTagger < FrameworkTagger
     def initialize(@handlers, @crates, @file, @line, @auth, @verdict, @conditional, @exempt, @whitelist_unread)
     end
 
-    def serves?(handler : String, crate : String?) : Bool
+    # `key` is the handler's `file\0name`; a registration the scan could not
+    # resolve to a fn is keyed `\0name` and matches any file.
+    def serves?(key : String, name : String, crate : String?) : Bool
       return false unless crate && @crates.includes?(crate)
-      (names = @handlers).nil? || names.includes?(handler)
+      (names = @handlers).nil? || names.includes?(key) || names.includes?("\0#{name}")
     end
 
     # Whether the middleware refuses this request: not on a path or verb it
@@ -894,9 +896,9 @@ class RustAuthTagger < FrameworkTagger
   # The handler fns a chain registers: `.service(f)`, `.route("/p", .. .to(f))`
   # and, through `.configure(g)`, whatever `g` registers on its `cfg`.
   private def collect_registered_handlers(text : String, file : String, handlers : Set(String), crates : Set(String), depth : Int32)
-    text.scan(SERVICE_ARG) { |m| handlers << m[1].split("::").last }
-    text.scan(SERVICE_TUPLE) { |m| m[1].split(',').each { |name| handlers << name.strip.split("::").last unless name.strip.empty? } }
-    text.scan(TO_ARG) { |m| handlers << m[1].split("::").last }
+    text.scan(SERVICE_ARG) { |m| add_handler(m[1], file, handlers) }
+    text.scan(SERVICE_TUPLE) { |m| m[1].split(',').each { |name| add_handler(name.strip, file, handlers) unless name.strip.empty? } }
+    text.scan(TO_ARG) { |m| add_handler(m[1], file, handlers) }
     return if depth > 4
     text.scan(CONFIGURE_ARG) do |m|
       entry = lookup_function(m[1], file) || next
@@ -904,6 +906,13 @@ class RustAuthTagger < FrameworkTagger
       crates << crate if crate
       collect_registered_handlers(Noir::CComments.strip(entry.body_text), entry.file_path, handlers, crates, depth + 1)
     end
+  end
+
+  # A registered handler is the fn its path resolves to (`admin::index` is not
+  # `public::index`); one the scan cannot resolve is known by name only.
+  private def add_handler(ref : String, file : String, handlers : Set(String))
+    entry = lookup_function(ref, file)
+    handlers << (entry ? "#{entry.file_path}\0#{entry.name}" : "\0#{ref.split("::").last}")
   end
 
   # Byte offset of the `wrap` in `chain.wrap(..)`, so a multi-line chain
@@ -937,6 +946,10 @@ class RustAuthTagger < FrameworkTagger
         name = Noir::TreeSitter.field(node, "name").try { |n| Noir::TreeSitter.node_text(n, source) }
         names << name.split("::").last if name
       end
+    end
+    # `.wrap(auth::ApiKeyAuth)`: a unit struct is a bare path.
+    if {"identifier", "scoped_identifier"}.includes?(Noir::TreeSitter.node_type(arg))
+      names << Noir::TreeSitter.node_text(arg, source).split("::").last
     end
     names.select(&.matches?(/\A[A-Z]\w*\z/))
   end
@@ -1026,9 +1039,15 @@ class RustAuthTagger < FrameworkTagger
     return unless code.gsub(COMPARED, "").matches?(MIDDLEWARE_REFUSAL) && code.matches?(CALL_CREDENTIAL)
     only = [] of String
     except = [] of String
+    # What a `method() == X` / `!= X` test means depends on its branch: one that
+    # refuses is the verbs the refusal applies to (`!=`: all but X, so X is
+    # exempt); one that hands the request on exempts (`==`) or limits (`!=`).
     code.scan(METHOD_TEST) do |m|
       verb = m[2].upcase
-      (m[1] == "!=" ? except : only) << verb
+      open = code.byte_index('{', m.byte_end(0))
+      close = open ? matching_brace(code, open) : nil
+      refuses = open && close ? code.byte_slice(open, close - open + 1).gsub(COMPARED, "").matches?(MIDDLEWARE_REFUSAL) : true
+      ((m[1] == "!=") == refuses ? except : only) << verb
     end
     AuthVerdict.new(only.uniq!, except.uniq!)
   end
@@ -1062,7 +1081,8 @@ class RustAuthTagger < FrameworkTagger
     path = handler.path || return
     name = handler.name.split(/::|\./).last
     crate = nearest_project_root(path, CARGO_TOML)
-    serving = @app_chains.select(&.serves?(name, crate))
+    key = "#{path}\0#{name}"
+    serving = @app_chains.select(&.serves?(key, name, crate))
     guarded = serving.find(&.guards?(endpoint.url, endpoint.method))
     return unless guarded
     notes = [] of String

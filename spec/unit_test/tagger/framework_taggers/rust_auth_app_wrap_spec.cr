@@ -149,6 +149,57 @@ describe "RustAuthTagger app-wide actix .wrap" do
     actix_guards({"src/main.rs" => APP_WRAP_SERVER, "src/auth.rs" => logger}).should be_empty
   end
 
+  it "reads a method test by what its branch does: a pass-through exempts the verb, a refusal limits to it" do
+    passes = ->(verb : String) { APP_WRAP_MIDDLEWARE.gsub("if bad_token(&req) {", "if req.method() == Method::#{verb} {\n return Box::pin(self.service.call(req));\n }\n if bad_token(&req) {") }
+    actix_guards({"src/main.rs" => APP_WRAP_SERVER, "src/auth.rs" => passes.call("GET")}, "GET").should be_empty
+    actix_guards({"src/main.rs" => APP_WRAP_SERVER, "src/auth.rs" => passes.call("GET")}, "POST").keys.sort!.should eq ["/collections", "/collections/{name}"]
+    # A CORS preflight skip leaves GET and POST guarded.
+    actix_guards({"src/main.rs" => APP_WRAP_SERVER, "src/auth.rs" => passes.call("OPTIONS")}, "GET").keys.sort!.should eq ["/collections", "/collections/{name}"]
+    actix_guards({"src/main.rs" => APP_WRAP_SERVER, "src/auth.rs" => passes.call("OPTIONS")}, "OPTIONS").should be_empty
+
+    only_post = APP_WRAP_MIDDLEWARE.gsub("if bad_token(&req)", "if req.method() == Method::POST && bad_token(&req)")
+    actix_guards({"src/main.rs" => APP_WRAP_SERVER, "src/auth.rs" => only_post}, "GET").should be_empty
+    actix_guards({"src/main.rs" => APP_WRAP_SERVER, "src/auth.rs" => only_post}, "POST").should_not be_empty
+  end
+
+  it "keeps same-named handlers of different modules apart" do
+    CodeLocator.instance.clear_all
+    tmpdir = File.tempname("actix_app_modules")
+    files = {
+      "Cargo.toml"    => "[package]\nname = \"t\"\n",
+      "src/main.rs"   => "mod admin;\nmod public;\nfn serve() {\n    App::new().wrap(AuthTransform::new(keys)).service(admin::index)\n}\nfn open() {\n    App::new().service(public::index)\n}\n",
+      "src/admin.rs"  => "pub fn index() {}\n",
+      "src/public.rs" => "pub fn index() {}\n",
+      "src/auth.rs"   => APP_WRAP_MIDDLEWARE,
+    }
+    files.each do |rel, src|
+      path = File.join(tmpdir, rel)
+      Dir.mkdir_p(File.dirname(path))
+      File.write(path, src)
+      CodeLocator.instance.register_path(path)
+    end
+    noir_options = create_test_options
+    noir_options["base"] = YAML::Any.new(tmpdir)
+    endpoints = {"/admin" => "src/admin.rs", "/" => "src/public.rs"}.map do |url, rel|
+      file = File.join(tmpdir, rel)
+      endpoint = Endpoint.new(url, "GET", [] of Param, Details.new(PathInfo.new(file, 1)).tap(&.technology=("rust_actix_web")))
+      endpoint.handler = Handler.new("index", file, 1)
+      endpoint
+    end
+    RustAuthTagger.new(noir_options).perform(endpoints)
+    FileUtils.rm_rf(tmpdir)
+    endpoints.find! { |e| e.url == "/admin" }.tags.map(&.name).should eq ["auth"]
+    endpoints.find! { |e| e.url == "/" }.tags.should be_empty
+  end
+
+  it "sees a unit-struct wrap, and ignores a refusal that only remaps the inner service's error" do
+    unit = APP_WRAP_SERVER.gsub(/\.wrap\(ConditionEx.*?\)\)\)/m, ".wrap(auth::AuthTransform)")
+    actix_guards({"src/main.rs" => unit, "src/auth.rs" => APP_WRAP_MIDDLEWARE}).keys.should contain("/collections")
+
+    remap = APP_WRAP_MIDDLEWARE[0, APP_WRAP_MIDDLEWARE.index!("impl Service")] + "impl Service<ServiceRequest> for AuthMiddleware {\n    fn call(&self, req: ServiceRequest) -> Self::Future {\n        let token = read_token(&req);\n        let fut = self.service.call(req);\n        Box::pin(async move { match fut.await { Ok(r) => Ok(r), Err(e) => Err(ErrorUnauthorized(e)) } })\n    }\n}\n"
+    actix_guards({"src/main.rs" => APP_WRAP_SERVER, "src/auth.rs" => remap}).should be_empty
+  end
+
   it "treats a method-conditional refusal as limited to the other verbs" do
     conditional = APP_WRAP_MIDDLEWARE.gsub("if bad_token(&req)", "if req.method() != Method::GET && bad_token(&req)")
     files = {"src/main.rs" => APP_WRAP_SERVER, "src/auth.rs" => conditional}
