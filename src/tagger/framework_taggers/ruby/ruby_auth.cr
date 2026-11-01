@@ -247,16 +247,19 @@ class RubyAuthTagger < FrameworkTagger
 
       # Action-body authorization (Pundit/CanCanCan) stacks with controller authn.
       routed_leaf = dispatch || rails_chain.controller_in(path)
-      body = check_action_body_auth(lines, line_idx, action, routed_leaf.try { |klass| rails_chain.resolve(klass, action).paths } || [] of String)
+      routed_paths = routed_leaf.try { |klass| rails_chain.resolve(klass, action).paths } || [] of String
+      body = check_action_body_auth(lines, line_idx, action, routed_paths)
       authz_desc ||= body[:authz]
       authz_desc ||= (dispatch || rails_chain.controller_in(path)).try { |cancan_leaf| cancan_refuses(cancan_leaf, action, endpoint.url.scan(/:(\w+)/).map(&.[1])) }
 
       # add_tag dedupes by (name, tagger), so authn/authz need distinct names.
       if authn_desc
-        endpoint.add_tag(Tag.new("auth", "Protected by #{authn_desc}", "ruby_auth"))
+        guard_path, guard_line = callback_location(authn_desc, routed_paths)
+        endpoint.add_tag(Tag.new("auth", "Protected by #{authn_desc}", "ruby_auth", guard_path, guard_line))
       end
       if authz_desc
-        endpoint.add_tag(Tag.new("authz", "Protected by #{authz_desc}", "ruby_auth"))
+        guard_path, guard_line = callback_location(authz_desc, routed_paths)
+        endpoint.add_tag(Tag.new("authz", "Protected by #{authz_desc}", "ruby_auth", guard_path, guard_line))
       end
       # The action's only check is a Pundit query a nil caller passes.
       if authn_desc.nil? && authz_desc.nil? && (policy = body[:anonymous])
@@ -386,6 +389,16 @@ class RubyAuthTagger < FrameworkTagger
 
   private def unreadable_except_note : String
     "; the `except:` list has a splat that cannot be read, so the action may be excepted; #{SETTING_LIFTED}"
+  end
+
+  # Where the app defines the callback a guard description names
+  # (`authentication_check (app-defined, ...)`), so `noir reach` on that
+  # file finds the endpoints it guards; nil for a library guard.
+  private def callback_location(desc : String, paths : Array(String)) : {String?, Int32?}
+    name = desc[/\A[a-z_]\w*[!?]?/]?
+    return {nil, nil} unless name && rails_chain.defs.has_key?(name)
+    path, idx = own_defs(name, paths).first
+    {path, idx + 1}
   end
 
   # Whether the app's `callback` decides on a `self.class.<setting>` a class macro sets.

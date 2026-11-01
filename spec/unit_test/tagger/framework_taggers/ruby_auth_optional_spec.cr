@@ -6,6 +6,10 @@ require "../../../../src/tagger/tagger"
 # was sent" from "refuse a caller who sent none", plus an anti-forgery
 # callback every visitor passes.
 private def tag_actions(files : Hash(String, String), routes : Array({String, String, Int32})) : Hash(String, Array(String))
+  auth_tags(files, routes).transform_values(&.map(&.description))
+end
+
+private def auth_tags(files : Hash(String, String), routes : Array({String, String, Int32})) : Hash(String, Array(Tag))
   CodeLocator.instance.clear_all
   tmpdir = File.tempname("ruby_auth_optional")
   files.each do |name, body|
@@ -19,7 +23,7 @@ private def tag_actions(files : Hash(String, String), routes : Array({String, St
     noir_options["base"] = YAML::Any.new(tmpdir)
     endpoints = routes.map { |url, file, line| Endpoint.new(url, "POST", [] of Param, Details.new(PathInfo.new(File.join(tmpdir, file), line))) }
     RubyAuthTagger.new(noir_options).perform(endpoints)
-    endpoints.to_h { |ep| {ep.url, ep.tags.select { |t| t.name == "auth" }.map(&.description)} }
+    endpoints.to_h { |ep| {ep.url, ep.tags.select { |t| t.name == "auth" }} }
   ensure
     FileUtils.rm_rf(tmpdir)
     CodeLocator.instance.clear_all
@@ -148,6 +152,18 @@ describe "RubyAuthTagger (optional credential readers)" do
     tags["/forms"].should be_empty
     tags["/tickets"].should eq(["Protected by authentication_check (app-defined, refuses callers without a credential)"])
     tags["/feeds"].should eq(["Protected by authentication_check (app-defined, refuses callers without a credential)"])
+  end
+
+  it "points a guard tag at the callback's definition" do
+    tags = auth_tags({
+      "app/controllers/application_controller.rb"               => APP_CONTROLLER,
+      "app/controllers/application_controller/authenticates.rb" => AUTHENTICATES,
+      "app/controllers/application_controller/prevents_csrf.rb" => PREVENTS_CSRF,
+      "app/controllers/tickets_controller.rb"                   => "class TicketsController < ApplicationController\n  prepend_before_action :authentication_check\n\n  def create\n  end\nend\n",
+    }, [{"/tickets", "app/controllers/tickets_controller.rb", 4}])
+    tag = tags["/tickets"].first
+    tag.path.to_s.should end_with("application_controller/authenticates.rb")
+    tag.line.should eq(6)
   end
 
   it "keeps the guards those readings must not lose" do
