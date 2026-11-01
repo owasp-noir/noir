@@ -4,52 +4,54 @@ require "../../../utils/c_comments"
 require "../../../utils/js_literal_scanner"
 require "../../../utils/top_level_split"
 require "../../../miniparsers/import_graph"
+require "../../../miniparsers/js_route_extractor"
+require "../../../miniparsers/ts_decorator_extractor"
 
 @[Noir::TaggerFor(key: "nestjs_auth", name: "NestJS Auth Tagger", desc: "Identifies NestJS-style decorator auth (Nest guards, tsoa @Security, routing-controllers @Authorized, Ts.ED @Authenticate)", order: 150)]
 class NestjsAuthTagger < FrameworkTagger
   # NestJS authentication guards — verify who the caller is.
   GUARD_PATTERNS = [
-    {/\@UseGuards\s*\(\s*AuthGuard/, "NestJS @UseGuards(AuthGuard)"},
-    {/\@UseGuards\s*\(\s*JwtAuthGuard/, "NestJS @UseGuards(JwtAuthGuard)"},
-    {/\@UseGuards\s*\(\s*LocalAuthGuard/, "NestJS @UseGuards(LocalAuthGuard)"},
-    {/\@UseGuards\s*\(\s*AuthenticationGuard/, "NestJS @UseGuards(AuthenticationGuard)"},
+    {/\A@UseGuards\s*\(\s*AuthGuard/, "NestJS @UseGuards(AuthGuard)"},
+    {/\A@UseGuards\s*\(\s*JwtAuthGuard/, "NestJS @UseGuards(JwtAuthGuard)"},
+    {/\A@UseGuards\s*\(\s*LocalAuthGuard/, "NestJS @UseGuards(LocalAuthGuard)"},
+    {/\A@UseGuards\s*\(\s*AuthenticationGuard/, "NestJS @UseGuards(AuthenticationGuard)"},
     # Anywhere in the list: `@UseGuards(BookingUidGuard, ApiAuthGuard)`.
-    {/\@UseGuards\s*\([^)]*?\b\w*[Aa]uth\w*Guard/, "NestJS auth guard"},
-    {/\@UseGuards\s*\(\s*GqlAuthGuard/, "NestJS GraphQL auth guard"},
+    {/\A@UseGuards\s*\([^)]*?\b\w*[Aa]uth\w*Guard/, "NestJS auth guard"},
+    {/\A@UseGuards\s*\(\s*GqlAuthGuard/, "NestJS GraphQL auth guard"},
     # The other decorator-controller frameworks mark authenticated handlers
     # and controllers the same way: tsoa `@Security`, routing-controllers
     # `@Authorized`, Ts.ED `@Authenticate` / `@UseAuth`.
-    {/\@Security\s*\(/, "@Security decorator"},
-    {/\@Authorized\s*\(/, "@Authorized decorator"},
-    {/\@(?:Authenticate|UseAuth)\s*\(/, "@Authenticate decorator"},
+    {/\A@Security\s*\(/, "@Security decorator"},
+    {/\A@Authorized\s*\(/, "@Authorized decorator"},
+    {/\A@(?:Authenticate|UseAuth)\s*\(/, "@Authenticate decorator"},
   ]
 
   # NestJS authorization decorators/guards — verify what the caller may do.
   # Distinct from authentication so JwtAuthGuard + @Roles stack as
   # auth_guard + authz_guard rather than collapsing into a single auth tag.
   ROLE_PATTERNS = [
-    {/\@UseGuards\s*\([^)]*\bRolesGuard\b/, "NestJS @UseGuards(RolesGuard)"},
-    {/\@Roles\s*\(/, "NestJS @Roles decorator"},
-    {/\@Permissions\s*\(/, "NestJS @Permissions decorator"},
-    {/\@RequirePermissions\s*\(/, "NestJS @RequirePermissions decorator"},
-    {/\@SetMetadata\s*\(\s*['"]roles['"]/, "NestJS role metadata"},
+    {/\A@UseGuards\s*\([\s\S]*\bRolesGuard\b/, "NestJS @UseGuards(RolesGuard)"},
+    {/\A@Roles\s*\(/, "NestJS @Roles decorator"},
+    {/\A@Permissions\s*\(/, "NestJS @Permissions decorator"},
+    {/\A@RequirePermissions\s*\(/, "NestJS @RequirePermissions decorator"},
+    {/\A@SetMetadata\s*\(\s*['"]roles['"]/, "NestJS role metadata"},
   ]
 
   # NestJS auth-related decorators
   AUTH_DECORATORS = [
-    {/\@ApiBearerAuth\s*\(/, "NestJS @ApiBearerAuth (Swagger)"},
-    {/\@ApiBasicAuth\s*\(/, "NestJS @ApiBasicAuth (Swagger)"},
-    {/\@ApiOAuth2\s*\(/, "NestJS @ApiOAuth2 (Swagger)"},
-    {/\@ApiSecurity\s*\(/, "NestJS @ApiSecurity (Swagger)"},
+    {/\A@ApiBearerAuth\s*\(/, "NestJS @ApiBearerAuth (Swagger)"},
+    {/\A@ApiBasicAuth\s*\(/, "NestJS @ApiBasicAuth (Swagger)"},
+    {/\A@ApiOAuth2\s*\(/, "NestJS @ApiOAuth2 (Swagger)"},
+    {/\A@ApiSecurity\s*\(/, "NestJS @ApiSecurity (Swagger)"},
   ]
 
   # Public/skip auth markers (negative signal)
   PUBLIC_PATTERNS = [
-    /\@Public\s*\(\)/,
-    /\@SkipAuth\s*\(\)/,
-    /\@AllowAnonymous\s*\(\)/,
-    /\@NoSecurity\s*\(\)/, # tsoa
-    /\@SetMetadata\s*\(\s*['"]isPublic['"]/,
+    /\A@Public\s*\(\)/,
+    /\A@SkipAuth\s*\(\)/,
+    /\A@AllowAnonymous\s*\(\)/,
+    /\A@NoSecurity\s*\(\)/, # tsoa
+    /\A@SetMetadata\s*\(\s*['"]isPublic['"]/,
   ]
 
   # A guard registered for every route: `{ provide: APP_GUARD, useClass:
@@ -85,7 +87,6 @@ class NestjsAuthTagger < FrameworkTagger
   # `Authenticated = (options = {}) => applyDecorators(SetMetadata(KEY, options), ...)`.
   SET_METADATA   = /SetMetadata\s*\(\s*([\w.$'"]+)\s*,\s*([^)]*?)\s*\)/
   TOP_LEVEL_DECL = /^(?:export\s+)?(?:const|function)\s+(\w+)\s*(?::[^=(]*)?(?:=\s*(?:async\s*)?)?\(\s*(?:\.\.\.)?(\w*)(?:\s*:[^=,)]*)?(?:\s*=\s*([^,)]+))?/m
-  DECORATOR_CALL = /@(\w+)\s*\(([^)]*)\)?/
   FLAG_PAIR      = /(\w+)\s*:\s*([^,}]+)/
   # ponytail: a name heuristic for what the guard hands on to the auth
   # service (`admin`, `permission`, `roles` are checked after login);
@@ -111,7 +112,7 @@ class NestjsAuthTagger < FrameworkTagger
   HANDLE_REQUEST  = /\bhandleRequest\s*(?:<[^>]*>)?\s*\([^)]*\)[^{]*\{/
   NO_USER_RETURN  = /\breturn\s+(?:null|undefined)\b|(?:\|\||\?\?)\s*(?:null|undefined)\b/
   CLASS_DECL      = /\bclass\s+(\w+)\b/
-  USE_GUARDS_CALL = /@UseGuards\s*\(/
+  USE_GUARDS_CALL = /\A@UseGuards\s*\(/
   AUTH_GUARD_REF  = /\b\w*[Aa]uth\w*Guard\b/
 
   # A project decorator that bundles a guard, as the Nest docs' `Auth()`
@@ -152,7 +153,8 @@ class NestjsAuthTagger < FrameworkTagger
     # is registered: the evidence `noir reach` on that file follows.
     @global_guard_sites = Hash(String?, {String, Int32}).new
     @guard_metadata = Hash(String?, GuardMetadata).new
-    @class_lines = Hash(String, Array(Int32)).new
+    # File => its decorated classes, read once per file.
+    @decorated = Hash(String, Array(Noir::TsDecoratorExtractor::ClassDecl)).new
     @optional_guards = Set(String).new
     # Decorator name => every `{file, root, guards}` defining it.
     @guard_decorators = Hash(String, Array({String, String?, String})).new
@@ -328,17 +330,12 @@ class NestjsAuthTagger < FrameworkTagger
     end
   end
 
-  # The project guard decorator a decorator line of `file` applies, as a
-  # description.
-  private def guard_decorator_desc(line : String, file : String) : String?
-    return if @guard_decorators.empty?
-    line.scan(DECORATOR_CALL) do |m|
-      next unless defs = @guard_decorators[m[1]]?
-      if guards = guard_decorator_for(m[1], defs, file)
-        return "NestJS @#{m[1]}() (applies UseGuards(#{guards}))"
-      end
-    end
-    nil
+  # The project guard decorator `decorator` is, as a description.
+  private def guard_decorator_desc(decorator : Noir::TsDecoratorExtractor::Decorator, file : String) : String?
+    return unless decorator.called
+    defs = @guard_decorators[decorator.name]? || return
+    guards = guard_decorator_for(decorator.name, defs, file) || return
+    "NestJS @#{decorator.name}() (applies UseGuards(#{guards}))"
   end
 
   # The definition of decorator `name` that `file` uses: its own, the one a
@@ -372,7 +369,7 @@ class NestjsAuthTagger < FrameworkTagger
     end
   end
 
-  # A `@UseGuards(...)` line whose every auth-named guard is optional.
+  # A `@UseGuards(...)` whose every auth-named guard is optional.
   private def optional_auth_only?(line : String) : Bool
     return false if @optional_guards.empty?
     args = guard_arg_lists(line, USE_GUARDS_CALL).first? || return false
@@ -414,13 +411,12 @@ class NestjsAuthTagger < FrameworkTagger
   # The decorator, its arguments and the metadata value a route sets
   # through one of the guard's decorators, method level first (it overrides
   # the class), or nil when it sets none.
-  private def route_metadata(metadata : GuardMetadata, decorator_lines : Array(String)) : {String, String, String}?
-    decorator_lines.each do |line|
-      line.scan(DECORATOR_CALL) do |m|
-        next unless decorator = metadata.decorators[m[1]]?
-        args = m[2].strip
-        return {m[1], args, decorator.literal || (args.empty? ? decorator.default : args)}
-      end
+  private def route_metadata(metadata : GuardMetadata, decorators : Array(Noir::TsDecoratorExtractor::Decorator)) : {String, String, String}?
+    decorators.each do |decorator|
+      next unless decorator.called
+      next unless set = metadata.decorators[decorator.name]?
+      args = decorator.args.join(", ").gsub(/\s+/, " ")
+      return {decorator.name, args, set.literal || (args.empty? ? set.default : args)}
     end
   end
 
@@ -450,18 +446,17 @@ class NestjsAuthTagger < FrameworkTagger
       line_num = path_info.line
       next if line_num.nil?
       # Skip stale/out-of-range line refs: a line beyond the content we
-      # read would crash the lines[idx] walks below with IndexError.
+      # read points at no decorator the file still has.
       next if line_num < 1 || line_num > lines.size
       line_idx = line_num - 1
 
       # Collect method- and class-level evidence without short-circuiting.
       # A method @Roles used to return before class @UseGuards(JwtAuthGuard),
       # so authz was stored as auth_guard and class authn was dropped.
-      class_decorators = class_decorator_lines(path_info.path, lines, line_idx)
-      method_decorators = method_decorator_lines(lines, line_idx)
+      class_decorators, method_decorators = decorators_at(path_info.path, line_idx)
       authn_descs = [] of String
       authz_descs = [] of String
-      method_decorators.each { |line| collect_decorator_line(line, path_info.path, authn_descs, authz_descs) }
+      method_decorators.each { |decorator| collect_decorator_line(decorator, path_info.path, authn_descs, authz_descs) }
       collect_class_decorators(class_decorators, path_info.path, authn_descs, authz_descs)
 
       root = nearest_project_root(path_info.path, PACKAGE_JSON)
@@ -478,8 +473,8 @@ class NestjsAuthTagger < FrameworkTagger
 
       # Its only auth guard is an optional one.
       if !guard && authn_descs.empty? && authz_descs.empty? &&
-         (optional = (method_decorators + class_decorators).find { |line| optional_auth_only?(line) })
-        names = guard_arg_lists(optional, USE_GUARDS_CALL).first?.try(&.strip)
+         (optional = (method_decorators + class_decorators).find { |decorator| optional_auth_only?(decorator.text) })
+        names = guard_arg_lists(optional.text, USE_GUARDS_CALL).first?.try(&.strip.gsub(/\s+/, " "))
         endpoint.add_tag(Tag.new("anonymous", "NestJS @UseGuards(#{names}) admits anonymous callers: its handleRequest returns no user instead of throwing", "nestjs_auth"))
         return
       end
@@ -490,7 +485,7 @@ class NestjsAuthTagger < FrameworkTagger
       end
 
       # Check if endpoint (or its whole controller) is explicitly public
-      if public?(lines, line_idx) || class_decorators.any? { |line| PUBLIC_PATTERNS.any? { |pattern| line.matches?(pattern) } }
+      if (method_decorators + class_decorators).any? { |decorator| PUBLIC_PATTERNS.any? { |pattern| decorator.text.matches?(pattern) } }
         return
       end
 
@@ -523,61 +518,28 @@ class NestjsAuthTagger < FrameworkTagger
     end
   end
 
-  private def public?(lines : Array(String), method_line : Int32) : Bool
-    idx = method_line - 1
-    while idx >= 0 && idx >= method_line - 5
-      current = lines[idx].strip
-      break if current.empty? && idx < method_line - 1
-      break if member_end?(current)
+  # The decorators of the class and of the method a route at 0-based
+  # `row` of `path` sits in: its innermost decorated class, and the method
+  # of it whose decorators or body hold the row.
+  private def decorators_at(path : String, row : Int32) : {Array(Noir::TsDecoratorExtractor::Decorator), Array(Noir::TsDecoratorExtractor::Decorator)}
+    none = [] of Noir::TsDecoratorExtractor::Decorator
+    klass = decorated_classes(path).select { |decl| decl.start_row <= row && row <= decl.end_row }.max_by?(&.start_row) || return {none, none}
+    method = klass.methods.find { |member| member.start_row <= row && row <= member.end_row }
+    {klass.decorators, method.try(&.decorators) || none}
+  end
 
-      PUBLIC_PATTERNS.each do |pattern|
-        return true if current.matches?(pattern)
-      end
-
-      idx -= 1
-    end
-
-    # Decorator order does not matter to Nest: `@Get()` then `@Public()` is
-    # as public as the reverse.
-    annotation_lines_below(lines, method_line, "@").any? do |below|
-      PUBLIC_PATTERNS.any? { |pattern| below.matches?(pattern) }
+  private def decorated_classes(path : String) : Array(Noir::TsDecoratorExtractor::ClassDecl)
+    @decorated[path] ||= begin
+      content = read_file(path)
+      content ? Noir::TsDecoratorExtractor.extract(Noir::JSRouteExtractor.strip_js_comments(content), path) : [] of Noir::TsDecoratorExtractor::ClassDecl
+    rescue ex
+      @logger.debug "NestjsAuthTagger: could not parse #{path}: #{ex.message}"
+      [] of Noir::TsDecoratorExtractor::ClassDecl
     end
   end
 
-  # The decorator lines of the handler at `method_line`, above and below it.
-  private def method_decorator_lines(lines : Array(String), method_line : Int32) : Array(String)
-    decorators = [] of String
-    idx = method_line - 1
-    while idx >= 0 && idx >= method_line - 8
-      current = lines[idx].strip
-      break if current.empty? && idx < method_line - 1
-      # Stop if we hit another method: its signature, or the end of a
-      # non-async one, which the signature test does not catch.
-      break if current.includes?("async ") && current.includes?("(") && idx < method_line - 1
-      break if member_end?(current)
-
-      decorators << current
-
-      idx -= 1
-    end
-
-    # `@Get()` then `@UseGuards(...)` guards the handler exactly as the
-    # reverse order does, and the walk above only sees the latter.
-    decorators.concat(annotation_lines_below(lines, method_line, "@"))
-  end
-
-  # The end of the previous member: a lone `}` or a one-line body such as
-  # `public c() {}`. A multi-line decorator's object lines (`schema: {
-  # type: 'object' }`) and callback statements (`cb(null, true);`) are
-  # neither.
-  ONE_LINE_BODY = /\)\s*(?::[^{}]*)?\{.*\}\z/
-
-  private def member_end?(line : String) : Bool
-    return false if line.starts_with?('@')
-    line == "}" || line.matches?(ONE_LINE_BODY)
-  end
-
-  private def collect_decorator_line(current : String, file : String, authn_descs : Array(String), authz_descs : Array(String))
+  private def collect_decorator_line(decorator : Noir::TsDecoratorExtractor::Decorator, file : String, authn_descs : Array(String), authz_descs : Array(String))
+    current = decorator.text
     ROLE_PATTERNS.each do |pattern, desc|
       authz_descs << desc if current.matches?(pattern) && !authz_descs.includes?(desc)
     end
@@ -595,20 +557,21 @@ class NestjsAuthTagger < FrameworkTagger
     AUTH_DECORATORS.each do |pattern, desc|
       authn_descs << desc if current.matches?(pattern) && !authn_descs.includes?(desc)
     end
-    if desc = guard_decorator_desc(current, file)
+    if desc = guard_decorator_desc(decorator, file)
       authn_descs << desc unless authn_descs.includes?(desc)
     end
   end
 
-  # For a `@UseGuards(...)` line, the guards in it that refuse anonymous
+  # For a `@UseGuards(...)`, the guards in it that refuse anonymous
   # callers (`authenticating_guards`, the same judgment a bundling
-  # decorator gets); nil for any other line.
+  # decorator gets); nil for any other decorator.
   private def use_guards_refusing(line : String) : Array(String)?
     guard_arg_lists(line, USE_GUARDS_CALL).first?.try { |args| authenticating_guards(args) }
   end
 
-  private def collect_class_decorators(decorators : Array(String), file : String, authn_descs : Array(String), authz_descs : Array(String))
-    decorators.each do |decorator|
+  private def collect_class_decorators(decorators : Array(Noir::TsDecoratorExtractor::Decorator), file : String, authn_descs : Array(String), authz_descs : Array(String))
+    decorators.each do |class_decorator|
+      decorator = class_decorator.text
       ROLE_PATTERNS.each do |pattern, desc|
         labeled = "#{desc} (class-level)"
         authz_descs << labeled if decorator.matches?(pattern) && !authz_descs.includes?(labeled) && !authz_descs.includes?(desc)
@@ -623,34 +586,12 @@ class NestjsAuthTagger < FrameworkTagger
         labeled = "#{desc} (class-level)"
         authn_descs << labeled unless authn_descs.includes?(labeled) || authn_descs.includes?(desc)
       end
-      if desc = guard_decorator_desc(decorator, file)
+      if desc = guard_decorator_desc(class_decorator, file)
         labeled = "#{desc} (class-level)"
         authn_descs << labeled unless authn_descs.includes?(labeled)
       end
     end
   end
-
-  # The decorator lines above the class enclosing `method_line`.
-  private def class_decorator_lines(path : String, lines : Array(String), method_line : Int32) : Array(String)
-    decorators = [] of String
-    idx = nearest_match_above(@class_lines, path, lines) { |line| current = line.strip; current.includes?("class ") && current.includes?("{") }[method_line]
-    return decorators if idx < 0
-
-    # The block ends at a blank line, the previous class's `}` or an import's
-    # `;`, not at a line count: a stack of multi-line `@ApiHeader({...})`
-    # docs between `@UseGuards` and the class runs past any small window.
-    class_idx = idx - 1
-    while class_idx >= 0 && class_idx >= idx - CLASS_DECORATOR_SPAN
-      decorator = lines[class_idx].strip
-      break if decorator.empty? && class_idx < idx - 1
-      break if decorator == "}" || decorator.ends_with?(';')
-      decorators << decorator
-      class_idx -= 1
-    end
-    decorators
-  end
-
-  CLASS_DECORATOR_SPAN = 60
 
   # `consumer.apply(AuthMiddleware).forRoutes({ path, method })` and the
   # same chain with `.exclude(...)`. A middleware counts only when its
@@ -665,7 +606,7 @@ class NestjsAuthTagger < FrameworkTagger
         raw = read_file(path) || next
         next unless raw.includes?("apply") || raw.includes?("class ") || raw.includes?("@Controller")
         text = Noir::CComments.strip(raw, quotes: %("'`))
-        index_controllers(text)
+        index_controllers(path) if raw.includes?("@Controller")
         index_class_bodies(text)
         sources << text if text.includes?(".apply")
       end
@@ -673,11 +614,14 @@ class NestjsAuthTagger < FrameworkTagger
     sources.each { |text| collect_for_routes(text) }
   end
 
-  private def index_controllers(text : String)
-    text.scan(/@Controller\s*\(\s*(?:['"`]([^'"`]*)['"`]\s*)?\)/) do |m|
-      tail = text[m.end(0), 300]
-      name = tail.match(/\bclass\s+([A-Za-z_$][\w$]*)/).try(&.[1]) || next
-      @controller_paths[name] = nest_path(m[1]? || "")
+  # `@Controller()` / `@Controller('items')` classes, by name.
+  private def index_controllers(path : String)
+    decorated_classes(path).each do |klass|
+      next if klass.name.empty?
+      controller = klass.decorators.find { |decorator| decorator.called && decorator.name == "Controller" } || next
+      arg = controller.args.first?
+      prefix = arg ? arg.strip.match(/\A['"`]([^'"`]*)['"`]\z/).try(&.[1]) : ""
+      @controller_paths[klass.name] = nest_path(prefix) if prefix && controller.args.size <= 1
     end
   end
 

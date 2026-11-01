@@ -22,7 +22,6 @@ module Analyzer::Typescript
       "UploadedFile"  => {"body", nil},
       "UploadedFiles" => {"body", nil},
     } of String => Tuple(String, String?)
-    PARAM_RE = param_decorator_re(PARAMS.keys)
 
     def analyze
       endpoints = analyze_with_extensions([".ts"])

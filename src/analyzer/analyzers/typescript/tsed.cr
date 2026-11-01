@@ -21,7 +21,6 @@ module Analyzer::Typescript
       "CookiesParams"  => {"cookie", nil},
       "MultipartFile"  => {"body", nil},
     } of String => Tuple(String, String?)
-    PARAM_RE = param_decorator_re(PARAMS.keys)
 
     BOOTSTRAP_RE = /@(?:Configuration|ServerSettings)\s*\(/
     MOUNT_RE     = /\bmount\s*:\s*\{\s*(['"`])([^'"`]+)\1\s*:/

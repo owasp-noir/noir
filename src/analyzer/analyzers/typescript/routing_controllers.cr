@@ -23,7 +23,6 @@ module Analyzer::Typescript
       "UploadedFile"  => {"body", nil},
       "UploadedFiles" => {"body", nil},
     } of String => Tuple(String, String?)
-    PARAM_RE = param_decorator_re(PARAMS.keys)
 
     BOOTSTRAP_RE    = /\b(?:create|use)(?:Express|Koa)Server\s*\(/
     ROUTE_PREFIX_RE = /\broutePrefix\s*:\s*(['"`])([^'"`]+)\1/

@@ -9,20 +9,12 @@ module Analyzer::Typescript
   # import its package, which is what keeps them off each other's and Nest's
   # `@Controller` / `@Get`.
   #
-  # Each subclass defines three constants:
+  # Each subclass defines two constants:
   # - `IMPORT_RE`: `from 'pkg'` / `require('pkg')` for its package(s).
   # - `PARAMS`: argument decorator => {param type, name when the decorator
   #   has no string argument}. A nil name falls back to the argument's
   #   identifier: tsoa's `@Query() name?: string` is the query param `name`.
-  # - `PARAM_RE`: `param_decorator_re(PARAMS.keys)`.
   abstract class DecoratorController < Analyzer::Javascript::Nestjs
-    # Group 1 decorator, group 3 its string argument, group 4 the identifier
-    # of the argument it decorates. One level of nested parens is allowed in
-    # the argument list (`@Body(new Pipe())`).
-    def self.param_decorator_re(names : Enumerable(String)) : Regex
-      Regex.new("@(#{names.join('|')})\\s*\\(\\s*(?:(['\"`])([^'\"`]+)\\2)?[^()]*(?:\\([^()]*\\)[^()]*)*\\)\\s*(?:(?:public|private|protected|readonly)\\s+)*([A-Za-z_$][\\w$]*)?")
-    end
-
     # `@Get('/')` under `@JsonController('/users')` registers `/users/`,
     # which Express (non-strict routing) also serves as `/users`; report
     # the bare form, as Midway does.
@@ -44,12 +36,24 @@ module Analyzer::Typescript
 
     # Nest's DTO fields are not read here: each framework names its own
     # whole-object decorators (`@QueryParams`, `@BodyParams`).
-    private def extract_decorator_parameters(method_params : String, endpoint : Endpoint,
-                                             _dto_fields : Hash(String, Array(String)) = {} of String => Array(String))
-      method_params.scan({{ "#{@type}::PARAM_RE".id }}) do |match|
-        type, fallback = {{ "#{@type}::PARAMS".id }}[match[1]]
-        name = match[3]? || fallback || match[4]?
-        endpoint.push_param(Param.new(name, "", type)) if name
+    protected def reads_dto? : Bool
+      false
+    end
+
+    private def extract_decorator_parameters(params : Array(Noir::TsDecoratorExtractor::Parameter), endpoint : Endpoint,
+                                             dto_fields : Hash(String, Array(String)) = {} of String => Array(String))
+      dto_fields.each do |param_type, names|
+        names.each { |name| endpoint.push_param(Param.new(name, "", param_type)) }
+      end
+      params.each do |param|
+        param.decorators.each do |decorator|
+          next unless param_decorator?(decorator)
+          type, fallback = {{ "#{@type}::PARAMS".id }}[decorator.name]? || next
+          # A resolved DTO already named its fields.
+          next if fallback && dto_fields.has_key?(type)
+          name = string_arg(decorator.args.first?) || fallback || param.name
+          endpoint.push_param(Param.new(name, "", type)) if name
+        end
       end
     end
 
