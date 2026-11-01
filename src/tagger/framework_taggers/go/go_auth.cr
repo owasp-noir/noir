@@ -1,12 +1,14 @@
 require "../../../models/framework_tagger"
 require "../../../models/endpoint"
 require "./group_scope"
+require "./beego_casbin_filter"
 require "../../../miniparsers/go_callee_extractor"
 require "../../../utils/top_level_split"
 
 @[Noir::TaggerFor(key: "go_auth", name: "Go Auth Tagger", desc: "Identifies Go authentication patterns (middleware, JWT, session)", order: 50)]
 class GoAuthTagger < FrameworkTagger
   include GoRouteGroupScope
+  include GoBeegoCasbinFilter
 
   # JWT library patterns
   JWT_PATTERNS = [
@@ -1558,6 +1560,7 @@ class GoAuthTagger < FrameworkTagger
       next if (prefix = scope[:prefix]) && !prefix_covers?(prefix, endpoint.url)
       endpoint.add_tag(scope[:tag]) if handed_after?(endpoint, scope[:owner])
     end
+    beego_casbin_guard(endpoint).try { |tag| endpoint.add_tag(tag) } if endpoint.details.technology == "go_beego"
   end
 
   # The registrars of a router that takes a bare handler (gorilla's
