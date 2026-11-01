@@ -1,4 +1,4 @@
-package hh
+package httphandler
 
 import "net/http"
 

@@ -426,15 +426,9 @@ module Noir
       path = "/#{path}" unless path.starts_with?("/")
       path = normalize_net_http_pattern_path(path)
 
-      # `mux.Handle("/x", httphandler.GET(h, fallback))`: a wrapper named
-      # for one verb serves only that verb.
-      # ponytail: read off the wrapper's name, not its body.
-      if verb == "ANY" && (h_node = handler_node) && Noir::TreeSitter.node_type(h_node) == "call_expression" &&
-         (fn = Noir::TreeSitter.field(h_node, "function"))
-        leaf = Noir::TreeSitter.node_type(fn) == "selector_expression" ? Noir::TreeSitter.field(fn, "field") : fn
-        leaf_name = leaf ? Noir::TreeSitter.node_text(leaf, source) : ""
-        verb = leaf_name if ANY_FAN_OUT_VERBS.includes?(leaf_name) || leaf_name == "QUERY"
-      end
+      # `mux.Handle("/x", httphandler.GET(h, nil))`: a wrapper named for one
+      # verb serves only that verb (see `verb_wrapper`).
+      verb = verb_wrapper(handler_node, source) || verb if verb == "ANY"
 
       if verb != "ANY"
         yield Route.new(router_name, verb, path, raw_path, handler_text, row)
@@ -481,6 +475,35 @@ module Noir
           yield Route.new(router_name, discovered_verb, path, raw_path, handler_text, row)
         end
       end
+    end
+
+    # A handler wrapper of an HTTP helper package (or this one) named for
+    # one verb, whose first argument is a handler and whose fallback, if
+    # any, is `nil`: `httphandler.GET(httphandler.Func(h), nil)`. With a
+    # fallback the other verbs reach that handler, and `cache.GET(key)` or
+    # `metrics.POST("x")` is not a handler at all, so those stay ANY.
+    # ponytail: read off the wrapper's name, not its body.
+    VERB_WRAPPER_PACKAGE = /http|handler|route|web|server|api|mux/i
+    HANDLER_ARG_TYPES    = Set{"identifier", "selector_expression", "func_literal", "call_expression"}
+
+    private def verb_wrapper(handler_node : LibTreeSitter::TSNode?, source : String) : String?
+      call = handler_node || return
+      return unless Noir::TreeSitter.node_type(call) == "call_expression"
+      fn = Noir::TreeSitter.field(call, "function") || return
+      leaf = fn
+      if Noir::TreeSitter.node_type(fn) == "selector_expression"
+        qualifier = Noir::TreeSitter.field(fn, "operand").try { |operand| Noir::TreeSitter.node_text(operand, source) } || ""
+        return unless qualifier.matches?(VERB_WRAPPER_PACKAGE)
+        leaf = Noir::TreeSitter.field(fn, "field") || return
+      end
+      name = Noir::TreeSitter.node_text(leaf, source)
+      return unless ANY_FAN_OUT_VERBS.includes?(name) || name == "QUERY"
+      args = [] of LibTreeSitter::TSNode
+      Noir::TreeSitter.field(call, "arguments").try { |list| Noir::TreeSitter.each_named_arg(list) { |arg| args << arg } }
+      return if args.empty? || args.size > 2
+      return unless HANDLER_ARG_TYPES.includes?(Noir::TreeSitter.node_type(args[0]))
+      return if (fallback = args[1]?) && Noir::TreeSitter.node_text(fallback, source) != "nil"
+      name
     end
 
     private def find_handler_body_node(handler_node : LibTreeSitter::TSNode,

@@ -1224,12 +1224,18 @@ describe Noir::TreeSitterGoRouteExtractor do
           mux.Handle("/hook", POST(hook))
           mux.Handle("/any", httphandler.Get(h))
           mux.Handle("/wrapped", middleware(httphandler.GET(h, nil)))
+          mux.Handle("/fallback", httphandler.GET(httphandler.Func(h), frontend))
+          mux.Handle("/cached", cache.GET(key))
+          mux.Handle("/metric", metrics.POST("x"))
       }
       GO
 
     routes = Noir::TreeSitterGoRouteExtractor.extract_net_http_routes(source)
     routes.map { |r| {r.verb, r.path} }.sort!.should eq([
       {"ANY", "/any"},
+      {"ANY", "/cached"},
+      {"ANY", "/fallback"},
+      {"ANY", "/metric"},
       {"ANY", "/wrapped"},
       {"GET", "/healthz"},
       {"POST", "/hook"},

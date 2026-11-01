@@ -17,7 +17,104 @@ module Analyzer::Go
     private def router_mount?(route, content : String) : Bool
       name = innermost_arg(route.handler_args.last?.try(&.strip) || return false)
       return false unless name.matches?(/\A[A-Za-z_]\w*\z/)
-      content.matches?(/\b#{Regex.escape(name)}#{ROUTER_CALL_METHODS.source}/)
+      content.matches?(/\b#{Regex.escape(name)}#{ROUTER_CALL_METHODS.source}/) ||
+        # `apiMux := http.NewServeMux()` filled by a helper of another file.
+        content.matches?(/\b#{Regex.escape(name)}\s*:?=\s*&?\s*http\s*\.\s*(?:NewServeMux\s*\(|ServeMux\s*\{)/)
+    end
+
+    # `func (s *S) RegisterRoutes(mux *http.ServeMux, ...)`: the head and
+    # its parameter list.
+    FUNC_WITH_PARAMS = /^func\s+(?:\([^)]*\)\s*)?(\w+)\s*\(([^)]*)\)/m
+
+    # The prefixes a `*http.ServeMux` parameter's routes are served under,
+    # read off each call of the function: `registerAPI(api)` with `root.
+    # Handle("/api/", http.StripPrefix("/api", api))` in the caller is
+    # `/api`; a mux the caller never mounts (or passes on) is the root, ``;
+    # one mounted where the prefix does not resolve (a variable pattern, a
+    # wrapper) is `nil`. With no call in the scan, the routes stand as
+    # written.
+    # ponytail: one call level; a mux handed through two helpers before it
+    # is mounted reads as the root.
+    @mux_param_prefixes = Hash(String, Array(String?)).new
+
+    private def mux_param_prefixes(function : String, index : Int32, file_contents : Hash(String, String)) : Array(String?)
+      @mux_param_prefixes.put_if_absent("#{function}/#{index}") do
+        prefixes = [] of String?
+        call = /(?<![\w])#{Regex.escape(function)}\s*\(/
+        file_contents.each_value do |content|
+          next unless content.includes?(function)
+          lines = content.lines
+          lines.each_with_index do |line, row|
+            next if line.lstrip.starts_with?("func ") || line.lstrip.starts_with?("//")
+            next unless m = line.match(call)
+            arg = call_argument(lines[row, 6].join('\n')[m.end..], index) || next
+            prefixes << (arg.matches?(/\A\w+\z/) ? caller_mount_prefix(lines, row, arg) : "")
+          end
+        end
+        prefixes.empty? ? [""] of String? : prefixes.uniq
+      end
+    end
+
+    # The `index`th argument of a call whose arguments start `text` (just
+    # after its opening parenthesis).
+    private def call_argument(text : String, index : Int32) : String?
+      depth = 1
+      close = nil
+      text.each_char_with_index do |char, i|
+        depth += 1 if char == '('
+        depth -= 1 if char == ')'
+        if depth == 0
+          close = i
+          break
+        end
+      end
+      return unless close
+      Noir::TopLevelSplit.split(text[0, close], ',', Noir::TopLevelSplit::Rules.new)[index]?.try(&.strip)
+    end
+
+    # How the function around `row` mounts the mux `name`.
+    private def caller_mount_prefix(lines : Array(String), row : Int32, name : String) : String?
+      start = row
+      while start > 0 && !lines[start].starts_with?("func ")
+        start -= 1
+      end
+      finish = row
+      while finish < lines.size - 1 && !lines[finish].starts_with?(%(}))
+        finish += 1
+      end
+      body = lines[start..finish].join('\n')
+      escaped = Regex.escape(name)
+      if m = body.match(/\.\s*Handle\s*\(\s*"[^"]*"\s*,\s*http\s*\.\s*StripPrefix\s*\(\s*"([^"]*)"\s*,\s*#{escaped}\s*\)\s*\)/)
+        m[1].rstrip('/')
+      elsif body.matches?(/\.\s*Handle\s*\(\s*"[^"]*"\s*,\s*#{escaped}\s*\)/)
+        ""
+      elsif body.matches?(/\.\s*Handle(?:Func)?\s*\([^\n]*[(,]\s*#{escaped}\s*\)/)
+        nil
+      else
+        ""
+      end
+    end
+
+    # `{function, index}` of the `*http.ServeMux` parameter `name` of the
+    # function around `row`, if `name` is one.
+    private def mux_parameter(lines : Array(String), row : Int32, name : String) : {String, Int32}?
+      start = row
+      while start > 0 && !lines[start].starts_with?("func ")
+        start -= 1
+      end
+      head = lines[start..Math.min(start + 3, lines.size - 1)].join(' ').match(FUNC_WITH_PARAMS) || return
+      names = [] of String
+      typed = [] of String?
+      head[2].split(',').each do |piece|
+        parts = piece.strip.split(/\s+/, 2)
+        names << parts[0]
+        typed << parts[1]?
+      end
+      # `a, b *http.ServeMux`: a name without a type takes the next one's.
+      (names.size - 2).downto(0) { |i| typed[i] ||= typed[i + 1] }
+      index = names.index(name) || return
+      return unless typed[index].try(&.matches?(/\A\*?(?:\w+\.)?ServeMux\z/))
+      {head[1], index}
     end
 
     # What a wrapper chain ends at: `api` in `requireAuth(api)` or
@@ -143,8 +240,13 @@ module Analyzer::Go
               # A ServeMux pattern ending in `/` serves every path under it;
               # `/x/{$}` (written `/x/`) serves only `/x/`.
               subtree = route.path.ends_with?('/') && !route.raw_path.ends_with?("{$}")
-              verbs.each do |verb|
-                new_endpoint = Endpoint.new(route.path, verb, details)
+              # A route on a `*http.ServeMux` parameter takes the prefix its
+              # callers mount that mux under; an unresolved mount drops it.
+              prefixes = mux_parameter(lines, route.line, route.router_name).try { |(fn, idx)| mux_param_prefixes(fn, idx, file_contents) } || [""] of String?
+              next if prefixes.includes?(nil)
+              prefixes.compact.flat_map { |prefix| verbs.map { |verb| {prefix, verb} } }.each do |(prefix, verb)|
+                route_path = prefix.empty? ? route.path : "#{prefix}#{route.path}"
+                new_endpoint = Endpoint.new(route_path, verb, details)
                 new_endpoint.add_tag(Tag.new("go-http-path-type", "subtree", "go_http_analyzer")) if subtree
                 if entries = callees_by_route[route.line]?
                   entries.each do |entry|
