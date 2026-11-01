@@ -261,6 +261,7 @@ class FlaskAuthTagger < FrameworkTagger
   # counts only where this line passes one of those parameters a value.
   private def decorator_authz(line : String, file : String) : String?
     match = line.match(DECORATOR_NAME) || return
+    return flask_allows_desc(line) if flask_allows_requires?(match[1], line, file)
     target = resolve_def(file, match[1]) || return
     # Not where the caller's own branch reaches the view unchecked
     # (`if in_window() or current_user.is_admin:`). A setting that skips
@@ -269,6 +270,43 @@ class FlaskAuthTagger < FrameworkTagger
     gates = authz_params(target[0], target[1], 0) || return
     args = match.post_match
     match[1] if gates.empty? || gates.any? { |gate| args.matches?(/\b#{gate}\s*=\s*(?!None\b|False\b|\(\s*\)|\[\s*\]|\{\s*\})\S/) }
+  end
+
+  # flask-allows: `@allows.requires(IsAdmin, ...)` on an `allows =
+  # Allows(...)` instance, or `@requires(...)` imported from flask_allows
+  # (or its flask_allows2 fork, FlaskBB's),
+  # refuses (403, or the `on_fail` handler) a caller whose identity fails
+  # the requirements: an authorization check. One that only negates
+  # (`requires(Not(...))`) says nothing about who may pass.
+  ALLOWS_INSTANCE      = /^([A-Za-z_]\w*)[ \t]*(?::[^=\n]+)?=[ \t]*(?:flask_allows2?\.)?Allows[ \t]*\(/m
+  ALLOWS_IMPORT        = /^[ \t]*(?:from[ \t]+flask_allows2?\b|import[ \t]+flask_allows2?\b)/m
+  ALLOWS_REQUIRES_FROM = /^[ \t]*from[ \t]+flask_allows2?\b[^\n]*\bimport\b[^\n]*\brequires\b/m
+
+  # A requirement built from the request (`ForRequest(can_access_forum,
+  # request_forum)`, `can_post_reply(topic)`) is decided by the requested
+  # resource's settings, which can let a guest through; a fixed one
+  # (`IsAdmin`, `IsAtLeast(GroupRole.MODERATOR)`) is not.
+  # ponytail: a lowercase call or `ForRequest(` marks the per-request kind;
+  # evaluate the requirement definitions if a project mixes the styles.
+  private def flask_allows_desc(line : String) : String
+    args = line.partition('(')[2]
+    requirements = args.sub(/,?\s*\b(?:on_fail|throws|identity)\s*=[\s\S]*\z/, "")
+    if requirements.matches?(/\bForRequest\s*\(|(?<![\w.])[a-z_][\w]*\s*\(/)
+      "flask-allows requires (a per-request requirement: the resource's settings can admit a guest)"
+    else
+      "flask-allows requires"
+    end
+  end
+
+  private def flask_allows_requires?(name : String, line : String, file : String) : Bool
+    receiver, _, leaf = name.rpartition('.')
+    return false unless leaf == "requires"
+    return false if line.matches?(/\brequires\s*\(\s*(?:Not\s*\(|~)/)
+    return !!read_file(file).try(&.matches?(ALLOWS_REQUIRES_FROM)) if receiver.empty?
+    !!resolve(file, receiver) do |path, instance|
+      source = read_file(path) || ""
+      source.matches?(ALLOWS_IMPORT) && source.scan(ALLOWS_INSTANCE).any? { |m| m[1] == instance }
+    end
   end
 
   # Whether `def name` in `file` denies with 403 on a role, permission or
@@ -418,7 +456,12 @@ class FlaskAuthTagger < FrameworkTagger
 
   # The decorators a list expression names, as `{declaring file, name}`.
   private def decorator_entries(text : String, file : String, depth : Int32) : Array(Tuple(String, String))
-    names = text.gsub(PY_STRING, "").scan(/(?:^\s*[\[({]?|[\[,{:+])\s*([A-Za-z_][\w.]*)/).map(&.[1])
+    code = text.gsub(PY_STRING, "")
+    names = code.scan(/(?:^\s*[\[({]?|[\[,{:+])\s*([A-Za-z_][\w.]*)/).map do |m|
+      # A flask-allows `requires(...)` entry keeps its requirements: what
+      # they test decides how the guard is described.
+      m[1].ends_with?("requires") && (args = call_arguments_after(code, m.end(1))) ? "#{m[1]}#{args}" : m[1]
+    end
     names.flat_map do |entry|
       if (ref = entry.match(/^(.+)\.(method_decorators|decorators)$/)) && (target = resolve_class(file, ref[1]))
         class_attr(target[0], target[1], ref[2], depth + 1) || [] of Tuple(String, String)
@@ -426,6 +469,21 @@ class FlaskAuthTagger < FrameworkTagger
         [{file, entry}]
       end
     end
+  end
+
+  # The `(...)` call text starting at char `index` of `code`, if one does.
+  private def call_arguments_after(code : String, index : Int32) : String?
+    return unless code[index]? == '('
+    depth = 0
+    (index...code.size).each do |i|
+      case code[i]
+      when '(' then depth += 1
+      when ')'
+        depth -= 1
+        return code[index..i] if depth == 0
+      end
+    end
+    nil
   end
 
   private def resolve_class(file : String, name : String) : Tuple(String, String)?
