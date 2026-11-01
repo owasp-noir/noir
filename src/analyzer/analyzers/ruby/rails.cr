@@ -551,8 +551,8 @@ module Analyzer::Ruby
     # A condition only a non-production Rails env satisfies: `Rails.env.test?`
     # (`development?`, `local?`, an `||` of them, or one `&&` anything),
     # `!Rails.env.production?`, or `unless Rails.env.production?`.
-    NON_PRODUCTION_ENV  = /Rails\.env\.(?:test|development|local)\?(?:(?:\s*(?:\|\||\bor\b)\s*Rails\.env\.(?:test|development|local)\?)*|\s*(?:&&|\band\b)(?:(?!\|\||\bor\b).)*)|!\s*Rails\.env\.production\?/
-    NON_PRODUCTION_COND = /(?:if\s+(?:#{NON_PRODUCTION_ENV.source})|unless\s+Rails\.env\.production\?)\s*\z/
+    NON_PRODUCTION_ENV      = /Rails\.env\.(?:test|development|local)\?(?:(?:\s*(?:\|\||\bor\b)\s*Rails\.env\.(?:test|development|local)\?)*|\s*(?:&&|\band\b)(?:(?!\|\||\bor\b).)*)|!\s*Rails\.env\.production\?/
+    NON_PRODUCTION_COND     = /(?:if\s+(?:#{NON_PRODUCTION_ENV.source})|unless\s+Rails\.env\.production\?)\s*\z/
     NON_PRODUCTION_BLOCK    = /\A#{NON_PRODUCTION_COND.source}/
     NON_PRODUCTION_MODIFIER = /\s#{NON_PRODUCTION_COND.source}/
 
