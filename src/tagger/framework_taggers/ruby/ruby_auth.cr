@@ -123,6 +123,7 @@ class RubyAuthTagger < FrameworkTagger
     @callback_exits = Hash({String, String}, Bool).new
     @rejecting_defs = Hash(String, Bool).new
     @denying_helpers = Hash(String, Bool).new
+    @credential_readers = Hash(String, Bool).new
     @authorizing_helpers = Hash(String, Bool).new
     @denies_anonymous = Hash(String, Bool).new
     @deny_settings = Hash(String, String).new
@@ -663,6 +664,7 @@ class RubyAuthTagger < FrameworkTagger
         next unless strict || text.matches?(SOFT_DENY)
         next if credential_gated?(body, i) || text.matches?(CREDENTIAL_PRESENT_MODIFIER)
         next unless conditions = deny_conditions(body, i)
+        next if forgery_refusal?(text, conditions)
         raw_parts = deny_parts(conditions)
         next unless parts = class_settings(raw_parts, settings)
         # `check = if arg[:except] ... !except.include?(action_name.to_sym)
@@ -690,6 +692,21 @@ class RubyAuthTagger < FrameworkTagger
       @deny_settings[key] = first if result && first && settings.none?(Nil)
     end
     result
+  end
+
+  # An anti-forgery check: `raise InvalidCSRFToken` after `return true if
+  # valid_authenticity_token?(session, params[:authenticity_token])`
+  # (zammad's `verify_csrf_token`). Every visitor, anonymous or not, is
+  # handed that token, so refusing a request without it is not a login gate.
+  # A deny that also waits on a real credential (`head :unauthorized unless
+  # current_user` below a forgery exit) still is one.
+  FORGERY_CHECK = /authenticity_token|csrf|forgery/i
+
+  private def forgery_refusal?(text : String, conditions : Array({String, Bool})) : Bool
+    return true if code_only(text).sub(CONDITION_MODIFIER, "").matches?(FORGERY_CHECK)
+    terms = conditions.flat_map { |condition, _| condition.split(/&&|\|\||\band\b|\bor\b/) }
+    terms.any?(&.matches?(FORGERY_CHECK)) &&
+      terms.none? { |term| term.matches?(CREDENTIAL_WORD) && !term.matches?(FORGERY_CHECK) }
   end
 
   # The definitions of `name` Ruby finds for a controller whose ancestry
@@ -825,6 +842,7 @@ class RubyAuthTagger < FrameworkTagger
       if (m = text.match(ANONYMOUS_EXIT)) && !text.matches?(DENY_RESPONSE)
         negated = m[2].matches?(NEGATED)
         return if m[2].matches?(CREDENTIAL_WORD) && (m[1] == "if" ? negated : !negated)
+        return if exits_without_credential?(body, m[2], m[1] == "if")
         conditions << {m[2], m[1] != "if"}
       elsif indent_j < indent || indent_j == branch_at
         from_branch = indent_j == branch_at
@@ -838,6 +856,23 @@ class RubyAuthTagger < FrameworkTagger
       end
     end
     conditions
+  end
+
+  # `return false if errors.blank?` where `errors = []` is only appended to
+  # under credential-present branches (`if session[:user_id]`,
+  # `authenticate_with_http_basic do`): a caller who sent no credential
+  # leaves it empty and takes the exit, so what follows is not a login gate.
+  EMPTY_LOCAL_TEST = /\A(\w+)\.(blank|empty|nil|present|any)\?\z/
+
+  private def exits_without_credential?(body : Array({Int32, String}), condition : String, if_form : Bool) : Bool
+    return false unless m = condition.strip.match(EMPTY_LOCAL_TEST)
+    return false unless if_form == {"blank", "empty", "nil"}.includes?(m[2])
+    local = m[1]
+    init = /\A#{Regex.escape(local)}\s*=\s*(?:\[\]|\{\}|nil|false|""|Array\.new|Hash\.new)\z/
+    write = /\A#{Regex.escape(local)}\s*(?:<<|\.(?:push|append|concat|<<|merge!|store)\b|\[[^\]]*\]\s*=(?!=)|\|?\|?=(?!=))/
+    writes = body.each_index.select { |k| !body[k][1].matches?(init) && body[k][1].matches?(write) }.to_a
+    initialised = body.any? { |_, text| text.matches?(init) }
+    initialised && !writes.empty? && writes.all? { |k| credential_gated?(body, k) }
   end
 
   # Whether the deny fires for a caller without the credential: the
@@ -871,15 +906,27 @@ class RubyAuthTagger < FrameworkTagger
                    condition.gsub(/(?<![\w.@])params\s*(?:\[[^\]]*\]|\.\w+\([^)]*\))*/, "").matches?(SECRET_SOURCE)
     condition.scan(/@?\w+/).any? do |m|
       if value = assigns[m[0]]?
-        value.matches?(CREDENTIAL_WORD)
+        value.matches?(CREDENTIAL_WORD) || credential_reader_call?(value)
       else
         ivars.includes?(m[0])
       end
     end
   end
 
+  # `user = authentication_check_only`: a bare call of an app method whose
+  # own body reads where a request carries its credential (session,
+  # cookies, an Authorization header), so the local holds the caller.
+  private def credential_reader_call?(value : String) : Bool
+    return false unless m = value.strip.match(/\A([a-z_]\w*[!?]?)(?:\(.*\))?\z/)
+    name = m[1]
+    return false unless rails_chain.defs.has_key?(name)
+    @credential_readers.put_if_absent(name) do
+      def_bodies(name).any?(&.any? { |_, text| code_only(text).matches?(CREDENTIAL_SOURCE) })
+    end
+  end
+
   # Where a request carries its credential.
-  CREDENTIAL_SOURCE = /\b(?:session|cookies|request\.headers)\b|token|bearer|jwt|authoriz|api_?key/i
+  CREDENTIAL_SOURCE =/\b(?:session|cookies|request\.headers)\b|token|bearer|jwt|authoriz|api_?key/i
 
   # The instance variables the callbacks that run before `callback` in
   # `chain` leave holding the caller: `@user = user` under `if session[:u]
@@ -930,6 +977,9 @@ class RubyAuthTagger < FrameworkTagger
     (i - 1).downto(1) do |j|
       next unless body[j][0] < indent
       indent = body[j][0]
+      # Rails yields to `authenticate_with_http_basic do |u, p|` (and the
+      # token/digest forms) only when the request sent that credential.
+      return true if body[j][1].matches?(/\Aauthenticate_with_http_(?:basic|token|digest)\b.*\bdo\b/)
       next unless body[j][1].matches?(CREDENTIAL_PRESENT_IF)
       # `if params[:format] == "json"` / `if request.format.json?` asks
       # about the request, not whether it carries a credential.
