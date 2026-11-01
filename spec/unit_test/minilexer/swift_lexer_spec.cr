@@ -147,6 +147,12 @@ describe Noir::SwiftLexer do
       lex.masked_source.should contain("#endif")
       lex.in_code?(src.index!("DEBUG")).should be_true
     end
+
+    it "handles hostile 100k nested string interpolation linearly without stack overflow" do
+      s = "\"\\(" * 100_000
+      lex = Noir::SwiftLexer.new(s)
+      lex.masked_source.size.should eq(s.size)
+    end
   end
 
   describe "brace-heavy sample matching_delimiter" do

@@ -70,7 +70,7 @@ module Analyzer::Swift
     # with the raw lines. Read argument text from these: a comment inside
     # `router.group(/* x */ "api")` must not swallow the literal.
     protected def swift_code_lines(content : String) : Array(String)
-      Noir::CComments.strip(content, quotes: "\"").lines
+      Noir::SwiftLexer.for(content).code_lines
     end
 
     # Route-path composition shared by the Vapor and Hummingbird
@@ -288,12 +288,12 @@ module Analyzer::Swift
     end
 
     protected def strip_code_lines(content : String, keep_strings : Bool = false) : Array(String)
-      lexer = Noir::SwiftLexer.new(content)
+      lexer = Noir::SwiftLexer.for(content)
       keep_strings ? lexer.code_lines : lexer.masked_lines
     end
 
     private def structural_opening_brace(line : String) : Int32?
-      lexer = Noir::SwiftLexer.new(line)
+      lexer = Noir::SwiftLexer.for(line)
       lexer.masked_source.index('{')
     end
   end

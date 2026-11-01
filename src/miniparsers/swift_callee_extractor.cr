@@ -23,7 +23,7 @@ module Noir::SwiftCalleeExtractor
 
   def callees_for_body(body : String, file_path : String, start_line : Int32) : Array(Entry)
     entries = [] of Entry
-    lexer = Noir::SwiftLexer.new(body)
+    lexer = Noir::SwiftLexer.for(body)
 
     lexer.masked_lines.each_with_index do |line, index|
       scan_line(line, file_path, start_line + index, entries)

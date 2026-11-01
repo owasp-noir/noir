@@ -238,4 +238,31 @@ describe "swift vapor analyzer" do
     File.delete(temp_file) if temp_file && File.exists?(temp_file)
     Dir.delete(temp_dir) if temp_dir && Dir.exists?(temp_dir)
   end
+
+  it "keeps comments with quotes out of route and group arguments" do
+    instance = Analyzer::Swift::Vapor.new(create_test_options)
+
+    temp_dir = File.tempname("swift_vapor_comment_quotes_test")
+    Dir.mkdir_p(temp_dir)
+    temp_file = File.join(temp_dir, "routes.swift")
+
+    File.write(temp_file, <<-SWIFT)
+      import Vapor
+
+      func routes(_ app: Application) throws {
+          app.get("c1", /* "fake" */ "c2") { req in "x" }
+          let api = app.grouped(/* "zz" */ "api")
+          api.get("v1") { req in "x" }
+          app.get("c3", // "fake2"
+                  "c4") { req in "x" }
+      }
+      SWIFT
+
+    instance.analyze_file(temp_file).map { |e| "#{e.method} #{e.url}" }.sort!.should eq(
+      ["GET /api/v1", "GET /c1/c2", "GET /c3/c4"]
+    )
+  ensure
+    File.delete(temp_file) if temp_file && File.exists?(temp_file)
+    Dir.delete(temp_dir) if temp_dir && Dir.exists?(temp_dir)
+  end
 end

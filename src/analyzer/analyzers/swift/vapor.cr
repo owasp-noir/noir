@@ -67,8 +67,9 @@ module Analyzer::Swift
       endpoints = [] of Endpoint
       content = read_file_content(path)
       lines = content.lines
-      lexer = Noir::SwiftLexer.new(content)
+      lexer = Noir::SwiftLexer.for(content)
       masked_lines = lexer.masked_lines
+      code_lines = lexer.code_lines
 
       include_callee = callees_needed?
       handler_bodies = named_handler_bodies(lines, masked_lines)
@@ -82,10 +83,11 @@ module Analyzer::Swift
 
       masked_lines.each_with_index do |masked_line, index|
         line = lines[index]
-        register_group_assignment(masked_line, line, prefix_by_receiver)
-        register_group_closure(masked_line, line, prefix_by_receiver, group_prefix_stack, brace_depth)
+        code_line = code_lines[index]
+        register_group_assignment(masked_line, code_line, prefix_by_receiver)
+        register_group_closure(masked_line, code_line, prefix_by_receiver, group_prefix_stack, brace_depth)
 
-        route = route_parts(masked_lines, lines, index, prefix_by_receiver)
+        route = route_parts(masked_lines, code_lines, index, prefix_by_receiver)
         unless route
           brace_depth = update_group_depth(masked_line, brace_depth, group_prefix_stack, prefix_by_receiver)
           next
@@ -237,22 +239,22 @@ module Analyzer::Swift
 
     # The last element is the prefix of a group expression the verb was called
     # on directly (`app.grouped("a").get("b")`), "" otherwise.
-    private def route_parts(masked_lines : Array(String), lines : Array(String), index : Int32, prefix_by_receiver : Hash(String, String)) : Tuple(String, String, String, String)?
+    private def route_parts(masked_lines : Array(String), code_lines : Array(String), index : Int32, prefix_by_receiver : Hash(String, String)) : Tuple(String, String, String, String)?
       masked_line = masked_lines[index]?
       return unless masked_line
       return unless route_definition_line?(masked_line)
 
-      masked_line, line = joined_route_call(masked_lines, lines, index)
+      masked_line, code_line = joined_route_call(masked_lines, code_lines, index)
 
       inline_prefix = ""
       if group = masked_line.match(INLINE_GROUP_PATTERN)
-        if chain = chain_prefix(masked_line, line, "", group.end(0) || 0)
+        if chain = chain_prefix(masked_line, code_line, "", group.end(0) || 0)
           rest_masked = masked_line[(chain[1] + 1)..]? || ""
           if rest_masked.matches?(INLINE_VERB_PATTERN)
-            rest_line = line[(chain[1] + 1)..]? || ""
+            rest_code = code_line[(chain[1] + 1)..]? || ""
             # Re-read the line as if the verb were called on the base receiver.
             masked_line = "#{masked_line[0...(group.begin(0) || 0)]}#{group[1]}#{rest_masked.lstrip}"
-            line = "#{line[0...(group.begin(0) || 0)]}#{group[1]}#{rest_line.lstrip}"
+            code_line = "#{code_line[0...(group.begin(0) || 0)]}#{group[1]}#{rest_code.lstrip}"
             inline_prefix = chain[0]
           end
         end
@@ -261,7 +263,7 @@ module Analyzer::Swift
       if match = masked_line.match(ON_ROUTE_PATTERN)
         return unless router_like?(match[1], prefix_by_receiver)
 
-        args = call_arguments(line, match.end(0) || 0, masked_line)
+        args = call_arguments(code_line, match.end(0) || 0, masked_line)
         return unless args
 
         route_args = args[0]
@@ -276,7 +278,7 @@ module Analyzer::Swift
         # `users.get { req in ... }` takes no path arguments.
         return {match[1], match[2].upcase, "", inline_prefix} if match[3] == "{"
 
-        args = call_arguments(line, match.end(0) || 0, masked_line)
+        args = call_arguments(code_line, match.end(0) || 0, masked_line)
         return unless args
 
         return {match[1], match[2].upcase, args[0], inline_prefix}
@@ -288,29 +290,29 @@ module Analyzer::Swift
     # `.on(` / `.get(` may close on a later line. `call_arguments` reads one
     # string, so fold following lines until the paren balances. The cap keeps
     # an unclosed `(` from swallowing the rest of the file.
-    private def joined_route_call(masked_lines : Array(String), lines : Array(String), index : Int32) : Tuple(String, String)
+    private def joined_route_call(masked_lines : Array(String), code_lines : Array(String), index : Int32) : Tuple(String, String)
       masked_line = masked_lines[index]
-      line = lines[index]
+      code_line = code_lines[index]
       match = masked_line.match(ROUTE_CALL_RE)
-      return {masked_line, line} unless match
+      return {masked_line, code_line} unless match
 
       open_at = match.end(0) || 0
-      return {masked_line, line} unless open_at > 0 && masked_line[open_at - 1] == '('
-      return {masked_line, line} if call_arguments(line, open_at, masked_line)
+      return {masked_line, code_line} unless open_at > 0 && masked_line[open_at - 1] == '('
+      return {masked_line, code_line} if call_arguments(code_line, open_at, masked_line)
 
       parts_m = [masked_line]
-      parts_l = [line]
+      parts_c = [code_line]
       next_index = index + 1
       while next_index < masked_lines.size && next_index - index < 40
         parts_m << masked_lines[next_index]
-        parts_l << lines[next_index]
+        parts_c << code_lines[next_index]
         joined_m = parts_m.join('\n')
-        joined_l = parts_l.join('\n')
-        return {joined_m, joined_l} if call_arguments(joined_l, open_at, joined_m)
+        joined_c = parts_c.join('\n')
+        return {joined_m, joined_c} if call_arguments(joined_c, open_at, joined_m)
         next_index += 1
       end
 
-      {masked_line, line}
+      {masked_line, code_line}
     end
 
     # A `.get`/`.post`/... call counts as a route only when its receiver is a
@@ -348,7 +350,7 @@ module Analyzer::Swift
       end
     end
 
-    private def register_group_assignment(masked_line : String, line : String, prefix_by_receiver : Hash(String, String))
+    private def register_group_assignment(masked_line : String, code_line : String, prefix_by_receiver : Hash(String, String))
       match = masked_line.match(GROUP_ASSIGN_PATTERN)
       return unless match
 
@@ -356,7 +358,7 @@ module Analyzer::Swift
       # `base` is absent for an implicit-`self` `grouped(...)` (a RoutesBuilder
       # extension): the new group then inherits the empty root prefix.
       base_prefix = (base = match[2]?) ? prefix_for_receiver(base, prefix_by_receiver) : ""
-      chain = chain_prefix(masked_line, line, base_prefix, match.end(0) || 0)
+      chain = chain_prefix(masked_line, code_line, base_prefix, match.end(0) || 0)
       return unless chain
 
       prefix_by_receiver[variable] = chain[0]
@@ -365,14 +367,14 @@ module Analyzer::Swift
     # Accumulates the prefix of a `.grouped(...)`/`.group(...)` call and every
     # group call chained onto it. `args_start` is just past the first call's
     # `(`. Returns the joined prefix and the index of the last call's `)`.
-    private def chain_prefix(masked_line : String, line : String, base_prefix : String, args_start : Int32) : Tuple(String, Int32)?
-      args = call_arguments(line, args_start, masked_line)
+    private def chain_prefix(masked_line : String, code_line : String, base_prefix : String, args_start : Int32) : Tuple(String, Int32)?
+      args = call_arguments(code_line, args_start, masked_line)
       return unless args
 
       prefix = normalized_route_join(base_prefix, parse_route_path(args[0]))
       close = args[1]
       while (rest_masked = masked_line[(close + 1)..]?) && (next_call = rest_masked.match(CHAINED_GROUP_PATTERN))
-        more = call_arguments(line, close + 1 + (next_call.end(0) || 0), masked_line)
+        more = call_arguments(code_line, close + 1 + (next_call.end(0) || 0), masked_line)
         break unless more
 
         prefix = normalized_route_join(prefix, parse_route_path(more[0]))
@@ -383,7 +385,7 @@ module Analyzer::Swift
     end
 
     private def register_group_closure(masked_line : String,
-                                       line : String,
+                                       code_line : String,
                                        prefix_by_receiver : Hash(String, String),
                                        group_prefix_stack : Array(Tuple(String, Int32, String?)),
                                        brace_depth : Int32)
@@ -391,7 +393,7 @@ module Analyzer::Swift
       return unless match
 
       base = match[1]
-      chain = chain_prefix(masked_line, line, prefix_for_receiver(base, prefix_by_receiver), match.end(0) || 0)
+      chain = chain_prefix(masked_line, code_line, prefix_for_receiver(base, prefix_by_receiver), match.end(0) || 0)
       return unless chain
 
       after_call = masked_line[(chain[1] + 1)..]? || ""

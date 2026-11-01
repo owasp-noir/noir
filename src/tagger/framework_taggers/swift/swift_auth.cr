@@ -4,7 +4,6 @@ require "../../../minilexers/swift_lexer"
 
 @[Noir::TaggerFor(key: "swift_auth", name: "Swift Auth Tagger", desc: "Identifies Vapor/Kitura/Hummingbird authentication patterns", order: 220)]
 class SwiftAuthTagger < FrameworkTagger
-  @lexer_cache = {} of String => Noir::SwiftLexer
   # `.group(` / `.grouped(` followed by any earlier arguments, so a pattern
   # after it matches at the start of ANY argument:
   # `app.grouped(UserToken.authenticator(), User.guardMiddleware())` is
@@ -65,7 +64,7 @@ class SwiftAuthTagger < FrameworkTagger
       next if line_num < 1 || line_num > lines.size
       line_idx = line_num - 1
 
-      lexer = (@lexer_cache[path_info.path] ||= Noir::SwiftLexer.new(content))
+      lexer = Noir::SwiftLexer.for(content)
       masked_lines = lexer.masked_lines
 
       # Check for auth middleware group wrapping this route

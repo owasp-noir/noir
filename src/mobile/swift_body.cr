@@ -28,7 +28,7 @@ module Noir
     # real source structure and corrupt where the body actually ends.
     def body_after_opening_brace(lines : Array(String), opening_index : Int32, col : Int32) : Tuple(String, Int32)
       first = lines[opening_index][(col + 1)..]? || ""
-      masked_lines = Noir::SwiftLexer.new(lines.join('\n')).masked_lines
+      masked_lines = Noir::SwiftLexer.for(lines.join('\n')).masked_lines
       first_clean = masked_lines[opening_index][(col + 1)..]? || ""
       brace = 1 + first_clean.count('{') - first_clean.count('}')
       if brace <= 0

@@ -31,8 +31,9 @@ module Analyzer::Swift
       endpoints = [] of Endpoint
       content = read_file_content(path)
       lines = content.lines
-      lexer = Noir::SwiftLexer.new(content)
+      lexer = Noir::SwiftLexer.for(content)
       masked_lines = lexer.masked_lines
+      code_lines = lexer.code_lines
       include_callee = callees_needed?
       handler_bodies = named_handler_bodies(lines, masked_lines)
       router_receivers = collect_router_receivers(masked_lines)
@@ -47,7 +48,7 @@ module Analyzer::Swift
           # Note: 'all' matches all HTTP methods, defaulting to GET for representation
           method_str = match[2]
           method = method_str == "all" ? "GET" : method_str.upcase
-          route_args = lines[index][(match.begin(3) || 0)...(match.end(3) || 0)]
+          route_args = code_lines[index][(match.begin(3) || 0)...(match.end(3) || 0)]
           route_path = parse_route_path(route_args)
 
           details = Details.new(PathInfo.new(path, index + 1))

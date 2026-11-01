@@ -58,7 +58,7 @@ module Analyzer::Swift
       endpoints = [] of Endpoint
       content = read_file_content(path)
       lines = swift_code_lines(content)
-      lexer = Noir::SwiftLexer.new(content)
+      lexer = Noir::SwiftLexer.for(content)
       masked_lines = lexer.masked_lines
       include_callee = callees_needed?
       handler_bodies = named_handler_bodies(lines, masked_lines)
@@ -353,7 +353,7 @@ module Analyzer::Swift
           open_paren = i + (method_match.end(0) || 0) - 1
           # Structure comes from the stripped line, but argument *content*
           # (the path literal) must be read from the original source.
-          args = call_arguments(original, open_paren + 1)
+          args = call_arguments(original, open_paren + 1, line)
 
           unless args
             # Arguments spill onto following lines; account for the open
@@ -550,7 +550,7 @@ module Analyzer::Swift
                                   hits : Array(RouteHit)) : Tuple(DslScope?, Int32)
       case m.kind
       when :verb
-        args = call_arguments(original, m.paren_col + 1)
+        args = call_arguments(original, m.paren_col + 1, line)
         args_str = args ? args[0] : ""
         if dsl_emitting?(stack)
           path = normalized_route_join(current_dsl_prefix(stack), parse_route_path(args_str))
@@ -559,7 +559,7 @@ module Analyzer::Swift
         # A trailing closure on this verb is its handler body, not a group.
         {DslScope.new(:handler, current_dsl_prefix(stack)), args ? args[1] + 1 : m.end_col}
       when :group
-        args = call_arguments(original, m.paren_col + 1)
+        args = call_arguments(original, m.paren_col + 1, line)
         args_str = args ? args[0] : ""
         prefix = normalized_route_join(current_dsl_prefix(stack), parse_route_path(args_str))
         {DslScope.new(:group, prefix), args ? args[1] + 1 : m.end_col}
@@ -650,7 +650,7 @@ module Analyzer::Swift
 
       variable = match[1]
       base = match[2]
-      args = call_arguments(original, match.end(0) || 0)
+      args = call_arguments(original, match.end(0) || 0, line)
       return unless args
 
       prefix_by_receiver[variable] = normalized_route_join(prefix_for_receiver(base, prefix_by_receiver), parse_route_path(args[0]))
@@ -667,7 +667,7 @@ module Analyzer::Swift
       base = match[1]
       return unless router_like?(base, prefix_by_receiver)
 
-      args = call_arguments(original, match.end(0) || 0)
+      args = call_arguments(original, match.end(0) || 0, line)
       return unless args
 
       after_call = line[(args[1] + 1)..]? || ""
@@ -794,7 +794,7 @@ module Analyzer::Swift
             open = stripped.index('(', marker)
             next unless open && stripped[(marker + 1)...open].strip == func_name
 
-            args = call_arguments(original, open + 1)
+            args = call_arguments(original, open + 1, stripped)
             next unless args
 
             args_str = args[0]

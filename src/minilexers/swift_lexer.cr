@@ -1,4 +1,5 @@
 require "./masked_lexer"
+require "../miniparsers/extraction_result_cache"
 
 module Noir
   # SwiftLexer is a hand-rolled structural masking lexer for Swift source,
@@ -21,7 +22,24 @@ module Noir
   class SwiftLexer
     include MaskedLexer
 
+    MAX_INTERPOLATION_DEPTH = 64
+
+    @@memo = Hash(UInt64, SwiftLexer).new
+    @@memo_mutex = Mutex.new
+
+    ExtractionResultCache.register_clearer do
+      @@memo_mutex.synchronize { @@memo.clear }
+    end
+
+    def self.for(source : String) : SwiftLexer
+      key = ExtractionResultCache.source_fingerprint(source)
+      ExtractionResultCache.fetch(@@memo, key, @@memo_mutex) do
+        SwiftLexer.new(source)
+      end
+    end
+
     getter chars : Array(Char)
+    @interp_depth : Int32
     @masked_lines : Array(String)?
     @masked_source : String?
     @code_lines : Array(String)?
@@ -32,6 +50,7 @@ module Noir
       @size = @chars.size
       @masked = @chars.dup
       @spans = [] of Tuple(Symbol, Int32, Int32)
+      @interp_depth = 0
       @skip_ranges = nil
       @masked_lines = nil
       @masked_source = nil
@@ -176,13 +195,21 @@ module Noir
 
         # Interpolation: \ followed by `hashes` '#' and '('
         if c == '\\' && check_hashes(i + 1, hashes) && (i + 1 + hashes < @size && @chars[i + 1 + hashes] == '(')
+          if @interp_depth >= MAX_INTERPOLATION_DEPTH
+            @masked[i] = ' '
+            i += 1
+            next
+          end
+
           @masked[i] = '\\'
           hashes.times { |k| @masked[i + 1 + k] = '#' }
           @masked[i + 1 + hashes] = '('
           @spans << {:string, span_start, i + 2 + hashes}
 
           # Parse interpolation (code inside is unmasked)
+          @interp_depth += 1
           i = scan_interpolation(i + 2 + hashes, hashes)
+          @interp_depth -= 1
           span_start = i
           next
         end
@@ -248,12 +275,20 @@ module Noir
 
         # Interpolation: \ followed by `hashes` '#' and '('
         if c == '\\' && check_hashes(i + 1, hashes) && (i + 1 + hashes < @size && @chars[i + 1 + hashes] == '(')
+          if @interp_depth >= MAX_INTERPOLATION_DEPTH
+            @masked[i] = ' '
+            i += 1
+            next
+          end
+
           @masked[i] = '\\'
           hashes.times { |k| @masked[i + 1 + k] = '#' }
           @masked[i + 1 + hashes] = '('
           @spans << {:string, span_start, i + 2 + hashes}
 
+          @interp_depth += 1
           i = scan_interpolation(i + 2 + hashes, hashes)
+          @interp_depth -= 1
           span_start = i
           next
         end
@@ -356,7 +391,7 @@ module Noir
             next unless kind == :comment
             (start...finish).each do |idx|
               next if idx >= @size
-              chars[idx] = ' ' unless chars[idx] == '\n'
+              chars[idx] = ' ' unless chars[idx] == '\n' || chars[idx] == '\r'
             end
           end
           chars.join
