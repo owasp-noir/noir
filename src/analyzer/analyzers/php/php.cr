@@ -355,7 +355,7 @@ module Analyzer::Php
     end
 
     private def attach_file_callees(endpoints : Array(Endpoint), content : String, path : String)
-      callees = Noir::PhpCalleeExtractor.callees_for_body(executable_file_content(content), path, 1)
+      callees = Noir::PhpCalleeExtractor.callees_for_body(executable_file_content(content), path, 1, php_mode: false)
       endpoints.each do |endpoint|
         attach_php_callees(endpoint, callees)
       end

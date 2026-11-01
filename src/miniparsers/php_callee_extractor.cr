@@ -1,5 +1,6 @@
 require "../models/endpoint"
 require "./callee_extractor_base"
+require "../minilexers/php_lexer"
 
 module Noir::PhpCalleeExtractor
   extend self
@@ -18,27 +19,37 @@ module Noir::PhpCalleeExtractor
   STATIC_CALL_REGEX         = /(\\?[A-Za-z_]\w*(?:\\[A-Za-z_]\w*)*(?:::[A-Za-z_]\w*)+)\s*\(/
   BARE_CALL_REGEX           = /(?<![>\w:$\\])(\\?[A-Za-z_]\w*(?:\\[A-Za-z_]\w*)*)\s*\(/
 
-  def callees_for_body(body : String, file_path : String, start_line : Int32) : Array(Entry)
+  # `body` is a fragment of PHP code (a method or closure body) unless
+  # `php_mode` is false, for a whole file that may open with markup.
+  def callees_for_body(body : String, file_path : String, start_line : Int32, php_mode : Bool = true) : Array(Entry)
     entries = [] of Entry
-
-    in_block_comment = false
-
-    body.lines.each_with_index do |line, index|
-      sanitized, in_block_comment = sanitize_line(line, in_block_comment)
-      scan_line(sanitized, file_path, start_line + index, entries)
+    code_lines(body, php_mode).each_with_index do |line, index|
+      scan_line(line, file_path, start_line + index, entries)
     end
-
     entries.uniq
   end
 
-  # `content` with `//`, `#` and `/* */` comments blanked, string literals
-  # and `#[Attribute]`s kept, and every line in place.
+  # `content` with `//`, `#` and `/* */` comments (docblocks too) blanked,
+  # string literals and `#[Attribute]`s kept, and every line in place.
   def strip_comments(content : String) : String
-    in_block_comment = false
-    content.split('\n').join('\n') do |line|
-      sanitized, in_block_comment = sanitize_line(line, in_block_comment, keep_strings: true)
-      sanitized
+    Noir::PhpLexer.new(content).without_comments(keep_docblocks: false)
+  end
+
+  # The lines of `body` with strings, comments, heredocs and attributes
+  # blanked, so a call written inside any of them (a multi-line SQL literal,
+  # a heredoc template) is not a callee.
+  private def code_lines(body : String, php_mode : Bool) : Array(String)
+    lexer = Noir::PhpLexer.new(body, php_mode: php_mode)
+    masked = lexer.masked
+    i = 0
+    while i + 1 < masked.size
+      if masked[i] == '#' && masked[i + 1] == '[' && (close = lexer.matching_delimiter(i + 1))
+        (i..close).each { |k| masked[k] = ' ' unless masked[k] == '\n' }
+        i = close
+      end
+      i += 1
     end
+    masked.join.split('\n')
   end
 
   private def scan_line(line : String, file_path : String, line_number : Int32, entries : Array(Entry))
@@ -97,82 +108,5 @@ module Noir::PhpCalleeExtractor
     return false if name.includes?("->") || name.includes?("::")
 
     RESERVED.includes?(name.downcase)
-  end
-
-  # ASCII byte values for the delimiters scanned below. All < 0x80, so a
-  # UTF-8 multi-byte sequence (bytes >= 0x80) never collides with them.
-  private BYTE_NEWLINE   = '\n'.ord.to_u8
-  private BYTE_STAR      = '*'.ord.to_u8
-  private BYTE_SLASH     = '/'.ord.to_u8
-  private BYTE_HASH      = '#'.ord.to_u8
-  private BYTE_BACKSLASH = '\\'.ord.to_u8
-  private BYTE_DQUOTE    = '"'.ord.to_u8
-  private BYTE_SQUOTE    = '\''.ord.to_u8
-  private BYTE_LBRACKET  = '['.ord.to_u8
-  private BYTE_SPACE     = ' '.ord.to_u8
-
-  # Blank out string literals and comments so the call-pattern regexes only
-  # see executable code. Scans the raw byte buffer for O(1) positional
-  # access — `String#[](Int)` is O(n) on multi-byte strings, which made a
-  # single long CJK/escaped line (e.g. CRMEB's half-megabyte SQL seed
-  # literal) cost O(n^2). String/comment bytes are replaced with spaces;
-  # code bytes (including any multi-byte ones outside strings) are copied
-  # verbatim so the result stays valid UTF-8.
-  #
-  # With `keep_strings` only comments are blanked: string bytes are copied
-  # verbatim and a PHP 8 `#[Attribute]` is code, not a `#` comment.
-  private def sanitize_line(line : String, in_block_comment : Bool, keep_strings : Bool = false) : Tuple(String, Bool)
-    bytes = line.to_slice
-    size = bytes.size
-    sanitized = String.build do |io|
-      in_string = false
-      escaped = false
-      quote = 0_u8
-      index = 0
-
-      while index < size
-        char = bytes[index]
-        next_char = index + 1 < size ? bytes[index + 1] : 0_u8
-
-        if in_block_comment
-          if char == BYTE_STAR && next_char == BYTE_SLASH
-            io << "  "
-            in_block_comment = false
-            index += 2
-          else
-            io << ' '
-            index += 1
-          end
-        elsif in_string
-          keep_strings ? io.write_byte(char) : io << ' '
-          if escaped
-            escaped = false
-          elsif char == BYTE_BACKSLASH
-            escaped = true
-          elsif char == quote
-            in_string = false
-          end
-          index += 1
-        elsif char == BYTE_SLASH && next_char == BYTE_STAR
-          io << "  "
-          in_block_comment = true
-          index += 2
-        elsif (char == BYTE_SLASH && next_char == BYTE_SLASH) ||
-              (char == BYTE_HASH && !(keep_strings && next_char == BYTE_LBRACKET))
-          (size - index).times { io.write_byte(BYTE_SPACE) }
-          index = size
-        elsif char == BYTE_DQUOTE || char == BYTE_SQUOTE
-          keep_strings ? io.write_byte(char) : io << ' '
-          in_string = true
-          quote = char
-          index += 1
-        else
-          io.write_byte(char)
-          index += 1
-        end
-      end
-    end
-
-    {sanitized, in_block_comment}
   end
 end

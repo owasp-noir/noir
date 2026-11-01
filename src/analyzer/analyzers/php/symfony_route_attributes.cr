@@ -1,4 +1,4 @@
-require "../../../minilexers/php_lexer"
+require "../../../miniparsers/php_block_parser"
 
 # Symfony's route attribute/annotation grammar (`#[Route(...)]`,
 # `@Route(...)`), shared by `Analyzer::Php::Symfony` and
@@ -7,30 +7,44 @@ module Analyzer::Php::SymfonyRouteAttributes
   # The options Symfony's Route attribute/annotation takes besides its path.
   SYMFONY_ROUTE_KEYS = %w[name methods requirements defaults condition host schemes env priority locale format utf8 stateless options alias]
 
-  # A `@Route(...)` annotation or `#[Route(...)]` attribute: where it
-  # starts and ends, and the text between its parentheses.
-  record RouteAttr, start : Int32, stop : Int32, args : String
+  # Packages whose `Route` is Symfony's (or extends it).
+  SYMFONY_ROUTE_NAMESPACES = {"Symfony\\", "FOS\\RestBundle\\", "Sensio\\Bundle\\FrameworkExtraBundle\\"}
 
-  # Every route annotation/attribute in `content`, its parentheses matched
-  # past strings (`condition="request.isXmlHttpRequest()"`). One whose
-  # parentheses do not balance is skipped. An attribute is code, so one
-  # written inside a string literal is text; an annotation lives in a
-  # docblock and has its ` * ` line prefixes dropped.
-  private def route_attributes(content : String, lexer : Noir::PhpLexer) : Array(RouteAttr)
+  # A `@Route(...)` annotation or `#[Route(...)]` attribute: where it
+  # starts and ends, the text between its parentheses, and for an
+  # attribute whether it sits on a class (nil for an annotation, which is
+  # judged by the text after it).
+  record RouteAttr, start : Int32, stop : Int32, args : String, on_class : Bool? = nil
+
+  # Every route annotation/attribute in `content` (the parser's source with
+  # comments blanked), in source order. An attribute is what the parser
+  # read: one inside a group (`#[IsGranted('X'), Route('/a')]`) or written
+  # fully qualified counts, one inside a string or comment does not. An
+  # annotation lives in a docblock and has its ` * ` line prefixes dropped;
+  # one whose parentheses do not balance is skipped.
+  private def route_attributes(content : String, parser : Noir::PhpBlockParser) : Array(RouteAttr)
     attrs = [] of RouteAttr
-    content.scan(/(@|#\[)Route\s*\(/) do |m|
-      start = m.begin(0)
-      open = m.end(0) - 1
-      if m[1] == "#["
-        next unless lexer.in_code?(start) && (close = lexer.matching_delimiter(open))
-        attrs << RouteAttr.new(start, close + 1, content[open + 1...close])
-      else
-        block = content[open...(content.index("*/", open) || content.size)]
-        next unless close = Noir::PhpLexer.new(block, php_mode: true).matching_delimiter(0)
-        attrs << RouteAttr.new(start, open + close + 1, block[1...close].gsub(/\n\s*\*/, "\n"))
-      end
+    targets = {} of Int32 => Bool
+    parser.each_node { |node| node.attributes.each { |attribute| targets[attribute.start] = node.kind.class? } }
+    parser.attributes.each do |attribute|
+      next unless route_attribute?(attribute.name) && (args = attribute.args)
+      stop = args.end + 1
+      on_class = targets.has_key?(attribute.start) ? targets[attribute.start] : route_applies_to_class?(content, stop)
+      attrs << RouteAttr.new(attribute.start, stop, content[args], on_class)
     end
-    attrs
+    content.scan(/@Route\s*\(/) do |m|
+      open = m.end(0) - 1
+      block = content[open...(content.index("*/", open) || content.size)]
+      next unless close = Noir::PhpLexer.new(block, php_mode: true).matching_delimiter(0)
+      attrs << RouteAttr.new(m.begin(0), open + close + 1, block[1...close].gsub(/\n\s*\*/, "\n"))
+    end
+    attrs.sort_by!(&.start)
+  end
+
+  # `Route`, or Symfony's (FOSRest's, Sensio's) written fully qualified.
+  private def route_attribute?(name : String) : Bool
+    return true if name == "Route"
+    name.ends_with?("\\Route") && SYMFONY_ROUTE_NAMESPACES.any? { |ns| name.lchop('\\').starts_with?(ns) }
   end
 
   # The top-level comma-separated arguments of an argument list.
@@ -83,20 +97,12 @@ module Analyzer::Php::SymfonyRouteAttributes
     "" if named.each_key.all? { |key| SYMFONY_ROUTE_KEYS.includes?(key) }
   end
 
+  # The verbs of the `methods` argument: a list (`['GET']`, `{"GET"}`), a
+  # string, or `Request::METHOD_*` constants. Only the argument itself is
+  # read, so a `condition` string mentioning `methods: [...]` is not.
   private def extract_methods_from_symfony_context(context : String) : Array(String)
-    methods = [] of String
-
-    if match = context.match(/methods\s*[:=]\s*\[([^\]]+)\]/m)
-      methods.concat(extract_method_tokens(match[1]))
-    elsif match = context.match(/methods\s*=\s*\{([^}]+)\}/m)
-      methods.concat(extract_method_tokens(match[1]))
-    elsif match = context.match(/methods\s*[:=]\s*['"]([^'"]+)['"]/)
-      methods << match[1].upcase
-    elsif match = context.match(/methods\s*[:=]\s*(?:[\w\\]+::)?METHOD_(\w+)/i)
-      methods << match[1].upcase
-    end
-
-    methods.uniq
+    value = attribute_args(context)[0]["methods"]? || return [] of String
+    extract_method_tokens(value).uniq
   end
 
   # Methods inside a `methods: [...]` / `={...}` list — either string
@@ -119,5 +125,9 @@ module Analyzer::Php::SymfonyRouteAttributes
   # Whether the attribute ending at `route_end` sits on a class.
   private def route_applies_to_class?(content : String, route_end : Int32) : Bool
     !!next_declaration(content, route_end).try(&.[1].starts_with?("class"))
+  end
+
+  private def route_applies_to_class?(content : String, attr : RouteAttr) : Bool
+    attr.on_class.nil? ? route_applies_to_class?(content, attr.stop) : attr.on_class == true
   end
 end

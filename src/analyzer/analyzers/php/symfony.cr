@@ -22,7 +22,8 @@ module Analyzer::Php
     # literal or a `Class::CONST`) when there is one, or `#[Security("expr")]`.
     # Security must open with its expression string: NelmioApiDoc's
     # `@Security(name="Bearer")` documents a scheme and checks nothing.
-    SECURITY_ATTR_RE = /(?:#\[|@)(?:(IsGranted)\s*\(\s*(?:attribute\s*:\s*)?(?:(['"])(.*?)\2|\\?[\w\\]+::(\w+))?|(Security)\s*\(\s*(?:expression\s*:\s*)?['"])/
+    # A later entry of an attribute group (`#[Route('/a'), IsGranted('X')]`) counts.
+    SECURITY_ATTR_RE = /(?:#\[|@|,\s*)(?:(IsGranted)\s*\(\s*(?:attribute\s*:\s*)?(?:(['"])(.*?)\2|\\?[\w\\]+::(\w+))?|(Security)\s*\(\s*(?:expression\s*:\s*)?['"])/
 
     # Attributes every caller, anonymous included, is granted.
     PUBLIC_ATTRIBUTES = %w[PUBLIC_ACCESS IS_AUTHENTICATED_ANONYMOUSLY]
@@ -45,9 +46,6 @@ module Analyzer::Php
     # ParamFetcher reads from the query, the decoded body or the files.
     FOS_PARAM_RE   = /(?:#\[|@)(?:[\w\\]*\\)?(QueryParam|RequestParam|FileParam)\s*\(/
     FOS_PARAM_BAGS = {"QueryParam" => "query", "RequestParam" => "form", "FileParam" => "file"}
-
-    # Packages whose `Route` is Symfony's (or extends it).
-    SYMFONY_ROUTE_NAMESPACES = {"Symfony\\", "FOS\\RestBundle\\", "Sensio\\Bundle\\FrameworkExtraBundle\\"}
 
     # Stands for a form name that cannot be read statically (`createNamed($n,
     # …)`, a computed `getBlockPrefix`); `?` is not valid in a form name.
@@ -186,21 +184,22 @@ module Analyzer::Php
       # tree. Skip the annotation/attribute scans when neither form is
       # present (`@Route` or `#[Route`).
       return endpoints unless content.includes?("Route")
-      return endpoints unless content.includes?("@Route") || content.includes?("#[Route")
+      return endpoints unless content.includes?("@Route") || content.includes?("#[")
       # `Route` imported from another package (Spiral's `#[Route(route:
       # '/users')]`) is not Symfony's.
       if (imported = parse_use_imports(content)["Route"]?) && SYMFONY_ROUTE_NAMESPACES.none? { |ns| imported.lchop('\\').starts_with?(ns) }
         return endpoints
       end
-      lexer = Noir::PhpLexer.new(content)
+      parser = Noir::PhpBlockParser.new(content)
+      lexer = parser.lexer
       content = lexer.without_comments
 
-      attrs = route_attributes(content, lexer)
-      classes = extract_classes(content, lexer, attrs)
+      attrs = route_attributes(content, parser)
+      classes = extract_classes(content, parser, attrs)
       import_prefixes = import_prefixes_for(path)
 
       attrs.each do |attr|
-        next if route_applies_to_class?(content, attr.stop)
+        next if route_applies_to_class?(content, attr)
         next unless route_path = extract_symfony_route_path(attr.args)
         next if docblock_orphaned?(content, attr)
 
@@ -231,30 +230,24 @@ module Analyzer::Php
       endpoints
     end
 
-    # Every class in the file, with its route prefix and class-level guard.
-    private def extract_classes(content : String, lexer : Noir::PhpLexer, attrs : Array(RouteAttr)) : Array(ClassInfo)
+    # Every named class in the file, with its route prefix and class-level
+    # guard: the `#[Route]` the parser attached to it, or the `@Route`
+    # annotation right before it.
+    private def extract_classes(content : String, parser : Noir::PhpBlockParser, attrs : Array(RouteAttr)) : Array(ClassInfo)
       classes = [] of ClassInfo
-      # `(?<!::)`: `User::class` in an attribute argument is not a declaration.
-      class_regex = /(?<!::)\bclass\s+(\w+)[^{]*\{/m
-      offset = 0
-
-      while class_match = content.match(class_regex, offset)
-        class_start = class_match.begin(0)
-        brace_pos = class_match.end(0) - 1
-        class_end = find_matching_php_close_brace(content, brace_pos)
-        if class_end
-          # The route attribute this class declaration is the next one after.
-          attr = attrs.reverse_each.find { |a| a.stop <= class_start }
-          on_class = attr && (decl = next_declaration(content, attr.stop)) && decl.begin(0) == class_start
-          prefix = (attr && on_class ? extract_symfony_route_path(attr.args) : nil) || ""
-          guard = security_attribute_guard(content[member_prelude_start(content, lexer, class_start)...class_start])
-          classes << ClassInfo.new(class_match[1], prefix, guard, brace_pos + 1, class_end)
-          offset = class_end + 1
-        else
-          offset = class_match.end(0)
+      parser.each_node do |node|
+        next unless node.kind.class? && node.braced? && (name = node.name)
+        next unless keyword = content.match(/\bclass\s+#{Regex.escape(name)}\b/, node.start)
+        class_start = keyword.begin(0)
+        starts = node.attributes.map(&.start)
+        attr = attrs.find { |a| a.on_class && starts.includes?(a.start) }
+        attr ||= attrs.reverse_each.find { |a| a.on_class.nil? && a.stop <= class_start }.try do |a|
+          a if (decl = next_declaration(content, a.stop)) && decl.begin(0) == class_start
         end
+        prefix = attr.try { |a| extract_symfony_route_path(a.args) } || ""
+        guard = security_attribute_guard(content[member_prelude_start(content, parser.lexer, class_start)...class_start])
+        classes << ClassInfo.new(name, prefix, guard, node.body.begin, node.body.end)
       end
-
       classes
     end
 
@@ -629,11 +622,12 @@ module Analyzer::Php
             route_h[YAML::Any.new("defaults")]?.try(&.as_h?).try(&.[YAML::Any.new("_controller")]?).try(&.as_s?)
       return unless ref && (m = ref.match(/\A\\?([A-Za-z_][\w\\]*)(?:::(\w+))?\z/))
       return unless file = class_file(m[1])
-      lexer = Noir::PhpLexer.new(read_file_content(file))
+      parser = Noir::PhpBlockParser.new(read_file_content(file))
+      lexer = parser.lexer
       content = lexer.without_comments
       method = Regex.escape(m[2]? || "__invoke")
       return unless sig = content.match(/(?:public|protected|private)\s+(?:static\s+)?function\s+(#{method})\s*\(/)
-      klass = extract_classes(content, lexer, [] of RouteAttr).find { |c| sig.begin(0) >= c.body_start && sig.begin(0) < c.body_end }
+      klass = extract_classes(content, parser, [] of RouteAttr).find { |c| sig.begin(0) >= c.body_start && sig.begin(0) < c.body_end }
       action_at(file, content, lexer, sig, klass)
     end
 

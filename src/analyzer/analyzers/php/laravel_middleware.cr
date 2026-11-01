@@ -1,5 +1,6 @@
 require "json"
 require "../../engines/php_engine"
+require "../../../miniparsers/php_block_parser"
 
 # Laravel middleware groups and aliases, read from where the app defines
 # them, judged by what their `handle()` does.
@@ -217,8 +218,8 @@ module Analyzer::Php
       return list unless body = method_body(source, signature).try(&.[0])
       return list unless body.includes?("middleware") || body.includes?("parent::")
       namespace = source.offsets.content.match(NAMESPACE_DECL_RE).try(&.[1])
-      lexer = Noir::PhpLexer.new(body, php_mode: true)
-      conditions = condition_blocks(body, lexer)
+      parser = Noir::PhpBlockParser.new(body, php_mode: true)
+      lexer = parser.lexer
       body.scan(CTOR_MIDDLEWARE_RE) do |m|
         open = m.end(0) - 1
         next unless lexer.in_code?(m.begin(0)) && (close = lexer.matching_delimiter(open))
@@ -226,7 +227,7 @@ module Analyzer::Php
         next if args.empty? || args[0].matches?(CLOSURE_ARG_RE)
         names = middleware_entries(args[0], source.imports, namespace)
         next if names.empty?
-        note = statement_condition(body, lexer, conditions, m.begin(0))
+        note = statement_condition(parser, m.begin(0))
         only = except = nil
         unreadable = args.size > 2
         if options = args[1]?
@@ -251,7 +252,7 @@ module Analyzer::Php
       end
       body.scan(PARENT_CTOR_RE) do |m|
         next unless lexer.in_code?(m.begin(0)) && (parent = parent_class_file(ctor_file, routes_file_path))
-        note = statement_condition(body, lexer, conditions, m.begin(0))
+        note = statement_condition(parser, m.begin(0))
         read_constructor_middleware(parent, routes_file_path, depth + 1).each do |entry|
           list << (note ? entry.copy_with(note: entry.note || note) : entry)
         end
@@ -267,22 +268,34 @@ module Analyzer::Php
     # when it is a top-level statement, the setting note under an
     # environment/config check, the condition note under any other `if`,
     # loop or block (braced or a single-statement body).
-    private def statement_condition(body : String, lexer : Noir::PhpLexer, conditions : Array(Tuple(String, Range(Int32, Int32))), pos : Int32) : String?
-      enclosing = conditions.select(&.[1].includes?(pos))
-      return enclosing.any?(&.[0].matches?(ENV_CONDITION_RE)) ? SETTING_NOTE : CONDITION_NOTE unless enclosing.empty?
-      depth = 0
-      (0...pos).each do |i|
-        case lexer.masked[i]
-        when '{' then depth += 1
-        when '}' then depth -= 1
-        end
-      end
-      return CONDITION_NOTE unless depth == 0
+    private def statement_condition(parser : Noir::PhpBlockParser, pos : Int32) : String?
+      enclosing = parser.path(pos)
+      conditions = enclosing.compact_map { |node| branch_condition(parser, node) if node.body.includes?(pos) }
+      return conditions.any?(&.matches?(ENV_CONDITION_RE)) ? SETTING_NOTE : CONDITION_NOTE unless conditions.empty?
+      return CONDITION_NOTE unless enclosing.empty?
+      masked = parser.lexer.masked
       i = pos - 1
-      while i >= 0 && (lexer.masked[i].whitespace? || !lexer.in_code?(i))
+      while i >= 0 && masked[i].whitespace?
         i -= 1
       end
-      i < 0 || lexer.masked[i] == ';' || lexer.masked[i] == '}' ? nil : CONDITION_NOTE
+      i < 0 || masked[i] == ';' || masked[i] == '}' ? nil : CONDITION_NOTE
+    end
+
+    # The condition a branch runs under: an `if` / `elseif` head, or for an
+    # `else` the negation of the branch before it. nil for anything else.
+    private def branch_condition(parser : Noir::PhpBlockParser, node : Noir::PhpBlockParser::Node) : String?
+      case node.kind
+      when .if?, .elseif? then node.head.try { |head| parser.lexer.source(head) }
+      when .else?         then node.prev.try { |prev| branch_condition(parser, prev) }.try { |cond| "!(#{cond})" }
+      end
+    end
+
+    # {condition, body} of each branch whose body holds `pos`, outermost first.
+    private def enclosing_conditions(parser : Noir::PhpBlockParser, pos : Int32) : Array(Tuple(String, Range(Int32, Int32)))
+      parser.path(pos).compact_map do |node|
+        next unless node.body.includes?(pos) && (cond = branch_condition(parser, node))
+        {cond, node.body}
+      end
     end
 
     # A handler that refuses an anonymous caller before doing anything: a
@@ -542,9 +555,7 @@ module Analyzer::Php
     # A request-shape check (CORS origin, preflight method, host), not a
     # check on who the caller is.
     ORIGIN_CONDITION_RE = /['"](?:origin|referer|host)['"]|->\s*(?:isMethod|getMethod|method|getHost)\s*\(/i
-    IF_RE               = /\b(?:else\s*)?if\s*\(/
     REDIRECT_RE         = /\breturn\s+(?:redirect\b|Redirect::)/
-    ELSE_BLOCK_RE       = /\G\s*else\s*\{/
 
     # Whether the middleware class's `handle()` (or the `$this->` helpers it
     # calls, or the parent it defers to) can refuse the caller: nil when it
@@ -559,16 +570,15 @@ module Analyzer::Php
       parent = content.match(/\bclass\s+\w+\s+extends\s+(\\?[\w\\]+)/).try do |m|
         qualify_class(m[1], parse_use_imports(content), content.match(/\bnamespace\s+([\w\\]+)\s*;/).try(&.[1]))
       end
-      handle = content.match(/(?:public|protected|private)\s+function\s+handle\s*\(/)
+      parser = Noir::PhpBlockParser.new(content)
+      handle = declared_method(parser, "handle")
       return parent ? middleware_refusal(parent, root, depth + 1) : nil unless handle
-      body = extract_php_method_body_after(content, handle.begin(0)).try(&.[0])
-      return unless body
+      return unless body = handle.presence
 
       helpers = {} of String => String
       body.scan(THIS_CALL_RE).map(&.[1]).uniq!.each do |name|
-        next unless sig = content.match(/(?:public|protected|private)\s+(?:static\s+)?function\s+#{name}\s*\(/)
-        next unless helper = extract_php_method_body_after(content, sig.begin(0))
-        refusal_verdict(helper[0], helpers).try { |verdict| helpers[name] = verdict }
+        next unless helper = declared_method(parser, name).presence
+        refusal_verdict(helper, helpers).try { |verdict| helpers[name] = verdict }
       end
       verdicts = [refusal_verdict(body, helpers)]
       verdicts << middleware_refusal(parent, root, depth + 1) if parent && body.includes?("parent::handle")
@@ -582,7 +592,8 @@ module Analyzer::Php
     # (CORS origin, preflight) it does not concern the caller's identity.
     # A call to a `helpers` entry is a refusal of that helper's kind.
     private def refusal_verdict(body : String, helpers : Hash(String, String)) : String?
-      lexer = Noir::PhpLexer.new(body, php_mode: true)
+      parser = Noir::PhpBlockParser.new(body, php_mode: true)
+      lexer = parser.lexer
       points = [] of Tuple(Int32, String, String)
       body.scan(MIDDLEWARE_REFUSAL_RE) { |m| points << {m.begin(0), m[0], ""} if lexer.in_code?(m.begin(0)) }
       body.scan(THIS_CALL_RE) do |m|
@@ -592,11 +603,10 @@ module Analyzer::Php
       redirects = body.scan(REDIRECT_RE).select { |m| lexer.in_code?(m.begin(0)) }
       return if points.empty? && redirects.empty?
 
-      conditions = condition_blocks(body, lexer)
       # A redirect anywhere (home, a locale) is not a refusal; one under a
       # check that the caller is not signed in sends the guest away.
       redirects.each do |m|
-        innermost = conditions.select(&.[1].includes?(m.begin(0))).min_by?(&.[1].size)
+        innermost = enclosing_conditions(parser, m.begin(0)).last?
         next unless innermost && user_missing?(innermost[0])
         points << {m.begin(0), m[0], ""}
       end
@@ -604,13 +614,14 @@ module Analyzer::Php
       verdict = nil
       body_checks_caller = body.matches?(CREDENTIAL_CONDITION_RE)
       users = body.scan(USER_ASSIGN_ANY_RE).map(&.[1])
-      top_ok = top_level_or_try_map(body, lexer)
-      pass_blocks = [] of Range(Int32, Int32)
-      env_skips = [] of Range(Int32, Int32)
-      conditions.each do |(cond, block)|
-        next unless body[block].includes?("$next(")
-        pass_blocks << block if user_missing?(cond, users) && unconditional_block?(body, top_ok, conditions, cond, block)
-        env_skips << block if cond.matches?(ENV_CONDITION_RE)
+      nexts = body.scan(NEXT_CALL_RE).compact_map { |m| m.begin(0) if lexer.in_code?(m.begin(0)) }
+      # Where the first guest pass-through / setting skip ends.
+      pass_end = nil
+      env_skip_end = nil
+      parser.each_node do |node|
+        next unless (cond = branch_condition(parser, node)) && calls_next?(nexts, node.body)
+        pass_end = Math.min(pass_end || node.body.end, node.body.end) if user_missing?(cond, users) && unconditional_branch?(parser, node)
+        env_skip_end = Math.min(env_skip_end || node.body.end, node.body.end) if cond.matches?(ENV_CONDITION_RE)
       end
       points.each do |(at, text, note)|
         # `if (! $user || ...) { return $next($request); }` before the
@@ -618,14 +629,15 @@ module Analyzer::Php
         # signed-in callers and is no authentication guard.
         # Only an unconditional pass-through counts: not one nested in another
         # condition or chained as an `elseif`.
-        next if pass_blocks.any? { |block| block.end <= at }
+        next if pass_end.try(&.<=(at))
+        enclosing = enclosing_conditions(parser, at)
         # `if ($request->user() && ! $user->isActivated()) { abort(401); }`:
         # the refusal needs a signed-in caller, so a guest is never refused.
-        next if conditions.any? { |(cond, block)| block.includes?(at) && split_condition(cond, "&&").any? { |part| user_source?(part, users) } }
+        next if enclosing.any? { |(cond, _)| split_condition(cond, "&&").any? { |part| user_source?(part, users) } }
         identity_evidence = body_checks_caller || text.matches?(IDENTITY_REFUSAL_RE)
-        around = conditions.select(&.[1].includes?(at)).map(&.[0]).push(text).join(' ')
+        around = enclosing.map(&.[0]).push(text).join(' ')
         # `if (app()->isLocal()) { return $next($request); }` before the refusal.
-        skipped = env_skips.any? { |block| block.end <= at }
+        skipped = env_skip_end.try(&.<=(at)) || false
         if around.matches?(ENV_CONDITION_RE)
           verdict = SETTING_NOTE if around.matches?(CREDENTIAL_CONDITION_RE)
         elsif around.matches?(ORIGIN_CONDITION_RE) && !around.matches?(CREDENTIAL_CONDITION_RE)
@@ -644,77 +656,34 @@ module Analyzer::Php
       verdict
     end
 
-    # Per offset: whether it sits at the top level of the method body, or inside
-    # nothing but `try { ... }` bodies (not a catch, loop, switch case or
-    # closure). One pass, so each lookup is O(1).
-    private def top_level_or_try_map(body : String, lexer : Noir::PhpLexer) : Array(Bool)
-      opens = [] of Bool # true when that `{` opens a `try` body
-      bad = 0
-      Array(Bool).new(body.size + 1) do |i|
-        flag = bad == 0
-        if i < body.size
-          case lexer.masked[i]
-          when '{'
-            is_try = ends_with_word?(body, i, "try")
-            opens << is_try
-            bad += 1 unless is_try
-          when '}'
-            bad -= 1 if opens.pop? == false
-          end
-        end
-        flag
-      end
+    NEXT_CALL_RE = /\$next\(/
+
+    # Whether a `$next(` call (offsets sorted) falls in `range`.
+    private def calls_next?(nexts : Array(Int32), range : Range(Int32, Int32)) : Bool
+      idx = nexts.bsearch_index { |pos| pos >= range.begin }
+      !idx.nil? && nexts[idx] < range.end
     end
 
-    # Whether the text before `stop`, ignoring trailing whitespace, ends in the
-    # whole word `word`.
-    private def ends_with_word?(body : String, stop : Int32, word : String) : Bool
-      while stop > 0 && body[stop - 1].whitespace?
-        stop -= 1
-      end
-      from = stop - word.size
-      return false if from < 0 || body[from, word.size] != word
-      from == 0 || !(body[from - 1].alphanumeric? || body[from - 1] == '_')
+    # A branch every guest reaches when its condition holds: an `if`, or the
+    # `else` of a lone `if`, at the top level of the method body or inside
+    # nothing but `try` / `finally` bodies (not a catch, loop, switch case,
+    # closure or another branch).
+    private def unconditional_branch?(parser : Noir::PhpBlockParser, node : Noir::PhpBlockParser::Node) : Bool
+      return false unless node.kind.if? || (node.kind.else? && node.prev.try(&.kind.if?))
+      parser.path(node.start)[0...-1].all? { |outer| outer.kind.try? || outer.kind.finally? }
     end
 
-    private def unconditional_block?(body : String, top_ok : Array(Bool), conditions : Array(Tuple(String, Range(Int32, Int32))), cond : String, block : Range(Int32, Int32)) : Bool
-      return false if conditions.any? { |(_, other)| other != block && other.begin < block.begin && other.end > block.begin }
-      return false unless top_ok[block.begin]
-      stop = block.begin
-      while stop > 0 && body[stop - 1].whitespace?
-        stop -= 1
-      end
-      return true unless stop > 0 && body[stop - 1] == ')'
-      stop -= 1
-      return true unless stop >= cond.size && body[stop - cond.size, cond.size] == cond
-      stop -= cond.size
-      while stop > 0 && body[stop - 1].whitespace?
-        stop -= 1
-      end
-      !(stop > 0 && body[stop - 1] == '(' && body[0...(stop - 1)].rstrip.matches?(/\belse\s*if\z|\belseif\z/))
-    end
-
-    # {condition, block it guards} for every `if` / `elseif` in `body`; an
-    # `else` block is listed under its negation, `!(condition)`.
-    private def condition_blocks(body : String, lexer : Noir::PhpLexer) : Array(Tuple(String, Range(Int32, Int32)))
-      blocks = [] of Tuple(String, Range(Int32, Int32))
-      body.scan(IF_RE) do |m|
-        open = m.end(0) - 1
-        next unless lexer.in_code?(open) && (close = lexer.matching_delimiter(open))
-        cond = body[(open + 1)...close]
-        start = close + 1
-        while start < body.size && lexer.masked[start].whitespace?
-          start += 1
-        end
-        next unless start < body.size
-        stop = lexer.masked[start] == '{' ? lexer.matching_delimiter(start) : lexer.statement_end(start)
-        next unless stop
-        blocks << {cond, start...stop}
-        if (other = body.match(ELSE_BLOCK_RE, stop + 1)) && (other_end = lexer.matching_delimiter(other.end(0) - 1))
-          blocks << {"!(#{cond})", other.end(0)...other_end}
+    # The body of the first method `name` a class in the file declares with a
+    # visibility.
+    private def declared_method(parser : Noir::PhpBlockParser, name : String) : String?
+      parser.declarations.each do |klass|
+        klass.children.each do |member|
+          next unless member.kind.method? && member.name == name && member.braced?
+          next unless member.modifiers.any? { |word| VISIBILITY_WORDS.includes?(word) }
+          return parser.lexer.source(member.body)
         end
       end
-      blocks
+      nil
     end
 
     @psr4_prefixes = {} of String => Array(Tuple(String, String))
