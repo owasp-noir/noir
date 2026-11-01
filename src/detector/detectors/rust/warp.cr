@@ -4,13 +4,17 @@ module Detector::Rust
   class Warp < Detector
     detector_for "rust_warp", extensions: %w[.rs], basenames: %w[Cargo.toml Cargo.lock]
 
+    # A `warp` dependency key (`warp = "1"`, `warp.workspace = true`,
+    # `[dependencies.warp]`), not a mention in a comment or a sibling crate.
+    # Same key shape as `RustEngine#cargo_dependency_re`, which gates the analyzer
+    # to crates that really depend on it; a looser detector runs the analyzer on a
+    # manifest the gate then waves every `.rs` file through for.
+    CARGO_DEP_RE = /^\s*(?:warp\s*[=.]|\[(?:[\w.-]+\.)?dependencies\.warp\])/m
+
     def detect(filename : String, file_contents : String) : Bool
       return false unless filename.includes?("Cargo.toml")
 
-      check = file_contents.includes?("warp")
-      check = check && file_contents.includes?("dependencies")
-
-      check
+      file_contents.includes?("dependencies") && file_contents.matches?(CARGO_DEP_RE)
     end
   end
 end

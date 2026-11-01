@@ -127,11 +127,35 @@ module Analyzer::Rust
 
     CARGO_WORKSPACE_RE = /(?m)^\s*\[workspace\]/
 
+    # A file belongs to the crate of its nearest `Cargo.toml`, so it is shown
+    # to the analyzer only when that crate depends on the framework. Counting
+    # every file under a dependent crate's directory read a workspace root's
+    # whole tree (`lib/**` of qdrant: 18 MB parsed for a 1 MB actix crate)
+    # because the root package lists the dependency.
     private def path_under_crate_roots?(path : String, roots : Array(String)) : Bool
       return true if roots.empty?
 
       expanded = Noir::PathScope.expand(path)
+      dir = File.dirname(expanded)
+      owner = (@crate_owner_memo[dir] ||= nearest_manifest_dir(dir))
+      return roots.includes?(owner) unless owner.empty?
+
       roots.any? { |root| Noir::PathScope.under_normalized_root?(expanded, root) }
+    end
+
+    @crate_owner_memo = Hash(String, String).new
+
+    # The closest ancestor (or `dir` itself) holding a scanned `Cargo.toml`;
+    # empty when there is none.
+    private def nearest_manifest_dir(dir : String) : String
+      manifests = cargo_manifest_dirs
+      current = dir
+      loop do
+        return current if manifests.has_key?(current)
+        parent = File.dirname(current)
+        return "" if parent == current
+        current = parent
+      end
     end
 
     # Workspace test crates are named after the convention without being
