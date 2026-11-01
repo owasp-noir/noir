@@ -8,7 +8,7 @@ describe Noir::TreeSitterAdonisJsExtractor do
       Route.post('/login', 'AuthController.login')
       TS
 
-    routes = Noir::TreeSitterAdonisJsExtractor.extract_routes(source)
+    routes = Noir::TreeSitterAdonisJsExtractor.extract_routes(source, path: "start/routes.ts")
     routes.map { |r| {r.verb, r.path} }.should eq([
       {"GET", "/"},
       {"POST", "/login"},
@@ -20,7 +20,7 @@ describe Noir::TreeSitterAdonisJsExtractor do
       Route.any('/wildcard', 'WildcardController.handle')
       TS
 
-    routes = Noir::TreeSitterAdonisJsExtractor.extract_routes(source)
+    routes = Noir::TreeSitterAdonisJsExtractor.extract_routes(source, path: "start/routes.ts")
     routes.map(&.verb).sort!.should eq(["DELETE", "GET", "PATCH", "POST", "PUT"])
     routes.map(&.path).uniq!.should eq(["/wildcard"])
   end
@@ -36,7 +36,7 @@ describe Noir::TreeSitterAdonisJsExtractor do
       }).prefix('/api/v1')
       TS
 
-    routes = Noir::TreeSitterAdonisJsExtractor.extract_routes(source)
+    routes = Noir::TreeSitterAdonisJsExtractor.extract_routes(source, path: "start/routes.ts")
     routes.map { |r| {r.verb, r.path} }.sort!.should eq([
       {"GET", "/api/v1/users"},
       {"POST", "/api/v1/blog/posts"},
@@ -48,7 +48,7 @@ describe Noir::TreeSitterAdonisJsExtractor do
       Route.resource('articles', 'ArticlesController').apiOnly()
       TS
 
-    routes = Noir::TreeSitterAdonisJsExtractor.extract_routes(source)
+    routes = Noir::TreeSitterAdonisJsExtractor.extract_routes(source, path: "start/routes.ts")
     routes.map { |r| {r.verb, r.path} }.sort!.should eq([
       {"GET", "/articles"},
       {"POST", "/articles"},
@@ -64,7 +64,7 @@ describe Noir::TreeSitterAdonisJsExtractor do
       router.resource('posts', PostsController)
       TS
 
-    routes = Noir::TreeSitterAdonisJsExtractor.extract_routes(source)
+    routes = Noir::TreeSitterAdonisJsExtractor.extract_routes(source, path: "start/routes.ts")
     routes.map { |r| {r.verb, r.path} }.sort!.should eq([
       {"GET", "/posts"},
       {"GET", "/posts/create"},
@@ -83,7 +83,7 @@ describe Noir::TreeSitterAdonisJsExtractor do
       router.resource('categories.posts', PostsController).only(['show']).as('cat_posts')
       TS
 
-    routes = Noir::TreeSitterAdonisJsExtractor.extract_routes(source)
+    routes = Noir::TreeSitterAdonisJsExtractor.extract_routes(source, path: "start/routes.ts")
     routes.map { |r| {r.verb, r.path} }.sort!.should eq([
       {"GET", "/posts/:post_id/comments"},
       {"POST", "/posts/:post_id/comments"},
@@ -98,7 +98,7 @@ describe Noir::TreeSitterAdonisJsExtractor do
       Route.resource('tags', 'TagsController').only(['index', 'show'])
       TS
 
-    routes = Noir::TreeSitterAdonisJsExtractor.extract_routes(source)
+    routes = Noir::TreeSitterAdonisJsExtractor.extract_routes(source, path: "start/routes.ts")
     routes.map { |r| {r.verb, r.path} }.sort!.should eq([
       {"GET", "/tags"},
       {"GET", "/tags/:id"},
@@ -110,7 +110,7 @@ describe Noir::TreeSitterAdonisJsExtractor do
       Route.resource('tags', 'TagsController').except(['destroy', 'update'])
       TS
 
-    routes = Noir::TreeSitterAdonisJsExtractor.extract_routes(source)
+    routes = Noir::TreeSitterAdonisJsExtractor.extract_routes(source, path: "start/routes.ts")
     # index, create, store, show and edit remain.
     routes.map { |r| {r.verb, r.path} }.sort!.should eq([
       {"GET", "/tags"},
@@ -126,7 +126,7 @@ describe Noir::TreeSitterAdonisJsExtractor do
       Route.get('/health', () => ({ ok: true }))
       TS
 
-    routes = Noir::TreeSitterAdonisJsExtractor.extract_routes(source)
+    routes = Noir::TreeSitterAdonisJsExtractor.extract_routes(source, path: "start/routes.ts")
     routes.map { |r| {r.verb, r.path} }.should eq([{"GET", "/health"}])
   end
 
@@ -135,7 +135,7 @@ describe Noir::TreeSitterAdonisJsExtractor do
       Route.get('/users', 'UsersController.index')
       TS
 
-    routes = Noir::TreeSitterAdonisJsExtractor.extract_routes(source, include_callees: true)
+    routes = Noir::TreeSitterAdonisJsExtractor.extract_routes(source, include_callees: true, path: "start/routes.ts")
     routes.first.callees.map(&.[0]).should contain("UsersController.index")
   end
 
@@ -144,7 +144,7 @@ describe Noir::TreeSitterAdonisJsExtractor do
       Route.get(`/users`, 'UsersController.show')
       TS
 
-    routes = Noir::TreeSitterAdonisJsExtractor.extract_routes(source)
+    routes = Noir::TreeSitterAdonisJsExtractor.extract_routes(source, path: "start/routes.ts")
     routes.map { |r| {r.verb, r.path} }.should eq([{"GET", "/users"}])
   end
 
@@ -159,7 +159,7 @@ describe Noir::TreeSitterAdonisJsExtractor do
       }).prefix('/api/v1')
       TS
 
-    routes = Noir::TreeSitterAdonisJsExtractor.extract_routes(source, include_callees: true)
+    routes = Noir::TreeSitterAdonisJsExtractor.extract_routes(source, include_callees: true, path: "start/routes.ts")
     routes.map(&.path).should_not contain("/api/v1/UsersController.show")
     routes.map { |r| {r.verb, r.path} }.should eq([{"GET", "/api/v1/users/{'x'}"}])
     routes.first.callees.map(&.[0]).should contain("UsersController.show")
@@ -170,7 +170,7 @@ describe Noir::TreeSitterAdonisJsExtractor do
       Route.get(`/users/${id}/posts`, 'PostsController.index')
       TS
 
-    routes = Noir::TreeSitterAdonisJsExtractor.extract_routes(source)
+    routes = Noir::TreeSitterAdonisJsExtractor.extract_routes(source, path: "start/routes.ts")
     routes.map { |r| {r.verb, r.path} }.should eq([{"GET", "/users/{id}/posts"}])
   end
 
@@ -179,7 +179,7 @@ describe Noir::TreeSitterAdonisJsExtractor do
       Route.get(routePath, 'UsersController.show')
       TS
 
-    Noir::TreeSitterAdonisJsExtractor.extract_routes(source).should be_empty
+    Noir::TreeSitterAdonisJsExtractor.extract_routes(source, path: "start/routes.ts").should be_empty
   end
 
   it "reports a prettier-broken route chain on its verb line" do
@@ -190,7 +190,7 @@ describe Noir::TreeSitterAdonisJsExtractor do
       router.post('/b', [UsersController, 'store'])
       TS
 
-    routes = Noir::TreeSitterAdonisJsExtractor.extract_routes(source)
+    routes = Noir::TreeSitterAdonisJsExtractor.extract_routes(source, path: "start/routes.ts")
     routes.map { |r| {r.path, r.line} }.should eq([{"/a", 1}, {"/b", 3}])
   end
 end

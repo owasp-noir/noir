@@ -1050,8 +1050,7 @@ module Analyzer::Typescript
       Noir::JSCalleeExtractor.callees_for_function_body(
         body,
         file_path,
-        procedure_line + relative_line - 1,
-        language: javascript_source_language(file_path)
+        procedure_line + relative_line - 1
       ).each do |name, callee_path, line|
         endpoint.push_callee(Callee.new(name, path: callee_path, line: line))
       end

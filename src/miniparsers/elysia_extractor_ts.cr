@@ -91,9 +91,9 @@ module Noir
       end
     end
 
-    def extract_routes(source : String, include_callees : Bool = false) : Array(Route)
+    def extract_routes(source : String, include_callees : Bool = false, path : String = "") : Array(Route)
       routes = [] of Route
-      Noir::TreeSitter.parse_javascript(source) do |root|
+      Noir::TreeSitter.parse_js_family(source, path) do |root|
         walk(root, source, "", routes, 0, include_callees)
       end
       routes
@@ -299,6 +299,9 @@ module Noir
     # the body is a single opaque param.
     private def scan_destructured_params(params : LibTreeSitter::TSNode, source : String, &block : Symbol, String ->)
       Noir::TreeSitter.each_named_child(params) do |param|
+        # TypeScript wraps each parameter (`({ body }: Context)`) in a
+        # `required_parameter` / `optional_parameter` holding the pattern.
+        param = Noir::TreeSitter.field(param, "pattern") || param
         next unless Noir::TreeSitter.node_type(param) == "object_pattern"
         Noir::TreeSitter.each_named_child(param) do |entry|
           name = destructure_key_name(entry, source)
@@ -424,20 +427,10 @@ module Noir
       nil
     end
 
-    # Pull the body out of an arrow function — the trailing child
-    # after the parameter list. Returns nil for arrow functions
-    # without a body (rare; would be parse-error territory).
+    # `field("body")`, not "the child after the parameters": TypeScript puts
+    # a `return_type` (and `type_parameters`) between the two.
     private def arrow_body(arrow : LibTreeSitter::TSNode) : LibTreeSitter::TSNode?
-      seen_params = false
-      Noir::TreeSitter.each_named_child(arrow) do |child|
-        ty = Noir::TreeSitter.node_type(child)
-        if !seen_params && (ty == "formal_parameters" || ty == "identifier")
-          seen_params = true
-          next
-        end
-        return child if seen_params
-      end
-      nil
+      Noir::TreeSitter.field(arrow, "body")
     end
 
     private def decode_string(node : LibTreeSitter::TSNode, source : String) : String

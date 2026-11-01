@@ -1231,8 +1231,7 @@ module Analyzer::Javascript
       body, open_brace_idx = body_info
       (from...open_brace_idx).each { |idx| newlines += 1 if chars.unsafe_fetch(idx) == '\n' }
       open_brace_line = controller_start_line + newlines
-      language = file_path.ends_with?(".ts") || file_path.ends_with?(".tsx") ? :typescript : :javascript
-      Noir::JSCalleeExtractor.callees_for_function_body(body, file_path, open_brace_line, language: language)
+      Noir::JSCalleeExtractor.callees_for_function_body(body, file_path, open_brace_line)
     end
 
     private def extract_method_parameters(content : String, start_pos : Int32, endpoint : Endpoint)

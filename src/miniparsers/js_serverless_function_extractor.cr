@@ -10,8 +10,8 @@ module Noir
   # inline `config` object, and the request params a handler body reads.
   #
   # The URL comes from the file's location, so this layer only deals with
-  # the module's contents. Text-based on purpose: these modules are mostly
-  # TypeScript, which the vendored JavaScript grammar does not parse.
+  # the module's contents. Text-based: it predates the vendored TypeScript
+  # grammar (`Noir::TreeSitter.parse_js_family`).
   module JSServerlessFunctionExtractor
     extend self
 

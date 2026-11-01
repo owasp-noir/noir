@@ -10,7 +10,7 @@ describe Noir::TreeSitterElysiaExtractor do
           .listen(3000)
       TS
 
-    routes = Noir::TreeSitterElysiaExtractor.extract_routes(source)
+    routes = Noir::TreeSitterElysiaExtractor.extract_routes(source, path: "src/index.ts")
     routes.map { |r| {r.verb, r.path} }.sort!.should eq([
       {"GET", "/users"},
       {"POST", "/users"},
@@ -28,7 +28,7 @@ describe Noir::TreeSitterElysiaExtractor do
           .listen(3000)
       TS
 
-    routes = Noir::TreeSitterElysiaExtractor.extract_routes(source)
+    routes = Noir::TreeSitterElysiaExtractor.extract_routes(source, path: "src/index.ts")
     routes.map { |r| {r.verb, r.path} }.sort!.should eq([
       {"GET", "/api/v1/health"},
       {"POST", "/api/v1/submit"},
@@ -41,7 +41,7 @@ describe Noir::TreeSitterElysiaExtractor do
           .all('/any', () => 'ok')
       TS
 
-    routes = Noir::TreeSitterElysiaExtractor.extract_routes(source)
+    routes = Noir::TreeSitterElysiaExtractor.extract_routes(source, path: "src/index.ts")
     routes.select { |r| r.path == "/any" }.map(&.verb).sort!.should eq(
       ["DELETE", "GET", "PATCH", "POST", "PUT"]
     )
@@ -53,7 +53,7 @@ describe Noir::TreeSitterElysiaExtractor do
           .post('/submit', ({ body }) => body)
       TS
 
-    routes = Noir::TreeSitterElysiaExtractor.extract_routes(source)
+    routes = Noir::TreeSitterElysiaExtractor.extract_routes(source, path: "src/index.ts")
     routes.first.has_body?.should be_true
   end
 
@@ -74,7 +74,7 @@ describe Noir::TreeSitterElysiaExtractor do
           })
       TS
 
-    routes = Noir::TreeSitterElysiaExtractor.extract_routes(source)
+    routes = Noir::TreeSitterElysiaExtractor.extract_routes(source, path: "src/index.ts")
     search = routes.find! { |r| r.path == "/search" }
     trace = routes.find! { |r| r.path == "/trace" }
     sessions = routes.find! { |r| r.path == "/sessions/:id" }
@@ -94,7 +94,7 @@ describe Noir::TreeSitterElysiaExtractor do
           )
       TS
 
-    routes = Noir::TreeSitterElysiaExtractor.extract_routes(source)
+    routes = Noir::TreeSitterElysiaExtractor.extract_routes(source, path: "src/index.ts")
     routes.map { |r| {r.verb, r.path} }.should eq([{"GET", "/protected"}])
   end
 
@@ -108,7 +108,7 @@ describe Noir::TreeSitterElysiaExtractor do
           })
       TS
 
-    routes = Noir::TreeSitterElysiaExtractor.extract_routes(source)
+    routes = Noir::TreeSitterElysiaExtractor.extract_routes(source, path: "src/index.ts")
     routes.first.query_params.should eq(["filter"])
   end
 
@@ -125,7 +125,7 @@ describe Noir::TreeSitterElysiaExtractor do
           .listen(3000)
       TS
 
-    routes = Noir::TreeSitterElysiaExtractor.extract_routes(source)
+    routes = Noir::TreeSitterElysiaExtractor.extract_routes(source, path: "src/index.ts")
     routes.map { |r| {r.verb, r.path} }.sort!.should eq([
       {"GET", "/api/v1/health"},
       {"POST", "/api/v1/users/{id}"},
@@ -140,7 +140,7 @@ describe Noir::TreeSitterElysiaExtractor do
         .post('/c', () => 'c')
       TS
 
-    routes = Noir::TreeSitterElysiaExtractor.extract_routes(source)
+    routes = Noir::TreeSitterElysiaExtractor.extract_routes(source, path: "src/index.ts")
     routes.map { |r| {r.path, r.line} }.sort!.should eq([{"/a", 1}, {"/b", 2}, {"/c", 3}])
   end
 
@@ -157,7 +157,7 @@ describe Noir::TreeSitterElysiaExtractor do
       const other = new Router({ prefix: '/no' }).get('/router', () => 'r')
       TS
 
-    routes = Noir::TreeSitterElysiaExtractor.extract_routes(source)
+    routes = Noir::TreeSitterElysiaExtractor.extract_routes(source, path: "src/index.ts")
     routes.map { |r| {r.verb, r.path} }.sort!.should eq([
       {"GET", "/plain"},
       {"GET", "/router"},
@@ -175,6 +175,20 @@ describe Noir::TreeSitterElysiaExtractor do
           .get("/a\\b", () => 'y')
       TS
 
-    Noir::TreeSitterElysiaExtractor.extract_routes(source).map(&.path).sort!.should eq([%(/a\\b), %(/say/'hi')])
+    Noir::TreeSitterElysiaExtractor.extract_routes(source, path: "src/index.ts").map(&.path).sort!.should eq([%(/a\\b), %(/say/'hi')])
+  end
+
+  it "reads typed destructuring and a return type on the TypeScript grammar" do
+    source = <<-TS
+      const app = new Elysia()
+          .group('/v1', (app: App): App =>
+              app.post('/items', async ({ body, query }: Context): Promise<Item> => save(body, query.tag))
+          )
+      TS
+
+    routes = Noir::TreeSitterElysiaExtractor.extract_routes(source, path: "src/index.ts")
+    routes.map { |r| {r.verb, r.path} }.should eq([{"POST", "/v1/items"}])
+    routes.first.has_body?.should be_true
+    routes.first.query_params.should eq(["tag"])
   end
 end

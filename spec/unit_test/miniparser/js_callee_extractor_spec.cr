@@ -61,18 +61,18 @@ describe Noir::JSCalleeExtractor do
         }
       TS
 
-    callees = Noir::JSCalleeExtractor.callees_for_function_body(body, "admin.tsx", 10, language: :typescript)
+    callees = Noir::JSCalleeExtractor.callees_for_function_body(body, "admin.tsx", 10)
     callees.map(&.[0]).should eq(["isLoggedIn", "redirect"])
   end
 
-  it "falls back for TypeScript-only syntax inside a method body" do
+  it "reads TypeScript-only syntax inside a method body with the TypeScript grammar" do
     body = <<-TS
 
         const dto = input as CreateUserDto
         return this.usersService.create(dto satisfies CreateUserDto)
       TS
 
-    callees = Noir::JSCalleeExtractor.callees_for_function_body(body, "users.controller.ts", 20, language: :typescript)
+    callees = Noir::JSCalleeExtractor.callees_for_function_body(body, "users.controller.ts", 20)
     callees.map { |name, _, line| {name, line} }.should eq([
       {"this.usersService.create", 22},
     ])
@@ -102,8 +102,8 @@ describe Noir::JSCalleeExtractor do
       {"deleteUser", 7},
     ])
 
-    Noir::JSCalleeExtractor.exported_function_line(source, "GET").should eq(1)
-    Noir::JSCalleeExtractor.exported_function_line(source, "DELETE").should eq(7)
+    Noir::JSCalleeExtractor.exported_function_line(source, "routes/+server.js", "GET").should eq(1)
+    Noir::JSCalleeExtractor.exported_function_line(source, "routes/+server.js", "DELETE").should eq(7)
   end
 
   it "extracts callees from typed exported arrow handlers" do
@@ -132,7 +132,7 @@ describe Noir::JSCalleeExtractor do
       })
       TS
 
-    callees = Noir::JSCalleeExtractor.callees_for_default_event_handler(source, "server/api/users.post.ts", language: :typescript)
+    callees = Noir::JSCalleeExtractor.callees_for_default_event_handler(source, "server/api/users.post.ts")
     callees.map { |name, _, line| {name, line} }.should eq([
       {"readBody", 2},
       {"AuditLog.write", 3},
@@ -227,5 +227,40 @@ describe Noir::JSCalleeExtractor do
     again.should eq(first)
     first.values.flatten.map(&.[1]).uniq!.should eq(["one.js"])
     other.values.flatten.map(&.[1]).uniq!.should eq(["two.js"])
+  end
+
+  it "reads TypeScript route handlers with generics, typed params and wrappers" do
+    source = <<-TS
+      app.get<{ Params: P }>('/users/:id', async (req: Request<P>, res?: Response): Promise<void> => {
+        const user = await repo.find!(req.params.id as string)
+        this.audit!.log<User>(user)
+        res!.json(user)
+      })
+      TS
+
+    callees = Noir::JSCalleeExtractor.callees_for_routes(source, "routes.ts")
+    callees.values.flatten.map(&.[0]).should eq(["repo.find", "this.audit.log", "res.json"])
+  end
+
+  it "resolves a SvelteKit handler wrapped in satisfies" do
+    source = <<-TS
+      export const GET = (async ({ url }: RequestEvent) => {
+        return json(await loadUsers(url))
+      }) satisfies RequestHandler
+      TS
+
+    callees = Noir::JSCalleeExtractor.callees_for_exported_function(source, "routes/+server.ts", "GET")
+    callees.map(&.[0]).should eq(["json", "loadUsers"])
+  end
+
+  it "parses .tsx bodies with the TSX grammar" do
+    body = <<-TSX
+
+        const node = <Button onClick={() => track("x")} />
+        return render(node)
+      TSX
+
+    callees = Noir::JSCalleeExtractor.callees_for_function_body(body, "page.tsx", 1)
+    callees.map(&.[0]).should eq(["track", "render"])
   end
 end

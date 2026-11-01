@@ -193,7 +193,7 @@ module Analyzer::Javascript
 
       methods = detect_api_methods(content)
       endpoints = methods.map do |verb|
-        endpoint = file_route_endpoint(url, verb, path, api_method_line(content, verb) || 1)
+        endpoint = file_route_endpoint(url, verb, path, api_method_line(content, path, verb) || 1)
         attach_callees(endpoint, path, content, verb) if include_callee
         endpoint
       end

@@ -87,7 +87,7 @@ module Analyzer::Javascript
         Noir::JSRouteExtractor.extract_header_params(handler, endpoint)
         Noir::JSRouteExtractor.extract_cookie_params(handler, endpoint)
         if include_callee
-          callees = Noir::JSCalleeExtractor.callees_for_function_body(handler, path, line, language: javascript_source_language(path))
+          callees = Noir::JSCalleeExtractor.callees_for_function_body(handler, path, line)
           attach_js_callees(endpoint, callees.reject { |name, _, _| name == "createRoute" })
         end
         endpoint

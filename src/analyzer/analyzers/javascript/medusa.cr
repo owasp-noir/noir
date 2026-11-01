@@ -41,7 +41,7 @@ module Analyzer::Javascript
       url = file_route_url(segments)
       verbs.map do |verb|
         handler = Noir::JSServerlessFunctionExtractor.exported_handler(content, verb)
-        line = handler.try(&.line) || api_method_line(content, verb) || 1
+        line = handler.try(&.line) || api_method_line(content, path, verb) || 1
         endpoint = file_route_endpoint(url, verb, path, line)
         if handler
           Noir::JSServerlessFunctionExtractor.extract_request_params(handler, endpoint, :request)

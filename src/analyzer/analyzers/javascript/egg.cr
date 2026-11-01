@@ -109,7 +109,7 @@ module Analyzer::Javascript
       Noir::JSRouteExtractor.extract_cookie_params(handler.body, endpoint)
       Noir::JSRouteExtractor.extract_path_params(handler.body, endpoint)
       if include_callee && !handler.path.empty?
-        attach_js_callees(endpoint, Noir::JSCalleeExtractor.callees_for_function_body(handler.body, handler.path, handler.line, language: javascript_source_language(handler.path)))
+        attach_js_callees(endpoint, Noir::JSCalleeExtractor.callees_for_function_body(handler.body, handler.path, handler.line))
       end
       endpoint
     end

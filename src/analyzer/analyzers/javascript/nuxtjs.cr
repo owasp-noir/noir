@@ -123,7 +123,7 @@ module Analyzer::Javascript
       begin
         content = read_file_content(path)
         h3_params = h3_event_params(Noir::JSRouteExtractor.strip_js_comments(content))
-        callees = include_callee ? Noir::JSCalleeExtractor.callees_for_default_event_handler(content, path, language: javascript_source_language(path)) : [] of Noir::JSCalleeExtractor::Entry
+        callees = include_callee ? Noir::JSCalleeExtractor.callees_for_default_event_handler(content, path) : [] of Noir::JSCalleeExtractor::Entry
 
         methods.each do |method|
           endpoint = Endpoint.new(url, method)

@@ -193,7 +193,7 @@ module Analyzer::Specification
     end
 
     private def parse_routes(content : String, source : String)
-      configs = Noir::JSObjectConfigExtractor.extract(content, ["routes"])
+      configs = Noir::JSObjectConfigExtractor.extract(content, ["routes"], source)
       return if configs.empty?
 
       configs.each do |config|

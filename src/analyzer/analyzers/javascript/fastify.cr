@@ -392,7 +392,7 @@ module Analyzer::Javascript
         end
 
         if include_callee
-          route_callees = Noir::JSCalleeExtractor.callees_for_function_body(args, path, line_no, language: javascript_source_language(path))
+          route_callees = Noir::JSCalleeExtractor.callees_for_function_body(args, path, line_no)
           attach_js_callees(endpoint, route_callees)
         end
 
@@ -505,7 +505,7 @@ module Analyzer::Javascript
     private def route_config_callees(config : String, path : String, start_line : Int32) : Array(Noir::JSCalleeExtractor::Entry)
       if handler = route_config_handler_body(config, start_line)
         body, body_line = handler
-        Noir::JSCalleeExtractor.callees_for_function_body(body, path, body_line, language: javascript_source_language(path))
+        Noir::JSCalleeExtractor.callees_for_function_body(body, path, body_line)
       else
         [] of Noir::JSCalleeExtractor::Entry
       end

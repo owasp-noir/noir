@@ -121,9 +121,9 @@ module Noir
       end
     end
 
-    def extract_routes(source : String, include_callees : Bool = false) : Array(Route)
+    def extract_routes(source : String, include_callees : Bool = false, path : String = "") : Array(Route)
       routes = [] of Route
-      Noir::TreeSitter.parse_javascript(source) do |root|
+      Noir::TreeSitter.parse_js_family(source, path) do |root|
         walk(root, source, "", routes, 0, include_callees)
       end
       routes
@@ -580,17 +580,10 @@ module Noir
       result
     end
 
+    # `field("body")`: TypeScript puts a `return_type` between the
+    # parameters and the body.
     private def function_body(fn : LibTreeSitter::TSNode) : LibTreeSitter::TSNode?
-      seen_params = false
-      Noir::TreeSitter.each_named_child(fn) do |child|
-        ty = Noir::TreeSitter.node_type(child)
-        if !seen_params && (ty == "formal_parameters" || ty == "identifier")
-          seen_params = true
-          next
-        end
-        return child if seen_params
-      end
-      nil
+      Noir::TreeSitter.field(fn, "body")
     end
 
     private def decode_string(node : LibTreeSitter::TSNode, source : String) : String

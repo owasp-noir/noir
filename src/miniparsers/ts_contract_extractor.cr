@@ -76,15 +76,6 @@ module Noir
       end
     end
 
-    # The JavaScript grammar reads `os.$context<{ a: B }>()` and
-    # `Schema.Class<User>("User")` as comparisons, which derails the whole
-    # call chain. Blank generic arguments in front of a call, keeping
-    # every line where it was.
-    GENERIC_ARGS = /(?<=[\w$])(?<g><(?:[^<>()\n;]++|(?&g))*>)(?=\s*\()/
-    # `const BASE: string = '/v1'` is an ERROR node to the JS grammar, so the
-    # constant never resolves; the annotation is blanked the same way.
-    DECLARATION_ANNOTATION = /(\b(?:const|let|var)\s+[A-Za-z_$][\w$]*)(\s*:\s*[^=\n]+)=/
-
     # Curried schema classes: `Schema.Class<X>("X")({ ...fields })`.
     SCHEMA_CLASS_CALLS = Set{"Class", "TaggedClass", "TaggedRequest", "TaggedError"}
     # Schema combinators whose argument contributes fields.
@@ -103,8 +94,8 @@ module Noir
 
     # --- ts-rest -----------------------------------------------------------
 
-    def ts_rest(source : String) : Array(Route)
-      extract(source) { |node, ctx| ts_rest_routes(node, "", ctx) }
+    def ts_rest(source : String, path : String = "") : Array(Route)
+      extract(source, path) { |node, ctx| ts_rest_routes(node, "", ctx) }
     end
 
     # `<x>.router({ ... }, { pathPrefix })`. The server-side
@@ -161,8 +152,8 @@ module Noir
 
     # --- oRPC --------------------------------------------------------------
 
-    def orpc(source : String) : Array(Route)
-      extract(source) { |node, ctx| orpc_routes(node, "", ctx) }
+    def orpc(source : String, path : String = "") : Array(Route)
+      extract(source, path) { |node, ctx| orpc_routes(node, "", ctx) }
     end
 
     # A procedure chain carrying `.route({ path })`, in any link order
@@ -230,8 +221,8 @@ module Noir
 
     # --- Effect HttpApi ----------------------------------------------------
 
-    def effect(source : String) : Array(Route)
-      extract(source) { |node, ctx| effect_routes(node, ctx) }
+    def effect(source : String, path : String = "") : Array(Route)
+      extract(source, path) { |node, ctx| effect_routes(node, ctx) }
     end
 
     # `.prefix(p)` applies to the endpoints already added to its receiver,
@@ -317,8 +308,8 @@ module Noir
     # `createRoute({ method, path, request })`, one route each wherever it
     # is written: handed inline to `app.openapi(...)` or kept as a constant
     # (often in a separate `*.routes.ts` that the app imports).
-    def hono_openapi(source : String) : Array(Route)
-      extract(source) { |node, ctx| hono_openapi_routes(node, ctx) }
+    def hono_openapi(source : String, path : String = "") : Array(Route)
+      extract(source, path) { |node, ctx| hono_openapi_routes(node, ctx) }
     end
 
     private def hono_openapi_routes(node : LibTreeSitter::TSNode, ctx : Context) : Array(Route)
@@ -373,14 +364,12 @@ module Noir
     # Parses `source` and hands each top-level declaration to `collect`.
     # A declaration another router resolved is dropped from the result, so
     # it is reported once, under the outer router's prefix.
-    private def extract(source : String, &collect : LibTreeSitter::TSNode, Context -> Array(Route)) : Array(Route)
+    private def extract(source : String, path : String, &collect : LibTreeSitter::TSNode, Context -> Array(Route)) : Array(Route)
       result = [] of Route
       return result if source.empty?
 
-      normalized = source.gsub(GENERIC_ARGS) { |m| " " * m.size }
-        .gsub(DECLARATION_ANNOTATION) { "#{$~[1]}#{" " * $~[2].size}=" }
-      TreeSitter.parse_javascript(normalized) do |root|
-        ctx = Context.new(normalized)
+      TreeSitter.parse_js_family(source, path) do |root|
+        ctx = Context.new(source)
         roots = [] of Tuple(String?, LibTreeSitter::TSNode)
         each_top_level(root, ctx) do |name, node|
           ctx.decls[name] = node if name
@@ -410,9 +399,9 @@ module Noir
             name = TreeSitter.field(declarator, "name")
             value = TreeSitter.field(declarator, "value")
             next unless name && value
-            yield (TreeSitter.node_type(name) == "identifier" ? text(name, ctx) : nil), value
+            yield (TreeSitter.node_type(name) == "identifier" ? text(name, ctx) : nil), TreeSitter.unwrap_ts_expression(value)
           end
-        when "class_declaration"
+        when "class_declaration", "abstract_class_declaration"
           yield TreeSitter.field(stmt, "name").try { |n| text(n, ctx) }, stmt
         else
           yield nil, stmt
@@ -433,10 +422,14 @@ module Noir
         each_pair(node, ctx) { |key, value| key == SPREAD ? fields.concat(schema_fields(value, ctx, depth + 1)) : fields << key }
       when "identifier"
         ctx.decls[text(node, ctx)]?.try { |decl| fields = schema_fields(decl, ctx, depth + 1) }
-      when "class_declaration"
+      when "class_declaration", "abstract_class_declaration"
         heritage = nil
         TreeSitter.each_named_child(node) { |child| heritage = child if TreeSitter.node_type(child) == "class_heritage" }
-        heritage.try { |h| TreeSitter.first_named_child(h) }.try { |expr| fields = schema_fields(expr, ctx, depth + 1) }
+        # TypeScript wraps the superclass in `extends_clause` (beside any
+        # `implements_clause`); JavaScript puts it directly under the heritage.
+        heritage.try { |h| TreeSitter.first_named_child(h) }
+          .try { |expr| TreeSitter.node_type(expr) == "extends_clause" ? TreeSitter.field(expr, "value") : expr }
+          .try { |expr| fields = schema_fields(expr, ctx, depth + 1) }
       when "call_expression"
         property = call_property(node, ctx)
         arg = first_arg(node)
@@ -470,7 +463,7 @@ module Noir
           value = TreeSitter.field(pair, "value")
           next unless key && value
           name = TreeSitter.node_type(key) == "string" ? string_value(key, ctx) : text(key, ctx)
-          yield name, value if name
+          yield name, TreeSitter.unwrap_ts_expression(value) if name
         when "shorthand_property_identifier"
           yield text(pair, ctx), pair
         when "spread_element"
@@ -535,7 +528,7 @@ module Noir
       return unless TreeSitter.node_type(args) == "arguments"
       i = 0
       TreeSitter.each_named_arg(args) do |arg|
-        return arg if i == n
+        return TreeSitter.unwrap_ts_expression(arg) if i == n
         i += 1
       end
       nil

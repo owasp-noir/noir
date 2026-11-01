@@ -18,8 +18,8 @@ module Analyzer::Typescript
       content.includes?("HttpApiEndpoint")
     end
 
-    def routes(content : String) : Array(Noir::TSContractExtractor::Route)
-      Noir::TSContractExtractor.effect(content)
+    def routes(content : String, path : String) : Array(Noir::TSContractExtractor::Route)
+      Noir::TSContractExtractor.effect(content, path)
     end
   end
 end

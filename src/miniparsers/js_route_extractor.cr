@@ -1425,8 +1425,7 @@ module Noir
       extract_path_params(stripped, context)
 
       callees = if include_callees
-                  language = path.matches?(/\.[mc]?tsx?\z/) ? :typescript : :javascript
-                  JSCalleeExtractor.callees_for_function_body(body, path, line, language: language)
+                  JSCalleeExtractor.callees_for_function_body(body, path, line)
                 else
                   [] of JSCalleeExtractor::Entry
                 end
@@ -1519,8 +1518,7 @@ module Noir
       guard = guard_definition?(body)
       request_callee_reads(body, content, path, line, context) unless guard
       callees = if include_callees && !guard
-                  language = path.matches?(/\.[mc]?tsx?\z/) ? :typescript : :javascript
-                  JSCalleeExtractor.callees_for_function_body(body, path, line, language: language)
+                  JSCalleeExtractor.callees_for_function_body(body, path, line)
                 else
                   [] of JSCalleeExtractor::Entry
                 end

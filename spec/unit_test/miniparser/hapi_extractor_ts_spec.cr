@@ -134,4 +134,17 @@ describe Noir::TreeSitterHapiExtractor do
     routes = Noir::TreeSitterHapiExtractor.extract_routes(source)
     routes.map { |r| {r.verb, r.path} }.should eq([{"POST", "/users/{id}/roles"}])
   end
+
+  it "reads `as const` and `satisfies` route objects in TypeScript" do
+    source = <<-TS
+      server.route([
+        { method: 'GET' as const, path: '/a', handler: (request: Request) => request.query.q },
+        { method: 'POST', path: '/b' as string, handler: h } satisfies ServerRoute,
+      ] as ServerRoute[]);
+      TS
+
+    routes = Noir::TreeSitterHapiExtractor.extract_routes(source, path: "routes.ts")
+    routes.map { |r| {r.verb, r.path} }.should eq([{"GET", "/a"}, {"POST", "/b"}])
+    routes.first.query_params.should eq(["q"])
+  end
 end

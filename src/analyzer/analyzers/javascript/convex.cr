@@ -28,7 +28,7 @@ module Analyzer::Javascript
         next unless owned_by_js_package?(path, owners)
         next if js_test_file?(path)
 
-        Noir::JSObjectConfigExtractor.extract(content, ["method", "handler"]).compact_map do |route|
+        Noir::JSObjectConfigExtractor.extract(content, ["method", "handler"], path).compact_map do |route|
           method = route.string("method").try(&.upcase)
           next unless method && METHODS.includes?(method)
           url = route.string("path") || route.string("pathPrefix").try { |prefix| "#{prefix}*" }

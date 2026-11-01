@@ -46,14 +46,9 @@ module Noir
       end
     end
 
-    def extract(source : String) : Config
-      # The JS grammar has neither `satisfies` nor `const x: T =`; both strips
-      # are same-line, so rows hold.
-      normalized = source
-        .gsub(JSObjectConfigExtractor::DECLARATION_ANNOTATION, "\\1 =")
-        .gsub(JSObjectConfigExtractor::SATISFIES_ASSERTION, "")
-      walker = Walker.new(normalized)
-      Noir::TreeSitter.parse_javascript(normalized) { |root| walker.run(root) }
+    def extract(source : String, path : String = "") : Config
+      walker = Walker.new(source)
+      Noir::TreeSitter.parse_js_family(source, path) { |root| walker.run(root) }
       Config.new(walker.routes, walker.flat_routes?)
     end
 
@@ -147,7 +142,7 @@ module Noir
 
         # Children: the trailing array of route/layout/prefix, a binding to
         # one, or a `defineRoutes`-style callback (Remix's routes adapter).
-        return unless children = args.last?
+        return unless children = args.last?.try { |arg| Noir::TreeSitter.unwrap_ts_expression(arg) }
         case Noir::TreeSitter.node_type(children)
         when "array", "identifier", "arrow_function", "function_expression"
           walk(children, child_parent, child_absorb)

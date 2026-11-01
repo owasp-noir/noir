@@ -1,8 +1,8 @@
 require "spec"
 require "../../../src/ext/tree_sitter/tree_sitter"
 
-describe "Noir::TreeSitter.parse_typescript" do
-  it "parses a TypeScript snippet with generics, type annotations, decorators, and as casts without errors" do
+describe "Noir::TreeSitter.parse_js_family" do
+  it "parses a .ts snippet with generics, type annotations, decorators, and as casts without errors" do
     source = <<-TS
       class Controller<T> {
         @Get(':id')
@@ -16,7 +16,7 @@ describe "Noir::TreeSitter.parse_typescript" do
     types = [] of String
     has_error_node = false
 
-    Noir::TreeSitter.parse_typescript(source) do |root|
+    Noir::TreeSitter.parse_js_family(source, "users.controller.ts") do |root|
       LibTreeSitter.ts_node_has_error(root).should be_false
       Noir::TreeSitter.node_has_error?(root).should be_false
 
@@ -34,10 +34,8 @@ describe "Noir::TreeSitter.parse_typescript" do
     types.should contain("type_arguments")
     types.should contain("as_expression")
   end
-end
 
-describe "Noir::TreeSitter.parse_tsx" do
-  it "parses a TSX snippet with JSX and TypeScript types without errors" do
+  it "parses a .tsx snippet with JSX and TypeScript types without errors" do
     source = <<-TSX
       interface Props<T> {
         item: T;
@@ -56,7 +54,7 @@ describe "Noir::TreeSitter.parse_tsx" do
     types = [] of String
     has_error_node = false
 
-    Noir::TreeSitter.parse_tsx(source) do |root|
+    Noir::TreeSitter.parse_js_family(source, "item_view.tsx") do |root|
       LibTreeSitter.ts_node_has_error(root).should be_false
       Noir::TreeSitter.node_has_error?(root).should be_false
 
@@ -71,5 +69,39 @@ describe "Noir::TreeSitter.parse_tsx" do
     types.should contain("jsx_element")
     types.should contain("interface_declaration")
     types.should contain("as_expression")
+  end
+  it "picks the grammar by extension" do
+    Noir::TreeSitter.js_family_language("a.ts").should eq(LibTreeSitter.tree_sitter_typescript)
+    Noir::TreeSitter.js_family_language("a.d.ts").should eq(LibTreeSitter.tree_sitter_typescript)
+    Noir::TreeSitter.js_family_language("a.MTS").should eq(LibTreeSitter.tree_sitter_typescript)
+    Noir::TreeSitter.js_family_language("a.cts").should eq(LibTreeSitter.tree_sitter_typescript)
+    Noir::TreeSitter.js_family_language("a.tsx").should eq(LibTreeSitter.tree_sitter_tsx)
+    Noir::TreeSitter.js_family_language("a.jsx").should eq(LibTreeSitter.tree_sitter_javascript)
+    Noir::TreeSitter.js_family_language("a.mjs").should eq(LibTreeSitter.tree_sitter_javascript)
+    Noir::TreeSitter.js_family_language("").should eq(LibTreeSitter.tree_sitter_javascript)
+  end
+
+  # `<T>x` is a type assertion in .ts and a JSX element in .tsx; the
+  # wrong grammar for either turns the file into ERROR nodes.
+  it "keeps .ts type assertions and .tsx JSX apart" do
+    Noir::TreeSitter.parse_js_family("const a = <any>b;", "a.ts") do |root|
+      Noir::TreeSitter.node_has_error?(root).should be_false
+    end
+    Noir::TreeSitter.parse_js_family("const a = <b>x</b>;", "a.tsx") do |root|
+      Noir::TreeSitter.node_has_error?(root).should be_false
+    end
+  end
+end
+
+describe "Noir::TreeSitter.unwrap_ts_expression" do
+  it "peels as / satisfies / non-null wrappers" do
+    source = "x = (y as any)! satisfies T as const;"
+    Noir::TreeSitter.parse_js_family(source, "a.ts") do |root|
+      assignment = Noir::TreeSitter.first_named_child(Noir::TreeSitter.first_named_child(root).not_nil!).not_nil!
+      right = Noir::TreeSitter.field(assignment, "right").not_nil!
+      inner = Noir::TreeSitter.unwrap_ts_expression(right)
+      Noir::TreeSitter.node_type(inner).should eq("parenthesized_expression")
+      Noir::TreeSitter.node_text(inner, source).should eq("(y as any)")
+    end
   end
 end

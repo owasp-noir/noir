@@ -284,8 +284,8 @@ module Noir::TreeSitter
 
   # Parses `source` with the JavaScript grammar and yields the
   # root node. Covers `.js` / `.mjs` / `.cjs` files; the JSX
-  # superset is recognised too — JSX-bearing TypeScript needs
-  # `parse_tsx`.
+  # superset is recognised too. Extractors that may see TypeScript
+  # call `parse_js_family`, which picks the grammar by extension.
   def self.parse_javascript(source : String, &)
     parse(source, LibTreeSitter.tree_sitter_javascript) { |root| yield root }
   end
@@ -297,17 +297,30 @@ module Noir::TreeSitter
     parse(source, LibTreeSitter.tree_sitter_rust) { |root| yield root }
   end
 
-  # Parses `source` with the TypeScript grammar and yields the
-  # root node. Covers `.ts` / `.mts` / `.cts` files. For JSX-bearing
-  # TypeScript (.tsx), use `parse_tsx`.
-  def self.parse_typescript(source : String, &)
-    parse(source, LibTreeSitter.tree_sitter_typescript) { |root| yield root }
+  # Parses JS-family `source` with the grammar `path`'s extension calls
+  # for: TypeScript for `.ts` / `.mts` / `.cts`, TSX for `.tsx`, and
+  # JavaScript (JSX included) for everything else, `""` among it.
+  def self.parse_js_family(source : String, path : String, &)
+    parse(source, js_family_language(path)) { |root| yield root }
   end
 
-  # Parses `source` with the TSX grammar and yields the root node.
-  # Covers `.tsx` files (JSX syntax with TypeScript type annotations).
-  def self.parse_tsx(source : String, &)
-    parse(source, LibTreeSitter.tree_sitter_tsx) { |root| yield root }
+  def self.js_family_language(path : String) : LibTreeSitter::TSLanguage
+    case File.extname(path).downcase
+    when ".ts", ".mts", ".cts" then LibTreeSitter.tree_sitter_typescript
+    when ".tsx"                then LibTreeSitter.tree_sitter_tsx
+    else                            LibTreeSitter.tree_sitter_javascript
+    end
+  end
+
+  TS_EXPRESSION_WRAPPERS = {"as_expression", "satisfies_expression", "non_null_expression"}
+
+  # Peels `x as T`, `x satisfies T` and `x!` down to `x`, so a reader of
+  # values sees the node the JavaScript grammar gives for plain `x`.
+  def self.unwrap_ts_expression(node : LibTreeSitter::TSNode) : LibTreeSitter::TSNode
+    while TS_EXPRESSION_WRAPPERS.includes?(node_type(node)) && (inner = first_named_child(node))
+      node = inner
+    end
+    node
   end
 
   # --- Small helpers used by extractors. Kept here so callers don't
