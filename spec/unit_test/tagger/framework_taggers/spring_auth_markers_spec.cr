@@ -25,27 +25,48 @@ def run_spring_markers(files : Hash(String, String), routes : Hash(String, Strin
   routes.keys.zip(endpoints).to_h { |route, endpoint| {route, endpoint.tags.select(&.name.==("auth")).map(&.description)} }
 end
 
-MARKER_DIR = "src/main/java/com/example/"
+MARKER_DIR  = "src/main/java/com/example/"
+ANY_REQUEST = "Protected by Spring Security authenticated via anyRequest()"
 
-def marker_files(rule : String = "permitAll()", reader : String = "getMethodAnnotation(AnonymousAccess.class)", feed : String = "AnonUtils.urls(ctx)") : Hash(String, String)
-  config = <<-JAVA
+# The utility class a permitAll matcher is fed from: `urls` walks the
+# handler mappings and reads `reader`; `extra` adds a method of its own.
+def marker_utils(reader : String, extra : String = "") : String
+  <<-JAVA
+    class AnonUtils {
+        static Set<String> urls(Ctx ctx) {
+            for (Map.Entry<RequestMappingInfo, HandlerMethod> e : mapping.getHandlerMethods().entrySet()) {
+                if (e.getValue().#{reader} != null) { out.add("x"); }
+            }
+            return out;
+        }
+        #{extra}
+    }
+    JAVA
+end
+
+def marker_chain(rule : String = "permitAll()", feed : String = "AnonUtils.urls(ctx)", before : String = "", head : String = "") : String
+  <<-JAVA
     @EnableWebSecurity
     class SecurityConfig {
         SecurityFilterChain chain(HttpSecurity http) throws Exception {
             Set<String> anonymousUrls = #{feed};
-            http.authorizeRequests()
+            http#{head}.authorizeRequests()
+                #{before}
                 .antMatchers(HttpMethod.GET, anonymousUrls.toArray(new String[0])).#{rule}
                 .anyRequest().authenticated();
             return http.build();
         }
     }
     JAVA
+end
+
+def marker_files(reader : String = "getMethodAnnotation(AnonymousAccess.class)", chain : String = marker_chain, extra : String = "") : Hash(String, String)
   {
     "#{MARKER_DIR}AnonymousAccess.java"     => "public @interface AnonymousAccess {}\n",
     "#{MARKER_DIR}AnonymousGetMapping.java" => "@AnonymousAccess\n@RequestMapping(method = RequestMethod.GET)\npublic @interface AnonymousGetMapping {}\n",
     "#{MARKER_DIR}Unrelated.java"           => "@RequestMapping(method = RequestMethod.GET)\npublic @interface UnrelatedGetMapping {}\n",
-    "#{MARKER_DIR}AnonUtils.java"           => "class AnonUtils {\n  static Set<String> urls(Ctx ctx) {\n    return h.#{reader};\n  }\n}\n",
-    "#{MARKER_DIR}SecurityConfig.java"      => config,
+    "#{MARKER_DIR}AnonUtils.java"           => marker_utils(reader, extra),
+    "#{MARKER_DIR}SecurityConfig.java"      => chain,
   }
 end
 
@@ -77,19 +98,25 @@ describe "SpringAuthTagger annotation-collected permitAll" do
     "GET /unrelated" => "#{MARKER_DIR}C.java:12",
     "GET /direct"    => "#{MARKER_DIR}C.java:16",
   }
+  with_controller = ->(files : Hash(String, String)) { files.merge({"#{MARKER_DIR}C.java" => controller}) }
 
   it "reads the annotation the permitAll matcher is collected from, meta-annotations included" do
-    tags = run_spring_markers(marker_files.merge({"#{MARKER_DIR}C.java" => controller}), routes)
+    tags = run_spring_markers(with_controller.call(marker_files), routes)
     tags["GET /open"].should be_empty
     tags["GET /direct"].should be_empty
-    tags["GET /closed"].should eq(["Protected by Spring Security authenticated via anyRequest()"])
-    tags["GET /unrelated"].should eq(["Protected by Spring Security authenticated via anyRequest()"])
+    tags["GET /closed"].should eq([ANY_REQUEST])
+    tags["GET /unrelated"].should eq([ANY_REQUEST])
     tags["GET /both"].should eq(["Protected by Spring @PreAuthorize"])
   end
 
   it "keeps the guard when the collected matcher is not a permitAll" do
-    tags = run_spring_markers(marker_files(rule: "authenticated()").merge({"#{MARKER_DIR}C.java" => controller}), routes)
-    tags["GET /open"].should eq(["Protected by Spring Security authenticated via anyRequest()"])
+    tags = run_spring_markers(with_controller.call(marker_files(chain: marker_chain(rule: "authenticated()"))), routes)
+    tags["GET /open"].should eq([ANY_REQUEST])
+  end
+
+  it "keeps the guard when the feeding method does not read the annotation" do
+    tags = run_spring_markers(with_controller.call(marker_files(reader: "getMethodAnnotation(Other.class)")), routes)
+    tags["GET /open"].should eq([ANY_REQUEST])
   end
 
   it "keeps the guard for a verb the collected matcher does not name" do
@@ -101,18 +128,107 @@ describe "SpringAuthTagger annotation-collected permitAll" do
       }
       JAVA
     tags = run_spring_markers(marker_files.merge({"#{MARKER_DIR}P.java" => post}), {"POST /p" => "#{MARKER_DIR}P.java:3"})
-    tags["POST /p"].should eq(["Protected by Spring Security authenticated via anyRequest()"])
+    tags["POST /p"].should eq([ANY_REQUEST])
   end
 
-  it "keeps the guard when the feeding class reads more than one annotation" do
-    reader = "getMethodAnnotation(AnonymousAccess.class);\n    h.getMethodAnnotation(AdminOnly.class)"
-    tags = run_spring_markers(marker_files(reader: reader).merge({"#{MARKER_DIR}C.java" => controller}), routes)
-    tags["GET /open"].should eq(["Protected by Spring Security authenticated via anyRequest()"])
+  it "keeps the guard when the feeding method reads more than one annotation" do
+    reader = "getMethodAnnotation(AnonymousAccess.class) != null || e.getValue().getMethodAnnotation(AdminOnly.class)"
+    tags = run_spring_markers(with_controller.call(marker_files(reader: reader)), routes)
+    tags["GET /open"].should eq([ANY_REQUEST])
   end
 
-  it "keeps the guard when the matcher is fed by a class that does not read the annotation" do
-    tags = run_spring_markers(marker_files(reader: "getMethodAnnotation(Other.class)").merge({"#{MARKER_DIR}C.java" => controller}), routes)
-    tags["GET /open"].should eq(["Protected by Spring Security authenticated via anyRequest()"])
+  it "ties the read to the method feeding the matcher, not to the class" do
+    # `publicPaths` reads a property; `needsLogin` in the same class reads @LoginRequired
+    utils = <<-JAVA
+      class SecurityUtils {
+          static String[] publicPaths(Environment env) {
+              return env.getProperty("app.public-paths", String[].class);
+          }
+          static boolean needsLogin(HandlerMethod h) {
+              return h.hasMethodAnnotation(LoginRequired.class);
+          }
+      }
+      JAVA
+    me = <<-JAVA
+      class M {
+          @LoginRequired
+          @GetMapping("/me")
+          public String me() { return "x"; }
+      }
+      JAVA
+    files = {
+      "#{MARKER_DIR}SecurityUtils.java"  => utils,
+      "#{MARKER_DIR}SecurityConfig.java" => marker_chain(feed: "SecurityUtils.publicPaths(env)"),
+      "#{MARKER_DIR}M.java"              => me,
+    }
+    run_spring_markers(files, {"GET /me" => "#{MARKER_DIR}M.java:3"})["GET /me"].should eq([ANY_REQUEST])
+  end
+
+  it "does not follow plain reflection into meta-annotations" do
+    tags = run_spring_markers(with_controller.call(marker_files(reader: "isAnnotationPresent(AnonymousAccess.class)")), routes)
+    tags["GET /direct"].should be_empty
+    tags["GET /open"].should eq([ANY_REQUEST])
+  end
+
+  it "does not read an annotation in a block comment or a string" do
+    source = <<-JAVA
+      class B {
+          /*
+           * @AnonymousAccess
+           */
+          @GetMapping("/block")
+          public String block() { return "x"; }
+
+          @GetMapping(value = "/str", produces = "@AnonymousAccess")
+          public String str() { return "x"; }
+      }
+      JAVA
+    tags = run_spring_markers(marker_files.merge({"#{MARKER_DIR}B.java" => source}), {"GET /block" => "#{MARKER_DIR}B.java:5", "GET /str" => "#{MARKER_DIR}B.java:9"})
+    tags["GET /block"].should eq([ANY_REQUEST])
+    tags["GET /str"].should eq([ANY_REQUEST])
+  end
+
+  it "keeps the guard of a chain whose matcher does not cover the handler" do
+    two_chains = <<-JAVA
+      @EnableWebSecurity
+      class SecurityConfig {
+          @Bean
+          @Order(1)
+          SecurityFilterChain api(HttpSecurity http) throws Exception {
+              Set<String> anonymousUrls = AnonUtils.urls(ctx);
+              http.antMatcher("/api/**").authorizeRequests()
+                  .antMatchers(HttpMethod.GET, anonymousUrls.toArray(new String[0])).permitAll()
+                  .anyRequest().authenticated();
+              return http.build();
+          }
+          @Bean
+          @Order(2)
+          SecurityFilterChain web(HttpSecurity http) throws Exception {
+              http.authorizeRequests().anyRequest().authenticated();
+              return http.build();
+          }
+      }
+      JAVA
+    source = <<-JAVA
+      class W {
+          @AnonymousAccess
+          @GetMapping("/api/open")
+          public String apiOpen() { return "x"; }
+
+          @AnonymousAccess
+          @GetMapping("/web/x")
+          public String webX() { return "x"; }
+      }
+      JAVA
+    tags = run_spring_markers(marker_files(chain: two_chains).merge({"#{MARKER_DIR}W.java" => source}), {"GET /api/open" => "#{MARKER_DIR}W.java:3", "GET /web/x" => "#{MARKER_DIR}W.java:7"})
+    tags["GET /api/open"].should be_empty
+    tags["GET /web/x"].should eq([ANY_REQUEST])
+  end
+
+  it "respects first-match order: an earlier catch-all keeps the guard" do
+    chain = marker_chain(before: ".antMatchers(\"/**\").authenticated()")
+    tags = run_spring_markers(with_controller.call(marker_files(chain: chain)), routes)
+    tags["GET /open"].first.should contain("authenticated via antMatchers(\"/**\")")
   end
 end
 
@@ -148,22 +264,28 @@ describe "SpringAuthTagger Shiro" do
     tags["GET /public"].should be_empty
   end
 
-  it "ignores an entry an earlier broader one shadows (first match wins)" do
+  it "takes the first matching entry in insertion order" do
     entries = <<-JAVA
-      filterChainDefinitionMap.put("/admin/**", "authc");
-      filterChainDefinitionMap.put("/admin/auth/login", "anon");
+      filterChainDefinitionMap.put("/admin/*", "authc");
+      filterChainDefinitionMap.put("/admin/login", "anon");
+      filterChainDefinitionMap.put("/user/**/edit", "authc");
+      filterChainDefinitionMap.put("/user/profile/**", "anon");
+      filterChainDefinitionMap.put("/dup", "anon");
+      filterChainDefinitionMap.put("/dup", "authc");
+      filterChainDefinitionMap.put("/**", "anon");
       JAVA
-    tags = run_spring_markers(config.call(entries).merge(controller), routes)
-    tags["GET /admin/auth/login"].first.should start_with("Protected by Shiro authc")
-  end
-
-  it "does not read a narrower earlier entry as shadowing a broader later one" do
-    entries = <<-JAVA
-      filterChainDefinitionMap.put("/admin/*", "anon");
-      filterChainDefinitionMap.put("/admin/**", "authc");
-      JAVA
-    tags = run_spring_markers(config.call(entries).merge(controller), {"GET /admin/a/b" => "#{MARKER_DIR}C.java:1"})
-    tags["GET /admin/a/b"].first.should start_with("Protected by Shiro authc")
+    tags = run_spring_markers(config.call(entries).merge(controller), {
+      "GET /admin/login"       => "#{MARKER_DIR}C.java:1",
+      "GET /admin/a/b"         => "#{MARKER_DIR}C.java:1",
+      "GET /user/profile/edit" => "#{MARKER_DIR}C.java:1",
+      "GET /user/profile/view" => "#{MARKER_DIR}C.java:1",
+      "GET /dup"               => "#{MARKER_DIR}C.java:1",
+    })
+    tags["GET /admin/login"].first.should contain("(\"/admin/*\")")
+    tags["GET /admin/a/b"].should be_empty
+    tags["GET /user/profile/edit"].first.should contain("(\"/user/**/edit\")")
+    tags["GET /user/profile/view"].should be_empty
+    tags["GET /dup"].first.should start_with("Protected by Shiro authc")
   end
 
   it "reads addPathDefinition and ignores puts on other maps" do
@@ -176,13 +298,13 @@ describe "SpringAuthTagger Shiro" do
     tags["GET /public"].should be_empty
   end
 
-  it "does not guess at a custom filter" do
+  it "limits a custom filter to its own pattern and names it as Shiro" do
     entries = <<-JAVA
       filterChainDefinitionMap.put("/admin/**", "jwt");
       JAVA
     tags = run_spring_markers(config.call(entries).merge(controller), routes)
-    tags["GET /admin/users"].first.should contain("Shiro filter \"jwt\"")
-    tags["GET /public"].first.should contain("Shiro filter \"jwt\"")
+    tags["GET /admin/users"].first.should start_with("Protected by Shiro filter \"jwt\"")
+    tags["GET /public"].should be_empty
   end
 
   it "reads Shiro method annotations" do
@@ -212,22 +334,36 @@ describe "SpringAuthTagger Shiro" do
 end
 
 describe "SpringAuthTagger argument-resolver principal" do
-  resolver = ->(returns_null : Bool) do
-    {"#{MARKER_DIR}LoginUserResolver.java" => <<-JAVA}
-      public class LoginUserResolver implements HandlerMethodArgumentResolver {
-          public boolean supportsParameter(MethodParameter parameter) {
-              return parameter.hasParameterAnnotation(LoginUser.class);
-          }
-          public Object resolveArgument(MethodParameter parameter) {
-              String token = request.getHeader("X-Token");
-              #{returns_null ? "if (token == null) { return null; }" : "if (token == null) { return Integer.valueOf(0); }"}
-              return UserTokenManager.getUserId(token);
-          }
-      }
-      JAVA
+  resolver_files = ->(returns_null : Bool, registered : Bool) do
+    files = {
+      "#{MARKER_DIR}LoginUser.java"         => "public @interface LoginUser {}\n",
+      "#{MARKER_DIR}LoginUserResolver.java" => <<-JAVA,
+        public class LoginUserResolver implements HandlerMethodArgumentResolver {
+            public boolean supportsParameter(MethodParameter parameter) {
+                return parameter.hasParameterAnnotation(LoginUser.class);
+            }
+            public Object resolveArgument(MethodParameter parameter) {
+                String token = request.getHeader("X-Token");
+                #{returns_null ? "if (token == null) { return null; }" : "if (token == null) { return Integer.valueOf(0); }"}
+                return UserTokenManager.getUserId(token);
+            }
+        }
+        JAVA
+    }
+    if registered
+      files["#{MARKER_DIR}WebConfig.java"] = <<-JAVA
+        class WebConfig implements WebMvcConfigurer {
+            public void addArgumentResolvers(List<HandlerMethodArgumentResolver> resolvers) {
+                resolvers.add(new LoginUserResolver());
+            }
+        }
+        JAVA
+    end
+    files
   end
   controller = <<-JAVA
     class W {
+        private OrderService orderService;
         @GetMapping("list")
         public Object list(@LoginUser Integer userId) {
             if (userId == null) {
@@ -262,6 +398,16 @@ describe "SpringAuthTagger argument-resolver principal" do
         public Object loose(@LoginUser Integer userId, @RequestParam Integer page) {
             return orderService.loose(userId, page);
         }
+
+        @GetMapping("overload")
+        public Object overload(@LoginUser Integer userId, @RequestParam String sn) {
+            return orderService.detail(sn, userId);
+        }
+
+        @GetMapping("overloads")
+        public Object overloads(@LoginUser Integer userId, @RequestParam String sn) {
+            return orderService.both(sn, userId);
+        }
     }
     JAVA
   service = <<-JAVA
@@ -277,32 +423,95 @@ describe "SpringAuthTagger argument-resolver principal" do
         public Object loose(Integer userId, Integer page) {
             return query(userId);
         }
+
+        public Object detail(Integer orderId, Integer userId) {
+            if (userId == null) {
+                return ResponseUtil.unlogin();
+            }
+            return 1;
+        }
+
+        public Object detail(String orderSn, Integer userId) {
+            return find(orderSn);
+        }
+
+        public Object both(Integer orderId, Integer userId) {
+            if (userId == null) {
+                return ResponseUtil.unlogin();
+            }
+            return 1;
+        }
+
+        public Object both(String orderSn, Integer userId) {
+            if (userId == null) {
+                return ResponseUtil.unlogin();
+            }
+            return 2;
+        }
     }
     JAVA
   routes = {
-    "GET /list"  => "#{MARKER_DIR}W.java:2",
-    "GET /count" => "#{MARKER_DIR}W.java:10",
-    "GET /late"  => "#{MARKER_DIR}W.java:18",
-    "GET /order" => "#{MARKER_DIR}W.java:28",
-    "GET /loose" => "#{MARKER_DIR}W.java:33",
+    "GET /list"      => "#{MARKER_DIR}W.java:3",
+    "GET /count"     => "#{MARKER_DIR}W.java:11",
+    "GET /late"      => "#{MARKER_DIR}W.java:19",
+    "GET /order"     => "#{MARKER_DIR}W.java:28",
+    "GET /loose"     => "#{MARKER_DIR}W.java:33",
+    "GET /overload"  => "#{MARKER_DIR}W.java:38",
+    "GET /overloads" => "#{MARKER_DIR}W.java:43",
   }
-  files = ->(returns_null : Bool) do
-    resolver.call(returns_null).merge({"#{MARKER_DIR}W.java" => controller.sub("class W {", "class W {\n    private OrderService orderService;").gsub(/^/m, ""), "#{MARKER_DIR}OrderService.java" => service})
-  end
+  refusal = "Protected by in-handler check: refuses an anonymous caller (userId == null)"
 
-  it "reads a custom login annotation whose resolver returns null, in the handler or one service hop away" do
-    # the injected field line shifts every route by one
-    shifted = routes.transform_values { |location| "#{location.split(':')[0]}:#{location.split(':')[1].to_i + 1}" }
-    tags = run_spring_markers(files.call(true), shifted)
-    tags["GET /list"].should eq(["Protected by in-handler check: refuses an anonymous caller (userId == null)"])
-    tags["GET /order"].should eq(["Protected by in-handler check: refuses an anonymous caller (userId == null)"])
+  it "reads a registered null-returning login annotation, in the handler or one service hop away" do
+    tags = run_spring_markers(resolver_files.call(true, true).merge({"#{MARKER_DIR}W.java" => controller, "#{MARKER_DIR}OrderService.java" => service}), routes)
+    tags["GET /list"].should eq([refusal])
+    tags["GET /order"].should eq([refusal])
+    tags["GET /overloads"].should eq([refusal])
     tags["GET /count"].should be_empty
     tags["GET /late"].should be_empty
     tags["GET /loose"].should be_empty
+    # one overload of `detail` does not refuse
+    tags["GET /overload"].should be_empty
   end
 
   it "does nothing when the resolver never returns null" do
-    shifted = routes.transform_values { |location| "#{location.split(':')[0]}:#{location.split(':')[1].to_i + 1}" }
-    run_spring_markers(files.call(false), shifted)["GET /list"].should be_empty
+    run_spring_markers(resolver_files.call(false, true).merge({"#{MARKER_DIR}W.java" => controller}), routes)["GET /list"].should be_empty
+  end
+
+  it "does nothing when no configuration registers the resolver" do
+    run_spring_markers(resolver_files.call(true, false).merge({"#{MARKER_DIR}W.java" => controller}), routes)["GET /list"].should be_empty
+  end
+
+  it "does not take a same-named annotation of another package for the resolver's" do
+    other = "package com.adm;\npublic @interface LoginUser {}\n"
+    admin = "package com.adm;\nclass A {\n    @GetMapping(\"/me\")\n    public Object me(@LoginUser Integer userId) {\n        if (userId == null) {\n            return ResponseUtil.unlogin();\n        }\n        return 1;\n    }\n}\n"
+    files = resolver_files.call(true, true).transform_values { |source| "package com.example;\n#{source}" }
+    files["src/main/java/com/adm/LoginUser.java"] = other
+    files["src/main/java/com/adm/A.java"] = admin
+    run_spring_markers(files, {"GET /me" => "src/main/java/com/adm/A.java:3"})["GET /me"].should be_empty
+  end
+
+  it "reads delegated refusals in linear time" do
+    build = ->(count : Int32) do
+      handlers = (0...count).map do |i|
+        "    @GetMapping(\"h#{i}\")\n    public Object h#{i}(@LoginUser Integer userId) {\n        return orderService.m#{i}(userId);\n    }\n"
+      end.join("\n")
+      methods = (0...count).map do |i|
+        "    public Object m#{i}(Integer userId) {\n        if (userId == null) {\n            return ResponseUtil.unlogin();\n        }\n        return #{i};\n    }\n"
+      end.join("\n")
+      files = resolver_files.call(true, true).merge({
+        "#{MARKER_DIR}W.java"            => "class W {\n    private OrderService orderService;\n#{handlers}}\n",
+        "#{MARKER_DIR}OrderService.java" => "@Service\npublic class OrderService {\n#{methods}}\n",
+      })
+      routes = (0...count).to_h { |i| {"GET /h#{i}", "#{MARKER_DIR}W.java:#{3 + i * 5}"} }
+      started = Time.instant
+      tags = run_spring_markers(files, routes)
+      tags["GET /h#{count - 1}"].size.should eq(1)
+      (Time.instant - started).total_seconds
+    end
+    build.call(50) # warm up
+    small = build.call(400)
+    large = build.call(1600)
+    # 4x the handlers: linear is ~4x, quadratic ~16x
+    (large / small).should be < 10.0
   end
 end
