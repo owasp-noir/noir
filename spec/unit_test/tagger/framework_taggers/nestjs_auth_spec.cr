@@ -708,4 +708,116 @@ describe "NestjsAuthTagger" do
       FileUtils.rm_rf(tmpdir)
     end
   end
+
+  # A Passport guard that runs only a login strategy starts the sign-in; the
+  # route it sits on is the anonymous entry point, whatever the guard is
+  # called. Any non-login strategy in the list still refuses.
+  it "does not call a Passport login-strategy guard a guard" do
+    CodeLocator.instance.clear_all
+    tmpdir = File.tempname("nest_passport_login")
+    # name => {decorator, guarded?}
+    cases = {
+      "google"   => {"@UseGuards(GoogleSSOGuard)", false},
+      "github"   => {"@UseGuards(GithubAuthGuard)", false},
+      "login"    => {"@UseGuards(AuthGuard('local'))", false},
+      "sso_pair" => {"@UseGuards(AuthGuard(['google', 'saml']))", false},
+      "me"       => {"@UseGuards(JwtAuthGuard)", true},
+      "either"   => {"@UseGuards(AuthGuard(['google', 'jwt']))", true},
+      # Every guard after an inline `AuthGuard(...)` is read, in either order.
+      "two_inline" => {"@UseGuards(AuthGuard('google'), AuthGuard('jwt'))", true},
+      "then_class" => {"@UseGuards(AuthGuard('google'), JwtAuthGuard)", true},
+      "list_class" => {"@UseGuards(AuthGuard(['google', 'saml']), JwtAuthGuard)", true},
+      "reversed"   => {"@UseGuards(JwtAuthGuard, AuthGuard('google'))", true},
+      # A strategy that is not a literal may be anything.
+      "const_member" => {"@UseGuards(AuthGuard(['google', JWT_STRATEGY]))", true},
+      "computed"     => {"@UseGuards(AuthGuard(strategyFor('google')))", true},
+      # Not sign-in flows: an API key, a verified ID token, a magic-link token.
+      "api_key"    => {"@UseGuards(AuthGuard('local_apikey'))", true},
+      "id_token"   => {"@UseGuards(AuthGuard('google-id-token'))", true},
+      "magic_link" => {"@UseGuards(AuthGuard('magic-link'))", true},
+    }
+    lines = {} of String => Int32
+    controller = String.build do |io|
+      io << "@Controller('auth')\nexport class AuthController {\n"
+      at = 3
+      cases.each do |name, (decorator, _)|
+        io << "  @Get('" << name << "')\n  " << decorator << "\n  " << name << "() {}\n\n"
+        lines[name] = at + 2
+        at += 4
+      end
+      io << "}\n"
+    end
+    files = {
+      "package.json"            => "{}",
+      "src/google-sso.guard.ts" => <<-TS,
+        export class GoogleSSOGuard extends AuthGuard('google') implements CanActivate {
+          canActivate(context: ExecutionContext) {
+            if (!enabled) throwHTTPErr({ statusCode: 404 });
+            return super.canActivate(context);
+          }
+        }
+        export class GithubAuthGuard extends AuthGuard("github") {}
+        export class JwtAuthGuard extends AuthGuard('jwt') {}
+        TS
+      "src/auth.controller.ts" => controller,
+    }
+    files.each do |rel, body|
+      path = File.join(tmpdir, rel)
+      Dir.mkdir_p(File.dirname(path))
+      File.write(path, body)
+      CodeLocator.instance.register_path(path)
+    end
+
+    begin
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(tmpdir)
+      controller = File.join(tmpdir, "src/auth.controller.ts")
+      endpoints = lines.transform_values do |line|
+        details = Details.new(PathInfo.new(controller, line))
+        details.technology = "ts_nestjs"
+        Endpoint.new("/x", "GET", [] of Param, details)
+      end
+
+      NestjsAuthTagger.new(noir_options).perform(endpoints.values)
+      auth = endpoints.transform_values(&.tags.any? { |tag| tag.name == "auth" })
+
+      cases.each { |name, (_, guarded)| {name, auth[name]}.should eq({name, guarded}) }
+    ensure
+      FileUtils.rm_rf(tmpdir)
+      CodeLocator.instance.clear_all
+    end
+  end
+
+  # Registered for every route, a login-strategy guard sends every anonymous
+  # request to the sign-in: the login-only reading applies to a route's own
+  # `@UseGuards`, not to the global guard.
+  it "keeps a global APP_GUARD that runs a login strategy as the routes' guard" do
+    CodeLocator.instance.clear_all
+    tmpdir = File.tempname("nest_passport_global")
+    files = {
+      "package.json"             => "{}",
+      "src/app.module.ts"        => "providers: [{ provide: APP_GUARD, useClass: GoogleAuthGuard }]\n",
+      "src/google-auth.guard.ts" => "export class GoogleAuthGuard extends AuthGuard('google') {}\n",
+      "src/items.controller.ts"  => "@Controller('items')\nexport class ItemsController {\n  @Get()\n  list() {}\n}\n",
+    }
+    files.each do |rel, body|
+      path = File.join(tmpdir, rel)
+      Dir.mkdir_p(File.dirname(path))
+      File.write(path, body)
+      CodeLocator.instance.register_path(path)
+    end
+
+    begin
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(tmpdir)
+      details = Details.new(PathInfo.new(File.join(tmpdir, "src/items.controller.ts"), 4))
+      details.technology = "ts_nestjs"
+      endpoint = Endpoint.new("/items", "GET", [] of Param, details)
+      NestjsAuthTagger.new(noir_options).perform([endpoint])
+      endpoint.tags.map(&.description).should eq(["Protected by NestJS global APP_GUARD (GoogleAuthGuard)"])
+    ensure
+      FileUtils.rm_rf(tmpdir)
+      CodeLocator.instance.clear_all
+    end
+  end
 end

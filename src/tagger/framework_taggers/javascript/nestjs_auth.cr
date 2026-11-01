@@ -111,18 +111,26 @@ class NestjsAuthTagger < FrameworkTagger
   HANDLE_REQUEST  = /\bhandleRequest\s*(?:<[^>]*>)?\s*\([^)]*\)[^{]*\{/
   NO_USER_RETURN  = /\breturn\s+(?:null|undefined)\b|(?:\|\||\?\?)\s*(?:null|undefined)\b/
   CLASS_DECL      = /\bclass\s+(\w+)\b/
-  USE_GUARDS_ARGS = /@UseGuards\s*\(([^)]*)\)/
+  USE_GUARDS_CALL = /@UseGuards\s*\(/
   AUTH_GUARD_REF  = /\b\w*[Aa]uth\w*Guard\b/
 
   # A project decorator that bundles a guard, as the Nest docs' `Auth()`
   # recipe does: `export function Auth() { return applyDecorators(
   # UseGuards(AuthGuard), ApiBearerAuth()) }`.
   APPLY_DECORATORS = /\bapplyDecorators\s*\(/
-  BARE_USE_GUARDS  = /\bUseGuards\s*\(([^)]*)\)/
+  BARE_USE_GUARDS  = /\bUseGuards\s*\(/
   GUARD_CLASS_DECL = /\bclass\s+(\w+)\b([^{]*)\{/
   # Passport's `AuthGuard(...)` (called inline, or extended) refuses a
   # caller its strategy cannot authenticate with 401.
   PASSPORT_GUARD = /\AAuthGuard\s*\(|\bextends\s+AuthGuard\s*\(/
+  # Its strategy list: `AuthGuard('google')`, `AuthGuard(['jwt', 'api-key'])`.
+  PASSPORT_CALL = /\bAuthGuard\s*\(/
+  # A strategy that signs a caller in rather than checking one: a password
+  # form or an OAuth/OIDC/SAML provider's redirect. Exact names: `local_apikey`
+  # checks a key, `google-id-token`, `auth0` and `magic-link` verify a token.
+  PASSPORT_LOGIN_STRATEGY = /\A(?:local|google|google-oauth20?|github2?|gitlab|microsoft|azuread-openidconnect|facebook|twitter|linkedin|apple|discord|slack|saml|oauth2?|openidconnect|oidc)\z/i
+  # One literal strategy name.
+  STRATEGY_LITERAL = /\A['"`]([^'"`$]+)['"`]\z/
   # What a `canActivate` does with a caller: throws 401 outright; throws 403
   # or returns false (Nest answers 403) on what it read from the request;
   # or only ever returns true.
@@ -246,7 +254,7 @@ class NestjsAuthTagger < FrameworkTagger
   # throws nothing; nil otherwise, including a `canActivate` that consults
   # route metadata through the Reflector.
   private def guard_verdict(header : String, body : String) : Symbol?
-    return :refuses if header.matches?(PASSPORT_GUARD)
+    return (passport_login_only?(header) ? :admits : :refuses) if header.matches?(PASSPORT_GUARD)
     return unless method = body.match(CAN_ACTIVATE)
     return unless params_close = Noir::JSLiteralScanner.find_matching_paren(body, method.end(0) - 1)
     return unless open = body.index('{', params_close)
@@ -272,8 +280,8 @@ class NestjsAuthTagger < FrameworkTagger
       decl_end = code.match(NEXT_TOP_LEVEL, decl.end(0)).try(&.begin(0)) || code.size
       next if m.begin >= decl_end
       next unless close = Noir::JSLiteralScanner.find_matching_paren(code, m.end(0) - 1)
-      code[m.end(0)...close].scan(BARE_USE_GUARDS) do |use|
-        guards = authenticating_guards(use[1])
+      guard_arg_lists(code[m.end(0)...close], BARE_USE_GUARDS).each do |args|
+        guards = authenticating_guards(args)
         next if guards.empty?
         defs = @guard_decorators[decl[1]] ||= [] of {String, String?, String}
         defs << {path, root, guards.join(", ")} unless defs.any? { |d| d[0] == path }
@@ -281,15 +289,40 @@ class NestjsAuthTagger < FrameworkTagger
     end
   end
 
+  # A Passport guard whose every strategy is a login flow (`local`, an
+  # OAuth/OIDC/SAML provider): `GoogleSSOGuard extends AuthGuard('google')`
+  # on `GET /auth/google` starts the sign-in, it does not protect a resource.
+  # A strategy that is not a literal (`JWT_STRATEGY`, `strategyFor('google')`)
+  # may be anything, so the guard is not login-only.
+  private def passport_login_only?(text : String) : Bool
+    list = guard_arg_lists(text, PASSPORT_CALL).first?.try(&.strip) || return false
+    list = list[1...-1] if list.starts_with?('[') && list.ends_with?(']')
+    strategies = Noir::TopLevelSplit.split(list, ',', Noir::TopLevelSplit::Rules::JS_POSITIONAL_ARGS).map(&.strip).reject(&.empty?)
+    !strategies.empty? && strategies.all? { |strategy| strategy.match(STRATEGY_LITERAL).try(&.[1].matches?(PASSPORT_LOGIN_STRATEGY)) }
+  end
+
+  # The argument text of each `call` (`UseGuards(`, `AuthGuard(`) in `text`,
+  # read to its own closing paren: `@UseGuards(AuthGuard('google'), JwtAuthGuard)`
+  # holds both guards. A call still open at the end of `text` runs to its end.
+  private def guard_arg_lists(text : String, call : Regex) : Array(String)
+    lists = [] of String
+    text.scan(call) do |m|
+      open = m.end(0) - 1
+      close = Noir::JSLiteralScanner.find_matching_paren(text, open) || text.size
+      lists << text[(open + 1)...close]
+    end
+    lists
+  end
+
   # The guards in a `UseGuards(...)` argument list that refuse anonymous
   # callers: Passport's `AuthGuard(...)`, or a class whose definition does
   # (`guard_verdict`). One whose definition says nothing definite falls back
   # to its name; an optional Passport guard never counts.
   private def authenticating_guards(args : String) : Array(String)
-    args.split(',').map(&.strip).select do |guard|
+    Noir::TopLevelSplit.split(args, ',', Noir::TopLevelSplit::Rules::JS_POSITIONAL_ARGS).map(&.strip).select do |guard|
       name = guard.match(/\A\w+/).try(&.[0]) || next false
       next false if @optional_guards.includes?(name)
-      next true if guard.matches?(PASSPORT_GUARD)
+      next !passport_login_only?(guard) if guard.matches?(PASSPORT_GUARD)
       verdict = @guard_classes[name]?
       verdict ? verdict == :refuses : name.matches?(AUTH_GUARD_REF)
     end
@@ -342,8 +375,8 @@ class NestjsAuthTagger < FrameworkTagger
   # A `@UseGuards(...)` line whose every auth-named guard is optional.
   private def optional_auth_only?(line : String) : Bool
     return false if @optional_guards.empty?
-    return false unless args = line.match(USE_GUARDS_ARGS)
-    names = args[1].scan(AUTH_GUARD_REF).map(&.[0])
+    args = guard_arg_lists(line, USE_GUARDS_CALL).first? || return false
+    names = args.scan(AUTH_GUARD_REF).map(&.[0])
     !names.empty? && names.all? { |name| @optional_guards.includes?(name) }
   end
 
@@ -446,7 +479,7 @@ class NestjsAuthTagger < FrameworkTagger
       # Its only auth guard is an optional one.
       if !guard && authn_descs.empty? && authz_descs.empty? &&
          (optional = (method_decorators + class_decorators).find { |line| optional_auth_only?(line) })
-        names = optional.match(USE_GUARDS_ARGS).try(&.[1].strip)
+        names = guard_arg_lists(optional, USE_GUARDS_CALL).first?.try(&.strip)
         endpoint.add_tag(Tag.new("anonymous", "NestJS @UseGuards(#{names}) admits anonymous callers: its handleRequest returns no user instead of throwing", "nestjs_auth"))
         return
       end
@@ -571,7 +604,7 @@ class NestjsAuthTagger < FrameworkTagger
   # callers (`authenticating_guards`, the same judgment a bundling
   # decorator gets); nil for any other line.
   private def use_guards_refusing(line : String) : Array(String)?
-    line.match(USE_GUARDS_ARGS).try { |m| authenticating_guards(m[1]) }
+    guard_arg_lists(line, USE_GUARDS_CALL).first?.try { |args| authenticating_guards(args) }
   end
 
   private def collect_class_decorators(decorators : Array(String), file : String, authn_descs : Array(String), authz_descs : Array(String))
