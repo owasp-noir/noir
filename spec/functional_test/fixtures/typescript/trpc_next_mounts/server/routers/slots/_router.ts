@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { authedProcedure, limitedProcedure, publicProcedure } from "../../procedures";
+import { authedProcedure, createPermProcedure, limitedProcedure, publicProcedure } from "../../procedures";
 import { router } from "../../trpc";
 import { holdHandler } from "./hold.handler";
 
@@ -10,5 +10,6 @@ export const slotsRouter = router({
   }),
   reserve: authedProcedure.mutation(async (opts) => (await import("./reserve.handler")).reserveHandler(opts)),
   hold: limitedProcedure.mutation(({ input }) => holdHandler({ input })),
+  remove: createPermProcedure("slot.delete").mutation(() => "ok"),
   ping: publicProcedure.query(() => "pong"),
 });

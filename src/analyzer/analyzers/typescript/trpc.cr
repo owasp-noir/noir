@@ -797,6 +797,12 @@ module Analyzer::Typescript
       seen = Set(String).new
       had_input = false
 
+      # The full receiver of the terminal call, so a call-form base such as
+      # `createXProcedure("p").input(...)` keeps its callee name.
+      outer_fn = Noir::TreeSitter.field(call_node, "function")
+      outer_obj = outer_fn ? Noir::TreeSitter.field(Noir::TreeSitter.unwrap_expression(outer_fn), "object") : nil
+      chain_text = outer_obj ? Noir::TreeSitter.node_text(outer_obj, source) : ""
+
       input_nodes = [] of LibTreeSitter::TSNode
       curr = call_node
       while Noir::TreeSitter.node_type(curr) == "call_expression"
@@ -830,9 +836,6 @@ module Analyzer::Typescript
       if params.empty? && had_input
         params << Param.new("input", "", param_type)
       end
-
-      obj_expr = Noir::TreeSitter.field(fn_u, "object")
-      chain_text = obj_expr ? Noir::TreeSitter.node_text(obj_expr, source) : ""
 
       TRPCProcedureData.new(method, line, path, chain_text, params, callees, handler, nil)
     end

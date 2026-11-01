@@ -9,6 +9,7 @@ expected_endpoints = [
   Endpoint.new("/api/trpc/slots/reserve", "POST"),
   Endpoint.new("/api/trpc/slots/hold", "POST"),
   Endpoint.new("/api/trpc/slots/ping", "GET"),
+  Endpoint.new("/api/trpc/slots/remove", "POST"),
   Endpoint.new("/api/trpc/me/get", "GET"),
   Endpoint.new("/api/trpc/other/get", "GET"),
   # The router lives in a package outside the scan.
@@ -41,7 +42,7 @@ describe "tRPC Next.js mounts", tags: "functional" do
     find.call("GET", "/api/trpc/slots/ping").handler.should_not(be_nil).tap do |h|
       h.name.should eq("ping")
       h.path.should_not(be_nil).should end_with("slots/_router.ts")
-      h.line.should eq(13)
+      h.line.should eq(14)
     end
   end
 
@@ -50,6 +51,10 @@ describe "tRPC Next.js mounts", tags: "functional" do
     access.call(find.call("GET", "/api/trpc/slots/getSchedule")).should eq([{"anonymous", "tRPC publicProcedure admits anonymous callers"}])
     # `.use(rateLimit)` from a package: unread, so neither.
     access.call(find.call("POST", "/api/trpc/slots/hold")).should be_empty
+  end
+
+  it "keeps the guard on a procedure built by a factory call" do
+    access.call(find.call("POST", "/api/trpc/slots/remove")).should eq([{"auth", "Protected by tRPC createPermProcedure"}])
   end
 
   it "resolves a same-named procedure and router by the import that names them" do
