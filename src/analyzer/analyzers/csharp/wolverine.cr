@@ -1,5 +1,5 @@
 require "../../../models/analyzer"
-require "../../../miniparsers/csharp_type_extractor"
+require "../../../miniparsers/csharp_decl_parser"
 require "./common"
 require "./minimal_api_support"
 
@@ -13,13 +13,11 @@ module Analyzer::CSharp
 
     include Common
 
-    # First in its attribute list or after a comma (`[AllowAnonymous, WolverineGet(...)]`).
-    ROUTE_ATTR_RE       = /[\[,]\s*(?:Wolverine\.Http\.)?Wolverine(Get|Post|Put|Patch|Delete|Head|Options)(?:Attribute)?\s*\(\s*@?"([^"]*)"/
-    PLACEHOLDER         = /\{([^{}]+)\}/
-    MAX_ATTRIBUTE_LINES = 32
+    ROUTE_ATTR_RE = /\AWolverine(Get|Post|Put|Patch|Delete|Head|Options)\z/
+    PLACEHOLDER   = /\{([^{}]+)\}/
     # Loaded from storage by the route id (Marten/EF), or explicitly not the
     # body: never request input of their own.
-    NOT_INPUT_ATTR_RE = /\[\s*(?:Entity|Document|Aggregate|ReadAggregate|WriteAggregate|NotBody)\b/
+    NOT_INPUT_ATTRIBUTES = Set{"Entity", "Document", "Aggregate", "ReadAggregate", "WriteAggregate", "NotBody"}
 
     @dto_fields = {} of String => Array(String)?
 
@@ -33,35 +31,26 @@ module Analyzer::CSharp
         lexer = Noir::CSharpLexer.new(content)
         lines = lexer.code_lines
         masked = lexer.masked_lines
-        lines.each_with_index do |line, i|
-          attr = ROUTE_ATTR_RE.match(line) || next
-          # The method follows its attribute lists (which may span lines), or
-          # shares the line with the last one. A list still open after
-          # MAX_ATTRIBUTE_LINES is unbalanced: fall back to the attribute line.
-          j = i
-          depth = 0
-          while j < masked.size && j - i < MAX_ATTRIBUTE_LINES
-            stripped = masked[j].strip
-            break if depth == 0 && !stripped.starts_with?('[')
-            depth += stripped.count('[') - stripped.count(']')
-            break if depth <= 0 && !stripped.ends_with?(']')
-            j += 1
+        Noir::CSharpDeclParser.parse(lexer).types.each do |type|
+          type.methods.each do |method|
+            method.attributes.each do |attr|
+              verb = attr.name.match(ROUTE_ATTR_RE).try(&.[1]) || next
+              template = attr.positional.first?.try(&.literal) || next
+              endpoint = endpoint(file, method.line + 1, verb.upcase, template, method.params)
+              if include_callee
+                block, start, skip_first = extract_callable_body(lines, masked, method.header_end)
+                attach_csharp_callees(endpoint, block, file, start + 1, true, skip_first_line: skip_first)
+              end
+              @result << endpoint
+            end
           end
-          j = i if depth > 0
-          signature, sig_end = build_signature(lines, masked, j)
-          endpoint = endpoint(file, j + 1, attr[1].upcase, attr[2], extract_balanced_param_list(signature) || "")
-          if include_callee
-            block, start, skip_first = extract_callable_body(lines, masked, sig_end)
-            attach_csharp_callees(endpoint, block, file, start + 1, true, skip_first_line: skip_first)
-          end
-          @result << endpoint
         end
       end
 
       @result
     end
 
-    private def endpoint(file : String, line : Int32, verb : String, template : String, param_list : String) : Endpoint
+    private def endpoint(file : String, line : Int32, verb : String, template : String, params : Array(Noir::CSharpDecl::Parameter)) : Endpoint
       path = "/" + template.lchop('/').gsub(PLACEHOLDER) { "{#{Common.route_placeholder_name($1)}}" }
       endpoint = Endpoint.new(path, verb, Details.new(PathInfo.new(file, line)))
       route_names = Set(String).new
@@ -71,14 +60,15 @@ module Analyzer::CSharp
       end
 
       body_taken = verb == "GET" || verb == "HEAD"
-      split_csharp_parameters(param_list).each do |param_def|
-        next if param_def.matches?(NOT_INPUT_ATTR_RE)
-        bound = Common.binding_attribute_type(param_def)
+      params.each do |param|
+        next if param.attributes.any? { |attr| NOT_INPUT_ATTRIBUTES.includes?(attr.name) }
+        binding = param.attributes.find { |attr| Common::BINDING_ATTRIBUTES.has_key?(attr.name) }
+        bound = binding.try { |attr| Common::BINDING_ATTRIBUTES[attr.name] }
         next if bound == "service"
-        decl = param_def.gsub(/\[[^\]]*\]/, "").sub(/=.*/m, "").gsub(/\b(?:ref|out|in|params)\s+/, "").strip
-        type, _, name = decl.rpartition(/\s+/)
+        type = param.type
+        name = param.name
         next if type.empty? || name.empty?
-        name = Common.explicit_binding_name(param_def) || name
+        name = binding.try(&.args.first?).try(&.literal) || name
         next if bound.nil? && route_names.includes?(name.downcase)
 
         base = type.rchop('?').rchop("[]").split('.').last
@@ -101,7 +91,6 @@ module Analyzer::CSharp
       return @dto_fields[name] if @dto_fields.has_key?(name)
 
       decl_re = /\b(?:class|record|struct)\s+(?:class\s+|struct\s+)?#{Regex.escape(name)}\b/
-      positional_re = /\brecord\s+(?:class\s+|struct\s+)?#{Regex.escape(name)}\s*\(([^)]*)\)/
       found = nil
       get_files_by_extension(".cs").each do |file|
         content = read_file_content(file)
@@ -109,12 +98,8 @@ module Analyzer::CSharp
 
         lexer = Noir::CSharpLexer.new(content)
         fields = [] of String
-        if m = positional_re.match(lexer.code_source)
-          split_csharp_parameters(m[1]).each do |arg|
-            arg.gsub(/\[[^\]]*\]/, "").split('=').first.strip.split(/\s+/).last?.try { |field| fields << field }
-          end
-        end
-        if type = Noir::CSharpTypeExtractor.extract(lexer).find(&.name.== name)
+        if type = Noir::CSharpDeclParser.parse(lexer).types.find(&.name.== name)
+          type.params.try &.each { |param| fields << param.name } if type.kind == "record"
           lines = lexer.code_lines
           (type.start_line..type.end_line).each do |k|
             lines[k]?.try { |l| Common::AUTO_PROPERTY_RE.match(l).try { |p| fields << p[1] } }

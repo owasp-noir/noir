@@ -70,23 +70,6 @@ module Analyzer::CSharp
       end
     end
 
-    # Crystal recompiles an interpolated regex literal on every evaluation
-    # (a full PCRE2 JIT compile). The `[FromX]` attribute set is fixed, so
-    # precompile its markers and strippers once at load time; the
-    # param-name regex interpolates a discovered name and is memoized.
-    FROM_ATTRIBUTE_PATTERNS = {
-      "FromQuery"         => "query",
-      "FromRoute"         => "path",
-      "FromBody"          => "json",
-      "FromHeader"        => "header",
-      "FromForm"          => "form",
-      "FromCookie"        => "cookie",
-      "FromServices"      => "service",
-      "FromKeyedServices" => "service",
-    }.map do |attr, type|
-      {"[#{attr}", /\[#{attr}[^\]]*\]/, type}
-    end
-    @param_name_strip_regexes = Hash(String, Regex).new
     @type_namespaces = Hash(Noir::CSharpType, String).new
     @type_files = Hash(Noir::CSharpType, String).new
     @closed_scopes = Set(String).new
@@ -419,9 +402,8 @@ module Analyzer::CSharp
           next unless lexer
           next if Common.aspnet_framework_source?(lexer.code_source)
           scope = route_scope_for(file, project_roots)
-          namespace = lexer.masked_source.match(NAMESPACE_DECL_RE).try(&.[1]) || ""
           Noir::CSharpTypeExtractor.extract(lexer).each do |type|
-            @type_namespaces[type] = namespace
+            @type_namespaces[type] = type.decl.namespace
             @type_files[type] = file
             types_by_scope[scope] << {file, type}
             all_types << type
@@ -510,13 +492,7 @@ module Analyzer::CSharp
 
     # Names of the public methods a class declares.
     private def declared_method_names(lexer : Noir::CSharpLexer, type : Noir::CSharpType) : Set(String)
-      names = Set(String).new
-      lexer.masked_lines[type.start_line..type.end_line].each do |line|
-        next unless potential_member_signature?(line) && line.matches?(/\bpublic\b/)
-        name = extract_action_name(line)
-        names << name unless name.empty?
-      end
-      names
+      type.decl.methods.select { |method| method.public? && method.type_params.nil? }.map(&.name).to_set
     end
 
     # Moves the files naming one of `names` out of `pool` and returns them.
@@ -640,15 +616,10 @@ module Analyzer::CSharp
     # The `[Route]` templates and `[Area]` name a controller class declares.
     alias ClassRoutes = Tuple(Array(String), String?)
 
-    CLASS_ROUTE_RE = /(?:\[|,)\s*(?:global::)?(?:\w+\.)*Route(?:Attribute)?\s*\(\s*(?:template\s*:\s*)?(?:@?"([^"]*)"|([A-Za-z_][\w.]*)\s*[,)])/
-    # `[Area("Admin")]`, or a constant: `[Area(AreaNames.Admin)]`.
-    CLASS_AREA_RE = /(?:\[|,)\s*(?:global::)?(?:\w+\.)*Area(?:Attribute)?\s*\(\s*(?:areaName\s*:\s*)?([^()\]]+)\)/
-
     # The project's own route attributes (`[V3ApiController("series")]`,
     # `[RestGetById]`), read from their definitions.
     @attribute_routes = Noir::CSharpAttributeRoutes.new
-    @class_attribute_re : Regex?
-    @verb_attribute_re : Regex?
+    @custom_route_names = Set(String).new
 
     ATTRIBUTE_CLASS_RE = /\bclass\s+\w+Attribute\b/
 
@@ -661,129 +632,50 @@ module Analyzer::CSharp
         scope = route_scope_for(file, project_roots)
         Noir::CSharpTypeExtractor.extract(lexer).each { |type| @attribute_routes.add(lexer, type, scope) }
       end
-      return if @attribute_routes.empty?
-      @verb_attribute_re = @class_attribute_re = attribute_use_re(@attribute_routes.route_names)
+      @custom_route_names = @attribute_routes.route_names.to_set
     end
 
     @project_roots = [] of String
 
-    # `[Name]`, `[Name(args)]` or `, Name(args)` inside one attribute list.
-    private def attribute_use_re(names : Array(String)) : Regex?
-      return if names.empty?
-      alternation = names.map { |name| Regex.escape(name) }.join('|')
-      Regex.new("([\\[,]\\s*)(?:global::)?(?:\\w+\\.)*(#{alternation})(?:Attribute)?\\b(?:\\s*\\(((?:[^()\"]|\"(?:[^\"\\\\]|\\\\.)*\")*)\\))?")
+    # What one of the project's own attributes means at a usage, when it is one.
+    private def custom_route(attr : Noir::CSharpDecl::Attribute, scope : String) : Noir::CSharpAttributeRoutes::Result?
+      @attribute_routes.resolve(attr, scope) if @custom_route_names.includes?(attr.name)
     end
 
-    # Character ranges of the attribute lists in `masked`: a `[` that opens a
-    # member or type (start of text, or after `]`, `;`, `{`, `}`), not an
-    # array type or indexer, through its closing `]`. A `, Name` elsewhere
-    # on the line (a parameter or base list) is not an attribute.
-    private def attribute_list_spans(masked : String) : Array(Range(Int32, Int32))
-      spans = [] of Range(Int32, Int32)
-      chars = masked.chars
-      previous = nil
-      index = 0
-      while index < chars.size
-        char = chars[index]
-        if char == '[' && (previous.nil? || "];{}".includes?(previous))
-          depth = 0
-          close = index
-          while close < chars.size
-            depth += 1 if chars[close] == '['
-            depth -= 1 if chars[close] == ']'
-            break if depth == 0
-            close += 1
-          end
-          spans << (index..Math.min(close, chars.size - 1))
-          previous = ']'
-          index = close + 1
-          next
-        end
-        previous = char unless char.whitespace?
-        index += 1
-      end
-      spans
+    # A `[Route]`/`[Http<Verb>]` template argument (`"x"`, `template: "x"`).
+    private def template_arg(attr : Noir::CSharpDecl::Attribute) : Noir::CSharpDecl::Arg?
+      attr.argument("template")
     end
 
-    # Runs `regex` over the attribute lists of `text` only (spans come from
-    # the masked twin), replacing each match with the block's value.
-    private def gsub_in_attribute_lists(text : String, masked : String, regex : Regex, & : Regex::MatchData, String -> String) : String
-      return text unless text.size == masked.size
-      spans = attribute_list_spans(masked)
-      return text if spans.empty?
-      chars = text.chars
-      spans.reverse_each do |span|
-        segment = chars[span].join
-        replaced = segment.gsub(regex) { |matched, match| yield match, matched }
-        chars[span] = replaced.chars
-      end
-      chars.join
-    end
-
-    # Templates of the custom class-level attributes on a controller header.
-    private def custom_class_templates(header : String, masked : String, scope : String) : Array(String)
-      templates = [] of String
-      regex = @class_attribute_re || return templates
-      gsub_in_attribute_lists(header, masked, regex) do |match, matched|
-        args = match[3]?.try { |text| Noir::CSharpAttributeRoutes.split_args(text) } || [] of String
-        found = @attribute_routes.resolve(match[2], args, scope)
-        if found && found.verb.nil? && (template = found.template)
-          templates << (template.empty? ? "/" : template)
-        end
-        matched
-      end
-      templates
-    end
-
-    # Rewrites a custom verb attribute into the `[Http<Verb>("template")]` it
-    # stands for, so the one attribute reader below sees a built-in. A route
-    # argument it cannot read stays as written, so the action keeps the
-    # `unresolved-route` tag a built-in `[HttpGet(Routes.Item)]` gets.
-    private def expand_custom_verb_attributes(line : String, masked : String, scope : String) : String
-      regex = @verb_attribute_re || return line
-      # The masked line has no string or comment text, so a name inside a
-      # literal is not mistaken for an attribute.
-      return line unless masked.includes?('[') && masked.matches?(regex)
-      gsub_in_attribute_lists(line, masked, regex) do |match, matched|
-        args = match[3]?.try { |value| Noir::CSharpAttributeRoutes.split_args(value) } || [] of String
-        found = @attribute_routes.resolve(match[2], args, scope)
-        verb = found.try(&.verb) || next matched
-        template = found.try(&.template)
-        first = args.first?
-        unread = template.nil? && first && !first.matches?(/\A\w+\s*(?:=(?!=)|:(?!:))/) ? first : nil
-        # Mid-list (`[Produces("x"), RestGetById]`) it opens a list of its own:
-        # the verb reader looks for `[Http<Verb>`.
-        opener = match[1].starts_with?(',') ? "] [" : match[1]
-        argument = if template && !template.includes?('"')
-                     "(@\"#{template}\")"
-                   elsif unread
-                     "(#{unread})"
-                   else
-                     ""
-                   end
-        "#{opener}Http#{verb.capitalize}#{argument}"
-      end
-    end
-
-    # Reads the class's own attribute list (every line of it, however many
-    # other attributes sit between `[Route]` and `class`).
+    # Reads the class's own attribute list, however many lines and other
+    # attributes it spans. `[Route("")]` is a real template: it roots the
+    # actions at `/` and, being the class's own, replaces an inherited
+    # `[Route("[controller]")]`, so it is kept as `/`. `[Route(Constants.
+    # PrefixApi)]`: a constant the scan declares is read; one it cannot read
+    # contributes no route.
     private def class_header_routes(lexer : Noir::CSharpLexer, type : Noir::CSharpType, file : String) : ClassRoutes
-      header_end = Math.min(type.start_line + type.header.count('\n'), lexer.code_lines.size - 1)
-      header = lexer.code_lines[type.start_line..header_end].join('\n')
-      # `[Route("")]` is a real template: it roots the actions at `/` and,
-      # being the class's own, replaces an inherited `[Route("[controller]")]`.
-      # Kept as `/` so it is not mistaken for "no route" downstream.
-      # `[Route(Constants.PrefixApi)]`: a constant the scan declares is read;
-      # one it cannot read contributes no route, as before.
-      routes = header.scan(CLASS_ROUTE_RE).compact_map do |match|
-        template = match[1]? || csharp_string_value(match[2], file)
-        template.try { |value| value.empty? ? "/" : value }
+      routes = [] of String
+      custom = [] of String
+      area = nil
+      scope = route_scope_for(file, @project_roots)
+      type.decl.attributes.each do |attr|
+        case attr.name
+        when "Route"
+          arg = template_arg(attr) || next
+          template = arg.literal || (arg.text.matches?(IDENTIFIER_PATH_RE) ? csharp_string_value(arg.text, file) : nil)
+          routes << (template.empty? ? "/" : template) if template
+        when "Area"
+          area ||= attr.argument("areaName").try { |arg| csharp_string_value(arg.text, file) }
+        else
+          found = custom_route(attr, scope) || next
+          template = found.template
+          custom << (template.empty? ? "/" : template) if found.verb.nil? && template
+        end
       end
-      masked_header = lexer.masked_lines[type.start_line..header_end].join('\n')
-      routes.concat(custom_class_templates(header, masked_header, route_scope_for(file, @project_roots)))
-      area = CLASS_AREA_RE.match(header).try { |match| csharp_string_value(match[1], file) }
-      {routes, area.presence}
+      {routes + custom, area.presence}
     end
+
+    IDENTIFIER_PATH_RE = /\A[A-Za-z_][\w.]*\z/
 
     # `[Route]` and `[Area]` are `Inherited = true`: a controller without its
     # own takes them from the nearest base class that declares them.
@@ -809,6 +701,82 @@ module Analyzer::CSharp
       {routes, area}
     end
 
+    # What an action's attributes declare: one `{verb, route}` per verb
+    # attribute (`[HttpGet("a"), HttpHead("a")]` is two), the verb-less
+    # `[Route]` a bare verb inherits, whether any routing attribute is
+    # present, `[NonAction]`, the verbs whose route argument is a constant
+    # the analyzer cannot read, and an `[ActionName]` rename.
+    record ActionAttributes, verb_routes : Array(Tuple(String, String)), route_attr : String,
+      explicit : Bool, non_action : Bool, unresolved : Set(String), renamed : String?
+
+    VERB_ATTRIBUTES = {
+      "HttpGet" => "GET", "HttpPost" => "POST", "HttpPut" => "PUT", "HttpDelete" => "DELETE",
+      "HttpPatch" => "PATCH", "HttpHead" => "HEAD", "HttpOptions" => "OPTIONS",
+    }
+
+    # A route argument that is a name (`ApiRoutes.Item`, `Const + "/x"`): the
+    # route exists but cannot be read here, so the action is reported at the
+    # class route with an `unresolved-route` tag.
+    UNREAD_ROUTE_ARG_RE = /\A[A-Za-z_]/
+
+    # ASP.NET Core routing has always accepted an arbitrary method string
+    # through `[AcceptVerbs(...)]`; QUERY (RFC 10008) ships natively as
+    # `HttpMethods.Query` starting with .NET 10.
+    ACCEPT_VERB_TOKENS  = %w[GET POST PUT DELETE PATCH HEAD OPTIONS QUERY]
+    HTTP_METHODS_ARG_RE = /\A(?:\w+\.)*HttpMethods\s*\.\s*([A-Za-z]+)\z/
+
+    private def action_attributes(attrs : Array(Noir::CSharpDecl::Attribute), scope : String) : ActionAttributes
+      verb_routes = [] of Tuple(String, String)
+      route_attr = ""
+      explicit = false
+      non_action = false
+      unresolved = Set(String).new
+      renamed = nil
+      attrs.each do |attr|
+        next unless attr.target.nil? || attr.target == "method"
+        if verb = VERB_ATTRIBUTES[attr.name]?
+          arg = template_arg(attr)
+          template = arg.try(&.literal).presence
+          verb_routes << {verb, template || route_attr}
+          unresolved << verb if template.nil? && arg && arg.positional? && arg.text.matches?(UNREAD_ROUTE_ARG_RE)
+          explicit = true
+        elsif attr.name == "Route"
+          route_attr = template_arg(attr).try(&.literal).presence || route_attr
+          explicit = true
+        elsif attr.name == "AcceptVerbs"
+          # `[AcceptVerbs("PUT", "PATCH")]` / `[AcceptVerbs("PUT", Route =
+          # "Bank")]`: several verbs at one route, the MVC equivalent of
+          # stacking `[HttpPut]` and `[HttpPatch]`.
+          verbs = attr.positional.compact_map do |arg|
+            token = (arg.literal || arg.text.match(HTTP_METHODS_ARG_RE).try(&.[1]) || "").upcase
+            token if ACCEPT_VERB_TOKENS.includes?(token)
+          end.uniq!
+          next if verbs.empty?
+          route = attr.property("Route").try(&.literal).presence || route_attr
+          verbs.each { |accept_verb| verb_routes << {accept_verb, route} }
+          explicit = true
+        elsif attr.name == "NonAction"
+          non_action = true
+        elsif attr.name == "ActionName"
+          renamed = attr.positional.first?.try(&.literal) || renamed
+        elsif (found = custom_route(attr, scope)) && (verb = found.verb)
+          # A custom verb attribute stands for the `[Http<Verb>("template")]`
+          # its definition reaches; an argument it cannot read keeps the
+          # `unresolved-route` tag a built-in `[HttpGet(Routes.Item)]` gets.
+          template = found.template
+          first = attr.positional.first?
+          if template && !template.includes?('"')
+            verb_routes << {verb, template.presence || route_attr}
+          else
+            verb_routes << {verb, route_attr}
+            unresolved << verb if template.nil? && first && first.text.matches?(UNREAD_ROUTE_ARG_RE)
+          end
+          explicit = true
+        end
+      end
+      ActionAttributes.new(verb_routes, route_attr, explicit, non_action, unresolved, renamed)
+    end
+
     private def analyze_controller(file : String, lexer : Noir::CSharpLexer, type : Noir::CSharpType,
                                    route_patterns : Array(ConventionalRoute), class_routes : ClassRoutes,
                                    include_callee : Bool, owner : Noir::CSharpType? = nil, owner_path : PathInfo? = nil, skip : Set(String)? = nil)
@@ -819,257 +787,61 @@ module Analyzer::CSharp
       lines = lexer.code_lines[type.start_line..type.end_line]
       masked_lines = lexer.masked_lines[type.start_line..type.end_line]
       attribute_scope = route_scope_for(file, @project_roots)
-      lines = lines.map_with_index { |text, index| expand_custom_verb_attributes(text, masked_lines[index], attribute_scope) } if @verb_attribute_re
       # One route per controller `[Route]`; none falls back to conventional routing.
       controller_routes, area = class_routes
       controller_routes = [""] if controller_routes.empty?
 
-      # Accumulate every `[Http<Verb>(...)]` on the pending action so a method
-      # carrying more than one (`[HttpGet(...)]` + `[HttpHead(...)]` for image/
-      # file serving, GET+POST, …) emits an endpoint per verb instead of only
-      # the last attribute. `route_attr` holds a verb-less `[Route(...)]` base
-      # that a bare `[HttpGet]` (no path of its own) inherits.
-      verb_routes = [] of Tuple(String, String)
-      route_attr = ""
-      explicit_endpoint_attribute = false
-      non_action_attribute = false
-      # `[HttpGet(ApiRoutes.X)]`: the route is a constant we cannot read. The
-      # action is still reported, at the class (or conventional) route, and
-      # tagged so the missing suffix is not mistaken for the full path.
-      unresolved_verbs = Set(String).new
-      # `[ActionName("List")]` names the action in the route (`[action]` token
-      # and conventional routing), whatever the method is called.
-      renamed_action : String? = nil
-      depth = 0
+      type.decl.methods.each do |method|
+        # An open generic method is never an action.
+        next unless method.public? && method.type_params.nil?
+        action = action_attributes(method.attributes, attribute_scope)
+        next if action.non_action || !action_method?(method.header, action.explicit)
+        next unless owner.nil? || action.explicit
+        next if skip.try(&.includes?(method.name))
+        handler = Handler.new("#{(owner || type).name}.#{method.name}", file, method.line + 1)
+        action_name = action.renamed || method.name
+        route_attr = action.route_attr
+        body_block, body_line, skip_first = extract_callable_body(lines, masked_lines, method.header_end - line_offset)
+        body_params = extract_params_from_block(body_block)
 
-      i = 0
-      while i < lines.size
-        start_index = i
-        line = lines[i]
-
-        if depth == 1
-          # Stitch together a multi-line `[Http<Verb>(\n   "/path",\n
-          # Order = 1\n)]` attribute before running the
-          # single-line matcher. The `[Http*]` opener arrives without
-          # a closing paren on the same line, the path literal lives
-          # on a subsequent line; the per-line matcher only
-          # saw `[HttpPost(` and recorded POST with an empty path.
-          attr_line, advance = stitch_multiline_attribute(lines, masked_lines, i)
-          line = attr_line if advance > 0
-
-          if accept = collect_accept_verbs(line, route_attr)
-            accept_verbs, accept_route = accept
-            accept_verbs.each { |accept_verb| verb_routes << {accept_verb, accept_route} }
-            explicit_endpoint_attribute = true
-          else
-            verb, verb_route, route_attr, found_attribute, unresolved = collect_verb_route(line, route_attr)
-            explicit_endpoint_attribute ||= found_attribute
-            if verb
-              verb_routes << {verb, verb_route}
-              unresolved_verbs << verb if unresolved
+        # No `[Http*]` attribute → convention-based (verb GET, route from
+        # any `[Route]` base or the controller convention). An action with a
+        # `[Route]` of its own and no verb attribute accepts every method.
+        emit_pairs = action.verb_routes.empty? ? [{route_attr.empty? ? "GET" : "ANY", route_attr}] : action.verb_routes
+        emit_pairs.each do |emit_verb, emit_route|
+          # A bare `[HttpGet]` whose `[Route("x")]` base came after it
+          # collected an empty route — fall back to the base so
+          # verb-then-`[Route]` ordering matches `[Route]`-then-verb.
+          emit_route = route_attr if emit_route.empty? && !route_attr.empty?
+          parameters = extract_parameters(method.params, emit_verb, file, lines, masked_lines)
+          parameters = merge_params(parameters, body_params, emit_verb)
+          routes = controller_routes.flat_map do |controller_route|
+            effective_action_route = emit_route
+            if !controller_route.empty? && controller_route == effective_action_route
+              effective_action_route = ""
             end
-          end
-          non_action_attribute = true if line.includes?("[NonAction")
-          if rename = ACTION_NAME_RE.match(line)
-            renamed_action = rename[1]
-          end
+            resolve_routes(controller_route, effective_action_route, controller_name, action_name, parameters, route_patterns, area)
+          end.uniq!
 
-          # Skip the continuation lines we just consumed; they're
-          # already folded into `line`.
-          i += advance if advance > 0
-        end
+          routes.each do |route|
+            details = Details.new(PathInfo.new(file, method.line + 1))
+            endpoint = Endpoint.new(route, emit_verb, details)
+            endpoint.handler = handler
+            # An inherited action also points at the controller that
+            # owns it: that class's `[Authorize]` / `[AllowAnonymous]`
+            # govern it, though the method sits in the base's file.
+            owner_path.try { |info| endpoint.details.add_path(info) }
 
-        if depth == 1 && potential_member_signature?(masked_lines[i])
-          signature, end_index = build_signature(lines, masked_lines, i)
-          if signature.matches?(/\bpublic\b/) && !non_action_attribute && action_method?(signature, explicit_endpoint_attribute) &&
-             (owner.nil? || explicit_endpoint_attribute)
-            action_name = extract_action_name(signature)
-            unless action_name.empty? || skip.try(&.includes?(action_name))
-              handler = Handler.new("#{(owner || type).name}.#{action_name}", file, line_offset + i + 1)
-              action_name = renamed_action || action_name
-              body_block, body_line, skip_first = extract_callable_body(lines, masked_lines, end_index)
-              body_params = extract_params_from_block(body_block)
-
-              # No `[Http*]` attribute → convention-based (verb GET, route from
-              # any `[Route]` base or the controller convention).
-              # An action with a `[Route]` of its own and no verb attribute
-              # accepts every method.
-              emit_pairs = verb_routes.empty? ? [{route_attr.empty? ? "GET" : "ANY", route_attr}] : verb_routes
-              emit_pairs.each do |emit_verb, emit_route|
-                # A bare `[HttpGet]` whose `[Route("x")]` base arrived on a
-                # later line collected an empty route — fall back to the base
-                # so verb-then-`[Route]` ordering matches `[Route]`-then-verb.
-                emit_route = route_attr if emit_route.empty? && !route_attr.empty?
-                parameters = extract_parameters(signature, emit_verb, file, lines, masked_lines)
-                parameters = merge_params(parameters, body_params, emit_verb)
-                routes = controller_routes.flat_map do |controller_route|
-                  effective_action_route = emit_route
-                  if !controller_route.empty? && controller_route == effective_action_route
-                    effective_action_route = ""
-                  end
-                  resolve_routes(controller_route, effective_action_route, controller_name, action_name, parameters, route_patterns, area)
-                end.uniq!
-
-                routes.each do |route|
-                  details = Details.new(PathInfo.new(file, line_offset + i + 1))
-                  endpoint = Endpoint.new(route, emit_verb, details)
-                  endpoint.handler = handler
-                  # An inherited action also points at the controller that
-                  # owns it: that class's `[Authorize]` / `[AllowAnonymous]`
-                  # govern it, though the method sits in the base's file.
-                  owner_path.try { |info| endpoint.details.add_path(info) }
-
-                  align_params_with_route(parameters, route).each do |param|
-                    endpoint.params << param
-                  end
-
-                  endpoint.add_tag(Tag.new("unresolved-route", UNRESOLVED_ROUTE_DESCRIPTION, TAGGER)) if unresolved_verbs.includes?(emit_verb)
-                  attach_csharp_callees(endpoint, body_block, file, line_offset + body_line + 1, include_callee, skip_first_line: skip_first)
-                  @result << endpoint
-                end
-              end
+            align_params_with_route(parameters, route).each do |param|
+              endpoint.params << param
             end
+
+            endpoint.add_tag(Tag.new("unresolved-route", UNRESOLVED_ROUTE_DESCRIPTION, TAGGER)) if action.unresolved.includes?(emit_verb)
+            attach_csharp_callees(endpoint, body_block, file, line_offset + body_line + 1, include_callee, skip_first_line: skip_first)
+            @result << endpoint
           end
-          verb_routes.clear
-          route_attr = ""
-          explicit_endpoint_attribute = false
-          non_action_attribute = false
-          unresolved_verbs.clear
-          renamed_action = nil
-          i = end_index
         end
-
-        (start_index..i).each do |index|
-          depth += masked_lines[index].count('{') - masked_lines[index].count('}')
-        end
-        i += 1
       end
-    end
-
-    # Collapses a `[Http<Verb>(...)` / `[Route(...)]` attribute that
-    # was split across multiple lines into a single logical line so
-    # the single-line attribute regexes in `extract_attribute_route`
-    # can find the path literal. Returns `{joined_line, advance}`
-    # where `advance` is the number of *extra* lines consumed; the
-    # caller adds that to its loop index. A non-multi-line case
-    # returns `{line, 0}` so the existing fast path is preserved.
-    private def stitch_multiline_attribute(lines : Array(String), masked : Array(String), start : Int32) : Tuple(String, Int32)
-      line = lines[start]
-      return {line, 0} unless line =~ /\[(Http(Post|Get|Put|Delete|Patch|Head|Options)|Route|AcceptVerbs)\b/
-
-      # The attribute closes when paren+bracket depth returns to zero. Depth is
-      # counted over `masked` — a route template is free to carry a literal
-      # `(` or `[` (`[HttpGet("smile-(-face")]`), and counting those as
-      # structure leaves the attribute permanently unbalanced, swallowing every
-      # remaining line of the class. If the opening line is already balanced,
-      # no stitching is needed.
-      paren = delimiter_depth(masked, start, '(', ')')
-      bracket = delimiter_depth(masked, start, '[', ']')
-      return {line, 0} if paren <= 0 && bracket <= 0
-
-      joined = line.rstrip
-      idx = start + 1
-      # Cap the read-ahead at 8 lines — far beyond what a real-world
-      # attribute spans, but tight enough that a runaway file with
-      # unbalanced brackets can't blow up the scan.
-      max_read = (start + 8).clamp(0, lines.size - 1)
-      while idx <= max_read
-        joined += " " + lines[idx].strip
-        paren += delimiter_depth(masked, idx, '(', ')')
-        bracket += delimiter_depth(masked, idx, '[', ']')
-        break if paren <= 0 && bracket <= 0
-        idx += 1
-      end
-
-      # An attribute that never balances runs `idx` one past `max_read`, which
-      # is the last line. The caller indexes `lines`/`masked_lines` with the
-      # advanced cursor, so it must stay in range.
-      {joined, idx.clamp(start, lines.size - 1) - start}
-    end
-
-    private def delimiter_depth(masked : Array(String), index : Int32, open : Char, close : Char) : Int32
-      line = masked[index]?
-      return 0 unless line
-      line.count(open) - line.count(close)
-    end
-
-    # `[AcceptVerbs("PUT", "PATCH")]` / `[AcceptVerbs("PUT", Route = "Bank")]`
-    # declares an action answering several verbs at one route — the MVC
-    # equivalent of stacking `[HttpPut]` and `[HttpPatch]`. It was ignored
-    # entirely, so such actions fell back to the conventional GET route.
-    ACCEPT_VERBS_RE       = /\[AcceptVerbs\s*\(([^\]]*)\)\s*\]/
-    ACCEPT_VERBS_ROUTE_RE = /\bRoute\s*=\s*@?"([^"]+)"/
-    # ASP.NET Core routing has always accepted an arbitrary method string
-    # through `[AcceptVerbs(...)]`; QUERY (RFC 10008) ships natively as
-    # `HttpMethods.Query` starting with .NET 10.
-    ACCEPT_VERB_TOKENS = %w[GET POST PUT DELETE PATCH HEAD OPTIONS QUERY]
-
-    private def collect_accept_verbs(line : String, route_attr : String) : Tuple(Array(String), String)?
-      match = ACCEPT_VERBS_RE.match(line)
-      return unless match
-
-      args = match[1]
-      route = ACCEPT_VERBS_ROUTE_RE.match(args).try(&.[1]) || route_attr
-      verbs = [] of String
-      args.scan(/@?"([^"]+)"/) do |literal|
-        token = literal[1].upcase
-        next unless ACCEPT_VERB_TOKENS.includes?(token)
-        verbs << token unless verbs.includes?(token)
-      end
-      # `HttpMethods.Put`-style arguments carry the verb as an identifier.
-      args.scan(/\bHttpMethods\s*\.\s*([A-Za-z]+)/) do |token|
-        upcased = token[1].upcase
-        next unless ACCEPT_VERB_TOKENS.includes?(upcased)
-        verbs << upcased unless verbs.includes?(upcased)
-      end
-      return if verbs.empty?
-
-      {verbs, route}
-    end
-
-    # Attribute name carrying each verb, for `extract_attribute_route`.
-    VERB_ATTRIBUTES = {
-      "[HttpPost"    => {"POST", "HttpPost"},
-      "[HttpGet"     => {"GET", "HttpGet"},
-      "[HttpPut"     => {"PUT", "HttpPut"},
-      "[HttpDelete"  => {"DELETE", "HttpDelete"},
-      "[HttpPatch"   => {"PATCH", "HttpPatch"},
-      "[HttpHead"    => {"HEAD", "HttpHead"},
-      "[HttpOptions" => {"OPTIONS", "HttpOptions"},
-    }
-
-    # Classify one attribute line. Returns `{verb, verb_route, route_attr, found,
-    # unresolved}`: for an `[Http<Verb>(...)]` the verb + its route (falling back
-    # to the `[Route]` base for a path-less attribute), with `route_attr` left
-    # unchanged, and `unresolved` when its route argument is a constant this
-    # analyzer cannot read; for a verb-less `[Route("x")]` the new base in
-    # `route_attr` (verb `nil`); for any other line, no change and `found =
-    # false`. Keeping the verb separate lets the caller accumulate several
-    # verbs on one method.
-    private def collect_verb_route(line : String, route_attr : String) : Tuple(String?, String, String, Bool, Bool)
-      VERB_ATTRIBUTES.each do |marker, pair|
-        next unless line.includes?(marker)
-        verb, attr = pair
-        route = extract_attribute_route(line, attr)
-        return {verb, route || route_attr, route_attr, true, route.nil? && line.matches?(UNRESOLVED_ROUTE_ARG_RE)}
-      end
-
-      if line.includes?("[Route")
-        return {nil, route_attr, extract_attribute_route(line, "Route") || route_attr, true, false}
-      end
-
-      {nil, route_attr, route_attr, false, false}
-    end
-
-    ACCESS_MODIFIER_RE = /\b(?:public|private|protected|internal)\b/
-    # `class`/`struct`/`interface`/`enum` are reserved, so their presence alone
-    # marks a type declaration. `record` is contextual and a perfectly legal
-    # parameter name (`Save(AuditRecord record)`) — it only declares a type
-    # when an identifier follows it.
-    TYPE_DECLARATION_RE = /\b(?:class|struct|interface|enum)\b|\brecord\s+(?:class\s+|struct\s+)?\w+\s*[<({]/
-
-    private def potential_member_signature?(line : String) : Bool
-      line.matches?(ACCESS_MODIFIER_RE) && line.includes?("(") && !line.matches?(TYPE_DECLARATION_RE)
     end
 
     private def action_method?(signature : String, explicit_endpoint_attribute : Bool) : Bool
@@ -1083,59 +855,49 @@ module Analyzer::CSharp
         signature.matches?(/Task\s*<\s*(?:IEnumerable|List|PagedResult|Result|Response|[A-Z]\w*)/)
     end
 
-    private def extract_action_name(signature : String) : String
-      # `.` and `?` belong in the return type: `Task<long?>`,
-      # `ActionResult<UserItemDataDto?>` and
-      # `Task<Bit.HttpExtensions.ListResponseModel<T>>` are all real action
-      # signatures that a `[\w<>\[\],\s]` class cannot span.
-      match = signature.match(/public\s+(?:async\s+)?(?:override\s+)?(?:virtual\s+)?[\w<>\[\],\s.?]+\s+(\w+)\s*\(/)
-      return "" unless match
-      match[1]
-    end
+    # The request source each `[FromX]` attribute binds a parameter from.
+    FROM_BINDINGS = {
+      "FromQuery"         => "query",
+      "FromRoute"         => "path",
+      "FromBody"          => "json",
+      "FromHeader"        => "header",
+      "FromForm"          => "form",
+      "FromCookie"        => "cookie",
+      "FromServices"      => "service",
+      "FromKeyedServices" => "service",
+    }
 
-    private def extract_parameters(signature : String, http_method : String, file : String,
+    private def extract_parameters(params : Array(Noir::CSharpDecl::Parameter), http_method : String, file : String,
                                    lines : Array(String), masked_lines : Array(String)) : Array(Param)
       parameters = [] of Param
-
-      param_list = extract_balanced_param_list(signature)
-      return parameters unless param_list
-
-      param_list = param_list.strip
-      return parameters if param_list.empty?
-
       default_param_type = default_param_type(http_method)
 
-      split_csharp_parameters(param_list).each do |param_def|
-        explicit_name = Common.explicit_binding_name(param_def)
-        cleaned_def, param_type = normalize_param_definition(param_def)
-        next if cleaned_def.empty?
+      params.each do |param|
+        binding = param.attributes.find { |attr| FROM_BINDINGS.has_key?(attr.name) }
+        param_type = binding.try { |attr| FROM_BINDINGS[attr.name] }
         next if param_type == "service"
-        unbound, binder_key = custom_binding(param_def)
+        # `[FromRoute(Name = "organizationId")] Guid sponsoringOrgId` binds
+        # the route value `organizationId`; the identifier is only the
+        # local name.
+        explicit_name = binding.try(&.args.first?).try(&.literal) if param_type
+        unbound, binder_key = custom_binding(param.attributes.map { |attr| "[#{attr.text}]" }.join(' '))
         next if unbound
         explicit_name ||= binder_key
-        # Attributes left after the `[FromX]` ones (`[ModelBinder(BinderType
-        # = typeof(B))]`) are not part of the declaration.
-        cleaned_def = cleaned_def.gsub(Common::ATTRIBUTE_LIST_RE, "").strip
 
-        if match = cleaned_def.match(/(\w+)\s*(?:=\s*[^,]+)?\s*$/)
-          param_name = match[1]
-
-          # A complex/interface action parameter with no explicit `[FromX]`
-          # attribute that names a DI service (an injected repository, the
-          # DbContext, a MediatR sender, …) is not request input — model
-          # binding never produces one. Dropping it removes a recurring FP.
-          if param_type.nil?
-            strip_regex = @param_name_strip_regexes[param_name] ||= /\b#{Regex.escape(param_name)}\b\s*(?:=\s*[^,]+)?\s*$/
-            type_token = cleaned_def.sub(strip_regex, "").strip.split(/\s+/).last?
-            next if type_token && Common.csharp_service_type?(type_token)
-          end
-
-          bound = param_type || default_param_type
-          # A model-bound complex type (`LoginInputModel model`) is the members
-          # a client sends, not a field named after the argument.
-          members = body_type_params(param_def, bound, file, lines, masked_lines) if bound.in?("json", "form") && explicit_name.nil?
-          members ? parameters.concat(members) : (parameters << Param.new(explicit_name || param_name, "", bound))
+        # A complex/interface action parameter with no explicit `[FromX]`
+        # attribute that names a DI service (an injected repository, the
+        # DbContext, a MediatR sender, …) is not request input — model
+        # binding never produces one.
+        if param_type.nil?
+          type_token = param.type.split(/\s+/).last?
+          next if type_token && Common.csharp_service_type?(type_token)
         end
+
+        bound = param_type || default_param_type
+        # A model-bound complex type (`LoginInputModel model`) is the members
+        # a client sends, not a field named after the argument.
+        members = body_type_params("#{param.type} #{param.name}", bound, file, lines, masked_lines) if bound.in?("json", "form") && explicit_name.nil?
+        members ? parameters.concat(members) : (parameters << Param.new(explicit_name || param.name, "", bound))
       end
 
       parameters
@@ -1151,20 +913,6 @@ module Analyzer::CSharp
       else
         "query"
       end
-    end
-
-    private def normalize_param_definition(param_def : String) : Tuple(String, String?)
-      param_type = nil
-      cleaned = param_def.strip
-
-      FROM_ATTRIBUTE_PATTERNS.each do |marker, attr_regex, type|
-        if cleaned.includes?(marker)
-          param_type = type
-          cleaned = cleaned.gsub(attr_regex, "")
-        end
-      end
-
-      {cleaned.strip, param_type}
     end
 
     private def merge_params(signature_params : Array(Param), body_params : Array(Param), http_method : String) : Array(Param)
@@ -1183,40 +931,6 @@ module Analyzer::CSharp
       end
 
       merged
-    end
-
-    # The attribute's own parens only: in `[HttpPost, ActionName("List")]` or
-    # `[HttpGet][Authorize("Policy")]` the literal belongs to the sibling
-    # attribute, not to a route.
-    private ATTRIBUTE_REGEXES = {
-      "HttpPost"    => /\[HttpPost(?:Attribute)?\s*\(\s*@?"([^"]+)"/,
-      "HttpGet"     => /\[HttpGet(?:Attribute)?\s*\(\s*@?"([^"]+)"/,
-      "HttpPut"     => /\[HttpPut(?:Attribute)?\s*\(\s*@?"([^"]+)"/,
-      "HttpDelete"  => /\[HttpDelete(?:Attribute)?\s*\(\s*@?"([^"]+)"/,
-      "HttpPatch"   => /\[HttpPatch(?:Attribute)?\s*\(\s*@?"([^"]+)"/,
-      "HttpHead"    => /\[HttpHead(?:Attribute)?\s*\(\s*@?"([^"]+)"/,
-      "HttpOptions" => /\[HttpOptions(?:Attribute)?\s*\(\s*@?"([^"]+)"/,
-      "Route"       => /\[Route(?:Attribute)?\s*\(\s*@?"([^"]+)"/,
-    }
-
-    # A `Route("x")` anywhere on the line (`[HttpDelete, EnableRateLimiting("f"),
-    # Route("rm")]`) routes a verb attribute that has no literal of its own.
-    private ROUTE_OWN_RE = /\bRoute(?:Attribute)?\s*\(\s*@?"([^"]+)"/
-
-    private TEMPLATE_REGEX = /Template\s*=\s*@?"([^"]+)"/
-
-    # A verb attribute whose first positional argument is not a string literal
-    # or a named argument (`[HttpGet(ApiRoutes.Attendees.Get)]`,
-    # `[HttpGet(Const + "/x")]`): the route exists but cannot be read here, so
-    # the action is reported at the class route with an `unresolved-route` tag.
-    private UNRESOLVED_ROUTE_ARG_RE = /\[Http(?:Post|Get|Put|Delete|Patch|Head|Options)(?:Attribute)?\s*\(\s*(?!["@$]|\w+\s*[=:])[A-Za-z_]/
-
-    private ACTION_NAME_RE = /\bActionName(?:Attribute)?\s*\(\s*"([^"]+)"/
-
-    # The route template the attribute declares, or nil when the line carries
-    # none (the caller keeps its current route).
-    private def extract_attribute_route(line : String, attribute : String) : String?
-      (ATTRIBUTE_REGEXES[attribute].match(line) || ROUTE_OWN_RE.match(line) || TEMPLATE_REGEX.match(line)).try(&.[1])
     end
 
     private def resolve_routes(controller_route : String, action_route : String, controller_name : String, action_name : String, parameters : Array(Param), route_patterns : Array(ConventionalRoute), area : String? = nil) : Array(String)

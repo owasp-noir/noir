@@ -8,6 +8,12 @@ private def table_for(source : String) : Noir::CSharpAttributeRoutes
   table
 end
 
+# The usage `[name(args)]`, parsed the way a controller's attribute is.
+private def usage(name : String, args : Array(String) = [] of String) : Noir::CSharpDecl::Attribute
+  source = "[#{name}#{args.empty? ? "" : "(#{args.join(", ")})"}] class C { }"
+  Noir::CSharpDeclParser.parse(Noir::CSharpLexer.new(source)).types.first.attributes.first
+end
+
 VERSIONED = <<-CS
   public class VersionedApiControllerAttribute : Attribute, IRouteTemplateProvider
   {
@@ -47,22 +53,22 @@ describe Noir::CSharpAttributeRoutes do
   table = table_for(VERSIONED)
 
   it "follows the constructor chain into an interpolated Template" do
-    table.resolve("V3ApiController", ["\"series\""]).should eq Noir::CSharpAttributeRoutes::Result.new(nil, "api/v3/series")
-    table.resolve("V3ApiController", [] of String).should eq Noir::CSharpAttributeRoutes::Result.new(nil, "api/v3/[controller]")
-    table.resolve("V3ApiController", ["resource: \"queue\""]).should eq Noir::CSharpAttributeRoutes::Result.new(nil, "api/v3/queue")
+    table.resolve(usage("V3ApiController", ["\"series\""])).should eq Noir::CSharpAttributeRoutes::Result.new(nil, "api/v3/series")
+    table.resolve(usage("V3ApiController", [] of String)).should eq Noir::CSharpAttributeRoutes::Result.new(nil, "api/v3/[controller]")
+    table.resolve(usage("V3ApiController", ["resource: \"queue\""])).should eq Noir::CSharpAttributeRoutes::Result.new(nil, "api/v3/queue")
   end
 
   it "reads a verb and template from the provider interface members or the built-in base" do
-    table.resolve("RestGetById", [] of String).should eq Noir::CSharpAttributeRoutes::Result.new("GET", "{id:int}")
-    table.resolve("RestPutById", [] of String).should eq Noir::CSharpAttributeRoutes::Result.new("PUT", "{id:int?}")
-    table.resolve("RestPostById", [] of String).should eq Noir::CSharpAttributeRoutes::Result.new("POST", nil)
+    table.resolve(usage("RestGetById", [] of String)).should eq Noir::CSharpAttributeRoutes::Result.new("GET", "{id:int}")
+    table.resolve(usage("RestPutById", [] of String)).should eq Noir::CSharpAttributeRoutes::Result.new("PUT", "{id:int?}")
+    table.resolve(usage("RestPostById", [] of String)).should eq Noir::CSharpAttributeRoutes::Result.new("POST", nil)
   end
 
   it "leaves out an attribute that only has a Template property, and an argument it cannot read" do
-    table.resolve("Label", [] of String).should be_nil
+    table.resolve(usage("Label", [] of String)).should be_nil
     table.route_names.sort!.should eq ["RestGetById", "RestPostById", "RestPutById", "V3ApiController", "VersionedApiController"]
     # `Prefix.Value` is a constant of another class: no template rather than a wrong one.
-    table.resolve("V3ApiController", ["Prefix.Value"]).try(&.template).should be_nil
+    table.resolve(usage("V3ApiController", ["Prefix.Value"])).try(&.template).should be_nil
   end
 
   it "takes a name two projects define from the usage's own project, and refuses when that does not settle it" do
@@ -72,18 +78,19 @@ describe Noir::CSharpAttributeRoutes do
       lexer = Noir::CSharpLexer.new(source.call(prefix))
       Noir::CSharpTypeExtractor.extract(lexer).each { |type| scoped.add(lexer, type, scope) }
     end
-    scoped.resolve("ApiRoute", ["\"x\""], "a").try(&.template).should eq "alpha/x"
-    scoped.resolve("ApiRoute", ["\"x\""], "b").try(&.template).should eq "beta/x"
-    scoped.resolve("ApiRoute", ["\"x\""], "c").should be_nil
+    scoped.resolve(usage("ApiRoute", ["\"x\""]), "a").try(&.template).should eq "alpha/x"
+    scoped.resolve(usage("ApiRoute", ["\"x\""]), "b").try(&.template).should eq "beta/x"
+    scoped.resolve(usage("ApiRoute", ["\"x\""]), "c").should be_nil
   end
 
   it "ignores property assignments and a filter that merely has a Template" do
     other = table_for("public class RestGetAttribute : HttpGetAttribute { public RestGetAttribute(string t) : base(t) { } }\npublic class ViewTemplateAttribute : ResultFilterAttribute { public string Template => \"x\"; }")
-    other.resolve("RestGet", ["\"ord\"", "Order = 2", "Name = \"n\""]).should eq Noir::CSharpAttributeRoutes::Result.new("GET", "ord")
-    other.resolve("ViewTemplate", [] of String).should be_nil
+    other.resolve(usage("RestGet", ["\"ord\"", "Order = 2", "Name = \"n\""])).should eq Noir::CSharpAttributeRoutes::Result.new("GET", "ord")
+    other.resolve(usage("ViewTemplate", [] of String)).should be_nil
   end
 
-  it "splits usage arguments at top-level commas only" do
-    Noir::CSharpAttributeRoutes.split_args(%q("a,b", Order = 1, c: f(1, 2))).should eq [%q("a,b"), "Order = 1", "c: f(1, 2)"]
+  it "binds arguments split at top-level commas only" do
+    other = table_for("public class PathAttribute : RouteAttribute { public PathAttribute(string a, string b = \"z\") : base(a + b) { } }\npublic class SegAttribute : HttpGetAttribute { public SegAttribute(string t, string u = \"\") : base(t) { } }")
+    other.resolve(usage("Seg", [%q("a,b"), "Order = 1", %q(u: f(1, 2))])).should eq Noir::CSharpAttributeRoutes::Result.new("GET", "a,b")
   end
 end
