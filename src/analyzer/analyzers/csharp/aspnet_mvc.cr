@@ -1,4 +1,5 @@
 require "../../../models/analyzer"
+require "../../../miniparsers/csharp_decl_parser"
 require "./common"
 
 module Analyzer::CSharp
@@ -6,13 +7,6 @@ module Analyzer::CSharp
     analyzer_for "cs_aspnet_mvc"
 
     include Common
-
-    # Crystal recompiles an interpolated regex literal on every evaluation
-    # (a full PCRE2 JIT compile). The attribute set is fixed, so precompile
-    # the route-extraction matchers once at load time.
-    ATTRIBUTE_ROUTE_PATTERNS = ["HttpGet", "HttpPost", "HttpPut", "HttpDelete", "HttpPatch", "Route"].to_h do |attribute|
-      {attribute, /\b#{attribute}\s*\(\s*"([^"]+)"/}
-    end
 
     def analyze
       include_callee = callees_needed?
@@ -172,90 +166,25 @@ module Analyzer::CSharp
       lines = lexer.code_lines
       masked_lines = lexer.masked_lines
 
-      i = 0
-      http_method = "GET" # Default method for tracking across lines
-      action_route = ""   # Track action-level route
-      explicit_endpoint_attribute = false
-      non_action = false
-      # Open class bodies, innermost last: {body depth, controller name or nil
-      # for a non-controller class, route prefix}. A file can declare several
-      # controllers, and each action belongs to the class it sits in.
-      scopes = [] of Tuple(Int32, String?, String)
-      pending_class : Tuple(Int32, String?, String)? = nil
-      depth = 0
-
-      while i < lines.size
-        start_index = i
-        line = lines[i]
-
-        # Look for HTTP method attributes (with optional route)
-        if line.includes?("[HttpPost")
-          http_method = "POST"
-          action_route = extract_attribute_route(line, "HttpPost")
-          explicit_endpoint_attribute = true
-        elsif line.includes?("[HttpGet")
-          http_method = "GET"
-          action_route = extract_attribute_route(line, "HttpGet")
-          explicit_endpoint_attribute = true
-        elsif line.includes?("[HttpPut")
-          http_method = "PUT"
-          action_route = extract_attribute_route(line, "HttpPut")
-          explicit_endpoint_attribute = true
-        elsif line.includes?("[HttpDelete")
-          http_method = "DELETE"
-          action_route = extract_attribute_route(line, "HttpDelete")
-          explicit_endpoint_attribute = true
-        elsif line.includes?("[HttpPatch")
-          http_method = "PATCH"
-          action_route = extract_attribute_route(line, "HttpPatch")
-          explicit_endpoint_attribute = true
-        elsif line.includes?("[Route")
-          action_route = extract_attribute_route(line, "Route")
-          explicit_endpoint_attribute = true
-        end
-        non_action = true if line.matches?(NON_ACTION_ATTR_RE)
-
-        if class_match = CLASS_DECL_RE.match(masked_lines[i])
-          base = class_match[3]? || masked_lines[i + 1]?.try { |next_line| BASE_LIST_LINE_RE.match(next_line).try(&.[1]) }
-          before = class_match.pre_match
-          body_depth = depth + before.count('{') - before.count('}') + 1
-          routable = class_match[2]?.nil? && !before.matches?(NON_ROUTABLE_CLASS_RE)
-          name = routable ? controller_class_name(class_match[1], base, web_api_file, bases) : nil
-          scope = {body_depth, name, controller_route_prefix(lines, masked_lines, i)}
-          # A body opened on the class line can hold an action on that line.
-          if class_match.post_match.includes?('{')
-            scopes << scope
-            pending_class = nil
-          else
-            pending_class = scope
-          end
-          # Attributes above the class (`[RoutePrefix]`) are not an action's.
-          http_method = "GET"
-          action_route = ""
-          explicit_endpoint_attribute = false
-          non_action = false
-        end
-
-        # Check for action method definition
-        _, controller_name, controller_prefix = scopes.last? || {0, nil, ""}
-        member = line.includes?("(") && (access = MEMBER_ACCESS_RE.match(masked_lines[i]))
-        if controller_name && member && access.try(&.[1]) == "public" &&
-           (line.matches?(ACTION_RESULT_RE) || explicit_endpoint_attribute)
-          signature, end_index = build_signature(lines, masked_lines, i)
-          action_name = extract_action_name(signature)
-          action_name = "" if non_action || signature.matches?(NON_ACTION_SIGNATURE_RE)
-          parameters = extract_parameters(signature, http_method)
-
-          unless action_name.empty?
-            # Build URL from controller route, action route, and action name
-            url = build_url(controller_prefix, action_route, controller_name, action_name)
-            details = Details.new(PathInfo.new(file, i + 1))
-            endpoint = Endpoint.new(url, http_method, details)
-            endpoint.handler = Handler.new(action_name, file, i + 1)
-
-            parameters.each do |param|
-              endpoint.params << param
-            end
+      Noir::CSharpDeclParser.parse(lexer).types.each do |type|
+        # Not routed: `abstract`/`static` classes and open generic ones.
+        next unless type.kind == "class" && type.type_params.nil?
+        next if type.modifiers.includes?("abstract") || type.modifiers.includes?("static")
+        controller_name = controller_class_name(type.name, type.base_name, web_api_file, bases) || next
+        controller_prefix = route_prefix(type.attributes)
+        type.methods.each do |method|
+          next unless method.public? && method.type_params.nil?
+          verbs, action_route, explicit, non_action = action_attributes(method.attributes)
+          next unless "#{method.return_type} #{method.name}(".matches?(ACTION_RESULT_RE) || explicit
+          # `[NonAction]`/`[ChildActionOnly]` and `static` methods, and Web
+          # API return types in a file that mixes in Web API controllers.
+          next if non_action || method.static? || method.header.matches?(NON_ACTION_SIGNATURE_RE)
+          line = method.line + 1
+          verbs.each do |http_method, verb_route|
+            url = build_url(controller_prefix, verb_route.presence || action_route, controller_name, method.name)
+            endpoint = Endpoint.new(url, http_method, Details.new(PathInfo.new(file, line)))
+            endpoint.handler = Handler.new(method.name, file, line)
+            extract_parameters(method.params, http_method).each { |param| endpoint.params << param }
 
             # Unlike aspnet_core_mvc, this analyzer parses params from the
             # signature only, so `body_block` exists purely to feed callee
@@ -263,53 +192,50 @@ module Analyzer::CSharp
             # `attach_csharp_callees` is a no-op anyway (`include_callee`
             # false).
             if include_callee
-              body_block = extract_method_block(lines, masked_lines, end_index)
-              attach_csharp_callees(endpoint, body_block, file, end_index + 1, include_callee, skip_first_line: true)
+              body_block = extract_method_block(lines, masked_lines, method.header_end)
+              attach_csharp_callees(endpoint, body_block, file, method.header_end + 1, include_callee, skip_first_line: true)
             end
             @result << endpoint
           end
-          # Reset to default after processing the method
-          http_method = "GET"
-          action_route = ""
-          explicit_endpoint_attribute = false
-          non_action = false
-          i = end_index
-        elsif member
-          # A non-action member ends the attributes that preceded it.
-          http_method = "GET"
-          action_route = ""
-          explicit_endpoint_attribute = false
-          non_action = false
         end
-
-        (start_index..i).each do |index|
-          depth += masked_lines[index].count('{') - masked_lines[index].count('}')
-        end
-        if (pending = pending_class) && depth >= pending[0]
-          scopes << pending
-          pending_class = nil
-        end
-        while (open = scopes.last?) && depth < open[0]
-          scopes.pop
-        end
-
-        i += 1
       end
     end
 
-    CLASS_DECL_RE = /\bclass\s+(\w+)(\s*<[^<>]*+>)?\s*(?::\s*([\w.]+))?/
-    # Not routed: `abstract`/`static` classes (an open generic one is caught
-    # by its `<T>`), `[NonAction]`/`[ChildActionOnly]` and `static` methods,
-    # and Web API return types in a file that mixes in Web API controllers.
-    MEMBER_ACCESS_RE        = /\b(public|private|protected|internal)\b/
-    NON_ROUTABLE_CLASS_RE   = /\b(?:abstract|static)\b/
-    NON_ACTION_ATTR_RE      = /[\[,]\s*(?:[\w.]*\.)?(?:NonAction|ChildActionOnly)\b/
-    NON_ACTION_SIGNATURE_RE = /\bstatic\b|\b(?:IHttpActionResult|HttpResponseMessage)\b/
+    VERB_ATTRIBUTES = {"HttpGet" => "GET", "HttpPost" => "POST", "HttpPut" => "PUT", "HttpDelete" => "DELETE", "HttpPatch" => "PATCH"}
+
+    # `{verb, its own route}` per verb attribute (GET when there is none),
+    # the `[Route]` template, whether either is present, and `[NonAction]`.
+    private def action_attributes(attrs : Array(Noir::CSharpDecl::Attribute)) : Tuple(Array(Tuple(String, String)), String, Bool, Bool)
+      verbs = [] of Tuple(String, String)
+      route = ""
+      explicit = false
+      non_action = false
+      attrs.each do |attr|
+        if verb = VERB_ATTRIBUTES[attr.name]?
+          verbs << {verb, attr.positional.first?.try(&.literal) || ""}
+          explicit = true
+        elsif attr.name == "Route"
+          route = attr.positional.first?.try(&.literal) || route
+          explicit = true
+        elsif attr.name.in?("NonAction", "ChildActionOnly")
+          non_action = true
+        end
+      end
+      verbs << {"GET", ""} if verbs.empty?
+      {verbs, route, explicit, non_action}
+    end
+
+    # `[RoutePrefix("x")]`, else a class-level `[Route("x")]`.
+    private def route_prefix(attrs : Array(Noir::CSharpDecl::Attribute)) : String
+      template = ->(name : String) { attrs.find(&.name.== name).try(&.positional.first?).try(&.literal).presence }
+      template.call("RoutePrefix") || template.call("Route") || ""
+    end
+
+    NON_ACTION_SIGNATURE_RE = /\b(?:IHttpActionResult|HttpResponseMessage)\b/
+
     # The return type ends in `Result` right before the action name:
     # `ActionResult`, `JsonResult`, `FileResult`, `Task<ViewResult>`, ...
     ACTION_RESULT_RE = /Result\s*>?\s+\w+\s*\(/
-    # A base list wrapped onto the line after the class name.
-    BASE_LIST_LINE_RE = /\A\s*:\s*([\w.]+)/
 
     WEB_API_NAMESPACE_RE = /\bSystem\.Web\.(?:Http|OData)\b/
 
@@ -358,111 +284,16 @@ module Analyzer::CSharp
       memo[base_name]
     end
 
-    ROUTE_PREFIX_ATTR_RE = /\[\s*RoutePrefix\s*\(\s*"([^"]+)"/
-    ROUTE_ATTR_RE        = /\[\s*Route\s*\(\s*"([^"]+)"/
+    BINDINGS = {"FromQuery" => "query", "FromRoute" => "path", "FromBody" => "json", "FromHeader" => "header", "FromForm" => "form", "FromCookie" => "cookie"}
 
-    # `[RoutePrefix("x")]` (else a class-level `[Route("x")]`) on the class
-    # line or the attribute lines directly above it.
-    private def controller_route_prefix(lines : Array(String), masked_lines : Array(String), index : Int32) : String
-      route = nil
-      j = index
-      while j >= 0 && (j == index || attribute_only_line?(masked_lines[j]))
-        if match = ROUTE_PREFIX_ATTR_RE.match(lines[j])
-          return match[1]
-        end
-        route ||= ROUTE_ATTR_RE.match(lines[j]).try(&.[1])
-        j -= 1
+    private def extract_parameters(params : Array(Noir::CSharpDecl::Parameter), http_method : String) : Array(Param)
+      default_param_type = http_method.in?("POST", "PUT", "PATCH") ? "form" : "query"
+      params.compact_map do |param|
+        next if param.type.empty?
+        next if param.attributes.any?(&.name.in?("FromServices", "FromKeyedServices"))
+        bound = param.attributes.compact_map { |attr| BINDINGS[attr.name]? }.first? || default_param_type
+        Param.new(param.name, "", bound)
       end
-      route || ""
-    end
-
-    private def attribute_only_line?(masked : String) : Bool
-      stripped = masked.strip
-      stripped.starts_with?('[') && stripped.ends_with?(']')
-    end
-
-    private def extract_action_name(line : String) : String
-      # Extract method name from: public ActionResult MethodName(params)
-      match = line.match(/public\s+(?:async\s+)?(?:override\s+)?(?:virtual\s+)?[\w<>\[\],\s]+\s+(\w+)\s*\(/)
-      return "" unless match
-      match[1]
-    end
-
-    private def extract_parameters(full_signature : String, http_method : String) : Array(Param)
-      parameters = [] of Param
-
-      # Extract parameter list (paren-depth aware so a param with an inner ')'
-      # — a method-call default like `id = GetDefault()` or a tuple type
-      # `(int,int) pair` — isn't truncated at the first ')').
-      param_list = extract_balanced_param_list(full_signature)
-      return parameters unless param_list
-
-      param_list = param_list.strip
-      return parameters if param_list.empty?
-
-      # Determine default parameter type based on HTTP method
-      default_param_type = case http_method
-                           when "GET"
-                             "query"
-                           when "POST", "PUT", "PATCH"
-                             "form"
-                           when "DELETE"
-                             "query"
-                           else
-                             "query"
-                           end
-
-      # Parse individual parameters
-      split_csharp_parameters(param_list).each do |param_def|
-        param_def = param_def.strip
-        next if param_def.empty?
-
-        # Check for parameter binding attributes
-        param_type = default_param_type
-        if param_def.includes?("[FromQuery]")
-          param_type = "query"
-          param_def = param_def.gsub("[FromQuery]", "").strip
-        elsif param_def.includes?("[FromRoute]")
-          param_type = "path"
-          param_def = param_def.gsub("[FromRoute]", "").strip
-        elsif param_def.includes?("[FromBody]")
-          param_type = "json"
-          param_def = param_def.gsub("[FromBody]", "").strip
-        elsif param_def.includes?("[FromHeader]")
-          param_type = "header"
-          param_def = param_def.gsub("[FromHeader]", "").strip
-        elsif param_def.includes?("[FromForm]")
-          param_type = "form"
-          param_def = param_def.gsub("[FromForm]", "").strip
-        elsif param_def.includes?("[FromCookie]")
-          param_type = "cookie"
-          param_def = param_def.gsub("[FromCookie]", "").strip
-        elsif param_def.includes?("[FromServices]") || param_def.includes?("[FromKeyedServices")
-          next
-        end
-
-        # Extract parameter name (last word before optional default value)
-        # Format: "type name" or "type name = default" or "[Attribute] type name"
-        parts = param_def.sub(/\s*=.*/m, "").split(/\s+/)
-        next if parts.size < 2
-
-        param_name = parts[-1]
-
-        parameters << Param.new(param_name, "", param_type)
-      end
-
-      parameters
-    end
-
-    private def extract_attribute_route(line : String, attribute : String) : String
-      # Extract route from [HttpGet("route")] or [Route("route")]. The
-      # attribute's own parens only: in `[HttpPost, ActionName("Delete")]`
-      # the literal belongs to ActionName. `[HttpGet, Route("x")]` still
-      # routes through its Route.
-      attribute_regex = ATTRIBUTE_ROUTE_PATTERNS[attribute]? || /\b#{attribute}\s*\(\s*"([^"]+)"/
-      match = line.match(attribute_regex) || line.match(ATTRIBUTE_ROUTE_PATTERNS["Route"])
-      return "" unless match
-      match[1]
     end
 
     private def build_url(controller_route : String, action_route : String, controller_name : String, action_name : String) : String

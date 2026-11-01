@@ -1,4 +1,5 @@
 require "../../../models/analyzer"
+require "../../../miniparsers/csharp_decl_parser"
 require "./common"
 
 module Analyzer::CSharp
@@ -48,7 +49,7 @@ module Analyzer::CSharp
       # those DTOs are worth indexing: the old code extracted the property
       # list of *every* type declaration in the scan — ~28k of them in
       # dotnet/aspnetcore, none of which FastEndpoints ever looks up.
-      endpoint_files = [] of String
+      endpoint_files = [] of Tuple(String, Noir::CSharpLexer, Noir::CSharpDecl::Unit)
       wanted = Set(String).new
       cs_files.each do |file|
         next unless File.exists?(file)
@@ -58,16 +59,21 @@ module Analyzer::CSharp
         next unless content.includes?("Endpoint")
         next unless content_matches?(content, ENDPOINT_SOURCE_RE)
 
-        endpoint_files << file
-        collect_request_types(content, wanted)
+        lexer = Noir::CSharpLexer.new(content)
+        unit = Noir::CSharpDeclParser.parse(lexer)
+        endpoint_files << {file, lexer, unit}
+        endpoint_types(unit).each do |_, base|
+          next if base.starts_with?("EndpointWithoutRequest")
+          extract_request_type(base).try { |type_name| wanted << type_name }
+        end
       end
       return @result if endpoint_files.empty?
 
       request_types = build_request_type_index(cs_files, wanted)
       route_prefixes, groups = collect_route_prefixes(cs_files)
 
-      endpoint_files.each do |file|
-        analyze_file(file, read_file_content(file), include_callee, request_types, route_prefixes, groups)
+      endpoint_files.each do |file, lexer, unit|
+        analyze_file(file, lexer, unit, include_callee, request_types, route_prefixes, groups)
       end
 
       @result
@@ -102,18 +108,13 @@ module Analyzer::CSharp
       [group_prefix(parent, groups, depth + 1), prefix].reject(&.empty?).join('/')
     end
 
-    # Request-DTO names referenced by an `Endpoint<TRequest[, TResponse]>` base
-    # in this source.
-    private def collect_request_types(content : String, wanted : Set(String))
-      content.each_line do |line|
-        next unless class_declaration_with_endpoint_base?(line)
-        base_match = BASE_TYPE_REGEX.match(line)
-        next unless base_match
-        base = base_match[1]
-        next if base.starts_with?("EndpointWithoutRequest")
-        if type_name = extract_request_type(base)
-          wanted << type_name
-        end
+    # The classes of `unit` deriving a FastEndpoints endpoint primitive, with
+    # that base (`Endpoint<Req, Res>`).
+    private def endpoint_types(unit : Noir::CSharpDecl::Unit) : Array(Tuple(Noir::CSharpDecl::TypeDecl, String))
+      unit.types.compact_map do |type|
+        next if type.kind != "class" || type.bases.empty?
+        base = BASE_TYPE_REGEX.match(": #{type.bases.join(", ")}").try(&.[1]) || next
+        {type, base}
       end
     end
 
@@ -131,42 +132,27 @@ module Analyzer::CSharp
       return index if wanted.empty?
 
       wanted_re = Regex.union(wanted.to_a.map { |name| /\b#{Regex.escape(name)}\b/ })
-      type_decl_regex = /(?:class|record(?:\s+struct)?|struct)\s+([A-Za-z_][A-Za-z0-9_]*)\b/
       files.each do |file|
         next unless File.exists?(file)
         content = read_file_content(file)
         next unless content_matches?(content, wanted_re)
         base_path = configured_base_for(file)
-        # Comment-blanked: `[FromHeader("X")] // note` is still an attribute line.
-        lines = Noir::CSharpLexer.new(content).code_lines
-        i = 0
-        while i < lines.size
-          line = lines[i]
-          if match = type_decl_regex.match(line)
-            type_name = match[1]
-            block, end_index = extract_request_type_block(lines, i)
-            # Property extraction is the expensive half; only the DTOs an
-            # `Endpoint<TRequest>` actually names are worth it. The block is
-            # still measured for every type so the traversal — and therefore
-            # which declarations are seen at all — does not depend on `wanted`.
-            params = wanted.includes?(type_name) ? extract_props_from_block(block) : [] of Param
-            unless params.empty?
-              key = {base_path, type_name}
-              defs = index[key] ||= [] of RequestTypeDef
-              # A type declared twice in one file (partial class, or the same
-              # name in two namespaces of one file) is still one declaration
-              # site; union those.
-              if existing_idx = defs.index { |d| d.file == file }
-                merged = defs[existing_idx].params.dup
-                params.each { |p| merged << p unless merged.any? { |e| e.name == p.name } }
-                defs[existing_idx] = RequestTypeDef.new(file, merged)
-              else
-                defs << RequestTypeDef.new(file, params)
-              end
-            end
-            i = end_index
+        Noir::CSharpDeclParser.parse(Noir::CSharpLexer.new(content)).types.each do |type|
+          next unless type.kind.in?("class", "record", "struct") && wanted.includes?(type.name)
+          params = request_props(type)
+          next if params.empty?
+          key = {base_path, type.name}
+          defs = index[key] ||= [] of RequestTypeDef
+          # A type declared twice in one file (partial class, or the same
+          # name in two namespaces of one file) is still one declaration
+          # site; union those.
+          if existing_idx = defs.index { |d| d.file == file }
+            merged = defs[existing_idx].params.dup
+            params.each { |p| merged << p unless merged.any? { |e| e.name == p.name } }
+            defs[existing_idx] = RequestTypeDef.new(file, merged)
+          else
+            defs << RequestTypeDef.new(file, params)
           end
-          i += 1
         end
       end
       index
@@ -198,53 +184,34 @@ module Analyzer::CSharp
       [] of Param
     end
 
-    private def analyze_file(file : String, content : String, include_callee : Bool, request_types : Hash(RequestTypeKey, Array(RequestTypeDef)),
+    private def analyze_file(file : String, lexer : Noir::CSharpLexer, unit : Noir::CSharpDecl::Unit, include_callee : Bool,
+                             request_types : Hash(RequestTypeKey, Array(RequestTypeDef)),
                              route_prefixes : Hash(String, String), groups : Hash(String, Tuple(String, String?)))
       base_path = configured_base_for(file)
       global_prefix = route_prefixes[base_path]? || ""
-      lines = content.lines
-      i = 0
-      while i < lines.size
-        line = lines[i]
-        if class_declaration_with_endpoint_base?(line)
-          base_match = BASE_TYPE_REGEX.match(line)
-          if base_match
-            base = base_match[1]
-            # `EndpointWithoutRequest<TResponse>` is response-only — the
-            # generic arg is the response shape, not a request DTO.
-            request_type = base.starts_with?("EndpointWithoutRequest") ? nil : extract_request_type(base)
-            class_block, end_index = extract_class_block(lines, i)
-            configure_block = extract_configure_block(class_block)
-            if configure_block
-              routes, methods = parse_configure(configure_block)
-              if !routes.empty? && !methods.empty?
-                request_params = resolve_request_params(request_types, base_path, request_type, file)
-                code_block = strip_csharp_comments(configure_block)
-                prefix = PREFIX_OVERRIDE_REGEX.match(code_block).try(&.[1]) || global_prefix
-                group = GROUP_CALL_REGEX.match(code_block).try { |m| group_prefix(m[1], groups) } || ""
-                routes.each do |raw_route|
-                  # FastEndpoints builds `{RoutePrefix}/{group prefix}/{route}`.
-                  route = [prefix, group, raw_route].map(&.strip('/')).reject(&.empty?).join('/')
-                  methods.each do |http_method|
-                    endpoint = build_endpoint(route, http_method, file, i + 1, request_params)
-                    next if endpoint.nil?
-                    attach_csharp_callees(endpoint.as(Endpoint), class_block, file, i + 1, include_callee)
-                    @result << endpoint.as(Endpoint)
-                  end
-                end
-              end
-            end
-            i = end_index
+      lines = lexer.code_lines
+      endpoint_types(unit).each do |type, base|
+        configure = type.methods.find { |method| method.name == "Configure" && method.params.empty? } || next
+        configure_block = lines[configure.line..configure.end_line].join('\n')
+        routes, methods = parse_configure(configure_block)
+        next if routes.empty? || methods.empty?
+        # `EndpointWithoutRequest<TResponse>` is response-only — the
+        # generic arg is the response shape, not a request DTO.
+        request_type = base.starts_with?("EndpointWithoutRequest") ? nil : extract_request_type(base)
+        request_params = resolve_request_params(request_types, base_path, request_type, file)
+        prefix = PREFIX_OVERRIDE_REGEX.match(configure_block).try(&.[1]) || global_prefix
+        group = GROUP_CALL_REGEX.match(configure_block).try { |m| group_prefix(m[1], groups) } || ""
+        class_block = lines[type.line..type.end_line].join('\n')
+        routes.each do |raw_route|
+          # FastEndpoints builds `{RoutePrefix}/{group prefix}/{route}`.
+          route = [prefix, group, raw_route].map(&.strip('/')).reject(&.empty?).join('/')
+          methods.each do |http_method|
+            endpoint = build_endpoint(route, http_method, file, type.line + 1, request_params) || next
+            attach_csharp_callees(endpoint, class_block, file, type.line + 1, include_callee)
+            @result << endpoint
           end
         end
-        i += 1
       end
-    end
-
-    private def class_declaration_with_endpoint_base?(line : String) : Bool
-      return false unless line.includes?("class ")
-      return false unless line.includes?(":")
-      line.includes?("Endpoint") || line.includes?("Ep<")
     end
 
     # Walks the first generic argument with balanced angle brackets so
@@ -282,41 +249,9 @@ module Analyzer::CSharp
       outer.empty? ? nil : outer
     end
 
-    private def extract_class_block(lines : Array(String), start_index : Int32) : Tuple(String, Int32)
-      io = String::Builder.new
-      brace = 0
-      started = false
-      i = start_index
-      while i < lines.size
-        line = lines[i]
-        io << line
-        io << '\n'
-        brace += line.count('{') - line.count('}')
-        started ||= brace > 0
-        if started && brace <= 0
-          break
-        end
-        i += 1
-      end
-      {io.to_s, i}
-    end
-
-    private def extract_configure_block(class_block : String) : String?
-      lines = class_block.lines
-      masked_lines = Noir::CSharpLexer.new(class_block).masked_lines
-      lines.each_with_index do |line, index|
-        next unless line.includes?("Configure") && line.includes?("(") && line.includes?(")")
-        next unless line.includes?("override") || line.includes?("public") || line.includes?("protected")
-        method_block = extract_method_block(lines, masked_lines, index)
-        return method_block
-      end
-      nil
-    end
-
     private def parse_configure(configure_block : String) : Tuple(Array(String), Array(String))
       routes = [] of String
       methods = [] of String
-      configure_block = strip_csharp_comments(configure_block)
 
       # Verb-style: Get("/users/{id}")
       configure_block.scan(VERB_CALL_REGEX) do |match|
@@ -374,14 +309,6 @@ module Analyzer::CSharp
       endpoint
     end
 
-    # Strip `// line` and `/* block */` comments so commented-out
-    # `Get("/x")` lines don't surface as endpoints. Keeps string
-    # literals intact since the regex only fires inside `/* */`.
-    private def strip_csharp_comments(block : String) : String
-      no_block = block.gsub(/\/\*[\s\S]*?\*\//, " ")
-      no_block.gsub(/\/\/[^\n]*/, "")
-    end
-
     private def normalize_route(route : String) : String
       normalized = route.strip
       normalized = normalized.gsub(/^\//, "").gsub(/\/+/, "/")
@@ -411,112 +338,53 @@ module Analyzer::CSharp
       end
     end
 
-    private def extract_request_type_block(lines : Array(String), start_index : Int32) : Tuple(String, Int32)
-      io = String::Builder.new
-      brace = 0
-      started = false
-      paren = 0
-      i = start_index
-      while i < lines.size
-        line = lines[i]
-        io << line
-        io << '\n'
-        brace += line.count('{') - line.count('}')
-        paren += line.count('(') - line.count(')')
-        # A body that opens *and* closes on the declaration line
-        # (`public partial class AdminLogin : JsonSerializerContext { }`) leaves
-        # `brace` at 0, so `brace > 0` alone never marked the block as started
-        # and the scan ran on until some *later* type's closing brace — merging
-        # that type's properties into this one and skipping its declaration.
-        started ||= brace > 0 || line.includes?("{")
-        # Record / positional record - end on `);` outside any brace.
-        if !started && line.includes?(";") && paren <= 0 && line.includes?(")")
-          break
-        end
-        if started && brace <= 0
-          break
-        end
-        i += 1
-      end
-      {io.to_s, i}
-    end
+    # How a request DTO's property attribute binds it (`""`: by the verb's
+    # default); `service` is never request input.
+    FROM_ATTRIBUTES = {
+      "FromQuery"  => "query",
+      "FromRoute"  => "path",
+      "FromBody"   => "json",
+      "FromHeader" => "header",
+      "FromForm"   => "form",
+      "FromCookie" => "cookie",
+      # `[FromClaim]` reads from the auth principal's JWT claims —
+      # not a request-side binding, so skip rather than mis-tag as
+      # `header`.
+      "FromClaim"         => "service",
+      "BindFrom"          => "",
+      "QueryParam"        => "query",
+      "RouteParam"        => "path",
+      "FromKeyedServices" => "service",
+      "FromServices"      => "service",
+    }
 
-    LEADING_ATTRIBUTES_RE = /\A(?:\[[^\]]*\]\s*)+/
-    # The first string argument of the attribute the text starts at.
-    ATTRIBUTE_NAME_ARG_RE = /\A\[\w+\s*\(\s*@?"([^"]+)"/
+    # A public auto-property's accessor list (`{ get; set; }`).
+    AUTO_ACCESSORS_RE = /\A\{\s*get\s*;/
 
-    private def extract_props_from_block(block : String) : Array(Param)
+    # The request properties of DTO `type`: its positional-record members and
+    # public auto-properties, named and bound by their attributes.
+    private def request_props(type : Noir::CSharpDecl::TypeDecl) : Array(Param)
       params = [] of Param
-      from_attr_map = {
-        "FromQuery"  => "query",
-        "FromRoute"  => "path",
-        "FromBody"   => "json",
-        "FromHeader" => "header",
-        "FromForm"   => "form",
-        "FromCookie" => "cookie",
-        # `[FromClaim]` reads from the auth principal's JWT claims —
-        # not a request-side binding, so skip rather than mis-tag as
-        # `header`.
-        "FromClaim"         => "service",
-        "BindFrom"          => "",
-        "QueryParam"        => "query",
-        "RouteParam"        => "path",
-        "FromKeyedServices" => "service",
-        "FromServices"      => "service",
-      }
-      lines = block.lines
-      pending_type : String? = nil
-      pending_name : String? = nil
-      pending_skip = false
-
-      lines.each do |raw_line|
-        line = raw_line.strip
-        next if line.empty?
-        next if line.starts_with?("//")
-        # Attributes may sit on their own line or lead the property's.
-        if attrs = line.match(LEADING_ATTRIBUTES_RE)
-          attr_text = attrs[0]
-          from_attr_map.each do |attr, ptype|
-            next unless attr_text.includes?("[#{attr}")
-            if ptype == "service"
-              pending_skip = true
-            else
-              pending_type = ptype unless ptype.empty?
-              # `[BindFrom("last_name")]` / `[FromHeader("X-Tenant")]` bind
-              # the property under that name.
-              if name = ATTRIBUTE_NAME_ARG_RE.match(attr_text[(attr_text.index("[#{attr}") || 0)..]).try(&.[1])
-                pending_name = name
-              end
-            end
+      type.params.try &.each { |param| params << Param.new(param.name, "", "") } if type.kind.in?("record", "struct")
+      type.members.each do |member|
+        next unless member.kind == :property && member.public?
+        next unless member.accessors.try(&.matches?(AUTO_ACCESSORS_RE))
+        bound = ""
+        name = member.name
+        skip = false
+        member.attributes.each do |attr|
+          ptype = FROM_ATTRIBUTES[attr.name]? || next
+          if ptype == "service"
+            skip = true
+            next
           end
-          line = attr_text.size < line.size ? line[attr_text.size..].strip : ""
-          next if line.empty?
+          bound = ptype unless ptype.empty?
+          # `[BindFrom("last_name")]` / `[FromHeader("X-Tenant")]` bind the
+          # property under that name.
+          attr.positional.first?.try(&.literal).presence.try { |literal| name = literal }
         end
-
-        if match = line.match(Common::AUTO_PROPERTY_RE)
-          name = match[1]
-          unless pending_skip
-            params << Param.new(pending_name || name, "", pending_type || "")
-          end
-          pending_type = nil
-          pending_name = nil
-          pending_skip = false
-          next
-        end
-
-        # Positional record params: `public record GetUserRequest(int Id, string Name);`
-        if positional_match = line.match(/^(?:public\s+)?(?:sealed\s+)?(?:record(?:\s+struct)?|struct)\s+\w+\s*\(([^)]*)\)/)
-          arglist = positional_match[1]
-          split_csharp_parameters(arglist).each do |arg|
-            cleaned = arg.strip
-            next if cleaned.empty?
-            if name_match = cleaned.match(/(\w+)\s*(?:=\s*[^,]+)?\s*$/)
-              params << Param.new(name_match[1], "", "")
-            end
-          end
-        end
+        params << Param.new(name, "", bound) unless skip
       end
-
       params.uniq(&.name)
     end
   end

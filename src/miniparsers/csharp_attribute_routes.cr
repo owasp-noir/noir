@@ -1,4 +1,3 @@
-require "../minilexers/csharp_lexer"
 require "./csharp_type_extractor"
 
 module Noir
@@ -22,17 +21,13 @@ module Noir
     MAX_DEPTH = 6
 
     record Result, verb : String?, template : String?
-    record Ctor, params : Array(Tuple(String, String?)), base_args : Array(String)?
+    record Ctor, params : Array(Tuple(String, String?)), base_args : Array(CSharpDecl::Arg)?
     record Decl, base : String?, ctors : Array(Ctor), template : String?, verb : String?, consts : Hash(String, String), scope : String, provider : Bool
 
-    TEMPLATE_ARROW_RE  = /\bTemplate\s*=>\s*([^;]+);/
+    # `Template = $"api/{x}";` in a constructor body.
     TEMPLATE_ASSIGN_RE = /\bTemplate\s*=(?![=>])\s*([^;]+);/
-    HTTP_METHODS_RE    = /\bHttpMethods\s*=>\s*new\s*(?:string)?\s*\[\s*\]\s*\{\s*"(\w+)"/
-    CONST_RE           = /\bconst\s+(?:string|int)\s+(\w+)\s*=\s*([^;]+);/
-    NAMED_ARG_RE       = /\A(\w+)\s*:(?!:)\s*(.+)\z/m
-    # `Order = 2`, `Name = "n"`: a property of the attribute, not an argument.
-    PROPERTY_ARG_RE = /\A\w+\s*=(?![=>])/
-    PROVIDER_RE     = /IRouteTemplateProvider|IActionHttpMethodProvider/
+    LITERAL_WORD_RE    = /"(\w+)"/
+    PROVIDERS          = {"IRouteTemplateProvider", "IActionHttpMethodProvider"}
 
     def initialize
       @decls = Hash(String, Array(Decl)).new
@@ -45,18 +40,33 @@ module Noir
     # Records `type` when it is an attribute class (`FooAttribute`).
     def add(lexer : CSharpLexer, type : CSharpType, scope : String = "") : Nil
       return unless type.name.ends_with?("Attribute")
+      decl = type.decl
       # A route-bearing attribute implements the provider interface or derives
       # another attribute class; a plain `: Attribute` with a `Template`
       # property is some other feature's.
-      return unless type.header.matches?(/IRouteTemplateProvider|IActionHttpMethodProvider/) || (type.base_name && type.base_name != "Attribute")
-      name = type.name.rchop("Attribute")
-      last = Math.min(type.end_line, lexer.code_lines.size - 1)
-      body = lexer.code_lines[type.start_line..last].join('\n')
-      (@decls[name] ||= [] of Decl) << Decl.new(
-        type.base_name.try(&.rchop("Attribute")), constructors(body, type.name),
-        (body.match(TEMPLATE_ARROW_RE) || body.match(TEMPLATE_ASSIGN_RE)).try(&.[1].strip),
-        body.match(HTTP_METHODS_RE).try(&.[1].upcase), constants(body), scope, type.header.matches?(PROVIDER_RE)
+      provider = decl.bases.any? { |base| PROVIDERS.includes?(CSharpDecl.simple_name(base)) }
+      return unless provider || (type.base_name && type.base_name != "Attribute")
+      ctors = decl.constructors.map do |ctor|
+        Ctor.new(ctor.params.map { |param| {param.name, param.default} }, ctor.initializer == "base" ? ctor.initializer_args : nil)
+      end
+      properties = decl.members.select(&.kind.== :property)
+      template = properties.find(&.name.== "Template").try(&.value) ||
+                 decl.constructors.compact_map { |ctor| body_text(lexer, ctor).try(&.match(TEMPLATE_ASSIGN_RE)).try(&.[1].strip) }.first?
+      verb = properties.find(&.name.== "HttpMethods").try(&.value).try(&.match(LITERAL_WORD_RE)).try(&.[1].upcase)
+      consts = Hash(String, String).new
+      decl.members.each do |member|
+        value = member.value
+        consts[member.name] = value if value && member.kind == :field && member.modifiers.includes?("const")
+      end
+      (@decls[type.name.rchop("Attribute")] ||= [] of Decl) << Decl.new(
+        type.base_name.try(&.rchop("Attribute")), ctors, template, verb, consts, scope, provider
       )
+    end
+
+    private def body_text(lexer : CSharpLexer, member : CSharpDecl::Member) : String?
+      open = member.body_open || return
+      close = member.body_close || return
+      lexer.code_source[open..close]
     end
 
     # Names of the recorded attributes whose definition reaches a route or
@@ -66,58 +76,28 @@ module Noir
       @decls.keys.select { |name| @decls[name].any? { |decl| provider?(decl) } }
     end
 
-    # What the usage `[name(args)]` means. `args` is the raw argument text.
-    # `scope` is the project of the file using it: a name two projects both
-    # define resolves to the one in the usage's own project, and to nothing
-    # when that does not settle it.
-    def resolve(name : String, args : Array(String), scope : String = "") : Result?
+    # What the usage `attribute` means. `scope` is the project of the file
+    # using it: a name two projects both define resolves to the one in the
+    # usage's own project, and to nothing when that does not settle it.
+    def resolve(attribute : CSharpDecl::Attribute, scope : String = "") : Result?
+      positional, named = bind(attribute.args, {} of String => String?, nil)
+      resolve_values(attribute.name, positional, named, 0, scope)
+    end
+
+    # Positional and `name:` arguments as string values; `Prop = value`
+    # arguments set a property of the attribute and bind nothing.
+    private def bind(args : Array(CSharpDecl::Arg), env : Hash(String, String?), decl : Decl?) : Tuple(Array(String?), Hash(String, String?))
       positional = [] of String?
       named = Hash(String, String?).new
       args.each do |arg|
-        next if arg.matches?(PROPERTY_ARG_RE)
-        if pair = arg.match(NAMED_ARG_RE)
-          named[pair[1]] = string_value(pair[2], {} of String => String?, nil)
+        next if arg.property
+        if key = arg.name
+          named[key] = string_value(arg.text, env, decl)
         else
-          positional << string_value(arg, {} of String => String?, nil)
+          positional << string_value(arg.text, env, decl)
         end
       end
-      resolve_values(name, positional, named, 0, scope)
-    end
-
-    # Splits the argument list text of a usage (`"a", b: "c"`).
-    def self.split_args(text : String) : Array(String)
-      args = [] of String
-      depth = 0
-      quoted = false
-      current = String::Builder.new
-      chars = text.chars
-      i = 0
-      while i < chars.size
-        char = chars[i]
-        if quoted
-          current << char
-          if char == '\\' && i + 1 < chars.size
-            i += 1
-            current << chars[i]
-          elsif char == '"'
-            quoted = false
-          end
-        elsif char == '"'
-          quoted = true
-          current << char
-        elsif char == ',' && depth == 0
-          args << current.to_s.strip
-          current = String::Builder.new
-        else
-          depth += 1 if "([{".includes?(char)
-          depth -= 1 if ")]}".includes?(char)
-          current << char
-        end
-        i += 1
-      end
-      last = current.to_s.strip
-      args << last unless last.empty?
-      args
+      {positional, named}
     end
 
     private def resolve_values(name : String, args : Array(String?), named : Hash(String, String?), depth : Int32, scope : String) : Result?
@@ -168,17 +148,7 @@ module Noir
 
       inherited = nil
       if base = decl.base
-        base_args = ctor.try(&.base_args) || [] of String
-        positional = [] of String?
-        base_named = Hash(String, String?).new
-        base_args.each do |arg|
-          next if arg.matches?(PROPERTY_ARG_RE)
-          if pair = arg.match(NAMED_ARG_RE)
-            base_named[pair[1]] = string_value(pair[2], env, decl)
-          else
-            positional << string_value(arg, env, decl)
-          end
-        end
+        positional, base_named = bind(ctor.try(&.base_args) || [] of CSharpDecl::Arg, env, decl)
         inherited = resolve_values(base, positional, base_named, depth + 1, decl.scope)
       end
 
@@ -196,10 +166,8 @@ module Noir
       return if depth > MAX_DEPTH
       if expr.matches?(/\A\d+\z/)
         expr
-      elsif m = expr.match(/\A@"((?:[^"]|"")*)"\z/)
-        m[1].gsub("\"\"", "\"")
-      elsif m = expr.match(/\A"((?:[^"\\]|\\.)*)"\z/)
-        m[1].gsub(/\\(.)/) { |_, esc| esc[1] }
+      elsif literal = CSharpDecl.literal(expr)
+        literal
       elsif m = expr.match(/\A\$@?"(.*)"\z/m)
         interpolate(m[1], env, decl, depth)
       elsif expr.matches?(/\A[A-Za-z_]\w*\z/)
@@ -220,59 +188,6 @@ module Noir
         resolved || ""
       end
       failed ? nil : value
-    end
-
-    private def constructors(body : String, class_name : String) : Array(Ctor)
-      ctors = [] of Ctor
-      body.scan(/\b(?:public|protected|internal)\s+#{Regex.escape(class_name)}\s*\(/) do |match|
-        open = match.end(0) - 1
-        close = matching_paren(body, open) || next
-        params = CSharpAttributeRoutes.split_args(body[(open + 1)...close]).compact_map do |param|
-          pair = param.match(/(\w+)\s*(?:=\s*(.+))?\z/m) || next
-          {pair[1], pair[2]?.try(&.strip)}
-        end
-        base_args = nil
-        if tail = body[(close + 1)..].match(/\A\s*:\s*base\s*\(/)
-          base_open = close + tail[0].size
-          if base_close = matching_paren(body, base_open)
-            base_args = CSharpAttributeRoutes.split_args(body[(base_open + 1)...base_close])
-          end
-        end
-        ctors << Ctor.new(params, base_args)
-      end
-      ctors
-    end
-
-    private def constants(body : String) : Hash(String, String)
-      found = Hash(String, String).new
-      body.scan(CONST_RE) { |match| found[match[1]] = match[2].strip }
-      found
-    end
-
-    # Index of the `)` closing the `(` at `open`, string literals skipped.
-    private def matching_paren(text : String, open : Int32) : Int32?
-      depth = 0
-      quoted = false
-      chars = text.chars
-      i = open
-      while i < chars.size
-        char = chars[i]
-        if quoted
-          if char == '\\'
-            i += 1
-          elsif char == '"'
-            quoted = false
-          end
-        elsif char == '"'
-          quoted = true
-        elsif char == '('
-          depth += 1
-        elsif char == ')'
-          depth -= 1
-          return i if depth == 0
-        end
-        i += 1
-      end
     end
   end
 end

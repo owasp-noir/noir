@@ -1,4 +1,5 @@
 require "../../../models/analyzer"
+require "../../../miniparsers/csharp_decl_parser"
 require "./common"
 require "./minimal_api_support"
 
@@ -31,15 +32,8 @@ module Analyzer::CSharp
     include Common
     include MinimalApiSupport
 
-    # `class X : ICarterModule` / `class X : CarterModule` / with generics or
-    # extra interfaces in the base list.
-    MODULE_CLASS_RE = /\bclass\s+(\w+)(?:\s*<[^>]*>)?\s*:[^{]*\bI?CarterModule\b/
-
-    # `public DirectorsModule() : base("/directors")` — Carter's constructor
-    # base path. `base()` with no literal leaves the prefix empty.
-    BASE_PATH_RE = /:\s*base\s*\(\s*@?"([^"]*)"/
-
-    ADD_ROUTES_RE = /\bAddRoutes\s*\(/
+    # A base-list entry naming `ICarterModule` / `CarterModule`.
+    MODULE_BASE_RE = /\bI?CarterModule\b/
 
     def analyze
       include_callee = callees_needed?
@@ -65,56 +59,17 @@ module Analyzer::CSharp
       lines = lexer.code_lines
       masked_lines = lexer.masked_lines
 
-      each_module(lines, masked_lines) do |prefix, class_start, class_end|
-        each_add_routes_body(lines, masked_lines, class_start, class_end) do |body_start, body_end|
-          analyze_add_routes_body(file, lines, masked_lines, body_start, body_end, prefix, include_callee)
+      Noir::CSharpDeclParser.parse(lexer).types.each do |type|
+        next unless type.kind == "class" && type.bases.any?(&.matches?(MODULE_BASE_RE))
+        # `public DirectorsModule() : base("/directors")` — Carter's
+        # constructor base path. `base()` with no literal leaves it empty.
+        prefix = type.constructors.find(&.initializer.== "base").try(&.initializer_args).try(&.first?).try(&.literal) || ""
+        # Extraction is scoped to `AddRoutes` bodies so MapGroup prefixes
+        # and base paths don't leak between modules declared in one file.
+        type.methods.each do |method|
+          next unless method.name == "AddRoutes"
+          analyze_add_routes_body(file, lines, masked_lines, method.header_end, method.end_line, prefix, include_callee)
         end
-      end
-    end
-
-    # Yields `{base_path, class_body_start, class_body_end}` for every Carter
-    # module class in the file. Classes are located by their base list, so a
-    # module nested inside a plain holder class (`static class Outer { class
-    # HomeModule : ICarterModule { … } }`) is still found.
-    private def each_module(lines : Array(String), masked_lines : Array(String), &)
-      lines.each_with_index do |line, index|
-        next unless (masked_lines[index]? || line).includes?("class")
-        next unless line.matches?(MODULE_CLASS_RE)
-
-        class_end = block_end(masked_lines, index)
-        prefix = module_base_path(lines, index, class_end)
-        yield prefix, index, class_end
-      end
-    end
-
-    # The constructor base path declared inside the module class body. Only
-    # the module's own constructor can carry it, and a `: base("…")` clause
-    # appears nowhere else in a Carter module, so the first match within the
-    # class body wins.
-    private def module_base_path(lines : Array(String), class_start : Int32, class_end : Int32) : String
-      (class_start..Math.min(class_end, lines.size - 1)).each do |idx|
-        line = lines[idx]
-        next unless line.includes?("base")
-        if match = BASE_PATH_RE.match(line)
-          return match[1]
-        end
-      end
-      ""
-    end
-
-    private def each_add_routes_body(lines : Array(String), masked_lines : Array(String),
-                                     class_start : Int32, class_end : Int32, &)
-      idx = class_start
-      limit = Math.min(class_end, lines.size - 1)
-      while idx <= limit
-        line = lines[idx]
-        if line.matches?(ADD_ROUTES_RE) && (line.includes?("public") || line.includes?("void"))
-          _, sig_end = build_signature(lines, masked_lines, idx)
-          body_end = block_end(masked_lines, sig_end)
-          yield sig_end, Math.min(body_end, limit)
-          idx = body_end
-        end
-        idx += 1
       end
     end
 
@@ -130,23 +85,6 @@ module Analyzer::CSharp
           @result << endpoint
         end
       end
-    end
-
-    # Index of the line closing the brace block that opens at or after
-    # `start_index`. Counting runs over the masked twin so a `}` inside a
-    # string literal can't close the block early.
-    private def block_end(masked_lines : Array(String), start_index : Int32) : Int32
-      depth = 0
-      started = false
-      idx = start_index
-      while idx < masked_lines.size
-        masked = masked_lines[idx]
-        depth += masked.count('{') - masked.count('}')
-        started ||= masked.includes?("{")
-        return idx if started && depth <= 0
-        idx += 1
-      end
-      masked_lines.size - 1
     end
   end
 end
