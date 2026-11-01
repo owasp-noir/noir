@@ -660,4 +660,39 @@ describe "ExpressAuthTagger" do
       ])
     end
   end
+
+  # `Promise.all(` is the builtin, not a `.all()` mount; a real mount sharing
+  # its line is still read.
+  it "reads no mount from Promise.all and keeps a mount on the same line" do
+    tmpdir = File.tempname("express_promise_all")
+    Dir.mkdir_p(tmpdir)
+    app_js = File.join(tmpdir, "app.js")
+    File.write(app_js, [
+      "const express = require('express');",
+      "const app = express();",
+      "async function warm() { await Promise.all(['/reports', requireAuth]); }",
+      "app.use('/admin', requireAuth); await Promise.all([warm()]);",
+      "app.get('/reports/daily', (req, res) => res.json([]));",
+      "app.get('/admin/users', (req, res) => res.json([]));",
+    ].join("\n"))
+
+    noir_options = create_test_options
+    noir_options["base"] = YAML::Any.new(tmpdir)
+    locator = CodeLocator.instance
+    Dir.glob("#{tmpdir}/**/*").each { |file| locator.register_path(file) }
+
+    reports_details = Details.new(PathInfo.new(app_js, 5))
+    reports_details.technology = "js_express"
+    reports = Endpoint.new("/reports/daily", "GET", [] of Param, reports_details)
+    admin_details = Details.new(PathInfo.new(app_js, 6))
+    admin_details.technology = "js_express"
+    admin = Endpoint.new("/admin/users", "GET", [] of Param, admin_details)
+
+    ExpressAuthTagger.new(noir_options).perform([reports, admin])
+
+    reports.tags.any? { |tag| tag.name == "auth" }.should be_false
+    admin.tags.any? { |tag| tag.name == "auth" }.should be_true
+  ensure
+    FileUtils.rm_rf(tmpdir) if tmpdir
+  end
 end

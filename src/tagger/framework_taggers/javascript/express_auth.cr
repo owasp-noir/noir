@@ -76,6 +76,15 @@ class ExpressAuthTagger < FrameworkTagger
   # window around one route never reads the next one's middleware.
   ROUTE_DECLARATION = /\.\s*(?:get|post|put|patch|delete|options|head|all|use|route)\s*\(/
 
+  # `Promise.all(` / `Promise.all (`: the builtin, never a mount. A large
+  # TS codebase carries thousands of them, and each one used to be read as
+  # a `.all()` registration whose every argument was followed to its
+  # definition (n8n: ~3,200 lines, over a second of tagging).
+  PROMISE_ALL = /\bPromise\s*\.\s*all\s*\(/
+
+  # The calls the mount pre-scan reads: a file with neither is skipped whole.
+  MOUNT_CALL = /\.\s*(?:use|all)\s*\(/
+
   def initialize(options : Hash(String, YAML::Any))
     super
     @mounted_auth_rules = [] of {prefix: String, description: String, file: String, receiver: String}
@@ -112,15 +121,18 @@ class ExpressAuthTagger < FrameworkTagger
     extensions.each do |ext|
       files = collect_files_by_extension(ext)
       files.each do |file|
-        lines = read_file_lines(file)
-        next if lines.nil?
         content = read_file(file) || next
+        # Most files of a large tree mount nothing: do not split them into
+        # (cached) lines just to look at none of them.
+        next unless content.matches?(MOUNT_CALL, options: Noir::TextFile::MATCH_OPTIONS)
+        lines = read_file_lines(file) || next
         expanded = Noir::PathScope.expand(file)
 
         lines.each_with_index do |line, idx|
+          next unless line.includes?(".use") || line.includes?(".all")
           stripped = line.strip
-          next unless stripped.includes?(".use") || stripped.includes?(".all")
           next unless stripped.matches?(ROUTE_DECLARATION)
+          next if stripped.includes?("Promise") && !stripped.gsub(PROMISE_ALL, "").matches?(ROUTE_DECLARATION)
           statement = Noir::CComments.strip(get_route_statement(lines, idx).join("\n"), quotes: %("'`))
           record_router_mount(expanded, statement, content) if statement.includes?(".use")
           args = call_args(statement) || [statement]
