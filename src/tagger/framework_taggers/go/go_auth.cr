@@ -88,6 +88,17 @@ class GoAuthTagger < FrameworkTagger
   # server serves.
   SERVER_MIDDLEWARE = /\b(\w+)\s*\.\s*Middleware\s*\(/
 
+  # The tail after a constructor call that ends in a method value:
+  # `.WithOptionalFor("/x").Handler`.
+  RESULT_METHOD_TAIL = /\A(?:\s*\.\s*\w+\s*\((?:[^()]|\([^()]*\))*\))*\s*\.\s*(\w+)\s*\z/
+
+  # A builder call in that tail that may waive the check:
+  # `.WithOptionalFor("/api/badge/")`, `.WithOptionalFor(cfg.PublicPath)`.
+  # `.WithOptional(false)` waives nothing, and `.WithOptionalForMethods(
+  # http.MethodOptions)` still checks every other verb. String contents are
+  # masked here (`""`).
+  OPTIONAL_BUILDER = /\.\s*(\w*Optional\w*)\s*\(((?:[^()]|\([^()]*\))*)\)/
+
   # One middleware argument's head: `AuthMiddleWare()` -> {"", "AuthMiddleWare"},
   # `auth.Required()` -> {"auth", "Required"}, `gin.BasicAuth(gin.Accounts{` ->
   # {"gin", "BasicAuth"}. A closure (`func(c *gin.Context) {`) is excluded.
@@ -226,6 +237,7 @@ class GoAuthTagger < FrameworkTagger
     @linked_modules = Hash({String, String}, Bool).new
     @router_chains = Hash({String, Int32, String}, {Array({String, Int32}), Bool}).new
     @owner_uses = Hash({String, Int32, String, String}, Array(Int32)).new
+    @escapes = Hash({String, Int32, String}, Bool).new
     @call_arguments = Hash({String, String, Int32}, Array({String, Int32, String, Int32})?).new
     @go_files = nil.as(Array(String)?)
     @bound_requests = Hash(String, Tag).new
@@ -768,11 +780,34 @@ class GoAuthTagger < FrameworkTagger
         flags = call_args(arg[ref.end..])
         fields = flags.each_with_index.to_h { |(flag, i)| {i.to_s, flag} } if !flags.empty? && flags.all? { |flag| flag == "true" || flag == "false" }
       end
-      case definition_verdict(qualifier, name, file, fields)
+      # A method value off a constructor's result, through its builder calls
+      # (wakapi's `middlewares.NewApiAuthenticateMiddleware(svc).
+      # WithOptionalForMethods(m).Handler`): the method decides, not the
+      # constructor that only builds the value.
+      # A tail that waives the check under some path (wakapi's
+      # `.WithOptionalFor("/api/badge/")`) is left to the constructor, as
+      # the method's refusal does not hold there.
+      # A waiver read from a setting (`.WithOptionalFor(cfg.PublicPath)`)
+      # keeps the method's verdict, and says the setting can open it.
+      verdict = nil
+      waiver = nil
+      if arg[ref.end - 1]? == '(' && (close = closing_paren(arg, ref.end - 1)) &&
+         (tail = arg[close + 1..].match(RESULT_METHOD_TAIL))
+        waivers = tail[0].scan(OPTIONAL_BUILDER).reject do |call|
+          call[1].ends_with?("Methods") || call[2].strip.empty? || call[2].strip == "false"
+        end
+        unless waivers.any?(&.[2].includes?('"'))
+          waiver = waivers.first?.try { |call| " .#{call[1]}(#{call[2].strip}) can let requests through unchecked, depending on its value" }
+          bodies = methods_on_result(qualifier.empty? ? nil : qualifier, name, tail[1], File.dirname(file))
+          verdict = bodies.max_of { |body| body_verdict(body, nil) } unless bodies.empty?
+        end
+      end
+      verdict ||= definition_verdict(qualifier, name, file, fields)
+      case verdict
       when Guard::Authn
-        Tag.new("auth", "Protected by Go middleware #{shown} (verified from its body: refuses anonymous callers)", "go_auth")
+        Tag.new("auth", "Protected by Go middleware #{shown} (verified from its body: refuses anonymous callers#{waiver ? ";#{waiver}" : ""})", "go_auth")
       when Guard::Authz
-        Tag.new("authz", "Protected by Go middleware #{shown} (verified from its body: permission check replies 403)", "go_auth")
+        Tag.new("authz", "Protected by Go middleware #{shown} (verified from its body: permission check replies 403#{waiver ? ";#{waiver}" : ""})", "go_auth")
       when nil
         if display.nil? && (bound = local_binding(file, shown))
           next guard_by_definition(bound, file, authish_name, shown)
@@ -2525,7 +2560,11 @@ class GoAuthTagger < FrameworkTagger
           # route's own line counts; gin copies a group's handlers when it
           # is created.
           ordered && (endpoint.details.technology == "go_fiber" ? line : hop[1]) < use_row
-        elsif local
+        elsif local || (owner_local && !escapes?(owner, owner_lines))
+          # A router built here, or handed in while the owner was built
+          # here (wakapi's `router.Get("/login", h)` next to `logoutRouter
+          # := chi.NewRouter()`), is another router unless the owner mounts
+          # it.
           owner_uses(owner, owner_lines, chain.last[0]).empty?
         else
           chain.any? { |(router, _)| owner_chain.any? { |(other, _)| other == router } }
@@ -2539,7 +2578,10 @@ class GoAuthTagger < FrameworkTagger
         # `app.Group("/api/public")`), so group identity says nothing there.
         next true if calls.empty? && !PREFIX_MATCHED_MIDDLEWARE.includes?(endpoint.details.technology) &&
                      sibling_parameters?(owner, owner_lines, owner_chain, path_info.path, lines, start, chain)
-        calls.empty? ? local && owner_local : ordered && calls.all? { |row| row < use_row }
+        # A router the owner's function builds and never lets out (wakapi's
+        # `r := chi.NewRouter(); r.Use(auth); router.Mount("/setup", r)`)
+        # is no other function's router.
+        calls.empty? ? owner_local && (local || !escapes?(owner, owner_lines)) : ordered && calls.all? { |row| row < use_row }
       end
     end
   end
@@ -2679,7 +2721,38 @@ class GoAuthTagger < FrameworkTagger
             called = segments.last == File.basename(package_dir)
           end
         end
-        row + 1 if called || (code.includes?("Mount(") && tokens.includes?(target))
+        # `owner.Mount("/s", target)`: mounted on the owner, not the owner
+        # mounted on `target` (`target.Mount("/s", owner)`).
+        mounts = code.includes?("Mount(") && tokens.includes?(target) && code.lstrip.starts_with?("#{owner[:receiver]}.")
+        row + 1 if called || mounts
+      end
+    end
+  end
+
+  # Whether the owner's router may be any other function's router. It stays
+  # in its function only when every line naming it is its construction
+  # (`r := chi.NewRouter()`), a route or middleware on it with a literal
+  # path (`r.Get("/", h)`, `r.Use(auth)`), or its mounting on another router
+  # (`router.Mount("/s", r)`). Anything else (handed to a helper or closure,
+  # `r.Route("/x", fn)`, `r.Group(fn)`, `r.Mount("/s", sub)`, `r.With(..)`,
+  # returned, stored) may hand it on.
+  private def escapes?(owner : Gate, owner_lines : Array(String)) : Bool
+    @escapes.put_if_absent({owner[:file], owner[:rows].begin, owner[:receiver]}) do
+      receiver = Regex.escape(owner[:receiver])
+      start = function_start(owner_lines, owner[:rows].begin)
+      next true if start < 0
+      last = enclosing_block_end(owner_lines, start + 2)
+      # `:=` or `var r = ...` only: `r = chi.NewRouter()` may set a
+      # package-level router other functions use.
+      built = /\A(?:var\s+#{receiver}\b[^=]*=|#{receiver}\s*:=)\s*(?:&\s*)?\w+\s*\.\s*New\w*\s*\([^()]*\)\s*\z/
+      use = /\A#{receiver}\s*\.\s*(?:Use\s*\(|(?i:get|post|put|patch|delete|head|options)\s*\(\s*""\s*,)/
+      mount = /\A\w+\s*\.\s*Mount\s*\(\s*""\s*,\s*#{receiver}\s*\)\z/
+      ((start + 1)...Math.min(last, owner_lines.size)).any? do |row|
+        code = code_only(owner_lines[row]).strip
+        mentions = code.split(/\W+/).count(owner[:receiver])
+        next false if mentions.zero?
+        next true if mentions > 1
+        !(code.matches?(built) || code.matches?(use) || code.matches?(mount))
       end
     end
   end

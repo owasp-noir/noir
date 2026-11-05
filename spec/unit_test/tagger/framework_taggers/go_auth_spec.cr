@@ -784,3 +784,171 @@ describe "GoAuthTagger (.Use look-back)" do
     end
   end
 end
+
+# A router a handler builds for itself (`r := chi.NewRouter(); r.Use(auth);
+# router.Mount("/setup", r)`) reaches only its own routes and what it hands
+# out or mounts on itself: not the routes other handlers register on the
+# router they are handed (wakapi's `/api/health`, `/login`). One it hands
+# to a helper (`register(s)`) may be any function's router.
+describe "GoAuthTagger (router built in a handler)" do
+  shared = [
+    "package main",                                         # 1
+    "import \"github.com/go-chi/chi/v5\"",                  # 2
+    "func (h *Shared) RegisterRoutes(router chi.Router) {", # 3
+    "  s := chi.NewRouter()",                               # 4
+    "  s.Use(authMiddleware.Handler)",                      # 5
+    "  register(s)",                                        # 6
+    "  router.Mount(\"/s\", s)",                            # 7
+    "}",                                                    # 8
+    "func register(x chi.Router) {",                        # 9
+    "  x.Get(\"/inner\", h)",                               # 10
+    "}",                                                    # 11
+  ]
+
+  local = [
+    "package main",                                         # 1
+    "import \"github.com/go-chi/chi/v5\"",                  # 2
+    "func (h *Setup) RegisterRoutes(router chi.Router) {",  # 3
+    "  r := chi.NewRouter()",                               # 4
+    "  r.Use(authMiddleware.Handler)",                      # 5
+    "  r.Get(\"/\", h.GetIndex)",                           # 6
+    "  router.Mount(\"/setup\", r)",                        # 7
+    "}",                                                    # 8
+    "func (h *Health) RegisterRoutes(router chi.Router) {", # 9
+    "  router.Get(\"/health\", h.Get)",                     # 10
+    "}",                                                    # 11
+    "func (h *Login) RegisterRoutes(router chi.Router) {",  # 12
+    "  router.Get(\"/login\", h.GetIndex)",                 # 13
+    "  logoutRouter := chi.NewRouter()",                    # 14
+    "  logoutRouter.Use(authMiddleware.Handler)",           # 15
+    "  logoutRouter.Post(\"/\", h.PostLogout)",             # 16
+    "  router.Mount(\"/logout\", logoutRouter)",            # 17
+    "  router.Get(\"/after\", h.After)",                    # 18
+    "}",                                                    # 19
+  ]
+
+  it "does not reach a route another handler registers" do
+    run_go_auth(local, "/health", "GET", 10).tags.any? { |t| t.name == "auth" }.should be_false
+  end
+
+  it "does not reach the handed router's routes in its own function" do
+    run_go_auth(local, "/login", "GET", 13).tags.any? { |t| t.name == "auth" }.should be_false
+    run_go_auth(local, "/after", "GET", 18).tags.any? { |t| t.name == "auth" }.should be_false
+  end
+
+  it "still reaches its own routes" do
+    run_go_auth(local, "/setup", "GET", 6).tags.any? { |t| t.name == "auth" }.should be_true
+    run_go_auth(local, "/logout", "POST", 16).tags.any? { |t| t.name == "auth" }.should be_true
+  end
+
+  # A router handed on through a function value, a closure or a sub-router
+  # keeps every route it may reach.
+  handed = [
+    "package main",                                    # 1
+    "import \"github.com/go-chi/chi/v5\"",             # 2
+    "func (h *H) RegisterRoutes(router chi.Router) {", # 3
+    "  r := chi.NewRouter()",                          # 4
+    "  r.Use(authMiddleware.Handler)",                 # 5
+    "  r.Route(\"/users\", usersRoutes)",              # 6
+    "  r.Group(adminRoutes)",                          # 7
+    "  addCrud := func(g chi.Router) {",               # 8
+    "    g.Get(\"/list\", list)",                      # 9
+    "  }",                                             # 10
+    "  addCrud(r)",                                    # 11
+    "  r.Get(\"/direct\", list)",                      # 12
+    "  router.Mount(\"/p\", r)",                       # 13
+    "}",                                               # 14
+    "func usersRoutes(r chi.Router) {",                # 15
+    "  r.Get(\"/all\", list)",                         # 16
+    "}",                                               # 17
+    "func adminRoutes(r chi.Router) {",                # 18
+    "  r.Get(\"/admin/stats\", list)",                 # 19
+    "}",                                               # 20
+  ]
+
+  it "still reaches routes it hands on through Route, Group or a closure" do
+    run_go_auth(handed, "/p/users/all", "GET", 16).tags.any? { |t| t.name == "auth" }.should be_true
+    run_go_auth(handed, "/p/admin/stats", "GET", 19).tags.any? { |t| t.name == "auth" }.should be_true
+    run_go_auth(handed, "/p/list", "GET", 9).tags.any? { |t| t.name == "auth" }.should be_true
+    run_go_auth(handed, "/p/direct", "GET", 12).tags.any? { |t| t.name == "auth" }.should be_true
+  end
+
+  # A package-level router set up in one function is every function's.
+  global = [
+    "package main",                        # 1
+    "import \"github.com/go-chi/chi/v5\"", # 2
+    "var r *chi.Mux",                      # 3
+    "func setup(router chi.Router) {",     # 4
+    "  r = chi.NewRouter()",               # 5
+    "  r.Use(authMiddleware.Handler)",     # 6
+    "  router.Mount(\"/g\", r)",           # 7
+    "}",                                   # 8
+    "func more() {",                       # 9
+    "  r.Get(\"/global\", h)",             # 10
+    "}",                                   # 11
+  ]
+
+  it "still reaches a package-level router's routes in another function" do
+    run_go_auth(global, "/global", "GET", 10).tags.any? { |t| t.name == "auth" }.should be_true
+  end
+
+  it "still reaches a helper it hands the router to" do
+    run_go_auth(shared, "/s/inner", "GET", 10).tags.any? { |t| t.name == "auth" }.should be_true
+  end
+end
+
+# A middleware handed as a method value off a constructor's result is judged
+# by that method, not by the constructor that only builds the value.
+describe "GoAuthTagger (method value off a constructor)" do
+  source = [
+    "package main",                                                             # 1
+    "type Auth struct{ optional bool }",                                        # 2
+    "func NewAuth() *Auth { return &Auth{} }",                                  # 3
+    "func (m *Auth) WithOptional(o bool) *Auth { m.optional = o; return m }",   # 4
+    "func (m *Auth) Handler(h http.Handler) http.Handler {",                    # 5
+    "  return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {", # 6
+    "    if r.Header.Get(\"Authorization\") == \"\" {",                         # 7
+    "      w.WriteHeader(http.StatusUnauthorized)",                             # 8
+    "      return",                                                             # 9
+    "    }",                                                                    # 10
+    "    h.ServeHTTP(w, r)",                                                    # 11
+    "  })",                                                                     # 12
+    "}",                                                                        # 13
+    "func (m *Auth) Log(h http.Handler) http.Handler { return h }",             # 14
+    "func routes(router chi.Router) {",                                         # 15
+    "  router.Group(func(r chi.Router) {",                                      # 16
+    "    r.Use(NewAuth().WithOptional(false).Handler)",                         # 17
+    "    r.Post(\"/heartbeat\", h)",                                            # 18
+    "  })",                                                                     # 19
+    "  router.Group(func(r chi.Router) {",                                      # 20
+    "    r.Use(NewAuth().Log)",                                                 # 21
+    "    r.Get(\"/open\", h)",                                                  # 22
+    "  })",                                                                     # 23
+    "  router.Group(func(r chi.Router) {",                                      # 24
+    "    r.Use(NewAuth().WithOptionalForMethods(http.MethodOptions).Handler)",  # 25
+    "    r.Post(\"/heartbeats\", h)",                                           # 26
+    "  })",                                                                     # 27
+    "  router.Group(func(r chi.Router) {",                                      # 28
+    "    r.Use(NewAuth().WithOptionalFor(cfg.PublicPath).Handler)",             # 29
+    "    r.Get(\"/setting\", h)",                                               # 30
+    "  })",                                                                     # 31
+    "}",                                                                        # 32
+  ]
+
+  it "reads the guard off the method" do
+    run_go_auth(source, "/heartbeat", "POST", 18).tags.any? { |t| t.name == "auth" }.should be_true
+  end
+
+  it "does not let the constructor's name decide for a pass-through method" do
+    run_go_auth(source, "/open", "GET", 22).tags.any? { |t| t.name == "auth" }.should be_false
+  end
+
+  it "says when a setting can waive the method's check" do
+    tag = run_go_auth(source, "/setting", "GET", 30).tags.find! { |t| t.name == "auth" }
+    tag.description.should contain("WithOptionalFor(cfg.PublicPath)")
+  end
+
+  it "still reads the method when only a verb is waived" do
+    run_go_auth(source, "/heartbeats", "POST", 26).tags.any? { |t| t.name == "auth" }.should be_true
+  end
+end
