@@ -41,7 +41,7 @@ module Analyzer::Javascript
         content = Noir::JSRouteExtractor.strip_js_comments(read_file_content(path))
         next if Noir::JSRouteExtractor.other_shared_extractor_framework?(content, :fastify)
         facts = fastify_file_facts(path, content, include_callee)
-        autoload_prefix = autoload_prefix_for(path, autoload_roots, content)
+        autoload_prefixes = autoload_prefixes_for(path, autoload_roots, content)
         parser_endpoints = Noir::JSRouteExtractor.extract_routes(path, content, @is_debug,
           include_callees: include_callee)
         # "METHOD url" this file already emitted, for the auxiliary passes'
@@ -49,40 +49,51 @@ module Analyzer::Javascript
         # quadratic).
         recorded = Set(String).new
         schema_by_line = facts.schema_params_by_line
-        parser_endpoints.each do |endpoint|
+        parser_endpoints.each do |parsed|
           # The shared JS parser emits `.query(` shorthand for any receiver
           # and without the addHttpMethod('QUERY') gate or plugin prefixes.
           # The Fastify-specific pass below owns all QUERY emission (gated
           # shorthand plus explicit route configs), so shared-parser QUERY
           # results would only add phantom or unprefixed duplicates.
-          next if endpoint.method == "QUERY"
+          next if parsed.method == "QUERY"
 
-          unless autoload_prefix.empty?
-            endpoint.url = Noir::URLPath.join(autoload_prefix, endpoint.url)
-          end
-          # Preserve the precise route line supplied by the shared extractor.
-          # Falling back to path-only keeps older behavior if a parser result
-          # somehow lacks location metadata.
-          if endpoint.details.code_paths.empty?
-            endpoint.details = Details.new(PathInfo.new(path))
-          end
+          autoload_prefixes.each do |autoload_prefix|
+            endpoint = parsed
+            if autoload_prefixes.size > 1
+              # One directory autoloaded under several prefixes: each copy
+              # gets arrays of its own (the struct copy shares them).
+              endpoint.params = parsed.params.dup
+              endpoint.tags = parsed.tags.dup
+              endpoint.callees = parsed.callees.dup
+              endpoint.details = parsed.details
+            end
+            unless autoload_prefix.empty?
+              endpoint.url = Noir::URLPath.join(autoload_prefix, parsed.url)
+            end
+            # Preserve the precise route line supplied by the shared extractor.
+            # Falling back to path-only keeps older behavior if a parser result
+            # somehow lacks location metadata.
+            if endpoint.details.code_paths.empty?
+              endpoint.details = Details.new(PathInfo.new(path))
+            end
 
-          # Parse path parameters from the URL path itself
-          if endpoint.url.includes?(":")
-            endpoint.url.scan(/:(\w+)/) do |m|
-              if m.size > 0
-                param = Param.new(m[1], "", "path")
-                endpoint.push_param(param)
+            # Parse path parameters from the URL path itself
+            if endpoint.url.includes?(":")
+              endpoint.url.scan(/:(\w+)/) do |m|
+                if m.size > 0
+                  param = Param.new(m[1], "", "path")
+                  endpoint.push_param(param)
+                end
               end
             end
-          end
 
-          endpoint.details.code_paths.first?.try(&.line).try { |line| schema_by_line.try(&.[line]?) }.try &.each do |param|
-            endpoint.push_param(param)
-          end
+            endpoint.details.code_paths.first?.try(&.line).try { |line| schema_by_line.try(&.[line]?) }.try &.each do |param|
+              endpoint.push_param(param)
+            end
 
-          result << endpoint
-          recorded << "#{endpoint.method} #{endpoint.url}"
+            result << endpoint
+            recorded << "#{endpoint.method} #{endpoint.url}"
+          end
         end
 
         # Auxiliary pass for `fastify.route({ method, url })` shapes
@@ -96,11 +107,13 @@ module Analyzer::Javascript
           # A file registered from another file is served under that
           # register's prefix(es), which the shared extractor applied above.
           mounts = CodeLocator.instance.all(ExpressConstants.file_key(Noir::PathScope.expand(path)))
-          (mounts.empty? ? [""] : mounts).each do |mount|
-            prefix = Noir::URLPath.join(autoload_prefix, mount)
-            extract_route_configs(path, content, result, recorded, include_callee, prefix, facts)
-            if has_query_method
-              extract_query_shorthand_routes(path, content, result, recorded, include_callee, prefix, facts)
+          autoload_prefixes.each do |autoload_prefix|
+            (mounts.empty? ? [""] : mounts).each do |mount|
+              prefix = Noir::URLPath.join(autoload_prefix, mount)
+              extract_route_configs(path, content, result, recorded, include_callee, prefix, facts)
+              if has_query_method
+                extract_query_shorthand_routes(path, content, result, recorded, include_callee, prefix, facts)
+              end
             end
           end
         end
@@ -237,7 +250,8 @@ module Analyzer::Javascript
                       .try { |o| extract_prop_value(o, "prefix", source) }
                       .try { |p| decode_string(p, source) } || ""
                     options_prefix = "/#{options_prefix}" unless options_prefix.empty? || options_prefix.starts_with?('/')
-                    autoload_roots << AutoloadRoot.new(root_path, dir_prefix, options_prefix) unless autoload_roots.any? { |r| r.path == root_path }
+                    autoload_root = AutoloadRoot.new(root_path, dir_prefix, options_prefix)
+                    autoload_roots << autoload_root unless autoload_roots.includes?(autoload_root)
                   end
                 end
               end
@@ -442,7 +456,7 @@ module Analyzer::Javascript
 
         facts = fastify_file_facts(path, content, false)
         facts.autoload_roots.each do |r|
-          roots << r unless roots.any? { |existing| existing.path == r.path }
+          roots << r unless roots.includes?(r)
         end
       rescue
         next
@@ -460,26 +474,22 @@ module Analyzer::Javascript
     #     both mount at `/api`.
     #   * an `export const autoPrefix = '/x'` declared in the file.
     # A file directly in a root with no autoPrefix yields "" (mounted at
-    # "/"), which leaves its routes untouched.
-    private def autoload_prefix_for(path : String, roots : Array(AutoloadRoot), content : String) : String
+    # "/"), which leaves its routes untouched. One prefix per registration
+    # of the most specific root (a directory autoloaded twice, under
+    # `options: { prefix: '/v1' }` and `'/v2'`, serves both).
+    private def autoload_prefixes_for(path : String, roots : Array(AutoloadRoot), content : String) : Array(String)
       auto_prefix = content.includes?("autoPrefix") && (m = content.match(AUTO_PREFIX_RE)) ? m[1] : ""
+      return [auto_prefix] if roots.empty?
 
-      dir_prefix = ""
-      unless roots.empty?
-        file_dir = File.dirname(Noir::PathScope.expand(path))
-        roots.each do |root|
-          next unless file_dir == root.path || file_dir.starts_with?("#{root.path}/")
-          if root.dir_prefix && file_dir != root.path
-            dir_prefix = "/#{file_dir[(root.path.size + 1)..]}"
-          end
-          dir_prefix = Noir::URLPath.join(root.prefix, dir_prefix) unless root.prefix.empty?
-          break
-        end
-      end
+      file_dir = File.dirname(Noir::PathScope.expand(path))
+      root_path = roots.find { |root| file_dir == root.path || file_dir.starts_with?("#{root.path}/") }.try(&.path)
+      matched = root_path ? roots.select { |root| root.path == root_path } : [] of AutoloadRoot
+      return [auto_prefix] if matched.empty?
 
-      return dir_prefix if auto_prefix.empty?
-      return auto_prefix if dir_prefix.empty?
-      Noir::URLPath.join(dir_prefix, auto_prefix)
+      matched.map do |root|
+        dir_prefix = root.dir_prefix && file_dir != root.path ? "/#{file_dir[(root.path.size + 1)..]}" : ""
+        Noir::URLPath.join(Noir::URLPath.join(root.prefix, dir_prefix), auto_prefix)
+      end.uniq!
     end
 
     # Markers indicating that HTTP QUERY method support is registered.

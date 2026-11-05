@@ -210,10 +210,13 @@ module Analyzer::Javascript
       end
     end
 
-    REGISTER_CALL_RE    = /\.register\s*\(/
-    REGISTER_PREFIX_RE  = /\bprefix\s*:\s*(?:['"]([^'"]+)['"]|`([^`$]+)`)/
-    REGISTER_MODULE_RE  = /\A(?:await\s+)?(?:require|import)\s*\(\s*['"]([^'"]+)['"]\s*\)(?:\.default)?\z/
-    REGISTER_BINDING_RE = /\A([A-Za-z_$][\w$]*)(?:\.([A-Za-z_$][\w$]*))?\z/
+    REGISTER_CALL_RE   = /\.register\s*\(/
+    REGISTER_PREFIX_RE = /\bprefix\s*:\s*(?:['"]([^'"]*)['"]|`([^`$]*)`)/
+    # A `prefix` key (`prefix:`, `'prefix':`, shorthand `{ prefix }`), not
+    # the word as a string value (`{ namespace: 'prefix' }`).
+    REGISTER_PREFIX_KEY_RE = /\bprefix(?:['"]?\s*:|\s*[,}])/
+    REGISTER_MODULE_RE     = /\A(?:await\s+)?(?:require|import)\s*\(\s*['"]([^'"]+)['"]\s*\)(?:\.default)?\z/
+    REGISTER_BINDING_RE    = /\A([A-Za-z_$][\w$]*)(?:\.([A-Za-z_$][\w$]*))?\z/
     # restify-router: `usersRouter.applyRoutes(server, '/users')` and the
     # nested `router.add('/v1', v1Router)`.
     APPLY_ROUTES_RE = /((?:require\s*\(\s*['"][^'"]+['"]\s*\))|[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)?)\s*\.applyRoutes\s*\(\s*[\w$.]+\s*,\s*(?:['"]([^'"]+)['"]|`([^`$]+)`)/
@@ -286,9 +289,10 @@ module Analyzer::Javascript
       end
 
       registered = edges.values.flat_map(&.map(&.[2])).to_set
+      visited = Set(Tuple(String, String)).new
       edges.each_key do |root|
         next if registered.includes?(root)
-        descend_register_mounts(root, "", edges, locator, Set{root})
+        descend_register_mounts(root, "", edges, locator, Set{root}, visited)
       end
     end
 
@@ -302,12 +306,12 @@ module Analyzer::Javascript
           prefix_match = options.match(REGISTER_PREFIX_RE)
           unless prefix_match
             # `{ prefix: someVariable }` is a prefix this scan cannot read.
-            yield plugin, "" unless options.matches?(/\bprefix\b/)
+            yield plugin, "" unless options.matches?(REGISTER_PREFIX_KEY_RE)
             next
           end
           # Fastify adds the leading slash itself: `{ prefix: 'api/v1' }`.
           prefix = prefix_match[1]? || prefix_match[2]
-          yield plugin, prefix.starts_with?('/') ? prefix : "/#{prefix}"
+          yield plugin, prefix.empty? || prefix.starts_with?('/') ? prefix : "/#{prefix}"
         end
       elsif @framework == :hapi
         content.scan(REGISTER_CALL_RE) do |m|
@@ -351,13 +355,21 @@ module Analyzer::Javascript
 
     private def descend_register_mounts(file : String, parent : String,
                                         edges : Hash(String, Array(Tuple(String, Noir::LocatorKey(Array(String)), String))),
-                                        locator : CodeLocator, on_path : Set(String))
+                                        locator : CodeLocator, on_path : Set(String),
+                                        visited : Set(Tuple(String, String)))
       edges[file]?.try &.each do |prefix, key, target|
         next if on_path.includes?(target)
         combined = prefix.empty? ? parent : Noir::URLPath.join(parent, prefix)
-        push_prefix_to_locator(locator, key, combined, "Mapped plugin mount prefix: #{target} => #{combined}") unless combined.empty?
+        # "" too: a plugin also registered unprefixed at the root keeps its
+        # root URL next to the prefixes it inherits elsewhere. Pushed before
+        # the memo: two named exports of one file are two keys.
+        push_prefix_to_locator(locator, key, combined, "Mapped plugin mount prefix: #{target} => #{combined}")
+        # A file's own mounts walked once under a prefix are not walked
+        # again: plugins registered from several parents would otherwise fan
+        # out exponentially.
+        next unless visited.add?({target, combined})
         on_path << target
-        descend_register_mounts(target, combined, edges, locator, on_path)
+        descend_register_mounts(target, combined, edges, locator, on_path, visited)
         on_path.delete(target)
       end
     end
