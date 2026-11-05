@@ -91,6 +91,15 @@
     wrap.appendChild(pre);
   });
 
+  /* Tables get a horizontal scroller so a wide flag matrix scrolls inside its
+     own frame instead of pushing the page out past the viewport on a phone. */
+  document.querySelectorAll(".prose > table").forEach(function (table) {
+    var wrap = document.createElement("div");
+    wrap.className = "table-scroll";
+    table.parentNode.insertBefore(wrap, table);
+    wrap.appendChild(table);
+  });
+
   /* Anchor links on headings. */
   document.querySelectorAll(".prose h2[id], .prose h3[id], .prose h4[id]").forEach(function (h) {
     if (h.querySelector(".heading-anchor")) return;
