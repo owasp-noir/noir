@@ -705,6 +705,13 @@ module Noir::CLI::Inspect
   # (`/ai-llms.json` is `/ai-llms`), so when only a catch-all matched, the
   # suffix-less path is tried against the Rails routes and its matches lead.
   def self.trace(endpoints : Array(Endpoint), method : String?, path : String) : Array(Match)
+    # A client declaration (Feign, `@HttpExchange`) mirrors a route another
+    # service serves; the route this app serves leads, the stub follows.
+    served, clients = trace_matches(endpoints, method, path).partition { |match| !match.endpoint.internal }
+    served + clients
+  end
+
+  private def self.trace_matches(endpoints : Array(Endpoint), method : String?, path : String) : Array(Match)
     matches = trace_path(endpoints, method, path)
     wanted = strip_trailing_slash(request_target(path))
     if matches.none?(&.matched_by.in?("exact", "pattern", "exact_ci", "pattern_ci")) && (bare = wanted.sub(RAILS_FORMAT_SUFFIX, "")) != wanted && !bare.empty?
@@ -905,6 +912,9 @@ module Noir::CLI::Inspect
       return false unless protocols.empty? || protocols.includes?(endpoint.protocol)
       context = endpoint.ai_context
       unless (g = guard).nil?
+        # An outbound client declaration (Feign, `@HttpExchange`) is not served
+        # here, so it is neither guarded nor open.
+        return false if endpoint.internal
         return false unless g == !Inspect.auth_guards(context).empty?
       end
       return false unless Inspect.bucket_matches?(sinks, context.try(&.sinks))

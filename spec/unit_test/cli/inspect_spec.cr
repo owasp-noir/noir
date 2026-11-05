@@ -363,6 +363,15 @@ describe Noir::CLI::Inspect do
     bare = endpoint("GET", "/health", "src/health.go", 1)
     endpoints = [guarded, open, bare]
 
+    it "leaves an outbound client declaration out of --no-guard and ranks it last in trace" do
+      client = endpoint("GET", "/dict/{type}", "src/RemoteDict.java", 1)
+      client.internal = true
+      served = endpoint("GET", "/dict/{type}", "src/DictController.java", 1)
+      f = Noir::CLI::QueryCommand.parse_filters(["--no-guard"]).filters
+      Noir::CLI::Inspect.query([client, served], f, false).map(&.path).should eq(["src/DictController.java"])
+      Noir::CLI::Inspect.trace([client, served], "GET", "/dict/x").map(&.endpoint.internal).should eq([false, true])
+    end
+
     it "ANDs filters and ORs comma lists" do
       f = Noir::CLI::QueryCommand.parse_filters(["--method", "GET,POST", "--sink", "any"]).filters
       Noir::CLI::Inspect.query(endpoints, f, false).map(&.url).should eq(["/admin/users", "/api/v1/items"])
