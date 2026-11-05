@@ -778,6 +778,15 @@ describe "SpringAuthTagger refusing argument resolver" do
     run_spring_markers(files, routes)["GET /me"].should eq(["Protected by in-handler check: refuses an anonymous caller (user == null)"])
   end
 
+  it "reads only a whole credential key, not one that merely contains token or auth" do
+    %w[csrfToken X-CSRF-TOKEN captchaToken pageToken deviceToken Idempotency-Token x-request-token-id author access_type].each do |key|
+      guarded.call("String v = request.getHeader(\"#{key}\"); if (v == null) { throw new IllegalStateException(); } return v;", "@NeedLogin", none).should eq(0)
+    end
+    %w[token Authorization X-Auth-Token access_token jwt api-key X-API-KEY ticket].each do |key|
+      guarded.call("String v = request.getHeader(\"#{key}\"); if (v == null) { throw new IllegalStateException(); } return lookup(v);", "@NeedLogin", none).should eq(1)
+    end
+  end
+
   it "judges each resolver of a file on its own" do
     both = {"#{MARKER_DIR}NeedLoginResolver.java" => <<-JAVA}
       public class NeedLoginResolver {

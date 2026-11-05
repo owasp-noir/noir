@@ -2523,7 +2523,9 @@ class SpringAuthTagger < FrameworkTagger
   RESOLVER_DEPTH    = 4
   RESOLVER_REJECTED = /\?|->|\bOptional\b|\.\s*required\s*\(|getParameterAnnotation\s*\([^()]*\)\s*\./
   RESOLVER_KEYWORDS = Set{"try", "catch", "finally", "for", "while", "do", "switch", "synchronized", "case", "default", "break", "continue", "yield", "assert", "class", "else"}
-  CREDENTIAL_NAME   = /token|auth|jwt|session|ticket|api[-_]?key|bearer|access/i
+  # The whole key, not a substring: `csrfToken`, `pageToken`, `captchaToken`
+  # or `author` are not login credentials.
+  CREDENTIAL_NAME   = /\A(?:x[-_])?(?:(?:user|admin|login|auth|access|api|session|refresh)[-_]?)?(?:token|authorization|auth|jwt|bearer|session(?:[-_]?id)?|sid|jsessionid|api[-_]?key|ticket)\z/i
   CREDENTIAL_SOURCE = /\A(?:\(\s*[\w$.]+\s*\)\s*)?[\w$]+(?:\s*\.\s*[\w$]+\s*\(\s*\))*\s*\.\s*(getHeader|getParameter|getAttribute|getCookie|getCookieValue)\s*\(\s*(?:[\w$]+\s*,\s*)?"([^"\\]*)"\s*(?:,\s*[\w$.]+\s*)?\)\z/
   LOCAL_ASSIGNMENT  = /\A(?:final\s+)?(?:[\w$.]+(?:<[\w$.,\s<>]*>)?(?:\[\])*\s+)?([a-z_$][\w$]*)\s*=(?!=)\s*(.*?)\s*;\z/m
   LOOKUP_CALL       = /\A[\w$]+(?:\s*\.\s*[\w$]+)*\s*\(\s*([a-z_$][\w$]*)\s*\)\z/
