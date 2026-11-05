@@ -143,8 +143,9 @@ module Noir
         token = tokens[idx]
         case token.type
         when :lparen, :lbrace, :lbracket
-          # A call (`now(`, `app.get(`) at the top level: types never call.
-          if nesting == 0 && token.type == :lparen && {:identifier, :http_method}.includes?(tokens[idx - 1].type)
+          # A call (`now(`, `app.get(`, `router.delete(`) at the top level: types never call.
+          if nesting == 0 && token.type == :lparen &&
+             ({:identifier, :http_method}.includes?(tokens[idx - 1].type) || tokens[idx - 2].type == :dot)
             return
           end
           nesting += 1

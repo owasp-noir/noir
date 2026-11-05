@@ -71,6 +71,20 @@ describe Noir::JSParser do
       routes.map(&.raw_path).sort!.should eq(["/asi-after", "/asi-swallowed"])
     end
 
+    it "keeps a keyword-named verb call between two comparisons" do
+      code = <<-JS
+        const express = require('express')
+        cfg.n < 2
+        router.delete('/asi-keyword-method', h)
+        a > (b)
+        cfg.n < 2
+        this.app.delete('/asi-this-delete', h)
+        x > (y)
+        JS
+      routes = Noir::JSParser.new(code).parse_routes
+      routes.map(&.raw_path).sort!.should eq(["/asi-keyword-method", "/asi-this-delete"])
+    end
+
     it "keeps a route inside a ternary between comparisons" do
       code = <<-JS
         const express = require('express');

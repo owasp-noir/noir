@@ -230,6 +230,7 @@ describe "JsMiscAuthTagger" do
         fastify.get<{ Querystring: { q: string } }>('/typed-guarded', { preHandler: requireUser }, async () => 1);
         fastify.get<{ Querystring: { q: string } }>('/typed-open', async () => 1);
         fastify.get<{ Q: Q }>('/a', async () => 1); fastify.get('/x2', { preHandler: requireUser }, async () => 1);
+        fastify.get<{ Q: Q }>('/same', { preHandler: requireUser }, async () => 1); fastify.post('/same', async () => 1);
         TS
       begin
         noir_options = create_test_options
@@ -242,7 +243,16 @@ describe "JsMiscAuthTagger" do
         details = Details.new(PathInfo.new(server, 8))
         details.technology = "js_fastify"
         endpoints << Endpoint.new("/x2", "GET", [] of Param, details)
-        tags = JsMiscAuthTagger.new(noir_options).perform(endpoints).to_h { |ep| {ep.url, ep.tags.map(&.description)} }
+        %w[GET POST].each do |method|
+          details = Details.new(PathInfo.new(server, 9))
+          details.technology = "js_fastify"
+          endpoints << Endpoint.new("/same", method, [] of Param, details)
+        end
+        tagged = JsMiscAuthTagger.new(noir_options).perform(endpoints)
+        same = tagged.select { |ep| ep.url == "/same" }.to_h { |ep| {ep.method, ep.tags.map(&.description)} }
+        same["GET"].should eq(["Protected by Fastify preHandler requireUser"])
+        same["POST"].should be_empty
+        tags = tagged.to_h { |ep| {ep.url, ep.tags.map(&.description)} }
         tags["/typed-guarded"].should eq(["Protected by Fastify preHandler requireUser"])
         tags["/typed-open"].should be_empty
         tags["/a"].should be_empty
