@@ -81,7 +81,7 @@ class JsMiscAuthTagger < FrameworkTagger
       # previous routes do not bleed into public handlers.
       description = check_route_scope(route_scope(lines, line_idx))
       if description.nil? && endpoint.details.technology == "js_fastify"
-        description = fastify_route_guard(path_info.path, line_idx) || fastify_plugin_hook(path_info.path, line_num, endpoint.url)
+        description = fastify_route_guard(path_info.path, line_idx, endpoint.url) || fastify_plugin_hook(path_info.path, line_num, endpoint.url)
       end
       description ||= koa_guard(path_info.path, line_idx) if endpoint.details.technology == "js_koa"
       if description
@@ -325,15 +325,11 @@ class JsMiscAuthTagger < FrameworkTagger
   # A route option `preHandler: requireUser` or an inline preHandler that
   # replies 401. A preHandler that does not refuse (an admin check that
   # only calls `next`) is not a guard.
-  private def fastify_route_guard(path : String, line_idx : Int32) : String?
+  private def fastify_route_guard(path : String, line_idx : Int32, url : String) : String?
     lines = read_file_lines(path) || return
     return if line_idx < 0 || line_idx >= lines.size
     text = Noir::CComments.strip(lines[line_idx, 40].join('\n'), quotes: %("'`))
-    head = text.match(FASTIFY_ROUTE) || return
-    return if text[0...head.begin(0)].includes?('\n')
-    open = head.end(0) - 1
-    close = Noir::JSLiteralScanner.find_matching_paren(text, open) || return
-    args = Noir::TopLevelSplit.split(text[open + 1...close], ',', Noir::TopLevelSplit::Rules::JS_POSITIONAL_ARGS)
+    args = fastify_route_args(text, url) || return
     content = read_file(path) || return
     HOOK_KINDS.each do |key|
       args.each do |arg|
@@ -351,6 +347,29 @@ class JsMiscAuthTagger < FrameworkTagger
       end
     end
     nil
+  end
+
+  # The arguments of the route call on the first line of `text`; with
+  # several calls on that line (`a.get('/a', h); a.get('/b', {…}, h)`), the
+  # one whose path literal is `url` (or, under a prefix, ends it), else the first.
+  private def fastify_route_args(text : String, url : String) : Array(String)?
+    first_line_end = text.index('\n') || text.size
+    first = suffix = nil
+    pos = 0
+    while (head = text.match(FASTIFY_ROUTE, pos)) && head.begin(0) < first_line_end
+      open = head.end(0) - 1
+      close = Noir::JSLiteralScanner.find_matching_paren(text, open) || break
+      args = Noir::TopLevelSplit.split(text[open + 1...close], ',', Noir::TopLevelSplit::Rules::JS_POSITIONAL_ARGS)
+      literal = args.first?.try(&.strip)
+      if literal && literal.size >= 2 && {'\'', '"', '`'}.includes?(literal[0]) && literal[-1] == literal[0]
+        route = literal[1...-1]
+        return args if route == url
+        suffix ||= args if url.ends_with?(route)
+      end
+      first ||= args
+      pos = close + 1
+    end
+    suffix || first
   end
 
   private def fastify_property(object_text : String, prop : String) : String?

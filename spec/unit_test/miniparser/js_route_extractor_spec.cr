@@ -431,6 +431,22 @@ describe Noir::JSRouteExtractor do
       end
     end
 
+    it "extracts a file whose only routes carry TypeScript type arguments" do
+      # No `.get(` anywhere: the prefilter must still admit `.get<`.
+      content = <<-TS
+        import Fastify from 'fastify';
+        const app = Fastify();
+        app.get<{ Querystring: { q: string } }>('/typed', async () => 1);
+        TS
+      file = File.tempfile("typed", ".ts", &.print(content))
+      begin
+        routes = Noir::JSRouteExtractor.extract_routes(file.path, content)
+        routes.map { |r| "#{r.method} #{r.url}" }.should eq(["GET /typed"])
+      ensure
+        file.delete
+      end
+    end
+
     it "extracts HTTP QUERY routes in express source" do
       content = <<-JS
         const express = require("express");

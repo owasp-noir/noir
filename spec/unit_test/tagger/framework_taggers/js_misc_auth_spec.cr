@@ -216,6 +216,43 @@ describe "JsMiscAuthTagger" do
     end
   end
 
+  describe "Fastify routes with TypeScript type arguments" do
+    it "reads the preHandler of a typed route, and of the call its line names" do
+      dir = File.tempname("fastify_typed")
+      Dir.mkdir_p(dir)
+      server = File.join(dir, "server.ts")
+      File.write(server, <<-TS)
+        import Fastify from 'fastify';
+        const fastify = Fastify();
+        async function requireUser(request, reply) {
+          if (!request.user) return reply.code(401).send({ error: 'unauthorized' });
+        }
+        fastify.get<{ Querystring: { q: string } }>('/typed-guarded', { preHandler: requireUser }, async () => 1);
+        fastify.get<{ Querystring: { q: string } }>('/typed-open', async () => 1);
+        fastify.get<{ Q: Q }>('/a', async () => 1); fastify.get('/x2', { preHandler: requireUser }, async () => 1);
+        TS
+      begin
+        noir_options = create_test_options
+        noir_options["base"] = YAML::Any.new(dir)
+        endpoints = {6 => "/typed-guarded", 7 => "/typed-open", 8 => "/a"}.map do |line, url|
+          details = Details.new(PathInfo.new(server, line))
+          details.technology = "js_fastify"
+          Endpoint.new(url, "GET", [] of Param, details)
+        end
+        details = Details.new(PathInfo.new(server, 8))
+        details.technology = "js_fastify"
+        endpoints << Endpoint.new("/x2", "GET", [] of Param, details)
+        tags = JsMiscAuthTagger.new(noir_options).perform(endpoints).to_h { |ep| {ep.url, ep.tags.map(&.description)} }
+        tags["/typed-guarded"].should eq(["Protected by Fastify preHandler requireUser"])
+        tags["/typed-open"].should be_empty
+        tags["/a"].should be_empty
+        tags["/x2"].should eq(["Protected by Fastify preHandler requireUser"])
+      ensure
+        FileUtils.rm_rf(dir)
+      end
+    end
+  end
+
   it "returns correct target_techs" do
     JsMiscAuthTagger.target_techs.should contain("js_fastify")
     JsMiscAuthTagger.target_techs.should contain("js_koa")

@@ -127,15 +127,26 @@ module Noir
 
     MAX_TYPE_ARGUMENT_TOKENS = 512
 
+    # Tokens that cannot sit at the top level of a type-argument list but do
+    # follow a comparison (`a.b < 2` + newline + `app.get(…)` under ASI).
+    STATEMENT_KEYWORDS = Set{"const", "let", "var", "return", "if", "else", "for", "while", "switch", "try", "catch",
+                             "finally", "throw", "function", "class", "import", "export", "break", "continue", "do",
+                             "case", "default", "yield", "await", "async"}
+
     private def type_argument_end(tokens : Array(JSToken), open : Int32) : Int32?
       angle = 0
       nesting = 0
+      conditional = false
       limit = Math.min(tokens.size - 1, open + MAX_TYPE_ARGUMENT_TOKENS)
       idx = open
       while idx < limit
         token = tokens[idx]
         case token.type
         when :lparen, :lbrace, :lbracket
+          # A call (`now(`, `app.get(`) at the top level: types never call.
+          if nesting == 0 && token.type == :lparen && {:identifier, :http_method}.includes?(tokens[idx - 1].type)
+            return
+          end
           nesting += 1
         when :rparen, :rbrace, :rbracket
           nesting -= 1
@@ -143,6 +154,16 @@ module Noir
         when :semicolon
           # `{ Params: P; Body: B }` separates members; outside a bracket it ends a statement.
           return if nesting == 0
+        when :keyword
+          if nesting == 0
+            return if STATEMENT_KEYWORDS.includes?(token.value)
+            conditional = true if token.value == "extends"
+          end
+        when :assign
+          # `() => T` is a type; `=`, `==` at the top level are not.
+          next_token = tokens[idx + 1]
+          arrow = next_token.value == ">" && next_token.position == token.position + 1
+          return if nesting == 0 && !arrow
         when :unknown
           if token.value == "<"
             angle += 1
@@ -150,6 +171,14 @@ module Noir
             angle -= 1
             if angle == 0
               return nesting == 0 && tokens[idx + 1].type == :lparen ? idx : nil
+            end
+          elsif nesting == 0
+            # A ternary (`T extends U ? A : B` is the only typed `?`), `&&`, `||`.
+            return if token.value == "?" && !conditional
+            previous = tokens[idx - 1]
+            if (token.value == "&" || token.value == "|") && previous.value == token.value &&
+               previous.position == token.position - 1
+              return
             end
           end
         end
