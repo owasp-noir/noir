@@ -1,0 +1,9 @@
+security:
+    firewalls:
+        main:
+            lazy: true
+
+    access_control:
+        - { path: ^/open, roles: PUBLIC_ACCESS }
+        - { path: ^/api, allow_if: 'is_granted("@api.access") and is_authenticated()' }
+        - { path: ^/maybe, allow_if: 'is_authenticated() or request.query.get("k") == "x"' }

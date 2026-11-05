@@ -346,10 +346,10 @@ module Analyzer::Php
     # an `AccessDenied` throw.
     private def refusal_in(body : String) : String?
       return unless body.includes?("Granted")
-      if (m = body.match(/denyAccessUnlessGranted\s*\(\s*['"](\w+)['"]/)) && !PUBLIC_ATTRIBUTES.includes?(m[1])
+      if (m = body.match(/denyAccessUnlessGranted\s*\(\s*['"]([^'"]+)['"]/)) && !PUBLIC_ATTRIBUTES.includes?(m[1])
         return "Symfony denyAccessUnlessGranted('#{m[1]}')"
       end
-      if body.includes?("AccessDenied") && (m = body.match(/isGranted\s*\(\s*['"](\w+)['"]/)) && !PUBLIC_ATTRIBUTES.includes?(m[1])
+      if body.includes?("AccessDenied") && (m = body.match(/isGranted\s*\(\s*['"]([^'"]+)['"]/)) && !PUBLIC_ATTRIBUTES.includes?(m[1])
         "Symfony isGranted('#{m[1]}') check"
       end
     end

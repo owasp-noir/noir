@@ -15,6 +15,10 @@ require "yaml"
 module Analyzer::Php::SymfonySecurity
   PUBLIC_ROLES = %w[PUBLIC_ACCESS IS_AUTHENTICATED_ANONYMOUSLY]
   CONDITIONS   = %w[host ip ips port allow_if request_matcher attributes route]
+  # An `allow_if` expression that every caller must satisfy and that asks for
+  # a login or a permission, never one that can also pass anonymously.
+  ALLOW_IF_CHECK_RE  = /\b(?:is_authenticated|is_fully_authenticated|is_remember_me|is_granted|has_role)\s*\(/
+  ALLOW_IF_OPENER_RE = /\bor\b|\|\||\bnot\b|!|\bPUBLIC_ACCESS\b|\bIS_AUTHENTICATED_ANONYMOUSLY\b|\?/
 
   record Firewall, pattern : Regex?, open : Bool, conditional : Bool
   record Rule, path : Regex?, methods : Array(String), roles : Array(String), conditional : Bool
@@ -60,7 +64,11 @@ module Analyzer::Php::SymfonySecurity
     rules = (security[YAML::Any.new("access_control")]?.try(&.as_a?) || [] of YAML::Any).compact_map do |node|
       rule = node.as_h? || next
       roles = rule[YAML::Any.new("roles")]? || rule[YAML::Any.new("role")]?
-      Rule.new(regex(rule[YAML::Any.new("path")]?), strings(rule[YAML::Any.new("methods")]?).map(&.upcase), strings(roles), conditional?(rule))
+      names = strings(roles)
+      expression = rule[YAML::Any.new("allow_if")]?.try(&.as_s?)
+      guarding = !expression.nil? && expression.matches?(ALLOW_IF_CHECK_RE) && !expression.matches?(ALLOW_IF_OPENER_RE)
+      names << "allow_if: #{expression}" if guarding
+      Rule.new(regex(rule[YAML::Any.new("path")]?), strings(rule[YAML::Any.new("methods")]?).map(&.upcase), names, conditional?(rule, guarding))
     end
 
     # `.../app/config/security.yml` serves `.../src`; `.../config/packages/` serves `.../src` too.
@@ -70,8 +78,8 @@ module Analyzer::Php::SymfonySecurity
     nil
   end
 
-  private def self.conditional?(entry : Hash(YAML::Any, YAML::Any)) : Bool
-    CONDITIONS.any? { |key| entry.has_key?(YAML::Any.new(key)) }
+  private def self.conditional?(entry : Hash(YAML::Any, YAML::Any), allow_if_guards : Bool = false) : Bool
+    CONDITIONS.any? { |key| entry.has_key?(YAML::Any.new(key)) && !(allow_if_guards && key == "allow_if") }
   end
 
   private def self.regex(node : YAML::Any?) : Regex?
