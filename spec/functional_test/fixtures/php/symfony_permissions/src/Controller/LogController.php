@@ -4,6 +4,7 @@ namespace App\Controller;
 
 use Symfony\Bundle\FrameworkBundle\Controller\AbstractController;
 use Symfony\Component\Routing\Attribute\Route;
+use Symfony\Component\Security\Http\Attribute\IsGranted;
 
 class LogController extends AbstractController
 {
@@ -30,6 +31,57 @@ class LogController extends AbstractController
     #[Route(path: '/open/info', name: 'open')]
     public function open()
     {
+        return $this->json([]);
+    }
+
+    #[Route(path: '/cmp/x', name: 'cmp')]
+    public function cmp()
+    {
+        return $this->json([]);
+    }
+
+    #[Route(path: '/str/x', name: 'str')]
+    public function str()
+    {
+        return $this->json([]);
+    }
+
+    #[Route(path: '/role/x', name: 'role')]
+    public function role()
+    {
+        return $this->json([]);
+    }
+
+    #[Route(path: '/dyn', name: 'dyn')]
+    public function dyn($attr)
+    {
+        $this->denyAccessUnlessGranted("{$attr}");
+
+        return $this->json([]);
+    }
+
+    #[Route(path: '/rolecheck', name: 'rolecheck')]
+    public function rolecheck()
+    {
+        $this->denyAccessUnlessGranted('ROLE_ADMIN');
+
+        return $this->json([]);
+    }
+
+    #[Route(path: '/voted', name: 'voted')]
+    #[IsGranted('@parts.read')]
+    public function voted()
+    {
+        return $this->json([]);
+    }
+
+    #[Route(path: '/dyncheck', name: 'dyncheck')]
+    public function dyncheck($attr)
+    {
+        if (!$this->isGranted("perm.{$attr}")) {
+            throw $this->createAccessDeniedException();
+        }
+
         return $this->json([]);
     }
 }

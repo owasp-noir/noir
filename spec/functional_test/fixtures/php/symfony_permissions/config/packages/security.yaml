@@ -6,4 +6,7 @@ security:
     access_control:
         - { path: ^/open, roles: PUBLIC_ACCESS }
         - { path: ^/api, allow_if: 'is_granted("@api.access") and is_authenticated()' }
+        - { path: ^/role, allow_if: "is_granted('ROLE_ADMIN') and is_authenticated()" }
         - { path: ^/maybe, allow_if: 'is_authenticated() or request.query.get("k") == "x"' }
+        - { path: ^/cmp, allow_if: "is_granted('ROLE_ADMIN') == false" }
+        - { path: ^/str, allow_if: "request.query.get('q') == 'is_authenticated()'" }
