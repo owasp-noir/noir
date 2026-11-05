@@ -48,3 +48,23 @@ describe "Postman scheme-less string URLs" do
     analyze_urls("users/1", "/orders").map(&.url).should eq ["/users/1", "/orders"]
   end
 end
+
+describe "Postman path variables with an empty value" do
+  it "keeps the segment as a path param instead of dropping it" do
+    url = {"raw" => "{{baseUrl}}/owners/{{ownerId}}/pets", "host" => ["{{baseUrl}}"], "path" => ["owners", "{{ownerId}}", "pets"]}
+    variables = [{"key" => "baseUrl", "value" => "http://h/app"}, {"key" => "ownerId", "value" => ""}]
+    content = {"info" => {"name" => "E", "schema" => "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"},
+               "variable" => variables, "item" => [{"name" => "r", "request" => {"method" => "GET", "url" => url}}]}.to_json
+    path = File.tempname("postman-emptyvar", ".json")
+    File.write(path, content)
+    CodeLocator.instance.clear Noir::LocatorKeys::POSTMAN_JSON
+    CodeLocator.instance.push Noir::LocatorKeys::POSTMAN_JSON, path
+    begin
+      eps = Analyzer::Specification::Postman.new(create_test_options).analyze
+      eps.map(&.url).should eq ["/app/owners/:ownerId/pets"]
+    ensure
+      CodeLocator.instance.clear Noir::LocatorKeys::POSTMAN_JSON
+      File.delete(path) if File.exists?(path)
+    end
+  end
+end
