@@ -38,9 +38,10 @@ class JsMiscAuthTagger < FrameworkTagger
 
   # `reply.code(401)` / `reply.status(401)` inside a hook or preHandler.
   FASTIFY_REPLY_401 = /reply\s*\.\s*(?:code|status)\s*\(\s*401\b|\.statusCode\s*=\s*401\b/
-  FASTIFY_ROUTE     = /\.\s*(?:get|post|put|patch|delete|del|head|options|all)\s*\(/
-  FASTIFY_EXEMPT    = /if\s*\(\s*(?:request|req)\s*\.\s*(?:url|routerPath)\s*===?\s*['"]([^'"]+)['"]\s*\)\s*return\b/
-  HOOK_KINDS        = %w[onRequest preHandler]
+  # `fastify.post<{ Body: T }>(`: TypeScript type arguments may sit before the `(`.
+  FASTIFY_ROUTE  = /\.\s*(?:get|post|put|patch|delete|del|head|options|all)\s*(?:<[\s\S]*?>\s*)?\(/
+  FASTIFY_EXEMPT = /if\s*\(\s*(?:request|req)\s*\.\s*(?:url|routerPath)\s*===?\s*['"]([^'"]+)['"]\s*\)\s*return\b/
+  HOOK_KINDS     = %w[onRequest preHandler]
 
   record FastifyHook, file : String, start_line : Int32, end_line : Int32, kind : String, exempt : Array(String)
 

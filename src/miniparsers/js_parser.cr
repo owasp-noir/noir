@@ -96,11 +96,66 @@ module Noir
     # a constant imported from another module.
     def initialize(source : String, @this_receiver_ok : Bool = true, constants : Hash(String, String)? = nil)
       lexer = JSLexer.new(source)
-      @tokens = lexer.tokenize
+      @tokens = drop_type_arguments(lexer.tokenize)
       @supports_named_routes = source.includes?("koa-router") || source.includes?("@koa/router")
       @constants.merge!(constants) if constants
       # Extract constants from the source
       extract_constants
+    end
+
+    # `app.post<{ Body: T }>('/x', …)`: a TypeScript type-argument list
+    # between a member call's name and its `(` hides the call from every
+    # route shape, so it is dropped. Only a `<` right after `.name` whose
+    # matching `>` is directly followed by `(` qualifies; a comparison
+    # (`a.length < n) { … } if (b > (c))`) unbalances a bracket first.
+    private def drop_type_arguments(tokens : Array(JSToken)) : Array(JSToken)
+      return tokens unless tokens.any? { |token| token.type == :unknown && token.value == "<" }
+      kept = Array(JSToken).new(tokens.size)
+      idx = 0
+      while idx < tokens.size
+        token = tokens[idx]
+        if token.type == :unknown && token.value == "<" && idx >= 2 && tokens[idx - 2].type == :dot &&
+           tokens[idx - 1].value.matches?(/\A[A-Za-z_$][\w$]*\z/) && (close = type_argument_end(tokens, idx))
+          idx = close + 1
+          next
+        end
+        kept << token
+        idx += 1
+      end
+      kept
+    end
+
+    MAX_TYPE_ARGUMENT_TOKENS = 512
+
+    private def type_argument_end(tokens : Array(JSToken), open : Int32) : Int32?
+      angle = 0
+      nesting = 0
+      limit = Math.min(tokens.size - 1, open + MAX_TYPE_ARGUMENT_TOKENS)
+      idx = open
+      while idx < limit
+        token = tokens[idx]
+        case token.type
+        when :lparen, :lbrace, :lbracket
+          nesting += 1
+        when :rparen, :rbrace, :rbracket
+          nesting -= 1
+          return if nesting < 0
+        when :semicolon
+          # `{ Params: P; Body: B }` separates members; outside a bracket it ends a statement.
+          return if nesting == 0
+        when :unknown
+          if token.value == "<"
+            angle += 1
+          elsif token.value == ">" && !(tokens[idx - 1].type == :assign && tokens[idx - 1].position == token.position - 1)
+            angle -= 1
+            if angle == 0
+              return nesting == 0 && tokens[idx + 1].type == :lparen ? idx : nil
+            end
+          end
+        end
+        idx += 1
+      end
+      nil
     end
 
     # The router nearest to `router` (itself first, then the routers it is

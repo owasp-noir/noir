@@ -28,6 +28,36 @@ describe Noir::JSParser do
     end
   end
 
+  describe "TypeScript type arguments" do
+    it "reads a route whose verb carries type arguments" do
+      code = <<-TS
+        import Fastify from 'fastify';
+        const app = Fastify();
+        app.post<{ Body: { a: string } }>('/generic', async (req) => req.body.a);
+        app.put<{ Params: P; Body: B }>('/items/:id', async () => 1);
+        app.get<{
+          Querystring: { q?: string; cb: () => void }
+        }>(
+          '/multi',
+          async () => 1
+        );
+        router.get<Promise<Array<T>>>('/nested', handler);
+        TS
+      routes = Noir::JSParser.new(code).parse_routes
+      routes.map { |r| "#{r.method} #{r.raw_path}" }.sort!.should eq(["GET /multi", "GET /nested", "POST /generic", "PUT /items/:id"])
+    end
+
+    it "keeps a comparison around a route intact" do
+      code = <<-JS
+        const express = require('express');
+        if (items.length < 2) { app.get('/inside', (req, res) => {}) }
+        if (n > (m)) { app.post('/after', (req, res) => {}) }
+        JS
+      routes = Noir::JSParser.new(code).parse_routes
+      routes.map(&.raw_path).sort!.should eq(["/after", "/inside"])
+    end
+  end
+
   describe "detect_framework" do
     it "detects express framework" do
       parser = Noir::JSParser.new("const express = require('express');")
