@@ -110,9 +110,10 @@ describe "Apache httpd Analyzer" do
       RewriteRule ^(.*)$ app.py/$1 [L]
       RewriteRule ^(.*)$ default.aspx/$1 [L]
       RewriteRule ^(.*)$ /app.jsp/$1 [L]
+      RewriteRule ^(.*)$ /?route=$1 [L,QSA]
       CONF
 
-    endpoints.map(&.url).should eq ["remote/(.*)"] + ["(.*)"] * 7
+    endpoints.map(&.url).should eq ["remote/(.*)"] + ["(.*)"] * 8
   end
 
   it "supports multiple ServerAlias hosts" do

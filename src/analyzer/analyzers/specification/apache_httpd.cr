@@ -242,7 +242,8 @@ module Analyzer::Specification
     SCRIPT_TARGET_RE = /\.(?:php\d?|phtml|cgi|fcgi|pl|py|rb|lua|asp|aspx|jsp|do|action)(?![A-Za-z0-9])/i
 
     private def root_remap?(pattern : String, target : String) : Bool
-      return false if target.matches?(SCRIPT_TARGET_RE) || !target.matches?(CAPTURE_ONLY_TARGET_RE)
+      # A query string (`/?route=$1`) hands the path to the directory index.
+      return false if target.includes?('?') || target.matches?(SCRIPT_TARGET_RE) || !target.matches?(CAPTURE_ONLY_TARGET_RE)
       Noir::URLPath.strip_regex_anchors(pattern).lstrip('/').in?({"(.*)", ".*", "(.+)", ".+"})
     end
 
