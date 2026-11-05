@@ -279,6 +279,28 @@ module Analyzer::Go
       seed
     end
 
+    # The names a Go file declares with a top-level `var`: `var x ...` and
+    # each line of a `var (` block, both written from column 0 as gofmt
+    # leaves them.
+    private def package_var_names(content : String, names : Set(String))
+      in_block = false
+      content.each_line do |line|
+        if in_block
+          if line.starts_with?(')')
+            in_block = false
+          elsif m = line.match(/\A\s+(\w+)/)
+            names << m[1]
+          end
+        elsif line.starts_with?("var")
+          if line.matches?(/\Avar\s*\(\s*(?:\/\/.*)?\z/)
+            in_block = true
+          elsif m = line.match(/\Avar\s+(\w+)/)
+            names << m[1]
+          end
+        end
+      end
+    end
+
     # Router-builder helpers (`func addUserRoutes(rg *gin.RouterGroup)`)
     # receive their group as an argument, so the prefix lives at the call
     # site (`addUserRoutes(router.Group("/v1"))`) and has to be grafted onto
@@ -332,6 +354,24 @@ module Analyzer::Go
         end
       end
 
+      # `slice = append(slice, builderA, builderB)` across the package's
+      # files, for a slice the package declares at its top level.
+      slices_by_dir = Hash(String, Hash(String, Array(String))).new
+      builders_by_dir.each do |dir, builders|
+        package_vars = Set(String).new
+        appends = Hash(String, Array(String)).new
+        files_by_dir[dir].each do |p|
+          content = file_contents[p]? || next
+          package_var_names(content, package_vars) if content.includes?("var")
+          next unless content.includes?("append(")
+          Noir::TreeSitterGoRouteExtractor.collect_builder_slice_appends(content, builders).each do |slice, names|
+            (appends[slice] ||= [] of String).concat(names)
+          end
+        end
+        appends.select! { |slice, _| package_vars.includes?(slice) }
+        slices_by_dir[dir] = appends unless appends.empty?
+      end
+
       prefixes_by_dir = Hash(String, Hash(String, Set(String))).new
       unresolved_by_dir = Hash(String, Set(String)).new
       # A call made inside another builder that hands on its own parameter
@@ -352,7 +392,8 @@ module Analyzer::Go
           next if names.empty?
           aliases = nil
           own_builders = file_builders[p]?
-          Noir::TreeSitterGoRouteExtractor.collect_router_builder_callsites(content, names, group_map).each do |fn, arg, qualifier, row|
+          slices = slices_by_dir[dir]? || Hash(String, Array(String)).new
+          Noir::TreeSitterGoRouteExtractor.collect_router_builder_callsites(content, names, group_map, slices).each do |fn, arg, qualifier, row|
             local = dir if builders_by_dir[dir]?.try(&.includes?(fn))
             target = if qualifier.empty?
                        local
