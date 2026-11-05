@@ -248,10 +248,10 @@ class AspnetAuthTagger < FrameworkTagger
         endpoint.add_tag(Tag.new("auth", "Protected by #{description} (class-level)", "aspnet_auth"))
         return
       end
-      chain.each_with_index do |decl, level|
+      chain.each do |decl|
         description ||= authorize_description(decl.attributes)
         if description
-          endpoint.add_tag(Tag.new("auth", "Protected by #{description} (#{level == 0 ? "class-level" : "inherited from #{decl.name}"})", "aspnet_auth"))
+          endpoint.add_tag(Tag.new("auth", "Protected by #{description} (#{decl.name == chain.first.name ? "class-level" : "inherited from #{decl.name}"})", "aspnet_auth"))
           return
         end
       end
@@ -408,11 +408,52 @@ class AspnetAuthTagger < FrameworkTagger
     type
   end
 
+  alias PartialKey = Tuple(String?, String, String?, Array(String))
+  @partial_groups = Hash(String, Hash(PartialKey, ClassDecl)).new
+
+  # The `partial` class `type` (declared in `path`) as one declaration: the
+  # attributes of every part with its name in the same project, namespace,
+  # containing type and type parameters, and the first base any part names.
+  # Grouped once per class name, so a controller split over many files
+  # stays linear.
+  private def merged_partial(type : Noir::CSharpDecl::TypeDecl, path : String) : ClassDecl?
+    groups = @partial_groups[type.name] ||= begin
+      parts = Hash(PartialKey, Array(ClassDecl)).new
+      (class_files[type.name]? || [] of String).each do |file|
+        root = nearest_project_root(file, CSPROJ)
+        declarations(type.name, [file]).each do |decl, part|
+          (parts[partial_key(part, root)] ||= [] of ClassDecl) << decl if part.partial?
+        end
+      end
+      parts.transform_values do |decls|
+        ClassDecl.new(type.name, decls.flat_map(&.attributes), decls.compact_map(&.base).first?, decls.first.path)
+      end
+    end
+    groups[partial_key(type, nearest_project_root(path, CSPROJ))]?
+  end
+
+  private def partial_key(type : Noir::CSharpDecl::TypeDecl, root : String?) : PartialKey
+    {root, type.namespace, type.type_params, outer_names(type)}
+  end
+
+  private def outer_names(type : Noir::CSharpDecl::TypeDecl) : Array(String)
+    names = [] of String
+    while outer = type.outer
+      names << outer.name
+      type = outer
+    end
+    names
+  end
+
   # The class enclosing `method_line`, then each base class the scan
   # declares, nearest first.
   private def class_chain(path : String, method_line : Int32) : Array(ClassDecl)
-    name = enclosing_class(path, method_line).try(&.name) || return [] of ClassDecl
-    own = declarations(name, [path]).map(&.[0])
+    type = enclosing_class(path, method_line) || return [] of ClassDecl
+    name = type.name
+    own = declarations(name, [path]).select { |_, part| part.start_line == type.start_line }.map(&.[0])
+    # `[Authorize]` on one part of a `partial` controller governs the actions
+    # declared in its other parts.
+    merged_partial(type, path).try { |merged| own << merged } if type.partial?
     chain = own.dup
     base = own.compact_map(&.base).first?
     from = path

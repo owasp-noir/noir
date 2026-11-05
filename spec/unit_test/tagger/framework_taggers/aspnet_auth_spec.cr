@@ -101,6 +101,107 @@ describe "AspnetAuthTagger" do
     FileUtils.rm_rf(tmpdir)
   end
 
+  it "applies [Authorize] of one part of a partial controller to the actions of its other files" do
+    noir_options = create_test_options
+    tmpdir = File.tempname("aspnet_partial")
+    Dir.mkdir_p(tmpdir)
+    main = File.join(tmpdir, "Main.cs")
+    other = File.join(tmpdir, "Main.Users.cs")
+    elsewhere = File.join(tmpdir, "Elsewhere.cs")
+    File.write(main, "namespace App.A\n{\n    [Authorize(Policy = \"Admin\")]\n    public partial class ServerController : Controller\n    {\n    }\n}\n")
+    File.write(other, "namespace App.A\n{\n    public partial class ServerController\n    {\n        [HttpGet(\"users\")]\n        public IActionResult Users() => Ok();\n\n        [AllowAnonymous]\n        [HttpGet(\"open\")]\n        public IActionResult Open() => Ok();\n    }\n}\n")
+    # same class name in another namespace: not a part of the guarded type
+    File.write(elsewhere, "namespace App.B\n{\n    public partial class ServerController : Controller\n    {\n        [HttpGet(\"b\")]\n        public IActionResult B() => Ok();\n    }\n}\n")
+    noir_options["base"] = YAML::Any.new(tmpdir)
+    CodeLocator.instance.clear_all
+    Dir.glob("#{tmpdir}/*.cs").each { |path| CodeLocator.instance.register_path(path) }
+
+    endpoints = [{other, 6, "/users"}, {other, 10, "/open"}, {elsewhere, 6, "/b"}].map do |path, line, url|
+      details = Details.new(PathInfo.new(path, line))
+      details.technology = "cs_aspnet_core_mvc"
+      Endpoint.new(url, "GET", [] of Param, details)
+    end
+    begin
+      AspnetAuthTagger.new(noir_options).perform(endpoints)
+    ensure
+      CodeLocator.instance.clear_all
+      FileUtils.rm_rf(tmpdir)
+    end
+
+    endpoints[0].tags.map(&.name).should eq(["auth"])
+    endpoints[0].tags[0].description.should eq("Protected by ASP.NET [Authorize(Policy)] (class-level)")
+    endpoints[1].tags.should be_empty
+    endpoints[2].tags.should be_empty
+  end
+
+  it "does not merge same-named partial classes across projects, containing types, type parameters or namespaces of one file" do
+    noir_options = create_test_options
+    tmpdir = File.tempname("aspnet_partial_scope")
+    Dir.mkdir_p(File.join(tmpdir, "A"))
+    Dir.mkdir_p(File.join(tmpdir, "B"))
+    File.write(File.join(tmpdir, "A", "A.csproj"), "<Project/>")
+    File.write(File.join(tmpdir, "B", "B.csproj"), "<Project/>")
+    guarded = File.join(tmpdir, "A", "Guarded.cs")
+    open_b = File.join(tmpdir, "B", "Open.cs")
+    multi = File.join(tmpdir, "B", "Multi.cs")
+    File.write(guarded, "namespace App\n{\n    [Authorize]\n    public partial class HomeController : Controller\n    {\n    }\n}\n")
+    File.write(open_b, "namespace App\n{\n    public partial class HomeController : Controller\n    {\n        [HttpGet(\"b\")]\n        public IActionResult B() => Ok();\n    }\n    public class Outer\n    {\n        [Authorize]\n        public partial class HomeController\n        {\n        }\n    }\n    [Authorize]\n    public partial class HomeController<T> : Controller\n    {\n    }\n}\n")
+    File.write(multi, "namespace One\n{\n    [Authorize]\n    public partial class MultiController : Controller\n    {\n    }\n}\nnamespace Two\n{\n    public partial class MultiController : Controller\n    {\n        [HttpGet(\"m\")]\n        public IActionResult M() => Ok();\n    }\n}\n")
+    noir_options["base"] = YAML::Any.new(tmpdir)
+    CodeLocator.instance.clear_all
+    Dir.glob("#{tmpdir}/**/*.cs").each { |path| CodeLocator.instance.register_path(path) }
+
+    endpoints = [{open_b, 6, "/b"}, {multi, 13, "/m"}].map do |path, line, url|
+      details = Details.new(PathInfo.new(path, line))
+      details.technology = "cs_aspnet_core_mvc"
+      Endpoint.new(url, "GET", [] of Param, details)
+    end
+    begin
+      AspnetAuthTagger.new(noir_options).perform(endpoints)
+    ensure
+      CodeLocator.instance.clear_all
+      FileUtils.rm_rf(tmpdir)
+    end
+
+    endpoints.each(&.tags.should(be_empty))
+  end
+
+  it "tags a controller split over many partial files in linear time" do
+    tag_parts = ->(count : Int32) do
+      noir_options = create_test_options
+      tmpdir = File.tempname("aspnet_partial_perf")
+      Dir.mkdir_p(tmpdir)
+      File.write(File.join(tmpdir, "App.csproj"), "<Project/>")
+      File.write(File.join(tmpdir, "Big.cs"), "namespace App\n{\n    [Authorize]\n    public partial class BigController : Controller\n    {\n    }\n}\n")
+      endpoints = [] of Endpoint
+      count.times do |i|
+        path = File.join(tmpdir, "Big.P#{i}.cs")
+        actions = (0...4).map { |j| "        [HttpGet(\"p#{i}a#{j}\")]\n        public IActionResult A#{j}() => Ok();\n" }.join
+        File.write(path, "namespace App\n{\n    public partial class BigController\n    {\n#{actions}    }\n}\n")
+        4.times do |j|
+          details = Details.new(PathInfo.new(path, 6 + j * 2))
+          details.technology = "cs_aspnet_core_mvc"
+          endpoints << Endpoint.new("/p#{i}a#{j}", "GET", [] of Param, details)
+        end
+      end
+      noir_options["base"] = YAML::Any.new(tmpdir)
+      CodeLocator.instance.clear_all
+      Dir.glob("#{tmpdir}/*.cs").each { |path| CodeLocator.instance.register_path(path) }
+      begin
+        elapsed = Time.measure { AspnetAuthTagger.new(noir_options).perform(endpoints) }
+        endpoints.all? { |endpoint| endpoint.tags.map(&.name) == ["auth"] }.should be_true
+        elapsed
+      ensure
+        CodeLocator.instance.clear_all
+        FileUtils.rm_rf(tmpdir)
+      end
+    end
+
+    small = tag_parts.call(150)
+    large = tag_parts.call(600)
+    large.should be < (small * 6 + 500.milliseconds)
+  end
+
   describe "Minimal API fluent .RequireAuthorization()" do
     it "detects .RequireAuthorization() chained on the route statement" do
       noir_options = create_test_options
