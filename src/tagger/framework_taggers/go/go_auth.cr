@@ -57,6 +57,9 @@ class GoAuthTagger < FrameworkTagger
   # PocketBase: `c.Bind(&req)` is in every gin / echo handler file.)
   USE_REGISTRATION = /\.\s*(?:Use|Pre|Middleware)\s*\(|\.\s*(?:Group|Party)\s*\(\s*"[^"]*"\s*,/
 
+  # A `.Use(` call, not a `.UserEmailLogin` handler or a `".Use"` string.
+  USE_TOKEN = /\.\s*Use\s*\(/
+
   # Where the middleware arguments start on a `code_only` line (string
   # literals blanked to `""`): right after `.Use(` / `.Pre(` (GoFrame's
   # `.Middleware(`), or after the path literal of a `Group("/seg", ...)`
@@ -622,7 +625,7 @@ class GoAuthTagger < FrameworkTagger
 
     # Check for JWT library middleware
     JWT_PATTERNS.each do |pattern|
-      if statement.matches?(pattern) && stripped.includes?(".Use") && args.none?(&.matches?(SKIPPER_FIELD))
+      if statement.matches?(pattern) && code_only(stripped).matches?(USE_TOKEN) && args.none?(&.matches?(SKIPPER_FIELD))
         jwt_match = statement.match(pattern)
         jwt_name = jwt_match ? jwt_match[0] : "JWT"
         jwt_tag = Tag.new("auth", "Protected by Go JWT middleware (#{jwt_name})", "go_auth")
@@ -1508,7 +1511,7 @@ class GoAuthTagger < FrameworkTagger
 
         # A chain that keeps its group nowhere guards only its own routes.
         use_receiver = above_line.match(GoRouteGroupScope::USE_CALL).try(&.[1])
-        if above_line.includes?(".Use") && !ephemeral_group_use(above_line) &&
+        if code_only(above_line).matches?(USE_TOKEN) && !ephemeral_group_use(above_line) &&
            (route_receiver.nil? || use_receiver.nil? ||
            router_chain(path_info.path, lines, line_num, route_receiver)[0].any? { |(router, _)| router == use_receiver })
           statement = statement_text(lines, check_idx + 1)
