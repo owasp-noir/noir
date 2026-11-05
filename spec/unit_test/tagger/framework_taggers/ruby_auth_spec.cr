@@ -2307,4 +2307,108 @@ describe "RubyAuthTagger (routed controller chain)" do
       FileUtils.rm_rf(tmpdir)
     end
   end
+
+  it "reads multiline CanCanCan rules, leading :: namespaces, and merged ability classes" do
+    CodeLocator.instance.clear_all
+    tmpdir = File.tempname("ruby_cancan_merge")
+    files = {
+      "app/controllers/application_controller.rb" => <<-RB,
+        class ApplicationController < ActionController::Base
+          rescue_from CanCan::AccessDenied, with: :deny_access
+        end
+        RB
+      "app/controllers/topics_controller.rb" => <<-RB,
+        class TopicsController < ApplicationController
+          load_and_authorize_resource :community
+          load_and_authorize_resource :topic, through: :community
+
+          def index
+          end
+
+          def create
+          end
+        end
+        RB
+      "app/controllers/goals_controller.rb" => <<-RB,
+        class GoalsController < ApplicationController
+          authorize_resource
+
+          def index
+          end
+
+          def create
+          end
+        end
+        RB
+      "app/models/ability.rb" => <<-RB,
+        class Ability
+          include CanCan::Ability
+
+          def initialize(user)
+            if user
+              merge Abilities::Admin.new(user) if user.admin?
+            else
+              merge Abilities::Everyone.new(user)
+            end
+          end
+        end
+        RB
+      "app/models/abilities/everyone.rb" => <<-RB,
+        module Abilities
+          class Everyone
+            include CanCan::Ability
+
+            def initialize(user)
+              can [:read, :help],
+                  ::SDG::Goal
+              can [:read,
+                   :map], Community
+            end
+          end
+        end
+        RB
+      "app/models/abilities/admin.rb" => <<-RB,
+        module Abilities
+          class Admin
+            include CanCan::Ability
+
+            def initialize(user)
+              can :manage, :all
+            end
+          end
+        end
+        RB
+    }
+    files.each do |name, body|
+      path = File.join(tmpdir, name)
+      Dir.mkdir_p(File.dirname(path))
+      File.write(path, body)
+      CodeLocator.instance.register_path(path)
+    end
+
+    begin
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(tmpdir)
+      topic_index = Endpoint.new("/communities/:community_id/topics", "GET", [] of Param,
+        Details.new(PathInfo.new(File.join(tmpdir, "app/controllers/topics_controller.rb"), 5)))
+      topic_create = Endpoint.new("/communities/:community_id/topics", "POST", [] of Param,
+        Details.new(PathInfo.new(File.join(tmpdir, "app/controllers/topics_controller.rb"), 8)))
+      goal_index = Endpoint.new("/goals", "GET", [] of Param,
+        Details.new(PathInfo.new(File.join(tmpdir, "app/controllers/goals_controller.rb"), 4)))
+      goal_create = Endpoint.new("/goals", "POST", [] of Param,
+        Details.new(PathInfo.new(File.join(tmpdir, "app/controllers/goals_controller.rb"), 7)))
+      endpoints = [topic_index, topic_create, goal_index, goal_create]
+
+      RubyAuthTagger.new(noir_options).perform(endpoints)
+
+      # Topic is not granted to everyone, so create is guarded.
+      topic_create.tags.map(&.description).any? { |d| d.includes?("CanCanCan load_and_authorize_resource") }.should be_true
+      # Goal has multiline and leading :: on subject: index is open, create is guarded.
+      goal_index.tags.should be_empty
+      goal_create.tags.map(&.description).any? { |d| d.includes?("CanCanCan authorize_resource") }.should be_true
+    ensure
+      FileUtils.rm_rf(tmpdir)
+      CodeLocator.instance.clear_all
+    end
+  end
 end
