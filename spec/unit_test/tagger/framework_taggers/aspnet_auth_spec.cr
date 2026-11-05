@@ -129,9 +129,41 @@ describe "AspnetAuthTagger" do
     end
 
     endpoints[0].tags.map(&.name).should eq(["auth"])
-    endpoints[0].tags[0].description.should contain("[Authorize(Policy)]")
+    endpoints[0].tags[0].description.should eq("Protected by ASP.NET [Authorize(Policy)] (class-level)")
     endpoints[1].tags.should be_empty
     endpoints[2].tags.should be_empty
+  end
+
+  it "does not merge same-named partial classes across projects, containing types, type parameters or namespaces of one file" do
+    noir_options = create_test_options
+    tmpdir = File.tempname("aspnet_partial_scope")
+    Dir.mkdir_p(File.join(tmpdir, "A"))
+    Dir.mkdir_p(File.join(tmpdir, "B"))
+    File.write(File.join(tmpdir, "A", "A.csproj"), "<Project/>")
+    File.write(File.join(tmpdir, "B", "B.csproj"), "<Project/>")
+    guarded = File.join(tmpdir, "A", "Guarded.cs")
+    open_b = File.join(tmpdir, "B", "Open.cs")
+    multi = File.join(tmpdir, "B", "Multi.cs")
+    File.write(guarded, "namespace App\n{\n    [Authorize]\n    public partial class HomeController : Controller\n    {\n    }\n}\n")
+    File.write(open_b, "namespace App\n{\n    public partial class HomeController : Controller\n    {\n        [HttpGet(\"b\")]\n        public IActionResult B() => Ok();\n    }\n    public class Outer\n    {\n        [Authorize]\n        public partial class HomeController\n        {\n        }\n    }\n    [Authorize]\n    public partial class HomeController<T> : Controller\n    {\n    }\n}\n")
+    File.write(multi, "namespace One\n{\n    [Authorize]\n    public partial class MultiController : Controller\n    {\n    }\n}\nnamespace Two\n{\n    public partial class MultiController : Controller\n    {\n        [HttpGet(\"m\")]\n        public IActionResult M() => Ok();\n    }\n}\n")
+    noir_options["base"] = YAML::Any.new(tmpdir)
+    CodeLocator.instance.clear_all
+    Dir.glob("#{tmpdir}/**/*.cs").each { |path| CodeLocator.instance.register_path(path) }
+
+    endpoints = [{open_b, 6, "/b"}, {multi, 13, "/m"}].map do |path, line, url|
+      details = Details.new(PathInfo.new(path, line))
+      details.technology = "cs_aspnet_core_mvc"
+      Endpoint.new(url, "GET", [] of Param, details)
+    end
+    begin
+      AspnetAuthTagger.new(noir_options).perform(endpoints)
+    ensure
+      CodeLocator.instance.clear_all
+      FileUtils.rm_rf(tmpdir)
+    end
+
+    endpoints.each(&.tags.should(be_empty))
   end
 
   describe "Minimal API fluent .RequireAuthorization()" do

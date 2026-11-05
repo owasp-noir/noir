@@ -248,10 +248,10 @@ class AspnetAuthTagger < FrameworkTagger
         endpoint.add_tag(Tag.new("auth", "Protected by #{description} (class-level)", "aspnet_auth"))
         return
       end
-      chain.each_with_index do |decl, level|
+      chain.each do |decl|
         description ||= authorize_description(decl.attributes)
         if description
-          endpoint.add_tag(Tag.new("auth", "Protected by #{description} (#{level == 0 ? "class-level" : "inherited from #{decl.name}"})", "aspnet_auth"))
+          endpoint.add_tag(Tag.new("auth", "Protected by #{description} (#{decl.name == chain.first.name ? "class-level" : "inherited from #{decl.name}"})", "aspnet_auth"))
           return
         end
       end
@@ -408,16 +408,40 @@ class AspnetAuthTagger < FrameworkTagger
     type
   end
 
+  # The other parts of the `partial` class `type` (declared in `path`): the
+  # same name in the same namespace, containing type and project.
+  private def partial_parts(type : Noir::CSharpDecl::TypeDecl, path : String) : Array(ClassDecl)
+    root = nearest_project_root(path, CSPROJ)
+    parts = [] of ClassDecl
+    (class_files[type.name]? || [] of String).each do |other|
+      next unless nearest_project_root(other, CSPROJ) == root
+      declarations(type.name, [other]).each do |decl, part|
+        next if other == path && part.start_line == type.start_line
+        next unless part.partial? && part.namespace == type.namespace && part.type_params == type.type_params && outer_names(part) == outer_names(type)
+        parts << decl
+      end
+    end
+    parts
+  end
+
+  private def outer_names(type : Noir::CSharpDecl::TypeDecl) : Array(String)
+    names = [] of String
+    while outer = type.outer
+      names << outer.name
+      type = outer
+    end
+    names
+  end
+
   # The class enclosing `method_line`, then each base class the scan
   # declares, nearest first.
   private def class_chain(path : String, method_line : Int32) : Array(ClassDecl)
-    name = enclosing_class(path, method_line).try(&.name) || return [] of ClassDecl
-    own = declarations(name, [path]).map(&.[0])
+    type = enclosing_class(path, method_line) || return [] of ClassDecl
+    name = type.name
+    own = declarations(name, [path]).select { |_, part| part.start_line == type.start_line }.map(&.[0])
     # `[Authorize]` on one part of a `partial` controller governs the actions
-    # declared in its other files.
-    if enclosing_class(path, method_line).try(&.partial?)
-      own.concat(class_decls(name, path).reject { |part| part.path == path })
-    end
+    # declared in its other parts.
+    own.concat(partial_parts(type, path)) if type.partial?
     chain = own.dup
     base = own.compact_map(&.base).first?
     from = path
