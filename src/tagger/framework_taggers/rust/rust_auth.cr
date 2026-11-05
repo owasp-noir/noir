@@ -94,6 +94,8 @@ class RustAuthTagger < FrameworkTagger
     @middleware_scopes = [] of {prefix: String, exact: Bool, local: Bool, description: String, except: Array({String, Bool}), at: {String, Int32}?}
     @guard_verdicts = {} of String => Bool
     @handler_param_types = {} of String => Hash(Int32, Array(String))
+    @handler_guard_calls = {} of String => Hash(Int32, String)
+    @guard_facts = nil.as(Noir::RustRequestGuards::Facts?)
     @fn_index = Hash(String, Array(RustFnEntry)).new
     @crate_fn_index = Hash(String, Array(RustFnEntry)).new
     @file_fn_index = Hash(String, Hash(String, RustFnEntry)).new
@@ -131,6 +133,25 @@ class RustAuthTagger < FrameworkTagger
       @logger.debug "rust request-guard scan error #{file}: #{e}"
     end
     @guard_verdicts = Noir::RustRequestGuards.resolve(facts)
+    @guard_facts = facts
+  end
+
+  # A handler body that runs `principal.validate_session()?` on a parameter
+  # whose type has an inherent method of that name that can answer 401/403.
+  private def handler_body_guard(endpoint : Endpoint) : String?
+    facts = @guard_facts || return
+    return if facts.refusing_units.empty?
+    handler = endpoint.handler || return
+    path = handler.path || return
+    line = handler.line || return
+    calls = @handler_guard_calls[path] ||= begin
+      content = read_file(path)
+      guards = facts.refusing_units
+      content ? Noir::RustRequestGuards.handler_guard_calls(content) do |type_text, method|
+        Noir::RustRequestGuards.type_names(type_text, facts).map { |type| "#{type}::#{method}" }.find { |label| guards.includes?(label) }
+      end : {} of Int32 => String
+    end
+    calls[line]?
   end
 
   # The first parameter of the endpoint's handler fn whose type is a
@@ -1167,6 +1188,11 @@ class RustAuthTagger < FrameworkTagger
   private def check_endpoint(endpoint : Endpoint)
     if guard = handler_request_guard(endpoint)
       endpoint.add_tag(Tag.new("auth", "Protected by Rust #{guard} request guard", "rust_auth"))
+      return
+    end
+
+    if call = handler_body_guard(endpoint)
+      endpoint.add_tag(Tag.new("auth", "Protected by Rust #{call}() check in the handler", "rust_auth"))
       return
     end
 
