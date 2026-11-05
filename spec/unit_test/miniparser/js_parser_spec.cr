@@ -28,6 +28,93 @@ describe Noir::JSParser do
     end
   end
 
+  describe "TypeScript type arguments" do
+    it "reads a route whose verb carries type arguments" do
+      code = <<-TS
+        import Fastify from 'fastify';
+        const app = Fastify();
+        app.post<{ Body: { a: string } }>('/generic', async (req) => req.body.a);
+        app.put<{ Params: P; Body: B }>('/items/:id', async () => 1);
+        app.get<{
+          Querystring: { q?: string; cb: () => void }
+        }>(
+          '/multi',
+          async () => 1
+        );
+        router.get<Promise<Array<T>>>('/nested', handler);
+        TS
+      routes = Noir::JSParser.new(code).parse_routes
+      routes.map { |r| "#{r.method} #{r.raw_path}" }.sort!.should eq(["GET /multi", "GET /nested", "POST /generic", "PUT /items/:id"])
+    end
+
+    it "keeps a comparison around a route intact" do
+      code = <<-JS
+        const express = require('express');
+        if (items.length < 2) { app.get('/inside', (req, res) => {}) }
+        if (n > (m)) { app.post('/after', (req, res) => {}) }
+        JS
+      routes = Noir::JSParser.new(code).parse_routes
+      routes.map(&.raw_path).sort!.should eq(["/after", "/inside"])
+    end
+  end
+
+  describe "TypeScript type arguments next to comparisons" do
+    it "keeps a route between two semicolon-less comparisons" do
+      code = <<-JS
+        const express = require('express')
+        const tooFew = config.workers < 2
+        app.get('/asi-swallowed', (req, res) => res.send('x'))
+        const expired = Date.now() > (config.start + config.ttl)
+        app.get('/asi-after', (req, res) => res.send('y'))
+        JS
+      routes = Noir::JSParser.new(code).parse_routes
+      routes.map(&.raw_path).sort!.should eq(["/asi-after", "/asi-swallowed"])
+    end
+
+    it "keeps a keyword-named verb call between two comparisons" do
+      code = <<-JS
+        const express = require('express')
+        cfg.n < 2
+        router.delete('/asi-keyword-method', h)
+        a > (b)
+        cfg.n < 2
+        this.app.delete('/asi-this-delete', h)
+        x > (y)
+        JS
+      routes = Noir::JSParser.new(code).parse_routes
+      routes.map(&.raw_path).sort!.should eq(["/asi-keyword-method", "/asi-this-delete"])
+    end
+
+    it "keeps a route inside a ternary between comparisons" do
+      code = <<-JS
+        const express = require('express');
+        const x = opts.all < limit ? app.get('/ternary-route', h) : n > (m);
+        const y = a.b < c && app.post('/and-route', h) || d > (e);
+        JS
+      routes = Noir::JSParser.new(code).parse_routes
+      routes.map(&.raw_path).sort!.should eq(["/and-route", "/ternary-route"])
+    end
+
+    it "still reads the type shapes TypeScript route calls use" do
+      code = <<-TS
+        import Fastify from 'fastify';
+        app.get<A<B>, C>('/nested-list', h);
+        app.get<Record<string, Array<{ a: number }>>>('/record', h);
+        app.get<() => void>('/fn', h);
+        app.get<{ cb: (x) => (string) }>('/fn-member', h);
+        app.get<T,>('/trailing', h);
+        app.get<'literal'>('/string-arg', h);
+        app.get<T extends U ? A : B>('/conditional', h);
+        app.get<{
+          a: string;
+          b: number
+        }>('/multi-line', h);
+        TS
+      routes = Noir::JSParser.new(code).parse_routes
+      routes.map(&.raw_path).sort!.should eq(["/conditional", "/fn", "/fn-member", "/multi-line", "/nested-list", "/record", "/string-arg", "/trailing"])
+    end
+  end
+
   describe "detect_framework" do
     it "detects express framework" do
       parser = Noir::JSParser.new("const express = require('express');")
