@@ -331,6 +331,21 @@ module Noir
         end
       end
 
+      # A router the function builds and mounts by name (wakapi's `r :=
+      # chi.NewRouter(); r.Get("/{user}/*", h); router.Mount("/badge", r)`)
+      # serves its routes under the mount prefix, whichever line comes first.
+      if ty == "function_declaration" || ty == "method_declaration" || ty == "func_literal"
+        if (body = Noir::TreeSitter.field(node, "body")) && !(mounted = local_mounts(node, body, source, local_groups, string_values)).empty?
+          saved = mounted.keys.map { |key| {key, local_groups[key]?} }
+          local_groups.merge!(mounted)
+          Noir::TreeSitter.each_named_child(node) do |child|
+            walk_chi(child, source, prefix_stack, local_groups, routes, skip_functions, config, string_values, helpers)
+          end
+          saved.each { |(key, value)| value ? (local_groups[key] = value) : local_groups.delete(key) }
+          return
+        end
+      end
+
       # `v1 := group.Group("/v1")` inside a closure binds `v1` to the
       # combined prefix. We use `local_groups` instead of `prefix_stack`
       # here because the binding is name-scoped: sibling calls on the
@@ -416,6 +431,109 @@ module Noir
       Noir::TreeSitter.each_named_child(node) do |child|
         walk_chi(child, source, prefix_stack, local_groups, routes, skip_functions, config, string_values, helpers)
       end
+    end
+
+    # `chi.NewRouter()` / `chi.NewMux()`: a router built in place.
+    LOCAL_ROUTER_CONSTRUCTOR = /\A(?:\w+\.)?New(?:Router|Mux)\z/
+
+    # The routers `body` builds with a constructor and mounts by name
+    # (`parent.Mount("/p", child)`), each with its full prefix: the parent's
+    # (a parameter or top-level router of this function, or another such
+    # child) joined with the mount path. Only a child declared once in the
+    # whole function, closures included (`:=`, `=`, `var`, parameters), and
+    # mounted once, on such a parent, is taken; anything else keeps the
+    # routes as they were read.
+    private def local_mounts(function : LibTreeSitter::TSNode, body : LibTreeSitter::TSNode, source : String,
+                             local_groups : Hash(String, String),
+                             string_values : Hash(String, String)) : Hash(String, String)
+      result = Hash(String, String).new
+      return result unless Noir::TreeSitter.node_text(body, source).includes?(".Mount(")
+      declarations = Hash(String, Int32).new(0)
+      top_level = Set(String).new
+      params = Set(String).new
+      built = Set(String).new
+      mounts = [] of {String, String, String}
+      count = ->(names : LibTreeSitter::TSNode?, top : Bool) do
+        if names
+          Noir::TreeSitter.each_named_child(names) do |id|
+            next unless Noir::TreeSitter.node_type(id) == "identifier"
+            name = Noir::TreeSitter.node_text(id, source)
+            declarations[name] += 1
+            top_level << name if top
+          end
+        end
+        nil
+      end
+      Noir::TreeSitter.field(function, "parameters").try do |list|
+        Noir::TreeSitter.each_named_child(list) do |decl|
+          Noir::TreeSitter.each_named_child(decl) do |id|
+            params << Noir::TreeSitter.node_text(id, source) if Noir::TreeSitter.node_type(id) == "identifier"
+          end
+          count.call(decl, false)
+        end
+      end
+      body_start = LibTreeSitter.ts_node_start_byte(body)
+      Noir::TreeSitter.walk(body) do |node|
+        up = Noir::TreeSitter.parent(node)
+        up = Noir::TreeSitter.parent(up) if up && Noir::TreeSitter.node_type(up) == "statement_list"
+        top = !up.nil? && LibTreeSitter.ts_node_start_byte(up) == body_start
+        case Noir::TreeSitter.node_type(node)
+        when "parameter_declaration", "var_spec"
+          count.call(node, false)
+        when "range_clause"
+          count.call(Noir::TreeSitter.field(node, "left"), false)
+        when "short_var_declaration", "assignment_statement"
+          left = Noir::TreeSitter.field(node, "left")
+          count.call(left, top)
+          name = left.try { |l| Noir::TreeSitter.first_named_child(l) }
+          rhs = Noir::TreeSitter.field(node, "right").try { |r| Noir::TreeSitter.first_named_child(r) }
+          if name && rhs && Noir::TreeSitter.node_type(name) == "identifier" && Noir::TreeSitter.node_type(rhs) == "call_expression"
+            callee = Noir::TreeSitter.field(rhs, "function")
+            built << Noir::TreeSitter.node_text(name, source) if callee && Noir::TreeSitter.node_text(callee, source).matches?(LOCAL_ROUTER_CONSTRUCTOR)
+          end
+        when "call_expression"
+          callee = Noir::TreeSitter.field(node, "function")
+          next unless callee && Noir::TreeSitter.node_type(callee) == "selector_expression"
+          field = Noir::TreeSitter.field(callee, "field")
+          operand = Noir::TreeSitter.field(callee, "operand")
+          next unless field && operand && Noir::TreeSitter.node_text(field, source) == "Mount" && Noir::TreeSitter.node_type(operand) == "identifier"
+          args = Noir::TreeSitter.field(node, "arguments") || next
+          next unless Noir::TreeSitter.named_arg_count(args) == 2
+          path = nil
+          child = nil
+          Noir::TreeSitter.each_named_arg(args) do |arg|
+            if path.nil?
+              path = string_expr_text(arg, source, string_values) || ""
+            elsif Noir::TreeSitter.node_type(arg) == "identifier"
+              child = Noir::TreeSitter.node_text(arg, source)
+            end
+          end
+          if (name = child) && (prefix = path) && (prefix.empty? || prefix.starts_with?('/'))
+            mounts << {name, Noir::TreeSitter.node_text(operand, source), prefix.rstrip('/')}
+          end
+        end
+      end
+      function_level = (params | top_level).select { |name| declarations[name] == 1 }.to_set
+      mounts.select! do |(child, _, _)|
+        built.includes?(child) && declarations[child] == 1 && mounts.count { |(other, _, _)| other == child } == 1
+      end
+      children = mounts.map(&.[0]).to_set
+      # Parents first: a mounted parent resolves before its children.
+      8.times do
+        progressed = false
+        mounts.each do |(child, parent, path)|
+          next if result.has_key?(child)
+          if children.includes?(parent)
+            next unless result.has_key?(parent)
+          else
+            next unless function_level.includes?(parent)
+          end
+          result[child] = "#{result[parent]? || local_groups[parent]? || ""}#{path}"
+          progressed = true
+        end
+        break unless progressed
+      end
+      result
     end
 
     # Classify a call_expression so `walk_chi` knows whether to descend
