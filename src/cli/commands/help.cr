@@ -41,8 +41,7 @@ module Noir::CLI::HelpCommand
         noir <command> [arguments] [flags]
         noir [flags]                       # v0-compatible: routes to `noir scan`
 
-      #{green.call("COMMANDS:")}
-      #{command_lines(cyan)}
+      #{command_sections(cyan, green)}
 
       #{green.call("GLOBAL FLAGS:")}
         --no-color        Strip ANSI color from every command's output (NO_COLOR env also works)
@@ -55,19 +54,23 @@ module Noir::CLI::HelpCommand
       HELP
   end
 
-  # The COMMANDS block, laid out from the catalog. The description column is
-  # aligned on the widest `verb args` pair, so a new subcommand doesn't need
-  # the whole block re-padded by hand — nor does it need to be added here at
-  # all.
-  private def self.command_lines(cyan : Proc(String, String)) : String
+  # The command sections, laid out from the catalog's `group`s. The
+  # description column is aligned on the widest `verb args` pair across every
+  # section, so a new subcommand doesn't need the block re-padded by hand —
+  # nor does it need to be added here at all.
+  private def self.command_sections(cyan : Proc(String, String), green : Proc(String, String)) : String
     commands = Noir::CLI::Catalog::COMMANDS
     width = commands.max_of { |command| "#{command.name} #{command.usage_args}".size }
 
-    commands.map do |command|
-      # Padding is measured on the uncolored text: the ANSI escapes around
-      # the verb are zero-width on screen but count toward String#size.
-      padding = " " * (width - "#{command.name} #{command.usage_args}".size)
-      "  #{cyan.call(command.name)} #{command.usage_args}#{padding}  #{command.summary}"
-    end.join("\n")
+    commands.group_by(&.group).map do |group, members|
+      header = green.call(members.size == 1 ? "#{group} COMMAND:" : "#{group} COMMANDS:")
+      lines = members.map do |command|
+        # Padding is measured on the uncolored text: the ANSI escapes around
+        # the verb are zero-width on screen but count toward String#size.
+        padding = " " * (width - "#{command.name} #{command.usage_args}".size)
+        "  #{cyan.call(command.name)} #{command.usage_args}#{padding}  #{command.summary}"
+      end
+      ([header] + lines).join("\n")
+    end.join("\n\n")
   end
 end
