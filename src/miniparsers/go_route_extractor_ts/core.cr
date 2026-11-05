@@ -1271,6 +1271,11 @@ module Noir
       # `gjson.Get(json, path)`, `header.Get("Content-Type")`, or
       # `params.Get("user")` don't surface as endpoints.
       return if non_router_operand?(router_name, groups)
+      # A handler's own request value: Fiber's `ctx.Get("Host",
+      # constant.SiteDefaultHost)` reads a header with a default, GoFrame's
+      # `r.Get("name", "guest")` a request value. The second argument reads
+      # as a handler, so the parameter's declared type decides.
+      return if Noir::TreeSitter.node_type(operand) == "identifier" && request_context_param?(call, router_name, source)
 
       args = Noir::TreeSitter.field(call, "arguments")
       return unless args
@@ -1359,6 +1364,35 @@ module Noir
       )
       route.handler_row = handler_row
       route
+    end
+
+    # The type of a handler's request value: `*fiber.Ctx`, `*gin.Context`,
+    # `echo.Context`, `*app.RequestContext`, `*fasthttp.RequestCtx`,
+    # `*ghttp.Request`. No router type is named like one.
+    REQUEST_CONTEXT_TYPE = /(?:\A|[.*\s])(?:Ctx|Context|RequestCtx|RequestContext|Request)\z/
+
+    # Whether `name` is a parameter of the innermost function around `call`
+    # that declares it, typed as a request value.
+    private def request_context_param?(call : LibTreeSitter::TSNode, name : String, source : String) : Bool
+      node = Noir::TreeSitter.parent(call)
+      depth = 0
+      while node && depth < Noir::TreeSitter::MAX_AST_DEPTH
+        if {"function_declaration", "method_declaration", "func_literal"}.includes?(Noir::TreeSitter.node_type(node)) &&
+           (params = Noir::TreeSitter.field(node, "parameters"))
+          Noir::TreeSitter.each_named_child(params) do |decl|
+            next unless Noir::TreeSitter.node_type(decl) == "parameter_declaration"
+            type = Noir::TreeSitter.field(decl, "type") || next
+            declared = false
+            Noir::TreeSitter.each_named_child(decl) do |child|
+              declared ||= Noir::TreeSitter.node_type(child) == "identifier" && Noir::TreeSitter.node_text(child, source) == name
+            end
+            return Noir::TreeSitter.node_text(type, source).strip.matches?(REQUEST_CONTEXT_TYPE) if declared
+          end
+        end
+        node = Noir::TreeSitter.parent(node)
+        depth += 1
+      end
+      false
     end
 
     private def router_operand_info(operand : LibTreeSitter::TSNode,
