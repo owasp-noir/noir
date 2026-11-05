@@ -735,9 +735,10 @@ module Noir::ImportGraph::Python
           imports = match[2]
         end
       elsif line.starts_with?("import")
-        line.scan(/import\s*([^'"\s\\]*)/) do |match|
-          next if match.size != 2
-          imports = match[1]
+        # `import a.b`, `import a.b as c`, `import a, b as c`: the alias is
+        # the name the module is bound to.
+        if match = line.match(/\Aimport\s+([^'"\\;]*)/)
+          imports = match[1].rstrip
         end
       end
 
