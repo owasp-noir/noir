@@ -508,7 +508,9 @@ module Analyzer::Specification
         next unless key
 
         value = scalar_to_s(variable["value"]?) || scalar_to_s(variable["initialValue"]?)
-        variables[key] = value if value
+        # An empty value (`ownerId: ""`) is a placeholder the user fills in per
+        # run, not a substitution: resolving it would delete the path segment.
+        variables[key] = value if value && !value.empty?
       end
 
       variables
