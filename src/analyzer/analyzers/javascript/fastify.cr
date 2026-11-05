@@ -131,7 +131,9 @@ module Analyzer::Javascript
     # config's `dirNameRoutePrefix` — when it is `false`, subdirectories
     # do NOT contribute a route prefix (a file's own `autoPrefix` export
     # provides the prefix instead).
-    record AutoloadRoot, path : String, dir_prefix : Bool
+    # `prefix` is the `options: { prefix: '/api' }` handed to every plugin
+    # the root loads.
+    record AutoloadRoot, path : String, dir_prefix : Bool, prefix : String = ""
 
     AUTO_PREFIX_RE = /\bautoPrefix\s*=\s*['"]([^'"]+)['"]/
 
@@ -231,7 +233,11 @@ module Analyzer::Javascript
                     if dp = extract_prop_value(arg_unwrapped, "dirNameRoutePrefix", source)
                       dir_prefix = false if Noir::TreeSitter.node_text(dp, source).strip == "false"
                     end
-                    autoload_roots << AutoloadRoot.new(root_path, dir_prefix) unless autoload_roots.any? { |r| r.path == root_path }
+                    options_prefix = extract_prop_value(arg_unwrapped, "options", source)
+                      .try { |o| extract_prop_value(o, "prefix", source) }
+                      .try { |p| decode_string(p, source) } || ""
+                    options_prefix = "/#{options_prefix}" unless options_prefix.empty? || options_prefix.starts_with?('/')
+                    autoload_roots << AutoloadRoot.new(root_path, dir_prefix, options_prefix) unless autoload_roots.any? { |r| r.path == root_path }
                   end
                 end
               end
@@ -466,6 +472,7 @@ module Analyzer::Javascript
           if root.dir_prefix && file_dir != root.path
             dir_prefix = "/#{file_dir[(root.path.size + 1)..]}"
           end
+          dir_prefix = Noir::URLPath.join(root.prefix, dir_prefix) unless root.prefix.empty?
           break
         end
       end

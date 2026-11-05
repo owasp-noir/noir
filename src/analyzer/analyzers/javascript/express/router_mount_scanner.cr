@@ -254,7 +254,9 @@ module Analyzer::Javascript
         imports = nil.as(NamedTuple(require_map: Hash(String, String), function_map: Hash(String, String), var_to_function: Hash(String, String))?)
 
         each_plugin_mount(content) do |plugin, prefix|
-          next unless mount_prefix?(prefix)
+          # Fastify: a register without a prefix still serves the child under
+          # the parent's own prefix, so it is an edge of the tree too.
+          next unless mount_prefix?(prefix) || (prefix.empty? && @framework == :fastify)
 
           plugin = plugin.strip
           target = if module_match = plugin.match(REGISTER_MODULE_RE)
@@ -296,8 +298,13 @@ module Analyzer::Javascript
         content.scan(REGISTER_CALL_RE) do |m|
           args = extract_use_call_args(content, m.byte_end(0))
           plugin = first_top_level_argument(args)
-          prefix_match = args[plugin.size..].match(REGISTER_PREFIX_RE)
-          next unless prefix_match
+          options = args[plugin.size..]
+          prefix_match = options.match(REGISTER_PREFIX_RE)
+          unless prefix_match
+            # `{ prefix: someVariable }` is a prefix this scan cannot read.
+            yield plugin, "" unless options.matches?(/\bprefix\b/)
+            next
+          end
           # Fastify adds the leading slash itself: `{ prefix: 'api/v1' }`.
           prefix = prefix_match[1]? || prefix_match[2]
           yield plugin, prefix.starts_with?('/') ? prefix : "/#{prefix}"
@@ -347,8 +354,8 @@ module Analyzer::Javascript
                                         locator : CodeLocator, on_path : Set(String))
       edges[file]?.try &.each do |prefix, key, target|
         next if on_path.includes?(target)
-        combined = Noir::URLPath.join(parent, prefix)
-        push_prefix_to_locator(locator, key, combined, "Mapped plugin mount prefix: #{target} => #{combined}")
+        combined = prefix.empty? ? parent : Noir::URLPath.join(parent, prefix)
+        push_prefix_to_locator(locator, key, combined, "Mapped plugin mount prefix: #{target} => #{combined}") unless combined.empty?
         on_path << target
         descend_register_mounts(target, combined, edges, locator, on_path)
         on_path.delete(target)
