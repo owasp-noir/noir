@@ -1139,10 +1139,14 @@ module Analyzer::Php
       if !class_ref.starts_with?('\\') && (mapped = imports[segments[0]]?)
         segments = mapped.lstrip('\\').split('\\').reject(&.empty?) + segments[1..]
       end
-      return unless segments.size >= 2
-
+      # A bare `UsersController` (RouteServiceProvider's `$namespace` is
+      # applied at runtime) is looked up in `app/Http/Controllers` below.
       root = laravel_project_root(routes_file_path)
       return unless root
+      # The runtime namespace may be a subnamespace (`Admin`) or live outside
+      # `app/` (psr-4 `Api\\` => `src/Api/`): a bare name that more than one
+      # file of the project answers to is not decided.
+      return if segments.size == 1 && get_files_by_basename("#{segments[0]}.php").size > 1
 
       candidates = [] of String
       candidates << File.join(root, "app", "#{segments[1..].join("/")}.php") if segments.size >= 2
