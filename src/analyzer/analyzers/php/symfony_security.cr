@@ -15,6 +15,33 @@ require "yaml"
 module Analyzer::Php::SymfonySecurity
   PUBLIC_ROLES = %w[PUBLIC_ACCESS IS_AUTHENTICATED_ANONYMOUSLY]
   CONDITIONS   = %w[host ip ips port allow_if request_matcher attributes route]
+  # An `allow_if` expression is a guard only when, with its string literals
+  # masked, it is nothing but check calls joined by `and` / `&&`: no
+  # comparison, `xor`, `in`, negation, `or`, ternary or boolean literal.
+  ALLOW_IF_STRING_RE = /"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'/
+  ALLOW_IF_CHECK     = /(?:is_authenticated|is_fully_authenticated)\(\s*\)|is_granted\(\s*\x01\s*\)/.source
+  ALLOW_IF_ALL       = Regex.new("\\A\\s*(?:#{ALLOW_IF_CHECK})(?:\\s*(?:and|&&)\\s*(?:#{ALLOW_IF_CHECK}))*\\s*\\z")
+
+  # Only a role or an authentication level is certain to refuse an anonymous
+  # caller; any other attribute is decided by an application voter, which
+  # may grant it to anonymous callers (a default group, say).
+  CERTAIN_ATTRIBUTE_RE = /\A(?:ROLE_\w+|IS_AUTHENTICATED(?:_\w+)?)\z/
+  VOTER_NOTE           = " (an application voter or setting may grant anonymous callers)"
+
+  def self.voter_note(attribute : String) : String
+    attribute.matches?(CERTAIN_ATTRIBUTE_RE) ? "" : VOTER_NOTE
+  end
+
+  # The guard an `allow_if` expression puts on every caller, or nil when
+  # it can pass anonymously or cannot be decided statically.
+  def self.allow_if_guard(expression : String) : String?
+    return unless ALLOW_IF_ALL.matches?(expression.gsub(ALLOW_IF_STRING_RE, "\u{1}"))
+    # Only check calls are left, so every literal is an `is_granted` attribute.
+    attributes = expression.scan(ALLOW_IF_STRING_RE).map { |m| m[0][1...-1] }
+    return if attributes.any? { |attribute| PUBLIC_ROLES.includes?(attribute) }
+    note = attributes.all?(&.matches?(CERTAIN_ATTRIBUTE_RE)) ? "" : VOTER_NOTE
+    "allow_if: #{expression}#{note}"
+  end
 
   record Firewall, pattern : Regex?, open : Bool, conditional : Bool
   record Rule, path : Regex?, methods : Array(String), roles : Array(String), conditional : Bool
@@ -60,7 +87,11 @@ module Analyzer::Php::SymfonySecurity
     rules = (security[YAML::Any.new("access_control")]?.try(&.as_a?) || [] of YAML::Any).compact_map do |node|
       rule = node.as_h? || next
       roles = rule[YAML::Any.new("roles")]? || rule[YAML::Any.new("role")]?
-      Rule.new(regex(rule[YAML::Any.new("path")]?), strings(rule[YAML::Any.new("methods")]?).map(&.upcase), strings(roles), conditional?(rule))
+      names = strings(roles)
+      expression = rule[YAML::Any.new("allow_if")]?.try(&.as_s?)
+      guard = expression.try { |source| allow_if_guard(source) }
+      names << guard if guard
+      Rule.new(regex(rule[YAML::Any.new("path")]?), strings(rule[YAML::Any.new("methods")]?).map(&.upcase), names, conditional?(rule, !guard.nil?))
     end
 
     # `.../app/config/security.yml` serves `.../src`; `.../config/packages/` serves `.../src` too.
@@ -70,8 +101,8 @@ module Analyzer::Php::SymfonySecurity
     nil
   end
 
-  private def self.conditional?(entry : Hash(YAML::Any, YAML::Any)) : Bool
-    CONDITIONS.any? { |key| entry.has_key?(YAML::Any.new(key)) }
+  private def self.conditional?(entry : Hash(YAML::Any, YAML::Any), allow_if_guards : Bool = false) : Bool
+    CONDITIONS.any? { |key| entry.has_key?(YAML::Any.new(key)) && !(allow_if_guards && key == "allow_if") }
   end
 
   private def self.regex(node : YAML::Any?) : Regex?

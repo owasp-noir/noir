@@ -45,13 +45,13 @@ describe "Symfony handler / access_control auth / form params", tags: "functiona
     guards.call(find.call("GET", "/share/{uid}")).should be_empty
 
     list = find.call("GET", "/list/{page}")
-    guards.call(list).should eq(["Symfony #[IsGranted('LIST')]"])
+    guards.call(list).should eq(["Symfony #[IsGranted('LIST')]#{Analyzer::Php::SymfonySecurity::VOTER_NOTE}"])
     params.call(list).should eq(["filter:query", "page:path", "sort:query"])
 
     home = find.call("GET", "/{page}")
     home.handler.try(&.name).should eq("EntryController::list")
     home.handler.try(&.line).should eq(31)
-    guards.call(home).should eq(["Symfony #[IsGranted('LIST')]"])
+    guards.call(home).should eq(["Symfony #[IsGranted('LIST')]#{Analyzer::Php::SymfonySecurity::VOTER_NOTE}"])
     params.call(home).should eq(["filter:query", "page:path", "sort:query"])
 
     edit = find.call("POST", "/edit/{id}")
