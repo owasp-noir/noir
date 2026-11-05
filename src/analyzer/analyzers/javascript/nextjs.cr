@@ -199,7 +199,7 @@ module Analyzer::Javascript
         endpoint.handler = handler
 
         extract_path_params(url, endpoint)
-        extract_pages_router_params(sanitized, endpoint)
+        extract_pages_router_params(verb_scoped(sanitized, method), endpoint)
         if include_callee
           attach_js_callees(endpoint, body_info.callees) if body_info
         end
@@ -667,19 +667,52 @@ module Analyzer::Javascript
       methods.uniq
     end
 
+    # `if (req.method === "GET") { … } else if (req.method === "PUT") { … }`:
+    # the block of one verb is not read for another. Only a condition that
+    # is a single verb test counts; anything else is kept for every verb.
+    VERB_BLOCK_HEAD = /\bif\s*\(\s*(?:(?:req|request)\.)?method\s*===?\s*['"]([A-Z]+)['"]\s*\)\s*\{/
+
+    private def verb_scoped(content : String, method : String) : String
+      return content unless content.includes?("method")
+      bare = binds_bare_method?(content)
+      cuts = [] of Range(Int32, Int32)
+      content.scan(VERB_BLOCK_HEAD) do |m|
+        next if m[1] == method
+        # A bare `method` read off something other than the request.
+        next if !bare && !m[0].matches?(/\b(?:req|request)\.method/)
+        open = m.end(0) - 1
+        close = Noir::JSRouteExtractor.find_matching_brace(content, open) || next
+        cuts << (open...close)
+      end
+      return content if cuts.empty?
+      String.build do |io|
+        pos = 0
+        cuts.each do |cut|
+          next if cut.begin < pos
+          io << content[pos...cut.begin]
+          pos = cut.end
+        end
+        io << content[pos..]
+      end
+    end
+
     private def extract_pages_router_params(content : String, endpoint : Endpoint)
+      # A dynamic segment's value is what `req.query.id` reads under `[id]`:
+      # it is the path parameter, not a query string key.
+      path_names = endpoint.params.select(&.param_type.==("path")).map(&.name).to_set
+
       # req.query.X and req.query["X"]
       content.scan(/req\.query\.(\w+)/) do |m|
-        add_param(endpoint, m[1], "query")
+        add_param(endpoint, m[1], "query") unless path_names.includes?(m[1])
       end
       content.scan(/req\.query\[['"]([^'"]+)['"]\]/) do |m|
-        add_param(endpoint, m[1], "query")
+        add_param(endpoint, m[1], "query") unless path_names.includes?(m[1])
       end
 
       # Destructured query: const { foo, bar } = req.query
       content.scan(/(?:const|let|var)\s*\{\s*([^}]+?)\s*\}\s*=\s*req\.query/) do |m|
         extract_simple_destructure_params(m[1]).each do |name|
-          add_param(endpoint, name, "query")
+          add_param(endpoint, name, "query") unless path_names.includes?(name)
         end
       end
 
