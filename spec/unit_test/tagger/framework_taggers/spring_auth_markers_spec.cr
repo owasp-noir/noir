@@ -615,3 +615,104 @@ describe "SpringAuthTagger argument-resolver principal" do
     (large / small).should be < 10.0
   end
 end
+
+describe "SpringAuthTagger refusing argument resolver" do
+  # `body` is the whole resolveArgument; `handler` the annotated parameter.
+  resolver = ->(body : String, handler : String, extra : Hash(String, String)) do
+    {
+      "#{MARKER_DIR}NeedLogin.java"         => "public @interface NeedLogin { boolean required() default true; }\n",
+      "#{MARKER_DIR}Fail.java"              => "public class Fail { public static void fail(String m) { throw new RuntimeException(m); } }\n",
+      "#{MARKER_DIR}NeedLoginResolver.java" => <<-JAVA,
+        public class NeedLoginResolver implements HandlerMethodArgumentResolver {
+            public boolean supportsParameter(MethodParameter parameter) {
+                return parameter.hasParameterAnnotation(NeedLogin.class);
+            }
+            public Object resolveArgument(MethodParameter parameter, NativeWebRequest request) {
+        #{body}
+            }
+        }
+        JAVA
+      "#{MARKER_DIR}WebConfig.java" => <<-JAVA,
+        class WebConfig {
+            @Autowired private NeedLoginResolver needLoginResolver;
+            public void addArgumentResolvers(List<HandlerMethodArgumentResolver> resolvers) {
+                resolvers.add(needLoginResolver);
+            }
+        }
+        JAVA
+      "#{MARKER_DIR}C.java" => <<-JAVA,
+        class C {
+            @GetMapping("/me")
+            public Object me(#{handler} User user) { return user; }
+            @GetMapping("/open")
+            public Object open() { return 1; }
+        }
+        JAVA
+    }.merge(extra)
+  end
+  routes = {"GET /me" => "#{MARKER_DIR}C.java:2", "GET /open" => "#{MARKER_DIR}C.java:4"}
+  none = {} of String => String
+  guarded = ->(body : String, handler : String, extra : Hash(String, String)) { run_spring_markers(resolver.call(body, handler, extra), routes)["GET /me"].size }
+  header = "String token = request.getHeader(\"token\");"
+
+  it "guards a resolver that throws when the token is absent" do
+    guarded.call("#{header} if (token == null) { throw new IllegalStateException(); } return lookup(token);", "@NeedLogin", none).should eq(1)
+    guarded.call("#{header} if (token != null && token.length() == 8) { return lookup(token); } else { Fail.fail(\"login\"); } return null;", "@NeedLogin", none).should eq(1)
+    run_spring_markers(resolver.call("#{header} if (token == null) { throw new IllegalStateException(); } return lookup(token);", "@NeedLogin", none), routes)["GET /open"].should be_empty
+  end
+
+  it "does not guard a resolver that can hand back a caller without the credential" do
+    [
+      "#{header} if (token == null) return null; User u = lookup(token); if (u == null) { throw new IllegalStateException(); } return u;",
+      "#{header} if (token == null) { return Guest.INSTANCE; } return lookup(token);",
+      "#{header} if (token == null) { return Optional.empty(); } return lookup(token);",
+      "#{header} try { return jwt.verify(token); } catch (JwtException e) { return null; }",
+      "#{header} switch (mode) { case OPTIONAL: return null; default: break; } if (token == null) { throw new IllegalStateException(); } return lookup(token);",
+    ].each { |body| guarded.call(body, "@NeedLogin", none).should eq(0) }
+  end
+
+  it "does not guard a test of something that is not the credential" do
+    guarded.call("HttpServletRequest req = request.getNativeRequest(HttpServletRequest.class); if (req == null) { throw new IllegalStateException(); } return svc.find(req.getHeader(\"token\"));", "@NeedLogin", none).should eq(0)
+    guarded.call("MultipartFile file = ((MultipartRequest) request.getNativeRequest()).getFile(\"file\"); if (file == null) { throw new IllegalArgumentException(); } return read(file);", "@NeedLogin", none).should eq(0)
+  end
+
+  it "does not read a throw on a blank token as a refusal of the absent one" do
+    guarded.call("#{header} if (token != null && token.isBlank()) { throw new IllegalArgumentException(); } return token == null ? null : lookup(token);", "@NeedLogin", none).should eq(0)
+  end
+
+  it "does not guard when the annotation or the resolver makes the credential optional" do
+    body = "NeedLogin ann = parameter.getParameterAnnotation(NeedLogin.class); #{header} if (token == null && ann.required()) { throw new IllegalStateException(); } return token == null ? null : lookup(token);"
+    guarded.call(body, "@NeedLogin", none).should eq(0)
+    guarded.call("#{header} if (token == null) { throw new IllegalStateException(); } return lookup(token);", "@NeedLogin(required = false)", none).should eq(0)
+  end
+
+  it "counts a helper's throw only at its top level" do
+    helper = {"#{MARKER_DIR}TokenUtil.java" => "public class TokenUtil { public static String anonymous() { try { return Keys.generate(); } catch (Exception e) { throw new IllegalStateException(e); } } }\n"}
+    guarded.call("#{header} if (token == null) { token = TokenUtil.anonymous(); } return lookup(token);", "@NeedLogin", helper).should eq(0)
+  end
+
+  it "judges each resolver of a file on its own" do
+    both = {"#{MARKER_DIR}NeedLoginResolver.java" => <<-JAVA}
+      public class NeedLoginResolver {
+          static class Strict implements HandlerMethodArgumentResolver {
+              public boolean supportsParameter(MethodParameter parameter) { return parameter.hasParameterAnnotation(NeedLogin.class); }
+              public Object resolveArgument(MethodParameter parameter, NativeWebRequest request) {
+                  String token = request.getHeader("token"); if (token == null) { throw new IllegalStateException(); } return lookup(token);
+              }
+          }
+          static class Lenient implements HandlerMethodArgumentResolver {
+              public boolean supportsParameter(MethodParameter parameter) { return parameter.hasParameterAnnotation(OptionalUser.class); }
+              public Object resolveArgument(MethodParameter parameter, NativeWebRequest request) { return null; }
+          }
+      }
+      JAVA
+    guarded.call("return null;", "@NeedLogin", both).should eq(0)
+  end
+
+  it "reads a resolver with thousands of conditions in linear time" do
+    body = "#{header} " + (1..6000).map { |i| "if (flag#{i}) { count++; }" }.join(" ") + " if (token == null) { throw new IllegalStateException(); } return lookup(token);"
+    started = Time.instant
+    guarded.call(body, "@NeedLogin", none)
+    (Time.instant - started).total_seconds.should be < 5
+  end
+end

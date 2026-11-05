@@ -173,8 +173,10 @@ class SpringAuthTagger < FrameworkTagger
     @permit_markers = Hash(String, Set(String)).new
     @permit_marker_names = Set(String).new
     @principal_resolvers = [] of {String, String, String}
+    @refusing_resolvers = [] of {String, String, String}
     @resolver_registrations = Set({String?, String}).new
     @principal_param_re = nil.as(Regex?)
+    @refusing_param_re = nil.as(Regex?)
     @shiro_chains = [] of ShiroChain
     @stripped_lines = Hash(String, Array(String)).new
     @field_types = Hash(String, Hash(String, String)).new
@@ -215,6 +217,7 @@ class SpringAuthTagger < FrameworkTagger
     @permit_markers.clear
     @permit_marker_names.clear
     @principal_resolvers.clear
+    @refusing_resolvers.clear
     @resolver_registrations.clear
     @shiro_chains.clear
     @stripped_lines.clear
@@ -2500,11 +2503,154 @@ class SpringAuthTagger < FrameworkTagger
       end
     end
     return unless code.includes?("HandlerMethodArgumentResolver") && (resolve = code.index("resolveArgument"))
-    return unless code[resolve..].matches?(/\breturn\s+null\s*;/)
     cls = File.basename(file, File.extname(file))
+    if refusing_resolver?(file)
+      annotations = code.scan(PARAMETER_ANNOTATION_READ).map(&.[1]).uniq!
+      if annotations.size == 1
+        type_file(annotations[0], code, file).try { |annotation_file| @refusing_resolvers << {cls, annotation_file, annotations[0]} }
+      end
+      return
+    end
+    return unless code[resolve..].matches?(/\breturn\s+null\s*;/)
     code.scan(PARAMETER_ANNOTATION_READ) do |match|
       type_file(match[1], code, file).try { |annotation_file| @principal_resolvers << {cls, annotation_file, match[1]} }
     end
+  end
+
+  CREDENTIAL_READ = /\.\s*(?:getHeader|getParameter|getCookies|getSession|getAttribute|getRemoteUser|getUserPrincipal)\s*\(/
+  # ponytail: an `if` walk capped here; a resolver with more is not read (no guard).
+  RESOLVER_IF_CAP = 4000
+
+  # A `resolveArgument` that turns a caller without a valid credential away:
+  # `if (token == null) throw ..`, or a non-null test of the token whose
+  # `else` throws, where `token` is read off the request (or looked up from
+  # one that is). Anything that can hand back a caller without the
+  # credential is no guard: a `return` that is neither the trailing
+  # fall-through nor built from the credential (`return null`, a guest
+  # object, a `catch` that returns), a `required()` switch, or a file with
+  # several resolvers. A refusal is a top-level `throw` or a unique static
+  # helper whose own top level throws.
+  private def refusing_resolver?(file : String) : Bool
+    return false unless index = code_index(file)
+    return false unless (decls = index[:methods]["resolveArgument"]?) && decls.size == 1
+    body = brace_body(index[:masked], decls[0][1]).gsub(/[^\x00-\x7F]/, " ")
+    return false if body.matches?(/\.\s*required\s*\(/)
+    creds = credential_vars(body)
+    return false if creds.empty?
+    names = creds.map { |name| Regex.escape(name) }.join('|')
+    return false unless returns_credential_only?(body, /\b(?:#{names})\b/)
+    absence = /\b(?:#{names})\s*==\s*null|\bnull\s*==\s*(?:#{names})\b|(?<!!)\b(?:#{names})\.(?:isEmpty|isBlank)\(\)|!\s*(?:[\w$.]+\.)?hasText\(\s*(?:#{names})\s*\)/
+    presence = /\b(?:#{names})\s*!=\s*null|\bnull\s*!=\s*(?:#{names})\b/
+    refuses = ->(text : String) do
+      top = top_level_text(text)
+      top.matches?(/\bthrow\b/) || throwing_call?(top, index[:code], file)
+    end
+    from = 0
+    checked = 0
+    while pos = body.index(/\bif\s*\(/, from)
+      from = pos + 2
+      return false if (checked += 1) > RESOLVER_IF_CAP
+      open = body.index!('(', pos)
+      close = closing(body, open) || return false
+      cond = body[(open + 1)...close]
+      block, after = branch(body, close + 1) || next
+      else_block = branch_after_else(body, after).try(&.[0])
+      next if cond.includes?("&&") && cond.includes?("||")
+      parts = cond.split(cond.includes?("||") ? "||" : "&&")
+      if !cond.includes?("&&") && parts.any?(&.matches?(absence))
+        return true if refuses.call(block)
+      elsif !cond.includes?("||") && parts.any?(&.matches?(presence)) && parts.none?(&.matches?(absence))
+        return true if else_block && refuses.call(else_block)
+      end
+    end
+    false
+  end
+
+  # Variables assigned from a request credential read, then from an
+  # expression using one (`User u = mapper.byToken(token)`).
+  private def credential_vars(body : String) : Array(String)
+    assigned = body.scan(/\b([A-Za-z_$][\w$]*)\s*=(?!=)\s*([^;]+);/).map { |match| {match[1], match[2]} }
+    creds = assigned.select { |_, rhs| rhs.matches?(CREDENTIAL_READ) }.map(&.[0])
+    3.times do
+      names = creds.map { |name| Regex.escape(name) }.join('|')
+      break if names.empty?
+      derived = /\b(?:#{names})\b/
+      grown = assigned.select { |name, rhs| !creds.includes?(name) && rhs.matches?(derived) }.map(&.[0])
+      break if grown.empty?
+      creds.concat(grown)
+    end
+    creds.uniq!
+  end
+
+  # Every `return` builds on the credential, or is the method's last statement.
+  private def returns_credential_only?(body : String, credential : Regex) : Bool
+    body.scan(/\breturn\b([^;]*);/) do |match|
+      next if match[1].matches?(credential)
+      before = body[0, match.begin(0)].rstrip
+      trailing = body[match.end(0)..].strip.in?("", "}")
+      return false unless trailing && (before.empty? || before.ends_with?(';') || before.ends_with?('}') || before.ends_with?('{'))
+    end
+    true
+  end
+
+  # `text` without anything inside nested braces.
+  private def top_level_text(text : String) : String
+    depth = 0
+    String.build do |io|
+      text.each_char do |char|
+        depth -= 1 if char == '}'
+        io << char if depth == 0
+        depth += 1 if char == '{'
+      end
+    end
+  end
+
+  # Index of the bracket closing the one at `open`; nil when unbalanced.
+  private def closing(text : String, open : Int32) : Int32?
+    depth = 0
+    index = open
+    while index < text.size
+      case text[index]
+      when '(', '{' then depth += 1
+      when ')', '}'
+        depth -= 1
+        return index if depth == 0
+      end
+      index += 1
+    end
+    nil
+  end
+
+  # The statement or `{}` block starting at `start` (after whitespace) and
+  # the index just past it.
+  private def branch(text : String, start : Int32) : {String, Int32}?
+    first = start
+    while first < text.size && text[first].whitespace?
+      first += 1
+    end
+    return unless first < text.size
+    if text[first] == '{'
+      stop = closing(text, first) || return
+      {text[(first + 1)...stop], stop + 1}
+    else
+      stop = text.index(';', first) || return
+      {text[first..stop], stop + 1}
+    end
+  end
+
+  private def branch_after_else(text : String, start : Int32) : {String, Int32}?
+    found = /\G\s*else\b/.match(text, start) || return
+    branch(text, found.end(0))
+  end
+
+  # A unique `Type.method(..)` call in `text` whose own top level throws.
+  private def throwing_call?(text : String, code : String, path : String) : Bool
+    text.scan(/\b([A-Z][\w$]*)\s*\.\s*([a-z_$][\w$]*)\s*\(/) do |call|
+      next unless (file = type_file(call[1], code, path)) && (index = code_index(file))
+      next unless (found = index[:methods][call[2]]?) && found.size == 1
+      return true if top_level_text(brace_body(index[:masked], found[0][1])).matches?(/\bthrow\b/)
+    end
+    false
   end
 
   private def resolve_permit_markers
@@ -2523,6 +2669,7 @@ class SpringAuthTagger < FrameworkTagger
       @permit_markers[key] = closure
       @permit_marker_names.concat(closure)
     end
+    @refusing_param_re = @refusing_resolvers.empty? ? nil : /@(#{@refusing_resolvers.map { |_, _, name| Regex.escape(name) }.uniq!.join('|')})\b(\([^)]*\))?\s+(?:final\s+)?[\w$.<>?]+\s+[a-z_$][\w$]*\s*[,)]/
     @principal_param_re = @principal_resolvers.empty? ? nil : /@(#{@principal_resolvers.map { |_, _, name| Regex.escape(name) }.uniq!.join('|')})\b(?:\([^)]*\))?\s+(?:final\s+)?[\w$.<>?]+\s+([a-z_$][\w$]*)\s*[,)]/
   end
 
@@ -2629,7 +2776,15 @@ class SpringAuthTagger < FrameworkTagger
     head = code[0, open]
     name = head.match(HANDLER_PRINCIPAL_PARAM).try { |param| param[1]? || param[2]? || param[3]? }
     name ||= principal_annotation_var(head, ctx)
-    return unless name
+    unless name
+      if (pattern = @refusing_param_re) && (found = head.match(pattern)) && !found[2]?.try(&.matches?(/\brequired\s*=\s*false\b/)) && (annotation_file = type_file(found[1], ctx.full_content, ctx.path))
+        module_dir = build_module(ctx.path)
+        if @refusing_resolvers.any? { |cls, file, _| file == annotation_file && @resolver_registrations.includes?({module_dir, cls}) }
+          return "Protected by argument resolver: @#{found[1]} refuses a caller without a valid credential"
+        end
+      end
+      return
+    end
     body = code[(open + 1)..]
     unless refuses_null?(body, raw[(open + 1)..], name)
       return unless delegated_refusal?(body, name, ctx)
