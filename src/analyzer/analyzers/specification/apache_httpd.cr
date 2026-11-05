@@ -229,7 +229,22 @@ module Analyzer::Specification
     private def skip_rewrite?(pattern : String, target : String) : Bool
       return true if target == "-"
       return true if static_asset_rewrite?(pattern, target)
-      false
+      root_remap?(pattern, target)
+    end
+
+    # `RewriteRule (.*) public/$1` moves the document root and `^(.*)$ $1.br`
+    # picks a pre-compressed copy: both match every URL and hand the same
+    # path on (the target is the capture plus a literal prefix or suffix, not
+    # a script), so they route nothing. A catch-all into `index.php` does.
+    CAPTURE_ONLY_TARGET_RE = /\A[^$]*\$1[^$]*\z/
+    # A server-side script in the target (`index.php/$1`, `app.cgi/$1`,
+    # `dispatch.fcgi/$1`, `app.aspx/$1`) is a front controller, not a remap.
+    SCRIPT_TARGET_RE = /\.(?:php\d?|phtml|cgi|fcgi|pl|py|rb|lua|asp|aspx|jsp|do|action)(?![A-Za-z0-9])/i
+
+    private def root_remap?(pattern : String, target : String) : Bool
+      # A query string (`/?route=$1`) hands the path to the directory index.
+      return false if target.includes?('?') || target.matches?(SCRIPT_TARGET_RE) || !target.matches?(CAPTURE_ONLY_TARGET_RE)
+      Noir::URLPath.strip_regex_anchors(pattern).lstrip('/').in?({"(.*)", ".*", "(.+)", ".+"})
     end
 
     private def static_asset_rewrite?(pattern : String, target : String) : Bool
