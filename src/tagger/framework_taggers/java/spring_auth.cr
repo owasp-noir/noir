@@ -2504,12 +2504,9 @@ class SpringAuthTagger < FrameworkTagger
     end
     return unless code.includes?("HandlerMethodArgumentResolver") && (resolve = code.index("resolveArgument"))
     cls = File.basename(file, File.extname(file))
-    if refusing_resolver?(file)
-      annotations = code.scan(PARAMETER_ANNOTATION_READ).map(&.[1]).uniq!
-      if annotations.size == 1
-        type_file(annotations[0], code, file).try { |annotation_file| @refusing_resolvers << {cls, annotation_file, annotations[0]} }
-      end
-      return
+    annotations = code.scan(PARAMETER_ANNOTATION_READ).map(&.[1]).uniq!
+    if annotations.size == 1 && refusing_resolver?(file, annotations[0])
+      type_file(annotations[0], code, file).try { |annotation_file| @refusing_resolvers << {cls, annotation_file, annotations[0]} }
     end
     return unless code[resolve..].matches?(/\breturn\s+null\s*;/)
     code.scan(PARAMETER_ANNOTATION_READ) do |match|
@@ -2517,140 +2514,240 @@ class SpringAuthTagger < FrameworkTagger
     end
   end
 
-  CREDENTIAL_READ = /\.\s*(?:getHeader|getParameter|getCookies|getSession|getAttribute|getRemoteUser|getUserPrincipal)\s*\(/
-  # ponytail: an `if` walk capped here; a resolver with more is not read (no guard).
-  RESOLVER_IF_CAP = 4000
+  # One statement of a resolver body (masked text): `kind` is :simple, :if,
+  # :return or :throw; an `if` keeps its condition and branches.
+  record ResolverStmt, kind : Symbol, text : String, from : Int32,
+    cond : String = "", then_b : Array(ResolverStmt) = [] of ResolverStmt, else_b : Array(ResolverStmt)? = nil
 
-  # A `resolveArgument` that turns a caller without a valid credential away:
-  # `if (token == null) throw ..`, or a non-null test of the token whose
-  # `else` throws, where `token` is read off the request (or looked up from
-  # one that is). Anything that can hand back a caller without the
-  # credential is no guard: a `return` that is neither the trailing
-  # fall-through nor built from the credential (`return null`, a guest
-  # object, a `catch` that returns), a `required()` switch, or a file with
-  # several resolvers. A refusal is a top-level `throw` or a unique static
-  # helper whose own top level throws.
-  private def refusing_resolver?(file : String) : Bool
+  # Nesting the resolver shape needs: wrapper > presence test > lookup check > refusal.
+  RESOLVER_DEPTH    = 4
+  RESOLVER_REJECTED = /\?|->|\bOptional\b|\.\s*required\s*\(|getParameterAnnotation\s*\([^()]*\)\s*\./
+  RESOLVER_KEYWORDS = Set{"try", "catch", "finally", "for", "while", "do", "switch", "synchronized", "case", "default", "break", "continue", "yield", "assert", "class", "else"}
+  CREDENTIAL_NAME   = /token|auth|jwt|session|ticket|api[-_]?key|bearer|access/i
+  CREDENTIAL_SOURCE = /\A(?:\(\s*[\w$.]+\s*\)\s*)?[\w$]+(?:\s*\.\s*[\w$]+\s*\(\s*\))*\s*\.\s*(getHeader|getParameter|getAttribute|getCookie|getCookieValue)\s*\(\s*(?:[\w$]+\s*,\s*)?"([^"\\]*)"\s*(?:,\s*[\w$.]+\s*)?\)\z/
+  LOCAL_ASSIGNMENT  = /\A(?:final\s+)?(?:[\w$.]+(?:<[\w$.,\s<>]*>)?(?:\[\])*\s+)?([a-z_$][\w$]*)\s*=(?!=)\s*(.*?)\s*;\z/m
+  LOOKUP_CALL       = /\A[\w$]+(?:\s*\.\s*[\w$]+)*\s*\(\s*([a-z_$][\w$]*)\s*\)\z/
+  STATIC_CALL       = /\A([A-Z][\w$]*)\s*\.\s*([a-z_$][\w$]*)\s*\(/
+  ANNOTATION_VAR    = /([a-z_$][\w$]*)\s*=\s*[\w$.]*getParameterAnnotation\s*\(/
+
+  # A `resolveArgument` of exactly this shape turns a caller without a
+  # credential away; anything else is no guard (a missed guard is better
+  # than a false one):
+  #   [if (<param has the resolver's own annotation>) {]
+  #     declarations and calls, `cred` read off the request by a
+  #     credential-named header/parameter/cookie/session key (or `u` =
+  #     one lookup call on it), then ONE refusing `if`:
+  #       if (<cred absent> [|| ..]) { <refusal> }
+  #       if (<cred != null> && ..) { <body> } else { <refusal> }
+  #     then declarations and a trailing `return`
+  #   [} return ..;]
+  # A refusal is straight-line code ending in `throw` or a call to a unique,
+  # import-resolved static helper whose top level throws. The presence
+  # `body` is straight-line with refusal-only `if` / `else if` chains and a
+  # trailing `return`. No loops, try, switch, lambdas, ternaries, Optional,
+  # annotation member reads, or reassigned credentials anywhere.
+  private def refusing_resolver?(file : String, own : String) : Bool
     return false unless index = code_index(file)
     return false unless (decls = index[:methods]["resolveArgument"]?) && decls.size == 1
-    body = brace_body(index[:masked], decls[0][1]).gsub(/[^\x00-\x7F]/, " ")
-    return false if body.matches?(/\.\s*required\s*\(/)
-    creds = credential_vars(body)
-    return false if creds.empty?
-    names = creds.map { |name| Regex.escape(name) }.join('|')
-    return false unless returns_credential_only?(body, /\b(?:#{names})\b/)
-    absence = /\b(?:#{names})\s*==\s*null|\bnull\s*==\s*(?:#{names})\b|(?<!!)\b(?:#{names})\.(?:isEmpty|isBlank)\(\)|!\s*(?:[\w$.]+\.)?hasText\(\s*(?:#{names})\s*\)/
-    presence = /\b(?:#{names})\s*!=\s*null|\bnull\s*!=\s*(?:#{names})\b/
-    refuses = ->(text : String) do
-      top = top_level_text(text)
-      top.matches?(/\bthrow\b/) || throwing_call?(top, index[:code], file)
+    start = decls[0][1]
+    body = ascii_only(brace_body(index[:masked], start).rchop('}'))
+    return false if body.matches?(RESOLVER_REJECTED)
+    source = ascii_only(index[:code][start, body.size])
+    stmts = (resolver_block(body, 0, 0) || return false)[0]
+    if (wrapper = stmts.first?) && wrapper.kind == :if && wrapper.else_b.nil? && annotation_test?(wrapper.cond, own) &&
+       (stmts.size == 1 || (stmts.size == 2 && stmts[1].kind == :return))
+      stmts = wrapper.then_b
     end
-    from = 0
-    checked = 0
-    while pos = body.index(/\bif\s*\(/, from)
-      from = pos + 2
-      return false if (checked += 1) > RESOLVER_IF_CAP
-      open = body.index!('(', pos)
-      close = closing(body, open) || return false
-      cond = body[(open + 1)...close]
-      block, after = branch(body, close + 1) || next
-      else_block = branch_after_else(body, after).try(&.[0])
-      next if cond.includes?("&&") && cond.includes?("||")
-      parts = cond.split(cond.includes?("||") ? "||" : "&&")
-      if !cond.includes?("&&") && parts.any?(&.matches?(absence))
-        return true if refuses.call(block)
-      elsif !cond.includes?("||") && parts.any?(&.matches?(presence)) && parts.none?(&.matches?(absence))
-        return true if else_block && refuses.call(else_block)
+    creds = Set(String).new
+    derived = Set(String).new
+    refused = false
+    stmts.each_with_index do |stmt, i|
+      case stmt.kind
+      when :simple
+        next unless assign = stmt.text.match(LOCAL_ASSIGNMENT)
+        if (raw = source[stmt.from, stmt.text.size].match(LOCAL_ASSIGNMENT)) && credential_source?(raw[2])
+          creds << assign[1]
+        elsif (call = assign[2].match(LOOKUP_CALL)) && creds.includes?(call[1])
+          derived << assign[1]
+        end
+      when :if
+        return false if refused || !refusing_if?(stmt, creds + derived, index[:code], file)
+        refused = true
+      when :return
+        return false unless refused && i == stmts.size - 1
+      else
+        return false
       end
     end
-    false
+    return false unless refused && (creds + derived).all? { |name| assigned_once?(body, name) }
+    body.scan(ANNOTATION_VAR).none? { |found| body.matches?(/(?<![\w$.])#{Regex.escape(found[1])}\s*\./) }
   end
 
-  # Variables assigned from a request credential read, then from an
-  # expression using one (`User u = mapper.byToken(token)`).
-  private def credential_vars(body : String) : Array(String)
-    assigned = body.scan(/\b([A-Za-z_$][\w$]*)\s*=(?!=)\s*([^;]+);/).map { |match| {match[1], match[2]} }
-    creds = assigned.select { |_, rhs| rhs.matches?(CREDENTIAL_READ) }.map(&.[0])
-    3.times do
-      names = creds.map { |name| Regex.escape(name) }.join('|')
-      break if names.empty?
-      derived = /\b(?:#{names})\b/
-      grown = assigned.select { |name, rhs| !creds.includes?(name) && rhs.matches?(derived) }.map(&.[0])
-      break if grown.empty?
-      creds.concat(grown)
-    end
-    creds.uniq!
+  private def ascii_only(text : String) : String
+    text.ascii_only? ? text : text.gsub(/[^\x00-\x7F]/, " ")
   end
 
-  # Every `return` builds on the credential, or is the method's last statement.
-  private def returns_credential_only?(body : String, credential : Regex) : Bool
-    body.scan(/\breturn\b([^;]*);/) do |match|
-      next if match[1].matches?(credential)
-      before = body[0, match.begin(0)].rstrip
-      trailing = body[match.end(0)..].strip.in?("", "}")
-      return false unless trailing && (before.empty? || before.ends_with?(';') || before.ends_with?('}') || before.ends_with?('{'))
-    end
-    true
+  # `"token"`-like key read off the request (a session attribute only from the session).
+  private def credential_source?(rhs : String) : Bool
+    return false unless found = rhs.match(CREDENTIAL_SOURCE)
+    return false if found[1] == "getAttribute" && !rhs.includes?("getSession") && !rhs.includes?("SCOPE_SESSION")
+    found[2].matches?(CREDENTIAL_NAME)
   end
 
-  # `text` without anything inside nested braces.
-  private def top_level_text(text : String) : String
-    depth = 0
-    String.build do |io|
-      text.each_char do |char|
-        depth -= 1 if char == '}'
-        io << char if depth == 0
-        depth += 1 if char == '{'
-      end
-    end
+  private def annotation_test?(cond : String, own : String) : Bool
+    name = Regex.escape(own)
+    strip_parens(cond).matches?(/\A(?:null\s*!=\s*)?(?:[\w$]+\s*\.\s*)?(?:hasParameterAnnotation\s*\(\s*#{name}\.class\s*\)|getParameterAnnotation\s*\(\s*#{name}\.class\s*\)(?:\s*instanceof\s+#{name}|\s*!=\s*null)?)\z/)
   end
 
-  # Index of the bracket closing the one at `open`; nil when unbalanced.
-  private def closing(text : String, open : Int32) : Int32?
-    depth = 0
-    index = open
-    while index < text.size
-      case text[index]
-      when '(', '{' then depth += 1
-      when ')', '}'
-        depth -= 1
-        return index if depth == 0
-      end
-      index += 1
-    end
-    nil
-  end
-
-  # The statement or `{}` block starting at `start` (after whitespace) and
-  # the index just past it.
-  private def branch(text : String, start : Int32) : {String, Int32}?
-    first = start
-    while first < text.size && text[first].whitespace?
-      first += 1
-    end
-    return unless first < text.size
-    if text[first] == '{'
-      stop = closing(text, first) || return
-      {text[(first + 1)...stop], stop + 1}
+  private def refusing_if?(stmt : ResolverStmt, names : Set(String), code : String, file : String) : Bool
+    rules = Noir::TopLevelSplit::Rules.new
+    cond = strip_parens(stmt.cond)
+    disjuncts = Noir::TopLevelSplit.split(cond, "||", rules)
+    if disjuncts.any? { |part| credential_test?(strip_parens(part), names, absent: true) }
+      stmt.else_b.nil? && refusal_block?(stmt.then_b, code, file)
+    elsif disjuncts.size == 1 && Noir::TopLevelSplit.split(cond, "&&", rules).any? { |part| credential_test?(strip_parens(part), names, absent: false) }
+      (else_b = stmt.else_b) ? refusal_block?(else_b, code, file) && presence_body?(stmt.then_b, code, file) : false
     else
-      stop = text.index(';', first) || return
-      {text[first..stop], stop + 1}
+      false
     end
   end
 
-  private def branch_after_else(text : String, start : Int32) : {String, Int32}?
-    found = /\G\s*else\b/.match(text, start) || return
-    branch(text, found.end(0))
+  private def credential_test?(atom : String, names : Set(String), absent : Bool) : Bool
+    names.any? do |name|
+      n = Regex.escape(name)
+      if absent
+        atom.matches?(/\A(?:#{n}\s*==\s*null|null\s*==\s*#{n}|#{n}\s*\.\s*(?:isEmpty|isBlank)\s*\(\s*\)|(?:[\w$.]+\.)?(?:isEmpty|isBlank)\s*\(\s*#{n}\s*\)|!\s*(?:[\w$.]+\.)?(?:hasText|hasLength|isNotEmpty|isNotBlank)\s*\(\s*#{n}\s*\))\z/)
+      else
+        atom.matches?(/\A(?:#{n}\s*!=\s*null|null\s*!=\s*#{n})\z/)
+      end
+    end
   end
 
-  # A unique `Type.method(..)` call in `text` whose own top level throws.
-  private def throwing_call?(text : String, code : String, path : String) : Bool
-    text.scan(/\b([A-Z][\w$]*)\s*\.\s*([a-z_$][\w$]*)\s*\(/) do |call|
-      next unless (file = type_file(call[1], code, path)) && (index = code_index(file))
-      next unless (found = index[:methods][call[2]]?) && found.size == 1
-      return true if top_level_text(brace_body(index[:masked], found[0][1])).matches?(/\bthrow\b/)
+  # Straight-line code, refusal-only `if` chains, a trailing `return`.
+  private def presence_body?(stmts : Array(ResolverStmt), code : String, file : String) : Bool
+    stmts.each_with_index.all? do |stmt, i|
+      case stmt.kind
+      when :simple then true
+      when :if     then refusal_chain?(stmt, code, file)
+      when :return then i == stmts.size - 1
+      else              false
+      end
     end
-    false
+  end
+
+  private def refusal_chain?(stmt : ResolverStmt, code : String, file : String) : Bool
+    return false unless refusal_block?(stmt.then_b, code, file)
+    return true unless else_b = stmt.else_b
+    else_b.size == 1 && else_b[0].kind == :if && refusal_chain?(else_b[0], code, file)
+  end
+
+  # Straight-line statements, the last a `throw` or a throwing static helper call.
+  private def refusal_block?(stmts : Array(ResolverStmt), code : String, file : String) : Bool
+    return false unless last = stmts.last?
+    return false unless stmts[0...-1].all? { |stmt| stmt.kind == :simple }
+    last.kind == :throw || (last.kind == :simple && throwing_helper?(last.text, code, file))
+  end
+
+  # `Type.method(..);` where `Type` resolves (import first) to one file with
+  # a single static `method` whose top level throws after straight-line code.
+  private def throwing_helper?(text : String, code : String, file : String) : Bool
+    return false unless call = text.match(STATIC_CALL)
+    return false unless (close = expression_end(text, call.end(0), ')')) && text[(close + 1)..].strip == ";"
+    return false unless (helper_file = type_file(call[1], code, file)) && (helper = code_index(helper_file))
+    return false unless (found = helper[:methods][call[2]]?) && found.size == 1
+    start = found[0][1]
+    head = helper[:masked][0, start - 1]
+    return false unless head[((head.rindex(/[;{}]/) || -1) + 1)..].matches?(/\bstatic\b/)
+    stmts = (resolver_block(ascii_only(brace_body(helper[:masked], start).rchop('}')), 0, 0) || return false)[0]
+    return false unless throw_at = stmts.index { |stmt| stmt.kind == :throw }
+    stmts[0...throw_at].all? { |stmt| stmt.kind == :simple }
+  end
+
+  # Assigned (or incremented) once: its declaration.
+  private def assigned_once?(body : String, name : String) : Bool
+    escaped = Regex.escape(name)
+    body.scan(/(?<![\w$.])#{escaped}\s*(?:[-+*\/%&|^]|<<|>>>?)?=(?!=)|(?<![\w$.])#{escaped}\s*(?:\+\+|--)|(?:\+\+|--)\s*#{escaped}(?![\w$])/).size == 1
+  end
+
+  # Statements from `pos` to the `}` closing a nested block (or the end of
+  # the top level), with the index past it. Nil outside the shape:
+  # unsupported statements, braces inside an expression, deeper nesting.
+  # One forward pass; each character is read once.
+  private def resolver_block(text : String, pos : Int32, depth : Int32) : {Array(ResolverStmt), Int32}?
+    return if depth > RESOLVER_DEPTH
+    stmts = [] of ResolverStmt
+    loop do
+      pos = skip_space(text, pos)
+      return depth == 0 ? {stmts, pos} : nil if pos >= text.size
+      if text[pos] == '}'
+        return depth == 0 ? nil : {stmts, pos + 1}
+      end
+      stmt, pos = resolver_statement(text, pos, depth) || return
+      stmts << stmt
+    end
+  end
+
+  private def resolver_statement(text : String, pos : Int32, depth : Int32) : {ResolverStmt, Int32}?
+    word = word_at(text, pos)
+    return if RESOLVER_KEYWORDS.includes?(word)
+    if word == "if"
+      open = skip_space(text, pos + 2)
+      return unless text[open]? == '('
+      return unless close = expression_end(text, open + 1, ')')
+      then_b, after = resolver_branch(text, close + 1, depth) || return
+      else_b = nil
+      if word_at(text, skip_space(text, after)) == "else"
+        else_b, after = resolver_branch(text, skip_space(text, after) + 4, depth) || return
+      end
+      return {ResolverStmt.new(:if, text[pos...after], pos, text[(open + 1)...close], then_b, else_b), after}
+    end
+    return unless stop = expression_end(text, pos, ';')
+    kind = word == "return" ? :return : word == "throw" ? :throw : :simple
+    {ResolverStmt.new(kind, text[pos..stop], pos), stop + 1}
+  end
+
+  private def resolver_branch(text : String, pos : Int32, depth : Int32) : {Array(ResolverStmt), Int32}?
+    pos = skip_space(text, pos)
+    return if pos >= text.size
+    return resolver_block(text, pos + 1, depth + 1) if text[pos] == '{'
+    return if depth + 1 > RESOLVER_DEPTH
+    stmt, after = resolver_statement(text, pos, depth + 1) || return
+    {[stmt], after}
+  end
+
+  # Index of `stop` at bracket depth 0 from `pos`; nil on a brace, a stray
+  # `;`, or an unbalanced bracket first.
+  private def expression_end(text : String, pos : Int32, stop : Char) : Int32?
+    depth = 0
+    while pos < text.size
+      char = text[pos]
+      return pos if depth == 0 && char == stop
+      case char
+      when '{', '}', ';' then return
+      when '(', '['      then depth += 1
+      when ')', ']'
+        return if depth == 0
+        depth -= 1
+      end
+      pos += 1
+    end
+  end
+
+  # The identifier starting at `pos` ("" when none). A `\G` regex at an
+  # offset is not anchored in PCRE2 and rescans the rest of `text`.
+  private def word_at(text : String, pos : Int32) : String
+    stop = pos
+    while stop < text.size && (text[stop].ascii_alphanumeric? || text[stop] == '_' || text[stop] == '$')
+      stop += 1
+    end
+    text[pos...stop]
+  end
+
+  private def skip_space(text : String, pos : Int32) : Int32
+    while pos < text.size && text[pos].whitespace?
+      pos += 1
+    end
+    pos
   end
 
   private def resolve_permit_markers
@@ -2776,20 +2873,22 @@ class SpringAuthTagger < FrameworkTagger
     head = code[0, open]
     name = head.match(HANDLER_PRINCIPAL_PARAM).try { |param| param[1]? || param[2]? || param[3]? }
     name ||= principal_annotation_var(head, ctx)
-    unless name
-      if (pattern = @refusing_param_re) && (found = head.match(pattern)) && !found[2]?.try(&.matches?(/\brequired\s*=\s*false\b/)) && (annotation_file = type_file(found[1], ctx.full_content, ctx.path))
-        module_dir = build_module(ctx.path)
-        if @refusing_resolvers.any? { |cls, file, _| file == annotation_file && @resolver_registrations.includes?({module_dir, cls}) }
-          return "Protected by argument resolver: @#{found[1]} refuses a caller without a valid credential"
-        end
-      end
-      return
+    if name
+      body = code[(open + 1)..]
+      return "Protected by in-handler check: refuses an anonymous caller (#{name} == null)" if refuses_null?(body, raw[(open + 1)..], name) || delegated_refusal?(body, name, ctx)
     end
-    body = code[(open + 1)..]
-    unless refuses_null?(body, raw[(open + 1)..], name)
-      return unless delegated_refusal?(body, name, ctx)
-    end
-    "Protected by in-handler check: refuses an anonymous caller (#{name} == null)"
+    refusing_resolver_param(head, ctx)
+  end
+
+  # The handler takes an `@X` parameter (no `false` switch on it) whose
+  # resolver, registered in the handler's module, refuses the caller.
+  private def refusing_resolver_param(head : String, ctx : SourceContext) : String?
+    return unless (pattern = @refusing_param_re) && (found = head.match(pattern))
+    return if found[2]?.try(&.includes?("false"))
+    return unless annotation_file = type_file(found[1], ctx.full_content, ctx.path)
+    module_dir = build_module(ctx.path)
+    return unless @refusing_resolvers.any? { |cls, file, _| file == annotation_file && @resolver_registrations.includes?({module_dir, cls}) }
+    "Protected by argument resolver: @#{found[1]} refuses a caller without a valid credential"
   end
 
   # `body` opens with `if (name == null) return <refusal>` / `throw`.

@@ -661,34 +661,121 @@ describe "SpringAuthTagger refusing argument resolver" do
     run_spring_markers(resolver.call("#{header} if (token == null) { throw new IllegalStateException(); } return lookup(token);", "@NeedLogin", none), routes)["GET /open"].should be_empty
   end
 
-  it "does not guard a resolver that can hand back a caller without the credential" do
+  it "guards the newbee-mall resolver shapes" do
+    admin = <<-JAVA
+      if (parameter.getParameterAnnotation(NeedLogin.class) instanceof NeedLogin) {
+          #{header}
+          if (null != token && !"".equals(token) && token.length() == 32) {
+              AdminToken adminToken = tokenMapper.selectByToken(token);
+              if (adminToken == null) {
+                  Fail.fail("not logged in");
+              } else if (adminToken.getExpireTime().getTime() <= System.currentTimeMillis()) {
+                  Fail.fail("expired");
+              }
+              return adminToken;
+          } else {
+              Fail.fail("not logged in");
+          }
+      }
+      return null;
+      JAVA
+    mall = <<-JAVA
+      if (parameter.getParameterAnnotation(NeedLogin.class) instanceof NeedLogin) {
+          User user = null;
+          #{header}
+          if (null != token && !"".equals(token)) {
+              UserToken userToken = tokenMapper.selectByToken(token);
+              if (userToken == null || userToken.getExpireTime().getTime() <= System.currentTimeMillis()) {
+                  Fail.fail("expired");
+              }
+              user = userMapper.selectByPrimaryKey(userToken.getUserId());
+              if (user == null) {
+                  Fail.fail("no user");
+              }
+              if (user.getLockedFlag().intValue() == 1) {
+                  Fail.fail("locked");
+              }
+              return user;
+          } else {
+              Fail.fail("not logged in");
+          }
+      }
+      return null;
+      JAVA
+    guarded.call(admin, "@NeedLogin", none).should eq(1)
+    guarded.call(mall, "@NeedLogin", none).should eq(1)
+  end
+
+  it "does not guard a resolver outside the recognized shape" do
     [
+      # a way back without the credential
       "#{header} if (token == null) return null; User u = lookup(token); if (u == null) { throw new IllegalStateException(); } return u;",
       "#{header} if (token == null) { return Guest.INSTANCE; } return lookup(token);",
       "#{header} if (token == null) { return Optional.empty(); } return lookup(token);",
       "#{header} try { return jwt.verify(token); } catch (JwtException e) { return null; }",
       "#{header} switch (mode) { case OPTIONAL: return null; default: break; } if (token == null) { throw new IllegalStateException(); } return lookup(token);",
+      "#{header} if (token != null) { User u = userMapper.selectByToken(token); if (u == null) { throw new IllegalStateException(); } return u; } return null;",
+      "#{header} if (token != null) { User u = userMapper.selectByToken(token); if (u != null) { return u; } else { Fail.fail(\"bad\"); } } return null;",
+      "#{header} if (token != null && token.isBlank()) { throw new IllegalArgumentException(); } return token == null ? null : lookup(token);",
+      # the refusal sits under another condition
+      "#{header} if (security.isStrict()) { if (token == null) { throw new IllegalStateException(); } } return token == null ? null : lookup(token);",
+      "#{header} if (parameter.getParameterType() == User.class) { if (token == null) { throw new IllegalStateException(); } } return null;",
+      "#{header} if (debug) { log.info(\"debug\"); } else { if (token == null) { throw new IllegalStateException(); } } return null;",
+      "#{header} if (token == null) { if (strict) throw new IllegalStateException(); } return lookup(token);",
+      "#{header} if (parameter.getParameterType() == Optional.class) { return Optional.ofNullable(token); } if (token == null) { throw new IllegalStateException(); } return lookup(token);",
+      "#{header} if (token == null) { throw new IllegalStateException(); } if (admin) { return lookup(token); } return null;",
+      "#{header} try { if (token == null) { throw new IllegalStateException(); } return lookup(token); } catch (IllegalStateException e) { log.warn(\"anonymous\"); } return null;",
+      "for (String h : headers) { String token = request.getHeader(h); if (token == null) { throw new IllegalStateException(); } } return null;",
+      "#{header} Runnable r = () -> { if (token == null) { throw new IllegalStateException(); } }; return null;",
+      "#{header} new Thread(new Runnable() { public void run() { if (token == null) { throw new IllegalStateException(); } } }); return null;",
+      # the credential is replaced
+      "#{header} if (token == null) { token = GUEST_TOKEN; } User u = lookup(token); if (u == null) { throw new IllegalStateException(); } return u;",
+      "#{header} token = token == null ? GUEST_TOKEN : token; if (token == null) { throw new IllegalStateException(); } return lookup(token);",
+      "String raw = request.getHeader(\"token\"); String token = raw; if (token == null) { throw new IllegalStateException(); } token = token.trim(); return lookup(token);",
+      "#{header} if (token == null) { throw new IllegalStateException(); } token = GUEST_TOKEN; return lookup(token);",
+      # not a credential
+      "String page = request.getParameter(\"page\"); if (page == null) { throw new IllegalArgumentException(); } return Integer.parseInt(page);",
+      "String tenant = request.getHeader(\"X-Tenant-Id\"); if (tenant == null) { throw new BadRequestException(); } return tenantService.find(tenant);",
+      "Map<String, String> vars = (Map<String, String>) request.getAttribute(HandlerMapping.URI_TEMPLATE_VARIABLES_ATTRIBUTE, 0); Project project = repo.findById(vars.get(\"projectId\")); if (project == null) { throw new NotFoundException(); } return project;",
+      "HttpServletRequest req = request.getNativeRequest(HttpServletRequest.class); if (req == null) { throw new IllegalStateException(); } return svc.find(req.getHeader(\"token\"));",
+      "MultipartFile file = ((MultipartRequest) request.getNativeRequest()).getFile(\"file\"); if (file == null) { throw new IllegalArgumentException(); } return read(file);",
+      "String token = request.getAttribute(\"token\", 0); if (token == null) { throw new IllegalStateException(); } return lookup(token);",
     ].each { |body| guarded.call(body, "@NeedLogin", none).should eq(0) }
   end
 
-  it "does not guard a test of something that is not the credential" do
-    guarded.call("HttpServletRequest req = request.getNativeRequest(HttpServletRequest.class); if (req == null) { throw new IllegalStateException(); } return svc.find(req.getHeader(\"token\"));", "@NeedLogin", none).should eq(0)
-    guarded.call("MultipartFile file = ((MultipartRequest) request.getNativeRequest()).getFile(\"file\"); if (file == null) { throw new IllegalArgumentException(); } return read(file);", "@NeedLogin", none).should eq(0)
-  end
-
-  it "does not read a throw on a blank token as a refusal of the absent one" do
-    guarded.call("#{header} if (token != null && token.isBlank()) { throw new IllegalArgumentException(); } return token == null ? null : lookup(token);", "@NeedLogin", none).should eq(0)
-  end
-
   it "does not guard when the annotation or the resolver makes the credential optional" do
-    body = "NeedLogin ann = parameter.getParameterAnnotation(NeedLogin.class); #{header} if (token == null && ann.required()) { throw new IllegalStateException(); } return token == null ? null : lookup(token);"
+    body = "NeedLogin ann = parameter.getParameterAnnotation(NeedLogin.class); #{header} if (token == null && ann.required()) { throw new IllegalStateException(); } return lookup(token);"
     guarded.call(body, "@NeedLogin", none).should eq(0)
-    guarded.call("#{header} if (token == null) { throw new IllegalStateException(); } return lookup(token);", "@NeedLogin(required = false)", none).should eq(0)
+    guarded.call("NeedLogin ann = parameter.getParameterAnnotation(NeedLogin.class); boolean need = ann.value(); #{header} if (token == null) { throw new IllegalStateException(); } return lookup(token);", "@NeedLogin", none).should eq(0)
+    plain = "#{header} if (token == null) { throw new IllegalStateException(); } return lookup(token);"
+    guarded.call(plain, "@NeedLogin(required = false)", none).should eq(0)
+    guarded.call(plain, "@NeedLogin(false)", none).should eq(0)
   end
 
-  it "counts a helper's throw only at its top level" do
-    helper = {"#{MARKER_DIR}TokenUtil.java" => "public class TokenUtil { public static String anonymous() { try { return Keys.generate(); } catch (Exception e) { throw new IllegalStateException(e); } } }\n"}
-    guarded.call("#{header} if (token == null) { token = TokenUtil.anonymous(); } return lookup(token);", "@NeedLogin", helper).should eq(0)
+  it "counts a helper's throw only at its top level, resolved by import" do
+    try_helper = {"#{MARKER_DIR}TokenUtil.java" => "public class TokenUtil { public static void check() { try { Keys.generate(); } catch (Exception e) { throw new IllegalStateException(e); } } }\n"}
+    guarded.call("#{header} if (token == null) { TokenUtil.check(); } return lookup(token);", "@NeedLogin", try_helper).should eq(0)
+    if_helper = {"#{MARKER_DIR}TokenUtil.java" => "public class TokenUtil { public static void check() { if (strict) { throw new IllegalStateException(); } } }\n"}
+    guarded.call("#{header} if (token == null) { TokenUtil.check(); } return lookup(token);", "@NeedLogin", if_helper).should eq(0)
+    # same-package `Errors` throws, the imported one does not
+    files = resolver.call("#{header} if (token == null) { Errors.fail(\"login\"); } return lookup(token);", "@NeedLogin", none).transform_values { |source| "package com.example;\n#{source}" }
+    files["#{MARKER_DIR}Errors.java"] = "package com.example;\npublic class Errors { public static void fail(String m) { throw new RuntimeException(m); } }\n"
+    files["src/main/java/com/other/Errors.java"] = "package com.other;\npublic class Errors { public static void fail(String m) { System.out.println(m); } }\n"
+    packaged = {"GET /me" => "#{MARKER_DIR}C.java:3"}
+    run_spring_markers(files, packaged)["GET /me"].size.should eq(1)
+    files["#{MARKER_DIR}NeedLoginResolver.java"] = files["#{MARKER_DIR}NeedLoginResolver.java"].sub("package com.example;\n", "package com.example;\nimport com.other.Errors;\n")
+    run_spring_markers(files, packaged)["GET /me"].should be_empty
+  end
+
+  it "keeps the in-handler check of a principal the refusing resolver hands back as null" do
+    body = "#{header} if (token == null) { throw new IllegalStateException(); } User u = lookup(token); return null;"
+    check = "{ if (user == null) { throw new IllegalStateException(\"login\"); } return user; }"
+    files = resolver.call(body, "@NeedLogin(required = false)", none)
+    files["#{MARKER_DIR}C.java"] = files["#{MARKER_DIR}C.java"].sub("{ return user; }", check)
+    run_spring_markers(files, routes)["GET /me"].should eq(["Protected by in-handler check: refuses an anonymous caller (user == null)"])
+    files = resolver.call("CurrentUser cu = parameter.getParameterAnnotation(CurrentUser.class); #{body}", "@CurrentUser", {"#{MARKER_DIR}CurrentUser.java" => "public @interface CurrentUser {}\n"})
+    files["#{MARKER_DIR}C.java"] = files["#{MARKER_DIR}C.java"].sub("{ return user; }", check)
+    run_spring_markers(files, routes)["GET /me"].should eq(["Protected by in-handler check: refuses an anonymous caller (user == null)"])
   end
 
   it "judges each resolver of a file on its own" do
@@ -709,10 +796,20 @@ describe "SpringAuthTagger refusing argument resolver" do
     guarded.call("return null;", "@NeedLogin", both).should eq(0)
   end
 
-  it "reads a resolver with thousands of conditions in linear time" do
-    body = "#{header} " + (1..6000).map { |i| "if (flag#{i}) { count++; }" }.join(" ") + " if (token == null) { throw new IllegalStateException(); } return lookup(token);"
-    started = Time.instant
-    guarded.call(body, "@NeedLogin", none)
-    (Time.instant - started).total_seconds.should be < 5
+  it "reads a resolver body in linear time" do
+    tail = " if (token == null) { throw new IllegalStateException(); } return lookup(token);"
+    time = ->(body : String) do
+      started = Time.instant
+      guarded.call(body, "@NeedLogin", none)
+      (Time.instant - started).total_seconds
+    end
+    flat = ->(count : Int32) { "#{header} " + (1..count).map { |i| "if (token.equals(\"v#{i}\")) { x = #{i}; }" }.join(" ") + tail }
+    time.call(flat.call(500)) # warm up
+    small = (0...3).min_of { time.call(flat.call(4000)) }
+    large = (0...3).min_of { time.call(flat.call(16000)) }
+    # 4x the conditions: linear is ~4x, quadratic ~16x
+    (large / small).should be < 10.0
+    nested = "#{header} " + (0...20000).map { |i| "if (token.equals(\"v#{i}\")) { " }.join + "x = 1;" + " }" * 20000 + tail
+    time.call(nested).should be < 5
   end
 end
