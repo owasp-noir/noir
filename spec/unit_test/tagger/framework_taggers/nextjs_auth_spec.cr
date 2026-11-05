@@ -25,6 +25,20 @@ describe "NextjsAuthTagger" do
     tags[0].description.should contain("if (!session?.user)")
   end
 
+  it "follows a helper that refuses when the token check answers an error message" do
+    tags = tag.call("pages/api/token-helper.ts", 4)
+    tags.map(&.name).should eq(["auth"])
+    tags[0].description.should contain("verifyUser")
+  end
+
+  it "does not take a type check of the body for a caller check" do
+    tag.call("pages/api/typeof-input.ts", 4).should be_empty
+  end
+
+  it "does not take a type check that refuses the caller holding a token for a guard" do
+    tag.call("pages/api/typeof-inverse.ts", 5).should be_empty
+  end
+
   it "tags a handler that compares the caller's key with a process.env secret" do
     tag.call("app/api/cron/route.ts", 3).map(&.name).should eq(["auth"])
   end

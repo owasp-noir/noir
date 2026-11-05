@@ -86,10 +86,16 @@ class NextjsAuthTagger < FrameworkTagger
   CARRIER = /\A\s*(?:(?:let|const|var)\s+)?([A-Za-z_$][\w$]*)\s*=(?![=>])/
   # `if (!auth)`: group 1 the value whose absence is refused.
   NEGATED_VALUE = /\bif\s*\(\s*!\s*([A-Za-z_$][\w$]*)(?:\s*\??\.\s*[A-Za-z_$][\w$]*)*\s*\)/
-  # `auth = await checkAuth(request)`, `const session = await getSession()`:
-  # group 1 the value, group 2 the callee. Whether the callee checks the
-  # caller is judged by its definition (`caller_check_callee?`).
-  CALLER_CHECK = /\b([A-Za-z_$][\w$]*)\s*=\s*(?:await\s+)?([\w$.]*(?:[Aa]uth|[Ss]ession)\w*)\s*\(\s*(?:\)|req(?:uest)?\b|headers\(\)|cookies\(\))/
+  # `if (typeof token === "string")`: a check that answers an error message
+  # in place of the token (linkwarden's `verifyToken`), or nothing, is refused
+  # the same way. Matched on raw text: `code_only` blanks the type name, and
+  # `=== "object"` would refuse the caller that has one.
+  TYPEOF_DENIED = /\bif\s*\(\s*typeof\s+([A-Za-z_$][\w$]*)\s*(?:===?\s*['"](?:string|undefined)['"]|!==?\s*['"]object['"])\s*\)/
+  # `auth = await checkAuth(request)`, `const session = await getSession()`,
+  # `const token = await getToken({ req })`: group 1 the value, group 2 the
+  # callee. Whether the callee checks the caller is judged by its
+  # definition (`caller_check_callee?`).
+  CALLER_CHECK = /\b([A-Za-z_$][\w$]*)\s*=\s*(?:await\s+)?([\w$.]*(?:[Aa]uth|[Ss]ession|Token)\w*)\s*\(\s*(?:\{\s*)?(?:\)|req(?:uest)?\b|headers\(\)|cookies\(\))/
   # A read of the submitted body. With a password in it, the helper is a login.
   BODY_READ  = /\.\s*(?:json|formData|text)\s*\(|\breq(?:uest)?\s*\.\s*body\b/
   CREDENTIAL = /password|credential/i
@@ -194,7 +200,9 @@ class NextjsAuthTagger < FrameworkTagger
     return true if text.matches?(SESSION_DENIED) || secret_list_denied?(text, raw[j]? || "")
     return true if text.matches?(/\bif\s*\(/) && (raw[j]? || "").matches?(SECRET_TEMPLATE)
     # `if (!auth)` where `auth` was set, above it, from a check of the request.
-    name = text.match(NEGATED_VALUE).try(&.[1]) || return false
+    # The `typeof` test is read off the raw line only when the code line holds one (not a comment).
+    typeof_hit = text.includes?("typeof") ? (raw[j]? || "").match(TYPEOF_DENIED) : nil
+    name = (text.match(NEGATED_VALUE) || typeof_hit).try(&.[1]) || return false
     (at = callers[name]?) ? at < j : false
   end
 
