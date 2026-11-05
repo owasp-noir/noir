@@ -32,5 +32,8 @@ describe "Laravel bare controller names", tags: "functional" do
     reports = find.call("/reports")
     reports.handler.should be_nil
     guards.call(reports).should be_empty
+    # The same name also exists outside `app/` (a psr-4 root wired by the
+    # route group's namespace), so the app's `auth` constructor is not borrowed.
+    guards.call(find.call("/export")).should be_empty
   end
 end
