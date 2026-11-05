@@ -100,9 +100,13 @@ describe "Apache httpd Analyzer" do
       RewriteRule ^(?:build|tests)/.* - [R=404,L]
       RewriteRule ^(.*css_[a-zA-Z0-9-_]+)\\.css$ $1\\.css\\.br [QSA]
       RewriteRule ^remote/(.*) remote.php [L]
+      RewriteRule (.*) public/$1 [L]
+      RewriteRule ^(.*)$ /app/$1 [L]
+      RewriteRule ^(.*)$ $1.br [L]
+      RewriteRule ^(.*)$ /index.php/$1 [L]
       CONF
 
-    endpoints.map(&.url).should eq ["remote/(.*)"]
+    endpoints.map(&.url).should eq ["remote/(.*)", "(.*)"]
   end
 
   it "supports multiple ServerAlias hosts" do

@@ -229,7 +229,18 @@ module Analyzer::Specification
     private def skip_rewrite?(pattern : String, target : String) : Bool
       return true if target == "-"
       return true if static_asset_rewrite?(pattern, target)
-      false
+      root_remap?(pattern, target)
+    end
+
+    # `RewriteRule (.*) public/$1` moves the document root and `^(.*)$ $1.br`
+    # picks a pre-compressed copy: both match every URL and hand the same
+    # path on (the target is the capture plus a literal prefix or suffix, not
+    # a script), so they route nothing. A catch-all into `index.php` does.
+    CAPTURE_ONLY_TARGET_RE = /\A[^$]*\$1[^$]*\z/
+
+    private def root_remap?(pattern : String, target : String) : Bool
+      return false if target.downcase.includes?(".php") || !target.matches?(CAPTURE_ONLY_TARGET_RE)
+      Noir::URLPath.strip_regex_anchors(pattern).lstrip('/').in?({"(.*)", ".*", "(.+)", ".+"})
     end
 
     private def static_asset_rewrite?(pattern : String, target : String) : Bool
