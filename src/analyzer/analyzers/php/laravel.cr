@@ -1143,6 +1143,12 @@ module Analyzer::Php
       # applied at runtime) is looked up in `app/Http/Controllers` below.
       root = laravel_project_root(routes_file_path)
       return unless root
+      # The runtime namespace may be a subnamespace (`Admin`): a bare name
+      # that more than one controller of the app answers to is not decided.
+      if segments.size == 1
+        app_dir = File.join(root, "app") + "/"
+        return if get_files_by_basename("#{segments[0]}.php").count(&.starts_with?(app_dir)) > 1
+      end
 
       candidates = [] of String
       candidates << File.join(root, "app", "#{segments[1..].join("/")}.php") if segments.size >= 2

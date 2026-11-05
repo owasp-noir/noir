@@ -27,5 +27,10 @@ describe "Laravel bare controller names", tags: "functional" do
     users.handler.not_nil!.name.should eq("UsersController@index")
     guards.call(users).should_not be_empty
     guards.call(find.call("/pages")).should be_empty
+    # Two controllers answer to `ReportsController`: the route's runtime
+    # namespace is unknown, so neither one's middleware is attached.
+    reports = find.call("/reports")
+    reports.handler.should be_nil
+    guards.call(reports).should be_empty
   end
 end
