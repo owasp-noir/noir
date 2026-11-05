@@ -1139,8 +1139,8 @@ module Analyzer::Php
       if !class_ref.starts_with?('\\') && (mapped = imports[segments[0]]?)
         segments = mapped.lstrip('\\').split('\\').reject(&.empty?) + segments[1..]
       end
-      return unless segments.size >= 2
-
+      # A bare `UsersController` (RouteServiceProvider's `$namespace` is
+      # applied at runtime) is looked up in `app/Http/Controllers` below.
       root = laravel_project_root(routes_file_path)
       return unless root
 
