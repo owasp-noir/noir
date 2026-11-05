@@ -237,9 +237,12 @@ module Analyzer::Specification
     # path on (the target is the capture plus a literal prefix or suffix, not
     # a script), so they route nothing. A catch-all into `index.php` does.
     CAPTURE_ONLY_TARGET_RE = /\A[^$]*\$1[^$]*\z/
+    # A server-side script in the target (`index.php/$1`, `app.cgi/$1`,
+    # `dispatch.fcgi/$1`, `app.aspx/$1`) is a front controller, not a remap.
+    SCRIPT_TARGET_RE = /\.(?:php\d?|phtml|cgi|fcgi|pl|py|rb|lua|asp|aspx|jsp|do|action)(?![A-Za-z0-9])/i
 
     private def root_remap?(pattern : String, target : String) : Bool
-      return false if target.downcase.includes?(".php") || !target.matches?(CAPTURE_ONLY_TARGET_RE)
+      return false if target.matches?(SCRIPT_TARGET_RE) || !target.matches?(CAPTURE_ONLY_TARGET_RE)
       Noir::URLPath.strip_regex_anchors(pattern).lstrip('/').in?({"(.*)", ".*", "(.+)", ".+"})
     end
 

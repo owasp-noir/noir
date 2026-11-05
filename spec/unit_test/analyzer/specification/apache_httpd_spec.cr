@@ -104,9 +104,15 @@ describe "Apache httpd Analyzer" do
       RewriteRule ^(.*)$ /app/$1 [L]
       RewriteRule ^(.*)$ $1.br [L]
       RewriteRule ^(.*)$ /index.php/$1 [L]
+      RewriteRule ^(.*)$ /cgi-bin/app.cgi/$1 [L]
+      RewriteRule ^(.*)$ /dispatch.fcgi/$1 [L]
+      RewriteRule ^(.*)$ /index.pl/$1 [L]
+      RewriteRule ^(.*)$ app.py/$1 [L]
+      RewriteRule ^(.*)$ default.aspx/$1 [L]
+      RewriteRule ^(.*)$ /app.jsp/$1 [L]
       CONF
 
-    endpoints.map(&.url).should eq ["remote/(.*)", "(.*)"]
+    endpoints.map(&.url).should eq ["remote/(.*)"] + ["(.*)"] * 7
   end
 
   it "supports multiple ServerAlias hosts" do
