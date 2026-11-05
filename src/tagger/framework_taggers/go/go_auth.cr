@@ -423,13 +423,27 @@ class GoAuthTagger < FrameworkTagger
   # `secure(a); pub(p)` does not. A caller's own group carries its prefix
   # (`g := e.Group("/admin")`), so routes a shared helper registers for
   # another caller's group are not claimed.
-  private def register_parameter_scope(file : String, lines : Array(String), index : Int32, receiver : String, tag : Tag, depth : Int32 = 0)
+  #
+  # A group built off such a parameter (`r := v1.Group("/config").Use(auth)`
+  # in `func registerConfig(v1 *gin.RouterGroup)`) has a prefix relative to
+  # whatever the caller hands in (`/api/v1`), so it is recorded by lineage
+  # too: the routes registered on `r` until `r` is reassigned.
+  private def register_parameter_scope(file : String, lines : Array(String), index : Int32, receiver : String, tag : Tag,
+                                       depth : Int32 = 0, parents : Hash(String, Array({String, Int32}))? = nil)
     head = function_start(lines, index)
     return if head < 0
     params = lines[head].match(FUNC_PARAMETERS).try(&.[1]) || return
     names = params.split(',').map { |param| param.strip.split(/\s+/).first? || "" }
-    slot = names.index(receiver) || return
     last = enclosing_block_end(lines, head + 2)
+    unless slot = names.index(receiver)
+      if parents && names.includes?(group_root(receiver, parents, index))
+        reassigned = /\A\s*#{Regex.escape(receiver)}\s*:?=(?!=)/
+        until_row = ((index + 1)..last).find { |row| lines[row - 1]?.try(&.matches?(reassigned)) }
+        rows = index..(until_row ? until_row - 1 : last)
+        @parameter_scopes << {owner: {file: file, receiver: receiver, rows: rows, parents: {} of String => Array({String, Int32})}, tag: tag, prefix: nil}
+      end
+      return
+    end
     @parameter_scopes << {owner: {file: file, receiver: receiver, rows: index..last, parents: {} of String => Array({String, Int32})}, tag: tag, prefix: nil}
     return if depth >= 3
     fn = lines[head].match(FUNC_NAME).try(&.[1]) || return
@@ -455,6 +469,17 @@ class GoAuthTagger < FrameworkTagger
         end
       end
     end
+  end
+
+  # The variable the group `name` (as of row `row`) is derived from, hop by
+  # hop through `parents`: `v1` for `r := v1.Group("/x")`.
+  private def group_root(name : String, parents : Hash(String, Array({String, Int32})), row : Int32) : String
+    16.times do
+      found = parents[name]?.try &.select { |(_, at)| at <= row }.max_by?(&.[1])
+      break unless found
+      name, row = found
+    end
+    name
   end
 
   # The URL prefix of a group the caller builds from its engine
@@ -598,6 +623,8 @@ class GoAuthTagger < FrameworkTagger
   end
 
   private def register_auth_scopes(stripped : String, scopes : GoRouteGroupScope::Scopes, file : String, lines : Array(String), index : Int32)
+    continued = continued_chain(lines, index)
+    stripped = continued if continued
     scope = resolve_use_scope(stripped, scopes) || resolve_group_middleware_scope(stripped, scopes)
     return if scope.nil?
     # The middleware guards a route group whose URL prefix we could not read
@@ -632,7 +659,7 @@ class GoAuthTagger < FrameworkTagger
     # The whole statement, so a config literal spread over the lines below
     # (`KeyAuthWithConfig(middleware.KeyAuthConfig{` / `Skipper: ...`) is
     # read with its fields.
-    statement = statement_text(lines, index)
+    statement = continued || statement_text(lines, index)
     args = middleware_args(statement)
 
     # Check for JWT library middleware
@@ -642,7 +669,7 @@ class GoAuthTagger < FrameworkTagger
         jwt_name = jwt_match ? jwt_match[0] : "JWT"
         jwt_tag = Tag.new("auth", "Protected by Go JWT middleware (#{jwt_name})", "go_auth")
         add_middleware_scope(scope, file, jwt_tag)
-        register_parameter_scope(file, lines, index, receiver, jwt_tag) if receiver
+        register_parameter_scope(file, lines, index, receiver, jwt_tag, parents: scopes.parents) if receiver
       end
     end
     return unless before == @middleware_scopes.size
@@ -653,8 +680,25 @@ class GoAuthTagger < FrameworkTagger
       tag = guard_by_definition(arg, file, authish_name: true)
       next unless tag
       add_middleware_scope(scope, file, tag)
-      register_parameter_scope(file, lines, index, receiver, tag) if receiver
+      register_parameter_scope(file, lines, index, receiver, tag, parents: scopes.parents) if receiver
     end
+  end
+
+  # A method chain continued over the lines below line `index` (1-based),
+  # comments dropped and joined on one line: `r := v1.Group("/x").` then
+  # `Use(auth).` then `Use(role)`. Nil for a line that does not continue.
+  private def continued_chain(lines : Array(String), index : Int32) : String?
+    row = index
+    first = lines[row - 1]
+    return unless first.rstrip.ends_with?('.') || first.includes?('/') || lines[row]?.try(&.lstrip.starts_with?('.'))
+    text = Noir::CComments.strip(first, quotes: %("'`)).strip
+    parts = [text]
+    while row < lines.size && parts.size < 10 && (text.ends_with?('.') || lines[row].lstrip.starts_with?('.'))
+      text = Noir::CComments.strip(lines[row], quotes: %("'`)).strip
+      parts << text
+      row += 1
+    end
+    parts.size > 1 ? parts.join(" ") : nil
   end
 
   # The head variable of a statement that builds a group, adds middleware

@@ -952,3 +952,52 @@ describe "GoAuthTagger (method value off a constructor)" do
     run_go_auth(source, "/heartbeats", "POST", 26).tags.any? { |t| t.name == "auth" }.should be_true
   end
 end
+
+# A group built off a router the function is handed (go-admin's
+# `r := v1.Group("/config").Use(auth)` in `func registerConfig(v1
+# *gin.RouterGroup, ...)`) reads as `/config`, while its routes are served
+# under the caller's prefix (`/api/v1/config`): its middleware reaches the
+# routes registered on it, whatever their URL.
+describe "GoAuthTagger (group off a router parameter)" do
+  handed = [
+    "package main",                                                                     # 1
+    "func registerConfig(v1 *gin.RouterGroup, authMiddleware *jwt.GinJWTMiddleware) {", # 2
+    "  r := v1.Group(\"/config\").Use(authMiddleware.MiddlewareFunc())",                # 3
+    "  {",                                                                              # 4
+    "    r.GET(\"\", h1)",                                                              # 5
+    "    r.GET(\"/:id\", h2)",                                                          # 6
+    "    r.POST(\"\", h3)",                                                             # 7
+    "    r.PUT(\"/:id\", h4)",                                                          # 8
+    "    r.DELETE(\"\", h5)",                                                           # 9
+    "  }",                                                                              # 10
+    "  open := v1.Group(\"/app-config\")",                                              # 11
+    "  {",                                                                              # 12
+    "    open.GET(\"\", h6)",                                                           # 13
+    "  }",                                                                              # 14
+    "  d := v1.Group(\"/demo\").",                                                      # 15
+    "    Use(authMiddleware.MiddlewareFunc()). // JWT",                                 # 16
+    "    Use(role)",                                                                    # 17
+    "  {",                                                                              # 18
+    "    d.GET(\"\", h7)",                                                              # 19
+    "  }",                                                                              # 20
+    "  r = v1.Group(\"/later\")",                                                       # 21
+    "  r.GET(\"\", h8)",                                                                # 22
+    "}",                                                                                # 23
+  ]
+
+  it "tags every route on the group under the caller's prefix" do
+    run_go_auth(handed, "/api/v1/config", "DELETE", 9).tags.any? { |t| t.name == "auth" }.should be_true
+  end
+
+  it "reads a middleware chain continued over the next lines" do
+    run_go_auth(handed, "/api/v1/demo", "GET", 19).tags.any? { |t| t.name == "auth" }.should be_true
+  end
+
+  it "does not tag a sibling group without middleware" do
+    run_go_auth(handed, "/api/v1/app-config", "GET", 13).tags.any? { |t| t.name == "auth" }.should be_false
+  end
+
+  it "does not tag routes on the variable once it is reassigned" do
+    run_go_auth(handed, "/api/v1/later", "GET", 22).tags.any? { |t| t.name == "auth" }.should be_false
+  end
+end
