@@ -626,6 +626,360 @@ describe "DjangoAuthTagger" do
     end
   end
 
+  # wger's `WgerPermission` opens every view but those setting `is_private`,
+  # `CanCreateExercises` refuses anonymous only on POST before handing on to
+  # `super()`, and pretix's `EventPermission` refuses anonymous first,
+  # whatever SAFE_METHODS test follows.
+  it "reads has_permission statement by statement, with the view's attributes" do
+    CodeLocator.instance.clear_all
+    tmpdir = File.tempname("django_drf_branches")
+    Dir.mkdir_p(tmpdir)
+    perms = File.join(tmpdir, "permissions.py")
+    views = File.join(tmpdir, "views.py")
+    File.write(perms, <<-PY)
+      from rest_framework import permissions
+      from rest_framework.permissions import SAFE_METHODS, BasePermission
+
+      class PrivateViews(permissions.BasePermission):
+          def has_permission(self, request, view):
+              """Public views are open; private ones need a login."""
+              if hasattr(view, 'is_private') and view.is_private:
+                  return request.user and request.user.is_authenticated
+              return True
+
+      class Contribute(BasePermission):
+          ADD_METHODS = ['POST']
+
+          def has_permission(self, request, view):
+              if request.method in SAFE_METHODS:
+                  return True
+              if not request.user.is_authenticated:
+                  return False
+              if request.method in self.ADD_METHODS:
+                  return request.user.has_perm("x.add")
+              return False
+
+      class CreateOnly(Contribute):
+          def has_permission(self, request, view):
+              if request.method == 'POST':
+                  return request.user.is_authenticated and request.user.has_perm("x.add")
+              return super().has_permission(request, view)
+
+      class TokenOrSession(BasePermission):
+          def has_permission(self, request, view):
+              if not request.user.is_authenticated and not isinstance(request.auth, (Device, Token)):
+                  return False
+              required = getattr(view, 'permission', None)
+              if request.method not in SAFE_METHODS and hasattr(view, 'write_permission'):
+                  required = view.write_permission
+              return True
+      PY
+    File.write(views, <<-PY)
+      from rest_framework import viewsets
+      from base import OwnedViewSet
+
+      class LicenseViewSet(viewsets.ReadOnlyModelViewSet):
+          permission_classes = (PrivateViews,)
+          def list(self, request):
+              pass
+
+      class WeightViewSet(viewsets.ModelViewSet):
+          permission_classes = (PrivateViews,)
+          is_private = True
+          def list(self, request):
+              pass
+
+      class SessionViewSet(OwnedViewSet):
+          permission_classes = (PrivateViews,)
+          def list(self, request):
+              pass
+
+      class ExerciseViewSet(viewsets.ModelViewSet):
+          permission_classes = (CreateOnly,)
+          def list(self, request):
+              pass
+          def create(self, request):
+              pass
+
+      class OrderViewSet(viewsets.ModelViewSet):
+          permission_classes = (TokenOrSession,)
+          def list(self, request):
+              pass
+      PY
+    [perms, views].each { |file| CodeLocator.instance.register_path(file) }
+
+    begin
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(tmpdir)
+      at = ->(method : String, line : Int32) { Endpoint.new("/#{line}", method, [] of Param, Details.new(PathInfo.new(views, line))) }
+      license, weight, session = at.call("GET", 6), at.call("GET", 12), at.call("GET", 17)
+      exercises, exercise_create, orders = at.call("GET", 22), at.call("POST", 24), at.call("GET", 29)
+
+      DjangoAuthTagger.new(noir_options).perform([license, weight, session, exercises, exercise_create, orders])
+
+      license.tags.should be_empty
+      weight.tags.map(&.description).should eq(["Protected by DRF permission_classes"])
+      # `is_private` may be set on the unread base: kept guarded.
+      session.tags.map(&.description).should eq(["Protected by DRF permission_classes"])
+      exercises.tags.should be_empty
+      exercise_create.tags.map(&.description).should eq(["Protected by DRF permission_classes"])
+      orders.tags.map(&.description).should eq(["Protected by DRF permission_classes"])
+    ensure
+      FileUtils.rm_rf(tmpdir)
+      CodeLocator.instance.clear_all
+    end
+  end
+
+  # A view attribute set by a method, in `initial()`, or defined by DRF
+  # itself is never read as absent; a verb test reads its polarity.
+  it "keeps view attributes it cannot see, and reads an if-return chain's polarity" do
+    CodeLocator.instance.clear_all
+    tmpdir = File.tempname("django_drf_branch_attacks")
+    Dir.mkdir_p(tmpdir)
+    perms = File.join(tmpdir, "permissions.py")
+    views = File.join(tmpdir, "views.py")
+    File.write(perms, <<-PY)
+      from rest_framework.permissions import SAFE_METHODS, BasePermission
+
+      class PrivateViews(BasePermission):
+          def has_permission(self, request, view):
+              if hasattr(view, 'is_private') and view.is_private:
+                  return request.user.is_authenticated
+              return True
+
+      class ModelViews(BasePermission):
+          def has_permission(self, request, view):
+              if hasattr(view, 'queryset'):
+                  return request.user.is_authenticated
+              return True
+
+      class ReadOrSignedIn(BasePermission):
+          def has_permission(self, request, view):
+              if request.user.is_authenticated:
+                  return True
+              if request.method in SAFE_METHODS:
+                  return True
+              return False
+
+      class Looped(BasePermission):
+          def has_permission(self, request, view):
+              if request.method in SAFE_METHODS:
+                  return True
+              for scope in view.scopes:
+                  if not request.user.is_authenticated:
+                      return False
+              return True
+      PY
+    File.write(views, <<-PY)
+      from rest_framework import viewsets
+
+      class PropertyViewSet(viewsets.ModelViewSet):
+          permission_classes = (PrivateViews,)
+          @property
+          def is_private(self):
+              return True
+
+      class InitialViewSet(viewsets.ModelViewSet):
+          permission_classes = (PrivateViews,)
+          def initial(self, request, *args, **kwargs):
+              self.is_private = True
+
+      class ModelViewSet2(viewsets.ModelViewSet):
+          permission_classes = (ModelViews,)
+
+      class ReadViewSet(viewsets.ModelViewSet):
+          permission_classes = (ReadOrSignedIn,)
+
+      class LoopViewSet(viewsets.ModelViewSet):
+          permission_classes = (Looped,)
+      PY
+    [perms, views].each { |file| CodeLocator.instance.register_path(file) }
+
+    begin
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(tmpdir)
+      at = ->(method : String, line : Int32) { Endpoint.new("/#{line}", method, [] of Param, Details.new(PathInfo.new(views, line))) }
+      property, initial, model = at.call("GET", 3), at.call("GET", 9), at.call("GET", 14)
+      read, write, loop_read, loop_write = at.call("GET", 17), at.call("POST", 17), at.call("GET", 20), at.call("POST", 20)
+
+      DjangoAuthTagger.new(noir_options).perform([property, initial, model, read, write, loop_read, loop_write])
+
+      guarded = ["Protected by DRF permission_classes"]
+      property.tags.map(&.description).should eq(guarded)
+      initial.tags.map(&.description).should eq(guarded)
+      model.tags.map(&.description).should eq(guarded)
+      read.tags.should be_empty
+      write.tags.map(&.description).should eq(guarded)
+      loop_read.tags.should be_empty
+      loop_write.tags.map(&.description).should eq(guarded)
+    ensure
+      FileUtils.rm_rf(tmpdir)
+      CodeLocator.instance.clear_all
+    end
+  end
+
+  # A statement that may refuse on its own (a raising call, an `assert`,
+  # `view.permission_denied(...)`) leaves the chain to the old readers; a
+  # getattr default, an attribute set under a class-level `if`, by a class
+  # decorator or by `Cls.attr = ...` are read as such.
+  it "stops reading has_permission at a statement that may refuse, and reads every way a view attribute is set" do
+    CodeLocator.instance.clear_all
+    tmpdir = File.tempname("django_drf_branch_statements")
+    Dir.mkdir_p(tmpdir)
+    perms = File.join(tmpdir, "permissions.py")
+    views = File.join(tmpdir, "views.py")
+    File.write(perms, <<-PY)
+      from rest_framework.permissions import BasePermission
+
+      def ensure(ok):
+          if not ok:
+              raise NotAuthenticated()
+
+      class EnsureCall(BasePermission):
+          def has_permission(self, request, view):
+              if request.method == "OPTIONS":
+                  return True
+              ensure(request.user.is_authenticated)
+              return True
+
+      class AssertAuth(BasePermission):
+          def has_permission(self, request, view):
+              if request.method == "OPTIONS":
+                  return True
+              assert request.user.is_authenticated, "login required"
+              return True
+
+      class DeniedCall(BasePermission):
+          def has_permission(self, request, view):
+              if request.method == "OPTIONS":
+                  return True
+              if not request.user.is_authenticated:
+                  view.permission_denied(request, message="login first")
+              return True
+
+      CHECKS = {}
+
+      class SubscriptCall(BasePermission):
+          def has_permission(self, request, view):
+              if request.method == "OPTIONS":
+                  return True
+              ok = CHECKS["login"](request.user.is_authenticated)
+              return True
+
+      class NoDefault(BasePermission):
+          def has_permission(self, request, view):
+              if getattr(view, "is_private"):
+                  return request.user.is_authenticated
+              return True
+
+      class PrivateViews(BasePermission):
+          def has_permission(self, request, view):
+              if hasattr(view, "is_private") and view.is_private:
+                  return request.user.is_authenticated
+              return True
+
+      class PrivateDefault(BasePermission):
+          def has_permission(self, request, view):
+              if getattr(view, "is_private", True):
+                  return request.user.is_authenticated
+              return True
+
+      class PublicFlag(BasePermission):
+          def has_permission(self, request, view):
+              if getattr(view, "public", False):
+                  return True
+              return request.user.is_authenticated
+      PY
+    File.write(views, <<-PY)
+      from rest_framework import viewsets
+
+      def make_private(cls):
+          cls.is_private = True
+          return cls
+
+      class EnsureViewSet(viewsets.ModelViewSet):
+          permission_classes = (EnsureCall,)
+
+      class AssertViewSet(viewsets.ModelViewSet):
+          permission_classes = (AssertAuth,)
+
+      class DeniedViewSet(viewsets.ModelViewSet):
+          permission_classes = (DeniedCall,)
+
+      class ConditionalViewSet(viewsets.ModelViewSet):
+          permission_classes = (PrivateViews,)
+          if True:
+              is_private = True
+
+      class DefaultPrivateViewSet(viewsets.ModelViewSet):
+          permission_classes = (PrivateDefault,)
+
+      class FlagFalseViewSet(viewsets.ModelViewSet):
+          permission_classes = (PrivateDefault,)
+          is_private = False
+
+      @make_private
+      class DecoratedViewSet(viewsets.ModelViewSet):
+          permission_classes = (PrivateViews,)
+
+      class LaterViewSet(viewsets.ModelViewSet):
+          permission_classes = (PrivateViews,)
+
+      LaterViewSet.is_private = True
+
+      class FlagViewSet(viewsets.ModelViewSet):
+          permission_classes = (PublicFlag,)
+
+      class SubscriptViewSet(viewsets.ModelViewSet):
+          permission_classes = (SubscriptCall,)
+
+      class NoDefaultViewSet(viewsets.ModelViewSet):
+          permission_classes = (NoDefault,)
+
+      class SetattrViewSet(viewsets.ModelViewSet):
+          permission_classes = (PrivateViews,)
+
+      setattr(SetattrViewSet, "is_private", True)
+      PY
+    [perms, views].each { |file| CodeLocator.instance.register_path(file) }
+
+    begin
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(tmpdir)
+      source = File.read(views)
+      at = ->(name : String) do
+        line = source.lines.index!(&.starts_with?("class #{name}(")) + 1
+        Endpoint.new("/#{name}", "GET", [] of Param, Details.new(PathInfo.new(views, line)))
+      end
+      names = %w[EnsureViewSet AssertViewSet DeniedViewSet ConditionalViewSet DefaultPrivateViewSet
+        FlagFalseViewSet DecoratedViewSet LaterViewSet FlagViewSet SubscriptViewSet NoDefaultViewSet SetattrViewSet]
+      endpoints = names.map { |name| at.call(name) }
+
+      DjangoAuthTagger.new(noir_options).perform(endpoints)
+
+      guarded = ["Protected by DRF permission_classes"]
+      endpoints.to_h { |endpoint| {endpoint.url.lchop('/'), endpoint.tags.map(&.description)} }.should eq({
+        "EnsureViewSet"         => guarded,
+        "AssertViewSet"         => guarded,
+        "DeniedViewSet"         => guarded,
+        "ConditionalViewSet"    => guarded,
+        "DefaultPrivateViewSet" => guarded,
+        "FlagFalseViewSet"      => [] of String,
+        # Set from outside the class: not read as absent, so the old
+        # reader's verdict stands.
+        "DecoratedViewSet" => guarded,
+        "LaterViewSet"     => guarded,
+        "FlagViewSet"      => guarded,
+        "SubscriptViewSet" => guarded,
+        "NoDefaultViewSet" => guarded,
+        "SetattrViewSet"   => guarded,
+      })
+    ensure
+      FileUtils.rm_rf(tmpdir)
+      CodeLocator.instance.clear_all
+    end
+  end
+
   it "judges project decorators, view-body checks and dispatchers by definition" do
     CodeLocator.instance.clear_all
     tmpdir = File.tempname("django_function_view_guards")
@@ -1488,7 +1842,11 @@ describe "DjangoAuthTagger" do
       recipe_read = at.call("GET", 10)
       recipe_write = at.call("PUT", 10)
       DjangoAuthTagger.new(noir_options).perform(endpoints + [recipe_read, recipe_write])
-      endpoints.each(&.tags.should(be_empty))
+      group_or_list, group_on_post, gate = endpoints
+      group_or_list.tags.should be_empty
+      # Under its verb branch the helper is the whole verdict for POST.
+      group_on_post.tags.map(&.description).should eq(["Protected by DRF permission_classes"])
+      gate.tags.should be_empty
       recipe_read.tags.should be_empty
       recipe_write.tags.map(&.description).should eq(["Protected by DRF permission_classes"])
     ensure
