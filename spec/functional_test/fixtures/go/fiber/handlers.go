@@ -48,3 +48,14 @@ func setupAdditionalRoutes(app *fiber.App) {
 		return c.SendString("uploaded")
 	})
 }
+
+// One handler behind a route with the `:word` slot and one without it.
+func registerShort(app *fiber.App) {
+	app.Get("/short", resolveShort)
+	app.Get("/short/:word", resolveShort)
+}
+
+func resolveShort(c *fiber.Ctx) error {
+	word := c.Params("word")
+	return c.Redirect(word)
+}

@@ -852,6 +852,49 @@ module Analyzer::Go
       end
     end
 
+    # A handler shared by `/short` and `/short/:word` reads `word` on both,
+    # so both get the path parameter; the route without the slot has none.
+    # Only that shape is dropped: a sibling route of the same handler that
+    # is this URL plus the slot's segment. A route whose prefix noir could
+    # not resolve (`Group(s.base)`) has no such sibling and keeps its params.
+    def self.drop_unslotted_path_params(endpoints : Array(Endpoint)) : Array(Endpoint)
+      by_handler = Hash({String, Int32}, Array(Int32)).new
+      endpoints.each_with_index do |endpoint, idx|
+        handler = endpoint.handler || next
+        path = handler.path || next
+        line = handler.line || next
+        (by_handler[{path, line}] ||= [] of Int32) << idx
+      end
+      by_handler.each_value do |indexes|
+        next if indexes.size < 2
+        indexes.each do |idx|
+          endpoint = endpoints[idx]
+          url = endpoint.url.rchop('/')
+          kept = endpoint.params.reject do |param|
+            param.param_type == "path" && !path_slot?(endpoint.url, param.name) &&
+              indexes.any? do |other|
+                sibling = endpoints[other].url
+                other != idx && path_slot?(sibling, param.name) &&
+                  sibling.split('/').reject { |segment| path_slot?(segment, param.name) }.join('/').rchop('/') == url
+              end
+          end
+          next if kept.size == endpoint.params.size
+          endpoint.params = kept
+          endpoints[idx] = endpoint
+        end
+      end
+      endpoints
+    end
+
+    # Whether `url` has a slot the path parameter `name` reads: `:name`,
+    # `{name}` / `{name:re}`, `*name`, `<name>`, or a wildcard read by
+    # position (`c.Params("*")`, `"*1"`, `"+"`) or by Beego's names for it.
+    def self.path_slot?(url : String, name : String) : Bool
+      return true if url.includes?(":#{name}") || url.includes?("{#{name}") || url.includes?("*#{name}") || url.includes?("<#{name}")
+      return false unless url.includes?('*') || url.includes?('+')
+      name.matches?(/\A[*+]\d*\z/) || {"splat", "path", "ext"}.includes?(name)
+    end
+
     def static_dir_entry(source_path : String, static_path : String, file_path : String) : Hash(String, String)
       {
         "static_path" => static_path,

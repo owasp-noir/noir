@@ -123,3 +123,36 @@ describe Analyzer::Go::GoEngine do
     end
   end
 end
+
+describe "Analyzer::Go::GoEngine.drop_unslotted_path_params" do
+  routed = ->(url : String, names : Array(String), line : Int32) do
+    endpoint = Endpoint.new(url, "GET", names.map { |name| Param.new(name, "", "path") })
+    endpoint.handler = Handler.new("h", "/app/h.go", line)
+    endpoint
+  end
+  path_names = ->(endpoint : Endpoint) { endpoint.params.select(&.param_type.==("path")).map(&.name) }
+
+  it "drops a slot the route lacks when the handler's sibling route adds it" do
+    endpoints = Analyzer::Go::GoEngine.drop_unslotted_path_params([
+      routed.call("/short", ["word"], 1),
+      routed.call("/short/:word", ["word"], 1),
+      routed.call("/v1/users/{user}/stats", ["user", "range"], 2),
+      routed.call("/v1/users/{user}/stats/{range}", ["user", "range"], 2),
+    ])
+    endpoints.map { |endpoint| path_names.call(endpoint) }.should eq([[] of String, ["word"], ["user"], ["user", "range"]])
+  end
+
+  it "keeps a param whose slot may sit in a prefix noir could not resolve" do
+    endpoints = Analyzer::Go::GoEngine.drop_unslotted_path_params([
+      # `Group(fmt.Sprintf("/teams/:%s", "team"))`, `Group(s.base)`: one route each
+      routed.call("/list", ["team"], 3),
+      routed.call("/k", ["tenant"], 4),
+      # the same handler on a resolved and an unresolved prefix
+      routed.call("/p/:pid/info", ["pid"], 5),
+      routed.call("/info", ["pid"], 5),
+      # no handler location: nothing to compare
+      Endpoint.new("/detail", "GET", [Param.new("project", "", "path")]),
+    ])
+    endpoints.map { |endpoint| path_names.call(endpoint) }.should eq([["team"], ["tenant"], ["pid"], ["pid"], ["project"]])
+  end
+end

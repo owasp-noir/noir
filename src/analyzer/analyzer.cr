@@ -181,6 +181,7 @@ def analysis_endpoints(options : Hash(String, YAML::Any), techs, logger : NoirLo
         wg.spawn do
           logger.debug "Analyzer[#{tech}] start"
           endpoints = analyzer[tech].call(phase_options)
+          endpoints = Analyzer::Go::GoEngine.drop_unslotted_path_params(endpoints) if tech.starts_with?("go_")
           # Set technology on each endpoint using map to handle struct copy
           endpoints_with_tech = endpoints.map do |ep|
             details = ep.details
