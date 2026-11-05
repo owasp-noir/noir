@@ -408,20 +408,32 @@ class AspnetAuthTagger < FrameworkTagger
     type
   end
 
-  # The other parts of the `partial` class `type` (declared in `path`): the
-  # same name in the same namespace, containing type and project.
-  private def partial_parts(type : Noir::CSharpDecl::TypeDecl, path : String) : Array(ClassDecl)
-    root = nearest_project_root(path, CSPROJ)
-    parts = [] of ClassDecl
-    (class_files[type.name]? || [] of String).each do |other|
-      next unless nearest_project_root(other, CSPROJ) == root
-      declarations(type.name, [other]).each do |decl, part|
-        next if other == path && part.start_line == type.start_line
-        next unless part.partial? && part.namespace == type.namespace && part.type_params == type.type_params && outer_names(part) == outer_names(type)
-        parts << decl
+  alias PartialKey = Tuple(String?, String, String?, Array(String))
+  @partial_groups = Hash(String, Hash(PartialKey, ClassDecl)).new
+
+  # The `partial` class `type` (declared in `path`) as one declaration: the
+  # attributes of every part with its name in the same project, namespace,
+  # containing type and type parameters, and the first base any part names.
+  # Grouped once per class name, so a controller split over many files
+  # stays linear.
+  private def merged_partial(type : Noir::CSharpDecl::TypeDecl, path : String) : ClassDecl?
+    groups = @partial_groups[type.name] ||= begin
+      parts = Hash(PartialKey, Array(ClassDecl)).new
+      (class_files[type.name]? || [] of String).each do |file|
+        root = nearest_project_root(file, CSPROJ)
+        declarations(type.name, [file]).each do |decl, part|
+          (parts[partial_key(part, root)] ||= [] of ClassDecl) << decl if part.partial?
+        end
+      end
+      parts.transform_values do |decls|
+        ClassDecl.new(type.name, decls.flat_map(&.attributes), decls.compact_map(&.base).first?, decls.first.path)
       end
     end
-    parts
+    groups[partial_key(type, nearest_project_root(path, CSPROJ))]?
+  end
+
+  private def partial_key(type : Noir::CSharpDecl::TypeDecl, root : String?) : PartialKey
+    {root, type.namespace, type.type_params, outer_names(type)}
   end
 
   private def outer_names(type : Noir::CSharpDecl::TypeDecl) : Array(String)
@@ -441,7 +453,7 @@ class AspnetAuthTagger < FrameworkTagger
     own = declarations(name, [path]).select { |_, part| part.start_line == type.start_line }.map(&.[0])
     # `[Authorize]` on one part of a `partial` controller governs the actions
     # declared in its other parts.
-    own.concat(partial_parts(type, path)) if type.partial?
+    merged_partial(type, path).try { |merged| own << merged } if type.partial?
     chain = own.dup
     base = own.compact_map(&.base).first?
     from = path

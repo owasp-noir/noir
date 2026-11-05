@@ -166,6 +166,42 @@ describe "AspnetAuthTagger" do
     endpoints.each(&.tags.should(be_empty))
   end
 
+  it "tags a controller split over many partial files in linear time" do
+    tag_parts = ->(count : Int32) do
+      noir_options = create_test_options
+      tmpdir = File.tempname("aspnet_partial_perf")
+      Dir.mkdir_p(tmpdir)
+      File.write(File.join(tmpdir, "App.csproj"), "<Project/>")
+      File.write(File.join(tmpdir, "Big.cs"), "namespace App\n{\n    [Authorize]\n    public partial class BigController : Controller\n    {\n    }\n}\n")
+      endpoints = [] of Endpoint
+      count.times do |i|
+        path = File.join(tmpdir, "Big.P#{i}.cs")
+        actions = (0...4).map { |j| "        [HttpGet(\"p#{i}a#{j}\")]\n        public IActionResult A#{j}() => Ok();\n" }.join
+        File.write(path, "namespace App\n{\n    public partial class BigController\n    {\n#{actions}    }\n}\n")
+        4.times do |j|
+          details = Details.new(PathInfo.new(path, 6 + j * 2))
+          details.technology = "cs_aspnet_core_mvc"
+          endpoints << Endpoint.new("/p#{i}a#{j}", "GET", [] of Param, details)
+        end
+      end
+      noir_options["base"] = YAML::Any.new(tmpdir)
+      CodeLocator.instance.clear_all
+      Dir.glob("#{tmpdir}/*.cs").each { |path| CodeLocator.instance.register_path(path) }
+      begin
+        elapsed = Time.measure { AspnetAuthTagger.new(noir_options).perform(endpoints) }
+        endpoints.all? { |endpoint| endpoint.tags.map(&.name) == ["auth"] }.should be_true
+        elapsed
+      ensure
+        CodeLocator.instance.clear_all
+        FileUtils.rm_rf(tmpdir)
+      end
+    end
+
+    small = tag_parts.call(150)
+    large = tag_parts.call(600)
+    large.should be < (small * 6 + 500.milliseconds)
+  end
+
   describe "Minimal API fluent .RequireAuthorization()" do
     it "detects .RequireAuthorization() chained on the route statement" do
       noir_options = create_test_options
