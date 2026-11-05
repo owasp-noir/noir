@@ -1443,4 +1443,33 @@ describe Noir::TreeSitterGoRouteExtractor do
       {"QUERY", "/add-string"},
     ])
   end
+
+  it "does not read a verb-named call on a handler's request value as a route" do
+    source = <<-GO
+      package main
+      func Inject(ctx *fiber.Ctx, id string) {
+          _ = ctx.Get("Host", constant.SiteDefaultHost)
+      }
+      func Show(r *ghttp.Request) {
+          r.Get("name", defaultName)
+      }
+      func Echo(c echo.Context) error {
+          c.Get("user", fallbackUser)
+          return nil
+      }
+      func setup(app *fiber.App) {
+          app.Get("/ok", handler)
+          app.Use(func(c *fiber.Ctx) error {
+              app.Get("/inner", innerHandler)
+              return c.Next()
+          })
+      }
+      GO
+
+    routes = Noir::TreeSitterGoRouteExtractor.extract_routes(source)
+    routes.map { |r| {r.verb, r.path} }.should eq([
+      {"GET", "/ok"},
+      {"GET", "/inner"},
+    ])
+  end
 end
