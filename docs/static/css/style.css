@@ -545,8 +545,9 @@ hr { border: 0; border-top: 1px solid var(--border); margin: 2.5rem 0; }
 /* min(..., 100%) matters: a bare `max-width: 72ch` beats `img { max-width: 100% }`
    on specificity, so a direct-child <img> wider than the column would spill out
    of the grid track and collide with the table of contents. */
-.prose > * { max-width: min(72ch, 100%); }
+.prose > * { max-width: min(66ch, 100%); }
 .prose > .table-scroll,
+.prose > table,
 .prose > .code-block,
 .prose > .tech-grid,
 .prose > .tech-legend,
@@ -554,8 +555,10 @@ hr { border: 0; border-top: 1px solid var(--border); margin: 2.5rem 0; }
 .prose > pre { max-width: none; }
 
 .prose > * + * { margin-top: 1.15rem; }
-.prose > * + :is(h2, h3, h4) { margin-top: 2.75rem; }
-.prose :is(h2, h3, h4) + * { margin-top: 0.85rem; }
+.prose > * + h2 { margin-top: 3.5rem; }
+.prose > * + h3 { margin-top: 2.5rem; }
+.prose > * + h4 { margin-top: 2rem; }
+.prose :is(h2, h3, h4) + * { margin-top: 0.9rem; }
 
 .prose h2 {
   font-size: var(--fs-xl); letter-spacing: -0.024em;
@@ -584,9 +587,10 @@ hr { border: 0; border-top: 1px solid var(--border); margin: 2.5rem 0; }
 .prose li::marker { color: var(--text-muted); }
 
 .prose blockquote {
-  margin-inline: 0; padding: 0.25rem 0 0.25rem 1.15rem;
-  border-left: 2px solid var(--border);
+  margin-inline: 0; padding: 0.35rem 0 0.35rem 1.15rem;
+  border-left: 2px solid var(--text-muted);
   color: var(--text-secondary);
+  font-size: 0.9375em;
 }
 
 .prose img { border-radius: var(--r); border: 1px solid var(--border); }
@@ -645,7 +649,7 @@ hr { border: 0; border-top: 1px solid var(--border); margin: 2.5rem 0; }
 .prose pre {
   margin: 0; padding: 1rem 1.1rem;
   overflow-x: auto;
-  font-size: 0.8125rem; line-height: 1.65;
+  font-size: 0.875rem; line-height: 1.7;
   background: none;
   scrollbar-width: thin;
 }
@@ -705,6 +709,10 @@ hr { border: 0; border-top: 1px solid var(--border); margin: 2.5rem 0; }
   margin-block: 1.6rem; overflow-x: auto; scrollbar-width: thin;
   border: 1px solid var(--border); border-radius: var(--r-lg);
 }
+.table-scroll > table { margin: 0; }
+/* On a phone the table keeps a readable column width and scrolls sideways,
+   rather than wrapping every description one word per line. */
+@media (max-width: 767px) { .table-scroll > table { min-width: 34rem; } }
 .prose table { width: 100%; border-collapse: collapse; font-size: 0.875rem; }
 .prose thead th {
   text-align: left; font-weight: 600; color: var(--heading);
@@ -715,6 +723,9 @@ hr { border: 0; border-top: 1px solid var(--border); margin: 2.5rem 0; }
 }
 .prose tbody td { padding: 0.6rem 0.9rem; border-top: 1px solid var(--border-subtle); vertical-align: top; }
 .prose tbody tr:first-child td { border-top: 0; }
+/* Inside the scroller a command stays on one line and the table scrolls,
+   instead of `noir query [FILTERS]` snapping in half on a phone. */
+.prose td code { white-space: nowrap; }
 
 /* The auto-generated frameworks page ships these classes as raw HTML. */
 .tech-legend {
@@ -869,10 +880,17 @@ pre.mermaid svg { max-width: 100%; height: auto; margin-inline: auto; }
 
 .wrap { max-width: var(--page-max); margin-inline: auto; padding-inline: var(--gutter); }
 
-.section { padding-block: clamp(4.5rem, 10vw, 8rem); }
-.section-head { max-width: 60ch; margin-bottom: clamp(2.5rem, 5vw, 3.75rem); }
-.section-title { font-size: var(--fs-2xl); letter-spacing: -0.03em; }
-.section-lede { margin-top: 0.9rem; color: var(--text-secondary); font-size: var(--fs-md); }
+/* Sections are hairline-separated and sit closer together than they used to:
+   two 8rem paddings back to back left a 16rem void between neighbouring
+   sections, and on a near-black page a void reads as the end of the page. */
+.section { padding-block: clamp(4rem, 7vw, 6rem); }
+.landing .section + .section { border-top: 1px solid var(--border-subtle); }
+.section-head { max-width: 60ch; margin-bottom: clamp(2rem, 4vw, 3rem); }
+.section-title { font-size: clamp(2rem, 1.4rem + 1.8vw, 3rem); letter-spacing: -0.034em; line-height: 1.06; }
+.section-lede {
+  margin-top: 1rem; color: var(--text-secondary);
+  font-size: clamp(1.0625rem, 1rem + 0.3vw, 1.25rem); line-height: 1.55;
+}
 
 /* 11.1 Hero. A poster: a dark island in both themes, closed by a hairline.
    Pulled up under the sticky header so the bar can float over the photograph
@@ -1008,7 +1026,9 @@ pre.mermaid svg { max-width: 100%; height: auto; margin-inline: auto; }
   display: flex; flex-direction: column;
   border: 1px solid var(--border); border-radius: var(--r-lg);
   background: var(--surface);
+  transition: border-color 0.25s var(--ease);
 }
+.cell:hover { border-color: color-mix(in srgb, var(--text-muted) 60%, var(--border)); }
 .cell-body { padding: clamp(1.35rem, 2.4vw, 1.9rem); }
 .cell h3 { font-size: var(--fs-lg); letter-spacing: -0.02em; }
 .cell p { margin-top: 0.65rem; color: var(--text-secondary); font-size: 0.9375rem; line-height: 1.62; }
@@ -1073,8 +1093,8 @@ pre.mermaid svg { max-width: 100%; height: auto; margin-inline: auto; }
 .stat-val {
   display: block;
   font-family: var(--font-mono);
-  font-size: clamp(1.6rem, 3vw, 2.1rem); font-weight: 500;
-  color: var(--heading); letter-spacing: -0.03em;
+  font-size: clamp(2rem, 3.2vw, 2.75rem); font-weight: 500;
+  color: var(--heading); letter-spacing: -0.04em; line-height: 1;
 }
 .stat-key { display: block; margin-top: 0.15rem; font-size: var(--fs-xs); color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.08em; }
 
