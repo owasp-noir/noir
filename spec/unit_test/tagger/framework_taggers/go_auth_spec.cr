@@ -747,3 +747,40 @@ describe "GoAuthTagger group inheritance" do
     tags["GET /four/x"].should eq(["auth"])
   end
 end
+
+# The route-adjacent `.Use` look-back reads a `.Use(` call, not a handler
+# whose name starts with `Use` (`a.user.UserEmailLogin`) on a route above.
+describe "GoAuthTagger (.Use look-back)" do
+  routes = [
+    "package main",                                                      # 1
+    "func register(r *gin.RouterGroup) {",                               # 2
+    "  g := r.Group(\"\", BanAPIForUserCenter)",                         # 3
+    "  g.POST(\"/user/login/email\", a.userController.UserEmailLogin)",  # 4
+    "  g.POST(\"/user/register/email\", a.userController.UserRegister)", # 5
+    "  r.GET(\"/s\", h) // \".Use(AuthRequired())\"",                    # 6
+    "  r.GET(\"/t\", h)",                                                # 7
+    "  r.Use(AuthRequired())",                                           # 8
+    "  r.GET(\"/u\", h)",                                                # 9
+    "}",
+  ]
+
+  it "does not read a handler named User* as middleware" do
+    run_go_auth(routes, "/user/register/email", "POST", 5).tags.any? { |t| t.name == "auth" }.should be_false
+  end
+
+  it "does not read a .Use in a comment" do
+    run_go_auth(routes, "/t", "GET", 7).tags.any? { |t| t.name == "auth" }.should be_false
+  end
+
+  it "still reads a .Use( call above the route" do
+    run_go_auth(routes, "/u", "GET", 9).tags.any? { |t| t.name == "auth" }.should be_true
+  end
+
+  it "reads iris UseRouter / UseGlobal / UseOnce as .Use" do
+    iris = ["package main", "func main() {", "  app.UseRouter(AuthRequired())", "  app.Get(\"/a\", h)", "}"]
+    %w[UseRouter UseGlobal UseOnce].each do |name|
+      lines = iris.map(&.sub("UseRouter", name))
+      run_go_auth(lines, "/a", "GET", 4).tags.any? { |t| t.name == "auth" }.should be_true
+    end
+  end
+end
