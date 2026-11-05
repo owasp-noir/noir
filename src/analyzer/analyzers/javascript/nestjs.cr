@@ -338,7 +338,8 @@ module Analyzer::Javascript
       # Scan-base-relative, never absolute: a `__tests__/` or `test/`
       # directory ABOVE the scan base is not this project's test tree.
       relative = base_relative_path(path)
-      relative.includes?(".test.") || relative.includes?(".spec.") ||
+      # `app.e2e-spec.ts` is the Nest CLI's e2e suite name.
+      relative.includes?(".test.") || relative.includes?(".spec.") || relative.includes?(".e2e-spec.") ||
         relative.includes?("/__tests__/") || relative.includes?("/__mocks__/") ||
         relative.includes?("/test/fixtures/") || relative.includes?("/tests/fixtures/")
     end
