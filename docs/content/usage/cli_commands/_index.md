@@ -16,12 +16,24 @@ noir <command> [arguments] [flags]
 
 ## Quick Reference
 
+**Scan**
+
 | Command                | Purpose                                                 |
 |------------------------|---------------------------------------------------------|
 | `noir scan PATHS...`   | Discover endpoints in one or more codebases             |
+
+**Query**
+
+| Command                | Purpose                                                 |
+|------------------------|---------------------------------------------------------|
 | `noir trace "<METHOD> <URL>"` | Map a request to its route, guards, params and sinks |
 | `noir reach FILE[:LINE]` | List the endpoints that touch a source file           |
 | `noir query [FILTERS]` | Search the attack surface with AND-ed filters           |
+
+**Management**
+
+| Command                | Purpose                                                 |
+|------------------------|---------------------------------------------------------|
 | `noir list techs`      | List supported languages, frameworks, and analyzers     |
 | `noir list taggers`    | List built-in and framework-specific taggers            |
 | `noir list formats`    | List supported output formats                           |
@@ -35,6 +47,11 @@ noir <command> [arguments] [flags]
 | `noir rules list`      | List rule files installed under the rules path          |
 | `noir rules update`    | Clone or pull the latest passive-scan rules             |
 | `noir rules path`      | Print the configured rules directory                    |
+
+**Utility**
+
+| Command                | Purpose                                                 |
+|------------------------|---------------------------------------------------------|
 | `noir completion zsh`  | Generate Zsh / Bash / Fish / Elvish completion scripts  |
 | `noir version`         | Print the version (use `--verbose` for build details)   |
 | `noir help [command]`  | Show top-level help or per-command help                 |

@@ -25,8 +25,12 @@ module Noir::CLI::Catalog
   # as the argument shape shown by `noir help` (`cache info | clear |
   # purge`). `args` overrides that for verbs whose argument isn't a fixed
   # vocabulary.
+  #
+  # `group` is the `noir help` section the verb is listed under; sections
+  # print in the order their first verb appears in `COMMANDS`.
   record Command,
     name : String,
+    group : String,
     summary : String,
     actions : Array(String) = [] of String,
     args : String? = nil do
@@ -37,17 +41,17 @@ module Noir::CLI::Catalog
   end
 
   COMMANDS = [
-    Command.new("scan", "Discover endpoints in one or more codebases", args: "[PATHS...]"),
-    Command.new("trace", "Map a request to its route, guards, params and sinks", args: "\"<METHOD> <URL>\" [PATHS...]"),
-    Command.new("reach", "List the endpoints that touch a source file", args: "<FILE[:LINE]> [PATHS...]"),
-    Command.new("query", "Search the attack surface with AND-ed filters", args: "[FILTERS] [PATHS...]"),
-    Command.new("list", "Enumerate built-in catalogs", LIST_SUBJECTS),
-    Command.new("cache", "Manage the on-disk LLM response cache", CACHE_ACTIONS),
-    Command.new("config", "Manage the user-level YAML configuration", CONFIG_ACTIONS),
-    Command.new("rules", "Manage the passive-scan rules repository", RULES_ACTIONS),
-    Command.new("completion", "Generate a shell completion script", SHELLS),
-    Command.new("version", "Print version (or full build details)", args: "[--verbose]"),
-    Command.new("help", "Show this overview or a command's help", args: "[command]"),
+    Command.new("scan", "SCAN", "Discover endpoints in one or more codebases", args: "[PATHS...]"),
+    Command.new("trace", "QUERY", "Map a request to its route, guards, params and sinks", args: "\"<METHOD> <URL>\" [PATHS...]"),
+    Command.new("reach", "QUERY", "List the endpoints that touch a source file", args: "<FILE[:LINE]> [PATHS...]"),
+    Command.new("query", "QUERY", "Search the attack surface with AND-ed filters", args: "[FILTERS] [PATHS...]"),
+    Command.new("list", "MANAGEMENT", "Enumerate built-in catalogs", LIST_SUBJECTS),
+    Command.new("cache", "MANAGEMENT", "Manage the on-disk LLM response cache", CACHE_ACTIONS),
+    Command.new("config", "MANAGEMENT", "Manage the user-level YAML configuration", CONFIG_ACTIONS),
+    Command.new("rules", "MANAGEMENT", "Manage the passive-scan rules repository", RULES_ACTIONS),
+    Command.new("completion", "UTILITY", "Generate a shell completion script", SHELLS),
+    Command.new("version", "UTILITY", "Print version (or full build details)", args: "[--verbose]"),
+    Command.new("help", "UTILITY", "Show this overview or a command's help", args: "[command]"),
   ]
 
   NAMES = COMMANDS.map(&.name)
