@@ -45,6 +45,33 @@ class JsMiscAuthTagger < FrameworkTagger
 
   record FastifyHook, file : String, start_line : Int32, end_line : Int32, kind : String, exempt : Array(String)
 
+  # `request.jwtVerify()` (@fastify/jwt) throws a 401 for a missing or bad
+  # token; a `catch` that neither replies nor rethrows lets the caller in.
+  FASTIFY_JWT_VERIFY = /\.\s*jwtVerify\s*\(/
+  FASTIFY_CATCH      = /\bcatch\b/
+  FASTIFY_RETHROW    = /\breply\s*\.\s*(?:send|code|status)\s*\(|\bthrow\b/
+  # `if (request.headers.authorization) await request.jwtVerify()`: verified
+  # only when a credential is sent, so anonymous callers get through.
+  FASTIFY_OPTIONAL_VERIFY = /\bif\s*\([^)]*(?:authorization|headers|token|cookie)/i
+  # `fastify.decorate('checkToken', async (request, reply) => { … })`.
+  FASTIFY_DECORATE = /\.\s*decorate\s*\(\s*['"]([A-Za-z_$][\w$]*)['"]\s*,/
+
+  # A hook that reads a key of the route's own config and refuses the routes
+  # that set it: `if (req.routeOptions.config?.permissions?.length) { …
+  # throw httpErrors.unauthorized() }`. Wiki.js gates its API this way.
+  FASTIFY_GATE_HOOK    = /\.addHook\s*\(\s*['"](onRequest|preParsing|preValidation|preHandler)['"]/
+  FASTIFY_CONFIG_READ  = /\b(?:routeOptions\s*\.\s*config|routeConfig|context\s*\.\s*config)\s*\??\.\s*([A-Za-z_$][\w$]*)/
+  FASTIFY_GATE_REFUSAL = /\bunauthorized\s*\(|\b(?:code|status)\s*\(\s*401\b|\bstatusCode\s*=\s*401\b/
+  # A config value that sets nothing.
+  FASTIFY_EMPTY_VALUE = /\A(?:\[\s*\]|false|null|undefined|0|''|""|``)\z/
+
+  # `key` of the route config, read by a refusing hook in the project at
+  # `root`. A hook inside a `register` callback covers only the routes of
+  # that callback: `file` and its line range.
+  record FastifyConfigGate, root : String, key : String, kind : String, file : String?, start_line : Int32, end_line : Int32
+  # `if (perms === 0)`, `if (perms.length < 1)`: a test of the key's absence.
+  FASTIFY_ABSENT_TEST = /\A[\w$?.]*\s*(?:===?\s*(?:0|null|undefined|false)\b|<\s*1\b)/
+
   # Generic Node.js auth middleware (shared across frameworks)
   GENERIC_NODE_AUTH = [
     {/\brequireAuth\b/, "requireAuth middleware"},
@@ -62,10 +89,15 @@ class JsMiscAuthTagger < FrameworkTagger
   def initialize(options : Hash(String, YAML::Any))
     super
     @fastify_hooks = [] of FastifyHook
+    @fastify_decorators = {} of {String?, String} => Array(Bool)
+    @fastify_config_gates = [] of FastifyConfigGate
+    @package_roots = {} of String => String?
   end
 
   def perform(endpoints : Array(Endpoint)) : Array(Endpoint)
+    @fastify_decorators = scan_fastify_decorators
     @fastify_hooks = scan_fastify_hooks
+    @fastify_config_gates = scan_fastify_config_gates
     super
   end
 
@@ -81,7 +113,9 @@ class JsMiscAuthTagger < FrameworkTagger
       # previous routes do not bleed into public handlers.
       description = check_route_scope(route_scope(lines, line_idx))
       if description.nil? && endpoint.details.technology == "js_fastify"
-        description = fastify_route_guard(path_info.path, line_idx, endpoint.method, endpoint.url) || fastify_plugin_hook(path_info.path, line_num, endpoint.url)
+        description = fastify_route_guard(path_info.path, line_idx, endpoint.method, endpoint.url) ||
+                      fastify_plugin_hook(path_info.path, line_num, endpoint.url) ||
+                      fastify_config_gate(path_info.path, line_idx, endpoint.method, endpoint.url)
       end
       description ||= koa_guard(path_info.path, line_idx) if endpoint.details.technology == "js_koa"
       if description
@@ -113,7 +147,7 @@ class JsMiscAuthTagger < FrameworkTagger
   # router, or of those under its path when it names one.
   private def koa_guard(path : String, line_idx : Int32) : String?
     lines = read_file_lines(path) || return
-    route = koa_call(lines, line_idx, KOA_ROUTE_CALL) || return
+    route = route_call(lines, line_idx, KOA_ROUTE_CALL) || return
     receiver, args = route
     content = read_file(path) || return
     if args.size >= 3
@@ -131,7 +165,7 @@ class JsMiscAuthTagger < FrameworkTagger
     (line_idx - 1).downto(0) do |idx|
       break if lines[idx].matches?(declared)
       next unless lines[idx].matches?(use_call)
-      use = koa_call(lines, idx, use_call) || next
+      use = route_call(lines, idx, use_call) || next
       middleware = use[1]
       first = middleware.first?.try(&.strip) || ""
       # A path, or a list of them (`['/admin', '/ops']`), scopes the use.
@@ -153,7 +187,7 @@ class JsMiscAuthTagger < FrameworkTagger
   # The receiver and top-level arguments of the call `call_re` matches on
   # line `line_idx`, read to its closing paren however long the handler
   # runs: a cut-off slice used to lose the whole call.
-  private def koa_call(lines : Array(String), line_idx : Int32, call_re : Regex) : {String?, Array(String)}?
+  private def route_call(lines : Array(String), line_idx : Int32, call_re : Regex) : {String?, Array(String)}?
     span = MAX_KOA_ARG_LINES
     loop do
       statement = Noir::CComments.strip(lines[line_idx, span].join("\n"), quotes: %("'`))
@@ -271,6 +305,9 @@ class JsMiscAuthTagger < FrameworkTagger
           close = Noir::JSLiteralScanner.find_matching_paren(text, open) || next
           args = Noir::TopLevelSplit.split(text[open + 1...close], ',', Noir::TopLevelSplit::Rules::JS_POSITIONAL_ARGS)
           callback = args[1]? || next
+          # Refusing by what the route's config sets is per route, not every
+          # route in range: `scan_fastify_config_gates` reads those.
+          next if callback.matches?(FASTIFY_CONFIG_READ)
           next unless fastify_refuses?(callback, text, file)
           hook_line = text[0...m.begin(0)].count('\n') + 1
           range = fastify_innermost(registers, hook_line) || {1, text.count('\n') + 1}
@@ -280,6 +317,28 @@ class JsMiscAuthTagger < FrameworkTagger
       end
     end
     rules
+  end
+
+  # Every `decorate('name', fn)` in the scan, keyed by its package: whether
+  # each definition of `name` refuses a caller. A name decorated by two
+  # services is a guard only when every definition refuses.
+  private def scan_fastify_decorators : Hash({String?, String}, Array(Bool))
+    found = {} of {String?, String} => Array(Bool)
+    %w[.js .mjs .cjs .ts .mts .cts].each do |ext|
+      collect_files_by_extension(ext).each do |file|
+        raw = read_file(file) || next
+        next unless raw.includes?("decorate")
+        text = Noir::CComments.strip(raw, quotes: %("'`))
+        text.scan(FASTIFY_DECORATE) do |m|
+          open = text.index('(', m.begin(0)) || next
+          close = Noir::JSLiteralScanner.find_matching_paren(text, open) || next
+          args = Noir::TopLevelSplit.split(text[open + 1...close], ',', Noir::TopLevelSplit::Rules::JS_POSITIONAL_ARGS)
+          value = args[1]? || next
+          (found[{package_root(file), m[1]}] ||= [] of Bool) << fastify_refuses?(value, text, file, decorators: false)
+        end
+      end
+    end
+    found
   end
 
   private def fastify_register_ranges(text : String) : Array({Int32, Int32})
@@ -301,15 +360,31 @@ class JsMiscAuthTagger < FrameworkTagger
     ranges.select { |span| span[0] <= line && line <= span[1] }.min_by? { |span| span[1] - span[0] }
   end
 
-  private def fastify_refuses?(expr : String, content : String, file : String) : Bool
-    return true if expr.matches?(FASTIFY_REPLY_401)
+  private def fastify_refuses?(expr : String, content : String, file : String, decorators : Bool = true) : Bool
+    return true if fastify_refusal_body?(expr)
+    # `fastify.checkToken`: a decorated function, judged by its definition.
+    if member = expr.strip.match(/\A[A-Za-z_$][\w$]*\s*\.\s*([A-Za-z_$][\w$]*)\z/)
+      if decorators && (verdicts = @fastify_decorators[{package_root(file), member[1]}]?)
+        return verdicts.all?
+      end
+      expr = member[1]
+    end
     name = expr.strip.match(/\A([A-Za-z_$][\w$]*)\z/).try(&.[1]) || return false
     handler = Noir::JSHandlerResolver.resolve(name, content, file) || return false
     path = handler.path || return false
     line = handler.line || return false
     source = read_file(path) || return false
-    body = Noir::JSRouteExtractor.definition_body(Noir::CComments.strip(source, quotes: %("'`)), line)
-    body.matches?(FASTIFY_REPLY_401)
+    fastify_refusal_body?(Noir::JSRouteExtractor.definition_body(Noir::CComments.strip(source, quotes: %("'`)), line))
+  end
+
+  private def fastify_refusal_body?(body : String) : Bool
+    return true if body.matches?(FASTIFY_REPLY_401)
+    return false unless at = body.index(FASTIFY_JWT_VERIFY)
+    return false if body[0...at].matches?(FASTIFY_OPTIONAL_VERIFY)
+    caught = body.index(FASTIFY_CATCH, at) || return true
+    open = body.index('{', caught) || return false
+    close = Noir::JSLiteralScanner.find_matching_brace(body, open) || return false
+    body[open..close].matches?(FASTIFY_RETHROW)
   end
 
   private def fastify_plugin_hook(path : String, line : Int32, url : String) : String?
@@ -326,22 +401,19 @@ class JsMiscAuthTagger < FrameworkTagger
   # replies 401. A preHandler that does not refuse (an admin check that
   # only calls `next`) is not a guard.
   private def fastify_route_guard(path : String, line_idx : Int32, method : String, url : String) : String?
-    lines = read_file_lines(path) || return
-    return if line_idx < 0 || line_idx >= lines.size
-    text = Noir::CComments.strip(lines[line_idx, 40].join('\n'), quotes: %("'`))
-    args = fastify_route_args(text, method, url) || return
+    args = fastify_route_args(path, line_idx, method, url) || return
     content = read_file(path) || return
     HOOK_KINDS.each do |key|
       args.each do |arg|
         next unless arg.lstrip.starts_with?('{')
         expr = fastify_property(arg, key) || next
-        if expr.matches?(FASTIFY_REPLY_401)
+        if fastify_refusal_body?(expr)
           return "Fastify #{key}"
         end
-        expr.scan(/\b([A-Za-z_$][\w$]*)\b/) do |ident|
+        expr.scan(/(?:\b[A-Za-z_$][\w$]*\s*\.\s*)?\b([A-Za-z_$][\w$]*)\b/) do |ident|
           name = ident[1]
           next if {"async", "await", "function", "return", "request", "reply", "req", "res", "true", "false", "null"}.includes?(name)
-          next unless fastify_refuses?(name, content, path)
+          next unless fastify_refuses?(ident[0], content, path)
           return "Fastify #{key} #{name}"
         end
       end
@@ -349,30 +421,136 @@ class JsMiscAuthTagger < FrameworkTagger
     nil
   end
 
-  # The arguments of the route call on the first line of `text`. With
-  # several calls on that line (`a.get('/a', h); a.post('/a', {…}, h)`), the
-  # best match wins: verb first, then a path literal equal to `url`, then one
-  # `url` ends with (under a prefix), then the first call.
-  private def fastify_route_args(text : String, method : String, url : String) : Array(String)?
-    first_line_end = text.index('\n') || text.size
-    best = nil
-    best_score = -1
-    pos = 0
-    while (head = text.match(FASTIFY_ROUTE, pos)) && head.begin(0) < first_line_end
-      open = head.end(0) - 1
-      close = Noir::JSLiteralScanner.find_matching_paren(text, open) || break
-      args = Noir::TopLevelSplit.split(text[open + 1...close], ',', Noir::TopLevelSplit::Rules::JS_POSITIONAL_ARGS)
-      verb = head[1].downcase
-      score = verb == "all" || verb == method.downcase || (verb == "del" && method == "DELETE") ? 4 : 0
-      literal = args.first?.try(&.strip)
-      if literal && literal.size >= 2 && {'\'', '"', '`'}.includes?(literal[0]) && literal[-1] == literal[0]
-        route = literal[1...-1]
-        score += route == url ? 2 : (url.ends_with?(route) ? 1 : 0)
+  # The arguments of the route call on line `line_idx`, read to its closing
+  # paren however long its schema runs. With several calls on that line
+  # (`a.get('/a', h); a.post('/a', {…}, h)`), the best match wins: verb
+  # first, then a path literal equal to `url`, then one `url` ends with
+  # (under a prefix), then the first call.
+  private def fastify_route_args(path : String, line_idx : Int32, method : String, url : String) : Array(String)?
+    lines = read_file_lines(path) || return
+    return if line_idx < 0 || line_idx >= lines.size
+    span = MAX_KOA_ARG_LINES
+    loop do
+      text = Noir::CComments.strip(lines[line_idx, span].join('\n'), quotes: %("'`))
+      first_line_end = text.index('\n') || text.size
+      best = nil
+      best_score = -1
+      cut = false
+      pos = 0
+      while (head = text.match(FASTIFY_ROUTE, pos)) && head.begin(0) < first_line_end
+        open = head.end(0) - 1
+        unless close = Noir::JSLiteralScanner.find_matching_paren(text, open)
+          cut = true
+          break
+        end
+        args = Noir::TopLevelSplit.split(text[open + 1...close], ',', Noir::TopLevelSplit::Rules::JS_POSITIONAL_ARGS)
+        verb = head[1].downcase
+        score = verb == "all" || verb == method.downcase || (verb == "del" && method == "DELETE") ? 4 : 0
+        literal = args.first?.try(&.strip)
+        if literal && literal.size >= 2 && {'\'', '"', '`'}.includes?(literal[0]) && literal[-1] == literal[0]
+          route = literal[1...-1]
+          score += route == url ? 2 : (url.ends_with?(route) ? 1 : 0)
+        end
+        best, best_score = args, score if score > best_score
+        pos = close + 1
       end
-      best, best_score = args, score if score > best_score
-      pos = close + 1
+      return best unless cut && line_idx + span < lines.size
+      span *= 4
     end
-    best
+  end
+
+  # Hooks whose refusal sits in a block entered only when the route's config
+  # sets a key: `if (perms && perms.length > 0) { … unauthorized() }` after
+  # `const perms = req.routeOptions.config?.permissions`. A test of the key's
+  # absence (`if (!config.public)`) opens the routes that set it instead, so
+  # it is not read as a gate.
+  private def scan_fastify_config_gates : Array(FastifyConfigGate)
+    gates = [] of FastifyConfigGate
+    %w[.js .mjs .cjs .ts .mts .cts].each do |ext|
+      collect_files_by_extension(ext).each do |file|
+        raw = read_file(file) || next
+        next unless raw.includes?("addHook") && raw.includes?("config")
+        root = package_root(file) || next
+        text = Noir::CComments.strip(raw, quotes: %("'`))
+        registers = fastify_register_ranges(text)
+        text.scan(FASTIFY_GATE_HOOK) do |m|
+          open = text.index('(', m.begin(0)) || next
+          close = Noir::JSLiteralScanner.find_matching_paren(text, open) || next
+          callback = Noir::TopLevelSplit.split(text[open + 1...close], ',', Noir::TopLevelSplit::Rules::JS_POSITIONAL_ARGS)[1]? || next
+          callback.scan(FASTIFY_CONFIG_READ) do |read|
+            key = read[1]
+            alias_name = callback[0...read.begin(0)].match(/(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*[^;=]*\z/).try(&.[1])
+            value = alias_name ? /\b#{Regex.escape(alias_name)}\b/ : /(?:[A-Za-z_$][\w$]*\s*\.\s*)?#{Regex.escape(read[0])}/
+            next unless fastify_gated_refusal?(callback, value)
+            if range = fastify_innermost(registers, text[0...m.begin(0)].count('\n') + 1)
+              gates << FastifyConfigGate.new(root, key, m[1], Noir::PathScope.expand(file), range[0], range[1])
+            elsif gates.none? { |g| g.file.nil? && g.root == root && g.key == key }
+              gates << FastifyConfigGate.new(root, key, m[1], nil, 0, 0)
+            end
+          end
+        end
+      end
+    end
+    gates
+  end
+
+  # An `if` that tests `value` (not its absence) and refuses inside its block.
+  private def fastify_gated_refusal?(callback : String, value : Regex) : Bool
+    callback.scan(/\bif\s*\(/) do |m|
+      cond_open = m.end(0) - 1
+      cond_close = Noir::JSLiteralScanner.find_matching_paren(callback, cond_open) || next
+      condition = callback[cond_open + 1...cond_close]
+      found = condition.match(value) || next
+      next if condition[0...found.begin(0)].rstrip.rstrip('(').rstrip.ends_with?('!')
+      next if condition[found.end(0)..].matches?(FASTIFY_ABSENT_TEST)
+      block_open = callback.index(/\S/, cond_close + 1) || next
+      next unless callback[block_open] == '{'
+      block_close = Noir::JSLiteralScanner.find_matching_brace(callback, block_open) || next
+      return true if callback[block_open..block_close].matches?(FASTIFY_GATE_REFUSAL)
+    end
+    false
+  end
+
+  # The route on line `line_idx` sets a key a gate hook of its project refuses on.
+  private def fastify_config_gate(path : String, line_idx : Int32, method : String, url : String) : String?
+    return if @fastify_config_gates.empty?
+    root = package_root(path) || return
+    expanded = Noir::PathScope.expand(path)
+    gates = @fastify_config_gates.select do |gate|
+      gate.root == root && (gate.file.nil? || (gate.file == expanded && gate.start_line <= line_idx + 1 && line_idx + 1 <= gate.end_line))
+    end
+    return if gates.empty?
+    args = fastify_route_args(path, line_idx, method, url) || return
+    args.each do |arg|
+      next unless arg.lstrip.starts_with?('{')
+      config = fastify_property(arg, "config") || next
+      gates.each do |gate|
+        value = fastify_property(config, gate.key) || next
+        next if value.matches?(FASTIFY_EMPTY_VALUE)
+        return "Fastify #{gate.kind} hook on config.#{gate.key}"
+      end
+    end
+    nil
+  end
+
+  # The nearest directory holding a package.json.
+  # ponytail: a gate is scoped to its package, not to the register tree.
+  private def package_root(file : String) : String?
+    dir = File.dirname(Noir::PathScope.expand(file))
+    @package_roots.fetch(dir) do
+      found = nil.as(String?)
+      probe = dir
+      loop do
+        if File.exists?(File.join(probe, "package.json"))
+          found = probe
+          break
+        end
+        parent = File.dirname(probe)
+        break if parent == probe
+        probe = parent
+      end
+      @package_roots[dir] = found
+    end
   end
 
   private def fastify_property(object_text : String, prop : String) : String?

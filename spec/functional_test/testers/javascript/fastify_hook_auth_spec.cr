@@ -28,5 +28,10 @@ describe "Fastify onRequest hooks and route preHandlers", tags: "functional" do
     guards_of.call("GET", "/control").join(" ").should contain("authenticate")
     guards_of.call("GET", "/admin").join(" ").should contain("requireUser")
     guards_of.call("GET", "/inline").join(" ").should contain("preHandler")
+    guards_of.call("GET", "/secure").join(" ").should contain("checkToken")
+    guards_of.call("GET", "/maybe").should be_empty
+    guards_of.call("GET", "/optional").should be_empty
+    # A decorator is read in its own package.
+    guards_of.call("GET", "/other/secure").should be_empty
   end
 end
