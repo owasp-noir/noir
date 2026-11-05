@@ -101,6 +101,39 @@ describe "AspnetAuthTagger" do
     FileUtils.rm_rf(tmpdir)
   end
 
+  it "applies [Authorize] of one part of a partial controller to the actions of its other files" do
+    noir_options = create_test_options
+    tmpdir = File.tempname("aspnet_partial")
+    Dir.mkdir_p(tmpdir)
+    main = File.join(tmpdir, "Main.cs")
+    other = File.join(tmpdir, "Main.Users.cs")
+    elsewhere = File.join(tmpdir, "Elsewhere.cs")
+    File.write(main, "namespace App.A\n{\n    [Authorize(Policy = \"Admin\")]\n    public partial class ServerController : Controller\n    {\n    }\n}\n")
+    File.write(other, "namespace App.A\n{\n    public partial class ServerController\n    {\n        [HttpGet(\"users\")]\n        public IActionResult Users() => Ok();\n\n        [AllowAnonymous]\n        [HttpGet(\"open\")]\n        public IActionResult Open() => Ok();\n    }\n}\n")
+    # same class name in another namespace: not a part of the guarded type
+    File.write(elsewhere, "namespace App.B\n{\n    public partial class ServerController : Controller\n    {\n        [HttpGet(\"b\")]\n        public IActionResult B() => Ok();\n    }\n}\n")
+    noir_options["base"] = YAML::Any.new(tmpdir)
+    CodeLocator.instance.clear_all
+    Dir.glob("#{tmpdir}/*.cs").each { |path| CodeLocator.instance.register_path(path) }
+
+    endpoints = [{other, 6, "/users"}, {other, 10, "/open"}, {elsewhere, 6, "/b"}].map do |path, line, url|
+      details = Details.new(PathInfo.new(path, line))
+      details.technology = "cs_aspnet_core_mvc"
+      Endpoint.new(url, "GET", [] of Param, details)
+    end
+    begin
+      AspnetAuthTagger.new(noir_options).perform(endpoints)
+    ensure
+      CodeLocator.instance.clear_all
+      FileUtils.rm_rf(tmpdir)
+    end
+
+    endpoints[0].tags.map(&.name).should eq(["auth"])
+    endpoints[0].tags[0].description.should contain("[Authorize(Policy)]")
+    endpoints[1].tags.should be_empty
+    endpoints[2].tags.should be_empty
+  end
+
   describe "Minimal API fluent .RequireAuthorization()" do
     it "detects .RequireAuthorization() chained on the route statement" do
       noir_options = create_test_options

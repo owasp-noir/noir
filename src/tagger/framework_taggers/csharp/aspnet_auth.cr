@@ -413,6 +413,11 @@ class AspnetAuthTagger < FrameworkTagger
   private def class_chain(path : String, method_line : Int32) : Array(ClassDecl)
     name = enclosing_class(path, method_line).try(&.name) || return [] of ClassDecl
     own = declarations(name, [path]).map(&.[0])
+    # `[Authorize]` on one part of a `partial` controller governs the actions
+    # declared in its other files.
+    if enclosing_class(path, method_line).try(&.partial?)
+      own.concat(class_decls(name, path).reject { |part| part.path == path })
+    end
     chain = own.dup
     base = own.compact_map(&.base).first?
     from = path
