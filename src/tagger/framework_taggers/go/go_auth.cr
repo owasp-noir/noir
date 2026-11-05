@@ -58,13 +58,13 @@ class GoAuthTagger < FrameworkTagger
   USE_REGISTRATION = /\.\s*(?:Use|Pre|Middleware)\s*\(|\.\s*(?:Group|Party)\s*\(\s*"[^"]*"\s*,/
 
   # A `.Use(` call, not a `.UserEmailLogin` handler or a `".Use"` string.
-  USE_TOKEN = /\.\s*Use\s*\(/
+  USE_TOKEN = /\.\s*Use(?:Router|Global|Once)?\s*\(/
 
   # Where the middleware arguments start on a `code_only` line (string
   # literals blanked to `""`): right after `.Use(` / `.Pre(` (GoFrame's
   # `.Middleware(`), or after the path literal of a `Group("/seg", ...)`
   # constructor or a route call.
-  MIDDLEWARE_ARGS_START = /\.\s*(?:Use|Pre|Middleware)\s*\(|\.\s*\w+\s*\(\s*""\s*,/
+  MIDDLEWARE_ARGS_START = /\.\s*(?:Use(?:Router|Global|Once)?|Pre|Middleware)\s*\(|\.\s*\w+\s*\(\s*""\s*,/
 
   # Middleware added inside a closure group on its router: `.Use(` /
   # `.Pre(`, or, on the closure's own router parameter only, GoFrame's

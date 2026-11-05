@@ -775,4 +775,12 @@ describe "GoAuthTagger (.Use look-back)" do
   it "still reads a .Use( call above the route" do
     run_go_auth(routes, "/u", "GET", 9).tags.any? { |t| t.name == "auth" }.should be_true
   end
+
+  it "reads iris UseRouter / UseGlobal / UseOnce as .Use" do
+    iris = ["package main", "func main() {", "  app.UseRouter(AuthRequired())", "  app.Get(\"/a\", h)", "}"]
+    %w[UseRouter UseGlobal UseOnce].each do |name|
+      lines = iris.map(&.sub("UseRouter", name))
+      run_go_auth(lines, "/a", "GET", 4).tags.any? { |t| t.name == "auth" }.should be_true
+    end
+  end
 end
