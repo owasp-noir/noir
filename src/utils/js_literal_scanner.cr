@@ -123,6 +123,32 @@ module Noir
       find_matching_impl(content.to_slice, open_paren_byte, '(', ')')
     end
 
+    # `content` with every comment and string, template and regex literal
+    # blanked to spaces byte for byte (newlines kept), so a pattern run over
+    # the result only matches code, and its byte offsets index `content`.
+    def self.blank_literals(content : String) : String
+      src = content.to_slice
+      size = src.size
+      blanked = Bytes.new(size)
+      src.copy_to(blanked)
+      idx = 0
+      regex_floor = 0
+      while idx < size
+        stop = simple_literal_end(src, size, idx)
+        if stop.nil? && chr(src, idx) == '/' && idx >= regex_floor && regex_start?(src, idx)
+          regex_stop, closed = regex_literal_end(src, size, idx)
+          closed ? (stop = regex_stop) : (regex_floor = regex_stop)
+        end
+        if stop
+          (idx...stop).each { |k| blanked[k] = 0x20_u8 unless blanked[k] == 0x0a_u8 }
+          idx = stop
+        else
+          idx += 1
+        end
+      end
+      String.new(blanked)
+    end
+
     # `extract_paren_content` from a BYTE offset; `end_pos` is a byte offset
     # too. The byte walk emits each byte of a multi-byte char as its own
     # U+0080..U+00FF char, so fold those back into the source bytes.
