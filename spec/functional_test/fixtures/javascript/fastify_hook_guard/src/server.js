@@ -39,3 +39,9 @@ fastify.get('/inline', {
 }, async () => 'ok')
 
 fastify.get('/open', async () => 'ok')
+
+// Decorated preHandlers, judged by their `decorate` definitions (plugins/auth.js).
+fastify.get('/secure', { preHandler: [fastify.checkToken] }, async () => 'ok')
+fastify.get('/maybe', { preHandler: [fastify.maybeUser] }, async () => 'ok')
+fastify.get('/optional', { preHandler: [fastify.optionalToken] }, async () => 'ok')
+fastify.get('/fake', { preHandler: [fastify.fakeCheck] }, async () => 'ok')

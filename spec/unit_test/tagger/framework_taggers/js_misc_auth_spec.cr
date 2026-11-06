@@ -1,5 +1,6 @@
 require "../../../spec_helper"
 require "../../../../src/tagger/tagger"
+require "file_utils"
 
 describe "JsMiscAuthTagger" do
   fixture_base = File.expand_path("../../../functional_test/fixtures/javascript/fastify_auth", __DIR__)
@@ -267,5 +268,30 @@ describe "JsMiscAuthTagger" do
     JsMiscAuthTagger.target_techs.should contain("js_fastify")
     JsMiscAuthTagger.target_techs.should contain("js_koa")
     JsMiscAuthTagger.target_techs.should contain("js_restify")
+  end
+
+  it "reads Fastify route calls in linear time when a string holds a route-call look-alike" do
+    timed = ->(n : Int32) do
+      dir = File.tempname("fastify_linear")
+      Dir.mkdir_p(dir)
+      path = File.join(dir, "app.js")
+      File.write(path, String.build { |io| n.times { |k| io << "fastify.get('/r#{k}', async () => 'ok'); log('.get(')\n" } })
+      options = create_test_options
+      options["base"] = YAML::Any.new(dir)
+      endpoints = (1..n).map do |k|
+        details = Details.new(PathInfo.new(path, k))
+        details.technology = "js_fastify"
+        Endpoint.new("/r#{k - 1}", "GET", [] of Param, details)
+      end
+      started = Time.instant
+      JsMiscAuthTagger.new(options).perform(endpoints)
+      elapsed = (Time.instant - started).total_seconds
+      FileUtils.rm_rf(dir)
+      elapsed
+    end
+    small = timed.call(500)
+    large = timed.call(2000)
+    # Linear is ~4x; growing every read to the end of the file was ~16x.
+    (large < small * 10 || large < 0.3).should be_true
   end
 end

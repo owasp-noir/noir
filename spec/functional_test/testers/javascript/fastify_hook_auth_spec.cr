@@ -28,5 +28,20 @@ describe "Fastify onRequest hooks and route preHandlers", tags: "functional" do
     guards_of.call("GET", "/control").join(" ").should contain("authenticate")
     guards_of.call("GET", "/admin").join(" ").should contain("requireUser")
     guards_of.call("GET", "/inline").join(" ").should contain("preHandler")
+    guards_of.call("GET", "/secure").join(" ").should contain("checkToken")
+    guards_of.call("GET", "/maybe").should be_empty
+    guards_of.call("GET", "/optional").should be_empty
+    # A verify call quoted in a string is not one.
+    guards_of.call("GET", "/fake").should be_empty
+    # A hook that lets routes setting `config.public` through still guards the rest.
+    guards_of.call("GET", "/flag/private").join(" ").should contain("onRequest")
+    guards_of.call("GET", "/flag/login").should be_empty
+    # A hook that gates on config and also refuses every anonymous caller.
+    guards_of.call("GET", "/a/plain").join(" ").should contain("onRequest")
+    guards_of.call("GET", "/a/joined").join(" ").should contain("onRequest")
+    # An exemption joined with another test does not hold for every route.
+    guards_of.call("POST", "/b/pubpost").join(" ").should contain("onRequest")
+    # A decorator is read in its own package.
+    guards_of.call("GET", "/other/secure").should be_empty
   end
 end
