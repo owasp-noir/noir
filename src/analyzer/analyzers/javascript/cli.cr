@@ -134,12 +134,13 @@ module Analyzer::Javascript
 
     # Test suites, test fixture trees and `.test-d.ts` type tests exercise a
     # CLI; they are not one. Static assets, vendored code and minified bundles
-    # are also skipped. Matched on the scan-base-relative path (see
+    # are also skipped, as is a top-level `benchmark/` harness (a nested
+    # package of that name may be a real CLI). Matched on the scan-base-relative path, rooted with a leading `/` (see
     # `js_test_or_vendor?`), so every directory term is a whole path segment.
     # A bare `test/` or `tests/` segment is deliberately NOT here: it is also
     # the `test` subcommand directory of yargs/oclif/Angular-style CLIs
     # (`src/commands/test/index.ts`). Only its `fixtures/` subtree is a decoy.
-    TEST_OR_VENDOR_PATH_RE = %r{(?:^|/)(?:node_modules|__tests__|__fixtures__|static|vendor)/|(?:^|/)tests?/(?:[^/]+/)*fixtures?/|\.test\.|\.test-d\.|\.spec\.|\.d\.ts|\.min\.[cm]?js$}
+    TEST_OR_VENDOR_PATH_RE = %r{(?:^|/)(?:node_modules|__tests__|__fixtures__|static|vendor)/|^/benchmarks?/|(?:^|/)tests?/(?:[^/]+/)*fixtures?/|\.test\.|\.test-d\.|\.spec\.|\.d\.ts|\.min\.[cm]?js$}
 
     # Two more OR-ed pairs of whole-file scans, collapsed the same way:
     # the evidence gate every JS/TS file passes through, and the
