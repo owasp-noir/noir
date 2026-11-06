@@ -135,6 +135,7 @@ module Analyzer::Javascript
       # regex across a multi-MB minified single line that merely packs a
       # `this.route(` substring from library code.
       return if Noir::JSRouteExtractor.minified_content?(content)
+      return if Noir::JSRouteExtractor.test_stub_only?(path, content)
       # `this.route(/* x */ 'GET', …)` and a commented-out call: blanked in
       # place, so offsets and lines stay put.
       content = Noir::JSRouteExtractor.strip_js_comments(content)
@@ -200,6 +201,9 @@ module Analyzer::Javascript
     private def extract_use_handler_routes(path : String, content : String, result : Array(Endpoint), include_callee : Bool)
       return unless content.includes?(".use")
       return if Noir::JSRouteExtractor.minified_content?(content)
+      # A test's throwaway app (`session-timeout-middleware.test.ts`), the
+      # same files the shared extractor skips.
+      return if Noir::JSRouteExtractor.test_stub_only?(path, content)
       content = Noir::JSRouteExtractor.strip_js_comments(content)
       prefixes = CodeLocator.instance.all(ExpressConstants.file_key(Noir::PathScope.expand(path)))
       prefixes = [""] if prefixes.empty?
@@ -265,6 +269,7 @@ module Analyzer::Javascript
     # is library code.
     private def extract_finale_resource_routes(path : String, content : String, result : Array(Endpoint))
       return unless content.includes?(".resource")
+      return if Noir::JSRouteExtractor.test_stub_only?(path, content)
       content = Noir::JSRouteExtractor.strip_js_comments(content)
       Noir::JSRouteExtractor.finale_resource_routes(content).each do |method, url, call_start|
         endpoint = Endpoint.new(url, method, Details.new(PathInfo.new(path, line_number_for_index(content, call_start))))
