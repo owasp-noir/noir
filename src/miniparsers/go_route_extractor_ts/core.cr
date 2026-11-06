@@ -295,9 +295,10 @@ module Noir
           end
         end
 
+        declarers = DeclarerCache.new
         Noir::TreeSitter.walk(root) do |node|
           next unless Noir::TreeSitter.node_type(node) == "call_expression"
-          if verb_calls && (route = decode_verb_call(node, source, group_prefixes, extra_verbs, group_method, group_aliases, string_values, closure_groups, literal_join))
+          if verb_calls && (route = decode_verb_call(node, source, group_prefixes, extra_verbs, group_method, group_aliases, string_values, closure_groups, literal_join, declarers))
             routes << route
           elsif handle_method && (route = decode_handle_call(node, source, group_prefixes, handle_method, group_method, group_aliases, string_values))
             routes << route
@@ -697,11 +698,12 @@ module Noir
               chained << node_key(operand) if operand && Noir::TreeSitter.node_type(operand) == "call_expression"
             end
           end
+          declarers = DeclarerCache.new
           Noir::TreeSitter.walk(body) do |node|
             next unless Noir::TreeSitter.node_type(node) == "call_expression"
             if handlefunc_methods
               decode_handlefunc_methods_call(node, source, group_prefixes).each { |r| routes << r } unless chained.includes?(node_key(node))
-            elsif route = decode_verb_call(node, source, group_prefixes, [] of String, "Group", [] of String, string_values, literal_join: literal_join)
+            elsif route = decode_verb_call(node, source, group_prefixes, [] of String, "Group", [] of String, string_values, literal_join: literal_join, declarers: declarers)
               routes << route
             elsif handle_method && (route = decode_handle_call(node, source, group_prefixes, handle_method))
               routes << route
@@ -1252,7 +1254,8 @@ module Noir
                                  group_aliases : Array(String) = [] of String,
                                  string_values : Hash(String, String) = Hash(String, String).new,
                                  closure_groups : Array(ClosureGroup) = [] of ClosureGroup,
-                                 literal_join : Bool = false) : Route?
+                                 literal_join : Bool = false,
+                                 declarers : DeclarerCache = DeclarerCache.new) : Route?
       function = Noir::TreeSitter.field(call, "function")
       return unless function
       return unless Noir::TreeSitter.node_type(function) == "selector_expression"
@@ -1275,7 +1278,7 @@ module Noir
       # constant.SiteDefaultHost)` reads a header with a default, GoFrame's
       # `r.Get("name", "guest")` a request value. The second argument reads
       # as a handler, so the parameter's declared type decides.
-      return if Noir::TreeSitter.node_type(operand) == "identifier" && request_context_param?(call, router_name, source)
+      return if Noir::TreeSitter.node_type(operand) == "identifier" && request_context_param?(call, router_name, source, declarers)
 
       args = Noir::TreeSitter.field(call, "arguments")
       return unless args
@@ -1372,8 +1375,10 @@ module Noir
     REQUEST_CONTEXT_TYPE = /(?:\A|[.*\s])(?:Ctx|Context|RequestCtx|RequestContext|Request)\z/
 
     # Whether `name` is a parameter of the innermost function around `call`
-    # that declares it, typed as a request value.
-    private def request_context_param?(call : LibTreeSitter::TSNode, name : String, source : String) : Bool
+    # that declares it, typed as a request value, and not redeclared on the
+    # way down to the call (`c := gin.New()` in a block or closure under
+    # `func h(c *gin.Context)`).
+    private def request_context_param?(call : LibTreeSitter::TSNode, name : String, source : String, declarers : DeclarerCache) : Bool
       node = Noir::TreeSitter.parent(call)
       depth = 0
       while node && depth < Noir::TreeSitter::MAX_AST_DEPTH
@@ -1386,11 +1391,69 @@ module Noir
             Noir::TreeSitter.each_named_child(decl) do |child|
               declared ||= Noir::TreeSitter.node_type(child) == "identifier" && Noir::TreeSitter.node_text(child, source) == name
             end
-            return Noir::TreeSitter.node_text(type, source).strip.matches?(REQUEST_CONTEXT_TYPE) if declared
+            next unless declared
+            return false unless Noir::TreeSitter.node_text(type, source).strip.matches?(REQUEST_CONTEXT_TYPE)
+            # Walk only a function whose text declares the name somewhere.
+            redeclares = declarers.put_if_absent({LibTreeSitter.ts_node_start_byte(node), name}) do
+              Noir::TreeSitter.node_text(node, source).matches?(/\b#{Regex.escape(name)}\b\s*(?:,|:=)|\bvar\s+(?:#{Regex.escape(name)}\b|\()/)
+            end
+            return !(redeclares && shadowed?(call, node, name, source))
           end
         end
         node = Noir::TreeSitter.parent(node)
         depth += 1
+      end
+      false
+    end
+
+    # Function start byte and name -> whether the function's text declares
+    # the name anywhere (`name :=`, `name, err :=`, `var name`).
+    alias DeclarerCache = Hash({UInt32, String}, Bool)
+
+    # Whether a statement between `function` and `call` declares `name`
+    # before the call. ponytail: scans the statements ahead of the call at
+    # each level, O(n^2) over a handler with n verb calls on its request
+    # value that also redeclares it; memoise per block if one ever does.
+    private def shadowed?(call : LibTreeSitter::TSNode, function : LibTreeSitter::TSNode, name : String, source : String) : Bool
+      prev = call
+      node = Noir::TreeSitter.parent(call)
+      while node && LibTreeSitter.ts_node_start_byte(node) > LibTreeSitter.ts_node_start_byte(function)
+        # `switch name := v.(type) { case ...: }`
+        if Noir::TreeSitter.node_type(node) == "type_switch_statement" && (alias_list = Noir::TreeSitter.field(node, "alias"))
+          return true if identifier_in?(alias_list, name, source)
+        end
+        before = LibTreeSitter.ts_node_start_byte(prev)
+        Noir::TreeSitter.each_named_child(node) do |child|
+          break if LibTreeSitter.ts_node_start_byte(child) >= before
+          return true if declares?(child, name, source)
+        end
+        prev = node
+        node = Noir::TreeSitter.parent(node)
+      end
+      false
+    end
+
+    # Whether the statement `node` declares `name`: `name := ...`,
+    # `var name = ...`, `for _, name := range ...`, `case name := <-ch:`.
+    private def declares?(node : LibTreeSitter::TSNode, name : String, source : String) : Bool
+      case Noir::TreeSitter.node_type(node)
+      when "short_var_declaration", "range_clause", "receive_statement"
+        left = Noir::TreeSitter.field(node, "left") || return false
+        return identifier_in?(left, name, source)
+      when "var_declaration", "var_spec_list"
+        Noir::TreeSitter.each_named_child(node) do |spec|
+          return true if Noir::TreeSitter.node_type(spec) == "var_spec_list" && declares?(spec, name, source)
+          next unless Noir::TreeSitter.node_type(spec) == "var_spec"
+          return true if identifier_in?(spec, name, source)
+        end
+      end
+      false
+    end
+
+    # Whether a direct child of `list` is the identifier `name`.
+    private def identifier_in?(list : LibTreeSitter::TSNode, name : String, source : String) : Bool
+      Noir::TreeSitter.each_named_child(list) do |id|
+        return true if Noir::TreeSitter.node_type(id) == "identifier" && Noir::TreeSitter.node_text(id, source) == name
       end
       false
     end

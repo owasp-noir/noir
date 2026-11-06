@@ -1472,4 +1472,68 @@ describe Noir::TreeSitterGoRouteExtractor do
       {"GET", "/inner"},
     ])
   end
+
+  it "reads a router declared over a handler's request value in an inner scope" do
+    source = <<-GO
+      package main
+      func Handler(c *gin.Context) {
+          c.Get("phantom", fallback)
+          func() {
+              c := gin.New()
+              c.GET("/c3", h)
+          }()
+          for _, c := range routers {
+              c.GET("/ranged", h)
+          }
+          {
+              var c = gin.New()
+              c.GET("/var", h)
+          }
+      }
+      func Start(ctx context.Context) {
+          if true {
+              ctx := fiber.New()
+              ctx.Get("/d3", fh)
+          }
+      }
+      func Later(c *fiber.Ctx) {
+          if true {
+              c.Get("Host", defaultHost)
+          }
+          if c := fiber.New(); c != nil {
+              c.Get("/init", fh)
+          }
+      }
+      func Typed(c *gin.Context, v interface{}) {
+          switch c := v.(type) {
+          case *gin.Engine:
+              c.GET("/typed", h)
+          }
+      }
+      func Selected(c *fiber.Ctx, apps chan *fiber.App) {
+          select {
+          case c := <-apps:
+              c.Get("/selected", fh)
+          }
+          {
+              c, err := newApp()
+              _ = err
+              c.Get("/pair", fh)
+          }
+          c.Get("Host", "after")
+      }
+      GO
+
+    routes = Noir::TreeSitterGoRouteExtractor.extract_routes(source)
+    routes.map { |r| {r.verb, r.path} }.should eq([
+      {"GET", "/c3"},
+      {"GET", "/ranged"},
+      {"GET", "/var"},
+      {"GET", "/d3"},
+      {"GET", "/init"},
+      {"GET", "/typed"},
+      {"GET", "/selected"},
+      {"GET", "/pair"},
+    ])
+  end
 end
