@@ -86,10 +86,21 @@ class NextjsAuthTagger < FrameworkTagger
   CARRIER = /\A\s*(?:(?:let|const|var)\s+)?([A-Za-z_$][\w$]*)\s*=(?![=>])/
   # `if (!auth)`: group 1 the value whose absence is refused.
   NEGATED_VALUE = /\bif\s*\(\s*!\s*([A-Za-z_$][\w$]*)(?:\s*\??\.\s*[A-Za-z_$][\w$]*)*\s*\)/
+  # `if (typeof token === "string")`: a check that answers an error message
+  # in place of the token (linkwarden's `verifyToken`) is refused the same
+  # way. Only `"string"`: `typeof null` is `"object"`, so other type tests
+  # let a check that answers null through. Matched on `typed_code`.
+  TYPEOF_DENIED = /\bif\s*\(\s*typeof\s+([A-Za-z_$][\w$]*)\s*===?\s*"string"\s*\)/
   # `auth = await checkAuth(request)`, `const session = await getSession()`:
   # group 1 the value, group 2 the callee. Whether the callee checks the
   # caller is judged by its definition (`caller_check_callee?`).
-  CALLER_CHECK = /\b([A-Za-z_$][\w$]*)\s*=\s*(?:await\s+)?([\w$.]*(?:[Aa]uth|[Ss]ession)\w*)\s*\(\s*(?:\)|req(?:uest)?\b|headers\(\)|cookies\(\))/
+  CALLER_CHECK = /\b([A-Za-z_$][\w$]*)\s*=\s*(?:await\s+)?([\w$.]*(?:[Aa]uth|[Ss]ession)\w*)\s*\(\s*(?:\{\s*)?(?:\)|req(?:uest)?\b|headers\(\)|cookies\(\))/
+  # `const token = await verifyToken({ req })`, `getBearerToken(request)`: a
+  # token read off the request object itself. A token taken from a field
+  # (`findResetToken(req.body.token)`) is one being redeemed, not the caller's.
+  TOKEN_CHECK = /\b([A-Za-z_$][\w$]*)\s*=\s*(?:await\s+)?([\w$.]*Token\w*)\s*\(\s*(?:\{\s*)?req(?:uest)?\s*[,})]/
+  # Token callees that mint or redeem one rather than check the caller's.
+  TOKEN_MINT = /(?:\A|\.)(?:generate|create|issue|sign|consume|find|reset|new|make|send|revoke)[A-Z]/
   # A read of the submitted body. With a password in it, the helper is a login.
   BODY_READ  = /\.\s*(?:json|formData|text)\s*\(|\breq(?:uest)?\s*\.\s*body\b/
   CREDENTIAL = /password|credential/i
@@ -180,7 +191,8 @@ class NextjsAuthTagger < FrameworkTagger
           break unless status
           throws = code[j..i].any?(&.matches?(/\bthrow\b/))
           carrier = code[(j + 1)..i].compact_map(&.match(CARRIER).try(&.[1])).first?
-          return Refusal.new(code[j].strip.rchop('{').strip, status, throws, enclosing_conditions(code, j), carrier)
+          condition = code[j].includes?("typeof") ? typed_code(raw[j]? || code[j]) : code[j]
+          return Refusal.new(condition.strip.rchop('{').strip, status, throws, enclosing_conditions(code, j), carrier)
         end
         # Nor is an `else` branch of one above it.
         break if j < i && stripped.matches?(ELSE_BRANCH)
@@ -194,7 +206,8 @@ class NextjsAuthTagger < FrameworkTagger
     return true if text.matches?(SESSION_DENIED) || secret_list_denied?(text, raw[j]? || "")
     return true if text.matches?(/\bif\s*\(/) && (raw[j]? || "").matches?(SECRET_TEMPLATE)
     # `if (!auth)` where `auth` was set, above it, from a check of the request.
-    name = text.match(NEGATED_VALUE).try(&.[1]) || return false
+    typeof_hit = text.includes?("typeof") ? typed_code(raw[j]? || "").match(TYPEOF_DENIED) : nil
+    name = (text.match(NEGATED_VALUE) || typeof_hit).try(&.[1]) || return false
     (at = callers[name]?) ? at < j : false
   end
 
@@ -202,10 +215,18 @@ class NextjsAuthTagger < FrameworkTagger
   private def caller_assignments(code : Array(String), path : String?) : Hash(String, Int32)
     found = {} of String => Int32
     code.each_with_index do |text, i|
-      next unless text.includes?('=') && (m = text.match(CALLER_CHECK))
-      found[m[1]] ||= i if caller_check_callee?(m[2], path)
+      next unless text.includes?('=')
+      m = text.match(CALLER_CHECK) || text.match(TOKEN_CHECK).try { |t| t unless t[2].matches?(TOKEN_MINT) }
+      found[m[1]] ||= i if m && caller_check_callee?(m[2], path)
     end
     found
+  end
+
+  # `line` as code, like `code_only`, but keeping a `"string"` literal so a
+  # `typeof` test still names its type. A literal holding one (a template
+  # quoting `typeof x === "string"`) is emptied whole.
+  private def typed_code(line : String) : String
+    Noir::CComments.strip(line, quotes: %("'`)).gsub(STRING_LITERAL) { |lit| lit[1...-1] == "string" ? %("string") : %("") }
   end
 
   @caller_checks = Hash(Tuple(String, String), Bool).new
