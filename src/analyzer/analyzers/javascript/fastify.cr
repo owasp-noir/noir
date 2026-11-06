@@ -104,16 +104,10 @@ module Analyzer::Javascript
         # never a real config — issue #1903).
         unless Noir::JSRouteExtractor.test_stub_only?(path, content) ||
                Noir::JSRouteExtractor.minified_content?(content)
-          # A file registered from another file is served under that
-          # register's prefix(es), which the shared extractor applied above.
-          mounts = CodeLocator.instance.all(ExpressConstants.file_key(Noir::PathScope.expand(path)))
           autoload_prefixes.each do |autoload_prefix|
-            (mounts.empty? ? [""] : mounts).each do |mount|
-              prefix = Noir::URLPath.join(autoload_prefix, mount)
-              extract_route_configs(path, content, result, recorded, include_callee, prefix, facts)
-              if has_query_method
-                extract_query_shorthand_routes(path, content, result, recorded, include_callee, prefix, facts)
-              end
+            extract_route_configs(path, content, result, recorded, include_callee, autoload_prefix, facts)
+            if has_query_method
+              extract_query_shorthand_routes(path, content, result, recorded, include_callee, autoload_prefix, facts)
             end
           end
         end
@@ -171,7 +165,11 @@ module Analyzer::Javascript
       plugin_ranges : Array(Tuple(Int32, Int32, String)),
       route_configs : Array(FastifyRouteConfig),
       query_calls : Array(FastifyQueryCall),
-      schema_params_by_line : Hash(Int32, Array(Param))
+      schema_params_by_line : Hash(Int32, Array(Param)),
+      # Top-level functions by name with their byte range: a plugin another
+      # file registers by name (`register(usersRouter, { prefix })`) carries
+      # its prefix on that name.
+      function_ranges : Array(Tuple(String, Int32, Int32))
 
     @@memo = Hash(UInt64, FastifyFileFacts).new
     @@memo_mutex = Mutex.new
@@ -193,10 +191,16 @@ module Analyzer::Javascript
       route_configs = [] of FastifyRouteConfig
       query_calls = [] of FastifyQueryCall
       schema_params_by_line = Hash(Int32, Array(Param)).new
+      function_ranges = [] of Tuple(String, Int32, Int32)
 
       Noir::TreeSitter.parse_js_family(source, path) do |root|
         declarations = Hash(String, LibTreeSitter::TSNode).new
         collect_top_level_declarations(root, source, declarations)
+        declarations.each do |name, decl|
+          decl = Noir::TreeSitter.unwrap_expression(decl)
+          next unless {"arrow_function", "function_expression", "function_declaration"}.includes?(Noir::TreeSitter.node_type(decl))
+          function_ranges << {name, LibTreeSitter.ts_node_start_byte(decl).to_i, LibTreeSitter.ts_node_end_byte(decl).to_i}
+        end
 
         Noir::TreeSitter.walk(root) do |node|
           next unless Noir::TreeSitter.node_type(node) == "call_expression"
@@ -442,7 +446,7 @@ module Analyzer::Javascript
       end
 
       autoload_roots.sort_by! { |r| -r.path.size }
-      FastifyFileFacts.new(autoload_roots, plugin_ranges, route_configs, query_calls, schema_params_by_line)
+      FastifyFileFacts.new(autoload_roots, plugin_ranges, route_configs, query_calls, schema_params_by_line, function_ranges)
     end
 
     private def collect_autoload_roots : Array(AutoloadRoot)
@@ -515,6 +519,22 @@ module Analyzer::Javascript
     # `register(async (i) => { i.register(async (v2) => { … }, { prefix: '/v2' }) }, { prefix: '/internal' })`
     # serves the inner routes under `/internal/v2`. A body seen twice (a named
     # plugin registered under several prefixes) keeps its first prefix.
+    # The cross-file mount prefixes a route at `offset` is served under, as
+    # the shared extractor applies them: those of the innermost top-level
+    # function another file registers by name, else the file's own.
+    private def cross_file_mounts_at(path : String, facts : FastifyFileFacts, offset : Int32) : Array(String)
+      locator = CodeLocator.instance
+      file = Noir::PathScope.expand(path)
+      facts.function_ranges.select { |_, open, close| open <= offset <= close }
+        .sort_by! { |_, open, close| close - open }
+        .each do |name, _, _|
+          mounts = locator.all(ExpressConstants.function_key(file, name)).reject(&.empty?)
+          return mounts unless mounts.empty?
+        end
+      mounts = locator.all(ExpressConstants.file_key(file))
+      mounts.empty? ? [""] : mounts
+    end
+
     private def plugin_prefix_at(ranges : Array(Tuple(Int32, Int32, String)), offset : Int32) : String
       ranges.select { |open_brace, close_brace, _| offset >= open_brace && offset <= close_brace }
         .uniq! { |open_brace, close_brace, _| {open_brace, close_brace} }
@@ -569,27 +589,30 @@ module Analyzer::Javascript
         end
 
         plugin_prefix = plugin_prefix_at(prefix_ranges, qc.call_start)
-        url = plugin_prefix.empty? ? qc.raw_url : Noir::URLPath.join(plugin_prefix, qc.raw_url)
-        url = Noir::URLPath.join(autoload_prefix, url) unless autoload_prefix.empty?
+        local_url = plugin_prefix.empty? ? qc.raw_url : Noir::URLPath.join(plugin_prefix, qc.raw_url)
 
-        next unless recorded.add?("QUERY #{url}")
+        cross_file_mounts_at(path, ffacts, qc.call_start).each do |mount|
+          prefix = Noir::URLPath.join(autoload_prefix, mount)
+          url = prefix.empty? ? local_url : Noir::URLPath.join(prefix, local_url)
+          next unless recorded.add?("QUERY #{url}")
 
-        endpoint = Endpoint.new(url, "QUERY")
-        endpoint.details = Details.new(PathInfo.new(path, qc.line))
+          endpoint = Endpoint.new(url, "QUERY")
+          endpoint.details = Details.new(PathInfo.new(path, qc.line))
 
-        # Extract path parameters from URL
-        url.scan(/:(\w+)/) do |pm|
-          next unless pm.size > 0
-          param = Param.new(pm[1], "", "path")
-          endpoint.push_param(param)
+          # Extract path parameters from URL
+          url.scan(/:(\w+)/) do |pm|
+            next unless pm.size > 0
+            param = Param.new(pm[1], "", "path")
+            endpoint.push_param(param)
+          end
+
+          qc.body_params.each do |p|
+            endpoint.push_param(p)
+          end
+          attach_js_callees(endpoint, qc.callees)
+
+          result << endpoint
         end
-
-        qc.body_params.each do |p|
-          endpoint.push_param(p)
-        end
-        attach_js_callees(endpoint, qc.callees)
-
-        result << endpoint
       end
     end
 
@@ -603,28 +626,31 @@ module Analyzer::Javascript
 
       ffacts.route_configs.each do |rc|
         plugin_prefix = plugin_prefix_at(prefix_ranges, rc.call_start)
-        url = plugin_prefix.empty? ? rc.url : Noir::URLPath.join(plugin_prefix, rc.url)
-        url = Noir::URLPath.join(autoload_prefix, url) unless autoload_prefix.empty?
+        local_url = plugin_prefix.empty? ? rc.url : Noir::URLPath.join(plugin_prefix, rc.url)
 
-        rc.methods.each do |http_method|
-          method_up = http_method.upcase
-          next unless recorded.add?("#{method_up} #{url}")
+        cross_file_mounts_at(path, ffacts, rc.call_start).each do |mount|
+          prefix = Noir::URLPath.join(autoload_prefix, mount)
+          url = prefix.empty? ? local_url : Noir::URLPath.join(prefix, local_url)
+          rc.methods.each do |http_method|
+            method_up = http_method.upcase
+            next unless recorded.add?("#{method_up} #{url}")
 
-          endpoint = Endpoint.new(url, method_up)
-          endpoint.details = Details.new(PathInfo.new(path, rc.line))
+            endpoint = Endpoint.new(url, method_up)
+            endpoint.details = Details.new(PathInfo.new(path, rc.line))
 
-          url.scan(/:(\w+)/) do |pm|
-            next unless pm.size > 0
-            param = Param.new(pm[1], "", "path")
-            endpoint.push_param(param)
+            url.scan(/:(\w+)/) do |pm|
+              next unless pm.size > 0
+              param = Param.new(pm[1], "", "path")
+              endpoint.push_param(param)
+            end
+
+            rc.body_params.each do |bp|
+              endpoint.push_param(bp)
+            end
+            attach_js_callees(endpoint, rc.callees)
+
+            result << endpoint
           end
-
-          rc.body_params.each do |bp|
-            endpoint.push_param(bp)
-          end
-          attach_js_callees(endpoint, rc.callees)
-
-          result << endpoint
         end
       end
     end

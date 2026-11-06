@@ -217,6 +217,10 @@ module Analyzer::Javascript
     REGISTER_PREFIX_KEY_RE = /\bprefix(?:['"]?\s*:|\s*[,}])/
     REGISTER_MODULE_RE     = /\A(?:await\s+)?(?:require|import)\s*\(\s*['"]([^'"]+)['"]\s*\)(?:\.default)?\z/
     REGISTER_BINDING_RE    = /\A([A-Za-z_$][\w$]*)(?:\.([A-Za-z_$][\w$]*))?\z/
+    # A statement that only calls a function on one bare argument.
+    DIRECT_PLUGIN_CALL_RE = /(?:^|[;{])[ \t]*(?:await\s+)?([A-Za-z_$][\w$]*)\s*\(\s*[A-Za-z_$][\w$]*\s*\)\s*(?:;|$)/m
+    # A plugin written inline: `async (v1) => {`, `function (f, o, done) {`, `f => {`.
+    INLINE_PLUGIN_RE = /\A\s*(?:async\s+)?(?:function\b|\([^)]*\)\s*(?::[^=]*)?=>|[A-Za-z_$][\w$]*\s*=>)/
     # restify-router: `usersRouter.applyRoutes(server, '/users')` and the
     # nested `router.add('/v1', v1Router)`.
     APPLY_ROUTES_RE = /((?:require\s*\(\s*['"][^'"]+['"]\s*\))|[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)?)\s*\.applyRoutes\s*\(\s*[\w$.]+\s*,\s*(?:['"]([^'"]+)['"]|`([^`$]+)`)/
@@ -242,11 +246,10 @@ module Analyzer::Javascript
     # a tree whose roots are the files nothing mounts. Same-file children are
     # the route extractor's job.
     private def scan_register_mounts(main_files : Array(String), locator : CodeLocator)
-      # from_file => [{prefix, target key, target module file}]
-      edges = Hash(String, Array(Tuple(String, Noir::LocatorKey(Array(String)), String))).new
+      edges = Hash(String, Array(PluginEdge)).new
       main_files.each do |file|
         content = read_source(file)
-        next unless @framework.in?(:fastify, :hapi) ? content.includes?(".register") || (@framework == :hapi && content.matches?(GLUE_PLUGIN_LIST_RE)) : content.includes?(".applyRoutes") || content.includes?(".add")
+        next unless @framework.in?(:fastify, :hapi) ? content.includes?(".register") || (@framework == :hapi && content.matches?(GLUE_PLUGIN_LIST_RE)) || (@framework == :fastify && direct_plugin_calls?(content)) : content.includes?(".applyRoutes") || content.includes?(".add")
         # A test app that mounts the router under a prefix of its own is not
         # a production mount.
         next if Noir::JSRouteExtractor.test_file?(file, content)
@@ -256,12 +259,23 @@ module Analyzer::Javascript
         content = Noir::JSRouteExtractor.strip_js_comments(content)
         imports = nil.as(NamedTuple(require_map: Hash(String, String), function_map: Hash(String, String), var_to_function: Hash(String, String))?)
 
-        each_plugin_mount(content) do |plugin, prefix|
+        each_plugin_mount(content) do |plugin, prefix, origin, direct|
           # Fastify: a register without a prefix still serves the child under
           # the parent's own prefix, so it is an edge of the tree too.
           next unless mount_prefix?(prefix) || (prefix.empty? && @framework == :fastify)
 
           plugin = plugin.strip
+          if direct
+            # `registerUsers(server)`: only a function that routes or
+            # registers on the parameter it is handed is a plugin, and only
+            # its own registrations are walked under this prefix.
+            imports ||= parse_imports(content, file)
+            target_file = imports[:function_map][plugin]? || next
+            name = exported_name(file, plugin)
+            plugin_function_spans(target_file, name) || next
+            (edges[Noir::PathScope.expand(file)] ||= [] of PluginEdge) << PluginEdge.new(prefix, ExpressConstants.function_key(target_file, name), target_file, origin, name)
+            next
+          end
           target = if module_match = plugin.match(REGISTER_MODULE_RE)
                      resolve_require_path(file, module_match[1]).try { |t| {ExpressConstants.file_key(t), t} }
                    elsif spec = plugin.match(GLUE_PLUGIN_PATH_RE)
@@ -282,36 +296,74 @@ module Analyzer::Javascript
                      end
                    end
           next unless target
-          (edges[Noir::PathScope.expand(file)] ||= [] of Tuple(String, Noir::LocatorKey(Array(String)), String)) << {prefix, target[0], target[1]}
+          (edges[Noir::PathScope.expand(file)] ||= [] of PluginEdge) << PluginEdge.new(prefix, target[0], target[1], origin, nil)
         end
       rescue e : File::Error | IO::Error
         @logger.debug "Error scanning #{file} for plugin mounts (#{e.class}): #{e.message}"
       end
 
-      registered = edges.values.flat_map(&.map(&.[2])).to_set
-      visited = Set(Tuple(String, String)).new
+      registered = edges.values.flat_map { |list| list.reject(&.scope).map(&.target) }.to_set
+      # A module entered only through direct calls still runs its other
+      # registrations as a root; the spans those calls walk are theirs.
+      called = Hash(String, Array(Tuple(Int32, Int32))).new
+      edges.each_value do |list|
+        list.each do |edge|
+          name = edge.scope || next
+          plugin_function_spans(edge.target, name).try { |spans| (called[edge.target] ||= [] of Tuple(Int32, Int32)).concat(spans.map(&.[1])) }
+        end
+      end
+      visited = Set(Tuple(String, String, String?)).new
       edges.each_key do |root|
         next if registered.includes?(root)
-        descend_register_mounts(root, "", edges, locator, Set{root}, visited)
+        descend_register_mounts(root, "", edges, locator, Set{root}, visited, nil, called[root]?)
       end
+    end
+
+    # Only a file that names Fastify (`FastifyInstance`, a `fastify` param)
+    # hands its instance to a plugin by a plain call; any other module's
+    # `validate(input)` would cost an import resolution per file.
+    private def direct_plugin_calls?(content : String) : Bool
+      content.includes?("astify") && content.matches?(DIRECT_PLUGIN_CALL_RE)
     end
 
     # Yields each cross-file mount site as {child expression, prefix}.
     private def each_plugin_mount(content : String, &)
       if @framework == :fastify
+        # `register(async (v1) => { v1.register(users) }, { prefix: '/api/v1' })`:
+        # a register inside an inline plugin's body inherits that plugin's
+        # prefix. Byte ranges of the inline plugins' arguments, each with its
+        # full prefix (enclosing plugins included), in source order.
+        inline_plugins = [] of Tuple(Int32, Int32, String)
+        enclosing_prefix = ->(offset : Int32) do
+          inline_plugins.reverse_each { |open, close, prefix| return prefix if open <= offset <= close }
+          ""
+        end
         content.scan(REGISTER_CALL_RE) do |m|
-          args = extract_use_call_args(content, m.byte_end(0))
+          args_start = m.byte_end(0)
+          scanned = Noir::JSLiteralScanner.extract_paren_content_at_byte(content, args_start) || next
+          args = scanned.content
           plugin = first_top_level_argument(args)
           options = args[plugin.size..]
           prefix_match = options.match(REGISTER_PREFIX_RE)
-          unless prefix_match
-            # `{ prefix: someVariable }` is a prefix this scan cannot read.
-            yield plugin, "" unless options.matches?(REGISTER_PREFIX_KEY_RE)
+          # `{ prefix: someVariable }` is a prefix this scan cannot read.
+          next if !prefix_match && options.matches?(REGISTER_PREFIX_KEY_RE)
+          # Fastify adds the leading slash itself: `{ prefix: 'api/v1' }`.
+          prefix = prefix_match.try { |pm| pm[1]? || pm[2] } || ""
+          prefix = "/#{prefix}" unless prefix.empty? || prefix.starts_with?('/')
+          enclosing = enclosing_prefix.call(args_start)
+          prefix = Noir::URLPath.join(enclosing, prefix) unless enclosing.empty?
+          if plugin.matches?(INLINE_PLUGIN_RE)
+            inline_plugins << {args_start, scanned.end_pos, prefix} unless prefix.empty?
             next
           end
-          # Fastify adds the leading slash itself: `{ prefix: 'api/v1' }`.
-          prefix = prefix_match[1]? || prefix_match[2]
-          yield plugin, prefix.empty? || prefix.starts_with?('/') ? prefix : "/#{prefix}"
+          yield plugin, prefix, args_start, false
+        end
+        # `await registerUsersRouter(server)`: a plugin called directly on the
+        # instance adds its routes to that instance, under its prefix.
+        if direct_plugin_calls?(content)
+          content.scan(DIRECT_PLUGIN_CALL_RE) do |m|
+            yield m[1], enclosing_prefix.call(m.byte_begin(1)), m.byte_begin(1), true
+          end
         end
       elsif @framework == :hapi
         content.scan(REGISTER_CALL_RE) do |m|
@@ -320,17 +372,17 @@ module Analyzer::Javascript
           options_prefix = hapi_routes_prefix(args[first.size..])
           first = first.strip
           items = first.starts_with?('[') && first.ends_with?(']') ? split_at_top_level_commas(first[1...-1]) : [first]
-          each_hapi_plugin_item(items, options_prefix) { |plugin, prefix| yield plugin, prefix }
+          each_hapi_plugin_item(items, options_prefix) { |plugin, prefix| yield plugin, prefix, m.byte_begin(0), false }
         end
         content.scan(GLUE_PLUGIN_LIST_RE) do |m|
           open = m.end(0) - 1
           close = Noir::JSLiteralScanner.find_matching_bracket(content, open) || next
           items = split_at_top_level_commas(content[(open + 1)...close])
-          each_hapi_plugin_item(items, nil) { |plugin, prefix| yield plugin, prefix }
+          each_hapi_plugin_item(items, nil) { |plugin, prefix| yield plugin, prefix, m.byte_begin(0), false }
         end
       else
-        content.scan(APPLY_ROUTES_RE) { |m| yield m[1], m[2]? || m[3] }
-        content.scan(RESTIFY_ADD_RE) { |m| yield m[3], m[1]? || m[2] }
+        content.scan(APPLY_ROUTES_RE) { |m| yield m[1], m[2]? || m[3], m.byte_begin(0), false }
+        content.scan(RESTIFY_ADD_RE) { |m| yield m[3], m[1]? || m[2], m.byte_begin(0), false }
       end
     end
 
@@ -354,25 +406,110 @@ module Analyzer::Javascript
     end
 
     private def descend_register_mounts(file : String, parent : String,
-                                        edges : Hash(String, Array(Tuple(String, Noir::LocatorKey(Array(String)), String))),
+                                        edges : Hash(String, Array(PluginEdge)),
                                         locator : CodeLocator, on_path : Set(String),
-                                        visited : Set(Tuple(String, String)))
-      edges[file]?.try &.each do |prefix, key, target|
+                                        visited : Set(Tuple(String, String, String?)),
+                                        scope : Array(Tuple(Int32, Int32))? = nil,
+                                        excluded : Array(Tuple(Int32, Int32))? = nil)
+      edges[file]?.try &.each do |edge|
+        # Entered through a directly called function: that function's own
+        # registrations (and its same-file helpers'), not every plugin its
+        # module mounts.
+        next if scope && scope.none? { |from, to| from <= edge.origin <= to }
+        next if excluded && excluded.any? { |from, to| from <= edge.origin <= to }
+        target = edge.target
         next if on_path.includes?(target)
-        combined = prefix.empty? ? parent : Noir::URLPath.join(parent, prefix)
+        combined = edge.prefix.empty? ? parent : Noir::URLPath.join(parent, edge.prefix)
         # "" too: a plugin also registered unprefixed at the root keeps its
         # root URL next to the prefixes it inherits elsewhere. Pushed before
         # the memo: two named exports of one file are two keys.
-        push_prefix_to_locator(locator, key, combined, "Mapped plugin mount prefix: #{target} => #{combined}")
+        push_prefix_to_locator(locator, edge.key, combined, "Mapped plugin mount prefix: #{target} => #{combined}")
         # A file's own mounts walked once under a prefix are not walked
         # again: plugins registered from several parents would otherwise fan
         # out exponentially.
-        next unless visited.add?({target, combined})
+        next unless visited.add?({target, combined, edge.scope})
         on_path << target
-        descend_register_mounts(target, combined, edges, locator, on_path, visited)
+        inner = edge.scope.try { |name| plugin_function_spans(target, name) }
+        # A same-file helper the plugin hands its instance to registers on
+        # the same instance: its own routes take the prefix too.
+        inner.try &.each do |helper, _|
+          next if helper == edge.scope
+          push_prefix_to_locator(locator, ExpressConstants.function_key(target, helper), combined, "Mapped plugin helper prefix: #{target}:#{helper} => #{combined}")
+        end
+        descend_register_mounts(target, combined, edges, locator, on_path, visited, inner.try(&.map(&.[1])))
         on_path.delete(target)
       end
     end
+
+    # A cross-file plugin mount: `prefix` from the register site at byte
+    # `origin` of the mounting file. `scope` names the function a direct
+    # call (`registerUsers(server)`) entered, nil for a `register(...)`.
+    record PluginEdge, prefix : String, key : Noir::LocatorKey(Array(String)), target : String, origin : Int32, scope : String?
+
+    # `const name = async (server) => { … }` / `function name(server) { … }`
+    # in `file`, as the byte range of its body, when the body routes on,
+    # registers on, or hands on its first parameter (`server.route(`,
+    # `server.register(`, `registerUsers(server)`). Offsets index the
+    # comment-stripped source, as edge origins do.
+    PLUGIN_USE_OF_PARAM = ->(param : String) { /(?<![\w$.])#{Regex.escape(param)}\s*\.\s*(?:register|route|get|post|put|patch|delete|del|head|options|all)\s*[<(]|(?<![\w$.])[A-Za-z_$][\w$]*\s*\(\s*#{Regex.escape(param)}\s*[,)]/ }
+    # `registerLocal(server)` inside a plugin's body: a same-file function
+    # handed the plugin's instance.
+    HANDED_PARAM_CALL = ->(param : String) { /(?<![\w$.])([A-Za-z_$][\w$]*)\s*\(\s*#{Regex.escape(param)}\s*[,)]/ }
+    @plugin_function_spans = Hash(Tuple(String, String), Array(Tuple(String, Tuple(Int32, Int32)))?).new
+
+    # The body spans of plugin function `name` in `file` and of the same-file
+    # functions it hands its instance to, transitively, each with its name;
+    # nil when `name` is no plugin (see `find_function_body`).
+    private def plugin_function_spans(file : String, name : String) : Array(Tuple(String, Tuple(Int32, Int32)))?
+      key = {file, name}
+      return @plugin_function_spans[key] if @plugin_function_spans.has_key?(key)
+      @plugin_function_spans[key] = collect_plugin_function_spans(file, name)
+    end
+
+    private def collect_plugin_function_spans(file : String, name : String) : Array(Tuple(String, Tuple(Int32, Int32)))?
+      content = Noir::JSRouteExtractor.strip_js_comments(read_source(file))
+      first = find_function_body(content, name) || return
+      return unless content.byte_slice(first[0], first[1] - first[0] + 1).matches?(PLUGIN_USE_OF_PARAM.call(first[2]))
+      spans = [{name, {first[0], first[1]}}]
+      queue = [first]
+      seen = Set{name}
+      while body = queue.shift?
+        content.byte_slice(body[0], body[1] - body[0] + 1).scan(HANDED_PARAM_CALL.call(body[2])) do |m|
+          helper = m[1]
+          next unless seen.add?(helper)
+          found = find_function_body(content, helper) || next
+          spans << {helper, {found[0], found[1]}}
+          queue << found
+        end
+      end
+      spans
+    rescue File::Error | IO::Error
+      nil
+    end
+
+    # `const name = async (server) => { … }` / `function name(server) { … }`:
+    # its body's `{`, matching `}` and first parameter. A `{` counts only
+    # right after `=>` (or a function's `)`), past a return-type annotation;
+    # an expression body (`(s) => s.user`) has none.
+    private def find_function_body(content : String, name : String) : Tuple(Int32, Int32, String)?
+      escaped = Regex.escape(name)
+      arrow = true
+      head = content.match(/\b(?:const|let|var)\s+#{escaped}\s*(?::[^=]+)?=\s*(?:async\s+)?(\()\s*([A-Za-z_$][\w$]*)/)
+      unless head
+        arrow = false
+        head = content.match(/\b(?:const|let|var)\s+#{escaped}\s*(?::[^=]+)?=\s*(?:async\s+)?function\b[^(]*(\()\s*([A-Za-z_$][\w$]*)/) ||
+               content.match(/\bfunction\s+#{escaped}\s*(\()\s*([A-Za-z_$][\w$]*)/) || return
+      end
+      params_close = Noir::JSLiteralScanner.find_matching_paren_at_byte(content, head.byte_begin(1)) || return
+      rest = content.byte_slice(params_close + 1, {content.bytesize - params_close - 1, 256}.min)
+      lead = rest.match(arrow ? ARROW_BODY_START : FUNCTION_BODY_START) || return
+      open = params_close + 1 + lead.byte_end(0)
+      close = Noir::JSLiteralScanner.find_matching_brace_at_byte(content, open) || return
+      {open, close, head[2]}
+    end
+
+    ARROW_BODY_START    = /\A\s*(?::[^={};]*)?=>\s*(?=\{)/
+    FUNCTION_BODY_START = /\A\s*(?::[^={};]*)?(?=\{)/
 
     # The handler is the last argument: `onRequest(app)` / `onRequest({ region }, app)`.
     FIREBASE_APP_HANDLER = /(?:\A|,)\s*([A-Za-z_$][\w$]*)\s*\z/
@@ -940,7 +1077,7 @@ module Analyzer::Javascript
       end
 
       # Pattern: const { funcA, funcB: aliasB } = require('./path/to/file')
-      content.scan(/(?:const|let|var)\s*\{\s*([\s\S]*?)\s*\}\s*=\s*require\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |m|
+      content.scan(/(?:const|let|var)\s*\{\s*((?:[^{}]|\{(?:[^{}]|\{[^{}]*\})*\})*?)\s*\}\s*=\s*require\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |m|
         if m.size >= 3
           names = m[1]
           require_path = m[2]

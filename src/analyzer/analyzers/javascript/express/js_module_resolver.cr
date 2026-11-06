@@ -20,9 +20,13 @@ module Analyzer::Javascript
     def self.resolve(from_file : String, require_path : String, root : String) : String?
       is_relative = require_path.starts_with?(".")
       is_root_alias = require_path.starts_with?("@/") || require_path.starts_with?("~/")
-      return unless is_relative || is_root_alias
+      # `@app/server/routes/v1` through tsconfig `paths`.
+      alias_target = Noir::JSHandlerResolver.tsconfig_alias_target(from_file, require_path, root) unless is_relative || is_root_alias
+      return unless is_relative || is_root_alias || alias_target
 
-      resolved = if is_root_alias
+      resolved = if alias_target
+                   alias_target
+                 elsif is_root_alias
                    alias_path = require_path.starts_with?("@/") ? require_path.lchop("@/") : require_path.lchop("~/")
                    File.expand_path(alias_path, root)
                  else
