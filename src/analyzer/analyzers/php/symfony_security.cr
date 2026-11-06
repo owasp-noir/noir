@@ -25,7 +25,7 @@ module Analyzer::Php::SymfonySecurity
   # Only a role or an authentication level is certain to refuse an anonymous
   # caller; any other attribute is decided by an application voter, which
   # may grant it to anonymous callers (a default group, say).
-  CERTAIN_ATTRIBUTE_RE = /\A(?:ROLE_\w+|IS_AUTHENTICATED(?:_\w+)?)\z/
+  CERTAIN_ATTRIBUTE_RE = /\A(?:ROLE_\w+|IS_AUTHENTICATED(?:_\w+)?|IS_IMPERSONATOR|IS_REMEMBERED)\z/
   VOTER_NOTE           = " (an application voter or setting may grant anonymous callers)"
 
   def self.voter_note(attribute : String) : String
@@ -35,6 +35,7 @@ module Analyzer::Php::SymfonySecurity
   # Voter note for the `roles:` of an `access_control` rule; its `allow_if`
   # entry (prefixed `allow_if:`) carries its own note.
   def self.roles_note(roles : Array(String)) : String
+    return "" if roles.any?(&.includes?(VOTER_NOTE))
     roles.all? { |r| r.starts_with?("allow_if:") || r.matches?(CERTAIN_ATTRIBUTE_RE) } ? "" : VOTER_NOTE
   end
 

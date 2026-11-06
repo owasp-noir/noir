@@ -108,4 +108,16 @@ class LogController extends AbstractController
     {
         return $this->json([]);
     }
+
+    #[Route(path: '/b8/x', name: 'b8')]
+    public function b8()
+    {
+        return $this->json([]);
+    }
+
+    #[Route(path: '/imp/x', name: 'imp')]
+    public function imp()
+    {
+        return $this->json([]);
+    }
 }

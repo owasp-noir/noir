@@ -13,6 +13,8 @@ describe Analyzer::Php::SymfonySecurity do
     guard.call("is_granted('@x.y') and is_granted('@z')").to_s.should end_with(note)
     Analyzer::Php::SymfonySecurity.roles_note(["ROLE_A", "@p.q"]).should eq(note)
     Analyzer::Php::SymfonySecurity.roles_note(["ROLE_A", "IS_AUTHENTICATED_FULLY"]).should eq("")
+    Analyzer::Php::SymfonySecurity.roles_note(["IS_IMPERSONATOR", "IS_REMEMBERED"]).should eq("")
+    Analyzer::Php::SymfonySecurity.roles_note(["@v", "allow_if: is_granted('@w')" + note]).should eq("")
   end
 
   it "leaves an allow_if that can pass anonymously undecided" do
