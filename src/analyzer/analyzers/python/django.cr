@@ -10,6 +10,10 @@ module Analyzer::Python
     # Base path for the Django project
     @django_base_path : ::String = ""
     @visited_url_paths = Hash(String, Bool).new
+    # `{file, list, prefix}` of the imported url lists already followed,
+    # and the `{file, list}` being read (a list including itself).
+    @visited_url_lists = Set(Tuple(String, String, String)).new
+    @url_lists_in_progress = Set(Tuple(String, String)).new
     @django_app_config_path_cache = Hash(::String, ::String).new
     @visited_app_config_paths = Set(::String).new
 
@@ -473,7 +477,8 @@ module Analyzer::Python
       logger.debug "Extracting endpoints from #{django_urls.filepath}"
       endpoints = [] of Endpoint
       url_base_path = File.dirname(django_urls.filepath)
-      @visited_url_paths[django_urls.filepath] = true
+      own_urlpatterns = django_urls.list_name == "urlpatterns"
+      @visited_url_paths[django_urls.filepath] = true if own_urlpatterns
 
       # Prefer the detector-cached content over a fresh disk read; falls
       # back to File.read (same encoding: utf-8, invalid: :skip) when the
@@ -481,24 +486,39 @@ module Analyzer::Python
       # -> line-number math further down is unaffected.
       content = urlconf_source(django_urls.filepath)
       original_content = content
-      package_map = find_imported_modules(@django_base_path, url_base_path, content)
-      import_aliases = extract_python_import_aliases(original_content)
-      app_config_refs = extract_django_app_config_refs(original_content)
-      drf_router_registrations = extract_drf_router_registrations(content, django_urls.filepath)
-      urlpattern_lists = extract_urlpattern_lists(content)
+      parse = urlconf_parse(django_urls.filepath, url_base_path, content)
+      package_map = parse.package_map
+      import_aliases = parse.import_aliases
+      app_config_refs = parse.app_config_refs
+      drf_router_registrations = parse.drf_router_registrations
+      urlpattern_lists = parse.urlpattern_lists
       route_path = PathInfo.new(django_urls.filepath)
 
-      direct_router_endpoints = extract_drf_direct_router_endpoints(
-        django_urls,
-        original_content,
-        drf_router_registrations,
-        package_map,
-        import_aliases,
-        route_path
-      )
+      # A router appended to the module's `urlpatterns` belongs to that
+      # list, not to another list read from the same file.
+      direct_router_endpoints = if own_urlpatterns
+                                  extract_drf_direct_router_endpoints(
+                                    django_urls,
+                                    original_content,
+                                    drf_router_registrations,
+                                    package_map,
+                                    import_aliases,
+                                    route_path
+                                  )
+                                else
+                                  [] of Endpoint
+                                end
 
-      urlpatterns_contents = extract_urlpatterns_contents(original_content, urlpattern_lists)
-      return direct_router_endpoints if urlpatterns_contents.empty?
+      unresolved = [] of ::String
+      # Another list of the module: only the lines binding it are read.
+      candidates = own_urlpatterns ? nil : (parse.assigned[django_urls.list_name]? || [] of Int32)
+      urlpatterns_contents = extract_url_list_contents(original_content, urlpattern_lists, [django_urls.list_name], unresolved, parse.lines, candidates)
+      # `urlpatterns = common_patterns + ...` naming a list imported from
+      # another urlconf: that list, read in its own file.
+      imported_endpoints = unresolved.uniq.flat_map do |name|
+        imported_list_endpoints(django_urls, django_urls.prefix, name) || [] of Endpoint
+      end
+      return direct_router_endpoints + imported_endpoints if urlpatterns_contents.empty?
 
       urlpatterns_contents.each do |urlpatterns_content|
         list_line = list_start_line(original_content, urlpatterns_content)
@@ -533,6 +553,17 @@ module Analyzer::Python
             extract_endpoints_from_django_app_config(join_url_parts(django_urls.prefix, route).lchop("/"), app_config_path, entry_path).each do |endpoint|
               endpoints << endpoint
             end
+            next
+          end
+
+          if terms = include_concat_terms(view)
+            endpoints.concat(concat_include_endpoints(django_urls, route, terms, package_map, route_path, urlpattern_lists, import_aliases, drf_router_registrations))
+            next
+          end
+
+          if (list_name = extract_local_include_target(view)) && !urlpattern_lists.has_key?(list_name) &&
+             (imported = imported_list_endpoints(django_urls, "#{django_urls.prefix}#{route}", list_name))
+            endpoints.concat(imported)
             next
           end
 
@@ -601,7 +632,105 @@ module Analyzer::Python
       end
 
       endpoints.concat(direct_router_endpoints)
+      endpoints.concat(imported_endpoints)
       endpoints
+    end
+
+    # The routes of url list `name` when the urlconf behind `django_urls`
+    # imports it from another module (`from pretix.presale.urls import
+    # event_patterns`), mounted at `prefix`; nil when `name` is no such list.
+    #
+    # An empty list, or a name bound to something else (`router.urls`, a
+    # call, `None`), is nil too, so the caller keeps its own reading of the
+    # entry. `[]` means the list was already read under this prefix.
+    private def imported_list_endpoints(django_urls : DjangoUrls, prefix : ::String, name : ::String) : Array(Endpoint)?
+      return unless name.matches?(/\A[A-Za-z_]\w*\z/)
+      file, list = (@imported_symbols[django_urls.filepath] ||= Noir::ImportGraph::Python.find_imported_symbols(@django_base_path, django_urls.filepath, urlconf_source(django_urls.filepath)))[name]? || return
+      return if list.empty? || file == django_urls.filepath
+      return unless urlconf_parse(file, File.dirname(file), urlconf_source(file)).assigned.has_key?(list)
+      # `from .presale.urls import urlpatterns as presale_patterns`: that
+      # module, read once like any included urlconf.
+      if list == "urlpatterns"
+        return [] of Endpoint if @visited_url_paths.has_key?(file)
+      else
+        return [] of Endpoint if @url_lists_in_progress.includes?({file, list})
+        return [] of Endpoint unless @visited_url_lists.add?({file, list, prefix})
+      end
+      @url_lists_in_progress << {file, list}
+      begin
+        endpoints = extract_endpoints(DjangoUrls.new(prefix, file, django_urls.basepath, list))
+      ensure
+        @url_lists_in_progress.delete({file, list})
+      end
+      return if endpoints.empty?
+      endpoints.each { |endpoint| append_code_path(endpoint.details, PathInfo.new(file)) }
+      endpoints
+    end
+
+    # A urlconf module's parse, shared by every list read from it.
+    private record UrlconfParse,
+      lines : Array(::String),
+      # Line indexes binding each name: `name = ...`, `name: T = ...`,
+      # `name += ...`, `name.extend(...)`.
+      assigned : Hash(::String, Array(Int32)),
+      package_map : Hash(::String, Tuple(::String, Int32)),
+      import_aliases : Hash(::String, ::String),
+      app_config_refs : Hash(::String, ::String),
+      drf_router_registrations : Hash(::String, Array(DjangoDrfRegistration)),
+      urlpattern_lists : Hash(::String, ::String)
+
+    ASSIGNED_NAME_RE = /\A\s*([A-Za-z_]\w*)\s*(?::[^=\n]+)?(?:\+?=|\.\s*extend\s*\()/
+    @urlconf_parses = Hash(Tuple(::String, ::String), UrlconfParse).new
+
+    private def urlconf_parse(path : ::String, url_base_path : ::String, content : ::String) : UrlconfParse
+      @urlconf_parses[{@django_base_path, path}] ||= begin
+        lines = content.split("\n")
+        assigned = Hash(::String, Array(Int32)).new
+        lines.each_with_index do |line, idx|
+          if m = line.match(ASSIGNED_NAME_RE)
+            (assigned[m[1]] ||= [] of Int32) << idx
+          end
+        end
+        UrlconfParse.new(lines, assigned,
+          find_imported_modules(@django_base_path, url_base_path, content),
+          extract_python_import_aliases(content),
+          extract_django_app_config_refs(content),
+          extract_drf_router_registrations(content, path),
+          extract_urlpattern_lists(content))
+      end
+    end
+
+    # The routes of each term of a concatenating include, mounted at
+    # `mount` under `django_urls`: an inline `[...]`, a list of this file,
+    # or one it imports.
+    private def concat_include_endpoints(django_urls : DjangoUrls, mount : ::String, terms : Array(::String),
+                                         package_map, route_path : PathInfo, urlpattern_lists : Hash(::String, ::String),
+                                         import_aliases : Hash(::String, ::String),
+                                         drf_router_registrations : Hash(::String, Array(DjangoDrfRegistration))) : Array(Endpoint)
+      terms.flat_map do |term|
+        content = term.starts_with?('[') ? term : urlpattern_lists[term]?
+        if content
+          extract_local_urlpattern_endpoints(django_urls, mount, content, package_map, route_path, urlpattern_lists, import_aliases, drf_router_registrations)
+        else
+          imported_list_endpoints(django_urls, join_url_parts(django_urls.prefix, mount).lchop("/"), term) || [] of Endpoint
+        end
+      end
+    end
+
+    # The `+` terms of an `include(...)` argument that concatenates lists
+    # (`include((locale_patterns + [path(...)], "presale"))`); nil for any
+    # other include.
+    private def include_concat_terms(view : ::String) : Array(::String)?
+      open = view.index(/\binclude\s*\(/) || return
+      inner = view[(view.index('(', open) || return) + 1..].strip
+      inner = inner.lchop('(').strip if inner.starts_with?('(')
+      first = split_python_arguments(inner).first?.try(&.strip) || return
+      while first.ends_with?(')') && first.count('(') < first.count(')')
+        first = first.rchop(')').strip
+      end
+      terms = split_python_expression_terms(first).map(&.strip).reject(&.empty?)
+      return unless terms.size > 1
+      terms if terms.all? { |term| term.starts_with?('[') || term.matches?(/\A[A-Za-z_]\w*\z/) }
     end
 
     # `path(f"{prefix}admin/login/", view)`: an f-string route interpolating
@@ -654,38 +783,41 @@ module Analyzer::Python
 
     private def extract_url_list_contents(content : ::String,
                                           urlpattern_lists : Hash(::String, ::String),
-                                          list_names : Array(::String)) : Array(::String)
+                                          list_names : Array(::String),
+                                          unresolved : Array(::String)? = nil,
+                                          lines : Array(::String) = content.split("\n"),
+                                          candidates : Array(Int32)? = nil) : Array(::String)
       contents = [] of ::String
-      lines = content.split("\n")
       # Compile once per call; interpolated regex literals inside the
       # per-line loop would be recompiled on every line.
       list_name_re = list_names.map { |name| Regex.escape(name) }.join("|")
-      assign_check_re = /^\s*(?:#{list_name_re})\s*=/
-      assign_capture_re = /^\s*(#{list_name_re})\s*=\s*(.+)$/m
+      assign_check_re = /^\s*(?:#{list_name_re})\s*(?::[^=\n]+)?=/
+      assign_capture_re = /^\s*(#{list_name_re})\s*(?::[^=\n]+)?=\s*(.+)$/m
       bindings = Hash(::String, ::String).new
       append_check_re = /^\s*(?:#{list_name_re})\s*\+=/
       append_capture_re = /^\s*(?:#{list_name_re})\s*\+=\s*(.+)$/m
       extend_check_re = /^\s*(?:#{list_name_re})\s*\.\s*extend\s*\(/
       extend_capture_re = /^\s*(?:#{list_name_re})\s*\.\s*extend\s*\((.*)\)\s*$/m
 
-      lines.each_with_index do |line, index|
+      (candidates || (0...lines.size)).each do |index|
+        line = lines[index]
         if line.matches?(assign_check_re)
           logical_line = collect_python_expression(lines, index, line)
           if assignment_match = logical_line.match(assign_capture_re)
             name = assignment_match[1]
             expression = inline_previous_binding(assignment_match[2], name, bindings[name]?)
             bindings[name] = expression if expression.lstrip.starts_with?('[')
-            add_urlpattern_expression_contents(contents, expression, urlpattern_lists, lines)
+            add_urlpattern_expression_contents(contents, expression, urlpattern_lists, lines, unresolved)
           end
         elsif line.matches?(append_check_re)
           logical_line = collect_python_expression(lines, index, line)
           if append_match = logical_line.match(append_capture_re)
-            add_urlpattern_expression_contents(contents, append_match[1], urlpattern_lists, lines)
+            add_urlpattern_expression_contents(contents, append_match[1], urlpattern_lists, lines, unresolved)
           end
         elsif line.matches?(extend_check_re)
           logical_line = collect_python_expression(lines, index, line)
           if extend_match = logical_line.match(extend_capture_re)
-            add_urlpattern_expression_contents(contents, extend_match[1], urlpattern_lists, lines)
+            add_urlpattern_expression_contents(contents, extend_match[1], urlpattern_lists, lines, unresolved)
           end
         end
       end
@@ -709,7 +841,8 @@ module Analyzer::Python
     private def add_urlpattern_expression_contents(contents : Array(::String),
                                                    expression : ::String,
                                                    urlpattern_lists : Hash(::String, ::String),
-                                                   lines : Array(::String)) : Nil
+                                                   lines : Array(::String),
+                                                   unresolved : Array(::String)? = nil) : Nil
       split_python_expression_terms(expression).each do |term|
         term = term.strip
         next if term.empty? || term == "urlpatterns"
@@ -720,7 +853,7 @@ module Analyzer::Python
         if group = term.match(URL_GROUP_FLATTEN_RE)
           group_name = group[1]? || group[2]
           url_group_members(lines, group_name).each do |member|
-            add_urlpattern_expression_contents(contents, member, urlpattern_lists, lines) unless member == group_name
+            add_urlpattern_expression_contents(contents, member, urlpattern_lists, lines, unresolved) unless member == group_name
           end
           next
         end
@@ -742,6 +875,8 @@ module Analyzer::Python
 
         if pattern_content = urlpattern_lists[identifier_match[1]]?
           contents.concat(pattern_content.split(URL_LIST_JOIN))
+        else
+          unresolved.try &.<< identifier_match[1]
         end
       end
     end
@@ -1582,6 +1717,14 @@ module Analyzer::Python
       include_match = view.match(/\binclude\s*\(\s*(?:\(\s*)?([A-Za-z_][A-Za-z0-9_]*)\b/)
       return unless include_match
 
+      # `include((pretix.control.urls, "control"))` after `import
+      # pretix.control.urls`: the module that dotted name binds.
+      if (dotted = view.match(/\binclude\s*\(\s*(?:\(\s*)?([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+)\s*[,)]/)) &&
+         (target = (@imported_symbols[urlconf_path] ||= Noir::ImportGraph::Python.find_imported_symbols(@django_base_path, urlconf_path, read_file_content(urlconf_path)))[dotted[1]]?) &&
+         target[1].empty? && File.file?(target[0])
+        return target[0]
+      end
+
       target_name = include_match[1]
       return imported_module_urls(target_name, urlconf_path) if view.includes?("#{target_name}.urls")
       imported = package_map[target_name]?
@@ -1675,6 +1818,17 @@ module Analyzer::Python
           extract_local_urlpattern_endpoints(django_urls, nested_mount, inline_patterns, package_map, route_path, urlpattern_lists, import_aliases, drf_router_registrations, seen).each do |endpoint|
             endpoints << endpoint
           end
+          next
+        end
+
+        if terms = include_concat_terms(view)
+          endpoints.concat(concat_include_endpoints(django_urls, nested_mount, terms, package_map, route_path, urlpattern_lists, import_aliases, drf_router_registrations))
+          next
+        end
+
+        if (list_name = extract_local_include_target(view)) && !urlpattern_lists.has_key?(list_name) &&
+           (imported = imported_list_endpoints(django_urls, join_url_parts(django_urls.prefix, nested_mount).lchop("/"), list_name))
+          endpoints.concat(imported)
           next
         end
 
@@ -3600,8 +3754,11 @@ module Analyzer::Python
     struct DjangoUrls
       include JSON::Serializable
       property prefix, filepath, basepath
+      # The url list read from the file: `urlpatterns`, or a list another
+      # urlconf imports by name (`from pretix.urls import common_patterns`).
+      property list_name : ::String
 
-      def initialize(@prefix : ::String, @filepath : ::String, @basepath : ::String)
+      def initialize(@prefix : ::String, @filepath : ::String, @basepath : ::String, @list_name : ::String = "urlpatterns")
         if !File.directory? @basepath
           raise "The basepath for DjangoUrls (#{@basepath}) does not exist or is not a directory."
         end
