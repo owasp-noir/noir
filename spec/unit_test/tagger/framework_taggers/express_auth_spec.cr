@@ -612,6 +612,61 @@ describe "ExpressAuthTagger" do
     FileUtils.rm_rf(tmpdir)
   end
 
+  it "counts a middleware that creates a 403 error for a missing caller, not for bad input" do
+    tmpdir = File.tempname("express_error_factory")
+    Dir.mkdir_p(tmpdir)
+    mw = File.join(tmpdir, "middlewares.js")
+    app_js = File.join(tmpdir, "app.js")
+    File.write(mw, [
+      "export function masterOnly(req, res, next) {",
+      "  if (!req.auth.isMaster) {",
+      "    const error = createHttpError(403, 'master key required');",
+      "    res.status(error.status);",
+      "    res.end('no');",
+      "    return;",
+      "  }",
+      "  next();",
+      "}",
+      "export function validateBody(req, res, next) {",
+      "  if (!req.body.name) {",
+      "    const error = createHttpError(403, 'name required');",
+      "    res.status(error.status);",
+      "    res.end('no');",
+      "    return;",
+      "  }",
+      "  next();",
+      "}",
+    ].join("\n"))
+    File.write(app_js, [
+      "import * as mw from './middlewares';",
+      "const router = express.Router();",
+      "router.delete('/purge', mw.masterOnly, (req, res) => res.json({}));",
+      "router.post('/items', mw.validateBody, (req, res) => res.json({}));",
+    ].join("\n"))
+
+    noir_options = create_test_options
+    noir_options["base"] = YAML::Any.new(tmpdir)
+    locator = CodeLocator.instance
+    locator.register_path(app_js)
+    locator.register_path(mw)
+    previous_bases = locator.scan_base_paths
+    locator.scan_base_paths = [tmpdir]
+    Noir::JSHandlerResolver.reset
+
+    purge = Endpoint.new("/purge", "DELETE", [] of Param, Details.new(PathInfo.new(app_js, 3)))
+    items = Endpoint.new("/items", "POST", [] of Param, Details.new(PathInfo.new(app_js, 4)))
+    begin
+      ExpressAuthTagger.new(noir_options).perform([purge, items])
+    ensure
+      locator.scan_base_paths = previous_bases
+    end
+
+    purge.tags.map(&.name).should eq(["auth"])
+    items.tags.should be_empty
+  ensure
+    FileUtils.rm_rf(tmpdir) if tmpdir
+  end
+
   describe "basic auth and reply helpers in a middleware definition" do
     base = File.expand_path("../../../functional_test/fixtures/javascript/express_basic_auth", __DIR__)
     server = "#{base}/server.js"

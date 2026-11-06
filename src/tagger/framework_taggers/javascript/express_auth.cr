@@ -557,9 +557,13 @@ class ExpressAuthTagger < FrameworkTagger
     hits.concat(basic_auth_runs(code, source)) if source
     # `if (!req.session.userId) return sendError(res, 403, …)`: a helper's
     # 403 counts when the branch it is in is about a missing caller.
-    code.scan(HELPER_FORBIDDEN) do |m|
-      if enclosing_conditions(code, m.begin(0)).any?(&.matches?(MISSING_CALLER))
-        hits << {m.begin(0), "#{m[0]})"}
+    # `if (!req.auth.isMaster) throw createSanitizedHttpError(403, …)`: an
+    # error factory handed a literal 403, in the same kind of branch.
+    [HELPER_FORBIDDEN, ERROR_FACTORY_FORBIDDEN].each do |refusal|
+      code.scan(refusal) do |m|
+        if enclosing_conditions(code, m.begin(0)).any?(&.matches?(MISSING_CALLER))
+          hits << {m.begin(0), "#{m[0]})"}
+        end
       end
     end
     hits.sort_by!(&.[0]).each do |at, label|
@@ -583,7 +587,8 @@ class ExpressAuthTagger < FrameworkTagger
   # caller without credentials, under the conditions around the *run*:
   # one built and never run, or a local `basicAuth({ user, pass })` that
   # builds an outbound header, refuses nothing.
-  HELPER_FORBIDDEN = /\b[A-Za-z_$][\w$]*\s*\(\s*(?:res|response)\s*,\s*403\b/
+  HELPER_FORBIDDEN        = /\b[A-Za-z_$][\w$]*\s*\(\s*(?:res|response)\s*,\s*403\b/
+  ERROR_FACTORY_FORBIDDEN = /\b[A-Za-z_$][\w$]*(?:Error|Err)\s*\(\s*40[13]\s*,/
   # `!req.user`, `!req.session.userId`, `!req.session`: no caller. Not
   # `!req.session.cart`, a session without a cart.
   MISSING_CALLER = /!\s*(?:req|request)\s*\.\s*(?:(?:session\s*\??\.\s*)?(?:user\w*|uid|account\w*|auth\w*|token\w*|logged\w*|isAuthenticated|passport|identity|principal)\b|session\s*(?:\)|\|\||&&))/
