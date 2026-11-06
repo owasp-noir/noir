@@ -217,6 +217,10 @@ module Analyzer::Javascript
     REGISTER_PREFIX_KEY_RE = /\bprefix(?:['"]?\s*:|\s*[,}])/
     REGISTER_MODULE_RE     = /\A(?:await\s+)?(?:require|import)\s*\(\s*['"]([^'"]+)['"]\s*\)(?:\.default)?\z/
     REGISTER_BINDING_RE    = /\A([A-Za-z_$][\w$]*)(?:\.([A-Za-z_$][\w$]*))?\z/
+    # A statement that only calls a function on one bare argument.
+    DIRECT_PLUGIN_CALL_RE = /(?:^|[;{])[ \t]*(?:await\s+)?([A-Za-z_$][\w$]*)\s*\(\s*[A-Za-z_$][\w$]*\s*\)\s*(?:;|$)/m
+    # A plugin written inline: `async (v1) => {`, `function (f, o, done) {`, `f => {`.
+    INLINE_PLUGIN_RE = /\A\s*(?:async\s+)?(?:function\b|\([^)]*\)\s*(?::[^=]*)?=>|[A-Za-z_$][\w$]*\s*=>)/
     # restify-router: `usersRouter.applyRoutes(server, '/users')` and the
     # nested `router.add('/v1', v1Router)`.
     APPLY_ROUTES_RE = /((?:require\s*\(\s*['"][^'"]+['"]\s*\))|[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)?)\s*\.applyRoutes\s*\(\s*[\w$.]+\s*,\s*(?:['"]([^'"]+)['"]|`([^`$]+)`)/
@@ -246,7 +250,7 @@ module Analyzer::Javascript
       edges = Hash(String, Array(Tuple(String, Noir::LocatorKey(Array(String)), String))).new
       main_files.each do |file|
         content = read_source(file)
-        next unless @framework.in?(:fastify, :hapi) ? content.includes?(".register") || (@framework == :hapi && content.matches?(GLUE_PLUGIN_LIST_RE)) : content.includes?(".applyRoutes") || content.includes?(".add")
+        next unless @framework.in?(:fastify, :hapi) ? content.includes?(".register") || (@framework == :hapi && content.matches?(GLUE_PLUGIN_LIST_RE)) || (@framework == :fastify && direct_plugin_calls?(content)) : content.includes?(".applyRoutes") || content.includes?(".add")
         # A test app that mounts the router under a prefix of its own is not
         # a production mount.
         next if Noir::JSRouteExtractor.test_file?(file, content)
@@ -296,22 +300,51 @@ module Analyzer::Javascript
       end
     end
 
+    # Only a file that names Fastify (`FastifyInstance`, a `fastify` param)
+    # hands its instance to a plugin by a plain call; any other module's
+    # `validate(input)` would cost an import resolution per file.
+    private def direct_plugin_calls?(content : String) : Bool
+      content.includes?("astify") && content.matches?(DIRECT_PLUGIN_CALL_RE)
+    end
+
     # Yields each cross-file mount site as {child expression, prefix}.
     private def each_plugin_mount(content : String, &)
       if @framework == :fastify
+        # `register(async (v1) => { v1.register(users) }, { prefix: '/api/v1' })`:
+        # a register inside an inline plugin's body inherits that plugin's
+        # prefix. Byte ranges of the inline plugins' arguments, each with its
+        # full prefix (enclosing plugins included), in source order.
+        inline_plugins = [] of Tuple(Int32, Int32, String)
+        enclosing_prefix = ->(offset : Int32) do
+          inline_plugins.reverse_each { |open, close, prefix| return prefix if open <= offset <= close }
+          ""
+        end
         content.scan(REGISTER_CALL_RE) do |m|
-          args = extract_use_call_args(content, m.byte_end(0))
+          args_start = m.byte_end(0)
+          scanned = Noir::JSLiteralScanner.extract_paren_content_at_byte(content, args_start) || next
+          args = scanned.content
           plugin = first_top_level_argument(args)
           options = args[plugin.size..]
           prefix_match = options.match(REGISTER_PREFIX_RE)
-          unless prefix_match
-            # `{ prefix: someVariable }` is a prefix this scan cannot read.
-            yield plugin, "" unless options.matches?(REGISTER_PREFIX_KEY_RE)
+          # `{ prefix: someVariable }` is a prefix this scan cannot read.
+          next if !prefix_match && options.matches?(REGISTER_PREFIX_KEY_RE)
+          # Fastify adds the leading slash itself: `{ prefix: 'api/v1' }`.
+          prefix = prefix_match.try { |pm| pm[1]? || pm[2] } || ""
+          prefix = "/#{prefix}" unless prefix.empty? || prefix.starts_with?('/')
+          enclosing = enclosing_prefix.call(args_start)
+          prefix = Noir::URLPath.join(enclosing, prefix) unless enclosing.empty?
+          if plugin.matches?(INLINE_PLUGIN_RE)
+            inline_plugins << {args_start, scanned.end_pos, prefix} unless prefix.empty?
             next
           end
-          # Fastify adds the leading slash itself: `{ prefix: 'api/v1' }`.
-          prefix = prefix_match[1]? || prefix_match[2]
-          yield plugin, prefix.empty? || prefix.starts_with?('/') ? prefix : "/#{prefix}"
+          yield plugin, prefix
+        end
+        # `await registerUsersRouter(server)`: a plugin called directly on the
+        # instance adds its routes to that instance, under its prefix.
+        if direct_plugin_calls?(content)
+          content.scan(DIRECT_PLUGIN_CALL_RE) do |m|
+            yield m[1], enclosing_prefix.call(m.byte_begin(1))
+          end
         end
       elsif @framework == :hapi
         content.scan(REGISTER_CALL_RE) do |m|
@@ -940,7 +973,7 @@ module Analyzer::Javascript
       end
 
       # Pattern: const { funcA, funcB: aliasB } = require('./path/to/file')
-      content.scan(/(?:const|let|var)\s*\{\s*([\s\S]*?)\s*\}\s*=\s*require\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |m|
+      content.scan(/(?:const|let|var)\s*\{\s*([^{}]*?)\s*\}\s*=\s*require\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |m|
         if m.size >= 3
           names = m[1]
           require_path = m[2]

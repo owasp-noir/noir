@@ -1,0 +1,4 @@
+{
+  "name": "fastify-register-named-ts",
+  "dependencies": { "fastify": "^4.0.0" }
+}

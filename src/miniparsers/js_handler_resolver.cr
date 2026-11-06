@@ -374,9 +374,11 @@ module Noir::JSHandlerResolver
   # the nearest tsconfig.json at or above `from_file` that declares any
   # (`"@server/*": ["./server/*"]`), without leaving the scan base.
   # ponytail: first target only, `extends` not followed.
-  private def tsconfig_alias_target(from_file : String, specifier : String, boundary : String?) : String?
+  def tsconfig_alias_target(from_file : String, specifier : String, boundary : String?) : String?
     dir = File.dirname(Noir::PathScope.expand(from_file))
-    stop = boundary.try { |b| Noir::PathScope.expand(b) }
+    # A scan base given as `./app/` keeps its slash; its own directory is
+    # still inside it.
+    stop = boundary.try { |b| Noir::PathScope.expand(b).chomp('/') }
     loop do
       aliases = tsconfig_paths(File.join(dir, "tsconfig.json"))
       unless aliases.empty?
