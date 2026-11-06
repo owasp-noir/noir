@@ -77,7 +77,10 @@ SECURITY_FILTER_BODY = <<-JAVA
               securityContext = new UserSecurityContext(result.getUser());
           }
       } else {
-          securityContext = loginService.fromSession(request);
+          LoginResult result = loginService.login(request);
+          if (result != null && result.getUser() != null) {
+              securityContext = new UserSecurityContext(result.getUser());
+          }
       }
   } catch (StorageException e) {
       throw new WebApplicationException(e);
@@ -107,7 +110,7 @@ describe "JaxrsAuthTagger" do
   it "guards the methods a registered filter refuses, not @PermitAll ones" do
     files = {
       "#{JAXRS_DIR}SecurityRequestFilter.java" => jaxrs_filter("SecurityRequestFilter", SECURITY_FILTER_BODY, ""),
-      "#{JAXRS_DIR}Config.java"                => "class Config { ResourceConfig create() { config.registerClasses(JacksonFeature.class, SecurityRequestFilter.class); return config; } }",
+      "#{JAXRS_DIR}Config.java"                => "class Config { static ResourceConfig create() { ResourceConfig config = new ResourceConfig(); config.registerClasses(JacksonFeature.class, SecurityRequestFilter.class); return config; } }",
       "#{JAXRS_DIR}ApiResource.java"           => SESSION_RESOURCE,
     }
     result = run_jaxrs_auth(files, {
@@ -260,7 +263,7 @@ describe "JaxrsAuthTagger" do
     {
       "if (requestContext.getHeaderString(\"Authorization\") == null)\n throw new NotAuthorizedException(\"no\");",
       "if (requestContext.getHeaderString(HttpHeaders.AUTHORIZATION) == null) {\n requestContext.abortWith(Response.status(Response.Status.UNAUTHORIZED).build());\n }",
-      "Principal principal = null;\n principal = auth(requestContext);\n if (principal == null && !resourceInfo.getResourceMethod().isAnnotationPresent(PermitAll.class)) {\n throw new NotAuthorizedException(\"no\");\n }",
+      "Principal principal = null;\n String h = requestContext.getHeaderString(\"Authorization\");\n if (h != null) {\n principal = tokens.verify(h);\n }\n if (principal == null && !resourceInfo.getResourceMethod().isAnnotationPresent(PermitAll.class)) {\n throw new NotAuthorizedException(\"no\");\n }",
     }.each do |body|
       files = {
         "#{JAXRS_DIR}AuthFilter.java"  => jaxrs_filter("AuthFilter", body),
@@ -321,6 +324,18 @@ describe "JaxrsAuthTagger" do
       "forbidden" => "if (!(requestContext.getSecurityContext().getUserPrincipal() instanceof final Principal principal)) {\n throw new ForbiddenException(Response.status(Response.Status.FORBIDDEN).build());\n }",
       # an else-if chain
       "else if" => "Principal p = null;\n p = auth(requestContext);\n if (p != null) {\n requestContext.setSecurityContext(ctx(p));\n } else if (open(requestContext)) {\n log();\n } else {\n throw new NotAuthorizedException(\"no\");\n }",
+      # round 2: a path-conditioned anonymous principal
+      "path principal" => "Principal principal = null;\n principal = Tokens.verify(requestContext.getHeaderString(\"Authorization\"));\n if (requestContext.getUriInfo().getPath().startsWith(\"api/public\")) {\n principal = new AnonymousPrincipal();\n }\n if (principal == null) {\n throw new NotAuthorizedException(\"login\");\n }",
+      # an anonymous fallback inside the call
+      "or anonymous" => "Principal principal = null;\n principal = Principals.currentOrAnonymous(requestContext);\n if (principal == null) {\n throw new NotAuthorizedException(\"login\");\n }",
+      # a guest context installed first
+      "guest context" => "if (requestContext.getUriInfo().getPath().startsWith(\"api/public\")) {\n requestContext.setSecurityContext(new GuestContext());\n }\n if (requestContext.getSecurityContext().getUserPrincipal() == null) {\n throw new NotAuthorizedException(\"login\");\n }",
+      # the context is never null
+      "context local" => "SecurityContext securityContext = null;\n securityContext = requestContext.getSecurityContext();\n if (securityContext == null) {\n throw new NotAuthorizedException(\"login\");\n }",
+      # a context local from a plain call
+      "context call" => "SecurityContext securityContext = null;\n String auth = requestContext.getHeaderString(\"Authorization\");\n if (auth != null) {\n securityContext = Tokens.check(auth);\n }\n if (securityContext != null) {\n requestContext.setSecurityContext(securityContext);\n } else {\n throw new NotAuthorizedException(\"x\");\n }",
+      # orElse fallback
+      "orElse" => "Principal principal = null;\n String sid = requestContext.getHeaderString(\"Authorization\");\n if (sid != null) {\n principal = sessions.find(sid).orElse(Guest.INSTANCE);\n }\n if (principal == null) {\n throw new NotAuthorizedException(\"login\");\n }",
       # a credential-present early return
       "present return" => "Principal p = null;\n p = auth(requestContext);\n if (p != null) {\n return;\n }\n throw new NotAuthorizedException(\"no\");",
     }.each do |name, body|
@@ -343,6 +358,12 @@ describe "JaxrsAuthTagger" do
       "feature local" => "@Provider\npublic class AuthFeature implements DynamicFeature {\n public void configure(ResourceInfo resourceInfo, FeatureContext context) {\n PermitAll permit = resourceInfo.getResourceMethod().getAnnotation(PermitAll.class);\n if (permit == null) {\n context.register(AuthFilter.class);\n }\n }\n }",
       # a setting decides
       "setting" => "public class App extends ResourceConfig {\n public App(Config config) {\n register(ApiResource.class);\n if (config.getBoolean(\"auth.enabled\")) {\n register(AuthFilter.class);\n }\n }\n }",
+      # a conditional argument
+      "ternary arg" => "public class App extends ResourceConfig {\n public App(boolean secure) {\n register(ApiResource.class);\n register(secure ? AuthFilter.class : NoopFilter.class);\n }\n }",
+      # a helper method called under a setting
+      "helper" => "public class App extends ResourceConfig {\n public App(Config config) {\n register(ApiResource.class);\n if (config.authEnabled()) {\n enableAuth();\n }\n }\n private void enableAuth() {\n register(AuthFilter.class);\n }\n }",
+      # two Dropwizard environments
+      "environments" => "public class Main {\n public void run(Environment env, Environment adminEnv) {\n env.jersey().register(new ApiResource());\n adminEnv.jersey().register(AuthFilter.class);\n }\n }",
       # two applications, one registering the filter
       "two apps" => "public class Main {\n static ResourceConfig admin() {\n return new ResourceConfig().register(AdminResource.class).register(AuthFilter.class);\n }\n static ResourceConfig publicApi() {\n return new ResourceConfig().register(ApiResource.class);\n }\n }",
     }.each do |name, config|
@@ -354,6 +375,31 @@ describe "JaxrsAuthTagger" do
       result = run_jaxrs_auth(files, {"GET /api" => {"#{JAXRS_DIR}ApiResource.java", "@GET"}})
       fail "#{name} guarded GET /api: #{result["GET /api"]}" unless result["GET /api"].empty?
     end
+  end
+
+  it "does not judge a module with a web.xml Jersey servlet" do
+    files = {
+      "#{JAXRS_DIR}AuthFilter.java"     => jaxrs_filter("AuthFilter", "if (requestContext.getSecurityContext().getUserPrincipal() == null) {\n throw new NotAuthorizedException(\"login\");\n }", ""),
+      "#{JAXRS_DIR}Main.java"           => "class Main {\n static ResourceConfig admin() {\n return new ResourceConfig().register(AdminResource.class).register(AuthFilter.class);\n }\n }",
+      "src/main/webapp/WEB-INF/web.xml" => "<web-app><servlet><servlet-class>org.glassfish.jersey.servlet.ServletContainer</servlet-class></servlet></web-app>",
+      "#{JAXRS_DIR}ApiResource.java"    => jaxrs_resource("    @GET\n    public Response x() { return null; }"),
+    }
+    run_jaxrs_auth(files, {"GET /api" => {"#{JAXRS_DIR}ApiResource.java", "@GET"}})["GET /api"].should be_empty
+    files.delete("src/main/webapp/WEB-INF/web.xml")
+    run_jaxrs_auth(files, {"GET /api" => {"#{JAXRS_DIR}ApiResource.java", "@GET"}})["GET /api"].size.should eq(1)
+  end
+
+  it "registers in one pass over many blocks" do
+    config = "public class App extends ResourceConfig {\n public App() {\n register(AuthFilter.class);\n" + (0...8000).map { |i| "  { register(R#{i}.class); }\n" }.join + " }\n}\n"
+    files = {
+      "#{JAXRS_DIR}AuthFilter.java"  => jaxrs_filter("AuthFilter", "if (requestContext.getSecurityContext().getUserPrincipal() == null) {\n throw new NotAuthorizedException(\"login\");\n }", ""),
+      "#{JAXRS_DIR}App.java"         => config,
+      "#{JAXRS_DIR}ApiResource.java" => jaxrs_resource("    @GET\n    public Response x() { return null; }"),
+    }
+    started = Time.instant
+    result = run_jaxrs_auth(files, {"GET /api" => {"#{JAXRS_DIR}ApiResource.java", "@GET"}})
+    (Time.instant - started).should be < 5.seconds
+    result["GET /api"].size.should eq(1)
   end
 
   it "binds a filter with an unknown annotation, and stops at one-line declarations" do
@@ -395,7 +441,7 @@ describe "JaxrsAuthTagger" do
   it "limits a @NameBinding filter to the resources carrying its annotation" do
     files = {
       "#{JAXRS_DIR}Secured.java"       => "@NameBinding\n@Retention(RUNTIME)\n@Target({TYPE, METHOD})\npublic @interface Secured {}",
-      "#{JAXRS_DIR}SecuredFilter.java" => jaxrs_filter("SecuredFilter", "Principal p = null;\n p = auth(requestContext);\n if (p == null) { requestContext.abortWith(Response.status(401).build()); }", "@Secured\n@Provider"),
+      "#{JAXRS_DIR}SecuredFilter.java" => jaxrs_filter("SecuredFilter", "if (requestContext.getSecurityContext().getUserPrincipal() == null) { requestContext.abortWith(Response.status(401).build()); }", "@Secured\n@Provider"),
       "#{JAXRS_DIR}ApiResource.java"   => jaxrs_resource(<<-JAVA),
           @GET // root
           public Response open() { return null; }

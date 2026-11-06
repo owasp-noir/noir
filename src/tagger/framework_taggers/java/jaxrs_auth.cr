@@ -2,6 +2,7 @@ require "../../../models/framework_tagger"
 require "../../../models/endpoint"
 require "../../../utils/c_comments"
 require "../../../utils/js_literal_scanner"
+require "../../../utils/top_level_split"
 require "./spring_module_scope"
 require "./spring_auth"
 
@@ -51,13 +52,11 @@ class JaxrsAuthTagger < FrameworkTagger
   FILTER_CLASS   = /\bclass\s+([A-Za-z_$][\w$]*)[^{;]*?(?:\bimplements\s+[^{;]*?|:\s*[^{;]*?)\b(?:[\w.]+\.)?ContainerRequestFilter\b(?!\s*[<.])/
   FEATURE_CLASS  = /\bclass\s+([A-Za-z_$][\w$]*)[^{;]*?(?:\bimplements\s+[^{;]*?|:\s*[^{;]*?)\b(?:[\w.]+\.)?DynamicFeature\b(?!\s*[<.])/
   FILTER_METHOD  = /(?:\bvoid\s+filter\s*\(\s*(?:final\s+)?(?:[\w.]+\.)?ContainerRequestContext\s+([a-z_$][\w$]*)\s*\)|\bfun\s+filter\s*\(\s*([a-z_$][\w$]*)\s*:\s*(?:[\w.]+\.)?ContainerRequestContext\??\s*\))[^{;]*\{/
-  CONFIGURE      = /\b(?:void|fun)\s+configure\s*\([^()]*\bResourceInfo\b[^()]*\)[^{;]*\{/
   REFUSAL        = /\Athrow\s+(?:new\s+)?(NotAuthorizedException|WebApplicationException|ClientErrorException)\s*\(|\A[\w$]+\s*\.\s*abortWith\s*\(/
   UNAUTHORIZED   = /\bUNAUTHORI[SZ]ED\b|\b401\b/
   OPTIONS_TEST   = /\A(?:(?:"OPTIONS"|HttpMethod\.OPTIONS)\s*\.\s*equals(?:IgnoreCase)?\s*\(\s*[\w$]+\s*\.\s*getMethod\s*\(\s*\)\s*\)|[\w$]+\s*\.\s*(?:getMethod\s*\(\s*\)|method)\s*(?:\.\s*equals(?:IgnoreCase)?\s*\(\s*(?:"OPTIONS"|HttpMethod\.OPTIONS)\s*\)|==\s*(?:"OPTIONS"|HttpMethod\.OPTIONS)))\z/
   ANNOTATION_NEG = /\A!\s*[\w$.()\s]*?\bisAnnotationPresent\s*\(\s*([A-Z][\w$]*)\s*(?:\.class|::class(?:\.java)?)\s*\)\z/
   REGISTER_CALL  = /\bregister(?:Classes|Instances)?\s*\(/
-  REGISTERED     = /\b([A-Z][\w$]*)\s*(?:\.class\b|::class\b)|\bnew\s+([A-Z][\w$]*)\s*\(/
   # A JAX-RS application definition: two in one app leave noir unable to
   # tell which one serves a resource.
   APPLICATION = /\bnew\s+ResourceConfig\s*\(|\bextends\s+(?:ResourceConfig|(?:[\w.]*\.)?Application)\b|:\s*(?:ResourceConfig|(?:[\w.]*\.)?Application)\s*\(/
@@ -66,13 +65,12 @@ class JaxrsAuthTagger < FrameworkTagger
   # Annotations that bind nothing: any other one on a filter may be its `@NameBinding`.
   NON_BINDING = Set{"Provider", "Priority", "PreMatching", "Component", "Singleton", "ApplicationScoped", "RequestScoped", "Dependent", "Named", "Service", "Slf4j", "Log4j2", "CommonsLog", "SuppressWarnings", "Deprecated", "Generated", "Inject"}
   CLASS_LINE  = /\bclass\s+[A-Za-z_$]/
-  # Block heads a registration may sit under: none of these.
-  CONDITIONAL_HEAD = /(?:\b(?:if|else|for|while|do|switch|catch|when)\b[^;{}]*|->\s*)\z/
 
   @filters = [] of RequestFilter
   @registrations = [] of Registration
   @features = Hash(String, Bool).new
   @applications = [] of String?
+  @unjudged = [] of String?
   @masked_lines = Hash(String, Array(String)).new
   @class_lines = Hash(String, Array(Int32)).new
 
@@ -91,6 +89,13 @@ class JaxrsAuthTagger < FrameworkTagger
     @registrations.clear
     @features.clear
     @applications.clear
+    @unjudged.clear
+    # A Jersey servlet declared in web.xml is an application of its own.
+    CodeLocator.instance.files_by_basename("web.xml").each do |file|
+      next if test_source?(file)
+      next unless (content = read_file(file)) && (content.includes?("ServletContainer") || content.includes?("jersey.config.server"))
+      @unjudged << build_module(file)
+    end
     sources = {".java", ".kt"}.flat_map { |ext| collect_files_by_extension(ext) }.reject { |file| test_source?(file) }
     sources.each do |file|
       next unless content = read_file(file)
@@ -151,36 +156,78 @@ class JaxrsAuthTagger < FrameworkTagger
     mask[from...start].scan(/@([A-Za-z_$][\w$.]*)/).map(&.[1].split('.').last)
   end
 
+  # Registrations, in one pass over the blocks of `mask`. One counts when
+  # its arguments are plain `X.class` literals, nothing conditional leads to
+  # it, and it is made directly in a `DynamicFeature.configure` (bare, or
+  # under a lone `!..isAnnotationPresent(A.class)`), in the constructor /
+  # `init` / `configure` of a `ResourceConfig` / `Application` subclass, or
+  # in a method that builds the `new ResourceConfig()`. A helper method's
+  # registration is not counted: noir cannot tell when it runs.
   private def scan_registrations(mask : String, module_dir : String?)
-    features = [] of {String, Int32, Int32}
     mask.scan(FEATURE_CLASS) do |match|
       @features[match[1]] = annotations_before(mask, match.begin(0)).includes?("Provider")
-      next unless (open = mask.index('{', match.end(0) - 1)) && (close = Noir::JSLiteralScanner.find_matching_brace(mask, open))
-      next unless found = mask[open..close].match(CONFIGURE)
-      body_open = open + found.end(0) - 1
-      body_close = Noir::JSLiteralScanner.find_matching_brace(mask, body_open) || next
-      features << {match[1], body_open, body_close}
     end
-    heads = block_heads(mask)
-    mask.scan(REGISTER_CALL) do |call|
-      open = call.end(0) - 1
-      next unless close = Noir::JSLiteralScanner.find_matching_paren(mask, open)
-      at = call.begin(0)
-      feature = features.find { |_, from, to| from < at < to }
-      exempt = Set(String).new
-      if feature
-        next unless marker = feature_condition(mask, feature[1], at)
-        exempt << marker unless marker.empty?
-      else
-        # An unconditional registration: no `if`, loop, lambda or `?:` around it.
-        next if heads.any? { |from, to, head| from < at < to && head.matches?(CONDITIONAL_HEAD) }
-        lead_from = (mask.rindex(/[;{}]/, at - 1) || -1) + 1
-        next if mask[lead_from...at].matches?(/\b(?:if|else|for|while)\b|\?|->/)
+    calls = [] of Regex::MatchData
+    mask.scan(REGISTER_CALL) { |call| calls << call }
+    return if calls.empty?
+    stack = [] of {Int32, String}
+    last = -1
+    next_call = 0
+    mask.each_char_with_index do |char, index|
+      while next_call < calls.size && calls[next_call].begin(0) == index
+        register_call(mask, calls[next_call], stack, last, module_dir)
+        next_call += 1
       end
-      mask[(open + 1)...close].scan(REGISTERED) do |registered|
-        @registrations << Registration.new(registered[1]? || registered[2], module_dir, exempt, feature.try(&.[0]))
+      case char
+      when '{'
+        stack << {index, mask[(last + 1)...index].strip}
+        last = index
+      when '}'
+        stack.pop?
+        last = index
+      when ';'
+        last = index
       end
     end
+  end
+
+  METHOD_HEAD    = /(?:\A|[\s>])([A-Za-z_$][\w$]*)\s*\([^()]*\)\s*(?::\s*[\w$.<>?]+\s*)?(?:throws\s+[\w$.,\s]+)?\z/
+  CLASS_HEAD     = /\bclass\s+([A-Za-z_$][\w$]*)([^{]*)\z/
+  APP_SUBCLASS   = /(?:\bextends|:)\s*(?:ResourceConfig|(?:[\w.]*\.)?Application)\b/
+  CONFIGURE_HEAD = /\b(?:void|fun)\s+configure\s*\([^()]*\bResourceInfo\b/
+  PLAIN_CLASS    = /\A(?:[\w$]+\.)*([A-Z][\w$]*)\s*(?:\.class|::class(?:\.java)?)\z/
+
+  private def register_call(mask : String, call : Regex::MatchData, stack : Array({Int32, String}), last : Int32, module_dir : String?)
+    open = call.end(0) - 1
+    return unless close = Noir::JSLiteralScanner.find_matching_paren(mask, open)
+    args = Noir::TopLevelSplit.split(mask[(open + 1)...close], ',', Noir::TopLevelSplit::Rules.new)
+    names = args.compact_map { |arg| arg.strip.match(PLAIN_CLASS).try(&.[1]) }
+    return if names.empty? || names.size != args.size
+    return if mask[(last + 1)...call.begin(0)].matches?(/\b(?:if|else|for|while)\b|\?|->/)
+
+    exempt = Set(String).new
+    feature = nil
+    if at = stack.rindex { |_, head| head.matches?(CONFIGURE_HEAD) }
+      return unless at > 0 && (owner = stack[at - 1][1].match(FEATURE_CLASS))
+      inner = stack[(at + 1)..]
+      if inner.size == 1
+        return unless (cond = inner[0][1].match(/\Aif\s*\((.*)\)\z/m)) && (marker = unwrap(cond[1]).match(ANNOTATION_NEG))
+        exempt << marker[1]
+      elsif !inner.empty?
+        return
+      end
+      feature = owner[1]
+    else
+      return unless stack.size >= 2 && (method = stack[-1][1].match(METHOD_HEAD) || stack[-1][1].match(/\A(init)\z/))
+      return unless klass = stack[-2][1].match(CLASS_HEAD)
+      name = method[1]
+      app_member = (name == klass[1] || name == "init" || name == "configure") && klass[2].matches?(APP_SUBCLASS)
+      unless app_member
+        body_close = Noir::JSLiteralScanner.find_matching_brace(mask, stack[-1][0]) || return
+        return unless mask[stack[-1][0]...body_close].includes?("new ResourceConfig(")
+      end
+    end
+    names.each { |registered| @registrations << Registration.new(registered, module_dir, exempt, feature) }
   end
 
   # Every `{..}` block of `mask` as `{open, close, the text before it back to
@@ -209,17 +256,6 @@ class JaxrsAuthTagger < FrameworkTagger
     blocks
   end
 
-  # Where a `DynamicFeature.configure` body starting at `open` registers the
-  # filter at `at`: "" unconditionally, the annotation of a lone
-  # `if (!..isAnnotationPresent(A.class)) {` around it, nil otherwise.
-  private def feature_condition(mask : String, open : Int32, at : Int32) : String?
-    inner = block_heads(mask[open..]).select { |from, to, _| from > 0 && from < at - open < to }
-    return "" if inner.empty? && !mask[((mask.rindex(/[;{}]/, at - 1) || 0) + 1)...at].matches?(/\b(?:if|else)\b|\?|->/)
-    return unless inner.size == 1
-    return unless cond = inner[0][2].match(/\Aif\s*\((.*)\)\z/m)
-    unwrap(cond[1]).match(ANNOTATION_NEG).try(&.[1])
-  end
-
   # The exempting annotations when the `filter` body (`code`, and `mask`
   # with its strings blanked) has the shape this tagger reads, nil otherwise.
   private def judge(code : String, mask : String) : Set(String)?
@@ -231,21 +267,27 @@ class JaxrsAuthTagger < FrameworkTagger
       stmts = statements(mask, start, (Noir::JSLiteralScanner.find_matching_brace(mask, start - 1) || return))
     end
     credential = nil
+    context_typed = false
     exempt = Set(String).new
     stmts.each do |from, to|
       text = mask[from...to]
+      # A security context installed before the refusal answers it: unread.
+      return if text.includes?("setSecurityContext") && !refusal_if?(code, mask, from, to, credential, Set(String).new)
       if (branch = if_parts(mask, from, to)) && branch[2].nil? && only_return?(mask, branch[1]) &&
          unwrap(code[branch[3][0]...branch[3][1]]).matches?(OPTIONS_TEST)
         next
       end
       if refusal_if?(code, mask, from, to, credential, exempt)
-        return exempt if credential.nil? || assigned_plainly?(stmts, mask, credential)
+        return exempt if credential.nil? || assigned_plainly?(stmts, mask, credential, context_typed)
         return
       end
       return if text.matches?(/\breturn\b/)
       if credential.nil? && (decl = text.match(/\A(?:final\s+)?(?:val\s+|var\s+)?([\w$.<>]+\s+)?([a-z_$][\w$]*)\s*(?::\s*([\w$.<>]+)\??\s*)?=\s*null\s*;?\z/))
         type = decl[1]?.try(&.strip) || decl[3]? || ""
-        credential = decl[2] if "#{type} #{decl[2]}".matches?(CREDENTIAL_LOCAL)
+        if "#{type} #{decl[2]}".matches?(CREDENTIAL_LOCAL)
+          credential = decl[2]
+          context_typed = type.ends_with?("SecurityContext")
+        end
       end
     end
     nil
@@ -414,22 +456,70 @@ class JaxrsAuthTagger < FrameworkTagger
     text.matches?(UNAUTHORIZED)
   end
 
-  # Every assignment of the credential local before the refusal is a plain
-  # call result: no fallback (`?:`, ternary, `||`, itself) and none under a
-  # test of its own absence.
-  private def assigned_plainly?(stmts : Array({Int32, Int32}), mask : String, name : String) : Bool
+  # Every assignment of the credential local is in the shape traccar and
+  # Alpine use: inside an `if` (possibly through `try`) whose conditions all
+  # test that a credential is present (`x != null`, `svc.isSpecified()`), from
+  # a plain `receiver.method(..)` call, or `new T(..)` for a
+  # `SecurityContext` local. Anything else (unconditional, a path test, a
+  # fallback, `orElse`, a ternary) can hand an anonymous caller a credential.
+  private def assigned_plainly?(stmts : Array({Int32, Int32}), mask : String, name : String, context_typed : Bool) : Bool
     escaped = Regex.escape(name)
     assign = /(?<![\w$.])#{escaped}\s*=(?!=)\s*([^;\n]*)/
-    absence = /(?<![\w$.])#{escaped}\s*==\s*null|null\s*==\s*#{escaped}\b/
     stmts.all? do |from, to|
       text = mask[from...to]
       next true unless text.matches?(assign)
-      next false if text.matches?(absence)
+      blocks = block_heads(text)
       text.scan(assign).all? do |found|
-        rhs = found[1]
-        rhs == "null" || (rhs.includes?("(") && !rhs.matches?(/\?|\|\||(?<![\w$.])#{escaped}\b/))
+        rhs = found[1].strip
+        next true if rhs == "null" && !blocks.any? { |open, close, _| open < found.begin(0) < close }
+        next false unless context_typed ? rhs.matches?(/\Anew\s+[A-Z][\w$.]*\s*\(/) : rhs.matches?(PLAIN_CALL)
+        presence_only?(text, blocks, found.begin(0))
       end
     end
+  end
+
+  # `receiver.method(args)` with no fallback in it.
+  PLAIN_CALL = /\A[a-z_$][\w$]*(?:\s*\.\s*[a-z_$][\w$]*)*\s*\.\s*[a-z_$][\w$]*\s*\([^?|;]*\)\s*;?\z/
+  FALLBACK   = /\b(?:orElse\w*|requireNonNullElse\w*|getOrDefault|firstNonNull)\b/
+  PRESENCE   = /\A(?:[\w$.()]+\s*!=\s*null|null\s*!=\s*[\w$.()]+|[\w$]+\s*\.\s*(?:isSpecified|isPresent)\s*\(\s*\))\z/
+
+  # Every block around `pos` in statement `text` is a `try`, or an `if` /
+  # `else` of a presence test, and the innermost condition is one.
+  private def presence_only?(text : String, blocks : Array({Int32, Int32, String}), pos : Int32) : Bool
+    return false if text[pos..].match(/\A[^;\n]*/).try(&.[0].matches?(FALLBACK))
+    around = blocks.select { |open, close, _| open < pos < close }.sort_by!(&.[0])
+    innermost = false
+    around.each do |open, _, head|
+      if head == "try" || head == "finally"
+        next
+      elsif cond = head.match(/\Aif\s*\((.*)\)\z/m)
+        return false unless presence_cond?(cond[1])
+        innermost = true
+      elsif head == "else"
+        # The `if` whose block closes right before this `else`.
+        before = text[0, open].rstrip.rchop("else").rstrip
+        return false unless before.ends_with?('}')
+        owner = blocks.find { |_, close, _| close == before.size - 1 } || return false
+        return false unless (owner_cond = owner[2].match(/\Aif\s*\((.*)\)\z/m)) && presence_cond?(owner_cond[1])
+        innermost = false
+      else
+        return false
+      end
+    end
+    lead_from = (text.rindex(/[;{}]/, pos - 1) || -1) + 1
+    lead = text[lead_from...pos].strip
+    if cond = lead.match(/\Aif\s*\((.*)\)\z/m)
+      return false unless presence_cond?(cond[1])
+      innermost = true
+    elsif !lead.empty?
+      return false
+    end
+    innermost
+  end
+
+  private def presence_cond?(cond : String) : Bool
+    return false if cond.includes?("||")
+    cond.split("&&").all? { |part| unwrap(part).matches?(PRESENCE) }
   end
 
   private def unwrap(text : String) : String
@@ -445,7 +535,7 @@ class JaxrsAuthTagger < FrameworkTagger
     annotations = nil
     filter = per_serving_classpath(endpoint, true) do |classpath, _|
       applies = ->(owner : String?) { owner.nil? || classpath.nil? || classpath.includes?(owner) }
-      next if @applications.count { |owner| applies.call(owner) } > 1
+      next if @applications.count { |owner| applies.call(owner) } > 1 || @unjudged.any? { |owner| applies.call(owner) }
       @filters.find do |item|
         registrations = @registrations.select { |reg| reg.name == item.name && applies.call(reg.module_dir) }
         # The filter class itself must be on the app's classpath: another
