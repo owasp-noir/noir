@@ -569,9 +569,8 @@ class ExpressAuthTagger < FrameworkTagger
     # createHttpError(401)` followed by `next()` is optional auth.
     code.scan(ERROR_FACTORY_FORBIDDEN) do |m|
       at = m.begin(0)
-      applied = code[0...at].matches?(FACTORY_APPLIED)
       refuses = enclosing_branches(code, at).any? do |condition, branch|
-        condition.matches?(MISSING_CALLER) && (applied || branch.matches?(/\b(?:return|throw)\b/))
+        condition.matches?(MISSING_CALLER_FACTORY) && !branch.matches?(/\bnext\s*\(\s*\)/) && factory_refused?(code[0...at], branch)
       end
       hits << {at, "#{m[0]})"} if refuses
     end
@@ -601,7 +600,9 @@ class ExpressAuthTagger < FrameworkTagger
   FACTORY_APPLIED         = /(?:\bthrow\s+(?:new\s+)?|\breturn\s+(?:next\s*\(\s*)?|\bnext\s*\(\s*)\z/
   # `!req.user`, `!req.session.userId`, `!req.session`: no caller. Not
   # `!req.session.cart`, a session without a cart.
-  MISSING_CALLER = /(?<!!)!\s*(?:req|request)\s*\.\s*(?:(?:session\s*\??\.\s*)?(?:user(?:_?[Ii]d)?\b|uid|account\w*|auth\w*|token\w*|logged\w*|isAuthenticated|passport|identity|principal)\b|session\s*(?:\)|\|\||&&))/
+  MISSING_CALLER = /!\s*(?:req|request)\s*\.\s*(?:(?:session\s*\??\.\s*)?(?:user\w*|uid|account\w*|auth\w*|token\w*|logged\w*|isAuthenticated|passport|identity|principal)\b|session\s*(?:\)|\|\||&&))/
+  # The factory rule's own test: also rejects `!!req.user` and `req.userAgent`.
+  MISSING_CALLER_FACTORY = /(?<!!)!\s*(?:req|request)\s*\.\s*(?:(?:session\s*\??\.\s*)?(?:user(?:_?(?:id|ID|Id)|Info|name|Name|Data|Obj|Session)?\b|uid|account\w*|auth\w*|token\w*|logged\w*|isAuthenticated|passport|identity|principal)\b|session\s*(?:\)|\|\||&&))/
 
   # The names `source` binds the express-basic-auth factory to.
   private def basic_auth_factories(source : String) : Array(String)
@@ -664,6 +665,16 @@ class ExpressAuthTagger < FrameworkTagger
       end
     end
     reach
+  end
+
+  # Whether the error built right after `head` is what refuses: thrown,
+  # returned or handed to `next(...)` as written, or kept in a local that
+  # `branch` throws, returns, passes to `next`, or answers with
+  # (`res.status(error.status)`). Stashing it (`req.authError = …`) is not.
+  private def factory_refused?(head : String, branch : String) : Bool
+    return true if head.matches?(FACTORY_APPLIED)
+    name = head.match(/\b(?:const|let|var)\s+(\w+)\s*(?::[^=\n]+)?=\s*\z/).try(&.[1]) || return false
+    branch.matches?(/\b(?:throw|return)\s+#{Regex.escape(name)}\b|\bnext\s*\(\s*#{Regex.escape(name)}\b|\bstatus\s*\(\s*#{Regex.escape(name)}\s*\.\s*status\b/)
   end
 
   # The conditions of every `if` whose block (or single statement) holds `at`.

@@ -683,9 +683,51 @@ describe "ExpressAuthTagger" do
         }
         next();
       }
-      module.exports = { masterOnly, thrown, viaNext, validateBody, optionalAuth, logOnly, guestOnly, doubleNeg, elseGuest, userAgent };
+      function stashReturnNext(req, res, next) {
+        if (!req.user) {
+          req.authError = createHttpError(401, 'login required for writes');
+          return next();
+        }
+        next();
+      }
+      function logReturnNext(req, res, next) {
+        if (!req.user) {
+          console.warn(createHttpError(401, 'anonymous'));
+          return next();
+        }
+        next();
+      }
+      function closureThrow(req, res, next) {
+        if (!req.user) {
+          req.authError = createHttpError(401, 'login');
+          req.fail = () => { throw req.authError; };
+        }
+        next();
+      }
+      function helperUserInfo(req, res, next) {
+        if (!req.userInfo) return sendError(res, 403, 'login');
+        next();
+      }
+      function helperUserObj(req, res, next) {
+        if (!req.userObj) { return sendError(res, 403, 'login'); }
+        next();
+      }
+      function helperUserAgent(req, res, next) {
+        if (!req.userAgent) return sendError(res, 403, 'login');
+        next();
+      }
+      function factoryUserID(req, res, next) {
+        if (!req.userID) throw createHttpError(401, 'login');
+        next();
+      }
+      function factoryNoMsg(req, res, next) {
+        if (!req.user) throw createHttpError(403);
+        next();
+      }
+      function sendError(res, code, msg) { res.status(code).json({ msg }); }
+      module.exports = { stashReturnNext, logReturnNext, closureThrow, helperUserInfo, helperUserObj, helperUserAgent, factoryUserID, factoryNoMsg, masterOnly, thrown, viaNext, validateBody, optionalAuth, logOnly, guestOnly, doubleNeg, elseGuest, userAgent };
       JS
-    names = %w[masterOnly thrown viaNext validateBody optionalAuth logOnly guestOnly doubleNeg elseGuest userAgent]
+    names = %w[masterOnly thrown viaNext validateBody optionalAuth logOnly guestOnly doubleNeg elseGuest userAgent stashReturnNext logReturnNext closureThrow helperUserInfo helperUserObj helperUserAgent factoryUserID factoryNoMsg]
     File.write(app_js, (["const mw = require('./mw');", "const app = express();"] + names.map { |n| "app.get('/#{n}', mw.#{n}, (req, res) => res.json({}));" }).join("\n"))
 
     noir_options = create_test_options
@@ -706,8 +748,9 @@ describe "ExpressAuthTagger" do
       locator.scan_base_paths = previous_bases
     end
 
+    # /closureThrow is guarded by the older `!req.user` + throw rule, as on main.
     guarded = endpoints.select { |ep| ep.tags.any? { |t| t.name == "auth" } }.map(&.url)
-    guarded.should eq(["/masterOnly", "/thrown", "/viaNext"])
+    guarded.should eq(["/masterOnly", "/thrown", "/viaNext", "/closureThrow", "/helperUserInfo", "/helperUserObj", "/helperUserAgent", "/factoryUserID", "/factoryNoMsg"])
   ensure
     FileUtils.rm_rf(tmpdir) if tmpdir
   end
