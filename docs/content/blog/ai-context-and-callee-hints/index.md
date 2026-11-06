@@ -7,13 +7,13 @@ authors = ["hahwul"]
 template = "blog_post"
 +++
 
-Around November 2025, AI changed how software gets built, and source-code vulnerability analysis has been moving in the same direction ever since.
+Since late 2025 or so, AI has changed how a lot of software gets built, and source-code vulnerability analysis has been heading the same way.
 
 A lot of AI-based source-code analysis tools and approaches follow the same shape: feed code in, ask an LLM, get a report back. To actually work well, the LLM needs to know *what to look at*. Drop the whole codebase on it and you burn tokens while still missing the spots that need attention.
 
 Noir v1 ships two flags that extract that "what to look at" upfront and pack it into the output.
 
-- `--include-callee`: adds a 1-hop callee graph to each endpoint as a `callees` array
+- `--include callee`: adds a 1-hop callee graph to each endpoint as a `callees` array
 - `--ai-context`: includes the same callee data and sorts it into five security categories under `ai_context`
 
 ## --include-callee: who calls whom
@@ -87,7 +87,7 @@ What the LLM gets from this single endpoint
 3. There's a `guard_absence`: no auth decorator detected
 4. There's a `sql` sink: `User.query.filter`
 
-For a human reviewer and an LLM alike, four signals stacked on one handler send a clear message: review this first. A credential-handling endpoint with no auth on top is priority 1, no further reasoning needed.
+For a human reviewer and an LLM alike, four signals stacked on one handler send a clear message: review this first. A credential-handling endpoint with no auth on top is priority one; there isn't much to debate.
 
 For contrast, here's a case where `--ai-context` did pick up auth (flask_auth fixture)
 

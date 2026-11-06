@@ -7,15 +7,15 @@ authors = ["hak"]
 template = "blog_post"
 +++
 
-You run `noir scan ./app -f curl` and get a wall of `/users/{id}?limit=`. Useful as a map. Useless as a request.
+If you've ever run `noir scan ./app -f curl`, you know the result: a long list of `/users/{id}?limit=` lines. Great as a map of the app, but you can't paste a single one of them into a terminal and expect a real response.
 
-`-f postman` is the same blank forms in a different envelope. `--probe` either 404s on the literal `{id}` or, for GET/HEAD/OPTIONS only, quietly stuffs in `1` / `noir`. Three sinks, three opinions about one parameter.
+`-f postman` gives you the same blanks in a different wrapper. `--probe` either sends the literal `{id}` and collects 404s, or, for GET/HEAD/OPTIONS only, quietly fills in `1` or `noir`. Three consumers, each with its own idea of what a parameter should hold.
 
-`--pvalue` is how you settle that once. Declare the placeholders; the optimizer writes them into every param *before* any formatter or deliverer runs. Same scan. Same values. Every sink.
+`--pvalue` settles that in one place. You declare the values once, and the optimizer writes them into every parameter before any formatter or deliverer gets to see the endpoint list. Same scan, same values, no matter where the output ends up.
 
 ## The flag
 
-Repeatable. Each hit is `TYPE=VALUE`, or a bare `VALUE` that hits every type:
+It's repeatable. Each occurrence is `TYPE=VALUE`, or just `VALUE` if you want it applied to every type:
 
 ```bash
 noir scan ./app -f curl -u https://api.example.com \
@@ -29,31 +29,29 @@ noir scan ./app -f curl -u https://api.example.com \
 | `any` (or omit the type) | Every parameter type |
 | `query` / `form` / `json` / `header` / `cookie` / `path` | That bucket only |
 
-`VALUE` comes in two shapes:
+`VALUE` itself comes in two shapes:
 
 | Form | Behavior |
 | --- | --- |
 | `42` | Every parameter of the targeted type |
 | `id=42` or `id:42` | Only parameters named `id` |
 
-This runs when the endpoint list is cleaned, ahead of curl / HTTPie / PowerShell / OpenAPI / Postman / JSON / YAML and ahead of probe/export. One declaration, every consumer. Format side: [cURL / HTTPie / PowerShell](@/usage/output_formats/curl/index.md). Probe side: [Delivering Results](@/usage/more_features/deliver/index.md).
+The substitution happens while the endpoint list is being cleaned up, so it lands ahead of curl, HTTPie, PowerShell, OpenAPI, Postman, JSON and YAML output, and ahead of probing and export too. For the format side see [cURL / HTTPie / PowerShell](@/usage/output_formats/curl/index.md); for probing see [Delivering Results](@/usage/more_features/deliver/index.md).
 
-## Order bites
+## How rules are picked
 
-Matching is first-hit. Type-specific rules beat the global `any` list, so `--pvalue path=…` wins over a bare `--pvalue test` for path params.
-
-Inside one type, a catch-all matches *every* name. Named overrides go first:
+Type-specific rules win over the global `any` list, so `--pvalue path=…` beats a bare `--pvalue test` for path parameters. Within a type, a rule that names the parameter wins over a catch-all, and the order you pass the flags in doesn't matter:
 
 ```bash
 # limit → 10; everything else in query → 1
 noir scan ./app -f curl -u https://api.example.com \
-  --pvalue "query=limit=10" \
-  --pvalue "query=1"
+  --pvalue "query=1" \
+  --pvalue "query=limit=10"
 ```
 
-Swap those two lines and `limit` is `1` too: the catch-all fired first. A few doc examples still show the catch-all first; that order is wrong for this matcher. Named rules, then the type-wide default.
+Swap those two lines and you get the same result. If you declare two rules for the same name, the first one wins, but that's a case you rarely want anyway.
 
-## Same declaration, three places it pays off
+## Where the same declaration pays off
 
 ### Curl you can actually paste
 
@@ -66,9 +64,9 @@ noir scan ./api -f curl -u https://staging.example.com \
   -o /tmp/api.curl.sh
 ```
 
-`source` it. Path templates are already substituted in the URL the curl builder emits. No `sed` pass over `{id}`.
+`source` it and go. Path templates are already substituted in the URLs the curl builder emits, so there's no `sed` pass over `{id}` afterwards.
 
-### Postman / OpenAPI for everyone else
+### Postman / OpenAPI for the rest of the team
 
 ```bash
 noir scan ./api -f postman -u https://staging.example.com \
@@ -83,19 +81,19 @@ noir scan ./api -f oas3 -u https://staging.example.com \
   -o /tmp/api.openapi.json
 ```
 
-Identical `--pvalue` block. Reviewers import one collection; CI diffs the OpenAPI against yesterday's. Placeholders do not drift between formats.
+Same `--pvalue` block as the curl run. Reviewers import one collection, CI diffs the OpenAPI against yesterday's, and the placeholders stay identical across formats.
 
-### Live status codes, optional proxy replay
+### Live status codes, and optionally a proxy
 
 ```bash
-# Attach observed codes; drop the obvious misses
+# Attach observed status codes; drop the obvious misses
 noir scan ./api -u https://staging.example.com \
   --status-codes --exclude-codes 404,502 \
   --pvalue "path=id=42" \
   --pvalue "query=1" \
   -f json -o /tmp/live.json
 
-# Read traffic through Burp/ZAP without doubling load on the target
+# Send only reads through Burp/ZAP so the target isn't hit twice as hard
 noir scan ./api -u https://staging.example.com \
   --probe-via http://127.0.0.1:8080 \
   --probe-match "GET" \
@@ -103,13 +101,13 @@ noir scan ./api -u https://staging.example.com \
   --pvalue "header=Authorization=Bearer $STAGING_TOKEN"
 ```
 
-`--status-codes`, `--probe`, and `--probe-via` all want `-u`.
+`--status-codes`, `--probe` and `--probe-via` all need `-u`.
 
-Path fill on probes has a safety rail you will notice the hard way: without `--pvalue path=…`, Noir auto-fills only read-only verbs (GET, HEAD, OPTIONS) with `1` / `noir`. POST / PUT / PATCH / DELETE keep the literal template, so a probe cannot become `DELETE /users/1` by accident. An explicit `--pvalue path=id=42` applies to *every* verb, writes included. Mean that, or park writes behind `--probe-skip "POST"` / `--probe-skip "DELETE"` until you do.
+One thing worth knowing before you probe: without `--pvalue path=…`, Noir only auto-fills path parameters on read-only verbs (GET, HEAD, OPTIONS), using `1` or `noir`. POST, PUT, PATCH and DELETE keep the literal template, so a probe can't turn into `DELETE /users/1` by accident. An explicit `--pvalue path=id=42` removes that guard and applies to every verb, writes included. If that's what you want, fine. If not, keep writes out with `--probe-skip "POST"` or `--probe-skip "DELETE"` until you're ready.
 
-## Park the defaults in config
+## Put the defaults in a config file
 
-Same keys, no flag soup on every CI job:
+The same keys live in the config file, which saves repeating the flags on every CI job:
 
 ```yaml
 url: "https://staging.example.com"
@@ -131,15 +129,15 @@ noir config init
 noir scan ./api --config-file ./ci/noir.yaml
 ```
 
-CLI `--pvalue` still wins when a one-off needs a different id. [Configuration file](@/usage/configurations/configuration_file/index.md) · [`noir config`](@/usage/cli_commands/_index.md#config).
+A `--pvalue` on the command line still wins when a one-off run needs a different id. See [Configuration file](@/usage/configurations/configuration_file/index.md) and [`noir config`](@/usage/cli_commands/_index.md#config).
 
-## What bites you
+## Things that trip people up
 
-- **Nameless params get nothing.** If an analyzer knows a hole exists but not its name, that hole is dropped before `--pvalue` runs. You will not see a stray `=42` in curl.
-- **`body` lands in `json`.** Params recorded as `body` are normalized into the buckets the optimizer knows, so `--pvalue json=…` reaches them. Prefer v1 `--pvalue TYPE=VAL` over the old `--set-pvalue-*` aliases in new scripts.
-- **Headers follow `-u`.** `--probe-header` and `--pvalue header=…` on probe payloads target the `-u` host. Endpoints that already carry an absolute host from source keep it; probe headers aimed at `-u` are withheld from those. Export destinations you named yourself still get the header.
-- **Secrets do not belong in committed yaml.** Expand in CI (`--pvalue "header=Authorization=Bearer $TOKEN"`). Do not bake tokens into `ci/noir.yaml`.
+- **Nameless parameters get nothing.** If an analyzer knows a parameter exists but not what it's called, it's dropped before `--pvalue` runs. You won't see a stray `=42` in the curl output.
+- **`body` lands in `json`.** Parameters recorded as `body` are normalized into the buckets the optimizer knows, so `--pvalue json=…` reaches them. For new scripts, use `--pvalue TYPE=VAL` rather than the old `--set-pvalue-*` aliases.
+- **Headers follow `-u`.** `--probe-header` and `--pvalue header=…` on probe payloads are aimed at the `-u` host. Endpoints that already carry an absolute host from the source keep that host and don't get those headers. Export destinations you named yourself still do.
+- **Secrets don't belong in committed YAML.** Expand them in CI (`--pvalue "header=Authorization=Bearer $TOKEN"`) instead of baking tokens into `ci/noir.yaml`.
 
-## Wrap
+## Wrapping up
 
-Discovery without values is a map with no street numbers. Number them once with `--pvalue`, reuse across curl, collections, OpenAPI, status-code filters, and proxy replay. Named overrides before catch-all rules. Write verbs on purpose. Defaults in the config file when the team agrees.
+Discovery output without values is a map with no street numbers. `--pvalue` lets you number them once and reuse the result across curl, collections, OpenAPI, status-code filtering and proxy replay. Be deliberate about write verbs when probing, and once the team agrees on the placeholders, move them into the config file.
