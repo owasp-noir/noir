@@ -111,4 +111,45 @@ describe Noir::RustRequestGuards do
     end
     calls.values.should eq(["Principal::validate_admin_session", "Principal::validate_session"])
   end
+
+  it "does not read look-alike text, non-refusing helpers or a same-named method that only refuses elsewhere" do
+    a = <<-RUST
+      impl Principal {
+          // never: self.fail(HttpError::unauthorized())
+          pub fn note(&self) -> Result<(), E> {
+              let msg = "HttpError::unauthorized and Status::Forbidden";
+              tracing::warn!("{}", msg);
+              Ok(())
+          }
+          pub fn not_found(&self) -> Result<(), E> {
+              Err(HttpError::not_found())
+          }
+          pub fn check(&self) -> Result<(), E> {
+              Err(HttpError::unauthorized())
+          }
+      }
+      pub async fn soft(parts: &mut Parts) -> Result<(), E> {
+          // HttpError::forbidden()
+          Ok(())
+      }
+      pub async fn hard(parts: &mut Parts) -> Result<(), E> {
+          Err(HttpError::forbidden())
+      }
+      RUST
+    b = <<-RUST
+      impl Principal {
+          pub fn check(&self) -> Result<(), E> { Ok(()) }
+      }
+      pub async fn hard(parts: &mut Parts) -> Result<(), E> { Ok(()) }
+      RUST
+    facts = Noir::RustRequestGuards::Facts.new
+    Noir::RustRequestGuards.scan(a, facts, "a/src/a.rs")
+    Noir::RustRequestGuards.scan(b, facts, "b/src/b.rs")
+    Noir::RustRequestGuards.resolve(facts)
+    facts.refusing_units.should_not contain("Principal::note")
+    facts.refusing_units.should_not contain("Principal::not_found")
+    facts.refusing_units.should_not contain("fn:soft")
+    # the same name elsewhere that does not refuse: not trusted
+    facts.refusing_units.should_not contain("Principal::check")
+  end
 end

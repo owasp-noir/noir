@@ -101,6 +101,9 @@ module Noir::RustRequestGuards
     getter refusing_units = Set(String).new
     # `type ReqPrincipal = web::ReqData<Principal>;`
     getter aliases = Hash(String, String).new
+    # Crates with an inherent `impl Type {` block, for any type: a type name
+    # two crates implement cannot be matched to a handler's parameter.
+    getter impl_crates = Hash(String, Set(String)).new
     getter refusing_macros = Set(String).new
     # `Enum::Variant` keys a `status_code` arm maps to 401/403, and those
     # some arm maps to another status (a key in both is not trusted).
@@ -136,6 +139,7 @@ module Noir::RustRequestGuards
       collect_status_arms(code, globs, facts, path, crate) if status_fn
     end
     source.scan(ALIAS_RE) { |m| facts.aliases[m[1]] ||= m[2] } if source.includes?("type ")
+    source.scan(INHERENT_IMPL_RE) { |m| (facts.impl_crates[m[1]] ||= Set(String).new) << crate } if source.includes?("impl")
     return unless source.matches?(EVIDENCE_RE)
     if source.includes?("crate::")
       facts.crate_uses[path] = source.scan(CRATE_USE_RE).join('\n', &.[0])
@@ -258,6 +262,11 @@ module Noir::RustRequestGuards
       end
       break unless added
     end
+    # A key two files define (same-named type or helper in different crates)
+    # is trusted only when every definition refuses.
+    open = facts.units.reject { |unit| unit.sites.any? { |site| refuses?(site, unit, none, known, facts) } }
+    open.each { |unit| facts.refusing_units.delete(unit.type) }
+    facts.refusing_units.reject! { |key| (crates = facts.impl_crates[key.partition("::")[0]]?) && crates.size > 1 }
   end
 
   # What a handler's body does about the caller: for each fn (keyed by the
