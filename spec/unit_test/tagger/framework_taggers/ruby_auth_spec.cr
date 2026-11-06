@@ -1811,6 +1811,92 @@ describe "RubyAuthTagger (routed controller chain)" do
     Noir::CanCanAbility.new("class A\n  include CanCan::Ability\n\n  def initialize(user)\n    can :read, Note\n  end\nend\n".lines).verdict("show", "Medium").maybe?.should be_true
   end
 
+  it "keeps merged abilities honest: cannot rules, unresolved classes, admin-only grants and look-alike text" do
+    other = Noir::CanCanAbility.new(<<-RB.lines)
+      class Everyone
+        include CanCan::Ability
+
+        def initialize(user)
+          can :read, ::Goal
+          cannot :read, Goal
+          can [:read,
+               :map], Note
+        end
+      end
+      RB
+    admin = Noir::CanCanAbility.new(<<-RB.lines)
+      class Admin
+        include CanCan::Ability
+
+        def initialize(user)
+          can :manage, :all
+        end
+      end
+      RB
+    resolver = ->(name : String) { name == "Everyone" ? other : (name == "Admin" ? admin : nil) }
+    ability = Noir::CanCanAbility.new(<<-RB.lines, resolver)
+      class Ability
+        include CanCan::Ability
+
+        def initialize(user)
+          if user
+            merge Admin.new(user) if user.admin?
+          else
+            merge Everyone.new(user)
+          end
+        end
+      end
+      RB
+    ability.readable?.should be_true
+    # a later `cannot` in the merged class still wins
+    ability.verdict("index", "Goal").no?.should be_true
+    ability.verdict("map", "Note").yes?.should be_true
+    # the admin-only grant must not open Goal for a guest
+    ability.verdict("destroy", "Note").no?.should be_true
+
+    # a merged class nobody can read leaves the whole ability unreadable
+    unknown = Noir::CanCanAbility.new(<<-RB.lines, resolver)
+      class Ability
+        include CanCan::Ability
+
+        def initialize(user)
+          merge Missing.new(user)
+        end
+      end
+      RB
+    unknown.readable?.should be_false
+
+    # merge text in a comment or a string is not a merge
+    fake = Noir::CanCanAbility.new(<<-RB.lines, resolver)
+      class Ability
+        include CanCan::Ability
+
+        def initialize(user)
+          # merge Admin.new(user)
+          can :read, Note, title: "merge Admin.new(user) [" # not a rule
+          can :create, Note
+        end
+      end
+      RB
+    fake.readable?.should be_true
+    fake.verdict("destroy", "Note").no?.should be_true
+    fake.verdict("create", "Note").yes?.should be_true
+
+    # self-merge terminates
+    loop_ability = nil.as(Noir::CanCanAbility?)
+    looping = ->(name : String) { loop_ability }
+    loop_ability = Noir::CanCanAbility.new(<<-RB.lines, looping)
+      class Ability
+        include CanCan::Ability
+
+        def initialize(user)
+          merge Ability.new(user)
+        end
+      end
+      RB
+    loop_ability.try(&.readable?).should be_false
+  end
+
   # Names in the guard callback that are not calls: a word inside a string
   # or after a receiver, and a local the body assigns. Another controller
   # defines `new`, `otp` and `client`; reading those as calls to it made a
