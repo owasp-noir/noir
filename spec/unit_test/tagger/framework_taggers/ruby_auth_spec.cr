@@ -1935,7 +1935,7 @@ describe "RubyAuthTagger (routed controller chain)" do
         end
       end
       RB
-    host = Noir::CanCanAbility.new(<<-RB.lines, ->(name : String) { guest.as(Noir::CanCanAbility?) })
+    host = Noir::CanCanAbility.new(<<-RB.lines, ->(_name : String) { guest.as(Noir::CanCanAbility?) })
       class Ability
         include CanCan::Ability
 
