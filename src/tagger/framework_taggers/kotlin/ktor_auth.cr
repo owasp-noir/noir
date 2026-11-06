@@ -1,11 +1,8 @@
 require "../../../models/framework_tagger"
 require "../../../models/endpoint"
-require "../prefix_scope"
 
 @[Noir::TaggerFor(key: "ktor_auth", name: "Ktor Auth Tagger", desc: "Identifies Ktor authentication patterns (authenticate blocks, principals)", order: 200)]
 class KtorAuthTagger < FrameworkTagger
-  include PrefixScope
-
   # Ktor authenticate block patterns
   AUTHENTICATE_BLOCK_PATTERNS = [
     {/authenticate\s*\(/, "Ktor authenticate block"},
@@ -16,7 +13,8 @@ class KtorAuthTagger < FrameworkTagger
 
   # `authenticate("session", optional = true) { ... }` lets an anonymous
   # caller through; it only resolves a principal when credentials are sent.
-  OPTIONAL_AUTHENTICATE = /\boptional\s*=\s*true\b/
+  # `strategy = AuthenticationStrategy.Optional` (Ktor 3) is the same.
+  OPTIONAL_AUTHENTICATE = /\boptional\s*=\s*true\b|\bAuthenticationStrategy\.Optional\b/
 
   # Ktor session/JWT/basic auth in route context
   ROUTE_AUTH_PATTERNS = [
@@ -34,9 +32,8 @@ class KtorAuthTagger < FrameworkTagger
   ROUTE_HANDLER = /^(?:get|post|put|patch|delete|head|options)\s*[({]/
 
   # One `authenticate {}` block found by the pre-scan: which file it is in,
-  # the line range its braces span, and the `route()` prefix it sits under.
-  alias AuthScope = NamedTuple(file: String, start_line: Int32, end_line: Int32,
-    prefix: String, description: String)
+  # and the line range its braces span.
+  alias AuthScope = NamedTuple(file: String, start_line: Int32, end_line: Int32, description: String)
 
   def initialize(options : Hash(String, YAML::Any))
     super
@@ -67,8 +64,8 @@ class KtorAuthTagger < FrameworkTagger
     end
   end
 
-  # Record every `authenticate {}` block in `content` with the line range it
-  # covers and the `route()` prefix it is nested under.
+  # Record every `authenticate {}` block nested in a `route()` block in
+  # `content`, with the line range it covers.
   #
   # Both stacks are keyed on real brace depth. Popping a `route()` prefix on
   # "any line that is just `}`" — what this used to do — retired the prefix
@@ -77,19 +74,16 @@ class KtorAuthTagger < FrameworkTagger
   # and onto other files entirely. `GoRouteGroupScope#each_group_scoped_line`
   # tracks the same thing the same way.
   private def scan_auth_blocks(file : String, content : String)
-    route_frames = [] of NamedTuple(threshold: Int32, prefix: String)
-    auth_frames = [] of NamedTuple(threshold: Int32, start_line: Int32, prefix: String, description: String)
+    route_frames = [] of Int32
+    auth_frames = [] of NamedTuple(threshold: Int32, start_line: Int32, description: String)
     depth = 0
 
     content.split("\n").each_with_index do |line, idx|
       line_num = idx + 1
       stripped = line.strip
 
-      if route_match = stripped.match(ROUTE_BLOCK)
-        route_frames << {threshold: depth, prefix: route_match[1]}
-      end
+      route_frames << depth if stripped.matches?(ROUTE_BLOCK)
 
-      # Only record a block whose route prefix is known.
       if !route_frames.empty? && AUTHENTICATE_BLOCK_PATTERNS.any? { |pattern, _desc| stripped.matches?(pattern) } &&
          !stripped.matches?(OPTIONAL_AUTHENTICATE)
         auth_match = stripped.match(/authenticate\s*\(\s*"([^"]+)"/)
@@ -97,14 +91,13 @@ class KtorAuthTagger < FrameworkTagger
         auth_frames << {
           threshold:   depth,
           start_line:  line_num,
-          prefix:      join_segments(route_frames.map(&.[:prefix])),
           description: "Protected by Ktor authenticate(\"#{auth_name}\") block",
         }
       end
 
       depth += line.count('{') - line.count('}')
 
-      while !route_frames.empty? && depth <= route_frames.last[:threshold]
+      while !route_frames.empty? && depth <= route_frames.last
         route_frames.pop
       end
       while !auth_frames.empty? && depth <= auth_frames.last[:threshold]
@@ -120,13 +113,12 @@ class KtorAuthTagger < FrameworkTagger
   end
 
   private def close_auth_frame(file : String,
-                               frame : NamedTuple(threshold: Int32, start_line: Int32, prefix: String, description: String),
+                               frame : NamedTuple(threshold: Int32, start_line: Int32, description: String),
                                end_line : Int32)
     @auth_scopes << {
       file:        file,
       start_line:  frame[:start_line],
       end_line:    end_line,
-      prefix:      frame[:prefix],
       description: frame[:description],
     }
   end
@@ -364,25 +356,21 @@ class KtorAuthTagger < FrameworkTagger
   end
 
   # An `authenticate {}` block found by the pre-scan guards this endpoint when
-  # the route is declared inside the block's braces. For a route declared in
-  # another file — Ktor's `route("/admin") { adminRoutes() }` extension-function
-  # split — the braces say nothing, so fall back to the block's `route()`
-  # prefix, matched on a segment boundary.
+  # the route is declared inside the block's braces. A route declared in a
+  # `Route.` extension function mounted inside the block
+  # (`authenticate { adminRoutes() }`) is tagged by the Ktor analyzer, which
+  # knows where the function is called. The block's `route()` prefix is no
+  # stand-in for that: a public sibling mounted under the same prefix
+  # (`route("/api") { authenticate { adminRoutes() }; publicRoutes() }`)
+  # shares it.
   private def check_scope_auth(endpoint : Endpoint) : String?
     return if @auth_scopes.empty?
 
-    url = endpoint.url
     locations = endpoint.details.code_paths.map { |info| {Noir::PathScope.expand(info.path), info.line} }
 
     @auth_scopes.each do |scope|
-      local = locations.select { |path, _| path == scope[:file] }
-
-      if local.empty?
-        next if scope[:prefix] == "/"
-        return scope[:description] if prefix_covers?(scope[:prefix], url)
-      elsif local.any? { |_, line| !line.nil? && line >= scope[:start_line] && line <= scope[:end_line] }
-        return scope[:description]
-      end
+      next unless locations.any? { |path, line| path == scope[:file] && !line.nil? && line >= scope[:start_line] && line <= scope[:end_line] }
+      return scope[:description]
     end
 
     nil
