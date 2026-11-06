@@ -13,7 +13,8 @@ class KtorAuthTagger < FrameworkTagger
 
   # `authenticate("session", optional = true) { ... }` lets an anonymous
   # caller through; it only resolves a principal when credentials are sent.
-  OPTIONAL_AUTHENTICATE = /\boptional\s*=\s*true\b/
+  # `strategy = AuthenticationStrategy.Optional` (Ktor 3) is the same.
+  OPTIONAL_AUTHENTICATE = /\boptional\s*=\s*true\b|\bAuthenticationStrategy\.Optional\b/
 
   # Ktor session/JWT/basic auth in route context
   ROUTE_AUTH_PATTERNS = [

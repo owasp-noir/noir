@@ -792,7 +792,7 @@ module Noir
           end
           return
         end
-        record_mount(node, source, active ? prefix : nil, file.mounts)
+        record_mount(node, source, prefix, file.mounts) if active
       end
 
       Noir::TreeSitter.each_named_child(node) do |child|
@@ -1088,24 +1088,32 @@ module Noir
       false
     end
 
-    # `foo()` / `this.foo()` is placed at `prefix`; `x.foo()` is not (its
-    # receiver may be any route). The analyzer keeps only the names that
-    # turn out to be `Route.` extension functions.
-    private def record_mount(call : LibTreeSitter::TSNode, source : String, prefix : String?, mounts : Array(Mount))
+    # A call made from routing code: `foo()` / `this.foo()` is placed at
+    # `prefix`; `this@routing.foo()` reaches an outer route, so its prefix is
+    # unknown (nil). Any other receiver (`svc.users()`) is not a route and is
+    # not recorded, nor is a call outside routing code. The analyzer keeps
+    # only the names that turn out to be `Route.` extension functions.
+    private def record_mount(call : LibTreeSitter::TSNode, source : String, prefix : String, mounts : Array(Mount))
       return unless callee = Noir::TreeSitter.first_named_child(call)
       case Noir::TreeSitter.node_type(callee)
       when "simple_identifier"
         mounts << Mount.new(Noir::TreeSitter.node_text(callee, source), prefix, Noir::TreeSitter.node_start_row(call))
       when "navigation_expression"
         receiver = Noir::TreeSitter.first_named_child(callee)
-        placed = receiver && Noir::TreeSitter.node_type(receiver) == "this_expression" ? prefix : nil
+        return unless receiver && Noir::TreeSitter.node_type(receiver) == "this_expression"
         name = last_navigation_segment(callee, source)
-        mounts << Mount.new(name, placed, Noir::TreeSitter.node_start_row(call)) unless name.empty?
+        return if name.empty?
+        placed = Noir::TreeSitter.node_text(receiver, source) == "this" ? prefix : nil
+        mounts << Mount.new(name, placed, Noir::TreeSitter.node_start_row(call))
       end
     end
 
+    # `authenticate(..., optional = true)` and the `AuthenticationStrategy.Optional`
+    # strategy let an anonymous call through.
+    OPTIONAL_AUTHENTICATE = /\boptional\s*=\s*true\b|\bAuthenticationStrategy\.Optional\b/
+
     # The provider an `authenticate("jwt") { }` block names ("default" for
-    # none); nil for `optional = true`, which lets an anonymous call through.
+    # none); nil for an optional block (`OPTIONAL_AUTHENTICATE`).
     # The grammar may nest the arguments one call deeper than the lambda:
     # `(authenticate("jwt")) { ... }`.
     private def authenticate_realm(call : LibTreeSitter::TSNode, source : String) : String?
@@ -1120,7 +1128,7 @@ module Noir
           Noir::TreeSitter.each_named_child(suffix) do |args|
             next unless Noir::TreeSitter.node_type(args) == "value_arguments"
             text = Noir::TreeSitter.node_text(args, source)
-            return if text.matches?(/\boptional\s*=\s*true\b/)
+            return if text.matches?(OPTIONAL_AUTHENTICATE)
             if name = text.match(/\A\(\s*"([^"]+)"/)
               realm = name[1]
             end
