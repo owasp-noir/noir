@@ -822,6 +822,11 @@ module Noir
 
       # 2. Class-body `property_declaration`s.
       if body = class_body_of(decl)
+        # `@JsonAutoDetect(fieldVisibility = ANY)` on the class binds private
+        # fields too; read only the class's own header, not nested classes.
+        decl_start = LibTreeSitter.ts_node_start_byte(decl).to_i
+        header = source.byte_slice(decl_start, LibTreeSitter.ts_node_start_byte(body).to_i - decl_start)
+        auto_detect = header.matches?(JSON_AUTO_DETECT_RE)
         last_prop_name : String? = nil
         Noir::TreeSitter.each_named_child(body) do |member|
           case Noir::TreeSitter.node_type(member)
@@ -864,10 +869,13 @@ module Noir
             next if name.empty?
             # A `private` / `protected` body property has no accessor for
             # Jackson or Spring's binder to reach (`private val isSet =
-            # mutableMapOf<...>()`), unless `@JsonProperty` names it.
+            # mutableMapOf<...>()`), unless `@JsonProperty` marks it (named or
+            # not) or the class opts its fields in with `@JsonAutoDetect`.
             visibility = field_visibility(member, source)
             wire_name = json_property_name(member, source)
-            next if (visibility == "private" || visibility == "protected") && wire_name.nil?
+            if (visibility == "private" || visibility == "protected") && !auto_detect && !json_property_annotated?(member, source)
+              next
+            end
             fields << FieldInfo.new(
               name, visibility, true, init, null_validation_groups(member, source),
               server_managed_field?(member, source, name, init, class_name, class_text), validation_annotations(member, source),
@@ -886,6 +894,19 @@ module Noir
     # `@JsonProperty("wire")`, including use-site targets (`@field:` /
     # `@get:` / `@param:`) and the `value = "wire"` form.
     JSON_PROPERTY_RE = /@(?:\w+:)?(?:\w+\.)*JsonProperty\s*\(\s*(?:value\s*=\s*)?"([^"]+)"/
+
+    JSON_PROPERTY_ANNOTATION_RE = /@(?:\w+:)?(?:\w+\.)*JsonProperty\b/
+    JSON_AUTO_DETECT_RE         = /@(?:\w+\.)*JsonAutoDetect\b/
+
+    private def json_property_annotated?(decl : LibTreeSitter::TSNode, source : String) : Bool
+      Noir::TreeSitter.each_named_child(decl) do |child|
+        case Noir::TreeSitter.node_type(child)
+        when "modifiers", "annotation"
+          return true if Noir::TreeSitter.node_text(child, source).matches?(JSON_PROPERTY_ANNOTATION_RE)
+        end
+      end
+      false
+    end
 
     private def json_property_name(decl : LibTreeSitter::TSNode, source : String) : String?
       Noir::TreeSitter.each_named_child(decl) do |child|
