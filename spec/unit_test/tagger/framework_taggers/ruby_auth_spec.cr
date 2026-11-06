@@ -1947,6 +1947,22 @@ describe "RubyAuthTagger (routed controller chain)" do
     host.verdict("show", "Topic", instance: true).maybe?.should be_true
   end
 
+  it "re-merges a class after a cannot rule so the later grant wins" do
+    everyone = Noir::CanCanAbility.new("class E\n  include CanCan::Ability\n\n  def initialize(user)\n    can :read, Topic\n  end\nend\n".lines)
+    ability = Noir::CanCanAbility.new(<<-RB.lines, ->(_name : String) { everyone.as(Noir::CanCanAbility?) })
+      class Ability
+        include CanCan::Ability
+
+        def initialize(user)
+          merge Abilities::Everyone.new(user)
+          cannot :read, Topic
+          merge Abilities::Everyone.new(user)
+        end
+      end
+      RB
+    ability.verdict("index", "Topic").yes?.should be_true
+  end
+
   # Names in the guard callback that are not calls: a word inside a string
   # or after a receiver, and a local the body assigns. Another controller
   # defines `new`, `otp` and `client`; reading those as calls to it made a

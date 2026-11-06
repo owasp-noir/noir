@@ -32,7 +32,7 @@ module Noir
     @user = "user"
     @resolver : Proc(String, CanCanAbility?)? = nil
     @lines = [] of String
-    @merged = Set({String, Grant}).new
+    @merged = Hash({String, Grant}, Int32).new
 
     def initialize(lines : Array(String), @resolver : Proc(String, CanCanAbility?)? = nil)
       @lines = join_logical_lines(lines)
@@ -163,8 +163,8 @@ module Noir
           grants = current + (m[3]? ? [condition(m[3], m[2] == "unless")] : [] of Grant)
           grant = all(grants)
           resolved = false
-          if !@merged.add?({class_name, grant})
-            # already merged under this very grant: its rules are in
+          if @merged[{class_name, grant}]? == @rules.size
+            # merged under this very grant with no rule since: its rules are in
             resolved = true
           elsif resolver = @resolver
             if other = resolver.call(class_name)
@@ -179,6 +179,7 @@ module Noir
                 other.aliases.each do |verb, list|
                   (@aliases[verb] ||= [] of String).concat(list).uniq!
                 end
+                @merged[{class_name, grant}] = @rules.size
               end
             end
           end
