@@ -26,8 +26,16 @@ describe "Fastify hooks gated on route config", tags: "functional" do
     # A hook that refuses routes lacking the key opens the ones that set it.
     guards_of.call("/inverse/anon").should be_empty
     guards_of.call("/api/plain").should be_empty
+    # The same hook still refuses the routes that do not set the key.
+    guards_of.call("/inverse/plain").join(" ").should contain("onRequest")
     # A negated group tests the key's absence too.
     guards_of.call("/inverse/roles").should be_empty
+    guards_of.call("/inverse/noroles").join(" ").should contain("preHandler")
+    # `typeof x === 'undefined'` and `Array.isArray(x) === false` test absence.
+    guards_of.call("/inverse/tier").should be_empty
+    # An encapsulated plugin's gate does not reach another plugin's routes.
+    guards_of.call("/pg/inside").join(" ").should contain("config.level")
+    guards_of.call("/pr/elsewhere").should be_empty
     # A hook inside a register callback guards only that callback's routes.
     guards_of.call("/scoped/inside").join(" ").should contain("config.role")
     guards_of.call("/scoped/outside").should be_empty

@@ -22,3 +22,5 @@ app.addHook('onRequest', async (req, reply) => {
 
 app.register(import('./api'), { prefix: '/api' })
 app.register(import('./scoped'), { prefix: '/scoped' })
+app.register(import('./plugin_gate'), { prefix: '/pg' })
+app.register(import('./plugin_routes'), { prefix: '/pr' })

@@ -19,6 +19,12 @@ module.exports = fp(async (fastify) => {
     }
   })
 
+  // The verify call is only quoted text.
+  fastify.decorate('fakeCheck', async (request) => {
+    const note = "await request.jwtVerify()"
+    request.log.info(note)
+  })
+
   // Verified only when a token is sent.
   fastify.decorate('optionalToken', async (request) => {
     if (request.headers.authorization) await request.jwtVerify()
