@@ -30,11 +30,15 @@ require "./rust_use_imports"
 # No file I/O: callers feed source text (and its path) to `scan` and
 # combine the results.
 module Noir::RustRequestGuards
-  REFUSAL_RE     = /\bStatus::(?:Unauthorized|Forbidden)\b|\bStatusCode::(?:UNAUTHORIZED|FORBIDDEN)\b|\bError(?:Unauthorized|Forbidden)\b/
+  REFUSAL_RE     = /\bStatus::(?:Unauthorized|Forbidden)\b|\bStatusCode::(?:UNAUTHORIZED|FORBIDDEN)\b|\bError(?:Unauthorized|Forbidden)\b|\b\w+::(?:unauthori[sz]ed|forbidden|permission_denied)\b/
   GUARD_CALL_RE  = /(\w+)(?:\s*::\s*<[^<>]*>)?\s*::\s*from_request(?:_parts)?\s*\(|\bguard\s*::\s*<\s*(?:\w+::)*(\w+)/
   TRAIT_RE       = /\A(?:\w+::)*FromRequest(?:Parts)?\b/
   SUCCESS_ARM_RE = /\A(?:(?:\w+::)*Outcome::)?(?:Success|Ok)\s*\(/
-  EVIDENCE_RE    = /\bFromRequest|macro_rules!/
+  # ponytail: a file with none of these words is not parsed, so a helper whose
+  # only refusal is a call into another file's helper is missed.
+  FN_DEF_RE        = /\bfn\s+(\w+)/
+  REQUEST_PARAM_RE = /\b(?:Parts|HttpRequest|ServiceRequest|RequestHead|HeaderMap)\b/
+  EVIDENCE_RE      = /\bFromRequest|macro_rules!|(?i:unauthori[sz]ed|forbidden)|permission_denied/
   # ponytail: a status mapping is read off its signature, not its callers;
   # a `&self -> StatusCode` helper nothing calls still maps its variants.
   STATUS_FN_RE   = /\bfn\s+(?:(status_code)|into_response)\b|\bfn\s+\w+\s*\(\s*&?\s*(?:mut\s+)?self\b[^)]*\)\s*->\s*[^{;]*\bStatusCode\b/
@@ -75,6 +79,8 @@ module Noir::RustRequestGuards
     Macro
     Delegate
     Variant
+    # `helper(..)?` whose body refuses (`Facts#refusing_units`).
+    Unit
   end
 
   # A place in a guard impl that can end the request: what it is, and the
@@ -87,6 +93,15 @@ module Noir::RustRequestGuards
 
   class Facts
     getter impls = [] of Impl
+    # Free fns taking the request (`fn bearer(parts: &mut Parts)`, keyed
+    # `fn:name`) and inherent methods (keyed `Type::name`) with the sites
+    # that can end the request; `resolve` fills `refusing_units` from them.
+    getter units = [] of Impl
+    getter refusing_units = Set(String).new
+    # Keys (`crate|fn:name`) of free fns that take the request; only those can refuse.
+    getter request_fns = Set(String).new
+    # `fn name` definitions per crate, counted by text in every file (parsed or not).
+    getter fn_defs = Hash(String, Int32).new(0)
     getter refusing_macros = Set(String).new
     # `Enum::Variant` keys a `status_code` arm maps to 401/403, and those
     # some arm maps to another status (a key in both is not trusted).
@@ -109,7 +124,7 @@ module Noir::RustRequestGuards
   end
 
   # Per-file state for walking a guard impl.
-  private record Walk, source : String, sites : Array(Site), enum_globs : Array(String)
+  private record Walk, source : String, sites : Array(Site), enum_globs : Array(String), crate : String = ""
 
   def self.scan(source : String, facts : Facts, path : String = "") : Nil
     crate = crate_dir(path)
@@ -121,6 +136,7 @@ module Noir::RustRequestGuards
       code.scan(ENUM_DEF_RE) { |m| (facts.enum_files["#{crate}|#{m[1]}"] ||= Set(String).new) << path }
       collect_status_arms(code, globs, facts, path, crate) if status_fn
     end
+    source.scan(FN_DEF_RE) { |m| facts.fn_defs["#{crate}|fn:#{m[1]}"] += 1 } if source.includes?("fn ")
     return unless source.matches?(EVIDENCE_RE)
     if source.includes?("crate::")
       facts.crate_uses[path] = source.scan(CRATE_USE_RE).join('\n', &.[0])
@@ -155,12 +171,12 @@ module Noir::RustRequestGuards
   # The sites of `body`, plus those of the inherent methods it calls as
   # `Self::name(...)` (transitively, each once).
   private def self.guard_sites(body : LibTreeSitter::TSNode, type : String, source : String, globs : Array(String),
-                               methods : Hash(String, LibTreeSitter::TSNode)) : Array(Site)
+                               methods : Hash(String, LibTreeSitter::TSNode), crate : String = "") : Array(Site)
     sites = [] of Site
     seen = Set(String).new
     queue = [body]
     while node = queue.shift?
-      sites_in(node, Walk.new(source, sites, globs), nil, false, false, 0)
+      sites_in(node, Walk.new(source, sites, globs, crate), nil, false, false, 0)
       next if methods.empty?
       Noir::TreeSitter.node_text(node, source).scan(SELF_CALL_RE) do |m|
         key = "#{type}::#{m[1]}"
@@ -203,6 +219,7 @@ module Noir::RustRequestGuards
   def self.resolve(facts : Facts) : Hash(String, Bool)
     known = facts.impls.map(&.type).to_set
     guards = Set(String).new
+    resolve_units(facts, known)
     loop do
       added = false
       facts.impls.each do |impl|
@@ -225,6 +242,29 @@ module Noir::RustRequestGuards
     end
     mixed.each { |name| verdicts.delete(name) }
     verdicts
+  end
+
+  # ponytail: a unit refuses when any one of its sites can, so a method that
+  # only refuses a privileged subset still counts, and same-named types share
+  # a key. Judge by the paths to the refusal if a repo needs it.
+  private def self.resolve_units(facts : Facts, known : Set(String)) : Nil
+    none = Set(String).new
+    loop do
+      added = false
+      facts.units.each do |unit|
+        next if facts.refusing_units.includes?(unit.type) || !facts.request_fns.includes?(unit.type)
+        next unless unit.sites.any? { |site| refuses?(site, unit, none, known, facts) }
+        facts.refusing_units << unit.type
+        added = true
+      end
+      break unless added
+    end
+    # A key two files define (same-named type or helper in different crates)
+    # is trusted only when every definition refuses.
+    open = facts.units.reject { |unit| unit.sites.any? { |site| refuses?(site, unit, none, known, facts) } }
+    open.each { |unit| facts.refusing_units.delete(unit.type) }
+    # A definition in a file that was never parsed (or an impl method of the same name) is unknown: not trusted.
+    facts.refusing_units.reject! { |key| facts.fn_defs[key] > facts.units.count { |unit| unit.type == key } }
   end
 
   # Leaf type names of a fn's parameters that are required guards, keyed
@@ -282,6 +322,7 @@ module Noir::RustRequestGuards
             in .macro?    then facts.refusing_macros.includes?(site.name)
             in .delegate? then guards.includes?(site.name)
             in .variant?  then refusing_variant?(site.name, impl, facts)
+            in .unit?     then site.name.try { |name| facts.refusing_units.includes?(name) } || false
             end
     return false unless fires
     cond = site.condition
@@ -446,13 +487,15 @@ module Noir::RustRequestGuards
         facts.refusing_macros << Noir::TreeSitter.node_text(name, source)
       end
       return
+    when "function_item"
+      collect_free_fn(node, source, globs, facts, file, crate, methods)
     when "impl_item"
       trait = Noir::TreeSitter.field(node, "trait")
       type = Noir::TreeSitter.field(node, "type")
       body = Noir::TreeSitter.field(node, "body")
       if trait && type && body && Noir::TreeSitter.node_text(trait, source).matches?(TRAIT_RE)
         if leaf = type_leaf(Noir::TreeSitter.node_text(type, source))
-          facts.impls << Impl.new(leaf, guard_sites(body, leaf, source, globs, methods), file, crate)
+          facts.impls << Impl.new(leaf, guard_sites(body, leaf, source, globs, methods, crate), file, crate)
         end
         return
       end
@@ -460,9 +503,59 @@ module Noir::RustRequestGuards
     Noir::TreeSitter.each_named_child(node) { |child| collect(child, source, globs, facts, file, crate, depth + 1, methods) }
   end
 
+  # A free fn that takes the request: `fn bearer(parts: &mut Parts)`.
+  private def self.collect_free_fn(node : LibTreeSitter::TSNode, source : String, globs : Array(String), facts : Facts,
+                                   file : String, crate : String, methods : Hash(String, LibTreeSitter::TSNode)) : Nil
+    owner = Noir::TreeSitter.parent(node).try { |p| Noir::TreeSitter.parent(p) }
+    return if owner && {"impl_item", "trait_item"}.includes?(Noir::TreeSitter.node_type(owner))
+    name = Noir::TreeSitter.field(node, "name") || return
+    params = Noir::TreeSitter.field(node, "parameters") || return
+    body = Noir::TreeSitter.field(node, "body") || return
+    fn_name = Noir::TreeSitter.node_text(name, source)
+    key = "#{crate}|fn:#{fn_name}"
+    facts.request_fns << key if Noir::TreeSitter.node_text(params, source).matches?(REQUEST_PARAM_RE)
+    facts.units << Impl.new(key, guard_sites(body, fn_name, source, globs, methods, crate), file, crate)
+  end
+
   private def self.guard_called(text : String) : String?
     m = text.match(GUARD_CALL_RE) || return
     m[1]? || m[2]?
+  end
+
+  # The unit a `helper(..)?` / `self.method(..).await?` propagates: `fn:helper`
+  # or `Owner::method`.
+  private def self.called_unit(node : LibTreeSitter::TSNode, walk : Walk) : String?
+    called_unit_from(Noir::TreeSitter.first_named_child(node), walk)
+  end
+
+  private def self.called_unit_from(start : LibTreeSitter::TSNode?, walk : Walk) : String?
+    source = walk.source
+    cur = start
+    while cur
+      case Noir::TreeSitter.node_type(cur)
+      when "await_expression"
+        cur = Noir::TreeSitter.first_named_child(cur)
+      when "call_expression"
+        fn = Noir::TreeSitter.field(cur, "function") || return
+        case Noir::TreeSitter.node_type(fn)
+        when "identifier", "scoped_identifier"
+          return "#{walk.crate}|fn:#{Noir::TreeSitter.node_text(fn, source).split("::").last}"
+        when "field_expression"
+          recv = Noir::TreeSitter.field(fn, "value") || return
+          field = Noir::TreeSitter.field(fn, "field") || return
+          method = Noir::TreeSitter.node_text(field, source)
+          if ERR_ADAPTERS.includes?(method)
+            cur = recv
+            next
+          end
+          return
+        else
+          return
+        end
+      else
+        return
+      end
+    end
   end
 
   # `err`: the node is the error a returned `Err(...)` / `.ok_or(...)`
@@ -527,8 +620,15 @@ module Noir::RustRequestGuards
       if called = guard_called(Noir::TreeSitter.node_text(node, source))
         sites << Site.new(SiteKind::Delegate, called, cond)
       end
+      if unit = called_unit(node, walk)
+        sites << Site.new(SiteKind::Unit, unit, cond)
+      end
       Noir::TreeSitter.each_named_child(node) { |child| sites_in(child, walk, cond, err, false, depth + 1) }
       return
+    when "return_expression"
+      if unit = called_unit(node, walk)
+        sites << Site.new(SiteKind::Unit, unit, cond)
+      end
     when "match_arm", "let_condition"
       pattern = Noir::TreeSitter.field(node, "pattern")
       Noir::TreeSitter.each_named_child(node) do |child|
