@@ -111,6 +111,7 @@ module Noir::CLI::ScanCommand
     app.logger.loading "Starting code analysis." do
       app.analyze
     end
+    app.print_endpoint_filter_warnings
     report_coverage_gaps(app.logger, app.analyzer_failures, "")
     app
   end
@@ -747,6 +748,7 @@ module Noir::CLI::ScanCommand
     app.logger.info "Scan completed in #{(elapsed.total_milliseconds / 1000.0).round(4)} s."
 
     if app_diff.nil?
+      app.print_endpoint_filter_warnings
       app.logger.info "Generating Report."
       app.report
     else
@@ -774,6 +776,7 @@ module Noir::CLI::ScanCommand
       # the two scans have different code, and only one of them is the one
       # the user is about to act on.
       report_coverage_gaps(app.logger, app_diff.analyzer_failures, " in the #{diff_label} codebase")
+      app.print_endpoint_filter_warnings(app_diff)
 
       app.logger.info "Generating Diff Report."
       diff_result = app.diff_report(app_diff)

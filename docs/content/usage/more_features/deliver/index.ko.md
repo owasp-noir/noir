@@ -79,6 +79,8 @@ noir scan ./source -u http://localhost:3000 \
 
 프록시로 보낼 엔드포인트를 좁힐 수 있습니다. 패턴에는 URL 부분 문자열, HTTP 메서드(대소문자 무시), `method:URL` 조합을 쓸 수 있습니다.
 
+이 플래그는 probe/export 대상만 고르고 결과에는 모든 엔드포인트가 남습니다. 아무 엔드포인트에도 맞지 않는 패턴은 경고를 출력합니다. 결과 자체에서 엔드포인트를 빼려면 [`--only-endpoints` / `--exclude-endpoints`](@/usage/cli_commands/_index.ko.md#endpoint-filters)를 쓰세요.
+
 ```bash
 # API 엔드포인트만
 noir scan ./source -u http://localhost:3000 --probe-via http://localhost:8080 --probe-match "api"

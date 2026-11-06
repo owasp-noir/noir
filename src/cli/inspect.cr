@@ -3,6 +3,7 @@ require "levenshtein"
 require "../models/endpoint"
 require "../utils/url_path"
 require "../utils/http_symbols"
+require "../utils/endpoint_filter"
 require "./common"
 require "./scan_flags"
 require "./commands/scan"
@@ -115,9 +116,46 @@ module Noir::CLI::Inspect
     {positionals, flags}
   end
 
+  # Pulls `--only-endpoints` / `--exclude-endpoints` (and their values) out
+  # of the scan arguments, parsed into terms.
+  def self.take_endpoint_filters(scan_argv : Array(String)) : {Array(EndpointFilter::Term), Array(EndpointFilter::Term), Array(String)}
+    only = [] of EndpointFilter::Term
+    exclude = [] of EndpointFilter::Term
+    rest = [] of String
+    i = 0
+    while i < scan_argv.size
+      arg = scan_argv[i]
+      parts = arg.split('=', 2)
+      name = parts[0]
+      inline = parts[1]?
+      unless name.in?("--only-endpoints", "--exclude-endpoints")
+        rest << arg
+        i += 1
+        next
+      end
+      value = inline
+      unless value
+        i += 1
+        value = scan_argv[i]?
+      end
+      Noir::CLI.die("#{name} requires a value", EXIT_USAGE) if value.nil?
+      begin
+        term = EndpointFilter.parse_term(value)
+      rescue ex : EndpointFilter::TermError
+        Noir::CLI.die("#{name} #{value.inspect}: #{ex.message}", EXIT_USAGE)
+      end
+      (name == "--only-endpoints" ? only : exclude) << term
+      i += 1
+    end
+    {only, exclude, rest}
+  end
+
   # The endpoint list to query: a saved report or a live scan.
   def self.load(common : Common, scan_argv : Array(String)) : Array(Endpoint)
     if from = common.from
+      # The endpoint filters are the one pair of scan flags that still mean
+      # something on a report, and the only way to say "not" to a query.
+      only, exclude, scan_argv = take_endpoint_filters(scan_argv)
       # Nothing is scanned, so a scan path or flag here is a mistake — and a
       # mistyped filter (`--no-gaurd`) would otherwise return the whole
       # surface as if it were the answer.
@@ -125,7 +163,11 @@ module Noir::CLI::Inspect
       unless unexpected.empty?
         Noir::CLI.die("--from reads a report and scans nothing; unexpected argument(s): #{unexpected.join(" ")}", EXIT_USAGE)
       end
-      load_report(from)
+      endpoints = load_report(from)
+      return endpoints if only.empty? && exclude.empty?
+      endpoints, warnings = Noir::EndpointFilter.apply(endpoints, only, exclude)
+      warnings.each { |warning| STDERR.puts "noir: #{warning.message}" }
+      endpoints
     else
       unknown = unknown_flags(scan_argv)
       unless unknown.empty?
@@ -186,21 +228,19 @@ module Noir::CLI::Inspect
     Noir::CLI.die("--from #{path}: #{ex.message}", EXIT_USAGE)
   end
 
-  # Guards that gate *who* may call the route. Rate limiting and CSRF checks
-  # are guards the augmentor records, but neither stops an anonymous caller,
-  # and "no auth" is what `--no-guard` asks.
-  NON_AUTH_GUARD_KINDS = {"rate_limit_guard", "csrf_guard"}
+  # The query matcher lives in `Noir::EndpointFilter`, shared with
+  # `noir scan --only-endpoints / --exclude-endpoints`.
+  alias Filters = ::Noir::EndpointFilter::Filters
+  NON_AUTH_GUARD_KINDS     = ::Noir::EndpointFilter::NON_AUTH_GUARD_KINDS
+  RESTATING_SIGNAL_SOURCES = ::Noir::EndpointFilter::RESTATING_SIGNAL_SOURCES
+  GLOB_CHARS               = ::Noir::EndpointFilter::GLOB_CHARS
 
   def self.auth_guards(context : AIContext?) : Array(AIContextEntry)
-    return [] of AIContextEntry unless context
-    context.guards.reject { |g| NON_AUTH_GUARD_KINDS.includes?(g.kind) }
+    ::Noir::EndpointFilter.auth_guards(context)
   end
 
-  # Signals worth filtering on: the route/detector/method ones restate
-  # method, url and tech, and would make `--signal any` match everything.
   def self.derived_signals(context : AIContext?) : Array(AIContextEntry)
-    return [] of AIContextEntry unless context
-    context.signals.reject { |s| RESTATING_SIGNAL_SOURCES.includes?(s.source) }
+    ::Noir::EndpointFilter.derived_signals(context)
   end
 
   # Evidence tying an endpoint to a file (`reach`). `path` is set only when
@@ -232,8 +272,6 @@ module Noir::CLI::Inspect
       end
     end
   end
-
-  RESTATING_SIGNAL_SOURCES = {"route", "detector", "http_method"}
 
   # One output row. Compact by default: a projection of what `Endpoint`
   # already carries, empty buckets omitted. `--full` carries the unchanged
@@ -640,13 +678,8 @@ module Noir::CLI::Inspect
     end.join('/')
   end
 
-  # Whether `query --method` lists a route declared for `declared`. An
-  # `ANY` row (nginx, Apache, `router.all`) serves every HTTP verb, so
-  # `--method POST` lists it, as `trace` does; `--method ANY` lists only
-  # the `ANY` rows.
   def self.method_listed?(methods : Array(String), declared : String) : Bool
-    declared = declared.upcase
-    methods.includes?(declared) || (::synthetic_any_method?(declared) && methods.any? { |m| ::ALLOWED_HTTP_METHODS.includes?(m) })
+    ::Noir::EndpointFilter.method_listed?(methods, declared)
   end
 
   record Match, endpoint : Endpoint, matched_by : String
@@ -878,162 +911,16 @@ module Noir::CLI::Inspect
 
   # ---- query: AND-ed filters, comma lists OR ------------------------------
 
-  record Filters,
-    methods : Array(String) = [] of String,
-    url : String? = nil,
-    path : String? = nil,
-    projects : Array(String) = [] of String,
-    handler : String? = nil,
-    techs : Array(String) = [] of String,
-    tags : Array(String) = [] of String,
-    params : Array(String) = [] of String,
-    param_types : Array(String) = [] of String,
-    protocols : Array(String) = [] of String,
-    guard : Bool? = nil,
-    sinks : Array(String) = [] of String,
-    sources : Array(String) = [] of String,
-    signals : Array(String) = [] of String,
-    validators : Array(String) = [] of String do
-    def matches?(endpoint : Endpoint) : Bool
-      return false unless methods.empty? || Inspect.method_listed?(methods, endpoint.method)
-      return false unless (u = url).nil? || Inspect.glob_or_substring?(u, endpoint.url)
-      return false unless (p = path).nil? || endpoint.details.code_paths.any? { |cp| Inspect.path_glob?(p, cp.path) }
-      return false unless projects.empty? || projects.any? { |wanted| Inspect.project_matches?(wanted, endpoint.details.project) }
-      return false unless (h = handler).nil? || endpoint.handler.try { |eh| Inspect.glob_or_substring?(h, eh.name) || Inspect.path_glob?(h, eh.path || "") }
-      unless techs.empty?
-        have = endpoint.details.technologies.empty? ? [endpoint.details.technology].compact : endpoint.details.technologies
-        return false unless (have & techs).present?
-      end
-      return false unless tags.empty? || endpoint.tags.any? { |t| tags.includes?(t.name) }
-      # One parameter has to satisfy both `--param` and `--param-type`.
-      unless params.empty? && param_types.empty?
-        return false unless endpoint.params.any? { |p| param_matches?(p) }
-      end
-      return false unless protocols.empty? || protocols.includes?(endpoint.protocol)
-      context = endpoint.ai_context
-      unless (g = guard).nil?
-        # An outbound client declaration (Feign, `@HttpExchange`) is not served
-        # here, so it is neither guarded nor open.
-        return false if endpoint.internal
-        return false unless g == !Inspect.auth_guards(context).empty?
-      end
-      return false unless Inspect.bucket_matches?(sinks, context.try(&.sinks))
-      return false unless Inspect.bucket_matches?(sources, context.try(&.sources))
-      return false unless Inspect.bucket_matches?(signals, Inspect.derived_signals(context))
-      return false unless Inspect.bucket_matches?(validators, context.try(&.validators))
-      true
-    end
-
-    private def param_matches?(param : Param) : Bool
-      return false unless params.empty? || params.any? do |name|
-                            param.param_type == "header" ? name.compare(param.name, case_insensitive: true) == 0 : name == param.name
-                          end
-      param_types.empty? || param_types.includes?(param.param_type) || param_types.includes?(param.request_type)
-    end
-  end
-
-  # `any` (or an empty bucket filter) is satisfied by a non-empty bucket.
-  def self.bucket_matches?(wanted : Array(String), entries : Array(AIContextEntry)?) : Bool
-    return true if wanted.empty?
-    return false if entries.nil? || entries.empty?
-    wanted.includes?("any") || entries.any? { |e| wanted.includes?(e.kind) }
-  end
-
-  # A glob when it looks like one, a substring otherwise. The glob is the
-  # agent's, not the shell's: `*` and `**` match anything including `/`
-  # (every Django URL ends in `/`, `*users*` has to find it), `?` one
-  # character, `[...]` a class, and `{`, `}` are literal so a route with
-  # `{id}` in it can be matched as written.
-  GLOB_CHARS = /[*?\[]/
-
   def self.glob_or_substring?(pattern : String, value : String) : Bool
-    return value.includes?(pattern) unless pattern.matches?(GLOB_CHARS)
-    glob_regex(pattern).matches?(value)
+    ::Noir::EndpointFilter.glob_or_substring?(pattern, value)
   end
 
-  # Reported paths carry the scan root (`corpus/app/routes/x.ts`), so a glob
-  # written from inside the app (`routes/*`) also matches from any `/`.
   def self.path_glob?(pattern : String, value : String) : Bool
-    return value.includes?(pattern) unless pattern.matches?(GLOB_CHARS)
-    return glob_regex(pattern).matches?(value) if pattern.starts_with?('/') || pattern.starts_with?('*')
-    glob_regex(pattern, anchored: false).matches?(value)
+    ::Noir::EndpointFilter.path_glob?(pattern, value)
   end
 
-  # A project is named by its directory under the scan base, so `services/orders`
-  # is that project and not `services/orders-v2`. A glob (same rules as above)
-  # matches the whole name. An endpoint with no project matches nothing.
-  def self.project_matches?(wanted : String, project : String) : Bool
-    return false if project.empty?
-    return glob_regex(wanted).matches?(project) if wanted.matches?(GLOB_CHARS)
-    wanted.chomp('/') == project
-  end
-
-  @@glob_regexes = Hash(String, Regex).new
-
-  private def self.glob_regex(pattern : String, anchored : Bool = true) : Regex
-    @@glob_regexes["#{anchored}:#{pattern}"] ||= begin
-      body = String.build do |io|
-        pattern.each_char do |c|
-          case c
-          when '*' then io << ".*"
-          when '?' then io << '.'
-          when '[' then io << '['
-          when ']' then io << ']'
-          else          io << Regex.escape(c.to_s)
-          end
-        end
-      end
-      Regex.new("#{anchored ? "\\A" : "(?:\\A|/)"}#{body}\\z")
-    rescue ArgumentError
-      # An unbalanced `[`: it was not a glob after all, so substring.
-      Regex.new(Regex.escape(pattern))
-    end
-  end
-
-  # Filter values that no endpoint can satisfy, so a typo (`--sink file`
-  # for `file_io`) or a report scanned without `--ai-context` is said out
-  # loud instead of returning an empty answer that looks final.
   def self.filter_warnings(endpoints : Array(Endpoint), filters : Filters) : Array(String)
-    warnings = [] of String
-    asks_context = !filters.guard.nil? || !(filters.sinks.empty? && filters.sources.empty? && filters.signals.empty? && filters.validators.empty?)
-    if asks_context && endpoints.none?(&.ai_context)
-      warnings << "no endpoint carries ai_context; scan with --ai-context (or drop --from)"
-      return warnings
-    end
-    contexts = endpoints.compact_map(&.ai_context)
-    {
-      {"method", filters.methods, endpoints.map(&.method.upcase)},
-      {"tech", filters.techs, endpoints.flat_map { |e| e.details.technologies.empty? ? [e.details.technology].compact : e.details.technologies }},
-      {"tag", filters.tags, endpoints.flat_map(&.tags.map(&.name))},
-      {"param", filters.params, endpoints.flat_map(&.params.map(&.name))},
-      {"param type", filters.param_types, endpoints.flat_map { |e| e.params.flat_map { |p| [p.param_type, p.request_type] } }},
-      {"project", filters.projects.reject(&.matches?(GLOB_CHARS)).map(&.chomp('/')), endpoints.map(&.details.project).reject(&.empty?)},
-      {"protocol", filters.protocols, endpoints.map(&.protocol)},
-      {"sink kind", filters.sinks, contexts.flat_map(&.sinks.map(&.kind))},
-      {"source kind", filters.sources, contexts.flat_map(&.sources.map(&.kind))},
-      {"signal kind", filters.signals, contexts.flat_map { |c| derived_signals(c).map(&.kind) }},
-      {"validator kind", filters.validators, contexts.flat_map(&.validators.map(&.kind))},
-    }.each do |label, wanted, seen|
-      seen = seen.uniq.sort!
-      unknown = wanted.reject do |k|
-        k == "any" || seen.includes?(k) ||
-          (label == "method" && method_listed?([k], "ANY") && seen.any? { |m| ::synthetic_any_method?(m) }) ||
-          (label == "param" && endpoints.any? do |e|
-            e.params.any? { |p| p.param_type == "header" && p.name.compare(k, case_insensitive: true) == 0 }
-          end)
-      end
-      next if unknown.empty?
-      # A signal the compact row hides (it restates method/url/tech) is not
-      # "unknown"; say why it does not filter.
-      if label == "signal kind"
-        restating = contexts.flat_map { |c| c.signals.select { |s| RESTATING_SIGNAL_SOURCES.includes?(s.source) }.map(&.kind) }.uniq!
-        hidden, unknown = unknown.partition { |k| restating.includes?(k) }
-        warnings << "signal #{hidden.join(", ")} restates the row's method, url or tech and does not filter" unless hidden.empty?
-        next if unknown.empty?
-      end
-      warnings << "no endpoint carries #{label} #{unknown.join(", ")}; in this report: #{seen.empty? ? "(none)" : seen.join(", ")}"
-    end
-    warnings
+    ::Noir::EndpointFilter.filter_warnings(endpoints, filters)
   end
 
   def self.query(endpoints : Array(Endpoint), filters : Filters, full : Bool) : Array(Row)
@@ -1049,6 +936,8 @@ module Noir::CLI::Inspect
         --full                 Emit the full endpoint record (jsonl/json; text keeps its one line)
         --limit <n>            Print at most n rows
         --count                Print only the number of matches
+        --only-endpoints / --exclude-endpoints <key:value>
+                               Keep / drop endpoints first (query filter keys; works with --from)
         Any `noir scan` flag (-b, --exclude-path, --only-techs, -t, -u, --config-file, ...);
                              not with --from, which scans nothing
 

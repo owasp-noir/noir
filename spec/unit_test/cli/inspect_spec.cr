@@ -869,3 +869,13 @@ describe "trace and query route matching (#3277)" do
     trace.call([route], "GET", "/_item/12").should eq([{"/(?:(_\\w+))/(?:(\\d+))", "pattern"}])
   end
 end
+
+describe "Noir::CLI::Inspect.take_endpoint_filters" do
+  it "pulls both flags and their values out of the scan arguments, in either spelling" do
+    only, exclude, rest = Noir::CLI::Inspect.take_endpoint_filters(
+      ["--only-endpoints", "/api/*", "--exclude-endpoints=protocol:cli", "--no-color", "--exclude-endpoints", "method:GET url:/health"])
+    only.map(&.text).should eq(["/api/*"])
+    exclude.map(&.text).should eq(["protocol:cli", "method:GET url:/health"])
+    rest.should eq(["--no-color"])
+  end
+end

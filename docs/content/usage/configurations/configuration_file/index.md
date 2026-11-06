@@ -114,6 +114,8 @@ noir scan /path/to/my/project -f json -u https://api.example.com --exclude-codes
 | `techs` | CSV | `-t` / `--techs` | Add techs to the analyzer set (on top of auto-detect) |
 | `only_techs` | CSV | `--only-techs` | Restrict which tech detectors run |
 | `exclude_techs` | CSV | `--exclude-techs` | Drop techs from the final set after detection |
+| `only_endpoints` | list | `--only-endpoints` | Keep only endpoints matching any of these filters; `key:value` [endpoint filters](@/usage/cli_commands/_index.md#endpoint-filters) |
+| `exclude_endpoints` | list | `--exclude-endpoints` | Drop endpoints matching any of these filters; `key:value` [endpoint filters](@/usage/cli_commands/_index.md#endpoint-filters) |
 | `concurrency` | int | `--concurrency` / `NOIR_CONCURRENCY` | Worker count (default: CPU count clamped to 4–32). Precedence: flag > `NOIR_CONCURRENCY` > config > default |
 
 ### Output

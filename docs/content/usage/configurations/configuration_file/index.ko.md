@@ -114,6 +114,8 @@ noir scan /path/to/my/project -f json -u https://api.example.com --exclude-codes
 | `techs` | CSV | `-t` / `--techs` | 자동 탐지에 더해 분석기 집합에 기술 추가 |
 | `only_techs` | CSV | `--only-techs` | 실행할 기술 탐지기 제한 |
 | `exclude_techs` | CSV | `--exclude-techs` | 탐지 후 최종 집합에서 기술 제거 |
+| `only_endpoints` | list | `--only-endpoints` | 이 필터 중 하나에 맞는 엔드포인트만 남김; `키:값` [엔드포인트 필터](@/usage/cli_commands/_index.ko.md#endpoint-filters) |
+| `exclude_endpoints` | list | `--exclude-endpoints` | 이 필터 중 하나에 맞는 엔드포인트 제외; `키:값` [엔드포인트 필터](@/usage/cli_commands/_index.ko.md#endpoint-filters) |
 | `concurrency` | int | `--concurrency` / `NOIR_CONCURRENCY` | 워커 수 (기본값: CPU 수, 4–32 범위로 제한). 우선순위: 플래그 > `NOIR_CONCURRENCY` > 설정 파일 > 기본값 |
 
 ### 출력

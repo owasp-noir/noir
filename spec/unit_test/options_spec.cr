@@ -574,6 +574,8 @@ describe "run_options_parser" do
       {flag: "--passive-scan-path", key: "passive_scan_path"},
       {flag: "--probe-match", key: "probe_match"},
       {flag: "--probe-skip", key: "probe_skip"},
+      {flag: "--only-endpoints", key: "only_endpoints"},
+      {flag: "--exclude-endpoints", key: "exclude_endpoints"},
       {flag: "--set-pvalue-query", key: "set_pvalue_query"},
     ]
 

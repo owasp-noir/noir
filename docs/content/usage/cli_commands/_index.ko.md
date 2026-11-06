@@ -100,9 +100,47 @@ noir scan ./app --include path,techs,callee --ai-context
 | AI Integration | `--ai-provider`, `--ai-model`, `--ai-key`, `--ai-key-file`, `--ai-temperature`, `--ai-seed`, `--ai-agent`, `--ai-agent-max-steps`, `--ai-dry-run`, `--ai-include-sensitive`, `--ai-no-optimize`, `--ai-native-tools-allowlist`, `--ai-scope`, `--ai-max-token`, `--ai-stream`, `--ai-max-requests` | [AI 제공업체](@/usage/ai_providers/_index.ko.md), [AI 기반 분석](@/get_started/ai_power/index.ko.md) |
 | DIFF | `--diff-path`, `--diff-ref`, `--fail-on` | [Diff](@/usage/more_features/diff/index.ko.md) |
 | TECHNOLOGIES | `-t/--techs`, `--only-techs`, `--exclude-techs` | [기술 범위 관리](@/usage/supported/tech-commands/index.ko.md) |
+| ENDPOINTS | `--only-endpoints`, `--exclude-endpoints` | 아래 [엔드포인트 필터](#endpoint-filters) |
 | CONFIG | `--config-file`, `--concurrency` | [설정 파일](@/usage/configurations/configuration_file/index.ko.md) |
 | CACHE | `--cache-disable`, `--cache-clear` | 아래 [Cache](#cache) |
 | DEBUG | `-d/--debug`, `--verbose`, `-h/--help` | `--verbose`는 `--include path`와 `--use-all-taggers`도 함께 켭니다 |
+
+### 엔드포인트 필터 {#endpoint-filters}
+
+`--only-endpoints FILTER`는 일치하는 엔드포인트만 남기고,
+`--exclude-endpoints FILTER`는 일치하는 엔드포인트를 뺍니다. 빠진 엔드포인트는
+stdout, `-o`, 모든 출력 포맷, status code probe, `--probe`, export 어디에도
+나오지 않습니다. (`--probe-match` / `--probe-skip`은 probe 대상만 고르고
+결과에는 모두 남깁니다.)
+
+```bash
+noir scan . --exclude-endpoints protocol:cli                       # CLI 명령 전부 제외
+noir scan . --exclude-endpoints '/admin*' --exclude-endpoints '/internal*'
+noir scan . --only-endpoints '/api/*'                              # /api만
+noir scan . -u https://t --only-endpoints '/api/*' \
+  --exclude-endpoints '/api/internal/*' \
+  --exclude-endpoints 'method:OPTIONS,HEAD' \
+  --exclude-endpoints 'method:GET url:/health'                     # GET /health만 제외
+```
+
+`FILTER`는 [`noir query`](#query) 필터를 `키:값`으로 적습니다.
+
+- 키: `url`, `method`, `protocol`, `tech`, `project`, `path`(소스 파일), `handler`, `param`, `param-type`. `/`로 시작하는 값은 `url:`의 줄임입니다.
+- 쉼표 목록은 OR입니다(`protocol:cli,ws`). 단일 패턴 키인 `url`, `path`, `handler`는 쉼표로 나누지 않습니다. 한 값 안에 공백으로 나눈 `키:값` 여러 개는 모두 맞아야 합니다.
+- 플래그를 반복하면 그중 하나만 맞아도 됩니다. `--only-endpoints`를 먼저, `--exclude-endpoints`를 나중에 적용합니다.
+- 패턴은 query 규칙을 따릅니다. `*`, `?`, `[`가 있으면 값 전체에 맞추는 glob이고(`*`는 `/`도 넘음), 없으면 부분 문자열입니다. 그래서 `/admin`은 `/api/admin/x`에도 맞고, `/admin*`은 `/admin`으로 시작하는 경로에만 맞습니다.
+- `url:`은 `-u`가 붙기 전의 선언된 경로에 맞추므로 `-u`가 있든 없든 같은 필터가 동작합니다.
+- `tag`, `guard`, `sink`, `source`, `signal`, `validator`는 받지 않습니다. 필터가 tagger와 AI context보다 먼저 실행되어 아직 값이 없기 때문입니다. 이 조건은 리포트에 `noir query`를 쓰세요.
+
+모르는 키, 빈 값, probe 필터 형식인 `CLI:/*`는 스캔을 시작하기 전에 힌트와 함께
+오류로 멈춥니다(`did you mean method:CLI or protocol:cli?`). 아무 엔드포인트에도
+맞지 않는 필터는 실제로 찾은 값 목록과 함께 경고를 출력합니다. diff 모드
+(`--diff-path`, `--diff-ref`)에서는 양쪽에 똑같이 적용됩니다.
+
+`--exclude-endpoints tech:python_cli`와 `--exclude-techs python_cli`의 결과는
+같지만, `--exclude-techs`는 해당 분석기를 아예 실행하지 않아 더 빠릅니다.
+
+설정 파일 키는 `only_endpoints`, `exclude_endpoints`(목록)입니다.
 
 스캔이 성공하면 종료 코드는 `0`입니다. `--strict`를 주면 분석기가 실패했거나
 파일을 건너뛰었을 때 `2`로 끝납니다. `--fail-on`을 주면 diff 스캔에서 지정한
@@ -255,8 +293,11 @@ noir query [filters] [paths...] [flags]
 | `--limit <n>` | 최대 n개 행 출력 (양의 정수여야 하며, candidates 개수도 제한) |
 | `--count` | 매칭된 엔드포인트 개수만 출력 |
 | 스캔 플래그 | `--from` 없이 직접 스캔할 때 모든 `noir scan` 플래그(`-b`, `--exclude-path`, `--only-techs`, `-t`, `-u`, `--config-file` 등) 사용 가능 |
+| `--only-endpoints`, `--exclude-endpoints` | 동사 실행 전에 적용되는 [엔드포인트 필터](#endpoint-filters). `--from`과도 함께 쓸 수 있어서, query에서 "제외" 조건은 `--exclude-endpoints`로 줍니다 |
 
-`--from`을 지정하면 아무것도 스캔하지 않으므로 스캔 경로나 스캔 플래그를 함께 전달하면 사용법 오류(종료 코드 2)가 발생합니다. 전역 플래그(`--no-color`, `-d`, `--verbose`)는 `--from`과 함께 사용할 수 있습니다.
+`--from`을 지정하면 아무것도 스캔하지 않으므로 스캔 경로나 스캔 플래그를 함께 전달하면 사용법 오류(종료 코드 2)가 발생합니다. 전역 플래그(`--no-color`, `-d`, `--verbose`)와 엔드포인트 필터는 `--from`과 함께 사용할 수 있습니다.
+
+live `noir query`에서 `--url`은 base URL이 아니라 URL 필터입니다. base URL은 `-u`로 지정하세요.
 
 종료 코드는 grep 규칙을 따릅니다:
 - `0`: 하나 이상의 엔드포인트가 매칭됨.

@@ -79,6 +79,8 @@ Export destinations (`--export-es`, `--export-webhook`) are unaffected: you name
 
 Narrow the set of endpoints sent through the proxy. Patterns accept a URL substring, an HTTP method (case-insensitive), or `method:URL` combined.
 
+These flags choose only what gets probed or exported; the report still lists every endpoint, and a pattern that matches nothing prints a warning. To drop endpoints from the report itself, use [`--only-endpoints` / `--exclude-endpoints`](@/usage/cli_commands/_index.md#endpoint-filters).
+
 ```bash
 # Only API endpoints
 noir scan ./source -u http://localhost:3000 --probe-via http://localhost:8080 --probe-match "api"

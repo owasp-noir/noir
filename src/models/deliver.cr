@@ -119,6 +119,7 @@ class Deliver
     result = endpoints
     @logger.debug "Matchers: #{@matchers}"
     @logger.debug "Filters: #{@filters}"
+    warn_unmatched_patterns(endpoints)
 
     unless @matchers.empty?
       @logger.info "Applying matchers"
@@ -150,6 +151,24 @@ class Deliver
         @logger.debug "Endpoint '#{endpoint.method} #{endpoint.url}' filtered with '#{filter}'."
       end
       filter
+    end
+  end
+
+  # A probe pattern that matches nothing is a typo or a misread flag: in
+  # #3471, `--use-filters "CLI:/*"` (method CLI, URL containing a literal
+  # `/*`) was meant to drop the CLI endpoints from the report, which these
+  # flags never do. Say so, and name the flag that does.
+  # Once per run: probe and each export call `apply_all` on the same list.
+  @@warned_patterns = Set(String).new
+
+  private def warn_unmatched_patterns(endpoints : Array(Endpoint))
+    {"--probe-match" => @matchers, "--probe-skip" => @filters}.each do |flag, patterns|
+      patterns.each do |pattern|
+        next if endpoints.any? { |endpoint| matches_pattern?(endpoint, pattern) }
+        next unless @@warned_patterns.add?("#{flag} #{pattern}")
+        @logger.warning "#{flag} #{pattern.inspect} matched no endpoint (URL substring, METHOD or METHOD:URL). " \
+                        "It only limits probing; to drop endpoints from the report use --exclude-endpoints."
+      end
     end
   end
 

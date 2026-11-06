@@ -218,6 +218,11 @@ class NoirRunner
     # handler code_path) so taggers and AI context see the real surface.
     @endpoints = NoirMobileLinker.apply(@endpoints, @logger)
 
+    # `--only-endpoints` / `--exclude-endpoints`: before anything probes,
+    # tags or reports, so a dropped endpoint is absent from every output
+    # format, `-o`, probe and export alike, and costs no tagger or AI work.
+    apply_endpoint_filters
+
     # Set status code
     if any_to_bool(@options["status_codes"]) || !@options["exclude_codes"].to_s.empty?
       probed = StatusCodeProbe.new(@options, @logger).apply(@endpoints)
@@ -271,6 +276,34 @@ class NoirRunner
     # concat: `analyze` can be called twice on one runner, and appending
     # would report the detect-phase gaps once per call.
     @scan_failures = Noir::SkippedFiles.failures(Noir::SkippedFiles::Phase::Scan)
+  end
+
+  # `url:` is matched against the route as written, not the `-u`-joined
+  # URL, so `/admin*` means the same with and without a target.
+  private def apply_endpoint_filters
+    only = Noir::EndpointFilter.terms(@options["only_endpoints"]?)
+    exclude = Noir::EndpointFilter.terms(@options["exclude_endpoints"]?)
+    return if only.empty? && exclude.empty?
+
+    before = @endpoints.size
+    keep = [] of Bool
+    # Filtered after the block: `with_route_paths` puts the URLs back by index.
+    with_route_paths do
+      keep, @endpoint_filter_warnings = Noir::EndpointFilter.keep_mask(@endpoints, only, exclude)
+    end
+    @endpoints = @endpoints.zip(keep).select(&.[1]).map(&.[0])
+    @logger.info "Endpoint filters kept #{@endpoints.size} of #{before} endpoints."
+  end
+
+  # Printed by the caller, not here: a diff scan judges a term that matched
+  # nothing against both sides (`EndpointFilter.merged_warnings`).
+  getter endpoint_filter_warnings = [] of Noir::EndpointFilter::Warning
+
+  # Not gated by --no-log: a typo in a filter changes the result.
+  def print_endpoint_filter_warnings(other : NoirRunner? = nil)
+    Noir::EndpointFilter.merged_warnings(@endpoint_filter_warnings, other.try(&.endpoint_filter_warnings)).each do |warning|
+      @logger.log(NoirLogger::LogLevel::WARNING, warning, force: true)
+    end
   end
 
   private def ai_context_enabled? : Bool

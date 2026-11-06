@@ -126,6 +126,8 @@ module Noir::CLI::ScanFlags
     Flag.new("--techs", "Specify technologies", Arg::Value, %w[-t], "techs"),
     Flag.new("--exclude-techs", "Exclude technologies", Arg::Value, hint: "techs"),
     Flag.new("--only-techs", "Only run these tech detectors", Arg::Value, hint: "techs"),
+    Flag.new("--only-endpoints", "Keep only endpoints matching a filter", Arg::Value, hint: "filter"),
+    Flag.new("--exclude-endpoints", "Drop endpoints matching a filter", Arg::Value, hint: "filter"),
     Flag.new("--config-file", "YAML config file", Arg::File, hint: "path"),
     Flag.new("--concurrency", "Concurrency level", Arg::Value, hint: "level"),
     Flag.new("--cache-disable", "Disable LLM cache for this run"),

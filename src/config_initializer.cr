@@ -345,6 +345,8 @@ class ConfigInitializer
       "url"                          => YAML::Any.new(""),
       "probe_skip"                   => YAML::Any.new([] of YAML::Any),
       "probe_match"                  => YAML::Any.new([] of YAML::Any),
+      "only_endpoints"               => YAML::Any.new([] of YAML::Any),
+      "exclude_endpoints"            => YAML::Any.new([] of YAML::Any),
       "tls_skip_verify"              => YAML::Any.new(false),
       "all_taggers"                  => YAML::Any.new(false),
       "use_taggers"                  => YAML::Any.new(""),
@@ -418,6 +420,13 @@ class ConfigInitializer
       # Restrict detection to these technologies only (comma-separated;
       # empty = detect everything). The inverse of exclude_techs.
       only_techs: "#{options["only_techs"]}"
+
+      # Keep only / drop endpoints from the report (Array of strings).
+      # Each entry is a `noir query` filter as key:value (url, method,
+      # protocol, tech, project, path, handler, param, param-type), or a
+      # bare "/path" pattern, e.g. ["protocol:cli", "/admin*"]
+      only_endpoints:
+      exclude_endpoints:
 
       # File paths to exclude (comma-separated glob patterns, e.g. "*.test.js,*_test.go")
       exclude_path: "#{options["exclude_path"]}"

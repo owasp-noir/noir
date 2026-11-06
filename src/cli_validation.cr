@@ -11,6 +11,7 @@ require "./output_builder/formats"
 require "./passive_scan/severity"
 require "./utils/path_scope"
 require "./diff_gate"
+require "./utils/endpoint_filter"
 
 module Noir::CliValidation
   class Error < Exception
@@ -31,8 +32,22 @@ module Noir::CliValidation
     validate_ai_provider_pair!(options)
     validate_ai_native_tools_allowlist!(options)
     validate_fail_on!(options)
+    validate_endpoint_filters!(options)
     warn_about_unused_delivery_flags(options)
     warn_about_contradictory_probe_filters(options)
+  end
+
+  # `--only-endpoints` / `--exclude-endpoints` terms are checked before the
+  # scan starts: `--use-filters "CLI:/*"` (#3471) is the shape of mistake
+  # that otherwise runs a whole scan and silently filters nothing.
+  def self.validate_endpoint_filters!(options : Hash(String, YAML::Any))
+    {"only_endpoints" => "--only-endpoints", "exclude_endpoints" => "--exclude-endpoints"}.each do |key, flag|
+      string_array(options[key]?).each do |text|
+        Noir::EndpointFilter.parse_term(text)
+      rescue ex : Noir::EndpointFilter::TermError
+        raise Error.new("#{flag} #{text.inspect}: #{ex.message}")
+      end
+    end
   end
 
   # `--ai-native-tools-allowlist` entries that don't canonicalize to a

@@ -711,6 +711,19 @@ def run_options_parser
       append_to_csv_option(noir_options, "exclude_techs", v, reset_seen: csv_reset_seen)
     end
 
+    # ENDPOINTS — drop endpoints from the report itself (every format, -o,
+    # probe and export), as opposed to --probe-match / --probe-skip, which
+    # only choose what gets probed. A value is a `noir query` filter spelled
+    # `key:value` (`protocol:cli`, `method:GET url:/health`), or a bare
+    # `/path` pattern; the syntax is checked in `Noir::CliValidation`.
+    parser.separator "\n ENDPOINTS:".colorize(:blue)
+    parser.on "--only-endpoints FILTER", "Keep only endpoints matching FILTER (e.g. '/api/*', protocol:http; repeatable, any may match)" do |v|
+      append_to_yaml_array(noir_options, "only_endpoints", v, csv_reset_seen)
+    end
+    parser.on "--exclude-endpoints FILTER", "Drop endpoints matching FILTER (e.g. protocol:cli, '/admin*', 'method:GET url:/health'; repeatable)" do |v|
+      append_to_yaml_array(noir_options, "exclude_endpoints", v, csv_reset_seen)
+    end
+
     parser.separator "\n CONFIG:".colorize(:blue)
     parser.on "--config-file PATH", "YAML config file" do |v|
       noir_options["config_file"] = YAML::Any.new(v)

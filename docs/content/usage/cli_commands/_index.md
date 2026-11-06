@@ -101,9 +101,49 @@ own page with the details.
 | AI Integration | `--ai-provider`, `--ai-model`, `--ai-key`, `--ai-key-file`, `--ai-temperature`, `--ai-seed`, `--ai-agent`, `--ai-agent-max-steps`, `--ai-dry-run`, `--ai-include-sensitive`, `--ai-no-optimize`, `--ai-native-tools-allowlist`, `--ai-scope`, `--ai-max-token`, `--ai-stream`, `--ai-max-requests` | [AI Providers](@/usage/ai_providers/_index.md), [AI Power](@/get_started/ai_power/index.md) |
 | DIFF | `--diff-path`, `--diff-ref`, `--fail-on` | [Diff](@/usage/more_features/diff/index.md) |
 | TECHNOLOGIES | `-t/--techs`, `--only-techs`, `--exclude-techs` | [Managing Technology Scopes](@/usage/supported/tech-commands/index.md) |
+| ENDPOINTS | `--only-endpoints`, `--exclude-endpoints` | [Endpoint filters](#endpoint-filters) below |
 | CONFIG | `--config-file`, `--concurrency` | [Configuration File](@/usage/configurations/configuration_file/index.md) |
 | CACHE | `--cache-disable`, `--cache-clear` | [Cache](#cache) below |
 | DEBUG | `-d/--debug`, `--verbose`, `-h/--help` | `--verbose` also turns on `--include path` and `--use-all-taggers` |
+
+### Endpoint filters {#endpoint-filters}
+
+`--only-endpoints FILTER` keeps only the endpoints that match, and
+`--exclude-endpoints FILTER` drops the ones that match. A dropped endpoint
+is gone from the whole run: stdout, `-o`, every output format, the
+status-code probe, `--probe` and the exports. (`--probe-match` /
+`--probe-skip` only choose what gets probed; the report keeps everything.)
+
+```bash
+noir scan . --exclude-endpoints protocol:cli                       # every CLI command
+noir scan . --exclude-endpoints '/admin*' --exclude-endpoints '/internal*'
+noir scan . --only-endpoints '/api/*'                              # only /api
+noir scan . -u https://t --only-endpoints '/api/*' \
+  --exclude-endpoints '/api/internal/*' \
+  --exclude-endpoints 'method:OPTIONS,HEAD' \
+  --exclude-endpoints 'method:GET url:/health'                     # GET /health only
+```
+
+A `FILTER` uses the [`noir query`](#query) filters, written `key:value`:
+
+- Keys: `url`, `method`, `protocol`, `tech`, `project`, `path` (source file), `handler`, `param`, `param-type`. A value that starts with `/` is short for `url:`.
+- A comma list is OR (`protocol:cli,ws`), except for the single-pattern keys `url`, `path` and `handler`. Several `key:value` items in one value, separated by spaces, must all match.
+- Repeat a flag to match either value. `--only-endpoints` is applied first, then `--exclude-endpoints`.
+- Patterns follow the query rules: with `*`, `?` or `[` it is a glob over the whole value (`*` crosses `/`), otherwise a substring. So `/admin` also matches `/api/admin/x`, while `/admin*` matches only the routes that start with `/admin`.
+- `url:` matches the route as declared, before `-u` is prepended, so the same filter works with or without `-u`.
+- `tag`, `guard`, `sink`, `source`, `signal` and `validator` are not accepted: the filter runs before the taggers and the AI-context builder fill them in. Use `noir query` on a report for those.
+
+An unknown key, an empty value or the probe-filter shape `CLI:/*` stops the
+scan before it starts, with a hint (`did you mean method:CLI or protocol:cli?`).
+A filter that matches no endpoint prints a warning with the values the scan
+actually found. In diff mode (`--diff-path`, `--diff-ref`) both sides are
+filtered the same way.
+
+`--exclude-endpoints tech:python_cli` gives the same report as
+`--exclude-techs python_cli`, but `--exclude-techs` is faster because it
+does not run that analyzer at all.
+
+The config file keys are `only_endpoints` and `exclude_endpoints` (lists).
 
 A scan exits with `0` on success. `--strict` makes it exit with `2` when
 an analyzer failed or skipped a file, and `--fail-on` makes a diff scan
@@ -259,8 +299,11 @@ Every query verb accepts these options:
 | `--limit <n>` | Print at most n rows (must be a positive integer; also limits candidates) |
 | `--count` | Print only the number of matches |
 | Scan flags | Any `noir scan` flag (`-b`, `--exclude-path`, `--only-techs`, `-t`, `-u`, `--config-file`, ...) is accepted when scanning live without `--from` |
+| `--only-endpoints`, `--exclude-endpoints` | The [endpoint filters](#endpoint-filters), applied before the verb runs. They also work with `--from`, so `--exclude-endpoints` is how a query says "not" |
 
-When `--from` is used, passing scan paths or scan flags is a usage error (exit code 2), because nothing is scanned. Global flags (`--no-color`, `-d`, `--verbose`) remain valid with `--from`.
+When `--from` is used, passing scan paths or scan flags is a usage error (exit code 2), because nothing is scanned. Global flags (`--no-color`, `-d`, `--verbose`) and the endpoint filters remain valid with `--from`.
+
+`--url` in a live `noir query` is the URL filter, not the base URL. Use `-u` to set the base URL there.
 
 Exit codes follow grep conventions:
 - `0`: one or more endpoints matched.
