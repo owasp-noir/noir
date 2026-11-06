@@ -301,6 +301,7 @@ total_endpoints = 1 +  # root
                   2 +  # %w[browse annotate].each unrolled to /repo/:id/browse + /annotate
                   21 + # devise_for :users (default table, model not in scan)
                   8 +  # devise_for :operators (model in app/models/accounts/: sessions + passwords only)
+                  21 + # devise_for :managers (only a namespaced Admin::Manager in the scan: default table)
                   3 +  # devise_for :admins, only: [:sessions]
                   3 +  # devise_for :members, only: [:sessions, :registrations], skip: [:registrations]
                   1 +  # devise_scope :user do get 'login', ... end
@@ -362,4 +363,9 @@ it "reads the devise line of a model kept in an app/models subfolder", tags: "fu
   urls.any?(&.includes?("/unlock")).should be_false
   urls.any?(&.includes?("/confirmation")).should be_false
   urls.any?(&.includes?("/sign_up")).should be_false
+end
+
+it "does not take a namespaced model for the top-level devise scope", tags: "functional" do
+  urls = tester.app.endpoints.map(&.url)
+  urls.should contain("/managers/unlock")
 end

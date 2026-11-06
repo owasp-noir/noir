@@ -1024,7 +1024,7 @@ module Analyzer::Ruby
         # defines the top-level class; take the first one that declares devise.
         dir = "#{framework_root}/app/models/"
         model_path = @known_files.select { |f| f.starts_with?(dir) && f.ends_with?("/#{model}.rb") }
-          .sort!.find { |f| ruby_source(f).matches?(/^\s*devise\b/m) }
+          .sort!.find { |f| top_level_class_with_devise?(ruby_source(f), model.camelcase) }
         return unless model_path
       end
       source = ruby_source(model_path)
@@ -1040,6 +1040,23 @@ module Analyzer::Ruby
       return if mods.empty?
       mods << "omniauthable" if source.matches?(/\bomniauth_providers\s*:/) && !mods.includes?("omniauthable")
       mods
+    end
+
+    # A subfolder model counts only when it defines the top-level class
+    # (`class User` at column 0, no `module` line before it) and declares
+    # devise: `class Admin::User` / `module Admin` must not stand in for `User`.
+    private def top_level_class_with_devise?(source : String, camel : String) : Bool
+      header = "class #{camel}"
+      seen_class = false
+      source.each_line do |line|
+        return false if !seen_class && line.starts_with?("module ")
+        if !seen_class && line.starts_with?(header) && !(line[header.size]?.try { |c| c.alphanumeric? || c == '_' || c == ':' })
+          seen_class = true
+        elsif seen_class && line.matches?(/^\s*devise\b/)
+          return true
+        end
+      end
+      false
     end
 
     private def singularize(name : String) : String
