@@ -557,14 +557,23 @@ class ExpressAuthTagger < FrameworkTagger
     hits.concat(basic_auth_runs(code, source)) if source
     # `if (!req.session.userId) return sendError(res, 403, …)`: a helper's
     # 403 counts when the branch it is in is about a missing caller.
-    # `if (!req.auth.isMaster) throw createSanitizedHttpError(403, …)`: an
-    # error factory handed a literal 403, in the same kind of branch.
-    [HELPER_FORBIDDEN, ERROR_FACTORY_FORBIDDEN].each do |refusal|
-      code.scan(refusal) do |m|
-        if enclosing_conditions(code, m.begin(0)).any?(&.matches?(MISSING_CALLER))
-          hits << {m.begin(0), "#{m[0]})"}
-        end
+    code.scan(HELPER_FORBIDDEN) do |m|
+      if enclosing_conditions(code, m.begin(0)).any?(&.matches?(MISSING_CALLER))
+        hits << {m.begin(0), "#{m[0]})"}
       end
+    end
+    # `if (!req.auth.isMaster) throw createSanitizedHttpError(403, …)`: an
+    # HTTP-error factory handed a literal 401/403, in a missing-caller branch
+    # that leaves the request: the factory call itself is thrown, returned or
+    # passed to `next`, or the branch returns/throws. `req.authError =
+    # createHttpError(401)` followed by `next()` is optional auth.
+    code.scan(ERROR_FACTORY_FORBIDDEN) do |m|
+      at = m.begin(0)
+      applied = code[0...at].matches?(FACTORY_APPLIED)
+      refuses = enclosing_branches(code, at).any? do |condition, branch|
+        condition.matches?(MISSING_CALLER) && (applied || branch.matches?(/\b(?:return|throw)\b/))
+      end
+      hits << {at, "#{m[0]})"} if refuses
     end
     hits.sort_by!(&.[0]).each do |at, label|
       return by_setting if code[0...at].matches?(ANONYMOUS_PASS_THROUGH)
@@ -588,10 +597,11 @@ class ExpressAuthTagger < FrameworkTagger
   # one built and never run, or a local `basicAuth({ user, pass })` that
   # builds an outbound header, refuses nothing.
   HELPER_FORBIDDEN        = /\b[A-Za-z_$][\w$]*\s*\(\s*(?:res|response)\s*,\s*403\b/
-  ERROR_FACTORY_FORBIDDEN = /\b[A-Za-z_$][\w$]*(?:Error|Err)\s*\(\s*40[13]\s*,/
+  ERROR_FACTORY_FORBIDDEN = /\b(?:create\w*Error|\w*HttpError)\s*\(\s*40[13]\s*[,)]/
+  FACTORY_APPLIED         = /(?:\bthrow\s+(?:new\s+)?|\breturn\s+(?:next\s*\(\s*)?|\bnext\s*\(\s*)\z/
   # `!req.user`, `!req.session.userId`, `!req.session`: no caller. Not
   # `!req.session.cart`, a session without a cart.
-  MISSING_CALLER = /!\s*(?:req|request)\s*\.\s*(?:(?:session\s*\??\.\s*)?(?:user\w*|uid|account\w*|auth\w*|token\w*|logged\w*|isAuthenticated|passport|identity|principal)\b|session\s*(?:\)|\|\||&&))/
+  MISSING_CALLER = /(?<!!)!\s*(?:req|request)\s*\.\s*(?:(?:session\s*\??\.\s*)?(?:user(?:_?[Ii]d)?\b|uid|account\w*|auth\w*|token\w*|logged\w*|isAuthenticated|passport|identity|principal)\b|session\s*(?:\)|\|\||&&))/
 
   # The names `source` binds the express-basic-auth factory to.
   private def basic_auth_factories(source : String) : Array(String)
@@ -658,21 +668,27 @@ class ExpressAuthTagger < FrameworkTagger
 
   # The conditions of every `if` whose block (or single statement) holds `at`.
   private def enclosing_conditions(code : String, at : Int32) : Array(String)
-    conditions = [] of String
+    enclosing_branches(code, at).map(&.[0])
+  end
+
+  # Those `if`s as {condition, branch text}.
+  private def enclosing_branches(code : String, at : Int32) : Array(Tuple(String, String))
+    branches = [] of Tuple(String, String)
     code[0...at].scan(IF_HEAD) do |m|
       open = m.end(0) - 1
       close = Noir::JSLiteralScanner.find_matching_paren(code, open) || next
       next if close >= at
       between = code[close + 1...at]
-      inside = if between.lstrip.starts_with?('{')
+      branch = if between.lstrip.starts_with?('{')
                  brace = close + 1 + (between.size - between.lstrip.size)
-                 (Noir::JSLiteralScanner.find_matching_brace(code, brace) || code.size) > at
-               else
-                 !between.includes?(';') && !between.includes?('}')
+                 block_end = Noir::JSLiteralScanner.find_matching_brace(code, brace) || code.size
+                 block_end > at ? code[brace...Math.min(block_end + 1, code.size)] : nil
+               elsif !between.includes?(';') && !between.includes?('}')
+                 code[close + 1..].partition(';')[0]
                end
-      conditions << code[open + 1...close] if inside
+      branches << {code[open + 1...close], branch} if branch
     end
-    conditions
+    branches
   end
 
   # A condition whose every root is module-level in `source` (an import or a

@@ -612,37 +612,81 @@ describe "ExpressAuthTagger" do
     FileUtils.rm_rf(tmpdir)
   end
 
-  it "counts a middleware that creates a 403 error for a missing caller, not for bad input" do
+  it "counts an HTTP-error factory 403/401 only where a missing caller is refused" do
     tmpdir = File.tempname("express_error_factory")
     Dir.mkdir_p(tmpdir)
-    mw = File.join(tmpdir, "middlewares.js")
+    mw = File.join(tmpdir, "mw.js")
     app_js = File.join(tmpdir, "app.js")
-    File.write(mw, [
-      "export function masterOnly(req, res, next) {",
-      "  if (!req.auth.isMaster) {",
-      "    const error = createHttpError(403, 'master key required');",
-      "    res.status(error.status);",
-      "    res.end('no');",
-      "    return;",
-      "  }",
-      "  next();",
-      "}",
-      "export function validateBody(req, res, next) {",
-      "  if (!req.body.name) {",
-      "    const error = createHttpError(403, 'name required');",
-      "    res.status(error.status);",
-      "    res.end('no');",
-      "    return;",
-      "  }",
-      "  next();",
-      "}",
-    ].join("\n"))
-    File.write(app_js, [
-      "import * as mw from './middlewares';",
-      "const router = express.Router();",
-      "router.delete('/purge', mw.masterOnly, (req, res) => res.json({}));",
-      "router.post('/items', mw.validateBody, (req, res) => res.json({}));",
-    ].join("\n"))
+    File.write(mw, <<-JS)
+      const createHttpError = require('http-errors');
+      function masterOnly(req, res, next) {
+        if (!req.auth.isMaster) {
+          const error = createHttpError(403, 'master key required');
+          res.status(error.status);
+          res.end('no');
+          return;
+        }
+        next();
+      }
+      function thrown(req, res, next) {
+        if (!req.user) {
+          throw createHttpError(403, 'master key required');
+        }
+        next();
+      }
+      function viaNext(req, res, next) {
+        if (!req.user) {
+          return next(createHttpError(401));
+        }
+        next();
+      }
+      function validateBody(req, res, next) {
+        if (!req.body.name) {
+          throw createHttpError(403, 'name required');
+        }
+        next();
+      }
+      function optionalAuth(req, res, next) {
+        if (!req.user) {
+          req.authError = createHttpError(401, 'login required for writes');
+        }
+        next();
+      }
+      function logOnly(req, res, next) {
+        if (!req.user) {
+          logError(401, 'anonymous request');
+        }
+        next();
+      }
+      function guestOnly(req, res, next) {
+        if (req.user) {
+          throw createHttpError(403, 'already logged in');
+        }
+        next();
+      }
+      function doubleNeg(req, res, next) {
+        if (!!req.user) {
+          throw createHttpError(403, 'already logged in');
+        }
+        next();
+      }
+      function elseGuest(req, res, next) {
+        if (!req.user) {
+          next();
+        } else {
+          throw createHttpError(403, 'guests only');
+        }
+      }
+      function userAgent(req, res, next) {
+        if (!req.userAgent) {
+          throw createHttpError(403, 'no agent');
+        }
+        next();
+      }
+      module.exports = { masterOnly, thrown, viaNext, validateBody, optionalAuth, logOnly, guestOnly, doubleNeg, elseGuest, userAgent };
+      JS
+    names = %w[masterOnly thrown viaNext validateBody optionalAuth logOnly guestOnly doubleNeg elseGuest userAgent]
+    File.write(app_js, (["const mw = require('./mw');", "const app = express();"] + names.map { |n| "app.get('/#{n}', mw.#{n}, (req, res) => res.json({}));" }).join("\n"))
 
     noir_options = create_test_options
     noir_options["base"] = YAML::Any.new(tmpdir)
@@ -653,16 +697,17 @@ describe "ExpressAuthTagger" do
     locator.scan_base_paths = [tmpdir]
     Noir::JSHandlerResolver.reset
 
-    purge = Endpoint.new("/purge", "DELETE", [] of Param, Details.new(PathInfo.new(app_js, 3)))
-    items = Endpoint.new("/items", "POST", [] of Param, Details.new(PathInfo.new(app_js, 4)))
+    endpoints = names.map_with_index do |n, idx|
+      Endpoint.new("/#{n}", "GET", [] of Param, Details.new(PathInfo.new(app_js, idx + 3)))
+    end
     begin
-      ExpressAuthTagger.new(noir_options).perform([purge, items])
+      ExpressAuthTagger.new(noir_options).perform(endpoints)
     ensure
       locator.scan_base_paths = previous_bases
     end
 
-    purge.tags.map(&.name).should eq(["auth"])
-    items.tags.should be_empty
+    guarded = endpoints.select { |ep| ep.tags.any? { |t| t.name == "auth" } }.map(&.url)
+    guarded.should eq(["/masterOnly", "/thrown", "/viaNext"])
   ensure
     FileUtils.rm_rf(tmpdir) if tmpdir
   end
