@@ -21,14 +21,18 @@ module Noir
     record Rule, actions : Array(String), subjects : Array(String), grant : Grant, allows : Bool,
       conditioned : Bool = false, on_user : Bool = false
 
+    # ponytail: merged abilities past this many rules are not read.
+    MAX_RULES = 5000
+
     getter rules = [] of Rule
     getter? readable = true
+    getter? guest = false
     getter aliases = {"read" => ["index", "show"], "create" => ["new"], "update" => ["edit"]}
     @defs = Hash(String, Int32).new
     @user = "user"
-    @guest = false
     @resolver : Proc(String, CanCanAbility?)? = nil
     @lines = [] of String
+    @merged = Set({String, Grant}).new
 
     def initialize(lines : Array(String), @resolver : Proc(String, CanCanAbility?)? = nil)
       @lines = join_logical_lines(lines)
@@ -159,10 +163,15 @@ module Noir
           grants = current + (m[3]? ? [condition(m[3], m[2] == "unless")] : [] of Grant)
           grant = all(grants)
           resolved = false
-          if resolver = @resolver
+          if !@merged.add?({class_name, grant})
+            # already merged under this very grant: its rules are in
+            resolved = true
+          elsif resolver = @resolver
             if other = resolver.call(class_name)
               if other.readable?
                 resolved = true
+                @guest ||= other.guest?
+                @readable = false if @rules.size + other.rules.size > MAX_RULES
                 other.rules.each do |r|
                   combined_grant = all([grant, r.grant])
                   @rules << Rule.new(r.actions, r.subjects, combined_grant, r.allows, r.conditioned, r.on_user)
@@ -253,6 +262,13 @@ module Noir
 
       cleaned.each do |line|
         stripped = line.strip
+        # A rule keyword at the start of a line ends an unfinished statement (a
+        # regex literal or a stray bracket would otherwise swallow what follows).
+        if !current_line.empty? && stripped.matches?(/\A(?:can|cannot|merge|end|def)\b/)
+          statements << current_line
+          current_line = ""
+          bracket_depth = paren_depth = brace_depth = 0
+        end
         if current_line.empty?
           if stripped.empty?
             statements << ""

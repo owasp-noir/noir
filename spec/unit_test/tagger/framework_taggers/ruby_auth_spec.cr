@@ -1897,6 +1897,56 @@ describe "RubyAuthTagger (routed controller chain)" do
     loop_ability.try(&.readable?).should be_false
   end
 
+  it "merges diamond ability trees in linear time, survives regex literals, and keeps a merged guest flag" do
+    # 30 levels, each merging the next twice
+    classes = {} of String => Noir::CanCanAbility
+    classes["L30"] = Noir::CanCanAbility.new("class L30\n  include CanCan::Ability\n\n  def initialize(user)\n    can :read, Note\n  end\nend\n".lines)
+    29.downto(0) do |i|
+      classes["L#{i}"] = Noir::CanCanAbility.new(
+        "class L#{i}\n  include CanCan::Ability\n\n  def initialize(user)\n    merge L#{i + 1}.new(user)\n    merge L#{i + 1}.new(user)\n  end\nend\n".lines,
+        ->(name : String) { classes[name]?.as(Noir::CanCanAbility?) })
+    end
+    started = Time.instant
+    classes["L0"].verdict("index", "Note").yes?.should be_true
+    (Time.instant - started).should be < 1.second
+    classes["L0"].rules.size.should eq(1)
+
+    # a regex literal's bracket must not swallow the next rule
+    regex = Noir::CanCanAbility.new(<<-RB.lines)
+      class Ability
+        include CanCan::Ability
+
+        def initialize(user)
+          can :read, Note, title: /(draft/
+          can :read, Topic
+        end
+      end
+      RB
+    regex.verdict("index", "Topic").yes?.should be_true
+
+    # a guest object in the merged class reads caller conditions as unknown
+    guest = Noir::CanCanAbility.new(<<-RB.lines)
+      class Everyone
+        include CanCan::Ability
+
+        def initialize(user)
+          user ||= User.new
+          can :read, Topic, user_id: user.id
+        end
+      end
+      RB
+    host = Noir::CanCanAbility.new(<<-RB.lines, ->(name : String) { guest.as(Noir::CanCanAbility?) })
+      class Ability
+        include CanCan::Ability
+
+        def initialize(user)
+          merge Everyone.new(user)
+        end
+      end
+      RB
+    host.verdict("show", "Topic", instance: true).maybe?.should be_true
+  end
+
   # Names in the guard callback that are not calls: a word inside a string
   # or after a receiver, and a local the body assigns. Another controller
   # defines `new`, `otp` and `client`; reading those as calls to it made a
