@@ -102,6 +102,8 @@ module Analyzer::Kotlin
     class MountPrefixes
       # Past this many placements for one function, keep its own URL.
       MAX_PREFIXES = 1024
+      # Past this many nested mounts, a function keeps its own URL.
+      MAX_DEPTH = 2048
 
       alias Extractor = Noir::TreeSitterKotlinKtorRouteExtractor
       # A prefix and the authenticate block it is mounted behind, if any.
@@ -178,7 +180,13 @@ module Analyzer::Kotlin
 
       # The call sites that place `node`, after the module and
       # placed-over-unplaced narrowing.
+      @narrowed_sites = Hash(Node, Array(Site)).new
+
       private def sites_for(node : Node) : Array(Site)
+        @narrowed_sites[node] ||= narrow_sites(node)
+      end
+
+      private def narrow_sites(node : Node) : Array(Site)
         name, module_root = node
         sites = @sites[name]? || [] of Site
         if @modules[name].size > 1
@@ -196,65 +204,110 @@ module Analyzer::Kotlin
       # Tarjan's strongly connected components over caller edges, once: a
       # function on a cycle (a component of several, or one calling itself)
       # keeps its own URL, so `resolve` below walks a DAG and memoises it all.
-      # ponytail: recursive; a call chain deeper than the fiber stack would overflow.
+      # Both walks keep their own stacks: a call chain tens of thousands of
+      # functions deep must not overflow the fiber stack.
       private def mark_cycles
+        index = Hash(Node, Int32).new
+        low = Hash(Node, Int32).new
+        stack = [] of Node
+        on_stack = Set(Node).new
         @modules.each do |name, roots|
           roots.each do |root|
-            node = {name, root}
-            tarjan(node) unless @tarjan_index.has_key?(node)
+            start = {name, root}
+            next if index.has_key?(start)
+            work = [{start, 0}]
+            index[start] = low[start] = index.size
+            stack << start
+            on_stack << start
+            while frame = work.last?
+              node, next_caller = frame
+              callers = callers_of(node)
+              if next_caller < callers.size
+                work[-1] = {node, next_caller + 1}
+                caller = callers[next_caller]
+                if !index.has_key?(caller)
+                  index[caller] = low[caller] = index.size
+                  stack << caller
+                  on_stack << caller
+                  work << {caller, 0}
+                elsif on_stack.includes?(caller)
+                  low[node] = {low[node], index[caller]}.min
+                end
+                next
+              end
+
+              work.pop
+              if parent = work.last?
+                low[parent[0]] = {low[parent[0]], low[node]}.min
+              end
+              next unless low[node] == index[node]
+              component = [] of Node
+              loop do
+                member = stack.pop
+                on_stack.delete(member)
+                component << member
+                break if member == node
+              end
+              @cyclic.concat(component) if component.size > 1 || callers.includes?(node)
+            end
           end
         end
       end
 
-      @tarjan_index = Hash(Node, Int32).new
-      @tarjan_low = Hash(Node, Int32).new
-      @tarjan_stack = [] of Node
-      @tarjan_on_stack = Set(Node).new
+      @callers = Hash(Node, Array(Node)).new
+      @depth = Hash(Node, Int32).new
 
-      private def tarjan(node : Node) : Nil
-        @tarjan_index[node] = @tarjan_low[node] = @tarjan_index.size
-        @tarjan_stack << node
-        @tarjan_on_stack << node
-        sites_for(node).each do |site|
-          next unless caller = caller_node(site)
-          if !@tarjan_index.has_key?(caller)
-            tarjan(caller)
-            @tarjan_low[node] = {@tarjan_low[node], @tarjan_low[caller]}.min
-          elsif @tarjan_on_stack.includes?(caller)
-            @tarjan_low[node] = {@tarjan_low[node], @tarjan_index[caller]}.min
-          end
-        end
-        return unless @tarjan_low[node] == @tarjan_index[node]
-
-        component = [] of Node
-        loop do
-          member = @tarjan_stack.pop
-          @tarjan_on_stack.delete(member)
-          component << member
-          break if member == node
-        end
-        self_call = sites_for(node).any? { |site| caller_node(site) == node }
-        @cyclic.concat(component) if component.size > 1 || self_call
+      private def callers_of(node : Node) : Array(Node)
+        @callers[node] ||= sites_for(node).compact_map { |site| caller_node(site) }
       end
 
+      # Post-order over the caller DAG: a function is placed once every caller
+      # it is placed through is.
       private def resolve(node : Node) : Array(Placement)
         if cached = @memo[node]?
           return cached
         end
-        return @memo[node] = ROOT if @cyclic.includes?(node)
-        sites = sites_for(node)
-        return @memo[node] = ROOT if sites.empty?
-
-        found = [] of Placement
-        sites.each do |site|
-          unless prefix = site.prefix
-            found << {"", nil}
+        work = [node]
+        while current = work.last?
+          if @memo.has_key?(current)
+            work.pop
             next
           end
-          outer = (caller = caller_node(site)) ? resolve(caller) : ROOT
-          outer.each { |head, guard| found << {join(head, prefix), guard || site.guard} }
+          if @cyclic.includes?(current) || sites_for(current).empty?
+            @memo[current] = ROOT
+            work.pop
+            next
+          end
+          pending = callers_of(current).reject { |caller| @memo.has_key?(caller) }
+          unless pending.empty?
+            work.concat(pending)
+            next
+          end
+
+          depth = callers_of(current).max_of? { |caller| @depth[caller]? || 0 } || 0
+          if depth >= MAX_DEPTH
+            # Past the cap a chain keeps its own URLs rather than growing ever
+            # longer ones (each level copies the prefix above it).
+            @depth[current] = MAX_DEPTH
+            @memo[current] = ROOT
+            work.pop
+            next
+          end
+
+          found = [] of Placement
+          sites_for(current).each do |site|
+            unless prefix = site.prefix
+              found << {"", nil}
+              next
+            end
+            outer = (caller = caller_node(site)) ? @memo[caller] : ROOT
+            outer.each { |head, guard| found << {join(head, prefix), guard || site.guard} }
+          end
+          @depth[current] = depth + 1
+          @memo[current] = merge(found)
+          work.pop
         end
-        @memo[node] = merge(found)
+        @memo[node]
       end
 
       # One placement per prefix; served open by any call site, it is open.

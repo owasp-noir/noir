@@ -40,7 +40,8 @@ class KtorAuthTagger < FrameworkTagger
     super
     @auth_scopes = [] of AuthScope
     @helpers = Hash({String, String}, Symbol).new
-    @error_statuses = Set(String).new
+    @error_statuses = Hash(String, Set(String)).new
+    @status_packages = Hash(String, Set(String)).new
   end
 
   def self.target_techs : Array(String)
@@ -280,15 +281,22 @@ class KtorAuthTagger < FrameworkTagger
   # Can answer the caller: a `return` or any `respond*(` call.
   ANSWERS = /\breturn\b|\brespond\w*\s*\(/
   # A status that is no success: `HttpStatusCode.<not 1xx-3xx>` or 4xx/5xx.
-  ERROR_STATUS          = /HttpStatusCode\s*(?:\(\s*[45]\d\d\b|\.(?!Continue\b|SwitchingProtocols\b|Processing\b|OK\b|Created\b|Accepted\b|NonAuthoritativeInformation\b|NoContent\b|ResetContent\b|PartialContent\b|MultiStatus\b|MultipleChoices\b|MovedPermanently\b|Found\b|SeeOther\b|NotModified\b|UseProxy\b|SwitchProxy\b|TemporaryRedirect\b|PermanentRedirect\b)\w+)/
+  # Ktor's 4xx/5xx `HttpStatusCode` companions, `HttpStatusCode(4xx, ...)` and
+  # `HttpStatusCode.fromValue(4xx)`.
+  ERROR_STATUS          = /HttpStatusCode\s*(?:\.\s*(?:BadRequest|Unauthorized|PaymentRequired|Forbidden|NotFound|MethodNotAllowed|NotAcceptable|ProxyAuthenticationRequired|RequestTimeout|Conflict|Gone|LengthRequired|PreconditionFailed|PayloadTooLarge|RequestURITooLong|UnsupportedMediaType|RequestedRangeNotSatisfiable|ExpectationFailed|UnprocessableEntity|Locked|FailedDependency|TooEarly|UpgradeRequired|TooManyRequests|RequestHeaderFieldTooLarge|InternalServerError|NotImplemented|BadGateway|ServiceUnavailable|GatewayTimeout|VersionNotSupported|VariantAlsoNegotiates|InsufficientStorage)\b|\(\s*[45]\d\d\b|\.\s*fromValue\s*\(\s*[45]\d\d\s*\))/
   ERROR_STATUS_ARGUMENT = /\A#{ERROR_STATUS.source}/
-  ERROR_STATUS_CONSTANT = /\b(?:const\s+)?val\s+(\w+)\s*(?::\s*HttpStatusCode\s*)?=\s*#{ERROR_STATUS.source}/
+  # A top-level constant (not one nested in an object or class).
+  ERROR_STATUS_CONSTANT = /^(?:(?:private|internal|public)\s+)?(?:const\s+)?val\s+(\w+)\s*(?::\s*HttpStatusCode\s*)?=\s*#{ERROR_STATUS.source}/m
+  LOCAL_BINDING         = /\A(?:val|var)\s+(\w+)(?:\s*:\s*[^=\n]+)?\s*=\s*(.+)\z/m
+  PACKAGE_LINE          = /^\s*package\s+([\w.]+)/m
+  IMPORT_LINE           = /^\s*import\s+([\w.]+)(\.\*)?/m
   HANDLER_CALL          = /\A(?:(?:val|var)\s+\w+(?:\s*:\s*[^=\n]+)?\s*=\s*)?call\.(\w+)\s*\(/
   GRADLE_MODULE         = /\A(?:build\.gradle(?:\.kts)?|pom\.xml)\z/
 
   private def pre_scan_credential_helpers
     @helpers.clear
     @error_statuses.clear
+    @status_packages.clear
     collect_files_by_extension(".kt").each do |file|
       content = read_file(file)
       next if content.nil?
@@ -297,7 +305,14 @@ class KtorAuthTagger < FrameworkTagger
       next unless reads || statuses
 
       masked = Noir::KotlinSourceMask.visible(content)
-      masked.scan(ERROR_STATUS_CONSTANT) { |match| @error_statuses << match[1] } if statuses
+      if statuses
+        constants = Set(String).new
+        masked.scan(ERROR_STATUS_CONSTANT) { |match| constants << match[1] }
+        unless constants.empty?
+          @error_statuses[Noir::PathScope.expand(file)] = constants
+          (@status_packages[kotlin_package(masked)] ||= Set(String).new).concat(constants)
+        end
+      end
       next unless reads
 
       module_root = gradle_module(file)
@@ -405,6 +420,7 @@ class KtorAuthTagger < FrameworkTagger
     return unless open = masked.index('{')
     body = (close = matching_close(masked, open)) ? masked[(open + 1)...close] : masked[(open + 1)..]
     module_root = gradle_module(file)
+    locals = Hash(String, Bool).new
     top_level_statements(body).each do |statement|
       if call = statement.match(HANDLER_CALL)
         case @helpers[{module_root, call[1]}]?
@@ -419,7 +435,10 @@ class KtorAuthTagger < FrameworkTagger
       end
       # A statement that can answer the caller before the guard, other than
       # with an error status, leaves the guard behind it.
-      return if answers_before_guard?(statement)
+      return if answers_before_guard?(statement, file, locals)
+      if binding = statement.match(LOCAL_BINDING)
+        locals[binding[1]] = binding[2].strip.matches?(ERROR_STATUS_ARGUMENT)
+      end
     end
     nil
   end
@@ -428,7 +447,7 @@ class KtorAuthTagger < FrameworkTagger
   # an error status: `return@get call.respondText("preview")`, a bare
   # `return@get`, `call.respond(data)`. `return@post call.respond(FORBIDDEN)`
   # with a project `val FORBIDDEN = HttpStatusCode(403, ...)` cannot.
-  private def answers_before_guard?(statement : String) : Bool
+  private def answers_before_guard?(statement : String, file : String, locals : Hash(String, Bool)) : Bool
     return false unless statement.matches?(ANSWERS)
     statement.scan(RETURN_RESPOND) do |found|
       return true unless found[1]?
@@ -437,9 +456,41 @@ class KtorAuthTagger < FrameworkTagger
       return true unless found[1].empty?
       return true unless (open = found.end - 1) && (close = matching_close(statement, open))
       argument = statement[(open + 1)...close].strip
-      return true unless argument.matches?(ERROR_STATUS_ARGUMENT) || @error_statuses.includes?(argument)
+      return true unless argument.matches?(ERROR_STATUS_ARGUMENT) || error_status_name?(argument, file, locals)
     end
     false
+  end
+
+  # Whether the name `argument` is bound to an error status where the
+  # handler reads it: a `val` of its own body first, else a top-level
+  # constant of the handler's file, of its package, or of a package it
+  # imports the name (or `*`) from.
+  private def error_status_name?(argument : String, file : String, locals : Hash(String, Bool)) : Bool
+    return false unless argument.matches?(/\A\w+\z/)
+    return locals[argument] if locals.has_key?(argument)
+    return true if @error_statuses[Noir::PathScope.expand(file)]?.try(&.includes?(argument))
+
+    package, imports = file_scope(file)
+    return true if @status_packages[package]?.try(&.includes?(argument))
+    imports.any? do |path, wildcard|
+      owner = wildcard ? path : path.rpartition('.')[0]
+      (wildcard || path.ends_with?(".#{argument}")) && !!@status_packages[owner]?.try(&.includes?(argument))
+    end
+  end
+
+  @file_scopes = Hash(String, {String, Array({String, Bool})}).new
+
+  private def file_scope(file : String) : {String, Array({String, Bool})}
+    @file_scopes[file] ||= begin
+      content = Noir::KotlinSourceMask.visible(read_file(file) || "")
+      imports = [] of {String, Bool}
+      content.scan(IMPORT_LINE) { |match| imports << {match[1], !match[2]?.nil?} }
+      {kotlin_package(content), imports}
+    end
+  end
+
+  private def kotlin_package(content : String) : String
+    content.match(PACKAGE_LINE).try(&.[1]) || ""
   end
 
   # `sessions.get` guards only when a missing session refuses or redirects.
