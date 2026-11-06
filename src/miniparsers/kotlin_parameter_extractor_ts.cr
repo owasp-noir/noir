@@ -1157,7 +1157,7 @@ module Noir
       # A multipart file is a body part even when `@RequestParam` names it;
       # the next parameter still inherits the format it would have.
       carry_format = effective_format
-      effective_format = "form" if multipart_type?(type_text)
+      effective_format = "form" if ann_kind != :body && multipart_type?(type_text, class_fields)
 
       default_value : String? = nil
       parameter_name = arg_name
@@ -1236,11 +1236,17 @@ module Noir
     end
 
     # Types Spring fills from a multipart part: `MultipartFile`, servlet
-    # `Part`, a collection or array of them. Mirrors the Java extractor.
-    MULTIPART_TYPE = /\A(?:(?:List|MutableList|Set|Collection|Array)\s*<\s*)?(?:[\w.]+\.)?(?:MultipartFile|Part)\s*>?\s*\??\z/
+    # `Part`, a collection or array of them. Mirrors the Java extractor. A
+    # bare `Part` is the servlet one only when the project declares no DTO of
+    # that name (`data class Part(val name: String)` in a parts catalog).
+    MULTIPART_COLLECTION = /\A(?:(?:List|MutableList|Set|Collection|Array)\s*<\s*)?(.+?)\s*>?\s*\??\z/
+    MULTIPART_FILE       = /\A(?:[\w.]+\.)?MultipartFile\z/
+    SERVLET_PART         = /\A(?:jakarta|javax)\.servlet\.http\.Part\z/
 
-    private def multipart_type?(type_text : String) : Bool
-      type_text.matches?(MULTIPART_TYPE)
+    private def multipart_type?(type_text : String, class_fields : Hash(String, Array(FieldInfo))) : Bool
+      return false unless element = type_text.match(MULTIPART_COLLECTION).try(&.[1])
+      return true if element.matches?(MULTIPART_FILE) || element.matches?(SERVLET_PART)
+      element == "Part" && !class_fields.has_key?("Part")
     end
 
     # True when `type_name` is a scalar Spring binds from a single

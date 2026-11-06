@@ -82,6 +82,30 @@ describe Noir::TreeSitterKotlinParameterExtractor do
       ])
     end
 
+    it "keeps a project DTO named Part out of multipart binding" do
+      source = <<-KT
+        @RestController
+        class C {
+            @PostMapping("/parts")
+            fun create(@RequestBody part: Part) {}
+
+            @PostMapping("/parts/form")
+            fun form(part: Part) {}
+
+            @PostMapping("/upload")
+            fun upload(@RequestParam("p") p: jakarta.servlet.http.Part, @RequestParam("f") f: MultipartFile) {}
+        }
+        KT
+      fields = {
+        "Part" => [Noir::TreeSitterKotlinParameterExtractor::FieldInfo.new("name", "public", true, "")],
+      }
+
+      extract(source, "C", "create", "POST", fields: fields).map { |p| {p.name, p.param_type} }.should eq([{"name", "json"}])
+      extract(source, "C", "form", "POST", fields: fields).map { |p| {p.name, p.param_type} }.should eq([{"name", "form"}])
+      extract(source, "C", "form", "GET", fields: fields).map { |p| {p.name, p.param_type} }.should eq([{"name", "query"}])
+      extract(source, "C", "upload", "POST", fields: fields).map { |p| {p.name, p.param_type} }.should eq([{"p", "form"}, {"f", "form"}])
+    end
+
     it "resolves Kotlin constants in explicit request parameter names" do
       source = <<-KT
         @RestController
