@@ -84,4 +84,40 @@ class LogController extends AbstractController
 
         return $this->json([]);
     }
+
+    #[Route(path: '/perm/x', name: 'perm')]
+    public function perm()
+    {
+        return $this->json([]);
+    }
+
+    #[Route(path: '/plain/x', name: 'plain')]
+    public function plain()
+    {
+        return $this->json([]);
+    }
+
+    #[Route(path: '/mixed/x', name: 'mixed')]
+    public function mixed()
+    {
+        return $this->json([]);
+    }
+
+    #[Route(path: '/full/x', name: 'full')]
+    public function full()
+    {
+        return $this->json([]);
+    }
+
+    #[Route(path: '/b8/x', name: 'b8')]
+    public function b8()
+    {
+        return $this->json([]);
+    }
+
+    #[Route(path: '/imp/x', name: 'imp')]
+    public function imp()
+    {
+        return $this->json([]);
+    }
 }

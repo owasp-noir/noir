@@ -6,6 +6,12 @@ security:
     access_control:
         - { path: ^/open, roles: PUBLIC_ACCESS }
         - { path: ^/api, allow_if: 'is_granted("@api.access") and is_authenticated()' }
+        - { path: ^/perm, roles: '@parts.read' }
+        - { path: ^/plain, roles: [ROLE_USER, IS_AUTHENTICATED_FULLY] }
+        - { path: ^/mixed, roles: [ROLE_USER, '@parts.read'] }
+        - { path: ^/full, allow_if: "is_granted('@x.y') and is_fully_authenticated()" }
+        - { path: ^/b8, roles: '@v', allow_if: "is_granted('@w')" }
+        - { path: ^/imp, roles: [IS_IMPERSONATOR, IS_REMEMBERED] }
         - { path: ^/role, allow_if: "is_granted('ROLE_ADMIN') and is_authenticated()" }
         - { path: ^/maybe, allow_if: 'is_authenticated() or request.query.get("k") == "x"' }
         - { path: ^/cmp, allow_if: "is_granted('ROLE_ADMIN') == false" }

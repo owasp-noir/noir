@@ -115,7 +115,7 @@ module Analyzer::Php
       file = File.expand_path(path)
       config = @security_configs.select { |c| file.starts_with?("#{c.root}/") }.max_by?(&.root.size)
       return unless config && (roles = config.required_roles(endpoint.method, endpoint.url))
-      endpoint.add_tag(Tag.new("auth", "Protected by Symfony access_control (#{roles.join(", ")})", "php_auth"))
+      endpoint.add_tag(Tag.new("auth", "Protected by Symfony access_control (#{roles.join(", ")})#{SymfonySecurity.roles_note(roles)}", "php_auth"))
     end
 
     private def yaml_route_file?(path : String) : Bool

@@ -25,21 +25,31 @@ module Analyzer::Php::SymfonySecurity
   # Only a role or an authentication level is certain to refuse an anonymous
   # caller; any other attribute is decided by an application voter, which
   # may grant it to anonymous callers (a default group, say).
-  CERTAIN_ATTRIBUTE_RE = /\A(?:ROLE_\w+|IS_AUTHENTICATED(?:_\w+)?)\z/
+  CERTAIN_ATTRIBUTE_RE = /\A(?:ROLE_\w+|IS_AUTHENTICATED(?:_\w+)?|IS_IMPERSONATOR|IS_REMEMBERED)\z/
   VOTER_NOTE           = " (an application voter or setting may grant anonymous callers)"
 
   def self.voter_note(attribute : String) : String
     attribute.matches?(CERTAIN_ATTRIBUTE_RE) ? "" : VOTER_NOTE
   end
 
+  # Voter note for the `roles:` of an `access_control` rule; its `allow_if`
+  # entry (prefixed `allow_if:`) carries its own note.
+  def self.roles_note(roles : Array(String)) : String
+    return "" if roles.any?(&.includes?(VOTER_NOTE))
+    roles.all? { |r| r.starts_with?("allow_if:") || r.matches?(CERTAIN_ATTRIBUTE_RE) } ? "" : VOTER_NOTE
+  end
+
   # The guard an `allow_if` expression puts on every caller, or nil when
   # it can pass anonymously or cannot be decided statically.
   def self.allow_if_guard(expression : String) : String?
-    return unless ALLOW_IF_ALL.matches?(expression.gsub(ALLOW_IF_STRING_RE, "\u{1}"))
+    masked = expression.gsub(ALLOW_IF_STRING_RE, "\u{1}")
+    return unless ALLOW_IF_ALL.matches?(masked)
     # Only check calls are left, so every literal is an `is_granted` attribute.
     attributes = expression.scan(ALLOW_IF_STRING_RE).map { |m| m[0][1...-1] }
     return if attributes.any? { |attribute| PUBLIC_ROLES.includes?(attribute) }
-    note = attributes.all?(&.matches?(CERTAIN_ATTRIBUTE_RE)) ? "" : VOTER_NOTE
+    # A conjunct that needs a login already refuses anonymous callers.
+    login = masked.matches?(/is_(?:fully_)?authenticated/)
+    note = login || attributes.all?(&.matches?(CERTAIN_ATTRIBUTE_RE)) ? "" : VOTER_NOTE
     "allow_if: #{expression}#{note}"
   end
 
