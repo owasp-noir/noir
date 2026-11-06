@@ -862,10 +862,16 @@ module Noir
               end
             end
             next if name.empty?
+            # A `private` / `protected` body property has no accessor for
+            # Jackson or Spring's binder to reach (`private val isSet =
+            # mutableMapOf<...>()`), unless `@JsonProperty` names it.
+            visibility = field_visibility(member, source)
+            wire_name = json_property_name(member, source)
+            next if (visibility == "private" || visibility == "protected") && wire_name.nil?
             fields << FieldInfo.new(
-              name, field_visibility(member, source), true, init, null_validation_groups(member, source),
+              name, visibility, true, init, null_validation_groups(member, source),
               server_managed_field?(member, source, name, init, class_name, class_text), validation_annotations(member, source),
-              init_string, json_property_name(member, source)
+              init_string, wire_name
             )
             last_prop_name = name
           else

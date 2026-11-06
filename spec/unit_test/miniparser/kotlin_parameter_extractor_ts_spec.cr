@@ -795,6 +795,20 @@ describe Noir::TreeSitterKotlinParameterExtractor do
   end
 
   describe "#extract_class_fields" do
+    it "skips private and protected body properties unless @JsonProperty names them" do
+      source = <<-KT
+        class SettingsUpdateDto(private val token: String) {
+          private val isSet = mutableMapOf<String, Boolean>()
+          protected var internalState: Int = 0
+          @JsonProperty("wire_name") private var hidden: String? = null
+          internal var shared: Boolean? = null
+          var deleteEmptyCollections: Boolean? = null
+        }
+        KT
+      fields = Noir::TreeSitterKotlinParameterExtractor.extract_class_fields(source)
+      fields["SettingsUpdateDto"].map(&.name).should eq(["token", "hidden", "shared", "deleteEmptyCollections"])
+    end
+
     it "collects primary constructor properties as fields" do
       source = <<-KT
         data class Article(var title: String, var body: String = "todo")
