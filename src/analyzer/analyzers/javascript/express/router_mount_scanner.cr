@@ -272,7 +272,7 @@ module Analyzer::Javascript
             imports ||= parse_imports(content, file)
             target_file = imports[:function_map][plugin]? || next
             name = exported_name(file, plugin)
-            plugin_function_range(target_file, name) || next
+            plugin_function_spans(target_file, name) || next
             (edges[Noir::PathScope.expand(file)] ||= [] of PluginEdge) << PluginEdge.new(prefix, ExpressConstants.function_key(target_file, name), target_file, origin, name)
             next
           end
@@ -302,11 +302,20 @@ module Analyzer::Javascript
         @logger.debug "Error scanning #{file} for plugin mounts (#{e.class}): #{e.message}"
       end
 
-      registered = edges.values.flat_map(&.map(&.target)).to_set
+      registered = edges.values.flat_map { |list| list.reject(&.scope).map(&.target) }.to_set
+      # A module entered only through direct calls still runs its other
+      # registrations as a root; the spans those calls walk are theirs.
+      called = Hash(String, Array(Tuple(Int32, Int32))).new
+      edges.each_value do |list|
+        list.each do |edge|
+          name = edge.scope || next
+          plugin_function_spans(edge.target, name).try { |spans| (called[edge.target] ||= [] of Tuple(Int32, Int32)).concat(spans.map(&.[1])) }
+        end
+      end
       visited = Set(Tuple(String, String, String?)).new
       edges.each_key do |root|
         next if registered.includes?(root)
-        descend_register_mounts(root, "", edges, locator, Set{root}, visited)
+        descend_register_mounts(root, "", edges, locator, Set{root}, visited, nil, called[root]?)
       end
     end
 
@@ -400,11 +409,14 @@ module Analyzer::Javascript
                                         edges : Hash(String, Array(PluginEdge)),
                                         locator : CodeLocator, on_path : Set(String),
                                         visited : Set(Tuple(String, String, String?)),
-                                        scope : Tuple(Int32, Int32)? = nil)
+                                        scope : Array(Tuple(Int32, Int32))? = nil,
+                                        excluded : Array(Tuple(Int32, Int32))? = nil)
       edges[file]?.try &.each do |edge|
         # Entered through a directly called function: that function's own
-        # registrations, not every plugin its module mounts.
-        next if scope && !(scope[0] <= edge.origin <= scope[1])
+        # registrations (and its same-file helpers'), not every plugin its
+        # module mounts.
+        next if scope && scope.none? { |from, to| from <= edge.origin <= to }
+        next if excluded && excluded.any? { |from, to| from <= edge.origin <= to }
         target = edge.target
         next if on_path.includes?(target)
         combined = edge.prefix.empty? ? parent : Noir::URLPath.join(parent, edge.prefix)
@@ -417,8 +429,14 @@ module Analyzer::Javascript
         # out exponentially.
         next unless visited.add?({target, combined, edge.scope})
         on_path << target
-        inner = edge.scope.try { |name| plugin_function_range(target, name) }
-        descend_register_mounts(target, combined, edges, locator, on_path, visited, inner)
+        inner = edge.scope.try { |name| plugin_function_spans(target, name) }
+        # A same-file helper the plugin hands its instance to registers on
+        # the same instance: its own routes take the prefix too.
+        inner.try &.each do |helper, _|
+          next if helper == edge.scope
+          push_prefix_to_locator(locator, ExpressConstants.function_key(target, helper), combined, "Mapped plugin helper prefix: #{target}:#{helper} => #{combined}")
+        end
+        descend_register_mounts(target, combined, edges, locator, on_path, visited, inner.try(&.map(&.[1])))
         on_path.delete(target)
       end
     end
@@ -434,28 +452,64 @@ module Analyzer::Javascript
     # `server.register(`, `registerUsers(server)`). Offsets index the
     # comment-stripped source, as edge origins do.
     PLUGIN_USE_OF_PARAM = ->(param : String) { /(?<![\w$.])#{Regex.escape(param)}\s*\.\s*(?:register|route|get|post|put|patch|delete|del|head|options|all)\s*[<(]|(?<![\w$.])[A-Za-z_$][\w$]*\s*\(\s*#{Regex.escape(param)}\s*[,)]/ }
-    @plugin_function_ranges = Hash(Tuple(String, String), Tuple(Int32, Int32)?).new
+    # `registerLocal(server)` inside a plugin's body: a same-file function
+    # handed the plugin's instance.
+    HANDED_PARAM_CALL = ->(param : String) { /(?<![\w$.])([A-Za-z_$][\w$]*)\s*\(\s*#{Regex.escape(param)}\s*[,)]/ }
+    @plugin_function_spans = Hash(Tuple(String, String), Array(Tuple(String, Tuple(Int32, Int32)))?).new
 
-    private def plugin_function_range(file : String, name : String) : Tuple(Int32, Int32)?
+    # The body spans of plugin function `name` in `file` and of the same-file
+    # functions it hands its instance to, transitively, each with its name;
+    # nil when `name` is no plugin (see `find_function_body`).
+    private def plugin_function_spans(file : String, name : String) : Array(Tuple(String, Tuple(Int32, Int32)))?
       key = {file, name}
-      return @plugin_function_ranges[key] if @plugin_function_ranges.has_key?(key)
-      @plugin_function_ranges[key] = find_plugin_function_range(file, name)
+      return @plugin_function_spans[key] if @plugin_function_spans.has_key?(key)
+      @plugin_function_spans[key] = collect_plugin_function_spans(file, name)
     end
 
-    private def find_plugin_function_range(file : String, name : String) : Tuple(Int32, Int32)?
+    private def collect_plugin_function_spans(file : String, name : String) : Array(Tuple(String, Tuple(Int32, Int32)))?
       content = Noir::JSRouteExtractor.strip_js_comments(read_source(file))
-      escaped = Regex.escape(name)
-      head = content.match(/\b(?:const|let|var)\s+#{escaped}\s*(?::[^=]+)?=\s*(?:async\s+)?(?:function\b[^(]*)?(\()\s*([A-Za-z_$][\w$]*)/) ||
-             content.match(/\bfunction\s+#{escaped}\s*(\()\s*([A-Za-z_$][\w$]*)/) || return
-      params_open = head.byte_begin(1)
-      params_close = Noir::JSLiteralScanner.find_matching_paren_at_byte(content, params_open) || return
-      open = content.byte_index('{', params_close) || return
-      close = Noir::JSLiteralScanner.find_matching_brace_at_byte(content, open) || return
-      body = content.byte_slice(open, close - open + 1)
-      body.matches?(PLUGIN_USE_OF_PARAM.call(head[2])) ? {open, close} : nil
+      first = find_function_body(content, name) || return
+      return unless content.byte_slice(first[0], first[1] - first[0] + 1).matches?(PLUGIN_USE_OF_PARAM.call(first[2]))
+      spans = [{name, {first[0], first[1]}}]
+      queue = [first]
+      seen = Set{name}
+      while body = queue.shift?
+        content.byte_slice(body[0], body[1] - body[0] + 1).scan(HANDED_PARAM_CALL.call(body[2])) do |m|
+          helper = m[1]
+          next unless seen.add?(helper)
+          found = find_function_body(content, helper) || next
+          spans << {helper, {found[0], found[1]}}
+          queue << found
+        end
+      end
+      spans
     rescue File::Error | IO::Error
       nil
     end
+
+    # `const name = async (server) => { … }` / `function name(server) { … }`:
+    # its body's `{`, matching `}` and first parameter. A `{` counts only
+    # right after `=>` (or a function's `)`), past a return-type annotation;
+    # an expression body (`(s) => s.user`) has none.
+    private def find_function_body(content : String, name : String) : Tuple(Int32, Int32, String)?
+      escaped = Regex.escape(name)
+      arrow = true
+      head = content.match(/\b(?:const|let|var)\s+#{escaped}\s*(?::[^=]+)?=\s*(?:async\s+)?(\()\s*([A-Za-z_$][\w$]*)/)
+      unless head
+        arrow = false
+        head = content.match(/\b(?:const|let|var)\s+#{escaped}\s*(?::[^=]+)?=\s*(?:async\s+)?function\b[^(]*(\()\s*([A-Za-z_$][\w$]*)/) ||
+               content.match(/\bfunction\s+#{escaped}\s*(\()\s*([A-Za-z_$][\w$]*)/) || return
+      end
+      params_close = Noir::JSLiteralScanner.find_matching_paren_at_byte(content, head.byte_begin(1)) || return
+      rest = content.byte_slice(params_close + 1, {content.bytesize - params_close - 1, 256}.min)
+      lead = rest.match(arrow ? ARROW_BODY_START : FUNCTION_BODY_START) || return
+      open = params_close + 1 + lead.byte_end(0)
+      close = Noir::JSLiteralScanner.find_matching_brace_at_byte(content, open) || return
+      {open, close, head[2]}
+    end
+
+    ARROW_BODY_START    = /\A\s*(?::[^={};]*)?=>\s*(?=\{)/
+    FUNCTION_BODY_START = /\A\s*(?::[^={};]*)?(?=\{)/
 
     # The handler is the last argument: `onRequest(app)` / `onRequest({ region }, app)`.
     FIREBASE_APP_HANDLER = /(?:\A|,)\s*([A-Za-z_$][\w$]*)\s*\z/
@@ -1023,7 +1077,7 @@ module Analyzer::Javascript
       end
 
       # Pattern: const { funcA, funcB: aliasB } = require('./path/to/file')
-      content.scan(/(?:const|let|var)\s*\{\s*((?:[^{}]|\{[^{}]*\})*?)\s*\}\s*=\s*require\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |m|
+      content.scan(/(?:const|let|var)\s*\{\s*((?:[^{}]|\{(?:[^{}]|\{[^{}]*\})*\})*?)\s*\}\s*=\s*require\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |m|
         if m.size >= 3
           names = m[1]
           require_path = m[2]
