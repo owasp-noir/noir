@@ -130,6 +130,7 @@ class RubyAuthTagger < FrameworkTagger
     @caller_ivars = Hash(String, Array(String)).new
     @cancan_verdicts = Hash({String, String, String, Bool}, Bool).new
     @cancan_abilities = Hash({String, String}, Noir::CanCanAbility?).new
+    @resolving_abilities = Set({String, String}).new
   end
 
   # Per-line flags for `check_controller_auth`, computed once per file.
@@ -1393,17 +1394,29 @@ class RubyAuthTagger < FrameworkTagger
   # helper or another engine's class of the same name is not it). nil when
   # there is none, or more than one.
   private def cancan_ability(name : String, controller_path : String) : Noir::CanCanAbility?
+    name = name.lchop("::")
     return unless idx = controller_path.rindex("/app/controllers/")
     app = controller_path[0, idx + "/app/".size]
-    @cancan_abilities.put_if_absent({name, app}) do
+    key = {name, app}
+    return @cancan_abilities[key] if @cancan_abilities.has_key?(key)
+    return if @resolving_abilities.includes?(key)
+
+    @resolving_abilities.add(key)
+    begin
       suffix = "/#{name.underscore.gsub("::", "/")}.rb"
       found = collect_files_by_extension(".rb").select do |path|
         path.starts_with?(app) && path.ends_with?(suffix) && !path[app.size..].matches?(%r{(?:\A|/)(?:spec|test)s?/}) &&
-          read_file_lines(path).try(&.any?(&.matches?(/\A\s*include\s+CanCan::Ability\b/)))
+          read_file_lines(path).try(&.any?(&.matches?(/\A\s*include\s+(?:::)?CanCan::Ability\b/)))
       end
-      next unless found.size == 1 && (lines = read_file_lines(found.first))
-      ability = Noir::CanCanAbility.new(lines)
-      ability if ability.readable?
+      ability = if found.size == 1 && (lines = read_file_lines(found.first))
+                  resolver = ->(rel_name : String) { cancan_ability(rel_name, controller_path) }
+                  parsed = Noir::CanCanAbility.new(lines, resolver)
+                  parsed if parsed.readable?
+                end
+      @cancan_abilities[key] = ability
+      ability
+    ensure
+      @resolving_abilities.delete(key)
     end
   end
 

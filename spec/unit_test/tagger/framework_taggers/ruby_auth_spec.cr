@@ -1811,6 +1811,158 @@ describe "RubyAuthTagger (routed controller chain)" do
     Noir::CanCanAbility.new("class A\n  include CanCan::Ability\n\n  def initialize(user)\n    can :read, Note\n  end\nend\n".lines).verdict("show", "Medium").maybe?.should be_true
   end
 
+  it "keeps merged abilities honest: cannot rules, unresolved classes, admin-only grants and look-alike text" do
+    other = Noir::CanCanAbility.new(<<-RB.lines)
+      class Everyone
+        include CanCan::Ability
+
+        def initialize(user)
+          can :read, ::Goal
+          cannot :read, Goal
+          can [:read,
+               :map], Note
+        end
+      end
+      RB
+    admin = Noir::CanCanAbility.new(<<-RB.lines)
+      class Admin
+        include CanCan::Ability
+
+        def initialize(user)
+          can :manage, :all
+        end
+      end
+      RB
+    resolver = ->(name : String) { name == "Everyone" ? other : (name == "Admin" ? admin : nil) }
+    ability = Noir::CanCanAbility.new(<<-RB.lines, resolver)
+      class Ability
+        include CanCan::Ability
+
+        def initialize(user)
+          if user
+            merge Admin.new(user) if user.admin?
+          else
+            merge Everyone.new(user)
+          end
+        end
+      end
+      RB
+    ability.readable?.should be_true
+    # a later `cannot` in the merged class still wins
+    ability.verdict("index", "Goal").no?.should be_true
+    ability.verdict("map", "Note").yes?.should be_true
+    # the admin-only grant must not open Goal for a guest
+    ability.verdict("destroy", "Note").no?.should be_true
+
+    # a merged class nobody can read leaves the whole ability unreadable
+    unknown = Noir::CanCanAbility.new(<<-RB.lines, resolver)
+      class Ability
+        include CanCan::Ability
+
+        def initialize(user)
+          merge Missing.new(user)
+        end
+      end
+      RB
+    unknown.readable?.should be_false
+
+    # merge text in a comment or a string is not a merge
+    fake = Noir::CanCanAbility.new(<<-RB.lines, resolver)
+      class Ability
+        include CanCan::Ability
+
+        def initialize(user)
+          # merge Admin.new(user)
+          can :read, Note, title: "merge Admin.new(user) [" # not a rule
+          can :create, Note
+        end
+      end
+      RB
+    fake.readable?.should be_true
+    fake.verdict("destroy", "Note").no?.should be_true
+    fake.verdict("create", "Note").yes?.should be_true
+
+    # self-merge terminates
+    loop_ability = nil.as(Noir::CanCanAbility?)
+    looping = ->(_name : String) { loop_ability }
+    loop_ability = Noir::CanCanAbility.new(<<-RB.lines, looping)
+      class Ability
+        include CanCan::Ability
+
+        def initialize(user)
+          merge Ability.new(user)
+        end
+      end
+      RB
+    loop_ability.try(&.readable?).should be_false
+  end
+
+  it "merges diamond ability trees in linear time, survives regex literals, and keeps a merged guest flag" do
+    # 30 levels, each merging the next twice
+    classes = {} of String => Noir::CanCanAbility
+    classes["L30"] = Noir::CanCanAbility.new("class L30\n  include CanCan::Ability\n\n  def initialize(user)\n    can :read, Note\n  end\nend\n".lines)
+    29.downto(0) do |i|
+      classes["L#{i}"] = Noir::CanCanAbility.new(
+        "class L#{i}\n  include CanCan::Ability\n\n  def initialize(user)\n    merge L#{i + 1}.new(user)\n    merge L#{i + 1}.new(user)\n  end\nend\n".lines,
+        ->(name : String) { classes[name]?.as(Noir::CanCanAbility?) })
+    end
+    started = Time.instant
+    classes["L0"].verdict("index", "Note").yes?.should be_true
+    (Time.instant - started).should be < 1.second
+    classes["L0"].rules.size.should eq(1)
+
+    # a regex literal's bracket must not swallow the next rule
+    regex = Noir::CanCanAbility.new(<<-RB.lines)
+      class Ability
+        include CanCan::Ability
+
+        def initialize(user)
+          can :read, Note, title: /(draft/
+          can :read, Topic
+        end
+      end
+      RB
+    regex.verdict("index", "Topic").yes?.should be_true
+
+    # a guest object in the merged class reads caller conditions as unknown
+    guest = Noir::CanCanAbility.new(<<-RB.lines)
+      class Everyone
+        include CanCan::Ability
+
+        def initialize(user)
+          user ||= User.new
+          can :read, Topic, user_id: user.id
+        end
+      end
+      RB
+    host = Noir::CanCanAbility.new(<<-RB.lines, ->(_name : String) { guest.as(Noir::CanCanAbility?) })
+      class Ability
+        include CanCan::Ability
+
+        def initialize(user)
+          merge Everyone.new(user)
+        end
+      end
+      RB
+    host.verdict("show", "Topic", instance: true).maybe?.should be_true
+  end
+
+  it "re-merges a class after a cannot rule so the later grant wins" do
+    everyone = Noir::CanCanAbility.new("class E\n  include CanCan::Ability\n\n  def initialize(user)\n    can :read, Topic\n  end\nend\n".lines)
+    ability = Noir::CanCanAbility.new(<<-RB.lines, ->(_name : String) { everyone.as(Noir::CanCanAbility?) })
+      class Ability
+        include CanCan::Ability
+
+        def initialize(user)
+          merge Abilities::Everyone.new(user)
+          cannot :read, Topic
+          merge Abilities::Everyone.new(user)
+        end
+      end
+      RB
+    ability.verdict("index", "Topic").yes?.should be_true
+  end
+
   # Names in the guard callback that are not calls: a word inside a string
   # or after a receiver, and a local the body assigns. Another controller
   # defines `new`, `otp` and `client`; reading those as calls to it made a
@@ -2305,6 +2457,110 @@ describe "RubyAuthTagger (routed controller chain)" do
       endpoint.tags.none? { |t| t.name == "authz" || t.name == "auth" }.should be_true
     ensure
       FileUtils.rm_rf(tmpdir)
+    end
+  end
+
+  it "reads multiline CanCanCan rules, leading :: namespaces, and merged ability classes" do
+    CodeLocator.instance.clear_all
+    tmpdir = File.tempname("ruby_cancan_merge")
+    files = {
+      "app/controllers/application_controller.rb" => <<-RB,
+        class ApplicationController < ActionController::Base
+          rescue_from CanCan::AccessDenied, with: :deny_access
+        end
+        RB
+      "app/controllers/topics_controller.rb" => <<-RB,
+        class TopicsController < ApplicationController
+          load_and_authorize_resource :community
+          load_and_authorize_resource :topic, through: :community
+
+          def index
+          end
+
+          def create
+          end
+        end
+        RB
+      "app/controllers/goals_controller.rb" => <<-RB,
+        class GoalsController < ApplicationController
+          authorize_resource
+
+          def index
+          end
+
+          def create
+          end
+        end
+        RB
+      "app/models/ability.rb" => <<-RB,
+        class Ability
+          include CanCan::Ability
+
+          def initialize(user)
+            if user
+              merge Abilities::Admin.new(user) if user.admin?
+            else
+              merge Abilities::Everyone.new(user)
+            end
+          end
+        end
+        RB
+      "app/models/abilities/everyone.rb" => <<-RB,
+        module Abilities
+          class Everyone
+            include CanCan::Ability
+
+            def initialize(user)
+              can [:read, :help],
+                  ::SDG::Goal
+              can [:read,
+                   :map], Community
+            end
+          end
+        end
+        RB
+      "app/models/abilities/admin.rb" => <<-RB,
+        module Abilities
+          class Admin
+            include CanCan::Ability
+
+            def initialize(user)
+              can :manage, :all
+            end
+          end
+        end
+        RB
+    }
+    files.each do |name, body|
+      path = File.join(tmpdir, name)
+      Dir.mkdir_p(File.dirname(path))
+      File.write(path, body)
+      CodeLocator.instance.register_path(path)
+    end
+
+    begin
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(tmpdir)
+      topic_index = Endpoint.new("/communities/:community_id/topics", "GET", [] of Param,
+        Details.new(PathInfo.new(File.join(tmpdir, "app/controllers/topics_controller.rb"), 5)))
+      topic_create = Endpoint.new("/communities/:community_id/topics", "POST", [] of Param,
+        Details.new(PathInfo.new(File.join(tmpdir, "app/controllers/topics_controller.rb"), 8)))
+      goal_index = Endpoint.new("/goals", "GET", [] of Param,
+        Details.new(PathInfo.new(File.join(tmpdir, "app/controllers/goals_controller.rb"), 4)))
+      goal_create = Endpoint.new("/goals", "POST", [] of Param,
+        Details.new(PathInfo.new(File.join(tmpdir, "app/controllers/goals_controller.rb"), 7)))
+      endpoints = [topic_index, topic_create, goal_index, goal_create]
+
+      RubyAuthTagger.new(noir_options).perform(endpoints)
+
+      # Topic is not granted to everyone, so create is guarded.
+      topic_create.tags.map(&.description).any? { |d| d.includes?("CanCanCan load_and_authorize_resource") }.should be_true
+      # Goal has multiline and leading :: on subject: index is open, create is guarded.
+      goal_index.tags.should be_empty
+      goal_create.tags.map(&.description).any?(&.includes?("CanCanCan authorize_resource")).should be_true
+    ensure
+      FileUtils.rm_rf(tmpdir)
+      CodeLocator.instance.clear_all
     end
   end
 end

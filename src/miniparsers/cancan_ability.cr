@@ -21,27 +21,33 @@ module Noir
     record Rule, actions : Array(String), subjects : Array(String), grant : Grant, allows : Bool,
       conditioned : Bool = false, on_user : Bool = false
 
+    # ponytail: merged abilities past this many rules are not read.
+    MAX_RULES = 5000
+
     getter rules = [] of Rule
     getter? readable = true
-    @aliases = {"read" => ["index", "show"], "create" => ["new"], "update" => ["edit"]}
+    getter? guest = false
+    getter aliases = {"read" => ["index", "show"], "create" => ["new"], "update" => ["edit"]}
     @defs = Hash(String, Int32).new
     @user = "user"
-    @guest = false
+    @resolver : Proc(String, CanCanAbility?)? = nil
+    @lines = [] of String
+    @merged = Hash({String, Grant}, Int32).new
 
-    def initialize(@lines : Array(String))
-      @lines = @lines.map { |line| code_only(line) }
+    def initialize(lines : Array(String), @resolver : Proc(String, CanCanAbility?)? = nil)
+      @lines = join_logical_lines(lines)
       @lines.each_with_index do |line, idx|
         if m = line.match(/\A\s*def\s+(\w+[!?]?)/)
           @defs[m[1]] = idx
-        elsif line.matches?(/\A\s*(?:include|extend|prepend)\s+(?!CanCan::Ability\b)/)
+        elsif line.matches?(/\A\s*(?:include|extend|prepend)\s+(?!(?:::)?CanCan::Ability\b)/)
           @readable = false
         end
       end
-      unless (init = @defs["initialize"]?) && (param = @lines[init].match(/def\s+initialize\s*\(?\s*(\w+)/))
+      unless (init = @defs["initialize"]?) && (param = @lines[init].match(/def\s+initialize(?:\s*\(?\s*(\w+))?/))
         @readable = false
         return
       end
-      @user = param[1]
+      @user = param[1]? || "user"
       @guest = @lines.any?(&.matches?(/\A\s*#{@user}\s*\|\|=/))
       read_body(init, [] of Grant, 0)
     end
@@ -152,6 +158,34 @@ module Noir
           (@aliases[m[2]] ||= [] of String).concat(symbols(m[1]))
         elsif text.matches?(/\A#{@user}\s*(?:\|\|)?=/) || text.matches?(/\A@?\w+\s*(?:\|\|)?=(?!=)/)
           # an assignment
+        elsif m = text.match(/\Amerge(?:\s*\(|\s+)(?:(?:::)?([A-Z]\w*(?:::[A-Z]\w*)*))(?:\.new\b)?(?:\s*\(.*?\))?\)?(?:\s+(if|unless)\s+(.+))?\z/)
+          class_name = m[1]
+          grants = current + (m[3]? ? [condition(m[3], m[2] == "unless")] : [] of Grant)
+          grant = all(grants)
+          resolved = false
+          if @merged[{class_name, grant}]? == @rules.size
+            # merged under this very grant with no rule since: its rules are in
+            resolved = true
+          elsif resolver = @resolver
+            if other = resolver.call(class_name)
+              if other.readable?
+                resolved = true
+                @guest ||= other.guest?
+                @readable = false if @rules.size + other.rules.size > MAX_RULES
+                other.rules.each do |r|
+                  combined_grant = all([grant, r.grant])
+                  @rules << Rule.new(r.actions, r.subjects, combined_grant, r.allows, r.conditioned, r.on_user)
+                end
+                other.aliases.each do |verb, list|
+                  (@aliases[verb] ||= [] of String).concat(list).uniq!
+                end
+                @merged[{class_name, grant}] = @rules.size
+              end
+            end
+          end
+          if !resolved && grant != Grant::No
+            @readable = false
+          end
         elsif (m = text.match(/\A([a-z_]\w*[!?]?)(?:\s*\(.*?\))?(?:\s+(if|unless)\s+(.+))?\z/)) && (callee = @defs[m[1]]?) && m[1] != "initialize"
           read_body(callee, current + (m[3]? ? [condition(m[3], m[2] == "unless")] : [] of Grant), depth + 1)
         elsif all(current) != Grant::No
@@ -214,9 +248,66 @@ module Noir
     private def subjects_of(text : String) : Array(String)
       text = text.strip
       inner = text.lchop('[').rchop(']')
-      items = inner.split(',').map(&.strip)
-      return [] of String unless items.all?(&.matches?(/\A(?:[A-Z][\w:]*|:\w+)\z/))
-      items.map { |item| item == ":all" ? "all" : item }
+      items = inner.split(',').map(&.strip).reject(&.empty?)
+      return [] of String unless items.all?(&.matches?(/\A(?:::)?(?:[A-Z][\w:]*|:\w+)\z/))
+      items.map { |item| item == ":all" ? "all" : item.lchop("::") }
+    end
+
+    private def join_logical_lines(raw_lines : Array(String)) : Array(String)
+      cleaned = raw_lines.map { |line| code_only(line) }
+      statements = [] of String
+      current_line = ""
+      bracket_depth = 0
+      paren_depth = 0
+      brace_depth = 0
+
+      cleaned.each do |line|
+        stripped = line.strip
+        # A rule keyword at the start of a line ends an unfinished statement (a
+        # regex literal or a stray bracket would otherwise swallow what follows).
+        if !current_line.empty? && stripped.matches?(/\A(?:can|cannot|merge|end|def)\b/)
+          statements << current_line
+          current_line = ""
+          bracket_depth = paren_depth = brace_depth = 0
+        end
+        if current_line.empty?
+          if stripped.empty?
+            statements << ""
+            next
+          end
+          current_line = line
+        else
+          if stripped.empty?
+            next
+          end
+          current_line = "#{current_line} #{stripped}"
+        end
+
+        stripped.each_char do |ch|
+          case ch
+          when '[' then bracket_depth += 1
+          when ']' then bracket_depth -= 1 if bracket_depth > 0
+          when '(' then paren_depth += 1
+          when ')' then paren_depth -= 1 if paren_depth > 0
+          when '{' then brace_depth += 1
+          when '}' then brace_depth -= 1 if brace_depth > 0
+          end
+        end
+
+        continues = bracket_depth > 0 || paren_depth > 0 || brace_depth > 0 ||
+                    stripped.ends_with?(',') || stripped.ends_with?('\\') ||
+                    stripped.ends_with?("||") || stripped.ends_with?("&&")
+
+        unless continues
+          statements << current_line
+          current_line = ""
+          bracket_depth = 0
+          paren_depth = 0
+          brace_depth = 0
+        end
+      end
+      statements << current_line unless current_line.empty?
+      statements
     end
 
     private def user_ref : Regex
