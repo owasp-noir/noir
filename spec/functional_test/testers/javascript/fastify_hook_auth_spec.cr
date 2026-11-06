@@ -38,6 +38,7 @@ describe "Fastify onRequest hooks and route preHandlers", tags: "functional" do
     guards_of.call("GET", "/flag/login").should be_empty
     # A hook that gates on config and also refuses every anonymous caller.
     guards_of.call("GET", "/a/plain").join(" ").should contain("onRequest")
+    guards_of.call("GET", "/a/joined").join(" ").should contain("onRequest")
     # An exemption joined with another test does not hold for every route.
     guards_of.call("POST", "/b/pubpost").join(" ").should contain("onRequest")
     # A decorator is read in its own package.

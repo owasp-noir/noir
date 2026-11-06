@@ -584,6 +584,9 @@ class JsMiscAuthTagger < FrameworkTagger
         if absent
           exempt << key if refuses && !condition.includes?("||")
         elsif refuses
+          # Only a test of the key alone (`perms && perms.length > 0`) gates:
+          # in `!user || config.admin` the refusal reaches routes without it.
+          next if condition.includes?("||") || condition.split("&&").any? { |part| !part.matches?(value) }
           gates << key
           gated << span
         elsif block.lstrip('{').lstrip.starts_with?("return") && !condition.includes?("&&")
