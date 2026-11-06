@@ -8,7 +8,11 @@ describe Analyzer::Php::SymfonySecurity do
     guard = ->(expression : String) { Analyzer::Php::SymfonySecurity.allow_if_guard(expression) }
     guard.call("is_authenticated()").should eq("allow_if: is_authenticated()")
     guard.call("is_granted('ROLE_ADMIN') && is_fully_authenticated()").should eq("allow_if: is_granted('ROLE_ADMIN') && is_fully_authenticated()")
-    guard.call(%q(is_granted("@api.access_api") and is_authenticated())).should eq(%q(allow_if: is_granted("@api.access_api") and is_authenticated()) + note)
+    guard.call(%q(is_granted("@api.access_api") and is_authenticated())).should eq(%q(allow_if: is_granted("@api.access_api") and is_authenticated()))
+    guard.call("is_granted('@x.y')").should eq("allow_if: is_granted('@x.y')" + note)
+    guard.call("is_granted('@x.y') and is_granted('@z')").to_s.should end_with(note)
+    Analyzer::Php::SymfonySecurity.roles_note(["ROLE_A", "@p.q"]).should eq(note)
+    Analyzer::Php::SymfonySecurity.roles_note(["ROLE_A", "IS_AUTHENTICATED_FULLY"]).should eq("")
   end
 
   it "leaves an allow_if that can pass anonymously undecided" do

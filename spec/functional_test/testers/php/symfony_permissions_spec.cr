@@ -35,7 +35,11 @@ describe "Symfony permission strings / allow_if access_control", tags: "function
     guards.call(find.call("/str/x")).should be_empty
     guards.call(find.call("/role/x")).size.should eq(1)
     guards.call(find.call("/role/x")).first.should_not contain("voter")
-    guards.call(find.call("/api/info")).should eq(["Symfony access_control (allow_if: is_granted(\"@api.access\") and is_authenticated()#{note})"])
+    guards.call(find.call("/api/info")).should eq(["Symfony access_control (allow_if: is_granted(\"@api.access\") and is_authenticated())"])
+    guards.call(find.call("/full/x")).should eq(["Symfony access_control (allow_if: is_granted('@x.y') and is_fully_authenticated())"])
+    guards.call(find.call("/perm/x")).should eq(["Symfony access_control (@parts.read)#{note}"])
+    guards.call(find.call("/plain/x")).should eq(["Symfony access_control (ROLE_USER, IS_AUTHENTICATED_FULLY)"])
+    guards.call(find.call("/mixed/x")).should eq(["Symfony access_control (ROLE_USER, @parts.read)#{note}"])
     guards.call(find.call("/maybe/info")).should be_empty
     guards.call(find.call("/open/info")).should be_empty
   end
