@@ -481,7 +481,10 @@ class JaxrsAuthTagger < FrameworkTagger
   # `receiver.method(args)` with no fallback in it.
   PLAIN_CALL = /\A[a-z_$][\w$]*(?:\s*\.\s*[a-z_$][\w$]*)*\s*\.\s*[a-z_$][\w$]*\s*\([^?|;]*\)\s*;?\z/
   FALLBACK   = /\b(?:orElse\w*|requireNonNullElse\w*|getOrDefault|firstNonNull)\b/
-  PRESENCE   = /\A(?:[\w$.()]+\s*!=\s*null|null\s*!=\s*[\w$.()]+|[\w$]+\s*\.\s*(?:isSpecified|isPresent)\s*\(\s*\))\z/
+  SPECIFIED  = /\A[\w$]+\s*\.\s*isSpecified\s*\(\s*\)\z/
+  NOT_NULL   = /\A(?:([a-z_$][\w$]*)[\w$.()]*\s*!=\s*null|null\s*!=\s*([a-z_$][\w$]*)[\w$.()]*)\z/
+  # A local named for a credential (`authHeader`, `loginResult`, `apiKey`).
+  CREDENTIAL_SUBJECT = /principal|securitycontext|subject|identity|credential|user|account|session|token|auth|login|key/i
 
   # Every block around `pos` in statement `text` is a `try`, or an `if` /
   # `else` of a presence test, and the innermost condition is one.
@@ -517,9 +520,22 @@ class JaxrsAuthTagger < FrameworkTagger
     innermost
   end
 
+  # A presence test counts only on a credential: a local named for one, or
+  # one read from a credential header (`String h = ctx.getHeaderString("X-Api-Key")`).
+  private def credential_subject?(name : String) : Bool
+    return true if name.matches?(CREDENTIAL_SUBJECT)
+    return false unless read = @current_code.match(/(?<![\w$.])#{Regex.escape(name)}\s*=(?!=)\s*[\w$]+\s*\.\s*getHeaderString\s*\(\s*(?:(HttpHeaders\.AUTHORIZATION)|"([^"]*)")/)
+    read[1]? ? true : read[2].matches?(SpringAuthTagger::CREDENTIAL_NAME)
+  end
+
   private def presence_cond?(cond : String) : Bool
     return false if cond.includes?("||")
-    cond.split("&&").all? { |part| unwrap(part).matches?(PRESENCE) }
+    cond.split("&&").all? do |part|
+      atom = unwrap(part)
+      next true if atom.matches?(SPECIFIED)
+      next false unless found = atom.match(NOT_NULL)
+      credential_subject?(found[1]? || found[2])
+    end
   end
 
   private def unwrap(text : String) : String

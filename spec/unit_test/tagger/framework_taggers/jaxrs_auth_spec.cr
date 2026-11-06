@@ -72,14 +72,14 @@ SECURITY_FILTER_BODY = <<-JAVA
   try {
       String authHeader = requestContext.getHeaderString("Authorization");
       if (authHeader != null) {
-          LoginResult result = loginService.login(authHeader);
-          if (result != null) {
-              securityContext = new UserSecurityContext(result.getUser());
+          LoginResult loginResult = loginService.login(authHeader);
+          if (loginResult != null) {
+              securityContext = new UserSecurityContext(loginResult.getUser());
           }
       } else {
-          LoginResult result = loginService.login(request);
-          if (result != null && result.getUser() != null) {
-              securityContext = new UserSecurityContext(result.getUser());
+          LoginResult loginResult = loginService.login(request);
+          if (loginResult != null && loginResult.getUser() != null) {
+              securityContext = new UserSecurityContext(loginResult.getUser());
           }
       }
   } catch (StorageException e) {
@@ -336,6 +336,10 @@ describe "JaxrsAuthTagger" do
       "context call" => "SecurityContext securityContext = null;\n String auth = requestContext.getHeaderString(\"Authorization\");\n if (auth != null) {\n securityContext = Tokens.check(auth);\n }\n if (securityContext != null) {\n requestContext.setSecurityContext(securityContext);\n } else {\n throw new NotAuthorizedException(\"x\");\n }",
       # orElse fallback
       "orElse" => "Principal principal = null;\n String sid = requestContext.getHeaderString(\"Authorization\");\n if (sid != null) {\n principal = sessions.find(sid).orElse(Guest.INSTANCE);\n }\n if (principal == null) {\n throw new NotAuthorizedException(\"login\");\n }",
+      # round 3: a guest assigned under a presence test of something else
+      "tenant guest"   => "Principal principal = null;\n String auth = requestContext.getHeaderString(\"Authorization\");\n if (auth != null) {\n principal = tokens.verify(auth);\n }\n String tenant = requestContext.getHeaderString(\"X-Tenant\");\n if (tenant != null) {\n principal = tenants.guestFor(tenant);\n }\n if (principal == null) {\n throw new NotAuthorizedException(\"login\");\n }",
+      "path guest"     => "Principal principal = null;\n String path = requestContext.getUriInfo().getPath();\n if (path != null) {\n principal = publicPaths.guestFor(path);\n }\n if (principal == null) {\n throw new NotAuthorizedException(\"login\");\n }",
+      "uri info guest" => "SecurityContext securityContext = null;\n if (requestContext.getUriInfo() != null) {\n securityContext = new AnonymousSecurityContext();\n }\n if (securityContext != null) {\n requestContext.setSecurityContext(securityContext);\n } else {\n throw new NotAuthorizedException(\"login\");\n }",
       # a credential-present early return
       "present return" => "Principal p = null;\n p = auth(requestContext);\n if (p != null) {\n return;\n }\n throw new NotAuthorizedException(\"no\");",
     }.each do |name, body|
