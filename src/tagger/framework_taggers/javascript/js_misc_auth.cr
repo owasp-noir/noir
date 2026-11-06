@@ -70,10 +70,21 @@ class JsMiscAuthTagger < FrameworkTagger
   # app-declared request flag, optionally narrowed by the method, either order.
   FASTIFY_FLAG_BYPASS              = /\A\s*(req|request)\s*\.\s*([A-Za-z_$][\w$]*)\s*(?:&&\s*\1\s*\.\s*method\s*(===|!==|==|!=)\s*['"]([A-Za-z]+)['"]\s*)?\z/
   FASTIFY_FLAG_BYPASS_METHOD_FIRST = /\A\s*(req|request)\s*\.\s*method\s*(===|!==|==|!=)\s*['"]([A-Za-z]+)['"]\s*&&\s*\1\s*\.\s*([A-Za-z_$][\w$]*)\s*\z/
-  FASTIFY_DECORATE_REQUEST         = /\.\s*decorateRequest\s*\(\s*['"]([A-Za-z_$][\w$]*)['"]/
-  # `req.flag = …` anywhere: a flag a hook or handler can set is request input.
-  FASTIFY_REQUEST_ASSIGN = /(?<![\w$.])(?:req|request)\s*\.\s*([A-Za-z_$][\w$]*)\s*(?:=(?![=>])|\|\|=|\?\?=|&&=)/
-  FASTIFY_THROW_FIRST    = /\Athrow\s+(?:new\s+)?\w*(?:Unauthori[sz]ed|Unauthenticated)\w*\s*\(/
+  # `decorateRequest("flag", false)`: a plain value, not a getter, a method
+  # or an arrow, each of which computes the flag per request.
+  FASTIFY_DECORATE_REQUEST    = /\.\s*decorateRequest\s*\(\s*['"]([A-Za-z_$][\w$]*)['"]\s*,\s*/
+  FASTIFY_COMPUTED_DECORATION = /\A(?:\{\s*get(?:ter)?\b|(?:async\s+)?function\b|(?:async\s+)?(?:\([^)]*\)|[A-Za-z_$][\w$]*)\s*=>)/
+  # Anything that can set a flag at request time makes it request input:
+  # `x.flag = …` on any receiver, `setDecorator("flag", …)`, `r["flag"] = …`,
+  # `Object.assign(r, { flag })`; `req[name] = …` could set any flag.
+  FASTIFY_MEMBER_ASSIGN   = /\.\s*([A-Za-z_$][\w$]*)\s*(?:=(?![=>])|\|\|=|\?\?=|&&=)/
+  FASTIFY_SET_DECORATOR   = /\bsetDecorator\s*\(\s*['"]([A-Za-z_$][\w$]*)['"]/
+  FASTIFY_BRACKET_ASSIGN  = /\[\s*['"]([A-Za-z_$][\w$]*)['"]\s*\]\s*(?:=(?![=>])|\|\|=|\?\?=|&&=)/
+  FASTIFY_COMPUTED_ASSIGN = /(?<![\w$.])(?:req|request)\s*\[\s*([A-Za-z_$][\w$.]*)\s*\]\s*(?:=(?![=>])|\|\|=|\?\?=|&&=)/
+  FASTIFY_OBJECT_ASSIGN   = /\bObject\s*\.\s*assign\s*\(/
+  # `key: value` or a shorthand `key` of the object literals assigned.
+  OBJECT_ASSIGN_KEY   = /(?<![\w$.])([A-Za-z_$][\w$]*)\s*:(?!:)|[{,]\s*([A-Za-z_$][\w$]*)\s*(?=[,}])/
+  FASTIFY_THROW_FIRST = /\Athrow\s+(?:new\s+)?\w*(?:Unauthori[sz]ed|Unauthenticated)\w*\s*\(/
   # `verifyAuth({ optional: true })`, `verifyModes(["anonymous", "jwt"])`: an
   # argument that can let a caller through.
   FASTIFY_OPENING_ARG = /\b(?:optional|anonymous|allowAnonymous|allowUnauthenticated|public|guest|skipAuth|bypass)\b/i
@@ -492,7 +503,7 @@ class JsMiscAuthTagger < FrameworkTagger
     end
     return if flag == "method"
     declared, assigned = fastify_request_flags
-    return if !declared.includes?(flag) || assigned.includes?(flag)
+    return if !declared.includes?(flag) || assigned.includes?(flag) || assigned.includes?("*")
     return :yes unless op && verb
     same = @fastify_method == verb.upcase
     applies = op.starts_with?('!') ? !same : same
@@ -510,9 +521,29 @@ class JsMiscAuthTagger < FrameworkTagger
       %w[.js .mjs .cjs .ts .mts .cts].each do |ext|
         collect_files_by_extension(ext).each do |file|
           text = read_file(file) || next
-          next unless text.includes?("req") || text.includes?("decorateRequest")
-          text.scan(FASTIFY_DECORATE_REQUEST) { |m| declared << m[1] } if text.includes?("decorateRequest")
-          text.scan(FASTIFY_REQUEST_ASSIGN) { |m| assigned << m[1] }
+          if text.includes?("decorateRequest")
+            text.scan(FASTIFY_DECORATE_REQUEST) do |m|
+              value = text.byte_slice(m.byte_end(0), {text.bytesize - m.byte_end(0), 64}.min)
+              declared << m[1] unless value.matches?(FASTIFY_COMPUTED_DECORATION)
+            end
+          end
+          text.scan(FASTIFY_MEMBER_ASSIGN) { |m| assigned << m[1] }
+          text.scan(FASTIFY_SET_DECORATOR) { |m| assigned << m[1] } if text.includes?("setDecorator")
+          if text.includes?('[')
+            text.scan(FASTIFY_BRACKET_ASSIGN) { |m| assigned << m[1] }
+            # `const name = "skipC"; request[name] = …` sets that flag; a key
+            # this file does not spell out could be any flag.
+            text.scan(FASTIFY_COMPUTED_ASSIGN) do |m|
+              key = text.match(/\b(?:const|let|var)\s+#{Regex.escape(m[1])}\s*=\s*['"]([A-Za-z_$][\w$]*)['"]/).try(&.[1])
+              assigned << (key || "*")
+            end
+          end
+          if text.includes?("assign")
+            text.scan(FASTIFY_OBJECT_ASSIGN) do |m|
+              args = Noir::JSLiteralScanner.extract_paren_content_at_byte(text, m.byte_end(0)).try(&.content) || next
+              args.scan(OBJECT_ASSIGN_KEY) { |k| assigned << (k[1]? || k[2]) }
+            end
+          end
         end
       end
       {declared, assigned}

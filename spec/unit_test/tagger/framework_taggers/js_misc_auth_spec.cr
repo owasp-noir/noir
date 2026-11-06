@@ -756,6 +756,119 @@ describe "JsMiscAuthTagger" do
       tags["/plain-flag"].should eq(["Protected by Fastify onRequest plainFlag#{note}"])
     end
 
+    it "rejects flags set at request time or computed by their decoration" do
+      tags = tag_routes.call({
+        "src/hooks.ts" => <<-JS,
+          import { UnauthorizedError } from "./errors";
+
+          export const viaSetDecorator = (req, _res, done) => {
+            if (req.skipA) return done();
+            if (!req.auth) throw new UnauthorizedError("Token missing");
+            done();
+          };
+          export const viaObjectAssign = (req, _res, done) => {
+            if (req.skipB) return done();
+            if (!req.auth) throw new UnauthorizedError("Token missing");
+            done();
+          };
+          export const viaBracket = (req, _res, done) => {
+            if (req.skipC) return done();
+            if (!req.auth) throw new UnauthorizedError("Token missing");
+            done();
+          };
+          export const viaOtherParam = (req, _res, done) => {
+            if (req.skipD) return done();
+            if (!req.auth) throw new UnauthorizedError("Token missing");
+            done();
+          };
+          export const viaGetter = (req, _res, done) => {
+            if (req.isTrusted) return done();
+            if (!req.auth) throw new UnauthorizedError("Token missing");
+            done();
+          };
+          export const viaMethodFn = (req, _res, done) => {
+            if (req.isInternal) return done();
+            if (!req.auth) throw new UnauthorizedError("Token missing");
+            done();
+          };
+          export const upperMethod = (req, _res, done) => {
+            if (req.forwarded && req.method.toUpperCase() !== "GET") return done();
+            if (!req.auth) throw new UnauthorizedError("Token missing");
+            done();
+          };
+          export const includesMethod = (req, _res, done) => {
+            if (req.forwarded && ["POST", "PUT"].includes(req.method)) return done();
+            if (!req.auth) throw new UnauthorizedError("Token missing");
+            done();
+          };
+          export const orMethod = (req, _res, done) => {
+            if (req.forwarded || req.method === "GET") return done();
+            if (!req.auth) throw new UnauthorizedError("Token missing");
+            done();
+          };
+          export const settingFlag = (req, _res, done) => {
+            if (req.forwarded && req.method !== "GET") return done();
+            if (!req.auth) throw new UnauthorizedError("Token missing");
+            done();
+          };
+          export const strictStrategy = (req, _res, done) => {
+            if (!req.user) throw new UnauthorizedError("no user");
+            done();
+          };
+          export const strict2 = (req, _res, done) => {
+            if (!req.auth) throw new UnauthorizedError("no auth");
+            done();
+          };
+          export const publicStrategy = (req, _res, done) => done();
+          JS
+        "src/server.ts" => <<-JS,
+          import fastify from "fastify";
+          import { viaSetDecorator, viaObjectAssign, viaBracket, viaOtherParam, viaGetter, viaMethodFn, upperMethod, includesMethod, orMethod, settingFlag, strictStrategy, strict2, publicStrategy } from "./hooks";
+
+          const server = fastify();
+          server.decorateRequest("skipA", false);
+          server.decorateRequest("skipB", false);
+          server.decorateRequest("skipC", false);
+          server.decorateRequest("skipD", false);
+          server.decorateRequest("isTrusted", { getter() { return this.headers["x-trusted"] === "1"; } });
+          server.decorateRequest("isInternal", function () { return this.ip === "127.0.0.1"; });
+          server.decorateRequest("forwarded", Boolean(process.env.FORWARD));
+          server.addHook("onRequest", async (request) => {
+            request.setDecorator("skipA", Boolean(request.routeOptions.config.open));
+            Object.assign(request, { skipB: Boolean(request.routeOptions.config.open) });
+            const flagName = "skipC";
+            request[flagName] = Boolean(request.routeOptions.config.open);
+          });
+          server.addHook("onRequest", async (r) => {
+            r.skipD = Boolean(r.routeOptions.config.open);
+          });
+          const AND = { relation: "and" };
+          const OR = { relation: "or" };
+          server.route({ method: "GET", url: "/r-setdecorator", config: { open: true }, onRequest: viaSetDecorator, handler: async () => [] });
+          server.route({ method: "GET", url: "/r-assign", config: { open: true }, onRequest: viaObjectAssign, handler: async () => [] });
+          server.route({ method: "GET", url: "/r-bracket", config: { open: true }, onRequest: viaBracket, handler: async () => [] });
+          server.route({ method: "GET", url: "/r-otherparam", config: { open: true }, onRequest: viaOtherParam, handler: async () => [] });
+          server.route({ method: "GET", url: "/r-getter", onRequest: viaGetter, handler: async () => [] });
+          server.route({ method: "GET", url: "/r-methodfn", onRequest: viaMethodFn, handler: async () => [] });
+          server.route({ method: "POST", url: "/r-upper", onRequest: upperMethod, handler: async () => [] });
+          server.route({ method: "POST", url: "/r-includes", onRequest: includesMethod, handler: async () => [] });
+          server.route({ method: "GET", url: "/r-or", onRequest: orMethod, handler: async () => [] });
+          server.route({ method: "GET", url: "/r-setting-get", onRequest: settingFlag, handler: async () => [] });
+          server.route({ method: "POST", url: "/r-setting-post", onRequest: settingFlag, handler: async () => [] });
+          server.route({ method: "GET", url: "/r-and-var", onRequest: server.auth([strictStrategy, strict2], AND), handler: async () => [] });
+          server.route({ method: "GET", url: "/r-and-var-pub", onRequest: server.auth([strictStrategy, publicStrategy], AND), handler: async () => [] });
+          server.route({ method: "GET", url: "/r-or-var", onRequest: server.auth([strictStrategy, publicStrategy], OR), handler: async () => [] });
+          server.listen({ port: 3000 });
+          JS
+      }, "src/server.ts")
+      note = " (a request-flag early return can bypass it)"
+      %w[/r-setdecorator /r-assign /r-bracket /r-otherparam /r-getter /r-methodfn
+        /r-upper /r-includes /r-or /r-and-var-pub /r-or-var].each { |url| tags[url].should be_empty }
+      tags["/r-setting-get"].should eq(["Protected by Fastify onRequest settingFlag"])
+      tags["/r-setting-post"].should eq(["Protected by Fastify onRequest settingFlag#{note}"])
+      tags["/r-and-var"].should_not be_empty
+    end
+
     it "anchors the absence test to its own if, not an earlier one" do
       tags = tag_routes.call({
         "src/hooks.ts" => <<-JS,
