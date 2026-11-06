@@ -1884,7 +1884,7 @@ describe "RubyAuthTagger (routed controller chain)" do
 
     # self-merge terminates
     loop_ability = nil.as(Noir::CanCanAbility?)
-    looping = ->(name : String) { loop_ability }
+    looping = ->(_name : String) { loop_ability }
     loop_ability = Noir::CanCanAbility.new(<<-RB.lines, looping)
       class Ability
         include CanCan::Ability
@@ -2491,7 +2491,7 @@ describe "RubyAuthTagger (routed controller chain)" do
       topic_create.tags.map(&.description).any? { |d| d.includes?("CanCanCan load_and_authorize_resource") }.should be_true
       # Goal has multiline and leading :: on subject: index is open, create is guarded.
       goal_index.tags.should be_empty
-      goal_create.tags.map(&.description).any? { |d| d.includes?("CanCanCan authorize_resource") }.should be_true
+      goal_create.tags.map(&.description).any?(&.includes?("CanCanCan authorize_resource")).should be_true
     ensure
       FileUtils.rm_rf(tmpdir)
       CodeLocator.instance.clear_all

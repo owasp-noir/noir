@@ -1399,7 +1399,7 @@ class RubyAuthTagger < FrameworkTagger
     app = controller_path[0, idx + "/app/".size]
     key = {name, app}
     return @cancan_abilities[key] if @cancan_abilities.has_key?(key)
-    return nil if @resolving_abilities.includes?(key)
+    return if @resolving_abilities.includes?(key)
 
     @resolving_abilities.add(key)
     begin
