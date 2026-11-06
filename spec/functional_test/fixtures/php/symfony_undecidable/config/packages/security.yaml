@@ -1,0 +1,14 @@
+security:
+    firewalls:
+        api:
+            pattern: ^/api
+            host: api\.example\.com
+        main:
+            lazy: true
+
+    access_control:
+        - { path: ^/a1, allow_if: 'is_authenticated() or request.query.get("k") == "x"' }
+        - { path: ^/host, host: admin\.example\.com, roles: ROLE_ADMIN }
+        - { path: '^/page/[a-z]', allow_if: 'is_authenticated() or true' }
+        - { path: ^/m, methods: [POST], allow_if: 'is_authenticated() or true' }
+        - { path: ^/, roles: ROLE_USER }
