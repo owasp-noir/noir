@@ -1054,6 +1054,7 @@ module Noir
                                injected_annotations : Set(String)) : String?
       arg_name = ""
       type_name = ""
+      type_text = ""
       Noir::TreeSitter.each_named_child(param) do |child|
         case Noir::TreeSitter.node_type(child)
         when "simple_identifier"
@@ -1062,7 +1063,10 @@ module Noir
           # Get the leaf type_identifier name for primitive lookup /
           # DTO key. `nullable_type` wraps a `user_type`; `user_type`
           # wraps a `type_identifier`.
-          type_name = leaf_type_name(child, source) if type_name.empty?
+          if type_name.empty?
+            type_name = leaf_type_name(child, source)
+            type_text = Noir::TreeSitter.node_text(child, source)
+          end
         end
       end
       return parameter_format if arg_name.empty?
@@ -1150,6 +1154,11 @@ module Noir
         effective_format = verb == "POST" ? "form" : "query"
       end
 
+      # A multipart file is a body part even when `@RequestParam` names it;
+      # the next parameter still inherits the format it would have.
+      carry_format = effective_format
+      effective_format = "form" if multipart_type?(type_text)
+
       default_value : String? = nil
       parameter_name = arg_name
 
@@ -1223,7 +1232,15 @@ module Noir
       # method-wide default, though — propagating it would drag a sibling
       # command object into json, so a body param leaves the carry
       # untouched (returns the incoming carry-over).
-      ann_kind == :body ? parameter_format : effective_format
+      ann_kind == :body ? parameter_format : carry_format
+    end
+
+    # Types Spring fills from a multipart part: `MultipartFile`, servlet
+    # `Part`, a collection or array of them. Mirrors the Java extractor.
+    MULTIPART_TYPE = /\A(?:(?:List|MutableList|Set|Collection|Array)\s*<\s*)?(?:[\w.]+\.)?(?:MultipartFile|Part)\s*>?\s*\??\z/
+
+    private def multipart_type?(type_text : String) : Bool
+      type_text.matches?(MULTIPART_TYPE)
     end
 
     # True when `type_name` is a scalar Spring binds from a single

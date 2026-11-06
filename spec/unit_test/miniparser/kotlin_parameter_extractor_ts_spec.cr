@@ -50,6 +50,38 @@ describe Noir::TreeSitterKotlinParameterExtractor do
       ])
     end
 
+    it "binds a multipart file as form even when @RequestParam names it" do
+      source = <<-KT
+        @RestController
+        class C {
+            @PostMapping(value = ["/x"], consumes = [MediaType.MULTIPART_FORM_DATA_VALUE])
+            fun upload(
+                @RequestParam("file") file: MultipartFile,
+                @RequestParam("selected") selected: Boolean = true,
+                @RequestParam files: List<MultipartFile>?,
+                @RequestParam("part") part: jakarta.servlet.http.Part,
+                note: String,
+            ) {}
+
+            @GetMapping("/y")
+            fun list(@RequestParam("partition") partition: PartitionKey, @RequestParam("q") q: String) {}
+        }
+        KT
+
+      params = extract(source, "C", "upload", "POST")
+      params.map { |p| {p.name, p.param_type} }.should eq([
+        {"file", "form"},
+        {"selected", "query"},
+        {"files", "form"},
+        {"part", "form"},
+        {"note", "query"},
+      ])
+      extract(source, "C", "list", "GET").map { |p| {p.name, p.param_type} }.should eq([
+        {"partition", "query"},
+        {"q", "query"},
+      ])
+    end
+
     it "resolves Kotlin constants in explicit request parameter names" do
       source = <<-KT
         @RestController
