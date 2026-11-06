@@ -1331,6 +1331,7 @@ module Noir
     Noir::ExtractionResultCache.register_clearer do
       @@handler_facts_mutex.synchronize { @@handler_facts.clear }
       @@stripped_sources_mutex.synchronize { @@stripped_sources.clear }
+      @@exported_constants_mutex.synchronize { @@exported_constants.clear }
     end
 
     # Comment-stripped definition files: many handlers live in, and hand
@@ -1793,9 +1794,11 @@ module Noir
     private def self.object_string_constants(content : String, constants : Hash(String, String)) : Nil
       content.scan(OBJECT_CONST_RE) do |m|
         open = m.byte_end(0) - 1
-        close = JSLiteralScanner.find_matching_brace_at_byte(content, open) || next
-        next if close - open > MAX_OBJECT_CONST_BYTES
-        body = content.byte_slice(open + 1, close - open - 1)
+        # Matched within a bounded window: an unclosed `{` would otherwise
+        # walk to the end of the file once per declaration.
+        window = content.byte_slice(open, {MAX_OBJECT_CONST_BYTES + 2, content.bytesize - open}.min)
+        close = JSLiteralScanner.find_matching_brace_at_byte(window, 0) || next
+        body = window.byte_slice(1, close - 1)
         TopLevelSplit.split(body, ',', TopLevelSplit::Rules::JS_POSITIONAL_ARGS).each do |entry|
           next if entry.blank?
           e = entry.match(OBJECT_CONST_ENTRY_RE) || next
@@ -1817,7 +1820,7 @@ module Noir
         content.scan(NAMED_RELATIVE_IMPORT_RE) do |m|
           names = m[1]? || m[3]
           target = Noir::ImportGraph.resolve_relative_import(file_path, m[2]? || m[4]) || next
-          exported = string_constants(stripped_source(target))
+          exported = exported_string_constants(target)
           names.split(',').each do |item|
             parts = item.strip.split(/\s*:\s*|\s+as\s+/)
             if value = exported[parts.first]?
@@ -1833,6 +1836,19 @@ module Noir
         end
       end
       constants.merge!(string_constants(content))
+    end
+
+    # `string_constants` of an imported module, once per module: a constants
+    # file is imported by hundreds of route files.
+    @@exported_constants = Hash(String, Hash(String, String)).new
+    @@exported_constants_mutex = Mutex.new
+
+    private def self.exported_string_constants(path : String) : Hash(String, String)
+      if hit = @@exported_constants_mutex.synchronize { @@exported_constants[path]? }
+        return hit
+      end
+      constants = string_constants(stripped_source(path))
+      @@exported_constants_mutex.synchronize { ExtractionResultCache.store_capped(@@exported_constants, path, constants, 512) }
     end
 
     # Substitutes every `${NAME}` that `constants` knows; the rest stay.
