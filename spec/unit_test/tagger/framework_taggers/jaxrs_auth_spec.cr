@@ -4,8 +4,8 @@ require "../../../../src/tagger/tagger"
 
 # Write `files` (relative path => source) under a temp root and run
 # JaxrsAuthTagger over `routes` ("METHOD /url" => {file, text on the route
-# line}). Returns each route's auth descriptions.
-def run_jaxrs_auth(files : Hash(String, String), routes : Hash(String, {String, String})) : Hash(String, Array(String))
+# line, or the line number}). Returns each route's auth descriptions.
+def run_jaxrs_auth(files : Hash(String, String), routes : Hash(String, {String, String | Int32})) : Hash(String, Array(String))
   CodeLocator.instance.clear_all
   root = File.tempname("jaxrs_auth")
   files.each do |relative, source|
@@ -20,7 +20,7 @@ def run_jaxrs_auth(files : Hash(String, String), routes : Hash(String, {String, 
   endpoints = routes.map do |route, location|
     method, url = route.split(' ', 2)
     file, text = location
-    line = (lines[file] ||= files[file].lines).index!(&.includes?(text)) + 1
+    line = text.is_a?(Int32) ? text : (lines[file] ||= files[file].lines).index!(&.includes?(text)) + 1
     endpoint = Endpoint.new(url, method, [] of Param, Details.new(PathInfo.new(File.join(root, file), line)))
     endpoint.details.technology = "java_jaxrs"
     endpoint
@@ -394,16 +394,22 @@ describe "JaxrsAuthTagger" do
   end
 
   it "registers in one pass over many blocks" do
-    config = "public class App extends ResourceConfig {\n public App() {\n register(AuthFilter.class);\n" + (0...8000).map { |i| "  { register(R#{i}.class); }\n" }.join + " }\n}\n"
-    files = {
-      "#{JAXRS_DIR}AuthFilter.java"  => jaxrs_filter("AuthFilter", "if (requestContext.getSecurityContext().getUserPrincipal() == null) {\n throw new NotAuthorizedException(\"login\");\n }", ""),
-      "#{JAXRS_DIR}App.java"         => config,
-      "#{JAXRS_DIR}ApiResource.java" => jaxrs_resource("    @GET\n    public Response x() { return null; }"),
-    }
-    started = Time.instant
-    result = run_jaxrs_auth(files, {"GET /api" => {"#{JAXRS_DIR}ApiResource.java", "@GET"}})
-    (Time.instant - started).should be < 5.seconds
-    result["GET /api"].size.should eq(1)
+    timed = ->(blocks : Int32) do
+      config = "public class App extends ResourceConfig {\n public App() {\n register(AuthFilter.class);\n" + (0...blocks).map { |i| "  { register(R#{i}.class); }\n" }.join + " }\n}\n"
+      files = {
+        "#{JAXRS_DIR}AuthFilter.java"  => jaxrs_filter("AuthFilter", "if (requestContext.getSecurityContext().getUserPrincipal() == null) {\n throw new NotAuthorizedException(\"login\");\n }", ""),
+        "#{JAXRS_DIR}App.java"         => config,
+        "#{JAXRS_DIR}ApiResource.java" => jaxrs_resource("    @GET\n    public Response x() { return null; }"),
+      }
+      started = Time.instant
+      result = run_jaxrs_auth(files, {"GET /api" => {"#{JAXRS_DIR}ApiResource.java", "@GET"}})
+      elapsed = Time.instant - started
+      result["GET /api"].size.should eq(1)
+      elapsed
+    end
+    small = timed.call(2000)
+    large = timed.call(8000)
+    (large / {small, 1.millisecond}.max).should be < 10.0
   end
 
   it "binds a filter with an unknown annotation, and stops at one-line declarations" do
@@ -427,19 +433,33 @@ describe "JaxrsAuthTagger" do
     result["GET /api/c"].should be_empty
   end
 
-  it "stays linear on many early returns and many endpoints" do
-    body = (["if (\"OPTIONS\".equals(requestContext.getMethod())) { return; }"] * 4000).join("\n") +
-           "\nif (requestContext.getSecurityContext().getUserPrincipal() == null) { throw new NotAuthorizedException(\"x\"); }"
-    methods = (0...4000).map { |i| "    @GET\n    @Path(\"/e#{i}\")\n    public String e#{i}() { return \"\"; }\n" }.join
-    files = {
-      "#{JAXRS_DIR}AuthFilter.java"  => jaxrs_filter("AuthFilter", body),
-      "#{JAXRS_DIR}ApiResource.java" => jaxrs_resource(methods),
-    }
-    routes = (0...4000).to_h { |i| {"GET /api/e#{i}", {"#{JAXRS_DIR}ApiResource.java", "@Path(\"/e#{i}\")"}} }
-    started = Time.instant
-    result = run_jaxrs_auth(files, routes)
-    (Time.instant - started).should be < 5.seconds
-    result["GET /api/e3999"].size.should eq(1)
+  it "stays linear in early returns and in endpoints" do
+    # Ratio, not wall clock: 4x the input is ~4x the time when linear, ~16x
+    # when quadratic, however slow the runner is. Route lines are given by
+    # number so the harness's own lookup stays out of the measurement.
+    timed = ->(returns : Int32, routes : Int32) do
+      body = (["if (\"OPTIONS\".equals(requestContext.getMethod())) { return; }"] * returns).join("\n") +
+             "\nif (requestContext.getSecurityContext().getUserPrincipal() == null) { throw new NotAuthorizedException(\"x\"); }"
+      methods = (0...routes).map { |i| "    @GET\n    @Path(\"/e#{i}\")\n    public String e#{i}() { return \"\"; }\n" }.join
+      resource = jaxrs_resource(methods)
+      files = {
+        "#{JAXRS_DIR}AuthFilter.java"  => jaxrs_filter("AuthFilter", body),
+        "#{JAXRS_DIR}ApiResource.java" => resource,
+      }
+      table = {} of String => {String, String | Int32}
+      resource.lines.each_with_index do |line, index|
+        line.match(/@Path\("\/(e\d+)"\)/).try { |found| table["GET /api/#{found[1]}"] = {"#{JAXRS_DIR}ApiResource.java", index + 1} }
+      end
+      started = Time.instant
+      result = run_jaxrs_auth(files, table)
+      elapsed = Time.instant - started
+      result["GET /api/e#{routes - 1}"].size.should eq(1)
+      elapsed
+    end
+    ratio = ->(small : Time::Span, large : Time::Span) { large / {small, 1.millisecond}.max }
+    ratio.call(timed.call(1000, 10), timed.call(4000, 10)).should be < 10.0
+    ratio.call(timed.call(10, 1000), timed.call(10, 4000)).should be < 10.0
+    ratio.call(timed.call(1000, 1000), timed.call(4000, 4000)).should be < 10.0
   end
 
   it "limits a @NameBinding filter to the resources carrying its annotation" do
