@@ -384,6 +384,7 @@ class SpringAuthTagger < FrameworkTagger
   # A condition that holds only for a caller presenting a credential.
   PRESENCE_TEST      = /!=\s*null|\bnull\s*!=|\b(?:hasText|hasLength|isNotBlank|isNotEmpty|isPresent|nonNull)\s*\(/
   HELPER_DECLARATION = /(?:\bfun|\b[\w$<>\[\]]+)\s+([a-z_$][\w$]*)\s*\(([^()]*)\)[^;{=]*\{/
+  OPTIONS_PASS       = /\A(?:"OPTIONS"\s*\.\s*equals\s*\(\s*[\w$]+\s*\.\s*getMethod\s*\(\s*\)\s*\)|[\w$]+\s*\.\s*getMethod\s*\(\s*\)\s*\.\s*equals\s*\(\s*"OPTIONS"\s*\)|HttpMethod\s*\.\s*OPTIONS\s*\.\s*matches\s*\(\s*[\w$]+\s*\.\s*getMethod\s*\(\s*\)\s*\))\z/
   LEADING_PASS       = /\A#{PASS_RETURN.source}/
   HELPER_CALL        = /\A(?:return\s+)?([a-z_$][\w$]*)\s*\(/
 
@@ -408,7 +409,7 @@ class SpringAuthTagger < FrameworkTagger
     stmts = top_statements(masked)
     direct = body.index(INTERCEPTOR_REJECTION_RE)
     helper = direct ? nil : helper_refusal(content, body, masked, stmts)
-    refusal = direct || helper
+    refusal = direct || helper.try(&.[0])
     return {false, open_paths} unless refusal
 
     covered = [] of Range(Int32, Int32)
@@ -418,7 +419,7 @@ class SpringAuthTagger < FrameworkTagger
       branches = if_branches(body[start...stop])
       next unless branches.size == 1 && (cond = branches[0][0]) && branches[0][1].matches?(PASS_RETURN)
       cond = strip_parens(cond.strip)
-      if (cond.includes?("\"OPTIONS\"") && !cond.matches?(/[|&!]/)) || cond.matches?(/\A!\s*\(\s*\w+\s+instanceof\s+HandlerMethod\s*\)\z/)
+      if cond.matches?(OPTIONS_PASS) || cond.matches?(/\A!\s*\(\s*\w+\s+instanceof\s+HandlerMethod\s*\)\z/)
         covered << (start...stop)
       elsif paths = allow_list(cond, source, file)
         open_paths.concat(paths)
@@ -427,11 +428,15 @@ class SpringAuthTagger < FrameworkTagger
     end
     return {true, open_paths} if direct
 
-    # Every other pass-through is uncovered, except a final top-level return.
+    # Any other `return` (but `return false` and a refusing helper call) is a
+    # pass-through: it must sit in a covered branch, or be the final one.
+    helpers = helper.try(&.[1]) || Set(String).new
     last_pass = stmts.last?.try { |start, stop| masked[start...stop].matches?(LEADING_PASS) ? start : nil }
     readable = true
-    masked.scan(PASS_RETURN) do |found|
+    masked.scan(/\breturn\b/) do |found|
       at = found.begin(0)
+      value = masked[found.end(0)..].match(/\A\s*([\w$]*)\s*(\()?/)
+      next if value && (value[1] == "false" || (value[2]? && helpers.includes?(value[1])))
       readable = false unless at == last_pass || covered.any?(&.includes?(at))
     end
     {readable, open_paths}
@@ -499,7 +504,7 @@ class SpringAuthTagger < FrameworkTagger
   # Char offset of the first top-level `if` of `preHandle` whose then-branch
   # calls a status helper of the class with 401/403: a method that sets the
   # response status from one of its parameters, matched by name and arity.
-  private def helper_refusal(content : String, body : String, masked : String, stmts : Array({Int32, Int32})) : Int32?
+  private def helper_refusal(content : String, body : String, masked : String, stmts : Array({Int32, Int32})) : {Int32, Set(String)}?
     helpers = Hash(String, Array({Int32, Int32})).new
     content.scan(HELPER_DECLARATION) do |decl|
       next if NON_METHOD_WORDS.includes?(decl[1])
@@ -516,15 +521,23 @@ class SpringAuthTagger < FrameworkTagger
       next unless masked[start...stop].starts_with?("if")
       branches = if_branches(body[start...stop])
       next unless branches.size == 1 && (cond = branches[0][0])
-      next if Noir::TopLevelSplit.split(strip_parens(cond.strip), "&&", Noir::TopLevelSplit::Rules.new).any?(&.matches?(PRESENCE_TEST))
+      cond = strip_parens(cond.strip)
+      # One plain test: no `&&` / `||`, no negated group, no bare flag.
+      next if cond.includes?("&&") || cond.includes?("||") || cond.matches?(/\A!\s*\(|\A!?\s*[a-z_$][\w$]*\z/) || cond.matches?(PRESENCE_TEST)
       then_body = unwrap_block(branches[0][1])
       then_masked = mask_literals(then_body)
-      each_statement(then_masked) do |from, to|
+      inner = [] of {Int32, Int32}
+      each_statement(then_masked) { |from, to| inner << {from, to} }
+      inner.each_with_index do |(from, to), i|
         next unless call = then_masked[from...to].match(HELPER_CALL)
         next unless decls = helpers[call[1]]?
         next unless args = paren_inner(then_body[from...to], call.byte_end(0) - 1)
         list = Noir::TopLevelSplit.split(args[0], ',', Noir::TopLevelSplit::Rules.new)
-        return start if decls.any? { |count, index| count == list.size && list[index].strip.matches?(REFUSAL_STATUS_ARG) }
+        next unless decls.any? { |count, index| count == list.size && list[index].strip.matches?(REFUSAL_STATUS_ARG) }
+        # The refusal ends the request: `return helper(..)`, or `helper(..); return false;`.
+        returned = then_masked[from...to].starts_with?("return") ||
+                   inner[i + 1]?.try { |next_from, next_to| then_masked[next_from...next_to].strip.matches?(/\Areturn\s+false\s*;?\z/) }
+        return {start, helpers.keys.to_set} if returned
       end
     end
     nil

@@ -229,4 +229,37 @@ describe "SpringAuthTagger (HandlerInterceptor refusal helpers and allow-lists)"
     (Time.instant - started).should be < 5.seconds
     result["GET /api/items"].should be_empty
   end
+
+  it "reads a helper refusal only under one plain condition and when it ends the request" do
+    {
+      "neg or presence"   => "String token = request.getHeader(\"Authorization\");\n if (!(token == null || jwt.verify(token))) { return responseTransform(response, 401, \"bad\"); }\n return true;",
+      "neg absence and"   => "String token = request.getHeader(\"Authorization\");\n if (!(token == null) && !jwt.verify(token)) { return responseTransform(response, 401, \"bad\"); }\n return true;",
+      "not isEmpty and"   => "String token = request.getHeader(\"Authorization\");\n if (!StringUtils.isEmpty(token) && !jwt.verify(token)) { return responseTransform(response, 401, \"bad\"); }\n return true;",
+      "flag"              => "String token = request.getHeader(\"Authorization\");\n boolean bad = token != null && !jwt.verify(token);\n if (bad) { return responseTransform(response, 401, \"bad\"); }\n return true;",
+      "path and"          => "String uri = request.getRequestURI();\n if (!uri.startsWith(\"/api/open\") && !authService.check()) { return responseTransform(response, 401, \"login\"); }\n return true;",
+      "try return"        => "try {\n if (request.getHeader(\"t\") == null) return true;\n } catch (Exception e) { }\n if (!authService.check()) { return responseTransform(response, 401, \"login\"); }\n return true;",
+      "stream startsWith" => "if (OPEN.stream().anyMatch(p -> request.getRequestURI().startsWith(p))) { return true; }\n if (!authService.check()) { return responseTransform(response, 401, \"login\"); }\n return true;",
+      "loop equals"       => "for (String p : OPEN) { if (p.equalsIgnoreCase(request.getRequestURI())) return true; }\n if (!authService.check()) { return responseTransform(response, 401, \"login\"); }\n return true;",
+      "discarded helper"  => "if (!authService.check()) { responseTransform(response, 401, \"login\"); }\n return true;",
+      "options == false"  => "if (\"OPTIONS\".equals(request.getMethod()) == false) { return true; }\n if (!authService.check()) { return responseTransform(response, 401, \"login\"); }\n return true;",
+      "options header"    => "if (\"OPTIONS\".equals(request.getHeader(\"X-Mode\"))) { return true; }\n if (!authService.check()) { return responseTransform(response, 401, \"login\"); }\n return true;",
+      "Boolean.TRUE"      => "if (((HandlerMethod) handler).hasMethodAnnotation(Anonymous.class)) { return Boolean.TRUE; }\n if (!authService.check()) { return responseTransform(response, 401, \"login\"); }\n return true;",
+      "or exempt"         => "if (!(isPublic(request) || authService.check())) { return responseTransform(response, 401, \"login\"); }\n return true;",
+    }.each do |name, pre_handle|
+      result = interceptor_guards(pre_handle, RESPONSE_HELPER)
+      fail "#{name} guarded: #{result["GET /api/items"]}" unless result["GET /api/items"].empty?
+    end
+
+    # The playedu shape: several refusals, helper then `return false`, a final super call.
+    extra = {"#{INTERCEPTOR_DIR}common/OpenPaths.java" => OPEN_PATHS}
+    result = interceptor_guards(<<-JAVA, RESPONSE_HELPER, extra)
+            if (OpenPaths.WHITELIST.contains(request.getRequestURI())) { return HandlerInterceptor.super.preHandle(request, response, handler); }
+            if (!authService.check()) { responseTransform(response, 401, "login"); return false; }
+            User u = users.find(authService.userId());
+            if (u == null) { return responseTransform(response, 401, "gone"); }
+            return HandlerInterceptor.super.preHandle(request, response, handler);
+      JAVA
+    result["GET /api/items"].should eq([GUARD])
+    result["GET /api/login"].should be_empty
+  end
 end
