@@ -805,6 +805,20 @@ describe "SpringAuthTagger refusing argument resolver" do
     guarded.call("return null;", "@NeedLogin", both).should eq(0)
   end
 
+  it "does not guard a resolver that hands an absent token a guest user or reads String.valueOf" do
+    [
+      "#{header} if (token == null) { return guestMapper.find(); } return lookup(token);",
+      "#{header} if (token == null) { token = GUEST; } return lookup(token);",
+      "#{header} User u; if (token == null) { u = guestMapper.find(); } else { u = lookup(token); } return u;",
+      "#{header} if (token == null) { Guests.anonymous(); } return lookup(token);",
+      "#{header} if (token == null) { Fail.log(\"guest\"); } return lookup(token);",
+      "String token = String.valueOf(request.getHeader(\"token\")); if (token == null) { throw new IllegalStateException(); } return lookup(token);",
+      "String token = String.valueOf(request.getHeader(\"token\")); if (token.isEmpty()) { throw new IllegalStateException(); } return lookup(token);",
+    ].each do |body|
+      guarded.call(body, "@NeedLogin", {"#{MARKER_DIR}Guests.java" => "public class Guests { public static void anonymous() { } }\n"}).should eq(0)
+    end
+  end
+
   it "reads a resolver body in linear time" do
     tail = " if (token == null) { throw new IllegalStateException(); } return lookup(token);"
     time = ->(body : String) do
