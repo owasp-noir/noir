@@ -67,7 +67,7 @@ describe "js_cli false-positive guards", tags: "functional" do
     if endpoint
       endpoint.params.count { |p| p.name == "type-test-only" }.should eq(0)
     end
-    tester.endpoints.count { |ep| ep.url.includes?("bench-decoy") }.should eq(0)
+    tester.endpoints.count(&.url.includes?("bench-decoy")).should eq(0)
   end
 
   it "does not harvest vendored widgets, static assets, minified bundles, or non-parseArgs options" do
