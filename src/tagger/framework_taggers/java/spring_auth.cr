@@ -373,8 +373,7 @@ class SpringAuthTagger < FrameworkTagger
 
   # A status handed to a response helper: `responseTransform(response, 401, "..")`.
   REFUSAL_STATUS_ARG = /\A(?:40[13]|(?:HttpServletResponse\.)?SC_(?:UNAUTHORIZED|FORBIDDEN)|(?:HttpStatus\.)?(?:UNAUTHORIZED|FORBIDDEN)(?:\.value\(\))?)\z/
-  # `if (cond) { return true; }`, `if (cond) return super.preHandle(..);`: a pass-through.
-  EARLY_PASS  = /\bif\s*\(/
+  # `return true`, `return super.preHandle(..)`: a pass-through.
   PASS_RETURN = /\breturn\s+(?:true\b|(?:HandlerInterceptor\s*\.\s*)?super\s*\.\s*preHandle\b)/
   # `[Owner.]LIST.contains(request.getRequestURI())` / `Helper.isOpen(request.getRequestURI())`.
   URI_LIST_TEST   = /\A(?:([A-Z][\w$]*)\s*\.\s*)?([A-Za-z_$][\w$]*)\s*\.\s*contains\s*\(\s*[a-z_$][\w$]*\s*\.\s*getRequestURI\s*\(\s*\)\s*\)\z/
@@ -382,11 +381,19 @@ class SpringAuthTagger < FrameworkTagger
   # What a literal list initializer may hold besides its string literals.
   LIST_INIT_WORDS = Set{"new", "ArrayList", "HashSet", "LinkedHashSet", "LinkedList", "List", "Set", "String", "Arrays", "asList", "of", "add", "Collections", "unmodifiableList", "unmodifiableSet", "ImmutableList", "ImmutableSet", "listOf", "setOf", "mutableListOf", "hashSetOf"}
 
-  # Whether `preHandle` refuses (a 401/403 status or auth exception, in its
-  # body or handed to a helper of the class that sets it), and the exact
-  # request URIs an allow-list it checks first lets through. A helper-only
-  # refusal is read in that shape alone: any other pass-through before it
-  # leaves the interceptor unread.
+  # A condition that holds only for a caller presenting a credential.
+  PRESENCE_TEST      = /!=\s*null|\bnull\s*!=|\b(?:hasText|hasLength|isNotBlank|isNotEmpty|isPresent|nonNull)\s*\(/
+  HELPER_DECLARATION = /(?:\bfun|\b[\w$<>\[\]]+)\s+([a-z_$][\w$]*)\s*\(([^()]*)\)[^;{=]*\{/
+  LEADING_PASS       = /\A#{PASS_RETURN.source}/
+  HELPER_CALL        = /\A(?:return\s+)?([a-z_$][\w$]*)\s*\(/
+
+  # Whether `preHandle` refuses, and the exact request URIs an allow-list it
+  # checks first lets through. A 401/403 status or auth exception in its
+  # body is read as main reads it. A refusal handed to a status helper of
+  # the class is read in one shape only: the then-branch of a top-level
+  # `if` (no `else`, no credential-presence test), with every pass-through
+  # return before it a lone OPTIONS test, `!(handler instanceof
+  # HandlerMethod)` or an allow-list, and none after it but the final one.
   private def check_pre_handle_auth(content : String, source : String, file : String) : {Bool, Array(String)}
     open_paths = [] of String
     pre_handle_match = content.match(/(?:\bboolean\s+preHandle\b|(?:override\s+)?fun\s+preHandle\b)[^{]*\{/m)
@@ -395,61 +402,132 @@ class SpringAuthTagger < FrameworkTagger
     open_brace_idx = pre_handle_match.byte_end(0) - 1
     close_brace_idx = Noir::JSLiteralScanner.find_matching_brace_at_byte(content, open_brace_idx)
     body = close_brace_idx ? content.byte_slice(open_brace_idx + 1, close_brace_idx - open_brace_idx - 1) : content.byte_slice(open_brace_idx + 1, [content.bytesize - open_brace_idx - 1, 1500].min)
+    body = ascii_only(body)
+    masked = mask_literals(body)
 
-    direct = body.match(INTERCEPTOR_REJECTION_RE).try(&.byte_begin(0))
-    refusal = [direct, helper_refusal(content, body)].compact.min?
+    stmts = top_statements(masked)
+    direct = body.index(INTERCEPTOR_REJECTION_RE)
+    helper = direct ? nil : helper_refusal(content, body, masked, stmts)
+    refusal = direct || helper
     return {false, open_paths} unless refusal
 
-    before = body.byte_slice(0, refusal)
     covered = [] of Range(Int32, Int32)
-    before.scan(EARLY_PASS) do |found|
-      next unless inner = paren_inner(before, found.byte_end(0) - 1)
-      cond, after = inner
-      start = after
-      while start < before.bytesize && before.byte_at(start).unsafe_chr.whitespace?
-        start += 1
-      end
-      stop = if before.byte_at?(start) == '{'.ord
-               Noir::JSLiteralScanner.find_matching_brace_at_byte(before, start) || before.bytesize - 1
-             else
-               before.byte_index(';', start) || before.bytesize - 1
-             end
-      next unless before.byte_slice(start, stop - start + 1).matches?(PASS_RETURN)
+    stmts.each do |start, stop|
+      break if stop > refusal
+      next unless masked[start...stop].starts_with?("if")
+      branches = if_branches(body[start...stop])
+      next unless branches.size == 1 && (cond = branches[0][0]) && branches[0][1].matches?(PASS_RETURN)
       cond = strip_parens(cond.strip)
-      if cond.includes?("\"OPTIONS\"") || cond.matches?(/\A!\s*\(\s*\w+\s+instanceof\s+HandlerMethod\s*\)\z/)
-        covered << (start..stop)
+      if (cond.includes?("\"OPTIONS\"") && !cond.matches?(/[|&!]/)) || cond.matches?(/\A!\s*\(\s*\w+\s+instanceof\s+HandlerMethod\s*\)\z/)
+        covered << (start...stop)
       elsif paths = allow_list(cond, source, file)
         open_paths.concat(paths)
-        covered << (start..stop)
+        covered << (start...stop)
       end
     end
-    # Every pass-through before the refusal must be one of those branches.
+    return {true, open_paths} if direct
+
+    # Every other pass-through is uncovered, except a final top-level return.
+    last_pass = stmts.last?.try { |start, stop| masked[start...stop].matches?(LEADING_PASS) ? start : nil }
     readable = true
-    before.scan(PASS_RETURN) do |found|
-      readable = false unless covered.any?(&.includes?(found.byte_begin(0)))
+    masked.scan(PASS_RETURN) do |found|
+      at = found.begin(0)
+      readable = false unless at == last_pass || covered.any?(&.includes?(at))
     end
-    {direct ? true : readable, open_paths}
+    {readable, open_paths}
   end
 
-  # Byte offset of the first call in `body` to a method of the class that
-  # sets the response status from one of its parameters, handed a 401/403.
-  private def helper_refusal(content : String, body : String) : Int32?
-    found = nil
-    content.scan(/(?:\bfun|\b[\w$<>\[\]]+)\s+([a-z_$][\w$]*)\s*\(([^()]*)\)[^;{=]*\{/) do |decl|
+  # `{start, stop}` of each top-level statement of masked `code`, in one
+  # pass: `;`, a block closing back to depth 0 (unless `else` / `catch` /
+  # `finally` follows), or a Kotlin newline that does not continue the
+  # expression. `each_statement` slices the rest of the text per statement.
+  private def top_statements(code : String) : Array({Int32, Int32})
+    found = [] of {Int32, Int32}
+    start = nil
+    depth = 0
+    pos = 0
+    size = code.size
+    while pos < size
+      char = code[pos]
+      if start.nil?
+        start = pos unless char.whitespace? || char == ';'
+        pos += 1 if start.nil?
+        next if start.nil?
+      end
+      case char
+      when '(', '[', '{' then depth += 1
+      when ')', ']', '}'
+        depth -= 1
+        if depth == 0 && char == '}'
+          after = pos + 1
+          while after < size && code[after].whitespace?
+            after += 1
+          end
+          unless code[after, 8].matches?(/\A(?:else|catch|finally)\b/)
+            found << {start, pos + 1}
+            start = nil
+          end
+        end
+      when ';'
+        if depth == 0
+          found << {start, pos + 1}
+          start = nil
+        end
+      when '\n'
+        if depth == 0 && statement_line_end?(code, start, pos)
+          found << {start, pos}
+          start = nil
+        end
+      end
+      pos += 1
+    end
+    found << {start, size} if start
+    found
+  end
+
+  private def statement_line_end?(code : String, start : Int32, pos : Int32) : Bool
+    before = code[start...pos].rstrip
+    return false if before.empty? || "=+-*/%&|,(.:?<>!{".includes?(before[-1])
+    return false if before.matches?(/\A(?:if|else|for|while)\b[^;]*\)\z|\Aelse\z/)
+    after = pos + 1
+    while after < code.size && code[after].whitespace?
+      after += 1
+    end
+    !(after < code.size && ".?&|:+-*/".includes?(code[after]))
+  end
+
+  # Char offset of the first top-level `if` of `preHandle` whose then-branch
+  # calls a status helper of the class with 401/403: a method that sets the
+  # response status from one of its parameters, matched by name and arity.
+  private def helper_refusal(content : String, body : String, masked : String, stmts : Array({Int32, Int32})) : Int32?
+    helpers = Hash(String, Array({Int32, Int32})).new
+    content.scan(HELPER_DECLARATION) do |decl|
       next if NON_METHOD_WORDS.includes?(decl[1])
-      params = decl[2].split(',').map { |param| param.strip.match(/([a-z_$][\w$]*)\s*(?::.*)?\z/).try(&.[1]) || "" }
+      params = decl[2].strip.empty? ? [] of String : decl[2].split(',').map { |param| param.strip.match(/([a-z_$][\w$]*)\s*(?::.*)?\z/).try(&.[1]) || "" }
       next unless close = Noir::JSLiteralScanner.find_matching_brace_at_byte(content, decl.byte_end(0) - 1)
-      helper = content.byte_slice(decl.byte_end(0), close - decl.byte_end(0))
-      next unless status = helper.match(/\b(?:setStatus|sendError)\s*\(\s*([a-z_$][\w$]*)\s*[,)]/)
+      method = content.byte_slice(decl.byte_end(0), close - decl.byte_end(0))
+      next unless status = method.match(/\b(?:setStatus|sendError)\s*\(\s*([a-z_$][\w$]*)\s*[,)]/)
       next unless index = params.index(status[1])
-      body.scan(/(?<![\w$.])#{Regex.escape(decl[1])}\s*\(/) do |call|
-        next unless args = paren_inner(body, call.byte_end(0) - 1)
-        arg = Noir::TopLevelSplit.split(args[0], ',', Noir::TopLevelSplit::Rules.new)[index]?
-        next unless arg && arg.strip.matches?(REFUSAL_STATUS_ARG)
-        found = [found, call.byte_begin(0)].compact.min
+      (helpers[decl[1]] ||= [] of {Int32, Int32}) << {params.size, index}
+    end
+    return if helpers.empty?
+
+    stmts.each do |start, stop|
+      next unless masked[start...stop].starts_with?("if")
+      branches = if_branches(body[start...stop])
+      next unless branches.size == 1 && (cond = branches[0][0])
+      next if Noir::TopLevelSplit.split(strip_parens(cond.strip), "&&", Noir::TopLevelSplit::Rules.new).any?(&.matches?(PRESENCE_TEST))
+      then_body = unwrap_block(branches[0][1])
+      then_masked = mask_literals(then_body)
+      each_statement(then_masked) do |from, to|
+        next unless call = then_masked[from...to].match(HELPER_CALL)
+        next unless decls = helpers[call[1]]?
+        next unless args = paren_inner(then_body[from...to], call.byte_end(0) - 1)
+        list = Noir::TopLevelSplit.split(args[0], ',', Noir::TopLevelSplit::Rules.new)
+        return start if decls.any? { |count, index| count == list.size && list[index].strip.matches?(REFUSAL_STATUS_ARG) }
       end
     end
-    found
+    nil
   end
 
   # The literal URIs of `LIST.contains(request.getRequestURI())`, the list a
@@ -485,6 +563,12 @@ class SpringAuthTagger < FrameworkTagger
       stop += 1
     end
     init = source.byte_slice(pos, stop - pos)
+    # A collection of literals, not a string searched by substring.
+    return unless init.matches?(/\b(?:of|asList|listOf|setOf|mutableListOf|hashSetOf|add)\s*\(/)
+    # Nor one the app fills at runtime.
+    source.scan(/(?<![\w$.])#{Regex.escape(field)}\s*\.\s*(?:add|addAll|put|putAll|remove|removeAll|removeIf|clear|set|retainAll)\s*\(/) do |mutation|
+      return unless pos <= mutation.byte_begin(0) < stop
+    end
     literals = init.scan(/"((?:[^"\\]|\\.)*)"/).map(&.[1])
     rest = init.gsub(/"(?:[^"\\]|\\.)*"/, " ")
     return if literals.empty? || rest.scan(/[A-Za-z_$][\w$]*/).any? { |word| !LIST_INIT_WORDS.includes?(word[0]) } || rest.matches?(/[^\w$\s<>(){}\[\].,;]/)

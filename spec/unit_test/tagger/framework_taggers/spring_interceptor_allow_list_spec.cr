@@ -172,4 +172,61 @@ describe "SpringAuthTagger (HandlerInterceptor refusal helpers and allow-lists)"
       fail "guarded by #{helper} / #{call}" unless result["GET /api/items"].empty?
     end
   end
+
+  it "leaves the review's look-alike helper refusals unread" do
+    {
+      "token present only" => "String token = request.getHeader(\"Authorization\");\n if (token != null && !jwt.verify(token)) {\n return responseTransform(response, 401, \"bad\");\n }\n return true;",
+      "hasText nested"     => "String token = request.getHeader(\"Authorization\");\n if (StringUtils.hasText(token)) {\n if (!jwt.verify(token)) {\n return responseTransform(response, 401, \"bad\");\n }\n }\n return true;",
+      "expired then null"  => "String token = request.getHeader(\"Authorization\");\n if (jwt.isExpired(token)) {\n return responseTransform(response, 401, \"expired\");\n }\n if (token == null) {\n return true;\n }\n return true;",
+      "options compound"   => "String token = request.getHeader(\"Authorization\");\n if (\"OPTIONS\".equals(request.getMethod()) || token == null) {\n return true;\n }\n if (!jwt.verify(token)) {\n return responseTransform(response, 401, \"bad\");\n }\n return true;",
+      "options negated"    => "if (!\"OPTIONS\".equals(request.getMethod())) {\n return true;\n }\n if (!authService.check()) {\n return responseTransform(response, 401, \"x\");\n }\n return true;",
+      "ternary"            => "String token = request.getHeader(\"Authorization\");\n return token == null ? true : responseTransform(response, 401, \"x\");",
+      "else pass"          => "String token = request.getHeader(\"Authorization\");\n if (token != null) {\n if (!jwt.verify(token)) return responseTransform(response, 401, \"x\");\n } else {\n return true;\n }\n return true;",
+    }.each do |name, pre_handle|
+      result = interceptor_guards(pre_handle, RESPONSE_HELPER)
+      fail "#{name} guarded: #{result["GET /api/items"]}" unless result["GET /api/items"].empty?
+    end
+  end
+
+  it "matches a status helper by arity" do
+    members = <<-JAVA
+          private boolean fail(HttpServletResponse response, int status) {
+              response.setStatus(status);
+              return false;
+          }
+          private boolean fail(HttpServletResponse response, int code, String msg) throws IOException {
+              response.setStatus(200);
+              return false;
+          }
+      JAVA
+    result = interceptor_guards("if (!authService.check()) { return fail(response, 401, \"login\"); }\n return true;", members)
+    result["GET /api/items"].should be_empty
+  end
+
+  it "does not read a string, or a list filled at runtime, as an allow-list" do
+    {
+      %(    private static final String OPEN = "/api/login,/api/open,/api/items";\n),
+      %(    private static final Set<String> OPEN = new HashSet<>(Set.of("/api/login"));\n    @PostConstruct\n    void init() { OPEN.addAll(extra); }\n),
+    }.each do |field|
+      result = interceptor_guards(<<-JAVA, field)
+              if (OPEN.contains(request.getRequestURI())) { return true; }
+              if (request.getHeader("Authorization") == null) {
+                  response.setStatus(401);
+                  return false;
+              }
+              return true;
+        JAVA
+      result["GET /api/login"].should eq([GUARD])
+      result["GET /api/items"].should eq([GUARD])
+    end
+  end
+
+  it "stays linear on many helpers and statements" do
+    pre_handle = (0...4000).map { |i| "if (a#{i}) { helper#{i}(response, 200, \"x\"); }" }.join("\n") + "\nreturn true;"
+    members = (0...4000).map { |i| "    private void helper#{i}(HttpServletResponse response, int code, String msg) { response.setStatus(code); }\n" }.join
+    started = Time.instant
+    result = interceptor_guards(pre_handle, members)
+    (Time.instant - started).should be < 5.seconds
+    result["GET /api/items"].should be_empty
+  end
 end
