@@ -36,4 +36,10 @@ class PageController extends AbstractController
     {
         return $this->json([]);
     }
+
+    #[Route(path: '/page/{slug}', name: 'page')]
+    public function page()
+    {
+        return $this->json([]);
+    }
 }

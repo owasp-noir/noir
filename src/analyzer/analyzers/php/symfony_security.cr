@@ -59,12 +59,15 @@ module Analyzer::Php::SymfonySecurity
       # ponytail: placeholders become one sample segment, so a rule only some
       # values of `{slug}` would match is decided by that one sample.
       path = url.gsub(/\{[^}]*\}/, "1")
-      # An undecidable entry only blocks the answer for paths it covers.
-      firewall = @firewalls.find { |f| f.pattern.nil? || f.pattern.try(&.matches?(path)) }
+      # An undecidable entry only blocks the answer for paths it covers; it
+      # is tried against a second sample too, so `^/page/[a-z]` covers `{slug}`.
+      other = url.gsub(/\{[^}]*\}/, "a")
+      covers = ->(re : Regex?, undecidable : Bool) { re.nil? || re.matches?(path) || (undecidable && re.matches?(other)) }
+      firewall = @firewalls.find { |f| covers.call(f.pattern, f.conditional) }
       return if firewall.nil? || firewall.conditional || firewall.open
 
       rule = @rules.find do |r|
-        (r.path.nil? || r.path.try(&.matches?(path))) && (r.methods.empty? || r.methods.includes?(method.upcase))
+        covers.call(r.path, r.conditional) && (r.methods.empty? || r.methods.includes?(method.upcase))
       end
       return if rule.nil? || rule.conditional || rule.roles.empty?
       return if rule.roles.any? { |role| PUBLIC_ROLES.includes?(role) }
@@ -83,7 +86,8 @@ module Analyzer::Php::SymfonySecurity
 
     firewalls = (security[YAML::Any.new("firewalls")]?.try(&.as_h?) || {} of YAML::Any => YAML::Any).values.compact_map do |node|
       fw = node.as_h? || next
-      Firewall.new(regex(fw[YAML::Any.new("pattern")]?), fw[YAML::Any.new("security")]?.try(&.raw) == false, conditional?(fw))
+      # Symfony ignores `pattern:` when a `request_matcher:` is set.
+      Firewall.new(fw.has_key?(YAML::Any.new("request_matcher")) ? nil : regex(fw[YAML::Any.new("pattern")]?), fw[YAML::Any.new("security")]?.try(&.raw) == false, conditional?(fw))
     end
     rules = (security[YAML::Any.new("access_control")]?.try(&.as_a?) || [] of YAML::Any).compact_map do |node|
       rule = node.as_h? || next

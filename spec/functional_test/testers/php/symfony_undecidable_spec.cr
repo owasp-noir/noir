@@ -26,6 +26,8 @@ describe "Symfony undecidable access_control scope", tags: "functional" do
     guards.call(find.call("/a1/x")).should be_empty
     guards.call(find.call("/host/x")).should be_empty
     guards.call(find.call("/api/x")).should be_empty
+    # `^/page/[a-z]` covers some values of `{slug}`: undecided, not ROLE_USER.
+    guards.call(find.call("/page/{slug}")).should be_empty
     # The POST-only undecidable rule does not cover GET.
     guards.call(find.call("/m/x")).should eq(["Symfony access_control (ROLE_USER)"])
   end
