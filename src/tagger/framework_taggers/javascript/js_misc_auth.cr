@@ -38,8 +38,11 @@ class JsMiscAuthTagger < FrameworkTagger
 
   # `reply.code(401)` / `reply.status(401)` inside a hook or preHandler.
   FASTIFY_REPLY_401 = /reply\s*\.\s*(?:code|status)\s*\(\s*401\b|\.statusCode\s*=\s*401\b/
+  # `if (!req.auth) throw new UnauthorizedError(...)`: Fastify answers a hook's
+  # thrown error through the error handler, a 401 for these.
+  FASTIFY_THROW_REFUSAL = /\bthrow\s+(?:new\s+)?\w*(?:Unauthori[sz]ed|Unauthenticated)\w*\s*\(/
   # `fastify.post<{ Body: T }>(`: TypeScript type arguments may sit before the `(`.
-  FASTIFY_ROUTE  = /\.\s*(get|post|put|patch|delete|del|head|options|all)\s*(?:<[\s\S]*?>\s*)?\(/
+  FASTIFY_ROUTE  = /\.\s*(get|post|put|patch|delete|del|head|options|all|route)\s*(?:<[\s\S]*?>\s*)?\(/
   FASTIFY_EXEMPT = /if\s*\(\s*(?:request|req)\s*\.\s*(?:url|routerPath)\s*===?\s*['"]([^'"]+)['"]\s*\)\s*return\b/
   HOOK_KINDS     = %w[onRequest preHandler]
 
@@ -54,7 +57,9 @@ class JsMiscAuthTagger < FrameworkTagger
   FASTIFY_RETHROW    = /\breply\s*\.\s*(?:send|code|status)\s*\(|\bthrow\b/
   # `if (request.headers.authorization) await request.jwtVerify()`: verified
   # only when a credential is sent, so anonymous callers get through.
-  FASTIFY_OPTIONAL_VERIFY = /\bif\s*\([^)]*(?:authorization|headers|token|cookie)/i
+  FASTIFY_OPTIONAL_VERIFY      = /\bif\s*\([^)]*(?:authorization|headers|token|cookie)/i
+  FASTIFY_OPTIONAL_VERIFY_COND = /authorization|token|cookie/i
+  BLOCK_IF_CONDITION           = /\bif\s*\(([^{}]*)\)\s*\z/
   # `fastify.decorate('checkToken', async (request, reply) => { … })`.
   FASTIFY_DECORATE = /\.\s*decorate\s*\(\s*['"]([A-Za-z_$][\w$]*)['"]\s*,/
 
@@ -389,9 +394,32 @@ class JsMiscAuthTagger < FrameworkTagger
     fastify_refusal_body?(Noir::JSRouteExtractor.definition_body(Noir::CComments.strip(source, quotes: %("'`)), line))
   end
 
+  # Whether `at` sits in a block entered only when a credential is sent:
+  # `if (req.headers.authorization) { … throw new UnauthorizedError() }`
+  # refuses a bad token but lets an anonymous caller through.
+  private def credential_presence_block?(body : String, at : Int32) : Bool
+    bytes = body.to_slice
+    depth = 0
+    (at - 1).downto(0) do |idx|
+      case bytes[idx]
+      when '}'.ord then depth += 1
+      when '{'.ord
+        if depth == 0
+          cond = body.byte_slice(0, idx).match(BLOCK_IF_CONDITION).try(&.[1]) || return false
+          return cond.matches?(FASTIFY_OPTIONAL_VERIFY_COND) && !cond.lstrip.starts_with?('!')
+        end
+        depth -= 1
+      end
+    end
+    false
+  end
+
   private def fastify_refusal_body?(body : String) : Bool
     body = code_only(body)
     return true if body.matches?(FASTIFY_REPLY_401)
+    if thrown = body.match(FASTIFY_THROW_REFUSAL)
+      return true unless credential_presence_block?(body, thrown.byte_begin(0))
+    end
     return false unless at = body.index(FASTIFY_JWT_VERIFY)
     return false if body[0...at].matches?(FASTIFY_OPTIONAL_VERIFY)
     caught = body.index(FASTIFY_CATCH, at) || return true
@@ -475,6 +503,11 @@ class JsMiscAuthTagger < FrameworkTagger
           verb = head[1].downcase
           score = verb == "all" || verb == method.downcase || (verb == "del" && method == "DELETE") ? 4 : 0
           literal = args.first?.try(&.strip)
+          # `route({ method: ["GET", "POST"], url: "/x", onRequest })`.
+          if verb == "route" && literal
+            score = 4 if fastify_property(literal, "method").try(&.scan(/['"`]([A-Za-z]+)['"`]/).any? { |m| m[1].upcase == method })
+            literal = fastify_property(literal, "url") || fastify_property(literal, "path")
+          end
           if literal && literal.size >= 2 && {'\'', '"', '`'}.includes?(literal[0]) && literal[-1] == literal[0]
             route = literal[1...-1]
             score += route == url ? 2 : (url.ends_with?(route) ? 1 : 0)

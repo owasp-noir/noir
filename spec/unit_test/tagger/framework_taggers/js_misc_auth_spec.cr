@@ -264,6 +264,66 @@ describe "JsMiscAuthTagger" do
     end
   end
 
+  describe "Fastify route({ ... }) configs" do
+    it "judges the config's onRequest hook by its definition" do
+      dir = File.tempname("fastify_route_config")
+      Dir.mkdir_p(File.join(dir, "plugins"))
+      File.write(File.join(dir, "plugins", "verify-auth.ts"), <<-TS)
+        export const verifyAuth =
+          (modes: string[]) =>
+          (req, _res, done) => {
+            if (!req.auth) throw new UnauthorizedError({ message: "Token missing" });
+            done();
+          };
+        export const checkOrigin = (req, _res, done) => {
+          if (req.headers.origin !== "https://app") throw new ForbiddenRequestError({ message: "bad origin" });
+          done();
+        };
+        export const logRequest = (req, _res, done) => { req.log.info("hit"); done(); };
+        export const optionalAuth = (req, _res, done) => {
+          if (req.headers.authorization) {
+            if (!req.auth) throw new UnauthorizedError({ message: "bad token" });
+          }
+          done();
+        };
+        TS
+      server = File.join(dir, "server.ts")
+      File.write(server, <<-TS)
+        import fastify from "fastify";
+        import { checkOrigin, logRequest, optionalAuth, verifyAuth } from "./plugins/verify-auth";
+        const server = fastify();
+        server.route({ method: "GET", url: "/secrets", onRequest: verifyAuth(["jwt"]), handler: async () => [] });
+        server.route({ method: ["POST", "PUT"], url: "/items", onRequest: (req, res, done) => { verifyAuth(["jwt"])(req, res, done); }, handler: async () => ({}) });
+        server.route({ method: "GET", url: "/status", handler: async () => ({}) });
+        server.route({ method: "POST", url: "/hook", onRequest: checkOrigin, handler: async () => ({}) });
+        server.route({ method: "GET", url: "/logged", onRequest: logRequest, handler: async () => ({}) });
+        server.route({ method: "GET", url: "/feed", onRequest: optionalAuth, handler: async () => [] });
+        TS
+      begin
+        noir_options = create_test_options
+        noir_options["base"] = YAML::Any.new(dir)
+        endpoints = [{4, "GET", "/secrets"}, {5, "POST", "/items"}, {5, "PUT", "/items"},
+                     {6, "GET", "/status"}, {7, "POST", "/hook"}, {8, "GET", "/logged"}, {9, "GET", "/feed"}].map do |line, method, url|
+          details = Details.new(PathInfo.new(server, line))
+          details.technology = "js_fastify"
+          Endpoint.new(url, method, [] of Param, details)
+        end
+        tags = JsMiscAuthTagger.new(noir_options).perform(endpoints).to_h { |ep| {"#{ep.method} #{ep.url}", ep.tags.map(&.description)} }
+        tags["GET /secrets"].should eq(["Protected by Fastify onRequest verifyAuth"])
+        tags["POST /items"].should eq(["Protected by Fastify onRequest verifyAuth"])
+        tags["PUT /items"].should eq(["Protected by Fastify onRequest verifyAuth"])
+        tags["GET /status"].should be_empty
+        # A 403 for a bad origin is a CSRF check, not a credential check.
+        tags["POST /hook"].should be_empty
+        tags["GET /logged"].should be_empty
+        # Refuses a bad token only when one is sent: anonymous callers pass.
+        tags["GET /feed"].should be_empty
+      ensure
+        FileUtils.rm_rf(dir)
+      end
+    end
+  end
+
   it "returns correct target_techs" do
     JsMiscAuthTagger.target_techs.should contain("js_fastify")
     JsMiscAuthTagger.target_techs.should contain("js_koa")

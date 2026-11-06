@@ -1626,6 +1626,13 @@ module Noir
       end
       line_end = content.byte_index('\n', line_start) || content.bytesize
       own_line = content.byte_slice(line_start, line_end - line_start)
+      # `export const verifyAuth =` with the function on the next line
+      # (Prettier's layout for a curried arrow).
+      if own_line.rstrip.ends_with?('=') && line_end < content.bytesize && !own_line.includes?("=>")
+        line_start = line_end + 1
+        line_end = content.byte_index('\n', line_start) || content.bytesize
+        own_line = content.byte_slice(line_start, line_end - line_start)
+      end
       from = line_start
       while (arrow = content.byte_index("=>", from)) && arrow < line_end
         from = arrow + 2
