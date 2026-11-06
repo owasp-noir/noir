@@ -1418,7 +1418,7 @@ module NoirAIContext
         elsif handle_sink = file_handle_sink(callee, callee_snippet)
           context.push_sink(handle_sink)
         elsif (raw_sink = PatternMatcher.detect_from_patterns(callee.name, callee_snippet, sink_patterns, callee.path, callee.line, "callee")) &&
-              !in_memory_send_file?(raw_sink, callee)
+              !in_memory_send_file?(raw_sink, callee) && !ktor_data_respond?(raw_sink, callee, callee_snippet)
           if helper = inert_project_helper(raw_sink, callee, endpoint, sink_patterns)
             inert_helpers << helper
           else
@@ -1472,6 +1472,20 @@ module NoirAIContext
     end
 
     SEND_IN_MEMORY_BUFFER = /\bsend_?file\s*\(\s*#{IN_MEMORY_BUFFER}/i
+
+    # Ktor's `call.respond(x)` serializes `x` through content negotiation. It
+    # renders a template only for a template plugin's content
+    # (`FreeMarkerContent(...)`, `ThymeleafContent(...)`), which the file
+    # either names at the call or imports from the plugin's package.
+    KTOR_TEMPLATE_CONTENT = /\b(?:FreeMarker|Thymeleaf|Mustache|Velocity|VelocityTools|Pebble|Jte|Kte)Content\b/
+    KTOR_TEMPLATE_IMPORT  = /\A\s*import\s+io\.ktor\.(?:server\.)?(?:freemarker|thymeleaf|mustache|velocity|pebble|jte)\b/
+
+    private def ktor_data_respond?(sink : AIContextEntry, callee : Callee, snippet : String?) : Bool
+      return false unless sink.kind == "template_render" && callee.name == "call.respond"
+      return false unless (path = callee.path) && path.ends_with?(".kt")
+      return false if snippet.try(&.matches?(KTOR_TEMPLATE_CONTENT))
+      @reader.lines_for(path).none?(&.matches?(KTOR_TEMPLATE_IMPORT))
+    end
 
     # Sink kinds whose callee names are words a project reuses for its own
     # helpers (`render`, `unserialize`). The other kinds keep the name match:
