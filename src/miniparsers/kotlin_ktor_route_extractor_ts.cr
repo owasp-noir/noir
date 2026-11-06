@@ -114,6 +114,29 @@ module Noir
 
       def initialize(@verb, @path, @line, @receive_type, @has_body, @query_params, @header_params, @form_params, @callees)
       end
+
+      def with_path(path : String) : Route
+        Route.new(@verb, path, @line, @receive_type, @has_body, @query_params, @header_params, @form_params, @callees)
+      end
+    end
+
+    # A call of a function by name from routing code, with the prefix in
+    # force at the call: `route("/{year}") { userRoutes() }`. `prefix` is
+    # nil when the call cannot be placed (a receiver other than `this`, or
+    # outside any routing scope). `line` is 0-based.
+    record Mount, name : String, prefix : String?, line : Int32
+
+    # A `fun Route.name() { ... }` declaration and its 0-based line span.
+    record RouteFunction, name : String, start_line : Int32, end_line : Int32
+
+    # A non-optional `authenticate(...) { }` block and its 0-based line span.
+    record AuthBlock, description : String, start_line : Int32, end_line : Int32
+
+    class FileRoutes
+      getter routes = [] of Route
+      getter mounts = [] of Mount
+      getter functions = [] of RouteFunction
+      getter auth_blocks = [] of AuthBlock
     end
 
     struct ResourceParam
@@ -162,7 +185,17 @@ module Noir
                        string_constants = Hash(String, String).new,
                        resource_paths : ResourceMap = Hash(String, ResolvedResource).new,
                        *, include_callees : Bool = false) : Array(Route)
-      routes = [] of Route
+      extract_file_routes(source, string_constants, resource_paths, include_callees: include_callees).routes
+    end
+
+    # `extract_routes` plus what the caller needs to place routes declared
+    # in `Route.` extension functions under the prefix they are mounted at.
+    def extract_file_routes(source : String,
+                            string_constants = Hash(String, String).new,
+                            resource_paths : ResourceMap = Hash(String, ResolvedResource).new,
+                            *, include_callees : Bool = false) : FileRoutes
+      file = FileRoutes.new
+      routes = file.routes
       local_string_constants = extract_string_constants(source)
 
       resources = Hash(String, ResolvedResource).new
@@ -184,9 +217,9 @@ module Noir
       end
 
       Noir::TreeSitter.parse_kotlin(source) do |root|
-        walk(root, source, "", routes, string_constants, local_string_constants, 0, include_callees, false, resources)
+        walk(root, source, "", routes, string_constants, local_string_constants, 0, include_callees, false, resources, [] of String, file)
       end
-      routes
+      file
     end
 
     # Blank out string/char literal contents (keeping the quotes) so structural
@@ -640,14 +673,18 @@ module Noir
                      include_callees : Bool,
                      active : Bool,
                      resources : Hash(String, ResolvedResource),
-                     resource_query_params : Array(String) = [] of String)
+                     resource_query_params : Array(String),
+                     file : FileRoutes)
       return if depth > Noir::TreeSitter::MAX_AST_DEPTH
 
       ty = Noir::TreeSitter.node_type(node)
 
       if ty == "function_declaration" && route_extension_function?(node, source)
+        if name = function_name(node, source)
+          file.functions << RouteFunction.new(name, Noir::TreeSitter.node_start_row(node), Noir::TreeSitter.node_end_row(node))
+        end
         if body = function_body_statements(node)
-          walk(body, source, prefix, routes, string_constants, local_string_constants, depth + 1, include_callees, true, resources, resource_query_params)
+          walk(body, source, prefix, routes, string_constants, local_string_constants, depth + 1, include_callees, true, resources, resource_query_params, file)
         end
         return
       end
@@ -663,7 +700,7 @@ module Noir
           # block documents is still emitted.
           Noir::TreeSitter.each_named_child(node) do |child|
             next if Noir::TreeSitter.node_type(child) == "call_suffix"
-            walk(child, source, prefix, routes, string_constants, local_string_constants, depth + 1, include_callees, active, resources, resource_query_params)
+            walk(child, source, prefix, routes, string_constants, local_string_constants, depth + 1, include_callees, active, resources, resource_query_params, file)
           end
           return
         when active && HTTP_VERB_NAMES.has_key?(name)
@@ -698,7 +735,7 @@ module Noir
             if method = call_http_method_argument(node, source)
               emit_method_route(node, body, source, method, new_prefix, routes, include_callees, resource_query_params, resources) if has_handle_call?(body, source)
             end
-            walk(body, source, new_prefix, routes, string_constants, local_string_constants, depth + 1, include_callees, true, resources, resource_query_params)
+            walk(body, source, new_prefix, routes, string_constants, local_string_constants, depth + 1, include_callees, true, resources, resource_query_params, file)
           end
           return
         when active && name == "resource"
@@ -712,7 +749,7 @@ module Noir
           type_name = call_type_argument_name(node, source)
           if type_name && (rp = resolve_resource(type_name, resources))
             if body = call_lambda_body(node)
-              walk(body, source, route_scope_join(prefix, rp.path), routes, string_constants, local_string_constants, depth + 1, include_callees, true, resources, rp.query_params)
+              walk(body, source, route_scope_join(prefix, rp.path), routes, string_constants, local_string_constants, depth + 1, include_callees, true, resources, rp.query_params, file)
             end
             return
           end
@@ -723,7 +760,7 @@ module Noir
           # HttpMethod argument it isn't a route selector — fall through.
           if (method = call_http_method_argument(node, source)) && (body = call_lambda_body(node))
             emit_method_route(node, body, source, method, prefix, routes, include_callees, resource_query_params, resources) if has_handle_call?(body, source)
-            walk(body, source, prefix, routes, string_constants, local_string_constants, depth + 1, include_callees, true, resources, resource_query_params)
+            walk(body, source, prefix, routes, string_constants, local_string_constants, depth + 1, include_callees, true, resources, resource_query_params, file)
             return
           end
         when active && (name == "staticResources" || name == "staticFiles")
@@ -743,19 +780,23 @@ module Noir
           # be named like a verb (e.g. CachingHeaders' `options { }`)
           # isn't mistaken for an OPTIONS route.
           if body = call_lambda_body(node)
-            walk(body, source, prefix, routes, string_constants, local_string_constants, depth + 1, include_callees, routing_install_call?(node, source), resources, resource_query_params)
+            walk(body, source, prefix, routes, string_constants, local_string_constants, depth + 1, include_callees, routing_install_call?(node, source), resources, resource_query_params, file)
           end
           return
         when name == "routing" || routing_install_call?(node, source) || (active && PASSTHROUGH_NAMES.includes?(name))
+          if active && name == "authenticate" && (realm = authenticate_realm(node, source))
+            file.auth_blocks << AuthBlock.new("Ktor authenticate(\"#{realm}\") block", Noir::TreeSitter.node_start_row(node), Noir::TreeSitter.node_end_row(node))
+          end
           if body = call_lambda_body(node)
-            walk(body, source, prefix, routes, string_constants, local_string_constants, depth + 1, include_callees, true, resources, resource_query_params)
+            walk(body, source, prefix, routes, string_constants, local_string_constants, depth + 1, include_callees, true, resources, resource_query_params, file)
           end
           return
         end
+        record_mount(node, source, active ? prefix : nil, file.mounts)
       end
 
       Noir::TreeSitter.each_named_child(node) do |child|
-        walk(child, source, prefix, routes, string_constants, local_string_constants, depth + 1, include_callees, active, resources, resource_query_params)
+        walk(child, source, prefix, routes, string_constants, local_string_constants, depth + 1, include_callees, active, resources, resource_query_params, file)
       end
     end
 
@@ -1045,6 +1086,55 @@ module Noir
         return true if has_handle_call?(child, source, depth + 1)
       end
       false
+    end
+
+    # `foo()` / `this.foo()` is placed at `prefix`; `x.foo()` is not (its
+    # receiver may be any route). The analyzer keeps only the names that
+    # turn out to be `Route.` extension functions.
+    private def record_mount(call : LibTreeSitter::TSNode, source : String, prefix : String?, mounts : Array(Mount))
+      return unless callee = Noir::TreeSitter.first_named_child(call)
+      case Noir::TreeSitter.node_type(callee)
+      when "simple_identifier"
+        mounts << Mount.new(Noir::TreeSitter.node_text(callee, source), prefix, Noir::TreeSitter.node_start_row(call))
+      when "navigation_expression"
+        receiver = Noir::TreeSitter.first_named_child(callee)
+        placed = receiver && Noir::TreeSitter.node_type(receiver) == "this_expression" ? prefix : nil
+        name = last_navigation_segment(callee, source)
+        mounts << Mount.new(name, placed, Noir::TreeSitter.node_start_row(call)) unless name.empty?
+      end
+    end
+
+    # The provider an `authenticate("jwt") { }` block names ("default" for
+    # none); nil for `optional = true`, which lets an anonymous call through.
+    # The grammar may nest the arguments one call deeper than the lambda:
+    # `(authenticate("jwt")) { ... }`.
+    private def authenticate_realm(call : LibTreeSitter::TSNode, source : String) : String?
+      realm = "default"
+      calls = [call]
+      if (inner = Noir::TreeSitter.first_named_child(call)) && Noir::TreeSitter.node_type(inner) == "call_expression"
+        calls << inner
+      end
+      calls.each do |node|
+        Noir::TreeSitter.each_named_child(node) do |suffix|
+          next unless Noir::TreeSitter.node_type(suffix) == "call_suffix"
+          Noir::TreeSitter.each_named_child(suffix) do |args|
+            next unless Noir::TreeSitter.node_type(args) == "value_arguments"
+            text = Noir::TreeSitter.node_text(args, source)
+            return if text.matches?(/\boptional\s*=\s*true\b/)
+            if name = text.match(/\A\(\s*"([^"]+)"/)
+              realm = name[1]
+            end
+          end
+        end
+      end
+      realm
+    end
+
+    private def function_name(func : LibTreeSitter::TSNode, source : String) : String?
+      Noir::TreeSitter.each_named_child(func) do |child|
+        return Noir::TreeSitter.node_text(child, source) if Noir::TreeSitter.node_type(child) == "simple_identifier"
+      end
+      nil
     end
 
     private def route_extension_function?(func : LibTreeSitter::TSNode, source : String) : Bool
@@ -1456,7 +1546,7 @@ module Noir
       end
     end
 
-    private def route_scope_join(prefix : String, suffix : String) : String
+    def route_scope_join(prefix : String, suffix : String) : String
       return "/" if prefix.empty? && suffix.empty?
       return suffix if prefix.empty?
       return prefix.rstrip('/') if suffix.empty?

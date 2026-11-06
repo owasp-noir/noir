@@ -46,6 +46,9 @@ module Analyzer::Kotlin
         resource_paths_by_base[base] = Noir::TreeSitterKotlinKtorRouteExtractor.compose_resources(raw_resources)
       end
 
+      parsed_by_base = Hash(String, Array(MountPrefixes::Source)).new do |hash, key|
+        hash[key] = [] of MountPrefixes::Source
+      end
       kotlin_files.each do |path|
         content = file_contents[path]
         next unless potential_ktor_route_file?(content)
@@ -53,8 +56,21 @@ module Analyzer::Kotlin
         base = configured_base_for(path)
         string_constants = string_constants_by_base[base]? || Hash(String, String).new
         resource_paths = resource_paths_by_base[base]? || Hash(String, Noir::TreeSitterKotlinKtorRouteExtractor::ResolvedResource).new
-        Noir::TreeSitterKotlinKtorRouteExtractor.extract_routes(content, string_constants, resource_paths, include_callees: include_callee).each do |route|
-          @result << build_endpoint(route, path)
+        module_root = Noir::PathScope.marker_root(path, base, {"/src/main/kotlin/", "/src/"}) || File.dirname(path)
+        parsed_by_base[base] << MountPrefixes::Source.new(path, module_root,
+          Noir::TreeSitterKotlinKtorRouteExtractor.extract_file_routes(content, string_constants, resource_paths, include_callees: include_callee))
+      end
+
+      parsed_by_base.each_value do |files|
+        prefixes = MountPrefixes.new(files)
+        files.each do |source|
+          source.file.routes.each do |route|
+            prefixes.for_line(source, route.line).each do |prefix, guard|
+              endpoint = build_endpoint(mounted(route, prefix), source.path)
+              endpoint.add_tag(Tag.new("auth", "Protected by #{guard}", "ktor_auth")) if guard
+              @result << endpoint
+            end
+          end
         end
       end
 
@@ -69,6 +85,106 @@ module Analyzer::Kotlin
 
     private def potential_ktor_route_file?(content : String) : Bool
       content.matches?(POTENTIAL_KTOR_ROUTE_RE)
+    end
+
+    # A route declared in `fun Route.userRoutes()` lives under every prefix
+    # the function is called at: `route("/{year}") { yearBasedRoutes() }`,
+    # with `yearBasedRoutes` in turn calling `userRoutes()`, serves
+    # `/{year}/sign`, not `/sign`. A call inside a non-optional
+    # `authenticate { }` block puts what it mounts behind that block. A
+    # function with no call seen, or with a call that cannot be placed
+    # (`someRoute.userRoutes()`, a call outside routing code), keeps the URL
+    # its own routes spell, unguarded. Functions are matched by name: call
+    # sites in the function's own Gradle module win, so two services that
+    # each mount their own `fun Route.api()` keep apart; a function called
+    # only from other modules takes those modules' call sites.
+    # ponytail: two same-named functions in one module share call sites.
+    class MountPrefixes
+      MAX_PREFIXES = 16
+
+      alias Extractor = Noir::TreeSitterKotlinKtorRouteExtractor
+      # A prefix and the authenticate block it is mounted behind, if any.
+      alias Placement = {String, String?}
+
+      record Source, path : String, module_root : String, file : Extractor::FileRoutes
+      record Site, prefix : String?, caller : String?, guard : String?, module_root : String
+
+      ROOT = [{"", nil}] of Placement
+
+      @sites = Hash(String, Array(Site)).new
+      @memo = Hash({String, String}, Array(Placement)).new
+
+      def initialize(sources : Array(Source))
+        declared = Set(String).new
+        sources.each { |source| source.file.functions.each { |function| declared << function.name } }
+        sources.each do |source|
+          file = source.file
+          file.mounts.each do |mount|
+            next unless declared.includes?(mount.name)
+            guard = file.auth_blocks.find { |block| block.start_line <= mount.line && mount.line <= block.end_line }.try(&.description)
+            (@sites[mount.name] ||= [] of Site) << Site.new(mount.prefix, enclosing(file, mount.line), guard, source.module_root)
+          end
+        end
+      end
+
+      # Placements for a route declared on `line` of `source`; the bare URL
+      # outside any `Route.` function.
+      def for_line(source : Source, line : Int32) : Array(Placement)
+        name = enclosing(source.file, line)
+        name ? resolve(name, source.module_root, Set({String, String}).new) : ROOT
+      end
+
+      private def enclosing(file : Extractor::FileRoutes, line : Int32) : String?
+        file.functions.select { |function| function.start_line <= line && line <= function.end_line }
+          .min_by? { |function| function.end_line - function.start_line }.try(&.name)
+      end
+
+      private def resolve(name : String, module_root : String, visiting : Set({String, String})) : Array(Placement)
+        key = {name, module_root}
+        if cached = @memo[key]?
+          return cached
+        end
+        sites = @sites[name]?
+        return ROOT if sites.nil? || visiting.includes?(key)
+
+        local = sites.select { |site| site.module_root == module_root }
+        sites = local unless local.empty?
+        visiting << key
+        found = [] of Placement
+        sites.each do |site|
+          unless prefix = site.prefix
+            found << {"", nil}
+            next
+          end
+          outer = (caller = site.caller) ? resolve(caller, site.module_root, visiting) : ROOT
+          outer.each { |head, guard| found << {join(head, prefix), guard || site.guard} }
+        end
+        visiting.delete(key)
+        @memo[key] = merge(found)
+      end
+
+      # One placement per prefix; served open by any call site, it is open.
+      private def merge(found : Array(Placement)) : Array(Placement)
+        merged = Hash(String, String?).new
+        found.each do |prefix, guard|
+          merged[prefix] = merged.has_key?(prefix) ? (merged[prefix] && guard) : guard
+        end
+        merged.to_a.first(MAX_PREFIXES)
+      end
+
+      def self.join(head : String, tail : String) : String
+        return tail if head.empty?
+        return head if tail.empty? || tail == "/"
+        Extractor.route_scope_join(head, tail)
+      end
+
+      private def join(head : String, tail : String) : String
+        self.class.join(head, tail)
+      end
+    end
+
+    private def mounted(route : Noir::TreeSitterKotlinKtorRouteExtractor::Route, prefix : String) : Noir::TreeSitterKotlinKtorRouteExtractor::Route
+      prefix.empty? ? route : route.with_path(MountPrefixes.join(prefix, route.path))
     end
 
     private def fully_qualified_constant?(name : String) : Bool
