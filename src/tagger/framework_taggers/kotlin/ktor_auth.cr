@@ -1,3 +1,4 @@
+require "../../../miniparsers/kotlin_source_mask"
 require "../../../models/framework_tagger"
 require "../../../models/endpoint"
 require "../prefix_scope"
@@ -41,6 +42,8 @@ class KtorAuthTagger < FrameworkTagger
   def initialize(options : Hash(String, YAML::Any))
     super
     @auth_scopes = [] of AuthScope
+    @refusing_helpers = Set(String).new
+    @principal_helpers = Set(String).new
   end
 
   def self.target_techs : Array(String)
@@ -50,6 +53,7 @@ class KtorAuthTagger < FrameworkTagger
   def perform(endpoints : Array(Endpoint)) : Array(Endpoint)
     # Pre-scan for authenticate {} blocks with route prefixes
     pre_scan_auth_blocks
+    pre_scan_credential_helpers
 
     super
   end
@@ -240,7 +244,92 @@ class KtorAuthTagger < FrameworkTagger
       idx += 1
     end
 
-    return "Ktor session check" if saw_session && session_missing_refuses?(Noir::CComments.strip(handler.join("\n")))
+    text = Noir::CComments.strip(handler.join("\n"))
+    return "Ktor session check" if saw_session && session_missing_refuses?(text)
+    credential_helper_guard(text)
+  end
+
+  # A project helper the handler calls (`call.checkAdminKey(secret)`) whose
+  # definition reads the caller's principal or session and refuses with a
+  # 401/403 is the handler's guard; so is a helper that only returns the
+  # principal (`call.validatePrincipal(db)`) when the handler refuses its
+  # null result (`?: throw Unauthorized()`). The definition is read, not
+  # the name.
+  # ponytail: helpers are matched by name across the scan's .kt files, and
+  # only a block or one-line `= expr` body is read.
+  HELPER_DEFINITION = /\bfun\s+(?:<[^>\n]*>\s*)?(?:[\w.]+(?:<[^>\n]*>)?\??\.)?(\w+)\s*\(/
+  # A helper refuses with a 401/403. A redirect is no refusal here: a
+  # `redirectIfSignedIn()` sends signed-in callers away from a public page.
+  HELPER_REFUSAL = /HttpStatusCode\.(?:Unauthorized|Forbidden)|\brespond\s*\(\s*40[13]\b|\bthrow\s+[^\n]*(?:Unauthorized|Forbidden)/
+  # `if (principal<User>() != null) throw Forbidden()` turns signed-in callers
+  # away (a guest-only page); it guards nothing.
+  CREDENTIAL_PRESENT = /\bif\s*\(\s*(?:call\.)?(?:principal\s*<[^>\n]*>\s*\(\s*\)|sessions\.get\s*<[^>\n]*>\s*\(\s*\))\s*!=\s*null/
+  HELPER_ELVIS       = /\A[^\n]*?\)\s*\?:([^\n]*)/
+  CREDENTIAL_READ    = /\bprincipal\s*<|\.principal\s*\(|\bauthentication\s*\.\s*principal\b|\bsessions\.get\s*</
+
+  private def pre_scan_credential_helpers
+    @refusing_helpers.clear
+    @principal_helpers.clear
+    collect_files_by_extension(".kt").each do |file|
+      content = read_file(file)
+      next if content.nil?
+      next unless content.includes?("principal") || content.includes?("sessions.get")
+
+      masked = Noir::KotlinSourceMask.visible(content)
+      masked.scan(HELPER_DEFINITION) do |match|
+        next unless body = helper_body(masked, match.end)
+        next unless body.matches?(CREDENTIAL_READ)
+        if body.matches?(HELPER_REFUSAL) && !body.matches?(CREDENTIAL_PRESENT)
+          @refusing_helpers << match[1]
+        else
+          @principal_helpers << match[1]
+        end
+      end
+    end
+    @principal_helpers.concat(@refusing_helpers)
+  end
+
+  # The body of the function whose parameter list opens just before `from`.
+  private def helper_body(text : String, from : Int32) : String?
+    depth = 1
+    idx = from
+    while idx < text.size && depth > 0
+      char = text[idx]
+      depth += 1 if char == '('
+      depth -= 1 if char == ')'
+      idx += 1
+    end
+    while idx < text.size && !{'{', '=', '\n'}.includes?(text[idx])
+      idx += 1
+    end
+    return if idx >= text.size || text[idx] == '\n'
+    return text[(idx + 1)...(text.index('\n', idx) || text.size)] if text[idx] == '='
+
+    start = idx + 1
+    depth = 0
+    while idx < text.size
+      char = text[idx]
+      if char == '{'
+        depth += 1
+      elsif char == '}'
+        depth -= 1
+        return text[start...idx] if depth == 0
+      end
+      idx += 1
+    end
+    nil
+  end
+
+  private def credential_helper_guard(text : String) : String?
+    text.scan(/(?<![\w.])(?:call\.)?(\w+)\s*\(/) do |match|
+      name = match[1]
+      return "Ktor #{name}() check" if @refusing_helpers.includes?(name)
+      next unless @principal_helpers.includes?(name)
+      # The elvis may open the next line: `call.validatePrincipal(db)\n ?: return@get ...`.
+      if (elvis = text[match.end..].match(HELPER_ELVIS)) && session_refusal?(elvis[1])
+        return "Ktor #{name}() check"
+      end
+    end
     nil
   end
 
