@@ -57,9 +57,18 @@ class JsMiscAuthTagger < FrameworkTagger
   FASTIFY_RETHROW    = /\breply\s*\.\s*(?:send|code|status)\s*\(|\bthrow\b/
   # `if (request.headers.authorization) await request.jwtVerify()`: verified
   # only when a credential is sent, so anonymous callers get through.
-  FASTIFY_OPTIONAL_VERIFY      = /\bif\s*\([^)]*(?:authorization|headers|token|cookie)/i
-  FASTIFY_OPTIONAL_VERIFY_COND = /authorization|token|cookie/i
-  BLOCK_IF_CONDITION           = /\bif\s*\(([^{}]*)\)\s*\z/
+  FASTIFY_OPTIONAL_VERIFY = /\bif\s*\([^)]*(?:authorization|headers|token|cookie)/i
+  # `!req.auth`, `!request.user`, `!token`: one negated read of a credential.
+  FASTIFY_ABSENCE_TEST = /\A\s*!\s*[A-Za-z_$][\w$]*(?:\s*\??\.\s*[A-Za-z_$][\w$]*)*\s*\z/
+  FASTIFY_CREDENTIAL   = /\b(?:auth|user|session|token|authorization|apiKey|apikey|cookie|identity|principal|jwt|credentials?)\b/i
+  # Any way out of the hook before the check: an anonymous caller may leave there.
+  FASTIFY_EARLY_EXIT  = /\breturn\b|\bdone\s*\(|\bnext\s*\(/
+  FASTIFY_THROW_FIRST = /\Athrow\s+(?:new\s+)?\w*(?:Unauthori[sz]ed|Unauthenticated)\w*\s*\(/
+  # `verifyAuth({ optional: true })`, `verifyModes(["anonymous", "jwt"])`: an
+  # argument that can let a caller through.
+  FASTIFY_OPENING_ARG = /\b(?:optional|anonymous|allowAnonymous|allowUnauthenticated|public|guest|skipAuth|bypass)\b/i
+  # `fastify.auth([a, b], { relation: 'or' })`: any one strategy lets the caller in.
+  FASTIFY_RELATION_OR = /\brelation\s*:\s*['"`]or['"`]/
   # `fastify.decorate('checkToken', async (request, reply) => { … })`.
   FASTIFY_DECORATE = /\.\s*decorate\s*\(\s*['"]([A-Za-z_$][\w$]*)['"]\s*,/
 
@@ -377,7 +386,7 @@ class JsMiscAuthTagger < FrameworkTagger
     ranges.select { |span| span[0] <= line && line <= span[1] }.min_by? { |span| span[1] - span[0] }
   end
 
-  private def fastify_refuses?(expr : String, content : String, file : String, decorators : Bool = true) : Bool
+  private def fastify_refuses?(expr : String, content : String, file : String, decorators : Bool = true, throws : Bool = false) : Bool
     return true if fastify_refusal_body?(expr)
     # `fastify.checkToken`: a decorated function, judged by its definition.
     if member = expr.strip.match(/\A[A-Za-z_$][\w$]*\s*\.\s*([A-Za-z_$][\w$]*)\z/)
@@ -391,35 +400,55 @@ class JsMiscAuthTagger < FrameworkTagger
     path = handler.path || return false
     line = handler.line || return false
     source = read_file(path) || return false
-    fastify_refusal_body?(Noir::JSRouteExtractor.definition_body(Noir::CComments.strip(source, quotes: %("'`)), line))
+    body = Noir::JSRouteExtractor.definition_body(Noir::CComments.strip(source, quotes: %("'`)), line)
+    fastify_refusal_body?(body) || (throws && fastify_throw_guard?(body))
   end
 
-  # Whether `at` sits in a block entered only when a credential is sent:
-  # `if (req.headers.authorization) { … throw new UnauthorizedError() }`
-  # refuses a bad token but lets an anonymous caller through.
-  private def credential_presence_block?(body : String, at : Int32) : Bool
+  # A route hook that refuses by throwing, in exactly this shape: at the top
+  # level of the hook's body, `if (!req.auth) throw new UnauthorizedError(…)`
+  # (or the throw alone in that `if`'s block), the condition one negated
+  # credential read with no `&&`/`||`, and no `return`, `done()` or
+  # `next()` anywhere before it. Optional-identity hooks (`if (!token)
+  # return done()` first), presence tests and guest-only checks do not
+  # match, and fall back to the reply/jwtVerify reading. Plugin `addHook`s
+  # never take this path.
+  private def fastify_throw_guard?(body : String) : Bool
+    body = code_only(body)
+    return false unless body.matches?(FASTIFY_THROW_REFUSAL)
     bytes = body.to_slice
     depth = 0
-    (at - 1).downto(0) do |idx|
+    idx = 0
+    while idx < bytes.size
       case bytes[idx]
-      when '}'.ord then depth += 1
-      when '{'.ord
-        if depth == 0
-          cond = body.byte_slice(0, idx).match(BLOCK_IF_CONDITION).try(&.[1]) || return false
-          return cond.matches?(FASTIFY_OPTIONAL_VERIFY_COND) && !cond.lstrip.starts_with?('!')
+      when '{'.ord, '('.ord, '['.ord then depth += 1
+      when '}'.ord, ')'.ord, ']'.ord then depth -= 1
+      when 'i'.ord
+        if depth == 0 && (head = body.byte_slice(idx, {body.bytesize - idx, 8}.min).match(/\Aif\s*\(/)) &&
+           (idx == 0 || !identifier_byte?(bytes[idx - 1]))
+          open = idx + head.byte_end(0) - 1
+          close = Noir::JSLiteralScanner.find_matching_paren_at_byte(body, open) || return false
+          cond = body.byte_slice(open + 1, close - open - 1)
+          if cond.matches?(FASTIFY_ABSENCE_TEST) && cond.matches?(FASTIFY_CREDENTIAL) &&
+             !body.byte_slice(0, idx).matches?(FASTIFY_EARLY_EXIT)
+            consequent = body.byte_slice(close + 1, {body.bytesize - close - 1, 400}.min).lstrip
+            consequent = consequent.lchop('{').lstrip if consequent.starts_with?('{')
+            return true if consequent.matches?(FASTIFY_THROW_FIRST)
+          end
+          idx = close
         end
-        depth -= 1
       end
+      idx += 1
     end
     false
+  end
+
+  private def identifier_byte?(byte : UInt8) : Bool
+    byte.unsafe_chr.ascii_alphanumeric? || byte == '_'.ord || byte == '$'.ord
   end
 
   private def fastify_refusal_body?(body : String) : Bool
     body = code_only(body)
     return true if body.matches?(FASTIFY_REPLY_401)
-    if thrown = body.match(FASTIFY_THROW_REFUSAL)
-      return true unless credential_presence_block?(body, thrown.byte_begin(0))
-    end
     return false unless at = body.index(FASTIFY_JWT_VERIFY)
     return false if body[0...at].matches?(FASTIFY_OPTIONAL_VERIFY)
     caught = body.index(FASTIFY_CATCH, at) || return true
@@ -452,10 +481,19 @@ class JsMiscAuthTagger < FrameworkTagger
         if fastify_refusal_body?(expr)
           return "Fastify #{key}"
         end
+        # A throw counts only from a hook called with nothing that opens it.
+        throws = !code_only(expr).matches?(FASTIFY_OPENING_ARG) && !expr.matches?(FASTIFY_OPENING_ARG)
+        if expr.matches?(FASTIFY_RELATION_OR)
+          # Every strategy has to refuse, or one of them lets the caller in.
+          strategies = expr.match(/\[([^\[\]]*)\]/).try(&.[1].split(',').map(&.strip).reject(&.empty?)) || next
+          next if strategies.empty?
+          next unless strategies.all? { |strategy| fastify_refuses?(strategy, content, path, throws: throws) }
+          return "Fastify #{key} #{strategies.join(", ")}"
+        end
         expr.scan(/(?:\b[A-Za-z_$][\w$]*\s*\.\s*)?\b([A-Za-z_$][\w$]*)\b/) do |ident|
           name = ident[1]
           next if {"async", "await", "function", "return", "request", "reply", "req", "res", "true", "false", "null"}.includes?(name)
-          next unless fastify_refuses?(ident[0], content, path)
+          next unless fastify_refuses?(ident[0], content, path, throws: throws)
           return "Fastify #{key} #{name}"
         end
       end

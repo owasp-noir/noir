@@ -324,6 +324,273 @@ describe "JsMiscAuthTagger" do
     end
   end
 
+  describe "Fastify hooks that refuse by throwing" do
+    # Writes `files` under a temp dir, tags every route the server file
+    # declares (`url: "/x"` or `.get("/x"`), and returns url => auth tags.
+    tag_routes = ->(files : Hash(String, String), server : String) do
+      dir = File.tempname("fastify_throw")
+      begin
+        files.each do |name, text|
+          path = File.join(dir, name)
+          Dir.mkdir_p(File.dirname(path))
+          File.write(path, text)
+          CodeLocator.instance.register_path(path)
+        end
+        noir_options = create_test_options
+        noir_options["base"] = YAML::Any.new(dir)
+        server_path = File.join(dir, server)
+        endpoints = [] of Endpoint
+        File.read_lines(server_path).each_with_index do |line, idx|
+          url = line.match(/url:\s*"([^"]+)"/).try(&.[1]) || line.match(/\.get\(\s*"([^"]+)"/).try(&.[1]) || next
+          details = Details.new(PathInfo.new(server_path, idx + 1))
+          details.technology = "js_fastify"
+          endpoints << Endpoint.new(url, "GET", [] of Param, details)
+        end
+        JsMiscAuthTagger.new(noir_options).perform(endpoints).to_h { |ep| {ep.url, ep.tags.select(&.name.==("auth")).map(&.description)} }
+      ensure
+        FileUtils.rm_rf(dir)
+      end
+    end
+
+    it "credits only a top-level absence test with no way out before it" do
+      tags = tag_routes.call({
+        "src/hooks.ts" => <<-JS,
+          import { UnauthorizedError } from "./errors";
+
+          // A: anonymous callers return early; only a bad token is refused.
+          export const earlyReturn = (req, _res, done) => {
+            const token = req.headers.authorization;
+            if (!token) return done();
+            if (!isValid(token)) throw new UnauthorizedError("bad token");
+            done();
+          };
+
+          // B: presence test without braces.
+          export const braceless = (req, _res, done) => {
+            if (req.headers.authorization && !isValid(req.headers.authorization)) throw new UnauthorizedError("bad token");
+            done();
+          };
+
+          // C: presence block with a nested block around the throw.
+          export const nestedOptional = (req, _res, done) => {
+            if (req.headers.authorization) {
+              const user = decode(req.headers.authorization);
+              if (!user) {
+                throw new UnauthorizedError("bad token");
+              }
+              req.user = user;
+            }
+            done();
+          };
+
+          // D: bracketed header name (string is blanked by code_only).
+          export const bracketHeader = (req, _res, done) => {
+            if (req.headers["authorization"]) {
+              if (!isValid(req.headers["authorization"])) throw new UnauthorizedError("bad token");
+            }
+            done();
+          };
+
+          // E: x-api-key presence block.
+          export const apiKeyOptional = (req, _res, done) => {
+            if (req.headers.apikey) {
+              throw new UnauthorizedError("bad key");
+            }
+            done();
+          };
+
+          // F: else branch of an absence test.
+          export const elseBranch = (req, _res, done) => {
+            if (!req.headers.authorization) {
+              done();
+            } else {
+              throw new UnauthorizedError("bad token");
+            }
+          };
+
+          // G: guest-only hook: refuses when a session IS present.
+          export const guestOnly = (req, _res, done) => {
+            if (req.session.user) throw new UnauthorizedError("already signed in");
+            done();
+          };
+
+          // H: option that opens the route.
+          export const verifyAuthOpt =
+            (opts: { optional?: boolean }) =>
+            (req, _res, done) => {
+              if (opts.optional && !req.auth) return done();
+              if (!req.auth) throw new UnauthorizedError("Token missing");
+              done();
+            };
+
+          // I: one mode allows anonymous callers.
+          export const verifyModes =
+            (modes: string[]) =>
+            (req, _res, done) => {
+              if (modes.includes("anonymous")) return done();
+              if (!req.auth) throw new UnauthorizedError("Token missing");
+              done();
+            };
+
+          // J: rate limiter / logger
+          export const rateLimiter = (req, reply, done) => {
+            if (tooMany(req.ip)) return reply.code(429).send();
+            done();
+          };
+          export const logOnly = (req, _res, done) => {
+            req.log.info("hit");
+            done();
+          };
+
+          // K: real guard
+          export const requireAuth =
+            (modes: string[]) =>
+            (req, _res, done) => {
+              if (!req.auth) throw new UnauthorizedError("Token missing");
+              done();
+            };
+
+          // L: throw in a catch after an early return for no token.
+          export const catchOnly = async (req) => {
+            if (!req.headers.authorization) return;
+            try {
+              await verify(req.headers.authorization);
+            } catch (e) {
+              throw new UnauthorizedError("bad token");
+            }
+          };
+
+          // M: fastify-auth strategies
+          export const strictStrategy = (req, _res, done) => {
+            if (!req.user) throw new UnauthorizedError("no user");
+            done();
+          };
+          export const publicStrategy = (req, _res, done) => done();
+          JS
+        "src/server.ts" => <<-JS,
+          import fastify from "fastify";
+          import { earlyReturn, braceless, nestedOptional, bracketHeader, apiKeyOptional, elseBranch, guestOnly, verifyAuthOpt, verifyModes, rateLimiter, logOnly, requireAuth, catchOnly, strictStrategy, publicStrategy } from "./hooks";
+
+          const server = fastify();
+          server.route({ method: "GET", url: "/a-early-return", onRequest: earlyReturn, handler: async () => [] });
+          server.route({ method: "GET", url: "/b-braceless", onRequest: braceless, handler: async () => [] });
+          server.route({ method: "GET", url: "/c-nested-optional", onRequest: nestedOptional, handler: async () => [] });
+          server.route({ method: "GET", url: "/d-bracket-header", onRequest: bracketHeader, handler: async () => [] });
+          server.route({ method: "GET", url: "/e-apikey-optional", onRequest: apiKeyOptional, handler: async () => [] });
+          server.route({ method: "GET", url: "/f-else-branch", onRequest: elseBranch, handler: async () => [] });
+          server.route({ method: "GET", url: "/g-guest-only", onRequest: guestOnly, handler: async () => [] });
+          server.route({ method: "GET", url: "/h-optional-opt", onRequest: verifyAuthOpt({ optional: true }), handler: async () => [] });
+          server.route({ method: "GET", url: "/i-anon-mode", onRequest: verifyModes(["anonymous", "jwt"]), handler: async () => [] });
+          server.route({ method: "GET", url: "/j-ratelimit", onRequest: rateLimiter, handler: async () => [] });
+          server.route({ method: "GET", url: "/j-log", onRequest: [logOnly], handler: async () => [] });
+          server.route({ method: "GET", url: "/j-config-ratelimit", config: { rateLimit: { max: 5 } }, handler: async () => [] });
+          server.route({ method: "GET", url: "/k-guard", onRequest: requireAuth(["jwt"]), handler: async () => [] });
+          server.route({ method: "GET", url: "/k-array", onRequest: [logOnly, requireAuth(["jwt"])], handler: async () => [] });
+          server.route({ method: "GET", url: "/l-catch", onRequest: catchOnly, handler: async () => [] });
+          server.route({ method: "GET", url: "/m-or", onRequest: server.auth([strictStrategy, publicStrategy], { relation: "or" }), handler: async () => [] });
+          server.get("/m-or-short", { onRequest: server.auth([strictStrategy, publicStrategy], { relation: "or" }) }, async () => []);
+          server.get("/h-optional-short", { onRequest: verifyAuthOpt({ optional: true }) }, async () => []);
+          server.listen({ port: 3000 });
+          JS
+      }, "src/server.ts")
+      # Optional identity, presence tests, guest-only, opening options and
+      # `relation: "or"` with a public strategy all let an anonymous caller in.
+      %w[/a-early-return /b-braceless /c-nested-optional /d-bracket-header /e-apikey-optional
+        /f-else-branch /g-guest-only /h-optional-opt /h-optional-short /i-anon-mode
+        /j-ratelimit /j-log /j-config-ratelimit /l-catch /m-or /m-or-short].each do |url|
+        tags[url].should be_empty
+      end
+      tags["/k-guard"].should_not be_empty
+      tags["/k-array"].should_not be_empty
+    end
+
+    it "keeps the throw rule out of plugin addHook scans" do
+      tags = tag_routes.call({
+        "src/app.ts" => <<-JS,
+          import Fastify from "fastify";
+
+          const app = Fastify();
+
+          app.register(async (admin) => {
+            admin.addHook("onRequest", async (req) => {
+              if (req.url.startsWith("/admin/") && !req.user) throw new UnauthorizedError("login");
+            });
+            admin.get("/admin/users", async () => []);
+            admin.get("/health", async () => "ok");
+            admin.route({ method: "GET", url: "/public-info", config: { public: true }, handler: async () => "" });
+          });
+
+          app.register(async (api) => {
+            api.addHook("onRequest", async (req) => {
+              if (req.routeOptions.config.public) return;
+              if (!req.user) throw new UnauthorizedError("login");
+            });
+            api.route({ method: "GET", url: "/api/open", config: { public: true }, handler: async () => "" });
+            api.route({ method: "GET", url: "/api/closed", handler: async () => "" });
+            api.get("/api/open-short", { config: { public: true } }, async () => "");
+          });
+
+          app.listen({ port: 3000 });
+          JS
+      }, "src/app.ts")
+      tags.values.all?(&.empty?).should be_true
+      tags = tag_routes.call({
+        "src/app.ts" => <<-JS,
+          import Fastify from "fastify";
+          const app = Fastify();
+          app.addHook("onRequest", async (req) => {
+            const token = req.headers.authorization;
+            if (!token) return;
+            const session = await lookup(token);
+            if (session.revoked) throw new UnauthorizedError("revoked");
+            req.auth = session;
+          });
+          app.get("/public/status", async () => "ok");
+          app.route({ method: "GET", url: "/public/docs", handler: async () => "" });
+          app.listen({ port: 3000 });
+          JS
+      }, "src/app.ts")
+      tags["/public/status"].should be_empty
+      tags["/public/docs"].should be_empty
+    end
+
+    it "anchors the absence test to its own if, not an earlier one" do
+      tags = tag_routes.call({
+        "src/hooks.ts" => <<-JS,
+          export const strict = (req, _res, done) => {
+            if (req.headers.authorization) req.log.debug("token sent");
+            if (!req.user) {
+              throw new UnauthorizedError("login");
+            }
+            done();
+          };
+          JS
+        "src/server.ts" => <<-JS,
+          import fastify from "fastify";
+          import { strict } from "./hooks";
+          const server = fastify();
+          server.route({ method: "GET", url: "/strict", onRequest: strict, handler: async () => [] });
+          JS
+      }, "src/server.ts")
+      tags["/strict"].should eq(["Protected by Fastify onRequest strict"])
+    end
+
+    it "reads a hook with tens of thousands of nested ifs in linear time" do
+      body = String.build do |io|
+        io << "export const big = (req, _res, done) => {\n  if (q) {\n"
+        40_000.times { |i| io << "    if (a" << i << ") b" << i << "(x);\n" }
+        io << "    if (!req.user) { throw new UnauthorizedError('x'); }\n  }\n  done();\n};\n"
+      end
+      started = Time.instant
+      tags = tag_routes.call({
+        "src/hooks.ts"  => body,
+        "src/server.ts" => %(import { big } from "./hooks";\nserver.route({ method: "GET", url: "/big", onRequest: big, handler: async () => [] });\n),
+      }, "src/server.ts")
+      tags["/big"].should be_empty
+      (Time.instant - started).should be < 10.seconds
+    end
+  end
+
   it "returns correct target_techs" do
     JsMiscAuthTagger.target_techs.should contain("js_fastify")
     JsMiscAuthTagger.target_techs.should contain("js_koa")
