@@ -51,10 +51,16 @@ module Noir::EndpointFilter
     sinks : Array(String) = [] of String,
     sources : Array(String) = [] of String,
     signals : Array(String) = [] of String,
-    validators : Array(String) = [] of String do
+    validators : Array(String) = [] of String,
+    # `--exclude-endpoints method:GET` drops GET rows, not the `ANY`
+    # catch-alls that `--method GET` lists because they also serve GET.
+    methods_exact : Bool = false do
     def matches?(endpoint : Endpoint) : Bool
-      return false unless methods.empty? || EndpointFilter.method_listed?(methods, endpoint.method)
-      return false unless (u = url).nil? || EndpointFilter.glob_or_substring?(u, endpoint.url)
+      unless methods.empty?
+        listed = methods_exact ? methods.includes?(endpoint.method.upcase) : EndpointFilter.method_listed?(methods, endpoint.method)
+        return false unless listed
+      end
+      return false unless (u = url).nil? || EndpointFilter.url_matches?(u, endpoint.url)
       return false unless (p = path).nil? || endpoint.details.code_paths.any? { |cp| EndpointFilter.path_glob?(p, cp.path) }
       return false unless projects.empty? || projects.any? { |wanted| EndpointFilter.project_matches?(wanted, endpoint.details.project) }
       return false unless (h = handler).nil? || endpoint.handler.try { |eh| EndpointFilter.glob_or_substring?(h, eh.name) || EndpointFilter.path_glob?(h, eh.path || "") }
@@ -107,6 +113,18 @@ module Noir::EndpointFilter
   def self.glob_or_substring?(pattern : String, value : String) : Bool
     return value.includes?(pattern) unless pattern.matches?(GLOB_CHARS)
     glob_regex(pattern).matches?(value)
+  end
+
+  # A pattern rooted at `/` also matches the path of an absolute HTTP URL,
+  # so `/admin*` finds `/admin` whether or not `-u` put a host in front of
+  # it, in a scan, a live query and a report read with `--from` alike.
+  ABSOLUTE_HTTP_URL = /\A(?:https?|wss?):\/\/[^\/?#]*/i
+
+  def self.url_matches?(pattern : String, url : String) : Bool
+    return true if glob_or_substring?(pattern, url)
+    return false unless pattern.starts_with?('/') && (host = ABSOLUTE_HTTP_URL.match(url))
+    path = url[host[0].size..]
+    glob_or_substring?(pattern, path.empty? ? "/" : path)
   end
 
   # Reported paths carry the scan root (`corpus/app/routes/x.ts`), so a glob
@@ -261,20 +279,15 @@ module Noir::EndpointFilter
 
   # A term that matched nothing (almost always a typo, which must not read
   # as "there was nothing to exclude"), or a filter that left nothing.
-  # `term_key` is set for the former, so a diff scan can warn only about a
-  # term neither side matched.
-  record Warning, message : String, term_key : String? = nil
+  # A diff scan prints a warning only when both sides raised it (same
+  # `term_key`): a diff that removes every CLI command leaves
+  # `protocol:cli` matching only the old side, and that is the point.
+  record Warning, message : String, term_key : String
 
   # Keeps the endpoints matching any `only` term (all of them when there is
   # none), then drops those matching any `exclude` term.
   def self.apply(endpoints : Array(Endpoint), only : Array(Term), exclude : Array(Term)) : {Array(Endpoint), Array(Warning)}
-    keep, warnings = keep_mask(endpoints, only, exclude)
-    {endpoints.zip(keep).select(&.[1]).map(&.[0]), warnings}
-  end
-
-  # `apply` as one flag per endpoint, for a caller that has to filter after
-  # it has put the URLs it matched against back (`NoirRunner`).
-  def self.keep_mask(endpoints : Array(Endpoint), only : Array(Term), exclude : Array(Term)) : {Array(Bool), Array(Warning)}
+    exclude = exclude.map { |term| term.copy_with(filters: term.filters.copy_with(methods_exact: true)) }
     warnings = [] of Warning
     {"--only-endpoints" => only, "--exclude-endpoints" => exclude}.each do |flag, terms|
       terms.each do |term|
@@ -283,26 +296,21 @@ module Noir::EndpointFilter
         warnings << Warning.new("#{flag} #{term.text.inspect} matched no endpoint#{detail.empty? ? "" : " (#{detail.join("; ")})"}", "#{flag} #{term.text}")
       end
     end
-    keep = endpoints.map do |e|
+    kept = endpoints.select do |e|
       (only.empty? || only.any?(&.filters.matches?(e))) && exclude.none?(&.filters.matches?(e))
     end
-    if !endpoints.empty? && keep.none?
-      warnings << Warning.new("--only-endpoints / --exclude-endpoints left none of the #{endpoints.size} endpoints")
+    if !endpoints.empty? && kept.empty?
+      warnings << Warning.new("--only-endpoints / --exclude-endpoints left none of the #{endpoints.size} endpoints", "left-none")
     end
-    {keep, warnings}
+    {kept, warnings}
   end
 
-  # The warnings to print for a scan and, in diff mode, its other side: a
-  # term is only suspect when it matched nothing on either side (a diff that
-  # removes every CLI command leaves `protocol:cli` matching only the old
-  # side, and that is the point of the diff).
+  # The warnings to print for a scan and, in diff mode, its other side:
+  # only those both sides raised.
   def self.merged_warnings(base : Array(Warning), other : Array(Warning)?) : Array(String)
     return base.map(&.message) unless other
-    other_keys = other.compact_map(&.term_key).to_set
-    base.compact_map do |warning|
-      key = warning.term_key
-      warning.message if key.nil? || other_keys.includes?(key)
-    end
+    other_keys = other.map(&.term_key).to_set
+    base.select { |warning| other_keys.includes?(warning.term_key) }.map(&.message)
   end
 
   # The terms an options hash carries under `key` (a YAML list, or a single

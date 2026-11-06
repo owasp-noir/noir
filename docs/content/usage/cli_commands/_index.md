@@ -130,7 +130,8 @@ A `FILTER` uses the [`noir query`](#query) filters, written `key:value`:
 - A comma list is OR (`protocol:cli,ws`), except for the single-pattern keys `url`, `path` and `handler`. Several `key:value` items in one value, separated by spaces, must all match.
 - Repeat a flag to match either value. `--only-endpoints` is applied first, then `--exclude-endpoints`.
 - Patterns follow the query rules: with `*`, `?` or `[` it is a glob over the whole value (`*` crosses `/`), otherwise a substring. So `/admin` also matches `/api/admin/x`, while `/admin*` matches only the routes that start with `/admin`.
-- `url:` matches the route as declared, before `-u` is prepended, so the same filter works with or without `-u`.
+- `url:` matches the URL as reported. A pattern that starts with `/` also matches the path of an absolute `http(s)://` URL, so `/admin*` works with or without `-u`, and on a report read with `noir query --from`.
+- In `--only-endpoints`, `method:GET` also keeps routes declared as `ANY`, as `noir query --method` does. In `--exclude-endpoints` it names the declared method exactly: `method:OPTIONS,HEAD` drops those rows and keeps the `ANY` catch-alls.
 - `tag`, `guard`, `sink`, `source`, `signal` and `validator` are not accepted: the filter runs before the taggers and the AI-context builder fill them in. Use `noir query` on a report for those.
 
 An unknown key, an empty value or the probe-filter shape `CLI:/*` stops the
@@ -139,9 +140,11 @@ A filter that matches no endpoint prints a warning with the values the scan
 actually found. In diff mode (`--diff-path`, `--diff-ref`) both sides are
 filtered the same way.
 
-`--exclude-endpoints tech:python_cli` gives the same report as
-`--exclude-techs python_cli`, but `--exclude-techs` is faster because it
-does not run that analyzer at all.
+`tech:` matches any technology an endpoint lists. When two analyzers find
+the same route (an OpenAPI file and the code behind it), the merged endpoint
+lists both, so `--exclude-endpoints tech:oas3` drops it too.
+`--exclude-techs oas3` instead skips that analyzer, keeps what the others
+found, and is faster.
 
 The config file keys are `only_endpoints` and `exclude_endpoints` (lists).
 
@@ -274,7 +277,7 @@ Filters that accept a comma-separated list match with OR:
 - `--validator <kind,...|any>`: carries a validator of this kind
 
 Single-value pattern filters (`<glob|substr>`):
-- `--url <glob|substr>`: route URL
+- `--url <glob|substr>`: route URL (a pattern starting with `/` also matches the path of a URL joined with `-u`)
 - `--path <glob|substr>`: source file path as reported (a relative glob matches from any `/`)
 - `--handler <glob|substr>`: handler function name, or handler source file path
 

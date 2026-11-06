@@ -169,6 +169,9 @@ module Noir::CLI::Inspect
       warnings.each { |warning| STDERR.puts "noir: #{warning.message}" }
       endpoints
     else
+      # Parsed only to fail a bad term with the usage exit code (2), not
+      # scan's 1, which a query verb uses for "no match"; scan reads them.
+      take_endpoint_filters(scan_argv)
       unknown = unknown_flags(scan_argv)
       unless unknown.empty?
         Noir::CLI.die("unknown flag(s): #{unknown.join(" ")}. Run `noir scan --help` for the scan flags a verb accepts.", EXIT_USAGE)

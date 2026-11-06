@@ -103,6 +103,23 @@ describe Noir::EndpointFilter do
       messages.should contain(%(--exclude-endpoints "/admn*" matched no endpoint))
     end
 
+    it "excludes a method exactly, but lets only-terms keep ANY routes as query does" do
+      endpoints = [ep("GET", "/a"), ep("OPTIONS", "/a"), ep("ANY", "/:controller/:action")]
+      kept, _ = Noir::EndpointFilter.apply(endpoints, [] of Noir::EndpointFilter::Term, terms("method:OPTIONS,HEAD"))
+      urls(kept).should eq(["GET /a", "ANY /:controller/:action"])
+      kept, _ = Noir::EndpointFilter.apply(endpoints, terms("method:GET"), [] of Noir::EndpointFilter::Term)
+      urls(kept).should eq(["GET /a", "ANY /:controller/:action"])
+    end
+
+    it "matches a /-rooted pattern against the path of a -u joined URL, as on a --from report" do
+      endpoints = [ep("GET", "https://t.example/sign"), ep("GET", "https://t.example/other"), ep("CLI", "cli://tool/sign", "cli", "python_cli")]
+      kept, warnings = Noir::EndpointFilter.apply(endpoints, terms("/sign*"), [] of Noir::EndpointFilter::Term)
+      urls(kept).should eq(["GET https://t.example/sign"])
+      warnings.should be_empty
+      Noir::EndpointFilter.url_matches?("/", "https://t.example").should be_true
+      Noir::EndpointFilter.url_matches?("https://t.example/s*", "https://t.example/sign").should be_true
+    end
+
     it "warns when nothing is left" do
       _, warnings = Noir::EndpointFilter.apply(sample, [] of Noir::EndpointFilter::Term, terms("/*", "protocol:cli"))
       warnings.map(&.message).should contain("--only-endpoints / --exclude-endpoints left none of the 7 endpoints")
@@ -118,6 +135,15 @@ describe Noir::EndpointFilter do
       merged = Noir::EndpointFilter.merged_warnings(new_side, old_side)
       merged.size.should eq(1)
       merged.first.should contain(%("/typo"))
+    end
+
+    it "keeps 'left none' in a diff only when both sides were emptied" do
+      none = [] of Noir::EndpointFilter::Term
+      _, new_side = Noir::EndpointFilter.apply([ep("GET", "/a")], terms("protocol:cli"), none)
+      _, old_side = Noir::EndpointFilter.apply([ep("CLI", "cli://t", "cli")], terms("protocol:cli"), none)
+      Noir::EndpointFilter.merged_warnings(new_side, old_side).should be_empty
+      _, old_empty = Noir::EndpointFilter.apply([ep("GET", "/b")], terms("protocol:cli"), none)
+      Noir::EndpointFilter.merged_warnings(new_side, old_empty).size.should eq(2)
     end
   end
 

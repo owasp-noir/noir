@@ -256,7 +256,7 @@ module Noir::CliValidation
     flags = [] of String
     flags << "--probe-match" if has_matchers
     flags << "--probe-skip" if has_filters
-    STDERR.puts "WARNING: #{flags.join(" / ")} set but no delivery target (--probe / --probe-via / --export-es / --export-webhook). These flags only filter what gets delivered, not what's written to stdout.".colorize(:yellow)
+    STDERR.puts "WARNING: #{flags.join(" / ")} set but no delivery target (--probe / --probe-via / --export-es / --export-webhook). These flags only filter what gets delivered, not what's written to stdout; to drop endpoints from the report, use --exclude-endpoints / --only-endpoints.".colorize(:yellow)
   end
 
   private def self.non_empty_array?(value : YAML::Any?) : Bool

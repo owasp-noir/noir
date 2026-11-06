@@ -220,7 +220,8 @@ class NoirRunner
 
     # `--only-endpoints` / `--exclude-endpoints`: before anything probes,
     # tags or reports, so a dropped endpoint is absent from every output
-    # format, `-o`, probe and export alike, and costs no tagger or AI work.
+    # format, `-o`, probe and export alike, and costs no tagger or AI-context
+    # work (the LLM optimizer, when on, has already run on the full list).
     apply_endpoint_filters
 
     # Set status code
@@ -278,20 +279,15 @@ class NoirRunner
     @scan_failures = Noir::SkippedFiles.failures(Noir::SkippedFiles::Phase::Scan)
   end
 
-  # `url:` is matched against the route as written, not the `-u`-joined
-  # URL, so `/admin*` means the same with and without a target.
+  # Matched against the URLs as reported (with `-u` joined), so a filter
+  # gives the same answer on the report later (`noir query --from`).
   private def apply_endpoint_filters
     only = Noir::EndpointFilter.terms(@options["only_endpoints"]?)
     exclude = Noir::EndpointFilter.terms(@options["exclude_endpoints"]?)
     return if only.empty? && exclude.empty?
 
     before = @endpoints.size
-    keep = [] of Bool
-    # Filtered after the block: `with_route_paths` puts the URLs back by index.
-    with_route_paths do
-      keep, @endpoint_filter_warnings = Noir::EndpointFilter.keep_mask(@endpoints, only, exclude)
-    end
-    @endpoints = @endpoints.zip(keep).select(&.[1]).map(&.[0])
+    @endpoints, @endpoint_filter_warnings = Noir::EndpointFilter.apply(@endpoints, only, exclude)
     @logger.info "Endpoint filters kept #{@endpoints.size} of #{before} endpoints."
   end
 

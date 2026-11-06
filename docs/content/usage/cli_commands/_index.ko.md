@@ -129,7 +129,8 @@ noir scan . -u https://t --only-endpoints '/api/*' \
 - 쉼표 목록은 OR입니다(`protocol:cli,ws`). 단일 패턴 키인 `url`, `path`, `handler`는 쉼표로 나누지 않습니다. 한 값 안에 공백으로 나눈 `키:값` 여러 개는 모두 맞아야 합니다.
 - 플래그를 반복하면 그중 하나만 맞아도 됩니다. `--only-endpoints`를 먼저, `--exclude-endpoints`를 나중에 적용합니다.
 - 패턴은 query 규칙을 따릅니다. `*`, `?`, `[`가 있으면 값 전체에 맞추는 glob이고(`*`는 `/`도 넘음), 없으면 부분 문자열입니다. 그래서 `/admin`은 `/api/admin/x`에도 맞고, `/admin*`은 `/admin`으로 시작하는 경로에만 맞습니다.
-- `url:`은 `-u`가 붙기 전의 선언된 경로에 맞추므로 `-u`가 있든 없든 같은 필터가 동작합니다.
+- `url:`은 결과에 나오는 URL에 맞춥니다. `/`로 시작하는 패턴은 절대 `http(s)://` URL의 경로 부분에도 맞으므로, `/admin*`은 `-u`가 있든 없든, `noir query --from`으로 리포트를 읽을 때도 똑같이 동작합니다.
+- `--only-endpoints`에서 `method:GET`은 `noir query --method`처럼 `ANY`로 선언된 라우트도 남깁니다. `--exclude-endpoints`에서는 선언된 메서드와 정확히 같아야 합니다. `method:OPTIONS,HEAD`는 그 행만 빼고 `ANY` catch-all 라우트는 남깁니다.
 - `tag`, `guard`, `sink`, `source`, `signal`, `validator`는 받지 않습니다. 필터가 tagger와 AI context보다 먼저 실행되어 아직 값이 없기 때문입니다. 이 조건은 리포트에 `noir query`를 쓰세요.
 
 모르는 키, 빈 값, probe 필터 형식인 `CLI:/*`는 스캔을 시작하기 전에 힌트와 함께
@@ -137,8 +138,11 @@ noir scan . -u https://t --only-endpoints '/api/*' \
 맞지 않는 필터는 실제로 찾은 값 목록과 함께 경고를 출력합니다. diff 모드
 (`--diff-path`, `--diff-ref`)에서는 양쪽에 똑같이 적용됩니다.
 
-`--exclude-endpoints tech:python_cli`와 `--exclude-techs python_cli`의 결과는
-같지만, `--exclude-techs`는 해당 분석기를 아예 실행하지 않아 더 빠릅니다.
+`tech:`은 엔드포인트에 기록된 기술 중 하나만 맞아도 됩니다. 두 분석기가 같은
+라우트를 찾으면(OpenAPI 파일과 그 뒤의 코드) 합쳐진 엔드포인트에 둘 다
+기록되므로, `--exclude-endpoints tech:oas3`는 그 엔드포인트도 뺍니다.
+`--exclude-techs oas3`는 해당 분석기만 건너뛰어 다른 분석기가 찾은 것은
+남기고, 더 빠릅니다.
 
 설정 파일 키는 `only_endpoints`, `exclude_endpoints`(목록)입니다.
 
@@ -268,7 +272,7 @@ noir query [filters] [paths...] [flags]
 - `--validator <kind,...|any>`: 해당 유형의 검증기 포함
 
 단일 패턴을 받는 필터 (`<glob|substr>`):
-- `--url <glob|substr>`: 라우트 URL
+- `--url <glob|substr>`: 라우트 URL (`/`로 시작하는 패턴은 `-u`가 붙은 URL의 경로 부분에도 맞음)
 - `--path <glob|substr>`: 보고된 소스 파일 경로 (상대 글롭은 임의의 `/` 뒤에서도 매칭)
 - `--handler <glob|substr>`: 핸들러 함수 이름 또는 핸들러 소스 파일 경로
 
