@@ -131,7 +131,8 @@ class HonoAuthTagger < FrameworkTagger
 
   private def check_route_and_nearby(lines : Array(String), line_idx : Int32) : String?
     (statement_start(lines, line_idx)..line_idx).each do |i|
-      if description = middleware_description(lines[i])
+      # Code only: `summary: `x middleware: [authMiddleware]`` names no middleware.
+      if description = middleware_description(code_only(lines[i]))
         return description
       end
     end
@@ -158,7 +159,10 @@ class HonoAuthTagger < FrameworkTagger
   # runs that middleware ahead of the handler `app.openapi(route, ...)`
   # registers. The endpoint is reported on the `createRoute(` line; only
   # the object's own `middleware` key counts, not one nested in `request`.
-  CREATE_ROUTE_CALL     = /\bcreateRoute\s*\(\s*\{/
+  # The span is masked as one text, so a multi-line comment or template
+  # literal that mentions a middleware hides it; the call has to open on
+  # the endpoint's own line, so a route never reads the next one's object.
+  CREATE_ROUTE_CALL     = /\bcreateRoute\s*(?:<[^<>{}()]*>)?\s*\(\s*\{/
   CREATE_ROUTE_MAX_SPAN = 120
   MIDDLEWARE_KEY        = "middleware".chars
 
@@ -166,8 +170,9 @@ class HonoAuthTagger < FrameworkTagger
     return unless lines[line_idx].includes?("createRoute")
 
     last = {line_idx + CREATE_ROUTE_MAX_SPAN, lines.size - 1}.min
-    code = (line_idx..last).join('\n') { |i| code_only(lines[i]) }
+    code = code_only(lines[line_idx..last].join('\n'))
     return unless open = code.match(CREATE_ROUTE_CALL)
+    return if (first_newline = code.index('\n')) && open.begin > first_newline
 
     # Walk the object literal: a `middleware:` key at its top level, and its
     # value up to the next top-level `,` or the closing `}`.

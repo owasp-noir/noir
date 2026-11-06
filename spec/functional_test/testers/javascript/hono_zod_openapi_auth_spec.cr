@@ -28,5 +28,20 @@ describe "Hono zod-openapi createRoute middleware", tags: "functional" do
     guards.call("GET", "/notes").should be_empty
     guards.call("DELETE", "/notes/{id}").should eq(["Protected by Hono bearerAuth middleware"])
     guards.call("POST", "/purge").should eq(["Protected by Hono authMiddleware middleware"])
+
+    # masked.ts: a middleware only a comment, a template literal or a nested
+    # object mentions is no guard; a regex or non-ASCII text before a real one
+    # does not hide it.
+    auth = ["Protected by Hono authMiddleware middleware"]
+    {"/a-blockcomment", "/b-template", "/c-nonauth", "/d-nested"}.each { |url| guards.call("POST", url).should be_empty }
+    {"/g-open", "/i-tpl", "/l-jsdoc"}.each { |url| guards.call("GET", url).should be_empty }
+    {"/f-auth", "/h-auth", "/k-unicode"}.each { |url| guards.call("GET", url).should eq(auth) }
+
+    # generic.ts: `createRoute<"get">({` and a `({` on the next line are read
+    # as their own object, never as the next route's.
+    guards.call("GET", "/pub-generic").should be_empty
+    guards.call("GET", "/pub-newline").should be_empty
+    guards.call("GET", "/priv").should eq(auth)
+    guards.call("GET", "/priv2").should eq(auth)
   end
 end
