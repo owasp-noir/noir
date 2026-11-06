@@ -53,6 +53,11 @@ expected_endpoints = [
   Endpoint.new("/query-method-const", "QUERY"),
   Endpoint.new("/query-string-verb", "QUERY"),
   Endpoint.new("/admin/query-group", "QUERY"),
+  # handlers.go: one handler on `/short` and `/short/:word`
+  Endpoint.new("/short", "GET"),
+  Endpoint.new("/short/:word", "GET", [
+    Param.new("word", "", "path"),
+  ]),
 ]
 
 tester = FunctionalTester.new("fixtures/go/fiber/", {
@@ -66,4 +71,10 @@ it "does not read fiber response headers as request params", tags: "functional" 
   update = tester.endpoints.find! { |endpoint| endpoint.url == "/update" }
   update.params.map(&.name).should_not contain("X-Resp-Only")
   update.params.map(&.name).should_not contain("Vary")
+end
+
+# A path parameter the shared handler reads exists only on the route with its slot.
+it "does not give a route a path parameter it has no slot for", tags: "functional" do
+  short = tester.endpoints.find! { |endpoint| endpoint.url == "/short" }
+  short.params.map(&.name).should_not contain("word")
 end
