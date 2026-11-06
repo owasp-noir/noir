@@ -102,7 +102,7 @@ class HonoAuthTagger < FrameworkTagger
       line_idx = line_num - 1
 
       # Check route definition + small surrounding window for chained middleware
-      description = check_route_and_nearby(lines, line_idx)
+      description = check_route_and_nearby(lines, line_idx) || check_create_route_middleware(lines, line_idx)
       if description
         endpoint.add_tag(Tag.new("auth", "Protected by #{description}", "hono_auth"))
         return
@@ -131,25 +131,78 @@ class HonoAuthTagger < FrameworkTagger
 
   private def check_route_and_nearby(lines : Array(String), line_idx : Int32) : String?
     (statement_start(lines, line_idx)..line_idx).each do |i|
-      current = lines[i]
-
-      HONO_AUTH_MIDDLEWARE.each do |pattern, desc|
-        if current.matches?(pattern)
-          return desc
-        end
-      end
-
-      CUSTOM_AUTH_NAMES.each do |pattern|
-        if current.matches?(pattern)
-          # Try to extract a nice name
-          if m = current.match(/\b([a-zA-Z_]*[Aa]uth[a-zA-Z_]*)\b/)
-            return "Hono #{m[1]} middleware"
-          end
-          return "custom Hono auth middleware"
-        end
+      if description = middleware_description(lines[i])
+        return description
       end
     end
     nil
+  end
+
+  private def middleware_description(text : String) : String?
+    HONO_AUTH_MIDDLEWARE.each do |pattern, desc|
+      return desc if text.matches?(pattern)
+    end
+
+    CUSTOM_AUTH_NAMES.each do |pattern|
+      next unless text.matches?(pattern)
+      # Try to extract a nice name
+      if m = text.match(/\b([a-zA-Z_]*[Aa]uth[a-zA-Z_]*)\b/)
+        return "Hono #{m[1]} middleware"
+      end
+      return "custom Hono auth middleware"
+    end
+    nil
+  end
+
+  # `@hono/zod-openapi`: `createRoute({ ..., middleware: [authMiddleware] })`
+  # runs that middleware ahead of the handler `app.openapi(route, ...)`
+  # registers. The endpoint is reported on the `createRoute(` line; only
+  # the object's own `middleware` key counts, not one nested in `request`.
+  CREATE_ROUTE_CALL     = /\bcreateRoute\s*\(\s*\{/
+  CREATE_ROUTE_MAX_SPAN = 120
+  MIDDLEWARE_KEY        = "middleware".chars
+
+  private def check_create_route_middleware(lines : Array(String), line_idx : Int32) : String?
+    return unless lines[line_idx].includes?("createRoute")
+
+    last = {line_idx + CREATE_ROUTE_MAX_SPAN, lines.size - 1}.min
+    code = (line_idx..last).join('\n') { |i| code_only(lines[i]) }
+    return unless open = code.match(CREATE_ROUTE_CALL)
+
+    # Walk the object literal: a `middleware:` key at its top level, and its
+    # value up to the next top-level `,` or the closing `}`.
+    chars = code.chars
+    depth = 0
+    value_start : Int32? = nil
+    idx = open.end - 1
+    while idx < chars.size
+      char = chars[idx]
+      if char == '{' || char == '(' || char == '['
+        depth += 1
+      elsif char == '}' || char == ')' || char == ']'
+        depth -= 1
+        break if depth == 0
+      elsif depth == 1 && char == ','
+        break if value_start
+      elsif depth == 1 && value_start.nil? && (after = middleware_key_end(chars, idx))
+        value_start = idx = after
+        next
+      end
+      idx += 1
+    end
+    value_start.try { |from| middleware_description(chars[from...idx].join) }
+  end
+
+  # The index after `middleware:` when the key starts at `idx`.
+  private def middleware_key_end(chars : Array(Char), idx : Int32) : Int32?
+    return if idx > 0 && (chars[idx - 1].alphanumeric? || chars[idx - 1] == '_' || chars[idx - 1] == '$')
+    return unless chars[idx, MIDDLEWARE_KEY.size] == MIDDLEWARE_KEY
+
+    after = idx + MIDDLEWARE_KEY.size
+    while after < chars.size && chars[after].whitespace?
+      after += 1
+    end
+    after + 1 if after < chars.size && chars[after] == ':'
   end
 
   private def check_context_user(lines : Array(String), line_idx : Int32) : String?
