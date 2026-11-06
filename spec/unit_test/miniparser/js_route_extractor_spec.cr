@@ -1225,4 +1225,27 @@ describe Noir::JSRouteExtractor do
       end
     end
   end
+
+  describe "string_constants" do
+    it "reads object-literal members as NAME.key" do
+      constants = Noir::JSRouteExtractor.string_constants(%(const prefix = '/x';\nexport const routes = Object.freeze({ prefix, v: `${prefix}/v`, n: { d: '/d' } });\n))
+      constants["routes.prefix"].should eq("/x")
+      constants["routes.v"].should eq("/x/v")
+      constants.has_key?("routes.n").should be_false
+    end
+
+    it "stays linear on many unclosed object literals" do
+      timed = ->(n : Int32) do
+        source = "const a = { x: `${y}`,\n" * n
+        started = Time.instant
+        Noir::JSRouteExtractor.string_constants(source)
+        Time.instant - started
+      end
+      timed.call(500)
+      small = timed.call(2_000)
+      large = timed.call(16_000)
+      # 8x the input: quadratic would be ~64x.
+      (large / small).should be < 24
+    end
+  end
 end

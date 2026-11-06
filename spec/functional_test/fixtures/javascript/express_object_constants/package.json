@@ -1,0 +1,4 @@
+{
+  "name": "express-object-constants",
+  "dependencies": { "express": "^4.18.0" }
+}

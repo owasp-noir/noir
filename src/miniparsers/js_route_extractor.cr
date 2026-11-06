@@ -1331,6 +1331,7 @@ module Noir
     Noir::ExtractionResultCache.register_clearer do
       @@handler_facts_mutex.synchronize { @@handler_facts.clear }
       @@stripped_sources_mutex.synchronize { @@stripped_sources.clear }
+      @@exported_constants_mutex.synchronize { @@exported_constants.clear }
     end
 
     # Comment-stripped definition files: many handlers live in, and hand
@@ -1774,10 +1775,41 @@ module Noir
     # `import { A, B as C } from './x'`, `const { A, B: C } = require('./x')`.
     NAMED_RELATIVE_IMPORT_RE = /\bimport\s*(?:[\w$]+\s*,\s*)?\{([^}]*)\}\s*from\s*['"](\.[^'"]*)['"]|\b(?:const|let|var)\s*\{([^}]*)\}\s*=\s*require\s*\(\s*['"](\.[^'"]*)['"]\s*\)/
 
+    # `const routes = Object.freeze({ prefix, verification: `${prefix}/verification` })`.
+    OBJECT_CONST_RE = /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*(?::\s*[\w.]+\s*)?=\s*(?:Object\.freeze\s*\(\s*)?\{/
+    # One property: `key: 'lit'`, `key: `${a}/b``, or the shorthand `key`.
+    OBJECT_CONST_ENTRY_RE  = /\A\s*([A-Za-z_$][\w$]*)\s*(?::\s*(?:'([^'\n]*)'|"([^"\n]*)"|`([^`]*)`))?\s*\z/
+    MAX_OBJECT_CONST_BYTES = 4096
+
     def self.string_constants(content : String) : Hash(String, String)
       constants = Hash(String, String).new
       content.scan(STRING_CONST_RE) { |m| constants[m[1]] = m[2]? || m[3]? || m[4] }
+      object_string_constants(content, constants) if content.includes?("${") || content.includes?("freeze")
       constants
+    end
+
+    # A small object literal of string constants, as `NAME.key` entries:
+    # `${experienceRoutes.verification}/sso` is a path built from one. A
+    # template value counts only when every placeholder in it resolves.
+    private def self.object_string_constants(content : String, constants : Hash(String, String)) : Nil
+      content.scan(OBJECT_CONST_RE) do |m|
+        open = m.byte_end(0) - 1
+        # Matched within a bounded window: an unclosed `{` would otherwise
+        # walk to the end of the file once per declaration.
+        window = content.byte_slice(open, {MAX_OBJECT_CONST_BYTES + 2, content.bytesize - open}.min)
+        close = JSLiteralScanner.find_matching_brace_at_byte(window, 0) || next
+        body = window.byte_slice(1, close - 1)
+        TopLevelSplit.split(body, ',', TopLevelSplit::Rules::JS_POSITIONAL_ARGS).each do |entry|
+          next if entry.blank?
+          e = entry.match(OBJECT_CONST_ENTRY_RE) || next
+          value = if template = e[4]?
+                    resolve_template(template, constants)
+                  else
+                    e[2]? || e[3]? || constants[e[1]]?
+                  end
+          constants["#{m[1]}.#{e[1]}"] = value if value && !value.includes?("${")
+        end
+      end
     end
 
     # The file's own string constants plus those it imports by name from a
@@ -1788,11 +1820,17 @@ module Noir
         content.scan(NAMED_RELATIVE_IMPORT_RE) do |m|
           names = m[1]? || m[3]
           target = Noir::ImportGraph.resolve_relative_import(file_path, m[2]? || m[4]) || next
-          exported = string_constants(stripped_source(target))
+          exported = exported_string_constants(target)
           names.split(',').each do |item|
             parts = item.strip.split(/\s*:\s*|\s+as\s+/)
-            value = exported[parts.first]? || next
-            constants[parts.last] = value
+            if value = exported[parts.first]?
+              constants[parts.last] = value
+            end
+            # `NAME.key` members of an imported object constant.
+            member = "#{parts.first}."
+            exported.each do |key, member_value|
+              constants["#{parts.last}.#{key.lchop(member)}"] = member_value if key.starts_with?(member)
+            end
           end
         rescue File::Error | IO::Error
         end
@@ -1800,11 +1838,27 @@ module Noir
       constants.merge!(string_constants(content))
     end
 
+    # `string_constants` of an imported module, once per module: a constants
+    # file is imported by hundreds of route files.
+    @@exported_constants = Hash(String, Hash(String, String)).new
+    @@exported_constants_mutex = Mutex.new
+
+    private def self.exported_string_constants(path : String) : Hash(String, String)
+      if hit = @@exported_constants_mutex.synchronize { @@exported_constants[path]? }
+        return hit
+      end
+      constants = string_constants(stripped_source(path))
+      @@exported_constants_mutex.synchronize { ExtractionResultCache.store_capped(@@exported_constants, path, constants, 512) }
+    end
+
     # Substitutes every `${NAME}` that `constants` knows; the rest stay.
     def self.resolve_template(template : String, constants : Hash(String, String)) : String
       return template unless template.includes?("${")
-      template.gsub(/\$\{\s*([A-Za-z_$][\w$]*)\s*\}/) { |whole, m| constants[m[1]]? || whole }
+      template.gsub(TEMPLATE_PLACEHOLDER_RE) { |whole, m| constants[m[1]]? || whole }
     end
+
+    # `${NAME}` or `${NAME.key}`.
+    TEMPLATE_PLACEHOLDER_RE = /\$\{\s*([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)?)\s*\}/
 
     # A template-literal mount path (`` `/${rootPath}` ``) as a rooted path.
     def self.resolve_mount_template(template : String, file_path : String, content : String) : String
