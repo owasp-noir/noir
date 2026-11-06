@@ -43,6 +43,7 @@ class KtorAuthTagger < FrameworkTagger
     super
     @auth_scopes = [] of AuthScope
     @helpers = Hash({String, String}, Symbol).new
+    @error_statuses = Set(String).new
   end
 
   def self.target_techs : Array(String)
@@ -252,38 +253,62 @@ class KtorAuthTagger < FrameworkTagger
   # guard when the helper's definition refuses a missing principal, in one
   # of two exact shapes at the top level of its body:
   #
-  #   principal<User>() ?: throw Unauthorized()          // or respond(401/403)
+  #   principal<User>() ?: throw Unauthorized()
   #   val p = principal<User>()
   #   if (p == null) throw Unauthorized()                // or p?.token != secret
   #
-  # A helper that returns the principal (`: User?`) guards only when the
-  # handler refuses its null result right at the call:
-  # `call.validatePrincipal(db) ?: throw Unauthorized()`. The helper is an
-  # `ApplicationCall.` / `RoutingCall.` extension called as `call.x(...)`,
-  # declared in the handler's own Gradle module. A call under an `if`, in a
-  # string or a comment, a refusal that does not test the principal (a
+  # Only a `throw` stops the handler: a helper that merely responds 401
+  # returns, and the handler runs on. A helper with a `return` ahead of its
+  # refusal (`if (!Config.authEnabled) return`) refuses only under a
+  # setting and is not judged. A helper that returns the principal
+  # (`: User?`) guards only when the handler refuses its null result right
+  # at the call: `call.validatePrincipal(db) ?: throw Unauthorized()` (or
+  # `?: return@get call.respond(HttpStatusCode.Unauthorized)`). The helper
+  # is an `ApplicationCall.` / `RoutingCall.` extension called as
+  # `call.x(...)`, declared in the handler's own Gradle module, at the top
+  # level of the handler with no earlier statement that can answer the
+  # caller first, other than with an error status. A call under an `if`, in
+  # a string or a comment, a refusal that does not test the principal (a
   # feature flag, a rate limit), and a guest-only `!= null` check guard
   # nothing.
+  # ponytail: a helper in a sibling Gradle module the handler's module
+  # depends on (`project(":auth")`) is not read; that misses a guard, never
+  # invents one.
   HELPER_DEFINITION = /\bfun\s+(?:<[^>\n]*>\s*)?(?:ApplicationCall|RoutingCall)\.(\w+)\s*\(/
   PRINCIPAL_READ    = /(?:call\.)?(?:authentication\.)?(?:principal|sessions\.get)\s*<[^<>\n]*>\s*\([^()\n]*\)/
   READ_ONLY         = /\A#{PRINCIPAL_READ.source}\z/
   READ_ELVIS        = /\A(?:(?:val|var)\s+\w+(?:\s*:\s*[^=\n]+)?\s*=\s*)?#{PRINCIPAL_READ.source}\s*\?:(.*)\z/m
   READ_BINDING      = /\A(?:val|var)\s+(\w+)(?:\s*:\s*[^=\n]+)?\s*=\s*#{PRINCIPAL_READ.source}\z/
   # `if (x == null)` or `if (x?.token != secret)`: true when x is missing.
-  ABSENCE_TEST  = /\Aif\s*\(\s*(.+?)\s*(?:==\s*null|\?\.\w+\s*!=\s*(?!null\b)[^()\n]+)\s*\)\s*\{?/m
-  REFUSAL_START = /\A\s*(?:throw\s+\w*(?:Unauthorized|Forbidden)\w*\s*\(|(?:return(?:@\w+)?\s+)?(?:call\.)?respond\s*\(\s*(?:HttpStatusCode\.(?:Unauthorized|Forbidden)\b|40[13]\b))/
-  HANDLER_CALL  = /\A(?:(?:val|var)\s+\w+(?:\s*:\s*[^=\n]+)?\s*=\s*)?call\.(\w+)\s*\(/
-  GRADLE_MODULE = /\A(?:build\.gradle(?:\.kts)?|pom\.xml)\z/
+  ABSENCE_TEST    = /\Aif\s*\(\s*(.+?)\s*(?:==\s*null|\?\.\w+\s*!=\s*(?!null\b)[^()\n]+)\s*\)\s*\{?/m
+  THROW_REFUSAL   = /\A\s*throw\s+\w*(?:Unauthorized|Forbidden)\w*\s*\(/
+  HANDLER_REFUSAL = /\A\s*(?:throw\s+\w*(?:Unauthorized|Forbidden)\w*\s*\(|return(?:@\w+)?\s+(?:call\.)?respond\s*\(\s*(?:HttpStatusCode\.(?:Unauthorized|Forbidden)\b|40[13]\b))/
+  RETURN_RESPOND  = /\breturn(?:@\w+)?\b(\s*(?:call\.)?respond\s*\()?/
+  RESPOND_CALL    = /\brespond(\w*)\s*\(/
+  # Can answer the caller: a `return` or any `respond*(` call.
+  ANSWERS = /\breturn\b|\brespond\w*\s*\(/
+  # A status that is no success: `HttpStatusCode.<not 1xx-3xx>` or 4xx/5xx.
+  ERROR_STATUS          = /HttpStatusCode\s*(?:\(\s*[45]\d\d\b|\.(?!Continue\b|SwitchingProtocols\b|Processing\b|OK\b|Created\b|Accepted\b|NonAuthoritativeInformation\b|NoContent\b|ResetContent\b|PartialContent\b|MultiStatus\b|MultipleChoices\b|MovedPermanently\b|Found\b|SeeOther\b|NotModified\b|UseProxy\b|SwitchProxy\b|TemporaryRedirect\b|PermanentRedirect\b)\w+)/
+  ERROR_STATUS_ARGUMENT = /\A#{ERROR_STATUS.source}/
+  ERROR_STATUS_CONSTANT = /\b(?:const\s+)?val\s+(\w+)\s*(?::\s*HttpStatusCode\s*)?=\s*#{ERROR_STATUS.source}/
+  HANDLER_CALL          = /\A(?:(?:val|var)\s+\w+(?:\s*:\s*[^=\n]+)?\s*=\s*)?call\.(\w+)\s*\(/
+  GRADLE_MODULE         = /\A(?:build\.gradle(?:\.kts)?|pom\.xml)\z/
 
   private def pre_scan_credential_helpers
     @helpers.clear
+    @error_statuses.clear
     collect_files_by_extension(".kt").each do |file|
       content = read_file(file)
       next if content.nil?
-      next unless content.includes?("principal") || content.includes?("sessions.get")
+      reads = content.includes?("principal") || content.includes?("sessions.get")
+      statuses = content.includes?("HttpStatusCode")
+      next unless reads || statuses
+
+      masked = Noir::KotlinSourceMask.visible(content)
+      masked.scan(ERROR_STATUS_CONSTANT) { |match| @error_statuses << match[1] } if statuses
+      next unless reads
 
       module_root = gradle_module(file)
-      masked = Noir::KotlinSourceMask.visible(content)
       masked.scan(HELPER_DEFINITION) do |match|
         next unless definition = helper_definition(masked, match.end)
         return_type, body = definition
@@ -304,12 +329,14 @@ class KtorAuthTagger < FrameworkTagger
     bound = Set(String).new
     top_level_statements(body).each do |statement|
       if elvis = statement.match(READ_ELVIS)
-        return true if elvis[1].matches?(REFUSAL_START)
+        return true if elvis[1].matches?(THROW_REFUSAL)
       elsif binding = statement.match(READ_BINDING)
         bound << binding[1]
       elsif (test = statement.match(ABSENCE_TEST)) && (bound.includes?(test[1]) || test[1].matches?(READ_ONLY))
-        return true if statement[test.end..].matches?(REFUSAL_START)
+        return true if statement[test.end..].matches?(THROW_REFUSAL)
       end
+      # Anything able to leave first makes the refusal conditional.
+      return false if statement.matches?(/\breturn\b/)
     end
     false
   end
@@ -387,18 +414,40 @@ class KtorAuthTagger < FrameworkTagger
     body = (close = matching_close(masked, open)) ? masked[(open + 1)...close] : masked[(open + 1)..]
     module_root = gradle_module(file)
     top_level_statements(body).each do |statement|
-      next unless call = statement.match(HANDLER_CALL)
-      case @helpers[{module_root, call[1]}]?
-      when :refuses
-        return "Ktor #{call[1]}() check"
-      when :principal
-        next unless args_close = matching_close(statement, call.end - 1)
-        if (elvis = statement[(args_close + 1)..].match(/\A\s*\?:(.*)\z/m)) && elvis[1].matches?(REFUSAL_START)
+      if call = statement.match(HANDLER_CALL)
+        case @helpers[{module_root, call[1]}]?
+        when :refuses
           return "Ktor #{call[1]}() check"
+        when :principal
+          if (args_close = matching_close(statement, call.end - 1)) &&
+             (elvis = statement[(args_close + 1)..].match(/\A\s*\?:(.*)\z/m)) && elvis[1].matches?(HANDLER_REFUSAL)
+            return "Ktor #{call[1]}() check"
+          end
         end
       end
+      # A statement that can answer the caller before the guard, other than
+      # with an error status, leaves the guard behind it.
+      return if answers_before_guard?(statement)
     end
     nil
+  end
+
+  # True when `statement` can return or respond with something other than
+  # an error status: `return@get call.respondText("preview")`, a bare
+  # `return@get`, `call.respond(data)`. `return@post call.respond(FORBIDDEN)`
+  # with a project `val FORBIDDEN = HttpStatusCode(403, ...)` cannot.
+  private def answers_before_guard?(statement : String) : Bool
+    return false unless statement.matches?(ANSWERS)
+    statement.scan(RETURN_RESPOND) do |found|
+      return true unless found[1]?
+    end
+    statement.scan(RESPOND_CALL) do |found|
+      return true unless found[1].empty?
+      return true unless (open = found.end - 1) && (close = matching_close(statement, open))
+      argument = statement[(open + 1)...close].strip
+      return true unless argument.matches?(ERROR_STATUS_ARGUMENT) || @error_statuses.includes?(argument)
+    end
+    false
   end
 
   # `sessions.get` guards only when a missing session refuses or redirects.
