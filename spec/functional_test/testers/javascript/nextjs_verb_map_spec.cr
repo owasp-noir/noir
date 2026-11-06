@@ -3,7 +3,7 @@ require "../../func_spec.cr"
 # A default export wrapping a verb-keyed object serves only those verbs
 # (the wrapper answers 405 for the rest). A spread, or an options object
 # with no verb key, keeps the all-methods fallback. `e2e/site/` is a
-# harness app; `app/api/e2e/` below the router directory is a real URL.
+# harness app; a `helper(Verb.GET, req, res)` call pins the method; `app/api/e2e/` below the router directory is a real URL.
 expected_endpoints = [
   Endpoint.new("/api/comments", "GET"),
   Endpoint.new("/api/comments", "POST"),
@@ -21,6 +21,10 @@ expected_endpoints = [
   Endpoint.new("/api/auth", "DELETE"),
   Endpoint.new("/api/auth", "PATCH"),
   Endpoint.new("/api/e2e", "GET"),
+  Endpoint.new("/api/pinned", "GET"),
+  Endpoint.new("/api/pinned_multi", "GET"),
+  Endpoint.new("/api/pinned_multi", "POST"),
+  Endpoint.new("/api/pinned_multi", "PUT"),
 ]
 
 FunctionalTester.new("fixtures/javascript/nextjs_verb_map/", {

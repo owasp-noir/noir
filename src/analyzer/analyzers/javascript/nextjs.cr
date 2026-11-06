@@ -38,6 +38,9 @@ module Analyzer::Javascript
     METHOD_SWITCH_BARE       = /switch\s*\(\s*(?:(?:req|request)\.)?method\s*\)/
     METHOD_INCLUDES          = /\[\s*([^\]]+)\]\s*\.includes\s*\(\s*(?:req|request)\.method/
     METHOD_INCLUDES_BARE     = /\[\s*([^\]]+)\]\s*\.includes\s*\(\s*(?:(?:req|request)\.)?method\b/
+    # `helper<T>(HttpMethod.GET, req, res, ...)`: a method-pinned helper that
+    # answers 405 for any other verb (hedgedoc's mock API).
+    METHOD_PINNED_CALL = /\b\w+(?:<[^()]*>)?\(\s*(?:\w+\.)?['"]?(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)['"]?\s*,\s*(?:req|request)\s*,\s*(?:res|response)\b/
     # `if (<cond>)` followed by its consequent: an immediate `throw`, the
     # block up to its first brace (captured in a lookahead, so a guard
     # nested in that block is still scanned), or a `return` statement.
@@ -540,6 +543,10 @@ module Analyzer::Javascript
             end
           end
         end
+      end
+
+      Noir::JSRouteExtractor.strip_js_comments(content).scan(METHOD_PINNED_CALL) do |m|
+        inferred << m[1] unless inferred.includes?(m[1])
       end
 
       infer_switch_method_cases(content, bare).each do |method|
