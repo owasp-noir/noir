@@ -579,6 +579,20 @@ describe Noir::ImportGraph::Python do
         result["Order"].should eq({File.join(root, "models", "__init__.py"), "Order"})
       end
     end
+
+    it "binds `import a.b as c` to its alias" do
+      with_tmpdir do |root|
+        Dir.mkdir_p(File.join(root, "pkg"))
+        File.write(File.join(root, "pkg", "__init__.py"), "")
+        File.write(File.join(root, "pkg", "tags.py"), "")
+        from_file = File.join(root, "app.py")
+
+        result = Noir::ImportGraph::Python.find_imported_symbols(root, from_file, "import pkg.tags as tags\nimport pkg\nimporter = 1\n")
+        result["tags"].should eq({File.join(root, "pkg", "tags.py"), ""})
+        result["pkg"].should eq({File.join(root, "pkg", "__init__.py"), ""})
+        result.size.should eq(2)
+      end
+    end
   end
 
   describe "#find_imported_package" do
