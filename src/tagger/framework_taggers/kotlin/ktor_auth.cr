@@ -42,8 +42,7 @@ class KtorAuthTagger < FrameworkTagger
   def initialize(options : Hash(String, YAML::Any))
     super
     @auth_scopes = [] of AuthScope
-    @refusing_helpers = Set(String).new
-    @principal_helpers = Set(String).new
+    @helpers = Hash({String, String}, Symbol).new
   end
 
   def self.target_techs : Array(String)
@@ -154,7 +153,7 @@ class KtorAuthTagger < FrameworkTagger
       end
 
       # Check route handler body for principal/session access
-      description = check_route_auth(lines, line_idx)
+      description = check_route_auth(lines, line_idx, path_info.path)
       if description
         endpoint.add_tag(Tag.new("auth", "Protected by #{description}", "ktor_auth"))
         return
@@ -213,7 +212,7 @@ class KtorAuthTagger < FrameworkTagger
   # straight into the next route's body: a public route inherited its
   # neighbour's `call.principal<…>()`. Seed the depth from the route line
   # instead, and scan that line too so a one-line handler is read at all.
-  private def check_route_auth(lines : Array(String), route_line : Int32) : String?
+  private def check_route_auth(lines : Array(String), route_line : Int32, file : String) : String?
     idx = route_line
     end_idx = [route_line + 15, lines.size - 1].min
     brace_depth = 0
@@ -246,88 +245,157 @@ class KtorAuthTagger < FrameworkTagger
 
     text = Noir::CComments.strip(handler.join("\n"))
     return "Ktor session check" if saw_session && session_missing_refuses?(text)
-    credential_helper_guard(text)
+    credential_helper_guard(handler.join("\n"), file)
   end
 
-  # A project helper the handler calls (`call.checkAdminKey(secret)`) whose
-  # definition reads the caller's principal or session and refuses with a
-  # 401/403 is the handler's guard; so is a helper that only returns the
-  # principal (`call.validatePrincipal(db)`) when the handler refuses its
-  # null result (`?: throw Unauthorized()`). The definition is read, not
-  # the name.
-  # ponytail: helpers are matched by name across the scan's .kt files, and
-  # only a block or one-line `= expr` body is read.
-  HELPER_DEFINITION = /\bfun\s+(?:<[^>\n]*>\s*)?(?:[\w.]+(?:<[^>\n]*>)?\??\.)?(\w+)\s*\(/
-  # A helper refuses with a 401/403. A redirect is no refusal here: a
-  # `redirectIfSignedIn()` sends signed-in callers away from a public page.
-  HELPER_REFUSAL = /HttpStatusCode\.(?:Unauthorized|Forbidden)|\brespond\s*\(\s*40[13]\b|\bthrow\s+[^\n]*(?:Unauthorized|Forbidden)/
-  # `if (principal<User>() != null) throw Forbidden()` turns signed-in callers
-  # away (a guest-only page); it guards nothing.
-  CREDENTIAL_PRESENT = /\bif\s*\(\s*(?:call\.)?(?:principal\s*<[^>\n]*>\s*\(\s*\)|sessions\.get\s*<[^>\n]*>\s*\(\s*\))\s*!=\s*null/
-  HELPER_ELVIS       = /\A[^\n]*?\)\s*\?:([^\n]*)/
-  CREDENTIAL_READ    = /\bprincipal\s*<|\.principal\s*\(|\bauthentication\s*\.\s*principal\b|\bsessions\.get\s*</
+  # A project helper the handler calls as a statement of its own is its
+  # guard when the helper's definition refuses a missing principal, in one
+  # of two exact shapes at the top level of its body:
+  #
+  #   principal<User>() ?: throw Unauthorized()          // or respond(401/403)
+  #   val p = principal<User>()
+  #   if (p == null) throw Unauthorized()                // or p?.token != secret
+  #
+  # A helper that returns the principal (`: User?`) guards only when the
+  # handler refuses its null result right at the call:
+  # `call.validatePrincipal(db) ?: throw Unauthorized()`. The helper is an
+  # `ApplicationCall.` / `RoutingCall.` extension called as `call.x(...)`,
+  # declared in the handler's own Gradle module. A call under an `if`, in a
+  # string or a comment, a refusal that does not test the principal (a
+  # feature flag, a rate limit), and a guest-only `!= null` check guard
+  # nothing.
+  HELPER_DEFINITION = /\bfun\s+(?:<[^>\n]*>\s*)?(?:ApplicationCall|RoutingCall)\.(\w+)\s*\(/
+  PRINCIPAL_READ    = /(?:call\.)?(?:authentication\.)?(?:principal|sessions\.get)\s*<[^<>\n]*>\s*\([^()\n]*\)/
+  READ_ONLY         = /\A#{PRINCIPAL_READ.source}\z/
+  READ_ELVIS        = /\A(?:(?:val|var)\s+\w+(?:\s*:\s*[^=\n]+)?\s*=\s*)?#{PRINCIPAL_READ.source}\s*\?:(.*)\z/m
+  READ_BINDING      = /\A(?:val|var)\s+(\w+)(?:\s*:\s*[^=\n]+)?\s*=\s*#{PRINCIPAL_READ.source}\z/
+  # `if (x == null)` or `if (x?.token != secret)`: true when x is missing.
+  ABSENCE_TEST  = /\Aif\s*\(\s*(.+?)\s*(?:==\s*null|\?\.\w+\s*!=\s*(?!null\b)[^()\n]+)\s*\)\s*\{?/m
+  REFUSAL_START = /\A\s*(?:throw\s+\w*(?:Unauthorized|Forbidden)\w*\s*\(|(?:return(?:@\w+)?\s+)?(?:call\.)?respond\s*\(\s*(?:HttpStatusCode\.(?:Unauthorized|Forbidden)\b|40[13]\b))/
+  HANDLER_CALL  = /\A(?:(?:val|var)\s+\w+(?:\s*:\s*[^=\n]+)?\s*=\s*)?call\.(\w+)\s*\(/
+  GRADLE_MODULE = /\A(?:build\.gradle(?:\.kts)?|pom\.xml)\z/
 
   private def pre_scan_credential_helpers
-    @refusing_helpers.clear
-    @principal_helpers.clear
+    @helpers.clear
     collect_files_by_extension(".kt").each do |file|
       content = read_file(file)
       next if content.nil?
       next unless content.includes?("principal") || content.includes?("sessions.get")
 
+      module_root = gradle_module(file)
       masked = Noir::KotlinSourceMask.visible(content)
       masked.scan(HELPER_DEFINITION) do |match|
-        next unless body = helper_body(masked, match.end)
-        next unless body.matches?(CREDENTIAL_READ)
-        if body.matches?(HELPER_REFUSAL) && !body.matches?(CREDENTIAL_PRESENT)
-          @refusing_helpers << match[1]
-        else
-          @principal_helpers << match[1]
+        next unless definition = helper_definition(masked, match.end)
+        return_type, body = definition
+        if refuses_missing_principal?(body)
+          @helpers[{module_root, match[1]}] = :refuses
+        elsif return_type.rstrip.ends_with?('?') && body.matches?(PRINCIPAL_READ)
+          @helpers[{module_root, match[1]}] ||= :principal
         end
       end
     end
-    @principal_helpers.concat(@refusing_helpers)
   end
 
-  # The body of the function whose parameter list opens just before `from`.
-  private def helper_body(text : String, from : Int32) : String?
-    depth = 1
-    idx = from
-    while idx < text.size && depth > 0
-      char = text[idx]
-      depth += 1 if char == '('
-      depth -= 1 if char == ')'
-      idx += 1
+  private def gradle_module(path : String) : String
+    nearest_project_root(path, GRADLE_MODULE) || ""
+  end
+
+  private def refuses_missing_principal?(body : String) : Bool
+    bound = Set(String).new
+    top_level_statements(body).each do |statement|
+      if elvis = statement.match(READ_ELVIS)
+        return true if elvis[1].matches?(REFUSAL_START)
+      elsif binding = statement.match(READ_BINDING)
+        bound << binding[1]
+      elsif (test = statement.match(ABSENCE_TEST)) && (bound.includes?(test[1]) || test[1].matches?(READ_ONLY))
+        return true if statement[test.end..].matches?(REFUSAL_START)
+      end
     end
+    false
+  end
+
+  # The return type text and the body of the function whose parameter list
+  # opens just before `from`; a one-line `= expr` body is that expression.
+  private def helper_definition(text : String, from : Int32) : {String, String}?
+    return unless close = matching_close(text, from - 1)
+    idx = close + 1
     while idx < text.size && !{'{', '=', '\n'}.includes?(text[idx])
       idx += 1
     end
     return if idx >= text.size || text[idx] == '\n'
-    return text[(idx + 1)...(text.index('\n', idx) || text.size)] if text[idx] == '='
+    return_type = text[(close + 1)...idx]
+    return {return_type, text[(idx + 1)...(text.index('\n', idx) || text.size)]} if text[idx] == '='
+    return unless body_close = matching_close(text, idx)
+    {return_type, text[(idx + 1)...body_close]}
+  end
 
-    start = idx + 1
+  # Index of the bracket closing the one at `open`, or nil.
+  private def matching_close(text : String, open : Int32) : Int32?
     depth = 0
+    idx = open
     while idx < text.size
-      char = text[idx]
-      if char == '{'
-        depth += 1
-      elsif char == '}'
+      case text[idx]
+      when '(', '{', '[' then depth += 1
+      when ')', '}', ']'
         depth -= 1
-        return text[start...idx] if depth == 0
+        return idx if depth == 0
       end
       idx += 1
     end
     nil
   end
 
-  private def credential_helper_guard(text : String) : String?
-    text.scan(/(?<![\w.])(?:call\.)?(\w+)\s*\(/) do |match|
-      name = match[1]
-      return "Ktor #{name}() check" if @refusing_helpers.includes?(name)
-      next unless @principal_helpers.includes?(name)
-      # The elvis may open the next line: `call.validatePrincipal(db)\n ?: return@get ...`.
-      if (elvis = text[match.end..].match(HELPER_ELVIS)) && session_refusal?(elvis[1])
-        return "Ktor #{name}() check"
+  # Statements at the top level of `text` (a body without its braces), split
+  # on newlines and `;`; a line opening with `?:` or `.` continues the one
+  # before it.
+  private def top_level_statements(text : String) : Array(String)
+    pieces = [] of String
+    current = String::Builder.new
+    depth = 0
+    text.each_char do |char|
+      case char
+      when '(', '{', '[' then depth += 1
+      when ')', '}', ']' then depth -= 1
+      end
+      if depth <= 0 && (char == '\n' || char == ';')
+        pieces << current.to_s
+        current = String::Builder.new
+      else
+        current << char
+      end
+    end
+    pieces << current.to_s
+
+    statements = [] of String
+    pieces.each do |piece|
+      stripped = piece.strip
+      next if stripped.empty?
+      if !statements.empty? && (stripped.starts_with?("?:") || stripped.starts_with?('.'))
+        statements[-1] = "#{statements[-1]} #{stripped}"
+      else
+        statements << stripped
+      end
+    end
+    statements
+  end
+
+  private def credential_helper_guard(handler : String, file : String) : String?
+    return if @helpers.empty?
+
+    masked = Noir::KotlinSourceMask.visible(handler)
+    return unless open = masked.index('{')
+    body = (close = matching_close(masked, open)) ? masked[(open + 1)...close] : masked[(open + 1)..]
+    module_root = gradle_module(file)
+    top_level_statements(body).each do |statement|
+      next unless call = statement.match(HANDLER_CALL)
+      case @helpers[{module_root, call[1]}]?
+      when :refuses
+        return "Ktor #{call[1]}() check"
+      when :principal
+        next unless args_close = matching_close(statement, call.end - 1)
+        if (elvis = statement[(args_close + 1)..].match(/\A\s*\?:(.*)\z/m)) && elvis[1].matches?(REFUSAL_START)
+          return "Ktor #{call[1]}() check"
+        end
       end
     end
     nil
