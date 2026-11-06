@@ -21,7 +21,8 @@ class SpringAuthTagger < FrameworkTagger
     file_path : String,
     line : Int32,
     is_auth_guard : Bool,
-    module_dir : String?
+    module_dir : String?,
+    open_paths : Array(String) = [] of String
 
   record RegisteredInterceptor,
     interceptor_name : String,
@@ -358,26 +359,136 @@ class SpringAuthTagger < FrameworkTagger
       line_start = clean_content.lines(chomp: false)[0, idx].sum(&.bytesize)
       next unless open = clean_content.byte_index('{', line_start)
       close = Noir::JSLiteralScanner.find_matching_brace_at_byte(clean_content, open) || clean_content.bytesize - 1
-      is_auth = check_pre_handle_auth(clean_content.byte_slice(open, close - open + 1))
+      is_auth, open_paths = check_pre_handle_auth(clean_content.byte_slice(open, close - open + 1), clean_content, file)
       @interceptor_defs[class_name] = InterceptorDef.new(
         name: class_name,
         file_path: file,
         line: idx + 1,
         is_auth_guard: is_auth,
-        module_dir: module_dir
+        module_dir: module_dir,
+        open_paths: open_paths
       )
     end
   end
 
-  private def check_pre_handle_auth(content : String) : Bool
+  # A status handed to a response helper: `responseTransform(response, 401, "..")`.
+  REFUSAL_STATUS_ARG = /\A(?:40[13]|(?:HttpServletResponse\.)?SC_(?:UNAUTHORIZED|FORBIDDEN)|(?:HttpStatus\.)?(?:UNAUTHORIZED|FORBIDDEN)(?:\.value\(\))?)\z/
+  # `if (cond) { return true; }`, `if (cond) return super.preHandle(..);`: a pass-through.
+  EARLY_PASS  = /\bif\s*\(/
+  PASS_RETURN = /\breturn\s+(?:true\b|(?:HandlerInterceptor\s*\.\s*)?super\s*\.\s*preHandle\b)/
+  # `[Owner.]LIST.contains(request.getRequestURI())` / `Helper.isOpen(request.getRequestURI())`.
+  URI_LIST_TEST   = /\A(?:([A-Z][\w$]*)\s*\.\s*)?([A-Za-z_$][\w$]*)\s*\.\s*contains\s*\(\s*[a-z_$][\w$]*\s*\.\s*getRequestURI\s*\(\s*\)\s*\)\z/
+  URI_HELPER_TEST = /\A([A-Z][\w$]*)\s*\.\s*([a-z_$][\w$]*)\s*\(\s*[a-z_$][\w$]*\s*\.\s*getRequestURI\s*\(\s*\)\s*\)\z/
+  # What a literal list initializer may hold besides its string literals.
+  LIST_INIT_WORDS = Set{"new", "ArrayList", "HashSet", "LinkedHashSet", "LinkedList", "List", "Set", "String", "Arrays", "asList", "of", "add", "Collections", "unmodifiableList", "unmodifiableSet", "ImmutableList", "ImmutableSet", "listOf", "setOf", "mutableListOf", "hashSetOf"}
+
+  # Whether `preHandle` refuses (a 401/403 status or auth exception, in its
+  # body or handed to a helper of the class that sets it), and the exact
+  # request URIs an allow-list it checks first lets through. A helper-only
+  # refusal is read in that shape alone: any other pass-through before it
+  # leaves the interceptor unread.
+  private def check_pre_handle_auth(content : String, source : String, file : String) : {Bool, Array(String)}
+    open_paths = [] of String
     pre_handle_match = content.match(/(?:\bboolean\s+preHandle\b|(?:override\s+)?fun\s+preHandle\b)[^{]*\{/m)
-    return false unless pre_handle_match
+    return {false, open_paths} unless pre_handle_match
 
     open_brace_idx = pre_handle_match.byte_end(0) - 1
     close_brace_idx = Noir::JSLiteralScanner.find_matching_brace_at_byte(content, open_brace_idx)
     body = close_brace_idx ? content.byte_slice(open_brace_idx + 1, close_brace_idx - open_brace_idx - 1) : content.byte_slice(open_brace_idx + 1, [content.bytesize - open_brace_idx - 1, 1500].min)
 
-    body.matches?(INTERCEPTOR_REJECTION_RE)
+    direct = body.match(INTERCEPTOR_REJECTION_RE).try(&.byte_begin(0))
+    refusal = [direct, helper_refusal(content, body)].compact.min?
+    return {false, open_paths} unless refusal
+
+    before = body.byte_slice(0, refusal)
+    covered = [] of Range(Int32, Int32)
+    before.scan(EARLY_PASS) do |found|
+      next unless inner = paren_inner(before, found.byte_end(0) - 1)
+      cond, after = inner
+      start = after
+      while start < before.bytesize && before.byte_at(start).unsafe_chr.whitespace?
+        start += 1
+      end
+      stop = if before.byte_at?(start) == '{'.ord
+               Noir::JSLiteralScanner.find_matching_brace_at_byte(before, start) || before.bytesize - 1
+             else
+               before.byte_index(';', start) || before.bytesize - 1
+             end
+      next unless before.byte_slice(start, stop - start + 1).matches?(PASS_RETURN)
+      cond = strip_parens(cond.strip)
+      if cond.includes?("\"OPTIONS\"") || cond.matches?(/\A!\s*\(\s*\w+\s+instanceof\s+HandlerMethod\s*\)\z/)
+        covered << (start..stop)
+      elsif paths = allow_list(cond, source, file)
+        open_paths.concat(paths)
+        covered << (start..stop)
+      end
+    end
+    # Every pass-through before the refusal must be one of those branches.
+    readable = true
+    before.scan(PASS_RETURN) do |found|
+      readable = false unless covered.any?(&.includes?(found.byte_begin(0)))
+    end
+    {direct ? true : readable, open_paths}
+  end
+
+  # Byte offset of the first call in `body` to a method of the class that
+  # sets the response status from one of its parameters, handed a 401/403.
+  private def helper_refusal(content : String, body : String) : Int32?
+    found = nil
+    content.scan(/(?:\bfun|\b[\w$<>\[\]]+)\s+([a-z_$][\w$]*)\s*\(([^()]*)\)[^;{=]*\{/) do |decl|
+      next if NON_METHOD_WORDS.includes?(decl[1])
+      params = decl[2].split(',').map { |param| param.strip.match(/([a-z_$][\w$]*)\s*(?::.*)?\z/).try(&.[1]) || "" }
+      next unless close = Noir::JSLiteralScanner.find_matching_brace_at_byte(content, decl.byte_end(0) - 1)
+      helper = content.byte_slice(decl.byte_end(0), close - decl.byte_end(0))
+      next unless status = helper.match(/\b(?:setStatus|sendError)\s*\(\s*([a-z_$][\w$]*)\s*[,)]/)
+      next unless index = params.index(status[1])
+      body.scan(/(?<![\w$.])#{Regex.escape(decl[1])}\s*\(/) do |call|
+        next unless args = paren_inner(body, call.byte_end(0) - 1)
+        arg = Noir::TopLevelSplit.split(args[0], ',', Noir::TopLevelSplit::Rules.new)[index]?
+        next unless arg && arg.strip.matches?(REFUSAL_STATUS_ARG)
+        found = [found, call.byte_begin(0)].compact.min
+      end
+    end
+    found
+  end
+
+  # The literal URIs of `LIST.contains(request.getRequestURI())`, the list a
+  # field of literals of this class or of `Owner`, or of a static helper
+  # whose body is that test on its parameter. Nil when not that shape.
+  private def allow_list(cond : String, source : String, file : String, depth = 0) : Array(String)?
+    if test = cond.match(URI_LIST_TEST)
+      owner_source = source
+      if owner = test[1]?
+        return unless (owner_file = type_file(owner, source, file)) && (owner_content = read_file(owner_file))
+        owner_source = Noir::CComments.strip(owner_content)
+      end
+      return literal_list(owner_source, test[2])
+    end
+    return unless depth == 0 && (call = cond.match(URI_HELPER_TEST))
+    return unless (helper_file = type_file(call[1], source, file)) && (helper_content = read_file(helper_file))
+    helper_source = Noir::CComments.strip(helper_content)
+    return unless decl = helper_source.match(/\bstatic\s+boolean\s+#{Regex.escape(call[2])}\s*\(\s*(?:final\s+)?String\s+([a-z_$][\w$]*)\s*\)\s*\{\s*return\s+((?:[A-Z][\w$]*\s*\.\s*)?[A-Za-z_$][\w$]*)\s*\.\s*contains\s*\(\s*\1\s*\)\s*;\s*\}/)
+    allow_list("#{decl[2]}.contains(request.getRequestURI())", helper_source, helper_file, depth + 1)
+  end
+
+  # The string literals a field is initialized with, when that is all it holds.
+  private def literal_list(source : String, field : String) : Array(String)?
+    return unless found = source.match(/\b#{Regex.escape(field)}\s*=(?!=)/)
+    pos = found.byte_end(0)
+    depth = 0
+    stop = pos
+    while stop < source.bytesize
+      byte = source.byte_at(stop)
+      depth += 1 if byte.in?('('.ord, '{'.ord, '['.ord)
+      depth -= 1 if byte.in?(')'.ord, '}'.ord, ']'.ord)
+      break if byte == ';'.ord && depth == 0
+      stop += 1
+    end
+    init = source.byte_slice(pos, stop - pos)
+    literals = init.scan(/"((?:[^"\\]|\\.)*)"/).map(&.[1])
+    rest = init.gsub(/"(?:[^"\\]|\\.)*"/, " ")
+    return if literals.empty? || rest.scan(/[A-Za-z_$][\w$]*/).any? { |word| !LIST_INIT_WORDS.includes?(word[0]) } || rest.matches?(/[^\w$\s<>(){}\[\].,;]/)
+    literals
   end
 
   private def scan_interceptor_registration(content : String, file : String, module_dir : String?)
@@ -2269,6 +2380,7 @@ class SpringAuthTagger < FrameworkTagger
 
       matches_exclude = reg.exclude_patterns.any? { |pattern| matches_ant_pattern?(url, pattern) }
       next if matches_exclude
+      next if interceptor.open_paths.includes?(url)
 
       return {"Protected by Spring HandlerInterceptor #{interceptor.name}", reg.file_path, reg.line}
     end
