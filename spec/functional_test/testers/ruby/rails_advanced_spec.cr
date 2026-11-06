@@ -300,6 +300,8 @@ total_endpoints = 1 +  # root
                   7 +  # optional-segment routes /feed + /report(/:section)/rss + /archive(/:year)(/:month) + optional scope
                   2 +  # %w[browse annotate].each unrolled to /repo/:id/browse + /annotate
                   21 + # devise_for :users (default table, model not in scan)
+                  8 +  # devise_for :operators (model in app/models/accounts/: sessions + passwords only)
+                  21 + # devise_for :managers (only a namespaced Admin::Manager in the scan: default table)
                   3 +  # devise_for :admins, only: [:sessions]
                   3 +  # devise_for :members, only: [:sessions, :registrations], skip: [:registrations]
                   1 +  # devise_scope :user do get 'login', ... end
@@ -353,4 +355,17 @@ end
 it "names Rack-spelled headers and drops the HTTP_VERSION server variable", tags: "functional" do
   download = tester.app.endpoints.find! { |e| e.url == "/api/0.6/changeset/:changeset_id/download" }
   download.params.select(&.param_type.==("header")).map(&.name).sort!.should eq(["Accept", "Accept-Language", "Content-Type"])
+end
+
+it "reads the devise line of a model kept in an app/models subfolder", tags: "functional" do
+  urls = tester.app.endpoints.map(&.url).select(&.starts_with?("/operators"))
+  urls.should_not be_empty
+  urls.any?(&.includes?("/unlock")).should be_false
+  urls.any?(&.includes?("/confirmation")).should be_false
+  urls.any?(&.includes?("/sign_up")).should be_false
+end
+
+it "does not take a namespaced model for the top-level devise scope", tags: "functional" do
+  urls = tester.app.endpoints.map(&.url)
+  urls.should contain("/managers/unlock")
 end
