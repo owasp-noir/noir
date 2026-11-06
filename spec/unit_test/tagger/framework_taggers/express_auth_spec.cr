@@ -612,6 +612,149 @@ describe "ExpressAuthTagger" do
     FileUtils.rm_rf(tmpdir)
   end
 
+  it "counts an HTTP-error factory 403/401 only where a missing caller is refused" do
+    tmpdir = File.tempname("express_error_factory")
+    Dir.mkdir_p(tmpdir)
+    mw = File.join(tmpdir, "mw.js")
+    app_js = File.join(tmpdir, "app.js")
+    File.write(mw, <<-JS)
+      const createHttpError = require('http-errors');
+      function masterOnly(req, res, next) {
+        if (!req.auth.isMaster) {
+          const error = createHttpError(403, 'master key required');
+          res.status(error.status);
+          res.end('no');
+          return;
+        }
+        next();
+      }
+      function thrown(req, res, next) {
+        if (!req.user) {
+          throw createHttpError(403, 'master key required');
+        }
+        next();
+      }
+      function viaNext(req, res, next) {
+        if (!req.user) {
+          return next(createHttpError(401));
+        }
+        next();
+      }
+      function validateBody(req, res, next) {
+        if (!req.body.name) {
+          throw createHttpError(403, 'name required');
+        }
+        next();
+      }
+      function optionalAuth(req, res, next) {
+        if (!req.user) {
+          req.authError = createHttpError(401, 'login required for writes');
+        }
+        next();
+      }
+      function logOnly(req, res, next) {
+        if (!req.user) {
+          logError(401, 'anonymous request');
+        }
+        next();
+      }
+      function guestOnly(req, res, next) {
+        if (req.user) {
+          throw createHttpError(403, 'already logged in');
+        }
+        next();
+      }
+      function doubleNeg(req, res, next) {
+        if (!!req.user) {
+          throw createHttpError(403, 'already logged in');
+        }
+        next();
+      }
+      function elseGuest(req, res, next) {
+        if (!req.user) {
+          next();
+        } else {
+          throw createHttpError(403, 'guests only');
+        }
+      }
+      function userAgent(req, res, next) {
+        if (!req.userAgent) {
+          throw createHttpError(403, 'no agent');
+        }
+        next();
+      }
+      function stashReturnNext(req, res, next) {
+        if (!req.user) {
+          req.authError = createHttpError(401, 'login required for writes');
+          return next();
+        }
+        next();
+      }
+      function logReturnNext(req, res, next) {
+        if (!req.user) {
+          console.warn(createHttpError(401, 'anonymous'));
+          return next();
+        }
+        next();
+      }
+      function closureThrow(req, res, next) {
+        if (!req.user) {
+          req.authError = createHttpError(401, 'login');
+          req.fail = () => { throw req.authError; };
+        }
+        next();
+      }
+      function helperUserInfo(req, res, next) {
+        if (!req.userInfo) return sendError(res, 403, 'login');
+        next();
+      }
+      function helperUserObj(req, res, next) {
+        if (!req.userObj) { return sendError(res, 403, 'login'); }
+        next();
+      }
+      function helperUserAgent(req, res, next) {
+        if (!req.userAgent) return sendError(res, 403, 'login');
+        next();
+      }
+      function factoryUserID(req, res, next) {
+        if (!req.userID) throw createHttpError(401, 'login');
+        next();
+      }
+      function factoryNoMsg(req, res, next) {
+        if (!req.user) throw createHttpError(403);
+        next();
+      }
+      function sendError(res, code, msg) { res.status(code).json({ msg }); }
+      module.exports = { stashReturnNext, logReturnNext, closureThrow, helperUserInfo, helperUserObj, helperUserAgent, factoryUserID, factoryNoMsg, masterOnly, thrown, viaNext, validateBody, optionalAuth, logOnly, guestOnly, doubleNeg, elseGuest, userAgent };
+      JS
+    names = %w[masterOnly thrown viaNext validateBody optionalAuth logOnly guestOnly doubleNeg elseGuest userAgent stashReturnNext logReturnNext closureThrow helperUserInfo helperUserObj helperUserAgent factoryUserID factoryNoMsg]
+    File.write(app_js, (["const mw = require('./mw');", "const app = express();"] + names.map { |n| "app.get('/#{n}', mw.#{n}, (req, res) => res.json({}));" }).join("\n"))
+
+    noir_options = create_test_options
+    noir_options["base"] = YAML::Any.new(tmpdir)
+    locator = CodeLocator.instance
+    locator.register_path(app_js)
+    locator.register_path(mw)
+    previous_bases = locator.scan_base_paths
+    locator.scan_base_paths = [tmpdir]
+    Noir::JSHandlerResolver.reset
+
+    endpoints = names.map_with_index do |n, idx|
+      Endpoint.new("/#{n}", "GET", [] of Param, Details.new(PathInfo.new(app_js, idx + 3)))
+    end
+    begin
+      ExpressAuthTagger.new(noir_options).perform(endpoints)
+    ensure
+      locator.scan_base_paths = previous_bases
+    end
+
+    # /closureThrow is guarded by the older `!req.user` + throw rule, as on main.
+    guarded = endpoints.select { |ep| ep.tags.any? { |t| t.name == "auth" } }.map(&.url)
+    guarded.should eq(["/masterOnly", "/thrown", "/viaNext", "/closureThrow", "/helperUserInfo", "/helperUserObj", "/helperUserAgent", "/factoryUserID", "/factoryNoMsg"])
+  ensure
+    FileUtils.rm_rf(tmpdir) if tmpdir
+  end
+
   describe "basic auth and reply helpers in a middleware definition" do
     base = File.expand_path("../../../functional_test/fixtures/javascript/express_basic_auth", __DIR__)
     server = "#{base}/server.js"
