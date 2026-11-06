@@ -82,8 +82,8 @@ module PythonGuardDefinitions
        identity_read?(body, file, 0)
       access = view_access(file, name)
       return true if access.closed? || access.configurable? || body.matches?(UNAUTHENTICATED) ||
-                     (body.matches?(REQUEST_CREDENTIAL) && body.matches?(REJECTION))
-    elsif refuses_caller?(body)
+                     (body.matches?(REQUEST_CREDENTIAL) && body.matches?(REJECTION)) || credential_rejection?(body, file, name)
+    elsif refuses_caller?(body) || credential_rejection?(body, file, name)
       return true
     end
     return false if hops >= 2
@@ -91,6 +91,130 @@ module PythonGuardDefinitions
       next false if callee == name
       target = resolve_def(file, callee)
       !!target && guard_definition?(target[0], target[1], hops + 1)
+    end
+  end
+
+  # A credential the caller sends that is not who the caller is: a CSRF
+  # double-submit token, a pagination cursor.
+  CREDENTIAL_LOOKALIKE = /csrf|xsrf|page|cursor/i
+  STRING_LITERAL       = /"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'/
+
+  # Whether `body` refuses under an `if` that tests a request credential
+  # for a mismatch (changedetection.io's `if request.headers.get('x-api-key')
+  # != token: return make_response(\n jsonify(...), 403\n)`), its first
+  # statement a rejection once wrapped lines are joined and strings
+  # blanked, and no enclosing condition reading the request (a key checked
+  # only `if request.method == 'POST'` leaves reads open).
+  private def credential_rejection?(body : String, file : String, name : String) : Bool
+    return false unless body.matches?(REQUEST_CREDENTIAL)
+    # A path to the view the caller can take without the key (`if
+    # request.method == 'GET': return f(...)` first, an earlier branch on
+    # a caller-chosen flag).
+    return false if body.matches?(VIEW_CALL) && view_access(file, name).caller?
+    lines = joined_continuations(body).lines
+    locals = assigned_locals(lines)
+    lines.each_with_index do |line, idx|
+      m = line.match(/\A(\s*)(?:if|elif)\s+(.+?):\s*(.*)\z/) || next
+      next unless credential_mismatch?(m[2].strip, locals)
+      indent = m[1].size
+      first = m[3].presence
+      unless first
+        following = lines[(idx + 1)..].find { |next_line| !next_line.blank? } || next
+        next unless following.size - following.lstrip.size > indent
+        first = following
+      end
+      code = first.strip.gsub(STRING_LITERAL, "''")
+      next unless code.matches?(/\A(?:return|raise|abort)\b/) && code.matches?(REJECTION)
+      return true if enclosing_conditions(lines, idx, indent).none?(&.matches?(REQUEST_READ))
+    end
+    false
+  end
+
+  # Whether `cond` holds exactly when the caller lacks the expected
+  # credential: `not <credential>`, `<credential> is None`, or the
+  # credential compared unequal to a value the request does not supply.
+  # `cred and not verify(cred)` lets a caller without one through.
+  private def credential_mismatch?(cond : String, locals : Hash(String, String)) : Bool
+    credential_identity(cond, true, locals) == false
+  end
+
+  # Whether `expr` is nothing but a read of a request credential.
+  private def credential_read?(expr : String) : Bool
+    credential = expr.strip.match(REQUEST_CREDENTIAL) || return false
+    credential.begin(0) == 0 && !credential[0].matches?(CREDENTIAL_LOOKALIKE) &&
+      !expr.matches?(/\s(?:and|or|not|if)\s|\A\s*not\s/)
+  end
+
+  # `name = expr` assignments in `lines`, the first for each name.
+  private def assigned_locals(lines : Array(String)) : Hash(String, String)
+    locals = Hash(String, String).new
+    lines.each do |line|
+      if m = line.match(/^\s*([A-Za-z_]\w*)\s*=(?!=)\s*(.+)/)
+        locals[m[1]] ||= m[2]
+      end
+    end
+    locals
+  end
+
+  # The conditions of the `if` / `elif` / `while` headers enclosing line
+  # `idx` (an `else:` reads its `if`), up to the `def`.
+  private def enclosing_conditions(lines : Array(String), idx : Int32, indent : Int32) : Array(String)
+    found = [] of String
+    threshold = indent
+    (idx - 1).downto(0) do |j|
+      line = lines[j]
+      next if line.blank?
+      line_indent = line.size - line.lstrip.size
+      next if line_indent >= threshold
+      stripped = line.strip
+      break if stripped.matches?(/\A(?:async\s+)?def\b/)
+      if m = stripped.match(/\A(?:if|elif|while)\s+(.+?):/)
+        found << m[1]
+      elsif stripped.matches?(/\Aelse\s*:/)
+        (j - 1).downto(0) do |k|
+          prior = lines[k]
+          next if prior.blank? || prior.size - prior.lstrip.size > line_indent
+          if head = prior.strip.match(/\A(?:if|elif)\s+(.+?):/)
+            found << head[1]
+          end
+          break
+        end
+      end
+      threshold = line_indent
+    end
+    found
+  end
+
+  # `body`'s code with each bracketed statement on one line and comments
+  # cut, so a wrapped `return make_response(\n    jsonify("Invalid key"),
+  # 403\n)` reads as one statement.
+  private def joined_continuations(body : String) : String
+    String.build do |io|
+      depth = 0
+      body.each_line do |raw|
+        line = Analyzer::Python::Helper.strip_python_comment(raw).rstrip
+        io << (depth > 0 ? " #{line.strip}" : line)
+        quote = nil
+        escaped = false
+        line.each_char do |char|
+          if quote
+            if escaped
+              escaped = false
+            elsif char == '\\'
+              escaped = true
+            elsif char == quote
+              quote = nil
+            end
+          else
+            case char
+            when '"', '\''     then quote = char
+            when '(', '[', '{' then depth += 1
+            when ')', ']', '}' then depth -= 1 if depth > 0
+            end
+          end
+        end
+        io << '\n' if depth == 0
+      end
     end
   end
 
@@ -202,7 +326,8 @@ module PythonGuardDefinitions
       # the setting off and the other an admin caller.
       combine_paths(gates).each do |conditions|
         judged = conditions.compact_map do |cond, positive|
-          implies_identity?(cond, positive, file, locals, params)
+          credential = credential_identity(cond, positive, locals)
+          credential.nil? ? implies_identity?(cond, positive, file, locals, params) : credential
         end
         next if judged.empty?
         next closed = true if judged.includes?(true)
@@ -357,6 +482,25 @@ module PythonGuardDefinitions
   end
 
   CONDITION_WORDS = %w[not is None True False in and or]
+
+  # Whether the `positive` branch of `cond` needs the caller to hold a
+  # request credential: the credential missing (`not <credential>`, `is
+  # None`) or compared with a value the request does not supply
+  # (`request.headers.get('x-api-key') != token`); nil for any other
+  # condition (a bare presence test lets any value through).
+  private def credential_identity(cond : String, positive : Bool, locals : Hash(String, String)) : Bool?
+    # `not <credential>` / `<credential> is None`: the key is missing.
+    if (missing = cond.strip.match(/\A(?:not\s+(.+)|(.+?)\s+is\s+None)\z/)) && credential_read?(missing[1]? || missing[2])
+      return !positive
+    end
+    m = cond.strip.match(/\A(.+?)\s*(==|!=|\bnot\s+in\b|\bin\b)\s*(.+)\z/) || return
+    subject, op, operand = m[1], m[2], m[3].strip
+    return unless credential_read?(subject)
+    return if operand.matches?(REQUEST_READ) || operand.matches?(/\A(?:None|''|""|True|False)\z/)
+    # `expected = request.args.get(...)` compared against: the caller's.
+    return if locals[operand]?.try(&.matches?(REQUEST_READ))
+    positive == op.in?("==", "in")
+  end
 
   # Whether reaching the true (`positive`) or false branch of `cond` needs
   # an identified caller; nil when `cond` tests only the decorator's own
