@@ -285,4 +285,101 @@ describe "KtorAuthTagger" do
 
     FileUtils.rm_rf(tmpdir)
   end
+  it "reads a called helper's definition for a principal check that refuses" do
+    tmpdir = File.tempname("ktor_helpers")
+    Dir.mkdir_p(tmpdir)
+
+    File.write(File.join(tmpdir, "Utils.kt"), <<-KT)
+      import io.ktor.server.auth.*
+
+      internal fun ApplicationCall.checkAdminKey(adminSecret: String) {
+          val principal = principal<TokenPrincipal>()
+          if (principal?.token != adminSecret) {
+              throw Unauthorized()
+          }
+      }
+
+      internal suspend fun ApplicationCall.validatePrincipal(db: Repo): TokenPrincipal? {
+          val principal = principal<TokenPrincipal>() ?: return null
+          if (!db.validateUser(principal.token)) return null
+          return principal
+      }
+
+      // Reads the principal for logging only; refuses nothing.
+      fun ApplicationCall.audit() {
+          log(principal<TokenPrincipal>()?.token)
+      }
+
+      // Turns signed-in callers away: a guest-only page.
+      fun ApplicationCall.guestOnly() {
+          if (principal<TokenPrincipal>() != null) throw Forbidden()
+      }
+
+      fun ApplicationCall.redirectIfSignedIn() {
+          principal<TokenPrincipal>()?.let { respondRedirect("/home") }
+      }
+
+      // Refuses, but on no credential: a content-type check.
+      fun ApplicationCall.requireJson() {
+          if (request.contentType() != ContentType.Application.Json) throw Unauthorized("json")
+      }
+      KT
+
+    routes = File.join(tmpdir, "Routes.kt")
+    File.write(routes, [
+      "fun Route.routes() {",                           # 1
+      "    post(\"/admin\") {",                         # 2
+      "        call.checkAdminKey(config.adminSecret)", # 3
+      "    }",                                          # 4
+      "    get(\"/votes\") {",                          # 5
+      "        val principal = call.validatePrincipal(repo) ?: throw Unauthorized()",
+      "    }",                                                               # 7
+      "    get(\"/sign\") {",                                                # 8
+      "        val principal = call.validatePrincipal(repo)",                # 9
+      "            ?: return@get call.respond(HttpStatusCode.Unauthorized)", # 10
+      "    }",                                                               # 11
+      "    get(\"/optional\") {",                                            # 12
+      "        val principal = call.validatePrincipal(repo)",                # 13
+      "        call.respond(principal?.token ?: \"guest\")",                 # 14
+      "    }",                                                               # 15
+      "    get(\"/audit\") {",                                               # 16
+      "        call.audit()",                                                # 17
+      "        call.requireJson()",                                          # 18
+      "        call.guestOnly(); call.redirectIfSignedIn(); val id = call.parameters[\"id\"] ?: throw Unauthorized()",
+      "    }",                                             # 20
+      "    get(\"/commented\") {",                         # 21
+      "        // call.checkAdminKey(config.adminSecret)", # 22
+      "        repo.checkAdminKey(config.adminSecret)",    # 23
+      "    }",                                             # 24
+      "}",
+    ].join("\n"))
+
+    noir_options = create_test_options
+    noir_options["base"] = YAML::Any.new(tmpdir)
+    locator = CodeLocator.instance
+    Dir.glob("#{tmpdir}/**/*").each { |file| locator.register_path(file) unless File.directory?(file) }
+
+    endpoint = ->(url : String, line : Int32) do
+      details = Details.new(PathInfo.new(routes, line))
+      details.technology = "kotlin_ktor"
+      Endpoint.new(url, "GET", [] of Param, details)
+    end
+    admin = endpoint.call("/admin", 2)
+    votes = endpoint.call("/votes", 5)
+    sign = endpoint.call("/sign", 8)
+    optional = endpoint.call("/optional", 12)
+    audit = endpoint.call("/audit", 16)
+    commented = endpoint.call("/commented", 21)
+
+    KtorAuthTagger.new(noir_options).perform([admin, votes, sign, optional, audit, commented])
+
+    admin.tags.map(&.description).should eq(["Protected by Ktor checkAdminKey() check"])
+    votes.tags.map(&.description).should eq(["Protected by Ktor validatePrincipal() check"])
+    sign.tags.map(&.description).should eq(["Protected by Ktor validatePrincipal() check"])
+    optional.tags.should be_empty
+    audit.tags.should be_empty
+    commented.tags.should be_empty
+
+    FileUtils.rm_rf(tmpdir)
+  end
 end
