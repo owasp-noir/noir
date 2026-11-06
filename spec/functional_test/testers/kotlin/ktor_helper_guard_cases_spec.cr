@@ -62,6 +62,26 @@ describe "Ktor helper guard cases", tags: "functional" do
     })
   end
 
+  it "reads only error statuses, from where the handler can see them" do
+    ktor_helper_case("o").should eq({
+      # A same-file constant that is a success status.
+      "GET /okconst" => false,
+      # A local `val STATUS = OK`; another package's `Codes.STATUS` is NotFound.
+      "GET /collide"   => false,
+      "GET /fromvalue" => false,
+      "GET /notfound"  => true,
+      "GET /var"       => false,
+      # A `return@forEach` reads as an early return (a missed guard).
+      "GET /foreach" => false,
+    })
+    ktor_helper_case("p").should eq({
+      "GET /gone"   => true,
+      "GET /denied" => true,
+      "GET /okay"   => false,
+      "GET /shadow" => false,
+    })
+  end
+
   it "resolves a helper in the handler's own Gradle module" do
     ktor_helper_case("m").should eq({
       "GET /admin/report" => true,
