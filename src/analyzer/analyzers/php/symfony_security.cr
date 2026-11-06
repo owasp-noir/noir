@@ -59,11 +59,12 @@ module Analyzer::Php::SymfonySecurity
       # ponytail: placeholders become one sample segment, so a rule only some
       # values of `{slug}` would match is decided by that one sample.
       path = url.gsub(/\{[^}]*\}/, "1")
-      firewall = @firewalls.find { |f| f.conditional || f.pattern.nil? || f.pattern.try(&.matches?(path)) }
+      # An undecidable entry only blocks the answer for paths it covers.
+      firewall = @firewalls.find { |f| f.pattern.nil? || f.pattern.try(&.matches?(path)) }
       return if firewall.nil? || firewall.conditional || firewall.open
 
       rule = @rules.find do |r|
-        r.conditional || ((r.path.nil? || r.path.try(&.matches?(path))) && (r.methods.empty? || r.methods.includes?(method.upcase)))
+        (r.path.nil? || r.path.try(&.matches?(path))) && (r.methods.empty? || r.methods.includes?(method.upcase))
       end
       return if rule.nil? || rule.conditional || rule.roles.empty?
       return if rule.roles.any? { |role| PUBLIC_ROLES.includes?(role) }
