@@ -64,8 +64,8 @@ module Analyzer::Kotlin
       parsed_by_base.each_value do |files|
         prefixes = MountPrefixes.new(files)
         files.each do |source|
-          source.file.routes.each do |route|
-            prefixes.for_line(source, route.line).each do |prefix, guard|
+          source.file.routes.each_with_index do |route, index|
+            prefixes.for_route(source, index).each do |prefix, guard|
               endpoint = build_endpoint(mounted(route, prefix), source.path)
               endpoint.add_tag(Tag.new("auth", "Protected by #{guard}", "ktor_auth")) if guard
               @result << endpoint
@@ -93,11 +93,11 @@ module Analyzer::Kotlin
     # `/{year}/sign`, not `/sign`. A call inside a non-optional
     # `authenticate { }` block puts what it mounts behind that block. A call
     # whose prefix is unknown (`this@routing.userRoutes()`) counts only when
-    # no call places the function; a function with no call seen keeps the
-    # URL its own routes spell, unguarded. Functions are matched by name;
-    # when one name is declared in several Gradle modules, call sites in the
-    # function's own module win, so two services that each mount their own
-    # `fun Route.api()` keep apart.
+    # no call places the function; a function with no call seen, or one on
+    # a call cycle, keeps the URL its own routes spell, unguarded. Functions
+    # are matched by name; when one name is declared in several Gradle
+    # modules, call sites in the function's own module win, so two services
+    # that each mount their own `fun Route.api()` keep apart.
     # ponytail: two same-named functions in one module share call sites.
     class MountPrefixes
       # Past this many placements for one function, keep its own URL.
@@ -106,6 +106,8 @@ module Analyzer::Kotlin
       alias Extractor = Noir::TreeSitterKotlinKtorRouteExtractor
       # A prefix and the authenticate block it is mounted behind, if any.
       alias Placement = {String, String?}
+      # A function as resolved: its name and the module it is read from.
+      alias Node = {String, String}
 
       record Source, path : String, module_root : String, file : Extractor::FileRoutes
       record Site, prefix : String?, caller : String?, guard : String?, module_root : String
@@ -113,11 +115,10 @@ module Analyzer::Kotlin
       ROOT = [{"", nil}] of Placement
 
       @sites = Hash(String, Array(Site)).new
-      @memo = Hash({String, String}, Array(Placement)).new
+      @memo = Hash(Node, Array(Placement)).new
       @modules = Hash(String, Set(String)).new
-      @cycle_hit = false
-
-      @functions_by_line = Hash(Extractor::FileRoutes, Array(String?)).new
+      @route_functions = Hash(Extractor::FileRoutes, Array(String?)).new
+      @cyclic = Set(Node).new
 
       def initialize(sources : Array(Source))
         sources.each do |source|
@@ -125,90 +126,135 @@ module Analyzer::Kotlin
         end
         sources.each do |source|
           file = source.file
+          @route_functions[file] = MountPrefixes.innermost(function_spans(file), file.routes.map(&.byte))
           next if file.mounts.empty?
-          guards = MountPrefixes.innermost(file.auth_blocks.map { |block| {block.start_line, block.end_line, block.description} })
-          file.mounts.each do |mount|
+          points = file.mounts.map(&.byte)
+          callers = MountPrefixes.innermost(function_spans(file), points)
+          guards = MountPrefixes.innermost(file.auth_blocks.map { |block| {block.start_byte, block.end_byte, block.description} }, points)
+          file.mounts.each_with_index do |mount, index|
             next unless @modules.has_key?(mount.name)
-            (@sites[mount.name] ||= [] of Site) << Site.new(mount.prefix, enclosing(file, mount.line), guards[mount.line]?, source.module_root)
+            (@sites[mount.name] ||= [] of Site) << Site.new(mount.prefix, callers[index], guards[index], source.module_root)
           end
         end
+        mark_cycles
       end
 
-      # The innermost span covering each line, for spans that nest (function
-      # and block bodies do), in one sweep: lookups stay O(1) on a file with
-      # thousands of route functions.
-      def self.innermost(spans : Array({Int32, Int32, String})) : Array(String?)
-        return [] of String? if spans.empty?
-        last = spans.max_of(&.[1])
-        table = Array(String?).new(last + 1, nil)
+      # Placements for the `index`th route of `source`; the bare URL outside
+      # any `Route.` function.
+      def for_route(source : Source, index : Int32) : Array(Placement)
+        return ROOT unless name = @route_functions[source.file][index]?
+        resolve({name, source.module_root})
+      end
+
+      private def function_spans(file : Extractor::FileRoutes) : Array({Int32, Int32, String})
+        file.functions.map { |function| {function.start_byte, function.end_byte, function.name} }
+      end
+
+      # The innermost span (start inclusive, end exclusive) holding each
+      # point, for spans that nest, in one sweep over both sorted lists.
+      def self.innermost(spans : Array({Int32, Int32, String}), points : Array(Int32)) : Array(String?)
+        result = Array(String?).new(points.size, nil)
+        return result if spans.empty?
         sorted = spans.sort_by { |span| {span[0], -span[1]} }
         stack = [] of {Int32, Int32, String}
         next_span = 0
-        (0..last).each do |line|
-          while next_span < sorted.size && sorted[next_span][0] <= line
-            stack << sorted[next_span]
+        (0...points.size).to_a.sort_by! { |index| points[index] }.each do |index|
+          point = points[index]
+          while next_span < sorted.size && sorted[next_span][0] <= point
+            span = sorted[next_span]
+            while (top = stack.last?) && top[1] <= span[0]
+              stack.pop
+            end
+            stack << span
             next_span += 1
           end
-          while (top = stack.last?) && top[1] < line
+          while (top = stack.last?) && top[1] <= point
             stack.pop
           end
-          table[line] = stack.last?.try(&.[2])
+          result[index] = stack.last?.try(&.[2])
         end
-        table
+        result
       end
 
-      # Placements for a route declared on `line` of `source`; the bare URL
-      # outside any `Route.` function.
-      def for_line(source : Source, line : Int32) : Array(Placement)
-        return ROOT unless name = enclosing(source.file, line)
-        placements = resolve(name, source.module_root, Set({String, String}).new)
-        placements.empty? ? ROOT : placements
-      end
-
-      private def enclosing(file : Extractor::FileRoutes, line : Int32) : String?
-        @functions_by_line[file] ||= MountPrefixes.innermost(file.functions.map { |function| {function.start_line, function.end_line, function.name} })
-        @functions_by_line[file][line]?
-      end
-
-      # Empty when every call reaches this function only through a cycle
-      # back into the caller being resolved.
-      private def resolve(name : String, module_root : String, visiting : Set({String, String})) : Array(Placement)
-        key = {name, module_root}
-        if cached = @memo[key]?
-          return cached
-        end
-        if visiting.includes?(key)
-          @cycle_hit = true
-          return [] of Placement
-        end
-        return ROOT unless sites = @sites[name]?
-
+      # The call sites that place `node`, after the module and
+      # placed-over-unplaced narrowing.
+      private def sites_for(node : Node) : Array(Site)
+        name, module_root = node
+        sites = @sites[name]? || [] of Site
         if @modules[name].size > 1
           local = sites.select { |site| site.module_root == module_root }
           sites = local unless local.empty?
         end
         placed = sites.reject { |site| site.prefix.nil? }
-        sites = placed unless placed.empty?
+        placed.empty? ? sites : placed
+      end
 
-        outer_hit = @cycle_hit
-        @cycle_hit = false
-        visiting << key
+      private def caller_node(site : Site) : Node?
+        site.caller.try { |caller| {caller, site.module_root} }
+      end
+
+      # Tarjan's strongly connected components over caller edges, once: a
+      # function on a cycle (a component of several, or one calling itself)
+      # keeps its own URL, so `resolve` below walks a DAG and memoises it all.
+      # ponytail: recursive; a call chain deeper than the fiber stack would overflow.
+      private def mark_cycles
+        @modules.each do |name, roots|
+          roots.each do |root|
+            node = {name, root}
+            tarjan(node) unless @tarjan_index.has_key?(node)
+          end
+        end
+      end
+
+      @tarjan_index = Hash(Node, Int32).new
+      @tarjan_low = Hash(Node, Int32).new
+      @tarjan_stack = [] of Node
+      @tarjan_on_stack = Set(Node).new
+
+      private def tarjan(node : Node) : Nil
+        @tarjan_index[node] = @tarjan_low[node] = @tarjan_index.size
+        @tarjan_stack << node
+        @tarjan_on_stack << node
+        sites_for(node).each do |site|
+          next unless caller = caller_node(site)
+          if !@tarjan_index.has_key?(caller)
+            tarjan(caller)
+            @tarjan_low[node] = {@tarjan_low[node], @tarjan_low[caller]}.min
+          elsif @tarjan_on_stack.includes?(caller)
+            @tarjan_low[node] = {@tarjan_low[node], @tarjan_index[caller]}.min
+          end
+        end
+        return unless @tarjan_low[node] == @tarjan_index[node]
+
+        component = [] of Node
+        loop do
+          member = @tarjan_stack.pop
+          @tarjan_on_stack.delete(member)
+          component << member
+          break if member == node
+        end
+        self_call = sites_for(node).any? { |site| caller_node(site) == node }
+        @cyclic.concat(component) if component.size > 1 || self_call
+      end
+
+      private def resolve(node : Node) : Array(Placement)
+        if cached = @memo[node]?
+          return cached
+        end
+        return @memo[node] = ROOT if @cyclic.includes?(node)
+        sites = sites_for(node)
+        return @memo[node] = ROOT if sites.empty?
+
         found = [] of Placement
         sites.each do |site|
           unless prefix = site.prefix
             found << {"", nil}
             next
           end
-          outer = (caller = site.caller) ? resolve(caller, site.module_root, visiting) : ROOT
+          outer = (caller = caller_node(site)) ? resolve(caller) : ROOT
           outer.each { |head, guard| found << {join(head, prefix), guard || site.guard} }
         end
-        visiting.delete(key)
-        result = merge(found)
-        # A result that met a cycle is partial: it is right for this call
-        # chain but not for one entering the cycle elsewhere.
-        @memo[key] = result unless @cycle_hit
-        @cycle_hit ||= outer_hit
-        result
+        @memo[node] = merge(found)
       end
 
       # One placement per prefix; served open by any call site, it is open.

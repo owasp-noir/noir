@@ -111,12 +111,14 @@ module Noir
       # for the caller to fill in (the route extractor doesn't carry
       # the file path itself); each tuple is (callee_name, line_1_based).
       getter callees : Array(Tuple(String, Int32))
+      # Byte offset of the verb call, for placing it in its enclosing function.
+      getter byte : Int32
 
-      def initialize(@verb, @path, @line, @receive_type, @has_body, @query_params, @header_params, @form_params, @callees)
+      def initialize(@verb, @path, @line, @receive_type, @has_body, @query_params, @header_params, @form_params, @callees, @byte = 0)
       end
 
       def with_path(path : String) : Route
-        Route.new(@verb, path, @line, @receive_type, @has_body, @query_params, @header_params, @form_params, @callees)
+        Route.new(@verb, path, @line, @receive_type, @has_body, @query_params, @header_params, @form_params, @callees, @byte)
       end
     end
 
@@ -124,13 +126,13 @@ module Noir
     # force at the call: `route("/{year}") { userRoutes() }`. `prefix` is
     # nil when the call cannot be placed (a receiver other than `this`, or
     # outside any routing scope). `line` is 0-based.
-    record Mount, name : String, prefix : String?, line : Int32
+    record Mount, name : String, prefix : String?, byte : Int32
 
-    # A `fun Route.name() { ... }` declaration and its 0-based line span.
-    record RouteFunction, name : String, start_line : Int32, end_line : Int32
+    # A `fun Route.name() { ... }` declaration and its byte span (end exclusive).
+    record RouteFunction, name : String, start_byte : Int32, end_byte : Int32
 
-    # A non-optional `authenticate(...) { }` block and its 0-based line span.
-    record AuthBlock, description : String, start_line : Int32, end_line : Int32
+    # A non-optional `authenticate(...) { }` block and its byte span (end exclusive).
+    record AuthBlock, description : String, start_byte : Int32, end_byte : Int32
 
     class FileRoutes
       getter routes = [] of Route
@@ -658,7 +660,7 @@ module Noir
       end
 
       query_params.uniq!
-      routes << Route.new(verb, full_path, line, receive_type, has_body, query_params, header_params, form_params, callees)
+      routes << Route.new(verb, full_path, line, receive_type, has_body, query_params, header_params, form_params, callees, start_byte(node))
     end
 
     # ---- traversal ----------------------------------------------------
@@ -681,7 +683,7 @@ module Noir
 
       if ty == "function_declaration" && route_extension_function?(node, source)
         if name = function_name(node, source)
-          file.functions << RouteFunction.new(name, Noir::TreeSitter.node_start_row(node), Noir::TreeSitter.node_end_row(node))
+          file.functions << RouteFunction.new(name, start_byte(node), end_byte(node))
         end
         if body = function_body_statements(node)
           walk(body, source, prefix, routes, string_constants, local_string_constants, depth + 1, include_callees, true, resources, resource_query_params, file)
@@ -769,7 +771,7 @@ module Noir
           # as a GET route (the served files aren't enumerable from
           # source). The remote path is the first string argument.
           if path = static_mount_path(node, source)
-            routes << Route.new("GET", route_scope_join(prefix, path), Noir::TreeSitter.node_start_row(node), nil, false, [] of String, [] of String, [] of String, [] of Tuple(String, Int32))
+            routes << Route.new("GET", route_scope_join(prefix, path), Noir::TreeSitter.node_start_row(node), nil, false, [] of String, [] of String, [] of String, [] of Tuple(String, Int32), start_byte(node))
           end
           return
         when name == "install"
@@ -785,7 +787,7 @@ module Noir
           return
         when name == "routing" || routing_install_call?(node, source) || (active && PASSTHROUGH_NAMES.includes?(name))
           if active && name == "authenticate" && (realm = authenticate_realm(node, source))
-            file.auth_blocks << AuthBlock.new("Ktor authenticate(\"#{realm}\") block", Noir::TreeSitter.node_start_row(node), Noir::TreeSitter.node_end_row(node))
+            file.auth_blocks << AuthBlock.new("Ktor authenticate(\"#{realm}\") block", start_byte(node), end_byte(node))
           end
           if body = call_lambda_body(node)
             walk(body, source, prefix, routes, string_constants, local_string_constants, depth + 1, include_callees, true, resources, resource_query_params, file)
@@ -847,7 +849,7 @@ module Noir
       end
 
       query_params.uniq!
-      routes << Route.new(verb, full_path, line, receive_type, has_body, query_params, header_params, form_params, callees)
+      routes << Route.new(verb, full_path, line, receive_type, has_body, query_params, header_params, form_params, callees, start_byte(node))
     end
 
     private def emit_method_route(node : LibTreeSitter::TSNode,
@@ -880,7 +882,7 @@ module Noir
       end
 
       query_params.uniq!
-      routes << Route.new(verb, full_path, line, receive_type, has_body, query_params, header_params, form_params, callees)
+      routes << Route.new(verb, full_path, line, receive_type, has_body, query_params, header_params, form_params, callees, start_byte(node))
     end
 
     # ---- call shape helpers ------------------------------------------
@@ -1097,14 +1099,14 @@ module Noir
       return unless callee = Noir::TreeSitter.first_named_child(call)
       case Noir::TreeSitter.node_type(callee)
       when "simple_identifier"
-        mounts << Mount.new(Noir::TreeSitter.node_text(callee, source), prefix, Noir::TreeSitter.node_start_row(call))
+        mounts << Mount.new(Noir::TreeSitter.node_text(callee, source), prefix, start_byte(call))
       when "navigation_expression"
         receiver = Noir::TreeSitter.first_named_child(callee)
         return unless receiver && Noir::TreeSitter.node_type(receiver) == "this_expression"
         name = last_navigation_segment(callee, source)
         return if name.empty?
         placed = Noir::TreeSitter.node_text(receiver, source) == "this" ? prefix : nil
-        mounts << Mount.new(name, placed, Noir::TreeSitter.node_start_row(call))
+        mounts << Mount.new(name, placed, start_byte(call))
       end
     end
 
@@ -1136,6 +1138,14 @@ module Noir
         end
       end
       realm
+    end
+
+    private def start_byte(node : LibTreeSitter::TSNode) : Int32
+      LibTreeSitter.ts_node_start_byte(node).to_i32
+    end
+
+    private def end_byte(node : LibTreeSitter::TSNode) : Int32
+      LibTreeSitter.ts_node_end_byte(node).to_i32
     end
 
     private def function_name(func : LibTreeSitter::TSNode, source : String) : String?
