@@ -1792,6 +1792,9 @@ module Noir
       nil
     end
 
+    # `${NAME}` or `${NAME.key}` in a template constant.
+    CONSTANT_PLACEHOLDER_RE = /\$\{\s*([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)?)\s*\}/
+
     # Extract constant assignments from the tokens
     private def extract_constants
       idx = 0
@@ -1804,6 +1807,11 @@ module Noir
            (@tokens[idx + 3].type == :string || @tokens[idx + 3].type == :template_literal)
           var_name = @tokens[idx + 1].value
           var_value = @tokens[idx + 3].value
+          # `${accountApiPrefix}/tokens`: a template built from an earlier
+          # (or imported) constant is that constant's value.
+          if @tokens[idx + 3].type == :template_literal && var_value.includes?("${")
+            var_value = var_value.gsub(CONSTANT_PLACEHOLDER_RE) { |whole, m| @constants[m[1]]? || whole }
+          end
           @constants[var_name] = var_value
         end
         idx += 1
