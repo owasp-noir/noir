@@ -42,6 +42,11 @@ module Analyzer::Javascript
     # `setGlobalPrefix` exclude can match the route without its version.
     @nest_version_segments = {} of String => Set(String)
     @nest_version_mutex = Mutex.new
+    # `@Module` classes per file (name => controller names), and the
+    # endpoints `RouterModule` already prefixed (the global prefix must still
+    # apply to those even when the path starts with it).
+    @nest_module_decls = {} of String => Hash(String, Array(String))
+    @router_prefixed = Set(String).new
 
     # Project-wide `EnumName.Member` / `Object.prop` -> value map, used to
     # resolve `@Controller(...)` prefix constants imported from another
@@ -334,53 +339,101 @@ module Analyzer::Javascript
     ROUTER_REGISTER_CALL = /\bRouterModule\s*\.\s*register\s*\(/
     MODULE_DECORATOR     = /@Module\s*\(/
     MODULE_CLASS         = /\bclass\s+(\w+)/
+    STRING_LITERAL       = /(['"`])(?:(?!\1)[^\\\n]|\\.)*\1/
 
     # Prefix the controllers of every module `RouterModule.register` mounts.
     # A controller is identified by (declaring file, class name): two
     # controllers may share a class name in different modules (hedgedoc's
-    # private and public `NotesController`). Only the module's own
+    # private and public `NotesController`). Only a module's own
     # `controllers` array is prefixed, as in Nest; `children` nest paths.
+    # A controller listed by several modules is served once per mount path,
+    # and also at its plain path when a module that lists it is not mounted.
     private def apply_router_module_prefixes(result : Array(Endpoint))
-      mounts = [] of Tuple(String, String)
       files = all_files.select { |path| GLOBAL_LITERAL_EXTENSIONS.any? { |ext| path.ends_with?(ext) } && !ignored_nest_path?(path) }
+      # {module file, module name} => full mount path
+      mounts = [] of Tuple(String, String, String)
       files.each do |path|
         content = read_file_content(path)
         next unless content.includes?("RouterModule")
         code = Noir::JSRouteExtractor.strip_js_comments(content)
-        code.scan(ROUTER_REGISTER_CALL) do |match|
+        masked = code.gsub(STRING_LITERAL) { |lit| " " * lit.size }
+        masked.scan(ROUTER_REGISTER_CALL) do |match|
           open_paren = match.end(0) - 1
-          close_paren = Noir::JSRouteExtractor.find_matching_paren(code, open_paren) || next
+          close_paren = Noir::JSRouteExtractor.find_matching_paren(masked, open_paren) || next
           arg = code[(open_paren + 1)...close_paren].strip
           arg = routes_array_for(arg, path, code) || next if arg.matches?(/\A[A-Za-z_$][\w$]*\z/)
-          collect_router_mounts(arg, "", path, file_literal_values(code), mounts, 0)
+          collect_router_mounts(arg, "", path, file_literal_values(code), code, mounts, 0)
         end
       rescue
         next
       end
       return if mounts.empty?
 
-      prefix_by_controller = {} of Tuple(String, String) => String
-      mounts.each do |(module_name, prefix)|
-        module_controllers(module_name, files).each do |key|
-          prefix_by_controller[key] ||= prefix
+      mounted = Set(Tuple(String, String)).new
+      mounts.each { |(file, name, _)| mounted << {Noir::PathScope.expand(file), name} }
+
+      paths_by_controller = {} of Tuple(String, String) => Array(String)
+      mounts.each do |(file, name, prefix)|
+        module_controller_keys(file, name).each do |key|
+          list = (paths_by_controller[key] ||= [] of String)
+          list << prefix unless list.includes?(prefix)
         end
       end
-      return if prefix_by_controller.empty?
+      return if paths_by_controller.empty?
 
+      # Controllers a module that is not mounted also lists: still served
+      # at their own path.
+      plain = Set(Tuple(String, String)).new
+      files.each do |path|
+        next unless read_file_content(path).includes?("@Module")
+        module_decls(path).each_key do |name|
+          next if mounted.includes?({Noir::PathScope.expand(path), name})
+          module_controller_keys(path, name).each { |key| plain << key }
+        end
+      end
+
+      extra = [] of Endpoint
       result.each_with_index do |endpoint, idx|
         handler = endpoint.handler || next
         file = Noir::PathScope.expand(handler.path || next)
-        klass = handler.name.partition('.')[0]
-        prefix = prefix_by_controller[{file, klass}]? || next
-        endpoint.url = join_router_prefix(prefix, endpoint.url)
-        result[idx] = endpoint
+        key = {file, handler.name.partition('.')[0]}
+        paths = paths_by_controller[key]? || next
+        original = endpoint
+        paths.each_with_index do |prefix, i|
+          prefixed = original
+          prefixed.url = join_router_prefix_after_version(prefix, original.url, handler.path)
+          @router_prefixed << router_prefixed_key(prefixed)
+          if i == 0
+            result[idx] = prefixed
+          else
+            extra << prefixed
+          end
+        end
+        extra << original if plain.includes?(key)
       end
+      result.concat(extra)
+    end
+
+    private def router_prefixed_key(endpoint : Endpoint) : String
+      cp = endpoint.details.code_paths.first?
+      "#{cp.try(&.path)}:#{cp.try(&.line)}:#{endpoint.method}:#{endpoint.url}"
+    end
+
+    # Nest builds `/{global}/v{n}/{module path}/{controller}`: the module
+    # path goes after a URI version segment.
+    private def join_router_prefix_after_version(prefix : String, url : String, file : String?) : String
+      segments = file && @nest_version_mutex.synchronize { @nest_version_segments[file]? }
+      relative = url.lchop('/')
+      if segments && (segment = segments.find { |seg| relative == seg || relative.starts_with?("#{seg}/") })
+        return "/#{segment}" + join_router_prefix(prefix, relative[segment.size..].presence || "/")
+      end
+      join_router_prefix(prefix, url)
     end
 
     # `[{ path, module, children: [...] }, ...]` into (module, full path).
     private def collect_router_mounts(text : String, parent : String, file : String,
-                                      literals : Hash(String, Array(String)),
-                                      mounts : Array(Tuple(String, String)), depth : Int32)
+                                      literals : Hash(String, Array(String)), code : String,
+                                      mounts : Array(Tuple(String, String, String)), depth : Int32)
       return if depth > 6 || !text.starts_with?("[") || !text.ends_with?("]")
       split_top_level(text[1...-1], ',').each do |element|
         element = element.strip
@@ -398,10 +451,12 @@ module Analyzer::Javascript
         next if path.nil?
         full = join_router_prefix(parent, path)
         if (name = module_name) && name.matches?(/\A\w+\z/)
-          mounts << {name, full}
+          if declared = module_file_for(name, file, code)
+            mounts << {declared[0], declared[1], full}
+          end
         end
         if kids = children
-          collect_router_mounts(kids, full, file, literals, mounts, depth + 1)
+          collect_router_mounts(kids, full, file, literals, code, mounts, depth + 1)
         end
       end
     end
@@ -440,30 +495,68 @@ module Analyzer::Javascript
       joined.empty? ? "/" : joined
     end
 
-    # (file, class) of every controller in the `controllers` array of the
-    # `@Module` class named `module_name`.
-    private def module_controllers(module_name : String, files : Array(String)) : Array(Tuple(String, String))
-      found = [] of Tuple(String, String)
-      files.each do |path|
-        content = read_file_content(path)
-        next unless content.includes?("@Module")
-        code = Noir::JSRouteExtractor.strip_js_comments(content)
-        code.scan(MODULE_DECORATOR) do |match|
-          open_paren = match.end(0) - 1
-          close_paren = Noir::JSRouteExtractor.find_matching_paren(code, open_paren) || next
-          klass = code[(close_paren + 1)..].match(MODULE_CLASS) || next
-          next unless klass[1] == module_name
-          list = code[open_paren...close_paren].match(/\bcontrollers\s*:\s*\[([^\]]*)\]/) || next
-          list[1].split(',').each do |raw|
-            name = raw.strip
-            next unless name.matches?(/\A\w+\z/)
-            found << {Noir::PathScope.expand(controller_file(name, path, code)), name}
+    # {file, module name} of the `@Module` class `name` in the routes file:
+    # declared there, or imported from a relative module (followed through
+    # re-exports). An alias import or a package import resolves to nothing.
+    private def module_file_for(name : String, routes_file : String, code : String) : Tuple(String, String)?
+      return {routes_file, name} if module_decls(routes_file).has_key?(name)
+      code.scan(NAMED_IMPORT) do |imp|
+        declared = imported_name(imp[1], name) || next
+        next unless imp[2].starts_with?('.')
+        target = Noir::ImportGraph.resolve_relative_import(routes_file, imp[2], boundary: import_boundary_for(routes_file)) || next
+        return declaring_module_file(declared, target, 0)
+      end
+      nil
+    end
+
+    private def declaring_module_file(name : String, file : String, depth : Int32) : Tuple(String, String)?
+      return {file, name} if module_decls(file).has_key?(name)
+      return if depth >= 4
+      content = read_file_content(file)
+      content.scan(NAMED_REEXPORT) do |m|
+        declared = imported_name(m[1], name) || next
+        target = Noir::ImportGraph.resolve_relative_import(file, m[2], boundary: import_boundary_for(file)) || next
+        return declaring_module_file(declared, target, depth + 1)
+      end
+      content.scan(STAR_REEXPORT) do |m|
+        target = Noir::ImportGraph.resolve_relative_import(file, m[1], boundary: import_boundary_for(file)) || next
+        if found = declaring_module_file(name, target, depth + 1)
+          return found
+        end
+      end
+      nil
+    rescue
+      nil
+    end
+
+    # `@Module({ controllers: [...] })` classes of a file: name => controller
+    # names. Read once per file.
+    private def module_decls(file : String) : Hash(String, Array(String))
+      @nest_module_decls[file]? || (@nest_module_decls[file] = begin
+        found = {} of String => Array(String)
+        content = read_file_content(file)
+        if content.includes?("@Module")
+          code = Noir::JSRouteExtractor.strip_js_comments(content)
+          code.scan(MODULE_DECORATOR) do |match|
+            open_paren = match.end(0) - 1
+            close_paren = Noir::JSRouteExtractor.find_matching_paren(code, open_paren) || next
+            klass = code[(close_paren + 1)..].match(MODULE_CLASS) || next
+            list = code[open_paren...close_paren].match(/\bcontrollers\s*:\s*\[([^\]]*)\]/)
+            found[klass[1]] = list ? list[1].split(',').map(&.strip).select(&.matches?(/\A\w+\z/)) : [] of String
           end
         end
+        found
       rescue
-        next
-      end
-      found
+        {} of String => Array(String)
+      end)
+    end
+
+    # (file, class) of each controller `module_name` lists, `file` being the
+    # file declaring the controller as the module file sees it.
+    private def module_controller_keys(module_file : String, module_name : String) : Array(Tuple(String, String))
+      names = module_decls(module_file)[module_name]? || return [] of Tuple(String, String)
+      code = Noir::JSRouteExtractor.strip_js_comments(read_file_content(module_file))
+      names.map { |name| {Noir::PathScope.expand(controller_file(name, module_file, code)), name} }
     end
 
     # The file declaring controller `name` as seen from the module file.
@@ -592,7 +685,7 @@ module Analyzer::Javascript
       return if global_prefix_excluded?(endpoint, config.excludes)
       # Controllers that hard-coded `/api/...` are already where the prefix
       # would put them; prefixing again would double it.
-      return if endpoint.url.starts_with?(normalized + "/") || endpoint.url == normalized
+      return if (endpoint.url.starts_with?(normalized + "/") || endpoint.url == normalized) && !@router_prefixed.includes?(router_prefixed_key(endpoint))
 
       # A root `@Get()` is served at the bare prefix: `/api`, not `/api/`.
       endpoint.url = if endpoint.url == "/"
