@@ -9,7 +9,7 @@ template = "blog_post"
 
 alibi is out: a companion tool that runs Noir once per view of your attack surface and cross-examines the results. It lives at [owasp-noir/alibi](https://github.com/owasp-noir/alibi).
 
-The premise fits in a paragraph. Noir reads the same surface from five directions:
+The idea is simple. Noir can already read the same attack surface from five directions:
 
 | View | Read from |
 | --- | --- |
@@ -25,7 +25,7 @@ Each view is a claim about what exists. The code says "this route is implemented
 
 My first plan was a single scan. Noir labels every endpoint with the technology that found it, so I figured the five views would fall out of one JSON for free.
 
-They don't. Noir deduplicates by `(method, url)` across every analyzer, and for a discovery tool that's correct: a Flask route and an OpenAPI path spelled identically *are* one endpoint. For a comparison it's fatal, and fatal in the worst direction, because the better two views agree, the more of their endpoints merge into single records and the more corroboration vanishes. Scan casdoor whole and you get 372 code endpoints against 9 documented ones. Scan its `swagger/` directory alone and the spec holds 235.
+They don't. Noir deduplicates by `(method, url)` across every analyzer, and for a discovery tool that's correct: a Flask route and an OpenAPI path spelled identically *are* one endpoint. For a comparison it's a problem, and it gets worse exactly when things are going well: the better two views agree, the more of their endpoints merge into single records, and the corroboration you wanted to measure disappears. Scan casdoor whole and you get 372 code endpoints against 9 documented ones. Scan its `swagger/` directory alone and the spec holds 235.
 
 So alibi runs Noir once per view, restricting each pass with `--only-techs`, and joins the results itself. Noir needed no changes for any of this, and alibi parses no API formats of its own. Its only input is Noir's JSON.
 
@@ -61,7 +61,7 @@ The first full run on casdoor marked nearly half the findings critical. The prom
 
 Argo CD reported 58 shadow APIs and 198 phantom contracts, none of them real. Its Go code registers `/api`; its OpenAPI documents 198 paths beneath it. Same surface, two granularities, not a single shared endpoint. Zero overlap between two populated views now reads as "this comparison failed", so the rules hold back and the report explains why instead of flooding.
 
-NetBox nearly shipped the worst answer of all. Its API documentation is one 12.35MB OpenAPI file, Noir skipped it for exceeding the file-size cap, and the draft report concluded that the project documents nothing. Not incomplete. Wrong, and confident about it. Noir now gives specification documents their own size budget ([#2671](https://github.com/owasp-noir/noir/pull/2671)), and alibi prints whatever Noir reported it couldn't read above the findings, because a missing view and an empty view mean opposite things.
+NetBox nearly shipped the worst answer of all. Its API documentation is one 12.35MB OpenAPI file, Noir skipped it for exceeding the file-size cap, and the draft report concluded that the project documents nothing. That's not an incomplete answer, it's a wrong one, delivered with full confidence. Noir now gives specification documents their own size budget ([#2671](https://github.com/owasp-noir/noir/pull/2671)), and alibi prints whatever Noir reported it couldn't read above the findings, because a missing view and an empty view mean opposite things.
 
 The same caution runs through the rest. A finding whose endpoint nearly matches another view (same path under a different verb, a parameter where the other side has a literal) is demoted and flagged, because "in code but not in the docs" is indistinguishable from "in both, but alibi failed to line them up". Snapshots record which rules actually evaluated, because dropping the contracts directory from one run makes `SHADOW` evaluate nothing, and to a naive diff that looks exactly like every shadow API having been closed.
 
