@@ -14,9 +14,21 @@ module Analyzer::Go
   # or at `_examples`. Included by every Go analyzer, engine or not.
   module GoTestPath
     @go_module_roots : Array(String)?
+    @go_test_module_roots : Set(String)?
+
+    # `module github.com/acme/app/tests`: a module named for a test tree is
+    # built by the test run only. Infisical's integration-test module keeps
+    # its fake upstream servers (`tests/fakes/github/fake.go`) there.
+    GO_MODULE_LINE_RE    = /^\s*module\s+["`]?([^\s"`]+)/m
+    GO_TEST_MODULE_NAMES = Set{"test", "tests", "e2e"}
 
     def go_test_path?(path : String) : Bool
       relative = base_relative_path(path)
+      unless go_test_module_roots.empty?
+        absolute = go_slash_path(Noir::PathScope.expand(path))
+        root = go_module_roots.find { |dir| absolute.starts_with?(dir) }
+        return true if root && go_test_module_roots.includes?(root)
+      end
       return false unless GoEngine.go_test_file?(relative)
       return true if relative.ends_with?("_test.go")
       absolute = go_slash_path(Noir::PathScope.expand(path))
@@ -32,6 +44,20 @@ module Analyzer::Go
       @go_module_roots ||= get_files_by_basename("go.mod")
         .map { |p| go_slash_path(Noir::PathScope.expand(File.dirname(p))).rstrip('/') + "/" }
         .sort_by! { |dir| -dir.size }
+    end
+
+    # Module roots (as in `go_module_roots`) of the test-named modules nested
+    # in the scan. A scan started at such a module keeps it: that is the
+    # project being asked about.
+    private def go_test_module_roots : Set(String)
+      @go_test_module_roots ||= get_files_by_basename("go.mod").compact_map do |go_mod|
+        next if base_relative_path(go_mod) == "/go.mod"
+        name = read_file_content(go_mod).match(GO_MODULE_LINE_RE).try(&.[1]) || next
+        next unless GO_TEST_MODULE_NAMES.includes?(name.split('/').last)
+        go_slash_path(Noir::PathScope.expand(File.dirname(go_mod))).rstrip('/') + "/"
+      rescue File::Error | IO::Error
+        nil
+      end.to_set
     end
 
     private def go_slash_path(path : String) : String
