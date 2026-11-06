@@ -66,6 +66,10 @@ class DjangoAuthTagger < FrameworkTagger
   # authenticated, active, staff or superuser, and holds no permissions.
   ANONYMOUS_REFUSING_CHECK = /\b(?:is_authenticated|is_active|is_staff|is_superuser|has_perms?|has_module_perms)\b/
 
+  # The view class's own attributes for the endpoint being judged, and
+  # whether every class it inherits from was read.
+  @drf_view_attrs : Tuple(Hash(String, String), Bool)? = nil
+
   def initialize(options : Hash(String, YAML::Any))
     super
     @login_required_middleware = false
@@ -848,22 +852,33 @@ class DjangoAuthTagger < FrameworkTagger
     decorators = decorator_text(lines, endpoint_line)
     # `@action(..., permission_classes=[...])` / `@permission_classes([...])`
     own = bracketed_after(decorators, /permission_classes\s*[=(]/)
+    decorator_own = !own.nil?
     drf = decorators.includes?("@api_view")
     lines = class_lines
-    if !own && (klass = enclosing_class(class_lines, class_line))
+    @drf_view_attrs = nil
+    if klass = enclosing_class(class_lines, class_line)
       # The class, then the bases it inherits from in the same file: a
       # `permission_classes` (or the APIView base) set on a shared mixin
       # applies to every view built on it.
       queue = [klass]
       seen = Set(Int32).new
+      attrs = Hash(String, String).new
+      complete = true
       while (current = queue.shift?) && seen.size < 8
         class_idx, class_indent = current
         next unless seen.add?(class_idx)
         header = class_header(lines, class_idx)
-        drf ||= header.matches?(DRF_VIEW_BASE)
-        own ||= class_permission_classes(lines, class_idx, class_indent)
-        queue.concat same_file_bases(lines, header)
+        unless decorator_own
+          drf ||= header.matches?(DRF_VIEW_BASE)
+          own ||= class_permission_classes(lines, class_idx, class_indent)
+        end
+        class_attributes(lines, class_idx).each { |name, value| attrs[name] = value unless attrs.has_key?(name) }
+        bases = same_file_bases(lines, header)
+        complete &&= class_base_names(header).size == bases.size + library_base_count(lines, header) &&
+                     !attributes_set_outside?(lines, class_idx, header)
+        queue.concat bases
       end
+      @drf_view_attrs = {attrs, complete && queue.empty?}
     end
 
     if own
@@ -966,6 +981,12 @@ class DjangoAuthTagger < FrameworkTagger
 
   private def class_refusal(klass : PermissionClass, method : String, depth : Int32) : String?
     setting = nil
+    # Decided statement by statement. A refusal reached through `super()`
+    # is left to the readers below, which note a setting the base reads.
+    if (body = klass.has_permission) && (branch = branch_verdict(klass, body, method, depth))
+      return if branch.t?
+      return "" if branch.f? && !body.matches?(SUPER_HAS_PERMISSION)
+    end
     if (body = klass.has_permission) && (verdict = return_verdict(klass, body, method, depth))
       return verdict.f? ? "" : nil
     end
@@ -1108,17 +1129,206 @@ class DjangoAuthTagger < FrameworkTagger
     return mw_not(perm_bool(expr[4..], klass, method, depth)) if masked.matches?(/\Anot\s/)
     if verb = expr.match(/\Arequest\.method(?:\.upper\(\))?\s*(==|!=|not\s+in|in)\s*(.+)\z/)
       verbs = verb[2].strip.split('.').last == "SAFE_METHODS" ? SAFE_METHODS : mw_literals(verb[2]).map(&.upcase)
+      # A verb list held in a name (`self.ADD_METHODS`) is not read.
+      return MwTri::Unknown if verbs.empty?
       hit = verbs.includes?(method.upcase)
       return (verb[1] == "==" || verb[1] == "in") == hit ? MwTri::T : MwTri::F
     end
     return MwTri::F if expr.matches?(/\A[\w.]*\buser\.(?:is_authenticated|is_staff|is_superuser|is_active)\z/)
+    return MwTri::T if expr == "True"
+    return MwTri::F if expr.in?("False", "None")
+    # An anonymous request carries no `request.auth`.
+    return MwTri::F if expr.matches?(/\A(?:request\.auth|isinstance\s*\(\s*request\.auth\s*,[^()]*(?:\([^()]*\))?[^()]*\))\z/)
+    if attr = expr.match(VIEW_ATTRIBUTE_TEST)
+      kind = attr[1]? ? :present : attr[2]? ? :value : :getattr
+      return view_attribute_value(attr[1]? || attr[2]? || attr[3], kind, attr[4]?)
+    end
     if expr.matches?(/\Asuper\s*\(\s*\)\s*\.has_permission\s*\(/)
-      return klass.bases.any? { |base| permission_refusal(base, method, depth + 1) } ? MwTri::F : MwTri::Unknown
+      return MwTri::F if klass.bases.any? { |base| permission_refusal(base, method, depth + 1) }
+      # Every base read and letting the caller through (DRF's own
+      # `BasePermission` allows): open.
+      open = depth < 4 && klass.bases.all? do |base|
+        base == "BasePermission" ||
+          @permission_classes[base]?.try(&.all? { |candidate| class_refusal(candidate, method, depth + 1).nil? })
+      end
+      return open ? MwTri::T : MwTri::Unknown
     end
     if expr.matches?(/\A[A-Za-z_]\w*\s*\(/) && refusing_helper_call?(klass.path, "return #{expr}")
       return MwTri::F
     end
     MwTri::Unknown
+  end
+
+  SUPER_HAS_PERMISSION = /\bsuper\s*\(\s*\)\s*\.has_permission\b/
+
+  # `hasattr(view, "x")`, `view.x`, `getattr(view, "x"[, default])`.
+  VIEW_ATTRIBUTE_TEST = /\A(?:hasattr\s*\(\s*view\s*,\s*['"](\w+)['"]\s*\)|view\.(\w+)|getattr\s*\(\s*view\s*,\s*['"](\w+)['"]\s*(?:,\s*([^()]*?))?\s*\))\z/
+
+  # A view attribute as the view class sets it: `is_private = True` read
+  # on the class and its bases. Absent counts only when every base was
+  # read (or is a library class); otherwise the attribute may be set on an
+  # unread base.
+  private def view_attribute_value(name : String, kind : Symbol, default : String?) : MwTri
+    attrs, complete = @drf_view_attrs || return MwTri::Unknown
+    if value = attrs[name]?
+      return MwTri::T if kind == :present
+      return MwTri::T if value == "True"
+      return MwTri::F if value.in?("False", "None", "0", "[]", "()", "''", "\"\"")
+      return MwTri::Unknown
+    end
+    # Absent from the project classes, a name DRF or Django defines on
+    # every view (or sets on it per request) is still there.
+    return MwTri::Unknown if !complete || LIBRARY_VIEW_ATTRIBUTE.matches?(name)
+    return MwTri::F if kind == :present
+    # `view.x` / `getattr(view, "x")` with no default raise AttributeError.
+    return MwTri::Unknown if kind == :value || default.nil?
+    case default.strip
+    when "False", "None" then MwTri::F
+    when "True"          then MwTri::T
+    else                      MwTri::Unknown
+    end
+  end
+
+  # ponytail: DRF's APIView / GenericAPIView / ViewSetMixin and Django's
+  # View attributes and handler methods, since the library source is not
+  # scanned; extend it when a project tests another one.
+  LIBRARY_VIEW_ATTRIBUTE = /\A(?:get_\w+|perform_\w+|check_\w+|initial\w*|(?:renderer|parser|authentication|throttle|permission)_classes|content_negotiation_class|metadata_class|versioning_class|settings|schema|allowed_methods|default_response_headers|headers|request|response|args|kwargs|format_kwarg|queryset|serializer_class|lookup_field|lookup_url_kwarg|filter_backends|pagination_class|paginator|action|action_map|basename|detail|suffix|name|description|http_method_names|dispatch|setup|options|list|create|retrieve|update|partial_update|destroy|get|post|put|patch|delete|head)\z/
+
+  # `NAME = value` statements directly in the class body at `class_idx`;
+  # a method or a `self.NAME =` assignment in it sets NAME to an unknown
+  # value (`@property def is_private`, `self.is_private = True`).
+  private def class_attributes(lines : Array(String), class_idx : Int32) : Hash(String, String)
+    attrs = Hash(String, String).new
+    body = class_body(lines, class_idx).lines
+    level = body.compact_map { |line| line.blank? || line.lstrip.starts_with?('#') ? nil : line.size - line.lstrip.size }.min?
+    return attrs unless level
+    body.each do |line|
+      if m = line.match(/\A\s*([A-Za-z_]\w*)\s*(?::[^=\n]+)?=(?!=)\s*(.+?)\s*(?:#.*)?\z/)
+        # Deeper than the class body (`if X: is_private = True`): set to
+        # a value not read.
+        value = line.size - line.lstrip.size == level ? m[2] : ""
+        attrs[m[1]] = value unless attrs.has_key?(m[1])
+        next
+      end
+      line.scan(/\A\s*(?:async\s+)?def\s+(\w+)|\bself\.(\w+)\s*=(?!=)/) do |found|
+        name = found[1]? || found[2]
+        attrs[name] = "" unless attrs.has_key?(name)
+      end
+    end
+    attrs
+  end
+
+  # Whether something outside the class body can set its attributes: a
+  # class decorator (`@make_public` doing `cls.public = True`) or a
+  # `ClassName.attr = ...` assignment in the file.
+  private def attributes_set_outside?(lines : Array(String), class_idx : Int32, header : String) : Bool
+    return true if class_idx > 0 && lines[class_idx - 1].lstrip.starts_with?('@')
+    name = header.match(/\bclass\s+(\w+)/).try(&.[1]) || return true
+    assignment = /\A\s*#{name}\.\w+\s*=(?!=)|\bsetattr\s*\(\s*#{name}\s*,/
+    lines.any? { |line| line.includes?(name) && line.matches?(assignment) }
+  end
+
+  private def class_base_names(header : String) : Array(String)
+    open = header.index('(') || return [] of String
+    header[(open + 1)..].sub(/\)\s*:[\s\S]*\z/, "").split(',').compact_map do |base|
+      base = base.strip.sub(/\[[\s\S]*\z/, "")
+      base.empty? || base.includes?('=') ? nil : base
+    end
+  end
+
+  # How many of `header`'s bases are `object` or classes imported from
+  # DRF / Django, which set no project attribute on the view.
+  private def library_base_count(lines : Array(String), header : String) : Int32
+    class_base_names(header).count do |base|
+      next true if base == "object"
+      import_re = /\A\s*from\s+(?:rest_framework|django)\b[\w.]*\s+import\b.*\b#{Regex.escape(base.split('.').first)}\b/
+      lines.any? { |line| line.lstrip.starts_with?("from ") && line.matches?(import_re) }
+    end
+  end
+
+  # `has_permission` read statement by statement for an anonymous caller
+  # of `method`: each top-level `if C: return X` (or `raise`) is an exit
+  # taken when C holds, then the closing `return Y`. A statement that
+  # cannot answer (an assignment, a call, a block holding no `return`) is
+  # passed over; any other block holding a `return` leaves the rest
+  # undecided. Nil when the body has no such exit to read.
+  private def branch_verdict(klass : PermissionClass, body : String, method : String, depth : Int32) : MwTri?
+    statements = permission_statements(body)
+    top = statements.min_of?(&.[0]) || return
+    exits = [] of {String, String}
+    rest = MwTri::F # falling off the end returns None
+    idx = 0
+    while idx < statements.size
+      indent, code = statements[idx]
+      block_end = idx + 1
+      while block_end < statements.size && statements[block_end][0] > indent
+        block_end += 1
+      end
+      block = statements[(idx + 1)...block_end].map(&.[1])
+      head, inline = mw_split_inline(code)
+      block.unshift(inline) if inline
+      if code.matches?(/\Areturn\b/)
+        rest = perm_bool(code.lchop("return").strip, klass, method, depth)
+        break
+      elsif code.matches?(/\Araise\b/)
+        rest = MwTri::F
+        break
+      elsif (cond = head.match(/\Aif\s+(.+):\z/)) && !statements[block_end]?.try { |s| s[0] == top && s[1].matches?(/\A(?:elif|else)\b/) }
+        if block.size == 1 && (exit = block[0].match(/\A(?:return\s+(.+)|raise\b.*)\z/))
+          exits << {cond[1], exit[1]? || "False"}
+        elsif !block.all? { |statement| plain_assignment?(statement) }
+          rest = MwTri::Unknown
+          break
+        end
+      elsif !plain_assignment?(code) && !(head.matches?(/\A(?:if|elif|else)\b.*:\z/) && block.all? { |statement| plain_assignment?(statement) })
+        # A call (`ensure(...)`, `view.permission_denied(...)`), an
+        # `assert`, a loop or `try` may refuse on its own: not read.
+        rest = MwTri::Unknown
+        break
+      end
+      idx = block_end
+    end
+    return if exits.empty?
+    exits.reverse_each do |test, returned|
+      taken = perm_bool(test, klass, method, depth)
+      value = perm_bool(returned, klass, method, depth)
+      rest = taken.t? ? value : taken.f? ? rest : (value == rest ? value : MwTri::Unknown)
+    end
+    rest
+  end
+
+  SAFE_CALLS = %w[getattr hasattr isinstance bool len str int list tuple set dict]
+
+  # `x = expr` / `x: T = expr` calling nothing that could raise a refusal
+  # (only builtins such as `getattr`): a statement that cannot answer.
+  private def plain_assignment?(statement : String) : Bool
+    return false unless statement.matches?(/\A[A-Za-z_][\w.]*\s*(?::[^=]+)?=(?!=)/)
+    # `required = getattr(view, 'x')(request)` / `CHECKS["login"](...)`
+    # call something not named.
+    return false if statement.matches?(/[)\]]\s*\(/)
+    statement.scan(/([\w.]+)\s*\(/).all?(&.[1].in?(SAFE_CALLS))
+  end
+
+  # The logical statements of a method body, `{indent, code}`, with
+  # comments and docstrings dropped and bracketed continuations joined.
+  private def permission_statements(body : String) : Array({Int32, String})
+    statements = [] of {Int32, String}
+    pending = ""
+    indent = 0
+    body.gsub(DOCSTRING, "").each_line do |raw|
+      line = Analyzer::Python::Helper.strip_python_comment(raw).rstrip
+      next if line.strip.empty?
+      if pending.empty?
+        indent = line.size - line.lstrip.size
+        pending = line.strip
+      else
+        pending = "#{pending} #{line.strip}"
+      end
+      next if mw_mask(pending)[1] > 0
+      statements << {indent, pending}
+      pending = ""
+    end
+    statements
   end
 
   # Whether `body` (a `has_permission` in `file`) is nothing but `return
