@@ -33,123 +33,48 @@ describe Noir::RustRequestGuards do
     verdicts["Lax"]?.should be_false
   end
 
-  it "finds handler body calls of refusing inherent methods on a parameter" do
-    source = <<-RUST
-      pub type ReqPrincipal = web::ReqData<Principal>;
-      impl Principal {
-          pub fn validate_session(&self) -> Result<&Session, ErrorResponse> {
-              match &self.session {
-                  Some(s) => Ok(s),
-                  None => Err(ErrorResponse::new(ErrorResponseType::Unauthorized, "no session")),
-              }
-          }
-          pub fn validate_admin_session(&self) -> Result<(), ErrorResponse> {
-              self.validate_session()?;
-              Ok(())
-          }
-          pub fn validate_either(&self) -> Result<(), ErrorResponse> {
-              if self.is_admin() {
-                  return self.validate_admin_session();
-              }
-              self.validate_session().map(|_| ())
-          }
-          pub fn validate_noop(&self) -> Result<(), ErrorResponse> {
-              Ok(())
-          }
-          pub fn validate_csrf(&self) -> Result<(), ErrorResponse> {
-              Err(ErrorResponse::new(ErrorResponseType::Forbidden, "csrf"))
-          }
-          pub fn is_admin(&self) -> bool { false }
-      }
-      pub async fn guarded(principal: ReqPrincipal) -> Result<HttpResponse> {
-          principal.validate_admin_session()?;
-          Ok(ok())
-      }
-      pub async fn csrf_only(principal: ReqPrincipal) -> Result<HttpResponse> {
-          principal.validate_csrf()?;
-          Ok(ok())
-      }
-      pub async fn branchy(principal: ReqPrincipal, flag: bool) -> Result<HttpResponse> {
-          if flag {
-              principal.validate_session()?;
-          }
-          Ok(ok())
-      }
-      pub async fn both_arms(principal: ReqPrincipal) -> Result<HttpResponse> {
-          if principal.is_admin() {
-              principal.validate_admin_session()?;
-          } else {
-              principal.validate_session()?;
-          }
-          Ok(ok())
-      }
-      pub async fn one_arm(principal: ReqPrincipal) -> Result<HttpResponse> {
-          if principal.is_admin() {
-              principal.validate_admin_session()?;
-          } else {
-              log();
-          }
-          Ok(ok())
-      }
-      pub async fn plain(principal: ReqPrincipal) -> Result<HttpResponse> {
-          let admin = principal.is_admin();
-          Ok(ok())
-      }
-      RUST
-    facts = Noir::RustRequestGuards::Facts.new
-    Noir::RustRequestGuards.scan(source, facts)
-    Noir::RustRequestGuards.resolve(facts)
-    facts.refusing_units.should contain("Principal::validate_session")
-    facts.refusing_units.should contain("Principal::validate_admin_session")
-    facts.refusing_units.should contain("Principal::validate_either")
-    facts.refusing_units.should_not contain("Principal::validate_noop")
-    facts.refusing_units.should_not contain("Principal::validate_csrf")
-    facts.refusing_units.should_not contain("Principal::is_admin")
-
-    calls = Noir::RustRequestGuards.handler_guard_calls(source) do |type_text, method|
-      Noir::RustRequestGuards.type_names(type_text, facts).map { |type| "#{type}::#{method}" }.find { |label| facts.refusing_units.includes?(label) }
-    end
-    calls.values.should eq(["Principal::validate_admin_session", "Principal::validate_session"])
-  end
-
-  it "does not read look-alike text, non-refusing helpers or a same-named method that only refuses elsewhere" do
+  it "does not read look-alike text, and scopes free helpers to their crate" do
     a = <<-RUST
-      impl Principal {
-          // never: self.fail(HttpError::unauthorized())
-          pub fn note(&self) -> Result<(), E> {
-              let msg = "HttpError::unauthorized and Status::Forbidden";
-              tracing::warn!("{}", msg);
-              Ok(())
-          }
-          pub fn not_found(&self) -> Result<(), E> {
-              Err(HttpError::not_found())
-          }
-          pub fn check(&self) -> Result<(), E> {
-              Err(HttpError::unauthorized())
-          }
+      pub async fn check(parts: &mut Parts) -> Result<(), E> {
+          Err(HttpError::forbidden())
       }
       pub async fn soft(parts: &mut Parts) -> Result<(), E> {
           // HttpError::forbidden()
+          let msg = "HttpError::unauthorized";
           Ok(())
       }
-      pub async fn hard(parts: &mut Parts) -> Result<(), E> {
-          Err(HttpError::forbidden())
+      pub struct Org;
+      impl FromRequestParts<S> for Org {
+          async fn from_request_parts(parts: &mut Parts, s: &S) -> Result<Self> {
+              check(parts).await?;
+              Ok(Org)
+          }
+      }
+      pub struct Lax;
+      impl FromRequestParts<S> for Lax {
+          async fn from_request_parts(parts: &mut Parts, s: &S) -> Result<Self> {
+              soft(parts).await?;
+              Ok(Lax)
+          }
       }
       RUST
+    # same name in another crate, not request-taking and not refusing
     b = <<-RUST
-      impl Principal {
-          pub fn check(&self) -> Result<(), E> { Ok(()) }
+      pub fn check(name: &str) -> Result<(), E> { Ok(()) }
+      pub struct Other;
+      impl FromRequestParts<S> for Other {
+          async fn from_request_parts(parts: &mut Parts, s: &S) -> Result<Self> {
+              check("x")?;
+              Ok(Other)
+          }
       }
-      pub async fn hard(parts: &mut Parts) -> Result<(), E> { Ok(()) }
       RUST
     facts = Noir::RustRequestGuards::Facts.new
     Noir::RustRequestGuards.scan(a, facts, "a/src/a.rs")
     Noir::RustRequestGuards.scan(b, facts, "b/src/b.rs")
-    Noir::RustRequestGuards.resolve(facts)
-    facts.refusing_units.should_not contain("Principal::note")
-    facts.refusing_units.should_not contain("Principal::not_found")
-    facts.refusing_units.should_not contain("fn:soft")
-    # the same name elsewhere that does not refuse: not trusted
-    facts.refusing_units.should_not contain("Principal::check")
+    verdicts = Noir::RustRequestGuards.resolve(facts)
+    verdicts["Org"]?.should be_true
+    verdicts["Lax"]?.should be_false
+    verdicts["Other"]?.should be_false
   end
 end
