@@ -851,6 +851,53 @@ describe Noir::TreeSitterKotlinParameterExtractor do
   end
 
   describe "#extract_class_fields" do
+    it "skips private and protected body properties unless @JsonProperty names them" do
+      source = <<-KT
+        class SettingsUpdateDto(private val token: String) {
+          private val isSet = mutableMapOf<String, Boolean>()
+          protected var internalState: Int = 0
+          @JsonProperty("wire_name") private var hidden: String? = null
+          internal var shared: Boolean? = null
+          var deleteEmptyCollections: Boolean? = null
+        }
+        KT
+      fields = Noir::TreeSitterKotlinParameterExtractor.extract_class_fields(source)
+      fields["SettingsUpdateDto"].map(&.name).should eq(["token", "hidden", "shared", "deleteEmptyCollections"])
+    end
+
+    it "keeps private properties any @JsonProperty marks or @JsonAutoDetect opts in" do
+      source = <<-KT
+        class Dto {
+          var pub: String? = null
+          @JsonProperty private var annotatedNoName: String? = null
+          @JsonProperty(required = true) private var annotatedRequired: String? = null
+          @field:JsonProperty("fieldNamed") private var fieldNamedRaw: String? = null
+          @get:JsonProperty("getterNamed") private var getterNamedRaw: String? = null
+          private var hiddenPriv: String? = null
+          protected var hiddenProt: String? = null
+          internal var internalOne: String? = null
+        }
+
+        @JsonAutoDetect(fieldVisibility = JsonAutoDetect.Visibility.ANY)
+        class AutoDto {
+          private var autoField: String? = null
+          var autoPub: String? = null
+          class Inner {
+            private var innerPriv: String? = null
+          }
+        }
+
+        data class CtorDto(private val ctorPriv: String, val ctorPub: String) {
+          private val isSet = mutableMapOf<String, Boolean>()
+        }
+        KT
+      fields = Noir::TreeSitterKotlinParameterExtractor.extract_class_fields(source)
+      fields["Dto"].map(&.name).should eq(["pub", "annotatedNoName", "annotatedRequired", "fieldNamedRaw", "getterNamedRaw", "internalOne"])
+      fields["AutoDto"].map(&.name).should eq(["autoField", "autoPub"])
+      fields.fetch("Inner", [] of Noir::TreeSitterKotlinParameterExtractor::FieldInfo).map(&.name).should be_empty
+      fields["CtorDto"].map(&.name).should eq(["ctorPriv", "ctorPub"])
+    end
+
     it "collects primary constructor properties as fields" do
       source = <<-KT
         data class Article(var title: String, var body: String = "todo")

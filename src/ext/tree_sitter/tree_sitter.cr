@@ -281,7 +281,95 @@ module Noir::TreeSitter
 
   # Parses `source` with the Kotlin grammar and yields the root node.
   def self.parse_kotlin(source : String, &)
-    parse(source, LibTreeSitter.tree_sitter_kotlin) { |root| yield root }
+    parse(kotlin_parse_text(source), LibTreeSitter.tree_sitter_kotlin) { |root| yield root }
+  end
+
+  # Kotlin 2.2 multi-dollar strings (`@Value($$"${server.port}")`) are newer
+  # than the vendored grammar, which turns the whole enclosing class into an
+  # ERROR node: every route in it was lost. Parse a copy with the `$` run
+  # before such a literal blanked and each `$` inside it made plain text.
+  # Only `$` bytes change, never their count, so node offsets still index
+  # the caller's `source`.
+  def self.kotlin_parse_text(source : String) : String
+    return source unless source.includes?(%($$"))
+
+    bytes = source.to_slice.dup
+    size = bytes.size
+    i = 0
+    while i < size
+      byte = bytes[i]
+      if byte == '/'.ord && i + 1 < size && bytes[i + 1] == '/'.ord
+        while i < size && bytes[i] != '\n'.ord
+          i += 1
+        end
+      elsif byte == '/'.ord && i + 1 < size && bytes[i + 1] == '*'.ord
+        i += 2
+        while i + 1 < size && !(bytes[i] == '*'.ord && bytes[i + 1] == '/'.ord)
+          i += 1
+        end
+        i += 2
+      elsif byte == '\''.ord
+        i += 1
+        while i < size && bytes[i] != '\''.ord && bytes[i] != '\n'.ord
+          i += 1 if bytes[i] == '\\'.ord
+          i += 1
+        end
+        i += 1
+      elsif byte == '$'.ord || byte == '"'.ord
+        run = 0
+        while i + run < size && bytes[i + run] == '$'.ord
+          run += 1
+        end
+        if run > 0 && (i + run >= size || bytes[i + run] != '"'.ord)
+          i += run
+          next
+        end
+        multi = run >= 2
+        run.times { |offset| bytes[i + offset] = ' '.ord.to_u8 } if multi
+        i = skip_kotlin_string(bytes, i + run, multi)
+      else
+        i += 1
+      end
+    end
+    String.new(bytes)
+  end
+
+  # Past the string literal opening at `i`; with `plain`, each `$` in it is
+  # rewritten to `_`. A `${...}` template is skipped by brace depth.
+  private def self.skip_kotlin_string(bytes : Bytes, i : Int32, plain : Bool) : Int32
+    size = bytes.size
+    raw = i + 2 < size && bytes[i + 1] == '"'.ord && bytes[i + 2] == '"'.ord
+    i += raw ? 3 : 1
+    while i < size
+      byte = bytes[i]
+      if raw && byte == '"'.ord && i + 2 < size && bytes[i + 1] == '"'.ord && bytes[i + 2] == '"'.ord
+        i += 3
+        while i < size && bytes[i] == '"'.ord
+          i += 1
+        end
+        return i
+      elsif !raw && byte == '"'.ord
+        return i + 1
+      elsif !raw && byte == '\\'.ord
+        i += 2
+      elsif byte == '$'.ord && plain
+        bytes[i] = '_'.ord.to_u8
+        i += 1
+      elsif byte == '$'.ord && i + 1 < size && bytes[i + 1] == '{'.ord
+        depth = 0
+        while i < size
+          depth += 1 if bytes[i] == '{'.ord
+          depth -= 1 if bytes[i] == '}'.ord
+          i += 1
+          break if depth == 0 && bytes[i - 1] == '}'.ord
+        end
+      elsif !raw && byte == '\n'.ord
+        return i
+      else
+        i += 1
+      end
+    end
+    i
   end
 
   # Parses `source` with the JavaScript grammar and yields the
