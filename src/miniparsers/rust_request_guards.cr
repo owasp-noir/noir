@@ -36,6 +36,7 @@ module Noir::RustRequestGuards
   SUCCESS_ARM_RE = /\A(?:(?:\w+::)*Outcome::)?(?:Success|Ok)\s*\(/
   # ponytail: a file with none of these words is not parsed, so a helper whose
   # only refusal is a call into another file's helper is missed.
+  FN_DEF_RE        = /\bfn\s+(\w+)/
   REQUEST_PARAM_RE = /\b(?:Parts|HttpRequest|ServiceRequest|RequestHead|HeaderMap)\b/
   EVIDENCE_RE      = /\bFromRequest|macro_rules!|(?i:unauthori[sz]ed|forbidden)|permission_denied/
   # ponytail: a status mapping is read off its signature, not its callers;
@@ -99,6 +100,8 @@ module Noir::RustRequestGuards
     getter refusing_units = Set(String).new
     # Keys (`crate|fn:name`) of free fns that take the request; only those can refuse.
     getter request_fns = Set(String).new
+    # `fn name` definitions per crate, counted by text in every file (parsed or not).
+    getter fn_defs = Hash(String, Int32).new(0)
     getter refusing_macros = Set(String).new
     # `Enum::Variant` keys a `status_code` arm maps to 401/403, and those
     # some arm maps to another status (a key in both is not trusted).
@@ -133,6 +136,7 @@ module Noir::RustRequestGuards
       code.scan(ENUM_DEF_RE) { |m| (facts.enum_files["#{crate}|#{m[1]}"] ||= Set(String).new) << path }
       collect_status_arms(code, globs, facts, path, crate) if status_fn
     end
+    source.scan(FN_DEF_RE) { |m| facts.fn_defs["#{crate}|fn:#{m[1]}"] += 1 } if source.includes?("fn ")
     return unless source.matches?(EVIDENCE_RE)
     if source.includes?("crate::")
       facts.crate_uses[path] = source.scan(CRATE_USE_RE).join('\n', &.[0])
@@ -259,6 +263,8 @@ module Noir::RustRequestGuards
     # is trusted only when every definition refuses.
     open = facts.units.reject { |unit| unit.sites.any? { |site| refuses?(site, unit, none, known, facts) } }
     open.each { |unit| facts.refusing_units.delete(unit.type) }
+    # A definition in a file that was never parsed (or an impl method of the same name) is unknown: not trusted.
+    facts.refusing_units.reject! { |key| facts.fn_defs[key] > facts.units.count { |unit| unit.type == key } }
   end
 
   # Leaf type names of a fn's parameters that are required guards, keyed
@@ -522,11 +528,6 @@ module Noir::RustRequestGuards
     called_unit_from(Noir::TreeSitter.first_named_child(node), walk)
   end
 
-  private def self.last_named_child(node : LibTreeSitter::TSNode) : LibTreeSitter::TSNode?
-    count = LibTreeSitter.ts_node_named_child_count(node)
-    count == 0 ? nil : LibTreeSitter.ts_node_named_child(node, count - 1)
-  end
-
   private def self.called_unit_from(start : LibTreeSitter::TSNode?, walk : Walk) : String?
     source = walk.source
     cur = start
@@ -627,13 +628,6 @@ module Noir::RustRequestGuards
     when "return_expression"
       if unit = called_unit(node, walk)
         sites << Site.new(SiteKind::Unit, unit, cond)
-      end
-    when "block"
-      # A tail call hands its result on as the block's value.
-      if (last = last_named_child(node)) && {"call_expression", "await_expression"}.includes?(Noir::TreeSitter.node_type(last))
-        if unit = called_unit_from(last, walk)
-          sites << Site.new(SiteKind::Unit, unit, cond)
-        end
       end
     when "match_arm", "let_condition"
       pattern = Noir::TreeSitter.field(node, "pattern")

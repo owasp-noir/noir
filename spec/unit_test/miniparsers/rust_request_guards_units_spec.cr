@@ -77,4 +77,32 @@ describe Noir::RustRequestGuards do
     verdicts["Lax"]?.should be_false
     verdicts["Other"]?.should be_false
   end
+
+  it "trusts neither an unparsed same-named fn in the crate nor a helper whose value is only stored" do
+    auth = <<-RUST
+      pub async fn check(parts: &mut Parts) -> Result<(), E> { Err(HttpError::unauthorized()) }
+      pub async fn bearer(parts: &mut Parts) -> Result<(), E> { Err(HttpError::unauthorized()) }
+      pub struct Mixed;
+      impl FromRequestParts<S> for Mixed {
+          async fn from_request_parts(parts: &mut Parts, s: &S) -> Result<Self> {
+              util::check(parts)?;
+              Ok(Mixed)
+          }
+      }
+      pub struct Maybe;
+      impl FromRequestParts<S> for Maybe {
+          async fn from_request_parts(parts: &mut Parts, s: &S) -> Result<Self> {
+              let user = if s.on { bearer(parts).await } else { Ok(()) };
+              Ok(Maybe)
+          }
+      }
+      RUST
+    util = "pub fn check(raw: &str) -> Result<(), E> { Ok(()) }\n"
+    facts = Noir::RustRequestGuards::Facts.new
+    Noir::RustRequestGuards.scan(auth, facts, "a/src/auth.rs")
+    Noir::RustRequestGuards.scan(util, facts, "a/src/util.rs")
+    verdicts = Noir::RustRequestGuards.resolve(facts)
+    verdicts["Mixed"]?.should be_false
+    verdicts["Maybe"]?.should be_false
+  end
 end
