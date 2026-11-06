@@ -594,8 +594,14 @@ module Noir
     # An inline `addX(api.Group("/posts"))` (or mux's
     # `addX(r.PathPrefix("/posts").Subrouter())`) comes back as the composed
     # prefix when `groups` knows `api` (`/api/v1/posts`), else as the literal.
+    #
+    # `slice_builders` maps a registration slice to the builders appended to
+    # it (go-admin's `routerCheckRole = append(routerCheckRole,
+    # registerDictRouter)`): a call on the value of a `range` over that slice
+    # (`for _, f := range routerCheckRole { f(v, auth) }`) calls each of them.
     def collect_router_builder_callsites(source : String, builders : Set(String),
-                                         groups : Hash(String, String) = Hash(String, String).new) : Array(Tuple(String, String, String, Int32))
+                                         groups : Hash(String, String) = Hash(String, String).new,
+                                         slice_builders : Hash(String, Array(String)) = Hash(String, Array(String)).new) : Array(Tuple(String, String, String, Int32))
       calls = [] of Tuple(String, String, String, Int32)
       return calls if builders.empty?
       Noir::TreeSitter.parse_go(source) do |root|
@@ -605,7 +611,15 @@ module Noir
           next unless fn
           fn_text = Noir::TreeSitter.node_text(fn, source)
           qualifier, _, name = fn_text.rpartition('.')
-          next unless builders.includes?(name)
+          targets = if builders.includes?(name)
+                      [name]
+                    elsif qualifier.empty? && !slice_builders.empty? && (slice = ranged_slice(node, name, source)) &&
+                          (appended = slice_builders[slice]?) && appended.size <= MAX_SLICE_BUILDERS
+                      appended.select { |builder| builders.includes?(builder) }
+                    else
+                      [] of String
+                    end
+          next if targets.empty?
           args = Noir::TreeSitter.field(node, "arguments")
           next unless args
           first_text = nil
@@ -625,17 +639,119 @@ module Noir
           next unless first_seen
           arg_text ||= first_text
           row = Noir::TreeSitter.node_start_row(node)
-          if arg_text
-            calls << {name, arg_text, qualifier, row}
-          else
-            # Non-identifier, non-inline-Group arg (e.g. expr, func result,
-            # root router, etc.) — record so caller can apply "all sites must
-            # resolve" guard and fall back to whole-file pass.
-            calls << {name, "__unresolved__", qualifier, row}
-          end
+          # Non-identifier, non-inline-Group arg (e.g. expr, func result,
+          # root router, etc.) — record so caller can apply "all sites must
+          # resolve" guard and fall back to whole-file pass.
+          targets.each { |target| calls << {target, arg_text || "__unresolved__", qualifier, row} }
         end
       end
       calls
+    end
+
+    # ponytail: a loop over more appended builders than this is left
+    # unprefixed; each builder's expansion re-walks its package, so a
+    # 2000-builder slice would cost minutes.
+    MAX_SLICE_BUILDERS = 200
+
+    # The slice `var` ranges over in the `for _, var := range slice` around
+    # `call` (in the same function), or nil, also when the declaration it
+    # sits in, closures included, declares a slice of that name itself (a
+    # local `routers := ...` shadowing the package one).
+    private def ranged_slice(call : LibTreeSitter::TSNode, var : String, source : String) : String?
+      node = Noir::TreeSitter.parent(call)
+      depth = 0
+      slice = nil
+      in_function = true
+      while node && depth < Noir::TreeSitter::MAX_AST_DEPTH
+        if in_function && slice.nil? && Noir::TreeSitter.node_type(node) == "for_statement"
+          Noir::TreeSitter.each_named_child(node) do |child|
+            next unless Noir::TreeSitter.node_type(child) == "range_clause"
+            left = Noir::TreeSitter.field(child, "left")
+            right = Noir::TreeSitter.field(child, "right")
+            next unless left && right && Noir::TreeSitter.node_type(right) == "identifier"
+            bound = false
+            Noir::TreeSitter.each_named_child(left) do |id|
+              bound ||= Noir::TreeSitter.node_text(id, source) == var
+            end
+            slice = Noir::TreeSitter.node_text(right, source) if bound
+          end
+        end
+        case Noir::TreeSitter.node_type(node)
+        when "func_literal"
+          return unless slice
+          in_function = false
+        when "function_declaration", "method_declaration"
+          return slice && !function_declares?(node, slice, source) ? slice : nil
+        end
+        node = Noir::TreeSitter.parent(node)
+        depth += 1
+      end
+    end
+
+    # The function or method declaration `node` sits in, or nil at file
+    # scope.
+    private def enclosing_declaration(node : LibTreeSitter::TSNode) : LibTreeSitter::TSNode?
+      current = Noir::TreeSitter.parent(node)
+      depth = 0
+      while current && depth < Noir::TreeSitter::MAX_AST_DEPTH
+        return current if {"function_declaration", "method_declaration"}.includes?(Noir::TreeSitter.node_type(current))
+        current = Noir::TreeSitter.parent(current)
+        depth += 1
+      end
+    end
+
+    # Whether `function` declares `name`: a parameter, `name := ...`,
+    # `var name ...` or a `range` variable anywhere in it.
+    private def function_declares?(function : LibTreeSitter::TSNode, name : String, source : String) : Bool
+      found = false
+      Noir::TreeSitter.walk(function) do |node|
+        next if found
+        case Noir::TreeSitter.node_type(node)
+        when "parameter_declaration", "var_spec"
+          Noir::TreeSitter.each_named_child(node) do |id|
+            found ||= Noir::TreeSitter.node_type(id) == "identifier" && Noir::TreeSitter.node_text(id, source) == name
+          end
+        when "short_var_declaration", "range_clause"
+          Noir::TreeSitter.field(node, "left").try do |left|
+            Noir::TreeSitter.each_named_child(left) do |id|
+              found ||= Noir::TreeSitter.node_type(id) == "identifier" && Noir::TreeSitter.node_text(id, source) == name
+            end
+          end
+        end
+      end
+      found
+    end
+
+    # The `builders` appended to each slice in `source`
+    # (`routerCheckRole = append(routerCheckRole, registerDictRouter)`), read
+    # off the syntax tree so comments and strings do not count.
+    def collect_builder_slice_appends(source : String, builders : Set(String)) : Hash(String, Array(String))
+      appends = Hash(String, Array(String)).new
+      # Declaration start byte and slice name -> whether it declares it.
+      local_slices = Hash({UInt32, String}, Bool).new
+      Noir::TreeSitter.parse_go(source) do |root|
+        Noir::TreeSitter.walk(root) do |node|
+          next unless Noir::TreeSitter.node_type(node) == "assignment_statement"
+          left = Noir::TreeSitter.field(node, "left").try { |l| Noir::TreeSitter.first_named_child(l) }
+          call = Noir::TreeSitter.field(node, "right").try { |r| Noir::TreeSitter.first_named_child(r) }
+          next unless left && call && Noir::TreeSitter.node_type(left) == "identifier" && Noir::TreeSitter.node_type(call) == "call_expression"
+          next unless Noir::TreeSitter.field(call, "function").try { |fn| Noir::TreeSitter.node_text(fn, source) == "append" }
+          slice = Noir::TreeSitter.node_text(left, source)
+          args = Noir::TreeSitter.field(call, "arguments") || next
+          names = [] of String
+          Noir::TreeSitter.each_named_arg(args) do |arg|
+            names << Noir::TreeSitter.node_text(arg, source) if Noir::TreeSitter.node_type(arg) == "identifier"
+          end
+          next unless names.first? == slice
+          # An append to a local slice of the package slice's name.
+          if decl = enclosing_declaration(node)
+            next if local_slices.put_if_absent({LibTreeSitter.ts_node_start_byte(decl), slice}) { function_declares?(decl, slice, source) }
+          end
+          names = names[1..].select { |name| builders.includes?(name) }
+          (appends[slice] ||= [] of String).concat(names) unless names.empty?
+        end
+      end
+      appends
     end
 
     # A router-builder call argument as `collect_router_builder_callsites`

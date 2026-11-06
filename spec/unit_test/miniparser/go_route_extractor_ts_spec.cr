@@ -1537,3 +1537,73 @@ describe Noir::TreeSitterGoRouteExtractor do
     ])
   end
 end
+
+describe "Noir::TreeSitterGoRouteExtractor builder slices" do
+  it "reads appends off the syntax tree, not comments or strings" do
+    source = <<-GO
+      package router
+      func init() {
+          // list = append(list, regB)
+          s := "list = append(list, regB)"
+          list = append(list, regA, other)
+      }
+      GO
+    Noir::TreeSitterGoRouteExtractor.collect_builder_slice_appends(source, Set{"regA", "regB"}).should eq({"list" => ["regA"]})
+  end
+
+  it "does not count an append to a function-local slice of the same name" do
+    source = <<-GO
+      package router
+      func init() { routers = append(routers, regA) }
+      func SetupAdmin(r *gin.Engine) {
+          routers := []func(*gin.RouterGroup){}
+          routers = append(routers, regB)
+      }
+      GO
+    Noir::TreeSitterGoRouteExtractor.collect_builder_slice_appends(source, Set{"regA", "regB"}).should eq({"routers" => ["regA"]})
+  end
+
+  it "does not read a loop in a closure over the outer function's local slice" do
+    source = <<-GO
+      package router
+      func Setup(r *gin.Engine) {
+          v1 := r.Group("/v1")
+          for _, f := range routers {
+              f(v1)
+          }
+      }
+      func SetupAdmin(r *gin.Engine) {
+          routers := []func(*gin.RouterGroup){regB}
+          adm := r.Group("/admin")
+          run := func() {
+              for _, f := range routers {
+                  f(adm)
+              }
+          }
+          run()
+      }
+      GO
+    calls = Noir::TreeSitterGoRouteExtractor.collect_router_builder_callsites(source, Set{"regA", "regB"}, {"v1" => "/v1", "adm" => "/admin"}, {"routers" => ["regA"]})
+    calls.map { |(fn, arg, _, _)| {fn, arg} }.should eq([{"regA", "v1"}])
+  end
+
+  it "does not expand a loop over more appended builders than the cap, in linear time" do
+    count = Noir::TreeSitterGoRouteExtractor::MAX_SLICE_BUILDERS + 1
+    builders = (0...count).map { |i| "reg#{i}" }
+    source = <<-GO
+      package router
+      func Init(r *gin.Engine) {
+          v := r.Group("/v1")
+          for _, f := range list {
+              f(v)
+          }
+      }
+      GO
+    started = Time.instant
+    calls = Noir::TreeSitterGoRouteExtractor.collect_router_builder_callsites(source, builders.to_set, {"v" => "/v1"}, {"list" => builders})
+    (Time.instant - started).should be < 2.seconds
+    calls.should be_empty
+    capped = builders[0, count - 1]
+    Noir::TreeSitterGoRouteExtractor.collect_router_builder_callsites(source, capped.to_set, {"v" => "/v1"}, {"list" => capped}).size.should eq(count - 1)
+  end
+end
