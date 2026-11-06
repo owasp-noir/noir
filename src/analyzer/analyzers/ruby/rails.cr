@@ -1019,7 +1019,14 @@ module Analyzer::Ruby
     # declares none.
     private def devise_modules(framework_root : String, model : String) : Array(String)?
       model_path = "#{framework_root}/app/models/#{model}.rb"
-      return unless known_file?(model_path)
+      unless known_file?(model_path)
+        # A model grouped in a subfolder (`app/models/users/user.rb`) still
+        # defines the top-level class; take the first one that declares devise.
+        dir = "#{framework_root}/app/models/"
+        model_path = @known_files.select { |f| f.starts_with?(dir) && f.ends_with?("/#{model}.rb") }
+          .sort!.find { |f| ruby_source(f).matches?(/^\s*devise\b/m) }
+        return unless model_path
+      end
       source = ruby_source(model_path)
       concerns = source.scan(/^\s*include\s+([A-Z][\w:]*)/m).compact_map do |inc|
         path = "#{framework_root}/app/models/concerns/#{inc[1].gsub("::", "/").underscore}.rb"
