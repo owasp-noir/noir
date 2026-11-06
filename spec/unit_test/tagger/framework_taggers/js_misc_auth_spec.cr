@@ -344,7 +344,8 @@ describe "JsMiscAuthTagger" do
           url = line.match(/url:\s*"([^"]+)"/).try(&.[1]) || line.match(/\.get\(\s*"([^"]+)"/).try(&.[1]) || next
           details = Details.new(PathInfo.new(server_path, idx + 1))
           details.technology = "js_fastify"
-          endpoints << Endpoint.new(url, "GET", [] of Param, details)
+          verb = line.match(/method:\s*"([A-Z]+)"/).try(&.[1]) || "GET"
+          endpoints << Endpoint.new(url, verb, [] of Param, details)
         end
         JsMiscAuthTagger.new(noir_options).perform(endpoints).to_h { |ep| {ep.url, ep.tags.select(&.name.==("auth")).map(&.description)} }
       ensure
@@ -554,61 +555,205 @@ describe "JsMiscAuthTagger" do
       tags["/public/docs"].should be_empty
     end
 
-    it "reports a check behind a request-flag early return with that caveat, and nothing behind a target allow-list" do
+    it "credits no bypass the app does not declare, and stays open on every widening attack" do
       tags = tag_routes.call({
         "src/hooks.ts" => <<-JS,
+          import { UnauthorizedError } from "./errors";
+
+          // W1: flag derived from route config by another hook.
+          export const markOpen = async (req) => {
+            req.skipChecks = Boolean(req.routeOptions.config.open);
+          };
+          export const flagFromConfig = (req, _res, done) => {
+            if (req.skipChecks) return done();
+            if (!req.auth) throw new UnauthorizedError("Token missing");
+            done();
+          };
+
+          // W2: GET is public.
+          export const getIsPublic = (req, _res, done) => {
+            if (req.method === "GET") return done();
+            if (!req.auth) throw new UnauthorizedError("Token missing");
+            done();
+          };
+
+          // W3: env setting.
+          export const envBypass = (req, _res, done) => {
+            if (process.env.DISABLE_AUTH) return done();
+            if (!req.auth) throw new UnauthorizedError("Token missing");
+            done();
+          };
+
+          // W4: local alias of the url.
+          export const urlAlias = (req, _res, done) => {
+            const u = req.url;
+            if (u.startsWith("/health")) return done();
+            if (!req.auth) throw new UnauthorizedError("Token missing");
+            done();
+          };
+
+          // W5: raw url and optional-chained route config.
+          export const rawUrl = (req, _res, done) => {
+            if (req.raw.url === HEALTH) return done();
+            if (!req.auth) throw new UnauthorizedError("Token missing");
+            done();
+          };
+          export const optChainConfig = (req, _res, done) => {
+            if (req.routeOptions?.config?.skip) return done();
+            if (!req.auth) throw new UnauthorizedError("Token missing");
+            done();
+          };
+
+          // W6: destructured url / method.
+          export const destructured = (req, _res, done) => {
+            const { url, method } = req;
+            if (method === "OPTIONS" || url === HEALTH) return done();
+            if (!req.auth) throw new UnauthorizedError("Token missing");
+            done();
+          };
+
+          // W7: client body flag (preHandler: body is parsed).
+          export const bodyFlag = (req, _res, done) => {
+            if (req.body?.preview) return done();
+            if (!req.auth) throw new UnauthorizedError("Token missing");
+            done();
+          };
+
+          // W8: bracket access to route config.
+          export const bracketConfig = (req, _res, done) => {
+            if (req["routeOptions"]["config"]["skip"]) return done();
+            if (!req.auth) throw new UnauthorizedError("Token missing");
+            done();
+          };
+
+          // W9: req.is404 / req.host (Fastify 5) / req.ip.
+          export const hostBypass = (req, _res, done) => {
+            if (req.host === INTERNAL_HOST) return done();
+            if (!req.auth) throw new UnauthorizedError("Token missing");
+            done();
+          };
+
+          // W10: real strict guard (control).
+          export const strict = (req, _res, done) => {
+            if (!req.auth) throw new UnauthorizedError("Token missing");
+            done();
+          };
+
+          // W11: infisical's exact shape (control).
           export const verifyAuth =
-            (modes: string[], options = { requireOrg: true }) =>
+            (modes: string[]) =>
             (req, _res, done) => {
               if (req.shouldForwardWritesToPrimaryInstance && req.method !== "GET") {
                 return done();
               }
-              if (!Array.isArray(modes)) throw new Error("Auth strategy must be array");
               if (!req.auth) throw new UnauthorizedError({ message: "Token missing" });
               done();
             };
-          export const pathAllow = (req, _res, done) => {
-            if (req.url.startsWith("/public")) return done();
-            if (!req.auth) throw new UnauthorizedError("login");
+
+          // W12: strategies for fastify-auth default relation (or).
+          export const publicStrategy = (req, _res, done) => done();
+
+          // W13: session object always exists with @fastify/session.
+          export const sessionObj = (req, _res, done) => {
+            if (!req.session) throw new UnauthorizedError("no session");
             done();
           };
-          export const configPublic = (req, _res, done) => {
-            if (req.routeOptions.config.public) return done();
-            if (!req.auth) throw new UnauthorizedError("login");
+
+          // W14: param named differently, flag bypass.
+          export const methodFlag = (request, _res, done) => {
+            if (request.method === "HEAD" || request.method === "GET") return done();
+            if (!request.user) throw new UnauthorizedError("login");
             done();
           };
-          export const regexAllow = (req, _res, done) => {
-            if (/^/health/.test(req.raw.url)) return done();
-            if (!req.auth) throw new UnauthorizedError("login");
-            done();
-          };
-          export const hostAllow = (req, _res, done) => {
-            if (req.hostname === "internal") return done();
-            if (!req.auth) throw new UnauthorizedError("login");
-            done();
-          };
-          export const modeAllow =
-            (mode: string) =>
-            (req, _res, done) => {
-              if (mode === "open") return done();
-              if (!req.auth) throw new UnauthorizedError("login");
-              done();
-            };
           JS
         "src/server.ts" => <<-JS,
           import fastify from "fastify";
-          import { configPublic, hostAllow, modeAllow, pathAllow, regexAllow, verifyAuth } from "./hooks";
+          import { markOpen, flagFromConfig, getIsPublic, envBypass, urlAlias, rawUrl, optChainConfig, destructured, bodyFlag, bracketConfig, hostBypass, strict, verifyAuth, publicStrategy, sessionObj, methodFlag } from "./hooks";
+
           const server = fastify();
-          server.route({ method: "GET", url: "/forwarded", onRequest: verifyAuth(["jwt"]), handler: async () => [] });
-          server.route({ method: "GET", url: "/public/list", onRequest: pathAllow, handler: async () => [] });
-          server.route({ method: "GET", url: "/config-public", onRequest: configPublic, handler: async () => [] });
-          server.route({ method: "GET", url: "/health/live", onRequest: regexAllow, handler: async () => [] });
-          server.route({ method: "GET", url: "/internal", onRequest: hostAllow, handler: async () => [] });
-          server.route({ method: "GET", url: "/mode", onRequest: modeAllow("open"), handler: async () => [] });
+          server.addHook("onRequest", markOpen);
+          server.route({ method: "GET", url: "/w1-open-config", config: { open: true }, onRequest: flagFromConfig, handler: async () => [] });
+          server.route({ method: "GET", url: "/w2-get", onRequest: getIsPublic, handler: async () => [] });
+          server.route({ method: "POST", url: "/w2-post", onRequest: getIsPublic, handler: async () => [] });
+          server.route({ method: "GET", url: "/w3-env", onRequest: envBypass, handler: async () => [] });
+          server.route({ method: "GET", url: "/w4-alias", onRequest: urlAlias, handler: async () => [] });
+          server.route({ method: "GET", url: "/w5-raw", onRequest: rawUrl, handler: async () => [] });
+          server.route({ method: "GET", url: "/w5-optchain", onRequest: optChainConfig, handler: async () => [] });
+          server.route({ method: "GET", url: "/w6-destructured", onRequest: destructured, handler: async () => [] });
+          server.route({ method: "POST", url: "/w7-body", preHandler: bodyFlag, handler: async () => [] });
+          server.route({ method: "GET", url: "/w8-bracket", onRequest: bracketConfig, handler: async () => [] });
+          server.route({ method: "GET", url: "/w9-host", onRequest: hostBypass, handler: async () => [] });
+          server.route({ method: "GET", url: "/w10-strict", onRequest: strict, handler: async () => [] });
+          server.route({ method: "GET", url: "/w11-verify", onRequest: verifyAuth(["jwt"]), handler: async () => [] });
+          server.route({ method: "GET", url: "/w12-default-or", onRequest: server.auth([strict, publicStrategy]), handler: async () => [] });
+          server.route({ method: "GET", url: "/w13-session", onRequest: sessionObj, handler: async () => [] });
+          server.route({ method: "GET", url: "/w14-method", onRequest: methodFlag, handler: async () => [] });
+          server.listen({ port: 3000 });
           JS
       }, "src/server.ts")
-      tags["/forwarded"].should eq(["Protected by Fastify onRequest verifyAuth (a request-flag early return can bypass it)"])
-      %w[/public/list /config-public /health/live /internal /mode].each { |url| tags[url].should be_empty }
+      tags["/w10-strict"].should eq(["Protected by Fastify onRequest strict"])
+      tags.each { |url, found| found.should be_empty unless url == "/w10-strict" }
+    end
+
+    it "settles a declared request-flag bypass against the route's method" do
+      tags = tag_routes.call({
+        "src/plugins/inject.ts" => <<-JS,
+          export const inject = async (server, opt) => {
+            server.decorateRequest("shouldForwardWritesToPrimaryInstance", Boolean(opt.forward));
+            server.decorateRequest("previewOnly", false);
+            server.decorateRequest("readReplica", false);
+          };
+          JS
+        "src/plugins/mark.ts" => <<-JS,
+          export const mark = async (req) => {
+            req.previewOnly = Boolean(req.body?.preview);
+          };
+          JS
+        "src/hooks.ts" => <<-JS,
+          export const verifyAuth =
+            (modes: string[]) =>
+            (req, _res, done) => {
+              if (req.shouldForwardWritesToPrimaryInstance && req.method !== "GET") {
+                return done();
+              }
+              if (!req.auth) throw new UnauthorizedError({ message: "Token missing" });
+              done();
+            };
+          export const assignedFlag = (req, _res, done) => {
+            if (req.previewOnly) return done();
+            if (!req.auth) throw new UnauthorizedError("login");
+            done();
+          };
+          export const readsOnGet = (req, _res, done) => {
+            if (req.method === "GET" && req.readReplica) return done();
+            if (!req.auth) throw new UnauthorizedError("login");
+            done();
+          };
+          export const plainFlag = (req, _res, done) => {
+            if (req.readReplica) return done();
+            if (!req.auth) throw new UnauthorizedError("login");
+            done();
+          };
+          JS
+        "src/server.ts" => <<-JS,
+          import { assignedFlag, plainFlag, readsOnGet, verifyAuth } from "./hooks";
+          server.route({ method: "GET", url: "/secrets", onRequest: verifyAuth(["jwt"]), handler: async () => [] });
+          server.route({ method: "POST", url: "/secrets-write", onRequest: verifyAuth(["jwt"]), handler: async () => [] });
+          server.route({ method: "GET", url: "/preview", onRequest: assignedFlag, handler: async () => [] });
+          server.route({ method: "GET", url: "/replica-get", onRequest: readsOnGet, handler: async () => [] });
+          server.route({ method: "POST", url: "/replica-post", onRequest: readsOnGet, handler: async () => [] });
+          server.route({ method: "GET", url: "/plain-flag", onRequest: plainFlag, handler: async () => [] });
+          JS
+      }, "src/server.ts")
+      note = " (a request-flag early return can bypass it)"
+      # `!== "GET"`: the bypass never applies to a GET route.
+      tags["/secrets"].should eq(["Protected by Fastify onRequest verifyAuth"])
+      tags["/secrets-write"].should eq(["Protected by Fastify onRequest verifyAuth#{note}"])
+      # A flag some hook assigns from the request is request input.
+      tags["/preview"].should be_empty
+      tags["/replica-get"].should eq(["Protected by Fastify onRequest readsOnGet#{note}"])
+      tags["/replica-post"].should eq(["Protected by Fastify onRequest readsOnGet"])
+      tags["/plain-flag"].should eq(["Protected by Fastify onRequest plainFlag#{note}"])
     end
 
     it "anchors the absence test to its own if, not an earlier one" do

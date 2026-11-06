@@ -60,20 +60,26 @@ class JsMiscAuthTagger < FrameworkTagger
   FASTIFY_OPTIONAL_VERIFY = /\bif\s*\([^)]*(?:authorization|headers|token|cookie)/i
   # `!req.auth`, `!request.user`, `!token`: one negated read of a credential.
   FASTIFY_ABSENCE_TEST = /\A\s*!\s*[A-Za-z_$][\w$]*(?:\s*\??\.\s*[A-Za-z_$][\w$]*)*\s*\z/
-  FASTIFY_CREDENTIAL   = /\b(?:auth|user|session|token|authorization|apiKey|apikey|cookie|identity|principal|jwt|credentials?)\b/i
+  # The member the absence test reads last: `!req.auth`, `!req.session.user`.
+  # A bare `!req.session` is not one: @fastify/session always sets it.
+  FASTIFY_CREDENTIAL = /(?:\A\s*!\s*|\.)\s*(?:auth|user|userId|token|authorization|apiKey|apikey|identity|principal|jwt|credentials?)\s*\z/i
   # Any way out of the hook before the check: an anonymous caller may leave there.
   FASTIFY_EARLY_EXIT = /\breturn\b|\bdone\s*\(|\bnext\s*\(/
   # A request-flag early return: no credential word, no request target.
-  FASTIFY_EXIT_CREDENTIAL = /auth|user|session|token|apikey|api_key|cookie|identity|principal|jwt|credential|login|anonymous|public|guest/i
-  FASTIFY_REQUEST_TARGET  = /\.\s*(?:url|originalUrl|path|routerPath|routeOptions|routeConfig|config|params|query|headers|hostname|raw)\b/
-  FASTIFY_PATH_LITERAL    = /['"`]\/|(?:^|[(\s!,=&|])\/[^\/\s*]/
-  FASTIFY_FLAG_ROOTS      = Set{"req", "request", "true", "false", "null", "undefined", "typeof"}
-  FASTIFY_THROW_FIRST     = /\Athrow\s+(?:new\s+)?\w*(?:Unauthori[sz]ed|Unauthenticated)\w*\s*\(/
+  # `req.shouldForwardWritesToPrimaryInstance && req.method !== "GET"`: one
+  # app-declared request flag, optionally narrowed by the method, either order.
+  FASTIFY_FLAG_BYPASS              = /\A\s*(req|request)\s*\.\s*([A-Za-z_$][\w$]*)\s*(?:&&\s*\1\s*\.\s*method\s*(===|!==|==|!=)\s*['"]([A-Za-z]+)['"]\s*)?\z/
+  FASTIFY_FLAG_BYPASS_METHOD_FIRST = /\A\s*(req|request)\s*\.\s*method\s*(===|!==|==|!=)\s*['"]([A-Za-z]+)['"]\s*&&\s*\1\s*\.\s*([A-Za-z_$][\w$]*)\s*\z/
+  FASTIFY_DECORATE_REQUEST         = /\.\s*decorateRequest\s*\(\s*['"]([A-Za-z_$][\w$]*)['"]/
+  # `req.flag = …` anywhere: a flag a hook or handler can set is request input.
+  FASTIFY_REQUEST_ASSIGN = /(?<![\w$.])(?:req|request)\s*\.\s*([A-Za-z_$][\w$]*)\s*(?:=(?![=>])|\|\|=|\?\?=|&&=)/
+  FASTIFY_THROW_FIRST    = /\Athrow\s+(?:new\s+)?\w*(?:Unauthori[sz]ed|Unauthenticated)\w*\s*\(/
   # `verifyAuth({ optional: true })`, `verifyModes(["anonymous", "jwt"])`: an
   # argument that can let a caller through.
   FASTIFY_OPENING_ARG = /\b(?:optional|anonymous|allowAnonymous|allowUnauthenticated|public|guest|skipAuth|bypass)\b/i
-  # `fastify.auth([a, b], { relation: 'or' })`: any one strategy lets the caller in.
-  FASTIFY_RELATION_OR = /\brelation\s*:\s*['"`]or['"`]/
+  # `fastify.auth([a, b])` is `relation: 'or'` unless it says `'and'`.
+  FASTIFY_AUTH_STRATEGIES = /\.\s*auth\s*\(\s*\[/
+  FASTIFY_RELATION_AND    = /\brelation\s*:\s*['"`]and['"`]/
   # `fastify.decorate('checkToken', async (request, reply) => { … })`.
   FASTIFY_DECORATE = /\.\s*decorate\s*\(\s*['"]([A-Za-z_$][\w$]*)['"]\s*,/
 
@@ -123,6 +129,7 @@ class JsMiscAuthTagger < FrameworkTagger
     @fastify_config_gates = [] of FastifyConfigGate
     @package_roots = {} of String => String?
     @fastify_bypassed = false
+    @fastify_method = ""
   end
 
   def perform(endpoints : Array(Endpoint)) : Array(Endpoint)
@@ -424,14 +431,17 @@ class JsMiscAuthTagger < FrameworkTagger
   # return done()` first), presence tests and guest-only checks do not
   # match, and fall back to the reply/jwtVerify reading. Plugin `addHook`s
   # never take this path.
+  # Verdict for `@fastify_method`: :guard, :bypass (guarded, but a declared
+  # request flag can wave the caller through) or nil.
   private def fastify_throw_guard?(body : String) : Symbol?
     raw = body
-    body = code_only(body)
+    # Literals blanked byte for byte, so offsets index `raw` too.
+    body = Noir::JSLiteralScanner.blank_literals(body)
     return unless body.matches?(FASTIFY_THROW_REFUSAL)
     bytes = body.to_slice
-    # Top-level `if`s before the check whose early exits are request-flag
-    # bypasses (see `request_flag_condition?`), as byte spans.
-    bypasses = [] of {Int32, Int32}
+    # Top-level `if`s before the check whose early exits are flag bypasses:
+    # byte span, and whether the bypass can apply to this route's method.
+    bypasses = [] of {Int32, Int32, Bool}
     depth = 0
     idx = 0
     while idx < bytes.size
@@ -451,12 +461,13 @@ class JsMiscAuthTagger < FrameworkTagger
               exits = [] of Int32
               body.byte_slice(0, idx).scan(FASTIFY_EARLY_EXIT) { |m| exits << m.byte_begin(0) }
               return :guard if exits.empty?
-              return :bypass if exits.all? { |at| bypasses.any? { |from, to| from <= at < to } }
-              return
+              spans = exits.map { |at| bypasses.find { |from, to, _| from <= at < to } }
+              return if spans.any?(Nil)
+              return spans.any? { |span| span.try(&.[2]) } ? :bypass : :guard
             end
           end
-          if request_flag_condition?(cond, raw.byte_slice(open + 1, close - open - 1))
-            bypasses << {close + 1, consequent_end(body, close + 1)}
+          if applies = flag_bypass_applies(raw.byte_slice(open + 1, close - open - 1))
+            bypasses << {close + 1, consequent_end(body, close + 1), applies == :yes}
           end
           idx = close
         end
@@ -466,17 +477,46 @@ class JsMiscAuthTagger < FrameworkTagger
     nil
   end
 
-  # `req.shouldForwardWritesToPrimaryInstance && req.method !== "GET"`: a
-  # condition on the request's own flags, not on a credential, the request
-  # target (url, path, route config, params, headers, a `/…` literal) or an
-  # argument of the hook's factory. An early return under it can let a
-  # caller past the check, so the guard is reported with that caveat.
-  private def request_flag_condition?(cond : String, raw_cond : String) : Bool
-    return false if cond.matches?(FASTIFY_EXIT_CREDENTIAL) || cond.matches?(FASTIFY_REQUEST_TARGET)
-    return false if raw_cond.matches?(FASTIFY_PATH_LITERAL)
-    roots = [] of String
-    cond.scan(/(?<![\w$.])([A-Za-z_$][\w$]*)/) { |m| roots << m[1] }
-    !roots.empty? && roots.all? { |root| FASTIFY_FLAG_ROOTS.includes?(root) }
+  # An early-return condition reading one request flag the app declares
+  # (`decorateRequest("name", …)`) and nothing assigns (`req.name = …`),
+  # optionally `&& req.method !== "GET"`. :yes when it can apply to the
+  # route's method, :no when the method rules it out, nil for any other
+  # condition (the check then counts as not reached).
+  private def flag_bypass_applies(raw_cond : String) : Symbol?
+    if m = raw_cond.match(FASTIFY_FLAG_BYPASS)
+      flag, op, verb = m[2], m[3]?, m[4]?
+    elsif m = raw_cond.match(FASTIFY_FLAG_BYPASS_METHOD_FIRST)
+      flag, op, verb = m[4], m[2], m[3]
+    else
+      return
+    end
+    return if flag == "method"
+    declared, assigned = fastify_request_flags
+    return if !declared.includes?(flag) || assigned.includes?(flag)
+    return :yes unless op && verb
+    same = @fastify_method == verb.upcase
+    applies = op.starts_with?('!') ? !same : same
+    applies ? :yes : :no
+  end
+
+  # Request decorations declared in the project, and request members any
+  # code assigns. Read once per run, on first need.
+  @fastify_request_flags : {Set(String), Set(String)}?
+
+  private def fastify_request_flags : {Set(String), Set(String)}
+    @fastify_request_flags ||= begin
+      declared = Set(String).new
+      assigned = Set(String).new
+      %w[.js .mjs .cjs .ts .mts .cts].each do |ext|
+        collect_files_by_extension(ext).each do |file|
+          text = read_file(file) || next
+          next unless text.includes?("req") || text.includes?("decorateRequest")
+          text.scan(FASTIFY_DECORATE_REQUEST) { |m| declared << m[1] } if text.includes?("decorateRequest")
+          text.scan(FASTIFY_REQUEST_ASSIGN) { |m| assigned << m[1] }
+        end
+      end
+      {declared, assigned}
+    end
   end
 
   # End (exclusive) of the statement or block that starts at `from`.
@@ -530,6 +570,7 @@ class JsMiscAuthTagger < FrameworkTagger
   # only calls `next`) is not a guard.
   private def fastify_route_guard(path : String, line_idx : Int32, method : String, url : String) : String?
     args = fastify_route_args(path, line_idx, method, url) || return
+    @fastify_method = method.upcase
     content = read_file(path) || return
     HOOK_KINDS.each do |key|
       args.each do |arg|
@@ -540,7 +581,7 @@ class JsMiscAuthTagger < FrameworkTagger
         end
         # A throw counts only from a hook called with nothing that opens it.
         throws = !code_only(expr).matches?(FASTIFY_OPENING_ARG) && !expr.matches?(FASTIFY_OPENING_ARG)
-        if expr.matches?(FASTIFY_RELATION_OR)
+        if expr.matches?(FASTIFY_AUTH_STRATEGIES) && !expr.matches?(FASTIFY_RELATION_AND)
           # Every strategy has to refuse, or one of them lets the caller in.
           strategies = expr.match(/\[([^\[\]]*)\]/).try(&.[1].split(',').map(&.strip).reject(&.empty?)) || next
           next if strategies.empty?
