@@ -36,6 +36,11 @@ describe "Fastify hooks gated on route config", tags: "functional" do
     # An encapsulated plugin's gate does not reach another plugin's routes.
     guards_of.call("/pg/inside").join(" ").should contain("config.level")
     guards_of.call("/pr/elsewhere").should be_empty
+    # A comment naming Fastify() or an unrelated fp() does not make a file the root.
+    guards_of.call("/lk/own").join(" ").should contain("config.tier")
+    guards_of.call("/pr/sibling").should be_empty
+    # A gate inside a fastify-plugin reaches its siblings.
+    guards_of.call("/pr/vip").join(" ").should contain("config.vip")
     # A hook inside a register callback guards only that callback's routes.
     guards_of.call("/scoped/inside").join(" ").should contain("config.role")
     guards_of.call("/scoped/outside").should be_empty
