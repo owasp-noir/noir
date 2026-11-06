@@ -554,6 +554,63 @@ describe "JsMiscAuthTagger" do
       tags["/public/docs"].should be_empty
     end
 
+    it "reports a check behind a request-flag early return with that caveat, and nothing behind a target allow-list" do
+      tags = tag_routes.call({
+        "src/hooks.ts" => <<-JS,
+          export const verifyAuth =
+            (modes: string[], options = { requireOrg: true }) =>
+            (req, _res, done) => {
+              if (req.shouldForwardWritesToPrimaryInstance && req.method !== "GET") {
+                return done();
+              }
+              if (!Array.isArray(modes)) throw new Error("Auth strategy must be array");
+              if (!req.auth) throw new UnauthorizedError({ message: "Token missing" });
+              done();
+            };
+          export const pathAllow = (req, _res, done) => {
+            if (req.url.startsWith("/public")) return done();
+            if (!req.auth) throw new UnauthorizedError("login");
+            done();
+          };
+          export const configPublic = (req, _res, done) => {
+            if (req.routeOptions.config.public) return done();
+            if (!req.auth) throw new UnauthorizedError("login");
+            done();
+          };
+          export const regexAllow = (req, _res, done) => {
+            if (/^/health/.test(req.raw.url)) return done();
+            if (!req.auth) throw new UnauthorizedError("login");
+            done();
+          };
+          export const hostAllow = (req, _res, done) => {
+            if (req.hostname === "internal") return done();
+            if (!req.auth) throw new UnauthorizedError("login");
+            done();
+          };
+          export const modeAllow =
+            (mode: string) =>
+            (req, _res, done) => {
+              if (mode === "open") return done();
+              if (!req.auth) throw new UnauthorizedError("login");
+              done();
+            };
+          JS
+        "src/server.ts" => <<-JS,
+          import fastify from "fastify";
+          import { configPublic, hostAllow, modeAllow, pathAllow, regexAllow, verifyAuth } from "./hooks";
+          const server = fastify();
+          server.route({ method: "GET", url: "/forwarded", onRequest: verifyAuth(["jwt"]), handler: async () => [] });
+          server.route({ method: "GET", url: "/public/list", onRequest: pathAllow, handler: async () => [] });
+          server.route({ method: "GET", url: "/config-public", onRequest: configPublic, handler: async () => [] });
+          server.route({ method: "GET", url: "/health/live", onRequest: regexAllow, handler: async () => [] });
+          server.route({ method: "GET", url: "/internal", onRequest: hostAllow, handler: async () => [] });
+          server.route({ method: "GET", url: "/mode", onRequest: modeAllow("open"), handler: async () => [] });
+          JS
+      }, "src/server.ts")
+      tags["/forwarded"].should eq(["Protected by Fastify onRequest verifyAuth (a request-flag early return can bypass it)"])
+      %w[/public/list /config-public /health/live /internal /mode].each { |url| tags[url].should be_empty }
+    end
+
     it "anchors the absence test to its own if, not an earlier one" do
       tags = tag_routes.call({
         "src/hooks.ts" => <<-JS,

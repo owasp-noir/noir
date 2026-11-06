@@ -62,8 +62,13 @@ class JsMiscAuthTagger < FrameworkTagger
   FASTIFY_ABSENCE_TEST = /\A\s*!\s*[A-Za-z_$][\w$]*(?:\s*\??\.\s*[A-Za-z_$][\w$]*)*\s*\z/
   FASTIFY_CREDENTIAL   = /\b(?:auth|user|session|token|authorization|apiKey|apikey|cookie|identity|principal|jwt|credentials?)\b/i
   # Any way out of the hook before the check: an anonymous caller may leave there.
-  FASTIFY_EARLY_EXIT  = /\breturn\b|\bdone\s*\(|\bnext\s*\(/
-  FASTIFY_THROW_FIRST = /\Athrow\s+(?:new\s+)?\w*(?:Unauthori[sz]ed|Unauthenticated)\w*\s*\(/
+  FASTIFY_EARLY_EXIT = /\breturn\b|\bdone\s*\(|\bnext\s*\(/
+  # A request-flag early return: no credential word, no request target.
+  FASTIFY_EXIT_CREDENTIAL = /auth|user|session|token|apikey|api_key|cookie|identity|principal|jwt|credential|login|anonymous|public|guest/i
+  FASTIFY_REQUEST_TARGET  = /\.\s*(?:url|originalUrl|path|routerPath|routeOptions|routeConfig|config|params|query|headers|hostname|raw)\b/
+  FASTIFY_PATH_LITERAL    = /['"`]\/|(?:^|[(\s!,=&|])\/[^\/\s*]/
+  FASTIFY_FLAG_ROOTS      = Set{"req", "request", "true", "false", "null", "undefined", "typeof"}
+  FASTIFY_THROW_FIRST     = /\Athrow\s+(?:new\s+)?\w*(?:Unauthori[sz]ed|Unauthenticated)\w*\s*\(/
   # `verifyAuth({ optional: true })`, `verifyModes(["anonymous", "jwt"])`: an
   # argument that can let a caller through.
   FASTIFY_OPENING_ARG = /\b(?:optional|anonymous|allowAnonymous|allowUnauthenticated|public|guest|skipAuth|bypass)\b/i
@@ -117,6 +122,7 @@ class JsMiscAuthTagger < FrameworkTagger
     @fastify_decorators = {} of {String?, String} => Array(Bool)
     @fastify_config_gates = [] of FastifyConfigGate
     @package_roots = {} of String => String?
+    @fastify_bypassed = false
   end
 
   def perform(endpoints : Array(Endpoint)) : Array(Endpoint)
@@ -401,7 +407,13 @@ class JsMiscAuthTagger < FrameworkTagger
     line = handler.line || return false
     source = read_file(path) || return false
     body = Noir::JSRouteExtractor.definition_body(Noir::CComments.strip(source, quotes: %("'`)), line)
-    fastify_refusal_body?(body) || (throws && fastify_throw_guard?(body))
+    return true if fastify_refusal_body?(body)
+    return false unless throws
+    case fastify_throw_guard?(body)
+    when :guard  then true
+    when :bypass then @fastify_bypassed = true
+    else              false
+    end
   end
 
   # A route hook that refuses by throwing, in exactly this shape: at the top
@@ -412,10 +424,14 @@ class JsMiscAuthTagger < FrameworkTagger
   # return done()` first), presence tests and guest-only checks do not
   # match, and fall back to the reply/jwtVerify reading. Plugin `addHook`s
   # never take this path.
-  private def fastify_throw_guard?(body : String) : Bool
+  private def fastify_throw_guard?(body : String) : Symbol?
+    raw = body
     body = code_only(body)
-    return false unless body.matches?(FASTIFY_THROW_REFUSAL)
+    return unless body.matches?(FASTIFY_THROW_REFUSAL)
     bytes = body.to_slice
+    # Top-level `if`s before the check whose early exits are request-flag
+    # bypasses (see `request_flag_condition?`), as byte spans.
+    bypasses = [] of {Int32, Int32}
     depth = 0
     idx = 0
     while idx < bytes.size
@@ -426,20 +442,61 @@ class JsMiscAuthTagger < FrameworkTagger
         if depth == 0 && (head = body.byte_slice(idx, {body.bytesize - idx, 8}.min).match(/\Aif\s*\(/)) &&
            (idx == 0 || !identifier_byte?(bytes[idx - 1]))
           open = idx + head.byte_end(0) - 1
-          close = Noir::JSLiteralScanner.find_matching_paren_at_byte(body, open) || return false
+          close = Noir::JSLiteralScanner.find_matching_paren_at_byte(body, open) || return
           cond = body.byte_slice(open + 1, close - open - 1)
-          if cond.matches?(FASTIFY_ABSENCE_TEST) && cond.matches?(FASTIFY_CREDENTIAL) &&
-             !body.byte_slice(0, idx).matches?(FASTIFY_EARLY_EXIT)
+          if cond.matches?(FASTIFY_ABSENCE_TEST) && cond.matches?(FASTIFY_CREDENTIAL)
             consequent = body.byte_slice(close + 1, {body.bytesize - close - 1, 400}.min).lstrip
             consequent = consequent.lchop('{').lstrip if consequent.starts_with?('{')
-            return true if consequent.matches?(FASTIFY_THROW_FIRST)
+            if consequent.matches?(FASTIFY_THROW_FIRST)
+              exits = [] of Int32
+              body.byte_slice(0, idx).scan(FASTIFY_EARLY_EXIT) { |m| exits << m.byte_begin(0) }
+              return :guard if exits.empty?
+              return :bypass if exits.all? { |at| bypasses.any? { |from, to| from <= at < to } }
+              return
+            end
+          end
+          if request_flag_condition?(cond, raw.byte_slice(open + 1, close - open - 1))
+            bypasses << {close + 1, consequent_end(body, close + 1)}
           end
           idx = close
         end
       end
       idx += 1
     end
-    false
+    nil
+  end
+
+  # `req.shouldForwardWritesToPrimaryInstance && req.method !== "GET"`: a
+  # condition on the request's own flags, not on a credential, the request
+  # target (url, path, route config, params, headers, a `/…` literal) or an
+  # argument of the hook's factory. An early return under it can let a
+  # caller past the check, so the guard is reported with that caveat.
+  private def request_flag_condition?(cond : String, raw_cond : String) : Bool
+    return false if cond.matches?(FASTIFY_EXIT_CREDENTIAL) || cond.matches?(FASTIFY_REQUEST_TARGET)
+    return false if raw_cond.matches?(FASTIFY_PATH_LITERAL)
+    roots = [] of String
+    cond.scan(/(?<![\w$.])([A-Za-z_$][\w$]*)/) { |m| roots << m[1] }
+    !roots.empty? && roots.all? { |root| FASTIFY_FLAG_ROOTS.includes?(root) }
+  end
+
+  # End (exclusive) of the statement or block that starts at `from`.
+  private def consequent_end(body : String, from : Int32) : Int32
+    bytes = body.to_slice
+    pos = from
+    while pos < bytes.size && bytes[pos].unsafe_chr.ascii_whitespace?
+      pos += 1
+    end
+    if pos < bytes.size && bytes[pos] == '{'.ord
+      close = Noir::JSLiteralScanner.find_matching_brace_at_byte(body, pos)
+      return close ? close + 1 : body.bytesize
+    end
+    body.byte_index(';', pos).try(&.+(1)) || body.byte_index('\n', pos) || body.bytesize
+  end
+
+  # Set by `fastify_refuses?` when the check it credited sits behind a
+  # request-flag early return.
+  private def bypass_note : String
+    @fastify_bypassed ? " (a request-flag early return can bypass it)" : ""
   end
 
   private def identifier_byte?(byte : UInt8) : Bool
@@ -487,14 +544,16 @@ class JsMiscAuthTagger < FrameworkTagger
           # Every strategy has to refuse, or one of them lets the caller in.
           strategies = expr.match(/\[([^\[\]]*)\]/).try(&.[1].split(',').map(&.strip).reject(&.empty?)) || next
           next if strategies.empty?
+          @fastify_bypassed = false
           next unless strategies.all? { |strategy| fastify_refuses?(strategy, content, path, throws: throws) }
-          return "Fastify #{key} #{strategies.join(", ")}"
+          return "Fastify #{key} #{strategies.join(", ")}#{bypass_note}"
         end
         expr.scan(/(?:\b[A-Za-z_$][\w$]*\s*\.\s*)?\b([A-Za-z_$][\w$]*)\b/) do |ident|
           name = ident[1]
           next if {"async", "await", "function", "return", "request", "reply", "req", "res", "true", "false", "null"}.includes?(name)
+          @fastify_bypassed = false
           next unless fastify_refuses?(ident[0], content, path, throws: throws)
-          return "Fastify #{key} #{name}"
+          return "Fastify #{key} #{name}#{bypass_note}"
         end
       end
     end
