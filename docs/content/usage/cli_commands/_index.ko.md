@@ -237,6 +237,17 @@ noir query [filters] [paths...] [flags]
 불리언 스위치 (상호 배타적):
 - `--guard` / `--no-guard`: 인증 가드(`ai_context.guards`) 존재 여부 (rate limiter와 CSRF 검사는 가드로 치지 않음)
 
+제외 (반복 가능):
+- `--exclude <filter>=<value>`: 해당 필터에 매칭되는 엔드포인트를 결과에서 뺍니다. `<filter>`는 위 필터 이름에서 대시를 뺀 것(`protocol`, `tech`, `url`, `path`, `tag`, `sink` 등)이고, `<value>`는 그 필터의 규칙을 그대로 따릅니다(쉼표 목록은 OR, `url`/`path`/`handler`는 글롭 또는 부분 문자열, 컨텍스트 유형에는 `any` 사용 가능). 어느 하나의 `--exclude`에라도 매칭되면 다른 필터와 상관없이 빠집니다.
+
+```bash
+noir query --exclude protocol=cli ./app                                     # 모든 언어의 CLI 명령 제외
+noir query --exclude url='/health*' --exclude path='tests/**' --from report.json
+noir query --no-guard --exclude sink=any --from report.json                 # 가드가 없고 싱크에도 닿지 않는 것
+```
+
+`--exclude-path`, `--exclude-techs`는 다릅니다. 파일이나 기술을 분석 대상에서 빼는 스캔 플래그라서 직접 스캔할 때만 쓸 수 있습니다. `--exclude`는 결과의 행만 숨기므로 `--from`과도 함께 쓸 수 있습니다.
+
 패턴 매칭 규칙:
 - 글롭 문자(`*`, `?`, `[`): `*`는 `/`를 넘어 매칭되고 `{id}`는 글자 그대로 비교됩니다. 글롭 문자가 없으면 부분 문자열로 매칭됩니다.
 - `--param`과 `--param-type`: 같은 하나의 파라미터가 두 조건을 모두 만족해야 합니다.

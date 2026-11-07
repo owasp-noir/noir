@@ -439,6 +439,87 @@ describe Noir::CLI::Inspect do
     end
   end
 
+  describe "query --exclude" do
+    guarded = with_context(endpoint("GET", "/admin/users", "src/admin.go", 1), guards: ["RequireAuth"], sinks: ["sql"], signals: ["idor_review"])
+    open = with_context(endpoint("POST", "/api/v1/items", "src/items.go", 1), sinks: ["command"])
+    bare = endpoint("GET", "/health", "src/health.go", 1)
+    tool = endpoint("CLI", "cli://tool", "tests/tool.py", 1, tech: "python_cli")
+    tool.protocol = "cli"
+    endpoints = [guarded, open, bare, tool]
+
+    query = ->(argv : Array(String)) do
+      parsed = Noir::CLI::QueryCommand.parse_filters(argv)
+      parsed.errors.should be_empty
+      Noir::CLI::Inspect.query(endpoints, parsed.filters, false, parsed.excludes).map(&.url)
+    end
+
+    it "drops what the named filter would match, with that filter's value rules" do
+      {
+        ["--exclude", "protocol=cli"]                             => ["/admin/users", "/api/v1/items", "/health"],
+        ["--exclude=protocol=cli"]                                => ["/admin/users", "/api/v1/items", "/health"],
+        ["--exclude", "tech=python_cli,go_gin"]                   => [] of String,
+        ["--exclude", "url=/api/**"]                              => ["/admin/users", "/health", "cli://tool"],
+        ["--exclude", "url=admin"]                                => ["/api/v1/items", "/health", "cli://tool"],
+        ["--exclude", "path=tests/**"]                            => ["/admin/users", "/api/v1/items", "/health"],
+        ["--exclude", "sink=any"]                                 => ["/health", "cli://tool"],
+        ["--exclude", "method=post"]                              => ["/admin/users", "/health", "cli://tool"],
+        ["--exclude", "protocol=cli", "--exclude", "url=/health"] => ["/admin/users", "/api/v1/items"],
+      }.each do |argv, expected|
+        query.call(argv).should eq(expected), argv.join(" ")
+      end
+    end
+
+    it "ANDs with the kept filters" do
+      query.call(["--method", "GET", "--exclude", "sink=sql"]).should eq(["/health"])
+      query.call(["--no-guard", "--exclude", "protocol=cli"]).should eq(["/api/v1/items", "/health"])
+    end
+
+    it "changes nothing without --exclude" do
+      parsed = Noir::CLI::QueryCommand.parse_filters(["--method", "GET"])
+      parsed.excludes.should be_empty
+      Noir::CLI::Inspect.query(endpoints, parsed.filters, false).map(&.url).should eq(["/admin/users", "/health"])
+    end
+
+    it "leaves the scan's --exclude-* flags for scan" do
+      parsed = Noir::CLI::QueryCommand.parse_filters(["--exclude-path", "tests", "--exclude-techs=python_cli", "--exclude-codes", "404"])
+      parsed.excludes.should be_empty
+      parsed.rest.should eq(["--exclude-path", "tests", "--exclude-techs=python_cli", "--exclude-codes", "404"])
+    end
+
+    it "rejects a value that names no filter, guard, or an empty value" do
+      keys = "method, url, path, project, handler, tech, tag, param, param-type, protocol, sink, source, signal, validator"
+      {
+        ["--exclude"]                  => "--exclude expects <filter>=<value> with a filter of #{keys}",
+        ["--exclude", "cli"]           => "--exclude expects <filter>=<value> with a filter of #{keys}",
+        ["--exclude", "protocols=cli"] => "--exclude expects <filter>=<value> with a filter of #{keys}",
+        ["--exclude", "guard=true"]    => "--exclude guard: use --guard or --no-guard",
+        ["--exclude", "protocol="]     => "--exclude protocol= requires a value",
+        ["--exclude", "tech=,"]        => "--exclude tech= requires a value",
+      }.each do |argv, error|
+        Noir::CLI::QueryCommand.parse_filters(argv).errors.should eq([error]), argv.join(" ")
+      end
+    end
+
+    it "warns when an excluded value is nowhere in the report, once per message" do
+      parsed = Noir::CLI::QueryCommand.parse_filters(["--exclude", "protocol=cil", "--exclude", "sink=sql"])
+      Noir::CLI::Inspect.query_warnings(endpoints, parsed.filters, parsed.excludes)
+        .should eq(["--exclude: no endpoint carries protocol cil; in this report: cli, http"])
+
+      parsed = Noir::CLI::QueryCommand.parse_filters(["--sink", "sql", "--exclude", "sink=command", "--exclude", "signal=ssrf"])
+      warnings = Noir::CLI::Inspect.query_warnings([bare], parsed.filters, parsed.excludes)
+      warnings.size.should eq(1)
+      warnings.first.should start_with("no endpoint carries ai_context")
+    end
+
+    it "points --exclude-path / --exclude-techs on a report at --exclude" do
+      Noir::CLI::Inspect.report_exclude_hint(["--exclude-path", "tests"])
+        .should eq("To hide endpoints of a report, use `noir query --exclude path=<glob>`")
+      Noir::CLI::Inspect.report_exclude_hint(["--exclude-techs=python_cli", "--exclude-path", "x"])
+        .should eq("To hide endpoints of a report, use `noir query --exclude tech=<name>` or `--exclude path=<glob>`")
+      Noir::CLI::Inspect.report_exclude_hint(["./app", "--exclude-codes", "404"]).should be_nil
+    end
+  end
+
   describe Noir::CLI::Inspect::Row do
     it "projects the endpoint and omits empty buckets" do
       ep = with_context(endpoint("GET", "/admin/users", "src/admin.go", 7), guards: ["RequireAuth"], signals: ["idor_review"])

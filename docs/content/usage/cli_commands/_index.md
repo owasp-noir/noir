@@ -241,6 +241,17 @@ Single-value pattern filters (`<glob|substr>`):
 Boolean switches (mutually exclusive):
 - `--guard` / `--no-guard`: endpoint has or lacks an auth guard (`ai_context.guards`; rate limiting and CSRF checks do not count as a guard)
 
+Exclusion (repeatable):
+- `--exclude <filter>=<value>`: drop the endpoints that filter would match. `<filter>` is any filter above without its dashes (`protocol`, `tech`, `url`, `path`, `tag`, `sink`, ...) and `<value>` follows that filter's rules (a comma list is OR, `url`/`path`/`handler` take a glob or a substring, `any` works for the context kinds). An endpoint any `--exclude` matches is dropped, whatever the other filters say.
+
+```bash
+noir query --exclude protocol=cli ./app                                     # every language's CLI commands out
+noir query --exclude url='/health*' --exclude path='tests/**' --from report.json
+noir query --no-guard --exclude sink=any --from report.json                 # unguarded and reaching no sink
+```
+
+`--exclude-path` and `--exclude-techs` are different: they are scan flags that keep files or techs out of the analysis, so they only work on a live scan. `--exclude` hides rows of the answer and works with `--from` too.
+
 Pattern matching rules:
 - Glob characters (`*`, `?`, `[`): `*` crosses `/` and `{id}` is treated literally. Without glob characters, the pattern is matched as a substring.
 - `--param` with `--param-type`: both conditions must be satisfied by the same parameter.

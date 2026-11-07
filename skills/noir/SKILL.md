@@ -125,6 +125,12 @@ characters the value is a substring. `--param` with `--param-type` must be
 satisfied by the same parameter. `--method POST` also lists `ANY` rows, which
 serve every method; `--method ANY` lists only those.
 
+`--exclude <filter>=<value>` (repeatable) drops what that filter would match,
+with the same names and value rules: `--exclude protocol=cli`,
+`--exclude path='tests/**'`, `--exclude sink=any`. It works with `--from`;
+the scan flags `--exclude-path` / `--exclude-techs` do not, because they
+only keep files or techs out of a live scan.
+
 A value that no endpoint in the report carries (a method, tech, tag, param,
 type, protocol or kind) is reported on stderr together with the values the
 report does have, so read stderr on an unexpected empty result. A report
