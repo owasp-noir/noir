@@ -224,6 +224,12 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           platforms: ${{ matrix.arch }}
+          # A plain build, not `--release`: the release compile was ~13 of
+          # this job's ~14 minutes, and what this job proves (the Dockerfile
+          # builds and links statically on both arches) does not depend on
+          # optimizer output. publish-ghcr.yml still builds the release image
+          # on every main push, so a release-only break surfaces there.
+          build-args: NOIR_BUILD_FLAGS=
           # Read publish-ghcr.yml's scope as well as this job's own. GitHub
           # scopes its Actions cache per ref, so a pull request can only read
           # entries written on its own branch or on main — and now that this
@@ -260,6 +266,9 @@ jobs:
           load: true
           platforms: linux/amd64
           tags: noir-action:ci
+          # Same plain build as build-docker: the e2e drives entrypoint.sh,
+          # which does not care how hard the compiler optimized noir.
+          build-args: NOIR_BUILD_FLAGS=
           cache-from: |
             type=gha,scope=action-ci
             type=gha,scope=ghcr-linux-amd64

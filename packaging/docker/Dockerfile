@@ -1,11 +1,20 @@
 ##= BUILDER =##
 FROM crystallang/crystal:1.22.2-alpine AS builder
 WORKDIR /noir
-COPY . .
 
-RUN apk add --no-cache yaml-dev zstd-dev git && \
-    shards install --production && \
-    shards build --release --no-debug --production --static
+# Packages and shards come before the source so a source-only change reuses
+# both layers instead of reinstalling them.
+RUN apk add --no-cache yaml-dev zstd-dev git
+COPY shard.yml shard.lock ./
+RUN shards install --production
+
+# `--release` is ~10x the compile time of a plain build (most of a 14-minute
+# image build). CI's pull-request image checks pass NOIR_BUILD_FLAGS= to skip
+# it: they prove the Dockerfile, static link and entrypoint, not optimizer
+# output. Published images keep the default.
+ARG NOIR_BUILD_FLAGS="--release"
+COPY . .
+RUN shards build $NOIR_BUILD_FLAGS --no-debug --production --static
 # Ref: https://crystal-lang.org/reference/1.15/guides/static_linking.html
 
 # Snapshot the passive-rules repo so the runner stage can ship them
