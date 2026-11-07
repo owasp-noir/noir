@@ -53,7 +53,7 @@ module Noir::EndpointFilter
     signals : Array(String) = [] of String,
     validators : Array(String) = [] of String,
     # `--exclude-endpoints method:GET` drops GET rows, not the `ANY`
-    # catch-alls that `--method GET` lists because they also serve GET.
+    # catch-all routes that `--method GET` lists because they also serve GET.
     methods_exact : Bool = false do
     def matches?(endpoint : Endpoint) : Bool
       unless methods.empty?

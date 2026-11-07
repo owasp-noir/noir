@@ -97,10 +97,10 @@ describe Noir::EndpointFilter do
     end
 
     it "warns about a term that matched nothing, with the values that exist" do
-      _, warnings = Noir::EndpointFilter.apply(sample, [] of Noir::EndpointFilter::Term, terms("protocol:clii", "/admn*"))
+      _, warnings = Noir::EndpointFilter.apply(sample, [] of Noir::EndpointFilter::Term, terms("protocol:clii", "/nowhere*"))
       messages = warnings.map(&.message)
       messages.should contain(%(--exclude-endpoints "protocol:clii" matched no endpoint (no endpoint carries protocol clii; in this report: cli, http)))
-      messages.should contain(%(--exclude-endpoints "/admn*" matched no endpoint))
+      messages.should contain(%(--exclude-endpoints "/nowhere*" matched no endpoint))
     end
 
     it "excludes a method exactly, but lets only-terms keep ANY routes as query does" do

@@ -131,7 +131,7 @@ A `FILTER` uses the [`noir query`](#query) filters, written `key:value`:
 - Repeat a flag to match either value. `--only-endpoints` is applied first, then `--exclude-endpoints`.
 - Patterns follow the query rules: with `*`, `?` or `[` it is a glob over the whole value (`*` crosses `/`), otherwise a substring. So `/admin` also matches `/api/admin/x`, while `/admin*` matches only the routes that start with `/admin`.
 - `url:` matches the URL as reported. A pattern that starts with `/` also matches the path of an absolute `http(s)://` URL, so `/admin*` works with or without `-u`, and on a report read with `noir query --from`.
-- In `--only-endpoints`, `method:GET` also keeps routes declared as `ANY`, as `noir query --method` does. In `--exclude-endpoints` it names the declared method exactly: `method:OPTIONS,HEAD` drops those rows and keeps the `ANY` catch-alls.
+- In `--only-endpoints`, `method:GET` also keeps routes declared as `ANY`, as `noir query --method` does. In `--exclude-endpoints` it names the declared method exactly: `method:OPTIONS,HEAD` drops those rows and keeps the `ANY` catch-all routes.
 - `tag`, `guard`, `sink`, `source`, `signal` and `validator` are not accepted: the filter runs before the taggers and the AI-context builder fill them in. Use `noir query` on a report for those.
 
 An unknown key, an empty value or the probe-filter shape `CLI:/*` stops the
