@@ -526,8 +526,9 @@ class EndpointOptimizer
     else
       # The key unifies placeholder spellings, so the duplicate may name
       # its slots differently (`/items/{item_id}` vs `/items/:itemId`).
-      # The winner's URL is the one reported; the loser's path params
-      # would name slots that URL does not have.
+      # The winner's URL is the one reported (a foreign `{name:regex}` is
+      # dropped below); the loser's path params would name slots that URL
+      # does not have.
       merge_params(dup, tiny_tmp, source_collection_pair?(dup, tiny_tmp), skip_path: dup.url != tiny_tmp.url)
     end
     merge_declared_access(dup, tiny_tmp)
@@ -544,7 +545,36 @@ class EndpointOptimizer
     dup = promote_scalar_context(dup, tiny_tmp)
     dup = absorb_technologies(dup, tiny_tmp)
     dup.handler ||= tiny_tmp.handler
-    dup
+    # After promotion, so a specification's bare `{id}` does not erase the
+    # code constraint it was just replaced with.
+    drop_foreign_placeholder_constraint(dup, tiny_tmp)
+  end
+
+  # `{id:[0-9]+}` and `{id}` are the same slot. The constraint stays when
+  # every code registration carries one (chi, gorilla/mux, Laravel): it
+  # selects the route, and a specification's bare `{id}` only describes
+  # that route. It does not stay when another code analyzer registered the
+  # slot without the regex. Go 1.22 ServeMux's `{id}` is not `{id:[0-9]+}`,
+  # and reporting the chi spelling on a merged `go_http` route hands
+  # consumers a pattern the mux rejects. Two constrained spellings are
+  # left on the winner — `{type:issues}` and `{type:pulls}` are different
+  # routes, not one slot with a foreign regex.
+  private def drop_foreign_placeholder_constraint(target : Endpoint, source : Endpoint) : Endpoint
+    return target if target.url == source.url
+
+    relaxed_target = strip_brace_constraints(target.url)
+    relaxed_source = strip_brace_constraints(source.url)
+    return target unless relaxed_target == relaxed_source
+
+    target_bare = target.url == relaxed_target
+    source_bare = source.url == relaxed_source
+    return target if target_bare == source_bare
+
+    bare = target_bare ? target : source
+    return target if source_document_endpoint?(bare)
+
+    target.url = relaxed_target
+    target
   end
 
   # An Ingress rule or an Envoy route without a `:method` matcher sends every
@@ -856,10 +886,13 @@ class EndpointOptimizer
   # Dedup-key form of a URL: every whole-segment placeholder becomes `{}`, so
   # one route reported by its code (`/users/:id`) and by a spec or collection
   # (`/users/{userId}`) is one endpoint. A literal segment (`/users/new`)
-  # stays distinct. Only the key changes; the reported URL keeps its spelling.
-  # Applied only across technologies (see `cross_technology_duplicate_keys`).
+  # stays distinct. Only the key changes. Applied only across technologies
+  # (see `cross_technology_duplicate_keys`).
   # ponytail: placeholders differing only by constraint (`{id:[0-9]+}` vs
   # `{name:[a-z]+}`) also unify, since the key ignores the constraint.
+  # The reported spelling is chosen at the merge: a code registration
+  # with no constraint wins over `{id:[0-9]+}`
+  # (`drop_foreign_placeholder_constraint`).
   private def unify_path_placeholders(url : String) : String
     url.gsub(WHOLE_SEGMENT_PLACEHOLDER_RE, "{}")
   end

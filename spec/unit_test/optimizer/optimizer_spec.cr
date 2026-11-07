@@ -250,6 +250,80 @@ describe "EndpointOptimizer" do
       result.find!(&.url.==("/users/:username")).details.code_paths.map(&.line).should eq([7])
     end
 
+    # chi/gorilla `{id:[0-9]+}` and stdlib net/http `{id}` are one route.
+    # `chi/` sorts before `stdlib/`, so first-wins used to keep the chi
+    # spelling and still tag `go_http` — a pattern Go 1.22 ServeMux rejects.
+    # benhoyt/go-routing registers the same handlers both ways.
+    it "drops a regex constraint a merged code route does not carry" do
+      optimizer = EndpointOptimizer.new(logger, options)
+      route = "/api/widgets/{slug}/parts/%s/update"
+      chi = tech_endpoint(route % "{id:[0-9]+}", "POST", "go_chi", "chi/route.go", 11)
+      chi.params << Param.new("slug", "", "path")
+      chi.params << Param.new("id", "", "path")
+      mux = tech_endpoint(route % "{id:[0-9]+}", "POST", "go_mux", "mux/route.go", 8)
+      http = tech_endpoint(route % "{id}", "POST", "go_http", "stdlib/route.go", 7)
+      http.params << Param.new("id", "", "path")
+      http.params << Param.new("limit", "", "query")
+
+      result = optimizer.optimize_endpoints([chi, mux, http])
+      result.size.should eq(1)
+      result[0].url.should eq(route % "{id}")
+      result[0].details.technology.should eq("go_chi")
+      result[0].details.technologies.should eq(["go_chi", "go_http", "go_mux"])
+      result[0].details.code_paths.map(&.path).should eq(["chi/route.go", "mux/route.go", "stdlib/route.go"])
+      result[0].params.map(&.name).should eq(["slug", "id", "limit"])
+
+      # The unconstrained registration sorting first stays unconstrained.
+      http_first = tech_endpoint(route % "{id}", "POST", "go_http", "a_stdlib/route.go")
+      chi_later = tech_endpoint(route % "{id:[0-9]+}", "POST", "go_chi", "z_chi/route.go")
+      reversed = optimizer.optimize_endpoints([http_first, chi_later])
+      reversed.size.should eq(1)
+      reversed[0].url.should eq(route % "{id}")
+      reversed[0].details.technologies.should eq(["go_chi", "go_http"])
+    end
+
+    it "keeps a regex constraint when the only bare spelling is a specification" do
+      optimizer = EndpointOptimizer.new(logger, options)
+      spec = tech_endpoint("/items/{id}", "GET", "oas3", "openapi.yaml")
+      laravel = tech_endpoint("/items/{id:[0-9]+}", "GET", "php_laravel", "routes/web.php")
+
+      result = optimizer.optimize_endpoints([spec, laravel])
+      result.size.should eq(1)
+      result[0].url.should eq("/items/{id:[0-9]+}")
+      result[0].details.technology.should eq("php_laravel")
+      result[0].details.technologies.should eq(["oas3", "php_laravel"])
+
+      # The document sorting first is promoted onto the code spelling.
+      spec_first = tech_endpoint("/items/{id}", "GET", "oas3", "a.yaml")
+      code_later = tech_endpoint("/items/{id:[0-9]+}", "GET", "go_chi", "z.go")
+      promoted = optimizer.optimize_endpoints([spec_first, code_later])
+      promoted.map(&.url).should eq(["/items/{id:[0-9]+}"])
+      promoted[0].details.technologies.should eq(["go_chi", "oas3"])
+    end
+
+    it "keeps the winner's constraint when every code spelling is constrained" do
+      optimizer = EndpointOptimizer.new(logger, options)
+      result = optimizer.optimize_endpoints([
+        tech_endpoint("/users/{id:[0-9]+}", "GET", "go_chi", "chi.go"),
+        tech_endpoint("/users/{id:\\d+}", "GET", "go_mux", "mux.go"),
+      ])
+      result.size.should eq(1)
+      result[0].url.should eq("/users/{id:[0-9]+}")
+      result[0].details.technologies.should eq(["go_chi", "go_mux"])
+    end
+
+    # The constraint is what splits these chi routes. A stdlib `{type}`
+    # beside them must not pull both into one unconstrained endpoint.
+    it "does not merge chi routes a constraint splits into a stdlib wildcard" do
+      optimizer = EndpointOptimizer.new(logger, options)
+      result = optimizer.optimize_endpoints([
+        tech_endpoint("/repos/{type:issues}", "GET", "go_chi", "chi/route.go", 1),
+        tech_endpoint("/repos/{type:pulls}", "GET", "go_chi", "chi/route.go", 2),
+        tech_endpoint("/repos/{type}", "GET", "go_http", "stdlib/route.go"),
+      ])
+      result.map(&.url).sort!.should eq(["/repos/{type:issues}", "/repos/{type:pulls}", "/repos/{type}"])
+    end
+
     it "keeps QUERY endpoints instead of downgrading them to GET" do
       optimizer = EndpointOptimizer.new(logger, options)
       endpoints = [
