@@ -145,6 +145,51 @@ describe Noir::TreeSitterGoRouteExtractor do
     routes.map { |r| {r.verb, r.path} }.should eq([{"GET", "/api/users/:id"}])
   end
 
+  it "keeps a dynamic Group prefix instead of dropping the chain" do
+    # pagoda: `entities.Group(fmt.Sprintf("/%s", strings.ToLower(name)))`.
+    # Treating the format as empty yielded `/add` and collapsed `GET ""`
+    # onto `/`, so the admin group's middleware matched the public home.
+    source = <<-GO
+      package main
+      import "fmt"
+      func mount(e *echo.Echo, name string, id int, n interface{ GetName() string }) {
+          e.GET("/", home)
+          ag := e.Group("/admin", RequireAdmin)
+          entities := ag.Group("/entity")
+          ng := entities.Group(fmt.Sprintf("/%s", strings.ToLower(name)))
+          ng.GET("", list)
+          ng.GET("/add", add)
+          ng.GET("/:id/edit", edit)
+          entities.Group(fmt.Sprintf("/%s", n.GetName())).GET("/show", show)
+          other := ag.Group(cfg.Base)
+          other.GET("/x", hx)
+          joined := e.Group(cfg.APIBase + "/v1")
+          joined.GET("/users", h)
+          teams := e.Group(fmt.Sprintf("/teams/:%s", "team"))
+          teams.GET("/list", h)
+          pct := e.Group(fmt.Sprintf("/100%%/%s", name))
+          pct.GET("/z", h)
+          msg := fmt.Sprintf("title:%s", name)
+          e.GET(msg, h)
+          e.GET(fmt.Sprintf("/users/%d", id), h)
+      }
+      GO
+
+    routes = Noir::TreeSitterGoRouteExtractor.extract_routes(source, literal_join: true)
+    routes.map { |r| {r.verb, r.path} }.sort!.should eq([
+      {"GET", "/"},
+      {"GET", "/100%/{name}/z"},
+      {"GET", "/admin/entity/{GetName}/show"},
+      {"GET", "/admin/entity/{name}"},
+      {"GET", "/admin/entity/{name}/:id/edit"},
+      {"GET", "/admin/entity/{name}/add"},
+      {"GET", "/admin/{Base}/x"},
+      {"GET", "/teams/:team/list"},
+      {"GET", "/users/{id}"},
+      {"GET", "{APIBase}/v1/users"},
+    ])
+  end
+
   it "extracts routes registered on inline group chains" do
     source = <<-GO
       package main
