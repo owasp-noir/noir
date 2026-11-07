@@ -15,6 +15,14 @@ Crystal-based attack surface detector that identifies endpoints by static analys
 | `just check` | format check + lint | 60s |
 | `just fix` | auto-format + fix lint | 60s |
 
+### Keep compiles cheap (parallel worktrees)
+
+A compile is the expensive step, and it is memory-bound: building the spec suite peaks at ~11GB RSS, `src/noir.cr` at ~6GB, whatever `--threads` says. Running the examples is cheap (~0.3GB).
+
+- **Compile the spec binary once, then filter it.** Run `just spec-build` (or `just test`), then iterate with `./bin/noir_spec -e hono`, `--location spec/...:42` or `--tag functional`. Do not run `crystal spec <file>` per change: every invocation is a full ~11GB compile of `src/`, and each one gets its own compiler cache.
+- **Go through `just`.** Compiling recipes run under `scripts/compile_gate.sh`, which caps concurrent compiles across all worktrees (`NOIR_COMPILE_SLOTS`, default 2, `0` disables). A bare `crystal build` bypasses the cap.
+- **Lint with the built Ameba.** `just check` builds `bin/ameba` once per worktree. Don't add a rule-level `Excluded:` glob that walks `spec/functional_test/fixtures` in `.ameba.yml`: Ameba re-expands those per (rule, file), which once made a full lint take ~10 minutes. Fixtures are excluded at the top level instead.
+
 ```bash
 # Docker build (for CI or consistent environments)
 docker run --rm -v $(pwd):/app -w /app crystallang/crystal:1.22.0-alpine sh -c "apk add --no-cache yaml-dev zstd-dev && shards install && shards build"
