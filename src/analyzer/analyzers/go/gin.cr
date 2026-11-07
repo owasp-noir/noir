@@ -207,6 +207,15 @@ module Analyzer::Go
       field.name if !field.embedded && field.name[0]?.try(&.uppercase?)
     end
 
+    # Json name for default `Bind`/`ShouldBind`. A `json` tag wins; with no
+    # `form` tag either, the exported name is the json key (the untagged
+    # convention). `form:"name"` and no `json` tag is a form param only —
+    # the Go field name is not also emitted as json.
+    private def gin_default_json_name(field : Noir::GoStructFields::Field) : String?
+      return if field.tag.matches?(TAG_KEYS["form"]) && !field.tag.matches?(TAG_KEYS["json"])
+      gin_field_name(field, "json")
+    end
+
     # The binds in `lines` as {binder, fields}, and whether any bind did not
     # resolve to tagged struct fields.
     private def gin_bind_fields(lines : Array(String), file : String, index : Noir::GoStructFields::Index) : Tuple(Array(Tuple(String, Array(Noir::GoStructFields::Field))), Bool)
@@ -243,8 +252,9 @@ module Analyzer::Go
     end
 
     # gin's binders: the default one reads the query string (`form` tags) on
-    # GET, otherwise the body by Content-Type, `json` or `form` tags (either
-    # encoding may be sent, so both are listed). `uri` tags fill path slots,
+    # GET, otherwise the body by Content-Type. Json comes from a `json` tag,
+    # or from the exported name when the field has no `form` tag; a form-only
+    # tag is listed as form and not also as json. `uri` tags fill path slots,
     # `header` tags headers. A `-` field is left out.
     private def add_gin_bind_params(kind : String, fields : Array(Noir::GoStructFields::Field), ep : Endpoint)
       fields.each do |field|
@@ -259,8 +269,10 @@ module Analyzer::Go
           gin_field_name(field, "form").try { |name| add_param_to_endpoint(Param.new(name, "", "query"), ep) }
         else
           query = ep.method == "GET"
-          if kind == "json" || (kind == "default" && !query)
+          if kind == "json"
             gin_field_name(field, "json").try { |name| add_param_to_endpoint(Param.new(name, "", "json"), ep) }
+          elsif kind == "default" && !query
+            gin_default_json_name(field).try { |name| add_param_to_endpoint(Param.new(name, "", "json"), ep) }
           end
           if kind != "json"
             gin_field_name(field, "form").try { |name| add_param_to_endpoint(Param.new(name, "", query ? "query" : "form"), ep) }
