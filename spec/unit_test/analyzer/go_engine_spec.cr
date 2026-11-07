@@ -41,13 +41,13 @@ describe Analyzer::Go::GoEngine do
       Analyzer::Go::GoEngine.go_test_file?("test/e2e/endpoint.go").should be_true
       Analyzer::Go::GoEngine.go_test_file?("/tests/fakes/a.go").should be_true
       Analyzer::Go::GoEngine.go_test_file?("/e2e/bench.go").should be_true
-      Analyzer::Go::GoEngine.go_test_file?("/integration/setup.go").should be_true
       Analyzer::Go::GoEngine.go_test_file?("/pkg/internal/test/helper.go").should be_true
     end
 
     it "matches those directory names as whole segments only" do
       Analyzer::Go::GoEngine.go_test_file?("/testing/harness/server.go").should be_false
       Analyzer::Go::GoEngine.go_test_file?("/testutil/server.go").should be_false
+      Analyzer::Go::GoEngine.go_test_file?("/internal/integration/slack/webhook.go").should be_false
       Analyzer::Go::GoEngine.go_test_file?("/mytest/x.go").should be_false
       Analyzer::Go::GoEngine.go_test_file?("/e2e_keys/x.go").should be_false
       Analyzer::Go::GoEngine.go_test_file?("/integrations/x.go").should be_false

@@ -24,11 +24,12 @@ module Analyzer::Go
 
     def go_test_path?(path : String) : Bool
       relative = base_relative_path(path)
-      # `test/`, `tests/`, `e2e/` and `integration/` are conventions, not a
-      # toolchain rule, so they stay on the scan-base path. Re-judging them
-      # from a nested module root would keep `test/e2e/*.go` whenever that
-      # tree had its own go.mod. A scan started at a directory named `test`
-      # does not match: the base name is not part of `relative`.
+      # `test/`, `tests/` and `e2e/` are conventions, not a toolchain rule,
+      # so they stay on the scan-base path. Re-judging them from a nested
+      # module root would keep `test/e2e/*.go` whenever that tree had its
+      # own go.mod. A scan started at a directory named `test` does not
+      # match: the base name is not part of `relative`. `integration/` is
+      # not in the set: it is a common production package.
       return true if GoEngine.go_test_dir?(relative)
       unless go_test_module_roots.empty?
         absolute = go_slash_path(Noir::PathScope.expand(path))
@@ -73,13 +74,15 @@ module Analyzer::Go
 
   abstract class GoEngine < Analyzer
     # Conventional test-only trees that `go build` still compiles when
-    # they are ordinary packages: `test/`, `tests/`, `e2e/`,
-    # `integration/`. Shopify/toxiproxy parks a bench router in
-    # `test/e2e/endpoint.go` (not `*_test.go`); `/test1` and `/test2`
-    # are not the API. Whole segments only, so `testing/` and
-    # `testutil/` stay. `tests` precedes `test` so dropping the trailing
-    # slash later cannot let `test` swallow `tests`.
-    GO_TEST_DIR_RE = %r{/(?:tests|test|e2e|integration)/}
+    # they are ordinary packages: `test/`, `tests/`, `e2e/`.
+    # Shopify/toxiproxy parks a bench router in `test/e2e/endpoint.go`
+    # (not `*_test.go`); `/test1` and `/test2` are not the API. Whole
+    # segments only, so `testing/` and `testutil/` stay. `integration/`
+    # is left out on purpose: `internal/integration/slack/webhook.go`
+    # is a production package, and skipping it would hide real routes.
+    # `tests` precedes `test` so dropping the trailing slash later
+    # cannot let `test` swallow `tests`.
+    GO_TEST_DIR_RE = %r{/(?:tests|test|e2e)/}
 
     # Scan-base-relative, rooted or not. A project whose own base
     # directory is named `test` does not match: that name is not part

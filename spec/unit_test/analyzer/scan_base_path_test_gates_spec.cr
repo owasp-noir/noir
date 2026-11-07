@@ -73,7 +73,6 @@ TEST_GATE_HOSTILE_ANCESTORS = [
   {"go/mux_test_dirs", "test"},
   {"go/mux_test_dirs", "tests"},
   {"go/mux_test_dirs", "e2e"},
-  {"go/mux_test_dirs", "integration"},
   {"scala/engine_source_sets", "src/test"},
   {"scala/engine_source_sets", "src/sbt-test"},
   {"clojure/test_trees", "test"},

@@ -1,3 +1,5 @@
+// `integration` is a production package name (internal/integration/...),
+// not a test tree. Routes here are part of the API.
 package integration
 
 import (
