@@ -2129,7 +2129,8 @@ module Noir
         return unless function && args
         # `path.Join(uriAdmin, "/lists")`: the stdlib join, every element
         # resolved, joined with `/` and cleaned of doubled and trailing ones.
-        if Noir::TreeSitter.node_text(function, source) == "path.Join"
+        fn_text = Noir::TreeSitter.node_text(function, source)
+        if fn_text == "path.Join"
           parts = [] of String
           Noir::TreeSitter.each_named_arg(args) do |a|
             part = string_expr_text(a, source, values, depth + 1)
@@ -2138,6 +2139,14 @@ module Noir
           end
           joined = parts.reject(&.empty?).join('/').squeeze('/')
           return joined.size > 1 ? joined.rchop('/') : joined
+        end
+        # `g.Group(fmt.Sprintf("/admin/%s", name))`. A path-shaped format
+        # keeps its literal parts; a verb whose argument resolves is that
+        # text, and one that does not is a `{name}` placeholder. Without
+        # this the group is dropped and its routes lose the whole prefix
+        # chain. Formats with no `/` (log lines) stay unresolved.
+        if fn_text == "fmt.Sprintf" || fn_text == "Sprintf"
+          return sprintf_format(args, source, values, depth)
         end
         name = Noir::TreeSitter.node_type(function) == "selector_expression" ? Noir::TreeSitter.field(function, "field") : function
         return unless name && (template = values["#{Noir::TreeSitter.node_text(name, source)}()"]?)
@@ -2151,6 +2160,117 @@ module Noir
         value = string_expr_text(arg, source, values, depth + 1)
         value ? template.sub(WRAPPER_ARG, value) : nil
       end
+    end
+
+    # `%s` / `%d` / `%v` / `%q` (optional flags and a numeric width) and
+    # `%%`. A resolved argument is substituted; anything else becomes
+    # `{name}` from the argument (`strings.ToLower(name)` → `{name}`,
+    # `n.GetName()` → `{GetName}`). Formats with no `/` stay unresolved.
+    private def sprintf_format(args : LibTreeSitter::TSNode, source : String, values : Hash(String, String), depth : Int32) : String?
+      format_node = nil
+      arg_nodes = [] of LibTreeSitter::TSNode
+      Noir::TreeSitter.each_named_arg(args) do |arg|
+        if format_node.nil?
+          format_node = arg
+        else
+          arg_nodes << arg
+        end
+      end
+      return unless format_node
+      format = string_expr_text(format_node, source, values, depth + 1)
+      return unless format && format.includes?('/')
+      seen = Hash(String, Int32).new
+      slot = 0
+      i = 0
+      String.build do |io|
+        while i < format.bytesize
+          if format.byte_at(i) != 37_u8
+            j = i
+            while j < format.bytesize && format.byte_at(j) != 37_u8
+              j += 1
+            end
+            io << format.byte_slice(i, j - i)
+            i = j
+            next
+          end
+          if i + 1 < format.bytesize && format.byte_at(i + 1) == 37_u8
+            io << '%'
+            i += 2
+            next
+          end
+          verb = format.byte_slice(i).match(SPRINTF_VERB)
+          return unless verb
+          node = arg_nodes[slot]?
+          return unless node
+          io << sprintf_slot(node, source, values, depth, seen)
+          slot += 1
+          i += verb[0].size
+        end
+      end
+    end
+
+    # One conversion, not an indexed `%[1]s` or a `*` width.
+    # `U` sits at the end of the class: next to `e` it spells a word the
+    # spell checker rejects, and order inside a class does not matter.
+    SPRINTF_VERB = /\A%[#+\- 0]*\d*(?:\.\d+)?[vTtbcdoOqxXeEfFgGspU]/
+
+    private def sprintf_slot(node : LibTreeSitter::TSNode, source : String, values : Hash(String, String), depth : Int32, seen : Hash(String, Int32)) : String
+      if text = string_expr_text(node, source, values, depth + 1)
+        return text
+      end
+      case Noir::TreeSitter.node_type(node)
+      when "int_literal", "float_literal", "imaginary_literal", "rune_literal"
+        return Noir::TreeSitter.node_text(node, source)
+      end
+      name = safe_placeholder(placeholder_name(node, source))
+      n = seen[name]?
+      seen[name] = (n || 0) + 1
+      "{#{n ? "#{name}#{n + 1}" : name}}"
+    end
+
+    # The identifier a dynamic segment is named for: the variable, the
+    # selector's field, or the single argument of a wrapper call.
+    private def placeholder_name(node : LibTreeSitter::TSNode, source : String, depth : Int32 = 0) : String
+      return "param" if depth > 8
+      case Noir::TreeSitter.node_type(node)
+      when "identifier"
+        Noir::TreeSitter.node_text(node, source)
+      when "selector_expression"
+        field = Noir::TreeSitter.field(node, "field")
+        field ? Noir::TreeSitter.node_text(field, source) : "param"
+      when "parenthesized_expression"
+        child = Noir::TreeSitter.first_named_child(node)
+        child ? placeholder_name(child, source, depth + 1) : "param"
+      when "call_expression"
+        function = Noir::TreeSitter.field(node, "function")
+        call_args = Noir::TreeSitter.field(node, "arguments")
+        return "param" unless function && call_args
+        only = nil
+        count = 0
+        Noir::TreeSitter.each_named_arg(call_args) do |arg|
+          only = arg
+          count += 1
+        end
+        if count == 1 && (arg = only)
+          placeholder_name(arg, source, depth + 1)
+        else
+          call_basename(function, source)
+        end
+      else
+        "param"
+      end
+    end
+
+    private def call_basename(function : LibTreeSitter::TSNode, source : String) : String
+      if Noir::TreeSitter.node_type(function) == "selector_expression"
+        field = Noir::TreeSitter.field(function, "field")
+        return Noir::TreeSitter.node_text(field, source) if field
+      end
+      Noir::TreeSitter.node_text(function, source).split('.').last
+    end
+
+    private def safe_placeholder(name : String) : String
+      name.matches?(/\A[A-Za-z_][A-Za-z0-9_]*\z/) ? name : "param"
     end
 
     # Stands for a wrapper's argument in its seeded template.
