@@ -129,7 +129,7 @@ noir scan . -u https://t --only-endpoints '/api/*' \
 - 쉼표 목록은 OR입니다(`protocol:cli,ws`). 단일 패턴 키인 `url`, `path`, `handler`는 쉼표로 나누지 않습니다. 한 값 안에 공백으로 나눈 `키:값` 여러 개는 모두 맞아야 합니다.
 - 플래그를 반복하면 그중 하나만 맞아도 됩니다. `--only-endpoints`를 먼저, `--exclude-endpoints`를 나중에 적용합니다.
 - 패턴은 query 규칙을 따릅니다. `*`, `?`, `[`가 있으면 값 전체에 맞추는 glob이고(`*`는 `/`도 넘음), 없으면 부분 문자열입니다. 그래서 `/admin`은 `/api/admin/x`에도 맞고, `/admin*`은 `/admin`으로 시작하는 경로에만 맞습니다.
-- `url:`은 결과에 나오는 URL에 맞춥니다. `/`로 시작하는 패턴은 절대 `http(s)://` URL의 경로 부분에도 맞으므로, `/admin*`은 `-u`가 있든 없든, `noir query --from`으로 리포트를 읽을 때도 똑같이 동작합니다.
+- `url:`은 결과에 나오는 URL에 맞춥니다. `/`로 시작하는 패턴은 절대 `http(s)://` URL의 경로 부분(호스트 제외)에 맞추므로, `/admin*`은 `-u`가 있든 없든, `noir query --from`으로 리포트를 읽을 때도 똑같이 동작합니다.
 - `--only-endpoints`에서 `method:GET`은 `noir query --method`처럼 `ANY`로 선언된 라우트도 남깁니다. `--exclude-endpoints`에서는 선언된 메서드와 정확히 같아야 합니다. `method:OPTIONS,HEAD`는 그 행만 빼고 `ANY` catch-all 라우트는 남깁니다.
 - `tag`, `guard`, `sink`, `source`, `signal`, `validator`는 받지 않습니다. 필터가 tagger와 AI context보다 먼저 실행되어 아직 값이 없기 때문입니다. 이 조건은 리포트에 `noir query`를 쓰세요.
 
@@ -272,7 +272,7 @@ noir query [filters] [paths...] [flags]
 - `--validator <kind,...|any>`: 해당 유형의 검증기 포함
 
 단일 패턴을 받는 필터 (`<glob|substr>`):
-- `--url <glob|substr>`: 라우트 URL (`/`로 시작하는 패턴은 `-u`가 붙은 URL의 경로 부분에도 맞음)
+- `--url <glob|substr>`: 라우트 URL (`/`로 시작하는 패턴은 `-u`가 붙은 URL의 경로 부분에 맞춤)
 - `--path <glob|substr>`: 보고된 소스 파일 경로 (상대 글롭은 임의의 `/` 뒤에서도 매칭)
 - `--handler <glob|substr>`: 핸들러 함수 이름 또는 핸들러 소스 파일 경로
 

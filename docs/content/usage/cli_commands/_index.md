@@ -130,7 +130,7 @@ A `FILTER` uses the [`noir query`](#query) filters, written `key:value`:
 - A comma list is OR (`protocol:cli,ws`), except for the single-pattern keys `url`, `path` and `handler`. Several `key:value` items in one value, separated by spaces, must all match.
 - Repeat a flag to match either value. `--only-endpoints` is applied first, then `--exclude-endpoints`.
 - Patterns follow the query rules: with `*`, `?` or `[` it is a glob over the whole value (`*` crosses `/`), otherwise a substring. So `/admin` also matches `/api/admin/x`, while `/admin*` matches only the routes that start with `/admin`.
-- `url:` matches the URL as reported. A pattern that starts with `/` also matches the path of an absolute `http(s)://` URL, so `/admin*` works with or without `-u`, and on a report read with `noir query --from`.
+- `url:` matches the URL as reported. A pattern that starts with `/` is matched against the path of an absolute `http(s)://` URL (not its host), so `/admin*` works with or without `-u`, and on a report read with `noir query --from`.
 - In `--only-endpoints`, `method:GET` also keeps routes declared as `ANY`, as `noir query --method` does. In `--exclude-endpoints` it names the declared method exactly: `method:OPTIONS,HEAD` drops those rows and keeps the `ANY` catch-all routes.
 - `tag`, `guard`, `sink`, `source`, `signal` and `validator` are not accepted: the filter runs before the taggers and the AI-context builder fill them in. Use `noir query` on a report for those.
 
@@ -277,7 +277,7 @@ Filters that accept a comma-separated list match with OR:
 - `--validator <kind,...|any>`: carries a validator of this kind
 
 Single-value pattern filters (`<glob|substr>`):
-- `--url <glob|substr>`: route URL (a pattern starting with `/` also matches the path of a URL joined with `-u`)
+- `--url <glob|substr>`: route URL (a pattern starting with `/` is matched against the path of a URL joined with `-u`)
 - `--path <glob|substr>`: source file path as reported (a relative glob matches from any `/`)
 - `--handler <glob|substr>`: handler function name, or handler source file path
 

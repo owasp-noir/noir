@@ -118,6 +118,10 @@ describe Noir::EndpointFilter do
       warnings.should be_empty
       Noir::EndpointFilter.url_matches?("/", "https://t.example").should be_true
       Noir::EndpointFilter.url_matches?("https://t.example/s*", "https://t.example/sign").should be_true
+      # Only the path: not the host of a target named like a route.
+      Noir::EndpointFilter.url_matches?("/admin", "https://admin.example/users").should be_false
+      Noir::EndpointFilter.url_matches?("/local", "http://localhost/x").should be_false
+      Noir::EndpointFilter.url_matches?("/admin", "https://admin.example/admin/x").should be_true
     end
 
     it "warns when nothing is left" do

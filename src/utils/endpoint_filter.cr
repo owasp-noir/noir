@@ -115,16 +115,20 @@ module Noir::EndpointFilter
     glob_regex(pattern).matches?(value)
   end
 
-  # A pattern rooted at `/` also matches the path of an absolute HTTP URL,
-  # so `/admin*` finds `/admin` whether or not `-u` put a host in front of
-  # it, in a scan, a live query and a report read with `--from` alike.
+  # A pattern rooted at `/` is matched against the path of an absolute HTTP
+  # URL, so `/admin*` finds `/admin` whether or not `-u` put a host in front
+  # of it, in a scan, a live query and a report read with `--from` alike.
+  # Only the path: as a substring of the whole URL, `/admin` would match
+  # the host of `https://admin.example/users`, and `/local` every
+  # `http://localhost/...` row.
   ABSOLUTE_HTTP_URL = /\A(?:https?|wss?):\/\/[^\/?#]*/i
 
   def self.url_matches?(pattern : String, url : String) : Bool
-    return true if glob_or_substring?(pattern, url)
-    return false unless pattern.starts_with?('/') && (host = ABSOLUTE_HTTP_URL.match(url))
-    path = url[host[0].size..]
-    glob_or_substring?(pattern, path.empty? ? "/" : path)
+    if pattern.starts_with?('/') && (host = ABSOLUTE_HTTP_URL.match(url))
+      path = url[host[0].size..]
+      return glob_or_substring?(pattern, path.empty? ? "/" : path)
+    end
+    glob_or_substring?(pattern, url)
   end
 
   # Reported paths carry the scan root (`corpus/app/routes/x.ts`), so a glob
