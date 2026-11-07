@@ -1,25 +1,33 @@
+# Ameba 1.7 resolves a rule-level `Excluded` glob with `Dir[]` once per
+# (rule, source) pair, so `spec/**/*` there re-walked the 10k-entry fixtures
+# tree ~3,000 times per rule: a full run took ~10 minutes, almost all of it
+# in opendir. The top-level `Excluded` is expanded once per run, so fixtures
+# (sample code for the analyzers, not noir code) are dropped here instead,
+# and rule-level globs below must stay narrow enough not to walk them.
+# Listing `lib` keeps Ameba's default, which this key replaces.
+Excluded:
+  - lib
+  - spec/functional_test/fixtures
+
 Metrics/CyclomaticComplexity:
   Enabled: false
 
-# Disable spec filename check for fixture files (they represent real code).
-# spec/suite.cr is also exempt, and its name is load-bearing: it is the entry
-# point that requires both suites into one binary, so it must NOT match the
-# `*_spec.cr` glob that `crystal spec` picks up on its own.
+# spec/suite.cr's name is load-bearing: it is the entry point that requires
+# both suites into one binary, so it must NOT match the `*_spec.cr` glob that
+# `crystal spec` picks up on its own.
 Lint/SpecFilename:
   Excluded:
-    - "spec/functional_test/fixtures/**/*"
     - "spec/suite.cr"
-
-# Disable useless assign warnings for fixture files
-Lint/UselessAssign:
-  Excluded:
-    - "spec/functional_test/fixtures/**/*"
 
 # Allow common short block parameter names used throughout the codebase
 Naming/BlockParameterName:
   Enabled: false
 
-# Exclude spec files from Lint/NotNil warnings
+# Exclude spec files from Lint/NotNil warnings. Spelled per subtree rather
+# than `spec/**/*` so the glob never descends into fixtures (see above).
 Lint/NotNil:
   Excluded:
-    - "spec/**/*"
+    - "spec/*.cr"
+    - "spec/functional_test/*.cr"
+    - "spec/functional_test/testers/**/*"
+    - "spec/unit_test/**/*"

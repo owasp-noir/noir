@@ -11,17 +11,21 @@ alias bmf := benchmark-full
 default:
     @just --list
 
+# Every compiling recipe below runs through scripts/compile_gate.sh, which caps
+# concurrent compiles across worktrees (each peaks at 6-11GB RSS). Set
+# NOIR_COMPILE_SLOTS to change the cap, or 0 to turn it off.
+#
 # Build noir binary (debug; fast incremental compile, slower runtime).
 [group('build')]
 build:
-    shards build
+    scripts/compile_gate.sh shards build
 
 # Build noir binary with --release (slower compile, 2–3x faster runtime; use for benchmarks).
 # Uses the same flags as production release builds (Homebrew, GitHub releases, Docker, Snap)
 # so that local benchmark comparisons against the global binary are fair.
 [group('build')]
 build-release:
-    shards build --release --no-debug --production
+    scripts/compile_gate.sh shards build --release --no-debug --production
 
 # Regenerate packaging/nix/shards.nix from shard.lock (run after changing dependencies).
 # crystal2nix always writes ./shards.nix, so move it into place afterwards.
@@ -85,13 +89,15 @@ docs-dependencies:
 # The Ameba shard ships source only, so running it means compiling it: about
 # two minutes here and 126s of CI's 155s lint job. Build it once and the
 # recipes below use the binary instead. CI caches the same binary keyed on
-# shard.lock.
+# shard.lock. `check` and `fix` build it on first use (e.g. in a fresh
+# worktree) rather than falling back to the shebang script, which recompiles
+# Ameba on every invocation.
 #
 # Build the pinned Ameba linter into bin/ameba.
 [group('development')]
 ameba-build:
     mkdir -p bin
-    crystal build lib/ameba/bin/ameba.cr -o bin/ameba
+    scripts/compile_gate.sh crystal build lib/ameba/bin/ameba.cr -o bin/ameba
 
 # Auto-format code and fix lint issues.
 [group('development')]
@@ -99,7 +105,8 @@ fix:
     #!/usr/bin/env bash
     set -euo pipefail
     crystal tool format
-    if [ -x bin/ameba ]; then ./bin/ameba --fix; else lib/ameba/bin/ameba.cr --fix; fi
+    [ -x bin/ameba ] || just ameba-build
+    ./bin/ameba --fix
 
 # Check code format and lint without changes.
 [group('development')]
@@ -107,7 +114,8 @@ check:
     #!/usr/bin/env bash
     set -euo pipefail
     crystal tool format --check
-    if [ -x bin/ameba ]; then ./bin/ameba; else lib/ameba/bin/ameba.cr; fi
+    [ -x bin/ameba ] || just ameba-build
+    ./bin/ameba
 
 # Compiling src/ is nearly the whole cost of a spec run, and that cost does not
 # grow when both suites go into one program: unit alone compiles in ~20s and
@@ -119,7 +127,7 @@ check:
 [group('development')]
 spec-build:
     mkdir -p bin
-    crystal build spec/suite.cr -o bin/noir_spec
+    scripts/compile_gate.sh crystal build spec/suite.cr -o bin/noir_spec
 
 # The run is single-threaded and takes only ~0.3GB, so splitting it on the
 # `functional` tag turns ~18s of examples into ~10s of wall time (the unit half
@@ -164,12 +172,12 @@ test-seed SEED: spec-build
 # Run unit tests only.
 [group('development')]
 test-unit:
-    crystal spec spec/unit_test
+    scripts/compile_gate.sh crystal spec spec/unit_test
 
 # Run functional tests only.
 [group('development')]
 test-func:
-    crystal spec spec/functional_test
+    scripts/compile_gate.sh crystal spec spec/functional_test
 
 # The fastest feedback loop while working on a single analyzer: ~8.5s, against
 # ~21s for a full `just test` (a ~12s build plus a ~10s parallel run). Almost
@@ -180,12 +188,12 @@ test-func:
 # Run one functional tester, e.g. `just test-func-one javascript/hono`.
 [group('development')]
 test-func-one TESTER:
-    crystal spec spec/functional_test/testers/{{TESTER}}_spec.cr
+    scripts/compile_gate.sh crystal spec spec/functional_test/testers/{{TESTER}}_spec.cr
 
 # Run every functional tester for one language: `just test-func-lang python`.
 [group('development')]
 test-func-lang LANG:
-    crystal spec spec/functional_test/testers/{{LANG}}
+    scripts/compile_gate.sh crystal spec spec/functional_test/testers/{{LANG}}
 
 # Check version consistency across all files.
 [group('development')]
