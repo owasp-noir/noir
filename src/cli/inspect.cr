@@ -123,7 +123,11 @@ module Noir::CLI::Inspect
       # surface as if it were the answer.
       unexpected = report_scan_args(scan_argv)
       unless unexpected.empty?
-        Noir::CLI.die("--from reads a report and scans nothing; unexpected argument(s): #{unexpected.join(" ")}", EXIT_USAGE)
+        message = "--from reads a report and scans nothing; unexpected argument(s): #{unexpected.join(" ")}"
+        if hint = report_exclude_hint(unexpected)
+          message += ". #{hint}"
+        end
+        Noir::CLI.die(message, EXIT_USAGE)
       end
       load_report(from)
     else
@@ -144,6 +148,20 @@ module Noir::CLI::Inspect
   # when a verb reads a report instead of scanning a path.
   def self.report_scan_args(scan_argv : Array(String)) : Array(String)
     scan_argv.reject { |arg| Noir::CLI::GLOBAL_FLAGS.includes?(arg) }
+  end
+
+  # `--exclude-path` / `--exclude-techs` are scan flags: they keep files or
+  # techs out of the analysis, so a report gives them nothing to do.
+  # `query --exclude` is the one that hides rows.
+  REPORT_EXCLUDE_HINTS = {
+    "--exclude-path"  => "path=<glob>",
+    "--exclude-techs" => "tech=<name>",
+  }
+
+  def self.report_exclude_hint(args : Array(String)) : String?
+    keys = args.compact_map { |arg| REPORT_EXCLUDE_HINTS[arg.split('=', 2)[0]]? }.uniq!
+    return if keys.empty?
+    "To hide endpoints of a report, use `noir query --exclude #{keys.join("` or `--exclude ")}`"
   end
 
   # Flags scan's parser would reject. Caught here so the verb keeps its exit
@@ -1036,8 +1054,27 @@ module Noir::CLI::Inspect
     warnings
   end
 
-  def self.query(endpoints : Array(Endpoint), filters : Filters, full : Bool) : Array(Row)
-    endpoints.select { |e| filters.matches?(e) }.map { |e| Row.build(e, full) }
+  # `excludes` are the `--exclude` filters: an endpoint any of them matches
+  # is dropped, whatever the other filters say.
+  def self.query(endpoints : Array(Endpoint), filters : Filters, full : Bool,
+                 excludes : Array(Filters) = [] of Filters) : Array(Row)
+    endpoints.select { |e| filters.matches?(e) && excludes.none?(&.matches?(e)) }.map { |e| Row.build(e, full) }
+  end
+
+  # `filter_warnings` for the kept filters, then for each `--exclude`: an
+  # excluded value no endpoint carries (`protocol=cil`) drops nothing, and
+  # the unfiltered answer would pass for the filtered one.
+  def self.query_warnings(endpoints : Array(Endpoint), filters : Filters,
+                          excludes : Array(Filters) = [] of Filters) : Array(String)
+    warnings = filter_warnings(endpoints, filters)
+    excludes.each do |excluded|
+      filter_warnings(endpoints, excluded).each do |warning|
+        next if warnings.includes?(warning)
+        prefixed = "--exclude: #{warning}"
+        warnings << prefixed unless warnings.includes?(prefixed)
+      end
+    end
+    warnings
   end
 
   # The `--from / -f / --full / --limit / --count` block every verb's help

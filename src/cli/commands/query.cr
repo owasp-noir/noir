@@ -5,7 +5,8 @@ require "../inspect"
 #
 # Attack-surface search. Filters AND together; a comma list inside one
 # filter is OR. `--sink any` / `--signal any` / `--source any` match a
-# non-empty bucket.
+# non-empty bucket. `--exclude <filter>=<value>` drops what that filter
+# would match.
 module Noir::CLI::QueryCommand
   # Filter flags and the `Filters` field each one fills. Every one takes a
   # value except the guard switches.
@@ -15,12 +16,18 @@ module Noir::CLI::QueryCommand
   # formats), so the value is not split into an OR list.
   SINGLE_PATTERN_FLAGS = %w[--url --path --handler]
 
-  record Parsed, filters : Inspect::Filters, rest : Array(String), errors : Array(String)
+  # `--exclude` keys: every value filter, named without its dashes. The guard
+  # switches already come as a pair, so `guard` is not one.
+  EXCLUDE_KEYS = VALUE_FLAGS.map(&.lchop("--"))
+
+  record Parsed, filters : Inspect::Filters, rest : Array(String), errors : Array(String),
+    excludes : Array(Inspect::Filters) = [] of Inspect::Filters
 
   def self.parse_filters(args : Array(String)) : Parsed
     rest = [] of String
     errors = [] of String
-    values = Hash(String, Array(String)).new { |h, k| h[k] = [] of String }
+    values = new_values
+    excludes = [] of Inspect::Filters
     guard = nil
 
     i = 0
@@ -40,16 +47,21 @@ module Noir::CLI::QueryCommand
           i += 1
           value = args[i]?
         end
-        items = if value && SINGLE_PATTERN_FLAGS.includes?(name)
-                  value.blank? ? [] of String : [value]
-                else
-                  value.try(&.split(',').map(&.strip).reject(&.empty?)) || [] of String
-                end
+        items = split_value(name, value)
         # `--sink ''` would otherwise be no filter at all, silently.
         if items.empty?
           errors << "#{name} requires a value"
         else
           values[name].concat(items)
+        end
+      when "--exclude"
+        value = inline
+        if value.nil?
+          i += 1
+          value = args[i]?
+        end
+        if excluded = parse_exclude(value, errors)
+          excludes << excluded
         end
       when "--"
         rest.concat(args[i..])
@@ -60,7 +72,46 @@ module Noir::CLI::QueryCommand
       i += 1
     end
 
-    filters = Inspect::Filters.new(
+    Parsed.new(build_filters(values, guard), rest, errors, excludes)
+  end
+
+  private def self.new_values : Hash(String, Array(String))
+    Hash(String, Array(String)).new { |h, k| h[k] = [] of String }
+  end
+
+  # A comma list is OR, except for the one-pattern flags.
+  private def self.split_value(flag : String, value : String?) : Array(String)
+    return [] of String if value.nil?
+    return value.blank? ? [] of String : [value] if SINGLE_PATTERN_FLAGS.includes?(flag)
+    value.split(',').map(&.strip).reject(&.empty?)
+  end
+
+  # `--exclude protocol=cli` is the `--protocol cli` filter, kept apart so
+  # the endpoints it matches are dropped instead of kept.
+  private def self.parse_exclude(value : String?, errors : Array(String)) : Inspect::Filters?
+    key, _, pattern = (value || "").partition('=')
+    key = key.strip
+    if key == "guard"
+      errors << "--exclude guard: use --guard or --no-guard"
+      return
+    end
+    unless EXCLUDE_KEYS.includes?(key)
+      errors << "--exclude expects <filter>=<value> with a filter of #{EXCLUDE_KEYS.join(", ")}"
+      return
+    end
+    flag = "--#{key}"
+    items = split_value(flag, pattern)
+    if items.empty?
+      errors << "--exclude #{key}= requires a value"
+      return
+    end
+    values = new_values
+    values[flag].concat(items)
+    build_filters(values, nil)
+  end
+
+  private def self.build_filters(values : Hash(String, Array(String)), guard : Bool?) : Inspect::Filters
+    Inspect::Filters.new(
       methods: values["--method"].map(&.upcase),
       url: values["--url"].first?,
       path: values["--path"].first?,
@@ -77,7 +128,6 @@ module Noir::CLI::QueryCommand
       signals: values["--signal"],
       validators: values["--validator"],
     )
-    Parsed.new(filters, rest, errors)
   end
 
   def self.run(argv : Array(String))
@@ -92,8 +142,8 @@ module Noir::CLI::QueryCommand
 
     positionals, scan_args = Inspect.split_positionals(parsed.rest)
     endpoints = Inspect.load(common, scan_args + positionals)
-    Inspect.filter_warnings(endpoints, parsed.filters).each { |w| STDERR.puts "noir query: #{w}" }
-    rows = Inspect.query(endpoints, parsed.filters, common.full)
+    Inspect.query_warnings(endpoints, parsed.filters, parsed.excludes).each { |w| STDERR.puts "noir query: #{w}" }
+    rows = Inspect.query(endpoints, parsed.filters, common.full, parsed.excludes)
     exit(Inspect.emit(rows, common))
   end
 
@@ -125,12 +175,16 @@ module Noir::CLI::QueryCommand
         --signal <kind,...|any> Carries a derived signal (idor_review, ssrf, open_redirect, ...)
         --validator <kind,...|any> Carries a validator of this kind
                                A value no endpoint carries is reported on stderr with the values seen.
+        --exclude <filter>=<value>
+                               Drop the endpoints that filter matches (repeatable): any filter above
+                               without its dashes, same values (e.g. protocol=cli, url='/health*')
 
       #{Noir::CLI.section("EXAMPLES:")}
         noir query --no-guard --sink any ./app
         noir query --signal idor_review --method PUT,DELETE --from report.json
         noir query --path 'billing/**' --count ./app
         noir query --project services/orders --url /items ./mono
+        noir query --exclude protocol=cli --exclude path='tests/**' --from report.json
 
       #{Noir::CLI.section("OPTIONS:")}
       #{Inspect.common_help}
