@@ -20,6 +20,10 @@ require "./go_route_extractor_ts"
 # Every plain handler argument of a route is resolved — middleware too
 # (`r.GET("/x", Auth, listX)` binds both bodies), and a middleware factory
 # called with no arguments (`RateLimit()`) resolves to the factory body.
+# A path-parameter read in that middleware body is credited only to a route
+# whose URL has the slot (`:userId`, `{userId}`, …). The handler's own reads
+# stay, so `GoEngine.drop_unslotted_path_params` can still keep a param whose
+# slot may sit in a prefix that did not resolve.
 # Only unambiguous references are claimed; everything else keeps the legacy
 # attribution:
 #   * a bare `listA` resolves to the one `func listA` in this file;
@@ -127,6 +131,9 @@ class Noir::GoNamedHandler
   # Rows of routes whose handler is a call to a function that registers
   # routes itself (`mux.Handle("/v1/", api.NewHandler())`): a mount.
   @mounts = Set(Int32).new
+  # Bodies of middleware arguments (and the helpers they call), not the
+  # handler that answers the route. See `mark_middleware_keys`.
+  @middleware_keys = Set(Key).new
 
   # `listA` -> {"", "listA"}, `h.List` -> {"h", "List"}, `RateLimit()` ->
   # {"", "RateLimit"}. Anything else (closures, calls with arguments,
@@ -324,6 +331,7 @@ class Noir::GoNamedHandler
       key = {path, fb.start_row}
       span_of.call(fb).each { |row| @rows[row] = key }
     end
+    mark_middleware_keys(routes)
   end
 
   # The handler argument that answers: the last, or the first with
@@ -621,11 +629,65 @@ class Noir::GoNamedHandler
     mw ? mw + args : args
   end
 
+  # Keys of every argument that is not the handler answering the route:
+  # `Auth()` in `users.Get("/", Auth(), listUsers)`, and `.Use` / group
+  # middleware. The handler's own body, and the helpers it calls, are not
+  # included — a path param read there may belong to a prefix noir could
+  # not resolve.
+  private def mark_middleware_keys(routes : Array(Noir::TreeSitterGoRouteExtractor::Route))
+    routes.each do |route|
+      primary = primary_arg(route).try(&.strip)
+      handler_args(route).each do |arg|
+        text = arg.strip
+        next if text == primary
+        @refs[text]?.try &.each { |key| @middleware_keys << key }
+      end
+    end
+  end
+
+  # Whether `url` has a slot the path parameter `name` reads: `:name`,
+  # `{name}` / `{name:re}`, `*name`, `<name>`, or a wildcard read by
+  # position (`c.Params("*")`, `"*1"`, `"+"`) or by Beego's names for it.
+  # `GoEngine.path_slot?` delegates here.
+  def self.path_slot?(url : String, name : String) : Bool
+    return true if url.includes?(":#{name}") || url.includes?("{#{name}") || url.includes?("*#{name}") || url.includes?("<#{name}")
+    return false unless url.includes?('*') || url.includes?('+')
+    name.matches?(/\A[*+]\d*\z/) || {"splat", "path", "ext"}.includes?(name)
+  end
+
+  # Fiber `c.Params` / `c.ParamsInt`, gin/echo/hertz `c.Param`, go-zero
+  # `PathParam`, net/http `PathValue`, httprouter `ByName`, fasthttp
+  # `UserValue`, chi's two-argument `chi.URLParam(r, name)`, mux
+  # `Vars(r)["name"]`. Iris's one-argument `URLParam("q")` is a query read
+  # and does not match. The name is group 1.
+  PATH_READ = /(?:\.(?:ParamsInt|Params|PathParam|PathValue|Param|ByName)\s*\(\s*|\.UserValue\s*\(\s*|\bchi\.URLParam\s*\(\s*[^,]+,\s*|\bVars\s*\([^)]*\)\s*\[\s*)["']([^"']+)["']/
+
+  # Drops path-parameter reads the route's URL does not slot. Other reads on
+  # the line (a header, a query) stay.
+  private def scrub_unslotted_path_reads(line : String, url : String) : String
+    line.gsub(PATH_READ) do |full|
+      if (name = $1) && self.class.path_slot?(url, name)
+        full
+      else
+        ""
+      end
+    end
+  end
+
   # Yields each bound body's file and lines with the endpoints routed to it.
+  # A middleware body is yielded once per endpoint, with path reads the URL
+  # does not slot removed, so a shared `c.Params("userId")` is not a path
+  # param of `/v1/users/`.
   def each_bound_body(& : String, Array(String), Array(Endpoint) ->)
     @lines.each do |key, lines|
-      eps = @targets[key]?
-      yield key[0], lines, eps if eps
+      eps = @targets[key]? || next
+      if @middleware_keys.includes?(key)
+        eps.each do |ep|
+          yield key[0], lines.map { |line| scrub_unslotted_path_reads(line, ep.url) }, [ep]
+        end
+      else
+        yield key[0], lines, eps
+      end
     end
   end
 
@@ -633,7 +695,12 @@ class Noir::GoNamedHandler
   def each_attribution(& : String, Endpoint ->)
     @lines.each do |key, lines|
       next unless eps = @targets[key]?
-      lines.each { |line| eps.each { |ep| yield line, ep } }
+      middleware = @middleware_keys.includes?(key)
+      lines.each do |line|
+        eps.each do |ep|
+          yield middleware ? scrub_unslotted_path_reads(line, ep.url) : line, ep
+        end
+      end
     end
   end
 end
