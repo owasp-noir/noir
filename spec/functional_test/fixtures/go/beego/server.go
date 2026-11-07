@@ -16,6 +16,7 @@ func main() {
 
 	web.Post("/alice", func(ctx *context.Context) {
 		ctx.GetCookie("auth")
+		// GetStrings reads Request.Form, so this is a body field on POST.
 		ctx.GetStrings("query")
 		ctx.Output.Body([]byte("bob"))
 	})
