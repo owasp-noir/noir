@@ -1,0 +1,203 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:content="http://purl.org/rss/1.0/modules/content/">
+  <channel>
+    <title>OWASP Noir - Authors: hak</title>
+    <link>https://owasp-noir.github.io/noir/authors/hak/</link>
+    <description>Hunt every endpoint in your code. Noir statically analyses source across 32 languages and 263 frameworks, exposing shadow APIs and mapping the attack surface.</description>
+    <atom:link href="https://owasp-noir.github.io/noir/authors/hak/rss.xml" rel="self" type="application/rss+xml" />
+    <item>
+      <title>Fill the blanks once: --pvalue across curl, collections, and probes</title>
+      <link>https://owasp-noir.github.io/noir/blog/pvalue-for-runnable-catalogs/</link>
+      <guid>https://owasp-noir.github.io/noir/blog/pvalue-for-runnable-catalogs/</guid>
+      <description>One set of parameter placeholders that flows into curl, Postman, OpenAPI, status-code probes, and Burp/ZAP replay.</description>
+      <content:encoded><![CDATA[<p>If you've ever run <code>noir scan ./app -f curl</code>, you know the result: a long list of <code>/users/{id}?limit=</code> lines. Great as a map of the app, but you can't paste a single one of them into a terminal and expect a real response.</p>
+<p><code>-f postman</code> gives you the same blanks in a different wrapper. <code>--probe</code> either sends the literal <code>{id}</code> and collects 404s, or, for GET/HEAD/OPTIONS only, quietly fills in <code>1</code> or <code>noir</code>. Three consumers, each with its own idea of what a parameter should hold.</p>
+<p><code>--pvalue</code> settles that in one place. You declare the values once, and the optimizer writes them into every parameter before any formatter or deliverer gets to see the endpoint list. Same scan, same values, no matter where the output ends up.</p>
+<h2 id="the-flag">The flag</h2>
+<p>It's repeatable. Each occurrence is <code>TYPE=VALUE</code>, or just <code>VALUE</code> if you want it applied to every type:</p>
+<pre><code class="language-bash hljs">noir scan ./app -f curl -u https://api.example.com \
+  --pvalue &quot;path=id=42&quot; \
+  --pvalue &quot;query=limit=10&quot; \
+  --pvalue &quot;header=Authorization=Bearer replace-me&quot;
+</code></pre>
+<table>
+<thead>
+<tr>
+<th><code>TYPE</code></th>
+<th>Scope</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>any</code> (or omit the type)</td>
+<td>Every parameter type</td>
+</tr>
+<tr>
+<td><code>query</code> / <code>form</code> / <code>json</code> / <code>header</code> / <code>cookie</code> / <code>path</code></td>
+<td>That bucket only</td>
+</tr>
+</tbody>
+</table>
+<p><code>VALUE</code> itself comes in two shapes:</p>
+<table>
+<thead>
+<tr>
+<th>Form</th>
+<th>Behavior</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>42</code></td>
+<td>Every parameter of the targeted type</td>
+</tr>
+<tr>
+<td><code>id=42</code> or <code>id:42</code></td>
+<td>Only parameters named <code>id</code></td>
+</tr>
+</tbody>
+</table>
+<p>The substitution happens while the endpoint list is being cleaned up, so it lands ahead of curl, HTTPie, PowerShell, OpenAPI, Postman, JSON and YAML output, and ahead of probing and export too. For the format side see <a href="https://owasp-noir.github.io/noir/usage/output_formats/curl/">cURL / HTTPie / PowerShell</a>; for probing see <a href="https://owasp-noir.github.io/noir/usage/more_features/deliver/">Delivering Results</a>.</p>
+<h2 id="how-rules-are-picked">How rules are picked</h2>
+<p>Type-specific rules win over the global <code>any</code> list, so <code>--pvalue path=…</code> beats a bare <code>--pvalue test</code> for path parameters. Within a type, a rule that names the parameter wins over a catch-all, and the order you pass the flags in doesn't matter:</p>
+<pre><code class="language-bash hljs"># limit → 10; everything else in query → 1
+noir scan ./app -f curl -u https://api.example.com \
+  --pvalue &quot;query=1&quot; \
+  --pvalue &quot;query=limit=10&quot;
+</code></pre>
+<p>Swap those two lines and you get the same result. If you declare two rules for the same name, the first one wins, but that's a case you rarely want anyway.</p>
+<h2 id="where-the-same-declaration-pays-off">Where the same declaration pays off</h2>
+<h3 id="curl-you-can-actually-paste">Curl you can actually paste</h3>
+<pre><code class="language-bash hljs">noir scan ./api -f curl -u https://staging.example.com \
+  --pvalue &quot;path=id=42&quot; \
+  --pvalue &quot;path=slug=demo&quot; \
+  --pvalue &quot;query=1&quot; \
+  --pvalue &quot;header=Authorization=Bearer $STAGING_TOKEN&quot; \
+  -o /tmp/api.curl.sh
+</code></pre>
+<p><code>source</code> it and go. Path templates are already substituted in the URLs the curl builder emits, so there's no <code>sed</code> pass over <code>{id}</code> afterwards.</p>
+<h3 id="postman-openapi-for-the-rest-of-the-team">Postman / OpenAPI for the rest of the team</h3>
+<pre><code class="language-bash hljs">noir scan ./api -f postman -u https://staging.example.com \
+  --pvalue &quot;path=id=42&quot; \
+  --pvalue &quot;query=limit=10&quot; \
+  --pvalue &quot;header=Authorization=Bearer replace-me&quot; \
+  -o /tmp/api.postman.json
+
+noir scan ./api -f oas3 -u https://staging.example.com \
+  --pvalue &quot;path=id=42&quot; \
+  --pvalue &quot;query=limit=10&quot; \
+  -o /tmp/api.openapi.json
+</code></pre>
+<p>Same <code>--pvalue</code> block as the curl run. Reviewers import one collection, CI diffs the OpenAPI against yesterday's, and the placeholders stay identical across formats.</p>
+<h3 id="live-status-codes-and-optionally-a-proxy">Live status codes, and optionally a proxy</h3>
+<pre><code class="language-bash hljs"># Attach observed status codes; drop the obvious misses
+noir scan ./api -u https://staging.example.com \
+  --status-codes --exclude-codes 404,502 \
+  --pvalue &quot;path=id=42&quot; \
+  --pvalue &quot;query=1&quot; \
+  -f json -o /tmp/live.json
+
+# Send only reads through Burp/ZAP so the target isn't hit twice as hard
+noir scan ./api -u https://staging.example.com \
+  --probe-via http://127.0.0.1:8080 \
+  --probe-match &quot;GET&quot; \
+  --pvalue &quot;path=id=42&quot; \
+  --pvalue &quot;header=Authorization=Bearer $STAGING_TOKEN&quot;
+</code></pre>
+<p><code>--status-codes</code>, <code>--probe</code> and <code>--probe-via</code> all need <code>-u</code>.</p>
+<p>One thing worth knowing before you probe: without <code>--pvalue path=…</code>, Noir only auto-fills path parameters on read-only verbs (GET, HEAD, OPTIONS), using <code>1</code> or <code>noir</code>. POST, PUT, PATCH and DELETE keep the literal template, so a probe can't turn into <code>DELETE /users/1</code> by accident. An explicit <code>--pvalue path=id=42</code> removes that guard and applies to every verb, writes included. If that's what you want, fine. If not, keep writes out with <code>--probe-skip &quot;POST&quot;</code> or <code>--probe-skip &quot;DELETE&quot;</code> until you're ready.</p>
+<h2 id="put-the-defaults-in-a-config-file">Put the defaults in a config file</h2>
+<p>The same keys live in the config file, which saves repeating the flags on every CI job:</p>
+<pre><code class="language-yaml hljs">url: &quot;https://staging.example.com&quot;
+format: &quot;json&quot;
+status_codes: true
+exclude_codes: &quot;404,502&quot;
+set_pvalue_path:
+  - &quot;id=42&quot;
+  - &quot;slug=demo&quot;
+set_pvalue_query:
+  - &quot;limit=10&quot;
+  - &quot;1&quot;
+set_pvalue_header:
+  - &quot;X-Debug-Tenant=noir-ci&quot;
+</code></pre>
+<pre><code class="language-bash hljs">noir config init
+noir scan ./api --config-file ./ci/noir.yaml
+</code></pre>
+<p>A <code>--pvalue</code> on the command line still wins when a one-off run needs a different id. See <a href="https://owasp-noir.github.io/noir/usage/configurations/configuration_file/">Configuration file</a> and <a href="https://owasp-noir.github.io/noir/usage/cli_commands/#config"><code>noir config</code></a>.</p>
+<h2 id="things-that-trip-people-up">Things that trip people up</h2>
+<ul>
+<li><strong>Nameless parameters get nothing.</strong> If an analyzer knows a parameter exists but not what it's called, it's dropped before <code>--pvalue</code> runs. You won't see a stray <code>=42</code> in the curl output.</li>
+<li><strong><code>body</code> lands in <code>json</code>.</strong> Parameters recorded as <code>body</code> are normalized into the buckets the optimizer knows, so <code>--pvalue json=…</code> reaches them. For new scripts, use <code>--pvalue TYPE=VAL</code> rather than the old <code>--set-pvalue-*</code> aliases.</li>
+<li><strong>Headers follow <code>-u</code>.</strong> <code>--probe-header</code> and <code>--pvalue header=…</code> on probe payloads are aimed at the <code>-u</code> host. Endpoints that already carry an absolute host from the source keep that host and don't get those headers. Export destinations you named yourself still do.</li>
+<li><strong>Secrets don't belong in committed YAML.</strong> Expand them in CI (<code>--pvalue &quot;header=Authorization=Bearer $TOKEN&quot;</code>) instead of baking tokens into <code>ci/noir.yaml</code>.</li>
+</ul>
+<h2 id="wrapping-up">Wrapping up</h2>
+<p>Discovery output without values is a map with no street numbers. <code>--pvalue</code> lets you number them once and reuse the result across curl, collections, OpenAPI, status-code filtering and proxy replay. Be deliberate about write verbs when probing, and once the team agrees on the placeholders, move them into the config file.</p>
+]]></content:encoded>
+      <pubDate>Sun, 27 Sep 2026 00:00:00 +0000</pubDate>
+      <category>tips</category>
+      <category>pvalue</category>
+      <category>curl</category>
+      <category>probe</category>
+      <category>workflow</category>
+    </item>
+    <item>
+      <title>After the endpoint list: query, reach, and trace</title>
+      <link>https://owasp-noir.github.io/noir/blog/query-reach-trace/</link>
+      <guid>https://owasp-noir.github.io/noir/blog/query-reach-trace/</guid>
+      <description>Use Noir&apos;s endpoint report to narrow a review, find routes connected to a source file, and match a request to its route.</description>
+      <content:encoded><![CDATA[<p>An endpoint list is a good place to start a review. Then you find a shared helper, a suspicious request, or a group of routes that needs a closer look. Reading the whole list again does not answer those questions.</p>
+<p>Noir's <code>query</code>, <code>reach</code>, and <code>trace</code> let you start with what you already know. A filter, a source file, or a concrete request can lead you to the next piece of code to read.</p>
+<h2 id="keep-the-report-change-the-question">Keep the report, change the question</h2>
+<p>Each command can scan a codebase directly. During a review, though, the questions keep changing. Saving a report lets you ask them without scanning again.</p>
+<p>The examples below use the Flask callee fixture in the <a href="https://github.com/owasp-noir/noir/tree/main/spec/functional_test/fixtures/python/flask_callees">Noir repository</a>. They were run with Noir 1.5.0, from the repository root, with <code>noir</code> on <code>PATH</code>. This fixture has a form handler, an order lookup, and helpers that both handlers call. No running Flask application is needed.</p>
+<pre><code class="language-bash hljs">cd spec/functional_test/fixtures/python/flask_callees
+noir scan . --ai-context --include callee -f json \
+	-o /tmp/noir-review.json --no-log &gt; /dev/null
+</code></pre>
+<p><code>--ai-context</code> collects static review context. It does not need an AI provider. <code>--include callee</code> keeps the recorded calls in the report too. The stdout redirect hides the duplicate report that <code>scan</code> prints while <code>-o</code> saves it.</p>
+<p>There is a difference between a live scan and <code>--from</code>. A live query command enables all AI context and callee collection implicitly. A saved report contains only what the original scan collected. Reading it does not add missing guards or sinks, and changing the application does not update the report. Regenerate it when the source changes.</p>
+<h2 id="query-gives-the-review-a-starting-point">Query gives the review a starting point</h2>
+<p>Suppose you want to inspect POST handlers that accept a form field named <code>name</code>, without a recorded authentication or authorization guard.</p>
+<pre><code class="language-bash hljs">noir query --method POST --no-guard --param name --param-type form \
+	--from /tmp/noir-review.json -f text
+</code></pre>
+<pre><code class="language-text hljs">POST /users  ./app.py:7  python_flask  handler=create_user@./app.py:8  signals=guard_absence
+</code></pre>
+<p>That leaves <code>create_user</code> at <code>app.py:8</code> to read. Different filters combine with AND. Values within a comma-separated filter combine with OR, so <code>--method GET,POST</code> accepts either method. When you specify both a parameter name and type, the same parameter must satisfy both.</p>
+<p><code>--no-guard</code> means Noir recorded no authentication or authorization guard. It does not prove that the route is public. Unresolved middleware or an upstream gateway can change the answer. Rate limiting and CSRF checks do not count as authentication guards either.</p>
+<p>If your report has database sinks, <code>--sink sql</code> can narrow the review further. A recorded sink is a reason to read the code, not a finding of SQL injection.</p>
+<h2 id="reach-starts-where-the-code-changed">Reach starts where the code changed</h2>
+<p>Now suppose the change is in <code>run_sql_query</code>, defined at <code>helpers.py:5</code>. Which endpoints need another look?</p>
+<pre><code class="language-bash hljs">noir reach helpers.py:5 --from /tmp/noir-review.json -f text
+</code></pre>
+<pre><code class="language-text hljs">POST /users  ./app.py:7  python_flask  handler=create_user@./app.py:8  signals=guard_absence  via=callee:run_sql_query@./helpers.py:5,callee:build_user_query@./helpers.py:1,callee:notify_admin@./helpers.py:10,callee:log_audit@./helpers.py:14
+GET /orders/&lt;order_id&gt;  ./app.py:17  python_flask  handler=get_order@./app.py:18  signals=path_param,idor  via=callee:run_sql_query@./helpers.py:5,callee:build_user_query@./helpers.py:1
+</code></pre>
+<p>Both <code>/users</code> and <code>/orders/&lt;order_id&gt;</code> appear. Their <code>via</code> fields point to recorded callees in <code>helpers.py</code>, with <code>run_sql_query</code> first because its definition is closest to the requested line.</p>
+<p>The line number ranks matches. It does not restrict the result to a function containing that line. Noir records declaration locations rather than complete function spans. JSON and JSONL output also include <code>nearest_line</code> when you supply a line number.</p>
+<p><code>reach</code> uses path suffixes, so <code>helpers.py</code> is enough here. In a larger repository, use a longer suffix to distinguish files with the same name. It checks recorded route, handler, callee, guard, source, sink, and validator locations. It is not a complete call graph, and it does not follow inheritance or dynamic loading. An empty result means no recorded connection matched, not that a change cannot affect a route.</p>
+<h2 id="trace-starts-with-the-request-you-have">Trace starts with the request you have</h2>
+<p>A proxy log usually has a concrete path, while the application declares a route template. Here is the order lookup from the same report:</p>
+<pre><code class="language-bash hljs">noir trace &quot;GET /orders/42&quot; --from /tmp/noir-review.json -f text
+</code></pre>
+<pre><code class="language-text hljs">GET /orders/&lt;order_id&gt;  ./app.py:17  python_flask  matched_by=pattern  handler=get_order@./app.py:18  signals=path_param,idor
+</code></pre>
+<p><code>matched_by=pattern</code> explains why <code>/orders/42</code> matches <code>/orders/&lt;order_id&gt;</code>. This is a lookup in the saved report. It sends no HTTP request.</p>
+<p>Include the method when you know it. Without a method, Noir returns matching routes across methods. HEAD can match a GET route. If several routes match, the most specific matches come first.</p>
+<p>A catch-all can accept a misspelled path too. When only wildcard or prefix routes match, <code>trace</code> also looks for nearby candidates. A complete miss exits with code 1 and includes any candidates it found. JSON and JSONL output carry the full matched endpoint under <code>endpoint</code>, so you can inspect its recorded parameters and context without another scan.</p>
+<h2 id="use-the-result-to-choose-what-to-read-next">Use the result to choose what to read next</h2>
+<p>There is no required order. Start with <code>query</code> when you know a property, <code>reach</code> when you have a changed file, or <code>trace</code> when you have a request. Then check the evidence against the code.</p>
+<p>Text output keeps the terminal readable. JSONL is the default for scripts, and <code>--full</code> adds the full endpoint record to <code>query</code> and <code>reach</code> results. <code>--limit</code> caps the printed rows. <code>--count</code> prints a count, but if you combine the two, it counts only the limited rows. All three commands exit with code 1 when nothing matches.</p>
+<p>Keep scan paths and scan-only flags on the original scan. Noir rejects them alongside <code>--from</code>, because that command reads a report rather than scanning a directory. The <a href="https://owasp-noir.github.io/noir/usage/cli_commands/#trace-reach-query">CLI reference</a> has the full filter list and output options.</p>
+]]></content:encoded>
+      <pubDate>Fri, 06 Nov 2026 00:00:00 +0000</pubDate>
+      <category>tips</category>
+      <category>query</category>
+      <category>reach</category>
+      <category>trace</category>
+      <category>workflow</category>
+    </item>
+  </channel>
+</rss>

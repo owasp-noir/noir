@@ -1,0 +1,204 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:content="http://purl.org/rss/1.0/modules/content/">
+  <channel>
+    <title>OWASP Noir - Authors: hak</title>
+    <link>https://owasp-noir.github.io/noir/ko/authors/hak/</link>
+    <description>Hunt every endpoint in your code. Noir statically analyses source across 32 languages and 263 frameworks, exposing shadow APIs and mapping the attack surface.</description>
+    <language>ko</language>
+    <atom:link href="https://owasp-noir.github.io/noir/ko/authors/hak/rss.xml" rel="self" type="application/rss+xml" />
+    <item>
+      <title>한 번만 채우기: curl·컬렉션·probe에 같은 --pvalue</title>
+      <link>https://owasp-noir.github.io/noir/ko/blog/pvalue-for-runnable-catalogs/</link>
+      <guid>https://owasp-noir.github.io/noir/ko/blog/pvalue-for-runnable-catalogs/</guid>
+      <description>curl, Postman, OpenAPI, status-code probe, Burp/ZAP replay에 그대로 흘려보내는 파라미터 placeholder 한 세트.</description>
+      <content:encoded><![CDATA[<p><code>noir scan ./app -f curl</code>을 한 번이라도 돌려봤다면 결과가 어떤지 아실 겁니다. <code>/users/{id}?limit=</code> 같은 줄이 길게 이어지죠. 앱의 지도로는 훌륭하지만, 그중 한 줄을 터미널에 붙여 넣어서 제대로 된 응답을 받을 수는 없습니다.</p>
+<p><code>-f postman</code>은 같은 빈칸을 다른 포장에 담은 것이고, <code>--probe</code>는 리터럴 <code>{id}</code>를 그대로 보내 404를 받거나, GET/HEAD/OPTIONS에 한해서만 <code>1</code>이나 <code>noir</code>를 슬쩍 채워 넣습니다. 결과를 받아 쓰는 쪽이 셋인데, 같은 파라미터에 대한 생각이 셋 다 다른 셈입니다.</p>
+<p><code>--pvalue</code>는 이걸 한 곳에서 정리합니다. 값을 한 번 선언하면 optimizer가 포맷터나 deliverer가 엔드포인트 목록을 보기 전에 모든 파라미터에 그 값을 심어둡니다. 스캔은 한 번, 값은 동일, 출력이 어디로 가든 상관없습니다.</p>
+<h2 id="플래그">플래그</h2>
+<p>반복해서 쓸 수 있습니다. 각 인자는 <code>TYPE=VALUE</code> 형태이고, 타입을 생략한 <code>VALUE</code>만 주면 모든 타입에 적용됩니다.</p>
+<pre><code class="language-bash hljs">noir scan ./app -f curl -u https://api.example.com \
+  --pvalue &quot;path=id=42&quot; \
+  --pvalue &quot;query=limit=10&quot; \
+  --pvalue &quot;header=Authorization=Bearer replace-me&quot;
+</code></pre>
+<table>
+<thead>
+<tr>
+<th><code>TYPE</code></th>
+<th>범위</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>any</code> (또는 타입 생략)</td>
+<td>모든 파라미터 타입</td>
+</tr>
+<tr>
+<td><code>query</code> / <code>form</code> / <code>json</code> / <code>header</code> / <code>cookie</code> / <code>path</code></td>
+<td>해당 버킷만</td>
+</tr>
+</tbody>
+</table>
+<p><code>VALUE</code>는 두 가지 형태가 있습니다.</p>
+<table>
+<thead>
+<tr>
+<th>형태</th>
+<th>동작</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>42</code></td>
+<td>대상 타입의 모든 파라미터</td>
+</tr>
+<tr>
+<td><code>id=42</code> 또는 <code>id:42</code></td>
+<td>이름이 <code>id</code>인 파라미터만</td>
+</tr>
+</tbody>
+</table>
+<p>치환은 엔드포인트 목록을 정리하는 단계에서 일어나기 때문에 curl, HTTPie, PowerShell, OpenAPI, Postman, JSON, YAML 출력은 물론 probe와 export보다도 앞섭니다. 포맷 쪽은 <a href="https://owasp-noir.github.io/noir/ko/usage/output_formats/curl/">cURL / HTTPie / PowerShell</a>, probe 쪽은 <a href="https://owasp-noir.github.io/noir/ko/usage/more_features/deliver/">결과 전달</a> 문서를 참고하세요.</p>
+<h2 id="규칙이-고르는-방식">규칙이 고르는 방식</h2>
+<p>타입 전용 규칙이 전역 <code>any</code> 규칙보다 우선합니다. 그래서 path 파라미터에서는 <code>--pvalue path=…</code>가 타입 없는 <code>--pvalue test</code>를 이깁니다. 같은 타입 안에서는 이름을 지정한 규칙이 catch-all보다 우선하고, 플래그를 적은 순서는 상관없습니다.</p>
+<pre><code class="language-bash hljs"># limit → 10, 나머지 query → 1
+noir scan ./app -f curl -u https://api.example.com \
+  --pvalue &quot;query=1&quot; \
+  --pvalue &quot;query=limit=10&quot;
+</code></pre>
+<p>두 줄을 뒤집어도 결과는 같습니다. 같은 이름에 규칙을 두 개 주면 먼저 적은 쪽이 이기지만, 그렇게 쓸 일은 거의 없을 겁니다.</p>
+<h2 id="같은-선언이-빛을-보는-세-곳">같은 선언이 빛을 보는 세 곳</h2>
+<h3 id="바로-붙여-넣을-수-있는-curl">바로 붙여 넣을 수 있는 curl</h3>
+<pre><code class="language-bash hljs">noir scan ./api -f curl -u https://staging.example.com \
+  --pvalue &quot;path=id=42&quot; \
+  --pvalue &quot;path=slug=demo&quot; \
+  --pvalue &quot;query=1&quot; \
+  --pvalue &quot;header=Authorization=Bearer $STAGING_TOKEN&quot; \
+  -o /tmp/api.curl.sh
+</code></pre>
+<p><code>source</code>하면 끝입니다. curl 빌더가 내보내는 URL에는 path 템플릿이 이미 치환되어 있어서, 나중에 <code>{id}</code>를 <code>sed</code>로 고칠 필요가 없습니다.</p>
+<h3 id="팀을-위한-postman-openapi">팀을 위한 Postman / OpenAPI</h3>
+<pre><code class="language-bash hljs">noir scan ./api -f postman -u https://staging.example.com \
+  --pvalue &quot;path=id=42&quot; \
+  --pvalue &quot;query=limit=10&quot; \
+  --pvalue &quot;header=Authorization=Bearer replace-me&quot; \
+  -o /tmp/api.postman.json
+
+noir scan ./api -f oas3 -u https://staging.example.com \
+  --pvalue &quot;path=id=42&quot; \
+  --pvalue &quot;query=limit=10&quot; \
+  -o /tmp/api.openapi.json
+</code></pre>
+<p>curl 때와 같은 <code>--pvalue</code> 블록입니다. 리뷰어는 컬렉션 하나를 import하고, CI는 어제의 OpenAPI와 diff하고, 포맷이 달라져도 placeholder는 그대로입니다.</p>
+<h3 id="라이브-status-code-필요하면-proxy까지">라이브 status code, 필요하면 proxy까지</h3>
+<pre><code class="language-bash hljs"># 관측된 status code를 붙이고, 뻔한 miss는 버립니다
+noir scan ./api -u https://staging.example.com \
+  --status-codes --exclude-codes 404,502 \
+  --pvalue &quot;path=id=42&quot; \
+  --pvalue &quot;query=1&quot; \
+  -f json -o /tmp/live.json
+
+# 타깃 부하를 두 배로 늘리지 않도록 read 요청만 Burp/ZAP로
+noir scan ./api -u https://staging.example.com \
+  --probe-via http://127.0.0.1:8080 \
+  --probe-match &quot;GET&quot; \
+  --pvalue &quot;path=id=42&quot; \
+  --pvalue &quot;header=Authorization=Bearer $STAGING_TOKEN&quot;
+</code></pre>
+<p><code>--status-codes</code>, <code>--probe</code>, <code>--probe-via</code>는 모두 <code>-u</code>가 필요합니다.</p>
+<p>probe 전에 하나 알아두면 좋은 게 있습니다. <code>--pvalue path=…</code>가 없으면 Noir는 read-only verb(GET, HEAD, OPTIONS)에만 <code>1</code>이나 <code>noir</code>로 path 파라미터를 자동으로 채웁니다. POST, PUT, PATCH, DELETE는 리터럴 템플릿을 유지해서, 실수로 <code>DELETE /users/1</code>이 나가는 일이 없습니다. 명시적으로 <code>--pvalue path=id=42</code>를 주면 이 보호가 풀리고 write를 포함한 모든 verb에 적용됩니다. 의도한 거라면 괜찮고, 아니라면 준비될 때까지 <code>--probe-skip &quot;POST&quot;</code>나 <code>--probe-skip &quot;DELETE&quot;</code>로 write를 빼두세요.</p>
+<h2 id="기본값은-설정-파일에">기본값은 설정 파일에</h2>
+<p>같은 키를 설정 파일에도 쓸 수 있어서, CI 잡마다 플래그를 반복할 필요가 없습니다.</p>
+<pre><code class="language-yaml hljs">url: &quot;https://staging.example.com&quot;
+format: &quot;json&quot;
+status_codes: true
+exclude_codes: &quot;404,502&quot;
+set_pvalue_path:
+  - &quot;id=42&quot;
+  - &quot;slug=demo&quot;
+set_pvalue_query:
+  - &quot;limit=10&quot;
+  - &quot;1&quot;
+set_pvalue_header:
+  - &quot;X-Debug-Tenant=noir-ci&quot;
+</code></pre>
+<pre><code class="language-bash hljs">noir config init
+noir scan ./api --config-file ./ci/noir.yaml
+</code></pre>
+<p>일회성으로 다른 id가 필요하면 CLI의 <code>--pvalue</code>가 설정 파일을 이깁니다. <a href="https://owasp-noir.github.io/noir/ko/usage/configurations/configuration_file/">설정 파일</a>과 <a href="https://owasp-noir.github.io/noir/ko/usage/cli_commands/#config"><code>noir config</code></a> 문서를 참고하세요.</p>
+<h2 id="자주-걸리는-지점">자주 걸리는 지점</h2>
+<ul>
+<li><strong>이름 없는 파라미터는 값을 받지 못합니다.</strong> analyzer가 파라미터의 존재는 알지만 이름을 모르면 <code>--pvalue</code>가 돌기 전에 빠집니다. curl 출력에 뜬금없는 <code>=42</code>가 생기지는 않습니다.</li>
+<li><strong><code>body</code>는 <code>json</code>으로 들어갑니다.</strong> <code>body</code>로 기록된 파라미터는 optimizer가 아는 버킷으로 정규화되기 때문에 <code>--pvalue json=…</code>이 닿습니다. 새 스크립트에서는 옛 <code>--set-pvalue-*</code> 별칭보다 <code>--pvalue TYPE=VAL</code>을 쓰세요.</li>
+<li><strong>헤더는 <code>-u</code>를 따릅니다.</strong> <code>--probe-header</code>와 probe payload용 <code>--pvalue header=…</code>는 <code>-u</code>로 지정한 호스트를 향합니다. 소스에 absolute host가 이미 박힌 엔드포인트는 그 host를 유지하고 이 헤더들을 받지 않습니다. 직접 지정한 export 목적지는 헤더를 그대로 받습니다.</li>
+<li><strong>시크릿은 커밋하지 마세요.</strong> <code>ci/noir.yaml</code>에 토큰을 넣지 말고 CI에서 env로 펼치세요 (<code>--pvalue &quot;header=Authorization=Bearer $TOKEN&quot;</code>).</li>
+</ul>
+<h2 id="정리">정리</h2>
+<p>값이 없는 discovery 결과는 번지 없는 지도입니다. <code>--pvalue</code>로 한 번 번지를 매기면 curl, 컬렉션, OpenAPI, status-code 필터, proxy replay에 같은 값을 그대로 쓸 수 있습니다. probe할 때 write verb는 의식적으로 다루고, 팀이 placeholder에 합의했다면 설정 파일로 옮기세요.</p>
+]]></content:encoded>
+      <pubDate>Sun, 27 Sep 2026 00:00:00 +0000</pubDate>
+      <category>tips</category>
+      <category>pvalue</category>
+      <category>curl</category>
+      <category>probe</category>
+      <category>workflow</category>
+    </item>
+    <item>
+      <title>엔드포인트 목록 다음에 할 일: query, reach, trace</title>
+      <link>https://owasp-noir.github.io/noir/ko/blog/query-reach-trace/</link>
+      <guid>https://owasp-noir.github.io/noir/ko/blog/query-reach-trace/</guid>
+      <description>Noir 스캔 결과에서 검토 대상을 좁히고, 소스 파일과 연결된 엔드포인트를 찾고, 실제 요청을 라우트에 대응시키는 방법.</description>
+      <content:encoded><![CDATA[<p>엔드포인트 목록을 뽑고 나면 다음 질문이 생긴다. 인증 확인이 안 보이는 라우트는 어디일까. 방금 수정한 공통 함수는 어떤 요청에서 사용할까. 프록시에서 본 요청은 어느 핸들러로 들어갈까.</p>
+<p>목록을 처음부터 다시 읽는 대신, 알고 있는 정보에서 시작하면 된다. Noir의 <code>query</code>는 조건에 맞는 엔드포인트를 고르고, <code>reach</code>는 소스 파일에 연결된 엔드포인트를 찾는다. <code>trace</code>는 실제 요청에 맞는 라우트를 보여준다.</p>
+<h2 id="스캔은-한-번-질문은-여러-번">스캔은 한 번, 질문은 여러 번</h2>
+<p>각 명령에 코드 경로를 넘겨 바로 스캔할 수도 있다. 다만 리뷰하다 보면 질문이 계속 바뀐다. 보고서를 저장해 두면 같은 코드를 매번 스캔하지 않고도 질문을 이어 갈 수 있다.</p>
+<p>아래 예시는 <a href="https://github.com/owasp-noir/noir/tree/main/spec/functional_test/fixtures/python/flask_callees">Noir 저장소의 Flask callee fixture</a>로 Noir 1.5.0에서 직접 실행했다. 저장소 루트에서 시작하며, <code>noir</code>가 <code>PATH</code>에 있어야 한다. 이 fixture에는 폼을 받는 핸들러와 주문 조회 핸들러, 두 핸들러가 함께 호출하는 함수가 있다. Flask 서버를 띄울 필요는 없다.</p>
+<pre><code class="language-bash hljs">cd spec/functional_test/fixtures/python/flask_callees
+noir scan . --ai-context --include callee -f json \
+	-o /tmp/noir-review.json --no-log &gt; /dev/null
+</code></pre>
+<p><code>--ai-context</code>는 정적 분석으로 리뷰에 필요한 정보를 모은다. AI 제공자를 설정할 필요는 없다. <code>--include callee</code>로 호출 정보도 보고서에 남긴다. <code>scan</code>은 <code>-o</code>로 저장하면서 같은 보고서를 stdout에도 출력하므로, 여기서는 리다이렉션으로 화면 출력을 숨겼다.</p>
+<p>직접 스캔할 때와 <code>--from</code>으로 읽을 때는 차이가 있다. query 계열 명령이 직접 스캔하면 전체 AI context와 callee 수집이 기본으로 켜진다. 반면 저장된 보고서에는 처음 스캔에서 모은 정보만 있다. 수집하지 않은 guard나 sink가 나중에 생기지는 않는다. 소스 코드를 수정했다면 보고서도 다시 만들어야 한다.</p>
+<h2 id="query로-먼저-볼-곳을-고른다">Query로 먼저 볼 곳을 고른다</h2>
+<p><code>name</code>이라는 폼 필드를 받는 POST 핸들러 중에서, 인증이나 권한 검사가 기록되지 않은 곳부터 보고 싶다고 하자.</p>
+<pre><code class="language-bash hljs">noir query --method POST --no-guard --param name --param-type form \
+	--from /tmp/noir-review.json -f text
+</code></pre>
+<pre><code class="language-text hljs">POST /users  ./app.py:7  python_flask  handler=create_user@./app.py:8  signals=guard_absence
+</code></pre>
+<p>이제 <code>app.py:8</code>의 <code>create_user</code>를 열어 보면 된다. 서로 다른 필터는 AND로 묶이고, 한 필터 안에 쉼표로 나열한 값은 OR다. 따라서 <code>--method GET,POST</code>는 둘 중 어느 메서드든 받는다. 파라미터 이름과 타입을 함께 지정하면 같은 파라미터가 두 조건을 모두 만족해야 한다.</p>
+<p><code>--no-guard</code>를 곧바로 &quot;인증 없는 엔드포인트&quot;로 읽으면 안 된다. Noir가 인증이나 인가 guard를 기록하지 못했다는 뜻이다. 분석기가 해석하지 못한 미들웨어나 앞단 게이트웨이에서 인증할 수도 있다. rate limit이나 CSRF 검사도 인증 guard에는 포함되지 않는다.</p>
+<p>보고서에 데이터베이스 sink가 있다면 <code>--sink sql</code>로 대상을 더 좁힐 수 있다. 다만 SQL sink가 있다는 것은 코드를 살펴볼 이유이지, SQL injection이 있다는 판정은 아니다.</p>
+<h2 id="reach는-바뀐-파일에서-시작한다">Reach는 바뀐 파일에서 시작한다</h2>
+<p>이번에는 <code>helpers.py:5</code>에 정의된 <code>run_sql_query</code>를 수정했다고 하자. 어떤 엔드포인트를 다시 확인해야 할까.</p>
+<pre><code class="language-bash hljs">noir reach helpers.py:5 --from /tmp/noir-review.json -f text
+</code></pre>
+<pre><code class="language-text hljs">POST /users  ./app.py:7  python_flask  handler=create_user@./app.py:8  signals=guard_absence  via=callee:run_sql_query@./helpers.py:5,callee:build_user_query@./helpers.py:1,callee:notify_admin@./helpers.py:10,callee:log_audit@./helpers.py:14
+GET /orders/&lt;order_id&gt;  ./app.py:17  python_flask  handler=get_order@./app.py:18  signals=path_param,idor  via=callee:run_sql_query@./helpers.py:5,callee:build_user_query@./helpers.py:1
+</code></pre>
+<p><code>/users</code>와 <code>/orders/&lt;order_id&gt;</code>가 함께 나온다. <code>via</code>에는 <code>helpers.py</code>에서 찾은 callee 기록이 들어 있다. 그중 <code>run_sql_query</code>의 정의가 지정한 줄에 가장 가까워서 먼저 표시된다.</p>
+<p>라인 번호는 일치한 기록의 순서를 정하는 데 쓴다. 그 줄이 들어 있는 함수만 골라 주는 옵션은 아니다. Noir는 선언 위치를 기록하며, 함수의 시작과 끝 전체를 기록하지는 않는다. 줄 번호를 넘기면 JSON과 JSONL 결과에는 <code>nearest_line</code>도 포함된다.</p>
+<p>파일은 경로의 뒷부분이 일치하는지로 찾으므로 여기서는 <code>helpers.py</code>만으로 충분하다. 큰 저장소에 같은 이름의 파일이 여럿 있다면 상위 디렉터리도 포함하는 편이 낫다. 검색 대상은 라우트와 핸들러, callee, guard, source, sink, validator에 기록된 위치다. 모든 호출 관계를 분석하는 기능은 아니며, 상속이나 동적 로딩도 따라가지 않는다. 결과가 없다는 이유만으로 이 파일이 어느 라우트에도 영향을 주지 않는다고 결론 내릴 수는 없다.</p>
+<h2 id="trace는-실제-요청에서-시작한다">Trace는 실제 요청에서 시작한다</h2>
+<p>프록시 로그에는 보통 구체적인 경로가 나오고, 코드에는 라우트 템플릿이 있다. 같은 보고서에서 주문 조회 요청을 찾아보자.</p>
+<pre><code class="language-bash hljs">noir trace &quot;GET /orders/42&quot; --from /tmp/noir-review.json -f text
+</code></pre>
+<pre><code class="language-text hljs">GET /orders/&lt;order_id&gt;  ./app.py:17  python_flask  matched_by=pattern  handler=get_order@./app.py:18  signals=path_param,idor
+</code></pre>
+<p><code>matched_by=pattern</code>을 보면 <code>/orders/42</code>가 <code>/orders/&lt;order_id&gt;</code> 패턴에 맞아서 나왔다는 것을 알 수 있다. 저장된 보고서에서 찾는 작업이므로 HTTP 요청은 보내지 않는다.</p>
+<p>메서드를 알고 있으면 함께 지정하는 편이 좋다. 생략하면 경로에 맞는 라우트를 메서드 구분 없이 보여준다. HEAD는 GET 라우트에도 대응한다. 일치하는 라우트가 여럿이면 구체적인 결과부터 나온다.</p>
+<p>catch-all은 오타가 난 경로도 받아줄 수 있다. 와일드카드나 prefix 라우트만 일치하면 <code>trace</code>는 비슷한 후보도 찾아본다. 전혀 일치하지 않을 때는 종료 코드 1을 반환하며, 비슷한 후보를 찾았다면 함께 보여준다. JSON과 JSONL 출력의 <code>endpoint</code>에는 일치한 엔드포인트의 전체 기록이 들어가므로, 다시 스캔하지 않고도 파라미터와 context를 확인할 수 있다.</p>
+<h2 id="다음에-읽을-코드를-찾는-데-쓴다">다음에 읽을 코드를 찾는 데 쓴다</h2>
+<p>정해진 순서는 없다. 찾고 싶은 조건이 있으면 <code>query</code>, 수정한 파일이 있으면 <code>reach</code>, 실제 요청이 있으면 <code>trace</code>부터 쓰면 된다. 그다음에는 결과에 나온 근거를 실제 코드와 맞춰 본다.</p>
+<p>터미널에서는 text 출력이 읽기 편하다. 스크립트용 기본 출력은 JSONL이고, <code>query</code>나 <code>reach</code> 결과에 전체 엔드포인트 정보가 필요하면 <code>--full</code>을 더한다. <code>--limit</code>은 출력할 행 수를 제한한다. <code>--count</code>는 개수를 출력하지만, 둘을 같이 쓰면 제한된 행의 개수만 센다. 세 명령 모두 결과가 없으면 종료 코드 1을 반환한다.</p>
+<p>스캔 경로나 스캔 전용 플래그는 보고서를 만들 때 지정한다. <code>--from</code>은 디렉터리를 스캔하는 대신 보고서를 읽으므로 이 옵션들을 함께 넘기면 사용법 오류가 난다. 전체 필터와 출력 옵션은 <a href="https://owasp-noir.github.io/noir/ko/usage/cli_commands/#trace-reach-query">CLI 문서</a>에서 확인할 수 있다.</p>
+]]></content:encoded>
+      <pubDate>Fri, 06 Nov 2026 00:00:00 +0000</pubDate>
+      <category>tips</category>
+      <category>query</category>
+      <category>reach</category>
+      <category>trace</category>
+      <category>workflow</category>
+    </item>
+  </channel>
+</rss>
