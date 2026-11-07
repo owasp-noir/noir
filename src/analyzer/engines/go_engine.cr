@@ -24,6 +24,13 @@ module Analyzer::Go
 
     def go_test_path?(path : String) : Bool
       relative = base_relative_path(path)
+      # `test/`, `tests/` and `e2e/` are conventions, not a toolchain rule,
+      # so they stay on the scan-base path. Re-judging them from a nested
+      # module root would keep `test/e2e/*.go` whenever that tree had its
+      # own go.mod. A scan started at a directory named `test` does not
+      # match: the base name is not part of `relative`. `integration/` is
+      # not in the set: it is a common production package.
+      return true if GoEngine.go_test_dir?(relative)
       unless go_test_module_roots.empty?
         absolute = go_slash_path(Noir::PathScope.expand(path))
         root = go_module_roots.find { |dir| absolute.starts_with?(dir) }
@@ -66,6 +73,25 @@ module Analyzer::Go
   end
 
   abstract class GoEngine < Analyzer
+    # Conventional test-only trees that `go build` still compiles when
+    # they are ordinary packages: `test/`, `tests/`, `e2e/`.
+    # Shopify/toxiproxy parks a bench router in `test/e2e/endpoint.go`
+    # (not `*_test.go`); `/test1` and `/test2` are not the API. Whole
+    # segments only, so `testing/` and `testutil/` stay. `integration/`
+    # is left out on purpose: `internal/integration/slack/webhook.go`
+    # is a production package, and skipping it would hide real routes.
+    # `tests` precedes `test` so dropping the trailing slash later
+    # cannot let `test` swallow `tests`.
+    GO_TEST_DIR_RE = %r{/(?:tests|test|e2e)/}
+
+    # Scan-base-relative, rooted or not. A project whose own base
+    # directory is named `test` does not match: that name is not part
+    # of the relative path.
+    def self.go_test_dir?(relative_path : String) : Bool
+      rooted = relative_path.starts_with?('/') ? relative_path : "/#{relative_path}"
+      rooted.matches?(GO_TEST_DIR_RE)
+    end
+
     # `*_test.go` is Go's hard-wired build-tag for test-only source.
     # `go build` excludes these files entirely; only `go test` pulls
     # them in. Real route handlers never live there, but framework
@@ -83,6 +109,9 @@ module Analyzer::Go
     # directory named `testdata` the same way: swaggo/swag parks
     # 196 parser-input endpoints under `testdata/...`.
     #
+    # `go_test_dir?` covers the conventional trees above, which the
+    # toolchain does not ignore.
+    #
     # Takes the scan-base-relative path (`Analyzer#base_relative_path`),
     # never the absolute one. Go's toolchain rule is relative to the
     # module, so on an absolute path a single `_`-prefixed directory
@@ -96,7 +125,8 @@ module Analyzer::Go
     def self.go_test_file?(relative_path : String) : Bool
       return true if relative_path.ends_with?("_test.go")
       return true if relative_path.starts_with?("testdata/") || relative_path.includes?("/testdata/")
-      relative_path.starts_with?('_') || relative_path.includes?("/_")
+      return true if relative_path.starts_with?('_') || relative_path.includes?("/_")
+      go_test_dir?(relative_path)
     end
 
     include GoTestPath

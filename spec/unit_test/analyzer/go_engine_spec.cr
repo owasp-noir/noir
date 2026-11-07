@@ -33,6 +33,29 @@ describe Analyzer::Go::GoEngine do
       Analyzer::Go::GoEngine.go_test_file?("main.go").should be_false
       Analyzer::Go::GoEngine.go_test_file?("path/to/server.go").should be_false
     end
+
+    # Helpers under these trees are test-only even when the file is not
+    # `*_test.go` (toxiproxy `test/e2e/endpoint.go`).
+    it "returns true for conventional test directories" do
+      Analyzer::Go::GoEngine.go_test_file?("/test/e2e/endpoint.go").should be_true
+      Analyzer::Go::GoEngine.go_test_file?("test/e2e/endpoint.go").should be_true
+      Analyzer::Go::GoEngine.go_test_file?("/tests/fakes/a.go").should be_true
+      Analyzer::Go::GoEngine.go_test_file?("/e2e/bench.go").should be_true
+      Analyzer::Go::GoEngine.go_test_file?("/pkg/internal/test/helper.go").should be_true
+    end
+
+    it "matches those directory names as whole segments only" do
+      Analyzer::Go::GoEngine.go_test_file?("/testing/harness/server.go").should be_false
+      Analyzer::Go::GoEngine.go_test_file?("/testutil/server.go").should be_false
+      Analyzer::Go::GoEngine.go_test_file?("/internal/integration/slack/webhook.go").should be_false
+      Analyzer::Go::GoEngine.go_test_file?("/mytest/x.go").should be_false
+      Analyzer::Go::GoEngine.go_test_file?("/e2e_keys/x.go").should be_false
+      Analyzer::Go::GoEngine.go_test_file?("/integrations/x.go").should be_false
+      Analyzer::Go::GoEngine.go_test_file?("/latest/x.go").should be_false
+      Analyzer::Go::GoEngine.go_test_file?("/api/e2e.go").should be_false
+      Analyzer::Go::GoEngine.go_test_file?("/pkg/tests.go").should be_false
+      Analyzer::Go::GoEngine.go_test_file?("server.go").should be_false
+    end
   end
 
   describe "#add_param_to_endpoint" do
