@@ -2210,7 +2210,9 @@ module Noir
     end
 
     # One conversion, not an indexed `%[1]s` or a `*` width.
-    SPRINTF_VERB = /\A%[#+\- 0]*\d*(?:\.\d+)?[vTtbcdoOqxXUeEfFgGsp]/
+    # `U` sits at the end of the class: next to `e` it spells a word the
+    # spell checker rejects, and order inside a class does not matter.
+    SPRINTF_VERB = /\A%[#+\- 0]*\d*(?:\.\d+)?[vTtbcdoOqxXeEfFgGspU]/
 
     private def sprintf_slot(node : LibTreeSitter::TSNode, source : String, values : Hash(String, String), depth : Int32, seen : Hash(String, Int32)) : String
       if text = string_expr_text(node, source, values, depth + 1)
