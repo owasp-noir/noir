@@ -22,6 +22,12 @@ module Analyzer::Go
       {pattern, /#{pattern}\(\s*"([^"]*)"\s*[,)]/}
     end
 
+    # Beego's context getters (`c.GetString`, `GetInt`, ...) read
+    # `Request.Form`. net/http parses a body into Form only for POST,
+    # PUT and PATCH — Echo's `FormValue` uses the same split — so on
+    # DELETE and every other verb the value is the query string.
+    FORM_BODY_METHODS = %w[POST PUT PATCH]
+
     # Beego's `Context.Input` accessors (`c.Ctx.Input.Query("owner")`) and
     # `c.Input().Get("id")`, with the param type each reads.
     INPUT_ACCESSORS = {
@@ -247,13 +253,15 @@ module Analyzer::Go
         next unless line.includes?("Input")
         line.scan(accessor) { |m| add_param_to_endpoint(Param.new(m[1], "", type), endpoint) }
       end
+      # Body methods carry the form body; every other verb is query-only.
+      getter_type = FORM_BODY_METHODS.includes?(endpoint.method) ? "form" : "query"
       CONTEXT_GETTER_PATTERNS.each do |pattern, getter_regex|
         # Quote-bounded + scan so two accessor calls on one line
         # each yield their own param (greedy `(.*)` captured across
         # both, producing one garbage name).
         next unless line.includes?(pattern)
         line.scan(getter_regex) do |m|
-          endpoint.params << Param.new(m[1], "", "query")
+          endpoint.params << Param.new(m[1], "", getter_type)
         end
       end
 
