@@ -1302,11 +1302,12 @@ module Noir
       args = Noir::TreeSitter.field(rhs_node, "arguments")
       return unless args
 
-      # An unresolvable path is not the empty prefix. Recording nothing
-      # drops the parent chain (`/admin` + `/entity` + a dynamic segment
-      # comes out as `/add`), and `GET ""` then collapses onto `/`, so
-      # middleware registered on the group matches unrelated routes.
-      prefix = group_call_prefix(args, source, string_values)
+      prefix = nil
+      Noir::TreeSitter.each_named_arg(args) do |arg|
+        prefix = string_expr_text(arg, source, string_values)
+        next unless prefix
+        break
+      end
       return unless prefix
 
       # Stack onto parent group's prefix when it's known.
@@ -1625,11 +1626,11 @@ module Noir
       if method_name == group_method
         args = Noir::TreeSitter.field(call, "arguments")
         return unless args
-        found = group_call_prefix(args, source, string_values)
-        # `Group("")` adds no segment; an inline chain with no path at
-        # all is not a route. An approximated path (`/{name}`) is kept.
-        return if found.nil? || found.empty?
-        prefix = found
+        Noir::TreeSitter.each_named_arg(args) do |arg|
+          prefix = string_expr_text(arg, source, string_values) || ""
+          break unless prefix.empty?
+        end
+        return if prefix.empty?
       end
 
       parent_info = router_operand_info(parent, source, groups, group_method, group_aliases, string_values)
@@ -2161,81 +2162,11 @@ module Noir
       end
     end
 
-    # The path added by `.Group(path, mw...)`. The first argument is the
-    # path; later ones are middleware, so only a real string there counts
-    # — a placeholder for `RequireAdmin` would invent a segment. An
-    # unresolved first argument is approximated instead of discarded.
-    private def group_call_prefix(args : LibTreeSitter::TSNode, source : String, values : Hash(String, String)) : String?
-      prefix = nil
-      first = true
-      Noir::TreeSitter.each_named_arg(args) do |arg|
-        if first
-          first = false
-          prefix = group_path_text(arg, source, values)
-          break if prefix
-        elsif text = string_expr_text(arg, source, values)
-          prefix = text
-          break
-        end
-      end
-      prefix
-    end
-
-    # A group path: the literal `string_expr_text` computes, or an
-    # approximation that still carries the known parts (`cfg.Base +
-    # "/v1"` → `{Base}/v1`, `opaque()` → `{opaque}`). Nil when the
-    # argument is not a path (`Group(func(r) {...})`).
-    private def group_path_text(node : LibTreeSitter::TSNode, source : String, values : Hash(String, String), depth : Int32 = 0) : String?
-      return if depth > Noir::TreeSitter::MAX_AST_DEPTH
-      if text = string_expr_text(node, source, values, depth)
-        return text
-      end
-      case Noir::TreeSitter.node_type(node)
-      when "identifier"
-        "{#{safe_placeholder(Noir::TreeSitter.node_text(node, source))}}"
-      when "selector_expression"
-        field = Noir::TreeSitter.field(node, "field")
-        return unless field
-        "{#{safe_placeholder(Noir::TreeSitter.node_text(field, source))}}"
-      when "parenthesized_expression"
-        child = Noir::TreeSitter.first_named_child(node)
-        child ? group_path_text(child, source, values, depth + 1) : nil
-      when "binary_expression"
-        return unless Noir::TreeSitter.field(node, "operator").try { |op| Noir::TreeSitter.node_text(op, source) == "+" }
-        left = Noir::TreeSitter.field(node, "left")
-        right = Noir::TreeSitter.field(node, "right")
-        return unless left && right
-        l = group_path_text(left, source, values, depth + 1)
-        r = group_path_text(right, source, values, depth + 1)
-        return if l.nil? && r.nil?
-        "#{l}#{r}"
-      when "call_expression"
-        function = Noir::TreeSitter.field(node, "function")
-        call_args = Noir::TreeSitter.field(node, "arguments")
-        return unless function && call_args
-        fn_text = Noir::TreeSitter.node_text(function, source)
-        if fn_text == "fmt.Sprintf" || fn_text == "Sprintf"
-          return sprintf_format(call_args, source, values, depth, require_slash: false)
-        end
-        only = nil
-        count = 0
-        Noir::TreeSitter.each_named_arg(call_args) do |arg|
-          only = arg
-          count += 1
-        end
-        if count == 1 && (arg = only) && (inner = group_path_text(arg, source, values, depth + 1))
-          return inner
-        end
-        "{#{safe_placeholder(call_basename(function, source))}}"
-      end
-    end
-
     # `%s` / `%d` / `%v` / `%q` (optional flags and a numeric width) and
     # `%%`. A resolved argument is substituted; anything else becomes
     # `{name}` from the argument (`strings.ToLower(name)` → `{name}`,
-    # `n.GetName()` → `{GetName}`). `require_slash` keeps log formats
-    # (`fmt.Sprintf("title:%s", t)`) out of the string-value table.
-    private def sprintf_format(args : LibTreeSitter::TSNode, source : String, values : Hash(String, String), depth : Int32, require_slash : Bool = true) : String?
+    # `n.GetName()` → `{GetName}`). Formats with no `/` stay unresolved.
+    private def sprintf_format(args : LibTreeSitter::TSNode, source : String, values : Hash(String, String), depth : Int32) : String?
       format_node = nil
       arg_nodes = [] of LibTreeSitter::TSNode
       Noir::TreeSitter.each_named_arg(args) do |arg|
@@ -2247,8 +2178,7 @@ module Noir
       end
       return unless format_node
       format = string_expr_text(format_node, source, values, depth + 1)
-      return unless format
-      return if require_slash && !format.includes?('/')
+      return unless format && format.includes?('/')
       seen = Hash(String, Int32).new
       slot = 0
       i = 0

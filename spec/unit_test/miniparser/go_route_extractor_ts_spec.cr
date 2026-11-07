@@ -161,10 +161,6 @@ describe Noir::TreeSitterGoRouteExtractor do
           ng.GET("/add", add)
           ng.GET("/:id/edit", edit)
           entities.Group(fmt.Sprintf("/%s", n.GetName())).GET("/show", show)
-          other := ag.Group(cfg.Base)
-          other.GET("/x", hx)
-          joined := e.Group(cfg.APIBase + "/v1")
-          joined.GET("/users", h)
           teams := e.Group(fmt.Sprintf("/teams/:%s", "team"))
           teams.GET("/list", h)
           pct := e.Group(fmt.Sprintf("/100%%/%s", name))
@@ -183,10 +179,34 @@ describe Noir::TreeSitterGoRouteExtractor do
       {"GET", "/admin/entity/{name}"},
       {"GET", "/admin/entity/{name}/:id/edit"},
       {"GET", "/admin/entity/{name}/add"},
-      {"GET", "/admin/{Base}/x"},
       {"GET", "/teams/:team/list"},
       {"GET", "/users/{id}"},
-      {"GET", "{APIBase}/v1/users"},
+    ])
+  end
+
+  it "leaves Group(s.base) and other non-literal prefixes unresolved" do
+    # A config-driven base is not a format string. Inventing `/{base}`
+    # would add a path param and change which slots
+    # `GoEngine.drop_unslotted_path_params` can see.
+    source = <<-GO
+      package main
+      func mount(e *echo.Echo, s *Server) {
+          g := e.Group(s.base)
+          g.GET("/list", h)
+          v1 := e.Group(cfg.APIBase + "/v1")
+          v1.GET("/users", h)
+          called := e.Group(helper())
+          called.GET("/k", h)
+          e.GET("/health", h)
+      }
+      GO
+
+    routes = Noir::TreeSitterGoRouteExtractor.extract_routes(source)
+    routes.map { |r| {r.verb, r.path} }.sort!.should eq([
+      {"GET", "/health"},
+      {"GET", "/k"},
+      {"GET", "/list"},
+      {"GET", "/users"},
     ])
   end
 
