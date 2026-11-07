@@ -163,11 +163,16 @@ module Analyzer::Go
     # `v1 := r.Group("/v1")` declared in `main.go` case — iterate until
     # no new entries land. In-file declarations win over external ones.
     # `import_marker`, when given, restricts the cross-file group/engine
-    # pre-pass to files that actually import the framework. Group
-    # variables (`v1 := r.Group("/v1")`) and root-engine bindings only
-    # ever appear in framework-importing files, so skipping the rest
-    # avoids parsing unrelated `.go` files — a large saving in mixed
-    # repos (e.g. an example monorepo where most dirs use other routers).
+    # pre-pass to files that import the framework, plus wiring files that
+    # declare a path group without that import (`r := router.New();
+    # v1 := r.Group("/api")` — the echo/gin import lives in `router`, so
+    # the marker check used to skip `main.go` and every builder handed
+    # `v1` was emitted unprefixed). Files that merely mention `.Group(`
+    # without a path literal stay out: parsing every `.go` file in a
+    # mixed repo is the cost this filter exists to avoid. Route emission
+    # is not decided here. `framework_route_source_candidate?` still
+    # requires the framework import (or a package that has one), so a
+    # non-framework `.Group("/x")` does not become an endpoint.
     # `file_contents` is still populated for every file so the per-file
     # route pass and callee pre-pass keep their read cache.
     def collect_package_groups_ts(group_method : String = "Group", import_marker : (String | Array(String))? = nil, string_seed : Hash(String, String)? = nil) : Tuple(Hash(String, Hash(String, String)), Hash(String, String))
@@ -195,7 +200,7 @@ module Analyzer::Go
         relevant_by_dir[dir] = if import_marker
                                  markers = import_markers(import_marker)
                                  paths.select do |p|
-                                   (c = file_contents[p]?) && markers.any? { |marker| c.includes?(marker) }
+                                   (c = file_contents[p]?) && (markers.any? { |marker| c.includes?(marker) } || group_decl_file?(c, group_method))
                                  end
                                else
                                  paths
@@ -294,6 +299,17 @@ module Analyzer::Go
       end
 
       {package_groups, file_contents}
+    end
+
+    # A wiring file's `v1 := e.Group("/api")` (or the raw-string form),
+    # checked without a regex so the per-file gate does not recompile
+    # one. The call and a path literal both have to be present; they are
+    # not required to be adjacent, so a group split across lines still
+    # counts. `.Group(fn)` middleware wrappers have no path literal and
+    # stay out. This only admits the file to the group pre-pass.
+    private def group_decl_file?(content : String, group_method : String) : Bool
+      return false unless content.includes?(".#{group_method}(")
+      content.includes?("\"/") || content.includes?("`/")
     end
 
     # Returns the cross-file group map for the given directory, or an
@@ -1117,7 +1133,131 @@ module Analyzer::Go
         return rel.empty? ? module_path : "#{module_path}/#{rel}"
       end
 
-      nil
+      # No go.mod covers this directory. Older trees (and GOPATH-era
+      # checkouts) still import packages by their full path
+      # (`"github.com/acme/app/controllers"`) while the sources sit at
+      # `<scan base>/controllers`. Without a module path, cross-package
+      # builder calls (`controllers.RegisterX(api.Group("/products"))`)
+      # cannot be tied to the package that declares the builder, and the
+      # routes come out unprefixed.
+      modless_import_index[expanded_dir]?
+    end
+
+    # `{expanded dir => import path}` for packages no go.mod covers.
+    # Built once, and only when a lookup misses every module: a tree
+    # with a go.mod never pays for it.
+    @modless_import_index : Hash(String, String)? = nil
+
+    private def modless_import_index : Hash(String, String)
+      @modless_import_index ||= build_modless_import_index
+    end
+
+    # The module prefix is the part of an import left after the longest
+    # scan-base-relative package path it ends with. The prefix that
+    # explains the most packages wins; a tie is left unresolved unless
+    # exactly one candidate ends in the scan base's directory name
+    # (the usual `github.com/user/<repo>` checkout). Stdlib imports
+    # (`net/http`) are not candidates: their first element has no dot,
+    # so a local package named `http` is not claimed by them.
+    private def build_modless_import_index : Hash(String, String)
+      index = Hash(String, String).new
+      by_base = Hash(String, Hash(String, String)).new
+      imports = Set(String).new
+
+      get_files_by_extension(".go").each do |path|
+        next if go_test_path?(path)
+        expanded = Noir::PathScope.expand(File.dirname(path))
+        base = Noir::PathScope.normalize_root(configured_base_for(path))
+        rel = package_rel_under(expanded, base)
+        # A vendored tree's import paths are third-party. Package main at
+        # the scan root has an empty rel and is not itself an importable
+        # package, but its import block is where the local paths are quoted.
+        if rel && (rel == "vendor" || rel.starts_with?("vendor/") || rel.includes?("/vendor/"))
+          next
+        end
+        if rel && !rel.empty?
+          (by_base[base] ||= Hash(String, String).new)[rel] = expanded
+        end
+        begin
+          content = read_file_content(path)
+        rescue IO::Error
+          next
+        end
+        next unless content.includes?("import")
+        Noir::GoCalleeExtractor.extract_import_aliases(content).each_value { |import_path| imports << import_path }
+      end
+
+      by_base.each do |base, rels|
+        rels_longest = rels.keys.sort_by! { |rel| -rel.size }
+        votes = Hash(String, Set(String)).new
+        imports.each do |import_path|
+          rels_longest.each do |rel|
+            next unless import_matches_package?(import_path, rel)
+            prefix = import_path == rel ? "" : import_path[0, import_path.size - rel.size - 1]
+            (votes[prefix] ||= Set(String).new) << rel
+            break
+          end
+        end
+        next if votes.empty?
+
+        best = Hash(String, Tuple(String, Int32)).new
+        tied = Set(String).new
+        votes.each do |prefix, explained|
+          score = explained.size
+          explained.each do |rel|
+            if current = best[rel]?
+              if score > current[1]
+                best[rel] = {prefix, score}
+                tied.delete(rel)
+              elsif score == current[1] && prefix != current[0]
+                tied << rel
+              end
+            else
+              best[rel] = {prefix, score}
+            end
+          end
+        end
+
+        base_name = File.basename(base)
+        best.each do |rel, (prefix, _score)|
+          chosen = prefix
+          if tied.includes?(rel)
+            chosen = modless_tie_break(rel, votes, best[rel][1], base_name)
+            next unless chosen
+          end
+          dir = rels[rel]? || next
+          import_path = chosen.empty? ? rel : "#{chosen}/#{rel}"
+          index[dir] = import_path if imports.includes?(import_path)
+        end
+      end
+      index
+    end
+
+    # The one tied prefix that ends with the scan-base directory name, or
+    # nil when the tie is not broken that way.
+    private def modless_tie_break(rel : String, votes : Hash(String, Set(String)), score : Int32, base_name : String) : String?
+      chosen = nil
+      votes.each do |prefix, explained|
+        next unless explained.size == score && explained.includes?(rel)
+        next unless prefix == base_name || prefix.ends_with?("/#{base_name}")
+        return if chosen
+        chosen = prefix
+      end
+      chosen
+    end
+
+    private def import_matches_package?(import_path : String, rel : String) : Bool
+      return true if import_path == rel
+      return false unless import_path.ends_with?("/#{rel}")
+      import_path.split('/', 2).first.includes?('.')
+    end
+
+    # `dir` relative to `base`, or nil when `dir` is outside `base`.
+    # Empty string is the base itself (package main at the module root).
+    private def package_rel_under(expanded_dir : String, base : String) : String?
+      return "" if expanded_dir == base
+      return unless expanded_dir.starts_with?(base) && expanded_dir.byte_at(base.bytesize) == '/'.ord
+      expanded_dir[base.bytesize + 1..]
     end
   end
 end
