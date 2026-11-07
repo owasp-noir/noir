@@ -183,6 +183,90 @@ describe "Noir::GoNamedHandler wrapped handlers and callees" do
   end
 end
 
+describe "Noir::GoNamedHandler middleware path params" do
+  it "credits a middleware path read only to a route whose url has the slot" do
+    seen = attributions(<<-GO)
+      package main
+
+      func Auth() fiber.Handler {
+      \treturn func(c *fiber.Ctx) error {
+      \t\t_ = c.Get("Authorization")
+      \t\t_ = c.Query("redirect")
+      \t\t_ = c.Params("userId")
+      \t\treturn c.Next()
+      \t}
+      }
+
+      func ginAuth(c *gin.Context) {
+      \t_ = c.Param("id")
+      \t_ = c.Query("q")
+      }
+
+      func chiAuth(w http.ResponseWriter, r *http.Request) {
+      \t_ = chi.URLParam(r, "slug")
+      \t_ = r.Header.Get("X-Token")
+      }
+
+      func muxAuth(w http.ResponseWriter, r *http.Request) {
+      \t_ = mux.Vars(r)["name"]
+      }
+
+      func listUsers(c *fiber.Ctx) error { return c.SendString("ok") }
+      func getUser(c *fiber.Ctx) error   { return c.SendString(c.Params("userId")) }
+      func sendEmail(c *fiber.Ctx) error { return c.SendString("ok") }
+      func listP(c *gin.Context)         {}
+      func getP(c *gin.Context)          {}
+      func listItems(w http.ResponseWriter, r *http.Request) {}
+      func showItem(w http.ResponseWriter, r *http.Request)  {}
+      func listMux(w http.ResponseWriter, r *http.Request)   {}
+      func showMux(w http.ResponseWriter, r *http.Request)   {}
+
+      // The handler itself reads `team`. No sibling route slots it, so the
+      // read stays: the prefix may be the part noir could not resolve.
+      func only(c *fiber.Ctx) error { return c.SendString(c.Params("team")) }
+
+      func main() {
+      \tr.GET("/v1/users/", Auth(), listUsers)
+      \tr.GET("/v1/users/:userId", Auth(), getUser)
+      \tr.POST("/v1/auth/send-verification-email", Auth(), sendEmail)
+      \tr.GET("/p", ginAuth, listP)
+      \tr.GET("/p/:id", ginAuth, getP)
+      \tr.GET("/items", chiAuth, listItems)
+      \tr.GET("/items/{slug}", chiAuth, showItem)
+      \tr.GET("/mux", muxAuth, listMux)
+      \tr.GET("/mux/{name}", muxAuth, showMux)
+      \tr.GET("/list", only)
+      }
+      GO
+
+    users = seen["/v1/users/"].join
+    users.should contain(%(c.Get("Authorization")))
+    users.should contain(%(c.Query("redirect")))
+    users.should_not contain(%(Params("userId")))
+
+    email = seen["/v1/auth/send-verification-email"].join
+    email.should contain(%(c.Get("Authorization")))
+    email.should_not contain(%(Params("userId")))
+
+    slotted = seen["/v1/users/:userId"].join
+    slotted.should contain(%(Params("userId")))
+    slotted.should contain(%(c.Get("Authorization")))
+
+    seen["/p"].join.should_not contain(%(Param("id")))
+    seen["/p"].join.should contain(%(c.Query("q")))
+    seen["/p/:id"].join.should contain(%(Param("id")))
+
+    seen["/items"].join.should_not contain(%(URLParam(r, "slug")))
+    seen["/items"].join.should contain(%(Header.Get("X-Token")))
+    seen["/items/{slug}"].join.should contain(%(URLParam(r, "slug")))
+
+    seen["/mux"].join.should_not contain(%(Vars(r)["name"]))
+    seen["/mux/{name}"].join.should contain(%(Vars(r)["name"]))
+
+    seen["/list"].join.should contain(%(Params("team")))
+  end
+end
+
 describe "Noir::GoNamedHandler#handler_for" do
   it "reports the last argument only: a named handler or the closure, never a middleware before a closure" do
     source = <<-GO

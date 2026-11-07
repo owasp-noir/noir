@@ -924,6 +924,8 @@ module Analyzer::Go
     # Only that shape is dropped: a sibling route of the same handler that
     # is this URL plus the slot's segment. A route whose prefix noir could
     # not resolve (`Group(s.base)`) has no such sibling and keeps its params.
+    # Middleware is not that handler: `GoNamedHandler` credits a middleware
+    # path read only to routes whose URL has the slot.
     def self.drop_unslotted_path_params(endpoints : Array(Endpoint)) : Array(Endpoint)
       by_handler = Hash({String, Int32}, Array(Int32)).new
       endpoints.each_with_index do |endpoint, idx|
@@ -953,13 +955,11 @@ module Analyzer::Go
       endpoints
     end
 
-    # Whether `url` has a slot the path parameter `name` reads: `:name`,
-    # `{name}` / `{name:re}`, `*name`, `<name>`, or a wildcard read by
-    # position (`c.Params("*")`, `"*1"`, `"+"`) or by Beego's names for it.
+    # Whether `url` has a slot the path parameter `name` reads. The predicate
+    # lives on `GoNamedHandler`, which applies it when a middleware body is
+    # attributed; this pass uses the same one.
     def self.path_slot?(url : String, name : String) : Bool
-      return true if url.includes?(":#{name}") || url.includes?("{#{name}") || url.includes?("*#{name}") || url.includes?("<#{name}")
-      return false unless url.includes?('*') || url.includes?('+')
-      name.matches?(/\A[*+]\d*\z/) || {"splat", "path", "ext"}.includes?(name)
+      Noir::GoNamedHandler.path_slot?(url, name)
     end
 
     def static_dir_entry(source_path : String, static_path : String, file_path : String) : Hash(String, String)
