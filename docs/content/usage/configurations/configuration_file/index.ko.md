@@ -157,6 +157,7 @@ noir scan /path/to/my/project -f json -u https://api.example.com --exclude-codes
 | `passive_scan_no_update_check` | bool | `--passive-scan-no-update-check` | 업데이트 확인 건너뛰기 |
 | `all_taggers` | bool | `-T` / `--use-all-taggers` | 모든 태거 활성화 |
 | `use_taggers` | CSV | `--use-taggers` | 선택한 태거만 활성화 |
+| `tagger_rules_path` | list | `--tagger-rules` | 커스텀 YAML 태그 규칙 파일 또는 디렉터리(항상 실행) |
 
 ### 프로브와 내보내기
 

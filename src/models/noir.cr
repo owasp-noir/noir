@@ -254,6 +254,10 @@ class NoirRunner
         # when no explicit tagger option was given.
         @logger.success "Running all taggers (implied by -f only-tag)."
         NoirTaggers.run_tagger @endpoints, @options, "all"
+      elsif @options["tagger_rules_path"]?.try(&.as_a?).try(&.present?)
+        # Custom rules run on their own; the branches above run them too.
+        @logger.success "Running custom tag rules."
+        NoirTaggers.run_tagger @endpoints, @options, ""
       end
 
       if ai_context_enabled?

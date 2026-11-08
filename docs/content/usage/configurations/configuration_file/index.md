@@ -157,6 +157,7 @@ noir scan /path/to/my/project -f json -u https://api.example.com --exclude-codes
 | `passive_scan_no_update_check` | bool | `--passive-scan-no-update-check` | Skip update check |
 | `all_taggers` | bool | `-T` / `--use-all-taggers` | Enable every tagger |
 | `use_taggers` | CSV | `--use-taggers` | Enable selected taggers |
+| `tagger_rules_path` | list | `--tagger-rules` | Custom YAML tag rule files or directories (always run) |
 
 ### Probe and export
 

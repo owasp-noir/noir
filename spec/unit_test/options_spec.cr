@@ -572,6 +572,7 @@ describe "run_options_parser" do
   describe "array flags override the config file rather than appending to it" do
     array_cases = [
       {flag: "--passive-scan-path", key: "passive_scan_path"},
+      {flag: "--tagger-rules", key: "tagger_rules_path"},
       {flag: "--probe-match", key: "probe_match"},
       {flag: "--probe-skip", key: "probe_skip"},
       {flag: "--set-pvalue-query", key: "set_pvalue_query"},

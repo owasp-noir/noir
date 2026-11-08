@@ -43,6 +43,14 @@ describe Noir::CLI::ListCommand do
       parsed.errors.first.should contain("--nope")
     end
 
+    it "collects --tagger-rules paths (space and = forms) for taggers only" do
+      parsed = Noir::CLI::ListCommand.parse_argv(["taggers", "--tagger-rules", "a", "--tagger-rules=b"])
+      parsed.rule_paths.should eq(%w[a b])
+      parsed.errors.should be_empty
+      Noir::CLI::ListCommand.parse_argv(["techs", "--tagger-rules", "a"]).errors.should_not be_empty
+      Noir::CLI::ListCommand.parse_argv(["taggers", "--tagger-rules"]).errors.should_not be_empty
+    end
+
     it "records an error when -f is given without a value" do
       parsed = Noir::CLI::ListCommand.parse_argv(["techs", "-f"])
       parsed.errors.should_not be_empty
@@ -116,6 +124,34 @@ describe Noir::CLI::ListCommand do
         tagger.as_h.has_key?("runner").should be_false
         tagger["id"].as_s.should_not be_empty
       end
+      doc.as_h.has_key?("custom_taggers").should be_false
+    end
+
+    it "adds custom rules, with their file and example check, when given" do
+      yaml = <<-YAML
+        key: team_internal
+        name: Internal Tagger
+        summary: Internal routes
+        order: 115
+        tag: { tagger: Internal, description: internal }
+        match: { path_segment: internal }
+        examples: { match: [{ url: /internal }, { url: /public }], no_match: [{ url: /api }] }
+        YAML
+      rules = [NoirTagRules.parse(yaml, "team.yml")]
+
+      io = IO::Memory.new
+      Noir::CLI::ListCommand.print_taggers("json", io, custom_rules: rules)
+      custom = JSON.parse(io.to_s)["custom_taggers"].as_a
+      custom.map(&.["id"].as_s).should eq(["team_internal"])
+      custom[0]["file"].as_s.should eq("team.yml")
+      custom[0]["example_failures"].as_a.map(&.as_s).should eq(["not tagged: GET /public (http)"])
+
+      io = IO::Memory.new
+      Noir::CLI::ListCommand.print_taggers("text", io, custom_rules: rules)
+      text = io.to_s
+      text.should contain("Custom tag rules (--tagger-rules):")
+      text.should contain("team_internal")
+      text.should contain("not tagged: GET /public (http)")
     end
   end
 

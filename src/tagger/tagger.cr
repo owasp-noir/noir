@@ -84,9 +84,17 @@ module NoirTaggers
     names.sort
   end
 
-  def self.unknown_tagger_names(use_taggers : String) : Array(String)
+  # The `--tagger-rules` rules for this scan. Loading raises
+  # `NoirTagRules::RuleError` on a bad file or a key some tagger already has.
+  def self.user_rules(options : Hash(String, YAML::Any)) : Array(NoirTagRules::Rule)
+    NoirTagRules.user_rules(options, ENTRIES.map(&.key).to_set)
+  end
+
+  # `extra_keys` are the user rules' keys, which are valid `--use-taggers`
+  # values for this scan only.
+  def self.unknown_tagger_names(use_taggers : String, extra_keys : Array(String) = [] of String) : Array(String)
     requested = use_taggers.split(",").map(&.strip).reject(&.empty?)
-    valid_names = available_tagger_names
+    valid_names = available_tagger_names + extra_keys
     # Case-insensitive match: canonical names in `valid_names` are
     # lowercase. `--use-taggers Hunt` and `--use-taggers HUNT` were
     # rejected pre-fix even though the user clearly intended `hunt`;
@@ -95,15 +103,16 @@ module NoirTaggers
     requested.reject { |name| valid_names.includes?(name.downcase) }
   end
 
-  def self.validate_tagger_names!(use_taggers : String)
-    unknown = unknown_tagger_names(use_taggers)
+  def self.validate_tagger_names!(use_taggers : String, extra_keys : Array(String) = [] of String)
+    unknown = unknown_tagger_names(use_taggers, extra_keys)
     return if unknown.empty?
 
     raise ArgumentError.new("Unknown tagger(s): #{unknown.join(", ")}")
   end
 
   def self.run_tagger(endpoints : Array(Endpoint), options : Hash(String, YAML::Any), use_taggers : String)
-    validate_tagger_names!(use_taggers)
+    custom_rules = user_rules(options)
+    validate_tagger_names!(use_taggers, custom_rules.map(&.key))
 
     # Parsing use_taggers — normalize to lowercase so case-insensitive
     # input matches the lowercase canonical tagger names. Validation
@@ -120,13 +129,26 @@ module NoirTaggers
     # appended in the order taggers run and nothing sorts them before
     # output. A single tagger raising must not abort the rest of the pass
     # (here or in the framework pass below) — degrade to "this tagger failed".
-    PLAIN_ENTRIES.each do |entry|
-      next unless is_all || use_taggers_arr.includes?(entry.key)
-      begin
-        build(entry.key, options).try(&.perform(endpoints))
-      rescue ex
-        logger.warning "Tagger '#{entry.key}' failed: #{ex.message}"
+    #
+    # `--tagger-rules` rules always run (passing the flag is the opt-in) and
+    # sort in among the selected ones by `order`. They have no spec to keep
+    # their examples honest, so a wrong example is a warning here instead.
+    custom_rules.each do |rule|
+      NoirTagRules.example_failures(rule).each do |failure|
+        logger.warning "Tag rule '#{rule.key}' (#{rule.source}) example #{failure}"
       end
+    end
+
+    runs = PLAIN_ENTRIES.select { |entry| is_all || use_taggers_arr.includes?(entry.key) }
+      .map { |entry| {entry.order, entry.key, nil.as(NoirTagRules::Rule?)} }
+    runs.concat(custom_rules.map { |rule| {rule.order, rule.key, rule.as(NoirTagRules::Rule?)} })
+    runs.sort_by! { |(order, key, _)| {order, key} }
+
+    runs.each do |(_, key, rule)|
+      tagger = rule ? RuleTagger.new(options, rule) : build(key, options)
+      tagger.try(&.perform(endpoints))
+    rescue ex
+      logger.warning "Tagger '#{key}' failed: #{ex.message}"
     end
 
     # Run framework taggers (tech-aware, only instantiated when matching endpoints exist)

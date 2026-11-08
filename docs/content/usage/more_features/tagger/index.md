@@ -31,6 +31,35 @@ noir scan <BASE_PATH> -T
 noir scan <BASE_PATH> --use-taggers hunt,oauth
 ```
 
+## Custom tag rules
+
+To tag what matters in your own codebase (internal routes, a billing module, a partner API), write a tag rule in YAML and pass it with `--tagger-rules`. The flag takes a rule file or a directory, which is searched for `*.yml` / `*.yaml`, and can be repeated. Rules loaded this way always run, so you don't need `-T` as well. They also run in addition to whatever `-T` or `--use-taggers` selects.
+
+```yaml
+# team-rules/internal.yml
+key: internal_api
+name: Internal API Tagger
+summary: Flags routes the public gateway never exposes
+order: 115
+tag:
+  tagger: Internal
+  description: Internal-only route; must not be reachable from the public gateway.
+match:
+  any:
+    - path_segment: [internal, ops]
+    - param: { type: header, name: x-internal-token }
+examples:
+  match: [{ url: /internal/health }]
+  no_match: [{ url: /api/internals }]
+```
+
+```bash
+noir scan <BASE_PATH> --tagger-rules ./team-rules
+noir list taggers --tagger-rules ./team-rules   # check the rules and their examples without scanning
+```
+
+To load the rules on every scan, set `tagger_rules_path` in the config file. If a rule file is malformed, or its `key` is already taken by another tagger, the scan stops before it starts and the error names the file. If an `examples` entry doesn't behave as stated, noir prints a warning. The [rule format](https://github.com/owasp-noir/noir/blob/main/src/tagger/rules/README.md) lists every condition. Several built-in taggers (`admin`, `payment`, `soap`, `cors`, `websocket`) use the same format.
+
 ## Output
 
 Tags appear in a `tags` array, both on the endpoint and on each parameter. Each tag has three fields:
