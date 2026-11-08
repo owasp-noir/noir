@@ -2,6 +2,7 @@ require "yaml"
 require "../models/tagger"
 require "../models/endpoint"
 require "../utils/http_symbols"
+require "../utils/utils"
 
 # Taggers defined as data: one YAML file per tagger under
 # `src/tagger/rules/`, embedded at compile time. A rule joins the same
@@ -91,7 +92,7 @@ module NoirTagRules
     rules = [] of Rule
     paths.each do |path|
       files = if File.directory?(path)
-                Dir.glob(File.join(path, "**", "*.{yml,yaml}")).sort!
+                glob_under(path, "**/*.{yml,yaml}").sort!
               elsif File.file?(path)
                 [path]
               else
