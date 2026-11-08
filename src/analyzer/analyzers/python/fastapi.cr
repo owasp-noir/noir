@@ -60,6 +60,7 @@ module Analyzer::Python
     end
 
     @fastapi_import_cache = Hash(::String, Hash(::String, Tuple(::String, Int32))).new
+    @fastapi_project_roots = [] of ::String
 
     REQUEST_ATTR_TYPES = {"query_params" => "query", "headers" => "header", "cookies" => "cookie"}
     @request_attr_regex_cache = Hash(::String, Regex).new
@@ -148,6 +149,8 @@ module Analyzer::Python
       end
 
       fastapi_base_paths = fastapi_project_roots(fastapi_app_instances)
+      @fastapi_project_roots = fastapi_base_paths
+      @fastapi_import_cache.clear
 
       begin
         # Seed prefix configuration from every FastAPI app instance. A
@@ -400,6 +403,19 @@ module Analyzer::Python
         local_import_modules = find_imported_modules(local_base_path, file_path, source)
         local_import_modules.each do |name, import_info|
           import_modules[name] = import_info unless import_modules.has_key?(name)
+        end
+      end
+
+      # Every FastAPI project root that contains the file acts like another
+      # `sys.path` entry: a dead `FastAPI()` file at a shallower path must
+      # not hide the real app's `from app.routers import ...`.
+      @fastapi_project_roots.each do |root|
+        next if root == app_base_path || root == local_base_path
+        next unless Noir::PathScope.under_root?(file_path, root)
+        find_imported_modules(root, file_path, source).each do |name, import_info|
+          next if import_info[0].empty?
+          existing = import_modules[name]?
+          import_modules[name] = import_info if existing.nil? || existing[0].empty?
         end
       end
 
