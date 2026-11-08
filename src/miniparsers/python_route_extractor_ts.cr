@@ -36,9 +36,12 @@ module Noir
       # serves its argument unchanged is for the caller to judge from the
       # wrapper's definition.
       getter rule_wrapper : String
+      # 0-based rows of the functions enclosing the decorated definition, innermost first.
+      getter scope_rows : Array(Int32)
 
       def initialize(@router_name, @attribute_name, @path, @methods, @decorator_line, @def_line, @def_name,
-                     @paths = [@path], @keywords = {} of String => String, @rule_wrapper = "")
+                     @paths = [@path], @keywords = {} of String => String, @rule_wrapper = "",
+                     @scope_rows = [] of Int32)
       end
     end
 
@@ -276,6 +279,50 @@ module Noir
       Noir::TreeSitter.node_type(node) == "string" ? decode_string(node, source) : Noir::TreeSitter.node_text(node, source)
     end
 
+    # A plain name bound by `name = <value>` / `name: T = <value>` or by a
+    # parameter. `scope_row` is the 0-based row of the function whose local it
+    # is, -1 at module level. `callee` is the last segment of the called name
+    # when the value is a call (`fastmcp.FastMCP(...)` -> "FastMCP"), else empty.
+    record NameBinding, name : String, callee : String, scope_row : Int32
+
+    # Every plain-name binding in `source`. Comments and docstrings bind nothing.
+    def extract_name_bindings(source : String) : Array(NameBinding)
+      bindings = [] of NameBinding
+      Noir::TreeSitter.parse_python(source) do |root|
+        Noir::TreeSitter.walk(root) do |node|
+          case Noir::TreeSitter.node_type(node)
+          when "assignment"
+            left = Noir::TreeSitter.field(node, "left")
+            next unless left && Noir::TreeSitter.node_type(left) == "identifier"
+            callee = ""
+            right = Noir::TreeSitter.field(node, "right")
+            if right && Noir::TreeSitter.node_type(right) == "call" && (function = Noir::TreeSitter.field(right, "function"))
+              callee = Noir::TreeSitter.node_text(function, source).split(".").last
+            end
+            bindings << NameBinding.new(Noir::TreeSitter.node_text(left, source), callee, enclosing_function_rows(node).first? || -1)
+          when "parameters"
+            row = enclosing_function_rows(node).first? || -1
+            Noir::TreeSitter.each_named_child(node) do |param|
+              name_node = Noir::TreeSitter.node_type(param) == "identifier" ? param : (Noir::TreeSitter.field(param, "name") || Noir::TreeSitter.first_named_child(param))
+              next unless name_node && Noir::TreeSitter.node_type(name_node) == "identifier"
+              bindings << NameBinding.new(Noir::TreeSitter.node_text(name_node, source), "", row)
+            end
+          end
+        end
+      end
+      bindings
+    end
+
+    private def enclosing_function_rows(node : LibTreeSitter::TSNode) : Array(Int32)
+      rows = [] of Int32
+      current = Noir::TreeSitter.parent(node)
+      while current
+        rows << Noir::TreeSitter.node_start_row(current) if Noir::TreeSitter.node_type(current) == "function_definition"
+        current = Noir::TreeSitter.parent(current)
+      end
+      rows
+    end
+
     # Walk the `call` node's arguments and return the string value of
     # the `url_prefix` keyword if present, `""` otherwise.
     private def extract_url_prefix(call_node : LibTreeSitter::TSNode, source : String) : String
@@ -314,6 +361,7 @@ module Noir
       if def_node && (name_node = Noir::TreeSitter.field(def_node, "name"))
         def_name = Noir::TreeSitter.node_text(name_node, source)
       end
+      scope_rows = enclosing_function_rows(deco_def)
 
       Noir::TreeSitter.each_named_child(deco_def) do |child|
         next unless Noir::TreeSitter.node_type(child) == "decorator"
@@ -324,7 +372,7 @@ module Noir
             next unless bare_routers && Noir::TreeSitter.node_type(ident) == "identifier"
             name = Noir::TreeSitter.node_text(ident, source)
             next unless bare_routers.includes?(name)
-            sink << Decoration.new(name, "route", "", ["GET"], Noir::TreeSitter.node_start_row(child), def_line, def_name, [""])
+            sink << Decoration.new(name, "route", "", ["GET"], Noir::TreeSitter.node_start_row(child), def_line, def_name, [""], scope_rows: scope_rows)
           end
           next
         end
@@ -341,6 +389,7 @@ module Noir
             paths,
             keywords,
             rule_wrapper,
+            scope_rows,
           )
         end
       end
