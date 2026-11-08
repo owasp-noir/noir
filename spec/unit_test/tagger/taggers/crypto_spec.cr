@@ -3,7 +3,7 @@ require "../../../../src/utils/*"
 require "../../../../src/models/endpoint.cr"
 require "../../../../src/models/logger.cr"
 require "../../../../src/models/tagger.cr"
-require "../../../../src/tagger/taggers/crypto.cr"
+require "../../../../src/tagger/tagger.cr"
 require "yaml"
 
 def default_tagger_options
@@ -15,17 +15,17 @@ def default_tagger_options
   }
 end
 
-describe "CryptoTagger" do
+describe "crypto rule (src/tagger/rules/crypto.yml)" do
   describe "initialization" do
     it "creates tagger with name" do
-      tagger = CryptoTagger.new(default_tagger_options)
+      tagger = NoirTaggers.build("crypto", default_tagger_options).not_nil!
       tagger.name.should eq("crypto")
     end
   end
 
   describe "perform" do
     it "tags an endpoint under an /encrypt path" do
-      tagger = CryptoTagger.new(default_tagger_options)
+      tagger = NoirTaggers.build("crypto", default_tagger_options).not_nil!
 
       endpoint = Endpoint.new("/api/encrypt", "POST")
 
@@ -36,7 +36,7 @@ describe "CryptoTagger" do
     end
 
     it "tags a JWKS key endpoint" do
-      tagger = CryptoTagger.new(default_tagger_options)
+      tagger = NoirTaggers.build("crypto", default_tagger_options).not_nil!
 
       endpoint = Endpoint.new("/.well-known/jwks.json", "GET")
 
@@ -47,7 +47,7 @@ describe "CryptoTagger" do
     end
 
     it "tags an endpoint with a plaintext/ciphertext parameter" do
-      tagger = CryptoTagger.new(default_tagger_options)
+      tagger = NoirTaggers.build("crypto", default_tagger_options).not_nil!
 
       endpoint = Endpoint.new("/api/op", "POST", [
         Param.new("ciphertext", "", "json"),
@@ -60,7 +60,7 @@ describe "CryptoTagger" do
     end
 
     it "tags a named primitive path (e.g. /aes/...)" do
-      tagger = CryptoTagger.new(default_tagger_options)
+      tagger = NoirTaggers.build("crypto", default_tagger_options).not_nil!
 
       endpoint = Endpoint.new("/api/rsa/sign", "POST")
 
@@ -71,7 +71,7 @@ describe "CryptoTagger" do
     end
 
     it "tags modern and legacy primitive paths (sha3, chacha20, rc4, 3des, pkcs12)" do
-      tagger = CryptoTagger.new(default_tagger_options)
+      tagger = NoirTaggers.build("crypto", default_tagger_options).not_nil!
 
       endpoints = [
         Endpoint.new("/api/sha3/digest", "POST"),
@@ -87,7 +87,7 @@ describe "CryptoTagger" do
     end
 
     it "tags a JOSE jwe/jws path" do
-      tagger = CryptoTagger.new(default_tagger_options)
+      tagger = NoirTaggers.build("crypto", default_tagger_options).not_nil!
 
       endpoint = Endpoint.new("/api/token/jwe", "POST")
 
@@ -98,7 +98,7 @@ describe "CryptoTagger" do
     end
 
     it "tags an endpoint with a pubkey/privkey parameter" do
-      tagger = CryptoTagger.new(default_tagger_options)
+      tagger = NoirTaggers.build("crypto", default_tagger_options).not_nil!
 
       endpoint = Endpoint.new("/api/op", "POST", [
         Param.new("privkey", "", "json"),
@@ -111,7 +111,7 @@ describe "CryptoTagger" do
     end
 
     it "tags when two distinct weak signals co-occur" do
-      tagger = CryptoTagger.new(default_tagger_options)
+      tagger = NoirTaggers.build("crypto", default_tagger_options).not_nil!
 
       endpoint = Endpoint.new("/api/signature", "POST", [
         Param.new("algorithm", "RS256", "json"),
@@ -124,7 +124,7 @@ describe "CryptoTagger" do
     end
 
     it "does not let one weak token echoed in path and param reach the threshold" do
-      tagger = CryptoTagger.new(default_tagger_options)
+      tagger = NoirTaggers.build("crypto", default_tagger_options).not_nil!
 
       endpoint = Endpoint.new("/api/cert", "GET", [
         Param.new("cert", "name", "query"),
@@ -136,7 +136,7 @@ describe "CryptoTagger" do
     end
 
     it "does not tag a non-crypto nonce + fingerprint pair" do
-      tagger = CryptoTagger.new(default_tagger_options)
+      tagger = NoirTaggers.build("crypto", default_tagger_options).not_nil!
 
       endpoint = Endpoint.new("/api/track", "POST", [
         Param.new("nonce", "", "json"),
@@ -149,7 +149,7 @@ describe "CryptoTagger" do
     end
 
     it "tags hashing endpoints exposing algorithm + digest" do
-      tagger = CryptoTagger.new(default_tagger_options)
+      tagger = NoirTaggers.build("crypto", default_tagger_options).not_nil!
 
       endpoint = Endpoint.new("/api/op", "POST", [
         Param.new("algorithm", "sha256", "json"),
@@ -163,7 +163,7 @@ describe "CryptoTagger" do
     end
 
     it "does not tag on a single weak signal" do
-      tagger = CryptoTagger.new(default_tagger_options)
+      tagger = NoirTaggers.build("crypto", default_tagger_options).not_nil!
 
       endpoint = Endpoint.new("/api/verify", "GET")
 
@@ -173,7 +173,7 @@ describe "CryptoTagger" do
     end
 
     it "does not tag auth sign-in / sign-up routes" do
-      tagger = CryptoTagger.new(default_tagger_options)
+      tagger = NoirTaggers.build("crypto", default_tagger_options).not_nil!
 
       signin = Endpoint.new("/signin", "POST")
       signup = Endpoint.new("/sign-up", "POST")
@@ -185,7 +185,7 @@ describe "CryptoTagger" do
     end
 
     it "does not tag a generic api key parameter" do
-      tagger = CryptoTagger.new(default_tagger_options)
+      tagger = NoirTaggers.build("crypto", default_tagger_options).not_nil!
 
       endpoint = Endpoint.new("/api/data", "GET", [
         Param.new("key", "abc123", "query"),

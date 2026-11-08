@@ -1,0 +1,55 @@
+# Cryptographic operation endpoints.
+key: crypto
+name: Crypto Tagger
+summary: Identifies cryptographic operation endpoints (encryption, signing, hashing, key management)
+order: 140
+tag:
+  tagger: Crypto
+  description: Cryptographic operation endpoint (encryption/decryption, signing, hashing, or key management); review for weak or obsolete algorithms, padding/signing oracles, static IV/salt/nonce reuse, and key exposure.
+match:
+  any:
+    - path_segment: [encrypt, decrypt, encryption, decryption, cipher,
+                     crypto, cryptography, hmac, jwks, jwk, jwt, jws, jwe,
+                     keystore, kms, pgp, gpg, unseal, x509,
+                     pkcs7, pkcs8, pkcs12, pfx,
+                     aes, rsa, dsa, ecdsa, ecdh, ed25519, ed448,
+                     x25519, x448, curve25519, secp256k1,
+                     sha1, sha224, sha256, sha384, sha512, sha3, keccak,
+                     ripemd, ripemd160, md5, blake2, blake3,
+                     rc4, 3des, blowfish, twofish, chacha20, salsa20,
+                     bcrypt, argon2, scrypt, pbkdf2, hkdf, totp, hotp]
+    - param:
+        name: [plaintext, ciphertext, cleartext, public_key, private_key,
+               pubkey, privkey, secret_key, signing_key, encryption_key,
+               decryption_key, passphrase, pem, hmac]
+    # Each word is generic alone (a `hash` route param, a `/signature`
+    # e-sign page), so take two different ones. A word that can be either a
+    # path segment or a param counts once.
+    - at_least:
+        count: 2
+        of:
+          - any: [{ path_segment: signature }, { param: { name: signature } }]
+          - any: [{ path_segment: hash }, { param: { name: hash } }]
+          - any: [{ path_segment: digest }, { param: { name: digest } }]
+          - any: [{ path_segment: checksum }, { param: { name: checksum } }]
+          - any: [{ path_segment: certificate }, { param: { name: certificate } }]
+          - any: [{ path_segment: cert }, { param: { name: cert } }]
+          - any: [{ path_segment: csr }, { param: { name: csr } }]
+          - path_segment: signatures
+          - path_segment: signing
+          - param: { name: algorithm }
+          - param: { name: salt }
+          - param: { name: nonce }
+          - param: { name: cipher }
+          - param: { name: key_id }
+          - param: { name: kid }
+examples:
+  match:
+    - { method: POST, url: /api/encrypt }
+    - { method: POST, url: /api/data, params: [{ name: privateKey, type: json }] }
+    - { method: POST, url: /api/verify, params: [{ name: signature, type: json }, { name: algorithm, type: json }] }
+    - { method: POST, url: /signing/digest }
+  no_match:
+    - { url: /files/hash }
+    - { method: POST, url: /api/signature, params: [{ name: signature, type: json }] }
+    - { url: /docs/signatures, params: [{ name: page }] }

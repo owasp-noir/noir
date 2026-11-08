@@ -3,7 +3,7 @@ require "../../../../src/utils/*"
 require "../../../../src/models/endpoint.cr"
 require "../../../../src/models/logger.cr"
 require "../../../../src/models/tagger.cr"
-require "../../../../src/tagger/taggers/webhook.cr"
+require "../../../../src/tagger/tagger.cr"
 require "yaml"
 
 def default_tagger_options
@@ -15,17 +15,17 @@ def default_tagger_options
   }
 end
 
-describe "WebhookTagger" do
+describe "webhook rule (src/tagger/rules/webhook.yml)" do
   describe "initialization" do
     it "creates tagger with name" do
-      tagger = WebhookTagger.new(default_tagger_options)
+      tagger = NoirTaggers.build("webhook", default_tagger_options).not_nil!
       tagger.name.should eq("webhook")
     end
   end
 
   describe "perform" do
     it "tags an endpoint under a /webhook path regardless of method" do
-      tagger = WebhookTagger.new(default_tagger_options)
+      tagger = NoirTaggers.build("webhook", default_tagger_options).not_nil!
 
       endpoint = Endpoint.new("/webhooks/stripe", "GET")
 
@@ -36,7 +36,7 @@ describe "WebhookTagger" do
     end
 
     it "tags an endpoint with a provider signature header" do
-      tagger = WebhookTagger.new(default_tagger_options)
+      tagger = NoirTaggers.build("webhook", default_tagger_options).not_nil!
 
       endpoint = Endpoint.new("/integrations/github", "POST", [
         Param.new("X-Hub-Signature-256", "", "header"),
@@ -49,7 +49,7 @@ describe "WebhookTagger" do
     end
 
     it "tags a POST /callback endpoint" do
-      tagger = WebhookTagger.new(default_tagger_options)
+      tagger = NoirTaggers.build("webhook", default_tagger_options).not_nil!
 
       endpoint = Endpoint.new("/payments/callback", "POST")
 
@@ -60,7 +60,7 @@ describe "WebhookTagger" do
     end
 
     it "tags a wildcard/any-method /callback route" do
-      tagger = WebhookTagger.new(default_tagger_options)
+      tagger = NoirTaggers.build("webhook", default_tagger_options).not_nil!
 
       endpoint = Endpoint.new("/payments/callback", "ANY")
 
@@ -71,7 +71,7 @@ describe "WebhookTagger" do
     end
 
     it "does not tag a GET /callback endpoint without other signals" do
-      tagger = WebhookTagger.new(default_tagger_options)
+      tagger = NoirTaggers.build("webhook", default_tagger_options).not_nil!
 
       endpoint = Endpoint.new("/auth/callback", "GET")
 
@@ -84,7 +84,7 @@ describe "WebhookTagger" do
       ["/api/oauth/callback", "/oauth2/callback", "/openid/callback",
        "/auth/google/callback", "/auth/:provider/callback",
        "/users/auth/github/callback"].each do |path|
-        tagger = WebhookTagger.new(default_tagger_options)
+        tagger = NoirTaggers.build("webhook", default_tagger_options).not_nil!
         endpoint = Endpoint.new(path, "POST", [
           Param.new("code", "", "query"),
           Param.new("state", "", "query"),
@@ -97,7 +97,7 @@ describe "WebhookTagger" do
     end
 
     it "still tags a webhook under an auth path via a strong signal" do
-      tagger = WebhookTagger.new(default_tagger_options)
+      tagger = NoirTaggers.build("webhook", default_tagger_options).not_nil!
 
       endpoint = Endpoint.new("/auth/webhooks/provider", "POST")
 
@@ -108,7 +108,7 @@ describe "WebhookTagger" do
     end
 
     it "does not tag an unrelated endpoint" do
-      tagger = WebhookTagger.new(default_tagger_options)
+      tagger = NoirTaggers.build("webhook", default_tagger_options).not_nil!
 
       endpoint = Endpoint.new("/api/users", "POST", [
         Param.new("name", "", "json"),
@@ -122,7 +122,7 @@ describe "WebhookTagger" do
     it "tags on newer provider signature headers" do
       ["X-Shopify-Hmac-Sha256", "Svix-Signature", "X-Razorpay-Signature",
        "X-Line-Signature", "X-Amz-Sns-Message-Type"].each do |header|
-        tagger = WebhookTagger.new(default_tagger_options)
+        tagger = NoirTaggers.build("webhook", default_tagger_options).not_nil!
         endpoint = Endpoint.new("/integrations/x", "POST", [
           Param.new(header, "", "header"),
         ])
@@ -136,7 +136,7 @@ describe "WebhookTagger" do
 
     it "does not tag an in-app notifications resource (FP guard)" do
       ["POST", "DELETE", "PUT"].each do |method|
-        tagger = WebhookTagger.new(default_tagger_options)
+        tagger = NoirTaggers.build("webhook", default_tagger_options).not_nil!
         endpoint = Endpoint.new("/api/notifications", method)
 
         tagger.perform([endpoint])
@@ -146,7 +146,7 @@ describe "WebhookTagger" do
     end
 
     it "still tags a POST /notify (payment IPN callback)" do
-      tagger = WebhookTagger.new(default_tagger_options)
+      tagger = NoirTaggers.build("webhook", default_tagger_options).not_nil!
 
       endpoint = Endpoint.new("/payment/notify", "POST")
 
@@ -157,7 +157,7 @@ describe "WebhookTagger" do
     end
 
     it "treats QUERY as a read, like GET, on a medium-signal URL" do
-      tagger = WebhookTagger.new(default_tagger_options)
+      tagger = NoirTaggers.build("webhook", default_tagger_options).not_nil!
 
       # Same URL as the POST case above; QUERY is safe + idempotent
       # (RFC 10008), so the write-only medium signal must not fire.
