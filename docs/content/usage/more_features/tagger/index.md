@@ -55,6 +55,7 @@ examples:
 
 ```bash
 noir scan <BASE_PATH> --tagger-rules ./team-rules
+noir list taggers --tagger-rules ./team-rules   # check the rules and their examples without scanning
 ```
 
 To load the rules on every scan, set `tagger_rules_path` in the config file. If a rule file is malformed, or its `key` is already taken by another tagger, the scan stops before it starts and the error names the file. If an `examples` entry doesn't behave as stated, noir prints a warning. The [rule format](https://github.com/owasp-noir/noir/blob/main/src/tagger/rules/README.md) lists every condition. Several built-in taggers (`admin`, `payment`, `soap`, `cors`, `websocket`) use the same format.

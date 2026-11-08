@@ -55,6 +55,7 @@ examples:
 
 ```bash
 noir scan <BASE_PATH> --tagger-rules ./team-rules
+noir list taggers --tagger-rules ./team-rules   # 스캔 없이 규칙과 examples만 확인
 ```
 
 매번 불러오려면 설정 파일에 `tagger_rules_path`를 지정하세요. 규칙 파일 형식이 잘못됐거나 `key`가 다른 tagger와 겹치면 스캔이 시작되기 전에 파일 이름과 함께 멈춥니다. `examples`가 적힌 대로 동작하지 않으면 경고를 출력합니다. 사용할 수 있는 조건은 [규칙 형식](https://github.com/owasp-noir/noir/blob/main/src/tagger/rules/README.md)에 정리되어 있습니다. 내장 tagger 중 `admin`, `payment`, `soap`, `cors`, `websocket`도 같은 형식으로 작성되어 있습니다.

@@ -28,13 +28,15 @@ module Noir::CLI::ListCommand
     subject : String?,
     format : String,
     help : Bool,
-    errors : Array(String)
+    errors : Array(String),
+    rule_paths : Array(String) = [] of String
 
   def self.parse_argv(argv : Array(String)) : Parsed
     subject = nil
     format = "text"
     help = false
     errors = [] of String
+    rule_paths = [] of String
 
     i = 0
     while i < argv.size
@@ -54,6 +56,15 @@ module Noir::CLI::ListCommand
         format = arg[3..]
       when .starts_with?("--format=")
         format = arg[9..]
+      when "--tagger-rules"
+        if value = argv[i + 1]?
+          rule_paths << value
+          i += 1
+        else
+          errors << "--tagger-rules requires a path"
+        end
+      when .starts_with?("--tagger-rules=")
+        rule_paths << arg["--tagger-rules=".size..]
       when .starts_with?("-")
         errors << "unknown option: #{arg}"
       else
@@ -66,7 +77,11 @@ module Noir::CLI::ListCommand
       i += 1
     end
 
-    Parsed.new(subject: subject, format: format, help: help, errors: errors)
+    if !rule_paths.empty? && subject && subject != "taggers"
+      errors << "--tagger-rules only applies to `noir list taggers`"
+    end
+
+    Parsed.new(subject: subject, format: format, help: help, errors: errors, rule_paths: rule_paths)
   end
 
   def self.run(argv : Array(String))
@@ -91,8 +106,14 @@ module Noir::CLI::ListCommand
     end
 
     case parsed.subject
-    when "techs"   then print_techs(parsed.format)
-    when "taggers" then print_taggers(parsed.format)
+    when "techs" then print_techs(parsed.format)
+    when "taggers"
+      rules = begin
+        NoirTagRules.load_paths(parsed.rule_paths, NoirTaggers::ENTRIES.map(&.key).to_set)
+      rescue ex : NoirTagRules::RuleError
+        Noir::CLI.die(ex.message || "invalid tag rule")
+      end
+      print_taggers(parsed.format, custom_rules: rules)
     when "formats" then print_formats(parsed.format)
     else
       Noir::CLI.die("Unknown list subject: #{parsed.subject}. Valid: #{SUBJECTS.join(", ")}.")
@@ -114,6 +135,8 @@ module Noir::CLI::ListCommand
 
       #{green.call("OPTIONS:")}
         -f, --format <fmt>     Output as text (default), json, or yaml
+        --tagger-rules <path>  Also list custom tag rules from a file or directory
+                               (taggers only; repeatable), and check their examples
 
       #{green.call("LEGACY ALIASES")} (still work in v1.x):
         --list-techs           → noir list techs
@@ -129,11 +152,11 @@ module Noir::CLI::ListCommand
     end
   end
 
-  def self.print_taggers(format : String = "text", io : IO = STDOUT)
+  def self.print_taggers(format : String = "text", io : IO = STDOUT, custom_rules : Array(NoirTagRules::Rule) = [] of NoirTagRules::Rule)
     case format
-    when "json" then io.puts taggers_document.to_json
-    when "yaml" then io.puts taggers_document.to_yaml
-    else             print_taggers_text(io)
+    when "json" then io.puts taggers_document(custom_rules).to_json
+    when "yaml" then io.puts taggers_document(custom_rules).to_yaml
+    else             print_taggers_text(io, custom_rules)
     end
   end
 
@@ -169,11 +192,28 @@ module Noir::CLI::ListCommand
     end
   end
 
-  private def self.print_taggers_text(io : IO)
+  private def self.print_taggers_text(io : IO, custom_rules : Array(NoirTagRules::Rule))
     io.puts "Available taggers:"
     print_tagger_entries(NoirTaggers::PLAIN_ENTRIES, io)
     io.puts "\nFramework-specific taggers:"
     print_tagger_entries(NoirTaggers::FRAMEWORK_ENTRIES, io)
+    return if custom_rules.empty?
+
+    # This doubles as the way to check a rule file before a scan: the
+    # examples are run here, where nothing else would run them.
+    io.puts "\nCustom tag rules (--tagger-rules):"
+    custom_rules.each do |rule|
+      io.puts " #{rule.key.colorize(:green)}"
+      io.puts "   #{"name".colorize(:blue)}: #{rule.name}"
+      io.puts "   #{"desc".colorize(:blue)}: #{rule.summary}"
+      io.puts "   #{"file".colorize(:blue)}: #{rule.source}"
+      failures = NoirTagRules.example_failures(rule)
+      if failures.empty?
+        io.puts "   #{"examples".colorize(:blue)}: #{rule.match_examples.size + rule.no_match_examples.size} ok"
+      else
+        failures.each { |failure| io.puts "   #{"examples".colorize(:blue)}: #{failure.colorize(:yellow)}" }
+      end
+    end
   end
 
   private def self.print_tagger_entries(entries : Array(NoirTaggers::Entry), io : IO)
@@ -215,11 +255,19 @@ module Noir::CLI::ListCommand
   # Structured taggers catalog. The class that runs each tagger is an
   # internal detail and is not part of the document — the registry `Entry`
   # carries only what both views print.
-  private def self.taggers_document
-    {
+  # `custom_taggers` appears only when `--tagger-rules` was given, so the
+  # default document is unchanged.
+  private def self.taggers_document(custom_rules : Array(NoirTagRules::Rule))
+    doc = {
       "taggers"           => serialize_taggers(NoirTaggers::PLAIN_ENTRIES),
       "framework_taggers" => serialize_taggers(NoirTaggers::FRAMEWORK_ENTRIES),
     }
+    return doc if custom_rules.empty?
+
+    doc.merge({"custom_taggers" => custom_rules.map do |rule|
+      {"id" => rule.key, "name" => rule.name, "desc" => rule.summary, "file" => rule.source,
+       "example_failures" => NoirTagRules.example_failures(rule)}
+    end})
   end
 
   private def self.serialize_taggers(source : Array(NoirTaggers::Entry)) : Array(Hash(String, String))

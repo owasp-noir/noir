@@ -56,4 +56,4 @@ If a tagger needs logic these conditions can't express, write it in Crystal unde
 
 ## Your own rules
 
-The same format works outside this directory: `noir scan --tagger-rules PATH` (or `tagger_rules_path` in the config file) loads rule files or directories at scan time. Those rules always run, their keys must not collide with an existing tagger, and wrong `examples` are reported as warnings instead of failing a spec. The file-name-matches-key requirement applies only to the built-in rules.
+The same format works outside this directory: `noir scan --tagger-rules PATH` (or `tagger_rules_path` in the config file) loads rule files or directories at scan time. Those rules always run, their keys must not collide with an existing tagger, and wrong `examples` are reported as warnings instead of failing a spec. The file-name-matches-key requirement applies only to the built-in rules. `noir list taggers --tagger-rules PATH` lists them and checks their examples without scanning.
