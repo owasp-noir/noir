@@ -348,6 +348,7 @@ class ConfigInitializer
       "tls_skip_verify"              => YAML::Any.new(false),
       "all_taggers"                  => YAML::Any.new(false),
       "use_taggers"                  => YAML::Any.new(""),
+      "tagger_rules_path"            => YAML::Any.new([] of YAML::Any),
       "diff"                         => YAML::Any.new(""),
       "diff_ref"                     => YAML::Any.new(""),
       "fail_on"                      => YAML::Any.new(""),
@@ -509,6 +510,10 @@ class ConfigInitializer
       # e.g "tagger1,tagger2"
       # To see the list of all taggers, run: noir list taggers
       use_taggers: "#{options["use_taggers"]}"
+
+      # Custom YAML tag rules (files or directories); they always run
+      # Format: https://github.com/owasp-noir/noir/blob/main/src/tagger/rules/README.md
+      tagger_rules_path: []
 
       # The diff file to use
       diff: "#{options["diff"]}"

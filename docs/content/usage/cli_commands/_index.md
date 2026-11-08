@@ -95,7 +95,7 @@ own page with the details.
 | BASE | `-b/--base-path`, `-u/--url` | [Your First Scan](@/get_started/running/index.md) |
 | OUTPUT | `-f/--format`, `-o/--output`, `--pvalue`, `--status-codes`, `--exclude-codes`, `--exclude-path`, `--include`, `--ai-context`, `--no-color`, `--no-spinner`, `--no-log`, `--strict` | [Output Formats](@/usage/output_formats/_index.md), [AI Context Coverage](@/usage/supported/ai_context_coverage/index.md) |
 | PASSIVE SCAN | `-P/--passive-scan`, `--passive-scan-path`, `--passive-scan-severity`, `--passive-scan-auto-update`, `--passive-scan-no-update-check` | [Passive Scanning](@/usage/passive_scan/_index.md) |
-| TAGGER | `-T/--use-all-taggers`, `--use-taggers` | [Tagger](@/usage/more_features/tagger/index.md) |
+| TAGGER | `-T/--use-all-taggers`, `--use-taggers`, `--tagger-rules` | [Tagger](@/usage/more_features/tagger/index.md) |
 | PROBE | `--probe`, `--probe-via`, `--probe-header`, `--probe-match`, `--probe-skip`, `--tls-skip-verify` | [Deliver](@/usage/more_features/deliver/index.md) |
 | EXPORT | `--export-es`, `--export-opensearch`, `--export-webhook` | [Deliver](@/usage/more_features/deliver/index.md) |
 | AI Integration | `--ai-provider`, `--ai-model`, `--ai-key`, `--ai-key-file`, `--ai-temperature`, `--ai-seed`, `--ai-agent`, `--ai-agent-max-steps`, `--ai-dry-run`, `--ai-include-sensitive`, `--ai-no-optimize`, `--ai-native-tools-allowlist`, `--ai-scope`, `--ai-max-token`, `--ai-stream`, `--ai-max-requests` | [AI Providers](@/usage/ai_providers/_index.md), [AI Power](@/get_started/ai_power/index.md) |

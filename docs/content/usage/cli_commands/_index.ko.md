@@ -94,7 +94,7 @@ noir scan ./app --include path,techs,callee --ai-context
 | BASE | `-b/--base-path`, `-u/--url` | [첫 번째 스캔](@/get_started/running/index.ko.md) |
 | OUTPUT | `-f/--format`, `-o/--output`, `--pvalue`, `--status-codes`, `--exclude-codes`, `--exclude-path`, `--include`, `--ai-context`, `--no-color`, `--no-spinner`, `--no-log`, `--strict` | [출력 형식](@/usage/output_formats/_index.ko.md), [AI 컨텍스트 커버리지](@/usage/supported/ai_context_coverage/index.ko.md) |
 | PASSIVE SCAN | `-P/--passive-scan`, `--passive-scan-path`, `--passive-scan-severity`, `--passive-scan-auto-update`, `--passive-scan-no-update-check` | [패시브 스캔](@/usage/passive_scan/_index.ko.md) |
-| TAGGER | `-T/--use-all-taggers`, `--use-taggers` | [태거](@/usage/more_features/tagger/index.ko.md) |
+| TAGGER | `-T/--use-all-taggers`, `--use-taggers`, `--tagger-rules` | [태거](@/usage/more_features/tagger/index.ko.md) |
 | PROBE | `--probe`, `--probe-via`, `--probe-header`, `--probe-match`, `--probe-skip`, `--tls-skip-verify` | [Deliver](@/usage/more_features/deliver/index.ko.md) |
 | EXPORT | `--export-es`, `--export-opensearch`, `--export-webhook` | [Deliver](@/usage/more_features/deliver/index.ko.md) |
 | AI Integration | `--ai-provider`, `--ai-model`, `--ai-key`, `--ai-key-file`, `--ai-temperature`, `--ai-seed`, `--ai-agent`, `--ai-agent-max-steps`, `--ai-dry-run`, `--ai-include-sensitive`, `--ai-no-optimize`, `--ai-native-tools-allowlist`, `--ai-scope`, `--ai-max-token`, `--ai-stream`, `--ai-max-requests` | [AI 제공업체](@/usage/ai_providers/_index.ko.md), [AI 기반 분석](@/get_started/ai_power/index.ko.md) |

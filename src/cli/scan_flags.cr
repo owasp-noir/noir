@@ -95,6 +95,7 @@ module Noir::CLI::ScanFlags
     Flag.new("--passive-scan-no-update-check", "Skip rule update check"),
     Flag.new("--use-all-taggers", "Activate all taggers", shorts: %w[-T]),
     Flag.new("--use-taggers", "Activate specific taggers", Arg::Value, hint: "list"),
+    Flag.new("--tagger-rules", "Custom YAML tag rules", Arg::File, hint: "path"),
     Flag.new("--probe", "Fire HTTP requests at endpoints"),
     Flag.new("--probe-via", "Route probes through proxy", Arg::Url, hint: "url"),
     Flag.new("--probe-header", "Header per probe", Arg::Value),

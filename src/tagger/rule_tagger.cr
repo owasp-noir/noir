@@ -76,6 +76,58 @@ module NoirTagRules
     BUILTIN.find { |rule| rule.key == key }
   end
 
+  # The rules named by `--tagger-rules` / `tagger_rules_path`, each entry a
+  # rule file or a directory walked for `**/*.{yml,yaml}`. A path that holds
+  # no rule, an unreadable file or a key that is already taken raises: a
+  # custom tagger that silently never runs is the failure this guards.
+  # `taken` is every key already registered; a user rule can't shadow one.
+  def self.user_rules(options : Hash(String, YAML::Any), taken : Set(String)) : Array(Rule)
+    paths = options["tagger_rules_path"]?.try(&.as_a?).try(&.map(&.to_s).reject(&.empty?)) || [] of String
+    load_paths(paths, taken)
+  end
+
+  def self.load_paths(paths : Array(String), taken : Set(String)) : Array(Rule)
+    taken = taken.dup
+    rules = [] of Rule
+    paths.each do |path|
+      files = if File.directory?(path)
+                Dir.glob(File.join(path, "**", "*.{yml,yaml}")).sort!
+              elsif File.file?(path)
+                [path]
+              else
+                raise RuleError.new("--tagger-rules: no such file or directory: #{path}")
+              end
+      raise RuleError.new("--tagger-rules: no .yml/.yaml rule files under #{path}") if files.empty?
+
+      files.each do |file|
+        rule = begin
+          parse(File.read(file), file)
+        rescue ex : YAML::ParseException | File::Error
+          raise RuleError.new("#{file}: #{ex.message}")
+        end
+        if taken.includes?(rule.key)
+          raise RuleError.new("#{file}: key '#{rule.key}' is already used by another tagger")
+        end
+        taken << rule.key
+        rules << rule
+      end
+    end
+    rules
+  end
+
+  # The examples a rule gets wrong, described for a person: what the spec
+  # fails on for built-in rules and what a scan warns about for user rules.
+  def self.example_failures(rule : Rule) : Array(String)
+    missed = rule.match_examples.reject { |ep| rule.matcher.call(ep) }.map { |ep| "not tagged: #{describe(ep)}" }
+    hit = rule.no_match_examples.select { |ep| rule.matcher.call(ep) }.map { |ep| "tagged but listed under no_match: #{describe(ep)}" }
+    missed + hit
+  end
+
+  private def self.describe(endpoint : Endpoint) : String
+    params = endpoint.params.map { |p| " #{p.param_type}:#{p.name}=#{p.value}" }.join
+    "#{endpoint.method} #{endpoint.url} (#{endpoint.protocol})#{params}"
+  end
+
   def self.parse(content : String, source : String) : Rule
     doc = YAML.parse(content).as_h? || raise RuleError.new("#{source}: a rule file must be a mapping")
     h = string_keys(doc, RULE_KEYS, source)

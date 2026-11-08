@@ -31,6 +31,34 @@ noir scan <BASE_PATH> -T
 noir scan <BASE_PATH> --use-taggers hunt,oauth
 ```
 
+## 커스텀 태그 규칙
+
+내부 라우트, 결제 모듈, 파트너 API처럼 내 코드베이스에서 중요한 것을 태깅하려면 YAML로 태그 규칙을 작성해 `--tagger-rules`로 넘깁니다. 이 플래그는 규칙 파일이나 디렉터리를 받고(디렉터리는 `*.yml` / `*.yaml`을 찾습니다), 여러 번 쓸 수 있습니다. 이렇게 불러온 규칙은 항상 실행되므로 `-T`를 함께 줄 필요가 없고, `-T`나 `--use-taggers`로 고른 tagger와 함께 실행됩니다.
+
+```yaml
+# team-rules/internal.yml
+key: internal_api
+name: Internal API Tagger
+summary: Flags routes the public gateway never exposes
+order: 115
+tag:
+  tagger: Internal
+  description: Internal-only route; must not be reachable from the public gateway.
+match:
+  any:
+    - path_segment: [internal, ops]
+    - param: { type: header, name: x-internal-token }
+examples:
+  match: [{ url: /internal/health }]
+  no_match: [{ url: /api/internals }]
+```
+
+```bash
+noir scan <BASE_PATH> --tagger-rules ./team-rules
+```
+
+매번 불러오려면 설정 파일에 `tagger_rules_path`를 지정하세요. 규칙 파일 형식이 잘못됐거나 `key`가 다른 tagger와 겹치면 스캔이 시작되기 전에 파일 이름과 함께 멈춥니다. `examples`가 적힌 대로 동작하지 않으면 경고를 출력합니다. 사용할 수 있는 조건은 [규칙 형식](https://github.com/owasp-noir/noir/blob/main/src/tagger/rules/README.md)에 정리되어 있습니다. 내장 tagger 중 `admin`, `payment`, `soap`, `cors`, `websocket`도 같은 형식으로 작성되어 있습니다.
+
 ## 출력
 
 태그는 엔드포인트와 각 파라미터의 `tags` 배열에 들어갑니다. 태그마다 필드가 세 개 있습니다:

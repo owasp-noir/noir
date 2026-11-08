@@ -397,7 +397,16 @@ module Noir::CliValidation
     raise Error.new("Output directory does not exist: #{output_dir}")
   end
 
+  # Also loads `--tagger-rules`, so a broken rule file stops the scan before
+  # it starts rather than after the analysis, and so `--use-taggers` accepts
+  # the keys those rules define.
   def self.validate_tagger_names!(options : Hash(String, YAML::Any))
+    custom_keys = begin
+      NoirTaggers.user_rules(options).map(&.key)
+    rescue ex : NoirTagRules::RuleError
+      raise Error.new(ex.message || "invalid tag rule")
+    end
+
     use_taggers = options["use_taggers"].to_s
     return if use_taggers.empty?
 
@@ -408,7 +417,7 @@ module Noir::CliValidation
       raise Error.new("--use-taggers: #{use_taggers.inspect} names no tagger. Use `noir list taggers` to see available taggers.")
     end
 
-    unknown_taggers = NoirTaggers.unknown_tagger_names(use_taggers)
+    unknown_taggers = NoirTaggers.unknown_tagger_names(use_taggers, custom_keys)
     return if unknown_taggers.empty?
 
     raise Error.new("Unknown tagger(s): #{unknown_taggers.join(", ")}. Use `noir list taggers` to see available taggers.")

@@ -53,3 +53,7 @@ A single string works wherever a list does. Unknown keys, empty lists and a `pat
 Put the false positive you are guarding against in `no_match`. Run `just spec-build && ./bin/noir_spec -e "tag rules"`.
 
 If a tagger needs logic these conditions can't express, write it in Crystal under `src/tagger/taggers/` instead.
+
+## Your own rules
+
+The same format works outside this directory: `noir scan --tagger-rules PATH` (or `tagger_rules_path` in the config file) loads rule files or directories at scan time. Those rules always run, their keys must not collide with an existing tagger, and wrong `examples` are reported as warnings instead of failing a spec. The file-name-matches-key requirement applies only to the built-in rules.

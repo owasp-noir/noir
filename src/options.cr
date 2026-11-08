@@ -534,6 +534,9 @@ def run_options_parser
       # `use_taggers` is replaced rather than added to.
       append_to_csv_option(noir_options, "use_taggers", v, reset_seen: csv_reset_seen)
     end
+    parser.on "--tagger-rules PATH", "Load custom YAML tag rules from a file or directory; they always run (repeatable)" do |v|
+      append_to_yaml_array(noir_options, "tagger_rules_path", v, csv_reset_seen)
+    end
 
     # PROBE — fire HTTP requests against the endpoints noir just
     # discovered (active replay). The v0 deliver flag names
