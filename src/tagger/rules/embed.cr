@@ -3,6 +3,8 @@
 # file in the given directory as a Crystal `{filename, content}` literal, so
 # the rules ship inside the binary and adding one needs no list edit.
 dir = ARGV[0]
-files = Dir.glob(File.join(dir, "*.{yml,yaml}")).sort!
-entries = files.map { |path| "{#{File.basename(path).inspect}, #{File.read(path).inspect}}" }
+# `Dir.children`, not `Dir.glob`: on Windows `__DIR__` has backslashes,
+# which a glob pattern reads as escapes, and the build shipped no rules.
+names = Dir.children(dir).select { |name| name.ends_with?(".yml") || name.ends_with?(".yaml") }.sort!
+entries = names.map { |name| "{#{name.inspect}, #{File.read(File.join(dir, name)).inspect}}" }
 puts "[#{entries.join(", ")}] of Tuple(String, String)"
