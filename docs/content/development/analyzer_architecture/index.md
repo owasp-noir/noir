@@ -276,6 +276,7 @@ just check                 # crystal tool format --check + ameba
 Output formats and taggers register the same way: you annotate the class, and there is no list to edit.
 
 - **Output format**: create `src/output_builder/{format}.cr` and annotate the class with `@[Noir::OutputFormat(name: "{format}", description: "…", order: 40)]`. `src/output_builder/formats.cr` builds the `-f` help text, `noir list formats` and the render dispatch from it. Add `spec/unit_test/output_builder/{format}_spec.cr`.
+- **Tag rule**: when a tagger only matches keywords (URL segments, parameter names, types and values, method, protocol), add `src/tagger/rules/{key}.yml` instead of a class. The file is the registration, and its `examples` are its test; `src/tagger/rules/README.md` describes the format.
 - **Tagger**: create `src/tagger/taggers/{name}.cr` (or `src/tagger/framework_taggers/{language}/{name}.cr` for a framework auth tagger, which inherits `FrameworkTagger`) and annotate it with `@[Noir::TaggerFor(key: "{name}", name: "…", desc: "…", order: 180)]`. `key` becomes the `--use-taggers` value. `order` fixes the order taggers run in, and so the order their tags are appended, so append a new value instead of renumbering. A missing annotation is not a compile error, but `registry_integrity_spec.cr` fails and names the class. Add a spec under `spec/unit_test/tagger/`.
 
 ## Adding a new language engine

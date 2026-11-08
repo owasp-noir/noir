@@ -790,7 +790,7 @@ class EndpointOptimizer
   #
   # - `protocol`: ~20 analyzers set `ws` on endpoints that also have an
   #   ordinary HTTP path (`python/fastapi.cr`, `python/starlette.cr`,
-  #   `java/spring.cr`, `elixir/phoenix_channel.cr`, …). `WebsocketTagger`
+  #   `java/spring.cr`, `elixir/phoenix_channel.cr`, …). the `websocket` tagger
   #   keys off exactly this field and the taggers run *after* the optimizer,
   #   so losing it dropped the `websocket` tag from the report.
   # - `metadata`: the mobile deep-link facts (action/category/host/package).

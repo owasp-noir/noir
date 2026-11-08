@@ -1,7 +1,7 @@
 require "../../func_spec.cr"
 
 # Phoenix Channel handle_in events surface as realtime `ws://` endpoints:
-# protocol "ws" (so the WebsocketTagger tags them), the synthetic "SEND"
+# protocol "ws" (so the websocket tagger tags them), the synthetic "SEND"
 # method, addressed as ws://<topic>/<event>. Endpoint is a struct, so build
 # via a Proc that mutates a local and returns it.
 build = ->(url : String) do

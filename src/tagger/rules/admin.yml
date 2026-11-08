@@ -1,0 +1,34 @@
+# Administrative / privileged endpoints: high-value targets for broken
+# access control, privilege escalation and forced browsing.
+key: admin
+name: Admin Tagger
+summary: Identifies administrative and privileged endpoints
+order: 110
+tag:
+  tagger: Admin
+  description: Administrative or privileged endpoint; high-value target for broken access control, privilege escalation, and forced browsing.
+match:
+  any:
+    # Whole segments only: /admin/users and /wp-admin match, /badminton
+    # does not. `superadmin` has no separator, so it is listed itself.
+    - path_segment: [admin, admins, administrator, administration, administrative,
+                     superuser, superadmin, sysadmin, backoffice, impersonate, godmode]
+    # A privilege grant on any route, e.g. PATCH /users/{id} with is_admin.
+    - param:
+        name: [is_admin, is_superuser, is_superadmin, is_staff, is_root, make_admin,
+               grant_admin, admin_only, superadmin, sudo, impersonate]
+    # Weaker hints that are also read-only filters (GET /roles?privilege=x),
+    # so only on a state-changing method.
+    - all:
+        - method_not: safe
+        - param: { name: [run_as, as_user, elevate, privilege, privileged] }
+examples:
+  match:
+    - { url: /admin/users }
+    - { method: POST, url: /wp-admin/options.php }
+    - { method: PATCH, url: /api/users/42, params: [{ name: isSuperuser, type: json }] }
+    - { method: POST, url: /api/session, params: [{ name: run_as, type: json }] }
+  no_match:
+    - { url: /badminton/courts }
+    - { url: /api/roles, params: [{ name: privilege }] }
+    - { method: QUERY, url: /api/roles, params: [{ name: privilege, type: form }] }

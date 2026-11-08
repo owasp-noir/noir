@@ -3,7 +3,7 @@ require "../../../../src/utils/*"
 require "../../../../src/models/endpoint.cr"
 require "../../../../src/models/logger.cr"
 require "../../../../src/models/tagger.cr"
-require "../../../../src/tagger/taggers/cors.cr"
+require "../../../../src/tagger/tagger.cr"
 require "yaml"
 
 def default_tagger_options
@@ -15,17 +15,17 @@ def default_tagger_options
   }
 end
 
-describe "CorsTagger" do
+describe "cors rule (src/tagger/rules/cors.yml)" do
   describe "initialization" do
     it "creates tagger with name" do
-      tagger = CorsTagger.new(default_tagger_options)
+      tagger = NoirTaggers.build("cors", default_tagger_options).not_nil!
       tagger.should_not be_nil
     end
   end
 
   describe "perform" do
     it "tags endpoint with CORS parameter" do
-      tagger = CorsTagger.new(default_tagger_options)
+      tagger = NoirTaggers.build("cors", default_tagger_options).not_nil!
 
       endpoint = Endpoint.new("/api/data", "GET", [
         Param.new("origin", "https://example.com", "header"),
@@ -38,7 +38,7 @@ describe "CorsTagger" do
     end
 
     it "tags endpoint with access-control-allow-origin" do
-      tagger = CorsTagger.new(default_tagger_options)
+      tagger = NoirTaggers.build("cors", default_tagger_options).not_nil!
 
       endpoint = Endpoint.new("/api/data", "GET", [
         Param.new("access-control-allow-origin", "*", "header"),
@@ -51,7 +51,7 @@ describe "CorsTagger" do
     end
 
     it "tags endpoint with access-control-allow-credentials" do
-      tagger = CorsTagger.new(default_tagger_options)
+      tagger = NoirTaggers.build("cors", default_tagger_options).not_nil!
 
       endpoint = Endpoint.new("/api/data", "OPTIONS", [
         Param.new("access-control-allow-credentials", "true", "header"),
@@ -64,7 +64,7 @@ describe "CorsTagger" do
     end
 
     it "tags endpoint with access-control-request-headers" do
-      tagger = CorsTagger.new(default_tagger_options)
+      tagger = NoirTaggers.build("cors", default_tagger_options).not_nil!
 
       endpoint = Endpoint.new("/api/data", "OPTIONS", [
         Param.new("Access-Control-Request-Headers", "X-Custom", "header"),
@@ -77,7 +77,7 @@ describe "CorsTagger" do
     end
 
     it "tags a CGI-style HTTP_ORIGIN header" do
-      tagger = CorsTagger.new(default_tagger_options)
+      tagger = NoirTaggers.build("cors", default_tagger_options).not_nil!
 
       endpoint = Endpoint.new("/api/data", "GET", [
         Param.new("HTTP_ORIGIN", "https://example.com", "header"),
@@ -90,7 +90,7 @@ describe "CorsTagger" do
     end
 
     it "does not tag endpoint without CORS parameters" do
-      tagger = CorsTagger.new(default_tagger_options)
+      tagger = NoirTaggers.build("cors", default_tagger_options).not_nil!
 
       endpoint = Endpoint.new("/api/data", "GET", [
         Param.new("user_id", "123", "query"),
@@ -102,7 +102,7 @@ describe "CorsTagger" do
     end
 
     it "handles multiple endpoints" do
-      tagger = CorsTagger.new(default_tagger_options)
+      tagger = NoirTaggers.build("cors", default_tagger_options).not_nil!
 
       endpoint1 = Endpoint.new("/api/data", "GET", [
         Param.new("origin", "https://example.com", "header"),
@@ -119,7 +119,7 @@ describe "CorsTagger" do
     end
 
     it "is case-insensitive for parameter matching" do
-      tagger = CorsTagger.new(default_tagger_options)
+      tagger = NoirTaggers.build("cors", default_tagger_options).not_nil!
 
       endpoint = Endpoint.new("/api/data", "GET", [
         Param.new("Origin", "https://example.com", "header"),
@@ -131,7 +131,7 @@ describe "CorsTagger" do
     end
 
     it "does not tag a non-header param named origin (e.g. a query param)" do
-      tagger = CorsTagger.new(default_tagger_options)
+      tagger = NoirTaggers.build("cors", default_tagger_options).not_nil!
 
       endpoint = Endpoint.new("/flights", "GET", [
         Param.new("origin", "JFK", "query"),

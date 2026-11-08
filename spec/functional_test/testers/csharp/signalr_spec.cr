@@ -1,7 +1,7 @@
 require "../../func_spec.cr"
 
 # SignalR hub methods surface as realtime `ws://` endpoints: protocol "ws"
-# (so the WebsocketTagger tags them), the synthetic "SEND" method, and
+# (so the websocket tagger tags them), the synthetic "SEND" method, and
 # message params (param_type "json"). Endpoint is a struct, so build via a
 # Proc that mutates a local and returns it.
 build = ->(url : String, params : Array(Param)) do

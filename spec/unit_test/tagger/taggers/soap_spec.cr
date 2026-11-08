@@ -3,7 +3,7 @@ require "../../../../src/utils/*"
 require "../../../../src/models/endpoint.cr"
 require "../../../../src/models/logger.cr"
 require "../../../../src/models/tagger.cr"
-require "../../../../src/tagger/taggers/soap.cr"
+require "../../../../src/tagger/tagger.cr"
 require "yaml"
 
 def default_tagger_options
@@ -15,17 +15,17 @@ def default_tagger_options
   }
 end
 
-describe "SoapTagger" do
+describe "soap rule (src/tagger/rules/soap.yml)" do
   describe "initialization" do
     it "creates tagger with name" do
-      tagger = SoapTagger.new(default_tagger_options)
+      tagger = NoirTaggers.build("soap", default_tagger_options).not_nil!
       tagger.should_not be_nil
     end
   end
 
   describe "perform" do
     it "tags endpoint with SOAPAction header" do
-      tagger = SoapTagger.new(default_tagger_options)
+      tagger = NoirTaggers.build("soap", default_tagger_options).not_nil!
 
       endpoint = Endpoint.new("/webservice", "POST", [
         Param.new("SOAPAction", "http://example.com/GetUser", "header"),
@@ -38,7 +38,7 @@ describe "SoapTagger" do
     end
 
     it "is case-insensitive for header matching" do
-      tagger = SoapTagger.new(default_tagger_options)
+      tagger = NoirTaggers.build("soap", default_tagger_options).not_nil!
 
       endpoint = Endpoint.new("/webservice", "POST", [
         Param.new("soapaction", "http://example.com/GetUser", "header"),
@@ -51,7 +51,7 @@ describe "SoapTagger" do
     end
 
     it "does not tag endpoint without SOAP parameters" do
-      tagger = SoapTagger.new(default_tagger_options)
+      tagger = NoirTaggers.build("soap", default_tagger_options).not_nil!
 
       endpoint = Endpoint.new("/api/data", "POST", [
         Param.new("user_id", "123", "json"),
@@ -63,7 +63,7 @@ describe "SoapTagger" do
     end
 
     it "handles multiple endpoints" do
-      tagger = SoapTagger.new(default_tagger_options)
+      tagger = NoirTaggers.build("soap", default_tagger_options).not_nil!
 
       endpoint1 = Endpoint.new("/soap", "POST", [
         Param.new("soapaction", "GetData", "header"),
@@ -81,7 +81,7 @@ describe "SoapTagger" do
 
     it "tags WSDL / ASMX URLs" do
       ["/service?wsdl", "/Service.wsdl", "/Account.asmx"].each do |url|
-        tagger = SoapTagger.new(default_tagger_options)
+        tagger = NoirTaggers.build("soap", default_tagger_options).not_nil!
         endpoint = Endpoint.new(url, "GET")
 
         tagger.perform([endpoint])
@@ -92,7 +92,7 @@ describe "SoapTagger" do
     end
 
     it "tags a SOAP 1.2 Content-Type header" do
-      tagger = SoapTagger.new(default_tagger_options)
+      tagger = NoirTaggers.build("soap", default_tagger_options).not_nil!
 
       endpoint = Endpoint.new("/webservice", "POST", [
         Param.new("Content-Type", "application/soap+xml; charset=utf-8", "header"),
@@ -105,7 +105,7 @@ describe "SoapTagger" do
     end
 
     it "does not tag a bare 'soap' path segment (store listing FP)" do
-      tagger = SoapTagger.new(default_tagger_options)
+      tagger = NoirTaggers.build("soap", default_tagger_options).not_nil!
 
       endpoint = Endpoint.new("/products/soap", "GET")
 
@@ -115,7 +115,7 @@ describe "SoapTagger" do
     end
 
     it "ignores a soapaction-like name on a non-header param" do
-      tagger = SoapTagger.new(default_tagger_options)
+      tagger = NoirTaggers.build("soap", default_tagger_options).not_nil!
 
       endpoint = Endpoint.new("/api/data", "POST", [
         Param.new("soapaction", "x", "json"),

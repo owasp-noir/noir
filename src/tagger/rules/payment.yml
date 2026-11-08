@@ -1,0 +1,41 @@
+# Payment and financial transaction endpoints.
+key: payment
+name: Payment Tagger
+summary: Identifies payment and financial transaction endpoints
+order: 120
+tag:
+  tagger: Payment
+  description: Payment or financial transaction endpoint; review for business-logic flaws (amount/price tampering, currency confusion), IDOR on financial records, and replay.
+match:
+  any:
+    - path_segment: [payment, payments, checkout, billing, invoice, invoices,
+                     refund, refunds, payout, payouts, withdrawal, withdrawals,
+                     paypal, stripe, braintree, pay, purchase, purchases]
+    # Card / bank data names a payment flow on any route.
+    - param:
+        name: [card_number, cc_number, cvv, cvc, cvv2, cvn, csc, security_code,
+               card_security_code, card_cvc, card_expiry, card_holder, cardholder_name,
+               payment_method, payment_method_id, payment_method_nonce, payment_intent,
+               setup_intent, stripe_token, paypal_token, card_token,
+               iban, routing_number, sort_code]
+    - all:
+        - param: { name: amount }
+        - param: { name: [currency, currency_code] }
+    # Segments that are payment-y only next to a money parameter
+    # (/orders alone is usually a plain listing).
+    - all:
+        - path_segment: [charge, charges, transaction, transactions, subscription,
+                         subscriptions, withdraw, transfer, transfers, deposit,
+                         deposits, wallet, wallets, order, orders]
+        - param:
+            name: [amount, currency, currency_code, price, total, subtotal, balance,
+                   total_amount, amount_due, grand_total]
+examples:
+  match:
+    - { method: POST, url: /api/checkout }
+    - { method: POST, url: /api/orders, params: [{ name: cardNumber, type: json }] }
+    - { method: POST, url: /api/transfer, params: [{ name: amount, type: json }, { name: currency, type: json }] }
+    - { method: POST, url: /api/orders, params: [{ name: total, type: json }] }
+  no_match:
+    - { url: /api/orders }
+    - { url: /api/users, params: [{ name: amount }] }

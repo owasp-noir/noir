@@ -9,7 +9,7 @@ module Analyzer::Ruby
   # connection in `config/routes.rb`. Each callable action becomes one
   # endpoint `ws://<mount>/<Channel>/<action>` (bare
   # `ws://<mount>/<Channel>` when a channel has no actions), method "SEND",
-  # protocol "ws" — so the existing WebsocketTagger tags them.
+  # protocol "ws" — so the existing websocket tagger tags them.
   #
   # Line-scan analyzer (Ruby house style). The cable mount lives in
   # `routes.rb` while channels live under `app/channels/`, so the mount is

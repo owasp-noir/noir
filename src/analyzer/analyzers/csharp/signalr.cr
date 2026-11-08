@@ -9,7 +9,7 @@ module Analyzer::CSharp
   # hub at a route. Each callable hub method becomes one endpoint
   # `ws://<hub-route>/<method>` (bare `ws://<hub-route>` when a hub has no
   # callable methods), method "SEND", protocol "ws" — so the existing
-  # WebsocketTagger tags them. Method parameters (minus DI/service types)
+  # websocket tagger tags them. Method parameters (minus DI/service types)
   # become params (param_type "json").
   #
   # Line-scan analyzer (C# house style; there is no C# engine). Hub classes

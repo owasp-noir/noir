@@ -1,5 +1,6 @@
 require "./taggers/*"
 require "./framework_taggers/**"
+require "./rule_tagger"
 require "../models/tagger"
 require "../models/framework_tagger"
 
@@ -11,25 +12,26 @@ module NoirTaggers
   # so every read would need a cast back. The two macro-generated `case`
   # dispatchers below resolve per concrete class instead, the same shape
   # `Noir::OutputFormats.render` uses.
-  record Entry, key : String, name : String, desc : String, framework : Bool
+  record Entry, key : String, name : String, desc : String, framework : Bool, order : Int32
 
   # Every annotated tagger, in `order`. Derived from the classes, so a
   # tagger joins the registry by existing: the two hand-maintained hash
   # literals this replaces were a second place to remember, where
   # forgetting produced no error and no failing spec — just a tagger that
-  # never ran.
+  # never ran. The YAML rules in `src/tagger/rules/` join the same list
+  # (`NoirTagRules::BUILTIN`) and sort in among the classes by `order`.
   ENTRIES = begin
-    {% begin %}
+    classes = {% begin %}
       [
-        {% for tagger in Tagger.all_subclasses
-                           .select(&.annotation(Noir::TaggerFor))
-                           .sort_by { |sub| sub.annotation(Noir::TaggerFor)[:order] } %}
+        {% for tagger in Tagger.all_subclasses.select(&.annotation(Noir::TaggerFor)) %}
           {% ann = tagger.annotation(Noir::TaggerFor) %}
           Entry.new({{ ann[:key] }}, {{ ann[:name] }}, {{ ann[:desc] }},
-            {{ tagger.ancestors.includes?(FrameworkTagger) }}),
+            {{ tagger.ancestors.includes?(FrameworkTagger) }}, {{ ann[:order] }}),
         {% end %}
       ] of Entry
     {% end %}
+    rules = NoirTagRules::BUILTIN.map { |rule| Entry.new(rule.key, rule.name, rule.summary, false, rule.order) }
+    (classes + rules).sort_by! { |entry| {entry.order, entry.key} }
   end
 
   PLAIN_ENTRIES     = ENTRIES.reject(&.framework)
@@ -55,7 +57,7 @@ module NoirTaggers
         {{ tagger }}.new(options)
       {% end %}
       else
-        nil
+        NoirTagRules.find(key).try { |rule| RuleTagger.new(options, rule) }
       end
     {% end %}
   end

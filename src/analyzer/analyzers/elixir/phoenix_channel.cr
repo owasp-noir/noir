@@ -9,7 +9,7 @@ module Analyzer::Elixir
   # `channel "room:*", RoomChannel`. Each `handle_in` event becomes one
   # endpoint `ws://<topic>/<event>` (bare `ws://<topic>` when a channel has
   # no `handle_in` clauses), method "SEND", protocol "ws" — so the existing
-  # WebsocketTagger tags them.
+  # websocket tagger tags them.
   #
   # Line-scan analyzer. The topic↔module map lives in the socket module
   # while `handle_in` clauses live in the channel module, so `channel`

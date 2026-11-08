@@ -118,20 +118,22 @@ describe "tagger registry integrity" do
     # `framework_tagger_spec.cr` instantiate them directly to exercise the
     # default `perform`, so neither can be made abstract.
     {% for sub in Tagger.all_subclasses %}
-      {% unless sub.name == "FrameworkTagger" %}
+      {% unless sub.name == "FrameworkTagger" || sub.name == "RuleTagger" %}
         declared << {{ sub.stringify }}
       {% end %}
     {% end %}
 
     missing = [] of String
     {% for sub in Tagger.all_subclasses %}
-      {% unless sub.name == "FrameworkTagger" || sub.annotation(Noir::TaggerFor) %}
+      {% unless sub.name == "FrameworkTagger" || sub.name == "RuleTagger" || sub.annotation(Noir::TaggerFor) %}
         missing << {{ sub.stringify }}
       {% end %}
     {% end %}
 
     fail "tagger classes with no Noir::TaggerFor annotation (they will never run): #{sorted(missing)}" unless missing.empty?
-    declared.size.should eq annotated.size
+    # `RuleTagger` is the one class behind every YAML rule; those register
+    # by their own key instead.
+    (declared.size + NoirTagRules::BUILTIN.size).should eq annotated.size
   end
 
   it "gives each tagger a unique key that is not the 'all' sentinel" do

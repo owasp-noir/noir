@@ -276,6 +276,7 @@ just check                 # crystal tool format --check + ameba
 출력 형식과 tagger도 같은 방식으로 등록합니다. 클래스에 어노테이션을 달면 되고, 수정할 목록은 없습니다.
 
 - **출력 형식**: `src/output_builder/{format}.cr`을 만들고 클래스에 `@[Noir::OutputFormat(name: "{format}", description: "…", order: 40)]`를 답니다. `src/output_builder/formats.cr`가 여기서 `-f` 도움말, `noir list formats`, 렌더링 디스패치를 만듭니다. `spec/unit_test/output_builder/{format}_spec.cr`도 추가하세요.
+- **Tag rule**: URL 세그먼트, 파라미터 이름·타입·값, 메서드, 프로토콜 같은 키워드만 보는 tagger라면 클래스 대신 `src/tagger/rules/{key}.yml`을 추가합니다. 파일 하나가 곧 등록이고, 파일 안의 `examples`가 테스트입니다. 형식은 `src/tagger/rules/README.md`를 참고하세요.
 - **Tagger**: `src/tagger/taggers/{name}.cr`(프레임워크 인증 tagger라면 `FrameworkTagger`를 상속해 `src/tagger/framework_taggers/{language}/{name}.cr`)을 만들고 `@[Noir::TaggerFor(key: "{name}", name: "…", desc: "…", order: 180)]`를 답니다. `key`는 `--use-taggers`에 넣는 값이 됩니다. `order`는 tagger 실행 순서, 즉 태그가 붙는 순서를 정하므로 번호를 다시 매기지 말고 뒤에 새 값을 붙이세요. 어노테이션을 빠뜨려도 컴파일 에러는 나지 않지만 `registry_integrity_spec.cr`가 실패하면서 클래스 이름을 알려줍니다. `spec/unit_test/tagger/` 아래에 스펙을 추가하세요.
 
 ## 새 언어 엔진 추가하기
