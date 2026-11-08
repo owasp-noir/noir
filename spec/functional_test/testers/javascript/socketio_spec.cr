@@ -1,7 +1,7 @@
 require "../../func_spec.cr"
 
 # Socket.IO inbound event handlers surface as realtime `ws://` endpoints:
-# protocol "ws" (so the WebsocketTagger tags them), the synthetic "SEND"
+# protocol "ws" (so the websocket tagger tags them), the synthetic "SEND"
 # method, addressed as ws://<namespace>/<event> (default namespace →
 # ws://<event>). Endpoint is a struct, so build via a Proc that mutates a
 # local and returns it.

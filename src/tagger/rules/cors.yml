@@ -1,0 +1,22 @@
+# Endpoints that read CORS request headers.
+key: cors
+name: CORS Tagger
+summary: Identifies CORS endpoints
+order: 30
+tag:
+  tagger: CORS
+  description: CORS endpoint enabling cross-origin requests, allowing web applications from different domains to interact.
+match:
+  # Headers only: `?origin=JFK` on a flight search is not CORS.
+  param:
+    type: header
+    name: [origin, http_origin]
+    name_prefix: access-control-
+examples:
+  match:
+    - { url: /api/data, params: [{ name: Origin, type: header }] }
+    - { url: /api/data, params: [{ name: HTTP_ORIGIN, type: header }] }
+    - { method: OPTIONS, url: /api/data, params: [{ name: Access-Control-Request-Headers, type: header }] }
+  no_match:
+    - { url: /flights, params: [{ name: origin, value: JFK }] }
+    - { url: /api/data, params: [{ name: user_id }] }

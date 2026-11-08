@@ -3,7 +3,7 @@ require "../../../../src/utils/*"
 require "../../../../src/models/endpoint.cr"
 require "../../../../src/models/logger.cr"
 require "../../../../src/models/tagger.cr"
-require "../../../../src/tagger/taggers/admin.cr"
+require "../../../../src/tagger/tagger.cr"
 require "yaml"
 
 def default_tagger_options
@@ -15,17 +15,17 @@ def default_tagger_options
   }
 end
 
-describe "AdminTagger" do
+describe "admin rule (src/tagger/rules/admin.yml)" do
   describe "initialization" do
     it "creates tagger with name" do
-      tagger = AdminTagger.new(default_tagger_options)
+      tagger = NoirTaggers.build("admin", default_tagger_options).not_nil!
       tagger.name.should eq("admin")
     end
   end
 
   describe "perform" do
     it "tags an endpoint under an /admin path" do
-      tagger = AdminTagger.new(default_tagger_options)
+      tagger = NoirTaggers.build("admin", default_tagger_options).not_nil!
 
       endpoint = Endpoint.new("/admin/users", "GET")
 
@@ -36,7 +36,7 @@ describe "AdminTagger" do
     end
 
     it "tags a wp-admin path via the admin token" do
-      tagger = AdminTagger.new(default_tagger_options)
+      tagger = NoirTaggers.build("admin", default_tagger_options).not_nil!
 
       endpoint = Endpoint.new("/wp-admin/options.php", "POST")
 
@@ -47,7 +47,7 @@ describe "AdminTagger" do
     end
 
     it "tags an endpoint with a privilege-mutation parameter" do
-      tagger = AdminTagger.new(default_tagger_options)
+      tagger = NoirTaggers.build("admin", default_tagger_options).not_nil!
 
       endpoint = Endpoint.new("/api/users/42", "PATCH", [
         Param.new("is_admin", "true", "json"),
@@ -60,7 +60,7 @@ describe "AdminTagger" do
     end
 
     it "tags a camelCase privilege-mutation parameter" do
-      tagger = AdminTagger.new(default_tagger_options)
+      tagger = NoirTaggers.build("admin", default_tagger_options).not_nil!
 
       endpoint = Endpoint.new("/api/users/42", "PATCH", [
         Param.new("isSuperuser", "true", "json"),
@@ -73,7 +73,7 @@ describe "AdminTagger" do
     end
 
     it "tags a superadmin path segment" do
-      tagger = AdminTagger.new(default_tagger_options)
+      tagger = NoirTaggers.build("admin", default_tagger_options).not_nil!
 
       endpoint = Endpoint.new("/superadmin/settings", "GET")
 
@@ -84,7 +84,7 @@ describe "AdminTagger" do
     end
 
     it "tags a weak privilege parameter only on a state-changing method" do
-      tagger = AdminTagger.new(default_tagger_options)
+      tagger = NoirTaggers.build("admin", default_tagger_options).not_nil!
 
       endpoint = Endpoint.new("/api/session", "POST", [
         Param.new("run_as", "root", "json"),
@@ -97,7 +97,7 @@ describe "AdminTagger" do
     end
 
     it "does not tag a weak privilege parameter used as a read-only filter" do
-      tagger = AdminTagger.new(default_tagger_options)
+      tagger = NoirTaggers.build("admin", default_tagger_options).not_nil!
 
       endpoint = Endpoint.new("/api/roles", "GET", [
         Param.new("privilege", "read", "query"),
@@ -109,7 +109,7 @@ describe "AdminTagger" do
     end
 
     it "treats QUERY as read-only for the weak privilege param heuristic" do
-      tagger = AdminTagger.new(default_tagger_options)
+      tagger = NoirTaggers.build("admin", default_tagger_options).not_nil!
 
       # QUERY is safe + idempotent (RFC 10008), so a weak privilege param
       # here stays below the threshold exactly as it does on a GET.
@@ -123,7 +123,7 @@ describe "AdminTagger" do
     end
 
     it "does not tag a benign path that merely contains the substring" do
-      tagger = AdminTagger.new(default_tagger_options)
+      tagger = NoirTaggers.build("admin", default_tagger_options).not_nil!
 
       endpoint = Endpoint.new("/badminton/courts", "GET")
 
@@ -133,7 +133,7 @@ describe "AdminTagger" do
     end
 
     it "does not tag a regular endpoint" do
-      tagger = AdminTagger.new(default_tagger_options)
+      tagger = NoirTaggers.build("admin", default_tagger_options).not_nil!
 
       endpoint = Endpoint.new("/api/products", "GET", [
         Param.new("page", "1", "query"),

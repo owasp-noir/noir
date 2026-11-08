@@ -41,7 +41,7 @@ struct Endpoint
   # discoverable). The method is the synthetic verb "SEND" — the
   # allow-listed messaging verb the optimizer keeps (matching Spring's
   # `@MessageMapping → SEND`) — and the protocol is "ws", so the existing
-  # WebsocketTagger tags them with no changes. Message/argument fields are
+  # websocket tagger tags them with no changes. Message/argument fields are
   # params (param_type "json").
   #
   # Keyed on the `ws://` / `wss://` URL scheme rather than the protocol so

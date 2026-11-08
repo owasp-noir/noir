@@ -1393,7 +1393,7 @@ describe "EndpointOptimizer" do
 
     # The dedup merged four collections and threw every scalar the losing
     # endpoint carried away. `protocol` is the consequential one: taggers run
-    # *after* the optimizer and `WebsocketTagger` keys off exactly this field,
+    # *after* the optimizer and the `websocket` tagger keys off exactly this field,
     # so a `ws` endpoint that lost the source-location tiebreak to a plain
     # HTTP one at the same path silently stopped being tagged.
     it "carries the losing duplicate's protocol, metadata and status code" do

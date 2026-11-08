@@ -1,0 +1,24 @@
+# SOAP web services.
+key: soap
+name: SOAP Tagger
+summary: Identifies SOAP endpoints
+order: 40
+tag:
+  tagger: SOAP
+  description: SOAP endpoint for XML-based web service communication, supporting structured information exchanges across network applications.
+match:
+  any:
+    - param: { type: header, name: soapaction }
+    # SOAP 1.2 carries the action in Content-Type instead.
+    - param: { type: header, name: content_type, value_contains: soap+xml }
+    # A bare `soap` segment is not enough (store listings sell soap).
+    - url_contains: ["?wsdl", ".wsdl", ".asmx"]
+examples:
+  match:
+    - { method: POST, url: /webservice, params: [{ name: SOAPAction, value: GetUser, type: header }] }
+    - { method: POST, url: /webservice, params: [{ name: Content-Type, value: application/soap+xml, type: header }] }
+    - { url: /Service.asmx }
+    - { url: /service?WSDL }
+  no_match:
+    - { url: /products/soap }
+    - { method: POST, url: /api/data, params: [{ name: soapaction, type: json }] }

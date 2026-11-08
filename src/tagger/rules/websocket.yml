@@ -1,0 +1,31 @@
+# WebSocket endpoints.
+key: websocket
+name: Websocket Tagger
+summary: Identifies Websocket endpoints
+order: 50
+tag:
+  tagger: WebSocket
+  description: WebSocket endpoint for real-time, bidirectional communication between clients and servers, enabling efficient data exchanges.
+match:
+  any:
+    - protocol: [ws, wss, websocket]
+    # Socket.IO / SockJS transports stay on http.
+    - url_contains: [socket.io, sockjs]
+    # Only the handshake sends these, so one is conclusive.
+    - param: { type: header, name: [sec_websocket_key, sec_websocket_accept] }
+    - param: { type: header, name: upgrade, value_contains: websocket }
+    # These also show up in generic header docs; take two.
+    - param:
+        type: header
+        name: [sec_websocket_version, sec_websocket_protocol, sec_websocket_extensions]
+        min: 2
+examples:
+  match:
+    - { url: /chat, protocol: wss }
+    - { url: /socket.io/ }
+    - { url: /chat, params: [{ name: Sec-WebSocket-Key, type: header }] }
+    - { url: /chat, params: [{ name: Upgrade, value: websocket, type: header }] }
+    - { url: /chat, params: [{ name: sec-websocket-version, type: header }, { name: sec-websocket-protocol, type: header }] }
+  no_match:
+    - { url: /topic, protocol: kafka }
+    - { url: /chat, params: [{ name: sec-websocket-version, type: header }] }

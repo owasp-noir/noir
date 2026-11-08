@@ -157,6 +157,8 @@ When adding a new framework in a language that already has an extractor, extend 
 3. Add unit test: `spec/unit_test/output_builder/{format}_spec.cr`
 
 ### Taggers
+**Prefer a YAML rule** when the tagger is keyword matching on URL segments, param names/types/values, method or protocol: add `src/tagger/rules/{key}.yml` (format in `src/tagger/rules/README.md`). The file is the registration and its `examples` are its test (`spec/unit_test/tagger/rule_tagger_spec.cr`); there is no Crystal to write. `admin`, `payment`, `soap`, `cors` and `websocket` are rules. Write a class only when the rule vocabulary can't express it:
+
 1. Create `src/tagger/taggers/{tagger_name}.cr`
 2. Annotate the class: `@[Noir::TaggerFor(key: "{tagger_name}", name: "{Name} Tagger", desc: "…", order: 180)]`. This is the whole registration — `src/tagger/tagger.cr` derives the registry, the `-T` key, the `noir list taggers` entry and the run dispatch from the annotation. Unlike `analyzer_for`, omitting it is *not* a compile error; `spec/unit_test/techs/registry_integrity_spec.cr` fails and names the class.
 3. `key` is also the tagger's runtime `name` — `Tagger#initialize` reads it back off the annotation, so do not assign `@name` yourself. `order` fixes the sequence plain taggers run in, which is user-visible: they run sequentially, `Endpoint#add_tag` appends, and nothing sorts tags before output. Values are spaced by 10, so append rather than renumber.

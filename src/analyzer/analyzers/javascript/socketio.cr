@@ -10,7 +10,7 @@ module Analyzer::Javascript
   # `io.of("/namespace")` scopes handlers to a namespace. Each inbound
   # event becomes one endpoint `ws://<namespace>/<event>` (default
   # namespace → `ws://<event>`), method "SEND", protocol "ws" — so the
-  # existing WebsocketTagger tags them. Outbound `emit`/`send` calls
+  # existing websocket tagger tags them. Outbound `emit`/`send` calls
   # (server → client) are not attack surface and are ignored.
   #
   # Per-file line scan (Socket.IO server setup and its handlers are
