@@ -1,2 +1,0 @@
-def connect():
-    return None

@@ -1,8 +1,10 @@
 from fastapi import APIRouter
 
+from app.schemas import ItemIn
+
 router = APIRouter()
 
 
-@router.get("/health")
-def health():
-    return {"status": "UP"}
+@router.post("/items")
+def create_item(item: ItemIn):
+    return item
