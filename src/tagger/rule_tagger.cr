@@ -174,6 +174,18 @@ module NoirTagRules
       raise RuleError.new("#{where}: '#{key}' is empty") if list.empty?
       subs = list.map { |c| compile(c, where) }
       key == "any" ? ->(ep : Endpoint) { subs.any?(&.call(ep)) } : ->(ep : Endpoint) { subs.all?(&.call(ep)) }
+    when "not"
+      inner = compile(value, where)
+      ->(ep : Endpoint) { !inner.call(ep) }
+    when "at_least"
+      h = string_keys(value.as_h? || raise(RuleError.new("#{where}: 'at_least' takes { count: N, of: [conditions] }")), %w[count of], "#{where} at_least")
+      count = h["count"]?.try(&.as_i?) || raise RuleError.new("#{where}: at_least 'count' must be an integer")
+      list = h["of"]?.try(&.as_a?) || raise RuleError.new("#{where}: at_least 'of' takes a list of conditions")
+      unless 1 <= count <= list.size
+        raise RuleError.new("#{where}: at_least count #{count} must be between 1 and the #{list.size} conditions in 'of'")
+      end
+      subs = list.map { |c| compile(c, where) }
+      ->(ep : Endpoint) { subs.count(&.call(ep)) >= count }
     when "path_segment"
       words = strings(value, key, where).map(&.downcase).to_set
       if bad = words.find(&.matches?(SEGMENT_SEP))

@@ -1,0 +1,45 @@
+# Inbound webhook / callback endpoints.
+key: webhook
+name: Webhook Tagger
+summary: Identifies inbound webhook and callback endpoints
+order: 130
+tag:
+  tagger: Webhook
+  description: Inbound webhook/callback endpoint; verify signature validation, replay protection, and source-IP trust, and review handlers for SSRF on outbound calls.
+match:
+  any:
+    - path_segment: [webhook, webhooks, ipn]
+    # A provider's signature / event header is conclusive on any route.
+    - param:
+        type: header
+        name: [x_hub_signature, x_hub_signature_256, x_signature, x_webhook_signature,
+               webhook_signature, x_hook_signature, x_event_key, x_github_event,
+               x_gitlab_event, x_gitlab_token, stripe_signature, paypal_transmission_sig,
+               x_razorpay_signature, x_paystack_signature, x_square_hmacsha256_signature,
+               x_slack_signature, x_line_signature, x_zm_signature, x_signature_ed25519,
+               x_telegram_bot_api_secret_token, x_shopify_hmac_sha256, x_shopify_topic,
+               x_wc_webhook_signature, x_wc_webhook_topic, x_twilio_signature,
+               x_twilio_email_event_webhook_signature, x_amz_sns_message_type,
+               x_mandrill_signature, svix_id, svix_signature, svix_timestamp]
+    # Generic hook words only on a state-changing method. `callback` next to
+    # an auth segment is the OAuth/SSO redirect, which the oauth tagger owns.
+    - all:
+        - method_not: safe
+        - any:
+            - path_segment: [hook, hooks, notify]
+            - all:
+                - path_segment: [callback, callbacks]
+                - not:
+                    path_segment: [oauth, oauth2, openid, oidc, auth, authentication,
+                                   sso, saml, login, signin]
+examples:
+  match:
+    - { method: POST, url: /api/webhooks/stripe }
+    - { url: /paypal/ipn }
+    - { method: POST, url: /events, params: [{ name: X-Hub-Signature-256, type: header }] }
+    - { method: POST, url: /payments/callback }
+    - { method: POST, url: /auth/hooks }
+  no_match:
+    - { url: /payments/callback }
+    - { method: POST, url: /oauth/callback }
+    - { method: POST, url: /events, params: [{ name: x_github_event, type: query }] }

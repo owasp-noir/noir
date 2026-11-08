@@ -114,6 +114,19 @@ describe NoirTagRules do
     endpoint.tags.map { |t| {t.name, t.tagger, t.description} }.should eq([{"sample", "Sample", "sample"}])
   end
 
+  it "negates with not" do
+    rule = NoirTagRules.parse(rule_yaml("{ path_segment: callback, not: { path_segment: oauth } }"), "t.yml")
+    tagged?(rule, Endpoint.new("/pay/callback", "POST")).should be_true
+    tagged?(rule, Endpoint.new("/oauth/callback", "POST")).should be_false
+  end
+
+  it "counts true conditions with at_least" do
+    rule = NoirTagRules.parse(rule_yaml("{ at_least: { count: 2, of: [{ path_segment: a }, { path_segment: b }, { param: { name: c } }] } }"), "t.yml")
+    tagged?(rule, Endpoint.new("/a", "GET")).should be_false
+    tagged?(rule, Endpoint.new("/a/b", "GET")).should be_true
+    tagged?(rule, Endpoint.new("/b", "GET", [Param.new("c", "", "query")])).should be_true
+  end
+
   describe "rejects at load time" do
     {
       "an unknown condition"              => rule_yaml("{ path_segmnt: admin }"),
@@ -127,6 +140,8 @@ describe NoirTagRules do
       "a non-integer min"                 => rule_yaml("{ param: { name: x, min: two } }"),
       "an example with an unknown field"  => rule_yaml("{ path_segment: x }") + "\nexamples: { match: [{ uri: /x }] }",
       "a non-mapping condition in a list" => rule_yaml("{ any: [admin] }"),
+      "an at_least count above its list"  => rule_yaml("{ at_least: { count: 3, of: [{ path_segment: a }, { path_segment: b }] } }"),
+      "an at_least with no count"         => rule_yaml("{ at_least: { of: [{ path_segment: a }] } }"),
     }.each do |what, yaml|
       it what do
         expect_raises(NoirTagRules::RuleError, /t\.yml/) { NoirTagRules.parse(yaml, "t.yml") }
