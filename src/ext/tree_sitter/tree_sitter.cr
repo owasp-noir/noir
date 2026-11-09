@@ -372,14 +372,6 @@ module Noir::TreeSitter
     i
   end
 
-  # Parses `source` with the JavaScript grammar and yields the
-  # root node. Covers `.js` / `.mjs` / `.cjs` files; the JSX
-  # superset is recognised too. Extractors that may see TypeScript
-  # call `parse_js_family`, which picks the grammar by extension.
-  def self.parse_javascript(source : String, &)
-    parse(source, LibTreeSitter.tree_sitter_javascript) { |root| yield root }
-  end
-
   # Parses `source` with the Rust grammar and yields the root node.
   # Covers `.rs` files. Used by the Rust framework analyzers
   # (axum, actix-web, rocket, …) and the Rust callee extractor.

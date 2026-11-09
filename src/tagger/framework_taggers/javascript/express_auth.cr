@@ -3,6 +3,7 @@ require "../../../models/endpoint"
 require "../../../miniparsers/js_handler_resolver"
 require "../../../utils/js_literal_scanner"
 require "../../../utils/top_level_split"
+require "./js_object_literal"
 require "../../../utils/url_path"
 require "../../../models/code_locator"
 require "../../../analyzer/analyzers/javascript/express_constants"
@@ -1328,7 +1329,7 @@ class ExpressAuthTagger < FrameworkTagger
     def_path = handler.path || return {nil, false}
     source = read_file(def_path) || return {nil, false}
     object = object_literal_at(source, handler.line) || return {nil, false}
-    expr = object_property(object, members[0]) || return {nil, false}
+    expr = Noir::JSObjectLiteral.property(object, members[0]) || return {nil, false}
     jwt_expr_guard(expr, source, "#{ref[1]}.#{members[0]}")
   end
 
@@ -1401,16 +1402,5 @@ class ExpressAuthTagger < FrameworkTagger
     abs = idx + brace
     close = Noir::JSLiteralScanner.find_matching_brace(content, abs) || return
     content[abs..close]
-  end
-
-  private def object_property(object_text : String, prop : String) : String?
-    text = object_text.strip
-    return unless text.starts_with?('{') && text.ends_with?('}')
-    Noir::TopLevelSplit.split(text[1...-1], ',', Noir::TopLevelSplit::Rules::JS_POSITIONAL_ARGS).each do |part|
-      if found = part.match(/\A\s*['"]?#{Regex.escape(prop)}['"]?\s*:\s*(.*)\z/m)
-        return found[1].strip
-      end
-    end
-    nil
   end
 end

@@ -12,11 +12,7 @@ module Detector::Typescript
     IMPORT_RE  = /(?:\bfrom|\brequire\s*\()\s*['"]@tsed\/(?:common|schema|di|platform-[\w-]+)['"]/
 
     def detect(filename : String, file_contents : String) : Bool
-      if File.basename(filename) == "package.json"
-        return content_matches?(file_contents, PACKAGE_RE)
-      end
-
-      filename.ends_with?(".ts") && content_matches?(file_contents, IMPORT_RE)
+      package_json_or_ts_import?(filename, file_contents, PACKAGE_RE, IMPORT_RE)
     end
   end
 end

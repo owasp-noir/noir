@@ -79,7 +79,7 @@ module Analyzer::Javascript
       end
 
       # Remove file extension
-      relative_path = strip_extension(relative_path)
+      relative_path = strip_extension(relative_path, EXTENSIONS)
 
       # Check for HTTP method-specific files (e.g., users.get.ts)
       http_methods = ["get", "post", "put", "delete", "patch", "head", "options"]
@@ -200,13 +200,6 @@ module Analyzer::Javascript
       end
 
       result
-    end
-
-    private def strip_extension(path : String) : String
-      EXTENSIONS.each do |ext|
-        return path[0..(path.size - ext.size - 1)] if path.ends_with?(ext)
-      end
-      path
     end
 
     # An unnamed catch-all (`[...].ts`) is h3's `_` param.

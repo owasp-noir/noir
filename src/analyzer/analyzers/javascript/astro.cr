@@ -119,19 +119,12 @@ module Analyzer::Javascript
     # `[...slug]` into `{id}` / `{slug}` in place, so `[id].json`
     # keeps its suffix.
     private def url_for(relative : String) : String
-      stripped = strip_extension(relative)
+      stripped = strip_extension(relative, EXTENSIONS)
       segments = stripped.split("/").reject(&.empty?).map { |seg| seg.gsub(FILE_ROUTE_PARAM_RE) { "{#{$1}}" } }
       url = "/" + segments.join("/")
       url = url.sub(/\/index$/, "")
       url = "/" if url.empty?
       url
-    end
-
-    private def strip_extension(path : String) : String
-      EXTENSIONS.each do |ext|
-        return path[0..(path.size - ext.size - 1)] if path.ends_with?(ext)
-      end
-      path
     end
   end
 end
