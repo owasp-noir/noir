@@ -1000,11 +1000,6 @@ module Analyzer::Swift
       body_after_opening_brace(lines, masked_lines, opening_index, opening_brace)
     end
 
-    private def strip_code_line(line : String) : String
-      stripped, _, _ = Noir::SwiftCalleeExtractor.strip_non_code_with_state(line, 0, false)
-      stripped
-    end
-
     # Strip comments and string contents across the whole file so brace,
     # paren and method scanning never trips over `}` inside a string or a
     # multi-line comment.

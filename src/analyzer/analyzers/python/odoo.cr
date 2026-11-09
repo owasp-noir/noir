@@ -22,13 +22,6 @@ module Analyzer::Python
     PROTECTED_AUTH = %w[user bearer]
     TAGGER         = "odoo_analyzer"
 
-    def analyze
-      ordered_parallel_analyze(python_source_files) do |path|
-        analyze_file(path, python_base_path_for(path))
-      end.each { |endpoints| result.concat(endpoints) }
-      result
-    end
-
     private def analyze_file(path : ::String, base_path : ::String) : Array(Endpoint)?
       source = read_file_content(path)
       return unless source.includes?("route") && source.matches?(Detector::Python::Odoo::IMPORT_RE)

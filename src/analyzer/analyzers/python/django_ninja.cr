@@ -546,7 +546,7 @@ module Analyzer::Python
         inst.edges.each do |edge|
           child = edge.child_key
           next unless child
-          child_prefix = combine_paths(prefix, normalize_segment(edge.prefix))
+          child_prefix = combine_router_prefixes(prefix, normalize_segment(edge.prefix))
           queue << {child, child_prefix}
         end
       end
@@ -563,7 +563,7 @@ module Analyzer::Python
 
     private def emit_instance(inst : NinjaInstance, prefix : ::String) : Nil
       inst.operations.each do |op|
-        full_path = normalize_ninja_path(combine_paths(prefix, op.path))
+        full_path = normalize_ninja_path(combine_router_prefixes(prefix, op.path))
         path_param_names = ninja_path_param_names(full_path)
         params = reconcile_params(op.params, path_param_names)
 
@@ -623,20 +623,6 @@ module Analyzer::Python
       seg = segment.strip
       return "" if seg.empty?
       seg.starts_with?("/") ? seg : "/#{seg}"
-    end
-
-    # Join two URL fragments, collapsing the slash at the boundary. A
-    # trailing slash on `own` is preserved (django-ninja keeps `"/"`
-    # operation paths trailing-slashed).
-    private def combine_paths(parent : ::String, own : ::String) : ::String
-      return own if parent.empty?
-      return parent if own.empty?
-      normalized_parent = parent.ends_with?("/") ? parent[0..-2] : parent
-      if own.starts_with?("/")
-        "#{normalized_parent}#{own}"
-      else
-        "#{normalized_parent}/#{own}"
-      end
     end
 
     private def dedupe_params(params : Array(Param)) : Array(Param)

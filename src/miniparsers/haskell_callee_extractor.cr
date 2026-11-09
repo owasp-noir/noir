@@ -131,12 +131,6 @@ module Noir::HaskellCalleeExtractor
     end
   end
 
-  private def scan_candidates(line : String, regex : Regex, candidates : Array(Tuple(Int32, String)))
-    line.scan(regex) do |match|
-      candidates << {match.begin(1) || 0, match[1]}
-    end
-  end
-
   private def assignment_lhs?(line : String, position : Int32, name : String) : Bool
     rest = line[(position + name.size)..]? || ""
     !!rest.match(/\A\s*(?:<-|=|::)/)
@@ -265,14 +259,6 @@ module Noir::HaskellCalleeExtractor
       index += 1
     end
     index
-  end
-
-  private def append_blanks(stripped : String::Builder, chars : Array(Char), start : Int32, finish : Int32)
-    index = start
-    while index < finish && index < chars.size
-      stripped << (chars[index] == '\n' ? '\n' : ' ')
-      index += 1
-    end
   end
 
   private def skip_block_comment(chars : Array(Char), start : Int32) : Int32

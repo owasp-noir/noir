@@ -1667,10 +1667,6 @@ module Analyzer::Rust
       "#{a.rstrip('/')}/#{b.lstrip('/')}"
     end
 
-    private def ensure_leading_slash(p : String) : String
-      p.starts_with?("/") ? p : "/#{p}"
-    end
-
     # Walk `node`'s children pairing each `attribute_item` with the
     # `function_item` it decorates (skipping doc comments / other attrs).
     private def each_attribute_pair(node : LibTreeSitter::TSNode, &block : LibTreeSitter::TSNode, LibTreeSitter::TSNode ->)

@@ -1374,13 +1374,6 @@ module Analyzer::Rust
       collect_header_and_cookie_params(body_node, source, endpoint)
     end
 
-    private def extract_function_params_from_text(params_text : String?, endpoint : Endpoint, path : String? = nil)
-      return unless params_text
-      params_text.split(',').each do |param_text|
-        extract_function_param_text(param_text, endpoint, path)
-      end
-    end
-
     # An extractor's fields are the request params: `Json<CreatePost>` reads
     # `CreatePost`'s wire field names from the body (`RustEngine#push_extractor_params`).
     private def extract_function_param_text(text : String, endpoint : Endpoint, path : String? = nil,

@@ -41,10 +41,6 @@ module Noir::ScalaCalleeExtractor
     entries.sort_by(&.[0]).map(&.[1]).uniq!
   end
 
-  def strip_comment_preserving_strings(line : String) : String
-    Noir::ScalaLexer.new(line).code_lines.first? || ""
-  end
-
   def strip_non_code_with_state(line : String,
                                 block_comment_depth : Int32,
                                 in_multiline_string : Bool,

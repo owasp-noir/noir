@@ -222,22 +222,6 @@ module Analyzer::Rust
       combined.empty? ? "/" : combined
     end
 
-    private def ensure_leading_slash(route_path : String) : String
-      route_path.starts_with?("/") ? route_path : "/#{route_path}"
-    end
-
-    private def first_identifier_argument(call : LibTreeSitter::TSNode, source : String) : String?
-      args = Noir::TreeSitter.field(call, "arguments")
-      return unless args
-      Noir::TreeSitter.each_named_arg(args) do |child|
-        case Noir::TreeSitter.node_type(child)
-        when "identifier", "scoped_identifier"
-          return Noir::TreeSitter.node_text(child, source)
-        end
-      end
-      nil
-    end
-
     # Loco analysers are scoped to `pub async fn` items only — the
     # legacy regex `pub\s+async\s+fn\s+(\w+)` enforced both modifiers.
     # tree-sitter exposes them as children of the `function_item`'s

@@ -506,14 +506,6 @@ module Noir::CppCalleeExtractor
     limit - 1
   end
 
-  private def skip_line_comment(source : String, index : Int32, limit : Int32) : Int32
-    i = index
-    while i < limit && source.byte_at(i).unsafe_chr != '\n'
-      i += 1
-    end
-    i
-  end
-
   private def skip_block_comment(source : String, index : Int32, limit : Int32) : Int32
     i = index + 2
     while i < limit

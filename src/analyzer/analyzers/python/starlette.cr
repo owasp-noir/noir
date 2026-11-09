@@ -315,13 +315,6 @@ module Analyzer::Python
       nil
     end
 
-    private def static_route_path(path : ::String) : ::String
-      normalized = path.gsub(/\/+/, "/")
-      normalized = "/#{normalized}" unless normalized.starts_with?("/")
-      normalized = normalized[0...-1] if normalized.ends_with?("/") && normalized != "/"
-      normalized == "/" ? "/*" : "#{normalized}/*"
-    end
-
     private def build_mounted_route_list_prefixes(lines : Array(::String),
                                                   app_prefixes : Hash(::String, Array(::String)),
                                                   inline_route_lists : Hash(::String, Tuple(Int32, Int32))) : Hash(::String, Array(::String))

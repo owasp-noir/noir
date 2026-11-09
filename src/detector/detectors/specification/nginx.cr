@@ -39,7 +39,7 @@ module Detector::Specification
       # executable directives instead of requiring a top-level server/http block.
       server = includes = false
       content.each_line do |raw|
-        line = strip_template_actions(strip_comment(raw))
+        line = Nginx.strip_template_actions(Nginx.strip_comment(raw))
         return true if line.matches?(LOCATION_RE)
         server ||= line.matches?(SERVER_RE)
         includes ||= line.matches?(INCLUDE_RE)
@@ -47,7 +47,8 @@ module Detector::Specification
       server && includes
     end
 
-    private def strip_comment(line : String) : String
+    # Shared with `Analyzer::Specification::Nginx`.
+    def self.strip_comment(line : String) : String
       previous = '\0'
       line.each_char_with_index do |ch, idx|
         if ch == '#' && (idx == 0 || previous.whitespace? || previous.in?(';', '{', '}'))
@@ -58,7 +59,7 @@ module Detector::Specification
       line
     end
 
-    private def strip_template_actions(line : String) : String
+    def self.strip_template_actions(line : String) : String
       line.gsub(/\{\{.*?\}\}/, "")
     end
   end

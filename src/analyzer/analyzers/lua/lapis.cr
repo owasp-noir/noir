@@ -260,7 +260,7 @@ module Analyzer::Lua
     # carries no inline verbs (they live in the required module), so it
     # correctly falls through to the full method set.
     private def match_methods(cleaned : String, route_offset : Int32, url_end : Int32) : Array(String)
-      search_limit, _ = route_call_limits(cleaned, route_offset, url_end)
+      search_limit, _ = Noir::LuaCalleeExtractor.route_call_limits(cleaned, route_offset, url_end)
       region = cleaned[route_offset...search_limit]? || ""
       if region.includes?("respond_to")
         verbs = scan_respond_to_verbs(region)
@@ -641,7 +641,7 @@ module Analyzer::Lua
                                    route_offset : Int32,
                                    after_url : Int32,
                                    handler_bodies : Hash(String, Noir::LuaCalleeExtractor::FunctionBody)) : Array(Noir::LuaCalleeExtractor::Entry)
-      search_limit, body_limit = route_call_limits(content, route_offset, after_url)
+      search_limit, body_limit = Noir::LuaCalleeExtractor.route_call_limits(content, route_offset, after_url)
       if body = Noir::LuaCalleeExtractor.extract_function_after(content, after_url, search_limit, body_limit)
         body_text, start_line = body
         return Noir::LuaCalleeExtractor.callees_for_body(body_text, path, start_line)
@@ -691,31 +691,6 @@ module Analyzer::Lua
       end
 
       [] of Noir::LuaCalleeExtractor::Entry
-    end
-
-    private def route_call_limits(content : String, route_offset : Int32, after_url : Int32) : Tuple(Int32, Int32)
-      if open_paren = first_open_paren_before(content, route_offset, after_url)
-        if close_paren = Noir::LuaCalleeExtractor.find_matching_delimiter(content, open_paren, '(', ')')
-          return {close_paren, close_paren}
-        end
-      end
-
-      line_end = content.index('\n', after_url) || content.size
-      {line_end, content.size}
-    end
-
-    private def first_open_paren_before(content : String, start_index : Int32, end_index : Int32) : Int32?
-      # `String#[]` re-walks from byte 0 on every call once the source
-      # contains any multi-byte char, turning this scan O(n^2); index a
-      # materialized Array(Char) instead (O(1) per access).
-      chars = content.chars
-      cursor = start_index
-      while cursor < end_index && cursor < chars.size
-        return cursor if chars[cursor] == '('
-        cursor += 1
-      end
-
-      nil
     end
 
     private def string_handler_after(content : String, start_index : Int32, limit : Int32) : String?

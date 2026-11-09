@@ -68,7 +68,7 @@ module Analyzer::Php
 
         details = Details.new(PathInfo.new(file_path, route_line))
         endpoint = Endpoint.new(full_path, method, params, details.dup)
-        attach_route_callees(endpoint, handler_body, file_path, body_start_line) if include_callee
+        attach_handler_callees(endpoint, handler_body, file_path, body_start_line) if include_callee
         endpoints << endpoint
         pos = next_pos
       end
@@ -100,7 +100,7 @@ module Analyzer::Php
 
           details = Details.new(PathInfo.new(file_path, route_line))
           endpoint = Endpoint.new(full_path, http_method, params, details.dup)
-          attach_route_callees(endpoint, handler_body, file_path, body_start_line) if include_callee
+          attach_handler_callees(endpoint, handler_body, file_path, body_start_line) if include_callee
           endpoints << endpoint
         end
         pos = next_pos
@@ -225,13 +225,6 @@ module Analyzer::Php
 
     private def inside_group_body?(pos : Int32, groups : Array(RouteGroup)) : Bool
       groups.any? { |group| pos >= group.body_start && pos < group.body_end }
-    end
-
-    private def attach_route_callees(endpoint : Endpoint, body : String?, file_path : String, start_line : Int32?)
-      return unless body && start_line
-
-      callees = Noir::PhpCalleeExtractor.callees_for_body(body, file_path, start_line)
-      attach_php_callees(endpoint, callees)
     end
 
     private def extract_methods_from_array(methods_str : String) : Array(String)

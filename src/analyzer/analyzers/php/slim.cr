@@ -179,13 +179,6 @@ module Analyzer::Php
       endpoints
     end
 
-    private def attach_handler_callees(endpoint : Endpoint, body : String?, file_path : String, start_line : Int32?)
-      return unless body && start_line
-
-      callees = Noir::PhpCalleeExtractor.callees_for_body(body, file_path, start_line)
-      attach_php_callees(endpoint, callees)
-    end
-
     # Locate the first `$var->group("/prefix", function(...) { ... })` call
     # in the given content and return its span + extracted prefix.
     private def find_group_call(content : String) : Tuple(Int32, Int32, Int32, Int32, String)?

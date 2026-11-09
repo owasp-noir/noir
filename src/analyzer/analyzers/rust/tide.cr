@@ -228,12 +228,6 @@ module Analyzer::Rust
       result
     end
 
-    private def extract_path_params(route : String, endpoint : Endpoint)
-      route.scan(/:(\w+)/) do |match|
-        endpoint.push_param(Param.new(match[1], "", "path"))
-      end
-    end
-
     # The handler argument is either an identifier (function name we
     # can look up in the file's function index), a closure (no extra
     # param extraction — closures rarely declare `req.query` etc.),

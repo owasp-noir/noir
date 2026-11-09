@@ -1575,13 +1575,6 @@ module Analyzer::Python
       static_url_match ? static_url_match[1] : nil
     end
 
-    private def static_route_path(path : ::String) : ::String
-      normalized = path.gsub(/\/+/, "/")
-      normalized = "/#{normalized}" unless normalized.starts_with?("/")
-      normalized = normalized[0...-1] if normalized.ends_with?("/") && normalized != "/"
-      normalized == "/" ? "/*" : "#{normalized}/*"
-    end
-
     # Flask-AppBuilder composes a URL from a class-level base and the
     # method-level `@expose(...)` suffix; reading only the suffix reports
     # `/data` where the route is `/api/v1/chart/data`. The base is

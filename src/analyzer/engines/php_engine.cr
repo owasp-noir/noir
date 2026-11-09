@@ -249,6 +249,13 @@ module Analyzer::Php
       Noir::PhpCalleeExtractor.attach_to(endpoint, callees)
     end
 
+    # Callees of an inline handler body, when there is one.
+    protected def attach_handler_callees(endpoint : Endpoint, body : String?, file_path : String, start_line : Int32?)
+      return unless body && start_line
+
+      attach_php_callees(endpoint, Noir::PhpCalleeExtractor.callees_for_body(body, file_path, start_line))
+    end
+
     protected def attach_method_callees(endpoint : Endpoint, method_body : Tuple(String, Int32)?, path : String)
       return unless method_body
 

@@ -373,22 +373,6 @@ module Analyzer::Python
       names
     end
 
-    # Concatenate two URL-prefix segments, normalising the
-    # boundary so `combine_router_prefixes("/api/v1", "/users")`
-    # gives `/api/v1/users` and `combine_router_prefixes("",
-    # "/users")` gives `/users`. Trailing slashes are dropped on
-    # the parent so we don't end up with `/api/v1//users`.
-    private def combine_router_prefixes(parent : ::String, own : ::String) : ::String
-      return own if parent.empty?
-      return parent if own.empty?
-      normalized_parent = parent.ends_with?("/") ? parent[0..-2] : parent
-      if own.starts_with?("/")
-        "#{normalized_parent}#{own}"
-      else
-        "#{normalized_parent}/#{own}"
-      end
-    end
-
     private def find_fastapi_imported_modules(app_base_path : ::String,
                                               file_path : ::String,
                                               source : ::String? = nil) : Hash(::String, Tuple(::String, Int32))
@@ -1410,13 +1394,6 @@ module Analyzer::Python
     # call-site convention, not a splitting rule.
     private def split_python_top_level(input : ::String, delimiter : Char) : Array(::String)
       Noir::TopLevelSplit.split(input, delimiter, Noir::TopLevelSplit::Rules::SHARED_DEPTH_RAW)
-    end
-
-    private def static_route_path(path : ::String) : ::String
-      normalized = path.gsub(/\/+/, "/")
-      normalized = "/#{normalized}" unless normalized.starts_with?("/")
-      normalized = normalized[0...-1] if normalized.ends_with?("/") && normalized != "/"
-      normalized == "/" ? "/*" : "#{normalized}/*"
     end
 
     # The Python identifier a FastAPI handler declares is not always the name

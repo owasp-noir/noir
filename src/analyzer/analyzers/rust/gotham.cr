@@ -150,10 +150,6 @@ module Analyzer::Rust
       combined.empty? ? "/" : combined
     end
 
-    private def ensure_leading_slash(route_path : String) : String
-      route_path.starts_with?("/") ? route_path : "/#{route_path}"
-    end
-
     # Route terminals: `.to(handler)` binds a handler fn; `.to_file` /
     # `.to_dir` / `.to_new_handler` bind static/dynamic handlers (no fn
     # name, but still a real route).
@@ -325,12 +321,6 @@ module Analyzer::Rust
         cursor = mfr[1]
       end
       [] of String
-    end
-
-    private def extract_path_params(route : String, endpoint : Endpoint)
-      route.scan(/:(\w+)/) do |match|
-        endpoint.push_param(Param.new(match[1], "", "path"))
-      end
     end
 
     # Header / cookie / `header::Name` extraction from the handler

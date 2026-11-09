@@ -255,13 +255,6 @@ module Analyzer::Php
       endpoints
     end
 
-    private def attach_handler_callees(endpoint : Endpoint, body : String?, file_path : String, start_line : Int32?)
-      return unless body && start_line
-
-      callees = Noir::PhpCalleeExtractor.callees_for_body(body, file_path, start_line)
-      attach_php_callees(endpoint, callees)
-    end
-
     private def extract_handler_body_with_end(offsets : Noir::CharOffsets, pos : Int32) : Tuple(String?, Int32, Int32?)
       size = offsets.content.size
       return {nil, pos, nil} unless pos < size

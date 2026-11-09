@@ -238,12 +238,6 @@ module Analyzer::Rust
       result.starts_with?("/") ? result : "/#{result}"
     end
 
-    def extract_path_params(route : String, endpoint : Endpoint)
-      route.scan(/:(\w+)/) do |match|
-        endpoint.push_param(Param.new(match[1], "", "path"))
-      end
-    end
-
     OAI_NAME_RE  = /#\[\s*oai\s*\([^\]]*\bname\s*=\s*"([^"]+)"/
     OAI_PARAM_RE = /(?:^|\])\s*(?:mut\s+)?([A-Za-z_]\w*)\s*:\s*(?:[\w:]*::)?(Query|Header|Cookie|CookiePrivate|CookieSigned)\s*</
 
@@ -317,20 +311,6 @@ module Analyzer::Rust
           end
         end
       end
-    end
-
-    private def first_identifier_argument(call : LibTreeSitter::TSNode, source : String) : String?
-      args = Noir::TreeSitter.field(call, "arguments")
-      return unless args
-      Noir::TreeSitter.each_named_arg(args) do |child|
-        case Noir::TreeSitter.node_type(child)
-        when "identifier"
-          return Noir::TreeSitter.node_text(child, source)
-        when "scoped_identifier"
-          return Noir::TreeSitter.node_text(child, source)
-        end
-      end
-      nil
     end
 
     private def string_content_from_string_literal(node : LibTreeSitter::TSNode, source : String) : String?

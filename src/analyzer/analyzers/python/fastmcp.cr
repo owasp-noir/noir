@@ -20,13 +20,6 @@ module Analyzer::Python
     ALIAS_RE     = /^\s*from\s+(?:fastmcp|mcp\.server\.fastmcp)(?:\.[\w.]+)?\s+import\s+\(?[^)]*?\bFastMCP\s+as\s+([A-Za-z_]\w*)/m
     CUSTOM_ROUTE = {"custom_route" => "GET"}
 
-    def analyze
-      ordered_parallel_analyze(python_source_files) do |path|
-        analyze_file(path, python_base_path_for(path))
-      end.each { |endpoints| result.concat(endpoints) }
-      result
-    end
-
     private def analyze_file(path : ::String, base_path : ::String) : Array(Endpoint)?
       source = read_file_content(path)
       return unless source.includes?("custom_route") && source.matches?(Detector::Python::FastMCP::IMPORT_RE)

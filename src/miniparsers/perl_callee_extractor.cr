@@ -357,21 +357,6 @@ module Noir::PerlCalleeExtractor
     stripped.to_s
   end
 
-  # `index` is a character offset (matches `source.chars` / `String#size`
-  # indexing), not a UTF-8 byte offset.
-  def line_number_for(chars : Array(Char), index : Int32) : Int32
-    return 1 if index <= 0
-
-    limit = index > chars.size ? chars.size : index
-    count = 1
-    i = 0
-    while i < limit
-      count += 1 if chars[i] == '\n'
-      i += 1
-    end
-    count
-  end
-
   private def scan_line(line : String, file_path : String, line_number : Int32, entries : Array(Entry))
     candidates = [] of Tuple(Int32, String)
 
@@ -387,12 +372,6 @@ module Noir::PerlCalleeExtractor
       next if declaration_name?(line, position)
 
       entries << {name, file_path, line_number}
-    end
-  end
-
-  private def scan_candidates(line : String, regex : Regex, candidates : Array(Tuple(Int32, String)))
-    line.scan(regex) do |match|
-      candidates << {match.begin(1) || 0, match[1]}
     end
   end
 
@@ -537,23 +516,6 @@ module Noir::PerlCalleeExtractor
     !identifier_part?(before) && !identifier_part?(after)
   end
 
-  private def read_identifier(chars : Array(Char), index : Int32, limit : Int32) : Tuple(String, Int32)
-    cursor = index
-    while cursor < limit && cursor < chars.size && identifier_part?(chars[cursor])
-      cursor += 1
-    end
-
-    {chars[index...cursor].join, cursor}
-  end
-
-  private def identifier_start?(char : Char) : Bool
-    char.ascii_letter? || char == '_'
-  end
-
-  private def identifier_part?(char : Char) : Bool
-    char.ascii_alphanumeric? || char == '_'
-  end
-
   private def comment_start?(chars : Array(Char), index : Int32) : Bool
     return false unless chars[index] == '#'
     # `$#array`, `$#{$ref}` and `$#$ref` are the last-index sigil, not a
@@ -626,34 +588,6 @@ module Noir::PerlCalleeExtractor
     when '{'                      then '}'
     when '<'                      then '>'
     when '"', '\'', '/', '|', '!' then open_char
-    end
-  end
-
-  private def skip_short_string(chars : Array(Char), index : Int32, limit : Int32) : Int32
-    quote = chars[index]
-    cursor = index + 1
-    escaped = false
-
-    while cursor < limit && cursor < chars.size
-      char = chars[cursor]
-      if escaped
-        escaped = false
-      elsif char == '\\'
-        escaped = true
-      elsif char == quote
-        return cursor + 1
-      end
-      cursor += 1
-    end
-
-    limit
-  end
-
-  private def append_blanks(builder : String::Builder, chars : Array(Char), start_index : Int32, finish_index : Int32)
-    index = start_index
-    while index < finish_index && index < chars.size
-      builder << (chars[index] == '\n' ? '\n' : ' ')
-      index += 1
     end
   end
 

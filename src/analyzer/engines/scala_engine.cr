@@ -78,18 +78,9 @@ module Analyzer::Scala
       body_after_scala_opening_brace(code_lines, structural_lines, start_index, opening_brace)
     end
 
-    protected def scala_structural_line(line : String) : String
-      Noir::ScalaLexer.new(line).masked_lines.first? || ""
-    end
-
-    protected def scala_code_line(line : String) : String
-      Noir::ScalaLexer.new(line).code_lines.first? || ""
-    end
-
-    # Whole-file masked views (via `Noir::ScalaLexer`). Unlike the per-line
-    # `scala_code_line` / `scala_structural_line`, these thread block-comment
-    # depth and triple-quote state across the WHOLE file, so route-shaped DSL
-    # inside a `"""…"""` string or a multi-line `/* … */` comment no longer
+    # Whole-file masked views (via `Noir::ScalaLexer`). These thread
+    # block-comment depth and triple-quote state across the WHOLE file, so
+    # route-shaped DSL inside a `"""…"""` string or a multi-line `/* … */` comment no longer
     # leaks as a phantom endpoint. Index 1:1 with `content.lines`; analyzers
     # that split with `content.split('\n')` should guard the last (possibly
     # empty) line with `[i]? || ""`. Build once per file and reuse.
@@ -114,10 +105,6 @@ module Analyzer::Scala
     # comment inside `parameter(/* x */ "q")` cannot hide the literal.
     protected def scala_code_text(lexer : Noir::ScalaLexer) : String
       lexer.code.join
-    end
-
-    private def scala_structural_opening_brace(line : String) : Int32?
-      scala_structural_line(line).index('{')
     end
 
     private def body_after_scala_opening_brace(code_lines : Array(String),
