@@ -7,6 +7,7 @@ require "./java_route_extractor_ts"
 require "../utils/text_file"
 require "../utils/jvm_literal"
 require "../utils/jackson_naming"
+require "./jvm_ts_helpers"
 
 module Noir
   # Tree-sitter-backed parameter extractor for Java/Spring.
@@ -24,6 +25,7 @@ module Noir
   # concern out of here keeps the extractor source-scoped and testable.
   module TreeSitterJavaParameterExtractor
     extend self
+    extend JvmTsHelpers::Modifiers
 
     # Primitive / stdlib types whose name we emit directly as a
     # parameter. Everything else is looked up in `class_fields` for
@@ -755,15 +757,6 @@ module Noir
         next unless n
         yield simple_name(Noir::TreeSitter.node_text(n, source))
       end
-    end
-
-    private def find_modifiers(decl : LibTreeSitter::TSNode) : LibTreeSitter::TSNode?
-      count = LibTreeSitter.ts_node_named_child_count(decl)
-      count.times do |i|
-        child = LibTreeSitter.ts_node_named_child(decl, i.to_u32)
-        return child if Noir::TreeSitter.node_type(child) == "modifiers"
-      end
-      nil
     end
 
     private def simple_name(full : String) : String

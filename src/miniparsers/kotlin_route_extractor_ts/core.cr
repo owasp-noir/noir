@@ -1,6 +1,7 @@
 require "../../utils/url_path"
 require "../../ext/tree_sitter/tree_sitter"
 require "../kotlin_source_mask"
+require "../jvm_ts_helpers"
 
 module Noir
   # Tree-sitter-backed Kotlin route extractor.
@@ -21,6 +22,9 @@ module Noir
   # (kotlin_ktor_route_extractor_ts.cr).
   module TreeSitterKotlinRouteExtractor
     extend self
+    extend JvmTsHelpers::Modifiers
+    extend JvmTsHelpers::KotlinDecls
+    extend JvmTsHelpers::KotlinNavigation
 
     # Spring mapping annotation names → HTTP verb. `nil` means look at
     # the annotation's `method =` argument. Same table as the Java
@@ -425,15 +429,6 @@ module Noir
       {class_name, join_prefixes(outer_prefixes, class_mapping_prefixes(node, source, pending, string_constants, local_string_constants))}
     end
 
-    private def abstract_type?(decl : LibTreeSitter::TSNode, source : String) : Bool
-      if mods = find_modifiers(decl)
-        Noir::TreeSitter.each_named_child(mods) do |child|
-          return true if Noir::TreeSitter.node_text(child, source) == "abstract"
-        end
-      end
-      false
-    end
-
     private def recover_split_constructor_prefix(node : LibTreeSitter::TSNode,
                                                  source : String,
                                                  outer_prefixes : Array(String),
@@ -695,37 +690,6 @@ module Noir
         return true if ty == "prefix_expression" && prefix_expression_has_annotation?(child)
       end
       false
-    end
-
-    # Kotlin's `class_declaration` names its class via a child
-    # `type_identifier`. Nested `object_declaration` / `interface_declaration`
-    # follow the same shape.
-    private def type_identifier_text(decl : LibTreeSitter::TSNode, source : String) : String
-      count = LibTreeSitter.ts_node_named_child_count(decl)
-      count.times do |i|
-        child = LibTreeSitter.ts_node_named_child(decl, i.to_u32)
-        if Noir::TreeSitter.node_type(child) == "type_identifier"
-          return Noir::TreeSitter.node_text(child, source)
-        end
-      end
-      ""
-    end
-
-    private def leaf_type_name(node : LibTreeSitter::TSNode, source : String) : String
-      case Noir::TreeSitter.node_type(node)
-      when "type_identifier"
-        Noir::TreeSitter.node_text(node, source)
-      else
-        result = ""
-        Noir::TreeSitter.each_named_child(node) do |child|
-          name = leaf_type_name(child, source)
-          unless name.empty?
-            result = name
-            break
-          end
-        end
-        result
-      end
     end
 
     # The class body is a `class_body` named child (not exposed as a

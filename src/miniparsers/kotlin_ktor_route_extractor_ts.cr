@@ -2,6 +2,7 @@ require "../ext/tree_sitter/tree_sitter"
 require "../models/endpoint"
 require "./kotlin_callee_extractor"
 require "./kotlin_source_mask"
+require "./jvm_ts_helpers"
 
 module Noir
   # Tree-sitter-backed Ktor DSL route extractor.
@@ -42,6 +43,7 @@ module Noir
   #   * `install(plugin) { ... }` plugin scoping that affects routing.
   module TreeSitterKotlinKtorRouteExtractor
     extend self
+    extend JvmTsHelpers::KotlinNavigation
 
     HTTP_VERB_NAMES = {
       "get"     => "GET",
@@ -162,10 +164,6 @@ module Noir
       getter ctor_params : Array(ResourceParam)
 
       def initialize(@simple_name, @lexical_name, @own_path, @ctor_params)
-      end
-
-      def ctor_param_types : Array(String)
-        @ctor_params.map(&.type_name)
       end
     end
 
@@ -1472,23 +1470,6 @@ module Noir
       else
         chain << ""
       end
-    end
-
-    private def last_navigation_segment(node : LibTreeSitter::TSNode, source : String) : String
-      result = ""
-      Noir::TreeSitter.each_named_child(node) do |child|
-        case Noir::TreeSitter.node_type(child)
-        when "simple_identifier"
-          result = Noir::TreeSitter.node_text(child, source)
-        when "navigation_suffix"
-          Noir::TreeSitter.each_named_child(child) do |sub|
-            if Noir::TreeSitter.node_type(sub) == "simple_identifier"
-              result = Noir::TreeSitter.node_text(sub, source)
-            end
-          end
-        end
-      end
-      result
     end
 
     # `["x"]` → `"x"`. Anything else (interpolated string, identifier

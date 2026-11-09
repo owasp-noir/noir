@@ -7,10 +7,12 @@ require "../../../miniparsers/java_route_extractor_ts"
 require "../../../miniparsers/kotlin_route_extractor_ts"
 require "../../../utils/url_path"
 require "../../../utils/top_level_split"
+require "../../../miniparsers/jvm_ts_helpers"
 
 module Analyzer::Java
   class Armeria < Analyzer
     analyzer_for "java_armeria"
+    include Noir::JvmTsHelpers::Modifiers
 
     # Anchor only — the chain body is bounded by a depth-aware scan so
     # semicolons inside lambda/anonymous-class bodies do not truncate
@@ -903,23 +905,6 @@ module Analyzer::Java
       return [] of Tuple(String, String, Int32) unless body
 
       Noir::JavaCalleeExtractor.callees_in_body(body, content, path)
-    end
-
-    private def find_modifiers(decl : LibTreeSitter::TSNode) : LibTreeSitter::TSNode?
-      count = LibTreeSitter.ts_node_named_child_count(decl)
-      count.times do |i|
-        child = LibTreeSitter.ts_node_named_child(decl, i.to_u32)
-        return child if Noir::TreeSitter.node_type(child) == "modifiers"
-      end
-      nil
-    end
-
-    private def simple_annotation_name(full : String) : String
-      if idx = full.rindex('.')
-        full[(idx + 1)..]
-      else
-        full
-      end
     end
 
     private def annotation_values(ann : LibTreeSitter::TSNode,

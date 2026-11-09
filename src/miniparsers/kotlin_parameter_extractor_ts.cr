@@ -7,6 +7,7 @@ require "./kotlin_source_mask"
 require "../utils/text_file"
 require "../utils/jvm_literal"
 require "../utils/jackson_naming"
+require "./jvm_ts_helpers"
 
 module Noir
   # Tree-sitter-backed parameter extractor for Kotlin Spring.
@@ -41,6 +42,8 @@ module Noir
   #   * Meta-annotations (custom annotations composing `@RequestMapping`).
   module TreeSitterKotlinParameterExtractor
     extend self
+    extend JvmTsHelpers::Modifiers
+    extend JvmTsHelpers::KotlinDecls
 
     # Scalar types Spring binds from a single request value. Type names
     # are first resolved to their leaf identifier by `leaf_type_name`
@@ -537,15 +540,6 @@ module Noir
       end
     end
 
-    private def abstract_type?(decl : LibTreeSitter::TSNode, source : String) : Bool
-      if mods = find_modifiers(decl)
-        Noir::TreeSitter.each_named_child(mods) do |child|
-          return true if Noir::TreeSitter.node_text(child, source) == "abstract"
-        end
-      end
-      false
-    end
-
     private def walk_class_containers(node : LibTreeSitter::TSNode, &block : LibTreeSitter::TSNode ->)
       ty = Noir::TreeSitter.node_type(node)
       if ty == "class_declaration" || ty == "object_declaration" || ty == "interface_declaration"
@@ -554,17 +548,6 @@ module Noir
       Noir::TreeSitter.each_named_child(node) do |child|
         walk_class_containers(child, &block)
       end
-    end
-
-    private def type_identifier_text(decl : LibTreeSitter::TSNode, source : String) : String
-      count = LibTreeSitter.ts_node_named_child_count(decl)
-      count.times do |i|
-        child = LibTreeSitter.ts_node_named_child(decl, i.to_u32)
-        if Noir::TreeSitter.node_type(child) == "type_identifier"
-          return Noir::TreeSitter.node_text(child, source)
-        end
-      end
-      ""
     end
 
     private def class_body_of(decl : LibTreeSitter::TSNode) : LibTreeSitter::TSNode?
@@ -642,23 +625,6 @@ module Noir
         end
       end
       nil
-    end
-
-    private def find_modifiers(decl : LibTreeSitter::TSNode) : LibTreeSitter::TSNode?
-      count = LibTreeSitter.ts_node_named_child_count(decl)
-      count.times do |i|
-        child = LibTreeSitter.ts_node_named_child(decl, i.to_u32)
-        return child if Noir::TreeSitter.node_type(child) == "modifiers"
-      end
-      nil
-    end
-
-    private def simple_annotation_name(full : String) : String
-      if idx = full.rindex('.')
-        full[(idx + 1)..]
-      else
-        full
-      end
     end
 
     # An `annotation` node wraps either a `user_type` (no args) or a
@@ -1386,23 +1352,6 @@ module Noir
     private def push_unique_param(params : Array(Param), param : Param)
       return if params.any? { |existing| existing.name == param.name && existing.param_type == param.param_type }
       params << param
-    end
-
-    private def leaf_type_name(node : LibTreeSitter::TSNode, source : String) : String
-      case Noir::TreeSitter.node_type(node)
-      when "type_identifier"
-        Noir::TreeSitter.node_text(node, source)
-      else
-        result = ""
-        Noir::TreeSitter.each_named_child(node) do |child|
-          name = leaf_type_name(child, source)
-          unless name.empty?
-            result = name
-            break
-          end
-        end
-        result
-      end
     end
 
     private def annotation_simple_name(ann : LibTreeSitter::TSNode, source : String) : String
