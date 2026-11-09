@@ -5,6 +5,7 @@ require "./java_callee_extractor"
 require "./java_parameter_extractor_ts"
 require "./java_route_extractor_ts"
 require "../utils/jvm_media_type"
+require "./jvm_ts_helpers"
 
 module Noir
   # Tree-sitter-backed Micronaut route + parameter extractor.
@@ -42,6 +43,8 @@ module Noir
   # `@Produces` (response type, not input), `@RequestAttribute`.
   module TreeSitterMicronautExtractor
     extend self
+    extend JvmTsHelpers::JavaSupertypes
+    extend JvmTsHelpers::JavaDecls
 
     HTTP_VERB_ANNOTATIONS = {
       "Get"     => "GET",
@@ -179,14 +182,6 @@ module Noir
 
     # ---- traversal ---------------------------------------------------
 
-    private def walk_classes(node : LibTreeSitter::TSNode, &block : LibTreeSitter::TSNode ->)
-      ty = Noir::TreeSitter.node_type(node)
-      block.call(node) if ty == "class_declaration" || ty == "interface_declaration"
-      Noir::TreeSitter.each_named_child(node) do |child|
-        walk_classes(child, &block)
-      end
-    end
-
     private def walk_interfaces(node : LibTreeSitter::TSNode, &block : LibTreeSitter::TSNode ->)
       block.call(node) if Noir::TreeSitter.node_type(node) == "interface_declaration"
       Noir::TreeSitter.each_named_child(node) do |child|
@@ -231,26 +226,10 @@ module Noir
       rows
     end
 
-    private def type_identifier_text(decl : LibTreeSitter::TSNode, source : String) : String
-      Noir::TreeSitter.each_named_child(decl) do |child|
-        if Noir::TreeSitter.node_type(child) == "identifier"
-          return Noir::TreeSitter.node_text(child, source)
-        end
-      end
-      ""
-    end
-
     private def class_body_node(decl : LibTreeSitter::TSNode) : LibTreeSitter::TSNode?
       Noir::TreeSitter.each_named_child(decl) do |child|
         ty = Noir::TreeSitter.node_type(child)
         return child if ty == "class_body" || ty == "interface_body"
-      end
-      nil
-    end
-
-    private def method_name_of(method : LibTreeSitter::TSNode, source : String) : String?
-      Noir::TreeSitter.each_named_child(method) do |child|
-        return Noir::TreeSitter.node_text(child, source) if Noir::TreeSitter.node_type(child) == "identifier"
       end
       nil
     end
@@ -424,32 +403,6 @@ module Noir
       end
     end
 
-    private def annotation_simple_name(ann : LibTreeSitter::TSNode, source : String) : String
-      Noir::TreeSitter.each_named_child(ann) do |child|
-        case Noir::TreeSitter.node_type(child)
-        when "identifier", "scoped_identifier"
-          full = Noir::TreeSitter.node_text(child, source)
-          return last_segment(full)
-        end
-      end
-      ""
-    end
-
-    private def last_segment(text : String) : String
-      if idx = text.rindex('.')
-        text[(idx + 1)..]
-      else
-        text
-      end
-    end
-
-    private def annotation_args_node(ann : LibTreeSitter::TSNode) : LibTreeSitter::TSNode?
-      Noir::TreeSitter.each_named_child(ann) do |child|
-        return child if Noir::TreeSitter.node_type(child) == "annotation_argument_list"
-      end
-      nil
-    end
-
     # `@Foo("a")`, `@Foo(value="a")`, `@Foo(uri="a")`,
     # `@Foo(uris={"a","b"})` — return every string path encountered.
     private def annotation_paths(args : LibTreeSitter::TSNode?,
@@ -504,62 +457,6 @@ module Noir
       end
       return paths unless paths.empty?
       found ? [""] : paths
-    end
-
-    # Simple names of the `implements` interfaces, read straight from the
-    # tree-sitter `interfaces` field (a `super_interfaces` node wrapping a
-    # `type_list`).
-    #
-    # Reading the field rather than slicing the class node's text at the
-    # first `{` matters: the node text starts at the `modifiers` child, so
-    # a class-level annotation whose arguments contain a brace —
-    # `@Produces({MediaType.APPLICATION_JSON})`, `@Controller` with a
-    # `consumes = {...}` argument — was mistaken for the class body and
-    # cut the header off before `implements` was ever reached, silently
-    # killing interface route inheritance.
-    private def implemented_interface_names(class_decl : LibTreeSitter::TSNode, source : String) : Array(String)
-      names = [] of String
-      return names unless interfaces = Noir::TreeSitter.field(class_decl, "interfaces")
-
-      Noir::TreeSitter.each_named_child(interfaces) do |child|
-        if Noir::TreeSitter.node_type(child) == "type_list"
-          Noir::TreeSitter.each_named_child(child) do |type_node|
-            append_simple_type_name(type_node, source, names)
-          end
-        else
-          append_simple_type_name(child, source, names)
-        end
-      end
-      names
-    end
-
-    # Appends the simple name of a type node — generics dropped, package
-    # qualifier dropped, any leading `@Annotation` on an `annotated_type`
-    # discarded — skipping empties and duplicates.
-    private def append_simple_type_name(type_node : LibTreeSitter::TSNode, source : String, names : Array(String))
-      name = strip_generic_arguments(Noir::TreeSitter.node_text(type_node, source))
-      name = name.split(/\s+/).last? || name
-      return if name.empty?
-      if idx = name.rindex('.')
-        name = name[(idx + 1)..]
-      end
-      names << name unless name.empty? || names.includes?(name)
-    end
-
-    private def strip_generic_arguments(text : String) : String
-      String.build do |io|
-        depth = 0
-        text.each_char do |char|
-          case char
-          when '<'
-            depth += 1
-          when '>'
-            depth -= 1 if depth > 0
-          else
-            io << char if depth == 0
-          end
-        end
-      end.strip
     end
 
     private def collect_string_values(node : LibTreeSitter::TSNode,
@@ -730,13 +627,6 @@ module Noir
         emit_param_for(param, source, method_format, dto_index, constants, current_class, params, query_template_vars, path_template_vars)
       end
       params
-    end
-
-    private def formal_parameters_node(method : LibTreeSitter::TSNode) : LibTreeSitter::TSNode?
-      Noir::TreeSitter.each_named_child(method) do |child|
-        return child if Noir::TreeSitter.node_type(child) == "formal_parameters"
-      end
-      nil
     end
 
     private def formal_parameter_names(method : LibTreeSitter::TSNode, source : String) : Set(String)

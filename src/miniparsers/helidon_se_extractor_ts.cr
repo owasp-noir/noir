@@ -3,6 +3,7 @@ require "../ext/tree_sitter/tree_sitter"
 require "./java_callee_extractor"
 require "./java_route_extractor_ts"
 require "../models/endpoint"
+require "./jvm_ts_helpers"
 
 module Noir
   # Tree-sitter-backed walker for Helidon SE's functional routing DSL.
@@ -40,6 +41,7 @@ module Noir
   # index already make).
   module TreeSitterHelidonSeExtractor
     extend self
+    extend JvmTsHelpers::JavaCalls
 
     # Helidon's fluent verb API: `HttpRules`/`HttpRouting.Builder` both
     # expose the same method names. `any` matches every HTTP method —
@@ -358,56 +360,15 @@ module Noir
       nil
     end
 
-    private def first_class_literal_type(call : LibTreeSitter::TSNode, source : String) : String?
-      args = argument_list_node(call)
-      return unless args
-      Noir::TreeSitter.each_named_arg(args) do |arg|
-        next unless Noir::TreeSitter.node_type(arg) == "class_literal"
-        Noir::TreeSitter.each_named_child(arg) do |child|
-          if Noir::TreeSitter.node_type(child) == "type_identifier"
-            return Noir::TreeSitter.node_text(child, source)
-          end
-        end
-      end
-      nil
-    end
-
-    # ---- shared shape helpers (Java call/string plumbing) --------------
+    # ---- shape helpers -----------------------------------------------
     #
-    # These mirror the equivalent private helpers in
-    # `TreeSitterJvmLambdaDslExtractor` — Crystal's `private def` is
-    # file-scoped, so they can't be shared directly; kept minimal since
-    # Helidon has no `nest`/`crud`/router-receiver concepts to carry.
-
-    private def method_invocation_method_name(call : LibTreeSitter::TSNode, source : String) : String
-      if name_node = Noir::TreeSitter.field(call, "name")
-        return Noir::TreeSitter.node_text(name_node, source)
-      end
-
-      result = ""
-      Noir::TreeSitter.each_named_child(call) do |child|
-        ty = Noir::TreeSitter.node_type(child)
-        case ty
-        when "identifier"
-          result = Noir::TreeSitter.node_text(child, source)
-        when "argument_list"
-          break
-        end
-      end
-      result
-    end
+    # The Java call/string plumbing shared with
+    # `TreeSitterJvmLambdaDslExtractor` comes from `JvmTsHelpers::JavaCalls`.
 
     private def type_identifier_text(decl : LibTreeSitter::TSNode, source : String) : String
       name_node = Noir::TreeSitter.field(decl, "name")
       return "" unless name_node
       Noir::TreeSitter.node_text(name_node, source)
-    end
-
-    private def argument_list_node(call : LibTreeSitter::TSNode) : LibTreeSitter::TSNode?
-      Noir::TreeSitter.each_named_child(call) do |child|
-        return child if Noir::TreeSitter.node_type(child) == "argument_list"
-      end
-      nil
     end
 
     # A route path starts with `/` (or `*`); anything else that survives the
@@ -417,88 +378,6 @@ module Noir
     # handler comes with it (Helidon prepends the missing `/`).
     private def route_path_shape?(path : String) : Bool
       path.empty? || path.starts_with?('/') || path.starts_with?('*')
-    end
-
-    private def lambda_or_reference_argument?(call : LibTreeSitter::TSNode) : Bool
-      args = argument_list_node(call)
-      return false unless args
-      Noir::TreeSitter.each_named_arg(args) do |arg|
-        return true if {"lambda_expression", "method_reference"}.includes?(Noir::TreeSitter.node_type(arg))
-      end
-      false
-    end
-
-    private def first_string_argument(call : LibTreeSitter::TSNode,
-                                      source : String,
-                                      constants : Hash(String, String)) : String?
-      args = argument_list_node(call)
-      return unless args
-      Noir::TreeSitter.each_named_arg(args) do |arg|
-        case Noir::TreeSitter.node_type(arg)
-        when "string_literal", "identifier", "field_access", "scoped_identifier", "binary_expression", "parenthesized_expression"
-          if value = resolve_string_value(arg, source, constants)
-            return value
-          end
-        end
-      end
-      nil
-    end
-
-    private def resolve_string_value(node : LibTreeSitter::TSNode,
-                                     source : String,
-                                     constants : Hash(String, String),
-                                     depth = 0) : String?
-      return if depth > 16
-
-      case Noir::TreeSitter.node_type(node)
-      when "string_literal"
-        Noir::TreeSitter.decode_string_literal(node, source)
-      when "identifier", "field_access", "scoped_identifier"
-        resolve_constant_reference(Noir::TreeSitter.node_text(node, source), constants)
-      when "binary_expression"
-        return unless Noir::TreeSitter.node_text(node, source).includes?("+")
-        left = Noir::TreeSitter.field(node, "left")
-        right = Noir::TreeSitter.field(node, "right")
-        return unless left && right
-        left_value = resolve_string_value(left, source, constants, depth + 1)
-        right_value = resolve_string_value(right, source, constants, depth + 1)
-        return unless left_value && right_value
-        "#{left_value}#{right_value}"
-      when "parenthesized_expression"
-        Noir::TreeSitter.each_named_child(node) do |child|
-          if value = resolve_string_value(child, source, constants, depth + 1)
-            return value
-          end
-        end
-      end
-    end
-
-    private def resolve_constant_reference(name : String, constants : Hash(String, String)) : String?
-      if resolved = constants[name]?
-        return resolved
-      end
-
-      suffix = ".#{name}"
-      matches = constants.compact_map do |key, value|
-        key.ends_with?(suffix) ? value : nil
-      end.uniq!
-      matches.size == 1 ? matches.first : nil
-    end
-
-    # Pull the lambda's body (`block` or expression) out of the call's
-    # argument list. Returns nil if no lambda is passed.
-    private def lambda_body_in_args(call : LibTreeSitter::TSNode) : LibTreeSitter::TSNode?
-      args = argument_list_node(call)
-      return unless args
-      Noir::TreeSitter.each_named_arg(args) do |arg|
-        next unless Noir::TreeSitter.node_type(arg) == "lambda_expression"
-        Noir::TreeSitter.each_named_arg(arg) do |child|
-          ty = Noir::TreeSitter.node_type(child)
-          next if ty == "identifier" || ty == "formal_parameters" || ty == "inferred_parameters"
-          return child
-        end
-      end
-      nil
     end
 
     private def method_reference_body_in_args(call : LibTreeSitter::TSNode,
@@ -519,33 +398,6 @@ module Noir
       end
 
       nil
-    end
-
-    private def method_body_index(root : LibTreeSitter::TSNode, source : String) : Hash(String, LibTreeSitter::TSNode)
-      bodies = Hash(String, LibTreeSitter::TSNode).new
-
-      walk_method_declarations(root) do |method|
-        name_node = Noir::TreeSitter.field(method, "name")
-        body = Noir::TreeSitter.field(method, "body")
-        next unless name_node && body
-
-        name = Noir::TreeSitter.node_text(name_node, source)
-        bodies[name] ||= body
-      end
-
-      bodies
-    end
-
-    private def walk_method_declarations(node : LibTreeSitter::TSNode, depth : Int32 = 0, &block : LibTreeSitter::TSNode ->)
-      return if depth > Noir::TreeSitter::MAX_AST_DEPTH
-
-      if Noir::TreeSitter.node_type(node) == "method_declaration"
-        block.call(node)
-      end
-
-      Noir::TreeSitter.each_named_child(node) do |child|
-        walk_method_declarations(child, depth + 1, &block)
-      end
     end
   end
 end

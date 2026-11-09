@@ -3,6 +3,7 @@ require "../ext/tree_sitter/tree_sitter"
 require "../utils/c_comments"
 require "./extraction_result_cache"
 require "../models/endpoint"
+require "./jvm_ts_helpers"
 
 module Noir
   # Tree-sitter-backed Java route extractor.
@@ -36,6 +37,8 @@ module Noir
   # of this once the Spring port is validated.
   module TreeSitterJavaRouteExtractor
     extend self
+    extend JvmTsHelpers::JavaSupertypes
+    extend JvmTsHelpers::Modifiers
 
     # Spring mapping annotation names mapped to the HTTP verb they imply.
     # `nil` means "look at the annotation's `method =` argument".
@@ -616,47 +619,6 @@ module Noir
       name == "HttpExchange" || name.ends_with?("Exchange")
     end
 
-    # Simple names of the `implements` interfaces, read straight from the
-    # tree-sitter `interfaces` field (a `super_interfaces` node wrapping a
-    # `type_list`).
-    #
-    # Reading the field rather than slicing the class node's text at the
-    # first `{` matters: the node text starts at the `modifiers` child, so
-    # a class-level annotation whose arguments contain a brace —
-    # `@Produces({MediaType.APPLICATION_JSON})`, `@RequestMapping({"/api"})`,
-    # `@CrossOrigin(origins = {...})` — was mistaken for the class body and
-    # cut the header off before `implements` was ever reached, silently
-    # killing interface route inheritance. `superclass_name` below already
-    # reads its field; this is the same idea for the interface list.
-    private def implemented_interface_names(class_decl : LibTreeSitter::TSNode, source : String) : Array(String)
-      names = [] of String
-      return names unless interfaces = Noir::TreeSitter.field(class_decl, "interfaces")
-
-      Noir::TreeSitter.each_named_child(interfaces) do |child|
-        if Noir::TreeSitter.node_type(child) == "type_list"
-          Noir::TreeSitter.each_named_child(child) do |type_node|
-            append_simple_type_name(type_node, source, names)
-          end
-        else
-          append_simple_type_name(child, source, names)
-        end
-      end
-      names
-    end
-
-    # Appends the simple name of a type node — generics dropped, package
-    # qualifier dropped, any leading `@Annotation` on an `annotated_type`
-    # discarded — skipping empties and duplicates.
-    private def append_simple_type_name(type_node : LibTreeSitter::TSNode, source : String, names : Array(String))
-      name = strip_generic_arguments(Noir::TreeSitter.node_text(type_node, source))
-      name = name.split(/\s+/).last? || name
-      return if name.empty?
-      if idx = name.rindex('.')
-        name = name[(idx + 1)..]
-      end
-      names << name unless name.empty? || names.includes?(name)
-    end
-
     # An `abstract class` is never instantiated as a controller, so its
     # `@*Mapping` methods are only ever served through a concrete
     # subclass. We use this both to suppress the base's standalone routes
@@ -684,22 +646,6 @@ module Noir
       else
         name
       end
-    end
-
-    private def strip_generic_arguments(text : String) : String
-      String.build do |io|
-        depth = 0
-        text.each_char do |char|
-          case char
-          when '<'
-            depth += 1
-          when '>'
-            depth -= 1 if depth > 0
-          else
-            io << char if depth == 0
-          end
-        end
-      end.strip
     end
 
     # Pull class-level `@RequestMapping(...)` / `@GetMapping(...)`
@@ -1155,15 +1101,6 @@ module Noir
         args = Noir::TreeSitter.field(ann, "arguments")
         yield name, args, Noir::TreeSitter.node_start_row(ann)
       end
-    end
-
-    private def find_modifiers(decl : LibTreeSitter::TSNode) : LibTreeSitter::TSNode?
-      count = LibTreeSitter.ts_node_named_child_count(decl)
-      count.times do |i|
-        child = LibTreeSitter.ts_node_named_child(decl, i.to_u32)
-        return child if Noir::TreeSitter.node_type(child) == "modifiers"
-      end
-      nil
     end
 
     private def simple_annotation_name(name_node : LibTreeSitter::TSNode, source : String) : String

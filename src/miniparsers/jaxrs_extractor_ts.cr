@@ -6,6 +6,7 @@ require "./java_parameter_extractor_ts"
 require "./java_route_extractor_ts"
 require "./import_graph"
 require "../utils/jvm_media_type"
+require "./jvm_ts_helpers"
 
 module Noir
   # Tree-sitter-backed JAX-RS / Jakarta REST extractor.
@@ -38,6 +39,8 @@ module Noir
   # `@MatrixParam`.
   module TreeSitterJaxRsExtractor
     extend self
+    extend JvmTsHelpers::JavaSupertypes
+    extend JvmTsHelpers::JavaDecls
 
     # JAX-RS HTTP-method annotations. Simple names are matched; the
     # walker normalises any package-qualified prefix to the trailing
@@ -294,29 +297,12 @@ module Noir
       classes
     end
 
-    private def walk_classes(node : LibTreeSitter::TSNode, &block : LibTreeSitter::TSNode ->)
-      ty = Noir::TreeSitter.node_type(node)
-      block.call(node) if ty == "class_declaration" || ty == "interface_declaration"
-      Noir::TreeSitter.each_named_child(node) do |child|
-        walk_classes(child, &block)
-      end
-    end
-
     private def walk_annotation_types(node : LibTreeSitter::TSNode, &block : LibTreeSitter::TSNode ->)
       ty = Noir::TreeSitter.node_type(node)
       block.call(node) if ty == "annotation_type_declaration"
       Noir::TreeSitter.each_named_child(node) do |child|
         walk_annotation_types(child, &block)
       end
-    end
-
-    private def type_identifier_text(decl : LibTreeSitter::TSNode, source : String) : String
-      Noir::TreeSitter.each_named_child(decl) do |child|
-        if Noir::TreeSitter.node_type(child) == "identifier"
-          return Noir::TreeSitter.node_text(child, source)
-        end
-      end
-      ""
     end
 
     private def collect_class_routes(decl : LibTreeSitter::TSNode,
@@ -622,13 +608,6 @@ module Noir
       nil
     end
 
-    private def method_name_of(method : LibTreeSitter::TSNode, source : String) : String?
-      Noir::TreeSitter.each_named_child(method) do |child|
-        return Noir::TreeSitter.node_text(child, source) if Noir::TreeSitter.node_type(child) == "identifier"
-      end
-      nil
-    end
-
     private def jaxrs_annotated_method_names(decl : LibTreeSitter::TSNode, source : String) : Set(String)
       names = Set(String).new
       body = class_body_node(decl)
@@ -650,35 +629,9 @@ module Noir
       false
     end
 
-    # Simple names of the `implements` interfaces, read straight from the
-    # tree-sitter `interfaces` field (a `super_interfaces` node wrapping a
-    # `type_list`).
-    #
-    # Reading the field rather than slicing the class node's text at the
-    # first `{` matters: the node text starts at the `modifiers` child, so
-    # a class-level annotation whose arguments contain a brace —
-    # `@Produces({MediaType.APPLICATION_JSON})` is the canonical JAX-RS
-    # spelling — was mistaken for the class body and cut the header off
-    # before `implements` was ever reached, silently killing interface
-    # route inheritance.
-    private def implemented_interface_names(class_decl : LibTreeSitter::TSNode, source : String) : Array(String)
-      names = [] of String
-      return names unless interfaces = Noir::TreeSitter.field(class_decl, "interfaces")
-
-      Noir::TreeSitter.each_named_child(interfaces) do |child|
-        if Noir::TreeSitter.node_type(child) == "type_list"
-          Noir::TreeSitter.each_named_child(child) do |type_node|
-            append_simple_type_name(type_node, source, names)
-          end
-        else
-          append_simple_type_name(child, source, names)
-        end
-      end
-      names
-    end
-
     # Single superclass from `extends SuperClass`, read from the
-    # tree-sitter `superclass` field for the same reason as above.
+    # tree-sitter `superclass` field for the same reason as
+    # `JvmTsHelpers::JavaSupertypes#implemented_interface_names`.
     # Returns the simple type name, or nil when the class does not
     # extend anything.
     private def extended_class_name(class_decl : LibTreeSitter::TSNode, source : String) : String?
@@ -689,35 +642,6 @@ module Noir
         append_simple_type_name(type_node, source, names)
       end
       names.first?
-    end
-
-    # Appends the simple name of a type node — generics dropped, package
-    # qualifier dropped, any leading `@Annotation` on an `annotated_type`
-    # discarded — skipping empties and duplicates.
-    private def append_simple_type_name(type_node : LibTreeSitter::TSNode, source : String, names : Array(String))
-      name = strip_generic_arguments(Noir::TreeSitter.node_text(type_node, source))
-      name = name.split(/\s+/).last? || name
-      return if name.empty?
-      if idx = name.rindex('.')
-        name = name[(idx + 1)..]
-      end
-      names << name unless name.empty? || names.includes?(name)
-    end
-
-    private def strip_generic_arguments(text : String) : String
-      String.build do |io|
-        depth = 0
-        text.each_char do |char|
-          case char
-          when '<'
-            depth += 1
-          when '>'
-            depth -= 1 if depth > 0
-          else
-            io << char if depth == 0
-          end
-        end
-      end.strip
     end
 
     # ---- annotation helpers ------------------------------------------
@@ -735,32 +659,6 @@ module Noir
           end
         end
       end
-    end
-
-    private def annotation_simple_name(ann : LibTreeSitter::TSNode, source : String) : String
-      Noir::TreeSitter.each_named_child(ann) do |child|
-        case Noir::TreeSitter.node_type(child)
-        when "identifier", "scoped_identifier"
-          full = Noir::TreeSitter.node_text(child, source)
-          return last_segment(full)
-        end
-      end
-      ""
-    end
-
-    private def last_segment(text : String) : String
-      if idx = text.rindex('.')
-        text[(idx + 1)..]
-      else
-        text
-      end
-    end
-
-    private def annotation_args_node(ann : LibTreeSitter::TSNode) : LibTreeSitter::TSNode?
-      Noir::TreeSitter.each_named_child(ann) do |child|
-        return child if Noir::TreeSitter.node_type(child) == "annotation_argument_list"
-      end
-      nil
     end
 
     private def annotation_line(decl : LibTreeSitter::TSNode, ann_name : String, source : String) : Int32?
@@ -929,13 +827,6 @@ module Noir
         written = Noir::TreeSitter.field(ann, "name").try { |node| Noir::TreeSitter.node_text(node, source) } || name
         type_text = Noir::TreeSitter.field(param, "type").try { |node| Noir::TreeSitter.node_text(node, source) } || ""
         return AuthParam.new(written, type_text, file)
-      end
-      nil
-    end
-
-    private def formal_parameters_node(method : LibTreeSitter::TSNode) : LibTreeSitter::TSNode?
-      Noir::TreeSitter.each_named_child(method) do |child|
-        return child if Noir::TreeSitter.node_type(child) == "formal_parameters"
       end
       nil
     end

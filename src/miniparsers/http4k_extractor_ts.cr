@@ -3,6 +3,7 @@ require "../ext/tree_sitter/tree_sitter"
 require "../models/endpoint"
 require "./kotlin_callee_extractor"
 require "./kotlin_source_mask"
+require "./jvm_ts_helpers"
 
 module Noir
   # Tree-sitter-backed http4k extractor.
@@ -49,6 +50,7 @@ module Noir
   #   * `static` / `singlePageApp` for static asset routes.
   module TreeSitterHttp4kExtractor
     extend self
+    extend JvmTsHelpers::KotlinNavigation
 
     HTTP_VERBS = Set{
       "GET", "POST", "PUT", "DELETE", "PATCH",
@@ -482,23 +484,6 @@ module Noir
       return if candidate.nil? || candidate.empty?
       upcased = candidate.upcase
       HTTP_VERBS.includes?(upcased) ? upcased : nil
-    end
-
-    private def last_navigation_segment(node : LibTreeSitter::TSNode, source : String) : String
-      result = ""
-      Noir::TreeSitter.each_named_child(node) do |child|
-        case Noir::TreeSitter.node_type(child)
-        when "simple_identifier"
-          result = Noir::TreeSitter.node_text(child, source)
-        when "navigation_suffix"
-          Noir::TreeSitter.each_named_child(child) do |sub|
-            if Noir::TreeSitter.node_type(sub) == "simple_identifier"
-              result = Noir::TreeSitter.node_text(sub, source)
-            end
-          end
-        end
-      end
-      result
     end
 
     # Return the receiver-method name for a `call_expression` whose

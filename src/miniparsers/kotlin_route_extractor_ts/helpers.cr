@@ -50,23 +50,6 @@ module Noir
       false
     end
 
-    private def find_modifiers(decl : LibTreeSitter::TSNode) : LibTreeSitter::TSNode?
-      count = LibTreeSitter.ts_node_named_child_count(decl)
-      count.times do |i|
-        child = LibTreeSitter.ts_node_named_child(decl, i.to_u32)
-        return child if Noir::TreeSitter.node_type(child) == "modifiers"
-      end
-      nil
-    end
-
-    private def simple_annotation_name(full : String) : String
-      if idx = full.rindex('.')
-        full[(idx + 1)..]
-      else
-        full
-      end
-    end
-
     # Kotlin `value_arguments` contains `value_argument` children.
     # Each argument is either positional (a single child that's a
     # literal) or named (has a `simple_identifier` + expression).
@@ -232,23 +215,6 @@ module Noir
     private def fully_qualified_constant(text : String, string_constants : Hash(String, String)) : String?
       return unless text.includes?('.')
       string_constants[text]?
-    end
-
-    private def last_navigation_segment(node : LibTreeSitter::TSNode, source : String) : String
-      result = ""
-      Noir::TreeSitter.each_named_child(node) do |child|
-        case Noir::TreeSitter.node_type(child)
-        when "simple_identifier"
-          result = Noir::TreeSitter.node_text(child, source)
-        when "navigation_suffix"
-          Noir::TreeSitter.each_named_child(child) do |sub|
-            if Noir::TreeSitter.node_type(sub) == "simple_identifier"
-              result = Noir::TreeSitter.node_text(sub, source)
-            end
-          end
-        end
-      end
-      result
     end
 
     # Extract verbs from `method = RequestMethod.X` / `method =
