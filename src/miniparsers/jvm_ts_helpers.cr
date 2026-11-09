@@ -7,8 +7,9 @@ module Noir
   # the extractors that had that exact copy.
   #
   # A mixer must not define a same-named, same-arity method of its own:
-  # these helpers call each other through `self`, so a local definition
-  # would silently replace the shared one for every caller.
+  # on an `extend self` module the later `extend` sits ahead of the
+  # module's own methods, so a local definition would be silently
+  # ignored, by the mixer's own calls too.
   module JvmTsHelpers
     # Java call/argument plumbing: Helidon SE and the lambda-DSL extractor
     # (Javalin, Spark, Vert.x Web, ...).
