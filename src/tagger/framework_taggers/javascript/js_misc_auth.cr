@@ -4,6 +4,7 @@ require "../../../miniparsers/js_handler_resolver"
 require "../../../miniparsers/js_route_extractor"
 require "../../../utils/js_literal_scanner"
 require "../../../utils/top_level_split"
+require "./js_object_literal"
 
 @[Noir::TaggerFor(key: "js_misc_auth", name: "JS Misc Auth Tagger", desc: "Identifies Fastify/Koa/Restify authentication patterns", order: 160)]
 class JsMiscAuthTagger < FrameworkTagger
@@ -606,7 +607,7 @@ class JsMiscAuthTagger < FrameworkTagger
     HOOK_KINDS.each do |key|
       args.each do |arg|
         next unless arg.lstrip.starts_with?('{')
-        expr = fastify_property(arg, key) || next
+        expr = Noir::JSObjectLiteral.property(arg, key) || next
         if fastify_refusal_body?(expr)
           return "Fastify #{key}"
         end
@@ -674,8 +675,8 @@ class JsMiscAuthTagger < FrameworkTagger
           literal = args.first?.try(&.strip)
           # `route({ method: ["GET", "POST"], url: "/x", onRequest })`.
           if verb == "route" && literal
-            score = 4 if fastify_property(literal, "method").try(&.scan(/['"`]([A-Za-z]+)['"`]/).any? { |m| m[1].upcase == method })
-            literal = fastify_property(literal, "url") || fastify_property(literal, "path")
+            score = 4 if Noir::JSObjectLiteral.property(literal, "method").try(&.scan(/['"`]([A-Za-z]+)['"`]/).any? { |m| m[1].upcase == method })
+            literal = Noir::JSObjectLiteral.property(literal, "url") || Noir::JSObjectLiteral.property(literal, "path")
           end
           if literal && literal.size >= 2 && {'\'', '"', '`'}.includes?(literal[0]) && literal[-1] == literal[0]
             route = literal[1...-1]
@@ -806,8 +807,8 @@ class JsMiscAuthTagger < FrameworkTagger
     args = fastify_route_args(path, line_idx, method, url) || return false
     args.any? do |arg|
       next false unless arg.lstrip.starts_with?('{')
-      config = fastify_property(arg, "config") || next false
-      value = fastify_property(config, key) || next false
+      config = Noir::JSObjectLiteral.property(arg, "config") || next false
+      value = Noir::JSObjectLiteral.property(config, key) || next false
       !value.matches?(FASTIFY_EMPTY_VALUE)
     end
   end
@@ -843,16 +844,5 @@ class JsMiscAuthTagger < FrameworkTagger
       end
       @package_roots[dir] = found
     end
-  end
-
-  private def fastify_property(object_text : String, prop : String) : String?
-    text = object_text.strip
-    return unless text.starts_with?('{') && text.ends_with?('}')
-    Noir::TopLevelSplit.split(text[1...-1], ',', Noir::TopLevelSplit::Rules::JS_POSITIONAL_ARGS).each do |part|
-      if found = part.match(/\A\s*['"]?#{Regex.escape(prop)}['"]?\s*:\s*(.*)\z/m)
-        return found[1].strip
-      end
-    end
-    nil
   end
 end

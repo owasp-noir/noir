@@ -253,6 +253,16 @@ class Detector
     end
   end
 
+  # A `package.json` matching `package_re`, or a `.ts` file matching
+  # `import_re` (the TypeScript decorator-framework detectors).
+  def package_json_or_ts_import?(filename : String, file_contents : String, package_re : Regex, import_re : Regex) : Bool
+    if File.basename(filename) == "package.json"
+      return content_matches?(file_contents, package_re)
+    end
+
+    filename.ends_with?(".ts") && content_matches?(file_contents, import_re)
+  end
+
   # Whether `filename` is a go.mod naming `marker` on a line not marked
   # `// indirect`: an indirect requirement is pulled in by another module,
   # and this one never imports it.

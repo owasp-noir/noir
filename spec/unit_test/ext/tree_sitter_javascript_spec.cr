@@ -1,7 +1,7 @@
 require "spec"
 require "../../../src/ext/tree_sitter/tree_sitter"
 
-describe "Noir::TreeSitter.parse_javascript" do
+describe "Noir::TreeSitter JavaScript grammar" do
   it "parses a simple Express-style call into the expected node shape" do
     source = <<-JS
       const app = express();
@@ -15,7 +15,7 @@ describe "Noir::TreeSitter.parse_javascript" do
       types << ty unless ty.empty?
       Noir::TreeSitter.each_named_child(n) { |c| visit.call(c) }
     end
-    Noir::TreeSitter.parse_javascript(source) { |root| visit.call(root) }
+    Noir::TreeSitter.parse(source, LibTreeSitter.tree_sitter_javascript) { |root| visit.call(root) }
 
     types.should contain("call_expression")
     types.should contain("member_expression")
@@ -34,7 +34,7 @@ describe "Noir::TreeSitter.parse_javascript" do
       end
       Noir::TreeSitter.each_named_child(n) { |c| visit.call(c) }
     end
-    Noir::TreeSitter.parse_javascript(source) { |root| visit.call(root) }
+    Noir::TreeSitter.parse(source, LibTreeSitter.tree_sitter_javascript) { |root| visit.call(root) }
 
     extracted.should eq("/x")
   end
@@ -53,7 +53,7 @@ describe "Noir::TreeSitter.parse_javascript" do
       found_block = true if Noir::TreeSitter.node_type(n) == "statement_block"
       Noir::TreeSitter.each_named_child(n) { |c| visit.call(c) }
     end
-    Noir::TreeSitter.parse_javascript(source) { |root| visit.call(root) }
+    Noir::TreeSitter.parse(source, LibTreeSitter.tree_sitter_javascript) { |root| visit.call(root) }
 
     found_block.should be_true
   end

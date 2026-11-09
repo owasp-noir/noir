@@ -3,6 +3,7 @@ require "../utils/js_literal_scanner"
 require "../ext/tree_sitter/tree_sitter"
 require "../models/endpoint"
 require "./js_callee_extractor"
+require "./js_ts_ast_helpers"
 
 module Noir
   # Tree-sitter-backed AdonisJS extractor.
@@ -54,6 +55,7 @@ module Noir
   #   * Domain / subdomain routing.
   module TreeSitterAdonisJsExtractor
     extend self
+    include JSTSAstHelpers
 
     HTTP_VERB_METHODS = {
       "get"     => "GET",
@@ -357,21 +359,6 @@ module Noir
 
     # ---- shape helpers ----------------------------------------------
 
-    # `Route.get(...)` and `Route.group(...).prefix(...)` both
-    # produce call_expressions whose callee is a member_expression
-    # ending in a `property_identifier`. Return that property name;
-    # empty string when the callee is a bare identifier
-    # (`foo(...)` — not in our shape).
-    private def chain_method_name(call : LibTreeSitter::TSNode, source : String) : String
-      callee = Noir::TreeSitter.first_named_child(call)
-      return "" unless callee
-      return "" unless Noir::TreeSitter.node_type(callee) == "member_expression"
-      Noir::TreeSitter.each_named_child(callee) do |child|
-        return Noir::TreeSitter.node_text(child, source) if Noir::TreeSitter.node_type(child) == "property_identifier"
-      end
-      ""
-    end
-
     # The receiver in a chain (the previous `call_expression` link)
     # is the first child of the callee `member_expression`.
     private def chain_receiver(call : LibTreeSitter::TSNode) : LibTreeSitter::TSNode?
@@ -433,13 +420,6 @@ module Noir
       full = Noir::URLPath.join_trimmed(prefix, path)
       line = Noir::TreeSitter.call_name_row(call)
       routes << Route.new("GET", full, line)
-    end
-
-    private def arguments_node(call : LibTreeSitter::TSNode) : LibTreeSitter::TSNode?
-      Noir::TreeSitter.each_named_child(call) do |child|
-        return child if Noir::TreeSitter.node_type(child) == "arguments"
-      end
-      nil
     end
 
     private def first_string_argument(call : LibTreeSitter::TSNode, source : String) : String?
@@ -589,33 +569,6 @@ module Noir
     # parameters and the body.
     private def function_body(fn : LibTreeSitter::TSNode) : LibTreeSitter::TSNode?
       Noir::TreeSitter.field(fn, "body")
-    end
-
-    private def decode_string(node : LibTreeSitter::TSNode, source : String) : String
-      buf = String.build do |io|
-        Noir::TreeSitter.each_named_child(node) do |child|
-          case Noir::TreeSitter.node_type(child)
-          when "string_fragment"
-            io << Noir::TreeSitter.node_text(child, source)
-          when "escape_sequence"
-            io << Noir::TreeSitter.unescape(Noir::TreeSitter.node_text(child, source))
-          when "template_substitution"
-            # `` `/users/${id}` `` — keep the hole as a `{id}` placeholder
-            # rather than dropping it, which would collapse the path to
-            # `/users/` (or `/users//edit` for an interior hole). Same
-            # convention the Python f-string and Kotlin template decoders
-            # use, and the shape downstream path-param extraction expects.
-            io << Noir::TreeSitter.node_text(child, source).lchop('$')
-          end
-        end
-      end
-      return buf unless buf.empty?
-      raw = Noir::TreeSitter.node_text(node, source)
-      if raw.size >= 2 && (raw[0] == '\'' || raw[0] == '"' || raw[0] == '`') && raw[0] == raw[-1]
-        raw[1..-2]
-      else
-        raw
-      end
     end
   end
 end

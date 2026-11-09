@@ -72,6 +72,67 @@ module Analyzer::Javascript
       endpoint
     end
 
+    # `path` minus the first of `extensions` it ends with (file-routed
+    # frameworks: Astro, Next.js, Nuxt).
+    protected def strip_extension(path : String, extensions : Array(String)) : String
+      extensions.each do |ext|
+        return path[0..(path.size - ext.size - 1)] if path.ends_with?(ext)
+      end
+      path
+    end
+
+    # ---- tree-sitter object-literal helpers (Fastify, Feathers, tRPC) ----
+
+    # The key of a `pair` / `method_definition` as plain text. tRPC
+    # overrides it to also read `[computed]` keys.
+    protected def property_key_name(node : LibTreeSitter::TSNode?, source : String) : String
+      return "" unless node
+      unwrapped = Noir::TreeSitter.unwrap_expression(node)
+      case Noir::TreeSitter.node_type(unwrapped)
+      when "identifier", "property_identifier"
+        Noir::TreeSitter.node_text(unwrapped, source)
+      when "string", "template_string"
+        decode_string(unwrapped, source) || ""
+      else
+        ""
+      end
+    end
+
+    # The value node of property `name` in an object literal, or the
+    # shorthand identifier itself for `{ name }`.
+    protected def extract_prop_value(obj_node : LibTreeSitter::TSNode, name : String, source : String) : LibTreeSitter::TSNode?
+      obj_node = Noir::TreeSitter.unwrap_expression(obj_node)
+      return unless Noir::TreeSitter.node_type(obj_node) == "object"
+      Noir::TreeSitter.each_named_child(obj_node) do |child|
+        case Noir::TreeSitter.node_type(child)
+        when "pair"
+          if key_node = Noir::TreeSitter.field(child, "key")
+            return Noir::TreeSitter.field(child, "value") if property_key_name(key_node, source) == name
+          end
+        when "shorthand_property_identifier"
+          return child if Noir::TreeSitter.node_text(child, source) == name
+        end
+      end
+      nil
+    end
+
+    # A quoted string or substitution-free template literal, unquoted;
+    # nil for anything else.
+    protected def decode_string(node : LibTreeSitter::TSNode, source : String) : String?
+      node = Noir::TreeSitter.unwrap_expression(node)
+      case Noir::TreeSitter.node_type(node)
+      when "string"
+        raw = Noir::TreeSitter.node_text(node, source).strip
+        return if raw.size < 2
+        raw[1..-2]
+      when "template_string"
+        raw = Noir::TreeSitter.node_text(node, source).strip
+        return if raw.size < 2
+        return if raw.includes?("${")
+        raw[1..-2]
+      end
+    end
+
     # `MatchData#begin` is a CHAR index; the inherited helper is the one
     # that converts it to a byte offset before counting newlines. This used
     # to slice `content.to_slice[0, start]` with the char index directly,

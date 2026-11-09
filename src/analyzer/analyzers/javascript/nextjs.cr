@@ -161,7 +161,7 @@ module Analyzer::Javascript
       return if idx.nil?
 
       relative = scoped[(idx + "/pages/api/".size)..-1]
-      relative = strip_extension(relative)
+      relative = strip_extension(relative, EXTENSIONS)
 
       # Skip private folders/files (leading underscore)
       return if relative.split("/").any?(&.starts_with?("_"))
@@ -991,13 +991,6 @@ module Analyzer::Javascript
       param = Param.new(name, "", type)
       param.add_tag(Tag.new("unresolved", "Key is a variable/constant identifier, not a string literal", "analyzer"))
       endpoint.push_param(param)
-    end
-
-    private def strip_extension(path : String) : String
-      EXTENSIONS.each do |ext|
-        return path[0..(path.size - ext.size - 1)] if path.ends_with?(ext)
-      end
-      path
     end
 
     private def convert_segments(relative : String) : String

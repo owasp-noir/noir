@@ -950,36 +950,5 @@ module Analyzer::Typescript
         ""
       end
     end
-
-    private def extract_prop_value(obj_node : LibTreeSitter::TSNode, name : String, source : String) : LibTreeSitter::TSNode?
-      obj_node = Noir::TreeSitter.unwrap_expression(obj_node)
-      return unless Noir::TreeSitter.node_type(obj_node) == "object"
-      Noir::TreeSitter.each_named_child(obj_node) do |child|
-        case Noir::TreeSitter.node_type(child)
-        when "pair"
-          if key_node = Noir::TreeSitter.field(child, "key")
-            return Noir::TreeSitter.field(child, "value") if property_key_name(key_node, source) == name
-          end
-        when "shorthand_property_identifier"
-          return child if Noir::TreeSitter.node_text(child, source) == name
-        end
-      end
-      nil
-    end
-
-    private def decode_string(node : LibTreeSitter::TSNode, source : String) : String?
-      node = Noir::TreeSitter.unwrap_expression(node)
-      case Noir::TreeSitter.node_type(node)
-      when "string"
-        raw = Noir::TreeSitter.node_text(node, source).strip
-        return if raw.size < 2
-        raw[1..-2]
-      when "template_string"
-        raw = Noir::TreeSitter.node_text(node, source).strip
-        return if raw.size < 2
-        return if raw.includes?("${")
-        raw[1..-2]
-      end
-    end
   end
 end
