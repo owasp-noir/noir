@@ -409,71 +409,6 @@ module Analyzer::Rust
       Noir::RustCalleeExtractor.attach_to(endpoint, callees)
     end
 
-    protected def extract_rust_function_body_with_end(lines : Array(String), start_index : Int32) : Tuple(String, Int32, Int32)?
-      return if start_index >= lines.size
-      return if Noir::RustCalleeExtractor.strip_comment(lines[start_index]).includes?(";")
-
-      body_lines = [] of String
-      body_start_line = start_index + 2
-      found_opening_brace = false
-      depth = 0
-      in_block_comment = false
-
-      (start_index...lines.size).each do |index|
-        raw_line = lines[index]
-        line, in_block_comment = Noir::RustCalleeExtractor.strip_comment_with_state(raw_line, in_block_comment)
-
-        unless found_opening_brace
-          return if index > start_index && line.strip.match(/^(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?fn\s+[A-Za-z_]\w*\b/)
-
-          brace_index = line.index('{')
-          next unless brace_index
-
-          found_opening_brace = true
-          depth = 1
-          tail = line[(brace_index + 1)..].strip
-          body_start_line = index + 1
-
-          if close_index = tail.index('}')
-            open_count = tail.count('{')
-            close_count = tail.count('}')
-            if depth + open_count - close_count <= 0
-              close_index = tail.rindex('}') || close_index
-              return {tail[0, close_index].strip, body_start_line, index}
-            end
-          end
-
-          if tail.empty?
-            body_start_line = index + 2
-          else
-            body_lines << tail
-            depth += tail.count('{') - tail.count('}')
-          end
-          next
-        end
-
-        stripped = line.strip
-        open_count = stripped.count('{')
-        close_count = stripped.count('}')
-
-        if close_count > 0 && depth + open_count - close_count <= 0
-          if close_index = line.index('}')
-            close_index = line.rindex('}') || close_index
-            before_close = line[0, close_index].strip
-            body_lines << before_close unless before_close.empty?
-          end
-          return {body_lines.join("\n"), body_start_line, index}
-        end
-
-        body_lines << raw_line
-        depth += open_count - close_count
-      end
-
-      return unless found_opening_brace
-
-      {body_lines.join("\n"), body_start_line, lines.size - 1}
-    end
-
     # ---- Shared tree-sitter walking helpers -----------------------------
     #
     # These were 47 byte-identical private copies across the ten Rust
@@ -490,6 +425,33 @@ module Analyzer::Rust
     # subclass, so the helpers here that call them (`each_routing_pair` →
     # `find_paired_function`, `build_function_index` → `walk`) still get
     # the adapter's behaviour.
+
+    # `:name` segments as path params. Adapters whose router spells
+    # params differently (`{name}`, `<name>`) override.
+    protected def extract_path_params(route : String, endpoint : Endpoint)
+      route.scan(/:(\w+)/) do |match|
+        endpoint.push_param(Param.new(match[1], "", "path"))
+      end
+    end
+
+    protected def ensure_leading_slash(route_path : String) : String
+      route_path.starts_with?("/") ? route_path : "/#{route_path}"
+    end
+
+    # First identifier / scoped-path argument of a call, used as the
+    # handler name. `get(create_user)` → `create_user`,
+    # `get(html::pages::login)` → `html::pages::login`.
+    protected def first_identifier_argument(call : LibTreeSitter::TSNode, source : String) : String?
+      args = Noir::TreeSitter.field(call, "arguments")
+      return unless args
+      Noir::TreeSitter.each_named_arg(args) do |child|
+        case Noir::TreeSitter.node_type(child)
+        when "identifier", "scoped_identifier"
+          return Noir::TreeSitter.node_text(child, source)
+        end
+      end
+      nil
+    end
 
     # Yield `node` and every named descendant, depth-first.
     protected def walk(node : LibTreeSitter::TSNode, &block : LibTreeSitter::TSNode ->)

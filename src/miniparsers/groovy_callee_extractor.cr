@@ -54,12 +54,6 @@ module Noir::GroovyCalleeExtractor
     end
   end
 
-  private def scan_candidates(line : String, regex : Regex, candidates : Array(Tuple(Int32, String)))
-    line.scan(regex) do |match|
-      candidates << {match.begin(1) || 0, match[1]}
-    end
-  end
-
   # Command-style calls (`render foo`, `cache true`, `AuditLog.write 'x'`) share
   # their surface syntax with typed variable/parameter declarations, where the
   # captured "command" is really the declared type:
@@ -147,14 +141,6 @@ module Noir::GroovyCalleeExtractor
     index = start
     while index < chars.size && chars[index] != '\n'
       stripped << ' '
-      index += 1
-    end
-  end
-
-  private def append_blanks(stripped : String::Builder, chars : Array(Char), start : Int32, finish : Int32)
-    index = start
-    while index < finish && index < chars.size
-      stripped << (chars[index] == '\n' ? '\n' : ' ')
       index += 1
     end
   end

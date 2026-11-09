@@ -101,6 +101,34 @@ module Noir::LuaCalleeExtractor
     extract_function_at(chars, function_index, body_limit)
   end
 
+  # `{search_limit, body_limit}` for the handler of a route call whose URL
+  # ends at `after_url`: both are the call's closing `)` when it has one,
+  # otherwise the end of the URL's line and the end of the source.
+  def route_call_limits(content : String, route_offset : Int32, after_url : Int32) : Tuple(Int32, Int32)
+    if open_paren = first_open_paren_before(content, route_offset, after_url)
+      if close_paren = find_matching_delimiter(content, open_paren, '(', ')')
+        return {close_paren, close_paren}
+      end
+    end
+
+    line_end = content.index('\n', after_url) || content.size
+    {line_end, content.size}
+  end
+
+  private def first_open_paren_before(content : String, start_index : Int32, end_index : Int32) : Int32?
+    # `String#[]` re-walks from byte 0 on every call once the source
+    # contains any multi-byte char, turning this scan O(n^2); index a
+    # materialized Array(Char) instead (O(1) per access).
+    chars = content.chars
+    cursor = start_index
+    while cursor < end_index && cursor < chars.size
+      return cursor if chars[cursor] == '('
+      cursor += 1
+    end
+
+    nil
+  end
+
   # Public String overload kept for callers outside this module.
   def extract_function_at(source : String,
                           function_index : Int32,
@@ -196,19 +224,6 @@ module Noir::LuaCalleeExtractor
     end
 
     nil
-  end
-
-  def line_number_for(chars : Array(Char), index : Int32) : Int32
-    return 1 if index <= 0
-
-    limit = index > chars.size ? chars.size : index
-    count = 1
-    i = 0
-    while i < limit
-      count += 1 if chars[i] == '\n'
-      i += 1
-    end
-    count
   end
 
   # Public String overload kept for callers outside this module.
@@ -316,12 +331,6 @@ module Noir::LuaCalleeExtractor
       next if declaration_name?(line, position)
 
       entries << {normalize_name(name), file_path, line_number}
-    end
-  end
-
-  private def scan_candidates(line : String, regex : Regex, candidates : Array(Tuple(Int32, String)))
-    line.scan(regex) do |match|
-      candidates << {match.begin(1) || 0, match[1]}
     end
   end
 
@@ -481,23 +490,6 @@ module Noir::LuaCalleeExtractor
     !identifier_part?(before) && !identifier_part?(after)
   end
 
-  private def read_identifier(chars : Array(Char), index : Int32, limit : Int32) : Tuple(String, Int32)
-    cursor = index
-    while cursor < limit && cursor < chars.size && identifier_part?(chars[cursor])
-      cursor += 1
-    end
-
-    {chars[index...cursor].join, cursor}
-  end
-
-  private def identifier_start?(char : Char) : Bool
-    char.ascii_letter? || char == '_'
-  end
-
-  private def identifier_part?(char : Char) : Bool
-    char.ascii_alphanumeric? || char == '_'
-  end
-
   private def comment_start?(chars : Array(Char), index : Int32) : Bool
     index + 1 < chars.size && chars[index] == '-' && chars[index + 1] == '-'
   end
@@ -551,34 +543,6 @@ module Noir::LuaCalleeExtractor
     end
 
     limit
-  end
-
-  private def skip_short_string(chars : Array(Char), index : Int32, limit : Int32) : Int32
-    quote = chars[index]
-    cursor = index + 1
-    escaped = false
-
-    while cursor < limit && cursor < chars.size
-      char = chars[cursor]
-      if escaped
-        escaped = false
-      elsif char == '\\'
-        escaped = true
-      elsif char == quote
-        return cursor + 1
-      end
-      cursor += 1
-    end
-
-    limit
-  end
-
-  private def append_blanks(builder : String::Builder, chars : Array(Char), start_index : Int32, finish_index : Int32)
-    index = start_index
-    while index < finish_index && index < chars.size
-      builder << (chars[index] == '\n' ? '\n' : ' ')
-      index += 1
-    end
   end
 
   private def append_string_placeholder(builder : String::Builder, chars : Array(Char),

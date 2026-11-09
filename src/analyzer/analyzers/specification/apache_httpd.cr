@@ -1,8 +1,12 @@
 require "../../engines/specification_engine"
+require "../../../detector/detectors/specification/apache_httpd"
 
 module Analyzer::Specification
   class ApacheHttpd < SpecificationEngine
     analyzer_for "apache_httpd"
+
+    # Directive matching shared with the detector.
+    alias Conf = Detector::Specification::ApacheHttpd
 
     METHOD_ANY = "ANY"
 
@@ -177,7 +181,7 @@ module Analyzer::Specification
 
     private def block_close?(line : String, directive : String) : Bool
       return false unless line.starts_with?("</")
-      ascii_prefix?(line, "</#{directive}")
+      Conf.ascii_prefix?(line, "</#{directive}")
     end
 
     private def directive?(line : String, directive : String) : Bool
@@ -186,7 +190,7 @@ module Analyzer::Specification
 
     private def directive_offset(line : String, directive : String) : Int32?
       offset = line.starts_with?('<') ? 1 : 0
-      return unless ascii_prefix?(line[offset..], directive)
+      return unless Conf.ascii_prefix?(line[offset..], directive)
 
       end_index = offset + directive.size
       return offset if end_index >= line.size
@@ -194,24 +198,6 @@ module Analyzer::Specification
       char = line[end_index]
       return offset if char.whitespace? || char == '>'
       nil
-    end
-
-    private def ascii_prefix?(value : String, prefix : String) : Bool
-      return false if value.size < prefix.size
-
-      prefix.each_byte.each_with_index do |byte, idx|
-        return false unless ascii_downcase(value.byte_at(idx)) == ascii_downcase(byte)
-      end
-
-      true
-    end
-
-    private def ascii_downcase(byte : UInt8) : UInt8
-      if byte >= 65 && byte <= 90
-        byte + 32
-      else
-        byte
-      end
     end
 
     private def redirect_status?(value : String) : Bool

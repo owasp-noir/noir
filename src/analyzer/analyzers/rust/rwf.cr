@@ -359,12 +359,6 @@ module Analyzer::Rust
       methods
     end
 
-    private def extract_path_params(route : String, endpoint : Endpoint)
-      route.scan(/:(\w+)/) do |match|
-        endpoint.push_param(Param.new(match[1], "", "path"))
-      end
-    end
-
     # Pull extractor params from `request.<verb>(...)` calls in the
     # body. Recognises both plain (`request.path_parameter("id")`) and
     # turbofish (`request.path_parameter::<i64>("id")`) forms because

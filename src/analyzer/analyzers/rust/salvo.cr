@@ -250,7 +250,7 @@ module Analyzer::Rust
       route_path = find_chain_path(fn_node, source, router_prefixes, crate_scope_for(file_path))
       return unless route_path
 
-      handler_name = first_handler_argument(call, source)
+      handler_name = first_identifier_argument(call, source)
       {route_path, verb.upcase, handler_name}
     end
 
@@ -567,21 +567,6 @@ module Analyzer::Rust
           end
         end
       end
-    end
-
-    # First identifier / scoped-path argument of a call, used as the
-    # handler name. `get(create_user)` → `create_user`,
-    # `get(html::pages::login)` → `html::pages::login`.
-    private def first_handler_argument(call : LibTreeSitter::TSNode, source : String) : String?
-      args = Noir::TreeSitter.field(call, "arguments")
-      return unless args
-      Noir::TreeSitter.each_named_arg(args) do |child|
-        case Noir::TreeSitter.node_type(child)
-        when "identifier", "scoped_identifier"
-          return Noir::TreeSitter.node_text(child, source)
-        end
-      end
-      nil
     end
 
     # Collect re-parseable expression fragments for every macro body that

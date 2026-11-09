@@ -1,9 +1,13 @@
 require "../../engines/specification_engine"
 require "../../../utils/url_path"
+require "../../../detector/detectors/specification/nginx"
 
 module Analyzer::Specification
   class Nginx < SpecificationEngine
     analyzer_for "nginx"
+
+    # Comment/template stripping shared with the detector.
+    alias Conf = Detector::Specification::Nginx
 
     METHOD_ANY = "ANY"
 
@@ -49,7 +53,7 @@ module Analyzer::Specification
         next unless content.includes?("include")
         targets = [] of String
         content.each_line do |raw|
-          next unless m = INCLUDE_RE.match(strip_template_actions(strip_comment(raw)).strip)
+          next unless m = INCLUDE_RE.match(Conf.strip_template_actions(Conf.strip_comment(raw)).strip)
           targets.concat(include_targets(path, m[1]))
         end
         edges[path] = targets unless targets.empty?
@@ -229,13 +233,13 @@ module Analyzer::Specification
       template_depth = 0
 
       content.each_line.with_index(line_offset) do |raw, idx|
-        uncommented = strip_comment(raw)
+        uncommented = Conf.strip_comment(raw)
         templated = uncommented.includes?("{{")
         conditional = template_depth > 0 || templated
         if templated
           template_depth = Math.max(0, template_depth + uncommented.scan(TEMPLATE_OPEN_RE).size - uncommented.scan(TEMPLATE_CLOSE_RE).size)
         end
-        line = strip_template_actions(uncommented).strip
+        line = Conf.strip_template_actions(uncommented).strip
         next if line.empty?
 
         # Pre-handle a trailing `}` so we pop the closing frame
@@ -457,21 +461,6 @@ module Analyzer::Specification
 
     private def current_location(stack : Array(Frame)) : Frame?
       stack.reverse_each { |f| return f if f.kind == "location" }
-    end
-
-    private def strip_comment(line : String) : String
-      previous = '\0'
-      line.each_char_with_index do |ch, idx|
-        if ch == '#' && (idx == 0 || previous.whitespace? || previous.in?(';', '{', '}'))
-          return line[0...idx]
-        end
-        previous = ch
-      end
-      line
-    end
-
-    private def strip_template_actions(line : String) : String
-      line.gsub(/\{\{.*?\}\}/, "")
     end
 
     private def normalize_location_path(path : String) : String

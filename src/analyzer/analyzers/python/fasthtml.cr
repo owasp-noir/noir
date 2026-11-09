@@ -32,13 +32,6 @@ module Analyzer::Python
     # sit under the prefix, which FastHTML prepends as-is.
     API_ROUTER_RE = /^\s*(\w+)\s*=\s*(?:\w+\.)?APIRouter\s*\(\s*(?:prefix\s*=\s*)?(?:(['"])(.*?)\2)?/m
 
-    def analyze
-      ordered_parallel_analyze(python_source_files) do |path|
-        analyze_file(path, python_base_path_for(path))
-      end.each { |endpoints| result.concat(endpoints) }
-      result
-    end
-
     private def analyze_file(path : ::String, base_path : ::String) : Array(Endpoint)?
       source = read_file_content(path)
       return unless source.includes?("fasthtml") && source.matches?(Detector::Python::FastHTML::IMPORT_RE)

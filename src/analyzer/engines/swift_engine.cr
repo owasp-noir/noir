@@ -291,10 +291,5 @@ module Analyzer::Swift
       lexer = Noir::SwiftLexer.for(content)
       keep_strings ? lexer.code_lines : lexer.masked_lines
     end
-
-    private def structural_opening_brace(line : String) : Int32?
-      lexer = Noir::SwiftLexer.for(line)
-      lexer.masked_source.index('{')
-    end
   end
 end

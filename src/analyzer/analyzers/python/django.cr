@@ -773,10 +773,6 @@ module Analyzer::Python
       list_line ? PathInfo.new(route_path.path, list_line + offset) : route_path
     end
 
-    private def extract_urlpatterns_contents(content : ::String, urlpattern_lists : Hash(::String, ::String)) : Array(::String)
-      extract_url_list_contents(content, urlpattern_lists, ["urlpatterns"])
-    end
-
     private def extract_app_config_url_contents(content : ::String, urlpattern_lists : Hash(::String, ::String)) : Array(::String)
       extract_url_list_contents(content, urlpattern_lists, ["urls", "urlpatterns"])
     end

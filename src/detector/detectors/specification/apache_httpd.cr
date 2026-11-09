@@ -68,7 +68,7 @@ module Detector::Specification
     end
 
     private def apache_directive?(line : String, directive : String) : Bool
-      return false unless ascii_prefix?(line, directive)
+      return false unless ApacheHttpd.ascii_prefix?(line, directive)
       return true if directive.starts_with?('<')
 
       end_index = directive.size
@@ -77,7 +77,8 @@ module Detector::Specification
       line[end_index].whitespace?
     end
 
-    private def ascii_prefix?(value : String, prefix : String) : Bool
+    # Shared with `Analyzer::Specification::ApacheHttpd`.
+    def self.ascii_prefix?(value : String, prefix : String) : Bool
       return false if value.size < prefix.size
 
       prefix.each_byte.each_with_index do |byte, idx|
@@ -87,7 +88,7 @@ module Detector::Specification
       true
     end
 
-    private def ascii_downcase(byte : UInt8) : UInt8
+    private def self.ascii_downcase(byte : UInt8) : UInt8
       if byte >= 65 && byte <= 90
         byte + 32
       else

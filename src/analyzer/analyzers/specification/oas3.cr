@@ -249,26 +249,11 @@ module Analyzer::Specification
       ALLOWED_HTTP_METHODS.includes?(method) || SYNTHETIC_ENDPOINT_METHODS.includes?(method)
     end
 
-    # Standard Path Item operations, plus OAS 3.2 `additionalOperations`.
+    # Standard Path Item operations, plus OAS 3.2 `additionalOperations`, of
+    # a JSON or YAML path item.
     # A name outside the HTTP and synthetic verb lists is skipped: the
     # optimizer would rewrite it to GET.
-    private def each_path_operation_json(path_item : Hash(String, JSON::Any), &)
-      path_item.each do |method, method_obj|
-        key = method.to_s
-        if key.downcase == "additionaloperations"
-          next unless ops = method_obj.as_h?
-          ops.each do |name, op|
-            op_name = name.to_s
-            next unless oas_additional_method?(op_name)
-            yield op_name, op
-          end
-        elsif HTTP_METHODS.includes?(key.downcase)
-          yield key, method_obj
-        end
-      end
-    end
-
-    private def each_path_operation_yaml(path_item : Hash(YAML::Any, YAML::Any), &)
+    private def each_path_operation(path_item : Hash, &)
       path_item.each do |method, method_obj|
         key = method.to_s
         if key.downcase == "additionaloperations"
@@ -525,7 +510,7 @@ module Analyzer::Specification
 
         path_base = scoped_base_path(path_item_h["servers"]?, base_path)
 
-        each_path_operation_json(path_item_h) do |method, method_obj|
+        each_path_operation(path_item_h) do |method, method_obj|
           # The operation's own params live in the file a `$ref` names.
           method_obj, op_doc = resolve_path_item_json(item_doc, method_obj)
           params = path_level_params.dup
@@ -590,7 +575,7 @@ module Analyzer::Specification
 
         path_base = scoped_base_path(path_item_h[YAML::Any.new("servers")]?, base_path)
 
-        each_path_operation_yaml(path_item_h) do |method, method_obj|
+        each_path_operation(path_item_h) do |method, method_obj|
           # The operation's own params live in the file a `$ref` names.
           method_obj, op_doc = resolve_path_item_yaml(item_doc, method_obj)
           params = path_level_params.dup

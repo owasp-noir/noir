@@ -564,13 +564,6 @@ module Analyzer::Php
       params
     end
 
-    private def attach_handler_callees(endpoint : Endpoint, body : String?, file_path : String, start_line : Int32?)
-      return unless body && start_line
-
-      callees = Noir::PhpCalleeExtractor.callees_for_body(body, file_path, start_line)
-      attach_php_callees(endpoint, callees)
-    end
-
     # Scans forward from `pos` for an immediate handler closure
     # (`function (...) {...}`). Returns the body text (or nil when the
     # handler is a string/callable-array reference, or brace matching

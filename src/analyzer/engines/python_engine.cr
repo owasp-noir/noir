@@ -146,6 +146,40 @@ module Analyzer::Python
       end
     end
 
+    # Default for per-file adapters (FastHTML, FastMCP, Frappe, Odoo): they
+    # define only `analyze_file(path, base_path) : Array(Endpoint)?`, run here
+    # over every production source with results in input order. Every other
+    # subclass overrides `analyze`.
+    def analyze
+      ordered_parallel_analyze(python_source_files) do |path|
+        analyze_file(path, python_base_path_for(path))
+      end.each { |endpoints| result.concat(endpoints) }
+      result
+    end
+
+    # Join two URL fragments, collapsing the slash at the boundary:
+    # `("/api/v1/", "users")` → `/api/v1/users`. A trailing slash on `own`
+    # is preserved.
+    protected def combine_router_prefixes(parent : ::String, own : ::String) : ::String
+      return own if parent.empty?
+      return parent if own.empty?
+      normalized_parent = parent.ends_with?("/") ? parent[0..-2] : parent
+      if own.starts_with?("/")
+        "#{normalized_parent}#{own}"
+      else
+        "#{normalized_parent}/#{own}"
+      end
+    end
+
+    # The `/*` wildcard a static-files mount serves under. Adapters whose
+    # path normalisation differs (aiohttp, Sanic, Falcon) override.
+    protected def static_route_path(path : ::String) : ::String
+      normalized = path.gsub(/\/+/, "/")
+      normalized = "/#{normalized}" unless normalized.starts_with?("/")
+      normalized = normalized[0...-1] if normalized.ends_with?("/") && normalized != "/"
+      normalized == "/" ? "/*" : "#{normalized}/*"
+    end
+
     # Splits call arguments on top-level commas, keeping every empty part so
     # positional indexing of the result stays valid.
     protected def split_python_arguments(args : ::String) : Array(::String)

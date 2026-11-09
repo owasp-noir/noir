@@ -19,13 +19,6 @@ module Analyzer::Python
     # `frappe.form_dict.member` — attribute reads of the request dict.
     FORM_DICT_ATTR_RE = /\bfrappe\.(?:local\.)?form_dict\.([A-Za-z_]\w*)\b(?!\s*\()/
 
-    def analyze
-      ordered_parallel_analyze(python_source_files) do |path|
-        analyze_file(path, python_base_path_for(path))
-      end.each { |endpoints| result.concat(endpoints) }
-      result
-    end
-
     private def analyze_file(path : ::String, base_path : ::String) : Array(Endpoint)?
       source = read_file_content(path)
       return unless source.includes?("whitelist") && source.matches?(Detector::Python::Frappe::IMPORT_RE)
