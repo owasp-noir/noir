@@ -423,6 +423,70 @@ module Analyzer::Python
       import_modules
     end
 
+    ABSOLUTE_IMPORT_RE = /^[ \t]*(?:from|import)[ \t]+([A-Za-z_]\w*)/m
+    @package_roots : Hash(::String, Array(::String))?
+    @package_root_imports = Hash(::String, Hash(::String, Tuple(::String, Int32))).new
+
+    # `name` as `path` imports it: from the app's own roots, else from
+    # another package root in the checkout.
+    private def fastapi_import(name : ::String, path : ::String, source : ::String,
+                               base_path : ::String) : Tuple(::String, Int32)?
+      info = find_fastapi_imported_modules(base_path, path, source)[name]?
+      return info if info && !info[0].empty?
+      package_root_imports(path, source, base_path)[name]?
+    end
+
+    # Imports of `path` resolved against a top-level package elsewhere in
+    # the same scan base, as another `sys.path` entry would: a
+    # path-dependency `shared/shared/` beside the app, or `core/` next to
+    # `routers/` in a service run from its source dir. Each root only
+    # answers for the package it was picked for. A root containing the
+    # file wins (deepest first); a package several unrelated roots hold is
+    # ambiguous and left alone.
+    # ponytail: a lone vendored copy of a pip dependency still binds; add a
+    # project-marker check if that shows up as FPs.
+    private def package_root_imports(path : ::String, source : ::String,
+                                     base_path : ::String) : Hash(::String, Tuple(::String, Int32))
+      @package_root_imports.fetch(path) do
+        imports = Hash(::String, Tuple(::String, Int32)).new
+        resolved = Hash(::String, Hash(::String, Tuple(::String, Int32))).new
+        own_base = python_base_path_for(path)
+        source.scan(ABSOLUTE_IMPORT_RE) do |m|
+          package = m[1]
+          next unless roots = package_roots[package]?
+          roots = roots.select { |root| python_base_path_for(root) == own_base }
+          containing = roots.select { |root| Noir::PathScope.under_root?(path, root) }.sort_by!(&.size).reverse!
+          next if containing.empty? && roots.size != 1
+          (containing.empty? ? roots : containing).each do |root|
+            # Already asked by `find_fastapi_imported_modules`.
+            next if root == base_path || root == File.dirname(path)
+            package_dir = File.join(root, package) + "/"
+            (resolved[root] ||= find_imported_modules(root, path, source)).each do |name, info|
+              imports[name] = info if info[0].starts_with?(package_dir) && !imports.has_key?(name)
+            end
+          end
+        end
+        @package_root_imports[path] = imports
+      end
+    end
+
+    # Top-level package name => the directories holding it (a package dir
+    # whose parent is not a package), across every scanned production
+    # `__init__.py`.
+    private def package_roots : Hash(::String, Array(::String))
+      @package_roots ||= begin
+        package_dirs = get_files_by_basename("__init__.py").reject do |init|
+          base_relative_path(init).includes?("/site-packages/") || python_test_path?(init)
+        end.map { |init| File.dirname(init) }.to_set
+        roots = Hash(::String, Array(::String)).new
+        package_dirs.each do |dir|
+          parent = File.dirname(dir)
+          (roots[File.basename(dir)] ||= [] of ::String) << parent unless package_dirs.includes?(parent)
+        end
+        roots
+      end
+    end
+
     # Configures the prefix for each router
     def configure_router_prefix(file : ::String,
                                 include_router_map : Hash(::String, Hash(::String, Router)),
@@ -1578,8 +1642,7 @@ module Analyzer::Python
       defined ||= function ? /^(?:async\s+)?def\s+#{escaped}\s*\(/m : /^\s*class\s+#{escaped}\s*[(:]/m
       return {source, path} if source.matches?(defined)
       return if depth > 5
-      imports = find_fastapi_imported_modules(base_path, path, source)
-      if (info = imports[model]?) && !info[0].empty? && info[0] != path
+      if (info = fastapi_import(model, path, source, base_path)) && info[0] != path
         return model_site(model, read_file_content(info[0]), info[0], base_path, depth + 1, function, defined)
       end
       source.scan(STAR_IMPORT_RE) do |m|
@@ -1651,7 +1714,7 @@ module Analyzer::Python
       module_name, _, name = callee.rpartition('.')
       site = if module_name.empty?
                model_site(name, source, path, base_path, function: true)
-             elsif (info = find_fastapi_imported_modules(base_path, path, source)[module_name]?) && !info[0].empty?
+             elsif info = fastapi_import(module_name, path, source, base_path)
                model_site(name, read_file_content(info[0]), info[0], base_path, function: true)
              end
       return [] of Param unless site
