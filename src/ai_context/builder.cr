@@ -320,7 +320,7 @@ module NoirAIContext
     # A state the name reports, not an action it takes: `SearchCondition.Deleted`,
     # `saved_change_to_name?`, `persisted?`. Lowercase `ed` only, so
     # `deleteDB` / `updateDNS` stay verbs.
-    STATE_NAMED_CALLEE = /\A(?i:creat|delet|updat|remov|sav|truncat|destroy|insert|persist|dropp|flush|committ)ed(?:[A-Z_]|\z)|\?\z/
+    STATE_NAMED_CALLEE = /\A(?:(?i:create|delete|update|remove|save|truncate)d|(?i:destroy|insert|persist|flush)ed|(?i:drop)ped|(?i:commit)ted)(?:[A-Z_]|\z)|\?\z/
     # What a `create…` call builds when it only builds a value in memory:
     # `createFormBuilder`, `CreateContext`, `CreateAPIError`,
     # `createNotFoundException`, `createAuthUri`. Deliberately without
