@@ -138,7 +138,7 @@ DELETE /settings/keys/:id
 | `csrf_guard` | CSRF 보호. 토큰 검사, `protect_from_forgery`, `SameSite=Strict` |
 | `rate_limit_guard` | 스로틀링이나 rate limit 계층 |
 
-가드가 이 버킷에 들어오는 길은 세 가지입니다. 먼저 [프레임워크별 인증 태거](@/usage/more_features/tagger/index.ko.md)가 프레임워크 고유의 장치(Spring Security 체인, Phoenix 파이프라인, Express 미들웨어, Noir가 본문까지 확인한 Go 미들웨어)를 읽어 `auth_guard`나 `authz_guard`를 보고합니다. 이때 `source`는 태거 이름이고 신뢰도는 86입니다. 다른 하나는 핸들러 소스의 이름 매칭(`login_required`, `@PreAuthorize`, `before_action :authenticate_user!`)으로, `source`는 `route_source`이고 신뢰도는 44에서 58 사이입니다. 마지막으로 핸들러가 호출자를 직접 확인하는 함수(`validateSession(req, res)`, `principal.validate_admin_session()`, `validateJobAccess`)를 부르면, 본문 어디에서 부르든 `source`가 `callee`인 가드로 보고합니다. 두 이름 매칭은 태거가 채우지 못한 kind만 채우며, `csrf_guard`와 `rate_limit_guard`는 핸들러 소스의 이름 매칭으로만 나옵니다.
+가드가 이 버킷에 들어오는 길은 세 가지입니다. 먼저 [프레임워크별 인증 태거](@/usage/more_features/tagger/index.ko.md)가 프레임워크 고유의 장치(Spring Security 체인, Phoenix 파이프라인, Express 미들웨어, Noir가 본문까지 확인한 Go 미들웨어)를 읽어 `auth_guard`나 `authz_guard`를 보고합니다. 이때 `source`는 태거 이름이고 신뢰도는 86입니다. 다른 하나는 핸들러 소스의 이름 매칭(`login_required`, `@PreAuthorize`, `before_action :authenticate_user!`)으로, `source`는 `route_source`이고 신뢰도는 44에서 58 사이입니다. 마지막으로 핸들러가 호출자를 직접 확인하는 함수(`validateSession(req, res)`, `verifyAuth(...)`, `principal.validate_admin_session()`)를 부르면, 본문 어디에서 부르든 `source`가 `callee`이고 신뢰도가 56 또는 60인 가드로 보고합니다. `verifyToken`이나 `validateApiKey` 호출은 이렇게 읽지 않습니다. 그 토큰은 호출자의 자격 증명일 수도 있지만 요청에 실려 온 재설정 토큰이나 일회용 코드인 경우도 그만큼 많기 때문입니다. 두 이름 매칭은 태거가 채우지 못한 kind만 채우며, `csrf_guard`와 `rate_limit_guard`는 핸들러 소스의 이름 매칭으로만 나옵니다.
 
 프레임워크가 익명 호출을 허용한다고 명시한 라우트(tRPC `publicProcedure`, Micronaut `@Secured(IS_ANONYMOUS)`)에는 `anonymous` 시그널이 붙고, `auth_guard`와 `authz_guard`의 이름 매칭은 건너뜁니다.
 
@@ -246,7 +246,7 @@ callee 이름이 매칭되면 sink의 `source`는 `callee`, 핸들러 텍스트�
 | `path_traversal` | `file_io` sink와 `file_input`이 함께 있음 |
 | `object_lookup` | 식별자 입력과 조회 callee(`findById`, `getOne`, `repo.get`)가 함께 있음 |
 | `object_write` | 경로에 식별자가 있는 상태 변경 엔드포인트가 조회 callee 없이 변경 callee(`create`, `update`, `delete`, `save`)를 호출. 감사 로그 기록과 메모리 안에서 값을 만드는 호출(`createFormBuilder`, `CreateAPIError`)은 변경으로 보지 않습니다 |
-| `unsafe_method` | `GET`, `HEAD`, `OPTIONS`, `QUERY` 엔드포인트가 변경 callee를 호출. 핸들러가 요청 메서드나 폼 제출 확인(`$form->isSubmitted()`, `form.validate_on_submit()`)으로 분기하면 건너뜁니다 |
+| `unsafe_method` | `GET`, `HEAD`, `OPTIONS`, `QUERY` 엔드포인트가 변경 callee를 호출. 핸들러가 요청 메서드(`request.method ==`, `$request->isMethod()`)나 폼 제출 확인(`$form->isSubmitted()`, `form.validate_on_submit()`)으로 분기하면 건너뜁니다 |
 | `priority_review` | 종합 점수. 아래에서 설명합니다 |
 
 부재(absence) 시그널 넷은 신뢰도가 일부러 낮습니다(28에서 44). 게이트웨이나 Noir가 읽지 않은 부모 클래스에 있는 가드는 놓칠 수 있으므로, 이 시그널은 "이 라우트를 보호하는 것이 없다"가 아니라 "여기서 감지된 것이 없다"는 뜻입니다.

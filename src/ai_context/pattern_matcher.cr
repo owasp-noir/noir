@@ -80,8 +80,7 @@ module NoirAIContext
       when "outbound_http"
         # Ruby `params.fetch(:q)` / `ENV.fetch("X")` read a hash.
         return true if name.matches?(HASH_FETCH_CALLEE)
-        # So does `prefs.fetch('link_form_fields', [])`: a bare-word key, not a URL.
-        return true if name.ends_with?(".fetch") && snippet && snippet.matches?(/#{Regex.escape(name)}\(\s*(?::|(["'])[\w .-]*\1\s*[,)])/)
+        return true if name.ends_with?(".fetch") && snippet && snippet.includes?("#{name}(:")
         return true if name.starts_with?("request.")
         return true if name == "request"
         return true if name.matches?(/(?:^|\.)(?:client|databaseClient)\.(?:query|insert|select|execute|sql|bind)\b/i)

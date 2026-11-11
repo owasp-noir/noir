@@ -332,12 +332,16 @@ module NoirAIContext
     # `auditLog.createAuditLog`, `Audit.create`, `downloadLogService.save`.
     # Only for a verb that adds an entry (`auditLogs.delete` still mutates),
     # and only for a log of that kind: a `timeLog` / `workoutLog` is the
-    # product's own record.
-    RECORD_NOUNS         = Set{"audit", "logger", "telemetry", "analytics", "metrics"}
+    # product's own record, and so is what an `analytics` / `metrics`
+    # service creates (`analytics.createDashboard`).
+    RECORD_NOUNS         = Set{"audit", "audits", "logger"}
     RECORD_LOG_KINDS     = Set{"audit", "access", "action", "activity", "event", "download", "request", "error", "system", "operation", "login"}
     RECORD_HOLDER_SUFFIX = Set{"service", "repository", "repo", "dao", "mapper", "store"}
     RECORDING_VERBS      = Set{"create", "save", "insert", "persist"}
-    INVOKER_CALLEE       = /\A(?:call|perform(?:_later|_async|_now)?|run|execute|invoke|handle)(?:\(\))?\z/
+    # What runs a command object, or hands it on to be run: `.call`, `.run!`,
+    # `.perform_later`, `.Execute`, `.new` (`CreateUser.new(params).call`),
+    # `.set` (`Job.set(wait: 5).perform_later`), Celery `.delay`.
+    INVOKER_CALLEE = /\A(?:call|new|set|bind|run|execute|invoke|handle|dispatch|process|delay|apply_async|perform(?:_\w+)?)(?:async)?[!?]?(?:\(\))?\z/i
 
     # A callee changes state when a call in its chain is a mutating verb
     # whose immediate receiver is not a known pure value. Judging the
@@ -373,7 +377,7 @@ module NoirAIContext
         if call = receiver.rchop?("()")
           !call.matches?(CRYPTO_FACTORY_CALLEE)
         else
-          !receiver.matches?(PURE_CALLEE_RECEIVER) && !value_type?(name_words(receiver))
+          !receiver.matches?(PURE_CALLEE_RECEIVER)
         end
       end
     end
@@ -385,19 +389,24 @@ module NoirAIContext
       words
     end
 
-    # A data class or a factory, as a constructor (`UpdatePaymentViewModel(...)`)
-    # or as the receiver of a builder (`CsrfTokenDto.create`,
-    # `StoreBrandingViewModel.CreateAsync`, `DbContextFactory.CreateContext`).
+    # A data class or a factory: `UpdatePaymentViewModel(...)` constructs one.
     private def self.value_type?(words : Array(String)) : Bool
       words.last?.in?("dto", "factory") || words.last(2) == ["view", "model"]
     end
 
+    # `create…` that builds a value in memory: by what it builds
+    # (`createFormBuilder`, `CreateAPIError`) or by what builds it
+    # (`CsrfTokenDto.create`, `StoreBrandingViewModel.CreateAsync`,
+    # `DbContextFactory.CreateContext`). Any other verb on such a receiver
+    # (`sessionFactory.save`) still mutates.
     private def self.value_factory?(words : Array(String), receiver : String?) : Bool
       return false unless words.first? == "create"
       return true if VALUE_FACTORY_NOUNS.includes?(words.last) || words[1..] == ["read", "stream"]
+      return false if receiver.nil?
       # Symfony's controller helper; `forms.createForm` in a form-builder
       # product is a record.
-      words.last == "form" && (receiver.nil? || receiver.in?("this", "self"))
+      return true if words.last == "form" && receiver.in?("this", "self")
+      !receiver.ends_with?("()") && value_type?(name_words(receiver))
     end
 
     private def self.recording?(words : Array(String), receiver : String?) : Bool
@@ -420,7 +429,7 @@ module NoirAIContext
     # callees list. The mutating callee in the GET endpoint is
     # often the POST branch's call, not actually reachable via GET.
     METHOD_DISPATCH_PATTERN  = /(?:request\.method\s*==|req\.method\s*==|r\.Method\s*==|request\.getMethod\(\)\s*\.equals|\.match\(\s*['"](?:GET|POST|PUT|PATCH|DELETE|QUERY)['"])/i
-    FORM_SUBMIT_CHECK_CALLEE = /(?:\.|->)(?:isSubmitted|isMethod|is_valid|validate_on_submit)\z/
+    FORM_SUBMIT_CHECK_CALLEE = /(?:\.|->)(?:isSubmitted|isMethod|validate_on_submit)\z/
 
     private def add_unsafe_method_signal(context : AIContext, endpoint : Endpoint, anchor : PathInfo?, route_snippet : String?)
       return if endpoint.mobile?
@@ -432,8 +441,9 @@ module NoirAIContext
       mutating = endpoint.callees.find { |callee| Builder.mutating_callee?(callee.name) }
       return unless mutating
       # The same dispatch, spelled as a form check: the write sits behind
-      # `$form->isSubmitted()` / `form.validate_on_submit()`, which a GET
-      # never passes.
+      # `$form->isSubmitted()` / `form.validate_on_submit()` /
+      # `$request->isMethod('POST')`, which a GET never passes. Not Django's
+      # `form.is_valid()`: a form bound to `request.GET` passes it.
       return if endpoint.callees.any?(&.name.matches?(FORM_SUBMIT_CHECK_CALLEE))
 
       # If the handler dispatches on HTTP method internally, we
@@ -1520,9 +1530,21 @@ module NoirAIContext
     # A handler that calls `validateSession(req, res)` or
     # `principal.validate_admin_session()` is guarded by that call, wherever
     # in the body it sits; the route-scope scan only reads the first lines.
+    # The route's own handler, which some analyzers list among its callees:
+    # by name, or as the last argument of the line that registers it
+    # (`r.POST("/session", h.ValidateSession)`).
+    private def handler_reference?(endpoint : Endpoint, callee : Callee) : Bool
+      name = callee.name.split(/\.|->|::/).last
+      return true if endpoint.handler.try(&.name.split(/[.#:@]/).last) == name
+      return false unless (path = callee.path) && (line = callee.line)
+
+      !!@reader.lines_for(path)[line - 1]?.try(&.matches?(CALLER_CHECK_AS_HANDLER))
+    end
+
     private def add_caller_check_guards(context : AIContext, endpoint : Endpoint, callee : Callee, snippet : String?)
       # The framework said the route admits anonymous callers.
       return if endpoint.tags.any? { |tag| tag.name == "anonymous" }
+      return if handler_reference?(endpoint, callee)
 
       { {AUTH_GUARD_PATTERNS, CALLER_AUTH_CHECK}, {AUTHZ_GUARD_PATTERNS, CALLER_ACCESS_CHECK} }.each do |patterns, check|
         pattern = patterns.first
@@ -2223,6 +2245,7 @@ module NoirAIContext
         route_scope = @reader.route_scope_snippet_for(path_info.path, path_info.line)
         guard_scope = route_scope && without_self_names(route_scope, endpoint, path_info)
         guard_scope = guard_scope.gsub(POST_AUTHORIZE_ANNOTATION, "") if guard_scope && !SAFE_METHODS.includes?(endpoint.method.upcase)
+        guard_scope = guard_scope.try(&.gsub(CALLER_CHECK_AS_HANDLER, ")"))
 
         # Try each guard category independently — a route can be
         # protected by authn, authz, csrf, and rate-limit at once,

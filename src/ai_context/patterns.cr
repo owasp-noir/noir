@@ -117,13 +117,15 @@ module NoirAIContext
       "Potential template/render sink inferred from code or callee name",
       62,
       # `html.EscapeString` / `html.escape` sanitize; they are not a render.
-      # `template` counts as the call (`c.template(...)`) or as Go's
-      # html/template package, not as a receiver: `@template.fields` is a
-      # model named Template, `template.putObject` a Spring `*Template` bean.
+      # `template` counts as the call itself (Bottle's `template('x')`) or
+      # as the receiver of a template API (Go's html/template, FreeMarker
+      # `template.process`), not as any receiver or accessor:
+      # `@template.fields` is a model named Template, `template.putObject` a
+      # Spring `*Template` bean, `@submitter.template` an association.
       # A view helper renders under its own name: Flask `render_template`,
       # Django `render_to_string` / `TemplateResponse`, ASP.NET `View(model)`,
       # Laravel `view('x')`.
-      name_patterns: [/\brender\b/i, /\Arender_(?:template|to_string|to_response)\z/, /(?:\A|(?<=\.|::|->))template\z/i, /\btemplate\.(?:Must|New|Parse\w*|HTML|Execute\w*)\b/, /\bTemplateResponse\z/, /\A(?:(?:Partial)?View|view)\z/, /\bhtml\b(?!\.(?:un)?escape)/i, /\brespond\b/i],
+      name_patterns: [/\brender\b/i, /\Arender_(?:template|to_string|to_response)\z/, /\Atemplate\z/i, /\btemplate\.(?:Must|New|Parse\w*|HTML|Execute\w*|process|merge|evaluate|render_async|stream|generate)\b/, /\bTemplateResponse\z/, /\A(?:(?:Partial)?View|view)\z/, /\bhtml\b(?!\.(?:un)?escape)/i, /\brespond\b/i],
       # Not Ruby `obj.respond_to?(:split)`, a method-existence check.
       source_patterns: [/\brender(_template)?\s*\(/i, /\breturn\s+render\b/i, /\brespond_to\b(?!\?)/i]
     ),
@@ -508,15 +510,23 @@ module NoirAIContext
 
   # A `validate…` / `verify…` that checks the caller rather than the input:
   # `validateSession(req, res)`, `verifyAuth([...])`, `validateAuthHeader`,
-  # `verifyAccessToken`, `principal.validate_admin_session()`. A guard, and
-  # not the input validator its verb suggests. The noun must close the name,
-  # so `verifyAuthenticationResponse`, `validate_auth_code_params` and
-  # `verifyMfaSession` (steps of a login flow) stay validators.
-  CALLER_AUTH_CHECK = /\b(?:validate|verify)_?(?:(?:user|api|auth|access|id|bearer)_?)*(?:session|auth(?:n|entication|enticated|orization)?|principal|jwt|token|api_?key|bearer)(?:_?(?:auth|header|token|cookie|middleware))*\b|\bprincipal\.(?:validate|verify)\w+/i
-  # The same for what the caller may reach: `validateJobAccess`,
-  # `ValidateAccessToInvoice`, `principal.validate_group_admin_can_manage()`.
-  CALLER_ACCESS_CHECK = /\b(?:[Vv]alidate|[Vv]erify)_?(?!\w*[Tt]oken)\w*?(?:[Aa]ccess(?:To[A-Z]\w*|_to_\w+)?)\b|\bprincipal\.(?:validate|verify)\w*(?:admin|_can_|permission|role)\w*/
+  # `principal.validate_admin_session()`. A guard, and not the input
+  # validator its verb suggests. The noun must close the name, so
+  # `verifyAuthenticationResponse`, `validate_auth_code_params` and
+  # `verifyMfaSession` (steps of a login flow) stay validators. A token or
+  # API key is deliberately not such a noun: `verifyToken(req.body.token)`
+  # is as often a reset token, a TOTP code or a captcha as the caller's
+  # bearer token, and a false guard hides an open route.
+  CALLER_AUTH_CHECK = /\b(?:validate|verify)_?(?:user_?)?(?:session|auth(?:n|entication|enticated|orization)?|principal)(?:_?(?:auth|header|cookie|middleware))*\b|\bprincipal\.(?:validate|verify)_\w*(?:session|auth|admin|user|api_key|access)\w*/i
+  # What the same receiver says the caller may reach:
+  # `principal.validate_group_admin_can_manage()`.
+  CALLER_ACCESS_CHECK = /\bprincipal\.(?:validate|verify)_\w*(?:admin|_can_|permission)\w*/i
   CALLER_CHECK        = Regex.union(CALLER_AUTH_CHECK, CALLER_ACCESS_CHECK)
+  # The same name (or `verifyToken`, which the auth patterns below also
+  # take) where a route names its handler, the call's last argument
+  # (`r.POST("/session", h.ValidateSession)`): the handler, not a guard in
+  # front of it. ` | ` ends a line of a scope snippet.
+  CALLER_CHECK_AS_HANDLER = /(?:#{CALLER_AUTH_CHECK.source}|\bverifyToken)\s*\)\s*;?\s*(?= \| |\z)/i
 
   # Authentication guard — "verifies who you are". Login required,
   # JWT verification, session check.

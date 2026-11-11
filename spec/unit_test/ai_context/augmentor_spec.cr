@@ -3840,6 +3840,17 @@ describe "NoirAIContext" do
       "createWriteStream",
       "Templates::CreateAttachments.call",
       "DestroyProblemsByAppJob.perform_later",
+      "CreateUser.run!",
+      "CreateUser.new",
+      "DeleteAccountWorker.perform_in",
+      "DeleteAccountJob.set",
+      "delete_user_data.delay",
+      "deleteItemHandler.Handle",
+      "deleteUserCommand.ExecuteAsync",
+      "request.session.destroy.bind",
+      "analytics.createDashboard",
+      "sessionFactory.save",
+      "createForm",
       "ctx.SaveChangesAsync",
       "$em->flush",
       "@record.update!",
@@ -3865,18 +3876,22 @@ describe "NoirAIContext" do
 
     context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
     context.signals.map(&.kind).should_not contain("unsafe_method")
+
+    # A Django form bound to `request.GET` passes `is_valid()` on a GET.
+    bound = Endpoint.new("/items/purge", "GET")
+    bound.push_callee(Callee.new("form.is_valid", "views.py", 5))
+    bound.push_callee(Callee.new("Item.objects.filter().delete", "views.py", 7))
+    NoirAIContext.apply([bound])[0].ai_context.should_not(be_nil).signals.map(&.kind).should contain("unsafe_method")
   end
 
   it "files a caller check called by the handler as a guard, not as an input validator" do
     {
-      "validateSession"                  => ["auth_guard"],
-      "call.validatePrincipal"           => ["auth_guard"],
-      "tokenManager.verifyToken"         => ["auth_guard"],
-      "validateAuthHeader"               => ["auth_guard"],
-      "principal.validate_session_auth"  => ["auth_guard"],
-      "principal.validate_admin_session" => ["auth_guard", "authz_guard"],
-      "$this->validateJobAccess"         => ["authz_guard"],
-      "ValidateAccessToInvoice"          => ["authz_guard"],
+      "validateSession"                           => ["auth_guard"],
+      "call.validatePrincipal"                    => ["auth_guard"],
+      "validateAuthHeader"                        => ["auth_guard"],
+      "principal.validate_session_auth"           => ["auth_guard"],
+      "principal.validate_admin_session"          => ["auth_guard", "authz_guard"],
+      "principal.validate_api_key_or_group_admin" => ["auth_guard", "authz_guard"],
     }.each do |name, kinds|
       endpoint = Endpoint.new("/items", "POST")
       endpoint.push_callee(Callee.new(name, "handler.src", 5))
@@ -3898,6 +3913,16 @@ describe "NoirAIContext" do
       "validate_auth_code_req_params",
       "validatePasswordResetAuthorization",
       "verifyEmailToken",
+      # A token or key the request carries: a reset token, a TOTP code, a
+      # captcha, a key under test. Filing these as guards hid open routes.
+      "tokenManager.verifyToken",
+      "device.verify_token",
+      "recaptcha.verify_token",
+      "openai.validateApiKey",
+      "this.authService.validateToken",
+      # A connectivity test, not a check of the caller.
+      "verifyBucketAccess",
+      "principal.validate_request_body",
     ].each do |name|
       endpoint = Endpoint.new("/items", "POST")
       endpoint.push_callee(Callee.new(name, "handler.src", 5))
@@ -3910,11 +3935,34 @@ describe "NoirAIContext" do
 
   it "does not let a caller-check callee overrule an anonymous route" do
     endpoint = Endpoint.new("/items", "POST")
-    endpoint.add_tag(Tag.new("anonymous", "AllowAnonymous", "aspnet_auth"))
+    endpoint.add_tag(Tag.new("anonymous", "NestJS @Public() admits anonymous callers", "nestjs_auth"))
     endpoint.push_callee(Callee.new("validateSession", "handler.src", 5))
 
     context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
     context.guards.should be_empty
+    # Still a check of the caller, so not an input validator either.
+    context.validators.should be_empty
+  end
+
+  it "does not read a route's own handler as the guard in front of it" do
+    named = Endpoint.new("/session", "POST")
+    named.handler = Handler.new("SessionController.validateSession", "handler.src", 5)
+    named.push_callee(Callee.new("this.validateSession", "handler.src", 5))
+    NoirAIContext.apply([named])[0].ai_context.should_not(be_nil).guards.should be_empty
+
+    source = "r.POST(\"/session\", h.ValidateSession)\nr.POST(\"/users\", ValidateSession, h.CreateUser)\nr.POST(\"/check\", VerifyToken)\n"
+    with_temp_ai_context_source(source, ".go") do |path|
+      {1 => false, 2 => true, 3 => false}.each do |line, guarded|
+        endpoint = Endpoint.new("/x", "POST")
+        details = endpoint.details
+        details.add_path(PathInfo.new(path, line))
+        endpoint.details = details
+        endpoint.push_callee(Callee.new({"h.ValidateSession", "ValidateSession", "VerifyToken"}[line - 1], path, line))
+
+        guards = NoirAIContext.apply([endpoint])[0].ai_context.should_not(be_nil).guards.map(&.kind)
+        guards.includes?("auth_guard").should eq(guarded), "line #{line}"
+      end
+    end
   end
 
   it "reads a caller check in the route declaration as the guard and only the input check as the validator" do
@@ -3960,12 +4008,15 @@ describe "NoirAIContext" do
       "@template.fields"           => false,
       "Template.new"               => false,
       "template.putObject"         => false,
+      "@submitter.template"        => false,
       "render_template"            => true,
       "render_to_string"           => true,
       "View"                       => true,
       "view"                       => true,
-      "c.template"                 => true,
+      "template"                   => true,
       "template.ParseFiles"        => true,
+      "template.process"           => true,
+      "template.render_async"      => true,
       "templates.TemplateResponse" => true,
       "$this->render"              => true,
     }.each do |name, expected|
@@ -3993,27 +4044,29 @@ describe "NoirAIContext" do
       kinds.includes?("command_exec").should eq(expected), "#{name} command_exec"
     end
 
-    with_temp_ai_context_source("#[post(\"/sync\")]\npub async fn sync() -> HttpResponse {\n    tokio::spawn(async move { push().await });\n    HttpResponse::Ok().finish()\n}\n", ".rs") do |path|
-      endpoint = Endpoint.new("/sync", "POST")
-      details = endpoint.details
-      details.add_path(PathInfo.new(path, 1))
-      endpoint.details = details
+    # The receiver and the async-block argument each rule a task spawn out
+    # on their own; a process spawn in the same position still counts.
+    {
+      "tokio::spawn(push_all());"           => false,
+      "spawn(async move { push().await });" => false,
+      "spawn(\"sh\", [cmd]);"               => true,
+    }.each do |call, expected|
+      with_temp_ai_context_source("#[post(\"/sync\")]\npub async fn sync() -> HttpResponse {\n    #{call}\n    HttpResponse::Ok().finish()\n}\n", ".rs") do |path|
+        endpoint = Endpoint.new("/sync", "POST")
+        details = endpoint.details
+        details.add_path(PathInfo.new(path, 1))
+        endpoint.details = details
 
-      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
-      context.sinks.map(&.kind).should_not contain("command_exec")
+        kinds = NoirAIContext.apply([endpoint])[0].ai_context.should_not(be_nil).sinks.map(&.kind)
+        kinds.includes?("command_exec").should eq(expected), call
+      end
     end
   end
 
-  it "does not read a path-string helper as file I/O or a keyed hash fetch as an outbound request" do
-    source = "def completed\n  fields = @template.preferences.fetch('link_form_fields', ['email'])\n  name = File.basename(params[:name])\nend\n"
-    with_temp_ai_context_source(source, ".rb") do |path|
-      endpoint = Endpoint.new("/completed", "GET")
-      endpoint.push_callee(Callee.new("@template.preferences.fetch", path, 2))
-      endpoint.push_callee(Callee.new("File.basename", path, 3))
-
-      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
-      context.sinks.should be_empty
-    end
+  it "does not read a path-string helper as file I/O" do
+    helper = Endpoint.new("/completed", "GET")
+    helper.push_callee(Callee.new("File.basename", "app.rb", 3))
+    NoirAIContext.apply([helper])[0].ai_context.should_not(be_nil).sinks.should be_empty
 
     read = Endpoint.new("/read", "GET")
     read.push_callee(Callee.new("File.read", "app.rb", 3))
