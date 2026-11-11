@@ -9,7 +9,7 @@ sort_by = "weight"
 Noir's default rules look for hard-coded secrets: API keys, tokens, private keys and connection strings. With `-P`, Noir downloads the rules on the first run, checks them for updates, and can update them for you.
 
 {% mascot(mood="hacker") %}
-Passive scan runs in the same pass as the endpoint scan. Secrets and dangerous calls in the code come back with a file and line.
+Passive scan runs in the same pass as the endpoint scan. Hard-coded secrets come back with a file and line.
 {% end %}
 
 ## Rule Locations

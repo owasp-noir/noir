@@ -22,7 +22,7 @@ faq_answers = [
   "네, MIT 라이선스의 무료 오픈 소스입니다. 상업적 용도로도 자유롭게 사용할 수 있습니다.",
   "ZAP, Burp Suite, Caido 등과 통합할 수 있습니다. DAST 파이프라인 가이드를 참조하세요.",
   "JSON, YAML, OpenAPI 명세, cURL 등 여러 형식으로 내보냅니다. 출력 형식 섹션을 참조하세요.",
-  "GitHub 이슈를 열어 보고해 주세요."
+  "GitHub 이슈를 열어 버그를 알리거나 기능을 요청해 주세요."
 ]
 
 +++
@@ -61,4 +61,4 @@ JSON, YAML, OpenAPI 명세, cURL 등 여러 형식으로 내보냅니다. [출�
 
 ### 버그 보고나 기능 요청은 어떻게 하나요?
 
-[GitHub 이슈](https://github.com/owasp-noir/noir/issues)를 열어 보고해 주세요.
+[GitHub 이슈](https://github.com/owasp-noir/noir/issues)를 열어 버그를 알리거나 기능을 요청해 주세요.

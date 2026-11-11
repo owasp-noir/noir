@@ -18,7 +18,7 @@ Use [OpenRouter](https://openrouter.ai) to access multiple AI models (OpenAI, An
 ```bash
 noir scan ./myapp \
      --ai-provider=openrouter \
-     --ai-model=anthropic/claude-opus-4-8 \
+     --ai-model=anthropic/claude-opus-5.5 \
      --ai-key=sk-or-...
 ```
 

@@ -62,7 +62,7 @@ nix develop
 
 ## 패키지 빌드
 
-플레이크는 릴리스 바이너리도 빌드합니다. 사용자가 `nix profile add github:owasp-noir/noir`로 설치할 때와 똑같이 빌드하며, 다른 공식 빌드와 같은 플래그(`--release --no-debug`)를 씁니다.
+플레이크는 릴리스 바이너리도 빌드합니다. 사용자가 `nix profile add github:owasp-noir/noir`로 설치할 때와 똑같이 빌드하며, 다른 공식 빌드처럼 `--release --no-debug`로 컴파일합니다. 다른 빌드는 shards에 `--production`도 넘기는데, Nix에서는 버전을 고정한 `packaging/nix/shards.nix`가 그 역할을 합니다.
 
 ```sh
 just nix-build

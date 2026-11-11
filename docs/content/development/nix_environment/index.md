@@ -62,7 +62,7 @@ nix develop
 
 ## Building the Package
 
-The flake also builds the release binary, exactly as `nix profile add github:owasp-noir/noir` does for users. Same flags as every other official build: `--release --no-debug`.
+The flake also builds the release binary, exactly as `nix profile add github:owasp-noir/noir` does for users. It compiles with `--release --no-debug`, like every other official build. The others also pass `--production` to shards; under Nix the pinned `packaging/nix/shards.nix` does that job.
 
 ```sh
 just nix-build

@@ -128,11 +128,11 @@ nix run github:owasp-noir/noir -- -h
 
 ## Direct Binary Download
 
-No package manager? Grab a prebuilt binary from [GitHub Releases](https://github.com/owasp-noir/noir/releases/latest). Builds exist for Linux and macOS; Windows (x86_64) builds start with the first release after v1.4.0.
+No package manager? Grab a prebuilt binary from [GitHub Releases](https://github.com/owasp-noir/noir/releases/latest). Builds exist for Linux, macOS and, since v1.5.0, Windows (x86_64).
 
 To install or update:
 
-1. Download the binary for your platform (e.g., `noir-v1.5.0-linux-x86_64` on Linux, `noir-v1.5.0-osx-arm64.tar.gz` on macOS, or `noir-vX.Y.Z-windows-x86_64.exe` on Windows).
+1. Download the binary for your platform (e.g., `noir-v1.5.0-linux-x86_64` on Linux, `noir-v1.5.0-osx-arm64.tar.gz` on macOS, or `noir-v1.5.0-windows-x86_64.exe` on Windows).
 2. **Linux**: make it executable and move it into your `PATH`:
 
     ```bash

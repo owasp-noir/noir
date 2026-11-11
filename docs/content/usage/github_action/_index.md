@@ -49,7 +49,7 @@ jobs:
 | `passive_scan_severity` | Minimum severity for passive scan (`critical`, `high`, `medium`, `low`) | No | `high` |
 | `use_all_taggers` | Enable all taggers (`-T/--use-all-taggers`) | No | `false` |
 | `use_taggers` | Enable specific taggers (`--use-taggers`) | No | `` |
-| `include_path` | Add source file paths to `plain` output; JSON always has them (`--include-path`) | No | `false` |
+| `include_path` | Add source file paths to `plain` output; JSON always has them (`--include path`) | No | `false` |
 | `verbose` | Verbose output (`--verbose`) | No | `false` |
 | `debug` | Debug output (`-d/--debug`) | No | `false` |
 | `concurrency` | Concurrency level (`--concurrency`) | No | `` |
