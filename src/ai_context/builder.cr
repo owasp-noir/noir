@@ -309,7 +309,7 @@ module NoirAIContext
     # headers, a bare Map/Set, a hash module, and a hash/HMAC built by a
     # call (`crypto.createHash().update()`, `hashlib.sha256().update`).
     # Case-sensitive: `Url.create` and `Digest.create` are model classes.
-    PURE_CALLEE_RECEIVER  = /\A(?:crypto|hashlib|hmac|hash|hasher|digest|\w*SearchParams|searchParams|params|urlParams|queryParams|headers|url|map|set)\z/
+    PURE_CALLEE_RECEIVER  = /\A(?:crypto|hashlib|hmac|hash|hasher|digest|\w*SearchParams|searchParams|params|urlParams|queryParams|headers|url|URI|ModelState|map|set)\z/
     CRYPTO_FACTORY_CALLEE = /\A(?:create(?:Hash|Hmac|Cipheriv|Decipheriv|Sign|Verify)|md5|sha\d*)\z/
     MUTATING_VERB_SEGMENT = /\A(?:create|destroy|delete|update|save|insert|remove|drop|truncate|persist|flush|commit|rollback|set_)/i
     # ponytail: name-only guess for receiverless text helpers
@@ -317,8 +317,30 @@ module NoirAIContext
     # definition if more of these turn up.
     PURE_TEXT_HELPER_CALLEE = /\Aremove_?\w*?(?:links|html|markup|whitespace|spaces|newlines|accents|diacritics|emojis?|punctuation|chars|characters|ansi|prefix|suffix|quotes|markdown|formatting|trailing_?slash(?:es)?|slashes|extension|indent(?:ation)?)\z/i
 
-    # A callee changes state when one of its chain segments is a mutating
-    # verb whose immediate receiver is not a known pure value. Judging the
+    # A state the name reports, not an action it takes: `SearchCondition.Deleted`,
+    # `saved_change_to_name?`, `persisted?`. Lowercase `ed` only, so
+    # `deleteDB` / `updateDNS` stay verbs.
+    STATE_NAMED_CALLEE = /\A(?i:creat|delet|updat|remov|sav|truncat|destroy|insert|persist|dropp|flush|committ)ed(?:[A-Z_]|\z)|\?\z/
+    # What a `create…` call builds when it only builds a value in memory:
+    # `createFormBuilder`, `CreateContext`, `CreateAPIError`,
+    # `createNotFoundException`, `createAuthUri`. Deliberately without
+    # `client` / `url` / `node`: an OAuth server's `createClient` and a
+    # shortener's `createUrl` write a record.
+    VALUE_FACTORY_NOUNS = Set{"builder", "context", "error", "exception", "uri"}
+    # Writing the audit trail is bookkeeping, not the state change a safe
+    # method must not make nor the object write a path identifier scopes:
+    # `auditLog.createAuditLog`, `Audit.create`, `downloadLogService.save`.
+    # Only for a verb that adds an entry (`auditLogs.delete` still mutates),
+    # and only for a log of that kind: a `timeLog` / `workoutLog` is the
+    # product's own record.
+    RECORD_NOUNS         = Set{"audit", "logger", "telemetry", "analytics", "metrics"}
+    RECORD_LOG_KINDS     = Set{"audit", "access", "action", "activity", "event", "download", "request", "error", "system", "operation", "login"}
+    RECORD_HOLDER_SUFFIX = Set{"service", "repository", "repo", "dao", "mapper", "store"}
+    RECORDING_VERBS      = Set{"create", "save", "insert", "persist"}
+    INVOKER_CALLEE       = /\A(?:call|perform(?:_later|_async|_now)?|run|execute|invoke|handle)(?:\(\))?\z/
+
+    # A callee changes state when a call in its chain is a mutating verb
+    # whose immediate receiver is not a known pure value. Judging the
     # segment with its receiver keeps `crypto.createHash().update().digest`
     # and `params.delete('debug')` out while `User.destroy`,
     # `db.session.commit` and `doc.set().save` stay in.
@@ -335,17 +357,59 @@ module NoirAIContext
       # `/` splits Clojure's `user.service/create!`.
       segments = bare.split(/\.|->|::|\//).map(&.strip.lstrip("$&*"))
       segments.each_with_index.any? do |segment, idx|
+        # A name the chain passes through is a property or a namespace, not
+        # a call: `services.updateCheck.getVersion`, `book.createdDate.toUTC`,
+        # `PersistenceUtil.escapeLikePattern`. Unless what follows only runs
+        # it: `Templates::CreateAttachments.call`, `DestroyAppJob.perform_later`.
+        next false unless idx == segments.size - 1 || segment.ends_with?("()") ||
+                          (idx == segments.size - 2 && segments.last.matches?(INVOKER_CALLEE))
         verb = segment.rchop("()")
         next false unless verb.matches?(MUTATING_VERB_SEGMENT)
-        next false if verb.matches?(CRYPTO_FACTORY_CALLEE)
-        next !verb.matches?(PURE_TEXT_HELPER_CALLEE) if idx == 0
-        receiver = segments[idx - 1]
+        next false if verb.matches?(CRYPTO_FACTORY_CALLEE) || verb.matches?(STATE_NAMED_CALLEE)
+        words = name_words(verb)
+        receiver = idx == 0 ? nil : segments[idx - 1]
+        next false if value_type?(words) || value_factory?(words, receiver) || recording?(words, receiver)
+        next !verb.matches?(PURE_TEXT_HELPER_CALLEE) if receiver.nil?
         if call = receiver.rchop?("()")
           !call.matches?(CRYPTO_FACTORY_CALLEE)
         else
-          !receiver.matches?(PURE_CALLEE_RECEIVER)
+          !receiver.matches?(PURE_CALLEE_RECEIVER) && !value_type?(name_words(receiver))
         end
       end
+    end
+
+    # `createAuditLog` / `CreateAsync` / `update_attribute!` as lowercase words.
+    private def self.name_words(identifier : String) : Array(String)
+      words = identifier.rstrip("!").underscore.split('_', remove_empty: true)
+      words.pop if words.size > 1 && words.last == "async"
+      words
+    end
+
+    # A data class or a factory, as a constructor (`UpdatePaymentViewModel(...)`)
+    # or as the receiver of a builder (`CsrfTokenDto.create`,
+    # `StoreBrandingViewModel.CreateAsync`, `DbContextFactory.CreateContext`).
+    private def self.value_type?(words : Array(String)) : Bool
+      words.last?.in?("dto", "factory") || words.last(2) == ["view", "model"]
+    end
+
+    private def self.value_factory?(words : Array(String), receiver : String?) : Bool
+      return false unless words.first? == "create"
+      return true if VALUE_FACTORY_NOUNS.includes?(words.last) || words[1..] == ["read", "stream"]
+      # Symfony's controller helper; `forms.createForm` in a form-builder
+      # product is a record.
+      words.last == "form" && (receiver.nil? || receiver.in?("this", "self"))
+    end
+
+    private def self.recording?(words : Array(String), receiver : String?) : Bool
+      return false unless RECORDING_VERBS.includes?(words.first?)
+      record_noun?(words) || (!receiver.nil? && record_noun?(name_words(receiver)))
+    end
+
+    private def self.record_noun?(words : Array(String)) : Bool
+      return false unless idx = words.rindex { |word| !RECORD_HOLDER_SUFFIX.includes?(word) }
+      subject = words[idx]
+      return true if RECORD_NOUNS.includes?(subject)
+      subject.in?("log", "logs") && idx > 0 && RECORD_LOG_KINDS.includes?(words[idx - 1])
     end
 
     # Suppression for unsafe_method: route handlers that branch on
@@ -355,7 +419,8 @@ module NoirAIContext
     # split that into one endpoint per method but share the
     # callees list. The mutating callee in the GET endpoint is
     # often the POST branch's call, not actually reachable via GET.
-    METHOD_DISPATCH_PATTERN = /(?:request\.method\s*==|req\.method\s*==|r\.Method\s*==|request\.getMethod\(\)\s*\.equals|\.match\(\s*['"](?:GET|POST|PUT|PATCH|DELETE|QUERY)['"])/i
+    METHOD_DISPATCH_PATTERN  = /(?:request\.method\s*==|req\.method\s*==|r\.Method\s*==|request\.getMethod\(\)\s*\.equals|\.match\(\s*['"](?:GET|POST|PUT|PATCH|DELETE|QUERY)['"])/i
+    FORM_SUBMIT_CHECK_CALLEE = /(?:\.|->)(?:isSubmitted|isMethod|is_valid|validate_on_submit)\z/
 
     private def add_unsafe_method_signal(context : AIContext, endpoint : Endpoint, anchor : PathInfo?, route_snippet : String?)
       return if endpoint.mobile?
@@ -366,6 +431,10 @@ module NoirAIContext
 
       mutating = endpoint.callees.find { |callee| Builder.mutating_callee?(callee.name) }
       return unless mutating
+      # The same dispatch, spelled as a form check: the write sits behind
+      # `$form->isSubmitted()` / `form.validate_on_submit()`, which a GET
+      # never passes.
+      return if endpoint.callees.any?(&.name.matches?(FORM_SUBMIT_CHECK_CALLEE))
 
       # If the handler dispatches on HTTP method internally, we
       # can't tell from the callee list alone which branch the
@@ -1155,6 +1224,13 @@ module NoirAIContext
 
     private def skip_param_signal?(endpoint : Endpoint, param : Param, pattern : PatternDefinition) : Bool
       return true if pattern.kind == "file_input" && param.param_type == "header"
+      # On a guarded route an `Authorization` / `X-API-Key` header or a
+      # session cookie is what that guard reads, and the guard is already
+      # reported. Without one the handler checks the secret itself
+      # (`X-Gitlab-Token` on a webhook), which is worth the signal.
+      if pattern.kind == "credential_input" && presented_credential_slot?(param.param_type)
+        return endpoint.tags.any? { |tag| guard_tag?(tag) }
+      end
       return false unless pattern.kind == "identifier_input"
       return true if endpoint.internal
       return !header_identifier_like?(param.name) if param.param_type == "header"
@@ -1432,11 +1508,38 @@ module NoirAIContext
           helper_repository_sink(callee).try { |entry| context.push_sink(entry) }
         end
 
-        if validator = PatternMatcher.detect_from_patterns(callee.name, callee_snippet, VALIDATOR_PATTERNS, callee.path, callee.line, "callee")
+        if callee.name.matches?(CALLER_CHECK)
+          add_caller_check_guards(context, endpoint, callee, callee_snippet)
+        elsif validator = PatternMatcher.detect_from_patterns(callee.name, callee_snippet, VALIDATOR_PATTERNS, callee.path, callee.line, "callee")
           context.push_validator(validator)
         end
       end
       inert_helpers
+    end
+
+    # A handler that calls `validateSession(req, res)` or
+    # `principal.validate_admin_session()` is guarded by that call, wherever
+    # in the body it sits; the route-scope scan only reads the first lines.
+    private def add_caller_check_guards(context : AIContext, endpoint : Endpoint, callee : Callee, snippet : String?)
+      # The framework said the route admits anonymous callers.
+      return if endpoint.tags.any? { |tag| tag.name == "anonymous" }
+
+      { {AUTH_GUARD_PATTERNS, CALLER_AUTH_CHECK}, {AUTHZ_GUARD_PATTERNS, CALLER_ACCESS_CHECK} }.each do |patterns, check|
+        pattern = patterns.first
+        next unless callee.name.matches?(check)
+        next if context.guards.any? { |guard| guard.kind == pattern.kind }
+
+        context.push_guard(AIContextEntry.new(
+          pattern.kind,
+          callee.name,
+          source: "callee",
+          description: pattern.description,
+          path: callee.path,
+          line: callee.line,
+          confidence: pattern.confidence,
+          snippet: snippet
+        ))
+      end
     end
 
     # `f.read()` / `f.Write(b)` touches the file system only when `f` holds a
@@ -2202,9 +2305,13 @@ module NoirAIContext
         end
         add_spring_mvc_template_render_sink(context, endpoint, path_info, snippet)
 
+        # A caller check (`onRequest: verifyAuth([...])`) is the guard scan's
+        # to report, not an input validator.
+        validator_scope = snippet.gsub(CALLER_CHECK, "")
         VALIDATOR_PATTERNS.each do |pattern|
           next if context.validators.any? { |v| v.kind == pattern.kind }
-          if validator = PatternMatcher.detect_single_pattern(pattern, "", snippet, path_info.path, path_info.line, "route_source")
+          if validator = PatternMatcher.detect_single_pattern(pattern, "", validator_scope, path_info.path, path_info.line, "route_source")
+            validator.snippet = snippet
             context.push_validator(validator)
           end
         end
