@@ -517,16 +517,19 @@ module NoirAIContext
   # API key is deliberately not such a noun: `verifyToken(req.body.token)`
   # is as often a reset token, a TOTP code or a captcha as the caller's
   # bearer token, and a false guard hides an open route.
-  CALLER_AUTH_CHECK = /\b(?:validate|verify)_?(?:user_?)?(?:session|auth(?:n|entication|enticated|orization)?|principal)(?:_?(?:auth|header|cookie|middleware))*\b|\bprincipal\.(?:validate|verify)_\w*(?:session|auth|admin|user|api_key|access)\w*/i
+  CALLER_AUTH_CHECK = /\b(?:validate|verify)_?(?:user_?)?(?:session|auth(?:n|enticated|orization)?|principal)(?:_?(?:auth|header|cookie|middleware))*\b|\bprincipal\.(?:validate|verify)_\w*(?:session|auth|admin|api_key)\w*/i
   # What the same receiver says the caller may reach:
   # `principal.validate_group_admin_can_manage()`.
   CALLER_ACCESS_CHECK = /\bprincipal\.(?:validate|verify)_\w*(?:admin|_can_|permission)\w*/i
   CALLER_CHECK        = Regex.union(CALLER_AUTH_CHECK, CALLER_ACCESS_CHECK)
   # The same name (or `verifyToken`, which the auth patterns below also
-  # take) where a route names its handler, the call's last argument
-  # (`r.POST("/session", h.ValidateSession)`): the handler, not a guard in
-  # front of it. ` | ` ends a line of a scope snippet.
-  CALLER_CHECK_AS_HANDLER = /(?:#{CALLER_AUTH_CHECK.source}|\bverifyToken)\s*\)\s*;?\s*(?= \| |\z)/i
+  # take) as the one thing a route registers at a path:
+  # `r.POST("/session", h.ValidateSession)`. That is the handler, not a guard
+  # in front of it. Only this exact shape: a middleware list
+  # (`e.POST("/users", CreateUser, ValidateSession)`), a decorator
+  # (`@guarded_by(validate_session)`) and a mount (`app.use("/api", verifyAuth)`)
+  # name real guards.
+  CALLER_CHECK_AS_HANDLER = /(?<!\buse)\(\s*(["'`])[^"'`\n]*\1\s*,\s*(?:[\w$]+\.)*(?:#{CALLER_AUTH_CHECK.source}|verifyToken)\s*\)/i
 
   # Authentication guard — "verifies who you are". Login required,
   # JWT verification, session check.

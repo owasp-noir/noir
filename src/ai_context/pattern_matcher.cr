@@ -11,7 +11,7 @@ module NoirAIContext
     # compacted or truncated.
     MAX_LABEL_CHARS = 64
 
-    HASH_FETCH_CALLEE = /(?:\A|[.:])(?:params|ENV|options|opts|config|settings|attributes|attrs|args|kwargs|hash|session)\.fetch\z/
+    HASH_FETCH_CALLEE = /(?:\A|[.:])(?:params|ENV|options|opts|config|settings|preferences|prefs|attributes|attrs|args|kwargs|hash|session)\.fetch\z/
 
     extend self
 

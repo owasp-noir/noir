@@ -3923,6 +3923,8 @@ describe "NoirAIContext" do
       # A connectivity test, not a check of the caller.
       "verifyBucketAccess",
       "principal.validate_request_body",
+      "principal.validate_username",
+      "webauthn.verify_authentication",
     ].each do |name|
       endpoint = Endpoint.new("/items", "POST")
       endpoint.push_callee(Callee.new(name, "handler.src", 5))
@@ -3940,8 +3942,24 @@ describe "NoirAIContext" do
 
     context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
     context.guards.should be_empty
-    # Still a check of the caller, so not an input validator either.
-    context.validators.should be_empty
+    context.validators.map(&.kind).should eq(["validation"])
+  end
+
+  it "does not read the credential check of a login as the guard on it" do
+    endpoint = Endpoint.new("/login", "POST")
+    endpoint.push_param(Param.new("password", "", "json"))
+    endpoint.push_callee(Callee.new("auth_service.validate_auth", "handler.src", 5))
+
+    context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+    context.guards.should be_empty
+    context.validators.map(&.kind).should eq(["validation"])
+
+    # An API mounted under `/auth/` is not a login step: changing a secret
+    # there is guarded by the session check it calls.
+    mounted = Endpoint.new("/auth/v1/clients/:id/secret", "PUT")
+    mounted.push_param(Param.new("password", "", "json"))
+    mounted.push_callee(Callee.new("principal.validate_admin_session", "handler.src", 5))
+    NoirAIContext.apply([mounted])[0].ai_context.should_not(be_nil).guards.map(&.kind).should eq(["auth_guard", "authz_guard"])
   end
 
   it "does not read a route's own handler as the guard in front of it" do
@@ -3950,14 +3968,25 @@ describe "NoirAIContext" do
     named.push_callee(Callee.new("this.validateSession", "handler.src", 5))
     NoirAIContext.apply([named])[0].ai_context.should_not(be_nil).guards.should be_empty
 
-    source = "r.POST(\"/session\", h.ValidateSession)\nr.POST(\"/users\", ValidateSession, h.CreateUser)\nr.POST(\"/check\", VerifyToken)\n"
+    # Only the one thing a route registers at a path is its handler. A
+    # middleware list in either order, a decorator, a mount and a body line
+    # that passes the check along all name a real guard.
+    source = <<-GO
+      r.POST("/session", h.ValidateSession)
+      r.POST("/users", ValidateSession, h.CreateUser)
+      r.POST("/check", VerifyToken)
+      e.POST("/users", CreateUser, ValidateSession)
+      e.POST("/items", CreateItem, VerifyToken)
+      app.use("/api", verifyAuth)
+      await runMiddleware(req, res, validateSession);
+      GO
     with_temp_ai_context_source(source, ".go") do |path|
-      {1 => false, 2 => true, 3 => false}.each do |line, guarded|
+      {1 => false, 2 => true, 3 => false, 4 => true, 5 => true, 6 => true, 7 => true}.each do |line, guarded|
         endpoint = Endpoint.new("/x", "POST")
         details = endpoint.details
         details.add_path(PathInfo.new(path, line))
         endpoint.details = details
-        endpoint.push_callee(Callee.new({"h.ValidateSession", "ValidateSession", "VerifyToken"}[line - 1], path, line))
+        endpoint.push_callee(Callee.new("h.ValidateSession", path, line)) if line == 1
 
         guards = NoirAIContext.apply([endpoint])[0].ai_context.should_not(be_nil).guards.map(&.kind)
         guards.includes?("auth_guard").should eq(guarded), "line #{line}"
@@ -4063,9 +4092,10 @@ describe "NoirAIContext" do
     end
   end
 
-  it "does not read a path-string helper as file I/O" do
+  it "does not read a path-string helper as file I/O or a preferences lookup as an outbound request" do
     helper = Endpoint.new("/completed", "GET")
     helper.push_callee(Callee.new("File.basename", "app.rb", 3))
+    helper.push_callee(Callee.new("@template.preferences.fetch", "app.rb", 4))
     NoirAIContext.apply([helper])[0].ai_context.should_not(be_nil).sinks.should be_empty
 
     read = Endpoint.new("/read", "GET")

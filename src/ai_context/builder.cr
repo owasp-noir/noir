@@ -1518,8 +1518,8 @@ module NoirAIContext
           helper_repository_sink(callee).try { |entry| context.push_sink(entry) }
         end
 
-        if callee.name.matches?(CALLER_CHECK)
-          add_caller_check_guards(context, endpoint, callee, callee_snippet)
+        if caller_check?(endpoint, callee)
+          add_caller_check_guards(context, callee, callee_snippet)
         elsif validator = PatternMatcher.detect_from_patterns(callee.name, callee_snippet, VALIDATOR_PATTERNS, callee.path, callee.line, "callee")
           context.push_validator(validator)
         end
@@ -1530,8 +1530,35 @@ module NoirAIContext
     # A handler that calls `validateSession(req, res)` or
     # `principal.validate_admin_session()` is guarded by that call, wherever
     # in the body it sits; the route-scope scan only reads the first lines.
+    #
+    # Not when the name cannot be taken at its word, in which case the
+    # callee stays the validator it was read as before: the framework said
+    # the route admits anonymous callers; the route is a login step
+    # (`/login`, `/verify`, `/reset-password`) that takes the credential
+    # itself, so `validate_auth(username, password)` is the login and not a
+    # guard on it; or the callee is the route's own handler. A bare `/auth/`
+    # prefix is not such a step: a whole API can be mounted under it.
+    private def caller_check?(endpoint : Endpoint, callee : Callee) : Bool
+      return false unless callee.name.matches?(CALLER_CHECK)
+      return false if endpoint.tags.any? { |tag| tag.name == "anonymous" }
+      return false if endpoint.url.matches?(AUTH_LIFECYCLE_SEGMENT_PATTERN) && takes_credential?(endpoint)
+
+      !handler_reference?(endpoint, callee)
+    end
+
+    # A secret the route checks itself (body / query / form / path:
+    # password, reset token, …). An `Authorization` header or session
+    # cookie is the caller presenting an already-issued credential to the
+    # auth layer, which every guarded route inherits.
+    private def takes_credential?(endpoint : Endpoint) : Bool
+      endpoint.params.any? do |param|
+        !presented_credential_slot?(param.param_type) &&
+          PatternMatcher.matches_any?(param.name, CREDENTIAL_INPUT_NAME_PATTERNS)
+      end
+    end
+
     # The route's own handler, which some analyzers list among its callees:
-    # by name, or as the last argument of the line that registers it
+    # by name, or as what the line that registers it names
     # (`r.POST("/session", h.ValidateSession)`).
     private def handler_reference?(endpoint : Endpoint, callee : Callee) : Bool
       name = callee.name.split(/\.|->|::/).last
@@ -1541,11 +1568,7 @@ module NoirAIContext
       !!@reader.lines_for(path)[line - 1]?.try(&.matches?(CALLER_CHECK_AS_HANDLER))
     end
 
-    private def add_caller_check_guards(context : AIContext, endpoint : Endpoint, callee : Callee, snippet : String?)
-      # The framework said the route admits anonymous callers.
-      return if endpoint.tags.any? { |tag| tag.name == "anonymous" }
-      return if handler_reference?(endpoint, callee)
-
+    private def add_caller_check_guards(context : AIContext, callee : Callee, snippet : String?)
       { {AUTH_GUARD_PATTERNS, CALLER_AUTH_CHECK}, {AUTHZ_GUARD_PATTERNS, CALLER_ACCESS_CHECK} }.each do |patterns, check|
         pattern = patterns.first
         next unless callee.name.matches?(check)
@@ -2245,7 +2268,7 @@ module NoirAIContext
         route_scope = @reader.route_scope_snippet_for(path_info.path, path_info.line)
         guard_scope = route_scope && without_self_names(route_scope, endpoint, path_info)
         guard_scope = guard_scope.gsub(POST_AUTHORIZE_ANNOTATION, "") if guard_scope && !SAFE_METHODS.includes?(endpoint.method.upcase)
-        guard_scope = guard_scope.try(&.gsub(CALLER_CHECK_AS_HANDLER, ")"))
+        guard_scope = guard_scope.try(&.gsub(CALLER_CHECK_AS_HANDLER, "()"))
 
         # Try each guard category independently — a route can be
         # protected by authn, authz, csrf, and rate-limit at once,
@@ -2617,10 +2640,7 @@ module NoirAIContext
       # session cookie is the caller presenting an already-issued
       # credential to the auth layer, which every guarded route
       # inherits, so it says nothing about brute force on this route.
-      credential_param = endpoint.params.any? do |p|
-        !presented_credential_slot?(p.param_type) &&
-          PatternMatcher.matches_any?(p.name, CREDENTIAL_INPUT_NAME_PATTERNS)
-      end
+      credential_param = takes_credential?(endpoint)
       credential_signal = context.signals.any? do |s|
         s.kind == "credential_input" && !presented_credential_slot?(s.name.split('.', 2).first)
       end
