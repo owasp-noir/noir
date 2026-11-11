@@ -11,7 +11,7 @@ module NoirAIContext
     # compacted or truncated.
     MAX_LABEL_CHARS = 64
 
-    HASH_FETCH_CALLEE = /(?:\A|[.:])(?:params|ENV|options|opts|config|settings|attributes|attrs|args|kwargs|hash|session)\.fetch\z/
+    HASH_FETCH_CALLEE = /(?:\A|[.:])(?:params|ENV|options|opts|config|settings|preferences|prefs|attributes|attrs|args|kwargs|hash|session)\.fetch\z/
 
     extend self
 
@@ -74,7 +74,6 @@ module NoirAIContext
         return true if name.matches?(/\b(URL\.Query|QueryParam|request\.query|req\.query|query_params|searchParams)\b/i)
         return true if snippet && snippet.matches?(/\b(URL\.Query\(\)\.Get|QueryParam\(|request\.query\.|req\.query\.|searchParams\.get)\b/i)
       when "template_render"
-        return true if name.matches?(/(?:^|\.)template\.(?:find|findAll|findById|count|save|insert|update|delete|remove)\b/i)
         return false unless snippet
         return true if snippet.matches?(/\brender\s+(json|plain|xml|body|status):/i)
         return true if snippet.matches?(/\brespond(Text|Bytes|File|Json|Redirect)\b/)

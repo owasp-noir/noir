@@ -3803,6 +3803,306 @@ describe "NoirAIContext" do
     real_context.signals.map(&.kind).should contain("object_write")
   end
 
+  it "does NOT read bookkeeping, value factories, states or passed-through names as a state change" do
+    [
+      "server.services.auditLog.createAuditLog",
+      "AuditLog.create!",
+      "downloadLogService.save",
+      "SearchCondition.Deleted",
+      "@submitter.persisted?",
+      "book.createdDate.toUTCZoned",
+      "server.services.updateCheck.getAvailableUpdateVersion",
+      "PersistenceUtil.escapeLikePattern",
+      "$this->createForm",
+      "$this->createFormBuilder",
+      "this.CreateAPIError",
+      "$this->createNotFoundException",
+      "_dbContextFactory.CreateContext",
+      "openIdProvider.createAuthUri",
+      "URI.create",
+      "CsrfTokenDto.create",
+      "StoreBrandingViewModel.CreateAsync",
+      "UpdatePaymentRequestViewModel",
+      "ModelState.Remove",
+      "createReadStream",
+    ].each do |name|
+      NoirAIContext::Builder.mutating_callee?(name).should be_false, "#{name} read as mutating"
+    end
+  end
+
+  it "still reads a write as a state change next to those names" do
+    [
+      "auditLogs.delete",
+      "timeLog.create",
+      "forms.createForm",
+      "oauthClient.createClient",
+      "deleteDB",
+      "createWriteStream",
+      "Templates::CreateAttachments.call",
+      "DestroyProblemsByAppJob.perform_later",
+      "CreateUser.run!",
+      "CreateUser.new",
+      "DeleteAccountWorker.perform_in",
+      "DeleteAccountJob.set",
+      "delete_user_data.delay",
+      "deleteItemHandler.Handle",
+      "deleteUserCommand.ExecuteAsync",
+      "request.session.destroy.bind",
+      "analytics.createDashboard",
+      "sessionFactory.save",
+      "createForm",
+      "ctx.SaveChangesAsync",
+      "$em->flush",
+      "@record.update!",
+    ].each do |name|
+      NoirAIContext::Builder.mutating_callee?(name).should be_true, "#{name} not read as mutating"
+    end
+  end
+
+  it "names the object write, not the audit entry written after it" do
+    endpoint = Endpoint.new("/keys/:id", "PATCH")
+    endpoint.push_param(Param.new("id", "", "path"))
+    endpoint.push_callee(Callee.new("server.services.auditLog.createAuditLog", "router.ts", 5))
+    endpoint.push_callee(Callee.new("server.services.kms.updateById", "router.ts", 9))
+
+    context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+    context.signals.select(&.kind.==("object_write")).map(&.name).should eq(["server.services.kms.updateById"])
+  end
+
+  it "suppresses unsafe_method when the write sits behind a form-submission check" do
+    endpoint = Endpoint.new("/project/:id/build", "GET")
+    endpoint.push_callee(Callee.new("$form->isSubmitted", "ProjectController.php", 5))
+    endpoint.push_callee(Callee.new("$entityManager->flush", "ProjectController.php", 7))
+
+    context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+    context.signals.map(&.kind).should_not contain("unsafe_method")
+
+    # A Django form bound to `request.GET` passes `is_valid()` on a GET.
+    bound = Endpoint.new("/items/purge", "GET")
+    bound.push_callee(Callee.new("form.is_valid", "views.py", 5))
+    bound.push_callee(Callee.new("Item.objects.filter().delete", "views.py", 7))
+    NoirAIContext.apply([bound])[0].ai_context.should_not(be_nil).signals.map(&.kind).should contain("unsafe_method")
+  end
+
+  it "files a caller check called by the handler as a guard, not as an input validator" do
+    {
+      "validateSession"                           => ["auth_guard"],
+      "call.validatePrincipal"                    => ["auth_guard"],
+      "validateAuthHeader"                        => ["auth_guard"],
+      "principal.validate_session_auth"           => ["auth_guard"],
+      "principal.validate_admin_session"          => ["auth_guard", "authz_guard"],
+      "principal.validate_api_key_or_group_admin" => ["auth_guard", "authz_guard"],
+    }.each do |name, kinds|
+      endpoint = Endpoint.new("/items", "POST")
+      endpoint.push_callee(Callee.new(name, "handler.src", 5))
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+      context.guards.map(&.kind).should eq(kinds), "#{name} guards"
+      context.guards.map(&.name).uniq!.should eq([name])
+      context.validators.map(&.kind).should_not contain("validation"), "#{name} filed as a validator"
+      context.signals.map(&.kind).should_not contain("guard_absence") if kinds.includes?("auth_guard")
+    end
+  end
+
+  it "keeps a validate/verify of the input a validator" do
+    [
+      "payload.validate",
+      "server.services.webAuthn.verifyAuthenticationResponse",
+      "server.services.authToken.validateRefreshToken",
+      "server.services.mfaSession.verifyMfaSession",
+      "validate_auth_code_req_params",
+      "validatePasswordResetAuthorization",
+      "verifyEmailToken",
+      # A token or key the request carries: a reset token, a TOTP code, a
+      # captcha, a key under test. Filing these as guards hid open routes.
+      "tokenManager.verifyToken",
+      "device.verify_token",
+      "recaptcha.verify_token",
+      "openai.validateApiKey",
+      "this.authService.validateToken",
+      # A connectivity test, not a check of the caller.
+      "verifyBucketAccess",
+      "principal.validate_request_body",
+      "principal.validate_username",
+      "webauthn.verify_authentication",
+    ].each do |name|
+      endpoint = Endpoint.new("/items", "POST")
+      endpoint.push_callee(Callee.new(name, "handler.src", 5))
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+      context.guards.should be_empty, "#{name} filed as a guard"
+      context.validators.map(&.kind).should contain("validation"), "#{name} lost its validator"
+    end
+  end
+
+  it "does not let a caller-check callee overrule an anonymous route" do
+    endpoint = Endpoint.new("/items", "POST")
+    endpoint.add_tag(Tag.new("anonymous", "NestJS @Public() admits anonymous callers", "nestjs_auth"))
+    endpoint.push_callee(Callee.new("validateSession", "handler.src", 5))
+
+    context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+    context.guards.should be_empty
+    context.validators.map(&.kind).should eq(["validation"])
+  end
+
+  it "does not read the credential check of a login as the guard on it" do
+    endpoint = Endpoint.new("/login", "POST")
+    endpoint.push_param(Param.new("password", "", "json"))
+    endpoint.push_callee(Callee.new("auth_service.validate_auth", "handler.src", 5))
+
+    context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+    context.guards.should be_empty
+    context.validators.map(&.kind).should eq(["validation"])
+
+    # An API mounted under `/auth/` is not a login step: changing a secret
+    # there is guarded by the session check it calls.
+    mounted = Endpoint.new("/auth/v1/clients/:id/secret", "PUT")
+    mounted.push_param(Param.new("password", "", "json"))
+    mounted.push_callee(Callee.new("principal.validate_admin_session", "handler.src", 5))
+    NoirAIContext.apply([mounted])[0].ai_context.should_not(be_nil).guards.map(&.kind).should eq(["auth_guard", "authz_guard"])
+  end
+
+  it "does not read a route's own handler as the guard in front of it" do
+    named = Endpoint.new("/session", "POST")
+    named.handler = Handler.new("SessionController.validateSession", "handler.src", 5)
+    named.push_callee(Callee.new("this.validateSession", "handler.src", 5))
+    NoirAIContext.apply([named])[0].ai_context.should_not(be_nil).guards.should be_empty
+
+    # Only the one thing a route registers at a path is its handler. A
+    # middleware list in either order, a decorator, a mount and a body line
+    # that passes the check along all name a real guard.
+    source = <<-GO
+      r.POST("/session", h.ValidateSession)
+      r.POST("/users", ValidateSession, h.CreateUser)
+      r.POST("/check", VerifyToken)
+      e.POST("/users", CreateUser, ValidateSession)
+      e.POST("/items", CreateItem, VerifyToken)
+      app.use("/api", verifyAuth)
+      await runMiddleware(req, res, validateSession);
+      GO
+    with_temp_ai_context_source(source, ".go") do |path|
+      {1 => false, 2 => true, 3 => false, 4 => true, 5 => true, 6 => true, 7 => true}.each do |line, guarded|
+        endpoint = Endpoint.new("/x", "POST")
+        details = endpoint.details
+        details.add_path(PathInfo.new(path, line))
+        endpoint.details = details
+        endpoint.push_callee(Callee.new("h.ValidateSession", path, line)) if line == 1
+
+        guards = NoirAIContext.apply([endpoint])[0].ai_context.should_not(be_nil).guards.map(&.kind)
+        guards.includes?("auth_guard").should eq(guarded), "line #{line}"
+      end
+    end
+  end
+
+  it "reads a caller check in the route declaration as the guard and only the input check as the validator" do
+    source = <<-CODE
+      server.route({
+        method: "POST",
+        url: "/keys",
+        onRequest: verifyAuth([AuthMode.JWT]),
+        handler: async (req) => {
+          validateKeyName(req.body.name);
+        }
+      });
+      CODE
+
+    with_temp_ai_context_source(source, ".ts") do |path|
+      endpoint = Endpoint.new("/keys", "POST")
+      details = endpoint.details
+      details.add_path(PathInfo.new(path, 1))
+      endpoint.details = details
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+      context.guards.map(&.kind).should contain("auth_guard")
+      context.validators.select(&.kind.==("validation")).map(&.name).should eq(["validateKeyName(req.body.name)"])
+    end
+  end
+
+  it "drops credential_input for the header a detected guard reads, and keeps it otherwise" do
+    guarded = Endpoint.new("/books", "POST")
+    guarded.add_tag(Tag.new("auth", "Protected by OAS security HTTPBearer", "oas3_access"))
+    guarded.push_param(Param.new("Authorization", "", "header"))
+    guarded.push_param(Param.new("password", "", "json"))
+    guarded_names = NoirAIContext.apply([guarded])[0].ai_context.should_not(be_nil).signals.select(&.kind.==("credential_input")).map(&.name)
+    guarded_names.should eq(["json.password"])
+
+    webhook = Endpoint.new("/webhooks/gitlab", "POST")
+    webhook.push_param(Param.new("X-Gitlab-Token", "", "header"))
+    webhook_names = NoirAIContext.apply([webhook])[0].ai_context.should_not(be_nil).signals.select(&.kind.==("credential_input")).map(&.name)
+    webhook_names.should eq(["header.X-Gitlab-Token"])
+  end
+
+  it "reads template_render off the render call, not off a receiver named template" do
+    {
+      "@template.fields"           => false,
+      "Template.new"               => false,
+      "template.putObject"         => false,
+      "@submitter.template"        => false,
+      "render_template"            => true,
+      "render_to_string"           => true,
+      "View"                       => true,
+      "view"                       => true,
+      "template"                   => true,
+      "template.ParseFiles"        => true,
+      "template.process"           => true,
+      "template.render_async"      => true,
+      "templates.TemplateResponse" => true,
+      "$this->render"              => true,
+    }.each do |name, expected|
+      endpoint = Endpoint.new("/page", "GET")
+      endpoint.push_callee(Callee.new(name, "handler.src", 5))
+
+      kinds = NoirAIContext.apply([endpoint])[0].ai_context.should_not(be_nil).sinks.map(&.kind)
+      kinds.includes?("template_render").should eq(expected), "#{name} template_render"
+    end
+  end
+
+  it "does not read an in-process task spawn as command execution" do
+    {
+      "tokio::spawn"        => false,
+      "task::spawn"         => false,
+      "std::thread::spawn"  => false,
+      "gevent.spawn"        => false,
+      "child_process.spawn" => true,
+      "spawn"               => true,
+    }.each do |name, expected|
+      endpoint = Endpoint.new("/run", "POST")
+      endpoint.push_callee(Callee.new(name, "handler.src", 5))
+
+      kinds = NoirAIContext.apply([endpoint])[0].ai_context.should_not(be_nil).sinks.map(&.kind)
+      kinds.includes?("command_exec").should eq(expected), "#{name} command_exec"
+    end
+
+    # The receiver and the async-block argument each rule a task spawn out
+    # on their own; a process spawn in the same position still counts.
+    {
+      "tokio::spawn(push_all());"           => false,
+      "spawn(async move { push().await });" => false,
+      "spawn(\"sh\", [cmd]);"               => true,
+    }.each do |call, expected|
+      with_temp_ai_context_source("#[post(\"/sync\")]\npub async fn sync() -> HttpResponse {\n    #{call}\n    HttpResponse::Ok().finish()\n}\n", ".rs") do |path|
+        endpoint = Endpoint.new("/sync", "POST")
+        details = endpoint.details
+        details.add_path(PathInfo.new(path, 1))
+        endpoint.details = details
+
+        kinds = NoirAIContext.apply([endpoint])[0].ai_context.should_not(be_nil).sinks.map(&.kind)
+        kinds.includes?("command_exec").should eq(expected), call
+      end
+    end
+  end
+
+  it "does not read a path-string helper as file I/O or a preferences lookup as an outbound request" do
+    helper = Endpoint.new("/completed", "GET")
+    helper.push_callee(Callee.new("File.basename", "app.rb", 3))
+    helper.push_callee(Callee.new("@template.preferences.fetch", "app.rb", 4))
+    NoirAIContext.apply([helper])[0].ai_context.should_not(be_nil).sinks.should be_empty
+
+    read = Endpoint.new("/read", "GET")
+    read.push_callee(Callee.new("File.read", "app.rb", 3))
+    NoirAIContext.apply([read])[0].ai_context.should_not(be_nil).sinks.map(&.kind).should eq(["file_io"])
+  end
+
   it "emits log_injection when handler logs request-controlled input" do
     source = <<-CODE
       app.post('/feedback', (req, res) => {
