@@ -6,11 +6,11 @@ sort_by = "weight"
 
 +++
 
-Noir는 Android나 iOS 앱의 진입점을 엔드포인트로 보고합니다. 진입점이란 앱이 외부에 노출하는 딥링크와 exported 컴포넌트입니다. Noir는 각 진입점을 그것을 처리하는 소스 코드와도 연결합니다.
+Noir는 Android나 iOS 앱의 진입점을 엔드포인트로 보고합니다. 진입점이란 앱이 외부에 노출하는 딥링크와 exported 컴포넌트입니다. 진입점마다 이를 처리하는 소스 코드도 함께 연결합니다.
 
 딥링크는 전형적인 모바일 공격 표면입니다. 외부에서 주어진 URL이나 인텐트가 앱 안으로 흘러 들어가 WebView, SQL 쿼리, 다른 컴포넌트에 도달할 수 있습니다.
 
-별도 플래그는 없습니다. 평소처럼 앱 소스 트리를 스캔하면 Noir가 아래 파일들을 읽습니다:
+별도 플래그는 없습니다. 평소처럼 앱 소스 트리를 스캔하면 Noir가 아래 파일을 읽습니다:
 
 ```bash
 noir scan path/to/app
@@ -29,7 +29,7 @@ noir scan path/to/app
 | Android | `/.well-known/assetlinks.json` | 서버 측 App Links 연결 선언(Digital Asset Links) |
 | iOS | `apple-app-site-association` | 서버 측 유니버설 링크 `paths` / `components` 패턴 |
 
-앞의 여섯 행은 앱 번들에 선언되는 **클라이언트** 측입니다. 마지막 두 행은 **서버** 측으로, 호스트가 자기 URL을 OS가 앱으로 열도록 게시하는 well-known 파일입니다. 이 연결의 양쪽 모두 같은 출력 모델의 `universal-link` 엔드포인트를 만듭니다.
+앞의 여섯 행은 앱 번들에 선언되는 **클라이언트** 측입니다. 마지막 두 행은 **서버** 측으로, OS가 해당 호스트의 URL을 앱으로 열도록 호스트가 게시하는 well-known 파일입니다. 이 연결의 양쪽 모두 같은 출력 모델의 `universal-link` 엔드포인트를 만듭니다.
 
 ## 엔드포인트 모델
 
@@ -58,7 +58,7 @@ SCHEME myapp://complex/:id
 
 ## 핸들러 코드와의 연결
 
-스캔 대상에 핸들러 소스가 있으면 Noir는 각 딥링크 엔드포인트를 그것을 처리하는 코드와 연결합니다.
+스캔 대상에 핸들러 소스가 있으면 Noir는 딥링크 엔드포인트마다 이를 처리하는 코드를 연결합니다.
 
 **Android**
 
@@ -82,7 +82,7 @@ SCHEME myapp://complex/:id
 |---|---|
 | 구조화된 인벤토리(JSON, JSONL, YAML, TOML, SARIF, Markdown table, mermaid, HTML)와 Elasticsearch / webhook export | 포함합니다. 앱 표면의 일부이기 때문입니다 |
 | HTTP 모양을 가정하는 출력·전송(cURL, HTTPie, PowerShell, OpenAPI 2.0 / 3.0, Postman, 능동 프로빙 / 프록시 전송) | 뺍니다. 앱 URL은 보내는 HTTP 요청이 아니라 여는 대상입니다 |
-| `-f adb`(Android)와 `-f simctl`(iOS) | 바로 실행 가능한 기기 명령으로 만들어 진입점을 엽니다 |
+| `-f adb`(Android)와 `-f simctl`(iOS) | 진입점을 여는 기기 명령으로 내보냅니다. 그대로 실행할 수 있습니다 |
 
 ## 참고 및 한계
 

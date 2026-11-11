@@ -7,16 +7,16 @@ sort_by = "weight"
 +++
 
 {% mascot(mood="anger") %}
-뭔가 불이 났어? 아래에서 맞는 증상부터 찾아봐. 대부분 플래그 하나로 해결돼.
+어디 불났어? 아래에서 맞는 증상부터 찾아봐. 대부분 플래그 하나로 해결돼.
 {% end %}
 
 ## 엔드포인트가 발견되지 않음
 
-**증상:** Noir가 실행되지만 엔드포인트가 0개로 보고됩니다.
+**증상:** Noir는 실행되는데 엔드포인트가 0개로 나옵니다.
 
 - 올바른 디렉터리를 지정했는지 확인하세요: `noir scan ./your-app`
 - 프레임워크가 지원되는지 확인하세요: `noir list techs`
-- 로그의 탐지 단계를 확인하세요. 감지된 기술이 하나씩 나옵니다. `No technologies detected`가 나오면 `-t`로 프레임워크를 직접 지정하세요: `noir scan . -t rails`
+- 로그의 탐지 단계를 확인하세요. 탐지된 기술이 하나씩 나옵니다. `No technologies detected`가 나오면 `-t`로 프레임워크를 직접 지정하세요: `noir scan . -t rails`
 - 지원하지 않는 프레임워크라면 [AI 기반 분석](@/get_started/ai_power/index.ko.md)으로 엔드포인트를 찾으세요
 
 ## 스캔이 너무 오래 걸림
@@ -25,7 +25,7 @@ sort_by = "weight"
 
 - `--only-techs`로 지정한 탐지기만 실행하고 나머지는 건너뛰세요: `noir scan . --only-techs rails`
   (`--techs`는 다릅니다. 탐지 범위를 좁히지 않고 분석 대상에 기술을 추가합니다)
-- `--exclude-techs`로 감지됐지만 필요 없는 프레임워크의 분석기를 건너뛰세요(로그에 `(skip)`으로 표시됩니다)
+- 탐지됐지만 필요 없는 프레임워크의 분석기는 `--exclude-techs`로 건너뛰세요(로그에 `(skip)`으로 표시됩니다)
 - `--exclude-path`로 vendor·생성 코드 트리를 건너뛰세요: `--exclude-path "vendor/*,**/node_modules/**"`
 - AI 응답은 캐시되므로 같은 코드를 다시 스캔하면 더 빠릅니다
 

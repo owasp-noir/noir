@@ -8,8 +8,8 @@ sort_by = "weight"
 
 Noir는 결과를 두 가지 방식으로 보냅니다.
 
-- **PROBE**: 방금 찾은 엔드포인트에 실제 HTTP 요청을 보냅니다(능동 재전송). 필요하면 Burp Suite나 ZAP 같은 프록시를 거칩니다.
-- **EXPORT**: 엔드포인트 목록을 데이터로 Elasticsearch, OpenSearch, 웹훅 수신기에 보냅니다. 엔드포인트 자체에는 트래픽이 가지 않습니다.
+- **Probe**: 방금 찾은 엔드포인트에 실제 HTTP 요청을 보냅니다(능동 재전송). 필요하면 Burp Suite나 ZAP 같은 프록시를 거칩니다.
+- **Export**: 엔드포인트 목록을 데이터로 Elasticsearch, OpenSearch, 웹훅 수신기에 보냅니다. 엔드포인트 자체에는 트래픽이 가지 않습니다.
 
 {% mascot(mood="run") %}
 Probe는 재전송, Export는 적재. 결과가 어디로 가야 하는지에 맞춰 고르면 돼.
@@ -67,7 +67,7 @@ noir scan ./source -u http://localhost:3000 \
 
 <img src="./deliver-header.png" alt="인터셉트 프록시에 잡힌 요청. Noir가 추가하도록 지정한 Abcd와 X-API-Key 헤더가 함께 실려 있습니다." width="1136" height="460" loading="lazy" decoding="async">
 
-이 헤더는 `-u` 타깃에만 붙습니다. 엔드포인트는 대부분 Noir가 `-u` 뒤에 붙인 경로입니다. 하지만 소스에 scheme과 호스트가 이미 적혀 있던 엔드포인트(OAS `servers:` 항목, HAR 캡처, 호스팅 백엔드 URL)는 그 호스트를 그대로 쓰고, 그 호스트는 지금 스캔하는 코드에서 온 값입니다. 이런 엔드포인트에도 요청은 나가지만 헤더는 붙지 않습니다. Noir는 헤더를 뺀 호스트를 한 번 알려줍니다.
+이 헤더는 `-u` 타깃에만 붙습니다. 엔드포인트는 대부분 Noir가 `-u` 뒤에 붙인 경로입니다. 하지만 소스에 scheme과 호스트가 이미 적혀 있던 엔드포인트(OAS `servers:` 항목, HAR 캡처, 호스팅 백엔드 URL)는 그 호스트를 그대로 씁니다. 이 호스트는 지금 스캔하는 코드에서 온 값이므로, Noir는 요청은 보내되 헤더는 붙이지 않습니다. 그리고 헤더를 뺀 호스트를 한 번 알려줍니다.
 
 ```
 ▲ Probe: --probe-header values withheld from https://collector.example.com — it is not the --url target. Endpoints on that host are still probed, without your headers.

@@ -16,7 +16,7 @@ Something on fire? Start with the symptom below that matches. Most of these have
 
 - Check that you are pointing to the correct directory: `noir scan ./your-app`
 - Verify that your framework is supported: `noir list techs`
-- Check the detection step in the log. It lists each detected technology; if it says `No technologies detected`, name the framework yourself with `-t`: `noir scan . -t rails`
+- Check the detection step in the log. It lists each detected technology. If it says `No technologies detected`, name the framework yourself with `-t`: `noir scan . -t rails`
 - If your framework is not supported, use [AI-Powered Analysis](@/get_started/ai_power/index.md) to detect endpoints
 
 ## Scan Takes Too Long

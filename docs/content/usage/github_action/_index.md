@@ -53,7 +53,7 @@ jobs:
 | `verbose` | Verbose output (`--verbose`) | No | `false` |
 | `debug` | Debug output (`-d/--debug`) | No | `false` |
 | `concurrency` | Concurrency level (`--concurrency`) | No | `` |
-| `exclude_codes` | Exclude HTTP response codes (comma‑separated) (`--exclude-codes`) | No | `` |
+| `exclude_codes` | Exclude HTTP response codes (comma-separated) (`--exclude-codes`) | No | `` |
 | `status_codes` | Display HTTP status codes for discovered endpoints (`--status-codes`) | No | `false` |
 | `ai_provider` | AI provider prefix or full custom URL (`--ai-provider`) | No | `` |
 | `ai_model` | AI model name (`--ai-model`) | No | `` |

@@ -9,7 +9,7 @@ sort_by = "weight"
 변경 사항을 보내는 방법, Crystal 설치, Noir 빌드, 테스트와 린터 실행을 다룹니다.
 
 {% mascot(mood="good") %}
-버그 수정, 기능, 문서, 픽스처. 어떤 기여든 Noir를 앞으로 밀어줘. 와줘서 고마워.
+버그 수정, 기능, 문서, 픽스처. 어떤 기여든 Noir에 힘이 돼. 와줘서 고마워.
 {% end %}
 
 ## 기여 방법
@@ -20,7 +20,7 @@ sort_by = "weight"
     git checkout -b your-feature-name
     ```
 3.  **코드를 수정**합니다.
-4.  명확한 커밋 메시지와 함께 **커밋**합니다.
+4.  메시지를 명확히 적어 **커밋**합니다.
 5.  포크한 저장소에 **푸시**합니다.
     ```sh
     git push origin your-feature-name
@@ -65,7 +65,7 @@ shards install
 shards build
 ```
 
-프로덕션 빌드는 `--release`를 붙여 만듭니다(컴파일은 느리지만 실행은 2–3배 빠릅니다). 벤치마크를 돌리거나 배포된 릴리스와 비교할 때 쓰세요. 디버그 빌드는 눈에 띄게 느려서 멀쩡한 빌드가 성능 회귀처럼 보일 수 있습니다. `just` 레시피는 공식 릴리스 빌드와 같은 플래그(`--release --no-debug --production`)를 씁니다.
+프로덕션 빌드는 `--release`를 붙여 만듭니다(컴파일은 느리지만 실행은 2~3배 빠릅니다). 벤치마크를 돌리거나 배포된 릴리스와 비교할 때 쓰세요. 디버그 빌드는 눈에 띄게 느려서 멀쩡한 빌드가 성능 회귀처럼 보일 수 있습니다. `just` 레시피는 공식 릴리스 빌드와 같은 플래그(`--release --no-debug --production`)를 씁니다.
 
 ```sh
 shards build --release

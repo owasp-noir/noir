@@ -6,7 +6,7 @@ sort_by = "weight"
 
 +++
 
-발견한 엔드포인트를 바로 실행할 수 있는 HTTP 클라이언트 명령으로 바꿉니다. `-u`로 base URL을 지정하면 각 경로 앞에 붙습니다. `-u`가 없으면 명령은 경로만 대상으로 합니다(`'/query'`).
+발견한 엔드포인트를 바로 실행할 수 있는 HTTP 클라이언트 명령으로 바꿉니다. `-u`로 base URL을 지정하면 각 경로 앞에 붙습니다. `-u`가 없으면 명령에는 경로만 들어갑니다(`'/query'`).
 
 ## cURL
 
@@ -89,9 +89,9 @@ Invoke-WebRequest -Method "POST" -Uri "https://www.example.com/upload" -Form @{"
 
 ## XML 요청 본문
 
-`param_type: xml`(Play `asXml`, Tapir `xmlBody` 등 전체 본문 XML 파라미터)은 HTTP 클라이언트 형식(`curl`, `httpie`, `powershell`)에서 요청 본문으로 들어가지 않습니다. 이 형식들은 `form` / `json` 본문과 위의 multipart `file` 업로드만 만듭니다. 그래서 XML 본문 파라미터만 있는 엔드포인트는 이 형식에서 헤더와 URL만 있는 명령으로 나옵니다.
+`param_type: xml`(Play `asXml`, Tapir `xmlBody` 등 전체 본문 XML 파라미터)은 HTTP 클라이언트 형식(`curl`, `httpie`, `powershell`)에서 요청 본문으로 들어가지 않습니다. 세 형식은 `form` / `json` 본문과 위의 multipart `file` 업로드만 만듭니다. 그래서 본문 파라미터가 XML뿐인 엔드포인트는 URL과 헤더만 있는 명령으로 나옵니다.
 
-XML 본문이 필요하면 다음을 사용하세요.
+XML 본문이 필요하면 다음 중 하나를 쓰세요.
 
 - `-f oas2` / `-f oas3`: `application/xml` requestBody ([OpenAPI](@/usage/output_formats/openapi/index.ko.md) 참고)
 - `-f postman`: `Content-Type: application/xml`인 raw 본문 ([추가 형식](@/usage/output_formats/more/index.ko.md#postman-컬렉션) 참고)
@@ -101,9 +101,9 @@ HTML 리포트의 "curl로 복사" 버튼도 같은 curl 빌더를 쓰므로 같
 
 ## ADB (Android)
 
-모바일 진입점은 HTTP 요청이 아니라 앱 URL이므로 위의 HTTP 클라이언트 형식은 이를 건너뜁니다. `-f adb`는 반대로 이것만 다룹니다. Noir가 찾아낸 Android 딥링크, 인텐트 컴포넌트, 콘텐츠 프로바이더를 연결된 기기나 에뮬레이터에서 바로 실행할 수 있는 [Android Debug Bridge](https://developer.android.com/tools/adb) 명령으로 변환합니다.
+모바일 진입점은 HTTP 요청이 아니라 앱 URL이므로 위의 HTTP 클라이언트 형식은 이를 건너뜁니다. `-f adb`는 반대로 모바일 진입점만 다룹니다. Noir가 찾아낸 Android 딥링크, 인텐트 컴포넌트, 콘텐츠 프로바이더를 연결된 기기나 에뮬레이터에서 바로 실행할 수 있는 [Android Debug Bridge](https://developer.android.com/tools/adb) 명령으로 변환합니다.
 
-`adb`는 Android 전용입니다. Android 진입점만 명령으로 만들고, 실행할 수 없는 나머지(HTTP 엔드포인트, iOS 스킴은 [`-f simctl`](#simctl-ios) 사용, 도메인만 선언하는 App Links)는 건너뜁니다. 건너뛴 종류마다 stderr에 경고가 한 줄씩 나오므로 stdout은 파이프로 넘기기 깔끔합니다.
+`adb`는 Android 전용입니다. Android 진입점만 명령으로 만들고, 실행할 수 없는 나머지는 건너뜁니다. HTTP 엔드포인트, iOS 스킴([`-f simctl`](#simctl-ios) 사용), 도메인만 선언하는 App Links가 여기에 해당합니다. 경고는 건너뛴 종류마다 stderr에 한 줄씩 나오므로 stdout은 그대로 파이프로 넘길 수 있습니다.
 
 ```bash
 noir scan ./my-android-app -f adb
@@ -125,7 +125,7 @@ adb shell content query --uri 'content://com.example.app.provider'
 
 ## simctl (iOS)
 
-`-f simctl`은 `-f adb`의 iOS 버전입니다. Noir가 찾아낸 iOS 커스텀 스킴 딥링크와 유니버설 링크를 부팅된 iOS 시뮬레이터에서 열 수 있는 [`xcrun simctl openurl`](https://developer.apple.com/documentation/xcode/running-your-app-on-simulated-or-physical-devices) 명령으로 변환합니다. iOS에는 인텐트나 콘텐츠 프로바이더에 해당하는 개념이 없어, 모든 명령은 단일 `openurl`입니다.
+`-f simctl`은 `-f adb`의 iOS 버전입니다. Noir가 찾아낸 iOS 커스텀 스킴 딥링크와 유니버설 링크를 부팅된 iOS 시뮬레이터에서 열 수 있는 [`xcrun simctl openurl`](https://developer.apple.com/documentation/xcode/running-your-app-on-simulated-or-physical-devices) 명령으로 변환합니다. iOS에는 인텐트나 콘텐츠 프로바이더에 해당하는 개념이 없어서 모든 명령이 `openurl` 하나입니다.
 
 ```bash
 noir scan ./my-ios-app -f simctl
@@ -137,7 +137,7 @@ xcrun simctl openurl booted 'myapp://host/path?token='
 xcrun simctl openurl booted 'https://app.example.com/buy'
 ```
 
-`-f adb`와 마찬가지로 `simctl`도 플랫폼 전용입니다. iOS 진입점만 명령으로 만들고 열 수 없는 나머지(HTTP 엔드포인트, Android 진입점은 `-f adb` 사용, 도메인만 선언하는 App Links)는 건너뜁니다. 건너뛴 종류마다 stderr에 경고가 한 줄씩 나옵니다.
+`-f adb`와 마찬가지로 `simctl`도 플랫폼 전용입니다. iOS 진입점만 명령으로 만들고, 열 수 없는 나머지는 건너뜁니다. HTTP 엔드포인트, Android 진입점(`-f adb` 사용), 도메인만 선언하는 App Links가 여기에 해당합니다. 건너뛴 종류마다 stderr에 경고가 한 줄씩 나옵니다.
 
 ## 파라미터 값 채우기
 

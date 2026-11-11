@@ -25,7 +25,7 @@ project files
   Optimizer, Taggers, Passive scan, Output formatter
 ```
 
-A detector does a cheap match (usually on a manifest file like `go.mod`, `package.json`, `Gemfile`) and returns a boolean. An analyzer does the heavy work: walks the source tree, parses route declarations, extracts parameters.
+A detector does a cheap match (usually on a manifest file like `go.mod`, `package.json`, `Gemfile`) and returns a boolean. An analyzer does the heavy work: it walks the source tree, parses route declarations and extracts parameters.
 
 ## The 3-layer analyzer
 
@@ -277,7 +277,7 @@ Output formats and taggers register the same way: you annotate the class, and th
 
 - **Output format**: create `src/output_builder/{format}.cr` and annotate the class with `@[Noir::OutputFormat(name: "{format}", description: "…", order: 40)]`. `src/output_builder/formats.cr` builds the `-f` help text, `noir list formats` and the render dispatch from it. Add `spec/unit_test/output_builder/{format}_spec.cr`.
 - **Tag rule**: when a tagger only matches keywords (URL segments, parameter names, types and values, method, protocol), add `src/tagger/rules/{key}.yml` instead of a class. The file is the registration, and its `examples` are its test; `src/tagger/rules/README.md` describes the format.
-- **Tagger**: create `src/tagger/taggers/{name}.cr` (or `src/tagger/framework_taggers/{language}/{name}.cr` for a framework auth tagger, which inherits `FrameworkTagger`) and annotate it with `@[Noir::TaggerFor(key: "{name}", name: "…", desc: "…", order: 180)]`. `key` becomes the `--use-taggers` value. `order` fixes the order taggers run in, and so the order their tags are appended, so append a new value instead of renumbering. A missing annotation is not a compile error, but `registry_integrity_spec.cr` fails and names the class. Add a spec under `spec/unit_test/tagger/`.
+- **Tagger**: create `src/tagger/taggers/{name}.cr` (or `src/tagger/framework_taggers/{language}/{name}.cr` for a framework auth tagger, which inherits `FrameworkTagger`) and annotate it with `@[Noir::TaggerFor(key: "{name}", name: "…", desc: "…", order: 180)]`. `key` becomes the `--use-taggers` value. `order` fixes the order taggers run in, and with it the order their tags are appended, so append a new value instead of renumbering. A missing annotation is not a compile error, but `registry_integrity_spec.cr` fails and names the class. Add a spec under `spec/unit_test/tagger/`.
 
 ## Adding a new language engine
 
@@ -340,7 +340,7 @@ Once an extractor outgrows one file, split it into a directory of part files beh
 
 In short: workers can finish in any order, so an analyzer's result must not depend on that order.
 
-`parallel_analyze` workers (and everything built on it: `scan_files`, `parallel_file_scan`) are fibers on Crystal's default execution context. That context runs one scheduler, but when a worker sits in a slow syscall the runtime can hand the scheduler to another thread. Workers still run one at a time. However, a fiber can resume on a different thread, and the order they finish in changes from run to run.
+`parallel_analyze` workers (and everything built on it: `scan_files`, `parallel_file_scan`) are fibers on Crystal's default execution context. That context runs one scheduler, but when a worker sits in a slow syscall the runtime can hand the scheduler to another thread. Workers still run one at a time, but a fiber can resume on a different thread, and the order they finish in changes from run to run.
 
 Fibers on `Noir::WorkerThreads` are different: that pool really runs in parallel, so keep it to pure work that touches no shared state.
 

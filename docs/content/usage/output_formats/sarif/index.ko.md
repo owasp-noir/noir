@@ -118,7 +118,7 @@ SARIF 파일은 `runs` 배열로 구성됩니다. 각 run에는 도구 정보(`d
 
 ### 엔드포인트 발견
 
-각 엔드포인트는 아래 정보와 함께 SARIF result로 보고됩니다.
+각 엔드포인트는 아래 정보를 담은 SARIF result로 보고됩니다.
 
 *   Rule ID: `endpoint-discovery`
 *   Level: `note` (정보성)

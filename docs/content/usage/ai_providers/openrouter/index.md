@@ -10,7 +10,7 @@ Use [OpenRouter](https://openrouter.ai) to access multiple AI models (OpenAI, An
 
 ## Setup
 
-1.  **API Key**: Get from [OpenRouter dashboard](https://openrouter.ai/keys)
+1.  **API Key**: Get one from the [OpenRouter dashboard](https://openrouter.ai/keys)
 2.  **Model**: Browse available models at [OpenRouter Models](https://openrouter.ai/models)
 
 ## Usage

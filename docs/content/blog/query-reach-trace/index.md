@@ -7,7 +7,7 @@ authors = ["hak"]
 template = "blog_post"
 +++
 
-An endpoint list is a good place to start a review. Then you find a shared helper, a suspicious request, or a group of routes that needs a closer look. Reading the whole list again does not answer those questions.
+An endpoint list is a good place to start a review. Then you find a shared helper, a suspicious request, or a group of routes that needs a closer look. Reading the whole list again does not help with any of them.
 
 Noir's `query`, `reach`, and `trace` let you start with what you already know. A filter, a source file, or a concrete request can lead you to the next piece of code to read.
 
@@ -23,7 +23,7 @@ noir scan . --ai-context --include callee -f json \
 	-o /tmp/noir-review.json --no-log > /dev/null
 ```
 
-`--ai-context` collects static review context. It does not need an AI provider. `--include callee` keeps the recorded calls in the report too. The stdout redirect hides the duplicate report that `scan` prints while `-o` saves it.
+`--ai-context` collects static review context and does not need an AI provider. `--include callee` keeps the recorded calls in the report too. The stdout redirect hides the duplicate report that `scan` prints while `-o` saves it.
 
 There is a difference between a live scan and `--from`. A live query command enables all AI context and callee collection implicitly. A saved report contains only what the original scan collected. Reading it does not add missing guards or sinks, and changing the application does not update the report. Regenerate it when the source changes.
 
@@ -61,7 +61,7 @@ GET /orders/<order_id>  ./app.py:17  python_flask  handler=get_order@./app.py:18
 
 Both `/users` and `/orders/<order_id>` appear. Their `via` fields point to recorded callees in `helpers.py`, with `run_sql_query` first because its definition is closest to the requested line.
 
-The line number ranks matches. It does not restrict the result to a function containing that line. Noir records declaration locations rather than complete function spans. JSON and JSONL output also include `nearest_line` when you supply a line number.
+The line number ranks matches, but it does not restrict the result to a function containing that line. Noir records declaration locations rather than complete function spans. JSON and JSONL output also include `nearest_line` when you supply a line number.
 
 `reach` uses path suffixes, so `helpers.py` is enough here. In a larger repository, use a longer suffix to distinguish files with the same name. It checks recorded route, handler, callee, guard, source, sink, and validator locations. It is not a complete call graph, and it does not follow inheritance or dynamic loading. An empty result means no recorded connection matched, not that a change cannot affect a route.
 
@@ -77,7 +77,7 @@ noir trace "GET /orders/42" --from /tmp/noir-review.json -f text
 GET /orders/<order_id>  ./app.py:17  python_flask  matched_by=pattern  handler=get_order@./app.py:18  signals=path_param,idor
 ```
 
-`matched_by=pattern` explains why `/orders/42` matches `/orders/<order_id>`. This is a lookup in the saved report. It sends no HTTP request.
+`matched_by=pattern` explains why `/orders/42` matches `/orders/<order_id>`. This is a lookup in the saved report, so it sends no HTTP request.
 
 Include the method when you know it. Without a method, Noir returns matching routes across methods. HEAD can match a GET route. If several routes match, the most specific matches come first.
 

@@ -10,8 +10,8 @@ Connect Noir to [OpenAI](https://openai.com) and use models like GPT-5.5 for LLM
 
 ## Setup
 
-1.  **Get an API Key**: Generate from [OpenAI dashboard](https://platform.openai.com/api-keys)
-2.  **Choose a Model**: Recommended: `gpt-5.5`
+1.  **Get an API Key**: Create one in the [OpenAI dashboard](https://platform.openai.com/api-keys)
+2.  **Choose a Model**: `gpt-5.5` is recommended
 
 ## Usage
 

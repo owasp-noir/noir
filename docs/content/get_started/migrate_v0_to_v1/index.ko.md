@@ -45,7 +45,7 @@ v1 이전의 단독 실행 플래그는 대응하는 동사로 넘어갑니다.
 
 ## Deliver 플래그 이름 변경: PROBE / EXPORT
 
-v0의 `noir scan -h`에는 `DELIVER` 섹션 하나만 있었습니다. v1은 이를 **PROBE**(발견한 엔드포인트에 실제 HTTP 요청을 다시 보냄)와 **EXPORT**(카탈로그를 외부 저장소로 보냄)로 나눕니다. 이렇게 나누면 `--probe-match` / `--probe-skip` / `--probe-header`가 프로브에만 영향을 주고 stdout의 JSON/SARIF에는 영향을 주지 않는다는 점이 분명해집니다.
+v0의 `noir scan -h`에는 `DELIVER` 섹션 하나만 있었습니다. v1은 이를 **PROBE**(발견한 엔드포인트에 실제 HTTP 요청을 다시 보냄)와 **EXPORT**(카탈로그를 외부 저장소로 보냄)로 나눕니다. 이렇게 나누면 `--probe-match` / `--probe-skip` / `--probe-header`가 프로브에만 적용되고 stdout의 JSON/SARIF는 바꾸지 않는다는 점이 분명해집니다.
 
 | v0 플래그 | v1 플래그 |
 | --- | --- |
@@ -95,7 +95,7 @@ v0 설정 파일은 CLI 플래그와 같은 평평한 구조라서 YAML 키도 v
 | `use_matchers` | `probe_match` |
 | `use_filters` | `probe_skip` |
 
-v0 설정 파일은 그대로 읽힙니다. Noir가 파일을 옵션에 합치기 전에 옛 키 이름을 바꿉니다. v0 설정 파일로 `noir config show`를 실행하면 v0 키와 그에 대응하는 v1 이름을 메모로 알려 줍니다.
+v0 설정 파일은 그대로 읽힙니다. Noir가 파일을 옵션에 합치기 전에 옛 키 이름을 바꿉니다. v0 설정 파일로 `noir config show`를 실행하면 v0 키마다 대응하는 v1 이름을 알려 주는 안내도 함께 출력합니다.
 
 한 파일에 두 이름이 함께 있으면(마이그레이션 중간 상태) v1 키가 우선합니다.
 
@@ -103,7 +103,7 @@ v0 설정 파일은 그대로 읽힙니다. Noir가 파일을 옵션에 합치�
 
 플래그 이름은 그대로지만 스캔 결과가 달라지는 항목입니다. 자세한 내용은 [v1.0.0 CHANGELOG](https://github.com/owasp-noir/noir/blob/main/CHANGELOG.md#v100)에 있습니다. 주요 항목:
 
-* **기본 동시성**이 v0의 고정값 `"20"` 대신 호스트 CPU 수를 따르며 4–32 범위로 제한됩니다. `--concurrency N`, 설정 파일의 `concurrency:`, `NOIR_CONCURRENCY` 환경 변수를 지정하면 그 값이 우선합니다.
+* **기본 동시성**이 v0의 고정값 `"20"` 대신 호스트 CPU 수를 따르며 4-32 범위로 제한됩니다. `--concurrency N`, 설정 파일의 `concurrency:`, `NOIR_CONCURRENCY` 환경 변수를 지정하면 그 값이 우선합니다.
 * **라우트 경로의 문자열 보간**(Python `f""`, Ruby/Crystal/Elixir `#{}`, PHP `$var`, Kotlin `${}`)이 `{name}` 자리표시자로 남습니다. v0는 보간 구간을 말없이 버리거나 언어 문법을 URL에 그대로 흘렸습니다. v1은 일관된 템플릿을 만들고 자리표시자를 path 파라미터로 등록합니다.
 * **`Any` / `All` 메서드**(Gin `r.Any`, axum `routing::any`, Echo `e.Any`, Fiber `app.All` 등)가 실제 HTTP 메서드(GET, POST, PUT, PATCH, DELETE, OPTIONS, HEAD)로 펼쳐집니다. v0는 SARIF나 Postman이 받지 못하는 비 HTTP `"ANY"` 메서드를 냈습니다. `QUERY`는 일부러 이 목록에서 뺐고, 라우트가 그 메서드를 직접 선언한 경우에만 나옵니다.
 * **stdout 출력**은 stdout이 터미널이 아니면 색상이 자동으로 꺼집니다. `ls` / `git`과 같은 관례입니다. `--no-color`와 `NO_COLOR=1`은 지금도 색상을 강제로 끕니다.

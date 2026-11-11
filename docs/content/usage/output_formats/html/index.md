@@ -37,7 +37,7 @@ For large scans, switch to the table view with the Cards / Table control. The sa
 - Summary: counts of endpoints, HTTP methods, parameters, and passive scan findings.
 - Endpoints: one collapsible card per endpoint, with a colored method badge (GET emerald, POST amber, PUT blue, PATCH violet, DELETE red) and a protocol badge for non-HTTP endpoints such as WebSockets.
 - Path groups: endpoints are grouped by their first path segment (or host for absolute URLs), with collapsible group headers and per-group counts.
-- Parameters: a table per endpoint listing each parameter, its type (query, form, json, header, cookie, path, file, xml, and related), and value.
+- Parameters: a table per endpoint listing each parameter, its type (query, form, json, header, cookie, path, file, xml, and others), and value.
 - Passive scan results: with `-P`, findings are shown with descriptions, colored severity badges, and the matched code snippet.
 - Source locations: the file path and line number where each endpoint was defined.
 

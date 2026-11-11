@@ -8,7 +8,7 @@ sort_by = "weight"
 
 Noir는 프로젝트를 두 단계로 스캔합니다. 먼저 **detector**가 어떤 프레임워크가 있는지 판단하고, 이어서 **analyzer**가 감지된 프레임워크마다 엔드포인트를 추출합니다. 이 페이지에서는 분석기 쪽 구조와 새 프레임워크를 추가하는 방법을 설명합니다.
 
-프레임워크만 추가하려면 [새 프레임워크 추가하기](#새-프레임워크-추가하기)부터 보세요. 그 앞의 절들은 코드가 끼워질 구조를 설명합니다.
+프레임워크만 추가하려면 [새 프레임워크 추가하기](#새-프레임워크-추가하기)부터 보세요. 그 앞 절은 새 코드가 들어갈 구조를 설명합니다.
 
 ## 파이프라인 개요
 
@@ -43,8 +43,8 @@ Detector는 매니페스트 파일(`go.mod`, `package.json`, `Gemfile` 등)을 �
 
 **참고 구현.** 아직 모든 면에서 모범인 파일은 없습니다. 순회는 한 파일에서, 본문은 다른 파일에서 가져오세요.
 
-- **순회 (L0)**: [`javascript/hono.cr`](https://github.com/owasp-noir/noir/blob/main/src/analyzer/analyzers/javascript/hono.cr)는 `JavascriptEngine`을 상속하고 `ordered_scan_files(get_files_by_extensions(DEFAULT_EXTENSIONS))`로 순회합니다. 그래서 worker pool, 콘텐츠 캐시, 파일별 오류 격리를 따로 구현하지 않고, 파일별 결과도 입력 순서대로 돌려받습니다. 본문은 따라 하지 마세요. extractor 호출 옆에 자체 정규식 패스가 아직 남아 있습니다.
-- **본문 (L1 → L2)**: [`javascript/hapi.cr`](https://github.com/owasp-noir/noir/blob/main/src/analyzer/analyzers/javascript/hapi.cr)는 65줄 정도입니다. 같은 `ordered_scan_files` 순회로 `JavascriptEngine`을 타고, `Noir::TreeSitterHapiExtractor.extract_routes`를 호출해 결과를 `Param`으로 옮기는 일만 합니다. `javascript/elysia.cr`, `javascript/adonisjs.cr`, `kotlin/http4k.cr`, `java/spark.cr`도 본문은 같은 모양이지만, 순회 방식은 따라 하지 마세요. 이 네 파일은 `Analyzer`를 직접 상속하고 `all_files`를 스스로 돕니다.
+- **순회 (L0)**: [`javascript/hono.cr`](https://github.com/owasp-noir/noir/blob/main/src/analyzer/analyzers/javascript/hono.cr)는 `JavascriptEngine`을 상속하고 `ordered_scan_files(get_files_by_extensions(DEFAULT_EXTENSIONS))`로 순회합니다. 그래서 worker pool, 콘텐츠 캐시, 파일별 오류 격리를 따로 구현하지 않아도 되고, 파일별 결과도 입력 순서대로 돌려받습니다. 본문은 따라 하지 마세요. extractor 호출 옆에 자체 정규식 패스가 아직 남아 있습니다.
+- **본문 (L1 → L2)**: [`javascript/hapi.cr`](https://github.com/owasp-noir/noir/blob/main/src/analyzer/analyzers/javascript/hapi.cr)는 65줄 정도입니다. `JavascriptEngine` 위에서 같은 `ordered_scan_files` 순회를 쓰고, `Noir::TreeSitterHapiExtractor.extract_routes`를 호출해 결과를 `Param`으로 옮기는 일만 합니다. `javascript/elysia.cr`, `javascript/adonisjs.cr`, `kotlin/http4k.cr`, `java/spark.cr`도 본문은 같은 모양이지만, 순회 방식은 따라 하지 마세요. 이 네 파일은 `Analyzer`를 직접 상속하고 `all_files`도 직접 돕니다.
 
 ## 현재 커버리지
 
@@ -62,7 +62,7 @@ Detector는 매니페스트 파일(`go.mod`, `package.json`, `Gemfile` 등)을 �
 
 ## 엔진별 순회 헬퍼
 
-모든 엔진에 공통인 순회 API는 없습니다. 어댑터를 쓰기 전에 해당 언어 엔진이 무엇을 제공하는지 확인하세요.
+모든 엔진에 공통인 순회 API는 없습니다. 어댑터를 작성하기 전에 해당 언어 엔진이 무엇을 제공하는지 확인하세요.
 
 | 엔진 | 어댑터가 쓰는 것 |
 |---|---|
@@ -175,11 +175,11 @@ end
 - **`analyzer_for`로 tech를 선언하세요**. 이 한 줄이 등록의 전부입니다(3단계 참고). 빠뜨리면 컴파일 에러가 납니다.
 - **라우트 파싱은 공용 extractor에 맡기세요** (`Noir::TreeSitterGoRouteExtractor`). 프레임워크 라우팅이 다르면 직접 다시 파싱하지 말고 extractor 인자(예: `handle_method:`)나 전용 진입점으로 조정하세요(Mux, GoZero 참고).
 - **엔진의 순회 헬퍼를 쓰세요** (Go는 `ordered_parallel_analyze(get_files_by_extension(".go"))`, 다른 언어는 `ordered_scan_files`, `parallel_file_scan`, `analyze_file`). 채널과 worker pool을 다시 만들지 마세요.
-- **프레임워크가 실제로 라우팅하는 verb만** 메서드 테이블에 넣으세요. 특히 `QUERY`(RFC 10008)는 업스트림이 명시적으로 지원할 때만 추가합니다. 추측으로 넣으면 프레임워크가 405로 응답할 엔드포인트를 보고합니다. 와일드카드(`ANY`/`ALL`/`*`) 라우트도 같습니다. 공용 `WILDCARD_HTTP_METHODS`(`src/utils/http_symbols.cr`)에도, 분석 시점에 `ANY`를 자체 테이블로 펼치는 분석기 로컬 목록에도 `QUERY`를 추가하지 마세요.
+- **프레임워크가 실제로 라우팅하는 verb만** 메서드 테이블에 넣으세요. 특히 `QUERY`(RFC 10008)는 업스트림이 명시적으로 지원할 때만 추가합니다. 추측으로 넣으면 프레임워크가 405로 응답할 엔드포인트를 보고합니다. 와일드카드(`ANY`/`ALL`/`*`) 라우트도 같습니다. 공용 `WILDCARD_HTTP_METHODS`(`src/utils/http_symbols.cr`)에도, 일부 분석기가 `ANY`를 직접 펼칠 때 쓰는 로컬 테이블에도 `QUERY`를 추가하지 마세요.
 
 ### 3. tech 메타데이터 선언
 
-**수정할 등록 목록은 없습니다.** 분석기와 detector 레지스트리는 클래스에서 바로 만들어집니다. `initialize_analyzers`(`src/analyzer/analyzer.cr`)와 `build_detector_list`(`src/detector/detector.cr`)가 각각 `all_subclasses`를 훑어 `analyzer_for` / `detector_for`에서 이름을 읽습니다. 예전에는 두 목록을 손으로 관리했고, 항목을 빠뜨려도 에러나 실패하는 스펙 없이 그냥 실행되지 않는 컴포넌트가 생겼습니다.
+**수정할 등록 목록은 없습니다.** 분석기와 detector 레지스트리는 클래스에서 바로 만들어집니다. `initialize_analyzers`(`src/analyzer/analyzer.cr`)와 `build_detector_list`(`src/detector/detector.cr`)가 각각 `all_subclasses`를 훑어 `analyzer_for` / `detector_for`에서 이름을 읽습니다. 예전에는 두 목록을 손으로 관리했는데, 항목을 빠뜨리면 에러도 실패하는 스펙도 없이 그 컴포넌트가 실행되지 않을 뿐이었습니다.
 
 남은 일은 카탈로그 항목 하나입니다. 분석기, detector와 같은 상대 경로에 새 파일로 만듭니다.
 
@@ -281,7 +281,7 @@ just check                 # crystal tool format --check + ameba
 
 ## 새 언어 엔진 추가하기
 
-한 언어에서 분석기 2개 이상이 같은 파일 순회 패턴을 쓰면 엔진으로 뽑아내세요. **`FileScanEngine`을 상속하세요.** 순회는 이미 거기 있습니다. 새 엔진은 언어 고유한 것만 선언합니다. 어떤 파일을 스캔할지, 무엇을 건너뛸지, 공용 라우트 조합 헬퍼 정도입니다.
+한 언어에서 분석기 2개 이상이 같은 파일 순회 패턴을 쓰면 엔진으로 뽑아내세요. **`FileScanEngine`을 상속하세요.** 순회는 이미 거기 있습니다. 새 엔진에는 언어마다 다른 부분만 선언합니다. 어떤 파일을 스캔할지, 무엇을 건너뛸지, 공용 라우트 조합 헬퍼 정도입니다.
 
 ```crystal
 # src/analyzer/engines/swift_engine.cr
@@ -339,13 +339,13 @@ extractor가 한 파일로 감당하기 어려워지면 계속 키우지 말고 
 
 요약하면, worker는 어떤 순서로든 끝날 수 있으므로 분석기 결과가 그 순서에 좌우되면 안 됩니다.
 
-`parallel_analyze`의 worker(그리고 그 위에 만든 `scan_files`, `parallel_file_scan`)는 Crystal 기본 execution context 위의 fiber입니다. 이 context는 스케줄러를 하나만 돌리지만, worker가 느린 syscall에 묶이면 런타임이 스케줄러를 다른 스레드로 넘길 수 있습니다. worker는 여전히 한 번에 하나씩 실행됩니다. 하지만 fiber가 다른 스레드에서 이어서 실행될 수 있고, 끝나는 순서도 실행할 때마다 달라집니다.
+`parallel_analyze`의 worker(그리고 그 위에 만든 `scan_files`, `parallel_file_scan`)는 Crystal 기본 execution context 위의 fiber입니다. 이 context는 스케줄러를 하나만 돌리지만, worker가 느린 syscall에 묶이면 런타임이 스케줄러를 다른 스레드로 넘길 수 있습니다. worker는 여전히 한 번에 하나씩 실행되지만, fiber가 다른 스레드에서 이어서 실행될 수 있고 끝나는 순서도 실행할 때마다 달라집니다.
 
 `Noir::WorkerThreads`의 fiber는 다릅니다. 이 풀은 실제로 병렬로 돌기 때문에 공유 상태를 건드리지 않는 순수한 작업만 맡기세요.
 
-분석기를 쓸 때 지킬 점:
+분석기를 작성할 때 지킬 점:
 
-- 어떤 파일이 먼저 끝나느냐에 결과가 좌우되면 안 됩니다. 한 파일이 다른 파일을 덮어쓸 수 있는 병합(같은 컨트롤러 이름을 정의한 두 서비스 등)은 실행할 때마다 다른 쪽이 이깁니다.
+- 어떤 파일이 먼저 끝나느냐에 결과가 좌우되면 안 됩니다. 한 파일이 다른 파일을 덮어쓸 수 있는 병합(같은 컨트롤러 이름을 정의한 두 서비스 등)은 실행할 때마다 이기는 쪽이 달라집니다.
 - worker에서 공유 상태에 바로 추가하기보다 파일별 결과를 반환하세요. `FileScanEngine#analyze`는 이미 `analyze_file` 결과를 입력 순서대로 합칩니다. 커스텀 모양이라면 파일별 결과를 입력 순서대로 돌려주는 `ordered_file_scan`, `ordered_scan_files`, `ordered_parallel_analyze`를 쓰세요.
 - `Noir::WorkerThreads`에서 실행될 수 있는 코드라면 공유하는 가변 컬렉션을 `Mutex`로 보호하세요.
 

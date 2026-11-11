@@ -32,7 +32,7 @@ noir scan .
 
 Noir reads the source files, detects which frameworks are in use, and prints every endpoint it finds: methods, paths, parameters, headers, and cookies.
 
-The screenshot also passes `-P` (passive scan for secrets) and `-T` (all taggers), both listed in the [Quick Reference](#quick-reference) below. Without them you get the endpoints only, with no tags or findings.
+The command in the screenshot also passes `-P` (passive scan for secrets) and `-T` (all taggers), both listed in the [Quick Reference](#quick-reference) below. Without them you get the endpoints only, with no tags or findings.
 
 > **v0 compatibility:** the v0 form `noir -b ./app` still works
 > without changes. The router falls back to `scan` for any
@@ -76,7 +76,7 @@ See all available formats with `noir list formats`, or in the [Output Formats](@
 
 ## Save Results to a File
 
-Save the output to a file with `-o`. The report still prints to the terminal as well:
+Save the output to a file with `-o`. The report still prints to the terminal:
 
 ```bash
 noir scan . -f json -o results.json
@@ -181,7 +181,7 @@ See [Callee Coverage](@/usage/supported/callee_coverage/index.md) and [AI Contex
 | `--passive-scan-severity LVL` | Min passive-scan severity (`critical`, `high`, `medium`, or `low`; default `high`) |
 | `-d, --debug`         | Enable debug messages |
 | `--config-file <path>`| Load default options from a YAML config file |
-| `--concurrency <N>`   | Worker count (default: CPU count, clamped to 4–32; or set `NOIR_CONCURRENCY`) |
+| `--concurrency <N>`   | Worker count (default: CPU count, clamped to 4-32; or set `NOIR_CONCURRENCY`) |
 | `--cache-disable`     | Disable the LLM response cache for this run |
 | `--cache-clear`       | Clear the LLM response cache before running |
 | `--strict`            | Exit with code 2 if any analyzer failed or skipped a file (the scan still reports its results) |

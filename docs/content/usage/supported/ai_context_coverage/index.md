@@ -57,11 +57,204 @@ Every context bucket is a list of entries with `kind`, `name`, optional `source`
 | `validators` | Input-validation and sanitization signals (schema validators, parameter coercion, allow-listing patterns) that mitigate sink risk |
 | `signals` | Other route-shape hints worth surfacing (state-changing methods without a detected guard, path-id usage suggesting object-level authorization concerns, file-upload behavior, etc.) |
 
+The kinds each bucket can hold are listed under [Kinds by bucket](#kinds-by-bucket).
+
 The list is best-effort. Heuristic confidence is exposed on each entry so consumers can filter by threshold. Each bucket keeps at most 16 entries so the output stays compact.
 
 Every non-empty context also carries `"untrusted_fields": ["name", "path", "snippet"]`. Those fields come from the scanned repository as-is, so `snippet` includes comments and string literals written by whoever controls that code. When you pass this output to an LLM, treat those fields as untrusted data and fence them off from your instructions.
 
 The shape is published as a JSON Schema at [`schemas/ai-context.schema.json`](https://owasp-noir.github.io/noir/schemas/ai-context.schema.json), for validators and for prompts that need a stable contract. The untrusted fields carry `"x-noir-untrusted": true` there. Entry `kind` values are an open vocabulary: new ones are added without a schema change.
+
+## Reading an entry
+
+Here is one endpoint from a Phoenix app, narrowed to two buckets with `--ai-context=guards,sinks`. The later snippets are cut short here:
+
+```text
+DELETE /settings/keys/:id
+  ○ path: id
+  ○ tags: idor auth
+  ○ ai_context:
+    - guards:
+      * auth_guard: Phoenix :account pipeline [elixir_auth] (./lib/app_web/router.ex:36) (conf 86) - Protected by Phoenix :account pipeline :: 34: pipe_through [:browser, :account] | 36: delete "/keys/:id", PageController, :delete_key | 37: end
+    - sources:
+      * request_input: path.id [param] (./lib/app_web/router.ex:36) (conf 88) - Route path parameter supplied by the caller. :: ...
+    - sinks:
+      * redirect: redirect [callee] (./lib/app_web/controllers/page_controller.ex:43) (conf 74) - Potential redirect sink inferred from code or callee name :: ...
+    - signals:
+      * authz_absence: /settings/keys/:id [heuristic] (./lib/app_web/router.ex:36) (conf 44) - Authenticated endpoint uses a path identifier with no authorization check detected; review for horizontal / vertical privilege escalation. :: ...
+```
+
+Each line is `kind: name [source] (path:line) (conf N) - description :: snippet`. The `authz_absence` signal came along because it is linked to `guards`, and it brought its own `sources` evidence. The same guard in JSON:
+
+```json
+{
+  "kind": "auth_guard",
+  "name": "Phoenix :account pipeline",
+  "source": "elixir_auth",
+  "description": "Protected by Phoenix :account pipeline",
+  "path": "./lib/app_web/router.ex",
+  "line": 36,
+  "confidence": 86,
+  "snippet": "34: pipe_through [:browser, :account] | 36: delete \"/keys/:id\", PageController, :delete_key | 37: end"
+}
+```
+
+| Field | Content |
+|---|---|
+| `kind` | What the entry is. The tables below list the kinds per bucket |
+| `name` | The concrete thing: a callee expression, a parameter as `<type>.<name>` (`query.id`, `json.password`), a guard's label, a route |
+| `source` | How Noir found it (see below) |
+| `description` | One sentence on why the entry is worth a look |
+| `path`, `line` | Where the evidence is. A callee points at its call site, a guard at the middleware or annotation that declares it, most others at the route |
+| `confidence` | 0 to 100. It ranks the heuristics against each other. It is not a probability |
+| `snippet` | A few numbered source lines around `line`, joined with ` \| ` and capped at about 240 characters |
+
+`source` takes one of these values:
+
+| `source` | Meaning |
+|---|---|
+| `route`, `detector` | The route itself and the technology that reported it |
+| `param` | Read off a parameter the analyzer extracted |
+| `param_tagger:<tagger>` | A tag a tagger put on a parameter (`param_tagger:Hunt`) |
+| `callee` | Matched on the name of a 1-hop callee, or on the line that calls it |
+| `route_source` | Matched on the handler's source text near the route |
+| `heuristic` | Derived from other entries in the same context |
+| `http_method`, `realtime_method` | Read off the HTTP method, or a WebSocket message handler |
+| `mobile_deep_link` | A mobile deep link or exported component |
+| `endpoint`, `resolver` | An outbound client declaration, and a GraphQL resolver matched to its operation |
+| a tagger or analyzer name | A tag from that tagger (`Admin`, `spring_auth`, `go_security`) or analyzer (`nginx_analyzer`, `odoo_analyzer`) |
+
+`--ai-context` turns on callee collection and runs every tagger, since both feed the context. If you name taggers with `--use-taggers`, only those run.
+
+## Kinds by bucket
+
+These are the kinds Noir emits today.
+
+### guards
+
+| Kind | Meaning |
+|---|---|
+| `auth_guard` | Authentication: the route checks who the caller is (login required, session check, JWT or API key verification) |
+| `authz_guard` | Authorization: the route checks what the caller may do (role, permission, policy, ownership comparison) |
+| `csrf_guard` | CSRF protection: token check, `protect_from_forgery`, `SameSite=Strict` |
+| `rate_limit_guard` | A throttling or rate-limit layer |
+
+A guard reaches the bucket one of two ways. The [framework auth taggers](@/usage/more_features/tagger/index.md) read the framework's own mechanism (a Spring Security chain, a Phoenix pipeline, an Express middleware, a Go middleware whose body Noir checked) and report `auth_guard` or `authz_guard` with the tagger as `source` and a confidence of 86. The fallback is a name match on the handler's source (`login_required`, `@PreAuthorize`, `before_action :authenticate_user!`), reported as `route_source` with a confidence between 44 and 58. The name match only fills a kind the taggers left empty, and it is the only origin of `csrf_guard` and `rate_limit_guard`.
+
+When a framework says a route admits anonymous callers (tRPC `publicProcedure`, Micronaut `@Secured(IS_ANONYMOUS)`), Noir emits an `anonymous` signal and skips the name match for `auth_guard` and `authz_guard`.
+
+### callees
+
+One kind, `callee`: a call made directly from the handler body. `name` is the call expression (`App.Keys.delete`) and `path:line` is the call site. See [Callee Coverage](@/usage/supported/callee_coverage/index.md) for which frameworks report callees.
+
+### sources
+
+| Kind | Meaning |
+|---|---|
+| `request_input` | A value the caller controls. One entry per parameter, named `<type>.<name>` with the types `path`, `query`, `header`, `cookie`, `json`, `form`, `file` and `xml`. GraphQL selections are `graphql.field.<name>`. Mobile entry points are `deep_link.mobile_scheme`, `deep_link.universal_link`, `deep_link.android_intent` and `ipc.content_provider`. A cookie the handler reads directly, with no cookie parameter extracted, is `cookie.<name>` from `route_source` |
+| `server_secret_source` | A Spring `@Value` secret that the handler returns |
+| `cors_policy` | The CORS policy registered for a Spring WebSocket/STOMP endpoint |
+
+### sinks
+
+| Kind | Meaning |
+|---|---|
+| `sql` | A SQL call: raw SQL, `execute` / `query` on a database-like receiver, a Spring Data repository method |
+| `data_store_query` | A document-store or graph-store query (`mongo.query`, a Neo4j client) |
+| `command_exec` | An OS command: `exec`, `system`, `spawn`, `popen`, `subprocess`, `ProcessBuilder` |
+| `code_eval` | In-process evaluation: `eval`, `new Function`, `instance_eval`, a `ScriptEngine` |
+| `deserialization` | Unsafe deserialization: `pickle.loads`, `yaml.load`, `Marshal.load`, `unserialize`, `ObjectInputStream.readObject` |
+| `template_injection` | A template built from a string: `render_template_string`, `ERB.new`, `Handlebars.compile` |
+| `template_render` | An ordinary template or view render |
+| `xss` | HTML output that skips auto-escaping: `innerHTML`, `dangerouslySetInnerHTML`, `html_safe`, `mark_safe`, `v-html`, a `safe` template filter |
+| `file_io` | A file-system read or write, a file send, a directory listing |
+| `redirect` | A redirect response |
+| `outbound_http` | An outbound HTTP request (`fetch`, `axios`, `requests`, `http.Get`, `RestTemplate`, `reqwest`). `name` includes the target URI when it is a literal |
+| `mass_assignment` | Request parameters written straight into a model (`update_attributes`, `Model.create(req.body)`) |
+| `crypto_weak` | A weak primitive: MD5 or SHA-1, DES, ECB mode, RC4, a non-cryptographic random source |
+| `webview_load` | Mobile only. A WebView loads a URL or HTML |
+| `intent_redirect` | Mobile only. An intent launched from inbound deep-link data |
+
+A sink has the source `callee` when a callee's name matched and `route_source` when the handler's text did. The handler text contributes at most one sink per kind.
+
+### validators
+
+| Kind | Meaning |
+|---|---|
+| `validation` | A validate, verify or permit step |
+| `schema_validation` | Schema-based validation that rejects undeclared fields: Pydantic, Zod, Joi, Yup, marshmallow, JSON Schema |
+| `type_coercion` | The input is forced to a number or a typed parameter (`parseInt`, `Integer()`, a typed `@PathVariable`) |
+| `allowlist_check` | The value is compared against a fixed set |
+| `sanitization` | A sanitize, escape, encode or normalize step |
+| `query_parameter_binding` | Query parameters are bound through the client API, not concatenated into the query string |
+| `existence_validation` | An existence check before the write (`existsBy...`, or a lookup that throws when nothing is found) |
+| `uniqueness_validation` | A duplicate or uniqueness check |
+| `expiry_validation` | An expiry or validity-window comparison on a token or session |
+| `credential_hashing`, `credential_verification` | A Spring Security password encoder's `encode` or `matches` |
+| `cookie_httponly`, `cookie_secure` | A cookie set with `HttpOnly` or `Secure` |
+
+### signals
+
+Two signals appear on every endpoint: `route_definition`, named `<METHOD> <url>`, and `technology`, named after the tech that reported the route. The rest fall into five groups.
+
+Route shape:
+
+| Kind | Meaning |
+|---|---|
+| `state_change` | The method is `POST`, `PUT`, `PATCH` or `DELETE`, or the endpoint is a privileged WebSocket message handler. Left out for pure gRPC and Thrift methods, GraphQL queries, SOAP read operations and a `POST` with no body parameters whose callees are all reads |
+| `path_param` | One per path parameter |
+| `internal_endpoint` | An outbound client declaration. The application calls this endpoint, it does not serve it |
+| `deep_link_input` | A mobile deep link or exported `ContentProvider` receives data from outside the app |
+| `graphql_resolver` | The Spring GraphQL resolver that implements this operation |
+
+Parameter names. Each has the source `param` and is named `<type>.<name>`:
+
+| Kind | Typical parameter names |
+|---|---|
+| `credential_input` | `password`, `token`, `secret`, `api_key`, `authorization`, `jwt`, `bearer`. Also reported from `route_source` when the handler reads `req.body.password` and the analyzer listed no such parameter |
+| `identifier_input` | `id`, anything ending in `_id` or `Id`, `user`, `account`, `order`, `project` |
+| `redirect_input` | `url`, `uri`, `redirect`, `return`, `next`, `continue`, `dest`, `callback` |
+| `file_input` | `file`, `upload`, `attachment`, `image`, `filename`, `path` |
+| `query_builder_input` | `sort`, `order`, `filter`, `where`, `search`, `select`, `field`, `column` |
+| `pii_input` | `email`, `phone`, `ssn`, `dob`, `passport`, `national_id` |
+| `html_content_input` | `description`, `html`, `message`, `comment`, `note`, `markdown` |
+| `code_input` | `script`, `formula`, `expression`, `command`, `template` |
+
+Tags. Every endpoint tag becomes a signal whose `kind` is the tag name and whose `source` is the tagger: `admin`, `payment`, `webhook`, `file_upload` and the rest of the [taggers](@/usage/more_features/tagger/index.md), framework findings such as `cors`, `csrf-protection`, `rate-limit` and `security-headers`, and analyzer notes such as `graphql-return` or `nginx-host`. Parameter tags (`sqli`, `ssrf`, `idor`) arrive the same way with the source `param_tagger:<tagger>`. Auth tags are the exception: they become guards.
+
+Weakened protections and leaks, matched on the handler's source:
+
+| Kind | Meaning |
+|---|---|
+| `csrf_exempt` | CSRF protection is switched off for the route (`@csrf_exempt`, `csrf().disable()`, `protect_from_forgery with: :null_session`). Only on state-changing methods |
+| `jwt_unsafe` | JWT verification is off or weakened: `verify=False`, algorithm `none`, `ignoreExpiration: true` |
+| `cors_open` | A wildcard origin together with `credentials: true` |
+| `sensitive_response` | The response includes a credential-like key (`token`, `password`, `secret`) |
+| `server_secret_source` | The handler returns a Spring `@Value` secret. Also listed under `sources` |
+| `log_injection` | The handler logs request input or a credential |
+| `foreign_identifier_write` | An id from the request body is assigned to a different `...Id` field and saved, with no lookup or existence check |
+
+Derived signals, built from the entries above (source `heuristic`):
+
+| Kind | When it appears |
+|---|---|
+| `guard_absence` | A state-changing endpoint with no guard of any kind and no identifier in its path. Login, logout and password-reset routes are skipped |
+| `idor_review` | The same, with an identifier in the path |
+| `authz_absence` | A state-changing endpoint has an `auth_guard`, no `authz_guard`, and an identifier in its path |
+| `rate_limit_absence` | A state-changing endpoint takes a credential in its body, query or path and has no `rate_limit_guard` |
+| `ssrf` | An `outbound_http` sink together with a `redirect_input` |
+| `open_redirect` | A `redirect` sink together with a `redirect_input` |
+| `path_traversal` | A `file_io` sink together with a `file_input` |
+| `object_lookup` | An identifier input together with a lookup callee (`findById`, `getOne`, `repo.get`) |
+| `object_write` | A state-changing endpoint with an identifier in its path calls a mutating callee (`create`, `update`, `delete`, `save`) and no lookup callee |
+| `unsafe_method` | A `GET`, `HEAD`, `OPTIONS` or `QUERY` endpoint calls a mutating callee. Skipped when the handler branches on the request method |
+| `priority_review` | The roll-up, described below |
+
+The four absence signals carry low confidence on purpose (28 to 44). Noir can miss a guard that lives in a gateway or in a base class it did not read, so they say "nothing was detected here", not "nothing protects this route".
+
+`priority_review` adds up three things: the review signals on the endpoint (the absence signals, `csrf_exempt`, `jwt_unsafe`, `cors_open`, `open_redirect`, `ssrf`, `path_traversal`, `sensitive_response`, `server_secret_source`, `unsafe_method`, `log_injection`, `deep_link_input`), the distinct heavy sink kinds (`sql`, `data_store_query`, `command_exec`, `code_eval`, `deserialization`, `template_injection`, `xss`, `mass_assignment`, `crypto_weak`, `webview_load`, `intent_redirect`), and one extra point if any of `csrf_exempt`, `jwt_unsafe`, `cors_open` or `open_redirect` is present. A `sql` or `data_store_query` sink does not count next to a `query_parameter_binding` validator, and `xss` does not count next to `sanitization` or `schema_validation`. A total under 2 emits nothing. Otherwise `name` is `high` (confidence 90) when the total is 3 or more, when one of those four signals is present, or when there are two heavy sink kinds, and `medium` (confidence 70) for the rest. Filtering on `kind == "priority_review"` and `confidence >= 80` gives you the high-priority routes.
+
+When a bucket is full, a new entry replaces the lowest-ranked one only if it ranks higher. Derived signals and absence findings outrank parameter-level entries, so a route with many parameters keeps its roll-ups.
 
 ## Typical use cases
 

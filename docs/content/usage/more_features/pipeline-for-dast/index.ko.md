@@ -40,4 +40,4 @@ Noir로 OpenAPI 명세를 만든 뒤 ZAP 자동화 프레임워크에 넘깁니�
         -cmd -autorun zap.yaml <any other ZAP options>
     ```
 
-자세한 내용은 ZAP 블로그 글을 참고하세요: [ZAP과 Noir로 DAST 강화하기](https://www.zaproxy.org/blog/2024-11-11-powering-up-dast-with-zap-and-noir/).
+자세한 내용은 ZAP 블로그 글 [ZAP과 Noir로 DAST 강화하기](https://www.zaproxy.org/blog/2024-11-11-powering-up-dast-with-zap-and-noir/)를 참고하세요.

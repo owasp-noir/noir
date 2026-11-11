@@ -115,15 +115,14 @@ noir scan . --exclude-path "*_test.go,vendor/*,**/node_modules/**"
 ```
 
 `--only-techs`와 `--techs`는 비슷해 보이지만 하는 일이 다릅니다.
-`--only-techs`는 실행할 탐지기를 제한합니다(지정한 탐지기만 돌아서 스캔이 빨라짐).
-`--techs`는 자동 탐지 결과에 더해 분석기 집합에 기술을 *추가*합니다
-(탐지가 놓쳐도 그 분석기는 실행됨).
+`--only-techs`는 실행할 탐지기를 제한하므로 스캔이 빨라지고 지정한 기술만 탐지됩니다.
+`--techs`는 자동 탐지 결과에 기술을 *추가*하므로, 탐지가 놓쳐도 그 분석기는 실행됩니다.
 "이 기술만, 탐지되지 않아도 실행"하고 싶다면 둘을 함께 쓰세요.
 
 ## 출력 보강하기
 
 `--include`는 plain 출력에 엔드포인트별 정보를 더하고,
-`--ai-context`는 AI 감사자를 위한 리뷰 컨텍스트를 붙입니다.
+`--ai-context`는 AI 감사자용 리뷰 컨텍스트를 붙입니다.
 
 ```bash
 # 1-hop 핸들러 callee 첨부 (라우트 본문 안의 함수/메서드 호출)
@@ -185,7 +184,7 @@ noir scan . --ai-context guards,sinks
 | `--passive-scan-severity LVL` | 패시브 스캔 최소 심각도 (`critical`, `high`, `medium`, `low` 중 하나; 기본 `high`) |
 | `-d, --debug`         | 디버그 메시지 활성화 |
 | `--config-file <경로>`| YAML 설정 파일에서 기본 옵션 로드 |
-| `--concurrency <N>`   | 워커 수 (기본값: CPU 수, 4–32 범위로 제한; 또는 `NOIR_CONCURRENCY`) |
+| `--concurrency <N>`   | 워커 수 (기본값: CPU 수, 4-32 범위로 제한; 또는 `NOIR_CONCURRENCY`) |
 | `--cache-disable`     | 이번 실행에 한해 LLM 응답 캐시 비활성화 |
 | `--cache-clear`       | 실행 전에 LLM 응답 캐시 초기화 |
 | `--strict`            | 분석기가 실패했거나 건너뛴 파일이 있으면 종료 코드 2 반환 (결과 출력은 그대로) |

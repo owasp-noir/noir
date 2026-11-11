@@ -25,7 +25,7 @@ noir scan . -f json --no-log
 
 결과는 `endpoints`, `passive_results`, `errors` 배열을 담은 객체입니다. 각 엔드포인트에는 URL, HTTP 메서드, 파라미터(타입: `query`, `path`, `header`, `cookie`, `form`, `json`, `file`, `xml` 등), 소스 코드 위치(`details.code_paths`), 엔드포인트를 만든 분석기(`details.technology`), 그리고 태거가 붙인 보안 태그가 들어갑니다. 아래 예시는 태거를 켠 상태(`-T`)로 만든 것이며, 그래서 `tags` 배열이 채워져 있습니다.
 
-같은 엔드포인트를 여러 분석기가 찾으면(예: Go 라우터와 프로젝트의 OpenAPI 문서) Noir는 하나의 항목으로 합칩니다. `details.technology`는 병합에서 이긴 분석기이고, `details.technologies`는 기여한 모든 분석기를 정렬·중복 제거해 담은 목록입니다. 이 목록은 항목이 둘 이상일 때만 출력되므로, 분석기 하나만 찾은 엔드포인트에는 `technology`만 있습니다. 출처가 모두 필요하면 `technologies`가 있으면 그것을 읽고, 없으면 `[technology]`로 대체하면 됩니다.
+같은 엔드포인트를 여러 분석기가 찾으면(예: Go 라우터와 프로젝트의 OpenAPI 문서) Noir는 하나의 항목으로 합칩니다. `details.technology`는 병합에서 이긴 분석기이고, `details.technologies`는 기여한 모든 분석기를 정렬·중복 제거해 담은 목록입니다. 이 목록은 항목이 둘 이상일 때만 출력되므로, 분석기 하나만 찾은 엔드포인트에는 `technology`만 있습니다. 출처가 모두 필요하면 `technologies`를 읽고, 이 키가 없을 때는 `[technology]`로 대체하면 됩니다.
 
 ```json
 "details": {
@@ -38,7 +38,7 @@ noir scan . -f json --no-log
 }
 ```
 
-모노레포에서는 같은 라우트를 두 앱이 제공할 수 있고, Noir는 이를 두 개의 엔드포인트로 유지합니다. `details.project`는 각 엔드포인트가 속한 앱을 나타냅니다. 첫 번째 소스 파일에서 위쪽으로 찾은 가장 가까운 빌드 매니페스트(`pyproject.toml`, `package.json`, `go.mod`, `pom.xml` 등)의 디렉터리이며, 스캔 기준 경로에 상대적입니다. 이름 붙일 것이 없으면 출력되지 않습니다. 단일 프로젝트 스캔(매니페스트가 기준 경로에 있음)이나 코드가 아닌 명세에서 온 엔드포인트가 그렇습니다. 따라서 기존 리포트는 바뀌지 않습니다. `noir query --project services/orders`로 필터링할 수 있습니다.
+모노레포에서는 같은 라우트를 두 앱이 제공할 수 있고, Noir는 이를 두 개의 엔드포인트로 유지합니다. `details.project`는 각 엔드포인트가 속한 앱을 나타냅니다. 첫 번째 소스 파일에서 위쪽으로 찾은 가장 가까운 빌드 매니페스트(`pyproject.toml`, `package.json`, `go.mod`, `pom.xml` 등)의 디렉터리를 스캔 기준 경로에 대한 상대 경로로 적습니다. 이름 붙일 것이 없으면 출력되지 않습니다. 단일 프로젝트 스캔(매니페스트가 기준 경로에 있음)이나 코드가 아닌 명세에서 온 엔드포인트가 그렇습니다. 따라서 기존 리포트는 바뀌지 않습니다. `noir query --project services/orders`로 필터링할 수 있습니다.
 
 ```json
 "details": {
