@@ -139,7 +139,7 @@ These are the kinds Noir emits today.
 | `csrf_guard` | CSRF protection: token check, `protect_from_forgery`, `SameSite=Strict` |
 | `rate_limit_guard` | A throttling or rate-limit layer |
 
-A guard reaches the bucket one of two ways. The [framework auth taggers](@/usage/more_features/tagger/index.md) read the framework's own mechanism (a Spring Security chain, a Phoenix pipeline, an Express middleware, a Go middleware whose body Noir checked) and report `auth_guard` or `authz_guard` with the tagger as `source` and a confidence of 86. The fallback is a name match on the handler's source (`login_required`, `@PreAuthorize`, `before_action :authenticate_user!`), reported as `route_source` with a confidence between 44 and 58. The name match only fills a kind the taggers left empty, and it is the only origin of `csrf_guard` and `rate_limit_guard`.
+A guard reaches the bucket one of three ways. The [framework auth taggers](@/usage/more_features/tagger/index.md) read the framework's own mechanism (a Spring Security chain, a Phoenix pipeline, an Express middleware, a Go middleware whose body Noir checked) and report `auth_guard` or `authz_guard` with the tagger as `source` and a confidence of 86. The fallback is a name match on the handler's source (`login_required`, `@PreAuthorize`, `before_action :authenticate_user!`), reported as `route_source` with a confidence between 44 and 58. A handler that calls a check of the caller itself (`validateSession(req, res)`, `principal.validate_admin_session()`, `validateJobAccess`) is reported with the source `callee`, wherever in the body the call sits. Both name matches only fill a kind the taggers left empty, and the match on the handler's source is the only origin of `csrf_guard` and `rate_limit_guard`.
 
 When a framework says a route admits anonymous callers (tRPC `publicProcedure`, Micronaut `@Secured(IS_ANONYMOUS)`), Noir emits an `anonymous` signal and skips the name match for `auth_guard` and `authz_guard`.
 
@@ -181,7 +181,7 @@ A sink has the source `callee` when a callee's name matched and `route_source` w
 
 | Kind | Meaning |
 |---|---|
-| `validation` | A validate, verify or permit step |
+| `validation` | A validate, verify or permit step on the input. A validate or verify of the caller (`validateSession`, `verifyAuth`) is a guard instead |
 | `schema_validation` | Schema-based validation that rejects undeclared fields: Pydantic, Zod, Joi, Yup, marshmallow, JSON Schema |
 | `type_coercion` | The input is forced to a number or a typed parameter (`parseInt`, `Integer()`, a typed `@PathVariable`) |
 | `allowlist_check` | The value is compared against a fixed set |
@@ -211,7 +211,7 @@ Parameter names. Each has the source `param` and is named `<type>.<name>`:
 
 | Kind | Typical parameter names |
 |---|---|
-| `credential_input` | `password`, `token`, `secret`, `api_key`, `authorization`, `jwt`, `bearer`. Also reported from `route_source` when the handler reads `req.body.password` and the analyzer listed no such parameter |
+| `credential_input` | `password`, `token`, `secret`, `api_key`, `authorization`, `jwt`, `bearer`. Also reported from `route_source` when the handler reads `req.body.password` and the analyzer listed no such parameter. A header or cookie is left out when a framework guard is reported for the endpoint, since that guard is what reads it |
 | `identifier_input` | `id`, anything ending in `_id` or `Id`, `user`, `account`, `order`, `project` |
 | `redirect_input` | `url`, `uri`, `redirect`, `return`, `next`, `continue`, `dest`, `callback` |
 | `file_input` | `file`, `upload`, `attachment`, `image`, `filename`, `path` |
@@ -246,8 +246,8 @@ Derived signals, built from the entries above (source `heuristic`):
 | `open_redirect` | A `redirect` sink together with a `redirect_input` |
 | `path_traversal` | A `file_io` sink together with a `file_input` |
 | `object_lookup` | An identifier input together with a lookup callee (`findById`, `getOne`, `repo.get`) |
-| `object_write` | A state-changing endpoint with an identifier in its path calls a mutating callee (`create`, `update`, `delete`, `save`) and no lookup callee |
-| `unsafe_method` | A `GET`, `HEAD`, `OPTIONS` or `QUERY` endpoint calls a mutating callee. Skipped when the handler branches on the request method |
+| `object_write` | A state-changing endpoint with an identifier in its path calls a mutating callee (`create`, `update`, `delete`, `save`) and no lookup callee. Writing an audit-log entry and building a value in memory (`createFormBuilder`, `CreateAPIError`) do not count as mutating |
+| `unsafe_method` | A `GET`, `HEAD`, `OPTIONS` or `QUERY` endpoint calls a mutating callee. Skipped when the handler branches on the request method or on a form-submission check (`$form->isSubmitted()`, `form.validate_on_submit()`) |
 | `priority_review` | The roll-up, described below |
 
 The four absence signals carry low confidence on purpose (28 to 44). Noir can miss a guard that lives in a gateway or in a base class it did not read, so they say "nothing was detected here", not "nothing protects this route".
