@@ -41,10 +41,12 @@ Every analyzer has three layers. Keep them separate: a framework adapter should 
 
 Get your file set from the engine or from the detector-built indexes (`get_files_by_extension`, `CodeLocator#files_by_basename`). Walking a directory yourself skips subtree pruning, `--exclude-path`, the media filter and the content cache.
 
-**Reference implementations.** No single file is the whole model yet. Take the walk from one and the body from the other:
+**Reference implementation.** [`javascript/hapi.cr`](https://github.com/owasp-noir/noir/blob/main/src/analyzer/analyzers/javascript/hapi.cr) is the model, at under 90 lines. It inherits `JavascriptEngine` and drives the walk with `ordered_scan_files(get_files_by_extensions(JS_EXTENSIONS))`, so it gets the worker pool, content cache and per-file error isolation for free, and per-file results come back in input order. For each file it calls `Noir::TreeSitterHapiExtractor.extract_routes` and only maps the result onto `Endpoint`s and `Param`s.
 
-- **The walk (L0)**: [`javascript/hono.cr`](https://github.com/owasp-noir/noir/blob/main/src/analyzer/analyzers/javascript/hono.cr) inherits `JavascriptEngine` and drives the walk with `ordered_scan_files(get_files_by_extensions(DEFAULT_EXTENSIONS))`. It gets the worker pool, content cache and per-file error isolation for free, and per-file results come back in input order. Don't copy its body: it still carries its own regex passes next to the extractor call.
-- **The body (L1 → L2)**: [`javascript/hapi.cr`](https://github.com/owasp-noir/noir/blob/main/src/analyzer/analyzers/javascript/hapi.cr) is about 65 lines. It rides `JavascriptEngine` with the same `ordered_scan_files` walk, calls `Noir::TreeSitterHapiExtractor.extract_routes`, and only maps the result onto `Param`s. `javascript/elysia.cr`, `javascript/adonisjs.cr`, `kotlin/http4k.cr` and `java/spark.cr` have the same body, but don't copy their walk: those four extend `Analyzer` directly and loop over `all_files` themselves.
+Other files match it on one layer only:
+
+- **Same walk (L0), different body**: [`javascript/hono.cr`](https://github.com/owasp-noir/noir/blob/main/src/analyzer/analyzers/javascript/hono.cr) drives the same `ordered_scan_files` walk. Don't copy its body: it still carries its own regex passes next to the extractor call.
+- **Extractor-backed body, different walk**: `javascript/elysia.cr`, `javascript/adonisjs.cr`, `kotlin/http4k.cr` and `java/spark.cr` also get their routes from an extractor. Don't copy their walk: those four extend `Analyzer` directly and loop over `all_files` themselves.
 
 ## Current coverage
 
@@ -354,8 +356,7 @@ Some older analyzers still append to a shared `result` from inside the walk. Don
 
 ## Where to look next
 
-- Walk (L0) reference: [`javascript/hono.cr`](https://github.com/owasp-noir/noir/blob/main/src/analyzer/analyzers/javascript/hono.cr)
-- Thin adapter (L2) reference: [`javascript/hapi.cr`](https://github.com/owasp-noir/noir/blob/main/src/analyzer/analyzers/javascript/hapi.cr)
+- Reference adapter (walk and body): [`javascript/hapi.cr`](https://github.com/owasp-noir/noir/blob/main/src/analyzer/analyzers/javascript/hapi.cr)
 - Shared file-walk base: [`engines/file_scan_engine.cr`](https://github.com/owasp-noir/noir/blob/main/src/analyzer/engines/file_scan_engine.cr)
 - Engine + extractor pair: [`engines/go_engine.cr`](https://github.com/owasp-noir/noir/blob/main/src/analyzer/engines/go_engine.cr) + [`miniparsers/go_route_extractor_ts.cr`](https://github.com/owasp-noir/noir/blob/main/src/miniparsers/go_route_extractor_ts.cr)
 - Custom-shape example: [`javascript/express.cr`](https://github.com/owasp-noir/noir/blob/main/src/analyzer/analyzers/javascript/express.cr) (pre-phase + closure state)

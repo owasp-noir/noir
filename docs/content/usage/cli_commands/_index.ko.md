@@ -179,13 +179,13 @@ noir trace <URL> [paths...] [flags]              # 해당 경로의 모든 HTTP 
 직접 전달할 수도 있습니다.
 
 매칭되는 라우트는 가장 구체적인 것부터 전부 출력하며 `matched_by`(`exact`, `pattern`,
-`wildcard`, 그리고 프록시 접두사 규칙이나 Go ServeMux의 `/x/` 하위 트리의 경우
+`wildcard`, 그리고 프록시 접두사 location이나 Go ServeMux의 `/x/` 하위 트리의 경우
 `prefix`)를 함께 표시합니다. `jsonl`(기본값)과 `json`에서는 `endpoint` 아래에
 전체 엔드포인트 레코드를 출력하고, 텍스트 형식(`-f text`)에서는 한 줄로 요약해
 출력합니다.
 
-매칭이 없으면 가장 가까운 라우트를 `candidates`(공통 접두사 세그먼트 수, 다른
-세그먼트 간의 편집 거리, 경로 길이 차이 기준 정렬)로 출력한 뒤 종료 코드 1을
+매칭이 없으면 가장 가까운 라우트를 `candidates`(공통 접두사 세그먼트 수, 처음
+달라지는 세그먼트의 편집 거리, 경로 길이 차이 기준 정렬)로 출력한 뒤 종료 코드 1을
 반환합니다. `jsonl`과 `json`에서는 `{"query": "<label>", "match": false, "candidates": [...]}`를
 출력하고, `text`에서는 `no match: <label>` 뒤에 후보를 차례로 출력합니다.
 와일드카드나 접두사 라우트(`/*unmatched_route` 등)만 매칭됐을 때도 요청 경로가
@@ -264,7 +264,7 @@ noir query --no-guard --exclude sink=any --from report.json                 # �
 |--------|------|
 | `--from <report>` | 스캔을 실행하는 대신 `noir scan -f json` 또는 `-f jsonl` 리포트 파일 읽기 |
 | `-f, --format <fmt>` | 출력 형식: `jsonl` (기본값), `json`, `text` (`plain`은 `text`의 별칭) |
-| `--full` | `jsonl` 및 `json`에서 `matched_by`, `via`, `nearest_line`과 함께 `endpoint`에 전체 엔드포인트 레코드 포함. `text`에서는 항상 한 줄 요약 유지 |
+| `--full` | `jsonl` 및 `json`에서 `matched_by`, `via`, `nearest_line`과 함께 `endpoint`에 전체 엔드포인트 레코드 포함. `trace`는 기본으로 이렇게 출력합니다. `text`에서는 항상 한 줄 요약 유지 |
 | `--limit <n>` | 최대 n개 행 출력 (양의 정수여야 하며, candidates 개수도 제한) |
 | `--count` | 매칭된 엔드포인트 개수만 출력 |
 | 스캔 플래그 | `--from` 없이 직접 스캔할 때 모든 `noir scan` 플래그(`-b`, `--exclude-path`, `--only-techs`, `-t`, `-u`, `--config-file` 등) 사용 가능 |
@@ -426,7 +426,7 @@ Crystal, LLVM, 타깃 트리플 같은 빌드 정보를 함께 보여줍니다(v
 
 ## v0 호환성
 
-v0의 호출 방식은 v1.x에서 수정 없이 그대로 동작합니다.
+v0의 호출 방식은 모두 v1.x에서 수정 없이 그대로 동작합니다.
 
 ```bash
 # 세 형태 모두 같은 스캔 결과를 냅니다

@@ -41,10 +41,12 @@ Detector는 매니페스트 파일(`go.mod`, `package.json`, `Gemfile` 등)을 �
 
 파일 목록은 엔진이나 detector가 만든 인덱스(`get_files_by_extension`, `CodeLocator#files_by_basename`)에서 받으세요. 디렉터리를 직접 돌면 서브트리 가지치기, `--exclude-path`, 미디어 필터, 콘텐츠 캐시를 모두 건너뜁니다.
 
-**참고 구현.** 아직 모든 면에서 모범인 파일은 없습니다. 순회는 한 파일에서, 본문은 다른 파일에서 가져오세요.
+**참고 구현.** [`javascript/hapi.cr`](https://github.com/owasp-noir/noir/blob/main/src/analyzer/analyzers/javascript/hapi.cr)가 기준입니다. 90줄이 안 됩니다. `JavascriptEngine`을 상속하고 `ordered_scan_files(get_files_by_extensions(JS_EXTENSIONS))`로 순회하므로 worker pool, 콘텐츠 캐시, 파일별 오류 격리를 따로 구현하지 않아도 되고, 파일별 결과도 입력 순서대로 돌려받습니다. 파일마다 `Noir::TreeSitterHapiExtractor.extract_routes`를 호출해 결과를 `Endpoint`와 `Param`으로 옮기는 일만 합니다.
 
-- **순회 (L0)**: [`javascript/hono.cr`](https://github.com/owasp-noir/noir/blob/main/src/analyzer/analyzers/javascript/hono.cr)는 `JavascriptEngine`을 상속하고 `ordered_scan_files(get_files_by_extensions(DEFAULT_EXTENSIONS))`로 순회합니다. 그래서 worker pool, 콘텐츠 캐시, 파일별 오류 격리를 따로 구현하지 않아도 되고, 파일별 결과도 입력 순서대로 돌려받습니다. 본문은 따라 하지 마세요. extractor 호출 옆에 자체 정규식 패스가 아직 남아 있습니다.
-- **본문 (L1 → L2)**: [`javascript/hapi.cr`](https://github.com/owasp-noir/noir/blob/main/src/analyzer/analyzers/javascript/hapi.cr)는 65줄 정도입니다. `JavascriptEngine` 위에서 같은 `ordered_scan_files` 순회를 쓰고, `Noir::TreeSitterHapiExtractor.extract_routes`를 호출해 결과를 `Param`으로 옮기는 일만 합니다. `javascript/elysia.cr`, `javascript/adonisjs.cr`, `kotlin/http4k.cr`, `java/spark.cr`도 본문은 같은 모양이지만, 순회 방식은 따라 하지 마세요. 이 네 파일은 `Analyzer`를 직접 상속하고 `all_files`도 직접 돕니다.
+다른 파일은 한 계층만 같습니다.
+
+- **순회(L0)는 같고 본문이 다름**: [`javascript/hono.cr`](https://github.com/owasp-noir/noir/blob/main/src/analyzer/analyzers/javascript/hono.cr)도 같은 `ordered_scan_files` 순회를 씁니다. 본문은 따라 하지 마세요. extractor 호출 옆에 자체 정규식 패스가 아직 남아 있습니다.
+- **본문은 extractor를 쓰고 순회가 다름**: `javascript/elysia.cr`, `javascript/adonisjs.cr`, `kotlin/http4k.cr`, `java/spark.cr`도 라우트를 extractor에서 받습니다. 순회 방식은 따라 하지 마세요. 이 네 파일은 `Analyzer`를 직접 상속하고 `all_files`도 직접 돕니다.
 
 ## 현재 커버리지
 
@@ -353,8 +355,7 @@ extractor가 한 파일로 감당하기 어려워지면 계속 키우지 말고 
 
 ## 다음에 볼 것
 
-- 순회(L0) 참고: [`javascript/hono.cr`](https://github.com/owasp-noir/noir/blob/main/src/analyzer/analyzers/javascript/hono.cr)
-- 얇은 어댑터(L2) 참고: [`javascript/hapi.cr`](https://github.com/owasp-noir/noir/blob/main/src/analyzer/analyzers/javascript/hapi.cr)
+- 참고 어댑터(순회와 본문): [`javascript/hapi.cr`](https://github.com/owasp-noir/noir/blob/main/src/analyzer/analyzers/javascript/hapi.cr)
 - 공용 파일 순회 베이스: [`engines/file_scan_engine.cr`](https://github.com/owasp-noir/noir/blob/main/src/analyzer/engines/file_scan_engine.cr)
 - 엔진 + extractor 쌍: [`engines/go_engine.cr`](https://github.com/owasp-noir/noir/blob/main/src/analyzer/engines/go_engine.cr) + [`miniparsers/go_route_extractor_ts.cr`](https://github.com/owasp-noir/noir/blob/main/src/miniparsers/go_route_extractor_ts.cr)
 - 커스텀 모양 예시: [`javascript/express.cr`](https://github.com/owasp-noir/noir/blob/main/src/analyzer/analyzers/javascript/express.cr) (전처리 단계 + 클로저 상태)

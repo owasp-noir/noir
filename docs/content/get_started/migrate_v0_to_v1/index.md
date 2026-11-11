@@ -31,6 +31,8 @@ noir version [--verbose]
 noir help [command]
 ```
 
+Later 1.x releases added the query verbs `trace`, `reach` and `query`. See [CLI Commands](@/usage/cli_commands/_index.md).
+
 The pre-v1 terminal flags still route to the equivalent verb:
 
 | v0 invocation | v1 invocation |

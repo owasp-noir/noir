@@ -12,7 +12,7 @@ v0 호출은 거의 다 v1에서도 그대로 돌아가. 이름이 바뀐 것, �
 
 ## 요약
 
-v1.0은 **호환성을 최우선**으로 했습니다. `noir -b ./app -P -f json` 같은 v0 호출은 자동으로 `scan` 서브커맨드로 넘어가고, 이름이 바뀐 플래그는 모두 옛 이름도 별칭으로 받습니다. 명시적으로 깨진 것은 `--ollama` / `--ollama-model`뿐입니다(2024년부터 지원 중단). 대신 `--ai-provider ollama [--ai-model NAME]`을 쓰세요.
+v1.0은 **호환성을 최우선**으로 했습니다. `noir -b ./app -P -f json` 같은 v0 호출은 자동으로 `scan` 서브커맨드로 넘어가고, 이름이 바뀐 플래그는 모두 옛 이름도 별칭으로 받습니다. 명시적으로 깨진 것은 `--ollama` / `--ollama-model`뿐입니다(2024년부터 deprecated 상태였습니다). 대신 `--ai-provider ollama [--ai-model NAME]`을 쓰세요.
 
 업그레이드하고 계속 쓰기만 할 거라면 여기까지만 읽어도 됩니다. 나머지는 문서, 대시보드, 후속 도구를 v1에 맞춰 고치는 분을 위한 내용입니다.
 
@@ -30,6 +30,8 @@ noir completion <zsh|bash|fish|elvish>
 noir version [--verbose]
 noir help [command]
 ```
+
+이후 1.x 릴리스에서 질의 명령 `trace`, `reach`, `query`가 추가됐습니다. [CLI 명령](@/usage/cli_commands/_index.ko.md)을 참고하세요.
 
 v1 이전의 단독 실행 플래그는 대응하는 동사로 넘어갑니다.
 
@@ -114,7 +116,7 @@ v0 설정 파일은 그대로 읽힙니다. Noir가 파일을 옵션에 합치�
 
 ## 명시적으로 깨진 것
 
-* `--ollama URL` / `--ollama-model NAME`: 둘 다 2024년부터 지원 중단 상태였습니다. 대신 `--ai-provider ollama [--ai-model NAME]`을 쓰세요. 둘 중 하나라도 넘기면 Noir가 대체 명령을 보여 주는 오류를 내고 멈춥니다.
+* `--ollama URL` / `--ollama-model NAME`: 둘 다 2024년부터 deprecated 상태였습니다. 대신 `--ai-provider ollama [--ai-model NAME]`을 쓰세요. 둘 중 하나라도 넘기면 Noir가 대체 명령을 보여 주는 오류를 내고 멈춥니다.
 
 깨진 항목은 이것이 전부입니다.
 

@@ -1,6 +1,6 @@
 +++
 title = "Community"
-description = "Resources for the OWASP Noir community, including articles, talks, and contribution guidelines."
+description = "Resources for the OWASP Noir community, including articles and talks, and where to start contributing."
 weight = 9
 sort_by = "weight"
 

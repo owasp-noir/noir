@@ -46,7 +46,7 @@ To an LLM this reads as "to review this endpoint, also look at `utils.py:3` and 
 
 - **guards**: auth middleware / decorators / access-control checks
 - **callees**: same as above but enriched with a code snippet and a confidence score
-- **sinks**: potential SQL / command-exec / file-I/O / redirect / template-render endpoints
+- **sinks**: potential SQL / command-exec / file-I/O / redirect / template-render calls
 - **validators**: input-validation calls
 - **signals**: heuristic flags like `state_change`, `credential_input`, `guard_absence`
 

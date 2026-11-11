@@ -49,7 +49,7 @@ jobs:
 | `passive_scan_severity` | 패시브 스캔 최소 심각도 (`critical`, `high`, `medium`, `low`) | 아니오 | `high` |
 | `use_all_taggers` | 모든 태거 활성화 (`-T/--use-all-taggers`) | 아니오 | `false` |
 | `use_taggers` | 특정 태거만 활성화 (`--use-taggers`) | 아니오 | `` |
-| `include_path` | `plain` 출력에 소스 파일 경로 추가. JSON에는 항상 들어 있음 (`--include-path`) | 아니오 | `false` |
+| `include_path` | `plain` 출력에 소스 파일 경로 추가. JSON에는 항상 들어 있음 (`--include path`) | 아니오 | `false` |
 | `verbose` | 상세 출력 (`--verbose`) | 아니오 | `false` |
 | `debug` | 디버그 출력 (`-d/--debug`) | 아니오 | `false` |
 | `concurrency` | 동시성 수준 (`--concurrency`) | 아니오 | `` |

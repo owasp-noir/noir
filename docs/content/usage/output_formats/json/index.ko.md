@@ -23,7 +23,7 @@ JSON은 다음 단계가 다 읽는 형식이야. jq든 스크립트든 AI 감�
 noir scan . -f json --no-log
 ```
 
-결과는 `endpoints`, `passive_results`, `errors` 배열을 담은 객체입니다. 각 엔드포인트에는 URL, HTTP 메서드, 파라미터(타입: `query`, `path`, `header`, `cookie`, `form`, `json`, `file`, `xml` 등), 소스 코드 위치(`details.code_paths`), 엔드포인트를 만든 분석기(`details.technology`), 그리고 태거가 붙인 보안 태그가 들어갑니다. 아래 예시는 태거를 켠 상태(`-T`)로 만든 것이며, 그래서 `tags` 배열이 채워져 있습니다.
+결과는 `endpoints`, `passive_results`, `errors` 배열을 담은 객체입니다. 각 엔드포인트에는 URL, HTTP 메서드, 파라미터(타입: `query`, `path`, `header`, `cookie`, `form`, `json`, `file`, `xml` 등), 소스 코드 위치(`details.code_paths`), 엔드포인트를 만든 분석기(`details.technology`), 그리고 태거가 붙인 보안 태그가 들어갑니다.
 
 같은 엔드포인트를 여러 분석기가 찾으면(예: Go 라우터와 프로젝트의 OpenAPI 문서) Noir는 하나의 항목으로 합칩니다. `details.technology`는 병합에서 이긴 분석기이고, `details.technologies`는 기여한 모든 분석기를 정렬·중복 제거해 담은 목록입니다. 이 목록은 항목이 둘 이상일 때만 출력되므로, 분석기 하나만 찾은 엔드포인트에는 `technology`만 있습니다. 출처가 모두 필요하면 `technologies`를 읽고, 이 키가 없을 때는 `[technology]`로 대체하면 됩니다.
 
@@ -47,6 +47,8 @@ noir scan . -f json --no-log
   "project": "services/orders"
 }
 ```
+
+전체 리포트는 다음과 같습니다. 태거를 켠 상태(`-T`)로 만든 것이어서 `tags` 배열이 채워져 있습니다.
 
 ```json
 {
@@ -141,7 +143,7 @@ noir scan . -f json --no-log
 
 ## 분석기 실패 기록
 
-분석기 하나가 예외를 던지면 로그를 남기고 건너뛰며, 스캔은 나머지 기술을 계속 처리합니다. 읽거나 파싱할 수 없는 파일 하나(예: 파싱 시간 상한을 넘긴 파일) 역시 그 파일만 건너뛰고 스캔은 이어집니다. `errors`에는 두 경우가 모두 남기 때문에, 결과가 비어 있는 이유가 "해당 프레임워크가 없어서"인지 "아예 분석하지 못해서"인지, 그리고 조용히 빠진 파일이 있었는지 구분할 수 있습니다.
+분석기 하나가 예외를 던지면 로그를 남기고 건너뛰며, 스캔은 나머지 분석기로 계속 진행합니다. 읽거나 파싱할 수 없는 파일 하나(예: 파싱 시간 상한을 넘긴 파일) 역시 그 파일만 건너뛰고 스캔은 이어집니다. `errors`에는 두 경우가 모두 남기 때문에, 결과가 비어 있는 이유가 "해당 프레임워크가 없어서"인지 "아예 분석하지 못해서"인지, 그리고 조용히 빠진 파일이 있었는지 구분할 수 있습니다.
 
 ```json
 {

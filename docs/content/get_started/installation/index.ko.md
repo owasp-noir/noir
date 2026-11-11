@@ -128,11 +128,11 @@ nix run github:owasp-noir/noir -- -h
 
 ## 바이너리 직접 다운로드
 
-패키지 매니저가 없다면 [GitHub Releases](https://github.com/owasp-noir/noir/releases/latest)에서 미리 빌드된 바이너리를 받으세요. Linux와 macOS용이 있고, Windows(x86_64)용은 v1.4.0 다음 릴리즈부터 나옵니다.
+패키지 매니저가 없다면 [GitHub Releases](https://github.com/owasp-noir/noir/releases/latest)에서 미리 빌드된 바이너리를 받으세요. Linux와 macOS용이 있고, v1.5.0부터는 Windows(x86_64)용도 있습니다.
 
 설치 및 업데이트:
 
-1. 플랫폼에 맞는 바이너리를 다운로드합니다(예: Linux는 `noir-v1.5.0-linux-x86_64`, macOS는 `noir-v1.5.0-osx-arm64.tar.gz`, Windows는 `noir-vX.Y.Z-windows-x86_64.exe`).
+1. 플랫폼에 맞는 바이너리를 다운로드합니다(예: Linux는 `noir-v1.5.0-linux-x86_64`, macOS는 `noir-v1.5.0-osx-arm64.tar.gz`, Windows는 `noir-v1.5.0-windows-x86_64.exe`).
 2. **Linux**: 실행 권한을 주고 `PATH`로 옮깁니다.
 
     ```bash

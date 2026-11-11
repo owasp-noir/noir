@@ -186,7 +186,8 @@ the full endpoint record under `endpoint`. In `text` format (`-f text`), it
 prints a compact one-line summary.
 
 On a miss, it prints the nearest routes as `candidates` (scored by shared
-leading segments, edit distance on differing segments, and path length) and
+leading segments, edit distance on the first differing segment, and difference
+in path length) and
 exits with code 1. In `jsonl` and `json`, a miss emits
 `{"query": "<label>", "match": false, "candidates": [...]}`; in `text`, it
 prints `no match: <label>` followed by each candidate. When only a wildcard
@@ -202,7 +203,7 @@ noir reach <FILE[:LINE]> [paths...] [flags]
 `reach` matches `FILE` as a path suffix against every location Noir recorded:
 route declarations, the handler definition, callees, guards, sources, sinks,
 and validators. It lists the evidence in `via` (`kind:name@line` or
-`kind@line`), and an entry outside the row's own file carries its path.
+`kind@line`), and an entry outside the row's own file carries its path (`@path:line`).
 When `:LINE` is given, evidence and rows are ordered by distance to that line
 and `nearest_line` is set. Noir records declaration lines, not function
 spans, so the line orders rather than filters. Inheritance and dynamic loading
@@ -268,7 +269,7 @@ Every query verb accepts these options:
 |------|-------------|
 | `--from <report>` | Read endpoints from a `noir scan -f json` or `-f jsonl` report instead of scanning |
 | `-f, --format <fmt>` | Output format: `jsonl` (default), `json`, or `text` (`plain` is accepted as an alias for `text`) |
-| `--full` | In `jsonl` and `json`, populate `endpoint` with the full endpoint record alongside `matched_by`, `via`, and `nearest_line`. In `text`, output remains a single compact line |
+| `--full` | In `jsonl` and `json`, populate `endpoint` with the full endpoint record alongside `matched_by`, `via`, and `nearest_line`. `trace` already does this by default. In `text`, output remains a single compact line |
 | `--limit <n>` | Print at most n rows (must be a positive integer; also limits candidates) |
 | `--count` | Print only the number of matches |
 | Scan flags | Any `noir scan` flag (`-b`, `--exclude-path`, `--only-techs`, `-t`, `-u`, `--config-file`, ...) is accepted when scanning live without `--from` |
