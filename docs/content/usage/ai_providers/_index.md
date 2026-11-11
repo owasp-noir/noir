@@ -1,6 +1,6 @@
 +++
 title = "AI Providers"
-description = "Learn how to connect Noir to supported AI providers such as OpenAI, Azure AI, OpenRouter, and local or ACP runtimes."
+description = "Connect Noir to supported AI providers such as OpenAI, Azure AI, OpenRouter, and local or ACP runtimes."
 weight = 3
 sort_by = "weight"
 

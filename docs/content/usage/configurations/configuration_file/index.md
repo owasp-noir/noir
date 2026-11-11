@@ -102,7 +102,7 @@ noir scan /path/to/my/project -f json -u https://api.example.com --exclude-codes
 
 ## Key reference
 
-`noir config init` writes a fully commented file with every supported key. The example above shows only some of them; CLI flags always override the file. Keys below match the generated file (legacy v0 names such as `send_es` / `send_proxy` still load, but migrate to the v1 names).
+`noir config init` writes a fully commented file with every supported key. The example above shows only some of them. CLI flags always override the file. The keys below match the generated file. Legacy v0 names such as `send_es` / `send_proxy` still load, but migrate to the v1 names.
 
 ### Scan paths and scope
 
@@ -114,7 +114,7 @@ noir scan /path/to/my/project -f json -u https://api.example.com --exclude-codes
 | `techs` | CSV | `-t` / `--techs` | Add techs to the analyzer set (on top of auto-detect) |
 | `only_techs` | CSV | `--only-techs` | Restrict which tech detectors run |
 | `exclude_techs` | CSV | `--exclude-techs` | Drop techs from the final set after detection |
-| `concurrency` | int | `--concurrency` / `NOIR_CONCURRENCY` | Worker count (default: CPU count clamped to 4–32). Precedence: flag > `NOIR_CONCURRENCY` > config > default |
+| `concurrency` | int | `--concurrency` / `NOIR_CONCURRENCY` | Worker count (default: CPU count clamped to 4-32). Precedence: flag > `NOIR_CONCURRENCY` > config > default |
 
 ### Output
 

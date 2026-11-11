@@ -58,5 +58,5 @@ noir scan <BASE_PATH> -P --passive-scan-severity low
 **출력 구성:**
 *   `[critical][aws-access-key][secret]`: 심각도, 규칙 `id`, 규칙 `category`
 *   `Detect AWS_ACCESS_KEY`: 규칙 이름(`info.name`)
-*   `extract`: 매칭된 코드 라인
+*   `extract`: 매칭된 코드 줄
 *   `file`: 파일 경로와 줄 번호

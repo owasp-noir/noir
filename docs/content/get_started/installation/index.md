@@ -151,7 +151,7 @@ To install or update:
 
     For a user-local install without `sudo`, extract under `~/.local/noir` instead and add `~/.local/noir` to your `PATH`.
 
-    The macOS archive ships OpenSSL libraries in `lib/`; do not move only the `noir` binary without them.
+    The macOS archive ships OpenSSL libraries in `lib/`, so don't move the `noir` binary without them.
 
 4. **Windows**: the `.exe` is self-contained. Rename it to `noir.exe` and put it in a folder on your `PATH`. In PowerShell, for a per-user install:
 

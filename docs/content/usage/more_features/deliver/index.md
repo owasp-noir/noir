@@ -51,7 +51,7 @@ Send every endpoint through a local Burp/ZAP proxy so its scanner picks them up.
 noir scan ./source -u http://localhost:3000 --probe-via http://localhost:8080
 ```
 
-The proxy port is required. `--probe-via http://localhost` is rejected rather than guessed, because a proxy URL without a port cannot be routed and probes would otherwise go straight to the target instead. A bare `host:port` (the form `curl -x` takes) is accepted and read as `http://host:port`.
+The proxy port is required. `--probe-via http://localhost` is rejected rather than guessed, because a proxy URL without a port cannot be routed and probes would otherwise go straight to the target. A bare `host:port` (the form `curl -x` takes) is accepted and read as `http://host:port`.
 
 <img src="./deliver-proxy.png" alt="Noir sending its four discovered endpoints through a proxy on localhost:8090, beside the proxy's history tab showing the four requests arrive." width="1534" height="392" loading="lazy" decoding="async">
 
@@ -67,7 +67,7 @@ noir scan ./source -u http://localhost:3000 \
 
 <img src="./deliver-header.png" alt="A proxied request in the intercepting proxy, carrying the custom Abcd and X-API-Key headers Noir was told to add." width="1136" height="460" loading="lazy" decoding="async">
 
-These headers go to the `-u` target and nowhere else. Most endpoints are paths that Noir joined onto `-u`. An endpoint that already carried its own scheme and host in the source (an OAS `servers:` entry, a HAR capture, a hosted-backend URL) keeps that host. That host came from the code you are scanning, so Noir probes the endpoint without your headers and names the host once so you can see what was withheld:
+These headers go to the `-u` target and nowhere else. Most endpoints are paths that Noir joined onto `-u`. An endpoint that already carried its own scheme and host in the source (an OAS `servers:` entry, a HAR capture, a hosted-backend URL) keeps that host. That host came from the code you are scanning, so Noir probes the endpoint without your headers. It names the host once, so you can see what was withheld:
 
 ```
 ▲ Probe: --probe-header values withheld from https://collector.example.com — it is not the --url target. Endpoints on that host are still probed, without your headers.

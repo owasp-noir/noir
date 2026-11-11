@@ -16,7 +16,7 @@ Noir is an open-source SAST tool. It reads source code and extracts the endpoint
 
 That inventory feeds three audiences:
 
-- **Human reviewers.** Security engineers and code auditors get a focused list of attacker-reachable entry points and the files, parameters, and tags around them, instead of having to skim the whole repository.
+- **Human reviewers.** Security engineers and code auditors get a focused list of attacker-reachable entry points and the files, parameters, and tags around them, instead of skimming the whole repository.
 - **AI auditors.** LLM-based SAST agents get the same focused list, plus per-endpoint review context (`--include callee` for 1-hop callees in plain output; `--ai-context` for guards, callees, sources, sinks, validators, and signals).
 - **DAST tools.** ZAP, Burp Suite, and Caido get a real route list to scan, including paths they would never have reached by crawling.
 

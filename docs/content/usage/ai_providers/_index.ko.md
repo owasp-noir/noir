@@ -6,7 +6,7 @@ sort_by = "weight"
 
 +++
 
-Noir의 AI 분석은 클라우드 API, 로컬 모델 서버, ACP 에이전트를 쓸 수 있습니다.
+Noir의 AI 분석에는 클라우드 API, 로컬 모델 서버, ACP 에이전트를 쓸 수 있습니다.
 
 `--ai-provider`에는 아래 표의 프리셋 이름이나 OpenAI 호환 URL(예: `http://localhost:8000/v1`)을 넘깁니다. API 키는 `NOIR_AI_KEY`나 `--ai-key-file`로 넘기세요. `--ai-key`도 되지만, 이 경우 키가 프로세스 목록에 그대로 보입니다.
 

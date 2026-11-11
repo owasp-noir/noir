@@ -137,7 +137,7 @@ xcrun simctl openurl booted 'myapp://host/path?token='
 xcrun simctl openurl booted 'https://app.example.com/buy'
 ```
 
-Like `-f adb`, `simctl` is platform-specific: it emits commands for iOS entry points and skips what it can't open: HTTP endpoints, Android entry points (use `-f adb`), and bare App Links domain associations. Each skipped kind gets a one-line warning on stderr.
+Like `-f adb`, `simctl` is platform-specific. It emits commands for iOS entry points and skips what it can't open: HTTP endpoints, Android entry points (use `-f adb`), and bare App Links domain associations. Each skipped kind gets a one-line warning on stderr.
 
 ## Filling Parameter Values
 

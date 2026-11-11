@@ -26,7 +26,7 @@ noir scan . -f oas2
 
 ## Example Output
 
-Follows the standard OpenAPI structure: `info` holds metadata, and `paths` maps each URL to its HTTP methods with parameters and responses. Paste the output into the [Swagger Editor](https://editor.swagger.io/) to visualize it right away.
+The document follows the standard OpenAPI structure: `info` holds metadata, and `paths` maps each URL to its HTTP methods with parameters and responses. Paste the output into the [Swagger Editor](https://editor.swagger.io/) to visualize it right away.
 
 ```json
 {

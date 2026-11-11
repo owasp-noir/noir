@@ -88,4 +88,4 @@ nix flake update
 
 ## Next Steps
 
-Proceed with the standard [build and test procedures](../how_to_build/).
+Continue with the usual [build and test steps](../how_to_build/).

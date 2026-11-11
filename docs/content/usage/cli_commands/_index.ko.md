@@ -7,8 +7,8 @@ sort_by = "weight"
 +++
 
 v1.0부터 Noir CLI는 동사 기반 구조를 씁니다. 핵심 명령은 `scan`이고,
-질의 명령(`trace`, `reach`, `query`)과 몇 개의 네임스페이스(`list`, `cache`, `config`, `rules`)가
-나머지를 묶습니다.
+여기에 질의 명령(`trace`, `reach`, `query`)과 네임스페이스(`list`, `cache`, `config`, `rules`)가
+붙습니다.
 
 ```
 noir <command> [arguments] [flags]
@@ -151,8 +151,8 @@ noir scan ./app --ai-provider ollama --ai-model llama3
 
 ## Trace, Reach, Query
 
-엔드포인트를 나열하는 대신 추적하기 위한 질의 명령 세 개입니다. AI 에이전트(또는
-특정 질문을 가진 리뷰어)에게 필요한 형태로, 좁은 질문을 던지면 작은 답을
+엔드포인트를 나열하는 대신 추적하는 질의 명령 세 개입니다. AI 에이전트(또는
+구체적인 질문이 있는 리뷰어)에게 필요한 형태로, 좁은 질문을 던지면 작은 답을
 돌려줍니다. 각 명령은 `--ai-context all --include callee`가 적용된 스캔을 실행하며
 `scan`의 모든 플래그를 받습니다. `--from`으로 저장된 리포트를 읽으면 스캔 한 번으로
 여러 질문에 답할 수 있습니다.
@@ -174,22 +174,22 @@ noir trace <URL> [paths...] [flags]              # 해당 경로의 모든 HTTP 
 
 `trace`는 실제 요청 경로를 선언된 라우트에 대응시킵니다. `/api/users/42`는
 `/api/users/{id}`, `:id`, `<int:pk>`, `[id]`, `*`에 매칭되고, HEAD 요청은 GET
-라우트에 대응됩니다. 메서드를 생략하면 해당 경로의 모든 메서드에 대해 매칭되는
-라우트를 찾습니다. `noir trace "POST /api/users/42" ./app`처럼 스캔 대상 경로를
+라우트에 대응됩니다. 메서드를 생략하면 그 경로에 매칭되는 라우트를 메서드와
+상관없이 나열합니다. `noir trace "POST /api/users/42" ./app`처럼 스캔 대상 경로를
 직접 전달할 수도 있습니다.
 
-매칭되는 라우트를 구체적인 순서로 전부 출력하며 `matched_by`(`exact`, `pattern`,
+매칭되는 라우트는 가장 구체적인 것부터 전부 출력하며 `matched_by`(`exact`, `pattern`,
 `wildcard`, 그리고 프록시 접두사 규칙이나 Go ServeMux의 `/x/` 하위 트리의 경우
-`prefix`)를 함께 표시합니다. 기본 형식인 `jsonl`과 `json`에서는 `endpoint` 아래에
-전체 엔드포인트 레코드를 출력하며, 텍스트 형식(`-f text`)에서는 한 줄 요약으로
+`prefix`)를 함께 표시합니다. `jsonl`(기본값)과 `json`에서는 `endpoint` 아래에
+전체 엔드포인트 레코드를 출력하고, 텍스트 형식(`-f text`)에서는 한 줄로 요약해
 출력합니다.
 
 매칭이 없으면 가장 가까운 라우트를 `candidates`(공통 접두사 세그먼트 수, 다른
 세그먼트 간의 편집 거리, 경로 길이 차이 기준 정렬)로 출력한 뒤 종료 코드 1을
-반환합니다. `jsonl`과 `json`에서는 `{"query": "<label>", "match": false, "candidates": [...]}`
-형태로 출력되며, `text`에서는 `no match: <label>` 뒤에 후보 목록이 출력됩니다.
-와일드카드나 접두사 라우트(`/*unmatched_route` 등)만 매칭된 경우에도 요청 경로의
-오타 가능성을 고려하여 매칭 결과 뒤에 후보 목록이 함께 출력됩니다.
+반환합니다. `jsonl`과 `json`에서는 `{"query": "<label>", "match": false, "candidates": [...]}`를
+출력하고, `text`에서는 `no match: <label>` 뒤에 후보를 차례로 출력합니다.
+와일드카드나 접두사 라우트(`/*unmatched_route` 등)만 매칭됐을 때도 요청 경로가
+오타였을 수 있으므로 매칭 결과 뒤에 후보 라우트를 함께 출력합니다.
 
 ### Reach
 
@@ -199,14 +199,14 @@ noir reach <FILE[:LINE]> [paths...] [flags]
 
 `reach`는 `FILE`을 경로 접미사로 보고 Noir가 기록한 모든 위치(라우트 선언, 핸들러
 정의, callee, 가드, 소스, 싱크, 검증기)와 비교해 근거를 `via`(`kind:name@line` 또는
-`kind@line`)에 나열합니다. 행의 파일이 아닌 곳의 근거에는 경로(`@path:line`)가
-붙습니다. `:LINE`을 주면 근거와 행을 거리순으로 정렬하고 `nearest_line`을 채웁니다.
+`kind@line`)에 나열합니다. 그 행의 파일 밖에 있는 근거에는 경로(`@path:line`)가
+붙습니다. `:LINE`을 주면 근거와 행을 그 줄에서 가까운 순으로 정렬하고 `nearest_line`을 채웁니다.
 Noir는 함수 범위가 아니라 선언 줄만 기록하므로, 줄 번호는 필터가 아니라 정렬
 기준입니다. 상속과 동적 로딩은 따라가지 않습니다.
 
-기록된 위치 중 `FILE`과 매칭되는 곳이 없으면 stderr에 설명 힌트를 출력하고 종료
-코드 1을 반환합니다. `:LINE`을 지정했으나 해당 파일의 근거에 줄 번호가 기록되어
-있지 않은 경우 stderr에 안내 메시지를 출력합니다.
+기록된 위치 중 `FILE`과 매칭되는 곳이 없으면 stderr에 힌트를 출력하고 종료
+코드 1을 반환합니다. `:LINE`을 줬는데 그 파일의 근거에 줄 번호가 기록되어
+있지 않으면 stderr에 안내 메시지를 출력합니다.
 
 ### Query
 
@@ -224,10 +224,12 @@ noir query [filters] [paths...] [flags]
 - `--param <name,...>`: 파라미터 이름 (헤더 파라미터는 대소문자 구분 없음)
 - `--param-type <type,...>`: 파라미터 위치/유형 (`query`, `json`, `form`, `header`, `cookie`, `path`)
 - `--protocol <proto,...>`: 프로토콜 (`http`, `ws`, `cli` 등)
-- `--sink <kind,...|any>`: 해당 유형의 싱크에 도달 (`sql`, `command`, `file_io`, `outbound_http`, `template_render`, `redirect`, `mass_assignment` 등)
+- `--sink <kind,...|any>`: 해당 유형의 싱크에 도달 (`sql`, `command_exec`, `file_io`, `outbound_http`, `template_render`, `redirect`, `mass_assignment` 등)
 - `--source <kind,...|any>`: 해당 유형의 소스를 읽음
 - `--signal <kind,...|any>`: 파생 보안 리뷰 신호 포함 (`idor_review`, `ssrf`, `open_redirect` 등)
 - `--validator <kind,...|any>`: 해당 유형의 검증기 포함
+
+버킷별로 나올 수 있는 kind는 [AI 컨텍스트](@/usage/supported/ai_context_coverage/index.ko.md#버킷별-kind) 문서에 정리되어 있습니다.
 
 단일 패턴을 받는 필터 (`<glob|substr>`):
 - `--url <glob|substr>`: 라우트 URL
@@ -252,7 +254,7 @@ noir query --no-guard --exclude sink=any --from report.json                 # �
 - 글롭 문자(`*`, `?`, `[`): `*`는 `/`를 넘어 매칭되고 `{id}`는 글자 그대로 비교됩니다. 글롭 문자가 없으면 부분 문자열로 매칭됩니다.
 - `--param`과 `--param-type`: 같은 하나의 파라미터가 두 조건을 모두 만족해야 합니다.
 - `any` 키워드: `--sink`, `--source`, `--signal`, `--validator`에서 `any`는 해당 버킷이 비어 있지 않으면 매칭됩니다.
-- stderr 경고: 리포트에 없는 값을 필터에 지정하면 stderr에 리포트에 실제 존재하는 값 목록과 함께 경고를 출력합니다. `--ai-context` 없이 스캔된 리포트에 `--guard`나 `--sink` 같은 컨텍스트 필터를 적용하면 AI 컨텍스트가 없다는 경고를 출력합니다.
+- stderr 경고: 리포트에 없는 값을 필터에 지정하면 리포트에 실제로 있는 값 목록과 함께 stderr에 경고를 출력합니다. `--ai-context` 없이 스캔된 리포트에 `--guard`나 `--sink` 같은 컨텍스트 필터를 적용하면 AI 컨텍스트가 없다는 경고를 출력합니다.
 
 ### 공통 플래그 및 종료 코드
 
@@ -267,7 +269,7 @@ noir query --no-guard --exclude sink=any --from report.json                 # �
 | `--count` | 매칭된 엔드포인트 개수만 출력 |
 | 스캔 플래그 | `--from` 없이 직접 스캔할 때 모든 `noir scan` 플래그(`-b`, `--exclude-path`, `--only-techs`, `-t`, `-u`, `--config-file` 등) 사용 가능 |
 
-`--from`을 지정하면 아무것도 스캔하지 않으므로 스캔 경로나 스캔 플래그를 함께 전달하면 사용법 오류(종료 코드 2)가 발생합니다. 전역 플래그(`--no-color`, `-d`, `--verbose`)는 `--from`과 함께 사용할 수 있습니다.
+`--from`을 쓰면 아무것도 스캔하지 않으므로, 스캔 경로나 스캔 플래그를 함께 넘기면 사용법 오류(종료 코드 2)입니다. 글로벌 플래그(`--no-color`, `-d`, `--verbose`)는 `--from`과 함께 쓸 수 있습니다.
 
 종료 코드는 grep 규칙을 따릅니다:
 - `0`: 하나 이상의 엔드포인트가 매칭됨.
@@ -276,7 +278,7 @@ noir query --no-guard --exclude sink=any --from report.json                 # �
 
 ### 출력 행 형식
 
-기본 압축 행(`-f jsonl`)은 엔드포인트 레코드의 투영이며 빈 버킷은 생략됩니다:
+기본 압축 행(`-f jsonl`)은 엔드포인트 레코드에서 일부 필드만 추린 것이며 빈 버킷은 생략합니다:
 
 ```json
 {"method":"POST","url":"/api/users/{id}","path":"src/routes.go","line":42,"tech":"go_gin",
@@ -291,7 +293,7 @@ noir query --no-guard --exclude sink=any --from report.json                 # �
 - `params`: `name:type` 형식의 파라미터 목록.
 - `guards`: 인증 및 인가 가드 (rate limiter, CSRF 제외).
 - `sinks`, `signals`: 프레임워크 인식 싱크 종류 및 파생 보안 리뷰 신호.
-- `matched_by`: `trace`에서 추가 (`exact`, `pattern`, `wildcard`, `prefix`; 대소문자만 다른 경우 `exact_ci`, `pattern_ci`, `wildcard_ci` — ASP.NET/Express/Koa 한정, 마지막에 나열).
+- `matched_by`: `trace`에서 추가 (`exact`, `pattern`, `wildcard`, `prefix`; 대소문자만 다른 경우 `exact_ci`, `pattern_ci`, `wildcard_ci`, ASP.NET/Express/Koa 한정, 마지막에 나열).
 - `via`: `reach`에서 추가 (`route`, `handler`, `callee`, `guard`, `source`, `sink`, `validator` 근거 목록).
 - `nearest_line`: `reach`에 `:LINE`을 지정했을 때 추가.
 

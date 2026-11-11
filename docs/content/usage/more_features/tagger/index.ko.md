@@ -6,7 +6,7 @@ sort_by = "weight"
 
 +++
 
-태거는 엔드포인트와 파라미터에 태그를 붙입니다. 태그는 엔드포인트가 무슨 일을 하는지, 어디가 위험할 수 있는지를 알려 줍니다. 예를 들어 SQL 인젝션에 열려 있을 수 있는 파라미터나 로그인 엔드포인트가 그렇습니다.
+태거는 엔드포인트와 파라미터에 태그를 붙입니다. 태그는 엔드포인트가 무슨 일을 하는지, 어디가 위험할 수 있는지를 알려 줍니다. 예를 들어 SQL 인젝션에 취약할 수 있는 파라미터나 로그인 엔드포인트가 그렇습니다.
 
 {% mascot(mood="inspect") %}
 태그는 내 돋보기야. redirect_url 같은 파라미터는 핸들러를 읽기도 전에 ssrf로 표시돼.
@@ -33,7 +33,7 @@ noir scan <BASE_PATH> --use-taggers hunt,oauth
 
 ## 커스텀 태그 규칙
 
-내부 라우트, 결제 모듈, 파트너 API처럼 내 코드베이스에서 중요한 것을 태깅하려면 YAML로 태그 규칙을 작성해 `--tagger-rules`로 넘깁니다. 이 플래그는 규칙 파일이나 디렉터리를 받고(디렉터리는 `*.yml` / `*.yaml`을 찾습니다), 여러 번 쓸 수 있습니다. 이렇게 불러온 규칙은 항상 실행되므로 `-T`를 함께 줄 필요가 없고, `-T`나 `--use-taggers`로 고른 tagger와 함께 실행됩니다.
+내부 라우트, 결제 모듈, 파트너 API처럼 내 코드베이스에서 중요한 것을 태깅하려면 YAML로 태그 규칙을 작성해 `--tagger-rules`로 넘깁니다. 이 플래그는 규칙 파일이나 디렉터리를 받고(디렉터리는 `*.yml` / `*.yaml`을 찾습니다), 여러 번 쓸 수 있습니다. 이렇게 불러온 규칙은 항상 실행되므로 `-T`를 함께 줄 필요가 없고, `-T`나 `--use-taggers`로 고른 태거와 함께 실행됩니다.
 
 ```yaml
 # team-rules/internal.yml
@@ -58,7 +58,7 @@ noir scan <BASE_PATH> --tagger-rules ./team-rules
 noir list taggers --tagger-rules ./team-rules   # 스캔 없이 규칙과 examples만 확인
 ```
 
-매번 불러오려면 설정 파일에 `tagger_rules_path`를 지정하세요. 규칙 파일 형식이 잘못됐거나 `key`가 다른 tagger와 겹치면 스캔이 시작되기 전에 파일 이름과 함께 멈춥니다. `examples`가 적힌 대로 동작하지 않으면 경고를 출력합니다. 사용할 수 있는 조건은 [규칙 형식](https://github.com/owasp-noir/noir/blob/main/src/tagger/rules/README.md)에 정리되어 있습니다. 내장 tagger 중 `admin`, `payment`, `soap`, `cors`, `websocket`, `webhook`, `crypto`도 같은 형식으로 작성되어 있습니다.
+매번 불러오려면 설정 파일에 `tagger_rules_path`를 지정하세요. 규칙 파일 형식이 잘못됐거나 `key`가 다른 태거와 겹치면 스캔이 시작되기 전에 파일 이름과 함께 멈춥니다. `examples`가 적힌 대로 동작하지 않으면 경고를 출력합니다. 사용할 수 있는 조건은 [규칙 형식](https://github.com/owasp-noir/noir/blob/main/src/tagger/rules/README.md)에 정리되어 있습니다. 내장 태거 중 `admin`, `payment`, `soap`, `cors`, `websocket`, `webhook`, `crypto`도 같은 형식으로 작성되어 있습니다.
 
 ## 출력
 
@@ -111,12 +111,12 @@ noir list taggers --tagger-rules ./team-rules   # 스캔 없이 규칙과 exampl
 | 프로토콜 / 인터페이스 | `graphql`, `soap`, `websocket`, `mcp`, `cors` | 해당 프로토콜이나 인터페이스를 쓰는 엔드포인트 |
 | 인증 & 토큰 | `oauth`, `jwt` | OAuth와 JWT 인증 엔드포인트 |
 | 프레임워크별 인증 | `django_auth`, `flask_auth`, `fastapi_auth`, `python_misc_auth`, `spring_auth`, `jaxrs_auth`, `java_misc_auth`, `ktor_auth`, `scala_auth`, `express_auth`, `nestjs_auth`, `hono_auth`, `nextjs_auth`, `js_misc_auth`, `go_auth`, `rust_auth`, `ruby_auth`, `php_auth`, `aspnet_auth`, `fastendpoints_auth`, `elixir_auth`, `swift_auth`, `crystal_auth`, `perl_auth` | 로그인이 필요한 엔드포인트에 `auth` 태그. `nestjs_auth`와 `ruby_auth`는 역할이나 정책 검사가 걸린 라우트에 `authz`도 붙입니다 |
-| 엔드포인트 용도 | `pii`, `admin`, `payment`, `webhook`, `crypto`, `debug`, `api_docs`, `account_recovery`, `file_upload` | 엔드포인트가 무엇을 위한 것인지(아래 참고) |
+| 엔드포인트 용도 | `pii`, `admin`, `payment`, `webhook`, `crypto`, `debug`, `api_docs`, `account_recovery`, `file_upload` | 엔드포인트의 용도(아래 참고) |
 | 프레임워크 보호 장치와 위험 | `rails_security`, `spring_security`, `rust_security`, `go_security` | 보안 설정과, 꺼진 안전한 기본값(아래 참고) |
 
 ### 엔드포인트 용도
 
-이 태그들은 엔드포인트가 무엇을 위한 것인지 알려 주므로, 리뷰어가 중요한 것부터 볼 수 있습니다. 태그 이름은 태거 이름과 같습니다.
+이 태그는 엔드포인트의 용도를 알려 주므로, 리뷰어가 중요한 것부터 볼 수 있습니다. 태그 이름은 태거 이름과 같습니다.
 
 | 태그 | 표시하는 대상 | 확인할 점 |
 |---|---|---|
@@ -140,7 +140,7 @@ noir list taggers --tagger-rules ./team-rules   # 스캔 없이 규칙과 exampl
 |---|---|
 | `csrf-protection` | CSRF 검증이 비활성화(`skip_before_action :verify_authenticity_token`, `skip_forgery_protection`)되었거나 약화(`protect_from_forgery with: :null_session`)된 경우. Rails는 상태를 바꾸는 요청을 기본으로 보호하므로, 일부러 끈 곳은 모두 확인하세요 |
 | `mass-assignment` | Strong Parameters가 우회된 경우(`params.permit!`, `params.to_unsafe_h`, 또는 `Model.new(params[:user])`처럼 가공되지 않은 `params[:x]` 해시를 모델 라이터에 전달). 권한 플래그나 소유자 컬럼 같은 필드를 공격자가 쓸 수 있는지 확인하세요 |
-| `rate-limit` | Rails 8 기본 `rate_limit` 매크로로 요청 수를 제한하는 액션. 로그인·복구 라우트에 이것이 없으면 그 자체가 발견 사항입니다 |
+| `rate-limit` | Rails 8 기본 `rate_limit` 매크로로 요청 수를 제한하는 액션. 로그인·복구 라우트에 없으면 그 자체가 발견 사항입니다 |
 
 **Spring** (`spring_security`). 인증 태거 `spring_auth`를 보완합니다.
 

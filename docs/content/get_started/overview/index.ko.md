@@ -30,9 +30,9 @@ Noir는 오픈 소스 SAST 도구입니다. 소스 코드를 읽어 애플리케
 
 **LLM 폴백.** 기본 지원하지 않는 프레임워크이거나 정적 규칙이 통하지 않는 커스텀 라우팅이라면, LLM(OpenAI, Ollama 등)을 연결해 빈자리를 채우세요.
 
-**DAST 스캐너에 공급.** 엔드포인트를 ZAP, Burp Suite, Caido에 프록시로 바로 흘려보내거나, OpenAPI로 내보내 가져가게 하세요. 페이지에 링크되지 않아 스캐너가 놓치던 경로도 스캔 범위에 들어옵니다.
+**DAST 스캐너에 공급.** 엔드포인트를 ZAP, Burp Suite, Caido에 프록시로 바로 흘려보내거나, OpenAPI로 내보내 스캐너에서 불러오세요. 페이지에 링크되지 않아 스캐너가 놓치던 경로도 스캔 범위에 들어옵니다.
 
-**AI 리뷰어에게 컨텍스트 제공.** LLM 기반 SAST 도구나 보안 에이전트는 저장소 전체 대신 이 인벤토리에서 시작할 수 있습니다. `--include callee`는 각 핸들러가 직접 호출하는 함수를 더하고, `--ai-context`는 엔드포인트마다 guards, callees, sources, sinks, validators, signals를 붙여 주므로 모델이 이를 다시 찾을 필요가 없습니다.
+**AI 리뷰어에게 컨텍스트 제공.** LLM 기반 SAST 도구나 보안 에이전트는 저장소 전체 대신 이 인벤토리에서 시작할 수 있습니다. `--include callee`는 각 핸들러가 직접 호출하는 함수를 더하고, `--ai-context`는 엔드포인트마다 guards, callees, sources, sinks, validators, signals를 붙여 주므로 모델이 다시 찾을 필요가 없습니다.
 
 **다음 도구가 읽을 형식으로 출력.** JSON, YAML, OpenAPI, CI/CD용 SARIF, cURL, HTTPie, HTML 리포트, Postman 컬렉션 등으로 내보냅니다.
 

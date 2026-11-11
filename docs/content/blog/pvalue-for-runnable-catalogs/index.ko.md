@@ -9,9 +9,9 @@ template = "blog_post"
 
 `noir scan ./app -f curl`을 한 번이라도 돌려봤다면 결과가 어떤지 아실 겁니다. `/users/{id}?limit=` 같은 줄이 길게 이어지죠. 앱의 지도로는 훌륭하지만, 그중 한 줄을 터미널에 붙여 넣어서 제대로 된 응답을 받을 수는 없습니다.
 
-`-f postman`은 같은 빈칸을 다른 포장에 담은 것이고, `--probe`는 리터럴 `{id}`를 그대로 보내 404를 받거나, GET/HEAD/OPTIONS에 한해서만 `1`이나 `noir`를 슬쩍 채워 넣습니다. 결과를 받아 쓰는 쪽이 셋인데, 같은 파라미터에 대한 생각이 셋 다 다른 셈입니다.
+`-f postman`은 같은 빈칸을 다른 포장에 담은 것이고, `--probe`는 리터럴 `{id}`를 그대로 보내 404를 받거나, GET/HEAD/OPTIONS에 한해서만 `1`이나 `noir`를 슬쩍 채워 넣습니다. 결과를 받아 쓰는 쪽이 셋인데, 파라미터에 뭘 채울지는 셋이 제각각인 셈입니다.
 
-`--pvalue`는 이걸 한 곳에서 정리합니다. 값을 한 번 선언하면 optimizer가 포맷터나 deliverer가 엔드포인트 목록을 보기 전에 모든 파라미터에 그 값을 심어둡니다. 스캔은 한 번, 값은 동일, 출력이 어디로 가든 상관없습니다.
+`--pvalue`는 이걸 한 곳에서 정리합니다. 값을 한 번 선언하면 optimizer가 포맷터나 deliverer가 엔드포인트 목록을 보기 전에 모든 파라미터에 그 값을 심어둡니다.
 
 ## 플래그
 
@@ -36,7 +36,7 @@ noir scan ./app -f curl -u https://api.example.com \
 | `42` | 대상 타입의 모든 파라미터 |
 | `id=42` 또는 `id:42` | 이름이 `id`인 파라미터만 |
 
-치환은 엔드포인트 목록을 정리하는 단계에서 일어나기 때문에 curl, HTTPie, PowerShell, OpenAPI, Postman, JSON, YAML 출력은 물론 probe와 export보다도 앞섭니다. 포맷 쪽은 [cURL / HTTPie / PowerShell](@/usage/output_formats/curl/index.ko.md), probe 쪽은 [결과 전달](@/usage/more_features/deliver/index.ko.md) 문서를 참고하세요.
+치환은 엔드포인트 목록을 정리하는 단계에서 일어나기 때문에 curl, HTTPie, PowerShell, OpenAPI, Postman, JSON, YAML 출력은 물론 probe와 export보다도 앞섭니다. 출력 형식 쪽은 [cURL / HTTPie / PowerShell](@/usage/output_formats/curl/index.ko.md), probe 쪽은 [결과 전달](@/usage/more_features/deliver/index.ko.md) 문서를 참고하세요.
 
 ## 규칙이 고르는 방식
 
@@ -81,7 +81,7 @@ noir scan ./api -f oas3 -u https://staging.example.com \
   -o /tmp/api.openapi.json
 ```
 
-curl 때와 같은 `--pvalue` 블록입니다. 리뷰어는 컬렉션 하나를 import하고, CI는 어제의 OpenAPI와 diff하고, 포맷이 달라져도 placeholder는 그대로입니다.
+curl 때와 같은 `--pvalue` 블록입니다. 리뷰어는 컬렉션 하나를 import하고, CI는 어제의 OpenAPI와 diff하고, 출력 형식이 달라져도 placeholder는 그대로입니다.
 
 ### 라이브 status code, 필요하면 proxy까지
 
@@ -135,9 +135,9 @@ noir scan ./api --config-file ./ci/noir.yaml
 
 - **이름 없는 파라미터는 값을 받지 못합니다.** analyzer가 파라미터의 존재는 알지만 이름을 모르면 `--pvalue`가 돌기 전에 빠집니다. curl 출력에 뜬금없는 `=42`가 생기지는 않습니다.
 - **`body`는 `json`으로 들어갑니다.** `body`로 기록된 파라미터는 optimizer가 아는 버킷으로 정규화되기 때문에 `--pvalue json=…`이 닿습니다. 새 스크립트에서는 옛 `--set-pvalue-*` 별칭보다 `--pvalue TYPE=VAL`을 쓰세요.
-- **헤더는 `-u`를 따릅니다.** `--probe-header`와 probe payload용 `--pvalue header=…`는 `-u`로 지정한 호스트를 향합니다. 소스에 absolute host가 이미 박힌 엔드포인트는 그 host를 유지하고 이 헤더들을 받지 않습니다. 직접 지정한 export 목적지는 헤더를 그대로 받습니다.
+- **헤더는 `-u`를 따릅니다.** `--probe-header`와 probe payload용 `--pvalue header=…`는 `-u`로 지정한 호스트를 향합니다. 소스에 absolute host가 이미 박힌 엔드포인트는 그 host를 유지하고 이 헤더를 받지 않습니다. 직접 지정한 export 목적지는 헤더를 그대로 받습니다.
 - **시크릿은 커밋하지 마세요.** `ci/noir.yaml`에 토큰을 넣지 말고 CI에서 env로 펼치세요 (`--pvalue "header=Authorization=Bearer $TOKEN"`).
 
 ## 정리
 
-값이 없는 discovery 결과는 번지 없는 지도입니다. `--pvalue`로 한 번 번지를 매기면 curl, 컬렉션, OpenAPI, status-code 필터, proxy replay에 같은 값을 그대로 쓸 수 있습니다. probe할 때 write verb는 의식적으로 다루고, 팀이 placeholder에 합의했다면 설정 파일로 옮기세요.
+값이 없는 discovery 결과는 번지 없는 지도입니다. `--pvalue`로 한 번 번지를 매기면 curl, 컬렉션, OpenAPI, status-code 필터, proxy replay에 같은 값을 그대로 쓸 수 있습니다. probe할 때 write verb는 신중하게 다루고, 팀이 placeholder에 합의했다면 설정 파일로 옮기세요.

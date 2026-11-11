@@ -11,7 +11,7 @@ If you've ever run `noir scan ./app -f curl`, you know the result: a long list o
 
 `-f postman` gives you the same blanks in a different wrapper. `--probe` either sends the literal `{id}` and collects 404s, or, for GET/HEAD/OPTIONS only, quietly fills in `1` or `noir`. Three consumers, each with its own idea of what a parameter should hold.
 
-`--pvalue` settles that in one place. You declare the values once, and the optimizer writes them into every parameter before any formatter or deliverer gets to see the endpoint list. Same scan, same values, no matter where the output ends up.
+`--pvalue` settles that in one place. You declare the values once, and the optimizer writes them into every parameter before any formatter or deliverer gets to see the endpoint list.
 
 ## The flag
 

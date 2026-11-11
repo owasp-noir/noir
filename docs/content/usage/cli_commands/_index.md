@@ -7,7 +7,7 @@ sort_by = "weight"
 +++
 
 Starting with v1.0, Noir's CLI uses a verb-based layout. `scan` is the
-main command, accompanied by query verbs (`trace`, `reach`, `query`)
+main command, alongside query verbs (`trace`, `reach`, `query`)
 and namespaces (`list`, `cache`, `config`, `rules`).
 
 ```
@@ -204,11 +204,11 @@ route declarations, the handler definition, callees, guards, sources, sinks,
 and validators. It lists the evidence in `via` (`kind:name@line` or
 `kind@line`), and an entry outside the row's own file carries its path.
 When `:LINE` is given, evidence and rows are ordered by distance to that line
-and `nearest_line` is set; Noir records declaration lines, not function
+and `nearest_line` is set. Noir records declaration lines, not function
 spans, so the line orders rather than filters. Inheritance and dynamic loading
 are not followed.
 
-If no recorded location matches `FILE`, `reach` prints an explanatory hint on
+If no recorded location matches `FILE`, `reach` prints a hint on
 stderr and exits with code 1. If `:LINE` is given but no line was recorded for
 the evidence in that file, a notice is printed on stderr.
 
@@ -228,10 +228,12 @@ Filters that accept a comma-separated list match with OR:
 - `--param <name,...>`: parameter name (case-insensitive for header parameters)
 - `--param-type <type,...>`: parameter type (`query`, `json`, `form`, `header`, `cookie`, `path`)
 - `--protocol <proto,...>`: protocol (`http`, `ws`, `cli`, ...)
-- `--sink <kind,...|any>`: reaches a sink of this kind (`sql`, `command`, `file_io`, `outbound_http`, `template_render`, `redirect`, `mass_assignment`, ...)
+- `--sink <kind,...|any>`: reaches a sink of this kind (`sql`, `command_exec`, `file_io`, `outbound_http`, `template_render`, `redirect`, `mass_assignment`, ...)
 - `--source <kind,...|any>`: reads a source of this kind
 - `--signal <kind,...|any>`: carries a derived signal (`idor_review`, `ssrf`, `open_redirect`, ...)
 - `--validator <kind,...|any>`: carries a validator of this kind
+
+The kinds each bucket can hold are listed in the [AI Context](@/usage/supported/ai_context_coverage/index.md#kinds-by-bucket) reference.
 
 Single-value pattern filters (`<glob|substr>`):
 - `--url <glob|substr>`: route URL

@@ -69,7 +69,7 @@ template = "landing"
 <section class="section wrap">
   <header class="section-head" data-reveal>
     <h2 class="section-title">무엇을 하나요</h2>
-    <p class="section-lede">소스를 한 번 훑어, 리뷰어와 모델과 스캐너가 모두 필요로 하는 엔드포인트 목록을 만듭니다.</p>
+    <p class="section-lede">소스를 한 번 훑어, 리뷰어와 모델, 스캐너 모두에게 필요한 엔드포인트 목록을 만듭니다.</p>
   </header>
   <div class="bento">
     <article class="cell cell-a" data-reveal>
@@ -131,7 +131,7 @@ template = "landing"
       </div>
       <div class="flow-step" data-reveal>
         <h3>찾아낸 결과를 읽으세요</h3>
-        <p>모든 엔드포인트는 출처가 된 파일과 줄 번호를 함께 갖고 있어, 결과에서 코드까지 한 번에 이동합니다.</p>
+        <p>엔드포인트마다 출처가 된 파일과 줄 번호가 붙어 있어, 결과에서 코드까지 한 번에 이동합니다.</p>
         <code class="flow-cmd">noir scan ./your-project -f json -o endpoints.json</code>
       </div>
       <div class="flow-step" data-reveal>

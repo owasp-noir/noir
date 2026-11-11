@@ -10,8 +10,8 @@ Use [xAI](https://x.ai) Grok models for code analysis and endpoint discovery.
 
 ## Setup
 
-1.  **API Key**: Get from [xAI website](https://x.ai/api)
-2.  **Model**: Choose model (e.g., `grok-4.5`)
+1.  **API Key**: Get one from the [xAI website](https://x.ai/api)
+2.  **Model**: Pick a model (e.g., `grok-4.5`)
 
 ## Usage
 

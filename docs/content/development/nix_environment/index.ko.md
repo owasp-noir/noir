@@ -62,7 +62,7 @@ nix develop
 
 ## 패키지 빌드
 
-플레이크는 릴리스 바이너리도 빌드합니다. 사용자가 `nix profile add github:owasp-noir/noir`로 설치할 때와 동일한 경로이며, 다른 공식 빌드와 같은 플래그(`--release --no-debug`)를 사용합니다.
+플레이크는 릴리스 바이너리도 빌드합니다. 사용자가 `nix profile add github:owasp-noir/noir`로 설치할 때와 똑같이 빌드하며, 다른 공식 빌드와 같은 플래그(`--release --no-debug`)를 씁니다.
 
 ```sh
 just nix-build
@@ -80,7 +80,7 @@ just nix-check
 
 CI에서도 같은 검사를 수행하므로, 재생성을 빠뜨렸다면 릴리스 후 첫 Nix 설치가 아니라 리뷰 단계에서 드러납니다.
 
-고정된 nixpkgs를(그리고 패키지가 빌드에 사용하는 Crystal 툴체인을) 최신으로 옮기려면 다음을 실행합니다.
+아래 명령은 고정된 nixpkgs를 최신으로 올립니다. 패키지를 빌드하는 Crystal 툴체인도 함께 올라갑니다.
 
 ```sh
 nix flake update
@@ -88,4 +88,4 @@ nix flake update
 
 ## 다음 단계
 
-[빌드 및 테스트 절차](../how_to_build/)를 진행하세요.
+이후에는 평소처럼 [빌드 및 테스트 절차](../how_to_build/)를 따르면 됩니다.

@@ -65,7 +65,7 @@ Build the project. The compiled binary ends up at `./bin/noir`.
 shards build
 ```
 
-For a production-grade build (slower compile, 2–3× faster runtime), pass `--release`. Use it when you run benchmarks or compare against a published release. Debug builds are noticeably slower and can make a healthy build look like a regression. The `just` recipe uses the same flags as the official release builds (`--release --no-debug --production`).
+For a production-grade build (slower compile, 2 to 3× faster runtime), pass `--release`. Use it when you run benchmarks or compare against a published release. Debug builds are noticeably slower and can make a healthy build look like a regression. The `just` recipe uses the same flags as the official release builds (`--release --no-debug --production`).
 
 ```sh
 shards build --release

@@ -19,7 +19,7 @@ CLI entry points are endpoints with `method = "CLI"` and `protocol = "cli"`. The
 | `cli://<binary>` | the root command (the program invoked with no subcommand) |
 | `cli://<binary>/<subcommand>` | a subcommand (`git commit`, `tool serve`, …) |
 
-The binary name comes from the project manifest when one is present (`go.mod`, `Cargo.toml`, `package.json` `bin`/`name`, `*.csproj`, `argparse(prog=...)`, …); otherwise it falls back to the source file / directory name.
+The binary name comes from the project manifest when one is present (`go.mod`, `Cargo.toml`, `package.json` `bin`/`name`, `*.csproj`, `argparse(prog=...)`, …). Otherwise it falls back to the source file / directory name.
 
 Inputs are parameters, distinguished by `param_type`:
 

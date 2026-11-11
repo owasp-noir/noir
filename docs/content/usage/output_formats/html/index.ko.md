@@ -35,7 +35,7 @@ noir scan -b spec/functional_test/fixtures/crystal/kemal -f html -o report.html
 ### 리포트 구성
 
 - 요약: 엔드포인트, HTTP 메서드, 파라미터, 패시브 스캔 결과 개수
-- 엔드포인트: 엔드포인트마다 접을 수 있는 카드 하나. 메서드 색 배지(GET 에메랄드, POST 앰버, PUT 블루, PATCH 바이올렛, DELETE 레드)와, WebSocket 같은 비-HTTP 엔드포인트에는 프로토콜 배지가 붙음
+- 엔드포인트: 엔드포인트마다 접을 수 있는 카드 하나. 메서드 색 배지(GET 에메랄드, POST 앰버, PUT 블루, PATCH 바이올렛, DELETE 레드)가 붙고, WebSocket 같은 비-HTTP 엔드포인트에는 프로토콜 배지도 붙음
 - 경로 그룹: 첫 번째 경로 세그먼트(절대 URL은 호스트)로 엔드포인트를 묶고, 접을 수 있는 그룹 헤더와 그룹별 개수를 표시
 - 파라미터: 엔드포인트마다 각 파라미터의 이름, 타입(query, form, json, header, cookie, path, file, xml 등), 값을 담은 테이블
 - 패시브 스캔 결과: `-P`를 쓰면 설명, 심각도 색 배지, 매칭된 코드 스니펫과 함께 표시
@@ -76,7 +76,7 @@ Noir는 설정 디렉터리에서 `report-template.html` 파일을 찾습니다.
 | `<%= noir_head %>` | 기본 CSS, 메타데이터, 페인트 전 테마 초기화 스크립트를 포함한 `<head>` 태그 내용 |
 | `<%= noir_header %>` | 제목, 브랜드 마크, 테마 토글이 포함된 헤더 섹션 |
 | `<%= noir_summary %>` | 요약 대시보드 (카운트 카드) |
-| `<%= noir_endpoints %>` | 검색창, 필터 칩, 뷰 토글, 경로 그룹을 포함한, 발견된 엔드포인트 목록 섹션 |
+| `<%= noir_endpoints %>` | 발견된 엔드포인트 목록 섹션 (검색창, 필터 칩, 뷰 토글, 경로 그룹 포함) |
 | `<%= noir_passive_scans %>` | 패시브 스캔 결과 섹션 |
 | `<%= noir_footer %>` | 푸터 섹션 |
 | `<%= noir_scripts %>` | 인터랙티브 스크립트 (테마 토글, 접이식 카드·그룹, 검색, 필터, 뷰 전환, 복사 버튼) |

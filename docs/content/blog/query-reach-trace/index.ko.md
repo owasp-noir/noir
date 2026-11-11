@@ -23,7 +23,7 @@ noir scan . --ai-context --include callee -f json \
 	-o /tmp/noir-review.json --no-log > /dev/null
 ```
 
-`--ai-context`는 정적 분석으로 리뷰에 필요한 정보를 모은다. AI 제공자를 설정할 필요는 없다. `--include callee`로 호출 정보도 보고서에 남긴다. `scan`은 `-o`로 저장하면서 같은 보고서를 stdout에도 출력하므로, 여기서는 리다이렉션으로 화면 출력을 숨겼다.
+`--ai-context`는 정적 분석으로 리뷰에 필요한 정보를 모은다. AI 제공업체를 설정할 필요는 없다. `--include callee`로 호출 정보도 보고서에 남긴다. `scan`은 `-o`로 저장하면서 같은 보고서를 stdout에도 출력하므로, 여기서는 리다이렉션으로 화면 출력을 숨겼다.
 
 직접 스캔할 때와 `--from`으로 읽을 때는 차이가 있다. query 계열 명령이 직접 스캔하면 전체 AI context와 callee 수집이 기본으로 켜진다. 반면 저장된 보고서에는 처음 스캔에서 모은 정보만 있다. 수집하지 않은 guard나 sink가 나중에 생기지는 않는다. 소스 코드를 수정했다면 보고서도 다시 만들어야 한다.
 
@@ -61,7 +61,7 @@ GET /orders/<order_id>  ./app.py:17  python_flask  handler=get_order@./app.py:18
 
 `/users`와 `/orders/<order_id>`가 함께 나온다. `via`에는 `helpers.py`에서 찾은 callee 기록이 들어 있다. 그중 `run_sql_query`의 정의가 지정한 줄에 가장 가까워서 먼저 표시된다.
 
-라인 번호는 일치한 기록의 순서를 정하는 데 쓴다. 그 줄이 들어 있는 함수만 골라 주는 옵션은 아니다. Noir는 선언 위치를 기록하며, 함수의 시작과 끝 전체를 기록하지는 않는다. 줄 번호를 넘기면 JSON과 JSONL 결과에는 `nearest_line`도 포함된다.
+줄 번호는 일치한 기록의 순서를 정하는 데 쓴다. 그 줄이 들어 있는 함수만 골라 주는 옵션은 아니다. Noir는 선언 위치를 기록하며, 함수의 시작과 끝 전체를 기록하지는 않는다. 줄 번호를 넘기면 JSON과 JSONL 결과에는 `nearest_line`도 포함된다.
 
 파일은 경로의 뒷부분이 일치하는지로 찾으므로 여기서는 `helpers.py`만으로 충분하다. 큰 저장소에 같은 이름의 파일이 여럿 있다면 상위 디렉터리도 포함하는 편이 낫다. 검색 대상은 라우트와 핸들러, callee, guard, source, sink, validator에 기록된 위치다. 모든 호출 관계를 분석하는 기능은 아니며, 상속이나 동적 로딩도 따라가지 않는다. 결과가 없다는 이유만으로 이 파일이 어느 라우트에도 영향을 주지 않는다고 결론 내릴 수는 없다.
 

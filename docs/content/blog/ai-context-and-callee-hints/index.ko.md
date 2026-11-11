@@ -9,12 +9,12 @@ template = "blog_post"
 
 2025년 말쯤부터 AI가 개발 방식을 크게 바꿔놓았고, 소스코드 취약점 분석도 같은 방향으로 옮겨가고 있습니다.
 
-많은 AI 기반 소스코드 분석 도구들이 코드를 LLM에 던지고 결과를 받는 패턴을 따릅니다. 그런데 이게 실제로 잘 동작하려면 LLM에게 "무엇을 봐야 하는지"를 알려주는 게 중요합니다. 그냥 코드베이스를 통째로 던지면 토큰만 태우고, 정작 봐야 할 지점은 놓치는 경우가 많거든요.
+AI 기반 소스코드 분석 도구 상당수가 코드를 LLM에 던지고 결과를 받는 패턴을 따릅니다. 그런데 이게 실제로 잘 동작하려면 LLM에게 "무엇을 봐야 하는지"를 알려주는 게 중요합니다. 그냥 코드베이스를 통째로 던지면 토큰만 태우고, 정작 봐야 할 지점은 놓치는 경우가 많거든요.
 
 Noir v1에는 그 "무엇을 봐야 하는지"를 미리 추출해서 출력에 실어주는 두 플래그가 있습니다.
 
 - `--include callee`: 각 엔드포인트 핸들러의 1-hop 호출 그래프를 `callees` 배열로 추가
-- `--ai-context`: 같은 callee 정보를 포함해서 5개 보안 카테고리로 분류된 `ai_context` 구조로 추가
+- `--ai-context`: 같은 callee 정보를 포함해 5개 보안 카테고리로 분류하고 `ai_context` 아래에 추가
 
 ## --include-callee: 누가 누구를 호출하나
 
@@ -107,7 +107,7 @@ $ noir -b ./flask_app --ai-context -f json
 }
 ```
 
-`@login_required` 데코레이터가 잡혀서 `guards`에 채워졌습니다. 이건 LLM에게 "이 엔드포인트는 auth가 걸려 있으니 다른 류의 취약점에 집중하라"는 negative signal로도 쓰입니다.
+`@login_required` 데코레이터가 잡혀서 `guards`에 들어갔습니다. 이건 LLM에게 "이 엔드포인트는 auth가 걸려 있으니 다른 류의 취약점에 집중하라"는 negative signal로도 쓰입니다.
 
 ## 동시에 hint이자 sink
 
@@ -120,7 +120,7 @@ $ noir -b ./flask_app --ai-context -f json
 
 - Flask + SQLAlchemy: `User.query.filter` → SQL sink
 - Express + MongoDB: `User.find` → NoSQL sink
-- 그냥 generic LLM은 이 차이를 모르거나 매번 reasoning을 다시 합니다
+- 그냥 generic LLM은 이 차이를 모르거나 매번 추론을 다시 합니다
 
 Noir는 detector 단계에서 framework를 식별하고, augmentor가 그 framework의 idiom에 맞춰 sink / guard 패턴을 적용합니다. LLM이 받는 건 raw 코드가 아니라 이미 framework-aware하게 정리된 context입니다.
 
@@ -139,10 +139,10 @@ noir -b ./app --ai-context=guards,sinks,signals -f json
 noir -b ./app --include callee -f json
 ```
 
-전체 카테고리는 첫 audit 때 한 번 돌리는 정도가 적당합니다. 이후 incremental review나 PR 단위에서는 `guards,sinks,signals`만 띄워도 충분한 경우가 많습니다.
+전체 카테고리는 첫 audit 때 한 번 돌리는 정도가 적당합니다. 이후 incremental review나 PR 단위에서는 `guards,sinks,signals`만으로도 충분한 경우가 많습니다.
 
 ## 다음 계획
 
 `--ai-context`의 sink / guard 패턴은 현재 정규식 기반 휴리스틱입니다. 데이터 흐름 자체를 따라가지는 않고, callee 이름과 코드 패턴으로 "여기 sink 같은데" 정도까지만 표시합니다. 이건 의도된 trade-off예요. 정확한 taint analysis는 전용 도구가 더 잘하고, Noir는 그 도구나 LLM에게 focus point를 빠르게 던지는 역할에 충실하려고 합니다.
 
-앞으로는 패턴 카탈로그를 더 framework-aware하게 확장하고, signal 종류를 추가하는 방향으로 진행할 예정입니다. 피드백이나 새 패턴 제안은 언제나 환영합니다.
+앞으로는 패턴 카탈로그를 더 framework-aware하게 확장하고 signal 종류도 늘릴 계획입니다. 피드백이나 새 패턴 제안은 언제나 환영합니다.

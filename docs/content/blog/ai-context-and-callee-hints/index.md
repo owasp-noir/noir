@@ -9,7 +9,7 @@ template = "blog_post"
 
 Since late 2025 or so, AI has changed how a lot of software gets built, and source-code vulnerability analysis has been heading the same way.
 
-A lot of AI-based source-code analysis tools and approaches follow the same shape: feed code in, ask an LLM, get a report back. To actually work well, the LLM needs to know *what to look at*. Drop the whole codebase on it and you burn tokens while still missing the spots that need attention.
+Many AI-based source-code analysis tools and approaches follow the same shape: feed code in, ask an LLM, get a report back. To work well, the LLM needs to know *what to look at*. Drop the whole codebase on it and you burn tokens while still missing the spots that need attention.
 
 Noir v1 ships two flags that extract that "what to look at" upfront and pack it into the output.
 
@@ -18,7 +18,7 @@ Noir v1 ships two flags that extract that "what to look at" upfront and pack it 
 
 ## --include-callee: who calls whom
 
-The simpler of the two. Parses each endpoint handler body with tree-sitter and pulls out 1-hop callees as `{name, path, line}`.
+The simpler of the two. It parses each endpoint handler body with tree-sitter and pulls out 1-hop callees as `{name, path, line}`.
 
 ```bash
 $ noir -b ./flask_app --include callee -f json

@@ -65,7 +65,7 @@ GET /profile
 
 - **Params** are compared by name and where they are sent (query, header, cookie, path, form, JSON body). A param that only changed its example or default value is not a change, since a client sends nothing different.
 - **Tags** are compared by name. Tags come from taggers, so run the diff with `-T` (or `--use-taggers`) to see them.
-- **`auth` removed**: when an endpoint had the `auth` tag before and doesn't now, the report puts `! auth tag removed` first. Check this one first in a review: it means a route that used to require login and no longer does. The auth taggers only run with `-T` or `--use-taggers`, so enable one of them to get this line.
+- **`auth` removed**: when an endpoint had the `auth` tag before and doesn't now, the report puts `! auth tag removed` first. Check this one first in a review: a route that used to require login no longer does. The auth taggers only run with `-T` or `--use-taggers`, so enable one of them to get this line.
 
 ### JSON and YAML Output
 
