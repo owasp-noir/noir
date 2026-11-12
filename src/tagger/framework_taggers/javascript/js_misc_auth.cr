@@ -142,6 +142,10 @@ class JsMiscAuthTagger < FrameworkTagger
     @package_roots = {} of String => String?
     @fastify_bypassed = false
     @fastify_method = ""
+    @koa_callers = {} of {String, Int32} => Array({String, Int32, Array(String)})?
+    @koa_import_index = nil.as({Hash(String, Array({String, String, String?})), Hash(String, Set(String))}?)
+    @js_sources = nil.as(Array(String)?)
+    @koa_param_guards = {} of {String, Int32, Int32, String?, Int32} => String?
   end
 
   def perform(endpoints : Array(Endpoint)) : Array(Endpoint)
@@ -177,7 +181,10 @@ class JsMiscAuthTagger < FrameworkTagger
 
   # What a Koa middleware's definition does to refuse a caller: throw
   # (`ctx.throw(401)`, `throw AuthenticationError(…)`), assert, or set 401/403.
-  KOA_REFUSAL    = /\bctx\.throw\s*\(\s*40[13]\b|\bctx\.status\s*=\s*40[13]\b|\bctx\.assert\s*\([^;]*?,\s*40[13]\b|\bthrow\s+(?:new\s+)?\w*(?:Unauthori[sz]ed|Forbidden|Authentication|Authorization)\w*\s*\(/
+  # An error built with a 401/403 status counts when it is thrown or handed
+  # to an assertion (logto's `throw new RequestError({ code, status: 401 })`,
+  # `assertThat(ok, new RequestError({ status: 403 }))`).
+  KOA_REFUSAL    = /\bctx\.throw\s*\(\s*40[13]\b|\bctx\.status\s*=\s*40[13]\b|\bctx\.assert\s*\([^;]*?,\s*40[13]\b|\bthrow\s+(?:new\s+)?\w*(?:Unauthori[sz]ed|Forbidden|Authentication|Authorization)\w*\s*\(|\b(?:throw|assert\w*\s*\((?:[^;()]|\([^()]*\))*?,)\s*new\s+\w*Error\s*\(\s*\{(?:[^{}]|\{[^{}]*\})*?\bstatus\s*:\s*40[13]\b/
   KOA_ROUTE_CALL = /\.\s*(?:get|post|put|patch|delete|del|all|head|options)\s*\(/
   # `auth`, `auth()`, `mw.requireUser({ … })`: the reference and its arguments.
   KOA_MIDDLEWARE_CALL = /\A((?:[A-Za-z_$][\w$]*\s*\.\s*)?[A-Za-z_$][\w$]*)\s*(?:\((.*)\))?\z/m
@@ -208,12 +215,40 @@ class JsMiscAuthTagger < FrameworkTagger
     end
     return unless receiver
     route_path = args[0]?.try(&.strip.match(/\A['"`]([^'"`]*)['"`]\z/).try(&.[1]))
+    koa_router_use_guard(path, lines, content, line_idx, receiver, route_path, 0)
+  rescue
+    nil
+  end
+
+  # Middleware a `router.use(...)` earlier in the file adds to `receiver`.
+  # A router that is a parameter of the top-level function registering the
+  # route (logto's `export default function xRoutes(...[router, tenant])`)
+  # is read inside that function only, then from its callers, on the router
+  # each one passes; every caller has to guard it, and a caller that cannot
+  # be read leaves the route unguarded.
+  private def koa_router_use_guard(path : String, lines : Array(String), content : String, line_idx : Int32,
+                                   receiver : String, route_path : String?, hops : Int32) : String?
+    function = enclosing_top_function(lines, line_idx)
+    position = function.try { |found| top_function_parameters(lines, found.line).try(&.index(receiver)) }
+    unless position && function
+      return koa_use_walk(path, lines, content, line_idx, 0, receiver, route_path).as?(String)
+    end
+    inside = koa_use_walk(path, lines, content, line_idx, function.line, receiver, route_path)
+    return inside.as?(String) unless inside.nil?
+    koa_param_guard(path, function, position, route_path, hops)
+  end
+
+  # The guard a `receiver.use(...)` between `floor` and `line_idx` adds,
+  # walking up; `:declared` when the walk reaches where `receiver` is
+  # declared first.
+  private def koa_use_walk(path : String, lines : Array(String), content : String, line_idx : Int32, floor : Int32,
+                           receiver : String, route_path : String?) : String | Symbol?
     use_call = /(?<![\w$.])#{Regex.escape(receiver)}\s*\.\s*use\s*\(/
     # Back to where this router is declared: a same-named router in another
     # function is a different one.
-    declared = /\b(?:const|let|var)\s+#{Regex.escape(receiver)}\s*=/
-    (line_idx - 1).downto(0) do |idx|
-      break if lines[idx].matches?(declared)
+    declared = /\b(?:const|let|var)\s+#{Regex.escape(receiver)}(?![\w$])\s*(?::[^=;]*)?=(?!=)/
+    (line_idx - 1).downto(floor) do |idx|
+      return :declared if lines[idx].matches?(declared)
       next unless lines[idx].matches?(use_call)
       use = route_call(lines, idx, use_call) || next
       middleware = use[1]
@@ -230,8 +265,242 @@ class JsMiscAuthTagger < FrameworkTagger
       end
     end
     nil
-  rescue
+  end
+
+  # A top-level function declaration: its line, its name, and whether the
+  # module exports it, as the default export or by name.
+  private record KoaFunction, line : Int32, name : String?, default_export : Bool, exported : Bool
+
+  # A call handing a router to a route function: the file and line of the
+  # call, and the argument standing for the router.
+  private record KoaRouterCall, path : String, line_idx : Int32, argument : String
+
+  MAX_KOA_ROUTER_HOPS = 4
+  KOA_TOP_FUNCTION    = /\A(export\s+(?:(default)\s+)?)?(?:async\s+)?function\s*\*?\s*([A-Za-z_$][\w$]*)?\s*(?:<[^()]*>)?\s*\(/
+  KOA_REEXPORT        = /\bexport\s*(?:\*(?:\s+as\s+[A-Za-z_$][\w$]*)?|\{[^}]*\})\s*from\s*['"]([^'"]+)['"]/
+
+  # The guard every caller of `function` puts on the router it passes at
+  # `position`; nil unless each one does.
+  private def koa_param_guard(path : String, function : KoaFunction, position : Int32,
+                              route_path : String?, hops : Int32) : String?
+    return if hops >= MAX_KOA_ROUTER_HOPS
+    key = {path, function.line, position, route_path, hops}
+    return @koa_param_guards[key] if @koa_param_guards.has_key?(key)
+    @koa_param_guards[key] = compute_koa_param_guard(path, function, position, route_path, hops)
+  end
+
+  private def compute_koa_param_guard(path : String, function : KoaFunction, position : Int32,
+                                      route_path : String?, hops : Int32) : String?
+    callers = koa_router_callers(path, function, position) || return
+    return if callers.empty?
+    guards = callers.map do |call|
+      caller_lines = read_file_lines(call.path) || return
+      caller_content = read_file(call.path) || return
+      guard = if spread = call.argument.match(/\A\.\.\.\s*([A-Za-z_$][\w$]*)\z/)
+                # `xRoutes(...args)`, the caller's own leading rest parameter
+                # passed on whole: the router keeps its position.
+                caller_function = enclosing_top_function(caller_lines, call.line_idx)
+                if caller_function && top_function_parameters(caller_lines, caller_function.line).try(&.first?) == "...#{spread[1]}"
+                  koa_param_guard(call.path, caller_function, position, route_path, hops + 1)
+                end
+              elsif call.argument.matches?(/\A[A-Za-z_$][\w$]*\z/)
+                koa_router_use_guard(call.path, caller_lines, caller_content, call.line_idx, call.argument, route_path, hops + 1)
+              end
+      guard || return
+    end
+    guards.first
+  end
+
+  # The top-level function the line sits in. Nil when the first column-0
+  # code line above is not a function header (a closing `}`, an arrow
+  # function, module-level code).
+  private def enclosing_top_function(lines : Array(String), line_idx : Int32) : KoaFunction?
+    line_idx.downto(0) do |idx|
+      line = lines[idx]
+      # Indented code, a blank line, or a wrapped header's `) {`.
+      next if line.empty? || line[0].whitespace? || line.starts_with?(')')
+      match = line.match(KOA_TOP_FUNCTION) || return
+      return KoaFunction.new(idx, match[3]?, !match[2]?.nil?, !match[1]?.nil?)
+    end
     nil
+  end
+
+  # The parameters of the top-level function at `function_line`,
+  # positional, with an array rest pattern (`...[router, tenant]`) spread
+  # out and a plain rest parameter kept as `...args`.
+  private def top_function_parameters(lines : Array(String), function_line : Int32) : Array(String)?
+    text = lines[function_line, MAX_KOA_ARG_LINES].join("\n")
+    open_paren = (text.match(KOA_TOP_FUNCTION) || return).end(0) - 1
+    close_paren = Noir::JSLiteralScanner.find_matching_paren(text, open_paren) || return
+    parameters = [] of String
+    list = strip_type_arguments(text[open_paren + 1...close_paren])
+    Noir::TopLevelSplit.split(list, ',', Noir::TopLevelSplit::Rules::JS_POSITIONAL_ARGS).each do |raw|
+      param = raw.strip
+      if param.matches?(/\A\.\.\.\s*\[/) && (open = param.index('[')) && (close = Noir::JSLiteralScanner.find_matching_bracket(param, open))
+        Noir::TopLevelSplit.split(param[open + 1...close], ',', Noir::TopLevelSplit::Rules::JS_POSITIONAL_ARGS).each do |element|
+          parameters << (element.strip.match(/\A[A-Za-z_$][\w$]*/).try(&.[0]) || "")
+        end
+      else
+        parameters << (param.match(/\A(?:\.\.\.\s*)?[A-Za-z_$][\w$]*/).try(&.[0]) || "")
+      end
+    end
+    parameters
+  end
+
+  # `text` without its TypeScript type argument lists (`Ctx<A, B>`,
+  # `Map<string, () => void>`), whose commas are no parameter separators.
+  # A `<` opens one right after a name; the `>` of `=>` closes nothing.
+  private def strip_type_arguments(text : String) : String
+    depth = 0
+    previous = ' '
+    String.build do |io|
+      text.each_char do |char|
+        if char == '<' && (previous.alphanumeric? || previous == '_' || previous == '$' || depth > 0)
+          depth += 1
+        elsif char == '>' && depth > 0 && previous != '='
+          depth -= 1
+        elsif depth == 0
+          io << char
+        end
+        previous = char unless char.whitespace?
+      end
+    end
+  end
+
+  # Every call of `function` (in its own module, and in each module that
+  # imports it) with what it passes for the router at `position`. Nil when
+  # one cannot be read that way (too few arguments, a spread elsewhere than
+  # first) or the function also travels some way a call cannot be read
+  # from, so an unread caller is never left out of the verdict.
+  private def koa_router_callers(path : String, function : KoaFunction, position : Int32) : Array(KoaRouterCall)?
+    key = {path, function.line}
+    calls = (@koa_callers.has_key?(key) ? @koa_callers[key] : (@koa_callers[key] = find_koa_router_calls(path, function))) || return
+    calls.map do |call|
+      args = call[2].map(&.strip)
+      argument = if args.first?.try(&.starts_with?("...")) && args.size == 1
+                   args[0]
+                 elsif args.size > position && args[0..position].none?(&.starts_with?("..."))
+                   args[position]
+                 end
+      return unless argument
+      KoaRouterCall.new(call[0], call[1], argument)
+    end
+  end
+
+  private def find_koa_router_calls(path : String, function : KoaFunction) : Array({String, Int32, Array(String)})?
+    calls = [] of {String, Int32, Array(String)}
+    if (name = function.name) && (own = read_file_lines(path))
+      own_calls = koa_local_calls(own, name) || return
+      calls.concat(own_calls.map { |idx, args| {path, idx, args} })
+    end
+    return calls unless function.exported
+    target = Noir::PathScope.expand(path)
+    importers, untraceable = koa_import_index
+    return if untraceable[target]?.try { |names| names.includes?("*") || names.includes?(function.default_export ? "default" : function.name || "") }
+    bindings = importers[target]? || [] of {String, String, String?}
+    # A module binding (`import * as r`, `const r = require(...)`) reaches a
+    # named export as `r.xRoutes(...)`, which is not read.
+    return if !function.default_export && bindings.any? { |binding| binding[2].nil? && module_binding?(binding[0], binding[1]) }
+    bindings.each do |file, local, exported|
+      next unless function.default_export ? exported.nil? || exported == "default" : exported == function.name
+      lines = read_file_lines(file) || next
+      local_calls = koa_local_calls(lines, local) || return
+      calls.concat(local_calls.map { |idx, args| {file, idx, args} })
+    end
+    calls
+  end
+
+  # Each call of `local` in `lines` with its arguments; nil when `local`
+  # also appears other than called (passed, stored, typed), or twice on a
+  # line. Its import, `require` binding and declaration are skipped.
+  private def koa_local_calls(lines : Array(String), local : String) : Array({Int32, Array(String)})?
+    name = Regex.escape(local)
+    mention = /(?<![\w$.])#{name}(?![\w$])/
+    call_re = /(?<![\w$.])#{name}\s*\(/
+    binding = /\A\s*import\s+[^(].*\z|\bfunction\s*\*?\s*#{name}(?![\w$])|\b(?:const|let|var)\s+(?:\{[^}]*\}|#{name})\s*=\s*require\s*\([^)]*\)/
+    calls = [] of {Int32, Array(String)}
+    in_import = false
+    lines.each_with_index do |line, idx|
+      # A wrapped `import {\n  xRoutes,\n} from '...'`.
+      if in_import
+        in_import = !line.includes?('}')
+        next
+      end
+      if line.matches?(/\A\s*import\s*(?:type\s+)?(?:[A-Za-z_$][\w$]*\s*,\s*)?\{[^}]*\z/)
+        in_import = true
+        next
+      end
+      next unless line.matches?(mention)
+      code = Noir::CComments.strip(line, quotes: %("'`)).gsub(binding, " ")
+      called = code.scan(call_re).size
+      return if code.scan(mention).size != called || called > 1
+      next if called == 0
+      call = route_call(lines, idx, call_re) || return
+      calls << {idx, call[1]}
+    end
+    calls
+  end
+
+  KOA_REQUIRE        = /(?<![\w$.])require\s*\(\s*['"]([^'"]+)['"]\s*\)/
+  KOA_DYNAMIC_IMPORT = /(?<![\w$.])import\s*\(\s*['"]([^'"]+)['"]/
+
+  private def koa_test_file?(file : String) : Bool
+    Noir::JSRouteExtractor.test_named_or_in_test_tree?(File.basename(file), file)
+  end
+
+  # Whether `local` in `file` binds a whole module (`import * as local`,
+  # `local = require(...)`), not its default export.
+  private def module_binding?(file : String, local : String) : Bool
+    content = read_file(file) || return true
+    name = Regex.escape(local)
+    content.matches?(/\*\s*as\s+#{name}(?![\w$])|(?<![\w$.])#{name}\s*=\s*require\s*\(/)
+  end
+
+  # Every module's import bindings, by the file each one resolves to
+  # (`{importing file, local name, exported name, nil for the default}`),
+  # and, per file, the names that also travel some way a call cannot be
+  # read from ("*" for all of them): a re-export, a dynamic `import()`, an
+  # unassigned `require('./x')(router)`. Built once per tagger run.
+  private def koa_import_index : {Hash(String, Array({String, String, String?})), Hash(String, Set(String))}
+    @koa_import_index ||= begin
+      index = Hash(String, Array({String, String, String?})).new
+      untraceable = Hash(String, Set(String)).new
+      mark = ->(file : String, specifier : String, names : Array(String)) do
+        resolved = Noir::JSHandlerResolver.resolve_specifier(file, specifier) || return
+        (untraceable[Noir::PathScope.expand(resolved)] ||= Set(String).new).concat(names)
+      end
+      js_sources.each do |file|
+        # A test harness mounting the routes serves no request.
+        next if koa_test_file?(file)
+        content = read_file(file) || next
+        next unless content.includes?("import") || content.includes?("require")
+        # A re-export hands on the names it lists (`export { a as b }`), or
+        # every one (`export *`).
+        content.scan(KOA_REEXPORT) do |m|
+          names = m[0].match(/\{([^}]*)\}/).try(&.[1].split(',').map(&.strip.split(/\s+as\s+/).first.strip)) || ["*"]
+          mark.call(file, m[1], names)
+        end
+        # Loaded where no binding holds it: `import('./x')`, or a
+        # `require('./x')` not assigned to a name.
+        content.scan(KOA_DYNAMIC_IMPORT) { |m| mark.call(file, m[1], ["*"]) }
+        content.scan(KOA_REQUIRE) do |m|
+          before = m.begin - 1
+          while before >= 0 && content[before].whitespace?
+            before -= 1
+          end
+          mark.call(file, m[1], ["*"]) unless before >= 0 && content[before] == '='
+        end
+        Noir::JSHandlerResolver.imports_of(content, file).each do |local, (specifier, exported)|
+          resolved = Noir::JSHandlerResolver.resolve_specifier(file, specifier) || next
+          (index[Noir::PathScope.expand(resolved)] ||= [] of {String, String, String?}) << {file, local, exported}
+        end
+      end
+      {index, untraceable}
+    end
+  end
+
+  private def js_sources : Array(String)
+    @js_sources ||= %w[.ts .tsx .mts .cts .js .jsx .mjs .cjs].flat_map { |ext| collect_files_by_extension(ext) }.uniq!
   end
 
   # The receiver and top-level arguments of the call `call_re` matches on
@@ -263,8 +532,24 @@ class JsMiscAuthTagger < FrameworkTagger
     body = koa_definition_body(handler) || return
     return if options.scan(KOA_DISABLING_OPTION).any? { |m| body.matches?(/\bif\s*\([^)]*\b#{Regex.escape(m[1])}\b/) }
     evidence = evidence.gsub(/\s+/, " ").chomp('(')
-    evidence += ")" * (evidence.count('(') - evidence.count(')')).clamp(0, 3)
+    evidence += closers(evidence)
     "Koa #{call[1].gsub(/\s+/, "")} middleware (#{evidence})"
+  end
+
+  # What closes the brackets `text` leaves open, innermost first (at most
+  # three): `new RequestError({ status: 403` gets `})`.
+  private def closers(text : String) : String
+    stack = [] of Char
+    text.each_char do |char|
+      case char
+      when '(' then stack << ')'
+      when '{' then stack << '}'
+      when '[' then stack << ']'
+      when ')', '}', ']'
+        stack.pop if stack.last? == char
+      end
+    end
+    stack.reverse.first(3).join
   end
 
   private def koa_definition_body(handler : Handler) : String?
@@ -276,8 +561,8 @@ class JsMiscAuthTagger < FrameworkTagger
 
   private def refusal_in_definition(handler : Handler) : String?
     body = koa_definition_body(handler) || return
-    if refusal = body.match(KOA_REFUSAL)
-      return refusal[0]
+    if refusal = koa_refusal(body)
+      return refusal
     end
     path = handler.path || return
     content = read_file(path) || return
@@ -285,11 +570,36 @@ class JsMiscAuthTagger < FrameworkTagger
       helper = Noir::JSHandlerResolver.resolve(name, content, path) || next
       next unless helper.path == path
       helper_body = koa_definition_body(helper) || next
-      if refusal = helper_body.match(KOA_REFUSAL)
-        return refusal[0]
+      if refusal = koa_refusal(helper_body)
+        return refusal
       end
     end
     nil
+  end
+
+  # The first refusal in `body`, other than one an error handler makes:
+  # inside the `catch` of a `try` that hands on (`try { await next() }`),
+  # it refuses nobody (a 401 rethrown from below). `try { verify(token) }
+  # catch { ctx.throw(401) }` before `next()` does.
+  private def koa_refusal(body : String) : String?
+    pos = 0
+    while refusal = body.match(KOA_REFUSAL, pos)
+      return refusal[0] unless after_next_in_catch?(body[0, refusal.begin])
+      pos = refusal.end
+    end
+    nil
+  end
+
+  KOA_NEXT_CALL = /(?<![\w$.])next\s*\(/
+
+  # Whether `text` ends inside a still-open `catch` block whose `try` block
+  # calls `next()`.
+  private def after_next_in_catch?(text : String) : Bool
+    catch_at = text.rindex(/\bcatch\b\s*(?:\([^)]*\))?\s*\{/) || return false
+    open = text.index('{', catch_at) || return false
+    return false if Noir::JSLiteralScanner.find_matching_brace(text, open)
+    try_at = text[0, catch_at].rindex(/\btry\s*\{/) || return false
+    text[try_at...catch_at].matches?(KOA_NEXT_CALL)
   end
 
   private def check_route_scope(scope : Array(String)) : String?
