@@ -53,6 +53,24 @@ module NoirAIContext
   # at the asset file with no line, never reach it.
   DIRECTORY_LISTING_CALL = /\b(?:serveIndex|http\.FileServer)\s*\(/
 
+  # Where the word `client` names an OAuth client record or a model rather
+  # than an HTTP client, see `PatternMatcher`: a read of its registration
+  # (`client.id.clone`, `client.secret`, `Client.ClientSecrets.Any`,
+  # `getClientId`, `getIdentifier`, `get_default_redirect_uri`,
+  # `AllowedScopes`), a final conversion (`into_response`, `to_dict`,
+  # `toString`), a model lookup (`Client::find`, `Oauth::Client.find_by`),
+  # or a database client's query (`client.query`,
+  # `databaseClient.execute`). A remote
+  # call that reads like one stays a request: `client.get_secret`,
+  # `client.get_id`, `client.scopes.request`, hvac's
+  # `client.is_authenticated`.
+  # ponytail: an accessor denylist, not a binding check; a binding check
+  # would need the client's origin, which is usually injected.
+  CLIENT_RECORD_MEMBER = /(?i:(?:get_?)?client_?id|(?:get_?)?(?:identifier|name)|id|secret|scopes?|created_?at|updated_?at|(?:allowed_?|get_?(?:default_?)?|check_?)?(?:redirect_?ur[il]s?|client_?secrets?|scopes))\b/
+  CLIENT_RECORD_CALL   = /\bClient(?:\.|::)(?:find\w*|where)\b|(?<!\w)(?:client|Client)(?:\.|->)(?:#{CLIENT_RECORD_MEMBER.source}(?:\.(?:clone|to_string|as_str|contains|includes|Contains|Any|getTime|equals|length|size|count))?\z|into_\w*response\z|(?:to|as)_(?:dict|json|s|h|string)\z|to(?:String|JSON|Json|Dict|Map)\z)|(?i:(?:\A|\.)(?:client|databaseClient)\.(?:query|insert|select|execute|sql|bind)\b)/
+  # The `client.get…` reads of a registration, for the line-level pattern.
+  CLIENT_REGISTRATION_GET = /(?i:get_?(?:client_?id|identifier|name|(?:default_?)?redirect_?ur[il]s?|scopes|client_?secrets?))\b/
+
   # `tokio::spawn(async move { … })`, `task::spawn`, `thread::spawn`,
   # `gevent.spawn(fn)` start a task in this process, not a command.
   TASK_SPAWN_RECEIVER = /(?<!tokio::|task::|thread::|rt::|runtime::|gevent\.|eventlet\.)/
@@ -150,7 +168,9 @@ module NoirAIContext
         /(?<!\bparams\.|\bENV\.|\boptions\.|\bopts\.|\bconfig\.|\bsettings\.|\bsession\.|\bhash\.)\bfetch\s*\((?!\s*:)/i,
         /\baxios\./i,
         /\bhttp\.(Get|Post|NewRequest)/,
-        /\bclient\.(get|post|request)/i,
+        # Not a read of an OAuth client's registration (`client.getClientId()`,
+        # `client.get_default_redirect_uri()`).
+        /\bclient\.(?!#{CLIENT_REGISTRATION_GET.source})(get|post|request)/i,
         /\b\w+\.(getForObject|postForObject|exchange)\s*\(/i,
         /\b(?:reqwest|ureq|surf|isahc|attohttpc)::(?:get|post|put|delete|patch|request)\s*(?:::<[^>]+>)?\s*\(/i,
         /\b(?:hyper|hyper_util|awc)::[A-Za-z0-9_:]*Client\b/,

@@ -2112,6 +2112,85 @@ describe "NoirAIContext" do
     end
   end
 
+  it "reads an OAuth client record as no outbound call" do
+    source = <<-CODE
+      let client = Client::find(id).await?;
+      client::update_client(id).await?;
+      UserLoginState::delete_all_by_cid(client.id.clone()).await?;
+      let uri = client.get_default_redirect_uri();
+      if client.is_ephemeral() { return client.into_response(); }
+      var limit = fs.GetFilterArray("limit");
+      var users = await client.GetUsers(server.FullUri);
+      $folders = $client->getFolders();
+      const data = fs.readFileSync(path);
+      repos = @client.get("/repos")
+      reply = client.chat.completions.create(model: m)
+      if client.getClientId() == id && client.isPublic() { client.redirectUris.contains(uri) }
+      info, err := fs.Stat(fsys, name)
+      CODE
+
+    with_temp_ai_context_source(source) do |path|
+      endpoint = Endpoint.new("/clients/{id}", "GET")
+      endpoint.details = Details.new(PathInfo.new(path, 1))
+      {"Client::find" => 1, "client.id.clone" => 3,
+       "client.get_default_redirect_uri" => 4, "client.into_response" => 5}.each do |name, line|
+        endpoint.push_callee(Callee.new(name, path, line))
+      end
+      endpoint.push_callee(Callee.new("client.GetUsers", path, 7))
+      endpoint.push_callee(Callee.new("$client->getFolders", path, 8))
+      endpoint.push_callee(Callee.new("fs.readFileSync", path, 9))
+      endpoint.push_callee(Callee.new("@client.get", path, 10))
+      endpoint.push_callee(Callee.new("client.chat.completions.create", path, 11))
+      endpoint.push_callee(Callee.new("client.getClientId", path, 12))
+      endpoint.push_callee(Callee.new("client.redirectUris.contains", path, 12))
+      endpoint.push_callee(Callee.new("fs.Stat", path, 13))
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+      context.sinks.select(&.kind.==("outbound_http")).map(&.line).should eq([7, 8, 10, 11])
+      context.sinks.select(&.kind.==("file_io")).map(&.line).should eq([9, 13])
+    end
+
+    {
+      "let uri = client.get_default_redirect_uri();\nif client.getClientId() == id { }" => false,
+      "let body = client.get(url).send().await?;"                                       => true,
+    }.each do |handler, outbound|
+      with_temp_ai_context_source(handler) do |path|
+        endpoint = Endpoint.new("/c", "GET")
+        endpoint.details = Details.new(PathInfo.new(path, 1))
+        context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+        context.sinks.map(&.kind).includes?("outbound_http").should eq(outbound)
+      end
+    end
+
+    with_temp_ai_context_source("c = httpx.Client()\n$rows = $client->query($sql);\nrows = this.Client.Query(sql)\nc = models::Client::find(id)\nr = client.toBlocking().retrieve(req)\nr = client!!.get(url)\nr = MyApp.Client.get(url)\nr = this.Client.GetAsync(url)\nc = Oauth::Client.find_by(uid)\nfs.HasFilter(x)\nfs.Write(bytes)\nclient.get(url).then(r => r.data)\nthis.#client.post(url)\nClient.get(url)\nawait fs.WriteAsync(bytes)\nlog(client.toString())\nself.client.as_ref().get(url)\nsecret = client.get_secret(name)\nif (context.Client.ClientId == id && Client.IsPublic && client.ClientSecrets.Any()) { }\nlet kube = Client::try_default().await?;") do |path|
+      endpoint = Endpoint.new("/q", "GET")
+      endpoint.details = Details.new(PathInfo.new(path, 1))
+      {"httpx.Client" => 1, "this.Client.Query" => 3, "models::Client::find" => 4,
+       "client.toBlocking" => 5, "client!!.get" => 6, "MyApp.Client.get" => 7, "this.Client.GetAsync" => 8,
+       "Oauth::Client.find_by" => 9, "fs.Write" => 11, "client.get().then" => 12,
+       "this.#client.post" => 13, "Client.get" => 14, "fs.WriteAsync" => 15, "client.toString" => 16,
+       "self.client.as_ref().get" => 17, "client.get_secret" => 18,
+       "context.Client.ClientId" => 19, "client.ClientSecrets.Any" => 19, "Client::try_default" => 20}.each do |name, line|
+        endpoint.push_callee(Callee.new(name, path, line))
+      end
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+      context.sinks.select(&.kind.==("outbound_http")).map(&.line).should eq([1, 5, 6, 7, 8, 12, 13, 14, 17, 18, 20])
+      context.sinks.select(&.kind.==("file_io")).map(&.line).should eq([11, 15])
+    end
+
+    # Remote calls that read like a record member.
+    with_temp_ai_context_source("if client.is_authenticated(): pass\nclient.scopes.request(url)\nclient.request_scopes(url)\nclient.as_user(token)") do |path|
+      endpoint = Endpoint.new("/v", "GET")
+      endpoint.details = Details.new(PathInfo.new(path, 1))
+      endpoint.push_callee(Callee.new("client.is_authenticated", path, 1))
+      endpoint.push_callee(Callee.new("client.scopes.request", path, 2))
+      endpoint.push_callee(Callee.new("client.request_scopes", path, 3))
+      endpoint.push_callee(Callee.new("client.as_user", path, 4))
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+      context.sinks.select(&.kind.==("outbound_http")).map(&.line).should eq([1, 2, 3, 4])
+    end
+  end
+
   it "classifies callees by what they do, not by a word in their name (#3139)" do
     source = <<-CODE
       count = session.exec(count_statement).one()
