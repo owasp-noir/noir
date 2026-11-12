@@ -209,6 +209,101 @@ describe "FastAPIAuthTagger" do
     get_public.tags.should be_empty
   end
 
+  it "reads a refusal spelled with the stdlib HTTPStatus enum, and each stacked route on its own" do
+    CodeLocator.instance.clear_all
+    tmpdir = File.tempname("fastapi_httpstatus")
+    Dir.mkdir_p(tmpdir)
+    deps = File.join(tmpdir, "decorators.py")
+    api = File.join(tmpdir, "api.py")
+    File.write(deps, <<-PY)
+      from http import HTTPStatus
+
+      async def check_account_exists(r: Request, access_token: str | None = Depends(check_access_token)) -> Account:
+          if not access_token:
+              raise HTTPException(HTTPStatus.UNAUTHORIZED, "Missing access token.")
+          return await get_account(access_token)
+
+      async def check_admin(account: Annotated[Account, Depends(check_account_exists)]) -> Account:
+          if account.id != settings.super_user:
+              raise HTTPException(HTTPStatus.FORBIDDEN, "No admin privileges.")
+          return account
+
+      async def check_maintenance() -> None:
+          if settings.maintenance:
+              raise HTTPException(HTTPStatus.SERVICE_UNAVAILABLE, "Down.")
+      PY
+    File.write(api, <<-PY)
+      from decorators import check_admin, check_account_exists, check_maintenance
+
+      @router.post("/a")
+      async def a(account: Account = Depends(check_account_exists)):
+          return 1
+
+      @router.post("/b", dependencies=[Depends(check_admin)])
+      async def b():
+          return 1
+
+      @router.post("/c", dependencies=[Depends(check_maintenance)])
+      async def c():
+          return 1
+
+      @router.get("/d", summary="List (beta")
+      @router.get(
+          "/e", dependencies=[Depends(check_admin)]
+      )
+      async def d():
+          return 1
+
+      @router.get("/f", dependencies=[Depends(check_admin)])
+      @router.get("/g")
+      async def f(account: Account = Depends(check_account_exists)):
+          return 1
+
+      @public.get("/h", description="""
+          Lists (beta
+          """)
+      @admin.get("/i", dependencies=[Depends(check_admin)])
+      async def h():
+          return 1
+
+      @router.get("/j")
+      @ router.get("/k", dependencies=[Depends(check_admin)], description="""
+          see #12""")
+      async def j(account: Account = Depends(check_account_exists)):
+          return 1
+      PY
+    [deps, api].each { |path| CodeLocator.instance.register_path(path) }
+
+    begin
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(tmpdir)
+      at = ->(line : Int32) { Endpoint.new("/#{line}", "POST", [] of Param, Details.new(PathInfo.new(api, line))) }
+      a, b, c, d, e = at.call(3), at.call(7), at.call(11), at.call(15), at.call(16)
+      f, g, h, i = at.call(22), at.call(23), at.call(27), at.call(30)
+      j = at.call(34)
+      FastAPIAuthTagger.new(noir_options).perform([a, b, c, d, e, f, g, h, i, j])
+      a.tags.map(&.description).should eq(["Protected by FastAPI Depends(check_account_exists)"])
+      b.tags.map(&.description).should eq(["Protected by FastAPI Depends(check_admin)"])
+      # A 503 refuses everyone on a setting, not an unknown caller.
+      c.tags.should be_empty
+      # A route stacked below guards only itself, a paren in a string
+      # notwithstanding.
+      d.tags.should be_empty
+      e.tags.map(&.description).should eq(["Protected by FastAPI Depends(check_admin)"])
+      f.tags.map(&.description).should eq(["Protected by FastAPI Depends(check_admin)"])
+      # The shared signature still guards every stacked route.
+      g.tags.map(&.description).should eq(["Protected by FastAPI Depends(check_account_exists)"])
+      # Another router's route is a sibling too, past a triple-quoted string.
+      h.tags.should be_empty
+      i.tags.map(&.description).should eq(["Protected by FastAPI Depends(check_admin)"])
+      # A sibling whose string reads as unclosed still ends at the `def`.
+      j.tags.map(&.description).should eq(["Protected by FastAPI Depends(check_account_exists)"])
+    ensure
+      FileUtils.rm_rf(tmpdir)
+      CodeLocator.instance.clear_all
+    end
+  end
+
   it "reads Annotated auth aliases, wrapped signatures and router dependencies" do
     CodeLocator.instance.clear_all
     tmpdir = File.tempname("fastapi_aliases")

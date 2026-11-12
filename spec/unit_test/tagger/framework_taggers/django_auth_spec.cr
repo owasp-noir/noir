@@ -51,6 +51,50 @@ describe "DjangoAuthTagger" do
     endpoint.tags[0].description.should contain("permission_required")
   end
 
+  it "reads a refusal status however it is spelled" do
+    CodeLocator.instance.clear_all
+    tmpdir = File.tempname("django_status_spelling")
+    Dir.mkdir_p(tmpdir)
+    views = File.join(tmpdir, "views.py")
+    File.write(views, <<-PY)
+      def drf_status(request):
+          if not request.user.is_authenticated:
+              return Response(status=status.HTTP_403_FORBIDDEN)
+          return Response({})
+
+      def enum_status(request):
+          if not request.user.is_authenticated:
+              return HttpResponse(status=HTTPStatus.UNAUTHORIZED)
+          return HttpResponse("ok")
+
+      def other_status(request):
+          if not request.user.is_authenticated:
+              return HttpResponse(status=HTTPStatus.ACCEPTED)
+          return HttpResponse("ok")
+
+      def qualified_status(request):
+          if not request.user.is_authenticated:
+              return Response(status=http_status.HTTP_401_UNAUTHORIZED)
+          return Response({})
+      PY
+    CodeLocator.instance.register_path(views)
+
+    begin
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(tmpdir)
+      at = ->(line : Int32) { Endpoint.new("/#{line}", "GET", [] of Param, Details.new(PathInfo.new(views, line))) }
+      drf, enum_view, other, qualified = at.call(1), at.call(6), at.call(11), at.call(16)
+      DjangoAuthTagger.new(noir_options).perform([drf, enum_view, other, qualified])
+      drf.tags.map(&.name).should eq(["auth"])
+      enum_view.tags.map(&.name).should eq(["auth"])
+      other.tags.should be_empty
+      qualified.tags.map(&.name).should eq(["auth"])
+    ensure
+      FileUtils.rm_rf(tmpdir)
+      CodeLocator.instance.clear_all
+    end
+  end
+
   it "detects LoginRequiredMixin in class" do
     noir_options = create_test_options
     noir_options["base"] = YAML::Any.new(fixture_base)

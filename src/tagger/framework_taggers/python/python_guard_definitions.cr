@@ -12,17 +12,28 @@ module PythonGuardDefinitions
   CALLEE    = /@([A-Za-z_]\w*)|(?<![\w.])([A-Za-z_]\w*)\s*\(/
   DOCSTRING = /"""[\s\S]*?"""|'''[\s\S]*?'''/
 
+  # A refusal status in the stdlib enum's spelling (`HTTPStatus.FORBIDDEN`,
+  # `http.HTTPStatus.UNAUTHORIZED`), as lnbits writes every one, and every
+  # spelling of a 401 / 403 / 4xx status: the number, DRF's and
+  # Starlette's `status.HTTP_403_FORBIDDEN` however qualified, or the enum. Shared by the
+  # Python auth taggers so each reads a status however it is written.
+  HTTP_STATUS_401 = /(?<!\w)(?:http\.)?HTTPStatus\.UNAUTHORIZED\b/
+  HTTP_STATUS_403 = /(?<!\w)(?:http\.)?HTTPStatus\.FORBIDDEN\b/
+  STATUS_401      = /(?:\b401\b|(?<![\w.])(?:\w+\.)*HTTP_401_UNAUTHORIZED\b|#{HTTP_STATUS_401.source})/
+  STATUS_403      = /(?:\b403\b|(?<![\w.])(?:\w+\.)*HTTP_403_FORBIDDEN\b|#{HTTP_STATUS_403.source})/
+  STATUS_4XX      = /(?:\b4\d\d\b|(?<![\w.])(?:\w+\.)*HTTP_4\d\d_\w+|(?<!\w)(?:http\.)?HTTPStatus\.(?:BAD_REQUEST|UNAUTHORIZED|PAYMENT_REQUIRED|FORBIDDEN|NOT_FOUND|METHOD_NOT_ALLOWED|NOT_ACCEPTABLE|PROXY_AUTHENTICATION_REQUIRED|REQUEST_TIMEOUT|CONFLICT|GONE|LENGTH_REQUIRED|PRECONDITION_FAILED|REQUEST_ENTITY_TOO_LARGE|CONTENT_TOO_LARGE|REQUEST_URI_TOO_LONG|URI_TOO_LONG|UNSUPPORTED_MEDIA_TYPE|REQUESTED_RANGE_NOT_SATISFIABLE|RANGE_NOT_SATISFIABLE|EXPECTATION_FAILED|IM_A_TEAPOT|MISDIRECTED_REQUEST|UNPROCESSABLE_ENTITY|UNPROCESSABLE_CONTENT|LOCKED|FAILED_DEPENDENCY|TOO_EARLY|UPGRADE_REQUIRED|PRECONDITION_REQUIRED|TOO_MANY_REQUESTS|REQUEST_HEADER_FIELDS_TOO_LARGE|UNAVAILABLE_FOR_LEGAL_REASONS)\b)/
+
   # What makes a decorator definition an auth guard: it answers 401 in any
   # spelling, or it reads a credential off the request and turns the request
   # away (Dify's inner-API key check answers 404), or it reads the logged-in
   # caller and denies with 403. A 403 alone is not enough: Dify's
   # `email_password_login_enabled` aborts 403 on a feature flag, which says
   # nothing about the caller.
-  UNAUTHENTICATED    = /\braise\s+(?:\w+\.)*\w*(?:Unauthori[sz]ed|Unauthenticated|NotAuthenticated|AuthenticationFailed)(?:Error|Exception)?\b|\babort\s*\(\s*(?:401\b|(?:\w+\.)*UNAUTHORIZED\b)|\.unauthorized\s*\(|\.response_401\s*\(|\bverify_jwt_in_request\s*\((?=\s*(?:\)|[A-Za-z_]\w*\s*=))(?![^)]*\boptional\s*=\s*(?!False\b))|\breturn\b.*,\s*401\b|\bstatus(?:_code)?\s*=\s*401\b|\bHTTP_401_UNAUTHORIZED\b/
+  UNAUTHENTICATED    = /\braise\s+(?:\w+\.)*\w*(?:Unauthori[sz]ed|Unauthenticated|NotAuthenticated|AuthenticationFailed)(?:Error|Exception)?\b|\babort\s*\(\s*(?:#{STATUS_401.source}|(?:\w+\.)*UNAUTHORIZED\b)|\.unauthorized\s*\(|\.response_401\s*\(|\bverify_jwt_in_request\s*\((?=\s*(?:\)|[A-Za-z_]\w*\s*=))(?![^)]*\boptional\s*=\s*(?!False\b))|\breturn\b.*,\s*#{STATUS_401.source}|\bstatus(?:_code)?\s*=\s*#{STATUS_401.source}|\bHTTP_401_UNAUTHORIZED\b/
   REQUEST_CREDENTIAL = /\brequest\.(?:authorization\b|(?:headers|cookies|args)(?:\.get\s*\(|\[)\s*["'][\w-]*(?:key|token|auth|secret|signature|password|session)[\w-]*["'])/i
-  REJECTION          = /\braise\s+[A-Za-z_]|\babort\s*\(|\breturn\b.*,\s*4\d\d\b/
+  REJECTION          = /\braise\s+[A-Za-z_]|\babort\s*\(|\breturn\b.*,\s*#{STATUS_4XX.source}/
   CALLER_IDENTITY    = /\bcurrent_user\b|\bis_authenticated\b|\bg\.user\b/
-  FORBIDDEN          = /\braise\s+(?:\w+\.)*\w*(?:Forbidden|PermissionDenied|AccessDenied)\w*\b|\babort\s*\(\s*(?:403\b|(?:\w+\.)*FORBIDDEN\b)|\breturn\b.*,\s*403\b|\.response_403\s*\(/
+  FORBIDDEN          = /\braise\s+(?:\w+\.)*\w*(?:Forbidden|PermissionDenied|AccessDenied)\w*\b|\babort\s*\(\s*(?:#{STATUS_403.source}|(?:\w+\.)*FORBIDDEN\b)|\breturn\b.*,\s*#{STATUS_403.source}|\.response_403\s*\(/
 
   # Sending the caller to the login page is how a browser view refuses
   # an anonymous one.

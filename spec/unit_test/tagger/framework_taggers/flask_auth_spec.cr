@@ -458,6 +458,30 @@ describe "FlaskAuthTagger" do
               return f(*args, **kwargs)
           return decorated
 
+      def missing_key_enum(f):
+          @wraps(f)
+          def decorated(*args, **kwargs):
+              if not request.headers.get('x-api-key'):
+                  return jsonify("key required"), HTTPStatus.UNAUTHORIZED
+              return f(*args, **kwargs)
+          return decorated
+
+      def bad_key_enum(f):
+          @wraps(f)
+          def decorated(*args, **kwargs):
+              if request.headers.get('x-api-key') != TOKEN:
+                  return jsonify("bad key"), HTTPStatus.FORBIDDEN
+              return f(*args, **kwargs)
+          return decorated
+
+      def anon_abort(f):
+          @wraps(f)
+          def decorated(*args, **kwargs):
+              if not current_user.is_authenticated:
+                  abort(status.HTTP_403_FORBIDDEN)
+              return f(*args, **kwargs)
+          return decorated
+
       class Views:
           @optional_token
           def optional(self):
@@ -486,12 +510,24 @@ describe "FlaskAuthTagger" do
           @missing_key
           def missing(self):
               return "ok"
+
+          @missing_key_enum
+          def missingenum(self):
+              return "ok"
+
+          @bad_key_enum
+          def badkeyenum(self):
+              return "ok"
+
+          @anon_abort
+          def anonabort(self):
+              return "ok"
       PY
     File.write(app, source)
 
     noir_options = create_test_options
     noir_options["base"] = YAML::Any.new(tmpdir)
-    names = %w[optional callerlist writes jsonkey publicflag localcopy missing]
+    names = %w[optional callerlist writes jsonkey publicflag localcopy missing missingenum badkeyenum anonabort]
     endpoints = names.map do |name|
       line = source.lines.index!(&.includes?("def #{name}(")) + 1
       details = Details.new(PathInfo.new(app, line))
@@ -503,13 +539,16 @@ describe "FlaskAuthTagger" do
     FileUtils.rm_rf(tmpdir)
 
     endpoints.to_h { |endpoint| {endpoint.url, endpoint.tags.map(&.description)} }.should eq({
-      "/optional"   => [] of String,
-      "/callerlist" => [] of String,
-      "/writes"     => [] of String,
-      "/jsonkey"    => ["Protected by json_and_key"],
-      "/publicflag" => [] of String,
-      "/localcopy"  => [] of String,
-      "/missing"    => ["Protected by missing_key"],
+      "/optional"    => [] of String,
+      "/callerlist"  => [] of String,
+      "/writes"      => [] of String,
+      "/jsonkey"     => ["Protected by json_and_key"],
+      "/publicflag"  => [] of String,
+      "/localcopy"   => [] of String,
+      "/missing"     => ["Protected by missing_key"],
+      "/missingenum" => ["Protected by missing_key_enum"],
+      "/badkeyenum"  => ["Protected by bad_key_enum"],
+      "/anonabort"   => ["Protected by anon_abort"],
     })
   end
 

@@ -1,6 +1,7 @@
 require "../../../models/framework_tagger"
 require "../../../models/endpoint"
 require "../../../analyzer/analyzers/python/python_helper"
+require "./python_guard_definitions"
 
 @[Noir::TaggerFor(key: "fastapi_auth", name: "FastAPI Auth Tagger", desc: "Identifies FastAPI authentication patterns (Depends, Security, OAuth2)", order: 100)]
 class FastAPIAuthTagger < FrameworkTagger
@@ -50,7 +51,7 @@ class FastAPIAuthTagger < FrameworkTagger
   # FastAPI docs and full-stack template annotate handler parameters with.
   ANNOTATED_ALIAS = /^\s*(\w+)\s*(?::\s*[\w.\[\]]+\s*)?=\s*Annotated\s*\[(.+)/
 
-  ROUTE_DECORATOR = /^\s*@(\w+)\.(?:get|post|put|patch|delete|options|head|trace|api_route|websocket)\b/
+  ROUTE_DECORATOR = /^\s*@\s*(\w+)\s*\.\s*(?:get|post|put|patch|delete|options|head|trace|api_route|websocket)\b/
 
   # Authorization, as opposed to authentication: a role / ownership field
   # being read, or the handler answering 403. A dependency counts only on
@@ -59,11 +60,11 @@ class FastAPIAuthTagger < FrameworkTagger
   # ponytail: `.permissions` / `.roles` may be a data read rather than a
   # check; a per-statement `if` parse would separate them.
   AUTHZ_FIELD                = /\.(?:is_superuser|is_admin|is_staff|owner_id|roles?|permissions?|scopes)\b/
-  FORBIDDEN                  = /status_code\s*=\s*(?:403\b|status\.HTTP_403_FORBIDDEN)|\bHTTP_403_FORBIDDEN\b|HTTPException\s*\(\s*403\b/
+  FORBIDDEN                  = /status_code\s*=\s*#{PythonGuardDefinitions::STATUS_403.source}|\bHTTP_403_FORBIDDEN\b|HTTPException\s*\(\s*#{PythonGuardDefinitions::STATUS_403.source}/
   PYTHON_DEF                 = /^(?:async\s+)?def\s+(\w+)\s*\(/
   RETURN_ANNOTATION          = /\)\s*->\s*([^\n]+?)\s*:\s*$/m
-  UNAUTHENTICATED_MARKER     = /\b401\b|\bHTTP_401_|Unauthori[sz]ed|NotAuthenticated|AuthenticationFailed/
-  REFUSAL_MARKER             = /\b(?:401|403)\b|\bHTTP_40[13]_|Unauthori[sz]ed|Forbidden|NotAuthenticated|PermissionDenied|AuthenticationFailed/
+  UNAUTHENTICATED_MARKER     = /\b401\b|\bHTTP_401_|Unauthori[sz]ed|NotAuthenticated|AuthenticationFailed|#{PythonGuardDefinitions::HTTP_STATUS_401.source}/
+  REFUSAL_MARKER             = /\b(?:401|403)\b|\bHTTP_40[13]_|Unauthori[sz]ed|Forbidden|NotAuthenticated|PermissionDenied|AuthenticationFailed|#{PythonGuardDefinitions::HTTP_STATUS_401.source}|#{PythonGuardDefinitions::HTTP_STATUS_403.source}/
   CLASS_DEF                  = /^(\s*)class\s+(\w+)\s*(?:\(([^)]*)\))?\s*:/
   CLASS_DEPENDENCY_ATTR      = /^\s*(\w+)\s*(?::[^=]+)?=\s*(?:Depends|Security)\s*\(/
   ANNOTATED_ALIAS_DEPENDENCY = /^\s*(\w+)\s*(?::\s*[\w.\[\]]+\s*)?=\s*Annotated\s*\[.*\bDepends\s*\(\s*([\w.]+)/
@@ -1067,7 +1068,7 @@ class FastAPIAuthTagger < FrameworkTagger
   end
 
   BODY_IF             = /^(el)?if\s+(.+?):\s*(raise\b.*|return\b.*)?$/
-  UNAUTHORIZED_STATUS = /status_code\s*=\s*(?:401\b|status\.HTTP_401_UNAUTHORIZED)/
+  UNAUTHORIZED_STATUS = /status_code\s*=\s*#{PythonGuardDefinitions::STATUS_401.source}/
   CALLER_REFERENCE    = /(?<![\w.])(?:request\.(?:state\.)?user\b|self\.[A-Za-z_]\w*|[A-Za-z_]\w*)/
   NONE_SKIPPING_TEST  = /^\(?\s*(request\.(?:state\.)?user|(?:self\.)?[A-Za-z_]\w*)(?:\s+is\s+not\s+None)?\s*(?:\band\b|\)?\s*$)/
   # Name components of a dependency that hands the route its caller.
@@ -1285,25 +1286,45 @@ class FastAPIAuthTagger < FrameworkTagger
   # next decorator or `def` at the handler's level ends it instead: that
   # line belongs to the next handler, whose `Depends(...)` is not this one's.
   private def handler_header(lines : Array(String), start : Int32) : String
-    String.build do |io|
-      depth = 0
-      def_indent : Int32? = nil
-      idx = start
-      while idx < lines.size && idx < start + 60
-        line = Analyzer::Python::Helper.strip_python_comment(lines[idx]).rstrip
-        stripped = line.lstrip
-        indent = line.size - stripped.size
-        opens_def = stripped.matches?(/^(?:async\s+)?def\s/)
-        if (level = def_indent) && indent <= level && (opens_def || stripped.starts_with?('@'))
-          break
-        end
-        io << line << '\n'
-        def_indent ||= indent if opens_def
-        depth += line.count('(') + line.count('[') - line.count(')') - line.count(']')
-        break if def_indent && depth <= 0 && line.ends_with?(':')
-        idx += 1
+    # The text read so far, so a string spanning lines (a triple-quoted
+    # `description=`) is not counted as brackets.
+    code = ""
+    # Another route stacked on the same handler, being skipped: FastAPI's
+    # route decorator hands the function back unchanged, so that route's
+    # `dependencies=[...]` guard only that route. The `def` ends it even
+    # when its brackets never read as closed.
+    sibling = ""
+    def_indent : Int32? = nil
+    idx = start - 1
+    while (idx += 1) < lines.size && idx < start + 60
+      line = Analyzer::Python::Helper.strip_python_comment(lines[idx]).rstrip
+      stripped = line.lstrip
+      indent = line.size - stripped.size
+      opens_def = stripped.matches?(/^(?:async\s+)?def\s/)
+      if (level = def_indent) && indent <= level && (opens_def || stripped.starts_with?('@'))
+        break
       end
+      sibling = "" if opens_def
+      if idx > start && def_indent.nil? && sibling.empty? && stripped.matches?(ROUTE_DECORATOR) && open_brackets(code) <= 0
+        sibling = line
+      elsif !sibling.empty?
+        sibling = "#{sibling}\n#{line}"
+      end
+      unless sibling.empty?
+        sibling = "" if open_brackets(sibling) <= 0
+        next
+      end
+      code = "#{code}#{line}\n"
+      def_indent ||= indent if opens_def
+      break if def_indent && open_brackets(code) <= 0 && line.ends_with?(':')
     end
+    code
+  end
+
+  # `bracket_delta` with triple-quoted strings taken out first, whose inner
+  # quotes and brackets it would otherwise read one character at a time.
+  private def open_brackets(code : String) : Int32
+    bracket_delta(code.gsub(PythonGuardDefinitions::DOCSTRING, "\"\""))
   end
 
   private def index_include_router_calls(path : String)

@@ -331,7 +331,7 @@ class DjangoAuthTagger < FrameworkTagger
   # Django spells the refusal of an anonymous caller its own way too: the
   # 403 response class, a 401/403 status, `PermissionDenied`, or the login
   # redirect.
-  DJANGO_REFUSAL = /\bHttpResponseForbidden\s*\(|\bredirect_to_login\s*\(|\bstatus\s*=\s*40[13]\b|\braise\s+(?:\w+\.)*PermissionDenied\b/
+  DJANGO_REFUSAL = /\bHttpResponseForbidden\s*\(|\bredirect_to_login\s*\(|\bstatus\s*=\s*(?:#{STATUS_401.source}|#{STATUS_403.source})|\braise\s+(?:\w+\.)*PermissionDenied\b/
   USER_ALIAS     = /\A([A-Za-z_]\w*)\s*=\s*(?:self\.)?request\.user\z/
   # A statement that writes before the check runs, so an anonymous caller
   # gets it done even though the response is refused.
