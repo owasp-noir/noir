@@ -84,6 +84,7 @@ class DjangoAuthTagger < FrameworkTagger
     @drf_default_permissions.clear
     @permission_classes.clear
     @dispatch_guards.clear
+    @as_view_guards.clear
     @mro_cache.clear
     @middlewares.clear
     @settings_lists.clear
@@ -295,24 +296,30 @@ class DjangoAuthTagger < FrameworkTagger
       break if current.empty?
       break if current.starts_with?("class ") || (current.starts_with?("def ") && idx < endpoint_line - 2)
 
-      DECORATOR_PATTERNS.each do |pattern|
-        if current.matches?(pattern)
-          decorator_name = current.split("(").first.lstrip('@')
-          return "Protected by Django #{decorator_name} decorator"
-        end
-      end
-      if description = method_decorator_auth(current, nil)
+      if description = judge_decorator(current, path)
         return description
-      end
-      # A project decorator, judged by what its definition does.
-      if current.starts_with?('@') && (guard = decorator_guard(current, path))
-        return "Protected by #{guard}"
       end
 
       idx -= 1
     end
 
     nil
+  end
+
+  # The guard one decorator line applies: a Django one by name, a project
+  # one by what its definition does.
+  private def judge_decorator(current : String, path : String) : String?
+    DECORATOR_PATTERNS.each do |pattern|
+      if current.matches?(pattern)
+        decorator_name = current.split("(").first.lstrip('@')
+        return "Protected by Django #{decorator_name} decorator"
+      end
+    end
+    if description = method_decorator_auth(current, nil)
+      return description
+    end
+    return unless current.starts_with?('@')
+    decorator_guard(current, path).try { |guard| "Protected by #{guard}" }
   end
 
   # Library decorators are judged by `DECORATOR_PATTERNS` before this is
@@ -505,6 +512,9 @@ class DjangoAuthTagger < FrameworkTagger
     if description = method_decorator_auth(decorator_text(lines, idx + 1), handler)
       return description
     end
+    if guard = as_view_guard(path, lines, idx)
+      return guard
+    end
     # Its bases, wherever the header wraps.
     header = class_header(lines, idx)
     key = {path, idx, method.upcase}
@@ -519,6 +529,103 @@ class DjangoAuthTagger < FrameworkTagger
       end
     end
     nil
+  end
+
+  # The `as_view` override pretix's permission mixins spell, and only that:
+  # `view = super(...).as_view(**kw)`, then `view = deco(...)(view)` and
+  # `return view`, or `return deco(...)(view)` / `return deco(view)` /
+  # `return deco(super().as_view(**kw))`. Any other statement (a branch, a
+  # nested def, a return of something else) is a body this does not read.
+  AS_VIEW_SUPER_CALL     = /(?<![\w.])super\s*\(([^()]*)\)\s*\.\s*as_view\s*\([^()]*\)/
+  AS_VIEW_WRAP           = /\A([A-Za-z_][\w.]*)\s*(?:\([^()]*\)\s*)?\(\s*(\w+|#{AS_VIEW_SUPER_CALL.source})\s*(?:,(?:[^()]|\([^()]*\))*)?\)\z/
+  PASS_THROUGH_DECORATOR = /\A(?:csrf_exempt|csrf_protect|ensure_csrf_cookie|requires_csrf_token|never_cache|cache_page|cache_control|vary_on_\w+|xframe_options_\w+|gzip_page|condition|etag|last_modified|sensitive_post_parameters|sensitive_variables)\z/
+  PLAIN_DJANGO_BASE      = /\A(?:object|ABC|Protocol|Generic|(?:Context|TemplateResponse|SingleObject(?:TemplateResponse)?|MultipleObject(?:TemplateResponse)?|Form|ModelForm|Deletion|Access|LoginRequired|PermissionRequired|UserPassesTest|SuccessMessage|(?:List|Create|Retrieve|Update|Destroy)Model)Mixin)\z/
+  AS_VIEW_SUPER_ONLY     = /\A#{AS_VIEW_SUPER_CALL.source}\z/
+  AS_VIEW_STATEMENT      = /\A(?:(\w+)\s*=(?!=)|return\b)\s*(.*)\z/
+
+  @as_view_guards = {} of {String, Int32} => String?
+
+  # The decorator an `as_view` override in the view's MRO wraps the view
+  # in, judged like one stacked on the handler. The first override is the
+  # one Django calls; the walk follows it only through `super()`, and stops
+  # at a framework view, whose `as_view` calls none, and at an override it
+  # cannot read.
+  private def as_view_guard(path : String, lines : Array(String), class_idx : Int32) : String?
+    key = {path, class_idx}
+    return @as_view_guards[key] if @as_view_guards.has_key?(key)
+    @as_view_guards[key] = compute_as_view_guard(path, lines, class_idx)
+  end
+
+  private def compute_as_view_guard(path : String, lines : Array(String), class_idx : Int32) : String?
+    class_mro(path, lines, class_idx).each do |klass|
+      # A base the scan does not hold may serve its own view: a framework
+      # view always does, a library mixin may. Django's own mixins, `object`
+      # and the typing bases define no `as_view`.
+      unless file = klass.path
+        next if klass.name.matches?(PLAIN_DJANGO_BASE)
+        return
+      end
+      class_lines = read_file_lines(file) || return
+      body = method_body(class_lines, klass.idx, "as_view") || next
+      decorators = as_view_wrappers(body, klass.name) || return
+      # Outermost first. A wrapper that is no guard counts only when it is
+      # one of Django's that hands every request on; any other may answer
+      # some itself before the guarded view inside it runs.
+      decorators.each do |decorator|
+        if guard = as_view_decorator_guard(decorator, file)
+          return "#{guard} (via #{klass.name}.as_view)"
+        end
+        return unless decorator.rpartition('.')[2].matches?(PASS_THROUGH_DECORATOR)
+      end
+    end
+    nil
+  end
+
+  # The decorators an `as_view` body in the `AS_VIEW_WRAP` shape wraps
+  # `super().as_view()` in, outermost first; nil for any other body, and
+  # for a `super(Ancestor, cls)` that skips the classes after this one.
+  private def as_view_wrappers(body : String, class_name : String) : Array(String)?
+    statements = permission_statements(body)
+    # A one-line docstring in plain quotes; `permission_statements` drops
+    # triple-quoted ones.
+    statements.shift if statements.first?.try(&.[1].matches?(/\A[rRuU]?(["']).*\1\z/))
+    indent = statements.first?.try(&.[0]) || return
+    view : String? = nil
+    decorators = [] of String
+    statements.each do |depth, code|
+      return unless depth == indent
+      statement = code.match(AS_VIEW_STATEMENT) || return
+      local, expr = statement[1]?, statement[2]
+      if super_call = expr.match(AS_VIEW_SUPER_CALL)
+        # Built again after a wrap: which one is served is not read.
+        return unless decorators.empty? && next_in_mro?(super_call[1], class_name)
+      end
+      if expr.matches?(AS_VIEW_SUPER_ONLY)
+        view = local
+      elsif expr == view
+        view = local
+      elsif (wrap = expr.match(AS_VIEW_WRAP)) && (wrap[2] == view || wrap[2].matches?(AS_VIEW_SUPER_ONLY))
+        decorators.unshift(wrap[1])
+        view = local
+      else
+        return
+      end
+      return decorators unless local
+    end
+    nil
+  end
+
+  # A project decorator by its definition (a `login_required_unless_debug`
+  # is not Django's), anything else as a decorator line is judged.
+  private def as_view_decorator_guard(decorator : String, file : String) : String?
+    line = "@#{decorator}("
+    return judge_decorator(line, file) unless resolve_def(file, decorator)
+    decorator_guard(line, file).try { |guard| "Protected by #{guard}" }
+  end
+
+  # `super()` or `super(ThisClass, cls)`: the next class in the MRO.
+  private def next_in_mro?(args : String, class_name : String) : Bool
+    args.strip.empty? || args.split(',').map(&.strip) == [class_name, "cls"]
   end
 
   # `AccessMixin.handle_no_permission` sends the caller to the login page

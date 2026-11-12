@@ -1375,6 +1375,297 @@ describe "DjangoAuthTagger" do
     end
   end
 
+  it "reads the decorator a mixin's as_view wraps the view in" do
+    CodeLocator.instance.clear_all
+    tmpdir = File.tempname("django_as_view_wrap")
+    Dir.mkdir_p(tmpdir)
+    perms = File.join(tmpdir, "permissions.py")
+    views = File.join(tmpdir, "views.py")
+    File.write(perms, <<-PY)
+      def org_permission_required(permission):
+          def decorator(function):
+              def wrapper(request, *args, **kw):
+                  if not request.user.is_authenticated:
+                      raise PermissionDenied()
+                  return function(request, *args, **kw)
+              return wrapper
+          return decorator
+
+      class OrgPermissionMixin:
+          permission = None
+
+          @classmethod
+          def as_view(cls, **initkwargs):
+              view = super(OrgPermissionMixin, cls).as_view(**initkwargs)
+              return org_permission_required(cls.permission)(view)
+
+      class LoginMixin:
+          @classmethod
+          def as_view(cls, **initkwargs):
+              view = super().as_view(**initkwargs)
+              return login_required(view)
+
+      class CacheMixin:
+          @classmethod
+          def as_view(cls, **initkwargs):
+              view = super().as_view(**initkwargs)
+              return never_cache(view)
+
+      class InlineMixin:
+          @classmethod
+          def as_view(cls, **initkwargs):
+              """
+              Every view needs a login.
+              """
+              return login_required(
+                  super().as_view(**initkwargs),
+                  login_url="/login",
+              )
+
+      class AssignMixin:
+          @classmethod
+          def as_view(cls, **initkwargs):
+              view = super().as_view(**initkwargs)
+              view = org_permission_required("x")(view)
+              return view
+
+      class MaybePublicMixin:
+          @classmethod
+          def as_view(cls, **initkwargs):
+              view = super().as_view(**initkwargs)
+              if cls.public:
+                  return view
+              return login_required(view)
+
+      class StackedMixin:
+          @classmethod
+          def as_view(cls, **initkwargs):
+              view = login_required(super().as_view(**initkwargs), login_url=reverse_lazy("login"))  # noqa
+              view = csrf_exempt(view)
+              return view
+
+      class DelegatingMixin:
+          @classmethod
+          def as_view(cls, **initkwargs):
+              view = login_required(super().as_view(**initkwargs))
+
+              def inner(request, *args, **kwargs):
+                  if request.method == "OPTIONS":
+                      return HttpResponse()
+                  return view(request, *args, **kwargs)
+              return csrf_exempt(inner)
+
+      class BranchOptOut:
+          @classmethod
+          def as_view(cls, **initkwargs):
+              if cls.public:
+                  return View.as_view(**initkwargs)
+              return super().as_view(**initkwargs)
+
+      class RebuiltAfterWrap:
+          @classmethod
+          def as_view(cls, **initkwargs):
+              view = login_required(super().as_view(**initkwargs))
+              return csrf_exempt(super().as_view(**initkwargs))
+
+      class Skipper:
+          @classmethod
+          def as_view(cls, **initkwargs):
+              return super(LoginMixin, cls).as_view(**initkwargs)
+
+      class AliasMixin:
+          @classmethod
+          def as_view(cls, **initkwargs):
+              """Wrap every view in login_required."""
+              view = super(AliasMixin, cls).as_view(**initkwargs)
+              guarded = view
+              return login_required(guarded)
+
+      def allow_preflight(view):
+          def wrapper(request, *args, **kwargs):
+              if request.method == "OPTIONS":
+                  return HttpResponse()
+              return view(request, *args, **kwargs)
+          return wrapper
+
+      class PreflightMixin:
+          @classmethod
+          def as_view(cls, **initkwargs):
+              view = login_required(super().as_view(**initkwargs))
+              return allow_preflight(view)
+
+      class LibraryWrapMixin:
+          @classmethod
+          def as_view(cls, **initkwargs):
+              view = super().as_view(**initkwargs)
+              return cors.allow_preflight(view)
+
+      class FallbackMixin:
+          @classmethod
+          def as_view(cls, **initkwargs):
+              return login_required(fallback, super().as_view(**initkwargs))
+
+      class RebindMixin:
+          @classmethod
+          def as_view(cls, **initkwargs):
+              view = login_required(super().as_view(**initkwargs))
+              if cls.public:
+                  view = super().as_view(**initkwargs)
+              return view
+      PY
+    File.write(views, <<-PY)
+      from permissions import OrgPermissionMixin, LoginMixin, CacheMixin, InlineMixin, AssignMixin, MaybePublicMixin, StackedMixin, RebindMixin, DelegatingMixin, BranchOptOut, RebuiltAfterWrap, Skipper, AliasMixin, FallbackMixin, PreflightMixin, LibraryWrapMixin
+
+      class OrgSettings(SingleObjectMixin, OrgPermissionMixin, FormView):
+          permission = 'organizer.settings:write'
+
+          def post(self, request, *args, **kwargs):
+              return None
+
+      class Profile(LoginMixin, View):
+          def get(self, request):
+              return None
+
+      class Cached(CacheMixin, View):
+          def get(self, request):
+              return None
+
+      class Rebuilt(OrgPermissionMixin, View):
+          @classmethod
+          def as_view(cls, **initkwargs):
+              return View.as_view(**initkwargs)
+
+          def get(self, request):
+              return None
+
+      class ViewFirst(View, LoginMixin):
+          def get(self, request):
+              return None
+
+      class Inline(InlineMixin, View):
+          def get(self, request):
+              return None
+
+      class Assigned(AssignMixin, View):
+          def get(self, request):
+              return None
+
+      class MaybePublic(MaybePublicMixin, View):
+          def get(self, request):
+              return None
+
+      class Stacked(StackedMixin, View):
+          def get(self, request):
+              return None
+
+      class Rebind(RebindMixin, View):
+          def get(self, request):
+              return None
+
+      class Delegating(DelegatingMixin, View):
+          def get(self, request):
+              return None
+
+      class OptedOut(BranchOptOut, LoginMixin, View):
+          def get(self, request):
+              return None
+
+      class Rewrapped(RebuiltAfterWrap, View):
+          def get(self, request):
+              return None
+
+      class Skipped(Skipper, LoginMixin, View):
+          def get(self, request):
+              return None
+
+      class Aliased(AliasMixin, View):
+          def get(self, request):
+              return None
+
+      class LibraryFirst(braces.PublicMixin, LoginMixin, View):
+          def get(self, request):
+              return None
+
+      class Fallback(FallbackMixin, View):
+          def get(self, request):
+              return None
+
+      class Preflight(PreflightMixin, View):
+          def get(self, request):
+              return None
+
+      class LibraryWrapped(LibraryWrapMixin, LoginMixin, View):
+          def get(self, request):
+              return None
+      PY
+    CodeLocator.instance.register_path(perms)
+    CodeLocator.instance.register_path(views)
+
+    begin
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(tmpdir)
+      at = ->(method : String, line : Int32) { Endpoint.new("/#{line}", method, [] of Param, Details.new(PathInfo.new(views, line))) }
+      org = at.call("POST", 6)
+      profile = at.call("GET", 10)
+      cached = at.call("GET", 14)
+      rebuilt = at.call("GET", 22)
+      view_first = at.call("GET", 26)
+      inline = at.call("GET", 30)
+      assigned = at.call("GET", 34)
+      maybe_public = at.call("GET", 38)
+      stacked = at.call("GET", 42)
+      rebind = at.call("GET", 46)
+      delegating = at.call("GET", 50)
+      opted_out = at.call("GET", 54)
+      rewrapped = at.call("GET", 58)
+      skipped = at.call("GET", 62)
+      aliased = at.call("GET", 66)
+      library_first = at.call("GET", 70)
+      fallback = at.call("GET", 74)
+      preflight = at.call("GET", 78)
+      library_wrapped = at.call("GET", 82)
+
+      DjangoAuthTagger.new(noir_options).perform([org, profile, cached, rebuilt, view_first, inline, assigned, maybe_public, stacked, rebind, delegating, opted_out, rewrapped, skipped, aliased, library_first, fallback, preflight, library_wrapped])
+
+      org.tags.map(&.description).should eq(["Protected by org_permission_required (via OrgPermissionMixin.as_view)"])
+      profile.tags.map(&.description).should eq(["Protected by Django login_required decorator (via LoginMixin.as_view)"])
+      # A decorator that turns nobody away is no guard.
+      cached.tags.should be_empty
+      # The view's own `as_view` never reaches the mixin's.
+      rebuilt.tags.should be_empty
+      # Nor does Django's `View.as_view`, first in the MRO.
+      view_first.tags.should be_empty
+      inline.tags.map(&.description).should eq(["Protected by Django login_required decorator (via InlineMixin.as_view)"])
+      assigned.tags.map(&.description).should eq(["Protected by org_permission_required (via AssignMixin.as_view)"])
+      # A branch returns the view undecorated.
+      maybe_public.tags.should be_empty
+      # Through a comment, a call in the keywords and a second wrap.
+      stacked.tags.map(&.description).should eq(["Protected by Django login_required decorator (via StackedMixin.as_view)"])
+      # A branch rebinds the local to the bare view.
+      rebind.tags.should be_empty
+      # A wrapper that answers some requests itself is not read.
+      delegating.tags.should be_empty
+      # A branch skips the mixins after it, so LoginMixin may never run.
+      opted_out.tags.should be_empty
+      # The served view is a fresh, unwrapped one.
+      rewrapped.tags.should be_empty
+      # `super(LoginMixin, cls)` starts the lookup after LoginMixin.
+      skipped.tags.should be_empty
+      aliased.tags.map(&.description).should eq(["Protected by Django login_required decorator (via AliasMixin.as_view)"])
+      # A library mixin ahead of LoginMixin may serve its own view.
+      library_first.tags.should be_empty
+      # The decorator wraps another object, not the served view.
+      fallback.tags.should be_empty
+      # A project wrapper outside the guard may answer some requests itself.
+      preflight.tags.should be_empty
+      # So may a library one, ahead of LoginMixin.
+      library_wrapped.tags.should be_empty
+    ensure
+      FileUtils.rm_rf(tmpdir)
+      CodeLocator.instance.clear_all
+    end
+  end
+
   it "reads a DRF permission's own early returns before its super() delegation" do
     CodeLocator.instance.clear_all
     tmpdir = File.tempname("django_drf_early_returns")
