@@ -210,6 +210,353 @@ describe "JsMiscAuthTagger" do
       tags["/docs"].should be_empty
     end
 
+    it "follows a router passed to another module's route function back to the callers' use" do
+      CodeLocator.instance.clear_all
+      dir = File.tempname("koa_router_param")
+      Dir.mkdir_p(File.join(dir, "routes", "account"))
+      files = {
+        "middleware/auth.ts" => <<-TS,
+          export default function koaAuth(audience: string) {
+            return async (ctx, next) => {
+              const { scopes } = await verify(ctx.request, audience);
+              assertThat(scopes.includes('all'), new RequestError({ code: 'auth.forbidden', status: 403 }));
+              return next();
+            };
+          }
+          TS
+        "routes/init.ts" => <<-TS,
+          import koaAuth from '../middleware/auth.js';
+          import itemRoutes from './items.js';
+          import accountRoutes from './account/index.js';
+          import publicRoutes from './public.js';
+          import sharedRoutes from './shared.js';
+          import listedRoutes from './listed.js';
+          import typedRoutes from './typed.js';
+
+          export default function init(tenant) {
+            const managementRouter: ManagementApiRouter = new Router();
+            managementRouter.use(koaAuth(tenant.audience));
+            itemRoutes(managementRouter, tenant);
+            accountRoutes(managementRouter, tenant);
+            sharedRoutes(managementRouter, tenant);
+            listedRoutes(managementRouter);
+            typedRoutes(tenant, managementRouter);
+
+            const anonymousRouter = new Router();
+            publicRoutes(anonymousRouter, tenant);
+            sharedRoutes(anonymousRouter, tenant);
+            [listedRoutes].forEach((register) => register(anonymousRouter));
+          }
+          TS
+        "routes/items.ts" => <<-TS,
+          export default function itemRoutes<T extends ManagementApiRouter>(
+            ...[router, { queries }]: RouterInitArgs<T>
+          ) {
+            router.get('/items', async (ctx, next) => next());
+          }
+          TS
+        "routes/account/index.ts" => <<-TS,
+          import emailRoutes from './email.js';
+
+          export default function accountRoutes(...args: RouterInitArgs<T>) {
+            emailRoutes(...args);
+          }
+          TS
+        "routes/account/email.ts" => <<-TS,
+          export default function emailRoutes(router, tenant) {
+            router.post('/account/email', async (ctx, next) => next());
+          }
+          TS
+        "routes/public.ts" => <<-TS,
+          export default function publicRoutes(router, tenant) {
+            router.get('/status', async (ctx, next) => next());
+          }
+          TS
+        "routes/shared.ts" => <<-TS,
+          export default function sharedRoutes(router, tenant) {
+            router.get('/shared', async (ctx, next) => next());
+          }
+          TS
+        "routes/mixed.ts" => <<-TS,
+          import koaAuth from '../middleware/auth.js';
+
+          function adminRoutes(router) {
+            router.use(koaAuth('admin'));
+            router.get('/admin', async (ctx, next) => next());
+          }
+
+          export default function mixedRoutes(router, tenant) {
+            router.get('/mixed', async (ctx, next) => next());
+          }
+
+          router.get('/module-level', async (ctx, next) => next());
+          TS
+        "routes/legacy.js" => <<-JS,
+          const mixedRoutes = require('./mixed');
+          const legacyRouter = new Router();
+          mixedRoutes(legacyRouter);
+          JS
+        "routes/late.ts" => <<-TS,
+          export default function lateRoutes(tenant, router) {
+            router.get('/late', async (ctx, next) => next());
+          }
+          TS
+        "routes/late-callers.ts" => <<-TS,
+          import koaAuth from '../middleware/auth.js';
+          import lateRoutes from './late.js';
+
+          export function guarded(tenant, ...args) {
+            const authed = new Router();
+            authed.use(koaAuth('x'));
+            lateRoutes(tenant, authed);
+            lateRoutes(...args);
+          }
+          TS
+        "routes/local.ts" => <<-TS,
+          import koaAuth from '../middleware/auth.js';
+          const router = new Router();
+          router.use(koaAuth('x'));
+          function register(router) {
+            router.get('/local', async (ctx, next) => next());
+          }
+          register(router);
+          TS
+        "routes/listed.ts" => <<-TS,
+          export default function listedRoutes(router) {
+            router.get('/listed', async (ctx, next) => next());
+          }
+          TS
+        "routes/typed.ts" => <<-TS,
+          export default function typedRoutes(tenant: Ctx<A, B>, router: Router) {
+            router.get('/typed', async (ctx, next) => next());
+          }
+          TS
+        "middleware/errors.ts" => <<-TS,
+          export default function koaErrors() {
+            return async (ctx, next) => {
+              try {
+                await next();
+              } catch (error) {
+                throw new RequestError({ code: 'auth.unauthorized', data: { error }, status: 401 });
+              }
+            };
+          }
+          TS
+        "routes/errors.ts" => <<-TS,
+          import koaErrors from '../middleware/errors.js';
+          const router = new Router();
+          router.use(koaErrors());
+          router.get('/errors', async (ctx, next) => next());
+          TS
+        "middleware/public-paths.ts" => <<-TS,
+          export default function publicPaths() {
+            return async (ctx, next) => {
+              if (ctx.path === '/health') return next();
+              if (!ctx.state.user) throw new RequestError({ code: 'auth.unauthorized', status: 401 });
+              await next();
+            };
+          }
+          TS
+        "routes/paths.ts" => <<-TS,
+          import publicPaths from '../middleware/public-paths.js';
+          const router = new Router();
+          router.use(publicPaths());
+          router.get('/paths', async (ctx, next) => next());
+          TS
+        "routes/twice.ts" => <<-TS,
+          export default function twiceRoutes(router) {
+            router.get('/twice', async (ctx, next) => next());
+          }
+          TS
+        "routes/twice-caller.ts" => <<-TS,
+          import koaAuth from '../middleware/auth.js';
+          import twiceRoutes from './twice.js';
+          const authed = new Router();
+          authed.use(koaAuth('x'));
+          const open = new Router();
+          twiceRoutes(authed); twiceRoutes(open);
+          TS
+        "routes/barrel-target.ts" => <<-TS,
+          export default function barrelRoutes(router) {
+            router.get('/barrel', async (ctx, next) => next());
+          }
+          TS
+        "routes/barrel.ts" => <<-TS,
+          import koaAuth from '../middleware/auth.js';
+          import barrelRoutes from './barrel-target.js';
+          export * as everything from './barrel-target.js';
+          const authed = new Router();
+          authed.use(koaAuth('x'));
+          barrelRoutes(authed);
+          TS
+        "middleware/verify.ts" => <<-TS,
+          export default function verifyJwt() {
+            return async (ctx, next) => {
+              try { await cache.warm(ctx) } catch {}
+              try {
+                ctx.state.user = jwt.verify(ctx.headers.authorization);
+              } catch (error) {
+                throw new RequestError({ code: 'auth.unauthorized', status: 401 });
+              }
+              await next();
+            };
+          }
+          TS
+        "routes/verified.ts" => <<-TS,
+          import verifyJwt from '../middleware/verify.js';
+          const router = new Router();
+          router.use(verifyJwt());
+          router.get('/verified', async (ctx, next) => next());
+          TS
+        "routes/named.ts" => <<-TS,
+          export function namedRoutes(...[router, tenant]: [Router, Tenant]) {
+            router.get('/named', async (ctx, next) => next());
+          }
+          TS
+        "routes/named-caller.ts" => <<-TS,
+          import koaAuth from '../middleware/auth.js';
+          import {
+            namedRoutes,
+          } from './named.js';
+          const authed = new Router();
+          authed.use(koaAuth('x'));
+          namedRoutes(authed, tenant);
+          TS
+        "routes/spaced.ts" => <<-TS,
+          export function spacedRoutes(router) {
+            router.get('/spaced', async (ctx, next) => next());
+          }
+          TS
+        "routes/spaced-callers.ts" => <<-TS,
+          import koaAuth from '../middleware/auth.js';
+          import { spacedRoutes } from './spaced.js';
+          import * as all from './spaced.js';
+          const authed = new Router();
+          authed.use(koaAuth('x'));
+          spacedRoutes(authed);
+          all.spacedRoutes(new Router());
+          TS
+        "routes/items.test.ts" => <<-TS,
+          const itemRoutes = await pickDefault(import('./items.js'));
+          const request = createRequester({ authedRoutes: itemRoutes });
+          TS
+        "routes/lazy.ts" => <<-TS,
+          export default function lazyRoutes(router) {
+            router.get('/lazy', async (ctx, next) => next());
+          }
+          TS
+        "routes/lazy-callers.ts" => <<-TS,
+          import koaAuth from '../middleware/auth.js';
+          import lazyRoutes from './lazy.js';
+          const authed = new Router();
+          authed.use(koaAuth('x'));
+          lazyRoutes(authed);
+          import('./lazy.js').then((m) => m.default(new Router()));
+          TS
+        "middleware/preflight.ts" => <<-TS,
+          export default function preflight() {
+            return async (ctx, next) => {
+              if (ctx.method === 'OPTIONS') return next();
+              try {
+                ctx.state.user = verify(ctx.headers.authorization);
+              } catch (error) {
+                ctx.throw(401);
+              }
+              await next();
+            };
+          }
+          TS
+        "routes/preflight.ts" => <<-TS,
+          import preflight from '../middleware/preflight.js';
+          const router = new Router();
+          router.use(preflight());
+          router.get('/preflight', async (ctx, next) => next());
+          TS
+        "middleware/loose.ts" => <<-TS,
+          export default function loose() {
+            return async (ctx, next) => {
+              assert(ctx.query.input, 'bad')
+              ctx.body = serialize(ctx, new HttpError({ status: 401 }))
+              return next()
+            }
+          }
+          TS
+        "routes/loose.ts" => <<-TS,
+          import loose from '../middleware/loose.js';
+          const router = new Router();
+          router.use(loose());
+          router.get('/loose', async (ctx, next) => next());
+          TS
+      }
+      files.each do |name, body|
+        file = File.join(dir, name)
+        Dir.mkdir_p(File.dirname(file))
+        File.write(file, body)
+        CodeLocator.instance.register_path(file)
+      end
+
+      begin
+        noir_options = create_test_options
+        noir_options["base"] = YAML::Any.new(dir)
+        endpoints = {"routes/items.ts" => {4, "/items"}, "routes/account/email.ts" => {2, "/account/email"},
+                     "routes/public.ts" => {2, "/status"}, "routes/shared.ts" => {2, "/shared"},
+                     "routes/mixed.ts" => {9, "/mixed"}, "routes/late.ts" => {2, "/late"},
+                     "routes/loose.ts" => {4, "/loose"}, "routes/local.ts" => {5, "/local"},
+                     "routes/listed.ts" => {2, "/listed"}, "routes/typed.ts" => {2, "/typed"},
+                     "routes/errors.ts" => {4, "/errors"}, "routes/paths.ts" => {4, "/paths"},
+                     "routes/twice.ts" => {2, "/twice"}, "routes/barrel-target.ts" => {2, "/barrel"},
+                     "routes/verified.ts" => {4, "/verified"}, "routes/named.ts" => {2, "/named"},
+                     "routes/spaced.ts" => {2, "/spaced"}, "routes/lazy.ts" => {2, "/lazy"},
+                     "routes/preflight.ts" => {4, "/preflight"}}.map do |file, (line, url)|
+          details = Details.new(PathInfo.new(File.join(dir, file), line))
+          details.technology = "js_koa"
+          Endpoint.new(url, "GET", [] of Param, details)
+        end
+        tags = JsMiscAuthTagger.new(noir_options).perform(endpoints).to_h { |ep| {ep.url, ep.tags.map(&.description)} }
+        guard = "Protected by Koa koaAuth middleware (assertThat(scopes.includes('all'), new RequestError({ code: 'auth.forbidden', status: 403})))"
+        # The test harness mounting it by reference is no caller.
+        tags["/items"].should eq([guard])
+        # Through `accountRoutes(...args)` to its caller.
+        tags["/account/email"].should eq([guard])
+        tags["/status"].should be_empty
+        # One caller passes an unguarded router.
+        tags["/shared"].should be_empty
+        # Not the `router.use` of an earlier function, and its only caller
+        # (a `require`) passes an unguarded router.
+        tags["/mixed"].should be_empty
+        # A caller passing too few arguments to read leaves the verdict open.
+        tags["/late"].should be_empty
+        # An assertion ends at its closing paren, semicolons or not.
+        tags["/loose"].should be_empty
+        # A module-level router handed to a function of the same file.
+        tags["/local"].should eq([guard])
+        # Also passed by reference, where the router it gets is not read.
+        tags["/listed"].should be_empty
+        # A type argument's comma is no parameter of its own.
+        tags["/typed"].should eq([guard])
+        # A 401 rethrown after `next()` refuses nobody; one after a public
+        # path's early return still refuses the rest.
+        tags["/errors"].should be_empty
+        tags["/paths"].should eq(["Protected by Koa publicPaths middleware (throw new RequestError({ code: 'auth.unauthorized', status: 401}))"])
+        # Two calls on a line, or a re-export, leave the callers unread.
+        tags["/twice"].should be_empty
+        tags["/barrel"].should be_empty
+        # A refusal in the catch around a token check, past a closed catch.
+        tags["/verified"].should eq(["Protected by Koa verifyJwt middleware (throw new RequestError({ code: 'auth.unauthorized', status: 401}))"])
+        # A wrapped named import, and a typed rest pattern.
+        tags["/named"].should eq([guard])
+        # A namespace import reaches the function unread.
+        tags["/spaced"].should be_empty
+        # A dynamic import outside the tests is a caller left unread.
+        tags["/lazy"].should be_empty
+        # An early `return next()` is not the `try` the catch belongs to.
+        tags["/preflight"].should eq(["Protected by Koa preflight middleware (ctx.throw(401))"])
+      ensure
+        FileUtils.rm_rf(dir)
+        CodeLocator.instance.clear_all
+      end
+    end
+
     it "reads a route's middleware however long its handler runs" do
       tags = verdicts.call("index.ts", {14 => "/items.short", 17 => "/items.long"})
       tags["/items.short"].should eq(["Protected by Koa auth middleware (throw AuthenticationError)"])

@@ -340,7 +340,7 @@ module Noir::JSHandlerResolver
 
   # Memoized: every route naming `controllers.x.y` resolves the same
   # specifiers, each a few `stat`s.
-  private def resolve_specifier(from_file : String, specifier : String) : String?
+  def resolve_specifier(from_file : String, specifier : String) : String?
     key = {from_file, specifier}
     found, cached = @@lock.synchronize { {@@specifiers.has_key?(key), @@specifiers[key]?} }
     return cached if found
