@@ -83,7 +83,7 @@ module NoirAIContext
         return true if name.ends_with?(".fetch") && snippet && snippet.includes?("#{name}(:")
         return true if name.starts_with?("request.")
         return true if name == "request"
-        return true if name.matches?(/(?:^|\.)(?:client|databaseClient)\.(?:query|insert|select|execute|sql|bind)\b/i)
+        return true if name.matches?(CLIENT_RECORD_CALL)
       when "crypto_weak"
         # Weak hash primitives are common for non-security uses (cache
         # keys, ETags, file fingerprints). Only flag when the snippet
