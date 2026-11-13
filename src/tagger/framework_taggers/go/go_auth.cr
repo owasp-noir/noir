@@ -676,11 +676,46 @@ class GoAuthTagger < FrameworkTagger
 
     # Read each middleware argument's definition; its name counts only when
     # the definition is not in the scan.
+    closures = args.count(&.lstrip.starts_with?("func"))
     args.each do |arg|
       tag = guard_by_definition(arg, file, authish_name: true)
+      if tag.nil? && closures == 1 && arg.lstrip.starts_with?("func") && resolve_group_middleware_scope(stripped, scopes)
+        tag = group_closure_guard(lines, index, file)
+      end
       next unless tag
       add_middleware_scope(scope, file, tag)
       register_parameter_scope(file, lines, index, receiver, tag, parents: scopes.parents) if receiver
+    end
+  end
+
+  # The inline middleware closure of a group constructor opened on line
+  # `index` (1-based): `admin := app.Group("/api/admin", func(c *fiber.Ctx)
+  # error {`, judged on its body as a named middleware's definition is
+  # (`body_verdict`). Only a closure that opens on that line and is the
+  # call's one closure argument is read; nil when its body does not refuse.
+  private def group_closure_guard(lines : Array(String), index : Int32, file : String) : Tag?
+    first = lines[index - 1]
+    col = first.index(/\bfunc\s*\(/) || return
+    body = [first[col..].sub(/\Afunc\s*\(/, "func closure(")]
+    depth = 0
+    opened = false
+    row = index - 1
+    loop do
+      code = code_only(row == index - 1 ? first[col..] : lines[row])
+      opened ||= code.includes?('{')
+      depth += code.count('{') - code.count('}')
+      break if opened && depth <= 0
+      row += 1
+      return if row >= lines.size || row >= index + 200
+      body << lines[row]
+    end
+    return if body.size < 2
+    body[-1] = "}" if code_only(body[-1]).strip.starts_with?('}')
+    case body_verdict(Noir::GoCalleeExtractor::FunctionBody.new(body.join("\n"), file, index - 1), nil)
+    when Guard::Authn
+      Tag.new("auth", "Protected by Go middleware (inline group closure, verified from its body: refuses anonymous callers)", "go_auth")
+    when Guard::Authz
+      Tag.new("authz", "Protected by Go middleware (inline group closure, verified from its body: refuses callers under a permission check)", "go_auth")
     end
   end
 

@@ -559,6 +559,116 @@ module Analyzer::Go
       expansions
     end
 
+    # A struct type that embeds the framework's router (`type Admin struct {
+    # fiber.Router }`), the package it is declared in, and the prefix of the
+    # one group it is ever built from.
+    record RouterWrapper, dir : String, type_name : String, import_path : String?, prefix : String
+
+    DOT_IMPORT = /^\s*(?:import\s+)?\.\s+"/m
+
+    # Router groups handed out wrapped in a project type, uber/fx style:
+    # `CreateEndpointGroups` returns `&Admin{Router: admin}` with `admin :=
+    # app.Group("/api/admin", mw)`, and `func RegisterAdmin(admin *svr.Admin,
+    # ...)` registers on it. fx calls `RegisterAdmin`, so there is no call
+    # site handing it a group: the link is the parameter's type.
+    #
+    # A wrapper counts only when all of these hold, else its routes keep
+    # today's (unprefixed) reading:
+    #   * it embeds `builder_type` (a named `R fiber.Router` field is reached
+    #     as `admin.R.Get`, which no builder reads);
+    #   * no other wrapper of that name is declared in the scan, and its
+    #     package declares no other type of that name (read by text, so a
+    #     build-tagged twin or a same-named nested field type also counts).
+    #     A same-named type of another package (`service.Admin`) is told
+    #     apart by the import path its qualifier names;
+    #   * the scan constructs it exactly once, as a literal whose router
+    #     field names a group its function builds off a root router (see
+    #     `TreeSitterGoRouteExtractor#collect_router_wrapper_constructions`).
+    #     A second literal, a `new(Admin)`, or a literal whose router value is
+    #     not read (a parameter, the root itself, a call) drops it.
+    # Not read (the routes stay unprefixed): a router assigned to the field
+    # after construction (`a.Router = g`), a wrapper built by a generic or
+    # reflective helper, a type alias (`type Admin = fiber.Router`), a group
+    # variable bound more than once in the constructing function (`admin =
+    # app.Group("/b")` after the literal: which binding it saw is not read), and
+    # routes registered on the wrapper as a method receiver (`func (a *Admin)
+    # Routes()`) rather than a parameter.
+    def resolve_router_wrappers(file_contents : Hash(String, String), builder_type : String) : Array(RouterWrapper)
+      field = builder_type.split('.').last
+      decls = Hash(String, Array({String, Bool})).new
+      file_contents.each do |path, content|
+        next unless content.includes?(builder_type)
+        Noir::GoStructFields.collect(content).each do |name, fields|
+          next unless fields.any? { |f| f.embedded && f.type == builder_type }
+          (decls[name] ||= [] of {String, Bool}) << {File.dirname(path), fields.size == 1}
+        end
+      end
+      return [] of RouterWrapper if decls.empty?
+      decls.select! do |name, found|
+        next false unless found.size == 1
+        decl = /^\s*(?:type\s+)?#{Regex.escape(name)}\s+(?:struct|interface)\b|\btype\s+#{Regex.escape(name)}\b/m
+        file_contents.sum do |path, content|
+          File.dirname(path) == found[0][0] && content.includes?(name) ? content.scan(decl).size : 0
+        end == 1
+      end
+      return [] of RouterWrapper if decls.empty?
+
+      modules = collect_go_modules
+      imports = decls.transform_values { |found| import_path_for_dir(found[0][0], modules) }
+      types = decls.transform_values { |found| found[0][1] }
+      constructions = Hash(String, Array(String?)).new
+      file_contents.each do |path, content|
+        next unless types.each_key.any? { |name| content.includes?(name) }
+        dir = File.dirname(path)
+        aliases = nil
+        Noir::TreeSitterGoRouteExtractor.collect_router_wrapper_constructions(content, types, field).each do |built|
+          # A same-named type of another package (`service.Admin`) is not
+          # this one. A qualifier no import explains, or a bare name in a
+          # package that dot-imports, may be: it counts, as a construction
+          # the prefix was not read from when it is.
+          own = if built.qualifier.empty?
+                  dir == decls[built.type_name][0][0] || DOT_IMPORT.matches?(content)
+                else
+                  aliases ||= Noir::GoCalleeExtractor.extract_import_aliases(content)
+                  imported = aliases[built.qualifier]?
+                  imported.nil? || imported == imports[built.type_name]
+                end
+          (constructions[built.type_name] ||= [] of String?) << built.prefix if own
+        end
+      end
+      constructions.compact_map do |name, prefixes|
+        prefix = prefixes.first if prefixes.size == 1
+        RouterWrapper.new(decls[name][0][0], name, imports[name], prefix) if prefix
+      end
+    end
+
+    # The functions in `content` that take one of `wrappers` as their router
+    # parameter (`admin *svr.Admin`, or `admin *Admin` in the wrapper's own
+    # package), as router-builder expansions bound to the wrapper's prefix.
+    # A function `taken` already expands, or that takes two wrappers, is left
+    # alone: its body would be read once per binding.
+    def router_wrapper_expansions(content : String, path : String, wrappers : Array(RouterWrapper),
+                                  taken : Array(Tuple(String, Noir::TreeSitterGoRouteExtractor::RouterBuilder, Set(String)))) : Array(Tuple(String, Noir::TreeSitterGoRouteExtractor::RouterBuilder, Set(String)))
+      expansions = [] of Tuple(String, Noir::TreeSitterGoRouteExtractor::RouterBuilder, Set(String))
+      dir = File.dirname(path)
+      aliases = nil
+      wrappers.each do |wrapper|
+        next unless content.includes?(wrapper.type_name)
+        qualifier = if dir == wrapper.dir
+                      ""
+                    else
+                      aliases ||= Noir::GoCalleeExtractor.extract_import_aliases(content)
+                      aliases.key_for?(wrapper.import_path) if wrapper.import_path
+                    end
+        next unless qualifier
+        Noir::TreeSitterGoRouteExtractor.collect_router_group_builders(content, wrapper.type_name, qualifier).each do |fn, rb|
+          expansions << {fn, rb, Set{wrapper.prefix}}
+        end
+      end
+      starts = (expansions + taken).map { |_, rb, _| rb.start_row }
+      expansions.reject { |_, rb, _| starts.count(rb.start_row) > 1 }
+    end
+
     # Emits every `expansions` helper's routes once per call-site prefix
     # (with the route's callees), then yields each `(line, endpoint)` pair
     # of the helper body so the caller applies its framework's param
