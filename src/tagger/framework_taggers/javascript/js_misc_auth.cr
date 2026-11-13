@@ -169,7 +169,8 @@ class JsMiscAuthTagger < FrameworkTagger
       if description.nil? && endpoint.details.technology == "js_fastify"
         description = fastify_route_guard(path_info.path, line_idx, endpoint.method, endpoint.url) ||
                       fastify_plugin_hook(path_info.path, line_num, endpoint.method, endpoint.url) ||
-                      fastify_config_gate(path_info.path, line_idx, endpoint.method, endpoint.url)
+                      fastify_config_gate(path_info.path, line_idx, endpoint.method, endpoint.url) ||
+                      fastify_handler_check(path_info.path, line_idx, endpoint.method, endpoint.url)
       end
       description ||= koa_guard(path_info.path, line_idx) if endpoint.details.technology == "js_koa"
       if description
@@ -941,6 +942,75 @@ class JsMiscAuthTagger < FrameworkTagger
       end
     end
     nil
+  end
+
+  # An inline handler whose first check refuses a caller who is not there
+  # (Wiki.js): `const userId = requestUserId(req)` then `if (!userId) {
+  # return reply.unauthorized() }`, or `if (!hasUserSession(req))`. Before
+  # the `if` only bindings of a call on the request and argument-less
+  # `reply.preventCache()`-style calls; every part of its condition, joined
+  # by `||`, a negated such binding or call named for the caller (not
+  # `!isAnonymous(req)`, which refuses the signed-in); its branch opens
+  # with a 401.
+  FASTIFY_HANDLER_FUNCTION = /\A(?:async\s+)?(?:function\b[^(]*)?\(/
+  FASTIFY_CALLER_NAME      = /user|actor|session|auth|account|caller|principal|identity|member|login|signed/i
+  FASTIFY_NOT_CALLER_NAME  = /anonym|guest|public|logged_?out|signed_?out/i
+  FASTIFY_QUIET_REPLY      = /\A(?:prevent\w*|header|headers|removeHeader|type)\z/
+
+  private def fastify_handler_check(path : String, line_idx : Int32, method : String, url : String) : String?
+    args = fastify_route_args(path, line_idx, method, url) || return
+    handler = if args.size >= 2 && !args.last.lstrip.starts_with?('{')
+                args.last.strip
+              else
+                args.reverse.find(&.lstrip.starts_with?('{')).try { |options| Noir::JSObjectLiteral.property(options, "handler") }.try(&.strip)
+              end
+    handler || return
+    head = handler.match(FASTIFY_HANDLER_FUNCTION) || return
+    close = Noir::JSLiteralScanner.find_matching_paren(handler, head.end(0) - 1) || return
+    params = handler[head.end(0)...close]
+    # `req: FastifyRequest<{ Body: B, Params: P }>`: type arguments hold commas.
+    while params != (stripped = params.gsub(/<[^<>]*>/, ""))
+      params = stripped
+    end
+    names = params.split(',').map { |param| param.strip.match(/\A([A-Za-z_$][\w$]*)/).try(&.[1]) }
+    request, reply = names[0]?, names[1]?
+    return unless request && reply
+    open = handler.match(/\G\s*(?::[^{=]*)?(?:=>\s*)?\{/, close + 1) || return
+    body = handler[open.end(0)..]
+    on_request = "(?:await\\s+)?([A-Za-z_$][\\w$.]*)\\s*\\(\\s*#{Regex.escape(request)}\\s*\\)"
+    binding = /\G\s*(?:const|let)\s+([A-Za-z_$][\w$]*)\s*(?::[^=;\n]+)?=\s*#{on_request}\s*;?/
+    quiet = /\G\s*#{Regex.escape(reply)}\s*\.\s*([A-Za-z_$][\w$]*)\s*\(\s*\)\s*;?/
+    bound = {} of String => String
+    pos = 0
+    loop do
+      if m = body.match(binding, pos)
+        bound[m[1]] = m[2]
+      elsif (m = body.match(quiet, pos)) && m[1].matches?(FASTIFY_QUIET_REPLY)
+        # `reply.preventCache()` sends nothing.
+      else
+        break
+      end
+      pos = m.end(0)
+    end
+    test = body.match(/\G\s*if\s*\(/, pos) || return
+    close = Noir::JSLiteralScanner.find_matching_paren(body, test.end(0) - 1) || return
+    condition = body[test.end(0)...close]
+    call = /\A!\s*#{on_request}\z/
+    variable = /\A!\s*([A-Za-z_$][\w$]*)\z/
+    caller_test = condition.split("||").all? do |part|
+      part = part.strip
+      named = if m = part.match(call)
+                [m[1]]
+              elsif (m = part.match(variable)) && (callee = bound[m[1]]?)
+                [m[1], callee]
+              end
+      named && named.any?(&.matches?(FASTIFY_CALLER_NAME)) && named.none?(&.matches?(FASTIFY_NOT_CALLER_NAME))
+    end
+    return unless caller_test
+    branch = body[close + 1..].lstrip.lchop('{')
+    reply_name = Regex.escape(reply)
+    return unless branch.matches?(/\A\s*(?:return\s+#{reply_name}\s*\.\s*(?:unauthorized\s*\(|(?:code|status)\s*\(\s*401\b)|throw\s+[\w$.]*\bhttpErrors\s*\.\s*unauthorized\s*\()/)
+    "Fastify handler check `if (#{condition.strip.gsub(/\s+/, " ")})` (replies 401)"
   end
 
   # The arguments of the route call on line `line_idx`, read to its closing
