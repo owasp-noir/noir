@@ -1061,3 +1061,170 @@ describe "GoAuthTagger (framework auth registrations)" do
     guarded?(result["GET /settings"]).should be_true
   end
 end
+
+# apache/answer: a group whose prefix is not readable (`r.Group(conf.APIBaseURL
+# + "/answer/api/v1")`) gets its `.Use` in one file and is handed to a
+# registrar method defined in another (`answerRouter.RegisterAnswerAPIRouter(
+# authV1)`). The routes carry the guard only when every call of the registrar
+# hands it a guarded group.
+GIN_REGISTRARS = <<-GO
+  package router
+
+  import "github.com/gin-gonic/gin"
+
+  type APIRouter struct{}
+
+  func (a *APIRouter) RegisterPublic(r *gin.RouterGroup) {
+  \tr.GET("/siteinfo", func(c *gin.Context) {})
+  }
+
+  func (a *APIRouter) RegisterAPI(r *gin.RouterGroup) {
+  \tr.GET("/conversation", func(c *gin.Context) {})
+  \tq := r.Group("/question")
+  \tq.POST("/report", func(c *gin.Context) {})
+  }
+
+  func (a *APIRouter) RegisterShared(r *gin.RouterGroup) {
+  \tr.GET("/connector", func(c *gin.Context) {})
+  }
+  GO
+
+# Runs the tagger over GIN_REGISTRARS with `body` as the caller's function.
+private def registrar_scan(body : String) : Hash(String, Endpoint)
+  main = GIN_AUTH + "type Conf struct{ Base string }\n\n" +
+         "func setup(conf Conf, reg *router.APIRouter) {\n\tr := gin.New()\n" + body + "}\n"
+  routes = [
+    {"GET", "/siteinfo", "router/router.go", %("/siteinfo")},
+    {"GET", "/conversation", "router/router.go", %("/conversation")},
+    {"POST", "/question/report", "router/router.go", %("/report")},
+    {"GET", "/connector", "router/router.go", %("/connector")},
+  ]
+  router_scope_scan({"go.mod" => GIN_MOD, "main.go" => main, "router/router.go" => GIN_REGISTRARS}, routes, "go_gin")
+end
+
+describe "GoAuthTagger (groups handed to a registrar in another file)" do
+  it "guards a registrar's routes, derived groups included, when its only caller's group is guarded" do
+    result = registrar_scan(<<-GO)
+      \tpublic := r.Group(conf.Base + "/api/v1")
+      \treg.RegisterPublic(public)
+      \tauthV1 := r.Group(conf.Base + "/api/v1")
+      \tauthV1.Use(Auth())
+      \treg.RegisterAPI(authV1)
+
+      GO
+    guarded?(result["GET /conversation"]).should be_true
+    guarded?(result["POST /question/report"]).should be_true
+    guarded?(result["GET /siteinfo"]).should be_false
+    guarded?(result["GET /connector"]).should be_false
+  end
+
+  it "guards a registrar only when every caller hands it a guarded group" do
+    mixed = registrar_scan(<<-GO)
+      \tpublic := r.Group(conf.Base + "/api/v1")
+      \tauthV1 := r.Group(conf.Base + "/api/v1")
+      \tauthV1.Use(Auth())
+      \treg.RegisterShared(public)
+      \treg.RegisterShared(authV1)
+
+      GO
+    guarded?(mixed["GET /connector"]).should be_false
+
+    both = registrar_scan(<<-GO)
+      \tauthV1 := r.Group(conf.Base + "/api/v1")
+      \tauthV1.Use(Auth())
+      \tadmin := r.Group(conf.Base + "/admin")
+      \tadmin.Use(Auth())
+      \treg.RegisterShared(authV1)
+      \treg.RegisterShared(admin)
+
+      GO
+    guarded?(both["GET /connector"]).should be_true
+  end
+
+  it "reads a guard on the group a handed group is derived from, before the derivation" do
+    before = registrar_scan(<<-GO)
+      \tapi := r.Group(conf.Base)
+      \tapi.Use(Auth())
+      \tv1 := api.Group("/v1")
+      \treg.RegisterAPI(v1)
+
+      GO
+    guarded?(before["GET /conversation"]).should be_true
+
+    # gin copies a group's middleware when a child is created.
+    after = registrar_scan(<<-GO)
+      \tapi := r.Group(conf.Base)
+      \tv1 := api.Group("/v1")
+      \tapi.Use(Auth())
+      \treg.RegisterAPI(v1)
+
+      GO
+    guarded?(after["GET /conversation"]).should be_false
+  end
+
+  it "leaves the routes unguarded when the guard is late, on a rebound group, not a guard, or a caller is unreadable" do
+    {
+      # Added after the registrar ran.
+      "\tauthV1 := r.Group(conf.Base)\n\treg.RegisterAPI(authV1)\n\tauthV1.Use(Auth())\n",
+      # The variable rebound to a fresh group in between.
+      "\tauthV1 := r.Group(conf.Base)\n\tauthV1.Use(Auth())\n\tauthV1 = r.Group(conf.Base + \"/x\")\n\treg.RegisterAPI(authV1)\n",
+      # Middleware that is no guard.
+      "\tauthV1 := r.Group(conf.Base)\n\tauthV1.Use(gin.Logger())\n\treg.RegisterAPI(authV1)\n",
+      # A second call handing it an expression, not a group variable.
+      "\tauthV1 := r.Group(conf.Base)\n\tauthV1.Use(Auth())\n\treg.RegisterAPI(authV1)\n\treg.RegisterAPI(r.Group(conf.Base))\n",
+      # The registrar handed on as a value: its callers are unknown.
+      "\tauthV1 := r.Group(conf.Base)\n\tauthV1.Use(Auth())\n\treg.RegisterAPI(authV1)\n\tapply(reg.RegisterAPI)\n",
+    }.each do |body|
+      guarded?(registrar_scan(body)["GET /conversation"]).should be_false
+    end
+  end
+
+  it "does not follow a registrar called by another registrar with its own parameter" do
+    result = registrar_scan(<<-GO)
+      \tauthV1 := r.Group(conf.Base)
+      \tauthV1.Use(Auth())
+      \twrap(reg, authV1)
+      }
+
+      func wrap(reg *router.APIRouter, g *gin.RouterGroup) {
+      \treg.RegisterAPI(g)
+
+      GO
+    guarded?(result["GET /conversation"]).should be_false
+  end
+
+  it "needs the guard on every route an endpoint was merged from" do
+    main = GIN_AUTH + <<-GO
+      type Conf struct{ Base string }
+
+      func setup(conf Conf, reg *router.APIRouter) {
+      \tr := gin.New()
+      \tauthV1 := r.Group(conf.Base)
+      \tauthV1.Use(Auth())
+      \treg.RegisterAPI(authV1)
+      \tpublic := r.Group(conf.Base)
+      \treg.RegisterPublic(public)
+      }
+      GO
+    files = {"go.mod" => GIN_MOD, "router/router.go" => GIN_REGISTRARS, "main.go" => main}
+    alone = router_scope_scan(files, [{"GET", "/x", "router/router.go", %("/conversation")}], "go_gin")
+    guarded?(alone["GET /x"]).should be_true
+    CodeLocator.instance.clear_all
+    dir = File.tempname("go_registrar_merge")
+    files.each do |rel, body|
+      path = File.join(dir, rel)
+      Dir.mkdir_p(File.dirname(path))
+      File.write(path, body)
+      CodeLocator.instance.register_path(path)
+    end
+    router = File.join(dir, "router/router.go")
+    details = Details.new(PathInfo.new(router, GIN_REGISTRARS.lines.index!(&.includes?(%("/conversation"))) + 1))
+    details.add_path(PathInfo.new(router, GIN_REGISTRARS.lines.index!(&.includes?(%("/siteinfo"))) + 1))
+    details.technology = "go_gin"
+    options = create_test_options
+    options["base"] = YAML::Any.new(dir)
+    merged = GoAuthTagger.new(options).perform([Endpoint.new("/x", "GET", [] of Param, details)]).first
+    FileUtils.rm_rf(dir)
+    guarded?(merged).should be_false
+  end
+end
