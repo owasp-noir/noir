@@ -635,7 +635,7 @@ module Noir
           # A constant/variable first argument is still the bind path
           # (`s.BindHandler(rootPath, h)`); resolve it before falling
           # back to treating the arg as the handler.
-          if raw_path.nil? && (resolved_path = string_expr_text(arg, source, string_values))
+          if raw_path.nil? && (resolved_path = route_path_text(arg, source, string_values))
             raw_path = resolved_path
           elsif handler_text.empty? && !raw_path.nil?
             handler_text = Noir::TreeSitter.node_text(arg, source)
@@ -767,7 +767,7 @@ module Noir
       handler_text = ""
       handler_args = [] of String
       Noir::TreeSitter.each_named_arg(args) do |arg|
-        s = string_expr_text(arg, source, string_values)
+        s = route_path_text(arg, source, string_values)
         if method.nil?
           # First arg is the method: a string ("GET", "WOOHOO", ...) or an
           # `http.MethodDelete` constant.
@@ -813,7 +813,7 @@ module Noir
       handler_text = ""
       handler_args = [] of String
       Noir::TreeSitter.each_named_arg(args) do |arg|
-        s = string_expr_text(arg, source, string_values)
+        s = route_path_text(arg, source, string_values)
         if raw_path.nil?
           return if s.nil?
           raw_path = s
@@ -996,7 +996,7 @@ module Noir
           # Resolve a constant/variable/concatenation path argument
           # (`r.Get(tokenPath, h)`, `r.Post(adminPath+"/x", h)`) before
           # treating a non-string arg as the handler.
-          if raw_path.nil? && (resolved_path = string_expr_text(arg, source, string_values))
+          if raw_path.nil? && (resolved_path = route_path_text(arg, source, string_values))
             raw_path = resolved_path
           elsif !raw_path.nil?
             handler_text = Noir::TreeSitter.node_text(arg, source) if handler_text.empty?

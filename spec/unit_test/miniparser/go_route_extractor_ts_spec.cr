@@ -210,6 +210,88 @@ describe Noir::TreeSitterGoRouteExtractor do
     ])
   end
 
+  it "keeps the literal tail of a route path behind a runtime base" do
+    # oapi-codegen's chi server: `r.Get(options.BaseURL+"/status", ...)`
+    # for every operation. Only an operand that is all runtime value is
+    # dropped; a literal on either side of a gap is not a known path.
+    source = <<-GO
+      package api
+      const apiPrefix = "/v1"
+      func HandlerWithOptions(si ServerInterface, options ChiServerOptions, id string) http.Handler {
+          r := chi.NewRouter()
+          r.Group(func(r chi.Router) {
+              r.Get(options.BaseURL+"/status", si.GetStatus)
+          })
+          r.Post(options.BaseURL+"/items", si.CreateItem)
+          base := options.BaseURL
+          r.Get(base+"/local", si.Local)
+          r.Get(options.Host+options.BaseURL+"/two", si.Two)
+          r.Get((options.BaseURL + "/paren"), si.Paren)
+          r.Get(options.BaseURL+apiPrefix+"/mixed", si.Mixed)
+          r.Get(apiPrefix+"/const", si.Const)
+          r.MethodFunc("PATCH", options.BaseURL+"/mf", si.MF)
+          r.Handle(options.BaseURL+"/handle", si.Handle)
+          r.Get(options.BaseURL, si.Root)
+          r.Get(options.BaseURL+id, si.All)
+          r.Get(options.BaseURL+"rel", si.Rel)
+          r.Get("/users/"+id, si.User)
+          r.Get("/a/"+id+"/b", si.Gap)
+          r.Get(options.BaseURL+"/x/"+id+"/y", si.Gap2)
+          r.Get(apiPrefix+id+"/z", si.Gap3)
+          r.Get(options.BaseURL+"/nohandler")
+          c.httpClient.Post(c.baseURL+"/client", "application/json", body)
+      }
+      GO
+
+    routes = Noir::TreeSitterGoRouteExtractor.extract_chi_routes(source)
+    routes.map { |r| {r.verb, r.path} }.sort!.should eq([
+      {"ANY", "/handle"},
+      {"GET", "/local"},
+      {"GET", "/paren"},
+      {"GET", "/status"},
+      {"GET", "/two"},
+      {"GET", "/v1/const"},
+      {"GET", "/v1/mixed"},
+      {"PATCH", "/mf"},
+      {"POST", "/items"},
+    ])
+  end
+
+  it "keeps the literal tail of a runtime base on Gin/Echo-style verbs too" do
+    source = <<-GO
+      package main
+      func RegisterHandlersWithOptions(router gin.IRouter, si ServerInterface, options GinServerOptions) {
+          router.GET(options.BaseURL+"/pets/:id", si.FindPetByID)
+          router.GET(options.BaseURL, si.Root)
+      }
+      GO
+
+    routes = Noir::TreeSitterGoRouteExtractor.extract_routes(source)
+    routes.map { |r| {r.verb, r.path} }.should eq([{"GET", "/pets/:id"}])
+  end
+
+  it "does not let a runtime base turn a stored constant into its tail" do
+    # `B` is read before `A` is declared. Recording `/x` on the first pass
+    # would make the second pass's `/api/x` disagree and drop `B`.
+    source = <<-GO
+      package main
+      const B = A + "/x"
+      const A = "/api"
+      var C = cfg.Base + "/c"
+      func main() {
+          r := gin.Default()
+          r.GET(B+"/y", h)
+          r.GET(C+"/d", h)
+      }
+      GO
+
+    routes = Noir::TreeSitterGoRouteExtractor.extract_routes(source)
+    routes.map { |r| {r.verb, r.path} }.sort!.should eq([
+      {"GET", "/api/x/y"},
+      {"GET", "/d"},
+    ])
+  end
+
   it "extracts routes registered on inline group chains" do
     source = <<-GO
       package main
