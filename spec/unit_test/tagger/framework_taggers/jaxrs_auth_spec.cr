@@ -456,10 +456,11 @@ describe "JaxrsAuthTagger" do
       result["GET /api/e#{routes - 1}"].size.should eq(1)
       elapsed
     end
+    best = ->(returns : Int32, routes : Int32) { (0...3).min_of { timed.call(returns, routes) } }
     ratio = ->(small : Time::Span, large : Time::Span) { large / {small, 1.millisecond}.max }
-    ratio.call(timed.call(1000, 10), timed.call(4000, 10)).should be < 10.0
-    ratio.call(timed.call(10, 1000), timed.call(10, 4000)).should be < 10.0
-    ratio.call(timed.call(1000, 1000), timed.call(4000, 4000)).should be < 10.0
+    ratio.call(best.call(1000, 10), best.call(4000, 10)).should be < 10.0
+    ratio.call(best.call(10, 1000), best.call(10, 4000)).should be < 10.0
+    ratio.call(best.call(1000, 1000), best.call(4000, 4000)).should be < 10.0
   end
 
   it "limits a @NameBinding filter to the resources carrying its annotation" do
