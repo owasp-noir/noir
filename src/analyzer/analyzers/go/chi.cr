@@ -43,6 +43,13 @@ module Analyzer::Go
     IMPORT_MARKER_RE = Regex.union(IMPORT_MARKER)
     MOUNT_CALL_RE    = /\.Mount\(/
 
+    # A package-local type wrapping chi (supabase/auth's `type router struct
+    # { chi chi.Router }`), and the functions that hand one out (`func
+    # newRouter() *router`), both read off the package's chi-importing files.
+    WRAPPER_STRUCT_RE  = /\btype\s+(\w+)\s+struct\s*\{([^{}]*)\}/
+    CHI_ROUTER_TYPE_RE = /\bchi\.(?:Router|Routes|Mux)\b/
+    FUNC_RESULT_RE     = /\bfunc\s+(?:\([^()]*\)\s*)?(\w+)\s*\([^()]*\)\s*\*?(\w+)\s*\{/
+
     def analyze
       result = [] of Endpoint
       free_pass = [] of Endpoint
@@ -130,6 +137,17 @@ module Analyzer::Go
       end
       @package_string_values = package_string_values
 
+      # A file of a chi package that never imports chi can still register
+      # routes through a package-local wrapper type. Per such package, a
+      # regex that binds a name to the wrapper (`r *router`, `r :=
+      # newRouter()`, `r := &router{...}`).
+      wrapper_bindings = Hash(String, Regex).new
+      chi_dirs.each do |dir|
+        if re = wrapper_binding_re(package_files[dir]? || [] of String, file_contents_cache)
+          wrapper_bindings[dir] = re
+        end
+      end
+
       # Import-path -> directory index for every package in the tree, so
       # a Mount target qualified by a package alias resolves to the
       # directory that declares it. Built once; gitea-style apps mount
@@ -183,23 +201,35 @@ module Analyzer::Go
         # pass below stays gated on the marker so another framework's
         # verb calls cannot surface as chi routes.
         chi_file = content_matches?(content, IMPORT_MARKER_RE)
-        next unless chi_file || expandable_mount_files.includes?(path)
+        dir = File.dirname(path)
+        # A file without the marker that binds the package's chi wrapper
+        # takes part too, but only routes on a name bound to the wrapper
+        # count: a cache, a KV store or another framework's router in the
+        # same file still cannot surface as a chi route.
+        wrapper_names = Set(String).new
+        if !chi_file && (binding_re = wrapper_bindings[dir]?)
+          content.scan(binding_re) { |m| wrapper_names << (m[1]? || m[2]) }
+        end
+        route_file = chi_file || !wrapper_names.empty?
+        next unless route_file || expandable_mount_files.includes?(path)
         lines = file_lines_cache[path]? || GoEngine.strip_comments(content).lines
 
-        dir = File.dirname(path)
         mounted_functions = package_mounted_functions.fetch(dir, Set(String).new)
 
         # Tree-sitter pre-pass: every `r.Get(...)` / `r.Route(...)`
         # / `r.Group(...)` resolved with the correct prefix, skipping
         # bodies of functions that are expanded via Mount (those
         # are handled below to get their `/admin` prefix).
-        ts_routes = if chi_file
+        ts_routes = if route_file
                       Noir::TreeSitterGoRouteExtractor
                         .extract_chi_routes(content, mounted_functions,
                           package_string_values[dir]? || Hash(String, String).new)
                     else
                       [] of Noir::TreeSitterGoRouteExtractor::Route
                     end
+        # ponytail: names, not scopes — a wrapper-bound `r` admits every
+        # `r.Get` in the file; track bindings per scope if that ever bites.
+        ts_routes.select! { |r| wrapper_names.includes?(r.router_name.split('.').last) } unless chi_file
         routes_by_line = Hash(Int32, Array(Noir::TreeSitterGoRouteExtractor::Route)).new
         ts_routes.each do |r|
           routes_by_line[r.line] ||= [] of Noir::TreeSitterGoRouteExtractor::Route
@@ -280,7 +310,7 @@ module Analyzer::Go
             end
             next
           end
-          next unless chi_file
+          next unless route_file
 
           # Emit any route whose declaration begins on this line,
           # and seed inline-handler tracking so the param extractor
@@ -547,6 +577,27 @@ module Analyzer::Go
     # doubling the slash when the mount prefix is `/` or `` — gitea mounts
     # its web router at `/` and `r.Mount("/", web.Routes())` must not
     # turn `/metrics` into `//metrics`.
+    # The binding regex for a package's chi wrapper types (see `analyze`),
+    # or nil when its chi-importing files declare none. Group 1 is a name
+    # declared with the type (`r *router`, a struct field `router *router`),
+    # group 2 one assigned a literal or a constructor result.
+    private def wrapper_binding_re(files : Array(String), contents : Hash(String, String)) : Regex?
+      sources = files.compact_map { |fp| contents[fp]? }.select { |c| content_matches?(c, IMPORT_MARKER_RE) }
+      types = Set(String).new
+      sources.each do |src|
+        src.scan(WRAPPER_STRUCT_RE) { |m| types << m[1] if m[2].matches?(CHI_ROUTER_TYPE_RE) }
+      end
+      return if types.empty?
+      ctors = Set(String).new
+      sources.each do |src|
+        src.scan(FUNC_RESULT_RE) { |m| ctors << m[1] if types.includes?(m[2]) }
+      end
+      type_alt = types.map { |t| Regex.escape(t) }.join('|')
+      value_alt = "(?:#{type_alt})\\s*\\{"
+      value_alt += "|(?:\\w+\\.)?(?:#{ctors.map { |c| Regex.escape(c) }.join('|')})\\s*\\(" unless ctors.empty?
+      Regex.new("\\b(\\w+)\\s+\\*?(?:#{type_alt})\\b(?!\\.)|\\b(\\w+)\\s*:?=\\s*&?(?:#{value_alt})")
+    end
+
     private def mount_join(prefix : String, url : String) : String
       base = prefix.rstrip('/')
       if base.empty?
