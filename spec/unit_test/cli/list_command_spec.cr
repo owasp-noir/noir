@@ -94,6 +94,8 @@ describe Noir::CLI::ListCommand do
       supported["websocket"].as_bool.should be_false
       supported["callee"].as_bool?.should_not be_nil
       supported["ai_context"]["guards"].as_bool?.should_not be_nil
+      doc["go_gin"]["view"].should eq("code")
+      doc["nginx"]["view"].should eq("gateway")
     end
 
     it "emits valid YAML" do

@@ -11,6 +11,7 @@ module NoirTechs::Catalog::Specification
     # (see `Detector::Specification::GraphqlSdl#applicable?`), so `-t
     # graphql` now selects a tech that produces endpoints.
     :graphql_sdl => {
+      :view      => "spec",
       :format    => ["GRAPHQL_SDL"],
       :similar   => ["graphql_sdl", "graphql-sdl", "graphql_schema", ".graphqls", "graphql", ".graphql"],
       :supported => {

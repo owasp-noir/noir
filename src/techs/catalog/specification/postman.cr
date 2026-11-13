@@ -4,6 +4,7 @@
 module NoirTechs::Catalog::Specification
   POSTMAN = {
     :postman => {
+      :view      => "traffic",
       :format    => ["JSON"],
       :similar   => ["postman", "postman collection"],
       :supported => {

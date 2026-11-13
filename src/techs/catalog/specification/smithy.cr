@@ -4,6 +4,7 @@
 module NoirTechs::Catalog::Specification
   SMITHY = {
     :smithy => {
+      :view      => "spec",
       :format    => ["SMITHY"],
       :similar   => ["smithy", "smithy-idl"],
       :supported => {

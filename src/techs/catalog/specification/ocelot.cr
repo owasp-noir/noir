@@ -4,6 +4,7 @@
 module NoirTechs::Catalog::Specification
   OCELOT = {
     :ocelot => {
+      :view      => "gateway",
       :format    => ["JSON"],
       :similar   => ["ocelot", "ocelot.json", "ocelot api gateway"],
       :supported => {

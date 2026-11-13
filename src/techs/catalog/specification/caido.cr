@@ -4,6 +4,7 @@
 module NoirTechs::Catalog::Specification
   CAIDO = {
     :caido => {
+      :view      => "traffic",
       :format    => ["JSON"],
       :similar   => ["caido", "caido-export", "caido_export"],
       :supported => {

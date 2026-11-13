@@ -4,6 +4,7 @@
 module NoirTechs::Catalog::Specification
   THUNDER_CLIENT = {
     :thunder_client => {
+      :view      => "traffic",
       :format    => ["JSON"],
       :similar   => ["thunder_client", "thunder-client", "thunderclient", "thunder-tests"],
       :supported => {

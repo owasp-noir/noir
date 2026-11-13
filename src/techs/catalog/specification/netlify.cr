@@ -4,6 +4,7 @@
 module NoirTechs::Catalog::Specification
   NETLIFY = {
     :netlify => {
+      :view      => "gateway",
       :format    => ["TXT", "TOML"],
       :similar   => ["netlify", "_redirects", "netlify.toml"],
       :supported => {

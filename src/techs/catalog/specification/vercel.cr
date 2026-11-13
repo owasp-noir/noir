@@ -4,6 +4,7 @@
 module NoirTechs::Catalog::Specification
   VERCEL = {
     :vercel => {
+      :view      => "gateway",
       :format    => ["JSON"],
       :similar   => ["vercel", "vercel.json", "now.json"],
       :supported => {

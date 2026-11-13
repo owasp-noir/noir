@@ -4,6 +4,7 @@
 module NoirTechs::Catalog::Specification
   KRAKEND = {
     :krakend => {
+      :view      => "gateway",
       :format    => ["JSON"],
       :similar   => ["krakend", "krakend.json", "krakend api gateway"],
       :supported => {

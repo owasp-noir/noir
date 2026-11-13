@@ -4,6 +4,7 @@
 module NoirTechs::Catalog::Specification
   HAPROXY = {
     :haproxy => {
+      :view      => "gateway",
       :format    => ["CFG"],
       :similar   => ["haproxy", "haproxy.cfg"],
       :supported => {

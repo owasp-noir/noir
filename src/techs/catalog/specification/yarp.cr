@@ -4,6 +4,7 @@
 module NoirTechs::Catalog::Specification
   YARP = {
     :yarp => {
+      :view      => "gateway",
       :format    => ["JSON", "C#"],
       :similar   => ["yarp", "yarp.reverseproxy", "yet another reverse proxy"],
       :supported => {

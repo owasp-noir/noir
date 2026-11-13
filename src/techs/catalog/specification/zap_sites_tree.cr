@@ -11,6 +11,7 @@ module NoirTechs::Catalog::Specification
     # No bare `"zap"` alias: `zig_zap` already owns it, and a duplicate
     # would resolve by TECHS iteration order rather than by intent.
     :zap_sites_tree => {
+      :view      => "traffic",
       :format    => ["YAML"],
       :similar   => ["zap_sites_tree", "zap-sites-tree", "zap-sitemap", "zap_sitemap", "zaproxy", "owasp-zap"],
       :supported => {

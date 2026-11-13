@@ -4,6 +4,7 @@
 module NoirTechs::Catalog::Specification
   AWS_CLOUDFORMATION = {
     :aws_cloudformation => {
+      :view      => "gateway",
       :format    => ["YAML", "JSON"],
       :similar   => ["aws cloudformation", "aws sam", "cloudformation", "sam", "template.yaml", "template.yml", "aws::serverless::function", "aws::apigateway::resource"],
       :supported => {

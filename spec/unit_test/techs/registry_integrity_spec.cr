@@ -233,6 +233,18 @@ describe "declaration / implementation split" do
     sorted(NoirTechs::IMPLEMENTATION_TECHS).should eq(implementations)
   end
 
+  # `noir query --seen-in` reads a declaration's view off its entry, and a
+  # missing one would silently count a gateway or a capture as code.
+  it "gives every declaration tech a view, and no other tech one" do
+    declared = NoirTechs::TECH_VIEWS.keys.to_set
+    missing = NoirTechs::DECLARATION_TECHS - declared
+    fail "declaration techs with no :view (one of spec, gateway, traffic): #{sorted(missing)}" unless missing.empty?
+    extra = declared - NoirTechs::DECLARATION_TECHS
+    fail "techs that serve their routes but declare a :view: #{sorted(extra)}" unless extra.empty?
+    bad = NoirTechs::TECH_VIEWS.reject { |_, view| %w[spec gateway traffic].includes?(view) }
+    fail "unknown :view values: #{bad}" unless bad.empty?
+  end
+
   it "never marks a language tech as an implementation" do
     both = NoirTechs::IMPLEMENTATION_TECHS.select { |tech| NoirTechs.language_tech?(tech) }
     fail "techs with both :language and :implementation: #{sorted(both)}" unless both.empty?

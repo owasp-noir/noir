@@ -4,6 +4,7 @@
 module NoirTechs::Catalog::Specification
   TRAEFIK = {
     :traefik => {
+      :view      => "gateway",
       :format    => ["YAML", "TOML"],
       :similar   => ["traefik", "traefik dynamic config", "ingressroute"],
       :supported => {

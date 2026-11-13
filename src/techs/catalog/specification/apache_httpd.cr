@@ -4,6 +4,7 @@
 module NoirTechs::Catalog::Specification
   APACHE_HTTPD = {
     :apache_httpd => {
+      :view      => "gateway",
       :format    => ["CONF"],
       :similar   => ["apache", "apache httpd", "httpd", "htaccess", "apache2"],
       :supported => {

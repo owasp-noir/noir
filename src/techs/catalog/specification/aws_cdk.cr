@@ -4,6 +4,7 @@
 module NoirTechs::Catalog::Specification
   AWS_CDK = {
     :aws_cdk => {
+      :view      => "gateway",
       :format    => ["TS", "JS", "PY"],
       :similar   => ["aws cdk", "aws-cdk-lib", "@aws-cdk", "cdk", "aws_cdk"],
       :supported => {

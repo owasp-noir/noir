@@ -32,6 +32,8 @@ module Noir::CLI::QueryCommand
     changes = [] of String
     fail_on_match = false
     guard = nil
+    seen_in = [] of Array(String)
+    not_seen_in = [] of String
 
     i = 0
     while i < args.size
@@ -81,6 +83,26 @@ module Noir::CLI::QueryCommand
         else
           changes.concat(items)
         end
+      when "--seen-in", "--not-seen-in"
+        value = inline
+        if value.nil?
+          i += 1
+          value = args[i]?
+        end
+        items = split_value(name, value)
+        unknown = items - NoirTechs::VIEWS
+        if items.empty?
+          errors << "#{name} requires a value"
+        elsif !unknown.empty?
+          errors << "unknown view #{unknown.join(", ")} for #{name}. Valid: #{NoirTechs::VIEWS.join(", ")}"
+        elsif name == "--seen-in"
+          # Unlike every other value flag, a repeat ANDs: `--seen-in code
+          # --seen-in traffic` is "served and exercised by a capture", the
+          # question worth asking; the OR is already `code,traffic`.
+          seen_in << items
+        else
+          not_seen_in.concat(items)
+        end
       when "--fail-on-match" then fail_on_match = true
       when "--"
         rest.concat(args[i..])
@@ -91,7 +113,8 @@ module Noir::CLI::QueryCommand
       i += 1
     end
 
-    Parsed.new(build_filters(values, guard), rest, errors, excludes, changes, fail_on_match)
+    filters = build_filters(values, guard).copy_with(seen_in: seen_in, not_seen_in: not_seen_in)
+    Parsed.new(filters, rest, errors, excludes, changes, fail_on_match)
   end
 
   private def self.new_values : Hash(String, Array(String))
@@ -209,6 +232,10 @@ module Noir::CLI::QueryCommand
         --exclude <filter>=<value>
                                Drop the endpoints that filter matches (repeatable): any filter above
                                without its dashes, same values (e.g. protocol=cli, url='/health*')
+        --seen-in <view,...>   Reported by a technology of this view: code, spec (OAS, gRPC, ...),
+                               gateway (nginx, Ingress, Kong, ...) or traffic (HAR, Postman, ...).
+                               Repeating it ANDs, unlike the other filters
+        --not-seen-in <view,...> Reported by no technology of these views
 
       #{Noir::CLI.section("DIFF:")}
         --diff-ref <rev>, --diff-path <dir>
@@ -221,6 +248,8 @@ module Noir::CLI::QueryCommand
         noir query --signal idor_review --method PUT,DELETE --from report.json
         noir query --path 'billing/**' --count ./app
         noir query --project services/orders --url /items ./mono
+        noir query --seen-in code --not-seen-in spec ./app     # served, missing from the spec
+        noir query --seen-in spec --not-seen-in code ./app     # in the spec, served by nothing found
         noir query --exclude protocol=cli --exclude path='tests/**' --from report.json
         noir query --diff-ref origin/main --no-guard --sink any --fail-on-match .
         noir query --diff-path ../old --change removed .

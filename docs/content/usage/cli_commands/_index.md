@@ -255,6 +255,22 @@ noir query --no-guard --exclude sink=any --from report.json                 # un
 
 `--exclude-path` and `--exclude-techs` are different: they are scan flags that keep files or techs out of the analysis, so they only work on a live scan. `--exclude` hides rows of the answer and works with `--from` too.
 
+Views (compare the sources that describe one service):
+- `--seen-in <view,...>`: reported by a technology of one of these views
+- `--not-seen-in <view,...>`: reported by no technology of these views
+
+Every technology belongs to one view: `code` (framework analyzers, and the schema-generated backends such as Strapi or Supabase), `spec` (OAS, RAML, gRPC, GraphQL SDL, WSDL, ...), `gateway` (nginx, Ingress, Kong, Envoy, Terraform, serverless.yml, ...) or `traffic` (HAR, Burp, Postman, Bruno, `.http` files, ...). `noir list techs` shows each one's view. When two sources report the same method and URL, the optimizer merges them into one endpoint that keeps every technology, and the view filters look at all of them. A comma list is OR, as in the other filters, but repeating `--seen-in` ANDs: `--seen-in code --seen-in traffic` is "served, and exercised by a capture or collection".
+
+```bash
+noir query --seen-in code --not-seen-in spec ./app        # shadow: served, missing from the spec
+noir query --seen-in spec --not-seen-in code ./app        # zombie: in the spec, served by nothing found
+noir query --seen-in gateway ./app                        # the gateway and routing rules themselves
+```
+
+The match is exact for now: `/orders/{id}` in the spec and `/orders/:id` in the code merge, since Noir normalizes common parameter spellings, but a prefix one side never sees (`/api` in front of `/orders`) keeps the two apart. An endpoint with no technology at all (a hand-written report) matches neither filter.
+
+Gateway rules are the weak side of this. A gateway rule joins a route only when method and path are exactly equal, and a prefix or catch-all rule (`location /api`, an Ingress `/`) does not cover the routes under it yet. So an empty result for code plus gateway, or a long "not behind a gateway" list, is not a finding. `query` says so on stderr whenever `gateway` is combined with another view.
+
 Pattern matching rules:
 - Glob characters (`*`, `?`, `[`): `*` crosses `/` and `{id}` is treated literally. Without glob characters, the pattern is matched as a substring.
 - `--param` with `--param-type`: both conditions must be satisfied by the same parameter.

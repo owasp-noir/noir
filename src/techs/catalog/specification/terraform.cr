@@ -4,6 +4,7 @@
 module NoirTechs::Catalog::Specification
   TERRAFORM = {
     :terraform => {
+      :view      => "gateway",
       :format    => ["TF", "JSON"],
       :similar   => ["terraform", "tf", "hcl", "opentofu", "tofu", "aws_api_gateway", "aws_apigatewayv2", "aws_apigatewayv2_route"],
       :supported => {
