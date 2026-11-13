@@ -169,7 +169,8 @@ class JsMiscAuthTagger < FrameworkTagger
       if description.nil? && endpoint.details.technology == "js_fastify"
         description = fastify_route_guard(path_info.path, line_idx, endpoint.method, endpoint.url) ||
                       fastify_plugin_hook(path_info.path, line_num, endpoint.method, endpoint.url) ||
-                      fastify_config_gate(path_info.path, line_idx, endpoint.method, endpoint.url)
+                      fastify_config_gate(path_info.path, line_idx, endpoint.method, endpoint.url) ||
+                      fastify_handler_check(path_info.path, line_idx, endpoint.method, endpoint.url)
       end
       description ||= koa_guard(path_info.path, line_idx) if endpoint.details.technology == "js_koa"
       if description
@@ -941,6 +942,95 @@ class JsMiscAuthTagger < FrameworkTagger
       end
     end
     nil
+  end
+
+  # An inline handler whose first check refuses a caller who is not there
+  # (Wiki.js): `const userId = requestUserId(req)` then `if (!userId) {
+  # return reply.unauthorized() }`, or `if (!hasUserSession(req))`. Before
+  # the `if` only bindings of a caller-named call on the request (nothing
+  # else has run for an anonymous caller yet) and `reply.preventCache()`;
+  # one `||` part a negated such binding or call (not `!isAnonymous(req)`,
+  # which refuses the signed-in); the branch opening with a 401.
+  FASTIFY_HANDLER_FUNCTION = /\A(?:async\s*)?(?:function\b[^(]*)?\(/
+  FASTIFY_CALLER_WORDS     = Set{"user", "userid", "actor", "session", "auth", "authenticated", "account", "caller", "principal", "identity", "member", "login", "logged", "signed"}
+  FASTIFY_NOT_CALLER_WORDS = Set{"anonymous", "anon", "guest", "public", "agent", "url", "count", "attempts", "out"}
+
+  # The regexes of a handler whose parameters are named `request`, `reply`.
+  private record FastifyHandlerRegexes, binding : Regex, quiet : Regex, call : Regex, refusal : Regex
+  @fastify_handler_regexes = {} of {String, String} => FastifyHandlerRegexes
+
+  private def fastify_handler_regexes(request : String, reply : String) : FastifyHandlerRegexes
+    @fastify_handler_regexes[{request, reply}] ||= begin
+      on_request = "(?:await\\s+)?([A-Za-z_$][\\w$.]*)\\s*\\(\\s*#{Regex.escape(request)}\\s*\\)"
+      replied = Regex.escape(reply)
+      FastifyHandlerRegexes.new(
+        /\G\s*(?:const|let)\s+([A-Za-z_$][\w$]*)\s*(?::[^=;\n]+)?=\s*#{on_request}\s*;?/,
+        /\G\s*#{replied}\s*\.\s*prevent\w*\s*\(\s*\)\s*;?/,
+        /\A!\s*#{on_request}\z/,
+        /\A\s*(?:return\s+#{replied}\s*\.\s*(?:unauthorized\s*\(|(?:code|status)\s*\(\s*401\b)|throw\s+[\w$.]*\bhttpErrors\s*\.\s*unauthorized\s*\()/)
+    end
+  end
+
+  # `requestUserId`, `actorFrom`, `hasUserSession`: a word of the name is
+  # the caller's, and none says otherwise (`userAgent`, `isAnonymous`).
+  private def fastify_caller_name?(name : String) : Bool
+    words = name.split('.').last.gsub(/([a-z0-9])([A-Z])/, "\\1 \\2").downcase.split(/[^a-z0-9]+/)
+    words.any? { |word| FASTIFY_CALLER_WORDS.includes?(word) } && words.none? { |word| FASTIFY_NOT_CALLER_WORDS.includes?(word) }
+  end
+
+  private def fastify_handler_check(path : String, line_idx : Int32, method : String, url : String) : String?
+    args = fastify_route_args(path, line_idx, method, url) || return
+    handler = if args.size >= 2 && !args.last.lstrip.starts_with?('{')
+                args.last.strip
+              else
+                args.reverse.find(&.lstrip.starts_with?('{')).try { |options| Noir::JSObjectLiteral.property(options, "handler") }.try(&.strip)
+              end
+    handler || return
+    head = handler.match(FASTIFY_HANDLER_FUNCTION) || return
+    close = Noir::JSLiteralScanner.find_matching_paren(handler, head.end(0) - 1) || return
+    params = handler[head.end(0)...close]
+    # `req: FastifyRequest<{ Body: B, Params: P }>`: type arguments hold commas.
+    while params != (stripped = params.gsub(/<[^<>]*>/, ""))
+      params = stripped
+    end
+    names = params.split(',').map { |param| param.strip.match(/\A([A-Za-z_$][\w$]*)/).try(&.[1]) }
+    request, reply = names[0]?, names[1]?
+    return unless request && reply
+    # `): Promise<{ ok: boolean }> => {`: the body opens after the arrow.
+    rest = handler[close + 1..]
+    open = rest.lstrip.starts_with?(':') ? rest.match(/=>\s*\{/) : rest.match(/\A\s*(?:=>\s*)?\{/)
+    open || return
+    body = rest[open.end(0)..]
+    regexes = fastify_handler_regexes(request, reply)
+    bound = {} of String => String
+    pos = 0
+    loop do
+      if (m = body.match(regexes.binding, pos)) && (fastify_caller_name?(m[1]) || fastify_caller_name?(m[2]))
+        bound[m[1]] = m[2]
+      elsif m = body.match(regexes.quiet, pos)
+        # `reply.preventCache()` sends nothing.
+      else
+        break
+      end
+      pos = m.end(0)
+    end
+    test = body.match(/\G\s*if\s*\(/, pos) || return
+    close = Noir::JSLiteralScanner.find_matching_paren(body, test.end(0) - 1) || return
+    condition = body[test.end(0)...close]
+    parts = Noir::TopLevelSplit.split(condition, '|', Noir::TopLevelSplit::Rules::JS_POSITIONAL_ARGS).reject(&.blank?)
+    caller_test = parts.find do |part|
+      part = part.strip
+      if m = part.match(regexes.call)
+        fastify_caller_name?(m[1])
+      elsif (m = part.match(/\A!\s*([A-Za-z_$][\w$]*)\z/)) && (callee = bound[m[1]]?)
+        fastify_caller_name?(m[1]) || fastify_caller_name?(callee)
+      else
+        false
+      end
+    end
+    return unless caller_test
+    return unless body[close + 1..].lstrip.lchop('{').matches?(regexes.refusal)
+    "Fastify handler check `if (#{condition.strip.gsub(/\s+/, " ")})` (replies 401)"
   end
 
   # The arguments of the route call on line `line_idx`, read to its closing
