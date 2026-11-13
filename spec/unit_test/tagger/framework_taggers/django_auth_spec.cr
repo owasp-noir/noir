@@ -717,6 +717,14 @@ describe "DjangoAuthTagger" do
               if request.method not in SAFE_METHODS and hasattr(view, 'write_permission'):
                   required = view.write_permission
               return True
+
+      class EventCRUD(TokenOrSession):
+          def has_permission(self, request, view):
+              if not super(EventCRUD, self).has_permission(request, view):
+                  return False
+              elif view.action == 'create' and 'events:create' not in request.permset:
+                  return False
+              return True
       PY
     File.write(views, <<-PY)
       from rest_framework import viewsets
@@ -749,6 +757,12 @@ describe "DjangoAuthTagger" do
           permission_classes = (TokenOrSession,)
           def list(self, request):
               pass
+
+      # pretix: Python 2's `super(EventCRUD, self)`.
+      class EventViewSet(viewsets.ModelViewSet):
+          permission_classes = (EventCRUD,)
+          def list(self, request):
+              pass
       PY
     [perms, views].each { |file| CodeLocator.instance.register_path(file) }
 
@@ -758,8 +772,9 @@ describe "DjangoAuthTagger" do
       at = ->(method : String, line : Int32) { Endpoint.new("/#{line}", method, [] of Param, Details.new(PathInfo.new(views, line))) }
       license, weight, session = at.call("GET", 6), at.call("GET", 12), at.call("GET", 17)
       exercises, exercise_create, orders = at.call("GET", 22), at.call("POST", 24), at.call("GET", 29)
+      events = at.call("GET", 35)
 
-      DjangoAuthTagger.new(noir_options).perform([license, weight, session, exercises, exercise_create, orders])
+      DjangoAuthTagger.new(noir_options).perform([license, weight, session, exercises, exercise_create, orders, events])
 
       license.tags.should be_empty
       weight.tags.map(&.description).should eq(["Protected by DRF permission_classes"])
@@ -768,6 +783,7 @@ describe "DjangoAuthTagger" do
       exercises.tags.should be_empty
       exercise_create.tags.map(&.description).should eq(["Protected by DRF permission_classes"])
       orders.tags.map(&.description).should eq(["Protected by DRF permission_classes"])
+      events.tags.map(&.description).should eq(["Protected by DRF permission_classes"])
     ensure
       FileUtils.rm_rf(tmpdir)
       CodeLocator.instance.clear_all

@@ -141,7 +141,8 @@ class DjangoAuthTagger < FrameworkTagger
         header = class_header(lines, idx)
         open = header.index('(') || next
         bases_text = header[(open + 1)..].sub(/\)\s*:[\s\S]*\z/, "")
-        has_permission = method_body(lines, idx, "has_permission")
+        # `super(EventCRUDPermission, self)` is Python 2's spelling of `super()`.
+        has_permission = method_body(lines, idx, "has_permission").try(&.gsub(/\bsuper\s*\(\s*#{Regex.escape(name)}\s*,\s*self\s*\)/, "super()"))
         bases = bases_text.split(',').map(&.strip.split('.').last.strip).reject(&.empty?)
         next unless bases_text.includes?("Permission") || has_permission || bases_text.includes?("APIKey")
         flag = class_body(lines, idx).match(/\b(?:self\.)?authenticated_users_only\s*=(?!=)\s*([^\n]+)/).try(&.[1].strip)
