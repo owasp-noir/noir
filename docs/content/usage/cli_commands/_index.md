@@ -261,6 +261,31 @@ Pattern matching rules:
 - `any` keyword: for `--sink`, `--source`, `--signal`, and `--validator`, `any` matches any non-empty bucket.
 - Warnings on stderr: if a filter value is not present anywhere in the report, Noir prints a warning on stderr with the values that do exist in the report. If context filters (`--guard`, `--sink`, etc.) are used on a report scanned without `--ai-context`, stderr warns that no endpoint carries AI context.
 
+#### Query over a diff
+
+With `--diff-ref <rev>` or `--diff-path <dir>`, `query` scans both sides and filters only the endpoints the change touched, the same set `noir scan --diff-ref` reports. `--change added,changed,removed` picks the categories (a comma list is OR). The default is `added,changed`, the new-side endpoints a reviewer has to look at. `removed` lists old-side endpoints, and the filters apply to them too.
+
+```bash
+noir query --diff-ref origin/main --no-guard --sink any .        # added or changed, unguarded, reaching a sink
+noir query --diff-ref origin/main --change added --no-guard .     # only the new routes
+noir query --diff-path ../old --change removed .                  # what the change took away
+```
+
+`--from` also reads a diff report, so one diff scan answers several questions:
+
+```bash
+noir scan --diff-ref origin/main --ai-context -f json -o diff.json .
+noir query --from diff.json --change added --signal idor_review
+```
+
+`--change` without a diff (no diff flag, or `--from` a plain report) is a usage error. `trace` and `reach` do not take a diff: a diff flag there is a usage error too.
+
+`--fail-on-match` turns any query into a CI gate, with or without a diff: exit `3` when at least one row matched (the rows still print, and stderr says how many), `0` when none did, `2` on a usage error. Use it instead of `! noir query ...`, which would also turn a mistyped flag into a passing job. With `--count`, the gate follows the count. `noir scan`'s `--fail-on` is a usage error on the query verbs, so it cannot pass for a gate that never fires.
+
+```bash
+noir query --diff-ref origin/main --no-guard --sink any --fail-on-match .
+```
+
 ### Shared Flags and Exit Codes
 
 Every query verb accepts these options:
@@ -280,6 +305,7 @@ Exit codes follow grep conventions:
 - `0`: one or more endpoints matched.
 - `1`: nothing matched (trace miss, reach finding no touched endpoints, or query matching zero endpoints).
 - `2`: usage error (invalid flag, missing required argument, mutually exclusive flags, non-positive limit, scan arguments passed with `--from`, or unreadable report).
+- `3`: `query --fail-on-match` matched one or more endpoints (it then exits `0` when nothing matched).
 
 ### Output Row Format
 

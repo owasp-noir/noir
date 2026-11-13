@@ -558,6 +558,23 @@ describe Noir::CLI::Inspect do
         File.delete?(jsonl_path)
       end
     end
+
+    # The shape `noir scan --diff-* -f json` prints: query reads the
+    # `--change` categories of it, the new side by default.
+    it "reads the --change categories of a diff report, added and changed by default" do
+      path = File.tempname("noir-inspect-diff", ".json")
+      File.write(path, {"added" => [endpoint("GET", "/new")], "removed" => [endpoint("GET", "/gone")],
+                        "changed" => [endpoint("POST", "/edited")], "changes" => [] of String, "errors" => [] of String}.to_json)
+      begin
+        load = ->(changes : Array(String)) { Noir::CLI::Inspect.load_report(path, changes).map(&.url) }
+        load.call([] of String).should eq(["/new", "/edited"])
+        load.call(["removed"]).should eq(["/gone"])
+        load.call(["changed", "added"]).should eq(["/new", "/edited"])
+        load.call(["added", "changed", "removed"]).should eq(["/new", "/edited", "/gone"])
+      ensure
+        File.delete?(path)
+      end
+    end
   end
 
   describe ".emit" do
@@ -624,6 +641,28 @@ describe Noir::CLI::TraceCommand do
     Noir::CLI::Inspect.request_target("/a%2Fb/%7Euser").should eq("/a%2Fb/~user")
     Noir::CLI::Inspect.request_target("cli://tool/run").should eq("cli://tool/run")
     Noir::CLI::Inspect.request_target("/bad%zz").should eq("/bad%zz")
+  end
+end
+
+describe "query --change and --fail-on-match" do
+  it "takes --change as an OR list of added, changed, removed and rejects anything else" do
+    parsed = Noir::CLI::QueryCommand.parse_filters(["--change", "added,removed", "--fail-on-match", "./app"])
+    parsed.changes.should eq(["added", "removed"])
+    parsed.fail_on_match.should be_true
+    parsed.rest.should eq(["./app"])
+    parsed.errors.should be_empty
+    Noir::CLI::QueryCommand.parse_filters(["--change=changed"]).changes.should eq(["changed"])
+    Noir::CLI::QueryCommand.parse_filters([] of String).fail_on_match.should be_false
+    Noir::CLI::QueryCommand.parse_filters(["--change", "added,bogus"]).errors.should eq(["unknown --change bogus. Valid: added, changed, removed"])
+    Noir::CLI::QueryCommand.parse_filters(["--change"]).errors.should eq(["--change requires a value"])
+  end
+
+  it "exits 3 on a match and 0 on none under --fail-on-match, grep's codes otherwise" do
+    gate = ->(status : Int32, fail_on_match : Bool) { Noir::CLI::QueryCommand.exit_code(status, fail_on_match, status == 0 ? 2 : 0) }
+    gate.call(Noir::CLI::Inspect::EXIT_MATCH, true).should eq(Noir::DiffGate::EXIT_CODE)
+    gate.call(Noir::CLI::Inspect::EXIT_NO_MATCH, true).should eq(0)
+    gate.call(Noir::CLI::Inspect::EXIT_MATCH, false).should eq(0)
+    gate.call(Noir::CLI::Inspect::EXIT_NO_MATCH, false).should eq(1)
   end
 end
 

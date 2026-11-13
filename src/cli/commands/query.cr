@@ -21,13 +21,16 @@ module Noir::CLI::QueryCommand
   EXCLUDE_KEYS = VALUE_FLAGS.map(&.lchop("--"))
 
   record Parsed, filters : Inspect::Filters, rest : Array(String), errors : Array(String),
-    excludes : Array(Inspect::Filters) = [] of Inspect::Filters
+    excludes : Array(Inspect::Filters) = [] of Inspect::Filters,
+    changes : Array(String) = [] of String, fail_on_match : Bool = false
 
   def self.parse_filters(args : Array(String)) : Parsed
     rest = [] of String
     errors = [] of String
     values = new_values
     excludes = [] of Inspect::Filters
+    changes = [] of String
+    fail_on_match = false
     guard = nil
 
     i = 0
@@ -63,6 +66,22 @@ module Noir::CLI::QueryCommand
         if excluded = parse_exclude(value, errors)
           excludes << excluded
         end
+      when "--change"
+        value = inline
+        if value.nil?
+          i += 1
+          value = args[i]?
+        end
+        items = split_value(name, value)
+        unknown = items - Inspect::DIFF_CHANGES
+        if items.empty?
+          errors << "--change requires a value"
+        elsif !unknown.empty?
+          errors << "unknown --change #{unknown.join(", ")}. Valid: #{Inspect::DIFF_CHANGES.join(", ")}"
+        else
+          changes.concat(items)
+        end
+      when "--fail-on-match" then fail_on_match = true
       when "--"
         rest.concat(args[i..])
         break
@@ -72,7 +91,7 @@ module Noir::CLI::QueryCommand
       i += 1
     end
 
-    Parsed.new(build_filters(values, guard), rest, errors, excludes)
+    Parsed.new(build_filters(values, guard), rest, errors, excludes, changes, fail_on_match)
   end
 
   private def self.new_values : Hash(String, Array(String))
@@ -141,10 +160,22 @@ module Noir::CLI::QueryCommand
     Noir::CLI.die("noir query: #{errors.join("; ")}", Inspect::EXIT_USAGE) unless errors.empty?
 
     positionals, scan_args = Inspect.split_positionals(parsed.rest)
-    endpoints = Inspect.load(common, scan_args + positionals)
+    endpoints = Inspect.load(common, scan_args + positionals, parsed.changes)
     Inspect.query_warnings(endpoints, parsed.filters, parsed.excludes).each { |w| STDERR.puts "noir query: #{w}" }
     rows = Inspect.query(endpoints, parsed.filters, common.full, parsed.excludes)
-    exit(Inspect.emit(rows, common))
+    exit(exit_code(Inspect.emit(rows, common), parsed.fail_on_match, rows.size))
+  end
+
+  # `--fail-on-match` is the gate, not `! noir query ...`: inverting grep's
+  # exit code in shell also turns a mistyped flag (exit 2) into a green CI
+  # job. Usage errors never get here, so they keep their 2.
+  def self.exit_code(status : Int32, fail_on_match : Bool, matched : Int32) : Int32
+    return status unless fail_on_match
+    return 0 if status == Inspect::EXIT_NO_MATCH
+    # STDERR, as scan's `--fail-on`: the reason a job went red stays visible
+    # when the rows go to a file or a pipe.
+    STDERR.puts "noir query: --fail-on-match matched #{matched} endpoint#{matched == 1 ? "" : "s"}"
+    Noir::DiffGate::EXIT_CODE
   end
 
   def self.print_help(io : IO = STDOUT)
@@ -179,15 +210,25 @@ module Noir::CLI::QueryCommand
                                Drop the endpoints that filter matches (repeatable): any filter above
                                without its dashes, same values (e.g. protocol=cli, url='/health*')
 
+      #{Noir::CLI.section("DIFF:")}
+        --diff-ref <rev>, --diff-path <dir>
+                               Scan both sides and query only what the change touched
+        --change <c,...>       added, changed, removed (default: added,changed, the new side).
+                               Also picks the categories of a diff report read with --from
+
       #{Noir::CLI.section("EXAMPLES:")}
         noir query --no-guard --sink any ./app
         noir query --signal idor_review --method PUT,DELETE --from report.json
         noir query --path 'billing/**' --count ./app
         noir query --project services/orders --url /items ./mono
         noir query --exclude protocol=cli --exclude path='tests/**' --from report.json
+        noir query --diff-ref origin/main --no-guard --sink any --fail-on-match .
+        noir query --diff-path ../old --change removed .
 
       #{Noir::CLI.section("OPTIONS:")}
+        --fail-on-match        Exit 3 when anything matched and 0 when nothing did (a CI gate)
       #{Inspect.common_help}
+        3 matched under --fail-on-match
       HELP
   end
 end
