@@ -5503,3 +5503,26 @@ describe "AI context for outbound client declarations" do
     end
   end
 end
+
+describe "AI context for a framework-named guard helper" do
+  # linkwarden: `const user = await verifyUser({ req, res }); if (!user) return;`
+  # is the Next.js tagger's guard; the `verify…` name is not an input validator.
+  it "does not also list the helper as a validator" do
+    source = "export default async function handler(req, res) {\n  const user = await verifyUser({ req, res });\n  if (!user) return;\n  res.json(user);\n}\n"
+    with_temp_ai_context_source(source, ".ts") do |path|
+      endpoint = Endpoint.new("/api/v1/links", "POST")
+      details = endpoint.details
+      details.add_path(PathInfo.new(path, 1))
+      details.technology = "js_nextjs"
+      endpoint.details = details
+      endpoint.push_callee(Callee.new("verifyUser", path, 2))
+      endpoint.add_tag(Tag.new("auth", "Protected by Next.js helper `verifyUser()` (replies 401)", "nextjs_auth", path, 2))
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+
+      context.guards.map(&.source).should eq(["nextjs_auth"])
+      # Neither from the callee nor from the source scan of the handler.
+      context.validators.should be_empty
+    end
+  end
+end
