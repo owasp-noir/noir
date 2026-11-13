@@ -1553,31 +1553,22 @@ module Analyzer::Python
       nil
     end
 
+    # Local name -> imported name for every `from … import …` name. Read
+    # through the import graph's statement walker so a parenthesised or
+    # `\`-continued name list binds the same names the package map does.
     private def extract_python_import_aliases(content : ::String) : Hash(::String, ::String)
       aliases = Hash(::String, ::String).new
-      lines = content.split("\n")
-
-      lines.each_with_index do |line, index|
-        next unless line.lstrip.starts_with?("from ")
-
-        import_line = python_paren_delta(line) > 0 ? join_until_python_call_closes(lines, index, line) : line
-        import_match = import_line.match(/from\s+[^'"\s\\]+\s+import\s+(.+)/m)
-        next unless import_match
-
-        imports = import_match[1].strip
-        imports = imports.lchop("(").rchop(")").strip
-        split_python_arguments(imports).each do |import_expr|
-          import_expr = import_expr.gsub(/[()]/, "").strip
-          next if import_expr.empty? || import_expr == "*"
-
+      Noir::ImportGraph::Python.each_import_statement(content) do |from_import, names|
+        next if from_import.empty?
+        names.split(',').each do |import_expr|
+          import_expr = import_expr.strip
           if alias_match = import_expr.match(/\A([A-Za-z_][A-Za-z0-9_]*)\s+as\s+([A-Za-z_][A-Za-z0-9_]*)\z/)
             aliases[alias_match[2]] = alias_match[1]
-          elsif name_match = import_expr.match(/\A([A-Za-z_][A-Za-z0-9_]*)\z/)
-            aliases[name_match[1]] = name_match[1]
+          elsif import_expr.matches?(/\A[A-Za-z_][A-Za-z0-9_]*\z/)
+            aliases[import_expr] = import_expr
           end
         end
       end
-
       aliases
     end
 
@@ -1943,12 +1934,22 @@ module Analyzer::Python
       router_names.uniq
     end
 
+    # `registration_path` is the file the `register()` call is in: the
+    # urlconf, or the module an imported router comes from.
     private def extract_drf_router_endpoints(django_urls : DjangoUrls,
                                              mount_route : ::String,
                                              registration : DjangoDrfRegistration,
-                                             package_map) : Array(Endpoint)
-      resolved = resolve_django_view_reference(registration.view_ref, package_map)
-      return [] of Endpoint unless resolved
+                                             package_map,
+                                             registration_path : ::String) : Array(Endpoint)
+      # A ViewSet imported from a package (`from app.api.views import
+      # WidgetViewSet`, defined or re-exported by its `__init__.py`) has no
+      # file in the package map; follow the imports the way urlconf views do.
+      resolved = resolve_django_view_reference(registration.view_ref, package_map) ||
+                 imported_view_target(registration_path, registration.view_ref)
+      unless resolved
+        logger.debug "DRF router: #{registration.view_ref} for prefix '#{registration.prefix}' not resolved from #{registration_path}"
+        return [] of Endpoint
+      end
 
       filepath, class_name = resolved
       route_base = join_url_parts(django_urls.prefix, mount_route, registration.prefix)
@@ -1965,6 +1966,7 @@ module Analyzer::Python
       endpoints = [] of Endpoint
       registrations = drf_router_registrations[router_name]? || [] of DjangoDrfRegistration
       registration_package_map = package_map
+      registration_path = django_urls.filepath
       router_path_info = route_path
 
       if registrations.empty?
@@ -1981,11 +1983,12 @@ module Analyzer::Python
         return endpoints if registrations.empty?
 
         registration_package_map = find_imported_modules(@django_base_path, imported_path, imported_content)
+        registration_path = imported_path
         router_path_info = PathInfo.new(imported_path)
       end
 
       registrations.each do |registration|
-        extract_drf_router_endpoints(django_urls, mount_route, registration, registration_package_map).each do |endpoint|
+        extract_drf_router_endpoints(django_urls, mount_route, registration, registration_package_map, registration_path).each do |endpoint|
           append_code_path(endpoint.details, route_path)
           append_code_path(endpoint.details, router_path_info)
           endpoints << endpoint
