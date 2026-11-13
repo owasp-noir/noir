@@ -1294,10 +1294,13 @@ describe "JsMiscAuthTagger" do
       {"post", "/ideas", "async (req: FastifyRequest<{ Body: Idea, Params: P }>, reply) => {\n  const actor = actorFrom(req)\n  const user = await requestUser(req)\n  if (!actor || !user) {\n    return reply.unauthorized('Sign in')\n  }\n}"},
       {"get", "/mentions", "async (req, reply) => {\n  if (!hasUserSession(req)) return reply.code(401).send()\n}"},
       {"put", "/opts", "{ schema: {}, handler: async (req, reply) => {\n  if (!requestUserId(req)) {\n    throw app.httpErrors.unauthorized()\n  }\n} }"},
+      {"post", "/either", "async(req, reply): Promise<{ ok: boolean }> => {\n  const userId = requestUserId(req)\n  if (!userId || !isValid(req)) return reply.unauthorized()\n}"},
       # Something runs first, an `&&`, a value not read off the request, a 404,
       # a check that refuses the signed-in, a reply already sent.
       {"post", "/e", "async (req, reply) => {\n  if (!isAnonymous(req)) return reply.code(401).send()\n}"},
       {"post", "/f", "async (req, reply) => {\n  reply.send()\n  if (!requestUserId(req)) return reply.unauthorized()\n}"},
+      {"post", "/g", "async (req, reply) => {\n  const post = await createPost(req)\n  const user = requestUser(req)\n  if (!user) return reply.unauthorized()\n}"},
+      {"post", "/h", "async (req, reply) => {\n  const agent = userAgent(req)\n  if (!agent) return reply.code(401).send()\n}"},
       {"post", "/a", "async (req, reply) => {\n  log(req.body)\n  const userId = requestUserId(req)\n  if (!userId) {\n    return reply.unauthorized()\n  }\n}"},
       {"post", "/b", "async (req, reply) => {\n  const userId = requestUserId(req)\n  if (!userId && strict) {\n    return reply.unauthorized()\n  }\n}"},
       {"post", "/c", "async (req, reply) => {\n  const page = pages[req.params.id]\n  if (!page) {\n    return reply.unauthorized()\n  }\n}"},
@@ -1323,8 +1326,8 @@ describe "JsMiscAuthTagger" do
     JsMiscAuthTagger.new(noir_options).perform(endpoints)
 
     endpoints[0].tags.map(&.description).should eq(["Protected by Fastify handler check `if (!userId)` (replies 401)"])
-    endpoints[1..3].each(&.tags.size.should(eq(1)))
-    endpoints[4..].each(&.tags.should(be_empty))
+    endpoints[1..4].each(&.tags.size.should(eq(1)))
+    endpoints[5..].each(&.tags.should(be_empty))
   ensure
     FileUtils.rm_rf(tmpdir) if tmpdir
   end
