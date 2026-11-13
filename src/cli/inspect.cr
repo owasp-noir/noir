@@ -1076,6 +1076,7 @@ module Noir::CLI::Inspect
   # loud instead of returning an empty answer that looks final.
   def self.filter_warnings(endpoints : Array(Endpoint), filters : Filters) : Array(String)
     warnings = [] of String
+    warnings << GATEWAY_JOIN_NOTE if gateway_join?(filters)
     asks_context = !filters.guard.nil? || !(filters.sinks.empty? && filters.sources.empty? && filters.signals.empty? && filters.validators.empty?)
     if asks_context && endpoints.none?(&.ai_context)
       warnings << "no endpoint carries ai_context; scan with --ai-context (or drop --from)"
@@ -1118,6 +1119,19 @@ module Noir::CLI::Inspect
       warnings << "no endpoint carries #{label} #{unknown.join(", ")}; in this report: #{seen.empty? ? "(none)" : seen.join(", ")}"
     end
     warnings
+  end
+
+  GATEWAY_JOIN_NOTE = "gateway rules join a route only on an exact method and path; a prefix or catch-all rule does not cover the routes under it yet"
+
+  # A `location /api` or an Ingress `/` never equals a route under it, so
+  # "served and routed" comes back empty and "not behind a gateway" comes
+  # back full on a service that is all behind one. Joining gateway with
+  # another view is when that reads as a finding; listing the rules is not.
+  private def self.gateway_join?(filters : Filters) : Bool
+    lists = filters.seen_in + (filters.not_seen_in.empty? ? [] of Array(String) : [filters.not_seen_in])
+    lists.each_with_index.any? do |list, i|
+      list.includes?("gateway") && lists.each_with_index.any? { |other, j| j != i && other.any? { |view| view != "gateway" } }
+    end
   end
 
   # `excludes` are the `--exclude` filters: an endpoint any of them matches

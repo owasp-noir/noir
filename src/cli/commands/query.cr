@@ -97,8 +97,8 @@ module Noir::CLI::QueryCommand
           errors << "unknown view #{unknown.join(", ")} for #{name}. Valid: #{NoirTechs::VIEWS.join(", ")}"
         elsif name == "--seen-in"
           # Unlike every other value flag, a repeat ANDs: `--seen-in code
-          # --seen-in gateway` is "served by code and routed by a gateway",
-          # the question worth asking; the OR is already `code,gateway`.
+          # --seen-in traffic` is "served and exercised by a capture", the
+          # question worth asking; the OR is already `code,traffic`.
           seen_in << items
         else
           not_seen_in.concat(items)
@@ -249,7 +249,7 @@ module Noir::CLI::QueryCommand
         noir query --path 'billing/**' --count ./app
         noir query --project services/orders --url /items ./mono
         noir query --seen-in code --not-seen-in spec ./app     # served, missing from the spec
-        noir query --seen-in code --seen-in gateway ./app      # served and routed by a gateway
+        noir query --seen-in spec --not-seen-in code ./app     # in the spec, served by nothing found
         noir query --exclude protocol=cli --exclude path='tests/**' --from report.json
         noir query --diff-ref origin/main --no-guard --sink any --fail-on-match .
         noir query --diff-path ../old --change removed .

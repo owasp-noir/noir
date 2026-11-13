@@ -893,6 +893,24 @@ describe "query --seen-in / --not-seen-in (#3565)" do
     Noir::CLI::Inspect.filter_warnings([internal, routed], f).should eq(["no endpoint carries view spec; in this report: code, gateway"])
     Noir::CLI::Inspect.filter_warnings(endpoints, f).should be_empty
   end
+
+  it "notes the exact-match limit only when gateway is joined with another view" do
+    note = Noir::CLI::Inspect::GATEWAY_JOIN_NOTE
+    {
+      ["--seen-in", "code", "--not-seen-in", "gateway"]      => true,
+      ["--seen-in", "code", "--seen-in", "gateway"]          => true,
+      ["--seen-in", "gateway", "--not-seen-in", "code"]      => true,
+      ["--seen-in", "spec", "--seen-in", "code,gateway"]     => true,
+      ["--seen-in", "gateway"]                               => false,
+      ["--seen-in", "code,gateway"]                          => false,
+      ["--not-seen-in", "gateway"]                           => false,
+      ["--seen-in", "code", "--not-seen-in", "spec,traffic"] => false,
+      ["--seen-in", "code", "--seen-in", "traffic"]          => false,
+    }.each do |argv, fires|
+      f = Noir::CLI::QueryCommand.parse_filters(argv).filters
+      Noir::CLI::Inspect.filter_warnings(endpoints, f).includes?(note).should eq(fires), argv.join(" ")
+    end
+  end
 end
 
 describe "trace and query route matching (#3277)" do

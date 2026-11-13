@@ -254,15 +254,17 @@ noir query --no-guard --exclude sink=any --from report.json                 # �
 - `--seen-in <view,...>`: 이 뷰에 속한 기술 중 하나가 보고한 엔드포인트
 - `--not-seen-in <view,...>`: 이 뷰에 속한 기술은 하나도 보고하지 않은 엔드포인트
 
-모든 기술은 뷰 하나에 속합니다. `code`(프레임워크 분석기, 그리고 Strapi나 Supabase처럼 스키마로 API를 만들어 서빙하는 백엔드), `spec`(OAS, RAML, gRPC, GraphQL SDL, WSDL 등), `gateway`(nginx, Ingress, Kong, Envoy, Terraform, serverless.yml 등), `traffic`(HAR, Burp, Postman, Bruno, `.http` 파일 등)입니다. 기술마다 어느 뷰인지는 `noir list techs`에 나옵니다. 두 출처가 같은 메서드와 URL을 보고하면 옵티마이저가 하나의 엔드포인트로 합치고 기여한 기술을 모두 남기는데, 뷰 필터는 그 기술 전부를 봅니다. 다른 필터처럼 쉼표 목록은 OR이지만, `--seen-in`을 반복하면 AND입니다. "코드가 서빙하면서 게이트웨이도 라우팅하는가"가 이 필터로 묻고 싶은 질문이기 때문입니다.
+모든 기술은 뷰 하나에 속합니다. `code`(프레임워크 분석기, 그리고 Strapi나 Supabase처럼 스키마로 API를 만들어 서빙하는 백엔드), `spec`(OAS, RAML, gRPC, GraphQL SDL, WSDL 등), `gateway`(nginx, Ingress, Kong, Envoy, Terraform, serverless.yml 등), `traffic`(HAR, Burp, Postman, Bruno, `.http` 파일 등)입니다. 기술마다 어느 뷰인지는 `noir list techs`에 나옵니다. 두 출처가 같은 메서드와 URL을 보고하면 옵티마이저가 하나의 엔드포인트로 합치고 기여한 기술을 모두 남기는데, 뷰 필터는 그 기술 전부를 봅니다. 다른 필터처럼 쉼표 목록은 OR이지만, `--seen-in`을 반복하면 AND입니다. `--seen-in code --seen-in traffic`은 "서빙되면서 캡처나 컬렉션에도 등장하는가"라는 뜻입니다.
 
 ```bash
 noir query --seen-in code --not-seen-in spec ./app        # shadow: 서빙되지만 명세에 없음
 noir query --seen-in spec --not-seen-in code ./app        # zombie: 명세에는 있지만 서빙하는 코드를 못 찾음
-noir query --seen-in code --seen-in gateway ./app         # exposed: 서빙되고 게이트웨이도 라우팅함
+noir query --seen-in gateway ./app                        # 게이트웨이·라우팅 규칙 자체
 ```
 
-지금은 정확히 일치할 때만 대조됩니다. Noir가 흔한 파라미터 표기를 통일하므로 명세의 `/orders/{id}`와 코드의 `/orders/:id`는 합쳐지지만, 서비스는 모르는 게이트웨이 접두사(`/orders` 앞의 `/api`)가 붙으면 따로 남습니다. 기술 정보가 아예 없는 엔드포인트(손으로 만든 리포트 등)는 두 필터 어디에도 매칭되지 않습니다.
+지금은 정확히 일치할 때만 대조됩니다. Noir가 흔한 파라미터 표기를 통일하므로 명세의 `/orders/{id}`와 코드의 `/orders/:id`는 합쳐지지만, 한쪽만 아는 접두사(`/orders` 앞의 `/api`)가 붙으면 따로 남습니다. 기술 정보가 아예 없는 엔드포인트(손으로 만든 리포트 등)는 두 필터 어디에도 매칭되지 않습니다.
+
+게이트웨이 규칙은 이 대조에서 약한 쪽입니다. 게이트웨이 규칙은 메서드와 경로가 정확히 같을 때만 라우트와 합쳐지고, 접두사나 catch-all 규칙(`location /api`, Ingress의 `/`)은 아직 그 아래 라우트를 포괄하지 못합니다. 그래서 code와 gateway를 함께 걸었을 때 결과가 비어 있거나, "게이트웨이 뒤에 없음" 목록이 길게 나와도 그 자체로는 발견이 아닙니다. `gateway`를 다른 뷰와 함께 쓰면 `query`가 stderr로 이 점을 알려 줍니다.
 
 패턴 매칭 규칙:
 - 글롭 문자(`*`, `?`, `[`): `*`는 `/`를 넘어 매칭되고 `{id}`는 글자 그대로 비교됩니다. 글롭 문자가 없으면 부분 문자열로 매칭됩니다.

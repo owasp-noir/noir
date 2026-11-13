@@ -121,10 +121,14 @@ Filters AND together; a comma list inside one filter is OR.
 `--seen-in` / `--not-seen-in` compare the sources that report a route: views
 are `code`, `spec` (OAS, gRPC, ...), `gateway` (nginx, Ingress, Kong, ...) and
 `traffic` (HAR, Postman, ...). Unlike every other filter, repeating
-`--seen-in` ANDs: `--seen-in code --seen-in gateway` is served and routed;
-`--seen-in code --not-seen-in spec` is served but undocumented. The match is
-the scan's own `(method, url)` merge, so a gateway prefix the code does not
-carry keeps the two apart.
+`--seen-in` ANDs. `--seen-in code --not-seen-in spec` is served but
+undocumented; `--seen-in spec --not-seen-in code` is in the spec, served by
+nothing found. The match is the scan's own exact `(method, url)` merge. A
+gateway rule joins a route only on an exact method and path; a prefix or
+catch-all rule (`location /api`, an Ingress `/`) does not cover the routes
+under it yet, so an empty code+gateway result or a full "not behind a
+gateway" list is not a finding (stderr says so). `--seen-in gateway` alone
+lists the rules.
 
 A glob is one when it contains `*`, `?` or `[`: `*` crosses `/` (`'*users*'`
 finds `/accounts/users/`), `{id}` is literal (`'/owners/{ownerId}/*'` works as
