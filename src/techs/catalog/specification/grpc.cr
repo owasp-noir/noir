@@ -4,6 +4,7 @@
 module NoirTechs::Catalog::Specification
   GRPC = {
     :grpc => {
+      :view      => "spec",
       :format    => ["PROTOBUF"],
       :similar   => ["grpc", "protobuf", "proto", "grpc-gateway"],
       :supported => {

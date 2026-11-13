@@ -4,6 +4,7 @@
 module NoirTechs::Catalog::Specification
   HAR = {
     :har => {
+      :view      => "traffic",
       :format    => ["JSON"],
       :similar   => ["har"],
       :supported => {

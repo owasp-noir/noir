@@ -4,6 +4,7 @@
 module NoirTechs::Catalog::Specification
   K8S_INGRESS = {
     :k8s_ingress => {
+      :view      => "gateway",
       :format    => ["YAML"],
       :similar   => ["kubernetes ingress", "k8s ingress", "kubernetes.io/ingress", "networking.k8s.io/v1"],
       :supported => {

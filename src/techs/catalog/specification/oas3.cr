@@ -4,6 +4,7 @@
 module NoirTechs::Catalog::Specification
   OAS3 = {
     :oas3 => {
+      :view      => "spec",
       :format    => ["JSON", "YAML"],
       :similar   => ["oas 3.0", "oas_3_0"],
       :supported => {

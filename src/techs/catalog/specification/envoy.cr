@@ -4,6 +4,7 @@
 module NoirTechs::Catalog::Specification
   ENVOY = {
     :envoy => {
+      :view      => "gateway",
       :format    => ["JSON", "YAML"],
       :similar   => ["envoy", "envoy-proxy", "envoy_proxy", "istio-envoy"],
       :supported => {

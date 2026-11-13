@@ -4,6 +4,7 @@
 module NoirTechs::Catalog::Specification
   CADDY = {
     :caddy => {
+      :view      => "gateway",
       :format    => ["CADDYFILE", "JSON"],
       :similar   => ["caddy", "caddyfile", "caddy.json"],
       :supported => {

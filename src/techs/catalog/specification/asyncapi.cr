@@ -4,6 +4,7 @@
 module NoirTechs::Catalog::Specification
   ASYNCAPI = {
     :asyncapi => {
+      :view      => "spec",
       :format    => ["JSON", "YAML"],
       :similar   => ["asyncapi", "async-api", "async_api"],
       :supported => {

@@ -4,6 +4,7 @@
 module NoirTechs::Catalog::Specification
   APIGEE = {
     :apigee => {
+      :view      => "gateway",
       :format    => ["XML"],
       :similar   => ["apigee", "apigee edge", "apigee x", "apiproxy"],
       :supported => {

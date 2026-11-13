@@ -4,6 +4,7 @@
 module NoirTechs::Catalog::Specification
   THRIFT = {
     :thrift => {
+      :view      => "spec",
       :format    => ["THRIFT"],
       :similar   => ["thrift", "apache-thrift", "thrift-idl"],
       :supported => {

@@ -4,6 +4,7 @@
 module NoirTechs::Catalog::Specification
   HOPPSCOTCH = {
     :hoppscotch => {
+      :view      => "traffic",
       :format    => ["JSON"],
       :similar   => ["hoppscotch", "hoppscotch-collection"],
       :supported => {

@@ -4,6 +4,7 @@
 module NoirTechs::Catalog::Specification
   RAML = {
     :raml => {
+      :view      => "spec",
       :format    => ["YAML"],
       :similar   => ["raml"],
       :supported => {

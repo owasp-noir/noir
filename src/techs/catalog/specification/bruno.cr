@@ -4,6 +4,7 @@
 module NoirTechs::Catalog::Specification
   BRUNO = {
     :bruno => {
+      :view      => "traffic",
       :format    => ["BRU"],
       :similar   => ["bruno", "bru"],
       :supported => {

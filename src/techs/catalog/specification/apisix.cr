@@ -4,6 +4,7 @@
 module NoirTechs::Catalog::Specification
   APISIX = {
     :apisix => {
+      :view      => "gateway",
       :format    => ["JSON", "YAML"],
       :similar   => ["apisix", "apache apisix", "apache-apisix", "apache_apisix"],
       :supported => {

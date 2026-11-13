@@ -4,6 +4,7 @@
 module NoirTechs::Catalog::Specification
   SERVERLESS_FRAMEWORK = {
     :serverless_framework => {
+      :view      => "gateway",
       :format    => ["YAML", "JSON"],
       :similar   => ["serverless framework", "serverless.yml", "serverless.yaml", "serverless.json", "aws lambda"],
       :supported => {

@@ -4,6 +4,7 @@
 module NoirTechs::Catalog::Specification
   NGINX = {
     :nginx => {
+      :view      => "gateway",
       :format    => ["CONF"],
       :similar   => ["nginx", "nginx.conf", "sites-enabled", "conf.d"],
       :supported => {

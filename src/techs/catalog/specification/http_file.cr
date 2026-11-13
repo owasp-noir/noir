@@ -4,6 +4,7 @@
 module NoirTechs::Catalog::Specification
   HTTP_FILE = {
     :http_file => {
+      :view      => "traffic",
       :format    => ["HTTP", "REST"],
       :similar   => ["http_file", "rest-client", "rest_client", "http-client", "http_client", ".http", ".rest"],
       :supported => {

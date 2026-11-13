@@ -19,6 +19,7 @@ module NoirTechs::Catalog::Specification
     # are `graphql_sdl`'s aliases and moving them would silently repoint
     # every existing `-t graphql` at a different analyzer.
     :graphql_operation => {
+      :view    => "traffic",
       :format  => ["GRAPHQL"],
       :similar => ["graphql_operation", "graphql-operation", "graphql_operations",
                    "graphql-operations", "graphql_document", "graphql-document"],

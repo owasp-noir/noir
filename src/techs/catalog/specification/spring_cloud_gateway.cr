@@ -4,6 +4,7 @@
 module NoirTechs::Catalog::Specification
   SPRING_CLOUD_GATEWAY = {
     :spring_cloud_gateway => {
+      :view      => "gateway",
       :format    => ["YAML", "PROPERTIES"],
       :similar   => ["spring cloud gateway", "spring-cloud-gateway", "scg"],
       :supported => {

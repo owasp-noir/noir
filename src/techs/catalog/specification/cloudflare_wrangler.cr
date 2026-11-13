@@ -4,6 +4,7 @@
 module NoirTechs::Catalog::Specification
   CLOUDFLARE_WRANGLER = {
     :cloudflare_wrangler => {
+      :view      => "gateway",
       :format    => ["TOML", "JSON"],
       :similar   => ["cloudflare", "cloudflare workers", "wrangler", "wrangler.toml", "wrangler.json", "wrangler.jsonc"],
       :supported => {

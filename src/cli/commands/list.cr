@@ -240,6 +240,8 @@ module Noir::CLI::ListCommand
   private def self.techs_document : JSON::Any
     doc = JSON.parse(NoirTechs.techs.to_json)
     doc.as_h.each do |tech, info|
+      # Only declarations carry `:view`; everything else is code.
+      info.as_h["view"] = JSON::Any.new(NoirTechs.view(tech))
       next unless supported = info.as_h["supported"]?
       target = supported.as_h
       target["callee"] = JSON::Any.new(NoirTechs.context_supported?(tech, "callee"))

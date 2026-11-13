@@ -4,6 +4,7 @@
 module NoirTechs::Catalog::Specification
   BURP = {
     :burp => {
+      :view      => "traffic",
       :format    => ["XML"],
       :similar   => ["burp", "burpsuite", "burp-suite", "burp_suite", "burp-sitemap"],
       :supported => {

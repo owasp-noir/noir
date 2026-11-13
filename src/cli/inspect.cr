@@ -955,16 +955,25 @@ module Noir::CLI::Inspect
     sinks : Array(String) = [] of String,
     sources : Array(String) = [] of String,
     signals : Array(String) = [] of String,
-    validators : Array(String) = [] of String do
+    validators : Array(String) = [] of String,
+    # One OR list per `--seen-in`; the lists AND (see QueryCommand).
+    seen_in : Array(Array(String)) = [] of Array(String),
+    not_seen_in : Array(String) = [] of String do
     def matches?(endpoint : Endpoint) : Bool
       return false unless methods.empty? || Inspect.method_listed?(methods, endpoint.method)
       return false unless (u = url).nil? || Inspect.glob_or_substring?(u, endpoint.url)
       return false unless (p = path).nil? || endpoint.details.code_paths.any? { |cp| Inspect.path_glob?(p, cp.path) }
       return false unless projects.empty? || projects.any? { |wanted| Inspect.project_matches?(wanted, endpoint.details.project) }
       return false unless (h = handler).nil? || endpoint.handler.try { |eh| Inspect.glob_or_substring?(h, eh.name) || Inspect.path_glob?(h, eh.path || "") }
-      unless techs.empty?
-        have = endpoint.details.technologies.empty? ? [endpoint.details.technology].compact : endpoint.details.technologies
-        return false unless (have & techs).present?
+      return false unless techs.empty? || (Inspect.technologies(endpoint) & techs).present?
+      unless seen_in.empty? && not_seen_in.empty?
+        views = Inspect.views(endpoint)
+        # No technology at all (a hand-made or foreign report) says nothing
+        # about where the route was seen, so it is neither "in the spec" nor
+        # "missing from the spec".
+        return false if views.empty?
+        return false unless seen_in.all? { |listed| (views & listed).present? }
+        return false if (views & not_seen_in).present?
       end
       return false unless tags.empty? || endpoint.tags.any? { |t| tags.includes?(t.name) }
       # One parameter has to satisfy both `--param` and `--param-type`.
@@ -992,6 +1001,16 @@ module Noir::CLI::Inspect
                           end
       param_types.empty? || param_types.includes?(param.param_type) || param_types.includes?(param.request_type)
     end
+  end
+
+  # Every technology that reported the endpoint; `technologies` is only
+  # serialized once two contributed.
+  def self.technologies(endpoint : Endpoint) : Array(String)
+    endpoint.details.technologies.empty? ? [endpoint.details.technology].compact : endpoint.details.technologies
+  end
+
+  def self.views(endpoint : Endpoint) : Array(String)
+    technologies(endpoint).map { |technology| NoirTechs.view(technology) }.uniq!
   end
 
   # `any` (or an empty bucket filter) is satisfied by a non-empty bucket.
@@ -1065,7 +1084,10 @@ module Noir::CLI::Inspect
     contexts = endpoints.compact_map(&.ai_context)
     {
       {"method", filters.methods, endpoints.map(&.method.upcase)},
-      {"tech", filters.techs, endpoints.flat_map { |e| e.details.technologies.empty? ? [e.details.technology].compact : e.details.technologies }},
+      {"tech", filters.techs, endpoints.flat_map { |e| technologies(e) }},
+      # `--not-seen-in spec` on a scan with no spec keeps every route, which
+      # reads like a finding; this says there was nothing to compare with.
+      {"view", filters.seen_in.flatten + filters.not_seen_in, endpoints.flat_map { |e| views(e) }},
       {"tag", filters.tags, endpoints.flat_map(&.tags.map(&.name))},
       {"param", filters.params, endpoints.flat_map(&.params.map(&.name))},
       {"param type", filters.param_types, endpoints.flat_map { |e| e.params.flat_map { |p| [p.param_type, p.request_type] } }},

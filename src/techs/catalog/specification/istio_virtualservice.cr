@@ -4,6 +4,7 @@
 module NoirTechs::Catalog::Specification
   ISTIO_VIRTUALSERVICE = {
     :istio_virtualservice => {
+      :view      => "gateway",
       :format    => ["YAML"],
       :similar   => ["istio", "virtualservice", "networking.istio.io"],
       :supported => {

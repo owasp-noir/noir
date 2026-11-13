@@ -4,6 +4,7 @@
 module NoirTechs::Catalog::Specification
   TYPESPEC = {
     :typespec => {
+      :view      => "spec",
       :format    => ["TYPESPEC"],
       :similar   => ["typespec", "tsp", "cadl"],
       :supported => {

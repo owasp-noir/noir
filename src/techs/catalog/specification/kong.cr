@@ -4,6 +4,7 @@
 module NoirTechs::Catalog::Specification
   KONG = {
     :kong => {
+      :view      => "gateway",
       :format    => ["YAML"],
       :similar   => ["kong", "kong declarative", "deck", "kong ingress controller", "kic"],
       :supported => {

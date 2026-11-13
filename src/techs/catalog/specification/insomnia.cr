@@ -4,6 +4,7 @@
 module NoirTechs::Catalog::Specification
   INSOMNIA = {
     :insomnia => {
+      :view      => "traffic",
       :format    => ["JSON", "YAML"],
       :similar   => ["insomnia", "insomnia collection", "insomnia export"],
       :supported => {

@@ -4,6 +4,7 @@
 module NoirTechs::Catalog::Specification
   WSDL = {
     :wsdl => {
+      :view      => "spec",
       :format    => ["XML"],
       :similar   => ["wsdl", "soap"],
       :supported => {

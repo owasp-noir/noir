@@ -4,6 +4,7 @@
 module NoirTechs::Catalog::Specification
   MITMPROXY = {
     :mitmproxy => {
+      :view      => "traffic",
       :format    => ["TNETSTRING"],
       :similar   => ["mitmproxy", "mitm", "mitmdump", "flow", "flows"],
       :supported => {

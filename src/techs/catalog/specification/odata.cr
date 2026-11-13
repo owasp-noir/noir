@@ -4,6 +4,7 @@
 module NoirTechs::Catalog::Specification
   ODATA = {
     :odata => {
+      :view      => "spec",
       :format    => ["XML"],
       :similar   => ["odata", "edmx", "csdl"],
       :supported => {

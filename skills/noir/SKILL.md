@@ -115,8 +115,16 @@ Filters AND together; a comma list inside one filter is OR.
 --param <name,..>        --param-type query,json,form,header,cookie,path
 --protocol http,ws,cli   --guard | --no-guard
 --sink <kind,..|any>     --source <kind,..|any>   --signal <kind,..|any>
---validator <kind,..|any>
+--validator <kind,..|any> --seen-in <view,..>   --not-seen-in <view,..>
 ```
+
+`--seen-in` / `--not-seen-in` compare the sources that report a route: views
+are `code`, `spec` (OAS, gRPC, ...), `gateway` (nginx, Ingress, Kong, ...) and
+`traffic` (HAR, Postman, ...). Unlike every other filter, repeating
+`--seen-in` ANDs: `--seen-in code --seen-in gateway` is served and routed;
+`--seen-in code --not-seen-in spec` is served but undocumented. The match is
+the scan's own `(method, url)` merge, so a gateway prefix the code does not
+carry keeps the two apart.
 
 A glob is one when it contains `*`, `?` or `[`: `*` crosses `/` (`'*users*'`
 finds `/accounts/users/`), `{id}` is literal (`'/owners/{ownerId}/*'` works as

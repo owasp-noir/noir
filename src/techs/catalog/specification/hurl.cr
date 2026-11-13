@@ -4,6 +4,7 @@
 module NoirTechs::Catalog::Specification
   HURL = {
     :hurl => {
+      :view      => "traffic",
       :format    => ["HURL"],
       :similar   => ["hurl", ".hurl"],
       :supported => {

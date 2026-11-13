@@ -4,6 +4,7 @@
 module NoirTechs::Catalog::Specification
   TYK = {
     :tyk => {
+      :view      => "gateway",
       :format    => ["JSON", "YAML"],
       :similar   => ["tyk", "tyk gateway", "tyk api definition", "tyk operator"],
       :supported => {

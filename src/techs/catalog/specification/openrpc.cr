@@ -4,6 +4,7 @@
 module NoirTechs::Catalog::Specification
   OPENRPC = {
     :openrpc => {
+      :view      => "spec",
       :format    => ["JSON"],
       :similar   => ["openrpc", "open-rpc", "open_rpc", "jsonrpc", "json-rpc", "json_rpc"],
       :supported => {

@@ -4,6 +4,7 @@
 module NoirTechs::Catalog::Specification
   KAMAL = {
     :kamal => {
+      :view      => "gateway",
       :format    => ["YAML"],
       :similar   => ["kamal", "kamal deploy", "kamal-deploy", "kamal proxy", "deploy.yml"],
       :supported => {

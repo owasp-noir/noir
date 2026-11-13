@@ -4,6 +4,7 @@
 module NoirTechs::Catalog::Specification
   K8S_GATEWAY_API = {
     :k8s_gateway_api => {
+      :view      => "gateway",
       :format    => ["YAML"],
       :similar   => ["kubernetes gateway api", "k8s gateway api", "httproute", "gateway.networking.k8s.io"],
       :supported => {

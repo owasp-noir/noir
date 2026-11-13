@@ -4,6 +4,7 @@
 module NoirTechs::Catalog::Specification
   OAS2 = {
     :oas2 => {
+      :view      => "spec",
       :format    => ["JSON", "YAML"],
       :similar   => ["oas 2.0", "oas_2_0", "swagger 2.0", "swagger_2_0", "swagger"],
       :supported => {

@@ -102,6 +102,23 @@ module NoirTechs
   # implementation reported (`spec-only`).
   DECLARATION_TECHS = TECHS.compact_map { |key, value| key.to_s unless value.has_key?(:language) || value.has_key?(:implementation) }.to_set
 
+  # Which view of a service a tech reads: the code that serves it, an API
+  # description, the edge / routing config in front of it, or a capture or
+  # client collection of requests sent to it. `noir query --seen-in` asks
+  # this of every technology a merged endpoint kept.
+  #
+  # A declaration tech names its view with `:view` on its catalog entry
+  # (spec/unit_test/techs/registry_integrity_spec.cr fails until it does);
+  # every other tech serves its routes, so it is `code`. So is a name with
+  # no catalog entry: the `-u` file hooks and `ai` read source files.
+  VIEWS = %w[code spec gateway traffic]
+
+  TECH_VIEWS = TECHS.compact_map { |key, value| {key.to_s, value[:view].to_s} if value.has_key?(:view) }.to_h
+
+  def self.view(tech : String) : String
+    TECH_VIEWS[tech]? || "code"
+  end
+
   # "When both are detected, X owns the routes and Y is noise" — declared on
   # X's catalog entry as `:supersedes => ["y"]`.
   #

@@ -834,6 +834,67 @@ describe "query --project" do
   end
 end
 
+describe "query --seen-in / --not-seen-in (#3565)" do
+  merged = ->(method : String, url : String, technologies : Array(String)) do
+    ep = endpoint(method, url, tech: technologies.first)
+    details = ep.details
+    details.technologies = technologies
+    ep.details = details
+    ep
+  end
+  documented = merged.call("GET", "/orders/{id}", ["go_gin", "oas3"])
+  routed = merged.call("GET", "/orders", ["go_gin", "nginx"])
+  internal = endpoint("GET", "/debug")
+  zombie = endpoint("DELETE", "/orders/{id}", tech: "oas3")
+  captured = endpoint("GET", "/login", tech: "har")
+  unknown = Endpoint.new("/legacy", "GET") # a report row with no technology
+  endpoints = [documented, routed, internal, zombie, captured, unknown]
+
+  query = ->(argv : Array(String)) do
+    parsed = Noir::CLI::QueryCommand.parse_filters(argv)
+    parsed.errors.should be_empty
+    Noir::CLI::Inspect.query(endpoints, parsed.filters, false, parsed.excludes).map { |row| "#{row.method} #{row.url}" }
+  end
+
+  it "maps each technology to its view, unknown names to code" do
+    {"go_gin" => "code", "strapi" => "code", "file_url" => "code", "oas3" => "spec",
+     "nginx" => "gateway", "k8s_ingress" => "gateway", "har" => "traffic", "postman" => "traffic"}.each do |tech, view|
+      NoirTechs.view(tech).should eq(view), tech
+    end
+    Noir::CLI::Inspect.views(documented).should eq(["code", "spec"])
+    Noir::CLI::Inspect.views(unknown).should be_empty
+  end
+
+  it "ORs a comma list and ANDs a repeated --seen-in" do
+    query.call(["--seen-in", "spec,gateway"]).should eq(["GET /orders/{id}", "GET /orders", "DELETE /orders/{id}"])
+    query.call(["--seen-in", "code", "--seen-in", "gateway"]).should eq(["GET /orders"])
+    query.call(["--seen-in=code", "--seen-in=spec,gateway", "--seen-in", "gateway"]).should eq(["GET /orders"])
+  end
+
+  it "keeps what no listed view reported, and claims nothing about a row with no technology" do
+    query.call(["--not-seen-in", "spec"]).should eq(["GET /orders", "GET /debug", "GET /login"])
+    query.call(["--seen-in", "code", "--not-seen-in", "spec"]).should eq(["GET /orders", "GET /debug"])
+    query.call(["--seen-in", "spec", "--not-seen-in", "code"]).should eq(["DELETE /orders/{id}"])
+    query.call(["--not-seen-in", "code,spec,gateway"]).should eq(["GET /login"])
+    query.call(["--seen-in", "code", "--method", "GET", "--url", "/orders*"]).should eq(["GET /orders/{id}", "GET /orders"])
+  end
+
+  it "rejects an unknown or empty view, naming the valid ones, and is no --exclude key" do
+    Noir::CLI::QueryCommand.parse_filters(["--seen-in", "code,api"]).errors
+      .should eq(["unknown view api for --seen-in. Valid: code, spec, gateway, traffic"])
+    Noir::CLI::QueryCommand.parse_filters(["--not-seen-in", "Spec"]).errors
+      .should eq(["unknown view Spec for --not-seen-in. Valid: code, spec, gateway, traffic"])
+    Noir::CLI::QueryCommand.parse_filters(["--seen-in", ","]).errors.should eq(["--seen-in requires a value"])
+    Noir::CLI::QueryCommand.parse_filters(["--exclude", "seen-in=code"]).errors.first.should start_with("--exclude expects")
+  end
+
+  it "warns when no endpoint was reported by a named view" do
+    f = Noir::CLI::QueryCommand.parse_filters(["--seen-in", "code", "--not-seen-in", "spec"]).filters
+    Noir::CLI::Inspect.filter_warnings([internal, routed], f).should eq(["no endpoint carries view spec; in this report: code, gateway"])
+    Noir::CLI::Inspect.filter_warnings(endpoints, f).should be_empty
+  end
+end
+
 describe "trace and query route matching (#3277)" do
   trace = ->(routes : Array(Endpoint), method : String?, path : String) { Noir::CLI::Inspect.trace(routes, method, path).map { |m| {m.endpoint.url, m.matched_by} } }
 
