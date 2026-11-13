@@ -387,7 +387,7 @@ module Noir
       handler_node : LibTreeSitter::TSNode? = nil
       Noir::TreeSitter.each_named_arg(args) do |arg|
         if raw_path.nil?
-          if s = string_expr_text(arg, source, string_values)
+          if s = route_path_text(arg, source, string_values)
             raw_path = s
           elsif Noir::TreeSitter.node_type(arg) == "interpreted_string_literal" || Noir::TreeSitter.node_type(arg) == "raw_string_literal"
             raw_path = decode_string_literal(arg, source)

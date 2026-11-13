@@ -1565,7 +1565,7 @@ module Noir
           # Previously the scan walked past the non-string first arg and
           # latched onto a later string literal, surfacing phantom routes
           # like `PUT /key` (observed across beego cache examples).
-          raw_path = string_expr_text(arg, source, string_values)
+          raw_path = route_path_text(arg, source, string_values)
         elsif Noir::TreeSitter.node_type(arg) != "interpreted_string_literal" &&
               Noir::TreeSitter.node_type(arg) != "raw_string_literal"
           # First non-string positional arg after the path is treated as
@@ -2245,10 +2245,14 @@ module Noir
     # generated Go file — a 20k-term string concatenation, `((((...))))`
     # — would run the fiber stack out. A stack overflow aborts the whole
     # process, so the scan dies rather than the file.
+    #
+    # `partial` keeps the `/`-rooted literal tail of a `+` chain whose
+    # leading operands do not resolve; see `route_path_text`.
     private def string_expr_text(node : LibTreeSitter::TSNode,
                                  source : String,
                                  values : Hash(String, String),
-                                 depth : Int32 = 0) : String?
+                                 depth : Int32 = 0,
+                                 partial : Bool = false) : String?
       return if depth > Noir::TreeSitter::MAX_AST_DEPTH
 
       case Noir::TreeSitter.node_type(node)
@@ -2260,13 +2264,18 @@ module Noir
         left = Noir::TreeSitter.field(node, "left")
         right = Noir::TreeSitter.field(node, "right")
         return unless left && right
-        left_text = string_expr_text(left, source, values, depth + 1)
+        left_text = string_expr_text(left, source, values, depth + 1, partial)
         right_text = string_expr_text(right, source, values, depth + 1)
-        return unless left_text && right_text
-        "#{left_text}#{right_text}"
+        if left_text && right_text
+          "#{left_text}#{right_text}"
+        elsif partial && right_text && right_text.starts_with?('/') && unresolved_operand?(left, source, values, depth + 1)
+          # Only when nothing on the left resolves: `"/a/" + id + "/b"`
+          # has a gap in the middle, and `/b` alone would be a wrong path.
+          right_text
+        end
       when "parenthesized_expression"
         child = Noir::TreeSitter.first_named_child(node)
-        child ? string_expr_text(child, source, values, depth + 1) : nil
+        child ? string_expr_text(child, source, values, depth + 1, partial) : nil
       when "selector_expression"
         # Another package's constant (`config.ApiUri`), when the analyzer
         # seeded it (see `extract_string_exports`).
@@ -2309,6 +2318,114 @@ module Noir
         return unless count == 1 && arg
         value = string_expr_text(arg, source, values, depth + 1)
         value ? template.sub(WRAPPER_ARG, value) : nil
+      end
+    end
+
+    # A route's path argument. A leading operand the scan cannot read
+    # (`options.BaseURL+"/status"`, which oapi-codegen's chi server emits
+    # for every operation) is a runtime base, and the literal after it is
+    # still the route, so it is kept. Not when a string literal follows the
+    # path: no router takes one there, and an `http.Client` does
+    # (`c.Post(c.baseURL+"/x", "application/json", body)`). Values that are
+    # stored and reused (constants, exports, wrapper templates) stay
+    # strict: they resolve to a fixed point, and a tail recorded before a
+    # forward-declared constant is seen would later disagree with the full
+    # value and drop it as ambiguous.
+    private def route_path_text(arg : LibTreeSitter::TSNode, source : String, values : Hash(String, String)) : String?
+      partial = true
+      if args = Noir::TreeSitter.parent(arg)
+        start = LibTreeSitter.ts_node_start_byte(arg)
+        Noir::TreeSitter.each_named_arg(args) do |sibling|
+          next unless LibTreeSitter.ts_node_start_byte(sibling) > start
+          type = Noir::TreeSitter.node_type(sibling)
+          partial = false if type == "interpreted_string_literal" || type == "raw_string_literal"
+        end
+      end
+      string_expr_text(arg, source, values, partial: partial)
+    end
+
+    # No operand of the `+` chain resolves: one runtime value, not a
+    # literal with a gap in it.
+    private def unresolved_operand?(node : LibTreeSitter::TSNode, source : String, values : Hash(String, String), depth : Int32) : Bool
+      return false if depth > Noir::TreeSitter::MAX_AST_DEPTH
+      case Noir::TreeSitter.node_type(node)
+      when "binary_expression"
+        left = Noir::TreeSitter.field(node, "left")
+        right = Noir::TreeSitter.field(node, "right")
+        !!(left && right && unresolved_operand?(left, source, values, depth + 1) && unresolved_operand?(right, source, values, depth + 1))
+      when "parenthesized_expression"
+        child = Noir::TreeSitter.first_named_child(node)
+        child ? unresolved_operand?(child, source, values, depth + 1) : false
+      when "identifier"
+        string_expr_text(node, source, values, depth + 1).nil? && !literal_bound?(node, Noir::TreeSitter.node_text(node, source), source)
+      else
+        string_expr_text(node, source, values, depth + 1).nil?
+      end
+    end
+
+    # Whether a scope around `node` binds `name` from an expression with a
+    # string literal in it. Such a name is a path built here that did not
+    # resolve, or one with two values, not a runtime base: gitea's
+    # `packageId := "/<id:(@" + npm_module.RegexpNamePart + ...` in
+    # `g.MatchPath("GET", packageId+"/<version>", ...)` would otherwise
+    # report `/<version>` for `/<id>/<version>`.
+    private def literal_bound?(node : LibTreeSitter::TSNode, name : String, source : String) : Bool
+      scope = Noir::TreeSitter.parent(node)
+      depth = 0
+      while scope && depth < Noir::TreeSitter::MAX_AST_DEPTH
+        Noir::TreeSitter.each_named_child(scope) do |stmt|
+          case Noir::TreeSitter.node_type(stmt)
+          when "short_var_declaration", "assignment_statement"
+            left = Noir::TreeSitter.field(stmt, "left")
+            right = Noir::TreeSitter.field(stmt, "right")
+            return true if left && right && identifier_in?(left, name, source) && literal_operand_in?(right)
+          when "var_declaration", "const_declaration"
+            return true if literal_spec?(stmt, name, source)
+          end
+        end
+        scope = Noir::TreeSitter.parent(scope)
+        depth += 1
+      end
+      false
+    end
+
+    # A `var`/`const` spec for `name` whose value has a literal operand.
+    private def literal_spec?(decl : LibTreeSitter::TSNode, name : String, source : String) : Bool
+      Noir::TreeSitter.each_named_child(decl) do |spec|
+        case Noir::TreeSitter.node_type(spec)
+        when "var_spec", "const_spec"
+          value = Noir::TreeSitter.field(spec, "value")
+          return true if value && identifier_in?(spec, name, source) && literal_operand_in?(value)
+        when "var_spec_list"
+          return true if literal_spec?(spec, name, source)
+        end
+      end
+      false
+    end
+
+    # A string literal among the `+` operands of an expression list, not
+    # inside a call: `os.Getenv("BASE")` is still a runtime value.
+    private def literal_operand_in?(list : LibTreeSitter::TSNode) : Bool
+      Noir::TreeSitter.each_named_child(list) do |expr|
+        return true if literal_operand?(expr, 0)
+      end
+      false
+    end
+
+    private def literal_operand?(node : LibTreeSitter::TSNode, depth : Int32) : Bool
+      return false if depth > Noir::TreeSitter::MAX_AST_DEPTH
+      case Noir::TreeSitter.node_type(node)
+      when "interpreted_string_literal", "raw_string_literal"
+        true
+      when "binary_expression"
+        left = Noir::TreeSitter.field(node, "left")
+        right = Noir::TreeSitter.field(node, "right")
+        !!((left && literal_operand?(left, depth + 1)) || (right && literal_operand?(right, depth + 1)))
+      when "parenthesized_expression"
+        child = Noir::TreeSitter.first_named_child(node)
+        child ? literal_operand?(child, depth + 1) : false
+      else
+        false
       end
     end
 

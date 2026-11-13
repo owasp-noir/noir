@@ -62,7 +62,7 @@ module Noir
       idx = 0
       Noir::TreeSitter.each_named_arg(args) do |arg|
         case idx
-        when 0 then path = string_expr_text(arg, source, string_values)
+        when 0 then path = route_path_text(arg, source, string_values)
         when 1 then controller_node = arg
         when 2 then mapping = string_expr_text(arg, source, string_values)
         end
