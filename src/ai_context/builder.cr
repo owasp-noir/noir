@@ -1520,6 +1520,8 @@ module NoirAIContext
 
         if caller_check?(endpoint, callee)
           add_caller_check_guards(context, callee, callee_snippet)
+        elsif named_guard_helper?(context, callee)
+          # Already a guard; not also an input validator.
         elsif validator = PatternMatcher.detect_from_patterns(callee.name, callee_snippet, VALIDATOR_PATTERNS, callee.path, callee.line, "callee")
           context.push_validator(validator)
         end
@@ -1566,6 +1568,17 @@ module NoirAIContext
       return false unless (path = callee.path) && (line = callee.line)
 
       !!@reader.lines_for(path)[line - 1]?.try(&.matches?(CALLER_CHECK_AS_HANDLER))
+    end
+
+    # The helper a framework tagger already names as the route's auth check
+    # (`Protected by Next.js helper \`verifyUser()\``): its `verify…` name
+    # is about the caller, not the input.
+    private def named_guard_helper?(context : AIContext, callee : Callee) : Bool
+      guard_helper_names(context).includes?(callee.name.split(/\.|->|::/).last)
+    end
+
+    private def guard_helper_names(context : AIContext) : Array(String)
+      context.guards.compact_map { |guard| guard.name.match(/`([A-Za-z_$][\w$]*)\(\)`/).try(&.[1]) }
     end
 
     private def add_caller_check_guards(context : AIContext, callee : Callee, snippet : String?)
@@ -2351,9 +2364,13 @@ module NoirAIContext
         end
         add_spring_mvc_template_render_sink(context, endpoint, path_info, snippet)
 
-        # A caller check (`onRequest: verifyAuth([...])`) is the guard scan's
-        # to report, not an input validator.
+        # A caller check (`onRequest: verifyAuth([...])`), or the helper a
+        # framework tagger named as the guard, is the guard scan's to report,
+        # not an input validator.
         validator_scope = snippet.gsub(CALLER_CHECK, "")
+        guard_helper_names(context).each do |name|
+          validator_scope = validator_scope.gsub(/(?<![\w$.])#{Regex.escape(name)}\s*\(/, "(")
+        end
         VALIDATOR_PATTERNS.each do |pattern|
           next if context.validators.any? { |v| v.kind == pattern.kind }
           if validator = PatternMatcher.detect_single_pattern(pattern, "", validator_scope, path_info.path, path_info.line, "route_source")
