@@ -1,3 +1,4 @@
+require "json"
 require "../models/endpoint"
 require "../models/code_locator"
 require "../utils/text_file"
@@ -56,6 +57,7 @@ module Noir::JSHandlerResolver
       @@imports.clear
       @@definitions.clear
       @@tsconfig_paths.clear
+      @@package_imports.clear
       @@member_modules.clear
       @@wrapper_shapes.clear
       @@parameter_modules.clear
@@ -351,7 +353,10 @@ module Noir::JSHandlerResolver
   private def resolve_specifier_uncached(from_file : String, specifier : String) : String?
     boundary = CodeLocator.instance.scan_base_paths.find { |base| from_file.starts_with?(base) }
     unless specifier.starts_with?('.')
-      target = tsconfig_alias_target(from_file, specifier, boundary) || return
+      # TypeScript reads `paths` before package.json `imports`, which often
+      # name the build output (logto: `"#src/*": "./build/*"`).
+      target = tsconfig_alias_target(from_file, specifier, boundary) ||
+               (package_imports_target(from_file, specifier, boundary) if specifier.starts_with?('#')) || return
       relative = Path[target].relative_to(File.dirname(Noir::PathScope.expand(from_file))).to_posix.to_s
       specifier = relative.starts_with?("..") ? relative : "./#{relative}"
     end
@@ -393,10 +398,68 @@ module Noir::JSHandlerResolver
         return
       end
       parent = File.dirname(dir)
-      break if parent == dir || (stop && !parent.starts_with?(stop))
+      break if parent == dir || (stop && parent != stop && !parent.starts_with?("#{stop}/"))
       dir = parent
     end
     nil
+  end
+
+  @@package_imports = Hash(String, Array(Tuple(String, String))).new
+  PACKAGE_CONDITIONS = %w[import require node default]
+
+  # The absolute path `specifier` (`#util/middlewares`) names through the
+  # `imports` map of the nearest package.json at or above `from_file`
+  # (Node subpath imports), without leaving the scan base. Node reads only
+  # the nearest package.json, whether or not it declares `imports`.
+  def package_imports_target(from_file : String, specifier : String, boundary : String?) : String?
+    dir = File.dirname(Noir::PathScope.expand(from_file))
+    stop = boundary.try { |b| Noir::PathScope.expand(b).chomp('/') }
+    loop do
+      manifest = File.join(dir, "package.json")
+      if File.file?(manifest)
+        package_imports(manifest).each do |pattern, target|
+          if star = pattern.index('*')
+            stem, tail = pattern[0...star], pattern[star + 1..]
+            # `#util/` does not match `#util/*`: the `*` takes at least one character.
+            next unless specifier.size >= pattern.size && specifier.starts_with?(stem) && specifier.ends_with?(tail)
+            return if target.empty?
+            return File.expand_path(target.gsub('*', specifier[stem.size...specifier.size - tail.size]), dir)
+          elsif pattern == specifier
+            return if target.empty?
+            return File.expand_path(target, dir)
+          end
+        end
+        return
+      end
+      parent = File.dirname(dir)
+      break if parent == dir || (stop && parent != stop && !parent.starts_with?("#{stop}/"))
+      dir = parent
+    end
+    nil
+  end
+
+  # pattern -> target relative to the package.json; an exact key before any
+  # pattern, then the longest stem first, as Node matches them.
+  # ponytail: a conditional target takes its first `import`, `require`,
+  # `node` or `default` key (in the object's order, as Node walks it) whose
+  # value is a string, never `types` (a declaration file); nested
+  # conditions are not followed.
+  private def package_imports(manifest : String) : Array(Tuple(String, String))
+    cached = @@lock.synchronize { @@package_imports[manifest]? }
+    return cached if cached
+    entries = [] of Tuple(String, String)
+    begin
+      imports = JSON.parse(TextFile.read(manifest))["imports"]?.try(&.as_h?)
+      imports.try &.each do |pattern, value|
+        # `null` blocks the pattern: Node refuses it, so it resolves nowhere.
+        target = value.raw.nil? ? "" : value.as_s? || value.as_h?.try(&.find { |c, v| PACKAGE_CONDITIONS.includes?(c) && v.as_s? }).try(&.[1].as_s)
+        entries << {pattern, target} if target && (target.empty? || target.starts_with?("./"))
+      end
+    rescue
+    end
+    entries.sort_by! { |pattern, _| {pattern.includes?('*') ? 1 : 0, -(pattern.index('*') || pattern.size), -pattern.size} }
+    @@lock.synchronize { @@package_imports[manifest] = entries }
+    entries
   end
 
   private def tsconfig_paths(tsconfig : String) : Array(Tuple(String, String))
