@@ -2356,8 +2356,76 @@ module Noir
       when "parenthesized_expression"
         child = Noir::TreeSitter.first_named_child(node)
         child ? unresolved_operand?(child, source, values, depth + 1) : false
+      when "identifier"
+        string_expr_text(node, source, values, depth + 1).nil? && !literal_bound?(node, Noir::TreeSitter.node_text(node, source), source)
       else
         string_expr_text(node, source, values, depth + 1).nil?
+      end
+    end
+
+    # Whether a scope around `node` binds `name` from an expression with a
+    # string literal in it. Such a name is a path built here that did not
+    # resolve, or one with two values, not a runtime base: gitea's
+    # `packageId := "/<id:(@" + npm_module.RegexpNamePart + ...` in
+    # `g.MatchPath("GET", packageId+"/<version>", ...)` would otherwise
+    # report `/<version>` for `/<id>/<version>`.
+    private def literal_bound?(node : LibTreeSitter::TSNode, name : String, source : String) : Bool
+      scope = Noir::TreeSitter.parent(node)
+      depth = 0
+      while scope && depth < Noir::TreeSitter::MAX_AST_DEPTH
+        Noir::TreeSitter.each_named_child(scope) do |stmt|
+          case Noir::TreeSitter.node_type(stmt)
+          when "short_var_declaration", "assignment_statement"
+            left = Noir::TreeSitter.field(stmt, "left")
+            right = Noir::TreeSitter.field(stmt, "right")
+            return true if left && right && identifier_in?(left, name, source) && literal_operand_in?(right)
+          when "var_declaration", "const_declaration"
+            return true if literal_spec?(stmt, name, source)
+          end
+        end
+        scope = Noir::TreeSitter.parent(scope)
+        depth += 1
+      end
+      false
+    end
+
+    # A `var`/`const` spec for `name` whose value has a literal operand.
+    private def literal_spec?(decl : LibTreeSitter::TSNode, name : String, source : String) : Bool
+      Noir::TreeSitter.each_named_child(decl) do |spec|
+        case Noir::TreeSitter.node_type(spec)
+        when "var_spec", "const_spec"
+          value = Noir::TreeSitter.field(spec, "value")
+          return true if value && identifier_in?(spec, name, source) && literal_operand_in?(value)
+        when "var_spec_list"
+          return true if literal_spec?(spec, name, source)
+        end
+      end
+      false
+    end
+
+    # A string literal among the `+` operands of an expression list, not
+    # inside a call: `os.Getenv("BASE")` is still a runtime value.
+    private def literal_operand_in?(list : LibTreeSitter::TSNode) : Bool
+      Noir::TreeSitter.each_named_child(list) do |expr|
+        return true if literal_operand?(expr, 0)
+      end
+      false
+    end
+
+    private def literal_operand?(node : LibTreeSitter::TSNode, depth : Int32) : Bool
+      return false if depth > Noir::TreeSitter::MAX_AST_DEPTH
+      case Noir::TreeSitter.node_type(node)
+      when "interpreted_string_literal", "raw_string_literal"
+        true
+      when "binary_expression"
+        left = Noir::TreeSitter.field(node, "left")
+        right = Noir::TreeSitter.field(node, "right")
+        !!((left && literal_operand?(left, depth + 1)) || (right && literal_operand?(right, depth + 1)))
+      when "parenthesized_expression"
+        child = Noir::TreeSitter.first_named_child(node)
+        child ? literal_operand?(child, depth + 1) : false
+      else
+        false
       end
     end
 

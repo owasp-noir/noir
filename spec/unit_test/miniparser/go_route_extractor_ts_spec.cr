@@ -257,6 +257,53 @@ describe Noir::TreeSitterGoRouteExtractor do
     ])
   end
 
+  it "does not read a name bound to a path built here as a runtime base" do
+    # gitea: `packageId` has a literal in it, so `/<version>` is not the
+    # route; neither is `/x` for a name with two literal values.
+    source = <<-GO
+      package main
+      func routes(r chi.Router, flag bool) {
+          packageId := `/<id:(@` + npm.RegexpNamePart + `)>`
+          r.Get(packageId+"/<version>", h)
+          p := "/a"
+          if flag {
+              p = "/b"
+          }
+          r.Get(p+"/x", h)
+          var tags = "/-/package" + packageId
+          r.Put(tags+"/<tag>", h)
+          base := os.Getenv("BASE_URL")
+          r.Get(base+"/env", h)
+      }
+      GO
+
+    routes = Noir::TreeSitterGoRouteExtractor.extract_chi_routes(source)
+    routes.map { |r| {r.verb, r.path} }.should eq([{"GET", "/env"}])
+  end
+
+  it "reads a two-argument client call with a runtime base as a route" do
+    # A decision, not an accident: across 15 serve-and-call repos no
+    # client call took this path, so no rule was added for it. The
+    # Gin-style walker reads only receivers it saw built or passed as a
+    # router. The chi walker reads any receiver whose field is not a
+    # known non-router (`client`), so a client method with any second
+    # argument reads as a route there, as its bare-literal form
+    # (`s.api.Get("/health", &out)`) already does on main.
+    source = <<-GO
+      package main
+      func (s *Service) Charge(payload *bytes.Reader, out *Health) {
+          s.client.Post(s.cfg.UpstreamURL+"/v1/charge", payload)
+          s.api.Get(s.endpoint+"/health", &out)
+          s.upstream.Post(s.cfg.UpstreamURL+"/v1/refund", payload)
+      }
+      GO
+
+    gin = Noir::TreeSitterGoRouteExtractor.extract_routes(source)
+    gin.should be_empty
+    chi = Noir::TreeSitterGoRouteExtractor.extract_chi_routes(source)
+    chi.map { |r| {r.verb, r.path} }.sort!.should eq([{"GET", "/health"}, {"POST", "/v1/refund"}])
+  end
+
   it "keeps the literal tail of a runtime base on Gin/Echo-style verbs too" do
     source = <<-GO
       package main
@@ -272,7 +319,9 @@ describe Noir::TreeSitterGoRouteExtractor do
 
   it "does not let a runtime base turn a stored constant into its tail" do
     # `B` is read before `A` is declared. Recording `/x` on the first pass
-    # would make the second pass's `/api/x` disagree and drop `B`.
+    # would make the second pass's `/api/x` disagree and drop `B`. `C` is
+    # not stored as `/c`, and a name built from a literal is no runtime
+    # base either, so `C+"/d"` is dropped rather than read as `/d`.
     source = <<-GO
       package main
       const B = A + "/x"
@@ -286,10 +335,7 @@ describe Noir::TreeSitterGoRouteExtractor do
       GO
 
     routes = Noir::TreeSitterGoRouteExtractor.extract_routes(source)
-    routes.map { |r| {r.verb, r.path} }.sort!.should eq([
-      {"GET", "/api/x/y"},
-      {"GET", "/d"},
-    ])
+    routes.map { |r| {r.verb, r.path} }.should eq([{"GET", "/api/x/y"}])
   end
 
   it "extracts routes registered on inline group chains" do
