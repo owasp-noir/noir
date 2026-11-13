@@ -588,7 +588,9 @@ module Analyzer::Go
     #     not read (a parameter, the root itself, a call) drops it.
     # Not read (the routes stay unprefixed): a router assigned to the field
     # after construction (`a.Router = g`), a wrapper built by a generic or
-    # reflective helper, a type alias (`type Admin = fiber.Router`), and
+    # reflective helper, a type alias (`type Admin = fiber.Router`), a group
+    # variable bound more than once in the constructing function (`admin =
+    # app.Group("/b")` after the literal: which binding it saw is not read), and
     # routes registered on the wrapper as a method receiver (`func (a *Admin)
     # Routes()`) rather than a parameter.
     def resolve_router_wrappers(file_contents : Hash(String, String), builder_type : String) : Array(RouterWrapper)

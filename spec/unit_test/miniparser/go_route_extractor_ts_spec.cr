@@ -1005,6 +1005,31 @@ describe Noir::TreeSitterGoRouteExtractor do
     ].sort_by!(&.to_s))
   end
 
+  it "does not read a wrapper's group from a variable bound twice in its function" do
+    source = <<-GO
+      package svr
+      func Create(app *fiber.App) {
+          admin := app.Group("/a")
+          w := &Admin{Router: admin}
+          admin = app.Group("/b")
+          var meta, other = app.Group("/m"), app.Group("/o")
+          meta = nil
+          _ = &Meta{Router: meta}
+          for i, ops := range list {
+              _ = i
+          }
+          ops := app.Group("/ops")
+          _ = &Ops{Router: ops}
+          v2 := app.Group("/v2")
+          _ = &V2{Router: v2}
+          _, _ = w, other
+      }
+      GO
+    types = {"Admin" => true, "Meta" => true, "Ops" => true, "V2" => true}
+    built = Noir::TreeSitterGoRouteExtractor.collect_router_wrapper_constructions(source, types, "Router")
+    built.to_h { |c| {c.type_name, c.prefix} }.should eq({"Admin" => nil, "Meta" => nil, "Ops" => nil, "V2" => "/v2"})
+  end
+
   it "binds a router-builder parameter by its exact qualified type when asked" do
     source = <<-GO
       package meta

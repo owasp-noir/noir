@@ -600,13 +600,14 @@ module Noir
     # has that one field only (a positional literal is read only then);
     # `field` is the embedded router's field name (`Router`).
     #
-    # The prefix is read only when the field's value is an identifier bound,
-    # in the function the literal sits in, to a group built off a root
+    # The prefix is read only when the field's value is an identifier bound
+    # once, in the function the literal sits in, to a group built off a root
     # router (`admin := app.Group("/api/admin", mw)` with `app *fiber.App`
     # or `app := fiber.New()`), or off such a group. Anything else is a
     # construction with no prefix: the root itself, a group handed in as a
     # parameter (its prefix is the caller's), a package-level literal, an
-    # inline call, a `new(Admin)` filled in later.
+    # inline call, a `new(Admin)` filled in later, a variable bound again
+    # anywhere in the function (`admin = app.Group("/b")`).
     def collect_router_wrapper_constructions(source : String, types : Hash(String, Bool), field : String,
                                              group_method : String = "Group") : Array(WrapperConstruction)
       found = [] of WrapperConstruction
@@ -678,23 +679,44 @@ module Noir
     # The groups `function` builds off a root router it holds (a root-typed
     # parameter or a `New()` result) or off one of those groups, in source
     # order. A group built off anything else, a parameter group included,
-    # is left out.
+    # is left out, and so is a name bound more than once in the function
+    # (by `:=`, `=`, `var` or `range`, to a group or to anything else): which
+    # binding a literal saw depends on where it sits, which is not read.
     private def rooted_function_groups(function : LibTreeSitter::TSNode, source : String, group_method : String,
                                        string_values : Hash(String, String)) : Hash(String, String)
       roots = Set(String).new
       groups = Hash(String, String).new
+      bindings = Hash(String, Int32).new(0)
       Noir::TreeSitter.walk(function) do |node|
         case Noir::TreeSitter.node_type(node)
         when "parameter_declaration"
           collect_engine_param(node, source, roots)
+        when "range_clause"
+          count_bound_names(Noir::TreeSitter.field(node, "left"), source, bindings)
         when "short_var_declaration", "assignment_statement", "var_spec"
+          # A `var_spec`'s names are its own identifier children.
+          count_bound_names(Noir::TreeSitter.node_type(node) == "var_spec" ? node : Noir::TreeSitter.field(node, "left"), source, bindings)
           collect_engine_assignment(node, source, roots)
           parent = group_call_operand(node, source, group_method) || next
           next unless roots.includes?(parent) || groups.has_key?(parent)
           collect_group(node, source, groups, group_method, string_values: string_values)
         end
       end
+      groups.reject! { |name, _| bindings[name] > 1 }
       groups
+    end
+
+    # Counts each plain identifier on the left of a binding (`a, b :=`,
+    # `x =`, `var x`); a field target (`s.R = g`) binds no local.
+    private def count_bound_names(left : LibTreeSitter::TSNode?, source : String, bindings : Hash(String, Int32))
+      return unless left
+      if Noir::TreeSitter.node_type(left) == "identifier"
+        bindings[Noir::TreeSitter.node_text(left, source)] += 1
+        return
+      end
+      Noir::TreeSitter.each_named_child(left) do |child|
+        bindings[Noir::TreeSitter.node_text(child, source)] += 1 if Noir::TreeSitter.node_type(child) == "identifier"
+      end
     end
 
     # `x` in `v := x.Group(...)`; nil for any other right-hand side,
