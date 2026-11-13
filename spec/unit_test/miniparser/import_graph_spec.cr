@@ -498,6 +498,39 @@ describe Noir::ImportGraph::Python do
       end
     end
 
+    it "joins backslash-continued imports" do
+      with_tmpdir do |root|
+        Dir.mkdir_p(File.join(root, "models"))
+        %w[a b c d e].each { |n| File.write(File.join(root, "models", "#{n}.py"), "") }
+        File.write(File.join(root, "f.py"), "")
+        File.write(File.join(root, "g.py"), "")
+        from_file = File.join(root, "app.py")
+        content = "from models import a, \\\n    b\n" \
+                  "from models import c, \\\n    d, \\\n    e  # three lines\n" \
+                  "import f, \\\n    g\n"
+
+        result = Noir::ImportGraph::Python.find_imported_modules(root, from_file, content)
+        %w[a b c d e].each { |n| result[n]?.try(&.[0]).should eq(File.join(root, "models", "#{n}.py")) }
+        result["f"]?.try(&.[0]).should eq(File.join(root, "f.py"))
+        result["g"]?.try(&.[0]).should eq(File.join(root, "g.py"))
+      end
+    end
+
+    it "does not join on a backslash outside an import or in a comment" do
+      with_tmpdir do |root|
+        Dir.mkdir_p(File.join(root, "models"))
+        %w[a b c].each { |n| File.write(File.join(root, "models", "#{n}.py"), "") }
+        from_file = File.join(root, "app.py")
+        content = "PATH = \"C:\\\\\" + \\\n    \"x\"\n" \
+                  "from models import a\n" \
+                  "from models import b  # C:\\\n" \
+                  "from models import c\n"
+
+        result = Noir::ImportGraph::Python.find_imported_modules(root, from_file, content)
+        %w[a b c].each { |n| result[n]?.try(&.[0]).should eq(File.join(root, "models", "#{n}.py")) }
+      end
+    end
+
     it "resolves imports indented inside a function" do
       with_tmpdir do |root|
         Dir.mkdir_p(File.join(root, "views"))

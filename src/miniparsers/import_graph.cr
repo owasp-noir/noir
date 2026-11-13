@@ -704,13 +704,15 @@ module Noir::ImportGraph::Python
   # comma-separated names}` (the from part is empty for a plain
   # `import`). Indented imports count too: an app factory routinely
   # imports its blueprints inside `create_app()`.
-  private def self.each_import_statement(content : String, &) : Nil
+  def self.each_import_statement(content : String, &) : Nil
     # A parenthesised import still waiting for its `)`: the `from` part
     # and the names collected so far. Collected per line with comments
     # cut first, so neither a `(`/`)` in a `#` comment nor a CRLF
     # terminator can shift where the name list starts or stops.
     open_from : String? = nil
     open_names = String::Builder.new
+    # An import line ending in `\`, waiting for the rest of its statement.
+    continued : String? = nil
     content.each_line do |raw_line|
       if from = open_from
         code = strip_import_comment(raw_line)
@@ -724,7 +726,23 @@ module Noir::ImportGraph::Python
         next
       end
 
+      if head = continued
+        raw_line = head + raw_line.lstrip
+        continued = nil
+      end
       line = raw_line.lstrip
+      # `from m import A, \` goes on with `B` on the next line: join the
+      # physical lines first, as Python does, or every name after the break
+      # is dropped. Only an import line starts a join, so a `\` in a string
+      # or a comment elsewhere never pulls in the line after it.
+      if line.starts_with?("from") || line.starts_with?("import")
+        code = strip_import_comment(line).rstrip
+        if code.ends_with?('\\')
+          continued = "#{code.rchop} "
+          next
+        end
+      end
+
       from_import = ""
       imports = ""
 
