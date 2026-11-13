@@ -536,8 +536,10 @@ module Noir
     # bound to a single prefix). `type_name` is the group type's final
     # identifier: `RouterGroup` for Gin/Hertz, `Group` for Echo. Methods
     # count too (`func (h *Handler) Register(v1 *echo.Group)`, called as
-    # `h.Register(v1)`), keyed by the method name.
-    def collect_router_group_builders(source : String, type_name : String = "RouterGroup") : Hash(String, RouterBuilder)
+    # `h.Register(v1)`), keyed by the method name. With `qualifier`, the
+    # parameter type must be exactly `qualifier.type_name` (bare `type_name`
+    # for `""`), not any type whose last segment is `type_name`.
+    def collect_router_group_builders(source : String, type_name : String = "RouterGroup", qualifier : String? = nil) : Hash(String, RouterBuilder)
       result = Hash(String, RouterBuilder).new
       duplicates = Set(String).new
       Noir::TreeSitter.parse_go(source) do |root|
@@ -546,7 +548,7 @@ module Noir
           name_node = Noir::TreeSitter.field(node, "name")
           params = Noir::TreeSitter.field(node, "parameters")
           next unless name_node && params
-          param = router_group_param_name(params, source, type_name)
+          param = router_group_param_name(params, source, type_name, qualifier)
           next unless param
           name = Noir::TreeSitter.node_text(name_node, source)
           # Two methods sharing a name (`(*UserH).Register`, `(*PostH).Register`)
@@ -564,7 +566,7 @@ module Noir
 
     # Returns the sole `*gin.RouterGroup` parameter's name, or nil when
     # the function has zero or more than one such parameter.
-    private def router_group_param_name(params : LibTreeSitter::TSNode, source : String, type_name : String) : String?
+    private def router_group_param_name(params : LibTreeSitter::TSNode, source : String, type_name : String, qualifier : String? = nil) : String?
       found = nil
       count = 0
       Noir::TreeSitter.each_named_child(params) do |decl|
@@ -574,12 +576,138 @@ module Noir
         next unless type_node && name_node
         # Generic arguments are not part of the name:
         # `*router.RouterGroup[*core.RequestEvent]` is a `RouterGroup`.
-        final = Noir::TreeSitter.node_text(type_node, source).lchop('*').split('[').first.split('.').last
-        next unless final == type_name
+        written = Noir::TreeSitter.node_text(type_node, source).lchop('*').split('[').first
+        if qualifier
+          next unless written == (qualifier.empty? ? type_name : "#{qualifier}.#{type_name}")
+        else
+          next unless written.split('.').last == type_name
+        end
         count += 1
         found = Noir::TreeSitter.node_text(name_node, source)
       end
       count == 1 ? found : nil
+    end
+
+    # One construction of a router-wrapper type (`type Admin struct {
+    # fiber.Router }`): the literal's qualifier and type name as written,
+    # and the prefix of the group its router field is built from, nil when
+    # that is not read.
+    record WrapperConstruction, qualifier : String, type_name : String, prefix : String?
+
+    # Every construction of the wrapper types in `source`: each composite
+    # literal (`&Admin{Router: admin}`, `svr.Admin{admin}`) and each
+    # `new(Admin)`. `types` maps a wrapper type name to whether the struct
+    # has that one field only (a positional literal is read only then);
+    # `field` is the embedded router's field name (`Router`).
+    #
+    # The prefix is read only when the field's value is an identifier bound,
+    # in the function the literal sits in, to a group built off a root
+    # router (`admin := app.Group("/api/admin", mw)` with `app *fiber.App`
+    # or `app := fiber.New()`), or off such a group. Anything else is a
+    # construction with no prefix: the root itself, a group handed in as a
+    # parameter (its prefix is the caller's), a package-level literal, an
+    # inline call, a `new(Admin)` filled in later.
+    def collect_router_wrapper_constructions(source : String, types : Hash(String, Bool), field : String,
+                                             group_method : String = "Group") : Array(WrapperConstruction)
+      found = [] of WrapperConstruction
+      Noir::TreeSitter.parse_go(source) do |root|
+        literals = [] of {String, String, String, LibTreeSitter::TSNode}
+        Noir::TreeSitter.walk(root) do |node|
+          case Noir::TreeSitter.node_type(node)
+          when "composite_literal"
+            type_node = Noir::TreeSitter.field(node, "type") || next
+            qualifier, _, name = Noir::TreeSitter.node_text(type_node, source).rpartition('.')
+            next unless types.has_key?(name)
+            value = wrapped_router_value(node, source, field, types[name])
+            function = value && enclosing_function(node)
+            if value && function
+              literals << {qualifier, name, value, function}
+            else
+              found << WrapperConstruction.new(qualifier, name, nil)
+            end
+          when "call_expression"
+            callee = Noir::TreeSitter.field(node, "function")
+            next unless callee && Noir::TreeSitter.node_text(callee, source) == "new"
+            arg = Noir::TreeSitter.field(node, "arguments").try { |args| Noir::TreeSitter.first_named_arg(args) } || next
+            qualifier, _, name = Noir::TreeSitter.node_text(arg, source).rpartition('.')
+            found << WrapperConstruction.new(qualifier, name, nil) if types.has_key?(name)
+          end
+        end
+        next if literals.empty?
+        string_values = collect_string_values(root, source)
+        function_groups = Hash(String, Hash(String, String)).new
+        literals.each do |(qualifier, name, value, function)|
+          groups = function_groups.put_if_absent(node_key(function)) { rooted_function_groups(function, source, group_method, string_values) }
+          found << WrapperConstruction.new(qualifier, name, groups[value]?)
+        end
+      end
+      found
+    end
+
+    # The identifier a wrapper literal stores in its router field: the
+    # `Router: admin` element, or the sole positional element of a
+    # one-field struct. Nil for anything else.
+    private def wrapped_router_value(literal : LibTreeSitter::TSNode, source : String, field : String, single : Bool) : String?
+      body = Noir::TreeSitter.field(literal, "body") || return
+      elements = [] of LibTreeSitter::TSNode
+      Noir::TreeSitter.each_named_child(body) { |child| elements << child unless Noir::TreeSitter.node_type(child) == "comment" }
+      value = nil
+      elements.each do |element|
+        next unless Noir::TreeSitter.node_type(element) == "keyed_element"
+        parts = [] of LibTreeSitter::TSNode
+        Noir::TreeSitter.each_named_child(element) do |child|
+          parts << (Noir::TreeSitter.node_type(child) == "literal_element" ? Noir::TreeSitter.first_named_child(child) || child : child)
+        end
+        value = parts[1] if parts.size == 2 && Noir::TreeSitter.node_text(parts[0], source) == field
+      end
+      if value.nil? && single && elements.size == 1 && Noir::TreeSitter.node_type(elements[0]) == "literal_element"
+        value = Noir::TreeSitter.first_named_child(elements[0])
+      end
+      return unless value && Noir::TreeSitter.node_type(value) == "identifier"
+      Noir::TreeSitter.node_text(value, source)
+    end
+
+    private def enclosing_function(node : LibTreeSitter::TSNode) : LibTreeSitter::TSNode?
+      current = Noir::TreeSitter.parent(node)
+      while current
+        return current if {"function_declaration", "method_declaration"}.includes?(Noir::TreeSitter.node_type(current))
+        current = Noir::TreeSitter.parent(current)
+      end
+    end
+
+    # The groups `function` builds off a root router it holds (a root-typed
+    # parameter or a `New()` result) or off one of those groups, in source
+    # order. A group built off anything else, a parameter group included,
+    # is left out.
+    private def rooted_function_groups(function : LibTreeSitter::TSNode, source : String, group_method : String,
+                                       string_values : Hash(String, String)) : Hash(String, String)
+      roots = Set(String).new
+      groups = Hash(String, String).new
+      Noir::TreeSitter.walk(function) do |node|
+        case Noir::TreeSitter.node_type(node)
+        when "parameter_declaration"
+          collect_engine_param(node, source, roots)
+        when "short_var_declaration", "assignment_statement", "var_spec"
+          collect_engine_assignment(node, source, roots)
+          parent = group_call_operand(node, source, group_method) || next
+          next unless roots.includes?(parent) || groups.has_key?(parent)
+          collect_group(node, source, groups, group_method, string_values: string_values)
+        end
+      end
+      groups
+    end
+
+    # `x` in `v := x.Group(...)`; nil for any other right-hand side,
+    # a chained `x.Group(...).Use(mw)` included.
+    private def group_call_operand(decl : LibTreeSitter::TSNode, source : String, group_method : String) : String?
+      right = Noir::TreeSitter.node_type(decl) == "var_spec" ? Noir::TreeSitter.field(decl, "value") : Noir::TreeSitter.field(decl, "right")
+      call = right.try { |r| Noir::TreeSitter.first_named_child(r) } || return
+      return unless Noir::TreeSitter.node_type(call) == "call_expression"
+      function = Noir::TreeSitter.field(call, "function") || return
+      return unless Noir::TreeSitter.node_type(function) == "selector_expression"
+      return unless Noir::TreeSitter.field(function, "field").try { |f| Noir::TreeSitter.node_text(f, source) } == group_method
+      operand = Noir::TreeSitter.field(function, "operand") || return
+      Noir::TreeSitter.node_text(operand, source) if Noir::TreeSitter.node_type(operand) == "identifier"
     end
 
     # Finds calls to any of the named builder functions and returns

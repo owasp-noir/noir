@@ -982,6 +982,40 @@ describe Noir::TreeSitterGoRouteExtractor do
     calls.map(&.[0..2]).should eq([{"AddPosts", "/api/v1/posts", "routes"}])
   end
 
+  it "reads the group a router-wrapper literal is built from, and nothing else" do
+    source = <<-GO
+      package svr
+      func Create(app *fiber.App, api fiber.Router) {
+          admin := app.Group("/api/admin", func(c *fiber.Ctx) error { return c.Next() })
+          ops := admin.Group("/ops")
+          partner := api.Group("/partner")
+          _ = &Admin{Router: admin}
+          _ = Ops{ops}
+          _ = &Partner{Router: partner}
+          _ = &Admin{Router: app}
+          _ = new(Admin)
+      }
+      var global = &Admin{Router: nil}
+      GO
+    types = {"Admin" => true, "Ops" => true, "Partner" => true}
+    built = Noir::TreeSitterGoRouteExtractor.collect_router_wrapper_constructions(source, types, "Router")
+    built.map { |c| {c.type_name, c.prefix} }.sort_by!(&.to_s).should eq([
+      {"Admin", "/api/admin"}, {"Admin", nil}, {"Admin", nil}, {"Admin", nil},
+      {"Ops", "/api/admin/ops"}, {"Partner", nil},
+    ].sort_by!(&.to_s))
+  end
+
+  it "binds a router-builder parameter by its exact qualified type when asked" do
+    source = <<-GO
+      package meta
+      func RegisterAdmin(admin *svr.Admin, c Admin) { admin.Get("/x", h) }
+      func RegisterOther(a *service.Admin) { a.Get("/y", h) }
+      GO
+    builders = Noir::TreeSitterGoRouteExtractor.collect_router_group_builders(source, "Admin", "svr")
+    builders.keys.should eq(["RegisterAdmin"])
+    builders["RegisterAdmin"].param.should eq("admin")
+  end
+
   it "composes path-scoped Group closures that reuse the outer router (gitea web wrapper)" do
     # Chi's own `Group` takes no path, but gitea's `code.gitea.io/gitea/
     # modules/web` wrapper exposes `m.Group("/path", func(){...})` where the

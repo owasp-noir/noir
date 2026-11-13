@@ -19,6 +19,9 @@ module Analyzer::Go
       # `RegisterUsers(app.Group("/api"))` + `func RegisterUsers(r fiber.Router)`:
       # the prefix lives at the call site (see `resolve_router_builder_prefixes`).
       builder_prefixes_by_dir = resolve_router_builder_prefixes(file_contents, package_groups, BUILDER_TYPE)
+      # `func RegisterAdmin(admin *svr.Admin)` with `type Admin struct {
+      # fiber.Router }` built once from a group: the prefix comes with the type.
+      wrappers = resolve_router_wrappers(file_contents, BUILDER_TYPE)
       framework_dirs = framework_package_dirs(file_contents, IMPORT_MARKER)
       named_scope = named_handler_scope(file_contents)
       parallel_analyze(get_files_by_extension(".go")) do |path|
@@ -48,6 +51,7 @@ module Analyzer::Go
 
         named = Noir::GoNamedHandler.new(content, path, ts_routes, named_scope)
         expand_builders = router_builder_expansions(content, BUILDER_TYPE, builder_prefixes_by_dir[dir]?, cross_file_groups)
+        expand_builders += router_wrapper_expansions(content, path, wrappers, expand_builders) unless wrappers.empty?
         suppress_ranges = expand_builders.map { |_, rb, _| rb.start_row..rb.end_row }
 
         # Resolve 1-hop callees for every route (see Gin).
