@@ -83,6 +83,27 @@ describe Noir::JSHandlerResolver do
 end
 
 describe Handler do
+  it "resolves a package.json `imports` specifier, after tsconfig `paths`" do
+    with_app do |dir, _|
+      Dir.mkdir_p(File.join(dir, "src", "util", "title"))
+      File.write(File.join(dir, "src", "util", "mw.ts"), "")
+      File.write(File.join(dir, "src", "util", "title", "index.js"), "")
+      File.write(File.join(dir, "package.json"), %({"imports": {"#util/*": "./src/util/*.ts", "#util/title": "./src/util/title/index.js", "#src/*": "./build/*", "#util/secret/*": null, "#mw": {"types": "./src/util/mw.d.ts", "node": "./src/util/mw.ts", "import": "./build/mw.js"}}}))
+      from = File.join(dir, "server.ts")
+      Noir::JSHandlerResolver.resolve_specifier(from, "#util/mw").should eq(File.join(dir, "src", "util", "mw.ts"))
+      Noir::JSHandlerResolver.resolve_specifier(from, "#util/title").should eq(File.join(dir, "src", "util", "title", "index.js"))
+      Noir::JSHandlerResolver.resolve_specifier(from, "#util/").should be_nil
+      Noir::JSHandlerResolver.resolve_specifier(from, "#util/secret/mw").should be_nil
+      # Conditions in the object's order, never `types`.
+      Noir::JSHandlerResolver.resolve_specifier(from, "#mw").should eq(File.join(dir, "src", "util", "mw.ts"))
+      # logto: package.json names the build output, tsconfig the source.
+      Noir::JSHandlerResolver.resolve_specifier(from, "#src/util/mw").should be_nil
+      File.write(File.join(dir, "tsconfig.json"), %({"compilerOptions": {"paths": {"#src/*": ["src/*"]}}}))
+      Noir::JSHandlerResolver.reset
+      Noir::JSHandlerResolver.resolve_specifier(from, "#src/util/mw").should eq(File.join(dir, "src", "util", "mw.ts"))
+    end
+  end
+
   it "is omitted from endpoint JSON when nil and round-trips when set" do
     ep = Endpoint.new("/x", "GET")
     ep.to_json.should_not contain("handler")

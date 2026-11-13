@@ -838,4 +838,150 @@ describe "ExpressAuthTagger" do
   ensure
     FileUtils.rm_rf(tmpdir) if tmpdir
   end
+
+  # actual's sync-server: `app.use(validateSessionMiddleware)` imported through
+  # package.json `imports` (`#util/*`); the middleware stops on a falsy
+  # `validateSession(req, res)`, whose own definition answers 401.
+  it "follows a middleware that stops when a refusing helper returns nothing" do
+    tmpdir = File.tempname("express_delegated")
+    Dir.mkdir_p(File.join(tmpdir, "src", "util"))
+    File.write(File.join(tmpdir, "package.json"), %({"name": "x", "imports": {"#util/title": "./src/util/title/index.js", "#util/*": "./src/util/*.ts"}}))
+    File.write(File.join(tmpdir, "src", "util", "validate-user.ts"), [
+      "export function validateSession(req: Request, res: Response) {",
+      "  const session = getSession(req.headers['x-actual-token']);",
+      "  if (!session) {",
+      "    res.status(401);",
+      "    res.send({ status: 'error' });",
+      "    return null;",
+      "  }",
+      "  return session;",
+      "}",
+      "export function loadSession(req: Request, res: Response) {",
+      "  return getSession(req.headers['x-actual-token']);",
+      "}",
+      "export async function asyncSession(req, res) {",
+      "  const session = await getSession(req.headers['x-actual-token']);",
+      "  if (!session) {",
+      "    res.status(401);",
+      "    return null;",
+      "  }",
+      "  return session;",
+      "}",
+      "export function objectSession(req, res) {",
+      "  if (expired()) return null;",
+      "  const session = getSession(req.headers['x-actual-token']);",
+      "  if (!session) {",
+      "    res.status(401);",
+      "    return { error: 'unauthorized' };",
+      "  }",
+      "  return session;",
+      "}",
+      "export function replySession(req, reply) {",
+      "  const session = getSession(req.headers['x-actual-token']);",
+      "  if (!session) return reply.status(401).send({ status: 'error' });",
+      "  return session;",
+      "}",
+    ].join("\n"))
+    File.write(File.join(tmpdir, "src", "util", "middlewares.ts"), [
+      "import { validateSession, loadSession, replySession, asyncSession, objectSession } from './validate-user';",
+      "const validateSessionMiddleware = async (",
+      "  req: Request,",
+      "  res: Response,",
+      "  next: NextFunction,",
+      ") => {",
+      "  const config = await loadConfig();",
+      "  const session: Session | null = await validateSession(req, res);",
+      "  if (!session)",
+      "    return;",
+      "  res.locals = session;",
+      "  next();",
+      "};",
+      "const unawaitedMiddleware = async (req, res, next) => {",
+      "  const session = asyncSession(req, res);",
+      "  if (!session) return;",
+      "  next();",
+      "};",
+      "const objectMiddleware = async (req, res, next) => {",
+      "  const session = objectSession(req, res);",
+      "  if (!session) return;",
+      "  next();",
+      "};",
+      "const debugMiddleware = async (req, res, next) => {",
+      "  const session = await validateSession(req, res);",
+      "  if (!session) {",
+      "    if (debug) return;",
+      "  }",
+      "  next();",
+      "};",
+      "const replySessionMiddleware = async (req, res, next) => {",
+      "  const session = await replySession(req, res);",
+      "  if (!session) return;",
+      "  next();",
+      "};",
+      "const loadSessionMiddleware = async (req, res, next) => {",
+      "  const session = await loadSession(req, res);",
+      "  if (!session) {",
+      "    return next();",
+      "  }",
+      "  res.locals = session;",
+      "  next();",
+      "};",
+      "export { validateSessionMiddleware, loadSessionMiddleware, replySessionMiddleware, unawaitedMiddleware, objectMiddleware, debugMiddleware };",
+    ].join("\n"))
+    # A Promise, an object, a response, or a stop under a further `if`:
+    # each lets an anonymous caller reach `next()`.
+    open_middlewares = %w[replySessionMiddleware unawaitedMiddleware objectMiddleware debugMiddleware]
+    open_files = open_middlewares.map do |middleware|
+      file = File.join(tmpdir, "src", "app-#{middleware}.ts")
+      File.write(file, [
+        "import express from 'express';",
+        "import { #{middleware} } from '#util/middlewares';",
+        "const app = express();",
+        "app.use(#{middleware});",
+        "app.post('/', (req, res) => { res.send('ok'); });",
+      ].join("\n"))
+      file
+    end
+    guarded_js = File.join(tmpdir, "src", "app-secrets.ts")
+    File.write(guarded_js, [
+      "import express from 'express';",
+      "import { validateSessionMiddleware } from '#util/middlewares';",
+      "const app = express();",
+      "app.use(validateSessionMiddleware);",
+      "app.post('/', (req, res) => { res.send('ok'); });",
+    ].join("\n"))
+    open_js = File.join(tmpdir, "src", "app-open.ts")
+    File.write(open_js, [
+      "import express from 'express';",
+      "import { loadSessionMiddleware } from '#util/middlewares';",
+      "const app = express();",
+      "app.use(loadSessionMiddleware);",
+      "app.post('/', (req, res) => { res.send('ok'); });",
+    ].join("\n"))
+
+    noir_options = create_test_options
+    noir_options["base"] = YAML::Any.new(tmpdir)
+    Dir.glob("#{tmpdir}/**/*").each { |file| CodeLocator.instance.register_path(file) unless File.directory?(file) }
+
+    guarded_details = Details.new(PathInfo.new(guarded_js, 5))
+    guarded_details.technology = "js_express"
+    guarded = Endpoint.new("/secret", "POST", [] of Param, guarded_details)
+    open_details = Details.new(PathInfo.new(open_js, 5))
+    open_details.technology = "js_express"
+    open = Endpoint.new("/open", "POST", [] of Param, open_details)
+
+    others = open_files.map_with_index do |file, idx|
+      details = Details.new(PathInfo.new(file, 5))
+      details.technology = "js_express"
+      Endpoint.new("/other#{idx}", "POST", [] of Param, details)
+    end
+
+    tagged = ExpressAuthTagger.new(noir_options).perform([guarded, open] + others)
+
+    guarded.tags.map(&.description).join(" ").should contain("validateSession() res.status(401)")
+    open.tags.empty?.should be_true
+    tagged[2..].each(&.tags.should(be_empty))
+  ensure
+    FileUtils.rm_rf(tmpdir) if tmpdir
+  end
 end

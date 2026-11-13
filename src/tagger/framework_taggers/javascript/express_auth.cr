@@ -430,7 +430,7 @@ class ExpressAuthTagger < FrameworkTagger
       found, note = found.partition(SETTING_NOTE)
       found.gsub(/\bnew\s+/, "new ").gsub(/(?<!\bnew)\s+/, "").chomp('(').sub(/\Athrownew\b/, "throw new") + note
     end
-    evidence ||= caller_stop(path, line) || return
+    evidence ||= caller_stop(path, line) || delegated_stop(path, line) || return
     # In the handler position a definition that answers the request is the
     # handler; one that calls `next()` on success is middleware all the same
     # (`app.use('/private', auth)`).
@@ -449,6 +449,70 @@ class ExpressAuthTagger < FrameworkTagger
     request = request_param(content, line) || return
     body = code_with_words(Noir::JSRouteExtractor.definition_body(content, line))
     caller_absence_refusal(body, Regex.escape(request), stop_file: path)
+  end
+
+  # `const session = await validateSession(req, res); if (!session) return;`:
+  # the middleware hands the request and the response to a helper, and stops
+  # without `next` when it gets nothing back. It is a guard when the helper's
+  # own definition refuses an anonymous caller (answers 401/403) and every
+  # `return` but its last hands back nothing: a helper that returns the
+  # response it refused on (`return res.status(401).send()`), or an object,
+  # gives a truthy value, and the middleware goes on to `next()`.
+  private def delegated_stop(path : String, line : Int32) : String?
+    content = read_file(path) || return
+    request = request_param(content, line) || return
+    body = code_with_words(Noir::JSRouteExtractor.definition_body(content, line))
+    body.scan(/(?<![\w$.])(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*(?::[^=;]+)?=\s*(await\s+)?([A-Za-z_$][\w$]*)\s*\(\s*#{Regex.escape(request)}\s*,\s*[A-Za-z_$][\w$]*\s*\)/) do |call|
+      return if earlier_exit?(body, call.begin(0), nil)
+      next unless top_level?(body, call.begin(0))
+      found = delegated_check(body, call, content, path)
+      return found if found
+    end
+    nil
+  end
+
+  DELEGATED_FALSY_RETURN = /\Areturn\s*(?:;|\}|\z|null\b|undefined\b|false\b)/
+
+  private def delegated_check(body : String, call : Regex::MatchData, content : String, path : String) : String?
+    test = body.match(/(?<![\w$.])if\s*\(\s*!\s*#{Regex.escape(call[1])}\s*\)/, call.end(0)) || return
+    between = body[call.end(0)...test.begin(0)]
+    return if !top_level?(body, test.begin(0)) || earlier_exit?(between, between.size, nil)
+    rest = body[test.end(0)..]
+    stripped = rest.lstrip
+    branch = if stripped.starts_with?('{')
+               brace = test.end(0) + (rest.size - stripped.size)
+               body[brace + 1...(Noir::JSLiteralScanner.find_matching_brace(body, brace) || return)]
+             else
+               stripped[0, stripped.index(/[;\n]/) || stripped.size]
+             end
+    return unless unconditional_return?(branch)
+    helper = Noir::JSHandlerResolver.resolve(call[3], content, path) || return
+    helper_path, helper_line = helper.path, helper.line
+    return if helper_path.nil? || helper_line.nil?
+    text = read_file(helper_path) || return
+    # An `async` helper called without `await` hands back a Promise, never falsy.
+    return if call[2]?.nil? && code_only(text.lines[helper_line - 1]? || "").matches?(/\basync\b/)
+    reply = Noir::JSRouteExtractor.definition_params(text, helper_line).try(&.[1]?).presence || return
+    helper_body = code_only(Noir::JSRouteExtractor.definition_body(text, helper_line))
+    return if helper_body.matches?(/\breturn\s+(?:await\s+)?#{Regex.escape(reply)}\b/)
+    returns = [] of Int32
+    helper_body.scan(/\breturn\b/) { |m| returns << m.begin(0) }
+    return if returns.size < 2 || returns[0...-1].any? { |at| !helper_body[at..].matches?(DELEGATED_FALSY_RETURN) }
+    refusal = anonymous_refusal(helper_body, text) || return
+    "#{call[3]}() #{refusal}"
+  end
+
+  # Whether `branch` (a block's inside, or one statement) leaves the
+  # middleware without `next`: a `return` of its own, not one under a
+  # further `if (...)` / `else` or inside a callback.
+  private def unconditional_return?(branch : String) : Bool
+    return false if branch.matches?(/\bnext\b/)
+    branch.scan(/\breturn\b/) do |m|
+      next unless top_level?(branch, m.begin(0))
+      before = branch[0...m.begin(0)].rstrip
+      return true unless before.ends_with?(')') || before.ends_with?("else")
+    end
+    false
   end
 
   STOP_CALL = /\breturn\s+(?:await\s+)?([A-Za-z_$][\w$]*(?:\s*\.\s*[A-Za-z_$][\w$]*)*)\s*\(/
@@ -968,10 +1032,15 @@ class ExpressAuthTagger < FrameworkTagger
 
   # The name the handler defined at `line` gives the request: the first
   # parameter of the last function on that line (`asyncHandler(async (req,
-  # res) => {`, `function show(request, response) {`).
+  # res) => {`, `function show(request, response) {`), or of one whose
+  # parameter list opens there and wraps (`async (\n  req: Request,`).
   private def request_param(content : String, line : Int32) : String?
-    text = content.lines[line - 1]? || return
+    lines = content.lines
+    text = lines[line - 1]? || return
     code = code_only(text)
+    if code.matches?(/(?:\bfunction\b\s*\*?\s*[\w$]*|[\w$\]]\s*(?::[^=]+)?=\s*(?:async\s*)?)\(\s*\z/)
+      return code_only(lines[line]? || "").match(/\A\s*([A-Za-z_$][\w$]*)\s*[:,)]/).try(&.[1])
+    end
     if arrow = code.rindex("=>")
       head = code[0...arrow].rstrip
       head = head.sub(/\)\s*:\s*[^()]*\z/, ")") # `): Promise<void>`
