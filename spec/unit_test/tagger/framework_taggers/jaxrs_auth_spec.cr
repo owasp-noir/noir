@@ -407,8 +407,8 @@ describe "JaxrsAuthTagger" do
       result["GET /api"].size.should eq(1)
       elapsed
     end
-    small = timed.call(2000)
-    large = timed.call(8000)
+    small = (0...3).min_of { timed.call(2000) }
+    large = (0...3).min_of { timed.call(8000) }
     (large / {small, 1.millisecond}.max).should be < 10.0
   end
 
