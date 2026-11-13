@@ -142,6 +142,7 @@ all, and the verb says so.
 ```bash
 for f in $(git diff --name-only main...HEAD); do noir reach "$f" --from report.json -f text; done
 noir scan ./app --diff-ref main -f json        # added / removed / changed endpoints, with auth changes
+noir query ./app --diff-ref main --no-guard --sink any   # filters over the added + changed endpoints only
 ```
 
 `reach` lists endpoints whose recorded evidence is in that file. It does not

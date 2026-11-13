@@ -353,6 +353,15 @@ class NoirRunner
     end
   end
 
+  # The diff against the old side, unrendered: what `diff_report` prints and
+  # what `noir query` filters. A route the status-code probe dropped from
+  # this side is dropped from the old one too, or it would read as removed
+  # although the code still has it.
+  def diff(diff_app) : OutputBuilderDiff::Result
+    old_endpoints = diff_app.endpoints.reject { |endpoint| @status_excluded.includes?({endpoint.url, endpoint.method}) }
+    OutputBuilderDiff.new(@options).diff(@endpoints, old_endpoints)
+  end
+
   # Renders the diff in the requested format and returns it, so the caller
   # can apply `--fail-on` to the same result instead of computing it twice.
   def diff_report(diff_app) : OutputBuilderDiff::Result
@@ -360,8 +369,7 @@ class NoirRunner
     # Either scan dying makes the diff unreliable; SARIF says so through
     # `executionSuccessful`.
     builder.analyzer_failures = analyzer_failures + diff_app.analyzer_failures
-    old_endpoints = diff_app.endpoints.reject { |endpoint| @status_excluded.includes?({endpoint.url, endpoint.method}) }
-    result = builder.diff(@endpoints, old_endpoints)
+    result = diff(diff_app)
 
     case options["format"]
     when "yaml"

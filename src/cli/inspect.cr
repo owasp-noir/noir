@@ -115,8 +115,16 @@ module Noir::CLI::Inspect
     {positionals, flags}
   end
 
-  # The endpoint list to query: a saved report or a live scan.
-  def self.load(common : Common, scan_argv : Array(String)) : Array(Endpoint)
+  # `--change` categories, in the order rows are printed. The default is the
+  # new side: what a reviewer of the change has to look at.
+  DIFF_CHANGES    = %w[added changed removed]
+  DEFAULT_CHANGES = %w[added changed]
+
+  # The endpoint list to query: a saved report or a live scan. `changes` is
+  # query's `--change` list (empty when not given). trace and reach pass nil:
+  # a diff is a set of endpoints to filter, and scanning only its new side
+  # behind their back would answer a question nobody asked.
+  def self.load(common : Common, scan_argv : Array(String), changes : Array(String)? = nil) : Array(Endpoint)
     if from = common.from
       # Nothing is scanned, so a scan path or flag here is a mistake — and a
       # mistyped filter (`--no-gaurd`) would otherwise return the whole
@@ -129,19 +137,41 @@ module Noir::CLI::Inspect
         end
         Noir::CLI.die(message, EXIT_USAGE)
       end
-      load_report(from)
+      load_report(from, changes)
     else
       unknown = unknown_flags(scan_argv)
       unless unknown.empty?
         Noir::CLI.die("unknown flag(s): #{unknown.join(" ")}. Run `noir scan --help` for the scan flags a verb accepts.", EXIT_USAGE)
       end
       options, args = ScanCommand.parse_options(scan_argv)
+      diff_flag = {"diff" => "--diff-path", "diff_ref" => "--diff-ref"}.find { |key, _| !options[key]?.to_s.empty? }.try(&.[1])
+      if diff_flag && changes.nil?
+        Noir::CLI.die("#{diff_flag} is supported by `noir query`", EXIT_USAGE)
+      end
+      if !diff_flag && changes.try(&.present?)
+        Noir::CLI.die("--change needs a diff: pass --diff-ref <rev> or --diff-path <dir>, or --from a diff report", EXIT_USAGE)
+      end
+      # The old side keeps the context too: `--change removed` rows are
+      # filtered by the same --guard / --sink as the new ones.
       options["ai_context"] = YAML::Any.new(true)
       options["ai_context_features"] = YAML::Any.new("")
       options["include_callee"] = YAML::Any.new(true)
       ScanCommand.prepare!(options, args)
-      ScanCommand.collect(options).endpoints
+      app, old = ScanCommand.collect(options)
+      return app.endpoints unless old && changes
+      result = app.diff(old)
+      change_categories(changes).flat_map do |category|
+        case category
+        when "added"   then result[:added]
+        when "removed" then result[:removed]
+        else                result[:changed]
+        end
+      end
     end
+  end
+
+  def self.change_categories(changes : Array(String)) : Array(String)
+    changes.empty? ? DEFAULT_CHANGES : DIFF_CHANGES & changes
   end
 
   # Global output flags are already applied by the router, and remain valid
@@ -174,18 +204,24 @@ module Noir::CLI::Inspect
     end
   end
 
-  # Reads the endpoints of a `-f json` document or a `-f jsonl` stream.
+  # Reads the endpoints of a `-f json` document or a `-f jsonl` stream, or
+  # the `changes` categories of a `noir scan --diff-* -f json` report.
   # Passive findings and failure lines (jsonl) are told apart by shape.
-  def self.load_report(path : String) : Array(Endpoint)
+  def self.load_report(path : String, changes : Array(String)? = nil) : Array(Endpoint)
     text = File.read(path)
     # A `-f json` document parses whole; a `-f jsonl` stream does not (or is
     # a single endpoint line), so it falls back to one object per line.
     report = false
+    diff = false
     objects = begin
       doc = JSON.parse(text)
       if doc.as_h? && (list = doc["endpoints"]?)
         report = true
         list.as_a
+      elsif doc.as_h? && DIFF_CHANGES.all? { |category| doc[category]?.try(&.as_a?) }
+        Noir::CLI.die("--from #{path} is a diff report, which `noir query` reads", EXIT_USAGE) unless changes
+        report = diff = true
+        change_categories(changes).flat_map { |category| doc[category].as_a }
       else
         [doc]
       end
@@ -198,6 +234,9 @@ module Noir::CLI::Inspect
     end
     if !report && endpoints.empty?
       Noir::CLI.die("--from #{path}: not a noir report (expected `noir scan -f json` or `-f jsonl` output)", EXIT_USAGE)
+    end
+    if !diff && changes.try(&.present?)
+      Noir::CLI.die("--change needs a diff, and --from #{path} is not a diff report (`noir scan --diff-ref <rev> -f json`)", EXIT_USAGE)
     end
     endpoints
   rescue ex : IO::Error | JSON::ParseException | JSON::SerializableError

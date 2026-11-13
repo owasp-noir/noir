@@ -631,6 +631,29 @@ describe "noir CLI surface (built binary)" do
     end
   end
 
+  # `query` used to hand the diff flags to the scan and drop them, so the
+  # whole surface came back as if it were the diff.
+  describe "query over a diff" do
+    it "queries only what the diff names and gates with --fail-on-match" do
+      removed = run_noir(["query", FIXTURE, "--diff-path", DIFF_FIXTURE, "--change", "removed",
+                          "--count", "--fail-on-match", "--no-color", "--no-log"])
+      removed.exit_code.should eq(3)
+      removed.stdout.strip.to_i.should be > 0
+      removed.stderr.should contain("--fail-on-match matched")
+
+      unchanged = run_noir(["query", FIXTURE, "--diff-path", FIXTURE, "--fail-on-match", "--no-color", "--no-log"])
+      unchanged.exit_code.should eq(0)
+      unchanged.stdout.should be_empty
+    end
+
+    it "is a usage error for --change without a diff, and for a diff flag on trace" do
+      run_noir(["query", FIXTURE, "--change", "added", "--no-color", "--no-log"]).exit_code.should eq(2)
+      trace = run_noir(["trace", "/", FIXTURE, "--diff-path", DIFF_FIXTURE, "--no-color", "--no-log"])
+      trace.exit_code.should eq(2)
+      trace.stderr.should contain("supported by `noir query`")
+    end
+  end
+
   describe "broken pipe" do
     # `noir list techs` writes far more than a pipe buffer holds, so a
     # reader that stops early (`| head`) closes the pipe mid-write. Scan's

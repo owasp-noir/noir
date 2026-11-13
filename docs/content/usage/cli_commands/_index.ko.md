@@ -256,6 +256,31 @@ noir query --no-guard --exclude sink=any --from report.json                 # �
 - `any` 키워드: `--sink`, `--source`, `--signal`, `--validator`에서 `any`는 해당 버킷이 비어 있지 않으면 매칭됩니다.
 - stderr 경고: 리포트에 없는 값을 필터에 지정하면 리포트에 실제로 있는 값 목록과 함께 stderr에 경고를 출력합니다. `--ai-context` 없이 스캔된 리포트에 `--guard`나 `--sink` 같은 컨텍스트 필터를 적용하면 AI 컨텍스트가 없다는 경고를 출력합니다.
 
+#### 변경분에 대한 질의
+
+`--diff-ref <rev>`나 `--diff-path <dir>`를 주면 `query`는 양쪽을 모두 스캔한 뒤, 변경이 건드린 엔드포인트만 놓고 필터를 적용합니다. 대상은 `noir scan --diff-ref`가 보고하는 것과 같습니다. 어떤 분류를 볼지는 `--change added,changed,removed`로 고릅니다(쉼표 목록은 OR). 기본값은 `added,changed`로, 리뷰어가 봐야 하는 새 쪽 엔드포인트입니다. `removed`를 고르면 이전 쪽 엔드포인트가 나오고, 필터도 그대로 적용됩니다.
+
+```bash
+noir query --diff-ref origin/main --no-guard --sink any .        # 추가·변경된 것 중 가드 없이 싱크에 닿는 것
+noir query --diff-ref origin/main --change added --no-guard .     # 새로 생긴 라우트만
+noir query --diff-path ../old --change removed .                  # 변경으로 사라진 것
+```
+
+`--from`으로 diff 리포트도 읽을 수 있어서, diff 스캔 한 번으로 여러 질문을 던질 수 있습니다.
+
+```bash
+noir scan --diff-ref origin/main --ai-context -f json -o diff.json .
+noir query --from diff.json --change added --signal idor_review
+```
+
+diff 없이 `--change`를 쓰면(diff 플래그도 없고 `--from`이 일반 리포트일 때) 사용법 오류입니다. `trace`와 `reach`는 diff를 받지 않으며, diff 플래그를 넘기면 역시 사용법 오류입니다.
+
+`--fail-on-match`를 붙이면 diff 유무와 상관없이 질의 자체가 CI 게이트가 됩니다. 한 행이라도 매칭되면 `3`(행은 그대로 출력되고, 몇 건인지는 stderr에 나옵니다), 하나도 없으면 `0`, 사용법 오류는 `2`로 끝납니다. `! noir query ...`로 종료 코드를 뒤집는 방식은 플래그 오타까지 통과로 바꿔 버리니, 대신 이 옵션을 쓰세요. `--count`와 함께 쓰면 개수를 기준으로 판단합니다.
+
+```bash
+noir query --diff-ref origin/main --no-guard --sink any --fail-on-match .
+```
+
 ### 공통 플래그 및 종료 코드
 
 세 질의 명령 모두 다음 옵션을 지원합니다:
@@ -275,6 +300,7 @@ noir query --no-guard --exclude sink=any --from report.json                 # �
 - `0`: 하나 이상의 엔드포인트가 매칭됨.
 - `1`: 매칭된 결과 없음 (trace 미스, reach에서 해당 파일에 닿는 엔드포인트 없음, query 매칭 결과 0건).
 - `2`: 사용법 오류 (잘못된 플래그, 필수 인자 누락, 상호 배타적 플래그 동시 사용, 양의 정수가 아닌 `--limit`, `--from`과 함께 스캔 인자 전달, 리포트 읽기 실패).
+- `3`: `query --fail-on-match`에서 하나 이상의 엔드포인트가 매칭됨 (이때 매칭이 없으면 `0`으로 끝남).
 
 ### 출력 행 형식
 

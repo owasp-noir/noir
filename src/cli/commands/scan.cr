@@ -94,11 +94,15 @@ module Noir::CLI::ScanCommand
     validate_options!(noir_options)
   end
 
-  # Detect + analyze with no report, no diff and no exit: the endpoint list
-  # the query verbs filter. Deliver flags (`--probe`, `--export-*`) still run
-  # inside `analyze`, exactly as on a scan.
-  def self.collect(noir_options : Hash(String, YAML::Any)) : NoirRunner
+  # Detect + analyze with no report and no exit: the endpoint list the query
+  # verbs filter and, under `--diff-ref` / `--diff-path`, the analyzed old
+  # side for `noir query` to diff it against. Deliver flags (`--probe`,
+  # `--export-*`) still run inside `analyze`, exactly as on a scan.
+  def self.collect(noir_options : Hash(String, YAML::Any)) : {NoirRunner, NoirRunner?}
     app = NoirRunner.new noir_options
+    # Resolved before the new side is scanned, as on a scan: a misspelled
+    # --diff-path or an unknown ref fails before the long part, not after.
+    old_side = diff_side(noir_options, app.logger)
     app.logger.loading "Detecting technologies in the base directory." do
       app.detect
     end
@@ -112,7 +116,9 @@ module Noir::CLI::ScanCommand
       app.analyze
     end
     report_coverage_gaps(app.logger, app.analyzer_failures, "")
-    app
+    return {app, nil} unless old_side
+    analyze_diff_side(app.logger, old_side, noir_options)
+    {app, old_side[0]}
   end
 
   private def self.apply_cache_flags(noir_options : Hash(String, YAML::Any))
@@ -598,6 +604,74 @@ module Noir::CLI::ScanCommand
     {[diff_path], "--diff-path", nil}
   end
 
+  # The old side of a diff scan, built but not yet scanned: its runner, the
+  # flag that named it (for messages), and the `--diff-ref` checkout its
+  # paths are relocated out of. nil without a diff flag. Shared by `scan` and
+  # `noir query`, so both resolve the base and clean the checkout up alike.
+  private def self.diff_side(noir_options : Hash(String, YAML::Any), logger) : {NoirRunner, String, Noir::GitSnapshot::Snapshot?}?
+    bases, label, snapshot = resolve_diff_side(noir_options, logger)
+    return unless bases
+    diff_options = noir_options.dup
+    diff_options["base"] = YAML::Any.new(bases.map { |b| YAML::Any.new(b) })
+    # `noir_options.dup` already carries over the parent's `nolog`
+    # setting, so --no-log applies to both scans uniformly.
+    # The previous shape force-set nolog=false for the diff side,
+    # which mixed diff-scan progress (banner, "Optimizing
+    # endpoints", "Found N endpoints") into the JSON stdout when
+    # the user explicitly asked for quiet output.
+
+    # Disable PROBE/EXPORT on the diff side. The diff scan is a
+    # detection-only pass — its sole purpose is to enumerate the
+    # *old* endpoints so the diff report can name what changed.
+    # Pre-fix, `--probe --diff-path X` fired HTTP requests against
+    # every base endpoint AND every old endpoint (so
+    # unchanged-but-present URLs got hit twice and removed-only
+    # URLs got hit once), and `--export-es --diff-path X` pushed
+    # the stale catalog into the index alongside the current one.
+    # Both surprised users running diff scans in CI.
+    diff_options["probe"] = YAML::Any.new(false)
+    diff_options["probe_via"] = YAML::Any.new("")
+    diff_options["export_es"] = YAML::Any.new("")
+    diff_options["export_webhook"] = YAML::Any.new("")
+    # The status-code probe is a probe too, and `--exclude-codes` on the
+    # old side dropped every removed endpoint (they 404 now) before the
+    # diff could name it.
+    diff_options["status_codes"] = YAML::Any.new(false)
+    diff_options["exclude_codes"] = YAML::Any.new("")
+
+    logger.info "Running Noir with Diff mode."
+    {NoirRunner.new(diff_options), label, snapshot}
+  end
+
+  # Scans the old side once the new one is done.
+  private def self.analyze_diff_side(logger, side : {NoirRunner, String, Noir::GitSnapshot::Snapshot?},
+                                     noir_options : Hash(String, YAML::Any))
+    old, label, snapshot = side
+    # Kept even though `LocatorKeys.reset` now runs at the top of each
+    # phase: this is a real codebase boundary, and `clear_all` is the only
+    # thing that also drops `Process`-lifetime slots a library caller
+    # declared. It does not reset `scan_base_paths` — `NoirRunner#detect`
+    # re-publishes those before anything walks a file, which is why the
+    # first codebase's roots have never been observable here.
+    locator = CodeLocator.instance
+    locator.clear_all
+    old.detect
+    old.analyze
+    if snap = snapshot
+      # The old side was scanned out of a scratch checkout that is deleted
+      # on exit, so a removed endpoint's `code_paths` would point at a
+      # directory that no longer exists. Report them under the base the
+      # user actually passed, which is where that file lived at REF.
+      old.endpoints = snap.relocate(old.endpoints, noir_options["base"].as_a.map(&.to_s))
+    end
+    # The diff is computed against the old codebase's endpoint list, so an
+    # analyzer that died over there turns unscanned routes into phantom
+    # "added" entries. Named separately from the base scan's failures —
+    # the two scans have different code, and only one of them is the one
+    # the user is about to act on.
+    report_coverage_gaps(logger, old.analyzer_failures, " in the #{label} codebase")
+  end
+
   private def self.run_scan(noir_options : Hash(String, YAML::Any))
     fail_on = Noir::DiffGate.parse(noir_options["fail_on"]?.to_s)
     needs_auth_tags = Noir::DiffGate.needs_taggers?(fail_on) && !any_to_bool(noir_options["all_taggers"]?)
@@ -631,40 +705,8 @@ module Noir::CLI::ScanCommand
       app.logger.debug_sub "#{k}: #{Noir::Redact.option(k, v)}"
     end
 
-    app_diff = nil
-    diff_bases, diff_label, snapshot = resolve_diff_side(noir_options, app.logger)
-    if bases = diff_bases
-      diff_options = noir_options.dup
-      diff_options["base"] = YAML::Any.new(bases.map { |b| YAML::Any.new(b) })
-      # `noir_options.dup` already carries over the parent's `nolog`
-      # setting, so --no-log applies to both scans uniformly.
-      # The previous shape force-set nolog=false for the diff side,
-      # which mixed diff-scan progress (banner, "Optimizing
-      # endpoints", "Found N endpoints") into the JSON stdout when
-      # the user explicitly asked for quiet output.
-
-      # Disable PROBE/EXPORT on the diff side. The diff scan is a
-      # detection-only pass — its sole purpose is to enumerate the
-      # *old* endpoints so the diff report can name what changed.
-      # Pre-fix, `--probe --diff-path X` fired HTTP requests against
-      # every base endpoint AND every old endpoint (so
-      # unchanged-but-present URLs got hit twice and removed-only
-      # URLs got hit once), and `--export-es --diff-path X` pushed
-      # the stale catalog into the index alongside the current one.
-      # Both surprised users running diff scans in CI.
-      diff_options["probe"] = YAML::Any.new(false)
-      diff_options["probe_via"] = YAML::Any.new("")
-      diff_options["export_es"] = YAML::Any.new("")
-      diff_options["export_webhook"] = YAML::Any.new("")
-      # The status-code probe is a probe too, and `--exclude-codes` on the
-      # old side dropped every removed endpoint (they 404 now) before the
-      # diff could name it.
-      diff_options["status_codes"] = YAML::Any.new(false)
-      diff_options["exclude_codes"] = YAML::Any.new("")
-
-      app_diff = NoirRunner.new diff_options
-      app.logger.info "Running Noir with Diff mode."
-    end
+    old_side = diff_side(noir_options, app.logger)
+    app_diff = old_side.try(&.[0])
 
     app.logger.loading "Detecting technologies in the base directory." do
       app.detect
@@ -746,37 +788,14 @@ module Noir::CLI::ScanCommand
     elapsed = Time.instant - start_time
     app.logger.info "Scan completed in #{(elapsed.total_milliseconds / 1000.0).round(4)} s."
 
-    if app_diff.nil?
+    if side = old_side
+      app.logger.info "Diffing base and diff codebases."
+      analyze_diff_side(app.logger, side, noir_options)
+      app.logger.info "Generating Diff Report."
+      diff_result = app.diff_report(side[0])
+    else
       app.logger.info "Generating Report."
       app.report
-    else
-      app.logger.info "Diffing base and diff codebases."
-      # Kept even though `LocatorKeys.reset` now runs at the top of each
-      # phase: this is a real codebase boundary, and `clear_all` is the only
-      # thing that also drops `Process`-lifetime slots a library caller
-      # declared. It does not reset `scan_base_paths` — `NoirRunner#detect`
-      # re-publishes those before anything walks a file, which is why the
-      # first codebase's roots have never been observable here.
-      locator = CodeLocator.instance
-      locator.clear_all
-      app_diff.detect
-      app_diff.analyze
-      if snap = snapshot
-        # The old side was scanned out of a scratch checkout that is deleted
-        # on exit, so a removed endpoint's `code_paths` would point at a
-        # directory that no longer exists. Report them under the base the
-        # user actually passed, which is where that file lived at REF.
-        app_diff.endpoints = snap.relocate(app_diff.endpoints, noir_options["base"].as_a.map(&.to_s))
-      end
-      # The diff is computed against the old codebase's endpoint list, so an
-      # analyzer that died over there turns unscanned routes into phantom
-      # "added" entries. Named separately from the base scan's failures —
-      # the two scans have different code, and only one of them is the one
-      # the user is about to act on.
-      report_coverage_gaps(app.logger, app_diff.analyzer_failures, " in the #{diff_label} codebase")
-
-      app.logger.info "Generating Diff Report."
-      diff_result = app.diff_report(app_diff)
     end
 
     LLM::HttpTransport.usage_summary(LLM::Cache.hits).try { |line| app.logger.info line }
