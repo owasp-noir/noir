@@ -572,11 +572,6 @@ module Analyzer::Go
       {path, content}
     end
 
-    # Route paths from the walker always start with `/` (or are empty for
-    # a `m.Get("", h)` at the router root), so joining is a matter of not
-    # doubling the slash when the mount prefix is `/` or `` — gitea mounts
-    # its web router at `/` and `r.Mount("/", web.Routes())` must not
-    # turn `/metrics` into `//metrics`.
     # The binding regex for a package's chi wrapper types (see `analyze`),
     # or nil when its chi-importing files declare none. Group 1 is a name
     # declared with the type (`r *router`, a struct field `router *router`),
@@ -598,6 +593,11 @@ module Analyzer::Go
       Regex.new("\\b(\\w+)\\s+\\*?(?:#{type_alt})\\b(?!\\.)|\\b(\\w+)\\s*:?=\\s*&?(?:#{value_alt})")
     end
 
+    # Route paths from the walker always start with `/` (or are empty for
+    # a `m.Get("", h)` at the router root), so joining is a matter of not
+    # doubling the slash when the mount prefix is `/` or `` — gitea mounts
+    # its web router at `/` and `r.Mount("/", web.Routes())` must not
+    # turn `/metrics` into `//metrics`.
     private def mount_join(prefix : String, url : String) : String
       base = prefix.rstrip('/')
       if base.empty?
