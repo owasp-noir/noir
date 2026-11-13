@@ -1265,6 +1265,24 @@ GIN_AUTH_MIDDLEWARE = <<-GO
   \t}
   }
 
+  // EjectUserBySiteInfo refuses a caller without a user only when the site
+  // is set to require a login.
+  func (am *AuthUserMiddleware) EjectUserBySiteInfo() gin.HandlerFunc {
+  \treturn func(ctx *gin.Context) {
+  \t\tsiteInfo, _ := am.siteInfoCommonService.GetSiteSecurity(ctx)
+  \t\tif siteInfo == nil || !siteInfo.LoginRequired {
+  \t\t\tctx.Next()
+  \t\t\treturn
+  \t\t}
+  \t\tif GetUserInfoFromContext(ctx) == nil {
+  \t\t\thandler.HandleResponse(ctx, errors.Unauthorized(reason.UnauthorizedError), nil)
+  \t\t\tctx.Abort()
+  \t\t\treturn
+  \t\t}
+  \t\tctx.Next()
+  \t}
+  }
+
   // MustAuth refuses a caller without a user.
   func (am *AuthUserMiddleware) MustAuth() gin.HandlerFunc {
   \treturn func(ctx *gin.Context) {
@@ -1294,7 +1312,7 @@ private def optional_auth_scan(body : String, routes : Array({String, String, St
 
     type Conf struct{ Base string }
 
-    func setup(conf Conf, reg *router.APIRouter, mw *middleware.AuthUserMiddleware) {
+    func setup(conf Conf, reg *router.APIRouter, authUserMiddleware *middleware.AuthUserMiddleware) {
     \tr := gin.New()
 
     GO
@@ -1307,23 +1325,43 @@ describe "GoAuthTagger (a middleware that only hands the request on)" do
   conversation = {"GET", "/conversation", "router/router.go", %("/conversation")}
 
   it "does not guard a registrar's routes with an optional Auth() on the handed group" do
-    result = optional_auth_scan("\tunAuth := r.Group(conf.Base)\n\tunAuth.Use(mw.Auth())\n\treg.RegisterAPI(unAuth)\n", [conversation])
+    result = optional_auth_scan("\tunAuth := r.Group(conf.Base)\n\tunAuth.Use(authUserMiddleware.Auth())\n\treg.RegisterAPI(unAuth)\n", [conversation])
     guarded?(result["GET /conversation"]).should be_false
   end
 
   it "does not guard a same-file group's routes with an optional Auth()" do
-    body = "\tunAuth := r.Group(\"/api\")\n\tunAuth.Use(mw.Auth())\n\n\n\n\n\n\n\tunAuth.GET(\"/feed\", func(c *gin.Context) {})\n"
+    body = "\tunAuth := r.Group(\"/api\")\n\tunAuth.Use(authUserMiddleware.Auth())\n\n\n\n\n\n\n\tunAuth.GET(\"/feed\", func(c *gin.Context) {})\n"
     result = optional_auth_scan(body, [{"GET", "/api/feed", "main.go", %("/feed")}])
     guarded?(result["GET /api/feed"]).should be_false
   end
 
   it "still guards with a middleware that aborts on one path" do
-    result = optional_auth_scan("\tauthV1 := r.Group(conf.Base)\n\tauthV1.Use(mw.MustAuth())\n\treg.RegisterAPI(authV1)\n", [conversation])
+    result = optional_auth_scan("\tauthV1 := r.Group(conf.Base)\n\tauthV1.Use(authUserMiddleware.MustAuth())\n\treg.RegisterAPI(authV1)\n", [conversation])
     guarded?(result["GET /conversation"]).should be_true
 
-    body = "\tauthed := r.Group(\"/api\")\n\tauthed.Use(mw.MustAuth())\n\n\n\n\n\n\n\tauthed.GET(\"/feed\", func(c *gin.Context) {})\n"
+    body = "\tauthed := r.Group(\"/api\")\n\tauthed.Use(authUserMiddleware.MustAuth())\n\n\n\n\n\n\n\tauthed.GET(\"/feed\", func(c *gin.Context) {})\n"
     result = optional_auth_scan(body, [{"GET", "/api/feed", "main.go", %("/feed")}])
     guarded?(result["GET /api/feed"]).should be_true
+  end
+
+  # The definition is in the scan and hands its check to a service, so the
+  # name decides: the method's own (`EjectUserBySiteInfo`), not the value's
+  # (`authUserMiddleware`).
+  it "judges a found middleware that delegates by its own name, not the value it is called on" do
+    eject = optional_auth_scan("\tunAuth := r.Group(conf.Base)\n\tunAuth.Use(authUserMiddleware.EjectUserBySiteInfo())\n\treg.RegisterAPI(unAuth)\n", [conversation])
+    guarded?(eject["GET /conversation"]).should be_false
+
+    body = "\tunAuth := r.Group(\"/api\")\n\tunAuth.Use(authUserMiddleware.EjectUserBySiteInfo())\n\n\n\n\n\n\n\tunAuth.GET(\"/feed\", func(c *gin.Context) {})\n"
+    eject = optional_auth_scan(body, [{"GET", "/api/feed", "main.go", %("/feed")}])
+    guarded?(eject["GET /api/feed"]).should be_false
+
+    # A middleware from a dependency, not in the scan: the reference is all
+    # there is to read.
+    main = "package main\n\nimport (\n\t\"github.com/gin-gonic/gin\"\n\tauthmw \"github.com/acme/authmw\"\n)\n\n" \
+           "func setup() {\n\tr := gin.New()\n\tapi := r.Group(\"/api\")\n\tapi.Use(authmw.Handler())\n" \
+           "\n\n\n\n\n\n\tapi.GET(\"/feed\", func(c *gin.Context) {})\n}\n"
+    dependency = router_scope_scan({"go.mod" => GIN_MOD, "main.go" => main}, [{"GET", "/api/feed", "main.go", %("/feed")}], "go_gin")
+    guarded?(dependency["GET /api/feed"]).should be_true
   end
 
   it "keeps the name's verdict when the closure does anything but hand the request on" do

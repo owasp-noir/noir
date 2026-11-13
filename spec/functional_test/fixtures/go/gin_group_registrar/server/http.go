@@ -18,9 +18,10 @@ func NewHTTPServer(uiConf *UIConf, apiRouter *router.APIRouter, pluginRouter *ro
 	mustUnAuthV1 := r.Group(uiConf.APIBaseURL + "/answer/api/v1")
 	apiRouter.RegisterMustUnAuthAPIRouter(authMw, mustUnAuthV1)
 
-	// No login needed: Auth() only reads the user.
+	// No login needed by default: Auth() only reads the user, and
+	// EjectUserBySiteInfo() refuses only when the site requires a login.
 	unAuthV1 := r.Group(uiConf.APIBaseURL + "/answer/api/v1")
-	unAuthV1.Use(authMw.Auth())
+	unAuthV1.Use(authMw.Auth(), authMw.EjectUserBySiteInfo())
 	apiRouter.RegisterUnAuthAPIRouter(unAuthV1)
 
 	authV1 := r.Group(uiConf.APIBaseURL + "/answer/api/v1")

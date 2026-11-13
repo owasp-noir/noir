@@ -12,6 +12,15 @@ type AuthService interface {
 
 type AuthUserMiddleware struct {
 	authService AuthService
+	siteService SiteService
+}
+
+type SiteSecurity struct {
+	LoginRequired bool
+}
+
+type SiteService interface {
+	GetSiteSecurity(ctx *gin.Context) (*SiteSecurity, error)
 }
 
 // Auth sets the user when one is logged in, and lets everyone through.
@@ -28,6 +37,24 @@ func (am *AuthUserMiddleware) Auth() gin.HandlerFunc {
 			return
 		}
 		ctx.Set("user", userInfo)
+		ctx.Next()
+	}
+}
+
+// EjectUserBySiteInfo refuses a caller without a user only when the site
+// requires a login.
+func (am *AuthUserMiddleware) EjectUserBySiteInfo() gin.HandlerFunc {
+	return func(ctx *gin.Context) {
+		siteInfo, _ := am.siteService.GetSiteSecurity(ctx)
+		if siteInfo == nil || !siteInfo.LoginRequired {
+			ctx.Next()
+			return
+		}
+		if _, ok := ctx.Get("user"); !ok {
+			handler.HandleResponse(ctx, errors.Unauthorized(reason.UnauthorizedError), nil)
+			ctx.Abort()
+			return
+		}
 		ctx.Next()
 	}
 }

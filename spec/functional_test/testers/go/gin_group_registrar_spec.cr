@@ -46,8 +46,8 @@ describe "go_auth on groups handed to registrars in another file", tags: "functi
     # `mustUnAuthV1` has no `.Use`.
     guarded["GET /siteinfo"].should be_false
     guarded["POST /user/login/email"].should be_false
-    # `unAuthV1.Use(authMw.Auth())`: named like a guard, but it lets every
-    # caller through.
+    # `unAuthV1.Use(authMw.Auth(), authMw.EjectUserBySiteInfo())`: one lets
+    # every caller through, the other is named for nothing that guards.
     guarded["GET /personal/question/page"].should be_false
     # Handed `mustUnAuthV1` and `authV1`.
     guarded["GET /connector/info"].should be_false

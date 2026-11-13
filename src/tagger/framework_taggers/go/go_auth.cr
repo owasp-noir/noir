@@ -891,7 +891,8 @@ class GoAuthTagger < FrameworkTagger
           verdict = bodies.max_of { |body| body_verdict(body, nil) } unless bodies.empty?
         end
       end
-      verdict ||= definition_verdict(qualifier, name, file, fields)
+      delegating = false
+      verdict, delegating = definition_verdict(qualifier, name, file, fields) if verdict.nil?
       case verdict
       when Guard::Authn
         Tag.new("auth", "Protected by Go middleware #{shown} (verified from its body: refuses anonymous callers#{waiver ? ";#{waiver}" : ""})", "go_auth")
@@ -901,7 +902,10 @@ class GoAuthTagger < FrameworkTagger
         if display.nil? && (bound = local_binding(file, shown))
           next guard_by_definition(bound, file, authish_name, shown)
         end
-        Tag.new("auth", "Protected by Go middleware #{shown}", "go_auth") if authish_name && reference.matches?(AUTHISH_NAME)
+        # A definition in the scan that hands the check to a call the walk
+        # does not follow is judged by its own name: the value it is called
+        # on (`authUserMiddleware.CheckPrivateMode`) says nothing about it.
+        Tag.new("auth", "Protected by Go middleware #{shown}", "go_auth") if authish_name && (delegating ? name : reference).matches?(AUTHISH_NAME)
       end
     end
   end
@@ -936,11 +940,12 @@ class GoAuthTagger < FrameworkTagger
   # type's method; when that method finds no refusal but hands the request
   # to a call the walk does not follow (`session.Require(c)`, an interface
   # field's `a.V.Verify(c)`), it is nil, so the name decides as for a
-  # middleware whose definition is not in the scan.
+  # middleware whose definition is not in the scan; the second value says
+  # it was found (its own name decides, not the value's).
   # ponytail: same package plus a sibling package directory named like the
   # qualifier (or the local's type package), one hop deep; a guard reached
   # through such a delegated call still resolves by name only.
-  private def definition_verdict(qualifier : String, name : String, file : String, fields : Hash(String, String)?) : Guard?
+  private def definition_verdict(qualifier : String, name : String, file : String, fields : Hash(String, String)?) : {Guard?, Bool}
     dir = File.dirname(file)
     bodies = [] of Noir::GoCalleeExtractor::FunctionBody
     if qualifier.empty?
@@ -953,11 +958,11 @@ class GoAuthTagger < FrameworkTagger
       if bodies.empty? && !file_imports(file).includes?(qualifier)
         typed = local_type_methods(qualifier, name, file)
         verdict = typed.max_of? { |body| body_verdict(body, fields) }
-        return if verdict == Guard::None && typed.any? { |body| delegates?(body) } && !typed.all? { |body| pass_through?(body) }
-        return verdict
+        return {nil, true} if verdict == Guard::None && typed.any? { |body| delegates?(body) } && !typed.all? { |body| pass_through?(body) }
+        return {verdict, false}
       end
     end
-    bodies.max_of? { |body| body_verdict(body, fields) }
+    {bodies.max_of? { |body| body_verdict(body, fields) }, false}
   end
 
   # A gin middleware factory's returned closure: `return func(ctx *gin.Context) {`.
