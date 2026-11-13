@@ -238,11 +238,13 @@ class GoAuthTagger < FrameworkTagger
     @router_chains = Hash({String, Int32, String}, {Array({String, Int32}), Bool}).new
     @owner_uses = Hash({String, Int32, String, String}, Array(Int32)).new
     @escapes = Hash({String, Int32, String}, Bool).new
-    @call_arguments = Hash({String, String, Int32}, Array({String, Int32, String, Int32})?).new
+    @call_arguments = Hash({String, String, Int32, Bool}, Array({String, Int32, String, Int32})?).new
     @go_files = nil.as(Array(String)?)
     @bound_requests = Hash(String, Tag).new
     @server_scopes = [] of {owner: Gate, tag: Tag}
     @parameter_scopes = [] of {owner: Gate, tag: Tag, prefix: String?}
+    @group_uses = [] of {file: String, receiver: String, row: Int32, tag: Tag}
+    @registrar_tags = Hash({String, Int32}, Array(Tag)).new
     @gozero_groups = Hash(String, Array({Range(Int32, Int32), Array(Tag)})).new
   end
 
@@ -268,6 +270,8 @@ class GoAuthTagger < FrameworkTagger
     @closure_scopes.clear
     @server_scopes.clear
     @parameter_scopes.clear
+    @group_uses.clear
+    @registrar_tags.clear
     @bound_requests.clear
 
     files = collect_files_by_extension(".go")
@@ -627,11 +631,35 @@ class GoAuthTagger < FrameworkTagger
     stripped = continued if continued
     scope = resolve_use_scope(stripped, scopes) || resolve_group_middleware_scope(stripped, scopes)
     return if scope.nil?
-    # The middleware guards a route group whose URL prefix we could not read
-    # (`r.Group(cfg.APIBase + "/v1")`). Recording it as global would claim
-    # every endpoint in the app is protected — including the ones registered on
-    # the app's explicitly public groups. Decline instead.
-    return if scope[:kind] == GoRouteGroupScope::ScopeKind::Unknown
+
+    # The whole statement, so a config literal spread over the lines below
+    # (`KeyAuthWithConfig(middleware.KeyAuthConfig{` / `Skipper: ...`) is
+    # read with its fields.
+    statement = continued || statement_text(lines, index)
+    args = middleware_args(statement)
+
+    # Check for JWT library middleware
+    tags = [] of Tag
+    JWT_PATTERNS.each do |pattern|
+      if statement.matches?(pattern) && code_only(stripped).matches?(USE_TOKEN) && args.none?(&.matches?(SKIPPER_FIELD))
+        jwt_match = statement.match(pattern)
+        jwt_name = jwt_match ? jwt_match[0] : "JWT"
+        tags << Tag.new("auth", "Protected by Go JWT middleware (#{jwt_name})", "go_auth")
+      end
+    end
+    # Read each middleware argument's definition; its name counts only when
+    # the definition is not in the scan.
+    if tags.empty?
+      closures = args.count(&.lstrip.starts_with?("func"))
+      args.each do |arg|
+        tag = guard_by_definition(arg, file, authish_name: true)
+        if tag.nil? && closures == 1 && arg.lstrip.starts_with?("func") && resolve_group_middleware_scope(stripped, scopes)
+          tag = group_closure_guard(lines, index, file)
+        end
+        tags << tag if tag
+      end
+    end
+    return if tags.empty?
 
     # A group that adds no path segment (`authV1 := apiV1.Group("/", auth)`)
     # shares its parent's prefix, so the prefix alone would also claim the
@@ -641,6 +669,15 @@ class GoAuthTagger < FrameworkTagger
     # ponytail: routes such a group hands to a helper in another file
     # (`registerAuth(authV1)`) resolve by name only.
     receiver = stripped.match(REGISTRATION_RECEIVER).try &.[1]
+    # The guard also stays on the group variable, for the registrars it is
+    # handed to (see `registrar_guards`).
+    tags.each { |tag| @group_uses << {file: file, receiver: receiver, row: index, tag: tag} } if receiver
+    # The middleware guards a route group whose URL prefix we could not read
+    # (`r.Group(cfg.APIBase + "/v1")`). Recording it as global would claim
+    # every endpoint in the app is protected — including the ones registered on
+    # the app's explicitly public groups. Decline instead.
+    return if scope[:kind] == GoRouteGroupScope::ScopeKind::Unknown
+
     # The group variable the middleware is registered on, with the rows
     # after the registration in its block: in gin a group copies its
     # parent's middleware when it is created, so only groups derived there
@@ -655,34 +692,7 @@ class GoAuthTagger < FrameworkTagger
       @current_gate = {file: file, receiver: chain, rows: index..statement_end(lines, index), parents: {} of String => Array({String, Int32})}
     end
 
-    before = @middleware_scopes.size
-    # The whole statement, so a config literal spread over the lines below
-    # (`KeyAuthWithConfig(middleware.KeyAuthConfig{` / `Skipper: ...`) is
-    # read with its fields.
-    statement = continued || statement_text(lines, index)
-    args = middleware_args(statement)
-
-    # Check for JWT library middleware
-    JWT_PATTERNS.each do |pattern|
-      if statement.matches?(pattern) && code_only(stripped).matches?(USE_TOKEN) && args.none?(&.matches?(SKIPPER_FIELD))
-        jwt_match = statement.match(pattern)
-        jwt_name = jwt_match ? jwt_match[0] : "JWT"
-        jwt_tag = Tag.new("auth", "Protected by Go JWT middleware (#{jwt_name})", "go_auth")
-        add_middleware_scope(scope, file, jwt_tag)
-        register_parameter_scope(file, lines, index, receiver, jwt_tag, parents: scopes.parents) if receiver
-      end
-    end
-    return unless before == @middleware_scopes.size
-
-    # Read each middleware argument's definition; its name counts only when
-    # the definition is not in the scan.
-    closures = args.count(&.lstrip.starts_with?("func"))
-    args.each do |arg|
-      tag = guard_by_definition(arg, file, authish_name: true)
-      if tag.nil? && closures == 1 && arg.lstrip.starts_with?("func") && resolve_group_middleware_scope(stripped, scopes)
-        tag = group_closure_guard(lines, index, file)
-      end
-      next unless tag
+    tags.each do |tag|
       add_middleware_scope(scope, file, tag)
       register_parameter_scope(file, lines, index, receiver, tag, parents: scopes.parents) if receiver
     end
@@ -881,7 +891,8 @@ class GoAuthTagger < FrameworkTagger
           verdict = bodies.max_of { |body| body_verdict(body, nil) } unless bodies.empty?
         end
       end
-      verdict ||= definition_verdict(qualifier, name, file, fields)
+      delegating = false
+      verdict, delegating = definition_verdict(qualifier, name, file, fields) if verdict.nil?
       case verdict
       when Guard::Authn
         Tag.new("auth", "Protected by Go middleware #{shown} (verified from its body: refuses anonymous callers#{waiver ? ";#{waiver}" : ""})", "go_auth")
@@ -891,7 +902,10 @@ class GoAuthTagger < FrameworkTagger
         if display.nil? && (bound = local_binding(file, shown))
           next guard_by_definition(bound, file, authish_name, shown)
         end
-        Tag.new("auth", "Protected by Go middleware #{shown}", "go_auth") if authish_name && reference.matches?(AUTHISH_NAME)
+        # A definition in the scan that hands the check to a call the walk
+        # does not follow is judged by its own name: the value it is called
+        # on (`authUserMiddleware.CheckPrivateMode`) says nothing about it.
+        Tag.new("auth", "Protected by Go middleware #{shown}", "go_auth") if authish_name && (delegating ? name : reference).matches?(AUTHISH_NAME)
       end
     end
   end
@@ -926,11 +940,12 @@ class GoAuthTagger < FrameworkTagger
   # type's method; when that method finds no refusal but hands the request
   # to a call the walk does not follow (`session.Require(c)`, an interface
   # field's `a.V.Verify(c)`), it is nil, so the name decides as for a
-  # middleware whose definition is not in the scan.
+  # middleware whose definition is not in the scan; the second value says
+  # it was found (its own name decides, not the value's).
   # ponytail: same package plus a sibling package directory named like the
   # qualifier (or the local's type package), one hop deep; a guard reached
   # through such a delegated call still resolves by name only.
-  private def definition_verdict(qualifier : String, name : String, file : String, fields : Hash(String, String)?) : Guard?
+  private def definition_verdict(qualifier : String, name : String, file : String, fields : Hash(String, String)?) : {Guard?, Bool}
     dir = File.dirname(file)
     bodies = [] of Noir::GoCalleeExtractor::FunctionBody
     if qualifier.empty?
@@ -943,11 +958,60 @@ class GoAuthTagger < FrameworkTagger
       if bodies.empty? && !file_imports(file).includes?(qualifier)
         typed = local_type_methods(qualifier, name, file)
         verdict = typed.max_of? { |body| body_verdict(body, fields) }
-        return if verdict == Guard::None && typed.any? { |body| delegates?(body) }
-        return verdict
+        return {nil, true} if verdict == Guard::None && typed.any? { |body| delegates?(body) } && !typed.all? { |body| pass_through?(body) }
+        return {verdict, false}
       end
     end
-    bodies.max_of? { |body| body_verdict(body, fields) }
+    {bodies.max_of? { |body| body_verdict(body, fields) }, false}
+  end
+
+  # A gin middleware factory's returned closure: `return func(ctx *gin.Context) {`.
+  GIN_MIDDLEWARE_CLOSURE = /\A\s*return\s+func\s*\(\s*(\w+)\s+\*\s*gin\s*\.\s*Context\s*\)\s*\{\s*\z/
+
+  # What a pass-through closure may not contain: a stop (`Abort*`, `panic`), a
+  # response written (`JSON`, `String`, `Status`, `Redirect`, `WriteHeader`,
+  # `http.Error`, ...), a 401/403, or code that runs after the handlers
+  # (`defer`, a goroutine).
+  STOPS_OR_ANSWERS = /\.\s*(?:Abort\w*|Redirect\w*|JSON|IndentedJSON|SecureJSON|PureJSON|AsciiJSON|JSONP|String|Status|Data|DataFromReader|HTML|XML|YAML|TOML|ProtoBuf|Render|File\w*|WriteHeader\w*|Write\w*|Error)\s*\(|\bhttp\s*\.\s*Error\s*\(|\b40[13]\b|Status(?:Unauthorized|Forbidden)\b|\bpanic\s*\(|\bdefer\b|\bgo\s+\w|\bgoto\b/
+
+  # Whether `body` is a gin middleware factory whose returned closure only
+  # reads the request and hands it on (apache/answer's optional `Auth()`: set
+  # the user when the token resolves, `ctx.Next()` either way). Every exit of
+  # the closure is `ctx.Next()` then `return`, or `ctx.Next()` as its last
+  # statement; it stops nothing, writes no response, and hands the context
+  # only to its own methods or to calls whose value it assigns, none of them
+  # a function of the package that stops or answers. Anything else (another
+  # framework's shape, a bare call handed the context, which may abort it) is
+  # not one. A name that reads as a guard does not make such a body one.
+  # ponytail: a delegate on another value (`am.svc.Get(ctx, t)`) is not
+  # followed; one that aborts the context and returns a value is misread.
+  private def pass_through?(body : Noir::GoCalleeExtractor::FunctionBody) : Bool
+    lines = Noir::CComments.strip(body.source, quotes: %("'`)).gsub(STRING_LITERAL, %("")).lines.map(&.strip).reject(&.empty?)
+    open = lines.index(&.matches?(GIN_MIDDLEWARE_CLOSURE)) || return false
+    ctx = lines[open].match(GIN_MIDDLEWARE_CLOSURE).try(&.[1]) || return false
+    # The closure's body, up to the brace that closes it, which also closes
+    # the factory.
+    depth = 1
+    close = ((open + 1)...lines.size).find do |idx|
+      depth += lines[idx].count('{') - lines[idx].count('}')
+      depth <= 0
+    end || return false
+    return false unless lines[close] == "}" && lines[(close + 1)..]? == ["}"] && lines[...open].size == 1
+    closure = lines[(open + 1)...close]
+    next_call = /\A#{Regex.escape(ctx)}\s*\.\s*Next\s*\(\s*\)\z/
+    handed = /[(,]\s*&?\s*#{Regex.escape(ctx)}\s*[,)]/
+    package = @bodies.functions_for(File.dirname(body.file_path))
+    return false unless closure.last?.try(&.matches?(next_call))
+    closure.each_with_index.all? do |(line, idx)|
+      next false if line.matches?(STOPS_OR_ANSWERS)
+      next false if line.starts_with?("return") && (line != "return" || !closure[idx - 1]?.try(&.matches?(next_call)))
+      next true unless line.matches?(handed)
+      # Handed to a call: only as a read whose value is kept, of a function
+      # that does not itself stop or answer.
+      line.matches?(ASSIGNMENT_HEAD) && line.scan(BODY_CALL).none? do |call|
+        package[call[1]]?.try(&.source.matches?(STOPS_OR_ANSWERS))
+      end
+    end
   end
 
   # A call on a value: `session.Require(c)`, `a.V.Verify(c)`.
@@ -1686,6 +1750,7 @@ class GoAuthTagger < FrameworkTagger
       next if (prefix = scope[:prefix]) && !prefix_covers?(prefix, endpoint.url)
       endpoint.add_tag(scope[:tag]) if handed_after?(endpoint, scope[:owner])
     end
+    registrar_guards(endpoint).each { |tag| endpoint.add_tag(tag) }
     beego_casbin_guard(endpoint).try { |tag| endpoint.add_tag(tag) } if endpoint.details.technology == "go_beego"
   end
 
@@ -2734,6 +2799,86 @@ class GoAuthTagger < FrameworkTagger
     {m[1], index}
   end
 
+  # A registrar helper (apache/answer's `func (a *AnswerAPIRouter)
+  # RegisterAnswerAPIRouter(r *gin.RouterGroup)`) registers its routes on
+  # whatever group each caller hands it (`authV1.Use(mustAuth);
+  # answerRouter.RegisterAnswerAPIRouter(authV1)` in another file). When the
+  # caller's group has a prefix the scan cannot read (`r.Group(conf.APIBaseURL
+  # + "/answer/api/v1")`) its `.Use` has no prefix scope, so the guard is read
+  # off the group variable instead: a route on the helper's group parameter
+  # carries a guard only when every call of the helper, in any file, hands it
+  # a plain variable that has that guard `.Use`d on it (or on a group it is
+  # derived from) above the call in the caller's function. A call handing it
+  # anything else (an expression, its own parameter, the helper as a value)
+  # leaves the route unguarded.
+  # ponytail: one hop; a registrar called by another registrar with its own
+  # parameter is unguarded.
+  # An endpoint merged from several Go routes (the same method and path in
+  # two registrars) needs the guard on each of them.
+  private def registrar_guards(endpoint : Endpoint) : Array(Tag)
+    return [] of Tag if @group_uses.empty? || PREFIX_MATCHED_MIDDLEWARE.includes?(endpoint.details.technology)
+    per_route = endpoint.details.code_paths.compact_map do |path_info|
+      next unless path_info.path.ends_with?(".go")
+      registrar_route_tags(path_info)
+    end
+    common_guards(per_route)
+  end
+
+  # The guards every caller hands the registrar `path_info`'s route is
+  # registered in, on its group parameter; empty for any other route.
+  private def registrar_route_tags(path_info : PathInfo) : Array(Tag)
+    none = [] of Tag
+    line = path_info.line || return none
+    lines = read_file_lines(path_info.path) || return none
+    return none if line < 1 || line > lines.size
+    name = lines[line - 1].match(ROUTE_RECEIVER).try(&.[1]) || return none
+    chain, local = router_chain(path_info.path, lines, line, name)
+    return none if local
+    start = function_start(lines, line)
+    return none if start < 0
+    slot = parameter_slot(lines[start], chain.last[0]) || return none
+    @registrar_tags.put_if_absent(slot) { registrar_call_tags(*slot) }
+  end
+
+  # The guard tags (one per name) every call of `fn` hands its group
+  # parameter at `index`; empty when any call does not.
+  private def registrar_call_tags(fn : String, index : Int32) : Array(Tag)
+    calls = [] of {String, Int32, String, Int32}
+    (@go_files ||= collect_files_by_extension(".go")).each do |file|
+      next if file.ends_with?("_test.go")
+      calls.concat(call_arguments(file, fn, index, qualified: true) || return [] of Tag)
+    end
+    common_guards(calls.map { |(file, caller, arg, row)| caller_group_tags(file, caller, arg, row) })
+  end
+
+  # The first tag of each guard kind present in every one of `sets`; empty
+  # when there are none.
+  private def common_guards(sets : Array(Array(Tag))) : Array(Tag)
+    return [] of Tag if sets.empty?
+    %w[auth authz].compact_map do |kind|
+      sets.first.find(&.name.==(kind)) if sets.all?(&.any?(&.name.==(kind)))
+    end
+  end
+
+  # The guards `.Use`d on the group `arg` handed out on `row` (1-based) of
+  # the function starting on `caller` (0-based) in `file`, or on a group it
+  # is derived from before the derivation: gin copies a group's middleware
+  # when a child group, or a route, is created.
+  private def caller_group_tags(file : String, caller : Int32, arg : String, row : Int32) : Array(Tag)
+    lines = read_file_lines(file) || return [] of Tag
+    chain, _ = router_chain(file, lines, row, arg)
+    @group_uses.compact_map do |use|
+      next unless use[:file] == file && function_start(lines, use[:row]) == caller
+      reaches = chain.any? do |(group, at)|
+        next false unless group == use[:receiver] && use[:row] < at
+        # Reassigned in between: the `.Use` was on the old group.
+        reassigned = /\A\s*#{Regex.escape(group)}\s*:?=(?!=)/
+        ((use[:row] + 1)...at).none? { |between| lines[between - 1].matches?(reassigned) }
+      end
+      use[:tag] if reaches
+    end
+  end
+
   # The scanned non-test `.go` files of `file`'s package (its directory).
   private def package_files(file : String) : Array(String)
     dir = File.dirname(file)
@@ -2744,11 +2889,12 @@ class GoAuthTagger < FrameworkTagger
   # call `fn(...)` in `file`, a one-line `func extra(g) { fn(g) }` included;
   # nil when one passes something other than an identifier at `index`, or
   # `fn` is used other than called or declared (`apply(a, fn)` hands the
-  # helper on as a value, to be called with who knows what).
-  private def call_arguments(file : String, fn : String, index : Int32) : Array({String, Int32, String, Int32})?
-    @call_arguments.put_if_absent({file, fn, index}) do
+  # helper on as a value, to be called with who knows what). `qualified`
+  # also reads a method call (`r.fn(g)`) as a call of `fn`.
+  private def call_arguments(file : String, fn : String, index : Int32, qualified : Bool = false) : Array({String, Int32, String, Int32})?
+    @call_arguments.put_if_absent({file, fn, index, qualified}) do
       lines = read_file_lines(file) || next [] of {String, Int32, String, Int32}
-      mention = /(?<![\w.])#{Regex.escape(fn)}\b/
+      mention = qualified ? /(?<!\w)#{Regex.escape(fn)}\b/ : /(?<![\w.])#{Regex.escape(fn)}\b/
       calls = [] of {String, Int32, String, Int32}
       unresolved = false
       lines.each_with_index do |line, row|
