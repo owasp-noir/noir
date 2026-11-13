@@ -651,6 +651,10 @@ describe "noir CLI surface (built binary)" do
       trace = run_noir(["trace", "/", FIXTURE, "--diff-path", DIFF_FIXTURE, "--no-color", "--no-log"])
       trace.exit_code.should eq(2)
       trace.stderr.should contain("supported by `noir query`")
+      # Scan's gate, ignored here, would pass every match.
+      fail_on = run_noir(["query", FIXTURE, "--diff-path", DIFF_FIXTURE, "--fail-on", "added", "--no-color", "--no-log"])
+      fail_on.exit_code.should eq(2)
+      fail_on.stderr.should contain("--fail-on-match")
     end
   end
 

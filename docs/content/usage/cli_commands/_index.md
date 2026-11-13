@@ -280,7 +280,7 @@ noir query --from diff.json --change added --signal idor_review
 
 `--change` without a diff (no diff flag, or `--from` a plain report) is a usage error. `trace` and `reach` do not take a diff: a diff flag there is a usage error too.
 
-`--fail-on-match` turns any query into a CI gate, with or without a diff: exit `3` when at least one row matched (the rows still print, and stderr says how many), `0` when none did, `2` on a usage error. Use it instead of `! noir query ...`, which would also turn a mistyped flag into a passing job. With `--count`, the gate follows the count.
+`--fail-on-match` turns any query into a CI gate, with or without a diff: exit `3` when at least one row matched (the rows still print, and stderr says how many), `0` when none did, `2` on a usage error. Use it instead of `! noir query ...`, which would also turn a mistyped flag into a passing job. With `--count`, the gate follows the count. `noir scan`'s `--fail-on` is a usage error on the query verbs, so it cannot pass for a gate that never fires.
 
 ```bash
 noir query --diff-ref origin/main --no-guard --sink any --fail-on-match .

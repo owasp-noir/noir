@@ -275,7 +275,7 @@ noir query --from diff.json --change added --signal idor_review
 
 diff 없이 `--change`를 쓰면(diff 플래그도 없고 `--from`이 일반 리포트일 때) 사용법 오류입니다. `trace`와 `reach`는 diff를 받지 않으며, diff 플래그를 넘기면 역시 사용법 오류입니다.
 
-`--fail-on-match`를 붙이면 diff 유무와 상관없이 질의 자체가 CI 게이트가 됩니다. 한 행이라도 매칭되면 `3`(행은 그대로 출력되고, 몇 건인지는 stderr에 나옵니다), 하나도 없으면 `0`, 사용법 오류는 `2`로 끝납니다. `! noir query ...`로 종료 코드를 뒤집는 방식은 플래그 오타까지 통과로 바꿔 버리니, 대신 이 옵션을 쓰세요. `--count`와 함께 쓰면 개수를 기준으로 판단합니다.
+`--fail-on-match`를 붙이면 diff 유무와 상관없이 질의 자체가 CI 게이트가 됩니다. 한 행이라도 매칭되면 `3`(행은 그대로 출력되고, 몇 건인지는 stderr에 나옵니다), 하나도 없으면 `0`, 사용법 오류는 `2`로 끝납니다. `! noir query ...`로 종료 코드를 뒤집는 방식은 플래그 오타까지 통과로 바꿔 버리니, 대신 이 옵션을 쓰세요. `--count`와 함께 쓰면 개수를 기준으로 판단합니다. `noir scan`의 `--fail-on`은 질의 명령에서 사용법 오류로 처리됩니다. 받아 놓고 무시하면 게이트처럼 보여도 실제로는 한 번도 걸리지 않기 때문입니다.
 
 ```bash
 noir query --diff-ref origin/main --no-guard --sink any --fail-on-match .

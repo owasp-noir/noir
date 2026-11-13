@@ -144,6 +144,11 @@ module Noir::CLI::Inspect
         Noir::CLI.die("unknown flag(s): #{unknown.join(" ")}. Run `noir scan --help` for the scan flags a verb accepts.", EXIT_USAGE)
       end
       options, args = ScanCommand.parse_options(scan_argv)
+      # Accepted and ignored, it would look like a gate and pass every match.
+      # Read off argv, not the options: a config file's `fail_on` is scan's.
+      if ScanCommand.cli_flag_names(args).includes?("--fail-on")
+        Noir::CLI.die("--fail-on is `noir scan`'s gate; `noir query` gates with --fail-on-match", EXIT_USAGE)
+      end
       diff_flag = {"diff" => "--diff-path", "diff_ref" => "--diff-ref"}.find { |key, _| !options[key]?.to_s.empty? }.try(&.[1])
       if diff_flag && changes.nil?
         Noir::CLI.die("#{diff_flag} is supported by `noir query`", EXIT_USAGE)

@@ -214,7 +214,7 @@ module Noir::CLI::QueryCommand
         --diff-ref <rev>, --diff-path <dir>
                                Scan both sides and query only what the change touched
         --change <c,...>       added, changed, removed (default: added,changed, the new side).
-                               Also selects from --from a `noir scan --diff-ref ... -f json` report
+                               Also picks the categories of a diff report read with --from
 
       #{Noir::CLI.section("EXAMPLES:")}
         noir query --no-guard --sink any ./app
