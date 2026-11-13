@@ -13,6 +13,10 @@ func (a *APIRouter) RegisterMustUnAuthAPIRouter(authUserMiddleware *middleware.A
 	r.POST("/user/login/email", func(ctx *gin.Context) {})
 }
 
+func (a *APIRouter) RegisterUnAuthAPIRouter(r *gin.RouterGroup) {
+	r.GET("/personal/question/page", func(ctx *gin.Context) {})
+}
+
 func (a *APIRouter) RegisterAPIRouter(r *gin.RouterGroup) {
 	r.GET("/ai/conversation", func(ctx *gin.Context) {})
 	r.DELETE("/ai/conversation", func(ctx *gin.Context) {})

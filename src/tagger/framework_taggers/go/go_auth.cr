@@ -631,35 +631,6 @@ class GoAuthTagger < FrameworkTagger
     stripped = continued if continued
     scope = resolve_use_scope(stripped, scopes) || resolve_group_middleware_scope(stripped, scopes)
     return if scope.nil?
-    # The middleware guards a route group whose URL prefix we could not read
-    # (`r.Group(cfg.APIBase + "/v1")`). Recording it as global would claim
-    # every endpoint in the app is protected — including the ones registered on
-    # the app's explicitly public groups. Decline instead: the guard is kept
-    # only on the group variable, for the registrars it is handed to (see
-    # `registrar_guards`).
-    unknown = scope[:kind] == GoRouteGroupScope::ScopeKind::Unknown
-
-    # A group that adds no path segment (`authV1 := apiV1.Group("/", auth)`)
-    # shares its parent's prefix, so the prefix alone would also claim the
-    # parent's own `apiV1.GET("users")`. Its middleware is credited only to
-    # routes registered on that variable in this file, inside the block that
-    # declares it: a sibling block's `g := e.Group("")` is another variable.
-    # ponytail: routes such a group hands to a helper in another file
-    # (`registerAuth(authV1)`) resolve by name only.
-    receiver = stripped.match(REGISTRATION_RECEIVER).try &.[1]
-    # The group variable the middleware is registered on, with the rows
-    # after the registration in its block: in gin a group copies its
-    # parent's middleware when it is created, so only groups derived there
-    # inherit it.
-    @current_owner = receiver ? {file: file, receiver: receiver, rows: index..enclosing_block_end(lines, index), parents: scopes.parents} : nil
-    @current_gate = receiver && scopes.aliases.includes?(receiver) ? @current_owner : nil
-    # `r.Group("/").Use(auth).POST("/x", h)` with the group kept nowhere:
-    # the middleware reaches only the routes chained in that statement.
-    # (Handed to a helper instead, `register(r.Group("/").Use(auth))`, it
-    # still reaches every route under the prefix.)
-    if chain = ephemeral_group_use(stripped)
-      @current_gate = {file: file, receiver: chain, rows: index..statement_end(lines, index), parents: {} of String => Array({String, Int32})}
-    end
 
     # The whole statement, so a config literal spread over the lines below
     # (`KeyAuthWithConfig(middleware.KeyAuthConfig{` / `Skipper: ...`) is
@@ -688,10 +659,40 @@ class GoAuthTagger < FrameworkTagger
         tags << tag if tag
       end
     end
+    return if tags.empty?
+
+    # A group that adds no path segment (`authV1 := apiV1.Group("/", auth)`)
+    # shares its parent's prefix, so the prefix alone would also claim the
+    # parent's own `apiV1.GET("users")`. Its middleware is credited only to
+    # routes registered on that variable in this file, inside the block that
+    # declares it: a sibling block's `g := e.Group("")` is another variable.
+    # ponytail: routes such a group hands to a helper in another file
+    # (`registerAuth(authV1)`) resolve by name only.
+    receiver = stripped.match(REGISTRATION_RECEIVER).try &.[1]
+    # The guard also stays on the group variable, for the registrars it is
+    # handed to (see `registrar_guards`).
+    tags.each { |tag| @group_uses << {file: file, receiver: receiver, row: index, tag: tag} } if receiver
+    # The middleware guards a route group whose URL prefix we could not read
+    # (`r.Group(cfg.APIBase + "/v1")`). Recording it as global would claim
+    # every endpoint in the app is protected — including the ones registered on
+    # the app's explicitly public groups. Decline instead.
+    return if scope[:kind] == GoRouteGroupScope::ScopeKind::Unknown
+
+    # The group variable the middleware is registered on, with the rows
+    # after the registration in its block: in gin a group copies its
+    # parent's middleware when it is created, so only groups derived there
+    # inherit it.
+    @current_owner = receiver ? {file: file, receiver: receiver, rows: index..enclosing_block_end(lines, index), parents: scopes.parents} : nil
+    @current_gate = receiver && scopes.aliases.includes?(receiver) ? @current_owner : nil
+    # `r.Group("/").Use(auth).POST("/x", h)` with the group kept nowhere:
+    # the middleware reaches only the routes chained in that statement.
+    # (Handed to a helper instead, `register(r.Group("/").Use(auth))`, it
+    # still reaches every route under the prefix.)
+    if chain = ephemeral_group_use(stripped)
+      @current_gate = {file: file, receiver: chain, rows: index..statement_end(lines, index), parents: {} of String => Array({String, Int32})}
+    end
 
     tags.each do |tag|
-      @group_uses << {file: file, receiver: receiver, row: index, tag: tag} if receiver
-      next if unknown
       add_middleware_scope(scope, file, tag)
       register_parameter_scope(file, lines, index, receiver, tag, parents: scopes.parents) if receiver
     end
@@ -952,11 +953,60 @@ class GoAuthTagger < FrameworkTagger
       if bodies.empty? && !file_imports(file).includes?(qualifier)
         typed = local_type_methods(qualifier, name, file)
         verdict = typed.max_of? { |body| body_verdict(body, fields) }
-        return if verdict == Guard::None && typed.any? { |body| delegates?(body) }
+        return if verdict == Guard::None && typed.any? { |body| delegates?(body) } && !typed.all? { |body| pass_through?(body) }
         return verdict
       end
     end
     bodies.max_of? { |body| body_verdict(body, fields) }
+  end
+
+  # A gin middleware factory's returned closure: `return func(ctx *gin.Context) {`.
+  GIN_MIDDLEWARE_CLOSURE = /\A\s*return\s+func\s*\(\s*(\w+)\s+\*\s*gin\s*\.\s*Context\s*\)\s*\{\s*\z/
+
+  # What a pass-through closure may not contain: a stop (`Abort*`, `panic`), a
+  # response written (`JSON`, `String`, `Status`, `Redirect`, `WriteHeader`,
+  # `http.Error`, ...), a 401/403, or code that runs after the handlers
+  # (`defer`, a goroutine).
+  STOPS_OR_ANSWERS = /\.\s*(?:Abort\w*|Redirect\w*|JSON|IndentedJSON|SecureJSON|PureJSON|AsciiJSON|JSONP|String|Status|Data|DataFromReader|HTML|XML|YAML|TOML|ProtoBuf|Render|File\w*|WriteHeader\w*|Write\w*|Error)\s*\(|\bhttp\s*\.\s*Error\s*\(|\b40[13]\b|Status(?:Unauthorized|Forbidden)\b|\bpanic\s*\(|\bdefer\b|\bgo\s+\w|\bgoto\b/
+
+  # Whether `body` is a gin middleware factory whose returned closure only
+  # reads the request and hands it on (apache/answer's optional `Auth()`: set
+  # the user when the token resolves, `ctx.Next()` either way). Every exit of
+  # the closure is `ctx.Next()` then `return`, or `ctx.Next()` as its last
+  # statement; it stops nothing, writes no response, and hands the context
+  # only to its own methods or to calls whose value it assigns, none of them
+  # a function of the package that stops or answers. Anything else (another
+  # framework's shape, a bare call handed the context, which may abort it) is
+  # not one. A name that reads as a guard does not make such a body one.
+  # ponytail: a delegate on another value (`am.svc.Get(ctx, t)`) is not
+  # followed; one that aborts the context and returns a value is misread.
+  private def pass_through?(body : Noir::GoCalleeExtractor::FunctionBody) : Bool
+    lines = Noir::CComments.strip(body.source, quotes: %("'`)).gsub(STRING_LITERAL, %("")).lines.map(&.strip).reject(&.empty?)
+    open = lines.index(&.matches?(GIN_MIDDLEWARE_CLOSURE)) || return false
+    ctx = lines[open].match(GIN_MIDDLEWARE_CLOSURE).try(&.[1]) || return false
+    # The closure's body, up to the brace that closes it, which also closes
+    # the factory.
+    depth = 1
+    close = ((open + 1)...lines.size).find do |idx|
+      depth += lines[idx].count('{') - lines[idx].count('}')
+      depth <= 0
+    end || return false
+    return false unless lines[close] == "}" && lines[(close + 1)..]? == ["}"] && lines[...open].size == 1
+    closure = lines[(open + 1)...close]
+    next_call = /\A#{Regex.escape(ctx)}\s*\.\s*Next\s*\(\s*\)\z/
+    handed = /[(,]\s*&?\s*#{Regex.escape(ctx)}\s*[,)]/
+    package = @bodies.functions_for(File.dirname(body.file_path))
+    return false unless closure.last?.try(&.matches?(next_call))
+    closure.each_with_index.all? do |(line, idx)|
+      next false if line.matches?(STOPS_OR_ANSWERS)
+      next false if line.starts_with?("return") && (line != "return" || !closure[idx - 1]?.try(&.matches?(next_call)))
+      next true unless line.matches?(handed)
+      # Handed to a call: only as a read whose value is kept, of a function
+      # that does not itself stop or answer.
+      line.matches?(ASSIGNMENT_HEAD) && line.scan(BODY_CALL).none? do |call|
+        package[call[1]]?.try(&.source.matches?(STOPS_OR_ANSWERS))
+      end
+    end
   end
 
   # A call on a value: `session.Require(c)`, `a.V.Verify(c)`.

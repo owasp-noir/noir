@@ -1228,3 +1228,122 @@ describe "GoAuthTagger (groups handed to a registrar in another file)" do
     guarded?(merged).should be_false
   end
 end
+
+# apache/answer's `Auth()`: named like a guard, but it only sets the user when
+# the token resolves and calls `ctx.Next()` on every path. Its body delegates
+# to a service, which used to leave the verdict to the name.
+GIN_AUTH_MIDDLEWARE = <<-GO
+  package middleware
+
+  import "github.com/gin-gonic/gin"
+
+  type AuthUserMiddleware struct {
+  \tauthService AuthService
+  }
+
+  func ExtractToken(ctx *gin.Context) string {
+  \treturn ctx.GetHeader("Authorization")
+  }
+
+  // Auth sets the user when one is logged in.
+  func (am *AuthUserMiddleware) Auth() gin.HandlerFunc {
+  \treturn func(ctx *gin.Context) {
+  \t\ttoken := ExtractToken(ctx)
+  \t\tif len(token) == 0 {
+  \t\t\tctx.Next()
+  \t\t\treturn
+  \t\t}
+  \t\tuserInfo, err := am.authService.GetUserCacheInfo(ctx, token)
+  \t\tif err != nil {
+  \t\t\tctx.Next()
+  \t\t\treturn
+  \t\t}
+  \t\tif userInfo != nil {
+  \t\t\tctx.Set("ctxUuidKey", userInfo)
+  \t\t}
+  \t\tctx.Next()
+  \t}
+  }
+
+  // MustAuth refuses a caller without a user.
+  func (am *AuthUserMiddleware) MustAuth() gin.HandlerFunc {
+  \treturn func(ctx *gin.Context) {
+  \t\ttoken := ExtractToken(ctx)
+  \t\tuserInfo, err := am.authService.GetUserCacheInfo(ctx, token)
+  \t\tif err != nil || userInfo == nil {
+  \t\t\thandler.HandleResponse(ctx, errors.Unauthorized(reason.UnauthorizedError), nil)
+  \t\t\tctx.Abort()
+  \t\t\treturn
+  \t\t}
+  \t\tctx.Next()
+  \t}
+  }
+  GO
+
+# `body` is `setup`'s, with `r`, `conf`, `reg` and `mw` in scope.
+private def optional_auth_scan(body : String, routes : Array({String, String, String, String})) : Hash(String, Endpoint)
+  main = <<-GO
+    package main
+
+    import (
+    \t"github.com/gin-gonic/gin"
+
+    \t"example.com/app/middleware"
+    \t"example.com/app/router"
+    )
+
+    type Conf struct{ Base string }
+
+    func setup(conf Conf, reg *router.APIRouter, mw *middleware.AuthUserMiddleware) {
+    \tr := gin.New()
+
+    GO
+  files = {"go.mod" => GIN_MOD, "main.go" => main + body + "}\n", "router/router.go" => GIN_REGISTRARS,
+           "middleware/auth.go" => GIN_AUTH_MIDDLEWARE}
+  router_scope_scan(files, routes, "go_gin")
+end
+
+describe "GoAuthTagger (a middleware that only hands the request on)" do
+  conversation = {"GET", "/conversation", "router/router.go", %("/conversation")}
+
+  it "does not guard a registrar's routes with an optional Auth() on the handed group" do
+    result = optional_auth_scan("\tunAuth := r.Group(conf.Base)\n\tunAuth.Use(mw.Auth())\n\treg.RegisterAPI(unAuth)\n", [conversation])
+    guarded?(result["GET /conversation"]).should be_false
+  end
+
+  it "does not guard a same-file group's routes with an optional Auth()" do
+    body = "\tunAuth := r.Group(\"/api\")\n\tunAuth.Use(mw.Auth())\n\n\n\n\n\n\n\tunAuth.GET(\"/feed\", func(c *gin.Context) {})\n"
+    result = optional_auth_scan(body, [{"GET", "/api/feed", "main.go", %("/feed")}])
+    guarded?(result["GET /api/feed"]).should be_false
+  end
+
+  it "still guards with a middleware that aborts on one path" do
+    result = optional_auth_scan("\tauthV1 := r.Group(conf.Base)\n\tauthV1.Use(mw.MustAuth())\n\treg.RegisterAPI(authV1)\n", [conversation])
+    guarded?(result["GET /conversation"]).should be_true
+
+    body = "\tauthed := r.Group(\"/api\")\n\tauthed.Use(mw.MustAuth())\n\n\n\n\n\n\n\tauthed.GET(\"/feed\", func(c *gin.Context) {})\n"
+    result = optional_auth_scan(body, [{"GET", "/api/feed", "main.go", %("/feed")}])
+    guarded?(result["GET /api/feed"]).should be_true
+  end
+
+  it "keeps the name's verdict when the closure does anything but hand the request on" do
+    set_user = "\t\tctx.Set(\"ctxUuidKey\", userInfo)"
+    [
+      # A response written.
+      {set_user, "\t\tctx.JSON(200, userInfo)"},
+      # The context handed to a bare call, which may abort it.
+      {set_user, "\t\tcheckUser(ctx, userInfo)"},
+      # An exit that is not `ctx.Next()` then `return`.
+      {"\t\t\tctx.Next()\n\t\t\treturn\n\t\t}\n\t\tuserInfo", "\t\t\treturn\n\t\t}\n\t\tuserInfo"},
+    ].each do |(from, to)|
+      GIN_AUTH_MIDDLEWARE.includes?(from).should be_true
+      middleware = GIN_AUTH_MIDDLEWARE.sub(from, to)
+      main = "package main\n\nimport (\n\t\"github.com/gin-gonic/gin\"\n\n\t\"example.com/app/middleware\"\n)\n\n" \
+             "func setup(mw *middleware.AuthUserMiddleware) {\n\tr := gin.New()\n\tunAuth := r.Group(\"/api\")\n\tunAuth.Use(mw.Auth())\n" \
+             "\n\n\n\n\n\n\tunAuth.GET(\"/feed\", func(c *gin.Context) {})\n}\n"
+      result = router_scope_scan({"go.mod" => GIN_MOD, "main.go" => main, "middleware/auth.go" => middleware},
+        [{"GET", "/api/feed", "main.go", %("/feed")}], "go_gin")
+      guarded?(result["GET /api/feed"]).should be_true
+    end
+  end
+end
