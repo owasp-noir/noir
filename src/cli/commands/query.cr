@@ -247,7 +247,7 @@ module Noir::CLI::QueryCommand
         --signal <kind,...|any> Carries a derived signal (idor_review, ssrf, open_redirect, ...)
         --validator <kind,...|any> Carries a validator of this kind
         --resolution <r,...>   A claim marked heuristic or unresolved (resolution in the row);
-                               today only a Go path read behind an unread base (prefix)
+                               today only a Go path or group prefix not read in full (prefix)
                                A value no endpoint carries is reported on stderr with the values seen.
         --exclude <filter>=<value>
                                Drop the endpoints that filter matches (repeatable): any filter above

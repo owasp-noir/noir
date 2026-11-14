@@ -262,11 +262,16 @@ module Analyzer::Go
           own_groups_by_file[path] = own
           own.each do |k, v|
             next if ambiguous.includes?(k)
-            if (existing = local_values[k]?) && existing != v
+            existing = local_values[k]?
+            if existing.nil? || existing == v
+              local_values[k] = v
+            elsif unread_group_prefix?(existing) != unread_group_prefix?(v)
+              # A prefix not read in full gives way to one that is: before
+              # such prefixes were recorded, the read one was the only binding.
+              local_values[k] = v unless unread_group_prefix?(v)
+            else
               ambiguous << k
               local_values.delete(k)
-            else
-              local_values[k] = v
             end
           end
         end
@@ -290,7 +295,8 @@ module Analyzer::Go
               found = Noir::TreeSitterGoRouteExtractor.extract_groups(content, groups, group_method, string_seed: string_seed)
               found.each do |k, v|
                 next if ambiguous.includes?(k)
-                groups[k] ||= v
+                existing = groups[k]?
+                groups[k] = v if existing.nil? || (unread_group_prefix?(existing) && !unread_group_prefix?(v))
               end
             end
             break if groups.size == prev_size
@@ -300,6 +306,10 @@ module Analyzer::Go
       end
 
       {package_groups, file_contents}
+    end
+
+    private def unread_group_prefix?(prefix : String) : Bool
+      Noir::TreeSitterGoRouteExtractor.unread_prefix?(prefix)
     end
 
     # A wiring file's `v1 := e.Group("/api")` (or the raw-string form),
@@ -669,6 +679,12 @@ module Analyzer::Go
       prefixes_by_dir.each do |dir, prefixes|
         unresolved = unresolved_by_dir[dir]?
         prefixes.reject! { |fn, _| unresolved.includes?(fn) } if unresolved
+        # A call site handing a group whose prefix was not read in full was
+        # an unresolved one before such prefixes were recorded.
+        # ponytail: so a helper handed both kinds is still left out; expand
+        # it per prefix (the read ones gaining their routes) once that
+        # change of output is wanted.
+        prefixes.reject! { |_, pset| pset.any? { |p| unread_group_prefix?(p) } && !pset.all? { |p| unread_group_prefix?(p) } }
         result[dir] = prefixes unless prefixes.empty?
       end
       result

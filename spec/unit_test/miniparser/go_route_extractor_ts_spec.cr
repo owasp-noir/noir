@@ -259,12 +259,14 @@ describe Noir::TreeSitterGoRouteExtractor do
       }
       GO
 
+    # The literal tail of `cfg.APIBase + "/v1"` is kept, as a route path's
+    # is, and every route behind an unread prefix is marked (#3567).
     routes = Noir::TreeSitterGoRouteExtractor.extract_routes(source)
-    routes.map { |r| {r.verb, r.path} }.sort!.should eq([
-      {"GET", "/health"},
-      {"GET", "/k"},
-      {"GET", "/list"},
-      {"GET", "/users"},
+    routes.map { |r| {r.verb, r.path, r.prefix_unresolved?} }.sort_by!(&.[1]).should eq([
+      {"GET", "/health", false},
+      {"GET", "/k", true},
+      {"GET", "/list", true},
+      {"GET", "/v1/users", true},
     ])
   end
 
@@ -375,6 +377,121 @@ describe Noir::TreeSitterGoRouteExtractor do
       GO
     Noir::TreeSitterGoRouteExtractor.extract_gf_routes(gf).map { |r| {r.path, r.prefix_unresolved?} }
       .sort_by!(&.[0]).should eq([{"/plain", false}, {"/tail", true}])
+  end
+
+  it "marks the routes of a group whose prefix was not read in full (#3567)" do
+    source = <<-GO
+      package main
+      func routes(r *gin.Engine, cfg *Config, base string) {
+          v1 := r.Group(base + "/v1")
+          v1.GET("/tail", h)
+          admin := v1.Group("/admin")
+          admin.GET("/nested", h)
+          seo := r.Group(cfg.BasePath)
+          seo.GET("/robots.txt", h)
+          named := r.Group(prefixFor("x"))
+          named.GET("/call", h)
+          lit := r.Group("/lit")
+          lit.GET("/read", h)
+          under := lit.Group(base + "/u")
+          under.GET("/x", h)
+          r.GET("/root", h)
+      }
+      GO
+    Noir::TreeSitterGoRouteExtractor.extract_routes(source).map { |r| {r.path, r.prefix_unresolved?} }
+      .sort_by!(&.[0]).should eq([
+      {"/call", true},
+      {"/lit/read", false},
+      {"/lit/u/x", true},
+      {"/robots.txt", true},
+      {"/root", false},
+      {"/v1/admin/nested", true},
+      {"/v1/tail", true},
+    ])
+  end
+
+  it "keeps a group prefix's tail only where a route path's would be kept (#3567)" do
+    # The tail rules of `route_path_text`: a name bound from a literal is
+    # not a runtime base, and a gap between literals is not a tail.
+    source = <<-GO
+      package main
+      func routes(r *gin.Engine, id string) {
+          packageID := "/<id:(@" + RegexpNamePart + ")>"
+          pkg := r.Group(packageID + "/<version>")
+          pkg.GET("/info", h)
+          gap := r.Group("/a/" + id + "/b")
+          gap.GET("/c", h)
+      }
+      GO
+    Noir::TreeSitterGoRouteExtractor.extract_routes(source).map { |r| {r.path, r.prefix_unresolved?} }
+      .sort_by!(&.[0]).should eq([{"/c", true}, {"/info", true}])
+  end
+
+  it "leaves a group read elsewhere as it was read (#3567)" do
+    # Two functions bind `g`: the flat map keeps the read prefix, as it did
+    # before an unread one was recorded at all.
+    source = <<-GO
+      package main
+      func a(r *gin.Engine) {
+          g := r.Group("/a")
+          g.GET("/x", h)
+      }
+      func b(r *gin.Engine, cfg *Config) {
+          g := r.Group(cfg.Base)
+          g.GET("/y", h)
+      }
+      GO
+    Noir::TreeSitterGoRouteExtractor.extract_routes(source).map { |r| {r.path, r.prefix_unresolved?} }
+      .sort_by!(&.[0]).should eq([{"/a/x", false}, {"/a/y", false}])
+  end
+
+  it "carries an unread group prefix to another file (#3567)" do
+    groups = Noir::TreeSitterGoRouteExtractor.extract_groups(<<-GO)
+      package main
+      func setup(r *gin.Engine, cfg *Config) {
+          api = r.Group(cfg.Base + "/api")
+          plain = r.Group("/plain")
+      }
+      GO
+    routes = Noir::TreeSitterGoRouteExtractor.extract_routes(<<-GO, groups)
+      package main
+      func routes() {
+          v2 := api.Group("/v2")
+          v2.GET("/x", h)
+          api.GET("/y", h)
+          plain.GET("/z", h)
+      }
+      GO
+    routes.map { |r| {r.path, r.prefix_unresolved?} }.sort_by!(&.[0])
+      .should eq([{"/api/v2/x", true}, {"/api/y", true}, {"/plain/z", false}])
+  end
+
+  it "marks chi and mux routes under a scope whose prefix was not read in full (#3567)" do
+    chi = <<-GO
+      package main
+      func routes(r chi.Router, base string) {
+          r.Route(base+"/v1", func(r chi.Router) {
+              r.Get("/x", h)
+              r.Route("/inner", func(r chi.Router) { r.Get("/y", h) })
+          })
+          r.Route("/lit", func(r chi.Router) { r.Get("/z", h) })
+          r.Group(func(r chi.Router) { r.Get("/g", h) })
+      }
+      GO
+    Noir::TreeSitterGoRouteExtractor.extract_chi_routes(chi).map { |r| {r.path, r.prefix_unresolved?} }
+      .sort_by!(&.[0]).should eq([{"/g", false}, {"/lit/z", false}, {"/v1/inner/y", true}, {"/v1/x", true}])
+
+    mux = <<-GO
+      package main
+      func routes(r *mux.Router, cfg *Config) {
+          api := r.PathPrefix(cfg.Base + "/api").Subrouter()
+          api.HandleFunc("/x", h).Methods("GET")
+          lit := r.PathPrefix("/lit").Subrouter()
+          lit.HandleFunc("/y", h).Methods("GET")
+      }
+      GO
+    Noir::TreeSitterGoRouteExtractor.extract_routes(mux, group_method: "Subrouter", handlefunc_methods: true)
+      .map { |r| {r.path, r.prefix_unresolved?} }.sort_by!(&.[0]).should eq([{"/api/x", true}, {"/lit/y", false}])
   end
 
   it "does not read a name bound to a path built here as a runtime base" do

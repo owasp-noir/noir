@@ -503,12 +503,13 @@ module Noir
           child = nil
           Noir::TreeSitter.each_named_arg(args) do |arg|
             if path.nil?
-              path = string_expr_text(arg, source, string_values) || ""
+              # A path not read in full mounts as an unread prefix.
+              path = string_expr_text(arg, source, string_values) || unread_group_prefix(arg, source, string_values) || ""
             elsif Noir::TreeSitter.node_type(arg) == "identifier"
               child = Noir::TreeSitter.node_text(arg, source)
             end
           end
-          if (name = child) && (prefix = path) && (prefix.empty? || prefix.starts_with?('/'))
+          if (name = child) && (prefix = path) && (prefix.lchop(UNREAD_PREFIX).empty? || prefix.lchop(UNREAD_PREFIX).starts_with?('/'))
             mounts << {name, Noir::TreeSitter.node_text(operand, source), prefix.rstrip('/')}
           end
         end
@@ -550,14 +551,14 @@ module Noir
       if name == config.prefix_method
         # (string, closure) -> push prefix. This also handles gf's
         # `.Group("/api", func(){...})`.
-        if chi_first_string_arg(call, source, string_values) && chi_closure_arg(call)
+        if chi_scope_prefix(call, source, string_values) && chi_closure_arg(call)
           return ChiCall::Route
         end
       end
 
       if (mw = config.middleware_method) && name == mw
         if chi_closure_arg(call)
-          if chi_first_string_arg(call, source, string_values)
+          if chi_scope_prefix(call, source, string_values)
             # (string, closure) -> push prefix. Chi's own `Group` takes no
             # path, but wrappers like gitea's `code.gitea.io/gitea/modules/web`
             # expose `m.Group("/path", func(){...})` — a path-scoped group.
@@ -863,7 +864,7 @@ module Noir
                                       source : String,
                                       string_values : Hash(String, String),
                                       expect_prefix : Bool) : Tuple(String, LibTreeSitter::TSNode, LibTreeSitter::TSNode)?
-      prefix = expect_prefix ? chi_first_string_arg(call, source, string_values) : ""
+      prefix = expect_prefix ? chi_scope_prefix(call, source, string_values) : ""
       return if prefix.nil?
       closure = chi_closure_arg(call)
       return unless closure
@@ -888,6 +889,15 @@ module Noir
         end
       end
       nil
+    end
+
+    # The prefix of a scoped `r.Route(prefix, func(r chi.Router) {...})`:
+    # the first string argument, else, when the call has a closure, its
+    # first argument as an unread prefix (`r.Route(base+"/v1", ...)`).
+    private def chi_scope_prefix(call : LibTreeSitter::TSNode, source : String, string_values : Hash(String, String)) : String?
+      read = chi_first_string_arg(call, source, string_values)
+      return read if read || chi_closure_arg(call).nil?
+      Noir::TreeSitter.field(call, "arguments").try { |args| unread_group_prefix(Noir::TreeSitter.first_named_arg(args), source, string_values) }
     end
 
     private def chi_closure_arg(call : LibTreeSitter::TSNode) : LibTreeSitter::TSNode?
