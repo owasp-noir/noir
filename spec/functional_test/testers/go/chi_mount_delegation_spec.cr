@@ -16,7 +16,16 @@ expected_endpoints = [
   Endpoint.new("/health", "GET"),
 ]
 
-FunctionalTester.new("fixtures/go/chi_mount_delegation/", {
+tester = FunctionalTester.new("fixtures/go/chi_mount_delegation/", {
   :techs     => 1,
   :endpoints => expected_endpoints.size,
-}, expected_endpoints).perform_tests
+}, expected_endpoints)
+tester.perform_tests
+
+# The mount prefix is read; the generated base between it and the tail is
+# not, so the mark survives the Mount expansion (#3567).
+describe "chi mount delegation prefix resolution", tags: "functional" do
+  it "keeps the mark on mounted generated routes, and not on a literal one" do
+    tester.endpoints.reject(&.resolution).map { |ep| "#{ep.method} #{ep.url}" }.should eq(["GET /health"])
+  end
+end

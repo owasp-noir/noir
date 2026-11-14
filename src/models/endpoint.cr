@@ -87,6 +87,22 @@ struct Endpoint
   @[YAML::Field(ignore_serialize: handler.nil?)]
   property handler : Handler?
 
+  # How a claim about the endpoint was read, for the claims that were not
+  # followed to a definition: claim name => `RESOLUTION_HEURISTIC` (matched
+  # by name, shape or proximity) or `RESOLUTION_UNRESOLVED` (the reference
+  # was seen but not followed). A resolved claim is not listed, so an
+  # endpoint with nothing marked has no map and its JSON/YAML is unchanged.
+  # Absence means nothing was marked, not that every claim was verified.
+  # The one claim marked today is `prefix`: the path has a leading operand
+  # in front of the part that was read (`options.BaseURL+"/status"`).
+  @[JSON::Field(ignore_serialize: !resolution.try(&.present?))]
+  @[YAML::Field(ignore_serialize: !resolution.try(&.present?))]
+  property resolution : Hash(String, String)?
+
+  RESOLUTION_HEURISTIC  = "heuristic"
+  RESOLUTION_UNRESOLVED = "unresolved"
+  RESOLUTION_VALUES     = [RESOLUTION_HEURISTIC, RESOLUTION_UNRESOLVED]
+
   # Per-endpoint context for AI code reviewers: 1-hop callees from the
   # handler body. Best-effort, intentionally incomplete on dynamic
   # dispatch / middleware / decorators. Populated by analyzers that

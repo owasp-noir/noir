@@ -228,6 +228,7 @@ noir query [filters] [paths...] [flags]
 - `--source <kind,...|any>`: 해당 유형의 소스를 읽음
 - `--signal <kind,...|any>`: 파생 보안 리뷰 신호 포함 (`idor_review`, `ssrf`, `open_redirect` 등)
 - `--validator <kind,...|any>`: 해당 유형의 검증기 포함
+- `--resolution <value,...>`: 이 값 중 하나로 표시된 주장이 하나 이상 있음 (`heuristic`, `unresolved`. [resolution](@/usage/output_formats/json/index.ko.md) 참고). 다른 값은 사용법 오류
 
 버킷별로 나올 수 있는 kind는 [AI 컨텍스트](@/usage/supported/ai_context_coverage/index.ko.md#버킷별-kind) 문서에 정리되어 있습니다.
 
@@ -359,6 +360,7 @@ noir query --diff-ref origin/main --no-guard --sink any --fail-on-match .
 - `path:line`: 라우트가 선언된 곳 (복사본이 병합된 경우 복사 디렉터리 밖의 첫 파일이며, 병합된 복사본이 둘 이상이면 `declarations`에 개수 표시).
 - `project`: 스캔 기준 경로에 상대적인 모노레포 프로젝트 디렉터리 (없으면 생략).
 - `handler`: 핸들러 본문 위치 (`name`, `path`, `line`, 분석기가 정의 위치를 찾은 경우).
+- `resolution`: 끝까지 읽지 못한 주장. 엔드포인트의 필드와 같습니다 (`{"prefix":"unresolved"}`). 표시된 것이 없으면 생략.
 - `params`: `name:type` 형식의 파라미터 목록.
 - `guards`: 인증 및 인가 가드 (rate limiter, CSRF 제외).
 - `sinks`, `signals`: 프레임워크 인식 싱크 종류 및 파생 보안 리뷰 신호.
@@ -366,7 +368,7 @@ noir query --diff-ref origin/main --no-guard --sink any --fail-on-match .
 - `via`: `reach`에서 추가 (`route`, `handler`, `callee`, `guard`, `source`, `sink`, `validator` 근거 목록). `query --behind-gateway`에서는 그 행 앞에 있는 게이트웨이 규칙(`gateway_prefix`, `gateway_exact`).
 - `nearest_line`: `reach`에 `:LINE`을 지정했을 때 추가.
 
-텍스트 형식(`-f text`)에서는 각 엔드포인트를 공백으로 구분된 한 줄로 출력합니다:
+텍스트 형식(`-f text`)에서는 각 엔드포인트를 공백으로 구분된 한 줄로 출력합니다 (표시된 주장이 있으면 handler 뒤에 `resolution=prefix:unresolved`가 붙습니다):
 
 ```text
 POST /api/users/{id}  src/routes.go:42  go_gin  handler=updateUser@src/users.go:80  guards=RequireAuth  sinks=sql  signals=idor_review

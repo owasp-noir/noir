@@ -189,6 +189,10 @@ class OutputBuilderCommon < OutputBuilder
         end
       end
 
+      if (marks = endpoint.resolution) && marks.present?
+        append_field r_buffer, "resolution", marks.join(", ") { |claim, how| "#{claim} #{how}" }, :cyan
+      end
+
       PARAM_NAME_FIELDS.each do |param_type, label|
         selected = endpoint.params.select { |p| p.request_type == param_type }
         append_field r_buffer, label, selected.map(&.name).join(", "), :cyan unless selected.empty?

@@ -487,7 +487,7 @@ describe Noir::CLI::Inspect do
     end
 
     it "rejects a value that names no filter, guard, or an empty value" do
-      keys = "method, url, path, project, handler, tech, tag, param, param-type, protocol, sink, source, signal, validator"
+      keys = "method, url, path, project, handler, tech, tag, param, param-type, protocol, sink, source, signal, validator, resolution"
       {
         ["--exclude"]                  => "--exclude expects <filter>=<value> with a filter of #{keys}",
         ["--exclude", "cli"]           => "--exclude expects <filter>=<value> with a filter of #{keys}",
@@ -1034,6 +1034,47 @@ describe "query --behind-gateway / --not-behind-gateway (#3565)" do
     io = IO::Memory.new
     Noir::CLI::QueryCommand.print_help(io)
     io.to_s.should contain("--behind-gateway / --not-behind-gateway")
+  end
+end
+
+describe "query --resolution (#3567)" do
+  marked = endpoint("GET", "/status", path: "api.gen.go", line: 44, tech: "go_chi")
+  marked.resolution = {"prefix" => Endpoint::RESOLUTION_UNRESOLVED}
+  plain = endpoint("GET", "/health", path: "routes.go", line: 9, tech: "go_chi")
+  endpoints = [marked, plain]
+  query = ->(argv : Array(String), full : Bool) do
+    parsed = Noir::CLI::QueryCommand.parse_filters(argv)
+    parsed.errors.should be_empty
+    Noir::CLI::Inspect.query(endpoints, parsed.filters, full, parsed.excludes)
+  end
+
+  it "keeps the endpoints with a claim marked one of the values, and drops them under --exclude" do
+    query.call(["--resolution", "unresolved"], false).map(&.url).should eq(["/status"])
+    query.call(["--resolution", "heuristic,unresolved"], false).map(&.url).should eq(["/status"])
+    query.call(["--exclude", "resolution=unresolved"], false).map(&.url).should eq(["/health"])
+  end
+
+  it "shows the map in the compact, full and text rows, and nothing without one" do
+    rows = query.call([] of String, false)
+    JSON.parse(rows[0].to_json)["resolution"].should eq(JSON.parse(%({"prefix":"unresolved"})))
+    JSON.parse(rows[1].to_json).as_h.has_key?("resolution").should be_false
+    rows[0].to_text.should contain("resolution=prefix:unresolved")
+    rows[1].to_text.should_not contain("resolution")
+    full = query.call([] of String, true)
+    JSON.parse(full[0].to_json)["endpoint"]["resolution"]["prefix"].should eq("unresolved")
+    full[0].to_text.should contain("resolution=prefix:unresolved")
+  end
+
+  it "rejects a value outside the vocabulary and warns on one no endpoint carries" do
+    Noir::CLI::QueryCommand.parse_filters(["--resolution", "resolved"]).errors
+      .should eq(["unknown --resolution resolved. Valid: heuristic, unresolved"])
+    Noir::CLI::QueryCommand.parse_filters(["--exclude", "resolution=guess"]).errors
+      .should eq(["unknown --resolution guess. Valid: heuristic, unresolved"])
+    f = Noir::CLI::QueryCommand.parse_filters(["--resolution", "heuristic"]).filters
+    Noir::CLI::Inspect.filter_warnings(endpoints, f).should eq(["no endpoint carries resolution heuristic; in this report: unresolved"])
+    io = IO::Memory.new
+    Noir::CLI::QueryCommand.print_help(io)
+    io.to_s.should contain("--resolution <r,...>")
   end
 end
 

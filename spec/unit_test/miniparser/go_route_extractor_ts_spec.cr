@@ -313,6 +313,68 @@ describe Noir::TreeSitterGoRouteExtractor do
       {"PATCH", "/mf"},
       {"POST", "/items"},
     ])
+    # Only the constant path was read in full (#3567).
+    routes.reject(&.prefix_unresolved?).map(&.path).should eq(["/v1/const"])
+    routes.find!(&.prefix_unresolved?).resolution.should eq({"prefix" => "unresolved"})
+    routes.find! { |r| r.path == "/v1/const" }.resolution.should be_nil
+  end
+
+  it "marks a path read behind an unread base in every decoder that keeps one (#3567)" do
+    verbs = <<-GO
+      package main
+      func routes(r *gin.Engine, base string) {
+          v1 := r.Group("/v1")
+          v1.GET(base+"/tail", h)
+          v1.GET("/literal", h)
+      }
+      GO
+    Noir::TreeSitterGoRouteExtractor.extract_routes(verbs).map { |r| {r.path, r.prefix_unresolved?} }
+      .sort_by!(&.[0]).should eq([{"/v1/literal", false}, {"/v1/tail", true}])
+
+    mux = <<-GO
+      package main
+      func routes(r *mux.Router, base string) {
+          r.HandleFunc(base+"/hf", h).Methods("GET")
+          r.Methods("POST").Path(base+"/path").HandlerFunc(h)
+          r.HandleFunc("/plain", h).Methods("GET")
+      }
+      GO
+    Noir::TreeSitterGoRouteExtractor.extract_routes(mux, handlefunc_methods: true).map { |r| {r.path, r.prefix_unresolved?} }
+      .sort_by!(&.[0]).should eq([{"/hf", true}, {"/path", true}, {"/plain", false}])
+
+    net_http = <<-GO
+      package main
+      import "net/http"
+      func routes(base string) {
+          mux := http.NewServeMux()
+          v1 := http.NewServeMux()
+          mux.Handle("/v1/", http.StripPrefix("/v1", v1))
+          v1.HandleFunc(base+"/tail", h)
+          http.HandleFunc("/plain", h)
+      }
+      GO
+    Noir::TreeSitterGoRouteExtractor.extract_net_http_routes(net_http).map { |r| {r.path, r.prefix_unresolved?} }
+      .sort_by!(&.[0]).should eq([{"/plain", false}, {"/v1/tail", true}])
+
+    beego = <<-GO
+      package main
+      func init() {
+          web.Router(base+"/tail", &MainController{})
+          web.Router("/plain", &MainController{})
+      }
+      GO
+    Noir::TreeSitterGoRouteExtractor.extract_beego_routes(beego).map { |r| {r.path, r.prefix_unresolved?} }
+      .sort_by!(&.[0]).should eq([{"/plain", false}, {"/tail", true}])
+
+    gf = <<-GO
+      package main
+      func routes(s *ghttp.Server, base string) {
+          s.BindHandler(base+"/tail", h)
+          s.BindHandler("/plain", h)
+      }
+      GO
+    Noir::TreeSitterGoRouteExtractor.extract_gf_routes(gf).map { |r| {r.path, r.prefix_unresolved?} }
+      .sort_by!(&.[0]).should eq([{"/plain", false}, {"/tail", true}])
   end
 
   it "does not read a name bound to a path built here as a runtime base" do

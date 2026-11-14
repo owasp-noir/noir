@@ -76,6 +76,7 @@ module Analyzer::Go
                   end
                 end
                 endpoint.handler = named.handler_for(route)
+                endpoint.resolution = route.resolution
                 result << endpoint
                 named.bind(route, endpoint)
                 route_eps << endpoint

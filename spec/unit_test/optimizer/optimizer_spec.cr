@@ -1442,6 +1442,22 @@ describe "EndpointOptimizer" do
       result[0].details.status_code.should eq(200)
     end
 
+    # A row without the mark was not shown to resolve the claim, so a merge
+    # keeps a claim either side marks, whichever row wins (#3567).
+    it "keeps a resolution mark either duplicate carries" do
+      optimizer = EndpointOptimizer.new(logger, options)
+      marked = Endpoint.new("/status", "GET", [] of Param, Details.new(PathInfo.new("api.gen.go", 44)))
+      marked.resolution = {"prefix" => Endpoint::RESOLUTION_UNRESOLVED}
+      plain = Endpoint.new("/status", "GET", [] of Param, Details.new(PathInfo.new("openapi.yaml", 3)))
+
+      [[marked, plain], [plain, marked]].each do |endpoints|
+        result = optimizer.optimize_endpoints(endpoints)
+        result.size.should eq(1)
+        result[0].resolution.should eq({"prefix" => "unresolved"})
+      end
+      optimizer.optimize_endpoints([plain, plain]).first.resolution.should be_nil
+    end
+
     # `internal` marks a declaration of a request the app *makes*
     # (`@FeignClient`, `@HttpExchange`), which `Deliver#probe_all`
     # reads to skip probing. A served route at the same address is the

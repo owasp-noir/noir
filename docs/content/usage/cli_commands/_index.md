@@ -233,6 +233,7 @@ Filters that accept a comma-separated list match with OR:
 - `--source <kind,...|any>`: reads a source of this kind
 - `--signal <kind,...|any>`: carries a derived signal (`idor_review`, `ssrf`, `open_redirect`, ...)
 - `--validator <kind,...|any>`: carries a validator of this kind
+- `--resolution <value,...>`: at least one claim is marked with one of these values (`heuristic`, `unresolved`; see [resolution](@/usage/output_formats/json/index.md)). Any other value is a usage error
 
 The kinds each bucket can hold are listed in the [AI Context](@/usage/supported/ai_context_coverage/index.md#kinds-by-bucket) reference.
 
@@ -364,6 +365,7 @@ The default compact row (`-f jsonl`) is a projection of the endpoint record, omi
 - `path:line`: where the route is declared (the first file outside a copy directory when copies were merged; `declarations` counts merged copies when greater than 1).
 - `project`: monorepo project directory relative to the scan base (omitted when empty).
 - `handler`: where the handler body lives (`name`, `path`, `line`), present when the analyzer resolved the definition.
+- `resolution`: the claims that were not read in full, as on the endpoint (`{"prefix":"unresolved"}`). Omitted when nothing is marked.
 - `params`: parameters in `name:type` format.
 - `guards`: authentication and authorization guards (rate limiting and CSRF excluded).
 - `sinks`, `signals`: framework-aware sink kinds and derived security review signals.
@@ -371,7 +373,7 @@ The default compact row (`-f jsonl`) is a projection of the endpoint record, omi
 - `via`: added by `reach` as a list of evidence items (`route`, `handler`, `callee`, `guard`, `source`, `sink`, `validator`), and by `query --behind-gateway` as the gateway rule in front of the row (`gateway_prefix`, `gateway_exact`).
 - `nearest_line`: added by `reach` when `:LINE` is given.
 
-In text format (`-f text`), each endpoint is printed as a single space-delimited line:
+In text format (`-f text`), each endpoint is printed as a single space-delimited line (a marked claim adds `resolution=prefix:unresolved` after the handler):
 
 ```text
 POST /api/users/{id}  src/routes.go:42  go_gin  handler=updateUser@src/users.go:80  guards=RequireAuth  sinks=sql  signals=idor_review

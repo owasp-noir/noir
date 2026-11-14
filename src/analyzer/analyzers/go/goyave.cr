@@ -85,6 +85,7 @@ module Analyzer::Go
 
               raw_verbs.flat_map { |raw_verb| Noir::TreeSitterGoRouteExtractor.fan_out_verbs(raw_verb) }.each do |verb|
                 new_endpoint = Endpoint.new(clean_path, verb, details)
+                new_endpoint.resolution = route.resolution
                 if entries = callees_by_route[route.line]?
                   entries.each do |entry|
                     name, callee_path, callee_line = entry

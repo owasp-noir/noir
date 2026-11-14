@@ -58,4 +58,8 @@ describe "gin struct-value handlers", tags: "functional" do
     # `form:"-"` is not form-bound.
     update.params.any? { |p| p.name == "extras" && p.param_type == "form" }.should be_false
   end
+
+  it "marks no claim on routes whose paths were read in full (#3567)" do
+    tester.app.endpoints.compact_map(&.resolution).should be_empty
+  end
 end

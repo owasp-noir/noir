@@ -341,6 +341,8 @@ module Noir::CLI::Inspect
     property tech : String?
     @[JSON::Field(ignore_serialize: handler.nil?)]
     property handler : Handler?
+    @[JSON::Field(ignore_serialize: !resolution.try(&.present?))]
+    property resolution : Hash(String, String)?
     @[JSON::Field(ignore_serialize: params.empty?)]
     property params = [] of String
     @[JSON::Field(ignore_serialize: tags.empty?)]
@@ -386,6 +388,7 @@ module Noir::CLI::Inspect
       row.project = endpoint.details.project unless endpoint.details.project.empty?
       row.tech = endpoint.details.technology
       row.handler = endpoint.handler
+      row.resolution = endpoint.resolution
       row.params = endpoint.params.map { |p| "#{p.name}:#{p.param_type}" }
       row.tags = endpoint.tags.map(&.name).uniq!
       row.callees = endpoint.callees.map(&.name).uniq!
@@ -424,6 +427,9 @@ module Noir::CLI::Inspect
             io << '@' << hp
             io << ':' << h.line if h.line
           end
+        end
+        if (marks = resolution) && marks.present?
+          io << "  resolution=" << marks.join(',') { |claim, how| "#{claim}:#{how}" }
         end
         {"guards", guards, "sinks", sinks, "signals", signals, "tags", tags}.each_slice(2) do |(label, values)|
           io << "  " << label << '=' << values.as(Array(String)).join(',') unless values.as(Array(String)).empty?
@@ -977,6 +983,8 @@ module Noir::CLI::Inspect
     sources : Array(String) = [] of String,
     signals : Array(String) = [] of String,
     validators : Array(String) = [] of String,
+    # At least one claim marked with one of these (`Endpoint#resolution`).
+    resolutions : Array(String) = [] of String,
     # One OR list per `--seen-in`; the lists AND (see QueryCommand).
     seen_in : Array(Array(String)) = [] of Array(String),
     not_seen_in : Array(String) = [] of String,
@@ -1009,6 +1017,7 @@ module Noir::CLI::Inspect
         return false unless endpoint.params.any? { |p| param_matches?(p) }
       end
       return false unless protocols.empty? || protocols.includes?(endpoint.protocol)
+      return false unless resolutions.empty? || endpoint.resolution.try(&.values.any? { |how| resolutions.includes?(how) })
       context = endpoint.ai_context
       unless (g = guard).nil?
         # An outbound client declaration (Feign, `@HttpExchange`) is not served
@@ -1276,6 +1285,7 @@ module Noir::CLI::Inspect
       {"param type", filters.param_types, endpoints.flat_map { |e| e.params.flat_map { |p| [p.param_type, p.request_type] } }},
       {"project", filters.projects.reject(&.matches?(GLOB_CHARS)).map(&.chomp('/')), endpoints.map(&.details.project).reject(&.empty?)},
       {"protocol", filters.protocols, endpoints.map(&.protocol)},
+      {"resolution", filters.resolutions, endpoints.flat_map { |e| e.resolution.try(&.values) || [] of String }},
       {"sink kind", filters.sinks, contexts.flat_map(&.sinks.map(&.kind))},
       {"source kind", filters.sources, contexts.flat_map(&.sources.map(&.kind))},
       {"signal kind", filters.signals, contexts.flat_map { |c| derived_signals(c).map(&.kind) }},

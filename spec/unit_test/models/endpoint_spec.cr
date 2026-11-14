@@ -404,6 +404,26 @@ describe "Details project" do
     Endpoint.from_json(endpoint.to_json).details.project.should eq("services/orders")
     Endpoint.from_json(unset_json).details.project.should eq("")
   end
+end
+
+describe "Endpoint resolution (#3567)" do
+  it "is absent from JSON and YAML when nothing is marked" do
+    endpoint = Endpoint.new("/status", "GET", Details.new(PathInfo.new("api.go", 4)))
+    [nil, {} of String => String].each do |marks|
+      endpoint.resolution = marks
+      JSON.parse(endpoint.to_json).as_h.has_key?("resolution").should be_false
+      YAML.parse(endpoint.to_yaml).as_h.has_key?("resolution").should be_false
+    end
+  end
+
+  it "round-trips a marked claim through JSON and YAML" do
+    endpoint = Endpoint.new("/status", "GET", Details.new(PathInfo.new("api.go", 4)))
+    endpoint.resolution = {"prefix" => Endpoint::RESOLUTION_UNRESOLVED}
+    JSON.parse(endpoint.to_json)["resolution"].should eq(JSON.parse(%({"prefix":"unresolved"})))
+    Endpoint.from_json(endpoint.to_json).resolution.should eq({"prefix" => "unresolved"})
+    Endpoint.from_yaml(endpoint.to_yaml).resolution.should eq({"prefix" => "unresolved"})
+    Endpoint::RESOLUTION_VALUES.should eq(["heuristic", "unresolved"])
+  end
 
   it "survives detached_copy and takes part in equality" do
     details = Details.new(PathInfo.new("a.py", 1))

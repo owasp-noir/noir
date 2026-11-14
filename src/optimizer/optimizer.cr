@@ -796,6 +796,10 @@ class EndpointOptimizer
   # - `metadata`: the mobile deep-link facts (action/category/host/package).
   # - `details.status_code`: recorded by spec/capture-derived analyzers.
   # - `kind`: Next.js marks server actions here; the plain report prints it.
+  # - `resolution`: a claim either row marks stays marked. A row without the
+  #   mark has not been shown to resolve that claim (no producer may read it
+  #   at all; a spec's path can lack the same base), so a merge never makes a
+  #   claim more certain. On the same claim the winner's value is kept.
   #
   # `internal` is not carried: a client declaration never merges into a
   # served route here (see `optimize_endpoints`), so both sides agree on it.
@@ -806,6 +810,9 @@ class EndpointOptimizer
     target.protocol = source.protocol if target.protocol == "http" && source.protocol != "http"
     target.metadata = source.metadata if target.metadata.nil?
     target.kind = source.kind if target.kind.empty?
+    if marks = source.resolution
+      target.resolution = target.resolution.try { |own| marks.merge(own) } || marks
+    end
 
     if target.details.status_code.nil? && (status_code = source.details.status_code)
       details = target.details

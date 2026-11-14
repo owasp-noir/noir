@@ -48,6 +48,29 @@ noir scan . -f json --no-log
 }
 ```
 
+Noir가 보고하는 내용 중에는 정의를 따라가서 읽은 것도 있고, 추정한 것도 있습니다. `resolution`은 엔드포인트의 주장 가운데 끝까지 읽지 못한 것을 나열하며, 각 주장에는 두 값 중 하나가 붙습니다.
+
+*   `heuristic`: 이름, 모양, 위치로 맞춘 것
+*   `unresolved`: 참조는 보았지만 따라가지 못한 것
+
+끝까지 읽은 주장은 나열하지 않고, 나열할 것이 없는 엔드포인트에는 `resolution` 키가 없습니다. 이번 버전은 생산자 하나가 주장 하나만 표시합니다. 따라서 키가 없다고 해서 그 엔드포인트의 모든 주장이 검증된 것은 아닙니다. 표시된 것이 없다는 뜻일 뿐입니다.
+
+지금 표시하는 주장은 Go 분석기가 붙이는 `prefix` 하나입니다. `prefix: unresolved`는 라우트 경로 앞쪽에 Noir가 읽지 못한 피연산자가 있고, URL은 그 뒤의 리터럴 부분이라는 뜻입니다. oapi-codegen은 모든 오퍼레이션을 `r.Get(options.BaseURL+"/status", ...)`로 등록하며, 이것은 `/status`로 보고됩니다. 실제 경로 앞에는 무언가가 더 있을 수 있습니다. Noir가 읽은 그룹이나 마운트 접두사는 그대로 붙지만(`r.Mount("/api", ...)`이면 `/api/status`), 그 사이의 피연산자는 여전히 읽지 못했으므로 표시는 남습니다. 메서드와 경로가 같은 두 행이 병합되면, 어느 한쪽이라도 표시한 주장은 표시된 채로 남습니다. 이런 행은 `noir query --resolution unresolved`로 볼 수 있습니다.
+
+```json
+{
+  "url": "/api/status",
+  "method": "GET",
+  "resolution": { "prefix": "unresolved" },
+  "details": {
+    "code_paths": [{ "path": "api/api.gen.go", "line": 32 }],
+    "technology": "go_chi"
+  }
+}
+```
+
+YAML, JSONL, TOML 출력에도 같은 필드가 들어가고, 일반 리포트에는 `resolution` 행으로 출력됩니다.
+
 전체 리포트는 다음과 같습니다. 태거를 켠 상태(`-T`)로 만든 것이어서 `tags` 배열이 채워져 있습니다.
 
 ```json
