@@ -145,6 +145,7 @@ class Noir::GoNamedHandler
   end
 
   @source_lines : Array(String)? = nil
+  @binding_index : Tuple(Array(Int32), Hash(String, Array(Int32)))? = nil
 
   # `handler_first`: the handler is the first argument after the path and
   # middleware follows it (Echo's `GET(path, h, m...)`), not the last.
@@ -400,10 +401,8 @@ class Noir::GoNamedHandler
   # ponytail: line-based like `local_closure_row`.
   private def local_binding_expr(name : String, row : Int32) : String?
     lines = @source_lines ||= @content.lines
-    (row - 1).downto(0) do |idx|
-      line = lines[idx]? || next
-      return if line.starts_with?("func ") || line.starts_with?("func(")
-      code = line.strip
+    binding_rows(name, row) do |idx|
+      code = lines[idx].strip
       # `var h http.Handler = http.HandlerFunc(admin)`.
       code = code.lchop("var").lstrip.sub(/\A(#{Regex.escape(name)})\s+[\w.*\[\]]+\s*=/, "\\1 =") if code.starts_with?("var ")
       next unless code.starts_with?(name)
@@ -598,13 +597,44 @@ class Noir::GoNamedHandler
   # route still reads as the nearest binding.
   private def local_closure_row(name : String, row : Int32) : Int32?
     lines = @source_lines ||= @content.lines
-    (row - 1).downto(0) do |idx|
-      line = lines[idx]? || next
-      return if line.starts_with?("func ") || line.starts_with?("func(")
-      code = line.lstrip
+    binding_rows(name, row) do |idx|
+      code = lines[idx].lstrip
       next unless code.starts_with?(name)
       rest = code[name.size..].lstrip.lchop(':')
       return idx if rest.starts_with?('=') && rest[1..].matches?(CLOSURE_HANDLER)
+    end
+  end
+
+  # Yields, nearest first, the rows above `row` and below the head of the
+  # top-level function holding it that may bind `name` (`name :=`, `name =`,
+  # `var name`): the only rows the two walks above act on. The file is
+  # indexed once, so a file of many routes is not rescanned per route.
+  # ponytail: still walks every rebinding of `name` in the function, so one
+  # name reassigned per route stays quadratic; keep the nearest per row if so.
+  private def binding_rows(name : String, row : Int32, &)
+    heads, by_name = @binding_index ||= begin
+      starts = [] of Int32
+      rows = Hash(String, Array(Int32)).new
+      (@source_lines ||= @content.lines).each_with_index do |line, idx|
+        starts << idx if line.starts_with?("func ") || line.starts_with?("func(")
+        code = line.lstrip
+        ident = code[/\A[A-Za-z_]\w*/]? || next
+        if ident == "var"
+          inner = code.lchop("var").lstrip[/\A[A-Za-z_]\w*/]?
+          (rows[inner] ||= [] of Int32) << idx if inner
+        end
+        rest = code[ident.size..].lstrip
+        (rows[ident] ||= [] of Int32) << idx if rest.starts_with?(':') || rest.starts_with?('=')
+      end
+      {starts, rows}
+    end
+    candidates = by_name[name]? || return
+    above = heads.bsearch_index { |h| h >= row } || heads.size
+    head = above > 0 ? heads[above - 1] : -1
+    upto = candidates.bsearch_index { |r| r >= row } || candidates.size
+    (upto - 1).downto(0) do |i|
+      break if candidates[i] <= head
+      yield candidates[i]
     end
   end
 
