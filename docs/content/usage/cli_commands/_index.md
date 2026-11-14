@@ -243,6 +243,7 @@ Single-value pattern filters (`<glob|substr>`):
 
 Boolean switches (mutually exclusive):
 - `--guard` / `--no-guard`: endpoint has or lacks an auth guard (`ai_context.guards`; rate limiting and CSRF checks do not count as a guard)
+- `--behind-gateway` / `--not-behind-gateway`: endpoint has or lacks a gateway rule in front of it (see [Behind a gateway](#behind-a-gateway))
 
 Exclusion (repeatable):
 - `--exclude <filter>=<value>`: drop the endpoints that filter would match. `<filter>` is any filter above without its dashes (`protocol`, `tech`, `url`, `path`, `tag`, `sink`, ...) and `<value>` follows that filter's rules (a comma list is OR, `url`/`path`/`handler` take a glob or a substring, `any` works for the context kinds). An endpoint any `--exclude` matches is dropped, whatever the other filters say.
@@ -269,7 +270,33 @@ noir query --seen-in gateway ./app                        # the gateway and rout
 
 The match is exact for now: `/orders/{id}` in the spec and `/orders/:id` in the code merge, since Noir normalizes common parameter spellings, but a prefix one side never sees (`/api` in front of `/orders`) keeps the two apart. An endpoint with no technology at all (a hand-written report) matches neither filter.
 
-Gateway rules are the weak side of this. A gateway rule joins a route only when method and path are exactly equal, and a prefix or catch-all rule (`location /api`, an Ingress `/`) does not cover the routes under it yet. So an empty result for code plus gateway, or a long "not behind a gateway" list, is not a finding. `query` says so on stderr whenever `gateway` is combined with another view.
+Gateway rules are the weak side of this. Through `--seen-in` a gateway rule joins a route only when method and path are exactly equal, and a prefix rule (`location /api`, an Ingress `Prefix /api`) never equals the routes under it. So an empty result for code plus gateway is not a finding. `query` says so on stderr whenever `gateway` is combined with another view, and points to the two flags below.
+
+#### Behind a gateway
+
+`--behind-gateway` keeps the endpoints a gateway sits in front of, and `--not-behind-gateway` keeps the others. An endpoint is behind a gateway when a gateway reported it too (an exact merge, the same as `--seen-in gateway`), or when a gateway rule covers its path:
+
+- an exact rule covers the route with the same path;
+- a prefix rule covers its own path and every path below it at a segment boundary: `/api` covers `/api` and `/api/users`, not `/apix`. A trailing slash on the rule does not matter;
+- the rule's method has to be the route's, unless the rule takes any method (`ANY`), which is what most gateway rules declare.
+
+The match type comes from the analyzer: the path-type of nginx `location`, Ingress, Gateway API `HTTPRoute`, Istio, Kong, HAProxy and Apache, and the path's own shape (`/api/*`, `/api/**`, `{proxy+}`) for Spring Cloud Gateway, YARP, APISIX, Caddy, API Gateway (serverless.yml, CloudFormation, CDK, Terraform) and the other gateways. The rows for a rewritten upstream path (an Ingress `rewrite-target`, an Istio or Gateway API rewrite) are not rules a client request meets, so they cover nothing.
+
+A catch-all prefix rule on `/` covers every route, and is as often a static file server in front of nothing, so it does not count. stderr says how many routes only a catch-all covers and names its file and line. With `--behind-gateway`, each row names the rule that covers it in `via` (`gateway_prefix` or `gateway_exact`, the rule's path, its file and line); the longest rule wins when several cover the route. Rows a gateway reported itself are never returned by `--not-behind-gateway`.
+
+```bash
+noir query --seen-in code --not-behind-gateway ./app      # served, with no gateway rule in front
+noir query --seen-in code --behind-gateway -f text ./app  # each row with the rule in front of it
+```
+
+Limits of this version:
+- The host is not read: an nginx `server_name` or an Ingress `host` covers routes of every service.
+- The upstream target is not read: a rule counts even when it proxies to another service in the same repository.
+- Path rewrites are not applied: behind `StripPrefix` or a `proxy_pass` with a path, the route the service declares is not under the rule's path, so it reads as not behind.
+- Regex and implementation-specific rules are not read. They still count when one merged with the route exactly.
+- Monorepo projects are not separated: a rule in one project covers routes of the others.
+- Envoy and Netlify rules are not read, since their rows do not record the match type or tell a rewrite or redirect apart; Traefik rules are read as exact, since `Path` and `PathPrefix` look the same.
+- Over a diff, added and changed routes are read against the new side's rules and removed ones against the old side's. A diff report read with `--from` holds only the changed rows, so only the rules among them count.
 
 Pattern matching rules:
 - Glob characters (`*`, `?`, `[`): `*` crosses `/` and `{id}` is treated literally. Without glob characters, the pattern is matched as a substring.
@@ -341,7 +368,7 @@ The default compact row (`-f jsonl`) is a projection of the endpoint record, omi
 - `guards`: authentication and authorization guards (rate limiting and CSRF excluded).
 - `sinks`, `signals`: framework-aware sink kinds and derived security review signals.
 - `matched_by`: added by `trace` (`exact`, `pattern`, `wildcard`, `prefix`; `exact_ci`, `pattern_ci`, `wildcard_ci` when only letter case differs, ASP.NET/Express/Koa only, listed last).
-- `via`: added by `reach` as a list of evidence items (`route`, `handler`, `callee`, `guard`, `source`, `sink`, `validator`).
+- `via`: added by `reach` as a list of evidence items (`route`, `handler`, `callee`, `guard`, `source`, `sink`, `validator`), and by `query --behind-gateway` as the gateway rule in front of the row (`gateway_prefix`, `gateway_exact`).
 - `nearest_line`: added by `reach` when `:LINE` is given.
 
 In text format (`-f text`), each endpoint is printed as a single space-delimited line:

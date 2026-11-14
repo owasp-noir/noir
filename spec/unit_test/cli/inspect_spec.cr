@@ -913,6 +913,138 @@ describe "query --seen-in / --not-seen-in (#3565)" do
   end
 end
 
+describe "query --behind-gateway / --not-behind-gateway (#3565)" do
+  rule = ->(method : String, url : String, tech : String, tags : Hash(String, String), line : Int32) do
+    ep = endpoint(method, url, path: "deploy/gw.conf", line: line, tech: tech)
+    tags.each { |name, value| ep.add_tag(Tag.new(name, value, "#{tech}_analyzer")) }
+    ep
+  end
+  api = rule.call("ANY", "/api/", "nginx", {"nginx-path-type" => "prefix"}, 10)
+  api_v1 = rule.call("ANY", "/api/v1", "k8s_ingress", {"ingress-path-type" => "prefix", "ingress-source" => "rule"}, 20)
+  health = rule.call("ANY", "/health", "haproxy", {"haproxy-path-type" => "exact"}, 30)
+  regex = rule.call("ANY", "^/admin/.*", "nginx", {"nginx-path-type" => "regex"}, 40)
+  regex.kind = "regex"
+  rewrite = rule.call("ANY", "/internal", "k8s_ingress", {"ingress-path-type" => "prefix", "ingress-source" => "rewrite"}, 50)
+  post_only = rule.call("POST", "/upload", "kong", {"kong-path-type" => "prefix"}, 60)
+  root = rule.call("ANY", "/", "nginx", {"nginx-path-type" => "prefix"}, 70)
+  rules = [api, api_v1, health, regex, rewrite, post_only, root]
+  code = {
+    "GET /api"               => endpoint("GET", "/api"),
+    "GET /api/users"         => endpoint("GET", "/api/users"),
+    "GET /api/v1/orders/:id" => endpoint("GET", "/api/v1/orders/:id"),
+    "GET /apix"              => endpoint("GET", "/apix"),
+    "GET /health"            => endpoint("GET", "/health"),
+    "GET /health/deep"       => endpoint("GET", "/health/deep"),
+    "GET /admin/users"       => endpoint("GET", "/admin/users"),
+    "GET /internal/x"        => endpoint("GET", "/internal/x"),
+    "POST /upload/file"      => endpoint("POST", "/upload/file"),
+    "PUT /upload/file"       => endpoint("PUT", "/upload/file"),
+  }
+  endpoints = rules + code.values
+
+  query = ->(argv : Array(String)) do
+    parsed = Noir::CLI::QueryCommand.parse_filters(argv)
+    parsed.errors.should be_empty
+    Noir::CLI::Inspect.query(endpoints, parsed.filters, false, parsed.excludes)
+  end
+  names = ->(rows : Array(Noir::CLI::Inspect::Row)) { rows.map { |row| "#{row.method} #{row.url}" } }
+
+  it "reads each analyzer's match type into exact, prefix, or nothing" do
+    {api => "prefix", api_v1 => "prefix", health => "exact", regex => nil, rewrite => nil, root => "prefix"}.each do |ep, type|
+      Noir::CLI::Inspect.gateway_rule_type(ep).should eq(type), ep.url
+    end
+    {
+      {"/api/{proxy+}", "serverless_framework"} => "prefix", {"/orders/**", "spring_cloud_gateway"} => "prefix",
+      {"/orders/*", "spring_cloud_gateway"} => nil, {"/api/*", "yarp"} => "prefix", {"/api*", "cloudflare_wrangler"} => "prefix",
+      {"/users", "krakend"} => "exact", {"/x", "envoy"} => nil, {"/x/*", "netlify"} => nil, {"/x", "go_gin"} => nil,
+    }.each do |(url, tech), type|
+      Noir::CLI::Inspect.gateway_rule_type(endpoint("ANY", url, tech: tech)).should eq(type), "#{tech} #{url}"
+    end
+    redirect = endpoint("ANY", "/old/*", tech: "caddy")
+    redirect.add_tag(Tag.new("caddy-source", "redir", "caddy_analyzer"))
+    Noir::CLI::Inspect.gateway_rule_type(redirect).should be_nil
+  end
+
+  it "covers a prefix at a segment boundary, an exact path, and ignores regex and rewrite rows" do
+    names.call(query.call(["--seen-in", "code", "--behind-gateway"])).should eq([
+      "GET /api", "GET /api/users", "GET /api/v1/orders/:id", "GET /health", "POST /upload/file",
+    ])
+    names.call(query.call(["--seen-in", "code", "--not-behind-gateway"])).should eq([
+      "GET /apix", "GET /health/deep", "GET /admin/users", "GET /internal/x", "PUT /upload/file",
+    ])
+  end
+
+  it "never returns a gateway's own row under --not-behind-gateway" do
+    names.call(query.call(["--not-behind-gateway"])).should eq(names.call(query.call(["--seen-in", "code", "--not-behind-gateway"])))
+    query.call(["--behind-gateway", "--not-seen-in", "code"]).size.should eq(rules.size)
+  end
+
+  it "names the longest covering rule on the row, and nothing without the flag" do
+    rows = query.call(["--seen-in", "code", "--behind-gateway", "--url", "/api/v1/orders/:id"])
+    rows.first.via.map(&.to_text).should eq(["gateway_prefix:/api/v1@deploy/gw.conf:20"])
+    JSON.parse(rows.first.to_json)["via"][0]["kind"].should eq("gateway_prefix")
+    rows.first.to_text.should contain("via=gateway_prefix:/api/v1@deploy/gw.conf:20")
+    query.call(["--url", "/api/v1/orders/:id", "--seen-in", "code"]).first.via.should be_empty
+    full = Noir::CLI::Inspect.query(endpoints, Noir::CLI::QueryCommand.parse_filters(["--behind-gateway", "--url", "/health"]).filters, true)
+    JSON.parse(full.last.to_json)["via"][0]["name"].should eq("/health")
+  end
+
+  it "does not count a catch-all `/` rule, and says how many routes only it covers" do
+    f = Noir::CLI::QueryCommand.parse_filters(["--seen-in", "code", "--behind-gateway"]).filters
+    Noir::CLI::Inspect.filter_warnings(endpoints, f).should eq([
+      "5 routes are under only a catch-all `/` gateway rule and not counted as behind a gateway: deploy/gw.conf:70",
+    ])
+    Noir::CLI::Inspect.filter_warnings(rules[0..-2] + code.values, f).should be_empty
+  end
+
+  it "treats a folded Ingress rule as any-method and keeps an exact merge behind" do
+    folded = merged_endpoint("GET", "/shop", ["js_express", "k8s_ingress"])
+    folded.add_tag(Tag.new("ingress-path-type", "prefix", "k8s_ingress_analyzer"))
+    under = endpoint("DELETE", "/shop/cart")
+    rows = Noir::CLI::Inspect.query([folded, under], Noir::CLI::QueryCommand.parse_filters(["--behind-gateway"]).filters, false)
+    names.call(rows).should eq(["GET /shop", "DELETE /shop/cart"])
+  end
+
+  it "does not count a catch-all merged into the code route at `/`" do
+    home = merged_endpoint("GET", "/", ["go_http", "kong"])
+    home.add_tag(Tag.new("kong-path-type", "prefix", "kong_analyzer"))
+    f = Noir::CLI::QueryCommand.parse_filters(["--not-behind-gateway"]).filters
+    names.call(Noir::CLI::Inspect.query([home], f, false)).should eq(["GET /"])
+    Noir::CLI::Inspect.filter_warnings([home], f).first.should start_with("1 route is under only a catch-all")
+  end
+
+  it "reads the rules from the whole scope, not only the rows queried (a diff)" do
+    f = Noir::CLI::Inspect.with_gateway_rules(Noir::CLI::QueryCommand.parse_filters(["--behind-gateway"]).filters, endpoints)
+    names.call(Noir::CLI::Inspect.query([code["GET /api/users"]], f, false)).should eq(["GET /api/users"])
+    names.call(Noir::CLI::Inspect.query([code["GET /api/users"]], Noir::CLI::QueryCommand.parse_filters(["--behind-gateway"]).filters, false)).should be_empty
+  end
+
+  it "rejects both flags together and as an --exclude key, and warns on a scan with no gateway" do
+    Noir::CLI::QueryCommand.parse_filters(["--behind-gateway", "--not-behind-gateway"]).errors
+      .should eq(["--behind-gateway and --not-behind-gateway are exclusive"])
+    Noir::CLI::QueryCommand.parse_filters(["--exclude", "behind-gateway=true"]).errors
+      .should eq(["--exclude behind-gateway: use --behind-gateway or --not-behind-gateway"])
+    Noir::CLI::QueryCommand.parse_filters(["--not-behind-gateway"]).filters.behind_gateway.should be_false
+    f = Noir::CLI::QueryCommand.parse_filters(["--not-behind-gateway"]).filters
+    Noir::CLI::Inspect.filter_warnings(code.values, f).should eq(["no endpoint carries view gateway; in this report: code"])
+  end
+
+  it "points the gateway join note at the new flags and lists them in help" do
+    Noir::CLI::Inspect::GATEWAY_JOIN_NOTE.should contain("--behind-gateway")
+    io = IO::Memory.new
+    Noir::CLI::QueryCommand.print_help(io)
+    io.to_s.should contain("--behind-gateway / --not-behind-gateway")
+  end
+end
+
+private def merged_endpoint(method : String, url : String, technologies : Array(String)) : Endpoint
+  ep = endpoint(method, url, tech: technologies.first)
+  details = ep.details
+  details.technologies = technologies
+  ep.details = details
+  ep
+end
+
 describe "trace and query route matching (#3277)" do
   trace = ->(routes : Array(Endpoint), method : String?, path : String) { Noir::CLI::Inspect.trace(routes, method, path).map { |m| {m.endpoint.url, m.matched_by} } }
 
