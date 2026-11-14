@@ -1278,8 +1278,8 @@ describe "JsMiscAuthTagger" do
       FileUtils.rm_rf(dir)
       elapsed
     end
-    small = timed.call(500)
-    large = timed.call(2000)
+    small = (0...3).min_of { timed.call(500) }
+    large = (0...3).min_of { timed.call(2000) }
     # Linear is ~4x; growing every read to the end of the file was ~16x.
     (large < small * 10 || large < 0.3).should be_true
   end

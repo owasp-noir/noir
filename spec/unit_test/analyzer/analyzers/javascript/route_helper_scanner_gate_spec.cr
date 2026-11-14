@@ -66,8 +66,8 @@ describe Analyzer::Javascript::RouteHelperScanner do
   # 8 s. Linear means 4x the input costs about 4x, not 16x.
   it "indexes a large non-ASCII file in linear time" do
     index_helpers(helper_bundle(200)).helpers.values.first.keys.should eq ["setup"]
-    small = Time.measure { index_helpers(helper_bundle(1_000)) }
-    large = Time.measure { index_helpers(helper_bundle(4_000)) }
+    small = (0...3).min_of { Time.measure { index_helpers(helper_bundle(1_000)) } }
+    large = (0...3).min_of { Time.measure { index_helpers(helper_bundle(4_000)) } }
     (large / small).should be < 10
   end
 end

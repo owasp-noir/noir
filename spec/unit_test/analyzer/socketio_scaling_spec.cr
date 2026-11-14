@@ -40,6 +40,8 @@ describe "Socket.IO large-file scaling" do
   it "resolves prefixed events and their check in linear time" do
     small, small_time = timed_scan(2000)
     large, large_time = timed_scan(8000)
+    small_time = {small_time, (0...2).min_of { timed_scan(2000)[1] }}.min
+    large_time = {large_time, (0...2).min_of { timed_scan(8000)[1] }}.min
     small.size.should eq(2000)
     large.size.should eq(8000)
     large.last.url.should eq("ws://pre_e7999")
