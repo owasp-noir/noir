@@ -308,7 +308,7 @@ module Noir
             # Mux's `.Methods(...)` can list several verbs at once
             # (`.Methods("GET", "POST")`), so the decoder returns an
             # array and we fan out into one Route per verb.
-            decode_handlefunc_methods_call(node, source, group_prefixes).each do |r|
+            decode_handlefunc_methods_call(node, source, group_prefixes, string_values).each do |r|
               routes << r
             end
           end
@@ -968,7 +968,7 @@ module Noir
           Noir::TreeSitter.walk(body) do |node|
             next unless Noir::TreeSitter.node_type(node) == "call_expression"
             if handlefunc_methods
-              decode_handlefunc_methods_call(node, source, group_prefixes).each { |r| routes << r } unless chained.includes?(node_key(node))
+              decode_handlefunc_methods_call(node, source, group_prefixes, string_values).each { |r| routes << r } unless chained.includes?(node_key(node))
             elsif route = decode_verb_call(node, source, group_prefixes, [] of String, "Group", [] of String, string_values, literal_join: literal_join, declarers: declarers)
               routes << route
             elsif handle_method && (route = decode_handle_call(node, source, group_prefixes, handle_method))
@@ -2072,7 +2072,8 @@ module Noir
     # route metadata.
     private def decode_handlefunc_methods_call(call : LibTreeSitter::TSNode,
                                                source : String,
-                                               groups : Hash(String, String)) : Array(Route)
+                                               groups : Hash(String, String),
+                                               string_values : Hash(String, String)) : Array(Route)
       empty = [] of Route
 
       current = call
@@ -2132,7 +2133,13 @@ module Noir
               when "interpreted_string_literal", "raw_string_literal"
                 raw_path ||= decode_string_literal(arg, source)
               else
-                handler_text = Noir::TreeSitter.node_text(arg, source) if handler_text.empty? && !raw_path.nil?
+                # A constant or wrapper path (`s.prefixedPath("/version")`),
+                # read the way chi's `BindHandler` reads one.
+                if raw_path.nil? && (resolved_path = route_path_text(arg, source, string_values))
+                  raw_path = resolved_path
+                elsif handler_text.empty? && !raw_path.nil?
+                  handler_text = Noir::TreeSitter.node_text(arg, source)
+                end
               end
             end
           end
@@ -2153,11 +2160,8 @@ module Noir
         when "Path"
           if args = Noir::TreeSitter.field(current, "arguments")
             Noir::TreeSitter.each_named_arg(args) do |arg|
-              case Noir::TreeSitter.node_type(arg)
-              when "interpreted_string_literal", "raw_string_literal"
-                raw_path ||= decode_string_literal(arg, source)
-                break
-              end
+              raw_path ||= route_path_text(arg, source, string_values)
+              break
             end
           end
         when "BuildOnly"
