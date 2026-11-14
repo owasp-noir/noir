@@ -123,11 +123,18 @@ check:
 # binary that runs all 20,807 examples in 17.5s on 0.3GB, so re-running in
 # randomized order or under a filter costs nothing more.
 #
+# Every spec file's top-level code lands in one `__crystal_main` frame, with a
+# stack slot per by-value struct (each `Endpoint.new` literal in a tester is
+# one). It reached the 8 MB default main-thread stack, and the binary then dies
+# with SIGSEGV before printing anything. macOS reads the main stack size from
+# the binary; on Linux it is `ulimit -s`, which `test` and CI raise.
+spec_stack_flags := if os() == "macos" { "--link-flags=-Wl,-stack_size,0x2000000" } else { "" }
+
 # Build the whole suite as one binary at bin/noir_spec.
 [group('development')]
 spec-build:
     mkdir -p bin
-    scripts/compile_gate.sh crystal build spec/suite.cr -o bin/noir_spec
+    scripts/compile_gate.sh crystal build spec/suite.cr -o bin/noir_spec {{spec_stack_flags}}
 
 # The run is single-threaded and takes only ~0.3GB, so splitting it on the
 # `functional` tag turns ~18s of examples into ~10s of wall time (the unit half
@@ -140,6 +147,8 @@ spec-build:
 test: spec-build
     #!/usr/bin/env bash
     set -uo pipefail
+    # See `spec_stack_flags`; macOS caps the soft limit at 65520 KB.
+    ulimit -s 65520 2>/dev/null || true
     logs=$(mktemp -d)
     trap 'rm -rf "$logs"' EXIT
     ./bin/noir_spec --tag '~functional' > "$logs/unit.log" 2>&1 & unit_pid=$!
