@@ -15,6 +15,9 @@ module Analyzer::Go
     HTTP_METHODS_ALLOWED  = (HTTP_METHODS_EXPANDED + %w[TRACE CONNECT QUERY ANY]).to_set
     IMPORT_MARKER         = "github.com/cloudwego/hertz"
     BUILDER_TYPE          = "*route.RouterGroup"
+    # Struct field types that hold a router (`s.h.GET(...)`).
+    ROUTER_TYPES = {"github.com/cloudwego/hertz/pkg/app/server" => %w[Hertz],
+                    "github.com/cloudwego/hertz/pkg/route"      => %w[Engine RouterGroup IRouter IRoutes]}
 
     def analyze
       package_groups, file_contents = collect_package_groups_ts(import_marker: IMPORT_MARKER)
@@ -26,6 +29,7 @@ module Analyzer::Go
       builder_prefixes_by_dir = resolve_router_builder_prefixes(file_contents, package_groups, BUILDER_TYPE)
       framework_dirs = framework_package_dirs(file_contents, IMPORT_MARKER)
       named_scope = named_handler_scope(file_contents)
+      router_fields = package_router_fields(file_contents, ROUTER_TYPES)
       # Per-file results merged below in input order, not appended to
       # `result` from the workers: worker completion order varies run to
       # run (see `Analyzer#ordered_scan_files`).
@@ -45,7 +49,8 @@ module Analyzer::Go
         # every HTTP method below — matching the legacy
         # behaviour.
         cross_file_groups = ts_groups_for_directory(package_groups, dir)
-        ts_routes = Noir::TreeSitterGoRouteExtractor.extract_routes(content, cross_file_groups, handle_method: "Handle")
+        ts_routes = Noir::TreeSitterGoRouteExtractor.extract_routes(content, cross_file_groups, handle_method: "Handle",
+          router_fields: router_fields[dir]? || Set(String).new)
           .select { |route| HTTP_METHODS_ALLOWED.includes?(route.verb) }
         routes_by_line = Hash(Int32, Array(Noir::TreeSitterGoRouteExtractor::Route)).new
         ts_routes.each do |r|

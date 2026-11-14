@@ -7,6 +7,8 @@ module Analyzer::Go
 
     IMPORT_MARKER = "github.com/labstack/echo"
     BUILDER_TYPE  = "*echo.Group"
+    # Struct field types that hold a router (`s.echo.GET(...)`).
+    ROUTER_TYPES = {IMPORT_MARKER => %w[Echo Group]}
 
     def analyze
       # Source Analysis
@@ -27,6 +29,7 @@ module Analyzer::Go
       named_scope = named_handler_scope(file_contents)
       struct_index = Noir::GoStructFields::Index.new(file_contents, named_scope.import_dirs)
       binders = binder_methods(file_contents)
+      router_fields = package_router_fields(file_contents, ROUTER_TYPES)
       parallel_analyze(get_files_by_extension(".go")) do |path|
         next if go_test_path?(path)
         next unless File.exists?(path)
@@ -45,7 +48,8 @@ module Analyzer::Go
           handle_method: "Add",
           handle_many_methods: ["Match"],
           string_seed: string_seed,
-          literal_join: true
+          literal_join: true,
+          router_fields: router_fields[dir]? || Set(String).new
         )
         routes_by_line = Hash(Int32, Array(Noir::TreeSitterGoRouteExtractor::Route)).new
         ts_routes.each do |r|

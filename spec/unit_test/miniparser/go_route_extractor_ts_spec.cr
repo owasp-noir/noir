@@ -128,6 +128,23 @@ describe Noir::TreeSitterGoRouteExtractor do
     routes.map(&.path).should eq(["/legit"])
   end
 
+  it "reads a struct-field receiver only when it is named Router or listed in router_fields" do
+    source = <<-GO
+      package main
+      func (s *Server) routes(c *gin.Context) {
+          s.router.GET("/lower", s.h)
+          s.Router.GET("/upper", s.h)
+          s.router.Group("/g").POST("/x", s.h)
+          s.client.Get("/client", s.h)
+          c.Request.Get("/request", s.h)
+      }
+      GO
+
+    Noir::TreeSitterGoRouteExtractor.extract_routes(source).map(&.path).should eq(["/upper"])
+    Noir::TreeSitterGoRouteExtractor.extract_routes(source, router_fields: Set{"router"}).map(&.path)
+      .should eq(["/lower", "/upper", "/g/x"])
+  end
+
   it "resolves string constants and concatenations used as paths" do
     source = <<-GO
       package main

@@ -13,6 +13,9 @@ module Analyzer::Go
     # polyglot repo, so every one of them pays the full scan. See
     # `Analyzer#content_matches?`.
     IMPORT_MARKER_RE = Regex.union(IMPORT_MARKER)
+    # Struct field types that hold a router (`s.app.Get(...)`).
+    ROUTER_TYPES = {IMPORT_MARKER                         => %w[Application Party],
+                    "github.com/kataras/iris/core/router" => %w[Party APIBuilder]}
 
     def analyze
       # Iris uses `.Party(...)` for route groups; pass that into both the
@@ -21,6 +24,7 @@ module Analyzer::Go
       # Pre-pass for cross-file identifier-handler resolution (see Gin).
       package_function_bodies = lazy_package_bodies(file_contents)
       named_scope = named_handler_scope(file_contents)
+      router_fields = package_router_fields(file_contents, ROUTER_TYPES)
       parallel_analyze(get_files_by_extension(".go")) do |path|
         next if go_test_path?(path)
         next unless File.exists?(path)
@@ -39,7 +43,8 @@ module Analyzer::Go
           # Iris's idiomatic closure-scoped group.
           handle_method: "Handle",
           handle_many_method: "HandleMany",
-          closure_group_methods: ["Party", "PartyFunc"]
+          closure_group_methods: ["Party", "PartyFunc"],
+          router_fields: router_fields[File.dirname(path)]? || Set(String).new
         )
         routes_by_line = Hash(Int32, Array(Noir::TreeSitterGoRouteExtractor::Route)).new
         ts_routes.each do |r|
