@@ -80,7 +80,7 @@ struct Endpoint
   @[YAML::Field(ignore_serialize: metadata.nil?)]
   property metadata : Hash(String, String)?
 
-  # The function that serves the route, resolved to its definition (see
+  # The function that serves the route, attributed to a definition (see
   # `Handler`). nil when the analyzer cannot resolve it, and omitted from
   # JSON/YAML then so reports without one are unchanged.
   @[JSON::Field(ignore_serialize: handler.nil?)]
@@ -93,8 +93,8 @@ struct Endpoint
   # was seen but not followed). A resolved claim is not listed, so an
   # endpoint with nothing marked has no map and its JSON/YAML is unchanged.
   # Absence means nothing was marked, not that every claim was verified.
-  # The one claim marked today is `prefix`: the path has a leading operand
-  # in front of the part that was read (`options.BaseURL+"/status"`).
+  # Go marks unread path/group prefixes (`prefix`) and handler definitions
+  # chosen by name, shape or proximity (`handler`).
   @[JSON::Field(ignore_serialize: !resolution.try(&.present?))]
   @[YAML::Field(ignore_serialize: !resolution.try(&.present?))]
   property resolution : Hash(String, String)?
@@ -474,8 +474,8 @@ end
 # `h.Show`, `articles#show`), with its definition site when the analyzer
 # could resolve one. `details.code_paths` is where the route is *declared*;
 # this is where its body *lives* — the file an agent opens next. Best-effort:
-# only analyzers with definition resolution populate it, and a route whose
-# handler is an inline closure has none to name.
+# Go marks a definition picked without following its reference in
+# `resolution["handler"]`; inline closures can be named `closure`.
 #
 # A class, not a struct: `Endpoint` carries it inline otherwise, and every
 # byte `Endpoint` grows lands in the spec binary's `__crystal_main` frame

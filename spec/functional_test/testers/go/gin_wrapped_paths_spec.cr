@@ -28,3 +28,10 @@ it "names inline and locally bound closures as handlers", tags: "functional" do
   live = tester.app.endpoints.find! { |ep| ep.url == "/livez" }
   live.handler.should eq(Handler.new("isLive", "#{base}/server/routes.go", 14))
 end
+
+it "marks the local closure's proximity binding, leaving inline definitions unmarked (#3567)", tags: "functional" do
+  marked = tester.endpoints.select { |ep| ep.resolution.try(&.["handler"]?) }
+  marked.map(&.url).should eq(["/livez"])
+  marked.first.resolution.should eq({"handler" => "heuristic"})
+  tester.endpoints.find! { |ep| ep.url == "/api/v1/photos/:uid" }.resolution.should be_nil
+end

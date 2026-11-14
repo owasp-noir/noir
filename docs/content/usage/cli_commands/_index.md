@@ -364,8 +364,8 @@ The default compact row (`-f jsonl`) is a projection of the endpoint record, omi
 
 - `path:line`: where the route is declared (the first file outside a copy directory when copies were merged; `declarations` counts merged copies when greater than 1).
 - `project`: monorepo project directory relative to the scan base (omitted when empty).
-- `handler`: where the handler body lives (`name`, `path`, `line`), present when the analyzer resolved the definition.
-- `resolution`: the claims that were not read in full, as on the endpoint (`{"prefix":"unresolved"}`). Omitted when nothing is marked.
+- `handler`: where the handler body lives (`name`, `path`, `line`), present when the analyzer attributed a definition. Go marks a choice by name, wrapper shape or proximity as `handler: heuristic` when the reference was not followed to that definition.
+- `resolution`: the claims that were not read in full, as on the endpoint (`{"prefix":"unresolved","handler":"heuristic"}` for an unread Go prefix and a handler picked without establishing the link). Omitted when nothing is marked.
 - `params`: parameters in `name:type` format.
 - `guards`: authentication and authorization guards (rate limiting and CSRF excluded).
 - `sinks`, `signals`: framework-aware sink kinds and derived security review signals.
@@ -373,7 +373,7 @@ The default compact row (`-f jsonl`) is a projection of the endpoint record, omi
 - `via`: added by `reach` as a list of evidence items (`route`, `handler`, `callee`, `guard`, `source`, `sink`, `validator`), and by `query --behind-gateway` as the gateway rule in front of the row (`gateway_prefix`, `gateway_exact`).
 - `nearest_line`: added by `reach` when `:LINE` is given.
 
-In text format (`-f text`), each endpoint is printed as a single space-delimited line (a marked claim adds `resolution=prefix:unresolved` after the handler):
+In text format (`-f text`), each endpoint is printed as a single space-delimited line (a marked claim adds, for example, `resolution=prefix:unresolved,handler:heuristic` after the handler):
 
 ```text
 POST /api/users/{id}  src/routes.go:42  go_gin  handler=updateUser@src/users.go:80  guards=RequireAuth  sinks=sql  signals=idor_review

@@ -327,7 +327,7 @@ module Analyzer::Go
                   end
                 end
                 endpoint.handler = named.handler_for(route)
-                endpoint.resolution = route.resolution
+                endpoint.resolution = named.resolution_for(route)
                 free_pass << endpoint
                 named.bind(route, endpoint)
                 last_endpoint = endpoint
@@ -733,7 +733,7 @@ module Analyzer::Go
               endpoint.handler = handler
               # The mount prefix joined on by the caller does not read the
               # path's own leading operand, so the mark stays.
-              endpoint.resolution = route.resolution
+              endpoint.resolution = named.resolution_for(route)
               file_endpoints << endpoint
             end
           end

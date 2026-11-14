@@ -359,8 +359,8 @@ noir query --diff-ref origin/main --no-guard --sink any --fail-on-match .
 
 - `path:line`: 라우트가 선언된 곳 (복사본이 병합된 경우 복사 디렉터리 밖의 첫 파일이며, 병합된 복사본이 둘 이상이면 `declarations`에 개수 표시).
 - `project`: 스캔 기준 경로에 상대적인 모노레포 프로젝트 디렉터리 (없으면 생략).
-- `handler`: 핸들러 본문 위치 (`name`, `path`, `line`, 분석기가 정의 위치를 찾은 경우).
-- `resolution`: 끝까지 읽지 못한 주장. 엔드포인트의 필드와 같습니다 (`{"prefix":"unresolved"}`). 표시된 것이 없으면 생략.
+- `handler`: 핸들러 본문 위치 (`name`, `path`, `line`, 분석기가 정의 위치를 찾은 경우). Go는 참조를 따라가지 못하고 이름, wrapper의 모양, 위치로 고른 정의를 `handler: heuristic`으로 표시합니다.
+- `resolution`: 끝까지 읽지 못한 주장. 엔드포인트의 필드와 같습니다 (Go의 읽지 못한 접두사와 연결을 확인하지 못한 핸들러라면 `{"prefix":"unresolved","handler":"heuristic"}`). 표시된 것이 없으면 생략.
 - `params`: `name:type` 형식의 파라미터 목록.
 - `guards`: 인증 및 인가 가드 (rate limiter, CSRF 제외).
 - `sinks`, `signals`: 프레임워크 인식 싱크 종류 및 파생 보안 리뷰 신호.
@@ -368,7 +368,7 @@ noir query --diff-ref origin/main --no-guard --sink any --fail-on-match .
 - `via`: `reach`에서 추가 (`route`, `handler`, `callee`, `guard`, `source`, `sink`, `validator` 근거 목록). `query --behind-gateway`에서는 그 행 앞에 있는 게이트웨이 규칙(`gateway_prefix`, `gateway_exact`).
 - `nearest_line`: `reach`에 `:LINE`을 지정했을 때 추가.
 
-텍스트 형식(`-f text`)에서는 각 엔드포인트를 공백으로 구분된 한 줄로 출력합니다 (표시된 주장이 있으면 handler 뒤에 `resolution=prefix:unresolved`가 붙습니다):
+텍스트 형식(`-f text`)에서는 각 엔드포인트를 공백으로 구분된 한 줄로 출력합니다 (표시된 주장이 있으면 handler 뒤에 `resolution=prefix:unresolved,handler:heuristic` 같은 표시가 붙습니다):
 
 ```text
 POST /api/users/{id}  src/routes.go:42  go_gin  handler=updateUser@src/users.go:80  guards=RequireAuth  sinks=sql  signals=idor_review

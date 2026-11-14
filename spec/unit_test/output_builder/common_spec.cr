@@ -370,3 +370,15 @@ private def plain_options
     "exclude_codes"  => YAML::Any.new(""),
   }
 end
+
+it "prints both resolution claims in the plain report (#3567)" do
+  options = create_test_options
+  options["color"] = YAML::Any.new(false)
+  builder = OutputBuilderCommon.new(options)
+  builder.io = IO::Memory.new
+  ep = Endpoint.new("/guess", "GET")
+  ep.resolution = {"prefix" => "unresolved", "handler" => "heuristic"}
+  builder.print([ep])
+  builder.io.to_s.should contain("resolution")
+  builder.io.to_s.should contain("prefix unresolved, handler heuristic")
+end
