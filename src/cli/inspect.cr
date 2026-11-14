@@ -124,7 +124,23 @@ module Noir::CLI::Inspect
   # query's `--change` list (empty when not given). trace and reach pass nil:
   # a diff is a set of endpoints to filter, and scanning only its new side
   # behind their back would answer a question nobody asked.
-  def self.load(common : Common, scan_argv : Array(String), changes : Array(String)? = nil) : Array(Endpoint)
+  #
+  # `scope`, when given, receives every endpoint the scan saw: a diff returns
+  # only what changed, and `--behind-gateway` needs the rules that did not.
+  # Added and changed rows are read against the new side's rules, removed
+  # ones against the old side's.
+  # ponytail: asked together, the two sides pool their rules, so a route
+  # added under a rule the same change removed still reads as covered; a
+  # diff report read with `--from` carries only its changed rows.
+  def self.load(common : Common, scan_argv : Array(String), changes : Array(String)? = nil,
+                scope : Array(Endpoint)? = nil) : Array(Endpoint)
+    endpoints = load_endpoints(common, scan_argv, changes, scope)
+    scope.concat(endpoints) if scope && scope.empty?
+    endpoints
+  end
+
+  private def self.load_endpoints(common : Common, scan_argv : Array(String), changes : Array(String)?,
+                                  scope : Array(Endpoint)?) : Array(Endpoint)
     if from = common.from
       # Nothing is scanned, so a scan path or flag here is a mistake — and a
       # mistyped filter (`--no-gaurd`) would otherwise return the whole
@@ -165,7 +181,12 @@ module Noir::CLI::Inspect
       app, old = ScanCommand.collect(options)
       return app.endpoints unless old && changes
       result = app.diff(old)
-      change_categories(changes).flat_map do |category|
+      categories = change_categories(changes)
+      if scope
+        scope.concat(app.endpoints) unless categories == ["removed"]
+        scope.concat(old.endpoints) if categories.includes?("removed")
+      end
+      categories.flat_map do |category|
         case category
         when "added"   then result[:added]
         when "removed" then result[:removed]
@@ -958,7 +979,11 @@ module Noir::CLI::Inspect
     validators : Array(String) = [] of String,
     # One OR list per `--seen-in`; the lists AND (see QueryCommand).
     seen_in : Array(Array(String)) = [] of Array(String),
-    not_seen_in : Array(String) = [] of String do
+    not_seen_in : Array(String) = [] of String,
+    behind_gateway : Bool? = nil,
+    # Read once per query by `with_gateway_rules`: a rule covers routes other
+    # than its own row, so one endpoint alone cannot say.
+    gateway_rules : Array(GatewayRule)? = nil do
     def matches?(endpoint : Endpoint) : Bool
       return false unless methods.empty? || Inspect.method_listed?(methods, endpoint.method)
       return false unless (u = url).nil? || Inspect.glob_or_substring?(u, endpoint.url)
@@ -974,6 +999,9 @@ module Noir::CLI::Inspect
         return false if views.empty?
         return false unless seen_in.all? { |listed| (views & listed).present? }
         return false if (views & not_seen_in).present?
+      end
+      unless (b = behind_gateway).nil?
+        return false unless b == Inspect.behind_gateway?(endpoint, gateway_rules || [] of GatewayRule)
       end
       return false unless tags.empty? || endpoint.tags.any? { |t| tags.includes?(t.name) }
       # One parameter has to satisfy both `--param` and `--param-type`.
@@ -1011,6 +1039,154 @@ module Noir::CLI::Inspect
 
   def self.views(endpoint : Endpoint) : Array(String)
     technologies(endpoint).map { |technology| NoirTechs.view(technology) }.uniq!
+  end
+
+  # ---- --behind-gateway: which routes a gateway rule covers ---------------
+
+  # A gateway row read as a rule. `path` is the comparable form (see
+  # `gateway_key`), `url` the row as reported, for the evidence.
+  record GatewayRule, type : String, path : String, url : String, method : String, location : PathInfo? do
+    # A prefix rule on `/` covers everything, and is as often a static file
+    # server in front of nothing (#3565), so it is not coverage.
+    def catch_all? : Bool
+      type == "prefix" && path == "/"
+    end
+
+    def covers?(route : String, route_method : String) : Bool
+      return false unless ::synthetic_any_method?(method) || method == route_method.upcase
+      return route == path if type == "exact"
+      catch_all? ? route.starts_with?('/') : (route == path || route.starts_with?("#{path}/"))
+    end
+
+    def via : Via
+      Via.new("gateway_#{type}", url, location.try(&.line), location.try(&.path))
+    end
+  end
+
+  # Match types by the path-type tag each analyzer records. Apache's
+  # `<Location>` and `ProxyPass` front the route; its Alias, Redirect and
+  # RewriteRule rows answer at the server. HAProxy `path_dir` matches a
+  # segment anywhere, so it is no prefix.
+  GATEWAY_PATH_TYPES = {
+    "nginx-path-type"          => {"prefix" => "prefix", "prefix-stop" => "prefix", "exact" => "exact"},
+    "ingress-path-type"        => {"prefix" => "prefix", "exact" => "exact"},
+    "gateway-path-type"        => {"pathprefix" => "prefix", "exact" => "exact"},
+    "virtualservice-path-type" => {"prefix" => "prefix", "exact" => "exact"},
+    "kong-path-type"           => {"prefix" => "prefix"},
+    "haproxy-path-type"        => {"prefix" => "prefix", "exact" => "exact"},
+    "apache-path-type"         => {"prefix" => "prefix", "proxy" => "prefix"},
+  }
+  # The tag that marks a row as the rewritten upstream path, not a rule a
+  # client request meets.
+  GATEWAY_REWRITE_SOURCES = {"ingress-path-type" => "ingress-source", "gateway-path-type" => "gateway-source",
+                             "virtualservice-path-type" => "virtualservice-source"}
+  # A subtree spelled in the URL: `/api/*`, `/api/**`, `{proxy+}`, `{**rest}`,
+  # `:path*`, wrangler's `/api*`.
+  GATEWAY_SUBTREE = %r{(?:/\*\*|/\{\*{1,2}[^{}/]*\}|/\{[^{}/]+\+\}|/:\w+\*|\*)\z}
+  # Gateways that record no path-type tag, so the URL's shape says. Spring
+  # PathPattern and Apigee's `MatchesPath` read a lone `*` as one segment.
+  GATEWAY_URL_TECHS = Set{"apigee", "apisix", "aws_cdk", "aws_cloudformation", "caddy", "cloudflare_wrangler", "kamal", "krakend",
+                          "ocelot", "serverless_framework", "spring_cloud_gateway", "terraform", "traefik", "tyk", "vercel", "yarp"}
+  GATEWAY_STAR_SEGMENT_TECHS = Set{"apigee", "spring_cloud_gateway"}
+
+  # `exact`, `prefix`, or nil when the row is no rule this version reads.
+  # ponytail: regex and implementation-specific rules are not used (they
+  # count only through an exact merge); envoy and netlify tag neither the
+  # match type nor their rewrite/redirect rows, traefik not Path from
+  # PathPrefix (read as exact). Upgrade path: a path-type tag on each.
+  def self.gateway_rule_type(endpoint : Endpoint) : String?
+    return if endpoint.regex_path?
+    types = endpoint.tags.compact_map do |tag|
+      next unless type = GATEWAY_PATH_TYPES[tag.name]?.try(&.[tag.description]?)
+      if source = GATEWAY_REWRITE_SOURCES[tag.name]?
+        origins = endpoint.tags.select(&.name.==(source))
+        next if origins.present? && origins.all?(&.description.==("rewrite"))
+      end
+      type
+    end
+    technologies(endpoint).each do |technology|
+      next unless GATEWAY_URL_TECHS.includes?(technology)
+      if type = gateway_url_type(endpoint, technology)
+        types << type
+      end
+    end
+    types.includes?("prefix") ? "prefix" : types.first?
+  end
+
+  private def self.gateway_url_type(endpoint : Endpoint, technology : String) : String?
+    only = ->(name : String, values : Array(String)) do
+      found = endpoint.tags.select(&.name.==(name))
+      found.present? && found.all? { |tag| values.includes?(tag.description) }
+    end
+    case technology
+    when "kamal" then return only.call("kamal-source", ["proxy"]) ? "prefix" : "exact"
+    when "tyk" then return endpoint.tags.any?(&.name.==("tyk-policy")) ? "exact" : "prefix" # listen_path
+    when "apigee"
+      return "prefix" unless endpoint.tags.any?(&.name.==("apigee-flow")) # BasePath
+    when "caddy"
+      return if only.call("caddy-source", ["redir", "respond"])
+    when "vercel"
+      return if only.call("vercel-rule", ["redirect", "header"])
+    end
+    url = endpoint.url
+    return "exact" unless url.matches?(GATEWAY_SUBTREE)
+    return if GATEWAY_STAR_SEGMENT_TECHS.includes?(technology) && url.ends_with?("/*")
+    "prefix"
+  end
+
+  # The path as rules compare it: no query, no trailing slash, every
+  # whole-segment placeholder spelled `{}` (as the optimizer's dedup does).
+  def self.gateway_key(url : String) : String
+    normalize(url).gsub(EndpointOptimizer::WHOLE_SEGMENT_PLACEHOLDER_RE, "{}")
+  end
+
+  # A rule's path, its subtree spelling (`/*`, `{proxy+}`) dropped.
+  private def self.gateway_rule_path(url : String) : String
+    gateway_key(url.sub(GATEWAY_SUBTREE, "")).presence || "/"
+  end
+
+  def self.gateway_rules(endpoints : Array(Endpoint)) : Array(GatewayRule)
+    endpoints.compact_map do |endpoint|
+      next unless views(endpoint).includes?("gateway") && (type = gateway_rule_type(endpoint))
+      # An Ingress rule routes every method; one folded into a code route
+      # took that route's method (see the optimizer's `fold_proxy_routes`).
+      any = ::synthetic_any_method?(endpoint.method) || endpoint.tags.any?(&.name.==("ingress-path-type"))
+      paths = endpoint.details.code_paths
+      # ponytail: a merged row does not say which file is the gateway's; the
+      # merge appends the folded rule's declaration last.
+      location = views(endpoint).size == 1 ? paths.first? : paths.last?
+      GatewayRule.new(type, gateway_rule_path(endpoint.url), endpoint.url, any ? "ANY" : endpoint.method.upcase, location)
+    end
+  end
+
+  # The longest rule covering the route, among the catch-all rules or the others.
+  # ponytail: rules × routes with a string check; index by first segment if
+  # a gateway with thousands of rules ever makes it slow.
+  def self.gateway_rule(endpoint : Endpoint, rules : Array(GatewayRule), catch_all : Bool = false) : GatewayRule?
+    route = gateway_key(endpoint.url)
+    best = nil
+    rules.each do |rule|
+      next unless rule.catch_all? == catch_all && rule.covers?(route, endpoint.method)
+      best = rule if best.nil? || rule.path.size > best.path.size
+    end
+    best
+  end
+
+  # Reported by a gateway itself (an exact merge), or under one of its rules.
+  # A catch-all `/` merged into the route at `/` is still only a catch-all;
+  # the rule's own row stays behind its gateway.
+  def self.behind_gateway?(endpoint : Endpoint, rules : Array(GatewayRule)) : Bool
+    return true if gateway_rule(endpoint, rules)
+    views = views(endpoint)
+    return false unless views.includes?("gateway")
+    views.size == 1 || !(gateway_rule_type(endpoint) == "prefix" && gateway_rule_path(endpoint.url) == "/")
+  end
+
+  # `scope` is every endpoint the rules may come from: a diff queries only
+  # the changed rows, and the rules in front of them did not change.
+  def self.with_gateway_rules(filters : Filters, scope : Array(Endpoint)) : Filters
+    return filters if filters.behind_gateway.nil? || filters.gateway_rules
+    filters.copy_with(gateway_rules: gateway_rules(scope))
   end
 
   # `any` (or an empty bucket filter) is satisfied by a non-empty bucket.
@@ -1077,6 +1253,10 @@ module Noir::CLI::Inspect
   def self.filter_warnings(endpoints : Array(Endpoint), filters : Filters) : Array(String)
     warnings = [] of String
     warnings << GATEWAY_JOIN_NOTE if gateway_join?(filters)
+    filters = with_gateway_rules(filters, endpoints)
+    if warning = catch_all_warning(endpoints, filters)
+      warnings << warning
+    end
     asks_context = !filters.guard.nil? || !(filters.sinks.empty? && filters.sources.empty? && filters.signals.empty? && filters.validators.empty?)
     if asks_context && endpoints.none?(&.ai_context)
       warnings << "no endpoint carries ai_context; scan with --ai-context (or drop --from)"
@@ -1088,7 +1268,9 @@ module Noir::CLI::Inspect
       {"tech", filters.techs, endpoints.flat_map { |e| technologies(e) }},
       # `--not-seen-in spec` on a scan with no spec keeps every route, which
       # reads like a finding; this says there was nothing to compare with.
-      {"view", filters.seen_in.flatten + filters.not_seen_in, endpoints.flat_map { |e| views(e) }},
+      # `--behind-gateway` asks for the gateway view only when no rule was
+      # read: a diff's rows need not hold the gateway rows behind its rules.
+      {"view", filters.seen_in.flatten + filters.not_seen_in + (filters.gateway_rules.try(&.empty?) ? ["gateway"] : [] of String), endpoints.flat_map { |e| views(e) }},
       {"tag", filters.tags, endpoints.flat_map(&.tags.map(&.name))},
       {"param", filters.params, endpoints.flat_map(&.params.map(&.name))},
       {"param type", filters.param_types, endpoints.flat_map { |e| e.params.flat_map { |p| [p.param_type, p.request_type] } }},
@@ -1121,7 +1303,21 @@ module Noir::CLI::Inspect
     warnings
   end
 
-  GATEWAY_JOIN_NOTE = "gateway rules join a route only on an exact method and path; a prefix or catch-all rule does not cover the routes under it yet"
+  GATEWAY_JOIN_NOTE = "--seen-in/--not-seen-in join gateway rules to a route only on an exact method and path; for the routes under a prefix rule use --behind-gateway or --not-behind-gateway"
+
+  # Routes that only a catch-all `/` rule covers are not counted as behind a
+  # gateway; this says how many, and which rules, so the count is not silent.
+  private def self.catch_all_warning(endpoints : Array(Endpoint), filters : Filters) : String?
+    return unless (rules = filters.gateway_rules) && rules.any?(&.catch_all?)
+    asked = filters.copy_with(behind_gateway: nil)
+    under = endpoints.compact_map do |endpoint|
+      next if !asked.matches?(endpoint) || behind_gateway?(endpoint, rules)
+      gateway_rule(endpoint, rules, catch_all: true)
+    end
+    return if under.empty?
+    named = under.compact_map(&.location).map { |l| l.line ? "#{l.path}:#{l.line}" : l.path }.uniq!
+    "#{under.size} route#{under.size == 1 ? " is" : "s are"} under only a catch-all `/` gateway rule and not counted as behind a gateway#{": " unless named.empty?}#{named.join(", ")}"
+  end
 
   # A `location /api` or an Ingress `/` never equals a route under it, so
   # "served and routed" comes back empty and "not behind a gateway" comes
@@ -1138,7 +1334,16 @@ module Noir::CLI::Inspect
   # is dropped, whatever the other filters say.
   def self.query(endpoints : Array(Endpoint), filters : Filters, full : Bool,
                  excludes : Array(Filters) = [] of Filters) : Array(Row)
-    endpoints.select { |e| filters.matches?(e) && excludes.none?(&.matches?(e)) }.map { |e| Row.build(e, full) }
+    filters = with_gateway_rules(filters, endpoints)
+    rules = filters.behind_gateway ? filters.gateway_rules : nil
+    endpoints.select { |e| filters.matches?(e) && excludes.none?(&.matches?(e)) }.map do |e|
+      row = Row.build(e, full)
+      # The rule in front of the row, the evidence `--behind-gateway` rests on.
+      if rules && (rule = gateway_rule(e, rules))
+        row.via = [rule.via]
+      end
+      row
+    end
   end
 
   # `filter_warnings` for the kept filters, then for each `--exclude`: an

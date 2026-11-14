@@ -9,7 +9,7 @@ require "../inspect"
 # would match.
 module Noir::CLI::QueryCommand
   # Filter flags and the `Filters` field each one fills. Every one takes a
-  # value except the guard switches.
+  # value except the guard and gateway switches.
   VALUE_FLAGS = %w[--method --url --path --project --handler --tech --tag --param --param-type --protocol --sink --source --signal --validator]
 
   # One pattern each: a URL or path can hold a comma (matrix params, Rails
@@ -17,7 +17,7 @@ module Noir::CLI::QueryCommand
   SINGLE_PATTERN_FLAGS = %w[--url --path --handler]
 
   # `--exclude` keys: every value filter, named without its dashes. The guard
-  # switches already come as a pair, so `guard` is not one.
+  # and gateway switches already come as pairs, so neither is one.
   EXCLUDE_KEYS = VALUE_FLAGS.map(&.lchop("--"))
 
   record Parsed, filters : Inspect::Filters, rest : Array(String), errors : Array(String),
@@ -32,6 +32,7 @@ module Noir::CLI::QueryCommand
     changes = [] of String
     fail_on_match = false
     guard = nil
+    behind = nil
     seen_in = [] of Array(String)
     not_seen_in = [] of String
 
@@ -46,6 +47,10 @@ module Noir::CLI::QueryCommand
         wanted = name == "--guard"
         errors << "--guard and --no-guard are exclusive" if !guard.nil? && guard != wanted
         guard = wanted
+      when "--behind-gateway", "--not-behind-gateway"
+        wanted = name == "--behind-gateway"
+        errors << "--behind-gateway and --not-behind-gateway are exclusive" if !behind.nil? && behind != wanted
+        behind = wanted
       when .in?(VALUE_FLAGS)
         value = inline
         if value.nil?
@@ -113,7 +118,7 @@ module Noir::CLI::QueryCommand
       i += 1
     end
 
-    filters = build_filters(values, guard).copy_with(seen_in: seen_in, not_seen_in: not_seen_in)
+    filters = build_filters(values, guard).copy_with(seen_in: seen_in, not_seen_in: not_seen_in, behind_gateway: behind)
     Parsed.new(filters, rest, errors, excludes, changes, fail_on_match)
   end
 
@@ -133,8 +138,8 @@ module Noir::CLI::QueryCommand
   private def self.parse_exclude(value : String?, errors : Array(String)) : Inspect::Filters?
     key, _, pattern = (value || "").partition('=')
     key = key.strip
-    if key == "guard"
-      errors << "--exclude guard: use --guard or --no-guard"
+    if pair = {"guard" => "--guard or --no-guard", "behind-gateway" => "--behind-gateway or --not-behind-gateway"}[key]?
+      errors << "--exclude #{key}: use #{pair}"
       return
     end
     unless EXCLUDE_KEYS.includes?(key)
@@ -183,9 +188,11 @@ module Noir::CLI::QueryCommand
     Noir::CLI.die("noir query: #{errors.join("; ")}", Inspect::EXIT_USAGE) unless errors.empty?
 
     positionals, scan_args = Inspect.split_positionals(parsed.rest)
-    endpoints = Inspect.load(common, scan_args + positionals, parsed.changes)
-    Inspect.query_warnings(endpoints, parsed.filters, parsed.excludes).each { |w| STDERR.puts "noir query: #{w}" }
-    rows = Inspect.query(endpoints, parsed.filters, common.full, parsed.excludes)
+    scope = [] of Endpoint
+    endpoints = Inspect.load(common, scan_args + positionals, parsed.changes, scope)
+    filters = Inspect.with_gateway_rules(parsed.filters, scope)
+    Inspect.query_warnings(endpoints, filters, parsed.excludes).each { |w| STDERR.puts "noir query: #{w}" }
+    rows = Inspect.query(endpoints, filters, common.full, parsed.excludes)
     exit(exit_code(Inspect.emit(rows, common), parsed.fail_on_match, rows.size))
   end
 
@@ -236,6 +243,13 @@ module Noir::CLI::QueryCommand
                                gateway (nginx, Ingress, Kong, ...) or traffic (HAR, Postman, ...).
                                Repeating it ANDs, unlike the other filters
         --not-seen-in <view,...> Reported by no technology of these views
+        --behind-gateway / --not-behind-gateway
+                               Has / lacks a gateway in front: reported by one, or under an exact or
+                               prefix rule (nginx location, Ingress Prefix, ...) for its method. With
+                               --behind-gateway each row names the rule (via=gateway_prefix:...).
+                               A catch-all `/` rule does not count; stderr says how many it alone
+                               covers. Not read: host, upstream target, path rewrites, regex rules,
+                               monorepo projects
 
       #{Noir::CLI.section("DIFF:")}
         --diff-ref <rev>, --diff-path <dir>
@@ -250,6 +264,7 @@ module Noir::CLI::QueryCommand
         noir query --project services/orders --url /items ./mono
         noir query --seen-in code --not-seen-in spec ./app     # served, missing from the spec
         noir query --seen-in spec --not-seen-in code ./app     # in the spec, served by nothing found
+        noir query --seen-in code --not-behind-gateway ./app   # served, with no gateway rule in front
         noir query --exclude protocol=cli --exclude path='tests/**' --from report.json
         noir query --diff-ref origin/main --no-guard --sink any --fail-on-match .
         noir query --diff-path ../old --change removed .

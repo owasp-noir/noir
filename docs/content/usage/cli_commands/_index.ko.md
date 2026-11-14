@@ -238,6 +238,7 @@ noir query [filters] [paths...] [flags]
 
 불리언 스위치 (상호 배타적):
 - `--guard` / `--no-guard`: 인증 가드(`ai_context.guards`) 존재 여부 (rate limiter와 CSRF 검사는 가드로 치지 않음)
+- `--behind-gateway` / `--not-behind-gateway`: 앞에 게이트웨이 규칙이 있는지 여부 ([게이트웨이 뒤](#게이트웨이-뒤) 참고)
 
 제외 (반복 가능):
 - `--exclude <filter>=<value>`: 해당 필터에 매칭되는 엔드포인트를 결과에서 뺍니다. `<filter>`는 위 필터 이름에서 대시를 뺀 것(`protocol`, `tech`, `url`, `path`, `tag`, `sink` 등)이고, `<value>`는 그 필터의 규칙을 그대로 따릅니다(쉼표 목록은 OR, `url`/`path`/`handler`는 글롭 또는 부분 문자열, 컨텍스트 유형에는 `any` 사용 가능). 어느 하나의 `--exclude`에라도 매칭되면 다른 필터와 상관없이 빠집니다.
@@ -264,7 +265,33 @@ noir query --seen-in gateway ./app                        # 게이트웨이·라
 
 지금은 정확히 일치할 때만 대조됩니다. Noir가 흔한 파라미터 표기를 통일하므로 명세의 `/orders/{id}`와 코드의 `/orders/:id`는 합쳐지지만, 한쪽만 아는 접두사(`/orders` 앞의 `/api`)가 붙으면 따로 남습니다. 기술 정보가 아예 없는 엔드포인트(손으로 만든 리포트 등)는 두 필터 어디에도 매칭되지 않습니다.
 
-게이트웨이 규칙은 이 대조에서 약한 쪽입니다. 게이트웨이 규칙은 메서드와 경로가 정확히 같을 때만 라우트와 합쳐지고, 접두사나 catch-all 규칙(`location /api`, Ingress의 `/`)은 아직 그 아래 라우트를 포괄하지 못합니다. 그래서 code와 gateway를 함께 걸었을 때 결과가 비어 있거나, "게이트웨이 뒤에 없음" 목록이 길게 나와도 그 자체로는 발견이 아닙니다. `gateway`를 다른 뷰와 함께 쓰면 `query`가 stderr로 이 점을 알려 줍니다.
+게이트웨이 규칙은 이 대조에서 약한 쪽입니다. `--seen-in`으로는 메서드와 경로가 정확히 같을 때만 규칙이 라우트와 합쳐지는데, 접두사 규칙(`location /api`, Ingress의 `Prefix /api`)은 그 아래 라우트와 같아질 일이 없습니다. 그래서 code와 gateway를 함께 걸었을 때 결과가 비어 있어도 그 자체로는 발견이 아닙니다. `gateway`를 다른 뷰와 함께 쓰면 `query`가 stderr로 이 점을 알리고 아래 두 플래그를 안내합니다.
+
+#### 게이트웨이 뒤
+
+`--behind-gateway`는 앞에 게이트웨이가 있는 엔드포인트를, `--not-behind-gateway`는 나머지를 남깁니다. 게이트웨이도 그 엔드포인트를 보고했거나(정확히 합쳐진 경우로, `--seen-in gateway`와 같음), 게이트웨이 규칙이 그 경로를 포괄하면 게이트웨이 뒤에 있는 것으로 봅니다.
+
+- exact 규칙은 경로가 같은 라우트를 포괄합니다.
+- prefix 규칙은 자기 경로와, 세그먼트 경계에서 그 아래로 이어지는 경로를 포괄합니다. `/api`는 `/api`와 `/api/users`를 포괄하고 `/apix`는 포괄하지 않습니다. 규칙 끝의 슬래시는 따지지 않습니다.
+- 규칙의 메서드가 라우트의 메서드와 같아야 합니다. 다만 규칙이 모든 메서드(`ANY`)를 받으면 메서드를 보지 않으며, 게이트웨이 규칙은 대부분 이렇게 선언됩니다.
+
+매치 방식은 분석기가 남긴 정보에서 읽습니다. nginx `location`, Ingress, Gateway API `HTTPRoute`, Istio, Kong, HAProxy, Apache는 경로 유형 태그를 보고, Spring Cloud Gateway, YARP, APISIX, Caddy, API Gateway(serverless.yml, CloudFormation, CDK, Terraform) 등 나머지 게이트웨이는 경로 모양(`/api/*`, `/api/**`, `{proxy+}`)을 봅니다. 재작성된 업스트림 경로 행(Ingress `rewrite-target`, Istio나 Gateway API의 rewrite)은 클라이언트 요청이 거치는 규칙이 아니므로 아무것도 포괄하지 않습니다.
+
+`/`에 걸린 catch-all prefix 규칙은 모든 라우트를 포괄하고, 실제로는 아무것도 앞에 두지 않은 정적 파일 서버인 경우도 많아서 세지 않습니다. catch-all만 포괄하는 라우트가 몇 개인지는 stderr에 그 규칙의 파일과 줄과 함께 나옵니다. `--behind-gateway`를 쓰면 각 행의 `via`에 그 행을 포괄하는 규칙(`gateway_prefix` 또는 `gateway_exact`, 규칙 경로, 파일과 줄)이 붙습니다. 여러 규칙이 포괄하면 가장 긴 규칙을 보여 줍니다. 게이트웨이가 직접 보고한 행은 `--not-behind-gateway`에 나오지 않습니다.
+
+```bash
+noir query --seen-in code --not-behind-gateway ./app      # 서빙되지만 앞에 게이트웨이 규칙이 없음
+noir query --seen-in code --behind-gateway -f text ./app  # 행마다 앞에 있는 규칙을 함께 표시
+```
+
+이번 버전의 한계:
+- 호스트를 보지 않습니다. nginx `server_name`이나 Ingress `host`가 달라도 모든 서비스의 라우트를 포괄합니다.
+- 업스트림 대상을 보지 않습니다. 같은 저장소의 다른 서비스로 프록시하는 규칙도 셉니다.
+- 경로 재작성을 적용하지 않습니다. `StripPrefix`나 경로가 붙은 `proxy_pass` 뒤에서는 서비스가 선언한 라우트가 규칙 경로 아래에 있지 않으므로 게이트웨이 뒤에 없는 것으로 나옵니다.
+- regex 규칙과 implementation-specific 규칙은 읽지 않습니다. 라우트와 정확히 합쳐진 경우에는 그대로 셉니다.
+- 모노레포 프로젝트를 구분하지 않습니다. 한 프로젝트의 규칙이 다른 프로젝트의 라우트도 포괄합니다.
+- Envoy와 Netlify 규칙은 읽지 않습니다. 매치 방식도 기록되지 않고 rewrite·redirect 행도 구분되지 않기 때문입니다. Traefik은 `Path`와 `PathPrefix`가 똑같이 보여서 exact로 읽습니다.
+- 변경분에서는 추가·변경된 라우트를 새 쪽 규칙으로, 삭제된 라우트를 옛 쪽 규칙으로 판단합니다. `--from`으로 읽는 diff 리포트에는 바뀐 행만 있으므로 그 안의 규칙만 셉니다.
 
 패턴 매칭 규칙:
 - 글롭 문자(`*`, `?`, `[`): `*`는 `/`를 넘어 매칭되고 `{id}`는 글자 그대로 비교됩니다. 글롭 문자가 없으면 부분 문자열로 매칭됩니다.
@@ -336,7 +363,7 @@ noir query --diff-ref origin/main --no-guard --sink any --fail-on-match .
 - `guards`: 인증 및 인가 가드 (rate limiter, CSRF 제외).
 - `sinks`, `signals`: 프레임워크 인식 싱크 종류 및 파생 보안 리뷰 신호.
 - `matched_by`: `trace`에서 추가 (`exact`, `pattern`, `wildcard`, `prefix`; 대소문자만 다른 경우 `exact_ci`, `pattern_ci`, `wildcard_ci`, ASP.NET/Express/Koa 한정, 마지막에 나열).
-- `via`: `reach`에서 추가 (`route`, `handler`, `callee`, `guard`, `source`, `sink`, `validator` 근거 목록).
+- `via`: `reach`에서 추가 (`route`, `handler`, `callee`, `guard`, `source`, `sink`, `validator` 근거 목록). `query --behind-gateway`에서는 그 행 앞에 있는 게이트웨이 규칙(`gateway_prefix`, `gateway_exact`).
 - `nearest_line`: `reach`에 `:LINE`을 지정했을 때 추가.
 
 텍스트 형식(`-f text`)에서는 각 엔드포인트를 공백으로 구분된 한 줄로 출력합니다:
