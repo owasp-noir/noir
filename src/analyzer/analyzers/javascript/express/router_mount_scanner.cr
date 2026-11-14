@@ -166,9 +166,13 @@ module Analyzer::Javascript
       main_files.each do |main_file|
         process_file_for_mounts(main_file, locator, file_contexts, global_deferred_mounts)
       end
+      # Before pass 2, so a hand-off target's own nested mounts defer onto
+      # the prefix it inherits; again after, for factories pass 2 placed.
+      carry_factory_prefixes(main_files, locator) if @framework == :express
 
       # PASS 2: Process all deferred nested mounts now that all top-level mounts are known
       process_deferred_mounts(global_deferred_mounts, file_contexts, locator)
+      carry_factory_prefixes(main_files, locator) if @framework == :express
     end
 
     # `app.lazyUse = function lazyUse(mountPath, requireFn) { app.use(mountPath, …) }`
@@ -500,6 +504,12 @@ module Analyzer::Javascript
         head = content.match(/\b(?:const|let|var)\s+#{escaped}\s*(?::[^=]+)?=\s*(?:async\s+)?function\b[^(]*(\()\s*([A-Za-z_$][\w$]*)/) ||
                content.match(/\bfunction\s+#{escaped}\s*(\()\s*([A-Za-z_$][\w$]*)/) || return
       end
+      function_body_after(content, head, arrow)
+    end
+
+    # The body `{`, matching `}` and first parameter of the function whose
+    # parameter list opens at `head`'s first group.
+    private def function_body_after(content : String, head : Regex::MatchData, arrow : Bool) : Tuple(Int32, Int32, String)?
       params_close = Noir::JSLiteralScanner.find_matching_paren_at_byte(content, head.byte_begin(1)) || return
       rest = content.byte_slice(params_close + 1, {content.bytesize - params_close - 1, 256}.min)
       lead = rest.match(arrow ? ARROW_BODY_START : FUNCTION_BODY_START) || return
@@ -510,6 +520,70 @@ module Analyzer::Javascript
 
     ARROW_BODY_START    = /\A\s*(?::[^={};]*)?=>\s*(?=\{)/
     FUNCTION_BODY_START = /\A\s*(?::[^={};]*)?(?=\{)/
+
+    # `app.use('/api', routes(router))` with `routes/index.js` being
+    # `module.exports = (router) => { users(router); require('./notes')(router) }`:
+    # the module's prefix is the router's, so a module whose exported
+    # function the factory hands that router to, and which routes on it,
+    # is served under the same prefixes. Followed transitively; a target
+    # is re-queued only when it gains a prefix, so a require cycle ends.
+    # ponytail: default exports only (`module.exports =` / `export default`);
+    # a named factory (`const { users } = require(...)`) is not followed.
+    DEFAULT_EXPORT_ARROW_RE    = /(?:\bmodule\s*\.\s*exports\s*=|\bexport\s+default)\s*(?:async\s+)?(\()\s*([A-Za-z_$][\w$]*)/
+    DEFAULT_EXPORT_FUNCTION_RE = /(?:\bmodule\s*\.\s*exports\s*=|\bexport\s+default)\s*(?:async\s+)?function\b[^(]*(\()\s*([A-Za-z_$][\w$]*)/
+    HANDED_REQUIRE_CALL        = ->(param : String) { /\brequire\s*\(\s*['"]([^'"]+)['"]\s*\)\s*\(\s*#{Regex.escape(param)}\s*[,)]/ }
+    @factory_targets = Hash(String, Array(String)).new
+
+    private def carry_factory_prefixes(main_files : Array(String), locator : CodeLocator)
+      queue = Deque(String).new(main_files.map { |file| Noir::PathScope.expand(file) })
+      while file = queue.shift?
+        prefixes = locator.all(ExpressConstants.file_key(file))
+        next if prefixes.empty?
+        factory_targets(file).each do |target|
+          key = ExpressConstants.file_key(target)
+          grew = false
+          prefixes.each do |prefix|
+            next if locator.all(key).includes?(prefix)
+            push_prefix_to_locator(locator, key, prefix, "Mapped factory hand-off prefix: #{file} -> #{target} => #{prefix}")
+            grew = true
+          end
+          queue << target if grew
+        end
+      end
+    end
+
+    # Modules whose default-exported function `file`'s default-exported
+    # function hands its first parameter to, when that function routes on
+    # (or hands on) the parameter it receives.
+    private def factory_targets(file : String) : Array(String)
+      @factory_targets[file] ||= begin
+        targets = [] of String
+        if body = default_export_body(file)
+          content, open, close, param = body
+          span = content.byte_slice(open, close - open + 1)
+          imports = parse_imports(content, file)
+          span.scan(HANDED_PARAM_CALL.call(param)) { |m| (target = imports[:require_map][m[1]]?) && targets << target }
+          span.scan(HANDED_REQUIRE_CALL.call(param)) { |m| resolve_require_path(file, m[1]).try { |target| targets << target } }
+          targets.select! do |target|
+            next false if target == file
+            inner = default_export_body(target) || next false
+            inner[0].byte_slice(inner[1], inner[2] - inner[1] + 1).matches?(PLUGIN_USE_OF_PARAM.call(inner[3]))
+          end
+        end
+        targets.uniq
+      end
+    end
+
+    private def default_export_body(file : String) : Tuple(String, Int32, Int32, String)?
+      content = read_source(file)
+      return unless content.includes?("exports") || content.includes?("export default")
+      content = Noir::JSRouteExtractor.strip_js_comments(content)
+      found = content.match(DEFAULT_EXPORT_ARROW_RE).try { |head| function_body_after(content, head, true) } ||
+              content.match(DEFAULT_EXPORT_FUNCTION_RE).try { |head| function_body_after(content, head, false) } || return
+      {content, found[0], found[1], found[2]}
+    rescue File::Error | IO::Error
+      nil
+    end
 
     # The handler is the last argument: `onRequest(app)` / `onRequest({ region }, app)`.
     FIREBASE_APP_HANDLER = /(?:\A|,)\s*([A-Za-z_$][\w$]*)\s*\z/
