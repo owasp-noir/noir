@@ -28,7 +28,8 @@ module Analyzer::Go
     # Per-directory `{route helper name => declaring file}`, see
     # `external_route_helper`.
     @router_helper_files = Hash(String, Hash(String, String)).new
-    # `{file, line}` of every route a Mount expansion read from such a helper.
+    # `{file, line}` of every route a Mount expansion read from such a helper,
+    # or reached by following a mounted function's delegation.
     @external_route_sites = Set(Tuple(String, Int32?)).new
 
     # Go enforces per-file imports, so any file using chi's router
@@ -302,7 +303,7 @@ module Analyzer::Go
             if (target = parse_mount_target(mount_call(lines, index), string_values_for(dir))) &&
                (target_dir = resolve_mount_dir(path, dir, target, file_contents_cache))
               endpoints = expand_mounted_router(target_dir, target[:func_name], target[:recv_type],
-                package_files, file_contents_cache, file_lines_cache, [] of String)
+                package_files, file_contents_cache, file_lines_cache, [] of String, target[:then_method])
               endpoints.each do |ep|
                 ep.url = mount_join(target[:prefix], ep.url)
                 result << ep
@@ -456,6 +457,8 @@ module Analyzer::Go
     #     `r.Mount("/todos", todosResource{}.Routes())`
     #     -> {func_name: "Routes", recv_type: "todosResource"}
     #   * pointer-receiver method — `r.Mount("/x", (&Type{}).Routes())`
+    #   * method on a constructor's result — `r.Mount("/api/", handlers.New(h).Handler())`
+    #     -> {func_name: "New", pkg_alias: "handlers", then_method: "Handler"}
     # The receiver type is kept so two resources that both expose a
     # `Routes()` method resolve to their own bodies, not the first one
     # found. Call arguments are allowed (`actions.Routes(prefix)`) —
@@ -473,18 +476,19 @@ module Analyzer::Go
       rest = m[3]
       # Value-receiver method: `Type{}.Routes()` / `pkg.Type{...}.Routes()`.
       if t = rest.match(/^([\w.]+)\s*\{[^{}]*\}\s*\.\s*(\w+)\s*\(/)
-        return {prefix: prefix, func_name: t[2], recv_type: t[1].split('.').last, pkg_alias: nil}
+        return {prefix: prefix, func_name: t[2], recv_type: t[1].split('.').last, pkg_alias: nil, then_method: nil}
       end
       # Pointer-receiver method: `(&Type{}).Routes()` — the only valid Go
       # syntax for a pointer-receiver resource (`.` binds tighter than
       # `&`, so the parens are required).
       if t = rest.match(/^\(\s*&\s*([\w.]+)\s*\{[^{}]*\}\s*\)\s*\.\s*(\w+)\s*\(/)
-        return {prefix: prefix, func_name: t[2], recv_type: t[1].split('.').last, pkg_alias: nil}
+        return {prefix: prefix, func_name: t[2], recv_type: t[1].split('.').last, pkg_alias: nil, then_method: nil}
       end
       # Plain or package-qualified function: `adminRouter()`,
-      # `apiv1.Routes()`, `actions.Routes(prefix)`.
-      if t = rest.match(/^(?:(\w+)\.)?(\w+)\s*\(/)
-        return {prefix: prefix, func_name: t[2], recv_type: nil, pkg_alias: t[1]?}
+      # `apiv1.Routes()`, `actions.Routes(prefix)`, optionally with one
+      # method called on its result (`handlers.New(h).Handler()`).
+      if t = rest.match(/^(?:(\w+)\.)?(\w+)\s*\((?:[^()]*\)\s*\.\s*(\w+)\s*\()?/)
+        return {prefix: prefix, func_name: t[2], recv_type: nil, pkg_alias: t[1]?, then_method: t[3]?}
       end
       nil
     end
@@ -506,7 +510,7 @@ module Analyzer::Go
       end
     end
 
-    alias MountTarget = NamedTuple(prefix: String, func_name: String, recv_type: String?, pkg_alias: String?)
+    alias MountTarget = NamedTuple(prefix: String, func_name: String, recv_type: String?, pkg_alias: String?, then_method: String?)
 
     # Skip key for a parsed mount target: a method target is keyed by
     # `Receiver.Method` so the free pass skips only the exact mounted
@@ -618,6 +622,9 @@ module Analyzer::Go
     # the resolver could not tell apart.
     MAX_MOUNT_DEPTH = 8
 
+    # `return HandlerWithOptions(si, ...)` / `return generated.Handler(s)`.
+    DELEGATE_RETURN_RE = /^\s*return\s+(?:(\w+)\.)?(\w+)\s*\(/
+
     # Extracts endpoints from a router function definition declared in
     # the Go package at `dir`, searching every `.go` file there.
     #
@@ -632,11 +639,17 @@ module Analyzer::Go
     # `/users` yields `/users/...` relative to `apiRouter`'s root. The
     # `ancestors` list guards against a router that (transitively)
     # mounts itself.
+    #
+    # A body that registers nothing hands out a router built elsewhere,
+    # which is followed instead: a returned call (oapi-codegen's `Handler`
+    # is `return HandlerWithOptions(si, ...)`), or, for `New(h).Handler()`
+    # (`then_method`), the method on `New`'s declared result type. Routes
+    # reached that way are dropped from the free pass.
     def expand_mounted_router(dir : String, func_name : String, recv_type : String?,
                               package_files : Hash(String, Array(String)),
                               file_contents_cache : Hash(String, String),
                               file_lines_cache : Hash(String, Array(String)),
-                              ancestors : Array(String)) : Array(Endpoint)
+                              ancestors : Array(String), then_method : String? = nil) : Array(Endpoint)
       endpoints = [] of Endpoint
       key = "#{dir}|#{recv_type}.#{func_name}"
       return endpoints if ancestors.includes?(key) || ancestors.size >= MAX_MOUNT_DEPTH
@@ -651,14 +664,21 @@ module Analyzer::Go
             rescue IO::Error
               next
             end
+        next unless content.includes?(func_name)
 
         found = false
+        body_rows = {0, -1}
+        result_type = nil
         nested = [] of Endpoint
         collected = [] of Noir::TreeSitterGoRouteExtractor::Route
         string_values = string_values_for(dir)
         Noir::TreeSitter.parse_go(content) do |root|
-          find_func_declaration(root, content, func_name, recv_type) do |body|
+          find_func_declaration(root, content, func_name, recv_type) do |body, decl|
             found = true
+            if then_method && (result = Noir::TreeSitter.field(decl, "result"))
+              type_name = Noir::TreeSitter.node_text(result, content).lchop('*')
+              result_type = type_name if type_name.matches?(/\A\w+\z/)
+            end
             # Re-run the chi walker against the isolated body. skip_functions
             # is empty because any nested func literal inside is the inline
             # handler which the walker already ignores by convention.
@@ -672,6 +692,7 @@ module Analyzer::Go
             lines = file_lines_cache[search_path]? || GoEngine.strip_comments(content).lines
             first_row = Noir::TreeSitter.node_start_row(body)
             last_row = Noir::TreeSitter.node_end_row(body)
+            body_rows = {first_row, last_row}
             row = first_row
             while row <= last_row && row < lines.size
               line = lines[row]
@@ -682,7 +703,7 @@ module Analyzer::Go
               target_dir = resolve_mount_dir(search_path, dir, target, file_contents_cache)
               next unless target_dir
               expand_mounted_router(target_dir, target[:func_name], target[:recv_type],
-                package_files, file_contents_cache, file_lines_cache, ancestors + [key]).each do |ep|
+                package_files, file_contents_cache, file_lines_cache, ancestors + [key], target[:then_method]).each do |ep|
                 ep.url = mount_join(target[:prefix], ep.url)
                 nested << ep
               end
@@ -717,6 +738,29 @@ module Analyzer::Go
           endpoints.concat(file_endpoints)
         end
         endpoints.concat(nested)
+
+        if collected.empty? && nested.empty?
+          # ponytail: the first `return f(...)` / `return pkg.f(...)` that
+          # yields routes, matched by name, and a constructor's declared
+          # result type, within MAX_MOUNT_DEPTH. A router kept in a variable
+          # first, or an interface result, would need type inference.
+          delegated = [] of Endpoint
+          lines = file_lines_cache[search_path]? || GoEngine.strip_comments(content).lines
+          (body_rows[0]..body_rows[1]).each do |row|
+            m = lines[row]?.try(&.match(DELEGATE_RETURN_RE)) || next
+            delegate_dir = (qualifier = m[1]?) ? import_dir(search_path, qualifier, file_contents_cache) : dir
+            next unless delegate_dir
+            delegated = expand_mounted_router(delegate_dir, m[2], nil,
+              package_files, file_contents_cache, file_lines_cache, ancestors + [key])
+            break unless delegated.empty?
+          end
+          if delegated.empty? && then_method && (rt = result_type)
+            delegated = expand_mounted_router(dir, then_method, rt,
+              package_files, file_contents_cache, file_lines_cache, ancestors + [key])
+          end
+          delegated.each { |ep| ep.details.code_paths.each { |cp| @external_route_sites << {cp.path, cp.line} } }
+          endpoints.concat(delegated)
+        end
         break
       end
 
@@ -754,7 +798,7 @@ module Analyzer::Go
       nil
     end
 
-    private def find_func_declaration(node : LibTreeSitter::TSNode, source : String, name : String, recv_type : String? = nil, &block : LibTreeSitter::TSNode ->)
+    private def find_func_declaration(node : LibTreeSitter::TSNode, source : String, name : String, recv_type : String? = nil, &block : LibTreeSitter::TSNode, LibTreeSitter::TSNode ->)
       node_ty = Noir::TreeSitter.node_type(node)
       # A plain function (`func Name()`) matches when no receiver type was
       # requested; a method (`func (r Type) Name()`) matches only when its
@@ -765,7 +809,7 @@ module Analyzer::Go
           if Noir::TreeSitter.node_text(name_node, source) == name &&
              (recv_type.nil? || method_receiver_type(node, source) == recv_type)
             if body = Noir::TreeSitter.field(node, "body")
-              yield body
+              yield body, node
               return
             end
           end
