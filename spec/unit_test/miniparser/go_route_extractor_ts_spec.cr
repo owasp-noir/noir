@@ -145,6 +145,47 @@ describe Noir::TreeSitterGoRouteExtractor do
       .should eq(["/lower", "/upper", "/g/x"])
   end
 
+  it "reads an accessor-call receiver only when router_fields lists it, with its prefix from the group map" do
+    source = <<-GO
+      package main
+      func (s *Server) routes() {
+          router.V1().POST("/login", login)
+          router.Router().GET("/healthz", health)
+          V1().GET("/local", h)
+          s.Admin().Group("/users").GET("/:id", h)
+          config.Get().Get("/config", h)
+          router.V1("x").GET("/args", h)
+      }
+      GO
+
+    Noir::TreeSitterGoRouteExtractor.extract_routes(source).should be_empty
+    routes = Noir::TreeSitterGoRouteExtractor.extract_routes(source,
+      {"router.V1()" => "/api/v1", "V1()" => "/api/v1", ".Admin()" => "/admin"},
+      router_fields: Set{"router.V1()", "router.Router()", "V1()", ".Admin()"})
+    routes.map(&.path).should eq(["/api/v1/login", "/healthz", "/api/v1/local", "/admin/users/:id"])
+    routes.map(&.router_name).should eq(["router.V1()", "router.Router()", "V1()", ".Admin()"])
+  end
+
+  it "lists parameterless functions and methods with their declared result and returned name" do
+    source = <<-GO
+      package router
+      func V1() *gin.RouterGroup { return v1 }
+      func (s *Server) Admin() *gin.RouterGroup { return s.admin }
+      func Maybe() *gin.Engine {
+          if x { return nil }
+          return router
+      }
+      func Group(p string) *gin.RouterGroup { return router.Group(p) }
+      func Pair() (*gin.Engine, error) { return router, nil }
+      GO
+
+    Noir::TreeSitterGoRouteExtractor.router_accessors(source).map { |a| {a.name, a.method, a.result, a.returns} }.should eq([
+      {"V1", false, "*gin.RouterGroup", "v1"},
+      {"Admin", true, "*gin.RouterGroup", "s.admin"},
+      {"Maybe", false, "*gin.Engine", nil},
+    ])
+  end
+
   it "resolves string constants and concatenations used as paths" do
     source = <<-GO
       package main

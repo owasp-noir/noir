@@ -29,7 +29,7 @@ module Analyzer::Go
       named_scope = named_handler_scope(file_contents)
       struct_index = Noir::GoStructFields::Index.new(file_contents, named_scope.import_dirs)
       binders = binder_methods(file_contents)
-      router_fields = package_router_fields(file_contents, ROUTER_TYPES)
+      router_fields = package_router_fields(file_contents, ROUTER_TYPES, named_scope.import_dirs, package_groups)
       parallel_analyze(get_files_by_extension(".go")) do |path|
         next if go_test_path?(path)
         next unless File.exists?(path)
@@ -41,7 +41,7 @@ module Analyzer::Go
 
         # Tree-sitter pre-pass: every Echo verb route
         # (`e.GET`, `g.POST`, …) with its group prefix applied.
-        cross_file_groups = ts_groups_for_directory(package_groups, dir)
+        receivers, cross_file_groups = file_router_receivers(router_fields, path, content, ts_groups_for_directory(package_groups, dir))
         ts_routes = Noir::TreeSitterGoRouteExtractor.extract_routes(
           content,
           cross_file_groups,
@@ -49,7 +49,7 @@ module Analyzer::Go
           handle_many_methods: ["Match"],
           string_seed: string_seed,
           literal_join: true,
-          router_fields: router_fields[dir]? || Set(String).new
+          router_fields: receivers
         )
         routes_by_line = Hash(Int32, Array(Noir::TreeSitterGoRouteExtractor::Route)).new
         ts_routes.each do |r|

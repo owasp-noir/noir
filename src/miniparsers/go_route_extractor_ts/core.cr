@@ -243,7 +243,8 @@ module Noir
     # than `decode_verb_call`.
     # `router_fields` names the struct fields the package declares with a
     # router type (`router *gin.Engine`), so `s.router.GET(...)` has a
-    # router receiver; see `router_operand_info`.
+    # router receiver; see `router_operand_info`. An entry ending in `()`
+    # names an accessor call (`router.V1()`); see `accessor_call_info`.
     def extract_routes(source : String,
                        external_groups : Hash(String, String) = Hash(String, String).new,
                        group_method : String = "Group",
@@ -1751,8 +1752,59 @@ module Noir
           {Noir::TreeSitter.node_text(operand, source), ""}
         end
       when "call_expression"
-        group_chain_operand_info(operand, source, groups, group_method, group_aliases, string_values, router_fields)
+        accessor_call_info(operand, source, router_fields) ||
+          group_chain_operand_info(operand, source, groups, group_method, group_aliases, string_values, router_fields)
       end
+    end
+
+    # A zero-argument call of a function the package can reach that is
+    # declared to return a router (`router.V1()`, `V1()`, `s.V1()`), as the
+    # `router_fields` key it matched (`router.V1()`, `V1()`, `.V1()`): the
+    # key is the route's router name, so its prefix is `groups[key]`. See
+    # `GoEngine#file_router_receivers`.
+    # ponytail: a method matches by name (`.V1()`), whatever the receiver's
+    # type; resolve the receiver's type if a same-named method on another
+    # value turns up.
+    private def accessor_call_info(call : LibTreeSitter::TSNode, source : String, router_fields : Set(String)) : Tuple(String, String)?
+      return if router_fields.empty?
+      args = Noir::TreeSitter.field(call, "arguments") || return
+      return if Noir::TreeSitter.first_named_arg(args)
+      function = Noir::TreeSitter.field(call, "function") || return
+      key = "#{Noir::TreeSitter.node_text(function, source)}()"
+      if !router_fields.includes?(key) && Noir::TreeSitter.node_type(function) == "selector_expression"
+        key = Noir::TreeSitter.field(function, "field").try { |f| ".#{Noir::TreeSitter.node_text(f, source)}()" } || return
+      end
+      {key, ""} if router_fields.includes?(key)
+    end
+
+    # A function or method declaration: its name, its declared result as
+    # written (`*gin.RouterGroup`), and the identifier or field path every
+    # `return` hands back (`v1`, `s.v1`), nil when they differ or are
+    # something else.
+    record RouterAccessor, name : String, method : Bool, result : String, returns : String?
+
+    # The top-level functions and methods of `source` that take no
+    # parameters and declare a single result, for `GoEngine` to keep those
+    # whose result is a router type.
+    def router_accessors(source : String) : Array(RouterAccessor)
+      found = [] of RouterAccessor
+      Noir::TreeSitter.parse_go(source) do |root|
+        Noir::TreeSitter.each_named_child(root) do |decl|
+          kind = Noir::TreeSitter.node_type(decl)
+          next unless kind == "function_declaration" || kind == "method_declaration"
+          name = Noir::TreeSitter.field(decl, "name")
+          result = Noir::TreeSitter.field(decl, "result")
+          body = Noir::TreeSitter.field(decl, "body")
+          params = Noir::TreeSitter.field(decl, "parameters")
+          next unless name && result && body && params && Noir::TreeSitter.first_named_child(params).nil?
+          next if Noir::TreeSitter.node_type(result) == "parameter_list"
+          returned = Set(String?).new
+          each_return_value(body) { |expr| returned << receiver_key(expr, source) }
+          found << RouterAccessor.new(Noir::TreeSitter.node_text(name, source), kind == "method_declaration",
+            Noir::TreeSitter.node_text(result, source), returned.size == 1 ? returned.first : nil)
+        end
+      end
+      found
     end
 
     private def group_chain_operand_info(call : LibTreeSitter::TSNode,

@@ -332,30 +332,128 @@ module Analyzer::Go
     # same-named field of another type is only seen in files that also
     # declare a router field; resolve the receiver's struct type if that
     # admits a look-alike call.
-    def package_router_fields(file_contents : Hash(String, String), types : Hash(String, Array(String))) : Hash(String, Set(String))
+    #
+    # A struct embedding a struct of another scanned package (`type
+    # Controller struct{ *core.Controller }`, the qualifier resolved through
+    # `import_dirs`) gets that struct's router fields, so `c.Echo.GET(...)`
+    # counts in the embedding package. A field's group prefix is read only
+    # where the group map already reads it (`s.api = s.router.Group("/v1")`
+    # in the using package); one set in another package's constructor
+    # (`Group: e.Group("/api/v2")`) is not, and its routes stay unprefixed,
+    # as an unread group's do.
+    # ponytail: one level of cross-package embedding; walk the embedded
+    # struct's own embeddings if a deeper chain turns up.
+    #
+    # Accessors are the parameterless functions and methods declared to
+    # return one of the types (`func V1() *gin.RouterGroup`), per declaring
+    # package, with the prefix of the group they return when every `return`
+    # names one `package_groups` knows (`return v1` after `v1 =
+    # router.Group("/api/v1")`), else "" (the routes stay unprefixed, as on
+    # an unread group). See `file_router_receivers`.
+    record RouterReceivers, fields : Hash(String, Set(String)), accessors : Hash(String, Hash(String, String)),
+      import_dirs : Hash(String, String)
+
+    def package_router_fields(file_contents : Hash(String, String), types : Hash(String, Array(String)),
+                              import_dirs : Hash(String, String), package_groups : Hash(String, Hash(String, String))) : RouterReceivers
       routers = Hash(String, Set(String)).new
       others = Hash(String, Set(String)).new
+      # dir -> struct name -> its router fields, for embedding packages.
+      struct_routers = Hash(String, Hash(String, Array(String))).new
+      accessors = Hash(String, Hash(String, String)).new
       # A line that declares a field of one of the types (`router *gin.Engine`,
-      # `struct{ *echo.Echo }`): only those files are parsed.
+      # `struct{ *echo.Echo }`), or a function returning one: only those
+      # files are parsed.
       names = types.values.flatten.uniq!.map { |t| Regex.escape(t) }.join('|')
       gate = Regex.new("(?:^|[{;])[ \\t]*(?:\\w+(?:[ \\t]*,[ \\t]*\\w+)*[ \\t]+)?\\*?\\w+\\.(?:#{names})[ \\t]*(?:`|//|}|\\r?$)", Regex::Options::MULTILINE)
+      returns_gate = Regex.new("^func\\b[^\\n]*\\)[ \\t]*\\*?\\w+\\.(?:#{names})[ \\t]*\\{", Regex::Options::MULTILINE)
       file_contents.each do |path, content|
         next if go_test_path?(path)
-        next unless content.includes?("struct") && types.each_key.any? { |imp| content.includes?(imp) } && content.matches?(gate)
+        next unless types.each_key.any? { |imp| content.includes?(imp) }
+        declares = content.includes?("struct") && content.matches?(gate)
+        returns = content.matches?(returns_gate)
+        next unless declares || returns
         aliases = Noir::GoCalleeExtractor.extract_import_aliases(content)
+        dir = File.dirname(path)
+        if declares
+          Noir::GoStructFields.collect(content).each do |struct_name, fields|
+            fields.each do |field|
+              router = router_type?(field.type, aliases, types)
+              name = field.embedded ? field.type.split('[').first.rpartition('.').last : field.name
+              ((router ? routers : others)[dir] ||= Set(String).new) << name
+              ((struct_routers[dir] ||= Hash(String, Array(String)).new)[struct_name] ||= [] of String) << name if router
+            end
+          end
+        end
+        next unless returns
+        Noir::TreeSitterGoRouteExtractor.router_accessors(content).each do |accessor|
+          next unless router_type?(accessor.result, aliases, types)
+          prefix = accessor.returns.try { |name| package_groups[dir]?.try(&.[name]?) } || ""
+          (accessors[dir] ||= Hash(String, String).new)["#{accessor.method ? "." : ""}#{accessor.name}()"] = prefix
+        end
+      end
+      embedded_router_fields(file_contents, struct_routers, import_dirs, routers) unless struct_routers.empty? || import_dirs.empty?
+      routers.each { |dir, found| others[dir]?.try { |o| found.subtract(o) } }
+      RouterReceivers.new(routers, accessors, import_dirs)
+    end
+
+    # Whether `type_text` (`*gin.Engine`, `gin.IRouter`) names one of the
+    # router `types` through the file's import `aliases`.
+    private def router_type?(type_text : String, aliases : Hash(String, String), types : Hash(String, Array(String))) : Bool
+      qualifier, _, type_name = type_text.strip.lchop('*').split('[').first.rpartition('.')
+      import_path = aliases[qualifier]?.try(&.gsub(/\/v\d+(?=\/|\z)/, ""))
+      !!(import_path && types[import_path]?.try(&.includes?(type_name)))
+    end
+
+    # Adds to `routers` the router fields of structs another package embeds
+    # (`*core.Controller`), read from `struct_routers`.
+    private def embedded_router_fields(file_contents : Hash(String, String), struct_routers : Hash(String, Hash(String, Array(String))),
+                                       import_dirs : Hash(String, String), routers : Hash(String, Set(String)))
+      struct_names = struct_routers.values.flat_map(&.keys).uniq!
+      file_contents.each do |path, content|
+        next if go_test_path?(path)
+        next unless content.includes?("struct") && struct_names.any? { |name| content.includes?(".#{name}") }
+        aliases = nil
         dir = File.dirname(path)
         Noir::GoStructFields.collect(content).each_value do |fields|
           fields.each do |field|
-            qualifier, _, type_name = field.type.lchop('*').split('[').first.rpartition('.')
-            import_path = aliases[qualifier]?.try(&.gsub(/\/v\d+(?=\/|\z)/, ""))
-            router = import_path && types[import_path]?.try(&.includes?(type_name))
-            name = field.embedded ? type_name : field.name
-            ((router ? routers : others)[dir] ||= Set(String).new) << name
+            next unless field.embedded
+            qualifier, _, type_name = field.type.rpartition('.')
+            next if qualifier.empty?
+            aliases ||= Noir::GoCalleeExtractor.extract_import_aliases(content)
+            embedded_dir = aliases[qualifier]?.try { |imp| import_dirs[imp]? }
+            next if embedded_dir.nil? || embedded_dir == dir
+            struct_routers[embedded_dir]?.try(&.[type_name]?).try { |found| (routers[dir] ||= Set(String).new).concat(found) }
           end
         end
       end
-      routers.each { |dir, found| others[dir]?.try { |o| found.subtract(o) } }
-      routers
+    end
+
+    # The router receivers the file at `path` can name: its package's
+    # router fields, plus the accessor calls it can make, keyed as the
+    # extractor matches them (see `TreeSitterGoRouteExtractor#
+    # accessor_call_info`): `V1()` and `.V1()` (a method) in the declaring
+    # package, `router.V1()` through the file's import of it. Returned with
+    # `groups` extended by each accessor's known prefix.
+    def file_router_receivers(receivers : RouterReceivers, path : String, content : String,
+                              groups : Hash(String, String)) : Tuple(Set(String), Hash(String, String))
+      dir = File.dirname(path)
+      fields = receivers.fields[dir]? || Set(String).new
+      return {fields, groups} if receivers.accessors.empty? || !content.includes?("()")
+      calls = receivers.accessors[dir]?.try(&.dup) || Hash(String, String).new
+      aliases = nil
+      receivers.accessors.each do |accessor_dir, found|
+        next if accessor_dir == dir
+        exported = found.reject { |key, _| key.starts_with?('.') }
+        next unless exported.each_key.any? { |key| content.includes?(".#{key}") }
+        aliases ||= Noir::GoCalleeExtractor.extract_import_aliases(content)
+        aliases.each do |name, import_path|
+          next unless receivers.import_dirs[import_path]? == accessor_dir
+          exported.each { |key, prefix| calls["#{name}.#{key}"] = prefix }
+        end
+      end
+      return {fields, groups} if calls.empty?
+      known = calls.reject { |_, prefix| prefix.empty? }
+      {fields + calls.keys.to_set, known.empty? ? groups : groups.merge(known)}
     end
 
     # Project-wide string facts a route or group path can be built from:
