@@ -17,9 +17,10 @@ module Analyzer::Go
     # Registration calls that make a file worth the route parse.
     ROUTE_METHODS = ["Handle", "HandleFunc", "Path", "PathPrefix", "Methods", "Queries"]
 
-    private def extract_mux_routes(content : String, cross_file_groups : Hash(String, String)) : Array(Noir::TreeSitterGoRouteExtractor::Route)
+    private def extract_mux_routes(content : String, cross_file_groups : Hash(String, String), string_seed : Hash(String, String)) : Array(Noir::TreeSitterGoRouteExtractor::Route)
       Noir::TreeSitterGoRouteExtractor.extract_routes(
         content, cross_file_groups,
+        string_seed: string_seed,
         group_method: "Subrouter",
         handlefunc_methods: true,
         # gorilla/mux registers nothing through a verb-named method —
@@ -38,7 +39,10 @@ module Analyzer::Go
       # `api := r.PathPrefix("/api/").Subrouter()`. The engine fixpoint
       # treats "Subrouter" as the grouping method and peeks through the
       # chain to read the PathPrefix argument.
-      package_groups, file_contents = collect_package_groups_ts("Subrouter", import_marker: IMPORT_MARKER)
+      # Paths built through wrappers (`s.prefixedPath("/version")`) and
+      # other packages' constants (see Gin).
+      string_seed = go_string_seed
+      package_groups, file_contents = collect_package_groups_ts("Subrouter", import_marker: IMPORT_MARKER, string_seed: string_seed)
       # `InitUser(r.PathPrefix("/api/users").Subrouter())` + `func InitUser(users *mux.Router)`:
       # the prefix lives at the call site (see `resolve_router_builder_prefixes`).
       builder_prefixes_by_dir = resolve_router_builder_prefixes(file_contents, package_groups, BUILDER_TYPE)
@@ -55,7 +59,7 @@ module Analyzer::Go
       # Route and static-file parses of every candidate file, on the worker
       # threads; the pass below consumes them (see `prefetch_route_sources`).
       prefetched = prefetch_route_sources(file_contents, framework_dirs, IMPORT_MARKER, ROUTE_METHODS, verb_calls: false) do |path, content|
-        {extract_mux_routes(content, ts_groups_for_directory(package_groups, File.dirname(path))),
+        {extract_mux_routes(content, ts_groups_for_directory(package_groups, File.dirname(path)), string_seed),
          Noir::TreeSitterGoRouteExtractor.extract_mux_statics(content)}
       end
       named_scope = named_handler_scope(file_contents)
@@ -69,7 +73,7 @@ module Analyzer::Go
         last_endpoint = Endpoint.new("", "")
 
         ts_routes, statics = prefetched[path]? ||
-                             {extract_mux_routes(content, ts_groups_for_directory(package_groups, dir)),
+                             {extract_mux_routes(content, ts_groups_for_directory(package_groups, dir), string_seed),
                               Noir::TreeSitterGoRouteExtractor.extract_mux_statics(content)}
         routes_by_line = Hash(Int32, Array(Noir::TreeSitterGoRouteExtractor::Route)).new
         ts_routes.each do |r|
@@ -128,7 +132,7 @@ module Analyzer::Go
         end
 
         expand_router_builders(content, lines, path, expand_builders, callees_by_route, named,
-          group_method: "Subrouter", handlefunc_methods: true) do |line, ep|
+          group_method: "Subrouter", handlefunc_methods: true, string_seed: string_seed) do |line, ep|
           add_mux_param_patterns(line, ep)
         end
 
