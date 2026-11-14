@@ -15,7 +15,18 @@ expected_endpoints = [
   Endpoint.new("/local", "GET"),
 ]
 
-FunctionalTester.new("fixtures/go/gin_router_builder_slice/", {
+tester = FunctionalTester.new("fixtures/go/gin_router_builder_slice/", {
   :techs     => 1,
   :endpoints => expected_endpoints.size,
-}, expected_endpoints).perform_tests
+}, expected_endpoints)
+tester.perform_tests
+
+# A builder no call site hands a readable group serves its routes under a
+# prefix that was not read (#3567); one handed a read group does not.
+describe "gin router-builder prefix resolution", tags: "functional" do
+  it "marks the routes of builders whose group no call site gave" do
+    tester.endpoints.select(&.resolution).map { |ep| "#{ep.method} #{ep.url}" }.sort!
+      .should eq(["GET /local", "GET /orphan", "GET /sb"])
+    tester.endpoints.compact_map(&.resolution).uniq!.should eq([{"prefix" => "unresolved"}])
+  end
+end

@@ -206,10 +206,12 @@ module Noir
       # prefix of a group the route sits on was not read in full
       # (`r.Group(base+"/v1")`, `r.Group(cfg.BasePath)`): the prefix then
       # carries `UNREAD_PREFIX`, which is taken off `path` here.
+      # A router-builder helper's group parameter no call site gave a
+      # readable prefix is marked by `GoEngine#unread_builder_routes`.
       # ponytail: a receiver whose group the group map does not know at all
-      # (an accessor or a group-typed field it lacks, a router-builder
-      # parameter with no call site read) leaves its routes unmarked;
-      # marking those needs group-typed receivers told from engine-typed ones.
+      # (an accessor or a group-typed field it lacks) leaves its routes
+      # unmarked; marking those needs group-typed receivers told from
+      # engine-typed ones.
       getter? prefix_unresolved : Bool
 
       def initialize(@router_name, @verb, path : String, @raw_path, @handler, @line,
@@ -222,6 +224,12 @@ module Noir
           @prefix_unresolved = true
         end
         @path = path
+      end
+
+      # Marks the route (see `GoEngine#unread_builder_routes`).
+      def unresolve_prefix! : self
+        @prefix_unresolved = true
+        self
       end
 
       # The mark an endpoint built from this route carries (`Endpoint#resolution`).

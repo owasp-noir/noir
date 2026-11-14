@@ -70,6 +70,9 @@ module Analyzer::Go
         # decoders so those registrations surface as endpoints too.
         ts_routes = Noir::TreeSitterGoRouteExtractor.extract_routes(content, cross_file_groups, handle_method: "Handle",
           handle_many_methods: ["Match"], string_seed: string_seed, router_fields: receivers)
+        # A helper's routes on a group no call site gave a readable prefix (#3567).
+        unread = unread_builder_routes(content, BUILDER_TYPE, builder_prefixes_by_dir[dir]?, cross_file_groups, "Handle", string_seed)
+        ts_routes.map! { |r| unread.includes?({r.line, r.path}) ? r.unresolve_prefix! : r } unless unread.empty?
         routes_by_line = Hash(Int32, Array(Noir::TreeSitterGoRouteExtractor::Route)).new
         ts_routes.each do |r|
           routes_by_line[r.line] ||= [] of Noir::TreeSitterGoRouteExtractor::Route
