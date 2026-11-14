@@ -509,6 +509,10 @@ jobs:
       # reports.
       - name: Run the suite
         run: |
+          # Top-level spec code shares one `__crystal_main` frame, which has
+          # reached the 8 MB default main stack (see `spec_stack_flags` in the
+          # justfile); Linux takes the main stack size from the limit.
+          ulimit -s 65536
           ./bin/noir_spec > /tmp/spec-default.log 2>&1 & pid_default=$!
           ./bin/noir_spec --order random > /tmp/spec-random.log 2>&1 & pid_random=$!
           ./bin/noir_spec --tag functional > /tmp/spec-functional.log 2>&1 & pid_functional=$!
