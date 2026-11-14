@@ -638,7 +638,7 @@ module Analyzer::Go
               next
             end
             prefix = group_map[arg]?
-            prefix = arg if prefix.nil? && arg.starts_with?("/")
+            prefix = arg if prefix.nil? && (arg.starts_with?("/") || unread_group_prefix?(arg))
             if prefix
               ((prefixes_by_dir[target] ||= Hash(String, Set(String)).new)[fn] ||= Set(String).new) << prefix
             else
@@ -680,11 +680,10 @@ module Analyzer::Go
         read = prefixes.compact_map { |fn, pset| fn if pset.any? { |p| !unread_group_prefix?(p) } }
         unresolved = unresolved_by_dir[dir]?
         prefixes.reject! { |fn, _| unresolved.includes?(fn) } if unresolved
-        # A call site handing a group whose prefix was not read in full was
-        # an unresolved one before such prefixes were recorded.
-        # ponytail: so a helper handed both kinds is still left out; expand
-        # it per prefix (the read ones gaining their routes) once that
-        # change of output is wanted.
+        # A call site handing an inline group whose prefix was not read in
+        # full carries its marker and any safe tail into the expansion.
+        # ponytail: a helper handed both read and unread groups stays out of
+        # expansion; expand it per prefix once the routes can be isolated.
         prefixes.reject! { |_, pset| pset.any? { |p| unread_group_prefix?(p) } && !pset.all? { |p| unread_group_prefix?(p) } }
         # A helper left out with a call site whose prefix was read stays,
         # with no prefix to expand: see `unread_builder_routes`.

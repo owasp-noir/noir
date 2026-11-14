@@ -799,6 +799,8 @@ module Noir
     # An inline `addX(api.Group("/posts"))` (or mux's
     # `addX(r.PathPrefix("/posts").Subrouter())`) comes back as the composed
     # prefix when `groups` knows `api` (`/api/v1/posts`), else as the literal.
+    # A Group prefix not read in full carries the unread marker and any safe
+    # literal tail, under the same `route_path_text` rules as a route path.
     #
     # `slice_builders` maps a registration slice to the builders appended to
     # it (go-admin's `routerCheckRole = append(routerCheckRole,
@@ -836,7 +838,7 @@ module Noir
               first_seen = true
               first_text = text
             end
-            if text && (text.starts_with?('/') || groups.has_key?(text))
+            if text && (text.starts_with?('/') || unread_prefix?(text) || groups.has_key?(text))
               arg_text = text
               break
             end
@@ -962,7 +964,8 @@ module Noir
     # A router-builder call argument as `collect_router_builder_callsites`
     # reports it: an identifier's name, or the prefix an inline
     # `router.Group("/v1")` / `r.PathPrefix("/v1").Subrouter()` builds
-    # (stacked on the receiver's prefix when `groups` knows it).
+    # (stacked on the receiver's prefix when `groups` knows it). An unread
+    # Group prefix keeps only the route path tail `route_path_text` allows.
     private def builder_arg_text(arg : LibTreeSitter::TSNode, source : String, groups : Hash(String, String)) : String?
       return Noir::TreeSitter.node_text(arg, source) if Noir::TreeSitter.node_type(arg) == "identifier"
       return unless Noir::TreeSitter.node_type(arg) == "call_expression"
@@ -979,6 +982,9 @@ module Noir
             lit = text
             break
           end
+        end
+        if lit.nil? && (first = Noir::TreeSitter.first_named_arg(gargs)) && string_expr_text(first, source, {} of String => String).nil?
+          lit = unread_group_prefix(first, source, {} of String => String)
         end
         parent = operand && groups[Noir::TreeSitter.node_text(operand, source)]?
         lit && parent ? group_join(parent, lit) : lit
@@ -1897,6 +1903,10 @@ module Noir
         return router_operand_info(parent, source, groups, group_method, group_aliases, string_values, router_fields)
       end
 
+      # `extra_group_methods` contributes to named group bindings, not this
+      # inline-chain reader (Kratos `.Group(...)` remains outside this pass).
+      # ponytail: thread explicit extra group methods through here if a
+      # framework needs inline chains, keeping the same receiver checks.
       return unless method_name == group_method || group_aliases.includes?(method_name)
 
       prefix = ""
@@ -1906,6 +1916,9 @@ module Noir
         Noir::TreeSitter.each_named_arg(args) do |arg|
           prefix = string_expr_text(arg, source, string_values) || ""
           break unless prefix.empty?
+        end
+        if prefix.empty? && (first = Noir::TreeSitter.first_named_arg(args)) && string_expr_text(first, source, string_values).nil?
+          prefix = unread_group_prefix(first, source, string_values) || ""
         end
         return if prefix.empty?
       end

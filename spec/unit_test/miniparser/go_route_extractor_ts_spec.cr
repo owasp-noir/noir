@@ -410,6 +410,29 @@ describe Noir::TreeSitterGoRouteExtractor do
     ])
   end
 
+  it "keeps safe tails and marks inline Group chains" do
+    source = <<-GO
+      package main
+      func routes(r *gin.Engine, cfg Config, suffix string) {
+          r.Group("/v0").GET("/ping", h)
+          r.Group(cfg.Base + "/v1").GET("/status", h)
+          r.Group(cfg.Base).GET("/root", h)
+          r.Group(cfg.Base + "/v1").Group("/admin").GET("/users", h)
+          r.Group(cfg.Base + "/v1" + suffix).GET("/gap", h)
+          db.Group(cfg.Base + "/table").GET("/not-a-route", h)
+      }
+      GO
+
+    routes = Noir::TreeSitterGoRouteExtractor.extract_routes(source)
+    routes.map { |r| {r.path, r.prefix_unresolved?} }.sort_by!(&.[0]).should eq([
+      {"/gap", true},
+      {"/root", true},
+      {"/v0/ping", false},
+      {"/v1/admin/users", true},
+      {"/v1/status", true},
+    ])
+  end
+
   it "keeps a group prefix's tail only where a route path's would be kept (#3567)" do
     # The tail rules of `route_path_text`: a name bound from a literal is
     # not a runtime base, and a gap between literals is not a tail.
@@ -1333,6 +1356,40 @@ describe Noir::TreeSitterGoRouteExtractor do
     builders = Noir::TreeSitterGoRouteExtractor.collect_router_group_builders(source)
     calls = Noir::TreeSitterGoRouteExtractor.collect_router_builder_callsites(source, builders.keys.to_set)
     calls.map(&.[0..2]).should eq([{"addUserRoutes", "/v1", ""}])
+  end
+
+  it "keeps unread inline Group tails at router-builder call sites" do
+    source = <<-GO
+      package routes
+      func main(r *gin.Engine, cfg Config) {
+          addUserRoutes(r.Group(cfg.Base + "/v2"))
+          addUserRoutes(r.Group(cfg.Base))
+          addUserRoutes(r.Group("/v0"))
+      }
+      func addUserRoutes(rg *gin.RouterGroup) {
+          rg.GET("/users", h)
+      }
+      GO
+
+    builders = Noir::TreeSitterGoRouteExtractor.collect_router_group_builders(source)
+    calls = Noir::TreeSitterGoRouteExtractor.collect_router_builder_callsites(source, builders.keys.to_set)
+    calls.map(&.[0..2]).sort!.should eq([
+      {"addUserRoutes", "#{Noir::TreeSitterGoRouteExtractor::UNREAD_PREFIX}/v2", ""},
+      {"addUserRoutes", Noir::TreeSitterGoRouteExtractor::UNREAD_PREFIX.to_s, ""},
+      {"addUserRoutes", "/v0", ""},
+    ].sort!)
+
+    routes = Noir::TreeSitterGoRouteExtractor.extract_routes_from_function(source, "addUserRoutes", {
+      "rg" => "#{Noir::TreeSitterGoRouteExtractor::UNREAD_PREFIX}/v2",
+    })
+    routes.map { |r| {r.path, r.prefix_unresolved?} }.should eq([{"/v2/users", true}])
+
+    unread = Noir::TreeSitterGoRouteExtractor::UNREAD_PREFIX.to_s
+    bare = Noir::TreeSitterGoRouteExtractor.extract_routes_from_function(source, "addUserRoutes", {"rg" => unread})
+    bare.map { |r| {r.path, r.prefix_unresolved?} }.should eq([{"/users", true}])
+
+    literal = Noir::TreeSitterGoRouteExtractor.extract_routes_from_function(source, "addUserRoutes", {"rg" => "/v0"})
+    literal.map { |r| {r.path, r.prefix_unresolved?} }.should eq([{"/v0/users", false}])
   end
 
   it "composes an inline sub-group call-site with its receiver's prefix" do
