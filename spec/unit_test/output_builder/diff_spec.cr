@@ -101,6 +101,19 @@ describe "OutputBuilderDiff" do
       result[:changes].should be_empty
     end
 
+    # Like `handler`, the mark says how a route was read, not what a scanner
+    # would send to it (#3567).
+    it "does not report a route whose resolution mark alone changed" do
+      builder = OutputBuilderDiff.new(create_test_options)
+
+      new_endpoint = Endpoint.new("/status", "GET")
+      new_endpoint.resolution = {"prefix" => Endpoint::RESOLUTION_UNRESOLVED}
+
+      result = builder.diff([new_endpoint], [Endpoint.new("/status", "GET")])
+
+      result[:changed].should be_empty
+    end
+
     it "matches params by name and request type, so body and json are one param" do
       builder = OutputBuilderDiff.new(create_test_options)
 

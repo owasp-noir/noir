@@ -87,6 +87,7 @@ module Analyzer::Go
 
           Noir::TreeSitterGoRouteExtractor.fan_out_verbs(route.verb).each do |verb|
             endpoint = Endpoint.new(route.path, verb, details)
+            endpoint.resolution = route.resolution
 
             endpoint.params << Param.new("body", "", "json") if BODY_VERBS.includes?(verb)
 

@@ -102,6 +102,7 @@ module Analyzer::Go
                   end
                 end
                 new_endpoint.handler = named.handler_for(route)
+                new_endpoint.resolution = route.resolution
                 result << new_endpoint
                 named.bind(route, new_endpoint)
                 last_endpoints << new_endpoint

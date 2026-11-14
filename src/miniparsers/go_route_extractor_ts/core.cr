@@ -186,10 +186,25 @@ module Noir
       # 0-based row where the last handler argument starts (an inline
       # closure is declared there), when the decoder records it.
       property handler_row : Int32? = nil
+      # The path's leading operand was not read: `route_path_text` kept the
+      # literal tail of `options.BaseURL+"/status"`, so the real path may
+      # have something in front of `path`. A group or mount prefix joined
+      # on later does not read that operand either.
+      # ponytail: only the path's own operand. A receiver whose group prefix
+      # was seen but not read (`r.Group(base+"/v1")`, an accessor or a
+      # group-typed field the group map lacks) leaves its routes unmarked;
+      # marking those needs group-typed receivers told from engine-typed ones.
+      getter? prefix_unresolved : Bool
 
       def initialize(@router_name, @verb, @path, @raw_path, @handler, @line,
                      @query_params : Array(String) = [] of String,
-                     @handler_args : Array(String) = [] of String)
+                     @handler_args : Array(String) = [] of String,
+                     *, @prefix_unresolved : Bool = false)
+      end
+
+      # The mark an endpoint built from this route carries (`Endpoint#resolution`).
+      def resolution : Hash(String, String)?
+        {"prefix" => Endpoint::RESOLUTION_UNRESOLVED} if @prefix_unresolved
       end
 
       # Text of every handler argument after the path, middleware included
@@ -1556,6 +1571,7 @@ module Noir
       return unless args
 
       raw_path = nil
+      unread = false
       handler_text = ""
       handler_row = nil
       handler_args = [] of String
@@ -1572,6 +1588,7 @@ module Noir
           # latched onto a later string literal, surfacing phantom routes
           # like `PUT /key` (observed across beego cache examples).
           raw_path = route_path_text(arg, source, string_values)
+          unread = !raw_path.nil? && unread_base?(arg, source, string_values)
         elsif Noir::TreeSitter.node_type(arg) != "interpreted_string_literal" &&
               Noir::TreeSitter.node_type(arg) != "raw_string_literal"
           # First non-string positional arg after the path is treated as
@@ -1636,6 +1653,7 @@ module Noir
         handler_text,
         Noir::TreeSitter.node_start_row(call),
         handler_args: handler_args,
+        prefix_unresolved: unread,
       )
       route.handler_row = handler_row
       route
@@ -2150,6 +2168,7 @@ module Noir
       build_only = false
       registration_line = Noir::TreeSitter.node_start_row(call)
       router_name = nil
+      unread = false
 
       loop do
         fn = Noir::TreeSitter.field(current, "function")
@@ -2201,6 +2220,7 @@ module Noir
                 # read the way chi's `BindHandler` reads one.
                 if raw_path.nil? && (resolved_path = route_path_text(arg, source, string_values))
                   raw_path = resolved_path
+                  unread = unread_base?(arg, source, string_values)
                 elsif handler_text.empty? && !raw_path.nil?
                   handler_text = Noir::TreeSitter.node_text(arg, source)
                 end
@@ -2224,7 +2244,10 @@ module Noir
         when "Path"
           if args = Noir::TreeSitter.field(current, "arguments")
             Noir::TreeSitter.each_named_arg(args) do |arg|
-              raw_path ||= route_path_text(arg, source, string_values)
+              if raw_path.nil? && (path_text = route_path_text(arg, source, string_values))
+                raw_path = path_text
+                unread = unread_base?(arg, source, string_values)
+              end
               break
             end
           end
@@ -2263,7 +2286,7 @@ module Noir
                  end
 
       verbs.uniq.map do |verb|
-        Route.new(router_name, verb, resolved, raw_path, handler_text, registration_line, query_params.dup)
+        Route.new(router_name, verb, resolved, raw_path, handler_text, registration_line, query_params.dup, prefix_unresolved: unread)
       end
     end
 
@@ -2410,6 +2433,13 @@ module Noir
         end
       end
       string_expr_text(arg, source, values, partial: partial)
+    end
+
+    # Whether the path `route_path_text` read from `arg` is only its literal
+    # tail. The strict read needs every operand and is the partial one
+    # everywhere else, so it fails exactly where the tail was kept.
+    private def unread_base?(arg : LibTreeSitter::TSNode, source : String, values : Hash(String, String)) : Bool
+      string_expr_text(arg, source, values).nil?
     end
 
     # No operand of the `+` chain resolves: one runtime value, not a

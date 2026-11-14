@@ -83,7 +83,7 @@ module Analyzer::Go
 
           if ts_hits = routes_by_line[index]?
             ts_hits.each do |route|
-              last_endpoint = add_endpoint(route.path, route.verb, details, named.handler_for(route))
+              last_endpoint = add_endpoint(route.path, route.verb, details, named.handler_for(route), route.resolution)
               named.bind(route, last_endpoint)
               if entries = callees_by_route[route.line]?
                 entries.each do |entry|
@@ -127,10 +127,12 @@ module Analyzer::Go
       end
     end
 
-    private def add_endpoint(route_path : String, method : String, details : Details, handler : Handler? = nil) : Endpoint
+    private def add_endpoint(route_path : String, method : String, details : Details, handler : Handler? = nil,
+                             resolution : Hash(String, String)? = nil) : Endpoint
       if !route_path.empty?
         new_endpoint = Endpoint.new(route_path, method, details)
         new_endpoint.handler = handler
+        new_endpoint.resolution = resolution
         result << new_endpoint
         new_endpoint
       else

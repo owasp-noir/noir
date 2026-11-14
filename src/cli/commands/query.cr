@@ -10,7 +10,7 @@ require "../inspect"
 module Noir::CLI::QueryCommand
   # Filter flags and the `Filters` field each one fills. Every one takes a
   # value except the guard and gateway switches.
-  VALUE_FLAGS = %w[--method --url --path --project --handler --tech --tag --param --param-type --protocol --sink --source --signal --validator]
+  VALUE_FLAGS = %w[--method --url --path --project --handler --tech --tag --param --param-type --protocol --sink --source --signal --validator --resolution]
 
   # One pattern each: a URL or path can hold a comma (matrix params, Rails
   # formats), so the value is not split into an OR list.
@@ -61,7 +61,7 @@ module Noir::CLI::QueryCommand
         # `--sink ''` would otherwise be no filter at all, silently.
         if items.empty?
           errors << "#{name} requires a value"
-        else
+        elsif known_values?(name, items, errors)
           values[name].concat(items)
         end
       when "--exclude"
@@ -152,9 +152,19 @@ module Noir::CLI::QueryCommand
       errors << "--exclude #{key}= requires a value"
       return
     end
+    return unless known_values?(flag, items, errors)
     values = new_values
     values[flag].concat(items)
     build_filters(values, nil)
+  end
+
+  # `--resolution` has a closed vocabulary, so a value outside it is a typo,
+  # not a value this report happens not to carry.
+  private def self.known_values?(flag : String, items : Array(String), errors : Array(String)) : Bool
+    return true unless flag == "--resolution"
+    unknown = items - Endpoint::RESOLUTION_VALUES
+    errors << "unknown --resolution #{unknown.join(", ")}. Valid: #{Endpoint::RESOLUTION_VALUES.join(", ")}" unless unknown.empty?
+    unknown.empty?
   end
 
   private def self.build_filters(values : Hash(String, Array(String)), guard : Bool?) : Inspect::Filters
@@ -174,6 +184,7 @@ module Noir::CLI::QueryCommand
       sources: values["--source"],
       signals: values["--signal"],
       validators: values["--validator"],
+      resolutions: values["--resolution"],
     )
   end
 
@@ -235,6 +246,8 @@ module Noir::CLI::QueryCommand
         --source <kind,...|any> Reads a source of this kind
         --signal <kind,...|any> Carries a derived signal (idor_review, ssrf, open_redirect, ...)
         --validator <kind,...|any> Carries a validator of this kind
+        --resolution <r,...>   A claim marked heuristic or unresolved (resolution in the row);
+                               today only a Go path read behind an unread base (prefix)
                                A value no endpoint carries is reported on stderr with the values seen.
         --exclude <filter>=<value>
                                Drop the endpoints that filter matches (repeatable): any filter above
@@ -266,6 +279,7 @@ module Noir::CLI::QueryCommand
         noir query --seen-in spec --not-seen-in code ./app     # in the spec, served by nothing found
         noir query --seen-in code --not-behind-gateway ./app   # served, with no gateway rule in front
         noir query --exclude protocol=cli --exclude path='tests/**' --from report.json
+        noir query --resolution unresolved --from report.json      # rows worth re-checking first
         noir query --diff-ref origin/main --no-guard --sink any --fail-on-match .
         noir query --diff-path ../old --change removed .
 

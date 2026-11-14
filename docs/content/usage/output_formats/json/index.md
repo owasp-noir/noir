@@ -48,6 +48,29 @@ A monorepo can serve the same route from two apps, and Noir keeps those as two e
 }
 ```
 
+Some of what Noir reports is read off a definition, and some is a best guess. `resolution` lists the claims of an endpoint that were not read in full, each with one of two values:
+
+*   `heuristic`: matched by name, shape or proximity
+*   `unresolved`: the reference was seen, but Noir could not follow it
+
+A claim read in full is not listed, and an endpoint with nothing to list has no `resolution` key. This version marks one claim from one producer, so the absence of the key does not mean every claim on the endpoint was verified. It only means nothing was marked.
+
+The one claim marked today is `prefix`, set by the Go analyzers. `prefix: unresolved` means the route's path has a leading operand Noir did not read, and the URL is the literal part after it. oapi-codegen registers every operation as `r.Get(options.BaseURL+"/status", ...)`, which is reported as `/status`. The real path may have something in front of it. A group or mount prefix Noir did read is still joined on (`r.Mount("/api", ...)` gives `/api/status`), and the mark stays, because the operand between them is still unread. When two rows for the same method and path merge, a claim either row marks stays marked. `noir query --resolution unresolved` lists these rows.
+
+```json
+{
+  "url": "/api/status",
+  "method": "GET",
+  "resolution": { "prefix": "unresolved" },
+  "details": {
+    "code_paths": [{ "path": "api/api.gen.go", "line": 32 }],
+    "technology": "go_chi"
+  }
+}
+```
+
+The YAML, JSONL and TOML outputs carry the same field, and the plain report prints it as a `resolution` row.
+
 A full report looks like this. It was produced with taggers enabled (`-T`), which is what fills the `tags` arrays.
 
 ```json

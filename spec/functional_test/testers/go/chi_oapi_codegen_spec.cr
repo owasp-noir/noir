@@ -17,7 +17,16 @@ expected_endpoints = [
   Endpoint.new("/v1/version", "GET"),
 ]
 
-FunctionalTester.new("fixtures/go/chi_oapi_codegen/", {
+tester = FunctionalTester.new("fixtures/go/chi_oapi_codegen/", {
   :techs     => 1,
   :endpoints => expected_endpoints.size,
-}, expected_endpoints).perform_tests
+}, expected_endpoints)
+tester.perform_tests
+
+# The tail is what was read; what stands in front of it was not (#3567).
+describe "chi oapi-codegen prefix resolution", tags: "functional" do
+  it "marks every route read behind the base, and not the constant one" do
+    tester.endpoints.reject(&.resolution).map { |ep| "#{ep.method} #{ep.url}" }.should eq(["GET /v1/version"])
+    tester.endpoints.compact_map(&.resolution).uniq!.should eq([{"prefix" => "unresolved"}])
+  end
+end

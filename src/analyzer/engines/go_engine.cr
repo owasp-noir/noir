@@ -838,6 +838,7 @@ module Analyzer::Go
               # mux's `.Queries("type", "{type}")` declares required query params.
               route.query_params.each { |qp| ep.params << Param.new(qp, "", "query") }
               ep.handler = named.handler_for(route) if named
+              ep.resolution = route.resolution
               callees_by_route[route.line]?.try &.each do |name, callee_path, callee_line|
                 ep.push_callee(Callee.new(name, path: callee_path, line: callee_line))
               end

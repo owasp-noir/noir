@@ -207,7 +207,7 @@ module Noir
         next if mount_rows.includes?(r.line)
         prefix = serve_mux_prefix(r.router_name, mounts, 0)
         next r if prefix.empty?
-        Route.new(r.router_name, r.verb, group_join(prefix, r.path), r.raw_path, r.handler, r.line, r.query_params, r.handler_args)
+        Route.new(r.router_name, r.verb, group_join(prefix, r.path), r.raw_path, r.handler, r.line, r.query_params, r.handler_args, prefix_unresolved: r.prefix_unresolved?)
       end
     end
 
@@ -383,12 +383,14 @@ module Noir
       return unless args
 
       raw_path : String? = nil
+      unread = false
       handler_text = ""
       handler_node : LibTreeSitter::TSNode? = nil
       Noir::TreeSitter.each_named_arg(args) do |arg|
         if raw_path.nil?
           if s = route_path_text(arg, source, string_values)
             raw_path = s
+            unread = unread_base?(arg, source, string_values)
           elsif Noir::TreeSitter.node_type(arg) == "interpreted_string_literal" || Noir::TreeSitter.node_type(arg) == "raw_string_literal"
             raw_path = decode_string_literal(arg, source)
           end
@@ -431,7 +433,7 @@ module Noir
       verb = verb_wrapper(handler_node, source) || verb if verb == "ANY"
 
       if verb != "ANY"
-        yield Route.new(router_name, verb, path, raw_path, handler_text, row)
+        yield Route.new(router_name, verb, path, raw_path, handler_text, row, prefix_unresolved: unread)
         return
       end
 
@@ -469,10 +471,10 @@ module Noir
       # otherwise method-agnostic handler — keep the ANY fan-out instead of
       # narrowing the surface to OPTIONS.
       if methods.empty? || methods == ["OPTIONS"]
-        yield Route.new(router_name, "ANY", path, raw_path, handler_text, row)
+        yield Route.new(router_name, "ANY", path, raw_path, handler_text, row, prefix_unresolved: unread)
       else
         methods.each do |discovered_verb|
-          yield Route.new(router_name, discovered_verb, path, raw_path, handler_text, row)
+          yield Route.new(router_name, discovered_verb, path, raw_path, handler_text, row, prefix_unresolved: unread)
         end
       end
     end

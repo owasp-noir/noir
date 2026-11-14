@@ -327,6 +327,7 @@ module Analyzer::Go
                   end
                 end
                 endpoint.handler = named.handler_for(route)
+                endpoint.resolution = route.resolution
                 free_pass << endpoint
                 named.bind(route, endpoint)
                 last_endpoint = endpoint
@@ -730,6 +731,9 @@ module Analyzer::Go
             Noir::TreeSitterGoRouteExtractor.fan_out_verbs(route.verb).each do |verb|
               endpoint = Endpoint.new(route.path, verb, details)
               endpoint.handler = handler
+              # The mount prefix joined on by the caller does not read the
+              # path's own leading operand, so the mark stays.
+              endpoint.resolution = route.resolution
               file_endpoints << endpoint
             end
           end

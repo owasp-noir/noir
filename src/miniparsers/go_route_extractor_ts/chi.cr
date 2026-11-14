@@ -626,6 +626,7 @@ module Noir
       args = Noir::TreeSitter.field(call, "arguments")
       return unless args
       raw_path = nil
+      unread = false
       handler_text = ""
       Noir::TreeSitter.each_named_arg(args) do |arg|
         case Noir::TreeSitter.node_type(arg)
@@ -637,6 +638,7 @@ module Noir
           # back to treating the arg as the handler.
           if raw_path.nil? && (resolved_path = route_path_text(arg, source, string_values))
             raw_path = resolved_path
+            unread = unread_base?(arg, source, string_values)
           elsif handler_text.empty? && !raw_path.nil?
             handler_text = Noir::TreeSitter.node_text(arg, source)
           end
@@ -656,6 +658,7 @@ module Noir
         raw_path,
         handler_text,
         Noir::TreeSitter.node_start_row(call),
+        prefix_unresolved: unread,
       )
     end
 
@@ -764,6 +767,7 @@ module Noir
       return unless args
       method = nil
       raw_path = nil
+      unread = false
       handler_text = ""
       handler_args = [] of String
       Noir::TreeSitter.each_named_arg(args) do |arg|
@@ -777,6 +781,7 @@ module Noir
         elsif raw_path.nil?
           return if s.nil?
           raw_path = s
+          unread = unread_base?(arg, source, string_values)
         else
           handler_text = Noir::TreeSitter.node_text(arg, source) if handler_text.empty?
           collect_handler_arg_texts(arg, source, handler_args)
@@ -789,7 +794,7 @@ module Noir
 
       base_prefix = local_groups[router_name]? || prefix_stack.join
       resolved = base_prefix.empty? ? path : group_join(base_prefix, path)
-      Route.new(router_name, m.upcase, resolved, path, handler_text, Noir::TreeSitter.node_start_row(call), handler_args: handler_args)
+      Route.new(router_name, m.upcase, resolved, path, handler_text, Noir::TreeSitter.node_start_row(call), handler_args: handler_args, prefix_unresolved: unread)
     end
 
     # Decode `r.HandleFunc("/path", h)` / `r.Handle("/path", h)` — chi
@@ -810,6 +815,7 @@ module Noir
       args = Noir::TreeSitter.field(call, "arguments")
       return unless args
       raw_path = nil
+      unread = false
       handler_text = ""
       handler_args = [] of String
       Noir::TreeSitter.each_named_arg(args) do |arg|
@@ -817,6 +823,7 @@ module Noir
         if raw_path.nil?
           return if s.nil?
           raw_path = s
+          unread = unread_base?(arg, source, string_values)
         else
           handler_text = Noir::TreeSitter.node_text(arg, source) if handler_text.empty?
           collect_handler_arg_texts(arg, source, handler_args)
@@ -828,7 +835,7 @@ module Noir
 
       base_prefix = local_groups[router_name]? || prefix_stack.join
       resolved = base_prefix.empty? ? path : group_join(base_prefix, path)
-      Route.new(router_name, "ANY", resolved, path, handler_text, Noir::TreeSitter.node_start_row(call), handler_args: handler_args)
+      Route.new(router_name, "ANY", resolved, path, handler_text, Noir::TreeSitter.node_start_row(call), handler_args: handler_args, prefix_unresolved: unread)
     end
 
     # `group.Bind(ctrl, ...)` as a `BIND` pseudo-route: the path is the
@@ -982,6 +989,7 @@ module Noir
       args = Noir::TreeSitter.field(call, "arguments")
       return unless args
       raw_path = nil
+      unread = false
       path_was_literal = false
       handler_text = ""
       handler_args = [] of String
@@ -998,6 +1006,7 @@ module Noir
           # treating a non-string arg as the handler.
           if raw_path.nil? && (resolved_path = route_path_text(arg, source, string_values))
             raw_path = resolved_path
+            unread = unread_base?(arg, source, string_values)
           elsif !raw_path.nil?
             handler_text = Noir::TreeSitter.node_text(arg, source) if handler_text.empty?
             collect_handler_arg_texts(arg, source, handler_args)
@@ -1057,6 +1066,7 @@ module Noir
         handler_text,
         Noir::TreeSitter.node_start_row(call),
         handler_args: handler_args,
+        prefix_unresolved: unread,
       )
     end
 
