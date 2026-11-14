@@ -1159,7 +1159,7 @@ module Noir::CLI::Inspect
     end
   end
 
-  # The longest rule covering the route, among the catch-alls or the others.
+  # The longest rule covering the route, among the catch-all rules or the others.
   # ponytail: rules × routes with a string check; index by first segment if
   # a gateway with thousands of rules ever makes it slow.
   def self.gateway_rule(endpoint : Endpoint, rules : Array(GatewayRule), catch_all : Bool = false) : GatewayRule?
