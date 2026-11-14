@@ -33,7 +33,7 @@ module Analyzer::Go
       framework_dirs = framework_package_dirs(file_contents, IMPORT_MARKER)
       named_scope = named_handler_scope(file_contents)
       struct_index = Noir::GoStructFields::Index.new(file_contents, named_scope.import_dirs)
-      router_fields = package_router_fields(file_contents, ROUTER_TYPES)
+      router_fields = package_router_fields(file_contents, ROUTER_TYPES, named_scope.import_dirs, package_groups)
       parallel_analyze(get_files_by_extension(".go")) do |path|
         next if go_test_path?(path)
         next unless File.exists?(path)
@@ -48,7 +48,7 @@ module Analyzer::Go
         # line loop below can attribute body params (Query/PostForm
         # /GetHeader/Cookie) to the most recently declared route —
         # matching the legacy `last_endpoint` semantics.
-        cross_file_groups = ts_groups_for_directory(package_groups, dir)
+        receivers, cross_file_groups = file_router_receivers(router_fields, path, content, ts_groups_for_directory(package_groups, dir))
 
         # Router-builder expansion: graft call-site prefixes onto
         # the routes of `func addXRoutes(rg *gin.RouterGroup)`
@@ -69,7 +69,7 @@ module Analyzer::Go
         # verb shortcuts (`r.GET`, etc.), so opt into the method-first
         # decoders so those registrations surface as endpoints too.
         ts_routes = Noir::TreeSitterGoRouteExtractor.extract_routes(content, cross_file_groups, handle_method: "Handle",
-          handle_many_methods: ["Match"], string_seed: string_seed, router_fields: router_fields[dir]? || Set(String).new)
+          handle_many_methods: ["Match"], string_seed: string_seed, router_fields: receivers)
         routes_by_line = Hash(Int32, Array(Noir::TreeSitterGoRouteExtractor::Route)).new
         ts_routes.each do |r|
           routes_by_line[r.line] ||= [] of Noir::TreeSitterGoRouteExtractor::Route

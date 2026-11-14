@@ -26,7 +26,7 @@ module Analyzer::Go
       wrappers = resolve_router_wrappers(file_contents, BUILDER_TYPE)
       framework_dirs = framework_package_dirs(file_contents, IMPORT_MARKER)
       named_scope = named_handler_scope(file_contents)
-      router_fields = package_router_fields(file_contents, ROUTER_TYPES)
+      router_fields = package_router_fields(file_contents, ROUTER_TYPES, named_scope.import_dirs, package_groups)
       parallel_analyze(get_files_by_extension(".go")) do |path|
         next if go_test_path?(path)
         next unless File.exists?(path)
@@ -40,13 +40,13 @@ module Analyzer::Go
         # websocket.New(...) detection stays on the raw line text
         # because it's a sibling expression, not part of the route
         # argument list.
-        cross_file_groups = ts_groups_for_directory(package_groups, dir)
+        receivers, cross_file_groups = file_router_receivers(router_fields, path, content, ts_groups_for_directory(package_groups, dir))
         # `app.Route("/r", func(r fiber.Router){...})` scopes a prefix to
         # the closure; `app.Mount("/mnt", micro)` prefixes a sub-app.
         ts_routes = Noir::TreeSitterGoRouteExtractor.extract_routes(
           content, cross_file_groups, handle_method: "Add",
           closure_group_methods: ["Route"], mount_methods: ["Mount"],
-          router_fields: router_fields[dir]? || Set(String).new)
+          router_fields: receivers)
         routes_by_line = Hash(Int32, Array(Noir::TreeSitterGoRouteExtractor::Route)).new
         ts_routes.each do |r|
           routes_by_line[r.line] ||= [] of Noir::TreeSitterGoRouteExtractor::Route

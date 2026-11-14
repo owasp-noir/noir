@@ -29,7 +29,7 @@ module Analyzer::Go
       builder_prefixes_by_dir = resolve_router_builder_prefixes(file_contents, package_groups, BUILDER_TYPE)
       framework_dirs = framework_package_dirs(file_contents, IMPORT_MARKER)
       named_scope = named_handler_scope(file_contents)
-      router_fields = package_router_fields(file_contents, ROUTER_TYPES)
+      router_fields = package_router_fields(file_contents, ROUTER_TYPES, named_scope.import_dirs, package_groups)
       # Per-file results merged below in input order, not appended to
       # `result` from the workers: worker completion order varies run to
       # run (see `Analyzer#ordered_scan_files`).
@@ -48,9 +48,9 @@ module Analyzer::Go
         # comes through as verb="ANY" and we fan it out to
         # every HTTP method below — matching the legacy
         # behaviour.
-        cross_file_groups = ts_groups_for_directory(package_groups, dir)
+        receivers, cross_file_groups = file_router_receivers(router_fields, path, content, ts_groups_for_directory(package_groups, dir))
         ts_routes = Noir::TreeSitterGoRouteExtractor.extract_routes(content, cross_file_groups, handle_method: "Handle",
-          router_fields: router_fields[dir]? || Set(String).new)
+          router_fields: receivers)
           .select { |route| HTTP_METHODS_ALLOWED.includes?(route.verb) }
         routes_by_line = Hash(Int32, Array(Noir::TreeSitterGoRouteExtractor::Route)).new
         ts_routes.each do |r|
